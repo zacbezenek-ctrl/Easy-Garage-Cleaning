@@ -718,7 +718,7 @@ CALLRAIL_BLOCK = ""
 
 # styles.css is served immutable: every change to it bumps this one version, which
 # HEAD, patch_static_pages and functions/before-after.js all use.
-STYLES_VERSION = "20260928a"
+STYLES_VERSION = "20260929t"
 # The one Google Fonts stylesheet for pages built on styles.css. Every face is used by
 # the shared CSS (tests/public-performance.test.mjs checks the weights); it always loads
 # with the media=print swap so it never blocks the first render.
@@ -1590,7 +1590,7 @@ def faq_html(faqs):
             f'<div class="faq-item"><details><summary><span class="faq-q-num">Q.{i:02d}</span> {esc(q)}</summary>'
             f'<p class="faq-a">{a}</p></details></div>'
         )
-    out.append('</div><p style="text-align:center;margin-top:24px;" class="reveal"><a href="/faq.html" class="content-link">See full FAQ →</a></p></div></section>')
+    out.append('</div><p style="text-align:center;margin-top:24px;" class="reveal faq-more"><a href="/faq.html" class="content-link">See full FAQ →</a></p></div></section>')
     return "\n".join(out)
 
 
@@ -2413,7 +2413,7 @@ def render_pricing():
 </tbody>
 </table>
 </div>
-<p class="section-sub reveal"><a href="/blog/got-junk-vs-local-junk-removal-fort-collins.html" class="content-link">Full GOT-JUNK vs local comparison →</a></p>
+<p class="section-sub reveal more-link"><a href="/blog/got-junk-vs-local-junk-removal-fort-collins.html" class="content-link">Full GOT-JUNK vs local comparison →</a></p>
 </div></section>
 {fmt(PRICING_HTML)}
 {quote_form_for("Garage Cleanout", cta_title="Schedule your <em>free walkthrough</em>", form_subject="Pricing Page Walkthrough Request", sms_body=SMS_PHOTOS_BODY)}
@@ -2702,7 +2702,7 @@ def render_service_areas():
 <iframe src="https://www.google.com/maps?q=Fort+Collins,+Colorado&amp;z=9&amp;output=embed" loading="lazy" referrerpolicy="no-referrer-when-downgrade" title="Easy Garage Cleaning service area across Northern Colorado"></iframe>
 <p class="areas-map-caption">Based in Fort Collins and serving Loveland, Windsor, Timnath, Wellington, Severance, LaPorte, and nearby Northern Colorado communities.</p>
 </div>
-<p class="reveal" style="margin-top:20px;text-align:center"><a href="/reviews.html" class="content-link">Customer reviews →</a> · <a href="/projects/" class="content-link">All projects →</a></p>
+<p class="reveal more-link" style="margin-top:20px;text-align:center"><a href="/reviews.html" class="content-link">Customer reviews →</a> · <a href="/projects/" class="content-link">All projects →</a></p>
 </div></section>
 {quote_form_for("Garage Cleanout", cta_title="Get a quote in <em>your city</em>", form_subject="Service Areas Page Quote", sms_body="Hi!%20I%20checked%20your%20service%20areas%20and%20need%20a%20quote.")}
 </main>"""
@@ -2734,7 +2734,7 @@ def render_reviews():
 <a href="{GBP_REVIEW_URL}" class="btn-secondary" rel="noopener noreferrer">Leave a review on Google</a>
 <a href="/book.html" class="btn-primary">Request a Free Walkthrough</a>
 </div>
-<p class="reveal" style="margin-top:16px;text-align:center"><a href="/service-areas.html" class="content-link">Service areas →</a></p>
+<p class="reveal more-link" style="margin-top:16px;text-align:center"><a href="/service-areas.html" class="content-link">Service areas →</a></p>
 </div></section>
 </main>"""
     notes = [
@@ -3556,6 +3556,11 @@ def wrap_scroll_tables(text):
     return re.sub(r'<table(?:\s[^>]*)?>[\s\S]*?</table>', wrap, text, flags=re.I)
 
 
+def mark_faq_more_link(text):
+    """The "See full FAQ" row under a page FAQ is a 44px tap target on touch screens (.faq-more a)."""
+    return re.sub(r'<p style="text-align:center;margin-top:24px;" class="reveal">(<a href="/faq(?:\.html)?" class="content-link">See full FAQ →</a></p>)', r'<p style="text-align:center;margin-top:24px;" class="reveal faq-more">\1', text)
+
+
 def patch_index_home_fixes(text):
     text = normalize_final_cta_section(text)
     if "<title>Garage Cleanouts Fort Collins CO | Get Your Garage Back Fast</title>" in text:
@@ -3736,9 +3741,11 @@ def patch_index_iteration7(text):
     if 'id="recent-jobs"' in text and 'href="/projects/"' not in text.split('id="recent-jobs"')[1].split("<!-- VIDEO -->")[0]:
         text = text.replace(
             '</div>\n  </div>\n</section>\n\n<!-- VIDEO -->',
-            '</div>\n    <p class="reveal" style="margin-top:24px;text-align:center"><a href="/projects/" class="content-link">View all projects →</a></p>\n  </div>\n</section>\n\n<!-- VIDEO -->',
+            '</div>\n    <p class="reveal more-link" style="margin-top:24px;text-align:center"><a href="/projects/" class="content-link">View all projects →</a></p>\n  </div>\n</section>\n\n<!-- VIDEO -->',
             1,
         )
+    # The standalone link row is a 44px tap target on touch screens (.more-link a in styles.css).
+    text = text.replace('<p class="reveal" style="margin-top:24px;text-align:center"><a href="/projects/"', '<p class="reveal more-link" style="margin-top:24px;text-align:center"><a href="/projects/"', 1)
     for old, new in [
         ('class="btn-primary">Get Free Quote', 'class="btn-primary" data-cta="hero-quote">Get Free Quote'),
         ('class="nav-cta">Book Now', 'class="nav-cta" data-cta="nav-book">Book Now'),
@@ -4372,6 +4379,7 @@ def patch_static_pages():
         text = render_customer_access(text, path.relative_to(ROOT).as_posix())
         text = patch_performance_and_tracking(text)
         text = wrap_scroll_tables(text)
+        text = mark_faq_more_link(text)
         text = re.sub(r'/analytics-loader\.js\?v=[^"\']+', '/analytics-loader.js?v=20260904b', text)
         text = re.sub(r'^[ \t]+$', '', text, flags=re.M)
         text = re.sub(r'/styles\.css\?v=[^"\']+', '/styles.css?v=' + STYLES_VERSION, text)

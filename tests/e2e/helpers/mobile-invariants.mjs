@@ -35,6 +35,17 @@ export async function assertNoHorizontalScroll(page,{tolerance=1}={}){
 // words of its own outside every link and button, so the link flows inside a
 // sentence. A link alone in a list item (footer and nav lists), a link styled as
 // a block or inline-block, and a link in a <div> are all measured.
+// An inline control is measured line by line: every line fragment, padding
+// included, must be 44px tall and 44px wide (or a whole line), so a link that
+// wraps into two short lines cannot pass on its combined box. Its padding
+// overlaps the lines above and below, so it must also take taps: the top and
+// bottom edge of every fragment must hit the control, not later text painted
+// over the padding. Every control, exempt inline links included, must keep its
+// own words: points along the midline and lower third of each line of its text
+// must hit the control, never a different control painted over them (a padded,
+// position:relative link on the next line does exactly that). Fixed and sticky
+// bars overlap the content they scroll over by design, so they never count as
+// that other control.
 export async function tapTargetViolations(page,selector=PRIMARY_CONTROLS,{min=MIN_TARGET}={}){
  return page.evaluate(({selector,min})=>{
   const text=value=>String(value||'').replace(/\s+/g,' ').trim().slice(0,60);
@@ -42,33 +53,65 @@ export async function tapTargetViolations(page,selector=PRIMARY_CONTROLS,{min=MI
   const id=element=>element.tagName.toLowerCase()+(element.id?'#'+element.id:'')+(element.tagName==='INPUT'?`[type=${element.type}]`:'');
   const onScreen=box=>box.width>1&&box.height>1&&box.right+window.scrollX>0&&box.bottom+window.scrollY>0&&box.left+window.scrollX<document.documentElement.scrollWidth;
   const display=element=>getComputedStyle(element).display;
+  const blockOf=element=>{let block=element.parentElement;while(block&&['inline','contents'].includes(display(block)))block=block.parentElement;return block;};
   const inlineCopyLink=element=>{
    if(!element.matches('a[href],[role="link"]')||/^\s*(?:tel|sms|mailto):/i.test(element.getAttribute('href')||'')||display(element)!=='inline')return false;
-   let block=element.parentElement;
-   while(block&&['inline','contents'].includes(display(block)))block=block.parentElement;
+   const block=blockOf(element);
    if(!block||!['P','LI'].includes(block.tagName))return false;
    const copy=block.cloneNode(true);
    for(const control of copy.querySelectorAll('a,button,[role="link"],[role="button"]'))control.remove();
    return /[\p{L}\p{N}]{2,}/u.test(copy.textContent);
   };
-  const out=[];
-  for(const element of document.querySelectorAll(selector)){
-   if(element.closest('[aria-hidden="true"],[inert]')||!element.checkVisibility({checkOpacity:false,checkVisibilityCSS:true}))continue;
-   if(element.tagName==='INPUT'&&(element.name==='botcheck'||element.tabIndex<0))continue;
-   if(inlineCopyLink(element))continue;
-   const box=element.getBoundingClientRect();if(!onScreen(box))continue;
-   const boxes=[box,...[...(element.labels||[])].map(label=>label.getBoundingClientRect())];
-   if(boxes.some(candidate=>candidate.width>=min-0.5&&candidate.height>=min-0.5))continue;
-   const widest=boxes.reduce((best,candidate)=>candidate.width*candidate.height>best.width*best.height?candidate:best);
-   out.push({id:`${id(element)} "${name(element)}"`,width:Math.round(widest.width),height:Math.round(widest.height)});
+  const big=candidate=>candidate.width>=min-0.5&&candidate.height>=min-0.5;
+  const pinned=element=>{for(let node=element;node;node=node.parentElement)if(['fixed','sticky'].includes(getComputedStyle(node).position))return true;return false;};
+  // Hit-test a page point after scrolling it into the middle of the viewport, clear of fixed bars.
+  const at=(x,y)=>{
+   const top=y-window.scrollY;
+   if(top<window.innerHeight*0.3||top>window.innerHeight*0.65)window.scrollTo({left:window.scrollX,top:Math.max(0,y-window.innerHeight*0.4),behavior:'instant'});
+   return document.elementFromPoint(x-window.scrollX,y-window.scrollY);
+  };
+  const takesTaps=element=>[...element.getClientRects()].filter(rect=>rect.width>=1).map(rect=>({x:rect.left+rect.width/2+window.scrollX,top:rect.top+window.scrollY,bottom:rect.bottom+window.scrollY})).every(({x,top,bottom})=>[top+2,bottom-2].every(y=>{const hit=at(x,y);return !!hit&&element.contains(hit);}));
+  const start={x:window.scrollX,y:window.scrollY};
+  const controls=[...document.querySelectorAll(selector)].filter(element=>!element.closest('[aria-hidden="true"],[inert]')&&element.checkVisibility({checkOpacity:false,checkVisibilityCSS:true})&&!(element.tagName==='INPUT'&&(element.name==='botcheck'||element.tabIndex<0))&&onScreen(element.getBoundingClientRect()));
+  // Sample each control's own words (text outside nested controls) before anything scrolls.
+  const range=document.createRange(),samples=[];
+  for(const element of controls){
+   const fixed=pinned(element),walker=document.createTreeWalker(element,NodeFilter.SHOW_TEXT);
+   for(let node=walker.nextNode();node;node=walker.nextNode()){
+    if(!/\S/.test(node.data)||node.parentElement.closest(selector)!==element)continue;
+    range.selectNodeContents(node);
+    for(const rect of range.getClientRects())if(rect.width>=2&&rect.height>=2)for(const x of [.15,.5,.85])for(const y of [.5,.75])samples.push({element,fixed,x:rect.left+rect.width*x+(fixed?0:start.x),y:rect.top+rect.height*y+(fixed?0:start.y)});
+   }
   }
+  const covered=new Map();
+  const cover=(element,hit)=>{
+   const other=hit?.closest(selector);
+   if(other&&other!==element&&!element.contains(other)&&!other.contains(element)&&!pinned(other))covered.set(element,other);
+  };
+  for(const {element,x,y} of samples.filter(sample=>sample.fixed))if(!covered.has(element))cover(element,document.elementFromPoint(x,y));
+  for(const {element,x,y} of samples.filter(sample=>!sample.fixed).sort((a,b)=>a.y-b.y))if(!covered.has(element))cover(element,at(x,y));
+  const out=[];
+  for(const element of controls){
+   const box=element.getBoundingClientRect(),labels=[...(element.labels||[])].map(label=>label.getBoundingClientRect()),notes=[];
+   const measured=!inlineCopyLink(element)&&!labels.some(big);let size=null;
+   if(measured&&display(element)!=='inline'){if(!big(box))size=[box,...labels].reduce((best,candidate)=>candidate.width*candidate.height>best.width*best.height?candidate:best);}
+   else if(measured){
+    const block=blockOf(element),style=block&&getComputedStyle(block),line=block?block.clientWidth-parseFloat(style.paddingLeft)-parseFloat(style.paddingRight):Infinity;
+    const fragments=[...element.getClientRects()].filter(rect=>rect.width>=1),short=fragments.find(rect=>rect.height<min-0.5||(rect.width<min-0.5&&rect.width<line-1));
+    if(!fragments.length||short){size=short||box;if(big(box))notes.push('a line of it is under 44px');}
+    else if(!takesTaps(element)){size=box;notes.push('padding does not take taps');}
+   }
+   if(covered.has(element))notes.push(`covered by ${id(covered.get(element))} "${name(covered.get(element))}"`);
+   if(size||notes.length)out.push({id:`${id(element)} "${name(element)}"`,width:Math.round((size||box).width),height:Math.round((size||box).height),...(notes.length?{note:notes.join('; ')}:{})});
+  }
+  window.scrollTo({left:start.x,top:start.y,behavior:'instant'});
   return out;
  },{selector,min});
 }
 
 export async function assertTapTargets(page,selector=PRIMARY_CONTROLS,{key,min=MIN_TARGET}={}){
  const violations=await tapTargetViolations(page,selector,{min});
- report('tap targets',key,ratchet('tapTargets',key,violations.map(item=>item.id)),new Map(violations.map(item=>[item.id,`${item.width}x${item.height}`])));
+ report('tap targets',key,ratchet('tapTargets',key,violations.map(item=>item.id)),new Map(violations.map(item=>[item.id,`${item.width}x${item.height}${item.note?', '+item.note:''}`])));
  return violations;
 }
 

@@ -48,6 +48,37 @@ test('every link is a tap target unless it is an inline link in the running text
  expect(found.sort()).toEqual(['a "(970) 555-0100"','a "synthetic@example.invalid"','a "Garage cleanout"','a "Estate cleanout"','a "Move-out"','a "Request walkthrough →"','a "Styled chip"','a "Link in a div"','span "ARIA link"','a "About"'].sort());
 });
 
+test('an inline link passes by its padding only when later text does not cover the padding',async({page:tab})=>{
+ const copy=link=>`<div style="width:300px;margin:60px 0;font:14px/1.5 system-ui">Text photos of the garage and the driveway to ${link} before the walkthrough so the crew can plan the truck, the dump run and the donation drop-off.</div>`;
+ await tab.setContent(page(copy('<a id="covered" href="sms:+19705550100" style="padding:16px 0">(970) 555-0100</a>')+copy('<a id="lifted" href="sms:+19705550101" style="padding:16px 0;position:relative">(970) 555-0101</a>')+copy('<a id="bare" href="sms:+19705550102">(970) 555-0102</a>')));
+ const found=await tapTargetViolations(tab);
+ expect(found.map(item=>item.id).sort()).toEqual(['a#bare "(970) 555-0102"','a#covered "(970) 555-0100"']);
+ expect(found.find(item=>item.id.startsWith('a#covered')).note).toBe('padding does not take taps');
+ expect(found.find(item=>item.id.startsWith('a#bare')).note).toBeUndefined();
+ expect(await tab.evaluate(()=>window.scrollY),'the probe restores the scroll position').toBe(0);
+});
+
+test('a link whose words sit under a neighbour\'s padding is reported, even an exempt link in running text',async({page:tab})=>{
+ const lines=(prefix,upper,lower)=>`<p style="width:320px;margin:60px 0;font:15px/1.65 system-ui">We run <a id="${prefix}1" href="/loveland" ${upper}>junk removal in Loveland</a>,<br>and <a id="${prefix}2" href="/windsor" ${lower}>junk removal in Windsor</a> too.</p>`;
+ const lifted='style="position:relative;padding:16px 0"';
+ await tab.setContent(page(lines('both',lifted,lifted)+lines('lower','',lifted)+lines('none','','')+
+  '<p style="position:absolute;top:740px;left:0;margin:0">Or <a id="barred" href="/call">call the office</a> today.</p><nav style="position:fixed;left:0;right:0;bottom:0;height:120px;background:#fff"><a href="tel:+19705550100" style="display:block;height:100px">Call</a></nav>'));
+ const found=await tapTargetViolations(tab);
+ expect(found.map(item=>item.id).sort()).toEqual(['a#both1 "junk removal in Loveland"','a#lower1 "junk removal in Loveland"']);
+ expect(found.find(item=>item.id.startsWith('a#both1')).note).toBe('covered by a#both2 "junk removal in Windsor"');
+ expect(found.find(item=>item.id.startsWith('a#lower1')).note).toBe('covered by a#lower2 "junk removal in Windsor"');
+ expect(await tab.evaluate(()=>window.scrollY),'the probe restores the scroll position').toBe(0);
+});
+
+test('an inline control is measured on every line it wraps onto, not on its combined box',async({page:tab})=>{
+ await tab.setContent(page('<div style="width:130px;font:16px/2 system-ui">Call <a id="wrapped" href="tel:+19705550103">(970) 555-0103 today</a></div><div style="font:16px/2 system-ui">Call <a id="boxed" href="tel:+19705550104" style="display:inline-flex;align-items:center;min-height:44px">(970) 555-0104</a></div>'));
+ const combined=await tab.locator('#wrapped').evaluate(link=>({lines:link.getClientRects().length,height:link.getBoundingClientRect().height}));
+ expect(combined.lines).toBe(2);expect(combined.height,'the combined box alone would pass').toBeGreaterThanOrEqual(44);
+ const found=await tapTargetViolations(tab);
+ expect(found.map(item=>item.id)).toEqual(['a#wrapped "(970) 555-0103 today"']);
+ expect(found[0].note).toBe('a line of it is under 44px');expect(found[0].height).toBeLessThan(44);
+});
+
 test('phone, email and money fields need the matching keyboard; search boxes are exempt',async({page:tab})=>{
  await tab.setContent(page(`
   <label>Mobile phone <input id="p1" name="phone"></label>

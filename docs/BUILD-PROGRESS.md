@@ -407,6 +407,10 @@ draft PR. The owner merges in phase order. See **Decisions** D-001.
   srcsets with fetchpriority, deferred Google Fonts (sorted URLs fix the HTTP 400 on ads/apply/thank-you), generated pages'
   inline script moved to a hashed /site-forms.js, the booking bar rendered in HTML (CLS 0), and portal photo thumbnails
   (size=thumb). Lighthouse CI now enforces >= 90 by default (repository variable 'false' opts out).
+- **MOBILE-TAP** Every tap target on the public pages and Hub shells covered by the device e2e is at least 44x44: in-line
+  links become inline-flex boxes (no overlapping hit areas), "See full FAQ"/"more" rows are marked by the generator, Hub
+  and crew module CSS gained 44px rules, and staff contact fields use autocomplete=off. The tap-target allowlist is empty;
+  the e2e checker samples each line fragment and reports covered controls. styles.css moved to ?v=20260929t.
 
 ## In progress
 
@@ -501,6 +505,7 @@ one prefixed commit only after the full root suite (and the platform suite when 
 | FIELD-MULTIDAY | Multi-day job visits: per-day visit record, end of day, final-day completion and day lock (flag off) | merged (fe447d1) |
 | DISPATCH-SCALE | Windowed dispatch reads and indexed customer search (flag off; shadow first) | merged (249dd76) |
 | SITE-4 | Public-site mobile performance pass (Lighthouse >= 90 on every page; enforcement on) | merged (38125bf) |
+| MOBILE-TAP | 44px tap targets on public pages and Hub shells (allowlist to zero) | merged (502f9b4) |
 
 ## Next
 

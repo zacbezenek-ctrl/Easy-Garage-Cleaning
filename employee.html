@@ -22,7 +22,7 @@
     window._mapsReady = false;
     function _onMapsLoaded() { window._mapsReady = true; }
   </script>
-  <link rel="stylesheet" href="/styles.css?v=20260928a">
+  <link rel="stylesheet" href="/styles.css?v=20260929t">
 <style>
 body { background: var(--navy); color: var(--white); padding-bottom: 0 !important; }
 /* ── View-container defaults: only login visible on cold load ── */
@@ -981,8 +981,8 @@ body.has-session #login-screen { display: none; }
     <input type="hidden" id="lf-id">
     <div class="fg"><label>Name</label><input type="text" id="lf-name" placeholder="Name"></div>
     <div class="frow" style="margin-bottom:.65rem">
-      <div class="fg" style="margin:0"><label>Phone</label><input type="tel" id="lf-phone"></div>
-      <div class="fg" style="margin:0"><label>Email</label><input type="email" id="lf-email"></div>
+      <div class="fg" style="margin:0"><label>Phone</label><input type="tel" id="lf-phone" autocomplete="off"></div>
+      <div class="fg" style="margin:0"><label>Email</label><input type="email" id="lf-email" autocomplete="off"></div>
     </div>
     <div class="frow" style="margin-bottom:.65rem">
       <div class="fg" style="margin:0"><label>City</label><input type="text" id="lf-city" placeholder="Fort Collins"></div>
@@ -1046,10 +1046,10 @@ body.has-session #login-screen { display: none; }
         <div class="new-cust-form" id="new-cust-form">
           <div class="frow" style="margin-bottom:.65rem">
             <div class="fg" style="margin:0"><label>Name *</label><input type="text" id="nc-name" placeholder="John Smith"></div>
-            <div class="fg" style="margin:0"><label>Phone</label><input type="tel" id="nc-phone" placeholder="(970) 555-0100"></div>
+            <div class="fg" style="margin:0"><label>Phone</label><input type="tel" id="nc-phone" autocomplete="off" placeholder="(970) 555-0100"></div>
           </div>
           <div class="frow">
-            <div class="fg" style="margin:0"><label>Email</label><input type="email" id="nc-email" placeholder="john@email.com"></div>
+            <div class="fg" style="margin:0"><label>Email</label><input type="email" id="nc-email" autocomplete="off" placeholder="john@email.com"></div>
             <div class="fg" style="margin:0"><label>Address</label><input type="text" id="nc-addr" placeholder="123 Main St"></div>
           </div>
         </div>
@@ -1143,10 +1143,10 @@ body.has-session #login-screen { display: none; }
     <div style="font-family:'Fraunces',serif;font-size:1.1rem;font-weight:700;margin-bottom:1.25rem">Add Customer</div>
     <div class="frow" style="margin-bottom:.65rem">
       <div class="fg" style="margin:0"><label>Name *</label><input type="text" id="ac-name" placeholder="John Smith"></div>
-      <div class="fg" style="margin:0"><label>Phone</label><input type="tel" id="ac-phone" placeholder="(970) 555-0100"></div>
+      <div class="fg" style="margin:0"><label>Phone</label><input type="tel" id="ac-phone" autocomplete="off" placeholder="(970) 555-0100"></div>
     </div>
     <div class="frow" style="margin-bottom:1.25rem">
-      <div class="fg" style="margin:0"><label>Email</label><input type="email" id="ac-email" placeholder="john@email.com"></div>
+      <div class="fg" style="margin:0"><label>Email</label><input type="email" id="ac-email" autocomplete="off" placeholder="john@email.com"></div>
       <div class="fg" style="margin:0"><label>Address</label><input type="text" id="ac-addr" placeholder="123 Main St"></div>
     </div>
     <div style="display:flex;gap:.65rem;justify-content:flex-end">

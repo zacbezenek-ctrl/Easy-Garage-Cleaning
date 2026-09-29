@@ -48,6 +48,15 @@ test('checked-in allowlist is sorted debt for touch projects only, with no empty
  }
 });
 
+// MOBILE-TAP cleared the tap-target debt (441 entries on 60 page keys). The list
+// only shrinks, so regenerating it can never bring a sub-44px control back.
+test('tap-target debt stays cleared and keyboard debt is limited to the two free-text fields',()=>{
+ const list=allowlist();
+ assert.deepEqual(list.tapTargets,{},'fix the control instead of allowlisting a new sub-44px target');
+ const known={'hub:business hub service request form':['input[name=onsiteContact] needs tel'],'hub:employee hub sign in':['input#lqm-amount needs decimal']};
+ for(const [key,items] of Object.entries(list.keyboards))for(const item of items)assert.ok(known[key]?.includes(item),`${key}: ${item} is new keyboard debt`);
+});
+
 test('EGC_E2E_WORKERS becomes a number for integers, stays a percentage otherwise and rejects anything else',()=>{
  assert.equal(e2eWorkers(undefined),'50%');assert.equal(e2eWorkers(''),'50%');assert.equal(e2eWorkers('  '),'50%');
  assert.equal(e2eWorkers('2'),2);assert.equal(e2eWorkers(' 12 '),12);assert.equal(e2eWorkers(3),3);
