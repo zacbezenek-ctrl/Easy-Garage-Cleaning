@@ -185,6 +185,35 @@ function authDeferred() {
   return { promise, resolve };
 }
 const signedInProfile = { ok: true, user: 'ZacB', displayName: 'Zac', businessAccess: true, role: 'owner' };
+for (const code of ['auth/network-request-failed', 'auth/invalid-custom-token']) {
+  test(`Firebase ${code} during restore reports only a fixed code and keeps employee access closed`, async () => {
+    const env = employeeAuth(async url => response(url.includes('firebase-session') ? { ok: true, token: 'synthetic-private-token' } : signedInProfile));
+    env.context.sessionStorage.setItem('egc_business_access', 'true');
+    env.context.sessionStorage.setItem('egc_u', 'PreviousOwner');
+    env.context.firebase.auth = () => ({
+      signInWithCustomToken: async () => { throw Object.assign(new Error('private token=synthetic-private-token'), { code }); },
+      signOut: async () => {},
+    });
+    await env.api.restoreHubSession();
+    assert.equal(env.api.getUser(), null);
+    assert.equal(env.context.entered, undefined);
+    assert.equal(env.context.sessionStorage.getItem('egc_business_access'), null);
+    assert.equal(env.context.sessionStorage.getItem('egc_u'), null);
+    assert.match(env.node('login-error').textContent, new RegExp(code));
+    assert.doesNotMatch(env.node('login-error').textContent, /private|synthetic-private-token/);
+  });
+}
+test('an unknown Firebase error code never reaches the login screen', async () => {
+  const env = employeeAuth(async url => response(url.includes('firebase-session') ? { ok: true, token: 'synthetic-private-token' } : signedInProfile));
+  env.context.firebase.auth = () => ({
+    signInWithCustomToken: async () => { throw { code: 'auth/private-token=synthetic-private-token', message: 'private token' }; },
+    signOut: async () => {},
+  });
+  await env.api.restoreHubSession();
+  assert.equal(env.api.getUser(), null);
+  assert.match(env.node('login-error').textContent, /Firebase code: unknown/);
+  assert.doesNotMatch(env.node('login-error').textContent, /private|synthetic-private-token/);
+});
 function fillEmployeeLogin(env) {
   env.node('l-user').value = 'ZacB';
   env.node('l-pass').value = 'SyntheticPassword1';
