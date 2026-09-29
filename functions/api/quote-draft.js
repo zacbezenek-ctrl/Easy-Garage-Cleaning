@@ -4,6 +4,7 @@ import { requireQuoteAuthor } from '../_lib/quote-permissions.js';
 import { expireStaleCheckout, previewQuoteSend, readQuoteDraft, saveQuoteDraft, sendQuoteDraft } from '../_lib/quote-draft.js';
 import { createEstimateReadyDelivery } from '../_lib/estimate-ready.js';
 import { stripeRequest, stripeSecretKey } from '../_lib/customer-payments.js';
+import { moneyTotalsMode } from '../_lib/money-core.js';
 
 /** Quote drafts (P2-07). Same-origin JSON, quote authors only (P2-12).
  * GET  /api/quote-draft?jobId=ID  => {ok, job: quote author DTO}
@@ -45,7 +46,7 @@ export function quoteDraftHandlers({ session = getHubSession, storage = dispatch
         let body; try { body = JSON.parse(raw); } catch { return reply(400, { ok: false, code: 'quote_draft_json_invalid', error: 'The quote request is incomplete.' }); }
         if (!body || typeof body !== 'object' || Array.isArray(body)) return reply(400, { ok: false, code: 'quote_draft_invalid_request', error: 'The quote request is incomplete.' });
         const { action, ...input } = body, store = storage(env), at = now().toISOString();
-        if (action === 'save') return reply(200, await saveQuoteDraft(store, actor, input, at, { env, checkouts: job => expireStaleCheckout({ store, job, stripe: stripe(env), now: at }) }));
+        if (action === 'save') return reply(200, await saveQuoteDraft(store, actor, input, at, { env, checkouts: job => expireStaleCheckout({ store, job, stripe: stripe(env), now: at, mode: moneyTotalsMode(env) }) }));
         if (action === 'send_preview') return reply(200, await previewQuoteSend(store, actor, input, at, { env }));
         if (action === 'send') return reply(200, await sendQuoteDraft(store, actor, input, at, { env, deliver: delivery(env, store).deliver }));
         return reply(400, { ok: false, code: 'quote_draft_invalid_request', error: 'Choose save, send_preview or send.' });

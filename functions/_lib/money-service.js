@@ -74,6 +74,10 @@ const instant = value => typeof value === 'string' && /^\d{4}-\d\d-\d\dT\d\d:\d\
 const usd = cents => (cents / 100).toLocaleString('en-US', { style: 'currency', currency: 'USD' });
 const pick = (value, keys) => plain(value) ? Object.fromEntries(keys.filter(key => value[key] !== undefined).map(key => [key, value[key]])) : null;
 const str = (value, max = 200) => typeof value === 'string' ? value.slice(0, max) : null;
+// store.totalsMode is MONEY_UNIFIED_TOTALS (moneyStorage, money-core moneyTotalsMode): 'unified' bills, caps and shows
+// money-core's unified totals (approved changes are the billed change-order lines only).
+const unifiedTotals = store => store?.totalsMode === 'unified';
+const totalsOf = (store, job) => customerMoneyTotals(job, { unified: unifiedTotals(store) });
 
 export const moneyApiEnabled = env => env?.MONEY_API_ENABLED === 'true';
 /**
@@ -146,7 +150,7 @@ function carryInternal(job, items) {
   });
 }
 
-async function saveEstimate({ job, input, actor, now, today }) {
+async function saveEstimate({ store, job, input, actor, now, today }) {
   if (closed(job)) throw fail('job_closed', 'A cancelled job cannot take a new estimate.', 409);
   if (!Array.isArray(input.lineItems) || !input.lineItems.length) throw fail('invalid_line_items', 'Add at least one priced line item.');
   if (input.lineItems.length > MAX_ESTIMATE_LINES) throw fail('too_many_lines', `An estimate can hold up to ${MAX_ESTIMATE_LINES} lines so the customer portal shows every line.`);
@@ -160,7 +164,7 @@ async function saveEstimate({ job, input, actor, now, today }) {
   const deposit = given(input.depositCents) ? whole(input.depositCents, 'The deposit', 0, totalCents) : depositCents(totalCents, 50);
   const scope = text(input.scope, 'The customer-facing scope', 1600, { required: true, multiline: true });
   if (!validDate(input.validUntil) || input.validUntil < today) throw fail('invalid_valid_until', 'Choose an estimate expiry date of today or later.');
-  const current = plain(job.estimate) ? job.estimate : {}, before = customerMoneyTotals(job), approval = plain(job.customerApproval) ? job.customerApproval : null;
+  const current = plain(job.estimate) ? job.estimate : {}, before = totalsOf(store, job), approval = plain(job.customerApproval) ? job.customerApproval : null;
   const next = { ...current, number: invoiceNumber(job.id, 'estimate', current.number), amount: totalCents / 100, amountCents: totalCents, scope, lineItems: lines, depositRequired: deposit / 100, depositRequiredCents: deposit, validUntil: input.validUntil, termsVersion: current.termsVersion || job.termsVersion || '2026-09', createdAt: current.createdAt || now, updatedAt: now, updatedBy: actor.user, source: 'egc_hub' };
   const existed = Boolean(current.number || given(current.amount) || approval?.status || given(job.invoice?.amount));
   const material = existed && estimateChanged(comparable(job, before), next), wasApproved = approved(current.status) || approved(approval?.status);
@@ -243,7 +247,7 @@ const recordOffline = kind => async ({ store, job, input, actor, now }) => {
   const payment = plain(job.payment) ? job.payment : {};
   // Recording more money must never verify an earlier unverified entry.
   if (paymentNeedsVerification(job)) throw fail('payment_needs_review', 'An earlier payment on this job is recorded but not verified, so no more money can be recorded yet. The owner confirms it against the check, bank or Stripe record and marks it verified on the job (the payment ledger backfill lists these jobs under needsVerification).', 409);
-  const totals = customerMoneyTotals(job);
+  const totals = totalsOf(store, job);
   if ([totals.totalCents, totals.paidCents, totals.recordedCents, totals.appliedCents, totals.balanceCents].includes(null)) throw fail('total_unknown', 'The quote and recorded payments must be readable before more money is recorded. Review this job.', 409, { issues: totals.issues });
   if (amount > totals.balanceCents) throw fail('amount_exceeds_balance', `The amount cannot be more than the ${usd(totals.balanceCents)} balance.`, 409, { balanceCents: totals.balanceCents });
   // payment.amount never holds payment.tips[], so it grows from the recorded total, not from paidCents.
@@ -280,7 +284,7 @@ async function issueInvoice({ store, job, input, actor, now, today }) {
   if (!validDate(input.dueDate) || input.dueDate < today) throw fail('invalid_due_date', 'Choose a payment due date of today or later.');
   const customerReference = input.customerReference === undefined ? undefined : text(input.customerReference, 'The customer reference', 120);
   const previous = plain(job.invoice) ? job.invoice : {}, numbered = await reserveNumber(store, job, now);
-  const { invoice, issues } = invoiceFromEstimate({ ...job, invoice: { ...previous, number: numbered.number } }, { now, dueDate: input.dueDate, customerReference });
+  const { invoice, issues } = invoiceFromEstimate({ ...job, invoice: { ...previous, number: numbered.number } }, { now, dueDate: input.dueDate, customerReference, unified: unifiedTotals(store) });
   const fresh = invoice.issuedAt === instant(now), warnings = [...numbered.warnings, ...issues.map(code => ({ code: code.replace(/^money_/, ''), message: ISSUE_MESSAGES[code] || 'Review the job money before sending this invoice.' }))];
   if (!approved(job.estimate?.status) && !approved(job.customerApproval?.status)) warnings.push({ code: 'estimate_not_approved', message: 'The estimate has no recorded customer approval.' });
   const patch = { invoice: { ...invoice, issuedBy: fresh ? actor.user : previous.issuedBy || actor.user, updatedBy: actor.user } };
@@ -303,12 +307,12 @@ function voidInvoice({ job, input, actor, now }) {
 // by mistake: the line and its decision stay as evidence, marked void, and an
 // issued invoice that still matches the job's money drops to the new total in
 // the same commit. Money already paid for it stays recorded (refund it apart).
-function voidChange({ job, input, actor, now }) {
+function voidChange({ store, job, input, actor, now }) {
   if (typeof input.changeOrderId !== 'string' || !/^change-[A-Za-z0-9_-]{1,60}$/.test(input.changeOrderId)) throw fail('request_invalid', 'Choose an approved change to void.');
   const reason = text(input.reason, 'A reason for voiding', 500, { required: true, min: 3 });
   const planned = voidChangeOrder(job, input.changeOrderId, { reason, by: actor.user, now });
   if (!planned) throw fail('change_order_missing', 'This change is no longer billed on the job. Refresh the job money.', 409);
-  const before = customerMoneyTotals(job), after = customerMoneyTotals({ ...job, ...planned.patch }), patch = { ...planned.patch }, warnings = [];
+  const before = totalsOf(store, job), after = totalsOf(store, { ...job, ...planned.patch }), patch = { ...planned.patch }, warnings = [];
   const invoice = plain(job.invoice) ? job.invoice : null, status = String(invoice?.status || '').toLowerCase();
   if (invoice && given(invoice.amount) && !['draft', 'void', 'superseded'].includes(status)) {
     if (before.totalCents !== null && moneyCents(invoice.amount) === before.totalCents && after.totalCents !== null && after.appliedCents !== null) {
@@ -424,13 +428,30 @@ export async function moneyLaborView(store, actor, jobId) {
 }
 
 /**
+ * The amount a Hub money view shows for the job's invoice (FIX-MONEY-TOTALS). Off and shadow: the saved figure, as
+ * before. With MONEY_UNIFIED_TOTALS=true an active invoice (saved, not void or superseded) shows money-core's unified
+ * total, the one its paid and balance are measured against, as the invoice document does; the saved figure stays as
+ * savedAmountCents, and issues names invoice_amount_stale when the two differ (an invoice issued before the flip, such
+ * as one that bills an approval with no change-order line, until it is reissued). `extra` holds those two fields, only
+ * in unified mode.
+ */
+export function invoiceAmount(job, totals, unified = false) {
+  const invoice = plain(job?.invoice) ? job.invoice : null, savedCents = Number.isSafeInteger(invoice?.amountCents) ? invoice.amountCents : moneyCents(invoice?.amount);
+  const active = Boolean(invoice && (invoice.status || invoice.issuedAt || given(invoice.amount))) && !['void', 'superseded'].includes(invoice.status);
+  if (!unified || !active) return { amountCents: savedCents, extra: {} };
+  const stale = totals.totalCents !== null && totals.totalCents !== savedCents;
+  return { amountCents: totals.totalCents, extra: { savedAmountCents: savedCents, issues: stale ? ['invoice_amount_stale'] : [] } };
+}
+
+/**
  * Business-manager DTO for one job's money (integer cents; an allowlist, never the raw job).
  * `paymentEvents` (the store's FUNNEL_PAYMENT_EVENTS_ENABLED) adds the FUN-33 read fields:
  * payments[].nonCashCredit and paidInFull; unset, the DTO is exactly as before.
+ * `unified` (MONEY_UNIFIED_TOTALS) shows money-core's unified totals, and an active invoice's unified total (invoiceAmount).
  */
-export function moneyProjection(job, now, { laborRecord = null, laborHidden = false, paymentEvents = false } = {}) {
+export function moneyProjection(job, now, { laborRecord = null, laborHidden = false, paymentEvents = false, unified = false } = {}) {
   const events = paymentEvents === true;
-  const totals = customerMoneyTotals(job), estimate = plain(job.estimate) ? job.estimate : null, invoice = plain(job.invoice) ? job.invoice : null;
+  const totals = customerMoneyTotals(job, { unified }), estimate = plain(job.estimate) ? job.estimate : null, invoice = plain(job.invoice) ? job.invoice : null, billed = invoiceAmount(job, totals, unified);
   const lines = legacyLineItems(job, { record: 'estimate', surface: 'invoice', totalCents: totals.quoteCents }), ledger = reconcileLedger(job);
   return {
     id: job.id, revision: job.revision, customerId: str(job.customerId), customer: str(job.customer), serviceType: str(job.serviceType), date: str(job.date, 10), status: stage(job) || null, notify: job.notify !== false,
@@ -439,8 +460,8 @@ export function moneyProjection(job, now, { laborRecord = null, laborHidden = fa
       termsVersion: str(estimate.termsVersion), sentAt: str(estimate.sentAt, 40), sentChannel: str(estimate.sentChannel, 20), acceptedAt: str(estimate.acceptedAt, 40), acceptedBy: str(estimate.acceptedBy, 120), fingerprint: estimateFingerprint(estimate) } : null,
     lineItems: lines.lineItems.map(line => ({ ...customerLineItem(line), customerSupplied: line.customerSupplied === true, grouped: Boolean(line.group) })), linesComplete: !lines.issues.length,
     approval: pick(job.customerApproval, ['status', 'approvedAt', 'approvedBy', 'source', 'supersededAt', 'reason', 'estimateRevision']),
-    invoice: { status: invoiceStatus(job, now), savedStatus: str(invoice?.status), number: str(invoice?.number), amountCents: Number.isSafeInteger(invoice?.amountCents) ? invoice.amountCents : moneyCents(invoice?.amount), dueDate: validDate(invoice?.dueDate) ? invoice.dueDate : null,
-      issuedAt: str(invoice?.issuedAt, 40), customerReference: str(invoice?.customerReference, 120), voidedAt: str(invoice?.voidedAt, 40), voidReason: str(invoice?.voidReason, 500) },
+    invoice: { status: invoiceStatus(job, now, { unified }), savedStatus: str(invoice?.status), number: str(invoice?.number), amountCents: billed.amountCents, dueDate: validDate(invoice?.dueDate) ? invoice.dueDate : null,
+      issuedAt: str(invoice?.issuedAt, 40), customerReference: str(invoice?.customerReference, 120), voidedAt: str(invoice?.voidedAt, 40), voidReason: str(invoice?.voidReason, 500), ...billed.extra },
     invoicePreview: invoicePreview(job, totals),
     // Changes the customer approved in the portal that are billed on top of the quote (a manager can void one).
     changeOrders: billedChangeOrders(job).map(line => ({ id: line.id, name: str(line.name, 160) || '', totalCents: line.totalCents, approvedAt: str(line.approvedAt, 40), approvedBy: str(line.approvedBy, 120), backfilled: line.backfilled === true })),
@@ -451,7 +472,7 @@ export function moneyProjection(job, now, { laborRecord = null, laborHidden = fa
   };
 }
 
-const result = async (store, actor, input, job, warnings, replayed, now) => ({ ok: true, authority: 'employee_hub', requestId: input.requestId, action: input.action, replayed, job: moneyProjection(job, now, { ...await moneyLaborView(store, actor, job.id), paymentEvents: store.paymentEvents === true }), warnings });
+const result = async (store, actor, input, job, warnings, replayed, now) => ({ ok: true, authority: 'employee_hub', requestId: input.requestId, action: input.action, replayed, job: moneyProjection(job, now, { ...await moneyLaborView(store, actor, job.id), paymentEvents: store.paymentEvents === true, unified: unifiedTotals(store) }), warnings });
 
 // True when a new invoice number this plan reserves is now held by another job.
 async function numberTaken(store, writes, job) {

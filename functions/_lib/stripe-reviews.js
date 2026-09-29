@@ -384,13 +384,21 @@ export const serviceRecordedSince = (job, review) => manualCentsSince(job, revie
 // (serviceRecordedSince). Null when nothing is missing: no service part, the job was not found, or no balance is left for
 // a checkout to charge (more than the balance cannot be recorded, so the owner is never stuck). The resolve commit marks
 // the job at the revision read here, so a payment changed meanwhile is a revision conflict.
-function keptServiceMissing(job, review, keptServiceCents) {
+// The balance is the one a new checkout would charge in the money totals `mode` (FIX-MONEY-TOTALS: money-core's unified
+// totals with MONEY_UNIFIED_TOTALS=true, where an older tip inside the paid total can leave a balance today's figures call
+// paid). Unified money that cannot be read counts as a balance (its paid and balance are then null): nothing shows the
+// service money is not asked for again once the money is fixed.
+const checkoutBalance = (job, mode) => {
+  const finance = customerMoneyState(job, mode);
+  return finance.unknown ? { owed: true, paidCents: null, balanceCents: null } : { owed: Math.round(finance.balance * 100) > 0, paidCents: Math.round(finance.paid * 100), balanceCents: Math.round(finance.balance * 100) };
+};
+function keptServiceMissing(job, review, keptServiceCents, mode = 'off') {
   if (!job || !(Number.isSafeInteger(keptServiceCents) && keptServiceCents > 0)) return null;
-  const finance = customerMoneyState(job), balanceCents = Math.round(finance.balance * 100);
-  if (balanceCents <= 0) return null;
+  const balance = checkoutBalance(job, mode);
+  if (!balance.owed) return null;
   const recordedSinceCents = serviceRecordedSince(job, review);
   if (recordedSinceCents >= keptServiceCents) return null;
-  return { keptServiceCents, recordedSinceCents, heldAt: text(review.createdAt, 40), ...(count(review.jobPaidCents) !== null ? { jobPaidCentsWhenHeld: review.jobPaidCents } : {}), jobPaidCents: Math.round(finance.paid * 100), jobBalanceCents: balanceCents };
+  return { keptServiceCents, recordedSinceCents, heldAt: text(review.createdAt, 40), ...(count(review.jobPaidCents) !== null ? { jobPaidCentsWhenHeld: review.jobPaidCents } : {}), jobPaidCents: balance.paidCents, jobBalanceCents: balance.balanceCents };
 }
 // Marking a tipped charge that is not on its job reconciled closes its review, which gives the customer's Pay button (and
 // the crew card link) back for whatever balance the job shows. Its service part must be on the job first, measured as
@@ -398,23 +406,23 @@ function keptServiceMissing(job, review, keptServiceCents) {
 // outside the Hub (appliedElsewhere, saved on the review and in the audit). A follow-up review is exempt: the earlier
 // close in its chain already settled where the charge's money went. A tip or service part that cannot be read counts as
 // missing while the job shows a balance.
-function serviceNotRecorded(job, review, onJob) {
+function serviceNotRecorded(job, review, onJob, mode = 'off') {
   const tipCents = tipOf(review);
   if (onJob || tipCents === 0 || followUp(review) || !job) return null;
   const serviceCents = serviceOf(count(review.amountCents), tipCents);
-  if (serviceCents !== null) return keptServiceMissing(job, review, serviceCents);
-  const balanceCents = Math.round(customerMoneyState(job).balance * 100);
-  return balanceCents > 0 ? { keptServiceCents: null, recordedSinceCents: serviceRecordedSince(job, review), jobBalanceCents: balanceCents } : null;
+  if (serviceCents !== null) return keptServiceMissing(job, review, serviceCents, mode);
+  const balance = checkoutBalance(job, mode);
+  return balance.owed ? { keptServiceCents: null, recordedSinceCents: serviceRecordedSince(job, review), jobBalanceCents: balance.balanceCents } : null;
 }
 // The owner-facing refusal for serviceNotRecorded.
 function serviceFirst(review, missing) {
   const tipCents = tipOf(review), service = Number.isSafeInteger(missing.keptServiceCents) ? `its ${usd(missing.keptServiceCents)} service part` : 'its service part';
   // Kept under 300 characters, which the Hub shows in full.
-  return fail('service_not_recorded', `Not on the job: closing this review lets the job's ${usd(missing.jobBalanceCents)} balance be paid again. First record ${service} under Estimates & payments${tipCents > 0 ? ` (never the ${usd(tipCents)} tip)` : ''}; ${usd(missing.recordedSinceCents)} recorded since the hold. Or tick that it went to another job or outside the Hub. Nothing was saved.`, 409,
+  return fail('service_not_recorded', `Not on the job: closing this review lets the job's ${Number.isSafeInteger(missing.jobBalanceCents) ? `${usd(missing.jobBalanceCents)} ` : ''}balance be paid again. First record ${service} under Estimates & payments${tipCents > 0 ? ` (never the ${usd(tipCents)} tip)` : ''}; ${usd(missing.recordedSinceCents)} recorded since the hold. Or tick that it went to another job or outside the Hub. Nothing was saved.`, 409,
     { amountCents: count(review.amountCents), tipCents, serviceCents: missing.keptServiceCents, recordedSinceCents: missing.recordedSinceCents, jobBalanceCents: missing.jobBalanceCents });
 }
 const PLANS = {
-  async 'payment.reconcile'({ store, review, input, actor, stripe, now }) {
+  async 'payment.reconcile'({ store, review, input, actor, stripe, now, mode }) {
     // A refund is the owner's to record (checked against Stripe, owner-only note and audit), never a business-visible reconcile.
     const owner = canRecordRefund(actor);
     if (review.reason === 'payment_refunded' && !owner) throw fail('owner_required', OWNER_REFUND, 403);
@@ -424,7 +432,7 @@ const PLANS = {
     // once Stripe shows no refund (a refund is recorded, never reconciled), on the job read here, which the resolve
     // commit marks at this revision.
     const elsewhere = () => {
-      const missing = serviceNotRecorded(job, review, onJob);
+      const missing = serviceNotRecorded(job, review, onJob, mode);
       if (!missing) return {};
       if (input.appliedElsewhere !== true) throw serviceFirst(review, missing);
       return { serviceAppliedElsewhere: true };
@@ -455,7 +463,7 @@ const PLANS = {
     const exit = review.reason === 'payment_refunded', why = exit ? `Stripe no longer shows a refund${comment ? `: ${comment}` : ''}` : comment;
     return { patch: { resolution: 'reconciled', resolutionNote: comment, recordedOnJobAtResolution: onJob, ...applied }, reason: `${why}${saying(applied)}` || null, ...(exit ? { visibility: 'owner' } : {}), marks: jobMark(job, now) };
   },
-  async 'payment.refund'({ store, review, input, actor, stripe, now }) {
+  async 'payment.refund'({ store, review, input, actor, stripe, now, mode }) {
     if (!canRecordRefund(actor)) throw fail('owner_required', 'Only the owner can record a refund.', 403);
     const comment = note(input.note), job = await heldJob(store, review), onJob = recordedOnJob(job, heldSession(review));
     // Recording the refund never changes the job, which still counts a charge already on it as paid.
@@ -476,7 +484,7 @@ const PLANS = {
     if (!refund.full && !counted && input.keptCentsAcknowledged !== refund.keptCents) throw fail('refund_partial', `Stripe shows ${usd(refund.refundedCents)} of ${usd(review.amountCents)} refunded. The ${usd(refund.keptCents)} kept is not on the job, and recording this refund closes the review for good. ${keptFirst(review, refund)}`, 409, amounts);
     // Before a tipped charge's review closes (which gives the customer Pay back), the service part kept must already be
     // on the job: otherwise Pay would ask for the balance that money already paid.
-    const missing = !refund.full && !counted && tipCents > 0 ? keptServiceMissing(job, review, split.keptServiceCents) : null;
+    const missing = !refund.full && !counted && tipCents > 0 ? keptServiceMissing(job, review, split.keptServiceCents, mode) : null;
     if (missing) throw fail('kept_not_recorded', `Record the ${usd(missing.keptServiceCents)} service part kept on the job under Estimates & payments first${tipFirst ? ' (the crew tip was refunded first)' : ''}: the job's payments have grown by ${usd(missing.recordedSinceCents)} since this charge was held, so the customer's Pay button would ask again for money this charge already paid. Then record the refund. Nothing was saved.`, 409, { ...amounts, ...missing });
     const kept = !refund.full && tipCents > 0 && Number.isSafeInteger(split.keptServiceCents) ? `kept: ${usd(split.keptServiceCents)} service, ${usd(split.keptTipCents)} crew tip${tipFirst ? ', the tip refunded first' : ''}` : '';
     const where = onJob ? ` (${shown}${kept ? `${kept}; ` : ''}the job still counts this charge as paid)`
@@ -526,12 +534,12 @@ async function releaseHeldCheckout(store, review, now) {
   return [{ collection: PORTAL_CHECKOUT_COLLECTION, id: review.jobId, revision: ledger.revision, patch: { status: 'settled', settledAt: now, settledBy: 'review_resolved' } }];
 }
 
-async function execute(store, actor, input, collection, now, fingerprint, receiptId, stripe) {
+async function execute(store, actor, input, collection, now, fingerprint, receiptId, stripe, mode) {
   const review = await store.read(collection, input.reviewId);
   if (!review) throw fail('not_found', 'This review no longer exists. Refresh the review queue.', 404);
   if (review.status !== 'open') throw fail('already_resolved', 'This review was already resolved. Refresh the review queue.', 409, { resolution: text(review.resolution, 30) });
   if (review.revision !== input.expectedRevision) throw fail('revision_conflict', 'This review changed after you opened it. Refresh and review it again.', 409);
-  const plan = await PLANS[input.action]({ store, review, input, actor, now, stripe });
+  const plan = await PLANS[input.action]({ store, review, input, actor, now, stripe, mode });
   const released = collection === PAYMENT_REVIEW_COLLECTION ? await releaseHeldCheckout(store, review, now) : [];
   const actorId = String(actor.user).toLowerCase(), patch = { ...plan.patch, status: 'resolved', resolvedAt: now, resolvedBy: actorId, resolveRequestId: input.requestId, updatedAt: now };
   const audit = auditWrite({ actor: { id: actorId, kind: 'human', role: actor.role }, via: actor.via === 'mcp' ? 'mcp' : 'hub', action: `stripe_review.${input.action}`, entity: { collection, id: review.id }, before: snapshot(review), after: snapshot({ ...review, ...patch }), requestId: input.requestId, reason: plan.reason ?? null, visibility: plan.visibility || 'business', now });
@@ -548,8 +556,9 @@ async function execute(store, actor, input, collection, now, fingerprint, receip
   return saved;
 }
 
-/** Resolve one open payment or membership review. `now` is an ISO string; `stripe` is stripeReviewClient(env) or a fake. */
-export async function resolveStripeReview(store, actor, input, now = new Date().toISOString(), { stripe = null } = {}) {
+/** Resolve one open payment or membership review. `now` is an ISO string; `stripe` is stripeReviewClient(env) or a fake;
+ * `totalsMode` is MONEY_UNIFIED_TOTALS (money-core moneyTotalsMode), the money a new checkout would charge the job. */
+export async function resolveStripeReview(store, actor, input, now = new Date().toISOString(), { stripe = null, totalsMode = 'off' } = {}) {
   requireDispatcher(actor);
   const collection = validate(input, actor), actorId = String(actor.user).toLowerCase();
   const fingerprint = await digest({ actor: actorId, input }), receiptId = input.requestId.toLowerCase();
@@ -564,7 +573,7 @@ export async function resolveStripeReview(store, actor, input, now = new Date().
   }
   const prior = await replay(true);
   if (prior) return prior;
-  try { return result(await execute(store, actor, input, collection, now, fingerprint, receiptId, stripe), false); }
+  try { return result(await execute(store, actor, input, collection, now, fingerprint, receiptId, stripe, totalsMode), false); }
   catch (error) {
     if (FINAL.has(error.code)) throw error;
     // A lost commit response (or a racing copy of this request) may have saved: the receipt is the proof.

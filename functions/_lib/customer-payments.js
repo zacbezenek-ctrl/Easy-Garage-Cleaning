@@ -1,6 +1,6 @@
 import { firestoreFetch } from './firebase-service-account.js';
 import { readJob, patchJob, encodeFirestoreFields, decodeFirestoreFields } from './firestore-job.js';
-import { paymentLedger, refundsRecorded } from './money-core.js';
+import { customerMoneyTotals, moneyTotalsMode, moneyUnpriced, paymentLedger, refundsRecorded, reportTotalsMismatch } from './money-core.js';
 import { manualEntryIds } from './money-ledger.js';
 import { billedChangeCents } from './change-orders.js';
 import { unsentQuoteDraft } from './quote-model.js';
@@ -117,14 +117,52 @@ export function customerQuoteTotal(job) {
   return quoteCents(job) / 100;
 }
 
-export function customerMoneyState(job) {
+// FIX-MONEY-TOTALS (MONEY_UNIFIED_TOTALS, money-core moneyTotalsMode): in mode 'unified' the portal, its checkout, the
+// payment return, crew card links and closeout read money-core's customerMoneyTotals(job, {unified: true}) in integer
+// cents: the quote plus the billed change-order lines, the money applied to the service (tips never count) and the
+// balance, with the deposit, what is due now and the remainder. When money-core cannot read those (money that is not
+// dollars and cents, a missing quote, tips that cannot be itemized), today's figures are shown with unknown: true and
+// nothing can be charged; a job with no quote saved yet is also unpriced: true (money-core moneyUnpriced), which is not
+// money for the team to review. Mode 'off' (unset) and 'shadow' serve today's figures; customerTotalsShadow logs the difference.
+// The one "needs review" rule (the Hub board's employee-money-totals.js applies exactly this): the total, the money applied,
+// the balance, what is due now and the remainder must read, and the deposit terms only while the deposit is what the
+// checkout collects. A deposit term that cannot be read (money_deposit_invalid) never holds up a completed job's balance;
+// its deposit figures are then null (unknown, never 0).
+const UNIFIED_KEYS = ['totalCents', 'appliedCents', 'balanceCents', 'dueNowCents', 'remainderCents'];
+const DEPOSIT_KEYS = ['depositRequiredCents', 'depositPaidCents', 'depositDueCents'];
+function unifiedTotals(job) {
+  const totals = customerMoneyTotals(job, { unified: true });
+  return [...UNIFIED_KEYS, ...(totals.purpose === 'deposit' ? DEPOSIT_KEYS : [])].every(key => Number.isSafeInteger(totals[key])) ? totals : null;
+}
+const unifiedDollars = value => Number.isSafeInteger(value) ? value / 100 : null;
+const unknownMoney = job => ({ unknown: true, ...(moneyUnpriced(customerMoneyTotals(job, { unified: true })) ? { unpriced: true } : {}) });
+
+export function customerMoneyState(job, mode = 'off') {
+  if (mode === 'unified') {
+    const totals = unifiedTotals(job);
+    return totals ? { total: totals.totalCents / 100, paid: totals.appliedCents / 100, balance: totals.balanceCents / 100 } : { ...customerMoneyState(job), ...unknownMoney(job) };
+  }
   // Change-order lines billed from portal approvals (change-orders.js) are owed on top of the quote.
   const totalCents = quoteCents(job) + billedChangeCents(job);
   const paidCents = cents(job.payment?.amount ?? job.invoice?.paid ?? job.invoice?.amountPaid ?? job.deposit?.paidAmount);
   return { total: totalCents / 100, paid: paidCents / 100, balance: Math.max(0, totalCents - paidCents) / 100 };
 }
 
-export function customerDepositState(job, finance = customerMoneyState(job)) {
+/** Shadow mode: today's figures against the unified ones, logged once as money_totals_mismatch when they differ. */
+export function customerTotalsShadow(job, surface, log) {
+  const served = customerMoneyState(job), due = customerDepositState(job, served), unified = customerMoneyTotals(job, { unified: true });
+  return reportTotalsMismatch(job?.id, surface, { totalCents: cents(served.total), paidCents: cents(served.paid), balanceCents: cents(served.balance), dueNowCents: cents(due.dueNow) },
+    { totalCents: unified.totalCents, paidCents: unified.appliedCents, balanceCents: unified.balanceCents, dueNowCents: unified.dueNowCents }, log);
+}
+
+// Mode 'unified' ignores `finance` and reads the deposit terms from money-core (unknown money: nothing due now).
+export function customerDepositState(job, finance = customerMoneyState(job), mode = 'off') {
+  if (mode === 'unified') {
+    const totals = unifiedTotals(job);
+    if (totals) return { required: unifiedDollars(totals.depositRequiredCents), paid: unifiedDollars(totals.depositPaidCents), due: unifiedDollars(totals.depositDueCents), dueNow: totals.dueNowCents / 100, purpose: totals.purpose, remainder: totals.remainderCents / 100 };
+    const legacy = customerDepositState(job);
+    return { ...legacy, dueNow: 0, remainder: customerMoneyState(job).balance, ...unknownMoney(job) };
+  }
   // Honor an existing signed deposit term; every new quote defaults to 50%.
   // The term is on the quote: billed change orders are due with the balance.
   const saved = job.estimate?.depositRequired ?? job.deposit?.amount, quote = Math.max(0, cents(finance.total) - billedChangeCents(job));
@@ -141,13 +179,21 @@ export function customerDepositState(job, finance = customerMoneyState(job)) {
 // the customerDepositState it charges. Money documents offer "Pay" only on it.
 // A Hub quote draft that was not sent in its current revision (P2-07) is never
 // payable, even once the job is completed: the customer has not seen that total.
-export function payable(job) {
+// In mode 'unified' it charges money-core's unified figures, and refuses
+// (CUSTOMER_PORTAL_MONEY_REVIEW) while money-core cannot read them, or
+// (CUSTOMER_PORTAL_ESTIMATE_NOT_READY) while no quote is saved.
+export const MONEY_REVIEW_TEXT = 'The amounts on this project need a quick review by our team before a card payment can open. Please call or text us.';
+export const UNPRICED_TEXT = 'Your estimate is not priced yet. Payment opens once Easy Garage Cleaning sends it to you.';
+export const unknownMoneyRefusal = state => state.unpriced ? { code: 'CUSTOMER_PORTAL_ESTIMATE_NOT_READY', error: UNPRICED_TEXT } : { code: 'CUSTOMER_PORTAL_MONEY_REVIEW', error: MONEY_REVIEW_TEXT };
+export function payable(job, mode = 'off') {
   if (!job || [job.status, job.pipelineStatus].some(status => CLOSED_STATUSES.includes(String(status || '').toLowerCase()))) throw failure('This job is not available for payment');
   if (unsentQuoteDraft(job)) throw failure('Your estimate is being updated. Payment opens once Easy Garage Cleaning sends it to you for review.', 409, 'CUSTOMER_PORTAL_ESTIMATE_NOT_APPROVABLE');
   if (customerPaymentNeedsReview(job)) throw failure('A recorded payment is awaiting team verification. Please wait before paying again.');
   const status = String(job.customerApproval?.status || job.estimate?.status || job.quoteStatus || '').toLowerCase();
   if (!['accepted', 'approved'].includes(status) && !['completed', 'paid'].includes(String(job.pipelineStatus || job.status || '').toLowerCase())) throw failure('Approve the estimate before paying');
-  return customerDepositState(job);
+  const due = customerDepositState(job, undefined, mode);
+  if (due.unknown) { const { code, error } = unknownMoneyRefusal(due); throw failure(error, 409, code); }
+  return due;
 }
 
 // Every customer-payment call (portal checkout create, resume, expire and
@@ -528,7 +574,7 @@ async function commitStripePayment(env, jobId, job, patch, { sessionId, amountCe
 // fromWebhook is true only for the Stripe webhook delivery (who recorded the payment).
 async function recordStripeCheckout(env, checkout, { kind, expectedJobId = '', recordedBy = '', settleHeld = true, holdOnly = false, now = new Date().toISOString(), fromWebhook = false }) {
   const crew = kind === CHECKOUT_KINDS.crew, { jobId, sessionId, tipCents, serviceCents } = verifiedCheckout(checkout, kind, expectedJobId), text = HELD[crew ? 'crew' : 'portal'];
-  const events = funnelPaymentEventsEnabled(env);
+  const events = funnelPaymentEventsEnabled(env), mode = moneyTotalsMode(env);
   // Money is recorded only from a session whose charge was read: fail closed (retryable) otherwise.
   if (!plainObject(checkout.payment_intent) || !plainObject(checkout.payment_intent.latest_charge)) throw failure('Stripe could not confirm this payment. Please try again.', 503, 'payment_charge_unread');
   const ledger = crew ? null : await readLedger(env, jobId), ledgerTip = Number(ledger?.state.tipCents || 0);
@@ -589,7 +635,10 @@ async function recordStripeCheckout(env, checkout, { kind, expectedJobId = '', r
   };
   let storageFailed = false;
   for (let attempt = 0; attempt < 3; attempt++) {
-    const job = await paymentJob(env, jobId), finance = customerMoneyState(job);
+    // finance is what payment.amount is written from (the recorded paid total); served is the figure shown and capped
+    // (FIX-MONEY-TOTALS: money-core's unified totals in mode 'unified', else the same figures).
+    const job = await paymentJob(env, jobId), finance = customerMoneyState(job), served = mode === 'unified' ? customerMoneyState(job, mode) : finance;
+    if (mode === 'shadow' && attempt === 0) customerTotalsShadow(job, crew ? 'crew_payment_record' : 'payment_record');
     if (knownSession(job, sessionId)) {
       // The job already counts this charge as paid and Stripe now shows a refund:
       // the job is left as it is, and the owner is told through a payment_refunded
@@ -626,7 +675,8 @@ async function recordStripeCheckout(env, checkout, { kind, expectedJobId = '', r
         catch { if (attempt < 2) continue; }
       }
       const item = saved && typeof saved === 'object' ? saved : { sessionId, paymentIntentId, amount: serviceCents / 100 };
-      return { result: { paid: true, duplicate: true, amountPaid: serviceCents / 100, ...tipped, balance: finance.balance, receiptUrl }, payment, invoice: job.invoice || {}, paymentSyncPayload: { ...item, balance: finance.balance, paidTotal: finance.paid }, withheld: unsentQuoteDraft(job) };
+      // paymentSyncPayload is the crew closeout's HighLevel payment-received note: it keeps today's figures in every mode.
+      return { result: { paid: true, duplicate: true, amountPaid: serviceCents / 100, ...tipped, balance: served.balance, receiptUrl }, payment, invoice: job.invoice || {}, paymentSyncPayload: { ...item, balance: finance.balance, paidTotal: finance.paid }, withheld: unsentQuoteDraft(job) };
     }
     // A review the office closed (reconciled elsewhere, refunded) is final:
     // neither a browser return nor a webhook retry ever puts that charge on the job.
@@ -695,11 +745,12 @@ async function recordStripeCheckout(env, checkout, { kind, expectedJobId = '', r
     // A crew link was sized to the balance when it opened. A payment recorded
     // since then means this charge needs a manager before it changes the job.
     // Only the service part is checked against the balance; the tip never counts toward it.
-    if (crew && (cents(finance.total) <= 0 || serviceCents > cents(finance.balance))) throw await heldForReview(job, finance, 'payment_exceeds_balance', text.payment_exceeds_balance, review);
+    // Unified money that cannot be read is never measured against a guess: a person settles the charge.
+    if (crew && (served.unknown || cents(served.total) <= 0 || serviceCents > cents(served.balance))) throw await heldForReview(job, finance, 'payment_exceeds_balance', text.payment_exceeds_balance, review);
     // Only the service part is paid toward the job; the tip is kept in payment.tips.
-    const paidCents = cents(finance.paid) + serviceCents;
+    const paidCents = cents(finance.paid) + serviceCents, appliedCents = served === finance || served.unknown ? paidCents : cents(served.paid) + serviceCents, totalCents = cents(served.total);
     // Preserve every confirmed dollar, including any unexpected excess, for reconciliation.
-    const paidTotal = paidCents / 100, balance = Math.max(0, cents(finance.total) - paidCents) / 100;
+    const paidTotal = paidCents / 100, balance = Math.max(0, totalCents - appliedCents) / 100;
     const deposit = customerDepositState(job, { ...finance, paid: paidTotal, balance });
     const receiptUrl = RECEIPT_URL.test(charge.receipt_url || '') ? charge.receipt_url : job.payment?.receiptUrl || '';
     const receiptEmail = clean(checkout.customer_details?.email || checkout.customer_email);
@@ -717,13 +768,15 @@ async function recordStripeCheckout(env, checkout, { kind, expectedJobId = '', r
     const tip = tipCents ? { sessionId, paymentIntentId, amountCents: tipCents, amount: tipCents / 100, source: crew ? 'crew_card' : 'customer_portal', createdBy: clean(checkout.metadata?.created_by, 80), recordedBy: clean(recordedBy, 80) || 'stripe', verifiedAt: now } : null;
     const tips = tip || Array.isArray(job.payment?.tips) ? { tips: [...trustedTips, ...(tip ? [tip] : [])] } : {};
     const payment = { ...(job.payment || {}), amount: paidTotal, lastAmount: paymentItem.amount, lastReceivedAt: now, method: 'stripe', processor: 'stripe', verified: true, receiptUrl, receiptEmail, reference: paymentIntentId || sessionId, stripeSessions: [...trustedSessions, paymentItem], ...tips, ...(crew ? { recordedBy: paymentItem.recordedBy } : {}) };
-    const invoice = { ...(job.invoice || {}), amount: finance.total, paid: paidTotal, balance, status: balance < .01 ? 'paid' : 'partial', updatedAt: now };
-    const paymentSyncPayload = { ...paymentItem, balance, paidTotal };
+    const invoice = { ...(job.invoice || {}), amount: served.total, paid: appliedCents / 100, balance, status: balance < .01 ? 'paid' : 'partial', updatedAt: now };
+    // The crew closeout sends this to HighLevel as its payment-received note (crew/postjob.html syncStripePaymentToHighLevel), so
+    // it quotes today's figures in every mode, like every other HighLevel note; the answer and the invoice mirror are served money.
+    const paymentSyncPayload = { ...paymentItem, balance: Math.max(0, cents(finance.total) - paidCents) / 100, paidTotal };
     const patch = {
       payment,
       deposit: { ...(job.deposit || {}), amount: deposit.required, paidAmount: deposit.paid, status: deposit.due < .01 ? 'paid' : deposit.paid ? 'partial' : 'due', verified: true, updatedAt: now },
       invoice, paymentSyncStatus: 'pending', paymentSyncPayload,
-      ...(paidTotal > finance.total ? { paymentReviewRequired: true } : {}), updatedAt: now,
+      ...(appliedCents > totalCents ? { paymentReviewRequired: true } : {}), updatedAt: now,
     };
     const mark = { jobRecordedAt: now, jobRecordedBy: clean(recordedBy, 80) };
     try {
@@ -790,10 +843,11 @@ export async function portalPaymentHeld(env, jobId, job = null, now = new Date()
 }
 
 // A checkout with no tip keeps the exact fingerprint it had before tips existed,
-// so an open session saved earlier is still resumed rather than expired.
-const fingerprint = (job, tipCents = 0) => JSON.stringify({ total: customerMoneyState(job).total, paid: customerMoneyState(job).paid, ...customerDepositState(job), revision: job.estimate?.revision || 1, approval: job.customerApproval?.status || job.estimate?.status || job.quoteStatus || '', status: job.pipelineStatus || job.status || '', ...(tipCents ? { tipCents } : {}) });
+// so an open session saved earlier is still resumed rather than expired. It is
+// taken over the figures the checkout charges in the money totals `mode`.
+const fingerprint = (job, tipCents = 0, mode = 'off') => JSON.stringify({ total: customerMoneyState(job, mode).total, paid: customerMoneyState(job, mode).paid, ...customerDepositState(job, undefined, mode), revision: job.estimate?.revision || 1, approval: job.customerApproval?.status || job.estimate?.status || job.quoteStatus || '', status: job.pipelineStatus || job.status || '', ...(tipCents ? { tipCents } : {}) });
 // An open portal checkout whose saved fingerprint (with its saved tip) differs no longer matches the quote.
-export const checkoutFingerprint = (job, tipCents = 0) => fingerprint(job, tipCents);
+export const checkoutFingerprint = (job, tipCents = 0, mode = 'off') => fingerprint(job, tipCents, mode);
 
 /**
  * Closes the job's portal card checkout when it no longer charges exactly what
@@ -812,7 +866,7 @@ export async function expireStaleCustomerCheckout(env, secret, jobId) {
   const job = await readJob(env, jobId);
   if (!job?.__updateTime) throw failure('Payment information is temporarily unavailable', 503);
   let due = null;
-  try { due = cents(payable(job).dueNow); } catch { /* nothing may be charged now: close it */ }
+  try { due = cents(payable(job, moneyTotalsMode(env)).dueNow); } catch { /* nothing may be charged now: close it */ }
   // Charging exactly what is due is harmless (a deposit checkout survives a void of a change due with the balance).
   if (due !== null && due >= 50 && Number(state.amountCents) === due) return 'current';
   const session = `checkout/sessions/${encodeURIComponent(state.sessionId)}`, checkout = await stripeRequest(secret, session);
@@ -829,11 +883,13 @@ export async function createCustomerStripeCheckout(env, secret, jobId, origin, {
   let ledger = await readLedger(env, jobId), state = ledger.state;
   let job = await readJob(env, jobId);
   if (!job?.__updateTime) throw failure('Payment information is temporarily unavailable', 503);
+  // The checkout charges the money totals mode's figures (FIX-MONEY-TOTALS); shadow logs how they differ from unified.
+  const mode = moneyTotalsMode(env);
   // Check a tip against the job and the balance before any earlier checkout is resumed or expired.
   if (requestTip(tipCents)) {
     const refusal = tipRefusal(job);
     if (refusal) throw failure(refusal, 409, 'tip_unavailable');
-    const due = payable(job); validTip(tipCents, cents(due.dueNow), due.purpose);
+    const due = payable(job, mode); validTip(tipCents, cents(due.dueNow), due.purpose);
   }
   // A portal checkout marked held (a tipped charge held for a person) is checked
   // against its review before Stripe is read: while the review is open (or cannot
@@ -890,8 +946,8 @@ export async function createCustomerStripeCheckout(env, secret, jobId, origin, {
       // The same tip resumes it; a different tip (or none) expires it below.
       let stillPayable = false;
       const savedTip = Number(state.tipCents || 0);
-      try { stillPayable = payable(job).dueNow >= .5; } catch { /* Expire stale/cancelled scope below. */ }
-      if (stillPayable && state.fingerprint === fingerprint(job, tipCents) && checkout.amount_total === state.amountCents + savedTip && /^https:\/\/checkout\.stripe\.com\//.test(checkout.url || '')) {
+      try { stillPayable = payable(job, mode).dueNow >= .5; } catch { /* Expire stale/cancelled scope below. */ }
+      if (stillPayable && state.fingerprint === fingerprint(job, tipCents, mode) && checkout.amount_total === state.amountCents + savedTip && /^https:\/\/checkout\.stripe\.com\//.test(checkout.url || '')) {
         if (!tips) await checkoutReviewHold(env, jobId, job);
         return { ok: true, url: checkout.url, amount: state.amountCents / 100, ...(savedTip ? { tip: savedTip / 100 } : {}), purpose: state.purpose };
       }
@@ -904,8 +960,9 @@ export async function createCustomerStripeCheckout(env, secret, jobId, origin, {
       state = ledger.state;
     } else throw failure('Your previous checkout is still being confirmed. Please try again.');
   }
-  const deposit = payable(job), amountCents = cents(deposit.dueNow), changeCents = billedChangeCents(job);
-  if (amountCents < 50) throw failure(customerMoneyState(job).balance < .5 ? 'There is no outstanding balance' : 'Your deposit is paid. The remaining balance is due on completion.');
+  if (mode === 'shadow') customerTotalsShadow(job, 'checkout');
+  const deposit = payable(job, mode), amountCents = cents(deposit.dueNow), changeCents = billedChangeCents(job);
+  if (amountCents < 50) throw failure(customerMoneyState(job, mode).balance < .5 ? 'There is no outstanding balance' : 'Your deposit is paid. The remaining balance is due on completion.');
   const tip = validTip(tipCents, amountCents, deposit.purpose);
   if (!tips) await checkoutReviewHold(env, jobId, job);
   const params = new URLSearchParams({
@@ -918,7 +975,7 @@ export async function createCustomerStripeCheckout(env, secret, jobId, origin, {
     'line_items[0][price_data][product_data][name]': `Easy Garage Cleaning — ${deposit.purpose === 'deposit' ? 'upfront deposit' : 'remaining balance'}`,
     'line_items[0][price_data][product_data][description]': `${clean(job.serviceType || 'Garage service', 100)}. ${deposit.purpose === 'deposit' ? 'Applied to your approved quote; remaining balance due on completion.' : `Balance after previous payments and credits${changeCents ? `, including ${(changeCents / 100).toLocaleString('en-US', { style: 'currency', currency: 'USD' })} in approved changes` : ''}.`}`,
     'metadata[kind]': 'egc_customer_portal_payment', 'metadata[job_id]': jobId, 'metadata[payment_purpose]': deposit.purpose,
-    'metadata[quote_revision]': String(job.estimate?.revision || 1), 'metadata[quoted_total_cents]': String(cents(customerMoneyState(job).total)),
+    'metadata[quote_revision]': String(job.estimate?.revision || 1), 'metadata[quoted_total_cents]': String(cents(customerMoneyState(job, mode).total)),
     'payment_intent_data[metadata][kind]': 'egc_customer_portal_payment', 'payment_intent_data[metadata][job_id]': jobId, 'payment_intent_data[metadata][payment_purpose]': deposit.purpose,
   });
   if (changeCents) params.set('metadata[approved_change_cents]', String(changeCents));
@@ -926,7 +983,7 @@ export async function createCustomerStripeCheckout(env, secret, jobId, origin, {
     params.set('customer_email', job.email); params.set('payment_intent_data[receipt_email]', job.email);
   }
   addTipLine(params, tip);
-  state = { status: 'creating', sessionId: '', key: `egc-customer-payment:${crypto.randomUUID()}`, params: params.toString(), amountCents, ...(tip ? { tipCents: tip } : {}), purpose: deposit.purpose, fingerprint: fingerprint(job, tip), createdAt: now };
+  state = { status: 'creating', sessionId: '', key: `egc-customer-payment:${crypto.randomUUID()}`, params: params.toString(), amountCents, ...(tip ? { tipCents: tip } : {}), purpose: deposit.purpose, fingerprint: fingerprint(job, tip, mode), createdAt: now };
   await saveLedger(env, jobId, state, ledger.version);
   // Recover through the same path, including the current-scope check, before returning a link.
   return createCustomerStripeCheckout(env, secret, jobId, origin, { tipCents, now });

@@ -4,6 +4,7 @@ import { requireQuoteAuthor } from '../_lib/quote-permissions.js';
 import { prepareHandoff, saveWalkthroughHandoff } from '../_lib/walkthrough-handoff.js';
 import { expireStaleCheckout } from '../_lib/quote-draft.js';
 import { stripeRequest, stripeSecretKey } from '../_lib/customer-payments.js';
+import { moneyTotalsMode } from '../_lib/money-core.js';
 const reply = (status, body) => Response.json(body, {status, headers:{'Cache-Control':'no-store','X-Content-Type-Options':'nosniff'}});
 // A refused save names each owner rule (or overlapping work) that stopped it. Only
 // each conflict's code and message leave the server, and no other details are
@@ -37,7 +38,7 @@ export function handoffHandlers({session=getHubSession,storage=dispatchStorage,n
         let input; try{input=JSON.parse(raw);}catch{return reply(400,{ok:false,error:'The walkthrough request is incomplete.'});}
         const store=storage(env),at=now().toISOString();
         // A signed revision closes an open portal checkout for the earlier terms.
-        return reply(200,await saveWalkthroughHandoff(store,actor,input,at,{env,checkouts:job=>expireStaleCheckout({store,job,stripe:stripe(env),now:at})}));
+        return reply(200,await saveWalkthroughHandoff(store,actor,input,at,{env,checkouts:job=>expireStaleCheckout({store,job,stripe:stripe(env),now:at,mode:moneyTotalsMode(env)})}));
       } catch(error) { return failure(error); }
     }
   };

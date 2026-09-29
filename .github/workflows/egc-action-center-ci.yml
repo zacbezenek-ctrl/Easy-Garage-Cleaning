@@ -230,6 +230,8 @@ jobs:
         run: python tests/browser/test_invoicing_ui.py
       - name: Portal insurance certificate, guarantee and terms, and the Hub documents admin
         run: python tests/browser/test_portal_documents_ui.py
+      - name: One total everywhere (quote, billed change, due now and the Pay amount) on the portal at phone width
+        run: python tests/browser/test_money_totals_ui.py
       - name: Hub quote draft "Send options for review" dialog on a phone
         run: python tests/browser/test_quote_draft_ui.py
       - name: Portal quote draft withholding and edit-safe quiet refresh on a phone

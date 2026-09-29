@@ -173,13 +173,14 @@ function editable(job) {
  * Open (unsettled) portal checkouts are opened for one quote fingerprint; a
  * revised quote expires them in Stripe so the customer cannot pay the old terms.
  * Failures are reported, never retried blindly: the portal checkout also
- * refuses and expires a session whose fingerprint no longer matches.
+ * refuses and expires a session whose fingerprint no longer matches. `mode` is
+ * the money totals mode (MONEY_UNIFIED_TOTALS) the checkout was fingerprinted in.
  */
-export async function expireStaleCheckout({ store, job, stripe, now = new Date().toISOString() }) {
+export async function expireStaleCheckout({ store, job, stripe, now = new Date().toISOString(), mode = 'off' }) {
   let ledger;
   try { ledger = await store.read(CHECKOUT_LEDGER, job.id); } catch { return { status: 'needs_review', reason: 'checkout_unreadable' }; }
   if (!ledger || !ledger.sessionId || ledger.status !== 'open') return { status: 'none' };
-  if (ledger.fingerprint === checkoutFingerprint(job, Number(ledger.tipCents || 0))) return { status: 'current' };
+  if (ledger.fingerprint === checkoutFingerprint(job, Number(ledger.tipCents || 0), mode)) return { status: 'current' };
   if (typeof stripe !== 'function') return { status: 'needs_review', reason: 'stripe_not_configured' };
   let expired;
   try { expired = await stripe(`checkout/sessions/${encodeURIComponent(ledger.sessionId)}/expire`, { method: 'POST' }); } catch { return { status: 'needs_review', reason: 'stripe_unconfirmed' }; }

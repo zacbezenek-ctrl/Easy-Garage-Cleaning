@@ -531,6 +531,7 @@ Each is a dry run first; review, then run again with `--apply`. All need `FIREBA
 | 5.3 | `MONEY_DOCUMENT_ENABLED=true` | Cloudflare, plain |
 | 5.4 | `PAYMENT_REVIEW_CHECKOUT_BLOCK_ENABLED=true` (optional) | Cloudflare, plain |
 | 5.5 | `GARAGE_GUARD_MEMBERSHIP_SYNC_ENABLED=true` (optional) | Cloudflare, plain |
+| 5.6 | `MONEY_UNIFIED_TOTALS=shadow`, then `true` | Cloudflare, plain |
 
 ### 5.1 Card payments and Review queues (no switch)
 
@@ -583,6 +584,23 @@ Each is a dry run first; review, then run again with `--apply`. All need `FIREBA
 - **Needs first:** the Stripe webhook events in [B6](#b6-stripe-webhook-events-and-the-live-key).
 - **Check it worked:** a new test membership shows on the customer, or waits in member matches.
 - **Roll back:** delete the variable. The Zapier team alert keeps working either way.
+
+### 5.6 One money total everywhere
+
+- **Set:** `MONEY_UNIFIED_TOTALS=shadow` for a week, then `MONEY_UNIFIED_TOTALS=true`.
+- **Where:** Cloudflare Pages, plain. Preview first.
+- **Turns on:** one amount owed per job. The customer portal (each approved change listed under the estimate), its Pay amount, crew card limits and the closeout balance, invoices, the invoice list and the estimate, invoice and receipt pages all use the quote plus billed approved changes, less the money paid toward the service. Tips never count. The Hub finance board follows while `MONEY_API_ENABLED` is on.
+  - An approval saved without a billed change line is not counted. Its finance row says **Approved change not billed**.
+  - Amounts the Hub cannot read are never charged online: the portal asks the customer to call, and the finance row says **Amounts need review**.
+  - An invoice issued before the switch lists the new total, flagged `invoice_amount_stale`, until you reissue it.
+- **`shadow`:** every page keeps today's figures. Wherever the one total would differ, the Cloudflare Functions log gets a `money_totals_mismatch` line with the job id and both sets of figures (no customer details).
+- **Needs first:**
+  1. `MONEY_API_ENABLED=true` ([5.2](#52-server-money-records)) and `MONEY_DOCUMENT_ENABLED=true` ([5.3](#53-branded-estimates-invoices-and-receipts)), before `true`.
+  2. A week on `shadow`. In Cloudflare Functions logs, search `money_totals_mismatch` and check each job it names. Look hardest at jobs already marked paid: an older tip recorded inside the paid amount (legacy tip) no longer counts toward what is owed, so the job can show a balance again. Settle those first.
+  3. Developer runs `node scripts/backfill-change-orders.mjs` (dry run). Review it, then apply it (`--apply --billing-enabled`) for the jobs whose finance row says **Approved change not billed**.
+- **HighLevel impact:** none. No new tags or messages. HighLevel notes and triggers (overdue reminders, the Customer messages buttons, the crew closeout payment note) keep today's figures. Payment reminders, the account list and the business hub also keep today's figures until a follow-up unit, so on the jobs the shadow log names they can differ from what checkout charges.
+- **Check it worked (phone):** on a test job with a $1,000 quote, a $500 deposit paid and a $150 approved change, the portal shows $1,150 total, $650 due and a Pay button; the Hub finance row shows $1,150 with a $650 balance; the invoice page says Balance due $650.
+- **Roll back:** delete the variable. Every page goes back to today's figures. Payments recorded meanwhile stay recorded.
 
 ## Stage 6: Customer portal and business client hub
 

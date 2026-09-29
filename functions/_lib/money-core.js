@@ -29,6 +29,56 @@ import { billedChangeOrders, changeOrderSaved } from './change-orders.js';
 
 export { moneyCents, normalizeLineItems, estimateTotals, quotedAmountCents, customerLineItem, MAX_TOTAL_CENTS };
 export const PAYMENT_KINDS = Object.freeze(['deposit', 'balance', 'tip', 'refund', 'offline']);
+
+/**
+ * MONEY_UNIFIED_TOTALS (FIX-MONEY-TOTALS): 'true' is mode 'unified', where
+ * every surface serves customerMoneyTotals(job, {unified: true}) (approved
+ * changes are the billed change-order lines only); 'shadow' computes both,
+ * serves today's figures and logs money_totals_mismatch; anything else
+ * (unset) is 'off', today's figures with no extra work.
+ */
+export const MONEY_TOTALS_MODES = Object.freeze(['off', 'shadow', 'unified']);
+export function moneyTotalsMode(env) {
+  const value = String(env?.MONEY_UNIFIED_TOTALS ?? '').trim();
+  return value === 'true' ? 'unified' : value === 'shadow' ? 'shadow' : 'off';
+}
+/** An approval recorded without a billed change-order line (CHANGE_ORDER_BILLING_ENABLED off): never counted in unified totals. */
+export const CHANGE_ORDER_UNBILLED = 'change_order_unbilled';
+const UNREADABLE = ['money_quote_invalid', 'money_change_order_invalid', 'money_paid_invalid', 'money_tips_unknown', 'money_deposit_invalid'];
+/**
+ * No quote saved yet (money_quote_missing) while every other amount reads: an
+ * unpriced job, shown as today and never charged, but not money for the team
+ * to review. Money that is saved and cannot be read is never unpriced.
+ */
+export const moneyUnpriced = totals => Array.isArray(totals?.issues) && totals.issues.includes('money_quote_missing') && !totals.issues.some(issue => UNREADABLE.includes(issue));
+const SHADOW_FIELDS = ['totalCents', 'paidCents', 'balanceCents', 'dueNowCents'];
+/**
+ * Shadow mode: `served` (today's figures) and `unified`, each
+ * {totalCents, paidCents, balanceCents, dueNowCents} with paidCents the money
+ * applied to the service, are compared; a difference is logged once as
+ * money_totals_mismatch with the job id, the surface and both sets of cents
+ * (no customer data). Returns whether they differ.
+ */
+export function reportTotalsMismatch(jobId, surface, served, unified, log = line => console.warn(line)) {
+  const pick = figures => Object.fromEntries(SHADOW_FIELDS.map(key => [key, Number.isSafeInteger(figures?.[key]) ? figures[key] : null]));
+  const before = pick(served), after = pick(unified);
+  if (SHADOW_FIELDS.every(key => before[key] === after[key])) return false;
+  try { log(`money_totals_mismatch ${JSON.stringify({ jobId: clean(jobId, 180), surface: clean(surface, 40), served: before, unified: after })}`); } catch { /* logging never changes money */ }
+  return true;
+}
+const shadowFigures = totals => ({ totalCents: totals.totalCents, paidCents: totals.appliedCents, balanceCents: totals.balanceCents, dueNowCents: totals.dueNowCents });
+/**
+ * The money-core totals a surface serves in `mode` (see moneyTotalsMode):
+ * 'unified' serves customerMoneyTotals(job, {unified: true}); 'shadow' also
+ * computes it, serves today's customerMoneyTotals(job) and reports any
+ * difference (reportTotalsMismatch); 'off' is today's figures.
+ */
+export function servedMoneyTotals(job, mode = 'off', { surface = 'money', log } = {}) {
+  if (mode === 'unified') return customerMoneyTotals(job, { unified: true });
+  const served = customerMoneyTotals(job);
+  if (mode === 'shadow') reportTotalsMismatch(job?.id, surface, shadowFigures(served), shadowFigures(customerMoneyTotals(job, { unified: true })), log);
+  return served;
+}
 const ENTRY_FIELDS = ['id', 'kind', 'amountCents', 'method', 'processor', 'processorRef', 'receiptUrl', 'at', 'by', 'verified', 'source'];
 const MAX_ENTRY_CENTS = MAX_TOTAL_CENTS;
 const plain = value => value !== null && typeof value === 'object' && !Array.isArray(value);
@@ -71,8 +121,15 @@ const unbilledApprovals = job => {
  * whose decision a stale Hub write turned back into a question (the portal
  * asks it again and does not bill it) is reported for review, never billed
  * silently.
+ *
+ * With {unified: true} the approved changes are exactly the billed
+ * change-order lines, as the portal checkout charges them. An approval no
+ * line covers (priced, or with a price that cannot be read) and a saved
+ * approvedChangeTotal above the billed lines are left out and reported as
+ * change_order_unbilled, never counted.
  */
-export function approvedChangeCents(job, issues = []) {
+export function approvedChangeCents(job, issues = [], { unified = false } = {}) {
+  if (unified) return billedChangeTotal(job, issues);
   const decisions = unbilledApprovals(job), lines = billedChangeOrders(job);
   let derived = 0;
   for (const cents of [...lines.map(line => line.totalCents), ...decisions.map(item => item.priceDelta === undefined || item.priceDelta === null || item.priceDelta === '' ? 0 : readCents(item.priceDelta))]) {
@@ -86,6 +143,15 @@ export function approvedChangeCents(job, issues = []) {
   const cents = readCents(stored);
   if (cents === null) { issues.push('money_change_order_invalid'); return null; }
   if (derived !== null && derived !== cents) issues.push('money_change_order_conflict');
+  return cents;
+}
+
+function billedChangeTotal(job, issues) {
+  const billed = billedChangeOrders(job).reduce((sum, line) => sum + line.totalCents, 0), cents = billed > MAX_TOTAL_CENTS ? null : billed;
+  if (cents === null) issues.push('money_change_order_invalid');
+  const stored = job?.approvedChangeTotal === undefined || job?.approvedChangeTotal === null ? null : readCents(job.approvedChangeTotal);
+  const priced = item => !(item.priceDelta === undefined || item.priceDelta === null || item.priceDelta === '') && readCents(item.priceDelta) !== 0;
+  if (unbilledApprovals(job).some(priced) || stored !== null && cents !== null && stored > cents) issues.push(CHANGE_ORDER_UNBILLED);
   return cents;
 }
 
@@ -214,12 +280,14 @@ export function paymentEntry(raw) {
  * through the ledger are excluded from what counts toward the balance. paidCents
  * is everything received, tips included; recordedCents is the saved
  * payment.amount, which never holds payment.tips[]. Never throws: out-of-range
- * money (above $1,000,000) is null plus an issue.
+ * money (above $1,000,000) is null plus an issue. {unified: true}
+ * (MONEY_UNIFIED_TOTALS) counts only the billed change-order lines (see
+ * approvedChangeCents) and marks the result unified: true.
  */
-export function customerMoneyTotals(job) {
+export function customerMoneyTotals(job, { unified = false } = {}) {
   const issues = [], quoteCents = quotedAmountCents(job);
   if (quoteCents === null) issues.push([job?.estimate?.amount, job?.total, job?.priceQuoted, job?.lockedTotal, job?.rate, job?.customerApproval?.amount].some(value => value !== undefined && value !== null) ? 'money_quote_invalid' : 'money_quote_missing');
-  const changeCents = approvedChangeCents(job, issues), ledger = paymentLedger(job);
+  const changeCents = approvedChangeCents(job, issues, { unified }), ledger = paymentLedger(job);
   const { paidCents, tipCents, recordedCents } = ledger;
   if (paidCents === null) issues.push('money_paid_invalid');
   if (tipCents === null) issues.push('money_tips_unknown');
@@ -244,7 +312,7 @@ export function customerMoneyTotals(job) {
     paidCents, tipCents, appliedCents, recordedCents, balanceCents, overpaidCents: known(totalCents, appliedCents) ? Math.max(0, appliedCents - totalCents) : null,
     depositRequiredCents, depositPaidCents, depositDueCents, dueNowCents, purpose: closing ? 'balance' : 'deposit',
     remainderCents: known(balanceCents, dueNowCents) ? Math.max(0, balanceCents - dueNowCents) : null,
-    complete: issues.length === 0, issues: [...new Set(issues)],
+    complete: issues.length === 0, issues: [...new Set(issues)], ...(unified ? { unified: true } : {}),
   };
 }
 
@@ -267,10 +335,10 @@ export function estimateMoney(lineItems, { approvedChangeCents: changeCents = 0,
   return { ...totals, approvedChangeCents: changeCents, contractCents: total === null ? null : total + changeCents, depositCents: total === null ? null : depositRequiredCents === null ? depositCents(total, depositPct) : Math.min(total, depositRequiredCents) };
 }
 
-// The billed change-order lines as saved, then approvals no line covers.
-function changeOrderLines(job, cents) {
+// The billed change-order lines as saved, then approvals no line covers (unified: the billed lines only).
+function changeOrderLines(job, cents, unified = false) {
   if (!cents) return [];
-  const decisions = unbilledApprovals(job).filter(item => readCents(item.priceDelta) > 0);
+  const decisions = unified ? [] : unbilledApprovals(job).filter(item => readCents(item.priceDelta) > 0);
   const lines = [
     ...billedChangeOrders(job).map(line => ({ id: line.id, kind: 'fee', name: clean(line.name, 160) || 'Approved change', description: clean(line.description, 600), quantity: 1, totalCents: line.totalCents })),
     ...decisions.map((item, index) => ({ id: `change-${lineId(item.id) || index + 1}`, kind: 'fee', name: `Approved change: ${clean(item.title, 140) || 'Additional work'}`, description: clean(item.details, 600), quantity: 1, totalCents: readCents(item.priceDelta) })),
@@ -285,7 +353,8 @@ function changeOrderLines(job, cents) {
  * duration). Saved lines are used only when they are complete (no repair that
  * could change what is charged) and add up to the quoted amount; otherwise one
  * honest line named like the Hub invoice (serviceType || 'Garage
- * transformation') carries the quote.
+ * transformation') carries the quote. Unified totals list only the billed
+ * change-order lines.
  */
 export function invoiceLineItems(job, totals = customerMoneyTotals(job)) {
   const issues = [], record = legacyLineItems(job, { record: 'estimate', surface: 'invoice', totalCents: totals.quoteCents });
@@ -295,7 +364,7 @@ export function invoiceLineItems(job, totals = customerMoneyTotals(job)) {
     issues.push(check.complete ? 'money_line_items_mismatch' : 'money_line_items_incomplete');
     lines = [singleLineItem(job, { surface: 'invoice', totalCents: totals.quoteCents })];
   }
-  const changes = changeOrderLines(job, totals.approvedChangeCents).map(line => lines.some(item => item.id === line.id) ? { ...line, id: `${line.id}-change` } : line);
+  const changes = changeOrderLines(job, totals.approvedChangeCents, totals.unified === true).map(line => lines.some(item => item.id === line.id) ? { ...line, id: `${line.id}-change` } : line);
   return { lineItems: [...lines, ...changes].map(customerLineItem), issues };
 }
 
@@ -306,16 +375,17 @@ export function invoiceLineItems(job, totals = customerMoneyTotals(job)) {
  * status paid/pending_verification when nothing is owed, else issued. A void or
  * superseded invoice is reissued fresh under the same number. Throws
  * money_total_unknown when the quote or paid total cannot be read. `now` (an
- * ISO instant) is required: omitting it throws money_now_required.
+ * ISO instant) is required: omitting it throws money_now_required. `unified`
+ * (MONEY_UNIFIED_TOTALS) bills the unified totals.
  */
-export function invoiceFromEstimate(job, { now, dueDays = 7, dueDate, customerReference } = {}) {
+export function invoiceFromEstimate(job, { now, dueDays = 7, dueDate, customerReference, unified = false } = {}) {
   if (!plain(job) || typeof job.id !== 'string' || !/^[A-Za-z0-9_-]{1,180}$/.test(job.id) || /^(secure_|_egc_)/.test(job.id)) throw fail('invalid_job', 'Choose a valid job before issuing an invoice.');
   const issuedAt = instant(requireNow(now));
   if (!issuedAt) throw fail('invalid_time', 'The invoice time must be an ISO instant.');
   if (!Number.isSafeInteger(dueDays) || dueDays < 0 || dueDays > 365) throw fail('invalid_due_date', 'Payment terms must be 0 to 365 days.');
   const due = dueDate === undefined ? addDays(denverToday(new Date(issuedAt)), dueDays) : dueDate;
   if (!validDate(due)) throw fail('invalid_due_date', 'Choose a valid payment due date.');
-  const totals = customerMoneyTotals(job);
+  const totals = customerMoneyTotals(job, { unified });
   if (totals.totalCents === null || totals.appliedCents === null || totals.balanceCents === null) throw fail('total_unknown', 'The quote and payments must be known before an invoice is issued.', 409);
   if (totals.totalCents <= 0) throw fail('invoice_empty', 'There is nothing to invoice for this job.', 409);
   const previous = plain(job.invoice) ? job.invoice : {}, reissue = ['void', 'superseded'].includes(previous.status);
@@ -347,15 +417,15 @@ function paidVerified(job, appliedCents) {
  * issued. Nothing owed is paid once the money is verified (a verified payment,
  * or a verified deposit covering it), else pending_verification. `now` is a
  * required ISO instant (money_now_required when omitted). Never throws on
- * saved job data.
+ * saved job data. `unified` (MONEY_UNIFIED_TOTALS) reads the unified totals.
  */
-export function invoiceStatus(job, now) {
+export function invoiceStatus(job, now, { unified = false } = {}) {
   const invoice = plain(job?.invoice) ? job.invoice : null, at = instant(requireNow(now));
   if (!at) throw fail('invalid_time', 'The status time must be an ISO instant.');
   if (!invoice || !invoice.status && !invoice.issuedAt && (invoice.amount === undefined || invoice.amount === null)) return 'not_issued';
   const base = String(invoice.status || 'issued').toLowerCase();
   if (['void', 'superseded', 'draft'].includes(base)) return base;
-  const totals = customerMoneyTotals(job);
+  const totals = customerMoneyTotals(job, { unified });
   if (totals.balanceCents === 0 && totals.totalCents > 0) return paidVerified(job, totals.appliedCents) ? 'paid' : 'pending_verification';
   if (validDate(invoice.dueDate) && invoice.dueDate < denverToday(new Date(at))) return 'overdue';
   return totals.appliedCents > 0 ? 'partial' : 'issued';

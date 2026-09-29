@@ -3,6 +3,7 @@ import { moneyStorage } from '../_lib/money-storage.js';
 import { MONEY_RECEIPTS, moneyApiEnabled, moneyJob, moneyLaborView, moneyProjection, mutateMoney, requireMoneyManager } from '../_lib/money-service.js';
 import { jobberGuardBillingError, jobberGuardHoldView, jobberGuardInvoiceHolds } from '../_lib/jobber-guard.js';
 import { MONEY_QUERY_KEYS, listMoney, moneyCsv } from '../_lib/money-reports.js';
+import { servedMoneyTotals } from '../_lib/money-core.js';
 import { denverToday } from '../_lib/dispatch-time.js';
 import { laborCostViewer } from '../_lib/job-labor-private.js';
 import { expireStaleCustomerCheckout, stripeSecretKey } from '../_lib/customer-payments.js';
@@ -66,7 +67,9 @@ export function moneyHandlers({ session = getHubSession, storage = moneyStorage,
           if (!/^[A-Za-z0-9_-]{1,180}$/.test(jobId) || /^(secure_|_egc_)/.test(jobId)) return reply(400, { ok: false, code: 'money_query_invalid', error: 'Choose a valid job.' });
           const job = await store.read('jobs', jobId);
           if (!moneyJob(job)) return reply(404, { ok: false, code: 'money_job_not_found', error: 'This job is not available for money changes.' });
-          return reply(200, { ok: true, authority: 'employee_hub', enabled: moneyApiEnabled(env), viewer: { id: actor.user }, job: moneyProjection(job, asOf, { ...await moneyLaborView(store, actor, jobId), paymentEvents: store.paymentEvents === true }), asOf });
+          // MONEY_UNIFIED_TOTALS: 'true' shows the unified totals; 'shadow' logs where they differ from the ones shown.
+          if (store.totalsMode === 'shadow') servedMoneyTotals(job, 'shadow', { surface: 'money_api' });
+          return reply(200, { ok: true, authority: 'employee_hub', enabled: moneyApiEnabled(env), viewer: { id: actor.user }, job: moneyProjection(job, asOf, { ...await moneyLaborView(store, actor, jobId), paymentEvents: store.paymentEvents === true, unified: store.totalsMode === 'unified' }), asOf });
         }
         const { rows, ...page } = await listMoney(store, Object.fromEntries(params), asOf);
         if (params.get('format') === 'csv') return new Response(moneyCsv(page.view, rows, { paymentEvents: store.paymentEvents === true }), { status: 200, headers: { 'Content-Type': 'text/csv; charset=utf-8', 'Content-Disposition': `attachment; filename="egc-${page.view}-${denverToday(at)}.csv"`, 'Cache-Control': 'no-store', 'X-Content-Type-Options': 'nosniff' } });

@@ -1,5 +1,5 @@
 import { MONEY_RECEIPTS, moneyJob, mutateMoney, paymentNeedsVerification, requireMoneyManager } from './money-service.js';
-import { customerMoneyTotals, invoiceStatus } from './money-core.js';
+import { customerMoneyTotals, invoiceStatus, servedMoneyTotals } from './money-core.js';
 import { addDays, denverToday, validDate } from './dispatch-time.js';
 import { businessAccountJob } from './portal-invitation.js';
 import { hubRecordEligibility } from './funnel-definitions.js';
@@ -77,13 +77,14 @@ export async function batchItemRequestId(batchRequestId, jobId) {
  * Whether a job can be invoiced now: a customer job (not a test, cancelled or
  * private record) whose work is completed or closing, whose money is readable
  * and verified, with a balance and no active invoice. `now` is an ISO instant.
+ * `unified` (store.totalsMode, MONEY_UNIFIED_TOTALS) reads money-core's unified totals.
  */
-export function invoiceEligibility(job, now) {
+export function invoiceEligibility(job, now, { unified = false } = {}) {
   if (!job) return reason('job_not_found');
   if (!moneyJob(job)) return reason('not_customer_job');
   if (testJob(job)) return reason('test_job');
   if (CLOSED.has(stage(job))) return reason('job_closed');
-  const status = invoiceStatus(job, now), totals = customerMoneyTotals(job);
+  const status = invoiceStatus(job, now, { unified }), totals = customerMoneyTotals(job, { unified });
   if (!ISSUABLE.has(status)) return { ...reason('already_invoiced'), status, totals };
   if (totals.purpose !== 'balance') return { ...reason('not_completed'), status, totals };
   if ([totals.totalCents, totals.appliedCents, totals.balanceCents].includes(null)) return { ...reason('money_needs_review'), status, totals };
@@ -111,7 +112,9 @@ export async function listInvoiceBatch(store, actor, now = new Date().toISOStrin
   const candidates = [], review = [], open = [];
   for (const job of jobs) {
     if (!moneyJob(job) || testJob(job) || CLOSED.has(stage(job))) continue;
-    const check = invoiceEligibility(job, now), base = { jobId: job.id, revision: job.revision, customerId: str(job.customerId), customer: str(job.customer, 120), serviceDate: str(job.date, 10), status: stage(job) || null, businessAccount: businessAccountJob(job), notify: job.notify !== false, automaticReminders: job.customerAutomationEnabled === true };
+    // MONEY_UNIFIED_TOTALS=shadow: each listed job logs where the unified totals would differ.
+    if (store.totalsMode === 'shadow') servedMoneyTotals(job, 'shadow', { surface: 'invoice_batch' });
+    const check = invoiceEligibility(job, now, { unified: store.totalsMode === 'unified' }), base = { jobId: job.id, revision: job.revision, customerId: str(job.customerId), customer: str(job.customer, 120), serviceDate: str(job.date, 10), status: stage(job) || null, businessAccount: businessAccountJob(job), notify: job.notify !== false, automaticReminders: job.customerAutomationEnabled === true };
     if (check.eligible) candidates.push({ ...base, totalCents: check.totals.totalCents, paidCents: check.totals.appliedCents, balanceCents: check.totals.balanceCents, invoiceStatus: check.status, estimateApproved: approved(job.estimate?.status) || approved(job.customerApproval?.status) });
     else if (['money_needs_review', 'payment_needs_review'].includes(check.reason)) review.push({ ...base, reason: check.reason, message: BATCH_REASONS[check.reason] });
     else if (check.reason === 'already_invoiced' && OPEN.has(check.status) && check.totals.balanceCents > 0 && !paymentNeedsVerification(job)) {
@@ -175,7 +178,7 @@ async function issueOne(store, actor, batch, item, now, hold) {
     // A replayed item goes straight to its receipt; a new one is re-checked
     // against the saved job, never the list the manager loaded.
     if (!receipt) {
-      const job = await store.read('jobs', item.jobId), check = invoiceEligibility(job, now);
+      const job = await store.read('jobs', item.jobId), check = invoiceEligibility(job, now, { unified: store.totalsMode === 'unified' });
       if (!check.eligible) return { ...row, ok: false, code: 'money_batch_not_eligible', error: BATCH_REASONS[check.reason], details: { reason: check.reason } };
       // FUN-32: the billing hold refuses this job's invoice.issue, as /api/money does.
       const billing = await hold(), held = billing ? jobberGuardHolds(billing, 'billing', { customerId: job.customerId, jobId: job.id }) : [];

@@ -1,10 +1,12 @@
 import { getHubSession, hasBusinessAccess } from '../_lib/hub-session.js';
 import { readJob } from '../_lib/firestore-job.js';
 import { createJobAssignmentAccess } from '../_lib/job-assignment.js';
-import { CHECKOUT_HOLD_CODE, CHECKOUT_HOLD_TEXT, STRIPE_API_VERSION, TIP_PRESETS, addTipLine, checkoutHold, customerMoneyState, customerPaymentNeedsReview, customerTipsEnabled, recordCrewStripePayment, requestTip, stripeSecretKey as stripeKey, tipRefusal, validTip } from '../_lib/customer-payments.js';
+import { CHECKOUT_HOLD_CODE, CHECKOUT_HOLD_TEXT, STRIPE_API_VERSION, TIP_PRESETS, addTipLine, checkoutHold, customerMoneyState, customerPaymentNeedsReview, customerTipsEnabled, customerTotalsShadow, recordCrewStripePayment, requestTip, stripeSecretKey as stripeKey, tipRefusal, validTip } from '../_lib/customer-payments.js';
+import { customerMoneyTotals, moneyTotalsMode } from '../_lib/money-core.js';
 
 const STRIPE_API = 'https://api.stripe.com/v1';
 const SESSION_ID = /^cs_(?:test_|live_)?[A-Za-z0-9_]+$/;
+const JOB_ID = /^[A-Za-z0-9_-]{1,120}$/;
 const HOST = /^(?:easygaragecleaning\.com|www\.easygaragecleaning\.com|easy-garage-cleaning\.pages\.dev|localhost(?::\d+)?|127\.0\.0\.1(?::\d+)?)$/;
 
 function json(status, body) {
@@ -110,7 +112,12 @@ export async function onRequestPost({ request, env }) {
   if (refusal) return json(409, { ok: false, code: 'JOB_PAYMENT_TIP_UNAVAILABLE', error: `${refusal} Take the payment without a tip, or ask a manager.` });
   const customer = safe(job.customer || job.customerName, 120);
   const email = safe(job.email, 180);
-  const finance = customerMoneyState(job);
+  // The cap is the money totals mode's balance (FIX-MONEY-TOTALS: money-core's unified totals with
+  // MONEY_UNIFIED_TOTALS=true, the closeout balance and the portal's); money it cannot read is never charged.
+  const mode = moneyTotalsMode(env);
+  if (mode === 'shadow') customerTotalsShadow(job, 'job_payment');
+  const finance = customerMoneyState(job, mode);
+  if (finance.unknown) return json(409, { ok: false, code: 'JOB_PAYMENT_MONEY_REVIEW', error: 'The amounts on this job need a manager review before a card payment. Do not charge the customer yet.' });
   const totalCents = Math.round(finance.total * 100);
   const paidCents = Math.round(finance.paid * 100);
   const balanceCents = Math.max(0, totalCents - paidCents);
@@ -162,6 +169,24 @@ export async function onRequestPost({ request, env }) {
   }
 }
 
+// The closeout's balance (business sessions: the financial closeout is theirs) in integer cents, from
+// customerMoneyState in the money totals mode, exactly what POST caps a card payment at; null while money-core
+// cannot read the amounts. issues names change_order_unbilled and any other money-core issue.
+async function closeoutBalance(env, session, raw) {
+  const jobId = safe(raw, 120);
+  if (!JOB_ID.test(jobId) || /^(secure_|_egc_)/.test(jobId)) return json(400, { ok: false, error: 'A valid job is required' });
+  if (!hasBusinessAccess(session)) return json(403, { ok: false, error: 'Only a manager can read the closeout balance' });
+  // Flag off (the default): the page keeps its own figures, and the job is not read.
+  const mode = moneyTotalsMode(env);
+  if (mode === 'off') return json(200, { ok: true, jobId, unified: false });
+  const job = await readJob(env, jobId).catch(() => null);
+  if (!job || job.recordType) return json(404, { ok: false, error: 'This job could not be found' });
+  if (mode === 'shadow') customerTotalsShadow(job, 'closeout');
+  if (mode !== 'unified') return json(200, { ok: true, jobId, unified: false });
+  const finance = customerMoneyState(job, mode), totals = customerMoneyTotals(job, { unified: true }), cents = value => Math.round(value * 100);
+  return json(200, { ok: true, jobId, unified: true, balance: finance.unknown ? null : { totalCents: cents(finance.total), paidCents: cents(finance.paid), balanceCents: cents(finance.balance), approvedChangeCents: totals.approvedChangeCents }, issues: totals.issues });
+}
+
 // The browser return and the Stripe webhook share recordCrewStripePayment, so
 // either can land first and the charge is recorded once.
 export function jobPaymentVerifier({ now = () => new Date() } = {}) {
@@ -169,9 +194,12 @@ export function jobPaymentVerifier({ now = () => new Date() } = {}) {
     if (!allowed(request)) return json(403, { ok: false, error: 'Forbidden origin' });
     const session = await getHubSession(request, env);
     if (!session) return json(401, { ok: false, code: 'HUB_AUTH_REQUIRED', error: 'Sign in to verify payment' });
+    const params = new URL(request.url).searchParams;
+    // Closeout reads the balance it may charge from the same money as the cap (FIX-MONEY-TOTALS). Without
+    // MONEY_UNIFIED_TOTALS=true it answers unified:false and the page keeps its own figures, as before.
+    if (params.has('job_id') && [...params.keys()].length === 1) return closeoutBalance(env, session, params.get('job_id'));
     const secret = stripeKey(env);
     if (!secret) return json(501, { ok: false, code: 'STRIPE_NOT_CONFIGURED', error: 'Stripe is not configured' });
-    const params = new URL(request.url).searchParams;
     // Closeout asks once whether it may offer the tip chips before a card payment.
     if (params.get('config') === 'tips' && [...params.keys()].length === 1) return json(200, { ok: true, tips: { enabled: customerTipsEnabled(env), presets: [...TIP_PRESETS] } });
     const id = safe(params.get('session_id'), 180);

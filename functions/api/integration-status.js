@@ -4,6 +4,7 @@ import { customerPortalConfigured } from '../_lib/customer-portal.js';
 import { employeeAccountsConfigured } from '../_lib/employee-accounts.js';
 import { gustoConfiguration } from '../_lib/gusto-client.js';
 import { moneyApiEnabled } from '../_lib/money-service.js';
+import { moneyTotalsMode } from '../_lib/money-core.js';
 import { lifecycleApiEnabled } from '../_lib/customer-lifecycle.js';
 import { serverMessagingEnabled } from '../_lib/messaging-settings.js';
 import { serverScheduleSyncActive } from '../_lib/schedule-sync-queue.js';
@@ -51,8 +52,11 @@ export function integrationStatusHandlers({session=getHubSession,revocations=fir
     Object.assign(status,await firebaseRevocationStatus(revocations(env),profiles,now().toISOString(),{defer}));
   }
   // Browser feature flags (booleans only); money writes stay in the browser unless moneyApi is on,
-  // and customer credits, decisions and rebooking follow-ups unless lifecycleApi is on.
-  const flags={moneyApi:moneyApiEnabled(env),lifecycleApi:lifecycleApiEnabled(env)};
+  // and customer credits, decisions and rebooking follow-ups unless lifecycleApi is on. unifiedTotals, present only with
+  // MONEY_UNIFIED_TOTALS=true and MONEY_API_ENABLED=true (the finance buttons then cap and record through /api/money, which
+  // serves the same unified money), makes the Hub finance board show money-core's unified totals.
+  const moneyApi=moneyApiEnabled(env);
+  const flags={moneyApi,lifecycleApi:lifecycleApiEnabled(env),...(moneyApi&&moneyTotalsMode(env)==='unified'?{unifiedTotals:true}:{})};
   return new Response(JSON.stringify({ok:true,status,flags}),{headers:{'Content-Type':'application/json','Cache-Control':'no-store'}});
   }};
 }
