@@ -536,7 +536,9 @@ async function handlePost({ request, env }, { clock, read }) {
       const checkout = await stripe(secret, `checkout/sessions/${encodeURIComponent(sessionId)}?expand[]=payment_intent.latest_charge`);
       return reply(200, { ok: true, ...await recordCustomerStripePayment(env, checkout, result.session.jobId, now) });
     // A charge held for review (for example, one Stripe shows refunded) answers 409 with its "do not pay again" message.
-    } catch (error) { return reply(error.status || 502, { ok: false, error: error.message || 'Stripe payment could not be verified', ...(error.reviewRecorded ? { code: error.code, reviewRecorded: true } : {}) }); }
+    // A confirmed charge waiting on an earlier payment's verification (payment_needs_review) names its code too, so the portal
+    // shows that final message instead of asking again.
+    } catch (error) { return reply(error.status || 502, { ok: false, error: error.message || 'Stripe payment could not be verified', ...(error.reviewRecorded ? { code: error.code, reviewRecorded: true } : error.code === 'payment_needs_review' ? { code: error.code } : {}) }); }
   }
 
   if (body.action === 'save_customer_memory') {

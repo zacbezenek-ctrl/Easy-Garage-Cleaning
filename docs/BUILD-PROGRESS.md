@@ -495,6 +495,10 @@ draft PR. The owner merges in phase order. See **Decisions** D-001.
   jobs and visits under a business-linked account root; the scheduler counts them as skipped.business_account_job and
   the portal-link backstop refuses business roots. The business hub shows money-core's effective invoice status (Overdue
   pill); invoiceStatus reads 'paid' for a verified deposit covering everything. Gap: portal payment.invoiceStatus DTO still saved status.
+- **FIX-PORTAL-CRASH** (P1, money) The customer portal renders idempotently: a render error keeps the last good page with a
+  refresh notice, failed refreshes keep the portal (Reconnecting… after 3), and a Stripe return verifies after the page
+  draws, retrying 2-32s with a 'being confirmed' notice; payment_needs_review answers carry their code so the portal stops.
+  Gap: a button stays disabled after a failed post-action refresh until the next good refresh.
 
 ## In progress
 
@@ -611,6 +615,7 @@ one prefixed commit only after the full root suite (and the platform suite when 
 | DISPATCH-RULES | Owner dispatch rules: skills, daily limits, working hours, crew size and drive time (warn until blocked) | merged (7013404) |
 | FUN-33 | Payment funnel events on the ledger: payment.received and paid-in-full crossings committed with the job (FUNNEL_PAYMENT_EVENTS_ENABLED, off) | merged (b9c3b07) |
 | FIX-B2B-BILLING | P1: no customer messages or homeowner links for business jobs; effective B2B invoice status | merged (d5c037b) |
+| FIX-PORTAL-CRASH | P1: customer portal survives re-renders, failed refreshes and failed Stripe verification | merged (3185fc6) |
 
 ## Next
 
