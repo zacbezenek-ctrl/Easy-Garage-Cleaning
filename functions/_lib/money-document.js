@@ -2,7 +2,7 @@ import { sha256 } from '@noble/hashes/sha2.js';
 import { customerPaymentNeedsReview, payable as checkoutPayable } from './customer-payments.js';
 import { denverToday, validDate } from './dispatch-time.js';
 import { customerMoneyTotals, invoiceLineItems, invoiceNumber, invoiceStatus, paymentLedger } from './money-core.js';
-import { customerLineItem, estimateTotals, included, legacyLineItems, singleLineItem } from './quote-model.js';
+import { customerLineItem, estimateTotals, included, legacyLineItems, singleLineItem, unsentQuoteDraft } from './quote-model.js';
 
 /**
  * Server-rendered, branded customer money documents (estimate, invoice,
@@ -139,7 +139,10 @@ function checkoutCents(job) {
 /**
  * Which documents a customer may open for this job: an estimate once a quote
  * exists, an invoice once issued (not draft, void or superseded) and a receipt
- * once a payment is recorded. Unknown money makes no document available.
+ * once a payment is recorded. Unknown money makes no document available. A Hub
+ * quote draft that has not been sent in its current revision (unsentQuoteDraft)
+ * keeps only its receipt, which then lists the recorded payments and never the
+ * unsent total, lines or balance (see moneyDocumentModel).
  */
 export function moneyDocumentKinds(job, now) {
   const at = instant(now);
@@ -147,6 +150,7 @@ export function moneyDocumentKinds(job, now) {
   if (!plain(job)) return [];
   const totals = customerMoneyTotals(job);
   if (!known(totals.quoteCents, totals.totalCents, totals.appliedCents, totals.balanceCents) || totals.totalCents <= 0) return [];
+  if (unsentQuoteDraft(job)) return totals.paidCents > 0 ? ['receipt'] : [];
   return MONEY_DOCUMENT_KINDS.filter(kind => kind === 'estimate' || kind === 'invoice' && PORTAL_INVOICE.has(invoiceStatus(job, at)) || kind === 'receipt' && totals.paidCents > 0);
 }
 
@@ -164,6 +168,9 @@ export function moneyDocumentLinks(job, { enabled = false, now } = {}) {
  * $0.50). `contact:false` leaves out the customer's phone and email
  * (collaborators). `audience:'staff'` words the pay note for a Hub copy that is
  * printed or handed on, which cannot carry the customer's portal session.
+ * For a customer, a Hub quote draft not sent in its current revision is
+ * withheld: only a receipt of the recorded payments, without the unsent
+ * service total, lines, balance or a pay button.
  */
 export function moneyDocumentModel(job, { kind, now, payUrl = null, contact = true, audience = 'customer' } = {}) {
   if (!MONEY_DOCUMENT_KINDS.includes(kind)) throw fail('invalid_kind', 'Choose an estimate, invoice or receipt.');
@@ -174,6 +181,9 @@ export function moneyDocumentModel(job, { kind, now, payUrl = null, contact = tr
   if (!known(totals.quoteCents, totals.totalCents, totals.appliedCents, totals.balanceCents)) throw fail('total_unknown', 'The amounts on this job need review by Easy Garage Cleaning before a document can be produced.', 409);
   if (totals.totalCents <= 0) throw fail('empty', 'There is nothing to show on this document yet.', 409);
   if (kind === 'receipt' && !(totals.paidCents > 0)) throw fail('unavailable', 'No payment has been recorded for this job yet.', 409);
+  const withheld = audience !== 'staff' && unsentQuoteDraft(job);
+  if (withheld && kind !== 'receipt') throw fail('unavailable', `Your ${kind} is being updated. Easy Garage Cleaning will send it to you for review.`, 409);
+  if (withheld) return withheldReceipt(job, totals, at, contact);
   const estimate = plain(job.estimate) ? job.estimate : {}, invoice = plain(job.invoice) ? job.invoice : {};
   const today = denverToday(new Date(at)), approval = approvalOf(job);
   let lines, status, statusLabel, number, dates;
@@ -246,6 +256,24 @@ export function moneyDocumentModel(job, { kind, now, payUrl = null, contact = tr
   };
 }
 
+// The receipt of an unsent quote draft: the recorded payments only. Paid toward
+// service and tips do not depend on the quote; the unsent total, balance and
+// any overpayment against it do, so they are left out.
+function withheldReceipt(job, totals, at, contact) {
+  const invoice = plain(job.invoice) ? job.invoice : {}, ledger = payments(job, { tips: true }), status = customerPaymentNeedsReview(job) ? 'pending_verification' : 'received';
+  const rows = totals.tipCents > 0 ? [{ label: 'Paid toward service', cents: totals.appliedCents }, { label: 'Tips for your crew (not part of the service total)', cents: totals.tipCents, tip: true }, { label: 'Total paid', cents: totals.paidCents }] : [{ label: 'Total paid', cents: totals.paidCents }];
+  return {
+    kind: 'receipt', title: TITLES.receipt, number: invoiceNumber(job.id, 'invoice', clean(invoice.number, 80)), status, statusLabel: status === 'received' ? 'Payment received' : 'Payment pending verification',
+    notice: 'Your estimate is being updated. This receipt lists the payments recorded so far; your service total and balance appear once Easy Garage Cleaning sends you the updated estimate.',
+    generatedAt: at, generatedLabel: instantStamp(at), dates: [['Receipt date', instantDay(ledger.latest) || instantDay(at)]],
+    customer: { name: clean(job.customer, 120) || 'Customer', address: clean(job.address, 240), phone: contact ? clean(job.phone, 40) : '', email: contact ? clean(job.email, 180) : '' },
+    service: clean(job.serviceType, 120) || SERVICE_TYPES[job.type] || 'Garage service', scope: '', withheld: true,
+    lines: [], rows, payments: ledger.rows, paymentsReconciled: ledger.reconciled, approval: '',
+    termsVersion: clean(invoice.termsVersion || job.estimate?.termsVersion || DEFAULT_TERMS_VERSION, 40), terms: TERMS.receipt,
+    pay: null, payNote: '', totals: { paidCents: totals.paidCents, tipCents: totals.tipCents, appliedCents: totals.appliedCents }, issues: [...new Set(totals.issues)],
+  };
+}
+
 const STYLE = '@page{margin:.5in}*{box-sizing:border-box}html{-webkit-text-size-adjust:100%}body{margin:0;background:#eef2f6;color:#0b223d;font:15px/1.5 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif}a{color:#b8360b}.doc{width:100%;max-width:820px;margin:0 auto;padding:20px 16px 28px;background:#fff}.top{display:flex;flex-wrap:wrap;align-items:flex-start;justify-content:space-between;gap:14px 24px;padding-bottom:18px;border-bottom:4px solid #ff5315}.logo{display:block;width:200px;max-width:100%;height:auto}.kind h1{margin:0;font-size:26px;line-height:1.1;letter-spacing:.04em;text-transform:uppercase}.kind p{margin:4px 0 0;color:#526071;overflow-wrap:anywhere}.status{display:inline-block;margin-top:8px;padding:4px 10px;border-radius:99px;background:#fff2ec;color:#a4330c;font-size:12px;font-weight:800;text-transform:uppercase;letter-spacing:.06em}.status.good{background:#e8f6ee;color:#116c41}.notice{margin:16px 0 0;padding:12px 14px;border-radius:10px;background:#fdecea;color:#8a2416;font-weight:700}.meta{display:grid;grid-template-columns:minmax(0,1fr);gap:18px;margin:22px 0}.label,dt{font-size:11px;font-weight:800;letter-spacing:.1em;color:#b8360b;text-transform:uppercase}.party strong,.party span{display:block;overflow-wrap:anywhere}.party span{color:#526071}.dates{display:grid;grid-template-columns:repeat(auto-fit,minmax(130px,1fr));gap:10px;margin:0}.dates div{min-width:0;padding:10px 12px;border-radius:8px;background:#f3f5f7}.dates dd{margin:2px 0 0;font-weight:700;overflow-wrap:anywhere}.scope{margin:0 0 18px;white-space:pre-line;color:#344256;overflow-wrap:anywhere}table{width:100%;border-collapse:collapse;table-layout:fixed}caption{padding:0 0 8px;text-align:left}th{padding:10px 8px;background:#0b223d;color:#fff;font-size:11px;letter-spacing:.08em;text-align:left;text-transform:uppercase}th:last-child,td:last-child{width:38%;text-align:right}td{padding:12px 8px;border-bottom:1px solid #d9dfe6;vertical-align:top;overflow-wrap:anywhere}td strong{display:block}td small{display:block;margin-top:3px;color:#667085}.tag{display:inline-block;margin-top:5px;padding:2px 8px;border-radius:6px;background:#eef3f7;color:#344256;font-size:12px;font-weight:700}tr.excluded td{color:#7a8594}tr.excluded .amount{text-decoration:line-through}.totals{width:100%;max-width:380px;margin:18px 0 0 auto}.totals div{display:flex;justify-content:space-between;gap:16px;padding:8px 0;border-bottom:1px solid #e4e7eb}.totals span{min-width:0;overflow-wrap:anywhere}.totals strong{white-space:nowrap}.totals .tip{color:#526071}.totals .due{border-top:3px solid #0b223d;border-bottom:0;padding-top:12px;font-size:19px;font-weight:800}h2{margin:28px 0 10px;font-size:15px;letter-spacing:.08em;text-transform:uppercase}.muted{color:#667085;font-size:13px}.approval{margin:18px 0 0;color:#116c41;font-weight:700}.pay{display:flex;align-items:center;justify-content:center;min-height:48px;margin:22px 0 0;padding:12px 18px;border-radius:10px;background:#ff5315;color:#fff;font-weight:800;text-align:center;text-decoration:none}.pay-note{margin:8px 0 0;color:#526071;font-size:13px}.terms{margin-top:28px;padding:16px;border-radius:8px;background:#f6f3ee;color:#526071;font-size:13px}.terms b{display:block;margin-bottom:5px;color:#0b223d}.terms p{margin:0}.foot{display:grid;gap:4px;margin-top:28px;padding-top:14px;border-top:1px solid #d9dfe6;color:#667085;font-size:12px}.foot a,.link{display:inline-block;min-height:44px;line-height:44px}.hint{margin:14px 0 0;color:#667085;font-size:12px}@media(min-width:681px){body{padding:24px 0}.doc{padding:40px 44px;border-radius:14px;box-shadow:0 18px 50px rgba(7,26,49,.09)}.logo{width:255px}.kind{text-align:right}.kind h1{font-size:32px}.meta{grid-template-columns:minmax(0,1.2fr) minmax(0,1fr);gap:30px}.pay{display:inline-flex;min-width:280px}.foot{grid-template-columns:repeat(3,auto);justify-content:space-between}th,td{padding-left:12px;padding-right:12px}th:last-child,td:last-child{width:160px}}@media print{body{padding:0;background:#fff;font-size:13px}.doc{max-width:none;padding:0;box-shadow:none}.hint{display:none}.pay{display:inline-flex;min-height:0;padding:8px 14px}a{color:#0b223d}tr{break-inside:avoid}}';
 const base64 = bytes => btoa(Array.from(bytes, byte => String.fromCharCode(byte)).join(''));
 export const MONEY_DOCUMENT_STYLE_HASH = `sha256-${base64(sha256(new TextEncoder().encode(STYLE)))}`;
@@ -271,14 +299,14 @@ function lineRow(line) {
 /** The complete HTML document; every saved value is escaped. See moneyDocumentModel for options. */
 export function renderMoneyDocument(job, options = {}) {
   const doc = moneyDocumentModel(job, options);
-  const good = ['approved', 'paid'].includes(doc.status);
+  const good = ['approved', 'paid', 'received'].includes(doc.status);
   const party = [doc.customer.address, [doc.customer.phone, doc.customer.email].filter(Boolean).join(' · ')].filter(Boolean).map(text => `<span>${esc(text)}</span>`).join('');
   const body = [
     `<header class="top">${logo}<div class="kind"><h1>${esc(doc.title)}</h1><p>${esc(doc.number)} · ${esc(doc.service)}</p><span class="status${good ? ' good' : ''}">${esc(doc.statusLabel)}</span></div></header>`,
     doc.notice ? `<p class="notice" role="note">${esc(doc.notice)}</p>` : '',
     `<section class="meta"><div class="party"><div class="label">Prepared for</div><strong>${esc(doc.customer.name)}</strong>${party}</div><dl class="dates">${doc.dates.map(([label, value]) => `<div><dt>${esc(label)}</dt><dd>${esc(value)}</dd></div>`).join('')}</dl></section>`,
     doc.scope ? `<p class="scope">${esc(doc.scope)}</p>` : '',
-    `<table><caption class="label">${doc.kind === 'estimate' ? 'Quoted services' : 'Services'}</caption><thead><tr><th scope="col">Description</th><th scope="col">Amount</th></tr></thead><tbody>${doc.lines.map(lineRow).join('')}</tbody></table>`,
+    doc.lines.length ? `<table><caption class="label">${doc.kind === 'estimate' ? 'Quoted services' : 'Services'}</caption><thead><tr><th scope="col">Description</th><th scope="col">Amount</th></tr></thead><tbody>${doc.lines.map(lineRow).join('')}</tbody></table>` : '',
     `<div class="totals">${doc.rows.map(row => `<div${row.due ? ' class="due"' : row.tip ? ' class="tip"' : ''}><span>${esc(row.label)}</span><strong>${esc(usd(row.cents))}</strong></div>`).join('')}</div>`,
     doc.approval ? `<p class="approval">✓ ${esc(doc.approval)}</p>` : '',
     doc.payments.length ? `<h2>Payments</h2><table><thead><tr><th scope="col">Payment</th><th scope="col">Amount</th></tr></thead><tbody>${doc.payments.map(row => `<tr><td><strong>${esc(row.label)}</strong>${row.date ? `<small>${esc(row.date)}</small>` : ''}${row.receiptUrl ? `<a class="link" href="${esc(row.receiptUrl)}" rel="noopener noreferrer">Stripe receipt</a>` : ''}</td><td>${esc(usd(row.amountCents))}</td></tr>`).join('')}</tbody></table>${doc.paymentsReconciled ? '' : '<p class="muted">Some payment details are still being reconciled by our team. The totals above are from our records.</p>'}` : '',

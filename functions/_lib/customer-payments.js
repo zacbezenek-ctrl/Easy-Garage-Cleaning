@@ -1,6 +1,7 @@
 import { firestoreFetch } from './firebase-service-account.js';
 import { readJob, patchJob, encodeFirestoreFields, decodeFirestoreFields } from './firestore-job.js';
 import { billedChangeCents } from './change-orders.js';
+import { unsentQuoteDraft } from './quote-model.js';
 
 const DB = 'https://firestore.googleapis.com/v1/projects/egcw-1ec83/databases/(default)/documents';
 const clean = (value, limit = 180) => String(value || '').replace(/[\r\n\t]/g, ' ').trim().slice(0, limit);
@@ -61,8 +62,11 @@ export function customerDepositState(job, finance = customerMoneyState(job)) {
 
 // The portal checkout's own rule: throws when no card payment can open, else
 // the customerDepositState it charges. Money documents offer "Pay" only on it.
+// A Hub quote draft that was not sent in its current revision (P2-07) is never
+// payable, even once the job is completed: the customer has not seen that total.
 export function payable(job) {
   if (!job || [job.status, job.pipelineStatus].some(status => ['cancelled', 'canceled', 'superseded', 'lost'].includes(String(status || '').toLowerCase()))) throw failure('This job is not available for payment');
+  if (unsentQuoteDraft(job)) throw failure('Your estimate is being updated. Payment opens once Easy Garage Cleaning sends it to you for review.', 409, 'CUSTOMER_PORTAL_ESTIMATE_NOT_APPROVABLE');
   if (customerPaymentNeedsReview(job)) throw failure('A recorded payment is awaiting team verification. Please wait before paying again.');
   const status = String(job.customerApproval?.status || job.estimate?.status || job.quoteStatus || '').toLowerCase();
   if (!['accepted', 'approved'].includes(status) && !['completed', 'paid'].includes(String(job.pipelineStatus || job.status || '').toLowerCase())) throw failure('Approve the estimate before paying');
@@ -350,7 +354,7 @@ async function recordStripeCheckout(env, checkout, { kind, expectedJobId = '', r
         catch { if (attempt < 2) continue; }
       }
       const item = saved && typeof saved === 'object' ? saved : { sessionId, paymentIntentId, amount: checkout.amount_total / 100 };
-      return { result: { paid: true, duplicate: true, amountPaid: checkout.amount_total / 100, balance: finance.balance, receiptUrl }, payment, invoice: job.invoice || {}, paymentSyncPayload: { ...item, balance: finance.balance, paidTotal: finance.paid } };
+      return { result: { paid: true, duplicate: true, amountPaid: checkout.amount_total / 100, balance: finance.balance, receiptUrl }, payment, invoice: job.invoice || {}, paymentSyncPayload: { ...item, balance: finance.balance, paidTotal: finance.paid }, withheld: unsentQuoteDraft(job) };
     }
     // A review the office closed (reconciled elsewhere, refunded) is final:
     // neither a browser return nor a webhook retry ever puts that charge on the job.
@@ -402,7 +406,7 @@ async function recordStripeCheckout(env, checkout, { kind, expectedJobId = '', r
     try {
       if (review) await patchJobWithReview(env, jobId, patch, job.__updateTime, review, { jobRecordedAt: now, jobRecordedBy: clean(recordedBy, 80) });
       else await patchJob(env, jobId, patch, job.__updateTime);
-      return { result: { paid: true, duplicate: false, amountPaid: paymentItem.amount, balance, receiptUrl }, payment, invoice, paymentSyncPayload };
+      return { result: { paid: true, duplicate: false, amountPaid: paymentItem.amount, balance, receiptUrl }, payment, invoice, paymentSyncPayload, withheld: unsentQuoteDraft(job) };
     } catch (error) { storageFailed = ![400, 409, 412].includes(error.storageStatus); } // Firestore answers a stale updateTime with 400 FAILED_PRECONDITION.
   }
   // Each retry re-reads the job, so a write whose response was lost is found above as a duplicate.
@@ -411,8 +415,14 @@ async function recordStripeCheckout(env, checkout, { kind, expectedJobId = '', r
 
 // recordedBy names who saw a held charge first ('customer_portal' for the portal
 // return, 'stripe_webhook' for the webhook); settleHeld:false is the webhook.
+// While a Hub quote draft has an unsent revision, the job's total is that revision, so the customer's reply
+// (verify_payment, and create_payment's alreadyPaid) confirms the payment without a balance measured against
+// terms they have not been sent. The payment itself is recorded in full either way.
 export async function recordCustomerStripePayment(env, checkout, expectedJobId = '', now = new Date().toISOString(), { recordedBy = 'customer_portal', settleHeld = true } = {}) {
-  return (await recordStripeCheckout(env, checkout, { kind: CHECKOUT_KINDS.portal, expectedJobId, recordedBy, settleHeld, now })).result;
+  const { result, withheld } = await recordStripeCheckout(env, checkout, { kind: CHECKOUT_KINDS.portal, expectedJobId, recordedBy, settleHeld, now });
+  if (!withheld) return result;
+  const { balance, ...confirmed } = result;
+  return { ...confirmed, balanceWithheld: true };
 }
 
 // Crew card links (job-payment.js) settle through the same verification from
@@ -424,6 +434,8 @@ export async function recordCrewStripePayment(env, checkout, { expectedJobId = '
 }
 
 const fingerprint = job => JSON.stringify({ total: customerMoneyState(job).total, paid: customerMoneyState(job).paid, ...customerDepositState(job), revision: job.estimate?.revision || 1, approval: job.customerApproval?.status || job.estimate?.status || job.quoteStatus || '', status: job.pipelineStatus || job.status || '' });
+// An open portal checkout whose saved fingerprint differs no longer matches the quote.
+export const checkoutFingerprint = job => fingerprint(job);
 
 /**
  * Closes the job's portal card checkout when it no longer charges exactly what

@@ -227,6 +227,14 @@
     return current.businessAccess === true && Boolean(signedIn) && String(user || '').trim().toLowerCase() === signedIn;
   }
 
+  // P2-12: the walkthrough also opens for an account the server reports can author
+  // quotes (sales/walkthrough role); /api/walkthrough-handoff and /api/quote-draft re-check it.
+  function canRunWalkthrough(user = profile().user) {
+    const current = profile(), signedIn = String(current.user || '').trim().toLowerCase();
+    if (!signedIn || String(user || '').trim().toLowerCase() !== signedIn) return false;
+    return canRunBusiness(user) || current.capabilities.includes('quotes.author');
+  }
+
   function mountCrewNav() {
     if (document.querySelector('.crew-utility')) return;
     const host = document.getElementById('topbar') || document.querySelector('#app .top');
@@ -238,7 +246,7 @@
       ['/crew/prejob', 'Pre-job'],
       ['/crew/postjob', 'Closeout'],
       ['/employee', 'My Hub'],
-    ].filter(([href]) => href !== '/crew/gameplan' || canRunBusiness());
+    ].filter(([href]) => href !== '/crew/gameplan' || canRunWalkthrough());
     const nav = document.createElement('nav');
     nav.className = 'crew-utility';
     nav.setAttribute('aria-label', 'Crew workflow');
@@ -249,5 +257,5 @@
 
   window.addEventListener('DOMContentLoaded', mountCrewNav);
 
-  window.EGCHubAuth = { session, signIn, signOut, confirmSignOut, fetch: securedFetch, clearLocal, profile, can, canRunBusiness, mountCrewNav, ensureFirebaseSession };
+  window.EGCHubAuth = { session, signIn, signOut, confirmSignOut, fetch: securedFetch, clearLocal, profile, can, canRunBusiness, canRunWalkthrough, mountCrewNav, ensureFirebaseSession };
 })();

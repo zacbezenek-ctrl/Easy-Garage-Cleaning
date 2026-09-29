@@ -2,9 +2,14 @@
    only from saved EGC data, and provider outcomes are classified so that an
    ambiguous result is never mistaken for a safe-to-retry failure. */
 import { escapeHtml } from './message-templates.js';
+import { NO_SMS_CONSENT_TAG } from './contact-consent.js';
 
 const API = 'https://services.leadconnectorhq.com';
-export const NO_SMS_CONSENT_TAG = 'egc-no-sms-consent';
+export { NO_SMS_CONSENT_TAG };
+// The only contact tags the messenger may add or remove, each registered with
+// its Hub write in the FUN-30 automation registry: egc-estimate-ready re-fires
+// the existing estimate-ready workflow for a confirmed quote send (estimate-ready.js).
+export const MESSENGER_TAG_WRITES = Object.freeze(['egc-estimate-ready']);
 export const MESSAGE_CHANNELS = Object.freeze(['SMS', 'Email']);
 
 export const normalizePhone = value => {
@@ -103,5 +108,23 @@ export function createGhlMessenger({ env = {}, fetcher = fetch, clock = () => ne
     } catch { return { status: 'uncertain', reason: 'no_provider_response', at }; }
   }
 
-  return { configured: () => Boolean(c.token && c.locationId), resolveRecipient, send };
+  // Tags start the existing HighLevel workflows (e.g. egc-estimate-ready), so a
+  // tag on a verified contact is classified exactly like send(). removeTags
+  // clears a tag first, because HighLevel's tag-added trigger does not fire for
+  // a contact that already has the tag.
+  async function tagRequest(method, { contactId, tags = [], idempotencyKey = '' } = {}) {
+    const at = clock().toISOString(), wanted = [...new Set((Array.isArray(tags) ? tags : []).filter(tag => typeof tag === 'string' && /^[a-z0-9][a-z0-9-]{0,59}$/.test(tag) && MESSENGER_TAG_WRITES.includes(tag)))];
+    if (!c.token || !c.locationId) return { status: 'failed', reason: 'not_configured', at };
+    if (!/^[A-Za-z0-9_-]{1,120}$/.test(String(contactId || '')) || !wanted.length) return { status: 'failed', reason: 'invalid_tags', at };
+    try {
+      const { response } = await request(`/contacts/${encodeURIComponent(contactId)}/tags`, { method, body: JSON.stringify({ tags: wanted }) }, idempotencyKey ? { 'Idempotency-Key': String(idempotencyKey).slice(0, 200) } : {});
+      if (response.ok) return { status: 'submitted', httpStatus: response.status, at };
+      if (response.status >= 400 && response.status < 500 && response.status !== 408) return { status: 'failed', httpStatus: response.status, at };
+      return { status: 'uncertain', httpStatus: response.status, at };
+    } catch { return { status: 'uncertain', reason: 'no_provider_response', at }; }
+  }
+  const addTags = input => tagRequest('POST', input);
+  const removeTags = input => tagRequest('DELETE', input);
+
+  return { configured: () => Boolean(c.token && c.locationId), resolveRecipient, send, addTags, removeTags };
 }

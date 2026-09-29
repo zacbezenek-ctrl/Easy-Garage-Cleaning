@@ -212,10 +212,12 @@ function fakeNode(tag = 'div') {
 const texts = node => [node.textContent, ...node.children.flatMap(texts)].filter(Boolean);
 
 test('a company project hides the copy-invite control and says why', () => {
-  const nodes = new Map(), context = { document: { createElement: fakeNode }, $: id => nodes.get(id) || nodes.set(id, fakeNode()).get(id), personEditor: item => ({ editor: item.id }), copyInvite: () => assert.fail('no invite is created while rendering') };
+  const editors = [], nodes = new Map(), context = { document: { createElement: fakeNode }, $: id => nodes.get(id) || nodes.set(id, fakeNode()).get(id), renderCollaboratorEditor: active => editors.push(active.map(item => item.id)), copyInvite: () => assert.fail('no invite is created while rendering') };
   vm.runInNewContext([sourceLine(portalHtml, 'const make='), sourceLine(portalHtml, 'function renderCollaborators(')].join('\n'), context);
   const people = [{ id: 'person-1', name: 'Synthetic Family', role: 'Family', status: 'active', permissions: { decide: true } }];
   context.renderCollaborators(people, true, true);
+  const invite = context.$('collaborator-list').children[0].children.find(node => node.textContent === 'Copy invite');
+  assert.equal(invite.dataset.person, 'person-1', 'the invite control names its person, so focus can follow it');
   assert.deepEqual(texts(context.$('collaborator-list')).filter(value => value === 'Copy invite'), ['Copy invite']);
   context.renderCollaborators(people, true, false);
   const list = texts(context.$('collaborator-list'));
@@ -224,6 +226,11 @@ test('a company project hides the copy-invite control and says why', () => {
   assert.ok(list.some(value => /managed through a business account/.test(value)));
   context.renderCollaborators(people, false, false);
   assert.equal(texts(context.$('collaborator-list')).some(value => /Copy invite|business account/.test(value)), false, 'non-owners never see either');
+  assert.deepEqual(editors, [['person-1'], ['person-1']], 'only the owner gets the people editor');
+  // The quiet refresh does not rebuild an unchanged list (a focused Copy invite button keeps its focus).
+  const shown = context.$('collaborator-list').children;
+  context.renderCollaborators(people, false, false);
+  assert.equal(context.$('collaborator-list').children, shown);
 });
 
 test('the portal page follows the server invite flag and treats an older response as available', () => {

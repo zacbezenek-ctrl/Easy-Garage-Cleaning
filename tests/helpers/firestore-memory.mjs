@@ -17,7 +17,7 @@ function filters(where){
 }
 
 export function firestoreMemory({fallback=null}={}){
- const documents=new Map(),commits=[];let revision=0;
+ const documents=new Map(),commits=[],patches=[];let revision=0;
  const stamp=()=>`2026-09-22T00:00:00.${String(++revision).padStart(9,'0')}Z`;
  const put=(path,data)=>{documents.set(path,{name:`${ROOT}/${path}`,fields:encodeFirestoreFields(data),updateTime:stamp()});return documents.get(path);};
  async function fetch(input,options={}){
@@ -51,11 +51,26 @@ export function firestoreMemory({fallback=null}={}){
     .slice(0,query.limit||undefined);
    return Response.json(rows.length?rows.map(document=>({document,readTime:'2026-09-22T00:00:00Z'})):[{readTime:'2026-09-22T00:00:00Z'}]);
   }
+  if(method==='PATCH'){
+   // Document PATCH (patchJob): top-level updateMask fields and the currentDocument
+   // preconditions. A stale updateTime is Firestore's 400 FAILED_PRECONDITION.
+   const key=path.split('/').filter(Boolean).join('/'),existing=documents.get(key),mask=url.searchParams.getAll('updateMask.fieldPaths');
+   const updateTime=url.searchParams.get('currentDocument.updateTime'),exists=url.searchParams.get('currentDocument.exists');
+   if(mask.some(field=>field.includes('.')))throw new Error('Nested update masks are not faked: '+mask.join(','));
+   if(!existing&&(updateTime||exists==='true'))return Response.json({error:{status:'NOT_FOUND'}},{status:404});
+   if(existing&&exists==='false')return Response.json({error:{status:'ALREADY_EXISTS'}},{status:409});
+   if(updateTime&&existing.updateTime!==updateTime)return Response.json({error:{status:'FAILED_PRECONDITION'}},{status:400});
+   const patch=decodeFirestoreFields(JSON.parse(options.body||'{}').fields||{}),next=mask.length?decodeFirestoreFields(existing?.fields||{}):{};
+   if(mask.length)for(const field of mask){if(field in patch)next[field]=patch[field];else delete next[field];}
+   else Object.assign(next,patch);
+   patches.push({path:key,fields:mask});
+   return Response.json(put(key,next));
+  }
   if(method!=='GET')throw new Error(`The in-memory Firestore fake does not support ${method} ${path}`);
   const parts=path.split('/').filter(Boolean);
   if(parts.length%2===0){const document=documents.get(parts.join('/'));return document?Response.json(document):Response.json({error:{status:'NOT_FOUND'}},{status:404});}
   const prefix=parts.join('/')+'/';
   return Response.json({documents:[...documents].filter(([key])=>key.startsWith(prefix)&&!key.slice(prefix.length).includes('/')).map(([,document])=>document)});
  }
- return {fetch,documents,commits,put,get:path=>documents.has(path)?decodeFirestoreFields(documents.get(path).fields):null};
+ return {fetch,documents,commits,patches,put,get:path=>documents.has(path)?decodeFirestoreFields(documents.get(path).fields):null};
 }

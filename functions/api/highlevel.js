@@ -395,16 +395,20 @@ function quoteLines(quote) {
   return lines.length ? ['Itemized quote:', ...lines.slice(0, 40).map(line => `- ${String(line?.name || 'Line item').slice(0, 160)}${Number(line?.qty) !== 1 ? ` × ${Number(line?.qty)}` : ''}: ${amount(line?.total)}`)] : [];
 }
 
-function noteBody(payload) {
+// A signed handoff's Job Brief is written once from the signed quote and replayed unchanged after Dispatch moves the
+// job, so its date line names the signed schedule rather than reading as the current plan. The label depends only on
+// the brief, never on the job's current schedule, so every replay sends the same body.
+function noteBody(payload, { signed = false } = {}) {
   const p = payload || {}, q = p.quote || {}, d = p.discovery || {}, s = p.scope || {}, l = p.logistics || {};
   const list = value => Array.isArray(value) ? value.filter(Boolean).join(', ') : (value || '—');
   const finish = s.finish_details || {};
+  const current = signed ? '; the current time is on the appointment' : '';
   if (p.internal_notes) return [
     'EGC INTERNAL JOB BRIEF',
     `Completed: ${p.sent_at || p.completed_at || new Date().toISOString()}`,
     `Locked total: $${Number(q.total || 0).toLocaleString('en-US')}`,
     `Deposit: $${Number(q.deposit || 0).toLocaleString('en-US')}`,
-    `Target date: ${q.job_date || 'TBD'} · ${q.start_time || 'TBD'}–${q.end_time || 'TBD'}`,
+    `${signed ? 'Signed date' : 'Target date'}: ${q.job_date || 'TBD'} · ${q.start_time || 'TBD'}–${q.end_time || 'TBD'}${current}`,
     ...quoteLines(q),
     '',
     String(p.internal_notes).replace(/^EGC INTERNAL JOB BRIEF\s*/i, '').trim(),
@@ -416,8 +420,8 @@ function noteBody(payload) {
     `Locked total: $${Number(q.total || 0).toLocaleString('en-US')}`,
     `Deposit: $${Number(q.deposit || 0).toLocaleString('en-US')}`,
     ...quoteLines(q),
-    `Target date: ${q.job_date || 'TBD'}`,
-    `Arrival window: ${q.start_time || 'TBD'}–${q.end_time || 'TBD'}`,
+    `${signed ? 'Signed date' : 'Target date'}: ${q.job_date || 'TBD'}${current}`,
+    `${signed ? 'Signed arrival window' : 'Arrival window'}: ${q.start_time || 'TBD'}–${q.end_time || 'TBD'}`,
     `Assigned crew: ${l.assigned_to || 'Unassigned'}${l.crew_size ? ` (${l.crew_size} needed)` : ''}`,
     `Why now: ${d.why_now || '—'}`,
     `Success looks like: ${d.success || '—'}`,
@@ -625,6 +629,11 @@ export async function onRequestPost({ request, env }) {
       if (!payload.start_time || !payload.end_time) return reply(400, { ok: false, error: 'Schedule start and end are required' });
       const event = await createAppointment(c, payload, contactId);
       if (payload.silent_update) return reply(200, { ok: true, contactId, ...event, pipeline: { updated: false, reason: 'silent-appointment-update' }, automation: { silent: true, notificationsRequested: false } });
+      // Notify customer (payload.notify) governs the appointment's own automations and the reminder tag only; the
+      // scheduled tags and the Scheduled stage follow every scheduled visit. A cancelled visit (read from storage, never
+      // the browser) is synced as its cancellation alone: no scheduled or reminder tag, and no move to Scheduled.
+      const stored = payload.job_id ? await readJob(env, payload.job_id).catch(() => null) : null;
+      if (['cancelled', 'canceled'].includes(String(stored?.pipelineStatus || stored?.status || '').toLowerCase())) return finish(contactId, { ok: true, contactId, ...event, pipeline: { updated: false, reason: 'visit-cancelled' }, automation: { trigger: '', reminderTrigger: '', cancelled: true, notificationsRequested: payload.notify !== false } });
       const typeTag = payload.event_type === 'job' ? 'egc-job-scheduled' : 'egc-walkthrough-scheduled';
       const reminderDays = Math.min(30, Math.max(1, Number(payload.reminder_days || 2)));
       const reminderTag = payload.notify === false ? '' : `egc-reminder-${reminderDays}d`;
@@ -652,11 +661,20 @@ export async function onRequestPost({ request, env }) {
       return finish(contactId, { ok: true, contactId, noteId, ...appointment, portalInvitation, automation: { trigger: payload.suppress_automation ? '' : tag, suppressed: Boolean(payload.suppress_automation) } });
     }
     const isCloseout = payload.tool === 'post_job';
+    // A signed handoff's Job Brief and its source-walkthrough sync belong to the handoff itself (server-built
+    // handoff_brief): after a Dispatch move they replay the handoff's first request instead of writing a second
+    // pinned brief. Only the job's appointment follows the job's current request (payload.idempotency_key).
+    const brief = handoffRequestId && payload.handoff_brief ? payload.handoff_brief : null, handoffKey = brief ? brief.idempotency_key : payload.idempotency_key || '';
+    const briefPayload = brief ? { ...payload, quote: brief.quote } : payload, noteKey = brief ? brief.idempotency_key : payload.idempotency_key || payload.request_id;
+    const nativeNote = body => syncNativeNote(env,session,{portalJobId:payload.job_id,requestId:noteKey,contactId,scope:isCloseout?'post_job':'game_plan',title:isCloseout?'EGC Job Closeout':'EGC Internal Job Brief',body});
+    const noteText = isCloseout ? closeoutNote(payload) : noteBody(briefPayload, { signed: Boolean(brief) });
+    // A brief the handoff's first sync wrote before the signed label existed keeps its original body: the same request
+    // with the signed label conflicts, so it replays that body instead of failing or writing a second brief.
     const note = operationsEnabled(env)
-      ? await syncNativeNote(env,session,{portalJobId:payload.job_id,requestId:payload.idempotency_key||payload.request_id,contactId,scope:isCloseout?'post_job':'game_plan',title:isCloseout?'EGC Job Closeout':'EGC Internal Job Brief',body:isCloseout?closeoutNote(payload):noteBody(payload)})
+      ? await nativeNote(noteText).catch(error => { if (!brief || isCloseout || error?.code !== 'provider_note_request_conflict') throw error; return nativeNote(noteBody(briefPayload)); })
       : await ghl(c, `/contacts/${encodeURIComponent(contactId)}/notes`, { method: 'POST', headers: payload.idempotency_key ? { 'Idempotency-Key': payload.idempotency_key } : {}, body: JSON.stringify({
       userId: c.userId || undefined, title: isCloseout ? 'EGC Job Closeout' : 'EGC Internal Job Brief',
-      body: isCloseout ? closeoutNote(payload) : noteBody(payload), color: '#F15A24', pinned: !isCloseout
+      body: noteText, color: '#F15A24', pinned: !isCloseout
     })});
     let taskId = '';
     if (isCloseout) {
@@ -682,7 +700,7 @@ export async function onRequestPost({ request, env }) {
       const visitTags=[...(!handoffRequestId||sourceCompleted?['egc-walkthrough-complete']:[]),...(quoteIsOpen?c.quoteReadyTags:[])];
       if(visitTags.length)await addTags(c,contactId,visitTags);
       const walkthrough = operationsEnabled(env)
-        ? savedJob?.sourceWalkthroughId ? await syncNativeSchedule(env,session,{portalVisitId:savedJob.sourceWalkthroughId,requestId:(payload.idempotency_key||'')+':walkthrough',contactProviderId:contactId,runAutomations:false}) : {updated:false,reason:'exact-source-walkthrough-not-linked'}
+        ? savedJob?.sourceWalkthroughId ? await syncNativeSchedule(env,session,{portalVisitId:savedJob.sourceWalkthroughId,requestId:handoffKey+':walkthrough',contactProviderId:contactId,runAutomations:false}) : {updated:false,reason:'exact-source-walkthrough-not-linked'}
         : await completeAppointment(c, client.highlevel_appointment_id || payload.walkthrough_appointment_id || '');
       const q = payload.quote || {};
       if (q.job_date && q.start_time && q.end_time) {
@@ -690,7 +708,7 @@ export async function onRequestPost({ request, env }) {
           job_id:payload.job_id,appointment_id: client.highlevel_job_appointment_id || '',
           event_type: 'job', start_time: q.start_at || `${q.job_date}T${q.start_time}:00-06:00`,
           end_time: q.end_at || `${q.job_date}T${q.end_time}:00-06:00`, title: q.title || 'EGC Garage Service',
-          address: client.address, notes: appointmentInstructions(payload), notify: true, idempotency_key: payload.idempotency_key || '',
+          address: client.address, notes: appointmentInstructions(payload), notify: handoffRequestId ? payload.notify !== false : true, idempotency_key: payload.idempotency_key || '',
         }, contactId);
         let tagSynced = true;
         try { await addTags(c, contactId, ['egc-hub-scheduled', 'egc-job-scheduled']); } catch { tagSynced = false; }

@@ -15,7 +15,7 @@ import { parseBusinessActor } from '../_lib/business-hub-core.js';
 import { businessAccountJob } from '../_lib/portal-invitation.js';
 import { moneyDocumentEnabled, moneyDocumentLinks } from '../_lib/money-document.js';
 import { customerMoneyTotals } from '../_lib/money-core.js';
-import { estimateFingerprint, included, legacyLineItems } from '../_lib/quote-model.js';
+import { estimateFingerprint, included, legacyLineItems, unsentQuoteDraft } from '../_lib/quote-model.js';
 import { crewPublicProfilesEnabled, customerCrew, customerCrewProjection, readCrewPublicProfiles } from '../_lib/crew-public-profile.js';
 import { liveSale, portalApprovalWrites, portalFunnelWrite, vocabularyValue } from '../_lib/job-funnel-events.js';
 
@@ -89,11 +89,13 @@ export function customerReviewUrl(env = {}) {
 
 // A replaced or withdrawn estimate is never approvable. A draft is refused only
 // with CUSTOMER_PORTAL_REJECT_DRAFT_ESTIMATES=true: Hub estimate saves still
-// release customer-facing estimates as 'draft' today.
+// release customer-facing estimates as 'draft' today. A quote drafted in the Hub
+// (P2-07) that has not been sent in its current revision is never approvable,
+// whatever the flag says (unsentQuoteDraft).
 const rejectDrafts = env => env?.CUSTOMER_PORTAL_REJECT_DRAFT_ESTIMATES === 'true';
 function approvalBlocked(job, draftsRejected) {
   const status = String(job.estimate?.status || '').toLowerCase();
-  return ['superseded', 'void', 'withdrawn'].includes(status) || draftsRejected && status === 'draft';
+  return ['superseded', 'void', 'withdrawn'].includes(status) || draftsRejected && status === 'draft' || unsentQuoteDraft(job);
 }
 
 function estimateRevision(job) {
@@ -137,6 +139,33 @@ function estimateState(job, finance, today, draftsRejected = false) {
     termsVersion: CUSTOMER_PORTAL_TERMS_VERSION,
   };
   return { ...estimate, fingerprint: shownFingerprint(estimate) };
+}
+
+// An unsent quote draft is withheld: the customer sees that it is being updated,
+// never its unsent price, deposit, scope or lines, and nothing to approve.
+function withheldEstimate(job) {
+  const estimate = {
+    number: safe(job.estimate?.number || job.quoteId || `EST-${String(job.id || '').slice(-6).toUpperCase()}`, 80),
+    status: 'being_updated', withheld: true, amount: 0,
+    service: safe(job.serviceType || job.type || 'Garage service', 120), scope: '',
+    approvedAt: '', approvedBy: '', validUntil: '', revision: estimateRevision(job), approvable: false,
+    depositRequired: 0, lineItems: [], terms: CUSTOMER_PORTAL_CONTENT.estimateTerms, termsVersion: CUSTOMER_PORTAL_TERMS_VERSION,
+  };
+  return { ...estimate, fingerprint: shownFingerprint(estimate) };
+}
+// Recorded payments stay visible, with the Stripe receipt link and the printable
+// receipt (moneyDocumentKinds keeps 'receipt', rendered without the unsent
+// total). The unsent total, balance, deposit and any invoice do not, and the
+// status never says whether the unsent total is covered: 'received', not 'partial'.
+function withheldPayment(job, finance) {
+  const needsReview = customerPaymentNeedsReview(job), deposit = { required: 0, paid: 0, due: 0, dueNow: 0, purpose: 'deposit', remainder: 0 };
+  return {
+    total: 0, paid: finance.paid, balance: 0, approvedChanges: 0, dueNow: 0, purpose: 'deposit', deposit, needsReview, withheld: true,
+    status: needsReview ? 'pending_verification' : finance.paid ? 'received' : 'unpaid',
+    receiptUrl: /^https:\/\/pay\.stripe\.com\/receipts\//.test(job.payment?.receiptUrl || '') ? job.payment.receiptUrl : '',
+    receiptEmail: safe(job.payment?.receiptEmail || '', 180), invoiceNumber: '', invoiceStatus: '', dueDate: '',
+    creditApplied: Math.max(0, amount(job.payment?.giftCreditApplied)), completionRequiresPayment: true,
+  };
 }
 
 function isoDate(value) {
@@ -284,8 +313,8 @@ function customerExperience(job, owner = true, { billing = false, now = '' } = {
 const portalJobKey = jobId => bytesToHex(sha256(new TextEncoder().encode(`egc-portal-job:${jobId}`))).slice(0, 16);
 
 function sanitize(job, session = {}, { today, reviewUrl, draftsRejected = false, billing = false, now = '' }) {
-  const finance = moneyState(job);
-  const estimate = estimateState(job, finance, today, draftsRejected);
+  const finance = moneyState(job), withheld = unsentQuoteDraft(job);
+  const estimate = withheld ? withheldEstimate(job) : estimateState(job, finance, today, draftsRejected);
   const state = portalStatus(job), review = reviewReady(job);
   const owner = !session.actorId, experience = customerExperience(job, owner, { billing, now }), actor = experience.collaborators.find(person => person.id === session.actorId);
   return {
@@ -299,7 +328,7 @@ function sanitize(job, session = {}, { today, reviewUrl, draftsRejected = false,
       arrivalWindow: safe(job.arrivalWindow || job.jobInstructions?.arrivalWindow || job.instructions?.arrivalWindow || '', 80),
     },
     estimate,
-    payment: {
+    payment: withheld ? withheldPayment(job, finance) : {
       total: finance.total, paid: finance.paid, balance: finance.balance, approvedChanges: billedChangeCents(job) / 100,
       dueNow: customerPaymentNeedsReview(job) ? 0 : customerDepositState(job, finance).dueNow,
       purpose: customerDepositState(job, finance).purpose,
@@ -465,13 +494,16 @@ async function handlePost({ request, env }, { clock, read }) {
   }
 
   if (body.action === 'create_payment') {
+    // An unsent Hub quote draft is never charged, whatever the job's stage:
+    // payable() refuses it on the job the checkout reads (409
+    // CUSTOMER_PORTAL_ESTIMATE_NOT_APPROVABLE) and expires an open checkout.
     const secret = stripeKey(env);
     if (!secret) return reply(501, { ok: false, error: 'Online payments are not configured' });
     const requestId = safe(body.request_id, 120);
     if (!requestId) return reply(400, { ok: false, error: 'Payment request ID required' });
     try {
       return reply(200, await createCustomerStripeCheckout(env, secret, result.session.jobId, new URL(request.url).origin, { now }));
-    } catch (error) { return reply(error.status || 502, { ok: false, error: error.message || 'Secure checkout could not be created', ...(error.reviewRecorded ? { code: error.code, reviewRecorded: true } : {}) }); }
+    } catch (error) { return reply(error.status || 502, { ok: false, ...(error.code === 'CUSTOMER_PORTAL_ESTIMATE_NOT_APPROVABLE' ? { code: error.code } : {}), error: error.message || 'Secure checkout could not be created', ...(error.reviewRecorded ? { code: error.code, reviewRecorded: true } : {}) }); }
   }
 
   if (body.action === 'verify_payment') {
@@ -635,6 +667,7 @@ async function handlePost({ request, env }, { clock, read }) {
   }
 
   if (body.action === 'apply_gift_credit') {
+    if (unsentQuoteDraft(result.job)) return reply(409, { ok: false, code: 'CUSTOMER_PORTAL_ESTIMATE_NOT_APPROVABLE', error: 'Your estimate is being updated. Credits can be applied once you review and approve it.' });
     if (customerPaymentNeedsReview(result.job)) return reply(409, { ok: false, error: 'A recorded payment needs team verification before applying another payment or credit' });
     const finance = moneyState(result.job);
     if (finance.balance < .01) return reply(409, { ok: false, error: 'This job is already paid in full' });

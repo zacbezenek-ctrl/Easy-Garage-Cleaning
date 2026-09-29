@@ -525,6 +525,12 @@ service cloud.firestore {
       allow read, write: if false;
     }
 
+    // Quote draft save/send receipts are written only in the same server
+    // commit as the quote (/api/quote-draft).
+    match /quoteDraftOperations/{documentId} {
+      allow read, write: if false;
+    }
+
     // Staff directory and employee vault migration receipts are written only by
     // server commits with the sealed profiles; browsers use /api/staff-directory.
     match /staffDirectoryOperations/{documentId} {

@@ -341,8 +341,10 @@ function auditState(job) {
   return Object.fromEntries(['date','time','endDate','endTime','status','pipelineStatus','assignedCrew','assignedTo','crewId','crewLead','vehicleId','jobInstructions','operationalScope','accessInstructions','customerInstructions','opsNotes','requiredEquipment','materials','crewNeeded','travelBufferMinutes','title','address','serviceType','name','memberIds','leadId','notes','employeeId','allDay','reason','recurrence','reminderDays','notify','shiftPickupEnabled','openShift','sourceTemplateJobId','recurrenceParentId','cancellationReason','arrivalWindowStart','arrivalWindowEnd','arrivalWindow','assignmentSegments','visitPurpose','reworkOfJobId','membershipId','bookingChannel','channelSelfReported','crmLinkReason','scheduleOccurrence','cancellationReasonCode','cancellationInitiatedBy','lateCancel','noShowReasonCode','estimatedDurationMin','durationOverride'].filter(key => job?.[key] !== undefined).map(key => [key,job[key]]));
 }
 
+// options.authorize replaces requireDispatcher only for server-built inputs
+// (walkthrough handoffs and quote drafts run by a verified quote author).
 export async function mutateDispatch(store, session, input, now = new Date().toISOString(), options = {}) {
-  requireDispatcher(session);
+  (options.authorize || requireDispatcher)(session);
   try { return await executeDispatch(store,session,input,now,options); }
   catch (error) {
     // Another copy of the same request may commit between our initial receipt
@@ -356,7 +358,7 @@ export async function mutateDispatch(store, session, input, now = new Date().toI
 }
 
 async function executeDispatch(store, session, input, now, options = {}) {
-  requireDispatcher(session);
+  (options.authorize || requireDispatcher)(session);
   if (!isObject(input) || !DISPATCH_ACTIONS.includes(input.action) || !/^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/i.test(input.requestId || '')) throw fail('dispatch_request_invalid','Use a supported dispatch action with a unique request ID.');
   onlyKeys(input,['action','requestId','customerId','kind','sourceWalkthroughId','sourceTemplateJobId','sourceJobId','jobId','id','expectedRevision','changes','cancellationReason','booking','reasonCode','initiatedBy']);
   if ('cancellationReason' in input && input.action !== 'schedule.cancel') throw fail('dispatch_cancel_patch_invalid','A cancellation reason can only be saved when cancelling a job.');

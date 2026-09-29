@@ -159,6 +159,12 @@ test('actual Firestore rules isolate canonical operations from crew SDK access',
       for(const db of [crew,manager]) for(const name of ['staffDirectoryOperations','employeeVaultMigrations']) await assertFails(db.collection(name).get());
       await assertFails(manager.doc('staffDirectoryOperations/forged').set({fingerprint:'0'.repeat(64)}));
     });
+    await t.test('quote draft save and send receipts are server-only even for business SDK sessions',async()=>{
+      await environment.withSecurityRulesDisabled(async context=>{await context.firestore().doc('quoteDraftOperations/receipt').set({fingerprint:'0'.repeat(64),actorId:'zacb',action:'send',jobId:'assigned',delivery:'automation'});});
+      for(const db of [publicDb,crew,lead,manager,partner]){const ref=db.doc('quoteDraftOperations/receipt');await assertFails(ref.get());await assertFails(ref.set({action:'save'}));await assertFails(ref.update({delivery:'dry_run'}));await assertFails(ref.delete());}
+      for(const db of [crew,manager,partner]) await assertFails(db.collection('quoteDraftOperations').get());
+      await assertFails(manager.doc('quoteDraftOperations/forged').set({fingerprint:'0'.repeat(64),actorId:'zacb',action:'send',jobId:'open'}));
+    });
     await t.test('garage catalog versions, pricing settings, settings versions and catalog receipts remain server-only even for business SDK sessions',async()=>{
       const paths=['catalogVersions/current','catalogVersions/2099-09-01.1','pricingSettings/current','catalogOperations/receipt','pricingSettingsVersions/synthetic'];
       await environment.withSecurityRulesDisabled(async context=>{const db=context.firestore();await db.doc(paths[0]).set({version:'2099-09-01.1'});await db.doc(paths[1]).set({catalogVersion:'2099-09-01.1',catalogJson:'{}'});await db.doc(paths[2]).set({settingsVersion:'synthetic',readyForCustomers:false});await db.doc(paths[3]).set({actorId:'zacb',action:'catalog.publish'});await db.doc(paths[4]).set({settingsVersion:'synthetic',readyForCustomers:false});});

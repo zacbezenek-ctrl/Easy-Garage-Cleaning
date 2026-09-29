@@ -10,6 +10,12 @@ const hash=async value=>[...new Uint8Array(await crypto.subtle.digest('SHA-256',
 const phone=value=>String(value||'').replace(/\D/g,'').replace(/^1(?=\d{10}$)/,'');
 const email=value=>String(value||'').trim().toLowerCase();
 const project=row=>Object.fromEntries(['id','revision',...fields].filter(key=>row[key]!==undefined).map(key=>[key,row[key]]));
+// A quote author who is not a dispatcher (P2-12) learns only which customer the
+// details resolved to, with masked contact hints: never another customer's
+// name, address, full phone, email or CRM link.
+const maskPhone=value=>{const digits=phone(value);return digits?'(•••) •••-'+digits.slice(-4):'';};
+const maskEmail=value=>{const [name,domain]=email(value).split('@');return name&&domain?name[0]+'•••@'+domain:'';};
+const masked=row=>({id:row.id,revision:row.revision,phone:maskPhone(row.phone),email:maskEmail(row.email),contactDetails:'masked'});
 function clean(customer){
   if(!plain(customer)||Object.keys(customer).some(key=>!fields.includes(key)))throw fail('invalid_customer','Only customer name, contact details and a selected CRM contact are accepted.');
   const result={};for(const key of fields){const value=customer[key]??'';if(typeof value!=='string'||value.length>({name:200,phone:40,email:254,address:1000,highlevelContactId:180}[key]))throw fail('invalid_customer','Customer details contain an invalid field.');result[key]=value.trim();}
@@ -46,11 +52,13 @@ export async function verifiedHighLevelContact(env,id,fetcher=fetch){
   return clean({name:contact.name||[contact.firstName,contact.lastName].filter(Boolean).join(' '),phone:contact.phone||'',email:contact.email||'',address:[contact.address1||contact.address,contact.city,contact.state,contact.postalCode].filter(Boolean).join(', '),highlevelContactId:id});
 }
 
-export async function resolveCustomer(store,session,input,{verifyContact,now=new Date().toISOString()}={}){
-  requireDispatcher(session);
+// authorize lets a verified quote author (P2-12) resolve the customer for a quote.
+// It may return {dispatcher:false} (requireQuoteAuthor): that caller gets masked().
+export async function resolveCustomer(store,session,input,{verifyContact,now=new Date().toISOString(),authorize=requireDispatcher}={}){
+  const access=authorize(session),view=access?.dispatcher===false?masked:project;
   if(!plain(input)||Object.keys(input).some(key=>!['requestId','customer'].includes(key))||!/^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/i.test(input.requestId||''))throw fail('invalid_request','Customer resolution needs a unique request ID and customer details.');
   const requested=clean(input.customer),fingerprint=await hash({actor:session.user,input}),receiptId=input.requestId.toLowerCase();
-  async function replay(){const receipt=await store.read('customerOperations',receiptId);if(!receipt)return null;if(receipt.fingerprint!==fingerprint)throw fail('idempotency_conflict','This request ID was already used for another customer. Keep the original request or refresh.',409);const customer=await store.read('customers',receipt.customerId);if(!customer||receipt.highlevelContactId&&customer.highlevelContactId!==receipt.highlevelContactId)throw fail('changed_since_operation','The customer link changed after it was saved. Ask a manager to review it.',409);return{ok:true,customer:project(customer),requestId:input.requestId,replayed:true,created:receipt.created,linked:receipt.linked};}
+  async function replay(){const receipt=await store.read('customerOperations',receiptId);if(!receipt)return null;if(receipt.fingerprint!==fingerprint)throw fail('idempotency_conflict','This request ID was already used for another customer. Keep the original request or refresh.',409);const customer=await store.read('customers',receipt.customerId);if(!customer||receipt.highlevelContactId&&customer.highlevelContactId!==receipt.highlevelContactId)throw fail('changed_since_operation','The customer link changed after it was saved. Ask a manager to review it.',409);return{ok:true,customer:view(customer),requestId:input.requestId,replayed:true,created:receipt.created,linked:receipt.linked};}
   const previous=await replay();if(previous)return previous;
   let wanted=requested;
   if(requested.highlevelContactId){if(typeof verifyContact!=='function')throw fail('provider_unavailable','CRM contact verification is unavailable.',503);wanted=clean(await verifyContact(requested.highlevelContactId));if(wanted.highlevelContactId!==requested.highlevelContactId)throw fail('provider_identity_mismatch','The selected CRM contact could not be verified.',409);}
@@ -80,5 +88,5 @@ export async function resolveCustomer(store,session,input,{verifyContact,now=new
   writes.push({collection:'customerOperations',id:receiptId,patch:{fingerprint,actorId:session.user,customerId:id,highlevelContactId:provider||current?.highlevelContactId||'',created,linked,createdAt:now,requestId:input.requestId}});
   try{await store.commit(writes);}catch(problem){const recovered=await replay();if(recovered)return recovered;throw problem;}
   const saved=await store.read('customers',id);if(!saved||provider&&saved.highlevelContactId!==provider)throw fail('outcome_unknown','The customer save could not be verified. Retry the unchanged request.',503);
-  return{ok:true,customer:project(saved),requestId:input.requestId,created,linked};
+  return{ok:true,customer:view(saved),requestId:input.requestId,created,linked};
 }

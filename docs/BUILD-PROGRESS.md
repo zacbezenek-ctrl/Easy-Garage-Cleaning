@@ -439,6 +439,10 @@ draft PR. The owner merges in phase order. See **Decisions** D-001.
   shared definitions: a staff pick wins, undecided stays null, "Not sure yet" is the unknown bucket. Dispatch create takes
   one-tap picks (pre-filled from GET /api/funnel-dimensions; the GHL lead-form suggestion is off by default), and bridge,
   adoption, portal, B2B and handoff writers set or refine them; booking and sale events carry them. Definitions 2026-09-28.6.
+- **QUOTE-DRAFT** (P2-07/P2-12) Unsigned quote drafts on an unscheduled job (/api/quote-draft), sent only after a person
+  previews and confirms; the send re-fires the existing egc-estimate-ready workflow via the approved-send core (messaging
+  off, dry run by default). Sales author quotes with EGC_STAFF_ROLE_PERMISSIONS; the portal withholds unsent revisions; a
+  cancelled visit's GHL sync adds no scheduled tags. Gaps: no gameplan tier editor or portal option chooser yet.
 
 ## In progress
 
@@ -541,6 +545,7 @@ one prefixed commit only after the full root suite (and the platform suite when 
 | FUN-36 | Server customer lifecycle actions: credits, gift-card sales, decision prompts, rebooking (flag off) | merged (999c6df) |
 | RECUR-CRON | Hourly recurring-plan horizon run over the bridge; per-visit plan prices (flag off) | merged (e68b03b) |
 | FUN-29 | Service line and funnel path on every project (definitions 2026-09-28.6) | merged (4c1d165) |
+| QUOTE-DRAFT | Unsigned quote drafts with a confirmed send (estimate-ready via approved send, off) and the quote-author role (flag off) | merged (0658534) |
 
 ## Next
 

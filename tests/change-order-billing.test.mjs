@@ -385,7 +385,10 @@ test('the portal page sends the displayed price with a request id it reuses unti
   const html = readFileSync(new URL('../customer-portal.html', import.meta.url), 'utf8');
   const stored = new Map(), posts = [], toasts = [], loads = [];
   let outcome = () => Promise.reject(Object.assign(new Error('Network connection lost'), { code: '' }));
+  // QUOTE-DRAFT (merge): a saved answer also drops the decision list's render key, so the next refresh rebuilds it.
+  const decisionList = { dataset: { key: 'rendered' } };
   const context = vm.createContext({
+    $: id => id === 'decision-list' ? decisionList : null,
     crypto: globalThis.crypto, money: value => `$${Number(value).toFixed(2)}`, portalData: { viewer: { owner: true, actorId: '', jobKey: 'synthetic-job-key' } },
     sessionStorage: { getItem: key => stored.get(key) ?? null, setItem: (key, value) => stored.set(key, String(value)), removeItem: key => stored.delete(key) },
     api: async body => { posts.push(structuredClone(body)); return outcome(); }, toast: (message, error = false) => toasts.push([message, error]), load: async quiet => { loads.push(quiet); },
@@ -397,6 +400,7 @@ test('the portal page sends the displayed price with a request id it reuses unti
   assert.deepEqual([button.disabled, button.textContent, toasts.at(-1)], [false, 'Approve +$150.00', ['Network connection lost', true]]);
   // The unconfirmed request is kept for this viewer on this job only.
   assert.deepEqual([...stored.keys()], ['egc.portal.decision.owner.synthetic-job-key.decision-freezer.approved']);
+  assert.equal(decisionList.dataset.key, 'rendered', 'an unconfirmed answer keeps what the customer typed');
   outcome = () => Promise.resolve({ ok: true, billed: true });
   await context.respondDecision(item, 'approved', control('Synthetic Customer'), control('Yes'), button);
   assert.equal(posts.length, 2);
@@ -404,6 +408,7 @@ test('the portal page sends the displayed price with a request id it reuses unti
   assert.equal(posts[1].request_id, posts[0].request_id, 'a retry repeats the same request');
   assert.deepEqual({ ...posts[1], request_id: 'x' }, { action: 'respond_decision', decision_id: 'decision-freezer', response: 'approved', responded_by: 'Synthetic Customer', note: 'Yes', request_id: 'x', price_delta_cents: 15000 });
   assert.equal(stored.size, 0, 'a saved answer forgets its request');
+  assert.equal('key' in decisionList.dataset, false, 'a saved answer rebuilds the decision list on the next load');
   assert.deepEqual(toasts.at(-1), ['Change approved. $150.00 was added to your balance.', false]);
   outcome = () => Promise.resolve({ ok: true, billed: false });
   await context.respondDecision({ id: 'decision-paint', priceDelta: 0 }, 'declined', control('Synthetic Customer'), control(''), button);

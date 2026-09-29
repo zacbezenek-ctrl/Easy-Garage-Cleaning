@@ -213,7 +213,7 @@ test('Hub rescheduling preserves the signed handoff and observed revision throug
 test('walkthrough conversion keeps canonical IDs and durable acceptance metadata',()=>{
   const handoff=read('functions/_lib/walkthrough-handoff.js'),client=read('crew/gameplan-handoff.js');
   for(const marker of ['sourceWalkthroughId','convertedJobId','conversionStatus','acceptedAt','acceptedBy','termsVersion','signatureCaptured','in_person_signature','syncIdempotencyKey'])assert.ok(handoff.includes(marker),marker+' is missing');
-  assert.match(handoff,/await mutateDispatch\(adapter, actor, dispatchInput, now\)/);
+  assert.match(handoff,/await mutateDispatch\(adapter, actor, dispatchInput, now, \{ authorize: session => requireQuoteAuthor\(session, env\) \}\)/);
   assert.match(handoff,/walkthroughHandoffs/);
   assert.doesNotMatch(handoff,/status: 'completed'|pipelineStatus: 'completed'/);
   assert.match(client,/highlevelOpportunityId/);
@@ -411,9 +411,11 @@ test('crew tools provide a job-aware employee home and one connected workflow',(
 
 test('walkthrough access stays limited to Zac Tyler and Alex while employees get pre-job and closeout',()=>{
   const auth=read('crew/hub-auth.js');
-  for(const marker of ['current.businessAccess === true','function canRunBusiness','href !== \'/crew/gameplan\' || canRunBusiness()'])assert.match(auth,new RegExp(marker.replace(/[.*+?^${}()|[\]\\]/g,'\\$&')));
+  // P2-12: the walkthrough also opens for a server-reported quotes.author (sales role, EGC_STAFF_ROLE_PERMISSIONS);
+  // with the flag off that set is exactly canRunBusiness (tests/quote-permissions.test.mjs).
+  for(const marker of ['current.businessAccess === true','function canRunBusiness','function canRunWalkthrough',"current.capabilities.includes('quotes.author')",'href !== \'/crew/gameplan\' || canRunWalkthrough()'])assert.match(auth,new RegExp(marker.replace(/[.*+?^${}()|[\]\\]/g,'\\$&')));
   assert.doesNotMatch(auth,/zacb|tylerg|alexk/i,'staff names live only in functions/_lib/business-users.js');
-  for(const marker of ['denyWalkthrough',"location.replace('/crew/?notice=walkthrough-restricted')",'!EGCHubAuth.canRunBusiness(user)'])assert.match(crew,new RegExp(marker.replace(/[.*+?^${}()|[\]\\]/g,'\\$&')));
+  for(const marker of ['denyWalkthrough',"location.replace('/crew/?notice=walkthrough-restricted')",'!EGCHubAuth.canRunWalkthrough(user)'])assert.match(crew,new RegExp(marker.replace(/[.*+?^${}()|[\]\\]/g,'\\$&')));
   assert.match(crewHome,/\(business\|\|job\.type!==\'walkthrough\'\)/);
   assert.match(crewHome,/document\.getElementById\('walkthrough-tool'\)\.hidden=!business/);
   assert.match(crewHome,/Pre-job → closeout/);
@@ -830,8 +832,9 @@ test('open-shift scheduling fields persist on the canonical job record',()=>{
   // with PRICE-SCRUB): the timesheet screen mounts the payroll week card and shows pay only where the server sent it;
   // (PAY-TIMESHEETS fourth check): the profile form's rate field only for a viewer who sets pay; (SYNC-QUEUE) page-load
   // sync retries skip visits the server schedule-sync queue owns; (PAY-TIMESHEETS after SYNC-QUEUE and P1-06) one new tag;
-  // (CHANGE-ORDERS) "Send decision" now appends to the decisions saved at that moment in a transaction.
-  assert.match(employee,/employee-suite\.js\?v=20260929change/);
+  // (CHANGE-ORDERS) "Send decision" now appends to the decisions saved at that moment in a transaction; (QUOTE-DRAFT) a
+  // signed handoff syncs from its saved snapshot only for its own sync.
+  assert.match(employee,/employee-suite\.js\?v=20260929quote/);
 });
 
 test('recurring visits request a server-side handoff clone instead of copying prior execution or payments',()=>{
