@@ -427,6 +427,10 @@ draft PR. The owner merges in phase order. See **Decisions** D-001.
   email, /api/customer-login sends the owner-approved portal_magic_link through the approved-send service and GHL messenger
   (5 requests per identifier and 3 sends per customer per rolling day), and /api/customer-login-verify redeems the single-use
   link into an account session and the owner's portal cookie; business-managed projects are excluded; staff revoke is audited.
+- **FUN-36** Server customer lifecycle actions behind `CUSTOMER_LIFECYCLE_API_ENABLED` (off): /api/customer-lifecycle issues
+  classed credits, records gift-card sales as cash plus liability (reference claims stop duplicates), prompts customer
+  decisions (change_order.proposed) and marks rebooking follow-ups, each with a receipt, audit entry and funnel event.
+  Managers are capped per customer over 30 days (advisory until FUN-27). Definitions 2026-09-28.5.
 
 ## In progress
 
@@ -526,6 +530,7 @@ one prefixed commit only after the full root suite (and the platform suite when 
 | CHANGE-ORDERS | Bill approved portal change orders as lines; manager void (flag off) | merged (ab396f7) |
 | FUN-03 | Field and portal funnel events; server-owned funnelSale | merged (74d1bfd) |
 | CLIENT-LOGIN | Customer magic-link sign-in and account sessions (flag off) | merged (d157286) |
+| FUN-36 | Server customer lifecycle actions: credits, gift-card sales, decision prompts, rebooking (flag off) | merged (999c6df) |
 
 ## Next
 

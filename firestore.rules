@@ -303,7 +303,9 @@ service cloud.firestore {
     // Canonical jobs include financial evidence, signatures and private notes.
     // Crew reads and execution writes go through assigned-only server DTOs;
     // otherwise direct SDK reads would bypass projection and completion gates.
-    // Managers retain the established administrative workflows.
+    // Managers retain the established administrative workflows. Until FUN-27
+    // denies SDK writes to giftWallet, customerDecisions, rebookingRequests and
+    // garageGuard, the FUN-36 credit limits bind only /api/customer-lifecycle.
     match /jobs/{documentId} {
       allow read: if businessUser() || ownAvailability(resource.data);
       // Crew mutations use the session-authorized APIs and shared capacity locks.
@@ -506,6 +508,20 @@ service cloud.firestore {
       allow read, write: if false;
     }
     match /moneyInvoiceNumbers/{documentId} {
+      allow read, write: if false;
+    }
+
+    // Customer credit, gift-card sale, decision and rebooking request receipts,
+    // the gift-card sales ledger (cash received for a card) and its payment
+    // reference claims are written only in the same server commit as the
+    // account or job change (/api/customer-lifecycle).
+    match /lifecycleOperations/{documentId} {
+      allow read, write: if false;
+    }
+    match /giftCardSales/{documentId} {
+      allow read, write: if false;
+    }
+    match /giftCardSaleRefs/{documentId} {
       allow read, write: if false;
     }
 

@@ -214,6 +214,8 @@ jobs:
         run: python tests/browser/test_portal_documents_ui.py
       - name: Hub money actions on the server money API, flag fallback and phone layout
         run: python3 -m unittest tests/browser/test_money_actions_ui.py
+      - name: Customer credits, gift-card sales, decision prompts and rebooking follow-ups on the server lifecycle API
+        run: python tests/browser/test_customer_lifecycle_ui.py
       - name: Portal change orders (approve, decline, billing and void) on a phone
         run: python tests/browser/test_portal_change_orders_ui.py
       - name: Client Login magic-link sign-in, sign-in retry and portal hand-off on a phone

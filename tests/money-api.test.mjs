@@ -195,9 +195,10 @@ test('integration-status surfaces the money API flag to signed-in Hub users only
   const env = { HUB_SESSION_SECRET: 'synthetic-money-flag-secret', HUB_AUTH_USERS_JSON: JSON.stringify({ ZacB: await hashHubCredential('ZacB', 'synthetic password') }) };
   const cookie = (await createHubSessionCookie(env, 'ZacB')).split(';')[0];
   const read = async extra => (await onRequestGet({ request: new Request('https://easygaragecleaning.com/api/integration-status', { headers: { Cookie: cookie } }), env: { ...env, ...extra } })).json();
-  assert.deepEqual((await read({})).flags, { moneyApi: false });
-  assert.deepEqual((await read({ MONEY_API_ENABLED: 'true' })).flags, { moneyApi: true });
-  assert.deepEqual((await read({ MONEY_API_ENABLED: 'yes' })).flags, { moneyApi: false });
+  // FUN-36 added the lifecycleApi flag (tests/customer-lifecycle-api.test.mjs); the money flag is independent of it.
+  assert.deepEqual((await read({})).flags, { moneyApi: false, lifecycleApi: false });
+  assert.deepEqual((await read({ MONEY_API_ENABLED: 'true' })).flags, { moneyApi: true, lifecycleApi: false });
+  assert.deepEqual((await read({ MONEY_API_ENABLED: 'yes' })).flags, { moneyApi: false, lifecycleApi: false });
   const anonymous = await onRequestGet({ request: new Request('https://easygaragecleaning.com/api/integration-status'), env: { ...env, MONEY_API_ENABLED: 'true' } });
   assert.equal(anonymous.status, 401); assert.equal((await anonymous.json()).flags, undefined);
 });

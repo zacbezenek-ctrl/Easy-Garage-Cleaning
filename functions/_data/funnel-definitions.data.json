@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "definitionsVersion": "2026-09-28.4",
+  "definitionsVersion": "2026-09-28.5",
   "about": "Canonical funnel definitions shared by the Employee Hub and egc-platform (@egc/funnel-definitions). Edit only this file, then run `node scripts/funnel-definitions.mjs --write`. docs/FUNNEL-METRICS.md is the living spec.",
   "timeZone": "America/Denver",
   "eligibility": {
@@ -246,6 +246,7 @@
     "deal.approval_superseded": { "group": "deal", "entity": ["projectId", "jobId"], "required": ["amountCents"], "optional": ["estimateRevision"] },
     "deal.lost": { "group": "deal", "entity": ["projectId", "jobId", "walkthroughId"], "required": ["reasonCode"], "optional": ["outcome"], "reasons": "lost" },
     "deal.reopened": { "group": "deal", "entity": ["projectId", "jobId", "walkthroughId"], "required": [], "optional": [] },
+    "change_order.proposed": { "group": "deal", "entity": ["projectId", "jobId"], "required": ["amountCents"], "optional": [] },
     "change_order.approved": { "group": "deal", "entity": ["projectId", "jobId"], "required": ["amountCents"], "optional": ["estimateRevision"] },
     "change_order.declined": { "group": "deal", "entity": ["projectId", "jobId"], "required": [], "optional": ["amountCents", "estimateRevision"] },
     "payment.received": { "group": "money", "entity": ["jobId", "projectId"], "required": ["amountCents", "kind"], "optional": ["method", "estimateRevision"] },

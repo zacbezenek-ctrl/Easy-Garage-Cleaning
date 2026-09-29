@@ -710,6 +710,37 @@ test('actual Firestore rules isolate canonical operations from crew SDK access',
       assert.deepEqual((({ghlSyncStatus,sealedPayload,contactId})=>[ghlSyncStatus,sealedPayload,contactId])(await store.read(WEB_LEAD_RECEIPTS,bigId)),['synced',null,'contact-emulator-big']);
       for(const db of [publicDb,crew,lead,manager,partner]){const ref=db.doc(WEB_LEAD_RECEIPTS+'/'+inquiryId);await assertFails(ref.get());await assertFails(ref.set({ghlSyncStatus:'synced'}));await assertFails(ref.update({attempts:0}));await assertFails(ref.delete());await assertFails(db.collection(WEB_LEAD_RECEIPTS).get());await assertFails(db.doc(WEB_LEAD_RECEIPTS+'/forged').set({ghlSyncStatus:'failed',retryAt:'2000-01-01T00:00:00.000Z'}));}
     });
+    await t.test('customer credits, gift-card sales and their receipts land in one fenced transaction through actual Firestore REST and stay server-only',async()=>{
+      const {lifecycleStorage,mutateLifecycle}=await import('../functions/_lib/customer-lifecycle.js');
+      const store=lifecycleStorage({},async(_env,url,options={})=>{
+        const target=new URL(url);target.protocol='http:';target.host=host;target.pathname=target.pathname.replace('/projects/egcw-1ec83/','/projects/'+projectId+'/');
+        return fetch(target,{...options,...(options.body ? {body:options.body.replaceAll('projects/egcw-1ec83/','projects/'+projectId+'/')} : {}),headers:{...options.headers,Authorization:'Bearer owner'}});
+      });
+      await environment.withSecurityRulesDisabled(async context=>{const db=context.firestore();await db.doc('jobs/fun36-root').set({type:'job',customerId:'fun36-customer',customer:'Synthetic Customer'});await db.doc('jobs/fun36-child').set({type:'job',customerId:'fun36-customer',customer:'Synthetic Customer',customerAccountOwnerJobId:'fun36-root'});});
+      const owner={user:'zacb',role:'owner',businessAccess:true},now='2099-09-10T12:00:00.000Z';
+      const sale=async(expectedRevision,requestId=crypto.randomUUID())=>mutateLifecycle(store,owner,{action:'gift_card.sell',requestId,jobId:'fun36-child',accountId:'fun36-root',expectedRevision,amountCents:10000,label:'EGC gift card',method:'cash',reference:'Cash receipt 7'},now);
+      const root=await store.read('jobs','fun36-root'),child=await store.read('jobs','fun36-child');
+      const sold=await sale(root.revision);
+      assert.equal(sold.context.account.availableCents,10000);
+      const id=sold.requestId.toLowerCase();
+      assert.equal((await store.read('giftCardSales',id)).amountCents,10000);
+      const refId=(await store.read('giftCardSales',id)).referenceKey;
+      assert.equal((await store.read('giftCardSaleRefs',refId)).saleId,id,'the payment reference claim is created in the same commit');
+      await assert.rejects(sale((await store.read('jobs','fun36-root')).revision),error=>error.code==='lifecycle_sale_duplicate'&&error.details.saleId===id,'the same payment under another request ID is refused');
+      assert.equal((await store.read('lifecycleOperations',id)).result.saleId,id);
+      assert.equal((await store.read('jobs','fun36-child')).revision,child.revision,'the fenced child job is verified, never written');
+      assert.equal((await store.read('jobs','fun36-root')).giftWallet.cards[0].creditClass,'gift_purchase');
+      assert.equal((await sale(root.revision,sold.requestId)).replayed,true,'the receipt replays the same request');
+      await assert.rejects(sale(root.revision),error=>error.code==='lifecycle_revision_conflict','a stale account revision is a 409 on real Firestore (400 FAILED_PRECONDITION)');
+      // A lineage hop that moves between the reads and the commit fails the transaction fence and writes nothing.
+      const latest=await store.read('jobs','fun36-root');let raced=false;
+      const racing={...store,commit:async writes=>{if(!raced){raced=true;await environment.withSecurityRulesDisabled(context=>context.firestore().doc('jobs/fun36-child').update({customer:'Synthetic Customer (edited)'}));}return store.commit(writes);}};
+      const requestId=crypto.randomUUID();
+      await assert.rejects(mutateLifecycle(racing,owner,{action:'credit.issue',requestId,jobId:'fun36-child',accountId:'fun36-root',expectedRevision:latest.revision,amountCents:500,creditClass:'referral',label:'Referral reward',reason:'Referred a neighbor'},now),error=>error.code==='lifecycle_revision_conflict');
+      assert.equal(raced,true); assert.equal(await store.read('lifecycleOperations',requestId.toLowerCase()),null); assert.equal((await store.read('jobs','fun36-root')).giftWallet.cards.length,1);
+      for(const db of [publicDb,crew,lead,manager,partner]) for(const path of ['lifecycleOperations/'+id,'giftCardSales/'+id,'giftCardSaleRefs/'+refId]){const ref=db.doc(path);await assertFails(ref.get());await assertFails(ref.set({amountCents:1}));await assertFails(ref.update({amountCents:1}));await assertFails(ref.delete());}
+      for(const db of [manager,partner]) for(const name of ['lifecycleOperations','giftCardSales','giftCardSaleRefs']) await assertFails(db.collection(name).get());
+    });
   } finally {await environment.cleanup();}
 });
 

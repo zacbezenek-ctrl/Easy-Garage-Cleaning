@@ -4,6 +4,7 @@ import { customerPortalConfigured } from '../_lib/customer-portal.js';
 import { employeeAccountsConfigured } from '../_lib/employee-accounts.js';
 import { gustoConfiguration } from '../_lib/gusto-client.js';
 import { moneyApiEnabled } from '../_lib/money-service.js';
+import { lifecycleApiEnabled } from '../_lib/customer-lifecycle.js';
 import { serverMessagingEnabled } from '../_lib/messaging-settings.js';
 import { serverScheduleSyncActive } from '../_lib/schedule-sync-queue.js';
 import { firebaseRevocations, firebaseRevocationStatus, reconcilesStaffRoster } from '../_lib/firebase-revocation.js';
@@ -49,8 +50,9 @@ export function integrationStatusHandlers({session=getHubSession,revocations=fir
     const profiles=reconcilesStaffRoster(request.url)?()=>listHubUserProfiles(env):null;
     Object.assign(status,await firebaseRevocationStatus(revocations(env),profiles,now().toISOString(),{defer}));
   }
-  // Browser feature flags (booleans only); money writes stay in the browser unless moneyApi is on.
-  const flags={moneyApi:moneyApiEnabled(env)};
+  // Browser feature flags (booleans only); money writes stay in the browser unless moneyApi is on,
+  // and customer credits, decisions and rebooking follow-ups unless lifecycleApi is on.
+  const flags={moneyApi:moneyApiEnabled(env),lifecycleApi:lifecycleApiEnabled(env)};
   return new Response(JSON.stringify({ok:true,status,flags}),{headers:{'Content-Type':'application/json','Cache-Control':'no-store'}});
   }};
 }
