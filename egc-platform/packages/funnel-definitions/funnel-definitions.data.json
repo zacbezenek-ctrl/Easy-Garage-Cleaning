@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "definitionsVersion": "2026-09-28.4",
+  "definitionsVersion": "2026-09-28.5",
   "about": "Canonical funnel definitions shared by the Employee Hub and egc-platform (@egc/funnel-definitions). Edit only this file, then run `node scripts/funnel-definitions.mjs --write`. docs/FUNNEL-METRICS.md is the living spec.",
   "timeZone": "America/Denver",
   "eligibility": {
