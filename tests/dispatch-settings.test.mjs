@@ -227,7 +227,7 @@ test('production storage reads dispatchSettings/current and a missing document m
 test('the settings editor is a registered owner-only Hub screen whose files ship with the Hub', () => {
   const owner = hubPage(), entry = owner.context.EGCHubScreens.get('dispatch_rules');
   assert.deepEqual({ group: entry.group, label: entry.label, capability: entry.capability, crewVisible: entry.crewVisible, module: entry.module, load: { ...entry.load } },
-    { group: 'RUN THE BUSINESS', label: 'Dispatch rules', capability: 'owner', crewVisible: false, module: 'EGCDispatchSettings', load: { js: 'employee-dispatch-settings.js', css: 'employee-dispatch-settings.css', v: '20260929rules3' } });
+    { group: 'RUN THE BUSINESS', label: 'Dispatch rules', capability: 'owner', crewVisible: false, module: 'EGCDispatchSettings', load: { js: 'employee-dispatch-settings.js', css: 'employee-dispatch-settings.css', v: '20260929rules4' } });
   for (const file of [entry.load.js, entry.load.css]) assert.ok(existsSync(new URL('../' + file, import.meta.url)), file);
   assert.equal(owner.api.canView('dispatch_rules'), true);
   assert.equal(hubPage({ user: 'TylerG', role: 'manager' }).api.canView('dispatch_rules'), false, 'managers dispatch but do not set the rules');

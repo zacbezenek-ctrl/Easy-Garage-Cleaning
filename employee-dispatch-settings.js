@@ -163,10 +163,13 @@ function render(keepMessage = false) {
     h('div', { class:'hub-actions' }, button('Reload', () => { if (S.dirty) show(note('warning', 'Save or discard your changes before reloading.')); else void load(); }, '', { disabled:S.loading || S.busy })));
   const status = h('div', { 'data-dr-status':'', 'aria-live':'polite' }, ...(keepMessage && S.message ? [S.message] : []));
   if (!keepMessage) S.message = null;
-  const body = [];
+  // Controls belong to the form drawn below, if any; a replaced form's inputs are never read again.
+  const body = []; S.controls = null;
   const saved = store().get();
   if (saved) body.push(note('warning', 'A save of the dispatch rules from this tab was not confirmed. Retry it unchanged before making another change.', button('Retry original save', () => send(true), 'primary'), button('Discard saved request', () => { store().discard(); render(); }, 'quiet')));
-  if (S.loading && !data) body.push(h('div', { class:'hub-screen-loading', 'aria-busy':'true' }, h('p', { class:'hub-sr-only', role:'status' }, 'Loading dispatch rules…'), h('span', { class:'hub-skeleton' }), h('span', { class:'hub-skeleton' }), h('span', { class:'hub-skeleton wide' })));
+  // While rules load (a reload, or "Discard draft and load latest") no form is shown: the older rules are never
+  // editable, so nothing typed can be replaced when the latest rules arrive and the form is drawn once from them.
+  if (S.loading) body.push(h('div', { class:'hub-screen-loading', 'aria-busy':'true' }, h('p', { class:'hub-sr-only', role:'status' }, 'Loading dispatch rules…'), h('span', { class:'hub-skeleton' }), h('span', { class:'hub-skeleton' }), h('span', { class:'hub-skeleton wide' })));
   else if (S.error && !data) body.push(note('error', kit().errorText(S.error, { dispatch_settings_forbidden:'Only the owner can view or change dispatch rules.' })+' Nothing is shown until the rules can be verified.', button('Retry', () => void load(), 'primary')));
   else if (data) {
     if (S.error) body.push(note('error', 'The latest rules could not be reloaded; the rules below are from the last successful load.', button('Retry', () => void load())));
@@ -174,7 +177,7 @@ function render(keepMessage = false) {
     body.push(form(data));
   }
   S.root.replaceChildren(head, status, ...body);
-  if (S.controls && data) syncControls();
+  if (S.controls) syncControls();
 }
 
 function mount(host, ctx = {}) {

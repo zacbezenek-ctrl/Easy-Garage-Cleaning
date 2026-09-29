@@ -53,7 +53,7 @@ class DispatchRulesBrowserTests(unittest.TestCase):
     def setUp(self):
         self.errors = []; self.posts = []; self.gets = 0; self.context = None
         self.settings = {'revision': None, 'source': 'defaults', 'values': dict(DEFAULTS), 'invalidFields': [], 'updatedAt': None, 'updatedBy': None}
-        self.lose_post = False; self.conflict_post = False; self.busy_post = False; self.busy_posts = []; self.fail_get = False; self.revision = 0
+        self.lose_post = False; self.conflict_post = False; self.busy_post = False; self.busy_posts = []; self.fail_get = False; self.hold_get = False; self.held = None; self.revision = 0
         self.openings = []; self.opening_queries = []; self.roster = ROSTER; self.jobs = [job()]
         self.warnings = [{'code': 'skill_missing', 'jobId': 'job-1', 'message': 'No assigned employee is qualified for Shelving install.', 'missingSkills': ['shelving'], 'blocking': True},
                          {'code': 'employee_daily_capacity', 'jobId': 'job-1', 'employeeId': 'crew.one', 'date': DAY, 'message': 'Crew One would have 4 jobs (9 hours) on 2026-09-22; the daily limit is 3 jobs.'},
@@ -84,6 +84,7 @@ class DispatchRulesBrowserTests(unittest.TestCase):
             if request.method == 'GET':
                 self.gets += 1
                 if self.fail_get: self.fail_get = False; send({'ok': False, 'code': 'dispatch_settings_unavailable', 'error': 'Dispatch settings could not be verified. Retry.'}, 503); return
+                if self.hold_get: self.hold_get = False; self.held = route; return
                 send(self.body()); return
             data = request.post_data_json
             if self.busy_post:
@@ -161,7 +162,14 @@ class DispatchRulesBrowserTests(unittest.TestCase):
         self.assertEqual(self.posts[-1]['expectedRevision'], 'r1')
         expect(page.get_by_label('Workday starts')).to_have_value('07:30')
         self.assertIsNone(page.evaluate('sessionStorage.getItem("egc.hub.pending.v1.dispatch_rules.zacb")'), 'a conflict is final; the request is not kept')
-        page.get_by_role('button', name='Discard draft and load latest').click()
+        # Nothing is editable until the latest rules arrive, so nothing typed meanwhile is replaced; the form is drawn once from them.
+        self.hold_get = True
+        with page.expect_request(lambda request: request.method == 'GET' and urlparse(request.url).path == '/api/dispatch-settings'):
+            page.get_by_role('button', name='Discard draft and load latest').click()
+        expect(page.get_by_role('status').filter(has_text='Loading dispatch rules')).to_have_count(1)
+        expect(page.get_by_label('Jobs per employee per day')).to_have_count(0)
+        self.assertEqual(self.gets, 2)
+        self.held.fulfill(status=200, content_type='application/json', body=json.dumps(self.body())); self.held = None
         expect(page.get_by_label('Workday starts')).to_have_value('08:00')
         # Client checks run before any request.
         page.get_by_label('Jobs per employee per day').fill('25')
