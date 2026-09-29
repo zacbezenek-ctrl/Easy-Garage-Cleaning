@@ -7,7 +7,7 @@ const reply=(status,body)=>new Response(JSON.stringify(body),{status,headers:{'C
 export function dispatchSearchHandlers({session=getHubSession,storage=dispatchStorage}={}) {
   return {async get({request,env}) {
     try{
-      const actor=await session(request,env);requireDispatcher(actor);
+      const actor=await session(request,env);requireDispatcher(actor,env);
       const params=new URL(request.url).searchParams;
       if(new Set(params.keys()).size!==[...params.keys()].length)return reply(400,{ok:false,code:'dispatch_search_invalid',error:'Each search filter can only be supplied once.'});
       return reply(200,await dispatchSearch(storage(env),actor,Object.fromEntries(params)));

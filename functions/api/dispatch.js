@@ -29,7 +29,7 @@ export function dispatchHandlers({ session = getHubSession, storage = dispatchSt
   return {
     async get({request,env}) {
       try {
-        const actor = await session(request,env); requireDispatcher(actor);
+        const actor = await session(request,env); requireDispatcher(actor,env);
         const params = Object.fromEntries(new URL(request.url).searchParams.entries());
         const store = storage(env), photos = crewRosterPhotoStore(store), overview = await dispatchOverview(photos.store,actor,params,now(),{travel:travel({env,store,now})});
         // Approved crew headshots (P4-07), read alongside the job scans; an unreadable profile store leaves the roster unchanged.
@@ -39,7 +39,7 @@ export function dispatchHandlers({ session = getHubSession, storage = dispatchSt
     async post({request,env}) {
       if (!sameOrigin(request)) return reply(403,{ok:false,code:'dispatch_origin_forbidden',error:'Open dispatch in the Employee Hub to save changes.'});
       try {
-        const actor = await session(request,env); requireDispatcher(actor);
+        const actor = await session(request,env); requireDispatcher(actor,env);
         if (request.headers.get('Content-Type')?.split(';')[0].trim().toLowerCase() !== 'application/json') return reply(415,{ok:false,code:'dispatch_json_required',error:'Dispatch changes must be submitted as JSON.'});
         if (Number(request.headers.get('Content-Length')) > 64000) return reply(413,{ok:false,code:'dispatch_request_too_large',error:'The dispatch request is too large.'});
         const raw = await request.text();

@@ -483,6 +483,10 @@ draft PR. The owner merges in phase order. See **Decisions** D-001.
   issue through money-service invoice.issue (one derived request id per job, replay-safe, MONEY_API_ENABLED), each
   issue adding the egc-invoice-issued tag through the MONEY-GHL-PARITY trigger. The Hub's invoice_send and
   payment_reminder sends are removed; HighLevel keeps the invoice and overdue messages.
+- **DISPATCH-RULES** Owner dispatch rules: dispatchSettings/current via owner-only /api/dispatch-settings (receipt, audit,
+  dispatchState guard) and dispatch-rules.js checks (skills, per-employee daily limits, working hours, crew size, drive
+  time) that warn until the owner turns on each block; jobs carry requiredSkills; openings and shift pickups honour them;
+  requireDispatcher uses can(dispatch.write). Gap: the bridge schedule.mutate path does not check owner rules yet.
 
 ## In progress
 
@@ -596,6 +600,7 @@ one prefixed commit only after the full root suite (and the platform suite when 
 | FUN-06 | iPad walkthrough recorder on the gameplan (EGC_WALKTHROUGH_VISIT_ENABLED) | merged (323c943) |
 | CREW-TIME | P1: clock-in-only location, status-driven job time and per-job pay rows (flags off) | merged (1507863) |
 | M5-SEND | Hub invoicing: batch issue plus the egc-invoice-issued tag (Hub invoice sends removed) | merged (023f80a) |
+| DISPATCH-RULES | Owner dispatch rules: skills, daily limits, working hours, crew size and drive time (warn until blocked) | merged (7013404) |
 
 ## Next
 

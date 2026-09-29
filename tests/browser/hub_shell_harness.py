@@ -173,6 +173,12 @@ class HubShell:
                   'warnings': [], 'coverage': {'complete': True, 'asOf': DAY + 'T18:00:00Z'}, 'startDate': start, 'endDate': end}); return
         if path == '/api/crew-availability' and request.method == 'GET':
             send({'ok': True, 'timeZone': 'America/Denver', 'employee': {'id': 'synthetic.crew', 'name': 'Synthetic Crew'}, 'startDate': DAY, 'endDate': '2026-10-22', 'availability': [], 'exceptions': [], 'coverage': {'complete': True}}); return
+        if path == '/api/dispatch-settings' and request.method == 'GET':
+            values = {'defaultTravelBufferMinutes': 20, 'defaultArrivalWindowMinutes': None, 'workdayStart': '08:00', 'workdayEnd': '17:00', 'blockCrewShort': False, 'blockSkillMissing': True, 'blockTravelShort': False,
+                      'blockOverCapacity': False, 'blockOutsideHours': False, 'maxJobsPerEmployeePerDay': 4, 'maxHoursPerEmployeePerDay': 9.5}
+            send({'ok': True, 'authority': 'employee_hub', 'settings': {'revision': 'settings-rev-1', 'source': 'firestore', 'values': values, 'invalidFields': [], 'updatedAt': DAY + 'T15:00:00Z', 'updatedBy': 'zacb'},
+                  'defaults': values, 'skills': [{'id': 'shelving', 'label': 'Shelving install'}], 'viewer': {'id': 'zacb'},
+                  'environment': {'arrival': {'enabled': False, 'minutes': 60}, 'envArrivalMinutes': 60, 'travelEstimates': 'off', 'envBlockTravelShort': False, 'staffDirectory': False}}); return
         if path == '/api/staff-directory' and request.method == 'GET': send(copy.deepcopy(STAFF)); return
         if path == '/api/operations' and request.method == 'GET':
             send({'ok': True, 'enabled': False, 'actor': {'id': 'zacb', 'role': 'owner', 'kind': 'human'}, 'owners': [{'id': 'zacb', 'name': 'Synthetic Owner', 'role': 'owner'}]}); return

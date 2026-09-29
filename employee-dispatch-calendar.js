@@ -61,10 +61,12 @@ function laneModel(data, jobs, date, {mode='employee', employee=''}={}) {
   const lane = (id, kind, label, extra={}) => { if (!lanes.has(id)) lanes.set(id,{id, kind, label, items:[], shades:[], gaps:[], memberIds:[], ...extra}); return lanes.get(id); };
   // Only active crews and roster employees take new work.
   const crewLane = crew => lane('crew:'+crew.id, 'crew', crew.name+(crew.status==='active'?'':' · inactive'), {crew, memberIds:crew.memberIds||[], drop:crew.status==='active'});
-  const employeeLane = id => { const listed=(data?.roster||[]).some(person => person.id===id); return lane('employee:'+id, 'employee', listed ? nameOf(data,id) : id+' · not on the active roster', {employeeId:id, memberIds:[id], drop:listed}); };
+  // Owner decision F19: an office-only owner or manager (fieldWork:false) gets a lane only for work
+  // already assigned to them (or when the board is filtered to them) and never takes a drop.
+  const employeeLane = id => { const found=(data?.roster||[]).find(person => person.id===id); return lane('employee:'+id, 'employee', found ? nameOf(data,id) : id+' · not on the active roster', {employeeId:id, memberIds:[id], drop:Boolean(found) && found.fieldWork!==false}); };
   lane('unassigned', 'unassigned', 'Unassigned');
   if (mode==='crew') for (const crew of crews.filter(row => row.status==='active')) crewLane(crew);
-  else for (const person of data?.roster||[]) if (!employee || person.id===employee) employeeLane(person.id);
+  else for (const person of data?.roster||[]) if (employee ? person.id===employee : person.fieldWork!==false) employeeLane(person.id);
   const company=[];
   for (const job of jobs) for (const row of rowsOf(job)) {
     const span=dayWindow(row,date); if (!span) continue;
@@ -371,7 +373,7 @@ function openSheet(item) {
   if (blocked) model.fields.append(k.notice(blocked,'error'));
   else {
     const people=h('div',{class:'dc-options dp-wide',role:'group','aria-label':'Employees'},h('h3',{class:'dc-subhead'},from?'Replace '+nameOf(S.data,from)+' with':row.assignedCrew.length?'Assign one employee instead':'Assign to'));
-    for (const person of S.data.roster||[]) {
+    for (const person of (S.data.roster||[]).filter(person => person.fieldWork!==false || row.assignedCrew.includes(person.id))) {
       const assigned=row.assignedCrew.includes(person.id), list=assigned?[]:hints(S.data,row,[person.id]);
       people.append(h('button',{type:'button', class:'dc-option'+(list.length?' dc-option-warn':''), disabled:assigned, onclick:()=>send({id:'employee:'+person.id,kind:'employee',employeeId:person.id},person.name)},
         h('strong',{},person.name),h('small',{},assigned?'Already on this job':list.length?list.map(hint => hint.message).join(' · '):'Free on the loaded schedule')));

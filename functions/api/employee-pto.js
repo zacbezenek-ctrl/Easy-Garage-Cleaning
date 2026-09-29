@@ -1,6 +1,7 @@
 import { getHubSession } from '../_lib/hub-session.js';
 import { dispatchStorage } from '../_lib/dispatch-storage.js';
 import { mutatePto, ptoOverview, ptoVault } from '../_lib/employee-pto.js';
+import { canDispatch } from '../_lib/dispatch-permissions.js';
 
 const LIMIT = 8192;
 const reply = (status, body) => Response.json(body,{status,headers:{'Cache-Control':'no-store','X-Content-Type-Options':'nosniff'}});
@@ -25,7 +26,8 @@ export function employeePtoHandlers({session=getHubSession,storage=dispatchStora
       try {
         const actor = await session(request,env);
         if (!actor?.user) return reply(401,{ok:false,code:'pto_sign_in_required',error:'Sign in to view requests.'});
-        return reply(200,await ptoOverview(storage(env),vault(env),actor,query(request.url),now()));
+        // Staff-role permissions (env) decide whether this viewer sees everyone's requests, as for approvals.
+        return reply(200,await ptoOverview(storage(env),vault(env),actor,query(request.url),now(),{env}));
       } catch(error) { return errorResponse(error); }
     },
     async post({request,env}) {
@@ -33,6 +35,8 @@ export function employeePtoHandlers({session=getHubSession,storage=dispatchStora
       try {
         const actor = await session(request,env);
         if (!actor?.user) return reply(401,{ok:false,code:'pto_sign_in_required',error:'Sign in to manage requests.'});
+        // Staff-role permissions (env) decide whether this viewer may approve, deny or end requests.
+        canDispatch(actor,env);
         if (request.headers.get('Content-Type')?.split(';')[0].trim().toLowerCase() !== 'application/json') return reply(415,{ok:false,code:'pto_json_required',error:'Request changes must use JSON.'});
         if (Number(request.headers.get('Content-Length')) > LIMIT) return reply(413,{ok:false,code:'pto_request_too_large',error:'The request is too large.'});
         const raw = await request.text();

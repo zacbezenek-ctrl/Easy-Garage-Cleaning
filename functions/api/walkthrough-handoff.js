@@ -5,8 +5,18 @@ import { prepareHandoff, saveWalkthroughHandoff } from '../_lib/walkthrough-hand
 import { expireStaleCheckout } from '../_lib/quote-draft.js';
 import { stripeRequest, stripeSecretKey } from '../_lib/customer-payments.js';
 const reply = (status, body) => Response.json(body, {status, headers:{'Cache-Control':'no-store','X-Content-Type-Options':'nosniff'}});
+// A refused save names each owner rule (or overlapping work) that stopped it. Only
+// each conflict's code and message leave the server, and no other details are
+// passed on. For a quote author who is not a dispatcher, saveWalkthroughHandoff
+// has already reduced these rows (and every warning of a saved or replayed
+// handoff) to name-free text (authorRuleRows): no employee name or id, no other
+// job id and no other job's workload.
+function conflictDetails(error) {
+  const rows = Array.isArray(error?.details?.conflicts) ? error.details.conflicts : null;
+  return rows ? {details:{conflicts:rows.filter(row => typeof row?.message === 'string' && row.message.trim()).slice(0, 10).map(row => ({code:typeof row.code === 'string' ? row.code : '', message:row.message.trim().slice(0, 600)}))}} : {};
+}
 function failure(error) {
-  if (/^(handoff_|dispatch_|quote_)/.test(error?.code || '')) return reply(error.status || 503, {ok:false, code:error.code, error:error.message});
+  if (/^(handoff_|dispatch_|quote_)/.test(error?.code || '')) return reply(error.status || 503, {ok:false, code:error.code, error:error.message, ...conflictDetails(error)});
   return reply(503, {ok:false,code:'handoff_unavailable',error:'The handoff could not be verified. Keep the saved request and retry; do not create another job.'});
 }
 const stripeFor=env=>{const secret=stripeSecretKey(env);return secret?(path,options)=>stripeRequest(secret,path,options):null;};

@@ -170,6 +170,8 @@ jobs:
         run: python tests/browser/test_dispatch_ui.py
       - name: Dispatch month grid, time lanes, drag and phone tap-to-assign
         run: python tests/browser/test_dispatch_calendar_ui.py
+      - name: Owner dispatch rules screen, rule checks and refused-move reasons on a phone
+        run: python tests/browser/test_dispatch_rules_ui.py
       - name: Recurring plans dialog, mobile layout and save recovery
         run: python tests/browser/test_recurring_ui.py
       - name: Crew availability and private draft recovery

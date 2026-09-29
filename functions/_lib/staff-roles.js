@@ -27,10 +27,25 @@ export const staffRolePermissionsEnabled = env => env?.EGC_STAFF_ROLE_PERMISSION
 
 // Unknown, duplicate and non-string entries are dropped; 'owner' is only kept for
 // the configured owner's signed profile. Returns null when nothing is stored.
+// These are the stored roles as displayed (roster, staff directory); can() acts
+// on capabilityRoles below.
 export function sanitizeStaffRoles(value, session = null) {
   if (!Array.isArray(value)) return null;
   const roles = [...new Set(value.filter(role => typeof role === 'string' && known.has(role)))];
   return STAFF_ROLES.filter(role => roles.includes(role) && (role !== 'owner' || isHubOwner(session)));
+}
+
+// The roles can() acts on (only with EGC_STAFF_ROLE_PERMISSIONS=true). The
+// configured owner's signed profile is never left without a management role
+// there: stored roles naming neither owner nor manager (['crew_lead'] for an
+// owner who also works in the field, F19, or []) act as if they also held
+// 'owner', so they cannot lock the owner out. An explicit ['manager'] is honored
+// (the owner then acts with manager capabilities only). The stored roles, and
+// what the roster and staff directory show, stay as sanitizeStaffRoles returns.
+function capabilityRoles(session) {
+  const roles = sanitizeStaffRoles(session?.staffRoles, session);
+  if (!roles || !isHubOwner(session) || roles.includes('owner') || roles.includes('manager')) return roles;
+  return STAFF_ROLES.filter(role => role === 'owner' || roles.includes(role));
 }
 
 // Roles derived from today's account data, for display and the migration backfill.
@@ -52,7 +67,7 @@ function legacyCan(session, capability) {
 }
 
 export function capabilityMode(session, env) {
-  return staffRolePermissionsEnabled(env) && signedProfile(session) && sanitizeStaffRoles(session.staffRoles, session) ? 'staff_roles' : 'legacy';
+  return staffRolePermissionsEnabled(env) && signedProfile(session) && capabilityRoles(session) ? 'staff_roles' : 'legacy';
 }
 
 export function can(session, capability, env = {}) {
@@ -60,7 +75,7 @@ export function can(session, capability, env = {}) {
   if (!signedProfile(session)) return false;
   if (capabilityMode(session, env) === 'legacy') return legacyCan(session, capability);
   if (ownerOnly.has(capability) && !isHubOwner(session)) return false;
-  return sanitizeStaffRoles(session.staffRoles, session).some(role => ROLE_CAPABILITIES[role].includes(capability));
+  return capabilityRoles(session).some(role => ROLE_CAPABILITIES[role].includes(capability));
 }
 
 export function staffCapabilities(session, env = {}) {

@@ -28,11 +28,22 @@ export const JOB_FIELDS = Object.freeze(['type','recordType','date','time','endD
   // Server-side only (dispatch-duration.js). The quote lines themselves are
   // large and carry money, so no shared scan loads them: quoteLines() reads
   // them for the sold jobs a dispatch list projects.
-  'estimate.status','durationOverride.minutes','durationOverride.reason','durationOverride.crewSize','durationOverride.source','logistics.crew_size']);
+  'estimate.status','durationOverride.minutes','durationOverride.reason','durationOverride.crewSize','durationOverride.source','logistics.crew_size',
+  // Required skills are read by the dispatch rules (dispatch-rules.js).
+  'requiredSkills']);
+
+/** Owner decision F19: the owner and managers are office staff and join assignment
+ * lists only when they take field work, recorded as stored staffRoles that also
+ * include crew or crew_lead (staffRoles in the Hub user configuration for configured
+ * users, or the Team screen's roles for employee accounts). */
+export function officeOnly(role, roles) {
+  return ['owner', 'manager'].includes(role) && !(Array.isArray(roles) && roles.some(value => value === 'crew' || value === 'crew_lead'));
+}
 
 // Roles come from stored staff roles (configuration or the encrypted account), else the
 // configured role or namedStaffRole(). With EGC_STAFF_DIRECTORY_ENABLED the rows also
-// carry staffRoles, skills and weekly availability from the encrypted profiles.
+// carry staffRoles, skills and weekly availability from the encrypted profiles, and an
+// office-only owner or manager (officeOnly) carries fieldWork:false; other rows omit it.
 export async function dispatchRoster(env) {
   const roles = [], role = (stored, fallback) => stored ? primaryStaffRole(stored) : fallback;
   const profiles = listHubUserProfiles(env).map(p => {
@@ -59,7 +70,8 @@ export async function dispatchRoster(env) {
     catch { throw failure('dispatch_storage_unavailable', 'Staff skills and availability could not be verified. Retry before scheduling.'); }
     profiles.forEach((profile, index) => {
       const ids = [profile.id, ...legacyPersonKeys(profile.id)], saved = ids.map(id => stored.find(row => row?.id === id && String(row.username || '').trim().toLowerCase() === profile.id)).find(Boolean) || {};
-      Object.assign(profile, { staffRoles: roles[index], skills: storedSkills(saved.skills).map(({ id, level }) => ({ id, level })), weeklyAvailability: storedWeeklyAvailability(saved.weeklyAvailability) });
+      Object.assign(profile, { staffRoles: roles[index], skills: storedSkills(saved.skills).map(({ id, level }) => ({ id, level })), weeklyAvailability: storedWeeklyAvailability(saved.weeklyAvailability),
+        ...(officeOnly(profile.role, roles[index]) ? { fieldWork: false } : {}) });
     });
   }
   return profiles.sort((a, b) => a.name.localeCompare(b.name));

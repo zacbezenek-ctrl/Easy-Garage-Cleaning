@@ -120,6 +120,53 @@ test('a conflicting date becomes an unscheduled occurrence flagged recurrenceCon
   assert.equal((await extendHorizon(f.store, manager, { now:NOW })).plans[0].created.length, 0); assert.equal(f.jobs().length, before);
 });
 
+test('a visit an owner dispatch rule refuses is saved unscheduled with the rule named on the job, the plan and the run, not as other work', async () => {
+  const f = fixture(), { result } = await f.create({ assignment:{ assignedCrew:['crew1'], crewNeeded:2 } });
+  // The owner blocks short-staffed saves after the plan was set up.
+  f.rows.set('dispatchSettings/current', { id:'current', revision:'settings1', blockCrewShort:true });
+  const reason = 'Requires 2 crew members; 1 assigned.';
+  const extended = await f.plan({ action:'extend', planId:result.plan.id, expectedRevision:result.plan.revision, limit:1 });
+  assert.deepEqual(extended.conflicts.map(row => [row.date, row.code, row.rules, row.reasons]), [['2026-09-30', 'dispatch_conflict', ['crew_size_short'], [reason]]]);
+  assert.match(extended.conflicts[0].message, /Requires 2 crew members; 1 assigned\.$/);
+  const job = f.job(extended.conflicts[0].jobId);
+  assert.deepEqual([job.status, job.date, job.recurrenceConflict.rules, job.recurrenceConflict.reasons], ['unscheduled', '', ['crew_size_short'], [reason]]);
+  assert.deepEqual(job.recurrenceConflict.conflicts.map(row => [row.code, row.message]), [['crew_size_short', reason]], 'each conflict keeps its own message');
+  assert.match(job.opsNotes, /could not be scheduled: .*Requires 2 crew members; 1 assigned\./);
+  const saved = f.rows.get('recurringPlans/' + result.plan.id);
+  assert.deepEqual(saved.occurrences['2026-09-30'].rules, ['crew_size_short']);
+  assert.equal(saved.warnings.at(-1).message, `The 2026-09-30 visit breaks the owner's dispatch rules and was saved unscheduled: ${reason} Change the plan's crew or choose a new time in Dispatch.`);
+  assert.deepEqual((await f.overview())[0].attention.map(row => [row.date, row.code, row.rules]), [['2026-09-30', 'dispatch_conflict', ['crew_size_short']]]);
+  // The scheduled horizon run reports the same rule.
+  const run = await extendHorizon(f.store, manager, { now:NOW });
+  assert.ok(run.plans[0].conflicts.length > 0 && run.plans[0].conflicts.every(row => row.rules?.[0] === 'crew_size_short' && row.reasons?.[0] === reason));
+  // Overlapping work is still reported as a plain conflict, without rules.
+  const g = fixture(), plain = await g.create();
+  await g.book({ date:'2026-09-30', time:'09:00', endTime:'11:00' }, { customerId:'c2' });
+  const overlap = await g.plan({ action:'extend', planId:plain.result.plan.id, expectedRevision:plain.result.plan.revision, limit:1 });
+  assert.deepEqual(overlap.conflicts.map(row => [row.code, 'rules' in row]), [['dispatch_conflict', false]]);
+  assert.equal(g.rows.get('recurringPlans/' + plain.result.plan.id).warnings.at(-1).message, 'The 2026-09-30 visit conflicts with other work and was saved unscheduled. Choose a new time in Dispatch.');
+});
+
+test('a visit refused for an owner rule and for overlapping work names both on the job, the plan, the run and the attention list', async () => {
+  const f = fixture(), { result } = await f.create({ assignment:{ assignedCrew:['crew1'], crewNeeded:2 } });
+  // crew1 already has other work that morning, and the owner then blocks short-staffed saves.
+  await f.book({ date:'2026-09-30', time:'09:00', endTime:'11:00' }, { customerId:'c2' });
+  f.rows.set('dispatchSettings/current', { id:'current', revision:'settings1', blockCrewShort:true });
+  const reason = 'Requires 2 crew members; 1 assigned.';
+  const extended = await f.plan({ action:'extend', planId:result.plan.id, expectedRevision:result.plan.revision, limit:1 });
+  assert.deepEqual(extended.conflicts.map(row => [row.date, row.rules, row.reasons, row.overlaps]), [['2026-09-30', ['crew_size_short'], [reason], true]]);
+  const job = f.job(extended.conflicts[0].jobId);
+  assert.deepEqual([job.recurrenceConflict.rules, job.recurrenceConflict.overlaps, job.recurrenceConflict.conflicts.map(row => row.code).sort()], [['crew_size_short'], true, ['crew_size_short', 'schedule_overlap']]);
+  const saved = f.rows.get('recurringPlans/' + result.plan.id);
+  assert.deepEqual([saved.occurrences['2026-09-30'].rules, saved.occurrences['2026-09-30'].overlaps], [['crew_size_short'], true]);
+  assert.equal(saved.warnings.at(-1).message, `The 2026-09-30 visit breaks the owner's dispatch rules and overlaps other work and was saved unscheduled: ${reason} Choose a new time in Dispatch or change the plan's crew.`);
+  assert.deepEqual((await f.overview())[0].attention.map(row => [row.date, row.rules, row.overlaps]), [['2026-09-30', ['crew_size_short'], true]]);
+  // Later visits break only the rule: they are not said to overlap anything.
+  const run = await extendHorizon(f.store, manager, { now:NOW });
+  assert.ok(run.plans[0].conflicts.length > 0 && run.plans[0].conflicts.every(row => row.rules?.[0] === 'crew_size_short' && !('overlaps' in row)));
+  assert.match(f.rows.get('recurringPlans/' + result.plan.id).warnings.at(-1).message, /breaks the owner's dispatch rules and was saved unscheduled: .* Change the plan's crew or choose a new time in Dispatch\.$/);
+});
+
 test('invalid daylight-saving wall times are saved unscheduled for review instead of guessed', async () => {
   const f = fixture(), start = '2027-03-01T12:00:00.000Z';
   const template = (await mutateDispatch(f.store, manager, { action:'schedule.create', requestId:randomUUID(), customerId:'c1', kind:'job', changes:{ date:'2027-03-07', time:'02:30', endTime:'04:00', assignedCrew:['crew1'] } }, start)).job;

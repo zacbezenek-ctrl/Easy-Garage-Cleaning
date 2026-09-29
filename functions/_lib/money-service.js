@@ -81,8 +81,8 @@ export const moneyJob = job => Boolean(job) && safeId(job.id) && hubRecordEligib
  */
 export const paymentNeedsVerification = job => customerPaymentNeedsReview(job) || job?.payment?.verified !== true && Array.isArray(job?.payment?.stripeSessions) && job.payment.stripeSessions.length > 0;
 
-export function requireMoneyManager(session) {
-  try { requireDispatcher(session); }
+export function requireMoneyManager(session, env) {
+  try { requireDispatcher(session, env); }
   catch (error) {
     if (error.status === 401) throw fail('sign_in_required', 'Sign in to the Employee Hub to manage job money.', 401);
     throw fail('forbidden', 'Only an operations manager or owner can manage job money.', 403);

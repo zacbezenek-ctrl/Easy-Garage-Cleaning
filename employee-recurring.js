@@ -7,6 +7,13 @@ const FREQUENCIES = [['weekly','Every week'],['biweekly','Every 2 weeks'],['ever
 const HORIZONS = [[28,'4 weeks ahead'],[56,'8 weeks ahead'],[84,'12 weeks ahead'],[182,'6 months ahead'],[364,'1 year ahead']];
 const STATES = { scheduled:'Scheduled', conflict:'Needs a new time', template:'Original visit', existing:'Existing booking', not_generated:'Not on schedule yet', updating:'Moving to the new plan', cancelled:'Cancelled in Dispatch', missing:'Removed from Dispatch', moved:'Moved', rescheduled:'Rescheduled', completed:'Completed', off_pattern:'No longer in this plan', covered:'Booked separately' };
 const KEPT = { started:'it has started', changed_in_dispatch:'it was changed in Dispatch', crew_changed_in_dispatch:'its crew was changed in Dispatch', time_passed:'the new time has passed', visit_closed:'it was cancelled or completed', slot_taken:'the customer already has another booking at the new time' };
+// The owner's dispatch rules (Dispatch rules screen names) a refused visit can break; the rest is other work.
+const RULES = { crew_size_short:'Crew size', skill_missing:'Required skills', outside_working_hours:'Working hours', employee_daily_capacity:'Daily limits', travel_buffer_short:'Drive time' };
+const ruled = row => Array.isArray(row?.rules) && row.rules.length > 0;
+const ruleNames = rules => rules.map(code => RULES[code] || String(code).replaceAll('_', ' ')).join(', ');
+const ruleText = row => 'the owner\'s dispatch rule' + (row.rules.length === 1 ? '' : 's') + ' (' + ruleNames(row.rules) + ')';
+// A refusal that broke a rule and also overlaps other work (or time off) says both: a new crew alone may not clear it.
+const overlapText = (row, verb) => row.overlaps === true ? ' and ' + verb + ' other work' : '';
 const STOPPED = { create:'Visits stopped being added: ', apply:'Booked visits stopped following the plan: ', price:'Visit prices stopped being saved: ' };
 const ORDINAL = ['','1st','2nd','3rd','4th'], DAYS = ['Sunday','Monday','Tuesday','Wednesday','Thursday','Friday','Saturday'];
 function h(tag, props, ...children) {
@@ -45,6 +52,7 @@ function attentionText(row) {
   if (row.state === 'moved') return day + ' was taken off the schedule in Dispatch. Choose a new time there.';
   if (row.state === 'off_pattern') return day + ' is still on the schedule but no longer matches this plan. Cancel it in Dispatch unless the customer should keep it.';
   if (row.code === 'recurring_slot_taken') return day + ' is unscheduled in Dispatch because a cancelled or moved booking still holds that time. Restore that booking or choose a new time there.';
+  if (ruled(row)) return day + ' broke ' + ruleText(row) + overlapText(row, 'overlaps') + ' and is unscheduled in Dispatch. ' + (row.overlaps === true ? 'Choose a new time there or change the plan\'s crew.' : 'Change the plan\'s crew or choose a new time there.');
   return day + ' conflicted with other work and is unscheduled in Dispatch. Choose a new time there.';
 }
 function errorText(error) {
@@ -112,10 +120,11 @@ async function extendAll(plan, label) {
     // A round may only move, keep or re-price booked visits; stop once done, blocked, or a round changed nothing.
     if (complete || blocked || !(result.created.length || moved || settled.length || (result.priced || []).length || result.retryable)) break;
   }
-  const held = conflicts.filter(row => row.code === 'recurring_slot_taken').length, other = conflicts.length - held, count = (n, verb) => n + ' visit' + (n === 1 ? ' ' : 's ') + verb, unfinished = !complete && !blocked;
+  const held = conflicts.filter(row => row.code === 'recurring_slot_taken').length, broke = conflicts.filter(row => row.code !== 'recurring_slot_taken' && ruled(row)), other = conflicts.length - held - broke.length, count = (n, verb) => n + ' visit' + (n === 1 ? ' ' : 's ') + verb, unfinished = !complete && !blocked;
   const waiting = unfinished ? ((current.occurrences || []).some(row => row.state === 'updating') ? 'Some booked visits are still being updated to match the plan.' : 'Some visits still need to be added or priced.') + ' Press Add upcoming visits to finish.' : '';
-  const keptText = kept.length ? kept.length + ' booked visit' + (kept.length === 1 ? '' : 's') + ' kept ' + (kept.length === 1 ? 'its' : 'their') + ' current time: ' + kept.map(row => dateText(row.date) + ' (' + (KEPT[row.reason] || 'Dispatch refused the change') + ')').join(', ') + '.' : '';
+  const keptText = kept.length ? kept.length + ' booked visit' + (kept.length === 1 ? '' : 's') + ' kept ' + (kept.length === 1 ? 'its' : 'their') + ' current time: ' + kept.map(row => dateText(row.date) + ' (' + (KEPT[row.reason] || (ruled(row) ? 'it would break ' + ruleText(row) + overlapText(row, 'overlap') : 'Dispatch refused the change')) + ')').join(', ') + '.' : '';
   S.notice = [label, updated ? updated + ' booked visit' + (updated === 1 ? '' : 's') + ' moved to match the plan.' : '', keptText, created ? created + ' visit' + (created === 1 ? '' : 's') + ' added to the schedule.' : unfinished ? '' : 'No new visits were needed inside the scheduling window.', other ? count(other, 'conflicted with other work and ' + (other === 1 ? 'was' : 'were')) + ' saved unscheduled — choose new times in Dispatch.' : '',
+    broke.length ? count(broke.length, (broke.length === 1 ? 'was' : 'were')) + ' saved unscheduled because ' + (broke.length === 1 ? 'it breaks' : 'they break') + ' the owner\'s dispatch rules: ' + broke.map(row => dateText(row.date) + ' — ' + ruleNames(row.rules) + (row.overlaps === true ? ', and it overlaps other work' : '') + (Array.isArray(row.reasons) && row.reasons.length ? ': ' + row.reasons.join(' ') : '')).join('; ') + ' Change the plan\'s crew or choose new times in Dispatch.' : '',
     held ? count(held, (held === 1 ? 'was' : 'were')) + ' saved unscheduled because a cancelled or moved booking still holds the time — restore it or choose a new time in Dispatch.' : '', blocked ? 'Stopped: ' + blocked.message : '', waiting].filter(Boolean).join(' ');
   if (conflicts.length || kept.length || blocked || unfinished) S.noticeKind = 'warn';
 }
@@ -191,8 +200,10 @@ function renderForm(body) {
   const drawSkips = () => skipList.replaceChildren(...[...skips].sort().map(date => btn(dateText(date, false) + ' ×', () => { skips.delete(date); drawSkips(); }, 'chip', { 'aria-label':'Remove skipped date ' + dateText(date, false) })));
   drawSkips();
   const checks = new Map(), crew = h('fieldset', { class:'rp-wide rp-crew' }, h('legend', {}, 'Crew for each visit'));
-  for (const member of data.roster) { const input = h('input', { type:'checkbox', value:member.id, checked:(assignment.assignedCrew || []).includes(member.id) }); checks.set(member.id, input); crew.append(h('label', { class:'rp-check' }, input, h('span', {}, member.name))); }
-  const lead = select([['', 'No crew lead'], ...data.roster.map(row => [row.id, row.name])], assignment.crewLead || '', { name:'crewLead' });
+  // Owner decision F19: an office-only owner or manager (fieldWork:false) is listed only when already on the plan.
+  const listed = data.roster.filter(row => row.fieldWork !== false || (assignment.assignedCrew || []).includes(row.id) || row.id === assignment.crewLead);
+  for (const member of listed) { const input = h('input', { type:'checkbox', value:member.id, checked:(assignment.assignedCrew || []).includes(member.id) }); checks.set(member.id, input); crew.append(h('label', { class:'rp-check' }, input, h('span', {}, member.name))); }
+  const lead = select([['', 'No crew lead'], ...listed.map(row => [row.id, row.name])], assignment.crewLead || '', { name:'crewLead' });
   const reminders = h('input', { type:'checkbox', name:'notifyCustomer', checked:plan?.notifyCustomer === true });
   const savedPrice = Number.isInteger(plan?.pricePerVisitCents) ? plan.pricePerVisitCents : null, lines = plan?.lineItems?.length || 0;
   const price = h('input', { type:'text', name:'pricePerVisit', inputMode:'decimal', autocomplete:'off', placeholder:'No price', value:savedPrice === null ? '' : (savedPrice / 100).toFixed(2) });

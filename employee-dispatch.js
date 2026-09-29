@@ -41,6 +41,11 @@ function arrivalBlankText(defaults) {
 }
 function range() { const view=views.get(S.view); return view?view.range(S.date):{startDate:S.date, endDate:addDays(S.date,S.view==='week'||S.view==='crew'?7:1)}; }
 const person = id => S.data?.roster?.find(p => p.id === id)?.name || id || 'Unassigned';
+// Owner decision F19: an office-only owner or manager (roster fieldWork:false, sent with the staff
+// directory on) is left out of assignment lists. Anyone in `keep` stays listed: people already on
+// the record being edited, and members and leads of active saved crews.
+const savedCrewIds = () => (S.data?.crews || []).filter(c => c.status === 'active').flatMap(c => [...(c.memberIds || []), c.leadId]).filter(Boolean);
+const assignable = (keep = []) => (S.data?.roster || []).filter(p => p.fieldWork !== false || keep.includes(p.id));
 const vehicle = id => S.data?.vehicles?.find(v => v.id === id)?.name || (id ? 'Vehicle unavailable' : 'No vehicle');
 const crewName = job => S.data?.crews?.find(c => c.id === job.crewId)?.name || (job.assignedCrew?.length ? job.assignedCrew.map(person).join(', ') : 'Unassigned');
 // Assignment segments: parallel crews or per-day windows (server flag EGC_DISPATCH_SEGMENTS).
@@ -397,23 +402,27 @@ function openOpenings(source) {
   const last=field(model,'lastDate','Search through',addDays(S.date,6),'date',{required:true});
   const duration=field(model,'durationMinutes','Job duration (minutes)',suggested&&suggested.minutes<=1440?suggested.minutes:120,'number',{min:15,max:1440,step:15,required:true});
   if(suggested)duration.parentElement.after(durationHint(job,suggested,duration,suggested.minutes>1440?' Openings cover one day at a time, so split longer work into daily segments.':''));
-  const buffer=field(model,'travelBufferMinutes','Travel buffer (minutes)',Number.isInteger(job?.travelBufferMinutes)?job.travelBufferMinutes:20,'number',{min:0,max:180,step:5,required:true});
+  // The job's own buffer, else the owner's default (Dispatch rules), else 20.
+  const rules=S.data.dispatchRules||{},buffer=field(model,'travelBufferMinutes','Travel buffer (minutes)',Number.isInteger(job?.travelBufferMinutes)?job.travelBufferMinutes:(rules.defaultTravelBufferMinutes??20),'number',{min:0,max:180,step:5,required:true});
   const destination=field(model,'destination','New job ZIP or address (optional)','','text',{maxLength:500,autocomplete:'off',placeholder:'80525 or street address'});
-  const begins=field(model,'workdayStart','Workday starts','08:00','time',{required:true});
-  const ends=field(model,'workdayEnd','Workday ends','17:00','time',{required:true});
+  const begins=field(model,'workdayStart','Workday starts',rules.workdayStart||'08:00','time',{required:true});
+  const ends=field(model,'workdayEnd','Workday ends',rules.workdayEnd==='24:00'?'23:59':rules.workdayEnd||'17:00','time',{required:true});
   const checks=new Map(),members=h('fieldset',{class:'dp-wide'},h('legend',{},'Employees needed together'));
-  for(const person of S.data.roster){const input=h('input',{type:'checkbox',value:person.id,checked:job?(job.assignedCrew||[]).includes(person.id):S.employee===person.id});checks.set(person.id,input);members.append(h('label',{class:'dp-check'},input,person.name));}
+  for(const person of assignable([...(job?.assignedCrew||[]),...savedCrewIds()])){const input=h('input',{type:'checkbox',value:person.id,checked:job?(job.assignedCrew||[]).includes(person.id):S.employee===person.id});checks.set(person.id,input);members.append(h('label',{class:'dp-check'},input,person.name));}
   const crew=select([['','Choose employees individually'],...S.data.crews.filter(row=>row.status==='active').map(row=>[row.id,row.name])],'',id=>{const selected=S.data.crews.find(row=>row.id===id);if(selected)for(const[id,input]of checks)input.checked=selected.memberIds.includes(id);});
   const truck=select([['','No vehicle required'],...S.data.vehicles.filter(row=>row.status==='available').map(row=>[row.id,row.name])],S.data.vehicles.some(row=>row.id===job?.vehicleId&&row.status==='available')?job.vehicleId:'',()=>{});
   model.fields.append(labeled('Saved crew to check',crew),labeled('Vehicle to check',truck),members);
+  // 'Find a time' starts from the job's required skills.
+  const skillQuery=window.EGCDispatchRules?.openingsFields(model,S.data,job?.requiredSkills)||null;
   const results=h('div',{class:'dp-openings-results dp-wide','aria-live':'polite'});model.fields.append(results);
   model.footer.append(btn('Back',model.close),h('button',{type:'submit',class:'dp-btn primary'},'Check openings'));
   const clearResults=()=>results.replaceChildren();for(const input of model.fields.querySelectorAll('input,select'))input.addEventListener('input',clearResults);
   model.form.addEventListener('submit',async event=>{
     event.preventDefault();if(S.pending)return;
-    const employeeIds=[...checks].filter(([,input])=>input.checked).map(([id])=>id);
-    if(!employeeIds.length){model.status.replaceChildren(notice('Choose the employees who need an opening together.','error'));return;}
-    const query={startDate:start.value,endDate:addDays(last.value,1),durationMinutes:duration.value,workdayStart:begins.value,workdayEnd:ends.value,employeeIds:employeeIds.join(','),travelBufferMinutes:buffer.value,...(truck.value?{vehicleId:truck.value}:{})};
+    const employeeIds=[...checks].filter(([,input])=>input.checked).map(([id])=>id),skills=skillQuery?.skills()||[];
+    if(!employeeIds.length&&!skills.length){model.status.replaceChildren(notice('Choose the employees who need an opening together, or the required skills to search every qualified employee.','error'));return;}
+    // 23:59 stands in for the owner's 24:00 end, which a time input cannot show; left unchanged, the server applies 24:00.
+    const query={startDate:start.value,endDate:addDays(last.value,1),durationMinutes:duration.value,workdayStart:begins.value,...(rules.workdayEnd==='24:00'&&ends.value==='23:59'?{}:{workdayEnd:ends.value}),employeeIds:employeeIds.join(','),travelBufferMinutes:buffer.value,...(truck.value?{vehicleId:truck.value}:{}),...(skills.length?{requiredSkills:skills.join(',')}:{})};
     const place=destination.value.trim();if(place)query[/^\d{5}$/.test(place)?'zip':'address']=place;
     formBusy(model,true);results.replaceChildren();model.status.replaceChildren(notice('Checking recorded capacity…'));
     try{
@@ -425,9 +434,11 @@ function openOpenings(source) {
       results.append(h('h3',{},data.candidates.length?'Recorded openings':'No matching openings'),h('p',{},data.candidates.length?'Each suggestion is rechecked when you save the job.': 'Try different dates, employees, duration or vehicle.'));
       for(const candidate of data.candidates){
         if(!/^\d{4}-\d{2}-\d{2}$/.test(candidate.date||'')||!/^\d{2}:\d{2}$/.test(candidate.time||'')||!/^\d{4}-\d{2}-\d{2}$/.test(candidate.endDate||'')||!/^\d{2}:\d{2}$/.test(candidate.endTime||''))throw new Error('An opening had invalid dates. Retry before booking.');
-        results.append(h('article',{},h('div',{},h('strong',{},dateText(candidate.date,true)),h('p',{},clock(candidate.time)+' – '+clock(candidate.endTime)+(candidate.endDate!==candidate.date?' · ends '+dateText(candidate.endDate,true):'')),h('small',{},employeeIds.map(person).join(', ')+(truck.value?' · '+vehicle(truck.value):''))),btn('Use this opening',()=>{
-          const selectedCrew=S.data.crews.find(row=>row.id===crew.value&&row.memberIds.length===employeeIds.length&&row.memberIds.every(id=>employeeIds.includes(id)));
-          model.close();openJob(job,{...candidate,assignedCrew:employeeIds,vehicleId:query.vehicleId||'',crewId:selectedCrew?.id,crewLead:selectedCrew?.leadId,travelBufferMinutes:Number(query.travelBufferMinutes)});
+        // With required skills and no employees chosen, each opening names the qualified employee.
+        const ids=Array.isArray(candidate.employeeIds)&&candidate.employeeIds.length?candidate.employeeIds:employeeIds;
+        results.append(h('article',{},h('div',{},h('strong',{},dateText(candidate.date,true)),h('p',{},clock(candidate.time)+' – '+clock(candidate.endTime)+(candidate.endDate!==candidate.date?' · ends '+dateText(candidate.endDate,true):'')),h('small',{},ids.map(person).join(', ')+(truck.value?' · '+vehicle(truck.value):''))),btn('Use this opening',()=>{
+          const selectedCrew=S.data.crews.find(row=>row.id===crew.value&&row.memberIds.length===ids.length&&row.memberIds.every(id=>ids.includes(id)));
+          model.close();openJob(job,{...candidate,assignedCrew:ids,vehicleId:query.vehicleId||'',crewId:selectedCrew?.id,crewLead:selectedCrew?.leadId,travelBufferMinutes:Number(query.travelBufferMinutes),requiredSkills:skills});
         },'primary')));
       }
       if(data.truncated)results.append(h('p',{},'Showing the first 20 openings. Narrow the search for later dates.'));
@@ -574,8 +585,8 @@ function openJob(job=null,options={}) {
   // A found opening wins over the job's saved crew, lead, vehicle and buffer,
   // so the job is saved with what the opening was checked for.
   const opening=Array.isArray(options.assignedCrew),selected=new Set(options.assignedCrew||job?.assignedCrew||[]);
-  const checks=new Map();
-  for(const member of S.data.roster||[]){const input=h('input',{type:'checkbox',value:member.id,checked:selected.has(member.id)});checks.set(member.id,input);assignments.append(h('label',{class:'dp-check'},input,h('span',{},member.name),h('small',{},words(member.role))));}
+  const checks=new Map(),keep=[...selected,job?.crewLead,options.crewLead,...segmentsOf(job).flatMap(s=>[...(s.assignedCrew||[]),s.crewLead]),...savedCrewIds()].filter(Boolean);
+  for(const member of assignable(keep)){const input=h('input',{type:'checkbox',value:member.id,checked:selected.has(member.id)});checks.set(member.id,input);assignments.append(h('label',{class:'dp-check'},input,h('span',{},member.name),h('small',{},words(member.role))));}
   for(const member of selected)if(!checks.has(member)){const input=h('input',{type:'checkbox',value:member,checked:true});checks.set(member,input);assignments.append(h('label',{class:'dp-check'},input,h('span',{},member),h('small',{},'Unavailable employee — reassign before saving')));}
   if(!checks.size)assignments.append(h('p',{},'No active employees available. Review approved employee accounts.'));
   const crewSelect=select([['','Temporary / individual assignment'],...(S.data.crews||[]).filter(c=>c.status==='active'||c.id===job?.crewId).map(c=>[c.id,c.name])],(opening?options.crewId:job?.crewId)||'',id=>{
@@ -583,7 +594,7 @@ function openJob(job=null,options={}) {
     for(const [member,input]of checks)input.checked=crew.memberIds.includes(member);lead.value=crew.leadId||'';
   },{name:'crewId'});
   model.fields.append(labeled('Saved crew',crewSelect),assignments);
-  const lead=select([['','No lead assigned'],...(S.data.roster||[]).map(p=>[p.id,p.name])],options.crewLead||(!opening||selected.has(job?.crewLead)?job?.crewLead:'')||'',()=>{}, {name:'crewLead'});
+  const lead=select([['','No lead assigned'],...assignable(keep).map(p=>[p.id,p.name])],options.crewLead||(!opening||selected.has(job?.crewLead)?job?.crewLead:'')||'',()=>{}, {name:'crewLead'});
   const truck=select([['','No vehicle assigned'],...(S.data.vehicles||[]).filter(v=>v.status==='available'||v.id===job?.vehicleId).map(v=>[v.id,v.name+(v.status==='available'?'':' · '+words(v.status))])],(opening?options.vehicleId:job?.vehicleId)||'',()=>{},{name:'vehicleId'});
   model.fields.append(labeled('Crew lead',lead),labeled('Vehicle / truck',truck));
   let segments=segmentsOf(job).map(s=>({...s,endDate:s.endDate||s.date,assignedCrew:[...(s.assignedCrew||[])],notes:s.notes||''}));
@@ -600,9 +611,10 @@ function openJob(job=null,options={}) {
     const from=h('input',{type:'time',value:segment.time||'',required:true,disabled:!editable,oninput:e=>{segment.time=e.target.value;}});
     const to=h('input',{type:'time',value:segment.endTime||'',required:true,disabled:!editable,oninput:e=>{segment.endTime=e.target.value;}});
     const crew=h('fieldset',{class:'dp-segment-crew dp-wide'},h('legend',{},label+' employees'));
-    const roster=(S.data.roster||[]).map(p=>[p.id,p.name]).concat(segment.assignedCrew.filter(id=>!(S.data.roster||[]).some(p=>p.id===id)).map(id=>[id,id+' · unavailable, reassign before saving']));
+    const listed=assignable(keep.concat(segment.assignedCrew,segment.crewLead||[]));
+    const roster=listed.map(p=>[p.id,p.name]).concat(segment.assignedCrew.filter(id=>!(S.data.roster||[]).some(p=>p.id===id)).map(id=>[id,id+' · unavailable, reassign before saving']));
     for(const [id,name]of roster)crew.append(h('label',{class:'dp-check'},h('input',{type:'checkbox',value:id,checked:segment.assignedCrew.includes(id),disabled:!editable,onchange:e=>{segment.assignedCrew=e.target.checked?[...new Set([...segment.assignedCrew,id])]:segment.assignedCrew.filter(value=>value!==id);}}),h('span',{},name)));
-    const leadChoice=select([['','No lead'],...(S.data.roster||[]).map(p=>[p.id,p.name])],segment.crewLead||'',value=>{segment.crewLead=value||null;},{disabled:!editable});
+    const leadChoice=select([['','No lead'],...listed.map(p=>[p.id,p.name])],segment.crewLead||'',value=>{segment.crewLead=value||null;},{disabled:!editable});
     const truckChoice=select([['','No vehicle'],...(S.data.vehicles||[]).filter(v=>v.status==='available'||v.id===segment.vehicleId).map(v=>[v.id,v.name+(v.status==='available'?'':' · '+words(v.status))])],segment.vehicleId||'',value=>{segment.vehicleId=value||null;},{disabled:!editable});
     const note=h('textarea',{rows:2,maxLength:2000,value:segment.notes||'',disabled:!editable,oninput:e=>{segment.notes=e.target.value;}});
     const noteField=labeled('Segment notes',note);noteField.classList.add('dp-wide');
@@ -652,11 +664,14 @@ function openJob(job=null,options={}) {
   // The suggestion was computed for the saved crew. Another size drops a length
   // the form applied and says the suggestion is recalculated on save.
   if(hint)crewNeeded.addEventListener('input',()=>{const changed=Number(crewNeeded.value)!==(job.crewNeeded||1);if(changed&&applied){duration.value='';applied=false;}hint.textContent=durationNote(job,suggested)+longer+(changed?' The crew size changed, so check the end time; the suggestion is recalculated after you save.':'');});
-  field(model,'travelBufferMinutes','Travel buffer (minutes)',options.travelBufferMinutes??job?.travelBufferMinutes??20,'number',{min:0,max:180,step:5});
+  // A found opening's buffer, else the job's, else the owner's default (Dispatch rules), else 20.
+  field(model,'travelBufferMinutes','Travel buffer (minutes)',options.travelBufferMinutes??job?.travelBufferMinutes??S.data.dispatchRules?.defaultTravelBufferMinutes??20,'number',{min:0,max:180,step:5});
   const instructions=field(model,'scope','Scope of work',scope(job||{}),'textarea',{rows:4,maxLength:20000,placeholder:'What the customer bought and what the crew must complete.'});instructions.parentElement.classList.add('dp-wide');
   field(model,'accessInstructions','Access instructions',job?.accessInstructions||'','textarea',{rows:2,maxLength:5000});
   field(model,'customerInstructions','Customer instructions',job?.customerInstructions||'','textarea',{rows:2,maxLength:5000});
   field(model,'requiredEquipment','Required equipment — one per line',(job?.requiredEquipment||[]).join('\n'),'textarea',{rows:3,maxLength:5000});
+  // A found opening's skills are preselected; the job's saved skills decide whether an empty choice is sent.
+  const skillFields=window.EGCDispatchRules?.jobFields(model,job,S.data,options.requiredSkills)||null;
   field(model,'materials','Materials — one per line',(job?.materials||[]).map(m=>m.name).join('\n'),'textarea',{rows:3,maxLength:5000});
   field(model,'opsNotes','Internal dispatch notes',job?.opsNotes||'','textarea',{rows:3,maxLength:5000});
   model.footer.append(btn('Back',model.close),h('button',{class:'dp-btn primary',type:'submit'},job?'Save changes':'Create job'));
@@ -678,7 +693,7 @@ function openJob(job=null,options={}) {
       crewNeeded:Number(data.get('crewNeeded')),travelBufferMinutes:Number(data.get('travelBufferMinutes')),jobInstructions:instructions.value.trim(),
       accessInstructions:String(data.get('accessInstructions')||'').trim(),customerInstructions:String(data.get('customerInstructions')||'').trim(),opsNotes:String(data.get('opsNotes')||'').trim(),
       requiredEquipment:list('requiredEquipment'),materials:list('materials').map((name,i)=>{const existing=job?.materials?.find(m=>m.name===name);return existing||{id:'material-'+i+'-'+name.toLowerCase().replace(/[^a-z0-9]/g,'').slice(0,30),name,quantity:1};})};
-    Object.assign(changes,{arrivalWindowStart:from||null,arrivalWindowEnd:to||null});
+    Object.assign(changes,{arrivalWindowStart:from||null,arrivalWindowEnd:to||null},skillFields?.changes());
     // The server derives the job time and crew from segments; it never takes both.
     if(segments.length){for(const name of ['date','time','endDate','endTime','assignedCrew','crewId','crewLead','vehicleId'])delete changes[name];
       if(segmentsOn())changes.assignmentSegments=segments.map(s=>({id:s.id,date:s.date,time:s.time,endDate:s.endDate||s.date,endTime:s.endTime,assignedCrew:[...s.assignedCrew],crewLead:s.crewLead||null,...(s.crewId&&(S.data.crews||[]).some(c=>c.id===s.crewId&&c.status==='active')?{crewId:s.crewId}:{}),vehicleId:s.vehicleId||null,notes:(s.notes||'').trim()}));}
@@ -715,8 +730,9 @@ function openResource(kind,resource=null) {
   if(kind==='crew'){
     field(model,'name','Crew name',resource?.name||'','text',{required:true,maxLength:100});
     const members=h('fieldset',{class:'dp-wide'},h('legend',{},'Crew members'));
-    for(const p of S.data.roster||[])members.append(h('label',{class:'dp-check'},h('input',{type:'checkbox',name:'memberIds',value:p.id,checked:resource?.memberIds?.includes(p.id)}),p.name));
-    model.fields.append(members,labeled('Crew lead',select([['','No lead'],...(S.data.roster||[]).map(p=>[p.id,p.name])],resource?.leadId||'',()=>{},{name:'leadId'})),
+    const listed=assignable([...(resource?.memberIds||[]),resource?.leadId].filter(Boolean));
+    for(const p of listed)members.append(h('label',{class:'dp-check'},h('input',{type:'checkbox',name:'memberIds',value:p.id,checked:resource?.memberIds?.includes(p.id)}),p.name));
+    model.fields.append(members,labeled('Crew lead',select([['','No lead'],...listed.map(p=>[p.id,p.name])],resource?.leadId||'',()=>{},{name:'leadId'})),
       labeled('Status',select([['active','Active'],['inactive','Inactive']],resource?.status||'active',()=>{},{name:'status'})));
   } else if(kind==='vehicle'){
     field(model,'name','Vehicle name',resource?.name||'','text',{required:true,maxLength:100});
@@ -755,6 +771,6 @@ function registerView(name,view) {
   if(S.root&&!S.modal)render();
 }
 // Registered views share this client, its dialogs and the save-recovery protocol (same requestId on retry).
-const internals=Object.freeze({state:()=>S,api,save,modal,openJob,show,redraw:renderBody,person,crewName,vehicle,h,btn,pill,notice,errorText,clock,dateText,addDays,today,words,key,segmentsOf,segmentsOn,active,warningsFor,reasonControls});
+const internals=Object.freeze({state:()=>S,api,save,modal,openJob,show,redraw:renderBody,person,assignable,crewName,vehicle,h,btn,pill,notice,errorText,clock,dateText,addDays,today,words,key,segmentsOf,segmentsOn,active,warningsFor,reasonControls});
 window.EGCDispatch={mount,unmount,refresh:load,canLeave:()=>!S.modal&&!S.pending,registerView,internals};
 })();

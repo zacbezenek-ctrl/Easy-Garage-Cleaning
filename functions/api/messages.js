@@ -75,7 +75,7 @@ export function messagesHandlers({
         const { action, requestId, items, ...item } = input;
         const batch = action.startsWith('batch_');
         if (batch) {
-          requireDispatcher(viewer);
+          requireDispatcher(viewer, env);
           if (Object.keys(item).length || !Array.isArray(items) || !items.length) return reply(400, { ok: false, code: 'messaging_batch_invalid', error: 'Choose at least one message for this batch.' });
           if (items.length > BATCH_LIMIT) return reply(400, { ok: false, code: 'messaging_batch_too_large', error: `Send at most ${BATCH_LIMIT} messages at a time.` });
           if (items.some(entry => !object(entry) || Object.keys(entry).some(key => !ITEM_KEYS.includes(key)))) return reply(400, { ok: false, code: 'messaging_batch_invalid', error: 'A batch item contains unsupported fields.' });

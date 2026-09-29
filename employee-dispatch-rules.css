@@ -1,0 +1,3 @@
+/* Dispatch rules view and skill pickers (employee-dispatch-rules.js). */
+.dp-rules-group{margin:18px 0}.dp-rules-group>h2{margin:0 0 12px}.dp-rule-blocking{border-left:4px solid #a62c27}.dp-pill-blocking{background:#fde8e4;color:#8b2e1c}
+.dp-skill-picker{display:grid;grid-template-columns:repeat(auto-fill,minmax(min(100%,220px),1fr));column-gap:14px}.dp-skill-picker legend,.dp-skill-picker small{grid-column:1/-1}.dp-skill-picker small{display:block;margin-top:6px;font-weight:400}

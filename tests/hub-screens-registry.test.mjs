@@ -21,10 +21,10 @@ function fixtureScreen(overrides = {}) {
 }
 const tabs = page => page.document.querySelectorAll('[data-ops-tab]').map(button => button.getAttribute('data-ops-tab'));
 // Screens the shipped MANIFEST registers (REVIEWS-UI, M5 invoicing); fixtures register after them. SHIPPED are the business
-// screens; the owner-only screens (P3-04 followup_settings, FUN-15 ad_spend, CATALOG-ADMIN catalog) register first and are checked separately.
+// screens; the owner-only screens (P3-04 followup_settings, FUN-15 ad_spend, CATALOG-ADMIN catalog, DISPATCH-RULES dispatch_rules) register first and are checked separately.
 // CREW-NOTIFY's Schedule alerts is crewVisible (every signed-in viewer sees it) and registers before them.
 const SHIPPED = ['reviews', 'message_templates', 'stocked_costs', 'staff', 'invoicing'];
-const OWNER_SHIPPED = ['followup_settings', 'ad_spend', 'catalog'];
+const OWNER_SHIPPED = ['followup_settings', 'ad_spend', 'catalog', 'dispatch_rules'];
 const CREW_SHIPPED = ['crew_alerts'];
 
 test('a registered screen joins the nav under its group only when the capability matches', () => {
@@ -251,7 +251,7 @@ test('one invalid MANIFEST line is skipped with a console warning and every othe
   const manifest = /const MANIFEST=\[\n((?:\{[^\n]*\},\n)*)\];/.exec(source);
   assert.ok(manifest, 'MANIFEST keeps one {...}, line per screen');
   const shipped = [...manifest[1].matchAll(/^\{id:'([a-z][a-z0-9_]+)'/gm)].map(match => match[1]);
-  for (const id of ['stocked_costs', 'staff', 'followup_settings']) assert.ok(shipped.includes(id), `${id} ships in MANIFEST`);
+  for (const id of ['stocked_costs', 'staff', 'followup_settings', 'dispatch_rules']) assert.ok(shipped.includes(id), `${id} ships in MANIFEST`);
   // P3-04: the shipped source itself registers every MANIFEST line with no warnings, one screen per line.
   const shippedWarnings = [], shippedContext = { document: createDocument(), console: { warn: (...args) => shippedWarnings.push(args.join(' ')), error() {}, log() {} }, addEventListener() {}, Promise, Map, Set, Error, Object, String, Array };
   shippedContext.window = shippedContext;

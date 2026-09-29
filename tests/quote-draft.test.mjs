@@ -357,6 +357,23 @@ test('a sales author signs their unplaced quote draft into a scheduled job but c
   assert.equal((await prepareHandoff(f.store, owner, { jobId: 'other' })).customer.id, 'c1');
 });
 
+test('with role permissions on, a manager lowered to sales drafts quotes as an author, not a dispatcher; with them off, as a dispatcher', async () => {
+  const lowered = { user: 'tylerg', role: 'manager', businessAccess: true, displayName: 'Synthetic Manager', staffRoles: ['sales'] };
+  const f = fixture(), open = (actor, query, env) => handoffHandlers({ session: async () => actor, storage: () => f.store }).get({ request: new Request(`https://easygaragecleaning.com/api/walkthrough-handoff?${query}`), env });
+  const drafts = actor => quoteDraftHandlers({ session: async () => actor, storage: () => f.store, now: () => new Date(NOW), delivery: () => ({ deliver: f.deliver }), stripe: () => null });
+  const saved = await drafts(lowered).post({ request: request('POST', { action: 'save', ...f.input() }), env: ROLES }), id = (await saved.json()).job.id;
+  assert.equal(saved.status, 200, 'a quote author');
+  const own = await (await open(lowered, `jobId=${id}`, ROLES)).json();
+  assert.deepEqual([own.jobId, own.customer.id, own.roster], [id, 'c1', []], 'its own draft, without the roster');
+  f.rows.set('jobs/other', { id: 'other', revision: 'or', type: 'job', status: 'unscheduled', pipelineStatus: 'unscheduled', customerId: 'c1', date: '', time: '', createdBy: 'zacb' });
+  const other = await open(lowered, 'jobId=other', ROLES);
+  assert.deepEqual([other.status, (await other.json()).code], [403, 'handoff_job_forbidden'], 'other jobs stay with Dispatch');
+  const legacy = await (await open(lowered, 'jobId=other', ENV)).json();
+  assert.deepEqual([legacy.jobId, legacy.roster.length], ['other', 2], 'flag off: a dispatcher, as today');
+  const crewOnly = await drafts({ ...lowered, staffRoles: ['crew'] }).post({ request: request('POST', { action: 'save', ...f.input() }), env: ROLES });
+  assert.deepEqual([crewOnly.status, (await crewOnly.json()).code], [403, 'quote_forbidden'], 'lowered to crew: no quote access');
+});
+
 test('drafting stops once work has started or the job is closed', async () => {
   const f = fixture(), created = await save(f, f.input()), id = created.job.id;
   f.rows.get(`jobs/${id}`).fieldLastActionAt = NOW;

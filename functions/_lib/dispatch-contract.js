@@ -9,6 +9,33 @@
  *       arrivalDefaults:{enabled:boolean,minutes:integer},segments:{enabled:boolean,max:31}}
  *   arrivalDefaults says whether blank arrival windows get a derived default
  *   (EGC_DISPATCH_DEFAULT_ARRIVAL_WINDOW_ENABLED) and its length; no secrets.
+ *   With EGC_STAFF_DIRECTORY_ENABLED=true a roster row also carries staffRoles,
+ *   skills and weeklyAvailability, and an office-only owner or manager carries
+ *   fieldWork:false (owner decision F19; stored staffRoles without crew or
+ *   crew_lead). The Hub leaves those rows out of its assignment lists and the
+ *   'any qualified' openings search, except where they are already assigned.
+ *   The server still accepts them when a dispatcher names them.
+ *   dispatchRules (P1-DS-06) is the non-secret owner rule summary: {skills:[{id,
+ *   label}] (staff skill catalog),workdayStart,workdayEnd,defaultTravelBufferMinutes,
+ *   maxJobsPerEmployeePerDay,maxHoursPerEmployeePerDay,blocking:{crewShort,
+ *   skillMissing,travelShort,overCapacity,outsideHours}}. Owner settings live in
+ *   dispatchSettings/current (GET/POST /api/dispatch-settings, owner only;
+ *   functions/_lib/dispatch-settings.js). Warnings add skill_missing
+ *   {missingSkills,unverified?,segmentId?}, employee_daily_capacity {employeeId,
+ *   date,jobCount,scheduledHours,...} and outside_working_hours {employeeId,date,
+ *   segmentId?} (functions/_lib/dispatch-rules.js); a rule the owner made blocking
+ *   carries blocking:true and a save that changes what it reads is a 409
+ *   dispatch_conflict. With no settings saved every rule is only a warning, and
+ *   with the staff directory off saves, receipts and job documents are
+ *   byte-identical to before P1-DS-06 (tests/snapshots/dispatch-legacy-output.json);
+ *   reads only gain dispatchRules here and the openings fields below. One
+ *   change needs no setting: with EGC_DISPATCH_TRAVEL_ESTIMATES on, a crew
+ *   claim checks drive estimates, so its response can carry a travel_buffer_short
+ *   notice where only the manual buffer was checked before.
+ *   Owner checklist: with EGC_STAFF_DIRECTORY_ENABLED=true and weekly hours
+ *   recorded, results change even with no settings saved: the board, the job
+ *   view and save and claim responses warn outside_working_hours, and openings
+ *   stay inside recorded hours (warnings only until the owner sets a block).
  * GET /api/dispatch?view=customers&q=phone-or-name
  *   => {ok,customers:[{id,name,phone,email,address}],total}; at most 50 results.
  *   With EGC_DISPATCH_WINDOWED_READS=true and every customer keyed, text
@@ -102,6 +129,9 @@
  * requiredEquipment:string[], materials:[{id,name,quantity:number}].
  * Also recurrence:'none'|'weekly'|'biweekly'|'monthly'|'quarterly',
  * reminderDays:integer1..30,notify:boolean,shiftPickupEnabled:boolean,notes:string.
+ * requiredSkills:string[] (staff skill catalog ids; an id the job already has
+ * may be kept after it leaves the catalog), else 400 dispatch_skills_invalid.
+ * Optional: a job without it requires no skills. Repeats copy it.
  * estimatedDurationMin:integer 15..10080|null is the expected on-site length (it
  * may span days); it never moves the saved schedule and blocks do not accept it.
  * Saving a value also records durationOverride {minutes,reason:'Set in dispatch',
@@ -184,7 +214,7 @@
  * date,time,endDate,endTime,startAt,endAt,timeZone,status,assignedCrew,assignedTo,
  * crewLead,crewId,vehicleId,crewNeeded,travelBufferMinutes,jobInstructions,
  * accessInstructions,customerInstructions,opsNotes,requiredEquipment,materials,
- * serviceType,syncStatus,highlevelAppointmentId,sourceWalkthroughId,completedAt,
+ * serviceType,syncStatus,highlevelAppointmentId,sourceWalkthroughId,completedAt,requiredSkills,
  * createdAt,updatedAt,recurrence,recurrenceParentId,sourceTemplateJobId,reminderDays,
  * notify,shiftPickupEnabled,openShift,notes,durationMin,estimatedDurationMin,
  * completionSync:{status,message,attemptedAt,syncedAt}|null,
@@ -227,9 +257,11 @@
  *
  * GET /api/dispatch-openings?startDate=YYYY-MM-DD&endDate=exclusive&
  * durationMinutes=120&workdayStart=08:00&workdayEnd=17:00&employeeIds=id1,id2&
- * vehicleId=optional&travelBufferMinutes=20&address=optional|zip=optional
+ * vehicleId=optional&travelBufferMinutes=20&address=optional|zip=optional&
+ * requiredSkills=optional
  * Manager only; at most14days, duration15..1440min, buffer0..180min. Explicit
- * active employee IDs required. Workdayend24:00 is allowed. Past times omitted.
+ * active employee IDs required unless requiredSkills is given (400
+ * dispatch_openings_employees_required). Workdayend24:00 is allowed. Past times omitted.
  * Optional job location for drive estimates: EITHER address (non-empty, <=500
  * chars) OR zip (5 digits), never both (400 dispatch_openings_invalid). With
  * EGC_DISPATCH_TRAVEL_ESTIMATES on, neighbouring work is padded by
@@ -242,7 +274,20 @@
  * Each candidate is the earliest representable start in one maximal workday
  * gap; at most20 earliest candidates are returned. No working-hours availability
  * is inferred. A candidate is only a suggestion and MUST use ordinary dispatch
- * POST validation when booking. Snapshot consistency covers guarded dispatch
+ * POST validation when booking.
+ * Dispatch rules (P1-DS-06): workdayStart/workdayEnd/travelBufferMinutes default
+ * to the owner settings (08:00/17:00/20 when none are saved). requiredSkills=
+ * id1,id2 (skill catalog ids) with employeeIds checks that crew (warning
+ * skill_missing; no candidates when the owner blocks it) and without
+ * employeeIds searches each employee holding every skill at proficient or lead
+ * ('any qualified'), leaving out fieldWork:false rows (office-only owners and
+ * managers, F19). Every candidate names employeeIds. Recorded weekly working
+ * hours (staff directory) exclude time outside them; constraints report
+ * requiredSkills, mode:'together'|'any_qualified', searchedEmployeeIds and
+ * workingAvailabilityConfirmed (true only when every searched employee has
+ * recorded hours, with a working_hours_applied warning instead of
+ * working_availability_unconfirmed). Daily limits add employee_daily_capacity
+ * warnings and skip that date only when the owner blocks it. Snapshot consistency covers guarded dispatch
  * writes and day locks, not independent provider databases.
  *
  * GET /api/dispatch-travel?date=YYYY-MM-DD&employeeId=optional (manager only;

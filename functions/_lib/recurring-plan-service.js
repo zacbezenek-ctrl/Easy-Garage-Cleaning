@@ -20,6 +20,7 @@ import { dispatchStorage } from './dispatch-storage.js';
 import { segmented } from './dispatch-segments.js';
 import { cadenceLabel, horizonRange, nextOccurrences, normalizeRecurringSchedule, occurrenceDates, occurrenceSchedule } from './recurring-plans.js';
 import { normalizePlanPrice, planPriced, priceKey, visitEstimateInput, visitPriceBlocker } from './recurring-plan-price.js';
+import { RULE_BLOCK_SETTINGS } from './dispatch-rules.js';
 
 export const RECURRING_PLAN_ACTIONS = Object.freeze(['create','update','pause','resume','end','extend']);
 export const RECURRING_EXTEND_LIMIT = 10;
@@ -54,6 +55,8 @@ const canonical = value => Array.isArray(value) ? `[${value.map(canonical).join(
 const sha256 = async text => [...new Uint8Array(await crypto.subtle.digest('SHA-256', new TextEncoder().encode(text)))].map(byte => byte.toString(16).padStart(2,'0')).join('');
 const digest = value => sha256(canonical(value));
 const clip = (value, max) => String(value ?? '').slice(0, max);
+// Saved rule codes of a refused visit (occurrence entries hold them for the plan's attention list).
+const ruleList = value => Array.isArray(value) ? value.filter(code => typeof code === 'string' && /^[a-z_]{1,40}$/.test(code)).slice(0, 6) : [];
 const validPlan = plan => Boolean(plan && safeId(plan.id) && plan.recordType === 'recurring_plan' && validDate(plan.startDate) && object(plan.cadence));
 const occurrences = plan => object(plan?.occurrences) ? plan.occurrences : {};
 const warn = (plan, warning) => [...(Array.isArray(plan.warnings) ? plan.warnings : []), warning].slice(-50);
@@ -157,7 +160,7 @@ export function recurringJobIndex(jobs) {
  * another live visit that day), and a live visit on a date the series no
  * longer includes is `off_pattern`. */
 function reconcile(date, entry, dispatch, planned, customerId) {
-  const row = { date, jobId: entry?.jobId || null, state: entry?.state || 'scheduled', ...(entry?.code ? { code: entry.code } : {}), ...(object(entry?.price) ? { price: entry.price.status } : {}) };
+  const row = { date, jobId: entry?.jobId || null, state: entry?.state || 'scheduled', ...(entry?.code ? { code: entry.code } : {}), ...(ruleList(entry?.rules).length ? { rules: ruleList(entry.rules), ...(entry.overlaps === true ? { overlaps: true } : {}) } : {}), ...(object(entry?.price) ? { price: entry.price.status } : {}) };
   // A booked visit the plan is still moving onto this date (applyToBooked).
   if (object(entry?.apply)) return { ...row, state: 'updating', recorded: row.state, ...(entry.apply.from?.date !== date ? { movedFrom: entry.apply.from?.date || null } : {}) };
   if (!dispatch || !row.jobId) return row;
@@ -392,7 +395,10 @@ async function extendRequest(store, session, input, fingerprint, roster, now, pr
   const outcome = run.plans[0], saved = await store.read(PLANS, plan.id) || plan, entries = mine(saved);
   // Report everything this request created, including a partial earlier attempt.
   const raw = await Promise.all(entries.map(([, entry]) => store.read('jobs', entry.jobId)));
-  const conflicts = entries.filter(([, entry]) => entry.state === 'conflict').map(([date, entry]) => ({ date, jobId: entry.jobId, code: entry.code || 'dispatch_conflict', message: clip(raw.find(job => job?.id === entry.jobId)?.recurrenceConflict?.message, 600) }));
+  const conflicts = entries.filter(([, entry]) => entry.state === 'conflict').map(([date, entry]) => {
+    const saved = raw.find(job => job?.id === entry.jobId)?.recurrenceConflict, rules = ruleList(entry.rules), reasons = Array.isArray(saved?.reasons) ? saved.reasons.filter(text => typeof text === 'string').slice(0, 3).map(text => clip(text, 300)) : [];
+    return { date, jobId: entry.jobId, code: entry.code || 'dispatch_conflict', message: clip(saved?.message, 600), ...(rules.length ? { rules, reasons, ...(entry.overlaps === true ? { overlaps: true } : {}) } : {}) };
+  });
   const result = { createdJobIds: raw.filter(Boolean).map(job => job.id), conflicts, updated: outcome.updated, kept: outcome.kept, priced: outcome.priced, blocked: outcome.blocked, complete: outcome.complete, retryable: outcome.retryable === true };
   await commitWithReceipt(store, [{ collection: OPERATIONS, id: receiptId, patch: { fingerprint, actorId: session.user, action: 'extend', planId: plan.id, requestId: input.requestId, createdAt: now, result } }], receiptId, fingerprint);
   return { ok: true, requestId: input.requestId, plan: projectRecurringPlan(saved, new Date(now)), created: raw.filter(Boolean).map(job => projectDispatchJob(job, roster)), conflicts, updated: outcome.updated, kept: outcome.kept, priced: outcome.priced, blocked: outcome.blocked, complete: outcome.complete, retryable: outcome.retryable === true, warnings: [] };
@@ -417,11 +423,11 @@ async function createOccurrence(store, actor, plan, template, date, { now, runId
     commit: async writes => {
       const target = writes.find(write => write.collection === 'jobs' && write.patch?.dispatchRequestId === requestId);
       if (!target) throw fail('commit_incomplete', 'The recurring visit could not be prepared.', 503);
-      Object.assign(target.patch, { recurringPlanId: plan.id, occurrenceDate: date, ...(conflict ? { recurrenceConflict: { ...occurrenceSchedule(plan, date), code: conflict.code, message: clip(conflict.message, 600), conflicts: conflict.conflicts, detectedAt: now } } : {}) });
+      Object.assign(target.patch, { recurringPlanId: plan.id, occurrenceDate: date, ...(conflict ? { recurrenceConflict: { ...occurrenceSchedule(plan, date), code: conflict.code, message: clip(conflict.message, 600), ...ruleFields(conflict), conflicts: conflict.conflicts, detectedAt: now } } : {}) });
       // The slot lets a later plan edit tell an untouched visit from one moved in
       // Dispatch; a priced plan's visit waits for its estimate.save (price pending).
-      writes.push({ collection: PLANS, id: plan.id, revision: plan.revision, patch: { occurrences: { ...occurrences(plan), [date]: { jobId: target.id, state, requestId, createdAt: now, ...(runId ? { runId } : {}), ...(conflict ? { code: conflict.code } : { slot: slotOf(target.patch) }), ...(key ? { price: { key, status: 'pending', at: now } } : {}) } },
-        lastRun: ranOk(plan, 'create', date, now, runId), lastGeneratedAt: now, ...(conflict ? { warnings: warn(plan, { code: 'recurrence_conflict', reason: conflict.code, date, jobId: target.id, message: conflict.code === SLOT_TAKEN.code ? `The ${date} visit was saved unscheduled because a cancelled or moved booking still holds that time. Restore that booking or choose a new time in Dispatch.` : `The ${date} visit conflicts with other work and was saved unscheduled. Choose a new time in Dispatch.`, at: now }) } : {}) } });
+      writes.push({ collection: PLANS, id: plan.id, revision: plan.revision, patch: { occurrences: { ...occurrences(plan), [date]: { jobId: target.id, state, requestId, createdAt: now, ...(runId ? { runId } : {}), ...(conflict ? { code: conflict.code, ...(conflict.rules?.length ? { rules: conflict.rules, ...(conflict.overlaps === true ? { overlaps: true } : {}) } : {}) } : { slot: slotOf(target.patch) }), ...(key ? { price: { key, status: 'pending', at: now } } : {}) } },
+        lastRun: ranOk(plan, 'create', date, now, runId), lastGeneratedAt: now, ...(conflict ? { warnings: warn(plan, { code: 'recurrence_conflict', reason: conflict.code, date, jobId: target.id, message: conflictWarning(conflict, date), at: now }) } : {}) } });
       return store.commit(writes);
     } };
   return mutateDispatch(adapter, actor, occurrenceInput(plan, template, date, requestId, conflict), now);
@@ -436,10 +442,31 @@ async function recordPlan(store, planId, update) {
   return store.read(PLANS, planId);
 }
 
-function conflictDetails(error) {
-  const rows = Array.isArray(error.details?.conflicts) ? error.details.conflicts : [];
-  return { code: error.code, message: clip(error.message, 600), conflicts: rows.slice(0, 10).map(row => Object.fromEntries(['code','otherJobId','availabilityId','vehicleId','employeeId'].filter(key => typeof row?.[key] === 'string').map(key => [key, clip(row[key], 180)]).concat(Array.isArray(row?.employeeIds) ? [['employeeIds', row.employeeIds.filter(id => typeof id === 'string').slice(0, 20)]] : []))) };
+// DISPATCH-RULES: the owner rules a refused visit broke, each with its own reason
+// (a dispatch_conflict's other rows are overlapping work or a blocked Hub day).
+// overlaps: a refusal that broke a rule AND overlaps other work (or time off),
+// so its warning names both; changing the crew alone may not clear the overlap.
+const RULE_CODES = new Set([...Object.keys(RULE_BLOCK_SETTINGS), 'travel_buffer_short']);
+const OVERLAP_CODES = new Set(['schedule_overlap', 'employee_unavailable', 'unverifiable_assignment']);
+function ruleReasons(error) {
+  const all = Array.isArray(error?.details?.conflicts) ? error.details.conflicts : [], rows = all.filter(row => RULE_CODES.has(row?.code));
+  return { rules: [...new Set(rows.map(row => row.code))], reasons: [...new Set(rows.map(row => typeof row.message === 'string' ? row.message.trim() : '').filter(Boolean))].slice(0, 3).map(text => clip(text, 300)),
+    overlaps: rows.length > 0 && all.some(row => OVERLAP_CODES.has(row?.code)) };
 }
+// The rule fields a refused visit saves and reports (only when a rule refused it).
+const ruleFields = conflict => conflict?.rules?.length ? { rules: conflict.rules, reasons: conflict.reasons, ...(conflict.overlaps === true ? { overlaps: true } : {}) } : {};
+/** A refused visit's conflict as saved on the job, the plan and the run: the
+ * refusal plus each broken rule's reason, the rule codes (rules/reasons, only
+ * when a rule refused it) and every conflict row with its own message. */
+function conflictDetails(error) {
+  const rows = Array.isArray(error.details?.conflicts) ? error.details.conflicts : [], { rules, reasons, overlaps } = ruleReasons(error);
+  return { code: error.code, message: clip([error.message, ...reasons].join(' '), 600), ...ruleFields({ rules, reasons, overlaps }),
+    conflicts: rows.slice(0, 10).map(row => Object.fromEntries(['code','otherJobId','availabilityId','vehicleId','employeeId'].filter(key => typeof row?.[key] === 'string').map(key => [key, clip(row[key], 180)]).concat(Array.isArray(row?.employeeIds) ? [['employeeIds', row.employeeIds.filter(id => typeof id === 'string').slice(0, 20)]] : [], typeof row?.message === 'string' && row.message.trim() ? [['message', clip(row.message.trim(), 300)]] : []))) };
+}
+// The plan warning for a visit saved unscheduled: a broken rule is named, not called other work.
+const conflictWarning = (conflict, date) => conflict.code === SLOT_TAKEN.code ? `The ${date} visit was saved unscheduled because a cancelled or moved booking still holds that time. Restore that booking or choose a new time in Dispatch.`
+  : conflict.rules?.length ? clip(`The ${date} visit breaks the owner's dispatch rules${conflict.overlaps ? ' and overlaps other work' : ''} and was saved unscheduled: ${conflict.reasons.join(' ')} ${conflict.overlaps ? 'Choose a new time in Dispatch or change the plan\'s crew.' : 'Change the plan\'s crew or choose a new time in Dispatch.'}`, 600)
+  : `The ${date} visit conflicts with other work and was saved unscheduled. Choose a new time in Dispatch.`;
 
 const upcomingDate = (plan, date, instant, range) => { const interval = scheduleInterval(occurrenceSchedule(plan, date)); return interval ? interval.start > instant : date > range.startDate; };
 
@@ -512,7 +539,7 @@ async function applyBooked(store, actor, planId, date, { now, runId }) {
   if (!validPlan(plan) || !object(entry?.apply)) return null;
   const apply = entry.apply, job = await store.read('jobs', entry.jobId), from = apply.from?.date || date;
   // Only a drop the plan recorded (or another run already settled) is reported; otherwise the entry is retried.
-  const drop = async (reason, message) => {
+  const drop = async (reason, message, rules = [], overlaps = false) => {
     const recorded = await recordPlan(store, planId, row => {
       const index = { ...occurrences(row) }, current = index[date];
       if (current?.jobId !== entry.jobId || !object(current.apply)) return null;
@@ -520,7 +547,7 @@ async function applyBooked(store, actor, planId, date, { now, runId }) {
       delete index[date]; index[back] = rest;
       return { occurrences: index, ...(message ? { warnings: warn(row, { code: 'booked_visit_not_updated', reason, date: back, jobId: entry.jobId, message, at: now }) } : {}) };
     }).catch(() => null);
-    return recorded ? { date, jobId: entry.jobId, status: 'kept', from, reason } : null;
+    return recorded ? { date, jobId: entry.jobId, status: 'kept', from, reason, ...(rules.length ? { rules, ...(overlaps ? { overlaps: true } : {}) } : {}) } : null;
   };
   if (!liveVisit(job)) return drop('visit_closed');
   if (!unstarted(job)) return drop('started', `The ${from} visit has started, so it kept its time and crew.`);
@@ -553,7 +580,7 @@ async function applyBooked(store, actor, planId, date, { now, runId }) {
     const fresh = occurrences(await store.read(PLANS, planId))[date];
     if (fresh?.jobId === entry.jobId && !object(fresh.apply)) return null;
     if (error.code === SLOT_TAKEN.code) return drop('slot_taken', `The ${from} visit was not moved to ${to.date} ${to.time} because the customer already has another booking at that time. It kept its original time; review both bookings in Dispatch.`);
-    if (PER_DATE.has(error.code) || error.status >= 400 && error.status < 500 && !['dispatch_revision_conflict','dispatch_idempotency_conflict','dispatch_changed_since_operation'].includes(error.code)) return drop(error.code || 'dispatch_refused', `The ${from} visit could not follow the plan: ${clip(error.message, 300)} It kept its original time.`);
+    if (PER_DATE.has(error.code) || error.status >= 400 && error.status < 500 && !['dispatch_revision_conflict','dispatch_idempotency_conflict','dispatch_changed_since_operation'].includes(error.code)) { const { rules, reasons, overlaps } = ruleReasons(error); return drop(error.code || 'dispatch_refused', `The ${from} visit could not follow the plan: ${clip([error.message, ...reasons].join(' '), 600)} It kept its original time.`, rules, overlaps); }
     throw error;
   }
 }
@@ -600,7 +627,7 @@ async function extendPlan(store, baseActor, planId, { now, horizonDays, meter, r
     catch (error) { retry(); if (error.status >= 500 || !error.status) { await stalled(error, occurrences(plan)[date]?.apply?.from?.date || date, 'apply'); throw error; } break; }
     if (done?.status === 'updated') outcome.updated.push({ date, jobId: done.jobId, from: done.from });
     // A change dropped because the visit started, moved or its new slot is taken is settled work too.
-    else if (done?.status === 'kept') outcome.kept.push({ date: done.from, jobId: done.jobId, reason: done.reason });
+    else if (done?.status === 'kept') outcome.kept.push({ date: done.from, jobId: done.jobId, reason: done.reason, ...(done.rules ? { rules: done.rules, ...(done.overlaps ? { overlaps: true } : {}) } : {}) });
   }
   // A dropped move frees the date it was holding; this run books it too.
   if (outcome.attempts && outcome.complete) { const fresh = await store.read(PLANS, planId); if (validPlan(fresh)) plan = fresh; }
@@ -640,7 +667,7 @@ async function extendPlan(store, baseActor, planId, { now, horizonDays, meter, r
       if (conflict) {
         try {
           result = await createOccurrence(store, actor, plan, template, date, { now, runId, conflict });
-          outcome.conflicts.push({ date, jobId: result.job.id, code: conflict.code, message: conflict.message });
+          outcome.conflicts.push({ date, jobId: result.job.id, code: conflict.code, message: conflict.message, ...ruleFields(conflict) });
         } catch (second) { error = second; }
       }
       if (!result) {

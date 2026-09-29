@@ -36,6 +36,25 @@ const customerProjection = row => row ? Object.fromEntries(['id', 'name', 'phone
 // quote draft, the job of the walkthrough being handed off, or a job they
 // created. Every other job stays with Dispatch.
 const authorsJob = (job, source, actor) => plain(job?.quoteDraft) || Boolean(source) && job.sourceWalkthroughId === source.id || Boolean(job?.createdBy) && job.createdBy === actor.user;
+// DISPATCH-RULES: a quote author who is not a dispatcher never sees the roster
+// (prepareHandoff), so the Dispatch rows of a save (its warnings, replayed or
+// fresh, and a refusal's details.conflicts) reach them as a code and a message
+// that names no employee and shows no other job, time off or workload. A row
+// whose message is fixed text keeps it; the per-employee rules get name-free
+// text; any other row gets a generic line. Dispatchers keep the full rows.
+const AUTHOR_TEXT = {
+  outside_working_hours: row => `An assigned employee does not work at this time${validDate(row.date) ? ` (${row.date})` : ''}.`,
+  employee_daily_capacity: row => `An assigned employee would pass the owner's daily limit${validDate(row.date) ? ` on ${row.date}` : ''}.`,
+  travel_buffer_short: () => 'An assigned employee may not have enough travel time between this job and other work.',
+};
+const AUTHOR_FIXED = new Set(['crew_size_short', 'skill_missing', 'schedule_overlap', 'employee_unavailable', 'unverifiable_assignment', 'legacy_blocked_day', 'unassigned', 'missing_crew_lead', 'segment_unassigned', 'inactive_assignment', 'vehicle_unavailable', 'missing_address', 'missing_customer_link', 'missing_scope', 'invalid_schedule', 'unscheduled', 'segments_invalid', 'provider_sync_pending', 'customer_memory_not_inherited', 'arrival_window_reset', 'checkout_needs_review']);
+export function authorRuleRows(rows) {
+  return (Array.isArray(rows) ? rows : []).filter(plain).map(row => {
+    const code = typeof row.code === 'string' ? row.code : '';
+    const message = Object.hasOwn(AUTHOR_TEXT, code) ? AUTHOR_TEXT[code](row) : AUTHOR_FIXED.has(code) && typeof row.message === 'string' ? row.message : 'Dispatch will review this job.';
+    return { code, message };
+  });
+}
 
 function text(value, label, max = 4000, required = false) {
   if (typeof value !== 'string' || value.length > max || required && !value.trim()) throw fail('invalid_plan', `${label} is missing or too long.`, 400);
@@ -254,8 +273,10 @@ export async function saveWalkthroughHandoff(store, actor, input, now = new Date
     const open = checkout && !['none', 'current', 'expired'].includes(checkout.status) ? [{ code: 'checkout_needs_review', message: 'An open card checkout for the earlier quote could not be closed. Review it in Stripe before the customer pays.' }] : [];
     return result(saved, true, [...(receipt.warnings || []), ...open], checkout);
   }
+  // A quote author who is not a dispatcher gets no crew identities (assignedCrew is
+  // always []; the crew page does not read it): warnings say what staffing needs.
   function result(saved, replayed, warnings, checkout = null) {
-    return { ok: true, authority: 'employee_hub', requestId: input.requestId, replayed, ...(checkout ? { checkout } : {}), job: { id: saved.id, revision: saved.revision, customerId: saved.customerId, projectId: saved.projectId, sourceWalkthroughId: saved.sourceWalkthroughId || '', date: saved.date, time: saved.time, endTime: saved.endTime, status: state(saved), assignedCrew: saved.assignedCrew || [], crewNeeded: saved.crewNeeded, highlevelContactId: saved.highlevelContactId || '', highlevelAppointmentId: saved.highlevelAppointmentId || '', highlevelOpportunityId: saved.highlevelOpportunityId || '', syncStatus: saved.syncStatus || 'pending' }, warnings, financialState: 'accepted_quote_not_payment', fieldJobUrl: `/crew/job.html?jobId=${encodeURIComponent(saved.id)}` };
+    return { ok: true, authority: 'employee_hub', requestId: input.requestId, replayed, ...(checkout ? { checkout } : {}), job: { id: saved.id, revision: saved.revision, customerId: saved.customerId, projectId: saved.projectId, sourceWalkthroughId: saved.sourceWalkthroughId || '', date: saved.date, time: saved.time, endTime: saved.endTime, status: state(saved), assignedCrew: access.dispatcher ? saved.assignedCrew || [] : [], crewNeeded: saved.crewNeeded, highlevelContactId: saved.highlevelContactId || '', highlevelAppointmentId: saved.highlevelAppointmentId || '', highlevelOpportunityId: saved.highlevelOpportunityId || '', syncStatus: saved.syncStatus || 'pending' }, warnings: access.dispatcher ? warnings : authorRuleRows(warnings), financialState: 'accepted_quote_not_payment', fieldJobUrl: `/crew/job.html?jobId=${encodeURIComponent(saved.id)}` };
   }
   const prior = await replay(); if (prior) return prior;
   const customer = await store.read('customers', input.customerId); requireRevision(customer);
@@ -292,16 +313,19 @@ export async function saveWalkthroughHandoff(store, actor, input, now = new Date
   }
   if (source?.convertedJobId && source.convertedJobId !== previous?.id) throw fail('existing_job', 'This walkthrough already has a saved job. Recover that job rather than creating another.');
   const roster = await store.roster(), assignedText = text(plan.logistics.assigned_to || '', 'Crew assignment', 500);
+  // A quote author who is not a dispatcher keeps the saved crew exactly. Any other
+  // name, one on the roster or not, gets the same refusal, so it cannot be used to
+  // learn who is on the roster.
+  const forbidden = () => fail('crew_assignment_forbidden', 'Only an operations manager or owner can assign crew. Clear the crew names; Dispatch will staff the job.', 403);
   let assignedCrew;
   if (!assignedText || /^crew of \d+$/i.test(assignedText)) assignedCrew = previous?.assignedCrew || [];
   else assignedCrew = jobCrewNames({ assignedTo: assignedText }).map(name => {
     const key = assignmentKey(name), exact = roster.filter(person => person.id === key), aliases = exact.length ? exact : roster.filter(person => assignmentKey(person.name) === key);
-    if (aliases.length !== 1) throw fail('crew_unverified', 'A requested crew member is not a unique active employee. Use the exact employee name or leave assignment for Dispatch.');
+    if (aliases.length !== 1) throw access.dispatcher ? fail('crew_unverified', 'A requested crew member is not a unique active employee. Use the exact employee name or leave assignment for Dispatch.') : forbidden();
     return aliases[0].id;
   });
-  // A quote author who is not a dispatcher keeps the saved crew exactly.
   if (!access.dispatcher) {
-    if (canonical([...assignedCrew].sort()) !== canonical([...(previous?.assignedCrew || [])].sort())) throw fail('crew_assignment_forbidden', 'Only an operations manager or owner can assign crew. Clear the crew names; Dispatch will staff the job.', 403);
+    if (canonical([...assignedCrew].sort()) !== canonical([...(previous?.assignedCrew || [])].sort())) throw forbidden();
     assignedCrew = previous?.assignedCrew || [];
   }
   const instructions = stripCrewMoneyDeep(handoffInstructions(plan, source?.id || '')), crewNotes = stripCrewMoney(plan.notes);
@@ -352,8 +376,18 @@ export async function saveWalkthroughHandoff(store, actor, input, now = new Date
       await store.commit(writes);
     },
   };
-  try { await mutateDispatch(adapter, actor, dispatchInput, now, { authorize: session => requireQuoteAuthor(session, env) }); }
-  catch (error) { const recovered = await replay(); if (recovered) return recovered; throw error; }
+  // DISPATCH-RULES: a handoff that leaves staffing to Dispatch (no one assigned,
+  // or a quote author who cannot assign crew) is saved with the crew-size
+  // shortfall as a warning, since only Dispatch can fill it. Every other owner
+  // block applies, and its refusal names the rule (details.conflicts).
+  const staffingLeftToDispatch = !access.dispatcher || !assignedCrew.length;
+  const enforce = warning => !(staffingLeftToDispatch && warning.code === 'crew_size_short');
+  try { await mutateDispatch(adapter, actor, dispatchInput, now, { authorize: session => requireQuoteAuthor(session, env), enforce }); }
+  catch (error) {
+    const recovered = await replay(); if (recovered) return recovered;
+    if (!access.dispatcher && Array.isArray(error?.details?.conflicts)) error.details = { conflicts: authorRuleRows(error.details.conflicts) };
+    throw error;
+  }
   const saved = await replay();
   if (!saved) throw fail('outcome_unknown', 'The save could not be read back. Retry the identical request; do not create a second job.', 503);
   return { ...saved, replayed: false };

@@ -13,7 +13,9 @@
  * An estimate never shortens a job's manual buffer: required = max(buffer,
  * estimate). Unknown locations use the buffer only, so no free capacity is
  * invented. EGC_DISPATCH_BLOCK_TRAVEL_SHORT=true makes a gap shorter than the
- * estimated drive a dispatch_conflict; by default it is only a warning.
+ * estimated drive a dispatch_conflict; by default it is only a warning. The
+ * owner's blockTravelShort (dispatch-settings.js) does the same, and
+ * travel.blockTravelShort below reports either.
  *
  * GET /api/dispatch-travel?date=YYYY-MM-DD&employeeId=optional (manager only)
  * => {ok,timeZone,date,asOf,travel:{mode,requestedMode,blockTravelShort},
@@ -26,6 +28,7 @@
  *     warnings:[{code,message,...}]}. legs[i] joins jobs[i] and jobs[i+1].
  */
 import { requireDispatcher } from './dispatch-service.js';
+import { dispatchRuleSettings } from './dispatch-settings.js';
 import { assignmentKey } from './job-assignment.js';
 import { sameOperationalProperty } from './dispatch-lineage.js';
 import { scheduleCrewIds } from './dispatch-conflicts.js';
@@ -201,7 +204,7 @@ function routeQuery(query, now) {
 export async function dispatchTravelRoutes(store, session, query = {}, now = new Date(), { travel = null } = {}) {
   requireDispatcher(session);
   const input = routeQuery(query, now), estimator = travel || travelEstimator();
-  const [jobs, roster] = await Promise.all([jobsForWindow(store, dayWindow(input.date), 'routes'), store.roster()]);
+  const [jobs, roster, rules] = await Promise.all([jobsForWindow(store, dayWindow(input.date), 'routes'), store.roster(), dispatchRuleSettings(store)]);
   if (input.employeeId && !roster.some(person => person.id === input.employeeId)) throw fail('dispatch_employee_inactive', 'That employee is not in the active roster. Refresh the roster.');
   const routes = new Map(), warnings = [];
   const route = id => {
@@ -250,5 +253,5 @@ export async function dispatchTravelRoutes(store, session, query = {}, now = new
     if (estimator.requestedMode === 'google' && estimator.mode !== 'google') warnings.unshift({ code: 'travel_google_key_missing', message: 'Google drive times are selected but no server key is configured. Built-in ZIP estimates are used instead.' });
     if (unestimated) warnings.push({ code: 'travel_estimate_unavailable', count: unestimated, message: `${unestimated} ${unestimated === 1 ? 'leg has' : 'legs have'} no drive estimate (unknown ZIP or address). The manual travel buffer applies.` });
   }
-  return { ok: true, timeZone: DISPATCH_TIME_ZONE, date: input.date, asOf: now.toISOString(), travel: { mode: estimator.mode, requestedMode: estimator.requestedMode, blockTravelShort: estimator.enabled && estimator.blockShort }, coverage: { complete: true, asOf: now.toISOString() }, employees, warnings };
+  return { ok: true, timeZone: DISPATCH_TIME_ZONE, date: input.date, asOf: now.toISOString(), travel: { mode: estimator.mode, requestedMode: estimator.requestedMode, blockTravelShort: estimator.enabled && (estimator.blockShort || rules.blockTravelShort) }, coverage: { complete: true, asOf: now.toISOString() }, employees, warnings };
 }

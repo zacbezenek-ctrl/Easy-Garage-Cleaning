@@ -22,6 +22,7 @@
  */
 import { getHubSession } from '../_lib/hub-session.js';
 import { requireDispatcher } from '../_lib/dispatch-service.js';
+import { canDispatch } from '../_lib/dispatch-permissions.js';
 import { garageGuardAction, garageGuardOverview, garageGuardStorage, garageGuardVisitTrackingEnabled } from '../_lib/garage-guard-visits.js';
 
 const MAX_BODY = 8192, QUERY_KEYS = new Set(['period', 'from', 'to']);
@@ -50,7 +51,7 @@ export function garageGuardMemberHandlers({ session = getHubSession, storage = g
     async get({ request, env }) {
       try {
         const actor = await session(request, env);
-        requireDispatcher(actor);
+        requireDispatcher(actor, env);
         const params = new URL(request.url).searchParams, query = {};
         for (const [key, value] of params) {
           if (!QUERY_KEYS.has(key) || Object.hasOwn(query, key)) throw fail('garage_guard_invalid_query', 'Use period, and from/to for a custom period, once each.', 400);
@@ -69,6 +70,8 @@ export function garageGuardMemberHandlers({ session = getHubSession, storage = g
         let body;
         try { body = JSON.parse(raw); } catch { throw fail('garage_guard_json_invalid', 'The request could not be read.', 400); }
         const actor = await session(request, env);
+        // Staff-role permissions (env) decide the library's dispatcher check for this session.
+        canDispatch(actor, env);
         return reply(200, await garageGuardAction(storage(env), actor, body, now().toISOString(), { visitsEnabled: garageGuardVisitTrackingEnabled(env) }));
       } catch (error) { return errorResponse(error); }
     },

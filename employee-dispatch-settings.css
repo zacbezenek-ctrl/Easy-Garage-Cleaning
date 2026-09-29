@@ -1,0 +1,16 @@
+/* Owner dispatch rules screen (employee-dispatch-settings.js), on the EGCHubKit tokens. */
+.egc-dispatch-rules{max-width:880px;padding-bottom:var(--hub-space-4)}
+.egc-dispatch-rules .dr-form{display:grid;gap:var(--hub-space-4);min-width:0}
+.egc-dispatch-rules .dr-card{display:grid;gap:var(--hub-space-3)}
+.egc-dispatch-rules .dr-card h2{font-size:20px}
+.egc-dispatch-rules .dr-lead{margin:0;color:var(--hub-muted);overflow-wrap:anywhere}
+.egc-dispatch-rules .dr-card .hub-check{padding:6px 0;border-bottom:1px solid var(--hub-line)}
+.egc-dispatch-rules .dr-card .hub-check:last-child{border-bottom:0}
+.egc-dispatch-rules .dr-pair{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:var(--hub-space-3)}
+.egc-dispatch-rules .dr-actions{position:sticky;bottom:0;z-index:1;display:flex;justify-content:flex-end;flex-wrap:wrap;gap:var(--hub-space-2);padding:var(--hub-space-3) 0;background:var(--hub-paper);border-top:1px solid var(--hub-line)}
+.egc-dispatch-rules [data-dr-status]:empty{display:none}
+@media (max-width:680px){
+  .egc-dispatch-rules .dr-pair{grid-template-columns:minmax(0,1fr)}
+  .egc-dispatch-rules .dr-actions .hub-btn{flex:1 1 auto}
+  .egc-dispatch-rules .dr-card h2{font-size:18px}
+}

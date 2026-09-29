@@ -66,7 +66,7 @@ export function recurringPlanHandlers({ session = getHubSession, storage = dispa
   return {
     async get({ request, env }) {
       try {
-        const actor = await session(request, env); requireDispatcher(actor);
+        const actor = await session(request, env); requireDispatcher(actor, env);
         const params = new URL(request.url).searchParams;
         if (new Set(params.keys()).size !== [...params.keys()].length) return reply(400, { ok:false, code:'recurring_request_invalid', error:'Each recurring plan filter can only be supplied once.' });
         return reply(200, { ...await recurringPlansOverview(storage(env), actor, Object.fromEntries(params), now(), { enabled: recurringPlansEnabled(env) }), viewer: { id: actor.user } });
@@ -75,7 +75,7 @@ export function recurringPlanHandlers({ session = getHubSession, storage = dispa
     async post({ request, env }) {
       if (!sameOrigin(request)) return reply(403, { ok:false, code:'recurring_origin_forbidden', error:'Open recurring plans in the Employee Hub to save changes.' });
       try {
-        const actor = await session(request, env); requireDispatcher(actor);
+        const actor = await session(request, env); requireDispatcher(actor, env);
         if (request.headers.get('Content-Type')?.split(';')[0].trim().toLowerCase() !== 'application/json') return reply(415, { ok:false, code:'recurring_json_required', error:'Recurring plan changes must be submitted as JSON.' });
         if (Number(request.headers.get('Content-Length')) > LIMIT) return reply(413, { ok:false, code:'recurring_request_too_large', error:'The recurring plan request is too large.' });
         const raw = await request.text();

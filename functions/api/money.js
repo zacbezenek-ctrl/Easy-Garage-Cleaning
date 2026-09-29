@@ -57,7 +57,7 @@ export function moneyHandlers({ session = getHubSession, storage = moneyStorage,
     async get({ request, env }) {
       if (!sameOrigin(request, true)) return reply(403, { ok: false, code: 'money_origin_forbidden', error: 'Open job finances in the Employee Hub.' });
       try {
-        const actor = laborCostViewer(await session(request, env), env); requireMoneyManager(actor);
+        const actor = laborCostViewer(await session(request, env), env); requireMoneyManager(actor, env);
         const params = new URL(request.url).searchParams, keys = [...params.keys()], at = now(), asOf = at.toISOString();
         if (new Set(keys).size !== keys.length || keys.some(key => !GET_KEYS.has(key)) || params.has('jobId') && keys.length !== 1) return reply(400, { ok: false, code: 'money_query_invalid', error: 'Use only the supported money filters, each at most once.' });
         const store = storage(env);
@@ -77,7 +77,7 @@ export function moneyHandlers({ session = getHubSession, storage = moneyStorage,
       if (!sameOrigin(request)) return reply(403, { ok: false, code: 'money_origin_forbidden', error: 'Open job finances in the Employee Hub to save changes.' });
       if (!moneyApiEnabled(env)) return reply(404, { ok: false, code: 'money_api_disabled', error: 'Server money actions are turned off. Use the standard finance tools.' });
       try {
-        const actor = laborCostViewer(await session(request, env), env); requireMoneyManager(actor);
+        const actor = laborCostViewer(await session(request, env), env); requireMoneyManager(actor, env);
         if (request.headers.get('Content-Type')?.split(';')[0].trim().toLowerCase() !== 'application/json') return reply(415, { ok: false, code: 'money_json_required', error: 'Money changes must be sent as JSON.' });
         if (Number(request.headers.get('Content-Length')) > LIMIT) return reply(413, { ok: false, code: 'money_request_too_large', error: 'The money request is too large.' });
         const raw = await request.text();
