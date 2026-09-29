@@ -14,7 +14,7 @@
       "id": "CI-01",
       "state": "resolved_batch8_final_head_seven_green",
       "owner": "build coordinator",
-      "action": "PR #86 final head d765eba3a79f269e5c39c9e302fbcdd21124d8df passed all seven applicable workflows and merged as a0297623276e0d0bed78dbdb789957367b8a60dd. Preserve this result separately from the pending final PR #87 seven-applicable-workflow gate.",
+      "action": "PR #86 final head d765eba3a79f269e5c39c9e302fbcdd21124d8df passed all seven applicable workflows and merged as a0297623276e0d0bed78dbdb789957367b8a60dd. Its six applicable main push checks passed. PR #87 final head bb41f03 passed seven applicable checks and merged as 5ed437c.",
       "evidence": "Business 36629316036; Root 36629315555; Firestore 36629315519; Platform 36629315656; Mobile 36629315606; Action Center 36629315563; Lighthouse 36629315570. Operations Integration path-filtered."
     },
     {
@@ -50,19 +50,19 @@
     },
     {
       "id": "HUB-INTEGRATION",
-      "state": "final_role_fix_candidate_pending_exact_head_seven_applicable_ci",
+      "state": "merged_deployed_live_acceptance_incomplete",
       "owner": "build coordinator",
-      "action": "PR #87 published combined head 6bfc032f9317a7ceeeeb23863c7f4c7174f2b769 and prior bf191d92c9de6ce394b8166d9fd53039d7e25104 each passed all eight workflows before Batch 8 merged to main. The final role-fix candidate includes Batch 8 main a029762 via local merge 6d215cc; 231 normal isolated Node tests passed on the combined tree. Focused field-payment browser 16/16 Chromium and 16/16 WebKit passed on identical d765 role-fix code before integration. Verify the seven applicable workflows on the final PR #87 head before merge. Business Hub Acceptance is path-filtered because the PR diff changes no listed workflow path; the last relevant Batch 8 main run 36630649618 passed."
+      "action": "PR #87 final head bb41f03 passed all seven applicable workflows, including both dedicated WebKit suites, and merged to main as 5ed437c. All six applicable main push checks passed. Cloudflare matching assets and all four Railway 5ed deployments succeeded; API/MCP/portal health reported 5ed. A synthetic transcript saved but processing failed; complete the separate production fix and live acceptance."
     },
     {
       "id": "OWNER-LIVE",
-      "state": "pending_deployment",
+      "state": "deployment_complete_live_acceptance_open",
       "owner": "owner",
       "action": "Complete docs/OWNER-GO-LIVE-CHECKLIST.md on real accounts and devices, including sign-in, Firestore rules, iPhone safe areas, Walkthroughs, Dispatch, recordings/task routing, and HighLevel boundaries."
     },
     {
       "id": "OWNER-FLAGS",
-      "state": "pending_deployment",
+      "state": "deployed_flags_off_review_open",
       "owner": "owner",
       "action": "Review evidence for each off-by-default flag before activation; leave refunds and milestone tags off until separately approved."
     },
@@ -71,6 +71,20 @@
       "state": "merged_code_flag_off_pending_release_access_and_activation_review",
       "owner": "release coordinator and owner",
       "action": "Publish reviewed Firestore rules/indexes, verify money backfill and unified totals gates, then enable EGC_FIELD_PAY_ENABLED in a new Cloudflare deployment only after preview acceptance. Keep refunds/milestone tags off. No real charge has been made by this task."
+    },
+    {
+      "id": "TRANSCRIPT-PRODUCTION-FIX",
+      "state": "reviewed_local_tests_passed_ci_and_deployment_pending",
+      "owner": "release coordinator",
+      "action": "Review and run exact-head CI on codex/transcript-production-schema-fix, merge and deploy it, then retry the same durable transcript saved for visit dispatch_beef26f85e694eb4b57d7a47a3c324d1. Verify one reviewed office task and no customer send; do not create a new intake to mask the failed saved one.",
+      "evidence": "Strict extraction schema had unsupported default annotations. Primary and independent review clear; AI 64 tests and API 18 tests plus typechecks passed locally. Production processing failed; original record persisted and no task/send occurred."
+    },
+    {
+      "id": "DRIVE-JOB-PHOTOS",
+      "state": "production_launch_blocker",
+      "owner": "owner and release coordinator",
+      "action": "Complete Cloudflare Production Drive OAuth at /api/drive-auth as Hub manager with company Google account, using exact redirect https://easygaragecleaning.com/api/drive-auth; verify regular job before/after uploads before crew completion acceptance.",
+      "evidence": "Live crew job showed Photo storage is unavailable. Drive setup page requested client ID/secret; route proves refresh token absent, and at least one client binding missing or unusable. FIELD-PAY receipt Firestore is separate."
     }
   ]
 }

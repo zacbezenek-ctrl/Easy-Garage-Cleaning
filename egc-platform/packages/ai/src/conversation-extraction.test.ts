@@ -74,6 +74,23 @@ describe('conversation extraction v2 strict schema',()=>{
     expect((item.kind as {enum:string[]}).enum).toEqual([...CONVERSATION_ACTION_KINDS]);
     expect(((item.attachmentsNeeded as {items:{enum:string[]}}).items).enum).toEqual([...MESSAGE_ATTACHMENT_KINDS]);
   });
+  it('sends the real strict schema without unsupported default annotations and keeps its shape',async()=>{
+    const generated=zodTextFormat(conversationModelOutputSchema,'egc_conversation').schema as Schema;
+    const generatedText=JSON.stringify(generated);
+    expect(generatedText).toContain('"default":'); // The stored scope still intentionally has Zod defaults.
+    const {call,result}=run(output());
+    expect((await result).ok).toBe(true);
+    const request=call.mock.calls[0]?.[0] as {text:{format:{type:string;name:string;strict:boolean;schema:Schema}}};
+    expect(request.text.format).toMatchObject({type:'json_schema',name:'egc_conversation',strict:true});
+    const sent=request.text.format.schema;
+    expect(JSON.stringify(sent)).not.toContain('"default":');
+    expect(sent).toEqual(JSON.parse(JSON.stringify(generated,(key,value)=>key==='default'?undefined:value)));
+    expect(validate(sent)).toEqual(validate(generated));
+    const properties=sent.properties as Record<string,Schema>;
+    const scope=(properties.scope as {anyOf:Schema[]}).anyOf.find(item=>item.type==='object')!;
+    expect(scope.additionalProperties).toBe(false);
+    expect(scope.required).toEqual(Object.keys(scope.properties as Record<string,Schema>));
+  });
   it('the stored v2 extraction is strict too, and an optional or record field cannot reach the model',()=>{
     const objects=validate(zodTextFormat(conversationExtractionSchema,'egc_conversation_stored').schema as Schema);
     expect(objects).toEqual(expect.arrayContaining(['#','#/properties/validation']));

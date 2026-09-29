@@ -295,9 +295,20 @@ export type ConversationExtractionResult =
 
 const contextSchema = z.object({ sourceKind: conversationSourceKindSchema, occurredAt: z.string().datetime({ offset: true }) }).strict();
 let format: ConversationRequest["text"]["format"] | undefined;
+// The stored walkthrough schema uses Zod defaults, but strict Structured Outputs rejects the
+// resulting JSON Schema `default` annotations. Keep the local Zod validation and remove only
+// those annotations from the model request; all fields remain required and objects stay closed.
+function withoutSchemaDefaults<T>(value: T, parent = ""): T {
+  if (Array.isArray(value)) return value.map(item => withoutSchemaDefaults(item)) as T;
+  if (value !== null && typeof value === "object") return Object.fromEntries(
+    Object.entries(value).filter(([key]) => parent === "properties" || key !== "default")
+      .map(([key, item]) => [key, withoutSchemaDefaults(item, key)])
+  ) as T;
+  return value;
+}
 // Built on first use, so a schema problem fails one extraction instead of the process that imports this module.
 function modelFormat() {
-  if (!format) { const built = zodTextFormat(conversationModelOutputSchema, "egc_conversation"); format = { type: "json_schema", name: built.name, strict: true, schema: built.schema }; }
+  if (!format) { const built = zodTextFormat(conversationModelOutputSchema, "egc_conversation"); format = { type: "json_schema", name: built.name, strict: true, schema: withoutSchemaDefaults(built.schema) }; }
   return format;
 }
 const parseJson = (text: string): unknown => { try { return JSON.parse(text); } catch { return undefined; } };

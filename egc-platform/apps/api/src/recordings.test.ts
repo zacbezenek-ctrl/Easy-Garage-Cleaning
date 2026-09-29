@@ -96,9 +96,11 @@ describe('durable text transcript intake',()=>{
   });
   it('retries failed transcript extraction from the same saved text without audio I/O',async()=>{
     const fixture=setupService(),c=transcript('Customer: Keep the bicycle.');
-    fixture.io.conversation.mockRejectedValueOnce(new Error('synthetic model failure'));
+    fixture.io.conversation.mockRejectedValueOnce(Object.assign(new Error('private transcript access_token=secret'),{status:400,code:'invalid_json_schema'}));
     const first=await fixture.service.saveTranscript(c);
-    expect(await fixture.service.processNext()).toBe(true);
+    const diagnostic=vi.fn();
+    expect(await fixture.service.processNext(diagnostic)).toBe(true);
+    expect(diagnostic).toHaveBeenCalledExactlyOnceWith({event:'recording_processing_failed',stage:'extraction',attempt:1,sourceKind:'transcript',code:'invalid_json_schema',status:400});
     const failed=await fixture.service.execute({...c,request:{requestId:randomUUID(),body:{command:'recording.get',recordingId:first.recording.id}}});
     expect(failed.recording).toMatchObject({status:'failed',lastErrorCode:'recording_processing_failed',transcript:'Customer: Keep the bicycle.'});
     fixture.linkProject('project-synthetic');
@@ -108,5 +110,15 @@ describe('durable text transcript intake',()=>{
     expect(draft.recording).toMatchObject({status:'draft',attemptCount:2,sourceKind:'transcript'});
     expect(fixture.io.conversation).toHaveBeenCalledTimes(2);
     expect(fixture.io.get).not.toHaveBeenCalled();expect(fixture.io.transcribe).not.toHaveBeenCalled();expect(fixture.io.put).not.toHaveBeenCalled();
+  });
+  it('keeps a processing failure retryable even when its diagnostic logger throws',async()=>{
+    const fixture=setupService(),c=transcript();
+    fixture.io.conversation.mockRejectedValueOnce(new Error('synthetic failure'));
+    const first=await fixture.service.saveTranscript(c);
+    expect(await fixture.service.processNext(()=>{throw new Error('logger unavailable');})).toBe(true);
+    expect(fixture.row).toMatchObject({status:'failed',processingLeaseUntil:null,lastErrorCode:'recording_processing_failed'});
+    await fixture.service.execute({...c,request:{requestId:randomUUID(),body:{command:'recording.retry',recordingId:first.recording.id}}});
+    await fixture.service.processNext();
+    expect(fixture.row).toMatchObject({status:'draft',attemptCount:2});
   });
 });
