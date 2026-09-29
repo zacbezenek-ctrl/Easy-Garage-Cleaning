@@ -20,6 +20,7 @@ ROOT = pathlib.Path(__file__).resolve().parents[2]
 DAY = '2026-09-22'
 UUID = re.compile(r'^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$')
 FINANCE_BOARD = next(line for line in (ROOT / 'employee-suite.js').read_text(encoding='utf-8').splitlines() if line.startswith('function financeBoard(){'))
+FINANCE_ACCESS = next(line for line in (ROOT / 'employee-suite.js').read_text(encoding='utf-8').splitlines() if line.startswith('function fieldPaymentReviewAccess(){'))
 
 
 def png():
@@ -58,6 +59,7 @@ class FieldPayBrowserTests(unittest.TestCase):
         self.context = None
         self.manager = False
         self.enabled = True
+        self.review_access = True
         self.balance = 14550
         self.row = None
         self.card_claim = None
@@ -73,13 +75,14 @@ class FieldPayBrowserTests(unittest.TestCase):
         self.stale_review = False
         self.errors = []
         self.receipt_reads = 0
+        self.payment_gets = 0
 
     def tearDown(self):
         if self.context:
             self.context.close()
         self.assertEqual(self.errors, [])
 
-    def page_open(self, *, manager=False, width=390, url=None):
+    def page_open(self, *, manager=False, width=390, url=None, expect_payment=True):
         self.manager = manager
         self.context = self.browser.new_context(viewport={'width': width, 'height': 844}, timezone_id='Asia/Tokyo', is_mobile=True, has_touch=True, service_workers='block')
         page = self.context.new_page()
@@ -88,13 +91,17 @@ class FieldPayBrowserTests(unittest.TestCase):
         page.on('pageerror', lambda error: self.errors.append(str(error)))
         page.route('**/*', self.route)
         page.goto(url or self.url + '/crew/job.html?jobId=job-1')
-        expect(page.get_by_role('heading', name='Settle the job with confidence')).to_be_visible()
-        expect(page.get_by_text('$145.50', exact=True)).to_be_visible()
+        if expect_payment:
+            expect(page.get_by_role('heading', name='Settle the job with confidence')).to_be_visible()
+            expect(page.get_by_text('$145.50', exact=True)).to_be_visible()
+        else:
+            expect(page.get_by_role('heading', name='Synthetic Drafts Garage')).to_be_visible()
+            expect(page.locator('#field-payment-card')).to_have_count(0)
         return page
 
     def detail(self):
         job = field_job(self.manager)
-        return {'ok': True, 'job': job, 'historyCursor': None, 'photosAvailable': True, 'features': {'jobCosts': False, 'fieldPay': self.enabled}, 'timezone': 'America/Denver'}
+        return {'ok': True, 'job': job, 'historyCursor': None, 'photosAvailable': True, 'features': {'jobCosts': False, 'fieldPay': self.enabled and (not self.manager or self.review_access), 'fieldPayReview': self.manager and self.review_access}, 'timezone': 'America/Denver'}
 
     def view(self):
         submit = self.enabled and not self.manager and self.balance > 0 and self.row is None and self.card_claim is None
@@ -133,6 +140,7 @@ class FieldPayBrowserTests(unittest.TestCase):
                     self.receipt_reads += 1
                     route.fulfill(status=200, content_type='image/jpeg', body=b'fake-image')
                 else:
+                    self.payment_gets += 1
                     send(self.view())
             else:
                 body = request.post_data_json
@@ -287,6 +295,13 @@ class FieldPayBrowserTests(unittest.TestCase):
         page.get_by_role('button', name='Approve receipt').click()
         expect(page.get_by_text('Receipt approved.')).to_be_visible()
 
+    def test_manager_without_payment_review_capability_gets_no_card_or_api_request(self):
+        self.review_access = False
+        page = self.page_open(manager=True, expect_payment=False)
+        expect(page.get_by_role('link', name='Payment', exact=True)).to_have_count(0)
+        self.assertEqual(self.payment_gets, 0)
+        self.assertEqual(page.locator('#manager-job-labor').count(), 1, 'management note access is deliberately still present')
+
     def test_unsafe_receipt_link_is_not_offered(self):
         self.row = {'id': '11111111-1111-4111-8111-111111111111', 'method': 'cash', 'amountCents': 14550, 'status': 'pending', 'revision': 'rev-receipt-1', 'submittedAt': DAY + 'T16:03:00Z', 'reference': 'Receipt 14', 'receiptUrl': 'https://not-the-hub.example/receipt/11111111'}
         page = self.page_open(manager=True)
@@ -362,18 +377,26 @@ class FieldPayBrowserTests(unittest.TestCase):
         page = self.context.new_page()
         page.on('pageerror', lambda error: self.errors.append(str(error)))
         job = {'id': 'job-1', 'type': 'job', 'customer': 'Synthetic customer', 'date': DAY, 'fieldPaymentPendingId': '11111111-1111-4111-8111-111111111111', 'fieldPaymentSyncPendingIds': ['card:cs_test_prior']}
-        page.evaluate('''(job) => {
+        render_finance = '''({job,caps}) => {
           const jobs=()=>[job], jobStage=()=> 'scheduled', financeState=()=>({total:145.5,balance:145.5,deposit:0,estimate:'draft',invoice:'open',paid:0}),
             jobEconomics=()=>({known:false,laborUnknown:false}), money=value=>'$'+Number(value).toFixed(2), dateLabel=()=> 'Sep 22',
             badge=(label)=>`<span class="badge">${label}</span>`, esc=value=>String(value), portalInvitationControl=()=>'',salesExitControl=()=>'',
-            empty=()=>'';
-        ''' + FINANCE_BOARD + '''
+            serverCapabilities=()=>caps,empty=()=>'';
+        ''' + FINANCE_ACCESS + FINANCE_BOARD + '''
           document.body.innerHTML=financeBoard();
-        }''', job)
+        }'''
+        page.evaluate(render_finance, {'job': job, 'caps': None})
         article = page.locator('[data-finance-job="job-1"]')
         expect(article.get_by_text('Receipt awaiting review')).to_be_visible()
         expect(article.get_by_text('HighLevel handoff pending')).to_be_visible()
         expect(article.get_by_role('link', name='Review pending receipt')).to_have_attribute('href', '/crew/job.html?jobId=job-1#field-payment-card')
+        page.evaluate(render_finance, {'job': job, 'caps': ['time.approve']})
+        article = page.locator('[data-finance-job="job-1"]')
+        expect(article.get_by_text('Receipt awaiting review')).to_be_visible()
+        expect(article.get_by_text('HighLevel handoff pending')).to_be_visible()
+        expect(article.locator('a.ops-finance-field-pay')).to_have_count(0)
+        page.evaluate(render_finance, {'job': job, 'caps': ['dispatch.write']})
+        expect(page.get_by_role('link', name='Review pending receipt')).to_be_visible()
 
 
 if __name__ == '__main__':
