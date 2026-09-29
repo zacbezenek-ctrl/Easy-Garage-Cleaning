@@ -4,8 +4,11 @@
  * /api/money with a request ID, revision check, receipt and audit entry.
  * Otherwise the existing browser tools run unchanged. The last flag value read
  * is kept per viewer for this tab, so a failed check never silently falls back
- * to the browser tools once server money actions were on. Nothing here sends
- * anything to a customer. */
+ * to the browser tools once server money actions were on. Nothing here sends a
+ * message itself: after a confirmed estimate, approval, deposit, payment or
+ * invoice save it starts the same HighLevel lifecycle trigger (the egc-<event>
+ * tag, suppressed when the job's notify is off) as the standard finance save,
+ * through the suite's own helper (window.EGCCustomerCommunication). */
 (function () {
 'use strict';
 const TZ='America/Denver', PREFIX='egc.money.pending.v1.', FLAG_PREFIX='egc.money.flag.v1.', MAX_LINES=12;
@@ -15,6 +18,15 @@ const CHANNELS=[['email','Email'],['text','Text message'],['in_person','In perso
 const KINDS=[['service','Service'],['labor','Labor'],['product','Product'],['disposal','Disposal'],['fee','Fee']];
 const ACTIVE_INVOICE=new Set(['issued','partial','overdue','paid','pending_verification']);
 const RETRY_STATUS=new Set([401,403,408,429]);
+// The standard finance save's lifecycle trigger for each server action (employee-suite.js opsFinanceAction):
+// [its action name, the event]. Marking an estimate sent, voiding an invoice and saving costs trigger nothing there or here.
+const LIFECYCLE={'estimate.save':['estimate','estimate-ready'],'estimate.record_approval':['accept','estimate-approved'],'deposit.record_offline':['deposit','deposit-received'],'invoice.issue':['invoice','invoice-issued'],'payment.record_offline':['payment','payment-received']};
+const UNTRIGGERED='customer message not triggered · use Trigger in HighLevel if it is still needed';
+const FLAGGED='customer message not triggered · flagged in Customer messages, so use Trigger in HighLevel there if it is still needed';
+// Read-back waits (ms) before a save counts as unconfirmed; how long a missed-trigger flag and the next form for the job wait.
+const READBACK=[400,1200,3000],FLAG_WAIT=8000,TRIGGER_WAIT=20000;
+// jobId -> the customer message a confirmed save is still starting; it patches the job, so the next form waits for it.
+const TRIGGERS=new Map();
 const legacy=typeof window.opsFinanceAction==='function'?window.opsFinanceAction:null;
 const S={dialog:null,opener:null,generation:0,flagRequest:null,busy:false,loading:false,id:'',action:'',view:'',job:null,viewer:'',draft:null,pending:null,error:'',errorKind:'',notice:''};
 const usd=new Intl.NumberFormat('en-US',{style:'currency',currency:'USD'});
@@ -37,6 +49,9 @@ function flagKey(){try{return FLAG_PREFIX+String(window.EGCHubAuth?.profile?.().
 function lastFlag(){try{return sessionStorage.getItem(flagKey());}catch{return null;}}
 function setFlag(value){window.EGC_FLAGS={...(window.EGC_FLAGS||{}),moneyApi:value};try{sessionStorage.setItem(flagKey(),String(value));}catch{}}
 function toast(message){if(typeof window.showToast==='function')window.showToast(message);}
+const wait=ms=>new Promise(resolve=>setTimeout(resolve,ms));
+/** Resolves with the promise's value, or with `fallback` after ms. */
+function within(promise,ms,fallback){let timer;return Promise.race([promise,new Promise(resolve=>{timer=setTimeout(()=>resolve(fallback),ms);})]).finally(()=>clearTimeout(timer));}
 
 async function call(url,init={}){
   const controller=new AbortController(),timer=setTimeout(()=>controller.abort(),30000);
@@ -67,6 +82,9 @@ function validJob(data,id){const job=data?.job;return job&&job.id===id&&typeof j
 async function load(){
   const generation=++S.generation;S.loading=true;S.error='';S.errorKind='';render();
   try{
+    // The last save's customer message patches this job (its money revision): load after it, so saving here does not conflict.
+    const trigger=TRIGGERS.get(S.id);
+    if(trigger){await within(trigger,TRIGGER_WAIT);if(generation!==S.generation)return;render();}
     const data=await call('/api/money?'+new URLSearchParams({jobId:S.id}));
     if(generation!==S.generation)return;
     if(!validJob(data,S.id))throw Object.assign(new Error('The job money details were incomplete. Retry.'),{status:503});
@@ -139,11 +157,17 @@ async function send(){
     clearPending(pending.viewer,pending.body.jobId);
     if(generation===S.generation)S.pending=null;
     const warnings=(result.warnings||[]).map(item=>item?.message).filter(Boolean);
-    finish([SAVED[pending.body.action]||'Saved','nothing was sent to the customer',...warnings].join(' · '),result);
+    if(!LIFECYCLE[pending.body.action]){finish([SAVED[pending.body.action]||'Saved','nothing was sent to the customer',...warnings].join(' · '),result);return;}
+    // As in the standard finance tools, the saved money closes the form and the toast then reports HighLevel.
+    const id=pending.body.jobId,run=customerMessage(pending.body).catch(()=>'Saved · customer message needs retry').then(message=>toast([message,...warnings].join(' · '))).finally(()=>{if(TRIGGERS.get(id)===run)TRIGGERS.delete(id);});
+    TRIGGERS.set(id,run);
+    finish('',result);
+    await run;
   }catch(error){
     if(generation!==S.generation)return;
     const code=error.code||'',retry=!error.status||error.status>=500||RETRY_STATUS.has(error.status);
-    if(code==='money_changed_since_operation'){clearPending(pending.viewer,pending.body.jobId);S.pending=null;finish('Saved earlier · the job has changed since, so review it',null);return;}
+    // This tab never saw that save confirmed, so it never started its trigger, and the saved job it describes is gone.
+    if(code==='money_changed_since_operation'){clearPending(pending.viewer,pending.body.jobId);S.pending=null;finish('Saved earlier · the job has changed since, so review it'+(LIFECYCLE[pending.body.action]?' · '+UNTRIGGERED:''),null);return;}
     if(code==='money_api_disabled'){handOver(pending.viewer,'Server money actions were turned off, so this was not saved here. Opening the standard finance tools; check the job before entering it again.');return;}
     if(retry){S.error=error.message+' Your request is kept. Retry it unchanged; do not create another.';S.errorKind='retry';}
     else{
@@ -153,8 +177,37 @@ async function send(){
     }
   }finally{if(generation===S.generation){S.busy=false;render();if(S.error)focusError();}}
 }
+/**
+ * Starts the standard finance save's HighLevel lifecycle trigger for a confirmed save, at most once, and returns its
+ * toast. It uses the saved job (moneyRequestId proves it is this save): the marker is the save's own time, so a replay
+ * of a request whose answer was lost builds the same trigger, and one already in the job's log (or claimed there by
+ * another tab replaying the same request) is not started again. A save it cannot confirm is flagged in the job's log.
+ */
+async function customerMessage(body){
+  const [action,event]=LIFECYCLE[body.action],hooks=window.EGCCustomerCommunication;
+  if(typeof hooks?.sync!=='function'||typeof hooks.read!=='function')return 'Saved · '+UNTRIGGERED;
+  const job=await savedJob(hooks,body);
+  if(!job){let flagged=false;try{flagged=typeof hooks.missed==='function'&&await within(hooks.missed(body.jobId,event,body.requestId),FLAG_WAIT,false)===true;}catch{}try{if(flagged)hooks.render?.();}catch{}return 'Saved · '+(flagged?FLAGGED:UNTRIGGERED);}
+  const marker=`${action}:${job.moneyUpdatedAt}`,key=`communication:${job.id}:${event}:${marker}`;
+  let logged=(Array.isArray(job.communicationLog)?job.communicationLog:[]).find(entry=>entry?.id===key)||null;
+  // The suite claims it in one transaction, so a duplicated tab replaying this request cannot start it a second time.
+  if((!logged||logged.status==='pending')&&typeof hooks.claim==='function'){try{logged=await hooks.claim(job.id,event,marker);}catch{}}
+  if(logged?.status==='pending')return 'Saved · customer message already started in another tab';
+  let sent=logged?.status==='triggered';
+  if(!logged){try{sent=await hooks.sync(job,event,marker);}catch{sent=false;}try{hooks.render?.();}catch{}}
+  return job.notify===false?'Saved · customer automation suppressed':sent?(action==='accept'?'Approval saved · '+(hooks.portalLabel?.(job.id,job)||'Portal delivery pending'):'Saved · HighLevel automation triggered'):'Saved · customer message needs retry';
+}
+/** The saved job once a read shows this save (its moneyRequestId), retried with a short backoff; null if none does. */
+async function savedJob(hooks,body){
+  for(let attempt=0;;attempt++){
+    let job=null;try{job=await hooks.read(body.jobId);}catch{}
+    if(job?.id===body.jobId&&job.moneyRequestId===body.requestId&&typeof job.moneyUpdatedAt==='string'&&job.moneyUpdatedAt)return job;
+    if(attempt>=READBACK.length)return null;
+    await wait(READBACK[attempt]);
+  }
+}
 function finish(message,result){
-  toast(message);
+  if(message)toast(message);
   window.dispatchEvent(new CustomEvent('egc:money-saved',{detail:{jobId:S.id,action:result?.action||null,revision:result?.job?.revision||null}}));
   close(true);
 }
@@ -181,6 +234,7 @@ function summary(){
   return h('section',{class:'em-summary','aria-label':'Job money'},h('p',{class:'em-customer'},job.customer||'Customer'),h('dl',{},rows.map(([label,value])=>h('div',{},h('dt',{},label),h('dd',{},value)))),h('p',{class:'em-muted'},status.join(' · ')),t.complete===false?h('p',{class:'em-notice warn'},'Some saved money on this job needs review. Figures that could not be read show “Needs review”.'):null);
 }
 const note=text=>h('p',{class:'em-note'},text);
+const automation=event=>S.job.notify===false?'Customer notifications are off for this job, so saving starts no HighLevel automation.':`Saving starts the HighLevel ${event} automation, as the standard finance tools do.`;
 function estimateView(){
   const d=S.draft,job=S.job,closed=['approved'].includes(job.approval?.status)||['accepted','approved'].includes(job.estimate?.status);
   if(job.estimate&&lockedEstimate(job))return[h('p',{class:'em-notice warn'},'This estimate has customer options, discounts or lines that need review. This editor changes fixed lines only, so it will not reprice it. Edit it from the walkthrough game plan.'),job.estimate&&!closed?h('button',{type:'button',class:'em-button',onclick:()=>switchView('sent')},'Record that it was sent'):null];
@@ -205,7 +259,7 @@ function estimateView(){
     field('Customer-facing scope',bind('scope',{tag:'textarea',rows:4,maxLength:1600,required:true}),'What is included in this price. The customer sees this text.'),
     h('div',{class:'em-pair'},field('Deposit required ($)',depositInput,'50% of the total unless you change it.'),field('Estimate valid through',bind('validUntil',{type:'date',min:today(),required:true}))),
     totalNode,
-    note('Saving does not send anything to the customer.'),
+    note(automation('estimate-ready')),
     job.estimate&&!closed?h('button',{type:'button',class:'em-button',onclick:()=>switchView('sent')},'Record that it was sent'):null,
   ];
 }
@@ -213,7 +267,7 @@ function acceptView(){
   const job=S.job;
   if(!job.estimate||!(job.totals.quoteCents>0))return[h('p',{class:'em-notice warn'},'Save a priced estimate before recording an approval.')];
   if(job.approval?.status==='approved'||['accepted','approved'].includes(job.estimate.status))return[h('p',{class:'em-notice'},`Approved by ${job.approval?.approvedBy||job.estimate.acceptedBy||'the customer'}. Save an estimate revision first if the customer is approving a change.`)];
-  return[h('p',{},`${job.estimate.number||'Estimate'}${job.estimate.revision?' · revision '+job.estimate.revision:''} · ${money(job.totals.quoteCents)}`),field('Approved by',bind('approvedBy',{maxLength:120,autocomplete:'name',required:true}),'The person who approved this estimate.'),note('Records an approval the customer already gave you in person, by phone or in writing. Nothing is sent to the customer.')];
+  return[h('p',{},`${job.estimate.number||'Estimate'}${job.estimate.revision?' · revision '+job.estimate.revision:''} · ${money(job.totals.quoteCents)}`),field('Approved by',bind('approvedBy',{maxLength:120,autocomplete:'name',required:true}),'The person who approved this estimate.'),note('Records an approval the customer already gave you in person, by phone or in writing. '+automation('estimate-approved'))];
 }
 function paymentView(){
   const job=S.job,t=job.totals,deposit=S.view==='deposit';
@@ -224,7 +278,7 @@ function paymentView(){
     field('How it was received',select('method',METHODS)),
     field('Receipt, check or transaction reference',bind('reference',{maxLength:160,autocomplete:'off',required:true}),'Needed to verify and reconcile this payment.'),
     job.ledger?.complete===false?h('p',{class:'em-notice warn'},'Older payment records on this job need review. New money is still recorded exactly.'):null,
-    note('Records money already received. It never charges a card and nothing is sent to the customer.')];
+    note('Records money already received. It never charges a card. '+automation(deposit?'deposit-received':'payment-received'))];
 }
 function invoiceView(){
   const job=S.job,t=job.totals,invoice=job.invoice,active=ACTIVE_INVOICE.has(invoice.status),preview=job.invoicePreview;
@@ -239,7 +293,7 @@ function invoiceView(){
       (preview.notices||[]).map(text=>h('p',{class:'em-notice warn'},text)),
     ]:h('p',{class:'em-notice warn'},'The invoice lines could not be previewed. Review the job money before issuing.'),
     h('div',{class:'em-pair'},field('Payment due date',bind('dueDate',{type:'date',min:today(),required:true})),field('PO / customer reference',bind('customerReference',{maxLength:120,autocomplete:'off'}),'Optional')),
-    note('Issuing does not send anything. The invoice shows in the customer portal with its balance.'),
+    note(automation('invoice-issued')+' The invoice shows in the customer portal with its balance.'),
     active&&invoice.status!=='paid'?h('button',{type:'button',class:'em-button danger',onclick:()=>switchView('void')},'Void this invoice…'):null,
     changeList(),
   ];

@@ -447,6 +447,10 @@ draft PR. The owner merges in phase order. See **Decisions** D-001.
   saves queue per-employee notices in the same commit, and the signed messaging cron texts them (crew_assignment,
   crew_unassignment, crew_schedule_change; owner-approved wording) only to an opted-in employee's own number on a
   HighLevel contact tagged egc-staff. MY EGC → Schedule alerts shows each employee their feed. Gaps: no Web Push yet.
+- **MONEY-GHL-PARITY** With `MONEY_API_ENABLED` on, a confirmed server money save (estimate, approval, deposit, payment,
+  invoice) starts the same egc-<event> HighLevel lifecycle trigger as the legacy finance save, through the suite's own
+  syncCustomerCommunication (claimed once per save; a save it cannot confirm shows as needs attention). Flag off: no
+  change. Gap: server estimate/invoice saves do not turn on automatic reminders (owner decision).
 
 ## In progress
 
@@ -551,6 +555,7 @@ one prefixed commit only after the full root suite (and the platform suite when 
 | FUN-29 | Service line and funnel path on every project (definitions 2026-09-28.6) | merged (4c1d165) |
 | QUOTE-DRAFT | Unsigned quote drafts with a confirmed send (estimate-ready via approved send, off) and the quote-author role (flag off) | merged (0658534) |
 | CREW-NOTIFY | Crew schedule notices: dispatch queues, messaging cron texts opted-in staff on egc-staff contacts (flag off) | merged (b95eee8) |
+| MONEY-GHL-PARITY | Server money saves start the same HighLevel lifecycle triggers as the finance tools (MONEY_API_ENABLED) | merged (890742e) |
 
 ## Next
 

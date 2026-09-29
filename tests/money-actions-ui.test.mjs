@@ -73,10 +73,13 @@ test('once server money actions were on for this viewer, an unreadable setting r
   assert.deepEqual(Object.keys(tab), ['egc_u']);
 });
 
-test('the money module is wired after the suite, never injects HTML and never sends to customers', () => {
+// MONEY-GHL-PARITY: a confirmed save now starts the standard finance save's HighLevel lifecycle trigger, but only
+// through the suite's own helper (window.EGCCustomerCommunication); the module itself still sends nothing.
+test('the money module is wired after the suite, never injects HTML and never sends to customers itself', () => {
   const suite = html.indexOf('<script src="employee-suite.js?v='), module = html.indexOf('<script src="employee-money-actions.js?v=');
   assert.ok(suite > 0 && module > suite, 'employee-money-actions.js must load after employee-suite.js to wrap opsFinanceAction');
   assert.match(html, /<link rel="stylesheet" href="employee-money-actions\.css\?v=\d{8}money">/);
   assert.doesNotMatch(source, /innerHTML|insertAdjacentHTML|outerHTML|document\.write/);
-  assert.doesNotMatch(source, /\/api\/(highlevel|messages|customer-payments)|syncCustomerCommunication|firebase|firestore/i);
+  assert.doesNotMatch(source, /\/api\/(highlevel|messages|customer-payments)|syncCustomerCommunication|firebase|firestore|db\.collection/i);
+  assert.deepEqual([...new Set(source.match(/window\.EGCCustomerCommunication/g))], ['window.EGCCustomerCommunication'], 'the only customer-communication path is the suite helper');
 });
