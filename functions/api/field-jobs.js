@@ -12,6 +12,8 @@ import { fieldFunnelType, fieldFunnelWrite } from '../_lib/job-funnel-events.js'
 import { fieldJobTime } from '../_lib/field-execution-time.js';
 import { fieldExpenseCloseoutMissing, fieldExpensesEnabled, requireFieldExpenseCloseout } from '../_lib/field-expenses.js';
 import { fieldCapabilities } from '../_lib/field-permissions.js';
+import { fieldPaymentsReady } from './field-payments.js';
+import { canDispatch } from '../_lib/dispatch-permissions.js';
 import { jobStatusMovesTime } from '../_lib/employee-job-time.js';
 import { clockInWithoutFix } from '../_lib/employee-timecards.js';
 import { addDays } from '../_lib/dispatch-time.js';
@@ -86,7 +88,7 @@ async function detail(ctx, env, jobId, cursor = '') {
   if (view.canEdit) view.completionMissing.push(...await fieldExpenseCloseoutMissing(env, job.id, { safe: true }));
   // features lets the job page skip optional modules (and their API calls) that are switched off. The CREW-TIME switches
   // are listed only when on (EGC_JOB_STATUS_MOVES_TIME, EGC_CLOCK_IN_WITHOUT_FIX), so an off page is as before.
-  const features = { jobCosts: fieldExpensesEnabled(env), ...(jobStatusMovesTime(env) ? { statusMovesTime: true } : {}), ...(clockInWithoutFix(env) ? { clockInWithoutFix: true } : {}) };
+  const features = { jobCosts: fieldExpensesEnabled(env), fieldPay: fieldPaymentsReady(env) && (canDispatch(ctx.session, env) || allowed.lead), ...(jobStatusMovesTime(env) ? { statusMovesTime: true } : {}), ...(clockInWithoutFix(env) ? { clockInWithoutFix: true } : {}) };
   return { job: view, historyCursor: history.cursor, photosAvailable: fieldPhotosConfigured(env), features, timezone: 'America/Denver' };
 }
 

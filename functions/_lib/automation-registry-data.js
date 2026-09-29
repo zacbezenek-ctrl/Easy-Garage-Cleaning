@@ -7,6 +7,7 @@
 const HL = 'functions/api/highlevel.js', WEB_LEAD = 'functions/api/web-lead.js', WEB_LEAD_INTAKE = 'functions/_lib/web-lead-intake.js', MESSAGING_CRON = 'functions/api/messaging-cron.js', SUITE = 'employee-suite.js', HANDOFF = 'crew/gameplan-handoff.js';
 const MCP = 'egc-platform/apps/mcp/src/server.ts', GHL_CLIENT = 'egc-platform/packages/ghl/src/index.ts';
 const CHECKIN = 'functions/_lib/highlevel-checkin.js';
+const FIELD_PAY_SYNC = 'functions/_lib/field-payment-sync.js';
 // GHL-TRACK-1: the durable tag outbox (off unless EGC_GHL_TAG_OUTBOX=true) and the shared HighLevel writer it and highlevel.js call.
 const TAG_OUTBOX = 'functions/_lib/ghl-tag-outbox.js', HL_TAGS = 'functions/_lib/highlevel-tags.js';
 const OUTBOX_SCHEDULE = ['functions/_lib/dispatch-service.js', 'functions/_lib/operations-scheduling.js', 'functions/api/dispatch.js', 'functions/api/ghl-tag-drain.js'], OUTBOX_OUTCOME = ['functions/_lib/walkthrough-visit.js', 'functions/api/walkthrough-visit.js', 'functions/api/ghl-tag-drain.js'];
@@ -34,7 +35,7 @@ const deepFreeze = value => { if (value && typeof value === 'object') { Object.v
 
 export const AUTOMATION_REGISTRY = deepFreeze({
   schemaVersion: 1,
-  registryVersion: '2026-09-28.1',
+  registryVersion: '2026-09-29.1',
   timeZone: 'America/Denver',
   ghlLocationId: 'KlgLwRaQSPz5G1YXsmc6',
   sources: {
@@ -93,7 +94,8 @@ export const AUTOMATION_REGISTRY = deepFreeze({
     trigger('tag:egc-deposit-received', 'tag_added', 'Tag egc-deposit-received', [write(HL, [SUITE], 'tool=lifecycle: automatically when a manager records a deposit', true)]),
     trigger('tag:egc-payment-received', 'tag_added', 'Tag egc-payment-received', [
       write(HL, [SUITE], 'tool=lifecycle: automatically when a manager records a payment, and the manual "Payment receipt" button', true),
-      write(HL, ['crew/postjob.html'], 'tool=lifecycle: automatically after a crew card payment is verified with Stripe, retried on page load; this path does not check the job notify flag', true)]),
+      write(HL, ['crew/postjob.html'], 'tool=lifecycle: automatically after a crew card payment is verified with Stripe, retried on page load; this path does not check the job notify flag', true),
+      write(FIELD_PAY_SYNC, ['functions/api/field-payments.js', 'functions/_lib/customer-payments.js'], 'FIELD-PAY: after verified exact-card settlement or manager approval of a private cash/check receipt, and on manager retry; verified source and matching contact required, native note outbox must confirm first. New collection defaults off; a pending handoff remains retryable after intake is disabled.', true)]),
     trigger('tag:egc-appointment-reminder', 'tag_added', 'Tag egc-appointment-reminder', [write(HL, [SUITE], 'tool=lifecycle: manual "Appointment reminder" button; the confirm dialog names the tag, not the text', false)]),
     trigger('tag:egc-review-requested', 'tag_added', 'Tag egc-review-requested', [write(HL, [SUITE], 'tool=lifecycle: manual "Review request" button; the confirm dialog names the tag, not the text', false)]),
     trigger('tag:egc-decision-needed', 'tag_added', 'Tag egc-decision-needed', [write(HL, [SUITE], 'tool=lifecycle: sent when a manager creates a remote customer decision request', false)]),
@@ -133,7 +135,7 @@ export const AUTOMATION_REGISTRY = deepFreeze({
     trigger('contact:note_added', 'note_added', 'Note added to a contact', [
       write(HL, [SUITE, HANDOFF, 'crew/prejob.html', 'crew/postjob.html'], 'the Game Plan internal brief, the closeout note, and lifecycle notes (cancellations, communication notes, the verified crew card payment note and the crew-on-the-way note, which is written even when suppress_automation skips the tag)', true),
       write(WEB_LEAD_INTAKE, [WEB_LEAD, 'fb-capture.js', 'customer-portal.html', MESSAGING_CRON], 'the website lead details note and the client hub help note (also on a cron retry)', true),
-      write(NOTE_OUTBOX, ['functions/_lib/operations-note-sync.js'], 'with the operations bridge on, the same Hub notes are written by the provider note outbox', true),
+      write(NOTE_OUTBOX, ['functions/_lib/operations-note-sync.js', FIELD_PAY_SYNC], 'with the operations bridge on, Hub notes and verified FIELD-PAY payment handoffs are written by the provider note outbox', true),
       write(HL_TAGS, [TAG_OUTBOX], `${OUTBOX_WHEN}: the internal note with the reason code of a walkthrough lost as not interested`, true)]),
     trigger('contact:task_added', 'task_added', 'Task added to a contact', [
       write(HL, [SUITE], 'tool=post_job: the 6-month garage check-in task after a legacy closeout retry with Hub operations off', true),
@@ -198,7 +200,7 @@ export const AUTOMATION_REGISTRY = deepFreeze({
     lifecycle('invoice-issued', 'retire', 'automatic on invoice issue'),
     lifecycle('invoice-overdue', 'retire', 'automatic reminder on a manager refresh'),
     lifecycle('deposit-received', 'retire', 'automatic on a recorded deposit'),
-    lifecycle('payment-received', 'retire', 'automatic on a recorded payment or a verified crew card payment', { code: [...code(HL, 'ghl_tag_helper_call'), ...code(SUITE, 'hub_lifecycle_trigger'), ...code('crew/postjob.html', 'hub_lifecycle_trigger')] }),
+    lifecycle('payment-received', 'retire', 'automatic on a recorded payment or a verified crew card payment', { code: [...code(HL, 'ghl_tag_helper_call'), ...code(SUITE, 'hub_lifecycle_trigger'), ...code('crew/postjob.html', 'hub_lifecycle_trigger'), ...code(FIELD_PAY_SYNC, 'ghl_tag_helper_call', 'ghl_contact_write')], notes: 'FIELD-PAY reuses this existing payment-received tag only after canonical verified money and the native note outbox confirm. Its contact API request is read-only identity verification. This inventory entry does not approve or change downstream workflows.' }),
     lifecycle('appointment-reminder', 'needs_owner_approval', 'manual button'),
     lifecycle('review-requested', 'needs_owner_approval', 'manual button'),
     lifecycle('decision-needed', 'needs_owner_approval', 'remote decision request'),
@@ -428,6 +430,8 @@ export const AUTOMATION_REGISTRY = deepFreeze({
     'functions/_lib/customer-resolution.js': { ghl_contact_write: 1 },
     // QUOTE-DRAFT: estimate-ready.js builds the messenger; its addTags/removeTags write only MESSENGER_TAG_WRITES (egc-estimate-ready).
     'functions/_lib/estimate-ready.js': { hub_send_helper_call: 1 },
+    // FIELD-PAY: a read-only contact identity check followed by the existing payment-received tag.
+    'functions/_lib/field-payment-sync.js': { ghl_tag_helper_call: 1, ghl_contact_write: 1 },
     // FUN-29: GET contacts/{id} for the lead-form service-line suggestion (read-only, flag off by default).
     'functions/_lib/funnel-dimensions.js': { ghl_contact_write: 1 },
     'functions/_lib/ghl-messenger.js': { ghl_message_send: 1, ghl_tag_write: 1, ghl_contact_write: 2 },

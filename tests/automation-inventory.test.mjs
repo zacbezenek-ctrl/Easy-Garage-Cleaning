@@ -183,7 +183,7 @@ test('the registered portal invitation texts are the ones the Hub sends, with an
 test('the inventory command checks the registry, never prints a credential and diffs HighLevel read-only', async () => {
   const lines = [], log = line => lines.push(line);
   assert.equal(await main(['--check'], { log }), 0, lines.join('\n'));
-  assert.match(lines[0], /^registry 2026-09-28\.1: \d+ automations, \d+ triggers, \d+ files with send paths$/);
+  assert.match(lines[0], /^registry 2026-09-29\.1: \d+ automations, \d+ triggers, \d+ files with send paths$/);
   const token = 'synthetic-ghl-token-111111111111111111111111';
   const known = AUTOMATION_REGISTRY.automations.filter(entry => entry.system === 'ghl_workflow' && entry.providerId).map(entry => ({ id: entry.providerId, name: entry.name, status: 'published', updatedAt: '2026-09-01T12:00:00.000Z' }));
   const calls = [];

@@ -327,17 +327,23 @@ service cloud.firestore {
       allow create: if businessUser() && !serverOwnedJobRecord(documentId) &&
         !serverOwnedJobData(request.resource.data, documentId) &&
         !('funnelSale' in request.resource.data) &&
+        !request.resource.data.keys().hasAny(['fieldPaymentPendingId', 'fieldPaymentLastId', 'fieldPaymentCardRequestId', 'fieldPaymentSyncPendingIds']) &&
         !request.resource.data.keys().hasAny(paymentEventFields()) &&
         !('ghlTagEntry' in request.resource.data) &&
         jobLaborUnchanged(request.resource.data, {}, documentId);
       allow update: if businessUser() && !serverOwnedJobRecord(documentId) &&
         !serverOwnedJobData(resource.data, documentId) &&
         !serverOwnedJobData(request.resource.data, documentId) &&
-        !request.resource.data.diff(resource.data).affectedKeys().hasAny(['funnelSale', 'ghlTagEntry']) &&
+        // A Stripe URL can remain payable after an SDK edit. Freeze the entire
+        // business job copy until the server settles or expires that checkout.
+        (!('fieldPaymentCardRequestId' in resource.data) || resource.data.fieldPaymentCardRequestId == null) &&
+        !request.resource.data.diff(resource.data).affectedKeys().hasAny(['funnelSale', 'ghlTagEntry', 'fieldPaymentPendingId', 'fieldPaymentLastId', 'fieldPaymentCardRequestId', 'fieldPaymentSyncPendingIds']) &&
         !request.resource.data.diff(resource.data).affectedKeys().hasAny(paymentEventFields()) &&
         jobLaborUnchanged(request.resource.data, resource.data, documentId);
       allow delete: if businessUser() && !serverOwnedJobRecord(documentId) &&
-        !serverOwnedJobData(resource.data, documentId);
+        !serverOwnedJobData(resource.data, documentId) &&
+        (!('fieldPaymentPendingId' in resource.data) || resource.data.fieldPaymentPendingId == null) &&
+        (!('fieldPaymentCardRequestId' in resource.data) || resource.data.fieldPaymentCardRequestId == null);
     }
 
     match /customers/{documentId} {
@@ -600,6 +606,22 @@ service cloud.firestore {
     // What each employee last heard about each job: written only with the
     // cron's notice closes, read by the cron and /api/crew-notifications.
     match /crewNoticeHeard/{documentId} {
+      allow read, write: if false;
+    }
+
+    // FIELD-PAY: cash/check evidence and its small private receipt image are
+    // written only by the assignment-checked server API. No browser SDK read
+    // can fetch an image, even for a manager; its API read checks the job.
+    match /fieldPaymentSubmissions/{documentId} {
+      allow read, write: if false;
+    }
+    match /fieldPaymentReceipts/{documentId} {
+      allow read, write: if false;
+    }
+    match /fieldPaymentCardCheckouts/{documentId} {
+      allow read, write: if false;
+    }
+    match /fieldPaymentCardSessions/{documentId} {
       allow read, write: if false;
     }
 

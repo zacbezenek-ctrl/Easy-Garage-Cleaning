@@ -534,6 +534,29 @@ async function releaseHeldCheckout(store, review, now) {
   return [{ collection: PORTAL_CHECKOUT_COLLECTION, id: review.jobId, revision: ledger.revision, patch: { status: 'settled', settledAt: now, settledBy: 'review_resolved' } }];
 }
 
+// A paid field card may be held rather than booked if its job changed or Stripe
+// showed a refund. Once Review queues records the authoritative resolution,
+// release that exact checkout's server lock in the SAME review commit. An open
+// review never reaches this function's commit path, so it continues to block
+// any replacement collection.
+async function releaseReviewedFieldCard(store, review, now, checkedJobRevision) {
+  if (review.kind !== CHECKOUT_KINDS.crew || !safeId(review.jobId)) return [];
+  const sessionId = heldSession(review);
+  const [claim, session, job] = await Promise.all([
+    store.read('fieldPaymentCardCheckouts', review.jobId),
+    store.read('fieldPaymentCardSessions', sessionId),
+    store.read('jobs', review.jobId),
+  ]);
+  if (!claim?.revision || !session?.revision || !job?.revision || claim.sessionId !== sessionId || session.sessionId !== sessionId ||
+      claim.jobId !== review.jobId || session.jobId !== review.jobId || !['creating', 'open'].includes(claim.status) || job.fieldPaymentCardRequestId !== claim.requestId) return [];
+  if (!checkedJobRevision || job.revision !== checkedJobRevision) throw fail('revision_conflict', 'The job changed while its card review was being resolved. Refresh the review.', 409);
+  return [
+    { collection: 'fieldPaymentCardCheckouts', id: review.jobId, revision: claim.revision, patch: { status: 'reviewed', reviewedAt: now, reviewId: review.id } },
+    { collection: 'fieldPaymentCardSessions', id: sessionId, revision: session.revision, patch: { status: 'reviewed', reviewedAt: now, reviewId: review.id } },
+    { collection: 'jobs', id: review.jobId, revision: job.revision, patch: { fieldPaymentCardRequestId: null, paymentReviewResolvedAt: now } },
+  ];
+}
+
 async function execute(store, actor, input, collection, now, fingerprint, receiptId, stripe, mode) {
   const review = await store.read(collection, input.reviewId);
   if (!review) throw fail('not_found', 'This review no longer exists. Refresh the review queue.', 404);
@@ -541,9 +564,11 @@ async function execute(store, actor, input, collection, now, fingerprint, receip
   if (review.revision !== input.expectedRevision) throw fail('revision_conflict', 'This review changed after you opened it. Refresh and review it again.', 409);
   const plan = await PLANS[input.action]({ store, review, input, actor, now, stripe, mode });
   const released = collection === PAYMENT_REVIEW_COLLECTION ? await releaseHeldCheckout(store, review, now) : [];
+  const checkedJobRevision = (plan.marks || []).find(mark => mark.collection === 'jobs' && mark.id === review.jobId)?.revision;
+  const fieldReleased = collection === PAYMENT_REVIEW_COLLECTION ? await releaseReviewedFieldCard(store, review, now, checkedJobRevision) : [];
   const actorId = String(actor.user).toLowerCase(), patch = { ...plan.patch, status: 'resolved', resolvedAt: now, resolvedBy: actorId, resolveRequestId: input.requestId, updatedAt: now };
   const audit = auditWrite({ actor: { id: actorId, kind: 'human', role: actor.role }, via: actor.via === 'mcp' ? 'mcp' : 'hub', action: `stripe_review.${input.action}`, entity: { collection, id: review.id }, before: snapshot(review), after: snapshot({ ...review, ...patch }), requestId: input.requestId, reason: plan.reason ?? null, visibility: plan.visibility || 'business', now });
-  const writes = [{ collection, id: review.id, revision: review.revision, patch }, ...(plan.writes || []), ...released];
+  const writes = [{ collection, id: review.id, revision: review.revision, patch }, ...(plan.writes || []), ...released, ...fieldReleased];
   const targets = new Set(writes.map(write => `${write.collection}/${write.id}`));
   for (const fence of plan.fences || []) if (!targets.has(`${fence.collection}/${fence.id}`)) { targets.add(`${fence.collection}/${fence.id}`); writes.push(fence); }
   const marks = (plan.marks || []).filter(mark => !targets.has(`${mark.collection}/${mark.id}`));
