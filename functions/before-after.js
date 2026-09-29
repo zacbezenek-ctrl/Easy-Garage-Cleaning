@@ -7,7 +7,7 @@ export const gallerySimpleScriptHash='e03b4b7252a3';
 export const galleryCanonical='https://easygaragecleaning.com/before-after';
 // Same stylesheet version and Google Fonts URL as the generated pages (STYLES_VERSION and
 // GOOGLE_FONTS_URL in _generate_site.py; tests/public-performance.test.mjs keeps them equal).
-export const stylesVersion='20260929t';
+export const stylesVersion='20260928p';
 export const googleFontsUrl='https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght@0,9..144,400;0,9..144,500;0,9..144,700;1,9..144,400&family=Inter:wght@400;500;600;700;800;900&family=JetBrains+Mono:wght@400&display=swap';
 // Card images: one column up to 820px, two columns in the 1200px wrap above it.
 const cardSizes='(min-width: 1200px) 565px, (min-width: 821px) calc(50vw - 35px), calc(100vw - 36px)';

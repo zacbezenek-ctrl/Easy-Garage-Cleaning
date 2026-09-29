@@ -411,6 +411,10 @@ draft PR. The owner merges in phase order. See **Decisions** D-001.
   links become inline-flex boxes (no overlapping hit areas), "See full FAQ"/"more" rows are marked by the generator, Hub
   and crew module CSS gained 44px rules, and staff contact fields use autocomplete=off. The tap-target allowlist is empty;
   the e2e checker samples each line fragment and reports covered controls. styles.css moved to ?v=20260929t.
+- **PUBLIC-TAP** The 44px tap-target and no-horizontal-scroll contract now covers every public page (77, listed from the
+  site on disk minus staff and redirected pages) on iPhone 375, Pixel 7, iPad Mini 768, desktop 1440 and 320px, with an
+  empty allowlist. A second styles.css max-width:1023px block clears the remaining 602 targets (blog, FAQ, what-we-take,
+  thank-you, apply, projects, legacy city pages); the before-after slider is 44px tall. styles.css is ?v=20260928p.
 
 ## In progress
 
@@ -506,6 +510,7 @@ one prefixed commit only after the full root suite (and the platform suite when 
 | DISPATCH-SCALE | Windowed dispatch reads and indexed customer search (flag off; shadow first) | merged (249dd76) |
 | SITE-4 | Public-site mobile performance pass (Lighthouse >= 90 on every page; enforcement on) | merged (38125bf) |
 | MOBILE-TAP | 44px tap targets on public pages and Hub shells (allowlist to zero) | merged (502f9b4) |
+| PUBLIC-TAP | 44px tap targets and no horizontal scroll on every public page | merged (3a8d78c) |
 
 ## Next
 

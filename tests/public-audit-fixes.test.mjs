@@ -83,7 +83,7 @@ test('client hub empty-state logo preserves its aspect ratio', () => {
 // branches that each changed it, fails here until the version is bumped everywhere (HEAD and the
 // patch_static_pages regex in _generate_site.py, functions/before-after.js, the private shells,
 // then a rebuild) and this pin names the new version and hash.
-const STYLES_RELEASE = { version: '20260929t', sha256: '57c1295f4669733b63f3cc71f19e4d47f23383384caf85d5e57a3eafb2ceb4a7' };
+const STYLES_RELEASE = { version: '20260928p', sha256: '3058352c20b6774915fab0b882ac3496fd22260bead970283c65c0f4fb0e41d9' };
 
 test('Cloudflare caches versioned public assets', () => {
   const headers = read('_headers');

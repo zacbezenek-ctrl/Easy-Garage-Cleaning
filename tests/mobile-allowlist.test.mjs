@@ -6,7 +6,7 @@ import {join} from 'node:path';
 import {allowlist,difference,mergePending,ratchet} from './e2e/helpers/allowlist.mjs';
 import {e2eWorkers} from './e2e/helpers/workers.mjs';
 
-const TOUCH_PROJECTS=['iphone-375','android-pixel7'];
+const TOUCH_PROJECTS=['iphone-375','android-pixel7','tablet-768'];
 
 test('multiset difference counts repeated identical controls instead of collapsing them',()=>{
  assert.deepEqual(difference(['a','a','b','c'],['a','c']),['a','b']);
@@ -43,7 +43,7 @@ test('checked-in allowlist is sorted debt for touch projects only, with no empty
   for(const [key,items] of Object.entries(entries)){
    assert.ok(items.length,`${kind} ${key} is empty; delete it`);assert.deepEqual(items,[...items].sort(),`${kind} ${key} must be sorted`);
    if(kind==='tapTargets')assert.ok(TOUCH_PROJECTS.includes(key.split(' ')[0]),`${key} is not a touch project`);
-   else assert.match(key,/^(\/[\w-]+\.html|hub:.+)$/);
+   else assert.match(key,/^((?:\/[\w-]+)+\.html|hub:.+)$/);
   }
  }
 });

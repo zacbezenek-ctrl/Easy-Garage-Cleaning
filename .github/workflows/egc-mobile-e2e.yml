@@ -2,10 +2,10 @@ name: EGC Mobile Device E2E
 
 on:
   pull_request:
-    paths: ['*.html','*.css','*.js','crew/**','images/**','functions/_lib/**','scripts/visual-audit-server.mjs','tests/e2e/**','tests/mobile-allowlist.test.mjs','.github/workflows/egc-mobile-e2e.yml']
+    paths: ['*.html','*.css','*.js','crew/**','images/**','functions/_lib/**','scripts/visual-audit-server.mjs','tests/e2e/**','tests/mobile-allowlist.test.mjs','blog/**','projects/**','_redirects','_generate_site.py','tests/source-files.mjs','tests/e2e-public-pages.test.mjs','.github/workflows/egc-mobile-e2e.yml']
   push:
     branches: [main]
-    paths: ['*.html','*.css','*.js','crew/**','images/**','functions/_lib/**','scripts/visual-audit-server.mjs','tests/e2e/**','tests/mobile-allowlist.test.mjs','.github/workflows/egc-mobile-e2e.yml']
+    paths: ['*.html','*.css','*.js','crew/**','images/**','functions/_lib/**','scripts/visual-audit-server.mjs','tests/e2e/**','tests/mobile-allowlist.test.mjs','blog/**','projects/**','_redirects','_generate_site.py','tests/source-files.mjs','tests/e2e-public-pages.test.mjs','.github/workflows/egc-mobile-e2e.yml']
 
 permissions:
   contents: read
@@ -32,7 +32,7 @@ jobs:
         run: npx --no-install playwright install --with-deps chromium
       - name: Ratchet allowlist contract
         run: node --test tests/mobile-allowlist.test.mjs
-      - name: iPhone 375x812, Pixel 7 and desktop 1440 against the local site only
+      - name: iPhone 375x812, Pixel 7, iPad Mini 768 and desktop 1440 against the local site only
         run: npx --no-install playwright test -c tests/e2e/playwright.config.mjs
       - uses: actions/upload-artifact@v4
         if: always()

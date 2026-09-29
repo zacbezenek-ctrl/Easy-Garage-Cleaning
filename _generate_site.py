@@ -718,7 +718,7 @@ CALLRAIL_BLOCK = ""
 
 # styles.css is served immutable: every change to it bumps this one version, which
 # HEAD, patch_static_pages and functions/before-after.js all use.
-STYLES_VERSION = "20260929t"
+STYLES_VERSION = "20260928p"
 # The one Google Fonts stylesheet for pages built on styles.css. Every face is used by
 # the shared CSS (tests/public-performance.test.mjs checks the weights); it always loads
 # with the media=print swap so it never blocks the first render.

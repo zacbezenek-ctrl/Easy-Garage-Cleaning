@@ -1,12 +1,10 @@
-// Public marketing pages on iPhone 375x812, Pixel 7 and desktop 1440.
-import {readdirSync} from 'node:fs';
-import {fileURLToPath} from 'node:url';
-import {test,open,touch} from './helpers/test.mjs';
-import {PRIMARY_CONTROLS,assertCameraCapture,assertInputKeyboards,assertKnownMissingCamera,assertNoHorizontalScroll,assertTapTargets} from './helpers/mobile-invariants.mjs';
+// Every public page (tests/e2e/helpers/public-pages.mjs) on iPhone 375x812, Pixel 7,
+// iPad Mini 768x1024 and desktop 1440, plus a 320px phone for horizontal scroll.
+import {test,expect,open,touch} from './helpers/test.mjs';
+import {PRIMARY_CONTROLS,assertCameraCapture,assertInputKeyboards,assertKnownMissingCamera,assertNoHorizontalScroll,assertTapTargets,tapTargetViolations} from './helpers/mobile-invariants.mjs';
+import {publicPages} from './helpers/public-pages.mjs';
 
-const root=fileURLToPath(new URL('../../',import.meta.url));
-const SERVICE_PAGES=readdirSync(root).filter(name=>/-fort-collins-co\.html$/.test(name)).sort().map(name=>'/'+name);
-const PAGES=['/index.html','/book.html','/pricing.html','/before-after.html','/garage-guard.html',...SERVICE_PAGES];
+const PAGES=publicPages();
 const PHOTO_UPLOADS=['/book.html','/pricing.html'];
 // TODO(mobile): known camera gaps. Each page must still load with its image
 // upload and library picker; only the missing capture="environment" option is
@@ -16,11 +14,16 @@ const KNOWN_NO_CAMERA={
  '/book.html':'TODO(mobile): the walkthrough form photo input is library-only; add a capture="environment" "Take a photo" input beside it.',
  '/pricing.html':'TODO(mobile): the pricing-page walkthrough form photo input is library-only; add a capture="environment" "Take a photo" input beside it.',
 };
+const NARROW={width:320,height:640};
 
 for(const path of PAGES){
  test.describe(path,()=>{
   test('fits the viewport with no horizontal scroll',async({page})=>{
    await open(page,path);await assertNoHorizontalScroll(page);
+  });
+  test('fits a 320px phone with no horizontal scroll',async({page},info)=>{
+   test.skip(info.project.name!=='iphone-375','The 320px check runs once, in the iPhone project.');
+   await page.setViewportSize(NARROW);await open(page,path);await assertNoHorizontalScroll(page);
   });
   test('primary controls are at least 44x44',async({page},info)=>{
    test.skip(!touch(info),'Touch target size applies to touch devices.');
@@ -37,3 +40,14 @@ for(const path of PAGES){
   });
  });
 }
+
+// The compare slider and its buttons at the top of the touch tablet range (the 1023px
+// edge of the styles.css tap block), where the slider used to render 20px tall.
+test('before-after compare controls are 44px tall on a 1023px touch tablet',async({page},info)=>{
+ test.skip(info.project.name!=='tablet-768','Runs once, in the tablet project.');
+ await page.setViewportSize({width:1023,height:1366});await open(page,'/before-after.html');
+ const slider=page.locator('.ba-card .controls input[type="range"]').first();
+ await expect(slider).toBeVisible();
+ expect((await slider.boundingBox()).height).toBeGreaterThanOrEqual(44);
+ expect(await tapTargetViolations(page,'.ba-card .controls input, .ba-card .controls button, .ba-card [data-expand]')).toEqual([]);
+});
