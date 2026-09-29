@@ -97,8 +97,9 @@ test('one added, removed or changed send path in the real tree fails with exactl
   assert.deepEqual(variant(copy => { copy.inventory['functions/api/highlevel.js'].ghl_tag_helper_call += 1; }),
     ['changed send path: functions/api/highlevel.js ghl_tag_helper_call found 6, registered 5. Review the new or removed call and update the registry.'], 'a new call to the shared tag writer is caught');
   assert.deepEqual(variant(copy => { copy.tags['functions/_lib/ghl-tag-outbox.js'].push('egc-visit-lost'); }), ['unregistered tag write: functions/_lib/ghl-tag-outbox.js writes egc-visit-lost. Add trigger tag:egc-visit-lost with this Hub write.']);
+  // SALES-BOOKING added a read of the lead's notes (GET view=lead), registered as a read in hub.highlevel_reads, so four are registered.
   assert.deepEqual(variant(copy => { copy.inventory['functions/api/highlevel.js'].ghl_note_task_write += 1; }),
-    ['changed send path: functions/api/highlevel.js ghl_note_task_write found 4, registered 3. Review the new or removed call and update the registry.']);
+    ['changed send path: functions/api/highlevel.js ghl_note_task_write found 5, registered 4. Review the new or removed call and update the registry.']);
   // FUN-13 moved the website lead HighLevel writes from functions/api/web-lead.js to functions/_lib/web-lead-intake.js.
   assert.deepEqual(variant(copy => { copy.tags['functions/_lib/web-lead-intake.js'].push('egc-lead-hot'); }), ['unregistered tag write: functions/_lib/web-lead-intake.js writes egc-lead-hot. Add trigger tag:egc-lead-hot with this Hub write.']);
   assert.deepEqual(variant(copy => { copy.tags['functions/api/highlevel.js'] = copy.tags['functions/api/highlevel.js'].filter(tag => tag !== 'egc-review-ready'); }), ['stale hub write: functions/api/highlevel.js no longer writes egc-review-ready.']);
@@ -182,7 +183,7 @@ test('the registered portal invitation texts are the ones the Hub sends, with an
 test('the inventory command checks the registry, never prints a credential and diffs HighLevel read-only', async () => {
   const lines = [], log = line => lines.push(line);
   assert.equal(await main(['--check'], { log }), 0, lines.join('\n'));
-  assert.match(lines[0], /^registry 2026-09-28\.1: \d+ automations, \d+ triggers, \d+ files with send paths$/);
+  assert.match(lines[0], /^registry 2026-09-29\.1: \d+ automations, \d+ triggers, \d+ files with send paths$/);
   const token = 'synthetic-ghl-token-111111111111111111111111';
   const known = AUTOMATION_REGISTRY.automations.filter(entry => entry.system === 'ghl_workflow' && entry.providerId).map(entry => ({ id: entry.providerId, name: entry.name, status: 'published', updatedAt: '2026-09-01T12:00:00.000Z' }));
   const calls = [];

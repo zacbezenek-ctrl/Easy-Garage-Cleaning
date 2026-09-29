@@ -1,7 +1,5 @@
 /* Employee Hub mobile shell pass (375x812 first). Loaded last so it can raise tap targets,
    wrap toolbars and fit the toast without editing each module's stylesheet. */
-.ops-nav button,.ops-menu,.ops-system button,.ops-edit-event,.ops-booking header>button,.ops-announcements button,.ops-request-list button,.ops-time-row button,.ops-availability-list button,.ac-btn,.ac-tab,.ac-filter select{min-height:44px}
-.ops-menu,.ops-booking header>button{min-width:44px}
 .ops-schedule-bar>div{flex-wrap:wrap}
 .ops-schedule-bar>div:first-child>button{width:44px;height:44px}
 .ops-schedule-bar .ops-button{width:auto;height:auto;min-height:44px;padding:0 14px}
@@ -10,9 +8,18 @@
 .ops-walk-list a{display:inline-flex;align-items:center;min-height:44px}
 .ops-notify{min-height:44px}
 .ops-context{min-width:0;flex:1 1 auto}
-.ops-context strong{display:block;max-width:100%;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+/* A long view title wraps to a second line instead of ending in an ellipsis ('Comm…'); the full name is its title attribute. */
+.ops-context strong{display:-webkit-box;-webkit-box-orient:vertical;-webkit-line-clamp:2;line-clamp:2;max-width:100%;overflow:hidden;overflow-wrap:anywhere;line-height:1.15}
 .ops-team-grid header>div,.ops-team-grid header h2{min-width:0;overflow-wrap:anywhere}
-#toast{white-space:normal;width:max-content;max-width:calc(100vw - 32px);box-sizing:border-box;text-align:center;overflow-wrap:anywhere;bottom:calc(1.5rem + env(safe-area-inset-bottom));transform:translateX(-50%) translateY(calc(100% + 2rem + env(safe-area-inset-bottom)))}
+/* Team cards keep a readable name column: as many 320px cards as fit, never three squeezed ones (102px names at 1180). */
+.ops-team-grid{grid-template-columns:repeat(auto-fill,minmax(min(100%,320px),1fr))}
+/* The workspace paints its own paper so the navy rail column behind it (below) never shows through. */
+.ops-workspace{background:var(--ops-paper)}
+.ops-nav-label{color:#8391a7}
+/* Finance rows keep four columns only where the workspace (viewport minus the 252px rail) has room for them. */
+@media (min-width:861px) and (max-width:1340px){.ops-finance-list article{grid-template-columns:minmax(0,1fr) 190px}.ops-finance-state,.ops-finance-actions{grid-column:1/-1}}
+@media (max-width:520px){.ops-metrics,.ops-metrics.score{grid-template-columns:repeat(2,minmax(0,1fr))}.ops-metrics article{min-width:0;overflow-wrap:anywhere}.ops-metrics .ops-button{white-space:normal;text-align:center}}
+#toast{white-space:normal;width:max-content;max-width:calc(100vw - 32px);box-sizing:border-box;text-align:center;overflow-wrap:anywhere;bottom:calc(1.5rem + var(--egc-safe-bottom));transform:translateX(-50%) translateY(calc(100% + 2rem + var(--egc-safe-bottom)))}
 .ops-scrim{position:fixed;inset:0;z-index:89;border:0;padding:0;margin:0;background:rgba(7,15,27,.55);cursor:pointer}
 .ops-scrim[hidden]{display:none}
 /* Hub dialogs (askAction, booking) scroll inside themselves: keep only the save and cancel row in thumb reach, so the
@@ -26,14 +33,84 @@
   .ops-booking>footer{display:contents}
   .ops-booking>footer>span{display:block;padding:12px 16px;border-top:1px solid var(--ops-line)}
   .ops-booking>footer>div{position:sticky;bottom:0;z-index:1;background:var(--ops-card);border-top:1px solid var(--ops-line);padding:10px 16px}
+  /* Native <dialog>s centre themselves (the Hub no longer zeroes their margin). On a phone they sit as a bottom sheet in
+     thumb reach above the home indicator, never taller than the screen between the insets, so the header and its close
+     stay below the status bar. dialog:modal:not(...) is (0,2,1): it outranks each module's own (0,1,0) max-height and
+     margin on purpose. The full-screen recurring plan, the calendar's edge sheet and the sync panel keep their own
+     placement and pad their own edges; the money, lifecycle and timecard dialogs scroll an inner sheet with the same cap. */
+  dialog:modal:not(.rp-dialog,.dc-sheet,.hs-panel){margin:auto auto var(--egc-safe-bottom);max-height:calc(100dvh - var(--egc-safe-top) - var(--egc-safe-bottom) - 12px)}
+  .em-sheet,.el-sheet,.tc-sheet{max-height:calc(100dvh - var(--egc-safe-top) - var(--egc-safe-bottom) - 12px)}
+  .rp-dialog .rp-head{padding-top:calc(14px + var(--egc-safe-top))}
+  .rp-dialog .rp-form-foot{padding-bottom:calc(12px + var(--egc-safe-bottom))}
+  .dc-sheet .dp-dialog-foot{padding-bottom:calc(17px + var(--egc-safe-bottom))}
+  .hs-panel{max-height:calc(100dvh - var(--egc-safe-top) - 12px)}
 }
-.egc-portal-bar a,.egc-portal-foot a{display:inline-flex;align-items:center;justify-content:center;min-height:44px;min-width:44px}
-.egc-portal-bar a{margin-block:-10px}
+.egc-portal-foot a{display:inline-flex;align-items:center;justify-content:center;min-height:44px;min-width:44px}
 .employee-signup-link{display:flex;align-items:center;justify-content:center;min-height:44px}
 #login-screen .fg input,#login-screen .btn-main{min-height:48px}
+
+/* Safe areas (viewport-fit=cover with a black-translucent status bar): the sticky topbar grows by the top inset, the page
+   and rail keep clear of the side insets in landscape, and the drawer pads its own edges. */
+.ops-shell{padding-right:var(--egc-safe-right)}
+.ops-topbar{height:calc(76px + var(--egc-safe-top));padding-top:var(--egc-safe-top)}
+@media (min-width:861px){
+  .ops-shell{grid-template-columns:calc(252px + var(--egc-safe-left)) minmax(0,1fr);background:linear-gradient(90deg,var(--ops-navy) calc(252px + var(--egc-safe-left)),var(--ops-paper) 0)}
+  /* The rail sticks below the public-site strip, so its foot stays on screen (it was cut by the strip's height on an iPad). */
+  .ops-rail{height:calc(100dvh - var(--egc-bar-h));padding-left:var(--egc-safe-left)}
+}
 @media (max-width:860px){
-  .ops-rail{visibility:hidden;transition:transform .2s,visibility 0s linear .2s}
+  .ops-shell{padding-left:var(--egc-safe-left)}
+  .ops-topbar{height:calc(68px + var(--egc-safe-top))}
+  .ops-rail{visibility:hidden;transition:transform .2s,visibility 0s linear .2s;width:calc(270px + var(--egc-safe-left));padding:var(--egc-safe-top) 0 var(--egc-safe-bottom) var(--egc-safe-left);overflow-y:auto;overscroll-behavior:contain}
   .ops-rail.open{visibility:visible;transition:transform .2s}
+  /* The drawer scrolls as one list: the footer links follow the last item instead of pinning a third of a short screen. */
+  .ops-rail>.ops-nav{flex:none;overflow:visible}
+  .ops-brand{height:60px}
   .ops-nav button{transition-property:color,background-color,box-shadow}
   .ops-menu{width:44px;height:44px}
+}
+/* Small phones: the signed-in Hub drops the public-site strip and the kicker so the title has room to wrap, and Refresh
+   becomes a 44px icon. The glyph's alt text is empty so the button's name stays "Refresh"; a browser without alt text in
+   content keeps the first declaration. */
+@media (max-width:400px){
+  body:has(#dashboard.ops-installed .ops-shell){--egc-bar-h:0px}
+  body:has(#dashboard.ops-installed .ops-shell) .egc-portal-bar{display:none}
+  .ops-topbar{padding-left:10px;padding-right:10px}
+  .ops-menu{margin-right:8px}
+  .ops-context>span{display:none}
+  .ops-context strong{font-size:14px}
+  .ops-system{gap:6px}
+  .ops-system .ops-quick-clock{min-width:74px;padding:0 8px}
+  .ops-system>button:last-child{flex:0 0 44px;width:44px;padding:0;font-size:0}
+  .ops-system>button:last-child::before{content:'\21bb';content:'\21bb' / '';font-size:20px;line-height:1}
+}
+/* An installed Hub (standalone) needs no public-site strip either; the topbar then takes the status-bar inset. */
+@media (display-mode:standalone){
+  body:has(#dashboard.ops-installed .ops-shell){--egc-bar-h:0px}
+  body:has(#dashboard.ops-installed .ops-shell) .egc-portal-bar{display:none}
+}
+/* Phone landscape (and any short window): a 48px topbar without the kicker, no page eyebrows and a tighter page head, so
+   the first screen shows work instead of chrome and a title. */
+@media (max-height:500px){
+  body:has(#dashboard.ops-installed .ops-shell){--egc-bar-h:0px}
+  body:has(#dashboard.ops-installed .ops-shell) .egc-portal-bar{display:none}
+  html{scroll-padding-top:calc(56px + var(--egc-safe-top))}
+  .ops-topbar{height:calc(48px + var(--egc-safe-top))}
+  .ops-context>span,.ops-page-head .ops-eyebrow,.hub-head .hub-eyebrow{display:none}
+  .ops-context strong{-webkit-line-clamp:1;line-clamp:1}
+  .ops-main{padding-top:14px}
+  .ops-page-head{margin-bottom:14px;gap:10px}
+  .ops-page-head h1{font-size:26px;margin:0 0 4px}
+  .ops-brand{height:52px}
+}
+/* Touch screens of every size (phones, landscape phones, iPads) get 44px targets; a mouse keeps the compact desktop sizes. */
+@media (pointer:coarse){
+  .ops-nav button,.ops-menu,.ops-system button,.ops-edit-event,.ops-booking header>button,.ops-announcements button,.ops-request-list button,.ops-time-row button,.ops-availability-list button,.ac-btn,.ac-tab,.ac-filter select,
+  .ops-finance-actions button,.ops-job-actions button,.ops-job-actions a,.ops-retry,.ops-customer-list button,.ops-contact-results button,.ops-agenda a,.ops-agenda-actions a,.ops-attention button,.ops-my-checklist button,.ops-day-empty,.ops-week header button,
+  .ops-shift-actions a,.ops-shift-actions button,.ops-person-actions .ops-button,.ops-map-link,.ops-integrations a,.ops-promise a,.ops-timeoff-calendar>header button,.ops-timeoff-calendar>footer button,.ops-chat-layout>aside>button,.ops-gusto-actions .ops-button{min-height:44px}
+  .ops-menu,.ops-booking header>button,.ops-edit-event,.ops-retry,.ops-job-actions a,.ops-job-actions button,.ops-finance-actions button,.ops-agenda a,.ops-agenda-actions a,.ops-week header button,.ops-map-link{min-width:44px}
+  .ops-job-actions a,.ops-agenda a,.ops-agenda-actions a,.ops-map-link,.ops-integrations a,.ops-promise a{display:inline-flex;align-items:center;justify-content:center}
+  .ops-score-form label div{height:auto;min-height:44px}
+  .egc-dispatch .dp-address{min-height:44px}
+  .ops-score-form input{min-height:44px}
 }

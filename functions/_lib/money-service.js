@@ -100,7 +100,7 @@ export const moneyJob = job => Boolean(job) && safeId(job.id) && hubRecordEligib
  * would otherwise mark it verified. Unverified card sessions count even when
  * no paid total was saved.
  */
-export const paymentNeedsVerification = job => customerPaymentNeedsReview(job) || job?.payment?.verified !== true && Array.isArray(job?.payment?.stripeSessions) && job.payment.stripeSessions.length > 0;
+export const paymentNeedsVerification = job => Boolean(job?.fieldPaymentCardRequestId) || customerPaymentNeedsReview(job) || job?.payment?.verified !== true && Array.isArray(job?.payment?.stripeSessions) && job.payment.stripeSessions.length > 0;
 
 export function requireMoneyManager(session, env) {
   try { requireDispatcher(session, env); }
@@ -246,7 +246,7 @@ async function reserveNumber(store, job, now) {
   throw fail('invoice_number_unavailable', 'A unique invoice number could not be reserved. Retry.', 503);
 }
 
-const recordOffline = kind => async ({ store, job, input, actor, now }) => {
+const recordOffline = kind => async ({ store, job, input, actor, now, fieldReviewReconcile = false }) => {
   const amount = whole(input.amountCents, 'The amount received', 1, MAX_TOTAL_CENTS);
   if (!OFFLINE_METHODS.includes(input.method)) throw fail('invalid_payment_method', `Choose how the money was received: ${OFFLINE_METHODS.join(', ')}.`);
   const reference = text(input.reference, 'A receipt, check or transaction reference', 160, { required: true, min: 2 });
@@ -254,7 +254,8 @@ const recordOffline = kind => async ({ store, job, input, actor, now }) => {
   if (!receivedAt || Date.parse(receivedAt) > Date.parse(now) + 300000 || store.paymentEvents === true && !funnelTimeAccepted(receivedAt)) throw fail('invalid_received_at', 'The time received must be a valid time that is not in the future.');
   const payment = plain(job.payment) ? job.payment : {};
   // Recording more money must never verify an earlier unverified entry.
-  if (paymentNeedsVerification(job)) throw fail('payment_needs_review', 'An earlier payment on this job is recorded but not verified, so no more money can be recorded yet. The owner confirms it against the check, bank or Stripe record and marks it verified on the job (the payment ledger backfill lists these jobs under needsVerification).', 409);
+  const otherUnverified = customerPaymentNeedsReview(job) || job?.payment?.verified !== true && Array.isArray(job?.payment?.stripeSessions) && job.payment.stripeSessions.length > 0;
+  if (fieldReviewReconcile ? otherUnverified : paymentNeedsVerification(job)) throw fail('payment_needs_review', 'An earlier payment on this job is recorded but not verified, so no more money can be recorded yet. The owner confirms it against the check, bank or Stripe record and marks it verified on the job (the payment ledger backfill lists these jobs under needsVerification).', 409);
   const totals = totalsOf(store, job);
   if ([totals.totalCents, totals.paidCents, totals.recordedCents, totals.appliedCents, totals.balanceCents].includes(null)) throw fail('total_unknown', 'The quote and recorded payments must be readable before more money is recorded. Review this job.', 409, { issues: totals.issues });
   if (amount > totals.balanceCents) throw fail('amount_exceeds_balance', `The amount cannot be more than the ${usd(totals.balanceCents)} balance.`, 409, { balanceCents: totals.balanceCents });
@@ -496,7 +497,19 @@ async function execute(store, actor, input, now, fingerprint, receiptId, via, re
   if (!moneyJob(job)) throw fail('job_not_found', 'This job is not available for money changes.', 404);
   if (typeof job.revision !== 'string' || !job.revision) throw fail('storage_incomplete', 'The job has no verifiable revision. Retry.', 503);
   if (job.revision !== input.expectedRevision) throw fail('revision_conflict', 'This job changed after you opened it. Refresh and review the latest money details.', 409);
-  const plan = await PLANS[input.action]({ store, job, input, actor, now, today: denverToday(new Date(now)) });
+  let fieldReviewFence = null;
+  if (job.fieldPaymentCardRequestId && input.action !== 'costs.save') {
+    if (input.action === 'payment.record_offline') {
+      const claim = await store.read('fieldPaymentCardCheckouts', job.id);
+      const review = claim?.sessionId ? await store.read('payment_reviews', claim.sessionId) : null;
+      if (claim?.jobId === job.id && claim.requestId === job.fieldPaymentCardRequestId && claim.status === 'open' &&
+          review?.jobId === job.id && review.sessionId === claim.sessionId && review.kind === 'egc_job_payment' && review.status === 'open' && review.revision) {
+        fieldReviewFence = { collection: 'payment_reviews', id: claim.sessionId, revision: review.revision, patch: { fieldPaymentMoneyGuardAt: now } };
+      }
+    }
+    if (!fieldReviewFence) throw fail('field_card_checkout_open', 'An exact field card checkout is open. Verify or cancel it before changing this job’s money.', 409);
+  }
+  const plan = await PLANS[input.action]({ store, job, input, actor, now, today: denverToday(new Date(now)), fieldReviewReconcile: Boolean(fieldReviewFence) });
   const patch = { ...plan.patch, moneyRequestId: input.requestId, moneyUpdatedAt: now, updatedAt: now }, warnings = plan.warnings || [], owner = plan.visibility === 'owner';
   let events = [];
   if (store.paymentEvents === true) {
@@ -510,6 +523,7 @@ async function execute(store, actor, input, now, fingerprint, receiptId, via, re
       ...(plan.writes || []),
       { collection: MONEY_RECEIPTS, id: receiptId, patch: { fingerprint, actorId: actor.user, action: input.action, jobId: job.id, requestId: input.requestId, via, auditId: audit.id, warnings, createdAt: now } },
       audit,
+      ...(fieldReviewFence ? [fieldReviewFence] : []),
       ...events,
     ]);
   } catch (error) {

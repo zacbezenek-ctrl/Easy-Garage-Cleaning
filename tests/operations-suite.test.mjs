@@ -403,7 +403,8 @@ test('canonical start time continues to prefill manager reference hours',()=>{
 test('crew tools provide a job-aware employee home and one connected workflow',()=>{
   for(const marker of ['Your workday','next-work','My upcoming work','Estimated pay','loadEmployeeData','loadAssignedJobs','workLink','Open job brief','Continue closeout','Time clock','Report issue','offline'])assert.match(crewHome,new RegExp(marker));
   for(const page of [crewHome,crew,prejob,postjob]){
-    assert.match(page,/crew-brand\.css\?v=20260904c/);
+    // WT-OUTCOME: the crew nav wraps instead of scrolling 'My Hub' off a 375 px screen, so the stylesheet tag moved.
+    assert.match(page,/crew-brand\.css\?v=20260929wtnav/);
     assert.match(page,/hub-auth\.js\?v=20260904c/);
   }
   const auth=read('crew/hub-auth.js');
@@ -422,8 +423,11 @@ test('walkthrough access stays limited to Zac Tyler and Alex while employees get
   for(const marker of ['current.businessAccess === true','function canRunBusiness','function canRunWalkthrough',"current.capabilities.includes('quotes.author')",'href !== \'/crew/gameplan\' || canRunWalkthrough()'])assert.match(auth,new RegExp(marker.replace(/[.*+?^${}()|[\]\\]/g,'\\$&')));
   assert.doesNotMatch(auth,/zacb|tylerg|alexk/i,'staff names live only in functions/_lib/business-users.js');
   for(const marker of ['denyWalkthrough',"location.replace('/crew/?notice=walkthrough-restricted')",'!EGCHubAuth.canRunWalkthrough(user)'])assert.match(crew,new RegExp(marker.replace(/[.*+?^${}()|[\]\\]/g,'\\$&')));
-  assert.match(crewHome,/\(business\|\|job\.type!==\'walkthrough\'\)/);
-  assert.match(crewHome,/document\.getElementById\('walkthrough-tool'\)\.hidden=!business/);
+  // WT-OUTCOME: crew home lists walkthroughs, and shows the Walkthrough tool, to exactly the accounts the gameplan opens for
+  // (canRunWalkthrough: business access, or walkthrough.perform once EGC_STAFF_ROLE_ACCESS is on); other crew never see them.
+  assert.match(crewHome,/const walkthroughs=EGCHubAuth\.canRunWalkthrough\(profile\.user\)/);
+  assert.match(crewHome,/\(walkthroughs\|\|job\.type!==\'walkthrough\'\)/);
+  assert.match(crewHome,/document\.getElementById\('walkthrough-tool'\)\.hidden=!EGCHubAuth\.canRunWalkthrough\(profile\.user\)/);
   assert.match(crewHome,/Pre-job → closeout/);
   for(const marker of ["view === 'walkthroughs' && !hasBusinessAccess(session)","payload.tool === 'game_plan' && !hasBusinessAccess(session)",'BUSINESS_ACCESS_REQUIRED'])assert.match(highlevel,new RegExp(marker.replace(/[.*+?^${}()|[\]\\]/g,'\\$&')));
 });
@@ -698,7 +702,8 @@ test('legacy Firebase leads are not loaded into the reset Hub',()=>{
   assert.doesNotMatch(employee,/db\.collection\('leads'\)\.get/);
   assert.match(employee,/leadsCache = \[\];/);
   assert.match(suite,/New HighLevel leads/);
-  assert.match(suite,/setInterval\(\(\)=>\{if\(!document\.hidden&&typeof me!=='undefined'&&me\)\{if\(isLead\(\)\)loadGhl\(\);else if\(typeof refreshCrewSchedule==='function'\)refreshCrewSchedule\(\)\}\},60000\)/);
+  // (SALES-BOOKING) a Sales or Phone booker's lead feed also reloads every minute, so "HighLevel unavailable, retrying" is true for them.
+  assert.match(suite,/setInterval\(\(\)=>\{if\(!document\.hidden&&typeof me!=='undefined'&&me\)\{if\(isLead\(\)\)loadGhl\(\);else\{if\(canView\('pipeline'\)\)loadGhl\(\);if\(typeof refreshCrewSchedule==='function'\)refreshCrewSchedule\(\)\}\}\},60000\)/);
   assert.match(highlevel,/DEFAULT_LEAD_RESET_AT/);
   assert.match(webLead,/syncHighLevelLead/);
 });
@@ -832,11 +837,14 @@ test('open-shift scheduling fields persist on the canonical job record',()=>{
   assert.match(read('employee-booking.js'),/changes\.assignedCrew=ids\(job,data\.roster\)/);
   // DISPATCH-RULES moved the predicate into dispatch-rules.js so the crew-size and skill blocks share it.
   assert.match(read('functions/_lib/dispatch-service.js'),/patch\.openShift=offeredForPickup\(next,/);
-  assert.match(read('functions/_lib/dispatch-rules.js'),/export function offeredForPickup\([^)]*\) \{\n  return job\?\.type === 'job' && job\.shiftPickupEnabled === true/);
+  assert.match(read('functions/_lib/dispatch-rules.js'),/export function offeredForPickup\([^)]*\) \{\r?\n  return job\?\.type === 'job' && job\.shiftPickupEnabled === true/);
   assert.match(suite,/if\(k==='type'\)render\(true\)/);
   assert.match(suite,/b\.type==='job'\?'':'ops-hidden'/);
   assert.match(suite,/b\.type==='blocked'\?'ops-hidden':''/);
-  assert.match(employee,/employee-suite\.css\?v=20260909gusto/);
+  // (SALES-BOOKING) the lead card actions and the failed-contact-search notice are new suite styles; (MOBILE-HUB) the Hub
+  // base (tokens, element defaults, safe areas) moved in from the public /styles.css; (MOBILE-HUB after SALES-BOOKING) one
+  // combined tag.
+  assert.match(employee,/employee-suite\.css\?v=20260929fieldpay2/);
   // Bumped deliberately (LEGACY-SEND): the customer thread delivery labels changed; (TEAM-UI) then (PAY-TIMESHEETS merged
   // with PRICE-SCRUB): the timesheet screen mounts the payroll week card and shows pay only where the server sent it;
   // (PAY-TIMESHEETS fourth check): the profile form's rate field only for a viewer who sets pay; (SYNC-QUEUE) page-load
@@ -857,8 +865,14 @@ test('open-shift scheduling fields persist on the canonical job record',()=>{
   // tags the HighLevel tag outbox owns records no reminder evidence; (FIX-DISPATCH-READY after AUTH-ROLES) one combined tag;
   // (FIX-EDIT-WIPE) the Hub chat and customer-thread drafts survive a send; (FIX-EDIT-WIPE after FIX-DISPATCH-READY) one
   // combined tag; (STAFF-ACCESS) the Team card's Reset sign-in, the approval dialog for approvers the owner allows and the
-  // Password screen's capability; (STAFF-ACCESS after FIX-EDIT-WIPE) one combined tag.
-  assert.match(employee,/employee-suite\.js\?v=20260929editaccess"/);
+  // Password screen's capability; (STAFF-ACCESS after FIX-EDIT-WIPE) one combined tag; (SALES-BOOKING)
+  // navigation by the server's booking capabilities, lead card Call / Open in HighLevel / Book, and HighLevel outage wording;
+  // (SALES-BOOKING after STAFF-ACCESS) one combined tag; (WT-OUTCOME) Today's agenda shows a walkthrough's outcome badge and
+  // link instead of Start; (WT-OUTCOME review) the Walkthroughs screen also needs dispatch.write when the server reports
+  // staff-role capabilities; (WT-OUTCOME after SALES-BOOKING) one combined tag; (MOBILE-HUB) the view title carries a title
+  // attribute, business users get RUN THE BUSINESS first and a crew member who is not clocked in sees the time clock above
+  // Today's jobs; (MOBILE-HUB after WT-OUTCOME) one combined tag.
+  assert.match(employee,/employee-suite\.js\?v=20260929fieldpay2"/);
 });
 
 test('recurring visits request a server-side handoff clone instead of copying prior execution or payments',()=>{

@@ -2038,6 +2038,15 @@ def write_site_forms_js(root=None):
         path.write_text(SITE_FORMS_JS, encoding="utf-8", newline="\n")
 
 
+# SALES-BOOKING (BOOK-25): /book offers walkthrough windows from the Denver clock once the root middleware marks
+# its time choices (EGC_BOOKING_EXPLICIT_SLOTS=true; unmarked, the static choices stay). booking-slots.js
+# is hand-written (not generated); its ?v= is its content hash and it runs before site-forms.js
+# binds the time choices.
+def booking_slots_script():
+    source = (ROOT / "booking-slots.js").read_text(encoding="utf-8").replace("\r\n", "\n")
+    return f'<script src="/booking-slots.js?v={hashlib.sha256(source.encode("utf-8")).hexdigest()[:12]}" defer></script>\n'
+
+
 def quote_form_for(stype, **kwargs):
     dg = ' checked' if 'garage' in stype.lower() and 'junk' not in stype.lower() and 'organization' not in stype.lower() else ''
     dj = ' checked' if stype.lower() == 'junk removal' else ''
@@ -2366,6 +2375,9 @@ def render_book():
 </section>'''
     body += book_form + f'\n{fmt(PROCESS_HTML, process_href="#process")}\n</main>'
     page = page_shell(title, desc, canonical, schema, body, quote_href="#quote", process_href="#process", pricing_href="/pricing.html")
+    if SITE_FORMS_SCRIPT_SRC not in page:
+        raise RuntimeError("book.html lost its site-forms.js tag; booking-slots.js must load before it")
+    page = page.replace(SITE_FORMS_SCRIPT_SRC, booking_slots_script() + SITE_FORMS_SCRIPT_SRC, 1)
     return page.replace('<body>', '<body class="book-page">', 1)
 
 

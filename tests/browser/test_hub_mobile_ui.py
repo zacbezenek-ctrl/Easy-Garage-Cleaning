@@ -26,7 +26,7 @@ class HubMobileBrowserTests(HubShell, unittest.TestCase):
             self.assertIn('fixture_screen', views)
             for view in views:
                 self.go(view)
-                page.wait_for_timeout(150)
+                self.settle()
                 scroll = self.no_horizontal_scroll()
                 if scroll['width'] > width: problems.append(f'{width} {view}: page scrolls sideways to {scroll["width"]}px {scroll["wide"]}')
                 problems += [f'{width} {view}: {item}' for item in self.small_targets() + self.small_inputs()]

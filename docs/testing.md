@@ -7,7 +7,7 @@ Every suite runs against synthetic data only. No test reaches production Firesto
 | Hub contract tests | `tests/*.test.mjs` | `node --test tests/*.test.mjs` (`npm test`) |
 | Pages Functions through the router | `tests/helpers/pages-router.mjs` | used by any `tests/*.test.mjs` |
 | Firestore rules and emulator acceptance | `tests/firestore-emulator.test.mjs`, `tests/emulator-harness.test.mjs`, `tests/*.browser.mjs` | `node scripts/emulator-exec.mjs …` |
-| Device e2e (iPhone 375x812, Pixel 7, iPad Mini 768, desktop 1440) | `tests/e2e/*.spec.mjs` | `npx playwright test -c tests/e2e/playwright.config.mjs` |
+| Device e2e (iPhone 375x812, Pixel 7, iPad Mini 768, desktop 1440; Hub shell also 320, 390, 414, 844x390, iPad 820/1180, 1366) | `tests/e2e/*.spec.mjs` | `npx playwright test -c tests/e2e/playwright.config.mjs` |
 | Isolated UI modules | `tests/browser/test_*_ui.py` | `python3 tests/browser/test_x_ui.py` |
 | Platform (API, MCP, worker) | `egc-platform/**` | `pnpm test`; Postgres `*.check.mjs` |
 
@@ -142,6 +142,7 @@ npx --no-install playwright test -c tests/e2e/playwright.config.mjs --project=ip
 ```
 
 - The projects are `iphone-375` (iPhone 13 descriptor in Chromium, 375x812 at 3x), `android-pixel7` (412px wide), `tablet-768` (iPad Mini descriptor, 768x1024, touch; runs `public-pages.spec.mjs` only), and `desktop-1440` (1440x900). The timezone is `America/Denver`, and pages open with `page.clock.install` at `2026-09-22T18:00:00Z`.
+- `hub-shell-mobile.spec.mjs` (MOBILE-HUB) runs only in the extra projects `phone-320` (iPhone SE), `phone-390`, `phone-414`, `phone-landscape` (844x390), `ipad-820` and `ipad-1180` (iPad Pro 11, portrait and landscape, touch) and `laptop-1366`, plus `iphone-375` and `desktop-1440`. It opens the signed-in Employee Hub with the Firebase compat SDK stubbed and every `/api/*` answered by `tests/e2e/helpers/hub-fixture.mjs` (long-name synthetic data; the finance job is the real `moneyProjection`), then checks each main view and the sign-in screen for horizontal scroll, 44px targets, 16px fields, AA contrast on sampled text, no public `/styles.css`, and the safe-area top inset, and checks Create job, Record payment and a Hub action dialog are centred (a bottom sheet on phones) with the save reachable. On the phone projects it then sets a 47px status bar and a 34px home indicator (`--egc-safe-top`/`--egc-safe-bottom`) and checks that Create job, Record payment and the Hub modal sit between them, that the recurring plan stays a full-screen sheet whose header and footer take the insets, and that every close and save takes the tap; each view also checks the topbar's Refresh is named exactly "Refresh". `hubReady(page)` waits for a DOM condition (content in `#ops-main`, no loading skeleton), never a delay.
 - The web server is `node scripts/visual-audit-server.mjs` on a free port (`EGC_E2E_PORT`), so parallel checkouts never test each other's files. A guard in `tests/e2e/helpers/test.mjs` aborts every request not addressed to 127.0.0.1 and fails any test with an uncaught page error.
 - `public-pages.spec.mjs` covers every public page: `publicPages()` in `tests/e2e/helpers/public-pages.mjs` lists each `*.html` on disk outside `PRIVATE_DIRS` in `_generate_site.py` (read from the generator, plus every dot-directory), minus the staff pages that `staff-paths.js` gates or lists as staff sign-in and crew-app files, minus legacy files that `_redirects` answers with a 3xx. That is every generated page, the hand-written ones (FAQ, blog, apply, thank-you, the legacy city pages), before-after, and the signed-out customer shells (`customer-portal.html`, `business-hub.html`, `quote.html`). `tests/e2e-public-pages.test.mjs` proves the list matches the generator and the sitemap and never contains a staff page, so a new page is covered the day it is added. Every page must fit 320px (checked once, in the iPhone project), 375, 412, 768 and 1440 with no horizontal scroll, and have no sub-44px tap target on the three touch projects; before-after's compare slider and buttons are also checked at 1023px, the top of the tablet range. `hub-shells.spec.mjs` covers dispatch (board and create dialog), crew sign-in, day list, and job with photos, employee sign-in, the customer portal (access help and project), and the business hub (gate, overview, and request form). The shells use `route()` fixtures like the Python tests, and crew payloads come from the real `fieldJobProjection`. `mobile-invariants.spec.mjs` proves each check catches a real violation.
 - Specs are named `*.spec.mjs`, so the root `node --test tests/*.test.mjs` glob ignores them. Output goes to `test-results/e2e/` and `test-results/e2e-report.json`.
@@ -185,7 +186,7 @@ Each entry below is in the spec's `KNOWN_NO_CAMERA`. The camera test for that pa
 
 No page scrolls horizontally at 375, 412 (Pixel 7), or 1440.
 
-Not yet covered by the shells: the signed-in Employee Hub dashboard, because it needs the Firebase compat SDK from gstatic and the guard aborts it. A later unit should add a local SDK stub or an emulator-backed run through `createHubServer`.
+The signed-in Employee Hub dashboard is covered by `hub-shell-mobile.spec.mjs`, which answers the gstatic Firebase compat script with a local stub (`hubFixtures` in `tests/e2e/helpers/hub-fixture.mjs`).
 
 ## Python browser tests
 
@@ -195,6 +196,8 @@ PLAYWRIGHT_CHROMIUM_EXECUTABLE=/path/to/chrome python3 tests/browser/test_dispat
 ```
 
 These tests mount one module on a stub page with `page.route` fixtures. They run at `timezone_id='Asia/Tokyo'` to catch device-timezone bugs.
+
+The Hub shell tests (`test_hub_shell_ui.py`, `test_hub_mobile_ui.py`, `test_hub_shell_mobile_ui.py`) load the real `employee.html` through `tests/browser/hub_shell_harness.py`. `open_page(width, height, profile, mobile=, touch=)` sets the viewport (touch gives `(pointer:coarse)`), `settle()` waits for the Hub to finish loading, and `audit(scope)` runs the layout probe: page overflow, clipped or ellipsised text, 44x44 targets, fields under 16px, generic font fallbacks, low-contrast text, dialogs outside the viewport, overlapping controls, visible `aria-hidden` content, and leaked public section padding. `dialog_box()` and `contrast()` measure one dialog or a list of selectors; `test_hub_shell_mobile_ui.py`'s `inset_problems()` repeats the dialog check under a 47px status bar and a 34px home indicator.
 
 ## Test environment variables
 

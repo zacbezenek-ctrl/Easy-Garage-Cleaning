@@ -13,6 +13,7 @@ import { crewNotificationsEnabled } from './crew-notifications.js';
 import { ghlTagOutboxEnabled } from './highlevel-tags.js';
 import { commitConflict, commitFailure } from './firestore-errors.js';
 import { dispatchReadMode, windowedJobs, pagedQuery, customerCoverage, aggregateCount } from './dispatch-window-reads.js';
+import { QUEUE_JOB_FIELDS } from './dispatch-queue.js';
 
 const ROOT = 'projects/egcw-1ec83/databases/(default)/documents';
 const BASE = `https://firestore.googleapis.com/v1/${ROOT}`;
@@ -35,7 +36,11 @@ export const JOB_FIELDS = Object.freeze(['type','recordType','date','time','endD
   // GHL-TRACK-1: the visit's newest HighLevel tag outbox entry (ghl-tag-outbox.js), for the card's HighLevel chip.
   'ghlTagEntry',
   // FIX-DISPATCH-READY: reminder readiness from today's browser calendar sync and the Jobber import (dispatch-readiness.js).
-  'scheduleSource','notifySetAt','automationTagSynced','automationReminderTag','automationReminderTaggedAt','syncLastAttemptAt','syncedAt']);
+  'scheduleSource','notifySetAt','automationTagSynced','automationReminderTag','automationReminderTaggedAt','syncLastAttemptAt','syncedAt',
+  // WT-OUTCOME: where a walkthrough stands and what a no-show rebook prefills (walkthrough-state.js); never the rep's notes.
+  'walkthroughOutcome.outcome','walkthroughOutcome.reasonCode','walkthroughOutcome.finishedAt','walkthroughOutcome.occurrence','walkthroughCompletedAt','convertedJobId','scheduleOccurrence','noShowReasonCode','noShowAt',
+  // FIX-DISPATCH-QUEUE: To schedule's review flag, sold and approved dates and Jobber visits (dispatch-queue.js); no amounts.
+  ...QUEUE_JOB_FIELDS]);
 
 /** Owner decision F19: the owner and managers are office staff and join assignment
  * lists only when they take field work, recorded as stored staffRoles that also

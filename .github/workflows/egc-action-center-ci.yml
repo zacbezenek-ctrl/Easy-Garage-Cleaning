@@ -7,10 +7,10 @@ on:
         required: false
         default: ''
   pull_request:
-    paths: ['egc-platform/**','functions/**','employee*','tests/**','crew/**','scripts/repair-stale-schedule-instants.mjs','scripts/backfill-job-contact-keys.mjs','scripts/backfill-customer-identity.mjs','scripts/backfill-job-labor-private.mjs','_generate_site.py','_services_data.py','_finalize_urls.py','tools/site-build.json','tools/gallery/**','scripts/render-before-after.mjs','gallery-simple.js','package.json','*.html','blog/**','projects/**','sitemap.xml','llms.txt','message-templates.*','customer-portal.html','staff-paths.js','hub-sw.js','crew/job.js','crew/field-outbox.js','crew/job.html','functions/api/employee-hub.js','functions/_lib/employee-job-time.js','functions/_lib/employee-timecards.js','customer-tip.*','staff-login.*','fb-capture.js','analytics-loader.js','site-forms.js','site-enhancements.js','styles.css','client-login.*','.github/workflows/egc-action-center-ci.yml']
+    paths: ['egc-platform/**','functions/**','employee*','tests/**','crew/**','scripts/repair-stale-schedule-instants.mjs','scripts/backfill-job-contact-keys.mjs','scripts/backfill-customer-identity.mjs','scripts/backfill-job-labor-private.mjs','_generate_site.py','_services_data.py','_finalize_urls.py','tools/site-build.json','tools/gallery/**','scripts/render-before-after.mjs','gallery-simple.js','package.json','*.html','blog/**','projects/**','sitemap.xml','llms.txt','message-templates.*','customer-portal.html','staff-paths.js','hub-sw.js','crew/job.js','crew/field-outbox.js','crew/job.html','functions/api/employee-hub.js','functions/_lib/employee-job-time.js','functions/_lib/employee-timecards.js','customer-tip.*','staff-login.*','fb-capture.js','analytics-loader.js','site-forms.js','site-enhancements.js','booking-slots.js','styles.css','client-login.*','.github/workflows/egc-action-center-ci.yml']
   push:
     branches: [main]
-    paths: ['egc-platform/**','functions/**','employee*','tests/**','crew/**','scripts/repair-stale-schedule-instants.mjs','scripts/backfill-job-contact-keys.mjs','scripts/backfill-customer-identity.mjs','scripts/backfill-job-labor-private.mjs','_generate_site.py','_services_data.py','_finalize_urls.py','tools/site-build.json','tools/gallery/**','scripts/render-before-after.mjs','gallery-simple.js','package.json','*.html','blog/**','projects/**','sitemap.xml','llms.txt','message-templates.*','customer-portal.html','staff-paths.js','hub-sw.js','crew/job.js','crew/field-outbox.js','crew/job.html','functions/api/employee-hub.js','functions/_lib/employee-job-time.js','functions/_lib/employee-timecards.js','customer-tip.*','staff-login.*','fb-capture.js','analytics-loader.js','site-forms.js','site-enhancements.js','styles.css','client-login.*','.github/workflows/egc-action-center-ci.yml']
+    paths: ['egc-platform/**','functions/**','employee*','tests/**','crew/**','scripts/repair-stale-schedule-instants.mjs','scripts/backfill-job-contact-keys.mjs','scripts/backfill-customer-identity.mjs','scripts/backfill-job-labor-private.mjs','_generate_site.py','_services_data.py','_finalize_urls.py','tools/site-build.json','tools/gallery/**','scripts/render-before-after.mjs','gallery-simple.js','package.json','*.html','blog/**','projects/**','sitemap.xml','llms.txt','message-templates.*','customer-portal.html','staff-paths.js','hub-sw.js','crew/job.js','crew/field-outbox.js','crew/job.html','functions/api/employee-hub.js','functions/_lib/employee-job-time.js','functions/_lib/employee-timecards.js','customer-tip.*','staff-login.*','fb-capture.js','analytics-loader.js','site-forms.js','site-enhancements.js','booking-slots.js','styles.css','client-login.*','.github/workflows/egc-action-center-ci.yml']
 permissions:
   contents: read
 # Push runs are keyed by commit SHA: a shared refs/heads/main group would let a newer queued
@@ -19,6 +19,24 @@ concurrency:
   group: egc-action-center-ci-${{ inputs.ref || github.event.pull_request.number || github.sha }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 jobs:
+  field-pay-webkit:
+    name: iPhone WebKit field payments and receipt review
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.ref || github.sha }}
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: pip install playwright==1.57.0
+      - run: python -m playwright install --with-deps webkit
+      - name: Exact balance, private receipt, manager review and safe retries
+        env:
+          EGC_TEST_BROWSER: webkit
+        run: python tests/browser/test_field_pay_ui.py
   database-and-platform:
     runs-on: ubuntu-latest
     timeout-minutes: 18
@@ -168,6 +186,8 @@ jobs:
         run: python tests/browser/test_native_booking_ui.py
       - name: Dispatch conflict recovery, openings and mobile controls
         run: python tests/browser/test_dispatch_ui.py
+      - name: Dispatch To schedule queue (age, source, Jobber time, review flags, booker view without money) on a phone
+        run: python tests/browser/test_dispatch_queue_ui.py
       - name: Dispatch month grid, time lanes, drag and phone tap-to-assign
         run: python tests/browser/test_dispatch_calendar_ui.py
       - name: Owner dispatch rules screen, rule checks and refused-move reasons on a phone
@@ -180,8 +200,14 @@ jobs:
         run: python tests/browser/test_availability_ui.py
       - name: Personal field agenda and Mountain date boundaries
         run: python tests/browser/test_field_today_ui.py
+      - name: Hub Walkthroughs screen (outcomes, rebook, reschedule and cancel through the dispatch dialogs) on a phone
+        run: python tests/browser/test_walkthroughs_ui.py
+      - name: Crew home walkthroughs for the rep (Call link and outcome badge), none for crew, and the crew nav wraps on a phone
+        run: python tests/browser/test_crew_home_walkthroughs_ui.py
       - name: Hub shell registry, draft-safe refreshes and navigation history
         run: python tests/browser/test_hub_shell_ui.py
+      - name: Hub shell on phones, landscape and iPad (safe-area dialogs, 16px fields, 44px targets, AA contrast, no public stylesheet)
+        run: python tests/browser/test_hub_shell_mobile_ui.py
       - name: Hub mobile shell at phone widths
         run: python tests/browser/test_hub_mobile_ui.py
       - name: Owner catalog and pricing screen on a phone
@@ -206,6 +232,8 @@ jobs:
         run: python tests/browser/test_customer_tips_ui.py
       - name: Crew closeout tip picker, held tipped charges and the Hub tip allocation card
         run: python tests/browser/test_crew_tips_ui.py
+      - name: Crew exact-balance card collection and reviewed cash or check receipts
+        run: python tests/browser/test_field_pay_ui.py
       - name: Walkthrough pricing served by role, offline copy and Hub outage messages
         run: python tests/browser/test_gameplan_pricing_ui.py
       - name: Walkthrough recorder consent, offline sync, one tab per walkthrough and phone/iPad layout
@@ -266,6 +294,8 @@ jobs:
         run: python tests/browser/test_public_performance_ui.py
       - name: Website lead relay, ads.html relay fix and book.html Meta Lead eventID on a phone
         run: python tests/browser/test_lead_relay_ui.py
+      - name: Sales and phone booking tools (lead card, New customer, booker dispatch form, HighLevel outage) and /book explicit slots
+        run: python tests/browser/test_sales_booking_ui.py
       - name: Owner message template drafts, approval and conflict recovery
         run: python tests/browser/test_message_templates_ui.py
       - uses: actions/upload-artifact@v4

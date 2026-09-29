@@ -35,9 +35,10 @@ const handlerNames = [...new Set(handlers.flatMap(calls))].sort();
 
 const RETIRED_FUNCTIONS = ['saveQuoteModal', 'applyQuoteTier', 'closeQuoteModal', 'openQuoteModal', 'openContractModal', 'closeContractModal', 'contractModalBgClick', 'updateDepositPreview', 'generateContract', 'copyContractLink'];
 const RETIRED_IDS = ['quote-modal', 'qm-job-id', 'qm-tier', 'qm-amount', 'qm-status', 'qm-pay-after', 'contract-modal'];
-// Pre-existing non-quote legacy markup (job/customer/lead CRM modals and the
-// calendar popup) that other units own. This list may only shrink.
-const KNOWN_UNRELATED_UNDEFINED = new Set(['closeCustomerDetail', 'closeJobDetail', 'closeLeadDetail', 'closeLeadModal', 'filterCustomersTab', 'moveJobPipeline', 'openJobDetail', 'saveLeadForm', 'setPipelineFilter', 'toggleJobsView']);
+// Pre-existing non-quote legacy markup (the job CRM modal and the calendar popup)
+// that other units own. This list may only shrink: MOBILE-HUB deleted the lead
+// drawer and the lead-form and customer-detail modals that called the rest.
+const KNOWN_UNRELATED_UNDEFINED = new Set(['closeJobDetail', 'filterCustomersTab', 'moveJobPipeline', 'openJobDetail', 'setPipelineFilter', 'toggleJobsView']);
 
 test('the retired quote and contract modals are removed and nothing looks them up', () => {
   for (const id of RETIRED_IDS) {

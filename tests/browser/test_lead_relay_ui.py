@@ -30,6 +30,14 @@ RELAYS_SETTLED = '() => window.__relays.settled === window.__relays.started'
 # so the page records the message instead and the test checks it.
 RECORD_ALERTS = "window.__alerts = []; window.alert = message => { window.__alerts.push(String(message)); };"
 STEP_SHOWN = """n => !!document.querySelector('form.multi-step-form .form-panel.active[data-step="' + n + '"]')"""
+# SALES-BOOKING, EGC_BOOKING_EXPLICIT_SLOTS=true: the root middleware (functions/_middleware.js) marks /book's time choices
+# for booking-slots.js. This static server has no middleware, so the flag-on test adds the marker the edge would; every
+# other test gets /book exactly as served with the flag off.
+BOOK_SLOTS = '<fieldset class="booking-slots"'
+def mark_book_slots(route):
+    response = route.fetch(); html = response.text()
+    assert html.count(BOOK_SLOTS) == 1, 'book.html has one booking-slots fieldset'
+    route.fulfill(response=response, body=html.replace(BOOK_SLOTS, BOOK_SLOTS + ' data-explicit-slots', 1))
 
 class Handler(SimpleHTTPRequestHandler):
     def log_message(self, *args): pass
@@ -141,6 +149,36 @@ class LeadRelayBrowserTests(unittest.TestCase):
         body=self.relayed[0]
         self.assertRegex(body['inquiry_id'],UUID)
         self.assertEqual([body['name'],body['phone'],body['city'],body['booking_slot'],body['flow_type']],['Synthetic Booker','+19705550112','Fort Collins','Tomorrow AM','walkthrough'])
+        self.assertEqual(self.lead_events(),[['track','Lead',{'content_name':'walkthrough_request'},{'eventID':body['inquiry_id']}]])
+        self.assertIn(['init',SITE_PIXEL],self.page.evaluate(PIXEL_CALLS))
+
+    def test_book_page_with_explicit_slots_relays_the_chosen_window_as_an_explicit_date(self):
+        # Flag on: the same visit relays the explicit Denver window the visitor chose (web-lead then words it for the text-back).
+        self.web3forms_status=204
+        self.page.route('**/book.html',mark_book_slots)
+        self.page.goto(self.url+'/book.html'); self.page.wait_for_function('() => !!window.EGCLeadCapture')
+        self.page.wait_for_function('() => !!document.querySelector("fieldset.booking-slots[data-slots-rendered]")')
+        self.assertLessEqual(self.page.evaluate('document.documentElement.scrollWidth'),375)
+        form=self.page.locator('form.multi-step-form')
+        def advance(step):
+            form.locator(f'[data-step="{step}"] [data-next]').click(); self.page.wait_for_function(STEP_SHOWN,arg=step+1); self.page.clock.run_for(200)
+        advance(1)
+        form.locator('select[name="Job size"]').select_option('medium'); advance(2)
+        # At the installed Tuesday noon in Denver the afternoon has started, so tomorrow morning (2026-09-23 AM) comes first.
+        self.assertEqual(form.locator('input[name="booking_slot_choice"]').evaluate_all('inputs => inputs.map(input => input.value)'),['2026-09-23 AM','2026-09-23 PM','2026-09-24 AM','2026-09-24 PM','Flexible'])
+        form.locator('input[name="booking_slot_choice"][value="2026-09-23 AM"]').check(); advance(3)
+        form.locator('select[name="City"]').select_option('Fort Collins'); advance(4)
+        advance(5)
+        form.locator('input[name="Name"]').fill('Synthetic Booker'); form.locator('input[name="Phone"]').fill('(970) 555-0112')
+        submit=form.locator('[data-submit-label]')
+        self.assertGreaterEqual(submit.bounding_box()['height'],44)
+        submit.click()
+        self.page.wait_for_function('() => (window.fbq.queue || []).some(args => args[1] === "Lead")')
+        self.until(lambda:self.web3forms,'the native Web3Forms POST was not sent')
+        self.assertEqual(self.relays_settled(),1); self.assertEqual(len(self.relayed),1,self.relayed); self.assertEqual(self.web3forms,['POST'])
+        body=self.relayed[0]
+        self.assertRegex(body['inquiry_id'],UUID)
+        self.assertEqual([body['name'],body['phone'],body['city'],body['booking_slot'],body['flow_type']],['Synthetic Booker','+19705550112','Fort Collins','2026-09-23 AM','walkthrough'])
         self.assertEqual(self.lead_events(),[['track','Lead',{'content_name':'walkthrough_request'},{'eventID':body['inquiry_id']}]])
         self.assertIn(['init',SITE_PIXEL],self.page.evaluate(PIXEL_CALLS))
 

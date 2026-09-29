@@ -1,5 +1,6 @@
 import { enforceBusinessProjectWrite } from './_lib/business-hub-write-guard.js';
 import { gateStaffPage, privateStaffResponse } from './_lib/staff-page-gate.js';
+import { BOOKING_SLOTS_MARKER, bookingSlotsPageRequest } from './_lib/booking-slots-flag.js';
 
 // Source trees, tooling and deploy configs sit beside the static site; never serve them.
 const PRIVATE_PATH = /^(?:\/(?:auth-verifier|contracts|docs|scripts|tests|egc-platform|functions|tools|\.github|\.claude|node_modules)(?:\/|$)|\/(?:sop|tyler-contract)(?:\.html)?\/?$|\/EGC-Lead-System-SOP\.pdf$|\/(?:package(?:-lock)?\.json|README\.md|firebase(?:\.emulator|\.field-day)?\.json|firestore\.(?:rules|indexes\.json)|pnpm-(?:lock|workspace)\.yaml|\.firebaserc|\.env(?:\.example)?|_[^/]+)(?:$|\/)|\/.*\.py\/?$)/i;
@@ -43,13 +44,23 @@ function blockedResponse() {
   });
 }
 
+// EGC_BOOKING_EXPLICIT_SLOTS (SALES-BOOKING): while the flag is on, /book is always fetched whole and served marked
+// and without validators, so a browser never revalidates (304) into a copy from the other flag state: turning the
+// flag on or off reaches the next page load, with no page regenerated. Off, /book is served exactly as before.
+function unconditional(request) {
+  const headers = new Headers(request.headers);
+  for (const name of ['If-None-Match', 'If-Modified-Since']) headers.delete(name);
+  return new Request(request, { headers });
+}
+
 export async function onRequest(context) {
   const { pathname } = new URL(context.request.url);
   if (privatePath(pathname)) return blockedResponse();
+  const bookingSlotsPage = bookingSlotsPageRequest(context.env, context.request, pathname);
 
   // EGC_STAFF_PAGE_GATE=on: staff pages and scripts need a Hub session (staff-paths.js); off leaves every response as before.
   const staffPage = await gateStaffPage(context.request, context.env);
-  const upstream = staffPage?.refusal || await enforceBusinessProjectWrite(context.request, context.env) || await context.next();
+  const upstream = staffPage?.refusal || await enforceBusinessProjectWrite(context.request, context.env) || await (bookingSlotsPage ? context.next(unconditional(context.request)) : context.next());
   const explicit404 = pathname === '/404' || pathname === '/404.html';
   const response = new Response(upstream.body, {
     status: explicit404 ? 404 : upstream.status,
@@ -116,11 +127,17 @@ export async function onRequest(context) {
   // Refresh a formerly immutable shared script URL and add a discoverable
   // business entry in server-rendered navigation, even with JavaScript disabled.
   if (response.status === 200 && response.headers.get('Content-Type')?.includes('text/html') && typeof HTMLRewriter !== 'undefined') {
-    return new HTMLRewriter()
+    const rewriter = new HTMLRewriter()
       .on('script[src^="/site-enhancements.js"]', { element(el) { el.setAttribute('src', '/site-enhancements.js?v=20260923business'); } })
       .on('nav.nav .nav-links', { element(el) { el.setAttribute('style', 'flex-wrap:wrap;gap:8px 14px'); el.append('<li><a href="/business-hub">Business Hub</a></li>', { html: true }); } })
-      .on('#nav-drawer .drawer-cta', { element(el) { el.before('<a href="/business-hub" class="drawer-link-row">Business Client Hub</a>', { html: true }); } })
-      .transform(response);
+      .on('#nav-drawer .drawer-cta', { element(el) { el.before('<a href="/business-hub" class="drawer-link-row">Business Client Hub</a>', { html: true }); } });
+    // EGC_BOOKING_EXPLICIT_SLOTS on: tell booking-slots.js to render /book's windows. Unmarked, the page keeps its static choices.
+    if (bookingSlotsPage) {
+      response.headers.delete('ETag');
+      response.headers.delete('Last-Modified');
+      rewriter.on('fieldset.booking-slots', { element(el) { el.setAttribute(BOOKING_SLOTS_MARKER, ''); } });
+    }
+    return rewriter.transform(response);
   }
   return response;
 }

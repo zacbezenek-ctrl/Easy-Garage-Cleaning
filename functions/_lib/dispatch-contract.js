@@ -245,6 +245,14 @@
  * range label such as '9:00 AM – 10:00 AM', '' when none is saved),
  * assignmentSegments (only on segmented jobs): [{id,date,time,endDate,endTime,
  * startAt,endAt,assignedCrew,crewLead,crewId,vehicleId,notes}].
+ * FIX-DISPATCH-QUEUE (functions/_lib/dispatch-queue.js): needsDispatchReview and dispatchReviewReason
+ * ('portal_approval'|'sold_schedule_later'|'jobber_import') appear only on jobs that carry them (legacy jobs
+ * have neither). The first save that leaves a flagged job scheduled (a dispatch save or a bridge schedule update)
+ * saves needsDispatchReview:false with dispatchReviewClearedAt/By. Only GET /api/dispatch's board (option readiness,
+ * never the signed bridge) adds queue:{since,sinceKind:'sold'|'approved'|'created'|null,ageDays,
+ * source:'walkthrough'|'portal'|'jobber'|'hub',jobber?:{date,time,endDate,endTime,allDay?,timeNeedsReview?,usable,past}}
+ * to each undated active customer job (To schedule), sends those jobs oldest first and sets queueFacts:true on the
+ * response (the queued jobs are exactly those with queue); queue facts carry no money.
  * suggestedDurationMin (integer minutes, a multiple of 15, or null when the
  * saved data cannot be read) and durationSource ('duration_override'|
  * 'line_items'|'estimated_duration'|'schedule_span'|'default'|null) come from

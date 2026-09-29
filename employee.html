@@ -13,7 +13,7 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Fraunces:ital,wght@0,400;0,500;0,700;1,400;1,500&family=Inter:wght@400;500;600;700;800;900&family=JetBrains+Mono:wght@400&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="employee-suite.css?v=20260909gusto">
+  <link rel="stylesheet" href="employee-suite.css?v=20260929fieldpay2">
   <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-app-compat.js"></script>
   <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-auth-compat.js"></script>
   <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-firestore-compat.js"></script>
@@ -22,7 +22,6 @@
     window._mapsReady = false;
     function _onMapsLoaded() { window._mapsReady = true; }
   </script>
-  <link rel="stylesheet" href="/styles.css?v=20260928p">
 <style>
 body { background: var(--navy); color: var(--white); padding-bottom: 0 !important; }
 /* ── View-container defaults: only login visible on cold load ── */
@@ -32,6 +31,7 @@ body { background: var(--navy); color: var(--white); padding-bottom: 0 !importan
 #oncall-overlay.open { display: flex; }
 #dashboard    { display: none; flex-direction: column; min-height: 100dvh; background: var(--navy); color: var(--white); }
 #login-screen { background: var(--navy); color: var(--white); }
+#login-screen, #mode-screen { --muted: #9aa6b8; --accent: #c2410c; --accent-deep: #9a3412; padding: calc(16px + var(--egc-safe-top)) calc(16px + var(--egc-safe-right)) calc(16px + var(--egc-safe-bottom)) calc(16px + var(--egc-safe-left)); }
 #mode-screen  { background: var(--navy); color: var(--white); }
 /* When a returning session is detected synchronously, hide login until async verify completes */
 body.has-session #login-screen { display: none; }
@@ -44,8 +44,9 @@ body.has-session #login-screen { display: none; }
 .login-error { background: rgba(239,68,68,.12); border: 1px solid rgba(239,68,68,.3); color: #fca5a5; border-radius: .5rem; padding: .65rem 1rem; font-size: .85rem; margin-bottom: 1rem; display: none; }
 .fg { margin-bottom: 1.1rem; }
 .fg label { display: block; font-size: .75rem; font-weight: 600; letter-spacing: .06em; text-transform: uppercase; color: var(--muted); margin-bottom: .4rem; }
-.fg input, .fg select, .fg textarea { width: 100%; background: var(--navy); border: 1px solid rgba(255,255,255,.12); border-radius: .5rem; color: var(--white); font-family: 'Inter', sans-serif; font-size: 1rem; padding: .7rem 1rem; outline: none; transition: border-color .2s; -webkit-appearance: none; }
-.fg input:focus, .fg select:focus, .fg textarea:focus { border-color: var(--accent); }
+.fg input, .fg select, .fg textarea { width: 100%; background: #fff; border: 1px solid rgba(10,22,40,.22); border-radius: .5rem; color: #0a1628; font-family: 'Inter', sans-serif; font-size: 1rem; padding: .7rem 1rem; outline: none; transition: border-color .2s; -webkit-appearance: none; }
+.fg input:focus, .fg select:focus, .fg textarea:focus { border-color: var(--accent); box-shadow: 0 0 0 3px rgba(255,91,31,.18); }
+.fg input::placeholder, .fg textarea::placeholder { color: #6b7280; }
 .fg select option { background: #fff; color: var(--ink); }
 .fg textarea { resize: vertical; min-height: 72px; }
 .btn-main { width: 100%; background: var(--accent); color: #fff; border: none; border-radius: .6rem; font-family: 'Inter', sans-serif; font-size: .95rem; font-weight: 600; padding: .8rem 1.5rem; cursor: pointer; transition: background .2s; margin-top: .5rem; }
@@ -485,6 +486,7 @@ body.has-session #login-screen { display: none; }
       padding: .75rem 1rem;
       border-bottom: 1px solid rgba(255,255,255,.05);
     }
+.review-card { background: rgba(255,255,255,.04); border: 1px solid rgba(255,255,255,.08); border-left: 3px solid var(--accent); border-radius: .75rem; padding: .25rem 1rem; }
 .review-row:last-child { border-bottom: none; }
 .review-row .ricon { font-size: 1rem; flex-shrink: 0; width: 20px; text-align: center; margin-top: .05rem; }
 .review-row .rlbl { font-size: .7rem; font-weight: 600; letter-spacing: .06em; text-transform: uppercase; color: var(--muted); }
@@ -557,9 +559,6 @@ body.has-session #login-screen { display: none; }
       .week-allday-row { min-width: 560px; }
       .week-body { min-width: 560px; height: calc(100dvh - 260px); }
       .week-days-grid { min-width: 508px; }
-
-      /* Prevent iOS input zoom — must be 16px+ */
-      input, textarea, select { font-size: 16px !important; }
 
       /* Quote builder: 4-col → 2-col */
       .opt-grid.g4 { grid-template-columns: 1fr 1fr; }
@@ -735,7 +734,7 @@ body.has-session #login-screen { display: none; }
 </style>
 </head>
 <body>
-<div class="egc-portal-bar" style="background:#14243d;border-bottom:1px solid rgba(255,255,255,.1);padding:10px 18px;display:flex;align-items:center;justify-content:space-between;gap:12px;font-size:13px">
+<div class="egc-portal-bar">
   <a href="/" style="color:#f5f1ea;font-weight:700;text-decoration:none"><span style="display:inline-block;width:8px;height:8px;background:#ff5b1f;border-radius:50%;margin-right:6px"></span>Easy Garage — Public site</a>
   <a href="tel:+19709991818" style="color:#ff5b1f;font-weight:600;text-decoration:none">(970) 999-1818</a>
 </div>
@@ -958,46 +957,6 @@ body.has-session #login-screen { display: none; }
 <div id="job-detail-modal" class="modal-backdrop" onclick="if(event.target===this)closeJobDetail()">
   <div class="modal-sheet"><button type="button" class="modal-close" onclick="closeJobDetail()"></button><div id="job-detail-body"></div></div>
 </div>
-<div id="cust-detail-modal" class="modal-backdrop" onclick="if(event.target===this)closeCustomerDetail()">
-  <div class="modal-sheet"><button type="button" class="modal-close" onclick="closeCustomerDetail()"></button><div id="cust-detail-body"></div></div>
-</div>
-<div id="lead-detail-drawer" class="lead-drawer" aria-hidden="true">
-  <div class="lead-drawer-backdrop" onclick="closeLeadDetail()"></div>
-  <div class="lead-drawer-panel" role="dialog" aria-modal="true" aria-labelledby="lead-detail-title">
-    <div class="lead-drawer-head">
-      <div>
-        <h3 id="lead-detail-title">Lead</h3>
-        <div id="lead-detail-subtitle" style="font-size:.78rem;color:var(--muted);margin-top:.2rem"></div>
-      </div>
-      <button type="button" class="lead-drawer-close" onclick="closeLeadDetail()" aria-label="Close"></button>
-    </div>
-    <div class="lead-drawer-body" id="lead-detail-body"></div>
-  </div>
-</div>
-<div id="lead-form-modal" class="modal-backdrop" onclick="if(event.target===this)closeLeadModal()">
-  <div class="modal-sheet">
-    <button type="button" class="modal-close" onclick="closeLeadModal()"></button>
-    <h3>Lead</h3>
-    <input type="hidden" id="lf-id">
-    <div class="fg"><label>Name</label><input type="text" id="lf-name" placeholder="Name"></div>
-    <div class="frow" style="margin-bottom:.65rem">
-      <div class="fg" style="margin:0"><label>Phone</label><input type="tel" id="lf-phone" autocomplete="off"></div>
-      <div class="fg" style="margin:0"><label>Email</label><input type="email" id="lf-email" autocomplete="off"></div>
-    </div>
-    <div class="frow" style="margin-bottom:.65rem">
-      <div class="fg" style="margin:0"><label>City</label><input type="text" id="lf-city" placeholder="Fort Collins"></div>
-      <div class="fg" style="margin:0"><label>Service</label><input type="text" id="lf-service" placeholder="Garage Cleanout"></div>
-    </div>
-    <div class="fg"><label>Timing</label><input type="text" id="lf-timing" placeholder="ASAP / This week"></div>
-    <div class="fg"><label>Message</label><textarea id="lf-message" rows="2"></textarea></div>
-    <div class="frow" style="margin-bottom:1rem">
-      <div class="fg" style="margin:0"><label>Source</label><select id="lf-source"><option value="website">Website</option><option value="Facebook Ads (fb)">Facebook Ads</option><option value="phone">Phone</option><option value="text">Text</option><option value="referral">Referral</option><option value="other">Other</option></select></div>
-      <div class="fg" style="margin:0"><label>Status</label><select id="lf-status"><option value="new">New</option><option value="quoted">Quoted</option><option value="booked">Booked</option><option value="dead">Dead</option><option value="no_answer_6_attempts">No Answer (6×)</option></select></div>
-    </div>
-    <button type="button" class="btn-main" onclick="saveLeadForm()">Save lead</button>
-  </div>
-</div>
-
 <!-- ═══════════════════════════════════════
      BOOKING WIZARD
 ═══════════════════════════════════════ -->
@@ -1305,7 +1264,7 @@ async function enterEmployeeApp(data, version = hubAuthVersion) {
 function clearHubProfile() {
   me = null;
   for (const storage of [sessionStorage, localStorage]) {
-    ['egc_u','egc_name','egc_role','egc_pay_type','egc_hourly_rate','egc_business_access','egc_owner','egc_capabilities','egc_capability_mode','egc_tok','egc_exp'].forEach(key => storage.removeItem(key));
+    ['egc_u','egc_name','egc_role','egc_pay_type','egc_hourly_rate','egc_business_access','egc_owner','egc_capabilities','egc_capability_mode','egc_role_access','egc_tok','egc_exp'].forEach(key => storage.removeItem(key));
   }
   // crew/gameplan.html keeps walkthrough price tables for offline walkthroughs; they leave with the account
   // (sign-out, an expired or failed session check, a failed sign-in).
@@ -1326,6 +1285,8 @@ function rememberHubProfile(data) {
     egc_capability_mode: data.capabilityMode === 'staff_roles' ? 'staff_roles' : 'legacy',
   };
   Object.entries(values).forEach(([key, value]) => sessionStorage.setItem(key, value));
+  // EGC_STAFF_ROLE_ACCESS (SALES-BOOKING): the suite opens the views the server's capabilities allow. Flag off, never stored.
+  if (data.roleAccess === true) sessionStorage.setItem('egc_role_access', 'true'); else sessionStorage.removeItem('egc_role_access');
 }
 
 async function doLogin() {
@@ -2996,28 +2957,29 @@ window.addEventListener('egc:booking-recovered',event=>{const key=event.detail?.
 <link rel="stylesheet" href="employee-timecard-correct.css?v=20260929timecorrect">
 <script src="employee-timecard-correct.js?v=20260929timecorrect"></script>
 <script src="employee-pricing.js?v=20260928price"></script>
-<link rel="stylesheet" href="employee-operations.css?v=20260928send">
+<link rel="stylesheet" href="employee-operations.css?v=20260929salesbooking">
 <script src="employee-recordings.js?v=20260921"></script>
-<script src="employee-operations.js?v=20260928sendowners"></script>
-<link rel="stylesheet" href="employee-dispatch.css?v=20260929ready">
+<script src="employee-operations.js?v=20260929salesbooking"></script>
+<link rel="stylesheet" href="employee-dispatch.css?v=20260929readysaleswtqueue">
 <link rel="stylesheet" href="employee-dispatch-calendar.css?v=20260928cal">
 <link rel="stylesheet" href="employee-dispatch-rules.css?v=20260928rules">
-<link rel="stylesheet" href="employee-field-today.css?v=20260922ops">
+<link rel="stylesheet" href="employee-field-today.css?v=20260929wtoutcome">
 <link rel="stylesheet" href="employee-availability.css?v=20260922ops">
-<script src="employee-dispatch.js?v=20260929ready4"></script>
-<script src="employee-dispatch-calendar.js?v=20260929rules"></script>
+<script src="employee-dispatch.js?v=20260929fieldpay2"></script>
+<script src="employee-dispatch-calendar.js?v=20260929wtoutcome"></script>
 <script src="employee-dispatch-rules.js?v=20260929rules"></script>
 <link rel="stylesheet" href="employee-recurring.css?v=20260929ready">
 <script src="employee-recurring.js?v=20260929ready"></script>
 <link rel="stylesheet" href="employee-booking.css?v=20260922ops">
 <script src="employee-booking.js?v=20260928recur"></script>
-<script src="employee-field-today.js?v=20260922ops"></script>
+<script src="employee-field-today.js?v=20260929wtoutcome2"></script>
+<script src="employee-walkthrough-state.js?v=20260929wtoutcome2"></script>
 <script src="employee-availability.js?v=20260922ops"></script>
-<link rel="stylesheet" href="employee-offline-queue.css?v=20260929hubpwa">
+<link rel="stylesheet" href="employee-offline-queue.css?v=20260929mobilehub">
 <script src="employee-offline-queue.js?v=20260929crewtime"></script>
 <link rel="stylesheet" href="employee-pto.css?v=20260928pto">
 <script src="employee-pto.js?v=20260928ptoamend"></script>
-<script src="employee-hub-screens.js?v=20260929editaccess"></script>
+<script src="employee-hub-screens.js?v=20260929editaccesswtmobile"></script>
 <link rel="stylesheet" href="employee-followups-home.css?v=20260928overdue">
 <script src="employee-followups-home.js?v=20260928overdue"></script>
 <script src="employee-ghl-tags.js?v=20260929ghltags3"></script>
@@ -3030,15 +2992,15 @@ window.addEventListener('egc:booking-recovered',event=>{const key=event.detail?.
 <script src="employee-staff-access.js?v=20260929accessr2"></script>
 <link rel="stylesheet" href="employee-staff.css?v=20260929access">
 <script src="employee-staff.js?v=20260929access"></script>
-<script src="employee-money-totals.js?v=20260929totals3"></script>
-<script src="employee-suite.js?v=20260929editaccess"></script>
-<link rel="stylesheet" href="employee-money-actions.css?v=20260928money">
+<script src="employee-money-totals.js?v=20260929fieldpay2"></script>
+<script src="employee-suite.js?v=20260929fieldpay2"></script>
+<link rel="stylesheet" href="employee-money-actions.css?v=20260929money">
 <script src="employee-money-actions.js?v=20260929ghl"></script>
-<link rel="stylesheet" href="employee-customer-lifecycle.css?v=20260928fun36">
+<link rel="stylesheet" href="employee-customer-lifecycle.css?v=20260929fun36">
 <script src="employee-customer-lifecycle.js?v=20260928fun36r3"></script>
-<link rel="stylesheet" href="employee-mobile.css?v=20260927hubreg">
+<link rel="stylesheet" href="employee-mobile.css?v=20260929mobilehub">
 
-<div class="egc-portal-foot" style="background:#0a1628;border-top:1px solid rgba(255,255,255,.08);padding:14px 18px;text-align:center;font-size:12px;color:rgba(245,241,234,.55)">
+<div class="egc-portal-foot">
   <a href="/privacy-policy" style="color:#ff5b1f;margin:0 8px">Privacy</a> · <a href="/" style="color:#ff5b1f">Home</a> · Employee portal — internal use only
 </div>
 </body>

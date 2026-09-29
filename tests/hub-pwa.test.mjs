@@ -335,7 +335,7 @@ test('employee.html: the Hub CSP allows blob:/https: images and blob: media, the
   assert.ok(directive('script-src').includes("'self'"), 'the worker registers under script-src');
   const at = name => html.indexOf(name);
   assert.ok(at('employee-offline-queue.js?v=20260929crewtime') > 0, 'CREW-TIME bumped the queue: it now keeps a clock-in with no position fix');
-  assert.ok(at('employee-offline-queue.css?v=20260929hubpwa') > 0);
+  assert.ok(at('employee-offline-queue.css?v=20260929mobilehub') > 0, 'MOBILE-HUB bumped the queue stylesheet: Sync now uses the AA orange token');
   assert.ok(at('employee-offline-queue.js') < at('employee-hub-screens.js') && at('employee-hub-screens.js') < at('employee-suite.js?v='));
   assert.doesNotMatch(html, /rel="manifest"/, 'the manifest link is added only when the switch is on');
   assert.doesNotMatch(html, /serviceWorker/);

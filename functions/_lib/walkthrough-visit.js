@@ -1,7 +1,6 @@
 import { firestoreFetch } from './firebase-service-account.js';
 import { dispatchStorage } from './dispatch-storage.js';
 import { validDate } from './dispatch-time.js';
-import { localInstant } from './operations-portal-records.js';
 import { hasBusinessAccess } from './hub-session.js';
 import { can, capabilityMode, staffRoleAccessEnabled } from './staff-roles.js';
 import { WALKTHROUGH_DENIAL } from './quote-permissions.js';
@@ -13,6 +12,7 @@ import { activeJobSegment, ownJobTimeProjection } from './employee-job-time.js';
 import { canonicalJson, funnelHubId, funnelReasonCodes, funnelVocabulary, sha256Hex } from './funnel-definitions.js';
 import { funnelEventWrite } from './funnel-events.js';
 import { ghlTagOutboxEnabled, outcomeTagWrites } from './ghl-tag-outbox.js';
+import { WALKTHROUGH_REBOOKABLE as REBOOKABLE, walkthroughOccurrence as occurrenceOf, walkthroughRebooked as rebooked } from './walkthrough-state.js';
 
 // FUN-05: the walkthrough visit record. Start, Finish and No-show on a
 // walkthrough job write walkthroughVisit / walkthroughOutcome /
@@ -36,8 +36,8 @@ const TYPED_NOTES = 3, TYPED_NOTE_CHARS = 400, NOTE_STATUSES = new Set(['decline
 // Outcomes that carry a reason code, and from which list.
 const OUTCOME_REASONS = { not_interested: 'lost', customer_no_show: 'noShow', rescheduled: 'reschedule' };
 const START_CLOSED = new Set(['cancelled', 'canceled', 'noshow', 'no_show', 'no-show', 'completed', 'closed']);
-// Outcomes a rebooked occurrence can follow, and how many earlier occurrences a visit keeps.
-const REBOOKABLE = new Set(['customer_no_show', 'rescheduled']), OCCURRENCES = 20;
+// How many earlier occurrences a visit keeps (the outcomes a rebooked occurrence can follow are WALKTHROUGH_REBOOKABLE).
+const OCCURRENCES = 20;
 const START_FIELDS = ['startedAt', 'startedBy', 'startRequestId', 'clockSource', 'recordingStatus', 'repTime', 'occurrence'];
 const ISO = /^\d{4}-\d\d-\d\dT\d\d:\d\d(?::\d\d(?:\.\d{1,9})?)?(?:Z|[+-]\d\d:\d\d)$/, PROVIDER_ID = /^[A-Za-z0-9_-]{1,120}$/;
 const fail = (code, message, status = 409, details) => Object.assign(new Error(message), { code: `walkthrough_visit_${code}`, status, ...(details ? { details } : {}) });
@@ -53,20 +53,7 @@ const outcomeOf = visit => plain(visit?.walkthroughOutcome) ? visit.walkthroughO
 const lockId = rep => `rep_${sha256Hex(`walkthrough-rep:${rep}`).slice(0, 40)}`;
 const omit = (value, keys) => plain(value) ? Object.fromEntries(Object.entries(value).filter(([key]) => !keys.includes(key))) : {};
 
-// The occurrence a visit is on: its Denver wall start and, once FUN-02 counts placements,
-// its scheduleOccurrence. `number` never goes down across a visit's occurrences.
-function occurrenceOf(visit, previous = 0) {
-  const date = validDate(visit.date) ? visit.date : null, time = typeof visit.time === 'string' && /^\d\d:\d\d$/.test(visit.time) ? visit.time : null;
-  const counter = Number.isInteger(visit.scheduleOccurrence) && visit.scheduleOccurrence >= 1 && visit.scheduleOccurrence <= 1000 ? visit.scheduleOccurrence : null;
-  return { number: Math.min(1000, Math.max(counter ?? 1, previous + 1)), date, time, startAt: date && time ? localInstant(date, time) : null, scheduleOccurrence: counter };
-}
-// Dispatch moved the visit to another start (or FUN-02 counted a new placement) since that occurrence.
-function moved(snapshot, visit) {
-  if (!plain(snapshot)) return false;
-  const current = occurrenceOf(visit);
-  return Boolean(current.startAt) && (current.startAt !== snapshot.startAt || current.scheduleOccurrence !== null && Number.isInteger(snapshot.scheduleOccurrence) && current.scheduleOccurrence !== snapshot.scheduleOccurrence);
-}
-const rebooked = visit => { const outcome = outcomeOf(visit); return Boolean(outcome && REBOOKABLE.has(outcome.outcome) && moved(outcome.occurrence, visit)); };
+// occurrenceOf, the moved check and rebooked live in walkthrough-state.js, shared with every list that shows a walkthrough.
 const occurrenceView = value => plain(value) ? { number: Number.isInteger(value.number) ? value.number : null, date: text(value.date, 10) || null, time: text(value.time, 5) || null, startAt: typeof value.startAt === 'string' && value.startAt ? value.startAt : null } : null;
 
 /** Owner, manager and sales reps record walkthroughs: with stored staff roles the P1-08

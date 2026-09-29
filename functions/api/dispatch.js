@@ -33,6 +33,7 @@ const away = row => Object.fromEntries(AWAY_FIELDS.filter(key => row?.[key] !== 
 // Reads take the Date; mutations take its ISO string (dispatch-contract.js).
 // A schedule.book holder (EGC_STAFF_ROLE_ACCESS, dispatch-booking.js) reads the
 // board and saves only what mutateBooking allows; everyone else needs dispatch.write.
+// Its viewer carries booker:true, so the board hides the crew controls it cannot save.
 export function dispatchHandlers({ session = getHubSession, storage = dispatchStorage, travel = travelEstimator, now = () => new Date(), ghlTags = firstGhlTagAttempt } = {}) {
   return {
     async get({request,env}) {
@@ -41,7 +42,7 @@ export function dispatchHandlers({ session = getHubSession, storage = dispatchSt
         const params = Object.fromEntries(new URL(request.url).searchParams.entries());
         const store = storage(env), photos = crewRosterPhotoStore(store), overview = await dispatchOverview(photos.store,actor,params,now(),{travel:travel({env,store,now}),readiness:true,...(access.booker ? {authorize:bookerAuthorize(env)} : {})});
         // Approved crew headshots (P4-07), read alongside the job scans; an unreadable profile store leaves the roster unchanged.
-        return reply(200,{...overview,...(Array.isArray(overview.roster) ? {roster:await photos.attach(overview.roster)} : {}),...(access.booker && Array.isArray(overview.availability) ? {availability:overview.availability.map(away)} : {}),viewer:{id:actor.user},funnel:dispatchFunnelOptions()});
+        return reply(200,{...overview,...(Array.isArray(overview.roster) ? {roster:await photos.attach(overview.roster)} : {}),...(access.booker && Array.isArray(overview.availability) ? {availability:overview.availability.map(away)} : {}),viewer:{id:actor.user,...(access.booker ? {booker:true} : {})},funnel:dispatchFunnelOptions()});
       } catch(error) { return errorResponse(error); }
     },
     async post({request,env,waitUntil}) {

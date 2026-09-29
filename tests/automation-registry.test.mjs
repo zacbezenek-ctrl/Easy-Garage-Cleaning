@@ -91,7 +91,8 @@ test('every automation lists the Hub writes that can start it', () => {
   assert.ok(writes('ghl.booking_confirmation_workflows').every(item => ['functions/api/highlevel.js', 'functions/_lib/ghl-tag-outbox.js'].includes(item.file) && item.automatic === true));
   assert.ok(writes('ghl.booking_confirmation_workflows').filter(item => item.file === 'functions/_lib/ghl-tag-outbox.js').every(item => /EGC_GHL_TAG_OUTBOX=true \(off\)/.test(item.when)));
   assert.deepEqual(writes('ghl.garage_sales_exit').map(item => item.file), ['functions/_lib/sales-followup-exit.js']);
-  assert.deepEqual(writes('ghl.lifecycle.payment_received').flatMap(item => item.via).sort(), ['crew/postjob.html', 'employee-suite.js']);
+  assert.deepEqual(writes('ghl.lifecycle.payment_received').flatMap(item => item.via).sort(), ['crew/postjob.html', 'employee-suite.js', 'functions/_lib/customer-payments.js', 'functions/api/field-payments.js']);
+  assert.ok(writes('ghl.lifecycle.payment_received').some(item => item.file === 'functions/_lib/field-payment-sync.js' && /native note outbox must confirm first/.test(item.when)));
   assert.deepEqual(writes('ghl.garage_instant_text_nurture'), [], 'Facebook forms start the nurture, not the Hub');
   assert.ok(writes('ghl.opportunity_workflows').some(item => item.trigger === 'opportunity_status:lost' && item.file.endsWith('mcp/src/server.ts') && item.automatic === false));
   const appointment = writes('ghl.appointment_status_workflows');

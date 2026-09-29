@@ -34,7 +34,7 @@ test('own availability projection excludes operational jobs, staff accounts and 
 
 test('canonical Firestore job grants cannot bypass server crew projection or completion gates',()=>{
  const rules=readFileSync(new URL('../firestore.rules',import.meta.url),'utf8');
- const job=rules.match(/match \/jobs\/\{documentId\} \{([\s\S]*?)\n    \}/)?.[1];
+ const job=rules.match(/match \/jobs\/\{documentId\} \{([\s\S]*?)\n    \}/)?.[1]?.replace(/\/\/[^\r\n]*/g,'');
  const customer=rules.match(/match \/customers\/\{documentId\} \{([\s\S]*?)\n    \}/)?.[1];
  assert.ok(job);assert.doesNotMatch(job,/assignedToUser|assignedUpdateIsSafe/);
  assert.match(job,/allow read: if businessUser\(\) \|\| ownAvailability/);
@@ -45,10 +45,11 @@ test('canonical Firestore job grants cannot bypass server crew projection or com
  // FUN-03: nor create or change a job's funnelSale (the sale the funnel ledger counts).
  // FUN-33 (updated deliberately): nor create or change the server-owned paid-in-full crossing fields.
  // GHL-TRACK-1 (updated deliberately): nor ghlTagEntry, the pointer that decides whether the browser sync adds booking tags.
- assert.match(job,/allow create: if businessUser\(\) && !serverOwnedJobRecord\(documentId\) &&\s*!serverOwnedJobData\(request\.resource\.data, documentId\) &&\s*!\('funnelSale' in request\.resource\.data\) &&\s*!request\.resource\.data\.keys\(\)\.hasAny\(paymentEventFields\(\)\) &&\s*!\('ghlTagEntry' in request\.resource\.data\) &&\s*jobLaborUnchanged\(request\.resource\.data, \{\}, documentId\);/);
- assert.match(job,/allow update: if businessUser\(\) && !serverOwnedJobRecord\(documentId\) &&\s*!serverOwnedJobData\(resource\.data, documentId\) &&\s*!serverOwnedJobData\(request\.resource\.data, documentId\) &&\s*!request\.resource\.data\.diff\(resource\.data\)\.affectedKeys\(\)\.hasAny\(\['funnelSale', 'ghlTagEntry'\]\) &&\s*!request\.resource\.data\.diff\(resource\.data\)\.affectedKeys\(\)\.hasAny\(paymentEventFields\(\)\) &&\s*jobLaborUnchanged\(request\.resource\.data, resource\.data, documentId\);/);
+ // FIELD-PAY: receipt/card pointers are server-owned, and a payable card freezes SDK job edits.
+ assert.match(job,/allow create: if businessUser\(\) && !serverOwnedJobRecord\(documentId\) &&\s*!serverOwnedJobData\(request\.resource\.data, documentId\) &&\s*!\('funnelSale' in request\.resource\.data\) &&\s*!request\.resource\.data\.keys\(\)\.hasAny\(\['fieldPaymentPendingId', 'fieldPaymentLastId', 'fieldPaymentCardRequestId', 'fieldPaymentSyncPendingIds'\]\) &&\s*!request\.resource\.data\.keys\(\)\.hasAny\(paymentEventFields\(\)\) &&\s*!\('ghlTagEntry' in request\.resource\.data\) &&\s*jobLaborUnchanged\(request\.resource\.data, \{\}, documentId\);/);
+ assert.match(job,/allow update: if businessUser\(\) && !serverOwnedJobRecord\(documentId\) &&\s*!serverOwnedJobData\(resource\.data, documentId\) &&\s*!serverOwnedJobData\(request\.resource\.data, documentId\) &&\s*\(!\('fieldPaymentCardRequestId' in resource\.data\) \|\| resource\.data\.fieldPaymentCardRequestId == null\) &&\s*!request\.resource\.data\.diff\(resource\.data\)\.affectedKeys\(\)\.hasAny\(\['funnelSale', 'ghlTagEntry', 'fieldPaymentPendingId', 'fieldPaymentLastId', 'fieldPaymentCardRequestId', 'fieldPaymentSyncPendingIds'\]\) &&\s*!request\.resource\.data\.diff\(resource\.data\)\.affectedKeys\(\)\.hasAny\(paymentEventFields\(\)\) &&\s*jobLaborUnchanged\(request\.resource\.data, resource\.data, documentId\);/);
  assert.match(rules.match(/function paymentEventFields\(\) \{([\s\S]*?)\n    \}/)?.[1]||'',/return \['paidInFullAt', 'paidInFullRevision', 'balanceReopenedAt', 'balanceReopenedReason', 'paymentEventIssue'\];/);
- assert.match(job,/allow delete: if businessUser\(\) && !serverOwnedJobRecord\(documentId\) &&\s*!serverOwnedJobData\(resource\.data, documentId\);/);
+ assert.match(job,/allow delete: if businessUser\(\) && !serverOwnedJobRecord\(documentId\) &&\s*!serverOwnedJobData\(resource\.data, documentId\) &&\s*\(!\('fieldPaymentPendingId' in resource\.data\) \|\| resource\.data\.fieldPaymentPendingId == null\) &&\s*\(!\('fieldPaymentCardRequestId' in resource\.data\) \|\| resource\.data\.fieldPaymentCardRequestId == null\);/);
  assert.match(rules.match(/function serverOwnedJobRecord\(documentId\) \{([\s\S]*?)\n    \}/)?.[1]||'',/matches\('\(secure_\|_egc_\)\.\*'\) && !documentId\.matches\('_egc_schedule_lock_\.\*'\)/);
  const ownedData=rules.match(/function serverOwnedJobData\(data, documentId\) \{([\s\S]*?)\n    \}/)?.[1]||'';
  for(const type of ['employee_hub_v2','employee_account_v1','schedule_operation','schedule_provider_receipt','schedule_adoption','operational_record_receipt']) assert.ok(ownedData.includes(`'${type}'`),type);

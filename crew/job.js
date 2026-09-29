@@ -52,7 +52,7 @@
   }
   function acceptJob(job, { snapshot = false } = {}) { if (!snapshot) supersedeStatusForm(job); S.job = job; S.timeSnapshot = job.jobTime; S.timeObservedAt = performance.now(); S.timeChanged = false; S.timeError = false; if (S.user && !S.offline) remember(snapshotKey(S.user.user), { job, photosAvailable: S.photosAvailable, features: S.features, savedAt: Date.now() }); }
   // EGC_JOB_STATUS_MOVES_TIME (statusMovesTime) and EGC_CLOCK_IN_WITHOUT_FIX (clockInWithoutFix), as the job detail reports them.
-  function acceptFeatures(features) { S.features = { statusMovesTime: features?.statusMovesTime === true, clockInWithoutFix: features?.clockInWithoutFix === true }; }
+  function acceptFeatures(features) { S.features = { statusMovesTime: features?.statusMovesTime === true, clockInWithoutFix: features?.clockInWithoutFix === true, fieldPay: features?.fieldPay === true, fieldPayReview: features?.fieldPayReview === true }; }
   function h(tag, attributes = {}, ...children) {
     const element = document.createElement(tag);
     for (const [name, value] of Object.entries(attributes)) { if (value === false || value == null) continue; if (name === 'class') element.className = value; else element.setAttribute(name, value === true ? '' : String(value)); }
@@ -260,6 +260,7 @@
       try { await outbox.migrate(sessionStorage, S.user.user, jobId); } catch (error) { message(error.message, true); }
       // Checked again once the waiting actions are read, as Background Sync may have confirmed some while this page was offline.
       await refreshOutbox(); supersedeStatusForm(S.job); renderJob();
+      if(S.features.fieldPay||S.features.fieldPayReview)void window.EGCFieldPayments?.refresh();
       await syncOutbox(); await loadEmployeeJobTime(); await loadManagerLabor();
     } catch (error) {
       if (!error.status && await offlineStart()) return;
@@ -268,7 +269,7 @@
   }
   async function refreshJob() {
     const data = await api(`/api/field-jobs?jobId=${encodeURIComponent(jobId)}`);
-    S.photosAvailable = data.photosAvailable; acceptFeatures(data.features); acceptJob(data.job); S.historyCursor = data.historyCursor; S.jobCosts = data.features?.jobCosts === true; return data;
+    S.photosAvailable = data.photosAvailable; acceptFeatures(data.features); acceptJob(data.job); S.historyCursor = data.historyCursor; S.jobCosts = data.features?.jobCosts === true; if(S.features.fieldPay||S.features.fieldPayReview)void window.EGCFieldPayments?.refresh(); return data;
   }
   async function loadDay() {
     try {
@@ -328,7 +329,9 @@
     const notes = [...main.querySelectorAll('h2')].find(heading => heading.textContent === 'Crew notes & issues'); if (notes) notes.closest('.card').id = 'notes-card';
     // Job costs mount only when the server reports the feature on, so a disabled flag adds no card and no request.
     if (S.jobCosts && window.EGCFieldExpenses) { const costs = document.createElement('section'); costs.className = 'card'; costs.id = 'field-expenses-card'; document.getElementById('photos-card').insertAdjacentElement('afterend', costs); window.EGCFieldExpenses.mount(costs, { jobId, user: S.user.user, manager: S.job.canAddManagementNote === true }); }
-    const nav = document.createElement('nav'); nav.className = 'job-sections'; nav.setAttribute('aria-label', 'Job sections'); nav.innerHTML = [['scope-card', 'Scope'], ['checklist-card', 'Checklist'], ['photos-card', 'Photos'], ['notes-card', 'Notes'], ['complete-card', 'Complete']].map(([id, text]) => `<a href="#${id}">${text}</a>`).join(''); main.querySelector('h1').insertAdjacentElement('afterend', nav);
+    const paymentOpen = S.features.fieldPay || S.features.fieldPayReview;
+    if (paymentOpen && window.EGCFieldPayments) { const payment = document.createElement('section'); payment.className = 'card full field-payment-card'; payment.id = 'field-payment-card'; document.getElementById('complete-card').insertAdjacentElement('beforebegin', payment); window.EGCFieldPayments.mount(payment, { jobId, user: S.user.user, offline: offline() }); }
+    const nav = document.createElement('nav'); nav.className = 'job-sections'; nav.setAttribute('aria-label', 'Job sections'); nav.innerHTML = [['scope-card', 'Scope'], ['checklist-card', 'Checklist'], ['photos-card', 'Photos'], ['notes-card', 'Notes'], ...(paymentOpen ? [['field-payment-card', 'Payment']] : []), ['complete-card', 'Complete']].map(([id, text]) => `<a href="#${id}">${text}</a>`).join(''); main.querySelector('h1').insertAdjacentElement('afterend', nav);
     if (S.job.statusReason) { const reason = document.createElement('p'); reason.className = 'notice'; reason.textContent = `${label(S.job.fieldStatus)}: ${S.job.statusReason}`; nav.insertAdjacentElement('afterend', reason); }
     document.getElementById('checklist-editor')?.addEventListener('toggle', event => { S.checklistOpen = event.target.open; });
     const history = document.getElementById('history-card'), entries = [...history.querySelectorAll('.history-item')];

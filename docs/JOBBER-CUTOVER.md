@@ -414,10 +414,15 @@ fall back to the raw-spelling lookups, and the HighLevel open-opportunity check 
 ### After apply
 
 - **Dispatch review.**
-  1. Open Dispatch and type `jobber_job` in search. Do not work from the Unscheduled filter alone: it also shows the
-     imported `jobber_invoice_*` rows, which are open balances, not work (Dispatch refuses to schedule them).
+  1. Open Dispatch's **To schedule** view (the header badge says how many jobs wait there and how many are new). Every
+     imported job is a **Jobber** row marked "From Jobber: needs review", with the first visit Jobber had for it
+     ("Jobber had: Thu, Oct 8 · 9:00 AM – 12:00 PM"). The imported `jobber_invoice_*` open balances are closed
+     (`invoiced`) records, not work, so they are not in To schedule. Searching `jobber_job` still finds every import.
   2. For each imported job: open it, read the internal notes (Jobber dates, crew, value), confirm the customer, price
-     and crew, and schedule it. Dispatch runs every conflict and lock check.
+     and crew, and schedule it. **Use this time** opens the editor at Jobber's time for an upcoming timed visit;
+     **Schedule** and **Find a time** work as for any job. Dispatch runs every conflict and lock check on the save, and
+     the first save that books the job clears its review flag. If the customer approves the job online first, the row
+     reads "Approved online: needs review" (source Portal approval) and still shows what Jobber had.
   3. For each entry in the report's `multiVisitJobs`: the Hub job holds one visit. Schedule it, then create each other
      listed visit in Dispatch for the same customer (or cancel it with the customer). Tick every listed date off.
   4. Customer notifications stay off on imported jobs until someone turns them on. In Dispatch the card shows
@@ -427,8 +432,8 @@ fall back to the raw-spelling lookups, and the HighLevel open-opportunity check 
      the customer; uncheck it to keep that customer silent. The Hub schedule's "Save confirmation and reminder
      preferences" tick still works as before.
   5. Record the agreed price on the job's estimate. Imported jobs carry no Hub price, only the Jobber value in notes.
-     Until the customer approves a price, Dispatch shows owners and managers **Price this job** on the card, which
-     opens that job in Estimates & payments.
+     Until the customer approves a price, Dispatch shows owners and managers **Price this job** on the card and on its
+     To schedule row, which opens that job in Estimates & payments.
 - **Recurring plans.** For each entry in `recurringPlans`, schedule the next visit. Then set its visit cadence in the
   Hub schedule and use "next visit", which is saved through Dispatch as a repeat of that job. Once P1-05 merges, use a
   recurring plan instead.
@@ -526,14 +531,16 @@ what happened in the Hub.
 
 - **Recurring plans are report-only** until P1-05 merges. After that, a small follow-up can create plan drafts from the
   receipt's `recurringPlanProposals`.
-- **No dedicated Dispatch badge for imported jobs.** Adding one would edit the shared `dispatch-storage.js` field mask
-  and `dispatch-service.js` warnings. Imported jobs are found through the `jobber_job` search and their internal note. Each carries `needsDispatchReview: true` for a future badge or MCP filter. Dispatch does not
-  clear the flag when it schedules the job, so it marks imported work, and "still needs review" means
-  `needsDispatchReview && !date`.
-- **Imported balances appear in Dispatch's Unscheduled filter and board.** A `jobber_invoice_*` row is `type: 'job'`,
-  dateless and `invoiced`, so Dispatch lists it next to unscheduled work, and refuses to schedule it
-  (`dispatch_terminal_job`). Review imported work with the `jobber_job` search. Hiding balances from the board is a
-  Dispatch change outside this unit.
+- **Imported jobs wait in Dispatch's To schedule view (FIX-DISPATCH-QUEUE).** Each carries `needsDispatchReview: true`
+  (reason `jobber_import`), shown as "From Jobber: needs review" and counted in the header badge's "new". The first
+  save that books the job clears the flag (`needsDispatchReview: false`, with `dispatchReviewClearedAt` and
+  `dispatchReviewClearedBy`), whether it is a Dispatch save or a bridge schedule update (MCP `egc.schedule_visit`);
+  `scheduleSource: 'jobber_import'` keeps marking imported work. An online approval before booking replaces the
+  reason with `portal_approval`. The signed `hub.dispatch.overview` bridge returns the flag and its reason too, so an
+  MCP reader can filter on it; like To schedule, count work as still waiting only while it also has no date.
+- **Imported balances appear only in Dispatch's Jobs view with All statuses.** A `jobber_invoice_*` row is
+  `type: 'job'`, dateless and `invoiced`, so it is closed work: To schedule and its badge leave it out, and Dispatch
+  refuses to schedule it (`dispatch_terminal_job`). Review open balances in Hub finance.
 - **Several upcoming visits of one Jobber job are one Hub job.** The other visits are added by hand from
   `multiVisitJobs` (section 4). Automatic per-visit jobs need a stable Jobber visit id, which the CSV reports do not
   carry; with the GraphQL source (which has visit ids) this could be a follow-up.

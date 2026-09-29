@@ -277,7 +277,7 @@ test('the Command center mounts the overdue widget once into #ops-home-widgets a
   assert.equal(mounted.querySelector('[data-fh-count]').textContent, '2');
   assert.equal(operations(), 2, 'one identity read and one queue read');
   const kit = page.document.head.querySelectorAll('link').map(node => node.getAttribute('href'));
-  assert.deepEqual(kit, ['employee-ui-kit.css?v=20260927hubreg'], 'the kit stylesheet loads before a widget mounts');
+  assert.deepEqual(kit, ['employee-ui-kit.css?v=20260929mobilehub'], 'the kit stylesheet loads before a widget mounts');
   page.api.render();
   page.api.render(true);
   page.context.refresh();

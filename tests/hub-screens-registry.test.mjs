@@ -25,7 +25,8 @@ const tabs = page => page.document.querySelectorAll('[data-ops-tab]').map(button
 // CREW-NOTIFY's Schedule alerts is crewVisible (every signed-in viewer sees it) and registers before them. STAFF-ACCESS's
 // Password (My EGC) follows it and needs the 'password' capability, which the suite adds only when the server reports
 // password.change (EGC_STAFF_PASSWORD_RESET on, an employee account).
-const SHIPPED = ['reviews', 'message_templates', 'stocked_costs', 'staff', 'invoicing'];
+// WT-OUTCOME: the Walkthroughs screen (employee-walkthroughs.js) replaces the suite's built-in Walkthroughs view in place.
+const SHIPPED = ['reviews', 'message_templates', 'stocked_costs', 'staff', 'invoicing', 'walkthroughs'];
 const OWNER_SHIPPED = ['followup_settings', 'ad_spend', 'catalog', 'dispatch_rules'];
 const CREW_SHIPPED = ['crew_alerts'];
 const PASSWORD_SHIPPED = ['password'];
@@ -92,7 +93,7 @@ test('render lazily loads the kit then the screen once, mounts with the Hub cont
   page.api.go('fixture_lazy');
   assert.ok(page.main().querySelector('.hub-screen-loading'), 'a skeleton shows while assets load');
   await page.flush();
-  assert.deepEqual(requested.sort(), ['employee-ui-kit.css?v=20260927hubreg', 'employee-ui-kit.js?v=20260927hubreg', 'fixture-lazy.css?v=t1', 'fixture-lazy.js?v=t1']);
+  assert.deepEqual(requested.sort(), ['employee-ui-kit.css?v=20260929mobilehub', 'employee-ui-kit.js?v=20260929mobilehub', 'fixture-lazy.css?v=t1', 'fixture-lazy.js?v=t1']);
   assert.equal(mounts.length, 1);
   const { host, ctx } = mounts[0];
   assert.equal(host, page.main());

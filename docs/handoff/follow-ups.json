@@ -1,0 +1,76 @@
+{
+  "schemaVersion": 1,
+  "asOf": "2026-09-29",
+  "items": [
+    {
+      "id": "CREDITS-QUEUE",
+      "state": "picked_first_on_batch8_candidate",
+      "owner": "build coordinator",
+      "action": "Preserve serial queue; verify final combined CI before main merge.",
+      "commitSha": "889f307",
+      "evidence": "159 targeted money, invoice, privacy and parity tests; primary and independent review passed"
+    },
+    {
+      "id": "CI-01",
+      "state": "fix_in_candidate_pending_full_ci",
+      "owner": "build coordinator",
+      "action": "Verify the Dispatch view-switch fix and all applicable workflows on the final Batch 8 head, including real Firestore atomic/payment rules and dedicated iPhone WebKit field payment cases. Operations Integration is path-filtered and does not run when egc-platform is unchanged; it runs again for Batch 9.",
+      "evidence": "PR #86 run 36604534261, test_dispatch_ui.py:304"
+    },
+    {
+      "id": "HANDOFF-41",
+      "state": "open",
+      "owner": "build coordinator",
+      "action": "Obtain and commit all 41 authoritative specs for unbuilt or in-flight units; reconcile IDs and launch states.",
+      "evidence": "0 of 41 located in checked branch or PR head"
+    },
+    {
+      "id": "HANDOFF-REFRESH",
+      "state": "open",
+      "owner": "build coordinator",
+      "action": "Refresh this handoff after each queued merge, with exact commit, review, CI, flag, and deployment state."
+    },
+    {
+      "id": "REFUNDS-REVIEW",
+      "state": "open",
+      "owner": "build coordinator",
+      "action": "Complete review, record the review state and exact activation flag in commit and handoff, and merge disabled."
+    },
+    {
+      "id": "TAGS-REVIEW",
+      "state": "open",
+      "owner": "build coordinator",
+      "action": "Obtain clean review of HighLevel milestone tags, record the review state and exact activation flag in commit and handoff, and merge disabled."
+    },
+    {
+      "id": "BUILD-IDS",
+      "state": "open",
+      "owner": "build coordinator",
+      "action": "Name and track the seven owner-reported running builds before incorporating them into Batch 9."
+    },
+    {
+      "id": "HUB-INTEGRATION",
+      "state": "all_eight_workflows_green_waiting_batch8",
+      "owner": "build coordinator",
+      "action": "PR #87 at bf191d92c9de6ce394b8166d9fd53039d7e25104 passed all eight workflows. After Batch 8 merges, integrate that main state into PR #87, resolve shared assets/docs, rerun all required checks, then merge Batch 9."
+    },
+    {
+      "id": "OWNER-LIVE",
+      "state": "pending_deployment",
+      "owner": "owner",
+      "action": "Complete docs/OWNER-GO-LIVE-CHECKLIST.md on real accounts and devices, including sign-in, Firestore rules, iPhone safe areas, Walkthroughs, Dispatch, recordings/task routing, and HighLevel boundaries."
+    },
+    {
+      "id": "OWNER-FLAGS",
+      "state": "pending_deployment",
+      "owner": "owner",
+      "action": "Review evidence for each off-by-default flag before activation; leave refunds and milestone tags off until separately approved."
+    },
+    {
+      "id": "FIELD-PAY-ROLLOUT",
+      "state": "code_reviewed_pending_ci_and_release_access",
+      "owner": "release coordinator and owner",
+      "action": "Publish reviewed Firestore rules/indexes, verify money backfill and unified totals gates, then enable EGC_FIELD_PAY_ENABLED in a new Cloudflare deployment only after preview acceptance. Keep refunds/milestone tags off. No real charge has been made by this task."
+    }
+  ]
+}

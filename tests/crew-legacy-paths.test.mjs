@@ -113,7 +113,8 @@ async function renderCrewHome(business, { online = true } = {}) {
     document: { getElementById: element },
     EGCHubAuth: {
       profile: () => ({ user: 'Crew.One', displayName: 'Synthetic Crew', businessAccess: business }),
-      canRunBusiness: () => business, mountCrewNav() {},
+      // Flag off, the gameplan opens for business access (crew/hub-auth.js canRunWalkthrough); crew home follows it (WT-OUTCOME).
+      canRunBusiness: () => business, canRunWalkthrough: () => business, mountCrewNav() {},
       async fetch(path) {
         if (path === '/api/crew-jobs') return Response.json({ ok: true, jobs });
         if (path === '/api/employee-hub') return Response.json({ ok: true, collections: { timeEntries: [] } });

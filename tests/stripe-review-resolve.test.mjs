@@ -113,6 +113,38 @@ test('a manager marks a held charge reconciled: one commit with the receipt and 
   assert.equal(view.viewer.canRecordRefund, false, 'managers see that only the owner records refunds');
 });
 
+test('resolving a held exact field card releases its checkout lock in the review commit, never while the review is open', async () => {
+  const requestId = randomUUID(), start = seed();
+  start['jobs/job-1'].fieldPaymentCardRequestId = requestId;
+  start['fieldPaymentCardCheckouts/job-1'] = { jobId: 'job-1', requestId, sessionId: 'cs_test_held', amountCents: 50000, status: 'open' };
+  start['fieldPaymentCardSessions/cs_test_held'] = { jobId: 'job-1', requestId, sessionId: 'cs_test_held', amountCents: 50000, status: 'open' };
+  const store = memoryStore(start);
+  assert.equal(store.get('jobs/job-1').fieldPaymentCardRequestId, requestId);
+  assert.equal(store.get('payment_reviews/cs_test_held').status, 'open');
+  const review = await reviewOf(store, 'payment_reviews/cs_test_held');
+  const input = request(review, 'payment.reconcile', { note: 'Charge settled outside this job', appliedElsewhere: true });
+  const result = await resolveStripeReview(store, manager, input, NOW, { stripe: stripeShows() });
+  assert.equal(result.review.status, 'resolved');
+  assert.equal(store.get('jobs/job-1').fieldPaymentCardRequestId, null);
+  assert.equal(store.get('fieldPaymentCardCheckouts/job-1').status, 'reviewed');
+  assert.equal(store.get('fieldPaymentCardSessions/cs_test_held').status, 'reviewed');
+  const writes = store.commits[0].writes;
+  assert.ok(writes.includes('payment_reviews/cs_test_held') && writes.includes('fieldPaymentCardCheckouts/job-1') && writes.includes('fieldPaymentCardSessions/cs_test_held') && writes.includes('jobs/job-1'));
+  assert.equal((await resolveStripeReview(store, manager, input, LATER)).replayed, true);
+  assert.equal(store.commits.length, 1);
+  const raced = memoryStore(start), originalRead = raced.read.bind(raced);
+  let changed = false;
+  raced.read = async (collection, id) => {
+    if (collection === 'fieldPaymentCardCheckouts' && !changed) { changed = true; raced.edit('jobs/job-1', { total: 1100 }); }
+    return originalRead(collection, id);
+  };
+  const fresh = await reviewOf(raced, 'payment_reviews/cs_test_held');
+  await assert.rejects(resolveStripeReview(raced, manager, request(fresh, 'payment.reconcile', { note: 'Charge settled outside this job', appliedElsewhere: true }), NOW, { stripe: stripeShows() }), code('stripe_review_revision_conflict', 409));
+  assert.equal(raced.get('payment_reviews/cs_test_held').status, 'open');
+  assert.equal(raced.get('jobs/job-1').fieldPaymentCardRequestId, requestId);
+  assert.equal(raced.commits.length, 0);
+});
+
 test('a charge the job already shows can be reconciled without a note; stale revisions, bad input and crew are refused before anything is written', async () => {
   const store = memoryStore();
   store.edit('jobs/job-1', { payment: { amount: 1200, verified: true, stripeSessions: [{ sessionId: 'cs_test_applied' }] } });

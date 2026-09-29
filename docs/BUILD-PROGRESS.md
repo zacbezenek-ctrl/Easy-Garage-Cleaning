@@ -535,6 +535,21 @@ draft PR. The owner merges in phase order. See **Decisions** D-001.
   (digest stored, never sent) that rotates sessions, revokes Firebase and locks the old password; Change password under My EGC;
   approvals set a role and (owner) a starting rate; backdated first rate floored at approvedAt; owner Apply rate to open weeks;
   payroll CSV/Gusto downloads recorded in payrollWeekExports (409 on a race). Grants never include pay.manage (GO-LIVE 3.6).
+- **SALES-BOOKING** (P1 booking; staff side under EGC_STAFF_ROLE_ACCESS; public side EGC_BOOKING_EXPLICIT_SLOTS off) Sales and
+  Phone see Leads, Walkthroughs, Schedule and the Action Center; lead cards Call / Open in HighLevel / Book walkthrough (prefilled
+  Create job, crew controls hidden, New customer via /api/customer-resolve, "HighLevel unavailable, retrying"); three read-only
+  booker views of /api/highlevel. The flag gives /book explicit Denver windows; flag off is byte-identical (GO-LIVE 2.4, item 120).
+- **WT-OUTCOME** (P1 walkthroughs; no flag, no sends) walkthrough-state.js holds the closed rule and badges (Sold → open job, Quote
+  to follow, Lost, No-show · rebook); Dispatch, calendar and crew DTOs carry them only once a walkthrough has an outcome. Rebook
+  moves a walkthrough no-show; a service-job no-show books a new visit. New Hub Walkthroughs screen over EGCDispatch.openFor, also
+  open to Sales/Phone bookers (sync state, no Retry, no money); the rep's own walkthroughs on /api/field-jobs (checklist 121).
+- **FIX-DISPATCH-QUEUE** (P1 Dispatch; no flag, no sends) A "To schedule" view and header badge ("N to schedule · M new"): undated
+  work oldest first with Denver-day age, Sold/Approved/Added, source (Walkthrough, Portal approval, Jobber, Hub), Jobber's time with
+  Use this time, and price/deposit chips for dispatchers only. Online approvals of undated jobs set needsDispatchReview; the first
+  schedule (Dispatch or bridge) clears it. Closed walkthroughs never queue (checklist 122).
+- **MOBILE-HUB** (P1 UI; no flag) The Hub shell stops loading the public /styles.css (the tokens and base rules it needs move
+  into employee-suite.css), drops the dead legacy lead drawer and lead/customer-detail markup, makes phone dialogs safe-area bottom
+  sheets, 16px fields, 44px targets, AA contrast, business users' RUN THE BUSINESS first, and landscape/iPad fixes (checklist 123).
 
 ## In progress
 
@@ -661,6 +676,10 @@ one prefixed commit only after the full root suite (and the platform suite when 
 | FIX-DISPATCH-READY | P1 Dispatch: reminder, price and deposit readiness on each visit (EGC_DISPATCH_NOTIFY_IMPORTED_ON, off) | merged (d8de34c) |
 | FIX-EDIT-WIPE | P1 UI: typed text survives background reloads (Hub chat and customer thread, crew job reason and checklist, business hub forms, schedule alerts) | merged (6f5dd90) |
 | STAFF-ACCESS | P1 auth/pay: staff sign-in reset and password change; approvals set role and starting rate (EGC_STAFF_PASSWORD_RESET, off) | merged (d3e8358) |
+| SALES-BOOKING | P1 booking: phone and sales booking tools; public /book explicit slots behind EGC_BOOKING_EXPLICIT_SLOTS (off) | merged (845020b) |
+| WT-OUTCOME | P1 walkthroughs: outcomes visible to the office; rebook; the rep's day | merged (0903732) |
+| FIX-DISPATCH-QUEUE | P1 Dispatch: 'To schedule' queue with age, source and Jobber times; portal approvals flagged for the office | merged (68ba13e) |
+| MOBILE-HUB | P1 UI: Hub shell mobile pass (no public stylesheet, safe-area dialogs, 16px fields, 44px targets, AA contrast, landscape and iPad) | merged (7c329dd) |
 
 ## Next
 
