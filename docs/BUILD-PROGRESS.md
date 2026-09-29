@@ -350,6 +350,8 @@ draft PR. The owner merges in phase order. See **Decisions** D-001.
   clock-free resolver that turns date words into America/Denver dates anchored on the walkthrough Start (scheduled date
   as a flagged fallback, never the upload time). Live only with `EGC_EXTRACTION_V2`. Gaps: nothing calls the resolver
   until FUN-09; named holidays stay unresolved until the shared business calendar lands.
+- **GO-LIVE** Owner runbook (docs/GO-LIVE.md) and a one-page owner go-live checklist (docs/OWNER-GO-LIVE-CHECKLIST.md):
+  what to deploy, which flags to switch on and in what order, and what to check after each step. Docs only.
 
 ## In progress
 
@@ -431,6 +433,7 @@ one prefixed commit only after the full root suite (and the platform suite when 
 | SYNC-QUEUE | Server-driven HighLevel schedule mirror queue (egc-api loop, flag off) | merged (6185062) |
 | P1-06 | Server time-off workflow and single PTO pay model (/api/employee-pto; employee-hub request writes 403) | merged (6c914d2) |
 | FUN-08 | Scheduling constraints in the v2 extraction, resolved against the walkthrough Start (Denver) | merged (354864f) |
+| GO-LIVE | Owner go-live runbook and checklist (docs only) | merged (f655cac) |
 
 ## Next
 
