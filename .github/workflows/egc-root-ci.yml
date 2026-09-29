@@ -44,6 +44,10 @@ jobs:
       - name: Funnel definitions copies match the canonical data file
         if: ${{ !cancelled() }}
         run: node scripts/funnel-definitions.mjs --check
+      # FUN-30: every customer send path and HighLevel/Zapier trigger write is registered, and docs/automation-registry.md is current.
+      - name: Automation registry matches the send paths in the code
+        if: ${{ !cancelled() }}
+        run: node scripts/automation-inventory.mjs --check
   shifted-clock:
     name: Root suite with the clock moved 400 days ahead
     runs-on: ubuntu-latest

@@ -375,6 +375,11 @@ draft PR. The owner merges in phase order. See **Decisions** D-001.
   payments on or after the owner's cutover day, imported balances Jobber changed, and HighLevel records the Jobber app
   made, matched to Hub customers. Per-surface switches `EGC_JOBBER_GUARD_BOOKING` / `_BILLING` / `_MESSAGING` (off; from
   `jobber.cutoverDate`, null) refuse the Jobber booking forward, hold invoice.issue and hold cron reminders. Definitions .4.
+- **FUN-30** Automation registry: every path that can message a customer or start a HighLevel, Zapier or provider
+  automation, with its trigger surfaces and the Hub writes behind it, classified (approved_automatic / approved_human /
+  internal / needs_owner_approval / retire; no approval fabricated), plus speed-to-lead touch classification, go/no-go
+  gates for FUN-11/12/35, GET /api/automation-registry and `scripts/automation-inventory.mjs --check` (code-scan drift;
+  root CI). Registered at merge: the moved web-lead intake, B2B invites, the messaging cron and the Action Center send.
 
 ## In progress
 
@@ -462,6 +467,7 @@ one prefixed commit only after the full root suite (and the platform suite when 
 | MCP-CURSORS | Keyset cursors for MCP Postgres CRM reads (flag off) | merged (8bd7af1) |
 | FUN-15 | Ad spend ingestion (Meta, Google), owner spend ledger and Ad spend screen (migration 0015, flags off) | merged (3caad96) |
 | FUN-32 | Jobber coexistence guard: read-only stray check and per-surface booking/billing/messaging holds (flags off) | merged (651fa38) |
+| FUN-30 | GHL/Zapier automation registry, drift check and FUN-11/12/35 gates (read-only) | merged (cfd58b6) |
 
 ## Next
 
