@@ -19,6 +19,32 @@ concurrency:
   group: egc-action-center-ci-${{ inputs.ref || github.event.pull_request.number || github.sha }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 jobs:
+  recording-webkit:
+    name: iPhone WebKit transcript and recording workflow
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.ref || github.sha }}
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: pip install playwright==1.57.0
+      - run: python -m playwright install --with-deps webkit
+      - name: Transcript intake, reviewed tasks, access and microphone lifecycle
+        env:
+          EGC_TEST_BROWSER: webkit
+          EGC_SCREENSHOT_DIR: test-results/recordings-webkit
+        run: python tests/browser/test_recordings_ui.py
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: recording-webkit-${{ github.run_id }}
+          path: test-results/recordings-webkit/
+          if-no-files-found: ignore
+          retention-days: 7
   database-and-platform:
     runs-on: ubuntu-latest
     timeout-minutes: 18

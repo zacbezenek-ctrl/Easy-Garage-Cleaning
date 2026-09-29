@@ -8,7 +8,7 @@ The Employee Hub and the linked crew, customer, business, and operations service
 
 ## Verified repository state
 
-At this snapshot, GitHub `main` is `59d617ac` (Batch 7). [Batch 8 PR #86](https://github.com/zacbezenek-ctrl/Easy-Garage-Cleaning/pull/86) is open and draft at `6cc4cad8`; its four committed units are SALES-BOOKING, WT-OUTCOME, FIX-DISPATCH-QUEUE, and MOBILE-HUB. Neither this handoff nor `docs/handoff/` is present at that PR head. The local `codex/hub-ios-walkthrough-completion` checkout contains further uncommitted Hub, recording, API, and test work; that is **in progress**, not deployed or merged.
+At this snapshot, GitHub `main` is `59d617ac` (Batch 7). [Batch 8 PR #86](https://github.com/zacbezenek-ctrl/Easy-Garage-Cleaning/pull/86) is open and draft at `6cc4cad8`; its four committed units are SALES-BOOKING, WT-OUTCOME, FIX-DISPATCH-QUEUE, and MOBILE-HUB. Neither this handoff nor `docs/handoff/` is present at that PR head. The implemented Hub, recording, API, and test work is committed at `a13e01e` in [Batch 9 PR #87](https://github.com/zacbezenek-ctrl/Easy-Garage-Cleaning/pull/87). It remains draft pending CI and the Batch 8 launch gates; it is not deployed or merged.
 
 The PR head's Root, Platform, Mobile Device, Lighthouse, Business Hub, and Firestore workflows succeeded. **Action Center CI failed** in the Dispatch browser suite: `test_find_a_time_searches_with_the_quote_length_and_books_the_same_unscheduled_job` could not find a visible “Find a time” control (`test_dispatch_ui.py:304`, run `36604534261`). Later browser steps were skipped. The next merge requires a fresh green run on the exact commit to merge.
 
@@ -25,7 +25,7 @@ The PR body reports FIELD-PAY awaiting a final minor fix; FIX-HUB-COLLECTED-CRED
 
 ## What is built and what remains
 
-The four Batch 8 units are committed in PR #86, subject to its failed CI gate and owner acceptance. In the local checkout, the Walkthroughs menu has role-correct links, an exact-visit Audio & transcript action for permitted performers, and a phone-first visual pass. Local implementation of the recording and transcript-to-office-task path is complete in the working tree; integrated CI and runtime verification remain. Treat all local changes as pending until committed, reviewed, CI-green, and merged. See [unit-status.json](handoff/unit-status.json) for the machine-readable snapshot.
+The four Batch 8 units are committed in PR #86, subject to its failed CI gate and owner acceptance. In the local checkout, the Walkthroughs menu has role-correct links, an exact-visit Audio & transcript action for permitted performers, and a phone-first visual pass. Local implementation of the recording and transcript-to-office-task path is complete in the working tree; integrated CI and runtime verification remain. Treat the implementation as pending until CI is green and the launch gates permit merging. See [unit-status.json](handoff/unit-status.json) for the machine-readable snapshot.
 
 This snapshot cannot certify the promised **41 specs for unbuilt or in-flight units**. No such spec set exists in the checked-out branch or PR #86 head. [spec-inventory.json](handoff/spec-inventory.json) records 0/41 located. Obtain the authoritative 41 documents and their IDs, then add them without silently inventing scope or marking units complete. Until then, the future-scope handoff is incomplete.
 
@@ -54,3 +54,7 @@ The owner must complete the live checks in the go-live checklist, including staf
 3. Follow the serial launch order. Before each merge, verify unit review, flags, CI, and whether the commit and this file carry the latest status.
 4. Add the real 41 specs when their source is available; reconcile every ID with the unit status and Batch 9 plan. Do not launch extra units during this wrap-up.
 5. Finish the owner checks after deployment. Record actual dates, results, and unresolved issues in this handoff rather than checking boxes based on code alone.
+
+## Batch 9 verification update
+
+PR #87 now carries the implementation and this handoff. Local recording checks pass 13/13 in WebKit, including exact transcript retries, assigned task proposals, current reviewer loading, Sales read-only review, and microphone cleanup. A dedicated WebKit CI job keeps these checks in the merge gate. Local full root testing was stopped after its confirmed Windows CRLF and POSIX file-mode incompatibilities; the Linux CI result is authoritative and must be recorded before merge. The remote inventory checked all 85 branch heads; none besides the Batch 8 branch had a head newer than main. No promised handoff/spec directory was present on the four newest relevant heads. This does not establish the state of unpushed local builds.

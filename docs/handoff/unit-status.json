@@ -12,28 +12,102 @@
     "failingRunId": 36604534261
   },
   "units": [
-    {"id": "SALES-BOOKING", "state": "committed_in_batch8_pr", "source": "PR #86 head"},
-    {"id": "WT-OUTCOME", "state": "committed_in_batch8_pr", "source": "PR #86 head"},
-    {"id": "FIX-DISPATCH-QUEUE", "state": "committed_in_batch8_pr", "source": "PR #86 head"},
-    {"id": "MOBILE-HUB", "state": "committed_in_batch8_pr", "source": "PR #86 head"},
-    {"id": "FIX-HUB-COLLECTED-CREDITS", "state": "reported_reviewed_queued", "source": "PR #86 description and owner queue", "merged": false},
-    {"id": "FIELD-PAY", "state": "reported_final_minor_fix_queued", "source": "PR #86 description and owner queue", "merged": false},
-    {"id": "FIX-REFUNDS", "state": "reported_built_reviewed_once_queued", "source": "PR #86 description and owner queue", "merged": false, "activation": "off_at_merge", "reviewStateRequiredInCommit": true},
-    {"id": "GHL-TRACK-2", "state": "reported_built_needs_clean_review_queued", "source": "PR #86 description and owner queue", "merged": false, "activation": "off_at_merge", "reviewStateRequiredInCommit": true},
-    {"id": "WT-HANDOFF", "state": "reported_in_review_or_queued", "source": "PR #86 description", "merged": false},
-    {"id": "OPS-VISIBILITY", "state": "reported_in_review_or_queued", "source": "PR #86 description", "merged": false},
-    {"id": "FIX-JOBBER-MONEY", "state": "reported_in_review_or_queued", "source": "PR #86 description", "merged": false}
+    {
+      "id": "SALES-BOOKING",
+      "state": "committed_in_batch8_pr",
+      "source": "PR #86 head"
+    },
+    {
+      "id": "WT-OUTCOME",
+      "state": "committed_in_batch8_pr",
+      "source": "PR #86 head"
+    },
+    {
+      "id": "FIX-DISPATCH-QUEUE",
+      "state": "committed_in_batch8_pr",
+      "source": "PR #86 head"
+    },
+    {
+      "id": "MOBILE-HUB",
+      "state": "committed_in_batch8_pr",
+      "source": "PR #86 head"
+    },
+    {
+      "id": "FIX-HUB-COLLECTED-CREDITS",
+      "state": "reported_reviewed_queued",
+      "source": "PR #86 description and owner queue",
+      "merged": false
+    },
+    {
+      "id": "FIELD-PAY",
+      "state": "reported_final_minor_fix_queued",
+      "source": "PR #86 description and owner queue",
+      "merged": false
+    },
+    {
+      "id": "FIX-REFUNDS",
+      "state": "reported_built_reviewed_once_queued",
+      "source": "PR #86 description and owner queue",
+      "merged": false,
+      "activation": "off_at_merge",
+      "reviewStateRequiredInCommit": true
+    },
+    {
+      "id": "GHL-TRACK-2",
+      "state": "reported_built_needs_clean_review_queued",
+      "source": "PR #86 description and owner queue",
+      "merged": false,
+      "activation": "off_at_merge",
+      "reviewStateRequiredInCommit": true
+    },
+    {
+      "id": "WT-HANDOFF",
+      "state": "reported_in_review_or_queued",
+      "source": "PR #86 description",
+      "merged": false
+    },
+    {
+      "id": "OPS-VISIBILITY",
+      "state": "reported_in_review_or_queued",
+      "source": "PR #86 description",
+      "merged": false
+    },
+    {
+      "id": "FIX-JOBBER-MONEY",
+      "state": "reported_in_review_or_queued",
+      "source": "PR #86 description",
+      "merged": false
+    }
   ],
   "laterAuthorizedHubIntegration": {
     "scope": "iOS Walkthroughs and recording/transcript to office tasks",
     "state": "local_implemented_pending_review_and_integrated_ci",
     "branch": "codex/hub-ios-walkthrough-completion",
     "merged": false,
-    "localBrowserResults": {"walkthroughs": "10/10", "hubMobile": "18/18", "actionCenter": "27/27"},
+    "localBrowserResults": {
+      "walkthroughs": "10/10",
+      "hubMobile": "18/18",
+      "actionCenter": "27/27"
+    },
     "reportedRecordingResults": "Chromium and WebKit recording browser suites passed; WebKit 13/13; coordinator report",
     "localRootSuite": "Windows POSIX/CRLF fixture failures reported by coordinator; canonical Linux CI pending"
   },
-  "additionalRunningBuilds": {"ownerReportedCount": 7, "identifiedIds": [], "state": "unknown_pending_source"},
-  "futureSpecs": {"expectedCount": 41, "locatedCount": 0, "state": "missing_source"},
-  "note": "Reported states are claims from the PR description or owner message, not proof of merged code. Recheck GitHub before updating or merging."
+  "additionalRunningBuilds": {
+    "ownerReportedCount": 7,
+    "identifiedIds": [],
+    "state": "unknown_pending_source"
+  },
+  "futureSpecs": {
+    "expectedCount": 41,
+    "locatedCount": 0,
+    "state": "missing_source"
+  },
+  "note": "Reported states are claims from the PR description or owner message, not proof of merged code. Recheck GitHub before updating or merging.",
+  "batch9": {
+    "pr": 87,
+    "branch": "codex/hub-ios-walkthrough-completion",
+    "implementationSha": "a13e01e81552edfabd2dcc61e1479cd3ed0ddb42",
+    "state": "draft_pending_ci_and_batch8",
+    "merged": false
+  }
 }
