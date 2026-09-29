@@ -53,7 +53,9 @@ export const TOOL_CONTRACTS:Record<string,ToolContract>={
   'actions.review':read({taskId:RECORD},{taskId:'synthetic'},{bridge:'task.get'}),
   'egc.daily_brief':read({},{briefId:'latest'},{bridge:'brief.latest'}),
   'egc.visit_get':read({portalVisitId:'synthetic-visit-1'},{portalVisitId:''},{bridge:'schedule.resolve'}),
-  'actions.reconcile_inbound':write({requestId:REQUEST},{requestId:REQUEST,limit:201},{bridge:'inbound.reconcile'}),
+  // GHL-ALIGN: follow-ups live in HighLevel, so with EGC_OPERATIONS_INBOUND_TASKS_ENABLED unset the tool refuses before any
+  // request (legacy mode keeps the Hub-only operations_not_enabled refusal); src/operations.test.ts covers the opt-in path.
+  'actions.reconcile_inbound':write({requestId:REQUEST},{requestId:REQUEST,limit:201},{refused:'inbound_tasks_disabled'},{legacy:{effect:{refused:'operations_not_enabled'}}}),
   'actions.propose':write({requestId:REQUEST,task:{title:'Call back about the quote',assignedUserId:'owner-1',dueAt:AT,completionCondition:'Customer reached'}},{requestId:REQUEST,task:{title:''}},{bridge:'task.create'}),
   'actions.edit':write({...revision,changes:{priority:'high'}},{...revision,changes:{}},{bridge:'task.edit'}),
   'actions.snooze':write({...revision,until:AT,reason:'Customer asked for Friday'},{...revision,revision:0,until:AT,reason:'Customer asked'},{bridge:'task.snooze'}),

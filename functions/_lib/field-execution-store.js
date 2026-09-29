@@ -47,7 +47,8 @@ export function createFieldStore(env) {
       if (!job.__updateTime) throw fieldFailure('The job version is unavailable. Reload before making changes.', 409, 'FIELD_REVISION_REQUIRED');
       const response = await firestoreFetch(env, `${BASE}:commit`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ writes: [
         { update: { name: `${ROOT}/jobs/${job.id}`, fields: encodeFirestoreFields(patch) }, updateMask: { fieldPaths: Object.keys(patch) }, currentDocument: { updateTime: job.__updateTime } },
-        { update: { name: `${ROOT}/jobs/${job.id}/fieldEvents/${event.id}`, fields: encodeFirestoreFields(event) }, currentDocument: previousEvent?.__updateTime ? { updateTime: previousEvent.__updateTime } : { exists: false } },
+        // A null event is a revision-checked claim on the job alone (the HighLevel check-in lease).
+        ...(event ? [{ update: { name: `${ROOT}/jobs/${job.id}/fieldEvents/${event.id}`, fields: encodeFirestoreFields(event) }, currentDocument: previousEvent?.__updateTime ? { updateTime: previousEvent.__updateTime } : { exists: false } }] : []),
         ...created.map(write => ({ update: { name: `${ROOT}/${write.collection}/${write.id}`, fields: encodeFirestoreFields(write.patch) }, currentDocument: { exists: false } })),
       ] }) });
       // Real Firestore answers a stale currentDocument.updateTime with 400

@@ -2,7 +2,7 @@ import {randomUUID} from "node:crypto";
 import type {FastifyInstance} from "fastify";
 import {OperationsError,operationsService,signRequest,authorize,SERVICE_ORIGINS,type Actor,type BridgeIssuer,type Command,type OperationsService,type PortalJobReference} from "@egc/operations";
 import {getDb,schema} from "@egc/database";
-import {InboundActionReconciler,type InboundPolicy} from "./inbound-actions.js";
+import {InboundActionReconciler,INBOUND_TASKS_DISABLED,inboundTasksEnabled,type InboundPolicy} from "./inbound-actions.js";
 import {syncPortalSchedule} from "./scheduling.js";
 import {ensureProviderNote} from "./provider-notes.js";
 import {actionSendEnabled,actionSendHook} from "./action-send.js";
@@ -43,7 +43,7 @@ export function portalAdapter(origin:string,key:string,workspace:string,fetcher:
     return job;
   }};
 }
-export async function registerOperationsRoutes(app:FastifyInstance,options:{service?:OperationsService;env?:NodeJS.ProcessEnv;audit?:(row:AuditRow)=>Promise<unknown>}={}) {
+export async function registerOperationsRoutes(app:FastifyInstance,options:{service?:OperationsService;env?:NodeJS.ProcessEnv;audit?:(row:AuditRow)=>Promise<unknown>;inbound?:Pick<InboundActionReconciler,"run">}={}) {
   const env=options.env??process.env;
   // BRIDGE-ADOPT-AUTHZ: runs a signed request with the issuer its claims verified. A refusal of an
   // actor that issuer may not present is logged and kept in audit_logs (best effort) before it is rethrown.
@@ -57,7 +57,8 @@ export async function registerOperationsRoutes(app:FastifyInstance,options:{serv
     }
   };
   let service=options.service;
-  let inbound:InboundActionReconciler|undefined;
+  // The inbound reconciler exists, ticks and answers inbound.reconcile only when EGC_OPERATIONS_INBOUND_TASKS_ENABLED is exactly "true".
+  let inbound:Pick<InboundActionReconciler,"run">|undefined=inboundTasksEnabled(env)?options.inbound:undefined;
   let bookingTick:(()=>Promise<unknown>)|undefined;
   let scheduleSyncExecute:ScheduleSyncExecute|undefined;
   if(!service && env.EGC_OPERATIONS_ENABLED==="true") {
@@ -70,12 +71,12 @@ export async function registerOperationsRoutes(app:FastifyInstance,options:{serv
       if(command.command==='intelligence.report')return getCanonicalReport({since:command.since,until:command.until,...(command.cohortSince?{cohortSince:command.cohortSince}:{}),...(command.cohortUntil?{cohortUntil:command.cohortUntil}:{}),refresh:true});
       if(command.command==='intelligence.customer')return getCustomerTimeline({contactId:command.contactId});
       return getCustomerStateDiagnostics();
-    },...(bridge?{resolvePortalJob:bridge.resolve,resolveOwner:bridge.owner,portalRead:bridge.read,syncSchedule:(actor,command)=>syncPortalSchedule(actor,command,bridge.read,{env}),ensureProviderNote:(actor,command)=>ensureProviderNote(actor,command,bridge.read,{service:service!})}:{})});
+    },...(bridge?{resolvePortalJob:bridge.resolve,resolveOwner:bridge.owner,portalRead:bridge.read,syncSchedule:(actor,command)=>syncPortalSchedule(actor,command,bridge.read,{env}),ensureProviderNote:(actor,command)=>ensureProviderNote(actor,command,bridge.read,{service:service!,env})}:{})});
     if(bridge)bookingTick=()=>reconcileHubBookings(bridge.read,env);
     if(bridge){const operations=service;scheduleSyncExecute=(actor,body,requestId)=>operations.execute(actor,body,requestId);}
     // Hourly recurring-plan horizon over this same bridge; no timer unless EGC_RECURRING_PLANS_ENABLED=true.
     if(bridge)registerRecurringHorizon(app,{env,read:bridge.read,workspace});
-    if(bridge){const actor:Actor={id:"inbound-response-reconciler",kind:"integration",role:"integration",workspace};inbound=new InboundActionReconciler(getDb(),service,async()=>await bridge.read(actor,{command:"portal.rules"}) as unknown as InboundPolicy,workspace);}
+    if(bridge&&inboundTasksEnabled(env)){const actor:Actor={id:"inbound-response-reconciler",kind:"integration",role:"integration",workspace};inbound=new InboundActionReconciler(getDb(),service,async()=>await bridge.read(actor,{command:"portal.rules"}) as unknown as InboundPolicy,workspace);}
   }
   if(bookingTick){let running=false;const mark=async(key:string,value?:string)=>{const now=new Date(),cursor=value??now.toISOString();await getDb().insert(schema.syncCursors).values({key,cursor}).onConflictDoUpdate({target:schema.syncCursors.key,set:{cursor,updatedAt:now}});};const tick=async()=>{if(running)return;running=true;try{await mark('customer_state:last_booking_attempt');await bookingTick!();await mark('customer_state:last_booking_success');}catch(error){const failure=reconciliationDiagnostic(error);await mark('customer_state:last_booking_failure').catch(()=>{});await mark('customer_state:last_booking_error',JSON.stringify({at:new Date().toISOString(),...failure})).catch(()=>{});app.log.warn({code:'booking_reconciliation_unavailable',...failure},'Hub booking reconciliation needs attention');}finally{running=false;}};const timer=setInterval(()=>void tick(),5*60000);timer.unref();app.addHook('onReady',async()=>{void tick();});app.addHook('onClose',async()=>{clearInterval(timer);});}
   // Server-driven schedule mirror queue (P1-DS-02): off unless EGC_SCHEDULE_SYNC_WORKER=true; needs the Hub bridge.
@@ -94,7 +95,7 @@ export async function registerOperationsRoutes(app:FastifyInstance,options:{serv
       // applies authorize() (the SEC-04 BRIDGE-AUTHZ table) to the same actor.
       await verifyDelegatedClaims(claims);
       if(claims.request.body.command==="inbound.reconcile"){
-        await signed(claims,issuer=>authorize(claims.actor,claims.request.body,env.EGC_OPERATIONS_WORKSPACE??"egc",undefined,undefined,issuer));if(!inbound)throw new OperationsError("inbound_reconciliation_not_configured",503);
+        await signed(claims,issuer=>authorize(claims.actor,claims.request.body,env.EGC_OPERATIONS_WORKSPACE??"egc",undefined,undefined,issuer));if(!inboundTasksEnabled(env))return reply.send(INBOUND_TASKS_DISABLED);if(!inbound)throw new OperationsError("inbound_reconciliation_not_configured",503);
         const command=claims.request.body;return reply.send(await inbound.run({limit:command.limit,...(command.lookbackDays?{lookbackDays:command.lookbackDays}:{})}));
       }
       const result=await signed(claims,issuer=>service!.execute(claims.actor,claims.request.body,claims.request.requestId,issuer));

@@ -487,10 +487,14 @@ export function createApprovedSendService({
       if (HELD.has(previous?.status) && Number.isFinite(lastMs) && notBefore > ctx.nowMs) return { ...base, status: 'deferred', reason: 'reminder_cadence', notBefore: new Date(notBefore).toISOString(), delivery: flags };
     }
     const { rendered, files } = await finalize(ctx, 'send');
-    const recipient = await messenger.resolveRecipient(lookup(ctx, true));
+    // A dry run writes nothing to HighLevel: an unknown contact stays unknown
+    // (no upsert, so no "contact created" workflow) and a linked one is only read.
+    const recipient = await messenger.resolveRecipient(lookup(ctx, !flags.dryRun));
     base.recipient = { channel: ctx.template.channel, masked: recipient.masked || '' };
     if (recipient.status !== 'ready') return { ...base, status: recipient.status, reason: recipient.reason || '', delivery: flags };
-    if (!recipient.contactId) return { ...base, status: 'needs_contact', reason: 'contact_unresolved', delivery: flags };
+    // A customer's unknown contact is reported by a dry run (contact 'unknown', GHL-ALIGN); a real send, and every crew
+    // message (its staff contact is never upserted, CREW-NOTIFY), needs the resolved contact.
+    if (!recipient.contactId && !(flags.dryRun && recipient.pendingUpsert && ctx.policy.audience !== 'crew')) return { ...base, status: 'needs_contact', reason: 'contact_unresolved', delivery: flags };
     if (recipientDestination(ctx.template.channel, { phone: recipient.toNumber, email: recipient.emailTo }) !== ctx.destination) throw fail('messaging_target_changed', 'The recipient changed while the message was being prepared. Preview it again.', 409);
     // Re-check after the slow provider lookup: approval, contact, notification
     // preference, assignment and wording must still match what was confirmed.
@@ -517,7 +521,7 @@ export function createApprovedSendService({
         throw error;
       }
     }
-    if (flags.dryRun) return { ...base, status: 'dry_run', attempts, attachments: claim.attachments, mirror: await mirror(ctx, claim), delivery: flags };
+    if (flags.dryRun) return { ...base, status: 'dry_run', attempts, attachments: claim.attachments, ...(recipient.pendingUpsert ? { contact: 'unknown' } : {}), mirror: await mirror(ctx, claim), delivery: flags };
     const result = await messenger.send({
       type: ctx.template.channel, contactId: recipient.contactId, message: rendered.body, subject: rendered.subject, html: rendered.html || '',
       attachments: files.map(file => file.url), toNumber: recipient.toNumber || '', emailTo: recipient.emailTo || '', idempotencyKey: claim.idempotencyKey,

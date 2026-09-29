@@ -4,11 +4,13 @@ This is the owner's checklist for turning on customer messaging safely. It lists
 
 Nothing in this checklist sends anything by itself. The approved-send service stays off (`EGC_MESSAGING_ENABLED` unset) and in dry run (`EGC_MESSAGING_DRY_RUN` unset) until you change those variables.
 
+HighLevel owns every follow-up and customer message. [HIGHLEVEL-BOUNDARY.md](HIGHLEVEL-BOUNDARY.md) lists every path that writes to HighLevel or messages a customer, with its flag and default, and the customer sends that do not go through HighLevel today (owner decisions).
+
 ## 1. What can reach a customer today
 
 | Path | Who starts it | Provider | Safety gates |
 | --- | --- | --- | --- |
-| Approved-send service (`POST /api/messages`) | Owner/manager preview + confirm, or assigned crew for **On my way** | HighLevel SMS/email | Off unless `EGC_MESSAGING_ENABLED` is exactly `true`. Dry run unless `EGC_MESSAGING_DRY_RUN` is exactly `false`. Only owner-approved template versions send. Denver quiet hours for reminders. One `message_sends` ledger entry per logical message. |
+| Approved-send service (`POST /api/messages`) | Owner/manager preview + confirm, or assigned crew for **On my way** | HighLevel SMS/email | Off unless `EGC_MESSAGING_ENABLED` is exactly `true`. Dry run unless `EGC_MESSAGING_DRY_RUN` is exactly `false`; a dry run writes nothing to HighLevel (no contact is created). Only owner-approved template versions send. Denver quiet hours for reminders. One `message_sends` ledger entry per logical message. |
 | Hub/crew customer thread (**Send to customer** in a job) | A signed-in manager or assigned crew member typing a message | HighLevel SMS | Recipient is the saved job's HighLevel contact only. Before sending, the contact is re-read and must match the saved job phone and the location, with no DND and no `egc-no-sms-consent` tag. Every send carries an `Idempotency-Key` derived from the message's request id and a 15 second timeout. |
 | Client portal replies | The customer | HighLevel internal comment (not a text) | Mirrors the customer's portal message into the HighLevel conversation for staff. Nothing is sent to the customer. |
 | Accepted-quote portal invitation | Automatic on a new quote approval | HighLevel SMS or email | See [portal invitations](portal-invitations.md): one per job, DND and `notify: false` respected. |
@@ -180,7 +182,7 @@ Run these in order. Stop at the first surprise.
 ```sh
 node --test tests/legacy-send-hardening.test.mjs tests/customer-messaging.test.mjs tests/ghl-messenger.test.mjs \
   tests/approved-send.test.mjs tests/quo-send-idempotency.test.mjs tests/sales-followup-exit.test.mjs tests/portal-invitation.test.mjs \
-  tests/job-contact-keys-backfill.test.mjs
+  tests/job-contact-keys-backfill.test.mjs tests/ghl-align.test.mjs
 ```
 
 The Firestore rules that keep the messaging ledgers (`message_sends`, `message_templates`, `message_operations`) server-only can be checked on a private emulator with its own free ports: `EGC_FIREBASE_EMULATOR_TEST=1 node scripts/emulator-exec.mjs --project demo-egc-messaging 'node --test tests/firestore-emulator.test.mjs'`.
@@ -190,7 +192,7 @@ The Firestore rules that keep the messaging ledgers (`message_sends`, `message_t
 **C. Dry run in production.** Set `EGC_MESSAGING_ENABLED=true` and leave `EGC_MESSAGING_DRY_RUN` unset, then redeploy.
 
 1. Approve one template (for example `on_my_way`) at `/message-templates`.
-2. Preview and confirm it for the first test job. Expect a `dry_run` ledger result and no HighLevel conversation entry.
+2. Preview and confirm it for the first test job. Expect a `dry_run` ledger result, no HighLevel conversation entry and no new HighLevel contact.
 3. Repeat for the DND job. Expect `suppressed` before any send.
 4. From the first test job's **Customer thread**, send yourself a message. Expect `sent` and a HighLevel message. Send one from the DND job's thread: expect **Not texted · customer opted out** and no HighLevel message.
 5. On the crew pre-job page for the first test job, tap **Send confirmation text** twice. Expect one text with the real start time and crew size, and **Already sent** on the second tap. Remove the start time from the job, reload the page and tap again: the page shows "no saved start time or crew size", no Quo text is sent and the phone composer does not open, on a crew login and on a manager login. Put the start time back and move the job two days out: tapping again shows "not saved for tomorrow" and nothing is sent. Set the date back to tomorrow afterwards.

@@ -157,7 +157,7 @@ While `EGC_OPERATIONS_ENABLED=false`, legacy draft creation, editing and approva
 - `egc.operations_status`, `egc.operations_owners` — actual readiness, queue/failure/freshness health and verified assignment identities.
 - `actions.queue`, `actions.review` — current canonical task records, approvals and history.
 - `actions.propose`, `actions.edit`, `actions.snooze`, `actions.cancel`, `actions.complete` — durable internal mutations with stable request ID and revision checks.
-- `actions.reconcile_inbound` — create missing review actions for unanswered customer messages, including booked customers. Default uses activation cutoff; optional historical lookback is bounded.
+- `actions.reconcile_inbound` — off by default: follow-ups live in HighLevel, so it returns `inbound_tasks_disabled` ("disabled: follow-ups live in HighLevel") and creates nothing. Only when `EGC_OPERATIONS_INBOUND_TASKS_ENABLED` is exactly `true` on both egc-mcp and egc-api does it create missing review actions for unanswered customer messages, including booked customers (default activation cutoff; optional bounded historical lookback). See [HIGHLEVEL-BOUNDARY.md](../../docs/HIGHLEVEL-BOUNDARY.md).
 - `actions.complete_from_message` — close the exact reviewed follow-up only after fresh verified delivery evidence matches its approved draft, recipient, revision and approval window.
 - `egc.generate_brief`, `egc.daily_brief` — save/read immutable task snapshots with separate current-change indicators.
 - `egc.calendar`, `egc.job_brief` — authoritative Employee Hub records, exact IDs and source revision; no name/latest-job fallback.

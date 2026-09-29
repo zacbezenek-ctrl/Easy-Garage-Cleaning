@@ -33,6 +33,7 @@ What that means for this runbook:
 - Stages 1 to 7 turn on tracking, scheduling, field work, money records, the portal and AI read access. None of them makes the Hub write texts or emails to customers.
 - Customers keep hearing from your HighLevel workflows. The Hub starts them the way it does today, with tags and appointments such as `egc-walkthrough-scheduled`, `egc-job-scheduled`, `egc-reminder-2d`, `egc-job-complete` and `egc-review-ready`.
 - The switches that would let the Hub write customer messages itself are listed under [Optional](#optional-only-if-you-want-the-hub-to-send-through-highlevel). Leave them off unless you decide otherwise.
+- HighLevel keeps the 6-month garage check-in and the unanswered-text follow-ups. The platform's own copies are opt-in on Railway (`EGC_OPERATIONS_CHECKIN_TASKS_ENABLED`, `EGC_OPERATIONS_INBOUND_TASKS_ENABLED`) and stay off, and a messaging dry run never writes to HighLevel. [HIGHLEVEL-BOUNDARY.md](HIGHLEVEL-BOUNDARY.md) lists every path that writes to HighLevel or messages a customer.
 - A few customer messages skip HighLevel today (Quo, EmailJS, Zapier, Stripe). They are in [Owner decisions](#owner-decisions), with the recommended move into HighLevel.
 
 ## How to use this page
@@ -177,7 +178,7 @@ Plus, on egc-api: the B3 secrets, `OPENAI_API_KEY`, `STORAGE_DRIVER=filesystem` 
 | --- | --- | --- |
 | `EGC_OPERATIONS_INBOUND_REPLY_MINUTES` | `off` | With the bridge on, the platform otherwise opens a Hub task for every unanswered customer text. HighLevel owns follow-ups, so switch that rule off. Any value that is not a whole number from 5 to 10080 switches it off. |
 
-Known gap until GHL-ALIGN lands ([next batch](#coming-in-the-next-batch)): while the bridge is on, the "6-month garage check-in" made at job closeout is created as a Hub task instead of a HighLevel task.
+**The 6-month check-in stays in HighLevel.** Once the bridge is on, each verified field completion creates the HighLevel task "6-month garage check-in" (read back first, so never twice). Check that no HighLevel workflow triggered by **Task Added** reacts to it in a way you do not want. Leave `EGC_OPERATIONS_CHECKIN_TASKS_ENABLED` unset on egc-api, so the platform adds no second check-in. Every path that writes to HighLevel is listed in [HIGHLEVEL-BOUNDARY.md](HIGHLEVEL-BOUNDARY.md).
 
 **Check it worked (phone):**
 
@@ -185,7 +186,7 @@ Known gap until GHL-ALIGN lands ([next batch](#coming-in-the-next-batch)): while
 2. `https://egc-api-production-faeb.up.railway.app/operations/service-keys` starts `{"protocol":"egc-service-auth-v2"`.
 3. Book a test visit in the Hub for a test contact that is you (your own phone and email), so anything HighLevel sends reaches only you. Keep the Hub open as a manager; within a minute or two the visit appears on the HighLevel calendar.
 
-**Roll back:** set `EGC_OPERATIONS_ENABLED=false` on egc-api, egc-mcp **and** Cloudflare Pages (then retry the deployment). The Hub then talks to HighLevel directly, as before (schedule, notes and the 6-month task go straight to HighLevel). Recordings, AI assistant Hub access and lead retries stop. Delete `EGC_OPERATIONS_INBOUND_REPLY_MINUTES` to bring back the 60-minute reply rule.
+**Roll back:** set `EGC_OPERATIONS_ENABLED=false` on egc-api, egc-mcp **and** Cloudflare Pages (then retry the deployment). The Hub then writes schedules and notes straight to HighLevel, as before. A job completed in the crew app then gets no 6-month check-in in any system (its internal handoff shows blocked until the bridge is back and it is retried); only a retried older closeout still adds the HighLevel task. Recordings, AI assistant Hub access and lead retries stop. Delete `EGC_OPERATIONS_INBOUND_REPLY_MINUTES` to bring back the 60-minute reply rule.
 
 ### B6. Stripe: webhook events and the live key
 
@@ -624,7 +625,7 @@ None of these is part of the core go-live. Each makes the **Hub** write or trigg
 ### O1. Hub-written messages (approved templates)
 
 - `EGC_MESSAGING_ENABLED=true` turns on the Hub's approved-send service (owner-approved templates at `/message-templates`).
-- `EGC_MESSAGING_DRY_RUN` stays unset (dry run: no message is sent) until templates and your A2P texting registration are approved; only `false` sends for real. In this build a dry run can still create the HighLevel contact for a job that has none (GHL-ALIGN stops that).
+- `EGC_MESSAGING_DRY_RUN` stays unset (dry run: no message is sent) until templates and your A2P texting registration are approved; only `false` sends for real. A dry run writes nothing to HighLevel, not even a contact.
 - `EGC_MESSAGING_SUBREQUEST_BUDGET` about `900` on Workers Paid.
 - Roll back: delete `EGC_MESSAGING_ENABLED`.
 
@@ -760,7 +761,6 @@ Before moving any of these, check which HighLevel workflows and calendar notific
 Not in this build. No steps yet; each will come with its own switch, off by default.
 
 - **FUN-06:** the iPad walkthrough recorder with Start and Finish ([3.4](#34-start-and-finish-after-fun-06)).
-- **GHL-ALIGN:** HighLevel owns follow-ups: the 6-month check-in always goes to HighLevel, the Hub's inbound-reply tasks become opt-in, and dry runs never write to HighLevel.
 - **SYNC-QUEUE:** server-driven HighLevel calendar sync, so it no longer waits for a manager's Hub to be open.
 - **RECUR-CRON:** the hourly recurring-plan worker and a price on each recurring visit ([Stage 4](#keep-off-for-now)).
 - **P1-06:** time-off requests and approvals on the server (needs you to say "merge P1-06").

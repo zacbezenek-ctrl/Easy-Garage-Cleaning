@@ -1,7 +1,7 @@
 import {afterEach,it,expect,vi} from "vitest";
 import {randomUUID} from "node:crypto";
 import {verifyRequest} from "@egc/operations";
-import {operationsPrincipal,callOperations,registerOperationsTools,OPERATIONS_WRITE_TOOLS,LEGACY_MUTATIONS_DISABLED} from "./operations.js";
+import {operationsPrincipal,callOperations,registerOperationsTools,OPERATIONS_WRITE_TOOLS,LEGACY_MUTATIONS_DISABLED,INBOUND_TASKS_DISABLED} from "./operations.js";
 import type {McpServer} from "@modelcontextprotocol/server";
 const env={...process.env};afterEach(()=>{process.env= {...env};});
 const key='isolated-mcp-signing-key-not-production-0123456789';
@@ -14,3 +14,23 @@ it('two concurrent requests do not exchange principals',async()=>{configure();co
 it('tool registry sources and side effects agree with middleware classifications',()=>{const tools:any[]=[];registerOperationsTools({registerTool:(name:any,definition:any)=>tools.push({name,...definition})} as unknown as McpServer);expect(tools.length).toBe(15);expect(tools.find(t=>t.name==="actions.reconcile_inbound").annotations.readOnlyHint).toBe(false);expect(new Set(tools.map(t=>t.name)).size).toBe(tools.length);for(const t of tools)expect(t.annotations.readOnlyHint).toBe(!OPERATIONS_WRITE_TOOLS.has(t.name));expect(tools.find(t=>t.name==='egc.calendar').description).toContain('NOT GHL');expect(tools.find(t=>t.name==='egc.daily_brief').annotations.readOnlyHint).toBe(true);for(const raw of ['tasks.update','walkthroughs.approve'])expect(LEGACY_MUTATIONS_DISABLED.has(raw)).toBe(true);});
 
 it('durable appointment operations remain usable in operations mode',()=>{for(const name of ['egc.ensure_booking','appointments.create','appointments.update','appointments.cancel','appointments.reconcile'])expect(LEGACY_MUTATIONS_DISABLED.has(name)).toBe(false);expect(LEGACY_MUTATIONS_DISABLED.has('appointments.delete')).toBe(true);});
+it('GHL-ALIGN: actions.reconcile_inbound creates nothing and calls nothing unless EGC_OPERATIONS_INBOUND_TASKS_ENABLED is exactly "true"',async()=>{
+  configure();const tools=new Map<string,any>();registerOperationsTools({registerTool:(name:any,definition:any,handler:any)=>tools.set(name,{definition,handler})} as unknown as McpServer);
+  const tool=tools.get('actions.reconcile_inbound'),args=tool.definition.inputSchema.parse({requestId:randomUUID()}),commands:string[]=[];
+  expect(tool.definition.description).toMatch(/^Off by default because follow-ups live in HighLevel/);
+  vi.stubGlobal('fetch',vi.fn(async(_url:unknown,options:any)=>{commands.push(verifyRequest(JSON.parse(options.body).envelope,{mcp:key}).request.body.command);return Response.json({ok:true,created:1});}));
+  try{
+    for(const value of [undefined,'','false','TRUE','True','1','yes',' true','true ']){
+      if(value===undefined)delete process.env.EGC_OPERATIONS_INBOUND_TASKS_ENABLED;else process.env.EGC_OPERATIONS_INBOUND_TASKS_ENABLED=value;
+      const out=await operationsPrincipal.run(actor,()=>tool.handler(args));
+      expect(out.structuredContent.result).toEqual({ok:false,disabled:true,error:'inbound_tasks_disabled',message:'disabled: follow-ups live in HighLevel',created:0,instruction:expect.stringContaining('HighLevel')});
+      expect(out.structuredContent.result).toBe(INBOUND_TASKS_DISABLED);
+    }
+    expect(commands).toEqual([]);
+    process.env.EGC_OPERATIONS_INBOUND_TASKS_ENABLED='true';
+    expect((await operationsPrincipal.run(actor,()=>tool.handler(args))).structuredContent.result).toMatchObject({ok:true,created:1,httpStatus:200});
+    expect(commands).toEqual(['inbound.reconcile']);
+    process.env.EGC_OPERATIONS_ENABLED='false';delete process.env.EGC_OPERATIONS_INBOUND_TASKS_ENABLED;
+    expect((await operationsPrincipal.run(actor,()=>tool.handler(args))).structuredContent.result).toMatchObject({error:'operations_not_enabled'});expect(commands).toHaveLength(1);
+  }finally{vi.unstubAllGlobals();}
+});

@@ -6,6 +6,7 @@ import {MCP_GRANT,OperationsService,SERVICE_ORIGINS,servicePublicKeySet,signRequ
 const state=vi.hoisted(()=>({nonces:new Set<string>()}));
 vi.mock("@egc/database",async()=>{const actual=await vi.importActual<typeof import("@egc/database")>("@egc/database");return{...actual,getDb:()=>({insert:()=>({values:(v:{issuer:string;nonce:string})=>({onConflictDoNothing:()=>({returning:async()=>{const key=v.issuer+v.nonce;if(state.nonces.has(key))return[];state.nonces.add(key);return[{id:"synthetic"}];}})})}),delete:()=>({where:async()=>undefined})})};});
 import {registerOperationsRoutes} from "./operations.js";
+import {INBOUND_TASKS_DISABLED} from "./inbound-actions.js";
 import {registerRecordingRoutes,type RecordingService} from "./recordings.js";
 import {signRecordingEnvelope} from "./recording-contracts.js";
 
@@ -76,7 +77,8 @@ describe("integration actors bound to their issuer on /operations/rpc",()=>{
   expect(await rpc(app,v1("mcp",integration("funnel-feed-reader"),roster))).toEqual({status:403,body:{error:"bridge_integration_issuer_unknown"}});
   expect(await rpc(app,v1("mcp",integration("mcp-integration"),{command:"status"}))).toEqual({status:403,body:{error:"bridge_integration_issuer_unknown"}});
   expect(await rpc(app,v1("mcp",integration("inbound-response-reconciler"),{command:"inbound.reconcile",limit:5}))).toEqual({status:403,body:{error:"bridge_integration_issuer_mismatch"}});
-  expect(await rpc(app,v1("mcp",integration(GRANT),{command:"inbound.reconcile",limit:5}))).toEqual({status:503,body:{error:"inbound_reconciliation_not_configured"}});
+  // The binding admits the grant; GHL-ALIGN (merge) then answers that inbound tasks are off (EGC_OPERATIONS_INBOUND_TASKS_ENABLED unset).
+  expect(await rpc(app,v1("mcp",integration(GRANT),{command:"inbound.reconcile",limit:5}))).toEqual({status:200,body:INBOUND_TASKS_DISABLED});
   expect(portalRead).toHaveBeenCalledTimes(1);
   expect(audit.mock.calls.map(([row])=>(row as {newValue:{code:string;command:string}}).newValue)).toEqual([
    {code:"bridge_integration_issuer_mismatch",issuer:"mcp",boundTo:"api",command:"hub.staff.roster"},{code:"bridge_integration_issuer_unknown",issuer:"mcp",boundTo:null,command:"hub.staff.roster"},

@@ -97,7 +97,7 @@ test('every automation lists the Hub writes that can start it', () => {
   assert.ok(appointment.some(item => item.trigger === 'appointment:created' && item.file === 'egc-platform/apps/api/src/scheduling.ts'));
   assert.ok(appointment.some(item => item.trigger === 'appointment_status:changed' && /deleteCalendarEvent/.test(item.when)));
   assert.deepEqual([...new Set(writes('ghl.note_task_workflows').map(item => `${item.trigger} ${item.file}`))].sort(), ['contact:note_added egc-platform/services/operations/src/note-outbox.ts',
-    'contact:note_added functions/_lib/web-lead-intake.js', 'contact:note_added functions/api/highlevel.js', 'contact:task_added functions/api/highlevel.js']);
+    'contact:note_added functions/_lib/web-lead-intake.js', 'contact:note_added functions/api/highlevel.js', 'contact:task_added functions/_lib/highlevel-checkin.js', 'contact:task_added functions/api/highlevel.js']);
   assert.deepEqual(writes('unknown.id'), []);
   assert.deepEqual(listenersFor(AUTOMATION_REGISTRY, 'call:missed').map(item => item.id), ['ghl.missed_call_textback', 'ghl.missed_call_cooldown_helper']);
   assert.equal(resolveSurface(AUTOMATION_REGISTRY, 'tag:egc-reminder-14d').id, 'tag:egc-reminder-{n}d');

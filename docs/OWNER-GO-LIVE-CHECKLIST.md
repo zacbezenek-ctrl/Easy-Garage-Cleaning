@@ -2,7 +2,7 @@
 
 Every owner action for switching the EGC Hub on, in order, one line each. The how-to, the phone checks and the roll-back steps are in [GO-LIVE.md](GO-LIVE.md); each item links to its section.
 
-The rule behind all of it: **HighLevel sends every customer message and owns every follow-up; the Hub only tracks.** Nothing below turns on Hub-written customer messages.
+The rule behind all of it: **HighLevel sends every customer message and owns every follow-up; the Hub only tracks.** Nothing below turns on Hub-written customer messages. Every path that writes to HighLevel or messages a customer, with its switch and default, is listed in [HIGHLEVEL-BOUNDARY.md](HIGHLEVEL-BOUNDARY.md).
 
 "Developer" means ask your developer (or Claude Code) to do it.
 
@@ -26,6 +26,7 @@ The rule behind all of it: **HighLevel sends every customer message and owns eve
 16. [ ] **Add the `fieldExpenses.incurredOn` single-field exemption in the Firebase console.** Field-cost date totals fail without it. [B4](GO-LIVE.md#b4-publish-firestore-rules-and-indexes)
 17. [ ] **Keep the automatic index on `business_sessions.expiresAt` (no exemption).** The business hub sign-in clean-up needs it. [B4](GO-LIVE.md#b4-publish-firestore-rules-and-indexes)
 18. [ ] **Set the Railway bridge variables on egc-api and egc-mcp.** Recordings, AI access and lead retries run over the bridge. [B5](GO-LIVE.md#b5-railway-platform-and-the-signed-bridge)
+    - [ ] **Once the bridge is on, each verified field completion creates the HighLevel task "6-month garage check-in". Check that no HighLevel workflow triggered by Task Added reacts to it in a way you do not want.** HighLevel owns the check-in; the Hub only creates the task. [B5](GO-LIVE.md#b5-railway-platform-and-the-signed-bridge), [HighLevel boundary](HIGHLEVEL-BOUNDARY.md#owner-checklist)
 19. [ ] **Set `EGC_OPERATIONS_INBOUND_REPLY_MINUTES=off` on Cloudflare.** Stops Hub tasks for unanswered texts, because HighLevel owns follow-ups. [B5](GO-LIVE.md#b5-railway-platform-and-the-signed-bridge)
 20. [ ] **Run the B5 checks (API health, service keys, a test visit reaching the HighLevel calendar).** Proves the bridge works both ways. [B5](GO-LIVE.md#b5-railway-platform-and-the-signed-bridge)
 21. [ ] **Complete the Stripe webhook event list (`checkout.session.async_payment_succeeded`, `invoice.paid` and the rest).** Card and membership payments are recorded from these events. [B6](GO-LIVE.md#b6-stripe-webhook-events-and-the-live-key)

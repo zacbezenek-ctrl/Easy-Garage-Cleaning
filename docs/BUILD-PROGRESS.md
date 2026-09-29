@@ -459,6 +459,10 @@ draft PR. The owner merges in phase order. See **Decisions** D-001.
   hub-sw.js (versioned employee-* files only, network first with ETag) and employee-offline-queue.js, which queues the
   viewer's own clock in/out, breaks and crew chat in IndexedDB and replays them with the same request id. Queued manager
   saves are idempotent; a closed card's location is locked. Gaps: employee.html itself is not cached offline.
+- **GHL-ALIGN** HighLevel owns follow-ups: the 6-month check-in is a HighLevel task (from the closeout and, read first
+  so it is created once, from each verified field completion while the bridge is on); egc-api opens a platform task only
+  with `EGC_OPERATIONS_CHECKIN_TASKS_ENABLED`. A messaging dry run writes nothing to HighLevel. The inbound reconciler runs
+  only with `EGC_OPERATIONS_INBOUND_TASKS_ENABLED` (both off). docs/HIGHLEVEL-BOUNDARY.md lists every send and its owner.
 
 ## In progress
 
@@ -566,6 +570,7 @@ one prefixed commit only after the full root suite (and the platform suite when 
 | MONEY-GHL-PARITY | Server money saves start the same HighLevel lifecycle triggers as the finance tools (MONEY_API_ENABLED) | merged (890742e) |
 | BRIDGE-ADOPT-AUTHZ | Fail-closed binding of bridge integration actor ids to their signing service (always on) | merged (93e8b20) |
 | HUB-PWA | Installable Hub and on-device clock/chat queue (HUB_OFFLINE_ENABLED, off) | merged (92153dc) |
+| GHL-ALIGN | HighLevel owns follow-ups: check-in task, dry run without writes, inbound reconciler opt-in (flags off) | merged (cb90ce9) |
 
 ## Next
 
