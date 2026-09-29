@@ -64,12 +64,14 @@ test('completing a no-show job keeps the field command\'s own closed answer, wit
   for (const status of NO_SHOW) assert.equal(await requireFieldExpenseCloseout({ EGC_FIELD_EXPENSES_ENABLED: 'true' }, noShow(status), {}, { store }), undefined, status);
 });
 
-test('automatic payment and estimate reminders stop for a no-show job, as for a cancelled one', () => {
+test('automatic deposit and estimate reminders stop for a no-show job, as for a cancelled one, and an overdue invoice is never a Hub reminder', () => {
   const settings = normalizeMessagingSettings(null);
+  // Payment reminders are HighLevel's (egc-invoice-overdue), so an unpaid overdue invoice selects nothing, no-show or not.
   const unpaid = extra => messagingJob({ date: '2026-12-01', invoice: { number: 'INV-3001', amount: 1200, dueDate: '2026-09-21', status: 'issued' }, deposit: { amount: 300, paidAmount: 300, verified: true }, ...extra });
+  const depositDue = extra => messagingJob({ date: '2026-09-25', invoice: { number: 'INV-3002', amount: 1200, dueDate: '2026-12-31', status: 'issued' }, ...extra });
   const quoting = extra => messagingJob({ date: '2026-12-01', invoice: null, estimate: { number: 'EST-1', status: 'sent', amount: 900, validUntil: '2026-09-23' }, deposit: { amount: 300, paidAmount: 300, verified: true }, ...extra });
-  const rows = { 'pay-open': unpaid({ status: 'completed', pipelineStatus: 'completed' }), 'pay-cancelled': unpaid({ status: 'cancelled', pipelineStatus: 'cancelled' }), 'estimate-open': quoting({}) };
-  for (const status of NO_SHOW) Object.assign(rows, { [`pay-${status}`]: unpaid({ status, pipelineStatus: status }), [`estimate-${status}`]: quoting({ status, pipelineStatus: status }) });
-  const selected = dueMessages(Object.entries(rows).map(([id, fields]) => ({ ...fields, id })), { now: new Date(MESSAGING_NOW), settings, kinds: new Set(['payment_reminder', 'estimate_expiring']) });
-  assert.deepEqual(selected.due.map(row => `${row.kind}:${row.jobId}`).sort(), ['estimate_expiring:estimate-open', 'payment_reminder:pay-open']);
+  const rows = { 'pay-open': unpaid({ status: 'completed', pipelineStatus: 'completed' }), 'deposit-open': depositDue({}), 'deposit-cancelled': depositDue({ status: 'cancelled', pipelineStatus: 'cancelled' }), 'estimate-open': quoting({}) };
+  for (const status of NO_SHOW) Object.assign(rows, { [`pay-${status}`]: unpaid({ status, pipelineStatus: status }), [`deposit-${status}`]: depositDue({ status, pipelineStatus: status }), [`estimate-${status}`]: quoting({ status, pipelineStatus: status }) });
+  const selected = dueMessages(Object.entries(rows).map(([id, fields]) => ({ ...fields, id })), { now: new Date(MESSAGING_NOW), settings, kinds: new Set(['deposit_reminder', 'estimate_expiring', 'payment_reminder']) });
+  assert.deepEqual(selected.due.map(row => `${row.kind}:${row.jobId}`).sort(), ['deposit_reminder:deposit-open', 'estimate_expiring:estimate-open']);
 });

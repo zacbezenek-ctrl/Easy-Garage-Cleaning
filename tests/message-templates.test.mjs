@@ -66,7 +66,8 @@ test('validation limits variables per message kind and requires one-line email s
 });
 
 test('every default seed is valid, renders within limits and starts unapproved', async () => {
-  assert.deepEqual([...TEMPLATE_KIND_IDS].sort(), ['b2b_invite', 'crew_assignment', 'crew_schedule_change', 'crew_unassignment', 'day_before_reminder', 'deposit_reminder', 'estimate_expiring', 'followup', 'invoice_send', 'on_my_way', 'payment_reminder', 'portal_magic_link', 'review_request'].sort());
+  // No invoice or payment reminder wording: those messages are HighLevel's (egc-invoice-issued / egc-invoice-overdue workflows).
+  assert.deepEqual([...TEMPLATE_KIND_IDS].sort(), ['b2b_invite', 'crew_assignment', 'crew_schedule_change', 'crew_unassignment', 'day_before_reminder', 'deposit_reminder', 'estimate_expiring', 'followup', 'on_my_way', 'portal_magic_link', 'review_request'].sort());
   const store = memoryStore();
   for (const state of await listTemplates(store)) {
     const seed = state.versions[0], base = TEMPLATE_KINDS[state.kind];
@@ -105,23 +106,23 @@ test('only the owner can approve; managers can draft; crew is forbidden', async 
 });
 
 test('editing creates a new unapproved version with a new hash; approval never carries over', async () => {
-  const store = memoryStore(), hash = await seedHash('payment_reminder');
-  await mutateTemplate(store, owner, { action: 'approve', requestId: uuid(), kind: 'payment_reminder', expectedVersion: 1, version: 1, hash }, NOW);
-  const edited = await mutateTemplate(store, manager, { action: 'save_draft', requestId: uuid(), kind: 'payment_reminder', expectedVersion: 1, ...sms('Hi {{firstName}}, {{balance}} is due {{dueDate}}: {{payLink}}') }, NOW);
+  const store = memoryStore(), hash = await seedHash('deposit_reminder');
+  await mutateTemplate(store, owner, { action: 'approve', requestId: uuid(), kind: 'deposit_reminder', expectedVersion: 1, version: 1, hash }, NOW);
+  const edited = await mutateTemplate(store, manager, { action: 'save_draft', requestId: uuid(), kind: 'deposit_reminder', expectedVersion: 1, ...sms('Hi {{firstName}}, your {{balance}} deposit for {{serviceDate}}: {{payLink}}') }, NOW);
   const [v1, v2] = edited.template.versions;
   assert.notEqual(v2.hash, v1.hash);
   assert.deepEqual([v1.status, v2.status, v2.approvedBy, edited.template.activeVersion], ['approved', 'draft', '', 1]);
-  assert.equal((await activeTemplate(store, 'payment_reminder')).version, 1, 'live wording stays the approved text until the owner approves the edit');
-  await assert.rejects(mutateTemplate(store, owner, { action: 'approve', requestId: uuid(), kind: 'payment_reminder', expectedVersion: 2, version: 2, hash: v1.hash }), code('messaging_template_revision_conflict'));
-  const same = await mutateTemplate(store, manager, { action: 'save_draft', requestId: uuid(), kind: 'payment_reminder', expectedVersion: 2, ...sms('Hi {{firstName}}, {{balance}} is due {{dueDate}}: {{payLink}}') }, NOW);
+  assert.equal((await activeTemplate(store, 'deposit_reminder')).version, 1, 'live wording stays the approved text until the owner approves the edit');
+  await assert.rejects(mutateTemplate(store, owner, { action: 'approve', requestId: uuid(), kind: 'deposit_reminder', expectedVersion: 2, version: 2, hash: v1.hash }), code('messaging_template_revision_conflict'));
+  const same = await mutateTemplate(store, manager, { action: 'save_draft', requestId: uuid(), kind: 'deposit_reminder', expectedVersion: 2, ...sms('Hi {{firstName}}, your {{balance}} deposit for {{serviceDate}}: {{payLink}}') }, NOW);
   assert.equal(same.unchanged, true); assert.equal(same.template.latestVersion, 2);
-  const promoted = await mutateTemplate(store, owner, { action: 'approve', requestId: uuid(), kind: 'payment_reminder', expectedVersion: 2, version: 2, hash: v2.hash }, NOW);
+  const promoted = await mutateTemplate(store, owner, { action: 'approve', requestId: uuid(), kind: 'deposit_reminder', expectedVersion: 2, version: 2, hash: v2.hash }, NOW);
   assert.deepEqual(promoted.template.versions.map(row => row.status), ['retired', 'approved']);
   // Tampering with stored text without a matching hash makes the template unusable.
-  const key = 'message_templates/payment_reminder', doc = store.get(key);
+  const key = 'message_templates/deposit_reminder', doc = store.get(key);
   doc.versions[1].body = 'Changed outside the approval flow {{payLink}}';
   store.set(key, doc);
-  assert.equal(await activeTemplate(store, 'payment_reminder'), null);
+  assert.equal(await activeTemplate(store, 'deposit_reminder'), null);
 });
 
 test('stale expected versions, concurrent saves and reused request IDs return conflicts', async () => {
@@ -158,7 +159,7 @@ test('template API is same-origin, manager-readable and owner-approved', async (
   const handlers = messageTemplateHandlers({ session: async () => sessions[who], storage: () => store, now: () => new Date(NOW) });
   const post = (body, headers = {}) => handlers.post({ request: new Request('https://easygaragecleaning.com/api/message-templates', { method: 'POST', headers: { Origin: 'https://easygaragecleaning.com', 'Content-Type': 'application/json', ...headers }, body: JSON.stringify(body) }), env: {} });
   const list = await (await handlers.get({ request: new Request('https://easygaragecleaning.com/api/message-templates'), env: {} })).json();
-  assert.equal(list.ok, true); assert.equal(list.templates.length, 13); assert.deepEqual(list.viewer, { id: 'tylerg', role: 'manager', canApprove: false });
+  assert.equal(list.ok, true); assert.equal(list.templates.length, 11); assert.deepEqual(list.viewer, { id: 'tylerg', role: 'manager', canApprove: false });
   sessions.tylerOwner = { ...manager, role: 'owner' }; who = 'tylerOwner';
   assert.deepEqual((await (await handlers.get({ request: new Request('https://easygaragecleaning.com/api/message-templates'), env: {} })).json()).viewer, { id: 'tylerg', role: 'owner', canApprove: false });
   who = 'manager';

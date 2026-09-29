@@ -16,7 +16,7 @@ HighLevel owns every follow-up and customer message. [HIGHLEVEL-BOUNDARY.md](HIG
 | Accepted-quote portal invitation | Automatic on a new quote approval | HighLevel SMS or email | See [portal invitations](portal-invitations.md): one per job, DND and `notify: false` respected. |
 | Crew pre-job texts (`/api/quo-send`) | Assigned crew or a manager tapping a script in `crew/prejob.html` | Quo (OpenPhone) | Saved job phone only. Crew can send only the two scripts; the server fills the name, address, flat rate, start time (`[TIME]`) and crew size (`[N]`) from the saved job and refuses the text when any of them is missing. The confirmation says "tomorrow", so it is refused unless the job is saved for tomorrow (Denver date). After a refusal the page shows the reason and does not open the phone composer. If Quo itself fails, the page (crew and managers alike) opens the phone's own composer for review only when `[TIME]` and `[N]` could be filled from the loaded job and no placeholder is left; otherwise it shows a note. One server receipt per send key. |
 | Crew hook (`/api/crew-hook`) | Business users only | Zapier (`CREW_WEBHOOK_URL`), which may text through Quo | The Zap owns delivery. Crew accounts are refused. |
-| Lifecycle tags (`egc-<event>`, e.g. `egc-estimate-ready`) | Hub finance saves (the standard finance tools, or the server money dialog when `MONEY_API_ENABLED` is `true`), **Trigger in HighLevel**, schedule sync, walkthrough hand-offs and crew closeouts, all via `/api/highlevel` | HighLevel workflows you built | **Notify customer** off stops the finance lifecycle tags but not every tag: see [What Notify customer off stops](#what-notify-customer-off-stops). Whatever the tagged workflow sends is outside the Hub's ledger. |
+| Lifecycle tags (`egc-<event>`, e.g. `egc-estimate-ready`) | Hub finance saves (the standard finance tools, the server money dialog when `MONEY_API_ENABLED` is `true`, or each invoice the **Invoicing** screen issues), **Trigger in HighLevel**, schedule sync, walkthrough hand-offs and crew closeouts, all via `/api/highlevel` | HighLevel workflows you built | **Notify customer** off stops the finance lifecycle tags but not every tag: see [What Notify customer off stops](#what-notify-customer-off-stops). Whatever the tagged workflow sends is outside the Hub's ledger. |
 | Sales follow-up exits (`egc-garage-sales-exit`, `egc-junk-sales-exit`) | Accepted/booked/completed jobs | HighLevel tag (no message) | Stops the matching nurture workflow. Other active jobs for the same customer hold the exit for review. |
 
 ### What Notify customer off stops
@@ -25,7 +25,7 @@ A job's **Notify customer** switch (`notify: false` on the job) does not stop ev
 
 | Hub action | Tags it adds | With Notify customer off |
 | --- | --- | --- |
-| Finance saves: estimate, approval, deposit, payment, invoice (the standard finance tools, or the server money dialog when `MONEY_API_ENABLED` is `true`), and **Trigger in HighLevel** | `egc-estimate-ready`, `egc-estimate-approved`, `egc-deposit-received`, `egc-payment-received`, `egc-invoice-issued` (the buttons also offer `egc-invoice-overdue`, `egc-appointment-reminder`, `egc-review-requested`) | **No tag.** The request is still sent with `suppress_automation`, so HighLevel finds or creates the contact and gets a Hub note, and the Hub logs the message as suppressed. |
+| Finance saves: estimate, approval, deposit, payment, invoice (the standard finance tools, the server money dialog when `MONEY_API_ENABLED` is `true`, or the **Invoicing** screen's single and batch issue), and **Trigger in HighLevel** | `egc-estimate-ready`, `egc-estimate-approved`, `egc-deposit-received`, `egc-payment-received`, `egc-invoice-issued` (the buttons also offer `egc-invoice-overdue`, `egc-appointment-reminder`, `egc-review-requested`) | **No tag.** The request is still sent with `suppress_automation`, so HighLevel finds or creates the contact and gets a Hub note, and the Hub logs the message as suppressed. |
 | Booking or rescheduling a walkthrough or job (schedule sync) | `egc-hub-scheduled`, `egc-walkthrough-scheduled` or `egc-job-scheduled`, and `egc-reminder-<N>d` | **`egc-hub-scheduled` and `egc-walkthrough-scheduled`/`egc-job-scheduled` are still added.** Only `egc-reminder-<N>d` is left out. A workflow that messages the customer from those tags still runs for that job. A cancelled visit's sync adds none of these tags and never moves the opportunity to Scheduled, whatever the switch says. |
 | Crew reassignment on a booked visit | none (a silent appointment update) | none |
 | Signed walkthrough hand-off | `egc-walkthrough-complete`, the quote-ready tags (`HIGHLEVEL_QUOTE_READY_TAGS`, default `egc-quote-ready`, `gc-quote-open`) while the quote is open, and `egc-hub-scheduled` + `egc-job-scheduled` when the visit has a job date | These are added either way; the job's appointment is written with Notify customer's setting, so its own automations do not run when it is off. |
@@ -82,8 +82,6 @@ Before you turn on automation for a kind at `/message-templates`, make sure no H
 | --- | --- | --- |
 | `on_my_way` | Crew pre-job **Send arrival text** (Quo) | Tell crews to use one or the other per job. The arrival text is recorded as `crew-on-the-way` with automation suppressed, so no workflow fires from it. |
 | `day_before_reminder` | Workflows on `egc-appointment-reminder`, and the scheduling reminder tags `egc-reminder-<N>d` | Remove the SMS/email steps from those workflows, or stop adding the tags. |
-| `invoice_send` | Workflow on `egc-invoice-issued` | Remove its customer message steps. |
-| `payment_reminder` | Workflow on `egc-invoice-overdue` | Remove its customer message steps. |
 | `deposit_reminder` | None known | Check that no workflow texts deposit reminders. |
 | `estimate_expiring` | Workflow on `egc-estimate-expiring` | Remove its customer message steps. |
 | `review_request` | Workflow on `egc-review-requested`; the Zap behind `REVIEW_WEBHOOK_URL`; the crew hook `review_request` Zap | Keep exactly one of these sending. |
@@ -91,6 +89,10 @@ Before you turn on automation for a kind at `/message-templates`, make sure no H
 | `crew_assignment`, `crew_unassignment`, `crew_schedule_change` | None (staff messages) | See staff contacts below. |
 | `portal_magic_link`, `b2b_invite` | None | Nothing to change. |
 | `portal_invitation_adapter` | The existing accepted-quote invitation | Nothing to change. It keeps running as today. |
+
+Invoices and overdue reminders are not approved-send kinds, so there is nothing to change for them: your HighLevel workflows on `egc-invoice-issued` and `egc-invoice-overdue` send them, and the Hub only adds those tags (see **Invoicing** in section 8). Keep those workflows as they are.
+
+**Deploy note (M5-SEND):** an earlier version of this checklist had an `invoice_send` and a `payment_reminder` kind and told you to remove the customer message steps from the `egc-invoice-issued` and `egc-invoice-overdue` workflows before turning those kinds on. Both kinds are removed in this build. If you removed those steps, **restore them before you deploy**; otherwise customers get no invoice message and no overdue reminder at all. Any saved `invoice_send` or `payment_reminder` wording and automation switch at `/message-templates` no longer does anything, and the messaging cron no longer sends payment reminders (`paymentReminderDays` in the saved messaging settings is ignored). Nothing needs deleting.
 
 The two sales-exit helpers (see [HighLevel sales handoff](highlevel-sales-handoff.md)) send nothing and stay on. The sales exit now looks up the customer's other jobs with bounded, exact lookups (CRM contact, Hub customer, normalized phone/email keys, saved phone spellings and email) instead of scanning the whole `jobs` collection. It no longer stops working once there are more than 500 jobs, so importing a large Jobber history does not keep accepted customers in nurture sequences.
 
@@ -148,6 +150,15 @@ Notice states: `pending` (queued, or waiting for a retry after 5, 10, 20 and 40 
 5. **Retire** removes a version from use. Retiring the active version also turns automation off.
 6. A send always uses the approved version at the moment of the confirmed preview. If the wording changed in between, the send is refused and must be previewed again.
 
+### Invoicing (Hub **Invoicing** screen)
+
+The Invoicing screen sends nothing to customers. HighLevel sends every invoice message, as it does for the standard finance tools.
+
+- **Issue one invoice or a batch.** The screen (CLIENT WORK) lists finished or closing customer jobs with a balance and no active invoice. Issuing goes through `/api/invoice-batch`, which runs the money service's `invoice.issue` (the same service `/api/money` uses, not the `/api/money` endpoint) once per job, each with its own request ID derived from the batch ID, so retrying the batch never issues twice. A batch whose answer was lost is retried from the screen (**Retry original batch**) and replays what it issued, even after its due date has passed; **Discard** drops that retry, and any invoice the batch already issued then gets no HighLevel trigger from the screen (use **Trigger in HighLevel** on those jobs). One request issues as many invoices as the Worker subrequest budget allows (about five at the default `MONEY_BATCH_SUBREQUEST_BUDGET`); the screen carries the rest on in follow-up requests under the same confirmation and stops at the first request that fails. It needs `MONEY_API_ENABLED`; while that is off the list stays readable and invoices are issued from each job's finance tools. With `EGC_JOBBER_GUARD_BILLING` on, a job Jobber has billed is refused exactly as `/api/money` refuses it.
+- **HighLevel sends the invoice.** Each issued invoice starts the same lifecycle trigger as the standard finance save: `/api/highlevel` adds the `egc-invoice-issued` tag, and your HighLevel workflow on that tag messages the customer. A job with **Notify customer** off gets no tag. The trigger is started once per invoice, also when a batch is retried or replayed from another tab, and the job's **Customer messages** log shows it. If a row says the trigger was not started or needs a retry, use **Trigger in HighLevel** on that job in Customer messages. A retried batch whose job has changed since (other money saved on it) finds the trigger in the job's log when it ran; when it did not, only the row and the toast say so, until you refresh. A new invoice whose job changed before the screen could confirm it is flagged **needs attention** in Customer messages.
+- **Open invoices** lists issued invoices that still have a balance, read-only. Overdue reminders stay with HighLevel: the Hub adds `egc-invoice-overdue` for jobs with automatic reminders on (**Enable auto**), and the **Overdue reminder** button adds it by hand.
+- **Automatic overdue reminders (owner decision).** The standard finance tools' invoice save turns on the job's automatic reminders (unless **Notify customer** is off); an invoice issued from this screen, like every `MONEY_API_ENABLED` save, does not. So a job invoiced here gets no automatic `egc-invoice-overdue` tag until someone presses **Enable auto** on it. The screen says **Automatic overdue reminder off (Enable auto on the job)** on every ready-to-invoice and open-invoice row where that is the case. Whether issuing should turn them on is your decision; until you decide, use **Enable auto** on each job that should get the overdue workflow.
+
 ## 9. Environment variables
 
 Cloudflare Pages (Production and Preview), all documented in `.env.example` and `docs/env-inventory.md`:
@@ -162,12 +173,13 @@ Cloudflare Pages (Production and Preview), all documented in `.env.example` and 
 | `EGC_MESSAGING_DRY_RUN` | plain | Only exactly `false` sends; anything else records `dry_run` ledger entries. |
 | `EGC_MESSAGING_SUBREQUEST_BUDGET` | plain | Worker subrequest budget per `/api/messages` call. |
 | `HUB_SESSION_SECRET` | secret | Signs Hub sessions and the preview confirm tokens. |
+| `MONEY_BATCH_SUBREQUEST_BUDGET` | plain | Worker subrequest budget per `/api/invoice-batch` issue call (default 45, about five invoices; the **Invoicing** screen carries the rest on in follow-up requests). |
 | `QUO_API_KEY` (alias `QUO`) | secret | Crew pre-job texts. |
 | `QUO_FROM` | plain | Quo sender number. |
 | `QUO_API_BASE` | plain | Quo API host override. |
 | `CREW_WEBHOOK_URL` | secret | Business-only crew hook to Zapier. |
 | `EGC_JOBBER_GUARD_BOOKING` | plain | Exactly `true` (FUN-32): from the Jobber cutover day on, the crew hook refuses `game_plan`, whose Zap branch creates a Jobber job. A backstop for old cached crew pages only: disable that Zap branch and uninstall the Official Jobber Integration (Jobber cutover section 8). See [Jobber cutover section 10](JOBBER-CUTOVER.md). |
-| `EGC_JOBBER_GUARD_BILLING` | plain | Exactly `true` (FUN-32): from the Jobber cutover day on, the messaging cron holds deposit and payment reminders (reason `jobber_guard_billing`) for a customer the saved Jobber guard check shows with an open Jobber bill. |
+| `EGC_JOBBER_GUARD_BILLING` | plain | Exactly `true` (FUN-32): from the Jobber cutover day on, `/api/money` and the **Invoicing** screen's batch refuse `invoice.issue` (`money_jobber_billing_hold`), and the messaging cron holds deposit reminders (reason `jobber_guard_billing`), for a customer the saved Jobber guard check shows with an open Jobber bill. |
 | `EGC_JOBBER_GUARD_MESSAGING` | plain | Exactly `true` (FUN-32): from the Jobber cutover day on, the messaging cron holds automatic reminders (reason `jobber_guard_messaging`) for a customer Jobber may still be messaging about open work or an open invoice. Turn it on only if Jobber's own messages cannot be fully turned off, or after the imported visits are removed from Jobber; otherwise it can hold every imported customer's reminders (Jobber cutover section 10.4). |
 | `MONEY_API_ENABLED` | plain | Exactly `true` moves the Hub finance buttons to the server money dialog. Its estimate, approval, deposit, payment and invoice saves add the same `egc-<event>` lifecycle tags as the standard finance tools (none when Notify customer is off). Unlike the standard tools, its estimate and invoice saves do not turn on the job's automatic reminders (`egc-estimate-expiring`, `egc-invoice-overdue`), so use **Enable auto** on each job that should get them until you decide otherwise. If the Hub cannot confirm a save to start its tag, the job shows **needs attention** in Customer messages; use **Trigger in HighLevel** there if the message is still needed. |
 
@@ -182,7 +194,8 @@ Run these in order. Stop at the first surprise.
 ```sh
 node --test tests/legacy-send-hardening.test.mjs tests/customer-messaging.test.mjs tests/ghl-messenger.test.mjs \
   tests/approved-send.test.mjs tests/quo-send-idempotency.test.mjs tests/sales-followup-exit.test.mjs tests/portal-invitation.test.mjs \
-  tests/job-contact-keys-backfill.test.mjs tests/ghl-align.test.mjs
+  tests/job-contact-keys-backfill.test.mjs tests/money-batch.test.mjs tests/invoice-highlevel-tag.test.mjs tests/portal-landing.test.mjs \
+  tests/ghl-align.test.mjs
 ```
 
 The Firestore rules that keep the messaging ledgers (`message_sends`, `message_templates`, `message_operations`) server-only can be checked on a private emulator with its own free ports: `EGC_FIREBASE_EMULATOR_TEST=1 node scripts/emulator-exec.mjs --project demo-egc-messaging 'node --test tests/firestore-emulator.test.mjs'`.

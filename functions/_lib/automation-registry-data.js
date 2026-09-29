@@ -73,7 +73,7 @@ export const AUTOMATION_REGISTRY = deepFreeze({
       write('functions/_lib/ghl-messenger.js', ['functions/_lib/estimate-ready.js', 'functions/api/quote-draft.js'], 'QUOTE-DRAFT: after a person previews and confirms "Send quote" for one quote draft revision (POST /api/quote-draft action=send), through the approved-send core: only with EGC_MESSAGING_ENABLED (off) and EGC_MESSAGING_DRY_RUN off (dry run by default), a message_sends ledger claimed first, never when the job notify flag is off; the tag is removed and added again so the workflow runs for that revision', false)]),
     trigger('tag:egc-estimate-approved', 'tag_added', 'Tag egc-estimate-approved', [write(HL, [SUITE], 'tool=lifecycle: automatically when a manager records an approval (the same request starts the portal invitation)', true)]),
     trigger('tag:egc-estimate-expiring', 'tag_added', 'Tag egc-estimate-expiring', [write(HL, [SUITE], 'tool=lifecycle: automatically on a manager Hub refresh the day before validUntil, for jobs with customerAutomationEnabled', true)]),
-    trigger('tag:egc-invoice-issued', 'tag_added', 'Tag egc-invoice-issued', [write(HL, [SUITE], 'tool=lifecycle: automatically when a manager issues an invoice, and the manual "Invoice due" button', true)]),
+    trigger('tag:egc-invoice-issued', 'tag_added', 'Tag egc-invoice-issued', [write(HL, [SUITE], 'tool=lifecycle: automatically when a manager issues an invoice (in the finance tools, or each invoice the Invoicing screen issues, single or in a batch, through the same suite helper), and the manual "Invoice due" button', true)]),
     trigger('tag:egc-invoice-overdue', 'tag_added', 'Tag egc-invoice-overdue', [write(HL, [SUITE], 'tool=lifecycle: automatically on a manager Hub refresh after the due date for jobs with customerAutomationEnabled, and the manual "Overdue reminder" button', true)]),
     trigger('tag:egc-deposit-received', 'tag_added', 'Tag egc-deposit-received', [write(HL, [SUITE], 'tool=lifecycle: automatically when a manager records a deposit', true)]),
     trigger('tag:egc-payment-received', 'tag_added', 'Tag egc-payment-received', [
@@ -296,8 +296,6 @@ export const AUTOMATION_REGISTRY = deepFreeze({
       code: [...code('functions/_lib/ghl-messenger.js', 'ghl_message_send', 'ghl_contact_write'), ...code(MESSAGING_CRON, 'hub_send_helper_call')], evidence: ['functions/_lib/crew-notification-delivery.js', 'functions/_lib/crew-notifications.js', 'functions/_lib/message-policies.js'],
       notes: 'Staff only, as crew_unassignment. EGC_MESSAGING_ENABLED gates every send; the kind sends only once its wording is approved and its automation switch is on (off by default).',
       ownerCheck: 'Approve the crew_schedule_change wording at /message-templates and switch its automation on only when crew schedule texts should go out.' }),
-    msgCore('invoice_send', 'Invoice with pay link (approved send)', 'Email'),
-    msgCore('payment_reminder', 'Payment reminder (approved send)', 'SMS'),
     msgCore('deposit_reminder', 'Deposit reminder (approved send)', 'SMS'),
     msgCore('estimate_expiring', 'Estimate expiring (approved send)', 'SMS'),
     msgCore('review_request', 'Review request (approved send)', 'SMS'),

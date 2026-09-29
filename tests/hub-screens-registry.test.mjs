@@ -20,23 +20,25 @@ function fixtureScreen(overrides = {}) {
   return { spec, calls, state };
 }
 const tabs = page => page.document.querySelectorAll('[data-ops-tab]').map(button => button.getAttribute('data-ops-tab'));
-// Screens the shipped MANIFEST registers (REVIEWS-UI); fixtures register after them. SHIPPED are the business
+// Screens the shipped MANIFEST registers (REVIEWS-UI, M5 invoicing); fixtures register after them. SHIPPED are the business
 // screens; the owner-only screens (P3-04 followup_settings, FUN-15 ad_spend, CATALOG-ADMIN catalog) register first and are checked separately.
 // CREW-NOTIFY's Schedule alerts is crewVisible (every signed-in viewer sees it) and registers before them.
-const SHIPPED = ['reviews', 'message_templates', 'stocked_costs', 'staff'];
+const SHIPPED = ['reviews', 'message_templates', 'stocked_costs', 'staff', 'invoicing'];
 const OWNER_SHIPPED = ['followup_settings', 'ad_spend', 'catalog'];
 const CREW_SHIPPED = ['crew_alerts'];
 
 test('a registered screen joins the nav under its group only when the capability matches', () => {
   for (const [who, expected] of [[{}, true], [MANAGER, true], [CREW, false]]) {
     const page = hubPage(who), screen = fixtureScreen();
+    // Shipped MANIFEST screens (M5 added 'invoicing' to CLIENT WORK) register first.
+    const lastInGroup = [...page.api.visibleNav()].filter(item => item[0] === 'CLIENT WORK').at(-1)?.[1];
     page.context.EGCHubScreens.register(screen.spec);
     const nav = page.api.visibleNav(), at = nav.findIndex(item => item[1] === 'fixture_ledger');
     assert.equal(at >= 0, expected, JSON.stringify(who));
     assert.equal(page.api.canView('fixture_ledger'), expected);
     if (expected) {
       assert.deepEqual([...nav[at]], ['CLIENT WORK', 'fixture_ledger', 'Fixture ledger']);
-      assert.equal(nav[at - 1][1], 'communications', 'appended after the last item in its group');
+      assert.equal(nav[at - 1][1], lastInGroup, 'appended after the last item in its group');
       assert.equal(nav[at + 1][0], 'CRM');
       page.api.install();
       assert.ok(tabs(page).includes('fixture_ledger'));
@@ -287,6 +289,14 @@ test('the shipped screens register cleanly for business viewers only and lazy-lo
   const registry = context.EGCHubScreens;
   assert.deepEqual([...registry.list().map(entry => entry.id)], [...CREW_SHIPPED, ...OWNER_SHIPPED, ...SHIPPED]);
   for (const id of OWNER_SHIPPED) assert.equal(registry.get(id).capability, 'owner', id);
+  const invoicing = registry.get('invoicing');
+  assert.deepEqual([invoicing.group, invoicing.label, invoicing.capability, invoicing.crewVisible, invoicing.module, invoicing.load.js, invoicing.load.css], ['CLIENT WORK', 'Invoicing', 'business', false, 'EGCMoney', 'employee-money.js', 'employee-money.css']);
+  assert.ok(!registry.allowed(invoicing, ['crew']) && registry.allowed(invoicing, ['crew', 'business']));
+  const money = { addEventListener() {} };
+  money.window = money;
+  vm.runInNewContext(readFileSync(new URL(`../${invoicing.load.js}`, import.meta.url), 'utf8'), money, { filename: invoicing.load.js });
+  assert.deepEqual(Object.keys(money[invoicing.module]).sort(), ['canLeave', 'mount', 'refresh', 'unmount'], 'the Invoicing module provides the screen API');
+  assert.ok(readFileSync(new URL(`../${invoicing.load.css}`, import.meta.url), 'utf8').length > 0, invoicing.load.css);
   const reviews = registry.get('reviews'), templates = registry.get('message_templates');
   assert.deepEqual([reviews.group, reviews.label, reviews.capability, reviews.module, reviews.load.js, reviews.load.css], ['RUN THE BUSINESS', 'Review queues', 'business', 'EGCReviews', 'employee-reviews.js', 'employee-reviews.css']);
   assert.deepEqual([templates.group, templates.label, templates.capability, templates.module, templates.load.js, templates.load.css], ['SYSTEM', 'Message templates', 'business', 'EGCMessageTemplates', 'message-templates.js', 'message-templates.css']);

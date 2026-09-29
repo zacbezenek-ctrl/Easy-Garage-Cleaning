@@ -835,8 +835,9 @@ test('open-shift scheduling fields persist on the canonical job record',()=>{
   // (CHANGE-ORDERS) "Send decision" now appends to the decisions saved at that moment in a transaction; (QUOTE-DRAFT) a
   // signed handoff syncs from its saved snapshot only for its own sync; (MONEY-GHL-PARITY) the suite exposes its
   // lifecycle helper to server money saves; (HUB-PWA) the offline queue's clock saves; (TIPS) tipped payments and held
-  // tipped charges in the finance board; (CREW-TIME) clock-in-only location and job-time labels.
-  assert.match(employee,/employee-suite\.js\?v=20260929crewtime2/);
+  // tipped charges in the finance board; (CREW-TIME) clock-in-only location and job-time labels; (M5-SEND trim) the
+  // invoice-overdue HighLevel trigger stays on the page whatever serverMessaging says.
+  assert.match(employee,/employee-suite\.js\?v=20260929invoicing/);
 });
 
 test('recurring visits request a server-side handoff clone instead of copying prior execution or payments',()=>{

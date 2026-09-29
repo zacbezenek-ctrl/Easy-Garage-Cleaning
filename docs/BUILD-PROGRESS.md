@@ -479,6 +479,10 @@ draft PR. The owner merges in phase order. See **Decisions** D-001.
   server stores no trail and refuses later location updates. No-fix clock-ins are saved and flagged behind
   `EGC_CLOCK_IN_WITHOUT_FIX`; with `EGC_JOB_STATUS_MOVES_TIME` job statuses move the crew member's time (travel/work) and
   leads move clocked-in crew-mates. Timesheets, My pay, Gusto rows and the payroll CSV show per-job work and travel.
+- **M5-SEND** (trimmed to the HighLevel rule) Hub Invoicing screen and /api/invoice-batch: owner/manager batch invoice
+  issue through money-service invoice.issue (one derived request id per job, replay-safe, MONEY_API_ENABLED), each
+  issue adding the egc-invoice-issued tag through the MONEY-GHL-PARITY trigger. The Hub's invoice_send and
+  payment_reminder sends are removed; HighLevel keeps the invoice and overdue messages.
 
 ## In progress
 
@@ -591,6 +595,7 @@ one prefixed commit only after the full root suite (and the platform suite when 
 | FIX-CREW-PRICE-LEAK | P1: keep quoted prices out of every crew-visible brief (crew_brief, strip on write and read, backfill) | merged (0162bfc) |
 | FUN-06 | iPad walkthrough recorder on the gameplan (EGC_WALKTHROUGH_VISIT_ENABLED) | merged (323c943) |
 | CREW-TIME | P1: clock-in-only location, status-driven job time and per-job pay rows (flags off) | merged (1507863) |
+| M5-SEND | Hub invoicing: batch issue plus the egc-invoice-issued tag (Hub invoice sends removed) | merged (023f80a) |
 
 ## Next
 

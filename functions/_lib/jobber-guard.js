@@ -15,10 +15,10 @@
  * behaves as before:
  *   EGC_JOBBER_GUARD_BOOKING   /api/crew-hook stops forwarding signed game plans
  *                              to the Zap that creates a Jobber job.
- *   EGC_JOBBER_GUARD_BILLING   the money API refuses invoice.issue, and the
- *                              messaging cron holds deposit and payment reminders,
- *                              while an open Jobber bill for the customer (or a
- *                              settled imported balance for the job) is saved.
+ *   EGC_JOBBER_GUARD_BILLING   the money API and the invoice batch refuse
+ *                              invoice.issue, and the messaging cron holds deposit
+ *                              reminders, while an open Jobber bill for the customer
+ *                              (or a settled imported balance for the job) is saved.
  *   EGC_JOBBER_GUARD_MESSAGING the messaging cron holds automatic customer
  *                              reminders while the customer has open Jobber work
  *                              or an open Jobber invoice that Jobber may message.
@@ -40,7 +40,7 @@ export const JOBBER_GUARD_FINDING_LIMIT = 1000;
 export const JOBBER_GUARD_SCHEMA = 1;
 // The cron's automatic customer messages (messaging-scheduler SCHEDULED_KINDS
 // with a customer audience); billing holds only the money reminders.
-export const GUARDED_MESSAGE_KINDS = Object.freeze({ billing: Object.freeze(['deposit_reminder', 'payment_reminder']), messaging: Object.freeze(['day_before_reminder', 'deposit_reminder', 'payment_reminder', 'estimate_expiring']) });
+export const GUARDED_MESSAGE_KINDS = Object.freeze({ billing: Object.freeze(['deposit_reminder']), messaging: Object.freeze(['day_before_reminder', 'deposit_reminder', 'estimate_expiring']) });
 // What each finding can hold while its surface switch is on. Requests, payments
 // and HighLevel records are report-only: the Hub never refuses its own work
 // because of them.

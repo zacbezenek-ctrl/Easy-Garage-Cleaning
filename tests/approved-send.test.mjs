@@ -7,7 +7,7 @@ import { messagingStorage } from '../functions/_lib/message-send-store.js';
 import { quietHoursDecision, reminderWindow, MESSAGE_POLICIES } from '../functions/_lib/message-policies.js';
 import { TEMPLATE_KINDS } from '../functions/_lib/message-template-defaults.js';
 import { crewJobProjection } from '../functions/_lib/crew-job-projection.js';
-import { customerDepositState, customerMoneyState } from '../functions/_lib/customer-payments.js';
+import { customerDepositState } from '../functions/_lib/customer-payments.js';
 import { env, owner, manager, crew, otherCrew, automation, job, memoryStore, fakeGhl, clock, uuid, NOW } from './helpers/messaging-fixture.mjs';
 
 const code = expected => error => { assert.equal(error.code, expected); return true; };
@@ -258,14 +258,14 @@ test('a job change during recipient verification cancels the send before any cla
   assert.equal(f.ghl.sends().length, 0); assert.equal(f.ledgers().length, 0);
 });
 
-test('roles follow the policy: assigned crew for on-my-way, managers for invoices, business staff for reviews', async () => {
-  const f = await setup({ kinds: ['on_my_way', 'invoice_send', 'review_request'], links: { payLink: async () => PAY }, jobFields: { status: 'scheduled' } });
+test('roles follow the policy: assigned crew for on-my-way, managers for billing reminders, business staff for reviews', async () => {
+  const f = await setup({ kinds: ['on_my_way', 'deposit_reminder', 'review_request'], links: { payLink: async () => PAY }, jobFields: { status: 'scheduled' } });
   await assert.rejects(f.service.preview(otherCrew, onMyWay()), code('messaging_forbidden'));
   await assert.rejects(f.service.preview({ ...crew, user: '' }, onMyWay()), code('messaging_sign_in_required'));
   assert.equal((await f.service.preview(crew, onMyWay())).status, 'ready');
-  await assert.rejects(f.service.preview(crew, { kind: 'invoice_send', jobId: 'job-1' }), code('messaging_forbidden'));
-  await assert.rejects(f.service.preview({ ...manager, businessAccess: false }, { kind: 'invoice_send', jobId: 'job-1' }), code('messaging_forbidden'));
-  assert.equal((await f.service.preview(manager, { kind: 'invoice_send', jobId: 'job-1' })).status, 'ready');
+  await assert.rejects(f.service.preview(crew, { kind: 'deposit_reminder', jobId: 'job-1' }), code('messaging_forbidden'));
+  await assert.rejects(f.service.preview({ ...manager, businessAccess: false }, { kind: 'deposit_reminder', jobId: 'job-1' }), code('messaging_forbidden'));
+  assert.equal((await f.service.preview(manager, { kind: 'deposit_reminder', jobId: 'job-1' })).status, 'ready');
   await assert.rejects(f.service.preview(manager, { kind: 'review_request', jobId: 'job-1' }), error => error.code === 'messaging_not_eligible' && error.details.reason === 'job_not_complete');
   await assert.rejects(f.service.preview(crew, { kind: 'on_my_way', jobId: 'job-1', overrides: { etaMinutes: 20, body: 'x' } }), code('messaging_override_not_allowed'));
   await assert.rejects(f.service.preview(crew, onMyWay({ overrides: { etaMinutes: 0 } })), code('messaging_override_invalid'));
@@ -282,33 +282,38 @@ test('roles follow the policy: assigned crew for on-my-way, managers for invoice
 test('private links are generated at send time, delivered, and never stored in the ledger or job', async () => {
   let calls = [];
   const links = { payLink: async context => { calls.push([context.purpose, context.sendKey]); return PAY; } };
-  const f = await setup({ kinds: ['payment_reminder', 'invoice_send'], links, attachments: async context => context.kind === 'invoice_send' ? [{ name: 'INV-1001.pdf', url: 'https://files.example.invalid/inv-1001.pdf' }] : [] });
-  const preview = await f.service.preview(manager, { kind: 'payment_reminder', jobId: 'job-1' });
+  const f = await setup({ kinds: ['deposit_reminder'], links });
+  const preview = await f.service.preview(manager, { kind: 'deposit_reminder', jobId: 'job-1' });
   assert.match(preview.body, /\[secure link\]/); assert.doesNotMatch(preview.body, /synthetic-pay-token/);
   assert.equal(preview.length, [...preview.body.replace('[secure link]', PAY)].length);
-  const sent = await f.service.send(manager, { kind: 'payment_reminder', jobId: 'job-1', requestId: uuid(), confirmToken: preview.confirmToken });
+  const sent = await f.service.send(manager, { kind: 'deposit_reminder', jobId: 'job-1', requestId: uuid(), confirmToken: preview.confirmToken });
   assert.equal(sent.status, 'submitted');
   assert.match(f.ghl.sends()[0].body.message, /synthetic-pay-token/);
-  assert.match(f.ghl.sends()[0].body.message, /\$1,200\.00 due October 1/);
+  assert.match(f.ghl.sends()[0].body.message, /your \$300\.00 deposit/);
   assert.deepEqual(calls.map(([purpose]) => purpose), ['preview', 'send']);
-  assert.equal(calls[0][1], 'payment_reminder:job-1:INV-1001:2026-09-17', 'the key is the 7-day reminder window counted from the due date');
+  assert.equal(calls[0][1], 'deposit_reminder:job-1:2026-09-22:2026-09-22', 'the key is the 3-day reminder window counted from the service date');
   const stored = JSON.stringify([...f.store.rows.values()]);
   assert.doesNotMatch(stored, /synthetic-pay-token/, 'bearer links never reach Firestore');
-  const email = await f.service.preview(manager, { kind: 'invoice_send', jobId: 'job-1' });
-  assert.deepEqual(email.attachments, ['INV-1001.pdf']); assert.equal(email.subject, 'Your Easy Garage Cleaning invoice INV-1001');
-  f.store.edit('jobs/job-1', { customer: '<b>Synthetic</b> & Co' });
-  const escaped = await f.service.preview(manager, { kind: 'invoice_send', jobId: 'job-1' });
-  await f.service.send(manager, { kind: 'invoice_send', jobId: 'job-1', requestId: uuid(), confirmToken: escaped.confirmToken });
-  const body = f.ghl.sends()[1].body;
+  // An owner-approved email wording carries attachments and escapes every value into its HTML.
+  const mail = await setup({ kinds: [], links, attachments: async context => context.kind === 'deposit_reminder' ? [{ name: 'EST-1001.pdf', url: 'https://files.example.invalid/est-1001.pdf' }] : [] });
+  const seed = await readTemplate(mail.store, 'deposit_reminder');
+  await mutateTemplate(mail.store, manager, { action: 'save_draft', requestId: uuid(), kind: 'deposit_reminder', expectedVersion: seed.latestVersion, channel: 'Email', subject: 'Your Easy Garage Cleaning deposit', body: 'Hi {{firstName}},\n\nYour {{balance}} deposit can be paid here: {{payLink}}' }, NOW);
+  const drafted = await readTemplate(mail.store, 'deposit_reminder'), version = drafted.versions.at(-1);
+  await mutateTemplate(mail.store, owner, { action: 'approve', requestId: uuid(), kind: 'deposit_reminder', expectedVersion: drafted.latestVersion, version: version.version, hash: version.hash }, NOW);
+  const email = await mail.service.preview(manager, { kind: 'deposit_reminder', jobId: 'job-1' });
+  assert.deepEqual(email.attachments, ['EST-1001.pdf']); assert.equal(email.subject, 'Your Easy Garage Cleaning deposit');
+  mail.store.edit('jobs/job-1', { customer: '<b>Synthetic</b> & Co' });
+  const escaped = await mail.service.preview(manager, { kind: 'deposit_reminder', jobId: 'job-1' });
+  await mail.service.send(manager, { kind: 'deposit_reminder', jobId: 'job-1', requestId: uuid(), confirmToken: escaped.confirmToken });
+  const body = mail.ghl.sends()[0].body;
   assert.equal(body.type, 'Email'); assert.equal(body.emailTo, 'synthetic@example.invalid');
-  assert.deepEqual(body.attachments, ['https://files.example.invalid/inv-1001.pdf']);
+  assert.deepEqual(body.attachments, ['https://files.example.invalid/est-1001.pdf']);
   assert.match(body.html, /^<p>Hi &lt;b&gt;Synthetic&lt;\/b&gt;,<\/p>/); assert.match(body.html, /<a href="https:\/\/easygaragecleaning\.com\/pay\/synthetic-pay-token">/);
-  const noLink = await setup({ kinds: ['payment_reminder'] });
-  await assert.rejects(noLink.service.preview(manager, { kind: 'payment_reminder', jobId: 'job-1' }), error => error.code === 'messaging_template_variable_missing' && error.details.variable === 'payLink');
-  const paid = await setup({ kinds: ['payment_reminder'], links, jobFields: { payment: { amount: 1200, verified: true }, invoice: { number: 'INV-1001', amount: 1200, balance: 0, dueDate: '2026-10-01', status: 'issued' } } });
-  await assert.rejects(paid.service.preview(manager, { kind: 'payment_reminder', jobId: 'job-1' }), error => error.code === 'messaging_not_eligible' && error.details.reason === 'nothing_due');
+  const noLink = await setup({ kinds: ['deposit_reminder'] });
+  await assert.rejects(noLink.service.preview(manager, { kind: 'deposit_reminder', jobId: 'job-1' }), error => error.code === 'messaging_template_variable_missing' && error.details.variable === 'payLink');
+  const paid = await setup({ kinds: ['deposit_reminder'], links, jobFields: { payment: { amount: 300, verified: true } } });
+  await assert.rejects(paid.service.preview(manager, { kind: 'deposit_reminder', jobId: 'job-1' }), error => error.code === 'messaging_not_eligible' && error.details.reason === 'nothing_due');
 });
-
 test('human-written follow-ups are confirmed exactly as written and deduplicated by content', async () => {
   const f = await setup({ kinds: [] }), input = { kind: 'followup_draft', jobId: 'job-1', overrides: { body: 'Hi {{firstName}}, checking in about shelving options. Call {{companyPhone}}.' } };
   await assert.rejects(f.service.preview(crew, input), code('messaging_forbidden'));
@@ -392,17 +397,15 @@ test('the Firestore adapter maps precondition failures and lost responses to mes
 
 test('billing messages never reach the crew-visible customer thread', async () => {
   const links = { payLink: async () => PAY };
-  const f = await setup({ kinds: ['on_my_way', 'invoice_send', 'payment_reminder', 'deposit_reminder'], links });
-  for (const kind of ['invoice_send', 'payment_reminder', 'deposit_reminder']) {
-    const sent = await confirmAndSend(f, manager, { kind, jobId: 'job-1' });
-    assert.deepEqual([sent.status, sent.mirror], ['submitted', 'saved'], kind);
-  }
-  assert.match(f.ghl.sends().map(call => call.body.message).join(' '), /INV-1001[\s\S]*\$1,200\.00[\s\S]*\$300\.00/, 'the customer still receives the amounts');
+  const f = await setup({ kinds: ['on_my_way', 'deposit_reminder'], links });
+  const sent = await confirmAndSend(f, manager, { kind: 'deposit_reminder', jobId: 'job-1' });
+  assert.deepEqual([sent.status, sent.mirror], ['submitted', 'saved']);
+  assert.match(f.ghl.sends().map(call => call.body.message).join(' '), /\$300\.00/, 'the customer still receives the amount');
   const row = { ...f.row(), id: 'job-1' };
-  assert.deepEqual(row.communicationLog.map(entry => entry.event), ['invoice_send', 'payment_reminder', 'deposit_reminder'], 'the business-only log records every billing send');
+  assert.deepEqual(row.communicationLog.map(entry => entry.event), ['deposit_reminder'], 'the business-only log records every billing send');
   assert.equal(row.customerConversation, undefined);
   const crewView = JSON.stringify(crewJobProjection(row));
-  for (const secret of ['INV-1001', '1,200', '$300.00', 'secure link', 'October 1']) assert.ok(!crewView.includes(secret), secret);
+  for (const secret of ['$300.00', 'secure link', 'deposit can be paid']) assert.ok(!crewView.includes(secret), secret);
   await confirmAndSend(f, crew, onMyWay());
   assert.match(crewJobProjection({ ...f.row(), id: 'job-1' }).customerConversation.at(-1).body, /on the way/, 'operational messages stay visible to the crew');
   for (const policy of Object.values(MESSAGE_POLICIES).filter(policy => policy.template)) {
@@ -410,25 +413,22 @@ test('billing messages never reach the crew-visible customer thread', async () =
     assert.equal(policy.billing, money, `${policy.kind} billing flag matches whether its wording can quote money`);
   }
 });
-
-test('void, superseded, draft, paid and unverified invoices are never sent or chased, by a person or automation', async () => {
+test('invoices and payment reminders are HighLevel\'s: no approved-send kind exists for them, and unverified or cancelled deposits are never chased', async () => {
   const links = { payLink: async () => PAY };
-  const cases = [[{ status: 'void' }, 'invoice_not_payable'], [{ status: 'superseded' }, 'invoice_not_payable'], [{ status: 'draft' }, 'invoice_not_payable'], [{ status: 'paid' }, 'invoice_not_payable'],
-    [{ status: 'pending_verification' }, 'invoice_not_payable'], [{ status: undefined }, 'invoice_not_payable']];
-  for (const [invoice, reason] of cases) {
-    const f = await setup({ kinds: ['payment_reminder', 'invoice_send'], automated: ['payment_reminder'], links, jobFields: { invoice: { ...job().invoice, ...invoice } } });
-    await assert.rejects(f.service.preview(manager, { kind: 'payment_reminder', jobId: 'job-1' }), notEligible(reason), JSON.stringify(invoice));
-    await assert.rejects(f.service.preview(manager, { kind: 'invoice_send', jobId: 'job-1' }), notEligible(reason));
-    await assert.rejects(f.service.send(automation, { kind: 'payment_reminder', jobId: 'job-1' }), notEligible(reason));
-    assert.equal(f.ghl.calls.length, 0); assert.equal(f.ledgers().length, 0);
+  const f = await setup({ kinds: ['deposit_reminder'], automated: ['deposit_reminder'], links });
+  for (const kind of ['invoice_send', 'payment_reminder']) {
+    assert.deepEqual([Object.hasOwn(MESSAGE_POLICIES, kind), Object.hasOwn(TEMPLATE_KINDS, kind)], [false, false], kind);
+    await assert.rejects(f.service.preview(manager, { kind, jobId: 'job-1' }), code('messaging_kind_unknown'), kind);
+    await assert.rejects(f.service.send(automation, { kind, jobId: 'job-1' }), code('messaging_kind_unknown'), kind);
+    await assert.rejects(f.service.status(manager, { kind, jobId: 'job-1' }), code('messaging_kind_unknown'), kind);
   }
-  const cancelled = await setup({ kinds: ['payment_reminder'], automated: ['payment_reminder'], links, jobFields: { status: 'cancelled', pipelineStatus: 'cancelled' } });
-  await assert.rejects(cancelled.service.send(automation, { kind: 'payment_reminder', jobId: 'job-1' }), notEligible('invoice_not_payable'));
-  const review = await setup({ kinds: ['payment_reminder'], links, jobFields: { payment: { amount: 200 } } });
-  await assert.rejects(review.service.preview(manager, { kind: 'payment_reminder', jobId: 'job-1' }), notEligible('payment_needs_review'));
-  assert.equal(cancelled.ghl.calls.length + review.ghl.calls.length, 0);
+  const cancelled = await setup({ kinds: ['deposit_reminder'], automated: ['deposit_reminder'], links, jobFields: { status: 'cancelled', pipelineStatus: 'cancelled' } });
+  await assert.rejects(cancelled.service.send(automation, { kind: 'deposit_reminder', jobId: 'job-1' }), notEligible('not_upcoming'));
+  const review = await setup({ kinds: ['deposit_reminder'], links, jobFields: { payment: { amount: 200 } } });
+  await assert.rejects(review.service.preview(manager, { kind: 'deposit_reminder', jobId: 'job-1' }), notEligible('payment_needs_review'));
+  assert.equal(f.ghl.calls.length + cancelled.ghl.calls.length + review.ghl.calls.length, 0);
+  assert.equal(f.ledgers().length + cancelled.ledgers().length + review.ledgers().length, 0);
 });
-
 test('quoted amounts come from the same helpers as the portal and Stripe checkout', async () => {
   const links = { payLink: async () => PAY };
   const deposit = { estimate: { ...job().estimate, depositRequired: 400 }, deposit: { amount: 250, paidAmount: 0 } };
@@ -440,31 +440,32 @@ test('quoted amounts come from the same helpers as the portal and Stripe checkou
   assert.match((await capped.service.preview(manager, { kind: 'deposit_reminder', jobId: 'job-1' })).body, /your \$1,200\.00 deposit/, 'a deposit never exceeds the quote total');
   const half = await setup({ kinds: ['deposit_reminder'], links, jobFields: { estimate: { ...job().estimate, depositRequired: undefined }, deposit: undefined } });
   assert.match((await half.service.preview(manager, { kind: 'deposit_reminder', jobId: 'job-1' })).body, /your \$600\.00 deposit/, 'unsigned deposits default to half the quote');
-  const balance = { estimate: { ...job().estimate, amount: 1200 }, payment: { amount: 200, verified: true }, invoice: { ...job().invoice, amount: 1400, balance: 999 } };
-  assert.equal(customerMoneyState(job(balance)).balance, 1000);
-  const b = await setup({ kinds: ['payment_reminder'], links, jobFields: balance });
-  const reminder = await b.service.preview(manager, { kind: 'payment_reminder', jobId: 'job-1' });
-  assert.match(reminder.body, /has \$1,000\.00 due/); assert.doesNotMatch(reminder.body, /\$999|\$1,400/);
+  const paidPart = { estimate: { ...job().estimate, depositRequired: 400 }, payment: { amount: 150, verified: true }, deposit: { amount: 400, paidAmount: 999 } };
+  assert.equal(customerDepositState(job(paidPart)).due, 250);
+  const part = await setup({ kinds: ['deposit_reminder'], links, jobFields: paidPart });
+  const reminder = await part.service.preview(manager, { kind: 'deposit_reminder', jobId: 'job-1' });
+  assert.match(reminder.body, /your \$250\.00 deposit/); assert.doesNotMatch(reminder.body, /\$999|\$400\.00/);
 });
 
 test('automated reminders keep a cadence even when a daily job runs every day', async () => {
   assert.equal(reminderWindow('2026-10-01', '2026-09-22', 7), '2026-09-17');
   assert.equal(reminderWindow('2026-10-01', '2026-09-23', 7), '2026-09-17');
   assert.equal(reminderWindow('2026-10-01', '2026-09-24', 7), '2026-09-24');
-  const f = await setup({ kinds: ['payment_reminder'], automated: ['payment_reminder'], links: { payLink: async () => PAY } });
-  const input = { kind: 'payment_reminder', jobId: 'job-1' };
+  // A Saturday 2026-10-03 visit: the 3-day windows counted back from it start on 2026-09-21 and 2026-09-24.
+  const f = await setup({ kinds: ['deposit_reminder'], automated: ['deposit_reminder'], links: { payLink: async () => PAY }, jobFields: { date: '2026-10-03' } });
+  const input = { kind: 'deposit_reminder', jobId: 'job-1' };
   assert.equal((await f.service.send(automation, input)).status, 'submitted');
   f.time.advance(DAY);
   const nextDay = await f.service.send(automation, input);
   assert.deepEqual([nextDay.status, nextDay.alreadyRecorded], ['already_sent', true]);
   f.time.advance(DAY);
   const edge = await f.service.send(automation, input);
-  assert.deepEqual([edge.status, edge.reason, edge.notBefore], ['deferred', 'reminder_cadence', '2026-09-29T18:00:00.000Z'], 'a new window does not allow a reminder on the next day');
+  assert.deepEqual([edge.status, edge.reason, edge.notBefore], ['deferred', 'reminder_cadence', '2026-09-25T18:00:00.000Z'], 'a new window does not allow a reminder on the next day');
   assert.equal(f.ghl.sends().length, 1); assert.equal(f.ledgers().length, 1);
   assert.equal((await f.service.preview(manager, input)).status, 'ready', 'a person may still confirm one reminder in the new window');
-  f.time.set('2026-09-29T18:00:00.000Z');
-  const weekLater = await f.service.send(automation, input);
-  assert.deepEqual([weekLater.status, weekLater.sendKey], ['submitted', 'payment_reminder:job-1:INV-1001:2026-09-24']);
+  f.time.set('2026-09-25T18:00:00.000Z');
+  const later = await f.service.send(automation, input);
+  assert.deepEqual([later.status, later.sendKey], ['submitted', 'deposit_reminder:job-1:2026-10-03:2026-09-24']);
   assert.equal(f.ghl.sends().length, 2);
   const deposit = await setup({ kinds: ['deposit_reminder'], automated: ['deposit_reminder'], links: { payLink: async () => PAY }, jobFields: { date: '2026-10-02' } });
   const dInput = { kind: 'deposit_reminder', jobId: 'job-1' };
@@ -495,7 +496,7 @@ test('a confirmed preview keeps its send key when a time bucket rolls over befor
 
 test('status reads the ledger without re-checking eligibility, template approval or the date', async () => {
   const links = { payLink: async () => PAY };
-  const f = await setup({ kinds: ['on_my_way', 'payment_reminder'], links, rows: { 'jobs/job-2': job() } });
+  const f = await setup({ kinds: ['on_my_way', 'deposit_reminder'], links, rows: { 'jobs/job-2': job() } });
   await confirmAndSend(f, crew, onMyWay());
   f.store.edit('jobs/job-1', { status: 'completed', pipelineStatus: 'completed' });
   const state = await readTemplate(f.store, 'on_my_way');
@@ -505,25 +506,25 @@ test('status reads the ledger without re-checking eligibility, template approval
   assert.equal((await f.service.status(crew, onMyWay())).status, 'submitted', 'the assigned crew member can still check their message');
   await assert.rejects(f.service.status(otherCrew, onMyWay()), code('messaging_forbidden'));
   f.store.edit('jobs/job-1', { status: 'scheduled', pipelineStatus: 'scheduled' });
-  const reminder = await confirmAndSend(f, manager, { kind: 'payment_reminder', jobId: 'job-1' });
+  const reminder = await confirmAndSend(f, manager, { kind: 'deposit_reminder', jobId: 'job-1' });
   f.time.advance(3 * DAY);
-  f.store.edit('jobs/job-1', { payment: { amount: 1200, verified: true }, invoice: { ...job().invoice, status: 'paid', balance: 0 } });
-  const later = await f.service.status(manager, { kind: 'payment_reminder', jobId: 'job-1', sendKey: reminder.sendKey });
+  f.store.edit('jobs/job-1', { payment: { amount: 300, verified: true } });
+  const later = await f.service.status(manager, { kind: 'deposit_reminder', jobId: 'job-1', sendKey: reminder.sendKey });
   assert.deepEqual([later.status, later.attempts, later.canRetry], ['submitted', 1, false]);
-  assert.equal((await f.service.status(manager, { kind: 'payment_reminder', jobId: 'job-1' })).status, 'not_sent', 'without the key, status looks up the current window');
-  assert.equal((await f.service.status(manager, { kind: 'payment_reminder', jobId: 'job-2', sendKey: reminder.sendKey })).status, 'not_sent', 'a key only reports its own record');
+  assert.equal((await f.service.status(manager, { kind: 'deposit_reminder', jobId: 'job-1' })).status, 'not_sent', 'without the key, status looks up the current window');
+  assert.equal((await f.service.status(manager, { kind: 'deposit_reminder', jobId: 'job-2', sendKey: reminder.sendKey })).status, 'not_sent', 'a key only reports its own record');
   assert.equal((await f.service.status(manager, { kind: 'on_my_way', jobId: 'job-1', overrides: { etaMinutes: 20 }, sendKey: reminder.sendKey })).status, 'not_sent', 'a key only reports its own kind');
-  await assert.rejects(f.service.status(crew, { kind: 'payment_reminder', jobId: 'job-1', sendKey: reminder.sendKey }), code('messaging_forbidden'));
-  await assert.rejects(f.service.status(manager, { kind: 'payment_reminder', jobId: 'job-1', sendKey: 42 }), code('messaging_request_invalid'));
+  await assert.rejects(f.service.status(crew, { kind: 'deposit_reminder', jobId: 'job-1', sendKey: reminder.sendKey }), code('messaging_forbidden'));
+  await assert.rejects(f.service.status(manager, { kind: 'deposit_reminder', jobId: 'job-1', sendKey: 42 }), code('messaging_request_invalid'));
   await assert.rejects(f.service.status(manager, { kind: 'followup_draft', jobId: 'job-1', overrides: { body: 'Hi' } }), code('messaging_request_invalid'));
 });
 
 test('crew cannot probe which records exist for message types they may not use', async () => {
-  const f = await setup({ kinds: ['on_my_way', 'invoice_send', 'portal_magic_link'] });
+  const f = await setup({ kinds: ['on_my_way', 'deposit_reminder', 'portal_magic_link'] });
   const answers = [];
   for (const jobId of ['job-1', 'missing-job']) {
     const errors = [];
-    for (const input of [{ kind: 'invoice_send', jobId }, onMyWay({ jobId })]) await f.service.preview(otherCrew, input).catch(error => errors.push([error.code, error.status, error.message]));
+    for (const input of [{ kind: 'deposit_reminder', jobId }, onMyWay({ jobId })]) await f.service.preview(otherCrew, input).catch(error => errors.push([error.code, error.status, error.message]));
     assert.deepEqual(errors.map(([code, status]) => [code, status]), [['messaging_forbidden', 403], ['messaging_forbidden', 403]], jobId);
     answers.push(errors);
   }
@@ -531,10 +532,10 @@ test('crew cannot probe which records exist for message types they may not use',
   await assert.rejects(f.service.preview(crew, { kind: 'portal_magic_link', accountId: 'missing-account' }), code('messaging_forbidden'));
   const customer = { user: 'customer:acct-1', kind: 'customer', source: 'portal', customerAccountId: 'acct-1' };
   await assert.rejects(f.service.send(customer, { kind: 'portal_magic_link', accountId: 'acct-2', requestId: uuid() }), code('messaging_forbidden'));
-  await assert.rejects(f.service.preview(manager, { kind: 'invoice_send', jobId: 'missing-job' }), code('messaging_target_not_found'));
+  await assert.rejects(f.service.preview(manager, { kind: 'deposit_reminder', jobId: 'missing-job' }), code('messaging_target_not_found'));
   const reads = [];
   const probe = createApprovedSendService({ store: { ...f.store, read: async (collection, id) => { reads.push(`${collection}/${id}`); return f.store.read(collection, id); } }, messenger: {}, clock: f.time, env });
-  await assert.rejects(probe.preview(crew, { kind: 'invoice_send', jobId: 'job-1' }), code('messaging_forbidden'));
+  await assert.rejects(probe.preview(crew, { kind: 'deposit_reminder', jobId: 'job-1' }), code('messaging_forbidden'));
   assert.deepEqual(reads, [], 'the record is not read before the role check');
 });
 

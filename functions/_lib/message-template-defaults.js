@@ -13,17 +13,6 @@ export const TEMPLATE_KINDS = Object.freeze({
     variables: [...common, 'serviceDate', 'arrivalWindow', 'portalLink'],
     body: 'Hi {{firstName}}, a friendly reminder from Easy Garage Cleaning: we will see you {{serviceDate}} with an arrival window of {{arrivalWindow}}. Questions or changes? Call or text {{companyPhone}}.',
   },
-  invoice_send: {
-    label: 'Invoice with pay link', audience: 'customer', channel: 'Email',
-    variables: [...common, 'invoiceNumber', 'balance', 'dueDate', 'payLink', 'portalLink'],
-    subject: 'Your Easy Garage Cleaning invoice {{invoiceNumber}}',
-    body: 'Hi {{firstName}},\n\nThank you for choosing Easy Garage Cleaning. Invoice {{invoiceNumber}} for {{balance}} is ready and due {{dueDate}}.\n\nYou can review and pay it securely here: {{payLink}}\n\nIf you have any questions, call or text us at {{companyPhone}}.\n\nThe Easy Garage Cleaning team',
-  },
-  payment_reminder: {
-    label: 'Payment reminder', audience: 'customer', channel: 'SMS',
-    variables: [...common, 'invoiceNumber', 'balance', 'dueDate', 'payLink'],
-    body: 'Hi {{firstName}}, a quick reminder from Easy Garage Cleaning that invoice {{invoiceNumber}} has {{balance}} due {{dueDate}}. You can pay securely here: {{payLink}} Questions? {{companyPhone}}',
-  },
   deposit_reminder: {
     label: 'Deposit reminder', audience: 'customer', channel: 'SMS',
     variables: [...common, 'balance', 'serviceDate', 'payLink'],
