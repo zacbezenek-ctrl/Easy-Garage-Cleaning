@@ -43,7 +43,10 @@ export class RecordingService{
     return identity;
   }
   private assertCurrentSource(row:Row,identity:Identity){
-    if(row.portalJobId!==identity.portalJobId||row.portalVisitId!==identity.portalVisitId||row.portalCustomerId!==identity.portalCustomerId||row.portalProjectId!==identity.portalProjectId)throw new OperationsError('recording_identity_changed',409);
+    // A visit can gain its exact project link after capture. Keep reads and manager refresh
+    // available while the job, visit and customer remain the same; approval still uses the
+    // stored revision and project in the Hub's compare-and-swap apply.
+    if(row.portalJobId!==identity.portalJobId||row.portalVisitId!==identity.portalVisitId||row.portalCustomerId!==identity.portalCustomerId)throw new OperationsError('recording_identity_changed',409);
   }
   async upload(claims:RecordingClaims,audio:Buffer,contentType:string){
     authorizeRecordingClaims(claims,this.workspace);
@@ -106,7 +109,7 @@ export class RecordingService{
     if(command.command==='recording.refresh_source'){
       if(!['owner','manager'].includes(c.actor.role))throw new OperationsError('human_manager_approval_required',403);
       if(row.status!=='draft'&&!(row.status==='approval_pending'&&row.lastErrorCode==='recording_source_revision_conflict'))throw new OperationsError('recording_review_refresh_not_safe',409);
-      await this.db.update(schema.walkthroughs).set({status:'draft',portalRevision:identity.portalRevision,approvalPayload:null,approvalFingerprint:null,approvalRequestId:null,lastErrorCode:null,updatedAt:new Date()}).where(and(eq(schema.walkthroughs.id,row.id),eq(schema.walkthroughs.updatedAt,row.updatedAt)));
+      await this.db.update(schema.walkthroughs).set({status:'draft',portalProjectId:identity.portalProjectId,portalRevision:identity.portalRevision,approvalPayload:null,approvalFingerprint:null,approvalRequestId:null,lastErrorCode:null,updatedAt:new Date()}).where(and(eq(schema.walkthroughs.id,row.id),eq(schema.walkthroughs.updatedAt,row.updatedAt)));
       return{ok:true,recording:publicRow(await this.row(row.id)),requiresNewReview:true};
     }
     if(command.command==='recording.retry'){

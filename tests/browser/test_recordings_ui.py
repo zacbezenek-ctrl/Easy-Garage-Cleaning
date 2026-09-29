@@ -16,7 +16,10 @@ class RecordingTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         cls.server=ThreadingHTTPServer(('127.0.0.1',0),partial(Handler,directory=str(ROOT)));threading.Thread(target=cls.server.serve_forever,daemon=True).start()
-        cls.pw=sync_playwright().start();cls.browser=getattr(cls.pw,os.environ.get('EGC_TEST_BROWSER','chromium')).launch(headless=True,args=['--no-sandbox'],**({'executable_path':os.environ['PLAYWRIGHT_CHROMIUM_EXECUTABLE']} if os.environ.get('PLAYWRIGHT_CHROMIUM_EXECUTABLE') else {}));cls.url=f'http://127.0.0.1:{cls.server.server_port}'
+        cls.pw=sync_playwright().start();engine=os.environ.get('EGC_TEST_BROWSER','chromium')
+        options={'args':['--no-sandbox']} if engine=='chromium' else {}
+        if engine=='chromium' and os.environ.get('PLAYWRIGHT_CHROMIUM_EXECUTABLE'):options['executable_path']=os.environ['PLAYWRIGHT_CHROMIUM_EXECUTABLE']
+        cls.browser=getattr(cls.pw,engine).launch(headless=True,**options);cls.url=f'http://127.0.0.1:{cls.server.server_port}'
     @classmethod
     def tearDownClass(cls):cls.browser.close();cls.pw.stop();cls.server.shutdown();cls.server.server_close()
     def setUp(self):

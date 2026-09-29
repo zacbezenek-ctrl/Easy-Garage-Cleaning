@@ -81,7 +81,7 @@
   ],
   "laterAuthorizedHubIntegration": {
     "scope": "iOS Walkthroughs and recording/transcript to office tasks",
-    "state": "local_implemented_pending_review_and_integrated_ci",
+    "state": "published_in_pr87_pending_final_ci_and_batch8_gate",
     "branch": "codex/hub-ios-walkthrough-completion",
     "merged": false,
     "localBrowserResults": {
@@ -89,8 +89,8 @@
       "hubMobile": "18/18",
       "actionCenter": "27/27"
     },
-    "reportedRecordingResults": "Chromium and WebKit recording browser suites passed; WebKit 13/13; coordinator report",
-    "localRootSuite": "Windows POSIX/CRLF fixture failures reported by coordinator; canonical Linux CI pending"
+    "recordingBrowserResults": "WebKit 13/13 locally",
+    "localRootSuite": "Windows POSIX/CRLF fixture expectations; Linux CI is merge evidence"
   },
   "additionalRunningBuilds": {
     "ownerReportedCount": 7,
@@ -107,7 +107,27 @@
     "pr": 87,
     "branch": "codex/hub-ios-walkthrough-completion",
     "implementationSha": "a13e01e81552edfabd2dcc61e1479cd3ed0ddb42",
-    "state": "draft_pending_ci_and_batch8",
-    "merged": false
+    "checkedHeadSha": "954390453443c61b0c9263adeab040e7a426827f",
+    "state": "draft_pending_followup_ci_and_batch8",
+    "merged": false,
+    "ciAtCheckedHead": {
+      "root": "success",
+      "platform": "success",
+      "operationsIntegration": "success",
+      "firestore": "success",
+      "businessHub": "success",
+      "mobileDeviceE2E": "success",
+      "lighthouse": "success",
+      "actionCenterFunctionsBundle": "success",
+      "actionCenterDatabasePlatform": "success",
+      "actionCenterBrowser": "success",
+      "actionCenterWebKit": "failed_linux_unsupported_no_sandbox_argument"
+    },
+    "followUp": {
+      "state": "included_with_this_handoff_revision_pending_ci",
+      "scope": ["authoritative office customer handoff", "exact recording project-link recovery", "Linux WebKit launch correction"],
+      "localResults": {"officeHandoffBrowser": "7/7", "recordingApi": "15/15", "proxyContact": "14/14", "dispatchRegressions": "43/43", "webkitRecordingsAfterLaunchFix": "13/13"},
+      "requires": "new PR head and complete CI rerun"
+    }
   }
 }

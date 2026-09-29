@@ -27,7 +27,7 @@ class BrowserTests(unittest.TestCase):
     def tearDownClass(cls): cls.browser.close();cls.pw.stop();cls.server.shutdown();cls.server.server_close()
     def setUp(self):
         self.context=self.browser.new_context(viewport={'width':1360,'height':1000});self.page=self.context.new_page()
-        self.items=[task()];self.calls=[];self.enabled=True;self.actor_role='owner';self.fail_once=False;self.stale=False;self.errors=[];self.calendar_available=False;self.send_available=False;self.send_errors=[];self.send_results=[];self.started=set()
+        self.items=[task()];self.calls=[];self.enabled=True;self.actor_role='owner';self.fail_once=False;self.stale=False;self.errors=[];self.calendar_available=False;self.send_available=False;self.send_errors=[];self.send_results=[];self.started=set();self.handoff_response=None;self.handoff_status=200;self.dispatch_reads=[]
         self.sold_revenue={'valueCents':None,'knownSubtotalCents':0,'unknownOccurrenceCount':1,'unknownValueCount':1,'missingValue':['confirmed-undated-sale'],'coverageIncomplete':True,'qualification':'Confirmed outcome has no verified occurrence date.','unknownOccurrenceEvents':[{'eventId':'confirmed-undated-sale','contactId':'synthetic-contact','valueCents':None,'currency':None}]}
         self.collected_revenue={'valueCents':None,'knownSubtotalCents':13900,'unknownOccurrenceCount':0,'unknownValueCount':0,'missingValue':[],'coverageIncomplete':True,'qualification':'Payment history is incomplete; the dated subtotal is not a complete total.','unknownOccurrenceEvents':[]}
         self.page.on('pageerror',lambda e:self.errors.append(str(e)))
@@ -38,6 +38,9 @@ class BrowserTests(unittest.TestCase):
     def route(self,route):
         req=route.request;p=urlparse(req.url)
         if p.hostname!='127.0.0.1': route.abort();return
+        if p.path=='/api/dispatch':
+            self.dispatch_reads.append(req.url)
+            route.fulfill(status=self.handoff_status if self.handoff_response is not None else 404,content_type='application/json',body=json.dumps(self.handoff_response if self.handoff_response is not None else {'ok':False,'code':'dispatch_job_not_found'}));return
         if p.path!='/api/operations': route.continue_();return
         def send(body,status=200):
             if body.get('authority')=='canonical_customer_event_ledger':body={**body,'soldRevenue':self.sold_revenue,'collectedRevenue':self.collected_revenue}
@@ -92,10 +95,60 @@ class BrowserTests(unittest.TestCase):
     def test_walkthrough_task_has_copy_handoff_without_sending(self):
         self.items=[task(kind='manual',portalJobId='visit-synthetic',sourceEvidence=[{'source':'recording','id':'recording-synthetic','excerpt':'Send the shelving options.'}],description='Reviewed shelving options and next steps.')]
         self.page.add_init_script("Object.defineProperty(navigator,'clipboard',{value:{writeText:async text=>{window.copiedOfficeText=text}}})")
-        self.open();self.detail();self.page.get_by_role('button',name='Copy office instructions',exact=True).click();expect(self.page.get_by_role('dialog')).to_contain_text('Copied. Open the customer in HighLevel');self.assertIn('Reviewed shelving options',self.page.evaluate('window.copiedOfficeText'));self.assertIn('visit-synthetic',self.page.evaluate('window.copiedOfficeText'));expect(self.page.get_by_role('link',name='Open HighLevel',exact=True)).to_have_attribute('href','https://app.gohighlevel.com/');self.assertFalse(any('send' in c['body']['command'] for c in self.calls))
+        self.open();self.detail();self.page.get_by_role('button',name='Copy office instructions',exact=True).click();expect(self.page.get_by_role('dialog')).to_contain_text('Copied. Review the customer and message in HighLevel before sending.');self.assertIn('Reviewed shelving options',self.page.evaluate('window.copiedOfficeText'));self.assertIn('visit-synthetic',self.page.evaluate('window.copiedOfficeText'));expect(self.page.get_by_role('link',name='Open HighLevel',exact=True)).to_have_attribute('href','https://app.gohighlevel.com/');self.assertFalse(any('send' in c['body']['command'] for c in self.calls))
     def test_walkthrough_handoff_copy_has_manual_fallback(self):
         self.items=[task(kind='manual',sourceEvidence=[{'source':'recording','id':'recording-synthetic','excerpt':'Call tomorrow.'}])];self.page.add_init_script("Object.defineProperty(navigator,'clipboard',{value:{writeText:async()=>{throw new Error('denied')}}})")
         self.open();self.detail();self.page.get_by_role('button',name='Copy office instructions',exact=True).click();expect(self.page.get_by_label('Office instructions to copy')).to_be_visible();self.assertIn('Call synthetic customer',self.page.get_by_label('Office instructions to copy').input_value())
+    def test_recording_handoff_uses_the_authoritative_customer_and_linked_highlevel_contact(self):
+        self.items=[task(kind='manual',portalJobId='visit-synthetic',description='Reviewed shelving options and next steps.',sourceEvidence=[{'source':'recording','id':'recording-synthetic','excerpt':'Send the shelving options.'}])]
+        contact='https://app.gohighlevel.com/v2/location/location123/contacts/detail/contact456'
+        self.handoff_response={'ok':True,'job':{'id':'visit-synthetic'},'customerHandoff':{'name':'Ada Synthetic','phone':'970-555-0123','highlevelContactUrl':contact,'reasonCode':None}}
+        self.page.add_init_script("Object.defineProperty(navigator,'clipboard',{value:{writeText:async text=>{window.copiedOfficeText=text}}})")
+        self.open();self.detail();handoff=self.page.locator('.ac-office-handoff')
+        expect(handoff).to_contain_text('Customer: Ada Synthetic');expect(handoff).to_contain_text('Phone: 970-555-0123');expect(handoff).to_contain_text('HighLevel contact linked to this visit')
+        expect(handoff.get_by_role('link',name='Open customer in HighLevel')).to_have_attribute('href',contact)
+        expect(handoff.get_by_role('link',name='970-555-0123')).to_have_attribute('href','tel:+19705550123')
+        handoff.get_by_role('button',name='Copy office instructions').click();copied=self.page.evaluate('window.copiedOfficeText')
+        for expected in ['Customer: Ada Synthetic','Phone: 970-555-0123','Reviewed shelving options and next steps.','Hub visit: visit-synthetic']:self.assertIn(expected,copied)
+        self.assertEqual(len(self.dispatch_reads),1)
+        self.assertIn('view=job&jobId=visit-synthetic',self.dispatch_reads[0])
+    def test_recording_handoff_keeps_generic_highlevel_link_when_contact_link_is_conflicted_or_unsafe(self):
+        self.items=[task(kind='manual',portalJobId='visit-synthetic',sourceEvidence=[{'source':'recording','id':'recording-synthetic','excerpt':'Send options.'}])]
+        good='https://app.gohighlevel.com/v2/location/location123/contacts/detail/contact456'
+        for reason,url in [('contact_link_conflict',good),(None,'https://app.gohighlevel.com.evil.test/v2/location/location123/contacts/detail/contact456')]:
+            self.handoff_response={'ok':True,'job':{'id':'visit-synthetic'},'customerHandoff':{'name':'Ada Synthetic','phone':'9705550123','highlevelContactUrl':url,'reasonCode':reason}}
+            self.open();self.detail();handoff=self.page.locator('.ac-office-handoff')
+            expect(handoff).to_contain_text('Customer: Ada Synthetic');expect(handoff).to_contain_text('No linked HighLevel contact page is available')
+            expect(handoff.get_by_role('link',name='Open HighLevel',exact=True)).to_have_attribute('href','https://app.gohighlevel.com/')
+            expect(handoff.get_by_role('link',name='Open customer in HighLevel')).to_have_count(0)
+            handoff.get_by_role('button',name='Copy office instructions').click()
+            self.assertFalse(any('task.send'==r['body']['command'] for r in self.calls))
+            self.page.get_by_role('dialog').get_by_role('button',name='Close',exact=True).click()
+    def test_recording_handoff_permission_error_has_no_guessed_contact(self):
+        self.items=[task(kind='manual',portalJobId='visit-synthetic',sourceEvidence=[{'source':'recording','id':'recording-synthetic','excerpt':'Call tomorrow.'}])]
+        self.handoff_status=403;self.handoff_response={'ok':False,'code':'dispatch_forbidden'}
+        self.open();self.detail();handoff=self.page.locator('.ac-office-handoff')
+        expect(handoff).to_contain_text('could not be verified')
+        expect(handoff.get_by_role('link',name='Open HighLevel',exact=True)).to_have_attribute('href','https://app.gohighlevel.com/')
+        expect(handoff.get_by_role('button',name='Copy office instructions')).to_be_enabled()
+        expect(handoff).not_to_contain_text('Customer:')
+    def test_closed_recording_handoff_does_not_fill_a_later_action(self):
+        self.items=[task(kind='manual',title='Recorded commitment',portalJobId='visit-first',sourceEvidence=[{'source':'recording','id':'recording-synthetic','excerpt':'Call tomorrow.'}]),task(title='Another action')]
+        self.page.add_init_script("""const originalFetch=window.fetch.bind(window);window.fetch=(url,options)=>String(url).startsWith('/api/dispatch?')?new Promise(resolve=>{window.releaseHandoff=()=>resolve(new Response(JSON.stringify({ok:true,job:{id:'visit-first'},customerHandoff:{name:'Wrong later customer',phone:'9705550199',highlevelContactUrl:'https://app.gohighlevel.com/v2/location/loc/contacts/detail/contact',reasonCode:null}}),{status:200,headers:{'Content-Type':'application/json'}}))}):originalFetch(url,options)""")
+        self.open();self.detail();expect(self.page.locator('.ac-office-handoff')).to_contain_text('Checking the current Hub customer link')
+        self.page.get_by_role('dialog').get_by_role('button',name='Close',exact=True).click()
+        self.page.locator('.ac-row').filter(has_text='Another action').click();expect(self.page.get_by_role('dialog')).to_contain_text('Another action')
+        self.page.evaluate('window.releaseHandoff()')
+        expect(self.page.get_by_role('dialog')).not_to_contain_text('Wrong later customer')
+        expect(self.page.locator('.ac-office-handoff')).to_have_count(0)
+    def test_hung_customer_lookup_enables_generic_handoff_after_timeout(self):
+        self.items=[task(kind='manual',portalJobId='visit-synthetic',sourceEvidence=[{'source':'recording','id':'recording-synthetic','excerpt':'Call tomorrow.'}])]
+        self.page.add_init_script("""const originalFetch=window.fetch.bind(window);window.fetch=(url,options)=>String(url).startsWith('/api/dispatch?')?new Promise((resolve,reject)=>options.signal.addEventListener('abort',()=>reject(new DOMException('aborted','AbortError')),{once:true})):originalFetch(url,options)""")
+        self.page.clock.install(time=NOW)
+        self.open();self.detail();handoff=self.page.locator('.ac-office-handoff');expect(handoff.get_by_role('button',name='Copy office instructions')).to_be_disabled()
+        self.page.clock.run_for(12010)
+        expect(handoff).to_contain_text('lookup timed out');expect(handoff.get_by_role('button',name='Copy office instructions')).to_be_enabled()
+        expect(handoff.get_by_role('link',name='Open HighLevel',exact=True)).to_have_attribute('href','https://app.gohighlevel.com/')
     def test_disabled_is_not_a_fake_empty_queue(self):
         self.enabled=False;self.open();expect(self.page.locator('[data-ac-content]')).to_contain_text('not an empty work queue');self.assertEqual([r for r in self.calls if r['body']['command']=='queue'],[])
     def test_desktop_and_mobile_have_no_horizontal_overflow(self):

@@ -12,6 +12,7 @@ import {assignmentKey,createJobAssignmentAccess} from './job-assignment.js';
 const BASE='https://firestore.googleapis.com/v1/projects/egcw-1ec83/databases/(default)/documents';
 const NAME='projects/egcw-1ec83/databases/(default)/documents';
 const id=value=>typeof value==='string'&&/^[A-Za-z0-9_-]{1,180}$/.test(value)&&!value.startsWith('secure_')&&!value.startsWith('_egc_');
+const contactId=value=>typeof value==='string'&&/^[A-Za-z0-9_-]{1,120}$/.test(value);
 const uuid=value=>typeof value==='string'&&/^[a-f0-9-]{36}$/i.test(value);
 function fail(code,status=409){throw Object.assign(new Error(code),{status});}
 async function read(env,path,fetcher){const r=await fetcher(env,BASE+'/'+path);if(r.status===404)return null;if(!r.ok)fail('recording_source_unavailable',503);const d=await r.json();return{...decodeFirestoreFields(d.fields),id:String(d.name||'').split('/').pop(),revision:d.updateTime};}
@@ -58,7 +59,10 @@ async function recordingSource(env,jobId,fetcher,profile=null){
   }
   const customer=await read(env,'customers/'+job.customerId,fetcher);
   if(!customer||customer.id!==job.customerId)fail('recording_customer_link_missing');
-  return{job,identity:{portalJobId:job.id,portalVisitId:visitId,portalCustomerId:job.customerId,portalProjectId:id(job.projectId)?job.projectId:null,portalRevision:job.revision,highlevelContactId:job.highlevelContactId||customer.highlevelContactId||null,authority:'employee_hub'}};
+  const jobContact=contactId(job.highlevelContactId)?job.highlevelContactId:null;
+  const customerContact=contactId(customer.highlevelContactId)?customer.highlevelContactId:null;
+  if(jobContact&&customerContact&&jobContact!==customerContact)fail('recording_contact_link_conflict');
+  return{job,identity:{portalJobId:job.id,portalVisitId:visitId,portalCustomerId:job.customerId,portalProjectId:id(job.projectId)?job.projectId:null,portalRevision:job.revision,highlevelContactId:jobContact||customerContact||null,authority:'employee_hub'}};
 }
 /** audit(entity,before,after) returns one create-only write (operations-command-policy.js)
  * that joins the approval's commit, so the hub_audit entry lands exactly with it. */

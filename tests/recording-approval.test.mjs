@@ -22,6 +22,17 @@ test('the original converted walkthrough remains a valid recording source, but a
   f.docs.get('jobs/visit-1').convertedJobId='different-job';
   await assert.rejects(resolveRecordingIdentity({},'job-1',f.fetcher),/visit_job_mismatch/);
 });
+test('recording source rejects conflicting CRM contacts and ignores invalid contact IDs',async()=>{
+  const f=fixture(),job=f.docs.get('jobs/visit-1'),customer=f.docs.get('customers/customer-1');
+  job.highlevelContactId='contact-job';customer.highlevelContactId='contact-customer';
+  await assert.rejects(resolveRecordingIdentity({},'visit-1',f.fetcher),error=>error.message==='recording_contact_link_conflict');
+  job.highlevelContactId='bad/contact';
+  assert.equal((await resolveRecordingIdentity({},'visit-1',f.fetcher)).highlevelContactId,'contact-customer');
+  customer.highlevelContactId='also/bad';
+  assert.equal((await resolveRecordingIdentity({},'visit-1',f.fetcher)).highlevelContactId,null);
+  delete job.highlevelContactId;delete customer.highlevelContactId;
+  assert.equal((await resolveRecordingIdentity({},'visit-1',f.fetcher)).highlevelContactId,null,'an unlinked visit remains a valid recording source');
+});
 test('staff review is atomic CAS plus unique receipt and does not overwrite signed price or scope',async()=>{const f=fixture();const result=await applyRecordingApproval({},command,actor,f.fetcher);assert.equal(result.ok,true);const writes=f.writes[0].writes;assert.equal(writes.length,3,'job CAS, receipt and (FUN-02) the scope.reviewed event');assert.deepEqual(writes[0].currentDocument,{updateTime:'revision-1'});assert.deepEqual(writes[1].currentDocument,{exists:false});assert.deepEqual(writes[2].currentDocument,{exists:false});assert.match(writes[2].update.name,/\/funnelEvents\/fe_[0-9a-f]{40}$/);assert.deepEqual(writes[0].updateMask.fieldPaths,['reviewedWalkthroughScope','updatedAt']);assert.equal(writes[0].update.fields.priceQuoted,undefined);assert.equal(writes[0].update.fields.acceptance,undefined);});
 test('known accepted approval replays without another write; changed payload cannot reuse it',async()=>{const f=fixture();f.docs.set('operation_recording_approvals/'+recordingId,{fingerprint:command.fingerprint,portalJobId:command.portalJobId,appliedAt:'saved'});assert.equal((await applyRecordingApproval({},command,actor,f.fetcher)).alreadyApplied,true);assert.equal(f.writes.length,0);await assert.rejects(applyRecordingApproval({},{...command,fingerprint:'b'.repeat(64)},actor,f.fetcher),/approval_conflict/);});
 test('stale source and concurrent CAS conflicts fail without a guessed retry',async()=>{const f=fixture();await assert.rejects(applyRecordingApproval({},{...command,expectedRevision:'stale'},actor,f.fetcher),/source_revision_conflict/);assert.equal(f.writes.length,0);f.setConflict();await assert.rejects(applyRecordingApproval({},command,actor,f.fetcher),/source_revision_conflict/);assert.equal(f.writes.length,1);});

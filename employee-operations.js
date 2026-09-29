@@ -175,15 +175,42 @@ function explainAction(task,commandName){const words={complete:['Complete action
 const BOOK_KINDS=Object.freeze({schedule_job:'job',callback:'walkthrough'});
 // Walkthrough commitments stay in the Hub queue. Staff can carry the reviewed
 // instructions into their existing HighLevel conversation without enabling sends.
-function officeHandoff(task,ui){
+function officeHandoff(task,ui,generation){
   if(!task.sourceEvidence?.some(e=>e.source==='recording'))return;
-  const content=[task.title,task.description,'Completion: '+(task.completionCondition||'Confirm the outcome'),task.portalJobId?'Hub visit: '+task.portalJobId:''].filter(Boolean).join('\n\n');
+  const base=[task.title,task.description,'Completion: '+(task.completionCondition||'Confirm the outcome'),task.portalJobId?'Hub visit: '+task.portalJobId:''].filter(Boolean);
+  let content=base.join('\n\n');
+  const current=()=>generation===state.generation&&state.dialog===ui.dialog;
+  // An external contact URL is useful only when it is the exact canonical HighLevel contact page.
+  const contactUrl=value=>{if(typeof value!=='string')return'';try{const url=new URL(value);return value===url.href&&url.origin==='https://app.gohighlevel.com'&&!url.username&&!url.password&&!url.search&&!url.hash&&/^\/v2\/location\/[A-Za-z0-9_-]+\/contacts\/detail\/[A-Za-z0-9_-]+$/.test(url.pathname)?url.href:'';}catch{return'';}};
+  const source=h('div',{class:'ac-muted',role:'status'},'Checking the current Hub customer link…');
+  const highlevel=h('a',{class:'ac-btn ac-link',href:'https://app.gohighlevel.com/',target:'_blank',rel:'noopener noreferrer'},'Open HighLevel');
   const note=h('p',{role:'status',class:'ac-muted'}),copy=button('Copy office instructions',async()=>{
-    try{await navigator.clipboard.writeText(content);note.textContent='Copied. Open the customer in HighLevel, review the message, and send it there.';}
-    catch{if(!ui.body.querySelector('[data-handoff-copy]')){const text=h('textarea',{'data-handoff-copy':'',readOnly:true,'aria-label':'Office instructions to copy',rows:8,value:content,style:'width:100%;font-size:16px'});box.append(text);text.focus();text.select();}note.textContent='Select and copy these instructions.';}
+    const exact=content;
+    try{await navigator.clipboard.writeText(exact);if(current())note.textContent='Copied. Review the customer and message in HighLevel before sending.';}
+    catch{if(!current())return;if(!ui.body.querySelector('[data-handoff-copy]')){const text=h('textarea',{'data-handoff-copy':'',readOnly:true,'aria-label':'Office instructions to copy',rows:8,value:exact,style:'width:100%;font-size:16px'});box.append(text);text.focus();text.select();}note.textContent='Select and copy these instructions.';}
   });
-  const box=h('section',{class:'ac-office-handoff'},h('h4',{},'Office follow-up'),h('p',{class:'ac-muted'},'Use these reviewed instructions to complete the follow-up. Customer messages are sent from HighLevel. Add the actual outcome when you complete this Hub task.'),h('div',{class:'ac-buttons'},copy,h('a',{class:'ac-btn ac-link',href:'https://app.gohighlevel.com/',target:'_blank',rel:'noopener noreferrer'},'Open HighLevel')),note);
+  copy.disabled=Boolean(task.portalJobId);
+  const box=h('section',{class:'ac-office-handoff'},h('h4',{},'Office follow-up'),h('p',{class:'ac-muted'},'Use these reviewed instructions to complete the follow-up. Customer messages are sent from HighLevel. Add the actual outcome when you complete this Hub task.'),source,h('div',{class:'ac-buttons'},copy,highlevel),note);
   ui.body.append(box);
+  const fallback=message=>{if(!current())return;source.replaceChildren(h('p',{},message));content=base.join('\n\n');highlevel.href='https://app.gohighlevel.com/';highlevel.textContent='Open HighLevel';copy.disabled=false;};
+  if(!task.portalJobId){fallback('No exact Hub visit is linked to this action. Find and verify the customer in HighLevel before contacting them.');return;}
+  void(async()=>{
+    const controller=new AbortController(),parent=state.controller?.signal,onAbort=()=>controller.abort();
+    parent?.addEventListener('abort',onAbort,{once:true});ui.dialog.addEventListener('close',onAbort,{once:true});
+    let timedOut=false;const timer=setTimeout(()=>{timedOut=true;controller.abort();},12000);
+    try{
+      const response=await fetch('/api/dispatch?'+new URLSearchParams({view:'job',jobId:task.portalJobId}),{credentials:'same-origin',cache:'no-store',signal:controller.signal});
+      const data=await response.json().catch(()=>({}));
+      if(!current())return;
+      if(!response.ok||data.ok!==true||data.job?.id!==task.portalJobId||!data.customerHandoff||typeof data.customerHandoff!=='object')throw new Error('customer_handoff_unavailable');
+      const handoff=data.customerHandoff,name=typeof handoff.name==='string'?handoff.name.trim().slice(0,300):'',phone=typeof handoff.phone==='string'?handoff.phone.trim().slice(0,80):'',tel=telHref(phone),url=handoff.reasonCode===null?contactUrl(handoff.highlevelContactUrl):'';
+      if(!name&&!phone){fallback('The Hub visit has no verified customer contact details. Find and verify the customer in HighLevel before contacting them.');return;}
+      source.replaceChildren(h('p',{},'Customer: '+(name||'Name unavailable in the Hub')),h('p',{},'Phone: ',tel?h('a',{href:tel},phone):phone||'Unavailable in the Hub'),url?h('p',{},'This is the HighLevel contact linked to this visit.'):h('p',{},'No linked HighLevel contact page is available. Search HighLevel using the Hub customer details before sending.'));
+      content=[name?'Customer: '+name:'Customer name: unavailable in the Hub',phone?'Phone: '+phone:'Phone: unavailable in the Hub',...base].join('\n\n');
+      highlevel.href=url||'https://app.gohighlevel.com/';highlevel.textContent=url?'Open customer in HighLevel':'Open HighLevel';copy.disabled=false;
+    }catch(error){if(!current()||error.name==='AbortError'&&!timedOut)return;fallback(timedOut?'The Hub customer lookup timed out. Find and verify the customer in HighLevel before contacting them.':'The current Hub customer record could not be verified. Find and verify the customer in HighLevel before contacting them.');}
+    finally{clearTimeout(timer);parent?.removeEventListener('abort',onAbort);ui.dialog.removeEventListener('close',onAbort);}
+  })();
 }
 function telHref(value){const digits=String(value||'').replace(/\D/g,''),e164=digits.length===10?'+1'+digits:digits.length===11&&digits[0]==='1'?'+'+digits:'';return e164?'tel:'+e164:'';}
 async function bookingActions(task,ui,generation){
@@ -208,7 +235,7 @@ async function bookingActions(task,ui,generation){
     row.replaceChildren(banner('The Hub record for this action could not be read, so there is no number to call yet. Reopen the action to retry.','warning'),book({kind}));
   }
 }
-async function detail(id){const generation=state.generation;const ui=openDialog('Action details');ui.body.append(h('p',{class:'ac-loading'},'Loading the current revision…'));try{const result=await rpc({command:'task.get',taskId:id});if(generation!==state.generation||state.dialog!==ui.dialog)return;const task=result.task;ui.body.replaceChildren();ui.body.append(h('span',{class:'ac-kicker'},labels[task.kind]||task.kind),h('h3',{},task.title));const list=h('dl',{class:'ac-detail-grid'});for(const [label,value] of [['Owner',ownerName(task.assignedUserId)],['Status',task.status],['Due / review',displayTime(attention(task))],['Approval',result.effectiveApproval],['Portal record',task.portalJobId||'Not linked'],['Revision',task.revision]])list.append(h('div',{},h('dt',{},label),h('dd',{},String(value))));ui.body.append(list);void bookingActions(task,ui,generation);if(task.description)ui.body.append(h('p',{style:'white-space:pre-wrap'},task.description));officeHandoff(task,ui);ui.body.append(h('h4',{},'Completion condition'),h('p',{},task.completionCondition||'Missing: add the evidence required to close this action.'));
+async function detail(id){const generation=state.generation;const ui=openDialog('Action details');ui.body.append(h('p',{class:'ac-loading'},'Loading the current revision…'));try{const result=await rpc({command:'task.get',taskId:id});if(generation!==state.generation||state.dialog!==ui.dialog)return;const task=result.task;ui.body.replaceChildren();ui.body.append(h('span',{class:'ac-kicker'},labels[task.kind]||task.kind),h('h3',{},task.title));const list=h('dl',{class:'ac-detail-grid'});for(const [label,value] of [['Owner',ownerName(task.assignedUserId)],['Status',task.status],['Due / review',displayTime(attention(task))],['Approval',result.effectiveApproval],['Portal record',task.portalJobId||'Not linked'],['Revision',task.revision]])list.append(h('div',{},h('dt',{},label),h('dd',{},String(value))));ui.body.append(list);void bookingActions(task,ui,generation);if(task.description)ui.body.append(h('p',{style:'white-space:pre-wrap'},task.description));officeHandoff(task,ui,generation);ui.body.append(h('h4',{},'Completion condition'),h('p',{},task.completionCondition||'Missing: add the evidence required to close this action.'));
 if(task.draftPayload){const d=task.draftPayload,review=draftReview(d);ui.body.append(banner('Draft review only. Approving here does not send a message or mark this task complete.',''),h('h4',{},String(d.channel||'').toUpperCase()+' to '+d.recipient));if(d.subject)ui.body.append(h('p',{},'Subject: '+d.subject));ui.body.append(h('div',{class:'ac-message-preview'},d.body),h('p',{class:'ac-muted'},'Proposed window: '+displayTime(d.sendWindowStart)+' – '+displayTime(d.sendWindowEnd)+' · '+TZ),attachmentList(review));if(!review.ok)ui.body.append(reviewBlocked(review));}
 if(task.sourceEvidence?.length){ui.body.append(h('h4',{},'Source evidence'));for(const item of task.sourceEvidence)ui.body.append(h('p',{},h('b',{},item.source+' · '+item.id),h('br'),item.excerpt||''));}
 if(task.completionEvidence?.length){ui.body.append(h('h4',{},'Completion evidence'));for(const item of task.completionEvidence)ui.body.append(h('p',{},String(item.outcome||item.kind||'Recorded evidence')));}

@@ -8,9 +8,11 @@ The Employee Hub and the linked crew, customer, business, and operations service
 
 ## Verified repository state
 
-At this snapshot, GitHub `main` is `59d617ac` (Batch 7). [Batch 8 PR #86](https://github.com/zacbezenek-ctrl/Easy-Garage-Cleaning/pull/86) is open and draft at `6cc4cad8`; its four committed units are SALES-BOOKING, WT-OUTCOME, FIX-DISPATCH-QUEUE, and MOBILE-HUB. Neither this handoff nor `docs/handoff/` is present at that PR head. The implemented Hub, recording, API, and test work is committed at `a13e01e` in [Batch 9 PR #87](https://github.com/zacbezenek-ctrl/Easy-Garage-Cleaning/pull/87). It remains draft pending CI and the Batch 8 launch gates; it is not deployed or merged.
+At this snapshot, GitHub `main` is `59d617ac` (Batch 7). [Batch 8 PR #86](https://github.com/zacbezenek-ctrl/Easy-Garage-Cleaning/pull/86) is open and draft at `6cc4cad8`; its four committed units are SALES-BOOKING, WT-OUTCOME, FIX-DISPATCH-QUEUE, and MOBILE-HUB. Neither this handoff nor `docs/handoff/` is present at that PR head. The Hub iOS Walkthroughs and transcript-to-office-task implementation, including this handoff, is published in [Batch 9 PR #87](https://github.com/zacbezenek-ctrl/Easy-Garage-Cleaning/pull/87). Its checked CI head is `954390453443c61b0c9263adeab040e7a426827f`. PR #87 remains draft; it is not deployed or merged.
 
-The PR head's Root, Platform, Mobile Device, Lighthouse, Business Hub, and Firestore workflows succeeded. **Action Center CI failed** in the Dispatch browser suite: `test_find_a_time_searches_with_the_quote_length_and_books_the_same_unscheduled_job` could not find a visible “Find a time” control (`test_dispatch_ui.py:304`, run `36604534261`). Later browser steps were skipped. The next merge requires a fresh green run on the exact commit to merge.
+**PR #86** has an older Action Center CI failure: its Dispatch browser suite could not find a visible “Find a time” control (`test_dispatch_ui.py:304`, run `36604534261`). That result belongs to PR #86's `6cc4cad8` head, not PR #87.
+
+At **PR #87 head `9543904`**, Root, Platform, Operations Integration, Firestore, Business Hub, Mobile Device E2E, and Lighthouse completed successfully. In Action Center CI, functions bundle, database/platform, and Chromium browser jobs succeeded; the WebKit job failed because its Linux browser rejected the Chromium-only `--no-sandbox` argument. That launch correction is tested locally and included with this handoff revision. The full PR #87 gate is **not green**; every required workflow must run again on its latest head before merge.
 
 The PR body reports FIELD-PAY awaiting a final minor fix; FIX-HUB-COLLECTED-CREDITS reviewed and next; WT-HANDOFF, OPS-VISIBILITY, and FIX-JOBBER-MONEY in review or queued. It reports FIX-REFUNDS built and reviewed once and GHL-TRACK-2 built but needing another clean review. These statements are from the PR description, not evidence that any of those units has landed. The owner's later queue instruction places credits, handoff, FIELD-PAY, refunds, and milestone tags in that order, followed by seven running builds as each finishes. The seven build IDs and their exact states have not been supplied in this checkout.
 
@@ -25,7 +27,7 @@ The PR body reports FIELD-PAY awaiting a final minor fix; FIX-HUB-COLLECTED-CRED
 
 ## What is built and what remains
 
-The four Batch 8 units are committed in PR #86, subject to its failed CI gate and owner acceptance. In the local checkout, the Walkthroughs menu has role-correct links, an exact-visit Audio & transcript action for permitted performers, and a phone-first visual pass. Local implementation of the recording and transcript-to-office-task path is complete in the working tree; integrated CI and runtime verification remain. Treat the implementation as pending until CI is green and the launch gates permit merging. See [unit-status.json](handoff/unit-status.json) for the machine-readable snapshot.
+The four Batch 8 units are committed in PR #86, subject to its CI gate and owner acceptance. PR #87 publishes the role-correct Walkthroughs menu, exact-visit recording/transcript intake, phone-first design, reviewed scope and assigned office tasks. This handoff revision includes a tested follow-up: the office handoff reads the saved customer name, phone and matching HighLevel contact link; recording source resolution recovers exact project links; and WebKit CI launches correctly on Linux. These follow-up changes were not part of the checked `9543904` head. Treat all of PR #87 as pending until the latest head is reviewed, CI-green, and launch gates permit merging. See [unit-status.json](handoff/unit-status.json) for the machine-readable snapshot.
 
 This snapshot cannot certify the promised **41 specs for unbuilt or in-flight units**. No such spec set exists in the checked-out branch or PR #86 head. [spec-inventory.json](handoff/spec-inventory.json) records 0/41 located. Obtain the authoritative 41 documents and their IDs, then add them without silently inventing scope or marking units complete. Until then, the future-scope handoff is incomplete.
 
@@ -39,9 +41,9 @@ The owner's stated merge sequence and gates are in [launch-order.json](handoff/l
 - Platform package suite: from `egc-platform/`, `pnpm test`; run its build/type checks and migrations when that tree changes.
 - Affected browser suites: `python -m unittest discover -s tests/browser -p test_walkthroughs_ui.py` and `python -m unittest discover -s tests/browser -p test_hub_shell_mobile_ui.py`. The CI workflow runs the broader Action Center browser suite.
 - Firestore emulator and device projects: follow [testing.md](testing.md) and the workflow for changed surfaces. Do not call CI green from a subset or a previous SHA.
-- Check GitHub Actions on the **exact merge SHA**. The current PR head has the Action Center failure named above.
+- Check GitHub Actions on the **exact merge SHA**. The previously checked PR #87 head has the WebKit CI failure named above; this follow-up requires a fresh full run.
 
-Local results on the uncommitted Hub integration: Walkthroughs browser suite **10/10**, Hub mobile browser suite **18/18** including an 844×390 side-notch dialog check, and Action Center browser suite **27/27** including calendar role regressions. The integration coordinator reports the recording browser suite green in Chromium and WebKit (WebKit **13/13**). The coordinator also reports local root-suite failures under Windows from POSIX/CRLF fixture expectations; the canonical Linux CI run on the new commit is still required. These local results do not replace the full CI gate.
+Local checks for the published Hub integration passed: Walkthroughs browser **10/10**, Hub mobile **18/18** including an 844×390 side-notch dialog, Action Center browser **27/27**, and recording browser **13/13 in WebKit**. For this follow-up, focused checks passed: office handoff browser **7/7**, recording API **15/15**, proxy/contact **14/14**, and Dispatch regressions **43/43**. The Linux WebKit launch correction also passed the 13 recording browser cases locally. Windows root-suite fixture checks depend on POSIX file modes and CRLF handling; the Linux CI result on the final head is the merge evidence. Local checks do not replace CI.
 
 ## Owner actions and follow-ups
 
@@ -49,12 +51,8 @@ The owner must complete the live checks in the go-live checklist, including staf
 
 ## How to resume
 
-1. Read this snapshot and the machine-readable files, then fetch fresh PR, branch, and CI state. Resolve the known Dispatch browser failure or document its replacement green run.
-2. Complete and review the local Hub and transcript integration; run the root, platform, affected browser, and applicable emulator tests. Update the status and test evidence here with exact SHAs.
+1. Read this snapshot and the machine-readable files, then fetch fresh PR, branch, and CI state. Keep PR #86's earlier failure separate from PR #87's current checks.
+2. Review the tested office-contact, project-link, and Linux WebKit follow-up. Verify PR #87 checks on its latest head; update status and test evidence with the exact SHA.
 3. Follow the serial launch order. Before each merge, verify unit review, flags, CI, and whether the commit and this file carry the latest status.
 4. Add the real 41 specs when their source is available; reconcile every ID with the unit status and Batch 9 plan. Do not launch extra units during this wrap-up.
 5. Finish the owner checks after deployment. Record actual dates, results, and unresolved issues in this handoff rather than checking boxes based on code alone.
-
-## Batch 9 verification update
-
-PR #87 now carries the implementation and this handoff. Local recording checks pass 13/13 in WebKit, including exact transcript retries, assigned task proposals, current reviewer loading, Sales read-only review, and microphone cleanup. A dedicated WebKit CI job keeps these checks in the merge gate. Local full root testing was stopped after its confirmed Windows CRLF and POSIX file-mode incompatibilities; the Linux CI result is authoritative and must be recorded before merge. The remote inventory checked all 85 branch heads; none besides the Batch 8 branch had a head newer than main. No promised handoff/spec directory was present on the four newest relevant heads. This does not establish the state of unpushed local builds.

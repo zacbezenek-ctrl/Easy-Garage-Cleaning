@@ -9,6 +9,12 @@ The following is the owner's wrap-up instruction in this task. Keep its wording 
 > - **Handoff:** docs/HANDOFF.md (what this is, the rules, how to run tests, what's built, what's parked and why, owner actions, how to continue) plus `docs/handoff/` with the machine-readable unit status, the launch order, your decisions verbatim, the follow-ups list, and all 41 specs for unbuilt or in-flight units. It commits to the branch in the next few minutes and I'll refresh it once more at the end.
 > - **No new units start.**
 
-The coordinator also relayed the owner's instruction **“Use the existing key and just GET IT DONE”** for the Hub recording/transcript work. The exact surrounding message is not present in this checkout or task context, so this line should be replaced with the full original text if it is later recovered.
+## Later implementation instruction (2026-09-29)
+
+> rip it, i wan tu to FULLY fix it, and i want u to make sure the UI is gorgeous, and works as a website (made to be moile app on IOS)- make sure eeverything is fully integreated, and make sure the fgull walkthrough menu is good to go, and a place for the walkthrough guy to dump recording transcripts of walkthrough, and then have it create tasks in high level or in the huib whatever is easiest for our opffice guy to sned stuff over
+
+## Existing key authorization (2026-09-29)
+
+> You know what I want? Use the existing key and just GET IT DONE
 
 The standing HighLevel boundary is recorded separately in [HIGHLEVEL-BOUNDARY.md](../HIGHLEVEL-BOUNDARY.md), including the owner's original words and the paths that can write or send.
