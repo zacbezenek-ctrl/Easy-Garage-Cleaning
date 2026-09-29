@@ -82,7 +82,7 @@ class PayrollWeekBrowserTests(unittest.TestCase):
         rows = card.locator('.pw-rows > li')
         expect(rows).to_have_count(3)
         expect(rows.filter(has_text='Synthetic TylerG')).to_contain_text(money(164.92))
-        expect(rows.filter(has_text='Synthetic Crew.One')).to_contain_text('Pay hidden'); expect(rows.filter(has_text='Synthetic Crew.One')).to_contain_text('22.00 paid h · 2.00 overtime · 8.00 time off')
+        expect(rows.filter(has_text='Synthetic Crew.One')).to_contain_text('Pay hidden'); expect(rows.filter(has_text='Synthetic Crew.One')).to_contain_text('22.00 paid h · 12.00 regular · 2.00 overtime · 8.00 time off')  # TIME-CORRECT: regular hours are listed too
         expect(card.locator('.pw-total')).to_contain_text('Pay hidden'); expect(card.locator('.pw-hidden')).to_have_count(3)
         expect(card.get_by_text('Only the owner can download the payroll export.')).to_be_visible()
         expect(card.get_by_role('button', name='Download payroll CSV')).to_have_count(0)

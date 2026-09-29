@@ -40,11 +40,11 @@ const withoutPay = value => Object.fromEntries(Object.entries(value).filter(([ke
 const PAY_OWNER_FIELD = Object.freeze({ profiles: 'username', timeEntries: 'employee', requests: 'employee' });
 export const payOwnerField = collection => Object.hasOwn(PAY_OWNER_FIELD, collection) ? PAY_OWNER_FIELD[collection] : null;
 
-// A timecard's audit history repeats pay changes (before/after), so those go too.
+// A timecard's audit history repeats pay changes (before/after) and the rate a correction sent (request), so those go too.
 export function payHidden(collection, data) {
   if (!record(data)) return data;
   const next = withoutPay(data);
-  if (collection === 'timeEntries' && Array.isArray(data.history)) next.history = data.history.map(entry => record(entry) && record(entry.changes) ? { ...entry, changes: withoutPay(entry.changes) } : entry);
+  if (collection === 'timeEntries' && Array.isArray(data.history)) next.history = data.history.map(entry => record(entry) && (record(entry.changes) || record(entry.request)) ? { ...entry, ...(record(entry.changes) ? { changes: withoutPay(entry.changes) } : {}), ...(record(entry.request) ? { request: withoutPay(entry.request) } : {}) } : entry);
   return next;
 }
 

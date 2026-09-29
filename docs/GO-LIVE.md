@@ -216,7 +216,7 @@ Tell the team:
 - The Hub page can record walkthrough audio (the microphone is allowed on `/employee`).
 - **Location is taken once, at clock-in** (owner decision, CREW-TIME). The Hub and the crew app read the phone's position only as a shift starts; nothing tracks it during the shift once every open Hub tab has been reloaded after the deploy. The clock card says "Location shared once at clock-in". See [4.9](#49-clock-in-location-once-no-switch).
 - **Time labels are honest.** The Hub clock card, My pay, timesheet rows and the payroll CSV name each job's work and travel; "General company time" means only time on no job. A shift whose job segments need a manager's review (a manager moved its clock-in later than its first segment, say) reads "Job time needs manager review" in the Hub and in the payroll CSV's Job time column; it is not a review flag and changes no hours or pay.
-- **Timesheet files changed (re-map imports before the first payroll).** The Hub's timesheet **Download CSV** column "Customer" is now "Job time". In the **Download for Gusto** (Smart Import) file, Job is now that job-time text (it was the job's label or "General company time") and Memo lists every job on the shift ("EGC Hub jobs a, b"; it was "EGC Hub job a"). The payroll CSV has a new last column, Job time. Every hour and pay column is unchanged. See [4.7](#47-timesheets-and-payroll).
+- **Timesheet files changed (re-map imports before the first payroll).** The payroll CSV has a new last column, Job time. Every hour and pay column is unchanged. The Hub's own timesheet **Download CSV** and **Download for Gusto** (Smart Import) buttons are gone with TIME-CORRECT (they added hours up on the device); until GUSTO-EXPORT lands there is no Gusto Smart Import file, so enter the week's hours in Gusto from the payroll CSV (**Download payroll CSV** on the payroll week card, owner only). See [4.7](#47-timesheets-and-payroll).
 - **Invoice and overdue messages stay with HighLevel (M5-SEND).** An earlier messaging checklist told you to remove the customer message steps from the `egc-invoice-issued` and `egc-invoice-overdue` workflows when turning on the Hub's `invoice_send` and `payment_reminder` kinds. Those kinds are removed in this build. If you removed those steps, **restore them before you deploy**, or customers get no invoice message and no overdue reminder. Saved `invoice_send` and `payment_reminder` wording and automation switches at `/message-templates` no longer do anything.
 
 ## Stage 1: Safe security switches
@@ -388,6 +388,7 @@ Every website lead already goes to HighLevel. Stage 2 makes that durable (nothin
 | 4.9 | Clock-in location once | No switch |
 | 4.10 | `EGC_CLOCK_IN_WITHOUT_FIX=true` (owner decision: on) | Cloudflare, plain |
 | 4.11 | `EGC_JOB_STATUS_MOVES_TIME=true` (optional) | Cloudflare, plain |
+| 4.12 | `EGC_TIMECARD_CORRECTIONS=true` (optional) | Cloudflare, plain |
 
 ### 4.1 Drive times
 
@@ -455,7 +456,7 @@ Every website lead already goes to HighLevel. Stage 2 makes that durable (nothin
 - **Payroll export:** after the week ends and every timecard is approved, rejected or fixed, open `/api/timesheets?view=week&start=YYYY-MM-DD&format=csv` (the Monday) while signed in. There is no Hub button for it yet.
 - **Check it worked:** open that link for last week. You get a CSV, or a message listing the timecards still to approve.
 - **Paid time off:** only through the raw employee API today; the PTO screen (P1-06) is in the next batch.
-- **Columns changed with CREW-TIME:** the payroll CSV ends with a Job time column (each job's work and travel, general company time, "Job time needs manager review" for a shift whose segments need review, and "No job segments" for older shifts); the Review flags column is as before. The Hub timesheet CSV's "Customer" column is now "Job time", and the Gusto Smart Import file's Job and Memo values changed (Job is the job-time text, Memo lists every job). If a Gusto Smart Import mapping or a spreadsheet reads those columns by name, re-map it before the first payroll after the deploy. Hours and pay are unchanged.
+- **Columns changed with CREW-TIME:** the payroll CSV ends with a Job time column (each job's work and travel, general company time, "Job time needs manager review" for a shift whose segments need review, and "No job segments" for older shifts); the Review flags column is as before. If a spreadsheet reads the payroll CSV's columns by name, re-map it before the first payroll after the deploy. Hours and pay are unchanged. The Hub's timesheet Download CSV and Download for Gusto (Smart Import) buttons were removed with TIME-CORRECT: the payroll CSV is the one export, and there is no Gusto Smart Import file until GUSTO-EXPORT lands (enter hours in Gusto from the payroll CSV until then).
 
 ### 4.8 Job costing (no switch)
 
@@ -490,6 +491,16 @@ Every website lead already goes to HighLevel. Stage 2 makes that durable (nothin
 - **Needs first:** every job has the right crew and lead. Tell crews that status taps now move their time.
 - **Check it worked (phone):** clock in, open a test job, tap Mark en route: the line says "Your time: travelling to …". Tap Mark arrived: "working on …". The Hub clock card shows the job's work.
 - **Roll back:** delete the variable. Statuses stop moving time; crews use "Start my work time here" as before.
+
+### 4.12 Correct timecards and close forgotten shifts (optional)
+
+- **Set:** `EGC_TIMECARD_CORRECTIONS=true`
+- **Where:** Cloudflare Pages, plain. Preview first.
+- **Turns on:** owners and managers (`time.approve`) get **Correct time** on every Time approvals timecard (clock-in, clock-out, breaks and job; the rate only for someone who may set pay, the owner under `EGC_STAFF_PAY_OWNER_ONLY`) and **Close shift** on a shift someone forgot to clock out of. Each save needs a reason, is kept in the timecard's history with who made it, recomputes the hours, and sends the card back to pending for approval. Shifts open more than 14 hours are listed under **Needs attention** on the Command center and Time approvals. Crew never get the buttons; with `EGC_STAFF_ROLE_PERMISSIONS` off, every Hub user with business access counts as `time.approve`.
+- **Unset:** no correction buttons and no 14-hour list, and the server refuses a correction (403 `EMPLOYEE_TIMECARD_CORRECTIONS_OFF`). Weekly totals come from the server's payroll week card either way.
+- **Needs first:** with `EGC_STAFF_ROLE_PERMISSIONS` on, check that each manager's staff role is manager. Confirm no Hub sign-in username (`HUB_AUTH_USERS_JSON`, `HUB_AUTH_ADDITIONAL_USERS_JSON`) contains `'` `"` `\` `` ` `` `<` `>` `&`, a tab or a line break: such accounts can no longer clock in from the crew app.
+- **Check it worked:** on Preview, clock a test account in and leave it running. As a manager, open Time approvals, tap **Close shift** on that row, enter the real end time and a reason, and save. The card reads pending, its history shows the reason and your name, and the payroll week card's hours change once it is approved. **Correct time** on another test card works the same way. Close every shift under Needs attention before the payroll export.
+- **Roll back:** delete the variable. Corrections already saved stay in the timecards and their history.
 
 ### Keep off for now
 

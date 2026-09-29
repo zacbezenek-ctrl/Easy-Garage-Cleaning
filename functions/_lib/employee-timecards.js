@@ -1,4 +1,6 @@
 import { NO_CLOCK_IN_FIX, applyEmployeeJobAction, finishEmployeeJobTime, initializeJobTracking, jobActionSatisfied } from './employee-job-time.js';
+import { can, capabilityMode } from './staff-roles.js';
+import { canSetPay, payChangeRefused } from './pay-visibility.js';
 
 const equal = (left, right) => JSON.stringify(left) === JSON.stringify(right);
 const text = (value, limit = 180) => String(value || '').trim().slice(0, limit);
@@ -123,12 +125,134 @@ function deviceStamp(entry, action, value, at, now) {
     deviceTimeEvents: [...events, { action, deviceCapturedAt: text(value, 40), recordedAt: at, receivedAt: now }].slice(-50) };
 }
 
-function withAudit(existing, next, session, now, action) {
+function withAudit(existing, next, session, now, action, extra = null) {
   const changes = auditFields.filter(key => !equal(existing?.[key], next[key]));
   const history = Array.isArray(existing?.history) ? existing.history : [];
   return { ...next, workDate: timecardWorkDate(next.clockInAt), updatedAt: now, updatedBy: session.user,
-    history: changes.length ? [...history, { action, actor: session.user, actorName: session.displayName || session.user, at: now,
+    history: changes.length || extra ? [...history, { action, actor: session.user, actorName: session.displayName || session.user, at: now, ...(extra || {}),
       changes: Object.fromEntries(changes.map(key => [key, { before: existing?.[key] ?? null, after: next[key] ?? null }])) }] : history };
+}
+
+// EGC_TIMECARD_CORRECTIONS: exactly "true" lets whoever approves time (time.approve: the owner and managers) correct a
+// timecard from Time approvals (clock-in, clock-out, breaks, job, and the rate with pay.manage) or close a shift someone
+// forgot to clock out of, with a reason. Unset: a save carrying `correction` is refused (403) and every other timecard
+// save works as before.
+export const timecardCorrectionsEnabled = env => String(env?.EGC_TIMECARD_CORRECTIONS || '').trim().toLowerCase() === 'true';
+// An open shift older than this shows under Needs attention (Command center and Time approvals) with the switch on.
+export const OPEN_SHIFT_ATTENTION_HOURS = 14;
+const MAX_CORRECTED_SHIFT = 24 * 3600000, MAX_BREAKS = 20;
+const CORRECTION_KEYS = { correct: ['correction', 'clockInAt', 'clockOutAt', 'breaks', 'jobId', 'hourlyRate'], close: ['correction', 'clockOutAt'] };
+const correctionError = (message, status = 400, code = 'EMPLOYEE_TIMECARD_INVALID') => Object.assign(timecardError(message, status), { code });
+const iso = ms => new Date(ms).toISOString();
+const validJobId = value => typeof value === 'string' && /^[A-Za-z0-9_-]{1,180}$/.test(value) && !/^(?:_egc_|secure_)/.test(value);
+export const correctionJobId = value => validJobId(value) ? value : '';
+
+function correctedInstant(value, label) {
+  const at = instant(value);
+  if (!Number.isFinite(at)) throw correctionError(`Enter a valid ${label}.`);
+  return at;
+}
+
+// The corrected breaks, in order and inside the shift. A break the card already had is kept as stored, and one whose end
+// or kind changed keeps its start's request ID.
+function correctedBreaks(value, existing, start, end) {
+  if (!Array.isArray(value) || value.length > MAX_BREAKS) throw correctionError(`Send the shift's breaks as a list of at most ${MAX_BREAKS}.`);
+  const stored = Array.isArray(existing) ? existing : [];
+  let previous = start;
+  return value.map(item => {
+    if (!item || typeof item !== 'object' || Array.isArray(item) || Object.keys(item).some(key => !['startAt', 'endAt', 'kind'].includes(key))) throw correctionError('Each break needs a start and an end.');
+    const from = correctedInstant(item.startAt, 'break start'), to = correctedInstant(item.endAt, 'break end');
+    if (to <= from) throw correctionError('Each break must end after it starts.');
+    if (from < previous || to > end) throw correctionError('Breaks must be inside the shift, in order and not overlapping.');
+    if (![undefined, '', 'rest', 'meal'].includes(item.kind)) throw correctionError('A break is a paid rest break or an unpaid meal break.');
+    previous = to;
+    const same = stored.find(row => instant(row?.startAt) === from);
+    if (same && instant(same.endAt) === to && (same.kind || '') === (item.kind || '')) return same;
+    return { ...(uuid(same?.startRequestId) ? { startRequestId: same.startRequestId } : {}), startAt: same ? same.startAt : iso(from), endAt: iso(to), ...(item.kind ? { kind: item.kind } : {}) };
+  });
+}
+const kept = (stored, at) => instant(stored) === at ? stored : iso(at);
+
+// Job segments are clipped to the corrected shift: a segment outside it is dropped, one crossing its ends is trimmed, and
+// a segment still running ends at the new clock-out. Every changed segment is listed for the audit entry.
+function clipJobTracking(entry, start, end, session, now) {
+  const tracking = entry.jobTracking;
+  if (!tracking || tracking.version !== 1 || !Array.isArray(tracking.segments)) return { jobTracking: tracking, changes: [] };
+  const changes = [], segments = [];
+  for (const segment of tracking.segments) {
+    const from = instant(segment?.startedAt), to = segment?.endedAt ? instant(segment.endedAt) : end;
+    if (!segment || typeof segment !== 'object' || !Number.isFinite(from) || !Number.isFinite(to)) { segments.push(segment); continue; }
+    const before = { startedAt: segment.startedAt, endedAt: segment.endedAt || '' }, clippedFrom = Math.max(from, start), clippedTo = Math.min(to, end);
+    if (clippedTo <= clippedFrom) { changes.push({ id: segment.id, kind: segment.kind, jobId: segment.jobId || '', before, after: null }); continue; }
+    const startedAt = clippedFrom === from ? segment.startedAt : iso(clippedFrom), endedAt = segment.endedAt && clippedTo === to ? segment.endedAt : iso(clippedTo);
+    if (startedAt === segment.startedAt && endedAt === segment.endedAt) { segments.push(segment); continue; }
+    segments.push({ ...segment, startedAt, endedAt, ...(segment.endedAt ? {} : { endedBy: session.user, endReason: 'manager_close' }), correctedAt: now, correctedBy: session.user });
+    changes.push({ id: segment.id, kind: segment.kind, jobId: segment.jobId || '', before, after: { startedAt, endedAt } });
+  }
+  return { jobTracking: changes.length ? { ...tracking, segments } : tracking, changes };
+}
+
+/** A manager's correction (kind 'correct') or close of a forgotten open shift (kind 'close'). It needs a reason, is
+ * saved against the card as the manager saw it (expectedUpdatedAt), recomputes hours, returns the card to pending,
+ * clips its job segments to the corrected shift and is recorded in the card's history with the reason. A retry with the
+ * same request ID after the correction landed changes nothing. */
+export function correctTimecard({ session, manager, existing, incoming, now, env = {}, jobLabel = null }) {
+  if (!manager || !can(session, 'time.approve', env)) throw correctionError('Only a manager or the owner can correct a timecard.', 403);
+  if (!timecardCorrectionsEnabled(env)) throw correctionError('Timecard corrections are switched off.', 403, 'EMPLOYEE_TIMECARD_CORRECTIONS_OFF');
+  if (!existing) throw correctionError('This timecard could not be found. Refresh Time approvals.', 404);
+  const meta = incoming.correction;
+  if (!meta || typeof meta !== 'object' || Array.isArray(meta) || Object.keys(meta).some(key => !['requestId', 'kind', 'reason', 'expectedUpdatedAt'].includes(key)) || !uuid(meta.requestId) || !Object.hasOwn(CORRECTION_KEYS, meta.kind) || typeof meta.expectedUpdatedAt !== 'string') throw correctionError('Send a correction with its kind, a unique request ID and the timecard version you corrected.');
+  const kind = meta.kind, requestId = meta.requestId.toLowerCase(), reason = text(meta.reason, 500);
+  if (reason.length < 3) throw correctionError('Give a reason for this correction. It is kept in the timecard history.');
+  if (Object.keys(incoming).some(key => !CORRECTION_KEYS[kind].includes(key))) throw correctionError(kind === 'close' ? 'Closing a shift sets only its clock-out time.' : 'A correction sets clock-in, clock-out, breaks, job and rate only.');
+  // A rate is refused from anyone who may not set pay before any replay is compared, so no answer depends on pay they
+  // cannot see. The rate is a plain amount with at most two decimals, sent as a number or a string.
+  const rateSent = own(incoming, 'hourlyRate');
+  if (rateSent && !canSetPay(session, env)) throw payChangeRefused();
+  const rate = rateSent ? typeof incoming.hourlyRate === 'number' ? incoming.hourlyRate : typeof incoming.hourlyRate === 'string' && /^\s*\d+(?:\.\d{1,2})?\s*$/.test(incoming.hourlyRate) ? Number(incoming.hourlyRate) : NaN : existing.hourlyRate;
+  if (rateSent && !(Number.isFinite(rate) && rate >= 0 && rate <= 1000 && Math.round(rate * 100) / 100 === rate)) throw correctionError('Enter an hourly rate from 0 to 1000, such as 22 or 22.50.');
+  // What was asked, from the request alone: a retry of a correction that already landed is recognised before the card's
+  // present state (closed, or changed since) is checked, and answers with the saved card. The rate sent is part of it and
+  // stays in the history like the rate change itself, which a reader without pay access never gets (payHidden).
+  const end = correctedInstant(incoming.clockOutAt, 'clock-out time'), asked = kind === 'close' ? null : correctedInstant(incoming.clockInAt, 'clock-in time');
+  if (kind === 'correct' && (!Array.isArray(incoming.breaks) || incoming.breaks.length > MAX_BREAKS)) throw correctionError(`Send the shift's breaks as a list of at most ${MAX_BREAKS}.`);
+  const request = kind === 'close' ? { kind, clockOutAt: iso(end) } : { kind, clockInAt: iso(asked), clockOutAt: iso(end),
+    breaks: incoming.breaks.map(item => ({ startAt: iso(correctedInstant(item?.startAt, 'break start')), endAt: iso(correctedInstant(item?.endAt, 'break end')), ...(item?.kind ? { kind: item.kind } : {}) })), ...(own(incoming, 'jobId') ? { jobId: incoming.jobId } : {}), ...(rateSent ? { hourlyRate: rate } : {}) };
+  // A request ID is the manager's own: the same ID from anyone else is a conflict whatever it carries.
+  const history = Array.isArray(existing.history) ? existing.history : [], earlier = history.find(item => item?.correctionRequestId === requestId);
+  if (earlier) {
+    if (text(earlier.actor).toLowerCase() === text(session.user).toLowerCase() && earlier.reason === reason && equal(earlier.request, request)) return existing;
+    throw correctionError('This correction request was already saved with different values. Refresh, then correct the timecard again.', 409, 'EMPLOYEE_TIMECARD_IDEMPOTENCY_CONFLICT');
+  }
+  if (String(existing.updatedAt || '') !== meta.expectedUpdatedAt) throw correctionError('This timecard changed since you opened it. Refresh, then correct it again.', 409, 'EMPLOYEE_TIMECARD_CHANGED');
+  const open = activeTimecard(existing) || !existing.clockOutAt;
+  if (kind === 'close' && !open) throw correctionError('This shift is already closed. Use Correct time to change its clock-out.', 409);
+  const start = kind === 'close' ? instant(existing.clockInAt) : asked, server = instant(now);
+  if (!Number.isFinite(start)) throw correctionError('This shift’s clock-in time cannot be read. Use Correct time to set it.', 409);
+  if (end <= start) throw correctionError('The clock-out time must be after the clock-in time.');
+  if (end - start > MAX_CORRECTED_SHIFT) throw correctionError('A corrected shift can be at most 24 hours long.');
+  if (end > server + DEVICE_SKEW) throw correctionError('The clock-out time cannot be in the future.');
+  let breaks;
+  if (kind === 'close') {
+    breaks = (Array.isArray(existing.breaks) ? existing.breaks : []).map(item => item?.endAt ? item : { ...item, endAt: iso(end) });
+    if (breaks.some(item => !(instant(item?.startAt) < end) || !(instant(item?.endAt) <= end))) throw correctionError('A break was recorded after that time. Pick a later clock-out, or use Correct time to fix the breaks.', 409);
+  } else breaks = correctedBreaks(incoming.breaks, existing.breaks, start, end);
+  const jobId = own(incoming, 'jobId') ? incoming.jobId : existing.jobId || '', jobChanged = own(incoming, 'jobId') && text(jobId) !== text(existing.jobId);
+  if (typeof jobId !== 'string' || jobId && !validJobId(jobId)) throw correctionError('Choose a job from the schedule for this timecard.');
+  if (jobChanged && jobId && typeof jobLabel !== 'string') throw correctionError('Choose a job from the schedule for this timecard.', 404);
+  let next = { ...existing, clockInAt: kept(existing.clockInAt, start), clockOutAt: kept(existing.clockOutAt, end), breaks, jobId, ...(jobChanged ? { jobLabel: jobId ? text(jobLabel) : '' } : {}),
+    ...(rateSent ? { hourlyRate: Math.round(rate * 100) / 100 } : {}), status: 'submitted', approvalStatus: 'pending', approvedAt: '', approvedBy: '' };
+  if (open) Object.assign(next, { locationTracking: false, locationStatus: 'stopped' });
+  const clipped = clipJobTracking(next, start, end, session, now);
+  if (clipped.changes.length) next.jobTracking = clipped.jobTracking;
+  const changed = clipped.changes.length || ['clockInAt', 'clockOutAt', 'jobId', 'hourlyRate'].some(key => !equal(existing[key] ?? '', next[key] ?? '')) || !equal(existing.breaks || [], breaks);
+  if (!changed) throw correctionError('Nothing changed. Change a time, break, job or rate before saving the correction.');
+  next.hours = timecardHours(next);
+  if (next.hours <= 0) throw correctionError('A corrected shift needs work time outside its breaks.');
+  next.grossEstimate = Math.round(next.hours * Math.max(0, Number(next.hourlyRate || 0)) * 100) / 100;
+  next = { ...next, correctedAt: now, correctedBy: session.user, correctionReason: reason };
+  return withAudit(existing, next, session, now, kind === 'close' ? 'manager_shift_close' : 'manager_time_correction',
+    { reason, correctionRequestId: requestId, request, ...(clipped.changes.length ? { segments: clipped.changes } : {}) });
 }
 
 // A Hub action queued on the device (queued) is built on the device's own copy, which has no server request IDs yet, so
@@ -194,10 +318,11 @@ function queuedClock(existing, incoming, now) {
   return equal(breaks, existing.breaks ?? []) ? existing : { breaks };
 }
 
-export function authorizeTimecard({ session, manager, id, incoming, existing, hourlyRate = 0, now = new Date().toISOString(), env = {}, queued = false }) {
+export function authorizeTimecard({ session, manager, id, incoming, existing, hourlyRate = 0, now = new Date().toISOString(), env = {}, queued = false, jobLabel = null }) {
   const device = offlineClockEnabled(env);
   // jobTime is what /api/employee-hub derives for display on each read; a save never stores it.
   if (own(incoming, 'jobTime')) { const { jobTime, ...rest } = incoming; incoming = rest; }
+  if (own(incoming, 'correction')) return correctTimecard({ session, manager, existing, incoming, now, env, jobLabel });
   if (incoming.jobAction) {
     if (Object.keys(incoming).some(key => key !== 'jobAction')) throw timecardError('Send job-time changes separately from other timecard edits.');
     const action = incoming.jobAction, segments = Array.isArray(existing?.jobTracking?.segments) ? existing.jobTracking.segments : [];
@@ -224,6 +349,11 @@ export function authorizeTimecard({ session, manager, id, incoming, existing, ho
     // not yet replayed, discarded or refused) never creates an employee-less record out of it. Administrative imports
     // and corrections that name the employee are created as before.
     if (!existing && !text(next.employee)) throw timecardError('A new timecard needs an employee.');
+    // Another employee's timecard (any save to it, a new card naming them, or one's own card moved to them) is saved only
+    // by whoever approves time, as a correction is: time.approve. With EGC_STAFF_ROLE_PERMISSIONS off (legacy mode) that is
+    // every business user, which is what manager already is, so nothing changes; with it on, a business user whose stored
+    // roles lack it (sales, phone) is refused. The viewer's own card is saved as before.
+    if ((existing && !sameEmployee(existing, session) || !sameEmployee(next, session)) && capabilityMode(session, env) !== 'legacy' && !can(session, 'time.approve', env)) throw timecardError('Only a manager or the owner can change another employee’s timecard.', 403);
     if (!existing && clockInSave(incoming)) next = managerClockIn(next, env, session);
     // A shift's location record is final once it starts, for a manager too (an employee's save is refused below): a
     // position fix, error or status sent for an open shift, or for a shift being reopened, is refused, and a closed shift

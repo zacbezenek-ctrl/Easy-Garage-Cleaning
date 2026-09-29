@@ -548,28 +548,24 @@ async function timesheets({ owner }) {
   page.api.go('timesheets');
   await page.flush();
   const board = page.main().textContent;
-  page.context.opsDownloadTimesheets();
-  const csv = blobs.at(-1).split('\r\n');
-  return { board, csv };
+  return { board, rows: page.main().querySelectorAll('.ops-time-row').map(row => row.textContent), exports: typeof page.context.opsDownloadTimesheets };
 }
 
 // PAY-TIMESHEETS: the Service column is the job's service for every viewer, never a pay type (job-1 is not in the job cache
-// here, so it is blank), and an employee whose pay the server did not send reads "Pay hidden", never a $0 total.
-test('the timesheet Service column is the job\'s service, never a pay type, and another employee\'s pay reads "Pay hidden" where it is not shown', async () => {
-  const manager = await timesheets({ owner: false });
-  // CREW-TIME: the third column lists the shift's job time from its segments (it was the clock-in job label, "Customer").
-  assert.equal(manager.csv[0], '"Employee","Date","Job time","Service","Job ID","Hours","Started at","Completed at"');
-  assert.equal(manager.csv.find(row => row.startsWith('"Crew One"')), '"Crew One","2026-09-22","General company time 4.00 h","","","4.00","2026-09-22T15:00:00.000Z","2026-09-22T19:00:00.000Z"');
-  assert.match(manager.csv.find(row => row.startsWith('"Synthetic Manager"')), /^"Synthetic Manager","2026-09-21","Synthetic Customer: work 4.00 h","","job-1",/, 'the manager\'s own Service is the job\'s too');
-  assert.doesNotMatch(manager.board, /hourly/);
-  assert.doesNotMatch(manager.board, /salary/);
-  assert.match(manager.board, /Crew One/);
-  assert.match(manager.board, /job-1/);
-  assert.match(manager.board, /Pay hidden/);
-  assert.match(manager.board, /\$120/, 'the manager\'s own pay (4 hours at 30) stays');
-  assert.doesNotMatch(manager.board, /\$84|\$0\b/, 'no figure, and no $0 stand-in, for the crew member');
-  const owner = await timesheets({ owner: true });
-  assert.match(owner.csv.find(row => row.startsWith('"Crew One"')), /^"Crew One","2026-09-22","General company time 4.00 h","","",/);
-  assert.doesNotMatch(owner.board, /salary|Pay hidden/);
-  assert.match(owner.board, /\$84/, 'the owner sees the crew member\'s pay (4 hours at 21)');
+// here, so it is blank). TIME-CORRECT: the board no longer adds up pay itself (it showed straight-time pay, open and pending
+// shifts included) or downloads its own hours CSV: pay is the server's payroll week card's, for every viewer, so the board
+// shows no pay at all, never a $0 stand-in, and each employee reads how many timecards are in which state.
+test('the timesheet Service column is the job\'s service, never a pay type, and the board itself shows no pay figures for any viewer', async () => {
+  for (const owner of [false, true]) {
+    const viewer = await timesheets({ owner }), label = owner ? 'owner' : 'manager';
+    assert.equal(viewer.exports, 'undefined', `${label}: the board's hours CSV is gone`);
+    assert.doesNotMatch(viewer.board, /hourly|salary/, label);
+    assert.match(viewer.board, /Crew One/);
+    assert.match(viewer.board, /job-1/);
+    assert.match(viewer.rows.find(row => row.includes('General company time')), /General company time 4\.00 h/, `${label}: the crew row lists its job time`);
+    assert.match(viewer.rows.find(row => row.includes('Synthetic Customer')), /Synthetic Customer: work 4\.00 h/, `${label}: the manager's own row too`);
+    assert.doesNotMatch(viewer.board, /\$\d|Pay hidden/, `${label}: no client-computed pay, and no $0 stand-in`);
+    assert.match(viewer.board, /1 pending/);
+    assert.match(viewer.board, /1 approved/);
+  }
 });

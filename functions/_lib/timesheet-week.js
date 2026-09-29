@@ -104,6 +104,16 @@ export function timecardWorkIntervals(card) {
   return { start, end, intervals, workedMs, restMs, unpaidMs };
 }
 
+/** Time shown beside the week's totals and never in them: a pending timecard's worked time, and an open shift's worked
+ * time so far (its open break ends now). Unreadable times count 0; the card is still counted as pending or open. */
+function unapprovedWorkMs(card, state, nowMs) {
+  if (state !== 'open') { const work = timecardWorkIntervals(card); return work.reason ? 0 : work.workedMs; }
+  if (!Number.isFinite(nowMs) || !(nowMs > instant(card?.clockInAt))) return 0;
+  const at = new Date(nowMs).toISOString(), breaks = Array.isArray(card.breaks) ? card.breaks.map(item => item && !item.endAt ? { ...item, endAt: at } : item) : card.breaks;
+  const work = timecardWorkIntervals({ ...card, clockOutAt: at, breaks });
+  return work.reason ? 0 : work.workedMs;
+}
+
 // Marks the portion of chronological work beyond `limit`; a gap of at least `gap` restarts the count.
 function excess(intervals, limit, gap = Infinity) {
   const over = []; let total = 0, last = -Infinity;
@@ -180,9 +190,9 @@ export function computeTimesheetWeeks({ timecards = [], pto = [], policy = 'colo
   const weeks = new Map();
   for (const value of weekStarts) {
     const first = timesheetWeekStart(value);
-    if (!weeks.has(first)) weeks.set(first, { first, dates: Array.from({ length: 7 }, (_, index) => addDays(first, index)), needsReview: [], excluded: { pending: 0, open: 0, rejected: 0 }, people: new Map() });
+    if (!weeks.has(first)) weeks.set(first, { first, dates: Array.from({ length: 7 }, (_, index) => addDays(first, index)), needsReview: [], excluded: { pending: 0, open: 0, rejected: 0 }, excludedMs: { pending: 0, open: 0 }, people: new Map() });
   }
-  const everyWeek = [...weeks.values()], weekOf = date => validDate(date) && weeks.get(timesheetWeekStart(date)) || null, included = [], unattributed = [];
+  const nowMs = instant(now), everyWeek = [...weeks.values()], weekOf = date => validDate(date) && weeks.get(timesheetWeekStart(date)) || null, included = [], unattributed = [];
   // Unapproved time (excluded pending, open or needing review) per employee, for the cross-week consecutive-hours check.
   const loose = new Map(), unapproved = (card, workDate, state) => {
     const start = instant(card.clockInAt), end = state === 'open' ? NaN : instant(card.clockOutAt);
@@ -190,7 +200,7 @@ export function computeTimesheetWeeks({ timecards = [], pto = [], policy = 'colo
   };
   const person = (week, employee, name) => {
     const key = personKey(employee);
-    if (!week.people.has(key)) week.people.set(key, { employee: key, name: String(name || employee || key).slice(0, 180), cards: [], pto: [], flags: new Set(), pendingExcluded: 0, open: 0 });
+    if (!week.people.has(key)) week.people.set(key, { employee: key, name: String(name || employee || key).slice(0, 180), cards: [], pto: [], flags: new Set(), pendingExcluded: 0, open: 0, pendingMs: 0, openMs: 0 });
     return week.people.get(key);
   };
   // A record goes to review in the weeks of its dates. A timecard whose clock-in cannot be read falls back to its
@@ -213,8 +223,8 @@ export function computeTimesheetWeeks({ timecards = [], pto = [], policy = 'colo
     if (state === 'open' || state === 'pending' && !includePending) {
       unapproved(card, workDate, state);
       if (!week) continue;
-      const row = person(week, card.employee, card.employeeName);
-      if (state === 'open') { week.excluded.open++; row.open++; } else { week.excluded.pending++; row.pendingExcluded++; }
+      const row = person(week, card.employee, card.employeeName), ms = unapprovedWorkMs(card, state, nowMs);
+      if (state === 'open') { week.excluded.open++; row.open++; row.openMs += ms; week.excludedMs.open += ms; } else { week.excluded.pending++; row.pendingExcluded++; row.pendingMs += ms; week.excludedMs.pending += ms; }
       continue;
     }
     const work = timecardWorkIntervals(card);
@@ -301,7 +311,7 @@ export function computeTimesheetWeeks({ timecards = [], pto = [], policy = 'colo
         totalPaidHours: hours(workedMs + ptoMs), dailyOvertimeHours: hours(dailyMs), weeklyOvertimeHours: hours(weeklyMs), overtimeBasis: !overtimeMs ? 'none' : weeklyMs >= dailyMs ? 'weekly' : 'daily',
         regularRate: Math.round(regularRate * 10000) / 10000, ...pay, grossPay: cents(pay.straightPay + pay.overtimePremium + pay.ptoPay + pay.bonus + pay.tips),
         approvedTimecards: row.cards.filter(item => item.state === 'approved').length, pendingTimecards: row.cards.filter(item => item.state === 'pending').length,
-        pendingExcludedTimecards: row.pendingExcluded, openShifts: row.open, flags: [...row.flags].sort(), jobTime: jobTimeHours(jobTime),
+        pendingExcludedTimecards: row.pendingExcluded, openShifts: row.open, pendingExcludedHours: hours(row.pendingMs), openHours: hours(row.openMs), flags: [...row.flags].sort(), jobTime: jobTimeHours(jobTime),
         days: [...days.values()].map(day => ({ date: day.date, workedHours: hours(day.workedMs), dailyOvertimeHours: hours(day.dailyOvertimeMs), ptoHours: Math.round(day.ptoHours * 1000) / 1000, timecards: day.timecards })),
         timecards: row.cards.map(item => ({ id: item.card.id, workDate: item.workDate, clockInAt: new Date(item.start).toISOString(), clockOutAt: new Date(item.end).toISOString(), workedHours: hours(item.workedMs),
           paidRestHours: hours(item.restMs), unpaidBreakHours: hours(item.unpaidMs), dailyOvertimeHours: hours(daily.get(item) || 0), hourlyRate: payRate(item.card.hourlyRate), bonus: cents(payAmount(item.card.bonus)), tips: cents(payAmount(item.card.tips)),
@@ -319,7 +329,7 @@ export function computeTimesheetWeeks({ timecards = [], pto = [], policy = 'colo
     if (week.excluded.pending) found.add('pending_timecards');
     const reasons = COVERAGE_REASONS.filter(reason => found.has(reason));
     results.set(first, { policy: { ...rules }, timeZone: TIMESHEET_TIME_ZONE, weekStart: first, weekEnd: last, dates, includePending: includePending === true, asOf: now,
-      employees, totals, needsReview: week.needsReview, unattributed: unattributed.map(item => ({ ...item })), excluded: week.excluded, coverage: { complete: !reasons.length, weekEnded, asOf: now, reasons } });
+      employees, totals, needsReview: week.needsReview, unattributed: unattributed.map(item => ({ ...item })), excluded: week.excluded, excludedHours: { pending: hours(week.excludedMs.pending), open: hours(week.excludedMs.open) }, coverage: { complete: !reasons.length, weekEnded, asOf: now, reasons } });
   }
   return results;
 }

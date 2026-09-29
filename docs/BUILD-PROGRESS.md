@@ -499,6 +499,10 @@ draft PR. The owner merges in phase order. See **Decisions** D-001.
   refresh notice, failed refreshes keep the portal (Reconnecting… after 3), and a Stripe return verifies after the page
   draws, retrying 2-32s with a 'being confirmed' notice; payment_needs_review answers carry their code so the portal stops.
   Gap: a button stays disabled after a failed post-action refresh until the next good refresh.
+- **TIME-CORRECT** (P1 payroll; EGC_TIMECARD_CORRECTIONS off) Owners and managers (time.approve) Correct time and Close shift
+  with a required reason, request id and card version; the card is recomputed, returned to pending and audited in its history;
+  shifts open over 14 h are listed under Needs attention. Board totals come from the server payroll week; the legacy Download
+  CSV / Download for Gusto buttons are removed (hours reach Gusto from the payroll CSV until GUSTO-EXPORT). Go-live card 4.12.
 
 ## In progress
 
@@ -616,6 +620,7 @@ one prefixed commit only after the full root suite (and the platform suite when 
 | FUN-33 | Payment funnel events on the ledger: payment.received and paid-in-full crossings committed with the job (FUNNEL_PAYMENT_EVENTS_ENABLED, off) | merged (b9c3b07) |
 | FIX-B2B-BILLING | P1: no customer messages or homeowner links for business jobs; effective B2B invoice status | merged (d5c037b) |
 | FIX-PORTAL-CRASH | P1: customer portal survives re-renders, failed refreshes and failed Stripe verification | merged (3185fc6) |
+| TIME-CORRECT | P1 payroll: manager timecard corrections, forgotten-shift close and server weekly totals (EGC_TIMECARD_CORRECTIONS, off) | merged (e8845e3) |
 
 ## Next
 

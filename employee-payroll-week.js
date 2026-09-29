@@ -1,5 +1,7 @@
 /* Payroll week: paid hours and gross pay per employee from /api/timesheets, and the payroll CSV download.
-   Other employees' pay is owner-only by default; the server marks it payHidden and it shows as "Pay hidden", never $0. */
+   Other employees' pay is owner-only by default; the server marks it payHidden and it shows as "Pay hidden", never $0.
+   These are the Time approvals totals (TIME-CORRECT): regular and overtime hours and gross from the server's overtime
+   rules. Pending and open time is listed beside them as "Not in totals", never added in. */
 (function(){
 'use strict';
 const API='/api/timesheets',STALE=5*60000,RETRY=60000,TIMEOUT=25000;
@@ -60,13 +62,20 @@ async function download(acknowledge){
   finally{if(epoch===S.epoch){S.exporting=false;render();}}
 }
 const pay=item=>item.payHidden===true?h('span',{class:'pw-hidden',title:'Only the owner sees other employees’ pay'},'Pay hidden'):money(item.grossPay);
+const plural=(count,word)=>`${count} ${word}${count===1?'':'s'}`;
+// Pending and open time as the server measured it (an open shift up to now); an older response without the hours gives counts only.
+function unapproved(pending,pendingHours,open,openHours){
+  const parts=[pending?`${finite(pendingHours)?hours(pendingHours)+' h in ':''}${plural(pending,'pending timecard')}`:'',open?`${plural(open,'open shift')}${finite(openHours)?` (${hours(openHours)} h so far)`:''}`:''].filter(Boolean);
+  return parts.length?h('small',{class:'pw-excluded'},'Not in totals: '+parts.join(' · ')):null;
+}
 function summary(d){
   const reasons=d.coverage.reasons.map(reason=>REASONS[reason]||String(reason).replace(/_/g,' '));
-  const detail=row=>[hours(row.totalPaidHours)+' paid h',row.overtimeHours?hours(row.overtimeHours)+' overtime':'',row.ptoHours?hours(row.ptoHours)+' time off':''].filter(Boolean).join(' · ');
+  const detail=row=>[hours(row.totalPaidHours)+' paid h',finite(row.regularHours)?hours(row.regularHours)+' regular':'',row.overtimeHours?hours(row.overtimeHours)+' overtime':'',row.ptoHours?hours(row.ptoHours)+' time off':''].filter(Boolean).join(' · ');
+  const excluded=d.excluded||{},excludedHours=d.excludedHours||{};
   return[
     h('p',{class:'pw-muted'},`${day(d.weekStart)} – ${day(d.weekEnd)} · `+(d.coverage.complete?'Every timecard is settled.':`Not final: ${reasons.join('; ')}.`)),
-    d.employees.length?h('ul',{class:'pw-rows'},d.employees.map(row=>h('li',{class:'pw-row'},h('div',{class:'pw-person'},h('b',{},row.name||row.employee),h('small',{},detail(row))),h('strong',{class:'pw-pay'},pay(row))))):h('p',{class:'pw-muted'},'No approved time in this week yet.'),
-    h('div',{class:'pw-row pw-total'},h('div',{class:'pw-person'},h('b',{},'Total'),h('small',{},detail(d.totals))),h('strong',{class:'pw-pay'},pay(d.totals))),
+    d.employees.length?h('ul',{class:'pw-rows'},d.employees.map(row=>h('li',{class:'pw-row'},h('div',{class:'pw-person'},h('b',{},row.name||row.employee),h('small',{},detail(row)),unapproved(row.pendingExcludedTimecards,row.pendingExcludedHours,row.openShifts,row.openHours)),h('strong',{class:'pw-pay'},pay(row))))):h('p',{class:'pw-muted'},'No approved time in this week yet.'),
+    h('div',{class:'pw-row pw-total'},h('div',{class:'pw-person'},h('b',{},'Total'),h('small',{},detail(d.totals)),unapproved(excluded.pending,excludedHours.pending,excluded.open,excludedHours.open)),h('strong',{class:'pw-pay'},pay(d.totals))),
     d.payHidden===true?h('p',{class:'pw-muted'},'Other employees’ pay is shown to the owner only. Hours, overtime and approvals are shown as usual.'):null,
   ];
 }

@@ -107,7 +107,8 @@ test('a reread while the owner downloads the payroll CSV does not cancel the dow
   assert.match(screen.card().textContent, /Payroll CSV for Sep 14 – Sep 20 downloaded\./);
 });
 
-test('the timesheet board labels a timecard with its job\'s service, never its pay type, on screen and in the hours CSV', async () => {
+// TIME-CORRECT removed the board's own hours CSV (opsDownloadTimesheets): the server payroll CSV is the export.
+test('the timesheet board labels a timecard with its job\'s service, never its pay type, and has no hours CSV of its own', async () => {
   const jobs = [{ id: 'job-deep', type: 'job', customer: 'Synthetic Customer', serviceType: 'Synthetic deep clean', date: '2026-09-15', status: 'scheduled' }, { id: 'job-plain', type: 'job', customer: 'Synthetic Other', date: '2026-09-16', status: 'scheduled' }];
   const cards = [card('linked', 'Crew.One', '2026-09-15', { jobId: 'job-deep', jobLabel: 'Synthetic Customer', payType: 'salary' }), card('plain', 'Crew.One', '2026-09-16', { jobId: 'job-plain', jobLabel: 'Synthetic Other', payType: 'salary' }), card('general', 'Crew.One', '2026-09-17')];
   const screen = timesheetScreen({ timecards: cards, jobs }), { page } = screen;
@@ -115,24 +116,21 @@ test('the timesheet board labels a timecard with its job\'s service, never its p
   const board = page.main().querySelector('.ops-timesheets'), rows = board.querySelectorAll('.ops-time-row b').map(node => node.parentNode.querySelector('span').textContent);
   assert.deepEqual(rows, ['Synthetic deep clean · job-deep', 'Garage service · job-plain', '']);
   assert.doesNotMatch(board.textContent, /salary|hourly/);
-  const files = [];
-  page.context.Blob = class { constructor(parts) { files.push(parts.join('')); } };
-  page.context.URL = Object.assign(Object.create(URL), { createObjectURL: () => 'blob:synthetic-hours', revokeObjectURL() {} });
-  page.context.opsDownloadTimesheets();
-  const csv = files[0].split('\r\n').map(line => line.split(',').map(cell => cell.replace(/^"|"$/g, '')));
-  assert.deepEqual(csv.map(row => row[3]), ['Service', 'Synthetic deep clean', 'Garage service', '']);
-  assert.doesNotMatch(files[0], /salary|hourly/);
+  assert.equal(page.context.opsDownloadTimesheets, undefined);
+  assert.equal(page.context.opsDownloadGusto, undefined);
+  assert.doesNotMatch(page.main().textContent, /Download CSV|Download for Gusto/);
 });
 
-test('an employee whose pay the server did not send reads "Pay hidden" on the board, never a $0 total', () => {
-  // The suite helpers alone: rows whose gross is null are the rows /api/employee-hub sent without pay (PRICE-SCRUB).
+// TIME-CORRECT: the board's own per-employee pay total (timesheetPay: straight time, open and pending shifts included) is
+// gone. Each employee reads how many timecards are in which state, and pay is only in the server's payroll week card.
+test('the board shows each employee\'s timecards by state and no pay of its own; a timecard\'s service is its job\'s', () => {
   const context = { console, Intl, Date, Promise, Map, Set, sessionStorage: { getItem: () => null, setItem() {}, removeItem() {} }, localStorage: { getItem: () => null, setItem() {}, removeItem() {} }, navigator: {}, location: { pathname: '/employee', search: '' }, setInterval: () => 1, clearInterval() {}, setTimeout: () => 1, clearTimeout() {}, addEventListener() {}, document: { readyState: 'loading', querySelector: () => null, querySelectorAll: () => [], addEventListener() {} }, jobsCache: [{ id: 'job-deep', type: 'job', serviceType: 'Synthetic deep clean' }] };
   context.window = context;
-  vm.runInNewContext(readFileSync(new URL('../employee-suite.js', import.meta.url), 'utf8').replace(/\}\)\(\);\s*$/, 'globalThis.ui={timesheetPay,timecardService};})();'), context);
-  const { timesheetPay, timecardService } = context.ui;
-  assert.equal(timesheetPay([{ hours: 4, gross: null }, { hours: 2, gross: null }]), 'Pay hidden');
-  assert.equal(timesheetPay([{ hours: 4, gross: 148.52 }, { hours: 2, gross: 20.5 }]), '$169');
-  assert.equal(timesheetPay([{ hours: 3, approvalStatus: 'legacy' }]), '$0', 'legacy job-hours rows (no pay tracked) keep their old total');
+  vm.runInNewContext(readFileSync(new URL('../employee-suite.js', import.meta.url), 'utf8').replace(/\}\)\(\);\s*$/, 'globalThis.ui={timesheetCounts,timecardService,timesheetPay:typeof timesheetPay};})();'), context);
+  const { timesheetCounts, timecardService, timesheetPay } = context.ui;
+  assert.equal(timesheetPay, 'undefined');
+  assert.equal(timesheetCounts([{ id: 'a', approvalStatus: 'approved' }, { id: 'b', approvalStatus: 'pending' }, { id: 'c', approvalStatus: 'pending', open: true }, { id: 'd', approvalStatus: 'approved' }, { id: 'e', approvalStatus: 'rejected' }]), '2 approved · 1 pending · 1 open · 1 rejected');
+  assert.equal(timesheetCounts([{ hours: 3, approvalStatus: 'legacy' }]), '1 job-hours record', 'legacy job-hours rows are counted, with no $0 total');
   assert.deepEqual([timecardService({ jobId: 'job-deep', payType: 'salary' }), timecardService({ jobId: 'job-gone', payType: 'salary' }), timecardService({ payType: 'hourly' })], ['Synthetic deep clean', '', '']);
 });
 
