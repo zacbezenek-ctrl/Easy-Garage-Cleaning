@@ -147,6 +147,13 @@ test('actual Firestore rules isolate canonical operations from crew SDK access',
       await assertFails(manager.doc('catalogVersions/2099-09-02.1').set({catalogVersion:'2099-09-02.1',catalogJson:'{}'}));
       await environment.withSecurityRulesDisabled(async context=>{for(const path of paths)await context.firestore().doc(path).delete();});
     });
+    await t.test('crew public profiles and their receipts are server-only even for business SDK sessions',async()=>{
+      const paths=['crew_public_profiles/crew1','crew_profile_operations/receipt'];
+      await environment.withSecurityRulesDisabled(async context=>{const db=context.firestore();await db.doc(paths[0]).set({username:'crew1',firstName:'Synthetic',active:true,photo:{fileId:'synthetic-drive-canary'}});await db.doc(paths[1]).set({action:'set_profile',fingerprint:'0'.repeat(64)});});
+      for(const db of [publicDb,crew,lead,manager,partner]) for(const path of paths){await assertFails(db.doc(path).get());await assertFails(db.doc(path).set({active:true}));await assertFails(db.doc(path).update({active:false}));await assertFails(db.doc(path).delete());}
+      for(const db of [crew,manager,partner]) for(const name of ['crew_public_profiles','crew_profile_operations']) await assertFails(db.collection(name).get());
+      await environment.withSecurityRulesDisabled(async context=>{for(const path of paths)await context.firestore().doc(path).delete();});
+    });
     await t.test('catalog publishes and settings saves keep their Firestore REST preconditions and audit atomically',async()=>{
       const {catalogStorage,mutateCatalog,readCatalogState}=await import('../functions/_lib/catalog-store.js');
       const {hubAuditStorage,listAudit}=await import('../functions/_lib/hub-audit.js');

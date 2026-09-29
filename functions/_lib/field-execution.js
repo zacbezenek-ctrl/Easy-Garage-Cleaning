@@ -152,7 +152,7 @@ export function fieldJobProjection(job, events = [], options = {}) {
     completionSync: job.fieldCompletionSync ? { status: job.fieldCompletionSync.status, message: fieldText(job.fieldCompletionSync.message, 600), attemptedAt: job.fieldCompletionSync.attemptedAt || null, syncedAt: job.fieldCompletionSync.syncedAt || null, canRetry: options.manager === true && job.fieldCompletionSync.status !== 'synced' } : null,
     startedAt: job.startedAt || null, completedAt: job.completedAt || null,
     completionMissing: frozen ? [] : fieldCompletionMissing(job),
-    canEdit: !frozen, canManageChecklist: options.manager === true && !frozen,
+    canEdit: !frozen, canManageChecklist: options.manager === true && !frozen, capabilities: options.capabilities || null,
     allowedStatuses: frozen ? [] : ({ scheduled: ['dispatched'], confirmed: ['dispatched'], crew_assigned: ['dispatched'], dispatched: ['arrived', 'delayed'], arrived: ['in_progress', 'waiting'], in_progress: ['paused', 'waiting', 'delayed', 'in_progress'] }[stage] || []),
   };
 }
@@ -220,6 +220,8 @@ export function fieldCommand(job, actor, input, now = new Date().toISOString()) 
       break;
     }
     case 'complete': {
+      // field-permissions.js decides who may complete; FIELD_LEAD_ONLY_COMPLETE narrows it to the lead or a manager.
+      if (actor.capabilities && actor.capabilities.complete !== true) throw fieldFailure('Only the crew lead or a manager can complete this job. Your checklist, photos and notes stay saved for them.', 403, 'FIELD_LEAD_REQUIRED');
       if (typeof input.hasIssues !== 'boolean') throw fieldFailure('Indicate whether this job has an issue requiring follow-up.');
       if (typeof input.notes !== 'string' || input.notes.length > 4000 || input.issueNotes !== undefined && (typeof input.issueNotes !== 'string' || input.issueNotes.length > 4000)) throw fieldFailure('Completion notes and issue details must each be no longer than 4,000 characters.');
       const missing = fieldCompletionMissing(job, input);

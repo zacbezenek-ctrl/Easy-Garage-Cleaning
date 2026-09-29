@@ -12,6 +12,7 @@ import { parseBusinessActor } from '../_lib/business-hub-core.js';
 import { businessAccountJob } from '../_lib/portal-invitation.js';
 import { moneyDocumentEnabled, moneyDocumentLinks } from '../_lib/money-document.js';
 import { estimateFingerprint, included, legacyLineItems } from '../_lib/quote-model.js';
+import { crewPublicProfilesEnabled, customerCrew, customerCrewProjection, readCrewPublicProfiles } from '../_lib/crew-public-profile.js';
 
 const HOST = /^(?:easygaragecleaning\.com|www\.easygaragecleaning\.com|easy-garage-cleaning\.pages\.dev|localhost(?::\d+)?|127\.0\.0\.1(?::\d+)?)$/;
 const DEFAULT_REVIEW_URL = 'https://search.google.com/local/writereview?placeid=ChIJ17AGfBiyRIsRyJ3k4mDtX8Q';
@@ -287,6 +288,8 @@ async function handleGet({ request, env }, deps) {
   const body = { ...sanitize(result.job, result.session, { today: denverToday(at), reviewUrl: customerReviewUrl(env), draftsRejected: rejectDrafts(env) }), moneyDocuments: moneyDocumentLinks(result.job, { enabled: moneyDocumentEnabled(env), now: at.toISOString() }) };
   // Default off: without the flag the DTO keeps its current shape.
   if (customerPhotosEnabled(env) && result.session.permissions?.view !== false) body.beforeAfter = customerPhotoProjection(result.job, customerPhotoPolicy(env));
+  // Default off as well. Only active crew profiles appear; a profile read failure hides the crew, never the project.
+  if (crewPublicProfilesEnabled(env) && result.session.permissions?.view !== false) Object.assign(body, await customerCrew(env, result.job, { profiles: deps.crewProfiles, now: at }).catch(() => customerCrewProjection(result.job, new Map(), new Map(), at)));
   return reply(200, body);
 }
 
@@ -596,8 +599,8 @@ export async function onRequestDelete() {
   return reply(200, { ok: true }, { 'Set-Cookie': clearCustomerPortalSessionCookie() });
 }
 
-export function createCustomerPortalHandlers({ now = () => new Date(), read = readJob } = {}) {
-  const deps = { clock: now, read };
+export function createCustomerPortalHandlers({ now = () => new Date(), read = readJob, crewProfiles = readCrewPublicProfiles } = {}) {
+  const deps = { clock: now, read, crewProfiles };
   return { onRequestGet: context => handleGet(context, deps), onRequestPost: context => handlePost(context, deps), onRequestDelete };
 }
 

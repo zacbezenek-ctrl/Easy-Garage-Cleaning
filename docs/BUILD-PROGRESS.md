@@ -380,6 +380,11 @@ draft PR. The owner merges in phase order. See **Decisions** D-001.
   internal / needs_owner_approval / retire; no approval fabricated), plus speed-to-lead touch classification, go/no-go
   gates for FUN-11/12/35, GET /api/automation-registry and `scripts/automation-inventory.mjs --check` (code-scan drift;
   root CI). Registered at merge: the moved web-lead intake, B2B invites, the messaging cron and the Action Center send.
+- **CREW-PROFILE** Crew public profiles: crew_public_profiles/{username} (one-word first name, manager-approved headshot
+  in private Drive, visibility flag; receipts and hub_audit in each commit) managed at the staff-gated /crew/profile-photo.
+  Behind `CREW_PUBLIC_PROFILES_ENABLED` the portal shows the job's crew (lead first) through signed, session-checked
+  /api/customer-crew-photo links and an "on the way" note on the service day; behind `FIELD_LEAD_ONLY_COMPLETE` only the
+  crew lead or a manager completes a job or sends on-my-way. Gaps: no Hub screen entry or dispatch avatars yet.
 
 ## In progress
 
@@ -468,6 +473,7 @@ one prefixed commit only after the full root suite (and the platform suite when 
 | FUN-15 | Ad spend ingestion (Meta, Google), owner spend ledger and Ad spend screen (migration 0015, flags off) | merged (3caad96) |
 | FUN-32 | Jobber coexistence guard: read-only stray check and per-surface booking/billing/messaging holds (flags off) | merged (651fa38) |
 | FUN-30 | GHL/Zapier automation registry, drift check and FUN-11/12/35 gates (read-only) | merged (cfd58b6) |
+| CREW-PROFILE | Crew public profiles (approved headshots, portal crew card) and lead-only completion (flags off) | merged (6f141a7) |
 
 ## Next
 

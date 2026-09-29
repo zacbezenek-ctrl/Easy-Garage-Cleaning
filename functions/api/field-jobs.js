@@ -9,6 +9,7 @@ import { createFieldPhotoClient, decodeFieldPhoto, fieldPhotosConfigured, verify
 import { syncFieldCompletion } from '../_lib/field-execution-sync.js';
 import { fieldJobTime } from '../_lib/field-execution-time.js';
 import { fieldExpenseCloseoutMissing, fieldExpensesEnabled, requireFieldExpenseCloseout } from '../_lib/field-expenses.js';
+import { fieldCapabilities } from '../_lib/field-permissions.js';
 
 const reply = (status, body) => Response.json(body, { status, headers: { 'Cache-Control': 'private, no-store', 'X-Content-Type-Options': 'nosniff' } });
 const mutationOriginAllowed = request => {
@@ -53,10 +54,12 @@ async function displayContext(ctx, env, jobs) {
   return job => ({ manager: ctx.manager, crewNames, vehicleName: resources.get(job.vehicleId)?.name || '', crewName: resources.get(job.crewId)?.name || '', viewer: ctx.session.user, resourceNames });
 }
 
+const capabilities = (ctx, env, job) => fieldCapabilities({ session: ctx.session, manager: ctx.manager, job, env, access: ctx.access });
+
 async function detail(ctx, env, jobId, cursor = '') {
   const job = await authorizedJob(ctx, jobId);
-  const [history, display] = await Promise.all([ctx.store.events(jobId, cursor), displayContext(ctx, env, [job])]);
-  const projection = fieldJobProjection(job, history.events, display(job));
+  const [history, display, allowed] = await Promise.all([ctx.store.events(jobId, cursor), displayContext(ctx, env, [job]), capabilities(ctx, env, job)]);
+  const projection = fieldJobProjection(job, history.events, { ...display(job), capabilities: allowed });
   // With FIELD_EXPENSE_CLOSEOUT_REQUIRED on, an open job lists its missing cost closeout (no amounts).
   if (projection.canEdit) projection.completionMissing.push(...await fieldExpenseCloseoutMissing(env, job.id, { safe: true }));
   // features lets the job page skip optional modules (and their API calls) that are switched off.
@@ -96,8 +99,8 @@ export async function onRequestGet({ request, env }) {
       jobs.push(job);
     }
     jobs.sort((a, b) => `${a.date} ${a.time || '99:99'}`.localeCompare(`${b.date} ${b.time || '99:99'}`) || a.id.localeCompare(b.id));
-    const display = await displayContext(ctx, env, jobs);
-    return reply(200, { ok: true, jobs: jobs.map(job => fieldJobProjection(job, [], display(job))), date, endDate: end.toISOString().slice(0, 10), timezone: 'America/Denver', photosAvailable: fieldPhotosConfigured(env), generatedAt: new Date().toISOString() });
+    const [display, allowed] = await Promise.all([displayContext(ctx, env, jobs), Promise.all(jobs.map(job => capabilities(ctx, env, job)))]);
+    return reply(200, { ok: true, jobs: jobs.map((job, index) => fieldJobProjection(job, [], { ...display(job), capabilities: allowed[index] })), date, endDate: end.toISOString().slice(0, 10), timezone: 'America/Denver', photosAvailable: fieldPhotosConfigured(env), generatedAt: new Date().toISOString() });
   } catch (error) { return errorResponse(error); }
 }
 
@@ -171,7 +174,7 @@ export async function onRequestPost(handlerContext) {
     else {
       if (receipt) throw fieldFailure('This action is pending verification. Retry shortly.', 409, 'FIELD_ACTION_PENDING');
       if (input.action === 'complete') await requireFieldExpenseCloseout(env, job, input);
-      const result = fieldCommand(job, { ...ctx.session, manager: ctx.manager }, input);
+      const result = fieldCommand(job, { ...ctx.session, manager: ctx.manager, capabilities: await capabilities(ctx, env, job) }, input);
       await ctx.store.commit(job, result.patch, { ...result.event, fingerprint });
       if (input.action === 'complete' && typeof handlerContext.waitUntil === 'function') {
         handlerContext.waitUntil(syncFieldCompletion(env, job.id, { actor: ctx.session }));

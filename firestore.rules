@@ -539,6 +539,16 @@ service cloud.firestore {
     match /operations_settings/{documentId} {
       allow read, write: if false;
     }
+    // Crew public profiles (first name, approved headshot pointer, customer
+    // visibility) and their request receipts are server-only. Staff use
+    // /api/crew-public-profile; customers get only a first name and a signed,
+    // session-checked photo link through the portal.
+    match /crew_public_profiles/{documentId} {
+      allow read, write: if false;
+    }
+    match /crew_profile_operations/{documentId} {
+      allow read, write: if false;
+    }
 
     match /{document=**} {
       allow read, write: if false;

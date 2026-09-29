@@ -12,6 +12,7 @@ import { TEMPLATE_KINDS } from './message-template-defaults.js';
 import { templateRegistry } from './message-template-store.js';
 import { MESSAGE_SENDS, ledgerId } from './message-send-store.js';
 import { maskRecipient, recipientDestination } from './ghl-messenger.js';
+import { fieldJobLead, fieldLeadOnlyComplete } from './field-permissions.js';
 
 export const COMPANY_PHONE = '(970) 999-1818';
 export const CONFIRM_TTL_MS = 10 * 60 * 1000;
@@ -221,6 +222,8 @@ export function createApprovedSendService({
   // deterministic send key and the recipient binding.
   async function context(actor, input, keyMs) {
     const ctx = await prepare(actor, input, keyMs), { policy, job, account, overrides, automated } = ctx;
+    // FIELD_LEAD_ONLY_COMPLETE narrows the crew's on-my-way send to the job's crew lead (fieldCapabilities.sendOnMyWay); status stays readable.
+    if (policy.kind === 'on_my_way' && fieldLeadOnlyComplete(env) && !automated && !(hasBusinessAccess(actor) && ['owner', 'manager'].includes(actor.role)) && !await fieldJobLead({ session: actor, job, access: assignment(actor) }).catch(() => false)) throw fail('messaging_forbidden', 'Only the crew lead or a manager can send the on-my-way message for this job.', 403);
     if (policy.audience === 'crew') {
       if (!ctx.crewId || !jobCrewNames(job).some(name => assignmentKey(name) === ctx.crewId)) throw fail('messaging_not_eligible', 'Choose a crew member assigned to this job.', 409, { reason: 'crew_not_assigned' });
       ctx.crew = await crewContact({ crewId: ctx.crewId, job });

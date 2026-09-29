@@ -12,7 +12,7 @@ const b64 = bytes => Buffer.from(bytes).toString('base64url');
 const expected = (root, label, message) => b64(createHmac('sha256', Buffer.from(hkdfSync('sha256', root, 'egc/purpose-keys/v1', label, 32))).update(message).digest());
 
 test('each registered purpose derives a distinct HMAC key from the same root', async () => {
-  assert.deepEqual(Object.values(PURPOSES).sort(), ['egc/confirm/v1', 'egc/customer-account-session/v1', 'egc/magic-link/v1', 'egc/rate-limit/v1']);
+  assert.deepEqual(Object.values(PURPOSES).sort(), ['egc/confirm/v1', 'egc/crew-photo-link/v1', 'egc/customer-account-session/v1', 'egc/magic-link/v1', 'egc/rate-limit/v1']);
   const signatures = await Promise.all(Object.values(PURPOSES).map(label => purposeSign(env, label, 'same message')));
   assert.equal(new Set(signatures).size, signatures.length);
   for (const [index, label] of Object.values(PURPOSES).entries()) {
