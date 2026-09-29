@@ -471,6 +471,10 @@ draft PR. The owner merges in phase order. See **Decisions** D-001.
   price-free crew_brief, the handoff and fieldJobProjection strip amounts from every crew copy (stripCrewMoney), and
   the priced brief stays in manager-only internalNotes and the signed HighLevel snapshot. scripts/backfill-crew-scope-
   prices.mjs (dry run by default) cleans stored briefs. Gap: staff-written Dispatch scopes are cleaned only with --include-staff.
+- **FUN-06** iPad walkthrough recorder on the gameplan (crew/gameplan-recorder.js, behind the FUN-05
+  `EGC_WALKTHROUGH_VISIT_ENABLED` flag): clock-in and consent first, recording in parts kept in IndexedDB and uploaded in
+  order to the recording service, one tab per walkthrough (Web Locks), consent withdrawal per visit, and Voice Memos import.
+  Gaps: parts are stitched only by FUN-34; iPads need iPadOS 15.4+; the gameplan is not in the offline shell.
 
 ## In progress
 
@@ -581,6 +585,7 @@ one prefixed commit only after the full root suite (and the platform suite when 
 | GHL-ALIGN | HighLevel owns follow-ups: check-in task, dry run without writes, inbound reconciler opt-in (flags off) | merged (cb90ce9) |
 | TIPS | Optional crew tips on card balance payments, held tipped charges and tip allocation (CUSTOMER_TIPS_ENABLED, off) | merged (99d4c1e) |
 | FIX-CREW-PRICE-LEAK | P1: keep quoted prices out of every crew-visible brief (crew_brief, strip on write and read, backfill) | merged (0162bfc) |
+| FUN-06 | iPad walkthrough recorder on the gameplan (EGC_WALKTHROUGH_VISIT_ENABLED) | merged (323c943) |
 
 ## Next
 

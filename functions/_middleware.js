@@ -65,8 +65,8 @@ export async function onRequest(context) {
     ? "default-src 'none'; script-src 'self'; style-src 'unsafe-inline'; connect-src 'none'; form-action 'none'; base-uri 'none'; object-src 'none'; frame-ancestors 'none'"
     : CSP);
   response.headers.set('Strict-Transport-Security', 'max-age=31536000; includeSubDomains');
-  // Co-Pilot voice input and Hub walkthrough recordings may ask for the microphone; every other page cannot.
-  const voiceInput = /^\/copilot(?:\.html)?\/?$/.test(pathname) || /^\/employee(?:\.html)?\/?$/.test(pathname);
+  // Co-Pilot voice input, Hub recordings and the iPad walkthrough recorder (FUN-06) may ask for the microphone; every other page cannot.
+  const voiceInput = /^\/copilot(?:\.html)?\/?$/.test(pathname) || /^\/employee(?:\.html)?\/?$/.test(pathname) || /^\/crew\/gameplan(?:\.html)?\/?$/.test(pathname);
   response.headers.set('Permissions-Policy', `camera=(), microphone=${voiceInput ? '(self)' : '()'}, geolocation=(self), payment=(), usb=()`);
   response.headers.set('Referrer-Policy', 'strict-origin-when-cross-origin');
   response.headers.set('X-Content-Type-Options', 'nosniff');

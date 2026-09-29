@@ -9,10 +9,12 @@ const response = (body, status = 200) => ({ ok: status < 400, status, json: asyn
 const flush = async () => { for (let i = 0; i < 30; i++) await Promise.resolve(); };
 
 // The Employee Hub page now records walkthrough audio (employee-recordings.js), so it joins Co-Pilot;
+// FUN-06 adds the iPad walkthrough recorder page (crew/gameplan) but not its scripts or other crew pages;
 // the signup page and public pages stay blocked.
 test('Co-Pilot voice input and Hub recordings can request the microphone only on their own pages', async () => {
   const { onRequest } = await import('../functions/_middleware.js');
-  for (const [path, allowed] of [['/copilot', true], ['/copilot.html', true], ['/employee', true], ['/employee.html', true], ['/employee-signup', false], ['/employee-suite.js', false], ['/', false], ['/crew/job.html', false]]) {
+  for (const [path, allowed] of [['/copilot', true], ['/copilot.html', true], ['/employee', true], ['/employee.html', true], ['/crew/gameplan', true], ['/crew/gameplan.html', true], ['/crew/gameplan/', true],
+    ['/crew/gameplan-recorder.js', false], ['/crew/gameplan-handoff.js', false], ['/crew/gameplanx', false], ['/crew/prejob.html', false], ['/employee-signup', false], ['/employee-suite.js', false], ['/', false], ['/crew/job.html', false]]) {
     const r = await onRequest({ request: new Request('https://easygaragecleaning.com' + path), next: async () => new Response('page') });
     assert.ok(r.headers.get('Permissions-Policy').includes(allowed ? 'microphone=(self)' : 'microphone=()'), path);
     assert.match(r.headers.get('Permissions-Policy'), /camera=\(\)/, path);

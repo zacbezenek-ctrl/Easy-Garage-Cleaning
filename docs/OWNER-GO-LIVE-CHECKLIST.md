@@ -65,6 +65,7 @@ The rule behind all of it: **HighLevel sends every customer message and owns eve
 45. [ ] **Book a test walkthrough in Dispatch and check the HighLevel calendar and tag.** HighLevel sends the confirmation, not the Hub. [3.2](GO-LIVE.md#32-booking-a-walkthrough-no-switch)
 46. [ ] **Upload a short test recording and retry any stuck ones.** Confirms walkthrough AI notes work after the crash fix. [3.3](GO-LIVE.md#33-recording-the-walkthrough)
 47. [ ] **When FUN-06 lands: assign reps in Dispatch, tell them to clock in first, then set `EGC_WALKTHROUGH_VISIT_ENABLED=true`.** Start and Finish then track the visit and the rep's time. [3.4](GO-LIVE.md#34-start-and-finish-after-fun-06)
+    - [ ] **Update every walkthrough iPad to iPadOS 15.4 or later (Settings > General > Software Update).** Recording in the Hub needs it; an older iPad records in Voice Memos instead. [3.4](GO-LIVE.md#34-start-and-finish-after-fun-06)
 48. [ ] **Rebook a no-show walkthrough by moving the same visit, never by creating a new one.** Keeps one history per walkthrough. [3.4](GO-LIVE.md#34-start-and-finish-after-fun-06)
 
 ## Stage 4: Crew scheduling and the field day
