@@ -1,9 +1,10 @@
 import * as z from "zod/v4";
 import { zodTextFormat } from "openai/helpers/zod";
 import { INTERNAL_TASK_KINDS, MESSAGE_ATTACHMENT_KINDS, MESSAGE_TASK_KINDS, isMessageTaskKind, type InternalTaskKind } from "@egc/operations/action-kinds";
-import { CONVERSATION_EXTRACTION_VERSION, CONVERSATION_LIMITS as L, conversationExtractionSchemas, conversationSourceKindSchema, walkthroughModelOutputSchema } from "@egc/schemas";
+import { CONVERSATION_EXTRACTION_VERSION, CONVERSATION_LIMITS as L, SCHEDULING_DAY_PARTS, SCHEDULING_WEEKDAYS, conversationExtractionSchemas, conversationSourceKindSchema, schedulingConstraintSchemas, walkthroughModelOutputSchema, type SchedulingConstraints } from "@egc/schemas";
 import type { CatalogIndexItem } from "./catalog-index.js";
 import { DEFAULT_EXTRACTION_MODEL, modelName, openaiClient } from "./provider.js";
+import { spokenDayParts, spokenNumbers, spokenUrgencies, spokenWeekdays } from "./scheduling-constraints.js";
 
 /** Conversation extraction v2 (P3-02): follow-up actions with the Action Center kinds, draft
  * suggestions, catalog mentions and customer preferences, each tied to exact transcript words.
@@ -88,6 +89,10 @@ export function conversationPrompt(context: ConversationContext, catalog: readon
     "requestedChannel is how the customer asked to be contacted, else null. questionText is the customer's unanswered question for answer_question, else null.",
     "catalogMentions are products or services discussed. catalogItemId must be an id from the catalog below or null; never guess an id. quantity, measurements and zone only when stated.",
     "preferences are the customer's stated likes, dislikes or constraints about the work.",
+    "schedulingConstraints are what the customer said about when the work can happen. Each one needs its own sourceQuote copied exactly from the transcript; use null (and [] for unavailableMentions) for anything the transcript does not state.",
+    "preferredWeekdays lists only weekdays its quote names (weekends means saturday and sunday; weekdays means monday to friday). timeOfDay.dayParts lists only parts of the day its quote names. urgency is asap, soon or flexible only when the customer says so.",
+    "notBeforeMention (the earliest the work can happen), notAfterMention (the latest it can happen) and each unavailableMentions entry copy the customer's own date words into mention, for example \"after next Tuesday\", \"by the end of October\" or \"the week of the 12th\"; mention must be words inside its sourceQuote. Never turn them into dates or weekdays: code resolves them against the walkthrough start.",
+    "crewSizeMention and durationHoursMention copy the spoken words into mention; people and hours are numbers only when those words say the number, else null. They are hints for staff, never a plan.",
     "Return structured data only.",
     catalog.length
       ? `Catalog (id | name | category | brands | tiers):\n${catalog.map(item => [item.id, item.name, item.category, item.brands.join(", ") || "-", item.tiers.join(", ") || "-"].join(" | ")).join("\n")}`
@@ -184,17 +189,70 @@ function scope(raw: unknown, grounded: (quote: string) => boolean, counts: Count
   return parsed.success ? parsed.data : undefined;
 }
 
-const envelope = z.object({ scope: z.unknown(), proposedActions: z.array(z.unknown()), catalogMentions: z.array(z.unknown()), preferences: z.array(z.unknown()) });
+// FUN-08. Each constraint stands alone: one whose sourceQuote is not in the transcript (or is only function words),
+// whose mention is not words inside its own quote, or that fails the strict schema after capping is dropped. Values
+// its quote does not say are cleared (weekdays, day parts, people, hours); an urgency, weekday list or day-part list
+// left with nothing its quote says is dropped. Null means the output carried no constraints at all (never extracted).
+const SC = schedulingConstraintSchemas;
+function scheduling(raw: unknown, grounded: (quote: string, minWords?: number) => boolean, counts: Counts): SchedulingConstraints | null {
+  const r = record(raw); if (!r) return null;
+  const drop = () => { counts.droppedSchedulingConstraints++; return null; };
+  const quoteOf = (e: Raw) => clipWords(e.sourceQuote, L.sourceQuote), mentionOf = (e: Raw) => clip(e.mention, L.mention);
+  const inside = (mention: string, quote: string) => evidenceMatcher(quote)(mention, 1);
+  const unique = (value: unknown) => Array.isArray(value) ? [...new Set(value)] : value;
+  function one<T extends { sourceQuote: string }>(value: unknown, parse: (e: Raw) => { success: true; data: T } | { success: false }, keep: (item: T) => T | null): T | null {
+    if (value === null || value === undefined) return null;
+    const e = record(value), parsed = e ? parse(e) : null;
+    if (!parsed?.success || !grounded(parsed.data.sourceQuote)) return drop();
+    return keep(parsed.data) ?? drop();
+  }
+  const listed = <V extends string>(values: readonly V[], said: Set<V>, order: readonly V[]) => {
+    const kept = order.filter(value => values.includes(value) && said.has(value));
+    if (kept.length) counts.clearedSchedulingValues += values.length - kept.length;
+    return kept;
+  };
+  const spoken = <K extends "people" | "hours">(item: { mention: string; sourceQuote: string } & Record<K, number | null>, key: K) => {
+    if (!inside(item.mention, item.sourceQuote)) return null;
+    if (item[key] !== null && !spokenNumbers(item.mention).has(item[key])) { counts.clearedSchedulingValues++; return { ...item, [key]: null }; }
+    return item;
+  };
+  const dateMention = (value: unknown) => one(value, e => SC.dateMention.safeParse({ mention: mentionOf(e), sourceQuote: quoteOf(e) }), item => inside(item.mention, item.sourceQuote) ? item : null);
+  const seen = new Set<string>(), unavailableMentions: SchedulingConstraints["unavailableMentions"] = [];
+  for (const value of Array.isArray(r.unavailableMentions) ? r.unavailableMentions : []) {
+    const item = dateMention(value);
+    if (!item) continue;
+    const key = normalizeEvidenceText(item.mention);
+    if (seen.has(key) || unavailableMentions.length >= L.unavailableMentions) { drop(); continue; }
+    seen.add(key); unavailableMentions.push(item);
+  }
+  return {
+    preferredWeekdays: one(r.preferredWeekdays, e => SC.preferredWeekdays.safeParse({ weekdays: unique(e.weekdays), sourceQuote: quoteOf(e) }), item => {
+      const weekdays = listed(item.weekdays, spokenWeekdays(item.sourceQuote), SCHEDULING_WEEKDAYS); return weekdays.length ? { ...item, weekdays } : null;
+    }),
+    timeOfDay: one(r.timeOfDay, e => SC.timeOfDay.safeParse({ dayParts: unique(e.dayParts), sourceQuote: quoteOf(e) }), item => {
+      const dayParts = listed(item.dayParts, spokenDayParts(item.sourceQuote), SCHEDULING_DAY_PARTS); return dayParts.length ? { ...item, dayParts } : null;
+    }),
+    notBeforeMention: dateMention(r.notBeforeMention),
+    notAfterMention: dateMention(r.notAfterMention),
+    unavailableMentions,
+    crewSizeMention: one(r.crewSizeMention, e => SC.crewSizeMention.safeParse({ people: e.people, mention: mentionOf(e), sourceQuote: quoteOf(e) }), item => spoken(item, "people")),
+    durationHoursMention: one(r.durationHoursMention, e => SC.durationHoursMention.safeParse({ hours: e.hours, mention: mentionOf(e), sourceQuote: quoteOf(e) }), item => spoken(item, "hours")),
+    urgency: one(r.urgency, e => SC.urgency.safeParse({ level: e.level, sourceQuote: quoteOf(e) }), item => spokenUrgencies(item.sourceQuote).has(item.level) ? item : null)
+  };
+}
+
+const envelope = z.object({ scope: z.unknown(), proposedActions: z.array(z.unknown()), catalogMentions: z.array(z.unknown()), preferences: z.array(z.unknown()), schedulingConstraints: z.unknown().optional() });
 /** Deterministic post-validation of raw model output. Items whose sourceQuote is not in the transcript (or is
  * only function words), or that fail the strict schema after capping, are dropped; unknown catalog ids, unspoken
  * owner/due mentions and drafts on internal kinds, with unspoken amounts or percentages, with links or with a
- * payment, acceptance or booking claim the transcript does not make are cleared. Null means the output is unusable. */
+ * payment, acceptance or booking claim the transcript does not make are cleared. Scheduling constraints follow the
+ * same quote rule, one constraint at a time (scheduling() above). Null means the output is unusable. */
 export function validateConversationOutput(raw: unknown, transcript: string, meta: {
   context: ConversationContext; catalog: readonly CatalogIndexItem[]; catalogVersion: string | null; model: string;
 }): ConversationExtraction | null {
   const shape = envelope.safeParse(raw);
   if (!shape.success) return null;
-  const counts: Counts = { droppedProposedActions: 0, droppedCatalogMentions: 0, droppedPreferences: 0, droppedEvidence: 0, clearedCatalogItemIds: 0, clearedMentions: 0, clearedDraftSuggestions: 0 };
+  const counts: Counts = { droppedProposedActions: 0, droppedCatalogMentions: 0, droppedPreferences: 0, droppedEvidence: 0, clearedCatalogItemIds: 0, clearedMentions: 0, clearedDraftSuggestions: 0, droppedSchedulingConstraints: 0, clearedSchedulingValues: 0 };
   const grounded = evidenceMatcher(transcript);
   const spoken = amounts(transcript, true), claimed = CLAIMS.map(claim => claim.test(transcript.normalize("NFKC"))), catalog = new Map(meta.catalog.map(item => [item.id, item]));
   // Keeps the first of repeated items and at most `limit` of them; everything else counts as dropped.
@@ -212,9 +270,10 @@ export function validateConversationOutput(raw: unknown, transcript: string, met
   const preferences = keep(shape.data.preferences, raw => preference(raw, grounded), item => normalizeEvidenceText(`${item.topic} ${item.statement}`), L.preferences, "droppedPreferences");
   const visitScope = meta.context.sourceKind === "visit_recording" ? scope(shape.data.scope, grounded, counts) : null;
   if (visitScope === undefined) return null;
+  const schedulingConstraints = scheduling(shape.data.schedulingConstraints, grounded, counts);
   const result = conversationExtractionSchema.safeParse({
     version: CONVERSATION_EXTRACTION_VERSION, sourceKind: meta.context.sourceKind, occurredAt: meta.context.occurredAt, model: meta.model, catalogVersion: meta.catalogVersion,
-    scope: visitScope, proposedActions, catalogMentions, preferences, validation: counts
+    scope: visitScope, proposedActions, catalogMentions, preferences, schedulingConstraints, validation: counts
   });
   return result.success ? result.data : null;
 }

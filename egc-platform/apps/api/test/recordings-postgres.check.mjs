@@ -105,3 +105,26 @@ test('EGC_EXTRACTION_V2 on: unusable model output fails safely as recording_proc
   await service.execute(claims({command:'recording.retry',recordingId:r.recording.id}));await service.processNext();
   const d=(await get(r.recording.id)).recording;assert.equal(d.status,'draft');assert.equal(d.extractionVersion,2);assert.equal(v.model.length,2);assert.equal(appliedCount,0);
 });
+// FUN-08: scheduling constraints ride in the same v2 conversation. Each keeps its transcript quote; one without a
+// supporting quote is dropped and counted. Rows stored before FUN-08 stay readable with schedulingConstraints null.
+const scheduledTranscript=`${visitTranscript}\nCustomer: We cannot do anything until after next week, and Fridays never work.\nCustomer: There is no rush on the shelving part.`;
+const scheduling=()=>({preferredWeekdays:null,timeOfDay:null,notBeforeMention:{mention:'until after next week',sourceQuote:'We cannot do anything until after next week'},notAfterMention:{mention:'by the end of October',sourceQuote:'It has to be finished by the end of October'},
+  unavailableMentions:[{mention:'Fridays',sourceQuote:'Fridays never work'}],crewSizeMention:null,durationHoursMention:null,urgency:{level:'flexible',sourceQuote:'There is no rush on the shelving part'}});
+test('EGC_EXTRACTION_V2 on: quoted scheduling constraints are stored and shown with the conversation; unquoted ones are dropped',async()=>{
+  const v=v2Service({transcript:scheduledTranscript,outputs:[{...v2Output(),schedulingConstraints:scheduling()}]});service=v.service;const d=await draft(),saved=await row(d.id);
+  assert.equal(d.extractionVersion,2);
+  const expected={...scheduling(),notAfterMention:null};
+  assert.deepEqual(d.conversation.schedulingConstraints,expected);assert.deepEqual(saved.extraction.conversation.schedulingConstraints,expected);
+  assert.equal(d.conversation.validation.droppedSchedulingConstraints,1);assert.equal(d.conversation.validation.clearedSchedulingValues,0);
+  assert.equal(Object.hasOwn(d.extraction,'schedulingConstraints'),false,'the reviewed walkthrough scope the Hub stores never carries them');
+  assert.deepEqual(d.proposedTasks.map(p=>p.task.kind),['send_quote','callback']);
+});
+test('a v2 row stored before FUN-08 still shows its conversation and proposals, with schedulingConstraints null (never extracted)',async()=>{
+  const v=v2Service();service=v.service;const d=await draft(),saved=await row(d.id);
+  const {schedulingConstraints:_,...legacy}=saved.extraction.conversation,{droppedSchedulingConstraints:__,clearedSchedulingValues:___,...counts}=legacy.validation;
+  await db.update(schema.walkthroughs).set({extraction:{...saved.extraction,conversation:{...legacy,validation:counts}}}).where(eq(schema.walkthroughs.id,d.id));
+  assert.equal(Object.hasOwn((await row(d.id)).extraction.conversation,'schedulingConstraints'),false);
+  const again=(await get(d.id)).recording;
+  assert.equal(again.conversation.schedulingConstraints,null);assert.equal(again.conversation.validation.droppedSchedulingConstraints,0);
+  assert.deepEqual(again.proposedTasks.map(p=>p.task.kind),['send_quote','callback']);
+});

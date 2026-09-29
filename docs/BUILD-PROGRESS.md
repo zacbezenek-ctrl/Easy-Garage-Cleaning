@@ -345,6 +345,11 @@ draft PR. The owner merges in phase order. See **Decisions** D-001.
   timecard rate); pay terms count only when the latest workflow decision set them. `scripts/pto-pay-audit.mjs` is read-only.
   Merged by the coordinator on the owner's direct authorization. Gap: managers still read rates via /api/timesheets until
   PAY-TIMESHEETS merges (next).
+- **FUN-08** Scheduling constraints in the v2 conversation extraction (preferred weekdays, time of day, not-before /
+  not-after / unavailable dates, crew size, duration, urgency; each with a transcript-checked sourceQuote), and a
+  clock-free resolver that turns date words into America/Denver dates anchored on the walkthrough Start (scheduled date
+  as a flagged fallback, never the upload time). Live only with `EGC_EXTRACTION_V2`. Gaps: nothing calls the resolver
+  until FUN-09; named holidays stay unresolved until the shared business calendar lands.
 
 ## In progress
 
@@ -425,6 +430,7 @@ one prefixed commit only after the full root suite (and the platform suite when 
 | FUN-20 | Garage Guard membership ledger: amounts, billing periods, churn, member visits and deferred revenue (flags off) | merged (3390387) |
 | SYNC-QUEUE | Server-driven HighLevel schedule mirror queue (egc-api loop, flag off) | merged (6185062) |
 | P1-06 | Server time-off workflow and single PTO pay model (/api/employee-pto; employee-hub request writes 403) | merged (6c914d2) |
+| FUN-08 | Scheduling constraints in the v2 extraction, resolved against the walkthrough Start (Denver) | merged (354864f) |
 
 ## Next
 
