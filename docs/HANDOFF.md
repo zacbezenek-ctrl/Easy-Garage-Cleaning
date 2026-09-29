@@ -1,70 +1,64 @@
 # Easy Garage Cleaning Hub handoff
 
-Status snapshot: **2026-09-29**. Refresh the GitHub heads and checks before acting; this file records what was verified at the snapshot, not a claim that a later merge or deployment has happened.
+Snapshot: **2026-09-29**. Read current GitHub checks before a merge. This snapshot records code and test evidence; it does not claim production deployment or activation.
 
 ## What this is
 
-The Employee Hub and the linked crew, customer, business, and operations services replace the daily Jobber workflow. `main` deploys through the site's Git integration. The current wrap-up is a controlled merge of already started work, followed by owner checks in a real account and on real devices. The owner's original queue said no new units start. The owner later separately authorized completion of the Hub's iOS Walkthroughs screen and transcript-to-office-task path; that local integration is part of this handoff.
+The Employee Hub connects office work, crew jobs, customer portals, HighLevel and the Railway operations services. The owner authorized completing the mobile Hub, Walkthroughs, transcript intake and office handoff, using existing credentials. The original queue remains serial and no unrelated new units start. Owner instructions are preserved verbatim in [decisions.md](handoff/decisions.md).
 
-## Verified repository state
+## Release state
 
-At this snapshot, GitHub `main` is `59d617ac` (Batch 7). [Batch 8 PR #86](https://github.com/zacbezenek-ctrl/Easy-Garage-Cleaning/pull/86) is open and draft at `6cc4cad8`; its four committed units are SALES-BOOKING, WT-OUTCOME, FIX-DISPATCH-QUEUE, and MOBILE-HUB. Neither this handoff nor `docs/handoff/` is present at that PR head. The Hub iOS Walkthroughs and transcript-to-office-task implementation, including this handoff, is published in [Batch 9 PR #87](https://github.com/zacbezenek-ctrl/Easy-Garage-Cleaning/pull/87). Its latest fully green code head is `9e810bd95cf152c016f721acc4efbeccb0da4afd`; the combined credits and asset-version follow-up recorded below requires a fresh final-head run. PR #87 remains draft; preview deployments exist, but it is not merged or deployed to production.
+- GitHub main was `59d617acda3422de90537b9c87a11f8be34b93f8` at the last check.
+- [Batch 8 PR #86](https://github.com/zacbezenek-ctrl/Easy-Garage-Cleaning/pull/86) originally contained SALES-BOOKING, WT-OUTCOME, FIX-DISPATCH-QUEUE and MOBILE-HUB at `6cc4cad8`. Its old Dispatch browser failure is addressed by reusing the loaded queue when switching views, preventing a second fetch from replacing a row while someone taps Find a time.
+- The completion candidate adds credits **889f307**, handoff **d173e71**, then FIELD-PAY **d769ac5**, in that order. FIELD-PAY source is **2b1c1b8ace9deccd8b827f89a42c76e17d9fa00f**. Final combined CI, including the new real Firestore checks, is pending at this snapshot.
+- [Batch 9 PR #87](https://github.com/zacbezenek-ctrl/Easy-Garage-Cleaning/pull/87), branch `codex/hub-ios-walkthrough-completion`, passed all eight workflows at **bf191d92c9de6ce394b8166d9fd53039d7e25104**. It awaits Batch 8, then reintegration and fresh checks on its resulting head.
+- Neither batch has been merged to main or deployed by this task at this snapshot. Use live PR checks for newer results; historical successful heads are not evidence for later commits.
 
-**PR #86** has an older Action Center CI failure: its Dispatch browser suite could not find a visible “Find a time” control (`test_dispatch_ui.py:304`, run `36604534261`). That result belongs to PR #86's `6cc4cad8` head, not PR #87.
+## Completed work
 
-At **PR #87 head `9e810bd`**, all eight workflows succeeded: Root, Platform, Operations Integration, Firestore, Business Hub, Mobile Device E2E, Lighthouse, and Action Center. Action Center includes functions, PostgreSQL lifecycle, full Chromium browser coverage and dedicated WebKit recording tests. The office visual refinement passed all 32 local Action Center browser tests and WebKit phone/landscape inspection. The queued collected-credits fix and asset-version refresh are the only subsequent changes in this revision; every required workflow must pass again on the final combined head before merge. Use live PR checks for the latest result.
+**Collected credits:** the Verified collected tile counts verified cash after subtracting applied gift credits. Credit-only payments settle the bill while showing zero cash; mixed payments count the cash portion; inconsistent splits show review. Primary and independent review and **159 targeted tests** passed.
 
-The PR body reports FIELD-PAY awaiting a final minor fix; an earlier FIX-HUB-COLLECTED-CREDITS candidate reviewed and next; WT-HANDOFF, OPS-VISIBILITY, and FIX-JOBBER-MONEY in review or queued. It reports FIX-REFUNDS built and reviewed once and GHL-TRACK-2 built but needing another clean review. These statements are from the PR description, not evidence that any of those units has landed. The owner's later queue instruction places credits, handoff, FIELD-PAY, refunds, and milestone tags in that order, followed by seven running builds as each finishes. The seven build IDs and their exact states have not been supplied in this checkout.
+**FIELD-PAY:** the assigned lead collects the exact remaining balance through Stripe or submits a private cash/check receipt photo. Cash/check stays pending until manager approval atomically updates the existing money ledger and receipt decision. Durable card claims, frozen retry IDs, current balance/assignment checks, private per-session evidence and existing Review queues protect interrupted requests. Direct browser edits wait while a card checkout is active. Approved payments have a native HighLevel note handoff and a visible manager retry state. See [FIELD-PAY.md](FIELD-PAY.md).
 
-## Queued credits fix completed
+FIELD-PAY primary and independent review findings were addressed. The final combined local payment, money, review and automation tests passed **139/139**; its focused browser tests passed **15/15 Chromium and 15/15 WebKit**, including manager finance badges and retry states. Existing crew drafts **8/8**, tips **3/3** and field expenses **23/23** also passed. The original unpublished candidate's reported review is not claimed for this implementation.
 
-The original collected-credits candidate was not published in the inspected refs. The existing queued unit is now completed in isolated commit `6e62996caa0c87371676201832a8f8e6edacdc12` in PR #87 (main-based source commit `f7ecda5cae5ab639e2883b7b7575b6e34bc6fabd`). Primary and independent review passed, along with **159 targeted money, invoice, privacy and parity tests**. The Verified collected tile counts verified cash after subtracting applied gift credits. Credit-only payments show zero cash while still settling the bill; mixed payments count only cash. Invalid splits show a review notice. Existing invoice balances and tip-mode behavior are preserved. Pick this portable commit first into the original serial queue and run its exact-head checks; inclusion in PR #87 is not a claim that Batch 8 or main has merged it. This revision also refreshes asset versions so returning staff receive the matching scripts and styles.
+**Walkthroughs and office handoff:** PR #87 contains the role-correct phone menu, audio/recording intake, pasted or uploaded TXT/MD/VTT/SRT transcripts, exact-visit permission checks, reviewed scope and assigned Hub tasks. The office sees the saved customer, copyable instructions and a verified HighLevel contact link or search fallback. Tasks and notes require review where specified; the implementation does not automatically send customer messages. Existing OpenAI configuration is reused.
 
-## Rules for continuing
+PR #87's eight green workflows are Root, Platform, Operations Integration, Firestore, Business Hub, Mobile Device E2E, Lighthouse and Action Center. Its local browser evidence also includes Walkthroughs **10/10**, Hub mobile **18/18**, Action Center **32/32** and recordings **13/13 WebKit**. These results belong to the stated PR head.
 
-### Active queue continuation
+## Rules and launch order
 
-The isolated `codex/batch8-release-completion` branch now starts with credits commit `889f307` after the original Batch 8 head. Its 159 targeted tests passed before this handoff commit was added. The published FIELD-PAY fragments do not satisfy the queued unit: partial crew card collection and manager-entered cash/check lack the required exact-balance, receipt-backed review flow. Completion of that existing unit is now in progress on isolated branch `codex/field-pay-completion`, followed by independent review and exact-head CI. The older claim of a third-reviewed unpublished implementation is not being treated as evidence for this new completion candidate. No Batch 8 merge to main or production deployment has occurred.
+1. Keep units serial, tested and reviewed. Merge Batch 8 only when FIELD-PAY is included and all required checks on its final head pass. The remaining completed work lands through Batch 9 after its own checks.
+2. FIELD-PAY ships with **EGC_FIELD_PAY_ENABLED off**. New intake requires it, **MONEY_API_ENABLED=true** and **MONEY_UNIFIED_TOTALS=true**. Publish the private Firestore rules first and verify the existing money backfill/shadow rollout prerequisites. Keep pending payment evidence and review recovery available during rollback.
+3. **FIX-REFUNDS and GHL-TRACK-2 remain parked and off.** Their implementation commits and exact activation flag names were not located. The PR reports refunds reviewed once and milestone tags needing a clean review; this is reported state, not evidence of reviewed source. Obtain the actual source, record review state in commit and handoff, and merge disabled.
+4. HighLevel owns customer communication and follow-ups. The payment handoff reuses its existing payment-received tag only after verified money and the native note outbox; downstream workflow review remains recorded in the automation registry. No live messages or charges were used for tests.
+5. Never infer production readiness from synthetic tests or a configured-key badge. Verify deployed revisions, rules, permissions and real-account acceptance separately.
 
-1. Keep the queue serial. Review and test each unit at its actual head; fix any failed gate before merging the next.
-2. Keep **FIX-REFUNDS** and **GHL-TRACK-2** disabled at merge. Record the review state and exact flag names in each commit and here before any activation decision. Do not infer approval from a merged commit.
-3. Merge Batch 8 to `main` only after FIELD-PAY is included and CI is green. Put the remaining completed units in a Batch 9 PR.
-4. HighLevel owns customer communication and follow-ups. Hub tracking and tags must not create an unreviewed customer send. See [HIGHLEVEL-BOUNDARY.md](HIGHLEVEL-BOUNDARY.md).
-5. Keep owner actions separate from code-complete claims. A checked-in feature or passing synthetic test does not prove its production credentials, Firestore rules, schedules, connected HighLevel workflow, or phone behavior.
-6. Preserve the isolated-unit review convention described in [BUILD-PROGRESS.md](BUILD-PROGRESS.md): unit-prefixed commits, adversarial review, affected tests, then full suites before merge. The old **Next** list and phase summary in that file are stale; use its detailed unit history as background, and the dated files here for this queue.
+Machine-readable queue and state: [launch-order.json](handoff/launch-order.json), [unit-status.json](handoff/unit-status.json), [follow-ups.json](handoff/follow-ups.json).
 
-## What is built and what remains
+## Parked inventory
 
-The four Batch 8 units are committed in PR #86, subject to its CI gate and owner acceptance. PR #87 publishes the role-correct Walkthroughs menu, exact-visit recording/transcript intake, phone-first design, reviewed scope and assigned office tasks. The office handoff reads saved customer details and the matching HighLevel contact link; recording source resolution recovers exact project links; and dedicated WebKit coverage passes. This revision adds the final warm offwhite/forest-green office layout and replaces internal task codes with readable labels. Treat PR #87 as pending until the latest head is reviewed, CI-green, and launch gates permit merging. See [unit-status.json](handoff/unit-status.json) for the machine-readable snapshot.
+The promised **41 authoritative specs** were not found in the inspected checkout or published PR head: **0/41 located**. The seven reported running builds have not been identified. [spec-inventory.json](handoff/spec-inventory.json) records these gaps. Obtain those sources and IDs; do not fabricate requirements or mark absent work complete. These inventory gaps are separate from the implemented transcript-to-office flow.
 
-This snapshot cannot certify the promised **41 specs for unbuilt or in-flight units**. No such spec set exists in the checked-out branch or PR #86 head. [spec-inventory.json](handoff/spec-inventory.json) records 0/41 located. Obtain the authoritative 41 documents and their IDs, then add them without silently inventing scope or marking units complete. Until then, the future-scope handoff is incomplete.
+## How to verify and run
 
-## Launch order
+- Root: `npm install --ignore-scripts`, then `npm test`. CI repeats the suite with its injected clock shifted 400 days.
+- Platform: from `egc-platform/`, `pnpm install --frozen-lockfile`, `pnpm build:packages`, `pnpm typecheck`, `pnpm test`, `pnpm build`; use the workflow's PostgreSQL checks when platform behavior changes.
+- FIELD-PAY browser: `python tests/browser/test_field_pay_ui.py`; set `EGC_TEST_BROWSER=webkit` for iPhone engine coverage. Walkthrough, mobile and recording suites are in `tests/browser/`.
+- Real database rules and atomic operations: use `.github/workflows/egc-firestore-ci.yml` and its isolated loopback emulators. Never point emulator tests at production.
+- Automation inventory: `node scripts/automation-inventory.mjs --check`. Registration records the writer; it does not approve a downstream customer workflow.
+- On Windows, existing full-suite POSIX/line-ending fixtures can differ; Linux CI on the final head is the merge gate. The new emulator tests have not yet run at this snapshot.
 
-The owner's stated merge sequence and gates are in [launch-order.json](handoff/launch-order.json). After a green merge, perform the owner checklist and go-live checks in [OWNER-GO-LIVE-CHECKLIST.md](OWNER-GO-LIVE-CHECKLIST.md) and [GO-LIVE.md](GO-LIVE.md). Flags remain at their documented off defaults until their specific verification and owner activation step. A production deployment and live device check have **not** been verified in this snapshot.
+## Production and owner actions
 
-## How to verify
+The read-only Railway snapshot showed API, MCP and worker at `8081d74b677bf2ff47523bf246236cdc4fbf4708` and portal at `038c1186ba7c69aafca34d82854fa11677a88bf2`. The older API lacks recording.transcript. Existing API configuration names, including OPENAI_API_KEY, are present; no key values were printed or replaced.
 
-- Root contract suite: `npm test` (also run with `EGC_CLOCK_SHIFT_DAYS=400` where the workflow does).
-- Platform package suite: from `egc-platform/`, `pnpm test`; run its build/type checks and migrations when that tree changes.
-- Affected browser suites: `python -m unittest discover -s tests/browser -p test_walkthroughs_ui.py` and `python -m unittest discover -s tests/browser -p test_hub_shell_mobile_ui.py`. The CI workflow runs the broader Action Center browser suite.
-- Firestore emulator and device projects: follow [testing.md](testing.md) and the workflow for changed surfaces. Do not call CI green from a subset or a previous SHA.
-- Check GitHub Actions on the **exact merge SHA**. Earlier successful runs do not replace the final revision's checks.
+The owner signed into the live Hub, and its office pages are accessible. Integrations reports the main Hub/HighLevel/Firebase/OpenAI/Stripe connections configured. Google Drive and Firebase sign-out verification still report setup needed; the cause of the latter has not been established. FIELD-PAY photos use private Firestore storage and do not depend on Drive.
 
-Local checks for the published Hub integration passed: Walkthroughs browser **10/10**, Hub mobile **18/18** including an 844×390 side-notch dialog, Action Center browser **32/32**, and recording browser **13/13 in WebKit**. For this follow-up, focused checks passed: office handoff browser **7/7**, recording API **15/15**, proxy/contact **14/14**, and Dispatch regressions **43/43**. The Linux WebKit launch correction also passed the 13 recording browser cases locally. Windows root-suite fixture checks depend on POSIX file modes and CRLF handling; the Linux CI result on the final head is the merge evidence. Local checks do not replace CI.
+Firebase and Cloudflare release-console sign-in has been requested and remains pending at this snapshot. Hub login does not provide those administrative sessions. After green merges, publish the reviewed Firebase rules/indexes, verify Cloudflare's actual deployment and flags, and deploy the same merged release to all four existing Railway services. Do not replace services or keys. Follow [GO-LIVE.md](GO-LIVE.md) and `egc-platform/docs/railway-deployment.md`.
 
-## Owner actions and follow-ups
+Finish with authorized synthetic live acceptance: assigned walkthrough transcript draft, manager review and one office task, correct customer/contact association, retry without duplication, role denial and phone layout. A real customer send or card charge is not part of this test. Record actual outcomes before calling the release production verified.
 
-The owner must complete the live checks in the go-live checklist, including staff access, installed iPhone safe areas, walkthrough booking/outcomes, Dispatch queue exits, production rules/session access, and HighLevel behavior. Verify operational flags and integrations in the deployed environment before enabling any parked behavior. [follow-ups.json](handoff/follow-ups.json) separates blockers from live checks. [decisions.md](handoff/decisions.md) preserves the owner's queue instruction verbatim.
+## Continue from here
 
-## How to resume
-
-1. Read this snapshot and the machine-readable files, then fetch fresh PR, branch, and CI state. Keep PR #86's earlier failure separate from PR #87's current checks.
-2. Verify the reviewed credits candidate and final asset-version update. Verify PR #87 checks on its latest head; update status and test evidence with the exact SHA. Pick credits first into the original serial queue; FIELD-PAY still requires its completed source.
-3. Follow the serial launch order. Before each merge, verify unit review, flags, CI, and whether the commit and this file carry the latest status.
-4. Add the real 41 specs when their source is available; reconcile every ID with the unit status and Batch 9 plan. Do not launch extra units during this wrap-up.
-5. Finish the owner checks after deployment. Record actual dates, results, and unresolved issues in this handoff rather than checking boxes based on code alone.
-
-## Production verification
-
-The read-only Railway production check found API, MCP and worker deployed successfully at `8081d74b677bf2ff47523bf246236cdc4fbf4708`, and the portal at `038c1186ba7c69aafca34d82854fa11677a88bf2`. The deployed API does not have `recording.transcript`. Required API configuration names, including `OPENAI_API_KEY`, are present; secret values and effective flag settings were not inspected. Deploy the transcript-capable API and matching Cloudflare Hub before staff use the new intake, then verify an assigned rep's draft and a manager's one-task approval in the office account. No new migration, key or audio storage is required for pasted text. Missing future specs are a separate wrap-up inventory gap, not a technical prerequisite for this flow.
+Fetch current heads/checks; complete Batch 8 CI and merge gate; integrate Batch 8 into PR #87; resolve shared asset versions and handoff status; rerun checks; merge Batch 9; publish matching services/rules; complete the live acceptance above. Refresh this handoff and the release evidence with actual results. Keep the original queue's missing specs, unlocated units and owner configuration work visible.

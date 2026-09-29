@@ -11,19 +11,25 @@
       "order": 1,
       "item": "FIX-HUB-COLLECTED-CREDITS",
       "gate": "review and tests",
-      "candidateCommitSha": "6e62996caa0c87371676201832a8f8e6edacdc12",
+      "candidateCommitSha": "889f307",
       "review": "primary and independent review passed; 159 targeted tests",
-      "state": "ready_for_first_queue_pick_pending_exact_head_ci"
+      "state": "picked_and_targeted_tests_passed"
     },
     {
       "order": 2,
       "item": "handoff_commit",
-      "gate": "docs/HANDOFF.md and docs/handoff/ reviewed for actual status and missing specs"
+      "gate": "docs/HANDOFF.md and docs/handoff/ reviewed for actual status and missing specs",
+      "state": "picked_second",
+      "candidateCommitSha": "d173e71"
     },
     {
       "order": 3,
       "item": "FIELD-PAY",
-      "gate": "final fix, review, and green CI"
+      "gate": "final fix, review, and green CI",
+      "state": "picked_third_pending_combined_ci",
+      "candidateCommitSha": "d769ac5",
+      "activationFlag": "EGC_FIELD_PAY_ENABLED",
+      "activation": "off"
     },
     {
       "order": 4,
@@ -57,6 +63,7 @@
   },
   "activation": {
     "FIX-REFUNDS": "off_at_merge",
-    "GHL-TRACK-2": "off_at_merge"
+    "GHL-TRACK-2": "off_at_merge",
+    "FIELD-PAY": "off_until_rules_and_money_prerequisites_verified"
   }
 }

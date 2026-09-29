@@ -128,7 +128,12 @@ async function load({quiet=false}={}) {
   finally { if (generation===S.generation && S.root) { S.loading=false; if(S.pendingBook&&S.error&&!S.data){S.pendingBook=null;S.error+=' The booking form did not open: book again once the schedule loads.';} render(); openPendingBook(); } }
 }
 function setFilter(field,value) { if(field==='status'&&value==='unscheduled'){S.status='active';showQueue();return;} S[field]=value; renderBody(); }
-function showQueue() { S.view='queue'; S.focusQueue=true; void load(); }
+function showQueue() {
+  S.view='queue'; S.focusQueue=true;
+  // Every board read includes the queue. Avoid replacing a row while the office
+  // is tapping Schedule or Find a time after switching views.
+  if(S.data)render();else void load();
+}
 function move(count) { const view=views.get(S.view); S.date=view?.step?view.step(S.date,count):addDays(S.date,count*(S.view==='week'||S.view==='crew'?7:1)); void load(); }
 function show(view,date) { if(/^\d{4}-\d{2}-\d{2}$/.test(date||''))S.date=date; if(view)S.view=view; void load(); }
 function setDate(date) { if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) return; S.date=date; void load(); }

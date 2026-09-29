@@ -4,17 +4,17 @@
   "items": [
     {
       "id": "CREDITS-QUEUE",
-      "state": "implemented_reviewed_pending_queue_pick",
+      "state": "picked_first_on_batch8_candidate",
       "owner": "build coordinator",
-      "action": "Pick the isolated credits fix first into the existing serial queue, run exact-head checks, then proceed to handoff and FIELD-PAY. Do not merge Batch 8 to main before FIELD-PAY.",
-      "commitSha": "6e62996caa0c87371676201832a8f8e6edacdc12",
+      "action": "Preserve serial queue; verify final combined CI before main merge.",
+      "commitSha": "889f307",
       "evidence": "159 targeted money, invoice, privacy and parity tests; primary and independent review passed"
     },
     {
       "id": "CI-01",
-      "state": "open",
+      "state": "fix_in_candidate_pending_full_ci",
       "owner": "build coordinator",
-      "action": "Fix or verify the Dispatch Find a time browser failure, then obtain green Action Center CI on the exact Batch 8 merge head.",
+      "action": "Verify the Dispatch view-switch fix and all eight workflows on the final Batch 8 head, including real Firestore atomic/payment rules and dedicated iPhone WebKit field payment cases.",
       "evidence": "PR #86 run 36604534261, test_dispatch_ui.py:304"
     },
     {
@@ -50,9 +50,9 @@
     },
     {
       "id": "HUB-INTEGRATION",
-      "state": "ui_ci_green_combined_candidate_pending_ci",
+      "state": "all_eight_workflows_green_waiting_batch8",
       "owner": "build coordinator",
-      "action": "All eight workflows passed UI head 9e810bd. Verify all Linux CI workflows again on the final credits-plus-UI PR #87 head, then preserve Batch 8/FIELD-PAY ordering before merge and production smoke checks."
+      "action": "PR #87 at bf191d92c9de6ce394b8166d9fd53039d7e25104 passed all eight workflows. After Batch 8 merges, integrate that main state into PR #87, resolve shared assets/docs, rerun all required checks, then merge Batch 9."
     },
     {
       "id": "OWNER-LIVE",
@@ -65,6 +65,12 @@
       "state": "pending_deployment",
       "owner": "owner",
       "action": "Review evidence for each off-by-default flag before activation; leave refunds and milestone tags off until separately approved."
+    },
+    {
+      "id": "FIELD-PAY-ROLLOUT",
+      "state": "code_reviewed_pending_ci_and_release_access",
+      "owner": "release coordinator and owner",
+      "action": "Publish reviewed Firestore rules/indexes, verify money backfill and unified totals gates, then enable EGC_FIELD_PAY_ENABLED in a new Cloudflare deployment only after preview acceptance. Keep refunds/milestone tags off. No real charge has been made by this task."
     }
   ]
 }

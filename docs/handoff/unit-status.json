@@ -5,11 +5,13 @@
   "mainSha": "59d617acda3422de90537b9c87a11f8be34b93f8",
   "batch8": {
     "pr": 86,
-    "state": "open_draft",
-    "headSha": "6cc4cad8aa188778c3737cb97d17cfaabced55b6",
+    "state": "completion_candidate_pending_ci",
+    "headSha": null,
     "merged": false,
-    "ci": "failed_action_center_browser",
-    "failingRunId": 36604534261
+    "ci": "pending_final_combined_head",
+    "failingRunId": 36604534261,
+    "codeSnapshot": "d769ac5",
+    "completionBranch": "codex/batch8-release-completion"
   },
   "units": [
     {
@@ -34,19 +36,32 @@
     },
     {
       "id": "FIX-HUB-COLLECTED-CREDITS",
-      "state": "reviewed_first_queue_commit_in_local_batch8_completion",
+      "state": "picked_first_on_batch8_candidate",
       "source": "Bounded completion of the existing queued unit",
       "merged": false,
-      "commitSha": "889f30744f0c3cbede5775d0e61c1e038d2107fb",
+      "commitSha": "889f307",
       "portableMainBasedSha": "f7ecda5cae5ab639e2883b7b7575b6e34bc6fabd",
-      "review": "primary and independent review complete",
+      "review": "primary and independent review complete; 159 targeted tests passed",
       "targetedTests": "159/159 passed"
     },
     {
       "id": "FIELD-PAY",
-      "state": "existing_unit_completion_in_progress_on_isolated_branch",
-      "source": "Published PR #85 requirements; new completion candidate codex/field-pay-completion, not yet reviewed",
-      "merged": false
+      "state": "implemented_reviewed_on_batch8_candidate_pending_ci",
+      "source": "Completion of existing queued unit; original unpublished candidate not recovered",
+      "merged": false,
+      "commitSha": "d769ac5",
+      "sourceCommitSha": "2b1c1b8ace9deccd8b827f89a42c76e17d9fa00f",
+      "review": "primary and independent adversarial findings addressed",
+      "targetedTests": "139/139 combined payment, money, review and automation tests; Chromium 15/15; WebKit 15/15",
+      "activation": "off",
+      "flag": "EGC_FIELD_PAY_ENABLED",
+      "prerequisites": [
+        "MONEY_API_ENABLED=true",
+        "MONEY_UNIFIED_TOTALS=true",
+        "published Firestore rules",
+        "verified payment ledger and unified totals rollout",
+        "matching operations API for native HighLevel note outbox"
+      ]
     },
     {
       "id": "FIX-REFUNDS",
@@ -85,7 +100,7 @@
   ],
   "laterAuthorizedHubIntegration": {
     "scope": "iOS Walkthroughs and recording/transcript to office tasks",
-    "state": "published_in_pr87_ui_ci_green_combined_credit_candidate_pending_ci_and_batch8_gate",
+    "state": "all_eight_workflows_green_waiting_batch8_then_reintegration",
     "branch": "codex/hub-ios-walkthrough-completion",
     "merged": false,
     "localBrowserResults": {
@@ -94,7 +109,8 @@
       "actionCenter": "32/32 after final visual refinement"
     },
     "recordingBrowserResults": "WebKit 13/13 locally",
-    "localRootSuite": "Windows POSIX/CRLF fixture expectations; Linux CI is merge evidence"
+    "localRootSuite": "Windows POSIX/CRLF fixture expectations; Linux CI is merge evidence",
+    "verifiedHeadSha": "bf191d92c9de6ce394b8166d9fd53039d7e25104"
   },
   "additionalRunningBuilds": {
     "ownerReportedCount": 7,
@@ -151,5 +167,11 @@
     "requiredVariableNamesPresent": true,
     "secretValuesInspected": false,
     "state": "requires_matching_api_and_hub_release_then_live_acceptance"
+  },
+  "productionDeployment": {
+    "completed": false,
+    "hubStaffSessionVerified": true,
+    "releaseConsoleAuthentication": "requested_pending",
+    "fieldPayEnabledByThisTask": false
   }
 }
