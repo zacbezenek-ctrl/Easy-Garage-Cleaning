@@ -6,22 +6,25 @@ import { readCustomerPortalContext } from '../_lib/customer-portal-access.js';
 import { denverToday } from '../_lib/dispatch-time.js';
 import { fieldActivity } from '../_lib/field-execution.js';
 import { customerPhotoPolicy, customerPhotoProjection, customerPhotosEnabled } from '../_lib/customer-photo-visibility.js';
-import { patchJob, patchJobsAtomic, readJob } from '../_lib/firestore-job.js';
+import { commitDocuments, patchJob, readJob } from '../_lib/firestore-job.js';
 import { CUSTOMER_PORTAL_CONTENT, CUSTOMER_PORTAL_TERMS_VERSION, approvalTermsVersion, customerPortalDocuments } from '../_lib/customer-portal-content.js';
 import { appendConversationMessage, cleanMessage, cleanRequestId, conversationMessages, deliverHighLevelMessage, findConversationMessage, replaceConversationMessage } from '../_lib/customer-messaging.js';
 import { customerMoneyState as moneyState, customerDepositState, customerPaymentNeedsReview, customerQuoteTotal, createCustomerStripeCheckout, recordCustomerStripePayment, stripeRequest as stripe, stripeSecretKey as stripeKey } from '../_lib/customer-payments.js';
-import { approvalClosed, billedChangeCents, billedChangeOrders, changeOrderBillingEnabled, changeOrderSaved, respondToDecision } from '../_lib/change-orders.js';
+import { approvalClosed, billedChangeCents, billedChangeOrders, changeOrderBillingEnabled, changeOrderSaved, decisionDeltaCents, respondToDecision } from '../_lib/change-orders.js';
 import { parseBusinessActor } from '../_lib/business-hub-core.js';
 import { businessAccountJob } from '../_lib/portal-invitation.js';
 import { moneyDocumentEnabled, moneyDocumentLinks } from '../_lib/money-document.js';
 import { customerMoneyTotals } from '../_lib/money-core.js';
 import { estimateFingerprint, included, legacyLineItems } from '../_lib/quote-model.js';
 import { crewPublicProfilesEnabled, customerCrew, customerCrewProjection, readCrewPublicProfiles } from '../_lib/crew-public-profile.js';
+import { liveSale, portalApprovalWrites, portalFunnelWrite, vocabularyValue } from '../_lib/job-funnel-events.js';
 
 const HOST = /^(?:easygaragecleaning\.com|www\.easygaragecleaning\.com|easy-garage-cleaning\.pages\.dev|localhost(?::\d+)?|127\.0\.0\.1(?::\d+)?)$/;
 const DEFAULT_REVIEW_URL = 'https://search.google.com/local/writereview?placeid=ChIJ17AGfBiyRIsRyJ3k4mDtX8Q';
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const REVIEW_CLICK_WINDOW_MS = 60 * 1000;
+const PORTAL_REQUEST = /^[A-Za-z0-9_-]{8,120}$/;
+const CLOSED_VISIT = ['cancelled', 'canceled', 'no_show', 'noshow', 'no-show'];
 const APPROVAL_ACTOR_FIELDS = ['approvedByActorId', 'approvedByBusinessAccountId', 'approvedByBusinessMemberId'];
 
 function reply(status, body, headers = {}) {
@@ -47,13 +50,17 @@ function amount(value) {
 
 // Field tools store paused/waiting/delayed as an activity on top of the
 // canonical stage; older writers may still save them as the status itself.
+// A field time on a cancelled or no-show visit, or from before a restore,
+// belongs to an earlier attempt (dispatch keeps the times), so it never moves
+// the visit the customer is waiting for past scheduled.
 function portalStatus(job) {
   const raw = String(job.pipelineStatus || job.status || 'scheduled').toLowerCase();
   if (raw === 'paid') return 'paid';
   if (['completed', 'review_requested', 'closed'].includes(raw) || raw === 'invoiced' && (job.completedAt || job.postJobChecklist?.completedAt)) return 'completed';
-  if (['in_progress', 'paused'].includes(raw) || job.startedAt) return 'in_progress';
-  if (['arrived', 'waiting'].includes(raw) || job.arrivedAt) return 'arrived';
-  if (['dispatched', 'delayed'].includes(raw) || job.dispatchedAt) return 'dispatched';
+  const restoredAt = Date.parse(job.restoredAt || ''), current = at => Boolean(at) && !CLOSED_VISIT.includes(raw) && !(Date.parse(at) <= restoredAt);
+  if (['in_progress', 'paused'].includes(raw) || current(job.startedAt)) return 'in_progress';
+  if (['arrived', 'waiting'].includes(raw) || current(job.arrivedAt)) return 'arrived';
+  if (['dispatched', 'delayed'].includes(raw) || current(job.dispatchedAt)) return 'dispatched';
   return 'scheduled';
 }
 
@@ -165,6 +172,26 @@ function approvalActor(actorId) {
 // must never be credited with a later signature.
 function withoutApprovalActor(estimate) {
   return Object.fromEntries(Object.entries(estimate || {}).filter(([key]) => !APPROVAL_ACTOR_FIELDS.includes(key)));
+}
+
+// FUN-03: a portal change and its funnel events are one :commit (the events
+// are create-only), so an event exists exactly when its change was saved. A
+// private record has no events (the builders return null).
+function commitWithEvents(env, updates, events) {
+  return commitDocuments(env, [...updates, ...events.filter(Boolean).map(event => ({ ...event, create: true }))]);
+}
+
+// An event the funnel ledger refuses (funnel_event_*) is a server fault: the
+// customer is never told the record changed and to refresh.
+function eventRefused(error) {
+  return String(error?.code || '').startsWith('funnel_event_') ? reply(503, { ok: false, code: 'CUSTOMER_PORTAL_STORAGE_UNAVAILABLE', error: 'This could not be saved right now, and nothing changed. Please try again shortly.' }) : null;
+}
+
+// An optional portal request_id (a later page resends it on retry); without
+// one the server names the request. A malformed one is refused.
+function portalRequestId(value) {
+  if (value === undefined || value === null || value === '') return { id: '', key: crypto.randomUUID() };
+  return typeof value === 'string' && PORTAL_REQUEST.test(value) ? { id: value, key: value } : null;
 }
 
 // Firestore answers a stale currentDocument.updateTime with 400
@@ -379,6 +406,19 @@ async function handlePost({ request, env }, { clock, read }) {
   if (body.action === 'approve_estimate') {
     const signedName = safe(body.signed_name, 120);
     if (signedName.length < 3 || body.confirmed !== true) return reply(400, { ok: false, error: 'Enter your full name and confirm the estimate' });
+    const request = portalRequestId(body.request_id), saved = result.job.customerApproval;
+    if (!request) return reply(400, { ok: false, code: 'CUSTOMER_PORTAL_REQUEST_INVALID', error: 'This approval request is invalid. Refresh and approve again.' });
+    const spent = () => reply(409, { ok: false, code: 'CUSTOMER_PORTAL_IDEMPOTENCY_CONFLICT', error: 'This approval request was already used for an earlier signature. Review the current estimate before approving again.' });
+    if (request.id && saved?.requestId === request.id) {
+      // A retry of the same approval (its response was lost) returns the saved
+      // signature only while the saved record is still that portal signature,
+      // at the revision and total this request binds. The Hub's Record approval
+      // merges a staff approval over it (keeping its requestId) and a revision
+      // supersedes it: the request is then spent, and the page starts a new one.
+      if (saved.status !== 'approved' || saved.source !== 'customer_portal' || saved.estimateRevision !== body.estimate_revision || Math.round(Number(saved.amount) * 100) !== body.amount_cents) return spent();
+      const salesFollowupExit = await syncSalesFollowupExit(env, result.session.jobId, { now: clock });
+      return reply(200, { ok: true, approval: { status: saved.status, approvedAt: saved.approvedAt, approvedBy: saved.approvedBy, amount: saved.amount, source: saved.source, termsVersion: saved.termsVersion }, replayed: true, salesFollowupExit });
+    }
     const finance = moneyState(result.job), quote = customerQuoteTotal(result.job);
     if (quote < .01) return reply(409, { ok: false, error: 'The estimate is not ready yet' });
     if (result.job.estimate?.validUntil && String(result.job.estimate.validUntil) < today) return reply(409, { ok: false, error: 'This estimate has expired. Ask the team for an updated estimate.' });
@@ -396,13 +436,25 @@ async function handlePost({ request, env }, { clock, read }) {
     const approval = { status: 'approved', approvedAt: now, approvedBy: signedName, amount: quote, source: 'customer_portal', termsVersion };
     const deposit = customerDepositState(result.job, finance), actor = approvalActor(result.session.actorId);
     try {
-      await patchJob(env, result.session.jobId, {
-        customerApproval: { ...approval, ...actor },
+      // deal.sold on the server clock at the bound total and revision, retiring
+      // the job's live sale first; none when the live sale is at this total
+      // (a re-signature). The job's funnelSale names the sale in the same commit.
+      const sale = await portalApprovalWrites(result.job, result.session, { key: request.key, amountCents: body.amount_cents, estimateRevision: body.estimate_revision }, now);
+      // A request whose deal.sold is the job's live sale never records a second
+      // sale under the same key: an M3 staff approval replaced its signature
+      // (without its requestId) and the total has changed since.
+      const live = liveSale(result.job);
+      if (live?.eventId && sale.writes.some(write => write.id === live.eventId)) return spent();
+      await commitWithEvents(env, [{ id: result.session.jobId, updateTime: result.jobUpdateTime, patch: {
+        // The request that saved this signature (a retry of it is a replay) and
+        // the revision it binds; the sale's own key is funnelSale.key.
+        customerApproval: { ...approval, ...actor, estimateRevision: body.estimate_revision, requestId: request.key },
+        ...(sale.funnelSale ? { funnelSale: sale.funnelSale } : {}),
         estimate: { ...withoutApprovalActor(result.job.estimate), status: 'approved', acceptedAt: now, acceptedBy: signedName, amount: quote, depositRequired: deposit.required, acceptedTermsVersion: termsVersion, ...actor },
         deposit: { ...(result.job.deposit || {}), amount: deposit.required, paidAmount: deposit.paid, status: deposit.due < .01 ? 'paid' : deposit.paid ? 'partial' : 'due' },
         quoteStatus: 'approved',
         updatedAt: now,
-      }, result.jobUpdateTime);
+      } }], sale.writes);
     } catch (error) {
       return conflict(error)
         ? reply(409, { ok: false, code: 'CUSTOMER_PORTAL_REVISION_CONFLICT', error: 'The estimate changed. Refresh before approving it.' })
@@ -514,6 +566,9 @@ async function handlePost({ request, env }, { clock, read }) {
     if (!response || input.respondedBy.length < 2) return reply(400, { ok: false, error: 'Choose approve or decline and enter your name' });
     if (body.request_id !== undefined && !input.requestId) return reply(400, { ok: false, code: 'CUSTOMER_PORTAL_REQUEST_INVALID', error: 'A valid decision request ID is required' });
     const billing = changeOrderBillingEnabled(env);
+    // FUN-03: the answer's funnel event is keyed by the page request, or by a
+    // server-named key saved as responseEventKey (never as responseRequestId).
+    const eventKey = input.requestId || crypto.randomUUID();
     let context = result;
     // Each retry re-reads the job through the portal access check (a revoked
     // link or decision right stops it), so an answer whose write landed without
@@ -532,10 +587,21 @@ async function handlePost({ request, env }, { clock, read }) {
       if (!plan.patch) return reply(200, { ...view, approvedChangeTotal: amount(job.approvedChangeTotal) });
       // A billed change is written only against the revision it was planned on.
       if (billing && !updateTime) break;
+      // change_order.approved/declined in this answer's commit (a replay above writes
+      // none), at what the answer adds to the balance: the billed line with billing
+      // on, otherwise the decision's price change.
+      const current = job.customerDecisions.find(item => item && item.id === input.decisionId);
+      const cents = Math.max(0, input.response === 'approved' && billing ? plan.billedCents : decisionDeltaCents(current) ?? Math.round(Math.max(0, amount(current?.priceDelta)) * 100));
+      const patch = { ...plan.patch, customerDecisions: plan.patch.customerDecisions.map(item => item && item.id === input.decisionId ? { ...item, responseEventKey: eventKey } : item) };
       try {
-        await patchJob(env, context.session.jobId, plan.patch, updateTime);
-        return reply(200, { ...view, approvedChangeTotal: plan.patch.approvedChangeTotal });
-      } catch { /* the next attempt re-reads: another answer, a job edit, a storage error or a lost response */ }
+        const event = await portalFunnelWrite(job, context.session, { type: `change_order.${input.response}`, key: eventKey, field: 'customerDecisions', subId: input.decisionId, data: { amountCents: cents } }, now);
+        await commitWithEvents(env, [{ id: context.session.jobId, patch, updateTime }], [event]);
+        return reply(200, { ...view, approvedChangeTotal: patch.approvedChangeTotal });
+      } catch (error) {
+        // An event the ledger refuses is a server fault: never retried, nothing saved.
+        const refused = eventRefused(error); if (refused) return refused;
+        /* the next attempt re-reads: another answer, a job edit, a storage error or a lost response */
+      }
     }
     return reply(503, { ok: false, code: 'CUSTOMER_PORTAL_STORAGE_UNAVAILABLE', error: 'Your answer could not be confirmed. Please try again; it will only be recorded once.' });
   }
@@ -544,15 +610,27 @@ async function handlePost({ request, env }, { clock, read }) {
     const kind = ['repeat', 'touch_up', 'garage_guard'].includes(body.kind) ? body.kind : 'repeat';
     const timing = ['asap', 'same_weekday', 'choose_date'].includes(body.timing) ? body.timing : 'asap';
     const preferredDate = timing === 'choose_date' ? isoDate(body.preferred_date) : '';
-    if (timing === 'choose_date' && (!preferredDate || preferredDate < today)) return reply(400, { ok: false, error: 'Choose a future preferred date' });
+    const portalRequest = portalRequestId(body.request_id);
+    if (!portalRequest) return reply(400, { ok: false, code: 'CUSTOMER_PORTAL_REQUEST_INVALID', error: 'This rebooking request is invalid. Refresh and send it again.' });
     const requests = Array.isArray(result.job.rebookingRequests) ? result.job.rebookingRequests : [];
+    // A retry of a saved request_id (its response was lost) returns that
+    // request only when it asks for the same visit; changed details under the
+    // same id are refused, never silently dropped (the page then sends them as a new request).
+    const replayed = portalRequest.id && requests.find(request => request.requestId === portalRequest.id);
+    if (replayed) {
+      const same = replayed.kind === kind && replayed.timing === timing && (replayed.preferredDate || '') === preferredDate && Boolean(replayed.preferredCrew) === Boolean(body.preferred_crew) && safe(replayed.notes, 600) === safe(body.notes, 600);
+      return same ? reply(200, { ok: true, request: replayed, replayed: true }) : reply(409, { ok: false, code: 'CUSTOMER_PORTAL_IDEMPOTENCY_CONFLICT', error: 'This rebooking request was already sent with different details. Send the form again to make it a new request.' });
+    }
+    if (timing === 'choose_date' && (!preferredDate || preferredDate < today)) return reply(400, { ok: false, error: 'Choose a future preferred date' });
     const duplicate = requests.find(request => request.status === 'pending' && request.kind === kind && request.timing === timing && (request.preferredDate || '') === preferredDate && safe(request.notes, 600) === safe(body.notes, 600));
     if (duplicate) return reply(200, { ok: true, request: duplicate });
     if (requests.filter(request => request.status === 'pending').length >= 3) return reply(409, { ok: false, error: 'The team already has your rebooking request' });
-    const request = { id: newId('rebook'), kind, timing, preferredDate, preferredCrew: Boolean(body.preferred_crew), notes: safe(body.notes, 600), status: 'pending', requestedAt: now, sourceJobId: result.session.jobId };
+    const request = { id: newId('rebook'), kind, timing, preferredDate, preferredCrew: Boolean(body.preferred_crew), notes: safe(body.notes, 600), status: 'pending', requestedAt: now, sourceJobId: result.session.jobId, ...(portalRequest.id ? { requestId: portalRequest.id } : {}) };
     try {
-      await patchJob(env, result.session.jobId, { rebookingRequests: [...requests, request].slice(-10), rebookingStatus: 'pending', rebookingUpdatedAt: now, updatedAt: now }, result.jobUpdateTime);
-    } catch { return reply(409, { ok: false, error: 'Your project changed. Refresh before requesting another visit.' }); }
+      // rebook.requested is recorded now: the saved list keeps only the last 10 requests.
+      const event = await portalFunnelWrite(result.job, result.session, { type: 'rebook.requested', key: portalRequest.id || request.id, field: 'rebookingRequests', subId: request.id }, now);
+      await commitWithEvents(env, [{ id: result.session.jobId, patch: { rebookingRequests: [...requests, request].slice(-10), rebookingStatus: 'pending', rebookingUpdatedAt: now, updatedAt: now }, updateTime: result.jobUpdateTime }], [event]);
+    } catch (error) { return eventRefused(error) || reply(409, { ok: false, error: 'Your project changed. Refresh before requesting another visit.' }); }
     return reply(200, { ok: true, request });
   }
 
@@ -575,15 +653,19 @@ async function handlePost({ request, env }, { clock, read }) {
     const paidTotal = Math.min(finance.total, finance.paid + applied);
     const balance = Math.max(0, finance.total - paidTotal);
     const redemption = { id: newId('redemption'), requestId, cardId, amount: applied, appliedAt: now, jobId: result.session.jobId };
+    const creditClass = vocabularyValue('creditClasses', card.creditClass) || vocabularyValue('creditClasses', card.source);
     const walletPatch = { giftWallet: { ...wallet, cards: updatedCards, redemptions: [...redemptions, redemption].slice(-40), updatedAt: now }, updatedAt: now };
     const jobPatch = {
       payment: { ...(result.job.payment || {}), amount: paidTotal, giftCreditApplied: amount(result.job.payment?.giftCreditApplied) + applied, lastAmount: applied, lastReceivedAt: now, method: finance.paid > 0 ? 'mixed_with_gift_credit' : 'gift_credit', verified: true },
       invoice: { ...(result.job.invoice || {}), amount: finance.total, paid: paidTotal, balance, status: balance < .01 ? 'paid' : 'partial', updatedAt: now }, updatedAt: now,
     };
     try {
-      if (result.accountJobId === result.session.jobId) await patchJob(env, result.session.jobId, { ...walletPatch, ...jobPatch }, result.jobUpdateTime);
-      else await patchJobsAtomic(env, [{ jobId: result.accountJobId, patch: walletPatch, updateTime: result.accountUpdateTime }, { jobId: result.session.jobId, patch: jobPatch, updateTime: result.jobUpdateTime }]);
-    } catch { return reply(409, { ok: false, error: 'That credit changed while it was being applied. Refresh and try again.' }); }
+      // credit.redeemed for the credit applied to this job; the wallet may live on the account's root job.
+      const event = await portalFunnelWrite(result.job, result.session, { type: 'credit.redeemed', key: requestId, field: 'giftWallet.redemptions', subId: redemption.id, sourceJobId: result.accountJobId, data: { amountCents: Math.round(applied * 100), creditClass } }, now);
+      await commitWithEvents(env, result.accountJobId === result.session.jobId
+        ? [{ id: result.session.jobId, patch: { ...walletPatch, ...jobPatch }, updateTime: result.jobUpdateTime }]
+        : [{ id: result.accountJobId, patch: walletPatch, updateTime: result.accountUpdateTime }, { id: result.session.jobId, patch: jobPatch, updateTime: result.jobUpdateTime }], [event]);
+    } catch (error) { return eventRefused(error) || reply(409, { ok: false, error: 'That credit changed while it was being applied. Refresh and try again.' }); }
     return reply(200, { ok: true, applied, balance });
   }
 
@@ -627,10 +709,11 @@ async function handlePost({ request, env }, { clock, read }) {
       if (clicks.some(item => item?.viewer === viewer && String(item.actorId || '') === actorId && Math.abs(started.getTime() - Date.parse(item.clickedAt)) < REVIEW_CLICK_WINDOW_MS)) return reply(200, { ok: true, recorded: false, duplicate: false });
       const click = { requestId, clickedAt: now, viewer, ...(owner ? {} : { actorId }) };
       try {
-        await patchJob(env, result.session.jobId, {
+        const event = await portalFunnelWrite(job, result.session, { type: 'review.clicked', key: requestId, field: 'reviewClicks', subId: requestId }, now);
+        await commitWithEvents(env, [{ id: result.session.jobId, updateTime, patch: {
           reviewClicks: [...clicks, click].slice(-20), reviewClickCount: Math.max(0, Number(job.reviewClickCount) || 0) + 1,
           reviewClickedAt: safe(job.reviewClickedAt, 50) || now, reviewLastClickedAt: now,
-        }, updateTime);
+        } }], [event]);
         return reply(200, { ok: true, recorded: true, duplicate: false });
       } catch (error) {
         if (!conflict(error)) break;

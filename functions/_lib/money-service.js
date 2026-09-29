@@ -1,5 +1,6 @@
 import { requireDispatcher } from './dispatch-service.js';
 import { auditWrite } from './hub-audit.js';
+import { moneySupersedeWrite } from './job-funnel-events.js';
 import { denverToday, validDate } from './dispatch-time.js';
 import { MAX_TOTAL_CENTS, customerLineItem, customerMoneyTotals, depositCents, estimateTotals, invoiceFromEstimate, invoiceLineItems, invoiceNumber, invoiceStatus, moneyCents, normalizeLineItems, paymentEntry } from './money-core.js';
 import { estimateChanged, estimateFingerprint, legacyLineItems } from './quote-model.js';
@@ -156,21 +157,27 @@ async function saveEstimate({ job, input, actor, now, today }) {
   const material = existed && estimateChanged(comparable(job, before), next), wasApproved = approved(current.status) || approved(approval?.status);
   next.revision = (Number.isSafeInteger(current.revision) && current.revision > 0 ? current.revision : 0) + (material || !current.number ? 1 : 0);
   next.status = material ? 'draft' : current.status || 'draft';
-  const deposits = plain(job.deposit) ? job.deposit : {}, depositPaid = moneyCents(deposits.paidAmount) ?? 0, warnings = [];
+  const deposits = plain(job.deposit) ? job.deposit : {}, depositPaid = moneyCents(deposits.paidAmount) ?? 0, warnings = [], writes = [];
   const patch = { estimate: next, total: totalCents / 100, priceQuoted: totalCents / 100, deposit: { ...deposits, amount: deposit / 100, status: depositPaid >= deposit ? 'paid' : depositPaid > 0 ? 'partial' : 'required' } };
   if (material && approval?.status && approval.status !== 'superseded' || material && wasApproved) {
-    patch.customerApproval = { ...(approval || {}), status: 'superseded', supersededAt: now, supersededBy: actor.user, reason: 'estimate_revised' };
+    patch.customerApproval = { ...(approval || {}), status: 'superseded', supersededAt: now, supersededBy: actor.user, reason: 'estimate_revised', supersededRequestId: input.requestId };
     patch.quoteStatus = 'draft';
     Object.assign(next, { acceptedAt: null, acceptedBy: null, acceptanceMethod: null });
     warnings.push({ code: 'approval_superseded', message: 'The customer decision no longer matches this estimate. Record or request a fresh approval.' });
   }
+  // FUN-03: a material revision ends the job's live sale (funnelSale), whether
+  // the approval is still current or a legacy browser revision already
+  // superseded it: deal.approval_superseded and the cleared funnelSale are in
+  // this revision's commit. A staff-recorded approval has no live sale.
+  const retired = material ? await moneySupersedeWrite(job, actor, { requestId: input.requestId, via: actor.via === 'mcp' ? 'mcp' : 'hub', source: { collection: MONEY_RECEIPTS, id: input.requestId.toLowerCase() } }, now) : null;
+  if (retired) { writes.push(retired); patch.funnelSale = null; }
   const invoice = plain(job.invoice) ? job.invoice : null;
   if (material && invoice && given(invoice.amount) && !['void', 'superseded'].includes(invoice.status)) {
     patch.invoice = { ...invoice, status: 'superseded', supersededAt: now, supersededReason: 'estimate_revised' };
     warnings.push({ code: 'invoice_superseded', message: 'The issued invoice was superseded. Issue a new invoice for the revised estimate.' });
   }
   if (before.appliedCents !== null && before.appliedCents > totalCents + (before.approvedChangeCents || 0)) warnings.push({ code: 'payments_exceed_total', message: 'Recorded payments are more than the revised total. The payments were kept; review them.' });
-  return { patch, warnings, reason: material ? 'estimate_revised' : null };
+  return { patch, writes, warnings, reason: material ? 'estimate_revised' : null };
 }
 
 function priced(job, label) {

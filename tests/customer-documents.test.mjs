@@ -594,17 +594,19 @@ test('the download button saves the PDF and falls back to the call-us state on a
 
 test('the approve button sends the displayed terms version and reloads on a terms change', async () => {
   const bodies = [], loads = [];
-  const button = { disabled: false, textContent: 'Approve estimate', addEventListener: (event, handler) => { button.handler = handler; } };
+  const button = { disabled: false, textContent: 'Approve estimate', dataset: {}, addEventListener: (event, handler) => { button.handler = handler; } };
   const context = {
     // P2-05: the page also binds the approval to the estimate it displayed.
     portalData: { estimate: { termsVersion: CUSTOMER_PORTAL_TERMS_VERSION, revision: 2, amount: 800, fingerprint: 'synthetic-fingerprint' } }, Error,
     $: id => ({ 'approve-button': button, 'approval-name': { value: ' Synthetic Customer ' }, 'approval-confirm': { checked: true }, 'pay-button': { classList: { contains: () => true } } })[id],
-    toast: () => {}, showError: () => {}, load: async quiet => loads.push(quiet),
+    toast: () => {}, showError: () => {}, load: async quiet => loads.push(quiet), crypto: globalThis.crypto,
     fetch: async (url, init) => { bodies.push(JSON.parse(init.body)); return { ok: false, json: async () => ({ ok: false, code: 'CUSTOMER_PORTAL_TERMS_CHANGED', error: 'Terms changed' }) }; },
   };
-  vm.runInNewContext(portalScript(html, ['function portalError(', 'async function api(', "$('approve-button').addEventListener('click',"]), context);
+  vm.runInNewContext(portalScript(html, ['function reviewRequestId(', 'function portalError(', 'async function api(', "$('approve-button').addEventListener('click',"]), context);
   await button.handler();
-  assert.deepEqual(bodies, [{ action: 'approve_estimate', signed_name: 'Synthetic Customer', confirmed: true, terms_version: CUSTOMER_PORTAL_TERMS_VERSION, estimate_revision: 2, amount_cents: 80000, estimate_fingerprint: 'synthetic-fingerprint' }]);
+  // FUN-03: the page also names the approval request (request_id).
+  assert.deepEqual(bodies.map(({ request_id, ...body }) => body), [{ action: 'approve_estimate', signed_name: 'Synthetic Customer', confirmed: true, terms_version: CUSTOMER_PORTAL_TERMS_VERSION, estimate_revision: 2, amount_cents: 80000, estimate_fingerprint: 'synthetic-fingerprint' }]);
+  assert.match(bodies[0].request_id, /^[0-9a-f-]{36}$/);
   assert.deepEqual(loads, [true]);
   assert.equal(button.disabled, false);
 });

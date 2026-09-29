@@ -308,12 +308,16 @@ service cloud.firestore {
       allow read: if businessUser() || ownAvailability(resource.data);
       // Crew mutations use the session-authorized APIs and shared capacity locks.
       // Business SDK writes can neither touch nor produce a server-owned record.
+      // funnelSale (FUN-03) names the sale the funnel ledger counts for the job;
+      // only the server writers that record or retire that sale may set it.
       allow create: if businessUser() && !serverOwnedJobRecord(documentId) &&
         !serverOwnedJobData(request.resource.data, documentId) &&
+        !('funnelSale' in request.resource.data) &&
         jobLaborUnchanged(request.resource.data, {}, documentId);
       allow update: if businessUser() && !serverOwnedJobRecord(documentId) &&
         !serverOwnedJobData(resource.data, documentId) &&
         !serverOwnedJobData(request.resource.data, documentId) &&
+        !request.resource.data.diff(resource.data).affectedKeys().hasAny(['funnelSale']) &&
         jobLaborUnchanged(request.resource.data, resource.data, documentId);
       allow delete: if businessUser() && !serverOwnedJobRecord(documentId) &&
         !serverOwnedJobData(resource.data, documentId);

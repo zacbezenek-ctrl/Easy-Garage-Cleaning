@@ -39,7 +39,8 @@ test('with visit tracking on, completing a member visit counts it once against t
   assert.deepEqual([membership.visitsRemaining, membership.periods[0].visitsUsed, membership.periods[0].recognizedCents, membership.periods[0].visits[0].allocatedCents], [3, 1, 20000, 20000]);
   assert.deepEqual([store.get('jobs/job-root').garageGuard.visitsRemaining, store.get('jobs/job-root').garageGuard.nextVisit], [3, '2026-10-05']);
   const events = [...store.documents.keys()].filter(path => path.startsWith('funnelEvents/')).map(path => store.get(path));
-  assert.deepEqual(events.map(event => [event.type, event.jobId, event.membershipId, event.occurredAt, event.via]), [['membership.visit_used', 'job-1', 'sub_member_1', '2026-10-05T18:00:00.000Z', 'field']]);
+  // FUN-03 commits job.completed with the completion itself; the member visit is counted once after it.
+  assert.deepEqual(events.map(event => [event.type, event.jobId, event.membershipId, event.occurredAt, event.via]), [['job.completed', 'job-1', null, '2026-10-05T18:00:00.000Z', 'field'], ['membership.visit_used', 'job-1', 'sub_member_1', '2026-10-05T18:00:00.000Z', 'field']]);
   const detail = await (await route.onRequestGet({ env, request: new Request('https://easygaragecleaning.com/api/field-jobs?jobId=job-1', { headers: { Cookie: (await createHubSessionCookie(env, 'Crew.One')).split(';')[0] } }) })).json();
   assert.equal(JSON.stringify(detail).includes('allocatedCents'), false, 'crew never see member revenue');
   assert.equal(JSON.stringify(detail).includes('membershipVisit'), false);
@@ -50,5 +51,6 @@ test('with visit tracking off, the completion keeps a pending member visit and t
   assert.deepEqual(store.get('jobs/job-1').membershipVisit.status, 'pending');
   assert.equal(store.get('memberships/sub_member_1').visitsRemaining, 4);
   assert.equal(store.get('jobs/job-root').garageGuard.visitsRemaining, 4);
-  assert.equal([...store.documents.keys()].some(path => path.startsWith('funnelEvents/')), false);
+  // Only FUN-03's job.completed from the completion commit: no membership event.
+  assert.deepEqual([...store.documents.keys()].filter(path => path.startsWith('funnelEvents/')).map(path => store.get(path).type), ['job.completed']);
 });

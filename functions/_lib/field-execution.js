@@ -167,7 +167,7 @@ export function fieldCommand(job, actor, input, now = new Date().toISOString()) 
   const state = job.fieldExecution || {}, actorId = actor.user, actorName = actor.displayName || actor.user;
   const stamp = { at: now, actorId, actorName };
   const event = { id: input.requestId, action: input.action, actorId, actorName, createdAt: now, state: 'applied', visibility: 'crew' };
-  let patch = {};
+  let patch = {}, milestone = null;
   if (!['note', 'resolve_issue'].includes(input.action) && closed(job)) throw fieldFailure('This job is closed. Its execution record cannot be changed.', 409, 'FIELD_JOB_CLOSED');
   switch (input.action) {
     case 'note': {
@@ -211,13 +211,16 @@ export function fieldCommand(job, actor, input, now = new Date().toISOString()) 
       }
       if (['paused', 'waiting', 'delayed'].includes(next) && fieldText(input.reason).length < 3) throw fieldFailure('Add a short reason so dispatch knows what is happening.');
       const canonical = ['paused', 'waiting', 'delayed'].includes(next) ? current : next;
-      patch = { status: canonical, pipelineStatus: canonical, fieldExecution: { ...state, activity: next, activityAt: now, activityBy: actorId, activityReason: fieldText(input.reason, 1000) }, ...(next === 'in_progress' && !job.startedAt ? { startedAt: now, startedBy: actorId } : {}), ...(next === 'arrived' ? { arrivedAt: now, arrivedBy: actorId } : {}) };
+      patch = { status: canonical, pipelineStatus: canonical, fieldExecution: { ...state, activity: next, activityAt: now, activityBy: actorId, activityReason: fieldText(input.reason, 1000) }, ...(next === 'in_progress' && !job.startedAt ? { startedAt: now, startedBy: actorId } : {}), ...(next === 'arrived' ? { arrivedAt: now, arrivedBy: actorId } : {}), ...(next === 'dispatched' ? { dispatchedAt: now, dispatchedBy: actorId } : {}) };
       if (next === 'in_progress' && current !== 'in_progress') {
         const items = fieldChecklist(job).filter(item => ['departure', 'arrival'].includes(item.stage));
         const progress = { completedAt: now, completedBy: actorId, completedCount: items.filter(item => item.completed).length, totalCount: items.length, standardItems: items };
         patch.preJobProgress = progress; patch.preJobChecklist = progress;
       }
       event.summary = `${current.replaceAll('_', ' ')} → ${next.replaceAll('_', ' ')}`; event.body = fieldText(input.reason, 1000);
+      event.fromStatus = fieldActivity(job); event.toStatus = next;
+      // job.started goes with the first startedAt, so a restored job's second start is not a second event.
+      milestone = next === 'in_progress' ? !job.startedAt && 'started' : ['dispatched', 'arrived'].includes(next) && next;
       break;
     }
     case 'complete': {
@@ -235,6 +238,7 @@ export function fieldCommand(job, actor, input, now = new Date().toISOString()) 
       // FUN-20: a member visit is counted against its membership once, after this commit (garage-guard-visits.js); a counted one keeps its state when completed again.
       if (typeof job.membershipId === 'string' && job.membershipId && !['applied', 'reconciled'].includes(job.membershipVisit?.status)) patch.membershipVisit = { status: 'pending', membershipId: job.membershipId, requestId: input.requestId, createdAt: now };
       event.summary = input.hasIssues ? 'Work completed — follow-up required' : 'Work completed'; event.body = completion.notes;
+      event.fromStatus = fieldActivity(job); event.toStatus = 'completed'; milestone = 'completed';
       break;
     }
     case 'configure_checklist': {
@@ -258,5 +262,7 @@ export function fieldCommand(job, actor, input, now = new Date().toISOString()) 
     if (time.clock) patch.fieldExecution = { ...(patch.fieldExecution || state), jobTime: time.clock };
     if (time.segment) event.timeSegment = time.segment;
   }
-  return { patch: { ...patch, updatedAt: now, fieldLastActionAt: now }, event };
+  // FUN-03: the lifecycle milestone this action reached (dispatched, arrived,
+  // first start, completed) is recorded as a funnel event in the same commit.
+  return { patch: { ...patch, updatedAt: now, fieldLastActionAt: now }, event, funnel: milestone ? { milestone, fromStatus: event.fromStatus, toStatus: event.toStatus } : null };
 }

@@ -82,6 +82,23 @@ export async function patchJobsAtomic(env, updates = []) {
   return response.json();
 }
 
+// One atomic documents:commit, so a business change and its funnel events land
+// together or not at all (FUN-03, C14). {id, patch, updateTime, collection='jobs'}
+// updates the named fields guarded by currentDocument.updateTime (or, with no
+// known revision, by the document existing); {create:true} writes a document
+// only if it is absent. Errors keep patchJob's "(status)" message.
+export async function commitDocuments(env, writes = []) {
+  const url = `https://firestore.googleapis.com/v1/projects/${PROJECT_ID}/databases/(default)/documents:commit`;
+  const body = { writes: writes.map(write => ({
+    update: { name: `projects/${PROJECT_ID}/databases/(default)/documents/${write.collection || 'jobs'}/${encodeURIComponent(write.id)}`, fields: encodeFirestoreFields(write.patch) },
+    updateMask: { fieldPaths: Object.keys(write.patch) },
+    currentDocument: write.create ? { exists: false } : write.updateTime ? { updateTime: write.updateTime } : { exists: true },
+  })) };
+  const response = await firestoreFetch(env, url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+  if (!response.ok) throw Object.assign(new Error(`Job storage write failed (${response.status})`), { storageStatus: response.status });
+  return response.json();
+}
+
 export async function queryJobsByField(env, fieldPath, value, limit = 20) {
   if (!/^[A-Za-z][A-Za-z0-9_]{0,79}$/.test(fieldPath)) throw new Error('Invalid job query field');
   const url = `https://firestore.googleapis.com/v1/projects/${PROJECT_ID}/databases/(default)/documents:runQuery`;

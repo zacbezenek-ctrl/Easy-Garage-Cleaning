@@ -107,6 +107,21 @@ test('actual Firestore rules isolate canonical operations from crew SDK access',
       for(const db of [publicDb,crew,manager]){await assertFails(db.doc('jobberImport/run').get());await assertFails(db.doc('jobberImport/run').set({status:'running'}));await assertFails(db.doc('jobberImport/run').delete());await assertFails(db.collection('jobberImport').get());}
       for(const db of [publicDb,crew,manager]) for(const path of ['jobberGuard/latest','jobberGuardRuns/run']){await assertFails(db.doc(path).get());await assertFails(db.doc(path).set({findings:[]}));await assertFails(db.doc(path).delete());await assertFails(db.collection(path.split('/')[0]).get());}
     });
+    await t.test('a job\'s funnelSale is written only by the server writers that record or retire the sale (FUN-03)',async()=>{
+      // Its own customer: later dispatch checks count each customer's account roots.
+      const sale={jobId:'sold-job',cents:80000,estimateRevision:2,key:'portalRequest:synthetic-sale-0001',eventId:'fe_synthetic',soldAt:'2099-09-10T12:00:00.000Z'};
+      await environment.withSecurityRulesDisabled(context=>context.firestore().doc('jobs/sold-job').set({type:'job',customerId:'funnel-sale-customer',status:'scheduled',customerApproval:{status:'approved',amount:800,source:'customer_portal'},funnelSale:sale}));
+      for(const db of [manager,partner]){
+        // The Hub's legacy "Record approval" and estimate editor merge named fields: allowed, and the sale is kept.
+        await assertSucceeds(db.doc('jobs/sold-job').set({customerApproval:{status:'approved',amount:800,source:'employee_recorded'},quoteStatus:'approved'},{merge:true}));
+        await assertFails(db.doc('jobs/sold-job').set({funnelSale:null},{merge:true}));
+        await assertFails(db.doc('jobs/sold-job').update({'funnelSale.cents':1}));
+        await assertFails(db.doc('jobs/sold-job').set({type:'job',customerId:'funnel-sale-customer',status:'scheduled'}),'a full overwrite may not drop the sale');
+        await assertFails(db.doc('jobs/assigned').update({funnelSale:{...sale,jobId:'assigned'}}));
+        await assertFails(db.doc('jobs/forged-sale').set({type:'job',customerId:'funnel-sale-customer',funnelSale:{...sale,jobId:'forged-sale'}}));
+      }
+      await environment.withSecurityRulesDisabled(async context=>assert.deepEqual((await context.firestore().doc('jobs/sold-job').get()).data().funnelSale,sale));
+    });
     await t.test('approved-send ledgers, message templates and messaging receipts remain server-only even for business SDK sessions',async()=>{
       await environment.withSecurityRulesDisabled(async context=>{const db=context.firestore();await db.doc('message_sends/send').set({kind:'payment_reminder',status:'submitted',targetId:'assigned'});await db.doc('message_templates/payment_reminder').set({kind:'payment_reminder',liveVersion:1});await db.doc('message_operations/receipt').set({actorId:'zacb',action:'template.approve'});});
       for(const db of [publicDb,crew,lead,manager]) for(const path of ['message_sends/send','message_templates/payment_reminder','message_operations/receipt']){await assertFails(db.doc(path).get());await assertFails(db.doc(path).set({status:'changed'}));await assertFails(db.doc(path).update({status:'changed'}));await assertFails(db.doc(path).delete());}

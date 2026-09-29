@@ -386,7 +386,8 @@ export const AUTOMATION_REGISTRY = deepFreeze({
     'functions/api/crew-hook.js': { zapier_hook: 4 },
     'functions/api/crew-jobs.js': { hub_send_helper_call: 1 },
     'functions/api/customer-portal-invitation.js': { hub_send_helper_call: 1 },
-    'functions/api/customer-portal.js': { hub_send_helper_call: 2 },
+    // FUN-03: a replayed portal approval (same request_id) re-runs the idempotent sales-exit sync, so the portal calls it twice plus its message delivery.
+    'functions/api/customer-portal.js': { hub_send_helper_call: 3 },
     'functions/api/email-confirmation.js': { emailjs_send: 1 },
     'functions/api/highlevel.js': { ghl_tag_write: 1, ghl_contact_write: 2, ghl_note_task_write: 3, ghl_opportunity_write: 3, ghl_appointment_write: 3, hub_send_helper_call: 3 },
     'functions/api/integration-status.js': { zapier_hook: 5 },

@@ -10,6 +10,7 @@ import { approvedChangeCents, customerMoneyTotals, invoiceFromEstimate, invoiceL
 import { moneyProjection } from '../functions/_lib/money-service.js';
 import { moneyDocumentModel } from '../functions/_lib/money-document.js';
 import { NOW, env, portalStore, portalCookie, portalHandlers, portalView, portalPost, portalScript } from './helpers/portal-fixture.mjs';
+import { applyFirestoreCommit } from './helpers/firestore-commit.mjs';
 
 const billing = { ...env, CHANGE_ORDER_BILLING_ENABLED: 'true', MONEY_API_ENABLED: 'true' };
 const ORIGIN = 'https://easygaragecleaning.com';
@@ -291,6 +292,11 @@ function paymentStore(t, jobs) {
   t.mock.method(globalThis, 'fetch', async (input, options = {}) => {
     const url = new URL(input), method = options.method || 'GET';
     if (url.hostname === 'firestore.googleapis.com') {
+      // FUN-03: portal decision answers commit the job with their funnel event (documents:commit).
+      if (url.pathname.endsWith('/documents:commit')) {
+        const result = applyFirestoreCommit(JSON.parse(options.body), { read: key => docs.has(key) ? { data: docs.get(key).value, updateTime: docs.get(key).updateTime } : null, write: (key, value) => docs.set(key, { value, updateTime: stamp() }) });
+        return result.stale ? Response.json({ error: { code: 400, status: 'FAILED_PRECONDITION' } }, { status: 400 }) : Response.json({ writeResults: result.paths.map(() => ({})) });
+      }
       const path = decodeURIComponent(url.pathname.split('/documents/')[1]), row = docs.get(path);
       if (method === 'PATCH') {
         const precondition = url.searchParams.get('currentDocument.updateTime'), create = url.searchParams.get('currentDocument.exists') === 'false';

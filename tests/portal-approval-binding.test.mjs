@@ -129,28 +129,38 @@ function approveButton(portalData, failure) {
   for (const [id, value] of [['approval-name', 'Synthetic Customer']]) dom.node(id).value = value;
   dom.node('approval-confirm').checked = true;
   dom.node('pay-button').classList.add('hidden');
-  const context = { $: dom.node, portalData, toast: (message, error) => toasts.push({ message, error: Boolean(error) }), load: async quiet => { loads.push(quiet === true); }, api: async body => { calls.push(body); if (failure) throw Object.assign(new Error(failure.message), { code: failure.code }); return { ok: true }; } };
-  vm.runInNewContext(portalScript(html, ["$('approve-button').addEventListener("]), context);
+  const context = { $: dom.node, portalData, crypto: globalThis.crypto, toast: (message, error) => toasts.push({ message, error: Boolean(error) }), load: async quiet => { loads.push(quiet === true); }, api: async body => { calls.push(body); if (failure) throw Object.assign(new Error(failure.message), { code: failure.code }); return { ok: true }; } };
+  vm.runInNewContext(portalScript(html, ['function reviewRequestId(', "$('approve-button').addEventListener("]), context);
   return { click: () => dom.node('approve-button').listeners.click(), calls, loads, toasts, button: dom.node('approve-button') };
 }
 
 test('the portal page approves exactly the revision and total it displayed and reloads after a binding conflict', async () => {
   // P4-09: the page also sends the terms version it displayed.
   const shown = { estimate: { revision: 4, amount: 1234.56, fingerprint: 'synthetic-fingerprint-4', termsVersion: CUSTOMER_PORTAL_TERMS_VERSION } };
-  const ok = approveButton(shown);
+  // FUN-03: it also names the request (request_id) so a retry is answered from the saved approval.
+  const ok = approveButton(shown), UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
   await ok.click();
-  assert.deepEqual({ ...ok.calls[0] }, { action: 'approve_estimate', signed_name: 'Synthetic Customer', confirmed: true, terms_version: CUSTOMER_PORTAL_TERMS_VERSION, estimate_revision: 4, amount_cents: 123456, estimate_fingerprint: 'synthetic-fingerprint-4' });
+  const { request_id: approvalId, ...sent } = ok.calls[0];
+  assert.deepEqual(sent, { action: 'approve_estimate', signed_name: 'Synthetic Customer', confirmed: true, terms_version: CUSTOMER_PORTAL_TERMS_VERSION, estimate_revision: 4, amount_cents: 123456, estimate_fingerprint: 'synthetic-fingerprint-4' });
+  assert.match(approvalId, UUID);
   assert.deepEqual(ok.loads, [false]);
-  for (const code of ['CUSTOMER_PORTAL_ESTIMATE_CHANGED', 'CUSTOMER_PORTAL_REVISION_CONFLICT', 'CUSTOMER_PORTAL_ESTIMATE_NOT_APPROVABLE']) {
+  await ok.click();
+  assert.notEqual(ok.calls[1].request_id, approvalId, 'a saved approval ends its request');
+  // FUN-03: a spent request_id (CUSTOMER_PORTAL_IDEMPOTENCY_CONFLICT) also reloads and starts a new request.
+  for (const code of ['CUSTOMER_PORTAL_ESTIMATE_CHANGED', 'CUSTOMER_PORTAL_REVISION_CONFLICT', 'CUSTOMER_PORTAL_ESTIMATE_NOT_APPROVABLE', 'CUSTOMER_PORTAL_IDEMPOTENCY_CONFLICT']) {
     const conflict = approveButton(shown, { code, message: 'The estimate changed after this page loaded. Refresh and review the current estimate before approving.' });
     await conflict.click();
     assert.deepEqual(conflict.loads, [true], code);
     assert.equal(conflict.toasts[0].error, true);
     assert.equal(conflict.button.disabled, false);
+    await conflict.click();
+    assert.notEqual(conflict.calls[1].request_id, conflict.calls[0].request_id, `${code}: the reloaded estimate is a new approval`);
   }
   const other = approveButton(shown, { code: 'CUSTOMER_PORTAL_STORAGE_UNAVAILABLE', message: 'Try again shortly.' });
   await other.click();
   assert.deepEqual(other.loads, [], 'an outage keeps the page as displayed');
+  await other.click();
+  assert.equal(other.calls[1].request_id, other.calls[0].request_id, 'a retry after an outage resends the same request');
 });
 
 test('a scope or line edit that keeps the revision and total still needs a fresh review', async t => {
@@ -184,22 +194,33 @@ function portalRender() {
   return { dom, render: estimate => context.render(data(estimate)) };
 }
 
-test('a poll that shows a revised estimate clears the approval checkbox and asks for a fresh review', () => {
+test('a poll that shows a revised estimate clears the approval checkbox, asks for a fresh review and starts a new approval request', () => {
   const p = portalRender(), A = { revision: 2, amount: 800, fingerprint: 'fp-a' };
   p.render(A);
   p.dom.node('approval-confirm').checked = true;
+  // FUN-03: an unsaved approval (its response was lost) keeps its request_id across an unchanged poll.
+  p.dom.node('approve-button').dataset.requestId = 'synthetic-pending-approval';
   p.render({ ...A });
   assert.equal(p.dom.node('approval-confirm').checked, true, 'an unchanged poll keeps the box ticked');
   assert.equal(p.dom.node('approval-updated').classList.contains('hidden'), true, 'no notice without a change');
+  assert.equal(p.dom.node('approve-button').dataset.requestId, 'synthetic-pending-approval', 'a retry of the same estimate resends its request');
   for (const B of [{ ...A, amount: 950 }, { ...A, revision: 3 }, { ...A, fingerprint: 'fp-b' }]) {
     const q = portalRender();
     q.render(A);
     q.dom.node('approval-confirm').checked = true;
+    q.dom.node('approve-button').dataset.requestId = 'synthetic-pending-approval';
     q.render(B);
     assert.equal(q.dom.node('approval-confirm').checked, false, JSON.stringify(B));
     assert.equal(q.dom.node('approval-updated').classList.contains('hidden'), false, JSON.stringify(B));
     assert.equal(q.dom.node('estimate-total').textContent, String(B.amount));
+    assert.equal('requestId' in q.dom.node('approve-button').dataset, false, `${JSON.stringify(B)}: approving the changed estimate is a new request`);
   }
+  // A change the staff approved (a phoned yes) also ends the pending request.
+  const s = portalRender();
+  s.render(A);
+  s.dom.node('approve-button').dataset.requestId = 'synthetic-pending-approval';
+  s.render({ ...A, amount: 950, status: 'approved' });
+  assert.equal('requestId' in s.dom.node('approve-button').dataset, false);
   // Ticking the box again after reviewing the update dismisses the notice.
   const r = portalRender();
   r.render(A); r.render({ ...A, amount: 950 });

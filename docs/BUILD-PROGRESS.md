@@ -419,6 +419,10 @@ draft PR. The owner merges in phase order. See **Decisions** D-001.
   behind `CHANGE_ORDER_BILLING_ENABLED`: money-core, the portal balance and card checkout, the messaging scheduler and crew
   closeout all count them, a manager can void one (change_order.void, which lowers a matching issued invoice and closes a
   stale portal checkout), and scripts/backfill-change-orders.mjs lists stored totals it cannot explain for review.
+- **FUN-03** Field and portal funnel events: crew dispatched/arrived/first-start/completed milestones and portal approvals,
+  decision answers and rebook requests commit their funnel event with the job (portal writers moved to :commit). A job's
+  server-owned funnelSale names the one live deal.sold, so re-signatures, handoffs and M3 revisions retire or keep it
+  instead of double counting; browser SDK writes cannot set it. Portal request_ids make retries replay, not repeat.
 
 ## In progress
 
@@ -516,6 +520,7 @@ one prefixed commit only after the full root suite (and the platform suite when 
 | MOBILE-TAP | 44px tap targets on public pages and Hub shells (allowlist to zero) | merged (502f9b4) |
 | PUBLIC-TAP | 44px tap targets and no horizontal scroll on every public page | merged (3a8d78c) |
 | CHANGE-ORDERS | Bill approved portal change orders as lines; manager void (flag off) | merged (ab396f7) |
+| FUN-03 | Field and portal funnel events; server-owned funnelSale | merged (74d1bfd) |
 
 ## Next
 

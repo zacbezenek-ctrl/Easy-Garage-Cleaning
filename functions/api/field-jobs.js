@@ -8,6 +8,7 @@ import { createFieldStore } from '../_lib/field-execution-store.js';
 import { applyMembershipVisit, garageGuardStorage, garageGuardVisitTrackingEnabled } from '../_lib/garage-guard-visits.js';
 import { createFieldPhotoClient, decodeFieldPhoto, fieldPhotosConfigured, verifyFieldPhotoMetadata } from '../_lib/field-execution-photos.js';
 import { syncFieldCompletion } from '../_lib/field-execution-sync.js';
+import { fieldFunnelType, fieldFunnelWrite } from '../_lib/job-funnel-events.js';
 import { fieldJobTime } from '../_lib/field-execution-time.js';
 import { fieldExpenseCloseoutMissing, fieldExpensesEnabled, requireFieldExpenseCloseout } from '../_lib/field-expenses.js';
 import { fieldCapabilities } from '../_lib/field-permissions.js';
@@ -195,7 +196,9 @@ export async function onRequestPost(handlerContext) {
       if (receipt) throw fieldFailure('This action is pending verification. Retry shortly.', 409, 'FIELD_ACTION_PENDING');
       if (input.action === 'complete') await requireFieldExpenseCloseout(env, job, input);
       const result = (ctx.visits ? fieldVisitCommand : fieldCommand)(job, { ...ctx.session, manager: ctx.manager, capabilities: await capabilities(ctx, env, job) }, input, new Date().toISOString());
-      await ctx.store.commit(job, result.patch, { ...result.event, fingerprint });
+      // FUN-03: a dispatched/arrived/started/completed milestone commits its funnel event with the job and receipt, at the receipt's server time.
+      const funnel = result.funnel ? [await fieldFunnelWrite(job, ctx.session, { requestId: input.requestId, type: fieldFunnelType(result.funnel.milestone), fromStatus: result.funnel.fromStatus, toStatus: result.funnel.toStatus }, result.event.createdAt)].filter(Boolean) : [];
+      await ctx.store.commit(job, result.patch, { ...result.event, fingerprint }, null, funnel);
       if (input.action === 'complete' && typeof handlerContext.waitUntil === 'function') {
         handlerContext.waitUntil(syncFieldCompletion(env, job.id, { actor: ctx.session }));
       }
