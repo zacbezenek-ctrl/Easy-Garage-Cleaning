@@ -16,7 +16,7 @@ function harness(overrides = {}) {
   const context = vm.createContext({
     save() {}, render() {}, invalidateAcceptance() { context.invalidated = true; },
     validateStep: () => [], PHOTO_COUNT: 3, uid: () => 'synthetic-job', normPhone: value => value,
-    buildInternalNotes: () => '', buildClientChecklists: () => ({ preJob: [], postJob: [] }), PRICING: servedPricing(),
+    buildInternalNotes: () => '', buildCrewBrief: () => '', buildClientChecklists: () => ({ preJob: [], postJob: [] }), PRICING: servedPricing(),
   });
   vm.runInContext(line('const freshState='), context);
   context.S = vm.runInContext('freshState()', context);

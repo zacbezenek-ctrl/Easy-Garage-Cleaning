@@ -12,7 +12,7 @@ export const CREW_PROJECTION_FIELDS = Object.freeze([
   'type','employee','date','endDate','time','endTime','allDay','status','reason',
   'pipelineStatus','customer','phone','address','startAt','endAt','arrivalWindow','serviceType',
   'assignedCrew','assignedTo','crewLead','crewId','crewName','vehicleId','vehicleName','crewNeeded','requiredCrewSize','crewSize',
-  'jobInstructions','instructions','scope','operationalScope.text','scopeOfWork','discovery.success',
+  'jobInstructions','instructions','scope','operationalScope.text','scopeOfWork','discovery.success','handoffVersion',
   'logistics.notes','logistics.access','logistics.truck_placement','logistics.requiredEquipment',
   'accessInstructions','customerInstructions','customerNotesSummary','requiredEquipment','materials','requiredMaterials',
   'clientChecklists.preJob','clientChecklists.postJob',

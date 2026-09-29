@@ -467,6 +467,10 @@ draft PR. The owner merges in phase order. See **Decisions** D-001.
   Checkout line (whole cents, at most half the balance or $500) on a balance payment; only the service part reaches
   payment.amount and the invoice, tips go to payment.tips[] and the ledger, and /api/tip-allocation splits them by on-site
   minutes (CSV). Tipped charges held in payment_reviews are never booked automatically. Gap: not in the payroll CSV itself.
+- **FIX-CREW-PRICE-LEAK** (P1 readiness) Quoted prices stay out of every crew-visible brief: the gameplan sends a
+  price-free crew_brief, the handoff and fieldJobProjection strip amounts from every crew copy (stripCrewMoney), and
+  the priced brief stays in manager-only internalNotes and the signed HighLevel snapshot. scripts/backfill-crew-scope-
+  prices.mjs (dry run by default) cleans stored briefs. Gap: staff-written Dispatch scopes are cleaned only with --include-staff.
 
 ## In progress
 
@@ -576,6 +580,7 @@ one prefixed commit only after the full root suite (and the platform suite when 
 | HUB-PWA | Installable Hub and on-device clock/chat queue (HUB_OFFLINE_ENABLED, off) | merged (92153dc) |
 | GHL-ALIGN | HighLevel owns follow-ups: check-in task, dry run without writes, inbound reconciler opt-in (flags off) | merged (cb90ce9) |
 | TIPS | Optional crew tips on card balance payments, held tipped charges and tip allocation (CUSTOMER_TIPS_ENABLED, off) | merged (99d4c1e) |
+| FIX-CREW-PRICE-LEAK | P1: keep quoted prices out of every crew-visible brief (crew_brief, strip on write and read, backfill) | merged (0162bfc) |
 
 ## Next
 

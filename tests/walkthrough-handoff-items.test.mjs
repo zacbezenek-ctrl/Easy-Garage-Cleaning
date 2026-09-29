@@ -241,7 +241,7 @@ test('the estimate scope is a customer-facing summary of sold finishes, never in
 const walkthrough = read('crew/gameplan.html');
 function gameplan(overrides = {}) {
   // PRICE-SCRUB: PRICING is what /api/pricing-config serves; the page ships no prices.
-  const context = vm.createContext({ PRICING: servedPricing(), save() {}, render() {}, invalidateAcceptance() {}, validateStep: () => [], PHOTO_COUNT: 3, uid: () => 'synthetic-job', normPhone: value => value, buildInternalNotes: () => 'Synthetic brief', buildClientChecklists: () => ({ version: '2026-09-client-v1', preJob: [], postJob: [] }) });
+  const context = vm.createContext({ PRICING: servedPricing(), save() {}, render() {}, invalidateAcceptance() {}, validateStep: () => [], PHOTO_COUNT: 3, uid: () => 'synthetic-job', normPhone: value => value, buildInternalNotes: () => 'Synthetic brief', buildCrewBrief: () => 'Synthetic crew brief', buildClientChecklists: () => ({ version: '2026-09-client-v1', preJob: [], postJob: [] }) });
   vm.runInContext(sourceLine(walkthrough, 'const freshState='), context);
   context.S = vm.runInContext('freshState()', context);
   Object.assign(context.S, { garageSize: '1', fill: 'medium', loads: '1', jobDate: '2026-10-01', startTime: '08:00', endTime: '13:00' }, overrides);

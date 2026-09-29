@@ -5,7 +5,7 @@
   // new start time; the person saving must see that warning.
   const arrivalNotice = warnings => (Array.isArray(warnings) ? warnings : []).filter(x => x?.code === 'arrival_window_reset').map(x => String(x.message || 'The saved arrival window was cleared. Review the arrival window the customer sees.')).join(' ');
   function signedPlan(p) {
-    return { ...select(p, ['discovery','scope','logistics','internal_notes','client_checklists','signature','acceptance','terms_version','terms_accepted','photos','notes']),
+    return { ...select(p, ['discovery','scope','logistics','internal_notes','crew_brief','client_checklists','signature','acceptance','terms_version','terms_accepted','photos','notes']),
       client: select(p.client, ['name','phone','email','address','highlevel_contact_id']),
       quote: select(p.quote, ['title','total','deposit','job_date','start_time','end_time','estimated_duration_min','line_items','catalog_version','duration_override_reason']) };
   }
@@ -15,7 +15,8 @@
     let active = null;
     const key = (actor, source) => `egc-signed-handoff-v1:${actor}:${source || 'manual'}`;
     function read(k) { try { return JSON.parse(d.storage.getItem(k) || 'null'); } catch { throw new Error('The saved handoff request is unreadable. Review the existing job in Dispatch before saving again.'); } }
-    const identity = p => JSON.stringify({...p,client:{...p.client,highlevel_contact_id:undefined}});
+    // crew_brief is internal_notes without prices, so a request frozen before it existed is the same signed version.
+    const identity = p => JSON.stringify({...p,crew_brief:undefined,client:{...p.client,highlevel_contact_id:undefined}});
     function remember(k, pending) { d.storage.setItem(k, JSON.stringify(pending)); }
     async function request(url, body) {
       const controller=new AbortController(),timer=setTimeout(()=>controller.abort(),60000);
