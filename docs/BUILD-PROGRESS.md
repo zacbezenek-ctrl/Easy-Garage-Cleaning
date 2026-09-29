@@ -491,6 +491,10 @@ draft PR. The owner merges in phase order. See **Decisions** D-001.
   payments (webhook, crew return, portal), /api/money writes and material quote-draft revisions commit the job with
   payment.received and any job.paid_in_full / job.balance_reopened crossing in one commit; firestore.rules gains
   paymentEventFields() (server-only crossing fields). Keep the flag unset until FUN-33b wires gift credit, change orders and handoff revisions.
+- **FIX-B2B-BILLING** (P1, always on; refusals only) Every customer-audience job message policy refuses business-account
+  jobs and visits under a business-linked account root; the scheduler counts them as skipped.business_account_job and
+  the portal-link backstop refuses business roots. The business hub shows money-core's effective invoice status (Overdue
+  pill); invoiceStatus reads 'paid' for a verified deposit covering everything. Gap: portal payment.invoiceStatus DTO still saved status.
 
 ## In progress
 
@@ -606,6 +610,7 @@ one prefixed commit only after the full root suite (and the platform suite when 
 | M5-SEND | Hub invoicing: batch issue plus the egc-invoice-issued tag (Hub invoice sends removed) | merged (023f80a) |
 | DISPATCH-RULES | Owner dispatch rules: skills, daily limits, working hours, crew size and drive time (warn until blocked) | merged (7013404) |
 | FUN-33 | Payment funnel events on the ledger: payment.received and paid-in-full crossings committed with the job (FUNNEL_PAYMENT_EVENTS_ENABLED, off) | merged (b9c3b07) |
+| FIX-B2B-BILLING | P1: no customer messages or homeowner links for business jobs; effective B2B invoice status | merged (d5c037b) |
 
 ## Next
 

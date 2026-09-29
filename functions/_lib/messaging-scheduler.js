@@ -17,6 +17,7 @@ import { templateRegistry } from './message-template-store.js';
 import { ledgerId } from './message-send-store.js';
 import { moneyStateCents } from './money-core.js';
 import { customerPaymentNeedsReview } from './customer-payments.js';
+import { businessAccountJob } from './portal-invitation.js';
 import { readMessagingSettings } from './messaging-settings.js';
 
 export const MESSAGING_RUNS = 'messaging_runs';
@@ -35,8 +36,9 @@ export const CREW_KINDS = Object.freeze(['crew_assignment', 'crew_unassignment',
 // deposit check does not depend on them (a billed change is due with the
 // balance, never with the deposit), but the scan keeps them so money-core and
 // the checkout helpers read the same money fields the checkout charges from.
+// businessAccountId marks a company project, which no reminder is sent for.
 export const SCHEDULER_JOB_FIELDS = Object.freeze([
-  'type','recordType','date','time','status','pipelineStatus','notify','customerAutomationEnabled','phone','email',
+  'type','recordType','date','time','status','pipelineStatus','notify','customerAutomationEnabled','phone','email','businessAccountId',
   'estimate','invoice','payment','deposit','total','priceQuoted','lockedTotal','rate','customerApproval.amount','customerDecisions','approvedChangeTotal','changeOrders',
   'giftWallet.redemptions','refunds','completedAt','postJobChecklist.completedAt','postJobProgress.standardItems',
   'customerPortalInvitationRequestedAt','customerPortalInvitation','communicationLog','automationMilestones',
@@ -67,6 +69,9 @@ const PORTAL_HELD = new Set(['submitted','sending','uncertain','suppressed','con
 const HELD = new Set(['submitted','uncertain','sending']);
 const SENT = new Set(['submitted','failed','uncertain','dry_run']);
 const NOT_READY = new Set(['messaging_template_not_approved','messaging_automation_disabled','messaging_disabled']);
+// The send path's refusals of a company project: the policies' (the job or its account root is business-linked) and
+// the portal link backstop's (message-links.js).
+const BUSINESS_REFUSALS = new Set(['business_account_job','link_not_allowed_business_account']);
 // The Hub's legacy page-load trigger marks these events per anchor; the tick
 // sets the same marker so turning server messaging off never repeats them,
 // and reads it so turning server messaging on never repeats a legacy send.
@@ -153,11 +158,15 @@ export function dueMessages(jobs, { now, settings, kinds = new Set(SCHEDULED_KIN
   const skip = reason => { skipped[reason] = (skipped[reason] || 0) + 1; };
   for (const job of Array.isArray(jobs) ? jobs : []) {
     if (!safeId(job?.id) || job.recordType || job.type !== 'job') continue;
-    const found = candidates(job, { today, tomorrow, settings, kinds, skip });
+    // A company project (businessAccountId) gets no customer reminder: its
+    // policies refuse it, so every message that would be due or held back for
+    // it is counted as business_account_job and none is ever attempted.
+    const business = businessAccountJob(job);
+    const found = candidates(job, { today, tomorrow, settings, kinds, skip: business ? () => skip('business_account_job') : skip });
     if (!found.length) continue;
     // Gates shared by every automatic customer message. The approved-send
     // service checks them again against a fresh read before it claims.
-    const gate = job.notify === false ? 'job_notifications_off' : job.customerAutomationEnabled !== true ? 'customer_automation_off' : !reachable(job) ? 'no_contact' : '';
+    const gate = business ? 'business_account_job' : job.notify === false ? 'job_notifications_off' : job.customerAutomationEnabled !== true ? 'customer_automation_off' : !reachable(job) ? 'no_contact' : '';
     for (const item of found) if (gate) skip(gate); else due.push(item);
   }
   return { today, due: due.sort(order), skipped };
@@ -229,7 +238,9 @@ async function markLegacyMilestone(store, item) {
 // would otherwise be retried first on every tick and spend the subrequest
 // budget before anything deliverable. For the rest of the Denver day they are
 // held behind every other item; the next day they are tried in order again.
-// The record only orders items, so a lost read or write changes nothing else.
+// A company-project refusal is the exception: it is skipped for the rest of
+// the day. The record only orders and skips items, so a lost read or write
+// changes nothing else.
 async function readHolds(store, today) {
   try {
     const doc = await store.read(MESSAGING_HOLDS, HOLDS_ID), entries = doc?.day === today && Array.isArray(doc.entries) ? doc.entries : [];
@@ -286,8 +297,16 @@ export async function runDueMessages(deps, { now, dryRun = false, requestId } = 
   const crew = (Array.isArray(pendingCrew) ? pendingCrew : []).filter(entry => safeId(entry?.jobId) && byId.has(entry.jobId) && crewReady.includes(entry.messageKind || 'crew_assignment'))
     .map(entry => ({ kind: entry.messageKind || 'crew_assignment', jobId: entry.jobId, anchor: safeId(entry.id) ? entry.id : '', step: 0, entry }));
   const holds = await readHolds(store, summary.today), heldLast = item => holds.entries.has(itemKey(item)) ? 1 : 0;
-  const items = [...selected.due, ...(portalInvite ? portalRetries(jobs, { now: at }) : []), ...crew].sort((left, right) => heldLast(left) - heldLast(right) || order(left, right));
-  Object.assign(summary, { scanned: jobs.length, due: items.length, held: items.filter(heldLast).length, skipped: selected.skipped });
+  // A visit under a business-linked account root has no businessAccountId of its own, so dueMessages selects it and
+  // the send path refuses it. Once refused today it is counted with the other company projects, not tried each tick.
+  const skipped = { ...selected.skipped }, business = item => {
+    const hold = holds.entries.get(itemKey(item));
+    if (hold?.status !== 'not_eligible' || !BUSINESS_REFUSALS.has(hold.reason)) return false;
+    skipped.business_account_job = (skipped.business_account_job || 0) + 1;
+    return true;
+  };
+  const items = [...selected.due.filter(item => !business(item)), ...(portalInvite ? portalRetries(jobs, { now: at }) : []), ...crew].sort((left, right) => heldLast(left) - heldLast(right) || order(left, right));
+  Object.assign(summary, { scanned: jobs.length, due: items.length, held: items.filter(heldLast).length, skipped });
   const clock = denverClock(at), window = settings.dayBeforeWindow, outcomes = [];
   let calls = 0;
   for (const item of items) {

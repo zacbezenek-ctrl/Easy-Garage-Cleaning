@@ -104,11 +104,24 @@ test('a next=invoice link opened from webmail lands on the portal, whose own lin
   assert.match(portal, /link\.getAttribute\('href'\)==='\/api\/money-document\?kind=invoice'/);
 });
 
+// FIX-B2B-BILLING: the refusal names the link layer (link_not_allowed_business_account; the message policies refuse
+// these jobs first as business_account_job) and also covers a visit whose account root is the company project.
 test('business-linked jobs never get a homeowner portal or pay link', async t => {
-  const w = world(t, { 'job-1': invoiceJob({ businessAccountId: 'acct-synthetic' }) });
-  const job = await w.read('job-1');
-  for (const provider of ['payLink', 'portalLink']) {
-    await assert.rejects(w.links[provider]({ kind: 'deposit_reminder', audience: 'customer', job, purpose: 'send' }),
-      error => error.code === 'messaging_not_eligible' && error.status === 409 && error.details?.reason === 'business_account_job', provider);
+  const w = world(t, {
+    'job-1': invoiceJob({ businessAccountId: 'acct-synthetic' }),
+    'root-1': invoiceJob({ businessAccountId: 'acct-synthetic', customerPortalLinkVersion: 2 }),
+    'visit-2': invoiceJob({ customerAccountOwnerJobId: 'root-1' }),
+  });
+  for (const id of ['job-1', 'visit-2']) {
+    const job = await w.read(id);
+    for (const provider of ['payLink', 'portalLink']) {
+      await assert.rejects(w.links[provider]({ kind: 'deposit_reminder', audience: 'customer', job, purpose: 'send' }),
+        error => error.code === 'messaging_not_eligible' && error.status === 409 && error.details?.reason === 'link_not_allowed_business_account', `${id} ${provider}`);
+      await assert.rejects(w.links[provider]({ kind: 'review_request', audience: 'customer', job, purpose: 'preview' }), error => error.details?.reason === 'link_not_allowed_business_account', `${id} ${provider} preview`);
+    }
   }
+  // Unlinking the company restores the homeowner link.
+  w.memory.put('jobs/root-1', invoiceJob({ customerPortalLinkVersion: 2 }));
+  const claims = await verifyCustomerPortalAccessToken(ENV, accessOf(await w.links.portalLink({ kind: 'review_request', audience: 'customer', job: await w.read('visit-2'), purpose: 'send' })), Date.parse(NOW));
+  assert.deepEqual([claims.jobId, claims.linkRoot, claims.linkVersion], ['visit-2', 'root-1', 2]);
 });

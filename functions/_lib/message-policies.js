@@ -5,6 +5,7 @@ import { localInstant } from './operations-portal-records.js';
 import { crewNoticeSendKey, slotUpcoming } from './crew-notifications.js';
 import { moneyCents } from './operations-financials.js';
 import { customerDepositState, customerMoneyState, customerPaymentNeedsReview } from './customer-payments.js';
+import { businessAccountJob } from './portal-invitation.js';
 
 export const MESSAGE_TIME_ZONE = 'America/Denver';
 export const QUIET_HOURS = Object.freeze({ start: '08:00', end: '20:00' });
@@ -41,11 +42,20 @@ function reminder(kind, { cadenceDays, series, anchor, ...options }) {
   return policy(kind, { ...options, cadenceDays, dedupe: c => key(c), previousKey: c => key(c, -cadenceDays) });
 }
 
+// A company project (businessAccountId) is shared through its business hub's
+// roles, and its job phone or email may be a tenant or an on-site contact, so
+// no customer message about the job goes out from here (B2B-SAFE): every
+// customer-audience job policy refuses it before its own rule runs. A visit
+// under a company project's account root is one too: approved-send passes the
+// verified root as c.accountRoot.
 function policy(kind, options) {
-  return Object.freeze({
+  const merged = {
     kind, template: kind, audience: 'customer', target: 'job', triggers: ['hub', 'mcp'], roles: ['dispatcher'], approvals: ['preview_confirm'],
     quietHours: false, maxAttempts: 3, overrides: [], customBody: false, adapterOnly: false, billing: false, cadenceDays: 0, previousKey: null, crewAssigned: true, eligible: () => ok, ...options,
-  });
+  };
+  const own = merged.eligible;
+  if (merged.audience === 'customer' && merged.target === 'job') merged.eligible = c => businessAccountJob(c.job) || businessAccountJob(c.accountRoot) ? reason('business_account_job') : own(c);
+  return Object.freeze(merged);
 }
 
 export const MESSAGE_POLICIES = Object.freeze({

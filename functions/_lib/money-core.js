@@ -334,11 +334,20 @@ export function invoiceFromEstimate(job, { now, dueDays = 7, dueDate, customerRe
   return { invoice, issues: [...new Set([...totals.issues, ...issues])] };
 }
 
+// Whether money covering the whole invoice is verified, by customerPaymentNeedsReview's rule (customer-payments.js):
+// a verified payment record, or, with no payment record, a verified deposit that covers everything applied.
+function paidVerified(job, appliedCents) {
+  const payment = plain(job?.payment) ? job.payment : {}, deposit = plain(job?.deposit) ? job.deposit : {}, depositCents = readCents(deposit.paidAmount);
+  return payment.verified === true || (payment.amount === undefined || payment.amount === null) && deposit.verified === true && depositCents !== null && depositCents >= appliedCents;
+}
+
 /**
  * Effective invoice status for display: not_issued, draft, void, superseded,
  * paid, pending_verification, overdue (Denver date past dueDate), partial or
- * issued. `now` is a required ISO instant (money_now_required when omitted).
- * Never throws on saved job data.
+ * issued. Nothing owed is paid once the money is verified (a verified payment,
+ * or a verified deposit covering it), else pending_verification. `now` is a
+ * required ISO instant (money_now_required when omitted). Never throws on
+ * saved job data.
  */
 export function invoiceStatus(job, now) {
   const invoice = plain(job?.invoice) ? job.invoice : null, at = instant(requireNow(now));
@@ -347,7 +356,7 @@ export function invoiceStatus(job, now) {
   const base = String(invoice.status || 'issued').toLowerCase();
   if (['void', 'superseded', 'draft'].includes(base)) return base;
   const totals = customerMoneyTotals(job);
-  if (totals.balanceCents === 0 && totals.totalCents > 0) return job.payment?.verified === true ? 'paid' : 'pending_verification';
+  if (totals.balanceCents === 0 && totals.totalCents > 0) return paidVerified(job, totals.appliedCents) ? 'paid' : 'pending_verification';
   if (validDate(invoice.dueDate) && invoice.dueDate < denverToday(new Date(at))) return 'overdue';
   return totals.appliedCents > 0 ? 'partial' : 'issued';
 }

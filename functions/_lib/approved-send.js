@@ -14,6 +14,7 @@ import { MESSAGE_SENDS, ledgerId } from './message-send-store.js';
 import { STAFF_CONTACT_TAG, maskRecipient, recipientDestination } from './ghl-messenger.js';
 import { fieldJobLead, fieldLeadOnlyComplete } from './field-permissions.js';
 import { describeLost, describeWork, jobCrewIds, lostOptions, shortestOption, workOptions } from './crew-notifications.js';
+import { customerPortalAccountRoot } from './customer-portal-revocation.js';
 
 export const COMPANY_PHONE = '(970) 999-1818';
 export const CONFIRM_TTL_MS = 10 * 60 * 1000;
@@ -135,6 +136,9 @@ export function createApprovedSendService({
   let rosterCache;
   const rosterRead = () => rosterCache ||= (typeof store.roster === 'function' ? Promise.resolve().then(() => store.roster()).then(rows => ({ rows: Array.isArray(rows) ? rows : [], ok: Array.isArray(rows) }), () => ({ rows: [], ok: false })) : Promise.resolve({ rows: [], ok: true }));
   const roster = async () => (await rosterRead()).rows;
+  // The job's verified account root, resolved as a portal link resolves it (the job itself when it has no owner). A
+  // chain that needs review proves no root, so only the job's own fields count, as before; a failed read fails the send.
+  const accountRoot = job => customerPortalAccountRoot(id => store.read('jobs', id), job).catch(error => { if (/^dispatch_lineage_/.test(String(error?.code || ''))) return null; throw error; });
   const rosterName = async id => { const key = assignmentKey(typeof id === 'string' ? id : id?.username || id?.user || id?.id || ''); return key ? (await roster()).find(person => person.id === key)?.name || '' : ''; };
 
   const forbidden = policy => fail('messaging_forbidden', policy.roles.includes('assigned_crew') ? 'Only crew assigned to this job or a manager can send this message.' : 'Your account cannot send this message.', 403);
@@ -307,6 +311,8 @@ export function createApprovedSendService({
       ctx.crew = await crewContact({ crewId: ctx.crewId, job });
       if (!object(ctx.crew) || !ctx.crew.name) throw fail('messaging_recipient_unavailable', 'This crew member\'s contact details are not available for messaging yet.', 409, { reason: 'crew_contact_unavailable' });
     }
+    // A visit under a company project's account root is refused like the project itself (B2B-SAFE).
+    if (policy.audience === 'customer' && job) ctx.accountRoot = await accountRoot(job);
     const eligibility = policy.eligible(ctx);
     if (!eligibility.eligible) throw fail('messaging_not_eligible', 'This message does not apply to this record right now.', 409, { reason: eligibility.reason });
     let template;

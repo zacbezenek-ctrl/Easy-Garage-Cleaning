@@ -67,13 +67,15 @@ def snapshot(role):
         ],
         'members': members,
         'projects': [
-            {'jobId': 'synthetic_job_1', 'propertyId': P1, 'service': 'Garage cleanout and reset', 'status': 'scheduled', 'date': '2026-10-02', 'time': '08:00', 'quoteStatus': 'approved', 'quoteNumber': 'Q-SYN-1', 'total': 12845.67, 'invoiceNumber': 'INV-SYN-1001-' + 'LONG' * 8, 'invoiceStatus': 'sent', 'dueDate': '2026-10-15', 'balance': 12345.67, 'paid': 500, 'paymentNeedsReview': False, 'receiptUrl': 'https://pay.stripe.com/receipts/synthetic'},
+            # FIX-B2B-BILLING: invoiceStatus is the server's effective status (money-core invoiceStatus at the request time), never a saved 'sent'.
+            {'jobId': 'synthetic_job_1', 'propertyId': P1, 'service': 'Garage cleanout and reset', 'status': 'scheduled', 'date': '2026-10-02', 'time': '08:00', 'quoteStatus': 'approved', 'quoteNumber': 'Q-SYN-1', 'total': 12845.67, 'invoiceNumber': 'INV-SYN-1001-' + 'LONG' * 8, 'invoiceStatus': 'partial', 'dueDate': '2026-10-15', 'balance': 12345.67, 'paid': 500, 'paymentNeedsReview': False, 'receiptUrl': 'https://pay.stripe.com/receipts/synthetic'},
             {'jobId': 'synthetic_job_2', 'propertyId': P2, 'service': 'Property service', 'status': 'not_scheduled', 'date': '', 'time': '', 'quoteStatus': 'not_issued', 'quoteNumber': '', 'total': None, 'invoiceNumber': '', 'invoiceStatus': 'not_issued', 'dueDate': '', 'balance': None, 'paid': None, 'paymentNeedsReview': False, 'receiptUrl': ''},
             {'jobId': 'synthetic_job_3', 'propertyId': P2, 'unavailable': True},
-            {'jobId': 'synthetic_job_4', 'propertyId': P1, 'service': 'Cleaning and organization', 'status': 'completed', 'date': '2026-09-01', 'time': '09:00', 'quoteStatus': 'accepted', 'quoteNumber': 'Q-SYN-4', 'total': 900, 'invoiceNumber': 'INV-SYN-1004', 'invoiceStatus': 'sent', 'dueDate': '2026-09-30', 'balance': None, 'paid': None, 'paymentNeedsReview': True, 'receiptUrl': ''},
+            {'jobId': 'synthetic_job_4', 'propertyId': P1, 'service': 'Cleaning and organization', 'status': 'completed', 'date': '2026-09-01', 'time': '09:00', 'quoteStatus': 'accepted', 'quoteNumber': 'Q-SYN-4', 'total': 900, 'invoiceNumber': 'INV-SYN-1004', 'invoiceStatus': 'pending_verification', 'dueDate': '2026-09-30', 'balance': None, 'paid': None, 'paymentNeedsReview': True, 'receiptUrl': ''},
+            {'jobId': 'synthetic_job_5', 'propertyId': P2, 'service': 'Garage cleanout and reset', 'status': 'completed', 'date': '2026-08-20', 'time': '09:00', 'quoteStatus': 'accepted', 'quoteNumber': 'Q-SYN-5', 'total': 450, 'invoiceNumber': 'INV-SYN-1005', 'invoiceStatus': 'overdue', 'dueDate': '2026-09-15', 'balance': 450, 'paid': 0, 'paymentNeedsReview': False, 'receiptUrl': ''},
         ],
         'manager': {'name': 'Zoe Zoll', 'email': 'zoe.zoll@easygaragecleaning.com', 'phone': '+19709991403'},
-        'coverage': {'linked': 4, 'unavailable': 1, 'paymentReview': 1}, 'updatedAt': NOW,
+        'coverage': {'linked': 5, 'unavailable': 1, 'paymentReview': 1}, 'updatedAt': NOW,
         **({'inviteDelivery': {'email': True}} if staff else {}),
         'rates': RATES,
     }
@@ -157,9 +159,9 @@ class BusinessHubBrowserTests(unittest.TestCase):
     def tearDown(self):
         for context in self.contexts: context.close()
         self.assertEqual(self.errors, [], f'Browser errors: {self.errors}')
-    def open(self, path, width=375, height=812):
+    def open(self, path, width=375, height=812, timezone='Asia/Tokyo'):
         phone = width <= 700
-        context = self.browser.new_context(viewport={'width': width, 'height': height}, timezone_id='Asia/Tokyo', is_mobile=phone, has_touch=phone, device_scale_factor=2 if phone else 1)
+        context = self.browser.new_context(viewport={'width': width, 'height': height}, timezone_id=timezone, is_mobile=phone, has_touch=phone, device_scale_factor=2 if phone else 1)
         self.contexts.append(context)
         page = context.new_page(); page.set_default_timeout(7000); page.clock.install(time=NOW)
         page.on('pageerror', lambda e: self.errors.append(str(e))); page.on('dialog', self.on_dialog)
@@ -499,6 +501,28 @@ class BusinessHubBrowserTests(unittest.TestCase):
         expect(viewer.locator('[data-ext-invite]')).to_have_count(0); expect(viewer.locator('td[data-label="Invitation"] .pill')).to_have_count(0)
         desktop = self.open('/business-hub', 1280, 800); self.tab(desktop, 'Team access')
         expect(desktop.locator('thead th')).to_have_text(['Person', 'Role / access', '']); expect(desktop.locator('td[data-label="Invitation"]')).to_have_count(0)
+
+    def test_invoices_show_the_server_status_denver_due_dates_and_view_only_for_roles_without_pay(self):
+        # FIX-B2B-BILLING: an Overdue pill from the server's effective status, due dates as Denver calendar days
+        # ('Oct 15, 2026') on any device time zone, and 'View' (not 'View / pay') for a member who cannot pay.
+        for role, label in [('viewer', 'View'), ('admin', 'View / pay')]:
+            self.role = role
+            for width, height, timezone in [(320, 640, 'Pacific/Kiritimati'), (390, 844, 'Pacific/Honolulu')]:
+                where = f'{role} {width} {timezone}'
+                page = self.open('/business-hub', width, height, timezone); self.tab(page, 'Invoices & billing')
+                overdue = self.row(page, 'INV-SYN-1005')
+                expect(overdue.locator('.pill.overdue')).to_have_text('Overdue'); expect(page.locator('.pill.overdue')).to_have_count(1)
+                expect(overdue.locator('td[data-label="Invoice"] small')).to_have_text('Due Sep 15, 2026')
+                expect(self.row(page, 'INV-SYN-1001').locator('td[data-label="Invoice"] small')).to_have_text('Due Oct 15, 2026')
+                self.assertEqual(page.locator('td[data-label="Invoice"] .pill').all_inner_texts(), ['Partially paid', 'Payment pending verification', 'Overdue'], where)
+                colors = page.evaluate("[...document.querySelectorAll('td[data-label=Invoice] .pill')].map(p => getComputedStyle(p).backgroundColor)")
+                self.assertNotEqual(colors[2], colors[0], f'{where}: the overdue pill stands out')
+                self.assertEqual(page.locator('[data-open]').all_inner_texts(), [label] * 3, where)
+                self.audit(page, where)
+        # The Projects tab keeps its own button, and staff get none.
+        self.tab(page, 'Projects & quotes'); self.assertEqual(set(page.locator('[data-open]').all_inner_texts()), {'Open project'})
+        staff = self.open('/business-hub?staff=1&account=' + ACCOUNT, 320, 640); self.tab(staff, 'Invoices & billing')
+        expect(staff.locator('[data-open]')).to_have_count(0); expect(staff.locator('.pill.overdue')).to_have_text('Overdue'); self.audit(staff, 'staff 320 invoices')
 
     def test_desktop_layout_is_unchanged_at_1280_and_1360(self):
         for width, height in [(1280, 800), (1360, 950)]:
