@@ -120,6 +120,21 @@
     "priorGreenHeadScope": "historical all-eight-workflow result before Batch 8 main merge",
     "localIntegration": "main_a029_merged_at_6d215_then_final_bb41_checks_passed_and_main_merge_5ed437c"
   },
+  "transcriptProductionFix": {
+    "pr": 88,
+    "finalHeadSha": "4a82e521df66f7eddcb95bb9886af07666f1f9c5",
+    "exactHeadCi": "four_of_four_applicable_success_including_dedicated_webkit_suites",
+    "merged": true,
+    "mainMergeSha": "d4fff3d3bcb1562fc35232dce8a0bb530b2aed4e",
+    "deployedRevision": "d4fff3d3bcb1562fc35232dce8a0bb530b2aed4e",
+    "railwayAndCloudflare": "four_Railway_success_health_aligned_Cloudflare_green",
+    "sameSavedTranscriptRetry": "failed_attempt_2_provider_http_429_no_task_or_send"
+  },
+  "nextProductionDiagnostic": {
+    "branch": "codex/transcript-limit-diagnostics",
+    "state": "reviewed_24_api_tests_typecheck_passed_ci_pending_not_merged_or_deployed",
+    "gate": "review documented error-code allowlist, tests, exact-head CI, matching deployment, inspect provider usage/limits before bounded retry"
+  },
   "activation": {
     "FIX-REFUNDS": "off_at_merge",
     "GHL-TRACK-2": "off_at_merge",
