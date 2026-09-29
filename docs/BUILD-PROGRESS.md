@@ -535,6 +535,10 @@ draft PR. The owner merges in phase order. See **Decisions** D-001.
   (digest stored, never sent) that rotates sessions, revokes Firebase and locks the old password; Change password under My EGC;
   approvals set a role and (owner) a starting rate; backdated first rate floored at approvedAt; owner Apply rate to open weeks;
   payroll CSV/Gusto downloads recorded in payrollWeekExports (409 on a race). Grants never include pay.manage (GO-LIVE 3.6).
+- **SALES-BOOKING** (P1 booking; staff side under EGC_STAFF_ROLE_ACCESS; public side EGC_BOOKING_EXPLICIT_SLOTS off) Sales and
+  Phone see Leads, Walkthroughs, Schedule and the Action Center; lead cards Call / Open in HighLevel / Book walkthrough (prefilled
+  Create job, crew controls hidden, New customer via /api/customer-resolve, "HighLevel unavailable, retrying"); three read-only
+  booker views of /api/highlevel. The flag gives /book explicit Denver windows; flag off is byte-identical (GO-LIVE 2.4, item 120).
 
 ## In progress
 
@@ -661,6 +665,7 @@ one prefixed commit only after the full root suite (and the platform suite when 
 | FIX-DISPATCH-READY | P1 Dispatch: reminder, price and deposit readiness on each visit (EGC_DISPATCH_NOTIFY_IMPORTED_ON, off) | merged (d8de34c) |
 | FIX-EDIT-WIPE | P1 UI: typed text survives background reloads (Hub chat and customer thread, crew job reason and checklist, business hub forms, schedule alerts) | merged (6f5dd90) |
 | STAFF-ACCESS | P1 auth/pay: staff sign-in reset and password change; approvals set role and starting rate (EGC_STAFF_PASSWORD_RESET, off) | merged (d3e8358) |
+| SALES-BOOKING | P1 booking: phone and sales booking tools; public /book explicit slots behind EGC_BOOKING_EXPLICIT_SLOTS (off) | merged (845020b) |
 
 ## Next
 

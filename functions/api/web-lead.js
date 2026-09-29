@@ -17,7 +17,10 @@
  *                      computed server-side so the AI step needs no Formatter
  *   lead_phone_e164  — the lead's number in +1XXXXXXXXXX form (OpenPhone "To")
  * plus the usual name/phone/items/source/subject and Meta fbc/fbp/fbclid, and
- * inquiry_id (the browser Meta Lead eventID, for CAPI deduplication).
+ * inquiry_id (the browser Meta Lead eventID, for CAPI deduplication). Only with
+ * EGC_BOOKING_EXPLICIT_SLOTS=true, when /book sends an explicit window
+ * ('2026-09-30 AM'), booking_slot is relayed in words ('Tomorrow morning') and
+ * the window itself in booking_slot_date; otherwise the relay is as before.
  *
  * FUN-13: with WEB_LEAD_RECEIPTS_ENABLED=true the lead is first recorded in the
  * server-only web_lead_receipts ledger (with its inquiry.received funnel event)
@@ -32,6 +35,8 @@
  */
 
 import { webLeadTiming } from '../_lib/funnel-calendar.js';
+import { bookingSlotLead, bookingSlotWords } from '../_lib/booking-slots.js';
+import { bookingExplicitSlotsEnabled } from '../_lib/booking-slots-flag.js';
 import { WEB_LEAD_FIELDS, envVar, highLevelConfig, receiveWebLead, syncHighLevelLead, webLeadHeld, webLeadInquiryId, webLeadLedgerOn, webLeadMeta, webLeadStorage } from '../_lib/web-lead-intake.js';
 
 const ALLOWED_HOST_RE = /^(?:easygaragecleaning\.com|www\.easygaragecleaning\.com|easy-garage-cleaning\.pages\.dev|localhost(?::\d+)?|127\.0\.0\.1(?::\d+)?)$/;
@@ -89,6 +94,18 @@ function relayFields(body, name, phone, inquiryId, now) {
     if (v) params.set(k, v);
   }
   return { flat, params };
+}
+
+// SALES-BOOKING (BOOK-25), EGC_BOOKING_EXPLICIT_SLOTS on: the relay feeds the automatic text-back, so an explicit window from /book goes out in
+// the customer's words (booking_slot 'Tomorrow morning'), with its date in the new booking_slot_date. Any other
+// choice ('Tomorrow AM', 'Flexible') is relayed exactly as sent.
+function relaySlot(flat, params, now) {
+  const words = bookingSlotWords(flat.booking_slot, now);
+  if (!words) return { flat, params };
+  const next = new URLSearchParams(params);
+  next.set('booking_slot', words);
+  next.set('booking_slot_date', flat.booking_slot);
+  return { flat: { ...flat, booking_slot: words, booking_slot_date: flat.booking_slot }, params: next };
 }
 
 async function relayLead(hook, flat, params) {
@@ -160,14 +177,18 @@ export function webLeadHandlers({ storage = webLeadStorage, now = () => new Date
     const { flat, params } = relayFields(body, name, phone, inquiryId, at);
     const meta = webLeadMeta(flat, { name, phone });
     const held = webLeadHeld(env, meta);
-    const lead = { name, phone, flat };
+    // SALES-BOOKING (BOOK-25), only with EGC_BOOKING_EXPLICIT_SLOTS=true: HighLevel and the receipt get the requested
+    // walkthrough window as an explicit Denver date resolved as the lead arrives; the Zapier relay gets it in the
+    // customer's words. Off, the lead, its receipt, the HighLevel note and the relay are exactly as before.
+    const explicitSlots = bookingExplicitSlotsEnabled(env);
+    const lead = { name, phone, flat: explicitSlots ? bookingSlotLead(flat, at) : flat }, relayed = explicitSlots ? relaySlot(flat, params, at) : { flat, params };
 
     let receipt = null, settleDelivered = null, ownedElsewhere = null;
     const unavailable = () => { try { warn(RECEIPT_UNAVAILABLE); } catch {} };
     if (ledger) {
       let result;
       try {
-        result = await receiveWebLead({ store: storage(env), env, now: at.toISOString(), sync: value => sync(env, value), relay: () => relayLead(hook, flat, params) }, { lead, inquiryId, clientInquiryId: webLeadInquiryId(body.inquiry_id) === inquiryId, meta, held });
+        result = await receiveWebLead({ store: storage(env), env, now: at.toISOString(), sync: value => sync(env, value), relay: () => relayLead(hook, relayed.flat, relayed.params) }, { lead, inquiryId, clientInquiryId: webLeadInquiryId(body.inquiry_id) === inquiryId, meta, held });
       } catch { result = { fallback: true }; }
       if (!result.fallback) return json(result.status, result.body);
       // Nothing was sent yet: deliver the legacy way and say the receipt is missing.
@@ -183,7 +204,7 @@ export function webLeadHandlers({ storage = webLeadStorage, now = () => new Date
     if (held) return json(202, { ok: true, accepted: true, held, ...(inquiryId ? { inquiryId } : {}), ...(receipt ? { receipt } : {}) });
 
     let highlevel;
-    try { highlevel = await sync(env, { ...flat, name, phone, source: flat.source || 'EGC Website' }); }
+    try { highlevel = await sync(env, { ...lead.flat, name, phone, source: flat.source || 'EGC Website' }); }
     catch {
       // A receipt that did land stays due, so the cron retries this lead.
       if (settleDelivered) unavailable();
@@ -199,7 +220,7 @@ export function webLeadHandlers({ storage = webLeadStorage, now = () => new Date
       try { ownerStatus = await ownedElsewhere(); } catch {}
       if (ownerStatus) return json(200, { ok: true, inquiryId, receipt: { status: ownerStatus }, highlevel: highlevelAnswer, relay: { configured: !!hook, sent: false, skipped: 'already-received' } });
     }
-    const relay = await relayLead(hook, flat, params);
+    const relay = await relayLead(hook, relayed.flat, relayed.params);
     if (settleDelivered) {
       // Marking a receipt that landed after all keeps the cron from syncing this lead a second time.
       let settled = false;

@@ -35,6 +35,8 @@ import { operationsEnabled } from '../_lib/operations-service-auth.js';
 import { ensureHighLevelCheckin } from '../_lib/highlevel-checkin.js';
 import { addTags, completeAppointment, ensureContact, ghl, highLevelConfig } from '../_lib/highlevel-tags.js';
 import { ghlTagOutboxEnabled, handOffScheduleTags, scheduleTagOwner } from '../_lib/ghl-tag-outbox.js';
+import { can } from '../_lib/staff-roles.js';
+import { leadDetailsFromNotes } from '../_lib/booking-slots.js';
 
 const DEFAULT_LEAD_RESET_AT = '2026-09-03T21:51:19.314Z';
 const HOST = /^(?:easygaragecleaning\.com|www\.easygaragecleaning\.com|easy-garage-cleaning\.pages\.dev|localhost(?::\d+)?|127\.0\.0\.1(?::\d+)?)$/;
@@ -445,20 +447,51 @@ export async function onRequestOptions() {
   }});
 }
 
+// SALES-BOOKING: with EGC_STAFF_ROLE_ACCESS a schedule.book holder (Sales, Phone) reads the lead feed, the
+// contact search and one lead's details, to call and book leads. Every other view stays business-only, and
+// with the flag off can() never grants schedule.book.
+const BOOKER_VIEWS = new Set(['command', 'contacts', 'lead']);
+const CONTACT_ID = /^[A-Za-z0-9_-]{1,180}$/;
+// A booker's lead feed: who to call and where the lead stands, never the opportunity's value.
+const bookerOpportunity = row => ({ id: row.id, name: row.name, status: row.status, source: row.source, pipelineId: row.pipelineId, pipelineStageId: row.pipelineStageId, createdAt: row.createdAt,
+  contactId: row.contactId || row.contact?.id || '', contact: { id: row.contact?.id || row.contactId || '', name: row.contact?.name || '', phone: row.contact?.phone || '', email: row.contact?.email || '' } });
+// A booker's contact search: who the contact is and where, never its tags or source (money and pipeline status).
+const bookerContact = row => ({ id: row.id, name: row.name, phone: row.phone, email: row.email, address: row.address });
+
+// One lead for the Hub's Book walkthrough: the contact and what its website-lead note asked for (read only).
+// A note that cannot be read leaves the lead without its requested window.
+async function leadView(c, id) {
+  if (!CONTACT_ID.test(id)) return reply(400, { ok: false, error: 'Choose a HighLevel contact.' });
+  const [contact, notes] = await Promise.allSettled([contactById(c, id), ghl(c, `/contacts/${encodeURIComponent(id)}/notes`)]);
+  if (contact.status === 'rejected') {
+    if (contact.reason?.status === 404) return reply(404, { ok: false, error: 'This HighLevel contact was not found.' });
+    throw contact.reason;
+  }
+  const found = contact.value || {};
+  if (found.id !== id || found.locationId !== c.locationId) return reply(404, { ok: false, error: 'This HighLevel contact was not found.' });
+  const shape = contactShape(found), details = notes.status === 'fulfilled' ? leadDetailsFromNotes(notes.value?.notes) : null;
+  return reply(200, { ok: true, locationId: c.locationId, notesRead: notes.status === 'fulfilled', lead: {
+    contactId: shape.id, name: shape.name, phone: shape.phone, email: shape.email || details?.email || '', address: shape.address,
+    service: details?.service || '', requestedSlot: details?.requestedSlot || null, requestedSlotText: details?.requestedSlotText || '',
+  } });
+}
+
 export async function onRequestGet({ request, env }) {
   if (!allowed(request)) return reply(403, { ok: false, error: 'Forbidden origin' });
   const session = await getHubSession(request, env);
   if (!session) return reply(401, { ok: false, code: 'HUB_AUTH_REQUIRED', error: 'Sign in to the EGC Hub' });
-  if (!hasBusinessAccess(session)) return reply(403, { ok: false, code: 'BUSINESS_ACCESS_REQUIRED', error: 'Business access is required for CRM records and handoffs. Open the assigned field job for crew actions.' });
+  const url = new URL(request.url), view = url.searchParams.get('view') || 'command';
+  if (!hasBusinessAccess(session) && !(BOOKER_VIEWS.has(view) && can(session, 'schedule.book', env))) return reply(403, { ok: false, code: 'BUSINESS_ACCESS_REQUIRED', error: 'Business access is required for CRM records and handoffs. Open the assigned field job for crew actions.' });
   const c = config(env);
   if (!c.token || !c.locationId) return reply(501, { ok: false, code: 'HIGHLEVEL_NOT_CONFIGURED', error: 'HighLevel needs an API key and location ID' });
-  const url = new URL(request.url), view = url.searchParams.get('view') || 'command';
   if (view === 'walkthroughs' && !hasBusinessAccess(session)) return reply(403, { ok: false, code: 'BUSINESS_ACCESS_REQUIRED', error: 'Walkthrough access is limited to Zac, Tyler, and Alex' });
   try {
+    if (view === 'lead') return await leadView(c, String(url.searchParams.get('contactId') || '').trim());
     if (view === 'contacts') {
       const q = String(url.searchParams.get('q') || '').trim();
       if (q.length < 2) return reply(400, { ok: false, error: 'Search needs at least 2 characters' });
-      return reply(200, { ok: true, contacts: await contacts(c, q) });
+      const found = await contacts(c, q);
+      return reply(200, { ok: true, contacts: hasBusinessAccess(session) ? found : found.map(bookerContact) });
     }
     if (view === 'walkthroughs') {
       const result = await getWalkthroughs(c, url.searchParams.get('date') || '');
@@ -470,9 +503,11 @@ export async function onRequestGet({ request, env }) {
     }
     const [pipes, allOpps] = await Promise.all([pipelines(c), opportunities(c)]);
     const resetAt = leadResetAt(env), opps = opportunitiesSince(allOpps, resetAt);
+    if (!hasBusinessAccess(session)) return reply(200, { ok: true, projection: 'booker', pipelines: pipes, opportunities: opps.map(bookerOpportunity), leadResetAt: resetAt, locationId: c.locationId });
     return reply(200, { ok: true, pipelines: pipes, opportunities: opps, leadResetAt: resetAt, locationId: c.locationId });
   } catch (error) {
-    return reply(502, { ok: false, error: 'HighLevel is unreachable', detail: error.detail || error.message });
+    // Provider detail stays with business users; a booker learns only that HighLevel is unavailable.
+    return reply(502, { ok: false, error: 'HighLevel is unreachable', ...(hasBusinessAccess(session) ? { detail: error.detail || error.message } : {}) });
   }
 }
 

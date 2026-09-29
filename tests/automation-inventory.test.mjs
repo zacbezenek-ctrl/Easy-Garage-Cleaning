@@ -97,8 +97,9 @@ test('one added, removed or changed send path in the real tree fails with exactl
   assert.deepEqual(variant(copy => { copy.inventory['functions/api/highlevel.js'].ghl_tag_helper_call += 1; }),
     ['changed send path: functions/api/highlevel.js ghl_tag_helper_call found 6, registered 5. Review the new or removed call and update the registry.'], 'a new call to the shared tag writer is caught');
   assert.deepEqual(variant(copy => { copy.tags['functions/_lib/ghl-tag-outbox.js'].push('egc-visit-lost'); }), ['unregistered tag write: functions/_lib/ghl-tag-outbox.js writes egc-visit-lost. Add trigger tag:egc-visit-lost with this Hub write.']);
+  // SALES-BOOKING added a read of the lead's notes (GET view=lead), registered as a read in hub.highlevel_reads, so four are registered.
   assert.deepEqual(variant(copy => { copy.inventory['functions/api/highlevel.js'].ghl_note_task_write += 1; }),
-    ['changed send path: functions/api/highlevel.js ghl_note_task_write found 4, registered 3. Review the new or removed call and update the registry.']);
+    ['changed send path: functions/api/highlevel.js ghl_note_task_write found 5, registered 4. Review the new or removed call and update the registry.']);
   // FUN-13 moved the website lead HighLevel writes from functions/api/web-lead.js to functions/_lib/web-lead-intake.js.
   assert.deepEqual(variant(copy => { copy.tags['functions/_lib/web-lead-intake.js'].push('egc-lead-hot'); }), ['unregistered tag write: functions/_lib/web-lead-intake.js writes egc-lead-hot. Add trigger tag:egc-lead-hot with this Hub write.']);
   assert.deepEqual(variant(copy => { copy.tags['functions/api/highlevel.js'] = copy.tags['functions/api/highlevel.js'].filter(tag => tag !== 'egc-review-ready'); }), ['stale hub write: functions/api/highlevel.js no longer writes egc-review-ready.']);

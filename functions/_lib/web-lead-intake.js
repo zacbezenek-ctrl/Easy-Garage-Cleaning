@@ -26,6 +26,8 @@ import { canonicalJson, sha256Hex } from './funnel-definitions.js';
 import { funnelEventWrite } from './funnel-events.js';
 import { quietHoursDecision } from './message-policies.js';
 import { SEAL_PURPOSES, purposeOpen, purposeSeal } from './purpose-keys.js';
+import { BOOKING_SLOT_PROBLEMS } from './booking-slots.js';
+import { bookingExplicitSlotsEnabled } from './booking-slots-flag.js';
 
 export const WEB_LEAD_RECEIPTS = 'web_lead_receipts';
 export const WEB_LEAD_FIELDS = Object.freeze(['name', 'phone', 'email', 'items', 'service_type', 'job_size', 'what_to_remove', 'photo_description', 'source', 'subject', 'city', 'serviceZip', 'preferred_date', 'preferred_timing', 'booking_slot', 'estimated_range', 'flow_type', 'sms_consent', 'request_id', 'fbc', 'fbp', 'fbclid', 'utm_source', 'utm_medium', 'utm_campaign', 'utm_content', 'utm_term', 'gclid', 'msclkid', 'landing_url', 'referrer', 'page_url']);
@@ -189,6 +191,10 @@ export async function syncHighLevelLead(env, lead, fetcher = (...args) => fetch(
   }
 }
 
+// SALES-BOOKING: after the requested window, the customer's own words and why it could not be booked as asked (only
+// with EGC_BOOKING_EXPLICIT_SLOTS=true; off, the note's slot line is exactly as before, even for a lead received while on).
+const slotRemarks = lead => { const remarks = [lead.booking_slot_choice ? `chosen as "${lead.booking_slot_choice}"` : '', BOOKING_SLOT_PROBLEMS[lead.booking_slot_problem] || ''].filter(Boolean); return remarks.length ? ` (${remarks.join('; ')})` : ''; };
+
 async function syncHighLevelDetails({ env, config, lead, request, contactId, isNew, created, delayed, isClientHubHelp }) {
   const tagsPath = `/contacts/${encodeURIComponent(contactId)}/tags`;
   let delayedTag = null;
@@ -241,7 +247,7 @@ async function syncHighLevelDetails({ env, config, lead, request, contactId, isN
     `Email: ${lead.email || '—'}`,
     `Location: ${[lead.city, lead.serviceZip].filter(Boolean).join(' ') || '—'}`,
     `Preferred date / timing: ${[lead.preferred_date, lead.preferred_timing].filter(Boolean).join(' · ') || '—'}`,
-    `Requested slot: ${lead.booking_slot || '—'}`,
+    `Requested slot: ${lead.booking_slot || '—'}${bookingExplicitSlotsEnabled(env) ? slotRemarks(lead) : ''}`,
     `Estimated range shown: ${lead.estimated_range || '—'}`,
     `Form path: ${lead.flow_type || 'standard'}`,
     `SMS consent checked: ${lead.sms_consent === 'yes' ? 'yes' : 'no'}`,

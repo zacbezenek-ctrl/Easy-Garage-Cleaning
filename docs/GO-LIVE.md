@@ -276,6 +276,7 @@ Every website lead already goes to HighLevel. Stage 2 makes that durable (nothin
 | 2.1 | `WEB_LEAD_RECEIPTS_ENABLED=true` | Cloudflare, plain |
 | 2.2 | `WEB_LEAD_ADS_RELAY_ENABLED=true` | Cloudflare, plain |
 | 2.3 | `WEB_LEAD_DELAYED_SYNC_TAG=true` (optional) | Cloudflare, plain |
+| 2.4 | `EGC_BOOKING_EXPLICIT_SLOTS=true` (optional) | Cloudflare, plain |
 
 ### Before Stage 2
 
@@ -316,6 +317,23 @@ Every website lead already goes to HighLevel. Stage 2 makes that durable (nothin
 - **Needs first:** add an "unless tagged `egc-delayed-sync`" filter only to instant-reply workflows started by `egc-website-lead`, `egc-client-hub-help`, `egc-sms-consent`, `egc-no-sms-consent` or Contact Created (with about a 1-minute wait before the check). Never on Facebook lead ads, native HighLevel forms, calls, texts or opportunity triggers.
 - **Check it worked:** follow the test in [FUNNEL-METRICS.md](FUNNEL-METRICS.md#111-unit-scopes) (FUN-13, optional part).
 - **Roll back:** remove the HighLevel filters **first**, then delete the variable. Nothing removes the tag once the flag is off.
+
+### 2.4 Exact walkthrough times on /book (optional)
+
+- **Set:** `EGC_BOOKING_EXPLICIT_SLOTS=true`
+- **Where:** Cloudflare Pages, plain. Preview first, then Production.
+- **Nothing on the public site changes until it is set.** Unset, `/book`, the lead, its receipt, the HighLevel note and the Zapier relay are exactly as before.
+- **Turns on:** `/book` offers the next open walkthrough windows by Denver date ("Tomorrow morning", "Thu, Oct 1 afternoon") instead of its fixed choices. The lead stores the exact date, and the "EGC Website Lead Details" note in HighLevel reads `Requested slot: 2026-10-01 AM (chosen as "Tomorrow AM")`. That line may end with "(sent after this window had started)" or "(EGC is closed then)". The Zapier AI + OpenPhone text-back gets `booking_slot` in words ("Tomorrow morning", "Thu, Oct 1 afternoon") plus an optional new field `booking_slot_date`. "Flexible" is unchanged.
+- **Closed days:** `/book` leaves out Sundays and the 11 holidays of the business calendar (New Year's Day, Martin Luther King Jr. Day, Washington's Birthday, Memorial Day, Juneteenth, Independence Day, Labor Day, Columbus Day, Veterans Day, Thanksgiving and Christmas). If EGC works any of those days, have the developer edit the business calendar (`functions/_data/funnel-definitions.data.json` and its browser copy in `booking-slots.js`) first.
+- **Needs first:**
+  1. Update any HighLevel workflow, trigger, smart list or report that reads "Requested slot:" in the "EGC Website Lead Details" note, so it accepts the new format and both possible endings.
+  2. Set it in **Preview only** and send one `/book` test lead with SMS consent. Check that the Zapier AI + OpenPhone text-back reads well with `booking_slot` in words. Map `booking_slot_date` in the Zap only if you want the exact date.
+- **HighLevel impact:** no new HighLevel writes. Only the note line's format changes (above).
+- **Check it worked (Preview, phone):**
+  1. Open `/book`. The time choices show days and dates, starting with the next open window, and no Sunday.
+  2. Send a test lead with SMS consent. The HighLevel note shows `Requested slot:` with the date and AM or PM, and the text-back names the window in words.
+- **Roll back:** delete the variable (or set it to `false`) and retry the deployment. No site rebuild is needed.
+- **Known limit:** a `/book` tab opened while the switch was on keeps sending exact windows until it is reloaded. Those reach HighLevel and the Zapier text-back raw ("2026-10-01 AM").
 
 ## Stage 3: Walkthroughs
 
@@ -387,6 +405,9 @@ Every website lead already goes to HighLevel. Stage 2 makes that durable (nothin
   - **Sales** and **Phone**: book, move, cancel and mark no-shows for walkthroughs **and** jobs in Dispatch. They never assign crew and never see pay, cost or money. The crew-size rule stays a warning for them.
   - **Sales** also runs walkthroughs: the game plan, the signed hand-off and the visit recorder. A sale they hand off is saved with no crew and shows "Sold: needs crew" in Dispatch until a manager assigns the crew.
   - **Contact details:** Sales and Phone see every customer's name, phone, email, address and full job history in Dispatch, its customer list and its search. Only the caller lookup stays masked.
+  - **Hub screens for Sales and Phone:** New HighLevel leads, Walkthroughs, Team schedule and the Action Center. Each lead card has **Call**, **Open in HighLevel** (texts and follow-up stay in HighLevel, so there is no text link) and **Book walkthrough**, which opens Create job filled in from the lead. Their booking form has no crew controls, and **New customer** goes through the Hub's customer check with no new HighLevel writes. When HighLevel is down they see "HighLevel unavailable, retrying" with the time.
+  - **Their HighLevel contact search is slimmer:** name, phone, email and address only, without tags or source, and the lead feed carries no deal value.
+  - The "Requested slot:" line of a website lead's HighLevel note changes only when `EGC_BOOKING_EXPLICIT_SLOTS` is on ([2.4](#24-exact-walkthrough-times-on-book-optional)).
   - You always keep owner access. A saved role never makes anyone the owner.
 - **Needs first:**
   1. The staff directory is on and its two migrations have run ([3.1](#31-team-roles-staff-directory)).
@@ -401,6 +422,7 @@ Every website lead already goes to HighLevel. Stage 2 makes that durable (nothin
   3. Give another test account the Manager role and sign in as it. The business Hub screens open.
   4. Take the Manager role away again. The staff directory confirms the sign-out, and Hub → Integrations shows no pending Firebase sign-out.
   5. Sign in as yourself. You still have owner access.
+  6. As the Sales test account, open New HighLevel leads and tap **Open in HighLevel** on a lead. In Production it must open that contact in HighLevel. **Book walkthrough** opens Create job with the lead's name and phone.
 - **Roll back:** delete the variable and retry the deployment. Business access goes back to the configured business users, and Sales and Phone can no longer book. Saved roles stay. A stored manager's Firebase data session ends the next time a business user loads the Hub on easygaragecleaning.com. A session issued in the half minute before that load ends on a later load. Hub → Integrations shows any sign-out still pending.
 
 

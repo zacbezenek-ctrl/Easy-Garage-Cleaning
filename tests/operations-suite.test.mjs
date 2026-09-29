@@ -698,7 +698,8 @@ test('legacy Firebase leads are not loaded into the reset Hub',()=>{
   assert.doesNotMatch(employee,/db\.collection\('leads'\)\.get/);
   assert.match(employee,/leadsCache = \[\];/);
   assert.match(suite,/New HighLevel leads/);
-  assert.match(suite,/setInterval\(\(\)=>\{if\(!document\.hidden&&typeof me!=='undefined'&&me\)\{if\(isLead\(\)\)loadGhl\(\);else if\(typeof refreshCrewSchedule==='function'\)refreshCrewSchedule\(\)\}\},60000\)/);
+  // (SALES-BOOKING) a Sales or Phone booker's lead feed also reloads every minute, so "HighLevel unavailable, retrying" is true for them.
+  assert.match(suite,/setInterval\(\(\)=>\{if\(!document\.hidden&&typeof me!=='undefined'&&me\)\{if\(isLead\(\)\)loadGhl\(\);else\{if\(canView\('pipeline'\)\)loadGhl\(\);if\(typeof refreshCrewSchedule==='function'\)refreshCrewSchedule\(\)\}\}\},60000\)/);
   assert.match(highlevel,/DEFAULT_LEAD_RESET_AT/);
   assert.match(webLead,/syncHighLevelLead/);
 });
@@ -836,7 +837,8 @@ test('open-shift scheduling fields persist on the canonical job record',()=>{
   assert.match(suite,/if\(k==='type'\)render\(true\)/);
   assert.match(suite,/b\.type==='job'\?'':'ops-hidden'/);
   assert.match(suite,/b\.type==='blocked'\?'ops-hidden':''/);
-  assert.match(employee,/employee-suite\.css\?v=20260909gusto/);
+  // (SALES-BOOKING) the lead card actions and the failed-contact-search notice are new suite styles.
+  assert.match(employee,/employee-suite\.css\?v=20260929salesbooking/);
   // Bumped deliberately (LEGACY-SEND): the customer thread delivery labels changed; (TEAM-UI) then (PAY-TIMESHEETS merged
   // with PRICE-SCRUB): the timesheet screen mounts the payroll week card and shows pay only where the server sent it;
   // (PAY-TIMESHEETS fourth check): the profile form's rate field only for a viewer who sets pay; (SYNC-QUEUE) page-load
@@ -857,8 +859,10 @@ test('open-shift scheduling fields persist on the canonical job record',()=>{
   // tags the HighLevel tag outbox owns records no reminder evidence; (FIX-DISPATCH-READY after AUTH-ROLES) one combined tag;
   // (FIX-EDIT-WIPE) the Hub chat and customer-thread drafts survive a send; (FIX-EDIT-WIPE after FIX-DISPATCH-READY) one
   // combined tag; (STAFF-ACCESS) the Team card's Reset sign-in, the approval dialog for approvers the owner allows and the
-  // Password screen's capability; (STAFF-ACCESS after FIX-EDIT-WIPE) one combined tag.
-  assert.match(employee,/employee-suite\.js\?v=20260929editaccess"/);
+  // Password screen's capability; (STAFF-ACCESS after FIX-EDIT-WIPE) one combined tag; (SALES-BOOKING)
+  // navigation by the server's booking capabilities, lead card Call / Open in HighLevel / Book, and HighLevel outage wording;
+  // (SALES-BOOKING after STAFF-ACCESS) one combined tag.
+  assert.match(employee,/employee-suite\.js\?v=20260929editaccesssales"/);
 });
 
 test('recurring visits request a server-side handoff clone instead of copying prior execution or payments',()=>{

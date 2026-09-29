@@ -4,11 +4,14 @@
 const TZ = 'America/Denver';
 const terminal = new Set(['completed', 'cancelled', 'canceled', 'paid', 'invoiced', 'review_requested', 'closed','noshow','no_show','no-show']);
 const active = job => !terminal.has(job.status || job.pipelineStatus);
-const S = { host:null, root:null, date:today(), view:'day', query:'', status:'active', employee:'', type:'', data:null, loading:false, generation:0, modal:null, refreshTimer:null, pending:false, error:'', notice:'', controller:null, viewer:null, recovery:null };
+const S = { host:null, root:null, date:today(), view:'day', query:'', status:'active', employee:'', type:'', data:null, loading:false, generation:0, modal:null, refreshTimer:null, pending:false, error:'', notice:'', controller:null, viewer:null, recovery:null, pendingBook:null };
 const recoveryPrefix='egc.dispatch.pending.v1.';
 // Extra views (employee-dispatch-calendar.js) register {label, range(date), step(date,count), render(target,jobs), help}; they save through save().
 const views=new Map();
 const CUSTOMER_SEARCH_DELAY_MS=300;
+// SALES-BOOKING: a Sales or Phone booker (EGC_STAFF_ROLE_ACCESS schedule.book) books, moves and cancels visits; crew
+// assignment, crews, vehicles and company blocks stay with managers, so the board hides those controls for them.
+const booker = () => S.data?.viewer?.booker === true;
 function h(tag, props, ...children) {
   const node = document.createElement(tag);
   for (const [key, value] of Object.entries(props || {})) {
@@ -58,7 +61,7 @@ const scope = job => typeof job.jobInstructions === 'string' ? job.jobInstructio
 const directions = address => 'https://www.google.com/maps/dir/?api=1&destination='+encodeURIComponent(address);
 function errorText(error) {
   if (error.status===401) return 'Your sign-in expired. Sign in again, then retry this saved draft.';
-  if (error.status===403) return 'Scheduling requires an authorized operations manager account.';
+  if (error.status===403) return booker()&&error.code==='dispatch_forbidden'&&error.message?error.message:'Scheduling requires an authorized operations manager account.';
   if (error.code==='dispatch_revision_conflict' || /revision/.test(error.code||'')) return 'This record changed while you were editing. Your draft is preserved. Load the latest record before applying it again.';
   const conflicts = error.details?.conflicts;
   if (conflicts?.length) return 'Scheduling conflict: '+conflicts.map(c=>c.message||[words(c.code||c.type),c.employeeId?person(c.employeeId):'',c.jobId||''].filter(Boolean).join(' · ')).join('; ');
@@ -113,7 +116,7 @@ async function load({quiet=false}={}) {
     if (generation!==S.generation || !S.root) return;
     S.data=data; S.error='';restoreRecovery(data.viewer.id);
   } catch (error) { if (generation!==S.generation || error.name==='AbortError') return; if([401,403].includes(error.status))S.data=null; S.error=errorText(error); S.errorStatus=error.status; }
-  finally { if (generation===S.generation && S.root) { S.loading=false; render(); } }
+  finally { if (generation===S.generation && S.root) { S.loading=false; if(S.pendingBook&&S.error&&!S.data){S.pendingBook=null;S.error+=' The booking form did not open: book again once the schedule loads.';} render(); openPendingBook(); } }
 }
 function setFilter(field,value) { S[field]=value; renderBody(); }
 function move(count) { const view=views.get(S.view); S.date=view?.step?view.step(S.date,count):addDays(S.date,count*(S.view==='week'||S.view==='crew'?7:1)); void load(); }
@@ -241,10 +244,10 @@ function jobCard(job, {compact=false,date=null}={}) {
   if(listed.length>3)card.append(h('p',{class:'dp-muted'},(listed.length-3)+' more items to review'));
   const actions=h('div',{class:'dp-card-actions'});
   if(!blocked)actions.append(h('a',{class:'dp-btn primary',href:job.type==='walkthrough'?'/crew/gameplan.html?walkthroughId='+encodeURIComponent(job.id):'/crew/job.html?jobId='+encodeURIComponent(job.id)},job.type==='walkthrough'?'Open walkthrough':job.attention?.status==='open'?'Review job issue':'Open job'));
-  if (active(job)) actions.append(btn('Edit / assign',()=>openJob(original)),btn('Cancel',()=>openStatus(original,'schedule.cancel'),'subtle'));
+  if (active(job)) actions.append(btn(booker()?'Edit / reschedule':'Edit / assign',()=>openJob(original)),btn('Cancel',()=>openStatus(original,'schedule.cancel'),'subtle'));
   if (active(job)&&!blocked&&job.type!=='walkthrough'&&S.data?.funnel?.reasonCodes?.noShow&&Date.parse(original.startAt)-3600000<=Date.now()) actions.append(btn('No-show',()=>openStatus(original,'schedule.no_show'),'subtle'));
   if (active(job)&&!blocked&&!original.date) actions.append(btn('Find a time',()=>openOpenings(original),'subtle',{'aria-label':'Find a time for '+(job.customer||'this job')}));
-  if (active(job)&&job.type==='job'&&window.EGCRecurring&&!segmentsOf(original).length&&!original.segmentsInvalid) actions.append(btn('Repeat',()=>window.EGCRecurring.open({templateJob:original,onChange:()=>load({quiet:true})}),'subtle dp-repeat',{'aria-label':'Repeat '+(job.customer||'this job')+' on a schedule'}));
+  if (active(job)&&job.type==='job'&&window.EGCRecurring&&!booker()&&!segmentsOf(original).length&&!original.segmentsInvalid) actions.append(btn('Repeat',()=>window.EGCRecurring.open({templateJob:original,onChange:()=>load({quiet:true})}),'subtle dp-repeat',{'aria-label':'Repeat '+(job.customer||'this job')+' on a schedule'}));
   if (['cancelled','canceled'].includes(job.status)) actions.append(btn('Restore',()=>openStatus(original,'schedule.restore')));
   card.append(actions);
   return card;
@@ -348,7 +351,7 @@ function reasonControls(parent,list,{who=false,required=true}={}) {
 function render() {
   if(!S.root||S.modal)return;
   const search=h('input',{type:'search',value:S.query,placeholder:'Filter this date range',oninput:e=>setFilter('query',e.target.value),'aria-label':'Search jobs'});
-  S.root.replaceChildren(h('header',{class:'dp-header'},h('div',{},h('span',{class:'dp-eyebrow'},'EGC OPERATIONS'),h('h1',{},'Dispatch'),h('p',{},'Schedule, assign and run the day.')),h('div',{class:'dp-header-actions'},btn('Search all jobs',openSearch,'',{disabled:!S.data}),btn('Find opening',openOpenings,'',{disabled:!S.data}),btn('Block time',()=>openBlock(),'',{disabled:!S.data}),btn('Crews & vehicles',()=>openResources()),window.EGCRecurring?btn('Recurring plans',()=>window.EGCRecurring.open({onChange:()=>load({quiet:true})})):null,btn('Refresh',()=>load(),'',{disabled:S.loading}),btn('Create job',()=>openJob(),'primary',{disabled:!S.data}))));
+  S.root.replaceChildren(h('header',{class:'dp-header'},h('div',{},h('span',{class:'dp-eyebrow'},'EGC OPERATIONS'),h('h1',{},'Dispatch'),h('p',{},'Schedule, assign and run the day.')),h('div',{class:'dp-header-actions'},btn('Search all jobs',openSearch,'',{disabled:!S.data}),btn('Find opening',openOpenings,'',{disabled:!S.data}),booker()?null:btn('Block time',()=>openBlock(),'',{disabled:!S.data}),booker()?null:btn('Crews & vehicles',()=>openResources()),window.EGCRecurring&&!booker()?btn('Recurring plans',()=>window.EGCRecurring.open({onChange:()=>load({quiet:true})})):null,btn('Refresh',()=>load(),'',{disabled:S.loading}),btn('Create job',()=>openJob(),'primary',{disabled:!S.data}))));
   S.root.querySelector('.dp-header-actions').insertBefore(btn('Drive times',openTravel,'',{disabled:!S.data}),S.root.querySelector('.dp-header-actions .primary'));
   const modes=h('div',{class:'dp-modes',role:'group','aria-label':'Calendar view'});
   for(const [id,label]of [['day','Day'],['week','Week'],['crew','Crew'],['jobs','Jobs'],...[...views].map(([id,view])=>[id,view.label])])modes.append(btn(label,()=>{S.view=id;void load();},S.view===id?'selected':'',{'aria-pressed':S.view===id?'true':'false'}));
@@ -508,7 +511,8 @@ function openOpenings(source) {
         const ids=Array.isArray(candidate.employeeIds)&&candidate.employeeIds.length?candidate.employeeIds:employeeIds;
         results.append(h('article',{},h('div',{},h('strong',{},dateText(candidate.date,true)),h('p',{},clock(candidate.time)+' – '+clock(candidate.endTime)+(candidate.endDate!==candidate.date?' · ends '+dateText(candidate.endDate,true):'')),h('small',{},ids.map(person).join(', ')+(truck.value?' · '+vehicle(truck.value):''))),btn('Use this opening',()=>{
           const selectedCrew=S.data.crews.find(row=>row.id===crew.value&&row.memberIds.length===ids.length&&row.memberIds.every(id=>ids.includes(id)));
-          model.close();openJob(job,{...candidate,assignedCrew:ids,vehicleId:query.vehicleId||'',crewId:selectedCrew?.id,crewLead:selectedCrew?.leadId,travelBufferMinutes:Number(query.travelBufferMinutes),requiredSkills:skills});
+          // A booker takes the time only; a manager assigns the crew the opening was checked for.
+          model.close();openJob(job,booker()?{date:candidate.date,time:candidate.time,endDate:candidate.endDate,endTime:candidate.endTime,travelBufferMinutes:Number(query.travelBufferMinutes),requiredSkills:skills}:{...candidate,assignedCrew:ids,vehicleId:query.vehicleId||'',crewId:selectedCrew?.id,crewLead:selectedCrew?.leadId,travelBufferMinutes:Number(query.travelBufferMinutes),requiredSkills:skills});
         },'primary')));
       }
       if(data.truncated)results.append(h('p',{},'Showing the first 20 openings. Narrow the search for later dates.'));
@@ -569,14 +573,129 @@ function openBlock(job=null,options={}) {
   model.footer.append(btn('Back',model.close),h('button',{type:'submit',class:'dp-btn primary'},'Save time block'));
   model.form.addEventListener('submit',event=>{event.preventDefault();const changes={title:title.value.trim(),date:startDate.value,time:startTime.value,endDate:endDate.value,endTime:endTime.value,opsNotes:notes.value.trim()};void save(model,job?{action:'schedule.update',requestId:key(),jobId:job.id,expectedRevision:job.revision,changes}:{action:'schedule.create',requestId:key(),kind:'blocked',changes},'Company time block saved.');});
 }
+// SALES-BOOKING (BOOK-05, BOOK-13): a customer who is not in the Hub yet is added here through /api/customer-resolve, which
+// selects the Hub customer that already has the same mobile, email or HighLevel contact instead of making a duplicate. The
+// optional HighLevel search only reads contacts: nothing here creates or changes a HighLevel contact.
+const HL_SEARCH_DOWN='HighLevel search unavailable. Check HighLevel before creating a new contact.';
+const HL_CONTACT=/^[A-Za-z0-9_-]{1,180}$/;
+function customerIntake(model,onSelect) {
+  const root=h('div',{class:'dp-new-customer dp-wide'}),panel=h('section',{class:'dp-new-customer-panel',hidden:true,'aria-label':'New customer'});
+  const control=(name,label,type,extra={})=>{const node=h(type==='textarea'?'textarea':'input',{name,type:type==='textarea'?undefined:type,...extra});return [node,labeled(label,node)];};
+  const [find,findField]=control('newCustomerLookup','Find in HighLevel (optional)','search',{autocomplete:'off',maxLength:75,placeholder:'Name, mobile or email'});
+  const [name,nameField]=control('newCustomerName','Name','text',{maxLength:200,autocomplete:'name'});
+  const [phone,phoneField]=control('newCustomerPhone','Mobile','tel',{maxLength:40,autocomplete:'tel',inputMode:'tel'});
+  const [email,emailField]=control('newCustomerEmail','Email','email',{maxLength:254,autocomplete:'email',inputMode:'email'});
+  const [address,addressField]=control('newCustomerAddress','Address','textarea',{maxLength:1000,rows:2,autocomplete:'street-address'});
+  const found=h('div',{class:'dp-hl-results',role:'status'}),linkBox=h('div',{class:'dp-linked-contact','aria-live':'polite'}),status=h('div',{class:'dp-form-status','aria-live':'polite'});
+  const toggle=btn('New customer',()=>open(),'',{'aria-expanded':'false'}),save=btn('Save customer',()=>void submit(),'primary'),cancel=btn('Cancel',()=>close());
+  let contact=null,pending=null,busy=false,generation=0,timer=0;
+  const controls=()=>[find,name,phone,email,address,save,cancel,...linkBox.querySelectorAll('button'),...found.querySelectorAll('button')];
+  const setBusy=value=>{busy=value;for(const node of controls())node.disabled=value;};
+  function showLink(){linkBox.replaceChildren();if(!contact)return;linkBox.append(h('p',{},'Linked to HighLevel contact '+(contact.name||contact.id)+'. The Hub uses the name, mobile and email saved in HighLevel.'),btn('Remove HighLevel link',()=>{contact=null;pending=null;showLink();}));}
+  function link(row) {
+    if(!HL_CONTACT.test(String(row?.id||''))){found.replaceChildren(notice('That HighLevel contact cannot be linked. Choose another.','error'));return;}
+    contact={id:row.id,name:row.name||''};pending=null;
+    if(row.name)name.value=row.name;if(row.phone)phone.value=row.phone;if(row.email)email.value=row.email;if(row.address)address.value=row.address;
+    found.replaceChildren();find.value='';showLink();
+  }
+  function open(prefill={}) {
+    panel.hidden=false;toggle.hidden=true;toggle.setAttribute('aria-expanded','true');status.replaceChildren();
+    if(prefill.name)name.value=prefill.name;if(prefill.phone)phone.value=prefill.phone;if(prefill.email)email.value=prefill.email;if(prefill.address)address.value=prefill.address;
+    if(prefill.contact&&HL_CONTACT.test(String(prefill.contact.id||'')))contact={id:prefill.contact.id,name:prefill.contact.name||''};
+    showLink();if(!prefill.name)name.focus();
+  }
+  function close() {if(busy)return;panel.hidden=true;toggle.hidden=false;toggle.setAttribute('aria-expanded','false');status.replaceChildren();toggle.focus();}
+  // A search that fails says so, so nobody takes a missing answer for "not in HighLevel" and adds a duplicate there.
+  find.addEventListener('input',()=>{
+    clearTimeout(timer);const g=++generation,q=find.value.trim();
+    if(q.length<2){found.replaceChildren();return;}
+    found.replaceChildren(h('small',{},'Searching HighLevel…'));
+    timer=setTimeout(async()=>{
+      try{
+        const {response,data}=await requestJSON('/api/highlevel?'+new URLSearchParams({view:'contacts',q}));
+        if(g!==generation||S.modal!==model)return;
+        if(!response.ok||data.ok!==true||!Array.isArray(data.contacts))throw new Error('unavailable');
+        found.replaceChildren(...data.contacts.slice(0,8).map(row=>btn([row.name||'Unnamed contact',row.phone||row.email||''].filter(Boolean).join(' · '),()=>link(row))));
+        if(!data.contacts.length)found.append(h('p',{},'No HighLevel contact matches. Save the customer without a HighLevel link, or check the spelling.'));
+      }catch{if(g===generation&&S.modal===model)found.replaceChildren(notice(HL_SEARCH_DOWN,'error'));}
+    },CUSTOMER_SEARCH_DELAY_MS);
+  });
+  // Enter saves the customer instead of submitting the whole booking.
+  panel.addEventListener('keydown',event=>{if(event.key==='Enter'&&event.target?.tagName==='INPUT'){event.preventDefault();if(event.target!==find)void submit();}});
+  // The same request ID is kept while the details stay the same, so a retry after an unknown outcome is the same request.
+  async function submit() {
+    if(busy)return;
+    const customer={name:name.value.trim(),phone:phone.value.trim(),email:email.value.trim(),address:address.value.trim(),...(contact?{highlevelContactId:contact.id}:{})};
+    if(!customer.name){status.replaceChildren(notice('Enter the customer’s name.','error'));name.focus();return;}
+    if(!contact&&!customer.phone&&!customer.email){status.replaceChildren(notice('Add a mobile or email so this customer can be matched safely.','error'));phone.focus();return;}
+    const body=pending&&JSON.stringify(pending.customer)===JSON.stringify(customer)?pending:{requestId:key(),customer};
+    pending=body;setBusy(true);status.replaceChildren(notice('Saving the customer…'));
+    try{
+      const {response,data}=await requestJSON('/api/customer-resolve',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
+      if(!response.ok||data.ok!==true)throw Object.assign(new Error(data.error||'The customer could not be verified. Retry the same request.'),{status:response.ok?503:response.status,code:data.code});
+      if(data.requestId!==body.requestId||typeof data.customer?.id!=='string'||!data.customer.id)throw Object.assign(new Error('The customer response was incomplete. Retry the same request.'),{status:503});
+      if(S.modal!==model)return;
+      pending=null;setBusy(false);
+      // A booker gets masked contact details back (customer-resolution.js); the details typed here stay the booking's.
+      const masked=data.customer.contactDetails==='masked';
+      onSelect({id:data.customer.id,name:customer.name,phone:customer.phone,email:customer.email,address:customer.address,crmLinked:masked?(contact?true:undefined):Boolean(data.customer.highlevelContactId)},data);
+      panel.hidden=true;toggle.hidden=false;toggle.setAttribute('aria-expanded','false');save.textContent='Save customer';status.replaceChildren();
+    }catch(error){
+      if(S.modal!==model)return;
+      setBusy(false);
+      if(error.status>=400&&error.status<500&&![401,403,408,429].includes(error.status))pending=null;
+      status.replaceChildren(notice(error.status===401?'Your sign-in expired. Sign in again, then retry.':error.message||'The customer could not be saved. Retry the same request.','error'));
+      save.textContent=pending?'Retry saving customer':'Save customer';
+    }
+  }
+  panel.append(h('h3',{},'New customer'),h('p',{class:'dp-muted'},'If this mobile, email or HighLevel contact is already a Hub customer, that customer is selected instead of a duplicate.'),findField,found,linkBox,nameField,phoneField,emailField,addressField,status,h('div',{class:'dp-card-actions'},save,cancel));
+  root.append(toggle,panel);
+  return {root,open};
+}
+// A requested window (the web form's 'YYYY-MM-DD AM|PM', read from the lead's HighLevel note) books from its suggested hour.
+// [suggested start, suggested end, words, window start, window end], as functions/_lib/booking-slots.js BOOKING_WINDOWS.
+const WINDOW_TIMES={AM:['09:00','10:00','morning','08:00','12:00'],PM:['13:00','14:00','afternoon','12:00','17:00']};
+function denverNow() { const parts=Object.fromEntries(new Intl.DateTimeFormat('en-US',{timeZone:TZ,year:'numeric',month:'2-digit',day:'2-digit',hour:'2-digit',minute:'2-digit',hourCycle:'h23'}).formatToParts(new Date()).map(part=>[part.type,part.value])); return {date:parts.year+'-'+parts.month+'-'+parts.day,minute:Number(parts.hour)*60+Number(parts.minute)}; }
+// state, by the Denver wall clock: 'passed' after the window ends, 'started' once it begins, 'closed' when the server says the
+// business calendar is closed then, else ''. Only a window with no state prefills the date and time.
+function requestedWindow(slot) {
+  const times=WINDOW_TIMES[slot?.window];if(!times||!/^\d{4}-\d{2}-\d{2}$/.test(slot?.date||''))return null;
+  const now=denverNow(),state=slot.date<now.date||slot.date===now.date&&now.minute>=minutesOf(times[4])?'passed':slot.date===now.date&&now.minute>=minutesOf(times[3])?'started':slot.closed===true?'closed':'';
+  return {date:slot.date,time:times[0],endTime:times[1],label:dateText(slot.date,true)+' '+times[2],state};
+}
+const SLOT_WORDS={passed:', which has passed. Agree a new time with them.',started:', which has already started. Agree a time with them.',closed:', when EGC is closed. Agree a new time with them.'};
+// SALES-BOOKING: the Hub (a lead card or an action) opens Create job prefilled: {kind, name, phone, email, address,
+// highlevelContactId, service, requestedSlot:{date,window,closed?}} for a lead, or {kind, customerId, name, phone, address} for a
+// Hub customer. It opens once the board has loaded, and only from the next load: a failed load drops it (the booker is
+// told to book again) so a later refresh never opens it unprompted. A previous save still waiting to be verified comes first.
+function book(prefill) {
+  S.pendingBook=prefill&&typeof prefill==='object'?prefill:null;
+  if(S.pendingBook&&S.root&&!S.data&&!S.loading&&!S.modal&&!S.pending){void load();return;}
+  openPendingBook();
+}
+function openPendingBook() {
+  const prefill=S.pendingBook;
+  if(!prefill||!S.root||!S.data||S.loading||S.modal||S.pending)return;
+  S.pendingBook=null;
+  if(S.recovery){S.notice='Verify the previous dispatch save first, then book again.';renderBody();if(!S.recovery.invalid)openRecovery();return;}
+  const slot=requestedWindow(prefill.requestedSlot);
+  openJob(null,{...(slot&&!slot.state?{date:slot.date,time:slot.time,endTime:slot.endTime}:{}),prefill:{...prefill,slot}});
+}
 function openJob(job=null,options={}) {
   if(!S.data)return;
   if(job?.type==='blocked')return openBlock(job,options);
-  const model=modal(job?'Edit / assign job':'Create job','Times are Mountain Time. Conflicting employee and vehicle assignments are blocked.');if(!model)return;
+  const model=modal(job?(booker()?'Edit / reschedule job':'Edit / assign job'):'Create job','Times are Mountain Time. Conflicting employee and vehicle assignments are blocked.');if(!model)return;
+  if(booker())model.dialog.classList.add('dp-booker');
   let selectedCustomer=job?.customerId?{id:job.customerId,name:job.customer,address:job.address,phone:job.phone}:null,sourceJobId=null;
   const search=field(model,'customerSearch','Customer',job?.customer||'','search',{required:!job,readOnly:!!job,autocomplete:'off',placeholder:'Search existing customers'});
   const customerResults=h('div',{class:'dp-customer-results',role:'status'});search.parentElement.append(customerResults);
   const lineage=h('div',{class:'dp-wide'});model.fields.append(lineage);
+  const intake=job?null:customerIntake(model,(customer,result)=>{
+    selectedCustomer=customer;sourceJobId=null;lineage.replaceChildren();clearTimeout(customerTimer);customerGeneration++;search.value=customer.name;
+    if(customer.address&&!address.value.trim())address.value=customer.address;
+    customerResults.replaceChildren(h('small',{},result.created?'New customer saved and selected':'This mobile, email or HighLevel contact is already a Hub customer, so that customer is selected'));customerResults.click();
+  });
+  if(intake)model.fields.append(intake.root);
   model.onError=error=>{
     if(job||error.code!=='dispatch_lineage_selection_required'||!Array.isArray(error.details?.candidates))return;
     const candidates=error.details.candidates.filter(row=>row.customerId===selectedCustomer?.id&&typeof row.jobId==='string');
@@ -592,7 +711,7 @@ function openJob(job=null,options={}) {
     customerResults.replaceChildren(h('small',{},'Searching…'));
     customerTimer=setTimeout(async()=>{
     if(g!==customerGeneration||S.modal!==model)return;
-    try{const r=await api('?'+new URLSearchParams({view:'customers',q}));if(g!==customerGeneration||S.modal!==model)return;customerResults.replaceChildren(...r.customers.map(c=>btn(c.name+' · '+(c.phone||c.address||'No contact details'),()=>{selectedCustomer=c;search.value=c.name;address.value=c.address||'';customerResults.replaceChildren(h('small',{},'Customer selected'));})));if(!r.customers.length)customerResults.append(h('p',{},'No matching Hub customer. Create or link the customer in Customers first.'));}
+    try{const r=await api('?'+new URLSearchParams({view:'customers',q}));if(g!==customerGeneration||S.modal!==model)return;customerResults.replaceChildren(...r.customers.map(c=>btn(c.name+' · '+(c.phone||c.address||'No contact details'),()=>{selectedCustomer=c;search.value=c.name;address.value=c.address||'';customerResults.replaceChildren(h('small',{},'Customer selected'));})));if(!r.customers.length)customerResults.append(h('p',{},'No matching Hub customer. Add them with New customer below.'));}
     catch(error){if(g===customerGeneration&&S.modal===model)customerResults.replaceChildren(notice(errorText(error),'error'));}
     },CUSTOMER_SEARCH_DELAY_MS);
   });
@@ -666,7 +785,7 @@ function openJob(job=null,options={}) {
   const longer=oneDay||suggested?.capped?'':' That is longer than one workday, so split it across days rather than one overnight block.',hint=suggested?durationHint(job,suggested,duration,longer):null;if(hint)model.fields.append(hint);
   setEnd(duration.value);for(const input of [startDate,startTime])input.addEventListener('change',()=>setEnd(duration.value));for(const input of [endDate,endTime])input.addEventListener('input',()=>{duration.value='';applied=false;});
   const address=field(model,'address','Job address',job?.address||'','textarea',{maxLength:1000,rows:2});
-  const assignments=h('fieldset',{class:'dp-assignment dp-wide'},h('legend',{},'Assigned employees'));
+  const assignments=h('fieldset',{class:'dp-assignment dp-wide dp-crew-only'},h('legend',{},'Assigned employees'));
   // A found opening wins over the job's saved crew, lead, vehicle and buffer,
   // so the job is saved with what the opening was checked for.
   const opening=Array.isArray(options.assignedCrew),selected=new Set(options.assignedCrew||job?.assignedCrew||[]);
@@ -678,10 +797,12 @@ function openJob(job=null,options={}) {
     const crew=S.data.crews.find(c=>c.id===id);if(!crew)return;
     for(const [member,input]of checks)input.checked=crew.memberIds.includes(member);lead.value=crew.leadId||'';
   },{name:'crewId'});
-  model.fields.append(labeled('Saved crew',crewSelect),assignments);
+  model.fields.append(labeled('Saved crew',crewSelect),assignments);crewSelect.parentElement.classList.add('dp-crew-only');
   const lead=select([['','No lead assigned'],...assignable(keep).map(p=>[p.id,p.name])],options.crewLead||(!opening||selected.has(job?.crewLead)?job?.crewLead:'')||'',()=>{}, {name:'crewLead'});
   const truck=select([['','No vehicle assigned'],...(S.data.vehicles||[]).filter(v=>v.status==='available'||v.id===job?.vehicleId).map(v=>[v.id,v.name+(v.status==='available'?'':' · '+words(v.status))])],(opening?options.vehicleId:job?.vehicleId)||'',()=>{},{name:'vehicleId'});
-  model.fields.append(labeled('Crew lead',lead),labeled('Vehicle / truck',truck));
+  model.fields.append(labeled('Crew lead',lead),labeled('Vehicle / truck',truck));lead.parentElement.classList.add('dp-crew-only');truck.parentElement.classList.add('dp-crew-only');
+  // A booker's save keeps the crew Dispatch shows (the hidden controls hold it); a manager staffs the visit.
+  if(booker())model.fields.append(h('p',{class:'dp-muted dp-wide'},'A manager assigns the crew and vehicle in Dispatch. This visit is saved without crew changes.'));
   let segments=segmentsOf(job).map(s=>({...s,endDate:s.endDate||s.date,assignedCrew:[...(s.assignedCrew||[])],notes:s.notes||''}));
   if(options.moveTo&&segments.length&&job?.date&&segmentsOn()){const shift=Math.round((Date.parse(options.moveTo+'T12:00Z')-Date.parse(job.date+'T12:00Z'))/86400000);segments=segments.map(s=>({...s,date:addDays(s.date,shift),endDate:addDays(s.endDate,shift)}));}
   // Unreadable saved segments are cleared together with the job-level time and crew.
@@ -690,7 +811,7 @@ function openJob(job=null,options={}) {
   const segmentNotice=text=>{model.status.replaceChildren(notice(text,'error'));};
   const formCrew=()=>[...checks].filter(([,input])=>input.checked).map(([id])=>id);
   function segmentCard(segment,index) {
-    const editable=segmentsOn(),label='Segment '+(index+1),card=h('section',{class:'dp-segment-card','aria-label':label});
+    const editable=segmentsOn(),crewEditable=editable&&!booker(),label='Segment '+(index+1),card=h('section',{class:'dp-segment-card','aria-label':label});
     const endDay=h('input',{type:'date',value:segment.endDate||'',required:true,disabled:!editable,oninput:e=>{segment.endDate=e.target.value;}});
     const day=h('input',{type:'date',value:segment.date||'',required:true,disabled:!editable,oninput:e=>{if(!segment.endDate||segment.endDate===segment.date){segment.endDate=e.target.value;endDay.value=e.target.value;}segment.date=e.target.value;}});
     const from=h('input',{type:'time',value:segment.time||'',required:true,disabled:!editable,oninput:e=>{segment.time=e.target.value;}});
@@ -698,12 +819,12 @@ function openJob(job=null,options={}) {
     const crew=h('fieldset',{class:'dp-segment-crew dp-wide'},h('legend',{},label+' employees'));
     const listed=assignable(keep.concat(segment.assignedCrew,segment.crewLead||[]));
     const roster=listed.map(p=>[p.id,p.name]).concat(segment.assignedCrew.filter(id=>!(S.data.roster||[]).some(p=>p.id===id)).map(id=>[id,id+' · unavailable, reassign before saving']));
-    for(const [id,name]of roster)crew.append(h('label',{class:'dp-check'},h('input',{type:'checkbox',value:id,checked:segment.assignedCrew.includes(id),disabled:!editable,onchange:e=>{segment.assignedCrew=e.target.checked?[...new Set([...segment.assignedCrew,id])]:segment.assignedCrew.filter(value=>value!==id);}}),h('span',{},name)));
-    const leadChoice=select([['','No lead'],...listed.map(p=>[p.id,p.name])],segment.crewLead||'',value=>{segment.crewLead=value||null;},{disabled:!editable});
-    const truckChoice=select([['','No vehicle'],...(S.data.vehicles||[]).filter(v=>v.status==='available'||v.id===segment.vehicleId).map(v=>[v.id,v.name+(v.status==='available'?'':' · '+words(v.status))])],segment.vehicleId||'',value=>{segment.vehicleId=value||null;},{disabled:!editable});
+    for(const [id,name]of roster)crew.append(h('label',{class:'dp-check'},h('input',{type:'checkbox',value:id,checked:segment.assignedCrew.includes(id),disabled:!crewEditable,onchange:e=>{segment.assignedCrew=e.target.checked?[...new Set([...segment.assignedCrew,id])]:segment.assignedCrew.filter(value=>value!==id);}}),h('span',{},name)));
+    const leadChoice=select([['','No lead'],...listed.map(p=>[p.id,p.name])],segment.crewLead||'',value=>{segment.crewLead=value||null;},{disabled:!crewEditable});
+    const truckChoice=select([['','No vehicle'],...(S.data.vehicles||[]).filter(v=>v.status==='available'||v.id===segment.vehicleId).map(v=>[v.id,v.name+(v.status==='available'?'':' · '+words(v.status))])],segment.vehicleId||'',value=>{segment.vehicleId=value||null;},{disabled:!crewEditable});
     const note=h('textarea',{rows:2,maxLength:2000,value:segment.notes||'',disabled:!editable,oninput:e=>{segment.notes=e.target.value;}});
     const noteField=labeled('Segment notes',note);noteField.classList.add('dp-wide');
-    card.append(h('header',{},h('h4',{},label),editable?btn('Remove',()=>{segments.splice(index,1);syncSegments();segmentBox.querySelector('.dp-segment-actions button')?.focus();},'subtle',{'aria-label':'Remove '+label.toLowerCase()}):null),
+    card.append(h('header',{},h('h4',{},label),crewEditable?btn('Remove',()=>{segments.splice(index,1);syncSegments();segmentBox.querySelector('.dp-segment-actions button')?.focus();},'subtle',{'aria-label':'Remove '+label.toLowerCase()}):null),
       labeled('Segment date',day),labeled('Segment start',from),labeled('Segment end date',endDay),labeled('Segment end',to),crew,labeled('Segment lead',leadChoice),labeled('Segment vehicle',truckChoice),noteField);
     return card;
   }
@@ -739,8 +860,9 @@ function openJob(job=null,options={}) {
     if(!segmentsOn())segmentBox.append(notice('Crew segments are turned off for this Hub. Keep them, or remove them all to set one job-level time and crew.'));
     segments.forEach((segment,index)=>segmentBox.append(segmentCard(segment,index)));
     const actions=h('div',{class:'dp-segment-actions'});
-    if(segmentsOn())actions.append(btn('Add crew segment',addSegment,'',{disabled:segments.length>=segmentMax()}),on?null:btn('Split across days',splitDays));
-    else if(on)actions.append(btn('Remove all segments',()=>{segments=[];syncSegments();}));
+    // Adding, splitting or removing segments changes who works the job, so a booker only moves segment times.
+    if(!booker()&&segmentsOn())actions.append(btn('Add crew segment',addSegment,'',{disabled:segments.length>=segmentMax()}),on?null:btn('Split across days',splitDays));
+    else if(!booker()&&on)actions.append(btn('Remove all segments',()=>{segments=[];syncSegments();}));
     segmentBox.append(actions);
   }
   model.fields.append(segmentBox);syncSegments();
@@ -789,6 +911,21 @@ function openJob(job=null,options={}) {
     const body=job?{action:'schedule.update',requestId:key(),jobId:job.id,expectedRevision:job.revision,changes,...(moved()?moveReason():{})}:{action:'schedule.create',requestId:key(),customerId:selectedCustomer.id,kind:type.value,...(sourceJobId?{sourceJobId}:{}),...(facts?{booking:facts}:{}),changes};
     void save(model,body,job?'Job updated.':'Job created.');
   });
+  const prefill=!job&&options.prefill;
+  if(prefill){
+    if(['job','walkthrough'].includes(prefill.kind)){type.value=prefill.kind;type.dispatchEvent(new Event('change'));}
+    if(typeof prefill.address==='string'&&prefill.address)address.value=prefill.address;
+    if(typeof prefill.service==='string'&&prefill.service){service.value=prefill.service;service.dispatchEvent(new Event('input'));}
+    const slot=prefill.slot,said=slot?'The customer asked for '+slot.label+(SLOT_WORDS[slot.state]||'. Confirm the exact time with them.'):prefill.requestedSlotText?'The customer asked for: '+prefill.requestedSlotText+'. Agree the time with them.':'';
+    if(said)model.fields.prepend(h('div',{class:'dp-wide'},notice(said)));
+    if(typeof prefill.customerId==='string'&&prefill.customerId){
+      selectedCustomer={id:prefill.customerId,name:prefill.name||'',address:prefill.address||'',phone:prefill.phone||''};search.value=prefill.name||'';
+      customerResults.replaceChildren(h('small',{},'Customer selected'));customerResults.click();
+    }else{
+      if(prefill.name){search.value=prefill.name;search.dispatchEvent(new Event('input'));}
+      intake?.open({name:prefill.name||'',phone:prefill.phone||'',email:prefill.email||'',address:prefill.address||'',contact:prefill.highlevelContactId?{id:prefill.highlevelContactId,name:prefill.name||''}:null});
+    }
+  }
   setTimeout(()=>search.focus(),0);
 }
 function openStatus(job,action) {
@@ -845,12 +982,13 @@ function openResource(kind,resource=null) {
     void save(model,body,words(kind)+' saved.');
   });
 }
-function mount(host) {
+// options.type starts a fresh board on one work type (the Hub's Walkthroughs page for a booker).
+function mount(host,options) {
   if(!host)return;if(S.host===host&&S.root?.isConnected)return;
-  unmount();S.host=host;S.root=h('section',{class:'egc-dispatch'});host.replaceChildren(S.root);render();void load();
+  unmount();if(typeof options?.type==='string')S.type=options.type;S.host=host;S.root=h('section',{class:'egc-dispatch'});host.replaceChildren(S.root);render();void load();
   S.refreshTimer=setInterval(()=>{if(!document.hidden&&!S.modal&&!S.pending)void load({quiet:true});},60000);
 }
-function unmount() {S.controller?.abort();S.generation++;if(S.refreshTimer)clearInterval(S.refreshTimer);S.refreshTimer=null;if(S.modal){S.modal.dialog.close();S.modal.dialog.remove();S.modal=null;}S.pending=false;S.root?.remove();S.root=null;S.host=null;S.data=null;S.viewer=null;S.recovery=null;}
+function unmount() {S.controller?.abort();S.generation++;if(S.refreshTimer)clearInterval(S.refreshTimer);S.refreshTimer=null;if(S.modal){S.modal.dialog.close();S.modal.dialog.remove();S.modal=null;}S.pending=false;S.root?.remove();S.root=null;S.host=null;S.data=null;S.viewer=null;S.recovery=null;S.pendingBook=null;}
 window.addEventListener('egc:signout',()=>{try{for(let i=sessionStorage.length-1;i>=0;i--){const name=sessionStorage.key(i);if(name?.startsWith(recoveryPrefix))sessionStorage.removeItem(name);}}catch{}unmount();});
 window.addEventListener('beforeunload',event=>{if(S.modal){event.preventDefault();event.returnValue='';}});
 function registerView(name,view) {
@@ -860,7 +998,7 @@ function registerView(name,view) {
 }
 // Registered views share this client, its dialogs and the save-recovery protocol (same requestId on retry).
 const internals=Object.freeze({state:()=>S,api,save,modal,openJob,show,redraw:renderBody,person,assignable,crewName,vehicle,h,btn,pill,notice,errorText,clock,dateText,addDays,today,words,key,segmentsOf,segmentsOn,active,warningsFor,reasonControls});
-window.EGCDispatch={mount,unmount,refresh:load,canLeave:()=>!S.modal&&!S.pending,registerView,internals};
+window.EGCDispatch={mount,unmount,refresh:load,canLeave:()=>!S.modal&&!S.pending,registerView,book,internals};
 // A readiness chip opened outside the Hub lands on /employee.html?view=finance&job=ID; that job's row is shown once the Hub renders it.
 try{if(typeof location!=='undefined'){const params=new URLSearchParams(location.search);if(params.get('view')==='finance'&&params.get('job'))focusFinanceRow(params.get('job'),100);}}catch{}
 })();
