@@ -399,6 +399,10 @@ draft PR. The owner merges in phase order. See **Decisions** D-001.
   Denver day in fieldExecution.visits, an "End today's visit" note that stops the job clock (queueable offline and closing the
   day it was written for), completion only on the final day (managers give a reason), and a per-day write lock for field
   actions, photos and job costs from split-job segments. Crew assets cache-busted to ?v=20260929multiday. Off: unchanged.
+- **DISPATCH-SCALE** Windowed dispatch reads and indexed customer search behind `EGC_DISPATCH_WINDOWED_READS` (unset =
+  full scans; 'shadow' logs differences; 'true' reads only rows ending within 35 days before the window, plus undated and
+  time-off rows, so multi-day jobs stay in). Saves query by customerId/sourceWalkthroughId; customers get versioned
+  searchKeys (scripts/backfill-customer-search-keys.mjs). scripts/dispatch-window-audit.mjs reports rows windows miss.
 
 ## In progress
 
@@ -491,6 +495,7 @@ one prefixed commit only after the full root suite (and the platform suite when 
 | CATALOG-ADMIN | Owner catalog and pricing screen (settings review/release, items, draft publish) | merged (b46c461) |
 | DISPATCH-DURATION | Suggested job duration from the sold quote lines in dispatch | merged (5cbbff0) |
 | FIELD-MULTIDAY | Multi-day job visits: per-day visit record, end of day, final-day completion and day lock (flag off) | merged (fe447d1) |
+| DISPATCH-SCALE | Windowed dispatch reads and indexed customer search (flag off; shadow first) | merged (249dd76) |
 
 ## Next
 

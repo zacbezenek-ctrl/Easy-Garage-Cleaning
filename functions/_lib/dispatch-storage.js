@@ -10,10 +10,12 @@ import { legacyPersonKeys, staffDirectoryEnabled, storedWeeklyAvailability } fro
 import { storedSkills } from './staff-skills.js';
 import { segmentsEnabled } from './dispatch-segments.js';
 import { commitConflict, commitFailure } from './firestore-errors.js';
+import { dispatchReadMode, windowedJobs, pagedQuery, customerCoverage, aggregateCount } from './dispatch-window-reads.js';
 
 const ROOT = 'projects/egcw-1ec83/databases/(default)/documents';
 const BASE = `https://firestore.googleapis.com/v1/${ROOT}`;
 const failure = (code, message, status = 503) => Object.assign(new Error(message), { code, status });
+const CUSTOMER_FIELDS = ['name','firstName','lastName','phone','email','address','highlevelContactId'];
 function decode(document,collection,id) {
   const prefix=`/documents/${collection}/`,name=document?.name;
   const path=typeof name==='string'&&name.includes(prefix)?name.slice(name.indexOf(prefix)+prefix.length):'';
@@ -90,9 +92,27 @@ export function dispatchStorage(env, fetcher = firestoreFetch) {
     } while (token);
     return rows;
   }
+  async function post(action, body) {
+    const response = await send(`${BASE}:${action}`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+    if (!response.ok) throw failure('dispatch_storage_unavailable', 'The dispatch records could not be queried. Retry before scheduling.');
+    return response.json().catch(() => null);
+  }
+  const query = (collection, fields, limit) => spec => pagedQuery({ post: body => post('runQuery', body), decode: document => decode(document, collection), collection, spec, fields, limit });
   return {
     roster: () => dispatchRoster(env),
     jobs: () => scan('jobs', JOB_FIELDS),
+    // EGC_DISPATCH_WINDOWED_READS: 'full' (default), 'shadow' or 'windowed'.
+    // Windowed and indexed reads are complete and fail closed like the scans.
+    windowedReads: dispatchReadMode(env),
+    jobsNear: (startDate, endDate) => windowedJobs(query('jobs', JOB_FIELDS), startDate, endDate),
+    // Every jobs row whose field equals value, whatever its dates (saveJobReads).
+    jobsWhere: (field, value) => query('jobs', JOB_FIELDS)({ field, op: 'EQUAL', value }),
+    customersByKey: key => query('customers', [...CUSTOMER_FIELDS, 'searchKeys'], 20000)({ field: 'searchKeys', op: 'ARRAY_CONTAINS', value: key }),
+    customerKeyCoverage: () => customerCoverage(async body => aggregateCount(await post('runAggregationQuery', body))),
+    async customerRecords(fields) {
+      if (!Array.isArray(fields) || !fields.length || fields.some(field => typeof field !== 'string' || !field)) throw failure('dispatch_storage_mask_required', 'A customers scan must name the fields it reads.');
+      return scan('customers', fields, 20000);
+    },
     // Complete paginated scan narrowed to the caller's DTO inputs. A mask is
     // mandatory: raw job bodies carry signature images and payment evidence.
     async jobRecords(fields) {
@@ -112,7 +132,7 @@ export function dispatchStorage(env, fetcher = firestoreFetch) {
       return found.filter(Boolean);
     },
     resources: () => scan('dispatchResources', null, 2000),
-    customers: () => scan('customers', ['name','firstName','lastName','phone','email','address','highlevelContactId'], 20000),
+    customers: () => scan('customers', CUSTOMER_FIELDS, 20000),
     settings: async () => arrivalSettings(env),
     recurringPlans: () => scan('recurringPlans', null, 2000),
     // JOB-COST-PRIVACY: the owner-only job labor records (functions/_lib/job-labor-private.js), one per job at most.
@@ -123,9 +143,10 @@ export function dispatchStorage(env, fetcher = firestoreFetch) {
       if (!response.ok) throw failure('dispatch_storage_unavailable', 'The dispatch record could not be loaded. Retry.');
       return decode(await response.json(),collection,id);
     },
-    async readMany(collection, ids) {
+    // `fields` masks the documents: a caller that only needs to know which exist reads no bodies.
+    async readMany(collection, ids, fields) {
       if (!ids.length) return [];
-      const response = await send(`${BASE}:batchGet`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ documents: ids.map(id => `${ROOT}/${collection}/${id}`) }) });
+      const response = await send(`${BASE}:batchGet`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ documents: ids.map(id => `${ROOT}/${collection}/${id}`), ...(fields?.length ? { mask: { fieldPaths: fields } } : {}) }) });
       if (!response.ok) throw failure('dispatch_storage_unavailable', 'The dispatch records could not be loaded. Retry.');
       const rows = await response.json();
       if (!Array.isArray(rows)) throw failure('dispatch_storage_incomplete', 'Dispatch returned incomplete records. Retry.');

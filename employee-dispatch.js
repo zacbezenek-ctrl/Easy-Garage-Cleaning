@@ -8,6 +8,7 @@ const S = { host:null, root:null, date:today(), view:'day', query:'', status:'ac
 const recoveryPrefix='egc.dispatch.pending.v1.';
 // Extra views (employee-dispatch-calendar.js) register {label, range(date), step(date,count), render(target,jobs), help}; they save through save().
 const views=new Map();
+const CUSTOMER_SEARCH_DELAY_MS=300;
 function h(tag, props, ...children) {
   const node = document.createElement(tag);
   for (const [key, value] of Object.entries(props || {})) {
@@ -463,12 +464,16 @@ function openJob(job=null,options={}) {
     if(error.details.truncated){const custom=h('input',{type:'text',maxLength:180,placeholder:'Exact job ID from Search all jobs',oninput:event=>{sourceJobId=event.target.value.trim()||choose.value||null;choose.required=!event.target.value.trim();}});lineage.append(labeled('Different prior job ID',custom,'Only the first 50 prior visits are listed. The selected job must belong to this exact customer.'));}
     choose.focus();
   };
-  let customerGeneration=0;
-  search.addEventListener('input',async()=>{
-    if(job)return;selectedCustomer=null;sourceJobId=null;lineage.replaceChildren();const g=++customerGeneration,q=search.value.trim();if(q.length<2){customerResults.replaceChildren(h('small',{},'Type at least 2 characters.'));return;}
+  let customerGeneration=0,customerTimer=0;
+  // One search once typing pauses; a newer keystroke or a closed form drops it.
+  search.addEventListener('input',()=>{
+    if(job)return;selectedCustomer=null;sourceJobId=null;lineage.replaceChildren();clearTimeout(customerTimer);const g=++customerGeneration,q=search.value.trim();if(q.length<2){customerResults.replaceChildren(h('small',{},'Type at least 2 characters.'));return;}
     customerResults.replaceChildren(h('small',{},'Searching…'));
+    customerTimer=setTimeout(async()=>{
+    if(g!==customerGeneration||S.modal!==model)return;
     try{const r=await api('?'+new URLSearchParams({view:'customers',q}));if(g!==customerGeneration||S.modal!==model)return;customerResults.replaceChildren(...r.customers.map(c=>btn(c.name+' · '+(c.phone||c.address||'No contact details'),()=>{selectedCustomer=c;search.value=c.name;address.value=c.address||'';customerResults.replaceChildren(h('small',{},'Customer selected'));})));if(!r.customers.length)customerResults.append(h('p',{},'No matching Hub customer. Create or link the customer in Customers first.'));}
-    catch(error){if(g===customerGeneration)customerResults.replaceChildren(notice(errorText(error),'error'));}
+    catch(error){if(g===customerGeneration&&S.modal===model)customerResults.replaceChildren(notice(errorText(error),'error'));}
+    },CUSTOMER_SEARCH_DELAY_MS);
   });
   const type=select([['job','Service job'],['walkthrough','Walkthrough']],job?.type||'job',()=>{},{name:'type',disabled:!!job});
   model.fields.append(labeled('Work type',type));

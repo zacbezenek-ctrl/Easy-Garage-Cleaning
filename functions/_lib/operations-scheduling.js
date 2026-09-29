@@ -6,7 +6,7 @@ import {scheduleRowsConflict,scheduleLockConflict,scheduleDayEntry} from './disp
 import {arrivalWindowProblem,arrivalWindowFields} from './dispatch-arrival.js';
 import {DISPATCH_TIME_ZONE} from './dispatch-contract.js';
 import {legacyBlockMode,legacyBlockedDays} from './dispatch-legacy-blocks.js';
-import {customerIdentityFields} from './customer-identity.js';
+import {customerIdentityFields,withCustomerSearchKeys} from './customer-identity.js';
 import {segmented} from './dispatch-segments.js';
 import {reasonInput,cancelPatch,visitFunnelWrites,requestKey,eventActor,eventVia,defaultVisitPurpose} from './dispatch-funnel.js';
 import {commitConflict,commitFailure} from './firestore-errors.js';
@@ -79,7 +79,7 @@ export async function linkScheduledCustomer(store,actor,input,now=new Date().toI
   const writes=[{collection:'jobs',id:visit.id,revision:visit.revision,patch:{customerId:id,projectId,highlevelContactId:contact.id,providerSyncOwner:'operations',updatedAt:now}}];
   if(root.id!==visit.id&&!root.projectId)writes.push({collection:'jobs',id:root.id,revision:root.revision,patch:{projectId,updatedAt:now}});
   if(!project)writes.push({collection:'projects',id:projectId,patch:{id:projectId,customerId:id,sourceRecordId:root.id,sourceWalkthroughId:root.type==='walkthrough'?root.id:null,createdAt:now,updatedAt:now,authority:'employee_hub'}});
-  if(!customer)writes.push({collection:'customers',id,patch:{id,name:contact.name||[contact.firstName,contact.lastName].filter(Boolean).join(' ')||visit.customer||'',phone:contact.phone||'',email:contact.email||'',...customerIdentityFields(contact),address:visit.address||contact.address1||'',highlevelContactId:contact.id,createdAt:now,updatedAt:now,source:'verified_provider_contact'}});
+  if(!customer)writes.push({collection:'customers',id,patch:withCustomerSearchKeys({id,name:contact.name||[contact.firstName,contact.lastName].filter(Boolean).join(' ')||visit.customer||'',phone:contact.phone||'',email:contact.email||'',...customerIdentityFields(contact),address:visit.address||contact.address1||'',highlevelContactId:contact.id,createdAt:now,updatedAt:now,source:'verified_provider_contact'})});
   else if(!customer.highlevelContactId)writes.push({collection:'customers',id,revision:customer.revision,patch:{highlevelContactId:contact.id,...customerIdentityFields(customer),updatedAt:now}});
   // An already exact link is not rewritten: repeated provider syncs must not churn the
   // visit revision that the schedule-sync queue guards its failure backoff with.

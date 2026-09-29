@@ -1,4 +1,5 @@
 import { mutateDispatch, requireDispatcher } from './dispatch-service.js';
+import { saveJobReads } from './dispatch-window-reads.js';
 import { assignmentKey, jobCrewNames } from './job-assignment.js';
 import { localInstant } from './operations-portal-records.js';
 import { customerIdentityPatch } from './customer-identity.js';
@@ -198,7 +199,7 @@ export async function prepareHandoff(store, actor, query = {}) {
   if (query.jobId && !job) throw fail('job_missing', 'The selected job no longer exists. Review its history rather than creating a replacement.', 404);
   if (job && !operational(job)) throw fail('job_mismatch', 'The selected record is not an operational job.');
   if (source) {
-    const matches = (await store.jobs()).filter(row => operational(row) && row.sourceWalkthroughId === source.id);
+    const matches = (await saveJobReads(store).where('sourceWalkthroughId', source.id)).filter(row => operational(row) && row.sourceWalkthroughId === source.id);
     const ids = [...new Set([...matches.map(row => row.id), source.convertedJobId, job?.id].filter(Boolean))];
     if (ids.length > 1) throw fail('existing_jobs_ambiguous', 'More than one job is linked to this walkthrough. Review the existing jobs in Dispatch.');
     if (!job && ids.length) job = await store.read('jobs', ids[0]);

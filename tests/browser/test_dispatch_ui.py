@@ -163,6 +163,18 @@ class DispatchBrowserTests(unittest.TestCase):
         self.open(); self.create(); self.page.get_by_label('Keep unscheduled', exact=True).check(); expect(self.page.get_by_label('Start date', exact=True)).to_be_disabled(); self.submit('Create job'); self.closed()
         for key in ['date', 'time', 'endDate', 'endTime']: self.assertEqual(self.calls[-1]['changes'][key], '')
         self.page.get_by_label('Filter by status', exact=True).select_option('unscheduled'); expect(self.page.locator('.dp-job')).to_have_count(1); expect(self.page.locator('.dp-unscheduled')).to_contain_text('New synthetic service')
+    def test_customer_search_waits_for_typing_to_pause_on_a_phone(self):
+        self.page.set_viewport_size({'width': 375, 'height': 812}); self.open(); self.page.get_by_role('button', name='Create job', exact=True).first.click()
+        searches = lambda: [params['q'] for params in self.gets if params.get('view') == ['customers']]
+        search = self.page.locator('input[name=customerSearch]'); self.page.clock.pause_at(self.page.evaluate('Date.now()') + 50)
+        search.press_sequentially('Johnson'); expect(self.page.locator('.dp-customer-results')).to_contain_text('Searching')
+        self.page.clock.run_for(299); self.assertEqual(searches(), [], 'no request while the manager is still typing')
+        self.page.clock.run_for(2); expect(self.page.get_by_role('button', name=CUSTOMER['name']+' · '+CUSTOMER['phone'], exact=True)).to_be_visible()
+        self.assertEqual(searches(), [['Johnson']])
+        search.fill('Jo'); search.fill('J'); expect(self.page.locator('.dp-customer-results')).to_contain_text('Type at least 2 characters.')
+        self.page.clock.run_for(1000); self.assertEqual(searches(), [['Johnson']], 'a pending search is dropped once the text is too short')
+        self.page.clock.resume(); self.assertLessEqual(self.page.evaluate('document.documentElement.scrollWidth'), 375)
+        self.assertEqual(self.page.evaluate("getComputedStyle(document.querySelector('input[name=customerSearch]')).fontSize"), '16px')
     def test_edit_legacy_unlinked_customer_preserves_identity_and_material_quantity(self):
         self.jobs[0]['customerId'] = ''; self.open(); self.card().get_by_role('button', name='Edit / assign', exact=True).click(); self.page.get_by_label('Access instructions', exact=True).fill('Use the side gate'); self.submit('Save changes'); self.closed()
         write = self.calls[-1]; self.assertEqual(write['action'], 'schedule.update'); self.assertEqual(write['jobId'], 'job-1'); self.assertNotIn('customerId', write)

@@ -4,7 +4,7 @@ import {localInstant} from './operations-portal-records.js';
 import {schedulingStorage} from './operations-scheduling.js';
 import {dispatchStorage} from './dispatch-storage.js';
 import {scheduleRowsConflict,scheduleLockConflict,scheduleDayEntry} from './dispatch-conflicts.js';
-import {customerIdentityFields} from './customer-identity.js';
+import {customerIdentityFields,withCustomerSearchKeys} from './customer-identity.js';
 import {segmented} from './dispatch-segments.js';
 import {visitFunnelWrites,eventActor,defaultVisitPurpose,providerClock} from './dispatch-funnel.js';
 const BASE='https://firestore.googleapis.com/v1/projects/egcw-1ec83/databases/(default)/documents/jobs';
@@ -152,7 +152,7 @@ export async function adoptScheduledVisit(store,actor,input,now=new Date().toISO
  if(!current){const funnel=await visitFunnelWrites({action:'create',after:next,actor:eventActor(actor),via:'bridge',key:{kind:'ghlAdoption',value:`${p.source}:${p.sourceId}`},source:{collection:'jobs',id:sourceReceiptId},bookedClock:providerClock(p.originalBookingAt||p.sourceCreatedAt,now),now});Object.assign(patch,funnel.patch);writes.push(...funnel.writes);}
  writes.push({collection:'customerIdentityState',id:'revision',revision:identityGuard?.revision,patch:{updatedAt:now,lastRequestId:input.requestId}});
  writes.push({collection:'dispatchState',id:'revision',revision:dispatchGuard?.revision,patch:{updatedAt:now,lastRequestId:input.requestId}});
- if(!customer)writes.push({collection:'customers',id:customerId,patch:{id:customerId,name:next.customer||'',phone:p.providerContact.phone||'',email:p.providerContact.email||'',...customerIdentityFields(p.providerContact),address:p.address,highlevelContactId:p.contactProviderId,createdAt:now,updatedAt:now,source:'verified_operational_adoption'}});
+ if(!customer)writes.push({collection:'customers',id:customerId,patch:withCustomerSearchKeys({id:customerId,name:next.customer||'',phone:p.providerContact.phone||'',email:p.providerContact.email||'',...customerIdentityFields(p.providerContact),address:p.address,highlevelContactId:p.contactProviderId,createdAt:now,updatedAt:now,source:'verified_operational_adoption'})});
  if(!project)writes.push({collection:'projects',id:projectId,patch:{id:projectId,customerId,sourceRecordId:id,sourceWalkthroughId:p.kind==='walkthrough'?id:null,createdBy:actor.id,createdAt:now,updatedAt:now,authority:'employee_hub'}});
  activeEntries.push(scheduleDayEntry(next,from.date,roster,now));
  writes.push({collection:'jobs',id:lockId,revision:lock?.revision,patch:{recordType:'schedule_lock',date:from.date,entries:activeEntries,updatedAt:now}});

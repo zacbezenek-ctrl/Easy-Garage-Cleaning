@@ -11,6 +11,17 @@
  *   (EGC_DISPATCH_DEFAULT_ARRIVAL_WINDOW_ENABLED) and its length; no secrets.
  * GET /api/dispatch?view=customers&q=phone-or-name
  *   => {ok,customers:[{id,name,phone,email,address}],total}; at most 50 results.
+ *   With EGC_DISPATCH_WINDOWED_READS=true and every customer keyed, text
+ *   matches when every word (one letter included) starts a word of the name
+ *   or email, and phone text (digits, spaces, + ( ) . -) when it is the start
+ *   of the number (a typed leading 1 optional; extensions ignored) or its last
+ *   4 or 7 digits (customer-identity.js). Otherwise any substring matches, as
+ *   before. Text starting inside a word or number, and address-only text,
+ *   match only the substring scan; shadow mode counts those and flags any
+ *   other difference. Response shapes never depend on that flag.
+ *   With 'true', rows whose date the windowed reads cannot verify (malformed,
+ *   non-string or missing) are neither on the board nor conflict evidence:
+ *   an accepted residual risk that scripts/dispatch-window-audit.mjs reports.
  * GET /api/dispatch?view=job&jobId=exact-ID
  *   => {ok,job:DispatchJob,roster,crews,vehicles,warnings,arrivalDefaults,segments}; no date-range filter.
  *
