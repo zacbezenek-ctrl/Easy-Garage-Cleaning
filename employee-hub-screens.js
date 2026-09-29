@@ -203,9 +203,62 @@ function unmountHome(){
 }
 const current=()=>active?{id:active.id,mounted:active.mounted}:null;
 function clearDrafts(){try{for(let i=sessionStorage.length-1;i>=0;i--){const key=sessionStorage.key(i);if(String(key||'').startsWith(DRAFTS))sessionStorage.removeItem(key);}}catch{}}
+// HUB_OFFLINE_ENABLED (/api/hub-offline): an installable Hub (employee.webmanifest) whose worker (hub-sw.js) keeps the
+// versioned employee-* files and whose time-clock and chat posts queue on the device (employee-offline-queue.js).
+// A definite off removes an earlier install's worker and file cache. An unreachable or unclear answer changes nothing
+// (the queue neither holds new saves nor removes any, though the Hub still shows what an earlier page left queued) and
+// is asked again when the connection returns, the Hub is shown again or the Hub next polls its records (pollPeople in
+// employee-suite.js), until a definite answer arrives.
+const OFFLINE=Object.freeze({config:'/api/hub-offline',worker:'/hub-sw.js',scope:'/',manifest:'/employee.webmanifest',cache:'egc-hub-assets-'});
+let offlineSetting=null;
+const hubWorker=registration=>[registration?.active,registration?.waiting,registration?.installing].some(worker=>{try{return new URL(worker?.scriptURL||'',location.href).pathname===OFFLINE.worker;}catch{return false;}});
+async function installOffline(){
+  if(!document.querySelector('link[rel="manifest"]')){const link=document.createElement('link');link.rel='manifest';link.href=OFFLINE.manifest;document.head.append(link);}
+  try{await navigator.serviceWorker?.register(OFFLINE.worker,{scope:OFFLINE.scope});}catch(error){console.warn('Hub offline worker was not registered:',error?.message||error);}
+}
+// The worker keeps serving the pages it controls until they close, so it is told to keep nothing more (and answers)
+// before it is unregistered and its files are deleted; a worker that does not answer within 2 s is removed anyway.
+const tell=(worker,type)=>new Promise(resolve=>{
+  if(typeof worker?.postMessage!=='function'||typeof MessageChannel!=='function')return resolve();
+  const channel=new MessageChannel(),done=()=>{clearTimeout(timer);channel.port1.close();resolve();},timer=setTimeout(done,2000);
+  channel.port1.onmessage=done;
+  try{worker.postMessage({type},[channel.port2]);}catch{done();}
+});
+const retire=worker=>tell(worker,'egc-hub-offline-retire');
+async function removeOffline(){
+  try{for(const registration of await navigator.serviceWorker?.getRegistrations?.()||[])if(hubWorker(registration)){await retire(registration.active);await registration.unregister();}}catch{}
+  try{for(const name of await caches.keys())if(name.startsWith(OFFLINE.cache))await caches.delete(name);}catch{}
+}
+async function readOffline(){
+  if(typeof fetch!=='function')return null;
+  let enabled=null;
+  try{const response=await fetch(OFFLINE.config,{credentials:'same-origin',cache:'no-store'}),data=await response.json();if(response.ok&&data?.ok===true&&typeof data.enabled==='boolean')enabled=data.enabled;}catch{enabled=null;}
+  if(enabled)await installOffline();else if(enabled===false)await removeOffline();
+  // Only a definite answer switches the queue: an unknown one never turns it on, nor removes what waits on the device.
+  if(enabled!==null)window.EGCHubOffline?.configure?.({enabled});
+  return enabled;
+}
+// A definite answer holds for the life of the page; an unknown one (a signal blip as the Hub loads) is not kept.
+function offline(){
+  if(offlineSetting)return offlineSetting;
+  const answer=offlineSetting=readOffline().then(enabled=>{if(enabled===null&&offlineSetting===answer)offlineSetting=null;return enabled;});
+  return answer;
+}
+const recheckOffline=()=>{if(!offlineSetting)void offline();};
+window.addEventListener('online',recheckOffline);
+document.addEventListener?.('visibilitychange',()=>{if(document.visibilityState!=='hidden')recheckOffline();});
+// Signing out clears the device copies of the Hub's files, so on a shared phone a signed-out load (EGC_STAFF_PAGE_GATE)
+// never gets staff scripts from them offline. The worker is told first, so a file still loading is not kept either; it
+// keeps copies again from the next signed-in load. (A Hub left signed in keeps its copies until it signs out.)
+async function forgetOfflineFiles(){
+  try{for(const registration of await navigator.serviceWorker?.getRegistrations?.()||[])if(hubWorker(registration))await tell(registration.active,'egc-hub-offline-signout');}catch{}
+  try{for(const name of await caches.keys())if(name.startsWith(OFFLINE.cache)){const cache=await caches.open(name);for(const request of await cache.keys())await cache.delete(request);}}catch{}
+}
 window.addEventListener('egc:signout',()=>{unmountAll();unmountHome();clearDrafts();});
+window.addEventListener('egc:signout',()=>{void forgetOfflineFiles();});
 window.addEventListener('beforeunload',event=>{if(active?.mounted&&!canLeave(active.id)){event.preventDefault();event.returnValue='';}});
-window.EGCHubScreens=Object.freeze({register,list,get,allowed,visible,widgets,mount,unmountAll,canLeave,refresh,current,registerWidget,homeWidgets,mountHome,unmountHome,kit:KIT});
+window.EGCHubScreens=Object.freeze({register,list,get,allowed,visible,widgets,mount,unmountAll,canLeave,refresh,current,registerWidget,homeWidgets,mountHome,unmountHome,offline,kit:KIT});
 for(const spec of MANIFEST){try{register(spec);}catch(error){console.warn('Hub screen registry skipped a MANIFEST entry:',error?.message||error);}}
 for(const spec of HOME_WIDGETS){try{registerWidget(spec);}catch(error){console.warn('Hub screen registry skipped a HOME_WIDGETS entry:',error?.message||error);}}
+void offline();
 })();

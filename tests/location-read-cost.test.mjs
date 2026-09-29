@@ -96,3 +96,21 @@ test('a location response arriving after signout cannot restore the previous emp
   assert.equal(env.api.S.locationWatch, null);
   assert.equal(env.calls.length, 1);
 });
+
+test('a location error that lands after shift location moved to a new shift saves its status and leaves the new shift’s watch running', async () => {
+  const env = harness();
+  const failure = env.callbacks.failure;
+  let resolve;
+  env.pending = new Promise(done => { resolve = done; });
+  const pending = failure(new Error('Location permission unavailable'));
+  // While that status save is out, shift location moves to the next shift.
+  env.api.startLocationWatch('time-synthetic-next');
+  assert.deepEqual(env.cleared, [7], 'the old watch was cleared');
+  resolve({ ok: true, json: async () => ({ ok: true, record: { id: 'time-synthetic', employee: 'SyntheticCrew', locationStatus: 'unavailable' } }) });
+  await pending;
+  assert.equal(env.calls.length, 1);
+  assert.equal(env.calls[0].body.data.locationStatus, 'unavailable', 'the old shift’s status was saved');
+  assert.deepEqual(env.cleared, [7], 'the new shift’s watch was not cleared');
+  assert.equal(env.api.S.locationWatch, 7);
+  assert.equal(env.api.S.locationEntryId, 'time-synthetic-next');
+});

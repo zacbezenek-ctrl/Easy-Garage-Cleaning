@@ -16,6 +16,9 @@ const TRAINING_VERSION = '2026-09-employee-os-v1';
 const TRAINING_CHECKS = new Map([['welcome', { answer: 1 }], ['safety', { answer: 2, supervisor: true }], ['property', { answer: 1 }], ['truck', { answer: 1, supervisor: true }], ['proof', { answer: 1 }], ['closeout', { answer: 0 }]]);
 const HOST = /^(?:easygaragecleaning\.com|www\.easygaragecleaning\.com|easy-garage-cleaning\.pages\.dev|localhost(?::\d+)?|127\.0\.0\.1(?::\d+)?)$/;
 const isRecord = value => value !== null && typeof value === 'object' && !Array.isArray(value);
+// A Hub action kept on the device (employee-offline-queue.js, HUB_OFFLINE_ENABLED) carries its request ID in the body;
+// the Hub's direct saves and the crew app's never do, so only queued sends get the replay allowances below.
+const QUEUED_REQUEST = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
 function reply(status, body) {
   return new Response(JSON.stringify(body), {
@@ -208,11 +211,11 @@ async function payGuard(env, session, collection, incoming, existing, now) {
   return withoutPayWrites(input);
 }
 
-async function authorizeMutation(env, session, collection, id, incoming, existing) {
+async function authorizeMutation(env, session, collection, id, incoming, existing, queued = false) {
   const now = new Date().toISOString();
   incoming = await payGuard(env, session, collection, incoming, existing, now);
   if (collection === 'timeEntries') return authorizeTimecard({ session, manager: manager(session), id, incoming, existing,
-    hourlyRate: existing?.hourlyRate ?? await employeeRate(env, session, now), now, env });
+    hourlyRate: existing?.hourlyRate ?? await employeeRate(env, session, now), now, env, queued });
   if (manager(session) && !(collection === 'training' && incoming.moduleId)) return collection === 'profiles' ? legacyManagerProfile({ env, session, existing, incoming, id, now }) : { ...(existing || {}), ...incoming, id };
 
   if (collection === 'profiles') {
@@ -262,6 +265,9 @@ async function authorizeMutation(env, session, collection, id, incoming, existin
     return { ...existing, readBy: [...new Set([...(existing.readBy || []), session.user])], updatedAt: now };
   }
 
+  // A device-queued send keeps its message ID, so the sender's own identical message is the one already saved. Direct
+  // saves (and the Hub with HUB_OFFLINE_ENABLED off) are refused as before.
+  if (queued && existing && ['teamMessages', 'jobMessages'].includes(collection) && same(existing.sender, session.user) && existing.body === String(incoming.body || '').trim().slice(0, 1200) && String(existing.jobId || '') === String(incoming.jobId || '').trim()) return existing;
   if (existing && !visibleTo(session, collection, existing)) throw new Error('This record belongs to another employee');
 
   if (collection === 'training') {
@@ -416,6 +422,8 @@ export async function onRequestPost({ request, env }) {
   let body;
   try { body = JSON.parse(raw); } catch { return reply(400, { ok: false, error: 'Invalid JSON' }); }
   if (!isRecord(body)) return reply(400, { ok: false, error: 'Invalid employee record' });
+  // A device-queued Hub action names the account that saved it and is never saved for another one (409, not a 401 that signs out).
+  if (body.expectedUser !== undefined && !same(body.expectedUser, session.user)) return reply(409, { ok: false, code: 'EMPLOYEE_HUB_ACCOUNT_CHANGED', error: 'This action was saved on this device by another account. Sign in as that employee to send it.' });
   if (typeof body.collection !== 'string' || typeof body.id !== 'string') return reply(400, { ok: false, error: 'Invalid employee record' });
   const collection = String(body.collection || '');
   const id = String(body.id || '').trim();
@@ -447,10 +455,10 @@ export async function onRequestPost({ request, env }) {
       }
       // A different vault key changes IDs; a 404 alone cannot prove this is new.
       if (!current.data) await readAll(env);
-      const data = await authorizeMutation(env, session, collection, id, incoming, current.data);
+      const data = await authorizeMutation(env, session, collection, id, incoming, current.data, QUEUED_REQUEST.test(String(body.requestId ?? '')));
       try {
         if (collection === 'timeEntries') return reply(200, { ok: true, record: visiblePay(session, env, collection, await writeTimecard(env, session, id, data, target)) });
-        const saved = await writeOne(env, collection, id, data, collection === 'profiles' ? target : null);
+        const saved = data === current.data && ['teamMessages', 'jobMessages'].includes(collection) ? data : await writeOne(env, collection, id, data, collection === 'profiles' ? target : null);
         return reply(200, { ok: true, record: visiblePay(session, env, collection, collection === 'profiles' ? legacyProfileView(saved, new Date().toISOString()) : saved) });
       } catch (error) {
         if (error.code !== 'EMPLOYEE_HUB_WRITE_CONFLICT' || attempt + 1 === attempts) throw error;

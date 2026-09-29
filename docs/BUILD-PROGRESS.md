@@ -455,6 +455,10 @@ draft PR. The owner merges in phase order. See **Decisions** D-001.
   the Hub) binds every minted id to the service whose key signs it (mcp, hub, api, worker); unknown or mismatched ids get
   403 before any policy or storage work, audited (hub_audit bridge.issuer_refused, audit_logs operations.issuer_refused).
   Always on. Gaps: egc-worker shares the API key; MCP-signed human actors are still accepted (follow-ups).
+- **HUB-PWA** Installable Employee Hub with an on-device queue behind `HUB_OFFLINE_ENABLED` (off): employee.webmanifest,
+  hub-sw.js (versioned employee-* files only, network first with ETag) and employee-offline-queue.js, which queues the
+  viewer's own clock in/out, breaks and crew chat in IndexedDB and replays them with the same request id. Queued manager
+  saves are idempotent; a closed card's location is locked. Gaps: employee.html itself is not cached offline.
 
 ## In progress
 
@@ -561,6 +565,7 @@ one prefixed commit only after the full root suite (and the platform suite when 
 | CREW-NOTIFY | Crew schedule notices: dispatch queues, messaging cron texts opted-in staff on egc-staff contacts (flag off) | merged (b95eee8) |
 | MONEY-GHL-PARITY | Server money saves start the same HighLevel lifecycle triggers as the finance tools (MONEY_API_ENABLED) | merged (890742e) |
 | BRIDGE-ADOPT-AUTHZ | Fail-closed binding of bridge integration actor ids to their signing service (always on) | merged (93e8b20) |
+| HUB-PWA | Installable Hub and on-device clock/chat queue (HUB_OFFLINE_ENABLED, off) | merged (92153dc) |
 
 ## Next
 

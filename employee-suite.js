@@ -432,6 +432,77 @@ const sessionProfile=()=>({id:employeeIdentity(),displayName:sessionStorage.getI
 const ownProfile=()=>{const base=sessionProfile(),saved=S.people.profiles.find(x=>sameAccount(x.username||x.id,base.id))||{};return{...base,...saved,id:base.id,role:base.role,payType:saved.payType||base.payType,hourlyRate:Number(saved.hourlyRate??base.hourlyRate)}};
 const onboardingComplete=profile=>Boolean(profile?.onboardingCompletedAt&&profile?.onboardingVersion==='2026-09-location-v2');
 const owned=(row,key='employee')=>sameAccount(row?.[key],employeeIdentity());
+// HUB_OFFLINE_ENABLED (employee-offline-queue.js): the viewer's clock and chat saves still held on this device show over
+// the server's copy until the queue sends, refuses, expires or discards them (also while the switch has not answered). A
+// load that overlaps a change to that queue (an action saved, sent, dropped or retried while the request was out) or the
+// Hub's own save reads the server again, at most twice more; a third read still overtaken is shown but read once more,
+// and shift location is not started from it. So a copy taken before a clock-out landed never brings the shift, or its
+// location watch, back. S.queuedShown keeps what each shown record is built from: the server's copy (none for a record
+// only this device has) and the queued saves over it. When the queue settles an action (egc:hub-offline-synced) the Hub
+// corrects the record at once, even with no connection to reload: a save the server confirmed joins its server copy, and
+// one refused, expired or discarded is dropped, so a clock-in the server never had no longer shows or keeps location on.
+const offlineQueue=()=>{const queue=window.EGCHubOffline;return queue?.showing?.()===true&&typeof queue.records==='function'?queue:null};
+const queuedKey=rows=>rows.map(row=>row.requestId).join(',');
+const clockOutSave=data=>data?.status==='submitted'&&Boolean(data.clockOutAt);
+S.queuedShown=new Map();
+function putQueued(shown){const record=shown.requests.length?{...shown.base,...Object.assign({},...shown.requests.map(row=>row.data)),id:shown.id,pendingSync:true}:shown.base,rows=S.people[shown.collection].filter(row=>row.id!==shown.id);S.people[shown.collection]=record?[...rows,record]:rows;if(!shown.requests.length)S.queuedShown.delete(shown.collection+'/'+shown.id);return record}
+function showQueued(collection,id,requestId,data){if(!Array.isArray(S.people[collection]))return null;const key=collection+'/'+id;let shown=S.queuedShown.get(key);if(!shown)S.queuedShown.set(key,shown={collection,id,base:S.people[collection].find(row=>row.id===id)||null,requests:[]});if(!shown.requests.some(row=>row.requestId===requestId))shown.requests.push({requestId,data});return putQueued(shown)}
+// A shift only this device has (its queued clock-in not yet confirmed by the server): no location update is sent for it.
+const unconfirmedShift=entryId=>{const shown=S.queuedShown.get(peopleCollections.timeEntries+'/'+entryId);return Boolean(shown&&!shown.base)};
+// rows: what is queued now. A save no longer queued that this page cannot account for (another Hub tab sent it) stays
+// shown until the server is read again.
+function settleShown(rows){
+  const queue=window.EGCHubOffline,still=new Set(rows.map(row=>row.requestId));let changed=false;
+  for(const shown of[...S.queuedShown.values()]){
+    const kept=shown.requests.filter(request=>{
+      if(still.has(request.requestId))return true;
+      const done=queue?.settled?.(request.requestId);
+      if(!done)return true;
+      if(done.outcome==='applied')shown.base=done.record?.id===shown.id?done.record:{...shown.base,...request.data,id:shown.id};
+      return false;
+    });
+    if(kept.length!==shown.requests.length){shown.requests=kept;putQueued(shown);changed=true}
+  }
+  return changed;
+}
+async function settleQueued(){
+  const queue=window.EGCHubOffline,generation=S.peopleGeneration;
+  if(typeof queue?.records!=='function')return;
+  const rows=S.queuedShown.size?await queue.records().catch(()=>null):[];
+  if(!rows||generation!==S.peopleGeneration)return;
+  const changed=settleShown(rows),paused=pauseDroppedClockOuts();
+  if(!changed&&!paused)return;
+  // S.people may be older than the queue here (the Hub's own clock-out can land while its reload is still out), so this
+  // only stops or keeps shift location: opsClockIn and a completed load start it.
+  followActiveShift(false);
+  if(!document.activeElement?.closest?.('.ops-onboarding,.ops-chat-compose,.ops-customer-thread form'))render();else updateQuickClock();
+}
+// Each clock-out this page saw the queue refuse, expire, discard, hold (switched off) or drop as superseded pauses its
+// shift's location once, whether or not the Hub was showing it yet (a page opened as an old clock-out expires). One whose
+// shift's clock-in also left the queue unsent (refused, expired, discarded or held with it) pauses only if the server
+// shows that shift open after it (pauseWhenOpen): an earlier attempt of the clock-in may have been saved with its reply
+// lost. One the crew member resolved (released: location resumed, clocked out or in again) pauses nothing.
+const clockOutKept=done=>done.outcome==='applied'||done.outcome==='released';
+function pauseDroppedClockOuts(){let paused=false;const all=window.EGCHubOffline?.settled?.()||[],unsent=new Set(all.filter(done=>done.clockIn&&done.outcome!=='applied').map(done=>done.id));for(const done of all){if(!done.clockOut||clockOutKept(done)||done.collection!==peopleCollections.timeEntries||S.pauseSeen.has(done.requestId))continue;S.pauseSeen.add(done.requestId);if(unsent.has(done.id))pauseWhenOpen(done.id,done.requestId);else pauseShift(done.id);paused=true}return paused}
+// A clock-out saved on this device that may or may not have reached the server (another Hub tab's, or one whose clock-in
+// left the queue unsent): shift location stays off for that shift, and the first load whose read of the server starts
+// after this decides. The server shows the shift still open: its location is paused, as for a clock-out not saved.
+// Otherwise it is closed (or never existed), and nothing is paused.
+function pauseWhenOpen(id,requestId){S.pauseIfOpen.set(String(id),{requestId:String(requestId||''),after:S.readSeq})}
+function resolvePauses(read){for(const[id,wait]of[...S.pauseIfOpen]){if(read<=wait.after){S.peopleReload=true;continue}S.pauseIfOpen.delete(id);if(S.people.timeEntries.some(row=>row.id===id&&row.status==='active'&&!row.clockOutAt&&!row.pendingSync))pauseShift(id)}}
+// Reads the server again (at once, or right after a load already under way).
+function reloadPeople(){if(!S.people.listeners||!employeeIdentity())return;if(S.peopleRequest)S.peopleReload=true;else void refreshPeople()}
+// So does a clock-out the Hub showed as queued that left the queue with no answer this page saw (another Hub tab sent it)
+// while the server still has the shift open.
+function pauseLostClockOuts(before,queued){const still=new Set(queued.map(row=>row.requestId));for(const shown of before.values())for(const request of shown.requests)if(clockOutSave(request.data)&&!still.has(request.requestId)&&!S.pauseSeen.has(request.requestId)&&window.EGCHubOffline?.settled?.(request.requestId)?.outcome!=='applied'&&S.people.timeEntries.some(row=>row.id===shown.id&&row.status==='active'&&!row.clockOutAt&&!row.pendingSync)){S.pauseSeen.add(request.requestId);pauseShift(shown.id)}}
+// The crew member was told a queued clock-out was saved, so when it is refused, expires or is discarded shift location
+// never restarts on its own: the time card says the clock-out was not saved, with location paused until they resume it
+// (opsResumeLocation) or clock out again. Kept for this tab (sessionStorage) and cleared once the shift is closed.
+const PAUSED_KEY='egc_hub_location_paused';
+S.pauseSeen=new Set();S.heldTold=new Set();S.clockSaving=0;S.pauseIfOpen=new Map();S.readSeq=0;S.releasing=new Map();
+function pausedShifts(){if(!S.locationPaused){S.locationPaused=new Set();try{const saved=JSON.parse(sessionStorage.getItem(PAUSED_KEY)||'null');if(saved&&sameAccount(saved.user,employeeIdentity())&&Array.isArray(saved.ids))saved.ids.forEach(id=>S.locationPaused.add(String(id)))}catch{}}return S.locationPaused}
+function keepPaused(){const ids=[...pausedShifts()].slice(-20);try{if(ids.length)sessionStorage.setItem(PAUSED_KEY,JSON.stringify({user:employeeIdentity(),ids}));else sessionStorage.removeItem(PAUSED_KEY)}catch{}}
+function pauseShift(id){pausedShifts().add(String(id));keepPaused()}
 // /api/employee-hub sends other employees' pay only to the owner (payVisibility 'all'); nobody else is shown a $0 stand-in.
 const payShown=account=>S.people.payVisibility==='all'||sameAccount(account,employeeIdentity());
 async function refreshPeople(){
@@ -444,20 +515,38 @@ async function refreshPeople(){
   if(includeAccounts)S.accountState.loading=true;
   S.peopleRequest=(async()=>{
     try{
-      const response=await hubFetch('/api/employee-hub'+(includeAccounts?'?include=accounts':''),{cache:'no-store'}),data=await response.json().catch(()=>({}));
-      if(!response.ok||!data.ok)throw new Error(data.error||'Employee records could not be loaded. Check the connection and retry.');
-      if(!data.collections||typeof data.collections!=='object'||Object.keys(peopleCollections).some(key=>!Array.isArray(data.collections[key])))throw new Error('The employee records response was incomplete. Retry before making changes.');
-      if(generation!==S.peopleGeneration)return false;
+      const queue=offlineQueue();
+      let data,queued=[],stale=false,read=0;
+      for(let pass=0;;pass++){
+        S.peopleReload=false;
+        const revision=queue?queue.revision():0,before=queue?queuedKey(await queue.records()):'';
+        read=++S.readSeq;
+        const response=await hubFetch('/api/employee-hub'+(includeAccounts?'?include=accounts':''),{cache:'no-store'});data=await response.json().catch(()=>({}));
+        if(!response.ok||!data.ok)throw new Error(data.error||'Employee records could not be loaded. Check the connection and retry.');
+        if(!data.collections||typeof data.collections!=='object'||Object.keys(peopleCollections).some(key=>!Array.isArray(data.collections[key])))throw new Error('The employee records response was incomplete. Retry before making changes.');
+        if(generation!==S.peopleGeneration)return false;
+        if(queue)queued=await queue.records();
+        if(generation!==S.peopleGeneration)return false;
+        if(!S.peopleReload&&(!queue||queue.revision()===revision&&queuedKey(queued)===before))break;
+        if(pass>=2){S.peopleReload=true;stale=true;break}
+      }
+      // Offline saving switched off: an action an earlier setting left on this device is held, never sent. Found once per
+      // page (no IndexedDB is opened on a device that never had a queue), so a shift whose clock-out waits here has its
+      // location paused before this load could start it.
+      if(!queue&&typeof window.EGCHubOffline?.hold==='function'){await window.EGCHubOffline.hold().catch(()=>{});if(generation!==S.peopleGeneration)return false}
       if(includeAccounts){
         if(data.accounts===undefined)await refreshAccountApplications();
         else if(Array.isArray(data.accounts)){S.people.accounts=data.accounts;S.accountState.loaded=true;S.accountState.error='';}
         else{S.accountState.error='The account request list was incomplete. Retry before reviewing accounts.';}
         if(generation!==S.peopleGeneration)return false;
       }
+      const shownBefore=S.queuedShown;S.queuedShown=new Map();
       Object.keys(peopleCollections).forEach(key=>{S.people[key]=Array.isArray(data.collections[key])?data.collections[key]:[]});
       S.people.payVisibility=data.payVisibility==='all'?'all':'own';
+      for(const row of queued)showQueued(row.collection,row.id,row.requestId,row.data);
+      pauseLostClockOuts(shownBefore,queued);pauseDroppedClockOuts();if(!stale)resolvePauses(read);
       S.peopleState.loaded=true;S.peopleState.error='';
-      const active=activeTimeEntry();if(active?.locationTracking&&!S.locationWatch)startLocationWatch(active.id);
+      followActiveShift(!stale);
       notifyAnnouncements(S.people.announcements);notifyChatMessages();
       return true;
     }catch(error){if(generation===S.peopleGeneration){S.peopleState.error=error.message||'Employee records are unavailable. Check the connection and retry.';if(includeAccounts)S.accountState.error=S.peopleState.error;}return false}
@@ -468,6 +557,8 @@ async function refreshPeople(){
         if(S.peopleState.loaded&&!S.peopleState.error&&!S.onboardingPrompted&&!sessionGrant('egc_business_access')&&!onboardingComplete(ownProfile())){S.onboardingPrompted=true;go('onboarding')}
         else if(!document.activeElement?.closest?.('.ops-onboarding,.ops-chat-compose,.ops-customer-thread form'))render();
         else updateQuickClock();
+        // The queue, or the Hub's own save, changed after this load's last read of the server: read it again.
+        if(S.peopleReload){S.peopleReload=false;refreshPeople()}
       }
     }
   })();
@@ -485,9 +576,16 @@ async function refreshAccountApplications(){
   finally{if(generation===S.peopleGeneration)S.accountState.loading=false}
 }
 window.opsReviewEmployeeAccount=async(username,decision)=>{if(!isOwnerAccount()||!['approved','rejected'].includes(decision))return;if(!S.accountState.loaded||S.accountState.error){if(typeof showToast==='function')showToast('Reload account requests before reviewing an employee');return;}const verb=decision==='approved'?'approve':'reject',account=S.people.accounts.find(row=>sameAccount(row.username,username)),approval=await askAction({kicker:'EMPLOYEE ACCOUNT',title:`${verb==='approve'?'Approve':'Reject'} ${account?.displayName||username}?`,copy:decision==='approved'?'This unlocks Employee Hub access using the password they created.':'This keeps the account locked and records the rejection.',confirmLabel:verb==='approve'?'Approve account':'Reject request',danger:verb!=='approve',fields:[]});if(!approval)return;try{const response=await hubFetch('/api/employee-accounts',{method:'POST',credentials:'same-origin',headers:{'Content-Type':'application/json'},body:JSON.stringify({action:'review',username,decision})}),result=await response.json().catch(()=>({}));if(!response.ok||!result.ok)throw new Error(result.error||'Account review failed');const signOut=String(result.firebaseRevocation?.status||''),note=signOut==='revocation_pending'?' Firebase sign-out is pending; see Integrations.':signOut==='revocation_failed'?' Firebase sign-out could not be confirmed; check Integrations.':'';if(note)loadIntegrations().then(()=>render());if(S.peopleRequest)await S.peopleRequest;const refreshed=await refreshPeople();render('action');if(!refreshed||S.accountState.error){if(typeof showToast==='function')showToast('Review saved, but team records could not refresh. Retry employee records.'+note);return;}if(typeof showToast==='function')showToast((decision==='approved'?`${account?.displayName||username} is on the team and can now sign in`:'Account request rejected')+(note?'.'+note:''))}catch(error){if(typeof showToast==='function')showToast(error.message||'Account review failed')}};
-async function peopleSet(collection,id,data,refresh=true){const generation=S.peopleGeneration;const response=await hubFetch('/api/employee-hub',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({collection,id,data})});const result=await response.json().catch(()=>({}));if(!response.ok||!result.ok)throw new Error(result.error||'Employee Hub record could not be saved');if(generation!==S.peopleGeneration)return result.record;if(refresh)await refreshPeople();else if(result.record&&Array.isArray(S.people[collection]))S.people[collection]=[...S.people[collection].filter(row=>row.id!==id),result.record];return result.record}
+async function peopleSet(collection,id,data,refresh=true){const generation=S.peopleGeneration;const response=await(window.EGCHubOffline?.send||hubFetch)('/api/employee-hub',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({collection,id,data})});const result=await response.json().catch(()=>({}));if(!response.ok||!result.ok)throw Object.assign(new Error(result.error||'Employee Hub record could not be saved'),{status:Number(response.status)||0,code:String(result.code||'')});if(generation!==S.peopleGeneration)return result.record;if(result.queued){const record=showQueued(collection,id,String(result.requestId||''),data)||{...data,id,pendingSync:true};if(!result.accountChanged)return record;if(typeof showToast==='function')showToast(`Saved on this device. Sign in as ${employeeIdentity()} to send it.`);return{...record,pendingAccount:true}}if(refresh)await refreshAfterSave();else if(result.record&&Array.isArray(S.people[collection])){const shown=S.queuedShown.get(collection+'/'+id);if(shown){shown.base=result.record;putQueued(shown)}else S.people[collection]=[...S.people[collection].filter(row=>row.id!==id),result.record]}return result.record}
+// A load already under way when the Hub's own save lands may have read the server before it: it reads again, and the
+// save waits for that read, instead of reusing the older one. This applies with HUB_OFFLINE_ENABLED off too, on purpose:
+// without it an online clock-out landing during a poll showed the shift active and restarted shift location. It costs a
+// second GET /api/employee-hub only when a save overlaps a load.
+async function refreshAfterSave(){if(!S.peopleRequest)return refreshPeople();S.peopleReload=true;await S.peopleRequest;if(S.peopleRequest)await S.peopleRequest}
 function pollPeople(){
   if(document.hidden||!S.people.listeners||!employeeIdentity())return false;
+  // The offline switch is asked again until it answers (employee-hub-screens.js keeps a definite answer for the page).
+  void window.EGCHubScreens?.offline?.();
   const interval=S.active==='crew_chat'?15000:60000;
   if(Date.now()-S.peopleLastRefreshAt<interval)return false;
   return refreshPeople();
@@ -495,6 +593,11 @@ function pollPeople(){
 document.addEventListener('visibilitychange',()=>{
   if(!document.hidden&&S.people.listeners&&employeeIdentity())return refreshPeople();
 });
+// A queued action was sent, refused, expired or discarded: what the Hub shows for it is settled on the device at once
+// (settleQueued, which needs no connection), then the server is read; a load already under way may have read the server
+// before that, so it reads again instead of being reused.
+window.addEventListener('egc:hub-offline-synced',()=>{if(!S.people.listeners||!employeeIdentity())return;const generation=S.peopleGeneration;void settleQueued().catch(()=>{}).then(()=>{if(generation!==S.peopleGeneration||!S.people.listeners)return;if(S.peopleRequest)S.peopleReload=true;else refreshPeople()})});
+window.addEventListener('egc:signout',()=>{S.queuedShown=new Map();S.pauseSeen=new Set();S.heldTold=new Set();S.locationPaused=null;S.clockSaving=0;S.pauseIfOpen=new Map();S.releasing=new Map();try{sessionStorage.removeItem(PAUSED_KEY)}catch{}});
 function startPeopleListeners(){if(!employeeIdentity())return Promise.resolve(false);const first=!S.people.listeners;S.people.listeners=true;if(!S.peopleTimer)S.peopleTimer=setInterval(pollPeople,15000);return refreshPeople().then(loaded=>{if(first&&loaded)return ensureOwnProfile();return loaded})}
 async function ensureOwnProfile(){const p=sessionProfile();if(!p.id)return;await peopleSet(peopleCollections.profiles,employeeKey(p.id),{username:p.id,displayName:p.displayName,role:p.role,payType:p.payType,hourlyRate:p.hourlyRate,lastSeenAt:new Date().toISOString(),status:'active'}).catch(()=>{})}
 const activeTimeEntry=()=>S.people.timeEntries.find(x=>owned(x)&&x.status==='active'&&!x.clockOutAt)||null;
@@ -512,12 +615,53 @@ function personalEntries(){return S.people.timeEntries.filter(row=>owned(row)).s
 function paySummary(){const entries=personalEntries(),period=payPeriod(),inPeriod=entries.filter(e=>{const d=Date.parse(e.clockInAt||'');return d>=period.start&&d<=period.end}),year=day().slice(0,4),ytd=entries.filter(e=>timecardDate(e).startsWith(year));return{entries,period,inPeriod,hours:inPeriod.reduce((n,e)=>n+entryHours(e),0),gross:inPeriod.reduce((n,e)=>n+entryGross(e),0),approved:inPeriod.filter(e=>e.approvalStatus==='approved').reduce((n,e)=>n+entryGross(e),0),pending:inPeriod.filter(e=>e.approvalStatus!=='approved').reduce((n,e)=>n+entryGross(e),0),ytd:ytd.reduce((n,e)=>n+entryGross(e),0),lifetime:entries.reduce((n,e)=>n+entryGross(e),0)}}
 function stopLocationWatch(){if(S.locationWatch!=null&&navigator.geolocation)navigator.geolocation.clearWatch(S.locationWatch);S.locationWatch=null;S.locationEntryId=''}
 function currentPosition(){return new Promise((resolve,reject)=>{if(!navigator.geolocation)return reject(new Error('Location is not supported on this device'));navigator.geolocation.getCurrentPosition(resolve,reject,{enableHighAccuracy:true,maximumAge:15000,timeout:20000})})}
-function startLocationWatch(entryId){if(!navigator.geolocation||S.locationWatch!=null)return;S.locationEntryId=entryId;S.locationWatch=navigator.geolocation.watchPosition(async position=>{if(Date.now()-S.lastLocationSave<60000)return;S.lastLocationSave=Date.now();const point={lat:Number(position.coords.latitude.toFixed(6)),lng:Number(position.coords.longitude.toFixed(6)),accuracy:Math.round(position.coords.accuracy||0),capturedAt:new Date().toISOString()};const current=S.people.timeEntries.find(x=>x.id===entryId),trail=[...(Array.isArray(current?.locationTrail)?current.locationTrail:[]),point].slice(-120);await peopleSet(peopleCollections.timeEntries,entryId,{lastLocation:point,locationTrail:trail,locationStatus:'tracking',locationUpdatedAt:point.capturedAt},false).catch(()=>{})},async error=>{await peopleSet(peopleCollections.timeEntries,entryId,{locationStatus:'unavailable',locationError:String(error.message||'Location unavailable').slice(0,120),locationUpdatedAt:new Date().toISOString()},false).catch(()=>{});stopLocationWatch()},{enableHighAccuracy:true,maximumAge:30000,timeout:20000})}
-window.opsClockIn=async()=>{if(activeTimeEntry())return;let position;try{position=await currentPosition()}catch(error){if(typeof showToast==='function')showToast('Clock-in needs location access. Enable location, then try again.');return}const p=ownProfile(),now=new Date().toISOString(),job=myShiftJobs().find(j=>String(j.date||'')===day())||myShiftJobs()[0]||null,id=`time-${personKey(p.id)}-${Date.now().toString(36)}`,point={lat:Number(position.coords.latitude.toFixed(6)),lng:Number(position.coords.longitude.toFixed(6)),accuracy:Math.round(position.coords.accuracy||0),capturedAt:now},entry={id,employee:p.id,employeeName:p.displayName,role:p.role,payType:p.payType,hourlyRate:Number(p.hourlyRate||0),clockInAt:now,clockOutAt:'',status:'active',approvalStatus:'open',jobId:job?.id||'',jobLabel:job?.customer||job?.serviceType||'',locationTracking:true,locationConsentAt:now,locationStatus:'tracking',lastLocation:point,locationTrail:[point],locationUpdatedAt:now,breaks:[],createdAt:now,updatedAt:now};await peopleSet(peopleCollections.timeEntries,id,entry);startLocationWatch(id);render('action');if(typeof showToast==='function')showToast('Clocked in · shift location is on')};
-window.opsClockOut=async()=>{const entry=activeTimeEntry();if(!entry)return;const now=new Date().toISOString(),hours=entryHours({...entry,clockOutAt:now});stopLocationWatch();await peopleSet(peopleCollections.timeEntries,entry.id,{clockOutAt:now,status:'submitted',approvalStatus:'pending',hours:Number(hours.toFixed(3)),grossEstimate:Number((hours*Number(entry.hourlyRate||0)).toFixed(2)),locationTracking:false,locationStatus:'stopped',updatedAt:now});render('action');if(typeof showToast==='function')showToast(`Clocked out · ${hours.toFixed(2)} hours submitted`)};
+// A clock-out for this shift saved on this device (EGCHubOffline.clockOut: perhaps by another Hub tab, whose queue this
+// tab shares but may not have read): no location update is sent for the shift, and this tab stops shift location. Still
+// queued, it shows the clock-out pending sync; held while offline saving is off, the shift's location is paused as a
+// clock-out not saved. Gone from the queue in the last 12 hours (sent, refused, expired or discarded, perhaps before this
+// tab's watch took a fix), the server is read again and decides: a closed shift shows closed, and one still open has its
+// location paused (pauseWhenOpen). One read of the device per update, so at most one a minute; while shift location is
+// being resumed for the shift (S.releasing), it waits for that, so a clock-out the crew member overrode by resuming never
+// stops the new watch. Without the queue, nothing waits.
+function clockedOutOnDevice(entryId){const queue=window.EGCHubOffline;if(typeof queue?.clockOut!=='function')return null;return Promise.resolve(S.releasing.get(entryId)).then(()=>queue.clockOut(entryId)).catch(()=>null).then(row=>{if(!row)return false;if(S.locationEntryId===entryId)stopLocationWatch();if(row.left){pauseWhenOpen(entryId,row.requestId);reloadPeople()}else if(row.held)pauseShift(entryId);else showQueued(row.collection,row.id,row.requestId,row.data);if(!document.activeElement?.closest?.('.ops-onboarding,.ops-chat-compose,.ops-customer-thread form'))render();else updateQuickClock();return true})}
+// The server's answer that this shift's location is no longer updated (a 403 or 409 other than a write race: the shift
+// was closed elsewhere, perhaps by another Hub tab or device): final, so shift location stops at once, after at most this
+// one refused update, and the server is read again (a shift still open there starts it again).
+const locationRefused=error=>[403,409].includes(error?.status)&&error?.code!=='EMPLOYEE_HUB_WRITE_CONFLICT';
+function locationClosed(entryId,error){if(!locationRefused(error))return;if(S.locationEntryId===entryId)stopLocationWatch();reloadPeople()}
+function startLocationWatch(entryId){if(!navigator.geolocation)return;if(S.locationWatch!=null){if(S.locationEntryId===entryId)return;stopLocationWatch()}S.locationEntryId=entryId;S.locationWatch=navigator.geolocation.watchPosition(async position=>{if(unconfirmedShift(entryId)||Date.now()-S.lastLocationSave<60000)return;S.lastLocationSave=Date.now();const waiting=clockedOutOnDevice(entryId);if(waiting&&(await waiting||S.locationEntryId!==entryId))return;const point={lat:Number(position.coords.latitude.toFixed(6)),lng:Number(position.coords.longitude.toFixed(6)),accuracy:Math.round(position.coords.accuracy||0),capturedAt:new Date().toISOString()};const current=S.people.timeEntries.find(x=>x.id===entryId),trail=[...(Array.isArray(current?.locationTrail)?current.locationTrail:[]),point].slice(-120);await peopleSet(peopleCollections.timeEntries,entryId,{lastLocation:point,locationTrail:trail,locationStatus:'tracking',locationUpdatedAt:point.capturedAt},false).catch(failure=>locationClosed(entryId,failure))},async error=>{const waiting=unconfirmedShift(entryId)?null:clockedOutOnDevice(entryId);if(waiting&&(await waiting||S.locationEntryId!==entryId)){if(S.locationEntryId===entryId)stopLocationWatch();return}if(!unconfirmedShift(entryId))await peopleSet(peopleCollections.timeEntries,entryId,{locationStatus:'unavailable',locationError:String(error.message||'Location unavailable').slice(0,120),locationUpdatedAt:new Date().toISOString()},false).catch(failure=>locationClosed(entryId,failure));if(S.locationEntryId===entryId)stopLocationWatch()},{enableHighAccuracy:true,maximumAge:30000,timeout:20000})}
+// Shift location follows the viewer's active shift: it moves to a new shift, and stops when none is active (clocked out,
+// including a clock-out still queued on this device, or a queued clock-in refused, expired or discarded) or the shift's
+// location is paused (or waits on a read of the server to decide, pauseWhenOpen). A read the queue overtook again, or the
+// queue settling an action (start:false), never starts a watch; it only stops one (also one still bound to another
+// shift), and the next completed read decides. A location
+// update for a shift only this device has is not sent (unconfirmedShift); the watch sends once it is confirmed. While
+// the Hub's own clock-in or clock-out is being saved (S.clockSaving), S.people can be older than the server, so no watch
+// starts either: opsClockIn starts its own once the save is answered.
+function followActiveShift(start=true){const active=activeTimeEntry(),paused=pausedShifts();if(S.peopleState.loaded&&paused.size){for(const id of[...paused])if(!S.people.timeEntries.some(row=>row.id===id&&row.status==='active'&&!row.clockOutAt))paused.delete(id);keepPaused()}tellHeld();if(active?.locationTracking&&!paused.has(active.id)&&!S.pauseIfOpen.has(active.id)){if(start&&!S.clockSaving)startLocationWatch(active.id);else if(S.locationEntryId&&S.locationEntryId!==active.id)stopLocationWatch()}else stopLocationWatch()}
+// Offline saving switched off with the viewer's clock actions still on this device: they are held, never sent while it is
+// off, and the crew member is told once per action on this page, from the server's records. A held clock-out whose shift
+// the server still has open: clock out again (the time card keeps saying so, with location paused). A held clock-in the
+// server never had: clock in again.
+function tellHeld(){if(!S.peopleState.loaded||typeof showToast!=='function')return;for(const done of window.EGCHubOffline?.settled?.()||[]){if(done.outcome!=='held'||done.collection!==peopleCollections.timeEntries||S.heldTold.has(done.requestId))continue;const server=S.people.timeEntries.find(row=>row.id===done.id&&!row.pendingSync);if(done.clockOut&&server?.status==='active'&&!server.clockOutAt){S.heldTold.add(done.requestId);showToast('A clock-out saved on this device was not sent because offline saving is off — clock out again.');supersedeHeld(done.requestId)}else if(done.clockIn&&!server){S.heldTold.add(done.requestId);showToast('A clock-in saved on this device was not sent because offline saving is off — clock in again if you are working, or ask a manager for a time correction.');supersedeHeld(done.requestId)}}}
+// Told it was not sent and to do it again, the crew member never has it sent later: offline saving switched back on does
+// not replay it (a clock-in, with what was queued after it for that shift), so it cannot close a shift at an old time or
+// create a second one. It stays on this device, still pausing that shift's location, until they resume location, clock
+// out or clock in again (releaseHeld) or it expires.
+function supersedeHeld(requestId){const queue=window.EGCHubOffline;if(typeof queue?.supersede==='function')void queue.supersede(requestId).catch(()=>{})}
+function releaseHeld(entryId,op){const queue=window.EGCHubOffline;return typeof queue?.release==='function'?queue.release({entryId,op}).catch(()=>[]):Promise.resolve([])}
+// The Hub's own clock save: S.clockSaving is set while it is out.
+async function clockSave(collection,id,data){S.clockSaving++;try{return await peopleSet(collection,id,data)}finally{S.clockSaving=Math.max(0,S.clockSaving-1)}}
+// Resuming paused shift location says the crew member is still working that shift: a clock-out of it held on this device
+// (offline saving off) is removed, and one this device queued for it is forgotten (release), so neither pauses location
+// again at the next position fix, in this tab or another, nor closes the shift if offline saving is switched back on. The
+// watch starts at once; its first update waits for that (S.releasing).
+window.opsResumeLocation=()=>{const entry=activeTimeEntry();if(!entry)return;const held=(window.EGCHubOffline?.settled?.()||[]).some(done=>done.outcome==='held'&&done.clockOut&&done.id===entry.id);if(pausedShifts().has(entry.id)||S.pauseIfOpen.has(entry.id)){const release=releaseHeld(entry.id,'resume');S.releasing.set(entry.id,release);void release.then(()=>{if(S.releasing.get(entry.id)===release)S.releasing.delete(entry.id)})}pausedShifts().delete(entry.id);S.pauseIfOpen.delete(entry.id);keepPaused();followActiveShift();render('action');if(typeof showToast==='function')showToast(held?'Shift location is on again · the clock-out saved on this device will not be sent':'Shift location is on again')};
+window.opsClockIn=async()=>{if(activeTimeEntry())return;let position;try{position=await currentPosition()}catch(error){if(typeof showToast==='function')showToast('Clock-in needs location access. Enable location, then try again.');return}const p=ownProfile(),now=new Date().toISOString(),job=myShiftJobs().find(j=>String(j.date||'')===day())||myShiftJobs()[0]||null,id=`time-${personKey(p.id)}-${Date.now().toString(36)}`,point={lat:Number(position.coords.latitude.toFixed(6)),lng:Number(position.coords.longitude.toFixed(6)),accuracy:Math.round(position.coords.accuracy||0),capturedAt:now},entry={id,employee:p.id,employeeName:p.displayName,role:p.role,payType:p.payType,hourlyRate:Number(p.hourlyRate||0),clockInAt:now,clockOutAt:'',status:'active',approvalStatus:'open',jobId:job?.id||'',jobLabel:job?.customer||job?.serviceType||'',locationTracking:true,locationConsentAt:now,locationStatus:'tracking',lastLocation:point,locationTrail:[point],locationUpdatedAt:now,breaks:[],createdAt:now,updatedAt:now};const saved=await clockSave(peopleCollections.timeEntries,id,entry);void releaseHeld(id,'clock_in');startLocationWatch(id);render('action');if(typeof showToast==='function'&&!saved?.pendingAccount)showToast(saved?.pendingSync?'Clock-in saved on this device · it syncs when you are back online':'Clocked in · shift location is on')};
+window.opsClockOut=async()=>{const entry=activeTimeEntry();if(!entry)return;const now=new Date().toISOString(),hours=entryHours({...entry,clockOutAt:now});stopLocationWatch();const saved=await clockSave(peopleCollections.timeEntries,entry.id,{clockOutAt:now,status:'submitted',approvalStatus:'pending',hours:Number(hours.toFixed(3)),grossEstimate:Number((hours*Number(entry.hourlyRate||0)).toFixed(2)),locationTracking:false,locationStatus:'stopped',updatedAt:now});void releaseHeld(entry.id,'clock_out');render('action');if(typeof showToast==='function'&&!saved?.pendingAccount)showToast(saved?.pendingSync?`Clock-out saved on this device · ${hours.toFixed(2)} hours sync when you are back online`:`Clocked out · ${hours.toFixed(2)} hours submitted`)};
 window.opsStartBreak=async()=>{const entry=activeTimeEntry();if(!entry||entry.breaks?.some(b=>!b.endAt))return;const breaks=[...(entry.breaks||[]),{startAt:new Date().toISOString(),endAt:''}];await peopleSet(peopleCollections.timeEntries,entry.id,{breaks,updatedAt:new Date().toISOString()})};
 window.opsEndBreak=async()=>{const entry=activeTimeEntry();if(!entry)return;const breaks=(entry.breaks||[]).map((b,i,a)=>i===a.length-1&&!b.endAt?{...b,endAt:new Date().toISOString()}:b);await peopleSet(peopleCollections.timeEntries,entry.id,{breaks,updatedAt:new Date().toISOString()})};
-function timeClockCard(){const entry=activeTimeEntry(),onBreak=entry?.breaks?.some(b=>!b.endAt),tracking=entry?.locationTracking&&S.locationWatch!=null;if(!entry)return`<section class="ops-card ops-clock-card"><span class="ops-eyebrow">TIME CLOCK</span><h2>Ready when you are</h2><p class="ops-body">Location is required while clocked in so dispatch and customers can receive accurate arrival progress. Tracking stops automatically at clock-out.</p><div class="ops-clock-actions"><button class="ops-button primary" onclick="opsClockIn()">Clock in + start shift location</button></div></section>`;return`<section class="ops-card ops-clock-card active"><div><span class="ops-live-dot"></span><span class="ops-eyebrow">CLOCKED IN</span></div><h2>${entryHours(entry).toFixed(2)} hours today</h2><p>${esc(entry.jobLabel||'General company time')} · Started ${timeLabel(entry.clockInAt)}</p><div class="ops-clock-meta">${badge(tracking?'Location sharing on':entry.locationStatus==='unavailable'?'Location needs attention':'Location starting',tracking?'good':entry.locationStatus==='unavailable'?'warn':'info')}${badge(onBreak?'On break':'Working',onBreak?'warn':'good')}</div>${entry.locationStatus==='unavailable'?'<p class="ops-clock-warning">Location stopped unexpectedly. Keep the Hub open and restore phone location access.</p>':''}<div class="ops-clock-actions">${onBreak?'<button class="ops-button" onclick="opsEndBreak()">End break</button>':'<button class="ops-button" onclick="opsStartBreak()">Start break</button>'}<button class="ops-button danger" onclick="opsClockOut()">Clock out</button></div></section>`}
+function timeClockCard(){const entry=activeTimeEntry(),onBreak=entry?.breaks?.some(b=>!b.endAt),paused=Boolean(entry&&pausedShifts().has(entry.id)),tracking=entry?.locationTracking&&S.locationWatch!=null;if(!entry)return`<section class="ops-card ops-clock-card"><span class="ops-eyebrow">TIME CLOCK</span><h2>Ready when you are</h2><p class="ops-body">Location is required while clocked in so dispatch and customers can receive accurate arrival progress. Tracking stops automatically at clock-out.</p><div class="ops-clock-actions"><button class="ops-button primary" onclick="opsClockIn()">Clock in + start shift location</button></div></section>`;return`<section class="ops-card ops-clock-card active"><div><span class="ops-live-dot"></span><span class="ops-eyebrow">CLOCKED IN</span></div><h2>${entryHours(entry).toFixed(2)} hours today</h2><p>${esc(entry.jobLabel||'General company time')} · Started ${timeLabel(entry.clockInAt)}</p><div class="ops-clock-meta">${paused?badge('Location paused','warn'):badge(tracking?'Location sharing on':entry.locationStatus==='unavailable'?'Location needs attention':'Location starting',tracking?'good':entry.locationStatus==='unavailable'?'warn':'info')}${badge(onBreak?'On break':'Working',onBreak?'warn':'good')}</div>${paused?'<p class="ops-clock-warning" role="alert">Clock-out not saved — clock out again. Shift location is paused until you resume it or clock out.</p>':entry.locationStatus==='unavailable'?'<p class="ops-clock-warning">Location stopped unexpectedly. Keep the Hub open and restore phone location access.</p>':''}<div class="ops-clock-actions">${paused?'<button class="ops-button" onclick="opsResumeLocation()">Resume location</button>':''}${onBreak?'<button class="ops-button" onclick="opsEndBreak()">End break</button>':'<button class="ops-button" onclick="opsStartBreak()">Start break</button>'}<button class="ops-button danger" onclick="opsClockOut()">Clock out</button></div></section>`}
 function announcementList(limit=5){const rows=[...S.people.announcements].filter(x=>x.status!=='archived').sort((a,b)=>String(b.createdAt||'').localeCompare(String(a.createdAt||''))).slice(0,limit),me=employeeIdentity();if(!rows.length)return empty('No announcements','Company updates and schedule notices will show here.');return`<div class="ops-announcements">${rows.map(a=>{const read=(a.readBy||[]).some(x=>sameEmployee(x,me));return`<article class="${read?'read':''}"><div><span>${esc((a.priority||'normal').toUpperCase())}</span><h3>${esc(a.title||'Update')}</h3><p>${esc(a.body||'')}</p><small>${dateLabel(a.createdAt)} · ${esc(a.createdBy||'EGC')}</small></div>${read?badge('Read','good'):`<button onclick="opsAcknowledgeAnnouncement('${esc(a.id)}')">Mark read</button>`}</article>`}).join('')}</div>`}
 function notifyAnnouncements(rows){if(!('Notification'in window)||Notification.permission!=='granted'||localStorage.getItem('egc_browser_alerts')!=='on')return;let seen=[];try{seen=JSON.parse(localStorage.getItem('egc_seen_announcements')||'[]')}catch{}const fresh=rows.filter(a=>a.status!=='archived'&&!seen.includes(a.id));fresh.slice(-2).forEach(a=>new Notification(a.title||'EGC team update',{body:String(a.body||'').slice(0,180),tag:a.id}));localStorage.setItem('egc_seen_announcements',JSON.stringify([...new Set([...seen,...rows.map(a=>a.id)])].slice(-100)))}
 function notifyChatMessages(){if(!('Notification'in window)||Notification.permission!=='granted'||localStorage.getItem('egc_browser_alerts')!=='on')return;const rows=[...S.people.teamMessages,...S.people.jobMessages].filter(x=>x.status!=='archived'&&!sameEmployee(x.sender,employeeIdentity())).sort((a,b)=>String(a.createdAt||'').localeCompare(String(b.createdAt||'')));let seen=[];try{seen=JSON.parse(localStorage.getItem('egc_seen_chat_messages')||'[]')}catch{}const fresh=rows.filter(x=>!seen.includes(x.id));fresh.slice(-2).forEach(message=>new Notification(message.jobId?'New job-room message':'New crew-chat message',{body:`${message.senderName||message.sender}: ${String(message.body||'').slice(0,150)}`,tag:message.id}));localStorage.setItem('egc_seen_chat_messages',JSON.stringify([...new Set([...seen,...rows.map(x=>x.id)])].slice(-300)))}

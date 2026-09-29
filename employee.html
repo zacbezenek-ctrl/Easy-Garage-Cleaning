@@ -6,7 +6,7 @@
   <title>Employee Portal — Easy Garage Cleaning</title>
   <meta name="robots" content="noindex, nofollow">
   <!-- Content Security Policy — restricts where scripts/connections can go -->
-  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'unsafe-inline' www.gstatic.com maps.googleapis.com; style-src 'self' 'unsafe-inline' fonts.googleapis.com; font-src fonts.gstatic.com data:; connect-src 'self' *.googleapis.com *.firebaseio.com *.firebaseapp.com firestore.googleapis.com; img-src 'self' data: maps.gstatic.com maps.googleapis.com; media-src 'self' blob:; frame-src 'none'; object-src 'none'; base-uri 'self';">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'unsafe-inline' www.gstatic.com maps.googleapis.com; style-src 'self' 'unsafe-inline' fonts.googleapis.com; font-src fonts.gstatic.com data:; connect-src 'self' *.googleapis.com *.firebaseio.com *.firebaseapp.com firestore.googleapis.com; img-src 'self' data: blob: https: maps.gstatic.com maps.googleapis.com; media-src 'self' blob:; frame-src 'none'; object-src 'none'; base-uri 'self';">
   <meta name="apple-mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-title" content="EGC Portal">
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
@@ -3006,9 +3006,11 @@ window.addEventListener('egc:booking-recovered',event=>{const key=event.detail?.
 <script src="employee-booking.js?v=20260928recur"></script>
 <script src="employee-field-today.js?v=20260922ops"></script>
 <script src="employee-availability.js?v=20260922ops"></script>
+<link rel="stylesheet" href="employee-offline-queue.css?v=20260929hubpwa">
+<script src="employee-offline-queue.js?v=20260929hubpwa2"></script>
 <link rel="stylesheet" href="employee-pto.css?v=20260928pto">
 <script src="employee-pto.js?v=20260928ptoamend"></script>
-<script src="employee-hub-screens.js?v=20260929crewnotify"></script>
+<script src="employee-hub-screens.js?v=20260929hubpwa"></script>
 <link rel="stylesheet" href="employee-followups-home.css?v=20260928overdue">
 <script src="employee-followups-home.js?v=20260928overdue"></script>
 <script src="employee-review-alerts.js?v=20260928reviews"></script>
@@ -3018,7 +3020,7 @@ window.addEventListener('egc:booking-recovered',event=>{const key=event.detail?.
 <script src="employee-labor-costs.js?v=20260929laborforbidden"></script>
 <link rel="stylesheet" href="employee-staff.css?v=20260928team">
 <script src="employee-staff.js?v=20260928team"></script>
-<script src="employee-suite.js?v=20260929ghl"></script>
+<script src="employee-suite.js?v=20260929hubpwa"></script>
 <link rel="stylesheet" href="employee-money-actions.css?v=20260928money">
 <script src="employee-money-actions.js?v=20260929ghl"></script>
 <link rel="stylesheet" href="employee-customer-lifecycle.css?v=20260928fun36">

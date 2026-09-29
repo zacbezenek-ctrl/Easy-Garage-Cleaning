@@ -46,6 +46,14 @@ export function timecardHours(entry, now = Date.now()) {
 
 export const activeTimecard = entry => Boolean(entry && entry.status === 'active' && !entry.clockOutAt);
 
+// Location a shift records while it is open: a position fix, its trail, and whether location is being shared.
+const locationFields = ['lastLocation', 'locationTrail', 'locationUpdatedAt', 'locationError'];
+// Whether a save changes a closed shift's location record: a new position, trail or location error, location turned back
+// on, or a status other than the 'stopped' that every clock-out (and its replay) sends.
+const lateLocation = (existing, incoming) => locationFields.some(key => own(incoming, key) && !equal(incoming[key], existing[key]))
+  || own(incoming, 'locationStatus') && incoming.locationStatus !== 'stopped' && incoming.locationStatus !== existing.locationStatus
+  || incoming.locationTracking === true && existing.locationTracking !== true;
+
 function location(value, now) {
   const lat = value?.lat, lng = value?.lng, accuracy = value?.accuracy;
   if (typeof lat !== 'number' || typeof lng !== 'number' || !Number.isFinite(lat) || !Number.isFinite(lng) || Math.abs(lat) > 90 || Math.abs(lng) > 180) throw timecardError('A valid shift location is required.');
@@ -90,27 +98,70 @@ function withAudit(existing, next, session, now, action) {
       changes: Object.fromEntries(changes.map(key => [key, { before: existing?.[key] ?? null, after: next[key] ?? null }])) }] : history };
 }
 
-function changeBreak(existing, incoming, stamp) {
+// A Hub action queued on the device (queued) is built on the device's own copy, which has no server request IDs yet, so
+// its earlier breaks are compared by their times; the rows kept are always the server's. Every other save compares the
+// earlier rows whole, as before.
+const breakTimes = rows => rows.map(item => ({ startAt: item?.startAt, endAt: item?.endAt }));
+
+function changeBreak(existing, incoming, stamp, queued = false) {
   if (!Array.isArray(incoming) || incoming.length > 100) throw timecardError('A valid break action is required.');
-  const previous = Array.isArray(existing) ? existing : [];
+  const previous = Array.isArray(existing) ? existing : [], earlier = queued ? breakTimes : rows => rows;
   const last = previous.at(-1), proposed = incoming.at(-1), request = uuid(proposed?.requestId) ? proposed.requestId.toLowerCase() : '';
   if (equal(previous, incoming)) return previous;
   // A queued crew break keeps its request ID, so a replay after the break was
   // changed elsewhere is a no-op instead of a second break.
   if (request && previous.some(item => item?.startRequestId === request || item?.endRequestId === request)) return previous;
   if (!last?.endAt && last) {
-    if (incoming.length !== previous.length || !equal(incoming.slice(0, -1), previous.slice(0, -1))) throw timecardError('Only the current break can be ended.');
+    if (incoming.length !== previous.length || !equal(earlier(incoming.slice(0, -1)), earlier(previous.slice(0, -1)))) throw timecardError('Only the current break can be ended.');
     // The browser sends its capture time; the server owns both break timestamps.
     if (!proposed?.endAt) return previous;
     if (proposed.startAt !== last.startAt) throw timecardError('The break changed. Refresh your timecard before ending it.', 409);
     return [...previous.slice(0, -1), { ...last, endAt: stamp(), ...(request ? { endRequestId: request } : {}) }];
   }
-  if (incoming.length === previous.length + 1 && equal(incoming.slice(0, -1), previous) && proposed && !proposed.endAt) return [...previous, { startAt: stamp(), endAt: '', ...(request ? { startRequestId: request } : {}) }];
-  if (last && incoming.length === previous.length && equal(incoming.slice(0, -1), previous.slice(0, -1)) && proposed.startAt === last.startAt && proposed.endAt) return previous;
+  if (incoming.length === previous.length + 1 && equal(earlier(incoming.slice(0, -1)), earlier(previous)) && proposed && !proposed.endAt) return [...previous, { startAt: stamp(), endAt: '', ...(request ? { startRequestId: request } : {}) }];
+  if (last && incoming.length === previous.length && equal(earlier(incoming.slice(0, -1)), earlier(previous.slice(0, -1))) && proposed.startAt === last.startAt && proposed.endAt) return previous;
   throw timecardError('Recorded breaks cannot be rewritten. Ask a manager for a time correction.', 403);
 }
 
-export function authorizeTimecard({ session, manager, id, incoming, existing, hourlyRate = 0, now = new Date().toISOString(), env = {} }) {
+// The Hub's own clock actions, as its offline queue keeps them (employee-offline-queue.js describe()): a clock-in (an
+// open shift with its start time, sharing location), a clock-out (only the clock-out fields; the crew app adds its
+// capture time) and a break started or ended (the breaks, with the new one's request ID).
+const CLOCK_OUT_KEYS = ['clockOutAt', 'status', 'approvalStatus', 'hours', 'grossEstimate', 'locationTracking', 'locationStatus', 'updatedAt', 'deviceCapturedAt'];
+const clockInSave = incoming => incoming.status === 'active' && !incoming.clockOutAt && typeof incoming.clockInAt === 'string' && incoming.locationTracking === true;
+const clockOutSave = incoming => Boolean(incoming.clockOutAt) && incoming.status === 'submitted' && Object.keys(incoming).every(key => CLOCK_OUT_KEYS.includes(key));
+const breakSave = incoming => Array.isArray(incoming.breaks) && Object.keys(incoming).every(key => ['breaks', 'updatedAt', 'deviceCapturedAt'].includes(key));
+const sameEmployee = (entry, session) => text(entry?.employee).toLowerCase() === text(session?.user).toLowerCase();
+
+// A manager's own queued break (queuedClock): the time the Hub showed for it is kept, as for every manager save, and it
+// is recorded as an employee's is, once (a replay is a no-op by its request ID) and only on an open shift. On a closed
+// one it is refused unless it is already there.
+function managerBreak(existing, incoming, now) {
+  const previous = Array.isArray(existing.breaks) ? existing.breaks : [], proposed = incoming.at(-1);
+  if (!activeTimecard(existing)) {
+    const request = uuid(proposed?.requestId) ? proposed.requestId.toLowerCase() : '';
+    if (request && previous.some(item => item?.startRequestId === request || item?.endRequestId === request) || equal(breakTimes(previous), breakTimes(incoming))) return previous;
+    throw timecardError('This shift is closed, so this break was not recorded. Correct the timecard’s breaks instead.', 409);
+  }
+  const shown = instant(proposed?.endAt || proposed?.startAt);
+  return changeBreak(previous, incoming, () => Number.isFinite(shown) ? new Date(shown).toISOString() : now, true);
+}
+
+// A manager's own clock action kept on a device (queued: the offline queue's request ID is in the body) is sent again,
+// with the same body, until an answer arrives, so like an employee's it is applied once. Its replay after a lost reply
+// never reopens, un-approves or rewrites a card changed since, here or on another device: a clock-in replayed onto its
+// timecard, or a clock-out onto a closed one, changes nothing, and a break goes through managerBreak. Returns the
+// existing card for a no-op, the save to apply otherwise (a break as the server's rows). The manager's first clock-in
+// and a clock-out of an open shift are saved as before, as are direct saves (administrative corrections and reopening a
+// shift, and every save with HUB_OFFLINE_ENABLED off).
+function queuedClock(existing, incoming, now) {
+  if (clockInSave(incoming)) return existing;
+  if (clockOutSave(incoming)) return existing.clockOutAt ? existing : incoming;
+  if (!breakSave(incoming)) return incoming;
+  const breaks = managerBreak(existing, incoming.breaks, now);
+  return equal(breaks, existing.breaks ?? []) ? existing : { breaks };
+}
+
+export function authorizeTimecard({ session, manager, id, incoming, existing, hourlyRate = 0, now = new Date().toISOString(), env = {}, queued = false }) {
   const device = offlineClockEnabled(env);
   if (incoming.jobAction) {
     if (Object.keys(incoming).some(key => key !== 'jobAction')) throw timecardError('Send job-time changes separately from other timecard edits.');
@@ -127,7 +178,21 @@ export function authorizeTimecard({ session, manager, id, incoming, existing, ho
   }
   if (own(incoming, 'jobTracking') && !equal(incoming.jobTracking, existing?.jobTracking)) throw timecardError('Job time segments are server records and cannot be replaced.', 403);
   if (manager) {
+    if (queued && existing && sameEmployee(existing, session)) {
+      const save = queuedClock(existing, incoming, now);
+      if (save === existing) return existing;
+      incoming = save;
+    }
     const next = { ...(existing || {}), ...incoming, id };
+    // A new timecard names its employee, so a location update for a shift the server does not have (a queued clock-in
+    // not yet replayed, discarded or refused) never creates an employee-less record out of it. Administrative imports
+    // and corrections that name the employee are created as before.
+    if (!existing && !text(next.employee)) throw timecardError('A new timecard needs an employee.');
+    // A closed shift's location record is final for a manager too (an employee's save to it is refused below): a position
+    // fix or location status sent after the clock-out (a Hub tab whose location watch outlived the shift) is refused, and
+    // the card keeps its clock-out location status. A save that repeats the stored values, or that reopens the shift, is
+    // unaffected.
+    if (existing && !activeTimecard(existing) && !activeTimecard(next) && lateLocation(existing, incoming)) throw timecardError('This shift is closed, so its location is no longer updated.', 409);
     // Existing administrative import/correction support is preserved. Every
     // actual approval must nevertheless refer to a completed valid shift.
     const changedTime = existing && timeFields.some(key => own(incoming, key) && !equal(existing[key], next[key]));
@@ -171,8 +236,7 @@ export function authorizeTimecard({ session, manager, id, incoming, existing, ho
   if (!activeTimecard(existing) || ['approved', 'rejected', 'pending'].includes(existing.approvalStatus)) {
     // An uncertain clock-out response may be safely retried without reopening,
     // changing, or revoking the already submitted/approved card.
-    const clockOutKeys = ['clockOutAt', 'status', 'approvalStatus', 'hours', 'grossEstimate', 'locationTracking', 'locationStatus', 'updatedAt', 'deviceCapturedAt'];
-    if (existing.clockOutAt && incoming.clockOutAt && incoming.status === 'submitted' && Object.keys(incoming).every(key => clockOutKeys.includes(key))) return existing;
+    if (existing.clockOutAt && clockOutSave(incoming)) return existing;
     throw timecardError('Only a manager can correct a submitted, approved, or rejected timecard.', 403);
   }
   const next = { ...existing };
@@ -181,7 +245,7 @@ export function authorizeTimecard({ session, manager, id, incoming, existing, ho
   if (own(incoming, 'jobId') && text(incoming.jobId) !== text(existing.jobId)) throw timecardError('Use Start job time or Switch job time so earlier shift hours keep their original job.', 409);
   if (own(incoming, 'notes')) next.notes = text(incoming.notes, 2000);
   let breakAt = '';
-  if (own(incoming, 'breaks')) next.breaks = changeBreak(existing.breaks, incoming.breaks, () => (breakAt = stamp(existing)));
+  if (own(incoming, 'breaks')) next.breaks = changeBreak(existing.breaks, incoming.breaks, () => (breakAt = stamp(existing)), queued);
   if (incoming.lastLocation) {
     const point = location(incoming.lastLocation, now);
     next.lastLocation = point; next.locationTrail = [...(existing.locationTrail || []), point].slice(-120); next.locationUpdatedAt = now;
