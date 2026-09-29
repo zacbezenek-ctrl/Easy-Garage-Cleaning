@@ -531,6 +531,10 @@ draft PR. The owner merges in phase order. See **Decisions** D-001.
   thread (caret kept; the HighLevel thread request is byte-identical, one send per tap), crew/job.js status reasons and the manager
   checklist editor (superseded notice for a crew-mate's same status), business hub forms and open panels (fresh request id per
   submit), and schedule alerts (refresh waits while edits are unsaved).
+- **STAFF-ACCESS** (P1 auth/pay; EGC_STAFF_PASSWORD_RESET off, EGC_STAFF_MANAGER_GRANTS) Reset sign-in makes a single-use 24 h link
+  (digest stored, never sent) that rotates sessions, revokes Firebase and locks the old password; Change password under My EGC;
+  approvals set a role and (owner) a starting rate; backdated first rate floored at approvedAt; owner Apply rate to open weeks;
+  payroll CSV/Gusto downloads recorded in payrollWeekExports (409 on a race). Grants never include pay.manage (GO-LIVE 3.6).
 
 ## In progress
 
@@ -656,6 +660,7 @@ one prefixed commit only after the full root suite (and the platform suite when 
 | FIX-MONEY-INVOICE-STATE | P1 money: payments never fabricate invoices; credits are not cash (MONEY_INVOICE_STATE_ENABLED, off) | merged (924ed44) |
 | FIX-DISPATCH-READY | P1 Dispatch: reminder, price and deposit readiness on each visit (EGC_DISPATCH_NOTIFY_IMPORTED_ON, off) | merged (d8de34c) |
 | FIX-EDIT-WIPE | P1 UI: typed text survives background reloads (Hub chat and customer thread, crew job reason and checklist, business hub forms, schedule alerts) | merged (6f5dd90) |
+| STAFF-ACCESS | P1 auth/pay: staff sign-in reset and password change; approvals set role and starting rate (EGC_STAFF_PASSWORD_RESET, off) | merged (d3e8358) |
 
 ## Next
 

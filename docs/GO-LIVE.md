@@ -326,6 +326,7 @@ Every website lead already goes to HighLevel. Stage 2 makes that durable (nothin
 | 3.3 | Recording in the Hub | Railway bridge (B5) |
 | 3.4 | `EGC_WALKTHROUGH_VISIT_ENABLED=true` (after FUN-06) | Cloudflare, plain |
 | 3.5 | `EGC_STAFF_ROLE_ACCESS=true` (owner decision: on) | Cloudflare, plain |
+| 3.6 | `EGC_STAFF_PASSWORD_RESET=true`, `EGC_STAFF_MANAGER_GRANTS=accounts.reset,accounts.approve` | Cloudflare, plain |
 
 ### 3.1 Team roles (staff directory)
 
@@ -401,6 +402,31 @@ Every website lead already goes to HighLevel. Stage 2 makes that durable (nothin
   4. Take the Manager role away again. The staff directory confirms the sign-out, and Hub → Integrations shows no pending Firebase sign-out.
   5. Sign in as yourself. You still have owner access.
 - **Roll back:** delete the variable and retry the deployment. Business access goes back to the configured business users, and Sales and Phone can no longer book. Saved roles stay. A stored manager's Firebase data session ends the next time a business user loads the Hub on easygaragecleaning.com. A session issued in the half minute before that load ends on a later load. Hub → Integrations shows any sign-out still pending.
+
+
+### 3.6 Staff sign-in resets, password change and approvals
+
+- **Set:** `EGC_STAFF_PASSWORD_RESET=true`. Optional, recommended: `EGC_STAFF_MANAGER_GRANTS=accounts.reset,accounts.approve`.
+- **Where:** Cloudflare Pages, plain. Preview first, then Production.
+- **Turns on:**
+  - **Reset sign-in** on each Team card, for you (and managers granted `accounts.reset`, never on a manager's account). It makes a single-use link that works once, for 24 hours. The Hub shows it to copy and never sends it: give it to the person yourself. It ends their Hub and Firebase data sessions at once and locks the old password until the link sets a new one.
+  - **Change password** under My EGC, for employee accounts.
+  - **Approve account** asks for the starting role and, from you, the starting rate. A manager granted `accounts.approve` reviews pending requests only and sets the role only; pay stays pending for you.
+  - A first rate you may date back to the day the account was approved, and **Apply rate to open weeks**, which fills $0 timecards in weeks not yet exported.
+  - Payroll CSV and Gusto hours downloads are recorded per week, so Apply rate never changes a week already exported. If a download says the week's pay changed while the file was prepared, download it again.
+  - Pay is always yours: it can never be granted. A granted manager never touches a manager's account or roles, or an account already approved or rejected.
+- **Needs first:**
+  1. The staff directory is on and its migrations have run ([3.1](#31-team-roles-staff-directory)).
+  2. The Firebase service account has the **Firebase Authentication Admin** role ([1.3](#13-security-steps-with-no-switch), step 3), so a reset signs the person out of Firebase data at once.
+  3. The rules from this build are published ([B4](#b4-publish-firestore-rules-and-indexes)). The reset receipts and payroll export records are server-only.
+- **Grants and role access:** `accounts.approve` also lets that manager change staff roles in the directory. With `EGC_STAFF_ROLE_ACCESS` on ([3.5](#35-staff-roles-grant-access-owner-decision-on)), giving someone Sales or Phone gives them booking and every customer's contact details in Dispatch.
+- **Payroll weeks paid before the switch:** downloads made before it was on are not recorded. When you use **Apply rate**, untick any week you have already paid.
+- **New hires:** approve them with a starting rate. If a manager approved one, set the first rate back to the approval day, then **Apply rate** before exporting that week.
+- **Check it worked (Preview):**
+  1. On a test employee's Team card, press **Reset sign-in** and copy the link. Their old password no longer works. The link sets a new one once, and opening it again fails.
+  2. Sign in as that employee and use **Change password** under My EGC.
+  3. Approve a test account request with a role and a starting rate. Its first timecards show pay after **Apply rate to open weeks**.
+- **Roll back:** delete the variables. Approval, sign-in, the setup page, the staff directory and timesheets behave exactly as before. Reset links not yet used stop working, and those people's old passwords work again.
 
 ## Stage 4: Crew scheduling and the field day
 

@@ -6,7 +6,7 @@ import {
   hubAuthConfigured,
   isHubOwner,
 } from '../_lib/hub-session.js';
-import { capabilityMode, staffCapabilities, staffRoleAccessEnabled } from '../_lib/staff-roles.js';
+import { capabilityMode, staffCapabilities, staffPasswordResetEnabled, staffRoleAccessEnabled } from '../_lib/staff-roles.js';
 
 const HOST = /^(?:easygaragecleaning\.com|www\.easygaragecleaning\.com|easy-garage-cleaning\.pages\.dev|localhost(?::\d+)?|127\.0\.0\.1(?::\d+)?)$/;
 
@@ -56,7 +56,8 @@ export async function onRequestPost({ request, env }) {
     });
   }
   if (!profile) {
-    return reply(401, { ok: false, error: 'Incorrect username or password' });
+    // STAFF-ACCESS: with sign-in resets on, a manager can issue a reset link (the Hub never sends it).
+    return reply(401, { ok: false, error: staffPasswordResetEnabled(env) ? 'Incorrect username or password. Forgot it? Ask a manager for a sign-in reset link.' : 'Incorrect username or password' });
   }
   const cookie = await createHubSessionCookie(env, profile.user, profile);
   return reply(200, { ok: true, ...profile, ...access(profile, env) }, { 'Set-Cookie': cookie });

@@ -3,6 +3,8 @@ import { employeeVaultReadOnly } from '../_lib/employee-vault-key.js';
 import { getHubUserProfile } from '../_lib/hub-session.js';
 import { STAFF_INVITATIONS } from '../_lib/staff-invitation-manifest.js';
 import { createStaffInvitationService } from '../_lib/staff-invitation-service.js';
+import { staffPasswordResetEnabled } from '../_lib/staff-roles.js';
+import { staffResetStore } from '../_lib/staff-access.js';
 const ORIGIN='https://easygaragecleaning.com';
 export function staffSetupReply(status,body){return new Response(JSON.stringify(body),{status,headers:{'Content-Type':'application/json; charset=utf-8','Cache-Control':'no-store','Referrer-Policy':'no-referrer','X-Robots-Tag':'noindex, nofollow'}});}
 export async function handleStaffSetup(request,service){
@@ -17,12 +19,17 @@ export async function handleStaffSetup(request,service){
     const bytes=new Uint8Array(count);let offset=0;for(const item of chunks){bytes.set(item,offset);offset+=item.length;}
     let input;try{input=JSON.parse(new TextDecoder().decode(bytes));}catch{return staffSetupReply(400,{error:'Invalid JSON'});}
     if(!input||typeof input!=='object'||Array.isArray(input))return staffSetupReply(400,{error:'Invalid request'});
-    const keys={inspect:['action','invite'],redeem:['action','invite','email','password','confirmPassword']};
+    // STAFF-ACCESS: a sign-in reset link (service.resetInvite) is inspected and used with action 'reset' only while the
+    // service has its reset store (EGC_STAFF_PASSWORD_RESET on); otherwise such links are invalid as before.
+    const keys={inspect:['action','invite'],redeem:['action','invite','email','password','confirmPassword'],...(service.resets?{reset:['action','invite','password','confirmPassword']}:{})};
     if(!Object.hasOwn(keys,input.action)||Object.keys(input).some(k=>!keys[input.action].includes(k)))return staffSetupReply(400,{error:'Invalid request fields'});
+    if(service.resets&&service.resetInvite(input.invite))return staffSetupReply(200,input.action==='inspect'?await service.inspectReset(input.invite):input.action==='reset'?await service.reset(input.invite,input):await service.redeem(input.invite,input));
+    if(input.action==='reset')return staffSetupReply(400,{error:'Invalid request fields'});
     return staffSetupReply(200,input.action==='inspect'?await service.inspect(input.invite):await service.redeem(input.invite,input));
   }catch(error){return staffSetupReply(error.status||503,{error:error.publicMessage||'Setup could not be confirmed. If you submitted a password, try normal staff sign-in before asking for another link.'});}
 }
 export async function onRequest({request,env}){
   if(!employeeAccountsConfigured(env)||employeeVaultReadOnly(env))return staffSetupReply(503,{error:'Secure staff setup is unavailable. Please contact Zac.'});
-  return handleStaffSetup(request,createStaffInvitationService({store:employeeInvitationStore(env),manifests:STAFF_INVITATIONS,staticUsernameExists:username=>Boolean(getHubUserProfile(env,username))}));
+  const resets=staffPasswordResetEnabled(env)?staffResetStore(env):null;
+  return handleStaffSetup(request,createStaffInvitationService({store:employeeInvitationStore(env),manifests:STAFF_INVITATIONS,staticUsernameExists:username=>Boolean(getHubUserProfile(env,username)),resets}));
 }

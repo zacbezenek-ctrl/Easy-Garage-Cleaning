@@ -554,6 +554,14 @@ service cloud.firestore {
     match /employeeVaultMigrations/{documentId} {
       allow read, write: if false;
     }
+    // STAFF-ACCESS receipts (sign-in resets, password changes, account reviews,
+    // Apply rate) and the payroll week export records are server-only too.
+    match /staffAccessOperations/{documentId} {
+      allow read, write: if false;
+    }
+    match /payrollWeekExports/{documentId} {
+      allow read, write: if false;
+    }
 
     // Garage catalog versions (immutable snapshots and the published pointer),
     // owner pricing settings, every saved settings version and their request

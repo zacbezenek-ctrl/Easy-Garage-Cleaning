@@ -34,8 +34,23 @@ export const ROLE_ACCESS_CAPABILITIES = Object.freeze({
   sales: ACCESS_CAPABILITIES,
   phone: Object.freeze(['schedule.book']),
 });
+// STAFF-ACCESS: capabilities that exist only with EGC_STAFF_PASSWORD_RESET on (staffPasswordResetEnabled).
+// accounts.reset issues a staff member's single-use sign-in reset link; it is the owner's. password.change is
+// self-service: every signed employee-account session changes its own password (configured Hub users keep theirs
+// in the Hub configuration). With the flag on, EGC_STAFF_MANAGER_GRANTS (comma separated) lets the owner give
+// managers accounts.reset and accounts.approve (a manager approving an account sets the role only; pay.manage is
+// never grantable). Flag off: can() answers false for these, grants are ignored and no list reports them.
+export const RESET_CAPABILITIES = Object.freeze(['accounts.reset', 'password.change']);
+export const MANAGER_GRANTABLE = Object.freeze(['accounts.reset', 'accounts.approve']);
+const ROLE_RESET_CAPABILITIES = Object.freeze({ owner: Object.freeze(['accounts.reset']), manager: Object.freeze([]), crew_lead: Object.freeze([]), crew: Object.freeze([]), sales: Object.freeze([]), phone: Object.freeze([]) });
+export const staffPasswordResetEnabled = env => env?.EGC_STAFF_PASSWORD_RESET === 'true';
+export function managerGrants(env = {}) {
+  if (!staffPasswordResetEnabled(env)) return [];
+  const named = String(env?.EGC_STAFF_MANAGER_GRANTS ?? '').split(',').map(name => name.trim());
+  return MANAGER_GRANTABLE.filter(capability => named.includes(capability));
+}
 const ROLE_PRECEDENCE = ['owner', 'manager', 'crew_lead', 'sales', 'phone', 'crew'];
-const known = new Set(STAFF_ROLES), capabilities = new Set(STAFF_CAPABILITIES), ownerOnly = new Set(OWNER_CAPABILITIES), accessOnly = new Set(ACCESS_CAPABILITIES);
+const known = new Set(STAFF_ROLES), capabilities = new Set(STAFF_CAPABILITIES), ownerOnly = new Set(OWNER_CAPABILITIES), accessOnly = new Set(ACCESS_CAPABILITIES), resetOnly = new Set(RESET_CAPABILITIES);
 const signedProfile = session => Boolean(session) && typeof session === 'object' && !Array.isArray(session) && typeof session.user === 'string' && Boolean(session.user.trim());
 
 export { staffRoleAccessEnabled };
@@ -96,23 +111,35 @@ export function capabilityMode(session, env) {
   return staffRolePermissionsEnabled(env) && signedProfile(session) && capabilityRoles(session, env) ? 'staff_roles' : 'legacy';
 }
 
+// The manager a STAFF-ACCESS grant reaches: a dispatcher under the legacy checks, or a holder of the manager role.
+const grantedManager = (session, env, legacy) => legacy ? hasBusinessAccess(session) && ['owner', 'manager'].includes(session.role) : capabilityRoles(session, env).includes('manager');
+
 export function can(session, capability, env = {}) {
-  const access = accessOnly.has(capability);
-  if (!access && !capabilities.has(capability)) throw new TypeError(`Unknown staff capability: ${capability}`);
-  if (!signedProfile(session) || access && !staffRoleAccessEnabled(env)) return false;
-  if (capabilityMode(session, env) === 'legacy') return legacyCan(session, capability);
-  if (ownerOnly.has(capability) && !isHubOwner(session)) return false;
-  const matrix = access ? ROLE_ACCESS_CAPABILITIES : ROLE_CAPABILITIES;
+  const access = accessOnly.has(capability), reset = resetOnly.has(capability);
+  if (!access && !reset && !capabilities.has(capability)) throw new TypeError(`Unknown staff capability: ${capability}`);
+  if (!signedProfile(session) || access && !staffRoleAccessEnabled(env) || reset && !staffPasswordResetEnabled(env)) return false;
+  if (capability === 'password.change') return session.source === 'employee-account';
+  const legacy = capabilityMode(session, env) === 'legacy';
+  if (managerGrants(env).includes(capability) && grantedManager(session, env, legacy)) return true;
+  if (legacy) return reset ? isHubOwner(session) : legacyCan(session, capability);
+  if ((ownerOnly.has(capability) || reset) && !isHubOwner(session)) return false;
+  const matrix = access ? ROLE_ACCESS_CAPABILITIES : reset ? ROLE_RESET_CAPABILITIES : ROLE_CAPABILITIES;
   return capabilityRoles(session, env).some(role => matrix[role].includes(capability));
 }
 
 // The capability names and role matrix a viewer is told about: with EGC_STAFF_ROLE_ACCESS
 // off, exactly STAFF_CAPABILITIES and ROLE_CAPABILITIES.
+// With EGC_STAFF_PASSWORD_RESET on, the names add accounts.reset and password.change, and the matrix adds accounts.reset
+// to the owner and the owner's grants to managers (password.change follows the account, not a role).
 export function capabilityNames(env = {}) {
-  return staffRoleAccessEnabled(env) ? [...STAFF_CAPABILITIES, ...ACCESS_CAPABILITIES] : STAFF_CAPABILITIES;
+  const names = staffRoleAccessEnabled(env) ? [...STAFF_CAPABILITIES, ...ACCESS_CAPABILITIES] : STAFF_CAPABILITIES;
+  return staffPasswordResetEnabled(env) ? [...names, ...RESET_CAPABILITIES] : names;
 }
 export function capabilityMatrix(env = {}) {
-  return staffRoleAccessEnabled(env) ? Object.fromEntries(STAFF_ROLES.map(role => [role, [...ROLE_CAPABILITIES[role], ...ROLE_ACCESS_CAPABILITIES[role]]])) : ROLE_CAPABILITIES;
+  const matrix = staffRoleAccessEnabled(env) ? Object.fromEntries(STAFF_ROLES.map(role => [role, [...ROLE_CAPABILITIES[role], ...ROLE_ACCESS_CAPABILITIES[role]]])) : ROLE_CAPABILITIES;
+  if (!staffPasswordResetEnabled(env)) return matrix;
+  const grants = managerGrants(env);
+  return Object.fromEntries(STAFF_ROLES.map(role => [role, [...matrix[role], ...ROLE_RESET_CAPABILITIES[role], ...(role === 'manager' ? grants.filter(name => !matrix[role].includes(name)) : [])]]));
 }
 
 export function staffCapabilities(session, env = {}) {

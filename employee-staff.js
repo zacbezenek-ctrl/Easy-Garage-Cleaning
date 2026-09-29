@@ -66,7 +66,7 @@ const roleText=roles=>Array.isArray(roles)&&roles.length?roles.map(role=>ROLE_LA
 const validWindow=w=>record(w)&&TIME.test(String(w.start))&&(TIME.test(String(w.end))||w.end==='24:00');
 const validWeek=week=>record(week)&&Object.keys(week).every(day=>DAYS.includes(day)&&Array.isArray(week[day])&&week[day].every(validWindow));
 const validRate=e=>record(e)&&validDate(e.effectiveFrom)&&typeof e.hourlyRate==='number'&&Number.isFinite(e.hourlyRate)&&typeof e.payType==='string'&&typeof e.overtimeMultiplier==='number';
-const validPay=pay=>record(pay)&&record(pay.current)&&(pay.current.hourlyRate===null||typeof pay.current.hourlyRate==='number')&&typeof pay.current.source==='string'&&Array.isArray(pay.schedule)&&pay.schedule.every(validRate)&&Array.isArray(pay.upcoming)&&pay.upcoming.every(validRate)&&typeof pay.needsReview==='boolean';
+const validPay=pay=>record(pay)&&record(pay.current)&&(pay.current.hourlyRate===null||typeof pay.current.hourlyRate==='number')&&typeof pay.current.source==='string'&&Array.isArray(pay.schedule)&&pay.schedule.every(validRate)&&Array.isArray(pay.upcoming)&&pay.upcoming.every(validRate)&&typeof pay.needsReview==='boolean'&&(pay.firstRateFrom===undefined||validDate(pay.firstRateFrom));
 function validPerson(p){
   return record(p)&&typeof p.username==='string'&&p.username.trim()!==''&&typeof p.displayName==='string'&&['configured','employee_account'].includes(p.source)&&
     Array.isArray(p.staffRoles)&&p.staffRoles.every(role=>ROLES.includes(role))&&Array.isArray(p.skills)&&p.skills.every(s=>record(s)&&typeof s.id==='string'&&LEVELS.includes(s.level))&&
@@ -183,8 +183,8 @@ function payload(kind){
   if(kind==='roles'){const staffRoles=EDITABLE_ROLES.filter(role=>d.staffRoles.includes(role));return staffRoles.length?{fields:{staffRoles}}:{error:'Choose at least one role.'};}
   if(kind==='skills')return{fields:{skills:S.data.catalog.skills.filter(skill=>LEVELS.includes(d.levels[skill.id])).map(skill=>({id:skill.id,level:d.levels[skill.id]}))}};
   if(kind==='pay'){
-    const day=today();
-    if(!validDate(d.effectiveFrom)||d.effectiveFrom<day||d.effectiveFrom>addDays(day,366))return{error:'Choose an effective date from '+dateLabel(day)+' through '+dateLabel(addDays(day,366))+' (Denver).'};
+    const day=today(),from=firstRateFrom(day);
+    if(!validDate(d.effectiveFrom)||d.effectiveFrom<from||d.effectiveFrom>addDays(day,366))return{error:'Choose an effective date from '+dateLabel(from)+' through '+dateLabel(addDays(day,366))+' (Denver).'};
     const hourlyRate=amount(d.hourlyRate,500,/^\d{1,3}(?:\.\d{1,2})?$/);
     if(hourlyRate===null)return{error:'Enter an hourly rate from $0 to $500, to the cent.'};
     const overtimeMultiplier=amount(d.overtimeMultiplier,3,/^\d(?:\.\d{1,2})?$/);
@@ -205,6 +205,8 @@ function payload(kind){
   return{fields:{weeklyAvailability}};
 }
 
+// STAFF-ACCESS: the earliest effective date the open pay editor offers (the approval day for a first rate).
+function firstRateFrom(day){const first=S.edit?personFor(S.edit.username)?.pay?.firstRateFrom:'';return validDate(first)&&first<day?first:day;}
 async function save(kind,person){
   if(S.busy||!S.draft||!S.edit||S.edit.kind!==kind||!same(S.edit.username,person.username))return;
   if(S.pending){S.notice={kind:'error',text:'Retry or discard the unconfirmed change before saving another.'};render();return;}
@@ -371,9 +373,9 @@ function editorFor(person){
       h('option',{value:'',selected:!d.levels[skill.id]},'Not recorded'),LEVELS.map(level=>h('option',{value:level,selected:d.levels[skill.id]===level},LEVEL_LABEL[level])))))),
       retired.length?h('p',{class:'st-muted'},'Retired skills ('+retired.map(skill=>skill.id).join(', ')+') are removed when you save.'):null);
   }else if(kind==='pay'){
-    const day=today(),current=person.pay?.current;
+    const day=today(),current=person.pay?.current,from=firstRateFrom(day);
     body.push(h('div',{class:'st-form-grid'},
-      field('Effective date (Denver)',h('input',{type:'date',name:'effectiveFrom',required:true,min:day,max:addDays(day,366),value:d.effectiveFrom,oninput:event=>{touch();d.effectiveFrom=event.target.value;}}),'Today in Denver is '+dateLabel(day)+'. Timecards clocked in before this date keep the rate saved at clock-in.'),
+      field('Effective date (Denver)',h('input',{type:'date',name:'effectiveFrom',required:true,min:from,max:addDays(day,366),value:d.effectiveFrom,oninput:event=>{touch();d.effectiveFrom=event.target.value;}}),from<day?'This is the first rate, so it can start on '+dateLabel(from)+', the day the account was approved. Then use Apply rate to open weeks for the $0 timecards.':'Today in Denver is '+dateLabel(day)+'. Timecards clocked in before this date keep the rate saved at clock-in.'),
       field('Hourly rate ($)',h('input',{type:'number',name:'hourlyRate',required:true,min:'0',max:'500',step:'0.01',inputmode:'decimal',autocomplete:'off',placeholder:current&&current.hourlyRate!==null?String(current.hourlyRate):'0.00',value:d.hourlyRate,oninput:event=>{touch();d.hourlyRate=event.target.value;}})),
       field('Pay type',h('select',{name:'payType',onchange:event=>{touch();d.payType=event.target.value;}},PAY_TYPES.map(type=>h('option',{value:type,selected:d.payType===type},type==='hourly'?'Hourly':'Salary')))),
       field('Overtime multiplier',h('input',{type:'number',name:'overtimeMultiplier',required:true,min:'1',max:'3',step:'0.01',inputmode:'decimal',autocomplete:'off',value:d.overtimeMultiplier,oninput:event=>{touch();d.overtimeMultiplier=event.target.value;}}))));
@@ -401,6 +403,7 @@ function editorFor(person){
 function personCard(person){
   const name=person.displayName||person.username,editing=S.edit&&same(S.edit.username,person.username);
   const actions=['roles','skills','pay','availability','gusto'].filter(kind=>allowed(kind,person)).map(kind=>button(BUTTON_LABEL[kind],()=>openEditor(kind,person),editing&&S.edit.kind===kind?'active':'',{'aria-label':openerLabel(kind,person),'aria-expanded':editing&&S.edit.kind===kind?'true':'false'}));
+  if(has('pay.manage')&&has('accounts.reset')&&person.source==='employee_account'&&person.pay?.current?.source==='pay_rates'&&typeof window.EGCStaffAccess?.applyRate==='function')actions.push(button('Apply rate to open weeks',event=>window.EGCStaffAccess.applyRate(person,{opener:event.currentTarget,ctx:S.ctx,onDone:()=>load()}),'',{'aria-label':'Apply rate to open weeks for '+name}));
   return h('article',{class:'st-person','data-username':person.username},
     h('header',{class:'st-person-head'},h('span',{class:'st-avatar','aria-hidden':'true'},(name.trim()[0]||'?').toUpperCase()),
       h('div',{},h('h3',{},name),h('p',{},'@'+person.username+' · '+(person.source==='configured'?'Hub configuration':'Employee account'))),h('span',{class:'st-tag role-'+person.primaryRole},ROLE_LABEL[person.primaryRole]||person.primaryRole)),

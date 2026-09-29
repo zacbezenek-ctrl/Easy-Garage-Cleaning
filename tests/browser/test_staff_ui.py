@@ -299,8 +299,9 @@ class StaffDirectoryShellTests(HubShell, unittest.TestCase):
         expect(page.locator('#ops-main article.st-person')).to_have_count(1)
         assets = page.evaluate("[...document.querySelectorAll('[data-egc-hub-asset]')].map(node=>node.getAttribute('src')||node.getAttribute('href')).filter(url=>/staff/.test(url)).sort()")
         # Bumped deliberately (GUSTO-EXPORT): the directory gained the owner's Gusto employee ID editor; (AUTH-ROLES on
-        # GUSTO-EXPORT) one new tag for the sign-out outcome and the Gusto editor together.
-        self.assertEqual(assets, ['employee-staff.css?v=20260929rolesgusto', 'employee-staff.js?v=20260929rolesgusto'])
+        # GUSTO-EXPORT) one new tag for the sign-out outcome and the Gusto editor together; (STAFF-ACCESS) the first-rate
+        # date and the owner's Apply rate to open weeks.
+        self.assertEqual(assets, ['employee-staff.css?v=20260929access', 'employee-staff.js?v=20260929access'])
         self.assertEqual(page.evaluate('document.querySelectorAll(".egc-staff").length'), 1)
         scroll = self.no_horizontal_scroll()
         self.assertLessEqual(scroll['width'], 375, scroll)

@@ -1,0 +1,57 @@
+/* STAFF-ACCESS (EGCStaffAccess): the Password screen under My EGC and the reset, approval and Apply rate dialogs.
+   Colours come from the Hub kit tokens when employee-ui-kit.css is loaded, with the same values as fallbacks. 375px first. */
+.egc-access,.sa-dialog{--sa-navy:var(--hub-navy,#0c1829);--sa-orange:var(--hub-orange,#ee5c2b);--sa-orange-ink:var(--hub-orange-ink,#b73f0e);--sa-ink:var(--hub-ink,#172033);--sa-muted:var(--hub-muted,#536173);
+  --sa-line:var(--hub-line,#d5dbe2);--sa-soft:var(--hub-soft,#f1f5f8);--sa-green:var(--hub-green,#19734f);--sa-red:var(--hub-red,#b83b44);--sa-amber:var(--hub-amber,#8a5a00);--sa-blue:var(--hub-blue,#2563a9);
+  --sa-radius:var(--hub-radius,6px);--sa-font:var(--hub-font,Inter,system-ui,-apple-system,'Segoe UI',sans-serif);--sa-serif:var(--hub-serif,'Fraunces',Georgia,serif);--sa-mono:var(--hub-mono,'JetBrains Mono',ui-monospace,monospace);
+  font-family:var(--sa-font);color:var(--sa-ink);overflow-wrap:anywhere}
+.egc-access *,.sa-dialog *{box-sizing:border-box}
+.egc-access{display:grid;gap:16px;max-width:560px;min-width:0;padding:0}
+.egc-access :is(h1,h2),.sa-dialog :is(h1,h2){margin:0;color:var(--sa-navy)}
+.egc-access p,.sa-dialog p{margin:0;line-height:1.45}
+.sa-screen-head{display:grid;gap:6px}
+.sa-screen-head h1,.sa-dialog-head h2{font-family:var(--sa-serif);font-size:24px;line-height:1.15}
+.sa-screen-head p{color:var(--sa-muted)}
+.sa-eyebrow{display:block;font:700 10px/1.3 var(--sa-mono);letter-spacing:.13em;text-transform:uppercase;color:var(--sa-orange-ink)}
+.sa-password,.sa-body{display:grid;gap:14px;min-width:0}
+.sa-field{display:grid;gap:6px;font-size:13px;font-weight:700;min-width:0}
+.sa-field small{font-weight:500;color:var(--sa-muted);line-height:1.4}
+.egc-access :is(input,select,textarea),.sa-dialog :is(input,select,textarea){width:100%;min-height:44px;padding:10px 12px;border:1px solid #b9c3cd;border-radius:var(--sa-radius);background:#fff;color:var(--sa-ink);font:400 15px/1.3 var(--sa-font)}
+.sa-dialog textarea{min-height:64px;resize:vertical}
+.sa-dialog input[type=checkbox]{width:22px;min-height:22px;height:22px;flex:0 0 22px;margin:2px 0 0;accent-color:var(--sa-orange)}
+.sa-btn{min-height:44px;min-width:44px;display:inline-flex;align-items:center;justify-content:center;gap:6px;padding:9px 16px;border:1px solid var(--sa-line);border-radius:var(--sa-radius);background:#fff;color:var(--sa-ink);font:700 14px/1.2 var(--sa-font);cursor:pointer;touch-action:manipulation;text-align:center}
+.sa-btn.primary{background:var(--sa-orange);border-color:var(--sa-orange);color:#fff}
+.sa-btn.danger{background:var(--sa-red);border-color:var(--sa-red);color:#fff}
+.sa-btn.quiet{background:transparent}
+.sa-btn.sa-wide{width:100%}
+.sa-btn:disabled,.sa-btn[aria-busy="true"]{opacity:.55;cursor:not-allowed}
+.sa-btn:focus-visible,.egc-access :is(input,select,textarea):focus-visible,.sa-dialog :is(input,select,textarea):focus-visible{outline:3px solid rgba(238,92,43,.35);outline-offset:2px}
+.sa-notice{border:1px solid var(--sa-line);border-left:4px solid var(--sa-blue);background:#fff;padding:10px 12px;border-radius:var(--sa-radius)}
+.sa-notice.error{border-left-color:var(--sa-red);background:#fff7f7}
+.sa-notice.warning{border-left-color:var(--sa-amber);background:#fffaf0}
+.sa-notice.success{border-left-color:var(--sa-green);background:#f3fbf6}
+.sa-muted{color:var(--sa-muted);font-size:13px}
+.egc-access .sa-link,.sa-dialog .sa-link{font-family:var(--sa-mono);background:var(--sa-soft)}
+.sa-dialog{width:min(560px,calc(100vw - 24px));max-height:calc(100dvh - 24px);padding:0;border:1px solid var(--sa-line);border-radius:10px;background:#fff;overflow:auto;overscroll-behavior:contain}
+.sa-dialog::backdrop{background:rgba(7,21,41,.6)}
+.sa-dialog .sa-body{padding:0 18px}
+.sa-dialog-head{position:sticky;top:0;z-index:1;display:grid;gap:4px;padding:16px 0 10px;background:#fff;border-bottom:1px solid var(--sa-line)}
+.sa-dialog-foot{position:sticky;bottom:0;display:flex;flex-wrap:wrap;justify-content:flex-end;gap:8px;padding:12px 0 calc(14px + env(safe-area-inset-bottom));background:#fff;border-top:1px solid var(--sa-line)}
+.sa-weeks{list-style:none;margin:0;padding:0;display:grid;gap:8px}
+.sa-week{border:1px solid var(--sa-line);border-radius:var(--sa-radius);padding:10px 12px;background:#fff}
+.sa-week.exported{background:var(--sa-soft)}
+.sa-check{display:flex;align-items:flex-start;gap:10px;min-height:44px;font-weight:500;cursor:pointer}
+.sa-check>span{display:grid;gap:3px;min-width:0}
+.sa-check small{color:var(--sa-muted);font-size:12px}
+.sa-tag{font-weight:700;color:var(--sa-amber)!important}
+.sa-skeleton{display:block;height:14px;border-radius:4px;background:linear-gradient(90deg,var(--sa-soft),#e3e8ee,var(--sa-soft));background-size:200% 100%;animation:sa-shimmer 1.2s linear infinite;width:60%}
+.sa-skeleton.wide{width:90%}
+@keyframes sa-shimmer{to{background-position:-200% 0}}
+@media (prefers-reduced-motion:reduce){.sa-skeleton{animation:none}}
+@media (max-width:680px){
+  .egc-access :is(input,select,textarea),.sa-dialog :is(input,select,textarea){font-size:16px}
+  .sa-dialog{width:calc(100vw - 12px);max-width:none;max-height:calc(100dvh - 12px);margin:auto}
+  .sa-dialog .sa-body{padding:0 14px}
+  .sa-dialog-foot{justify-content:stretch}
+  .sa-dialog-foot .sa-btn{flex:1 1 140px}
+  .sa-btn{min-height:46px}
+}
