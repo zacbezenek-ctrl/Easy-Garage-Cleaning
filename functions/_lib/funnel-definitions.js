@@ -19,9 +19,12 @@ const SLUG = /^[a-z][a-z0-9_]{0,63}$/, TAG = /^(?=.{1,64}$)[a-z0-9]+(?:-[a-z0-9]
 const EVENT_TYPE = /^[a-z][a-z_]{0,31}\.[a-z][a-z_]{0,39}$/, HUB_ID = /^[A-Za-z0-9_-]{1,180}$/;
 const DAYS = ['sunday', 'monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday'];
 const DATA_TYPES = new Set(['cents', 'integer', 'slug', 'reasonCode', 'enum', 'boolean', 'sha256', 'instant']);
-const SERVICE_LINE_SOURCES = ['explicit', 'visitPurpose', 'businessAccount', 'ghlGarageHelpRequested', 'salesExitService', 'legacyJobType'];
+const SERVICE_LINE_SOURCES = ['explicit', 'visitPurpose', 'businessAccount', 'catalogCategory', 'relatedProject', 'ghlGarageHelpRequested', 'salesExitService', 'legacyJobType'];
+const FUNNEL_PATH_SOURCES = ['explicit', 'visitPurpose', 'bookingChannel', 'recurringSeries', 'businessAccount', 'walkthrough', 'repeat'];
 const CLASSES = new Set(['never', 'test', 'internal', 'excluded']);
 const UNITS = ['day', 'week', 'month', 'quarter', 'year', 'custom'];
+const JOBBER_SURFACES = ['booking', 'billing', 'messaging'];
+const JOBBER_FINDINGS = ['jobber_request_after_cutover', 'jobber_job_after_cutover', 'jobber_visit_after_cutover', 'jobber_invoice_after_cutover', 'jobber_payment_after_cutover', 'jobber_imported_balance_changed', 'ghl_contact_from_jobber', 'ghl_opportunity_from_jobber'];
 const plain = value => value !== null && typeof value === 'object' && !Array.isArray(value);
 
 /** Canonical JSON: object keys sorted by UTF-16 code unit, arrays in order, no whitespace. */
@@ -83,11 +86,21 @@ export function validateFunnelDefinitions(d) {
   const sources = d.serviceLineSources || {};
   const lines = vocabularies.serviceLines || [];
   if (!Array.isArray(sources.precedence) || !sources.precedence.length || sources.precedence.some(source => !SERVICE_LINE_SOURCES.includes(source)) || new Set(sources.precedence).size !== sources.precedence.length) problem('serviceLineSources.precedence must list known sources once');
-  for (const [name, map] of [['visitPurpose', sources.visitPurpose], ['ghlGarageHelpRequested', sources.ghlGarageHelpRequested?.values], ['salesExitService', sources.salesExitService], ['legacyJobType', sources.legacyJobType]]) {
+  for (const [name, map] of [['visitPurpose', sources.visitPurpose], ['catalogCategory', sources.catalogCategory], ['ghlGarageHelpRequested', sources.ghlGarageHelpRequested?.values], ['salesExitService', sources.salesExitService], ['legacyJobType', sources.legacyJobType]]) {
     if (!plain(map)) problem(`serviceLineSources.${name} is required`);
-    else for (const line of Object.values(map)) if (!lines.includes(line)) problem(`serviceLineSources.${name} maps to an unknown service line`);
+    else for (const line of Object.values(map)) if (!lines.includes(line) || line === d.metricDimensions?.serviceLine?.missingBucket) problem(`serviceLineSources.${name} maps to an unknown service line`);
   }
   if (!lines.includes(sources.businessAccount)) problem('serviceLineSources.businessAccount must be a service line');
+  if (sources.relatedProject !== 'inherit') problem('serviceLineSources.relatedProject must be inherit');
+  // FUN-29: the funnel path a booking pre-fills, with the same precedence model. There is no unknown path: undecided is null.
+  const pathSources = d.funnelPathSources || {}, paths = vocabularies.funnelPaths || [];
+  if (!Array.isArray(pathSources.precedence) || !pathSources.precedence.length || pathSources.precedence.some(source => !FUNNEL_PATH_SOURCES.includes(source)) || new Set(pathSources.precedence).size !== pathSources.precedence.length) problem('funnelPathSources.precedence must list known sources once');
+  for (const [name, map, keys] of [['visitPurpose', pathSources.visitPurpose, vocabularies.visitPurposes], ['bookingChannel', pathSources.bookingChannel, vocabularies.bookingChannels]]) {
+    if (!plain(map)) problem(`funnelPathSources.${name} is required`);
+    else for (const [key, path] of Object.entries(map)) if (!keys?.includes(key) || !paths.includes(path)) problem(`funnelPathSources.${name} maps an unknown value or to an unknown path`);
+  }
+  for (const name of ['recurringSeries', 'businessAccount', 'walkthrough', 'repeat']) if (!paths.includes(pathSources[name])) problem(`funnelPathSources.${name} must be a funnel path`);
+  if (!Number.isInteger(d.dimensionRulesVersion) || d.dimensionRulesVersion < 1) problem('dimensionRulesVersion must be a positive integer');
   const calendar = d.calendar || {}, hours = calendar.businessHours || {};
   if (calendar.weekStartsOn !== 'monday') problem('weeks start on Monday');
   if (!plain(hours) || Object.keys(hours).length !== 7 || DAYS.some(day => !Array.isArray(hours[day]))) problem('calendar.businessHours needs all seven days');
@@ -152,6 +165,17 @@ export function validateFunnelDefinitions(d) {
     const reasoned = [...required, ...optional].includes('reasonCode');
     if (reasoned !== (spec.reasons !== undefined) || reasoned && !Array.isArray(reasons[spec.reasons])) problem(`event type ${type} must name its reason list exactly when it takes a reasonCode`);
   }
+  // FUN-32: the Jobber cutover day and the coexistence guard's findings.
+  const jobber = plain(d.jobber) ? d.jobber : (problem('jobber is required'), {});
+  if (jobber.cutoverDate !== null && !(typeof jobber.cutoverDate === 'string' && DATE.test(jobber.cutoverDate) && new Date(`${jobber.cutoverDate}T12:00:00Z`).toISOString().startsWith(jobber.cutoverDate))) problem('jobber.cutoverDate must be null or a real YYYY-MM-DD date');
+  const surfaces = list(jobber.guardSurfaces, SLUG, 'jobber.guardSurfaces');
+  for (const surface of JOBBER_SURFACES) if (!surfaces.includes(surface)) problem(`jobber.guardSurfaces needs ${surface}`);
+  const findings = plain(jobber.findings) ? jobber.findings : (problem('jobber.findings is required'), {});
+  for (const [code, spec] of Object.entries(findings)) if (!SLUG.test(code) || !plain(spec) || !Array.isArray(spec.surfaces) || !spec.surfaces.length || spec.surfaces.some(surface => !surfaces.includes(surface)) || new Set(spec.surfaces).size !== spec.surfaces.length || !['customer', 'job'].includes(spec.scope)) problem(`jobber finding ${code} is invalid`);
+  for (const code of JOBBER_FINDINGS) if (!Object.hasOwn(findings, code)) problem(`jobber finding ${code} is missing`);
+  const markers = plain(jobber.ghlAppMarkers) ? jobber.ghlAppMarkers : {};
+  const marked = [list(markers.sources, TAG, 'jobber.ghlAppMarkers.sources'), list(markers.tags, TAG, 'jobber.ghlAppMarkers.tags'), list(markers.createdBySourceIds, /^[A-Za-z0-9_-]{1,120}$/, 'jobber.ghlAppMarkers.createdBySourceIds')];
+  if (!marked.some(values => values.length)) problem('jobber.ghlAppMarkers needs at least one marker');
   return problems;
 }
 
@@ -205,30 +229,73 @@ export function funnelDimensionValue(dimension, value) {
   return definitionsPath(definitions, spec.values).includes(value) ? value : spec.missingBucket;
 }
 
+const lookupKey = value => typeof value === 'string' ? value.trim().toLowerCase() : '';
+const lookup = (map, value) => { const wanted = lookupKey(value); const match = wanted && Object.keys(map).find(name => name.toLowerCase() === wanted); return match ? map[match] : null; };
+// One value, or a list that decides only when every value the map knows gives the same answer (values it does not know are neutral).
+const agreed = (map, values) => {
+  const found = [...new Set((Array.isArray(values) ? values : [values]).map(value => lookup(map, value)).filter(Boolean))];
+  return found.length === 1 ? found[0] : null;
+};
+
 /**
  * The service line a booking pre-fills (A1), from the first source in
  * serviceLineSources.precedence that decides it: {explicit, visitPurpose,
- * businessAccountId, ghlGarageHelpRequested (the GHL field value),
- * salesExitService ('garage' | 'junk', sales-followup-exit.js), legacyJobType}.
+ * businessAccountId, catalogCategories (the catalog categories of the sold
+ * lines; they decide only when they map to one line), relatedProjectServiceLine
+ * (the recorded line of the project a repeat continues), ghlGarageHelpRequested
+ * (the GHL field value), salesExitService ('garage' | 'junk',
+ * sales-followup-exit.js), legacyJobType}. salesExitService and legacyJobType
+ * may be lists (a legacy project's visits), deciding only when they agree.
  * Returns {serviceLine, source}; nothing decisive gives the missing bucket
  * ('unknown') with source null, and the booking asks for one tap.
  */
 export function funnelServiceLine(inputs = {}) {
   const definitions = funnelDefinitions(), sources = definitions.serviceLineSources, lines = definitions.vocabularies.serviceLines;
   const missing = definitions.metricDimensions.serviceLine.missingBucket, given = plain(inputs) ? inputs : {};
-  const key = value => typeof value === 'string' ? value.trim().toLowerCase() : '';
-  const lookup = (map, value) => { const wanted = key(value); const match = wanted && Object.keys(map).find(name => name.toLowerCase() === wanted); return match ? map[match] : null; };
+  const decided = value => lines.includes(value) && value !== missing ? value : null;
   const decide = {
-    explicit: () => lines.includes(given.explicit) && given.explicit !== missing ? given.explicit : null,
+    explicit: () => decided(given.explicit),
     visitPurpose: () => lookup(sources.visitPurpose, given.visitPurpose),
     businessAccount: () => funnelHubId(given.businessAccountId) ? sources.businessAccount : null,
+    catalogCategory: () => agreed(sources.catalogCategory, given.catalogCategories),
+    relatedProject: () => decided(given.relatedProjectServiceLine),
     ghlGarageHelpRequested: () => lookup(sources.ghlGarageHelpRequested.values, given.ghlGarageHelpRequested),
-    salesExitService: () => lookup(sources.salesExitService, given.salesExitService),
-    legacyJobType: () => lookup(sources.legacyJobType, given.legacyJobType),
+    salesExitService: () => agreed(sources.salesExitService, given.salesExitService),
+    legacyJobType: () => agreed(sources.legacyJobType, given.legacyJobType),
   };
   for (const source of sources.precedence) { const serviceLine = decide[source](); if (serviceLine) return { serviceLine, source }; }
   return { serviceLine: missing, source: null };
 }
+
+/**
+ * The funnel path a booking pre-fills (FUN-29), from the first source in
+ * funnelPathSources.precedence that decides it: {explicit, visitPurpose,
+ * bookingChannel (one channel, or a list that decides only when the channels
+ * that map give one path), recurringSeries (a recurring plan or a legacy visit
+ * cadence), businessAccountId, walkthrough (the project was scoped or
+ * sold on an on-site walkthrough), repeat (it continues an earlier project:
+ * a repeat template, rebook request or previous project)}. Returns
+ * {funnelPath, source}; nothing decisive gives {funnelPath: null, source: null}
+ * (there is no unknown path; metrics bucket it with funnelDimensionValue) and the
+ * booking asks for one tap.
+ */
+export function funnelPathFor(inputs = {}) {
+  const definitions = funnelDefinitions(), sources = definitions.funnelPathSources, paths = definitions.vocabularies.funnelPaths, given = plain(inputs) ? inputs : {};
+  const decide = {
+    explicit: () => paths.includes(given.explicit) ? given.explicit : null,
+    visitPurpose: () => lookup(sources.visitPurpose, given.visitPurpose),
+    bookingChannel: () => agreed(sources.bookingChannel, given.bookingChannel),
+    recurringSeries: () => given.recurringSeries === true ? sources.recurringSeries : null,
+    businessAccount: () => funnelHubId(given.businessAccountId) ? sources.businessAccount : null,
+    walkthrough: () => given.walkthrough === true ? sources.walkthrough : null,
+    repeat: () => given.repeat === true ? sources.repeat : null,
+  };
+  for (const source of sources.precedence) { const funnelPath = decide[source](); if (funnelPath) return { funnelPath, source }; }
+  return { funnelPath: null, source: null };
+}
+
+/** The version of the service-line and funnel-path derivation rules; projects record the version that derived their values. */
+export const dimensionRulesVersion = () => funnelDefinitions().dimensionRulesVersion;
 
 /** Coverage reasons for a period starting on a Denver date: pre_cutover_history until the cutover date is set and reached. */
 export function cutoverCoverageReasons(fromDate) {

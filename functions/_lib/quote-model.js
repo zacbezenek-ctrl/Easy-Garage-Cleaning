@@ -561,3 +561,21 @@ export function estimateFingerprint(estimate) {
 }
 
 export const estimateChanged = (previous, next) => estimateFingerprint(previous) !== estimateFingerprint(next);
+
+/**
+ * P2-07 quote drafts reach the customer only through a confirmed send. A job
+ * whose quote was drafted in the Hub (job.quoteDraft, or estimate.source
+ * 'quote_draft') is released once the customer approved it, or once the saved
+ * estimate revision is exactly the revision that was sent. Anything else (a
+ * draft never sent, or a revision saved after the last send) is unsent: every
+ * customer surface withholds it and nothing can approve or pay it, whatever
+ * CUSTOMER_PORTAL_REJECT_DRAFT_ESTIMATES says. Jobs not drafted here are never
+ * affected (false).
+ */
+export function unsentQuoteDraft(job) {
+  const estimate = plain(job?.estimate) ? job.estimate : null;
+  if (!plain(job?.quoteDraft) && estimate?.source !== 'quote_draft') return false;
+  const status = String(estimate?.status || '').toLowerCase();
+  if (['accepted', 'approved'].includes(status)) return false;
+  return !(status === 'sent' && Number.isSafeInteger(estimate.revision) && estimate.sentRevision === estimate.revision);
+}

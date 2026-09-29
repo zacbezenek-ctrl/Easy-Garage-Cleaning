@@ -1,9 +1,11 @@
 import * as z from "zod/v4";
 import {isMessageTaskKind,MESSAGE_ATTACHMENT_KINDS,TASK_KINDS} from "./action-kinds.js";
-import {HUB_COMMANDS,HUB_COMMAND_POLICY,HUB_WRITE_COMMANDS,PORTAL_PASSTHROUGH,hubCommandDenial,hubCommandPolicy,isHubCommandName,type HubCommandPolicy} from "./hub-commands.js";
+import {HUB_COMMANDS,HUB_COMMAND_POLICY,HUB_WRITE_COMMANDS,PORTAL_PASSTHROUGH,RECURRING_HORIZON_ACTOR,RECURRING_HORIZON_COMMAND,hubCommandDenial,hubCommandPolicy,isHubCommandName,type HubCommandPolicy} from "./hub-commands.js";
 import {BRIDGE_COMMAND_POLICY,bridgeCommandDenial,bridgeCommandPolicy,type BridgeCommandPolicy} from "./bridge-command-policy.js";
 export * from "./hub-commands.js";
 export * from "./bridge-command-policy.js";
+import {SPEND_COMMANDS,SPEND_WRITE_COMMANDS,isSpendCommand,spendCommandDenial} from "./spend-commands.js";
+export * from "./spend-commands.js";
 
 export const CONTRACT_VERSION = 1;
 export const isoTime = z.string().datetime({ offset: true });
@@ -142,9 +144,13 @@ export const commandSchema = z.discriminatedUnion("command", [
   }).strict().refine(proof=>!proof.operationalScope||proof.operationalScope.sourceId===proof.localJobId,"Operational scope must reference the exact local job")}).strict(),
   z.object({command:z.literal("schedule.link_customer"),portalVisitId:portalId,expectedRevision:z.string().min(1),providerContact:z.record(z.string(),z.unknown())}).strict(),
   z.object({command:z.literal("schedule.resolve"),portalVisitId:portalId}).strict(),
+  // Scheduled recurring-plan horizon run (egc-api's timer only); the Hub takes its clock from the envelope.
+  z.object({command:z.literal(RECURRING_HORIZON_COMMAND),after:portalId.nullable().optional(),maxPlans:z.number().int().min(1).max(25).optional(),limit:z.number().int().min(1).max(20).optional()}).strict(),
   z.object({command:z.literal("schedule.mutate"),requestId:entityId,mode:z.enum(["create","update","cancel"]),portalVisitId:portalId.optional(),portalCustomerId:portalId,sourceWalkthroughId:portalId.optional(),
     expectedRevision:z.string().min(1).optional(),kind:z.enum(["walkthrough","job"]).optional(),changes:z.object({date:z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),time:z.string().regex(/^\d{2}:\d{2}$/).optional(),endTime:z.string().regex(/^\d{2}:\d{2}$/).optional(),title:z.string().min(1).max(500).optional(),assignedTo:z.string().min(1).max(200).optional(),address:z.string().max(1000).optional()}).strict()}).strict(),
   z.object({command:z.literal("schedule.bind_provider"),operationId:entityId,portalVisitId:portalId,expectedRevision:z.string().min(1),event:z.record(z.string(),z.unknown())}).strict(),
+  z.object({command:z.literal("schedule.sync_due"),limit:z.number().int().min(1).max(25).default(25)}).strict(),
+  z.object({command:z.literal("schedule.sync_failed"),requestId:entityId,portalVisitId:portalId,expectedRevision:z.string().min(1).max(200),syncRequestId:z.string().regex(/^[A-Za-z0-9:._-]{1,250}$/),code:z.string().regex(/^[a-z][a-z0-9_]{0,63}$/)}).strict(),
   z.object({command:z.literal("status")}).strict(),
   z.object({command:z.literal("calendar"),startDate:z.string().regex(/^\d{4}-\d{2}-\d{2}$/),endDate:z.string().regex(/^\d{4}-\d{2}-\d{2}$/),timeZone:timeZone.default("America/Denver"),...page}).strict(),
   z.object({command:z.literal("portal.job"),jobId:portalId}).strict(),
@@ -170,10 +176,13 @@ export const commandSchema = z.discriminatedUnion("command", [
   z.object({command:z.literal("brief.get"),briefId:entityId,...page}).strict(),
   z.object({command:z.literal("brief.latest"),...page}).strict(),
   z.object({command:z.literal("history"),contactId:entityId.optional(),portalJobId:portalId.optional(),...page}).strict().refine(c=>Boolean(c.contactId||c.portalJobId),"An exact contact or portal record is required"),
-  ...Object.values(HUB_COMMANDS)
+  ...Object.values(HUB_COMMANDS),
+  ...Object.values(SPEND_COMMANDS)
 ]);
 export type Command = z.infer<typeof commandSchema>;
-export const WRITE_COMMANDS = new Set(["provider.note.ensure","portal.note.add","portal.job.edit","portal.project.ensure","inbound.reconcile","task.create","task.edit","task.complete","task.complete_from_message","task.cancel","task.snooze","tasks.approve","task.reject","task.send","brief.create","schedule.mutate","schedule.bind_provider","schedule.sync_provider","schedule.link_customer","schedule.adopt",...HUB_WRITE_COMMANDS]);
+export const WRITE_COMMANDS = new Set(["provider.note.ensure","portal.note.add","portal.job.edit","portal.project.ensure","inbound.reconcile","task.create","task.edit","task.complete","task.complete_from_message","task.cancel","task.snooze","tasks.approve","task.reject","task.send","brief.create","schedule.mutate","schedule.bind_provider","schedule.sync_provider","schedule.sync_failed","schedule.link_customer","schedule.adopt",RECURRING_HORIZON_COMMAND,...HUB_WRITE_COMMANDS,...SPEND_WRITE_COMMANDS]);
+/** The only principal allowed to read the schedule mirror queue and record its failures. */
+export const SCHEDULE_SYNC_WORKER_ID = "schedule-sync-worker";
 export const requestSchema = z.object({requestId:entityId,body:commandSchema}).strict();
 export const signedClaimsSchema = z.object({
   v:z.literal(CONTRACT_VERSION),iss:z.enum(["portal","mcp"]),aud:z.enum(["egc-operations","egc-portal"]),
@@ -188,10 +197,14 @@ export function authorize(actor:Actor, command:Command, workspace:string, hubPol
   if (!actorSchema.safeParse(actor).success || (actor.role === "integration") !== (actor.kind === "integration")) throw new OperationsError("invalid_actor",403);
   if (actor.workspace !== workspace) throw new OperationsError("workspace_forbidden",403);
   if(command.command==='schedule.adopt'&&(actor.kind!=='integration'||actor.role!=='integration'||actor.id!=='booking-adoption-worker'))throw new OperationsError('schedule_adoption_internal_only',403);
+  if((command.command==="schedule.sync_due"||command.command==="schedule.sync_failed")&&(actor.kind!=="integration"||actor.role!=="integration"||actor.id!==SCHEDULE_SYNC_WORKER_ID))throw new OperationsError("schedule_sync_queue_internal_only",403);
+  if(command.command===RECURRING_HORIZON_COMMAND&&(actor.kind!=='integration'||actor.role!=='integration'||actor.id!==RECURRING_HORIZON_ACTOR))throw new OperationsError('recurring_horizon_internal_only',403);
   if (!["owner","manager","sales","integration"].includes(actor.role)) throw new OperationsError("role_forbidden",403);
   const hub=hubCommandPolicy(command.command,hubPolicies);
   // Fail closed: a hub.* command without a policy entry is never authorized.
   if (isHubCommandName(command.command) && !hub) throw new OperationsError("hub_command_unknown",403);
+  const spendDenied=isSpendCommand(command.command)&&spendCommandDenial(actor);
+  if (spendDenied) throw new OperationsError(spendDenied,403);
   const hubDenied=hub&&hubCommandDenial(actor,command,hub);
   if (hubDenied) throw new OperationsError(hubDenied,403);
   // SEC-04: the legacy commands the Hub runs answer to the same table the Hub enforces.
@@ -204,7 +217,7 @@ export function authorize(actor:Actor, command:Command, workspace:string, hubPol
     throw new OperationsError("human_manager_approval_required",403);
   // A customer send is confirmed by a signed-in person; integrations (MCP) never send here.
   if (command.command === "task.send" && actor.kind !== "human") throw new OperationsError("human_send_confirmation_required",403);
-  if (actor.kind === "integration" && WRITE_COMMANDS.has(command.command) && !["provider.note.ensure","portal.note.add","portal.job.edit","portal.project.ensure","inbound.reconcile","task.create","task.edit","task.snooze","task.complete","task.complete_from_message","task.cancel","brief.create","schedule.mutate","schedule.bind_provider","schedule.sync_provider","schedule.link_customer","schedule.adopt"].includes(command.command))
+  if (actor.kind === "integration" && WRITE_COMMANDS.has(command.command) && !["provider.note.ensure","portal.note.add","portal.job.edit","portal.project.ensure","inbound.reconcile","task.create","task.edit","task.snooze","task.complete","task.complete_from_message","task.cancel","brief.create","schedule.mutate","schedule.bind_provider","schedule.sync_provider","schedule.sync_failed","schedule.link_customer","schedule.adopt",RECURRING_HORIZON_COMMAND].includes(command.command))
     throw new OperationsError("integration_write_forbidden",403);
 }
 /** A delegated MCP grant must name its delegate in the actor id, and only an owner or manager delegate may write. */

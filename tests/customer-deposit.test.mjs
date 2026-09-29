@@ -10,6 +10,7 @@ import { encodeFirestoreFields, decodeFirestoreFields } from '../functions/_lib/
 import * as portal from '../functions/api/customer-portal.js';
 import * as webhook from '../functions/api/stripe-webhook.js';
 import * as crewPayment from '../functions/api/job-payment.js';
+import { applyFirestoreCommit } from './helpers/firestore-commit.mjs';
 
 const origin = 'https://easygaragecleaning.com';
 const env = { FIREBASE_API_KEY: 'firebase-test-customer-deposit', CUSTOMER_PORTAL_SECRET: 'synthetic-customer-deposit-secret', STRIPE_SECRET_KEY: 'sk_test_synthetic_deposit', STRIPE_WEBHOOK_SECRET: 'whsec_synthetic_deposit', HUB_SESSION_SECRET: 'synthetic-hub-payment-secret', HUB_AUTH_USERS_JSON: JSON.stringify({ ZacB: { role: 'owner', passwordHash: 'synthetic-hash' } }) };
@@ -23,6 +24,13 @@ async function fixture(t, initial = {}) {
   t.mock.method(globalThis, 'fetch', async (input, options = {}) => {
     const url = new URL(input), method = options.method || 'GET'; calls.push({ url: url.href, method });
     if (url.hostname === 'firestore.googleapis.com') {
+      // FUN-03: portal writers commit the job change with its funnel event.
+      if (url.pathname.endsWith('/documents:commit')) {
+        const body = JSON.parse(options.body);
+        if (failJobWrites && body.writes.some(write => write.update.name.includes('/documents/jobs/'))) return Response.json({}, { status: 503 });
+        const result = applyFirestoreCommit(body, { read: path => docs.has(path) ? { data: docs.get(path).value, updateTime: version(docs.get(path)) } : null, write: (path, value) => docs.set(path, { value, version: (docs.get(path)?.version || 0) + 1 }) });
+        return result.stale ? Response.json({}, { status: 412 }) : Response.json({ commitTime: '2026-09-08T00:00:00Z' });
+      }
       const path = decodeURIComponent(url.pathname.split('/documents/')[1]); let row = docs.get(path);
       if (method === 'PATCH') {
         if (failJobWrites && path.startsWith('jobs/')) return Response.json({}, { status: 503 });

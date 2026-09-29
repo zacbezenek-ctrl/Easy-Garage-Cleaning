@@ -7,10 +7,10 @@ on:
         required: false
         default: ''
   pull_request:
-    paths: ['egc-platform/**','functions/**','employee*','tests/**','crew/**','scripts/repair-stale-schedule-instants.mjs','scripts/backfill-job-contact-keys.mjs','scripts/backfill-customer-identity.mjs','_generate_site.py','_services_data.py','_finalize_urls.py','tools/site-build.json','tools/gallery/**','scripts/render-before-after.mjs','gallery-simple.js','package.json','*.html','blog/**','projects/**','sitemap.xml','llms.txt','message-templates.*','customer-portal.html','staff-paths.js','staff-login.*','fb-capture.js','analytics-loader.js','.github/workflows/egc-action-center-ci.yml']
+    paths: ['egc-platform/**','functions/**','employee*','tests/**','crew/**','scripts/repair-stale-schedule-instants.mjs','scripts/backfill-job-contact-keys.mjs','scripts/backfill-customer-identity.mjs','scripts/backfill-job-labor-private.mjs','_generate_site.py','_services_data.py','_finalize_urls.py','tools/site-build.json','tools/gallery/**','scripts/render-before-after.mjs','gallery-simple.js','package.json','*.html','blog/**','projects/**','sitemap.xml','llms.txt','message-templates.*','customer-portal.html','staff-paths.js','staff-login.*','fb-capture.js','analytics-loader.js','site-forms.js','site-enhancements.js','styles.css','client-login.*','.github/workflows/egc-action-center-ci.yml']
   push:
     branches: [main]
-    paths: ['egc-platform/**','functions/**','employee*','tests/**','crew/**','scripts/repair-stale-schedule-instants.mjs','scripts/backfill-job-contact-keys.mjs','scripts/backfill-customer-identity.mjs','_generate_site.py','_services_data.py','_finalize_urls.py','tools/site-build.json','tools/gallery/**','scripts/render-before-after.mjs','gallery-simple.js','package.json','*.html','blog/**','projects/**','sitemap.xml','llms.txt','message-templates.*','customer-portal.html','staff-paths.js','staff-login.*','fb-capture.js','analytics-loader.js','.github/workflows/egc-action-center-ci.yml']
+    paths: ['egc-platform/**','functions/**','employee*','tests/**','crew/**','scripts/repair-stale-schedule-instants.mjs','scripts/backfill-job-contact-keys.mjs','scripts/backfill-customer-identity.mjs','scripts/backfill-job-labor-private.mjs','_generate_site.py','_services_data.py','_finalize_urls.py','tools/site-build.json','tools/gallery/**','scripts/render-before-after.mjs','gallery-simple.js','package.json','*.html','blog/**','projects/**','sitemap.xml','llms.txt','message-templates.*','customer-portal.html','staff-paths.js','staff-login.*','fb-capture.js','analytics-loader.js','site-forms.js','site-enhancements.js','styles.css','client-login.*','.github/workflows/egc-action-center-ci.yml']
 permissions:
   contents: read
 # Push runs are keyed by commit SHA: a shared refs/heads/main group would let a newer queued
@@ -71,6 +71,10 @@ jobs:
           pnpm --filter @egc/database migrate:runtime
           pnpm --filter @egc/database migrate:runtime
         working-directory: egc-platform
+      # FUN-15: ad spend daily rows, sync days, lead-form counts and the append-only owner spend ledger.
+      - name: Ad spend ingestion ledger and owner spend entries
+        run: node --test services/ad-spend/test/postgres.check.mjs
+        working-directory: egc-platform
       - name: Existing task adapter database regression tests
         run: pnpm --filter @egc/lead-audit test:operations:integration
         working-directory: egc-platform
@@ -81,6 +85,10 @@ jobs:
           node --test services/operations/test/message-completion.check.mjs
           node --test services/operations/test/legacy-walkthrough.check.mjs
         working-directory: egc-platform
+      # schedule-sync-postgres.check.mjs runs the real Hub queue from functions/_lib, which imports
+      # the root package's @noble/hashes (funnel-definitions.js); pnpm installs only egc-platform.
+      - name: Install root dependencies for the Hub modules the schedule-sync check imports
+        run: npm install --ignore-scripts --no-audit --no-fund
       - name: Durable appointment claims, unknown-outcome reconciliation, MCP safety defaults, OAuth clients and grants, and paged CRM reads
         run: |
           node --test apps/mcp/test/appointments-postgres.check.mjs
@@ -88,6 +96,7 @@ jobs:
           node --test apps/mcp/test/oauth-postgres.check.mjs
           pnpm --filter @egc/mcp test:crm-reads:postgres
           node --test apps/api/test/scheduling-postgres.check.mjs
+          node --test apps/api/test/schedule-sync-postgres.check.mjs
           node --test apps/api/test/service-auth-postgres.check.mjs
         working-directory: egc-platform
       - name: Durable recording intake, retries and authoritative review
@@ -171,6 +180,10 @@ jobs:
         run: python tests/browser/test_hub_shell_ui.py
       - name: Hub mobile shell at phone widths
         run: python tests/browser/test_hub_mobile_ui.py
+      - name: Owner catalog and pricing screen on a phone
+        run: python tests/browser/test_catalog_ui.py
+      - name: Job labor dollars owner-only on the finance board and cost dialog
+        run: python tests/browser/test_job_cost_privacy_ui.py
       - name: Follow-up owner and due-time settings on a phone
         run: python tests/browser/test_followup_settings_ui.py
       - name: Hub home overdue follow-ups widget (isolated and Command center)
@@ -181,8 +194,18 @@ jobs:
         run: python tests/browser/test_gameplan_pricing_ui.py
       - name: Staff directory Team screen on a phone
         run: python tests/browser/test_staff_ui.py
+      - name: Crew schedule alerts feed, acknowledgement and text opt-in on a phone
+        run: python tests/browser/test_crew_notifications_ui.py
+      - name: Time-off requests, approvals and PTO pay edits on a phone
+        run: python tests/browser/test_pto_requests_ui.py
+      - name: 'Payroll week card: owner-only pay and CSV'
+        run: python tests/browser/test_payroll_week_ui.py
       - name: Field job-cost capture on a phone
         run: python tests/browser/test_field_expenses_ui.py
+      - name: Crew multi-day visits, end of day and the day lock on a phone
+        run: python tests/browser/test_field_multiday_ui.py
+      - name: Owner-only ad spend screen, manual spend entries and connection health on a phone
+        run: python tests/browser/test_ad_spend_ui.py
       - name: Owner stocked item costs screen, manager read-only view and phone layout
         run: python tests/browser/test_standard_costs_ui.py
       - name: Crew pre-job customer texts are idempotent and never re-sent
@@ -191,14 +214,28 @@ jobs:
         run: python3 -m unittest tests/browser/test_money_document_ui.py
       - name: Portal insurance certificate, guarantee and terms, and the Hub documents admin
         run: python tests/browser/test_portal_documents_ui.py
+      - name: Hub quote draft "Send options for review" dialog on a phone
+        run: python tests/browser/test_quote_draft_ui.py
+      - name: Portal quote draft withholding and edit-safe quiet refresh on a phone
+        run: python tests/browser/test_quote_draft_portal_ui.py
       - name: Hub money actions on the server money API, flag fallback and phone layout
         run: python3 -m unittest tests/browser/test_money_actions_ui.py
+      - name: Customer credits, gift-card sales, decision prompts and rebooking follow-ups on the server lifecycle API
+        run: python tests/browser/test_customer_lifecycle_ui.py
+      - name: Portal change orders (approve, decline, billing and void) on a phone
+        run: python tests/browser/test_portal_change_orders_ui.py
+      - name: Client Login magic-link sign-in, sign-in retry and portal hand-off on a phone
+        run: python tests/browser/test_client_login_ui.py
       - name: Staff page gate sign-in redirects, 401 scripts and crew service worker installs
         run: python tests/browser/test_staff_gate_ui.py
+      - name: Crew headshots, manager approval and the customer portal crew card on a phone
+        run: python tests/browser/test_crew_profile_ui.py
       - name: Customer before/after photos and manager sharing on a phone
         run: python tests/browser/test_customer_photos_ui.py
       - name: Public nav drawer keyboard contract and footer tap targets
         run: python tests/browser/test_nav_drawer_ui.py
+      - name: Public site mobile performance (logos, hero srcset, deferred fonts, site-forms.js, static booking bar)
+        run: python tests/browser/test_public_performance_ui.py
       - name: Website lead relay, ads.html relay fix and book.html Meta Lead eventID on a phone
         run: python tests/browser/test_lead_relay_ui.py
       - name: Owner message template drafts, approval and conflict recovery

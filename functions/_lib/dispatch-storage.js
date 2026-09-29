@@ -9,18 +9,26 @@ import { primaryStaffRole, sanitizeStaffRoles } from './staff-roles.js';
 import { legacyPersonKeys, staffDirectoryEnabled, storedWeeklyAvailability } from './staff-directory.js';
 import { storedSkills } from './staff-skills.js';
 import { segmentsEnabled } from './dispatch-segments.js';
+import { crewNotificationsEnabled } from './crew-notifications.js';
 import { commitConflict, commitFailure } from './firestore-errors.js';
+import { dispatchReadMode, windowedJobs, pagedQuery, customerCoverage, aggregateCount } from './dispatch-window-reads.js';
 
 const ROOT = 'projects/egcw-1ec83/databases/(default)/documents';
 const BASE = `https://firestore.googleapis.com/v1/${ROOT}`;
 const failure = (code, message, status = 503) => Object.assign(new Error(message), { code, status });
+const CUSTOMER_FIELDS = ['name','firstName','lastName','phone','email','address','highlevelContactId'];
 function decode(document,collection,id) {
   const prefix=`/documents/${collection}/`,name=document?.name;
   const path=typeof name==='string'&&name.includes(prefix)?name.slice(name.indexOf(prefix)+prefix.length):'';
   if (!path||path.includes('/')||id&&path!==id||typeof document.updateTime!=='string'||!document.updateTime||document.fields!==undefined&&(!document.fields||typeof document.fields!=='object'||Array.isArray(document.fields))) throw failure('dispatch_storage_incomplete','Dispatch received a record without a verifiable identity or revision. Refresh before changing work.');
   return {...decodeFirestoreFields(document.fields || {}),id:path,revision:document.updateTime};
 }
-const JOB_FIELDS = ['type','recordType','date','time','endDate','endTime','customerId','customerAccountOwnerJobId','customerMemoryInheritedFrom','propertyId','customer','phone','address','title','serviceType','status','pipelineStatus','assignedCrew','assignedTo','crewLead','crewId','vehicleId','crewNeeded','requiredCrewSize','travelBufferMinutes','jobInstructions','operationalScope.text','scope','scopeOfWork','accessInstructions','customerInstructions','opsNotes','requiredEquipment','materials','syncStatus','highlevelAppointmentId','highlevelContactId','sourceWalkthroughId','sourceTemplateJobId','recurrence','recurrenceParentId','reminderDays','notify','shiftPickupEnabled','openShift','notes','durationMin','estimatedDurationMin','createdAt','updatedAt','completedAt','cancelledAt','startedAt','employee','employeeId','allDay','reason','startAt','endAt','fieldExecution.activity','fieldExecution.activityReason','fieldExecution.activityAt','fieldExecution.activityBy','fieldExecution.attention','fieldExecution.jobTime','fieldLastActionAt','fieldCompletionSync.status','fieldCompletionSync.message','fieldCompletionSync.attemptedAt','fieldCompletionSync.syncedAt','arrivalWindowStart','arrivalWindowEnd','arrivalWindow','assignmentSegments'];
+/** The fields a dispatch jobs scan returns (a Firestore field mask; tests apply the same mask). */
+export const JOB_FIELDS = Object.freeze(['type','recordType','date','time','endDate','endTime','customerId','customerAccountOwnerJobId','customerMemoryInheritedFrom','propertyId','customer','phone','address','title','serviceType','status','pipelineStatus','assignedCrew','assignedTo','crewLead','crewId','vehicleId','crewNeeded','requiredCrewSize','travelBufferMinutes','jobInstructions','operationalScope.text','scope','scopeOfWork','accessInstructions','customerInstructions','opsNotes','requiredEquipment','materials','syncStatus','highlevelAppointmentId','highlevelContactId','sourceWalkthroughId','sourceTemplateJobId','recurrence','recurrenceParentId','reminderDays','notify','shiftPickupEnabled','openShift','notes','durationMin','estimatedDurationMin','createdAt','updatedAt','completedAt','cancelledAt','startedAt','employee','employeeId','allDay','reason','startAt','endAt','fieldExecution.activity','fieldExecution.activityReason','fieldExecution.activityAt','fieldExecution.activityBy','fieldExecution.attention','fieldExecution.jobTime','fieldLastActionAt','fieldCompletionSync.status','fieldCompletionSync.message','fieldCompletionSync.attemptedAt','fieldCompletionSync.syncedAt','arrivalWindowStart','arrivalWindowEnd','arrivalWindow','assignmentSegments',
+  // Server-side only (dispatch-duration.js). The quote lines themselves are
+  // large and carry money, so no shared scan loads them: quoteLines() reads
+  // them for the sold jobs a dispatch list projects.
+  'estimate.status','durationOverride.minutes','durationOverride.reason','durationOverride.crewSize','durationOverride.source','logistics.crew_size']);
 
 // Roles come from stored staff roles (configuration or the encrypted account), else the
 // configured role or namedStaffRole(). With EGC_STAFF_DIRECTORY_ENABLED the rows also
@@ -86,9 +94,27 @@ export function dispatchStorage(env, fetcher = firestoreFetch) {
     } while (token);
     return rows;
   }
+  async function post(action, body) {
+    const response = await send(`${BASE}:${action}`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+    if (!response.ok) throw failure('dispatch_storage_unavailable', 'The dispatch records could not be queried. Retry before scheduling.');
+    return response.json().catch(() => null);
+  }
+  const query = (collection, fields, limit) => spec => pagedQuery({ post: body => post('runQuery', body), decode: document => decode(document, collection), collection, spec, fields, limit });
   return {
     roster: () => dispatchRoster(env),
     jobs: () => scan('jobs', JOB_FIELDS),
+    // EGC_DISPATCH_WINDOWED_READS: 'full' (default), 'shadow' or 'windowed'.
+    // Windowed and indexed reads are complete and fail closed like the scans.
+    windowedReads: dispatchReadMode(env),
+    jobsNear: (startDate, endDate) => windowedJobs(query('jobs', JOB_FIELDS), startDate, endDate),
+    // Every jobs row whose field equals value, whatever its dates (saveJobReads).
+    jobsWhere: (field, value) => query('jobs', JOB_FIELDS)({ field, op: 'EQUAL', value }),
+    customersByKey: key => query('customers', [...CUSTOMER_FIELDS, 'searchKeys'], 20000)({ field: 'searchKeys', op: 'ARRAY_CONTAINS', value: key }),
+    customerKeyCoverage: () => customerCoverage(async body => aggregateCount(await post('runAggregationQuery', body))),
+    async customerRecords(fields) {
+      if (!Array.isArray(fields) || !fields.length || fields.some(field => typeof field !== 'string' || !field)) throw failure('dispatch_storage_mask_required', 'A customers scan must name the fields it reads.');
+      return scan('customers', fields, 20000);
+    },
     // Complete paginated scan narrowed to the caller's DTO inputs. A mask is
     // mandatory: raw job bodies carry signature images and payment evidence.
     async jobRecords(fields) {
@@ -98,6 +124,8 @@ export function dispatchStorage(env, fetcher = firestoreFetch) {
     legacyBlockMode: legacyBlockMode(env),
     // EGC_DISPATCH_SEGMENTS: segment writes; reads always honour saved segments.
     segmentsEnabled: segmentsEnabled(env),
+    // EGC_CREW_NOTIFICATIONS_ENABLED: dispatch saves queue crew notices in the same commit.
+    crewNotificationsEnabled: crewNotificationsEnabled(env),
     async legacyBlockedDays(dates) {
       const found = await Promise.all(dates.map(async date => {
         const response = await send(`${BASE}/blocked_days/${encodeURIComponent(date)}?mask.fieldPaths=blockedAt`);
@@ -108,22 +136,39 @@ export function dispatchStorage(env, fetcher = firestoreFetch) {
       return found.filter(Boolean);
     },
     resources: () => scan('dispatchResources', null, 2000),
-    customers: () => scan('customers', ['name','firstName','lastName','phone','email','address','highlevelContactId'], 20000),
+    customers: () => scan('customers', CUSTOMER_FIELDS, 20000),
     settings: async () => arrivalSettings(env),
     recurringPlans: () => scan('recurringPlans', null, 2000),
+    // JOB-COST-PRIVACY: the owner-only job labor records (functions/_lib/job-labor-private.js), one per job at most.
+    jobLaborCosts: () => scan('jobLaborCosts', ['jobId', 'laborCents', 'recordedAt', 'recordedBy', 'requestId'], 20000),
+    projects: () => scan('projects', null, 20000),
     async read(collection, id) {
       const response = await send(`${BASE}/${collection}/${encodeURIComponent(id)}`);
       if (response.status === 404) return null;
       if (!response.ok) throw failure('dispatch_storage_unavailable', 'The dispatch record could not be loaded. Retry.');
       return decode(await response.json(),collection,id);
     },
-    async readMany(collection, ids) {
+    // `fields` masks the documents: a caller that only needs to know which exist reads no bodies.
+    async readMany(collection, ids, fields) {
       if (!ids.length) return [];
-      const response = await send(`${BASE}:batchGet`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ documents: ids.map(id => `${ROOT}/${collection}/${id}`) }) });
+      const response = await send(`${BASE}:batchGet`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ documents: ids.map(id => `${ROOT}/${collection}/${id}`), ...(fields?.length ? { mask: { fieldPaths: fields } } : {}) }) });
       if (!response.ok) throw failure('dispatch_storage_unavailable', 'The dispatch records could not be loaded. Retry.');
       const rows = await response.json();
       if (!Array.isArray(rows)) throw failure('dispatch_storage_incomplete', 'Dispatch returned incomplete records. Retry.');
       return rows.filter(row => row?.found).map(row => decode(row.found,collection));
+    },
+    // Map id -> {id,revision,estimate:{lineItems}} for the jobs found.
+    async quoteLines(ids) {
+      const found = new Map(), chunks = [];
+      for (let index = 0; index < ids.length; index += 100) chunks.push(ids.slice(index, index + 100));
+      await Promise.all(chunks.map(async chunk => {
+        const response = await send(`${BASE}:batchGet`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ documents: chunk.map(id => `${ROOT}/jobs/${id}`), mask: { fieldPaths: ['estimate.lineItems'] } }) });
+        if (!response.ok) throw failure('dispatch_storage_unavailable', 'The quote lines could not be loaded. Retry.');
+        const rows = await response.json();
+        if (!Array.isArray(rows)) throw failure('dispatch_storage_incomplete', 'Dispatch returned incomplete quote lines. Retry.');
+        for (const row of rows) if (row?.found) { const job = decode(row.found, 'jobs'); found.set(job.id, job); }
+      }));
+      return found;
     },
     async commit(writes) {
       let response,transaction;

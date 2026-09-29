@@ -8,11 +8,11 @@
   // The retired photo draft queue; its drafts move into the outbox (adoptPhotoDrafts).
   const PHOTO_DRAFTS = 'egc-field-photo-drafts', PHOTO_TIMEOUT = 120000, PHOTO_MAX = 8 * 1024 * 1024;
   const PHOTO_DATA = /^data:image\/(?:jpeg|png|webp);base64,[A-Za-z0-9+/]+={0,2}$/;
-  const QUEUEABLE = ['checklist', 'material', 'note', 'status', 'photo'];
+  const QUEUEABLE = ['checklist', 'material', 'note', 'status', 'photo', 'end_day'];
   const CLOCK_OPS = ['clock_in', 'break_start', 'break_end', 'clock_out', 'job_time'];
   // A first attempt the crew member is watching is dropped (and shown) when the
   // server definitively refuses it, exactly like the former single retry card.
-  const DIRECT_DISCARD_CODES = ['FIELD_START_INCOMPLETE', 'FIELD_COMPLETION_INCOMPLETE', 'FIELD_STATUS_CONFLICT', 'FIELD_JOB_CLOSED', 'FIELD_ISSUE_CHANGED'];
+  const DIRECT_DISCARD_CODES = ['FIELD_START_INCOMPLETE', 'FIELD_COMPLETION_INCOMPLETE', 'FIELD_STATUS_CONFLICT', 'FIELD_JOB_CLOSED', 'FIELD_ISSUE_CHANGED', 'FIELD_COMPLETION_NOT_FINAL_DAY', 'FIELD_VISIT_ENDED', 'FIELD_VISIT_NOT_STARTED', 'FIELD_VISIT_LIMIT'];
   const STATUS_FLOW = { scheduled: ['dispatched'], confirmed: ['dispatched'], crew_assigned: ['dispatched'], dispatched: ['arrived', 'delayed'], arrived: ['in_progress', 'waiting'], in_progress: ['paused', 'waiting', 'delayed', 'in_progress'] };
   const uuid = value => typeof value === 'string' && /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(value);
   const same = (left, right) => String(left || '').trim().toLowerCase() === String(right || '').trim().toLowerCase();
@@ -322,6 +322,14 @@
       else if (input.action === 'status' && view.allowedStatuses.includes(input.status)) {
         const stage = ['paused', 'waiting', 'delayed'].includes(input.status) ? view.status : input.status;
         Object.assign(view, { fieldStatus: input.status, status: stage, allowedStatuses: STATUS_FLOW[stage] || [], statusQueued: true });
+      } else if (input.action === 'end_day' && view.visits) {
+        // A queued end of day shows the visit day it was saved for as ended until
+        // the server confirms it. After midnight that is the previous day, and
+        // the job's day ends too only while today's visit has not started.
+        const today = view.visits.today, days = view.visits.days || [], date = typeof input.visitDate === 'string' && input.visitDate ? input.visitDate : today;
+        const ended = { date, scheduled: false, startedAt: null, ...days.find(day => day.date === date), status: 'ended', endedAt: item.queuedAt || null, endedBy: '', notes: String(input.notes || ''), queued: true };
+        view.visits = { ...view.visits, canEndDay: false, days: [...days.filter(day => day.date !== date), ended].sort((a, b) => String(a.date).localeCompare(String(b.date))) };
+        if (date === today || !days.some(day => day.date === today && day.status !== 'not_started')) Object.assign(view, { fieldStatus: 'day_ended', allowedStatuses: view.allowedStatuses.filter(status => status !== 'paused'), statusQueued: true });
       }
     }
     return view;

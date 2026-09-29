@@ -71,8 +71,8 @@ async function setup(t) {
     assert.equal(response.status, 200, await response.text());
     return response.headers.get('set-cookie').split(';')[0];
   };
-  const write = async (username, data, cookie = owner) => {
-    const response = await hub.onRequestPost({ env, request: request('/api/employee-hub', { collection: 'profiles', id: key(username), data }, cookie) });
+  const write = async (username, data, cookie = owner, hubEnv = env) => {
+    const response = await hub.onRequestPost({ env: hubEnv, request: request('/api/employee-hub', { collection: 'profiles', id: key(username), data }, cookie) });
     assert.equal(response.status, 200);
     return (await response.json()).record;
   };
@@ -153,19 +153,32 @@ test('default owner and manager responses omit applications and only the owner m
   }
 });
 
-// PRICE-SCRUB: by default (EGC_STAFF_PAY_OWNER_ONLY) only the owner sets another employee's pay;
-// a manager's edit keeps the stored pay. EGC_STAFF_PAY_OWNER_ONLY=false restores manager pay edits.
+// PRICE-SCRUB and PAY-TIMESHEETS: by default (EGC_STAFF_PAY_OWNER_ONLY) only the owner sees and sets another employee's
+// pay; a manager's save carrying pay is refused (403 pay_owner_only). EGC_STAFF_PAY_OWNER_ONLY=false restores manager pay edits.
 test('the owner can set pay before first login, a manager\'s edit cannot, and employee initialization preserves it without duplicate profiles', async t => {
   const store = await setup(t);
   await store.register('New.Crew_1');
   await store.review('New.Crew_1');
   const initial = (await store.roster(store.manager)).find(profile => profile.username === 'New.Crew_1');
   assert.ok(initial, 'approval must supply an editable roster record before the employee signs in');
+  // PAY-TIMESHEETS: with EGC_STAFF_PAY_OWNER_ONLY on (the default) only the owner sets pay, so the manager's rate is
+  // refused and nothing is saved. The roster record sent back with its pay unchanged is refused the same way (the answer
+  // never depends on the stored pay); without pay (the team board leaves it out unless the rate was edited) it saves.
   assert.equal('hourlyRate' in initial, false, 'managers see the roster but not another employee\'s pay');
-  const edited = await store.write('New.Crew_1', { ...initial, displayName: 'Crew display', preferredName: 'Crew nickname', hourlyRate: 99, payType: 'salary' }, store.manager);
-  assert.equal('hourlyRate' in edited || 'payType' in edited, false, 'the save reply hides pay from the manager too');
+  // The owner sees payType 'hourly' and hourlyRate 0 on an approved account's roster record until pay is set; withoutPay
+  // keeps these requests free of pay even if the manager's roster record ever carried it.
+  const withoutPay = Object.fromEntries(Object.entries(initial).filter(([name]) => !['hourlyRate', 'payType'].includes(name)));
+  for (const data of [{ ...withoutPay, hourlyRate: 27.5 }, { ...withoutPay, jobTitle: 'Synthetic crew', payType: 'hourly', hourlyRate: 0 }]) {
+    const refused = await hub.onRequestPost({ env: store.env, request: request('/api/employee-hub', { collection: 'profiles', id: key('New.Crew_1'), data }, store.manager) });
+    assert.deepEqual([refused.status, (await refused.json()).code, store.profileDocuments().length], [403, 'pay_owner_only', 0], JSON.stringify(data));
+  }
+  const saved = await store.write('New.Crew_1', { ...withoutPay, jobTitle: 'Synthetic crew' }, store.manager);
+  assert.deepEqual([saved.jobTitle, Object.hasOwn(saved, 'hourlyRate'), (await store.roster()).find(profile => profile.username === 'New.Crew_1').hourlyRate], ['Synthetic crew', false, 0]);
+  assert.equal('payType' in saved, false, 'the save reply hides pay from the manager too');
+  // The legacy rule (EGC_STAFF_PAY_OWNER_ONLY=false): a manager sets pay before first login.
+  await store.write('New.Crew_1', { ...initial, displayName: 'Crew display', preferredName: 'Crew nickname', hourlyRate: 27.5 }, store.manager, { ...store.env, EGC_STAFF_PAY_OWNER_ONLY: 'false' });
   let profile = (await store.roster()).find(profile => profile.username === 'New.Crew_1');
-  assert.deepEqual([profile.hourlyRate, profile.payType, profile.preferredName], [0, 'hourly', 'Crew nickname'], 'the manager\'s pay fields were dropped');
+  assert.deepEqual([profile.hourlyRate, profile.payType, profile.preferredName], [27.5, 'hourly', 'Crew nickname'], 'with the flag off the manager\'s rate saves');
   await store.write('New.Crew_1', { ...profile, hourlyRate: 27.5 }, store.owner);
   profile = (await store.roster()).find(profile => profile.username === 'New.Crew_1');
   assert.equal(profile.awaitingFirstSignIn, true, 'manager editing must not imply the employee has signed in');

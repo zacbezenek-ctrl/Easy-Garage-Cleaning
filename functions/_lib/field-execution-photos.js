@@ -2,6 +2,17 @@ import { fieldFailure } from './field-execution.js';
 
 const FILES = 'https://www.googleapis.com/drive/v3/files';
 export const FIELD_PHOTO_MAX_BYTES = 6 * 1024 * 1024;
+export const FIELD_PHOTO_THUMBNAIL_MAX_BYTES = 1024 * 1024;
+// Drive's thumbnailLink is a short-lived googleusercontent.com URL ending in a size such as
+// =s220. Only that host is ever fetched, and the size is raised for a sharp 2-column phone grid.
+const THUMBNAIL_HOST = /^[a-z0-9-]+\.googleusercontent\.com$/;
+
+export function driveThumbnailUrl(link, size = 640) {
+  let url;
+  try { url = new URL(link); } catch { return null; }
+  if (url.protocol !== 'https:' || !THUMBNAIL_HOST.test(url.hostname) || url.port || url.username || url.password) return null;
+  return url.search || url.hash ? url.href : url.href.replace(/=s\d{1,4}$/, `=s${size}`);
+}
 export const fieldPhotosConfigured = env => Boolean(env.GOOGLE_CLIENT_ID && env.GOOGLE_CLIENT_SECRET && env.GOOGLE_REFRESH_TOKEN);
 
 export function decodeFieldPhoto(dataUrl) {
@@ -37,6 +48,22 @@ async function driveAccessToken(env, now, tokens) {
   return tokenData.access_token;
 }
 
+// The whole body, or null (with the rest cancelled) once it passes max bytes.
+async function readCapped(body, max) {
+  if (!body) return null;
+  const reader = body.getReader(), chunks = [];
+  let size = 0;
+  for (let part = await reader.read(); !part.done; part = await reader.read()) {
+    size += part.value.byteLength;
+    if (size > max) { await reader.cancel().catch(() => {}); return null; }
+    chunks.push(part.value);
+  }
+  const bytes = new Uint8Array(size);
+  let offset = 0;
+  for (const chunk of chunks) { bytes.set(chunk, offset); offset += chunk.byteLength; }
+  return bytes;
+}
+
 export async function createFieldPhotoClient(env, { now = () => Date.now(), tokens = driveTokens } = {}) {
   if (!fieldPhotosConfigured(env)) throw fieldFailure('Photo storage is not connected. Your photo has not been uploaded; contact operations.', 503, 'FIELD_PHOTO_STORAGE_UNAVAILABLE');
   const token = await driveAccessToken(env, now, tokens), headers = { Authorization: `Bearer ${token}` };
@@ -54,7 +81,7 @@ export async function createFieldPhotoClient(env, { now = () => Date.now(), toke
       return id;
     },
     async metadata(fileId) {
-      const response = await call(`${FILES}/${encodeURIComponent(fileId)}?fields=id,size,mimeType,appProperties,trashed`);
+      const response = await call(`${FILES}/${encodeURIComponent(fileId)}?fields=id,size,mimeType,appProperties,trashed,thumbnailLink`);
       if (response.status === 404) return null;
       if (!response.ok) throw fieldFailure('Photo storage could not confirm the saved image. Retry to verify it.', 503, 'FIELD_PHOTO_VERIFY_FAILED');
       return response.json();
@@ -75,6 +102,22 @@ export async function createFieldPhotoClient(env, { now = () => Date.now(), toke
       // Drive's files remain private. Access is checked against the live job
       // assignment on every image request; no public sharing link is issued.
       return new Response(response.body, { headers: { 'Content-Type': response.headers.get('Content-Type'), 'Cache-Control': 'private, no-store', 'X-Content-Type-Options': 'nosniff', 'Content-Security-Policy': "default-src 'none'", 'Content-Disposition': 'inline' } });
+    },
+    // A small rendition of a private file from the thumbnailLink its metadata returned. Drive
+    // requires the same credentials for a non-public file's thumbnail. It is fetched directly, not
+    // through call(): a 401 from the thumbnail host must not drop the token every other tile uses.
+    // The capped bytes are read in full inside the timeout, so the cap holds without a
+    // Content-Length and a slow viewer is never sent a cut-off image. Any problem returns null so
+    // the caller serves the full image instead; this never throws.
+    async thumbnail(link, size = 640) {
+      const url = driveThumbnailUrl(link, size);
+      if (!url) return null;
+      try {
+        const response = await fetch(url, { headers, redirect: 'error', signal: AbortSignal.timeout(10000) }), type = response.headers.get('Content-Type') || '';
+        if (!response.ok || !/^image\/(jpeg|png|webp)(;|$)/i.test(type) || Number(response.headers.get('Content-Length')) > FIELD_PHOTO_THUMBNAIL_MAX_BYTES) { await response.body?.cancel().catch(() => {}); return null; }
+        const bytes = await readCapped(response.body, FIELD_PHOTO_THUMBNAIL_MAX_BYTES);
+        return bytes?.length ? new Response(bytes, { headers: { 'Content-Type': type, 'Cache-Control': 'private, no-store', 'X-Content-Type-Options': 'nosniff', 'Content-Security-Policy': "default-src 'none'", 'Content-Disposition': 'inline' } }) : null;
+      } catch { return null; }
     },
   };
 }

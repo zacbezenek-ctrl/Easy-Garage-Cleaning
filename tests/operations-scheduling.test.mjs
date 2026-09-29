@@ -3,7 +3,8 @@ import assert from 'node:assert/strict';
 import {randomUUID} from 'node:crypto';
 import {syncNativeSchedule} from '../functions/_lib/operations-schedule-sync.js';
 import {createHubSessionCookie} from '../functions/_lib/hub-session.js';
-import {mutateScheduledVisit,resolveScheduledVisit,bindScheduledProvider,linkScheduledCustomer} from '../functions/_lib/operations-scheduling.js';
+import {mutateScheduledVisit,resolveScheduledVisit,bindScheduledProvider,linkScheduledCustomer,scheduleMutateSyncKey} from '../functions/_lib/operations-scheduling.js';
+import {scheduleSyncRequestId} from '../functions/_lib/schedule-sync-queue.js';
 const actor={id:'verified-grant',kind:'integration',role:'integration',workspace:'egc'};
 function fixture(){
  const rows=new Map([['customers/customer-a',{id:'customer-a',name:'Synthetic customer',highlevelContactId:'contact-a',revision:'customer-r1'}]]);let revision=0;
@@ -104,4 +105,19 @@ test('legacy text assignment cannot silently override canonical dispatch crews o
   const g=fixture();g.rows.set('jobs/_egc_schedule_lock_2026-09-23',{id:'_egc_schedule_lock_2026-09-23',recordType:'schedule_lock',revision:'lock-r1',entries:'bad'});
   await assert.rejects(mutateScheduledVisit(g.store,actor,g.input()),/lock_unavailable/);
   assert.equal(g.rows.get('jobs/_egc_schedule_lock_2026-09-23').entries,'bad');
+});
+
+test('each bridge schedule change stores a fresh Hub-minted sync key that never equals the caller requestId',async()=>{
+ // MCP egc.schedule_visit syncs under its own requestId with automations off, and the page's syncJobRecord
+ // sends the visit key with automations on; one appointment-ledger key never takes both payloads.
+ const f=fixture(),key=id=>f.rows.get(`jobs/${id}`).syncIdempotencyKey;
+ const created=f.input(),r=await mutateScheduledVisit(f.store,actor,created),id=r.visit.portalVisitId;
+ assert.equal(key(id),`schedule-mutate:${created.requestId}`);
+ const moved=f.input({mode:'update',portalVisitId:id,expectedRevision:r.visit.revision,changes:{time:'12:00',endTime:'13:00'}}),m=await mutateScheduledVisit(f.store,actor,moved);
+ assert.equal(key(id),`schedule-mutate:${moved.requestId}`,'a reschedule gets a fresh key');
+ const cancel=f.input({mode:'cancel',portalVisitId:id,expectedRevision:m.visit.revision,changes:{}});await mutateScheduledVisit(f.store,actor,cancel);
+ assert.equal(key(id),scheduleMutateSyncKey(cancel.requestId));
+ assert.ok([created,moved,cancel].every(input=>key(id)!==input.requestId));
+ // The schedule-sync mirror appends its own suffix, so it is distinct from both.
+ assert.equal(await scheduleSyncRequestId(f.rows.get(`jobs/${id}`)),`schedule-mutate:${cancel.requestId}:mirror`);
 });

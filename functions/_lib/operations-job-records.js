@@ -1,4 +1,5 @@
 import {fieldCompletionMissing} from './field-execution.js';
+import {legacyDimensionFacts,projectDimensionPatch,resolveDimensions} from './funnel-dimensions.js';
 const safe=id=>typeof id==='string'&&/^[A-Za-z0-9_-]{1,180}$/.test(id)&&!/^(_egc_|secure_)/.test(id);
 const fail=(code,status=409)=>Object.assign(new Error(code),{status});
 const canonical=v=>Array.isArray(v)?v.map(canonical):v&&typeof v==='object'?Object.fromEntries(Object.entries(v).sort(([a],[b])=>a.localeCompare(b)).map(([k,v])=>[k,canonical(v)])):v;
@@ -49,7 +50,8 @@ export async function mutatePortalRecord(store,actor,command,now=new Date().toIS
     if(!safe(projectId)||root.projectId&&record.projectId&&root.projectId!==record.projectId)throw fail('project_identity_conflict');
     const project=await store.read('projects',projectId);
     if(project&&(project.customerId!==customer.id||project.sourceRecordId!==rootId))throw fail('project_customer_conflict');
-    if(!project)writes.push({collection:'projects',id:projectId,patch:{id:projectId,customerId:customer.id,sourceRecordId:rootId,sourceWalkthroughId:root.type==='walkthrough'?root.id:null,createdAt:now,createdBy:actor.id,authority:'employee_hub'}});
+    // FUN-29: a project created for existing records takes its service line and path from them (the legacy mapping).
+    if(!project)writes.push({collection:'projects',id:projectId,patch:{id:projectId,customerId:customer.id,sourceRecordId:rootId,sourceWalkthroughId:root.type==='walkthrough'?root.id:null,createdAt:now,createdBy:actor.id,authority:'employee_hub',...projectDimensionPatch(null,resolveDimensions(legacyDimensionFacts({sourceWalkthroughId:root.type==='walkthrough'?root.id:null},root.id===record.id?[record]:[root,record])),{actor:actor.id,now})}});
     else guards.push({collection:'projects',id:project.id,revision:project.revision,patch:{customerId:customer.id}});
     patch={projectId};
     if(root.id!==record.id&&!root.projectId)writes.push({collection:'jobs',id:root.id,revision:root.revision,patch:{projectId,updatedAt:now}});

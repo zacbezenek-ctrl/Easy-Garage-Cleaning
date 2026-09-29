@@ -23,8 +23,9 @@ const LINK = /https:\/\/easygaragecleaning\.com\/business-hub#invite=([a-f0-9]{3
 
 class MemoryStore {
   constructor() { this.records = new Map(); this.clock = 0; this.hooks = {}; }
-  async read(c, id) { await this.hooks.beforeRead?.(c, id); return structuredClone(this.records.get(c + '/' + id) || null); }
+  async read(c, id) { return structuredClone(this.records.get(c + '/' + id) || null); }
   async commit(changes) {
+    await this.hooks.beforeCommit?.(changes);
     for (const w of changes) { const old = this.records.get(w.collection + '/' + w.id); if (w.version ? old?._version !== w.version : Boolean(old)) throw Object.assign(new Error('Conflict'), { status: 409, publicMessage: 'The record changed or could not be saved. Refresh and retry; no partial update was applied.' }); }
     for (const w of changes) { const key = w.collection + '/' + w.id, old = this.records.get(key); this.records.set(key, { ...(w.patch ? old : {}), ...structuredClone(w.data), id: w.id, _version: String(++this.clock) }); }
   }
@@ -401,16 +402,23 @@ test('concurrent resends commit and send at most once', async () => {
   const invited = await h.call({ action: 'invite_member', requestId: uid(), name: 'Synthetic Pending', email: 'pending@example.invalid', role: 'viewer', deliver: 'email' }, { url: a.staffUrl });
   const emails = h.sent().length;
   for (const sameRequest of [false, true]) {
-    // Every submission reads the account before any of them commits; only the version precondition separates them.
-    const waiting = [];
-    h.business.hooks.beforeRead = c => c === 'business_operations' && waiting.length < 3 ? new Promise(go => { waiting.push(go); if (waiting.length === 3) waiting.forEach(f => f()); }) : null;
+    // Every submission makes all of its reads (the account, its receipt, then the mailbox and sender email caps) before any
+    // of them commits; only the version precondition separates them. The gate holds each commit until all three submissions
+    // have reached theirs or ended without one, so a submission that fails early is a clear failure here, never a hang.
+    // Holding only the receipt read left the cap reads to race the winner's commit behind async digests: under load a loser
+    // could read the mailbox cap after the winner's committed send filled it (3 of 3) and answer 429 instead of 409.
+    let open = false, ended = 0; const held = [];
+    const release = () => { if (!open && held.length + ended === 3) { open = true; held.forEach(go => go()); } };
+    h.business.hooks.beforeCommit = () => open ? null : new Promise(go => { held.push(go); release(); });
     const requestId = uid(), input = () => ({ action: 'resend_invite', requestId: sameRequest ? requestId : uid(), memberId: invited.data.memberId, deliver: 'email' });
-    const results = await Promise.all([1, 2, 3].map(() => h.call(input(), { url: a.staffUrl })));
-    h.business.hooks.beforeRead = null;
+    const results = await Promise.all([1, 2, 3].map(() => h.call(input(), { url: a.staffUrl }).finally(() => { ended += 1; release(); })));
+    h.business.hooks.beforeCommit = null;
     assert.deepEqual(results.map(r => r.status).sort(), [201, 409, 409], String(sameRequest));
   }
   assert.equal(h.sent().length, emails + 2, 'one email per winning resend');
   assert.equal((await h.member(a.accountId, invited.data.memberId)).version, 3);
+  const caps = h.business.rows('business_operations').filter(r => r.kind === 'invite_email_quota');
+  assert.deepEqual(caps.map(r => [r.scope, r.sends.length]).sort(), [['address', 3], ['sender', 3]], 'the email caps hold only committed sends: a losing resend claims none');
 });
 
 test('reset_sign_in needs confirm:true, ends the current session and issues a new link; resend refuses signed-in members', async () => {

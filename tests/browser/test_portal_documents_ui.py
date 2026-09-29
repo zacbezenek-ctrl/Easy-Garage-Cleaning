@@ -50,7 +50,7 @@ class PortalDocumentsBrowserTests(unittest.TestCase):
         self.context = self.browser.new_context(viewport={'width': 375, 'height': 812}, is_mobile=True, has_touch=True, timezone_id='Asia/Tokyo', accept_downloads=True)
         self.page = self.context.new_page(); self.page.set_default_timeout(5000); self.page.clock.install(time=NOW)
         self.errors = []; self.posts = []; self.portal_gets = 0; self.status_available = True; self.pdf_status = 200
-        self.hub = hub_status(); self.hub_status_code = 200; self.hub_post = None; self.portal_post = None
+        self.hub = hub_status(); self.hub_status_code = 200; self.hub_post = None; self.portal_post = None; self.portal_replies = []
         self.page.on('pageerror', lambda error: self.errors.append(str(error))); self.page.route('**/*', self.route)
     def tearDown(self):
         self.assertEqual(self.errors, []); self.context.close()
@@ -62,6 +62,7 @@ class PortalDocumentsBrowserTests(unittest.TestCase):
             if request.method == 'GET': self.portal_gets += 1; send(portal_view()); return
             body = request.post_data_json; self.posts.append(body)
             if self.portal_post: self.portal_post(send, body); return
+            if self.portal_replies: status, data = self.portal_replies.pop(0); send(data, status); return
             send({'ok': False, 'code': 'CUSTOMER_PORTAL_TERMS_CHANGED', 'error': 'Our estimate terms were updated. Review the latest terms, then approve again.'}, 409); return
         if parsed.path == '/api/customer-portal-document':
             if parsed.query == 'kind=insurance&view=status': send({'ok': True, 'kind': 'insurance', 'available': self.status_available}); return
@@ -114,8 +115,9 @@ class PortalDocumentsBrowserTests(unittest.TestCase):
         self.open_portal(); before = self.portal_gets
         self.page.locator('#approval-name').fill('Synthetic Customer'); self.page.locator('#approval-confirm').check(); self.page.locator('#approve-button').click()
         expect(self.page.locator('#toast')).to_contain_text('Our estimate terms were updated')
-        # P2-05: the approval also names the revision, amount and fingerprint the page displayed.
-        self.assertEqual(self.posts[-1], {'action': 'approve_estimate', 'signed_name': 'Synthetic Customer', 'confirmed': True, 'terms_version': DOCUMENTS['termsVersion'], 'estimate_revision': 1, 'amount_cents': 80000, 'estimate_fingerprint': 'synthetic-estimate-fingerprint'})
+        # P2-05: the approval also names the revision, amount and fingerprint the page displayed; FUN-03: and its request.
+        sent = dict(self.posts[-1]); self.assertRegex(sent.pop('request_id', ''), r'^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$')
+        self.assertEqual(sent, {'action': 'approve_estimate', 'signed_name': 'Synthetic Customer', 'confirmed': True, 'terms_version': DOCUMENTS['termsVersion'], 'estimate_revision': 1, 'amount_cents': 80000, 'estimate_fingerprint': 'synthetic-estimate-fingerprint'})
         expect(self.page.locator('#approve-button')).to_be_enabled()
         for _ in range(50):
             if self.portal_gets > before: break
@@ -133,6 +135,33 @@ class PortalDocumentsBrowserTests(unittest.TestCase):
         self.assertEqual(self.posts, [{'action': 'verify_payment', 'session_id': 'cs_test_synthetic_held'}])
         self.assertEqual(self.page.evaluate('location.search'), '', 'a reload does not verify the held charge again')
         self.assert_mobile('#payment-notice')
+
+    def test_a_rebooking_retry_resends_its_request_and_an_edited_form_sends_a_new_one(self):
+        # FUN-03: a lost response keeps the request_id for the retry; after any edit (or a changed-details conflict) the form is a new request.
+        self.open_portal(); form = self.page.locator('#rebook-form'); state = self.page.locator('#rebook-state')
+        lost = {'ok': False, 'code': 'CUSTOMER_PORTAL_STORAGE_UNAVAILABLE', 'error': 'Synthetic lost response.'}
+        changed = {'ok': False, 'code': 'CUSTOMER_PORTAL_IDEMPOTENCY_CONFLICT', 'error': 'This rebooking request was already sent with different details.'}
+        self.portal_replies = [(503, lost), (503, lost), (503, lost), (409, changed), (503, lost)]
+        form.locator('#rebook-notes').fill('Same setup as last time')
+        def send(expected):
+            sent = len(self.posts); form.get_by_role('button', name='Request my next visit').click()
+            for _ in range(50):
+                if len(self.posts) > sent: break
+                self.page.wait_for_timeout(100)
+            expect(state).to_contain_text(expected); expect(form.get_by_role('button', name='Request my next visit')).to_be_enabled()
+            return self.posts[-1]
+        first = send('Synthetic lost response'); retry = send('Synthetic lost response')
+        form.locator('#rebook-notes').fill('Please bring the shelving crew')
+        edited = send('Synthetic lost response')
+        form.locator('input[name="rebook-kind"][value="touch_up"]').check(force=True)
+        switched = send('already sent with different details')
+        after_conflict = send('Synthetic lost response')
+        self.assertEqual([body['action'] for body in (first, retry, edited, switched, after_conflict)], ['request_rebook'] * 5)
+        self.assertRegex(first['request_id'], UUID)
+        self.assertEqual(retry['request_id'], first['request_id'], 'a retry resends the same request')
+        self.assertEqual([edited['notes'], switched['kind']], ['Please bring the shelving crew', 'touch_up'])
+        ids = [first['request_id'], edited['request_id'], switched['request_id'], after_conflict['request_id']]
+        self.assertEqual(len(set(ids)), 4, 'an edit or a changed-details conflict starts a new request')
 
     def open_hub(self):
         self.page.goto(self.url + '/hub-documents'); expect(self.page.get_by_role('heading', name='Portal documents')).to_be_visible()

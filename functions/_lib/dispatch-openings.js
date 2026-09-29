@@ -6,6 +6,7 @@ import { validDate, addDays, denverToday, scheduleInterval, availabilityInterval
 import { localInstant } from './operations-portal-records.js';
 import { legacyBlockedDays } from './dispatch-legacy-blocks.js';
 import { jobSegments, lockEntryOwner } from './dispatch-segments.js';
+import { jobsForWindow, lockOwnerIds } from './dispatch-window-reads.js';
 
 const fail=(code,message,status=400)=>Object.assign(new Error(message),{code,status});
 const closed=row=>['cancelled','canceled','completed','invoiced','paid','review_requested','closed','noshow','no_show','no-show'].includes(row.pipelineStatus || row.status);
@@ -52,7 +53,7 @@ async function snapshot(store,dates) {
   for(let attempt=0;attempt<2;attempt++) {
     const guard=await store.read('dispatchState','revision');
     const before=await locks();
-    const [jobs,resources,roster]=await Promise.all([store.jobs(),store.resources(),store.roster()]);
+    const [jobs,resources,roster]=await Promise.all([jobsForWindow(store,{startDate:dates[0],endDate:addDays(dates.at(-1),1)},'openings'),store.resources(),store.roster()]);
     const [after,rosterAfter]=await Promise.all([locks(),store.roster()]);
     const guardAfter=await store.read('dispatchState','revision');
     if (!same(guard,guardAfter)||before.some((lock,index)=>!same(lock,after[index]))||rosterKey(roster)!==rosterKey(rosterAfter))continue;
@@ -85,7 +86,7 @@ export async function dispatchOpenings(store,session,query={},now=new Date(),{tr
   const sources=[...data.jobs.filter(operational).flatMap(jobSegments),...data.resources.filter(unavailable)];
   // An orphan lock is still a reservation until an operations manager reviews
   // it. Existing jobs, including completed work, are authoritative over old locks.
-  const canonicalIds=new Set(data.jobs.map(row=>row.id));
+  const canonicalIds=await lockOwnerIds(store,data.jobs,data.locks);
   data.locks.forEach((lock,index)=>{
     for(const entry of lock?.entries || []) {
       if (canonicalIds.has(entry.id)||canonicalIds.has(lockEntryOwner(entry)))continue;

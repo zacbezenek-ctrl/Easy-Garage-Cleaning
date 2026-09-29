@@ -2,7 +2,7 @@ import { sha256 } from '@noble/hashes/sha2.js';
 import { customerPaymentNeedsReview, payable as checkoutPayable } from './customer-payments.js';
 import { denverToday, validDate } from './dispatch-time.js';
 import { customerMoneyTotals, invoiceLineItems, invoiceNumber, invoiceStatus, paymentLedger } from './money-core.js';
-import { customerLineItem, estimateTotals, included, legacyLineItems, singleLineItem } from './quote-model.js';
+import { customerLineItem, estimateTotals, included, legacyLineItems, singleLineItem, unsentQuoteDraft } from './quote-model.js';
 
 /**
  * Server-rendered, branded customer money documents (estimate, invoice,
@@ -130,7 +130,8 @@ function payments(job, { tips }) {
 }
 
 // What the portal checkout would charge right now, in cents (payable() in
-// customer-payments.js, still on the legacy money state), or null if it refuses.
+// customer-payments.js, on the legacy money state plus billed change orders),
+// or null if it refuses.
 function checkoutCents(job) {
   try { return Math.round(checkoutPayable(job).dueNow * 100); } catch { return null; }
 }
@@ -138,7 +139,10 @@ function checkoutCents(job) {
 /**
  * Which documents a customer may open for this job: an estimate once a quote
  * exists, an invoice once issued (not draft, void or superseded) and a receipt
- * once a payment is recorded. Unknown money makes no document available.
+ * once a payment is recorded. Unknown money makes no document available. A Hub
+ * quote draft that has not been sent in its current revision (unsentQuoteDraft)
+ * keeps only its receipt, which then lists the recorded payments and never the
+ * unsent total, lines or balance (see moneyDocumentModel).
  */
 export function moneyDocumentKinds(job, now) {
   const at = instant(now);
@@ -146,6 +150,7 @@ export function moneyDocumentKinds(job, now) {
   if (!plain(job)) return [];
   const totals = customerMoneyTotals(job);
   if (!known(totals.quoteCents, totals.totalCents, totals.appliedCents, totals.balanceCents) || totals.totalCents <= 0) return [];
+  if (unsentQuoteDraft(job)) return totals.paidCents > 0 ? ['receipt'] : [];
   return MONEY_DOCUMENT_KINDS.filter(kind => kind === 'estimate' || kind === 'invoice' && PORTAL_INVOICE.has(invoiceStatus(job, at)) || kind === 'receipt' && totals.paidCents > 0);
 }
 
@@ -163,6 +168,9 @@ export function moneyDocumentLinks(job, { enabled = false, now } = {}) {
  * $0.50). `contact:false` leaves out the customer's phone and email
  * (collaborators). `audience:'staff'` words the pay note for a Hub copy that is
  * printed or handed on, which cannot carry the customer's portal session.
+ * For a customer, a Hub quote draft not sent in its current revision is
+ * withheld: only a receipt of the recorded payments, without the unsent
+ * service total, lines, balance or a pay button.
  */
 export function moneyDocumentModel(job, { kind, now, payUrl = null, contact = true, audience = 'customer' } = {}) {
   if (!MONEY_DOCUMENT_KINDS.includes(kind)) throw fail('invalid_kind', 'Choose an estimate, invoice or receipt.');
@@ -173,6 +181,9 @@ export function moneyDocumentModel(job, { kind, now, payUrl = null, contact = tr
   if (!known(totals.quoteCents, totals.totalCents, totals.appliedCents, totals.balanceCents)) throw fail('total_unknown', 'The amounts on this job need review by Easy Garage Cleaning before a document can be produced.', 409);
   if (totals.totalCents <= 0) throw fail('empty', 'There is nothing to show on this document yet.', 409);
   if (kind === 'receipt' && !(totals.paidCents > 0)) throw fail('unavailable', 'No payment has been recorded for this job yet.', 409);
+  const withheld = audience !== 'staff' && unsentQuoteDraft(job);
+  if (withheld && kind !== 'receipt') throw fail('unavailable', `Your ${kind} is being updated. Easy Garage Cleaning will send it to you for review.`, 409);
+  if (withheld) return withheldReceipt(job, totals, at, contact);
   const estimate = plain(job.estimate) ? job.estimate : {}, invoice = plain(job.invoice) ? job.invoice : {};
   const today = denverToday(new Date(at)), approval = approvalOf(job);
   let lines, status, statusLabel, number, dates;
@@ -217,8 +228,9 @@ export function moneyDocumentModel(job, { kind, now, payUrl = null, contact = tr
   const closed = kind === 'invoice' && ['void', 'superseded'].includes(status) || kind === 'estimate' && ['expired', 'superseded'].includes(status);
   const due = Number.isSafeInteger(totals.dueNowCents) && totals.dueNowCents > 0, deposit = totals.purpose === 'deposit';
   const offer = url && due && !needsReview && !cancelled && !closed && (approval.approved || !deposit);
-  // The checkout still charges the legacy amount (no approved changes, tips
-  // counted as paid): the button appears only when it charges this figure.
+  // The checkout charges the legacy amount plus change orders billed through
+  // the portal (tips count as paid, an approval without a change-order line
+  // is not charged): the button appears only when it charges this figure.
   const charge = offer ? checkoutCents(job) : null;
   const pay = offer && charge !== null && charge >= 50 && charge === totals.dueNowCents ? { url, amountCents: totals.dueNowCents, label: `Pay ${usd(totals.dueNowCents)} ${deposit ? 'deposit' : 'balance'} securely` } : null;
   let payNote = '';
@@ -241,6 +253,24 @@ export function moneyDocumentModel(job, { kind, now, payUrl = null, contact = tr
     approval: (kind === 'estimate' || kind === 'invoice') && approval.approved ? `Estimate approved${approval.by ? ` by ${approval.by}` : ''}${approval.at ? ` on ${instantDay(approval.at)}` : ''}${approval.portal ? ' in the customer portal' : ''}` : '',
     termsVersion: clean((kind === 'estimate' ? estimate.termsVersion : invoice.termsVersion || estimate.termsVersion) || DEFAULT_TERMS_VERSION, 40), terms: TERMS[kind],
     pay, payNote, totals, issues: [...new Set(issues)],
+  };
+}
+
+// The receipt of an unsent quote draft: the recorded payments only. Paid toward
+// service and tips do not depend on the quote; the unsent total, balance and
+// any overpayment against it do, so they are left out.
+function withheldReceipt(job, totals, at, contact) {
+  const invoice = plain(job.invoice) ? job.invoice : {}, ledger = payments(job, { tips: true }), status = customerPaymentNeedsReview(job) ? 'pending_verification' : 'received';
+  const rows = totals.tipCents > 0 ? [{ label: 'Paid toward service', cents: totals.appliedCents }, { label: 'Tips for your crew (not part of the service total)', cents: totals.tipCents, tip: true }, { label: 'Total paid', cents: totals.paidCents }] : [{ label: 'Total paid', cents: totals.paidCents }];
+  return {
+    kind: 'receipt', title: TITLES.receipt, number: invoiceNumber(job.id, 'invoice', clean(invoice.number, 80)), status, statusLabel: status === 'received' ? 'Payment received' : 'Payment pending verification',
+    notice: 'Your estimate is being updated. This receipt lists the payments recorded so far; your service total and balance appear once Easy Garage Cleaning sends you the updated estimate.',
+    generatedAt: at, generatedLabel: instantStamp(at), dates: [['Receipt date', instantDay(ledger.latest) || instantDay(at)]],
+    customer: { name: clean(job.customer, 120) || 'Customer', address: clean(job.address, 240), phone: contact ? clean(job.phone, 40) : '', email: contact ? clean(job.email, 180) : '' },
+    service: clean(job.serviceType, 120) || SERVICE_TYPES[job.type] || 'Garage service', scope: '', withheld: true,
+    lines: [], rows, payments: ledger.rows, paymentsReconciled: ledger.reconciled, approval: '',
+    termsVersion: clean(invoice.termsVersion || job.estimate?.termsVersion || DEFAULT_TERMS_VERSION, 40), terms: TERMS.receipt,
+    pay: null, payNote: '', totals: { paidCents: totals.paidCents, tipCents: totals.tipCents, appliedCents: totals.appliedCents }, issues: [...new Set(totals.issues)],
   };
 }
 
@@ -269,14 +299,14 @@ function lineRow(line) {
 /** The complete HTML document; every saved value is escaped. See moneyDocumentModel for options. */
 export function renderMoneyDocument(job, options = {}) {
   const doc = moneyDocumentModel(job, options);
-  const good = ['approved', 'paid'].includes(doc.status);
+  const good = ['approved', 'paid', 'received'].includes(doc.status);
   const party = [doc.customer.address, [doc.customer.phone, doc.customer.email].filter(Boolean).join(' · ')].filter(Boolean).map(text => `<span>${esc(text)}</span>`).join('');
   const body = [
     `<header class="top">${logo}<div class="kind"><h1>${esc(doc.title)}</h1><p>${esc(doc.number)} · ${esc(doc.service)}</p><span class="status${good ? ' good' : ''}">${esc(doc.statusLabel)}</span></div></header>`,
     doc.notice ? `<p class="notice" role="note">${esc(doc.notice)}</p>` : '',
     `<section class="meta"><div class="party"><div class="label">Prepared for</div><strong>${esc(doc.customer.name)}</strong>${party}</div><dl class="dates">${doc.dates.map(([label, value]) => `<div><dt>${esc(label)}</dt><dd>${esc(value)}</dd></div>`).join('')}</dl></section>`,
     doc.scope ? `<p class="scope">${esc(doc.scope)}</p>` : '',
-    `<table><caption class="label">${doc.kind === 'estimate' ? 'Quoted services' : 'Services'}</caption><thead><tr><th scope="col">Description</th><th scope="col">Amount</th></tr></thead><tbody>${doc.lines.map(lineRow).join('')}</tbody></table>`,
+    doc.lines.length ? `<table><caption class="label">${doc.kind === 'estimate' ? 'Quoted services' : 'Services'}</caption><thead><tr><th scope="col">Description</th><th scope="col">Amount</th></tr></thead><tbody>${doc.lines.map(lineRow).join('')}</tbody></table>` : '',
     `<div class="totals">${doc.rows.map(row => `<div${row.due ? ' class="due"' : row.tip ? ' class="tip"' : ''}><span>${esc(row.label)}</span><strong>${esc(usd(row.cents))}</strong></div>`).join('')}</div>`,
     doc.approval ? `<p class="approval">✓ ${esc(doc.approval)}</p>` : '',
     doc.payments.length ? `<h2>Payments</h2><table><thead><tr><th scope="col">Payment</th><th scope="col">Amount</th></tr></thead><tbody>${doc.payments.map(row => `<tr><td><strong>${esc(row.label)}</strong>${row.date ? `<small>${esc(row.date)}</small>` : ''}${row.receiptUrl ? `<a class="link" href="${esc(row.receiptUrl)}" rel="noopener noreferrer">Stripe receipt</a>` : ''}</td><td>${esc(usd(row.amountCents))}</td></tr>`).join('')}</tbody></table>${doc.paymentsReconciled ? '' : '<p class="muted">Some payment details are still being reconciled by our team. The totals above are from our records.</p>'}` : '',

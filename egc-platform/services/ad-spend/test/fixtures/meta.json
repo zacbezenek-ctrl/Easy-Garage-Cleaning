@@ -1,0 +1,47 @@
+{
+  "_comment": "Synthetic recordings shaped like Graph API v25.0 responses. Ids, names and amounts are fictitious.",
+  "account": { "timezone_name": "America/Denver", "currency": "USD", "id": "act_1234567890" },
+  "insightsAccount": {
+    "data": [
+      { "spend": "45.67", "impressions": "3021", "clicks": "88", "date_start": "2026-09-19", "date_stop": "2026-09-19" },
+      { "spend": "50.00", "impressions": "3500", "clicks": "91", "date_start": "2026-09-20", "date_stop": "2026-09-20" },
+      { "spend": "12.34", "impressions": "800", "clicks": "20", "date_start": "2026-09-22", "date_stop": "2026-09-22" }
+    ],
+    "paging": { "cursors": { "before": "MAZDZD", "after": "MgZDZD" } }
+  },
+  "insightsAdSetPages": [
+    {
+      "data": [
+        { "campaign_id": "120200000000000001", "campaign_name": "Synthetic Garage Leads", "adset_id": "120200000000000101", "adset_name": "Fort Collins 35-65", "spend": "30.00", "impressions": "2000", "clicks": "60", "date_start": "2026-09-19", "date_stop": "2026-09-19" },
+        { "campaign_id": "120200000000000001", "campaign_name": "Synthetic Garage Leads", "adset_id": "120200000000000102", "adset_name": "Loveland retarget", "spend": "15.67", "impressions": "1021", "clicks": "28", "date_start": "2026-09-19", "date_stop": "2026-09-19" },
+        { "campaign_id": "120200000000000001", "campaign_name": "Synthetic Garage Leads", "adset_id": "120200000000000101", "adset_name": "Fort Collins 35-65", "spend": "25.00", "impressions": "1800", "clicks": "50", "date_start": "2026-09-20", "date_stop": "2026-09-20" }
+      ],
+      "paging": { "cursors": { "before": "MAZDZD", "after": "MwZDZD" }, "next": "https://evil.example.invalid/steal?access_token=synthetic" }
+    },
+    {
+      "data": [
+        { "campaign_id": "120200000000000002", "campaign_name": "Synthetic Junk Removal", "adset_id": "120200000000000201", "adset_name": "Windsor homeowners", "spend": "25.00", "impressions": "1700", "clicks": "41", "date_start": "2026-09-20", "date_stop": "2026-09-20" },
+        { "campaign_id": "120200000000000001", "campaign_name": "Synthetic Garage Leads", "adset_id": "120200000000000101", "adset_name": "Fort Collins 35-65", "spend": "12.34", "impressions": "800", "clicks": "20", "date_start": "2026-09-22", "date_stop": "2026-09-22" }
+      ],
+      "paging": { "cursors": { "before": "NAZDZD", "after": "NQZDZD" } }
+    }
+  ],
+  "leadgenForms": {
+    "data": [
+      { "id": "900000000000001", "name": "Synthetic garage help form", "status": "ACTIVE" },
+      { "id": "900000000000002", "name": "Synthetic spring promo", "status": "ARCHIVED" }
+    ],
+    "paging": { "cursors": { "before": "QVFI", "after": "QVFJ" } }
+  },
+  "leads": {
+    "900000000000001": {
+      "data": [
+        { "id": "120211111111111101", "created_time": "2026-09-20T05:59:00+0000" },
+        { "id": "120211111111111102", "created_time": "2026-09-20T06:00:00+0000" },
+        { "id": "120211111111111103", "created_time": "2026-09-22T15:00:00+0000" }
+      ],
+      "paging": { "cursors": { "before": "QVFI", "after": "QVFJ" } }
+    },
+    "900000000000002": { "data": [] }
+  }
+}

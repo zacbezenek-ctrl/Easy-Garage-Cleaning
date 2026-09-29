@@ -1,6 +1,14 @@
 {
   "indexes": [
     {
+      "collectionGroup": "jobs",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "providerSyncOwner", "order": "ASCENDING" },
+        { "fieldPath": "syncStatus", "order": "ASCENDING" }
+      ]
+    },
+    {
       "collectionGroup": "funnelEvents",
       "queryScope": "COLLECTION",
       "fields": [

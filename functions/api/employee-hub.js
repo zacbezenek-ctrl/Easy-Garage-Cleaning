@@ -8,7 +8,7 @@ import { listEmployeeApplications, normalizeEmployeeUsername } from '../_lib/emp
 import { activeTimecard, authorizeTimecard, timecardError } from '../_lib/employee-timecards.js';
 import { activeJobSegment, employeeJobTime, ownJobTimeProjection } from '../_lib/employee-job-time.js';
 import { legacyManagerProfile, legacyProfileView, mirrorLegacyPay, profileHourlyRate } from '../_lib/staff-directory.js';
-import { incomingPay, seesOthersPay, visiblePay } from '../_lib/pay-visibility.js';
+import { assertNoOthersPay, assertPayUnchanged, canSetPay, payOwnerField, seesOthersPay, visiblePay, withoutPayWrites } from '../_lib/pay-visibility.js';
 
 const PROJECT_ID = 'egcw-1ec83';
 const COLLECTIONS = EMPLOYEE_HUB_COLLECTIONS;
@@ -175,8 +175,42 @@ async function employeeRate(env, session, now) {
   return profileHourlyRate(profile.data, now) ?? Math.max(0, Number(session.hourlyRate || 0));
 }
 
+// EGC_STAFF_PAY_OWNER_ONLY (default on): pay on profiles, timecards and time-off requests is the owner's (pay.manage).
+// A save counts as the caller's own only when both the stored owner and the owner after the save are the caller.
+// - Another employee's record: any pay field is refused (403 pay_owner_only) whatever its value, and a stored timecard
+//   or time-off request never moves to another employee. The stored pay is never read for this, so a guess cannot be
+//   confirmed.
+// - Your own record: a pay change is refused; unchanged pay a form sends back (the ensureOwnProfile echo of the Hub
+//   configuration, your own timecard) is accepted and then dropped, so the stored pay stays exactly as it was. Your own
+//   new timecard snapshots the server rate, as a crew clock-in does.
+// Approving time off still sets paid hours (hours, not a rate). Crew profile and timecard saves take pay only from the
+// server (authorizeMutation ignores what they send); their time-off requests are checked here.
+async function payGuard(env, session, collection, incoming, existing, now) {
+  const field = payOwnerField(collection);
+  if (!field || canSetPay(session, env) || (!manager(session) && collection !== 'requests')) return incoming;
+  // grossEstimate is derived from the hours and the stored rate; the timecard rules recompute it.
+  const input = collection === 'timeEntries' ? Object.fromEntries(Object.entries(incoming).filter(([key]) => key !== 'grossEstimate')) : incoming;
+  const stored = existing ? existing[field] : undefined;
+  // A crew member's request is saved as their own (and one already stored is refused later).
+  const after = !manager(session) ? (existing ? stored : session.user) : Object.hasOwn(input, field) ? input[field] : stored;
+  if (!((!existing || same(stored, session.user)) && same(after, session.user))) {
+    assertNoOthersPay(session, env, collection, input, { moved: Boolean(existing) && !same(after, stored) });
+    return input;
+  }
+  if (collection === 'timeEntries' && !existing) {
+    const { payType, hourlyRate, ...own } = input;
+    assertPayUnchanged(session, env, own, null);
+    return { ...withoutPayWrites(own), payType: session.payType, hourlyRate: await employeeRate(env, session, now) };
+  }
+  // Your profile is compared with the pay the team board shows for it and the Hub configuration's pay (what
+  // ensureOwnProfile sends and the save mirrors); a timecard or request with what is stored.
+  assertPayUnchanged(session, env, input, ...(collection === 'profiles' ? [legacyProfileView(existing, now), session] : [existing]));
+  return withoutPayWrites(input);
+}
+
 async function authorizeMutation(env, session, collection, id, incoming, existing) {
   const now = new Date().toISOString();
+  incoming = await payGuard(env, session, collection, incoming, existing, now);
   if (collection === 'timeEntries') return authorizeTimecard({ session, manager: manager(session), id, incoming, existing,
     hourlyRate: existing?.hourlyRate ?? await employeeRate(env, session, now), now, env });
   if (manager(session) && !(collection === 'training' && incoming.moduleId)) return collection === 'profiles' ? legacyManagerProfile({ env, session, existing, incoming, id, now }) : { ...(existing || {}), ...incoming, id };
@@ -229,13 +263,6 @@ async function authorizeMutation(env, session, collection, id, incoming, existin
   }
 
   if (existing && !visibleTo(session, collection, existing)) throw new Error('This record belongs to another employee');
-
-  if (collection === 'requests') {
-    if (existing) throw new Error('Only a manager can change a submitted request');
-    // Paid time-off hours and weekend pay are set by a manager; an employee request cannot pre-fill them.
-    const { paidHoursPerDay, paidWeekends, ...requested } = incoming;
-    return { ...requested, id, employee: session.user, status: 'pending', reviewedBy: '', reviewedAt: '' };
-  }
 
   if (collection === 'training') {
     const moduleId = String(incoming.moduleId || '');
@@ -371,7 +398,7 @@ export async function onRequestGet({ request, env }) {
       } : profile;
     }).map(profile => legacyProfileView(profile, viewedAt));
     // Other employees' pay goes to the owner only (EGC_STAFF_PAY_OWNER_ONLY); hours stay visible to managers.
-    for (const name of ['profiles', 'timeEntries']) collections[name] = collections[name].map(row => visiblePay(session, env, name, row));
+    for (const name of ['profiles', 'timeEntries', 'requests']) collections[name] = collections[name].map(row => visiblePay(session, env, name, row));
     return reply(200, { ok: true, collections, payVisibility: seesOthersPay(session, env) ? 'all' : 'own', ...(includeAccounts ? { accounts } : {}) });
   } catch (error) {
     return reply(502, { ok: false, ...(error.code ? { code: error.code } : {}), error: String(error.message || 'Employee Hub storage failed') });
@@ -393,6 +420,8 @@ export async function onRequestPost({ request, env }) {
   const collection = String(body.collection || '');
   const id = String(body.id || '').trim();
   if (!COLLECTIONS.has(collection) || !id || id.length > 180) return reply(400, { ok: false, error: 'Invalid employee record' });
+  // Requests change only through /api/employee-pto: field whitelist, decision history and availability locks.
+  if (collection === 'requests') return reply(403, { ok: false, code: 'EMPLOYEE_HUB_REQUEST_WORKFLOW_REQUIRED', error: 'Requests are sent and reviewed through the request workflow. Refresh the Hub and try again.' });
   if (body.data !== undefined && !isRecord(body.data)) return reply(400, { ok: false, error: 'Invalid employee record data' });
   let incoming;
   try {
@@ -418,7 +447,7 @@ export async function onRequestPost({ request, env }) {
       }
       // A different vault key changes IDs; a 404 alone cannot prove this is new.
       if (!current.data) await readAll(env);
-      const data = await authorizeMutation(env, session, collection, id, incomingPay(session, env, collection, incoming, current.data), current.data);
+      const data = await authorizeMutation(env, session, collection, id, incoming, current.data);
       try {
         if (collection === 'timeEntries') return reply(200, { ok: true, record: visiblePay(session, env, collection, await writeTimecard(env, session, id, data, target)) });
         const saved = await writeOne(env, collection, id, data, collection === 'profiles' ? target : null);

@@ -10,6 +10,7 @@ import { sendAcceptedQuotePortal } from '../functions/_lib/portal-invitation.js'
 import { createCustomerPortalHandlers } from '../functions/api/customer-portal.js';
 import { customerPortalLinkHandler } from '../functions/api/customer-portal-link.js';
 import { UNVERSIONED_PAGE_TERMS_VERSION } from '../functions/_lib/customer-portal-content.js';
+import { applyFirestoreCommit } from './helpers/firestore-commit.mjs';
 
 // B2B-SAFE: company projects shared through the business hub never receive a
 // homeowner owner-level portal link, and company approvals name the member.
@@ -36,7 +37,7 @@ const approve = { action: 'approve_estimate', signed_name: 'Synthetic Signer', c
 // Firestore REST emulation for any collection (versioned updateTime, updateMask
 // patches, 412 on a stale precondition) plus HighLevel call capture.
 function firestore(t, jobs, accounts = { [ACCOUNT]: account }) {
-  const documents = new Map(), writes = [], highLevel = [];
+  const documents = new Map(), writes = [], highLevel = [], events = [];
   let counter = 0;
   const put = (path, data) => documents.set(path, { data: structuredClone(data), updateTime: `2026-09-22T00:00:00.${String(++counter).padStart(6, '0')}Z` });
   for (const [id, data] of Object.entries(jobs)) put(`jobs/${id}`, data);
@@ -46,6 +47,15 @@ function firestore(t, jobs, accounts = { [ACCOUNT]: account }) {
     const url = new URL(input), method = options.method || 'GET';
     if (url.hostname === 'services.leadconnectorhq.com') { highLevel.push(url.pathname); return Response.json({}, { status: 500 }); }
     assert.equal(url.hostname, 'firestore.googleapis.com', `Unexpected external request to ${url.hostname}`);
+    // FUN-03: portal writers commit the job change with its funnel events.
+    if (url.pathname.endsWith('/documents:commit')) {
+      const commit = JSON.parse(options.body);
+      const result = applyFirestoreCommit(commit, { read: path => documents.has(path) ? structuredClone(documents.get(path)) : null, write: (path, data, { mask }) => {
+        assert.equal(path.startsWith('business_accounts/'), false, 'the portal never writes business accounts');
+        put(path, data); if (path.startsWith('jobs/')) writes.push({ path, fields: mask }); else events.push(structuredClone(data));
+      } });
+      return result.stale ? Response.json({}, { status: 412 }) : Response.json({ commitTime: NOW });
+    }
     const path = decodeURIComponent(url.pathname.split('/documents/')[1] || '');
     if (method === 'GET') return documents.has(path) ? Response.json(body(path)) : Response.json({}, { status: 404 });
     assert.equal(method, 'PATCH');
@@ -57,7 +67,7 @@ function firestore(t, jobs, accounts = { [ACCOUNT]: account }) {
     writes.push({ path, fields: mask });
     return Response.json(body(path));
   });
-  return { writes, highLevel, doc: path => structuredClone(documents.get(path)?.data), job: id => structuredClone(documents.get(`jobs/${id}`)?.data) };
+  return { writes, highLevel, events, doc: path => structuredClone(documents.get(path)?.data), job: id => structuredClone(documents.get(`jobs/${id}`)?.data) };
 }
 
 const handlers = createCustomerPortalHandlers({ now: () => new Date(NOW) });
@@ -76,6 +86,12 @@ const call = async (viewer, payload) => {
 };
 // P4-09: approvals record the terms version the page showed; these requests send none, so the unversioned marker is stored.
 const publicApproval = { status: 'approved', approvedAt: NOW, approvedBy: 'Synthetic Signer', amount: 800, source: 'customer_portal', termsVersion: UNVERSIONED_PAGE_TERMS_VERSION };
+// FUN-03: the saved approval also names the request that saved it (a server id when the page sends none) and the revision it binds.
+const savedApproval = saved => {
+  const { requestId, estimateRevision, ...approval } = saved.customerApproval;
+  assert.match(requestId, /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/); assert.equal(estimateRevision, 1);
+  return approval;
+};
 
 test('a company member approval is attributed to that member for accounts payable', async t => {
   const earlier = { approvedByActorId: businessActor(ACCOUNT, BILLING), approvedByBusinessAccountId: ACCOUNT, approvedByBusinessMemberId: BILLING.id };
@@ -85,9 +101,11 @@ test('a company member approval is attributed to that member for accounts payabl
   assert.equal(result.status, 200);
   assert.deepEqual(result.body.approval, publicApproval, 'the response never returns member ids');
   const saved = f.job('job-1');
-  assert.deepEqual(saved.customerApproval, { ...publicApproval, ...attribution });
+  assert.deepEqual(savedApproval(saved), { ...publicApproval, ...attribution });
   assert.deepEqual(saved.estimate, { number: 'EST-1', status: 'approved', amount: 800, sentAt: '2026-09-20T12:00:00.000Z', revision: 1, acceptedAt: NOW, acceptedBy: 'Synthetic Signer', depositRequired: 400, acceptedTermsVersion: UNVERSIONED_PAGE_TERMS_VERSION, ...attribution }, 'the current signer replaces an earlier approver');
   assert.equal(saved.quoteStatus, 'approved');
+  // FUN-03: the sale is recorded in the same commit and names the company member, not a person's name.
+  assert.deepEqual(f.events.map(event => [event.type, event.actor, event.businessAccountId, event.data.amountCents, event.idempotencyKey]), [['deal.sold', { id: actor, kind: 'customer', role: 'business' }, ACCOUNT, 80000, `portalRequest:${saved.customerApproval.requestId}`]]);
   const view = await call(await company());
   assert.equal(view.status, 200);
   assert.deepEqual([view.body.estimate.status, view.body.estimate.approvedBy], ['approved', 'Synthetic Signer']);
@@ -110,7 +128,7 @@ test('homeowner and family approvals keep their existing shape', async t => {
     assert.equal(result.status, 200);
     assert.deepEqual(result.body.approval, publicApproval);
     const saved = f.job('job-1');
-    assert.deepEqual(saved.customerApproval, publicApproval, 'no actor fields are added');
+    assert.deepEqual(savedApproval(saved), publicApproval, 'no actor fields are added');
     assert.deepEqual(Object.keys(saved.estimate).sort(), ['acceptedAt', 'acceptedBy', 'acceptedTermsVersion', 'amount', 'depositRequired', 'number', 'revision', 'sentAt', 'status']);
   });
 });
@@ -121,7 +139,7 @@ test('a homeowner re-approval never credits an earlier company approver', async 
   assert.equal((await call(await cookie(), approve)).status, 200);
   const saved = f.job('job-1');
   for (const key of ACTOR_FIELDS) assert.equal(key in saved.estimate, false, key);
-  assert.deepEqual(saved.customerApproval, publicApproval);
+  assert.deepEqual(savedApproval(saved), publicApproval);
   assert.deepEqual([saved.estimate.number, saved.estimate.sentAt, saved.estimate.acceptedBy], ['EST-1', '2026-09-20T12:00:00.000Z', 'Synthetic Signer'], 'other estimate fields carry forward');
 });
 
@@ -194,10 +212,12 @@ function fakeNode(tag = 'div') {
 const texts = node => [node.textContent, ...node.children.flatMap(texts)].filter(Boolean);
 
 test('a company project hides the copy-invite control and says why', () => {
-  const nodes = new Map(), context = { document: { createElement: fakeNode }, $: id => nodes.get(id) || nodes.set(id, fakeNode()).get(id), personEditor: item => ({ editor: item.id }), copyInvite: () => assert.fail('no invite is created while rendering') };
+  const editors = [], nodes = new Map(), context = { document: { createElement: fakeNode }, $: id => nodes.get(id) || nodes.set(id, fakeNode()).get(id), renderCollaboratorEditor: active => editors.push(active.map(item => item.id)), copyInvite: () => assert.fail('no invite is created while rendering') };
   vm.runInNewContext([sourceLine(portalHtml, 'const make='), sourceLine(portalHtml, 'function renderCollaborators(')].join('\n'), context);
   const people = [{ id: 'person-1', name: 'Synthetic Family', role: 'Family', status: 'active', permissions: { decide: true } }];
   context.renderCollaborators(people, true, true);
+  const invite = context.$('collaborator-list').children[0].children.find(node => node.textContent === 'Copy invite');
+  assert.equal(invite.dataset.person, 'person-1', 'the invite control names its person, so focus can follow it');
   assert.deepEqual(texts(context.$('collaborator-list')).filter(value => value === 'Copy invite'), ['Copy invite']);
   context.renderCollaborators(people, true, false);
   const list = texts(context.$('collaborator-list'));
@@ -206,6 +226,11 @@ test('a company project hides the copy-invite control and says why', () => {
   assert.ok(list.some(value => /managed through a business account/.test(value)));
   context.renderCollaborators(people, false, false);
   assert.equal(texts(context.$('collaborator-list')).some(value => /Copy invite|business account/.test(value)), false, 'non-owners never see either');
+  assert.deepEqual(editors, [['person-1'], ['person-1']], 'only the owner gets the people editor');
+  // The quiet refresh does not rebuild an unchanged list (a focused Copy invite button keeps its focus).
+  const shown = context.$('collaborator-list').children;
+  context.renderCollaborators(people, false, false);
+  assert.equal(context.$('collaborator-list').children, shown);
 });
 
 test('the portal page follows the server invite flag and treats an older response as available', () => {

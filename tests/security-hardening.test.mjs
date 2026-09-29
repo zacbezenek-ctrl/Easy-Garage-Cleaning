@@ -419,10 +419,13 @@ test('crew job rules limit assigned staff to operational fields', () => {
 });
 
 test('public conversion and machine-readable content match the walkthrough flow', () => {
-  const publicText = files().filter(path => path.endsWith('.html')).map(path => readFileSync(path, 'utf8')).join('\n');
+  // Generated pages' form copy (step names, validation messages, labels) is served from /site-forms.js.
+  const publicText = [...files().filter(path => path.endsWith('.html')), join(root, 'site-forms.js')].map(path => readFileSync(path, 'utf8')).join('\n');
   assert.doesNotMatch(publicText, /normalized to E\.164 for Zapier\/Firestore|Google reviews widget goes here|Review slot \d|Add team \/ truck photo|owner to add VIDEO_ID/i);
   assert.doesNotMatch(publicText, /746 Star Grass/i);
-  assert.match(read('book.html'), /Please choose a preferred walkthrough window/);
+  // The multi-step form script moved from an inline copy to /site-forms.js (SITE-4).
+  assert.match(read('book.html'), /<script src="\/site-forms\.js\?v=[0-9a-f]{12}" defer><\/script>/);
+  assert.match(read('site-forms.js'), /Please choose a preferred walkthrough window/);
   assert.doesNotMatch(read('book.html'), /name="Preferred timing"/);
   assert.match(read('reviews.html'), /Verified feedback, <em>at the source<\/em>/);
   assert.match(read('404.html'), /name="robots" content="noindex, nofollow"/);
@@ -458,6 +461,7 @@ test('public copy excludes retired seeded stories, placeholders, and unsupported
   const publicText = files()
     .filter(path => path.endsWith('.html') || path.endsWith('.xml') || path.endsWith('.txt'))
     .filter(path => !relative(root, path).split(/[\\/]/).some(part => ['crew', 'contracts', 'functions', 'tests'].includes(part)))
+    .concat(join(root, 'site-forms.js'))
     .map(path => readFileSync(path, 'utf8'))
     .join('\n');
   assert.doesNotMatch(publicText, /response within 5 minutes|respond in 5 minutes|reply within 5 minutes|5[- ]min(?:ute)? response|locked flat-rate quote in about 5 minutes/i);

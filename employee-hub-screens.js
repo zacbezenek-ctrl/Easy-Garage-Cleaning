@@ -9,10 +9,15 @@ const KIT={js:'employee-ui-kit.js',css:'employee-ui-kit.css',v:'20260927hubreg'}
 // backticks and control characters are refused. An invalid line is skipped with a console warning.
 // The screen file defines window.EGCName={mount(host,ctx), unmount(), canLeave(), refresh()}; ctx is
 // {identity, role, capabilities, hubFetch, toast, askAction, go, screen}. The kit (window.EGCHubKit) loads first.
+// A screen keeps unsent drafts in sessionStorage under DRAFTS+'<screen>.<viewer>'; sign-out clears them here, because
+// this file is always loaded and a lazily loaded screen may never have run on the page.
 const MANIFEST=[
+{id:'crew_alerts',group:'MY EGC',label:'Schedule alerts',iconPath:'M12 3a6 6 0 0 0-6 6v4l-2 3h16l-2-3V9a6 6 0 0 0-6-6zM10 19a2 2 0 0 0 4 0',crewVisible:true,load:{js:'employee-crew-notifications.js',css:'employee-crew-notifications.css',v:'20260928crewnotify4'},module:'EGCCrewNotifications'},
 {id:'followup_settings',group:'SYSTEM',label:'Follow-up owner',iconPath:'M12 3a4 4 0 1 1 0 8 4 4 0 0 1 0-8zM4 21a8 8 0 0 1 16 0',capability:'owner',load:{js:'employee-followup-settings.js',css:'employee-followup-settings.css',v:'20260928followup'},module:'EGCFollowupSettings'},
+{id:'ad_spend',group:'GROW THE ENGINE',label:'Ad spend',iconPath:'M3 10v4h4l5 4V6l-5 4zM16 9a4 4 0 0 1 0 6M19 6a8 8 0 0 1 0 12',capability:'owner',load:{js:'employee-ad-spend.js',css:'employee-ad-spend.css',v:'20260928adspend'},module:'EGCAdSpend'},
+{id:'catalog',group:'SYSTEM',label:'Catalog & pricing',iconPath:'M4 4h7l9 9-7 7-9-9zM8 8h.01',capability:'owner',load:{js:'employee-catalog.js',css:'employee-catalog.css',v:'20260928catalog'},module:'EGCCatalog'},
 {id:'reviews',group:'RUN THE BUSINESS',label:'Review queues',iconPath:'M9 3h6v3H9zM6 5h3v1h6V5h3v16H6zM9 13l2 2 4-4',capability:'business',load:{js:'employee-reviews.js',css:'employee-reviews.css',v:'20260928reviews'},module:'EGCReviews'},
-{id:'message_templates',group:'SYSTEM',label:'Message templates',iconPath:'M4 5h16v11H9l-5 4z',capability:'business',load:{js:'message-templates.js',css:'message-templates.css',v:'20260927msg'},module:'EGCMessageTemplates'},
+{id:'message_templates',group:'SYSTEM',label:'Message templates',iconPath:'M4 5h16v11H9l-5 4z',capability:'business',load:{js:'message-templates.js',css:'message-templates.css',v:'20260928crew'},module:'EGCMessageTemplates'},
 {id:'stocked_costs',group:'SYSTEM',label:'Stocked item costs',capability:'business',iconPath:'M4 7l8-4 8 4v10l-8 4-8-4zM4 7l8 4 8-4M12 11v10',load:{js:'employee-standard-costs.js',css:'employee-standard-costs.css',v:'20260928fun19'},module:'EGCStandardCosts'},
 {id:'staff',group:'RUN THE BUSINESS',label:'Staff directory',iconPath:'M9 11a3.5 3.5 0 1 0 0-7 3.5 3.5 0 0 0 0 7zM2 20c0-3.5 3-6 7-6s7 2.5 7 6M16 4.5a3.5 3.5 0 0 1 0 6.5M18 14c2.5.6 4 2.8 4 6',capability:'business',load:{js:'employee-staff.js',css:'employee-staff.css',v:'20260928team'},module:'EGCStaff'},
 ];
@@ -26,7 +31,7 @@ const HOME_WIDGETS=[
 ];
 const HOMES=new Set(['today','my_day']);
 const ID=/^[a-z][a-z0-9_]{1,47}$/,CAPABILITY=/^[a-z][a-z0-9_]{1,40}$/,MODULE=/^EGC[A-Za-z0-9]{1,40}$/,VERSION=/^[A-Za-z0-9._-]{1,40}$/,ICON=/^[MmLlHhVvCcSsQqTtAaZz0-9 .,-]{1,800}$/;
-const ASSET=/^\/?(?:[A-Za-z0-9_-][A-Za-z0-9._-]*\/)*[A-Za-z0-9_-][A-Za-z0-9._-]*\.(?:js|css)$/,ASSET_TIMEOUT=30000;
+const ASSET=/^\/?(?:[A-Za-z0-9_-][A-Za-z0-9._-]*\/)*[A-Za-z0-9_-][A-Za-z0-9._-]*\.(?:js|css)$/,ASSET_TIMEOUT=30000,DRAFTS='egc.hub.draft.v1.';
 const screens=new Map(),assets=new Map(),homeDefs=new Map();
 let active=null,home=null;
 const fail=message=>{throw new Error('Hub screen registry: '+message);};
@@ -197,7 +202,8 @@ function unmountHome(){
   }
 }
 const current=()=>active?{id:active.id,mounted:active.mounted}:null;
-window.addEventListener('egc:signout',()=>{unmountAll();unmountHome();});
+function clearDrafts(){try{for(let i=sessionStorage.length-1;i>=0;i--){const key=sessionStorage.key(i);if(String(key||'').startsWith(DRAFTS))sessionStorage.removeItem(key);}}catch{}}
+window.addEventListener('egc:signout',()=>{unmountAll();unmountHome();clearDrafts();});
 window.addEventListener('beforeunload',event=>{if(active?.mounted&&!canLeave(active.id)){event.preventDefault();event.returnValue='';}});
 window.EGCHubScreens=Object.freeze({register,list,get,allowed,visible,widgets,mount,unmountAll,canLeave,refresh,current,registerWidget,homeWidgets,mountHome,unmountHome,kit:KIT});
 for(const spec of MANIFEST){try{register(spec);}catch(error){console.warn('Hub screen registry skipped a MANIFEST entry:',error?.message||error);}}

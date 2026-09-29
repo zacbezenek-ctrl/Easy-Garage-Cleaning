@@ -9,6 +9,7 @@ import * as portal from '../functions/api/customer-portal.js';
 import * as exchange from '../functions/api/customer-portal-session.js';
 import * as upload from '../functions/api/drive-upload.js';
 import { readCustomerPortalContext } from '../functions/_lib/customer-portal-access.js';
+import { applyFirestoreCommit } from './helpers/firestore-commit.mjs';
 
 const origin = 'https://easygaragecleaning.com';
 const env = {
@@ -31,11 +32,17 @@ const post = (cookie, body) => portal.onRequestPost({ env, request: request('/ap
 
 function fixture(t, initial = {}) {
   const jobs = new Map(Object.entries({ 'job-1': { customer: 'Synthetic Customer',customerId:'customer-1',address:'100 Test Street', type: 'job', total: 400, customerCollaborators: [person()], ...initial } }));
-  const calls = [], writes = [];
+  const calls = [], writes = [], events = new Map();
   t.mock.method(globalThis, 'fetch', async (input, options = {}) => {
     const url = new URL(input), method = options.method || 'GET';
     calls.push({ url, method, body: options.body });
     if (url.hostname === 'firestore.googleapis.com') {
+      // FUN-03: portal writers commit the job change with its funnel event.
+      if (url.pathname.endsWith('/documents:commit')) {
+        const result = applyFirestoreCommit(JSON.parse(options.body), { read: path => path.startsWith('jobs/') ? jobs.has(path.slice(5)) ? { data: jobs.get(path.slice(5)), updateTime: '2026-09-07T00:00:00Z' } : null : events.has(path) ? { data: events.get(path) } : null,
+          write: (path, value) => { if (path.startsWith('jobs/')) { writes.push(path.slice(5)); jobs.set(path.slice(5), value); } else events.set(path, value); } });
+        return result.stale ? Response.json({}, { status: 412 }) : Response.json({ commitTime: '2026-09-07T00:00:00Z' });
+      }
       const jobId = decodeURIComponent(url.pathname.split('/').pop());
       if (!jobs.has(jobId)) return Response.json({}, { status: 404 });
       if (method === 'PATCH') {

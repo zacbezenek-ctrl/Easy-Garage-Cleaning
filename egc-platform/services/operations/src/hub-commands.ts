@@ -37,7 +37,7 @@ export const HUB_COMMANDS = {
 } as const satisfies Record<HubCommandName,z.ZodObject>;
 export const HUB_WRITE_COMMANDS:readonly string[] = Object.freeze(Object.entries(HUB_COMMAND_POLICY).filter(([,rule])=>rule.write).map(([name])=>name));
 /** Commands the API forwards unchanged to the Hub authority (service.ts). */
-export const PORTAL_PASSTHROUGH:ReadonlySet<string> = new Set(["portal.note.add","portal.job.edit","portal.project.ensure","calendar","portal.job","portal.evidence","portal.members","portal.revenue","portal.rules","schedule.resolve","schedule.mutate","schedule.bind_provider","schedule.link_customer",...Object.keys(HUB_COMMANDS)]);
+export const PORTAL_PASSTHROUGH:ReadonlySet<string> = new Set(["portal.note.add","portal.job.edit","portal.project.ensure","calendar","portal.job","portal.evidence","portal.members","portal.revenue","portal.rules","schedule.resolve","schedule.mutate","schedule.bind_provider","schedule.link_customer","schedule.sync_due","schedule.sync_failed",...Object.keys(HUB_COMMANDS)]);
 
 const accepts=(schema:z.ZodType|undefined,value:unknown)=>Boolean(schema?.safeParse(value).success);
 /** Static contract checks; run at module load so a malformed addition fails every build and test. */

@@ -270,19 +270,57 @@ service cloud.firestore {
         ] || (recordType == 'schedule_lock' && !documentId.matches('_egc_schedule_lock_.*'));
     }
 
+    function laborCopy(data, key) {
+      let costs = data.get('costs', null);
+      return costs is map ? costs.get(key, null) : null;
+    }
+
+    function laborCopiesKept(next, previous) {
+      return next.get('laborCost', null) == previous.get('laborCost', null) &&
+        laborCopy(next, 'labor') == laborCopy(previous, 'labor') &&
+        laborCopy(next, 'laborCents') == laborCopy(previous, 'laborCents');
+    }
+
+    function laborCopiesKeptOrDropped(next, previous) {
+      return next.get('laborCost', null) in [null, previous.get('laborCost', null)] &&
+        laborCopy(next, 'labor') in [null, laborCopy(previous, 'labor')] &&
+        laborCopy(next, 'laborCents') in [null, laborCopy(previous, 'laborCents')];
+    }
+
+    function jobLaborUnchanged(next, previous, documentId) {
+      // JOB-COST-PRIVACY: labor dollars live in the server-only jobLaborCosts
+      // record, because every business user reads jobs (on a one-person job,
+      // labor over hours is that employee's rate). A browser write keeps the
+      // copy an older save left on a job, never adds or changes one, and drops
+      // or blanks one only once the job's private record exists (the owner's
+      // figure is kept there; scripts/backfill-job-labor-private.mjs moves the
+      // rest). A blank costs.labor on a job with no copy stays allowed.
+      return laborCopiesKept(next, previous) ||
+        laborCopiesKeptOrDropped(next, previous) &&
+        exists(/databases/$(database)/documents/jobLaborCosts/$(documentId));
+    }
+
     // Canonical jobs include financial evidence, signatures and private notes.
     // Crew reads and execution writes go through assigned-only server DTOs;
     // otherwise direct SDK reads would bypass projection and completion gates.
-    // Managers retain the established administrative workflows.
+    // Managers retain the established administrative workflows. Until FUN-27
+    // denies SDK writes to giftWallet, customerDecisions, rebookingRequests and
+    // garageGuard, the FUN-36 credit limits bind only /api/customer-lifecycle.
     match /jobs/{documentId} {
       allow read: if businessUser() || ownAvailability(resource.data);
       // Crew mutations use the session-authorized APIs and shared capacity locks.
       // Business SDK writes can neither touch nor produce a server-owned record.
+      // funnelSale (FUN-03) names the sale the funnel ledger counts for the job;
+      // only the server writers that record or retire that sale may set it.
       allow create: if businessUser() && !serverOwnedJobRecord(documentId) &&
-        !serverOwnedJobData(request.resource.data, documentId);
+        !serverOwnedJobData(request.resource.data, documentId) &&
+        !('funnelSale' in request.resource.data) &&
+        jobLaborUnchanged(request.resource.data, {}, documentId);
       allow update: if businessUser() && !serverOwnedJobRecord(documentId) &&
         !serverOwnedJobData(resource.data, documentId) &&
-        !serverOwnedJobData(request.resource.data, documentId);
+        !serverOwnedJobData(request.resource.data, documentId) &&
+        !request.resource.data.diff(resource.data).affectedKeys().hasAny(['funnelSale']) &&
+        jobLaborUnchanged(request.resource.data, resource.data, documentId);
       allow delete: if businessUser() && !serverOwnedJobRecord(documentId) &&
         !serverOwnedJobData(resource.data, documentId);
     }
@@ -340,6 +378,15 @@ service cloud.firestore {
       allow read, write: if false;
     }
 
+    // Jobber coexistence guard checks (scripts/jobber-guard.mjs, service
+    // account); owners and managers read the latest through /api/jobber-guard.
+    match /jobberGuard/{documentId} {
+      allow read, write: if false;
+    }
+    match /jobberGuardRuns/{documentId} {
+      allow read, write: if false;
+    }
+
     // The Hub audit trail and single-use confirmation receipts are written
     // only by server commits; owners read the audit through /api/hub-audit.
     match /hub_audit/{documentId} {
@@ -392,6 +439,11 @@ service cloud.firestore {
     match /membership_reviews/{documentId} {
       allow read, write: if false;
     }
+    // Receipts for Garage Guard member-visit and visit-count actions (FUN-20,
+    // /api/garage-guard-members), written in the same commit as the change.
+    match /garage_guard_operations/{documentId} {
+      allow read, write: if false;
+    }
     // Confirmed crew card charges the webhook held off their job for a manager.
     match /payment_reviews/{documentId} {
       allow read, write: if false;
@@ -414,6 +466,29 @@ service cloud.firestore {
       allow read, write: if false;
     }
 
+    // JOB-COST-PRIVACY: owner-entered job labor dollars and their save
+    // receipts. Only the server reads or writes them, for a viewer who sees
+    // labor dollars, via /api/job-labor-costs and /api/money.
+    match /jobLaborCosts/{documentId} {
+      allow read, write: if false;
+    }
+    match /jobLaborCostOperations/{documentId} {
+      allow read, write: if false;
+    }
+
+    // Client Login: rate-limit counters, single-use sign-in links and
+    // account sessions hold keyed digests only and are written only by the
+    // server. A browser must never read, forge or delete them.
+    match /rate_limits/{documentId} {
+      allow read, write: if false;
+    }
+    match /customer_login_links/{documentId} {
+      allow read, write: if false;
+    }
+    match /customer_sessions/{documentId} {
+      allow read, write: if false;
+    }
+
     // Hub bridge command receipts hold the audited before/after and the
     // idempotency fingerprint for every registry write. Server-only.
     match /hub_command_operations/{documentId} {
@@ -433,6 +508,26 @@ service cloud.firestore {
       allow read, write: if false;
     }
     match /moneyInvoiceNumbers/{documentId} {
+      allow read, write: if false;
+    }
+
+    // Customer credit, gift-card sale, decision and rebooking request receipts,
+    // the gift-card sales ledger (cash received for a card) and its payment
+    // reference claims are written only in the same server commit as the
+    // account or job change (/api/customer-lifecycle).
+    match /lifecycleOperations/{documentId} {
+      allow read, write: if false;
+    }
+    match /giftCardSales/{documentId} {
+      allow read, write: if false;
+    }
+    match /giftCardSaleRefs/{documentId} {
+      allow read, write: if false;
+    }
+
+    // Quote draft save/send receipts are written only in the same server
+    // commit as the quote (/api/quote-draft).
+    match /quoteDraftOperations/{documentId} {
       allow read, write: if false;
     }
 
@@ -469,6 +564,22 @@ service cloud.firestore {
       allow read, write: if false;
     }
 
+    // Crew schedule notices (CREW-NOTIFY) are queued only in the dispatch
+    // commit and delivered by the messaging cron; employees read and
+    // acknowledge their own through /api/crew-notifications, which also keeps
+    // their schedule-text opt-in. No SDK session reads or writes either.
+    match /crewNotifications/{documentId} {
+      allow read, write: if false;
+    }
+    match /crewNotificationPrefs/{documentId} {
+      allow read, write: if false;
+    }
+    // What each employee last heard about each job: written only with the
+    // cron's notice closes, read by the cron and /api/crew-notifications.
+    match /crewNoticeHeard/{documentId} {
+      allow read, write: if false;
+    }
+
     // Walkthrough visit request receipts and each rep's open-walkthrough lock
     // (FUN-05) are written only in the server commit that records the visit.
     match /walkthroughVisitOperations/{documentId} {
@@ -481,6 +592,16 @@ service cloud.firestore {
     // Operations settings (P3-04 follow-up owner and due-time policy) are written
     // only by the owner through /api/operations-followup-settings with a hub_audit entry.
     match /operations_settings/{documentId} {
+      allow read, write: if false;
+    }
+    // Crew public profiles (first name, approved headshot pointer, customer
+    // visibility) and their request receipts are server-only. Staff use
+    // /api/crew-public-profile; customers get only a first name and a signed,
+    // session-checked photo link through the portal.
+    match /crew_public_profiles/{documentId} {
+      allow read, write: if false;
+    }
+    match /crew_profile_operations/{documentId} {
       allow read, write: if false;
     }
 

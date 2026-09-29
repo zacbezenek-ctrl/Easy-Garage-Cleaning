@@ -106,6 +106,12 @@ test('crew roles are refused every bridge command; sales reads; writes need a ma
   throwsCode(()=>authorizeCommand(grant,{command:'schedule.adopt'},PORTAL),'bridge_integration_forbidden',403);
   throwsCode(()=>authorizeCommand(integration('booking-adoption-worker-2'),{command:'schedule.adopt'},PORTAL),'bridge_integration_forbidden',403);
   throwsCode(()=>authorizeCommand(owner,{command:'schedule.adopt'},PORTAL),'bridge_role_forbidden',403);
+  // The hourly recurring-plan horizon run comes only from egc-api's own timer principal.
+  const horizon=integration('recurring-horizon-worker');
+  assert.deepEqual((({action,kind,confirm})=>({action,kind,confirm}))(authorizeCommand(horizon,{command:'recurring.extend_horizon'},PORTAL)),{action:'recurring.extend_horizon',kind:'write',confirm:false});
+  for(const actor of [grant,service,worker,sync,noteLink,integration('recurring-horizon-worker-2'),integration('x-recurring-horizon-worker'),...readers])throwsCode(()=>authorizeCommand(actor,{command:'recurring.extend_horizon'},PORTAL),'bridge_integration_forbidden',403);
+  for(const actor of [owner,manager,sales])throwsCode(()=>authorizeCommand(actor,{command:'recurring.extend_horizon'},PORTAL),'bridge_role_forbidden',403);
+  throwsCode(()=>authorizeCommand(horizon,{command:'recurring.extend_horizon'},RECORDING),'unsupported_recording_command',400);
   // Customer links come from the API's schedule and note sync; provider bindings from that sync or the MCP.
   for(const [command,allowed,refused] of [['schedule.link_customer',[sync,noteLink],[grant,service,worker,...readers]],['schedule.bind_provider',[sync,grant,service],[noteLink,worker,...readers]]]){
     for(const actor of allowed)assert.equal(authorizeCommand(actor,{command},PORTAL).kind,'write',`${actor.id} ${command}`);

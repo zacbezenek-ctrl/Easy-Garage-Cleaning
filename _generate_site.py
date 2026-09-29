@@ -5,6 +5,7 @@ Reproducible build: EGC_SITE_BUILD_DATE=<buildDate in tools/site-build.json> npm
 Every build records the date it stamped into tools/site-build.json; commit that file
 with the pages so tests/site-generator.test.mjs rebuilds with the same date.
 """
+import hashlib
 import importlib.util
 import json
 import os
@@ -715,9 +716,16 @@ TRACKING_BLOCK = ""
 RESOURCE_HINTS = ""
 CALLRAIL_BLOCK = ""
 
-# Footer links are 44px tap targets on phones. Inline until the next versioned
-# styles.css release absorbs it; functions/before-after.js carries the same rule.
-# The id keeps this block invisible to the "<style>" checks that find page stylesheets.
+# styles.css is served immutable: every change to it bumps this one version, which
+# HEAD, patch_static_pages and functions/before-after.js all use.
+STYLES_VERSION = "20260928p"
+# The one Google Fonts stylesheet for pages built on styles.css. Every face is used by
+# the shared CSS (tests/public-performance.test.mjs checks the weights); it always loads
+# with the media=print swap so it never blocks the first render.
+GOOGLE_FONTS_URL = "https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght@0,9..144,400;0,9..144,500;0,9..144,700;1,9..144,400&family=Inter:wght@400;500;600;700;800;900&family=JetBrains+Mono:wght@400&display=swap"
+# The footer 44px tap-target rule ships in styles.css. This is the retired inline
+# stopgap: inject_footer_tap_css removes it from pages that load styles.css and
+# keeps it only on a footer page that does not.
 FOOTER_TAP_MARKER = 'id="footer-tap"'
 FOOTER_TAP_STYLE = '<style id="footer-tap">@media(max-width:640px){.site-footer .foot-brand a,.site-footer .foot-col a,.site-footer .foot-bar a{display:inline-flex;align-items:center;min-height:44px}}</style>'
 
@@ -755,11 +763,10 @@ HEAD = """<!DOCTYPE html>
 <link rel="dns-prefetch" href="https://fonts.googleapis.com">
 <link rel="dns-prefetch" href="https://fonts.gstatic.com">
 """ + RESOURCE_HINTS + """
-<link href="https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght@0,9..144,400;0,9..144,500;0,9..144,700;1,9..144,400&family=Inter:wght@400;500;600;700;800;900&family=JetBrains+Mono:wght@400&display=swap" rel="stylesheet" media="print" onload="this.media='all'">
-<noscript><link href="https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght@0,9..144,400;0,9..144,500;0,9..144,700;1,9..144,400&family=Inter:wght@400;500;600;700;800;900&family=JetBrains+Mono:wght@400&display=swap" rel="stylesheet"></noscript>
+<link href=\"""" + GOOGLE_FONTS_URL + """" rel="stylesheet" media="print" onload="this.media='all'">
+<noscript><link href=\"""" + GOOGLE_FONTS_URL + """" rel="stylesheet"></noscript>
 {schema}
-<link rel="stylesheet" href="/styles.css?v=20260904j">
-""" + FOOTER_TAP_STYLE.replace("{", "{{").replace("}", "}}") + """
+<link rel="stylesheet" href="/styles.css?v=""" + STYLES_VERSION + """">
 </head>
 <body>
 <a href="#main-content" class="skip-link">Skip to content</a>
@@ -967,8 +974,15 @@ FOOTER = """
   <a href="sms:{phone}?body=Hi!%20I'd%20like%20to%20schedule%20a%20free%20on-site%20walkthrough." class="mobile-cta-btn mobile-cta-text">Text</a>
   <a href="{quote_href}" class="mobile-cta-btn mobile-cta-quote">Walkthrough</a>
 </div>
-<script>
-{nav_js_iife}
+<script src="/site-forms.js?v={site_forms_version}" defer></script>
+</body></html>
+"""
+
+# Shared nav, reveal, back-to-top, multi-step lead form and mobile quote-sheet behaviour for
+# generated pages, served as /site-forms.js (immutable; the ?v= is its content hash, so any
+# change reaches returning visitors). Hand-written pages keep their inline copies, and
+# patch_nav_hamburger keeps the inline drawer init on them.
+SITE_FORMS_TEMPLATE = """{nav_js_iife}
   document.querySelectorAll('.nav-dropdown-trigger').forEach(btn=>{{
     btn.addEventListener('click',e=>{{
       e.stopPropagation();
@@ -1069,8 +1083,6 @@ function initMultiStepForm(form){{
   const onScroll=()=>{{if(dismissed||shown)return;const max=document.documentElement.scrollHeight-window.innerHeight;if(max<=0)return;if(window.scrollY/max>=0.5){{shown=true;sheet.classList.add('visible');sheet.setAttribute('aria-hidden','false');}}}};
   window.addEventListener('scroll',onScroll,{{passive:true}});
 }})();
-</script>
-</body></html>
 """
 
 PRICING_HTML = """
@@ -1578,7 +1590,7 @@ def faq_html(faqs):
             f'<div class="faq-item"><details><summary><span class="faq-q-num">Q.{i:02d}</span> {esc(q)}</summary>'
             f'<p class="faq-a">{a}</p></details></div>'
         )
-    out.append('</div><p style="text-align:center;margin-top:24px;" class="reveal"><a href="/faq.html" class="content-link">See full FAQ →</a></p></div></section>')
+    out.append('</div><p style="text-align:center;margin-top:24px;" class="reveal faq-more"><a href="/faq.html" class="content-link">See full FAQ →</a></p></div></section>')
     return "\n".join(out)
 
 
@@ -1742,7 +1754,7 @@ def fmt(template, **kwargs):
         "quote_href": "/book.html", "service_areas_href": "/service-areas.html", "reviews_href": "/reviews.html",
         "process_href": "/#process", "pricing_href": "/pricing.html",
         "form_id": "q", "sel_fc": "", "sel_lo": "", "sel_wi": "", "sel_ti": "", "sel_we": "",
-        "nav_js_iife": NAV_JS_IIFE,
+        "nav_js_iife": NAV_JS_IIFE, "site_forms_version": SITE_FORMS_VERSION,
     }
     defaults.update(kwargs)
     return template.format(**defaults)
@@ -2014,6 +2026,18 @@ def enforce_walkthrough_first_copy(text):
     return text
 
 
+# The same copy guard the pages get runs over the script, so its strings match the old inline copy.
+SITE_FORMS_JS = enforce_walkthrough_first_copy(SITE_FORMS_TEMPLATE.format(nav_js_iife=NAV_JS_IIFE).strip() + "\n")
+SITE_FORMS_VERSION = hashlib.sha256(SITE_FORMS_JS.encode("utf-8")).hexdigest()[:12]
+SITE_FORMS_SCRIPT_SRC = '<script src="/site-forms.js?v='
+
+
+def write_site_forms_js(root=None):
+    path = Path(root or ROOT) / "site-forms.js"
+    if not path.exists() or path.read_text(encoding="utf-8") != SITE_FORMS_JS:
+        path.write_text(SITE_FORMS_JS, encoding="utf-8", newline="\n")
+
+
 def quote_form_for(stype, **kwargs):
     dg = ' checked' if 'garage' in stype.lower() and 'junk' not in stype.lower() and 'organization' not in stype.lower() else ''
     dj = ' checked' if stype.lower() == 'junk removal' else ''
@@ -2070,8 +2094,7 @@ def render_service(s):
 <div class="hero-ctas"><a href="#quote" class="btn-primary">Schedule Free Walkthrough</a>
 <a href="sms:{PHONE}?body={SMS_PHOTOS_BODY}" class="btn-secondary">Schedule by Text</a></div>
 <div class="hero-trust"><span class="trust-badge">Locally owned</span><span class="trust-badge">Flat-rate pricing</span><span class="trust-badge">Next-day when available</span>{trust}</div></div>
-<div class="hero-ba"><div class="hero-ba-cell before"><span class="hero-ba-label">BEFORE</span><picture><source srcset="/images/garage-before.webp" type="image/webp"><img src="/images/garage-before.jpg" alt="Cluttered two-car garage in Fort Collins before our crew arrived" width="1200" height="1200"></picture></div>
-<div class="hero-ba-cell after"><span class="hero-ba-label">AFTER</span><picture><source srcset="/images/garage-after.webp" type="image/webp"><img src="/images/garage-after.jpg" alt="Clean swept garage after an Easy Garage Cleaning visit" width="1200" height="1200"></picture></div></div></div></header>"""
+{hero_ba_html("Cluttered two-car garage in Fort Collins before our crew arrived", "Clean swept garage after an Easy Garage Cleaning visit")}</div></header>"""
     items = items_html(s["yes_title"], s["yes"], NO_ITEMS) if s.get("show_items", True) else ""
     # Do not publish a media placeholder. Restore this only when a real,
     # accessible video URL and transcript are available.
@@ -2111,11 +2134,27 @@ ITEM_PARENT_CATEGORY = {
 }
 
 
+# Hero before/after cells are about half the phone width (one column below 900px) and
+# at most ~260px on desktop, so phones at 3x take the 600w file instead of the 1200w one.
+HERO_BA_SIZES = "(min-width: 900px) 300px, calc(50vw - 24px)"
+
+
+def hero_ba_img(state, alt, priority=False, lazy=False):
+    extra = ' fetchpriority="high"' if priority else (' loading="lazy"' if lazy else "")
+    return (f'<img src="/images/garage-{state}.webp" srcset="/images/garage-{state}-600.webp 600w, /images/garage-{state}.webp 1200w" '
+            f'sizes="{HERO_BA_SIZES}" alt="{alt}" width="1200" height="1200" decoding="async"{extra}>')
+
+
+def hero_ba_html(before_alt, after_alt):
+    """The hero before/after pair; the first image is the page's priority hero image."""
+    return (f'<div class="hero-ba"><div class="hero-ba-cell before"><span class="hero-ba-label">BEFORE</span>{hero_ba_img("before", before_alt, priority=True)}</div>\n'
+            f'<div class="hero-ba-cell after"><span class="hero-ba-label">AFTER</span>{hero_ba_img("after", after_alt)}</div></div>')
+
+
 def city_hero_visual(city):
     # All city pages get the same real before/after image pair as the Fort
     # Collins page — no visible placeholder cells.
-    return """<div class="hero-ba"><div class="hero-ba-cell before"><span class="hero-ba-label">BEFORE</span><picture><source srcset="/images/garage-before.webp" type="image/webp"><img src="/images/garage-before.jpg" alt="Cluttered two-car garage before a cleanout" width="1200" height="1200"></picture></div>
-<div class="hero-ba-cell after"><span class="hero-ba-label">AFTER</span><picture><source srcset="/images/garage-after.webp" type="image/webp"><img src="/images/garage-after.jpg" alt="Clean, swept garage after a cleanout" width="1200" height="1200"></picture></div></div>"""
+    return hero_ba_html("Cluttered two-car garage before a cleanout", "Clean, swept garage after a cleanout")
 
 
 def render_city(c):
@@ -2374,7 +2413,7 @@ def render_pricing():
 </tbody>
 </table>
 </div>
-<p class="section-sub reveal"><a href="/blog/got-junk-vs-local-junk-removal-fort-collins.html" class="content-link">Full GOT-JUNK vs local comparison →</a></p>
+<p class="section-sub reveal more-link"><a href="/blog/got-junk-vs-local-junk-removal-fort-collins.html" class="content-link">Full GOT-JUNK vs local comparison →</a></p>
 </div></section>
 {fmt(PRICING_HTML)}
 {quote_form_for("Garage Cleanout", cta_title="Schedule your <em>free walkthrough</em>", form_subject="Pricing Page Walkthrough Request", sms_body=SMS_PHOTOS_BODY)}
@@ -2663,7 +2702,7 @@ def render_service_areas():
 <iframe src="https://www.google.com/maps?q=Fort+Collins,+Colorado&amp;z=9&amp;output=embed" loading="lazy" referrerpolicy="no-referrer-when-downgrade" title="Easy Garage Cleaning service area across Northern Colorado"></iframe>
 <p class="areas-map-caption">Based in Fort Collins and serving Loveland, Windsor, Timnath, Wellington, Severance, LaPorte, and nearby Northern Colorado communities.</p>
 </div>
-<p class="reveal" style="margin-top:20px;text-align:center"><a href="/reviews.html" class="content-link">Customer reviews →</a> · <a href="/projects/" class="content-link">All projects →</a></p>
+<p class="reveal more-link" style="margin-top:20px;text-align:center"><a href="/reviews.html" class="content-link">Customer reviews →</a> · <a href="/projects/" class="content-link">All projects →</a></p>
 </div></section>
 {quote_form_for("Garage Cleanout", cta_title="Get a quote in <em>your city</em>", form_subject="Service Areas Page Quote", sms_body="Hi!%20I%20checked%20your%20service%20areas%20and%20need%20a%20quote.")}
 </main>"""
@@ -2695,7 +2734,7 @@ def render_reviews():
 <a href="{GBP_REVIEW_URL}" class="btn-secondary" rel="noopener noreferrer">Leave a review on Google</a>
 <a href="/book.html" class="btn-primary">Request a Free Walkthrough</a>
 </div>
-<p class="reveal" style="margin-top:16px;text-align:center"><a href="/service-areas.html" class="content-link">Service areas →</a></p>
+<p class="reveal more-link" style="margin-top:16px;text-align:center"><a href="/service-areas.html" class="content-link">Service areas →</a></p>
 </div></section>
 </main>"""
     notes = [
@@ -3265,6 +3304,8 @@ def patch_nav_hamburger(text):
     )
     if _NAMED_NAV_INIT.search(text):
         pass  # patch_nav_drawer_a11y refreshes the shared init below
+    elif SITE_FORMS_SCRIPT_SRC in text:
+        pass  # generated pages load the shared init from /site-forms.js
     elif legacy_nav.search(text) and "function initNavDrawer" not in text:
         text = legacy_nav.sub(NAV_JS_IIFE.strip(), text, count=1)
     elif "function initNavDrawer" not in text and "querySelector('.nav-toggle')" in text:
@@ -3323,15 +3364,99 @@ def inject_polish_css(text):
 
 
 _FOOTER_TAP_BLOCK = re.compile(r'<style id="footer-tap">[\s\S]*?</style>')
+_STYLES_LINK = re.compile(r'<link\b[^>]*\bhref="/styles\.css\?v=[^"]*"[^>]*>')
 
 
 def inject_footer_tap_css(text):
+    if _STYLES_LINK.search(text):
+        return re.sub(r'<style id="footer-tap">[\s\S]*?</style>\n?', "", text)
     if FOOTER_TAP_MARKER in text:
         # Earlier builds shipped a narrower rule; keep every page on the current one.
         return _FOOTER_TAP_BLOCK.sub(lambda _: FOOTER_TAP_STYLE, text, count=1)
     if 'class="site-footer"' not in text or "</head>" not in text:
         return text
     return text.replace("</head>", FOOTER_TAP_STYLE + "\n</head>", 1)
+
+
+_FONT_LINK_OR_NOSCRIPT = re.compile(r'<noscript>[\s\S]*?</noscript>|<link\b[^>]*\bhref="https://fonts\.googleapis\.com/css2\?[^"]*"[^>]*>')
+_FONT_HREF = re.compile(r'(\bhref=")(https://fonts\.googleapis\.com/css2\?[^"]*)(")')
+_FONT_NOSCRIPT_NEXT = re.compile(r'\s*<noscript><link\b[^>]*fonts\.googleapis\.com/css2\?')
+
+
+def google_fonts_url(url):
+    """Sort and de-duplicate each family's axis tuples; Google answers an unsorted or repeated list with HTTP 400."""
+    base, _, query = url.replace("&amp;", "&").partition("?")
+    parts = []
+    for part in query.split("&"):
+        name, sep, spec = part.partition(":")
+        if name.startswith("family=") and sep and "@" in spec:
+            axes, _, values = spec.partition("@")
+            tuples = sorted(set(values.split(";")), key=lambda item: [float(value.split("..")[0]) for value in item.split(",")])
+            part = f"{name}:{axes}@{';'.join(tuples)}"
+        parts.append(part)
+    return base + "?" + "&".join(parts)
+
+
+def _html_attr(tag, name):
+    match = re.search(rf'\s{name}="([^"]*)"', tag)
+    return match.group(1) if match else None
+
+
+def defer_google_fonts(text):
+    """Google Fonts stylesheets never block the first render: media=print swaps to all on load, with a noscript copy."""
+    def fix(match):
+        tag = _FONT_HREF.sub(lambda m: m.group(1) + google_fonts_url(m.group(2)) + m.group(3), match.group(0))
+        if tag.startswith("<noscript>") or _html_attr(tag, "rel") != "stylesheet" or _html_attr(tag, "media") == "print":
+            return tag
+        href = _html_attr(tag, "href")
+        deferred = f'<link href="{href}" rel="stylesheet" media="print" onload="this.media=\'all\'">'
+        if _FONT_NOSCRIPT_NEXT.match(match.string, match.end()):
+            return deferred
+        return deferred + f'\n<noscript><link href="{href}" rel="stylesheet"></noscript>'
+    return _FONT_LINK_OR_NOSCRIPT.sub(fix, text)
+
+
+_LEGACY_HERO_BA = re.compile(
+    r'(<div class="hero-ba-cell (before|after)"><span class="hero-ba-label">[A-Z]+</span>)'
+    r'<picture><source srcset="/images/garage-\2\.webp" type="image/webp">'
+    r'<img (loading="lazy" )?src="/images/garage-\2\.jpg" alt="([^"]*)" width="1200" height="1200"></picture>'
+)
+
+
+def patch_hero_ba_images(text):
+    """Hand-written hero before/after cells get the generated pages' responsive images."""
+    prioritized = 'fetchpriority="high"' in text
+
+    def fix(match):
+        nonlocal prioritized
+        state = match.group(2)
+        priority = state == "before" and not prioritized
+        prioritized = prioritized or priority
+        return match.group(1) + hero_ba_img(state, match.group(4), priority=priority, lazy=bool(match.group(3)) and not priority)
+    return _LEGACY_HERO_BA.sub(fix, text)
+
+
+CUSTOMER_ACCESS_HTML = (
+    '<nav id="egc-customer-access" class="egc-customer-access" aria-label="Booking and customer portal">'
+    '<div class="egc-customer-access-inner"><span class="egc-customer-access-label">Start a project or manage your existing one.</span>'
+    '<div class="egc-customer-access-links"><a href="/book">Book a Free Walkthrough</a><a href="/customer-portal">Customer Portal</a></div>'
+    '{business}</div></nav>'
+)
+# site-enhancements.js builds this same bar and contact on pages without it: change both together
+# (tests/public-performance.test.mjs compares them).
+BOOK_BUSINESS_CONTACT = (
+    '<p class="egc-business-contact">Business partnerships: Zoe Zoll | <a href="tel:+19709991403">(970) 999-1403</a> | '
+    '<a href="mailto:zoe.zoll@easygaragecleaning.com">zoe.zoll@easygaragecleaning.com</a></p>'
+)
+
+
+def render_customer_access(text, rel):
+    """Pages that load site-enhancements.js ship its booking/portal bar in the HTML (styled by
+    styles.css), so the deferred script never inserts it above the hero after first paint."""
+    if 'id="egc-customer-access"' in text or '<script src="/site-enhancements.js' not in text or not _STYLES_LINK.search(text):
+        return text
+    bar = CUSTOMER_ACCESS_HTML.format(business=BOOK_BUSINESS_CONTACT if rel == "book.html" else "")
+    return re.sub(r'<main\b[^>]*\bid="main-content"[^>]*>', lambda match: match.group(0) + bar, text, count=1)
 
 
 def fix_index_schema(text):
@@ -3429,6 +3554,11 @@ def wrap_scroll_tables(text):
             return match.group(0)
         return f'<div class="compare-scroll">{match.group(0)}</div>'
     return re.sub(r'<table(?:\s[^>]*)?>[\s\S]*?</table>', wrap, text, flags=re.I)
+
+
+def mark_faq_more_link(text):
+    """The "See full FAQ" row under a page FAQ is a 44px tap target on touch screens (.faq-more a)."""
+    return re.sub(r'<p style="text-align:center;margin-top:24px;" class="reveal">(<a href="/faq(?:\.html)?" class="content-link">See full FAQ →</a></p>)', r'<p style="text-align:center;margin-top:24px;" class="reveal faq-more">\1', text)
 
 
 def patch_index_home_fixes(text):
@@ -3611,9 +3741,11 @@ def patch_index_iteration7(text):
     if 'id="recent-jobs"' in text and 'href="/projects/"' not in text.split('id="recent-jobs"')[1].split("<!-- VIDEO -->")[0]:
         text = text.replace(
             '</div>\n  </div>\n</section>\n\n<!-- VIDEO -->',
-            '</div>\n    <p class="reveal" style="margin-top:24px;text-align:center"><a href="/projects/" class="content-link">View all projects →</a></p>\n  </div>\n</section>\n\n<!-- VIDEO -->',
+            '</div>\n    <p class="reveal more-link" style="margin-top:24px;text-align:center"><a href="/projects/" class="content-link">View all projects →</a></p>\n  </div>\n</section>\n\n<!-- VIDEO -->',
             1,
         )
+    # The standalone link row is a 44px tap target on touch screens (.more-link a in styles.css).
+    text = text.replace('<p class="reveal" style="margin-top:24px;text-align:center"><a href="/projects/"', '<p class="reveal more-link" style="margin-top:24px;text-align:center"><a href="/projects/"', 1)
     for old, new in [
         ('class="btn-primary">Get Free Quote', 'class="btn-primary" data-cta="hero-quote">Get Free Quote'),
         ('class="nav-cta">Book Now', 'class="nav-cta" data-cta="nav-book">Book Now'),
@@ -4195,7 +4327,9 @@ def patch_static_pages():
                     toc = article_toc_html(content)
                     if toc:
                         text = text[:m.start(2)] + toc + content + text[m.end(2):]
-            if 'id="nav-drawer"' in text and "querySelector('.nav-toggle')" not in text:
+            if SITE_FORMS_SCRIPT_SRC in text:
+                pass  # /site-forms.js runs the drawer and back-to-top behaviour
+            elif 'id="nav-drawer"' in text and "querySelector('.nav-toggle')" not in text:
                 btt_js = """
 (function(){
   const btt=document.getElementById('back-to-top');
@@ -4240,11 +4374,15 @@ def patch_static_pages():
         text = dedupe_mobile_sheet_css(original)
         text = patch_nav_drawer_a11y(text)
         text = inject_footer_tap_css(text)
+        text = defer_google_fonts(text)
+        text = patch_hero_ba_images(text)
+        text = render_customer_access(text, path.relative_to(ROOT).as_posix())
         text = patch_performance_and_tracking(text)
         text = wrap_scroll_tables(text)
+        text = mark_faq_more_link(text)
         text = re.sub(r'/analytics-loader\.js\?v=[^"\']+', '/analytics-loader.js?v=20260904b', text)
         text = re.sub(r'^[ \t]+$', '', text, flags=re.M)
-        text = re.sub(r'/styles\.css\?v=[^"\']+', '/styles.css?v=20260904j', text)
+        text = re.sub(r'/styles\.css\?v=[^"\']+', '/styles.css?v=' + STYLES_VERSION, text)
         has_public_form = bool(re.search(r'<form[^>]*class=["\'][^"\']*(?:lead-form-lite|multi-step-form)', text, re.I))
         if has_public_form and 'fb-capture.js' not in text:
             text = text.replace('</body>', '<script src="/fb-capture.js?v=20260903c" defer></script>\n</body>', 1)
@@ -4448,6 +4586,7 @@ def main():
     sitemap_urls.append((f"{SITE}/blog/5-signs-your-fort-collins-garage-needs-a-cleanout.html", "0.7"))
 
     generate_sitemap(sorted(set(sitemap_urls), key=lambda x: x[0]))
+    write_site_forms_js()
     generate_llms_txt()
     generate_ai_txt()
     patch_static_pages()

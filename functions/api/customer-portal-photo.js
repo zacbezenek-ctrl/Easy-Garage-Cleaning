@@ -12,6 +12,7 @@ const HOST = /^(?:easygaragecleaning\.com|www\.easygaragecleaning\.com|easy-gara
 // Field uploads are only ever JPEG, PNG or WebP (decodeFieldPhoto), and the
 // Drive client refuses anything else; this re-check keeps the response type exact.
 const IMAGE = /^image\/(?:jpeg|png|webp)$/;
+const imageType = response => String(response.headers.get('Content-Type') || '').split(';')[0].trim().toLowerCase();
 
 function reply(status, body) {
   return new Response(JSON.stringify(body), { status, headers: { 'Content-Type': 'application/json', 'Cache-Control': 'no-store', 'X-Content-Type-Options': 'nosniff' } });
@@ -24,26 +25,36 @@ function allowed(request) {
   try { return HOST.test(new URL(raw).host); } catch { return false; }
 }
 
+// photoId, plus size=thumb for the gallery grid's small rendition.
+function photoParams(url) {
+  const params = [...url.searchParams], keys = params.map(([key]) => key).sort().join(',');
+  if (keys === 'photoId') return { photoId: params[0][1], thumb: false };
+  if (keys === 'photoId,size' && url.searchParams.get('size') === 'thumb') return { photoId: url.searchParams.get('photoId'), thumb: true };
+  return null;
+}
+
 const missing = () => reply(404, { ok: false, code: 'CUSTOMER_PORTAL_PHOTO_NOT_FOUND', error: 'This photo is not available.' });
 const unavailable = () => reply(503, { ok: false, code: 'CUSTOMER_PORTAL_PHOTO_UNAVAILABLE', error: 'This photo is temporarily unavailable. Please try again shortly.' });
 
 async function handleGet({ request, env }, { clock, read, businessRead, photos }) {
   if (!customerPhotosEnabled(env)) return missing();
   if (!allowed(request)) return reply(403, { ok: false, code: 'CUSTOMER_PORTAL_ORIGIN_FORBIDDEN', error: 'Forbidden origin' });
-  const params = [...new URL(request.url).searchParams];
-  if (params.length !== 1 || params[0][0] !== 'photoId') return reply(400, { ok: false, code: 'CUSTOMER_PORTAL_PHOTO_INVALID', error: 'Choose one project photo.' });
+  const params = photoParams(new URL(request.url));
+  if (!params) return reply(400, { ok: false, code: 'CUSTOMER_PORTAL_PHOTO_INVALID', error: 'Choose one project photo.' });
   let result;
   try { result = await readCustomerPortalContext(env, await verifyCustomerPortalSessionToken(env, readCookie(request), clock().getTime()), { read, businessRead }); }
   catch (error) { return reply(error.status || 503, { ok: false, code: error.code || 'CUSTOMER_PORTAL_STORAGE_UNAVAILABLE', error: error.code ? error.message : 'Your project could not be loaded. Please try again shortly.' }); }
   if (result.session.permissions?.view === false) return reply(403, { ok: false, code: 'CUSTOMER_PORTAL_ACCESS_REVOKED', error: 'Your access to this private project has changed.' });
-  const photo = customerPortalPhoto(result.job, params[0][1], customerPhotoPolicy(env));
+  const photo = customerPortalPhoto(result.job, params.photoId, customerPhotoPolicy(env));
   if (!photo) return missing();
   try {
     const client = await photos(env), metadata = await client.metadata(photo.fileId);
     // The Drive file must still be this job's own upload, even if a job
     // document were edited to point at another customer's file.
     if (!metadata || metadata.trashed || metadata.appProperties?.egcJobId !== result.job.id || metadata.appProperties?.egcFieldRequestId !== photo.id) return missing();
-    const image = await client.image(photo.fileId), type = String(image.headers.get('Content-Type') || '').split(';')[0].trim().toLowerCase();
+    // The grid asks for Drive's small rendition; without one it gets the full image, as before.
+    const small = params.thumb && metadata.thumbnailLink && typeof client.thumbnail === 'function' ? await client.thumbnail(metadata.thumbnailLink) : null;
+    const image = small || await client.image(photo.fileId), type = imageType(image);
     if (!IMAGE.test(type)) { await image.body?.cancel().catch(() => {}); return unavailable(); }
     return new Response(image.body, { status: 200, headers: { 'Content-Type': type, 'Cache-Control': 'private, no-store', 'X-Content-Type-Options': 'nosniff', 'Content-Security-Policy': "default-src 'none'", 'Content-Disposition': 'inline', 'Cross-Origin-Resource-Policy': 'same-origin', 'Referrer-Policy': 'no-referrer' } });
   } catch { return unavailable(); }

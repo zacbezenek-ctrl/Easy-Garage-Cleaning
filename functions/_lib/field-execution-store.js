@@ -42,11 +42,13 @@ export function createFieldStore(env) {
       const rows = await query(`jobs/${id}`, spec), page = rows.slice(0, 50), last = page.at(-1);
       return { events: page, cursor: rows.length > 50 && last ? `${last.createdAt}~${last.id}` : null };
     },
-    async commit(job, patch, event, previousEvent = null) {
+    // created: create-only records of the same change (FUN-03 funnel events).
+    async commit(job, patch, event, previousEvent = null, created = []) {
       if (!job.__updateTime) throw fieldFailure('The job version is unavailable. Reload before making changes.', 409, 'FIELD_REVISION_REQUIRED');
       const response = await firestoreFetch(env, `${BASE}:commit`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ writes: [
         { update: { name: `${ROOT}/jobs/${job.id}`, fields: encodeFirestoreFields(patch) }, updateMask: { fieldPaths: Object.keys(patch) }, currentDocument: { updateTime: job.__updateTime } },
         { update: { name: `${ROOT}/jobs/${job.id}/fieldEvents/${event.id}`, fields: encodeFirestoreFields(event) }, currentDocument: previousEvent?.__updateTime ? { updateTime: previousEvent.__updateTime } : { exists: false } },
+        ...created.map(write => ({ update: { name: `${ROOT}/${write.collection}/${write.id}`, fields: encodeFirestoreFields(write.patch) }, currentDocument: { exists: false } })),
       ] }) });
       // Real Firestore answers a stale currentDocument.updateTime with 400
       // FAILED_PRECONDITION; other 400s (bad data) stay storage failures.

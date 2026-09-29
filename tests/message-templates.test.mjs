@@ -1,12 +1,12 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { renderTemplate, validateTemplateVersion, templateHash, templateVariables, SMS_LIMIT, LINK_PLACEHOLDER, TEMPLATE_VARIABLES } from '../functions/_lib/message-templates.js';
+import { renderTemplate, validateTemplateVersion, templateHash, templateRoom, templateVariables, SMS_LIMIT, LINK_PLACEHOLDER, TEMPLATE_VARIABLES } from '../functions/_lib/message-templates.js';
 import { TEMPLATE_KINDS, TEMPLATE_KIND_IDS } from '../functions/_lib/message-template-defaults.js';
 import { activeTemplate, isMessagingOwner, listTemplates, mutateTemplate, readTemplate } from '../functions/_lib/message-template-store.js';
 import { messageTemplateHandlers } from '../functions/api/message-templates.js';
 import { memoryStore, owner, manager, crew, uuid, NOW } from './helpers/messaging-fixture.mjs';
 
-const sample = { firstName: 'Sam', crewLeadName: 'Casey', etaMinutes: '20', arrivalWindow: '9:00 AM–10:00 AM', serviceDate: 'Tuesday, September 22', portalLink: 'https://easygaragecleaning.com/customer-portal?p=synthetic', payLink: 'https://easygaragecleaning.com/pay/synthetic', invoiceNumber: 'INV-1001', balance: '$1,200.00', dueDate: 'October 1', companyPhone: '(970) 999-1818', inviteLink: 'https://easygaragecleaning.com/business-hub#invite=synthetic', loginLink: 'https://easygaragecleaning.com/client-login#t=synthetic' };
+const sample = { firstName: 'Sam', crewLeadName: 'Casey', etaMinutes: '20', arrivalWindow: '9:00 AM–10:00 AM', serviceDate: 'Tuesday, September 22', removedDates: 'Wednesday, September 23', portalLink: 'https://easygaragecleaning.com/customer-portal?p=synthetic', payLink: 'https://easygaragecleaning.com/pay/synthetic', invoiceNumber: 'INV-1001', balance: '$1,200.00', dueDate: 'October 1', companyPhone: '(970) 999-1818', inviteLink: 'https://easygaragecleaning.com/business-hub#invite=synthetic', loginLink: 'https://easygaragecleaning.com/client-login#t=synthetic' };
 const sms = body => ({ channel: 'SMS', subject: '', body });
 const code = expected => error => { assert.equal(error.code, expected); return true; };
 const seedHash = async kind => (await readTemplate(memoryStore(), kind)).versions[0].hash;
@@ -39,6 +39,15 @@ test('SMS is capped at 320 characters after rendering', () => {
   assert.throws(() => renderTemplate(sms('x'.repeat(300) + '{{payLink}}'), { payLink: 'https://easygaragecleaning.com/' + 'p'.repeat(40) }), code('messaging_sms_too_long'));
 });
 
+test('the room an SMS leaves for open variables is what rendering them would take up to the limit', () => {
+  const template = sms('Hi {{firstName}}, now: {{serviceDate}}. No longer: {{removedDates}} or {{serviceDate}}. {{loginLink}}');
+  const { room, counts } = templateRoom(template, sample, ['serviceDate', 'removedDates']);
+  assert.deepEqual(counts, { serviceDate: 2, removedDates: 1 });
+  const rendered = [...renderTemplate(template, sample).body].length;
+  assert.equal(SMS_LIMIT - room + 2 * sample.serviceDate.length + sample.removedDates.length, rendered, 'fixed text, first name and link are counted once each');
+  assert.throws(() => templateRoom(template, { ...sample, firstName: '' }, ['serviceDate', 'removedDates']), code('messaging_template_variable_missing'));
+});
+
 test('email HTML escapes every value and template character and links only verified https URLs', () => {
   const rendered = renderTemplate({ channel: 'Email', subject: 'Invoice {{invoiceNumber}} for {{firstName}}', body: 'Hi {{firstName}} <3 & thanks\nline two\n\nPay: {{payLink}}' }, { ...sample, firstName: '<img src=x onerror=alert(1)>"Sam"', invoiceNumber: 'INV-<1>' });
   assert.equal(rendered.html, '<p>Hi &lt;img src=x onerror=alert(1)&gt;&quot;Sam&quot; &lt;3 &amp; thanks<br>line two</p><p>Pay: <a href="https://easygaragecleaning.com/pay/synthetic">https://easygaragecleaning.com/pay/synthetic</a></p>');
@@ -57,7 +66,7 @@ test('validation limits variables per message kind and requires one-line email s
 });
 
 test('every default seed is valid, renders within limits and starts unapproved', async () => {
-  assert.deepEqual([...TEMPLATE_KIND_IDS].sort(), ['b2b_invite', 'crew_assignment', 'day_before_reminder', 'deposit_reminder', 'estimate_expiring', 'followup', 'invoice_send', 'on_my_way', 'payment_reminder', 'portal_magic_link', 'review_request'].sort());
+  assert.deepEqual([...TEMPLATE_KIND_IDS].sort(), ['b2b_invite', 'crew_assignment', 'crew_schedule_change', 'crew_unassignment', 'day_before_reminder', 'deposit_reminder', 'estimate_expiring', 'followup', 'invoice_send', 'on_my_way', 'payment_reminder', 'portal_magic_link', 'review_request'].sort());
   const store = memoryStore();
   for (const state of await listTemplates(store)) {
     const seed = state.versions[0], base = TEMPLATE_KINDS[state.kind];
@@ -149,7 +158,7 @@ test('template API is same-origin, manager-readable and owner-approved', async (
   const handlers = messageTemplateHandlers({ session: async () => sessions[who], storage: () => store, now: () => new Date(NOW) });
   const post = (body, headers = {}) => handlers.post({ request: new Request('https://easygaragecleaning.com/api/message-templates', { method: 'POST', headers: { Origin: 'https://easygaragecleaning.com', 'Content-Type': 'application/json', ...headers }, body: JSON.stringify(body) }), env: {} });
   const list = await (await handlers.get({ request: new Request('https://easygaragecleaning.com/api/message-templates'), env: {} })).json();
-  assert.equal(list.ok, true); assert.equal(list.templates.length, 11); assert.deepEqual(list.viewer, { id: 'tylerg', role: 'manager', canApprove: false });
+  assert.equal(list.ok, true); assert.equal(list.templates.length, 13); assert.deepEqual(list.viewer, { id: 'tylerg', role: 'manager', canApprove: false });
   sessions.tylerOwner = { ...manager, role: 'owner' }; who = 'tylerOwner';
   assert.deepEqual((await (await handlers.get({ request: new Request('https://easygaragecleaning.com/api/message-templates'), env: {} })).json()).viewer, { id: 'tylerg', role: 'owner', canApprove: false });
   who = 'manager';

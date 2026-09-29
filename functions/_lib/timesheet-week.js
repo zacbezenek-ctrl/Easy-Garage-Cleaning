@@ -1,5 +1,6 @@
 import { activeTimecard } from './employee-timecards.js';
 import { addDays, validDate } from './dispatch-time.js';
+import { ptoPaidDays } from './pto-pay.js';
 
 export const TIMESHEET_TIME_ZONE = 'America/Denver';
 const HOUR = 3600000;
@@ -126,17 +127,20 @@ function measure(intervals) {
 
 const group = (map, key, item) => { if (!map.has(key)) map.set(key, []); map.get(key).push(item); };
 
-/** Expands approved time-off requests into paid PTO days. Only an explicit numeric paidHoursPerDay (a
- * manager-owned field) makes a request paid; legacy requests without it remain unpaid time off. Saturdays and
- * Sundays are skipped unless a manager also sets paidWeekends: true, so a Mon-Sun vacation at 8 hours pays 40.
- * PTO is paid at the employee's latest snapshotted timecard rate, never a rate stored on the employee-authored request. */
+/** Expands approved time-off requests into paid PTO days through the one PTO pay model (pto-pay.js). An approval
+ * made in the request workflow pays its recorded paidDates at hoursPerDay; those fields win whenever the request has
+ * a boolean paid. An older approval pays only an explicit manager-set paidHoursPerDay, on Monday to Friday unless a
+ * manager also set paidWeekends: true, so a Mon-Sun vacation at 8 hours pays 40. Requests with neither remain unpaid
+ * time off, and pay terms or dates that cannot be read go to review instead of paying 0. PTO is paid at the
+ * employee's latest snapshotted timecard rate, never a rate stored on the employee-authored request. */
 export function ptoFromRequests(requests = []) {
   const entries = [];
   for (const request of Array.isArray(requests) ? requests : []) {
-    if (!record(request) || request.type !== 'time_off' || request.status !== 'approved' || request.paidHoursPerDay === undefined || request.paidHoursPerDay === null || request.paidHoursPerDay === '') continue;
-    const first = request.startDate, last = request.endDate || request.startDate, base = { id: String(request.id || ''), employee: request.employee, hours: request.paidHoursPerDay };
-    if (!validDate(first) || !validDate(last) || last < first || Date.parse(last) - Date.parse(first) > 30 * 86400000) { entries.push({ ...base, date: validDate(first) ? first : '', hours: NaN }); continue; }
-    for (let date = first; date <= last; date = addDays(date, 1)) if (request.paidWeekends === true || new Date(`${date}T12:00:00Z`).getUTCDay() % 6) entries.push({ ...base, date });
+    const pay = record(request) && request.status === 'approved' ? ptoPaidDays(request) : null;
+    if (!pay) continue;
+    const base = { id: String(request.id || ''), employee: request.employee, hours: pay.hours };
+    if (pay.review) { entries.push({ ...base, date: pay.date, hours: NaN }); continue; }
+    for (const date of pay.dates) entries.push({ ...base, date });
   }
   return entries;
 }

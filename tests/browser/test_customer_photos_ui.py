@@ -55,7 +55,7 @@ class CustomerPhotosBrowserTests(unittest.TestCase):
         self.context = self.browser.new_context(viewport={'width': 375, 'height': 812}, timezone_id='Asia/Tokyo', is_mobile=True, has_touch=True)
         self.page = self.context.new_page(); self.page.set_default_timeout(7000)
         self.page.clock.install(time=NOW)
-        self.errors = []; self.photo_requests = []; self.share_posts = []; self.share_gets = 0; self.job_gets = 0
+        self.errors = []; self.photo_requests = []; self.photo_sizes = []; self.share_posts = []; self.share_gets = 0; self.job_gets = 0
         self.portal = copy.deepcopy(FIXTURES['portal']); self.sharing = copy.deepcopy(FIXTURES['sharing']); self.crew = FIXTURES['crew']; self.broken = set()
         self.share_status = 200; self.post_status = [200]
         self.page.on('pageerror', lambda error: self.errors.append(str(error)))
@@ -70,7 +70,7 @@ class CustomerPhotosBrowserTests(unittest.TestCase):
         if parsed.hostname != '127.0.0.1': route.abort(); return
         if parsed.path == '/api/customer-portal': return self.json(route, 200, self.portal)
         if parsed.path == '/api/customer-portal-photo':
-            photo_id = query.get('photoId', [''])[0]; self.photo_requests.append(photo_id)
+            photo_id = query.get('photoId', [''])[0]; self.photo_requests.append(photo_id); self.photo_sizes.append(query.get('size', ['full'])[0])
             if photo_id in self.broken: return self.json(route, 503, {'ok': False, 'code': 'CUSTOMER_PORTAL_PHOTO_UNAVAILABLE', 'error': 'This photo is temporarily unavailable.'})
             return route.fulfill(status=200, content_type='image/png', body=IMAGE)
         if parsed.path == '/api/hub-auth': return self.json(route, 200, {'ok': True, 'user': 'zacb', 'displayName': 'Synthetic Owner', 'role': 'owner', 'businessAccess': True})
@@ -136,7 +136,9 @@ class CustomerPhotosBrowserTests(unittest.TestCase):
         self.assertLess(len(self.photo_requests), 5, 'photos below the fold wait for lazy loading')
         for index in range(5): thumbs.nth(index).scroll_into_view_if_needed(); expect(thumbs.nth(index)).to_have_class('ba-thumb loaded')
         sources = self.page.eval_on_selector_all('#gallery-card img', 'images => images.map(image => [image.getAttribute("src"), image.loading])')
-        self.assertEqual([source for source, _ in sources], [f'/api/customer-portal-photo?photoId={IDS[index]}' for index in (0, 1, 2, 3, 4)])
+        # Grid tiles ask for Drive's small rendition; the viewer below opens the full photo.
+        self.assertEqual([source for source, _ in sources], [f'/api/customer-portal-photo?photoId={IDS[index]}&size=thumb' for index in (0, 1, 2, 3, 4)])
+        self.assertEqual(set(self.photo_sizes), {'thumb'})
         self.assertEqual({loading for _, loading in sources}, {'lazy'})
         self.assertNotIn(IDS[5], self.photo_requests, 'the unshared progress photo is never requested')
         html = self.page.content()
@@ -151,6 +153,8 @@ class CustomerPhotosBrowserTests(unittest.TestCase):
         expect(self.page.locator('#gallery-position')).to_have_text('Photo 1 of 5 · Added Sep 22, 2026')
         expect(self.page.locator('#gallery-image')).to_have_attribute('alt', 'Before photo, added Sep 22, 2026')
         expect(self.page.locator('#gallery-image')).to_have_attribute('src', f'/api/customer-portal-photo?photoId={IDS[0]}')
+        self.page.wait_for_function("document.getElementById('gallery-image').complete && document.getElementById('gallery-image').naturalWidth > 0")
+        self.assertIn('full', self.photo_sizes, 'the viewer loads the full photo, not the grid thumbnail')
         self.page.keyboard.press('ArrowRight'); expect(self.page.locator('#gallery-position')).to_contain_text('Photo 2 of 5')
         self.page.get_by_role('button', name='Next photo').tap(); expect(self.page.locator('#gallery-position')).to_contain_text('Photo 3 of 5')
         self.page.get_by_role('button', name='Previous photo').tap(); self.page.get_by_role('button', name='Previous photo').tap(); self.page.get_by_role('button', name='Previous photo').tap()

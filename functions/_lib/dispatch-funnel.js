@@ -1,6 +1,7 @@
 import { funnelDefinitions, funnelHubId, sha256Hex } from './funnel-definitions.js';
 import { funnelEventWrite } from './funnel-events.js';
 import { scheduleInterval } from './dispatch-time.js';
+import { dimensionPicks } from './funnel-dimensions.js';
 
 // FUN-02: the booking facts a visit records (channel, self-reported channel,
 // booker, visit purpose, rework/membership link, CRM link reason) and the
@@ -16,7 +17,7 @@ const safeId = value => typeof value === 'string' && /^[A-Za-z0-9_-]{1,180}$/.te
 const STRICT_UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/, PROVIDER_ID = /^[A-Za-z0-9_-]{1,120}$/, STATUS = /^[a-z][a-z0-9_]{0,39}$/;
 const ACTOR = /^[a-z0-9][a-z0-9_.@:+-]{0,119}$/, ROLE = /^[a-z][a-z_]{0,39}$/;
 const OPERATIONAL = new Set(['job', 'cleanout', 'reorg']);
-const BOOKING_KEYS = ['channel', 'channelSelfReported', 'visitPurpose', 'reworkOfJobId', 'membershipId', 'crmLinkReason'];
+const BOOKING_KEYS = ['channel', 'channelSelfReported', 'visitPurpose', 'reworkOfJobId', 'membershipId', 'crmLinkReason', 'serviceLine', 'serviceLineSuggested', 'funnelPath'];
 // Codes only history mappings may use (FUN-04), never a live choice.
 const RESERVED_REASON = 'other_legacy', RESERVED_CHANNEL = 'jobber_legacy';
 // Dispatch staff book by phone or in person; the other channels belong to their own writers.
@@ -58,10 +59,13 @@ export function requestKey(requestId) {
 /**
  * Validates the optional `booking` of a schedule.create: {channel?,
  * channelSelfReported?, visitPurpose?, reworkOfJobId?, membershipId?,
- * crmLinkReason?}. A walkthrough is always visitPurpose 'walkthrough'; a job
- * defaults to 'service' (the legacy meaning of every job). A rework visit needs
- * reworkOfJobId and a member visit needs membershipId, and neither takes the
- * other. `fail(reason, message, status)` builds the caller's error.
+ * crmLinkReason?, serviceLine?, serviceLineSuggested?, funnelPath?}. A
+ * walkthrough is always visitPurpose 'walkthrough'; a job defaults to 'service'
+ * (the legacy meaning of every job). A rework visit needs reworkOfJobId and a
+ * member visit needs membershipId, and neither takes the other. serviceLine and
+ * funnelPath are the FUN-29 one-tap picks for the project; serviceLineSuggested
+ * marks serviceLine as the untouched lead-form suggestion (funnel-dimensions.js
+ * dimensionPicks). `fail(reason, message, status)` builds the caller's error.
  */
 export function bookingInput(value, type, fail) {
   const definitions = funnelDefinitions(), vocab = definitions.vocabularies;
@@ -84,6 +88,7 @@ export function bookingInput(value, type, fail) {
     channelSelfReported: pick('channelSelfReported', vocab.selfReportedChannels, 'answer to how the customer heard about us'),
     visitPurpose, reworkOfJobId, membershipId,
     crmLinkReason: pick('crmLinkReason', vocab.crmLinkReasons, 'reason there is no CRM contact'),
+    ...dimensionPicks(booking, fail),
   };
 }
 
@@ -135,6 +140,7 @@ export function dispatchFunnelOptions() {
     const definitions = funnelDefinitions(), vocab = definitions.vocabularies, live = list => list.filter(code => code !== RESERVED_REASON);
     return { visitPurposes: vocab.visitPurposes.filter(purpose => purpose !== 'walkthrough'), bookingChannels: STAFF_CHANNELS.filter(channel => vocab.bookingChannels.includes(channel)),
       selfReportedChannels: [...vocab.selfReportedChannels], crmLinkReasons: [...vocab.crmLinkReasons], initiatedBy: vocab.initiatedBy.filter(value => value !== 'system'),
+      serviceLines: [...vocab.serviceLines], funnelPaths: [...vocab.funnelPaths],
       reasonCodes: { cancel: live(definitions.reasonCodes.cancel), reschedule: live(definitions.reasonCodes.reschedule), noShow: live(definitions.reasonCodes.noShow) } };
   } catch { return null; }
 }
@@ -147,13 +153,14 @@ export function dispatchFunnelOptions() {
  *   reason   {reasonCode, initiatedBy, lateCancel} for reschedule, cancel and no-show
  *   crewChanged  the assigned crew changed to a non-empty crew (jobs only)
  *   bookedClock  {clockSource, occurredAt} for a provider-timed booking (adoption)
+ *   dimensions   the project's {serviceLine, funnelPath} for the booking event (FUN-29)
  * The occurrence counter counts the start instants a visit has been placed at:
  * the first placement is the booking, every later start change a reschedule.
  * Taking a placed visit off the calendar is a reschedule without toStartAt.
  * A change of end time alone moves nothing. Returns {writes, patch} where patch
  * carries scheduleOccurrence for the visit.
  */
-export async function visitFunnelWrites({ action, before = null, after, actor, via, key, source, reason = {}, crewChanged = false, bookedClock = null, now }) {
+export async function visitFunnelWrites({ action, before = null, after, actor, via, key, source, reason = {}, crewChanged = false, bookedClock = null, dimensions = null, now }) {
   const kind = visitKind(after?.type);
   if (!kind) return { writes: [], patch: {} };
   const family = kind === 'walkthrough' ? 'walkthrough' : 'job', visit = kind === 'walkthrough' ? { walkthroughId: after.id } : { jobId: after.id };
@@ -171,7 +178,7 @@ export async function visitFunnelWrites({ action, before = null, after, actor, v
     if (action === 'restore') add(`${family}.restored`, { fromStatus: statusOf(before), toStatus: statusOf(after) });
     if (to && to !== from) {
       if (prior === 0) {
-        add(kind === 'walkthrough' ? 'walkthrough.booked' : 'job.scheduled', { channel: known('bookingChannels', after.bookingChannel), channelSelfReported: known('selfReportedChannels', after.channelSelfReported), visitPurpose: known('visitPurposes', after.visitPurpose) || defaultVisitPurpose(after.type), occurrence: 1 }, bookedClock || {});
+        add(kind === 'walkthrough' ? 'walkthrough.booked' : 'job.scheduled', { channel: known('bookingChannels', after.bookingChannel), channelSelfReported: known('selfReportedChannels', after.channelSelfReported), visitPurpose: known('visitPurposes', after.visitPurpose) || defaultVisitPurpose(after.type), serviceLine: known('serviceLines', dimensions?.serviceLine), funnelPath: known('funnelPaths', dimensions?.funnelPath), occurrence: 1 }, bookedClock || {});
         patch.scheduleOccurrence = 1;
       } else {
         add(`${family}.rescheduled`, { reasonCode: reason.reasonCode, initiatedBy: reason.initiatedBy, occurrence: counted(prior + 1), fromStartAt: from, toStartAt: to });

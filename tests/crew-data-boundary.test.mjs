@@ -41,8 +41,10 @@ test('canonical Firestore job grants cannot bypass server crew projection or com
  // SEC-A: manager SDK writes exclude server-owned receipts and encrypted records.
  // Every write method must also reject server-owned recordTypes on the stored and proposed document.
  assert.doesNotMatch(job,/allow [^:]*write:|allow create, update, delete:/);
- assert.match(job,/allow create: if businessUser\(\) && !serverOwnedJobRecord\(documentId\) &&\s*!serverOwnedJobData\(request\.resource\.data, documentId\);/);
- assert.match(job,/allow update: if businessUser\(\) && !serverOwnedJobRecord\(documentId\) &&\s*!serverOwnedJobData\(resource\.data, documentId\) &&\s*!serverOwnedJobData\(request\.resource\.data, documentId\);/);
+ // JOB-COST-PRIVACY (updated deliberately): creates and updates also refuse adding or changing a job labor copy.
+ // FUN-03: nor create or change a job's funnelSale (the sale the funnel ledger counts).
+ assert.match(job,/allow create: if businessUser\(\) && !serverOwnedJobRecord\(documentId\) &&\s*!serverOwnedJobData\(request\.resource\.data, documentId\) &&\s*!\('funnelSale' in request\.resource\.data\) &&\s*jobLaborUnchanged\(request\.resource\.data, \{\}, documentId\);/);
+ assert.match(job,/allow update: if businessUser\(\) && !serverOwnedJobRecord\(documentId\) &&\s*!serverOwnedJobData\(resource\.data, documentId\) &&\s*!serverOwnedJobData\(request\.resource\.data, documentId\) &&\s*!request\.resource\.data\.diff\(resource\.data\)\.affectedKeys\(\)\.hasAny\(\['funnelSale'\]\) &&\s*jobLaborUnchanged\(request\.resource\.data, resource\.data, documentId\);/);
  assert.match(job,/allow delete: if businessUser\(\) && !serverOwnedJobRecord\(documentId\) &&\s*!serverOwnedJobData\(resource\.data, documentId\);/);
  assert.match(rules.match(/function serverOwnedJobRecord\(documentId\) \{([\s\S]*?)\n    \}/)?.[1]||'',/matches\('\(secure_\|_egc_\)\.\*'\) && !documentId\.matches\('_egc_schedule_lock_\.\*'\)/);
  const ownedData=rules.match(/function serverOwnedJobData\(data, documentId\) \{([\s\S]*?)\n    \}/)?.[1]||'';

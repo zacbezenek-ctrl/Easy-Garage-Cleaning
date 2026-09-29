@@ -21,9 +21,11 @@ function fixtureScreen(overrides = {}) {
 }
 const tabs = page => page.document.querySelectorAll('[data-ops-tab]').map(button => button.getAttribute('data-ops-tab'));
 // Screens the shipped MANIFEST registers (REVIEWS-UI); fixtures register after them. SHIPPED are the business
-// screens; P3-04's owner-only followup_settings registers first and is checked separately.
+// screens; the owner-only screens (P3-04 followup_settings, FUN-15 ad_spend, CATALOG-ADMIN catalog) register first and are checked separately.
+// CREW-NOTIFY's Schedule alerts is crewVisible (every signed-in viewer sees it) and registers before them.
 const SHIPPED = ['reviews', 'message_templates', 'stocked_costs', 'staff'];
-const OWNER_SHIPPED = ['followup_settings'];
+const OWNER_SHIPPED = ['followup_settings', 'ad_spend', 'catalog'];
+const CREW_SHIPPED = ['crew_alerts'];
 
 test('a registered screen joins the nav under its group only when the capability matches', () => {
   for (const [who, expected] of [[{}, true], [MANAGER, true], [CREW, false]]) {
@@ -52,11 +54,12 @@ test('a registered screen joins the nav under its group only when the capability
 });
 
 test('crew-visible and owner-only screens follow the viewer, not the nav group', () => {
-  const crew = hubPage(CREW);
+  const crew = hubPage(CREW), shipped = new Set(crew.context.EGCHubScreens.list().map(entry => entry.id));
   crew.context.EGCHubScreens.register({ ...fixtureScreen().spec, id: 'fixture_crew', group: 'MY EGC', label: 'Fixture crew', capability: undefined, crewVisible: true });
   crew.context.EGCHubScreens.register({ ...fixtureScreen().spec, id: 'fixture_owner', group: 'SYSTEM', label: 'Fixture owner', capability: 'owner' });
   const crewNav = crew.api.visibleNav();
-  assert.deepEqual([...crewNav.map(item => item[1])].slice(-2), ['onboarding', 'fixture_crew']);
+  assert.deepEqual([...crewNav.map(item => item[1])].filter(id => !shipped.has(id)).slice(-2), ['onboarding', 'fixture_crew']);
+  assert.ok(crewNav.some(item => item[1] === 'crew_alerts'), 'the shipped Schedule alerts screen is crew-visible');
   assert.ok(!crewNav.some(item => item[1] === 'fixture_owner'));
   assert.deepEqual([...crew.api.hubCapabilities()], ['crew']);
   const manager = hubPage(MANAGER);
@@ -282,8 +285,8 @@ test('the shipped screens register cleanly for business viewers only and lazy-lo
   vm.runInNewContext(readFileSync(new URL('../employee-hub-screens.js', import.meta.url), 'utf8'), context, { filename: 'employee-hub-screens.js' });
   assert.deepEqual(warnings, []);
   const registry = context.EGCHubScreens;
-  assert.deepEqual([...registry.list().map(entry => entry.id)], [...OWNER_SHIPPED, ...SHIPPED]);
-  assert.equal(registry.get('followup_settings').capability, 'owner');
+  assert.deepEqual([...registry.list().map(entry => entry.id)], [...CREW_SHIPPED, ...OWNER_SHIPPED, ...SHIPPED]);
+  for (const id of OWNER_SHIPPED) assert.equal(registry.get(id).capability, 'owner', id);
   const reviews = registry.get('reviews'), templates = registry.get('message_templates');
   assert.deepEqual([reviews.group, reviews.label, reviews.capability, reviews.module, reviews.load.js, reviews.load.css], ['RUN THE BUSINESS', 'Review queues', 'business', 'EGCReviews', 'employee-reviews.js', 'employee-reviews.css']);
   assert.deepEqual([templates.group, templates.label, templates.capability, templates.module, templates.load.js, templates.load.css], ['SYSTEM', 'Message templates', 'business', 'EGCMessageTemplates', 'message-templates.js', 'message-templates.css']);
@@ -291,6 +294,7 @@ test('the shipped screens register cleanly for business viewers only and lazy-lo
   for (const [who, visible] of [[CREW, false], [MANAGER, true], [{}, true]]) {
     const page = hubPage(who), nav = page.api.visibleNav().map(item => item[1]);
     for (const id of SHIPPED) assert.equal(nav.includes(id), visible, `${id} for ${JSON.stringify(who)}`);
+    for (const id of CREW_SHIPPED) assert.ok(nav.includes(id), `${id} for ${JSON.stringify(who)}`);
     if (visible) assert.ok(nav.indexOf('reviews') > nav.indexOf('delivery') && nav.indexOf('message_templates') > nav.indexOf('settings'), 'each joins the end of its nav group');
   }
 });

@@ -1,5 +1,6 @@
 import {sourceFiles} from './source-files.mjs';
 import assert from 'node:assert/strict';
+import { createHash } from 'node:crypto';
 import { readFileSync, readdirSync } from 'node:fs';
 import test from 'node:test';
 
@@ -77,6 +78,13 @@ test('client hub empty-state logo preserves its aspect ratio', () => {
   assert.match(html, /\.empty-state img\{height:auto\}/);
 });
 
+// styles.css is served immutable, so a browser keeps what a ?v= URL first returned for a year.
+// The pin ties the version to the exact bytes: any change to styles.css, including a merge of two
+// branches that each changed it, fails here until the version is bumped everywhere (HEAD and the
+// patch_static_pages regex in _generate_site.py, functions/before-after.js, the private shells,
+// then a rebuild) and this pin names the new version and hash.
+const STYLES_RELEASE = { version: '20260928p', sha256: '3058352c20b6774915fab0b882ac3496fd22260bead970283c65c0f4fb0e41d9' };
+
 test('Cloudflare caches versioned public assets', () => {
   const headers = read('_headers');
   const styles = read('styles.css');
@@ -88,7 +96,12 @@ test('Cloudflare caches versioned public assets', () => {
     .filter((entry) => entry.isFile() && entry.name.endsWith('.html'))
     .map((entry) => ({ name: `${entry.parentPath}/${entry.name}`, html: readFileSync(`${entry.parentPath}/${entry.name}`, 'utf8') }))
     .filter((page) => page.html.includes('styles.css'));
-  for (const page of pages) assert.match(page.html, /styles\.css\?v=20260904j/, `${page.name} loads a stale shared stylesheet`);
+  // STYLES_VERSION in _generate_site.py is the one styles.css version (HEAD, patch_static_pages, before-after); STYLES_RELEASE
+  // ties it to the file's content, so a styles.css change must move every page to a version never served before.
+  const version = read('_generate_site.py').match(/^STYLES_VERSION = "(\d{8}[a-z])"$/m)[1];
+  assert.equal(version, STYLES_RELEASE.version);
+  assert.equal(createHash('sha256').update(styles.replace(/\r\n/g, '\n')).digest('hex'), STYLES_RELEASE.sha256, `styles.css changed under ?v=${STYLES_RELEASE.version}, which browsers already cache as immutable: bump it everywhere to a version never served before and update STYLES_RELEASE`);
+  for (const page of pages) assert.match(page.html, new RegExp(`styles\\.css\\?v=${version}["']`), `${page.name} loads a stale shared stylesheet`);
 });
 
 test('the shared visual refresh preserves readable text on light and dark surfaces', () => {

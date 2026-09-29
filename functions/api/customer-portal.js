@@ -1,22 +1,30 @@
+import { sha256 } from '@noble/hashes/sha2.js';
+import { bytesToHex } from '@noble/hashes/utils.js';
 import { syncSalesFollowupExit } from '../_lib/sales-followup-exit.js';
 import { clearCustomerPortalSessionCookie, createCustomerPortalCollaboratorAccessToken, readCookie, verifyCustomerPortalSessionToken } from '../_lib/customer-portal.js';
 import { readCustomerPortalContext } from '../_lib/customer-portal-access.js';
 import { denverToday } from '../_lib/dispatch-time.js';
 import { fieldActivity } from '../_lib/field-execution.js';
 import { customerPhotoPolicy, customerPhotoProjection, customerPhotosEnabled } from '../_lib/customer-photo-visibility.js';
-import { patchJob, patchJobsAtomic, readJob } from '../_lib/firestore-job.js';
+import { commitDocuments, patchJob, readJob } from '../_lib/firestore-job.js';
 import { CUSTOMER_PORTAL_CONTENT, CUSTOMER_PORTAL_TERMS_VERSION, approvalTermsVersion, customerPortalDocuments } from '../_lib/customer-portal-content.js';
 import { appendConversationMessage, cleanMessage, cleanRequestId, conversationMessages, deliverHighLevelMessage, findConversationMessage, replaceConversationMessage } from '../_lib/customer-messaging.js';
-import { customerMoneyState as moneyState, customerDepositState, customerPaymentNeedsReview, createCustomerStripeCheckout, recordCustomerStripePayment, stripeRequest as stripe, stripeSecretKey as stripeKey } from '../_lib/customer-payments.js';
+import { customerMoneyState as moneyState, customerDepositState, customerPaymentNeedsReview, customerQuoteTotal, createCustomerStripeCheckout, recordCustomerStripePayment, stripeRequest as stripe, stripeSecretKey as stripeKey } from '../_lib/customer-payments.js';
+import { approvalClosed, billedChangeCents, billedChangeOrders, changeOrderBillingEnabled, changeOrderSaved, decisionDeltaCents, respondToDecision } from '../_lib/change-orders.js';
 import { parseBusinessActor } from '../_lib/business-hub-core.js';
 import { businessAccountJob } from '../_lib/portal-invitation.js';
 import { moneyDocumentEnabled, moneyDocumentLinks } from '../_lib/money-document.js';
-import { estimateFingerprint, included, legacyLineItems } from '../_lib/quote-model.js';
+import { customerMoneyTotals } from '../_lib/money-core.js';
+import { estimateFingerprint, included, legacyLineItems, unsentQuoteDraft } from '../_lib/quote-model.js';
+import { crewPublicProfilesEnabled, customerCrew, customerCrewProjection, readCrewPublicProfiles } from '../_lib/crew-public-profile.js';
+import { liveSale, portalApprovalWrites, portalFunnelWrite, vocabularyValue } from '../_lib/job-funnel-events.js';
 
 const HOST = /^(?:easygaragecleaning\.com|www\.easygaragecleaning\.com|easy-garage-cleaning\.pages\.dev|localhost(?::\d+)?|127\.0\.0\.1(?::\d+)?)$/;
 const DEFAULT_REVIEW_URL = 'https://search.google.com/local/writereview?placeid=ChIJ17AGfBiyRIsRyJ3k4mDtX8Q';
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const REVIEW_CLICK_WINDOW_MS = 60 * 1000;
+const PORTAL_REQUEST = /^[A-Za-z0-9_-]{8,120}$/;
+const CLOSED_VISIT = ['cancelled', 'canceled', 'no_show', 'noshow', 'no-show'];
 const APPROVAL_ACTOR_FIELDS = ['approvedByActorId', 'approvedByBusinessAccountId', 'approvedByBusinessMemberId'];
 
 function reply(status, body, headers = {}) {
@@ -42,13 +50,17 @@ function amount(value) {
 
 // Field tools store paused/waiting/delayed as an activity on top of the
 // canonical stage; older writers may still save them as the status itself.
+// A field time on a cancelled or no-show visit, or from before a restore,
+// belongs to an earlier attempt (dispatch keeps the times), so it never moves
+// the visit the customer is waiting for past scheduled.
 function portalStatus(job) {
   const raw = String(job.pipelineStatus || job.status || 'scheduled').toLowerCase();
   if (raw === 'paid') return 'paid';
   if (['completed', 'review_requested', 'closed'].includes(raw) || raw === 'invoiced' && (job.completedAt || job.postJobChecklist?.completedAt)) return 'completed';
-  if (['in_progress', 'paused'].includes(raw) || job.startedAt) return 'in_progress';
-  if (['arrived', 'waiting'].includes(raw) || job.arrivedAt) return 'arrived';
-  if (['dispatched', 'delayed'].includes(raw) || job.dispatchedAt) return 'dispatched';
+  const restoredAt = Date.parse(job.restoredAt || ''), current = at => Boolean(at) && !CLOSED_VISIT.includes(raw) && !(Date.parse(at) <= restoredAt);
+  if (['in_progress', 'paused'].includes(raw) || current(job.startedAt)) return 'in_progress';
+  if (['arrived', 'waiting'].includes(raw) || current(job.arrivedAt)) return 'arrived';
+  if (['dispatched', 'delayed'].includes(raw) || current(job.dispatchedAt)) return 'dispatched';
   return 'scheduled';
 }
 
@@ -77,11 +89,13 @@ export function customerReviewUrl(env = {}) {
 
 // A replaced or withdrawn estimate is never approvable. A draft is refused only
 // with CUSTOMER_PORTAL_REJECT_DRAFT_ESTIMATES=true: Hub estimate saves still
-// release customer-facing estimates as 'draft' today.
+// release customer-facing estimates as 'draft' today. A quote drafted in the Hub
+// (P2-07) that has not been sent in its current revision is never approvable,
+// whatever the flag says (unsentQuoteDraft).
 const rejectDrafts = env => env?.CUSTOMER_PORTAL_REJECT_DRAFT_ESTIMATES === 'true';
 function approvalBlocked(job, draftsRejected) {
   const status = String(job.estimate?.status || '').toLowerCase();
-  return ['superseded', 'void', 'withdrawn'].includes(status) || draftsRejected && status === 'draft';
+  return ['superseded', 'void', 'withdrawn'].includes(status) || draftsRejected && status === 'draft' || unsentQuoteDraft(job);
 }
 
 function estimateRevision(job) {
@@ -101,14 +115,17 @@ function estimateLines(job, finance) {
 // revision and total still needs a fresh review.
 const shownFingerprint = estimate => estimateFingerprint({ amount: estimate.amount, depositRequired: estimate.depositRequired, scope: estimate.scope, lineItems: estimate.lineItems });
 
+// The estimate card shows the signed quote; billed change orders are part of
+// the payment total, never of the estimate an approval binds to.
 function estimateState(job, finance, today, draftsRejected = false) {
-  const rawStatus = String(job.customerApproval?.status || job.estimate?.status || job.quoteStatus || (finance.total ? 'ready' : 'not_ready')).toLowerCase();
+  const quote = { ...finance, total: customerQuoteTotal(job) };
+  const rawStatus = String(job.customerApproval?.status || job.estimate?.status || job.quoteStatus || (quote.total ? 'ready' : 'not_ready')).toLowerCase();
   const validUntil = safe(job.estimate?.validUntil || '', 30);
   const status = validUntil && validUntil < today && !['accepted', 'approved'].includes(rawStatus) ? 'expired' : rawStatus;
   const estimate = {
     number: safe(job.estimate?.number || job.quoteId || `EST-${String(job.id || '').slice(-6).toUpperCase()}`, 80),
     status: ['accepted', 'approved'].includes(status) ? 'approved' : status,
-    amount: finance.total,
+    amount: quote.total,
     service: safe(job.serviceType || job.type || 'Garage service', 120),
     scope: safe(job.estimate?.scope || job.scopeSummary || 'Your flat-rate garage service based on the agreed walkthrough scope.', 1600),
     approvedAt: safe(job.customerApproval?.approvedAt || job.estimate?.acceptedAt || '', 50),
@@ -117,11 +134,38 @@ function estimateState(job, finance, today, draftsRejected = false) {
     revision: estimateRevision(job),
     approvable: !approvalBlocked(job, draftsRejected),
     depositRequired: customerDepositState(job, finance).required,
-    lineItems: estimateLines(job, finance),
+    lineItems: estimateLines(job, quote),
     terms: CUSTOMER_PORTAL_CONTENT.estimateTerms,
     termsVersion: CUSTOMER_PORTAL_TERMS_VERSION,
   };
   return { ...estimate, fingerprint: shownFingerprint(estimate) };
+}
+
+// An unsent quote draft is withheld: the customer sees that it is being updated,
+// never its unsent price, deposit, scope or lines, and nothing to approve.
+function withheldEstimate(job) {
+  const estimate = {
+    number: safe(job.estimate?.number || job.quoteId || `EST-${String(job.id || '').slice(-6).toUpperCase()}`, 80),
+    status: 'being_updated', withheld: true, amount: 0,
+    service: safe(job.serviceType || job.type || 'Garage service', 120), scope: '',
+    approvedAt: '', approvedBy: '', validUntil: '', revision: estimateRevision(job), approvable: false,
+    depositRequired: 0, lineItems: [], terms: CUSTOMER_PORTAL_CONTENT.estimateTerms, termsVersion: CUSTOMER_PORTAL_TERMS_VERSION,
+  };
+  return { ...estimate, fingerprint: shownFingerprint(estimate) };
+}
+// Recorded payments stay visible, with the Stripe receipt link and the printable
+// receipt (moneyDocumentKinds keeps 'receipt', rendered without the unsent
+// total). The unsent total, balance, deposit and any invoice do not, and the
+// status never says whether the unsent total is covered: 'received', not 'partial'.
+function withheldPayment(job, finance) {
+  const needsReview = customerPaymentNeedsReview(job), deposit = { required: 0, paid: 0, due: 0, dueNow: 0, purpose: 'deposit', remainder: 0 };
+  return {
+    total: 0, paid: finance.paid, balance: 0, approvedChanges: 0, dueNow: 0, purpose: 'deposit', deposit, needsReview, withheld: true,
+    status: needsReview ? 'pending_verification' : finance.paid ? 'received' : 'unpaid',
+    receiptUrl: /^https:\/\/pay\.stripe\.com\/receipts\//.test(job.payment?.receiptUrl || '') ? job.payment.receiptUrl : '',
+    receiptEmail: safe(job.payment?.receiptEmail || '', 180), invoiceNumber: '', invoiceStatus: '', dueDate: '',
+    creditApplied: Math.max(0, amount(job.payment?.giftCreditApplied)), completionRequiresPayment: true,
+  };
 }
 
 function isoDate(value) {
@@ -159,17 +203,68 @@ function withoutApprovalActor(estimate) {
   return Object.fromEntries(Object.entries(estimate || {}).filter(([key]) => !APPROVAL_ACTOR_FIELDS.includes(key)));
 }
 
+// FUN-03: a portal change and its funnel events are one :commit (the events
+// are create-only), so an event exists exactly when its change was saved. A
+// private record has no events (the builders return null).
+function commitWithEvents(env, updates, events) {
+  return commitDocuments(env, [...updates, ...events.filter(Boolean).map(event => ({ ...event, create: true }))]);
+}
+
+// An event the funnel ledger refuses (funnel_event_*) is a server fault: the
+// customer is never told the record changed and to refresh.
+function eventRefused(error) {
+  return String(error?.code || '').startsWith('funnel_event_') ? reply(503, { ok: false, code: 'CUSTOMER_PORTAL_STORAGE_UNAVAILABLE', error: 'This could not be saved right now, and nothing changed. Please try again shortly.' }) : null;
+}
+
+// An optional portal request_id (a later page resends it on retry); without
+// one the server names the request. A malformed one is refused.
+function portalRequestId(value) {
+  if (value === undefined || value === null || value === '') return { id: '', key: crypto.randomUUID() };
+  return typeof value === 'string' && PORTAL_REQUEST.test(value) ? { id: value, key: value } : null;
+}
+
 // Firestore answers a stale currentDocument.updateTime with 400
 // FAILED_PRECONDITION; 409/412 count too.
 function conflict(error) {
   return /\((400|409|412)\)/.test(String(error?.message));
 }
 
-function customerExperience(job, owner = true) {
+// What the portal needs to show a job's decisions: every saved change-order
+// line, the decisions billed on the balance, and (billing on) the clock that
+// closes priced questions.
+function decisionContext(job, { billing = false, now = '' } = {}) {
+  const saved = (Array.isArray(job.changeOrders) ? job.changeOrders : []).filter(line => line !== null && typeof line === 'object' && !Array.isArray(line));
+  return { job, billing, now, saved, billed: new Set(billedChangeOrders(job).map(line => line.decisionId)) };
+}
+
+// What a portal viewer sees of one crew decision. `billed` marks an approved
+// change whose change-order line is on the balance. A pending question that
+// already has its own saved line was answered before and a stale Hub write
+// reverted it: it shows as the approval that line records, never with Approve
+// and Decline (the server refuses both). `closed` marks a pending question
+// that cannot be answered here, with closedReason 'review' (its line id is
+// taken) or, with billing on, a priced question whose job is 'closed' or
+// 'finished' or that has 'expired'.
+function decisionView(item, context) {
+  const priceDelta = Math.max(0, amount(item.priceDelta)), own = context.saved.find(line => line.decisionId === item.id);
+  let status = ['pending', 'approved', 'declined', 'cancelled'].includes(item.status) ? item.status : 'pending';
+  const reverted = status === 'pending' && Boolean(own);
+  if (reverted) status = 'approved';
+  const closedReason = status !== 'pending' ? '' : changeOrderSaved(context.saved, item.id) ? 'review' : context.billing && priceDelta > 0 ? approvalClosed(context.job, item, context.now) : '';
+  return {
+    id: id(item.id, 'decision'), title: safe(item.title, 180), details: safe(item.details, 1200),
+    photoUrl: /^https:\/\/(?:drive|docs)\.google\.com\//i.test(item.photoUrl || '') ? item.photoUrl : '',
+    priceDelta, timeDeltaMinutes: Math.max(0, Number(item.timeDeltaMinutes || 0)), status,
+    promptedAt: safe(item.promptedAt, 50), respondedAt: safe(item.respondedAt || (reverted ? own.approvedAt : ''), 50), responseNote: safe(item.responseNote, 600), responseBy: safe(item.responseBy || (reverted ? own.approvedBy : ''), 120),
+    billed: status === 'approved' && context.billed.has(item.id), closed: Boolean(closedReason), ...(closedReason ? { closedReason } : {}),
+  };
+}
+
+function customerExperience(job, owner = true, { billing = false, now = '' } = {}) {
   const memory = job.customerMemory || {};
   const rules = job.jobDayRules || {};
   const collaborators = Array.isArray(job.customerCollaborators) ? job.customerCollaborators : [];
-  const decisions = Array.isArray(job.customerDecisions) ? job.customerDecisions : [];
+  const decisions = Array.isArray(job.customerDecisions) ? job.customerDecisions : [], shown = decisionContext(job, { billing, now });
   const requests = Array.isArray(job.rebookingRequests) ? job.rebookingRequests : [];
   const cards = Array.isArray(job.giftWallet?.cards) ? job.giftWallet.cards : [];
   const redemptions = Array.isArray(job.giftWallet?.redemptions) ? job.giftWallet.redemptions : [];
@@ -195,13 +290,7 @@ function customerExperience(job, owner = true) {
     // A company project's people are managed in its business account, and the
     // server refuses invitations for it (CUSTOMER_PORTAL_BUSINESS_PROJECT).
     invitesAvailable: owner && !businessAccountJob(job),
-    decisions: decisions.slice(-20).map(item => ({
-      id: id(item.id, 'decision'), title: safe(item.title, 180), details: safe(item.details, 1200),
-      photoUrl: /^https:\/\/(?:drive|docs)\.google\.com\//i.test(item.photoUrl || '') ? item.photoUrl : '',
-      priceDelta: Math.max(0, amount(item.priceDelta)), timeDeltaMinutes: Math.max(0, Number(item.timeDeltaMinutes || 0)),
-      status: ['pending', 'approved', 'declined', 'cancelled'].includes(item.status) ? item.status : 'pending',
-      promptedAt: safe(item.promptedAt, 50), respondedAt: safe(item.respondedAt, 50), responseNote: safe(item.responseNote, 600), responseBy: safe(item.responseBy, 120),
-    })).sort((a, b) => String(b.promptedAt).localeCompare(String(a.promptedAt))),
+    decisions: decisions.slice(-20).map(item => decisionView(item, shown)).sort((a, b) => String(b.promptedAt).localeCompare(String(a.promptedAt))),
     rebooking: requests.slice(-10).map(request => ({
       id: id(request.id, 'rebook'), kind: ['repeat', 'touch_up', 'garage_guard'].includes(request.kind) ? request.kind : 'repeat',
       preferredDate: isoDate(request.preferredDate), timing: ['asap', 'same_weekday', 'choose_date'].includes(request.timing) ? request.timing : 'asap',
@@ -220,14 +309,17 @@ function customerExperience(job, owner = true) {
   };
 }
 
-function sanitize(job, session = {}, { today, reviewUrl, draftsRejected = false }) {
-  const finance = moneyState(job);
-  const estimate = estimateState(job, finance, today, draftsRejected);
+// An opaque per-job key the page scopes its saved requests with (never the job id).
+const portalJobKey = jobId => bytesToHex(sha256(new TextEncoder().encode(`egc-portal-job:${jobId}`))).slice(0, 16);
+
+function sanitize(job, session = {}, { today, reviewUrl, draftsRejected = false, billing = false, now = '' }) {
+  const finance = moneyState(job), withheld = unsentQuoteDraft(job);
+  const estimate = withheld ? withheldEstimate(job) : estimateState(job, finance, today, draftsRejected);
   const state = portalStatus(job), review = reviewReady(job);
-  const owner = !session.actorId, experience = customerExperience(job, owner), actor = experience.collaborators.find(person => person.id === session.actorId);
+  const owner = !session.actorId, experience = customerExperience(job, owner, { billing, now }), actor = experience.collaborators.find(person => person.id === session.actorId);
   return {
     ok: true,
-    viewer: { owner, actorId: safe(session.actorId, 100), name: actor?.name || '', permissions: session.permissions || { view: true, decide: true, pay: true, rebook: true } },
+    viewer: { owner, actorId: safe(session.actorId, 100), name: actor?.name || '', permissions: session.permissions || { view: true, decide: true, pay: true, rebook: true }, jobKey: portalJobKey(job.id) },
     customer: { firstName: safe(job.customer || 'Customer', 120).split(/\s+/)[0], name: safe(job.customer || 'Customer', 120) },
     appointment: {
       date: safe(job.date, 30), time: safe(job.time, 20), endTime: safe(job.endTime, 20),
@@ -236,8 +328,8 @@ function sanitize(job, session = {}, { today, reviewUrl, draftsRejected = false 
       arrivalWindow: safe(job.arrivalWindow || job.jobInstructions?.arrivalWindow || job.instructions?.arrivalWindow || '', 80),
     },
     estimate,
-    payment: {
-      total: finance.total, paid: finance.paid, balance: finance.balance,
+    payment: withheld ? withheldPayment(job, finance) : {
+      total: finance.total, paid: finance.paid, balance: finance.balance, approvedChanges: billedChangeCents(job) / 100,
       dueNow: customerPaymentNeedsReview(job) ? 0 : customerDepositState(job, finance).dueNow,
       purpose: customerDepositState(job, finance).purpose,
       deposit: customerDepositState(job, finance),
@@ -284,9 +376,11 @@ async function handleGet({ request, env }, deps) {
   const result = await requirePortal(request, env, deps);
   if (result.error) return result.error;
   const at = deps.clock();
-  const body = { ...sanitize(result.job, result.session, { today: denverToday(at), reviewUrl: customerReviewUrl(env), draftsRejected: rejectDrafts(env) }), moneyDocuments: moneyDocumentLinks(result.job, { enabled: moneyDocumentEnabled(env), now: at.toISOString() }) };
+  const body = { ...sanitize(result.job, result.session, { today: denverToday(at), reviewUrl: customerReviewUrl(env), draftsRejected: rejectDrafts(env), billing: changeOrderBillingEnabled(env), now: at.toISOString() }), moneyDocuments: moneyDocumentLinks(result.job, { enabled: moneyDocumentEnabled(env), now: at.toISOString() }) };
   // Default off: without the flag the DTO keeps its current shape.
   if (customerPhotosEnabled(env) && result.session.permissions?.view !== false) body.beforeAfter = customerPhotoProjection(result.job, customerPhotoPolicy(env));
+  // Default off as well. Only active crew profiles appear; a profile read failure hides the crew, never the project.
+  if (crewPublicProfilesEnabled(env) && result.session.permissions?.view !== false) Object.assign(body, await customerCrew(env, result.job, { profiles: deps.crewProfiles, now: at }).catch(() => customerCrewProjection(result.job, new Map(), new Map(), at)));
   return reply(200, body);
 }
 
@@ -341,30 +435,55 @@ async function handlePost({ request, env }, { clock, read }) {
   if (body.action === 'approve_estimate') {
     const signedName = safe(body.signed_name, 120);
     if (signedName.length < 3 || body.confirmed !== true) return reply(400, { ok: false, error: 'Enter your full name and confirm the estimate' });
-    const finance = moneyState(result.job);
-    if (finance.total < .01) return reply(409, { ok: false, error: 'The estimate is not ready yet' });
+    const request = portalRequestId(body.request_id), saved = result.job.customerApproval;
+    if (!request) return reply(400, { ok: false, code: 'CUSTOMER_PORTAL_REQUEST_INVALID', error: 'This approval request is invalid. Refresh and approve again.' });
+    const spent = () => reply(409, { ok: false, code: 'CUSTOMER_PORTAL_IDEMPOTENCY_CONFLICT', error: 'This approval request was already used for an earlier signature. Review the current estimate before approving again.' });
+    if (request.id && saved?.requestId === request.id) {
+      // A retry of the same approval (its response was lost) returns the saved
+      // signature only while the saved record is still that portal signature,
+      // at the revision and total this request binds. The Hub's Record approval
+      // merges a staff approval over it (keeping its requestId) and a revision
+      // supersedes it: the request is then spent, and the page starts a new one.
+      if (saved.status !== 'approved' || saved.source !== 'customer_portal' || saved.estimateRevision !== body.estimate_revision || Math.round(Number(saved.amount) * 100) !== body.amount_cents) return spent();
+      const salesFollowupExit = await syncSalesFollowupExit(env, result.session.jobId, { now: clock });
+      return reply(200, { ok: true, approval: { status: saved.status, approvedAt: saved.approvedAt, approvedBy: saved.approvedBy, amount: saved.amount, source: saved.source, termsVersion: saved.termsVersion }, replayed: true, salesFollowupExit });
+    }
+    const finance = moneyState(result.job), quote = customerQuoteTotal(result.job);
+    if (quote < .01) return reply(409, { ok: false, error: 'The estimate is not ready yet' });
     if (result.job.estimate?.validUntil && String(result.job.estimate.validUntil) < today) return reply(409, { ok: false, error: 'This estimate has expired. Ask the team for an updated estimate.' });
     if (approvalBlocked(result.job, rejectDrafts(env))) return reply(409, { ok: false, code: 'CUSTOMER_PORTAL_ESTIMATE_NOT_APPROVABLE', error: 'This estimate is being updated and cannot be approved yet. Refresh the page or ask the team for the current estimate.' });
     // The approval binds to the exact revision, total and shown content the
     // customer saw. An older page that does not send them must refresh; it
     // never approves a price or scope it did not show.
     if (!Number.isSafeInteger(body.estimate_revision) || !Number.isSafeInteger(body.amount_cents) || typeof body.estimate_fingerprint !== 'string') return reply(409, { ok: false, code: 'CUSTOMER_PORTAL_ESTIMATE_CHANGED', error: 'This page is out of date. Refresh it to review the current estimate before approving.' });
-    if (body.estimate_revision !== estimateRevision(result.job) || body.amount_cents !== Math.round(finance.total * 100) || body.estimate_fingerprint !== estimateState(result.job, finance, today).fingerprint) return reply(409, { ok: false, code: 'CUSTOMER_PORTAL_ESTIMATE_CHANGED', error: 'The estimate changed after this page loaded. Refresh and review the current estimate before approving.' });
+    if (body.estimate_revision !== estimateRevision(result.job) || body.amount_cents !== Math.round(quote * 100) || body.estimate_fingerprint !== estimateState(result.job, finance, today).fingerprint) return reply(409, { ok: false, code: 'CUSTOMER_PORTAL_ESTIMATE_CHANGED', error: 'The estimate changed after this page loaded. Refresh and review the current estimate before approving.' });
     // The approval records the terms version the page displayed (a page from
     // before versioning is recorded as having shown only the estimate terms).
     // A page opened before the copy changed must reload rather than approve unseen terms.
     const termsVersion = approvalTermsVersion(body.terms_version);
     if (!termsVersion) return reply(409, { ok: false, code: 'CUSTOMER_PORTAL_TERMS_CHANGED', error: 'Our estimate terms were updated. Review the latest terms, then approve again.' });
-    const approval = { status: 'approved', approvedAt: now, approvedBy: signedName, amount: finance.total, source: 'customer_portal', termsVersion };
+    const approval = { status: 'approved', approvedAt: now, approvedBy: signedName, amount: quote, source: 'customer_portal', termsVersion };
     const deposit = customerDepositState(result.job, finance), actor = approvalActor(result.session.actorId);
     try {
-      await patchJob(env, result.session.jobId, {
-        customerApproval: { ...approval, ...actor },
-        estimate: { ...withoutApprovalActor(result.job.estimate), status: 'approved', acceptedAt: now, acceptedBy: signedName, amount: finance.total, depositRequired: deposit.required, acceptedTermsVersion: termsVersion, ...actor },
+      // deal.sold on the server clock at the bound total and revision, retiring
+      // the job's live sale first; none when the live sale is at this total
+      // (a re-signature). The job's funnelSale names the sale in the same commit.
+      const sale = await portalApprovalWrites(result.job, result.session, { key: request.key, amountCents: body.amount_cents, estimateRevision: body.estimate_revision }, now);
+      // A request whose deal.sold is the job's live sale never records a second
+      // sale under the same key: an M3 staff approval replaced its signature
+      // (without its requestId) and the total has changed since.
+      const live = liveSale(result.job);
+      if (live?.eventId && sale.writes.some(write => write.id === live.eventId)) return spent();
+      await commitWithEvents(env, [{ id: result.session.jobId, updateTime: result.jobUpdateTime, patch: {
+        // The request that saved this signature (a retry of it is a replay) and
+        // the revision it binds; the sale's own key is funnelSale.key.
+        customerApproval: { ...approval, ...actor, estimateRevision: body.estimate_revision, requestId: request.key },
+        ...(sale.funnelSale ? { funnelSale: sale.funnelSale } : {}),
+        estimate: { ...withoutApprovalActor(result.job.estimate), status: 'approved', acceptedAt: now, acceptedBy: signedName, amount: quote, depositRequired: deposit.required, acceptedTermsVersion: termsVersion, ...actor },
         deposit: { ...(result.job.deposit || {}), amount: deposit.required, paidAmount: deposit.paid, status: deposit.due < .01 ? 'paid' : deposit.paid ? 'partial' : 'due' },
         quoteStatus: 'approved',
         updatedAt: now,
-      }, result.jobUpdateTime);
+      } }], sale.writes);
     } catch (error) {
       return conflict(error)
         ? reply(409, { ok: false, code: 'CUSTOMER_PORTAL_REVISION_CONFLICT', error: 'The estimate changed. Refresh before approving it.' })
@@ -375,13 +494,16 @@ async function handlePost({ request, env }, { clock, read }) {
   }
 
   if (body.action === 'create_payment') {
+    // An unsent Hub quote draft is never charged, whatever the job's stage:
+    // payable() refuses it on the job the checkout reads (409
+    // CUSTOMER_PORTAL_ESTIMATE_NOT_APPROVABLE) and expires an open checkout.
     const secret = stripeKey(env);
     if (!secret) return reply(501, { ok: false, error: 'Online payments are not configured' });
     const requestId = safe(body.request_id, 120);
     if (!requestId) return reply(400, { ok: false, error: 'Payment request ID required' });
     try {
       return reply(200, await createCustomerStripeCheckout(env, secret, result.session.jobId, new URL(request.url).origin, { now }));
-    } catch (error) { return reply(error.status || 502, { ok: false, error: error.message || 'Secure checkout could not be created', ...(error.reviewRecorded ? { code: error.code, reviewRecorded: true } : {}) }); }
+    } catch (error) { return reply(error.status || 502, { ok: false, ...(error.code === 'CUSTOMER_PORTAL_ESTIMATE_NOT_APPROVABLE' ? { code: error.code } : {}), error: error.message || 'Secure checkout could not be created', ...(error.reviewRecorded ? { code: error.code, reviewRecorded: true } : {}) }); }
   }
 
   if (body.action === 'verify_payment') {
@@ -471,39 +593,81 @@ async function handlePost({ request, env }, { clock, read }) {
   }
 
   if (body.action === 'respond_decision') {
-    const decisionId = id(body.decision_id, 'decision');
     const response = body.response === 'approved' ? 'approved' : body.response === 'declined' ? 'declined' : '';
-    const signedName = safe(body.responded_by, 120);
-    if (!response || signedName.length < 2) return reply(400, { ok: false, error: 'Choose approve or decline and enter your name' });
-    const decisions = Array.isArray(result.job.customerDecisions) ? result.job.customerDecisions : [];
-    const current = decisions.find(item => item.id === decisionId);
-    if (!current) return reply(404, { ok: false, error: 'This decision is no longer available' });
-    if (current.status !== 'pending') return reply(409, { ok: false, error: 'This decision has already been answered' });
-    const updated = decisions.map(item => item.id === decisionId ? { ...item, status: response, respondedAt: now, responseBy: signedName, responseNote: safe(body.note, 600), responseSource: 'customer_portal' } : item);
-    const approvedTotal = updated.filter(item => item.status === 'approved').reduce((sum, item) => sum + Math.max(0, amount(item.priceDelta)), 0);
-    try {
-      await patchJob(env, result.session.jobId, { customerDecisions: updated, approvedChangeTotal: approvedTotal, customerDecisionUpdatedAt: now, updatedAt: now }, result.jobUpdateTime);
-    } catch { return reply(409, { ok: false, error: 'That decision changed. Refresh before answering it.' }); }
-    return reply(200, { ok: true, decision: updated.find(item => item.id === decisionId), approvedChangeTotal: approvedTotal });
+    const input = { decisionId: id(body.decision_id, 'decision'), response, respondedBy: safe(body.responded_by, 120), note: safe(body.note, 600), requestId: typeof body.request_id === 'string' && UUID.test(body.request_id) ? body.request_id.toLowerCase() : '', priceDeltaCents: Number.isSafeInteger(body.price_delta_cents) ? body.price_delta_cents : null };
+    if (!response || input.respondedBy.length < 2) return reply(400, { ok: false, error: 'Choose approve or decline and enter your name' });
+    if (body.request_id !== undefined && !input.requestId) return reply(400, { ok: false, code: 'CUSTOMER_PORTAL_REQUEST_INVALID', error: 'A valid decision request ID is required' });
+    const billing = changeOrderBillingEnabled(env);
+    // FUN-03: the answer's funnel event is keyed by the page request, or by a
+    // server-named key saved as responseEventKey (never as responseRequestId).
+    const eventKey = input.requestId || crypto.randomUUID();
+    let context = result;
+    // Each retry re-reads the job through the portal access check (a revoked
+    // link or decision right stops it), so an answer whose write landed without
+    // a response is found as a replay: a change is added to the balance once.
+    for (let attempt = 0; attempt < 3; attempt += 1) {
+      if (attempt) {
+        context = await requirePortal(request, env, { clock, read });
+        if (context.error) { if (context.error.status >= 500) break; return context.error; }
+        if (!owner && !context.session.permissions?.decide) return reply(403, { ok: false, error: 'You are not authorized to answer job decisions' });
+      }
+      const job = context.job, updateTime = context.jobUpdateTime;
+      let plan;
+      try { plan = respondToDecision(job, input, { billing, now, actorId: safe(context.session.actorId, 100), paidCents: customerMoneyTotals(job).appliedCents }); }
+      catch (error) { return /^CUSTOMER_PORTAL_/.test(error.code || '') ? reply(error.status || 409, { ok: false, code: error.code, error: error.message }) : reply(503, { ok: false, code: 'CUSTOMER_PORTAL_STORAGE_UNAVAILABLE', error: 'Your answer could not be saved. Please try again shortly.' }); }
+      const view = { ok: true, decision: decisionView(plan.decision, decisionContext(plan.patch ? { ...job, ...plan.patch } : job, { billing, now })), billed: plan.billedCents > 0, replayed: plan.replayed };
+      if (!plan.patch) return reply(200, { ...view, approvedChangeTotal: amount(job.approvedChangeTotal) });
+      // A billed change is written only against the revision it was planned on.
+      if (billing && !updateTime) break;
+      // change_order.approved/declined in this answer's commit (a replay above writes
+      // none), at what the answer adds to the balance: the billed line with billing
+      // on, otherwise the decision's price change.
+      const current = job.customerDecisions.find(item => item && item.id === input.decisionId);
+      const cents = Math.max(0, input.response === 'approved' && billing ? plan.billedCents : decisionDeltaCents(current) ?? Math.round(Math.max(0, amount(current?.priceDelta)) * 100));
+      const patch = { ...plan.patch, customerDecisions: plan.patch.customerDecisions.map(item => item && item.id === input.decisionId ? { ...item, responseEventKey: eventKey } : item) };
+      try {
+        const event = await portalFunnelWrite(job, context.session, { type: `change_order.${input.response}`, key: eventKey, field: 'customerDecisions', subId: input.decisionId, data: { amountCents: cents } }, now);
+        await commitWithEvents(env, [{ id: context.session.jobId, patch, updateTime }], [event]);
+        return reply(200, { ...view, approvedChangeTotal: patch.approvedChangeTotal });
+      } catch (error) {
+        // An event the ledger refuses is a server fault: never retried, nothing saved.
+        const refused = eventRefused(error); if (refused) return refused;
+        /* the next attempt re-reads: another answer, a job edit, a storage error or a lost response */
+      }
+    }
+    return reply(503, { ok: false, code: 'CUSTOMER_PORTAL_STORAGE_UNAVAILABLE', error: 'Your answer could not be confirmed. Please try again; it will only be recorded once.' });
   }
 
   if (body.action === 'request_rebook') {
     const kind = ['repeat', 'touch_up', 'garage_guard'].includes(body.kind) ? body.kind : 'repeat';
     const timing = ['asap', 'same_weekday', 'choose_date'].includes(body.timing) ? body.timing : 'asap';
     const preferredDate = timing === 'choose_date' ? isoDate(body.preferred_date) : '';
-    if (timing === 'choose_date' && (!preferredDate || preferredDate < today)) return reply(400, { ok: false, error: 'Choose a future preferred date' });
+    const portalRequest = portalRequestId(body.request_id);
+    if (!portalRequest) return reply(400, { ok: false, code: 'CUSTOMER_PORTAL_REQUEST_INVALID', error: 'This rebooking request is invalid. Refresh and send it again.' });
     const requests = Array.isArray(result.job.rebookingRequests) ? result.job.rebookingRequests : [];
+    // A retry of a saved request_id (its response was lost) returns that
+    // request only when it asks for the same visit; changed details under the
+    // same id are refused, never silently dropped (the page then sends them as a new request).
+    const replayed = portalRequest.id && requests.find(request => request.requestId === portalRequest.id);
+    if (replayed) {
+      const same = replayed.kind === kind && replayed.timing === timing && (replayed.preferredDate || '') === preferredDate && Boolean(replayed.preferredCrew) === Boolean(body.preferred_crew) && safe(replayed.notes, 600) === safe(body.notes, 600);
+      return same ? reply(200, { ok: true, request: replayed, replayed: true }) : reply(409, { ok: false, code: 'CUSTOMER_PORTAL_IDEMPOTENCY_CONFLICT', error: 'This rebooking request was already sent with different details. Send the form again to make it a new request.' });
+    }
+    if (timing === 'choose_date' && (!preferredDate || preferredDate < today)) return reply(400, { ok: false, error: 'Choose a future preferred date' });
     const duplicate = requests.find(request => request.status === 'pending' && request.kind === kind && request.timing === timing && (request.preferredDate || '') === preferredDate && safe(request.notes, 600) === safe(body.notes, 600));
     if (duplicate) return reply(200, { ok: true, request: duplicate });
     if (requests.filter(request => request.status === 'pending').length >= 3) return reply(409, { ok: false, error: 'The team already has your rebooking request' });
-    const request = { id: newId('rebook'), kind, timing, preferredDate, preferredCrew: Boolean(body.preferred_crew), notes: safe(body.notes, 600), status: 'pending', requestedAt: now, sourceJobId: result.session.jobId };
+    const request = { id: newId('rebook'), kind, timing, preferredDate, preferredCrew: Boolean(body.preferred_crew), notes: safe(body.notes, 600), status: 'pending', requestedAt: now, sourceJobId: result.session.jobId, ...(portalRequest.id ? { requestId: portalRequest.id } : {}) };
     try {
-      await patchJob(env, result.session.jobId, { rebookingRequests: [...requests, request].slice(-10), rebookingStatus: 'pending', rebookingUpdatedAt: now, updatedAt: now }, result.jobUpdateTime);
-    } catch { return reply(409, { ok: false, error: 'Your project changed. Refresh before requesting another visit.' }); }
+      // rebook.requested is recorded now: the saved list keeps only the last 10 requests.
+      const event = await portalFunnelWrite(result.job, result.session, { type: 'rebook.requested', key: portalRequest.id || request.id, field: 'rebookingRequests', subId: request.id }, now);
+      await commitWithEvents(env, [{ id: result.session.jobId, patch: { rebookingRequests: [...requests, request].slice(-10), rebookingStatus: 'pending', rebookingUpdatedAt: now, updatedAt: now }, updateTime: result.jobUpdateTime }], [event]);
+    } catch (error) { return eventRefused(error) || reply(409, { ok: false, error: 'Your project changed. Refresh before requesting another visit.' }); }
     return reply(200, { ok: true, request });
   }
 
   if (body.action === 'apply_gift_credit') {
+    if (unsentQuoteDraft(result.job)) return reply(409, { ok: false, code: 'CUSTOMER_PORTAL_ESTIMATE_NOT_APPROVABLE', error: 'Your estimate is being updated. Credits can be applied once you review and approve it.' });
     if (customerPaymentNeedsReview(result.job)) return reply(409, { ok: false, error: 'A recorded payment needs team verification before applying another payment or credit' });
     const finance = moneyState(result.job);
     if (finance.balance < .01) return reply(409, { ok: false, error: 'This job is already paid in full' });
@@ -522,15 +686,19 @@ async function handlePost({ request, env }, { clock, read }) {
     const paidTotal = Math.min(finance.total, finance.paid + applied);
     const balance = Math.max(0, finance.total - paidTotal);
     const redemption = { id: newId('redemption'), requestId, cardId, amount: applied, appliedAt: now, jobId: result.session.jobId };
+    const creditClass = vocabularyValue('creditClasses', card.creditClass) || vocabularyValue('creditClasses', card.source);
     const walletPatch = { giftWallet: { ...wallet, cards: updatedCards, redemptions: [...redemptions, redemption].slice(-40), updatedAt: now }, updatedAt: now };
     const jobPatch = {
       payment: { ...(result.job.payment || {}), amount: paidTotal, giftCreditApplied: amount(result.job.payment?.giftCreditApplied) + applied, lastAmount: applied, lastReceivedAt: now, method: finance.paid > 0 ? 'mixed_with_gift_credit' : 'gift_credit', verified: true },
       invoice: { ...(result.job.invoice || {}), amount: finance.total, paid: paidTotal, balance, status: balance < .01 ? 'paid' : 'partial', updatedAt: now }, updatedAt: now,
     };
     try {
-      if (result.accountJobId === result.session.jobId) await patchJob(env, result.session.jobId, { ...walletPatch, ...jobPatch }, result.jobUpdateTime);
-      else await patchJobsAtomic(env, [{ jobId: result.accountJobId, patch: walletPatch, updateTime: result.accountUpdateTime }, { jobId: result.session.jobId, patch: jobPatch, updateTime: result.jobUpdateTime }]);
-    } catch { return reply(409, { ok: false, error: 'That credit changed while it was being applied. Refresh and try again.' }); }
+      // credit.redeemed for the credit applied to this job; the wallet may live on the account's root job.
+      const event = await portalFunnelWrite(result.job, result.session, { type: 'credit.redeemed', key: requestId, field: 'giftWallet.redemptions', subId: redemption.id, sourceJobId: result.accountJobId, data: { amountCents: Math.round(applied * 100), creditClass } }, now);
+      await commitWithEvents(env, result.accountJobId === result.session.jobId
+        ? [{ id: result.session.jobId, patch: { ...walletPatch, ...jobPatch }, updateTime: result.jobUpdateTime }]
+        : [{ id: result.accountJobId, patch: walletPatch, updateTime: result.accountUpdateTime }, { id: result.session.jobId, patch: jobPatch, updateTime: result.jobUpdateTime }], [event]);
+    } catch (error) { return eventRefused(error) || reply(409, { ok: false, error: 'That credit changed while it was being applied. Refresh and try again.' }); }
     return reply(200, { ok: true, applied, balance });
   }
 
@@ -574,10 +742,11 @@ async function handlePost({ request, env }, { clock, read }) {
       if (clicks.some(item => item?.viewer === viewer && String(item.actorId || '') === actorId && Math.abs(started.getTime() - Date.parse(item.clickedAt)) < REVIEW_CLICK_WINDOW_MS)) return reply(200, { ok: true, recorded: false, duplicate: false });
       const click = { requestId, clickedAt: now, viewer, ...(owner ? {} : { actorId }) };
       try {
-        await patchJob(env, result.session.jobId, {
+        const event = await portalFunnelWrite(job, result.session, { type: 'review.clicked', key: requestId, field: 'reviewClicks', subId: requestId }, now);
+        await commitWithEvents(env, [{ id: result.session.jobId, updateTime, patch: {
           reviewClicks: [...clicks, click].slice(-20), reviewClickCount: Math.max(0, Number(job.reviewClickCount) || 0) + 1,
           reviewClickedAt: safe(job.reviewClickedAt, 50) || now, reviewLastClickedAt: now,
-        }, updateTime);
+        } }], [event]);
         return reply(200, { ok: true, recorded: true, duplicate: false });
       } catch (error) {
         if (!conflict(error)) break;
@@ -596,8 +765,8 @@ export async function onRequestDelete() {
   return reply(200, { ok: true }, { 'Set-Cookie': clearCustomerPortalSessionCookie() });
 }
 
-export function createCustomerPortalHandlers({ now = () => new Date(), read = readJob } = {}) {
-  const deps = { clock: now, read };
+export function createCustomerPortalHandlers({ now = () => new Date(), read = readJob, crewProfiles = readCrewPublicProfiles } = {}) {
+  const deps = { clock: now, read, crewProfiles };
   return { onRequestGet: context => handleGet(context, deps), onRequestPost: context => handlePost(context, deps), onRequestDelete };
 }
 

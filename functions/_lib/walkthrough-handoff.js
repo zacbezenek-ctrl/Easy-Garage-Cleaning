@@ -1,14 +1,18 @@
-import { mutateDispatch, requireDispatcher } from './dispatch-service.js';
+import { mutateDispatch } from './dispatch-service.js';
+import { saveJobReads } from './dispatch-window-reads.js';
+import { requireQuoteAuthor } from './quote-permissions.js';
 import { assignmentKey, jobCrewNames } from './job-assignment.js';
 import { localInstant } from './operations-portal-records.js';
 import { customerIdentityPatch } from './customer-identity.js';
 import { suggestedDurationMinutes } from './quote-duration.js';
 import { estimateTotals, included, normalizeLineItems, toWalkthroughLineItem, validateSelection } from './quote-model.js';
 import { funnelEventWrite } from './funnel-events.js';
+import { saleWrites } from './job-funnel-events.js';
 import { funnelHubId } from './funnel-definitions.js';
 import { instantMs } from './funnel-calendar.js';
 import { validDate } from './dispatch-time.js';
 import { eventActor } from './dispatch-funnel.js';
+import { pendingProjectDimensions } from './funnel-dimensions.js';
 
 const plain = value => value !== null && typeof value === 'object' && !Array.isArray(value);
 const safeId = value => typeof value === 'string' && /^[A-Za-z0-9_-]{1,180}$/.test(value) && !/^(secure_|_egc_)/.test(value);
@@ -20,7 +24,14 @@ const phone = value => String(value || '').replace(/\D/g, '').replace(/^1(?=\d{1
 const email = value => String(value || '').trim().toLowerCase();
 const state = job => String(job?.pipelineStatus || job?.status || '').toLowerCase();
 const operational = job => job && !job.recordType && ['job', 'cleanout', 'reorg'].includes(job.type);
+// Service addresses compare by their words, ignoring case, spacing and punctuation.
+const addressKey = value => String(value || '').toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim();
+const sameAddress = (next, saved) => addressKey(next) === addressKey(saved);
 const customerProjection = row => row ? Object.fromEntries(['id', 'name', 'phone', 'email', 'address', 'highlevelContactId'].map(key => [key, row[key] || ''])) : null;
+// The jobs a quote author who is not a dispatcher may open or revise (P2-12): a
+// quote draft, the job of the walkthrough being handed off, or a job they
+// created. Every other job stays with Dispatch.
+const authorsJob = (job, source, actor) => plain(job?.quoteDraft) || Boolean(source) && job.sourceWalkthroughId === source.id || Boolean(job?.createdBy) && job.createdBy === actor.user;
 
 function text(value, label, max = 4000, required = false) {
   if (typeof value !== 'string' || value.length > max || required && !value.trim()) throw fail('invalid_plan', `${label} is missing or too long.`, 400);
@@ -130,7 +141,7 @@ export function normalizeHandoffPlan(input, now = new Date().toISOString()) {
   const lines = itemizedQuote(quote, totalCents, logistics.crew_size, minutes) || { line_items: [{ name: 'Garage cleanout and reset', qty: 1, total: totalCents / 100 }], line_items_count: 1 };
   return { client, quote: { title: text(quote.title || 'EGC Garage Service', 'Job title', 500, true), total: totalCents / 100, deposit: depositCents / 100, job_date: date, start_time: start, end_time: end, start_at: startAt, end_at: endAt, estimated_duration_min: minutes, expected_shift_hours: (minutes + 90) / 60, ...lines }, discovery, scope, logistics, internal_notes: text(input.internal_notes, 'Job brief', 4900, true), client_checklists: checks(input.client_checklists), signature, acceptance: { accepted_at: new Date(acceptedAt).toISOString(), accepted_by: text(acceptance.accepted_by, 'Signer name', 200, true), method: 'in_person_signature', terms_version: terms, signature_captured: true }, terms_version: terms, terms_accepted: true, photos: { before }, notes: text(input.notes || '', 'Customer notes', 8000) };
 }
-function identityMatches(left, right) {
+export function identityMatches(left, right) {
   const a = phone(left.phone), b = phone(right.phone), c = email(left.email), d = email(right.email);
   const p = left.highlevelContactId || left.highlevel_contact_id, q = right.highlevelContactId || right.highlevel_contact_id;
   if (a && b && a !== b || c && d && c !== d || p && q && p !== q) return false;
@@ -165,17 +176,19 @@ function financePatch(plan, previous, jobId, actor, now) {
 // time is the iPad's clock, accepted only inside the two-sided bounds (now + 5
 // min, and walkthrough start - 1 h / scheduled date - 1 day); otherwise the sale
 // is attested and dated at the bound or server time. A revision first retires
-// the approval it replaces, so the net of deal.sold minus
-// deal.approval_superseded is always the current signed contract.
-async function saleEvents({ plan, previous, source, job, actor, requestId, receiptId, now }) {
+// the job's live sale (FUN-03 funnelSale: a portal or handoff sale, even one a
+// legacy browser revision already superseded; never a staff-recorded approval,
+// which has no sale), so the net of deal.sold minus deal.approval_superseded
+// is always the current signed contract. {writes, funnelSale}: the commit
+// saves funnelSale on the job with the events. The sale records the project's
+// service line and funnel path after this commit (FUN-29 dimensions).
+async function saleEvents({ plan, source, job, actor, requestId, receiptId, now, dimensions = {} }) {
   const base = { idempotencyKey: { kind: 'requestId', value: requestId }, projectId: funnelHubId(job.projectId) ? job.projectId : undefined, jobId: job.id, walkthroughId: funnelHubId(source?.id) ? source.id : undefined, customerId: funnelHubId(job.customerId) ? job.customerId : undefined,
     highlevelContactId: /^[A-Za-z0-9_-]{1,120}$/.test(job.highlevelContactId || '') ? job.highlevelContactId : undefined, actor: eventActor({ id: actor.user, kind: 'human', role: actor.role }), via: 'hub', source: { collection: 'walkthroughHandoffs', id: receiptId }, eligibility: { hub: job } };
-  const writes = [], prior = previous?.customerApproval;
-  if (prior?.status === 'approved' && typeof prior.amount === 'number' && Number.isFinite(prior.amount) && prior.amount >= 0) writes.push(await funnelEventWrite(null, now, { ...base, type: 'deal.approval_superseded', data: { amountCents: Math.round(prior.amount * 100), ...(Number.isInteger(previous.estimate?.revision) ? { estimateRevision: previous.estimate.revision } : {}) } }));
   const startedAt = source?.walkthroughVisit?.startedAt;
-  writes.push(await funnelEventWrite(null, now, { ...base, type: 'deal.sold', data: { amountCents: Math.round(plan.quote.total * 100), estimateRevision: job.estimate.revision },
-    deviceAt: plan.acceptance.accepted_at, deviceBounds: { startedAt: instantMs(startedAt) === null ? null : startedAt, scheduledDate: validDate(source?.date) ? source.date : null } }));
-  return writes;
+  const signed = { deviceAt: plan.acceptance.accepted_at, deviceBounds: { startedAt: instantMs(startedAt) === null ? null : startedAt, scheduledDate: validDate(source?.date) ? source.date : null } };
+  return saleWrites(job, { soldData: { amountCents: Math.round(plan.quote.total * 100), estimateRevision: job.estimate.revision, ...dimensions } },
+    (type, data) => funnelEventWrite(null, now, { ...base, type, data, ...(type === 'deal.sold' ? signed : {}) }));
 }
 // The walkthrough's sold_on_site outcome in FUN-05's walkthroughOutcome shape, dated like
 // its deal.sold. Its occurrence is FUN-05's {number, date, time, startAt, scheduleOccurrence}.
@@ -187,9 +200,11 @@ function soldOutcome(source, sold, actor, requestId, deviceAt) {
 }
 
 /** Resolve an already-saved handoff without changing history, customer identity,
- * money, or visit completion. Managers can safely resume after a lost response. */
-export async function prepareHandoff(store, actor, query = {}) {
-  requireDispatcher(actor);
+ * money, or visit completion. Managers can safely resume after a lost response.
+ * Quote authors (options.env, P2-12) use it too for the jobs they may revise
+ * (authorsJob); only dispatchers see the roster or any other job. */
+export async function prepareHandoff(store, actor, query = {}, { env = {} } = {}) {
+  const access = requireQuoteAuthor(actor, env);
   if (Object.keys(query).some(key => !['sourceWalkthroughId', 'jobId'].includes(key))) throw fail('invalid_request', 'The walkthrough lookup is invalid.', 400);
   for (const id of [query.sourceWalkthroughId, query.jobId].filter(Boolean)) if (!safeId(id)) throw fail('invalid_request', 'Choose a valid saved walkthrough or job.', 400);
   const source = query.sourceWalkthroughId ? await store.read('jobs', query.sourceWalkthroughId) : null;
@@ -198,21 +213,27 @@ export async function prepareHandoff(store, actor, query = {}) {
   if (query.jobId && !job) throw fail('job_missing', 'The selected job no longer exists. Review its history rather than creating a replacement.', 404);
   if (job && !operational(job)) throw fail('job_mismatch', 'The selected record is not an operational job.');
   if (source) {
-    const matches = (await store.jobs()).filter(row => operational(row) && row.sourceWalkthroughId === source.id);
+    const matches = (await saveJobReads(store).where('sourceWalkthroughId', source.id)).filter(row => operational(row) && row.sourceWalkthroughId === source.id);
     const ids = [...new Set([...matches.map(row => row.id), source.convertedJobId, job?.id].filter(Boolean))];
     if (ids.length > 1) throw fail('existing_jobs_ambiguous', 'More than one job is linked to this walkthrough. Review the existing jobs in Dispatch.');
     if (!job && ids.length) job = await store.read('jobs', ids[0]);
     if (ids.length && !job) throw fail('job_missing', 'The linked job cannot be verified. Review its history before creating more work.');
     if (job && (!operational(job) || job.sourceWalkthroughId !== source.id || source.customerId && job.customerId !== source.customerId)) throw fail('job_mismatch', 'The existing job and walkthrough do not share the same customer and source.');
   }
+  if (job && !access.dispatcher && !authorsJob(job, source, actor)) throw fail('job_forbidden', 'Only an operations manager or owner can open this job. Start from its walkthrough or quote draft.', 403);
   const customerId = job?.customerId || source?.customerId || '';
   const customer = customerId ? await store.read('customers', customerId) : null;
   if (customerId && !customer) throw fail('customer_missing', 'The linked customer is unavailable. Repair the customer link before saving.');
-  return { ok: true, authority: 'employee_hub', sourceWalkthroughId: source?.id || '', sourceRevision: source?.revision || '', jobId: job?.id || '', expectedRevision: job?.revision || '', customerId: customer?.id || '', customer: customerProjection(customer), roster: await store.roster() };
+  // A quote author sees the customer's contact details only through a job they may revise.
+  return { ok: true, authority: 'employee_hub', sourceWalkthroughId: source?.id || '', sourceRevision: source?.revision || '', jobId: job?.id || '', expectedRevision: job?.revision || '', customerId: customer?.id || '', customer: access.dispatcher || job ? customerProjection(customer) : null, roster: access.dispatcher ? await store.roster() : [] };
 }
 
-export async function saveWalkthroughHandoff(store, actor, input, now = new Date().toISOString()) {
-  requireDispatcher(actor);
+/** options.checkouts(job) (the API passes quote-draft expireStaleCheckout): a
+ * signed revision re-prices and re-approves an existing job, so an open portal
+ * card checkout opened for the earlier terms is expired, or reported as
+ * checkout_needs_review, exactly as a quote draft revision does. */
+export async function saveWalkthroughHandoff(store, actor, input, now = new Date().toISOString(), { env = {}, checkouts = null } = {}) {
+  const access = requireQuoteAuthor(actor, env);
   if (!plain(input) || Object.keys(input).some(key => !['actorId', 'requestId', 'customerId', 'sourceWalkthroughId', 'sourceRevision', 'jobId', 'expectedRevision', 'plan'].includes(key)) || !requestId(input.requestId) || !safeId(input.customerId) || input.jobId && !safeId(input.jobId)) throw fail('invalid_request', 'The accepted walkthrough needs a stable request and customer identity.', 400);
   if (input.actorId && input.actorId !== actor.user) throw fail('actor_changed', 'The signed-in employee changed. Reopen the original account to recover this request.', 403);
   const plan = normalizeHandoffPlan(input.plan, now), fingerprint = await hash({ actor: actor.user, input }), receiptId = input.requestId.toLowerCase();
@@ -223,10 +244,12 @@ export async function saveWalkthroughHandoff(store, actor, input, now = new Date
     const saved = await store.read('jobs', receipt.jobId), customer = await store.read('customers', receipt.customerId);
     if (!saved || !customer || saved.customerId !== receipt.customerId || saved.sourceWalkthroughId !== receipt.sourceWalkthroughId || saved.handoffRequestId !== input.requestId || saved.handoffFingerprint !== fingerprint) throw fail('changed_since_save', 'The earlier save succeeded, but this job has since changed. Open its current record in Dispatch.');
     savedHandoffPayload(saved, input.requestId);
-    return result(saved, true, receipt.warnings || []);
+    const checkout = receipt.originalJobRevision && typeof checkouts === 'function' ? await checkouts(saved).catch(() => ({ status: 'needs_review', reason: 'checkout_unconfirmed' })) : null;
+    const open = checkout && !['none', 'current', 'expired'].includes(checkout.status) ? [{ code: 'checkout_needs_review', message: 'An open card checkout for the earlier quote could not be closed. Review it in Stripe before the customer pays.' }] : [];
+    return result(saved, true, [...(receipt.warnings || []), ...open], checkout);
   }
-  function result(saved, replayed, warnings) {
-    return { ok: true, authority: 'employee_hub', requestId: input.requestId, replayed, job: { id: saved.id, revision: saved.revision, customerId: saved.customerId, projectId: saved.projectId, sourceWalkthroughId: saved.sourceWalkthroughId || '', date: saved.date, time: saved.time, endTime: saved.endTime, status: state(saved), assignedCrew: saved.assignedCrew || [], crewNeeded: saved.crewNeeded, highlevelContactId: saved.highlevelContactId || '', highlevelAppointmentId: saved.highlevelAppointmentId || '', highlevelOpportunityId: saved.highlevelOpportunityId || '', syncStatus: saved.syncStatus || 'pending' }, warnings, financialState: 'accepted_quote_not_payment', fieldJobUrl: `/crew/job.html?jobId=${encodeURIComponent(saved.id)}` };
+  function result(saved, replayed, warnings, checkout = null) {
+    return { ok: true, authority: 'employee_hub', requestId: input.requestId, replayed, ...(checkout ? { checkout } : {}), job: { id: saved.id, revision: saved.revision, customerId: saved.customerId, projectId: saved.projectId, sourceWalkthroughId: saved.sourceWalkthroughId || '', date: saved.date, time: saved.time, endTime: saved.endTime, status: state(saved), assignedCrew: saved.assignedCrew || [], crewNeeded: saved.crewNeeded, highlevelContactId: saved.highlevelContactId || '', highlevelAppointmentId: saved.highlevelAppointmentId || '', highlevelOpportunityId: saved.highlevelOpportunityId || '', syncStatus: saved.syncStatus || 'pending' }, warnings, financialState: 'accepted_quote_not_payment', fieldJobUrl: `/crew/job.html?jobId=${encodeURIComponent(saved.id)}` };
   }
   const prior = await replay(); if (prior) return prior;
   const customer = await store.read('customers', input.customerId); requireRevision(customer);
@@ -248,6 +271,19 @@ export async function saveWalkthroughHandoff(store, actor, input, now = new Date
     if (!operational(previous) || previous.customerId !== customer.id || (previous.sourceWalkthroughId || '') !== (source?.id || '') || previous.revision !== input.expectedRevision) throw fail('job_changed', 'The existing job changed or belongs to a different walkthrough. Open its current record before revising it.');
     if (!['scheduled', 'unscheduled', 'draft'].includes(state(previous)) || previous.fieldLastActionAt || previous.fieldExecution && (Object.keys(previous.fieldExecution).some(key=>key!=='photos') || (previous.fieldExecution.photos || []).some(photo=>photo.category!=='walkthrough'))) throw fail('work_started', 'This job has already entered the field workflow. Use the explicit scope and finance revision tools rather than replacing its signed handoff.');
   }
+  // A quote author who is not a dispatcher places an unplaced job but never moves
+  // one Dispatch has placed (P2-12: sales cannot change dispatch): its schedule,
+  // service address and required crew size stay exactly as Dispatch saved them.
+  let placedAddress = null;
+  if (previous && !access.dispatcher) {
+    if (!authorsJob(previous, source, actor)) throw fail('revision_forbidden', 'Only an operations manager or owner can revise this job. Start from its walkthrough or quote draft.', 403);
+    const unplaced = state(previous) === 'unscheduled' && !previous.date && !previous.time;
+    if (!unplaced && (plan.quote.job_date !== previous.date || (previous.endDate || previous.date) !== plan.quote.job_date || plan.quote.start_time !== previous.time || plan.quote.end_time !== previous.endTime)) throw fail('schedule_change_forbidden', `Only an operations manager or owner can move a scheduled job. Keep its saved schedule${previous.date ? ` (${previous.date} ${previous.time || ''}–${previous.endTime || ''})` : ''} or ask Dispatch to move it.`, 403);
+    if (!unplaced && !sameAddress(plan.client.address, previous.address)) throw fail('schedule_change_forbidden', `Only an operations manager or owner can change the service address of a scheduled job. Keep its saved address (${String(previous.address || 'none on file').slice(0, 200)}) or ask Dispatch to change it.`, 403);
+    if (!unplaced) placedAddress = previous.address;
+    const savedCrew = Number(previous.crewNeeded);
+    if (!unplaced && savedCrew !== plan.logistics.crew_size) throw fail('schedule_change_forbidden', `Only an operations manager or owner can change the crew size of a scheduled job. Keep its saved crew size${Number.isInteger(savedCrew) && savedCrew > 0 ? ` (${savedCrew})` : ''} or ask Dispatch to change it.`, 403);
+  }
   if (source?.convertedJobId && source.convertedJobId !== previous?.id) throw fail('existing_job', 'This walkthrough already has a saved job. Recover that job rather than creating another.');
   const roster = await store.roster(), assignedText = text(plan.logistics.assigned_to || '', 'Crew assignment', 500);
   let assignedCrew;
@@ -257,10 +293,17 @@ export async function saveWalkthroughHandoff(store, actor, input, now = new Date
     if (aliases.length !== 1) throw fail('crew_unverified', 'A requested crew member is not a unique active employee. Use the exact employee name or leave assignment for Dispatch.');
     return aliases[0].id;
   });
+  // A quote author who is not a dispatcher keeps the saved crew exactly.
+  if (!access.dispatcher) {
+    if (canonical([...assignedCrew].sort()) !== canonical([...(previous?.assignedCrew || [])].sort())) throw fail('crew_assignment_forbidden', 'Only an operations manager or owner can assign crew. Clear the crew names; Dispatch will staff the job.', 403);
+    assignedCrew = previous?.assignedCrew || [];
+  }
   const instructions = handoffInstructions(plan, source?.id || '');
-  const changes = { date: plan.quote.job_date, endDate: plan.quote.job_date, time: plan.quote.start_time, endTime: plan.quote.end_time, title: plan.quote.title, address: plan.client.address, serviceType: 'Garage transformation', crewNeeded: plan.logistics.crew_size, assignedCrew, jobInstructions: plan.internal_notes, accessInstructions: instructions.accessNotes, customerInstructions: plan.notes, notify: true, ...materialChanges(plan, previous ? previous.materials : source?.materials) };
+  const changes = { date: plan.quote.job_date, endDate: plan.quote.job_date, time: plan.quote.start_time, endTime: plan.quote.end_time, title: plan.quote.title, address: placedAddress ?? plan.client.address, serviceType: 'Garage transformation', crewNeeded: plan.logistics.crew_size, assignedCrew, jobInstructions: plan.internal_notes, accessInstructions: instructions.accessNotes, customerInstructions: plan.notes, notify: access.dispatcher || previous?.notify !== false, ...materialChanges(plan, previous ? previous.materials : source?.materials) };
   const dispatchInput = previous ? { action: 'schedule.update', requestId: input.requestId, jobId: previous.id, expectedRevision: previous.revision, changes } : { action: 'schedule.create', requestId: input.requestId, customerId: customer.id, kind: 'job', ...(source ? { sourceWalkthroughId: source.id } : {}), booking: { channel: 'hub_in_person' }, changes };
   const adapter = { ...store,
+    // FUN-29: a job sold on a signed walkthrough plan came through the walkthrough path, and its signed lines are sold evidence.
+    dimensionFacts: { walkthroughSale: true, lineItems: plan.quote.itemized ? plan.quote.estimate_line_items : null },
     read: async (collection, id) => {
       const row = await store.read(collection, id);
       // An orphan legacy walkthrough can acquire only the exact verified
@@ -284,21 +327,25 @@ export async function saveWalkthroughHandoff(store, actor, input, now = new Date
       // Also brings a legacy customer's derived phone/email lookup keys current.
       fence('customers', customer, customerIdentityPatch(customer, now));
       if (sourceProject) fence('projects', sourceProject);
-      const sale = await saleEvents({ plan, previous, source, job: { ...previous, ...target.patch, id: target.id }, actor, requestId: input.requestId, receiptId, now });
+      // The job as it stands before this signature holds the live sale the signature retires.
+      const saleJob = { ...previous, ...target.patch, id: target.id }, created = writes.some(write => write.collection === 'projects' && write.id === saleJob.projectId && !write.revision);
+      const saleProject = !funnelHubId(saleJob.projectId) || created ? null : sourceProject?.id === saleJob.projectId ? sourceProject : await store.read('projects', saleJob.projectId);
+      const sale = await saleEvents({ plan, source, job: saleJob, actor, requestId: input.requestId, receiptId, now, dimensions: pendingProjectDimensions(saleProject, writes, saleJob.projectId) });
+      if (sale.funnelSale) target.patch.funnelSale = sale.funnelSale;
       // A signed handoff records the walkthrough's sold_on_site outcome (FUN-02). A walkthrough
       // the rep Started (FUN-05) gets its outcome, completion and event from its own Finish, and
       // an outcome the walkthrough visit already recorded is never overwritten.
       const ownOutcome = plain(source?.walkthroughOutcome) || plain(source?.walkthroughVisit) && instantMs(source.walkthroughVisit.startedAt) !== null;
-      if (source) fence('jobs', source, { customerId: customer.id, convertedJobId: target.id, conversionStatus: 'job_scheduled', updatedAt: now, ...(ownOutcome ? {} : { walkthroughOutcome: soldOutcome(source, sale.at(-1).patch, actor, input.requestId, plan.acceptance.accepted_at) }) });
+      if (source) fence('jobs', source, { customerId: customer.id, convertedJobId: target.id, conversionStatus: 'job_scheduled', updatedAt: now, ...(ownOutcome ? {} : { walkthroughOutcome: soldOutcome(source, sale.writes.at(-1).patch, actor, input.requestId, plan.acceptance.accepted_at) }) });
       // Scheduling a sold job is not proof the source visit has completed.
       // Its original status, actual completion time, signature and money stay intact.
-      writes.push(...sale);
+      writes.push(...sale.writes);
       const dispatchReceipt = writes.find(write => write.collection === 'dispatchOperations' && write.id === receiptId);
       writes.push({ collection: 'walkthroughHandoffs', id: receiptId, patch: { fingerprint, actorId: actor.user, customerId: customer.id, jobId: target.id, sourceWalkthroughId: source?.id || '', sourceRevision: source?.revision || '', originalJobRevision: previous?.revision || '', acceptedAt: plan.acceptance.accepted_at, amountCents: Math.round(plan.quote.total * 100), signature: plan.signature, plan: providerPayload, priorEstimate: previous?.estimate || null, priorAcceptance: previous?.acceptance || null, createdAt: now, warnings: dispatchReceipt?.patch?.warnings || [] } });
       await store.commit(writes);
     },
   };
-  try { await mutateDispatch(adapter, actor, dispatchInput, now); }
+  try { await mutateDispatch(adapter, actor, dispatchInput, now, { authorize: session => requireQuoteAuthor(session, env) }); }
   catch (error) { const recovered = await replay(); if (recovered) return recovered; throw error; }
   const saved = await replay();
   if (!saved) throw fail('outcome_unknown', 'The save could not be read back. Retry the identical request; do not create a second job.', 503);
@@ -312,5 +359,9 @@ export function savedHandoffPayload(job, handoffRequestId) {
   if (job?.handoffVersion !== 1 || !p || job.handoffRequestId !== handoffRequestId || !['accepted', 'approved'].includes(job.estimate?.status) || job.estimate.amount !== p.quote.total || job.estimate.depositRequired !== p.quote.deposit || job.acceptance?.acceptedAt !== p.acceptance.accepted_at || canonical(job.scope || {}) !== canonical(p.scope || {}) || p.quote.itemized === true && canonical(job.estimate.lineItems ?? null) !== canonical(p.quote.estimate_line_items ?? null) || ['cancelled','canceled','completed','paid','invoiced','closed'].includes(state(job))) throw fail('sync_snapshot_changed', 'The signed handoff changed. Review the current saved job before synchronizing it.');
   const start = localInstant(job.date, job.time), end = localInstant(job.endDate || job.date, job.endTime);
   if (!start || !end || end <= start) throw fail('invalid_schedule', 'The current Hub schedule needs review before CRM synchronization.');
-  return { ...p, job_id: job.id, idempotency_key: job.syncIdempotencyKey, opportunity_id: job.highlevelOpportunityId || '', client: { ...p.client, highlevel_contact_id: job.highlevelContactId || p.client.highlevel_contact_id || '', highlevel_job_appointment_id: job.highlevelAppointmentId || '', highlevel_appointment_id: job.walkthroughAppointmentId || '' }, quote: { ...p.quote, job_date: job.date, start_time: job.time, end_time: job.endTime, start_at: start, end_at: end }, walkthrough_id: job.sourceWalkthroughId || '' };
+  // notify is the saved Dispatch choice: a job Dispatch marked silent never runs customer appointment automations.
+  // idempotency_key is the job's current appointment request (Dispatch's after a move). The Job Brief belongs to the
+  // signed handoff instead: handoff_brief keys it on the handoff's own request and writes it from the signed quote, so a
+  // rebuild after a Dispatch move replays the first note (same key, same body) rather than adding a second one.
+  return { ...p, job_id: job.id, idempotency_key: job.syncIdempotencyKey, handoff_brief: { idempotency_key: p.idempotency_key || `walkthrough-handoff:${handoffRequestId}`, quote: p.quote }, notify: job.notify !== false, opportunity_id: job.highlevelOpportunityId || '', client: { ...p.client, highlevel_contact_id: job.highlevelContactId || p.client.highlevel_contact_id || '', highlevel_job_appointment_id: job.highlevelAppointmentId || '', highlevel_appointment_id: job.walkthroughAppointmentId || '' }, quote: { ...p.quote, job_date: job.date, start_time: job.time, end_time: job.endTime, start_at: start, end_at: end }, walkthrough_id: job.sourceWalkthroughId || '' };
 }

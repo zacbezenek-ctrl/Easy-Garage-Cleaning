@@ -1,6 +1,7 @@
 import { moneyCents, uniqueReceipts } from './operations-financials.js';
 import { addDays, denverToday, validDate } from './dispatch-time.js';
 import { MAX_TOTAL_CENTS, customerLineItem, depositCents as quoteDepositCents, estimateFingerprint, estimateTotals, included, legacyLineItems, normalizeLineItems, quotedAmountCents, singleLineItem } from './quote-model.js';
+import { billedChangeOrders, changeOrderSaved } from './change-orders.js';
 
 /**
  * Canonical money shapes built on quote-model. Pure: no I/O; `now` is injected.
@@ -53,12 +54,28 @@ export function invoiceNumber(jobId, kind = 'invoice', existing = '') {
   return `${kind === 'estimate' ? 'EST' : 'INV'}-${String(jobId || '').slice(-6).toUpperCase()}`;
 }
 
-/** Approved change orders in cents: the saved approvedChangeTotal, else the approved decisions. */
+// Approved decisions that no saved change-order line covers (change-orders.js):
+// a billed line counts instead of its decision, and a voided one covers its
+// decision too, so a change a manager voided is never counted again even when
+// a stale write drops the decision's changeOrderVoidedAt.
+const unbilledApprovals = job => {
+  const saved = Array.isArray(job?.changeOrders) ? job.changeOrders : [];
+  return (Array.isArray(job?.customerDecisions) ? job.customerDecisions : []).filter(item => plain(item) && item.status === 'approved' && !item.changeOrderVoidedAt && !changeOrderSaved(saved, item.id));
+};
+
+/**
+ * Approved change orders in cents: the saved approvedChangeTotal, else the
+ * billed change-order lines plus the approved decisions no line covers. A
+ * saved total that differs from that derived figure is still used but flagged
+ * money_change_order_conflict, even when nothing is derived: a legacy total
+ * whose decision a stale Hub write turned back into a question (the portal
+ * asks it again and does not bill it) is reported for review, never billed
+ * silently.
+ */
 export function approvedChangeCents(job, issues = []) {
-  const decisions = Array.isArray(job?.customerDecisions) ? job.customerDecisions.filter(item => plain(item) && item.status === 'approved') : [];
+  const decisions = unbilledApprovals(job), lines = billedChangeOrders(job);
   let derived = 0;
-  for (const item of decisions) {
-    const cents = item.priceDelta === undefined || item.priceDelta === null || item.priceDelta === '' ? 0 : readCents(item.priceDelta);
+  for (const cents of [...lines.map(line => line.totalCents), ...decisions.map(item => item.priceDelta === undefined || item.priceDelta === null || item.priceDelta === '' ? 0 : readCents(item.priceDelta))]) {
     derived = derived === null || cents === null || derived + cents > MAX_TOTAL_CENTS ? null : derived + cents;
   }
   const stored = job?.approvedChangeTotal;
@@ -68,7 +85,7 @@ export function approvedChangeCents(job, issues = []) {
   }
   const cents = readCents(stored);
   if (cents === null) { issues.push('money_change_order_invalid'); return null; }
-  if (derived !== null && decisions.length && derived !== cents) issues.push('money_change_order_conflict');
+  if (derived !== null && derived !== cents) issues.push('money_change_order_conflict');
   return cents;
 }
 
@@ -211,12 +228,16 @@ export function estimateMoney(lineItems, { approvedChangeCents: changeCents = 0,
   return { ...totals, approvedChangeCents: changeCents, contractCents: total === null ? null : total + changeCents, depositCents: total === null ? null : depositRequiredCents === null ? depositCents(total, depositPct) : Math.min(total, depositRequiredCents) };
 }
 
+// The billed change-order lines as saved, then approvals no line covers.
 function changeOrderLines(job, cents) {
   if (!cents) return [];
-  const decisions = (Array.isArray(job?.customerDecisions) ? job.customerDecisions : []).filter(item => plain(item) && item.status === 'approved' && readCents(item.priceDelta) > 0);
-  const lines = decisions.map((item, index) => ({ id: `change-${lineId(item.id) || index + 1}`, kind: 'service', name: `Approved change: ${clean(item.title, 140) || 'Additional work'}`, description: clean(item.details, 600), quantity: 1, totalCents: readCents(item.priceDelta) }));
+  const decisions = unbilledApprovals(job).filter(item => readCents(item.priceDelta) > 0);
+  const lines = [
+    ...billedChangeOrders(job).map(line => ({ id: line.id, kind: 'fee', name: clean(line.name, 160) || 'Approved change', description: clean(line.description, 600), quantity: 1, totalCents: line.totalCents })),
+    ...decisions.map((item, index) => ({ id: `change-${lineId(item.id) || index + 1}`, kind: 'fee', name: `Approved change: ${clean(item.title, 140) || 'Additional work'}`, description: clean(item.details, 600), quantity: 1, totalCents: readCents(item.priceDelta) })),
+  ];
   const itemized = lines.reduce((sum, line) => sum + line.totalCents, 0) === cents && new Set(lines.map(line => line.id)).size === lines.length;
-  return normalizeLineItems(itemized ? lines : [{ id: 'change-orders', kind: 'service', name: 'Approved changes', description: '', quantity: 1, totalCents: cents }]).lineItems;
+  return normalizeLineItems(itemized ? lines : [{ id: 'change-orders', kind: 'fee', name: 'Approved changes', description: '', quantity: 1, totalCents: cents }]).lineItems;
 }
 
 /**

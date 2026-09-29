@@ -51,5 +51,9 @@ export function createJobAssignmentAccess(env, session) {
     return names;
   }
 
-  return { matches, assigned, identities };
+  // Per-day segment assignments store canonical usernames, so they match the
+  // signed-in username only, never a display-name alias.
+  const exactly = value => Boolean(username) && assignmentKey(assignmentName(value)) === username;
+
+  return { matches, assigned, identities, exactly };
 }

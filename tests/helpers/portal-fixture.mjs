@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import { createCustomerPortalSessionToken } from '../../functions/_lib/customer-portal.js';
 import { encodeFirestoreFields, decodeFirestoreFields } from '../../functions/_lib/firestore-job.js';
 import { createCustomerPortalHandlers } from '../../functions/api/customer-portal.js';
+import { applyFirestoreCommit } from './firestore-commit.mjs';
 
 export const NOW = '2026-09-22T18:00:00.000Z';
 export const env = { CUSTOMER_PORTAL_SECRET: 'synthetic-portal-fixture-secret', FIREBASE_API_KEY: 'firebase-test-portal-fixture' };
@@ -10,8 +11,10 @@ const origin = 'https://easygaragecleaning.com';
 // Firestore REST emulation for single job documents: versioned updateTime,
 // updateMask patches and, like real Firestore, a 400 FAILED_PRECONDITION
 // whenever currentDocument.updateTime is stale (conflictStatus overrides it).
+// FUN-03 portal writers use documents:commit: its job writes are recorded in
+// writes like a PATCH, and its create-only funnel events in events.
 export function portalStore(t, jobs = {}, { conflictStatus = 400 } = {}) {
-  const rows = new Map(), calls = [], writes = [], rejected = [];
+  const rows = new Map(), calls = [], writes = [], rejected = [], events = new Map(), commits = [];
   let version = 0, failures = 0;
   const stamp = () => `2026-09-22T00:00:00.${String(++version).padStart(6, '0')}Z`;
   const put = (id, value) => rows.set(id, { value: structuredClone(value), updateTime: stamp() });
@@ -21,6 +24,21 @@ export function portalStore(t, jobs = {}, { conflictStatus = 400 } = {}) {
     const url = new URL(input), method = options.method || 'GET';
     calls.push({ host: url.hostname, method });
     assert.equal(url.hostname, 'firestore.googleapis.com', `Unexpected external request to ${url.hostname}`);
+    if (url.pathname.endsWith('/documents:commit')) {
+      assert.equal(method, 'POST');
+      if (failures) { failures -= 1; return Response.json({}, { status: 500 }); }
+      const body = JSON.parse(options.body), read = path => path.startsWith('jobs/') ? rows.has(path.slice(5)) ? { data: rows.get(path.slice(5)).value, updateTime: rows.get(path.slice(5)).updateTime } : null : events.has(path) ? { data: events.get(path) } : null;
+      const result = applyFirestoreCommit(body, { read, write: (path, value, { mask, precondition }) => {
+        if (path.startsWith('jobs/')) { rows.set(path.slice(5), { value, updateTime: stamp() }); writes.push({ id: path.slice(5), fields: mask, precondition: precondition.updateTime || '' }); }
+        else { assert.match(path, /^funnelEvents\/fe_[0-9a-f]{40}$/, `Unexpected Firestore write ${path}`); events.set(path, value); }
+      } });
+      if (result.stale) {
+        rejected.push({ id: result.stale.replace(/^jobs\//, ''), precondition: body.writes.find(write => write.update.name.endsWith(`/${result.stale}`))?.currentDocument?.updateTime || '' });
+        return Response.json({ error: { code: conflictStatus, message: 'the stored version does not match the required base version', status: conflictStatus === 409 ? 'ABORTED' : 'FAILED_PRECONDITION' } }, { status: conflictStatus });
+      }
+      commits.push(result.paths);
+      return Response.json({ commitTime: '2026-09-22T00:00:00Z', writeResults: result.paths.map(() => ({})) });
+    }
     const id = decodeURIComponent(url.pathname.split('/documents/jobs/')[1] || '');
     assert.ok(id, `Unexpected Firestore request ${url.pathname}`);
     if (method === 'GET') return rows.has(id) ? Response.json(document(id)) : Response.json({}, { status: 404 });
@@ -39,10 +57,13 @@ export function portalStore(t, jobs = {}, { conflictStatus = 400 } = {}) {
     return Response.json(document(id));
   });
   return {
-    rows, calls, writes, rejected,
+    rows, calls, writes, rejected, commits,
+    events: () => [...events.values()].map(value => structuredClone(value)),
     job: id => structuredClone(rows.get(id)?.value),
     revision: id => rows.get(id)?.updateTime,
     edit: (id, patch) => put(id, { ...rows.get(id).value, ...patch }),
+    // Replaces (or creates) a whole job, as another writer's commit would leave it.
+    put: (id, value) => put(id, value),
     failNextWrite: () => { failures += 1; },
   };
 }

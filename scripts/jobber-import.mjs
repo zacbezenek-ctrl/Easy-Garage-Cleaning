@@ -46,11 +46,10 @@ import { dispatchStorage } from '../functions/_lib/dispatch-storage.js';
 import { validDate } from '../functions/_lib/dispatch-time.js';
 import { localInstant } from '../functions/_lib/operations-portal-records.js';
 import * as map from '../functions/_lib/jobber-import-map.js';
+import { DEFAULT_JOBBER_GRAPHQL_VERSION, jobberGraphql } from '../functions/_lib/jobber-graphql.js';
 
 export const JOBS_COLLECTION_SAFE_LIMIT = 500;
-const TOKEN_URL = 'https://api.getjobber.com/api/oauth/token';
-const GQL_URL = 'https://api.getjobber.com/api/graphql';
-export const DEFAULT_GQL_VERSION = '2025-04-16';
+export const DEFAULT_GQL_VERSION = DEFAULT_JOBBER_GRAPHQL_VERSION;
 const fail = (code, message, details) => Object.assign(new Error(message), { code: 'jobber_import_' + code, ...(details ? { details } : {}) });
 const plain = value => value !== null && typeof value === 'object' && !Array.isArray(value);
 const canonical = value => Array.isArray(value) ? `[${value.map(canonical).join(',')}]` : plain(value) ? `{${Object.keys(value).sort().filter(key => value[key] !== undefined).map(key => `${JSON.stringify(key)}:${canonical(value[key])}`).join(',')}}` : JSON.stringify(value ?? null);
@@ -132,41 +131,12 @@ const INVOICES_QUERY = `query EgcImportInvoices($after: String, $filter: Invoice
   client { id } properties(first: 1) { nodes { street1 street2 city province postalCode } } jobs(first: 10) { nodes { jobNumber } }
   amounts { total invoiceBalance taxAmount } } pageInfo { hasNextPage endCursor } } }`;
 
-/** Read-only Jobber GraphQL reader. Same refresh-token grant as
- * functions/api/jobber-clients.js; keep Refresh Token Rotation OFF in the Jobber
- * app so this does not orphan the deployed token. Provider bodies and tokens are
- * never included in errors. */
+/** Read-only Jobber GraphQL reader through the shared client
+ * (functions/_lib/jobber-graphql.js): the refresh-token grant of
+ * functions/api/jobber-clients.js, rate-limit backoff, and errors that never
+ * include provider bodies or tokens. */
 export async function graphqlSource(env, { fetcher = fetch, sleep = ms => new Promise(resolve => setTimeout(resolve, ms)), historySince = '', version = DEFAULT_GQL_VERSION, maxPages = 2000 } = {}) {
-  if (!env?.JOBBER_CLIENT_ID || !env.JOBBER_CLIENT_SECRET || !env.JOBBER_REFRESH_TOKEN) throw fail('graphql_not_configured', 'Set JOBBER_CLIENT_ID, JOBBER_CLIENT_SECRET and JOBBER_REFRESH_TOKEN to read Jobber directly, or use the CSV exports.');
-  let response;
-  try { response = await fetcher(TOKEN_URL, { method: 'POST', headers: { 'Content-Type': 'application/x-www-form-urlencoded' }, body: new URLSearchParams({ grant_type: 'refresh_token', refresh_token: env.JOBBER_REFRESH_TOKEN, client_id: env.JOBBER_CLIENT_ID, client_secret: env.JOBBER_CLIENT_SECRET }), signal: AbortSignal.timeout(20000) }); }
-  catch { throw fail('graphql_unavailable', 'Jobber could not be reached. Retry, or use the CSV exports.'); }
-  const grant = await response.json().catch(() => ({}));
-  if (!response.ok || typeof grant.access_token !== 'string' || !grant.access_token) throw fail('graphql_auth_failed', `Jobber did not accept the refresh token (HTTP ${response.status}). Re-authorize the Jobber app with read access to clients, jobs, visits and invoices.`);
-  async function query(document, variables, attempt = 0) {
-    let reply;
-    try { reply = await fetcher(GQL_URL, { method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${grant.access_token}`, 'X-JOBBER-GRAPHQL-VERSION': version }, body: JSON.stringify({ query: document, variables }), signal: AbortSignal.timeout(30000) }); }
-    catch { throw fail('graphql_unavailable', 'Jobber stopped responding during the export. Nothing was written; retry.'); }
-    const body = await reply.json().catch(() => null), throttled = reply.status === 429 || body?.errors?.some(error => error?.extensions?.code === 'THROTTLED');
-    if (throttled && attempt < 6) {
-      const status = body?.extensions?.cost?.throttleStatus, needed = Number(body?.extensions?.cost?.requestedQueryCost) - Number(status?.currentlyAvailable), rate = Number(status?.restoreRate);
-      await sleep(Number.isFinite(needed) && rate > 0 ? Math.min(60000, Math.max(1000, Math.ceil(needed / rate) * 1000)) : 5000);
-      return query(document, variables, attempt + 1);
-    }
-    if (!reply.ok || !body || body.errors || !plain(body.data)) throw fail('graphql_failed', `Jobber rejected an export query (HTTP ${reply.status}). Check the app's scopes and JOBBER_GRAPHQL_VERSION; nothing was written.`);
-    return body.data;
-  }
-  async function pages(document, field, variables = {}) {
-    const nodes = [];let after = null, count = 0;
-    do {
-      const connection = (await query(document, { ...variables, after }))[field];
-      if (!plain(connection) || !Array.isArray(connection.nodes) || typeof connection.pageInfo?.hasNextPage !== 'boolean') throw fail('graphql_incomplete', 'Jobber returned an incomplete page. Nothing was written; retry.');
-      nodes.push(...connection.nodes);
-      after = connection.pageInfo.hasNextPage ? connection.pageInfo.endCursor : null;
-      if (connection.pageInfo.hasNextPage && (typeof after !== 'string' || !after) || ++count > maxPages) throw fail('graphql_incomplete', 'Jobber pagination did not finish. Nothing was written; retry.');
-    } while (after);
-    return nodes;
-  }
+  const { pages } = await jobberGraphql(env, { fetcher, sleep, version, maxPages, codePrefix: 'jobber_import_', task: 'export', alternative: ', or use the CSV exports' });
   const since = historySince ? localInstant(historySince, '00:00') : null, problems = [];
   const visitNodes = [...await pages(VISITS_QUERY, 'visits', since ? { filter: { startAt: { after: since } } } : {}), ...(since ? await pages(VISITS_QUERY, 'visits', { filter: { status: 'UNSCHEDULED' } }) : [])];
   const invoiceNodes = new Map();

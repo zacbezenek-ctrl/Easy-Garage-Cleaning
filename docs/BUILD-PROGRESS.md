@@ -298,7 +298,7 @@ draft PR. The owner merges in phase order. See **Decisions** D-001.
   walkthrough, phone, B2B rate card and owner economics by role through /api/pricing-config (crew 403, owner part
   owner-only); the walkthrough caches tables per user/version and fails closed offline. The six catalog services bundle
   as a generated plain module (checked on Wrangler 3 and 4 in CI). Managers stop seeing others' pay in /api/employee-hub
-  (`EGC_STAFF_PAY_OWNER_ONLY`). Gaps: /api/timesheets and payroll CSV still show pay; pay-field edits need pay.manage later.
+  (`EGC_STAFF_PAY_OWNER_ONLY`). Gaps: /api/timesheets and payroll CSV still show pay; pay-field edits need pay.manage later (both closed by PAY-TIMESHEETS).
 - **FUN-37** Bridge funnel event feed: read-only `hub.funnel.events` (keyset cursor over (recordedAt, id) with a 5-minute
   settle window), `hub.walkthrough.outcomes` (Finish/No-show/handoff sale with the visit's reason and occurrence;
   unprovable handoff sales go to `unverified`) and `hub.funnel.case` (a project's events pinned to one readTime),
@@ -329,6 +329,124 @@ draft PR. The owner merges in phase order. See **Decisions** D-001.
   job was made from (legacy rework case), backfill source ids stop at the document id (no Stripe session ids), case
   cursors tolerate 60 s of clock skew, the signed endpoint's refusal matrix covers all three commands without storage
   reads, and the feed tests use deterministic ids (the '1437'/'7777' substring flake).
+- **FUN-20** Garage Guard membership ledger (runs with `GARAGE_GUARD_MEMBERSHIP_SYNC_ENABLED`): the webhook's membership
+  commit also records Stripe amounts, billing periods, churn class and membership.* funnel events (definitions
+  2026-09-28.3); a ledger failure is saved as ledgerError and never blocks the membership. Member visits count against a
+  membership with `GARAGE_GUARD_VISIT_TRACKING_ENABLED` (off); GET/POST /api/garage-guard-members lists members and applies,
+  links or reconciles visits. Gaps: pre-FUN-20 members stay unknown until a renewal; no UI screen (FUN-26).
+- **SYNC-QUEUE** Server-driven HighLevel calendar mirror (P1-DS-02): the Hub answers schedule.sync_due / sync_failed for
+  the `schedule-sync-worker` principal only, and an egc-api loop (every 2 min, automations off, ':mirror' keys) runs
+  schedule.sync_provider for due operations-owned visits with backoff; page loads stop auto-retrying those visits while
+  the worker has checked in. Both sides gated by `EGC_SCHEDULE_SYNC_WORKER` (off). Documented flag-off change: the page's
+  synced write is fenced so a drift re-queue wins. Gap: deploy the jobs(providerSyncOwner, syncStatus) index first.
+- **P1-06** Server time-off workflow at `/api/employee-pto` (request, approve, deny, cancel, end, manager `amend`):
+  approved time off becomes one native availability block through the lock/revision/receipt contract, and the generic
+  employee-hub request write now returns 403. `functions/_lib/pto-pay.js` is the one PTO pay model (paid hours at the
+  timecard rate); pay terms count only when the latest workflow decision set them. `scripts/pto-pay-audit.mjs` is read-only.
+  Merged by the coordinator on the owner's direct authorization. Gap: managers still read rates via /api/timesheets until
+  PAY-TIMESHEETS merges (next).
+- **FUN-08** Scheduling constraints in the v2 conversation extraction (preferred weekdays, time of day, not-before /
+  not-after / unavailable dates, crew size, duration, urgency; each with a transcript-checked sourceQuote), and a
+  clock-free resolver that turns date words into America/Denver dates anchored on the walkthrough Start (scheduled date
+  as a flagged fallback, never the upload time). Live only with `EGC_EXTRACTION_V2`. Gaps: nothing calls the resolver
+  until FUN-09; named holidays stay unresolved until the shared business calendar lands.
+- **GO-LIVE** Owner runbook (docs/GO-LIVE.md) and a one-page owner go-live checklist (docs/OWNER-GO-LIVE-CHECKLIST.md):
+  what to deploy, which flags to switch on and in what order, and what to check after each step. Docs only.
+- **PAY-TIMESHEETS** Owner-only pay everywhere under `EGC_STAFF_PAY_OWNER_ONLY` (default on): /api/timesheets shows
+  managers hours, approvals and paid time-off hours but not other employees' rates or gross, the payroll CSV is the
+  owner's alone, and any save that carries or moves another employee's pay (or a manager's own) is 403 pay_owner_only;
+  one pay-visibility.js module; a payroll week card in Time approvals. Gap: /api/job-costing (JOB-COST-PRIVACY, next).
+- **JOB-COST-PRIVACY** Job labor dollars owner-only under `EGC_STAFF_PAY_OWNER_ONLY` (default on): /api/job-costing,
+  /api/money laborCents, /api/job-labor-costs, raw jobs from /api/crew-jobs and /api/case-study and the Hub finance board
+  give everyone but the owner hours only ("Labor $ hidden", totals null); the owner's figures live in the server-only
+  jobLaborCosts record, firestore.rules keep browser writes from adding or changing a labor copy on a job, and
+  scripts/backfill-job-labor-private.mjs moves (or --restore returns) existing copies. Gap: run the backfill after deploy.
+- **MCP-CURSORS** Keyset cursors for the MCP Postgres CRM reads (.search tools and conversations.get messages) behind
+  `EGC_MCP_KEYSET_CURSORS` (off: offset cursors as today; turning it off refuses keyset cursors with invalid_cursor so a
+  rollback is real). Keys are exact microsecond Postgres text plus id; rows whose order key can move mid-walk are
+  reported as coverage.complete=false, never silently skipped. Gap: Hub/bridge reads still page by offset.
+- **FUN-15** Ad spend ingestion (@egc/ad-spend): hourly read-only Meta and Google Ads daily spend, impressions and clicks
+  by campaign/ad set in integer cents on Denver dates with a 3-day restatement window, Meta lead-form counts, and an
+  append-only owner spend ledger for channels without an API (trigger-enforced; owner-only spend.* bridge commands and an
+  owner-only Hub "Ad spend" screen). Unknown days stay null. Migration renumbered to 0015_ad_spend. Flags:
+  `EGC_AD_SPEND_META_ENABLED`, `EGC_AD_SPEND_GOOGLE_ENABLED` (off). Gap: live APIs unverified (no credentials yet).
+- **FUN-32** Jobber coexistence guard: a read-only check (scripts/jobber-guard.mjs; `--save` stores a complete check in
+  the server-only jobberGuard/latest, GET /api/jobber-guard shows it) lists Jobber requests, jobs, visits, invoices and
+  payments on or after the owner's cutover day, imported balances Jobber changed, and HighLevel records the Jobber app
+  made, matched to Hub customers. Per-surface switches `EGC_JOBBER_GUARD_BOOKING` / `_BILLING` / `_MESSAGING` (off; from
+  `jobber.cutoverDate`, null) refuse the Jobber booking forward, hold invoice.issue and hold cron reminders. Definitions .4.
+- **FUN-30** Automation registry: every path that can message a customer or start a HighLevel, Zapier or provider
+  automation, with its trigger surfaces and the Hub writes behind it, classified (approved_automatic / approved_human /
+  internal / needs_owner_approval / retire; no approval fabricated), plus speed-to-lead touch classification, go/no-go
+  gates for FUN-11/12/35, GET /api/automation-registry and `scripts/automation-inventory.mjs --check` (code-scan drift;
+  root CI). Registered at merge: the moved web-lead intake, B2B invites, the messaging cron and the Action Center send.
+- **CREW-PROFILE** Crew public profiles: crew_public_profiles/{username} (one-word first name, manager-approved headshot
+  in private Drive, visibility flag; receipts and hub_audit in each commit) managed at the staff-gated /crew/profile-photo.
+  Behind `CREW_PUBLIC_PROFILES_ENABLED` the portal shows the job's crew (lead first) through signed, session-checked
+  /api/customer-crew-photo links and an "on the way" note on the service day; behind `FIELD_LEAD_ONLY_COMPLETE` only the
+  crew lead or a manager completes a job or sends on-my-way. Gaps: no Hub screen entry or dispatch avatars yet.
+- **CATALOG-ADMIN** Owner-only Hub screen "Catalog & pricing" (employee-catalog.js/.css, one MANIFEST line) on the P2-03
+  /api/catalog handler: pricing settings with a change review and an explicit release for customer quotes, items with
+  price-check age, and a local draft (verify, edit, add) published as a new catalog version after a field-by-field diff.
+  Saves retry the identical request after a lost reply and rebase three ways on conflicts; unsent drafts are cleared at
+  sign-out. Needs `CATALOG_QUOTES_ENABLED`. Gap: publishing exceeds the Workers Free CPU limit (P2-03 carry-over).
+- **DISPATCH-DURATION** Suggested job length in dispatch (functions/_lib/dispatch-duration.js over quote-duration.js):
+  the sold quote's selected lines' person-minutes divided by the crew, rounded up to 15 minutes; a recorded walkthrough or
+  dispatch length for the same crew wins. The DTO gains only suggestedDurationMin/durationSource/durationCoverage/
+  durationCapped (no line or amount); quote lines are read masked for the sold jobs a list returns. Dispatch accepts
+  estimatedDurationMin (15..10080, audited) and prefills Expected duration and "Find a time". No flag.
+- **FIELD-MULTIDAY** Multi-day visits behind `FIELD_MULTIDAY_VISITS` (functions/_lib/field-execution-visits.js): one visit per
+  Denver day in fieldExecution.visits, an "End today's visit" note that stops the job clock (queueable offline and closing the
+  day it was written for), completion only on the final day (managers give a reason), and a per-day write lock for field
+  actions, photos and job costs from split-job segments. Crew assets cache-busted to ?v=20260929multiday. Off: unchanged.
+- **DISPATCH-SCALE** Windowed dispatch reads and indexed customer search behind `EGC_DISPATCH_WINDOWED_READS` (unset =
+  full scans; 'shadow' logs differences; 'true' reads only rows ending within 35 days before the window, plus undated and
+  time-off rows, so multi-day jobs stay in). Saves query by customerId/sourceWalkthroughId; customers get versioned
+  searchKeys (scripts/backfill-customer-search-keys.mjs). scripts/dispatch-window-audit.mjs reports rows windows miss.
+- **SITE-4** Public-site mobile performance: 368/552/704px WebP logos, one STYLES_VERSION (20260928a), 600w/1200w hero
+  srcsets with fetchpriority, deferred Google Fonts (sorted URLs fix the HTTP 400 on ads/apply/thank-you), generated pages'
+  inline script moved to a hashed /site-forms.js, the booking bar rendered in HTML (CLS 0), and portal photo thumbnails
+  (size=thumb). Lighthouse CI now enforces >= 90 by default (repository variable 'false' opts out).
+- **MOBILE-TAP** Every tap target on the public pages and Hub shells covered by the device e2e is at least 44x44: in-line
+  links become inline-flex boxes (no overlapping hit areas), "See full FAQ"/"more" rows are marked by the generator, Hub
+  and crew module CSS gained 44px rules, and staff contact fields use autocomplete=off. The tap-target allowlist is empty;
+  the e2e checker samples each line fragment and reports covered controls. styles.css moved to ?v=20260929t.
+- **PUBLIC-TAP** The 44px tap-target and no-horizontal-scroll contract now covers every public page (77, listed from the
+  site on disk minus staff and redirected pages) on iPhone 375, Pixel 7, iPad Mini 768, desktop 1440 and 320px, with an
+  empty allowlist. A second styles.css max-width:1023px block clears the remaining 602 targets (blog, FAQ, what-we-take,
+  thank-you, apply, projects, legacy city pages); the before-after slider is 44px tall. styles.css is ?v=20260928p.
+- **CHANGE-ORDERS** Portal-approved change orders are billed through change-order lines (functions/_lib/change-orders.js)
+  behind `CHANGE_ORDER_BILLING_ENABLED`: money-core, the portal balance and card checkout, the messaging scheduler and crew
+  closeout all count them, a manager can void one (change_order.void, which lowers a matching issued invoice and closes a
+  stale portal checkout), and scripts/backfill-change-orders.mjs lists stored totals it cannot explain for review.
+- **FUN-03** Field and portal funnel events: crew dispatched/arrived/first-start/completed milestones and portal approvals,
+  decision answers and rebook requests commit their funnel event with the job (portal writers moved to :commit). A job's
+  server-owned funnelSale names the one live deal.sold, so re-signatures, handoffs and M3 revisions retire or keep it
+  instead of double counting; browser SDK writes cannot set it. Portal request_ids make retries replay, not repeat.
+- **CLIENT-LOGIN** Customer sign-in by magic link behind `CUSTOMER_LOGIN_ENABLED` (off): /client-login asks for a phone or
+  email, /api/customer-login sends the owner-approved portal_magic_link through the approved-send service and GHL messenger
+  (5 requests per identifier and 3 sends per customer per rolling day), and /api/customer-login-verify redeems the single-use
+  link into an account session and the owner's portal cookie; business-managed projects are excluded; staff revoke is audited.
+- **FUN-36** Server customer lifecycle actions behind `CUSTOMER_LIFECYCLE_API_ENABLED` (off): /api/customer-lifecycle issues
+  classed credits, records gift-card sales as cash plus liability (reference claims stop duplicates), prompts customer
+  decisions (change_order.proposed) and marks rebooking follow-ups, each with a receipt, audit entry and funnel event.
+  Managers are capped per customer over 30 days (advisory until FUN-27). Definitions 2026-09-28.5.
+- **RECUR-CRON** Recurring plans extend themselves: egc-api's hourly timer signs recurring.extend_horizon over the Hub
+  bridge as the recurring-horizon-worker (SEC-04 policy entry and PORTAL_COMMANDS; human and other integrations refused),
+  and the Hub adds each plan's due visits under the plan's manager, bounded and resumable. With MONEY_API_ENABLED each
+  visit gets the plan's price through estimate.save, keyed by visit. Gated by EGC_RECURRING_PLANS_ENABLED on both sides.
+- **FUN-29** Every project records serviceLine and funnelPath (with source, dimensionRulesVersion 1 and who/when) from the
+  shared definitions: a staff pick wins, undecided stays null, "Not sure yet" is the unknown bucket. Dispatch create takes
+  one-tap picks (pre-filled from GET /api/funnel-dimensions; the GHL lead-form suggestion is off by default), and bridge,
+  adoption, portal, B2B and handoff writers set or refine them; booking and sale events carry them. Definitions 2026-09-28.6.
+- **QUOTE-DRAFT** (P2-07/P2-12) Unsigned quote drafts on an unscheduled job (/api/quote-draft), sent only after a person
+  previews and confirms; the send re-fires the existing egc-estimate-ready workflow via the approved-send core (messaging
+  off, dry run by default). Sales author quotes with EGC_STAFF_ROLE_PERMISSIONS; the portal withholds unsent revisions; a
+  cancelled visit's GHL sync adds no scheduled tags. Gaps: no gameplan tier editor or portal option chooser yet.
+- **CREW-NOTIFY** Crew schedule notices behind `EGC_CREW_NOTIFICATIONS_ENABLED` (off): dispatch, bridge and recurring
+  saves queue per-employee notices in the same commit, and the signed messaging cron texts them (crew_assignment,
+  crew_unassignment, crew_schedule_change; owner-approved wording) only to an opted-in employee's own number on a
+  HighLevel contact tagged egc-staff. MY EGC → Schedule alerts shows each employee their feed. Gaps: no Web Push yet.
 
 ## In progress
 
@@ -406,6 +524,33 @@ one prefixed commit only after the full root suite (and the platform suite when 
 | FUN-13 | Website lead intake: ads relay fix, inquiry ids, durable sealed receipts with cron retries (flags off) | merged (61a1fff) |
 | B2B-HARDEN | B2B isolation hardening: stored-account save guard, receipt/quota TTL, scope export, business_* emulator denies | merged (a1c706f) |
 | FUN-37-FIX | FUN-37 follow-up: legacy rework case, backfill source ids, cursor skew, authz matrix and deterministic test ids | merged (0a00c28) |
+| FUN-20 | Garage Guard membership ledger: amounts, billing periods, churn, member visits and deferred revenue (flags off) | merged (3390387) |
+| SYNC-QUEUE | Server-driven HighLevel schedule mirror queue (egc-api loop, flag off) | merged (6185062) |
+| P1-06 | Server time-off workflow and single PTO pay model (/api/employee-pto; employee-hub request writes 403) | merged (6c914d2) |
+| FUN-08 | Scheduling constraints in the v2 extraction, resolved against the walkthrough Start (Denver) | merged (354864f) |
+| GO-LIVE | Owner go-live runbook and checklist (docs only) | merged (f655cac) |
+| PAY-TIMESHEETS | Owner-only pay in timesheets, payroll CSV and pay-field writes; payroll week card | merged (a990d27) |
+| JOB-COST-PRIVACY | Owner-only job labor dollars (server-only jobLaborCosts, finance board, job-costing and money API) | merged (d7b8fe1) |
+| MCP-CURSORS | Keyset cursors for MCP Postgres CRM reads (flag off) | merged (8bd7af1) |
+| FUN-15 | Ad spend ingestion (Meta, Google), owner spend ledger and Ad spend screen (migration 0015, flags off) | merged (3caad96) |
+| FUN-32 | Jobber coexistence guard: read-only stray check and per-surface booking/billing/messaging holds (flags off) | merged (651fa38) |
+| FUN-30 | GHL/Zapier automation registry, drift check and FUN-11/12/35 gates (read-only) | merged (cfd58b6) |
+| CREW-PROFILE | Crew public profiles (approved headshots, portal crew card) and lead-only completion (flags off) | merged (6f141a7) |
+| CATALOG-ADMIN | Owner catalog and pricing screen (settings review/release, items, draft publish) | merged (b46c461) |
+| DISPATCH-DURATION | Suggested job duration from the sold quote lines in dispatch | merged (5cbbff0) |
+| FIELD-MULTIDAY | Multi-day job visits: per-day visit record, end of day, final-day completion and day lock (flag off) | merged (fe447d1) |
+| DISPATCH-SCALE | Windowed dispatch reads and indexed customer search (flag off; shadow first) | merged (249dd76) |
+| SITE-4 | Public-site mobile performance pass (Lighthouse >= 90 on every page; enforcement on) | merged (38125bf) |
+| MOBILE-TAP | 44px tap targets on public pages and Hub shells (allowlist to zero) | merged (502f9b4) |
+| PUBLIC-TAP | 44px tap targets and no horizontal scroll on every public page | merged (3a8d78c) |
+| CHANGE-ORDERS | Bill approved portal change orders as lines; manager void (flag off) | merged (ab396f7) |
+| FUN-03 | Field and portal funnel events; server-owned funnelSale | merged (74d1bfd) |
+| CLIENT-LOGIN | Customer magic-link sign-in and account sessions (flag off) | merged (d157286) |
+| FUN-36 | Server customer lifecycle actions: credits, gift-card sales, decision prompts, rebooking (flag off) | merged (999c6df) |
+| RECUR-CRON | Hourly recurring-plan horizon run over the bridge; per-visit plan prices (flag off) | merged (e68b03b) |
+| FUN-29 | Service line and funnel path on every project (definitions 2026-09-28.6) | merged (4c1d165) |
+| QUOTE-DRAFT | Unsigned quote drafts with a confirmed send (estimate-ready via approved send, off) and the quote-author role (flag off) | merged (0658534) |
+| CREW-NOTIFY | Crew schedule notices: dispatch queues, messaging cron texts opted-in staff on egc-staff contacts (flag off) | merged (b95eee8) |
 
 ## Next
 

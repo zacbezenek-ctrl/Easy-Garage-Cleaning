@@ -75,7 +75,7 @@ class RecurringBrowserTests(unittest.TestCase):
         action = body['action']; response = {'ok': True, 'requestId': body['requestId'], 'warnings': [], 'created': [], 'conflicts': [], 'blocked': None, 'complete': True, 'retryable': False}
         def bump(row): self.revision += 1; row['revision'] = f'plan-rev-{self.revision}'
         if action == 'create':
-            fields = body['plan']; row = plan(status='active', cadence=fields['cadence'], cadenceLabel='Every 2 weeks' if fields['cadence']['frequency'] == 'biweekly' else 'Every week', count=fields.get('count'), endsOn=fields.get('endsOn'), skipDates=fields.get('skipDates', []), horizonDays=fields.get('horizonDays'), assignment=fields['assignment'], upcoming=[], attention=[])
+            fields = body['plan']; row = plan(status='active', cadence=fields['cadence'], cadenceLabel='Every 2 weeks' if fields['cadence']['frequency'] == 'biweekly' else 'Every week', count=fields.get('count'), endsOn=fields.get('endsOn'), skipDates=fields.get('skipDates', []), horizonDays=fields.get('horizonDays'), assignment=fields['assignment'], upcoming=[], attention=[], pricePerVisitCents=fields.get('pricePerVisitCents'))
             self.plans = [row]; response['plan'] = row
         else:
             row = next(item for item in self.plans if item['id'] == body['planId'])
@@ -234,6 +234,114 @@ class RecurringBrowserTests(unittest.TestCase):
         dialog.get_by_role('button', name='Close recurring plans').click()
         self.page.get_by_role('button', name='Repeat ' + CUSTOMER + ' on a schedule').click()
         expect(self.dialog().get_by_role('button', name='Start recurring plan', exact=True)).to_be_disabled()
+
+    def test_price_per_visit_is_sent_in_cents_when_starting_a_plan(self):
+        self.start()
+        self.open_dispatch()
+        self.page.get_by_role('button', name='Repeat ' + CUSTOMER + ' on a schedule').click()
+        dialog = self.dialog()
+        price = dialog.get_by_label('Price per visit (USD)', exact=True)
+        self.assertEqual(price.get_attribute('inputmode'), 'decimal'); expect(price).to_have_value('')
+        price.fill('145.555')
+        dialog.get_by_role('button', name='Start recurring plan', exact=True).click()
+        expect(dialog.get_by_role('alert').filter(has_text='Enter the price per visit like 145 or 145.50')).to_be_visible()
+        self.assertEqual(self.calls, [])
+        price.fill('145.5')
+        dialog.get_by_role('button', name='Start recurring plan', exact=True).click()
+        expect(dialog.locator('[data-plan="plan-1"]')).to_contain_text('$145.50 per visit')
+        self.assertEqual(self.calls[0]['action'], 'create'); self.assertEqual(self.calls[0]['plan']['pricePerVisitCents'], 14550)
+        self.assertNotIn('applyToBooked', self.calls[0])
+
+    def test_edit_can_move_booked_visits_and_change_the_price_on_a_phone(self):
+        self.start(375, 812)
+        self.plans = [plan(pricePerVisitCents=14500, lineItems=[{'id': 'recurring-visit', 'kind': 'service', 'name': 'Garage cleanout (recurring visit)', 'quantity': 1, 'unitCents': 14500, 'totalCents': 14500}])]
+        self.extend_script = [{'created': [], 'conflicts': [], 'updated': [{'date': '2026-09-30', 'jobId': 'occ-1', 'from': '2026-09-30'}], 'priced': [{'date': '2026-09-30', 'jobId': 'occ-1', 'status': 'applied'}], 'complete': True}]
+        self.update_warnings = [{'code': 'booked_visits_updating', 'visits': [{'date': '2026-09-30', 'from': '2026-09-30', 'jobId': 'occ-1'}], 'message': '1 booked visit that has not started is being updated to match this plan.'}]
+        self.open_dispatch(); self.open_plans()
+        card = self.dialog().locator('[data-plan="plan-1"]')
+        expect(card).to_contain_text('$145.00 per visit')
+        card.get_by_role('button', name='Edit', exact=True).click()
+        dialog = self.dialog()
+        price = dialog.get_by_label('Price per visit (USD)', exact=True)
+        expect(price).to_have_value('145.00'); self.assertEqual(price.get_attribute('inputmode'), 'decimal')
+        self.assertEqual(self.page.evaluate("getComputedStyle(document.querySelector('dialog.rp-dialog input[name=pricePerVisit]')).fontSize"), '16px')
+        move = dialog.get_by_label('Also move booked visits that have not started to the new time, crew and price', exact=True)
+        expect(move).not_to_be_checked()
+        box = self.page.evaluate("document.querySelector('dialog.rp-dialog input[name=applyToBooked]').closest('label').getBoundingClientRect().height")
+        self.assertGreaterEqual(box, 44)
+        dialog.get_by_label('Start time', exact=True).fill('09:00'); dialog.get_by_label('End time', exact=True).fill('11:00')
+        price.fill('160'); move.check()
+        self.assertLessEqual(self.page.evaluate('document.documentElement.scrollWidth'), 375)
+        dialog.get_by_role('button', name='Save plan changes', exact=True).click()
+        expect(dialog.get_by_role('status').filter(has_text='1 booked visit moved to match the plan.')).to_be_visible()
+        self.assertEqual([call['action'] for call in self.calls], ['update', 'extend'])
+        update = self.calls[0]
+        self.assertEqual(update['applyToBooked'], True); self.assertEqual(update['plan']['pricePerVisitCents'], 16000); self.assertEqual(update['plan']['time'], '09:00')
+        self.assertEqual(self.calls[1]['expectedRevision'], 'plan-rev-2')
+        expect(dialog.locator('[data-plan="plan-1"]')).to_contain_text('$160.00 per visit')
+        # An edit that leaves the price and booked visits alone sends neither field.
+        dialog.locator('[data-plan="plan-1"]').get_by_role('button', name='Edit', exact=True).click()
+        self.dialog().get_by_role('button', name='Save plan changes', exact=True).click()
+        expect(self.dialog().get_by_role('status').filter(has_text='Plan updated.')).to_be_visible()
+        self.assertNotIn('pricePerVisitCents', self.calls[-1]['plan']); self.assertNotIn('applyToBooked', self.calls[-1])
+
+    def test_booked_visit_moves_continue_through_every_bounded_round(self):
+        self.start(375, 812)
+        self.plans = [plan(occurrences=[{'date': '2026-10-28', 'jobId': 'occ-7', 'state': 'updating', 'recorded': 'scheduled'}])]
+        moved = lambda *days: [{'date': day, 'jobId': 'occ-' + day[-2:], 'from': day} for day in days]
+        # Rounds that only move booked visits (nothing created, not complete, not retryable) are still progress.
+        self.extend_script = [{'created': [], 'conflicts': [], 'updated': moved('2026-09-30', '2026-10-07', '2026-10-14', '2026-10-21'), 'complete': False},
+                              {'created': [], 'conflicts': [], 'updated': moved('2026-10-28', '2026-11-04'), 'complete': False},
+                              {'created': [], 'conflicts': [], 'updated': moved('2026-11-11'), 'complete': True}]
+        self.update_warnings = [{'code': 'booked_visits_updating', 'visits': [], 'message': '7 booked visits that have not started are being updated to match this plan.'}]
+        self.open_dispatch(); self.open_plans()
+        dialog = self.dialog()
+        dialog.locator('[data-plan="plan-1"]').get_by_role('button', name='Edit', exact=True).click()
+        dialog.get_by_label('Start time', exact=True).fill('09:00'); dialog.get_by_label('End time', exact=True).fill('11:00')
+        dialog.get_by_label('Also move booked visits that have not started to the new time, crew and price', exact=True).check()
+        dialog.get_by_role('button', name='Save plan changes', exact=True).click()
+        status = dialog.get_by_role('status').filter(has_text='7 booked visits moved to match the plan.')
+        expect(status).to_be_visible()
+        expect(status).not_to_contain_text('still being updated')
+        self.assertEqual([call['action'] for call in self.calls], ['update', 'extend', 'extend', 'extend'])
+        self.assertEqual([call['expectedRevision'] for call in self.calls[1:]], ['plan-rev-2', 'plan-rev-3', 'plan-rev-4'])
+        self.assertEqual(len({call['requestId'] for call in self.calls}), 4)
+        # A round that changes nothing ends the loop early, and the manager is told the plan is not finished.
+        self.extend_script = [{'created': [], 'conflicts': [], 'updated': moved('2026-10-28'), 'complete': False}, {'created': [], 'conflicts': [], 'complete': False}]
+        dialog.locator('[data-plan="plan-1"]').get_by_role('button', name='Add upcoming visits', exact=True).click()
+        unfinished = dialog.get_by_role('status').filter(has_text='Some booked visits are still being updated to match the plan. Press Add upcoming visits to finish.')
+        expect(unfinished).to_be_visible()
+        expect(unfinished).to_contain_text('1 booked visit moved to match the plan.')
+        expect(unfinished).not_to_contain_text('No new visits were needed')
+        self.assertEqual([call['action'] for call in self.calls[4:]], ['extend', 'extend'])
+        self.assertLessEqual(self.page.evaluate('document.documentElement.scrollWidth'), 375)
+
+    def test_rounds_that_only_keep_booked_visits_continue_and_name_each_visit(self):
+        self.start(375, 812)
+        message = 'The 2026-10-14 visit could not be saved (dispatch_lock_unavailable). Each run retries it, and later visits wait for it. If this continues, add 2026-10-14 as a skipped date so later visits are added.'
+        self.plans = [plan(lastRun={'at': DAY + 'T17:00:00Z', 'status': 'error', 'stage': 'create', 'code': 'dispatch_lock_unavailable', 'date': '2026-10-14', 'message': message})]
+        kept = lambda *rows: [{'date': day, 'jobId': 'occ-' + day[-2:], 'reason': reason} for day, reason in rows]
+        # A round in which every booked-visit change drops (nothing created, moved or priced; not retryable) is still progress.
+        self.extend_script = [{'created': [], 'conflicts': [], 'kept': kept(('2026-09-30', 'changed_in_dispatch'), ('2026-10-07', 'started'), ('2026-10-14', 'slot_taken'), ('2026-10-21', 'changed_in_dispatch')), 'complete': False},
+                              {'created': [], 'conflicts': [], 'kept': kept(('2026-10-28', 'time_passed')), 'complete': True}]
+        self.open_dispatch(); self.open_plans()
+        card = self.dialog().locator('[data-plan="plan-1"]')
+        expect(card).to_contain_text('Visits stopped being added: ' + message)
+        card.get_by_role('button', name='Add upcoming visits', exact=True).click()
+        status = self.dialog().get_by_role('status').filter(has_text='5 booked visits kept their current time:')
+        expect(status).to_be_visible()
+        expect(status).to_contain_text('Wed, Oct 14 (the customer already has another booking at the new time)')
+        expect(status).to_contain_text('Wed, Oct 7 (it has started)')
+        expect(status).to_contain_text('Wed, Oct 28 (the new time has passed)')
+        expect(status).not_to_contain_text('Press Add upcoming visits to finish')
+        self.assertEqual([call['action'] for call in self.calls], ['extend', 'extend'])
+        self.assertEqual(len({call['requestId'] for call in self.calls}), 2)
+        self.assertLessEqual(self.page.evaluate('document.documentElement.scrollWidth'), 375)
+        # A failed price names what stopped; the card reloads after the next action.
+        self.plans[0]['lastRun'] = {'status': 'error', 'stage': 'price', 'code': 'dispatch_storage_unavailable', 'date': '2026-09-30', 'message': 'The 2026-09-30 visit could not be priced (dispatch_storage_unavailable). Each run retries it.'}
+        card.get_by_role('button', name='Add upcoming visits', exact=True).click()
+        expect(card).to_contain_text('Visit prices stopped being saved: The 2026-09-30 visit could not be priced')
+        expect(card).not_to_contain_text('Visits stopped being added')
 
 if __name__ == '__main__':
     unittest.main(verbosity=2)

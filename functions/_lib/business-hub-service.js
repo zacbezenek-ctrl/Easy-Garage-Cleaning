@@ -1,5 +1,7 @@
 import { LIMITS, ROLES, INVITE_HOURS, INVITE_ORIGIN, fail, uid, isId, text, email, personName, safeName, date, digest, randomToken, rights, permitted, staffAllowed, staffCanAccess, activeMember, bounded, requireJobId, requireLinkedJob, businessActor, projectView, accountView, inviteState, receiptExpiry, QUOTA_WINDOW, quotaExpiry } from './business-hub-core.js';
 import { PROPERTY_DENIED, memberPropertyIds, canSeeProperty, scopeAccount, isScopedAccount, requireScopedProperty, requireScopedLinkedJob, requestedPropertyIds, scopeKey, applyPropertyIds, memberSummary, propertySummary, businessHubAudit, scopedAccountView, operationReceipt } from './business-hub-scope.js';
+import { funnelHubId } from './funnel-definitions.js';
+import { projectDimensionPatch, resolveDimensions, visitDimensionFacts } from './funnel-dimensions.js';
 const COOKIE = '__Host-egc_business';
 // save() persists only a FULL account: one this hub read from storage (including through helpers.store), one it built for a
 // new company, or a copyStoredAccount() of one. The marker is private to this module, so no other module can make a scoped
@@ -447,7 +449,11 @@ export function createBusinessHandler({ store, getStaff, finance, needsReview, p
         if (!link) { bounded(ctx.account, 'projects'); link = { jobId }; ctx.account.projects.push(link); }
         Object.assign(link, { propertyId: input.propertyId, active: true, sharedBy: ctx.profile.user, sharedAt: new Date(now()).toISOString() });
         if (input.requestId) { const item = ctx.account.requests.find(r => r.id === input.requestId); item.jobId = jobId; item.status = 'project_linked'; }
-        await save(ctx, action, [{ collection: 'jobs', id: jobId, version: job._version, patch: true, data: { businessAccountId: ctx.account.id, businessPropertyId: input.propertyId, businessSharingApprovedBy: ctx.profile.user, businessSharingApprovedAt: link.sharedAt } }]);
+        // FUN-29: work linked to a business account is commercial B2B on the B2B path, unless a staff pick or better evidence says otherwise.
+        const project = funnelHubId(job.projectId) ? await store.read('projects', job.projectId) : null;
+        const dimensions = project ? projectDimensionPatch(project, resolveDimensions(visitDimensionFacts({ ...job, businessAccountId: ctx.account.id })), { actor: ctx.profile.user, now: link.sharedAt }) : null;
+        await save(ctx, action, [{ collection: 'jobs', id: jobId, version: job._version, patch: true, data: { businessAccountId: ctx.account.id, businessPropertyId: input.propertyId, businessSharingApprovedBy: ctx.profile.user, businessSharingApprovedAt: link.sharedAt } },
+          ...(dimensions ? [{ collection: 'projects', id: project.id, version: project._version, patch: true, data: { ...dimensions, updatedAt: link.sharedAt } }] : [])]);
         return response(200, { ok: true });
       }
       if (action === 'unlink_project') {

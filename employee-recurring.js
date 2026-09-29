@@ -5,7 +5,9 @@ const TZ = 'America/Denver', recoveryPrefix = 'egc.recurring.pending.v1.';
 const S = { host:null, root:null, dialog:null, data:null, loading:false, error:'', errorStatus:0, actionError:'', notice:'', noticeKind:'', stale:[], generation:0, busy:false, viewer:null, recovery:null, view:'list', template:null, plan:null, confirm:null, onChange:null };
 const FREQUENCIES = [['weekly','Every week'],['biweekly','Every 2 weeks'],['every_n_weeks','Every few weeks'],['monthly','Monthly'],['quarterly','Every 3 months']];
 const HORIZONS = [[28,'4 weeks ahead'],[56,'8 weeks ahead'],[84,'12 weeks ahead'],[182,'6 months ahead'],[364,'1 year ahead']];
-const STATES = { scheduled:'Scheduled', conflict:'Needs a new time', template:'Original visit', existing:'Existing booking', not_generated:'Not on schedule yet', cancelled:'Cancelled in Dispatch', missing:'Removed from Dispatch', moved:'Moved', rescheduled:'Rescheduled', completed:'Completed', off_pattern:'No longer in this plan', covered:'Booked separately' };
+const STATES = { scheduled:'Scheduled', conflict:'Needs a new time', template:'Original visit', existing:'Existing booking', not_generated:'Not on schedule yet', updating:'Moving to the new plan', cancelled:'Cancelled in Dispatch', missing:'Removed from Dispatch', moved:'Moved', rescheduled:'Rescheduled', completed:'Completed', off_pattern:'No longer in this plan', covered:'Booked separately' };
+const KEPT = { started:'it has started', changed_in_dispatch:'it was changed in Dispatch', crew_changed_in_dispatch:'its crew was changed in Dispatch', time_passed:'the new time has passed', visit_closed:'it was cancelled or completed', slot_taken:'the customer already has another booking at the new time' };
+const STOPPED = { create:'Visits stopped being added: ', apply:'Booked visits stopped following the plan: ', price:'Visit prices stopped being saved: ' };
 const ORDINAL = ['','1st','2nd','3rd','4th'], DAYS = ['Sunday','Monday','Tuesday','Wednesday','Thursday','Friday','Saturday'];
 function h(tag, props, ...children) {
   const node = document.createElement(tag);
@@ -27,6 +29,9 @@ const key = () => crypto.randomUUID();
 function today() { return new Intl.DateTimeFormat('en-CA', { timeZone:TZ, year:'numeric', month:'2-digit', day:'2-digit' }).format(new Date()); }
 function dateText(date, short = true) { return /^\d{4}-\d{2}-\d{2}$/.test(date || '') ? new Intl.DateTimeFormat('en-US', { timeZone:'UTC', weekday:'short', month:'short', day:'numeric', ...(short ? {} : { year:'numeric' }) }).format(new Date(date + 'T12:00:00Z')) : 'Date needed'; }
 function clock(value) { const match = /^(\d{2}):(\d{2})$/.exec(value || ''); if (!match) return 'Time needed'; const hour = Number(match[1]); return (hour % 12 || 12) + ':' + match[2] + ' ' + (hour < 12 ? 'AM' : 'PM'); }
+const money = cents => new Intl.NumberFormat('en-US', { style:'currency', currency:'USD' }).format(cents / 100);
+/** '' -> null (no price); '145', '145.5' or '145.50' -> integer cents; anything else -> NaN. */
+function priceCents(text) { const value = String(text || '').trim().replace(/^\$/, '').replace(/,/g, ''); if (!value) return null; const match = /^(\d{1,7})(?:\.(\d{1,2}))?$/.exec(value); if (!match) return NaN; const cents = Number(match[1]) * 100 + Number((match[2] || '').padEnd(2, '0')); return cents >= 1 && cents <= 100000000 ? cents : NaN; }
 function dayParts(date) { const value = new Date((date || today()) + 'T12:00:00Z'), day = value.getUTCDate(); return { day, weekday:value.getUTCDay(), nth:Math.ceil(day / 7) > 4 ? -1 : Math.ceil(day / 7) }; }
 const person = id => S.data?.roster?.find(row => row.id === id)?.name || id;
 function stateText(row) {
@@ -98,17 +103,21 @@ async function load({ quiet = false } = {}) {
 }
 function changed() { try { S.onChange?.(); } catch {} }
 async function extendAll(plan, label) {
-  let current = plan, created = 0, conflicts = [], blocked = null;
+  let current = plan, created = 0, updated = 0, kept = [], conflicts = [], blocked = null, complete = false;
   for (let round = 0; round < 15; round++) {
     S.notice = label + ' Adding upcoming visits… ' + created + ' so far.'; render();
     const result = await send({ action:'extend', requestId:key(), planId:current.id, expectedRevision:current.revision, limit:4 }, 'Upcoming visits added.');
-    current = result.plan; created += result.created.filter(job => job.date).length; conflicts = conflicts.concat(result.conflicts || []); blocked = result.blocked;
-    if (result.complete || blocked || (!result.created.length && !result.retryable)) break;
+    const moved = (result.updated || []).length, settled = Array.isArray(result.kept) ? result.kept : [];
+    current = result.plan; created += result.created.filter(job => job.date).length; updated += moved; kept = kept.concat(settled); conflicts = conflicts.concat(result.conflicts || []); blocked = result.blocked; complete = result.complete === true;
+    // A round may only move, keep or re-price booked visits; stop once done, blocked, or a round changed nothing.
+    if (complete || blocked || !(result.created.length || moved || settled.length || (result.priced || []).length || result.retryable)) break;
   }
-  const held = conflicts.filter(row => row.code === 'recurring_slot_taken').length, other = conflicts.length - held, count = (n, verb) => n + ' visit' + (n === 1 ? ' ' : 's ') + verb;
-  S.notice = [label, created ? created + ' visit' + (created === 1 ? '' : 's') + ' added to the schedule.' : 'No new visits were needed inside the scheduling window.', other ? count(other, 'conflicted with other work and ' + (other === 1 ? 'was' : 'were')) + ' saved unscheduled — choose new times in Dispatch.' : '',
-    held ? count(held, (held === 1 ? 'was' : 'were')) + ' saved unscheduled because a cancelled or moved booking still holds the time — restore it or choose a new time in Dispatch.' : '', blocked ? 'Stopped: ' + blocked.message : ''].filter(Boolean).join(' ');
-  if (conflicts.length || blocked) S.noticeKind = 'warn';
+  const held = conflicts.filter(row => row.code === 'recurring_slot_taken').length, other = conflicts.length - held, count = (n, verb) => n + ' visit' + (n === 1 ? ' ' : 's ') + verb, unfinished = !complete && !blocked;
+  const waiting = unfinished ? ((current.occurrences || []).some(row => row.state === 'updating') ? 'Some booked visits are still being updated to match the plan.' : 'Some visits still need to be added or priced.') + ' Press Add upcoming visits to finish.' : '';
+  const keptText = kept.length ? kept.length + ' booked visit' + (kept.length === 1 ? '' : 's') + ' kept ' + (kept.length === 1 ? 'its' : 'their') + ' current time: ' + kept.map(row => dateText(row.date) + ' (' + (KEPT[row.reason] || 'Dispatch refused the change') + ')').join(', ') + '.' : '';
+  S.notice = [label, updated ? updated + ' booked visit' + (updated === 1 ? '' : 's') + ' moved to match the plan.' : '', keptText, created ? created + ' visit' + (created === 1 ? '' : 's') + ' added to the schedule.' : unfinished ? '' : 'No new visits were needed inside the scheduling window.', other ? count(other, 'conflicted with other work and ' + (other === 1 ? 'was' : 'were')) + ' saved unscheduled — choose new times in Dispatch.' : '',
+    held ? count(held, (held === 1 ? 'was' : 'were')) + ' saved unscheduled because a cancelled or moved booking still holds the time — restore it or choose a new time in Dispatch.' : '', blocked ? 'Stopped: ' + blocked.message : '', waiting].filter(Boolean).join(' ');
+  if (conflicts.length || kept.length || blocked || unfinished) S.noticeKind = 'warn';
 }
 /** Booked visits an update no longer includes stay listed until the manager cancels them. */
 function showSaved(label, warnings = []) {
@@ -131,7 +140,7 @@ function retryRecovery() {
   const saved = S.recovery; if (!saved || saved.invalid) return;
   void act(async () => {
     const result = await send(saved.request, saved.success);
-    if (saved.request.action === 'create' || saved.request.action === 'extend' && !result.complete) await extendAll(result.plan, saved.success);
+    if (saved.request.action === 'create' || saved.request.applyToBooked === true && result.plan.status === 'active' || saved.request.action === 'extend' && !result.complete) await extendAll(result.plan, saved.success);
     else showSaved(saved.success, result.warnings || []);
   });
 }
@@ -141,8 +150,9 @@ function planCard(plan) {
     h('div', { class:'rp-plan-top' }, h('h3', {}, plan.customer || 'Customer'), pill(plan.status === 'active' ? 'Active' : plan.status === 'paused' ? 'Paused' : 'Ended', active ? '' : 'muted')),
     h('p', { class:'rp-cadence' }, plan.cadenceLabel + ' · ' + clock(plan.time) + ' – ' + clock(plan.endTime) + (plan.spanDays ? ' (+' + plan.spanDays + ' day)' : '')),
     plan.address ? h('p', { class:'rp-muted' }, plan.address) : null,
+    Number.isInteger(plan.pricePerVisitCents) ? h('p', { class:'rp-price' }, money(plan.pricePerVisitCents) + ' per visit') : null,
     h('p', { class:'rp-muted' }, [ends, plan.skipDates.length ? plan.skipDates.length + ' skipped date' + (plan.skipDates.length === 1 ? '' : 's') : '', 'Crew: ' + (plan.assignment?.assignedCrew?.length ? plan.assignment.assignedCrew.map(person).join(', ') : 'Unassigned')].filter(Boolean).join(' · ')));
-  if (plan.lastRun?.status === 'blocked') card.append(h('p', { class:'rp-warning' }, 'Visits stopped being added: ' + (plan.lastRun.message || 'review this plan.')));
+  if (plan.lastRun?.status === 'blocked' || plan.lastRun?.status === 'error') card.append(h('p', { class:'rp-warning' }, (plan.lastRun.status === 'error' && STOPPED[plan.lastRun.stage] || STOPPED.create) + (plan.lastRun.message || 'review this plan.')));
   for (const row of plan.attention || []) card.append(h('p', { class:'rp-warning' }, attentionText(row)));
   if (plan.upcoming?.length) card.append(h('ul', { class:'rp-upcoming', 'aria-label':'Next visits' }, plan.upcoming.map(row => h('li', {}, h('span', {}, dateText(row.date)), h('small', { class:'rp-state-' + row.state }, stateText(row))))));
   else if (plan.finished) card.append(h('p', { class:'rp-muted' }, 'This series has no more visits.'));
@@ -166,7 +176,7 @@ function renderForm(body) {
   const assignment = plan ? plan.assignment || {} : { assignedCrew:(template.assignedCrew || []).filter(id => data.roster.some(row => row.id === id)), crewLead:template.crewLead || null, crewId:template.crewId || null, vehicleId:template.vehicleId || null };
   const cadence = source.cadence || { frequency:'weekly' };
   const form = h('form', { class:'rp-form', novalidate:true });
-  form.append(h('div', { class:'rp-summary' }, h('strong', {}, plan ? plan.customer : template.customer || 'Customer'), h('span', {}, plan ? 'Editing changes visits not yet on the schedule. Visits already booked keep their date, time and crew; if the new pattern leaves any out, you will be shown which ones to cancel in Dispatch.' : 'Repeats ' + (template.serviceType || 'this job') + ' with its scope, access notes and materials.')));
+  form.append(h('div', { class:'rp-summary' }, h('strong', {}, plan ? plan.customer : template.customer || 'Customer'), h('span', {}, plan ? 'Editing changes visits not yet on the schedule. Visits already booked keep their date, time, crew and price unless you choose to move them below; if the new pattern leaves any out, you will be shown which ones to cancel in Dispatch.' : 'Repeats ' + (template.serviceType || 'this job') + ' with its scope, access notes and materials.')));
   const frequency = select(FREQUENCIES, cadence.frequency, { name:'frequency' });
   const weeks = h('input', { type:'number', name:'intervalWeeks', inputMode:'numeric', min:1, max:52, step:1, value:cadence.intervalWeeks || 3 });
   const start = h('input', { type:'date', name:'startDate', required:true, value:source.startDate || template?.date || today() });
@@ -184,6 +194,9 @@ function renderForm(body) {
   for (const member of data.roster) { const input = h('input', { type:'checkbox', value:member.id, checked:(assignment.assignedCrew || []).includes(member.id) }); checks.set(member.id, input); crew.append(h('label', { class:'rp-check' }, input, h('span', {}, member.name))); }
   const lead = select([['', 'No crew lead'], ...data.roster.map(row => [row.id, row.name])], assignment.crewLead || '', { name:'crewLead' });
   const reminders = h('input', { type:'checkbox', name:'notifyCustomer', checked:plan?.notifyCustomer === true });
+  const savedPrice = Number.isInteger(plan?.pricePerVisitCents) ? plan.pricePerVisitCents : null, lines = plan?.lineItems?.length || 0;
+  const price = h('input', { type:'text', name:'pricePerVisit', inputMode:'decimal', autocomplete:'off', placeholder:'No price', value:savedPrice === null ? '' : (savedPrice / 100).toFixed(2) });
+  const booked = plan ? h('input', { type:'checkbox', name:'applyToBooked' }) : null;
   const vehicles = (data.vehicles || []).filter(row => row.status === 'available' || row.id === assignment.vehicleId);
   const truck = select([['', 'No vehicle'], ...vehicles.map(row => [row.id, row.name])], assignment.vehicleId || '', { name:'vehicleId' });
   const weeksField = labeled('Weeks between visits', weeks), monthlyField = labeled('Monthly pattern', monthlyBy), endsOnField = labeled('Last visit on or before', endsOn), countField = labeled('Number of visits', count, 'Skipped dates count toward this total.');
@@ -201,6 +214,8 @@ function renderForm(body) {
     labeled('Ends', endsMode), endsOnField, countField, labeled('Keep on the schedule', horizon, 'Visits are added to Dispatch this far ahead.'),
     h('div', { class:'rp-wide rp-skips' }, labeled('Skip a date', skipInput), btn('Add skipped date', () => { if (/^\d{4}-\d{2}-\d{2}$/.test(skipInput.value)) { skips.add(skipInput.value); skipInput.value = ''; drawSkips(); } }), skipList),
     crew, labeled('Crew lead', lead), labeled('Vehicle', truck),
+    labeled('Price per visit (USD)', price, lines > 1 ? 'Now itemized from ' + lines + ' lines; a new amount replaces them with one line. Saved as each added visit\u2019s estimate, with no deposit; nothing is sent.' : 'Optional. Saved as each added visit\u2019s estimate, with no deposit; nothing is sent to the customer.'),
+    booked ? h('label', { class:'rp-check rp-wide' }, booked, h('span', {}, 'Also move booked visits that have not started to the new time, crew and price')) : null,
     h('label', { class:'rp-check rp-wide' }, reminders, h('span', {}, 'Send the customer\u2019s usual appointment reminders for each added visit')));
   sync();
   const status = h('div', { class:'rp-form-status', 'aria-live':'polite' });
@@ -216,6 +231,8 @@ function renderForm(body) {
     if (endsMode.value === 'after' && (!Number.isInteger(visits) || visits < 1 || visits > 520)) problems.push('Enter between 1 and 520 visits.');
     const interval = Number(weeks.value);
     if (frequency.value === 'every_n_weeks' && (!Number.isInteger(interval) || interval < 1 || interval > 52)) problems.push('Enter 1 to 52 weeks between visits.');
+    const cents = priceCents(price.value);
+    if (Number.isNaN(cents)) problems.push('Enter the price per visit like 145 or 145.50, or leave it blank.');
     if (problems.length) { status.replaceChildren(notice(problems.join(' '), 'error')); return; }
     const monthly = ['monthly','quarterly'].includes(frequency.value);
     const keepCadence = plan && cadence.frequency === frequency.value && (!monthly || cadence.monthlyBy === monthlyBy.value) && start.value === plan.startDate;
@@ -224,7 +241,8 @@ function renderForm(body) {
     const schedule = { cadence:frequency.value === 'every_n_weeks' ? { frequency:'every_n_weeks', intervalWeeks:interval } : nextCadence, startDate:start.value, time:time.value, endTime:endTime.value,
       endsOn:endsMode.value === 'on' ? endsOn.value : null, count:endsMode.value === 'after' ? visits : null, skipDates:[...skips].sort(), horizonDays:Number(horizon.value), notifyCustomer:reminders.checked,
       assignment:{ assignedCrew:members, crewLead:lead.value || null, crewId:savedCrew && savedCrew.memberIds.length === members.length && savedCrew.memberIds.every(id => members.includes(id)) ? savedCrew.id : null, vehicleId:truck.value || null } };
-    const request = plan ? { action:'update', requestId:key(), planId:plan.id, expectedRevision:plan.revision, plan:schedule } : { action:'create', requestId:key(), plan:{ templateJobId:template.id, ...schedule } };
+    if (cents !== savedPrice) schedule.pricePerVisitCents = cents;
+    const request = plan ? { action:'update', requestId:key(), planId:plan.id, expectedRevision:plan.revision, plan:schedule, ...(booked.checked ? { applyToBooked:true } : {}) } : { action:'create', requestId:key(), plan:{ templateJobId:template.id, ...schedule } };
     const controls = [...form.elements].filter(control => !control.disabled);
     S.busy = true; for (const control of controls) control.disabled = true;
     status.replaceChildren(notice('Saving and verifying…'));
@@ -240,7 +258,8 @@ function renderForm(body) {
     }
     S.busy = false;
     const note = [plan ? 'Plan updated.' : 'Recurring plan started.', ...(result.warnings || []).map(row => row.message)].join(' ');
-    void act(async () => { if (!plan) await extendAll(result.plan, note); else showSaved('Plan updated.', result.warnings || []); });
+    // Booked visits follow the edit in the same bounded extend requests that add new visits.
+    void act(async () => { if (!plan) await extendAll(result.plan, note); else if (request.applyToBooked && result.plan.status === 'active') { await extendAll(result.plan, note); S.stale = (result.warnings || []).flatMap(row => row.code === 'generated_visits_off_pattern' && Array.isArray(row.visits) ? row.visits : []); if (S.stale.length) S.noticeKind = 'warn'; } else showSaved('Plan updated.', result.warnings || []); });
   });
   body.append(form);
   setTimeout(() => frequency.focus(), 0);

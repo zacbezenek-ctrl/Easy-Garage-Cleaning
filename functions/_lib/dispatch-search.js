@@ -1,6 +1,7 @@
 import { requireDispatcher, projectDispatchJob } from './dispatch-service.js';
 import { validDate } from './dispatch-time.js';
 import { jobCrewNames, assignmentKey } from './job-assignment.js';
+import { withQuoteLines } from './dispatch-duration.js';
 
 const fail=(message,code='dispatch_search_invalid',status=400)=>Object.assign(new Error(message),{code,status});
 const normalize=value=>String(value||'').normalize('NFKD').replace(/[\u0300-\u036f]/g,'').toLowerCase().replace(/\s+/g,' ').trim();
@@ -38,8 +39,10 @@ export async function dispatchSearch(store,session,query={},now=new Date()) {
     const text=(directText+' '+employeeText).trim();
     if(!(date&&(raw.date===date||raw.endDate===date))&&!(phoneOnly&&phone.length>=3&&phones.some(value=>value.includes(phone)))&&!tokens.every(token=>text.includes(token)))continue;
     const job=projectDispatchJob(raw,roster);
-    matches.push({job,canonicalCustomerName:name||null,rank:normalize(raw.id)===q?0:normalize(name||raw.customer).startsWith(q)?1:2});
+    matches.push({raw,job,canonicalCustomerName:name||null,rank:normalize(raw.id)===q?0:normalize(name||raw.customer).startsWith(q)?1:2});
   }
   matches.sort((a,b)=>a.rank-b.rank||String(b.job.date||'9999').localeCompare(String(a.job.date||'9999'))||a.job.id.localeCompare(b.job.id));
-  return {ok:true,query:query.q.trim(),status,total:matches.length,truncated:matches.length>50,results:matches.slice(0,50).map(({job,canonicalCustomerName})=>({job,canonicalCustomerName})),coverage:{complete:true,mode:'canonical_hub_history',asOf:now.toISOString()}};
+  // Only the returned jobs read their quote lines for the duration suggestion.
+  const shown=matches.slice(0,50),lined=await withQuoteLines(store,shown.map(match=>match.raw));
+  return {ok:true,query:query.q.trim(),status,total:matches.length,truncated:matches.length>50,results:shown.map(({raw,job,canonicalCustomerName},index)=>({job:lined[index]===raw?job:projectDispatchJob(lined[index],roster),canonicalCustomerName})),coverage:{complete:true,mode:'canonical_hub_history',asOf:now.toISOString()}};
 }

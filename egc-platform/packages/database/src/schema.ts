@@ -1,11 +1,16 @@
+import { sql } from "drizzle-orm";
 import {
+  type AnyPgColumn,
   boolean,
+  check,
+  date,
   index,
   integer,
   jsonb,
   numeric,
   pgEnum,
   pgTable,
+  primaryKey,
   text,
   timestamp,
   uniqueIndex,
@@ -697,3 +702,110 @@ export const operationsServiceNonces = pgTable("operations_service_nonces", {
   expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
   createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull()
 }, t => [uniqueIndex("operations_service_nonces_issuer_nonce_uq").on(t.issuer,t.nonce),index("operations_service_nonces_expiry_idx").on(t.expiresAt)]);
+
+// FUN-15 ad spend. Provider rows mirror the Meta/Google daily reports read-only, in
+// integer cents, keyed by the account's own report date plus the Denver date. A day
+// is known only when ad_sync_days holds its pull; an absent day is unknown, never 0.
+export const adSpendDaily = pgTable("ad_spend_daily", {
+  id: uuid("id").defaultRandom().primaryKey(),
+  platform: text("platform").notNull(),
+  accountId: text("account_id").notNull(),
+  reportDate: date("report_date", { mode: "string" }).notNull(),
+  denverDate: date("denver_date", { mode: "string" }).notNull(),
+  accountTimeZone: text("account_time_zone").notNull(),
+  level: text("level").notNull(),
+  campaignId: text("campaign_id").notNull(),
+  campaignName: text("campaign_name"),
+  adSetId: text("ad_set_id"),
+  adSetName: text("ad_set_name"),
+  currency: text("currency").notNull(),
+  spendCents: integer("spend_cents").notNull(),
+  impressions: integer("impressions"),
+  clicks: integer("clicks"),
+  pulledAt: timestamp("pulled_at", { withTimezone: true }).notNull(),
+  createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull()
+}, t => [
+  // coalesce instead of NULLS NOT DISTINCT, which needs PostgreSQL 15 or later.
+  uniqueIndex("ad_spend_daily_row_uq").on(t.platform, t.accountId, t.reportDate, t.campaignId, sql`coalesce(${t.adSetId}, '')`),
+  index("ad_spend_daily_denver_idx").on(t.denverDate, t.platform),
+  check("ad_spend_daily_platform_ck", sql`${t.platform} in ('meta_ads','google_ads')`),
+  check("ad_spend_daily_level_ck", sql`(${t.level}='ad_set' and ${t.adSetId} is not null) or (${t.level}='campaign' and ${t.adSetId} is null)`),
+  check("ad_spend_daily_amounts_ck", sql`${t.spendCents}>=0 and coalesce(${t.impressions},0)>=0 and coalesce(${t.clicks},0)>=0`)
+]);
+
+// One row per source, account (or Facebook page) and report date that was pulled
+// successfully: the account-level day total is the authoritative spend for that day.
+export const adSyncDays = pgTable("ad_sync_days", {
+  source: text("source").notNull(),
+  accountId: text("account_id").notNull(),
+  reportDate: date("report_date", { mode: "string" }).notNull(),
+  denverDate: date("denver_date", { mode: "string" }).notNull(),
+  timeZone: text("time_zone").notNull(),
+  timeZoneAligned: boolean("time_zone_aligned").notNull(),
+  currency: text("currency"),
+  totalCents: integer("total_cents"),
+  totalImpressions: integer("total_impressions"),
+  totalClicks: integer("total_clicks"),
+  leadCount: integer("lead_count"),
+  breakdownGapCents: integer("breakdown_gap_cents"),
+  rowCount: integer("row_count").notNull(),
+  settled: boolean("settled").notNull(),
+  firstPulledAt: timestamp("first_pulled_at", { withTimezone: true }).notNull(),
+  pulledAt: timestamp("pulled_at", { withTimezone: true }).notNull(),
+  restatedAt: timestamp("restated_at", { withTimezone: true })
+}, t => [
+  primaryKey({ name: "ad_sync_days_pk", columns: [t.source, t.accountId, t.reportDate] }),
+  index("ad_sync_days_denver_idx").on(t.denverDate, t.source),
+  check("ad_sync_days_source_ck", sql`${t.source} in ('meta_ads','google_ads','meta_leadgen')`),
+  check("ad_sync_days_totals_ck", sql`case when ${t.source}='meta_leadgen' then ${t.leadCount}>=0 and ${t.totalCents} is null else ${t.totalCents}>=0 and ${t.currency} is not null and ${t.leadCount} is null end`)
+]);
+
+// Meta lead-form submissions per form per Denver day (created_time is an instant).
+// Lead ids are opaque provider ids kept for the GHL leadgen reconciliation, never PII.
+export const metaLeadgenDaily = pgTable("meta_leadgen_daily", {
+  pageId: text("page_id").notNull(),
+  formId: text("form_id").notNull(),
+  formName: text("form_name"),
+  denverDate: date("denver_date", { mode: "string" }).notNull(),
+  leadCount: integer("lead_count").notNull(),
+  leadIds: jsonb("lead_ids").$type<string[]>().default([]).notNull(),
+  pulledAt: timestamp("pulled_at", { withTimezone: true }).notNull()
+}, t => [
+  primaryKey({ name: "meta_leadgen_daily_pk", columns: [t.formId, t.denverDate] }),
+  index("meta_leadgen_daily_page_idx").on(t.pageId, t.denverDate),
+  check("meta_leadgen_daily_count_ck", sql`${t.leadCount}>=0 and jsonb_array_length(${t.leadIds})=${t.leadCount}`)
+]);
+
+// Owner-attested spend for channels without an API. Append-only: a row can only be
+// closed once (voided or superseded by a correction); a database trigger enforces it.
+export const spendEntries = pgTable("spend_entries", {
+  id: uuid("id").defaultRandom().primaryKey(),
+  workspaceId: text("workspace_id").notNull(),
+  requestId: uuid("request_id").notNull(),
+  channel: text("channel").notNull(),
+  description: text("description").notNull(),
+  amountCents: integer("amount_cents").notNull(),
+  currency: text("currency").default("USD").notNull(),
+  firstDate: date("first_date", { mode: "string" }).notNull(),
+  lastDate: date("last_date", { mode: "string" }).notNull(),
+  receiptReference: text("receipt_reference").notNull(),
+  clockSource: text("clock_source").default("attested").notNull(),
+  enteredBy: text("entered_by").notNull(),
+  attestedAt: timestamp("attested_at", { withTimezone: true }).notNull(),
+  status: text("status").default("active").notNull(),
+  revision: integer("revision").default(1).notNull(),
+  supersedesId: uuid("supersedes_id").references((): AnyPgColumn => spendEntries.id),
+  closedAt: timestamp("closed_at", { withTimezone: true }),
+  closedBy: text("closed_by"),
+  closeReason: text("close_reason"),
+  ...timestamps
+}, t => [
+  uniqueIndex("spend_entries_request_uq").on(t.workspaceId, t.requestId),
+  uniqueIndex("spend_entries_supersedes_uq").on(t.supersedesId),
+  index("spend_entries_period_idx").on(t.workspaceId, t.status, t.firstDate, t.lastDate),
+  // Meta and Google spend, under any of its other names, is ingested and never typed in (API_CHANNEL_ALIAS).
+  check("spend_entries_channel_ck", sql`${t.channel} ~ '^[a-z][a-z0-9_]{1,39}$' and ${t.channel} not in ('meta_ads','google_ads') and ${t.channel} !~ '(^|_)(facebook|fb|instagram|insta|ig|meta|google|googleads|adwords|gads|youtube|yt)(ads?)?(_|$)|^(facebook|instagram|google|adwords|youtube)'`),
+  check("spend_entries_amount_ck", sql`${t.amountCents}>=0 and ${t.currency}='USD' and ${t.clockSource}='attested'`),
+  check("spend_entries_period_ck", sql`${t.lastDate}>=${t.firstDate} and ${t.lastDate}-${t.firstDate}<366`),
+  check("spend_entries_status_ck", sql`${t.status} in ('active','voided','superseded') and (${t.status}='active')=(${t.closedAt} is null)`)
+]);

@@ -1,0 +1,34 @@
+/* Schedule alerts screen (EGCCrewNotifications). Kit tokens only; scoped to .egc-crew-alerts. */
+.egc-crew-alerts .ca-body{display:grid;gap:var(--hub-space-4);min-width:0}
+.egc-crew-alerts .ca-prefs{display:grid;gap:var(--hub-space-3)}
+.egc-crew-alerts .ca-prefs h2,.egc-crew-alerts .ca-list-head h2{font-size:20px}
+.egc-crew-alerts .ca-muted{margin:0;color:var(--hub-muted);font-size:14px;line-height:1.45;overflow-wrap:anywhere}
+.egc-crew-alerts .ca-status{margin:0;min-height:1.2em;color:var(--hub-muted);font-size:14px}
+.egc-crew-alerts .ca-status:empty{min-height:0}
+.egc-crew-alerts .ca-list-head{display:flex;align-items:center;justify-content:space-between;gap:var(--hub-space-3);flex-wrap:wrap}
+.egc-crew-alerts .ca-list{list-style:none;margin:0;padding:0;display:grid;gap:var(--hub-space-3)}
+.egc-crew-alerts .ca-notice{display:grid;gap:var(--hub-space-2);border-left:4px solid var(--hub-blue);padding:var(--hub-space-4)}
+.egc-crew-alerts .ca-notice.ca-unassigned,.egc-crew-alerts .ca-notice.ca-cancelled{border-left-color:var(--hub-red)}
+.egc-crew-alerts .ca-notice.ca-time_changed{border-left-color:var(--hub-amber)}
+.egc-crew-alerts .ca-notice.ca-assigned,.egc-crew-alerts .ca-notice.ca-restored{border-left-color:var(--hub-green)}
+.egc-crew-alerts .ca-notice-head{display:flex;align-items:center;justify-content:space-between;gap:var(--hub-space-2);flex-wrap:wrap}
+.egc-crew-alerts .ca-intent{font-size:16px;color:var(--hub-navy)}
+.egc-crew-alerts .ca-when{margin:0;font-weight:700;font-size:15px;line-height:1.4;overflow-wrap:anywhere}
+.egc-crew-alerts .ca-was{margin:0;color:var(--hub-muted);font-size:14px;text-decoration:line-through;overflow-wrap:anywhere}
+.egc-crew-alerts .ca-lost{margin:0;font-size:14px;font-weight:600;overflow-wrap:anywhere}
+.egc-crew-alerts .ca-chip{display:inline-flex;align-items:center;min-height:24px;padding:2px 8px;border-radius:999px;background:var(--hub-soft);color:var(--hub-muted);font:700 11px/1.2 var(--hub-font);letter-spacing:.02em}
+.egc-crew-alerts .ca-chip.ca-texted,.egc-crew-alerts .ca-chip.ca-covered,.egc-crew-alerts .ca-chip.ca-grouped,.egc-crew-alerts .ca-chip.ca-read_in_hub{background:#e5f3ec;color:var(--hub-green)}
+.egc-crew-alerts .ca-chip.ca-queued,.egc-crew-alerts .ca-chip.ca-unconfirmed{background:#fff4dc;color:var(--hub-amber)}
+.egc-crew-alerts .ca-chip.ca-off{background:#fdecea;color:var(--hub-red)}
+.egc-crew-alerts .ca-chips{display:flex;flex-wrap:wrap;gap:var(--hub-space-2)}
+.egc-crew-alerts .ca-still{font-weight:600}
+.egc-crew-alerts .ca-team-panel{display:grid;gap:var(--hub-space-3);min-width:0}
+.egc-crew-alerts .ca-team{display:grid;gap:var(--hub-space-3);min-width:0}
+.egc-crew-alerts .ca-team h3{margin:var(--hub-space-2) 0 0;font-size:17px;color:var(--hub-navy)}
+.egc-crew-alerts .ca-member{display:grid;gap:var(--hub-space-2);padding:var(--hub-space-4);min-width:0;overflow-wrap:anywhere}
+.egc-crew-alerts .ca-attention{border-left-color:var(--hub-red)}
+.egc-crew-alerts .ca-empty{margin:0;padding:var(--hub-space-4);border:1px dashed var(--hub-line);border-radius:var(--hub-radius);color:var(--hub-muted);text-align:center}
+@media (max-width:680px){
+  .egc-crew-alerts .hub-actions .hub-btn,.egc-crew-alerts .ca-list-head .hub-btn{flex:1 1 auto;width:100%}
+  .egc-crew-alerts .ca-list-head{align-items:stretch}
+}

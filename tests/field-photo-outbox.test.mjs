@@ -156,7 +156,8 @@ test('only a well-formed photo is queued', async () => {
   }
   for (const dataUrl of [PNG, JPEG, 'data:image/webp;base64,UklGRhYAAABXRUJQVlA4IAoAAAAwAQCdASoBAAEAAQA0JaQAA3AA/vuUAAA=']) await box.enqueue(photo('Crew.One', 'job-a', 'after', { dataUrl, caption: '' }));
   assert.equal((await box.items('Crew.One')).length, 3);
-  assert.deepEqual([...load().api.QUEUEABLE].sort(), ['checklist', 'material', 'note', 'photo', 'status']);
+  // FIELD-MULTIDAY queues an offline end of day ('end_day') alongside the photo queue.
+  assert.deepEqual([...load().api.QUEUEABLE].sort(), ['checklist', 'end_day', 'material', 'note', 'photo', 'status']);
 });
 
 test('a full phone is reported as full and the outbox keeps using IndexedDB', async () => {

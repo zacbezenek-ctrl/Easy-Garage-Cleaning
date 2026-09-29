@@ -5,9 +5,10 @@ import {createHash,randomUUID} from "node:crypto";
 import {and,asc,desc,eq,gt,gte,inArray,isNull,lt,lte,ne,notInArray,or,sql} from "drizzle-orm";
 import {getDb,schema} from "@egc/database";
 import {buildDueWorkSnapshot,collectTaskPages,pageDueWork,type QueueSnapshot,type SourceCoverage,type WaitingOn} from "@egc/lead-audit/operations-core";
-import {authorize,commandSchema,OperationsError,PORTAL_PASSTHROUGH,WRITE_COMMANDS,type Actor,type Command} from "./contracts.js";
+import {authorize,commandSchema,OperationsError,PORTAL_PASSTHROUGH,RECURRING_HORIZON_COMMAND,WRITE_COMMANDS,type Actor,type Command} from "./contracts.js";
 import {assertCompletion,assertEditable,assertTiming,digest,jsonRecord,requestDigest,withoutEmptyAttachments} from "./policy.js";
 import {isMessageTaskKind} from "./action-kinds.js";
+import {isSpendRequest,spendRead,spendWrite} from "./spend-service.js";
 
 type Db=ReturnType<typeof getDb>;
 type Tx=Parameters<Parameters<Db["transaction"]>[0]>[0];
@@ -60,6 +61,8 @@ export class OperationsService {
     // Adoption proof is produced by the backend's exact-source verifier. Public
     // RPC/MCP callers cannot supply proof or bypass that verifier via this service.
     if(command.command==='schedule.adopt')throw new OperationsError('schedule_adoption_internal_only',403);
+    // The horizon run goes straight from egc-api's timer to the Hub; RPC and MCP callers cannot start it.
+    if(command.command===RECURRING_HORIZON_COMMAND)throw new OperationsError('recurring_horizon_internal_only',403);
     if(command.command==="intelligence.report"||command.command==="intelligence.diagnostics"||command.command==="intelligence.customer"){
       if(!this.config.canonicalRead)throw new OperationsError("canonical_customer_state_unavailable",503);
       return this.config.canonicalRead(actor,command);
@@ -141,7 +144,7 @@ export class OperationsService {
         return {...prior.response,replayed:true};
       }
       await tx.execute(sql`select set_config('egc.operations_actor',${actor.id},true),set_config('egc.operations_actor_kind',${actor.kind},true)`);
-      const result=await this.write(tx,actor,command,portal);
+      const result=await this.write(tx,actor,command,portal,requestId);
       const response=jsonRecord(result);
       await tx.insert(schema.operationRequests).values({workspaceId:actor.workspace,actorId:actor.id,requestId,digest:digestOfRequest,response});
       return response;
@@ -276,6 +279,7 @@ export class OperationsService {
       type,actorId:actor.id,actorKind:actor.kind,source:"operations",evidence:jsonRecord(evidence),occurredAt:this.now()});
   }
   private async read(tx:Tx,actor:Actor,command:Command,portalEvents:PortalTimelineEvent[]=[],nativeEvidence?:NativeHistoryEvidence):Promise<Record<string,unknown>> {
+    if(isSpendRequest(command))return spendRead(tx,actor,command,this.now());
     switch(command.command) {
       case "status": return {ok:true,contractVersion:1,workspace:actor.workspace,actor,health:await operationalHealth(tx,actor.workspace),
         capabilities:{tasks:true,exactDraftApprovals:true,persistedBriefs:true,externalExecution:false,actionSend:Boolean(this.config.sendTaskMessage),portalIdentity:Boolean(this.config.resolvePortalJob)},
@@ -337,7 +341,8 @@ export class OperationsService {
       default:throw new OperationsError("unsupported_read",400);
     }
   }
-  private async write(tx:Tx,actor:Actor,command:Command,portal:PortalJobReference|null):Promise<Record<string,unknown>> {
+  private async write(tx:Tx,actor:Actor,command:Command,portal:PortalJobReference|null,requestId:string):Promise<Record<string,unknown>> {
+    if(isSpendRequest(command))return spendWrite(tx,actor,command,requestId,this.now());
     if(command.command==="task.create") {
       const input=command.task;
       if(actor.role==="sales" && input.assignedUserId!==actor.id) throw new OperationsError("assignment_requires_manager",403);

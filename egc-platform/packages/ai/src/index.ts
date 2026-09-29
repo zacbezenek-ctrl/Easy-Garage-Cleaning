@@ -13,6 +13,7 @@ import type { ConversationExtraction } from "./conversation-extraction.js";
 export { DEFAULT_EXTRACTION_MODEL, DEFAULT_TRANSCRIBE_MODEL };
 export * from "./catalog-index.js";
 export * from "./conversation-extraction.js";
+export * from "./scheduling-constraints.js";
 
 /** Folds the model's evidence array back into the stored per-field record; the first quote for a field wins. */
 export function walkthroughEvidenceRecord(evidence: WalkthroughModelOutput["evidence"]): WalkthroughExtraction["evidence"] {

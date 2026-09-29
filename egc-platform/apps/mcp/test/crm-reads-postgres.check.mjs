@@ -10,16 +10,21 @@ const url=new URL(process.env.DATABASE_URL||'http://invalid');
 if(process.env.EGC_OPERATIONS_TEST!=='isolated'||!['127.0.0.1','localhost'].includes(url.hostname)||url.pathname!=='/egc_operations_test'||!['postgres:','postgresql:'].includes(url.protocol))throw new Error('Only isolated loopback egc_operations_test is allowed');
 const db=getDb(),NOW=new Date('2026-09-22T12:00:00.000Z'),HOUR=3_600_000,DAY=24*HOUR,at=ms=>new Date(NOW.valueOf()+ms);
 const actor={id:'mcp-service-grant',role:'integration',kind:'integration',workspace:'egc'};
-const tools=new Map();
+const tools=new Map(),keysetTools=new Map();
 // The injected clock; a test moves it between page calls as real time moves between them.
 let clock=NOW;
+// tools reads EGC_MCP_KEYSET_CURSORS (unset here, so offsets); keysetTools has keyset cursors on.
 registerTools({registerTool:(name,config,handler)=>tools.set(name,{config,handler})},crmReadTools(),{now:()=>clock});
-async function call(name,args={}){const t=tools.get(name);const r=await operationsPrincipal.run(actor,()=>t.handler(t.config.inputSchema.parse(args)));return {isError:r.isError===true,value:r.structuredContent.result};}
-async function walk(name,args,pick=r=>r,step=0){
-  const seen=[],sizes=[];let cursor;
-  do{const r=await call(name,{...args,...(cursor?{cursor}:{})});assert.equal(r.isError,false,JSON.stringify(r.value));const page=pick(r.value);assert.equal(page.coverage.complete,true);assert.equal(page.asOf,NOW.toISOString());seen.push(...page.items);sizes.push(page.items.length);cursor=page.page.nextCursor;clock=new Date(clock.valueOf()+step);}while(cursor&&sizes.length<20);
-  return {seen,sizes};
+registerTools({registerTool:(name,config,handler)=>keysetTools.set(name,{config,handler})},crmReadTools({keyset:()=>true}),{now:()=>clock});
+async function call(name,args={},registry=tools){const t=registry.get(name);const r=await operationsPrincipal.run(actor,()=>t.handler(t.config.inputSchema.parse(args)));return {isError:r.isError===true,value:r.structuredContent.result};}
+async function walk(name,args,pick=r=>r,step=0,registry=tools){
+  const seen=[],sizes=[],cursors=[];let cursor;
+  do{const r=await call(name,{...args,...(cursor?{cursor}:{})},registry);assert.equal(r.isError,false,JSON.stringify(r.value));const page=pick(r.value);assert.equal(page.coverage.complete,true);assert.equal(page.asOf,NOW.toISOString());seen.push(...page.items);sizes.push(page.items.length);cursor=page.page.nextCursor;if(cursor)cursors.push(cursor);clock=new Date(clock.valueOf()+step);}while(cursor&&sizes.length<20);
+  return {seen,sizes,cursors};
 }
+const version=cursor=>JSON.parse(Buffer.from(cursor,'base64url').toString()).v;
+// Microsecond n past a base instant, as PostgreSQL stores it; a JS Date would round these to one millisecond.
+const micro=(base,n)=>sql`(${base}::timestamptz + ${n}::int * interval '1 microsecond')`;
 let fetchBefore,contact,other;
 before(()=>{fetchBefore=globalThis.fetch;globalThis.fetch=async()=>{throw new Error('network disabled in isolated check');};});
 after(async()=>{globalThis.fetch=fetchBefore;await db.$client.end({timeout:5});});
@@ -135,4 +140,102 @@ test('a cursor older than a day is refused before any read',async()=>{
   assert.equal(late.isError,true);assert.equal(late.value.error,'invalid_cursor');
   clock=at(DAY-1);
   assert.equal((await call('tasks.search',{limit:1,cursor:first.value.page.nextCursor})).value.page.offset,1);
+});
+
+test('keyset: rows that differ only in microseconds or tie exactly are walked once each, in exact order, for every order shape',async()=>{
+  // 505 tasks over seven microseconds inside one millisecond (updated_at desc).
+  const tasks=await db.insert(schema.tasks).values(Array.from({length:505},(_,i)=>({title:`Micro ${i}`,createdAt:at(-DAY),updatedAt:micro('2026-09-22T11:00:00.123Z',i%7)}))).returning({id:schema.tasks.id});
+  const expected=(await db.execute(sql`select id from tasks order by updated_at desc, id desc`)).map(r=>r.id);
+  assert.equal(expected.length,tasks.length);
+  const t=await walk('tasks.search',{limit:200},r=>r,90_000,keysetTools);
+  assert.deepEqual(t.sizes,[200,200,105]);assert.deepEqual(t.seen.map(r=>r.id),expected);assert.deepEqual(t.cursors.map(version),[2,2]);
+  assert.ok(t.seen.every(r=>!('egcPageKey' in r)&&!('egcPageId' in r)));
+  // Ascending (appointments), a joined select (calls, leads) and conversation messages, each with microsecond ties.
+  // Appointments and messages report any row written after asOf, so their fixtures are written before it (the column default would be the database's real clock).
+  clock=NOW;
+  await db.insert(schema.appointments).values([0,0,1,1,2,5,5].map((n,i)=>({providerId:`micro-${i}`,contactId:contact.id,appointmentStartAt:micro('2026-09-23T15:00:00.456Z',n),createdAt:at(-DAY),updatedAt:at(-DAY)})));
+  const appointments=await walk('appointments.search',{limit:2},r=>r,0,keysetTools);
+  assert.deepEqual(appointments.seen.map(r=>r.id),(await db.execute(sql`select id from appointments order by appointment_start_at asc, id asc`)).map(r=>r.id));assert.deepEqual(appointments.sizes,[2,2,2,1]);
+  clock=NOW;
+  await db.insert(schema.calls).values([3,3,2,2,1].map((n,i)=>({providerMessageId:`micro-call-${i}`,contactId:i%2?contact.id:other.id,direction:'inbound',actorType:'customer',startedAt:micro('2026-09-22T10:00:00.789Z',n)})));
+  const calls=await walk('calls.search',{limit:2},r=>r,0,keysetTools);
+  assert.deepEqual(calls.seen.map(r=>r.call.id),(await db.execute(sql`select id from calls order by started_at desc, id desc`)).map(r=>r.id));assert.ok(calls.seen.every(r=>typeof r.customerName==='string'&&!('egcPageKey' in r)));
+  clock=NOW;
+  const [third]=await db.insert(schema.contacts).values({provider:'ghl',providerId:'synthetic-crm-micro',name:'Micro fixture',updatedAt:at(-DAY)}).returning();
+  await db.insert(schema.leads).values([contact,other,third].map(c=>({contactId:c.id,createdAt:micro('2026-09-22T09:00:00.001Z',1)})));
+  const leads=await walk('leads.search',{limit:1},r=>r,0,keysetTools);
+  assert.deepEqual(leads.seen.map(r=>r.lead.id),(await db.execute(sql`select id from leads order by created_at desc, id desc`)).map(r=>r.id));assert.deepEqual(leads.sizes,[1,1,1]);
+  clock=NOW;
+  const [conversation]=await db.insert(schema.conversations).values({providerId:'conv-micro',contactId:contact.id}).returning();
+  await db.insert(schema.messages).values([4,4,4,0,9].map((n,i)=>({providerId:`micro-message-${i}`,conversationId:conversation.id,contactId:contact.id,type:'TYPE_SMS',direction:'inbound',actorType:'customer',occurredAt:micro('2026-09-22T08:00:00.002Z',n),createdAt:at(-DAY),updatedAt:at(-DAY)})));
+  const messages=await walk('conversations.get',{conversationId:conversation.id,messageLimit:2},v=>v.messages,0,keysetTools);
+  assert.deepEqual(messages.seen.map(r=>r.id),(await db.execute(sql`select id from messages order by occurred_at desc, id desc`)).map(r=>r.id));
+});
+
+test('keyset: a row deleted or created during the walk neither skips nor repeats one, and the walk stays complete',async()=>{
+  const tasks=await db.insert(schema.tasks).values(Array.from({length:6},(_,i)=>({title:`Keyset ${i}`,createdAt:at(-DAY),updatedAt:at(-(i+1)*HOUR)}))).returning({id:schema.tasks.id});
+  const first=await call('tasks.search',{limit:2},keysetTools);
+  assert.deepEqual(first.value.items.map(t=>t.id),tasks.slice(0,2).map(t=>t.id));
+  // An offset walk would now skip tasks[2] (one row fewer ahead of it) or repeat tasks[1] (one more).
+  await db.delete(schema.tasks).where(eq(schema.tasks.id,tasks[0].id));
+  await db.insert(schema.tasks).values({title:'Created after asOf',createdAt:at(10_000),updatedAt:at(10_000)});
+  clock=at(30_000);
+  const second=await call('tasks.search',{limit:2,cursor:first.value.page.nextCursor},keysetTools);
+  assert.deepEqual(second.value.items.map(t=>t.id),tasks.slice(2,4).map(t=>t.id));assert.deepEqual(second.value.coverage,{complete:true});assert.equal(second.value.page.offset,2);
+  const third=await call('tasks.search',{limit:2,cursor:second.value.page.nextCursor},keysetTools);
+  assert.deepEqual(third.value.items.map(t=>t.id),tasks.slice(4).map(t=>t.id));assert.equal(third.value.page.nextCursor,null);assert.deepEqual(third.value.coverage,{complete:true});
+});
+
+test('keyset: an update that moves a row that existed at asOf across the cursor is reported, not silent',async()=>{
+  // jobs, not tasks: the tasks revision guard stamps updated_at with clock_timestamp() on UPDATE, so an injected time there would never reach the probe.
+  const jobs=await db.insert(schema.jobs).values(Array.from({length:5},(_,i)=>({contactId:contact.id,status:'scheduled',createdAt:at(-DAY),updatedAt:at(-(i+1)*HOUR)}))).returning({id:schema.jobs.id});
+  const first=await call('jobs.search',{limit:2},keysetTools);
+  assert.deepEqual(first.value.items.map(j=>j.id),jobs.slice(0,2).map(j=>j.id));
+  // Job 4 has not been reached; the update moves it to the head, behind the cursor, so the walk misses it.
+  await db.update(schema.jobs).set({accessNotes:'Synthetic gate note',updatedAt:at(10_000)}).where(eq(schema.jobs.id,jobs[4].id));clock=at(30_000);
+  const [stored]=await db.select({updatedAt:schema.jobs.updatedAt}).from(schema.jobs).where(eq(schema.jobs.id,jobs[4].id));assert.equal(stored.updatedAt.toISOString(),at(10_000).toISOString());
+  const second=await call('jobs.search',{limit:2,cursor:first.value.page.nextCursor},keysetTools);
+  assert.deepEqual(second.value.items.map(j=>j.id),[jobs[2].id,jobs[3].id]);assert.equal(second.value.page.nextCursor,null);
+  assert.equal(second.value.coverage.complete,false);assert.equal(second.value.coverage.reason,'rows_changed_after_asOf');assert.match(second.value.coverage.instruction,/existed at asOf/);
+});
+
+test('keyset: an appointment booked after asOf, returned, then rescheduled past the cursor is reported on the pages it can repeat on',async()=>{
+  // Four appointments at asOf, two per page. One is booked between them after page 1, and rescheduled past the cursor after page 2, so the walk really returns it twice.
+  const existing=(await db.insert(schema.appointments).values([1,2,3,4].map(h=>({providerId:`asof-${h}`,contactId:contact.id,appointmentStartAt:at(h*HOUR),createdAt:at(-DAY),updatedAt:at(-DAY)}))).returning({id:schema.appointments.id})).map(a=>a.id);
+  const first=await call('appointments.search',{limit:2},keysetTools);
+  assert.deepEqual(first.value.items.map(a=>a.id),existing.slice(0,2));assert.deepEqual(first.value.coverage,{complete:true});
+  const [booked]=await db.insert(schema.appointments).values({providerId:'booked-after-asof',contactId:contact.id,appointmentStartAt:at(2.5*HOUR),createdAt:at(10_000),updatedAt:at(10_000)}).returning({id:schema.appointments.id});
+  clock=at(30_000);
+  const second=await call('appointments.search',{limit:2,cursor:first.value.page.nextCursor},keysetTools);
+  assert.deepEqual(second.value.items.map(a=>a.id),[booked.id,existing[2]]);
+  await db.update(schema.appointments).set({appointmentStartAt:at(3.5*HOUR),updatedAt:at(40_000)}).where(eq(schema.appointments.id,booked.id));clock=at(60_000);
+  const third=await call('appointments.search',{limit:2,cursor:second.value.page.nextCursor},keysetTools);
+  assert.deepEqual(third.value.items.map(a=>a.id),[booked.id,existing[3]]);assert.equal(third.value.page.nextCursor,null);
+  for(const page of [second,third]){
+    assert.equal(page.value.asOf,NOW.toISOString());assert.equal(page.value.coverage.complete,false);assert.equal(page.value.coverage.reason,'rows_changed_after_asOf');
+    assert.match(page.value.coverage.instruction,/created or updated after asOf.*either way across the cursor/);
+  }
+});
+
+test('keyset: a canonical snapshot that moves a lead into a state filter cannot repeat a lead, because the lead order is a fixed key',async()=>{
+  // The offset walk in the earlier test repeats the first lead here and has to report it; the keyset walk continues after it.
+  const [third]=await db.insert(schema.contacts).values({provider:'ghl',providerId:'synthetic-crm-third',name:'Third fixture',updatedAt:at(-DAY)}).returning();
+  const leads=await db.insert(schema.leads).values([[contact,'BOOKED',-HOUR],[other,'BOOKED',-2*HOUR],[third,'NEVER_CONTACTED',-30*60_000]].map(([c,currentState,ms])=>({contactId:c.id,currentState,createdAt:at(ms),updatedAt:at(-DAY)}))).returning({id:schema.leads.id});
+  const booked=await call('leads.search',{state:'BOOKED',limit:1},keysetTools);
+  assert.deepEqual(booked.value.items.map(r=>r.lead.id),[leads[0].id]);
+  await db.insert(schema.customerStateSnapshots).values({contactId:third.id,leadId:leads[2].id,state:'JOB_SOLD',intentStage:'sold',pipeline:'direct_job',reconciliationStatus:'reconciled',snapshot:{state:'JOB_SOLD'},coverage:{complete:true},lastReconciledAt:at(5_000),createdAt:at(5_000),updatedAt:at(5_000)});
+  await db.update(schema.leads).set({assignedUserId:'synthetic-rep',updatedAt:at(6_000)}).where(eq(schema.leads.id,leads[1].id));
+  clock=at(60_000);
+  const next=await call('leads.search',{state:'BOOKED',limit:1,cursor:booked.value.page.nextCursor},keysetTools);
+  assert.deepEqual(next.value.items.map(r=>r.lead.id),[leads[1].id]);assert.deepEqual(next.value.coverage,{complete:true});assert.equal(next.value.page.nextCursor,null);
+});
+
+test('keyset cursors are refused once the flag is off, and an offset cursor issued before it was turned on continues by offset',async()=>{
+  await db.insert(schema.tasks).values(Array.from({length:3},(_,i)=>({title:`Flag ${i}`,createdAt:at(-DAY),updatedAt:at(-(i+1)*HOUR)})));
+  const keysetFirst=await call('tasks.search',{limit:1},keysetTools);assert.equal(version(keysetFirst.value.page.nextCursor),2);
+  const refused=await call('tasks.search',{limit:1,cursor:keysetFirst.value.page.nextCursor});
+  assert.equal(refused.isError,true);assert.equal(refused.value.error,'invalid_cursor');
+  const offsetFirst=await call('tasks.search',{limit:1});assert.equal(version(offsetFirst.value.page.nextCursor),1);
+  const continued=await call('tasks.search',{limit:1,cursor:offsetFirst.value.page.nextCursor},keysetTools);
+  assert.equal(continued.value.page.offset,1);assert.equal(version(continued.value.page.nextCursor),1);
 });

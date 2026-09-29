@@ -65,8 +65,12 @@
       if(active)return active;
       active=perform(recoverOriginal).finally(()=>{active=null;}); return active;
     }
+    // The CRM sync and portal invitation run only for managers (/api/highlevel
+    // requires business access). A quote author's signed job is left 'pending'
+    // for a manager's Hub to synchronize from the saved snapshot.
     async function sync(saved) {
       if (await d.actor() !== saved.pending.actor) throw new Error('The signed-in account changed. Sign in again before synchronizing.');
+      if (typeof d.managerSync === 'function' && !d.managerSync()) return {ok:true,handoffSync:{status:'manager_required'},portalInvitation:{status:'manager_required'}};
       return request('/api/highlevel',{tool:'game_plan',job_id:saved.result.job.id,handoff_request_id:saved.pending.requestId});
     }
     function release(saved) {
@@ -78,7 +82,7 @@
   root.EGCWalkthroughHandoffClient=createClient;
   if (typeof S === 'undefined') return;
   const actor=async()=>{const user=await EGCHubAuth.session();return typeof user==='string'?user:user?.user || '';};
-  const client=createClient({storage:sessionStorage,fetch:(...args)=>EGCHubAuth.fetch(...args),actor,uuid:()=>crypto.randomUUID(),plan:()=>payload(),source:()=>S.sourceWalkthroughId || '',savedJobId:()=>S.handoffJobId || '',photoDraftId:()=>S.photoDraftJobId || S.jobId,
+  const client=createClient({storage:sessionStorage,fetch:(...args)=>EGCHubAuth.fetch(...args),actor,managerSync:()=>EGCHubAuth.canRunBusiness(),uuid:()=>crypto.randomUUID(),plan:()=>payload(),source:()=>S.sourceWalkthroughId || '',savedJobId:()=>S.handoffJobId || S.quoteDraftJobId || '',photoDraftId:()=>S.photoDraftJobId || S.jobId,
     accept:(result,pending)=>{
       S.photoDraftJobId=pending.photoDraftJobId || S.photoDraftJobId || S.jobId;
       S.jobId=result.job.id; S.handoffJobId=result.job.id; S.customerId=result.job.customerId;
@@ -105,14 +109,15 @@
       S.highlevelJobAppointmentId=synced.appointmentId || S.highlevelJobAppointmentId;
       S.highlevelOpportunityId=synced.pipeline?.opportunityId || S.highlevelOpportunityId;
       if(!recoverOriginal)writeActive();save();
-      const portal=synced.portalInvitation;
-      const portalText=portal?.status==='submitted'?(portal.channel==='Email'?'Portal email queued in HighLevel. ':'Portal text queued in HighLevel. '):portal?.status==='suppressed'?'Portal delivery is paused. ':'Portal delivery needs attention in Estimates & payments. ';
-      const scheduleText=synced.handoffSync?.status==='synced'?'Job and CRM schedule verified. ':'Job saved; CRM reconciliation still needs attention. ';
+      const portal=synced.portalInvitation,managerSync=synced.handoffSync?.status==='manager_required';
+      const portalText=managerSync?'':portal?.status==='submitted'?(portal.channel==='Email'?'Portal email queued in HighLevel. ':'Portal text queued in HighLevel. '):portal?.status==='suppressed'?'Portal delivery is paused. ':'Portal delivery needs attention in Estimates & payments. ';
+      const scheduleText=managerSync?'Job saved. A manager completes the CRM sync and the portal invitation from the Hub. ':synced.handoffSync?.status==='synced'?'Job and CRM schedule verified. ':'Job saved; CRM reconciliation still needs attention. ';
       const photoText=photos.status==='synced'?'Walkthrough photos uploaded. ':photos.status==='needs_setup'?'Drive needs setup; photos remain on this device. ':'Photos remain on this device; upload needs attention. ';
       const staffing=saved.result.warnings.some(x=>['unassigned','crew_size_short','missing_crew_lead'].includes(x.code))?'Assign the required crew in Dispatch before work. ':'';
       const arrival=saved.arrivalNotice?saved.arrivalNotice+' ':'';
-      status.textContent=portalText+scheduleText+photoText+staffing+arrival+(recoverOriginal?'The original signed version was recovered; review any later form edits separately.':'');
-      button.disabled=false;button.textContent=photos.status==='synced'&&synced.handoffSync?.status==='synced'?'Saved — verify again':'Retry remaining synchronization';
+      const checkout=saved.result.warnings.filter(x=>x?.code==='checkout_needs_review').map(x=>String(x.message||'')+' ').join('');
+      status.textContent=portalText+scheduleText+photoText+staffing+arrival+checkout+(recoverOriginal?'The original signed version was recovered; review any later form edits separately.':'');
+      button.disabled=false;button.textContent=photos.status==='synced'&&['synced','manager_required'].includes(synced.handoffSync?.status)?'Saved — verify again':'Retry remaining synchronization';
       // Keep the same immutable request for photo/CRM retries. A signed revision
       // is a separate explicit action only after the original save is confirmed.
       const revise=document.createElement('button');revise.type='button';revise.textContent='Start a signed revision';
@@ -177,5 +182,11 @@
     }
     return{status:originals.length?'synced':'none',verified:originals.length};
   }
-  root.EGCWalkthroughHandoff={save:()=>client.save(),send,openings,photos};
+  // P2-07: an unsigned draft for later review; its job becomes the signed job.
+  function sendOptions(button){
+    if(!root.EGCQuoteDraft){$('send-status').textContent='Quote drafts are still loading. Try again in a moment.';return null;}
+    return root.EGCQuoteDraft.open({storage:sessionStorage,fetch:(...args)=>EGCHubAuth.fetch(...args),actor,uuid:()=>crypto.randomUUID(),plan:()=>payload(),source:()=>S.sourceWalkthroughId || '',savedJobId:()=>S.quoteDraftJobId || S.handoffJobId || '',draftId:()=>S.photoDraftJobId || S.jobId || '',
+      accept:result=>{S.quoteDraftJobId=result.job.id;S.customerId=result.job.customerId;save();},onSent:()=>{if(button)button.textContent='Options sent — send again after changes';}});
+  }
+  root.EGCWalkthroughHandoff={save:()=>client.save(),send,openings,photos,sendOptions};
 })(window);

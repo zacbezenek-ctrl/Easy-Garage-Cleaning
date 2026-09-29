@@ -3,6 +3,7 @@ import { firebaseServiceAccountConfigured } from '../_lib/firebase-service-accou
 import { employeeVaultSecret } from '../_lib/employee-vault-key.js';
 import { PAY_REVIEW_REASONS, computeTimesheetWeek, overtimePolicy, ptoFromRequests, timesheetWeekStart } from '../_lib/timesheet-week.js';
 import { payrollCsv, payrollCsvFilename } from '../_lib/payroll-export.js';
+import { payChangeRefused, seesOthersPay, timesheetPayView } from '../_lib/pay-visibility.js';
 import { readEmployeeHubRecords } from './employee-hub.js';
 
 const headers = { 'Cache-Control': 'no-store', 'X-Content-Type-Options': 'nosniff' };
@@ -38,10 +39,14 @@ export function timesheetHandlers({ session = getHubSession, read = readTimeshee
         const actor = await session(request, env);
         if (!actor?.user) throw fail('Sign in to review timesheets.', 'timesheet_sign_in_required', 401);
         if (!hasBusinessAccess(actor)) throw fail('Only operations managers can review payroll timesheets.', 'timesheet_forbidden', 403);
-        const input = query(request.url), policy = overtimePolicy(env), records = await read(env);
+        const input = query(request.url);
+        // EGC_STAFF_PAY_OWNER_ONLY (default on): the payroll CSV is the owner's (pay.manage), and every other viewer's
+        // JSON loses the other employees' pay (timesheetPayView). Off, every business user gets both as before.
+        if (input.csv && !seesOthersPay(actor, env)) throw payChangeRefused('Only the owner can download the payroll export. Managers review hours and approvals here.');
+        const policy = overtimePolicy(env), records = await read(env);
         if (!Array.isArray(records?.timecards) || !Array.isArray(records?.requests)) throw fail('Timecards could not be read as a complete list.', 'timesheet_records_invalid', 503);
         const week = computeTimesheetWeek({ timecards: records.timecards, pto: ptoFromRequests(records.requests), policy, weekStart: input.weekStart, includePending: input.includePending, now: now().toISOString() });
-        if (!input.csv) return reply(200, { ok: true, ...week });
+        if (!input.csv) return reply(200, { ok: true, ...timesheetPayView(actor, env, week) });
         // Payroll exports only a finished week whose every shift is approved, rejected, or explicitly included, and
         // whose pay-review flags were fixed or explicitly acknowledged.
         const blocking = week.coverage.reasons.filter(reason => !input.acknowledged.has(reason));
@@ -54,7 +59,7 @@ export function timesheetHandlers({ session = getHubSession, read = readTimeshee
         }
         return new Response(payrollCsv(week), { status: 200, headers: { ...headers, 'Content-Type': 'text/csv; charset=utf-8', 'Content-Disposition': `attachment; filename="${payrollCsvFilename(week)}"` } });
       } catch (error) {
-        if (typeof error?.code === 'string' && error.code.startsWith('timesheet_')) return reply(error.status || 503, { ok: false, code: error.code, error: error.message, ...(error.details ? { details: error.details } : {}) });
+        if (typeof error?.code === 'string' && (error.code.startsWith('timesheet_') || error.code === 'pay_owner_only')) return reply(error.status || 503, { ok: false, code: error.code, error: error.message, ...(error.details ? { details: error.details } : {}) });
         return reply(503, { ok: false, code: 'timesheet_unavailable', error: 'Timesheets could not be read safely. Retry, or contact the Hub administrator.' });
       }
     },

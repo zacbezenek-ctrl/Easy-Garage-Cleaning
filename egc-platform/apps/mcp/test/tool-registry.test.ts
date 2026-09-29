@@ -2,7 +2,7 @@ import {afterEach,describe,expect,it,vi} from 'vitest';
 import * as z from 'zod/v4';
 import type {McpServer} from '@modelcontextprotocol/server';
 import {defineTool,registerTools,invokeTool,requestIdField,confirmTokenField,TOOL_CLASSES,TWO_STEP_CLASSES,type ConfirmGate,type ToolClass,type ToolDef} from '../src/tools/define.js';
-import {decodeCursor,encodeCursor,filterDigest,pageOf,pageFields,CursorError} from '../src/tools/pagination.js';
+import {decodeCursor,encodeCursor,encodeKeysetCursor,filterDigest,keysetOf,pageOf,pageFields,readCursor,CursorError} from '../src/tools/pagination.js';
 import {error,guarded,result} from '../src/tools/result.js';
 import {DOMAIN_TOOLS,REGISTRY_WRITE_TOOLS} from '../src/tools/index.js';
 import {requiredToolScope,WRITE_TOOLS} from '../src/tool-access.js';
@@ -209,6 +209,29 @@ describe('cursor pagination',()=>{
     expect(last.page).toEqual({limit:3,offset:3,returned:1,nextCursor:null,total:4});expect(last.coverage.complete).toBe(false);
     expect(pageOf({rows:[],limit:3,offset:0,tool:'t.x',filters,asOf:NOW,coverage:{complete:true},total:9}).page.nextCursor).toBeNull();
     expect(z.object(pageFields).strict().parse({})).toEqual({limit:50});expect(z.object(pageFields).safeParse({limit:201}).success).toBe(false);
+  });
+  it('keyset cursors round-trip an exact microsecond position with the anchor and rows already returned, and stay under the cursor size limit',()=>{
+    const after={key:'2026-09-22T11:59:59.999999Z',id:'ffffffff-ffff-4fff-bfff-ffffffffffff'},cursor=encodeKeysetCursor('tasks.list',filters,123_456,NOW,after);
+    expect(readCursor(cursor,'tasks.list',filters,NOW)).toEqual({offset:123_456,anchor:NOW,after});
+    expect(decodeCursor(cursor,'tasks.list',filters)).toBe(123_456);expect(cursor.length).toBeLessThanOrEqual(512);expect(pageFields.cursor.safeParse(cursor).success).toBe(true);
+    expect(readCursor(encodeCursor('tasks.list',filters,4,NOW),'tasks.list',filters,NOW)).toEqual({offset:4,anchor:NOW});
+    const code=(fn:()=>unknown)=>{try{fn();}catch(e){return (e as CursorError).code;}return 'accepted';};
+    expect(code(()=>readCursor(cursor,'tasks.list',{...filters,status:'done'},NOW))).toBe('cursor_filter_mismatch');
+    const raw=JSON.parse(Buffer.from(cursor,'base64url').toString()),forged=(patch:Record<string,unknown>)=>Buffer.from(JSON.stringify({...raw,...patch})).toString('base64url');
+    for(const patch of [{a:undefined},{k:undefined},{k:[after.key]},{k:[after.key,after.id,'x']},{k:['2026-09-22T11:59:59.999Z',after.id]},{k:['2026-09-31T00:00:00.000000Z',after.id]},{k:['2026-13-01T00:00:00.000000Z',after.id]},{k:[after.key,'not-a-uuid']},{k:[after.key,after.id.toUpperCase()]},{k:{0:after.key,1:after.id}},{v:3}])
+      expect(code(()=>readCursor(forged(patch),'tasks.list',filters,NOW)),JSON.stringify(patch)).toBe('invalid_cursor');
+    // An offset cursor never carries a position.
+    expect(code(()=>readCursor(Buffer.from(JSON.stringify({...JSON.parse(Buffer.from(encodeCursor('tasks.list',filters,4,NOW),'base64url').toString()),k:[after.key,after.id]})).toString('base64url'),'tasks.list',filters,NOW))).toBe('invalid_cursor');
+  });
+  it('pageOf with keyOf continues after the last returned row, anchored to asOf, and falls back to an offset cursor when that row has no usable position',()=>{
+    const rows=[{id:'a',key:'2026-09-22T11:00:00.000003Z'},{id:'b',key:'2026-09-22T11:00:00.000002Z'},{id:'c',key:'2026-09-22T11:00:00.000001Z'}];
+    const uuid=(c:string)=>`${c.repeat(8)}-0000-4000-8000-000000000000`,keyOf=(row:{id:string;key:string})=>keysetOf(row.key,uuid(row.id));
+    const page=pageOf({rows,limit:2,offset:10,tool:'tasks.list',filters,asOf:NOW,coverage:{complete:true},keyOf});
+    expect(page.items).toEqual(rows.slice(0,2));expect(readCursor(page.page.nextCursor!,'tasks.list',filters,NOW)).toEqual({offset:12,anchor:NOW,after:{key:rows[1]!.key,id:uuid('b')}});
+    expect(pageOf({rows:rows.slice(0,2),limit:2,offset:0,tool:'tasks.list',filters,asOf:NOW,coverage:{complete:true},keyOf}).page.nextCursor).toBeNull();
+    const fallback=pageOf({rows,limit:2,offset:10,tool:'tasks.list',filters,asOf:NOW,anchor:NOW,coverage:{complete:true},keyOf:()=>undefined});
+    expect(readCursor(fallback.page.nextCursor!,'tasks.list',filters,NOW)).toEqual({offset:12,anchor:NOW});
+    for(const [key,id] of [[null,uuid('a')],['2026-09-22T11:00:00.000001+00',uuid('a')],['2026-09-22T11:00:00.000001Z',null],['infinity',uuid('a')]])expect(keysetOf(key,id),String(key)).toBeUndefined();
   });
 });
 

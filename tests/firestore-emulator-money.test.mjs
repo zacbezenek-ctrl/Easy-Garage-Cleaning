@@ -74,4 +74,22 @@ test('the money API commit, receipt, audit and ledger contracts hold on real Fir
     assert.equal(report.preview.some(row => row.id === jobId), false);
     assert.equal(report.invoiceNumbers.toReserve.some(number => number.includes(jobId.slice(-6).toUpperCase())), false);
   });
+
+  await t.test('a portal approval saved before change-order billing is backfilled, then voided from the Hub, on real Firestore', async () => {
+    const { runChangeOrderBackfill } = await import('../scripts/backfill-change-orders.mjs');
+    const { billedChangeCents } = await import('../functions/_lib/change-orders.js');
+    const changeJob = `money-change-${run}`;
+    await store.commit([{ collection: 'jobs', id: changeJob, patch: { type: 'job', customerId: `cust-${run}`, customer: 'Synthetic Customer', serviceType: 'Garage transformation', date: '2026-09-24', status: 'in_progress', pipelineStatus: 'in_progress',
+      total: 1000, estimate: { amount: 1000, status: 'approved' }, payment: { amount: 500, verified: true }, approvedChangeTotal: 150,
+      customerDecisions: [{ id: 'decision-freezer', title: 'Haul the old freezer', details: '', priceDelta: 150, status: 'approved', respondedAt: '2026-09-21T16:00:00.000Z', responseBy: 'Synthetic Customer', responseSource: 'customer_portal' }] } }]);
+    const report = await runChangeOrderBackfill(store, { apply: true, now: NOW });
+    assert.equal(report.aborted, undefined); assert.deepEqual(report.preview.map(row => row.id), [changeJob]);
+    let job = await store.read('jobs', changeJob);
+    assert.deepEqual(job.changeOrders.map(line => [line.id, line.totalCents, line.backfilled, line.approvedAt]), [['change-decision-freezer', 15000, true, '2026-09-21T16:00:00.000Z']]);
+    assert.equal(billedChangeCents(job), 15000); assert.equal(job.customerDecisions[0].changeOrderId, 'change-decision-freezer');
+    const voided = await mutateMoney(store, owner, { action: 'change_order.void', requestId: randomUUID(), jobId: changeJob, expectedRevision: job.revision, changeOrderId: 'change-decision-freezer', reason: 'Synthetic: not done' }, NOW);
+    job = await store.read('jobs', changeJob);
+    assert.deepEqual([job.changeOrders[0].status, job.approvedChangeTotal, billedChangeCents(job), voided.job.totals.totalCents, voided.job.changeOrders], ['void', 0, 0, 100000, []]);
+    assert.equal((await runChangeOrderBackfill(store, { apply: true, now: NOW })).preview.length, 0, 'a voided change is never backfilled again');
+  });
 });

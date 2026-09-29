@@ -40,6 +40,8 @@
 (function () {
   'use strict';
 
+  var portalPath = '/customer-portal';
+
   function makeLink(label, href, className) {
     var link = document.createElement('a');
     link.textContent = label;
@@ -48,10 +50,7 @@
     return link;
   }
 
-  function installCustomerAccess() {
-    var main = document.getElementById('main-content');
-    if (!main || document.getElementById('egc-customer-access')) return;
-    var portalPath = '/customer-portal';
+  function insertCustomerAccess(main) {
     var style = document.createElement('style');
     style.id = 'egc-customer-access-style';
     style.textContent =
@@ -83,6 +82,8 @@
     inner.appendChild(label);
     inner.appendChild(links);
 
+    // _generate_site.py (CUSTOMER_ACCESS_HTML, BOOK_BUSINESS_CONTACT) writes this bar into the pages;
+    // change both together (tests/public-performance.test.mjs compares them).
     if (/^\/book(?:\.html)?\/?$/.test(window.location.pathname)) {
       var business = document.createElement('p');
       business.className = 'egc-business-contact';
@@ -96,6 +97,14 @@
     // Keep the new navigation inside main so the existing mobile drawer's
     // background inert/focus handling continues to cover these links.
     main.insertBefore(nav, main.firstChild);
+  }
+
+  function installCustomerAccess() {
+    var main = document.getElementById('main-content');
+    if (!main) return;
+    // Generated pages ship the bar in their HTML (styled by styles.css) so it never shifts the
+    // hero after first paint; it is only built here for pages that do not have it yet.
+    if (!document.getElementById('egc-customer-access')) insertCustomerAccess(main);
 
     var drawer = document.getElementById('nav-drawer');
     if (drawer && !drawer.querySelector('a[href="' + portalPath + '"]')) {

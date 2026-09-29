@@ -46,7 +46,8 @@ test('public marketing pages do not promise prices from photos', () => {
     /text photos for (?:a )?(?:flat-rate )?walkthrough scheduling response/i,
   ];
   const failures = [];
-  for (const file of publicHtml()) {
+  // Generated pages load their step names, validation messages and form labels from /site-forms.js (SITE-4).
+  for (const file of [...publicHtml(), path.join(root, 'site-forms.js')]) {
     const html = fs.readFileSync(file, 'utf8');
     for (const pattern of prohibited) if (pattern.test(html)) failures.push(`${path.relative(root, file)}: ${pattern}`);
   }

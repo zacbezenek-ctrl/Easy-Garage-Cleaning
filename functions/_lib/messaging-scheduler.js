@@ -25,11 +25,16 @@ export const HOLDS_ID = 'current';
 export const CRON_ACTOR_ID = 'messaging-cron-worker';
 export const CRON_ACTOR = Object.freeze({ id: CRON_ACTOR_ID, kind: 'system', source: 'cron' });
 export const SCHEDULED_KINDS = Object.freeze(['day_before_reminder', 'deposit_reminder', 'payment_reminder', 'estimate_expiring']);
+// Dispatch crew notices (crewOutbox): each approved and switched on separately.
+export const CREW_KINDS = Object.freeze(['crew_assignment', 'crew_unassignment', 'crew_schedule_change']);
 // The only job fields the scheduler reads. Money and contact fields feed the
 // same helpers the portal and checkout use; nothing else leaves storage.
+// changeOrders carries the billed change-order lines (change-orders.js): the
+// checkout balance (customerMoneyState) bills them, so without them a change
+// money-core counts would read as a money_mismatch and never be reminded.
 export const SCHEDULER_JOB_FIELDS = Object.freeze([
   'type','recordType','date','time','status','pipelineStatus','notify','customerAutomationEnabled','phone','email',
-  'estimate','invoice','payment','deposit','total','priceQuoted','lockedTotal','rate','customerApproval.amount','customerDecisions','approvedChangeTotal',
+  'estimate','invoice','payment','deposit','total','priceQuoted','lockedTotal','rate','customerApproval.amount','customerDecisions','approvedChangeTotal','changeOrders',
   'giftWallet.redemptions','refunds','completedAt','postJobChecklist.completedAt','postJobProgress.standardItems',
   'customerPortalInvitationRequestedAt','customerPortalInvitation','communicationLog','automationMilestones',
 ]);
@@ -50,7 +55,7 @@ const PORTAL_MAX_ATTEMPTS = 5;
 const PORTAL_RETRY_AFTER_MS = 10 * 60000;
 const DAY_MS = 86400000;
 const RESULT_LIMIT = 60;
-const PRIORITY = { day_before_reminder: 0, portal_invitation: 1, crew_assignment: 2, deposit_reminder: 3, payment_reminder: 4, estimate_expiring: 5 };
+const PRIORITY = { day_before_reminder: 0, portal_invitation: 1, crew_assignment: 2, crew_unassignment: 2, crew_schedule_change: 2, deposit_reminder: 3, payment_reminder: 4, estimate_expiring: 5 };
 const TERMINAL = new Set(['cancelled','canceled','completed','invoiced','paid','review_requested','closed','noshow','no_show','no-show','superseded','lost']);
 // A dispatch no-show (FUN-02) stops automatic payment and estimate reminders like a cancel; staff collect any fee by hand.
 const UNPAYABLE_JOB = new Set(['cancelled','canceled','superseded','lost','noshow','no_show','no-show']);
@@ -284,13 +289,19 @@ export async function runDueMessages(deps, { now, dryRun = false, requestId } = 
   // Nothing may reach a customer overnight, so the tick does not even scan.
   const quiet = quietHoursDecision(at);
   if (!quiet.allowed) return { ...summary, deferred: 'quiet_hours', notBefore: quiet.notBefore };
-  summary.kinds = await kindReadiness([...SCHEDULED_KINDS, ...(crewOutbox ? ['crew_assignment'] : [])], { templates, flags, links, dryRun });
+  summary.kinds = await kindReadiness([...SCHEDULED_KINDS, ...(crewOutbox ? CREW_KINDS : [])], { templates, flags, links, dryRun });
   summary.kinds.portal_invitation = portalInvite ? 'ready' : 'not_configured';
   const ready = new Set(Object.keys(summary.kinds).filter(kind => summary.kinds[kind] === 'ready' && kind !== 'portal_invitation'));
   if (!ready.size && !portalInvite) return summary;
   const jobs = await store.jobRecords([...SCHEDULER_JOB_FIELDS]), byId = new Map(jobs.map(job => [job.id, job]));
   const selected = dueMessages(jobs, { now: at, settings, kinds: ready });
-  const crew = ready.has('crew_assignment') ? (await crewOutbox.pending(settings.maxSendsPerTick * 2)).filter(entry => safeId(entry?.jobId) && byId.has(entry.jobId)).map(entry => ({ kind: 'crew_assignment', jobId: entry.jobId, anchor: '', step: 0, entry })) : [];
+  const crewReady = CREW_KINDS.filter(kind => ready.has(kind));
+  // The notice id is the anchor, so each employee's notice is its own item. An
+  // unreadable crew outbox never stops the customer reminders in this tick.
+  let pendingCrew = [];
+  if (crewReady.length) { try { pendingCrew = await crewOutbox.pending(settings.maxSendsPerTick * 2, { kinds: crewReady, dryRun }); } catch { summary.crewOutbox = 'unavailable'; } }
+  const crew = (Array.isArray(pendingCrew) ? pendingCrew : []).filter(entry => safeId(entry?.jobId) && byId.has(entry.jobId) && crewReady.includes(entry.messageKind || 'crew_assignment'))
+    .map(entry => ({ kind: entry.messageKind || 'crew_assignment', jobId: entry.jobId, anchor: safeId(entry.id) ? entry.id : '', step: 0, entry }));
   const holds = await readHolds(store, summary.today), heldLast = item => holds.entries.has(itemKey(item)) ? 1 : 0;
   const items = [...selected.due, ...(portalInvite ? portalRetries(jobs, { now: at }) : []), ...crew].sort((left, right) => heldLast(left) - heldLast(right) || order(left, right));
   Object.assign(summary, { scanned: jobs.length, due: items.length, held: items.filter(heldLast).length, skipped: selected.skipped });
@@ -302,10 +313,10 @@ export async function runDueMessages(deps, { now, dryRun = false, requestId } = 
     if (calls >= settings.maxSendsPerTick * CALLS_PER_SEND) { summary.limitReached = true; record({ status: 'not_attempted', reason: 'call_limit' }); continue; }
     if (item.kind === 'day_before_reminder' && (clock < window.start || clock >= window.end)) { record({ status: 'deferred', reason: 'send_window' }); continue; }
     const approved = item.kind !== 'portal_invitation';
-    if (approved && item.kind !== 'crew_assignment') { const shortcut = await handled(item, job, nowMs, flags); if (shortcut) { record(shortcut); continue; } }
+    if (approved && !item.entry) { const shortcut = await handled(item, job, nowMs, flags); if (shortcut) { record(shortcut); continue; } }
     if (budget() < (approved ? ITEM_COST : PORTAL_COST) + FINISH_COST) { summary.budgetExhausted = true; record({ status: 'not_attempted', reason: 'subrequest_budget' }); continue; }
     calls += 1; summary.attempted += 1;
-    const input = { kind: item.kind, jobId: item.jobId, ...(item.entry ? { overrides: { crewId: item.entry.crewId } } : {}) };
+    const input = { kind: item.kind, jobId: item.jobId, ...(item.entry ? { overrides: { crewId: item.entry.crewId, ...(safeId(item.entry.id) ? { noticeId: item.entry.id } : {}) } } : {}) };
     let outcome;
     try {
       if (dryRun) {

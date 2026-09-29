@@ -213,7 +213,7 @@ test('Hub rescheduling preserves the signed handoff and observed revision throug
 test('walkthrough conversion keeps canonical IDs and durable acceptance metadata',()=>{
   const handoff=read('functions/_lib/walkthrough-handoff.js'),client=read('crew/gameplan-handoff.js');
   for(const marker of ['sourceWalkthroughId','convertedJobId','conversionStatus','acceptedAt','acceptedBy','termsVersion','signatureCaptured','in_person_signature','syncIdempotencyKey'])assert.ok(handoff.includes(marker),marker+' is missing');
-  assert.match(handoff,/await mutateDispatch\(adapter, actor, dispatchInput, now\)/);
+  assert.match(handoff,/await mutateDispatch\(adapter, actor, dispatchInput, now, \{ authorize: session => requireQuoteAuthor\(session, env\) \}\)/);
   assert.match(handoff,/walkthroughHandoffs/);
   assert.doesNotMatch(handoff,/status: 'completed'|pipelineStatus: 'completed'/);
   assert.match(client,/highlevelOpportunityId/);
@@ -411,9 +411,11 @@ test('crew tools provide a job-aware employee home and one connected workflow',(
 
 test('walkthrough access stays limited to Zac Tyler and Alex while employees get pre-job and closeout',()=>{
   const auth=read('crew/hub-auth.js');
-  for(const marker of ['current.businessAccess === true','function canRunBusiness','href !== \'/crew/gameplan\' || canRunBusiness()'])assert.match(auth,new RegExp(marker.replace(/[.*+?^${}()|[\]\\]/g,'\\$&')));
+  // P2-12: the walkthrough also opens for a server-reported quotes.author (sales role, EGC_STAFF_ROLE_PERMISSIONS);
+  // with the flag off that set is exactly canRunBusiness (tests/quote-permissions.test.mjs).
+  for(const marker of ['current.businessAccess === true','function canRunBusiness','function canRunWalkthrough',"current.capabilities.includes('quotes.author')",'href !== \'/crew/gameplan\' || canRunWalkthrough()'])assert.match(auth,new RegExp(marker.replace(/[.*+?^${}()|[\]\\]/g,'\\$&')));
   assert.doesNotMatch(auth,/zacb|tylerg|alexk/i,'staff names live only in functions/_lib/business-users.js');
-  for(const marker of ['denyWalkthrough',"location.replace('/crew/?notice=walkthrough-restricted')",'!EGCHubAuth.canRunBusiness(user)'])assert.match(crew,new RegExp(marker.replace(/[.*+?^${}()|[\]\\]/g,'\\$&')));
+  for(const marker of ['denyWalkthrough',"location.replace('/crew/?notice=walkthrough-restricted')",'!EGCHubAuth.canRunWalkthrough(user)'])assert.match(crew,new RegExp(marker.replace(/[.*+?^${}()|[\]\\]/g,'\\$&')));
   assert.match(crewHome,/\(business\|\|job\.type!==\'walkthrough\'\)/);
   assert.match(crewHome,/document\.getElementById\('walkthrough-tool'\)\.hidden=!business/);
   assert.match(crewHome,/Pre-job → closeout/);
@@ -826,8 +828,13 @@ test('open-shift scheduling fields persist on the canonical job record',()=>{
   assert.match(suite,/b\.type==='job'\?'':'ops-hidden'/);
   assert.match(suite,/b\.type==='blocked'\?'ops-hidden':''/);
   assert.match(employee,/employee-suite\.css\?v=20260909gusto/);
-  // Bumped deliberately (LEGACY-SEND): the customer thread delivery labels changed.
-  assert.match(employee,/employee-suite\.js\?v=20260928team/);
+  // Bumped deliberately (LEGACY-SEND): the customer thread delivery labels changed; (TEAM-UI) then (PAY-TIMESHEETS merged
+  // with PRICE-SCRUB): the timesheet screen mounts the payroll week card and shows pay only where the server sent it;
+  // (PAY-TIMESHEETS fourth check): the profile form's rate field only for a viewer who sets pay; (SYNC-QUEUE) page-load
+  // sync retries skip visits the server schedule-sync queue owns; (PAY-TIMESHEETS after SYNC-QUEUE and P1-06) one new tag;
+  // (CHANGE-ORDERS) "Send decision" now appends to the decisions saved at that moment in a transaction; (QUOTE-DRAFT) a
+  // signed handoff syncs from its saved snapshot only for its own sync.
+  assert.match(employee,/employee-suite\.js\?v=20260929quote/);
 });
 
 test('recurring visits request a server-side handoff clone instead of copying prior execution or payments',()=>{
@@ -889,9 +896,12 @@ test('crew photo evidence is keyboard accessible',()=>{
 });
 
 test('public quote progress and production links stay configured',()=>{
-  assert.match(commercial,/const shell=form\.closest\('\.quote-form'\)\|\|document/);
-  assert.match(commercial,/const dots=shell\.querySelectorAll\('\.form-step-dot'\)/);
-  assert.match(commercial,/const lbl=shell\.querySelector\('\.form-step-label'\)/);
+  // Generated pages run the multi-step form from /site-forms.js (SITE-4) instead of an inline copy.
+  assert.match(commercial,/<script src="\/site-forms\.js\?v=[0-9a-f]{12}" defer><\/script>/);
+  const forms=read('site-forms.js');
+  assert.match(forms,/const shell=form\.closest\('\.quote-form'\)\|\|document/);
+  assert.match(forms,/const dots=shell\.querySelectorAll\('\.form-step-dot'\)/);
+  assert.match(forms,/const lbl=shell\.querySelector\('\.form-step-label'\)/);
   const publicSource=sourceFiles(new URL('..',import.meta.url))
     .filter(x=>x.isFile()&&/\.(?:html|py)$/.test(x.name))
     .map(x=>fs.readFileSync(`${x.parentPath}/${x.name}`,'utf8')).join('\n');
@@ -1197,7 +1207,8 @@ test('customer portal connects appointments estimates payments photos progress a
 test('post-booking portal saves customer memory decisions rebooking family access credits and Garage Guard',async()=>{
   const portalApi=await import('../functions/api/customer-portal.js'),env={...TEST_HUB_ENV,HUB_SESSION_SECRET:'post-booking-secret',FIREBASE_API_KEY:'firebase-test'},cookie=(await createCustomerPortalSessionCookie(env,'job-cx',{linkVersion:0})).split(';')[0],patches=[];
   const fields={customer:{stringValue:'Dana Customer'},date:{stringValue:'2026-09-18'},time:{stringValue:'09:00'},address:{stringValue:'123 Pine St'},serviceType:{stringValue:'Garage Turnaround'},total:{integerValue:'1400'},status:{stringValue:'in_progress'},customerDecisions:{arrayValue:{values:[{mapValue:{fields:{id:{stringValue:'decision-1'},title:{stringValue:'Remove cabinet?'},details:{stringValue:'Damaged and unsafe.'},priceDelta:{integerValue:'75'},timeDeltaMinutes:{integerValue:'20'},status:{stringValue:'pending'},promptedAt:{stringValue:'2026-09-04T18:00:00Z'}}}}]}},giftWallet:{mapValue:{fields:{cards:{arrayValue:{values:[{mapValue:{fields:{id:{stringValue:'credit-1'},label:{stringValue:'Garage Guard credit'},issuedAmount:{integerValue:'100'},remainingAmount:{integerValue:'100'},source:{stringValue:'Unused visit'}}}}]}}}}},garageGuard:{mapValue:{fields:{plan:{stringValue:'guard'},status:{stringValue:'active'},visitsIncluded:{integerValue:'4'},visitsRemaining:{integerValue:'3'}}}}};
-  const originalFetch=globalThis.fetch;globalThis.fetch=async(url,options={})=>{if((options.method||'GET')==='PATCH'){const body=JSON.parse(options.body);patches.push(body.fields);return new Response(JSON.stringify({name:'projects/egcw-1ec83/databases/(default)/documents/jobs/job-cx',fields:body.fields}),{status:200})}return new Response(JSON.stringify({name:'projects/egcw-1ec83/databases/(default)/documents/jobs/job-cx',fields}),{status:200})};
+  // FUN-03: decisions, rebooking and credits commit the job change with its funnel event.
+  const originalFetch=globalThis.fetch,events=[];globalThis.fetch=async(url,options={})=>{if(new URL(url).pathname.endsWith('/documents:commit')){for(const write of JSON.parse(options.body).writes)(write.update.name.includes('/documents/jobs/')?patches:events).push(write.update.fields);return new Response(JSON.stringify({commitTime:'2026-09-07T00:00:00Z'}),{status:200})}if((options.method||'GET')==='PATCH'){const body=JSON.parse(options.body);patches.push(body.fields);return new Response(JSON.stringify({name:'projects/egcw-1ec83/databases/(default)/documents/jobs/job-cx',fields:body.fields}),{status:200})}return new Response(JSON.stringify({name:'projects/egcw-1ec83/databases/(default)/documents/jobs/job-cx',fields}),{status:200})};
   const post=body=>portalApi.onRequestPost({request:new Request('https://easygaragecleaning.com/api/customer-portal',{method:'POST',headers:{Origin:'https://easygaragecleaning.com',Cookie:cookie,'Content-Type':'application/json'},body:JSON.stringify(body)}),env});
   try{
     const view=await portalApi.onRequestGet({request:new Request('https://easygaragecleaning.com/api/customer-portal',{headers:{Cookie:cookie}}),env}),data=await view.json();assert.equal(data.experience.decisions[0].status,'pending');assert.equal(data.experience.giftWallet.available,100);assert.equal(data.experience.garageGuard.visitsRemaining,3);assert.equal(data.payment.completionRequiresPayment,true);
@@ -1210,6 +1221,7 @@ test('post-booking portal saves customer memory decisions rebooking family acces
     assert.equal(patches.some(p=>p.customerMemory?.mapValue?.fields?.accessInstructions?.stringValue==='Use east door'),true);
     assert.equal(patches.some(p=>p.customerDecisions?.arrayValue?.values?.[0]?.mapValue?.fields?.status?.stringValue==='approved'),true);
     assert.equal(patches.some(p=>p.payment?.mapValue?.fields?.giftCreditApplied?.integerValue==='75'),true);
+    assert.deepEqual(events.map(e=>e.type.stringValue),['change_order.approved','rebook.requested','credit.redeemed']);
     const collaboratorCookie=(await createCustomerPortalSessionCookie(env,'job-cx',{actorId:'person-1',permissions:{view:true,decide:true,pay:false,rebook:true}})).split(';')[0];
     const denied=await portalApi.onRequestPost({request:new Request('https://easygaragecleaning.com/api/customer-portal',{method:'POST',headers:{Origin:'https://easygaragecleaning.com',Cookie:collaboratorCookie,'Content-Type':'application/json'},body:JSON.stringify({action:'apply_gift_credit',card_id:'credit-1',amount:25,request_id:'blocked'})}),env});assert.equal(denied.status,403);
   }finally{globalThis.fetch=originalFetch}

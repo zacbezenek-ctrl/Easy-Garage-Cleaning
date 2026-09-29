@@ -1,0 +1,93 @@
+/* Owner catalog & pricing screen (employee-catalog.js). Scoped under .egc-catalog / .cat-*; colours come from the
+   Hub UI kit tokens (employee-ui-kit.css). Phone first: one column, 44px targets, 16px inputs at <=680px, table rows
+   become cards and nothing scrolls sideways. */
+.egc-catalog{padding-bottom:var(--hub-space-4);max-width:1180px}
+.egc-catalog h2{font-size:20px}
+.egc-catalog h4{margin:0 0 6px;font:700 15px/1.3 var(--hub-font);color:var(--hub-navy);overflow-wrap:anywhere}
+.egc-catalog p{overflow-wrap:anywhere}
+.cat-muted,.cat-meta{color:var(--hub-muted);font-size:13px;line-height:1.4}
+.cat-meta{display:block;overflow-wrap:anywhere}
+.cat-feedback{display:grid;gap:var(--hub-space-2)}
+.cat-feedback:empty{display:none}
+.cat-retry p{margin:6px 0 0}
+.cat-tabs{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:4px;padding:4px;background:var(--hub-soft);border:1px solid var(--hub-line);border-radius:var(--hub-radius-lg)}
+.cat-tabs button{min-height:var(--hub-tap);min-width:0;border:0;border-radius:var(--hub-radius);background:transparent;color:var(--hub-muted);font:700 14px/1.2 var(--hub-font);cursor:pointer;padding:6px 8px;overflow-wrap:anywhere;touch-action:manipulation}
+.cat-tabs button.active{background:#fff;color:var(--hub-navy);box-shadow:0 1px 3px rgba(15,25,42,.14)}
+.cat-tabs button:focus-visible{outline:3px solid rgba(238,92,43,.35);outline-offset:1px}
+.cat-panel,.cat-settings,.cat-items,.cat-draft,.cat-list{display:grid;gap:var(--hub-space-4);min-width:0}
+.cat-card{display:grid;gap:var(--hub-space-3)}
+.cat-card>p{margin:0}
+.cat-fields{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,220px),1fr));gap:var(--hub-space-3);align-items:start}
+.cat-markups{grid-template-columns:repeat(auto-fit,minmax(min(100%,160px),1fr))}
+.cat-fields>*,.cat-filters>*{min-width:0}
+.cat-error{color:var(--hub-red)!important;font-weight:700}
+.egc-catalog [aria-invalid="true"],.cat-dialog [aria-invalid="true"]{border-color:var(--hub-red)!important}
+.cat-sticky{position:sticky;bottom:0;z-index:2;display:flex;flex-wrap:wrap;gap:var(--hub-space-2);padding:var(--hub-space-3);margin:0 calc(-1 * var(--hub-space-2));background:rgba(251,250,247,.96);border-top:1px solid var(--hub-line);box-shadow:0 -8px 20px rgba(15,25,42,.06)}
+.cat-sticky .hub-btn{flex:1 1 160px}
+.cat-toolbar .hub-btn{flex:1 1 auto}
+.cat-filters{display:grid;gap:var(--hub-space-2);padding:var(--hub-space-3);background:var(--hub-card);border:1px solid var(--hub-line);border-radius:var(--hub-radius)}
+.cat-filter-more>summary{min-height:var(--hub-tap);display:flex;align-items:center;gap:8px;font:700 14px/1.2 var(--hub-font);color:var(--hub-navy);cursor:pointer;list-style-position:inside}
+.cat-filter-more>summary::-webkit-details-marker{display:none}
+.cat-filter-more>summary::before{content:'+';display:inline-grid;place-items:center;width:22px;height:22px;border:1px solid var(--hub-line);border-radius:var(--hub-radius);font:700 15px/1 var(--hub-font);color:var(--hub-muted)}
+.cat-filter-more[open]>summary::before{content:'\2212'}
+.cat-filter-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,140px),1fr));gap:var(--hub-space-3);padding-top:var(--hub-space-2)}
+.cat-filter-grid>*{min-width:0}
+.cat-count{margin:0;color:var(--hub-muted);font-size:13px}
+.cat-table-wrap{min-width:0;border:1px solid var(--hub-line);border-radius:var(--hub-radius);background:#fff}
+.cat-table{width:100%;border-collapse:collapse;font-size:14px;table-layout:fixed}
+.cat-table th,.cat-table td{padding:10px 12px;border-bottom:1px solid var(--hub-line);text-align:left;vertical-align:top;overflow-wrap:anywhere;min-width:0}
+.cat-table th{font:700 11px/1.3 var(--hub-mono);letter-spacing:.08em;text-transform:uppercase;color:var(--hub-muted);background:var(--hub-soft)}
+.cat-table th:nth-child(1){width:30%}.cat-table th:nth-child(5){width:150px}
+.cat-table tr:last-child td{border-bottom:0}
+.cat-item-cell strong{display:block;color:var(--hub-navy)}
+.cat-chips{display:flex;flex-wrap:wrap;gap:4px;margin-top:6px}
+.cat-chips:empty{display:none}
+.cat-chip,.cat-badge{display:inline-flex;align-items:center;max-width:100%;padding:2px 8px;border-radius:999px;font:700 11px/1.5 var(--hub-mono);letter-spacing:.04em;text-transform:uppercase;overflow-wrap:anywhere}
+.cat-chip{background:var(--hub-soft);color:var(--hub-ink);border:1px solid var(--hub-line)}
+.cat-chip.new,.cat-badge.draft{background:#e7eff9;color:var(--hub-blue);border:1px solid #c5d8ef}
+.cat-badges{display:flex;flex-wrap:wrap;gap:4px;margin-bottom:4px}
+.cat-badge.stale{background:#fdecec;color:var(--hub-red);border:1px solid #efb5b8}
+.cat-badge.unverified{background:#fff4dc;color:var(--hub-amber);border:1px solid #edd29a}
+.cat-badge.verified{background:#e8f5ee;color:var(--hub-green);border:1px solid #b9dcc9}
+.cat-row-actions{display:flex;flex-wrap:wrap;gap:6px}
+.cat-row-actions .hub-btn{flex:1 1 auto}
+.cat-more{justify-self:center}
+.cat-changes{list-style:none;margin:0;padding:0;display:grid;gap:var(--hub-space-2)}
+.cat-changes li{display:flex;flex-wrap:wrap;justify-content:space-between;align-items:center;gap:var(--hub-space-2);padding:var(--hub-space-3);background:#fff;border:1px solid var(--hub-line);border-radius:var(--hub-radius)}
+.cat-changes li>div:first-child{min-width:0;flex:1 1 200px}
+.cat-subhead{margin:6px 0 0!important;font:700 15px/1.3 var(--hub-font)!important;color:var(--hub-navy)}
+.cat-checks{border:1px solid var(--hub-line);border-radius:var(--hub-radius);padding:8px 12px 10px;margin:0;display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,200px),1fr));gap:0 12px;min-width:0}
+.cat-checks legend{font:700 12px/1.3 var(--hub-font);padding:0 4px}
+.cat-checks>small{grid-column:1/-1;color:var(--hub-muted)}
+.cat-checks.invalid{border-color:var(--hub-red)}
+.cat-checks .hub-check span{overflow-wrap:anywhere}
+.cat-diff-list{margin:6px 0 0;padding-left:18px;display:grid;gap:4px}
+.cat-diff-item{border:1px solid var(--hub-line);border-radius:var(--hub-radius);padding:10px 12px;background:#fff;margin-top:8px;min-width:0}
+.cat-diff-item dl{margin:0;display:grid;gap:8px}
+.cat-diff-row{display:grid;grid-template-columns:minmax(0,140px) minmax(0,1fr);gap:8px;font-size:14px}
+.cat-diff-row dt{font-weight:700;color:var(--hub-muted);overflow-wrap:anywhere}
+.cat-diff-row dd{margin:0;overflow-wrap:anywhere}
+.cat-diff-row del{color:var(--hub-red)}
+.cat-diff-row ins{color:var(--hub-green);text-decoration:none;font-weight:700}
+.cat-diff-table{border:1px solid var(--hub-line);border-radius:var(--hub-radius);background:#fff;min-width:0}
+.cat-diff-table table{width:100%;border-collapse:collapse;font-size:14px;table-layout:fixed}
+.cat-diff-table :is(th,td){padding:8px 10px;border-bottom:1px solid var(--hub-line);text-align:left;vertical-align:top;overflow-wrap:anywhere}
+.cat-diff-table thead th{font:700 11px var(--hub-mono);text-transform:uppercase;letter-spacing:.06em;color:var(--hub-muted);background:var(--hub-soft)}
+.cat-dialog .hub-dialog-body>.hub-field,.cat-dialog .hub-dialog-body>.cat-checks{min-width:0}
+@media (max-width:680px){
+  .egc-catalog .hub-head .hub-actions .hub-btn{flex:1 1 auto}
+  .cat-table,.cat-table tbody,.cat-table tr{display:block;width:100%}
+  .cat-table thead{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0);white-space:nowrap}
+  .cat-table tr{padding:12px;border-bottom:1px solid var(--hub-line)}
+  .cat-table tr:last-child{border-bottom:0}
+  .cat-table td{display:grid;grid-template-columns:minmax(0,88px) minmax(0,1fr);gap:4px 10px;padding:6px 0;border:0}
+  .cat-table td>*{grid-column:2}
+  .cat-table td::before{content:attr(data-label);grid-column:1;grid-row:1 / span 4;font:700 11px/1.5 var(--hub-mono);letter-spacing:.06em;text-transform:uppercase;color:var(--hub-muted)}
+  .cat-table td.cat-item-cell{display:block;padding-top:0}
+  .cat-table td.cat-item-cell::before{content:none}
+  .cat-table td.cat-row-actions{display:flex;padding-top:8px}
+  .cat-table td.cat-row-actions::before{content:none}
+  .cat-diff-row{grid-template-columns:minmax(0,1fr)}
+  .cat-sticky{margin:0}
+  .cat-dialog .hub-field :is(input,select,textarea){font-size:16px}
+}

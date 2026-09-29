@@ -6,7 +6,7 @@ import {join} from 'node:path';
 import {allowlist,difference,mergePending,ratchet} from './e2e/helpers/allowlist.mjs';
 import {e2eWorkers} from './e2e/helpers/workers.mjs';
 
-const TOUCH_PROJECTS=['iphone-375','android-pixel7'];
+const TOUCH_PROJECTS=['iphone-375','android-pixel7','tablet-768'];
 
 test('multiset difference counts repeated identical controls instead of collapsing them',()=>{
  assert.deepEqual(difference(['a','a','b','c'],['a','c']),['a','b']);
@@ -43,9 +43,18 @@ test('checked-in allowlist is sorted debt for touch projects only, with no empty
   for(const [key,items] of Object.entries(entries)){
    assert.ok(items.length,`${kind} ${key} is empty; delete it`);assert.deepEqual(items,[...items].sort(),`${kind} ${key} must be sorted`);
    if(kind==='tapTargets')assert.ok(TOUCH_PROJECTS.includes(key.split(' ')[0]),`${key} is not a touch project`);
-   else assert.match(key,/^(\/[\w-]+\.html|hub:.+)$/);
+   else assert.match(key,/^((?:\/[\w-]+)+\.html|hub:.+)$/);
   }
  }
+});
+
+// MOBILE-TAP cleared the tap-target debt (441 entries on 60 page keys). The list
+// only shrinks, so regenerating it can never bring a sub-44px control back.
+test('tap-target debt stays cleared and keyboard debt is limited to the two free-text fields',()=>{
+ const list=allowlist();
+ assert.deepEqual(list.tapTargets,{},'fix the control instead of allowlisting a new sub-44px target');
+ const known={'hub:business hub service request form':['input[name=onsiteContact] needs tel'],'hub:employee hub sign in':['input#lqm-amount needs decimal']};
+ for(const [key,items] of Object.entries(list.keyboards))for(const item of items)assert.ok(known[key]?.includes(item),`${key}: ${item} is new keyboard debt`);
 });
 
 test('EGC_E2E_WORKERS becomes a number for integers, stays a percentage otherwise and rejects anything else',()=>{

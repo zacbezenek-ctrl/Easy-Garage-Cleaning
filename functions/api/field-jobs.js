@@ -2,12 +2,17 @@ import { getHubSession, hasBusinessAccess, listHubUserProfiles } from '../_lib/h
 import { employeeAccountsConfigured, listEmployeeApplications } from '../_lib/employee-accounts.js';
 import { firebaseServiceAccountConfigured } from '../_lib/firebase-service-account.js';
 import { createJobAssignmentAccess } from '../_lib/job-assignment.js';
-import { fieldCancelled, fieldCommand, fieldFailure, fieldFingerprint, fieldId, fieldJobProjection, fieldPhotos, fieldRequestId, fieldStage, fieldText, fieldViewerWorksOn } from '../_lib/field-execution.js';
+import { fieldCancelled, fieldCommand, fieldFailure, fieldFingerprint, fieldId, fieldJobProjection, fieldPhotos, fieldRequestId, fieldStage, fieldText } from '../_lib/field-execution.js';
+import { assignedDuring, assignedOn, fieldVisitCommand, fieldVisitProjection, fieldVisitsEnabled } from '../_lib/field-execution-visits.js';
 import { createFieldStore } from '../_lib/field-execution-store.js';
+import { applyMembershipVisit, garageGuardStorage, garageGuardVisitTrackingEnabled } from '../_lib/garage-guard-visits.js';
 import { createFieldPhotoClient, decodeFieldPhoto, fieldPhotosConfigured, verifyFieldPhotoMetadata } from '../_lib/field-execution-photos.js';
 import { syncFieldCompletion } from '../_lib/field-execution-sync.js';
+import { fieldFunnelType, fieldFunnelWrite } from '../_lib/job-funnel-events.js';
 import { fieldJobTime } from '../_lib/field-execution-time.js';
 import { fieldExpenseCloseoutMissing, fieldExpensesEnabled, requireFieldExpenseCloseout } from '../_lib/field-expenses.js';
+import { fieldCapabilities } from '../_lib/field-permissions.js';
+import { addDays } from '../_lib/dispatch-time.js';
 
 const reply = (status, body) => Response.json(body, { status, headers: { 'Cache-Control': 'private, no-store', 'X-Content-Type-Options': 'nosniff' } });
 const mutationOriginAllowed = request => {
@@ -24,7 +29,7 @@ async function context(request, env) {
   if (!session) throw fieldFailure('Sign in to the Employee Hub to open your jobs.', 401, 'FIELD_AUTH_REQUIRED');
   if (!firebaseServiceAccountConfigured(env)) throw fieldFailure('Secure job storage is not connected. Contact operations.', 503, 'FIELD_STORAGE_UNAVAILABLE');
   const manager = hasBusinessAccess(session), access = createJobAssignmentAccess(env, session), store = createFieldStore(env);
-  return { session, manager, access, store };
+  return { session, manager, access, store, visits: fieldVisitsEnabled(env) };
 }
 
 async function authorizedJob(ctx, id) {
@@ -33,6 +38,22 @@ async function authorizedJob(ctx, id) {
   if (!job || !['job', 'cleanout', 'reorg'].includes(job.type) || job.recordType) throw fieldFailure('This job is unavailable. Open Today for your current assignments.', 404, 'FIELD_JOB_NOT_FOUND');
   if (!ctx.manager && !await ctx.access.assigned(job)) throw fieldFailure('This job is not currently assigned to your account. Open Today for your assignments.', 403, 'FIELD_JOB_NOT_ASSIGNED');
   return job;
+}
+
+// Multi-day visits: a crew write needs an assignment on the current Denver day.
+// An end of day counts for the visit day it names when that is today or, for
+// one saved offline before midnight, yesterday.
+async function requireWorkday(ctx, job, input = {}) {
+  if (!ctx.visits || ctx.manager) return;
+  const today = fieldToday(new Date()), day = input.action === 'end_day' && [today, addDays(today, -1)].includes(input.visitDate) ? input.visitDate : today;
+  if (!await assignedOn(job, day, ctx.access)) throw fieldFailure(day === today ? 'You are not scheduled on this job today. Ask operations to add you to today’s crew before recording work.' : `You were not scheduled on this job on ${day}. Send this end of day’s notes to operations.`, 403, 'FIELD_JOB_NOT_ASSIGNED_TODAY');
+}
+
+async function projection(ctx, job, events, options) {
+  const view = fieldJobProjection(job, events, options);
+  if (!ctx.visits) return view;
+  const today = fieldToday(new Date());
+  return { ...view, visits: fieldVisitProjection(job, { today, manager: ctx.manager, viewer: ctx.session.user, assignedToday: ctx.manager || await assignedOn(job, today, ctx.access) }) };
 }
 
 async function displayContext(ctx, env, jobs) {
@@ -52,14 +73,16 @@ async function displayContext(ctx, env, jobs) {
   return job => ({ manager: ctx.manager, crewNames, vehicleName: resources.get(job.vehicleId)?.name || '', crewName: resources.get(job.crewId)?.name || '', viewer: ctx.session.user, resourceNames });
 }
 
+const capabilities = (ctx, env, job) => fieldCapabilities({ session: ctx.session, manager: ctx.manager, job, env, access: ctx.access });
+
 async function detail(ctx, env, jobId, cursor = '') {
   const job = await authorizedJob(ctx, jobId);
-  const [history, display] = await Promise.all([ctx.store.events(jobId, cursor), displayContext(ctx, env, [job])]);
-  const projection = fieldJobProjection(job, history.events, display(job));
+  const [history, display, allowed] = await Promise.all([ctx.store.events(jobId, cursor), displayContext(ctx, env, [job]), capabilities(ctx, env, job)]);
+  const view = await projection(ctx, job, history.events, { ...display(job), capabilities: allowed });
   // With FIELD_EXPENSE_CLOSEOUT_REQUIRED on, an open job lists its missing cost closeout (no amounts).
-  if (projection.canEdit) projection.completionMissing.push(...await fieldExpenseCloseoutMissing(env, job.id, { safe: true }));
+  if (view.canEdit) view.completionMissing.push(...await fieldExpenseCloseoutMissing(env, job.id, { safe: true }));
   // features lets the job page skip optional modules (and their API calls) that are switched off.
-  return { job: projection, historyCursor: history.cursor, photosAvailable: fieldPhotosConfigured(env), features: { jobCosts: fieldExpensesEnabled(env) }, timezone: 'America/Denver' };
+  return { job: view, historyCursor: history.cursor, photosAvailable: fieldPhotosConfigured(env), features: { jobCosts: fieldExpensesEnabled(env) }, timezone: 'America/Denver' };
 }
 
 function errorResponse(error) {
@@ -89,14 +112,14 @@ export async function onRequestGet({ request, env }) {
     for (const job of source) {
       // This is the signed-in employee's day, including for managers. Managers
       // can open any job by ID and use dispatch for the company-wide view.
-      if (!await ctx.access.assigned(job) || !fieldViewerWorksOn(job, ctx.session.user, date, end.toISOString().slice(0, 10))) continue;
+      if (!await assignedDuring(job, date, end.toISOString().slice(0, 10), ctx.access)) continue;
       const stage = fieldStage(job), completed = ['completed', 'paid', 'invoiced', 'review_requested'].includes(stage);
       if (status === 'active' && (completed || fieldCancelled(job)) || status === 'completed' && !completed || status === 'cancelled' && stage !== 'cancelled') continue;
       jobs.push(job);
     }
     jobs.sort((a, b) => `${a.date} ${a.time || '99:99'}`.localeCompare(`${b.date} ${b.time || '99:99'}`) || a.id.localeCompare(b.id));
-    const display = await displayContext(ctx, env, jobs);
-    return reply(200, { ok: true, jobs: jobs.map(job => fieldJobProjection(job, [], display(job))), date, endDate: end.toISOString().slice(0, 10), timezone: 'America/Denver', photosAvailable: fieldPhotosConfigured(env), generatedAt: new Date().toISOString() });
+    const [display, allowed] = await Promise.all([displayContext(ctx, env, jobs), Promise.all(jobs.map(job => capabilities(ctx, env, job)))]);
+    return reply(200, { ok: true, jobs: await Promise.all(jobs.map((job, index) => projection(ctx, job, [], { ...display(job), capabilities: allowed[index] }))), date, endDate: end.toISOString().slice(0, 10), timezone: 'America/Denver', photosAvailable: fieldPhotosConfigured(env), generatedAt: new Date().toISOString() });
   } catch (error) { return errorResponse(error); }
 }
 
@@ -138,6 +161,7 @@ async function savePhoto(ctx, env, job, input, fingerprint, receipt) {
   for (let attempt = 0; attempt < 3; attempt++) {
     const latest = await authorizedJob(ctx, job.id), currentReceipt = await ctx.store.readEvent(job.id, input.requestId);
     if (currentReceipt?.state === 'applied') return;
+    await requireWorkday(ctx, latest);
     if (!currentReceipt || currentReceipt.fingerprint !== fingerprint) throw fieldFailure('This upload receipt changed. Contact operations.', 409, 'FIELD_IDEMPOTENCY_CONFLICT');
     if (fieldCancelled(latest)) throw fieldFailure('The job was cancelled or marked a no-show during upload. The photo has not been added to the job.', 409, 'FIELD_JOB_CLOSED');
     const existing = fieldPhotos(latest);
@@ -161,6 +185,7 @@ export async function onRequestPost(handlerContext) {
     const receipt = await ctx.store.readEvent(job.id, input.requestId);
     if (receipt && receipt.fingerprint !== fingerprint) throw fieldFailure('This action ID was already used for different information. Refresh before retrying.', 409, 'FIELD_IDEMPOTENCY_CONFLICT');
     if (receipt?.state === 'applied') return reply(200, { ok: true, alreadyApplied: true, ...await detail(ctx, env, job.id) });
+    await requireWorkday(ctx, job, input);
     if (!receipt && job.__updateTime !== input.expectedRevision) throw fieldFailure('This job changed. Refresh to review the latest assignment and details before retrying.', 409, 'FIELD_REVISION_CONFLICT');
     if (input.action === 'photo') await savePhoto(ctx, env, job, input, fingerprint, receipt);
     else if (input.action === 'retry_completion_sync') {
@@ -170,10 +195,16 @@ export async function onRequestPost(handlerContext) {
     else {
       if (receipt) throw fieldFailure('This action is pending verification. Retry shortly.', 409, 'FIELD_ACTION_PENDING');
       if (input.action === 'complete') await requireFieldExpenseCloseout(env, job, input);
-      const result = fieldCommand(job, { ...ctx.session, manager: ctx.manager }, input);
-      await ctx.store.commit(job, result.patch, { ...result.event, fingerprint });
+      const result = (ctx.visits ? fieldVisitCommand : fieldCommand)(job, { ...ctx.session, manager: ctx.manager, capabilities: await capabilities(ctx, env, job) }, input, new Date().toISOString());
+      // FUN-03: a dispatched/arrived/started/completed milestone commits its funnel event with the job and receipt, at the receipt's server time.
+      const funnel = result.funnel ? [await fieldFunnelWrite(job, ctx.session, { requestId: input.requestId, type: fieldFunnelType(result.funnel.milestone), fromStatus: result.funnel.fromStatus, toStatus: result.funnel.toStatus }, result.event.createdAt)].filter(Boolean) : [];
+      await ctx.store.commit(job, result.patch, { ...result.event, fingerprint }, null, funnel);
       if (input.action === 'complete' && typeof handlerContext.waitUntil === 'function') {
         handlerContext.waitUntil(syncFieldCompletion(env, job.id, { actor: ctx.session }));
+      }
+      // A failed or skipped count stays 'pending' on the visit for a manager (/api/garage-guard-members).
+      if (input.action === 'complete' && result.patch.membershipVisit && garageGuardVisitTrackingEnabled(env) && typeof handlerContext.waitUntil === 'function') {
+        handlerContext.waitUntil(applyMembershipVisit(garageGuardStorage(env), ctx.session, { jobId: job.id, via: 'field' }).catch(() => null));
       }
     }
     return reply(200, { ok: true, alreadyApplied: false, ...await detail(ctx, env, job.id) });

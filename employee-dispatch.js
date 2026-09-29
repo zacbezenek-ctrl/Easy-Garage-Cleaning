@@ -8,6 +8,7 @@ const S = { host:null, root:null, date:today(), view:'day', query:'', status:'ac
 const recoveryPrefix='egc.dispatch.pending.v1.';
 // Extra views (employee-dispatch-calendar.js) register {label, range(date), step(date,count), render(target,jobs), help}; they save through save().
 const views=new Map();
+const CUSTOMER_SEARCH_DELAY_MS=300;
 function h(tag, props, ...children) {
   const node = document.createElement(tag);
   for (const [key, value] of Object.entries(props || {})) {
@@ -167,6 +168,7 @@ function jobCard(job, {compact=false,date=null}={}) {
   if(!blocked)actions.append(h('a',{class:'dp-btn primary',href:job.type==='walkthrough'?'/crew/gameplan.html?walkthroughId='+encodeURIComponent(job.id):'/crew/job.html?jobId='+encodeURIComponent(job.id)},job.type==='walkthrough'?'Open walkthrough':job.attention?.status==='open'?'Review job issue':'Open job'));
   if (active(job)) actions.append(btn('Edit / assign',()=>openJob(original)),btn('Cancel',()=>openStatus(original,'schedule.cancel'),'subtle'));
   if (active(job)&&!blocked&&job.type!=='walkthrough'&&S.data?.funnel?.reasonCodes?.noShow&&Date.parse(original.startAt)-3600000<=Date.now()) actions.append(btn('No-show',()=>openStatus(original,'schedule.no_show'),'subtle'));
+  if (active(job)&&!blocked&&!original.date) actions.append(btn('Find a time',()=>openOpenings(original),'subtle',{'aria-label':'Find a time for '+(job.customer||'this job')}));
   if (active(job)&&job.type==='job'&&window.EGCRecurring&&!segmentsOf(original).length&&!original.segmentsInvalid) actions.append(btn('Repeat',()=>window.EGCRecurring.open({templateJob:original,onChange:()=>load({quiet:true})}),'subtle dp-repeat',{'aria-label':'Repeat '+(job.customer||'this job')+' on a schedule'}));
   if (['cancelled','canceled'].includes(job.status)) actions.append(btn('Restore',()=>openStatus(original,'schedule.restore')));
   card.append(actions);
@@ -220,8 +222,48 @@ function renderBody() {
 function labeled(label,control,help) {const id=control.id||'dp-'+key();control.id=id;return h('label',{class:'dp-field',htmlFor:id},h('span',{},label),control,help?h('small',{},help):null);}
 function select(options,value,onChange,props={}) {return h('select',{onchange:e=>onChange(e.target.value),...props},options.map(([id,label])=>h('option',{value:id,selected:id===value},label)));}
 // FUN-02: reason, channel and visit-purpose codes come from the server's shared funnel definitions (GET funnel).
-const codeLabels={hub_phone:'By phone',hub_in_person:'In person',customer:'Customer',company:'EGC',diy:'Doing it themselves',service:'Service visit',install:'Install visit',return:'Return visit',rework:'Rework visit',crm_sync_pending:'CRM sync pending',no_crm_contact:'No CRM contact',b2b_account:'Business account',internal_or_test:'Internal or test'};
+const codeLabels={hub_phone:'By phone',hub_in_person:'In person',customer:'Customer',company:'EGC',diy:'Doing it themselves',service:'Service visit',install:'Install visit',return:'Return visit',rework:'Rework visit',crm_sync_pending:'CRM sync pending',no_crm_contact:'No CRM contact',b2b_account:'Business account',internal_or_test:'Internal or test',
+  garage_transformation:'Garage transformation / organization',junk_removal:'Junk removal',garage_guard_visit:'Garage Guard member visit',commercial_b2b:'Commercial / B2B',unknown:'Not sure yet',walkthrough:'On-site walkthrough',remote_photo_video_quote:'Photo or video quote',direct_phone_booking:'Booked directly by phone',b2b_request:'Business (B2B) request',rebook:'Repeat customer rebook',member_visit:'Garage Guard member visit',recurring:'Recurring service'};
 function codeSelect(codes,value='',props={}) {return select([['','Choose…'],...codes.map(code=>[code,codeLabels[code]||words(code)])],value,()=>{},props);}
+// FUN-29: the project's service line and funnel path. The server pre-fills both from the booking (GET /api/funnel-dimensions);
+// one tap is required only when nothing on file decides a value. An untouched pre-fill is not sent: the server derives it again.
+// An untouched lead-form suggestion is sent as serviceLineSuggested (a lower rule, not a staff pick); a changed select is the staff pick.
+const dimensionSources={explicit:'an earlier staff choice',visitPurpose:'the visit purpose',businessAccount:'the business account',catalogCategory:'the sold catalog items',relatedProject:'the earlier project',salesExitService:'the service name',legacyJobType:'the job type',bookingChannel:'how it was booked',recurringSeries:'the recurring plan',walkthrough:'the walkthrough',repeat:'the earlier project'};
+function dimensionControls(model,lists,read) {
+  if(!Array.isArray(lists?.serviceLines)||!Array.isArray(lists?.funnelPaths))return null;
+  const controls={serviceLine:codeSelect(lists.serviceLines,'',{name:'serviceLine',required:true}),funnelPath:codeSelect(lists.funnelPaths,'',{name:'funnelPath',required:true})},hints={},derived={serviceLine:null,funnelPath:null},suggested={serviceLine:null,funnelPath:null};
+  // The lead-form answer per customer: GHL is read once per form, not on every keystroke.
+  const answers=new Map();
+  for(const [name,label]of [['serviceLine','Service line'],['funnelPath','How this project reached us']]) {
+    // The hint describes the select without becoming part of its name.
+    hints[name]=h('small',{class:'dp-muted',id:'dp-hint-'+key(),'aria-hidden':'true'});controls[name].setAttribute('aria-describedby',hints[name].id);
+    controls[name].addEventListener('change',()=>{controls[name].dataset.touched='1';});
+    const wrap=labeled(label,controls[name]);wrap.append(hints[name]);model.fields.append(wrap);
+  }
+  const settle=(name,dim)=>{
+    const select=controls[name],has=value=>typeof value==='string'&&[...select.options].some(option=>option.value===value);
+    // A project that holds "Not sure yet" is asked again: the select starts empty, so the answer needs a new tap.
+    const current=has(dim?.value)?dim.value:'',unsure=dim?.required===true&&current==='unknown',value=unsure?'':current,suggestion=!value&&has(dim?.suggestion)?dim.suggestion:'';
+    derived[name]=current||null;suggested[name]=suggestion||null;
+    if(!select.dataset.touched)select.value=value||suggestion;
+    select.required=!dim||dim.required===true;
+    hints[name].textContent=!dim?'The suggestion could not be loaded. Choose one.':suggestion?'Suggested by the Facebook lead form. Confirm or change it.':unsure?'Earlier marked Not sure yet. Choose the service line, or Not sure yet again.':!select.required?'Set from '+(dimensionSources[dim.source]||'the booking')+'. Change it only if it is wrong.':'Required: nothing on file decides this. Choose one.';
+  };
+  let generation=0,timer=null;
+  const refresh=()=>{clearTimeout(timer);timer=setTimeout(async()=>{
+    const g=++generation,query=read();
+    if(!query){for(const name of Object.keys(controls)){derived[name]=null;suggested[name]=null;controls[name].required=true;hints[name].textContent='Select the customer to see what is on file.';}return;}
+    for(const name of Object.keys(controls))hints[name].textContent='Checking what is on file…';
+    try{
+      const known=answers.has(query.customerId),{response,data}=await requestJSON('/api/funnel-dimensions?'+new URLSearchParams({...query,...(known?{suggest:'false'}:{})}));
+      if(g!==generation||S.modal!==model)return;
+      if(!response.ok||data.ok!==true||data.customerId!==query.customerId||typeof data.serviceLine?.required!=='boolean'||typeof data.funnelPath?.required!=='boolean')throw new Error('unverified');
+      if(!known&&['ok','unavailable','disabled'].includes(data.ghl))answers.set(query.customerId,data.serviceLine.suggestion??null);
+      settle('serviceLine',known&&data.serviceLine.required?{...data.serviceLine,suggestion:answers.get(query.customerId)}:data.serviceLine);settle('funnelPath',data.funnelPath);
+    }catch{if(g===generation&&S.modal===model){settle('serviceLine',null);settle('funnelPath',null);}}
+  },250);};
+  return {refresh,facts:()=>Object.assign({},...Object.entries(controls).map(([name,select])=>!select.value||select.value===derived[name]?{}:select.dataset.touched?{[name]:select.value}:select.value===suggested[name]?{[name]:select.value,serviceLineSuggested:true}:{}))};
+}
 function reasonControls(parent,list,{who=false,required=true}={}) {
   const lists=S.data?.funnel;if(!Array.isArray(lists?.reasonCodes?.[list]))return null;
   const code=codeSelect(lists.reasonCodes[list],'',{name:'reasonCode',required}),by=who&&Array.isArray(lists.initiatedBy)?codeSelect(lists.initiatedBy,'',{name:'initiatedBy',required}):null;
@@ -332,20 +374,37 @@ function openSearch() {
   });
   query.focus();
 }
-function openOpenings() {
-  if(!S.data)return;
-  const model=modal('Find a scheduling opening','Checks recorded jobs, time off and vehicle reservations. Confirm employees are working before booking.');if(!model)return;
+// Suggested job length from the server (functions/_lib/dispatch-duration.js). A
+// schedule span or the default is not new information, so it is never offered.
+// The job editor applies a suggestion only when it fits one workday.
+const durationFrom={line_items:'the sold quote',duration_override:'the walkthrough override',estimated_duration:'the saved estimate'},WORKDAY_MINUTES=600;
+function durationSuggestion(job) {const minutes=job?.suggestedDurationMin;return Object.hasOwn(durationFrom,job?.durationSource??'')&&Number.isInteger(minutes)&&minutes>=15&&minutes<=10080&&minutes%15===0?{minutes,source:job.durationSource,partial:job.durationSource==='line_items'&&job.durationCoverage==='partial',capped:job.durationCapped===true}:null;}
+function durationText(minutes) {const hours=Math.floor(minutes/60),rest=minutes%60;return [hours?hours+' hr':'',rest?rest+' min':''].filter(Boolean).join(' ');}
+function durationNote(job,suggested) {return 'Suggested from '+durationFrom[suggested.source]+': '+durationText(suggested.minutes)+(suggested.source==='line_items'?' for a crew of '+(job.crewNeeded||1):'')+'.'+(suggested.partial?' Some sold lines have no time estimate, so allow extra time.':'')+(suggested.capped?' The lines add up to more than 24 hr, so plan the work across days.':'');}
+function durationHint(job,suggested,control,extra='') {const id='dp-duration-'+key();control.setAttribute('aria-describedby',id);return h('small',{class:'dp-muted dp-wide dp-duration-hint',id,'aria-live':'polite'},durationNote(job,suggested)+extra);}
+function durationOptions(suggested) {
+  const rows=[['','Set duration…'],['30','30 minutes'],['60','1 hour'],['90','90 minutes'],['120','2 hours'],['180','3 hours'],['240','4 hours'],['360','6 hours'],['480','8 hours']];
+  if(!suggested)return rows;
+  const value=String(suggested.minutes),found=rows.find(([id])=>id===value),at=rows.findIndex(([id])=>Number(id)>suggested.minutes);
+  if(found)found[1]+=' · suggested';else rows.splice(at<0?rows.length:at,0,[value,durationText(suggested.minutes)+' · suggested']);
+  return rows;
+}
+function openOpenings(source) {
+  // The toolbar passes its click event; a job card passes the job to book.
+  if(!S.data)return;const job=source&&!(source instanceof Event)?source:null;
+  const suggested=durationSuggestion(job),model=modal(job?'Find a time for '+(job.customer||job.title||'this job'):'Find a scheduling opening','Checks recorded jobs, time off and vehicle reservations. Confirm employees are working before booking.');if(!model)return;
   const start=field(model,'startDate','Search from',S.date,'date',{required:true});
   const last=field(model,'lastDate','Search through',addDays(S.date,6),'date',{required:true});
-  const duration=field(model,'durationMinutes','Job duration (minutes)',120,'number',{min:15,max:1440,step:15,required:true});
-  const buffer=field(model,'travelBufferMinutes','Travel buffer (minutes)',20,'number',{min:0,max:180,step:5,required:true});
+  const duration=field(model,'durationMinutes','Job duration (minutes)',suggested&&suggested.minutes<=1440?suggested.minutes:120,'number',{min:15,max:1440,step:15,required:true});
+  if(suggested)duration.parentElement.after(durationHint(job,suggested,duration,suggested.minutes>1440?' Openings cover one day at a time, so split longer work into daily segments.':''));
+  const buffer=field(model,'travelBufferMinutes','Travel buffer (minutes)',Number.isInteger(job?.travelBufferMinutes)?job.travelBufferMinutes:20,'number',{min:0,max:180,step:5,required:true});
   const destination=field(model,'destination','New job ZIP or address (optional)','','text',{maxLength:500,autocomplete:'off',placeholder:'80525 or street address'});
   const begins=field(model,'workdayStart','Workday starts','08:00','time',{required:true});
   const ends=field(model,'workdayEnd','Workday ends','17:00','time',{required:true});
   const checks=new Map(),members=h('fieldset',{class:'dp-wide'},h('legend',{},'Employees needed together'));
-  for(const person of S.data.roster){const input=h('input',{type:'checkbox',value:person.id,checked:S.employee===person.id});checks.set(person.id,input);members.append(h('label',{class:'dp-check'},input,person.name));}
+  for(const person of S.data.roster){const input=h('input',{type:'checkbox',value:person.id,checked:job?(job.assignedCrew||[]).includes(person.id):S.employee===person.id});checks.set(person.id,input);members.append(h('label',{class:'dp-check'},input,person.name));}
   const crew=select([['','Choose employees individually'],...S.data.crews.filter(row=>row.status==='active').map(row=>[row.id,row.name])],'',id=>{const selected=S.data.crews.find(row=>row.id===id);if(selected)for(const[id,input]of checks)input.checked=selected.memberIds.includes(id);});
-  const truck=select([['','No vehicle required'],...S.data.vehicles.filter(row=>row.status==='available').map(row=>[row.id,row.name])],'',()=>{});
+  const truck=select([['','No vehicle required'],...S.data.vehicles.filter(row=>row.status==='available').map(row=>[row.id,row.name])],S.data.vehicles.some(row=>row.id===job?.vehicleId&&row.status==='available')?job.vehicleId:'',()=>{});
   model.fields.append(labeled('Saved crew to check',crew),labeled('Vehicle to check',truck),members);
   const results=h('div',{class:'dp-openings-results dp-wide','aria-live':'polite'});model.fields.append(results);
   model.footer.append(btn('Back',model.close),h('button',{type:'submit',class:'dp-btn primary'},'Check openings'));
@@ -368,7 +427,7 @@ function openOpenings() {
         if(!/^\d{4}-\d{2}-\d{2}$/.test(candidate.date||'')||!/^\d{2}:\d{2}$/.test(candidate.time||'')||!/^\d{4}-\d{2}-\d{2}$/.test(candidate.endDate||'')||!/^\d{2}:\d{2}$/.test(candidate.endTime||''))throw new Error('An opening had invalid dates. Retry before booking.');
         results.append(h('article',{},h('div',{},h('strong',{},dateText(candidate.date,true)),h('p',{},clock(candidate.time)+' – '+clock(candidate.endTime)+(candidate.endDate!==candidate.date?' · ends '+dateText(candidate.endDate,true):'')),h('small',{},employeeIds.map(person).join(', ')+(truck.value?' · '+vehicle(truck.value):''))),btn('Use this opening',()=>{
           const selectedCrew=S.data.crews.find(row=>row.id===crew.value&&row.memberIds.length===employeeIds.length&&row.memberIds.every(id=>employeeIds.includes(id)));
-          model.close();openJob(null,{...candidate,assignedCrew:employeeIds,vehicleId:query.vehicleId||'',crewId:selectedCrew?.id,crewLead:selectedCrew?.leadId,travelBufferMinutes:Number(query.travelBufferMinutes)});
+          model.close();openJob(job,{...candidate,assignedCrew:employeeIds,vehicleId:query.vehicleId||'',crewId:selectedCrew?.id,crewLead:selectedCrew?.leadId,travelBufferMinutes:Number(query.travelBufferMinutes)});
         },'primary')));
       }
       if(data.truncated)results.append(h('p',{},'Showing the first 20 openings. Narrow the search for later dates.'));
@@ -445,12 +504,16 @@ function openJob(job=null,options={}) {
     if(error.details.truncated){const custom=h('input',{type:'text',maxLength:180,placeholder:'Exact job ID from Search all jobs',oninput:event=>{sourceJobId=event.target.value.trim()||choose.value||null;choose.required=!event.target.value.trim();}});lineage.append(labeled('Different prior job ID',custom,'Only the first 50 prior visits are listed. The selected job must belong to this exact customer.'));}
     choose.focus();
   };
-  let customerGeneration=0;
-  search.addEventListener('input',async()=>{
-    if(job)return;selectedCustomer=null;sourceJobId=null;lineage.replaceChildren();const g=++customerGeneration,q=search.value.trim();if(q.length<2){customerResults.replaceChildren(h('small',{},'Type at least 2 characters.'));return;}
+  let customerGeneration=0,customerTimer=0;
+  // One search once typing pauses; a newer keystroke or a closed form drops it.
+  search.addEventListener('input',()=>{
+    if(job)return;selectedCustomer=null;sourceJobId=null;lineage.replaceChildren();clearTimeout(customerTimer);const g=++customerGeneration,q=search.value.trim();if(q.length<2){customerResults.replaceChildren(h('small',{},'Type at least 2 characters.'));return;}
     customerResults.replaceChildren(h('small',{},'Searching…'));
+    customerTimer=setTimeout(async()=>{
+    if(g!==customerGeneration||S.modal!==model)return;
     try{const r=await api('?'+new URLSearchParams({view:'customers',q}));if(g!==customerGeneration||S.modal!==model)return;customerResults.replaceChildren(...r.customers.map(c=>btn(c.name+' · '+(c.phone||c.address||'No contact details'),()=>{selectedCustomer=c;search.value=c.name;address.value=c.address||'';customerResults.replaceChildren(h('small',{},'Customer selected'));})));if(!r.customers.length)customerResults.append(h('p',{},'No matching Hub customer. Create or link the customer in Customers first.'));}
-    catch(error){if(g===customerGeneration)customerResults.replaceChildren(notice(errorText(error),'error'));}
+    catch(error){if(g===customerGeneration&&S.modal===model)customerResults.replaceChildren(notice(errorText(error),'error'));}
+    },CUSTOMER_SEARCH_DELAY_MS);
   });
   const type=select([['job','Service job'],['walkthrough','Walkthrough']],job?.type||'job',()=>{},{name:'type',disabled:!!job});
   model.fields.append(labeled('Work type',type));
@@ -467,11 +530,14 @@ function openJob(job=null,options={}) {
     const syncBooking=()=>{const isJob=type.value==='job',rework=isJob&&booking.purpose.value==='rework',unlinked=Boolean(crm)&&selectedCustomer?.crmLinked===false;purpose.hidden=!isJob;original.hidden=!rework;booking.original.required=rework;if(crm){crm.hidden=!unlinked;booking.crm.required=unlinked;}};
     for(const control of [type,booking.purpose])control.addEventListener('change',syncBooking);
     search.addEventListener('input',syncBooking);customerResults.addEventListener('click',syncBooking);syncBooking();
+    booking.dimensions=dimensionControls(model,lists,()=>selectedCustomer?.id?{customerId:selectedCustomer.id,kind:type.value,...(type.value==='job'&&booking.purpose.value?{visitPurpose:booking.purpose.value}:{}),...(booking.channel.value?{channel:booking.channel.value}:{}),...(booking.original.required&&booking.original.value.trim()?{reworkOfJobId:booking.original.value.trim()}:{}),...(model.form.querySelector('[name="serviceType"]')?.value.trim()?{serviceType:model.form.querySelector('[name="serviceType"]').value.trim().slice(0,200)}:{})}:null);
+    if(booking.dimensions){for(const control of [type,booking.purpose,booking.channel])control.addEventListener('change',booking.dimensions.refresh);for(const control of [search,booking.original])control.addEventListener('input',booking.dimensions.refresh);customerResults.addEventListener('click',booking.dimensions.refresh);booking.dimensions.refresh();}
   }
   const service=field(model,'serviceType','Service',job?.serviceType||'','text',{required:true,maxLength:200,placeholder:'Garage cleanout, organization, shelving…'});
+  if(booking.dimensions)service.addEventListener('input',booking.dimensions.refresh);
   let date=options.moveTo||options.date||job?.date||S.date;
   const dayOffset=job?.date&&job?.endDate?Math.round((Date.parse(job.endDate+'T12:00Z')-Date.parse(job.date+'T12:00Z'))/86400000):0;
-  const unscheduled=h('input',{type:'checkbox',checked:job?!job.date:false,name:'unscheduled'});
+  const unscheduled=h('input',{type:'checkbox',checked:job?!job.date&&!options.date:false,name:'unscheduled'});
   model.fields.append(h('label',{class:'dp-check dp-wide'},unscheduled,h('span',{},'Keep unscheduled')));
   const startDate=field(model,'date','Start date',date,'date',{required:true});
   const startTime=field(model,'time','Start time',options.time||job?.time||'08:00','time',{required:true});
@@ -493,23 +559,32 @@ function openJob(job=null,options={}) {
   // Moving the start time moves a custom arrival window with it. A window that
   // would cross midnight is cleared, and the manager is told why.
   startTime.addEventListener('change',()=>{const shift=minutesOf(startTime.value)-minutesOf(previousStart);previousStart=startTime.value;if(!shift||!arrival.every(input=>input.value))return;const [from,to]=arrival.map(input=>minutesOf(input.value)+shift);if(!(from>=0&&to<1440)){for(const input of arrival)input.value='';arrivalNote.replaceChildren(notice('The custom arrival window was cleared because moving it with the new start time would cross midnight. Set a new window, or '+blankArrival));return;}arrivalNote.replaceChildren();arrivalStart.value=hhmm(from);arrivalEnd.value=hhmm(to);});
-  const duration=select([['','Set duration…'],['30','30 minutes'],['60','1 hour'],['90','90 minutes'],['120','2 hours'],['180','3 hours'],['240','4 hours'],['360','6 hours'],['480','8 hours']], '',value=>{
+  // Unscheduled work starts from a suggested length that fits one workday; a
+  // longer one is listed but never applied as one overnight block. A chosen
+  // length keeps the end in step with the start until the end is edited by hand.
+  const suggested=durationSuggestion(job),oneDay=Boolean(suggested)&&suggested.minutes<=WORKDAY_MINUTES,setEnd=value=>{
     if(!value||!startDate.value||!startTime.value)return;const minute=Number(startTime.value.slice(0,2))*60+Number(startTime.value.slice(3))+Number(value);endDate.value=addDays(startDate.value,Math.floor(minute/1440));endTime.value=String(Math.floor(minute/60)%24).padStart(2,'0')+':'+String(minute%60).padStart(2,'0');
-  });model.fields.append(labeled('Expected duration',duration));
+  };
+  let applied=oneDay&&!job.date&&!options.date;
+  const duration=select(durationOptions(suggested),applied?String(suggested.minutes):'',value=>{applied=false;setEnd(value);});model.fields.append(labeled('Expected duration',duration));
+  const longer=oneDay||suggested?.capped?'':' That is longer than one workday, so split it across days rather than one overnight block.',hint=suggested?durationHint(job,suggested,duration,longer):null;if(hint)model.fields.append(hint);
+  setEnd(duration.value);for(const input of [startDate,startTime])input.addEventListener('change',()=>setEnd(duration.value));for(const input of [endDate,endTime])input.addEventListener('input',()=>{duration.value='';applied=false;});
   const address=field(model,'address','Job address',job?.address||'','textarea',{maxLength:1000,rows:2});
   const assignments=h('fieldset',{class:'dp-assignment dp-wide'},h('legend',{},'Assigned employees'));
-  const selected=new Set(options.assignedCrew||job?.assignedCrew||[]);
+  // A found opening wins over the job's saved crew, lead, vehicle and buffer,
+  // so the job is saved with what the opening was checked for.
+  const opening=Array.isArray(options.assignedCrew),selected=new Set(options.assignedCrew||job?.assignedCrew||[]);
   const checks=new Map();
   for(const member of S.data.roster||[]){const input=h('input',{type:'checkbox',value:member.id,checked:selected.has(member.id)});checks.set(member.id,input);assignments.append(h('label',{class:'dp-check'},input,h('span',{},member.name),h('small',{},words(member.role))));}
   for(const member of selected)if(!checks.has(member)){const input=h('input',{type:'checkbox',value:member,checked:true});checks.set(member,input);assignments.append(h('label',{class:'dp-check'},input,h('span',{},member),h('small',{},'Unavailable employee — reassign before saving')));}
   if(!checks.size)assignments.append(h('p',{},'No active employees available. Review approved employee accounts.'));
-  const crewSelect=select([['','Temporary / individual assignment'],...(S.data.crews||[]).filter(c=>c.status==='active'||c.id===job?.crewId).map(c=>[c.id,c.name])],options.crewId||job?.crewId||'',id=>{
+  const crewSelect=select([['','Temporary / individual assignment'],...(S.data.crews||[]).filter(c=>c.status==='active'||c.id===job?.crewId).map(c=>[c.id,c.name])],(opening?options.crewId:job?.crewId)||'',id=>{
     const crew=S.data.crews.find(c=>c.id===id);if(!crew)return;
     for(const [member,input]of checks)input.checked=crew.memberIds.includes(member);lead.value=crew.leadId||'';
   },{name:'crewId'});
   model.fields.append(labeled('Saved crew',crewSelect),assignments);
-  const lead=select([['','No lead assigned'],...(S.data.roster||[]).map(p=>[p.id,p.name])],options.crewLead||job?.crewLead||'',()=>{}, {name:'crewLead'});
-  const truck=select([['','No vehicle assigned'],...(S.data.vehicles||[]).filter(v=>v.status==='available'||v.id===job?.vehicleId).map(v=>[v.id,v.name+(v.status==='available'?'':' · '+words(v.status))])],options.vehicleId||job?.vehicleId||'',()=>{},{name:'vehicleId'});
+  const lead=select([['','No lead assigned'],...(S.data.roster||[]).map(p=>[p.id,p.name])],options.crewLead||(!opening||selected.has(job?.crewLead)?job?.crewLead:'')||'',()=>{}, {name:'crewLead'});
+  const truck=select([['','No vehicle assigned'],...(S.data.vehicles||[]).filter(v=>v.status==='available'||v.id===job?.vehicleId).map(v=>[v.id,v.name+(v.status==='available'?'':' · '+words(v.status))])],(opening?options.vehicleId:job?.vehicleId)||'',()=>{},{name:'vehicleId'});
   model.fields.append(labeled('Crew lead',lead),labeled('Vehicle / truck',truck));
   let segments=segmentsOf(job).map(s=>({...s,endDate:s.endDate||s.date,assignedCrew:[...(s.assignedCrew||[])],notes:s.notes||''}));
   if(options.moveTo&&segments.length&&job?.date&&segmentsOn()){const shift=Math.round((Date.parse(options.moveTo+'T12:00Z')-Date.parse(job.date+'T12:00Z'))/86400000);segments=segments.map(s=>({...s,date:addDays(s.date,shift),endDate:addDays(s.endDate,shift)}));}
@@ -573,8 +648,11 @@ function openJob(job=null,options={}) {
   }
   model.fields.append(segmentBox);syncSegments();
   const segmentProblem=()=>segments.map((s,i)=>!s.date||!s.time||!s.endDate||!s.endTime||!(s.endDate+'T'+s.endTime>s.date+'T'+s.time)?'Segment '+(i+1)+' needs a date, start and a later end.':s.crewLead&&!s.assignedCrew.includes(s.crewLead)?'Segment '+(i+1)+': the lead must be one of its employees.':'').find(Boolean);
-  field(model,'crewNeeded','Required crew size',job?.crewNeeded||options.assignedCrew?.length||1,'number',{min:1,max:20,step:1,required:true});
-  field(model,'travelBufferMinutes','Travel buffer (minutes)',job?.travelBufferMinutes??options.travelBufferMinutes??20,'number',{min:0,max:180,step:5});
+  const crewNeeded=field(model,'crewNeeded','Required crew size',job?.crewNeeded||options.assignedCrew?.length||1,'number',{min:1,max:20,step:1,required:true});
+  // The suggestion was computed for the saved crew. Another size drops a length
+  // the form applied and says the suggestion is recalculated on save.
+  if(hint)crewNeeded.addEventListener('input',()=>{const changed=Number(crewNeeded.value)!==(job.crewNeeded||1);if(changed&&applied){duration.value='';applied=false;}hint.textContent=durationNote(job,suggested)+longer+(changed?' The crew size changed, so check the end time; the suggestion is recalculated after you save.':'');});
+  field(model,'travelBufferMinutes','Travel buffer (minutes)',options.travelBufferMinutes??job?.travelBufferMinutes??20,'number',{min:0,max:180,step:5});
   const instructions=field(model,'scope','Scope of work',scope(job||{}),'textarea',{rows:4,maxLength:20000,placeholder:'What the customer bought and what the crew must complete.'});instructions.parentElement.classList.add('dp-wide');
   field(model,'accessInstructions','Access instructions',job?.accessInstructions||'','textarea',{rows:2,maxLength:5000});
   field(model,'customerInstructions','Customer instructions',job?.customerInstructions||'','textarea',{rows:2,maxLength:5000});
@@ -605,7 +683,7 @@ function openJob(job=null,options={}) {
     if(segments.length){for(const name of ['date','time','endDate','endTime','assignedCrew','crewId','crewLead','vehicleId'])delete changes[name];
       if(segmentsOn())changes.assignmentSegments=segments.map(s=>({id:s.id,date:s.date,time:s.time,endDate:s.endDate||s.date,endTime:s.endTime,assignedCrew:[...s.assignedCrew],crewLead:s.crewLead||null,...(s.crewId&&(S.data.crews||[]).some(c=>c.id===s.crewId&&c.status==='active')?{crewId:s.crewId}:{}),vehicleId:s.vehicleId||null,notes:(s.notes||'').trim()}));}
     else if(hadSegments)changes.assignmentSegments=[];
-    const facts=booking.channel?Object.fromEntries([['channel',booking.channel.value],['visitPurpose',type.value==='job'?booking.purpose.value:''],['reworkOfJobId',booking.original.required?booking.original.value.trim():''],['channelSelfReported',booking.heard.value],['crmLinkReason',booking.crm?.required?booking.crm.value:'']].filter(([,value])=>value)):null;
+    const facts=booking.channel?Object.fromEntries([['channel',booking.channel.value],['visitPurpose',type.value==='job'?booking.purpose.value:''],['reworkOfJobId',booking.original.required?booking.original.value.trim():''],['channelSelfReported',booking.heard.value],['crmLinkReason',booking.crm?.required?booking.crm.value:''],...Object.entries(booking.dimensions?.facts()||{})].filter(([,value])=>value)):null;
     const body=job?{action:'schedule.update',requestId:key(),jobId:job.id,expectedRevision:job.revision,changes,...(moved()?moveReason():{})}:{action:'schedule.create',requestId:key(),customerId:selectedCustomer.id,kind:type.value,...(sourceJobId?{sourceJobId}:{}),...(facts?{booking:facts}:{}),changes};
     void save(model,body,job?'Job updated.':'Job created.');
   });

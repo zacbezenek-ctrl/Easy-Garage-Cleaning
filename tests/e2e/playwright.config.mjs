@@ -24,6 +24,8 @@ export default defineConfig({
  projects:[
   {name:'iphone-375',use:{...devices['iPhone 13'],...chromium,viewport:{width:375,height:812},deviceScaleFactor:3}},
   {name:'android-pixel7',use:{...devices['Pixel 7'],...chromium}},
+  // Touch tablet (iPad Mini, 768x1024) for the public pages only; the Hub shells are phone-first.
+  {name:'tablet-768',testMatch:/public-pages\.spec\.mjs$/,use:{...devices['iPad Mini'],...chromium,viewport:{width:768,height:1024}}},
   {name:'desktop-1440',use:{...devices['Desktop Chrome'],...chromium,viewport:{width:1440,height:900}}},
  ],
 });

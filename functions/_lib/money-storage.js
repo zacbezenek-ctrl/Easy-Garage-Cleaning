@@ -6,10 +6,10 @@ const ROOT = 'projects/egcw-1ec83/databases/(default)/documents';
 const BASE = `https://firestore.googleapis.com/v1/${ROOT}`;
 const failure = (code, message, status = 503) => Object.assign(new Error(message), { code, status });
 
-// Everything the money reads, lists, CSV exports and the ledger backfill need.
+// Everything the money reads, lists, CSV exports and the ledger and change-order backfills need.
 // A mask is mandatory: raw job bodies also carry signature images and private notes.
 export const MONEY_JOB_FIELDS = Object.freeze(['type', 'recordType', 'customer', 'customerId', 'date', 'status', 'pipelineStatus', 'serviceType', 'scopeSummary', 'notify',
-  'total', 'priceQuoted', 'lockedTotal', 'rate', 'estimate', 'customerApproval', 'quoteStatus', 'invoice', 'payment', 'deposit', 'approvedChangeTotal', 'customerDecisions',
+  'total', 'priceQuoted', 'lockedTotal', 'rate', 'estimate', 'customerApproval', 'quoteStatus', 'invoice', 'payment', 'deposit', 'approvedChangeTotal', 'customerDecisions', 'changeOrders',
   'giftWallet.redemptions', 'refunds', 'completedAt', 'postJobChecklist.completedAt', 'postJobProgress.standardItems', 'costs',
   'paymentLedger', 'paymentLedgerStatus', 'paymentLedgerIssues', 'paymentLedgerVersion', 'moneyRequestId']);
 
@@ -22,6 +22,9 @@ export const MONEY_JOB_FIELDS = Object.freeze(['type', 'recordType', 'customer',
  * create collision as ALREADY_EXISTS (409); both mean nothing was applied, so
  * both are money_revision_conflict. A lost or unexplained response is
  * money_outcome_unknown: retry the same requestId, whose receipt is the proof.
+ * A write's optional `remove` lists field paths (e.g. 'costs.labor') deleted in the same write, and its optional
+ * `mask` lists the field paths it sets (e.g. ['costs.labor'], leaving the rest of costs as it is) in place of its
+ * patch's top-level keys. A write with `delete: true` deletes the document under its revision precondition.
  */
 export function moneyStorage(env, fetcher = firestoreFetch) {
   const base = dispatchStorage(env, fetcher);
@@ -32,13 +35,16 @@ export function moneyStorage(env, fetcher = firestoreFetch) {
   return {
     read: (collection, id) => mapped(() => base.read(collection, id), 'The job money record could not be loaded. Retry.'),
     jobs: () => mapped(() => base.jobRecords([...MONEY_JOB_FIELDS]), 'The complete job money records could not be loaded. Retry.'),
+    // JOB-COST-PRIVACY: the private labor records, and each job's legacy labor copy for the backfill that moves it.
+    laborRecords: () => mapped(() => base.jobLaborCosts(), 'The complete job labor costs could not be loaded. Retry.'),
+    laborCopies: () => mapped(() => base.jobRecords(['type', 'recordType', 'costs.labor', 'costs.laborCents', 'costs.recordedAt', 'costs.recordedBy', 'laborCost']), 'The complete job records could not be loaded. Retry.'),
     async commit(writes) {
       let response;
-      const body = JSON.stringify({ writes: writes.map(write => ({
+      const body = JSON.stringify({ writes: writes.map(write => write.delete === true ? { delete: `${ROOT}/${write.collection}/${write.id}`, currentDocument: write.revision ? { updateTime: write.revision } : { exists: true } } : {
         update: { name: `${ROOT}/${write.collection}/${write.id}`, fields: encodeFirestoreFields(write.patch) },
-        updateMask: { fieldPaths: Object.keys(write.patch) },
+        updateMask: { fieldPaths: [...(write.mask || Object.keys(write.patch)), ...(write.remove || [])] },
         currentDocument: write.revision ? { updateTime: write.revision } : { exists: write.exists === true },
-      })) });
+      }) });
       try { response = await fetcher(env, `${BASE}:commit`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body, signal: AbortSignal.timeout(20000) }); }
       catch { throw failure('money_outcome_unknown', 'The save response was lost. Retry the same request to safely check whether it saved.'); }
       if (response.ok) return response.json().catch(() => ({}));

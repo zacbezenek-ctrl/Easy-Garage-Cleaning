@@ -14,11 +14,17 @@ import { denverToday } from './dispatch-time.js';
  * match with one verified account root; everything else opens
  * membership_reviews/{subscriptionId} and nothing is mirrored. The account job
  * receives only the display fields the portal and Hub already read (garageGuard).
+ * FUN-20: the webhook wraps the store with garageGuardLedgerStore
+ * (garage-guard-ledger.js), which adds the Stripe amounts, billing periods,
+ * churn class and funnel events to the membership commit; member visits are
+ * counted by garage-guard-visits.js.
  */
 
 const ROOT = 'projects/egcw-1ec83/databases/(default)/documents';
 // resolveDispatchLineage verifies at most 150 prior visits; one more row proves there are too many.
 const JOB_LIMIT = 151;
+// FUN-20: the fields the ledger reads from a membership's member-visit jobs when a billing period closes (date orders which are fenced first).
+const MEMBER_VISIT_JOB_LIMIT = 500, MEMBER_VISIT_JOB_FIELDS = ['type', 'recordType', 'date', 'status', 'pipelineStatus', 'completedAt', 'membershipId', 'membershipVisit'];
 const RETRYABLE = new Set(['dispatch_revision_conflict', 'dispatch_outcome_unknown']);
 // A 'sending' alert this old is not in flight any more (the send itself times out after 15 s).
 export const ALERT_STALE_MS = 10 * 60 * 1000;
@@ -285,6 +291,25 @@ export function membershipStorage(env, fetcher = firestoreFetch) {
         if (!id || id.includes('/') || typeof document.updateTime !== 'string' || !document.updateTime) throw fail('storage_incomplete', 'A customer job had no verifiable identity. Retry the event.');
         return { ...decodeFirestoreFields(document.fields || {}), id, revision: document.updateTime };
       });
+    },
+    /** FUN-20: the member-visit jobs of one membership (read when a billing period closes); complete:false when more exist. */
+    async membershipVisits(subscriptionId, limit = MEMBER_VISIT_JOB_LIMIT) {
+      let response;
+      try {
+        response = await fetcher(env, `https://firestore.googleapis.com/v1/${ROOT}:runQuery`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, signal: AbortSignal.timeout(20000), body: JSON.stringify({ structuredQuery: {
+          from: [{ collectionId: 'jobs' }], where: { fieldFilter: { field: { fieldPath: 'membershipId' }, op: 'EQUAL', value: { stringValue: subscriptionId } } },
+          select: { fields: MEMBER_VISIT_JOB_FIELDS.map(fieldPath => ({ fieldPath })) }, limit: limit + 1,
+        } }) });
+      } catch { throw fail('storage_unavailable', 'Member visits could not be loaded. Retry the event.'); }
+      if (!response.ok) throw fail('storage_unavailable', 'Member visits could not be loaded. Retry the event.');
+      const rows = await response.json().catch(() => null);
+      if (!Array.isArray(rows)) throw fail('storage_incomplete', 'Member visits returned an incomplete response. Retry the event.');
+      const found = rows.filter(row => row?.document).map(({ document }) => {
+        const id = String(document.name || '').split('/documents/jobs/')[1] || '';
+        if (!id || id.includes('/') || typeof document.updateTime !== 'string' || !document.updateTime) throw fail('storage_incomplete', 'A member visit had no verifiable identity. Retry the event.');
+        return { ...decodeFirestoreFields(document.fields || {}), id, revision: document.updateTime };
+      });
+      return { rows: found.slice(0, limit), complete: found.length <= limit };
     },
   };
 }

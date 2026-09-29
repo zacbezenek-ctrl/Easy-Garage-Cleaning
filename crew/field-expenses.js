@@ -344,7 +344,7 @@
       S.error ? h('p', { class: 'notice error', role: 'alert' }, S.error) : null,
       pendingCard(),
       closeoutCard(),
-      S.data.canRecord ? recordForm() : h('p', { class: 'notice' }, 'This job is closed for new costs. Ask operations to record any late receipts.'),
+      S.data.canRecord ? recordForm() : h('p', { class: 'notice' }, S.data.notScheduledToday ? 'You are not scheduled on this job today (Mountain Time). Record costs on a day you work this job, or give the receipt to operations.' : 'This job is closed for new costs. Ask operations to record any late receipts.'),
       h('h3', {}, own ? 'Your recorded costs' : 'All recorded costs'),
       entries.length ? totals() : null,
       entries.length ? h('ul', { class: 'expense-list' }, entries.map(entryItem)) : h('p', { class: 'empty' }, own ? 'You have not recorded any costs on this job.' : 'No field costs recorded for this job yet.'),

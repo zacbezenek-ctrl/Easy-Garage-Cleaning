@@ -1,6 +1,6 @@
 name: EGC Lighthouse (mobile)
 # Mobile performance and accessibility >= 90 for the public site, the portals and the crew Today screen.
-# Warn-only until the LIGHTHOUSE_ENFORCE repository variable is 'true'. See docs/lighthouse-ci.md.
+# Enforced by default (SITE-4); set the LIGHTHOUSE_ENFORCE repository variable to 'false' to make it warn-only. See docs/lighthouse-ci.md.
 on:
   push:
     branches: ['main']
@@ -54,7 +54,7 @@ jobs:
         run: npx --no-install --prefix "$LHCI_TOOLS" lhci collect --config=tests/lighthouse/lighthouserc.cjs
       - name: Assert performance and accessibility >= 0.9
         env:
-          LIGHTHOUSE_ENFORCE: ${{ vars.LIGHTHOUSE_ENFORCE }}
+          LIGHTHOUSE_ENFORCE: ${{ vars.LIGHTHOUSE_ENFORCE || 'true' }}
         run: |
           set +e
           npx --no-install --prefix "$LHCI_TOOLS" lhci assert --config=tests/lighthouse/lighthouserc.cjs
@@ -65,14 +65,14 @@ jobs:
             echo "::error::Lighthouse mobile scores are below 0.9. Open the egc-lighthouse report artifact for the failing audits."
             exit "$status"
           fi
-          echo "::warning::Lighthouse mobile scores are below 0.9. Warn-only until the LIGHTHOUSE_ENFORCE repository variable is 'true'."
+          echo "::warning::Lighthouse mobile scores are below 0.9. Warn-only because the LIGHTHOUSE_ENFORCE repository variable is not 'true'."
       - name: Write the HTML and JSON reports
         if: ${{ !cancelled() }}
         run: npx --no-install --prefix "$LHCI_TOOLS" lhci upload --config=tests/lighthouse/lighthouserc.cjs
       - name: Record the score table in the job summary
         if: ${{ !cancelled() }}
         env:
-          LIGHTHOUSE_ENFORCE: ${{ vars.LIGHTHOUSE_ENFORCE }}
+          LIGHTHOUSE_ENFORCE: ${{ vars.LIGHTHOUSE_ENFORCE || 'true' }}
         run: node tests/lighthouse/summary.mjs >> "$GITHUB_STEP_SUMMARY"
       - uses: actions/upload-artifact@v4
         if: ${{ !cancelled() }}

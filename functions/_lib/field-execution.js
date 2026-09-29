@@ -18,7 +18,8 @@ const closed = job => ['completed', 'invoiced', 'paid', 'review_requested'].incl
 export function fieldActivity(job) {
   const stage = fieldStage(job), activity = job.fieldExecution?.activity;
   if (activity === stage) return stage;
-  if (activity === 'paused' && stage === 'in_progress' || activity === 'waiting' && ['arrived', 'in_progress'].includes(stage) || activity === 'delayed' && ['dispatched', 'in_progress'].includes(stage)) return activity;
+  // day_ended is written only by the multi-day 'end_day' action (field-execution-visits.js).
+  if (activity === 'paused' && stage === 'in_progress' || activity === 'waiting' && ['arrived', 'in_progress'].includes(stage) || activity === 'delayed' && ['dispatched', 'in_progress'].includes(stage) || activity === 'day_ended' && ['dispatched', 'arrived', 'in_progress'].includes(stage)) return activity;
   return stage;
 }
 export const FIELD_CHECKLIST_DEFAULTS = [
@@ -152,8 +153,8 @@ export function fieldJobProjection(job, events = [], options = {}) {
     completionSync: job.fieldCompletionSync ? { status: job.fieldCompletionSync.status, message: fieldText(job.fieldCompletionSync.message, 600), attemptedAt: job.fieldCompletionSync.attemptedAt || null, syncedAt: job.fieldCompletionSync.syncedAt || null, canRetry: options.manager === true && job.fieldCompletionSync.status !== 'synced' } : null,
     startedAt: job.startedAt || null, completedAt: job.completedAt || null,
     completionMissing: frozen ? [] : fieldCompletionMissing(job),
-    canEdit: !frozen, canManageChecklist: options.manager === true && !frozen,
-    allowedStatuses: frozen ? [] : ({ scheduled: ['dispatched'], confirmed: ['dispatched'], crew_assigned: ['dispatched'], dispatched: ['arrived', 'delayed'], arrived: ['in_progress', 'waiting'], in_progress: ['paused', 'waiting', 'delayed', 'in_progress'] }[stage] || []),
+    canEdit: !frozen, canManageChecklist: options.manager === true && !frozen, capabilities: options.capabilities || null,
+    allowedStatuses: frozen ? [] : ({ scheduled: ['dispatched'], confirmed: ['dispatched'], crew_assigned: ['dispatched'], dispatched: ['arrived', 'delayed'], arrived: ['in_progress', 'waiting'], in_progress: ['paused', 'waiting', 'delayed', 'in_progress'] }[stage] || []).filter(status => status !== 'paused' || fieldActivity(job) !== 'day_ended'),
   };
 }
 
@@ -166,7 +167,7 @@ export function fieldCommand(job, actor, input, now = new Date().toISOString()) 
   const state = job.fieldExecution || {}, actorId = actor.user, actorName = actor.displayName || actor.user;
   const stamp = { at: now, actorId, actorName };
   const event = { id: input.requestId, action: input.action, actorId, actorName, createdAt: now, state: 'applied', visibility: 'crew' };
-  let patch = {};
+  let patch = {}, milestone = null;
   if (!['note', 'resolve_issue'].includes(input.action) && closed(job)) throw fieldFailure('This job is closed. Its execution record cannot be changed.', 409, 'FIELD_JOB_CLOSED');
   switch (input.action) {
     case 'note': {
@@ -210,16 +211,21 @@ export function fieldCommand(job, actor, input, now = new Date().toISOString()) 
       }
       if (['paused', 'waiting', 'delayed'].includes(next) && fieldText(input.reason).length < 3) throw fieldFailure('Add a short reason so dispatch knows what is happening.');
       const canonical = ['paused', 'waiting', 'delayed'].includes(next) ? current : next;
-      patch = { status: canonical, pipelineStatus: canonical, fieldExecution: { ...state, activity: next, activityAt: now, activityBy: actorId, activityReason: fieldText(input.reason, 1000) }, ...(next === 'in_progress' && !job.startedAt ? { startedAt: now, startedBy: actorId } : {}), ...(next === 'arrived' ? { arrivedAt: now, arrivedBy: actorId } : {}) };
+      patch = { status: canonical, pipelineStatus: canonical, fieldExecution: { ...state, activity: next, activityAt: now, activityBy: actorId, activityReason: fieldText(input.reason, 1000) }, ...(next === 'in_progress' && !job.startedAt ? { startedAt: now, startedBy: actorId } : {}), ...(next === 'arrived' ? { arrivedAt: now, arrivedBy: actorId } : {}), ...(next === 'dispatched' ? { dispatchedAt: now, dispatchedBy: actorId } : {}) };
       if (next === 'in_progress' && current !== 'in_progress') {
         const items = fieldChecklist(job).filter(item => ['departure', 'arrival'].includes(item.stage));
         const progress = { completedAt: now, completedBy: actorId, completedCount: items.filter(item => item.completed).length, totalCount: items.length, standardItems: items };
         patch.preJobProgress = progress; patch.preJobChecklist = progress;
       }
       event.summary = `${current.replaceAll('_', ' ')} → ${next.replaceAll('_', ' ')}`; event.body = fieldText(input.reason, 1000);
+      event.fromStatus = fieldActivity(job); event.toStatus = next;
+      // job.started goes with the first startedAt, so a restored job's second start is not a second event.
+      milestone = next === 'in_progress' ? !job.startedAt && 'started' : ['dispatched', 'arrived'].includes(next) && next;
       break;
     }
     case 'complete': {
+      // field-permissions.js decides who may complete; FIELD_LEAD_ONLY_COMPLETE narrows it to the lead or a manager.
+      if (actor.capabilities && actor.capabilities.complete !== true) throw fieldFailure('Only the crew lead or a manager can complete this job. Your checklist, photos and notes stay saved for them.', 403, 'FIELD_LEAD_REQUIRED');
       if (typeof input.hasIssues !== 'boolean') throw fieldFailure('Indicate whether this job has an issue requiring follow-up.');
       if (typeof input.notes !== 'string' || input.notes.length > 4000 || input.issueNotes !== undefined && (typeof input.issueNotes !== 'string' || input.issueNotes.length > 4000)) throw fieldFailure('Completion notes and issue details must each be no longer than 4,000 characters.');
       const missing = fieldCompletionMissing(job, input);
@@ -229,7 +235,10 @@ export function fieldCommand(job, actor, input, now = new Date().toISOString()) 
       const progress = stage => { const items = checklist.filter(item => stage === 'pre' ? ['departure', 'arrival'].includes(item.stage) : ['work', 'finish'].includes(item.stage)); return { completedAt: now, completedBy: actorId, completedCount: items.filter(item => item.completed).length, totalCount: items.length, standardItems: items }; };
       patch = { status: 'completed', pipelineStatus: 'completed', completedAt: now, completedBy: actorId, closeoutNotes: completion.notes, fieldExecution: { ...state, activity: 'completed', completion, ...(input.hasIssues ? { attention: { ...stamp, requestId: input.requestId, visibility: 'crew', reason: completion.issueNotes, status: 'open' } } : {}) }, postJobProgress: progress('post'), postJobChecklist: progress('post'), preJobProgress: job.preJobProgress || progress('pre'), preJobChecklist: { ...(job.preJobChecklist || progress('pre')) }, afterPhotoCount: fieldPhotos(job).filter(photo => photo.category === 'after').length, completionEvidence: { kind: 'verified_field_execution', actorId, recordedAt: now, requestId: input.requestId, photoIds: completion.evidencePhotoIds } };
       patch.fieldCompletionSync = { requestId: input.requestId, status: 'pending', message: 'Work is saved. The internal CRM completion note and follow-up are awaiting verification.', createdAt: now, attempts: 0, requestedBy: actorId, requestedByName: actorName, providerContactId: fieldText(job.highlevelContactId, 200), title: 'EGC field completion', body: [`EGC job: ${job.id}`, `Work completed: ${now}`, `Completed by: ${actorName} (${actorId})`, `Services: ${fieldText(job.serviceType, 500) || 'Garage service'}`, `Work performed: ${completion.notes}`, `Verified before photos: ${fieldPhotos(job).filter(photo => photo.category === 'before').length}`, `Verified after photos: ${fieldPhotos(job).filter(photo => photo.category === 'after').length}`, `Required checklist: ${checklist.filter(item => item.required).length} complete`, `Issues / follow-up: ${completion.hasIssues ? completion.issueNotes : 'None reported'}`, 'This is an operational work-completion record. Payment status has not been changed.'].join('\n') };
+      // FUN-20: a member visit is counted against its membership once, after this commit (garage-guard-visits.js); a counted one keeps its state when completed again.
+      if (typeof job.membershipId === 'string' && job.membershipId && !['applied', 'reconciled'].includes(job.membershipVisit?.status)) patch.membershipVisit = { status: 'pending', membershipId: job.membershipId, requestId: input.requestId, createdAt: now };
       event.summary = input.hasIssues ? 'Work completed — follow-up required' : 'Work completed'; event.body = completion.notes;
+      event.fromStatus = fieldActivity(job); event.toStatus = 'completed'; milestone = 'completed';
       break;
     }
     case 'configure_checklist': {
@@ -253,5 +262,7 @@ export function fieldCommand(job, actor, input, now = new Date().toISOString()) 
     if (time.clock) patch.fieldExecution = { ...(patch.fieldExecution || state), jobTime: time.clock };
     if (time.segment) event.timeSegment = time.segment;
   }
-  return { patch: { ...patch, updatedAt: now, fieldLastActionAt: now }, event };
+  // FUN-03: the lifecycle milestone this action reached (dispatched, arrived,
+  // first start, completed) is recorded as a funnel event in the same commit.
+  return { patch: { ...patch, updatedAt: now, fieldLastActionAt: now }, event, funnel: milestone ? { milestone, fromStatus: event.fromStatus, toStatus: event.toStatus } : null };
 }

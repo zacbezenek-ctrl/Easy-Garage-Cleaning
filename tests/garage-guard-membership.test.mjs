@@ -364,6 +364,26 @@ test('the Firestore adapter links a member and the customer portal shows the mir
   assert.equal(db.get('jobs/job-child').garageGuard, undefined, 'only the account root carries the display copy');
 });
 
+test('FUN-20: with visit tracking on, the Firestore adapter lists the membership\'s member visits when its year closes', async t => {
+  // A member visit completed an hour after the checkout and never counted: the cancellation must not book its year's visits as breakage.
+  const seed = account(); seed['jobs/job-child'] = { ...seed['jobs/job-child'], membershipId: 'sub_member_1', visitPurpose: 'member_visit', status: 'completed', pipelineStatus: 'completed', completedAt: new Date((T0 + 3600) * 1000).toISOString() };
+  const db = firestore(t, seed), tracked = { ...env, GARAGE_GUARD_VISIT_TRACKING_ENABLED: 'true' }; let clock = NOW;
+  const handlers = stripeWebhookHandlers({ now: () => new Date(clock), send: async () => new Response('{}') });
+  const post = event => {
+    const signedAt = event.created + 60, raw = JSON.stringify(event), signature = createHmac('sha256', tracked.STRIPE_WEBHOOK_SECRET).update(`${signedAt}.${raw}`).digest('hex');
+    clock = new Date(signedAt * 1000).toISOString();
+    return handlers.post({ env: tracked, request: new Request(`${origin}/api/stripe-webhook`, { method: 'POST', headers: { 'Stripe-Signature': `t=${signedAt},v1=${signature}` }, body: raw }) });
+  };
+  const queries = () => db.calls.filter(call => call.endsWith(':runQuery')).length;
+  assert.equal((await post(checkoutEvent())).status, 200);
+  const before = queries();
+  assert.equal((await post(deletedEvent())).status, 200);
+  assert.equal(queries() - before, 1, 'one membershipId query when the tracked year closes');
+  const membership = db.get('memberships/sub_member_1'), [period] = membership.periods;
+  assert.deepEqual([membership.status, membership.ledgerError, period.status, period.visitsTracked, period.breakageCents, period.breakageUnknown, period.unresolvedVisitJobIds],
+    ['cancelled', undefined, 'closed', true, null, 'visits_unresolved', ['job-child']]);
+});
+
 test('the link commit fences the identity revision and every account revision the decision read', async () => {
   const store = memoryStore(); await apply(store, checkoutEvent());
   assert.deepEqual(store.commits, [['jobs/job-root', 'memberships/sub_member_1', 'stripe_events/evt_guard_checkout']]);

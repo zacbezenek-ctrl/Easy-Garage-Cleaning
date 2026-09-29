@@ -7,6 +7,7 @@ const MIN_ROOT = 32, MAX_ROOT = 8192;
 
 export const PURPOSES = Object.freeze({
   confirm: 'egc/confirm/v1',
+  crewPhotoLink: 'egc/crew-photo-link/v1',
   customerAccountSession: 'egc/customer-account-session/v1',
   magicLink: 'egc/magic-link/v1',
   rateLimit: 'egc/rate-limit/v1',

@@ -154,3 +154,82 @@ export function customerIdentityStorage(env,fetcher=firestoreFetch) {
     },
   };
 }
+
+/** Indexed customer search (P1-DS-14). searchKeys holds the phone-digit
+ * prefixes (3+ digits; extension cut, NANP without the leading 1) and the last
+ * 4 and 7 digits first, then the lowercased 2-to-16-character prefixes of each
+ * email word and each name word in order, at most 200 (a very long name loses
+ * only its last words). searchKeysVersion is SEARCH_KEYS_VERSION: readers use
+ * the index only while every customer has it (bump it with any key-format
+ * change and rerun the backfill). Keys are never evidence: readers re-derive
+ * them from the saved fields.
+ * Any path that creates a customer, or changes its name, firstName, lastName,
+ * phone or email, must write customerSearchFields/customerSearchPatch in the
+ * same commit. A create without keys only makes search scan again (coverage
+ * counts keyed customers), but an edit without them leaves stale keys that
+ * coverage cannot see; the backfill dry run lists those (staleKeys). */
+export const SEARCH_KEYS_VERSION=2;
+const SEARCH_PREFIX=16,SEARCH_KEY_LIMIT=200;
+const PHONE_EXTENSION=/\s*(?:ext\.?|extension|x|#)\s*\d{1,6}$/i,PHONE_TEXT=/^[+\d().\s-]+$/;
+const fold=value=>typeof value==='string'||typeof value==='number'?String(value).normalize('NFKD').replace(/[\u0300-\u036f]/g,'').toLowerCase():'';
+const searchWords=value=>fold(value).split(/[^\p{L}\p{N}]+/u).filter(Boolean);
+const savedWords=row=>[row?.email,row?.name,row?.firstName,row?.lastName].flatMap(searchWords);
+const longest=keys=>keys.reduce((best,key)=>key.length>best.length?key:best);
+
+/** A saved phone's searchable digits: extension cut, NANP without its leading 1. */
+export function customerPhoneDigits(value) {
+  const digits=fold(value).trim().replace(PHONE_EXTENSION,'').replace(/\D/g,'');
+  return digits.length===11&&digits[0]==='1'?digits.slice(1):digits;
+}
+
+export function customerSearchKeys(row) {
+  const keys=new Set(),digits=customerPhoneDigits(row?.phone);
+  if(digits.length>=3&&digits.length<=15) {
+    for(let length=3;length<=digits.length;length++)keys.add(digits.slice(0,length));
+    for(const length of [4,7])if(digits.length>length)keys.add(digits.slice(-length));
+  }
+  for(const word of savedWords(row))for(let length=2;length<=Math.min(word.length,SEARCH_PREFIX);length++)keys.add(word.slice(0,length));
+  return [...keys].slice(0,SEARCH_KEY_LIMIT);
+}
+
+export function customerSearchFields(row) {
+  return {searchKeys:customerSearchKeys(row),searchKeysVersion:SEARCH_KEYS_VERSION};
+}
+
+/** A new customer's patch with its derived search keys. */
+export const withCustomerSearchKeys=patch=>({...patch,...customerSearchFields(patch)});
+
+/** Derived search keys for a saved customer, or null when they are current. */
+export function customerSearchPatch(row,now=new Date().toISOString()) {
+  const fields=customerSearchFields(row),saved=Array.isArray(row?.searchKeys)?row.searchKeys:null;
+  return row?.searchKeysVersion===SEARCH_KEYS_VERSION&&saved?.length===fields.searchKeys.length&&saved.every((key,index)=>key===fields.searchKeys[index])?null:{...fields,searchKeysUpdatedAt:now};
+}
+
+/** What a search needs, or null when the index cannot answer it (empty text,
+ * only one-character words, fewer than 3 phone digits) and callers scan.
+ * `query` lists the keys to read; every match holds one of them.
+ * Phone text (digits, spaces and + ( ) . -, an extension ignored) matches a
+ * customer holding any key in `any`: NANP area codes never start with 1, so
+ * digits typed with a leading 1 are also tried without it. Other text, emails included, matches when every
+ * word of 2+ characters is a key (its first 16 characters) and every word in
+ * `words` (one letter, or longer than 16) starts a saved name or email word. */
+export function customerSearchTerms(text) {
+  const value=fold(text).trim(),number=value.replace(PHONE_EXTENSION,'');
+  if(!value)return null;
+  if(number&&PHONE_TEXT.test(number)) {
+    const digits=number.replace(/\D/g,''),any=[...new Set([digits.length===11&&digits[0]==='1'?digits.slice(1):digits,...(digits.length>=4&&digits[0]==='1'?[digits.slice(1)]:[])])].filter(key=>key.length>=3&&key.length<=15);
+    return any.length?{query:any,any}:null;
+  }
+  const words=[...new Set(searchWords(value))],keys=[...new Set(words.filter(word=>word.length>=2).map(word=>word.slice(0,SEARCH_PREFIX)))];
+  if(!keys.length)return null;
+  // The longest key selects best, but an email's domain (gmail, com) is shared by many customers.
+  const local=value.includes('@')?searchWords(value.split('@')[0]).filter(word=>word.length>=2).map(word=>word.slice(0,SEARCH_PREFIX)):[];
+  return {query:[longest(local.length?local:keys)],keys,words:words.filter(word=>word.length<2||word.length>SEARCH_PREFIX)};
+}
+
+export function customerMatchesSearch(row,terms) {
+  const keys=new Set(customerSearchKeys(row));
+  if(terms.any)return terms.any.some(key=>keys.has(key));
+  const words=terms.words.length?savedWords(row):[];
+  return terms.keys.every(key=>keys.has(key))&&terms.words.every(word=>words.some(found=>found.startsWith(word)));
+}

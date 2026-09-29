@@ -11,6 +11,17 @@
  *   (EGC_DISPATCH_DEFAULT_ARRIVAL_WINDOW_ENABLED) and its length; no secrets.
  * GET /api/dispatch?view=customers&q=phone-or-name
  *   => {ok,customers:[{id,name,phone,email,address}],total}; at most 50 results.
+ *   With EGC_DISPATCH_WINDOWED_READS=true and every customer keyed, text
+ *   matches when every word (one letter included) starts a word of the name
+ *   or email, and phone text (digits, spaces, + ( ) . -) when it is the start
+ *   of the number (a typed leading 1 optional; extensions ignored) or its last
+ *   4 or 7 digits (customer-identity.js). Otherwise any substring matches, as
+ *   before. Text starting inside a word or number, and address-only text,
+ *   match only the substring scan; shadow mode counts those and flags any
+ *   other difference. Response shapes never depend on that flag.
+ *   With 'true', rows whose date the windowed reads cannot verify (malformed,
+ *   non-string or missing) are neither on the board nor conflict evidence:
+ *   an accepted residual risk that scripts/dispatch-window-audit.mjs reports.
  * GET /api/dispatch?view=job&jobId=exact-ID
  *   => {ok,job:DispatchJob,roster,crews,vehicles,warnings,arrivalDefaults,segments}; no date-range filter.
  *
@@ -44,6 +55,28 @@
  * member_visit),crmLinkReason? (kept only when the visit has no CRM contact)},
  * saved as bookingChannel, channelSelfReported, bookedBy, visitPurpose,
  * reworkOfJobId, membershipId, crmLinkReason (400 dispatch_booking_*).
+ * FUN-29 (functions/_lib/funnel-dimensions.js): booking also takes the one-tap
+ * picks serviceLine? (a serviceLines code; 'unknown' is "Not sure yet") and
+ * funnelPath? (a funnelPaths code), plus serviceLineSuggested?:true when
+ * serviceLine is the untouched Facebook lead-form suggestion (only a line the
+ * lead form gives; it ranks as the ghlGarageHelpRequested rule, not as a staff
+ * pick) (400 dispatch_booking_invalid). The project the visit creates gets
+ * serviceLine/serviceLineSource, funnelPath/funnelPathSource,
+ * dimensionRulesVersion and dimensionsUpdatedAt/By; a project it joins is refined
+ * only on better evidence, under its revision in the same commit. The booking
+ * event carries the values; GET `funnel` also lists serviceLines and funnelPaths.
+ * GET /api/funnel-dimensions?customerId=ID&kind=job|walkthrough, optional
+ * visitPurpose, channel, reworkOfJobId, serviceType, suggest=false: dispatcher
+ * only, read-only; an unknown or repeated key is 400
+ * funnel_dimensions_query_invalid, a missing customer 404
+ * funnel_dimensions_customer_not_found.
+ *   => {ok,customerId,kind,projectId,rulesVersion,serviceLine:{value,source,
+ *       required,suggestion},funnelPath:{value,source,required},
+ *       ghl:'disabled'|'ok'|'unavailable'|'not_needed'|'skipped'}
+ *   What a create with these facts records without a pick (a rework shows the
+ *   project it joins); required means the form needs one tap. suggestion is the
+ *   lead-form line (FUNNEL_GHL_SERVICE_LINE_PREFILL_ENABLED=true), read only
+ *   while the line is undecided; suggest=false skips that read ('skipped').
  * schedule.update and schedule.cancel take reasonCode? (reschedule or cancel
  * list; other_legacy is reserved) and initiatedBy?:'customer'|'company'|'system'
  * (400 dispatch_reason_code_invalid). A cancel saves cancellationReasonCode
@@ -69,6 +102,14 @@
  * requiredEquipment:string[], materials:[{id,name,quantity:number}].
  * Also recurrence:'none'|'weekly'|'biweekly'|'monthly'|'quarterly',
  * reminderDays:integer1..30,notify:boolean,shiftPickupEnabled:boolean,notes:string.
+ * estimatedDurationMin:integer 15..10080|null is the expected on-site length (it
+ * may span days); it never moves the saved schedule and blocks do not accept it.
+ * Saving a value also records durationOverride {minutes,reason:'Set in dispatch',
+ * source:'dispatch',crewSize,recordedBy,recordedAt} for the crew the job is then
+ * planned for, so it outranks the quote lines for that crew (the suggestion
+ * below reports it as estimated_duration). null clears both fields, and the
+ * suggestion falls back to the quote lines, the schedule span or the default.
+ * Crew and open-shift views treat a length over 1440 as multi-day, not one shift.
  * Cadence and notification preferences are stored metadata, not a guarantee that
  * another visit or message has been created. Provider sync reports separately.
  * Server-owned repeats live in /api/recurring-plans (recurring-plan-service.js):
@@ -151,6 +192,24 @@
  * range label such as '9:00 AM – 10:00 AM', '' when none is saved),
  * assignmentSegments (only on segmented jobs): [{id,date,time,endDate,endTime,
  * startAt,endAt,assignedCrew,crewLead,crewId,vehicleId,notes}].
+ * suggestedDurationMin (integer minutes, a multiple of 15, or null when the
+ * saved data cannot be read) and durationSource ('duration_override'|
+ * 'line_items'|'estimated_duration'|'schedule_span'|'default'|null) come from
+ * functions/_lib/dispatch-duration.js (P1-DS-05). A length recorded for the
+ * crew the job is planned for wins: the walkthrough manager's override
+ * (duration_override, judged for logistics.crew_size) or a length saved in
+ * dispatch (estimated_duration). Otherwise the selected lines of a sold
+ * (accepted/approved) quote give person-minutes (durationMinutes, else
+ * split.laborMinutes, x quantity) divided by the crew (crewNeeded) and rounded
+ * up to 15 minutes; without line minutes it falls back to estimatedDurationMin,
+ * the saved schedule span, then 120. durationCoverage is 'complete'|'partial'
+ * for line_items ('partial': some sold lines carry no minutes) and null
+ * otherwise; durationCapped is true when the total was capped at one day. Both
+ * mark an undercount. Masked scans never load quote lines: lists read them only
+ * for the sold jobs they return, and a job whose lines cannot be read or changed
+ * meanwhile gets nulls. No line, amount or price reaches the DTO. The Hub
+ * prefills Expected duration (only when it fits one workday) and the openings
+ * search from it.
  * Date/time invalid or absent is represented as startAt:null.
  * Financial/credential/employee payroll fields are deliberately absent.
  *

@@ -4,6 +4,8 @@ import { createJobAssignmentAccess } from '../_lib/job-assignment.js';
 import { fieldCancelled, fieldFailure, fieldFingerprint, fieldId, fieldRequestId, fieldStage, fieldText } from '../_lib/field-execution.js';
 import { createFieldPhotoClient, decodeFieldPhoto, fieldPhotosConfigured, verifyFieldPhotoMetadata } from '../_lib/field-execution-photos.js';
 import { FIELD_EXPENSE_CLOSEOUT_GROUPS, FIELD_EXPENSE_INCOME_KINDS, FIELD_EXPENSE_KINDS, FIELD_EXPENSE_MAX_CENTS, FIELD_EXPENSE_PAYERS, FIELD_EXPENSE_SHAREABLE_KINDS, FIELD_EXPENSE_SHARE_JOBS, FIELD_EXPENSE_SHARE_WEIGHT_MAX, createFieldExpenseStore, fieldExpenseAttestation, fieldExpenseCapacity, fieldExpenseChange, fieldExpenseCloseout, fieldExpenseCloseoutRequired, fieldExpenseDamagePhotos, fieldExpenseListing, fieldExpenseRange, fieldExpenseRecord, fieldExpenseShareParts, fieldExpenseShareRows, fieldExpensesEnabled, validExpenseDate, validFieldExpenseShare } from '../_lib/field-expenses.js';
+import { assignedOn, fieldVisitsEnabled } from '../_lib/field-execution-visits.js';
+import { denverToday } from '../_lib/dispatch-time.js';
 
 const reply = (status, body) => Response.json(body, { status, headers: { 'Cache-Control': 'private, no-store', 'X-Content-Type-Options': 'nosniff' } });
 const mutationOriginAllowed = request => {
@@ -61,7 +63,14 @@ export function fieldExpenseHandlers({ session = getHubSession, storage = create
     const user = await session(request, env);
     if (!user) throw fieldFailure('Sign in to the Employee Hub to record job costs.', 401, 'FIELD_AUTH_REQUIRED');
     if (!firebaseServiceAccountConfigured(env)) throw fieldFailure('Secure job storage is not connected. Contact operations.', 503, 'FIELD_STORAGE_UNAVAILABLE');
-    return { session: user, manager: hasBusinessAccess(user), access: createJobAssignmentAccess(env, user), store: storage(env) };
+    return { session: user, manager: hasBusinessAccess(user), access: createJobAssignmentAccess(env, user), store: storage(env), visits: fieldVisitsEnabled(env) };
+  }
+
+  // Multi-day visits (FIELD_MULTIDAY_VISITS): crew record costs only on a Denver
+  // day they work the job, like every other field write.
+  const workday = async (ctx, job) => ctx.manager || !ctx.visits || assignedOn(job, denverToday(now()), ctx.access);
+  async function requireWorkday(ctx, job) {
+    if (!await workday(ctx, job)) throw fieldFailure('You are not scheduled on this job today. Ask operations to add you to today’s crew before recording costs.', 403, 'FIELD_JOB_NOT_ASSIGNED_TODAY');
   }
 
   async function authorizedJob(ctx, id) {
@@ -99,10 +108,10 @@ export function fieldExpenseHandlers({ session = getHubSession, storage = create
 
   const damagePhotoIds = job => fieldExpenseDamagePhotos(job).map(photo => photo.id.toLowerCase());
   async function listing(ctx, env, job) {
-    const [rows, attestations] = await Promise.all([ctx.store.listExpenses(job.id), ctx.store.listAttestations(job.id)]);
+    const [rows, attestations, scheduled] = await Promise.all([ctx.store.listExpenses(job.id), ctx.store.listAttestations(job.id), workday(ctx, job)]);
     return {
       ...fieldExpenseListing(job.id, rows, { manager: ctx.manager, user: ctx.session.user, attestations, closeoutRequired: fieldExpenseCloseoutRequired(env) }),
-      canRecord: ctx.manager || !fieldCancelled(job), canManage: ctx.manager, receiptsAvailable: fieldPhotosConfigured(env),
+      canRecord: scheduled && (ctx.manager || !fieldCancelled(job)), ...(scheduled ? {} : { notScheduledToday: true }), canManage: ctx.manager, receiptsAvailable: fieldPhotosConfigured(env),
       damagePhotos: fieldExpenseDamagePhotos(job).map(photo => ({ id: photo.id.toLowerCase(), caption: fieldText(photo.caption, 500), createdAt: fieldText(photo.createdAt, 40) })),
       limits: { maxAmountCents: FIELD_EXPENSE_MAX_CENTS, kinds: FIELD_EXPENSE_KINDS, incomeKinds: FIELD_EXPENSE_INCOME_KINDS, payers: FIELD_EXPENSE_PAYERS, shareableKinds: FIELD_EXPENSE_SHAREABLE_KINDS, maxShareJobs: FIELD_EXPENSE_SHARE_JOBS, maxShareWeight: FIELD_EXPENSE_SHARE_WEIGHT_MAX, closeoutGroups: FIELD_EXPENSE_CLOSEOUT_GROUPS },
       timezone: 'America/Denver',
@@ -147,6 +156,7 @@ export function fieldExpenseHandlers({ session = getHubSession, storage = create
     if (pending?.state === 'applied') return outcome(true, pending);
     if (pending?.status === 'void') throw voided();
     if (!pending && await ctx.store.readRequest(job.id, id)) throw fieldFailure('This entry ID was already used for a cost correction. Refresh before retrying.', 409, 'FIELD_IDEMPOTENCY_CONFLICT');
+    await requireWorkday(ctx, job);
     if (!ctx.manager && fieldCancelled(job)) throw fieldFailure('This job is cancelled or was a no-show. Ask operations before recording costs.', 409, 'FIELD_JOB_CLOSED');
     const picture = input.receiptDataUrl ? decodeFieldPhoto(input.receiptDataUrl) : null;
     let client = null;
@@ -187,6 +197,7 @@ export function fieldExpenseHandlers({ session = getHubSession, storage = create
       if (!current || current.fingerprint !== fingerprint || current.receipt?.fileId !== fileId) throw fieldFailure('This receipt record changed. Contact operations.', 409, 'FIELD_IDEMPOTENCY_CONFLICT');
       if (current.state === 'applied') return outcome(true, current);
       if (current.status === 'void') throw voided();
+      await requireWorkday(ctx, latest);
       if (!ctx.manager && fieldCancelled(latest)) throw fieldFailure('The job was cancelled or marked a no-show during upload. The cost has not been recorded.', 409, 'FIELD_JOB_CLOSED');
       const linked = await linkedRows(ctx, current, { authorize: true });
       if (!ctx.manager && linked.some(item => fieldCancelled(item.job))) throw closedDuringShare();

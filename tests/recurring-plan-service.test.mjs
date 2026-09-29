@@ -5,6 +5,7 @@ import { mutateDispatch } from '../functions/_lib/dispatch-service.js';
 import { extendHorizon, mutateRecurringPlan, occurrenceRequestId, recurringPlansOverview, runRecurringHorizon } from '../functions/_lib/recurring-plan-service.js';
 import { recurringJobIndex } from '../functions/_lib/recurring-plan-service.js';
 import { recurringPlanHandlers } from '../functions/api/recurring-plans.js';
+import { maskJob } from './helpers/recurring-fixture.mjs';
 
 const manager = { user:'zacb', displayName:'Owner', role:'owner', businessAccess:true };
 const NOW = '2026-09-22T12:00:00.000Z';
@@ -19,8 +20,9 @@ function fixture() {
   const commits = [], clone = value => structuredClone(value);
   const all = collection => [...rows.entries()].filter(([key]) => key.startsWith(collection + '/')).map(([, value]) => clone(value));
   const roster = [{ id:'zacb', name:'Owner', role:'owner' }, { id:'crew1', name:'Crew One', role:'crew' }, { id:'crew2', name:'Crew Two', role:'crew' }];
+  // jobs() is masked to JOB_FIELDS like production's dispatchStorage scan.
   const store = {
-    jobs: async () => all('jobs'), resources: async () => all('dispatchResources'), customers: async () => all('customers'), recurringPlans: async () => all('recurringPlans'), roster: async () => clone(roster),
+    jobs: async () => all('jobs').map(row => maskJob(row)), resources: async () => all('dispatchResources'), customers: async () => all('customers'), recurringPlans: async () => all('recurringPlans'), roster: async () => clone(roster),
     read: async (collection, id) => clone(rows.get(`${collection}/${id}`) || null),
     commit: async writes => {
       const seen = new Set();

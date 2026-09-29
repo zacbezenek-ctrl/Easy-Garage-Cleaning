@@ -2,7 +2,8 @@ import {and,desc,eq,inArray,sql} from "drizzle-orm";
 import {getDb,schema} from "@egc/database";
 import {GhlClient,asDate,asRecord,asString} from "@egc/ghl";
 import {recomputeLeadState} from "@egc/lead-audit";
-import {ReliableAppointments,postgresAppointmentStore,AppointmentOperationError,OperationsError,appointmentStatus,type Actor,type Command,type AppointmentProvider} from "@egc/operations";
+import {randomUUID} from "node:crypto";
+import {ReliableAppointments,postgresAppointmentStore,AppointmentOperationError,OperationsError,appointmentStatus,appointmentMatches,type Actor,type Command,type AppointmentProvider} from "@egc/operations";
 type Json=Record<string,unknown>;
 type Sync=Extract<Command,{command:"schedule.sync_provider"}>;
 type Portal=(actor:Actor,command:Command)=>Promise<Json>;
@@ -77,7 +78,29 @@ export async function syncPortalSchedule(actor:Actor,command:Sync,portal:Portal,
     // schedule fields still equal this provider event before acknowledging sync.
     const latest=asRecord((await portal(actor,{command:"schedule.resolve",portalVisitId:command.portalVisitId})).visit);
     await portal(system,{command:"schedule.bind_provider",portalVisitId:command.portalVisitId,expectedRevision:String(latest.revision),operationId:verified.operationId,event});
+    // With the schedule-sync worker on, a second writer can land a write that resolved an older
+    // schedule after this one, and bind while the visit was still pending (a moment the Hub has no
+    // synced appointment to call drifted). Read the appointment back after binding: if it no
+    // longer holds the event just bound, the Hub is re-queued ('pending' under a fresh
+    // schedule-drift key, written by bind_provider's drift rule for a synced visit) and this sync
+    // reports schedule_provider_drift instead of verified. Flag off: no extra read.
+    if(env.EGC_SCHEDULE_SYNC_WORKER==="true"&&await requeueIfDrifted(provider,portal,system,command.portalVisitId,String(latest.revision),event)){
+      await db.insert(schema.auditLogs).values({actor:actor.id,action:"schedule.provider.drift",entity:"appointment",entityId:appointment!.id,newValue:{operationId:verified.operationId,portalVisitId:command.portalVisitId,providerAppointmentId:event.id},source:"operations"});
+      throw new OperationsError("schedule_provider_drift",409,{operationId:verified.operationId});
+    }
     await db.insert(schema.auditLogs).values({actor:actor.id,action:"schedule.provider.verified",entity:"appointment",entityId:appointment!.id,newValue:{operationId:verified.operationId,portalVisitId:command.portalVisitId,providerAppointmentId:event.id},source:"operations"});
     return {ok:true,authority:"employee_hub",providerSync:"verified",portalVisitId:command.portalVisitId,operationId:verified.operationId,appointmentId:event.id,contactId:providerContactId,calendarId:event.calendarId,appointment};
   }catch(error){if(error instanceof OperationsError)throw error;if(error instanceof AppointmentOperationError)throw new OperationsError(error.code,409,{operationId:error.operationId});throw new OperationsError("schedule_provider_sync_unavailable",503);}
+}
+
+/** The post-bind check: true when the provider appointment no longer holds the start, end and
+ * status of the event just bound (the fields the Hub's bind verifies). The event as it now reads
+ * is then re-bound under a fresh operation id: the Hub, synced to this very appointment, refuses
+ * it and re-queues the visit under schedule-drift:<operation id>. Any other answer (a concurrent
+ * reschedule already re-queued it) leaves the visit to that change. */
+async function requeueIfDrifted(provider:AppointmentProvider,portal:Portal,system:Actor,portalVisitId:string,revision:string,event:Json){
+  const id=String(event.id),current=raw(await provider.getAppointment(id));
+  if(appointmentMatches(current,{startTime:event.startTime,endTime:event.endTime,appointmentStatus:event.appointmentStatus??event.appoinmentStatus??event.status},id))return false;
+  await portal(system,{command:"schedule.bind_provider",portalVisitId,expectedRevision:revision,operationId:randomUUID(),event:current}).catch(()=>undefined);
+  return true;
 }

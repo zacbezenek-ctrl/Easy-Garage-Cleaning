@@ -1,6 +1,6 @@
 /* Pure message template rules. Only whitelisted variables render, missing
    values fail closed, SMS is capped and email HTML is always escaped. */
-export const TEMPLATE_VARIABLES = Object.freeze(['firstName','crewLeadName','etaMinutes','arrivalWindow','serviceDate','portalLink','payLink','invoiceNumber','balance','dueDate','companyPhone','inviteLink','loginLink']);
+export const TEMPLATE_VARIABLES = Object.freeze(['firstName','crewLeadName','etaMinutes','arrivalWindow','serviceDate','removedDates','portalLink','payLink','invoiceNumber','balance','dueDate','companyPhone','inviteLink','loginLink']);
 export const LINK_VARIABLES = Object.freeze(['portalLink','payLink','inviteLink','loginLink']);
 export const TEMPLATE_CHANNELS = Object.freeze(['SMS','Email']);
 export const SMS_LIMIT = 320;
@@ -76,6 +76,21 @@ function html(parts, vars) {
     : LINK_VARIABLES.includes(part.variable) ? `<a href="${escapeHtml(value(part.variable, vars))}">${escapeHtml(value(part.variable, vars))}</a>`
     : escapeHtml(value(part.variable, vars))).join('');
   return body.split(/\n{2,}/).map(paragraph => `<p>${paragraph.replace(/\n/g, '<br>')}</p>`).join('');
+}
+
+/** How much of an SMS body is taken before the `open` variables: the
+ * characters of its text and of every other variable's value (as rendered),
+ * and how many times each open variable appears, so a caller can size those
+ * variables to what is left under SMS_LIMIT. */
+export function templateRoom(template, vars = {}, open = []) {
+  const counts = Object.fromEntries(open.map(name => [name, 0]));
+  let used = 0;
+  for (const part of segments(String(template?.body || ''))) {
+    if (part.variable === undefined) used += [...part.text].length;
+    else if (open.includes(part.variable)) counts[part.variable] += 1;
+    else used += [...value(part.variable, vars)].length;
+  }
+  return { room: SMS_LIMIT - used, counts };
 }
 
 // Deterministic: the same template and values always produce the same output.

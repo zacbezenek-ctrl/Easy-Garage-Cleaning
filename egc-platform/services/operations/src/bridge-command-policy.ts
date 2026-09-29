@@ -51,6 +51,13 @@ export const BRIDGE_COMMAND_POLICY:Readonly<Record<string,BridgeCommandPolicy>> 
   "schedule.link_customer": policy({kind:"write",actors:[integration(/^(?:schedule-sync|note-link):.+$/)],confirm:false}),
   "schedule.bind_provider": policy({kind:"write",actors:[integration(/^schedule-sync:.+$/),integration(MCP_PRINCIPAL_PATTERN)],confirm:false}),
   "schedule.adopt": policy({kind:"write",actors:[integration(/^booking-adoption-worker$/)],confirm:false}),
+  // The API's schedule-sync loop (apps/api schedule-sync-worker.ts) is the only caller. sync_due
+  // is a read of the queue whose only write is the loop's own check-in document.
+  "schedule.sync_due": policy({kind:"read",actors:[integration(/^schedule-sync-worker$/)],confirm:false}),
+  "schedule.sync_failed": policy({kind:"write",actors:[integration(/^schedule-sync-worker$/)],confirm:false}),
+  // The hourly recurring-plan horizon run comes only from egc-api's own timer
+  // (apps/api recurring-horizon-worker.ts); RECURRING_HORIZON_ACTOR in hub-command-policy.ts.
+  "recurring.extend_horizon": policy({kind:"write",actors:[integration(/^recurring-horizon-worker$/)],confirm:false}),
   "recording.resolve": policy({kind:"read",actors:READERS,confirm:false}),
   // The API applies a recording only after a human manager approved its exact preview.
   "recording.apply": policy({kind:"write",actors:human("owner","manager"),confirm:false})

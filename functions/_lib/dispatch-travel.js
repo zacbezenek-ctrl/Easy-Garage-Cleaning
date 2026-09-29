@@ -32,6 +32,7 @@ import { scheduleCrewIds } from './dispatch-conflicts.js';
 import { DISPATCH_TIME_ZONE } from './dispatch-contract.js';
 import { validDate, denverToday, scheduleInterval, occupiedDays } from './dispatch-time.js';
 import { jobSegments } from './dispatch-segments.js';
+import { jobsForWindow, dayWindow } from './dispatch-window-reads.js';
 
 export const TRAVEL_ROAD_FACTOR = 1.35, TRAVEL_AVERAGE_MPH = 35, TRAVEL_OVERHEAD_MINUTES = 5, TRAVEL_WINDOW_MINUTES = 240;
 const CACHE_TTL_MS = 30 * 86400000, GOOGLE_PAIR_LIMIT = 25, GOOGLE_CONCURRENCY = 5, CACHE_READ_LIMIT = 200, GOOGLE_TIMEOUT_MS = 5000, MODES = new Set(['off','offline','google']);
@@ -200,7 +201,7 @@ function routeQuery(query, now) {
 export async function dispatchTravelRoutes(store, session, query = {}, now = new Date(), { travel = null } = {}) {
   requireDispatcher(session);
   const input = routeQuery(query, now), estimator = travel || travelEstimator();
-  const [jobs, roster] = await Promise.all([store.jobs(), store.roster()]);
+  const [jobs, roster] = await Promise.all([jobsForWindow(store, dayWindow(input.date), 'routes'), store.roster()]);
   if (input.employeeId && !roster.some(person => person.id === input.employeeId)) throw fail('dispatch_employee_inactive', 'That employee is not in the active roster. Refresh the roster.');
   const routes = new Map(), warnings = [];
   const route = id => {

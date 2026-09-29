@@ -1,0 +1,62 @@
+.egc-lifecycle{--el-ink:#172033;--el-muted:#5f6b7c;--el-line:#d9d8d2;--el-paper:#fbfaf7;--el-green:#19734f;--el-red:#b83b44;--el-orange:#ee5c2b;width:calc(100vw - 12px);max-width:600px;max-height:calc(100dvh - 12px);padding:0;border:0;border-radius:14px;background:var(--el-paper);color:var(--el-ink);font:16px/1.45 system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;box-shadow:0 18px 48px rgba(15,25,42,.28);overflow:hidden}
+.egc-lifecycle::backdrop{background:rgba(12,24,41,.55)}
+.egc-lifecycle *{box-sizing:border-box}
+.el-sheet{display:flex;flex-direction:column;max-height:calc(100dvh - 12px);min-width:0}
+.el-head{position:sticky;top:0;z-index:1;display:flex;gap:12px;align-items:flex-start;justify-content:space-between;padding:14px 16px 12px;border-bottom:1px solid var(--el-line);background:#fff}
+.el-head>div{min-width:0}
+.el-kicker{margin:0;font-size:.72rem;font-weight:750;letter-spacing:.12em;color:var(--el-orange)}
+.el-head h2{margin:2px 0 0;font-size:1.12rem;line-height:1.3;overflow-wrap:anywhere}
+.el-close{flex:0 0 44px;width:44px;height:44px;border:1px solid var(--el-line);border-radius:10px;background:#fff;color:var(--el-ink);font-size:1.5rem;line-height:1;cursor:pointer}
+.el-body{flex:1 1 auto;overflow:auto;overscroll-behavior:contain;padding:14px 16px 18px;display:grid;gap:14px;min-width:0}
+.el-body>*{min-width:0;margin:0}
+.el-body p{margin:0;overflow-wrap:anywhere}
+.el-summary{padding:12px;border:1px solid var(--el-line);border-radius:12px;background:#fff;display:grid;gap:8px;min-width:0}
+.el-customer{font-weight:700}
+.el-summary dl{margin:0;display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,120px),1fr));gap:8px}
+.el-summary dl div{min-width:0;padding:8px 10px;border-radius:9px;background:#f4f3ef}
+.el-summary dt{font-size:.75rem;color:var(--el-muted)}
+.el-summary dd{margin:0;font-weight:700;font-variant-numeric:tabular-nums;overflow-wrap:anywhere}
+.el-list{margin:0;padding:0;list-style:none;display:grid;gap:0;border-top:1px solid #eeede8}
+.el-list li{display:flex;gap:12px;justify-content:space-between;padding:8px 0;border-bottom:1px solid #eeede8;min-width:0}
+.el-list span{min-width:0;overflow-wrap:anywhere}
+.el-list b{font-variant-numeric:tabular-nums;white-space:nowrap}
+.el-muted,.el-note{color:var(--el-muted);font-size:.88rem}
+.el-notice{padding:10px 12px;border-radius:10px;border:1px solid #c9d7e6;background:#eef4fa;font-size:.92rem}
+.el-notice.warn{border-color:#ecd49a;background:#fff8e6;color:#4d3800}
+.el-notice.error{border-color:#e6b9bd;background:#fff1f1;color:#7c1f27}
+.el-notice.error:focus{outline:3px solid var(--el-red);outline-offset:2px}
+.el-toggle{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px}
+.el-toggle .el-button{width:100%}
+.el-toggle .el-button.on{background:var(--el-ink);border-color:var(--el-ink);color:#fff}
+.el-field{display:grid;gap:5px;min-width:0}
+.el-field>label{font-size:.86rem;font-weight:650}
+.el-field small{color:var(--el-muted);font-size:.8rem}
+.el-field input,.el-field select,.el-field textarea{width:100%;min-width:0;min-height:44px;padding:10px 12px;border:1px solid #c5c9cf;border-radius:9px;background:#fff;color:var(--el-ink);font:inherit;font-size:16px}
+.el-field textarea{resize:vertical;min-height:72px}
+.el-field input:focus-visible,.el-field select:focus-visible,.el-field textarea:focus-visible,.el-button:focus-visible,.el-close:focus-visible,.el-choice input:focus-visible{outline:3px solid #b3841c;outline-offset:2px}
+.el-pair{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,200px),1fr));gap:12px}
+.el-choices{margin:0;padding:0;border:0;display:grid;gap:8px;min-width:0}
+.el-choices legend{padding:0;margin-bottom:6px;font-size:.86rem;font-weight:650}
+.el-choice{display:flex;gap:10px;align-items:flex-start;min-height:44px;padding:10px 12px;border:1px solid var(--el-line);border-radius:10px;background:#fff;cursor:pointer;min-width:0}
+.el-choice input{flex:0 0 auto;width:22px;height:22px;margin:0}
+.el-choice span{min-width:0;overflow-wrap:anywhere}
+.el-choice small,.el-request small{display:block;color:var(--el-muted);font-size:.85rem}
+.el-button{appearance:none;min-height:44px;padding:10px 16px;border:1px solid #c5c9cf;border-radius:10px;background:#fff;color:var(--el-ink);font:650 .95rem/1.25 system-ui,-apple-system,sans-serif;cursor:pointer;display:inline-flex;align-items:center;justify-content:center;text-align:center;max-width:100%}
+.el-button.primary{background:var(--el-green);border-color:var(--el-green);color:#fff}
+.el-button.danger{color:var(--el-red);border-color:#e3bcc0}
+.el-button:disabled,.el-close:disabled{opacity:.55;cursor:default}
+.el-foot{position:sticky;bottom:0;display:grid;gap:8px;padding:12px 16px calc(12px + env(safe-area-inset-bottom));border-top:1px solid var(--el-line);background:#fff}
+.el-status{margin:0;min-height:1.2em;font-size:.85rem;color:var(--el-muted)}
+.el-actions{display:flex;flex-wrap:wrap;gap:10px;justify-content:flex-end}
+.el-skeleton{display:grid;gap:12px}
+.el-skeleton span{display:block;height:64px;border-radius:12px;background:linear-gradient(90deg,#ecebe6 0%,#f7f6f2 50%,#ecebe6 100%);background-size:200% 100%;animation:el-shimmer 1.2s linear infinite}
+@keyframes el-shimmer{to{background-position:-200% 0}}
+@media (prefers-reduced-motion:reduce){.el-skeleton span{animation:none}}
+@media (max-width:680px){
+  .egc-lifecycle{width:calc(100vw - 12px);border-radius:12px}
+  .el-head,.el-body,.el-foot{padding-left:12px;padding-right:12px}
+  .el-actions{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,130px),1fr))}
+  .el-actions .el-button{width:100%}
+  .el-actions .primary{grid-column:1/-1}
+  .el-field input,.el-field select,.el-field textarea{font-size:16px}
+}

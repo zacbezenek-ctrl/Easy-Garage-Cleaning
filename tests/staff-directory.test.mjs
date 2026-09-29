@@ -441,6 +441,11 @@ test('legacy /api/employee-hub never returns the pay schedule or audit trail, an
   // The legacy profile form still edits today's fields; directory-owned fields are ignored.
   // Manager pay edits are the legacy rule, EGC_STAFF_PAY_OWNER_ONLY=false (PRICE-SCRUB).
   const forged = { username: 'Crew.Account', jobTitle: 'Synthetic lead', hourlyRate: 22, payRates: [], payRateMirror: null, history: [], staffRoles: ['manager'], skills: [], skillCatalogVersion: 'x', weeklyAvailability: {}, migrations: ['forged'], directoryRequestId: 'forged', directoryUpdatedBy: 'forged' };
+  // PAY-TIMESHEETS: with EGC_STAFF_PAY_OWNER_ONLY on (the default) the manager's rate is refused and nothing changes.
+  const refused = await employeeHub.onRequestPost({ env, request: jsonRequest('/api/employee-hub', { collection: 'profiles', id: 'crew.account', data: forged }, manager) });
+  assert.deepEqual([refused.status, (await refused.json()).code], [403, 'pay_owner_only']);
+  assert.deepEqual((await decrypt(fire, 'profiles', 'crew.account')).data, stored);
+  // The manager rate edit below is the legacy rule, EGC_STAFF_PAY_OWNER_ONLY=false.
   const response = await employeeHub.onRequestPost({ env: { ...env, EGC_STAFF_PAY_OWNER_ONLY: 'false' }, request: jsonRequest('/api/employee-hub', { collection: 'profiles', id: 'crew.account', data: forged }, manager) });
   assert.equal(response.status, 200, await response.clone().text());
   const { record } = await response.json();
@@ -488,7 +493,10 @@ test('legacy pay helpers: stripping, the effective-rate view and the moving mirr
   const env = staffEnv(), enabled = { ...env, EGC_STAFF_DIRECTORY_ENABLED: 'true' };
   assert.deepEqual(legacyProfileInput({ jobTitle: 'x', hourlyRate: 9, payType: 'salary', payRates: [] }), { jobTitle: 'x', hourlyRate: 9, payType: 'salary' });
   assert.deepEqual(legacyProfileInput({ jobTitle: 'x', hourlyRate: 9, payType: 'salary', payRates: [] }, { stripPay: true }), { jobTitle: 'x' });
-  assert.deepEqual([legacyPayLocked(people.TylerG, env), legacyPayLocked(people.TylerG, enabled), legacyPayLocked(people.ZacB, enabled), legacyPayLocked(employee('Crew.One'), enabled)], [false, true, false, true]);
+  // PAY-TIMESHEETS: EGC_STAFF_PAY_OWNER_ONLY (on unless exactly 'false') locks legacy pay edits even with the directory off.
+  const legacy = { ...env, EGC_STAFF_PAY_OWNER_ONLY: 'false' }, legacyEnabled = { ...enabled, EGC_STAFF_PAY_OWNER_ONLY: 'false' };
+  assert.deepEqual([legacyPayLocked(people.TylerG, legacy), legacyPayLocked(people.TylerG, legacyEnabled), legacyPayLocked(people.ZacB, legacyEnabled), legacyPayLocked(employee('Crew.One'), legacyEnabled)], [false, true, false, true]);
+  assert.deepEqual([legacyPayLocked(people.TylerG, env), legacyPayLocked(people.AlexK, env), legacyPayLocked(people.ZacB, env), legacyPayLocked(people.ZacB, enabled), legacyPayLocked(employee('Crew.One'), env)], [true, true, false, false, true]);
   const profile = { id: 'crew.one', username: 'Crew.One', hourlyRate: 21, payRates: [{ effectiveFrom: LEGACY_EFFECTIVE_FROM, hourlyRate: 21, payType: 'hourly', overtimeMultiplier: 1.5, setBy: 'x', setAt: NOW }, { effectiveFrom: '2026-10-01', hourlyRate: 26, payType: 'hourly', overtimeMultiplier: 1.5, setBy: 'x', setAt: NOW }], payRateMirror: { hourlyRate: 21, effectiveFrom: LEGACY_EFFECTIVE_FROM, at: NOW }, history: [] };
   // 05:30Z on Oct 1 is still Sep 30 in Denver.
   assert.deepEqual(legacyProfileView(profile, '2026-10-01T05:30:00.000Z'), { id: 'crew.one', username: 'Crew.One', hourlyRate: 21 });
@@ -541,6 +549,7 @@ test('HTTP: once a scheduled raise takes effect, legacy readers show it, a crew 
 
 test('HTTP: with the directory on, only the owner changes pay through the legacy profile form; off, managers still can when EGC_STAFF_PAY_OWNER_ONLY=false', async t => {
   const fire = vaultFirestore(t), enabled = { ...env, EGC_STAFF_DIRECTORY_ENABLED: 'true' };
+  const legacy = { ...env, EGC_STAFF_PAY_OWNER_ONLY: 'false' }, legacyEnabled = { ...enabled, EGC_STAFF_PAY_OWNER_ONLY: 'false' };
   t.mock.timers.enable({ apis: ['Date'], now: Date.parse(NOW) });
   await seedAccount(env, 'Crew.Account');
   await writeOne(env, 'profiles', 'crew.account', { username: 'Crew.Account', payType: 'hourly', hourlyRate: 21 }, { data: null }, NOW);
@@ -551,16 +560,38 @@ test('HTTP: with the directory on, only the owner changes pay through the legacy
     assert.equal(response.status, 200, await response.clone().text());
     return (await decrypt(fire, 'profiles', id)).data;
   };
+  // PAY-TIMESHEETS: with EGC_STAFF_PAY_OWNER_ONLY on (the default), directory on or off, a pay change by anyone but
+  // the owner is refused, on another employee's profile and on their own.
+  const refuse = async (hubEnv, cookie, id, data) => {
+    const response = await employeeHub.onRequestPost({ env: hubEnv, request: jsonRequest('/api/employee-hub', { collection: 'profiles', id, data }, cookie) });
+    assert.deepEqual([response.status, (await response.json()).code], [403, 'pay_owner_only'], JSON.stringify(data));
+  };
+  const before = fire.snapshot();
+  for (const hubEnv of [env, enabled]) for (const cookie of [manager, lead]) {
+    await refuse(hubEnv, cookie, 'crew.account', { username: 'Crew.Account', jobTitle: 'Synthetic lead', hourlyRate: 99, payType: 'salary' });
+    await refuse(hubEnv, cookie, 'crew.account', { username: 'Crew.Account', payType: 'salary' });
+  }
+  await refuse(env, manager, 'tylerg', { username: 'TylerG', displayName: 'Synthetic Manager', hourlyRate: 99, payType: 'salary', lastSeenAt: NOW });
+  assert.equal(fire.snapshot(), before, 'a refused pay change writes nothing');
+  // The form sent back with the pay it showed is refused like any other pay on another employee's profile (so the answer
+  // never depends on the stored pay); without pay (the team board leaves it out unless the rate was edited) it saves
+  // everything else, and the stored pay stays.
+  await refuse(env, manager, 'crew.account', { username: 'Crew.Account', jobTitle: 'Synthetic lead', hourlyRate: 21, payType: 'hourly' });
+  assert.equal(fire.snapshot(), before, 'a refused echo writes nothing');
+  const echoed = await save(env, manager, 'crew.account', { username: 'Crew.Account', jobTitle: 'Synthetic lead' });
+  assert.deepEqual([echoed.hourlyRate, echoed.payType, echoed.jobTitle], [21, 'hourly', 'Synthetic lead']);
+  // ensureOwnProfile sends the Hub configuration's pay, which the manager's own profile mirrors.
+  const ensured = await save(env, manager, 'tylerg', { username: 'TylerG', displayName: 'Synthetic Manager', role: 'manager', payType: 'hourly', hourlyRate: 30, lastSeenAt: NOW });
+  assert.deepEqual([ensured.hourlyRate, ensured.payType], [30, 'hourly']);
+  // With the flag off and the directory on, a manager's pay fields are dropped as before.
   for (const cookie of [manager, lead]) {
-    const kept = await save(enabled, cookie, 'crew.account', { username: 'Crew.Account', jobTitle: 'Synthetic lead', hourlyRate: 99, payType: 'salary' });
+    const kept = await save(legacyEnabled, cookie, 'crew.account', { username: 'Crew.Account', jobTitle: 'Synthetic lead', hourlyRate: 99, payType: 'salary' });
     assert.deepEqual([kept.hourlyRate, kept.payType, kept.jobTitle], [21, 'hourly', 'Synthetic lead'], 'a manager\'s pay fields are dropped');
   }
   // ensureOwnProfile: a manager's own profile keeps mirroring the Hub configuration, whatever the form sent.
-  const own = await save(enabled, manager, 'tylerg', { username: 'TylerG', displayName: 'Synthetic Manager', hourlyRate: 99, payType: 'salary', lastSeenAt: NOW });
+  const own = await save(legacyEnabled, manager, 'tylerg', { username: 'TylerG', displayName: 'Synthetic Manager', hourlyRate: 99, payType: 'salary', lastSeenAt: NOW });
   assert.deepEqual([own.hourlyRate, own.payType], [30, 'hourly']);
   assert.equal((await save(enabled, owner, 'crew.account', { username: 'Crew.Account', hourlyRate: 23 })).hourlyRate, 23, 'the owner keeps today\'s legacy edit');
-  // PRICE-SCRUB: by default only the owner sets another employee's pay; the legacy rule is EGC_STAFF_PAY_OWNER_ONLY=false.
-  assert.equal((await save(env, manager, 'crew.account', { username: 'Crew.Account', hourlyRate: 25, payType: 'salary' })).hourlyRate, 23, 'a manager\'s pay fields are dropped by default');
-  assert.equal((await save({ ...env, EGC_STAFF_PAY_OWNER_ONLY: 'false' }, manager, 'crew.account', { username: 'Crew.Account', hourlyRate: 24, payType: 'salary' })).hourlyRate, 24, 'with the directory off and pay open to managers, managers edit pay as before');
-  assert.equal((await save(env, manager, 'tylerg', { username: 'TylerG', hourlyRate: 31 })).hourlyRate, 31);
+  assert.equal((await save(legacy, manager, 'crew.account', { username: 'Crew.Account', hourlyRate: 24, payType: 'salary' })).hourlyRate, 24, 'with the directory off, managers edit pay as today');
+  assert.equal((await save(legacy, manager, 'tylerg', { username: 'TylerG', hourlyRate: 31 })).hourlyRate, 31);
 });

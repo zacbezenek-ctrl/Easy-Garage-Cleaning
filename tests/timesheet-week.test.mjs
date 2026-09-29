@@ -120,6 +120,31 @@ test('paid time off skips Saturday and Sunday unless a manager also sets paidWee
   assert.deepEqual([only(vacation).ptoHours, only(vacation).ptoPay, only(vacation).days.map(item => item.ptoHours)], [40, 800, [8, 8, 8, 8, 8, 0, 0]]);
 });
 
+test('workflow approvals pay their recorded paid days, win over older pay fields, and send unreadable terms to review', () => {
+  // A workflow approval: its approve decision's by/at are the request's reviewedBy/reviewedAt.
+  const at = '2026-09-20T15:00:00.000Z', base = { type: 'time_off', status: 'approved', employee: 'Crew.One', startDate: '2026-09-25', endDate: '2026-09-28', reviewedBy: 'zacb', reviewedAt: at, decisions: [{ action: 'approve', status: 'approved', by: 'zacb', at }] };
+  const paid = request => ptoFromRequests([request]).map(entry => [entry.id, entry.date, entry.hours, entry.hourlyRate]);
+  // The same fields without that decision (an employee wrote them into an older request) pay only by the older rule.
+  assert.deepEqual(paid({ ...base, id: 'unbound', decisions: [], paid: true, hoursPerDay: 12, paidDates: ['2026-09-25', '2026-09-26', '2026-09-27', '2026-09-28'] }), []);
+  assert.deepEqual(paid({ ...base, id: 'unbound-older', reviewedAt: '2026-09-21T00:00:00.000Z', paid: true, hoursPerDay: 4, paidDates: ['2026-09-26'], paidHoursPerDay: 8 }), [['unbound-older', '2026-09-25', 8, undefined], ['unbound-older', '2026-09-28', 8, undefined]]);
+  // The manager's paid days, weekend days included only when chosen; without them, the requested weekdays.
+  assert.deepEqual(paid({ ...base, id: 'chosen', paid: true, hoursPerDay: 8, paidDates: ['2026-09-26', '2026-09-28'], hourlyRate: 999 }), [['chosen', '2026-09-26', 8, undefined], ['chosen', '2026-09-28', 8, undefined]]);
+  assert.deepEqual(paid({ ...base, id: 'default', paid: true, hoursPerDay: 7.5 }), [['default', '2026-09-25', 7.5, undefined], ['default', '2026-09-28', 7.5, undefined]]);
+  // A request carrying both shapes pays by the workflow fields alone.
+  assert.deepEqual(paid({ ...base, id: 'both', paid: true, hoursPerDay: 4, paidDates: ['2026-09-25'], paidHoursPerDay: 8, paidWeekends: true }), [['both', '2026-09-25', 4, undefined]]);
+  assert.deepEqual(paid({ ...base, id: 'unpaid', paid: false, hoursPerDay: null, paidHoursPerDay: 8, paidWeekends: true }), []);
+  // An early end pays only the days before the first day back, in either shape.
+  assert.deepEqual(paid({ ...base, id: 'ended', paid: true, hoursPerDay: 8, paidDates: ['2026-09-25', '2026-09-26', '2026-09-28'], endedEarlyFrom: '2026-09-26' }), [['ended', '2026-09-25', 8, undefined]]);
+  assert.deepEqual(paid({ ...base, id: 'older-ended', paidHoursPerDay: 8, endedEarlyFrom: '2026-09-28' }), [['older-ended', '2026-09-25', 8, undefined]]);
+  for (const status of ['pending', 'denied', 'cancelled', '']) assert.deepEqual(paid({ ...base, id: 'not-approved', status, paid: true, hoursPerDay: 8, paidDates: ['2026-09-25'] }), []);
+  const result = week([day('mon', '2026-09-21', '08:00', '16:00')], { pto: ptoFromRequests([{ ...base, id: 'chosen', paid: true, hoursPerDay: 8, paidDates: ['2026-09-25', '2026-09-26', '2026-09-28'] }]) }), row = only(result);
+  assert.deepEqual([row.workedHours, row.ptoHours, row.ptoPay, row.totalPaidHours, row.days.map(item => item.ptoHours)], [8, 16, 320, 24, [0, 0, 0, 0, 8, 8, 0]]);
+  // Unreadable workflow terms are reviewed, never paid as 0.
+  const invalid = week([], { pto: ptoFromRequests([{ ...base, id: 'hours', paid: true, hoursPerDay: 13, paidDates: ['2026-09-25'] }, { ...base, id: 'range', paid: true, hoursPerDay: 8, endDate: '2026-12-31' }, { ...base, id: 'list', paid: true, hoursPerDay: 8, paidDates: '2026-09-25' }]) });
+  assert.deepEqual(invalid.needsReview.map(item => [item.id, item.reason, item.workDate]), [['hours', 'invalid_pto', '2026-09-25'], ['range', 'invalid_pto', '2026-09-25'], ['list', 'invalid_pto', '2026-09-25']]);
+  assert.equal(invalid.coverage.complete, false);
+});
+
 test('invalid, overlapping and unidentified timecards need review and never enter pay totals', () => {
   const cards = [
     day('valid', '2026-09-25', '08:00', '12:00'),
