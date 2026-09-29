@@ -93,6 +93,9 @@ const createJob=async(service,start,end)=>{
  await managerPage.getByRole('combobox',{name:'How was this booked?',exact:true}).selectOption('hub_phone');
  // The synthetic customer has no HighLevel contact, so FUN-02 asks why before creating the visit.
  await managerPage.getByRole('combobox',{name:'Why is there no CRM contact?',exact:true}).selectOption('internal_or_test');
+ // FUN-29: a job booked by phone without a walkthrough needs the one-tap path; picking the service line too keeps the
+ // submit independent of when the pre-fill answers.
+ await managerPage.getByRole('combobox',{name:'Service line',exact:true}).selectOption('garage_transformation');await managerPage.getByRole('combobox',{name:'How this project reached us',exact:true}).selectOption('direct_phone_booking');
  await managerPage.getByRole('dialog').getByRole('button',{name:'Create job',exact:true}).click();
 };
 try{

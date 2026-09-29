@@ -12,6 +12,7 @@ import { legacyBlockedDays, legacyBlockWarning } from './dispatch-legacy-blocks.
 import { SEGMENT_HULL_KEYS, SEGMENT_LIMIT, segmented, segmentsInvalid, jobSegments, segmentDays, segmentLockEntries, ownsLockEntry, projectSegments, validateSegments } from './dispatch-segments.js';
 import { bookingInput, bookingPatch, reasonInput, cancelPatch, noShowProblem, visitFunnelWrites, requestKey, eventActor } from './dispatch-funnel.js';
 import { dispatchDurationFields, dispatchDurationOverride, dispatchCrewSize, withQuoteLines, ESTIMATED_DURATION_MIN } from './dispatch-duration.js';
+import { bookingDimensions, firstPlacementDimensions } from './funnel-dimensions.js';
 
 const TERMINAL = new Set(['cancelled','canceled','completed','invoiced','paid','review_requested','closed','noshow','no_show','no-show']);
 const JOB_TYPES = new Set(['job','walkthrough','cleanout','reorg','blocked']);
@@ -387,7 +388,7 @@ async function executeDispatch(store, session, input, now, options = {}) {
     collection = 'jobs';
     // A no-show closes the visit like a cancellation, without a provider appointment change.
     const create = input.action === 'schedule.create', noShow = input.action === 'schedule.no_show', cancel = input.action === 'schedule.cancel' || noShow, restore = input.action === 'schedule.restore';
-    let booking = null, rework = null;
+    let booking = null, rework = null, dimensionContext = null;
     if (create) {
       if (input.kind === 'blocked') {
         if (input.customerId || input.sourceWalkthroughId || input.sourceTemplateJobId || input.sourceJobId) throw fail('dispatch_block_invalid','A company-wide scheduling block cannot have a customer or source job.');
@@ -444,6 +445,7 @@ async function executeDispatch(store, session, input, now, options = {}) {
       Object.assign(patch,bookingPatch(booking,{bookedBy:session.user,highlevelContactId:patch.highlevelContactId}));
       if (!project) writes.push({ collection:'projects', id:projectId, patch:{ id:projectId, customerId:customer.id, sourceRecordId:origin?.id || id, sourceWalkthroughId:source?.id || (input.kind === 'walkthrough' ? id : null), authority:'employee_hub',createdAt:now,updatedAt:now,createdBy:session.user,highlevelContactId:patch.highlevelContactId,crmLinkReason:patch.crmLinkReason,...(template?.projectId ? {previousProjectId:template.projectId} : {}) } });
       if (origin && !origin.projectId) writes.push({ collection:'jobs',id:origin.id,revision:origin.revision,patch:{ projectId, updatedAt:now } });
+      dimensionContext = { project, projectWrite: project ? null : writes.find(write => write.collection === 'projects' && write.id === projectId), template };
       }
     } else {
       id = input.jobId;
@@ -539,7 +541,9 @@ async function executeDispatch(store, session, input, now, options = {}) {
     if(arrival?.reset)warnings.push({code:'arrival_window_reset',jobId:id,message:'The saved arrival window did not include the new start time and was cleared. Review the arrival window the customer sees.'});
     // FUN-02: the funnel events for this change commit with the visit and its receipt.
     const crewBefore = current ? legacyMembers(current,roster).sort() : [], crewAfter = legacyMembers(next,roster).sort();
-    const funnel = await visitFunnelWrites({action:create ? 'create' : noShow ? 'no_show' : cancel ? 'cancel' : restore ? 'restore' : 'update',before:current,after:next,actor:eventActor({id:session.user,kind:'human',role:session.role}),via:'hub',key:requestKey(input.requestId),source:{collection:'dispatchOperations',id:receiptId},reason:{...reason,lateCancel:patch.lateCancel},crewChanged:!cancel && crewAfter.length > 0 && canonical(crewAfter) !== canonical(crewBefore),now});
+    // FUN-29: the project's service line and funnel path, set at booking and refined only by better evidence.
+    const dimensions = dimensionContext ? await bookingDimensions(store,{picks:booking,visit:next,...dimensionContext,facts:store.dimensionFacts,actor:session.user,now,writes}) : await firstPlacementDimensions(store,current,next);
+    const funnel = await visitFunnelWrites({action:create ? 'create' : noShow ? 'no_show' : cancel ? 'cancel' : restore ? 'restore' : 'update',before:current,after:next,actor:eventActor({id:session.user,kind:'human',role:session.role}),via:'hub',key:requestKey(input.requestId),source:{collection:'dispatchOperations',id:receiptId},reason:{...reason,lateCancel:patch.lateCancel},crewChanged:!cancel && crewAfter.length > 0 && canonical(crewAfter) !== canonical(crewBefore),dimensions,now});
     Object.assign(patch,funnel.patch); writes.push(...funnel.writes);
   } else {
     collection = 'dispatchResources';

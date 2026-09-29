@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "definitionsVersion": "2026-09-28.5",
+  "definitionsVersion": "2026-09-28.6",
   "about": "Canonical funnel definitions shared by the Employee Hub and egc-platform (@egc/funnel-definitions). Edit only this file, then run `node scripts/funnel-definitions.mjs --write`. docs/FUNNEL-METRICS.md is the living spec.",
   "timeZone": "America/Denver",
   "eligibility": {
@@ -86,10 +86,24 @@
     "reschedule": ["customer_request", "weather", "crew_unavailable", "previous_job_overran", "access_issue", "vehicle_or_equipment", "other", "other_legacy"],
     "noShow": ["customer_not_home", "no_access", "unreachable", "wrong_address", "other", "other_legacy"]
   },
+  "dimensionRulesVersion": 1,
   "serviceLineSources": {
-    "precedence": ["explicit", "visitPurpose", "businessAccount", "ghlGarageHelpRequested", "salesExitService", "legacyJobType"],
+    "precedence": ["explicit", "visitPurpose", "businessAccount", "catalogCategory", "relatedProject", "ghlGarageHelpRequested", "salesExitService", "legacyJobType"],
     "visitPurpose": { "member_visit": "garage_guard_visit" },
     "businessAccount": "commercial_b2b",
+    "catalogCategory": {
+      "bikes": "garage_transformation",
+      "cabinets-workbenches": "garage_transformation",
+      "floors-lighting-extras": "garage_transformation",
+      "lawn-garden": "garage_transformation",
+      "overhead": "garage_transformation",
+      "shelving": "garage_transformation",
+      "small-items": "garage_transformation",
+      "sports-outdoor": "garage_transformation",
+      "wall-systems": "garage_transformation",
+      "services": "garage_transformation"
+    },
+    "relatedProject": "inherit",
     "ghlGarageHelpRequested": {
       "field": "contact.facebook__garage_help_requested",
       "fieldId": "eeVNj4ay4uwJGgP6pzrq",
@@ -97,6 +111,15 @@
     },
     "salesExitService": { "garage": "garage_transformation", "junk": "junk_removal" },
     "legacyJobType": { "cleanout": "garage_transformation", "reorg": "garage_transformation" }
+  },
+  "funnelPathSources": {
+    "precedence": ["explicit", "visitPurpose", "bookingChannel", "recurringSeries", "businessAccount", "walkthrough", "repeat"],
+    "visitPurpose": { "member_visit": "member_visit" },
+    "bookingChannel": { "recurring_plan": "recurring", "b2b_hub": "b2b_request", "portal": "rebook" },
+    "recurringSeries": "recurring",
+    "businessAccount": "b2b_request",
+    "walkthrough": "walkthrough",
+    "repeat": "rebook"
   },
   "calendar": {
     "timeZone": "America/Denver",

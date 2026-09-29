@@ -55,6 +55,28 @@
  * member_visit),crmLinkReason? (kept only when the visit has no CRM contact)},
  * saved as bookingChannel, channelSelfReported, bookedBy, visitPurpose,
  * reworkOfJobId, membershipId, crmLinkReason (400 dispatch_booking_*).
+ * FUN-29 (functions/_lib/funnel-dimensions.js): booking also takes the one-tap
+ * picks serviceLine? (a serviceLines code; 'unknown' is "Not sure yet") and
+ * funnelPath? (a funnelPaths code), plus serviceLineSuggested?:true when
+ * serviceLine is the untouched Facebook lead-form suggestion (only a line the
+ * lead form gives; it ranks as the ghlGarageHelpRequested rule, not as a staff
+ * pick) (400 dispatch_booking_invalid). The project the visit creates gets
+ * serviceLine/serviceLineSource, funnelPath/funnelPathSource,
+ * dimensionRulesVersion and dimensionsUpdatedAt/By; a project it joins is refined
+ * only on better evidence, under its revision in the same commit. The booking
+ * event carries the values; GET `funnel` also lists serviceLines and funnelPaths.
+ * GET /api/funnel-dimensions?customerId=ID&kind=job|walkthrough, optional
+ * visitPurpose, channel, reworkOfJobId, serviceType, suggest=false: dispatcher
+ * only, read-only; an unknown or repeated key is 400
+ * funnel_dimensions_query_invalid, a missing customer 404
+ * funnel_dimensions_customer_not_found.
+ *   => {ok,customerId,kind,projectId,rulesVersion,serviceLine:{value,source,
+ *       required,suggestion},funnelPath:{value,source,required},
+ *       ghl:'disabled'|'ok'|'unavailable'|'not_needed'|'skipped'}
+ *   What a create with these facts records without a pick (a rework shows the
+ *   project it joins); required means the form needs one tap. suggestion is the
+ *   lead-form line (FUNNEL_GHL_SERVICE_LINE_PREFILL_ENABLED=true), read only
+ *   while the line is undecided; suggest=false skips that read ('skipped').
  * schedule.update and schedule.cancel take reasonCode? (reschedule or cancel
  * list; other_legacy is reserved) and initiatedBy?:'customer'|'company'|'system'
  * (400 dispatch_reason_code_invalid). A cancel saves cancellationReasonCode

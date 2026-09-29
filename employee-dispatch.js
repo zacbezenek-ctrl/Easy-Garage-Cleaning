@@ -222,8 +222,48 @@ function renderBody() {
 function labeled(label,control,help) {const id=control.id||'dp-'+key();control.id=id;return h('label',{class:'dp-field',htmlFor:id},h('span',{},label),control,help?h('small',{},help):null);}
 function select(options,value,onChange,props={}) {return h('select',{onchange:e=>onChange(e.target.value),...props},options.map(([id,label])=>h('option',{value:id,selected:id===value},label)));}
 // FUN-02: reason, channel and visit-purpose codes come from the server's shared funnel definitions (GET funnel).
-const codeLabels={hub_phone:'By phone',hub_in_person:'In person',customer:'Customer',company:'EGC',diy:'Doing it themselves',service:'Service visit',install:'Install visit',return:'Return visit',rework:'Rework visit',crm_sync_pending:'CRM sync pending',no_crm_contact:'No CRM contact',b2b_account:'Business account',internal_or_test:'Internal or test'};
+const codeLabels={hub_phone:'By phone',hub_in_person:'In person',customer:'Customer',company:'EGC',diy:'Doing it themselves',service:'Service visit',install:'Install visit',return:'Return visit',rework:'Rework visit',crm_sync_pending:'CRM sync pending',no_crm_contact:'No CRM contact',b2b_account:'Business account',internal_or_test:'Internal or test',
+  garage_transformation:'Garage transformation / organization',junk_removal:'Junk removal',garage_guard_visit:'Garage Guard member visit',commercial_b2b:'Commercial / B2B',unknown:'Not sure yet',walkthrough:'On-site walkthrough',remote_photo_video_quote:'Photo or video quote',direct_phone_booking:'Booked directly by phone',b2b_request:'Business (B2B) request',rebook:'Repeat customer rebook',member_visit:'Garage Guard member visit',recurring:'Recurring service'};
 function codeSelect(codes,value='',props={}) {return select([['','Choose…'],...codes.map(code=>[code,codeLabels[code]||words(code)])],value,()=>{},props);}
+// FUN-29: the project's service line and funnel path. The server pre-fills both from the booking (GET /api/funnel-dimensions);
+// one tap is required only when nothing on file decides a value. An untouched pre-fill is not sent: the server derives it again.
+// An untouched lead-form suggestion is sent as serviceLineSuggested (a lower rule, not a staff pick); a changed select is the staff pick.
+const dimensionSources={explicit:'an earlier staff choice',visitPurpose:'the visit purpose',businessAccount:'the business account',catalogCategory:'the sold catalog items',relatedProject:'the earlier project',salesExitService:'the service name',legacyJobType:'the job type',bookingChannel:'how it was booked',recurringSeries:'the recurring plan',walkthrough:'the walkthrough',repeat:'the earlier project'};
+function dimensionControls(model,lists,read) {
+  if(!Array.isArray(lists?.serviceLines)||!Array.isArray(lists?.funnelPaths))return null;
+  const controls={serviceLine:codeSelect(lists.serviceLines,'',{name:'serviceLine',required:true}),funnelPath:codeSelect(lists.funnelPaths,'',{name:'funnelPath',required:true})},hints={},derived={serviceLine:null,funnelPath:null},suggested={serviceLine:null,funnelPath:null};
+  // The lead-form answer per customer: GHL is read once per form, not on every keystroke.
+  const answers=new Map();
+  for(const [name,label]of [['serviceLine','Service line'],['funnelPath','How this project reached us']]) {
+    // The hint describes the select without becoming part of its name.
+    hints[name]=h('small',{class:'dp-muted',id:'dp-hint-'+key(),'aria-hidden':'true'});controls[name].setAttribute('aria-describedby',hints[name].id);
+    controls[name].addEventListener('change',()=>{controls[name].dataset.touched='1';});
+    const wrap=labeled(label,controls[name]);wrap.append(hints[name]);model.fields.append(wrap);
+  }
+  const settle=(name,dim)=>{
+    const select=controls[name],has=value=>typeof value==='string'&&[...select.options].some(option=>option.value===value);
+    // A project that holds "Not sure yet" is asked again: the select starts empty, so the answer needs a new tap.
+    const current=has(dim?.value)?dim.value:'',unsure=dim?.required===true&&current==='unknown',value=unsure?'':current,suggestion=!value&&has(dim?.suggestion)?dim.suggestion:'';
+    derived[name]=current||null;suggested[name]=suggestion||null;
+    if(!select.dataset.touched)select.value=value||suggestion;
+    select.required=!dim||dim.required===true;
+    hints[name].textContent=!dim?'The suggestion could not be loaded. Choose one.':suggestion?'Suggested by the Facebook lead form. Confirm or change it.':unsure?'Earlier marked Not sure yet. Choose the service line, or Not sure yet again.':!select.required?'Set from '+(dimensionSources[dim.source]||'the booking')+'. Change it only if it is wrong.':'Required: nothing on file decides this. Choose one.';
+  };
+  let generation=0,timer=null;
+  const refresh=()=>{clearTimeout(timer);timer=setTimeout(async()=>{
+    const g=++generation,query=read();
+    if(!query){for(const name of Object.keys(controls)){derived[name]=null;suggested[name]=null;controls[name].required=true;hints[name].textContent='Select the customer to see what is on file.';}return;}
+    for(const name of Object.keys(controls))hints[name].textContent='Checking what is on file…';
+    try{
+      const known=answers.has(query.customerId),{response,data}=await requestJSON('/api/funnel-dimensions?'+new URLSearchParams({...query,...(known?{suggest:'false'}:{})}));
+      if(g!==generation||S.modal!==model)return;
+      if(!response.ok||data.ok!==true||data.customerId!==query.customerId||typeof data.serviceLine?.required!=='boolean'||typeof data.funnelPath?.required!=='boolean')throw new Error('unverified');
+      if(!known&&['ok','unavailable','disabled'].includes(data.ghl))answers.set(query.customerId,data.serviceLine.suggestion??null);
+      settle('serviceLine',known&&data.serviceLine.required?{...data.serviceLine,suggestion:answers.get(query.customerId)}:data.serviceLine);settle('funnelPath',data.funnelPath);
+    }catch{if(g===generation&&S.modal===model){settle('serviceLine',null);settle('funnelPath',null);}}
+  },250);};
+  return {refresh,facts:()=>Object.assign({},...Object.entries(controls).map(([name,select])=>!select.value||select.value===derived[name]?{}:select.dataset.touched?{[name]:select.value}:select.value===suggested[name]?{[name]:select.value,serviceLineSuggested:true}:{}))};
+}
 function reasonControls(parent,list,{who=false,required=true}={}) {
   const lists=S.data?.funnel;if(!Array.isArray(lists?.reasonCodes?.[list]))return null;
   const code=codeSelect(lists.reasonCodes[list],'',{name:'reasonCode',required}),by=who&&Array.isArray(lists.initiatedBy)?codeSelect(lists.initiatedBy,'',{name:'initiatedBy',required}):null;
@@ -490,8 +530,11 @@ function openJob(job=null,options={}) {
     const syncBooking=()=>{const isJob=type.value==='job',rework=isJob&&booking.purpose.value==='rework',unlinked=Boolean(crm)&&selectedCustomer?.crmLinked===false;purpose.hidden=!isJob;original.hidden=!rework;booking.original.required=rework;if(crm){crm.hidden=!unlinked;booking.crm.required=unlinked;}};
     for(const control of [type,booking.purpose])control.addEventListener('change',syncBooking);
     search.addEventListener('input',syncBooking);customerResults.addEventListener('click',syncBooking);syncBooking();
+    booking.dimensions=dimensionControls(model,lists,()=>selectedCustomer?.id?{customerId:selectedCustomer.id,kind:type.value,...(type.value==='job'&&booking.purpose.value?{visitPurpose:booking.purpose.value}:{}),...(booking.channel.value?{channel:booking.channel.value}:{}),...(booking.original.required&&booking.original.value.trim()?{reworkOfJobId:booking.original.value.trim()}:{}),...(model.form.querySelector('[name="serviceType"]')?.value.trim()?{serviceType:model.form.querySelector('[name="serviceType"]').value.trim().slice(0,200)}:{})}:null);
+    if(booking.dimensions){for(const control of [type,booking.purpose,booking.channel])control.addEventListener('change',booking.dimensions.refresh);for(const control of [search,booking.original])control.addEventListener('input',booking.dimensions.refresh);customerResults.addEventListener('click',booking.dimensions.refresh);booking.dimensions.refresh();}
   }
   const service=field(model,'serviceType','Service',job?.serviceType||'','text',{required:true,maxLength:200,placeholder:'Garage cleanout, organization, shelving…'});
+  if(booking.dimensions)service.addEventListener('input',booking.dimensions.refresh);
   let date=options.moveTo||options.date||job?.date||S.date;
   const dayOffset=job?.date&&job?.endDate?Math.round((Date.parse(job.endDate+'T12:00Z')-Date.parse(job.date+'T12:00Z'))/86400000):0;
   const unscheduled=h('input',{type:'checkbox',checked:job?!job.date&&!options.date:false,name:'unscheduled'});
@@ -640,7 +683,7 @@ function openJob(job=null,options={}) {
     if(segments.length){for(const name of ['date','time','endDate','endTime','assignedCrew','crewId','crewLead','vehicleId'])delete changes[name];
       if(segmentsOn())changes.assignmentSegments=segments.map(s=>({id:s.id,date:s.date,time:s.time,endDate:s.endDate||s.date,endTime:s.endTime,assignedCrew:[...s.assignedCrew],crewLead:s.crewLead||null,...(s.crewId&&(S.data.crews||[]).some(c=>c.id===s.crewId&&c.status==='active')?{crewId:s.crewId}:{}),vehicleId:s.vehicleId||null,notes:(s.notes||'').trim()}));}
     else if(hadSegments)changes.assignmentSegments=[];
-    const facts=booking.channel?Object.fromEntries([['channel',booking.channel.value],['visitPurpose',type.value==='job'?booking.purpose.value:''],['reworkOfJobId',booking.original.required?booking.original.value.trim():''],['channelSelfReported',booking.heard.value],['crmLinkReason',booking.crm?.required?booking.crm.value:'']].filter(([,value])=>value)):null;
+    const facts=booking.channel?Object.fromEntries([['channel',booking.channel.value],['visitPurpose',type.value==='job'?booking.purpose.value:''],['reworkOfJobId',booking.original.required?booking.original.value.trim():''],['channelSelfReported',booking.heard.value],['crmLinkReason',booking.crm?.required?booking.crm.value:''],...Object.entries(booking.dimensions?.facts()||{})].filter(([,value])=>value)):null;
     const body=job?{action:'schedule.update',requestId:key(),jobId:job.id,expectedRevision:job.revision,changes,...(moved()?moveReason():{})}:{action:'schedule.create',requestId:key(),customerId:selectedCustomer.id,kind:type.value,...(sourceJobId?{sourceJobId}:{}),...(facts?{booking:facts}:{}),changes};
     void save(model,body,job?'Job updated.':'Job created.');
   });

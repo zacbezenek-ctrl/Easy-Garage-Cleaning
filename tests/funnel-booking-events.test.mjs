@@ -373,7 +373,10 @@ test('GHL self-booking adoption is its booking, dated by the provider clock, and
   const result = await adoptScheduledVisit(store, actor, input, now), [booked] = store.events();
   assert.equal(result.adopted, true); assert.equal(store.events().length, 1);
   assert.deepEqual([booked.type, booked.walkthroughId, booked.clockSource, booked.occurredAt, booked.denverDate, booked.recordedAt, booked.via], ['walkthrough.booked', result.jobId, 'provider', '2026-09-20T16:05:00.000Z', '2026-09-20', now, 'bridge']);
-  assert.deepEqual(booked.data, { channel: 'ghl_self_booking', occurrence: 1, visitPurpose: 'walkthrough' });
+  // FUN-29: the adopted walkthrough's new project is on the walkthrough path; nothing decides its service line yet.
+  assert.deepEqual(booked.data, { channel: 'ghl_self_booking', occurrence: 1, visitPurpose: 'walkthrough', funnelPath: 'walkthrough' });
+  const adoptedProject = store.rows.get(`projects/${saved(store, result.jobId).projectId}`);
+  assert.deepEqual([adoptedProject.serviceLine, adoptedProject.serviceLineSource, adoptedProject.funnelPath, adoptedProject.funnelPathSource], [null, null, 'walkthrough', 'walkthrough']);
   assert.equal(booked.idempotencyKey, 'ghlAdoption:ghl_appointment:provider-appointment');
   assert.deepEqual([saved(store, result.jobId).bookingChannel, saved(store, result.jobId).scheduleOccurrence], ['ghl_self_booking', 1]);
   await adoptScheduledVisit(store, actor, { ...input, requestId: randomUUID() }, now);
@@ -395,7 +398,11 @@ const handoff = (store, extra = {}) => ({ requestId: randomUUID(), customerId: '
 test('a signed handoff writes deal.sold on the device clock inside its two-sided bounds and sets sold_on_site in the same commit', async () => {
   const store = handoffStore(), input = handoff(store), result = await saveWalkthroughHandoff(store, owner, input, HANDOFF_NOW);
   const [sold] = store.events('deal.sold'), walk = store.rows.get('jobs/w1');
-  assert.deepEqual([sold.projectId, sold.jobId, sold.walkthroughId, sold.customerId, sold.highlevelContactId, sold.data], ['p1', result.job.id, 'w1', 'c1', 'provider1', { amountCents: 140000, estimateRevision: 1 }]);
+  // FUN-29: the sale records the project's service line and path; the legacy project p1 had neither, so the signed job
+  // (a garage transformation sold on a walkthrough) sets them in the same commit.
+  assert.deepEqual([sold.projectId, sold.jobId, sold.walkthroughId, sold.customerId, sold.highlevelContactId, sold.data], ['p1', result.job.id, 'w1', 'c1', 'provider1', { amountCents: 140000, estimateRevision: 1, serviceLine: 'garage_transformation', funnelPath: 'walkthrough' }]);
+  const project = store.rows.get('projects/p1');
+  assert.deepEqual([project.serviceLine, project.serviceLineSource, project.funnelPath, project.funnelPathSource, project.dimensionRulesVersion], ['garage_transformation', 'salesExitService', 'walkthrough', 'walkthrough', 1]);
   assert.deepEqual([sold.clockSource, sold.occurredAt, sold.deviceAt, sold.recordedAt, sold.clockReasons], ['device_validated', '2026-09-22T17:45:00.000Z', '2026-09-22T17:45:00.000Z', HANDOFF_NOW, []]);
   assert.deepEqual(sold.source, { collection: 'walkthroughHandoffs', id: input.requestId });
   // The outcome uses FUN-05's walkthroughOutcome shape, dated like the sale, so FUN-05 and FUN-06 readers use it as is.
@@ -406,7 +413,7 @@ test('a signed handoff writes deal.sold on the device clock inside its two-sided
   const [scheduled] = store.events('job.scheduled');
   assert.equal(scheduled.data.channel, 'hub_in_person');
   const commit = store.commits.at(-1);
-  for (const key of ['jobs/w1', `jobs/${result.job.id}`, `walkthroughHandoffs/${input.requestId}`, `funnelEvents/${sold.id}`, `funnelEvents/${scheduled.id}`]) assert.ok(commit.includes(key), key);
+  for (const key of ['jobs/w1', 'projects/p1', `jobs/${result.job.id}`, `walkthroughHandoffs/${input.requestId}`, `funnelEvents/${sold.id}`, `funnelEvents/${scheduled.id}`]) assert.ok(commit.includes(key), key);
   assert.equal((await saveWalkthroughHandoff(store, owner, input, HANDOFF_NOW)).replayed, true);
   assert.equal(store.events('deal.sold').length, 1, 'a replay never writes a second sale');
 });
@@ -509,7 +516,8 @@ test('recording approval commits scope.reviewed with the review and its receipt,
 
 test('the helpers keep unknown values null, reserve legacy codes and never fail a commit on an actor or provider time they cannot store', async () => {
   const fail = (reason, message, status = 400) => Object.assign(new Error(message), { code: reason, status });
-  assert.deepEqual(bookingInput(undefined, 'job', fail), { bookingChannel: null, channelSelfReported: null, visitPurpose: 'service', reworkOfJobId: null, membershipId: null, crmLinkReason: null });
+  // FUN-29 added the service-line and funnel-path one-tap picks to the booking facts.
+  assert.deepEqual(bookingInput(undefined, 'job', fail), { bookingChannel: null, channelSelfReported: null, visitPurpose: 'service', reworkOfJobId: null, membershipId: null, crmLinkReason: null, serviceLine: null, funnelPath: null });
   assert.equal(bookingInput({}, 'walkthrough', fail).visitPurpose, 'walkthrough');
   assert.deepEqual(reasonInput({}, 'cancel', fail), { reasonCode: null, initiatedBy: null });
   assert.throws(() => reasonInput({ reasonCode: 'other_legacy' }, 'noShow', fail), error => error.code === 'reason_code_invalid');

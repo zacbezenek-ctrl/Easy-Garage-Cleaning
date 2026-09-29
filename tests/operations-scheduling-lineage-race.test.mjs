@@ -5,6 +5,7 @@ import { randomUUID, webcrypto } from 'node:crypto';
 import vm from './helpers/vm-realm.mjs';
 import { arrivalWindowProblem, arrivalWindowFields } from '../functions/_lib/dispatch-arrival.js';
 import * as funnel from '../functions/_lib/dispatch-funnel.js';
+import * as dimensions from '../functions/_lib/funnel-dimensions.js';
 import { commitConflict, commitFailure } from '../functions/_lib/firestore-errors.js';
 import { bridgeCommandDenial, bridgeCommandPolicy } from '../egc-platform/services/operations/src/bridge-command-policy.ts';
 
@@ -30,6 +31,8 @@ function load() {
     // FUN-02 booking fields and funnel events run for real.
     reasonInput: funnel.reasonInput, cancelPatch: funnel.cancelPatch, visitFunnelWrites: funnel.visitFunnelWrites,
     requestKey: funnel.requestKey, eventActor: funnel.eventActor, eventVia: funnel.eventVia, defaultVisitPurpose: funnel.defaultVisitPurpose,
+    // FUN-29 project service line and funnel path run for real.
+    eventDimensions: dimensions.eventDimensions, firstPlacementDimensions: dimensions.firstPlacementDimensions, legacyDimensionFacts: dimensions.legacyDimensionFacts, projectDimensionPatch: dimensions.projectDimensionPatch, resolveDimensions: dimensions.resolveDimensions, visitDimensionFacts: dimensions.visitDimensionFacts,
     // The real shared classifier, so commit error paths map as in production.
     commitConflict, commitFailure,
   });

@@ -7,6 +7,7 @@ import {scheduleRowsConflict,scheduleLockConflict,scheduleDayEntry} from './disp
 import {customerIdentityFields,withCustomerSearchKeys} from './customer-identity.js';
 import {segmented} from './dispatch-segments.js';
 import {visitFunnelWrites,eventActor,defaultVisitPurpose,providerClock} from './dispatch-funnel.js';
+import {eventDimensions,projectDimensionPatch,resolveDimensions,visitDimensionFacts} from './funnel-dimensions.js';
 const BASE='https://firestore.googleapis.com/v1/projects/egcw-1ec83/databases/(default)/documents/jobs';
 const fail=(code,status=409)=>Object.assign(new Error(code),{status});
 const safeId=v=>typeof v==='string'&&/^[A-Za-z0-9_-]{1,180}$/.test(v)&&!/^(_egc_|secure_)/.test(v);
@@ -148,12 +149,14 @@ export async function adoptScheduledVisit(store,actor,input,now=new Date().toISO
  if(p.localJobId)patch.normalizedLocalJobId=p.localJobId;if(p.normalizedLocalAppointmentId)patch.normalizedLocalAppointmentId=p.normalizedLocalAppointmentId;
  if(p.providerAppointmentId)Object.assign(patch,{highlevelAppointmentId:p.providerAppointmentId,highlevelCalendarId:p.providerCalendarId,providerAppointmentStatus:p.providerStatus,syncStatus:'synced',syncedAt:verifiedAt});else if(!current?.highlevelAppointmentId)patch.syncStatus='pending';
  const next={...current,...patch},writes=[{collection:'jobs',id,revision:current?.revision,patch}];
+ // FUN-29: a project created here takes its service line and funnel path from the adopted visit.
+ const projectFields=project?null:projectDimensionPatch(null,resolveDimensions(visitDimensionFacts(next)),{actor:actor.id,now});
  // FUN-02: a newly adopted visit is its booking, dated by the provider's booking time.
- if(!current){const funnel=await visitFunnelWrites({action:'create',after:next,actor:eventActor(actor),via:'bridge',key:{kind:'ghlAdoption',value:`${p.source}:${p.sourceId}`},source:{collection:'jobs',id:sourceReceiptId},bookedClock:providerClock(p.originalBookingAt||p.sourceCreatedAt,now),now});Object.assign(patch,funnel.patch);writes.push(...funnel.writes);}
+ if(!current){const funnel=await visitFunnelWrites({action:'create',after:next,actor:eventActor(actor),via:'bridge',key:{kind:'ghlAdoption',value:`${p.source}:${p.sourceId}`},source:{collection:'jobs',id:sourceReceiptId},bookedClock:providerClock(p.originalBookingAt||p.sourceCreatedAt,now),dimensions:eventDimensions(project||projectFields),now});Object.assign(patch,funnel.patch);writes.push(...funnel.writes);}
  writes.push({collection:'customerIdentityState',id:'revision',revision:identityGuard?.revision,patch:{updatedAt:now,lastRequestId:input.requestId}});
  writes.push({collection:'dispatchState',id:'revision',revision:dispatchGuard?.revision,patch:{updatedAt:now,lastRequestId:input.requestId}});
  if(!customer)writes.push({collection:'customers',id:customerId,patch:withCustomerSearchKeys({id:customerId,name:next.customer||'',phone:p.providerContact.phone||'',email:p.providerContact.email||'',...customerIdentityFields(p.providerContact),address:p.address,highlevelContactId:p.contactProviderId,createdAt:now,updatedAt:now,source:'verified_operational_adoption'})});
- if(!project)writes.push({collection:'projects',id:projectId,patch:{id:projectId,customerId,sourceRecordId:id,sourceWalkthroughId:p.kind==='walkthrough'?id:null,createdBy:actor.id,createdAt:now,updatedAt:now,authority:'employee_hub'}});
+ if(!project)writes.push({collection:'projects',id:projectId,patch:{id:projectId,customerId,sourceRecordId:id,sourceWalkthroughId:p.kind==='walkthrough'?id:null,createdBy:actor.id,createdAt:now,updatedAt:now,authority:'employee_hub',...projectFields}});
  activeEntries.push(scheduleDayEntry(next,from.date,roster,now));
  writes.push({collection:'jobs',id:lockId,revision:lock?.revision,patch:{recordType:'schedule_lock',date:from.date,entries:activeEntries,updatedAt:now}});
  for(const receiptId of [sourceReceiptId,requestReceiptId])writes.push({collection:'jobs',id:receiptId,patch:{recordType:'schedule_adoption',fingerprint,portalVisitId:id,portalCustomerId:customerId,source,adopted:!current,actorId:actor.id,createdAt:now}});

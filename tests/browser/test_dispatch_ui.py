@@ -32,6 +32,17 @@ TRAVEL = {'ok': True, 'timeZone': 'America/Denver', 'date': DAY, 'asOf': '2026-0
 FUNNEL = {'visitPurposes': ['service', 'install', 'return', 'rework', 'member_visit'], 'bookingChannels': ['hub_phone', 'hub_in_person'], 'selfReportedChannels': ['google_search', 'referral', 'other'],
           'crmLinkReasons': ['crm_sync_pending', 'other'], 'initiatedBy': ['customer', 'company'],
           'reasonCodes': {'cancel': ['customer_changed_plans', 'weather', 'other'], 'reschedule': ['customer_request', 'weather', 'other'], 'noShow': ['customer_not_home', 'no_access', 'other']}}
+# FUN-29 adds the service-line and funnel-path lists.
+FUNNEL29 = {**FUNNEL, 'serviceLines': ['garage_transformation', 'junk_removal', 'garage_guard_visit', 'commercial_b2b', 'unknown'],
+            'funnelPaths': ['walkthrough', 'remote_photo_video_quote', 'direct_phone_booking', 'b2b_request', 'rebook', 'member_visit', 'recurring']}
+def prefill(query):
+    # Mirrors GET /api/funnel-dimensions: a walkthrough is on the walkthrough path; a junk service name decides the line.
+    kind, service = query.get('kind', [''])[0], query.get('serviceType', [''])[0]
+    line = 'junk_removal' if 'junk' in service.lower() and kind == 'job' else None
+    path = 'walkthrough' if kind == 'walkthrough' else None
+    return {'ok': True, 'customerId': query.get('customerId', [''])[0], 'kind': kind, 'projectId': None, 'rulesVersion': 1, 'ghl': 'disabled',
+            'serviceLine': {'value': line, 'source': 'salesExitService' if line else None, 'required': line is None, 'suggestion': None},
+            'funnelPath': {'value': path, 'source': 'walkthrough' if path else None, 'required': path is None}}
 
 class Handler(SimpleHTTPRequestHandler):
     def log_message(self, *args): pass
@@ -64,7 +75,7 @@ class DispatchBrowserTests(unittest.TestCase):
         self.search_queries = []; self.search_results = []; self.search_failure = None; self.hang_once = False; self.hung_route = None
         self.arrival_defaults = {'enabled': False, 'minutes': 60}
         self.travel_queries = []; self.travel_failure = None
-        self.segments = None; self.funnel = None; self.customers = [CUSTOMER]
+        self.segments = None; self.funnel = None; self.customers = [CUSTOMER]; self.prefill = prefill; self.prefill_queries = []
         self.page.on('pageerror', lambda e: self.errors.append(str(e)))
         self.page.on('dialog', lambda dialog: dialog.accept())
         self.page.route('**/*', self.route)
@@ -86,6 +97,9 @@ class DispatchBrowserTests(unittest.TestCase):
             self.opening_queries.append(parse_qs(parsed.query))
             if self.opening_failure: route.fulfill(status=503, content_type='application/json', body=json.dumps({'ok': False, 'error': self.opening_failure})); return
             route.fulfill(status=200, content_type='application/json', body=json.dumps({'ok': True, 'coverage': {'complete': True, 'consistent': True}, 'candidates': self.opening_candidates, 'warnings': [{'code': 'working_availability_unconfirmed', 'message': 'Confirm these employees are working before booking.'}], 'total': len(self.opening_candidates), 'truncated': False})); return
+        if parsed.path == '/api/funnel-dimensions':
+            query = parse_qs(parsed.query); self.prefill_queries.append(query); result = self.prefill(query)
+            route.fulfill(status=result.get('status', 200), content_type='application/json', body=json.dumps(result)); return
         if parsed.path != '/api/dispatch': route.continue_(); return
         def send(data, status=200): route.fulfill(status=status, content_type='application/json', body=json.dumps(data))
         if req.method == 'GET':
@@ -578,5 +592,71 @@ class DispatchBrowserTests(unittest.TestCase):
         self.open(); expect(self.card().get_by_role('button', name='No-show', exact=True)).to_have_count(0)
         self.card().get_by_role('button', name='Cancel', exact=True).click(); expect(self.page.get_by_role('dialog').get_by_role('combobox', name='Reason', exact=True)).to_have_count(0); self.submit('Cancel job'); self.closed()
         self.assertNotIn('reasonCode', self.calls[-1])
+
+    def test_service_line_and_path_are_prefilled_and_one_tap_is_required_only_when_nothing_decides(self):
+        self.funnel = FUNNEL29; self.open(); self.create(); dialog = self.page.get_by_role('dialog')
+        line = dialog.get_by_role('combobox', name='Service line', exact=True); path = dialog.get_by_role('combobox', name='How this project reached us', exact=True)
+        expect(dialog).to_contain_text('Required: nothing on file decides this. Choose one.')
+        dialog.get_by_role('combobox', name='How was this booked?', exact=True).select_option('hub_phone')
+        self.submit('Create job'); self.assertEqual(self.calls, [], 'an undecided line and path are one required tap each')
+        dialog.get_by_label('Service', exact=True).fill('Junk removal')
+        expect(line).to_have_value('junk_removal'); expect(dialog).to_contain_text('Set from the service name. Change it only if it is wrong.')
+        self.assertEqual(self.prefill_queries[-1]['serviceType'], ['Junk removal']); self.assertEqual(self.prefill_queries[-1]['customerId'], [CUSTOMER['id']])
+        path.select_option('direct_phone_booking'); self.submit('Create job'); self.closed()
+        self.assertEqual(self.calls[-1]['booking'], {'channel': 'hub_phone', 'visitPurpose': 'service', 'funnelPath': 'direct_phone_booking'}, 'an untouched pre-fill is left for the server to derive')
+        # A walkthrough is on the walkthrough path; "Not sure yet" is a valid one-tap answer for its line.
+        self.page.get_by_role('button', name='Create job', exact=True).first.click(); self.page.locator('input[name=customerSearch]').fill('Johnson')
+        self.page.get_by_role('button', name=CUSTOMER['name']+' · '+CUSTOMER['phone'], exact=True).click()
+        dialog.get_by_role('combobox', name='Work type', exact=True).select_option('walkthrough'); expect(path).to_have_value('walkthrough')
+        self.assertEqual(self.prefill_queries[-1]['kind'], ['walkthrough'])
+        dialog.get_by_role('combobox', name='How was this booked?', exact=True).select_option('hub_in_person'); dialog.get_by_label('Service', exact=True).fill('Walkthrough')
+        line.select_option('unknown'); self.submit('Create job'); self.closed()
+        self.assertEqual(self.calls[-1]['booking'], {'channel': 'hub_in_person', 'serviceLine': 'unknown'})
+        # A staff change of a pre-filled value is sent as their pick.
+        self.page.get_by_role('button', name='Create job', exact=True).first.click(); self.page.locator('input[name=customerSearch]').fill('Johnson')
+        self.page.get_by_role('button', name=CUSTOMER['name']+' · '+CUSTOMER['phone'], exact=True).click()
+        dialog.get_by_role('combobox', name='Work type', exact=True).select_option('walkthrough'); expect(path).to_have_value('walkthrough')
+        dialog.get_by_role('combobox', name='How was this booked?', exact=True).select_option('hub_phone'); dialog.get_by_label('Service', exact=True).fill('Walkthrough')
+        path.select_option('rebook'); line.select_option('garage_transformation'); self.submit('Create job'); self.closed()
+        self.assertEqual(self.calls[-1]['booking'], {'channel': 'hub_phone', 'serviceLine': 'garage_transformation', 'funnelPath': 'rebook'})
+    def test_prefill_failure_and_lead_form_suggestion_fit_a_phone(self):
+        self.funnel = FUNNEL29; self.prefill = lambda query: {'status': 503, 'ok': False, 'code': 'funnel_dimensions_unavailable', 'error': 'Unavailable'}
+        self.page.set_viewport_size({'width': 375, 'height': 812}); self.open(); self.create(); dialog = self.page.get_by_role('dialog')
+        line = dialog.get_by_role('combobox', name='Service line', exact=True); path = dialog.get_by_role('combobox', name='How this project reached us', exact=True)
+        expect(dialog.get_by_text('The suggestion could not be loaded. Choose one.').first).to_be_visible()
+        for width in [375, 320]:
+            self.page.set_viewport_size({'width': width, 'height': 812}); self.assertLessEqual(self.page.evaluate('document.documentElement.scrollWidth'), width+1); self.assertLessEqual(dialog.evaluate('(el)=>el.scrollWidth'), dialog.evaluate('(el)=>el.clientWidth')+1)
+        for control in [line, path]: self.assertGreaterEqual(control.bounding_box()['height'], 44); self.assertEqual(control.evaluate('(el)=>getComputedStyle(el).fontSize'), '16px')
+        dialog.get_by_role('combobox', name='How was this booked?', exact=True).select_option('hub_phone')
+        self.submit('Create job'); self.assertEqual(self.calls, [], 'an unverified pre-fill never skips the pick')
+        line.select_option('garage_transformation'); path.select_option('remote_photo_video_quote'); self.submit('Create job'); self.closed()
+        self.assertEqual(self.calls[-1]['booking'], {'channel': 'hub_phone', 'visitPurpose': 'service', 'serviceLine': 'garage_transformation', 'funnelPath': 'remote_photo_video_quote'})
+        # The Facebook lead form only suggests: an untouched suggestion is sent marked as one, never as the staff member's pick.
+        self.prefill = lambda query: {**prefill(query), 'serviceLine': {'value': None, 'source': None, 'required': True, 'suggestion': 'junk_removal' if 'suggest' not in query else None}, 'ghl': 'skipped' if 'suggest' in query else 'ok'}
+        self.page.set_viewport_size({'width': 375, 'height': 812}); self.create()
+        expect(line).to_have_value('junk_removal'); expect(dialog).to_contain_text('Suggested by the Facebook lead form. Confirm or change it.')
+        # The lead form is read once per customer: later refreshes skip the GHL read and keep the suggestion.
+        asked = len(self.prefill_queries); dialog.get_by_label('Service', exact=True).fill('Garage help')
+        dialog.get_by_role('combobox', name='How was this booked?', exact=True).select_option('hub_phone'); path.select_option('direct_phone_booking')
+        for _ in range(50):
+            if len(self.prefill_queries) > asked: break
+            self.page.wait_for_timeout(100)
+        self.assertGreater(len(self.prefill_queries), asked); self.assertTrue(all(query.get('suggest') == ['false'] for query in self.prefill_queries[asked:]), self.prefill_queries[asked:])
+        expect(line).to_have_value('junk_removal'); self.submit('Create job'); self.closed()
+        self.assertEqual(self.calls[-1]['booking'], {'channel': 'hub_phone', 'visitPurpose': 'service', 'serviceLine': 'junk_removal', 'serviceLineSuggested': True, 'funnelPath': 'direct_phone_booking'})
+        # Choosing a value is the staff pick, even the suggested one.
+        self.create(); expect(line).to_have_value('junk_removal'); line.select_option('garage_transformation'); line.select_option('junk_removal')
+        dialog.get_by_role('combobox', name='How was this booked?', exact=True).select_option('hub_phone'); path.select_option('direct_phone_booking'); self.submit('Create job'); self.closed()
+        self.assertEqual(self.calls[-1]['booking'], {'channel': 'hub_phone', 'visitPurpose': 'service', 'serviceLine': 'junk_removal', 'funnelPath': 'direct_phone_booking'})
+        # A project that holds "Not sure yet" is asked again: the select starts empty and blocks the save until answered.
+        self.prefill = lambda query: {**prefill(query), 'serviceLine': {'value': 'unknown', 'source': 'explicit', 'required': True, 'suggestion': None}, 'ghl': 'not_needed'}
+        self.create(); expect(dialog).to_contain_text('Earlier marked Not sure yet. Choose the service line, or Not sure yet again.'); expect(line).to_have_value('')
+        dialog.get_by_role('combobox', name='How was this booked?', exact=True).select_option('hub_phone'); path.select_option('direct_phone_booking')
+        calls = len(self.calls); self.submit('Create job'); self.assertEqual(len(self.calls), calls, 'the earlier "Not sure yet" needs a new tap')
+        line.select_option('unknown'); self.submit('Create job'); self.closed()
+        self.assertEqual(self.calls[-1]['booking'], {'channel': 'hub_phone', 'visitPurpose': 'service', 'funnelPath': 'direct_phone_booking'}, 'a reconfirmed "Not sure yet" is what the project holds')
+        # A response for another customer is never applied.
+        self.prefill = lambda query: {**prefill(query), 'customerId': 'someone-else', 'funnelPath': {'value': 'walkthrough', 'source': 'walkthrough', 'required': False}}
+        self.create(); expect(dialog.get_by_text('The suggestion could not be loaded. Choose one.').first).to_be_visible(); expect(path).to_have_value('')
 
 if __name__ == '__main__': unittest.main(verbosity=2)

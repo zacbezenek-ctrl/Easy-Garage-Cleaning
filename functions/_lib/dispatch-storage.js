@@ -138,6 +138,7 @@ export function dispatchStorage(env, fetcher = firestoreFetch) {
     recurringPlans: () => scan('recurringPlans', null, 2000),
     // JOB-COST-PRIVACY: the owner-only job labor records (functions/_lib/job-labor-private.js), one per job at most.
     jobLaborCosts: () => scan('jobLaborCosts', ['jobId', 'laborCents', 'recordedAt', 'recordedBy', 'requestId'], 20000),
+    projects: () => scan('projects', null, 20000),
     async read(collection, id) {
       const response = await send(`${BASE}/${collection}/${encodeURIComponent(id)}`);
       if (response.status === 404) return null;

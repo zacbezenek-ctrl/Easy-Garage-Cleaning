@@ -11,6 +11,7 @@ import { funnelHubId } from './funnel-definitions.js';
 import { instantMs } from './funnel-calendar.js';
 import { validDate } from './dispatch-time.js';
 import { eventActor } from './dispatch-funnel.js';
+import { pendingProjectDimensions } from './funnel-dimensions.js';
 
 const plain = value => value !== null && typeof value === 'object' && !Array.isArray(value);
 const safeId = value => typeof value === 'string' && /^[A-Za-z0-9_-]{1,180}$/.test(value) && !/^(secure_|_egc_)/.test(value);
@@ -171,13 +172,14 @@ function financePatch(plan, previous, jobId, actor, now) {
 // legacy browser revision already superseded; never a staff-recorded approval,
 // which has no sale), so the net of deal.sold minus deal.approval_superseded
 // is always the current signed contract. {writes, funnelSale}: the commit
-// saves funnelSale on the job with the events.
-async function saleEvents({ plan, source, job, actor, requestId, receiptId, now }) {
+// saves funnelSale on the job with the events. The sale records the project's
+// service line and funnel path after this commit (FUN-29 dimensions).
+async function saleEvents({ plan, source, job, actor, requestId, receiptId, now, dimensions = {} }) {
   const base = { idempotencyKey: { kind: 'requestId', value: requestId }, projectId: funnelHubId(job.projectId) ? job.projectId : undefined, jobId: job.id, walkthroughId: funnelHubId(source?.id) ? source.id : undefined, customerId: funnelHubId(job.customerId) ? job.customerId : undefined,
     highlevelContactId: /^[A-Za-z0-9_-]{1,120}$/.test(job.highlevelContactId || '') ? job.highlevelContactId : undefined, actor: eventActor({ id: actor.user, kind: 'human', role: actor.role }), via: 'hub', source: { collection: 'walkthroughHandoffs', id: receiptId }, eligibility: { hub: job } };
   const startedAt = source?.walkthroughVisit?.startedAt;
   const signed = { deviceAt: plan.acceptance.accepted_at, deviceBounds: { startedAt: instantMs(startedAt) === null ? null : startedAt, scheduledDate: validDate(source?.date) ? source.date : null } };
-  return saleWrites(job, { soldData: { amountCents: Math.round(plan.quote.total * 100), estimateRevision: job.estimate.revision } },
+  return saleWrites(job, { soldData: { amountCents: Math.round(plan.quote.total * 100), estimateRevision: job.estimate.revision, ...dimensions } },
     (type, data) => funnelEventWrite(null, now, { ...base, type, data, ...(type === 'deal.sold' ? signed : {}) }));
 }
 // The walkthrough's sold_on_site outcome in FUN-05's walkthroughOutcome shape, dated like
@@ -264,6 +266,8 @@ export async function saveWalkthroughHandoff(store, actor, input, now = new Date
   const changes = { date: plan.quote.job_date, endDate: plan.quote.job_date, time: plan.quote.start_time, endTime: plan.quote.end_time, title: plan.quote.title, address: plan.client.address, serviceType: 'Garage transformation', crewNeeded: plan.logistics.crew_size, assignedCrew, jobInstructions: plan.internal_notes, accessInstructions: instructions.accessNotes, customerInstructions: plan.notes, notify: true, ...materialChanges(plan, previous ? previous.materials : source?.materials) };
   const dispatchInput = previous ? { action: 'schedule.update', requestId: input.requestId, jobId: previous.id, expectedRevision: previous.revision, changes } : { action: 'schedule.create', requestId: input.requestId, customerId: customer.id, kind: 'job', ...(source ? { sourceWalkthroughId: source.id } : {}), booking: { channel: 'hub_in_person' }, changes };
   const adapter = { ...store,
+    // FUN-29: a job sold on a signed walkthrough plan came through the walkthrough path, and its signed lines are sold evidence.
+    dimensionFacts: { walkthroughSale: true, lineItems: plan.quote.itemized ? plan.quote.estimate_line_items : null },
     read: async (collection, id) => {
       const row = await store.read(collection, id);
       // An orphan legacy walkthrough can acquire only the exact verified
@@ -288,7 +292,9 @@ export async function saveWalkthroughHandoff(store, actor, input, now = new Date
       fence('customers', customer, customerIdentityPatch(customer, now));
       if (sourceProject) fence('projects', sourceProject);
       // The job as it stands before this signature holds the live sale the signature retires.
-      const sale = await saleEvents({ plan, source, job: { ...previous, ...target.patch, id: target.id }, actor, requestId: input.requestId, receiptId, now });
+      const saleJob = { ...previous, ...target.patch, id: target.id }, created = writes.some(write => write.collection === 'projects' && write.id === saleJob.projectId && !write.revision);
+      const saleProject = !funnelHubId(saleJob.projectId) || created ? null : sourceProject?.id === saleJob.projectId ? sourceProject : await store.read('projects', saleJob.projectId);
+      const sale = await saleEvents({ plan, source, job: saleJob, actor, requestId: input.requestId, receiptId, now, dimensions: pendingProjectDimensions(saleProject, writes, saleJob.projectId) });
       if (sale.funnelSale) target.patch.funnelSale = sale.funnelSale;
       // A signed handoff records the walkthrough's sold_on_site outcome (FUN-02). A walkthrough
       // the rep Started (FUN-05) gets its outcome, completion and event from its own Finish, and

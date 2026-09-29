@@ -435,6 +435,10 @@ draft PR. The owner merges in phase order. See **Decisions** D-001.
   bridge as the recurring-horizon-worker (SEC-04 policy entry and PORTAL_COMMANDS; human and other integrations refused),
   and the Hub adds each plan's due visits under the plan's manager, bounded and resumable. With MONEY_API_ENABLED each
   visit gets the plan's price through estimate.save, keyed by visit. Gated by EGC_RECURRING_PLANS_ENABLED on both sides.
+- **FUN-29** Every project records serviceLine and funnelPath (with source, dimensionRulesVersion 1 and who/when) from the
+  shared definitions: a staff pick wins, undecided stays null, "Not sure yet" is the unknown bucket. Dispatch create takes
+  one-tap picks (pre-filled from GET /api/funnel-dimensions; the GHL lead-form suggestion is off by default), and bridge,
+  adoption, portal, B2B and handoff writers set or refine them; booking and sale events carry them. Definitions 2026-09-28.6.
 
 ## In progress
 
@@ -536,6 +540,7 @@ one prefixed commit only after the full root suite (and the platform suite when 
 | CLIENT-LOGIN | Customer magic-link sign-in and account sessions (flag off) | merged (d157286) |
 | FUN-36 | Server customer lifecycle actions: credits, gift-card sales, decision prompts, rebooking (flag off) | merged (999c6df) |
 | RECUR-CRON | Hourly recurring-plan horizon run over the bridge; per-visit plan prices (flag off) | merged (e68b03b) |
+| FUN-29 | Service line and funnel path on every project (definitions 2026-09-28.6) | merged (4c1d165) |
 
 ## Next
 

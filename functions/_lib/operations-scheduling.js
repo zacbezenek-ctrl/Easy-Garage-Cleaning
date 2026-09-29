@@ -9,6 +9,7 @@ import {legacyBlockMode,legacyBlockedDays} from './dispatch-legacy-blocks.js';
 import {customerIdentityFields,withCustomerSearchKeys} from './customer-identity.js';
 import {segmented} from './dispatch-segments.js';
 import {reasonInput,cancelPatch,visitFunnelWrites,requestKey,eventActor,eventVia,defaultVisitPurpose} from './dispatch-funnel.js';
+import {eventDimensions,firstPlacementDimensions,legacyDimensionFacts,projectDimensionPatch,resolveDimensions,visitDimensionFacts} from './funnel-dimensions.js';
 import {commitConflict,commitFailure} from './firestore-errors.js';
 import {bridgeCommandDenial,bridgeCommandPolicy} from '../../egc-platform/services/operations/src/bridge-command-policy.ts';
 const ROOT='projects/egcw-1ec83/databases/(default)/documents';
@@ -78,7 +79,8 @@ export async function linkScheduledCustomer(store,actor,input,now=new Date().toI
   if(project&&(project.customerId!==id||project.sourceRecordId!==root.id))throw failure('schedule_project_link_conflict');
   const writes=[{collection:'jobs',id:visit.id,revision:visit.revision,patch:{customerId:id,projectId,highlevelContactId:contact.id,providerSyncOwner:'operations',updatedAt:now}}];
   if(root.id!==visit.id&&!root.projectId)writes.push({collection:'jobs',id:root.id,revision:root.revision,patch:{projectId,updatedAt:now}});
-  if(!project)writes.push({collection:'projects',id:projectId,patch:{id:projectId,customerId:id,sourceRecordId:root.id,sourceWalkthroughId:root.type==='walkthrough'?root.id:null,createdAt:now,updatedAt:now,authority:'employee_hub'}});
+  // FUN-29: a project created for an existing visit takes its service line and path from the visit's records (the legacy mapping).
+  if(!project)writes.push({collection:'projects',id:projectId,patch:{id:projectId,customerId:id,sourceRecordId:root.id,sourceWalkthroughId:root.type==='walkthrough'?root.id:null,createdAt:now,updatedAt:now,authority:'employee_hub',...projectDimensionPatch(null,resolveDimensions(legacyDimensionFacts({sourceWalkthroughId:root.type==='walkthrough'?root.id:null},[root,...(root.id===visit.id?[]:[visit])])),{actor:actor.id,now})}});
   if(!customer)writes.push({collection:'customers',id,patch:withCustomerSearchKeys({id,name:contact.name||[contact.firstName,contact.lastName].filter(Boolean).join(' ')||visit.customer||'',phone:contact.phone||'',email:contact.email||'',...customerIdentityFields(contact),address:visit.address||contact.address1||'',highlevelContactId:contact.id,createdAt:now,updatedAt:now,source:'verified_provider_contact'})});
   else if(!customer.highlevelContactId)writes.push({collection:'customers',id,revision:customer.revision,patch:{highlevelContactId:contact.id,...customerIdentityFields(customer),updatedAt:now}});
   // An already exact link is not rewritten: repeated provider syncs must not churn the
@@ -140,7 +142,7 @@ export async function mutateScheduledVisit(store,actor,input,now=new Date().toIS
     bookingChannel:actor.kind==='integration'?'mcp':null,channelSelfReported:null,bookedBy:actor.id,visitPurpose:defaultVisitPurpose(kind),crmLinkReason:null});
   // Cancelling an already cancelled visit keeps the original cancellation's time, actor and reason facts.
   if(input.mode==='cancel'&&!['cancelled','canceled'].includes(current.pipelineStatus||current.status))Object.assign(patch,{status:'cancelled',pipelineStatus:'cancelled',cancelledAt:now,cancelledBy:actor.id,...cancelPatch(reason,current,now)});
-  const projectWrites=[];
+  const projectWrites=[];let dimensions=null;
   // Firestore cannot put read preconditions on a commit. Identity-field no-ops
   // fence the exact customer/source/project revisions together with the visit,
   // receipt and schedule locks; a changed lineage must abort the entire save.
@@ -158,8 +160,12 @@ export async function mutateScheduledVisit(store,actor,input,now=new Date().toIS
       const project=await store.read('projects',source.projectId);
       if(!project||project.customerId!==customer.id)throw failure('schedule_project_link_conflict');
       guardIdentity('jobs',source);guardIdentity('projects',project);
-      projectId=source.projectId;patch.sourceWalkthroughId=source.id;
-    }else projectWrites.push({collection:'projects',id:projectId,patch:{id:projectId,customerId:customer.id,sourceRecordId:id,sourceWalkthroughId:kind==='walkthrough'?id:null,createdBy:actor.id,createdAt:now,updatedAt:now,authority:'employee_hub',highlevelContactId:patch.highlevelContactId,crmLinkReason:null}});
+      projectId=source.projectId;patch.sourceWalkthroughId=source.id;dimensions=eventDimensions(project);
+    }else{
+      // FUN-29: the new project's service line and funnel path from this booking's facts (no staff picks on the bridge).
+      const fields=projectDimensionPatch(null,resolveDimensions(visitDimensionFacts({...patch,sourceWalkthroughId:undefined})),{actor:actor.id,now});dimensions=eventDimensions(fields);
+      projectWrites.push({collection:'projects',id:projectId,patch:{id:projectId,customerId:customer.id,sourceRecordId:id,sourceWalkthroughId:kind==='walkthrough'?id:null,createdBy:actor.id,createdAt:now,updatedAt:now,authority:'employee_hub',highlevelContactId:patch.highlevelContactId,crmLinkReason:null,...fields}});
+    }
     patch.projectId=projectId;
   }
   const next={...current,...patch},start=localInstant(next.date,next.time),end=localInstant(next.date,next.endTime);
@@ -196,7 +202,9 @@ export async function mutateScheduledVisit(store,actor,input,now=new Date().toIS
     locks.push({collection:'jobs',id:lockId,revision:lock?.revision,patch:{recordType:'schedule_lock',date,entries,updatedAt:now}});
   }
   const assigned=input.mode!=='cancel'&&typeof changes.assignedTo==='string'&&Boolean(changes.assignedTo.trim())&&changes.assignedTo!==(current?.assignedTo||'');
-  const funnel=await visitFunnelWrites({action:input.mode,before:current,after:{...current,...patch},actor:eventActor(actor),via:eventVia(via),key:requestKey(input.requestId),source:{collection:'jobs',id:receiptId},reason:{...reason,lateCancel:patch.lateCancel},crewChanged:assigned,now});
+  // FUN-29: an update that places a visit saved unscheduled books it with its project's values, as dispatch does.
+  dimensions??=await firstPlacementDimensions(store,current,{...current,...patch});
+  const funnel=await visitFunnelWrites({action:input.mode,before:current,after:{...current,...patch},actor:eventActor(actor),via:eventVia(via),key:requestKey(input.requestId),source:{collection:'jobs',id:receiptId},reason:{...reason,lateCancel:patch.lateCancel},crewChanged:assigned,dimensions,now});
   Object.assign(patch,funnel.patch);
   const writes=[{collection:'jobs',id,revision:current?.revision,patch},...projectWrites,...identityWrites,...locks,...funnel.writes,{collection:'dispatchState',id:'revision',revision:dispatchGuard?.revision,patch:{updatedAt:now,lastRequestId:input.requestId}},{collection:'jobs',id:receiptId,patch:{recordType:'schedule_operation',fingerprint:hash,scheduleHash:await digest(scheduleState(next)),portalVisitId:id,actorId:actor.id,actorKind:actor.kind,requestId:input.requestId,mode:input.mode,before:current?{date:current.date,time:current.time,endTime:current.endTime,status:current.status,revision:current.revision}:null,after:{date:next.date,time:next.time,endTime:next.endTime,status:next.status},createdAt:now}}];
   try{await store.commit(writes);}catch(error){const receipt=await store.read('jobs',receiptId).catch(()=>null);if(!receipt||receipt.fingerprint!==hash)throw error;}
