@@ -26,7 +26,7 @@ body{background:var(--field-canvas);color:var(--field-ink)}
 .field-header .brand span{color:#ffc0a6;font-size:12px;font-weight:800;letter-spacing:.1em;text-transform:uppercase}
 #field-main h1{color:var(--field-navy);font-weight:800;letter-spacing:-.035em}
 #field-main h2,#field-main h3{color:var(--field-navy);font-weight:800;letter-spacing:-.02em}
-.eyebrow{color:#a63c13;letter-spacing:.11em;font-size:11px;font-weight:800}
+.eyebrow{color:#a63c13;letter-spacing:.11em;font-size:11px;font-weight:800;overflow-wrap:anywhere}
 .card{border-color:var(--line);border-radius:10px;box-shadow:0 12px 30px rgba(17,29,48,.055)}
 .day-job:hover{border-color:#da6a43;box-shadow:0 14px 32px rgba(17,29,48,.09)}
 a{color:#9f3912}

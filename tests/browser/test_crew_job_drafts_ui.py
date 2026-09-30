@@ -129,6 +129,48 @@ class CrewJobDraftsBrowserTests(unittest.TestCase):
         fonts = self.page.evaluate("""[...document.querySelectorAll('#field-main input:not([type=checkbox]), #field-main select, #field-main textarea')].filter(el=>el.offsetParent).map(el=>parseFloat(getComputedStyle(el).fontSize))""")
         self.assertTrue(all(size >= 16 for size in fonts), fonts)
 
+    def test_long_visit_id_and_start_error_keep_first_checklist_tappable(self):
+        page = self.open(390, 844)
+        self.job.update(id='visit_egcgarage_20260922_b528f9b4f1234e9b9f141c00687a',
+                        fieldStatus='arrived', startedAt=None,
+                        allowedStatuses=['in_progress', 'paused', 'waiting', 'delayed'])
+        self.job['checklist'][0]['completed'] = False
+        original = self.answer_post
+
+        def answer(route):
+            body = route.request.post_data_json
+            if body.get('action') == 'status' and body.get('status') == 'in_progress':
+                route.fulfill(status=409, content_type='application/json', body=json.dumps({
+                    'ok': False, 'code': 'FIELD_START_INCOMPLETE',
+                    'error': 'Complete arrival preparation before starting work.',
+                    'missing': ['Complete a required checklist item.'],
+                }))
+            elif body.get('action') == 'checklist':
+                self.posts.append(copy.deepcopy(body))
+                self.job['expectedRevision'] = 'rev-check-saved'
+                for row in self.job['checklist']:
+                    if row['id'] == body['itemId']:
+                        row.update(completed=body['completed'], completedAt=DAY + 'T16:00:00.000Z',
+                                   completedBy='Crew One')
+                route.fulfill(status=200, content_type='application/json',
+                              body=json.dumps({**self.detail(), 'alreadyApplied': False}))
+            else:
+                original(route)
+
+        self.answer_post = answer
+        page.reload()
+        self.assertEqual(page.evaluate('document.documentElement.scrollWidth'), 390,
+                         'the long visit ID must wrap instead of widening the phone viewport')
+        page.get_by_role('button', name='Start work', exact=True).click()
+        expect(page.get_by_role('alert').filter(has_text='Complete arrival preparation')).to_be_visible()
+        expect(page.locator('#feedback')).to_be_visible()
+        self.assertEqual(page.evaluate('document.documentElement.scrollWidth'), 390)
+        first = page.locator('input[data-check="departure-address"]')
+        first.check()
+        expect(first).to_be_checked()
+        self.assertTrue(self.job['checklist'][0]['completed'],
+                        'the ordinary tap saves the checklist item while the error remains visible')
+
     def test_pause_reason_typed_during_a_background_sync_survives_and_saves_once(self):
         page = self.open(375)
         page.get_by_role('button', name='Pause work', exact=True).click()

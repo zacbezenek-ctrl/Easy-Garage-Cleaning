@@ -15,7 +15,7 @@ const basic = response => Object.defineProperty(response, 'type', { value: 'basi
 // Inside a worker, relative request URLs resolve against the worker's origin.
 class WorkerRequest extends Request { constructor(input, init) { super(typeof input === 'string' ? new URL(input, ORIGIN).href : input, init); } }
 const NOW = Date.parse('2026-09-22T15:00:00.000Z');
-const SHELL_CACHE = 'egc-crew-shell-20260930launchpolish';
+const SHELL_CACHE = 'egc-crew-shell-20260930launchpolish2';
 
 function harness({ config = { enabled: true }, indexedDB = fakeIndexedDB(), api = null, network = null } = {}) {
   const listeners = {}, stores = new Map(), fetched = [], messages = [];
@@ -99,7 +99,7 @@ test('install caches only the static job shell under a versioned cache and activ
   // again (?v=20260929editwipe2) so a blank line or an emptied checklist editor, and a reason typed while this phone's own
   // queued status confirms, survive too.
   // FIELD-PAY adds a private payment UI and changes the job script; all three assets must reload offline.
-  assert.deepEqual(shell, ['/app-touch.css?v=20260930mobiletouch', '/crew/field-expenses.css?v=20260928fun19', '/crew/field-expenses.js?v=20260929multiday', '/crew/field-outbox.js?v=20260929crewtime2', '/crew/field-payments.css?v=20260929fieldpay2', '/crew/field-payments.js?v=20260929fieldpay2', '/crew/job-photo-sharing.css?v=20260927photo', '/crew/job-photo-sharing.js?v=20260929editwipe', '/crew/job.css?v=20260930launchpolish', '/crew/job.html', '/crew/job.js?v=20260929fieldpay2', '/crew/manifest.webmanifest', '/crew/offline.html']);
+  assert.deepEqual(shell, ['/app-touch.css?v=20260930mobiletouch', '/crew/field-expenses.css?v=20260928fun19', '/crew/field-expenses.js?v=20260929multiday', '/crew/field-outbox.js?v=20260929crewtime2', '/crew/field-payments.css?v=20260929fieldpay2', '/crew/field-payments.js?v=20260929fieldpay2', '/crew/job-photo-sharing.css?v=20260927photo', '/crew/job-photo-sharing.js?v=20260929editwipe', '/crew/job.css?v=20260930launchpolish2', '/crew/job.html', '/crew/job.js?v=20260929fieldpay2', '/crew/manifest.webmanifest', '/crew/offline.html']);
   await sw.dispatch('activate');
   assert.deepEqual([...sw.stores.keys()].sort(), [SHELL_CACHE, 'unrelated-cache'], 'older shell versions are removed; other caches are left alone');
   assert.equal(sw.state.claimed, 1); assert.equal(sw.state.unregistered, 0);
@@ -255,7 +255,7 @@ function gatedSite({ env = STAFF_ENV, accept = '*/*' } = {}) {
   return phone;
 }
 const PUBLIC_KEYS = ['/app-touch.css?v=20260930mobiletouch', '/crew/field-outbox.js?v=20260929crewtime2', '/crew/manifest.webmanifest', '/crew/offline.html'];
-const STAFF_KEYS = ['/crew/field-expenses.css?v=20260928fun19', '/crew/field-expenses.js?v=20260929multiday', '/crew/field-payments.css?v=20260929fieldpay2', '/crew/field-payments.js?v=20260929fieldpay2', '/crew/job-photo-sharing.css?v=20260927photo', '/crew/job-photo-sharing.js?v=20260929editwipe', '/crew/job.css?v=20260930launchpolish', '/crew/job.html', '/crew/job.js?v=20260929fieldpay2'];
+const STAFF_KEYS = ['/crew/field-expenses.css?v=20260928fun19', '/crew/field-expenses.js?v=20260929multiday', '/crew/field-payments.css?v=20260929fieldpay2', '/crew/field-payments.js?v=20260929fieldpay2', '/crew/job-photo-sharing.css?v=20260927photo', '/crew/job-photo-sharing.js?v=20260929editwipe', '/crew/job.css?v=20260930launchpolish2', '/crew/job.html', '/crew/job.js?v=20260929fieldpay2'];
 const shellKeys = async sw => (await sw.cached()).filter(([name]) => name === SHELL_CACHE).map(([, path]) => path).sort();
 
 test('staff gate on: a signed-out install caches the public shell, refusals are never stored, and signing in fills in the job shell', async t => {
