@@ -34,12 +34,20 @@ export function captureOriginalAttribution(input: { raw?: Json; source?: string 
 }
 
 export function exclusionReasons(input: { tags?: string[]; raw?: Json; source?: string | null; doNotContact?: boolean }) {
-  const raw = input.raw ?? {}, tags = (input.tags ?? []).map(t=>t.toLowerCase());
+  const raw = input.raw ?? {}, tags = (input.tags ?? []).map(t=>t.trim().toLowerCase());
   const reasons: string[] = [];
   if (tags.some(t=>["egc-test","test","test-lead","internal","egc-internal","vendor","supplier"].includes(t)) || ["isTest","is_test","isTestLead","is_test_lead","isInternal","isVendor"].some(k=>raw[k]===true) || input.source?.toLowerCase()==="egc synthetic routing validation") reasons.push("test_internal_or_vendor");
+  // Recruiting contacts use explicit applicant lifecycle tags (for example
+  // applicant-active). An interview/recruiting conversation is not a customer
+  // acquisition. Do not infer this from someone's name or message keywords.
+  if (tags.some(t=>/^applicant(?:$|[-_: ])/.test(t))) reasons.push("job_applicant");
   if (input.doNotContact || raw.dnd === true || tags.some(t=>["dnc","do-not-contact","do not contact"].includes(t))) reasons.push("do_not_contact");
   return reasons;
 }
+
+/** DNC remains a real customer in reporting but is ineligible for contact/Meta.
+ * Non-customer records are excluded from sales queues and denominators too. */
+export const excludedFromCustomerReporting = (reasons: readonly string[]) => reasons.some(reason=>reason==="test_internal_or_vendor"||reason==="job_applicant");
 
 export function isVoicemailOrScreening(text: string) {
   return /(?:please (?:leave|record) (?:your |a |an )?(?:message|name)|after the (?:tone|beep)|not available|couldn't get to your call|can(?:not|'t) come to the phone|see if this person is available|mailbox|call has been forwarded|leave me a message)/i.test(text);
@@ -266,7 +274,7 @@ export function projectCustomer(input:{contactId:string;leadId?:string|null;cust
   const reconciliationStatus:CustomerProjection["reconciliationStatus"]=(input.providerAppointmentCount??0)>1?"duplicate_suspected":discrepancies.some(d=>d.code==="verbally_booked_provider_missing")?"verbally_booked_provider_pending":discrepancies.length?"reconciliation_needed":has("walkthrough_booked")?"provider_booking_confirmed":"fully_reconciled";
   return {contactId:input.contactId,leadId:input.leadId??null,customerName:input.customerName??null,leadCreatedAt:input.leadCreatedAt,state,intentStage,pipeline,videoQuoteStage,pipelineDisposition:disposition,reconciliationStatus,
     supportingEvidence:supporting.flatMap(e=>e.evidence),nextRequiredAction:state==="FOLLOW_UP_PENDING"&&disposition==="active"&&followUp?.nextAction?followUp.nextAction:nextActions[state],followUpCommitment:followUp?{occurredAt:followUp.occurredAt,deadline:followUp.details.deadline??followUp.details.followUpDeadline??followUp.details.deadlineMention??null,action:followUp.nextAction,evidence:followUp.evidence}:null,humanReviewNeeded:input.events.some(e=>e.humanReviewNeeded)||discrepancies.length>0,
-    discrepancies,excluded:(input.exclusionReasons??[]).includes("test_internal_or_vendor"),exclusionReasons:input.exclusionReasons??[],eventIds:input.events.map(e=>e.eventId),lastEventAt:input.events.at(-1)?.occurredAt??input.leadCreatedAt};
+    discrepancies,excluded:excludedFromCustomerReporting(input.exclusionReasons??[]),exclusionReasons:input.exclusionReasons??[],eventIds:input.events.map(e=>e.eventId),lastEventAt:input.events.at(-1)?.occurredAt??input.leadCreatedAt};
 }
 
 export function assertionReconciled(assertion:OperationalAssertion, providerEvents:CanonicalEvent[]) {

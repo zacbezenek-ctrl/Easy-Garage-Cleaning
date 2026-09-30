@@ -6,7 +6,7 @@ const url=new URL(process.env.DATABASE_URL??'http://invalid');
 if(process.env.EGC_CUSTOMER_STATE_TEST!=='isolated'||!['localhost','127.0.0.1'].includes(url.hostname)||!['/egc_operations_test','/egc_customer_state_test'].includes(url.pathname)||!['postgres:','postgresql:'].includes(url.protocol))throw new Error('Customer-state integration requires EGC_CUSTOMER_STATE_TEST=isolated and explicitly named loopback test database');
 const {getDb,schema}=await import('@egc/database');
 const {eq,sql}=await import('drizzle-orm');
-const {reconcileCustomerState,recordUserConfirmedOutcome,getCustomerTimeline,getCanonicalReport,getOperationalEventEvidence}=await import('../dist/index.js');
+const {reconcileCustomerState,recordUserConfirmedOutcome,getCustomerTimeline,getCanonicalReport,getOperationalEventEvidence,getCustomerStateDiagnostics}=await import('../dist/index.js');
 const db=getDb(),created=[];
 const originalFetch=globalThis.fetch;
 globalThis.fetch=async()=>{throw new Error('All external HTTP disabled in isolated customer-state integration test');};
@@ -22,6 +22,27 @@ after(async()=>{
   await db.$client.end({timeout:2});
 });
 const refresh=()=>reconcileCustomerState({contactIds:[contact.id],useAI:false});
+
+test('an explicitly tagged applicant is excluded from sales totals, completeness gaps and booking repair queues',async()=>{
+  await db.update(schema.contacts).set({tags:['applicant-active']}).where(eq(schema.contacts.id,contact.id));
+  const window={since:new Date(prior.valueOf()-86400000),until:new Date(),refresh:false};
+  const before=await getCanonicalReport(window);
+  assert.ok(!before.coverage.missingCustomers.some(row=>row.contactId===contact.id),'an applicant without a snapshot is not missing business coverage');
+  await db.insert(schema.messages).values({providerId:`applicant-out-${randomUUID()}`,contactId:contact.id,type:'SMS',direction:'outbound',actorType:'human',body:'Your employment interview is confirmed.',occurredAt:prior});
+  await db.insert(schema.messages).values({providerId:`applicant-in-${randomUUID()}`,contactId:contact.id,type:'SMS',direction:'inbound',actorType:'customer',body:'Thank you.',occurredAt:at});
+  const result=await refresh();assert.equal(result.failed,0);
+  const timeline=await getCustomerTimeline({contactId:contact.id});
+  assert.equal(timeline.customer.excluded,true);assert.ok(timeline.customer.exclusionReasons.includes('job_applicant'));
+  assert.ok(timeline.events.length,'recruiting evidence remains available without counting as a customer');
+  // Even an old retained booking-link discrepancy is not a customer repair job.
+  await db.update(schema.customerStateSnapshots).set({snapshot:{...timeline.customer,discrepancies:[{code:'provider_missing_job_link',detail:'Interview has no service job',sourceIds:[]}]}}).where(eq(schema.customerStateSnapshots.contactId,contact.id));
+  const report=await getCanonicalReport(window);
+  assert.ok(!report.countedEvents.some(event=>event.contactId===contact.id));
+  assert.ok(!report.coverage.customers.some(row=>row.contactId===contact.id));
+  const diagnostics=await getCustomerStateDiagnostics();
+  assert.ok(!diagnostics.providerMissingJobLink.some(row=>row.contactId===contact.id));
+  assert.ok(diagnostics.excludedCustomers.some(row=>row.contactId===contact.id&&row.reasons.includes('job_applicant')));
+});
 
 test('two exact paid jobs remain separate occurrences with one acquisition after legacy migration and replay',async()=>{
   const records=[13900,72500].map((amountCents,i)=>({id:`occurrence-${contact.id}-${i}`,highlevelContactId:contact.providerId,kind:'job',status:'completed',createdAt:prior.toISOString(),completedAt:at.toISOString(),financials:{quote:{at:prior.toISOString(),amountCents,source:'customer_approval'},payments:[{key:`receipt-${contact.id}-${i}`,at:at.toISOString(),amountCents}]}}));

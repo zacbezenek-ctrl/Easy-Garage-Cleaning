@@ -4,7 +4,7 @@
 const employeeLoadState=()=>({loading:false,loaded:false,error:''});
 const S={active:'my_day',installed:false,integrations:{},ghl:{loading:true,error:'',pipelines:[],opportunities:[],leadResetAt:''},ghlTimer:null,walks:{loading:true,error:'',events:[]},weekAnchor:'',timesheetAnchor:'',availabilityAnchor:'',availabilitySelected:'',availabilityAllDay:true,booking:null,actionDialog:null,contactResults:[],trainingModule:'',chatChannel:'team',people:{profiles:[],timeEntries:[],announcements:[],requests:[],incidents:[],equipment:[],training:[],teamMessages:[],jobMessages:[],messageReads:[],accounts:[],listeners:false},locating:false,clockInWithoutFix:false,onboardingPrompted:false};
 const $=s=>document.querySelector(s),all=s=>Array.from(document.querySelectorAll(s));
-S.peopleState=employeeLoadState();S.accountState=employeeLoadState();S.integrationState=employeeLoadState();S.peopleTimer=null;S.peopleRequest=null;S.peopleGeneration=0;S.peopleLastRefreshAt=0;
+S.peopleState=employeeLoadState();S.accountState=employeeLoadState();S.integrationState=employeeLoadState();S.peopleTimer=null;S.peopleRequest=null;S.peopleGeneration=0;S.peopleLastRefreshAt=0;S.peoplePollFailures=0;
 const esc=v=>String(v==null?'':v).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const money=v=>Number(v||0).toLocaleString('en-US',{style:'currency',currency:'USD',maximumFractionDigits:0});
 const payMoney=v=>Number(v||0).toLocaleString('en-US',{style:'currency',currency:'USD',minimumFractionDigits:2,maximumFractionDigits:2});
@@ -611,11 +611,11 @@ async function refreshPeople(){
       S.people.payVisibility=data.payVisibility==='all'?'all':'own';S.clockInWithoutFix=data.clockInWithoutFix===true;S.timecardCorrections=data.timecardCorrections===true;
       for(const row of queued)showQueued(row.collection,row.id,row.requestId,row.data);
       pauseLostClockOuts(shownBefore,queued);pauseDroppedClockOuts();if(!stale)resolvePauses(read);
-      S.peopleState.loaded=true;S.peopleState.error='';
+      S.peopleState.loaded=true;S.peopleState.error='';S.peoplePollFailures=0;
       followActiveShift();
       notifyAnnouncements(S.people.announcements);notifyChatMessages();
       return true;
-    }catch(error){if(generation===S.peopleGeneration){S.peopleState.error=error.message||'Employee records are unavailable. Check the connection and retry.';if(includeAccounts)S.accountState.error=S.peopleState.error;}return false}
+    }catch(error){if(generation===S.peopleGeneration){S.peoplePollFailures=Math.min(4,(S.peoplePollFailures||0)+1);S.peopleState.error=error.message||'Employee records are unavailable. Check the connection and retry.';if(includeAccounts)S.accountState.error=S.peopleState.error;}return false}
     finally{
       if(generation===S.peopleGeneration){
         if(includeAccounts)S.accountState.loading=false;
@@ -677,7 +677,9 @@ function pollPeople(){
   if(document.hidden||!S.people.listeners||!employeeIdentity())return false;
   // The offline switch is asked again until it answers (employee-hub-screens.js keeps a definite answer for the page).
   void window.EGCHubScreens?.offline?.();
-  const interval=S.active==='crew_chat'?15000:60000;
+  // Failed storage reads back off instead of repeatedly scanning an unavailable
+  // vault. Explicit refresh, visibility return and post-save reads stay immediate.
+  const interval=S.peoplePollFailures?Math.min(15*60000,60000*2**S.peoplePollFailures):S.active==='crew_chat'?15000:60000;
   if(Date.now()-S.peopleLastRefreshAt<interval)return false;
   return refreshPeople();
 }
@@ -928,6 +930,6 @@ function scoreFields(d){const fs=[['spend','Ad spend'],['leads','Qualified leads
 window.opsSaveScorecard=function(){const f=$('#ops-score-form');if(!f)return;const out={};new FormData(f).forEach((v,k)=>out[k]=Number(v||0));localStorage.setItem('egc_scorecard',JSON.stringify(out));render(true);if(typeof showToast==='function')showToast('Scorecard saved')};
 const legacyRefresh=window.refresh;window.refresh=function(){if(legacyRefresh)legacyRefresh();render()};
 const legacyBoot=window.bootDashboard;window.bootDashboard=function(){if(legacyBoot)legacyBoot();const fresh=!S.installed;install();if(!fresh&&typeof me!=='undefined'&&me)loadAll();render()};
-window.addEventListener('egc:signout',()=>{window.EGCHubScreens?.unmountAll();$('#ops-hub-layer')?.remove();S.fieldToday=null;S.renderedView='';S.bookerBoard=undefined;S.leadBooking=null;S.contactError='';S.viewHistory=false;S.customerQuery='';S.chatDrafts={};S.threadDrafts={};drawerObserver?.disconnect();drawerObserver=null;drawerUpdate=null;try{for(let i=sessionStorage.length-1;i>=0;i--){const key=sessionStorage.key(i);if(String(key||'').startsWith('egc.hub.pending.v1.'))sessionStorage.removeItem(key)}}catch{}window.EGCFieldToday?.unmount();window.EGCDispatch?.unmount();window.EGCAvailability?.unmount();S.shiftRequests={};S.peopleGeneration++;clearInterval(S.peopleTimer);clearInterval(S.ghlTimer);clearTimeout(onboardingDraftTimer);S.peopleTimer=null;S.ghlTimer=null;S.peopleRequest=null;Object.keys(peopleCollections).forEach(key=>{S.people[key]=[]});S.people.accounts=[];S.people.listeners=false;S.peopleState=employeeLoadState();S.accountState=employeeLoadState();S.integrationState=employeeLoadState();S.integrations={};S.ghl={loading:true,error:'',pipelines:[],opportunities:[],leadResetAt:''};S.walks={loading:true,error:'',events:[]};S.onboardingPrompted=false;S.onboardingSaving=false;S.onboardingDraftVersion=Number(S.onboardingDraftVersion||0)+1;S.onboardingDraft=null;S.onboardingDraftUser='';S.chatChannel='team';S.booking=null;S.actionDialog=null;if(actionResolve)actionResolve(null);actionResolve=null;$('.ops-shell')?.remove();$('#dashboard')?.classList.remove('ops-installed');S.installed=false;S.active='my_day'});
+window.addEventListener('egc:signout',()=>{window.EGCHubScreens?.unmountAll();$('#ops-hub-layer')?.remove();S.fieldToday=null;S.renderedView='';S.bookerBoard=undefined;S.leadBooking=null;S.contactError='';S.viewHistory=false;S.customerQuery='';S.chatDrafts={};S.threadDrafts={};drawerObserver?.disconnect();drawerObserver=null;drawerUpdate=null;try{for(let i=sessionStorage.length-1;i>=0;i--){const key=sessionStorage.key(i);if(String(key||'').startsWith('egc.hub.pending.v1.'))sessionStorage.removeItem(key)}}catch{}window.EGCFieldToday?.unmount();window.EGCDispatch?.unmount();window.EGCAvailability?.unmount();S.shiftRequests={};S.peopleGeneration++;clearInterval(S.peopleTimer);clearInterval(S.ghlTimer);clearTimeout(onboardingDraftTimer);S.peopleTimer=null;S.ghlTimer=null;S.peopleRequest=null;Object.keys(peopleCollections).forEach(key=>{S.people[key]=[]});S.people.accounts=[];S.people.listeners=false;S.peoplePollFailures=0;S.peopleState=employeeLoadState();S.accountState=employeeLoadState();S.integrationState=employeeLoadState();S.integrations={};S.ghl={loading:true,error:'',pipelines:[],opportunities:[],leadResetAt:''};S.walks={loading:true,error:'',events:[]};S.onboardingPrompted=false;S.onboardingSaving=false;S.onboardingDraftVersion=Number(S.onboardingDraftVersion||0)+1;S.onboardingDraft=null;S.onboardingDraftUser='';S.chatChannel='team';S.booking=null;S.actionDialog=null;if(actionResolve)actionResolve(null);actionResolve=null;$('.ops-shell')?.remove();$('#dashboard')?.classList.remove('ops-installed');S.installed=false;S.active='my_day'});
 window.addEventListener('DOMContentLoaded',()=>{if(typeof me!=='undefined'&&me){install();if(!isManager()&&S.active!=='onboarding')go('my_day')}});
 })();

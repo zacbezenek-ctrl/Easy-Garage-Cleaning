@@ -34,7 +34,7 @@ export function canonicalExclusionReasons(customer: CanonicalCustomerGate): stri
   const reasons = customer.exclusionReasons ?? [];
   return [
     ...(customer.state === 'DO_NOT_CONTACT' || reasons.includes('do_not_contact') ? ['canonical_do_not_contact'] : []),
-    ...(customer.excluded || reasons.includes('test_internal_or_vendor') ? ['canonical_customer_excluded'] : [])
+    ...(customer.excluded || reasons.includes('test_internal_or_vendor') || reasons.includes('job_applicant') ? ['canonical_customer_excluded'] : [])
   ];
 }
 
