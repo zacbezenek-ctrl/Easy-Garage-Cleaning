@@ -181,6 +181,42 @@ test('manual and post-write employee refreshes run immediately between automatic
   assert.equal(env.reads(), initial + 2);
 });
 
+test('failed automatic vault reads back off to fifteen minutes and successful recovery restores the normal cadence', async () => {
+  const env = suite();
+  env.pending = response({ ok: false, error: 'Storage temporarily unavailable' }, 503);
+  await env.api.startPeopleListeners();
+  assert.equal(env.reads(), 1);
+  assert.equal(env.api.S.peopleState.loaded, false, 'an unavailable vault is never an empty successful result');
+  env.api.S.active = 'crew_chat';
+  for (const delay of [120000, 240000, 480000, 900000, 900000]) {
+    const before = env.reads();
+    await env.advance(delay - 15000);
+    assert.equal(env.reads(), before, 'chat does not bypass the failed-read delay');
+    await env.advance(15000);
+    assert.equal(env.reads(), before + 1);
+  }
+  env.pending = null;
+  await env.api.refreshPeople();
+  assert.equal(env.api.S.peoplePollFailures, 0);
+  const recovered = env.reads();
+  await env.advance(15000);
+  assert.equal(env.reads(), recovered + 1, 'successful recovery restores chat updates');
+});
+
+test('manual, post-write and visibility refreshes bypass failed-read backoff and sign-out resets it', async () => {
+  const env = suite();
+  env.pending = response({ ok: false, error: 'Storage temporarily unavailable' }, 429);
+  await env.api.startPeopleListeners();
+  await env.api.refreshPeople();
+  assert.equal(env.reads(), 2, 'explicit retry stays available');
+  await env.api.peopleSet('profiles', 'zacb', { username: 'ZacB' });
+  assert.equal(env.reads(), 3, 'read-after-write remains immediate');
+  await env.documentEvents.visibilitychange();
+  assert.equal(env.reads(), 4, 'foregrounding checks current shift state immediately');
+  env.events['egc:signout']();
+  assert.equal(env.api.S.peoplePollFailures, 0, 'a new account does not inherit old retry delays');
+});
+
 test('owner refresh reuses the account list from the hub instead of reading it twice', async () => {
   const env = suite();
   await env.api.startPeopleListeners();

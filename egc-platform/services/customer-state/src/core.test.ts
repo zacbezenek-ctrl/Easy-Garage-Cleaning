@@ -126,6 +126,25 @@ describe("durable ledger and operational truth",()=>{
   it("excludes marked test/internal/vendor/DNC from Meta eligibility without guessing names",()=>{
     expect(exclusionReasons({tags:["egc-test"]})).toContain("test_internal_or_vendor");expect(exclusionReasons({raw:{isVendor:true}})).toContain("test_internal_or_vendor");expect(exclusionReasons({doNotContact:true})).toContain("do_not_contact");expect(exclusionReasons({raw:{name:"Testa"}})).toEqual([]);
   });
+  it("excludes explicit applicant lifecycle tags from customer sales reports without deleting their evidence",()=>{
+    for(const tag of ["applicant", "applicant-active", " Applicant-Rejected ", "APPLICANT: INTERVIEW", "applicant_hired"]){
+      const reasons=exclusionReasons({tags:[tag]});
+      expect(reasons).toContain("job_applicant");
+      const sources=[source("Interview confirmed",{events:[ev("two_way_contact"),ev("walkthrough_booked")]})];
+      const events=buildCanonicalEvents(sources),customer=projection(sources,{exclusionReasons:reasons,missingJobLink:true});
+      expect(customer.excluded).toBe(true);
+      expect(customer.eventIds).toHaveLength(2);
+      const report=buildReport({events,customers:[customer],since:"2026-09-01T00:00:00.000Z",until:"2026-10-01T00:00:00.000Z"});
+      expect(report.countedEvents).toEqual([]);
+      expect(report.periodActivity.twoWayContacts?.count).toBe(0);
+      expect(report.cohort.metrics.twoWayContacts?.denominator).toBe(0);
+      expect(report.excludedCustomers).toEqual([{contactId,reasons:["job_applicant"]}]);
+    }
+    // Names, ad copy, contact messages and a word containing "applicant" are
+    // not explicit lifecycle markers. A DNC customer still belongs in metrics.
+    for(const input of [{tags:["applicants-helped"]},{tags:["non-applicant"]},{raw:{name:"Applicant",message:"I applied for a job",attributionSource:{utmContent:"Sales Person Ad"}}}])expect(exclusionReasons(input)).toEqual([]);
+    expect(projection([],{exclusionReasons:exclusionReasons({doNotContact:true})}).excluded).toBe(false);
+  });
   it("unknown event time cannot overwrite earlier verified transcript time",()=>{
     const known=source("accepted",{events:[ev("job_sold")]}),unknown=source("won",{sourceType:"job",sourceRecordId:"job",occurredAt:"2026-09-20T10:00:00.000Z",events:[ev("job_sold",{details:{occurredAtVerified:false}})]});
     const [e]=buildCanonicalEvents([known,unknown]);expect(e?.occurredAt).toBe(at);expect(e?.details.occurredAtVerified).toBe(true);
