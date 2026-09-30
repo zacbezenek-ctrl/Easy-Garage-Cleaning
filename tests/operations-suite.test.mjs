@@ -404,7 +404,7 @@ test('crew tools provide a job-aware employee home and one connected workflow',(
   for(const marker of ['Your workday','next-work','My upcoming work','Estimated pay','loadEmployeeData','loadAssignedJobs','workLink','Open job brief','Continue closeout','Time clock','Report issue','offline'])assert.match(crewHome,new RegExp(marker));
   for(const page of [crewHome,crew,prejob,postjob]){
     // WT-OUTCOME: the crew nav wraps instead of scrolling 'My Hub' off a 375 px screen, so the stylesheet tag moved.
-    assert.match(page,/crew-brand\.css\?v=20260930mobiletouch/);
+    assert.match(page,/crew-brand\.css\?v=20260930launchpolish/);
     assert.match(page,/hub-auth\.js\?v=20260904c/);
   }
   const auth=read('crew/hub-auth.js');
@@ -873,7 +873,7 @@ test('open-shift scheduling fields persist on the canonical job record',()=>{
   // staff-role capabilities; (WT-OUTCOME after SALES-BOOKING) one combined tag; (MOBILE-HUB) the view title carries a title
   // attribute, business users get RUN THE BUSINESS first and a crew member who is not clocked in sees the time clock above
   // Today's jobs; (MOBILE-HUB after WT-OUTCOME) one combined tag.
-  assert.match(employee,/employee-suite\.js\?v=20260929hubready3"/);
+  assert.match(employee,/employee-suite\.js\?v=20260930launchpolish"/);
 });
 
 test('recurring visits request a server-side handoff clone instead of copying prior execution or payments',()=>{

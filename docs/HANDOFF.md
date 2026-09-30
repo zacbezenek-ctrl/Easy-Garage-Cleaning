@@ -1,6 +1,6 @@
 # Easy Garage Cleaning Hub handoff
 
-Snapshot: **2026-09-30 UTC**. Web fixes through **PR #94** are merged and deployed at `af3bdb403a9161256d69f6134dd7d93ab86257ac`; the unchanged Railway services remain at PR #92 (`15ac32a8aad86d468dd193c6ae9b18e9d09c27e5`). The live Hub verified a manually reviewed task from the original saved transcript and read-only Completed history. Automatic AI extraction still needs existing-account credits, regular job photos need Drive setup, and FIELD-PAY remains off.
+Snapshot: **2026-09-30 UTC**. Web fixes through **PR #95** are merged and deployed at `f6c32488f7e7c9f12f628eddaa913020b962f827`; the unchanged Railway services remain at PR #92 (`15ac32a8aad86d468dd193c6ae9b18e9d09c27e5`). The live Hub verified a manually reviewed task from the original saved transcript and read-only Completed history. Automatic AI extraction still needs existing-account credits, regular job photos need Drive setup, and FIELD-PAY remains off.
 
 ## Mobile gesture and styling follow-up
 
@@ -100,3 +100,11 @@ Employee-account managers were allowed to begin Drive and Jobber setup, but the 
 This permission correction does not establish a live Drive connection. Google/Cloudflare administrative sign-in and the missing existing-client bindings remain required before private job-photo acceptance. The FIELD-PAY runbook now explicitly includes the money-document prerequisite and the week of reviewed shadow totals from the existing rollout guide; no flags or production money data were changed.
 
 The continued source search covered the available recent Codex task summaries and narrowly matched Google Drive documents. No authoritative refunds/milestone source, 41-spec set or seven build IDs was recovered. Older active Codex tasks are outside the available listing; unpublished work remains possible.
+
+## Active launch polish and staff-data incident
+
+PR #95 passed all five applicable workflows on its final head and again on main, plus Pages, password-verifier and Vercel deployment checks. The signed-in live Hub loads the shared touch policy and its menu/Walkthrough navigation works.
+
+The next existing-feature pass aligns the verified crew job and profile screens with the navy/orange design, repairs recording-load retry and reviewer-access recovery, removes literal null text from unavailable Review queues, and adds a bounded read check to Integrations. These changes are being reviewed on `codex/hub-launch-polish`; do not treat this paragraph as deployment evidence.
+
+**Unresolved live data failure:** Walkthroughs cannot load dispatch records; the staff-data endpoint returned a Cloudflare 502 Host Error (Ray `a4306b0a99c37988`, 2026-09-30 04:17:28 UTC). Employee records were already unavailable before the styling deployment. Source inspection maps the dispatch message to a non-success Firestore read, but does not establish the upstream status or cause. The owner authorized Firebase/Cloudflare investigation. Automatic approval review separately blocked Google Accounts authentication-page access; manual admin sign-in remains pending. Do not claim production readiness until staff reads are restored and live workflows pass again.

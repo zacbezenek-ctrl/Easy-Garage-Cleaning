@@ -19,6 +19,8 @@
 /* Finance rows keep four columns only where the workspace (viewport minus the 252px rail) has room for them. */
 @media (min-width:861px) and (max-width:1340px){.ops-finance-list article{grid-template-columns:minmax(0,1fr) 190px}.ops-finance-state,.ops-finance-actions{grid-column:1/-1}}
 @media (max-width:520px){.ops-metrics,.ops-metrics.score{grid-template-columns:repeat(2,minmax(0,1fr))}.ops-metrics article{min-width:0;overflow-wrap:anywhere}.ops-metrics .ops-button{white-space:normal;text-align:center}}
+/* Connection badges follow their details on phones; a long read check must not squeeze the service-account guidance into a narrow strip. */
+@media (max-width:600px){.ops-integrations article{display:block}.ops-integrations .ops-status{display:inline-flex;margin-top:10px}}
 #toast{white-space:normal;width:max-content;max-width:calc(100vw - 32px);box-sizing:border-box;text-align:center;overflow-wrap:anywhere;bottom:calc(1.5rem + var(--egc-safe-bottom));transform:translateX(-50%) translateY(calc(100% + 2rem + var(--egc-safe-bottom)))}
 .ops-scrim{position:fixed;inset:0;z-index:89;border:0;padding:0;margin:0;background:rgba(7,15,27,.55);cursor:pointer}
 .ops-scrim[hidden]{display:none}

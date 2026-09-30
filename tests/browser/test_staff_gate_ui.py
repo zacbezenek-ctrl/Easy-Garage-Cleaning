@@ -12,7 +12,7 @@ OUT = ROOT / 'test-results' / 'staff-gate'
 MANAGER = ('tylerg', 'synthetic-manager-password')
 CREW = ('synthetic.crew', 'synthetic-crew-password')
 PUBLIC_SHELL = ['/app-touch.css?v=20260930mobiletouch', '/crew/field-outbox.js?v=20260929crewtime2', '/crew/manifest.webmanifest', '/crew/offline.html']
-STAFF_SHELL = ['/crew/field-expenses.css?v=20260928fun19', '/crew/field-expenses.js?v=20260929multiday', '/crew/field-payments.css?v=20260929fieldpay2', '/crew/field-payments.js?v=20260929fieldpay2', '/crew/job-photo-sharing.css?v=20260927photo', '/crew/job-photo-sharing.js?v=20260929editwipe', '/crew/job.css?v=20260930mobiletouch', '/crew/job.html', '/crew/job.js?v=20260929fieldpay2']
+STAFF_SHELL = ['/crew/field-expenses.css?v=20260928fun19', '/crew/field-expenses.js?v=20260929multiday', '/crew/field-payments.css?v=20260929fieldpay2', '/crew/field-payments.js?v=20260929fieldpay2', '/crew/job-photo-sharing.css?v=20260927photo', '/crew/job-photo-sharing.js?v=20260929editwipe', '/crew/job.css?v=20260930launchpolish2', '/crew/job.html', '/crew/job.js?v=20260929fieldpay2']
 # Registers the crew worker (the job page's own registration is reused), waits until it is activated, and lists its shell cache.
 WORKER_SHELL = """async () => {
   const registration = await navigator.serviceWorker.register('/crew/sw.js', { scope: '/crew/' });
@@ -184,12 +184,12 @@ class StaffGateBrowserTests(unittest.TestCase):
         page = self.page
         page.goto(self.url + '/crew/offline')
         expect(page.get_by_role('heading', name='You are offline')).to_be_visible()
-        self.assertEqual(page.locator('.field-header').evaluate('el => getComputedStyle(el).backgroundColor'), 'rgb(22, 47, 39)', 'the offline page is styled without the gated job.css')
+        self.assertEqual(page.locator('.field-header').evaluate('el => getComputedStyle(el).backgroundColor'), 'rgb(17, 29, 48)', 'the navy offline page is styled without the gated job.css')
         self.assertGreaterEqual(page.locator('.button').bounding_box()['height'], 44)
         self.assertLessEqual(page.evaluate('document.documentElement.scrollWidth'), 375)
         page.screenshot(path=str(OUT / 'crew-offline.png'), full_page=True)
         shell = page.evaluate(WORKER_SHELL)
-        self.assertEqual(shell, {'names': ['egc-crew-shell-20260930mobiletouch'], 'keys': PUBLIC_SHELL}, 'the outbox import and the public shell load signed out; gated files are skipped, not fatal')
+        self.assertEqual(shell, {'names': ['egc-crew-shell-20260930launchpolish2'], 'keys': PUBLIC_SHELL}, 'the outbox import and the public shell load signed out; gated files are skipped, not fatal')
         self.assertEqual(self.context.request.get(self.url + '/crew/job.js?v=20260929fieldpay2', max_redirects=0).status, 401, 'the gated shell files were refused, not cached')
 
     def test_the_crew_worker_installs_signed_in_with_the_whole_shell_and_reloads_offline(self):
@@ -199,11 +199,11 @@ class StaffGateBrowserTests(unittest.TestCase):
         expect(page).to_have_url(self.url + '/crew/job')
         expect(page).to_have_title("Today's work · Easy Garage Cleaning")
         shell = page.evaluate(WORKER_SHELL)
-        self.assertEqual(shell, {'names': ['egc-crew-shell-20260930mobiletouch'], 'keys': sorted(PUBLIC_SHELL + STAFF_SHELL)})
+        self.assertEqual(shell, {'names': ['egc-crew-shell-20260930launchpolish2'], 'keys': sorted(PUBLIC_SHELL + STAFF_SHELL)})
         self.context.set_offline(True)
         page.reload()
         expect(page).to_have_title("Today's work · Easy Garage Cleaning")
-        self.assertEqual(page.evaluate("getComputedStyle(document.querySelector('.field-header')).backgroundColor"), 'rgb(22, 47, 39)', 'the cached job.css loaded offline')
+        self.assertEqual(page.evaluate("getComputedStyle(document.querySelector('.field-header')).backgroundColor"), 'rgb(17, 29, 48)', 'the cached navy crew job.css loaded offline')
         self.context.set_offline(False)
         self.context.clear_cookies()
         page.goto(self.url + '/crew/job?jobId=synthetic-job-1')

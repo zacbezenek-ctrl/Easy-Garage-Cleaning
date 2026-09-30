@@ -1,7 +1,21 @@
 {
   "schemaVersion": 1,
-  "asOf": "2026-09-29 23:54:13 UTC",
+  "asOf": "2026-09-30 UTC",
   "items": [
+    {
+      "id": "STAFF-DATA-READ",
+      "state": "open",
+      "owner": "release coordinator and owner",
+      "action": "Diagnose and repair the live staff/dispatch storage read failure. Firebase and Cloudflare admin investigation is authorized; manual admin sign-in is pending. Verify signed-in Walkthroughs and employee records after repair.",
+      "evidence": "Live employee endpoint returned 502 Host Error; Ray a4306b0a99c37988 at 2026-09-30 04:17:28 UTC. Dispatch error maps to a failed Firestore read; upstream status unknown."
+    },
+    {
+      "id": "MOBILE-DEVICE-ACCEPTANCE",
+      "state": "browser_regressions_passed_device_check_open",
+      "owner": "owner",
+      "action": "On a physical iPhone, verify double taps do not zoom staff pages, deliberate pinch remains usable, signature drawing works, and portrait/landscape controls remain reachable.",
+      "evidence": "PR95 passed 14-entrypoint WebKit touch checks and 36 crew geometry cases; actual native iPhone gestures were not exercised."
+    },
     {
       "id": "CREDITS-QUEUE",
       "state": "merged_first_in_batch8",

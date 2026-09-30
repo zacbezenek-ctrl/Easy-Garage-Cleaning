@@ -17,3 +17,33 @@
   #field-main{padding-left:max(14px,env(safe-area-inset-left));padding-right:max(14px,env(safe-area-inset-right));padding-bottom:calc(100px + env(safe-area-inset-bottom))}
   #feedback{bottom:max(16px,env(safe-area-inset-bottom));left:max(16px,env(safe-area-inset-left));right:max(16px,env(safe-area-inset-right));width:auto;transform:none}
 }
+
+/* Bring the verified field record into the crew Hub's navy and orange visual system. */
+:root{--field-navy:#111d30;--field-orange:#bd4310;--field-canvas:#f2f1ed;--field-ink:#172033;--line:#d9d8d2;background:var(--field-canvas);color:var(--field-ink)}
+body{background:var(--field-canvas);color:var(--field-ink)}
+.field-header{background:var(--field-navy);border-bottom:3px solid #e8581c}
+.field-header .brand{font-size:24px;letter-spacing:-.04em}
+.field-header .brand span{color:#ffc0a6;font-size:12px;font-weight:800;letter-spacing:.1em;text-transform:uppercase}
+#field-main h1{color:var(--field-navy);font-weight:800;letter-spacing:-.035em}
+#field-main h2,#field-main h3{color:var(--field-navy);font-weight:800;letter-spacing:-.02em}
+.eyebrow{color:#a63c13;letter-spacing:.11em;font-size:11px;font-weight:800;overflow-wrap:anywhere}
+.card{border-color:var(--line);border-radius:10px;box-shadow:0 12px 30px rgba(17,29,48,.055)}
+.day-job:hover{border-color:#da6a43;box-shadow:0 14px 32px rgba(17,29,48,.09)}
+a{color:#9f3912}
+.field-header a{color:#fff}
+button,.button{border-color:#aab5b4;border-radius:6px;color:var(--field-navy)}
+button:hover,.button:hover{background:#f7f5f1}
+.primary{background:var(--field-orange);border-color:var(--field-orange);color:#fff}
+.primary:hover{background:#9f370f;border-color:#9f370f}
+.job-sections{background:rgba(242,241,237,.97);border-bottom-color:var(--line);backdrop-filter:blur(12px);overflow-x:auto;justify-content:space-between;scrollbar-width:none;-webkit-overflow-scrolling:touch}
+.job-sections::-webkit-scrollbar{display:none}
+.job-sections a{color:var(--field-navy);flex:0 0 auto;white-space:nowrap;padding-inline:6px}
+.job-sections a:hover,.job-sections a:focus-visible{background:#e6e5e0;color:var(--field-navy)}
+.badge{background:#e6e9e7;color:#25344a}
+.detail-grid dt{color:#657184}
+.empty{background:#f7f6f2;color:#515e6a}
+input:not([type=checkbox]),textarea,select{border-color:#aab4b4;color:var(--field-ink);border-radius:6px}
+input[type=checkbox],.check input{accent-color:var(--field-orange)}
+input:focus-visible,select:focus-visible,textarea:focus-visible{outline-color:#bd4310}
+#feedback{background:var(--field-navy);border-left:4px solid #e8581c}
+.offline-stamp{color:#667282}

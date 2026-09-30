@@ -34,3 +34,11 @@ The following is the owner's wrap-up instruction in this task. Keep its wording 
 > Do a MULTI agent check for styling mobile problems. Make sure double clicking doesn’t zoom in on the app
 
 The standing HighLevel boundary is recorded separately in [HIGHLEVEL-BOUNDARY.md](../HIGHLEVEL-BOUNDARY.md), including the owner's original words and the paths that can write or send.
+
+## Production data investigation authorization (2026-09-30 UTC)
+
+> Yes, investigate the data error
+
+## Full functional and visual completion instruction (2026-09-30 UTC)
+
+> i want u to work like a DOGGGG, spin up hella agents. I want this shit to be in like oprestrine condition from a functionality perspective and a visual perspective tomorrow, i need this shit AMAZING, as many agents as u can think of, just like GO GO GO GO
