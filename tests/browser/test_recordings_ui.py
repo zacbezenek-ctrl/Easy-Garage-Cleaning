@@ -23,7 +23,7 @@ class RecordingTests(unittest.TestCase):
     @classmethod
     def tearDownClass(cls):cls.browser.close();cls.pw.stop();cls.server.shutdown();cls.server.server_close()
     def setUp(self):
-        self.context=self.browser.new_context(viewport={'width':390,'height':900});self.page=self.context.new_page();self.calls=[];self.errors=[];self.fail=False;self.fail_text=False;self.fail_manual=False
+        self.context=self.browser.new_context(viewport={'width':390,'height':900});self.page=self.context.new_page();self.calls=[];self.errors=[];self.fail=False;self.fail_preapply=False;self.fail_identity=False;self.fail_conflict=False;self.fail_validation=False;self.fail_text=False;self.fail_manual=False
         self.row={'id':str(uuid.uuid4()),'createdAt':'2026-09-21T12:00:00Z','revision':'2026-09-21T12:01:00Z','status':'draft','portalJobId':'visit-synthetic','portalVisitId':'visit-synthetic','portalCustomerId':'customer-synthetic','portalProjectId':None,'portalRevision':'source-v1','linkageExceptions':['project_link_not_established'],'transcript':'I will call before work starts. Keep the bicycle.','extraction':{'garageSize':'2_car','junkVolumeYards':None,'itemsRemove':[],'itemsKeep':['Bicycle'],'itemsRelocate':[],'storageRequirements':[],'bikeRacks':0,'toolRacks':0,'shelving':[],'pressureWashing':False,'pestObservations':[],'activeInfestation':None,'accessNotes':None,'estimatedLaborHours':None,'customerPreferences':[],'customerObjections':[],'salesNotes':[],'crewNotes':[],'pricingNotes':[],'evidence':{},'proposedActions':[{'title':'Call before work','kind':'callback','commitment':'Call before work starts','sourceQuote':'I will call before work starts','ownerMention':None,'dueMention':None,'confidence':0.9}]}}
         self.fail_get=False;self.fail_context=False;self.hold_context=False;self.held_context=None;self.hold_get=False;self.hold_list=False;self.held_read=None
         self.page.on('pageerror',lambda e:self.errors.append(str(e)));self.page.route('**/*',self.route)
@@ -48,10 +48,29 @@ class RecordingTests(unittest.TestCase):
             if self.fail_text:self.fail_text=False;route.fulfill(status=503,content_type='application/json',body='{"error":"recording_unavailable"}');return
             self.row.update(sourceKind='transcript',sourceFilename=c.get('filename'),transcript=c['transcript']);result['recording']=self.row
         elif name=='recording.approve':
+            if self.fail_preapply:
+                self.fail_preapply=False
+                self.row.update(status='approval_pending',reviewMode='ai_scope',lastErrorCode='recording_preapply_source_revision_conflict',pendingReview=c,approvalRequestId=request['requestId'])
+                route.fulfill(status=409,content_type='application/json',body='{"error":"recording_source_revision_conflict"}');return
+            if self.fail_identity:
+                self.fail_identity=False
+                self.row.update(status='approval_pending',reviewMode='ai_scope',lastErrorCode='recording_identity_changed',pendingReview=c,approvalRequestId=request['requestId'])
+                route.fulfill(status=409,content_type='application/json',body='{"error":"recording_identity_changed"}');return
+            if self.fail_conflict:
+                self.fail_conflict=False
+                saved=json.loads(json.dumps(c));saved['extraction']['itemsKeep']=['Saved review from another manager']
+                self.row.update(status='approval_pending',reviewMode='ai_scope',lastErrorCode=None,pendingReview=saved,approvalRequestId=str(uuid.uuid4()))
+                route.fulfill(status=409,content_type='application/json',body='{"error":"recording_approval_request_conflict"}');return
+            if self.fail_validation:
+                self.fail_validation=False
+                route.fulfill(status=400,content_type='application/json',body='{"error":"invalid_recording_command"}');return
             if self.fail:self.fail=False;self.fail_text=False;route.fulfill(status=503,content_type='application/json',body='{"error":"recording_unavailable"}');return
             self.row['status']='approved';self.row['approvedBy']='test-owner';result['recording']=self.row
         elif name=='recording.refresh_source':
-            self.row['revision']='2026-09-21T12:02:00Z';result['recording']=self.row;result['requiresNewReview']=True
+            self.row['revision']='2026-09-21T12:02:00Z'
+            if self.row['status']=='approval_pending' and self.row.get('lastErrorCode')=='recording_preapply_source_revision_conflict':
+                self.row.update(status='draft',reviewMode=None,lastErrorCode=None,pendingReview=None,approvalRequestId=None,portalRevision='source-v2')
+            result['recording']=self.row;result['requiresNewReview']=True
         elif name=='recording.review_manual_tasks':
             if self.fail_manual:
                 status=self.fail_manual;self.fail_manual=False;route.fulfill(status=status,content_type='application/json',body='{"error":"recording_source_revision_conflict"}' if status==409 else '{"error":"recording_unavailable"}');return
@@ -125,6 +144,67 @@ class RecordingTests(unittest.TestCase):
         writes=[call for call in self.calls if call['body']['command']=='recording.approve']
         self.assertEqual(len(writes),2);self.assertEqual(writes[0],writes[1]);self.assertEqual(writes[0]['requestId'],request_id)
         self.assertFalse(any(call['body']['command']=='recording.refresh_source' for call in self.calls))
+    def test_definitive_preapply_conflict_allows_explicit_fresh_review_only(self):
+        self.row['sourceKind']='transcript';self.fail_preapply=True
+        self.open()
+        self.page.get_by_label('I reviewed the transcript, the current visit, the scope and each selected action').check()
+        self.page.get_by_role('button',name='Approve reviewed scope',exact=True).click()
+        expect(self.page.get_by_role('alert')).to_contain_text('before this review saved any scope or follow-ups')
+        expect(self.page.get_by_text('Status: approval_pending',exact=True)).to_be_visible()
+        request_id=self.row['approvalRequestId']
+        expect(self.page.get_by_role('button',name='Retry exact reviewed approval',exact=True)).to_have_count(0)
+        self.page.get_by_text('Source transcript',exact=True).click()
+        expect(self.page.get_by_text('I will call before work starts. Keep the bicycle.',exact=True)).to_be_visible()
+        self.page.get_by_role('button',name='Review current visit again',exact=True).click()
+        expect(self.page.get_by_text('Status: draft',exact=True)).to_be_visible()
+        expect(self.page.get_by_role('button',name='Approve reviewed scope',exact=True)).to_be_visible()
+        self.assertIsNone(self.row['pendingReview']);self.assertIsNone(self.row['approvalRequestId'])
+        refreshes=[call for call in self.calls if call['body']['command']=='recording.refresh_source']
+        self.assertEqual(len(refreshes),1);self.assertEqual(refreshes[0]['body']['recordingId'],self.row['id'])
+        self.page.get_by_label('I reviewed the transcript, the current visit, the scope and each selected action').check()
+        self.page.get_by_role('button',name='Approve reviewed scope',exact=True).click()
+        expect(self.page.get_by_text('Status: approved',exact=True)).to_be_visible()
+        writes=[call for call in self.calls if call['body']['command']=='recording.approve']
+        self.assertEqual(len(writes),2);self.assertEqual(writes[0]['body']['revision'],'2026-09-21T12:01:00Z')
+        self.assertEqual(writes[1]['body']['revision'],'2026-09-21T12:02:00Z')
+        self.assertNotEqual(writes[1]['requestId'],request_id)
+    def test_postapply_identity_conflict_keeps_exact_submitted_review_frozen(self):
+        self.fail_identity=True;self.open()
+        self.page.get_by_label('I reviewed the transcript, the current visit, the scope and each selected action').check()
+        self.page.get_by_role('button',name='Approve reviewed scope',exact=True).click()
+        expect(self.page.get_by_role('alert')).to_contain_text('Some work may already be saved')
+        expect(self.page.get_by_label('Keep',exact=True)).to_be_disabled()
+        expect(self.page.get_by_role('button',name='Review current visit again',exact=True)).to_have_count(0)
+        self.page.get_by_role('button',name='Retry exact review',exact=True).click()
+        expect(self.page.get_by_text('Status: approved',exact=True)).to_be_visible()
+        writes=[call for call in self.calls if call['body']['command']=='recording.approve']
+        self.assertEqual(len(writes),2);self.assertEqual(writes[0],writes[1])
+        self.assertFalse(any(call['body']['command']=='recording.refresh_source' for call in self.calls))
+    def test_competing_review_conflict_reloads_authoritative_frozen_request(self):
+        self.fail_conflict=True;self.open()
+        self.page.get_by_label('I reviewed the transcript, the current visit, the scope and each selected action').check()
+        self.page.get_by_role('button',name='Approve reviewed scope',exact=True).click()
+        expect(self.page.get_by_text('Status: approval_pending',exact=True)).to_be_visible()
+        self.assertEqual(self.row['pendingReview']['extraction']['itemsKeep'],['Saved review from another manager'])
+        self.page.get_by_role('button',name='Retry exact reviewed approval',exact=True).click()
+        expect(self.page.get_by_text('Status: approved',exact=True)).to_be_visible()
+        writes=[call for call in self.calls if call['body']['command']=='recording.approve']
+        self.assertEqual(len(writes),2)
+        self.assertEqual(writes[1]['body'],self.row['pendingReview'])
+        self.assertEqual(writes[1]['requestId'],self.row['approvalRequestId'])
+        self.assertNotEqual(writes[0]['requestId'],writes[1]['requestId'])
+    def test_definitive_validation_refusal_reenables_draft_for_correction(self):
+        self.fail_validation=True;self.open()
+        self.page.get_by_label('I reviewed the transcript, the current visit, the scope and each selected action').check()
+        self.page.get_by_role('button',name='Approve reviewed scope',exact=True).click()
+        expect(self.page.get_by_role('button',name='Approve reviewed scope',exact=True)).to_be_visible()
+        expect(self.page.get_by_label('Keep',exact=True)).to_be_enabled()
+        self.page.get_by_label('Keep',exact=True).fill('Bicycle\nTool box')
+        self.page.get_by_role('button',name='Approve reviewed scope',exact=True).click()
+        expect(self.page.get_by_text('Status: approved',exact=True)).to_be_visible()
+        writes=[call for call in self.calls if call['body']['command']=='recording.approve']
+        self.assertEqual(len(writes),2);self.assertNotEqual(writes[0]['requestId'],writes[1]['requestId'])
+        self.assertEqual(writes[1]['body']['extraction']['itemsKeep'],['Bicycle','Tool box'])
     def test_failed_processing_is_truthful_and_retryable(self):
         self.row['status']='failed';self.row['lastErrorCode']='recording_processing_failed';self.page.goto(self.url);self.page.get_by_role('button',name='Recordings',exact=True).click();self.page.get_by_role('button',name='Open recording',exact=True).click();expect(self.page.get_by_role('alert')).to_contain_text('Audio is saved');self.page.get_by_role('button',name='Retry processing').click();expect(self.page.get_by_text('Status: processing',exact=True)).to_be_visible()
     def test_credit_exhaustion_shows_saved_transcript_and_keeps_retry_available(self):
