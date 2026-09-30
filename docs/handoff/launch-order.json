@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "asOf": "2026-09-29",
+  "asOf": "2026-09-29 23:54:13 UTC",
   "source": "owner wrap-up instruction",
   "originalQueueNewUnitsMayStart": false,
   "laterAuthorizedWork": "Complete the Hub iOS Walkthroughs and transcript-to-office-task integration already in the working tree.",
@@ -148,7 +148,7 @@
     "mainMergeSha": "bc57eea94ed9da8aa984033027161a4ca829be36",
     "deployedRevision": "bc57eea94ed9da8aa984033027161a4ca829be36",
     "liveEvidence": "two clean owner reloads; old failed recording source readable at 627 bytes; no attempt 4; future exact-credit message tested only",
-    "gate": "restore existing OpenAI credits, retry same saved transcript once, verify AI-reviewed task; photo/Firestore/flag owner gates remain"
+    "gate": "Restore credits in the existing OpenAI account, then test automatic extraction on a fresh synthetic transcript. The original saved source is manually approved; do not retry or approve duplicate actions on it. Do not rotate keys. Photo, Firestore and flag owner gates remain."
   },
   "activation": {
     "FIX-REFUNDS": "off_at_merge",
@@ -156,18 +156,258 @@
     "FIELD-PAY": "off_until_rules_and_money_prerequisites_verified"
   },
   "resilientOfficeWorkflow": {
-    "branch": "codex/hub-resilient-operations",
-    "state": "implementation_under_review_pending_exact_head_ci_and_live_acceptance",
-    "baseMainSha": "a28c019ff3446a537135ceb973ac3793bd15d6a2",
-    "scope": [
-      "human_reviewed_manual_tasks_from_saved_failed_transcript",
-      "read_only_completed_task_history"
+    "checkedAt": "2026-09-29 23:54:13 UTC",
+    "pr": 92,
+    "headSha": "967bd5e9b1095d6dbe689fcf8e27a732b027699b",
+    "mergeSha": "15ac32a8aad86d468dd193c6ae9b18e9d09c27e5",
+    "prChecks": [
+      {
+        "id": 36645384265,
+        "name": "EGC Lighthouse (mobile)",
+        "sha": "967bd5e9b1095d6dbe689fcf8e27a732b027699b",
+        "status": "completed",
+        "conclusion": "success",
+        "attempt": 1,
+        "url": "https://github.com/zacbezenek-ctrl/Easy-Garage-Cleaning/actions/runs/36645384265"
+      },
+      {
+        "id": 36645384281,
+        "name": "EGC Operations Integration",
+        "sha": "967bd5e9b1095d6dbe689fcf8e27a732b027699b",
+        "status": "completed",
+        "conclusion": "success",
+        "attempt": 1,
+        "url": "https://github.com/zacbezenek-ctrl/Easy-Garage-Cleaning/actions/runs/36645384281"
+      },
+      {
+        "id": 36645384297,
+        "name": "EGC Root CI",
+        "sha": "967bd5e9b1095d6dbe689fcf8e27a732b027699b",
+        "status": "completed",
+        "conclusion": "success",
+        "attempt": 1,
+        "url": "https://github.com/zacbezenek-ctrl/Easy-Garage-Cleaning/actions/runs/36645384297"
+      },
+      {
+        "id": 36645384233,
+        "name": "EGC Firestore Rules and Dispatch",
+        "sha": "967bd5e9b1095d6dbe689fcf8e27a732b027699b",
+        "status": "completed",
+        "conclusion": "success",
+        "attempt": 1,
+        "url": "https://github.com/zacbezenek-ctrl/Easy-Garage-Cleaning/actions/runs/36645384233"
+      },
+      {
+        "id": 36645384290,
+        "name": "EGC Platform CI",
+        "sha": "967bd5e9b1095d6dbe689fcf8e27a732b027699b",
+        "status": "completed",
+        "conclusion": "success",
+        "attempt": 1,
+        "url": "https://github.com/zacbezenek-ctrl/Easy-Garage-Cleaning/actions/runs/36645384290"
+      },
+      {
+        "id": 36645384352,
+        "name": "EGC Mobile Device E2E",
+        "sha": "967bd5e9b1095d6dbe689fcf8e27a732b027699b",
+        "status": "completed",
+        "conclusion": "success",
+        "attempt": 1,
+        "url": "https://github.com/zacbezenek-ctrl/Easy-Garage-Cleaning/actions/runs/36645384352"
+      },
+      {
+        "id": 36645384226,
+        "name": "EGC Action Center CI",
+        "sha": "967bd5e9b1095d6dbe689fcf8e27a732b027699b",
+        "status": "completed",
+        "conclusion": "success",
+        "attempt": 1,
+        "url": "https://github.com/zacbezenek-ctrl/Easy-Garage-Cleaning/actions/runs/36645384226"
+      }
     ],
-    "browserAssetVersion": "20260929hubready5",
-    "aiCreditsRestored": false,
-    "scopeOrPriceMutation": false,
-    "customerSend": false,
-    "newServiceOrCredential": false,
-    "gate": "primary and independent review, targeted tests, exact-head CI, serial merge, matching deployments, synthetic live acceptance"
-  }
+    "mainChecks": [
+      {
+        "id": 36646472897,
+        "name": "EGC Operations Integration",
+        "sha": "15ac32a8aad86d468dd193c6ae9b18e9d09c27e5",
+        "status": "completed",
+        "conclusion": "success",
+        "attempt": 1,
+        "url": "https://github.com/zacbezenek-ctrl/Easy-Garage-Cleaning/actions/runs/36646472897"
+      },
+      {
+        "id": 36646472914,
+        "name": "EGC Root CI",
+        "sha": "15ac32a8aad86d468dd193c6ae9b18e9d09c27e5",
+        "status": "completed",
+        "conclusion": "success",
+        "attempt": 1,
+        "url": "https://github.com/zacbezenek-ctrl/Easy-Garage-Cleaning/actions/runs/36646472914"
+      },
+      {
+        "id": 36646472850,
+        "name": "EGC Mobile Device E2E",
+        "sha": "15ac32a8aad86d468dd193c6ae9b18e9d09c27e5",
+        "status": "completed",
+        "conclusion": "success",
+        "attempt": 1,
+        "url": "https://github.com/zacbezenek-ctrl/Easy-Garage-Cleaning/actions/runs/36646472850"
+      },
+      {
+        "id": 36646472957,
+        "name": "EGC Firestore Rules and Dispatch",
+        "sha": "15ac32a8aad86d468dd193c6ae9b18e9d09c27e5",
+        "status": "completed",
+        "conclusion": "success",
+        "attempt": 2,
+        "url": "https://github.com/zacbezenek-ctrl/Easy-Garage-Cleaning/actions/runs/36646472957"
+      },
+      {
+        "id": 36646472952,
+        "name": "EGC Action Center CI",
+        "sha": "15ac32a8aad86d468dd193c6ae9b18e9d09c27e5",
+        "status": "completed",
+        "conclusion": "success",
+        "attempt": 1,
+        "url": "https://github.com/zacbezenek-ctrl/Easy-Garage-Cleaning/actions/runs/36646472952"
+      },
+      {
+        "id": 36646472828,
+        "name": "EGC Lighthouse (mobile)",
+        "sha": "15ac32a8aad86d468dd193c6ae9b18e9d09c27e5",
+        "status": "completed",
+        "conclusion": "success",
+        "attempt": 1,
+        "url": "https://github.com/zacbezenek-ctrl/Easy-Garage-Cleaning/actions/runs/36646472828"
+      }
+    ],
+    "previews": {
+      "vercel": "success",
+      "cloudflare": "success"
+    },
+    "deployments": [
+      {
+        "id": "dad7ff2d-9648-4cf0-9daf-d2130e7005d4",
+        "serviceId": "4abf9a12-e6d1-463d-9ab2-2f020c2af5a3",
+        "status": "SUCCESS",
+        "commitHash": "15ac32a8aad86d468dd193c6ae9b18e9d09c27e5"
+      },
+      {
+        "id": "0f5c364a-9c61-41fb-9661-cbea8d459a8f",
+        "serviceId": "2e0dc8e6-75d6-45d4-a3cf-dfa33eb57af0",
+        "status": "SUCCESS",
+        "commitHash": "15ac32a8aad86d468dd193c6ae9b18e9d09c27e5"
+      },
+      {
+        "id": "afd29a04-c736-4bdc-8fd4-4d2766bcc711",
+        "serviceId": "be952225-3d10-438f-9249-9287c4006050",
+        "status": "SUCCESS",
+        "commitHash": "15ac32a8aad86d468dd193c6ae9b18e9d09c27e5"
+      },
+      {
+        "id": "f99c03d9-5a15-41fb-8e7e-46bd1f0a5ece",
+        "serviceId": "f5103c6d-b205-4027-931c-cb2fc23b3355",
+        "status": "SUCCESS",
+        "commitHash": "15ac32a8aad86d468dd193c6ae9b18e9d09c27e5"
+      }
+    ],
+    "health": [
+      {
+        "url": "https://egc-api-production-faeb.up.railway.app/health",
+        "ok": true,
+        "service": "egc-api",
+        "database": "ready",
+        "release": "15ac32a8aad86d468dd193c6ae9b18e9d09c27e5",
+        "operationsEnabled": true
+      },
+      {
+        "url": "https://egc-mcp-production.up.railway.app/health",
+        "ok": true,
+        "service": "egc-mcp",
+        "oauth": true,
+        "database": "ready",
+        "release": "15ac32a8aad86d468dd193c6ae9b18e9d09c27e5",
+        "operationsEnabled": true
+      },
+      {
+        "url": "https://egc-portal-production.up.railway.app/api/health",
+        "ok": true,
+        "service": "egc-portal",
+        "database": "ready",
+        "canonicalCustomerState": "ready",
+        "walkthroughAuthority": "employee_hub",
+        "release": "15ac32a8aad86d468dd193c6ae9b18e9d09c27e5"
+      }
+    ],
+    "localTests": {
+      "hubBridge": 39,
+      "operationsUnit": 146,
+      "operationsBrowser": 33,
+      "operationsBuild": "pass",
+      "mcpTypecheck": "pass",
+      "postgres": "CI passed: completed queue plus 17 recording integration tests",
+      "handoffBrowser": 8,
+      "recordingApi": 27,
+      "recordingWebkit": 17,
+      "apiTypecheck": "pass"
+    },
+    "databaseRegression": {
+      "runId": 36645384226,
+      "jobId": 109667021569,
+      "conclusion": "success",
+      "completedHistoryRegression": "pass",
+      "manualClaimReplayRevisionRace": "pass",
+      "recordingTestCount": 17
+    },
+    "mainRetry": {
+      "runId": 36646472957,
+      "failedJob": 109670507481,
+      "reason": "one isolated Firestore emulator exited during startup; fetch failed before dispatch assertions",
+      "sameGitTree": "479d14e5952e988db5ff9e68eb680583fbbed741",
+      "sourceChange": false,
+      "retriedOnlyFailedJob": true,
+      "finalConclusion": "success",
+      "finalAttempt": 2
+    },
+    "live": {
+      "visitId": "dispatch_beef26f85e694eb4b57d7a47a3c324d1",
+      "title": "INTERNAL TEST \u2014 verify transcript handoff",
+      "assignedOwner": "Zac",
+      "dueAt": "2026-09-30T18:00:00.000Z",
+      "mode": "human_reviewed_manual_tasks",
+      "sourceCreatedAt": "2026-09-29T21:32:19Z",
+      "sourceBytes": 627,
+      "aiRetry": false,
+      "customerSend": false,
+      "taskId": "017c9a9a-3008-433b-95a1-b20c664dac49",
+      "recordingApproved": true,
+      "taskCreated": true,
+      "taskRevision": 1,
+      "sourceQuoteVerified": true,
+      "missingHighlevelContactFallback": true,
+      "copyInstructionsVerified": true,
+      "approvedBy": "ZacB",
+      "manualTranscriptTaskVerified": true,
+      "completedHistoryVerified": true,
+      "reopenedAfterFullReload": true,
+      "completed": true,
+      "completedAtDisplay": "Sep 29, 2026, 5:46 PM Mountain",
+      "completedTaskRevision": 2,
+      "openCountBeforeCompletion": 98,
+      "openCountAfterCompletion": 97,
+      "oldCompletedTaskId": "b2b10b59-7c38-4b0c-9ba5-10063406b2c2",
+      "oldCompletionProofReadBack": true,
+      "closedTaskButtons": [
+        "Close"
+      ],
+      "viewportWidth": 390,
+      "horizontalOverflow": false,
+      "aiExtractionVerified": false,
+      "summary": "At 390 px width, the signed owner approved the original 627-byte saved text transcript through the manual review path. Exactly one internal task, 017c9a9a-3008-433b-95a1-b20c664dac49 (INTERNAL TEST \u2014 verify transcript handoff), appeared with owner Zac, September 30 noon Mountain deadline and the exact transcript excerpt. A full reload preserved the task; Copy office instructions succeeded and the absent HighLevel contact produced the expected search fallback. The task completed with a no-customer-contact proof note, reducing the open count from 98 to 97. Completed history reopened both this task and earlier task b2b10b59-7c38-4b0c-9ba5-10063406b2c2 with dates, source and completion evidence; only Close remained available. No AI retry, customer message, booking, invoice or payment was created."
+    },
+    "state": "pr92_merged_deployed_manual_transcript_and_completed_history_live_verified",
+    "aiExtractionAccepted": false,
+    "fieldPayEnabled": false
+  },
+  "latestMainSha": "15ac32a8aad86d468dd193c6ae9b18e9d09c27e5"
 }
