@@ -33,6 +33,10 @@ jobs:
           python-version: '3.12'
       - run: pip install playwright==1.57.0
       - run: python -m playwright install --with-deps webkit
+      - name: Mobile gestures, readable inputs and scrollable sheets
+        env:
+          EGC_TEST_BROWSER: webkit
+        run: python tests/browser/test_touch_zoom_ui.py
       - name: Transcript intake, reviewed tasks, access and microphone lifecycle
         env:
           EGC_TEST_BROWSER: webkit

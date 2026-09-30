@@ -30,3 +30,8 @@
 @media(min-width:700px){.cp-list{grid-template-columns:repeat(2,minmax(0,1fr));gap:0 14px}}
 @media(prefers-reduced-motion:reduce){.cp-skeleton span{animation:none}}
 .cp-sr{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0);white-space:nowrap}
+.cp-brand{min-width:0;overflow-wrap:anywhere}.cp-header>a:last-child{flex:none}
+@media(max-width:760px), (orientation:landscape) and (max-height:430px){
+  .cp-header{padding-top:max(10px,env(safe-area-inset-top));padding-left:max(16px,env(safe-area-inset-left));padding-right:max(16px,env(safe-area-inset-right))}
+  .egc-crew-profile{padding-left:max(16px,env(safe-area-inset-left));padding-right:max(16px,env(safe-area-inset-right));padding-bottom:calc(96px + env(safe-area-inset-bottom))}
+}
