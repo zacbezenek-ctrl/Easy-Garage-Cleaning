@@ -39,7 +39,10 @@ test('an explicitly tagged applicant is excluded from sales totals, completeness
   const report=await getCanonicalReport(window);
   assert.ok(!report.countedEvents.some(event=>event.contactId===contact.id));
   assert.ok(!report.coverage.customers.some(row=>row.contactId===contact.id));
+  const [older]=await db.insert(schema.contacts).values({providerId:`older-snapshot-${randomUUID()}`}).returning();created.push(older.id);
+  await db.insert(schema.customerStateSnapshots).values({contactId:older.id,state:'NEW_LEAD',intentStage:'unengaged',pipeline:'general',reconciliationStatus:'fully_reconciled',snapshot:{excluded:false},coverage:{},lastReconciledAt:at});
   const diagnostics=await getCustomerStateDiagnostics();
+  assert.ok(diagnostics.unresolvedDiscrepancies.some(row=>row.contactId===older.id&&row.discrepancies.some(d=>d.code==='snapshot_incomplete')),'older incomplete snapshots stay visible instead of crashing or appearing clean');
   assert.ok(!diagnostics.providerMissingJobLink.some(row=>row.contactId===contact.id));
   assert.ok(diagnostics.excludedCustomers.some(row=>row.contactId===contact.id&&row.reasons.includes('job_applicant')));
 });
