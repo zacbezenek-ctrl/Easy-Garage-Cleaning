@@ -341,10 +341,21 @@ export async function verifyHubSessionToken(env, token, now = Date.now()) {
   }
 }
 
-export async function createHubActionState(env, purpose, username, now = Date.now()) {
+export async function createHubActionState(env, purpose, username, now = Date.now(), session = null) {
   const secret = sessionSecret(env);
   if (!secret) throw new Error('Hub session secret is not configured');
-  const payload = bytesToBase64Url(encoder.encode(JSON.stringify({ v: 2, p: purpose, u: username, exp: now + ACTION_STATE_SECONDS * 1000 })));
+  // A stored-role manager is absent from HUB_AUTH_USERS_JSON. Bind their OAuth
+  // state to the signed Hub session's account version and expiry; the callback
+  // cannot rely on the SameSite=Strict Hub cookie after a provider redirect.
+  const employee = session?.source === 'employee-account';
+  if (employee && (session.user !== username || !hasBusinessAccess(session) ||
+    typeof session.sessionVersion !== 'string' || !Number.isFinite(session.expiresAt) || session.expiresAt <= now)) {
+    throw new Error('An active manager session is required for integration setup');
+  }
+  const state = employee
+    ? { v: 3, p: purpose, u: username, av: session.sessionVersion, se: session.expiresAt, exp: now + ACTION_STATE_SECONDS * 1000 }
+    : { v: 2, p: purpose, u: username, exp: now + ACTION_STATE_SECONDS * 1000 };
+  const payload = bytesToBase64Url(encoder.encode(JSON.stringify(state)));
   return `${payload}.${await signature(secret, payload)}`;
 }
 
@@ -355,8 +366,19 @@ export async function verifyHubActionState(env, token, purpose, now = Date.now()
   if (!payload || !suppliedSignature || extra || !safeEqual(await signature(secret, payload), suppliedSignature)) return null;
   try {
     const state = JSON.parse(new TextDecoder().decode(base64UrlToBytes(payload)));
-    if (state.v !== 2 || state.p !== purpose || !users(env)[state.u] || !Number.isFinite(state.exp) || state.exp <= now) return null;
-    return { user: state.u, purpose: state.p, expiresAt: state.exp };
+    if (state.p !== purpose || !Number.isFinite(state.exp) || state.exp <= now) return null;
+    if (state.v === 2) {
+      // Legacy states remain limited to configured Hub users. A username-only
+      // state never authorizes an employee account manager.
+      if (!users(env)[state.u]) return null;
+      return { user: state.u, purpose: state.p, expiresAt: state.exp };
+    }
+    if (state.v !== 3 || typeof state.u !== 'string' || !state.u ||
+      typeof state.av !== 'string' || !Number.isFinite(state.se) || state.se <= now ||
+      configuredUsername(env, state.u)) return null;
+    const profile = staffRoleAccess(env, await getEmployeeSessionProfile(env, state.u, state.av));
+    if (!hasBusinessAccess(profile)) return null;
+    return { user: state.u, purpose: state.p, expiresAt: state.exp, managerProfile: profile };
   } catch {
     return null;
   }
