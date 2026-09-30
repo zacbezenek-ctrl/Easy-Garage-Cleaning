@@ -628,6 +628,16 @@ class ReviewQueuesBrowserTests(unittest.TestCase):
         self.failing = set(); alert.get_by_role('button', name='Retry').click()
         expect(page.locator('.rv-card').filter(has_text='$500.00')).to_be_visible()
 
+    def test_unavailable_summary_and_restricted_insurance_do_not_render_null(self):
+        self.failing = {'/api/stripe-reviews', '/api/message-sends'}
+        self.forbidden = {'/api/portal-documents-admin'}
+        self.page.goto(self.url + '/hub-reviews'); page = self.page
+        expect(page.get_by_role('alert').filter(has_text='Held Stripe payments and member matches could not be loaded')).to_be_visible()
+        expect(page.get_by_role('alert').filter(has_text='Messages with an unknown outcome could not be loaded')).to_be_visible()
+        expect(page.locator('.rv-summary')).to_have_count(0)
+        expect(page.get_by_text('null', exact=True)).to_have_count(0)
+        self.assertNotIn('null', page.locator('.egc-reviews').evaluate('(root) => [...root.childNodes].filter(node => node.nodeType === Node.TEXT_NODE).map(node => node.textContent.trim())'))
+
     def test_the_command_center_alert_lists_waiting_items_and_links_to_the_queues(self):
         self.page.goto(self.url + '/hub-alerts'); page = self.page
         # One of the two messages may still be sending, so only one waits for a person.
@@ -678,7 +688,7 @@ class ReviewQueuesInHubTests(HubShell, unittest.TestCase):
         expect(page.locator('#ops-title')).to_have_text('Review queues'); expect(page.locator('#ops-kicker')).to_have_text('RUN THE BUSINESS')
         expect(page.locator('.egc-reviews .rv-card').filter(has_text='$500.00')).to_be_visible()
         assets = page.evaluate("[...document.querySelectorAll('[data-egc-hub-asset]')].map(node=>node.getAttribute('src')||node.getAttribute('href')).sort()")
-        self.assertIn('employee-reviews.js?v=20260929reviewstips7', assets); self.assertIn('employee-reviews.css?v=20260929reviewstips7', assets)
+        self.assertIn('employee-reviews.js?v=20260930launchpolish', assets); self.assertIn('employee-reviews.css?v=20260930launchpolish', assets)
         scroll = self.no_horizontal_scroll(); self.assertLessEqual(scroll['width'], 375, scroll)
         self.assertEqual(self.small_targets('.egc-reviews'), [])
         page.locator('.egc-reviews .rv-card').filter(has_text='$500.00').get_by_role('button', name='Mark reconciled').click()

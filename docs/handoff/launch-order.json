@@ -1,9 +1,9 @@
 {
   "schemaVersion": 1,
-  "asOf": "2026-09-29 23:54:13 UTC",
+  "asOf": "2026-09-30 UTC",
   "source": "owner wrap-up instruction",
   "originalQueueNewUnitsMayStart": false,
-  "laterAuthorizedWork": "Complete the Hub iOS Walkthroughs and transcript-to-office-task integration already in the working tree.",
+  "laterAuthorizedWork": "Complete and polish existing Hub, iOS crew, Walkthroughs and transcript-to-office-task flows, plus investigate the approved live staff-data failure; no unrelated new units.",
   "mergeMode": "one_at_a_time",
   "testEachMerge": true,
   "steps": [
@@ -409,5 +409,10 @@
     "aiExtractionAccepted": false,
     "fieldPayEnabled": false
   },
-  "latestMainSha": "15ac32a8aad86d468dd193c6ae9b18e9d09c27e5"
+  "latestMainSha": "15ac32a8aad86d468dd193c6ae9b18e9d09c27e5",
+  "latestVerifiedWebRelease": {
+    "pr": 95,
+    "sha": "f6c32488f7e7c9f12f628eddaa913020b962f827",
+    "ci": "all_applicable_pr_and_main_workflows_success"
+  }
 }

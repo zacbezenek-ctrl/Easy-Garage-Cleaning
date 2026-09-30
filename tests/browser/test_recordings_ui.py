@@ -25,16 +25,25 @@ class RecordingTests(unittest.TestCase):
     def setUp(self):
         self.context=self.browser.new_context(viewport={'width':390,'height':900});self.page=self.context.new_page();self.calls=[];self.errors=[];self.fail=False;self.fail_text=False;self.fail_manual=False
         self.row={'id':str(uuid.uuid4()),'createdAt':'2026-09-21T12:00:00Z','revision':'2026-09-21T12:01:00Z','status':'draft','portalJobId':'visit-synthetic','portalVisitId':'visit-synthetic','portalCustomerId':'customer-synthetic','portalProjectId':None,'portalRevision':'source-v1','linkageExceptions':['project_link_not_established'],'transcript':'I will call before work starts. Keep the bicycle.','extraction':{'garageSize':'2_car','junkVolumeYards':None,'itemsRemove':[],'itemsKeep':['Bicycle'],'itemsRelocate':[],'storageRequirements':[],'bikeRacks':0,'toolRacks':0,'shelving':[],'pressureWashing':False,'pestObservations':[],'activeInfestation':None,'accessNotes':None,'estimatedLaborHours':None,'customerPreferences':[],'customerObjections':[],'salesNotes':[],'crewNotes':[],'pricingNotes':[],'evidence':{},'proposedActions':[{'title':'Call before work','kind':'callback','commitment':'Call before work starts','sourceQuote':'I will call before work starts','ownerMention':None,'dueMention':None,'confidence':0.9}]}}
+        self.fail_get=False;self.fail_context=False;self.hold_context=False;self.held_context=None;self.hold_get=False;self.hold_list=False;self.held_read=None
         self.page.on('pageerror',lambda e:self.errors.append(str(e)));self.page.route('**/*',self.route)
     def tearDown(self):self.assertEqual(self.errors,[]);self.context.close()
     def route(self,route):
         p=urlparse(route.request.url)
         if p.hostname!='127.0.0.1':route.abort();return
-        if p.path=='/api/operations':route.fulfill(status=200,content_type='application/json',body=json.dumps({'ok':True,'actor':{'role':'owner','id':'test-owner'},'owners':[{'id':'test-owner','name':'Test owner'}]}));return
+        if p.path=='/api/operations':
+            if self.hold_context:self.held_context=route;return
+            if self.fail_context:self.fail_context=False;route.fulfill(status=503,content_type='application/json',body='{"ok":false}');return
+            route.fulfill(status=200,content_type='application/json',body=json.dumps({'ok':True,'actor':{'role':'owner','id':'test-owner'},'owners':[{'id':'test-owner','name':'Test owner'}]}));return
         if p.path!='/api/operations-recordings':route.continue_();return
         request=route.request.post_data_json;self.calls.append(request);c=request['body'];name=c['command'];result={'ok':True}
-        if name=='recording.list':result.update(recordings=[self.row],nextOffset=None)
-        elif name=='recording.get':result['recording']=self.row
+        if name=='recording.list':
+            if self.hold_list:self.held_read=route;return
+            result.update(recordings=[self.row],nextOffset=None)
+        elif name=='recording.get':
+            if self.hold_get:self.held_read=route;return
+            if self.fail_get:self.fail_get=False;route.fulfill(status=503,content_type='application/json',body='{"error":"recording_unavailable"}');return
+            result['recording']=self.row
         elif name=='recording.transcript':
             if self.fail_text:self.fail_text=False;route.fulfill(status=503,content_type='application/json',body='{"error":"recording_unavailable"}');return
             self.row.update(sourceKind='transcript',sourceFilename=c.get('filename'),transcript=c['transcript']);result['recording']=self.row
@@ -52,6 +61,51 @@ class RecordingTests(unittest.TestCase):
     def open(self):self.page.goto(self.url);self.page.get_by_role('button',name='Recordings',exact=True).click();self.page.get_by_role('button',name='Open recording',exact=True).click();expect(self.page.get_by_text('Status: draft',exact=True)).to_be_visible()
     def test_scope_and_source_are_visible_without_invented_tasks(self):
         self.open();expect(self.page.get_by_label('Keep',exact=True)).to_have_value('Bicycle');expect(self.page.get_by_text('I will call before work starts',exact=True)).to_be_visible();self.assertEqual(self.page.get_by_label('Task owner').input_value(),'');self.assertEqual(self.page.get_by_label('Due time · America/Denver').input_value(),'');self.assertLessEqual(self.page.evaluate('document.documentElement.scrollWidth'),391)
+    def test_failed_saved_recording_read_has_retry_and_back(self):
+        self.page.goto(self.url);self.page.get_by_role('button',name='Recordings',exact=True).click();self.fail_get=True;self.page.get_by_role('button',name='Open recording',exact=True).click()
+        expect(self.page.get_by_role('alert')).to_contain_text('service is unavailable')
+        expect(self.page.get_by_role('button',name='All visit recordings',exact=True)).to_be_visible()
+        self.page.get_by_role('button',name='Retry saved recording',exact=True).click();expect(self.page.get_by_text('Status: draft',exact=True)).to_be_visible()
+    def test_stalled_saved_recording_read_recovers_without_losing_source(self):
+        self.page.goto(self.url);self.page.get_by_role('button',name='Recordings',exact=True).click();self.hold_get=True
+        self.page.get_by_role('button',name='Open recording',exact=True).click()
+        expect(self.page.get_by_role('alert')).to_contain_text('saved source remains on the visit',timeout=15000)
+        expect(self.page.get_by_role('button',name='All visit recordings',exact=True)).to_be_visible()
+        self.held_read.abort()
+        self.hold_get=False;self.page.get_by_role('button',name='Retry saved recording',exact=True).click()
+        self.page.get_by_text('Source transcript',exact=True).click()
+        expect(self.page.get_by_text('I will call before work starts. Keep the bicycle.',exact=True)).to_be_visible()
+    def test_stalled_recording_list_recovers_to_saved_source(self):
+        self.hold_list=True;self.page.goto(self.url);self.page.get_by_role('button',name='Recordings',exact=True).click()
+        expect(self.page.get_by_role('alert')).to_contain_text('saved source remains on the visit',timeout=15000)
+        self.held_read.abort()
+        self.hold_list=False;self.page.get_by_role('button',name='Retry',exact=True).click()
+        self.page.get_by_role('button',name='Open recording',exact=True).click()
+        expect(self.page.get_by_text('Status: draft',exact=True)).to_be_visible()
+    def test_reviewer_context_failure_keeps_intake_and_recovers(self):
+        self.fail_context=True;self.page.goto(self.url);self.page.evaluate("void EGCRecordings.open('visit-synthetic')")
+        expect(self.page.get_by_role('alert')).to_contain_text('Review access and task owners could not be checked')
+        expect(self.page.get_by_role('button',name='Add transcript',exact=True)).to_be_visible()
+        self.page.get_by_role('button',name='Retry review access',exact=True).click()
+        expect(self.page.get_by_role('alert')).to_have_count(0)
+        self.page.get_by_role('button',name='Open recording',exact=True).click();expect(self.page.get_by_role('button',name='Approve reviewed scope',exact=True)).to_be_enabled()
+    def test_late_reviewer_context_cannot_discard_a_new_transcript(self):
+        self.fail_context=True;self.page.goto(self.url);self.page.evaluate("void EGCRecordings.open('visit-synthetic')")
+        expect(self.page.get_by_role('button',name='Retry review access',exact=True)).to_be_visible()
+        self.hold_context=True
+        with self.page.expect_request('**/api/operations'):
+            self.page.get_by_role('button',name='Retry review access',exact=True).click()
+        self.page.get_by_role('button',name='Add transcript',exact=True).click()
+        self.page.get_by_label('Walkthrough transcript',exact=True).fill('Keep the bicycle. Call before work starts.')
+        self.held_context.fulfill(status=200,content_type='application/json',body=json.dumps({'ok':True,'actor':{'role':'owner','id':'test-owner'},'owners':[{'id':'test-owner','name':'Test owner'}]}))
+        expect(self.page.get_by_label('Walkthrough transcript',exact=True)).to_have_value('Keep the bicycle. Call before work starts.')
+        expect(self.page.get_by_role('button',name='Create review draft',exact=True)).to_be_visible()
+    def test_stalled_reviewer_context_still_opens_saved_recordings(self):
+        self.hold_context=True;self.page.goto(self.url);self.page.evaluate("void EGCRecordings.open('visit-synthetic')")
+        expect(self.page.get_by_text('Checking review access for this visit…',exact=True)).to_be_visible()
+        expect(self.page.get_by_role('button',name='Add transcript',exact=True)).to_be_visible(timeout=15000)
+        expect(self.page.get_by_role('alert')).to_contain_text('Review access and task owners could not be checked')
+        self.held_context.abort()
     def test_review_requires_human_checkbox_and_selected_action_details(self):
         self.open();self.page.get_by_role('button',name='Approve reviewed scope',exact=True).click();self.assertFalse(any(c['body']['command']=='recording.approve' for c in self.calls));self.page.get_by_label('I reviewed the transcript, the current visit, the scope and each selected action').check();self.page.get_by_label('Create an Action Center task').check();self.page.get_by_role('button',name='Approve reviewed scope',exact=True).click();expect(self.page.get_by_role('alert')).to_contain_text('Choose an owner');self.assertFalse(any(c['body']['command']=='recording.approve' for c in self.calls))
     def test_unknown_approval_retries_exact_review_and_request_id(self):

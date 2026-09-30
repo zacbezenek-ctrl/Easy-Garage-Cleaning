@@ -452,7 +452,7 @@ function render(){
   if(!S.failure&&pending()?.get())S.failure={message:'A change you made earlier was not confirmed. Retry it to check whether it saved, or discard it.'};
   const head=h('header',{class:'hub-head'},h('div',{},h('span',{class:'hub-eyebrow'},'OWNER REVIEWS'),h('h1',{},'Review queues'),h('p',{},'What automation held for a person: card charges, Garage Guard member matches, messages with an unknown outcome and the insurance certificate. Nothing here charges, refunds or messages a customer.')),
     h('div',{class:'hub-actions'},button(S.loading?'Checking…':'Refresh',()=>void load(),'',{disabled:S.loading||S.busy}),button('Message templates',()=>S.ctx?.go?.('message_templates'))));
-  S.root.replaceChildren(head,feedback(),summary(),insuranceAlert(),...stripeSections(),sendSection());
+  S.root.replaceChildren(...[head,feedback(),summary(),insuranceAlert(),...stripeSections(),sendSection()].filter(Boolean));
 }
 function mount(host,ctx={}){
   if(!host||!kit())return;

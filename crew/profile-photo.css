@@ -35,3 +35,22 @@
   .cp-header{padding-top:max(10px,env(safe-area-inset-top));padding-left:max(16px,env(safe-area-inset-left));padding-right:max(16px,env(safe-area-inset-right))}
   .egc-crew-profile{padding-left:max(16px,env(safe-area-inset-left));padding-right:max(16px,env(safe-area-inset-right));padding-bottom:calc(96px + env(safe-area-inset-bottom))}
 }
+
+/* The profile belongs to the same crew flow as the walkthrough and field job. */
+.cp-page{background:#f2f1ed;color:#172033}
+.cp-header{background:#111d30;border-bottom:3px solid #e8581c}
+.cp-brand{font-size:24px;letter-spacing:-.04em}
+.cp-brand span{color:#ffc0a6;font-size:12px;font-weight:800;letter-spacing:.1em;text-transform:uppercase}
+.egc-crew-profile{--cp-line:#d9d8d2;--cp-muted:#687386}
+.egc-crew-profile h1{color:#111d30;font-weight:800;letter-spacing:-.035em}
+.egc-crew-profile h2,.egc-crew-profile h3{color:#111d30;font-weight:800;letter-spacing:-.02em}
+.cp-card{border-radius:10px;box-shadow:0 12px 30px rgba(17,29,48,.06)}
+.cp-avatar{background:#f5e4d9;color:#ad4118}
+.cp-btn{border-color:#aab5b4;border-radius:6px;color:#111d30}
+.cp-btn:hover{background:#f7f5f1}
+.cp-btn.primary{background:#bd4310;border-color:#bd4310;color:#fff}
+.cp-btn.primary:hover{background:#9f370f}
+.cp-field input{border-color:#aab4b4;border-radius:6px;color:#172033}
+.cp-btn:focus-within,.cp-btn:focus-visible,.egc-crew-profile input:focus-visible{outline-color:#bd4310}
+@media(max-width:540px){.cp-actions>.cp-btn.danger{grid-column:1/-1}}
+@media(max-width:380px){.cp-actions{grid-template-columns:1fr}}

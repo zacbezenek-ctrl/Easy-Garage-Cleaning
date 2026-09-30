@@ -1,8 +1,8 @@
 {
   "schemaVersion": 1,
-  "asOf": "2026-09-29 23:54:13 UTC",
+  "asOf": "2026-09-30 UTC",
   "repository": "zacbezenek-ctrl/Easy-Garage-Cleaning",
-  "mainSha": "15ac32a8aad86d468dd193c6ae9b18e9d09c27e5",
+  "mainSha": "f6c32488f7e7c9f12f628eddaa913020b962f827",
   "batch8": {
     "pr": 86,
     "state": "merged_to_main_after_seven_green_workflows",
@@ -739,5 +739,40 @@
     "specsPromised": 41,
     "reportedBuildIdsLocated": 0,
     "unpublishedWorkNotExcluded": true
+  },
+  "mobilePolishPR95": {
+    "pr": 95,
+    "state": "merged_deployed_verified",
+    "headSha": "d9dace98057bd28523d9897d6a2c6f6d98a42c6f",
+    "mergeSha": "f6c32488f7e7c9f12f628eddaa913020b962f827",
+    "prWorkflows": "five_of_five_success",
+    "mainWorkflows": "five_of_five_success",
+    "liveTouchPolicy": "manipulation",
+    "physicalIPhoneTested": false,
+    "staffEntrypoints": 14,
+    "crewGeometryCases": 36
+  },
+  "activeLaunchPolish": {
+    "branch": "codex/hub-launch-polish",
+    "state": "implementation_and_review",
+    "scope": [
+      "crew_visual_consistency",
+      "recording_read_recovery",
+      "review_error_rendering",
+      "database_read_diagnostics"
+    ],
+    "newBusinessUnits": false,
+    "fieldPayEnabled": false
+  },
+  "liveStaffDataIncident": {
+    "state": "unresolved",
+    "observedAt": "2026-09-30 04:17:28 UTC",
+    "staffEndpointStatus": 502,
+    "cloudflareRayId": "a4306b0a99c37988",
+    "walkthroughError": "The dispatch record could not be loaded. Retry.",
+    "upstreamFirestoreStatus": "unknown",
+    "predatesMobileRelease": "employee records unavailable before styling deployment",
+    "adminInvestigationAuthorized": true,
+    "manualAdminSignIn": "pending"
   }
 }
