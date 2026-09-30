@@ -47,7 +47,7 @@ export async function onRequestGet({ request, env }) {
     const session = await getHubSession(request, env);
     if (!session) return page('Drive setup — sign in required','<p>Sign in to the EGC Hub, then open this setup link again.</p>',401);
     if (!hasBusinessAccess(session)) return page('Drive setup — business access required','<p>Only an EGC manager can connect business integrations.</p>',403);
-    const state = await createHubActionState(env, 'drive-oauth', session.user);
+    const state = await createHubActionState(env, 'drive-oauth', session.user, Date.now(), session);
     const auth = `${AUTH_URL}?client_id=${encodeURIComponent(env.GOOGLE_CLIENT_ID)}` +
       `&redirect_uri=${encodeURIComponent(redirectUri)}&response_type=code` +
       `&scope=${encodeURIComponent(SCOPE)}&access_type=offline&prompt=consent` +
@@ -56,7 +56,7 @@ export async function onRequestGet({ request, env }) {
   }
 
   const state = await verifyHubActionState(env, url.searchParams.get('state'), 'drive-oauth');
-  if (!state || !hasBusinessAccess(getHubUserProfile(env, state.user))) {
+  if (!state || !hasBusinessAccess(state.managerProfile || getHubUserProfile(env, state.user))) {
     return page('Drive setup — expired or invalid','<p>Return to the EGC Hub and start the Drive connection again.</p>',403);
   }
 
