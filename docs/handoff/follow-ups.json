@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "asOf": "2026-09-29",
+  "asOf": "2026-09-29 23:54:13 UTC",
   "items": [
     {
       "id": "CREDITS-QUEUE",
@@ -46,7 +46,7 @@
       "id": "BUILD-IDS",
       "state": "open",
       "owner": "build coordinator",
-      "action": "Name and track the seven owner-reported running builds before incorporating them into Batch 9."
+      "action": "Name and track the seven owner-reported running builds in the remaining serial queue; Batch 9 has already merged."
     },
     {
       "id": "HUB-INTEGRATION",
@@ -76,36 +76,36 @@
       "id": "TRANSCRIPT-PRODUCTION-FIX",
       "state": "merged_deployed_provider_429_on_same_record_retry",
       "owner": "release coordinator",
-      "action": "PR #88 final 4a82e52 passed all four checks and merged as d4fff3d. Same saved transcript for visit dispatch_beef26f85e694eb4b57d7a47a3c324d1 was retried without duplicate intake; PR #89 diagnostics subsequently identified credit_balance_exhausted on attempt 3. Restore credits before further retry; verify one reviewed task and no customer send.",
+      "action": "Earlier provider failures and releases remain historical. The original source is now manually approved. Restore credits in the existing OpenAI account, then test automatic extraction on a fresh synthetic transcript. The original saved source is manually approved; do not retry or approve duplicate actions on it. Do not rotate keys.",
       "evidence": "Attempt 2 returned extraction provider_request_failed HTTP 429; attempt 3 on baf7aa2 at 22:24:50 UTC returned credit_balance_exhausted HTTP 429. No AI task or send."
     },
     {
       "id": "TRANSCRIPT-LIMIT-DIAGNOSTICS",
       "state": "pr89_merged_deployed_credit_balance_exhausted_confirmed",
       "owner": "release coordinator",
-      "action": "PR #89 passed seven exact-head checks and both previews, merged as baf7aa2 and deployed. Credit restoration was requested from the owner in the existing OpenAI account; complete the billing payment handoff before retrying the same saved transcript. Do not rotate keys or retry while exhausted.",
+      "action": "Earlier provider failures and releases remain historical. The original source is now manually approved. Restore credits in the existing OpenAI account, then test automatic extraction on a fresh synthetic transcript. The original saved source is manually approved; do not retry or approve duplicate actions on it. Do not rotate keys.",
       "evidence": "API log for attempt 3 at 2026-09-29T22:24:50.268800228Z: extraction, transcript source, credit_balance_exhausted, HTTP 429 on baf7aa2. Four Railway services deployed and API/MCP/portal health matched."
     },
     {
       "id": "OPENAI-CREDITS",
       "state": "owner_billing_payment_handoff_required",
       "owner": "owner and billing administrator",
-      "action": "Restore credits in the existing OpenAI account, verify the available balance, then authorize a bounded retry of the same saved transcript. No key rotation or billing change has occurred in this handoff.",
+      "action": "Restore credits in the existing OpenAI account, then test automatic extraction on a fresh synthetic transcript. The original saved source is manually approved; do not retry or approve duplicate actions on it. Do not rotate keys.",
       "evidence": "Provider returned credit_balance_exhausted, HTTP 429, on attempt 3. No AI-created office task or customer send."
     },
     {
       "id": "AUTH-AND-CREDIT-MESSAGE-DIAGNOSTICS",
       "state": "pr90_merged_deployed_future_credit_category_not_live_triggered",
       "owner": "release coordinator",
-      "action": "PR #90 final head 75dcad6 passed seven exact-head checks and both previews, merged as bc57eea and deployed to matching Cloudflare/Railway services. Keep other HTTP 429 messages generic; do not infer a permanent sign-in fix or provider-credit restoration. After credits return, retry the same saved transcript once.",
+      "action": "Earlier provider failures and releases remain historical. The original source is now manually approved. Restore credits in the existing OpenAI account, then test automatic extraction on a fresh synthetic transcript. The original saved source is manually approved; do not retry or approve duplicate actions on it. Do not rotate keys.",
       "evidence": "Auth diagnostics passed 20 tests; credit UX passed API typecheck, 20 lifecycle and 15 WebKit tests. Two fresh final-release reloads restored signed owner with no error, but earlier transient Firebase cause remains unknown. Old saved recording reopened with readable 627-byte source and generic old lastErrorCode; no attempt 4."
     },
     {
       "id": "MANUAL-OFFICE-TASK-ACCEPTANCE",
-      "state": "manual_persistence_completion_verified_ai_flow_still_open",
+      "state": "manual_persistence_completion_and_history_verified_ai_flow_open",
       "owner": "release coordinator",
       "action": "Retain the manual acceptance evidence separately from AI-created task acceptance; complete the latter only after OpenAI credits are restored.",
-      "evidence": "Task b2b10b59-7c38-4b0c-9ba5-10063406b2c2 linked to synthetic visit saved, reopened after full reload with owner Zac and Sep 30 noon MT due, then completed with no-contact note. Open count 86 to 85; task removed. No Completed history view exposed."
+      "evidence": "Earlier task b2b10b59-7c38-4b0c-9ba5-10063406b2c2 and PR #92 task 017c9a9a-3008-433b-95a1-b20c664dac49 both reopened read-only in Completed with source and completion proof. No AI-created task or customer send."
     },
     {
       "id": "DRIVE-JOB-PHOTOS",
@@ -116,24 +116,299 @@
     },
     {
       "id": "RESILIENT-OFFICE-WORKFLOW",
-      "state": "implementation_under_review_pending_exact_head_ci_and_live_acceptance",
+      "state": "merged_deployed_manual_live_acceptance_verified",
       "owner": "release coordinator",
-      "action": "Complete exact-head review and CI, deploy the manual transcript review and Completed history, then verify one manual transcript task and the existing completed task in the live Hub. Preserve AI credit and photo launch blockers separately."
+      "action": "Use the reviewed manual transcript path and Completed history. Restore credits in the existing OpenAI account, then test automatic extraction on a fresh synthetic transcript. The original saved source is manually approved; do not retry or approve duplicate actions on it. Do not rotate keys.",
+      "evidence": {
+        "visitId": "dispatch_beef26f85e694eb4b57d7a47a3c324d1",
+        "title": "INTERNAL TEST \u2014 verify transcript handoff",
+        "assignedOwner": "Zac",
+        "dueAt": "2026-09-30T18:00:00.000Z",
+        "mode": "human_reviewed_manual_tasks",
+        "sourceCreatedAt": "2026-09-29T21:32:19Z",
+        "sourceBytes": 627,
+        "aiRetry": false,
+        "customerSend": false,
+        "taskId": "017c9a9a-3008-433b-95a1-b20c664dac49",
+        "recordingApproved": true,
+        "taskCreated": true,
+        "taskRevision": 1,
+        "sourceQuoteVerified": true,
+        "missingHighlevelContactFallback": true,
+        "copyInstructionsVerified": true,
+        "approvedBy": "ZacB",
+        "manualTranscriptTaskVerified": true,
+        "completedHistoryVerified": true,
+        "reopenedAfterFullReload": true,
+        "completed": true,
+        "completedAtDisplay": "Sep 29, 2026, 5:46 PM Mountain",
+        "completedTaskRevision": 2,
+        "openCountBeforeCompletion": 98,
+        "openCountAfterCompletion": 97,
+        "oldCompletedTaskId": "b2b10b59-7c38-4b0c-9ba5-10063406b2c2",
+        "oldCompletionProofReadBack": true,
+        "closedTaskButtons": [
+          "Close"
+        ],
+        "viewportWidth": 390,
+        "horizontalOverflow": false,
+        "aiExtractionVerified": false,
+        "summary": "At 390 px width, the signed owner approved the original 627-byte saved text transcript through the manual review path. Exactly one internal task, 017c9a9a-3008-433b-95a1-b20c664dac49 (INTERNAL TEST \u2014 verify transcript handoff), appeared with owner Zac, September 30 noon Mountain deadline and the exact transcript excerpt. A full reload preserved the task; Copy office instructions succeeded and the absent HighLevel contact produced the expected search fallback. The task completed with a no-customer-contact proof note, reducing the open count from 98 to 97. Completed history reopened both this task and earlier task b2b10b59-7c38-4b0c-9ba5-10063406b2c2 with dates, source and completion evidence; only Close remained available. No AI retry, customer message, booking, invoice or payment was created."
+      }
     }
   ],
   "resilientOfficeWorkflow": {
-    "branch": "codex/hub-resilient-operations",
-    "state": "implementation_under_review_pending_exact_head_ci_and_live_acceptance",
-    "baseMainSha": "a28c019ff3446a537135ceb973ac3793bd15d6a2",
-    "scope": [
-      "human_reviewed_manual_tasks_from_saved_failed_transcript",
-      "read_only_completed_task_history"
+    "checkedAt": "2026-09-29 23:54:13 UTC",
+    "pr": 92,
+    "headSha": "967bd5e9b1095d6dbe689fcf8e27a732b027699b",
+    "mergeSha": "15ac32a8aad86d468dd193c6ae9b18e9d09c27e5",
+    "prChecks": [
+      {
+        "id": 36645384265,
+        "name": "EGC Lighthouse (mobile)",
+        "sha": "967bd5e9b1095d6dbe689fcf8e27a732b027699b",
+        "status": "completed",
+        "conclusion": "success",
+        "attempt": 1,
+        "url": "https://github.com/zacbezenek-ctrl/Easy-Garage-Cleaning/actions/runs/36645384265"
+      },
+      {
+        "id": 36645384281,
+        "name": "EGC Operations Integration",
+        "sha": "967bd5e9b1095d6dbe689fcf8e27a732b027699b",
+        "status": "completed",
+        "conclusion": "success",
+        "attempt": 1,
+        "url": "https://github.com/zacbezenek-ctrl/Easy-Garage-Cleaning/actions/runs/36645384281"
+      },
+      {
+        "id": 36645384297,
+        "name": "EGC Root CI",
+        "sha": "967bd5e9b1095d6dbe689fcf8e27a732b027699b",
+        "status": "completed",
+        "conclusion": "success",
+        "attempt": 1,
+        "url": "https://github.com/zacbezenek-ctrl/Easy-Garage-Cleaning/actions/runs/36645384297"
+      },
+      {
+        "id": 36645384233,
+        "name": "EGC Firestore Rules and Dispatch",
+        "sha": "967bd5e9b1095d6dbe689fcf8e27a732b027699b",
+        "status": "completed",
+        "conclusion": "success",
+        "attempt": 1,
+        "url": "https://github.com/zacbezenek-ctrl/Easy-Garage-Cleaning/actions/runs/36645384233"
+      },
+      {
+        "id": 36645384290,
+        "name": "EGC Platform CI",
+        "sha": "967bd5e9b1095d6dbe689fcf8e27a732b027699b",
+        "status": "completed",
+        "conclusion": "success",
+        "attempt": 1,
+        "url": "https://github.com/zacbezenek-ctrl/Easy-Garage-Cleaning/actions/runs/36645384290"
+      },
+      {
+        "id": 36645384352,
+        "name": "EGC Mobile Device E2E",
+        "sha": "967bd5e9b1095d6dbe689fcf8e27a732b027699b",
+        "status": "completed",
+        "conclusion": "success",
+        "attempt": 1,
+        "url": "https://github.com/zacbezenek-ctrl/Easy-Garage-Cleaning/actions/runs/36645384352"
+      },
+      {
+        "id": 36645384226,
+        "name": "EGC Action Center CI",
+        "sha": "967bd5e9b1095d6dbe689fcf8e27a732b027699b",
+        "status": "completed",
+        "conclusion": "success",
+        "attempt": 1,
+        "url": "https://github.com/zacbezenek-ctrl/Easy-Garage-Cleaning/actions/runs/36645384226"
+      }
     ],
-    "browserAssetVersion": "20260929hubready5",
-    "aiCreditsRestored": false,
-    "scopeOrPriceMutation": false,
-    "customerSend": false,
-    "newServiceOrCredential": false,
-    "gate": "primary and independent review, targeted tests, exact-head CI, serial merge, matching deployments, synthetic live acceptance"
+    "mainChecks": [
+      {
+        "id": 36646472897,
+        "name": "EGC Operations Integration",
+        "sha": "15ac32a8aad86d468dd193c6ae9b18e9d09c27e5",
+        "status": "completed",
+        "conclusion": "success",
+        "attempt": 1,
+        "url": "https://github.com/zacbezenek-ctrl/Easy-Garage-Cleaning/actions/runs/36646472897"
+      },
+      {
+        "id": 36646472914,
+        "name": "EGC Root CI",
+        "sha": "15ac32a8aad86d468dd193c6ae9b18e9d09c27e5",
+        "status": "completed",
+        "conclusion": "success",
+        "attempt": 1,
+        "url": "https://github.com/zacbezenek-ctrl/Easy-Garage-Cleaning/actions/runs/36646472914"
+      },
+      {
+        "id": 36646472850,
+        "name": "EGC Mobile Device E2E",
+        "sha": "15ac32a8aad86d468dd193c6ae9b18e9d09c27e5",
+        "status": "completed",
+        "conclusion": "success",
+        "attempt": 1,
+        "url": "https://github.com/zacbezenek-ctrl/Easy-Garage-Cleaning/actions/runs/36646472850"
+      },
+      {
+        "id": 36646472957,
+        "name": "EGC Firestore Rules and Dispatch",
+        "sha": "15ac32a8aad86d468dd193c6ae9b18e9d09c27e5",
+        "status": "completed",
+        "conclusion": "success",
+        "attempt": 2,
+        "url": "https://github.com/zacbezenek-ctrl/Easy-Garage-Cleaning/actions/runs/36646472957"
+      },
+      {
+        "id": 36646472952,
+        "name": "EGC Action Center CI",
+        "sha": "15ac32a8aad86d468dd193c6ae9b18e9d09c27e5",
+        "status": "completed",
+        "conclusion": "success",
+        "attempt": 1,
+        "url": "https://github.com/zacbezenek-ctrl/Easy-Garage-Cleaning/actions/runs/36646472952"
+      },
+      {
+        "id": 36646472828,
+        "name": "EGC Lighthouse (mobile)",
+        "sha": "15ac32a8aad86d468dd193c6ae9b18e9d09c27e5",
+        "status": "completed",
+        "conclusion": "success",
+        "attempt": 1,
+        "url": "https://github.com/zacbezenek-ctrl/Easy-Garage-Cleaning/actions/runs/36646472828"
+      }
+    ],
+    "previews": {
+      "vercel": "success",
+      "cloudflare": "success"
+    },
+    "deployments": [
+      {
+        "id": "dad7ff2d-9648-4cf0-9daf-d2130e7005d4",
+        "serviceId": "4abf9a12-e6d1-463d-9ab2-2f020c2af5a3",
+        "status": "SUCCESS",
+        "commitHash": "15ac32a8aad86d468dd193c6ae9b18e9d09c27e5"
+      },
+      {
+        "id": "0f5c364a-9c61-41fb-9661-cbea8d459a8f",
+        "serviceId": "2e0dc8e6-75d6-45d4-a3cf-dfa33eb57af0",
+        "status": "SUCCESS",
+        "commitHash": "15ac32a8aad86d468dd193c6ae9b18e9d09c27e5"
+      },
+      {
+        "id": "afd29a04-c736-4bdc-8fd4-4d2766bcc711",
+        "serviceId": "be952225-3d10-438f-9249-9287c4006050",
+        "status": "SUCCESS",
+        "commitHash": "15ac32a8aad86d468dd193c6ae9b18e9d09c27e5"
+      },
+      {
+        "id": "f99c03d9-5a15-41fb-8e7e-46bd1f0a5ece",
+        "serviceId": "f5103c6d-b205-4027-931c-cb2fc23b3355",
+        "status": "SUCCESS",
+        "commitHash": "15ac32a8aad86d468dd193c6ae9b18e9d09c27e5"
+      }
+    ],
+    "health": [
+      {
+        "url": "https://egc-api-production-faeb.up.railway.app/health",
+        "ok": true,
+        "service": "egc-api",
+        "database": "ready",
+        "release": "15ac32a8aad86d468dd193c6ae9b18e9d09c27e5",
+        "operationsEnabled": true
+      },
+      {
+        "url": "https://egc-mcp-production.up.railway.app/health",
+        "ok": true,
+        "service": "egc-mcp",
+        "oauth": true,
+        "database": "ready",
+        "release": "15ac32a8aad86d468dd193c6ae9b18e9d09c27e5",
+        "operationsEnabled": true
+      },
+      {
+        "url": "https://egc-portal-production.up.railway.app/api/health",
+        "ok": true,
+        "service": "egc-portal",
+        "database": "ready",
+        "canonicalCustomerState": "ready",
+        "walkthroughAuthority": "employee_hub",
+        "release": "15ac32a8aad86d468dd193c6ae9b18e9d09c27e5"
+      }
+    ],
+    "localTests": {
+      "hubBridge": 39,
+      "operationsUnit": 146,
+      "operationsBrowser": 33,
+      "operationsBuild": "pass",
+      "mcpTypecheck": "pass",
+      "postgres": "CI passed: completed queue plus 17 recording integration tests",
+      "handoffBrowser": 8,
+      "recordingApi": 27,
+      "recordingWebkit": 17,
+      "apiTypecheck": "pass"
+    },
+    "databaseRegression": {
+      "runId": 36645384226,
+      "jobId": 109667021569,
+      "conclusion": "success",
+      "completedHistoryRegression": "pass",
+      "manualClaimReplayRevisionRace": "pass",
+      "recordingTestCount": 17
+    },
+    "mainRetry": {
+      "runId": 36646472957,
+      "failedJob": 109670507481,
+      "reason": "one isolated Firestore emulator exited during startup; fetch failed before dispatch assertions",
+      "sameGitTree": "479d14e5952e988db5ff9e68eb680583fbbed741",
+      "sourceChange": false,
+      "retriedOnlyFailedJob": true,
+      "finalConclusion": "success",
+      "finalAttempt": 2
+    },
+    "live": {
+      "visitId": "dispatch_beef26f85e694eb4b57d7a47a3c324d1",
+      "title": "INTERNAL TEST \u2014 verify transcript handoff",
+      "assignedOwner": "Zac",
+      "dueAt": "2026-09-30T18:00:00.000Z",
+      "mode": "human_reviewed_manual_tasks",
+      "sourceCreatedAt": "2026-09-29T21:32:19Z",
+      "sourceBytes": 627,
+      "aiRetry": false,
+      "customerSend": false,
+      "taskId": "017c9a9a-3008-433b-95a1-b20c664dac49",
+      "recordingApproved": true,
+      "taskCreated": true,
+      "taskRevision": 1,
+      "sourceQuoteVerified": true,
+      "missingHighlevelContactFallback": true,
+      "copyInstructionsVerified": true,
+      "approvedBy": "ZacB",
+      "manualTranscriptTaskVerified": true,
+      "completedHistoryVerified": true,
+      "reopenedAfterFullReload": true,
+      "completed": true,
+      "completedAtDisplay": "Sep 29, 2026, 5:46 PM Mountain",
+      "completedTaskRevision": 2,
+      "openCountBeforeCompletion": 98,
+      "openCountAfterCompletion": 97,
+      "oldCompletedTaskId": "b2b10b59-7c38-4b0c-9ba5-10063406b2c2",
+      "oldCompletionProofReadBack": true,
+      "closedTaskButtons": [
+        "Close"
+      ],
+      "viewportWidth": 390,
+      "horizontalOverflow": false,
+      "aiExtractionVerified": false,
+      "summary": "At 390 px width, the signed owner approved the original 627-byte saved text transcript through the manual review path. Exactly one internal task, 017c9a9a-3008-433b-95a1-b20c664dac49 (INTERNAL TEST \u2014 verify transcript handoff), appeared with owner Zac, September 30 noon Mountain deadline and the exact transcript excerpt. A full reload preserved the task; Copy office instructions succeeded and the absent HighLevel contact produced the expected search fallback. The task completed with a no-customer-contact proof note, reducing the open count from 98 to 97. Completed history reopened both this task and earlier task b2b10b59-7c38-4b0c-9ba5-10063406b2c2 with dates, source and completion evidence; only Close remained available. No AI retry, customer message, booking, invoice or payment was created."
+    },
+    "state": "pr92_merged_deployed_manual_transcript_and_completed_history_live_verified",
+    "aiExtractionAccepted": false,
+    "fieldPayEnabled": false
   }
 }
