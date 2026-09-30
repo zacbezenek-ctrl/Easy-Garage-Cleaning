@@ -37,6 +37,10 @@ jobs:
         env:
           EGC_TEST_BROWSER: webkit
         run: python tests/browser/test_touch_zoom_ui.py
+      - name: Catalog quotes, exact save recovery and sign-out privacy
+        env:
+          EGC_TEST_BROWSER: webkit
+        run: python tests/browser/test_catalog_quote_ui.py
       - name: Transcript intake, reviewed tasks, access and microphone lifecycle
         env:
           EGC_TEST_BROWSER: webkit
@@ -242,6 +246,8 @@ jobs:
         run: python tests/browser/test_hub_mobile_ui.py
       - name: Owner catalog and pricing screen on a phone
         run: python tests/browser/test_catalog_ui.py
+      - name: Catalog product selection, server prices and reviewed quote handoff
+        run: python tests/browser/test_catalog_quote_ui.py
       - name: Hub offline queue, Pending sync, clock-out not saved and discarding a shift at phone widths
         run: python tests/browser/test_hub_offline_ui.py
       - name: Crew job page time moves, crew-mate move, refused moves and clock-in-only location at phone widths

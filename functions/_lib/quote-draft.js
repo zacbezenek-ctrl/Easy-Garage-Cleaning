@@ -13,6 +13,8 @@ import { checkoutFingerprint } from './customer-payments.js';
 import { consumeConfirmation, issueConfirmation } from './confirm-token.js';
 import { messagingFlags } from './approved-send.js';
 import { maskRecipient, normalizeEmail, normalizePhone } from './ghl-messenger.js';
+import { catalogQuotesEnabled, catalogStorage, readCatalogState } from './catalog-store.js';
+import { priceCatalogQuote } from './catalog-quote.js';
 
 /**
  * P2-07 unsigned quote drafts and an explicit human send.
@@ -51,6 +53,7 @@ const DRAFT_KEYS = ['client', 'title', 'scope', 'line_items', 'valid_until', 'ca
 const SAVE_KEYS = ['actorId', 'requestId', 'customerId', 'sourceWalkthroughId', 'sourceRevision', 'jobId', 'expectedRevision', 'draft'];
 const PREVIEW_KEYS = ['actorId', 'jobId', 'expectedRevision'];
 const SEND_KEYS = ['actorId', 'requestId', 'jobId', 'expectedRevision', 'confirmToken'];
+const catalogStateDefault = env => readCatalogState(catalogStorage(env));
 // Delivery outcomes that never claimed a send, or a definite provider refusal, may be retried by the same send request.
 const RETRYABLE_DELIVERY = new Set(['pending', 'failed', 'unavailable', 'needs_contact', 'contact_mismatch', 'not_configured']);
 const FINAL = new Set(['quote_draft_idempotency_conflict', 'quote_draft_changed_since_save', 'quote_draft_changed_since_send', 'quote_draft_actor_changed']);
@@ -115,8 +118,19 @@ export function normalizeQuoteDraft(value, now = new Date().toISOString()) {
 // an approval and an issued invoice; recorded payments are never touched.
 function quotePatch(job, draft, actor, now, jobId) {
   const current = plain(job?.estimate) ? job.estimate : {}, deposits = plain(job?.deposit) ? job.deposit : {}, approval = plain(job?.customerApproval) ? job.customerApproval : null;
-  const next = { ...current, number: invoiceNumber(jobId, 'estimate', current.number), amount: draft.totalCents / 100, amountCents: draft.totalCents, depositRequired: draft.depositCents / 100, depositRequiredCents: draft.depositCents, scope: draft.scope, lineItems: structuredClone(draft.lineItems), validUntil: draft.validUntil, termsVersion: current.termsVersion || job?.termsVersion || '2026-09', catalogVersion: draft.catalogVersion, source: 'quote_draft', createdAt: current.createdAt || now, updatedAt: now, updatedBy: actor.user };
-  const fresh = !current.number, material = fresh || estimateChanged(current, next), wasApproved = approved(current.status) || approved(approval?.status), wasSent = current.status === 'sent' || Boolean(current.sentAt);
+  const next = { ...current, number: invoiceNumber(jobId, 'estimate', current.number), amount: draft.totalCents / 100, amountCents: draft.totalCents, depositRequired: draft.depositCents / 100, depositRequiredCents: draft.depositCents, scope: draft.scope, lineItems: structuredClone(draft.lineItems), validUntil: draft.validUntil, termsVersion: current.termsVersion || job?.termsVersion || '2026-09', catalogVersion: draft.catalogVersion,
+    ...(draft.catalogPricing ? { pricingSettingsVersion: draft.pricingSettingsVersion, depositPct: draft.depositPct } : current.pricingSettingsVersion ? { pricingSettingsVersion: null, depositPct: null } : {}),
+    source: 'quote_draft', createdAt: current.createdAt || now, updatedAt: now, updatedBy: actor.user };
+  // Catalog provenance is part of the terms a customer reviewed. A new
+  // approved settings/catalog version can leave every visible cent unchanged,
+  // but must still retire the earlier send and approval. The same applies when
+  // an author switches between catalog and legacy quote sources.
+  const priorCatalog = plain(job?.quoteDraft?.catalogPricing) ? job.quoteDraft.catalogPricing : null;
+  const nextCatalog = draft.catalogPricing || null;
+  const provenanceChanged = canonical(priorCatalog) !== canonical(nextCatalog) || Boolean(priorCatalog || nextCatalog) && (
+    current.catalogVersion !== draft.catalogVersion || (current.pricingSettingsVersion ?? null) !== (draft.pricingSettingsVersion ?? null) ||
+    (current.depositPct ?? null) !== (draft.depositPct ?? null));
+  const fresh = !current.number, material = fresh || estimateChanged(current, next) || provenanceChanged, wasApproved = approved(current.status) || approved(approval?.status), wasSent = current.status === 'sent' || Boolean(current.sentAt);
   next.revision = (Number.isSafeInteger(current.revision) && current.revision > 0 ? current.revision : 0) + (material ? 1 : 0);
   next.status = material ? 'draft' : current.status || 'draft';
   const paid = typeof deposits.paidAmount === 'number' && Number.isFinite(deposits.paidAmount) ? Math.max(0, deposits.paidAmount) : 0, required = draft.depositCents / 100;
@@ -145,8 +159,10 @@ export function quoteDraftView(job) {
   return {
     id: job.id, revision: job.revision, customerId: job.customerId || '', customer: String(job.customer || '').slice(0, 200), projectId: job.projectId || '', sourceWalkthroughId: job.sourceWalkthroughId || '', status: stage(job), quoteStatus: job.quoteStatus || '',
     estimate: { number: estimate.number || '', revision: Number.isSafeInteger(estimate.revision) ? estimate.revision : null, status: estimate.status || 'draft', amountCents: Number.isSafeInteger(estimate.amountCents) ? estimate.amountCents : null, depositRequiredCents: Number.isSafeInteger(estimate.depositRequiredCents) ? estimate.depositRequiredCents : null, validUntil: validDate(estimate.validUntil) ? estimate.validUntil : null, scope: String(estimate.scope || '').slice(0, 1600), sentAt: estimate.sentAt || null, sentRevision: Number.isSafeInteger(estimate.sentRevision) ? estimate.sentRevision : null, fingerprint: estimateFingerprint(estimate),
-      lineItems: lines.map(line => ({ id: line.id, kind: line.kind, name: line.name, description: line.description, quantity: line.quantity, unitCents: line.unitCents, totalCents: line.totalCents, optional: line.optional, selected: line.selected, included: included(line), group: line.group ? { id: line.group.id, label: line.group.label, selection: line.group.selection, required: line.group.required } : null, tier: line.tier })),
+      ...(estimate.pricingSettingsVersion ? { catalogVersion: estimate.catalogVersion, pricingSettingsVersion: estimate.pricingSettingsVersion, depositPct: estimate.depositPct } : {}),
+      lineItems: lines.map(line => ({ id: line.id, kind: line.kind, name: line.name, description: line.description, quantity: line.quantity, unitCents: line.unitCents, totalCents: line.totalCents, customerSupplied: line.customerSupplied === true, optional: line.optional, selected: line.selected, included: included(line), group: line.group ? { id: line.group.id, label: line.group.label, selection: line.group.selection, required: line.group.required } : null, tier: line.tier })),
       options: packageTotals(lines).map(group => ({ groupId: group.groupId, label: group.label, selection: group.selection, required: group.required, tiers: group.tiers, selectedTier: group.selectedTier })) },
+    ...(plain(job.quoteDraft?.catalogPricing) ? { catalogPricing: job.quoteDraft.catalogPricing } : {}),
     approval: pick(job.customerApproval, ['status', 'approvedAt', 'supersededAt']),
     delivery: pick(job.estimateReady, ['requestId', 'revision', 'mode', 'status', 'reason', 'attempts', 'recipient', 'tagReset', 'at']),
   };
@@ -197,7 +213,7 @@ export async function readQuoteDraft(store, actor, query = {}, { env = {} } = {}
   return { ok: true, authority: 'employee_hub', job: quoteDraftView(await readJobFor(store, query.jobId)) };
 }
 
-export async function saveQuoteDraft(store, actor, input, now = new Date().toISOString(), { env = {}, checkouts = null } = {}) {
+export async function saveQuoteDraft(store, actor, input, now = new Date().toISOString(), { env = {}, checkouts = null, catalogState = catalogStateDefault } = {}) {
   requireQuoteAuthor(actor, env);
   keys(input, SAVE_KEYS, 'The quote draft needs a stable request and customer identity.');
   if (!uuid(input.requestId) || !safeId(input.customerId) || input.jobId && !safeId(input.jobId) || input.sourceWalkthroughId && !safeId(input.sourceWalkthroughId)) throw fail('invalid_request', 'The quote draft needs a stable request and customer identity.', 400);
@@ -218,10 +234,27 @@ export async function saveQuoteDraft(store, actor, input, now = new Date().toISO
   // (and the quote's expiry window) moved on still returns the saved quote.
   const prior = await replay(true);
   if (prior) return prior;
-  const draft = normalizeQuoteDraft(input.draft, now);
+  const catalogMode = input.draft?.catalog_pricing !== undefined;
+  let draft;
+  if (catalogMode) {
+    if (!catalogQuotesEnabled(env)) throw fail('catalog_disabled', 'Catalog quotes are turned off. Keep this draft for review.', 404);
+    const priced = priceCatalogQuote(await catalogState(env), input.draft.catalog_pricing, now);
+    if (input.draft.catalog_version !== priced.catalogVersion || canonical(input.draft.line_items) !== canonical(priced.lineItems)) {
+      throw fail('catalog_price_changed', 'The catalog quote lines do not match the current server preview. Preview the products again.', 409);
+    }
+    const material = { ...input.draft, line_items: priced.storedLineItems };
+    delete material.catalog_pricing;
+    draft = normalizeQuoteDraft(material, now);
+    if (draft.totalCents !== priced.totalCents) throw fail('catalog_price_changed', 'The catalog quote total changed. Preview the products again.', 409);
+    Object.assign(draft, { depositCents: priced.depositCents, depositPct: priced.depositPct, pricingSettingsVersion: priced.settingsVersion, catalogPricing: structuredClone(priced.catalogPricing) });
+  } else {
+    draft = normalizeQuoteDraft(input.draft, now);
+    if (draft.lineItems.some(line => line.catalog)) throw fail('catalog_descriptor_required', 'Catalog products must be saved from a current server price preview.', 409);
+  }
   const customer = await store.read('customers', input.customerId); requireRevision(customer);
   if (!identityMatches(draft.client, customer)) throw fail('customer_mismatch', 'The quote\'s customer details do not match the selected customer. Review the phone, email and CRM link.');
-  const record = (job, plan, jobId) => ({ quoteDraft: { ...(plain(job?.quoteDraft) ? job.quoteDraft : { version: 1, createdAt: now, createdBy: actor.user }), requestId: input.requestId, fingerprint, savedAt: now, savedBy: actor.user, sourceWalkthroughId: input.sourceWalkthroughId || '' },
+  const record = (job, plan, jobId) => ({ quoteDraft: { ...(plain(job?.quoteDraft) ? job.quoteDraft : { version: 1, createdAt: now, createdBy: actor.user }), requestId: input.requestId, fingerprint, savedAt: now, savedBy: actor.user, sourceWalkthroughId: input.sourceWalkthroughId || '',
+      ...(draft.catalogPricing ? { catalogPricing: draft.catalogPricing } : job?.quoteDraft?.catalogPricing ? { catalogPricing: null } : {}) },
     receipt: { fingerprint, actorId: actor.user, action: 'save', customerId: customer.id, jobId, sourceWalkthroughId: input.sourceWalkthroughId || '', estimateRevision: plan.patch.estimate.revision, material: plan.material, revisedRelease: plan.revisedRelease, warnings: plan.warnings, createdAt: now } });
   const audit = (job, patch, jobId) => auditWrite({ actor: { id: actor.user, kind: 'human', role: actor.role }, via: 'hub', action: 'quote.draft.save', entity: { collection: 'jobs', id: jobId }, before: job ? moneySnapshot(job) : null, after: moneySnapshot({ ...(job || {}), ...patch }), requestId: input.requestId, reason: null, now });
   try {
@@ -322,8 +355,9 @@ function deliveryPlan(job, env) {
 function sendBinding(job, delivery) {
   return { jobId: job.id, jobRevision: job.revision, customerId: job.customerId || '', estimateNumber: job.estimate.number, estimateRevision: job.estimate.revision, estimateFingerprint: estimateFingerprint(job.estimate), delivery: delivery.mode };
 }
-function sendable(job, now) {
+function sendable(job, now, env) {
   editable(job);
+  if (plain(job.quoteDraft?.catalogPricing) && !catalogQuotesEnabled(env)) throw fail('catalog_disabled', 'Catalog quotes are turned off. Keep this saved quote for review.', 404);
   const estimate = plain(job.estimate) ? job.estimate : null;
   if (!estimate?.number || !Number.isSafeInteger(estimate.revision)) throw fail('estimate_missing', 'Save the quote before sending it.');
   if (approved(estimate.status) || approved(job.customerApproval?.status)) throw fail('already_approved', 'The customer already approved this quote. Revise it first if they are reviewing a change.');
@@ -342,7 +376,7 @@ export async function previewQuoteSend(store, actor, input, now = new Date().toI
   actorMatches(input, actor);
   const job = await readJobFor(store, input.jobId);
   if (job.revision !== input.expectedRevision) throw fail('revision_conflict', 'This quote changed after you opened it. Reload it and review the latest version.');
-  sendable(job, now);
+  sendable(job, now, env);
   const delivery = deliveryPlan(job, env), estimate = job.estimate;
   const summary = `Send ${estimate.number} revision ${estimate.revision} (${usd(estimate.amountCents)}) to ${String(job.customer || 'the customer').slice(0, 80)}`;
   const confirmation = await issueConfirmation(env, { actorId: actor.user, action: SEND_ACTION, entityId: `jobs/${job.id}`, payload: sendBinding(job, delivery), summary, now });
@@ -367,7 +401,9 @@ export async function sendQuoteDraft(store, actor, input, now = new Date().toISO
     let saved = await store.read('jobs', receipt.jobId);
     if (!saved || saved.estimate?.sentRequestId !== input.requestId) throw fail('changed_since_send', 'The quote was sent, but it has changed since. Reload it to see its current state.');
     let delivery = pick(saved.estimateReady, ['status', 'reason', 'attempts', 'recipient', 'tagReset']) || { status: 'not_requested' };
-    if (typeof deliver === 'function' && saved.estimateReady?.requestId === input.requestId && RETRYABLE_DELIVERY.has(saved.estimateReady.status)) {
+    // A previously recorded send still replays truthfully after catalog rollback,
+    // but a retry must not initiate a new provider delivery while it is off.
+    if (typeof deliver === 'function' && !(plain(saved.quoteDraft?.catalogPricing) && !catalogQuotesEnabled(env)) && saved.estimateReady?.requestId === input.requestId && RETRYABLE_DELIVERY.has(saved.estimateReady.status)) {
       delivery = await deliver(saved.id, { requestId: input.requestId, actorId: actor.user, actorRole: actor.role, mode: saved.estimateReady.mode }).catch(() => ({ status: 'uncertain', reason: 'delivery_unconfirmed' }));
       saved = await store.read('jobs', receipt.jobId) || saved;
     }
@@ -377,7 +413,7 @@ export async function sendQuoteDraft(store, actor, input, now = new Date().toISO
   if (prior) return prior;
   const job = await readJobFor(store, input.jobId);
   if (job.revision !== input.expectedRevision) throw fail('revision_conflict', 'This quote changed after the preview. Preview it again before sending.');
-  sendable(job, now);
+  sendable(job, now, env);
   const delivery = deliveryPlan(job, env), estimate = job.estimate;
   const patch = {
     estimate: { ...estimate, status: 'sent', sentAt: now, sentBy: actor.user, sentChannel: 'estimate_ready', sentRevision: estimate.revision, sentFingerprint: estimateFingerprint(estimate), sentRequestId: input.requestId, updatedAt: now },

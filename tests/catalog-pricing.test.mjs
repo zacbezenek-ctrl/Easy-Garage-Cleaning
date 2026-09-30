@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import vm from 'node:vm';
 import test from 'node:test';
-import { applyMinimum, catalogLine, computeSellPriceCents } from '../functions/_lib/catalog.js';
+import { applyMinimum, catalogLine, catalogLinePricer, computeSellPriceCents, validatePricingSettings } from '../functions/_lib/catalog.js';
 import { servedPricing } from './helpers/walkthrough-pricing.mjs';
 
 const readJson = path => JSON.parse(fs.readFileSync(new URL(path, import.meta.url), 'utf8'));
@@ -26,6 +26,25 @@ test('placeholder settings price a 4x8 rack exactly (the GARAGE-CATALOG.md worke
   // product $194.99 + labor 120 min x $75/h = $150.00 + markup 20% of $194.99 = $38.998 -> $39.00 + disposal $10.00
   assert.deepEqual(price, { productCents: 19499, laborCents: 15000, laborMinutes: 120, markupCents: 3900, disposalCents: 1000, fixedCents: 0, totalCents: 39399, unitCents: 39399, quantity: 1, priceVerified: true, priceEvidence: 'search_snippet' });
   assert.deepEqual(catalogLine(rack, defaults), { kind: 'product', name: rack.name, quantity: 1, unitCents: 39399, totalCents: 39399, customerSupplied: false, split: { productCents: 19499, laborCents: 15000, laborMinutes: 120, markupCents: 3900, disposalCents: 1000 }, durationMinutes: 120 });
+});
+
+test('batch catalog pricing matches strict per-line pricing and keeps its validated settings snapshot', () => {
+  const custom = settings({ markupPct: { default: 12.5, byCategory: { overhead: 35 } } });
+  const priceLine = catalogLinePricer(custom);
+  for (const entry of catalog.items.filter(candidate => candidate.availability === 'active')) {
+    assert.deepEqual(priceLine(entry, { quantity: 2 }), catalogLine(entry, custom, { quantity: 2 }), entry.id);
+  }
+  const before = priceLine(rack);
+  custom.laborRateCents = 1;
+  custom.markupPct.byCategory.overhead = 0;
+  assert.deepEqual(priceLine(rack), before, 'a later settings edit cannot reprice a validated batch');
+  assert.throws(() => catalogLinePricer(settings({ roundingRule: 'nearest' })), { code: 'catalog_settings_invalid' });
+  assert.throws(() => catalogLine(rack, settings({ roundingRule: 'nearest' })), { code: 'catalog_settings_invalid' }, 'public single-line pricing remains strict');
+});
+
+test('released catalog deposit percentage uses the same two-decimal precision as quote deposits', () => {
+  assert.equal(validatePricingSettings(settings({ depositPct: 33.33 })).depositPct, 33.33);
+  assert.throws(() => validatePricingSettings(settings({ depositPct: 33.333 })), { code: 'catalog_settings_invalid' });
 });
 
 test('quantity multiplies the rounded unit figures, so a line is exactly unitCents x quantity', () => {

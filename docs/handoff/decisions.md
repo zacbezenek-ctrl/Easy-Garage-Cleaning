@@ -42,3 +42,7 @@ The standing HighLevel boundary is recorded separately in [HIGHLEVEL-BOUNDARY.md
 ## Full functional and visual completion instruction (2026-09-30 UTC)
 
 > i want u to work like a DOGGGG, spin up hella agents. I want this shit to be in like oprestrine condition from a functionality perspective and a visual perspective tomorrow, i need this shit AMAZING, as many agents as u can think of, just like GO GO GO GO
+
+## Catalog and pricing priority (2026-09-30 UTC)
+
+> Get catalog and pricing good to go

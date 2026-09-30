@@ -2,7 +2,7 @@
   "schemaVersion": 1,
   "asOf": "2026-09-30 UTC",
   "repository": "zacbezenek-ctrl/Easy-Garage-Cleaning",
-  "mainSha": "d08b9ec7a6a21c33403540c5025c9b0a93f625be",
+  "mainSha": "665beb1ee0b8e57dbf1c5e8359bde3bd00f7b8b8",
   "batch8": {
     "pr": 86,
     "state": "merged_to_main_after_seven_green_workflows",
@@ -754,7 +754,7 @@
   },
   "activeLaunchPolish": {
     "branch": "codex/hub-staff-touch-completion",
-    "state": "implementation_and_review",
+    "state": "merged_deployed_verified_pr97",
     "scope": [
       "ai_approval_source_identity_and_finalization",
       "remaining_staff_touch_pages",
@@ -789,5 +789,34 @@
     "mainChecks": "twelve_of_twelve_success",
     "liveAssetsMatch": true,
     "physicalIPhoneTested": false
+  },
+  "launchPolishPR97": {
+    "pr": 97,
+    "state": "merged_deployed_verified",
+    "headSha": "cdd7b3cbcb682e1da051c5d1e1267ec6e4dc7085",
+    "mergeSha": "665beb1ee0b8e57dbf1c5e8359bde3bd00f7b8b8",
+    "prWorkflows": "nine_of_nine_success",
+    "mainWorkflows": "eight_of_eight_success",
+    "mainChecks": "sixteen_of_sixteen_success",
+    "liveAssetsMatch": true,
+    "physicalIPhoneTested": false
+  },
+  "catalogPricingCompletion": {
+    "branch": "codex/catalog-pricing-readiness",
+    "state": "implemented_activation_pending",
+    "ownerRequest": "Get catalog and pricing good to go",
+    "serverPricedPreviewAndSave": true,
+    "configuredDeposit": true,
+    "verifiedCurrentProductsOnly": true,
+    "exactUnknownSaveRecovery": true,
+    "placeholderRatesReleased": false,
+    "liveFlagVerified": false,
+    "activationGates": [
+      "owner_approved_installation_settings",
+      "authenticated_catalog_and_firestore_health",
+      "reviewed_product_price_publication",
+      "actual_cloudflare_cpu_budget_acceptance"
+    ],
+    "legacyServiceRatesChanged": false
   }
 }

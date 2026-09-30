@@ -8,7 +8,7 @@
 (function(){
 'use strict';
 // Drafts live under the Hub's draft prefix, which the always-loaded screen registry clears on sign-out.
-const API='/api/catalog',SCREEN='catalog',DRAFT_KEY='egc.hub.draft.v1.catalog.',TZ='America/Denver',PAGE=40,MAX_ITEM_CENTS=10000000;
+const API='/api/catalog',SCREEN='catalog',DRAFT_KEY='egc.hub.draft.v1.catalog.',TZ='America/Denver',PAGE=40,MAX_ITEM_CENTS=10000000,QUOTE_ASSET_VERSION='20260930catalogquote1';
 const PRODUCT_CATEGORIES=['bikes','cabinets-workbenches','floors-lighting-extras','lawn-garden','overhead','shelving','small-items','sports-outdoor','wall-systems'];
 const TIERS=['good','better','best'],VERIFIED_EVIDENCE=['product_page','search_snippet'];
 const AVAILABILITY={active:'Active',referral_only:'Referral only',hidden:'Hidden'};
@@ -387,7 +387,7 @@ function formatValue(field,value){
 const S={host:null,root:null,ctx:null,kit:null,mountId:0,generation:0,controller:null,data:null,base:null,loading:false,loadError:null,loadedAt:0,
   tab:'settings',filters:{q:'',category:'',tier:'',status:'',availability:'',min:'',max:''},filtersOpen:null,shown:PAGE,list:null,
   draft:emptyDraft(),draftLoaded:false,settingsForm:null,settingsValues:null,settingsRevision:null,settingsErrors:{},settingsRebased:false,
-  busy:false,notice:null,conflict:null,retry:null,dialog:null};
+  busy:false,quoteLoading:false,notice:null,conflict:null,retry:null,dialog:null};
 const now=()=>{const value=typeof S.ctx?.now==='function'?Number(S.ctx.now()):Date.now();return Number.isFinite(value)?value:Date.now();};
 // The server's clock carried forward from the last load, so versions and check dates follow Denver's calendar, not the device's.
 function serverNow(){const asOf=Date.parse(S.data?.asOf||'');return Number.isFinite(asOf)?asOf+Math.max(0,now()-S.loadedAt):now();}
@@ -407,7 +407,46 @@ const fetcher=()=>typeof S.ctx?.hubFetch==='function'?S.ctx.hubFetch:undefined;
 const pendingStore=()=>S.kit.pending(SCREEN);
 function pendingBody(){try{return S.kit?pendingStore().get()?.body||null:null;}catch{return null;}}
 // Edits wait while a save is in flight or an unconfirmed one waits for Retry, so its answer settles exactly what was sent.
-const locked=()=>S.busy||Boolean(S.retry||pendingBody());
+const locked=()=>S.busy||S.quoteLoading||Boolean(S.retry||pendingBody());
+let quoteAssetsPromise=null;
+function quoteAsset(tag,url){
+  const existing=[...document.querySelectorAll('[data-egc-catalog-quote-asset]')].find(node=>node.getAttribute('data-egc-catalog-quote-asset')===url);
+  if(existing?.dataset.ready==='true')return Promise.resolve();
+  return new Promise((resolve,reject)=>{
+    const node=existing||document.createElement(tag);
+    if(!existing){node.setAttribute('data-egc-catalog-quote-asset',url);if(tag==='link'){node.rel='stylesheet';node.href=url;}else node.src=url;}
+    node.addEventListener('load',()=>{node.dataset.ready='true';resolve();},{once:true});
+    node.addEventListener('error',()=>{node.remove();reject(new Error('catalog_quote_asset_unavailable'));},{once:true});
+    if(!existing)document.head.append(node);
+  });
+}
+function loadQuoteAssets(){
+  if(typeof window.EGCCatalogQuote?.open==='function')return Promise.resolve();
+  if(!quoteAssetsPromise)quoteAssetsPromise=(async()=>{
+    await quoteAsset('link',`/employee-catalog-quote.css?v=${QUOTE_ASSET_VERSION}`);
+    await quoteAsset('link',`/crew/quote-draft.css?v=${QUOTE_ASSET_VERSION}`);
+    await quoteAsset('script',`/crew/quote-draft.js?v=${QUOTE_ASSET_VERSION}`);
+    await quoteAsset('script',`/employee-catalog-quote.js?v=${QUOTE_ASSET_VERSION}`);
+    if(typeof window.EGCCatalogQuote?.open!=='function')throw new Error('catalog_quote_asset_unavailable');
+  })().catch(error=>{quoteAssetsPromise=null;throw error;});
+  return quoteAssetsPromise;
+}
+async function buildCatalogQuote(){
+  if(!S.data?.enabled||!S.data.settings?.readyForCustomers||locked()||!canEdit())return;
+  const mount=S.mountId;S.quoteLoading=true;S.notice=null;render();
+  try{
+    await loadQuoteAssets();
+    if(mount!==S.mountId)return;
+    await window.EGCCatalogQuote.open({overview:S.data,hubFetch:fetcher(),identity:viewerId(),reloadOverview:async()=>{
+      if(mount!==S.mountId)throw new Error('The catalog screen is no longer open.');
+      await load();
+      if(mount!==S.mountId||!S.data?.enabled||!S.data.settings?.readyForCustomers)throw new Error('Catalog prices are not ready. Review the pricing screen.');
+      return S.data;
+    }});
+  }catch{
+    if(mount===S.mountId)S.notice={kind:'error',text:'The catalog quote could not open. Try again from this screen. No customer message was sent.'};
+  }finally{if(mount===S.mountId){S.quoteLoading=false;render();}}
+}
 
 function persist(){
   try{
@@ -503,7 +542,7 @@ async function send(body){
       const later=settingsAfterSave(S.settingsForm,S.settingsValues,body.settings,result.values,suggestedLabel(result.settingsVersion));
       S.settingsForm=later;S.settingsValues=later?clone(result.values):null;S.settingsRevision=later?result.revision:null;
       S.settingsErrors={};if(S.data?.enabled&&(fresh||!later))syncSettings();
-      S.notice={kind:'success',text:`Pricing settings saved as ${result.settingsVersion}${result.readyForCustomers?', released for customer quotes':', for internal estimates only'}.${result.current===false?' A newer save replaced them since; the latest values are shown.':''}${later&&settingsDirty()?' Your later edits are still in the form.':''}`};
+      S.notice={kind:'success',text:`Pricing settings saved as ${result.settingsVersion}${result.readyForCustomers?', approved for catalog quotes':', for internal estimates only'}.${result.current===false?' A newer save replaced them since; the latest values are shown.':''}${later&&settingsDirty()?' Your later edits are still in the form.':''}`};
     }else{
       S.draft=publishedDraft(S.draft,body.catalog,data.publication.version);S.tab='items';
       const left=draftCount();
@@ -587,7 +626,8 @@ function settingsPanel(){
   if(!S.settingsForm||!S.settingsValues)syncSettings();
   const values=S.data.settings.values,form=S.settingsForm,errors=S.settingsErrors,frozen=locked()||!canSettings();
   const review=btn('Review changes',openSettingsReview,'primary',{disabled:true});
-  const update=()=>{review.disabled=frozen||!settingsDirty();persist();};
+  let sticky;
+  const update=()=>{const dirty=settingsDirty();review.disabled=frozen||!dirty;sticky?.classList.toggle('cat-idle',!dirty);persist();};
   const money=MONEY_SETTINGS.map(([key,label,,,help])=>bound({name:key,label:label+' ($)',type:'text',inputmode:'decimal',autocomplete:'off',help},form,errors,update));
   const fields=[...money,bound({name:'depositPct',label:'Deposit (% of the quote)',type:'text',inputmode:'decimal',autocomplete:'off',help:'Catalog quotes only. The walkthrough deposit in use today (50%, set by the deposit terms) does not change here.'},form,errors,update),
     bound({name:'includeDisposal',label:'Charge packaging haul-away',type:'checkbox'},form,errors,update),
@@ -595,17 +635,18 @@ function settingsPanel(){
   const markups=[bound({name:'markup.default',label:'Default markup (%)',type:'text',inputmode:'decimal',autocomplete:'off',help:'Used by any category left blank.'},form,errors,update),
     ...PRODUCT_CATEGORIES.map(category=>bound({name:'markup.'+category,label:(S.base.categories.find(entry=>entry.id===category)?.label||category)+' (%)',type:'text',inputmode:'decimal',autocomplete:'off',placeholder:'Default'},form,errors,update))];
   const saved=S.data.settings;
+  sticky=h('div',{class:'cat-sticky'},review,btn('Undo my edits',()=>{S.settingsForm=null;S.settingsErrors={};syncSettings();persist();render();},'',{disabled:frozen}));
   const panel=h('form',{class:'cat-settings',novalidate:true,onsubmit:event=>{event.preventDefault();openSettingsReview();}},
-    saved.readyForCustomers?h('div',{class:'hub-notice success'},'These prices are released for customer quotes.'):h('div',{class:'hub-notice warning'},'Placeholder values: these settings price internal estimates only until you review every value and release them for customer quotes.'),
+    saved.readyForCustomers?h('div',{class:'hub-notice success'},'These prices are approved for catalog quotes. Existing walkthrough prices are managed separately.'):h('div',{class:'hub-notice warning'},'Placeholder values: these settings price internal estimates only until you review every value and approve them for catalog quotes. Existing walkthrough prices are managed separately.'),
     S.settingsRebased?h('div',{class:'hub-notice warning'},'The saved settings changed after you started editing. Fields you did not change now show the latest saved values; the review compares your edits with them.'):null,
     !canSettings()?h('div',{class:'hub-notice'},'Only the owner can change pricing settings.'):null,
     h('section',{class:'hub-card cat-card'},h('h2',{},'Rates and charges'),h('div',{class:'cat-fields'},fields)),
     h('section',{class:'hub-card cat-card'},h('h2',{},'Markup on product cost'),h('p',{class:'cat-muted'},'Added to the product cost of every catalog item in the category.'),h('div',{class:'cat-fields cat-markups'},markups)),
     h('section',{class:'hub-card cat-card'},h('h2',{},'Version and release'),h('div',{class:'cat-fields'},
-      bound({name:'settingsVersion',label:'Version label for this save',type:'text',autocomplete:'off',maxlength:80,help:`Every quote records the label that priced it. Saved now: ${saved.settingsVersion}.`},form,errors,update),
-      bound({name:'ready',label:'Reviewed: these values may price customer quotes',type:'checkbox',help:'Leave off to keep them for internal estimates only.'},form,errors,update)),
+      bound({name:'settingsVersion',label:'Version label for this save',type:'text',autocomplete:'off',maxlength:80,help:`Every catalog quote records the label that priced it. Saved now: ${saved.settingsVersion}.`},form,errors,update),
+      bound({name:'ready',label:'Reviewed: these values may price catalog quotes',type:'checkbox',help:'Leave off to keep them for internal estimates only.'},form,errors,update)),
       h('p',{class:'cat-muted'},saved.source==='defaults'?'No settings have been saved yet; the shipped placeholders are in use.':`Last saved ${when(saved.updatedAt)}${saved.updatedBy?' by '+saved.updatedBy:''}.`)),
-    h('div',{class:'cat-sticky'},review,btn('Undo my edits',()=>{S.settingsForm=null;S.settingsErrors={};syncSettings();persist();render();},'',{disabled:frozen})),
+    sticky,
     opsDefaults());
   if(frozen)for(const control of panel.querySelectorAll('input,select,textarea'))control.disabled=true;
   update();
@@ -665,8 +706,14 @@ function itemsPanel(){
     bound({name:'min',label:'Price from ($)',type:'text',inputmode:'decimal',autocomplete:'off',placeholder:'0'},f,{},change),
     bound({name:'max',label:'Price up to ($)',type:'text',inputmode:'decimal',autocomplete:'off',placeholder:'Any'},f,{},change))));
   const checking=f.status==='attention';
+  const canQuote=canEdit()&&S.data.settings?.readyForCustomers===true;
   return h('div',{class:'cat-items'},
-    h('div',{class:'hub-actions cat-toolbar'},canEdit()?btn('Add product',openAdd,'primary',{disabled:locked()}):null,attention||checking?btn(checking?'Show all prices':`Needs a check (${attention})`,()=>{S.filters.status=checking?'':'attention';S.shown=PAGE;render();}):null),
+    h('div',{class:'hub-actions cat-toolbar'},canEdit()?btn('Add product',openAdd,'primary',{disabled:locked()}):null,attention||checking?btn(checking?'Show all prices':`Needs a check (${attention})`,()=>{S.filters.status=checking?'':'attention';S.shown=PAGE;render();}):null,
+      canEdit()?btn(S.quoteLoading?'Opening catalog quote…':'Build catalog quote',()=>void buildCatalogQuote(),'cat-quote-btn',{disabled:locked()||!canQuote}):null),
+    canEdit()?h('div',{class:'hub-notice'+(canQuote?'':' warning')},canQuote?
+      'Build an unsigned catalog quote from approved prices. You review it before anything is sent. Existing walkthrough prices are managed separately.':
+      'Review and approve Pricing before building a catalog quote. Existing walkthrough prices are managed separately.',
+      canQuote?null:btn('Review pricing',()=>{S.tab='settings';render();S.root?.querySelector('#cat-tab-settings')?.focus?.();},'',{disabled:locked()})):null,
     filters,itemList());
 }
 function changeKind(id){
@@ -700,7 +747,7 @@ function render(){
   S.list=null;
   const parts=[head(),feedback()];
   if(S.data?.enabled&&S.base)parts.push(tabs(),panel());
-  else if(S.data&&!S.data.enabled)parts.push(h('div',{class:'hub-notice warning'},h('strong',{},'Catalog pricing is turned off'),h('p',{},'The owner turns it on by setting CATALOG_QUOTES_ENABLED to true in Cloudflare. Until then nothing here can be viewed or edited.')));
+  else if(S.data&&!S.data.enabled)parts.push(h('div',{class:'hub-notice warning'},h('strong',{},'Catalog pricing is turned off'),h('p',{},'Ask the owner to enable catalog pricing for the Hub. Items and settings will appear here when it is ready.')));
   else if(S.loading)parts.push(skeleton());
   else if(S.loadError)parts.push(unavailable());
   const focused=document.activeElement&&S.root.contains(document.activeElement)?document.activeElement.id:'';
@@ -861,8 +908,8 @@ function openSettingsReview(){
     void send({action:'settings.update',requestId:S.kit.requestId(),expectedRevision:S.data.settings.revision,settings:parsed.settings,...(releasing?{confirmCustomerUse:true}:{})});
   };
   const body=(missing=false)=>[h('div',{class:'cat-diff-table'},h('table',{},h('thead',{},h('tr',{},['Setting','Now','After saving'].map(text=>h('th',{scope:'col'},text)))),h('tbody',{},changes.map(row=>h('tr',{},h('th',{scope:'row'},row.label),h('td',{},row.before),h('td',{},h('strong',{},row.after))))))),
-    releasing?h('div',{class:'hub-notice warning'},'Saving releases these prices for customer quotes. Nothing is sent to any customer by saving.'):null,
-    releasing?bound({name:'release',label:'I reviewed every value and these prices may be used for customer quotes',type:'checkbox'},confirm,missing?{release:'Confirm the review to release these prices.'}:{}):null];
+    releasing?h('div',{class:'hub-notice warning'},'Saving approves these prices for catalog quotes. Existing walkthrough prices are managed separately. Nothing is sent to any customer by saving.'):null,
+    releasing?bound({name:'release',label:'I reviewed every value and these prices may be used for catalog quotes',type:'checkbox'},confirm,missing?{release:'Confirm the review to approve these prices.'}:{}):null];
   const dialog=openDialog({eyebrow:'Review settings',title:`Save pricing settings ${parsed.settings.settingsVersion}`,body:body(),onSubmit:save,actions:[btn('Keep editing',closeDialog),btn('Save settings',save,'primary')]});
 }
 function confirmDiscard(){
@@ -886,7 +933,7 @@ function mount(host,ctx={}){
 }
 function unmount(){
   S.generation++;S.mountId++;S.controller?.abort();S.controller=null;closeDialog();S.root?.remove();
-  Object.assign(S,{root:null,host:null,data:null,base:null,loading:false,loadError:null,busy:false,notice:null,conflict:null,retry:null,list:null,settingsErrors:{}});
+  Object.assign(S,{root:null,host:null,data:null,base:null,loading:false,loadError:null,busy:false,quoteLoading:false,notice:null,conflict:null,retry:null,list:null,settingsErrors:{}});
 }
 function reset(){
   unmount();

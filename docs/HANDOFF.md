@@ -1,6 +1,14 @@
 # Easy Garage Cleaning Hub handoff
 
-Snapshot: **2026-09-30 UTC**. Web fixes through **PR #96** are merged and deployed at `d08b9ec7a6a21c33403540c5025c9b0a93f625be`; the unchanged Railway services remain at PR #92 (`15ac32a8aad86d468dd193c6ae9b18e9d09c27e5`). The live Hub verified a manually reviewed task from the original saved transcript and read-only Completed history. Automatic AI extraction still needs existing-account credits, regular job photos need Drive setup, and FIELD-PAY remains off.
+Snapshot: **2026-09-30 UTC**. Web fixes through **PR #97** are merged and deployed at `665beb1ee0b8e57dbf1c5e8359bde3bd00f7b8b8`; the Railway API reports the same release, while unchanged MCP, worker and portal services remain at PR #92 (`15ac32a8aad86d468dd193c6ae9b18e9d09c27e5`). PR #97 passed nine applicable PR workflows and eight main workflows. Live Firestore reads last reported HTTP 429 at 06:07 UTC; the morning session expired before a new authenticated probe. Automatic AI extraction still needs existing-account credits, regular job photos need Drive setup, and FIELD-PAY remains off.
+
+## Catalog and pricing completion
+
+The owner explicitly prioritized **“Get catalog and pricing good to go.”** This change connects **System → Catalog & pricing → Build catalog quote** to the existing saved quote, separately confirmed send and customer approval flow. Product selection, customer-supplied quantities, server price review, one visible minimum charge and configured deposits work on phone layouts. The server verifies every price and version again on save; unknown saves retain their exact request, changed prices can be refreshed without losing selections, and sign-out clears draft details even when a save answers late.
+
+The owner screen now explains catalog pricing separately from existing walkthrough services, loads the quote editor only when opened, and keeps inactive settings actions from covering phone inputs. Batch pricing validates one immutable settings snapshot instead of validating it for every product. Deposit precision matches the quote model.
+
+**Activation remains open:** the repository installation rates are explicitly unapproved placeholders; the owner was asked for the actual labor, markup, minimum and packaging rates. No settings approval or live flag change is inferred. Staff/admin sign-in and current Firestore health are also unverified. Product quotes block unverified, stale, hidden and referral-only products. Public research is being captured separately for review; a source observation is not a published catalog change. Follow [the catalog workflow](GARAGE-CATALOG.md#build-and-review-a-catalog-quote) after these gates are satisfied.
 
 ## Mobile gesture and styling follow-up
 
