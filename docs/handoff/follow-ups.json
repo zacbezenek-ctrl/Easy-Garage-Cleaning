@@ -6,8 +6,8 @@
       "id": "STAFF-DATA-READ",
       "state": "open",
       "owner": "release coordinator and owner",
-      "action": "Diagnose and repair the live staff/dispatch storage read failure. Firebase and Cloudflare admin investigation is authorized; manual admin sign-in is pending. Verify signed-in Walkthroughs and employee records after repair.",
-      "evidence": "Live employee endpoint returned 502 Host Error; Ray a4306b0a99c37988 at 2026-09-30 04:17:28 UTC. Dispatch error maps to a failed Firestore read; upstream status unknown."
+      "action": "Restore Firestore reads. Finish existing Firebase/Cloudflare admin sign-ins, inspect the exact quota/billing condition, resolve it, then verify the signed-in roster, Walkthroughs, crew schedule and portal documents. No flag or credential changes have been made.",
+      "evidence": "PR96 deployed read probe reports Read Limited, mapping to HTTP429 on one masked Firestore GET. Staff endpoint previously returned502 Host Error, Ray a4306b0a99c37988. The roster error is masked; its exact inner response is not independently verified."
     },
     {
       "id": "MOBILE-DEVICE-ACCEPTANCE",

@@ -52,7 +52,7 @@ class CrewHomeWalkthroughBrowserTests(unittest.TestCase):
     def setUp(self):
         self.context = self.browser.new_context(viewport={'width': 375, 'height': 812}, is_mobile=True, has_touch=True, timezone_id='Asia/Tokyo')
         self.page = self.context.new_page(); self.page.set_default_timeout(7000); self.page.clock.install(time=NOW)
-        self.errors = []; self.writes = []; self.viewer = REP; self.jobs = rows()
+        self.errors = []; self.writes = []; self.viewer = REP; self.jobs = rows(); self.jobs_status = 200
         self.page.on('pageerror', lambda error: self.errors.append(str(error)))
         self.context.route('**/*', self.route)
     def tearDown(self):
@@ -67,7 +67,8 @@ class CrewHomeWalkthroughBrowserTests(unittest.TestCase):
         if req.method != 'GET' and url.path.startswith('/api/'): self.writes.append((req.method, url.path)); send({'ok': False}, 405); return
         if url.path == '/api/hub-auth': send(self.viewer); return
         if url.path == '/api/firebase-session': send({'ok': True, 'token': 'synthetic-firebase-token'}); return
-        if url.path == '/api/crew-jobs': send({'ok': True, 'jobs': self.jobs}); return
+        if url.path == '/api/crew-jobs':
+            send({'ok': self.jobs_status == 200, 'jobs': self.jobs}, self.jobs_status); return
         if url.path == '/api/employee-hub': send({'ok': True, 'collections': {'timeEntries': []}}); return
         if url.path.startswith('/api/'): send({'ok': False, 'error': 'Not in this fixture.'}, 404); return
         route.continue_()
@@ -80,6 +81,27 @@ class CrewHomeWalkthroughBrowserTests(unittest.TestCase):
             self.page.set_viewport_size({'width': width, 'height': 812})
             self.assertLessEqual(self.page.evaluate('document.documentElement.scrollWidth'), width, f'no horizontal scroll at {width}px')
         self.page.set_viewport_size({'width': 375, 'height': 812})
+
+    def test_schedule_failure_replaces_loading_card_and_retry_recovers(self):
+        self.jobs_status = 502
+        self.page.goto(self.url + '/crew/')
+        card = self.page.locator('#next-work')
+        expect(card.get_by_role('heading', name='Schedule unavailable')).to_be_visible()
+        expect(card).not_to_contain_text('Loading your schedule')
+        expect(card).not_to_contain_text('No upcoming assignment')
+        expect(self.page.locator('#assigned-jobs')).to_contain_text('schedule could not load')
+        retry = card.get_by_role('button', name='Retry schedule', exact=True)
+        self.assertGreaterEqual(retry.bounding_box()['height'], 44)
+        self.fits()
+        out = ROOT / 'test-results'; out.mkdir(exist_ok=True)
+        self.page.screenshot(path=str(out / 'crew-home-schedule-unavailable-375.png'), full_page=True)
+        retry.click()
+        expect(card.get_by_role('button', name='Retry schedule', exact=True)).to_be_enabled()
+        self.jobs_status = 200
+        card.get_by_role('button', name='Retry schedule', exact=True).click()
+        expect(card.get_by_role('heading', name='Synthetic Walkthrough Garage')).to_be_visible()
+        expect(self.page.locator('#assigned-jobs .job-row')).to_have_count(2)
+        expect(card.get_by_role('button', name='Retry schedule', exact=True)).to_have_count(0)
 
     def test_rep_sees_their_walkthroughs_with_a_call_link_and_the_outcome(self):
         self.open(); page = self.page

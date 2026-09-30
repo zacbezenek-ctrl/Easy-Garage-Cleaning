@@ -1,6 +1,6 @@
 # Easy Garage Cleaning Hub handoff
 
-Snapshot: **2026-09-30 UTC**. Web fixes through **PR #95** are merged and deployed at `f6c32488f7e7c9f12f628eddaa913020b962f827`; the unchanged Railway services remain at PR #92 (`15ac32a8aad86d468dd193c6ae9b18e9d09c27e5`). The live Hub verified a manually reviewed task from the original saved transcript and read-only Completed history. Automatic AI extraction still needs existing-account credits, regular job photos need Drive setup, and FIELD-PAY remains off.
+Snapshot: **2026-09-30 UTC**. Web fixes through **PR #96** are merged and deployed at `d08b9ec7a6a21c33403540c5025c9b0a93f625be`; the unchanged Railway services remain at PR #92 (`15ac32a8aad86d468dd193c6ae9b18e9d09c27e5`). The live Hub verified a manually reviewed task from the original saved transcript and read-only Completed history. Automatic AI extraction still needs existing-account credits, regular job photos need Drive setup, and FIELD-PAY remains off.
 
 ## Mobile gesture and styling follow-up
 
@@ -82,7 +82,7 @@ Firebase/Google and Cloudflare administrative sign-in remains pending at this sn
 
 ## Continue from here
 
-Restore credits in the existing OpenAI account through the authorized billing handoff, then test automatic drafting with a fresh synthetic transcript and confirm a single reviewed AI draft with no duplicate customer action. The original saved source has already been manually approved. PR #90's credit category is deployed, but the older record's generic status and two clean auth reloads do not prove those paths under a new live failure. Restore regular job photo storage through Drive OAuth and verify upload, review Firestore rules and release flags, and complete real-device role checks. Keep refunds and milestone tags off and the missing 41 specs and seven build IDs visible until their sources are found.
+First restore live Firestore reads: the deployed Integrations probe reports **Read Limited**, mapping to HTTP 429. Finish the pending admin sign-ins, inspect the exact quota/billing condition, resolve it, then verify staff roster, Walkthroughs, crew schedule and portal document reads. Next restore credits in the existing OpenAI account through the authorized billing handoff, then test automatic drafting with a fresh synthetic transcript and confirm a single reviewed AI draft with no duplicate customer action. The original saved source has already been manually approved. PR #90's credit category is deployed, but the older record's generic status and two clean auth reloads do not prove those paths under a new live failure. Restore regular job photo storage through Drive OAuth and verify upload, review Firestore rules and release flags, and complete real-device role checks. Keep refunds and milestone tags off and the missing 41 specs and seven build IDs visible until their sources are found.
 
 
 ## Final resilient-office release evidence
@@ -101,10 +101,16 @@ This permission correction does not establish a live Drive connection. Google/Cl
 
 The continued source search covered the available recent Codex task summaries and narrowly matched Google Drive documents. No authoritative refunds/milestone source, 41-spec set or seven build IDs was recovered. Older active Codex tasks are outside the available listing; unpublished work remains possible.
 
-## Active launch polish and staff-data incident
+## Verified launch polish and staff-data incident
 
-PR #95 passed all five applicable workflows on its final head and again on main, plus Pages, password-verifier and Vercel deployment checks. The signed-in live Hub loads the shared touch policy and its menu/Walkthrough navigation works.
+PR #96 passed all five applicable workflows on exact head `73287024729865f65d855bceb78203eb9e631909`, merged as `d08b9ec7a6a21c33403540c5025c9b0a93f625be`, and passed all five main workflows and all 12 main checks. Pages and password-verifier deployments succeeded. The signed-in Hub and crew home load the matching assets and shared touch policy.
 
-The next existing-feature pass aligns the verified crew job and profile screens with the navy/orange design, repairs recording-load retry and reviewer-access recovery, removes literal null text from unavailable Review queues, and adds a bounded read check to Integrations. These changes are being reviewed on `codex/hub-launch-polish`; do not treat this paragraph as deployment evidence.
+This release aligns crew job, photo and offline screens with the navy/orange design, repairs failed/stalled recording reads and reviewer-access recovery, removes literal null text from unavailable Review queues, and adds a bounded read check to Integrations. Its first-head real field CI exposed a long visit ID widening the phone viewport; the corrected head wraps the ID and passes a normal checklist-tap regression with feedback visible. No acceptance force-click or timeout relaxation was used.
 
-**Unresolved live data failure:** Walkthroughs cannot load dispatch records; the staff-data endpoint returned a Cloudflare 502 Host Error (Ray `a4306b0a99c37988`, 2026-09-30 04:17:28 UTC). Employee records were already unavailable before the styling deployment. Source inspection maps the dispatch message to a non-success Firestore read, but does not establish the upstream status or cause. The owner authorized Firebase/Cloudflare investigation. Automatic approval review separately blocked Google Accounts authentication-page access; manual admin sign-in remains pending. Do not claim production readiness until staff reads are restored and live workflows pass again.
+**Unresolved live data failure:** the deployed Integrations probe reports **Read Limited**, which maps to an upstream Firestore HTTP 429 on one masked server read. The staff-data endpoint earlier returned Cloudflare 502 Host Error (Ray `a4306b0a99c37988`, 2026-09-30 04:17:28 UTC). The current Walkthroughs screen says the active employee roster could not be verified; crew schedule and portal documents are unavailable. The exact quota/billing condition has not been inspected. The roster banner masks multiple account errors, so the probe does not establish each individual read's inner status. The owner authorized Firebase/Cloudflare investigation; manual admin sign-in remains pending after automatic approval review separately blocked Google Accounts authentication-page access.
+
+## Current existing-workflow corrections
+
+The continuing parallel audit found an AI approval customer-relink race, two staff pages missing the shared touch policy, a crew home card stuck on Loading after its schedule read failed, and a redundant employee-data scan after successful profile synchronization. Corrections and focused regressions are on `codex/hub-staff-touch-completion`. Exact-head CI, main CI, deployment and post-deploy observations must be recorded before treating this follow-up as released. No new units, credentials, rollout flags, customer sends or charges are included.
+
+Do not claim full production readiness until Firestore reads and live workflows recover, existing OpenAI credits and Drive setup are addressed, and physical-iPhone checks and parked rollout prerequisites are satisfied.

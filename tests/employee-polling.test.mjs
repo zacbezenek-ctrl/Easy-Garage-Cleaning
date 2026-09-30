@@ -30,13 +30,16 @@ function suite() {
   context.hubFetch = async (url, init = {}) => {
     calls.push({ url, method: init.method || 'GET' });
     if (url.includes('employee-accounts')) return env.accountResponse || response({ ok: true, accounts: [] });
-    if (init.method === 'POST') return response({ ok: true, record: JSON.parse(init.body).data });
+    if (init.method === 'POST') {
+      const body = JSON.parse(init.body);
+      return env.postResponse ? env.postResponse(body) : response({ ok: true, record: { ...body.data, id: body.id } });
+    }
     if (env.pending) return env.pending;
     return response({ ok: true, collections: collections(), accounts: [] });
   };
   context.window = context;
   const source = readFileSync(new URL('../employee-suite.js', import.meta.url), 'utf8')
-    .replace(/\}\)\(\);\s*$/, 'Object.assign(globalThis,{ui:{S,refreshPeople,startPeopleListeners,peopleSet,accountApprovalBoard}});})();');
+    .replace(/\}\)\(\);\s*$/, 'Object.assign(globalThis,{ui:{S,refreshPeople,startPeopleListeners,ensureOwnProfile,peopleSet,accountApprovalBoard}});})();');
   vm.runInNewContext(source, context);
   env.api = context.ui;
   env.reads = () => calls.filter(call => call.url.split('?')[0] === '/api/employee-hub' && call.method === 'GET').length;
@@ -54,6 +57,79 @@ function suite() {
   env.elapse = milliseconds => { now += milliseconds; };
   return env;
 }
+
+test('first sign-in mirrors the canonical profile without a second whole-vault read', async () => {
+  const env = suite();
+  env.pending = response({ ok: true, collections: { ...collections(), profiles: [
+    { id: 'zacb', username: 'ZacB', displayName: 'Before', accountStatus: 'approved', awaitingFirstSignIn: true },
+    { id: 'crew.one', username: 'Crew.One', displayName: 'Crew One' },
+  ] }, accounts: [{ username: 'ZacB', status: 'approved' }] });
+  env.postResponse = body => response({ ok: true, record: {
+    ...body.data, id: body.id, displayName: 'Canonical name', lastSeenAt: '2026-09-30T00:00:00.000Z',
+  } });
+
+  await env.api.startPeopleListeners();
+
+  assert.equal(env.reads(), 1, 'the successful profile mirror must not scan the entire vault again');
+  assert.equal(env.calls.filter(call => call.url === '/api/employee-hub' && call.method === 'POST').length, 1);
+  assert.deepEqual(Array.from(env.api.S.people.profiles, row => row.id), ['zacb', 'crew.one'], 'the own row keeps its place');
+  assert.equal(env.api.S.people.profiles[0].displayName, 'Canonical name', 'the server record wins over the earlier GET');
+  assert.equal(env.api.S.people.profiles[0].lastSeenAt, '2026-09-30T00:00:00.000Z');
+  assert.equal(env.api.S.people.profiles[0].accountStatus, 'approved', 'the GET-only account projection remains available');
+  assert.equal(env.api.S.people.profiles[0].awaitingFirstSignIn, false, 'the saved first sign-in clears the readiness hold');
+  assert.equal(env.api.S.people.accounts[0].status, 'approved');
+});
+
+test('profile mirror refreshes after a read that overlaps its save', async () => {
+  const env = suite();
+  await env.api.startPeopleListeners();
+  const initial = env.reads();
+  let releaseStale;
+  env.pending = new Promise(resolve => { releaseStale = resolve; });
+  const read = env.api.refreshPeople();
+  const mirror = env.api.ensureOwnProfile();
+  for (let turn = 0; turn < 20 && !env.api.S.peopleReload; turn += 1) await Promise.resolve();
+  assert.equal(env.api.S.peopleReload, true, 'the mirror save marks the in-flight read for replay');
+  env.pending = response({ ok: true, collections: { ...collections(), profiles: [{ id: 'zacb', username: 'ZacB', displayName: 'Latest', lastSeenAt: '2026-09-30T00:00:00.000Z' }] }, accounts: [] });
+  releaseStale(response({ ok: true, collections: { ...collections(), profiles: [{ id: 'zacb', username: 'ZacB', displayName: 'Stale' }] }, accounts: [] }));
+  await Promise.all([read, mirror]);
+  assert.equal(env.reads(), initial + 2, 'one stale read is replayed once after the save');
+  assert.equal(env.api.S.people.profiles[0].displayName, 'Latest');
+});
+
+test('an incomplete profile mutation response keeps the full refresh', async () => {
+  const env = suite();
+  env.postResponse = body => response({ ok: true, record: { ...body.data } });
+  await env.api.startPeopleListeners();
+  assert.equal(env.reads(), 2, 'a record without the canonical id cannot replace the GET projection');
+});
+
+test('a profile response for another identity is reread instead of being merged', async () => {
+  const env = suite();
+  env.postResponse = body => response({ ok: true, record: {
+    ...body.data, id: body.id, username: 'Other.Person', lastSeenAt: '2026-09-30T00:00:00.000Z',
+  } });
+  await env.api.startPeopleListeners();
+  assert.equal(env.reads(), 2, 'a mismatched username is never accepted as the signed-in profile');
+  assert.equal(env.api.S.people.profiles.some(row => row.username === 'Other.Person'), false);
+});
+
+test('account switch while the profile save is pending discards its response', async () => {
+  const env = suite();
+  let finishSave;
+  env.postResponse = body => new Promise(resolve => { finishSave = () => resolve(response({ ok: true, record: {
+    ...body.data, id: body.id, lastSeenAt: '2026-09-30T00:00:00.000Z',
+  } })); });
+  const loading = env.api.startPeopleListeners();
+  for (let turn = 0; turn < 20 && !finishSave; turn += 1) await Promise.resolve();
+  assert.equal(typeof finishSave, 'function');
+  env.events['egc:signout']();
+  env.context.sessionStorage.setItem('egc_u', 'Other.Person');
+  finishSave();
+  await loading;
+  assert.equal(env.reads(), 1, 'the old save does not start another collection read');
+  assert.equal(env.api.S.people.profiles.length, 0, 'the old profile is not merged into the new account');
+});
 
 test('employee polling pauses hidden tabs, refreshes on return, and uses a minute outside chat', async () => {
   const env = suite();

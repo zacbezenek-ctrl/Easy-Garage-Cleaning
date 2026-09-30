@@ -60,8 +60,8 @@ describe('durable text transcript intake',()=>{
     let row:Record<string,unknown>|null=null,sourceCustomer='customer-synthetic',sourceProject:string|null=null,sourceRevision='source-v1';
     const select=()=>{const chain={from:()=>chain,where:()=>chain,orderBy:()=>chain,limit:()=>chain,offset:async()=>row?[row]:[],for:async()=>row?[row]:[],then:(resolve:(value:unknown[])=>unknown)=>Promise.resolve(row?[row]:[]).then(resolve)};return chain;};
     const db={select,insert:()=>({values:(values:Record<string,unknown>)=>({onConflictDoNothing:async()=>{if(!row)row={attemptCount:0,extraction:null,createdAt:new Date('2026-09-29T12:00:00.000Z'),updatedAt:new Date('2026-09-29T12:00:00.000Z'),...values};}})}),update:()=>({set:(values:Record<string,unknown>)=>{const result={where:()=>result,returning:async()=>{row={...row,...values};return[row];},then:(resolve:(value:unknown)=>unknown)=>{row={...row,...values};return Promise.resolve(undefined).then(resolve);}};return result;}}),transaction:async(fn:(tx:unknown)=>Promise<unknown>)=>fn(db)};
-    const io={put:vi.fn(),get:vi.fn(),transcribe:vi.fn(),extract:vi.fn(),createManualTask:vi.fn(async(_actor:unknown,_task:unknown,_requestId:string)=>({ok:true})),catalog:vi.fn(()=>({items:[],catalogVersion:'synthetic'})),conversation:vi.fn(async(_text:string,options:{context:{sourceKind:'visit_recording'|'visit_transcript';occurredAt:string}})=>({ok:true,extraction:conversationExtractionSchema.parse({version:2,sourceKind:options.context.sourceKind,occurredAt:options.context.occurredAt,model:'synthetic',catalogVersion:'synthetic',scope:null,proposedActions:[],catalogMentions:[],preferences:[],validation:{droppedProposedActions:0,droppedCatalogMentions:0,droppedPreferences:0,droppedEvidence:0,clearedCatalogItemIds:0,clearedMentions:0,clearedDraftSuggestions:0}})}))};
-    const portalCommands:string[]=[];let onMembersRead:(()=>void)|null=null,onJobRead:(()=>void)|null=null;
+    const io={put:vi.fn(),get:vi.fn(),transcribe:vi.fn(),extract:vi.fn(),createManualTask:vi.fn(async(_actor:unknown,_task:unknown,_requestId:string)=>({ok:true})),createReviewedTask:vi.fn(async(_actor:unknown,_task:unknown,_requestId:string)=>({ok:true})),catalog:vi.fn(()=>({items:[],catalogVersion:'synthetic'})),conversation:vi.fn(async(_text:string,options:{context:{sourceKind:'visit_recording'|'visit_transcript';occurredAt:string}})=>({ok:true,extraction:conversationExtractionSchema.parse({version:2,sourceKind:options.context.sourceKind,occurredAt:options.context.occurredAt,model:'synthetic',catalogVersion:'synthetic',scope:null,proposedActions:[],catalogMentions:[],preferences:[],validation:{droppedProposedActions:0,droppedCatalogMentions:0,droppedPreferences:0,droppedEvidence:0,clearedCatalogItemIds:0,clearedMentions:0,clearedDraftSuggestions:0}})}))};
+    const portalCommands:string[]=[];let onMembersRead:(()=>void)|null=null,onJobRead:(()=>void)|null=null,onApply:(()=>void)|null=null;
     const fetcher=vi.fn(async(url:RequestInfo|URL,init?:RequestInit)=>{
       const envelope=JSON.parse(String(init?.body)).envelope as string,command=JSON.parse(Buffer.from(envelope.split('.')[0]!,'base64url').toString()).request.body.command as string;
       portalCommands.push(command);
@@ -69,13 +69,15 @@ describe('durable text transcript intake',()=>{
         if(command==='portal.members'){onMembersRead?.();return Response.json({authority:'employee_hub',members:[{id:'test-owner'}]});}
         if(command==='portal.job'){onJobRead?.();return Response.json({authority:'employee_hub',job:{id:'visit-synthetic',revision:sourceRevision,type:'walkthrough',highlevelContactId:null,sourceWalkthroughId:null,customer:'Synthetic customer',status:'active'}});}
       }
+      if(command==='recording.apply'){onApply?.();return Response.json({ok:true});}
       return Response.json({identity:{authority:'employee_hub',portalJobId:'visit-synthetic',portalVisitId:'visit-synthetic',portalCustomerId:sourceCustomer,portalProjectId:sourceProject,portalRevision:sourceRevision,highlevelContactId:null}});
     });
     const service=new RecordingService({EGC_OPERATIONS_WORKSPACE:'egc',EGC_PORTAL_ORIGIN:'https://synthetic.invalid',EGC_OPERATIONS_PORTAL_SIGNING_SECRET:key,EGC_EXTRACTION_V2:'false'},db as never,fetcher,io as never);
-    return{service,io,fetcher,portalCommands,get row(){return row;},changeCustomer:(value:string)=>{sourceCustomer=value;sourceRevision='source-v3';},linkProject:(value:string)=>{sourceProject=value;sourceRevision='source-v2';},onMembersRead:(fn:()=>void)=>{onMembersRead=fn;},onJobRead:(fn:()=>void)=>{onJobRead=fn;}};
+    return{service,io,fetcher,portalCommands,get row(){return row;},changeRow:(values:Record<string,unknown>)=>{row={...row,...values};},changeCustomer:(value:string)=>{sourceCustomer=value;sourceRevision='source-v3';},linkProject:(value:string)=>{sourceProject=value;sourceRevision='source-v2';},onMembersRead:(fn:()=>void)=>{onMembersRead=fn;},onJobRead:(fn:()=>void)=>{onJobRead=fn;},onApply:(fn:()=>void)=>{onApply=fn;}};
   }
   const transcript=(text='Customer: Keep the shelves.',requestId:string=randomUUID())=>{const c=claims();c.actor.role='sales';c.request.requestId=requestId;c.request.body={command:'recording.transcript',portalJobId:'visit-synthetic',transcript:text,filename:'visit.srt'};return c;};
   const manualTask=(recordingId:string)=>({title:'Call the customer',description:'Confirm access with the customer.',kind:'manual' as const,priority:'medium' as const,assignedUserId:'test-owner',dueAt:'2026-09-30T15:00:00Z',timeZone:'America/Denver',waitingOn:'none' as const,reviewAt:null,portalJobId:'visit-synthetic',portalVisitId:'visit-synthetic',contactId:null,jobId:null,completionCondition:'Record the outcome in the job notes.',sourceEvidence:[{source:'recording' as const,id:recordingId,excerpt:'Please call me about access.'}],dependencies:[],draft:null});
+  const reviewedApproval=(c:RecordingClaims,recordingId:string,revision:string,actions:ReturnType<typeof manualTask>[]):RecordingClaims=>({...c,actor:{...c.actor,role:'owner'},request:{requestId:randomUUID(),body:{command:'recording.approve',recordingId,revision,extraction:walkthroughExtractionSchema.parse({}),actions}}});
   it('stores exact text once, rejects changed replays, and processes without touching audio',async()=>{
     const {service,io}=setupService(),c=transcript('00:00:01 --> 00:00:02\nCustomer: Keep the shelves.');
     const first=await service.saveTranscript(c);expect(first.recording).toMatchObject({status:'uploaded',sourceKind:'transcript',sourceFilename:'visit.srt',transcript:c.request.body.command==='recording.transcript'?c.request.body.transcript:null});
@@ -154,6 +156,84 @@ describe('durable text transcript intake',()=>{
     const first=await fixture.service.saveTranscript(c);
     expect(await fixture.service.processNext()).toBe(true);
     expect(await fixture.service.execute({...c,request:{requestId:randomUUID(),body:{command:'recording.get',recordingId:first.recording.id}}})).toMatchObject({recording:{status:'failed',lastErrorCode:'recording_processing_failed',transcript:'Customer: Keep the shelves.'}});
+  });
+  it('refuses AI follow-ups if the Hub customer is relinked after scope apply',async()=>{
+    const fixture=setupService(),c=transcript('Customer: Please call me about access.');
+    const first=await fixture.service.saveTranscript(c);await fixture.service.processNext();
+    const draft=await fixture.service.execute({...c,request:{requestId:randomUUID(),body:{command:'recording.get',recordingId:first.recording.id}}}) as {recording:{revision:string}};
+    const approval=reviewedApproval(c,first.recording.id,draft.recording.revision,[manualTask(first.recording.id)]);
+    fixture.onApply(()=>fixture.changeCustomer('different-customer'));
+    await expect(fixture.service.execute(approval)).rejects.toThrow('recording_identity_changed');
+    expect(fixture.portalCommands).toContain('recording.apply');
+    expect(fixture.io.createReviewedTask).not.toHaveBeenCalled();
+    expect(fixture.row).toMatchObject({status:'approval_pending',approvalRequestId:approval.request.requestId,approvalPayload:{command:approval.request.body}});
+  });
+  it('refuses an AI task when the Hub job changes between exact-source and canonical reads',async()=>{
+    const fixture=setupService(),c=transcript('Customer: Please call me about access.');
+    const first=await fixture.service.saveTranscript(c);await fixture.service.processNext();
+    const draft=await fixture.service.execute({...c,request:{requestId:randomUUID(),body:{command:'recording.get',recordingId:first.recording.id}}}) as {recording:{revision:string}};
+    const approval=reviewedApproval(c,first.recording.id,draft.recording.revision,[manualTask(first.recording.id)]);
+    fixture.onJobRead(()=>fixture.changeCustomer('different-customer'));
+    await expect(fixture.service.execute(approval)).rejects.toThrow('recording_source_revision_conflict');
+    expect(fixture.io.createReviewedTask).not.toHaveBeenCalled();
+    expect(fixture.row).toMatchObject({status:'approval_pending',approvalRequestId:approval.request.requestId});
+  });
+  it('keeps the exact AI review and task IDs after a partial write, but stops on customer relink',async()=>{
+    const fixture=setupService(),c=transcript('Customer: Please call me about access.');
+    const first=await fixture.service.saveTranscript(c);await fixture.service.processNext();
+    const draft=await fixture.service.execute({...c,request:{requestId:randomUUID(),body:{command:'recording.get',recordingId:first.recording.id}}}) as {recording:{revision:string}};
+    const task=manualTask(first.recording.id),approval=reviewedApproval(c,first.recording.id,draft.recording.revision,[task,{...task,title:'Confirm the next visit'}]);
+    fixture.io.createReviewedTask.mockImplementationOnce(async()=>{fixture.changeCustomer('different-customer');return{ok:true};});
+    await expect(fixture.service.execute(approval)).rejects.toThrow('recording_identity_changed');
+    expect(fixture.io.createReviewedTask).toHaveBeenCalledTimes(1);
+    expect(fixture.row).toMatchObject({status:'approval_pending',approvalRequestId:approval.request.requestId,approvalPayload:{command:approval.request.body}});
+    await expect(fixture.service.execute(approval)).rejects.toThrow('recording_identity_changed');
+    expect(fixture.io.createReviewedTask).toHaveBeenCalledTimes(1);
+    fixture.changeCustomer('customer-synthetic');
+    expect(await fixture.service.execute(approval)).toMatchObject({recording:{status:'approved'}});
+    expect(fixture.io.createReviewedTask).toHaveBeenCalledTimes(3);
+    expect(fixture.io.createReviewedTask.mock.calls[0]?.[2]).toBe(fixture.io.createReviewedTask.mock.calls[1]?.[2]);
+    expect(fixture.io.createReviewedTask.mock.calls[2]?.[2]).toBe(stableUuid(`recording:${first.recording.id}:action:1`));
+    expect(fixture.io.createReviewedTask.mock.calls[0]?.[1]).toEqual(fixture.io.createReviewedTask.mock.calls[1]?.[1]);
+  });
+  it('does not erase a frozen AI approval after one task and a source-revision conflict',async()=>{
+    const fixture=setupService(),c=transcript('Customer: Please call me about access.');
+    const first=await fixture.service.saveTranscript(c);await fixture.service.processNext();
+    const draft=await fixture.service.execute({...c,request:{requestId:randomUUID(),body:{command:'recording.get',recordingId:first.recording.id}}}) as {recording:{revision:string}};
+    const task=manualTask(first.recording.id),approval=reviewedApproval(c,first.recording.id,draft.recording.revision,[task,{...task,title:'Confirm the next visit'}]);
+    fixture.io.createReviewedTask.mockImplementationOnce(async()=>{fixture.onJobRead(()=>fixture.linkProject('project-synthetic'));return{ok:true};});
+    await expect(fixture.service.execute(approval)).rejects.toThrow('recording_source_revision_conflict');
+    expect(fixture.io.createReviewedTask).toHaveBeenCalledTimes(1);
+    const frozen=fixture.row as {approvalRequestId:string;approvalFingerprint:string;approvalPayload:unknown};
+    expect(frozen).toMatchObject({status:'approval_pending',lastErrorCode:'recording_source_revision_conflict',approvalRequestId:approval.request.requestId,approvalPayload:{command:approval.request.body}});
+    const refresh={...approval,request:{requestId:randomUUID(),body:{command:'recording.refresh_source' as const,recordingId:first.recording.id}}};
+    await expect(fixture.service.execute(refresh)).rejects.toThrow('recording_review_refresh_not_safe');
+    expect(fixture.row).toMatchObject({status:'approval_pending',approvalRequestId:frozen.approvalRequestId,approvalFingerprint:frozen.approvalFingerprint,approvalPayload:frozen.approvalPayload});
+    fixture.onJobRead(()=>{});
+    expect(await fixture.service.execute(approval)).toMatchObject({recording:{status:'approved'}});
+    expect(fixture.io.createReviewedTask).toHaveBeenCalledTimes(3);
+    expect(fixture.io.createReviewedTask.mock.calls[0]?.[2]).toBe(fixture.io.createReviewedTask.mock.calls[1]?.[2]);
+    expect(fixture.io.createReviewedTask.mock.calls[2]?.[2]).toBe(stableUuid(`recording:${first.recording.id}:action:1`));
+  });
+  it('does not finalize an AI review if the customer changes after its last task write',async()=>{
+    const fixture=setupService(),c=transcript('Customer: Please call me about access.');
+    const first=await fixture.service.saveTranscript(c);await fixture.service.processNext();
+    const draft=await fixture.service.execute({...c,request:{requestId:randomUUID(),body:{command:'recording.get',recordingId:first.recording.id}}}) as {recording:{revision:string}};
+    const approval=reviewedApproval(c,first.recording.id,draft.recording.revision,[manualTask(first.recording.id)]);
+    fixture.io.createReviewedTask.mockImplementationOnce(async()=>{fixture.changeCustomer('different-customer');return{ok:true};});
+    await expect(fixture.service.execute(approval)).rejects.toThrow('recording_identity_changed');
+    expect(fixture.io.createReviewedTask).toHaveBeenCalledTimes(1);
+    expect(fixture.row).toMatchObject({status:'approval_pending',approvalPayload:{command:approval.request.body}});
+  });
+  it('does not overwrite a manager refresh that reset an AI review during its task write',async()=>{
+    const fixture=setupService(),c=transcript('Customer: Please call me about access.');
+    const first=await fixture.service.saveTranscript(c);await fixture.service.processNext();
+    const draft=await fixture.service.execute({...c,request:{requestId:randomUUID(),body:{command:'recording.get',recordingId:first.recording.id}}}) as {recording:{revision:string}};
+    const approval=reviewedApproval(c,first.recording.id,draft.recording.revision,[manualTask(first.recording.id)]);
+    fixture.io.createReviewedTask.mockImplementationOnce(async()=>{fixture.changeRow({status:'draft',approvalPayload:null,approvalFingerprint:null,approvalRequestId:null});return{ok:true};});
+    await expect(fixture.service.execute(approval)).rejects.toThrow('recording_approval_request_conflict');
+    expect(fixture.row).toMatchObject({status:'draft',approvalPayload:null,approvalFingerprint:null});
+    expect(fixture.io.createReviewedTask).toHaveBeenCalledTimes(1);
   });
   it('reviews exact-source manual office tasks without applying or inventing a walkthrough scope',async()=>{
     const fixture=setupService(),c=transcript('Customer: Please call me about access.');

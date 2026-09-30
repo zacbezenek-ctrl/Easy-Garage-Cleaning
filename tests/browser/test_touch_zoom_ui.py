@@ -33,6 +33,12 @@ PAGES = {
     'crew/offline.html': (None, '.actions a'),
 }
 VIEWPORT = re.compile(r'<meta\s+name=["\']viewport["\']\s+content=["\']([^"\']+)', re.I)
+BUSINESS_STAFF_PAGES = {
+    'business-hub.html': ('business-hub.html', '.gate-grid', '#invite-code'),
+    'staff-setup': ('functions/staff-setup.js', '.gate-card', '#email'),
+}
+STAFF_SETUP_SOURCE = (ROOT / 'functions/staff-setup.js').read_text(encoding='utf-8')
+STAFF_SETUP_HTML = re.search(r'const html=`([^`]+)`;', STAFF_SETUP_SOURCE).group(1)
 
 
 class Handler(SimpleHTTPRequestHandler):
@@ -58,6 +64,18 @@ class TouchViewportSourceTests(unittest.TestCase):
                     self.assertRegex(source, r'touch-action\s*:\s*manipulation', path)
                 else:
                     self.assertRegex(source, r'<link[^>]+href=["\']/app-touch\.css\?v=[^"\']+["\']', path)
+
+    def test_business_staff_pages_load_policy_without_disabling_pinch_zoom(self):
+        for path, (source_path, _, _) in BUSINESS_STAFF_PAGES.items():
+            with self.subTest(path=path):
+                source = (ROOT / source_path).read_text(encoding='utf-8')
+                viewport = VIEWPORT.search(source)
+                self.assertIsNotNone(viewport, path)
+                content = viewport.group(1).lower().replace(' ', '')
+                self.assertIn('width=device-width', content, path)
+                self.assertNotIn('maximum-scale', content, path)
+                self.assertNotIn('user-scalable=no', content, path)
+                self.assertRegex(source, r'<link[^>]+href=["\']/app-touch\.css\?v=20260930mobiletouch["\']', path)
 
 
 class TouchZoomWebKitTests(unittest.TestCase):
@@ -96,6 +114,8 @@ class TouchZoomWebKitTests(unittest.TestCase):
         url = urlparse(route.request.url)
         if url.hostname != '127.0.0.1':
             route.abort()
+        elif url.path == '/staff-setup':
+            route.fulfill(status=200, content_type='text/html; charset=utf-8', body=STAFF_SETUP_HTML)
         elif url.path.endswith('.js'):
             # Only the real markup and stylesheet matter for this policy test.
             route.fulfill(status=200, content_type='application/javascript', body='')
@@ -184,6 +204,30 @@ class TouchZoomWebKitTests(unittest.TestCase):
           document.body.append(canvas);return getComputedStyle(canvas).touchAction;
         }''')
         self.assertEqual(value, 'none')
+
+    def test_business_staff_surfaces_keep_touch_policy_and_page_scroll(self):
+        for path, (_, text_surface, field) in BUSINESS_STAFF_PAGES.items():
+            with self.subTest(path=path):
+                self.open(path)
+                values = self.page.evaluate('''([surface,field])=>{
+                  const touch=selector=>getComputedStyle(document.querySelector(selector)).touchAction;
+                  const select=document.createElement('select'),textarea=document.createElement('textarea');
+                  document.body.append(select,textarea);
+                  const fonts=[...document.querySelectorAll('input:not([type=checkbox]),select,textarea')]
+                    .map(el=>parseFloat(getComputedStyle(el).fontSize));
+                  return {scale:visualViewport.scale, root:touch('html'), body:touch('body'),
+                    surface:touch(surface), field:touch(field), fonts};
+                }''', [text_surface, field])
+                self.assertAlmostEqual(values['scale'], 1, delta=0.01, msg=(path, values))
+                self.assertEqual((values['root'], values['body'], values['surface'], values['field']),
+                                 ('manipulation',) * 4, (path, values))
+                self.assertTrue(values['fonts'] and all(size >= 16 for size in values['fonts']),
+                                (path, values))
+                moved = self.page.evaluate('''()=>{
+                  const spacer=document.createElement('div');spacer.style.height='1200px';
+                  document.body.append(spacer);scrollTo(0,180);return scrollY;
+                }''')
+                self.assertGreater(moved, 0, path)
 
 
 if __name__ == '__main__':

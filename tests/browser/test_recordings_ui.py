@@ -110,6 +110,21 @@ class RecordingTests(unittest.TestCase):
         self.open();self.page.get_by_role('button',name='Approve reviewed scope',exact=True).click();self.assertFalse(any(c['body']['command']=='recording.approve' for c in self.calls));self.page.get_by_label('I reviewed the transcript, the current visit, the scope and each selected action').check();self.page.get_by_label('Create an Action Center task').check();self.page.get_by_role('button',name='Approve reviewed scope',exact=True).click();expect(self.page.get_by_role('alert')).to_contain_text('Choose an owner');self.assertFalse(any(c['body']['command']=='recording.approve' for c in self.calls))
     def test_unknown_approval_retries_exact_review_and_request_id(self):
         self.open();self.fail=True;self.page.get_by_label('I reviewed the transcript, the current visit, the scope and each selected action').check();self.page.get_by_role('button',name='Approve reviewed scope',exact=True).click();expect(self.page.get_by_role('button',name='Retry exact review')).to_be_visible();expect(self.page.get_by_label('Keep',exact=True)).to_be_disabled();self.page.get_by_role('button',name='Retry exact review').click();expect(self.page.get_by_text('Status: approved',exact=True)).to_be_visible();writes=[x for x in self.calls if x['body']['command']=='recording.approve'];self.assertEqual(len(writes),2);self.assertEqual(writes[0],writes[1]);self.assertEqual(writes[0]['body']['actions'],[])
+    def test_pending_ai_source_conflict_preserves_exact_retry_and_saved_transcript(self):
+        pending={'command':'recording.approve','recordingId':self.row['id'],'revision':self.row['revision'],'extraction':self.row['extraction'],'actions':[]}
+        request_id=str(uuid.uuid4())
+        self.row.update(status='approval_pending',sourceKind='transcript',reviewMode='ai_scope',lastErrorCode='recording_source_revision_conflict',pendingReview=pending,approvalRequestId=request_id)
+        self.page.goto(self.url);self.page.get_by_role('button',name='Recordings',exact=True).click();self.page.get_by_role('button',name='Open recording',exact=True).click()
+        expect(self.page.get_by_role('alert')).to_contain_text('Some work may already be saved')
+        expect(self.page.get_by_role('button',name='Review current visit again')).to_have_count(0)
+        self.page.get_by_text('Source transcript',exact=True).click()
+        expect(self.page.get_by_text('I will call before work starts. Keep the bicycle.',exact=True)).to_be_visible()
+        retry=self.page.get_by_role('button',name='Retry exact reviewed approval',exact=True)
+        self.fail=True;retry.click();expect(retry).to_be_visible()
+        retry.click();expect(self.page.get_by_text('Status: approved',exact=True)).to_be_visible()
+        writes=[call for call in self.calls if call['body']['command']=='recording.approve']
+        self.assertEqual(len(writes),2);self.assertEqual(writes[0],writes[1]);self.assertEqual(writes[0]['requestId'],request_id)
+        self.assertFalse(any(call['body']['command']=='recording.refresh_source' for call in self.calls))
     def test_failed_processing_is_truthful_and_retryable(self):
         self.row['status']='failed';self.row['lastErrorCode']='recording_processing_failed';self.page.goto(self.url);self.page.get_by_role('button',name='Recordings',exact=True).click();self.page.get_by_role('button',name='Open recording',exact=True).click();expect(self.page.get_by_role('alert')).to_contain_text('Audio is saved');self.page.get_by_role('button',name='Retry processing').click();expect(self.page.get_by_text('Status: processing',exact=True)).to_be_visible()
     def test_credit_exhaustion_shows_saved_transcript_and_keeps_retry_available(self):
