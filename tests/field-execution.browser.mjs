@@ -57,7 +57,7 @@ const server = createServer(async (incoming, outgoing) => {
       outgoing.writeHead(response.status, Object.fromEntries(response.headers)); outgoing.end(Buffer.from(await response.arrayBuffer())); return;
     }
     const filename = resolve(root, `.${url.pathname}`);
-    if (!filename.startsWith(resolve(root, 'crew') + '\\') && !filename.startsWith(resolve(root, 'crew') + '/')) { outgoing.writeHead(404); outgoing.end(); return; }
+    if (filename !== resolve(root, 'app-touch.css') && !filename.startsWith(resolve(root, 'crew') + '\\') && !filename.startsWith(resolve(root, 'crew') + '/')) { outgoing.writeHead(404); outgoing.end(); return; }
     const data = await readFile(filename); outgoing.writeHead(200, { 'Content-Type': ({ '.html': 'text/html', '.js': 'application/javascript', '.css': 'text/css', '.json': 'application/json', '.webmanifest': 'application/manifest+json' })[extname(filename)] || 'application/octet-stream' }); outgoing.end(data);
   } catch (error) { outgoing.writeHead(500); outgoing.end(String(error.message)); }
 });

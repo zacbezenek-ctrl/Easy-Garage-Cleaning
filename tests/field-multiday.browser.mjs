@@ -5,7 +5,7 @@ import assert from 'node:assert/strict';
 import { createServer } from 'node:http';
 import { readFile, mkdir } from 'node:fs/promises';
 import { fileURLToPath, pathToFileURL } from 'node:url';
-import { resolve, extname } from 'node:path';
+import { resolve, extname, sep } from 'node:path';
 import { hashHubCredential } from '../functions/_lib/hub-session.js';
 import { fieldChecklist } from '../functions/_lib/field-execution.js';
 import { addDays } from '../functions/_lib/dispatch-time.js';
@@ -48,7 +48,7 @@ const server = createServer(async (incoming, outgoing) => {
       outgoing.writeHead(response.status, Object.fromEntries(response.headers)); outgoing.end(Buffer.from(await response.arrayBuffer())); return;
     }
     const filename = resolve(root, `.${target.pathname}`);
-    if (!filename.startsWith(resolve(root, 'crew') + '/')) { outgoing.writeHead(404); outgoing.end(); return; }
+    if (filename !== resolve(root, 'app-touch.css') && !filename.startsWith(resolve(root, 'crew') + sep)) { outgoing.writeHead(404); outgoing.end(); return; }
     outgoing.writeHead(200, { 'Content-Type': ({ '.html': 'text/html', '.js': 'application/javascript', '.css': 'text/css', '.json': 'application/json' })[extname(filename)] || 'application/octet-stream' }); outgoing.end(await readFile(filename));
   } catch (error) { outgoing.writeHead(500); outgoing.end(String(error.message)); }
 });

@@ -284,10 +284,11 @@ class HubOfflineBrowserTests(HubShell, unittest.TestCase):
         self.assertTrue(script['script'].endswith('/hub-sw.js')); self.assertEqual(urlparse(script['scope']).path, '/')
         page.reload()
         page.wait_for_function('document.querySelector("#ops-main")?.children.length>0 && navigator.serviceWorker.controller')
-        kept = page.evaluate("""async()=>{for(let i=0;i<400;i++){const names=await caches.keys(),name=names.find(n=>n.startsWith('egc-hub-assets-'));if(name){const keys=(await (await caches.open(name)).keys()).map(r=>new URL(r.url).pathname+new URL(r.url).search);if(keys.some(k=>k.startsWith('/employee-suite.js?v=')))return {name,keys};}await new Promise(res=>setTimeout(res,50));}return null;}""")
+        kept = page.evaluate("""async()=>{for(let i=0;i<400;i++){const names=await caches.keys(),name=names.find(n=>n.startsWith('egc-hub-assets-'));if(name){const keys=(await (await caches.open(name)).keys()).map(r=>new URL(r.url).pathname+new URL(r.url).search);if(keys.some(k=>k.startsWith('/employee-suite.js?v='))&&keys.includes('/app-touch.css?v=20260930mobiletouch'))return {name,keys};}await new Promise(res=>setTimeout(res,50));}return null;}""")
         self.assertIsNotNone(kept, 'the worker keeps the versioned Hub files from a signed-in load')
         self.assertEqual(kept['name'], 'egc-hub-assets-20260929hubpwa')
-        self.assertTrue(all(re.match(r'^/employee-[A-Za-z0-9_-]+\.(js|css)\?v=', key) for key in kept['keys']), kept['keys'])
+        self.assertTrue(all(re.match(r'^/(?:employee-[A-Za-z0-9_-]+\.(?:js|css)|app-touch\.css)\?v=', key) for key in kept['keys']), kept['keys'])
+        self.assertIn('/app-touch.css?v=20260930mobiletouch', kept['keys'])
         self.assertFalse(any(key.startswith('/employee.html') or key.startswith('/api/') for key in kept['keys']))
 
         self.setting = False
