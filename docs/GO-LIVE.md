@@ -857,7 +857,7 @@ Invoice sending and customer portal sign-in links by text or email are in the [n
 | `EGC_RECURRING_PLANS_ENABLED` | Waits for the recurring-plan background job (RECUR-CRON). |
 | `EGC_STAFF_ROLE_PERMISSIONS` | Can hide business screens from a manager whose saved roles lack them; check every business user's roles first. `EGC_STAFF_ROLE_ACCESS` ([3.5](#35-staff-roles-grant-access-owner-decision-on)) turns it on for you, after the role checks there. |
 | `EGC_EXTRACTION_V2` (Railway egc-api) | Waits for the recording review screen (P3-09); also adds OpenAI cost per recording. |
-| `CATALOG_QUOTES_ENABLED` | No Hub screen yet (CATALOG-ADMIN), and the pricing settings are placeholders. |
+| `CATALOG_QUOTES_ENABLED` | The owner catalog screen and reviewed product quote flow are implemented. Enable for owner setup with the placeholder guard still on; release customer pricing only after approved settings and live catalog/storage checks. Unverified or stale products cannot be quoted. See [catalog workflow](GARAGE-CATALOG.md#build-and-review-a-catalog-quote). |
 | `CUSTOMER_PORTAL_REJECT_DRAFT_ESTIMATES` | The Hub still saves estimates as draft, so customers could not approve. |
 | `EGC_OPERATIONS_BRIDGE_CONFIRM_REQUIRED` | Would block AI and bridge visit cancellations; nothing can issue the confirmation yet. |
 | `EGC_OPERATIONS_FOLLOWUP_POLICY_ENABLED`, `EGC_OPERATIONS_STAFF_MEMBERS`, `EGC_OPERATIONS_FOLLOWUP_ROLE`, `EGC_OPERATIONS_FOLLOWUP_OWNER_ID` | Hub-side follow-up ownership. HighLevel owns follow-ups. |
@@ -961,7 +961,7 @@ Not in this build. No steps yet; each will come with its own switch, off by defa
 - **P1-06:** time-off requests and approvals on the server (needs you to say "merge P1-06").
 - **PAY-TIMESHEETS** and **JOB-COST-PRIVACY:** pay and labor cost owner-only in the timesheet API, payroll CSV and job costing.
 - **HUB-PWA:** the Hub as an installable app, with an offline queue for clock-ins and chat.
-- **CATALOG-ADMIN:** the Hub screen for the catalog and pricing settings.
+- **CATALOG-ADMIN is implemented:** owner catalog/settings/publishing and reviewed product quotes. Customer activation still needs approved pricing and the live checks described in [Garage catalog](GARAGE-CATALOG.md).
 - **CHANGE-ORDERS** and **TIPS:** billing approved change orders; optional crew tips on card payments.
 - **QUOTE-DRAFT:** unsigned quote drafts that reach the customer only after a confirmed human send.
 - **FIELD-MULTIDAY**, **DISPATCH-DURATION**, **CREW-PROFILE:** per-day visits for multi-day jobs, suggested job length from the quote, crew profiles and photos in the portal.

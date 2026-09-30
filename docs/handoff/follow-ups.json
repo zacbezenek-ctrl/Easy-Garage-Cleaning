@@ -3,6 +3,13 @@
   "asOf": "2026-09-30 UTC",
   "items": [
     {
+      "id": "CATALOG-PRICING-RELEASE",
+      "state": "implementation_ready_activation_pending",
+      "owner": "owner and release coordinator",
+      "action": "Receive approved labor, markup, minimum and packaging rates; save reviewed settings through Catalog & pricing with a new settings version. Verify authenticated catalog/Firestore health and Cloudflare CPU headroom; publish only exact verified product price updates. Run a synthetic save and customer review without sending a real customer message. Enable catalog administration only with the placeholder guard still on; release customer pricing after these checks pass.",
+      "evidence": "The product quote composer and server-priced save path are implemented. Repository installation settings remain explicitly unapproved. Price research is separate from publication; unverified/stale products are excluded from customer quote selection."
+    },
+    {
       "id": "STAFF-DATA-READ",
       "state": "open",
       "owner": "release coordinator and owner",

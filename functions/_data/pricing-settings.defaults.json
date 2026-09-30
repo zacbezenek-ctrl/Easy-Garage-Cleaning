@@ -33,7 +33,7 @@
   "minimumJobCents": "PLACEHOLDER: $450 minimum per quote, matching today's walkthrough minimum in crew/gameplan.html recommend() (Math.max(450, ...)). Market references: Colorado handyman minimums $100-$200 for the first hour plus travel, Boulder-area 2-hour minimums of about $150-$300, and Denver Handy Co.'s $320 (2 people x 2 hours). Applied once to the whole quote with applyMinimum(), never to a single line.",
   "includeDisposal": "PLACEHOLDER: when true, every item marked haulAwayApplicable adds disposalCentsPerItem per unit for breaking down and hauling away its packaging.",
   "disposalCentsPerItem": "PLACEHOLDER: $10.00 per unit of packaging haul-away. The Larimer County landfill charges $22-$37 per pickup load in 2026 (larimer.gov fee schedule snippet) and local junk haulers' minimums run $60-$150; $10 per unit assumes several units' cardboard and foam share one load. No packaging-specific fee was published anywhere we could read.",
-  "depositPct": "Matches current policy: a 50% deposit (crew/gameplan.html walkthroughDeposit and depositSummary, terms version 2026-09-deposit50). The catalog math does not use it; it lives here so the quote builder reads one settings record.",
-  "roundingRule": "half_up_cent: each fractional cent rounds half up (0.5 cent becomes 1 cent), applied once per line component (labor, markup) on the line total, never per unit. ceil_cent rounds any fraction up instead."
+  "depositPct": "PLACEHOLDER: 50% upfront for new catalog product quotes; the catalog quote builder calculates and saves the exact deposit from this setting. Existing signed walkthrough service quotes keep their separate 50% terms until that flow is explicitly revised.",
+  "roundingRule": "half_up_cent: each fractional cent rounds half up (0.5 cent becomes 1 cent), applied once per unit component (labor, markup), then multiplied by quantity for the line total. ceil_cent rounds any fraction up instead."
  }
 }

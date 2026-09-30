@@ -3,7 +3,7 @@
   "asOf": "2026-09-30 UTC",
   "source": "owner wrap-up instruction",
   "originalQueueNewUnitsMayStart": false,
-  "laterAuthorizedWork": "Complete and polish existing Hub, iOS crew, Walkthroughs and transcript-to-office-task flows, plus investigate the approved live staff-data failure; no unrelated new units.",
+  "laterAuthorizedWork": "Complete and polish existing Hub, iOS crew, Walkthroughs and transcript-to-office-task flows, plus investigate the approved live staff-data failure; no unrelated new units. Owner explicitly prioritized catalog and pricing completion on 2026-09-30.",
   "mergeMode": "one_at_a_time",
   "testEachMerge": true,
   "steps": [
@@ -415,5 +415,11 @@
     "sha": "d08b9ec7a6a21c33403540c5025c9b0a93f625be",
     "ci": "all_applicable_pr_and_main_workflows_success",
     "liveFirestoreRead": "HTTP429_unresolved"
+  },
+  "catalogPricingActivation": {
+    "implementation": "codex/catalog-pricing-readiness",
+    "gate": "tested serial release, then owner-approved settings and authenticated live acceptance",
+    "placeholderReleaseAuthorized": false,
+    "customerMessagesSentForTesting": false
   }
 }

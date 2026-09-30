@@ -150,10 +150,10 @@
     const client = options.client || createClient(options);
     const S = { step: 'review', busy: false, error: '', status: '', saved: null, preview: null, sent: null, validUntil: denverDate(options.now ? options.now() : Date.now(), 14), generation: 0 };
     const opener = document.activeElement, body = h('div', { class: 'qd-body' }), foot = h('div', { class: 'qd-foot' });
-    const dialog = h('dialog', { class: 'qd-dialog', 'aria-labelledby': 'qd-title' }, h('div', { class: 'qd-head' }, h('p', { class: 'qd-kicker' }, 'Not signing today?'), h('h2', { id: 'qd-title' }, 'Send options for review')), body, foot);
+    const dialog = h('dialog', { class: 'qd-dialog' + (options.variant === 'catalog' ? ' cq-review' : ''), 'aria-labelledby': 'qd-title' }, h('div', { class: 'qd-head' }, h('p', { class: 'qd-kicker' }, options.kicker || 'Not signing today?'), h('h2', { id: 'qd-title' }, options.title || 'Send options for review')), body, foot);
     const close = () => { S.generation++; if (dialog.open) dialog.close(); dialog.remove(); active = null; window.removeEventListener('egc:signout', signout); if (opener?.focus) opener.focus(); };
     const signout = () => { client.clear(); close(); };
-    const draft = () => draftFromWalkthrough(options.plan(), S.validUntil);
+    const draft = () => typeof options.draft === 'function' ? options.draft(S.validUntil) : draftFromWalkthrough(options.plan(), S.validUntil);
     // An earlier save whose answer was lost is shown and retried exactly as it
     // was frozen, never the walkthrough as it reads now.
     async function detectFrozen() {
@@ -165,7 +165,7 @@
     }
     const totalOf = list => list.reduce((sum, line) => sum + (line.selected === false ? 0 : Number(line.totalCents) || 0), 0);
     function lines(list) {
-      return h('ul', { class: 'qd-lines' }, list.map(line => h('li', { class: line.included === false || line.selected === false ? 'qd-line qd-muted' : 'qd-line' }, h('span', {}, line.name, line.quantity !== 1 ? ` × ${line.quantity}` : '', line.group ? ` (${line.group.label}${line.tier ? ` · ${line.tier}` : ''})` : line.optional ? ' (optional)' : ''), h('b', {}, money(line.totalCents)))));
+      return h('ul', { class: 'qd-lines' }, list.map(line => h('li', { class: line.included === false || line.selected === false ? 'qd-line qd-muted' : 'qd-line' }, h('span', {}, line.name, line.customerSupplied ? ' (customer supplied)' : '', line.quantity !== 1 ? ` × ${line.quantity}` : '', line.group ? ` (${line.group.label}${line.tier ? ` · ${line.tier}` : ''})` : line.optional ? ' (optional)' : ''), h('b', {}, money(line.totalCents)))));
     }
     function render() {
       const children = [];
@@ -179,15 +179,23 @@
           h('input', { id: 'qd-valid', class: 'qd-input', type: 'date', value: S.validUntil, min: denverDate(options.now ? options.now() : Date.now()), required: true, oninput: event => { S.validUntil = event.target.value; } }));
       } else if (S.step === 'confirm') {
         const job = S.preview.job;
-        children.push(h('p', { class: 'qd-summary' }, S.preview.summary), lines(job.estimate.lineItems), h('p', { class: 'qd-total' }, 'Total ', h('b', {}, money(job.estimate.amountCents)), ` · valid through ${dayText(job.estimate.validUntil)}`), h('p', { class: 'qd-mode' }, (MODES[S.preview.delivery.mode] || MODES.off)(S.preview.delivery.recipient?.masked || '')));
+        children.push(h('p', { class: 'qd-summary' }, S.preview.summary), lines(job.estimate.lineItems), h('p', { class: 'qd-total' }, 'Total ', h('b', {}, money(job.estimate.amountCents)), ` · valid through ${dayText(job.estimate.validUntil)}`), Number.isSafeInteger(job.estimate.depositRequiredCents) ? h('p', {}, 'Deposit due: ', money(job.estimate.depositRequiredCents)) : null, h('p', { class: 'qd-mode' }, (MODES[S.preview.delivery.mode] || MODES.off)(S.preview.delivery.recipient?.masked || '')));
       } else children.push(h('p', { class: 'qd-done' }, S.status));
       if (S.busy) children.push(h('div', { class: 'qd-skeleton', 'aria-hidden': 'true' }, h('span'), h('span')));
       children.push(h('p', { class: 'qd-status', 'aria-live': 'polite' }, S.step === 'done' ? '' : S.status), S.error ? h('p', { class: 'qd-error', role: 'alert' }, S.error) : null);
       body.replaceChildren(...children.filter(Boolean));
-      const primary = S.step === 'review' ? h('button', { type: 'button', class: 'qd-primary', disabled: S.busy, onclick: saveDraft }, S.busy ? 'Saving draft…' : S.retry ? 'Retry original save' : 'Save draft')
+      const primary = S.step === 'review' ? h('button', { type: 'button', class: 'qd-primary', disabled: S.busy, onclick: S.reprice ? refreshPrices : saveDraft }, S.busy ? 'Saving draft…' : S.reprice ? 'Review updated prices' : S.retry ? 'Retry original save' : 'Save draft')
         : S.step === 'confirm' ? h('button', { type: 'button', class: 'qd-primary', disabled: S.busy, onclick: confirmSend }, S.busy ? 'Sending…' : S.retry ? 'Retry original send' : S.preview.delivery.mode === 'automation' ? 'Send to customer' : 'Mark as sent')
           : h('button', { type: 'button', class: 'qd-primary', onclick: close }, 'Done');
       foot.replaceChildren(...(S.step === 'done' ? [primary] : [h('button', { type: 'button', class: 'qd-secondary', disabled: S.busy, onclick: close }, 'Close'), primary]));
+    }
+    async function refreshPrices() {
+      if (S.busy) return;
+      const generation = S.generation;
+      S.busy = true; S.error = ''; render();
+      try { const reopen = await options.reprice(); if (generation !== S.generation) return; close(); await reopen(); }
+      catch (error) { if (generation === S.generation) S.error = error.message || 'The latest prices could not be loaded. Retry.'; }
+      finally { if (generation === S.generation) { S.busy = false; render(); } }
     }
     async function saveDraft() {
       const generation = S.generation, current = draft(), miss = missing(current);
@@ -210,6 +218,7 @@
         const pending = await client.pendingSave().catch(() => null);
         if (generation !== S.generation) return;
         S.retry = Boolean(pending); S.frozen = pending ? pending.draft : null; S.error = error.message || 'The quote could not be saved. Retry.';
+        S.reprice = !pending && typeof options.reprice === 'function' && /^quote_draft_catalog_(version_changed|price_changed|price_unverified|item_unavailable)$/.test(error.code || '');
       } finally { if (generation === S.generation) { S.busy = false; render(); } }
     }
     async function confirmSend() {

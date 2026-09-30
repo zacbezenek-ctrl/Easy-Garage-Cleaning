@@ -1,12 +1,16 @@
 # Garage product catalog
 
-The garage product catalog is the priced list of storage products and EGC services that the walkthrough quote builder will offer as good, better and best options. This unit (CAT-DATA) adds the data and the pure pricing library only. There is no UI, API or Firestore write yet. Later units add the settings API, the owner admin screen, and publishing to Firestore.
+The garage product catalog contains storage products and EGC services. **Hub → System → Catalog & pricing** lets the owner inspect products, review pricing settings, publish catalog versions and build product installation quotes. The catalog and settings APIs store immutable versions and save receipts in Firestore. Existing walkthrough service prices use their separate price table.
+
+**Customer release gate:** catalog quotes require `CATALOG_QUOTES_ENABLED=true`, owner-approved pricing settings, and current verified product prices. The shipped installation settings remain placeholders. Do not treat this implementation or a green test as approval of those rates or proof that the live flag is enabled.
 
 | File | What it is |
 |---|---|
 | `functions/_data/garage-catalog.json` | The catalog: `catalogVersion` `2026-09-27.1`, `schemaVersion` 1, 250 items, 62 customer needs and the audit log. |
 | `functions/_data/pricing-settings.defaults.json` | **Placeholder** owner pricing settings. `mustSetBeforeCustomerUse` is `true`. |
 | `functions/_lib/catalog.js` | `validateCatalog`, `validatePricingSettings`, `optionsForNeed`, `staleItems`, `computeSellPriceCents`, `catalogLine`, `applyMinimum`, `settingsReadyForCustomers`. Pure functions, integer cents, injected clock. |
+| `employee-catalog.js`, `employee-catalog-quote.js` | Owner catalog administration and the phone-friendly product quote composer. |
+| `functions/_lib/catalog-quote.js`, `functions/api/quote-draft.js` | Server price preview, verified save and the existing separately confirmed send flow. |
 | `tests/catalog.test.mjs`, `tests/catalog-pricing.test.mjs` | The contract for the data and the pricing math. |
 
 The catalog is a Pages Functions data file, not a website page. The `functions/` directory is compiled into the Worker and is not expected to be served as a static asset. The edge middleware's private-path list does not name `/functions`, so the owner checklist includes a one-time check that `/functions/_data/garage-catalog.json` returns 404 in production.
@@ -278,7 +282,21 @@ To re-check an item:
 5. Publish a new version: set `catalogVersion` to the date plus a counter (for example `2026-12-20.1`) and `generatedOn` to that date. No `checkedOn` may be later than `generatedOn`.
 6. Run `node --test tests/catalog.test.mjs tests/catalog-pricing.test.mjs`. `validateCatalog` rejects missing sources, dates in the future, wrong coverage claims, image links and unsafe crew settings, and names the exact failing field.
 
-The next units add a Firestore-published catalog (`catalogVersions/{version}`, falling back to this seed file) and an owner screen for these edits.
+The owner publishes the reviewed JSON through **Catalog & pricing → Publish**. The API atomically saves an immutable `catalogVersions/{version}`, updates the current pointer, and records its receipt and audit entry. Replaying a lost response uses the same request. A broken published record fails closed; it never silently falls back to old seed prices.
+
+## Build and review a catalog quote
+
+1. Enable catalog administration with `CATALOG_QUOTES_ENABLED=true` while keeping `mustSetBeforeCustomerUse=true`. This permits owner setup while product quote saves remain blocked. Review and save approved settings in **Pricing**, including labor, markup, minimum, packaging, deposit and rounding. Release those settings only after the owner decision and live storage checks. The settings version identifies those exact values permanently.
+2. On **Items**, choose **Build catalog quote**. Enter the customer name, address and phone or email. Add up to 11 product selections; search and category filters show only active products with current verified prices.
+3. Enter quantities and mark products the customer already owns. The server includes approved labor and packaging, removes product cost and markup for customer-supplied products, and applies the minimum once as its own visible line.
+4. Choose **Review exact price**. The server checks the current catalog and settings versions. Review the total and configured deposit, then continue to **Save draft**. Saving alone does not notify the customer.
+5. Review the saved quote and delivery mode. Confirm the separate send only when ready. Existing quote delivery, customer approval and money document flows use the saved amount and deposit.
+
+The server recalculates every catalog line on save and rejects changed versions, substituted totals, unverified prices and stale products. Internal cost splits stay out of the customer preview. A saved quote retains its original prices until its validity date; later catalog changes do not silently reprice it. Turning the catalog switch off blocks new saves and sends while preserving exact receipts for already-completed requests.
+
+An unconfirmed save keeps its original customer, selections, prices and request identity across reloads. Retry it unchanged before starting another quote. Sign-out clears local draft details, including protection against late network responses. This browser storage is temporary; save the draft before closing the browser session.
+
+Focused verification: `node --test tests/catalog-quote.test.mjs tests/quote-draft.test.mjs tests/catalog-api.test.mjs tests/catalog-pricing.test.mjs tests/catalog-admin-ui.test.mjs`; browser checks: `python tests/browser/test_catalog_ui.py` and `python tests/browser/test_catalog_quote_ui.py`. The new composer also runs in WebKit using `EGC_TEST_BROWSER=webkit`.
 
 ## Stocked item standard costs (cost, not price)
 

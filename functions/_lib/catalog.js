@@ -256,7 +256,7 @@ export function validatePricingSettings(settings) {
   integer(settings.minimumJobCents, 'settings.minimumJobCents', 0, MAX_ITEM_CENTS, settingsInvalid);
   flag(settings.includeDisposal, 'settings.includeDisposal', settingsInvalid);
   integer(settings.disposalCentsPerItem, 'settings.disposalCentsPerItem', 0, 100000, settingsInvalid);
-  if (typeof settings.depositPct !== 'number' || !Number.isFinite(settings.depositPct) || settings.depositPct < 0 || settings.depositPct > 100) throw settingsInvalid('settings.depositPct', 'must be a percentage from 0 to 100');
+  if (typeof settings.depositPct !== 'number' || !Number.isFinite(settings.depositPct) || settings.depositPct < 0 || settings.depositPct > 100 || Math.abs(settings.depositPct * 100 - Math.round(settings.depositPct * 100)) > 1e-9) throw settingsInvalid('settings.depositPct', 'must be a percentage from 0 to 100 with at most 2 decimals');
   oneOf(settings.roundingRule, 'settings.roundingRule', ROUNDING_RULES, settingsInvalid);
   if (settings.comments !== undefined) {
     if (!plain(settings.comments)) throw settingsInvalid('settings.comments', 'must be an object');
@@ -278,8 +278,8 @@ function roundCents(numerator, denominator, rule) {
 }
 
 // One unit (one priceUnit) of an active item: {productCents, laborCents, laborMinutes, markupCents, disposalCents, fixedCents}.
-function unitPrice(item, settings, options) {
-  validatePricingSettings(settings);
+function unitPrice(item, settings, options, settingsValidated = false) {
+  if (!settingsValidated) validatePricingSettings(settings);
   if (!plain(item) || typeof item.id !== 'string') throw pricingInvalid('item', 'is not a catalog item');
   const label = `item ${item.id}`;
   shape(options, `${label} options`, [], ['quantity', 'customerSupplied', 'productCostCents'], pricingInvalid);
@@ -319,10 +319,28 @@ export function computeSellPriceCents(item, settings, options = {}) {
 // The LI-CORE line fields for a catalog item. `split` and `durationMinutes` (person-minutes) describe
 // ONE unit, so split sums to unitCents and totalCents = unitCents x quantity. A fixed-price service has
 // no split. The quote builder adds id, group, tier and catalog: {itemId, version: catalog.catalogVersion}.
-export function catalogLine(item, settings, options = {}) {
-  const { quantity, customerSupplied, unit, unitCents } = unitPrice(item, settings, options);
+function catalogLineFromSettings(item, settings, options, settingsValidated) {
+  const { quantity, customerSupplied, unit, unitCents } = unitPrice(item, settings, options, settingsValidated);
   const split = item.kind === 'service' ? null : Object.fromEntries(SPLIT_KEYS.map(key => [key, unit[key]]));
   return { kind: item.kind, name: item.name, quantity, unitCents, totalCents: unitCents * quantity, customerSupplied, split, durationMinutes: unit.laborMinutes };
+}
+
+export function catalogLine(item, settings, options = {}) {
+  return catalogLineFromSettings(item, settings, options, false);
+}
+
+// Price a whole catalog after one strict settings validation. Copy the pricing inputs so an editor's later
+// mutation cannot change the meaning of a validated batch. Single-line callers still validate every call.
+export function catalogLinePricer(settings) {
+  validatePricingSettings(settings);
+  const pricing = {
+    laborRateCents: settings.laborRateCents,
+    markupPct: { default: settings.markupPct.default, byCategory: { ...settings.markupPct.byCategory } },
+    includeDisposal: settings.includeDisposal,
+    disposalCentsPerItem: settings.disposalCentsPerItem,
+    roundingRule: settings.roundingRule,
+  };
+  return (item, options = {}) => catalogLineFromSettings(item, pricing, options, true);
 }
 
 // The minimum job charge applies to the whole quote, never to one line.

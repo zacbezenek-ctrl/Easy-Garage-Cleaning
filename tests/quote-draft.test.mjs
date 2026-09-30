@@ -12,6 +12,7 @@ import { MESSAGE_SENDS, ledgerId } from '../functions/_lib/message-send-store.js
 import { createGhlMessenger } from '../functions/_lib/ghl-messenger.js';
 import { CONFIRM_TOKEN_COLLECTION } from '../functions/_lib/confirm-token.js';
 import { readFileSync } from 'node:fs';
+import { priceCatalogQuote } from '../functions/_lib/catalog-quote.js';
 
 const NOW = '2026-09-22T18:00:00.000Z';
 const LATER = '2026-09-22T18:02:00.000Z';
@@ -21,6 +22,16 @@ const crew = { user: 'crew.person', role: 'crew', businessAccess: false, display
 const ENV = { HUB_SESSION_SECRET: 'synthetic-quote-draft-session-secret-0123456789' };
 const ROLES = { ...ENV, EGC_STAFF_ROLE_PERMISSIONS: 'true' };
 const MESSAGING = { ...ENV, EGC_MESSAGING_ENABLED: 'true', EGC_MESSAGING_DRY_RUN: 'false', HIGHLEVEL_API_KEY: 'synthetic-ghl-token', HIGHLEVEL_LOCATION_ID: 'location-1' };
+const CATALOG_ENV = { ...ENV, CATALOG_QUOTES_ENABLED: 'true' };
+const CATALOG_NOW = '2026-09-30T18:00:00.000Z';
+const catalogState = () => {
+  const catalog = JSON.parse(readFileSync(new URL('../functions/_data/garage-catalog.json', import.meta.url), 'utf8'));
+  const settings = JSON.parse(readFileSync(new URL('../functions/_data/pricing-settings.defaults.json', import.meta.url), 'utf8'));
+  Object.assign(settings, { mustSetBeforeCustomerUse: false, depositPct: 30 });
+  return { catalog, publication: { version: catalog.catalogVersion }, settings };
+};
+const catalogSelection = state => ({ catalogVersion: state.catalog.catalogVersion, settingsVersion: state.settings.settingsVersion,
+  items: [{ id: 'catalog-1', itemId: 'overhead-rack-fleximounts-gr48-classic-4x8', quantity: 1, customerSupplied: false }] });
 
 const shelf = { id: 'shelving', label: 'Shelving', selection: 'single', required: true };
 // Good/better/best shelving with "better" pre-selected, plus a declined optional add-on.
@@ -103,6 +114,97 @@ test('a walkthrough quote with good/better/best options is saved as a draft on a
   const audit = commit.find(write => write.collection === 'hub_audit').patch;
   assert.deepEqual([audit.action, audit.actor.id, audit.entity.id, audit.requestId], ['quote.draft.save', 'zacb', job.id, value.requestId.toLowerCase()]);
   assert.equal(f.rows.get(`${QUOTE_DRAFT_RECEIPTS}/${value.requestId.toLowerCase()}`).jobId, job.id);
+});
+
+test('a catalog quote saves only server-computed products, once-only minimum, configured deposit and frozen version provenance', async () => {
+  const f = fixture(), state = catalogState(), descriptor = catalogSelection(state);
+  const preview = priceCatalogQuote(state, descriptor, CATALOG_NOW);
+  const value = f.input({ sourceWalkthroughId: undefined, sourceRevision: undefined, draft: {
+    ...draft(), title: 'Catalog product installation', scope: 'Supply and install an overhead rack.',
+    line_items: preview.lineItems, catalog_version: preview.catalogVersion, catalog_pricing: descriptor, valid_until: '2026-10-15',
+  } });
+  let current = state;
+  const options = { catalogState: async () => current };
+  const saved = await save(f, value, owner, CATALOG_ENV, CATALOG_NOW, options);
+  const job = f.job(saved.job.id);
+  assert.deepEqual([job.estimate.amountCents, job.estimate.depositRequiredCents, job.estimate.depositPct, job.estimate.pricingSettingsVersion], [45000, 13500, 30, state.settings.settingsVersion]);
+  assert.deepEqual(job.estimate.lineItems.map(line => [line.id, line.totalCents]), [['catalog-1', 39399], ['catalog-minimum', 5601]]);
+  assert.equal(job.estimate.lineItems[0].split.productCents, 19499);
+  assert.equal(saved.job.estimate.lineItems[0].split, undefined, 'quote author DTO does not disclose product cost');
+  assert.equal(saved.job.estimate.lineItems[0].customerSupplied, false, 'quote author DTO identifies EGC-supplied products');
+  assert.deepEqual(job.quoteDraft.catalogPricing, descriptor);
+  assert.equal(f.delivered.length, 0);
+  current = { ...state, settings: { ...state.settings, settingsVersion: 'next-release' } };
+  assert.equal((await save(f, value, owner, CATALOG_ENV, CATALOG_NOW, options)).replayed, true, 'a lost-response retry replays before current pricing is rechecked');
+  const changed = { ...value, requestId: randomUUID() };
+  await assert.rejects(save(f, changed, owner, CATALOG_ENV, CATALOG_NOW, options), { code: 'quote_draft_catalog_version_changed' });
+  current = state;
+  await assert.rejects(save(f, { ...value, requestId: randomUUID(), draft: { ...value.draft, line_items: value.draft.line_items.map(line => line.id === 'catalog-1' ? { ...line, totalCents: 1 } : line) } }, owner, CATALOG_ENV, CATALOG_NOW, options), { code: 'quote_draft_catalog_price_changed' });
+  await assert.rejects(previewQuoteSend(f.store, owner, { jobId: job.id, expectedRevision: job.revision }, CATALOG_NOW, { env: ENV }), { code: 'quote_draft_catalog_disabled' });
+  const sendPreview = await previewQuoteSend(f.store, owner, { jobId: job.id, expectedRevision: job.revision }, CATALOG_NOW, { env: CATALOG_ENV });
+  assert.match(sendPreview.summary, /\$450\.00/);
+  assert.equal(sendPreview.job.estimate.depositRequiredCents, 13500);
+  const sendInput = { requestId: randomUUID(), jobId: job.id, expectedRevision: job.revision, confirmToken: sendPreview.confirmToken };
+  const sent = await sendQuoteDraft(f.store, owner, sendInput, CATALOG_NOW, { env: CATALOG_ENV });
+  assert.equal(sent.job.estimate.status, 'sent');
+  let deliveredAfterRollback = 0;
+  const replayedSend = await sendQuoteDraft(f.store, owner, sendInput, CATALOG_NOW, { env: ENV, deliver: async () => { deliveredAfterRollback++; return { status: 'submitted' }; } });
+  assert.equal(replayedSend.replayed, true);
+  assert.equal(replayedSend.job.estimate.status, 'sent', 'the original send remains recorded after rollback');
+  assert.equal(deliveredAfterRollback, 0, 'rollback never starts a new provider delivery');
+});
+
+test('quote author DTO identifies a customer-supplied catalog product without exposing its cost split', async () => {
+  const f = fixture(), state = catalogState(), descriptor = catalogSelection(state);
+  descriptor.items[0].customerSupplied = true;
+  const preview = priceCatalogQuote(state, descriptor, CATALOG_NOW);
+  const value = f.input({ sourceWalkthroughId: undefined, sourceRevision: undefined, draft: {
+    ...draft(), line_items: preview.lineItems, catalog_version: preview.catalogVersion,
+    catalog_pricing: descriptor, valid_until: '2026-10-15',
+  } });
+  const saved = await save(f, value, owner, CATALOG_ENV, CATALOG_NOW, { catalogState: async () => state });
+  assert.equal(f.job(saved.job.id).estimate.lineItems[0].split.productCents, 0);
+  assert.equal(saved.job.estimate.lineItems[0].customerSupplied, true);
+  assert.equal(saved.job.estimate.lineItems[0].split, undefined);
+});
+
+test('a new catalog settings version with identical cents retires the sent quote and approval', async () => {
+  const f = fixture(), state = catalogState(), first = catalogSelection(state);
+  const firstPrice = priceCatalogQuote(state, first, CATALOG_NOW);
+  const quote = (priced, selection) => ({ ...draft(), title: 'Catalog product installation', scope: 'Supply and install an overhead rack.',
+    line_items: priced.lineItems, catalog_version: priced.catalogVersion, catalog_pricing: selection, valid_until: '2026-10-15' });
+  const initial = await save(f, f.input({ sourceWalkthroughId: undefined, sourceRevision: undefined, draft: quote(firstPrice, first) }), owner, CATALOG_ENV, CATALOG_NOW, { catalogState: async () => state });
+  const id = initial.job.id;
+  const sendPreview = await previewQuoteSend(f.store, owner, { jobId: id, expectedRevision: f.job(id).revision }, CATALOG_NOW, { env: CATALOG_ENV });
+  await sendQuoteDraft(f.store, owner, { requestId: randomUUID(), jobId: id, expectedRevision: f.job(id).revision, confirmToken: sendPreview.confirmToken }, CATALOG_NOW, { env: CATALOG_ENV });
+  f.rows.get(`jobs/${id}`).customerApproval = { status: 'approved', approvedAt: CATALOG_NOW, amount: 450 };
+  const nextState = { ...state, settings: { ...state.settings, settingsVersion: 'approved-identical-cents-v2' } };
+  const second = catalogSelection(nextState), secondPrice = priceCatalogQuote(nextState, second, CATALOG_NOW);
+  assert.deepEqual(secondPrice.lineItems, firstPrice.lineItems, 'the customer-visible prices and lines are identical');
+  const changed = await save(f, { requestId: randomUUID(), customerId: 'c1', sourceWalkthroughId: '', jobId: id, expectedRevision: f.job(id).revision,
+    draft: quote(secondPrice, second) }, owner, CATALOG_ENV, CATALOG_NOW, { catalogState: async () => nextState });
+  const job = f.job(id);
+  assert.deepEqual([job.estimate.amountCents, job.estimate.revision, job.estimate.status, job.quoteStatus, job.customerApproval.status], [45000, 2, 'draft', 'draft', 'superseded']);
+  assert.deepEqual([job.estimate.sentRevision, job.estimate.pricingSettingsVersion, job.quoteDraft.catalogPricing.settingsVersion], [1, second.settingsVersion, second.settingsVersion]);
+  assert.equal(projectReleased(job), false, 'the earlier send and approval cannot release new provenance');
+  assert.deepEqual(changed.warnings.map(warning => warning.code), ['approval_superseded']);
+  assert.equal(f.calls.at(-1).find(write => write.collection === QUOTE_DRAFT_RECEIPTS).patch.material, true);
+});
+
+test('catalog preview endpoint is read-only, uses quote-author permissions and never exposes cost split', async () => {
+  const f = fixture(), state = catalogState(), descriptor = catalogSelection(state);
+  let actor = owner;
+  const handler = quoteDraftHandlers({ session: async () => actor, storage: () => f.store, now: () => new Date(CATALOG_NOW), catalogState: async () => state });
+  const post = (env, body) => handler.post({ request: request('POST', body), env });
+  assert.equal((await post(ENV, { action: 'catalog_preview', catalogPricing: descriptor })).status, 404);
+  const preview = await post(CATALOG_ENV, { action: 'catalog_preview', catalogPricing: descriptor });
+  assert.equal(preview.status, 200);
+  const body = await preview.json();
+  assert.deepEqual([body.totalCents, body.depositCents, body.lineItems.length], [45000, 13500, 2]);
+  assert.equal(JSON.stringify(body).includes('productCents'), false);
+  assert.equal(f.calls.length, 0);
+  actor = crew;
+  assert.equal((await post(CATALOG_ENV, { action: 'catalog_preview', catalogPricing: descriptor })).status, 403);
 });
 
 test('draft creation is idempotent: a replay, concurrent copies and a lost response all resolve to one job; changed content under the same id is refused', async () => {

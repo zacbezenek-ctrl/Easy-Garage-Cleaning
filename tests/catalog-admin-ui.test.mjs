@@ -65,7 +65,7 @@ function firestore() {
 // may drop a POST response after the server applied it and `hold` keeps each POST in flight until release().
 // `unlocked` removes the edit lock, standing in for an edit that lands while a save is unanswered: the answer must
 // still settle only what was sent.
-const LOCK = 'const locked=()=>S.busy||Boolean(S.retry||pendingBody());';
+const LOCK = 'const locked=()=>S.busy||S.quoteLoading||Boolean(S.retry||pendingBody());';
 function screen({ now = NOW, who = OWNER, env = ENV, fs = firestore(), tamper, lose = 0, fail, hold = false, unlocked = false } = {}) {
   const clock = { now }, cache = new Map(), document = createDocument(), events = {}, session = storage({ egc_u: who.user });
   const handler = catalogHandlers({ session: async () => who, storage: e => catalogStorage(e, fs.fetcher), now: () => new Date(clock.now), cache });
@@ -664,22 +664,27 @@ test('settings are saved only after the diff review, with the revision edited an
   await ui.loaded();
   const review = ui.button('Review changes', ui.root());
   assert.equal(review.disabled, true, 'nothing to review yet');
+  assert.ok(ui.root().querySelector('.cat-settings .cat-sticky').className.includes('cat-idle'), 'the unused actions do not stick over the form');
   ui.fill('Labor rate per technician-hour ($)', '80', ui.root());
-  ui.fill('Reviewed: these values may price customer quotes', true, ui.root());
+  assert.ok(!ui.root().querySelector('.cat-settings .cat-sticky').className.includes('cat-idle'), 'the edited form gains sticky actions');
+  ui.fill('Reviewed: these values may price catalog quotes', true, ui.root());
   assert.equal(review.disabled, false);
   assert.equal(ui.control('Labor rate per technician-hour ($)', ui.root()).getAttribute('inputmode'), 'decimal');
   review.click();
   const dialog = ui.dialog();
   ui.button('Save settings', dialog).click();
-  assert.match(dialog.textContent, /Confirm the review to release these prices\./);
+  assert.match(dialog.textContent, /Confirm the review to approve these prices\./);
   assert.equal(ui.fs.posts.length, 0);
-  ui.fill('I reviewed every value and these prices may be used for customer quotes', true, ui.dialog());
+  ui.fill('I reviewed every value and these prices may be used for catalog quotes', true, ui.dialog());
   ui.button('Save settings', ui.dialog()).click();
-  await ui.settle(() => ui.root().textContent.includes('released for customer quotes.'), 'the save');
+  await ui.settle(() => ui.root().textContent.includes('approved for catalog quotes.'), 'the save');
   const post = JSON.parse(ui.fs.posts[0]);
   assert.deepEqual([post.action, post.expectedRevision, post.confirmCustomerUse, post.settings.laborRateCents, post.settings.mustSetBeforeCustomerUse], ['settings.update', null, true, 8000, false]);
   assert.equal(ui.fs.get('pricingSettings/current').settings.laborRateCents, 8000);
-  await ui.settle(() => ui.root().querySelectorAll('.cat-settings .hub-notice.success').some(node => node.textContent === 'These prices are released for customer quotes.'), 'the reload');
+  await ui.settle(() => ui.root().querySelectorAll('.cat-settings .hub-notice.success').some(node => node.textContent.includes('These prices are approved for catalog quotes.')), 'the reload');
+  ui.button('Items', ui.root()).click();
+  assert.notEqual(ui.button('Build catalog quote', ui.root()).disabled, true, 'approved settings unlock the unsigned quote');
+  ui.button('Pricing', ui.root()).click();
   // An out-of-range value is reported on the field and never sent.
   ui.fill('Deposit (% of the quote)', '101', ui.root());
   ui.button('Review changes', ui.root()).click();
@@ -698,6 +703,7 @@ test('a manager sees a read-only catalog; disabled and failed loads never look l
   assert.match(manager.root().querySelector('.cat-row-actions').textContent, /Read only/);
   const off = screen({ env: {} });
   await off.settle(() => off.root().textContent.includes('Catalog pricing is turned off'), 'the disabled notice');
+  assert.ok(!off.root().textContent.includes('CATALOG_QUOTES_ENABLED'), 'staff see a plain setup instruction');
   assert.equal(off.root().querySelector('.cat-tabs'), null);
   let broken = true;
   const failing = screen({ fail: () => broken ? Response.json({ ok: false, code: 'catalog_unavailable', error: 'The catalog could not complete this request.' }, { status: 503 }) : null });
@@ -749,7 +755,7 @@ test('the catalog screen is registered once, owner-only, and loads its own versi
   const owner = hubPage(), entry = owner.context.EGCHubScreens.get('catalog');
   assert.deepEqual(copy({ ...entry, mount: undefined, unmount: undefined, canLeave: undefined, refresh: undefined, homeWidget: undefined }), {
     id: 'catalog', group: 'SYSTEM', label: 'Catalog & pricing', iconPath: entry.iconPath, capability: 'owner', crewVisible: false,
-    load: { js: 'employee-catalog.js', css: 'employee-catalog.css', v: '20260928catalog' }, module: 'EGCCatalog' });
+    load: { js: 'employee-catalog.js', css: 'employee-catalog.css', v: '20260930catalogquote1' }, module: 'EGCCatalog' });
   assert.ok(owner.api.visibleNav().some(item => item[0] === 'SYSTEM' && item[1] === 'catalog' && item[2] === 'Catalog & pricing'));
   for (const who of [{ user: 'AlexK', business: true, role: 'manager' }, { user: 'Synthetic.Crew', business: false, role: 'crew' }]) {
     const page = hubPage(who);

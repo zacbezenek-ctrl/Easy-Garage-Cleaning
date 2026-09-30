@@ -20,7 +20,7 @@ import { firestoreFetch } from './firebase-service-account.js';
 import { decodeFirestoreFields, encodeFirestoreFields } from './firestore-job.js';
 import { hasBusinessAccess, isHubOwner } from './hub-session.js';
 import { auditWrite } from './hub-audit.js';
-import { CATALOG_SCHEMA_VERSION, catalogLine, settingsReadyForCustomers, staleItems, validateCatalog, validatePricingSettings } from './catalog.js';
+import { CATALOG_SCHEMA_VERSION, catalogLinePricer, settingsReadyForCustomers, staleItems, validateCatalog, validatePricingSettings } from './catalog.js';
 import { denverToday } from './dispatch-time.js';
 import { SEED_CATALOG_JSON, SEED_SETTINGS_JSON } from '../_data/catalog-seed.js';
 
@@ -180,9 +180,9 @@ export function requireCatalogOwner(session) {
 }
 
 // One unit of every item (catalogLine, quantity 1). Referral-only and hidden items are not quotable.
-function itemPrice(item, settings, stale, internal) {
+function itemPrice(item, priceLine, stale, internal) {
   let line;
-  try { line = catalogLine(item, settings); }
+  try { line = priceLine(item); }
   catch (error) {
     if (error?.code === 'catalog_item_not_quotable') return { quotable: false, reason: item.availability, stale };
     throw fail('pricing_unavailable', 'The catalog could not be priced with the saved settings. Nothing was changed; review the settings.', 503);
@@ -212,7 +212,8 @@ export function projectCatalogOverview({ catalog, publication, settings, setting
   const view = () => !internal ? { ...pick(catalog, PUBLIC_CATALOG_FIELDS), items: items.map(item => pick(item, PUBLIC_ITEM_FIELDS)) } : full ? catalog : { ...omit(catalog, DETAIL_CATALOG_FIELDS), items: items.map(item => omit(item, DETAIL_ITEM_FIELDS)) };
   const priced = () => {
     const ids = new Set(items.map(item => item.id)), stale = staleItems(catalog, now).filter(entry => ids.has(entry.id)), staleIds = new Set(stale.map(entry => entry.id));
-    return { prices: Object.fromEntries(items.map(item => [item.id, itemPrice(item, settings, staleIds.has(item.id), internal)])), stale: { afterDays: catalog.staleAfterDays, count: stale.length, items: internal ? stale : stale.map(({ id, reason }) => ({ id, reason })) } };
+    const priceLine = catalogLinePricer(settings);
+    return { prices: Object.fromEntries(items.map(item => [item.id, itemPrice(item, priceLine, staleIds.has(item.id), internal)])), stale: { afterDays: catalog.staleAfterDays, count: stale.length, items: internal ? stale : stale.map(({ id, reason }) => ({ id, reason })) } };
   };
   const at = now instanceof Date ? now : new Date(now), day = Number.isFinite(at.getTime()) ? denverToday(at) : null;
   const { prices, stale } = day ? projected(catalog, `prices:${internal}:${day}:${JSON.stringify(settings)}`, priced) : priced();
