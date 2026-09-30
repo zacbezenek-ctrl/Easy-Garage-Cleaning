@@ -16,6 +16,8 @@
     .actions{display:flex;margin:14px 0}.button{flex:1 1 auto;min-height:48px;display:inline-flex;align-items:center;justify-content:center;padding:10px 16px;border-radius:9px;font-weight:650;text-decoration:none;text-align:center;background:#174b36;color:#fff;border:1px solid #174b36}
     @media(max-width:760px){.field-header{padding:10px 16px}#field-main{padding:18px 14px 100px}.card{padding:18px;margin:14px 0}}
   </style>
+<!-- This offline fallback stays self-contained. Keep the shared gesture policy here too. -->
+<style>:where(html, body, body *){touch-action:manipulation}</style>
 </head>
 <body>
   <header class="field-header"><a class="brand" href="/crew/job.html">EGC <span>Field work</span></a></header>

@@ -1,6 +1,14 @@
 # Easy Garage Cleaning Hub handoff
 
-Snapshot: **2026-09-29**. Fixes through **PR #92** are merged and deployed at `15ac32a8aad86d468dd193c6ae9b18e9d09c27e5`. The live Hub verified a manually reviewed task from the original saved transcript and read-only Completed history. Automatic AI extraction still needs existing-account credits, regular job photos need Drive setup, and FIELD-PAY remains off.
+Snapshot: **2026-09-30 UTC**. Web fixes through **PR #94** are merged and deployed at `af3bdb403a9161256d69f6134dd7d93ab86257ac`; the unchanged Railway services remain at PR #92 (`15ac32a8aad86d468dd193c6ae9b18e9d09c27e5`). The live Hub verified a manually reviewed task from the original saved transcript and read-only Completed history. Automatic AI extraction still needs existing-account credits, regular job photos need Drive setup, and FIELD-PAY remains off.
+
+## Mobile gesture and styling follow-up
+
+The owner requested a parallel mobile styling audit and prevention of accidental double-tap page zoom. The shared `app-touch.css` uses `touch-action: manipulation` across staff pages and nested sheets, while explicit signature-canvas gestures retain `touch-action: none`. Viewports allow deliberate pinch zoom. The offline crew fallback carries the same policy inline; the Hub and crew workers keep the versioned shared stylesheet for offline use.
+
+The focused pass also fixes landscape sign-in scrolling, walkthrough/photo button sizes, long job text wrapping, crew safe areas and Co-Pilot input sizing. The Hub audit confirmed its existing transcript-dialog notch clearance and shell layout. Regression coverage includes `tests/browser/test_touch_zoom_ui.py`, the existing mobile device suite, and offline cache tests. Browser emulation is regression evidence; it does not certify every native iPhone/Safari release. Physical-device pinch/double-tap acceptance remains a device check.
+
+PR #94 passed all four applicable workflows on its tested head and main, with successful Pages deployment. Its Drive/Jobber callback fix rechecks an employee manager's current access after OAuth returns; separate provider setup remains an owner action.
 
 ## What this is
 

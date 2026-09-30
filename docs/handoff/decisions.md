@@ -29,4 +29,8 @@ The following is the owner's wrap-up instruction in this task. Keep its wording 
 
 > Keep going
 
+## Mobile styling and touch instruction (2026-09-29)
+
+> Do a MULTI agent check for styling mobile problems. Make sure double clicking doesn’t zoom in on the app
+
 The standing HighLevel boundary is recorded separately in [HIGHLEVEL-BOUNDARY.md](../HIGHLEVEL-BOUNDARY.md), including the owner's original words and the paths that can write or send.

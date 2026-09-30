@@ -1,5 +1,5 @@
 /* EGC Employee Hub service worker (HUB_OFFLINE_ENABLED, registered by employee-hub-screens.js with scope /).
-   It keeps a device copy of the Hub's versioned static files (/employee-*.js|css?v=…) so an installed Hub still opens
+   It keeps a device copy of the Hub's versioned static files (/employee-*.js|css?v=… and /app-touch.css?v=…) so an installed Hub still opens
    its screens on a weak or dropped connection. Pages (employee.html stays no-store), API responses, other origins,
    non-GET requests and unversioned files are never intercepted or cached; queued Hub posts live in the page's own
    IndexedDB queue (employee-offline-queue.js). */
@@ -8,7 +8,7 @@ const VERSION = '20260929hubpwa';
 const CACHE_PREFIX = 'egc-hub-assets-';
 const CACHE = `${CACHE_PREFIX}${VERSION}`;
 const CONFIG = '/api/hub-offline';
-const ASSET = /^\/employee-[A-Za-z0-9_-]+\.(?:js|css)$/;
+const ASSET = /^(?:\/employee-[A-Za-z0-9_-]+\.(?:js|css)|\/app-touch\.css)$/;
 const VERSIONED = /^\?v=[A-Za-z0-9._-]{1,40}$/;
 const NETWORK_WAIT = 6000;
 let configCheckedAt = 0, retired = false, signOuts = 0;

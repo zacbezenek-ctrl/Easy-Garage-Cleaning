@@ -1,0 +1,7 @@
+/* Shared staff-app gesture policy, including dynamically mounted sheets and
+   their own scroll containers. Manipulation permits scrolling and pinch zoom,
+   but disables double-tap page zoom. Keep specificity at zero so controls with
+   deliberate gestures (such as the signature canvas) retain touch-action:none. */
+:where(html, body, body *) {
+  touch-action: manipulation;
+}

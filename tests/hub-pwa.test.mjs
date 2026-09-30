@@ -132,6 +132,14 @@ test('a versioned Hub file loads fresh with the session cookie and is kept; late
   assert.equal(await second.response.text(), 'network /employee-suite.js');
 });
 
+test('the shared gesture policy stays available on an offline Hub reload', async () => {
+  const sw = await installed(), key = '/app-touch.css?v=20260930mobiletouch';
+  assert.equal((await sw.fetchEvent(key)).response.status, 200);
+  sw.state.online = false;
+  assert.equal(await (await sw.fetchEvent(key)).response.text(), 'network /app-touch.css');
+  assert.equal((await sw.fetchEvent('/app-touch.css')).responded, false, 'unversioned assets still bypass the cache');
+});
+
 test('a file changed without a ?v= bump is never served stale: the new file is served and replaces the device copy', async () => {
   const sw = await installed(), key = '/employee-suite.js?v=20260922ops';
   await sw.fetchEvent(key);

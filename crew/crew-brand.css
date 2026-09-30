@@ -41,3 +41,33 @@
 .crew-playbook-modern .important-record{border-top:4px solid #ef5b2a}.crew-playbook-modern .important-head{display:flex;align-items:flex-start;justify-content:space-between;gap:14px;margin-bottom:8px}.crew-playbook-modern .important-head h2{font-size:21px;margin:4px 0 0}.crew-playbook-modern .important-record>p{color:#687386;font-size:14px;line-height:1.55;max-width:760px;margin:0 0 15px}.crew-playbook-modern .important-badge{background:#111d30;color:#fff;font:700 10px 'JetBrains Mono',monospace;letter-spacing:.08em;text-transform:uppercase;padding:6px 8px;white-space:nowrap}.crew-playbook-modern .important-photos{margin-top:13px}.crew-playbook-modern .important-count{font:700 11px 'JetBrains Mono',monospace;color:#ef5b2a;text-transform:uppercase;letter-spacing:.05em;margin:12px 0 8px}.crew-playbook-modern .important-add{border-color:#ef5b2a;color:#b74620;background:#fff8f4}.crew-playbook-modern .important-notes{display:grid;gap:4px;background:#f6f5f1;border-left:3px solid #ef5b2a;padding:12px 13px;margin:13px 0}.crew-playbook-modern .important-notes strong{color:#687386;font-size:10px;letter-spacing:.08em;text-transform:uppercase}.crew-playbook-modern .important-notes span{font-size:14px;white-space:pre-line}.crew-playbook-modern .important-notes.missing{border-left-color:#b33d45}.crew-playbook-modern .empty-photo-note{color:#687386;font-size:13.5px}
 .crew-playbook-modern #donebar{z-index:60;background:rgba(255,255,255,.97);border-color:#d9d8d2;backdrop-filter:blur(12px)}.crew-playbook-modern #donebar .inner{max-width:1016px}.crew-playbook-modern #donebtn{font-family:Inter,system-ui,sans-serif;border-radius:3px;text-transform:none;letter-spacing:0;font-weight:800}
 @media(max-width:760px){.crew-playbook-modern #topbar{padding-left:14px;padding-right:14px}.crew-playbook-modern main{padding:22px 14px 112px}.crew-playbook-modern .grid2,.crew-playbook-modern .grid3,.crew-playbook-modern .jobcard .grid2{grid-template-columns:1fr}.crew-playbook-modern .jobcard,.crew-playbook-modern .photocard,.crew-playbook-modern .important-record,.crew-playbook-modern #sections>section,.crew-playbook-modern .client-checks{padding:17px}.crew-playbook-modern .important-head{display:block}.crew-playbook-modern .important-badge{display:inline-block;margin-top:9px}}
+
+/* Field controls remain reachable on narrow phones and short landscape screens. */
+body #egc-gate{overflow-y:auto;padding-top:max(16px,env(safe-area-inset-top));padding-bottom:max(16px,env(safe-area-inset-bottom))}
+body #egc-gate .gcard{flex-shrink:0}
+body>footer a,body>footer button{display:inline-flex;align-items:center;min-height:44px}
+body:not(.crew-playbook-modern) .section-head a{display:inline-flex;align-items:center;min-height:44px}
+#gate{overflow-y:auto;padding-top:max(16px,env(safe-area-inset-top));padding-bottom:max(16px,env(safe-area-inset-bottom))}
+#app .top{padding-top:env(safe-area-inset-top)}
+#app .steps button,#app .lock,#app .sig-tools button{min-height:44px}
+#app .photo button,#app .qty-row button,#viewer button{width:44px;height:44px}
+#app .sig-tools button{padding-inline:12px}
+#viewer button{top:max(18px,env(safe-area-inset-top));right:max(18px,env(safe-area-inset-right))}
+.crew-playbook-modern .lkr,.crew-playbook-modern .lkr .nm,.crew-playbook-modern .reviewqr .cap{min-width:0;overflow-wrap:anywhere}
+.crew-playbook-modern .drivelink{display:inline-flex;align-items:center;min-height:44px}
+.crew-playbook-modern .lookbtn{min-width:44px}
+.crew-playbook-modern .copybtn,.crew-playbook-modern a[href="/employee?view=finance"]{display:inline-flex;align-items:center;justify-content:center;min-height:44px}
+.crew-playbook-modern .pthumb .del{top:0;right:0;width:44px;height:44px;line-height:1;display:grid;place-items:center}
+.crew-playbook-modern #pviewer .x{top:max(14px,env(safe-area-inset-top));right:max(16px,env(safe-area-inset-right));min-width:44px;min-height:44px}
+.crew-playbook-modern #donebar{padding-left:max(18px,env(safe-area-inset-left));padding-right:max(18px,env(safe-area-inset-right))}
+@media(max-width:760px), (orientation:landscape) and (max-height:430px){
+  .crew-playbook-modern #topbar{padding-left:max(14px,env(safe-area-inset-left));padding-right:max(14px,env(safe-area-inset-right))}
+  .crew-playbook-modern main{padding-left:max(14px,env(safe-area-inset-left));padding-right:max(14px,env(safe-area-inset-right));padding-bottom:calc(112px + env(safe-area-inset-bottom))}
+  .crew-utility>div{padding-left:max(10px,env(safe-area-inset-left));padding-right:max(10px,env(safe-area-inset-right))}
+}
+@media(orientation:landscape) and (max-height:430px){
+  body:not(.crew-playbook-modern) #topbar,body:not(.crew-playbook-modern)>main,body>footer,#app .top-row,#app .steps,#app main{padding-left:max(20px,env(safe-area-inset-left));padding-right:max(20px,env(safe-area-inset-right))}
+  body #egc-gate{padding-left:max(20px,env(safe-area-inset-left));padding-right:max(20px,env(safe-area-inset-right))}
+  #gate{padding-left:max(24px,env(safe-area-inset-left));padding-right:max(24px,env(safe-area-inset-right))}
+}
+@media(max-height:500px){body #egc-gate{align-items:flex-start}body #egc-gate .gcard{margin:auto}#gate{place-items:start center}}
