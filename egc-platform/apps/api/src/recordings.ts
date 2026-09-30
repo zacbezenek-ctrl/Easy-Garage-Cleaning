@@ -17,7 +17,7 @@ type Approval=Extract<RecordingCommand,{command:'recording.approve'}>;
 type ManualTaskReview=Extract<RecordingCommand,{command:'recording.review_manual_tasks'}>;
 const TRANSCRIPT_CONTENT_TYPE='text/plain; charset=utf-8';
 const isTranscriptRow=(row:Row)=>row.audioContentType===TRANSCRIPT_CONTENT_TYPE&&row.audioObjectKey===null;
-export type RecordingDependencies={put:typeof putObject;get:typeof getObject;transcribe:typeof transcribeWalkthrough;extract:typeof extractWalkthrough;conversation?:typeof extractConversation;catalog?:typeof loadCatalogIndex;createManualTask?:(actor:Actor,task:ManualTaskReview['actions'][number],requestId:string)=>Promise<unknown>};
+export type RecordingDependencies={put:typeof putObject;get:typeof getObject;transcribe:typeof transcribeWalkthrough;extract:typeof extractWalkthrough;conversation?:typeof extractConversation;catalog?:typeof loadCatalogIndex;createManualTask?:(actor:Actor,task:ManualTaskReview['actions'][number],requestId:string)=>Promise<unknown>;createReviewedTask?:(actor:Actor,task:Approval['actions'][number],requestId:string)=>Promise<unknown>};
 // v2 rows keep the reviewed walkthrough shape in `extraction` (what the review screen edits and approves) and the
 // evidence-validated conversation proposals beside it; the DTO lifts them out with their Action Center task drafts.
 // Once a review is approved or pending, its tasks exist or are being created, so proposedTasks is empty.
@@ -119,9 +119,12 @@ export class RecordingService{
         if(!refreshed)throw new OperationsError('recording_revision_conflict',409);
         return{ok:true,recording:publicRow(refreshed),requiresNewReview:true};
       }
-      if(row.status!=='draft'&&!(row.status==='approval_pending'&&row.lastErrorCode==='recording_source_revision_conflict'))throw new OperationsError('recording_review_refresh_not_safe',409);
-      await this.db.update(schema.walkthroughs).set({status:'draft',portalProjectId:identity.portalProjectId,portalRevision:identity.portalRevision,approvalPayload:null,approvalFingerprint:null,approvalRequestId:null,lastErrorCode:null,updatedAt:new Date()}).where(and(eq(schema.walkthroughs.id,row.id),eq(schema.walkthroughs.updatedAt,row.updatedAt)));
-      return{ok:true,recording:publicRow(await this.row(row.id)),requiresNewReview:true};
+      // A definitive Hub compare-and-swap refusal made no scope or task writes.
+      // Every other pending outcome may have partially committed and stays frozen.
+      if(row.status!=='draft'&&!(row.status==='approval_pending'&&row.lastErrorCode==='recording_preapply_source_revision_conflict'))throw new OperationsError('recording_review_refresh_not_safe',409);
+      const[refreshed]=await this.db.update(schema.walkthroughs).set({status:'draft',portalProjectId:identity.portalProjectId,portalRevision:identity.portalRevision,approvalPayload:null,approvalFingerprint:null,approvalRequestId:null,lastErrorCode:null,updatedAt:new Date(Math.max(Date.now(),row.updatedAt.getTime()+1))}).where(and(eq(schema.walkthroughs.id,row.id),eq(schema.walkthroughs.workspaceId,this.workspace),eq(schema.walkthroughs.status,row.status),eq(schema.walkthroughs.updatedAt,row.updatedAt))).returning();
+      if(!refreshed)throw new OperationsError('recording_revision_conflict',409);
+      return{ok:true,recording:publicRow(refreshed),requiresNewReview:true};
     }
     if(command.command==='recording.retry'){
       if(row.status==='approval_pending')throw new OperationsError('recording_approval_retry_requires_original_review',409);
@@ -237,25 +240,51 @@ export class RecordingService{
     const validationBridge=portalAdapter(this.env.EGC_PORTAL_ORIGIN!,this.env.EGC_OPERATIONS_PORTAL_SIGNING_SECRET??'',this.workspace,this.fetcher,this.env);
     for(const action of command.actions){if(action.dependencies.length)throw new OperationsError('recording_action_dependencies_not_supported',400);if(!await validationBridge.owner(action.assignedUserId))throw new OperationsError('recording_action_owner_unverified',409);}
     const hash=fingerprint({extraction:command.extraction,actions:command.actions});
-    const row=await this.db.transaction(async tx=>{
+    const {row,newClaim}=await this.db.transaction(async tx=>{
       const[r]=await tx.select().from(schema.walkthroughs).where(and(eq(schema.walkthroughs.id,command.recordingId),eq(schema.walkthroughs.workspaceId,this.workspace))).for('update');
       if(!r)throw new OperationsError('recording_not_found',404);
       if(r.extractionVersion===0)throw new OperationsError('recording_manual_review_not_scope_approval',409);
       if(!r.portalJobId||!r.portalVisitId||!r.portalCustomerId||!r.portalRevision)throw new OperationsError('recording_identity_unverified',409);
-      if(['approved','approval_pending'].includes(r.status)){if(r.approvalFingerprint!==hash)throw new OperationsError('recording_approval_request_conflict',409);return r;}
+      if(['approved','approval_pending'].includes(r.status)){
+        if(r.approvalFingerprint!==hash)throw new OperationsError('recording_approval_request_conflict',409);
+        if(r.status==='approved')return{row:r,newClaim:false};
+        // An exact retry keeps the frozen payload and IDs, but invalidates a
+        // concurrent first attempt's ability to label the claim pre-apply-safe.
+        const[retrying]=await tx.update(schema.walkthroughs).set({lastErrorCode:null,updatedAt:new Date(Math.max(Date.now(),r.updatedAt.getTime()+1))}).where(eq(schema.walkthroughs.id,r.id)).returning();
+        return{row:retrying!,newClaim:false};
+      }
       if(r.status!=='draft'||r.updatedAt.toISOString()!==command.revision)throw new OperationsError('recording_revision_conflict',409);
       for(const action of command.actions){if(action.portalJobId!==r.portalJobId||action.portalVisitId!==r.portalVisitId||action.jobId||action.contactId)throw new OperationsError('recording_action_identity_mismatch',409);}
-      const[updated]=await tx.update(schema.walkthroughs).set({status:'approval_pending',approvalRequestId:requestId,approvalFingerprint:hash,approvalPayload:{actor,command},lastErrorCode:null,updatedAt:new Date()}).where(eq(schema.walkthroughs.id,r.id)).returning();return updated!;
+      const[updated]=await tx.update(schema.walkthroughs).set({status:'approval_pending',approvalRequestId:requestId,approvalFingerprint:hash,approvalPayload:{actor,command},lastErrorCode:null,updatedAt:new Date(Math.max(Date.now(),r.updatedAt.getTime()+1))}).where(eq(schema.walkthroughs.id,r.id)).returning();return{row:updated!,newClaim:true};
     });
     if(row.status==='approved')return{ok:true,alreadyApplied:true,recording:publicRow(row)};
     const stored=row.approvalPayload as {actor:Actor;command:Approval};
+    let definitePreApplyConflict=false;
     try{
-      await this.portal(stored.actor,{command:'recording.apply',recordingId:row.id,requestId:row.approvalRequestId,fingerprint:hash,expectedRevision:row.portalRevision,portalJobId:row.portalJobId,portalVisitId:row.portalVisitId,portalCustomerId:row.portalCustomerId,portalProjectId:row.portalProjectId,extraction:stored.command.extraction});
-      const bridge=portalAdapter(this.env.EGC_PORTAL_ORIGIN!,this.env.EGC_OPERATIONS_PORTAL_SIGNING_SECRET??'',this.workspace,this.fetcher,this.env),operations=operationsService({workspace:this.workspace,resolvePortalJob:bridge.resolve,resolveOwner:bridge.owner,portalRead:bridge.read});
-      for(let i=0;i<stored.command.actions.length;i++){const action=stored.command.actions[i]!;await operations.execute(stored.actor,{command:'task.create',task:{...action,dedupeKey:`recording:${row.id}:action:${i}`,sourceEvidence:[...action.sourceEvidence,{source:'recording',id:row.id,excerpt:action.description.slice(0,2000)}]}},stableUuid(`recording:${row.id}:action:${i}`));}
-      await this.db.transaction(async tx=>{const[current]=await tx.select().from(schema.walkthroughs).where(eq(schema.walkthroughs.id,row.id)).for('update');if(current?.status==='approved')return;const approved=hasConversation(current?.extraction)?{...stored.command.extraction,conversation:current.extraction.conversation}:stored.command.extraction;await tx.update(schema.walkthroughs).set({status:'approved',extraction:approved,approvedBy:stored.actor.id,approvedAt:new Date(),approvedRevision:row.portalRevision,lastErrorCode:null,updatedAt:new Date()}).where(eq(schema.walkthroughs.id,row.id));await tx.insert(schema.auditLogs).values({actor:stored.actor.id,action:'recording.approve',entity:'walkthrough',entityId:row.id,source:'employee_hub',newValue:{portalJobId:row.portalJobId,portalVisitId:row.portalVisitId,fingerprint:hash,actions:stored.command.actions.length}});});
+      try{await this.portal(stored.actor,{command:'recording.apply',recordingId:row.id,requestId:row.approvalRequestId,fingerprint:hash,expectedRevision:row.portalRevision,portalJobId:row.portalJobId,portalVisitId:row.portalVisitId,portalCustomerId:row.portalCustomerId,portalProjectId:row.portalProjectId,extraction:stored.command.extraction});}
+      catch(error){definitePreApplyConflict=newClaim&&error instanceof OperationsError&&error.code==='recording_source_revision_conflict'&&error.status===409;throw error;}
+      const bridge=portalAdapter(this.env.EGC_PORTAL_ORIGIN!,this.env.EGC_OPERATIONS_PORTAL_SIGNING_SECRET??'',this.workspace,this.fetcher,this.env);
+      const checkedPortalJob=async(id:string)=>{
+        if(id!==row.portalJobId)throw new OperationsError('recording_identity_changed',409);
+        const source=await this.resolveSource(stored.actor,id);
+        this.assertCurrentSource(row,source);
+        const job=await bridge.resolve(id);
+        if(job.id!==id||job.revision!==source.portalRevision)throw new OperationsError('recording_source_revision_conflict',409);
+        return job;
+      };
+      const operations=this.io.createReviewedTask?null:operationsService({workspace:this.workspace,resolvePortalJob:checkedPortalJob,resolveOwner:bridge.owner,portalRead:bridge.read});
+      for(let i=0;i<stored.command.actions.length;i++){
+        // A saved approval may resume after a partial task write. Keep its task IDs,
+        // but never pair the old conversation with a newly linked customer.
+        this.assertCurrentSource(row,await this.resolveSource(stored.actor,row.portalJobId!));
+        const action=stored.command.actions[i]!,key=stableUuid(`recording:${row.id}:action:${i}`),task={...action,dedupeKey:`recording:${row.id}:action:${i}`,sourceEvidence:[...action.sourceEvidence,{source:'recording' as const,id:row.id,excerpt:action.description.slice(0,2000)}]};
+        if(this.io.createReviewedTask){await checkedPortalJob(action.portalJobId!);await this.io.createReviewedTask(stored.actor,task,key);}
+        else await operations!.execute(stored.actor,{command:'task.create',task},key);
+      }
+      this.assertCurrentSource(row,await this.resolveSource(stored.actor,row.portalJobId!));
+      await this.db.transaction(async tx=>{const[current]=await tx.select().from(schema.walkthroughs).where(eq(schema.walkthroughs.id,row.id)).for('update');if(current?.status==='approved')return;if(current?.status!=='approval_pending'||current.approvalFingerprint!==hash)throw new OperationsError('recording_approval_request_conflict',409);const approved=hasConversation(current.extraction)?{...stored.command.extraction,conversation:current.extraction.conversation}:stored.command.extraction;await tx.update(schema.walkthroughs).set({status:'approved',extraction:approved,approvedBy:stored.actor.id,approvedAt:new Date(),approvedRevision:row.portalRevision,lastErrorCode:null,updatedAt:new Date()}).where(eq(schema.walkthroughs.id,row.id));await tx.insert(schema.auditLogs).values({actor:stored.actor.id,action:'recording.approve',entity:'walkthrough',entityId:row.id,source:'employee_hub',newValue:{portalJobId:row.portalJobId,portalVisitId:row.portalVisitId,fingerprint:hash,actions:stored.command.actions.length}});});
       return{ok:true,recording:publicRow(await this.row(row.id))};
-    }catch(error){await this.db.update(schema.walkthroughs).set({lastErrorCode:safeRecordingError(error),updatedAt:new Date()}).where(and(eq(schema.walkthroughs.id,row.id),eq(schema.walkthroughs.status,'approval_pending')));throw error;}
+    }catch(error){await this.db.update(schema.walkthroughs).set({lastErrorCode:definitePreApplyConflict?'recording_preapply_source_revision_conflict':safeRecordingError(error),updatedAt:new Date(Math.max(Date.now(),row.updatedAt.getTime()+1))}).where(and(eq(schema.walkthroughs.id,row.id),eq(schema.walkthroughs.status,'approval_pending'),eq(schema.walkthroughs.approvalFingerprint,hash),eq(schema.walkthroughs.updatedAt,row.updatedAt)));throw error;}
   }
 }
 

@@ -409,10 +409,11 @@
     "aiExtractionAccepted": false,
     "fieldPayEnabled": false
   },
-  "latestMainSha": "15ac32a8aad86d468dd193c6ae9b18e9d09c27e5",
+  "latestMainSha": "d08b9ec7a6a21c33403540c5025c9b0a93f625be",
   "latestVerifiedWebRelease": {
-    "pr": 95,
-    "sha": "f6c32488f7e7c9f12f628eddaa913020b962f827",
-    "ci": "all_applicable_pr_and_main_workflows_success"
+    "pr": 96,
+    "sha": "d08b9ec7a6a21c33403540c5025c9b0a93f625be",
+    "ci": "all_applicable_pr_and_main_workflows_success",
+    "liveFirestoreRead": "HTTP429_unresolved"
   }
 }
