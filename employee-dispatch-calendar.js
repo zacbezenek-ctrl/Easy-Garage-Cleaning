@@ -399,7 +399,7 @@ window.addEventListener('egc:signout',() => { cancelDrag(); lastModel=null; C.mo
 window.EGCDispatchCalendar=Object.freeze({AXIS_START, AXIS_END, SLOT, monthGrid, addMonths, dayWindow, rowsOf, laneModel, untimed, hints, crewChange, moveChanges, startChanged});
 const dispatch=window.EGCDispatch;
 if (dispatch?.registerView) {
-  dispatch.registerView('month',{label:'Month', range:date => { const grid=monthGrid(date); return {startDate:grid.startDate, endDate:grid.endDate}; }, step:addMonths, render:renderMonth, help:'Tap a day to open it.'});
-  dispatch.registerView('lanes',{label:'Lanes', range:date => ({startDate:date, endDate:addDays(date,1)}), step:addDays, render:renderLanes, help:'Drag a job to another row or time to review the change, or tap it to assign.'});
+  dispatch.registerView('month',{label:'Month', pendingSubject:'this month', range:date => { const grid=monthGrid(date); return {startDate:grid.startDate, endDate:grid.endDate}; }, step:addMonths, render:renderMonth, help:'Tap a day to open it.'});
+  dispatch.registerView('lanes',{label:'Lanes', pendingSubject:'this date', range:date => ({startDate:date, endDate:addDays(date,1)}), step:addDays, render:renderLanes, help:'Drag a job to another row or time to review the change, or tap it to assign.'});
 }
 })();

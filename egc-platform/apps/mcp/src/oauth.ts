@@ -21,7 +21,7 @@ export type AccessMode = { operations: boolean; directSends: boolean; moneyTools
 export type AccessStatement = { read: string; write: string; sends: string; approvals: string; payments: string };
 
 // Approval of a queued draft does not send it, and no send path for approved drafts exists yet. Say exactly that.
-export const DIRECT_SENDS_PAUSED = "One-step MCP customer sends are paused in Action Center mode. Queue the exact draft with actions.propose (kind followup_message) for owner or manager approval in the Employee Hub; approval does not send. Sending an approved draft needs the Employee Hub one-tap send or MCP two-step confirmation, and neither is enabled on this server yet. An operator can restore one-step sends with EGC_MCP_DIRECT_SENDS_ENABLED=true.";
+export const DIRECT_SENDS_PAUSED = "One-step MCP customer sends are paused in Action Center mode. Queue the exact draft with actions.propose (kind followup_message) for owner or manager approval in the Employee Hub; approval does not send. Use the Employee Hub reviewed Send action when the server reports actionSend enabled, with the exact sender and current draft selected. If that action is unavailable, report the blocker; do not bypass this gate or change send settings. Nothing has been sent by this tool.";
 
 // The consent page and /mcp-info must describe the live server policy, not an aspiration.
 export function accessStatement(mode: AccessMode): AccessStatement {

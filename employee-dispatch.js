@@ -366,8 +366,8 @@ function dayColumn(date,jobs) {
 function renderBody() {
   const target=S.root?.querySelector('[data-dp-body]'); if(!target)return;
   target.replaceChildren();
-  if(S.loading){target.append(h('p',{class:'dp-loading',role:'status'},'Loading the Hub schedule…'));return;}
-  if(S.error) {target.append(notice(S.error,'error'),S.errorStatus===401?signInLink():btn('Retry',()=>load())); return;}
+  if(S.loading){const subject=views.get(S.view)?.pendingSubject;target.append(subject?h('div',{class:'dc-skeleton','aria-busy':'true'},h('p',{class:'dc-sr',role:'status'},'Loading '+subject+'…'),h('span',{}),h('span',{}),h('span',{class:'dc-short'})):h('p',{class:'dp-loading',role:'status'},'Loading the Hub schedule…'));return;}
+  if(S.error) {const subject=views.get(S.view)?.pendingSubject;target.append(notice(subject?'The schedule for '+subject+' has not loaded, so nothing is shown for it. '+S.error:S.error,'error'),S.errorStatus===401?signInLink():btn('Retry',()=>load())); return;}
   if(!S.data)return;
   if(S.recovery){target.append(notice(S.recovery.invalid?'A saved request could not be read. Reopen this browser session before making another dispatch change.':'A previous dispatch save has not been verified. Review and retry its original request before making another change.','error'));if(!S.recovery.invalid)target.append(btn('Review unverified save',openRecovery,'primary'));}
   if(S.data.coverage?.complete===false){target.append(notice('Some records could not be loaded. This schedule is incomplete; verify missing work before dispatching.','error'),btn('Retry',()=>load()));return;}
@@ -1138,7 +1138,7 @@ window.addEventListener('egc:signout',()=>{try{for(let i=sessionStorage.length-1
 window.addEventListener('beforeunload',event=>{if(S.modal){event.preventDefault();event.returnValue='';}});
 function registerView(name,view) {
   if(!/^[a-z][a-z0-9_]{1,23}$/.test(name)||['day','week','crew','jobs','queue'].includes(name)||views.has(name)||typeof view?.label!=='string'||typeof view.range!=='function'||typeof view.render!=='function')throw new Error('Dispatch view '+name+' is invalid or already registered.');
-  views.set(name,Object.freeze({label:view.label,range:view.range,step:typeof view.step==='function'?view.step:null,render:view.render,help:typeof view.help==='string'?view.help:''}));
+  views.set(name,Object.freeze({label:view.label,range:view.range,step:typeof view.step==='function'?view.step:null,render:view.render,pendingSubject:typeof view.pendingSubject==='string'?view.pendingSubject:'',help:typeof view.help==='string'?view.help:''}));
   if(S.root&&!S.modal)render();
 }
 // Registered views share this client, its dialogs and the save-recovery protocol (same requestId on retry).

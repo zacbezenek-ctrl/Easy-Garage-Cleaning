@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import {salesAcquisitionCohort,acquisitionAttribution} from "./acquisition.js";
 import { and, asc, desc, eq, gte, inArray, isNull, lt, lte, or, sql } from "drizzle-orm";
 import { getDb, schema } from "@egc/database";
 import { classifyAttribution, detectConversions, sha256, toConversionPreview, type ConversionCandidate, type ConversionLead } from "./core.js";
@@ -82,7 +83,7 @@ async function discover(options: ConversionOptions, config: ConversionConfig, no
     excludedCustomers:snapshots.flatMap(s=>{const reasons=canonicalExclusionReasons({...s.snapshot as CanonicalCustomerGate,state:s.state});return reasons.length?[{contactId:s.contactId,reasons}]:[]}),
     ...sourceExtractionCoverage(allCandidates,range)
   };
-  return { candidates, allCandidates, leads, range, canonicalCoverage };
+  return { candidates, allCandidates, leads, range, canonicalCoverage, snapshotByContact };
 }
 
 async function readiness(config: ConversionConfig) {
@@ -279,19 +280,16 @@ export async function conversionStatus(options: ConversionOptions = {}) {
     getDb().select().from(schema.metaConversionTests).orderBy(desc(schema.metaConversionTests.createdAt)).limit(1),
     getDb().select().from(schema.syncCursors).where(eq(schema.syncCursors.key,'meta.conversions.cursor')).limit(1)
   ]);
-  const cohort = discovery.leads.filter(lead => {
-    const createdAt = new Date(lead.providerCreatedAt ?? lead.createdAt ?? 0);
-    return createdAt >= discovery.range.from && createdAt <= discovery.range.to;
-  });
-  const eligible = cohort.filter(lead => classifyAttribution(lead).classification === "eligible_meta_paid");
+  const acquisition=salesAcquisitionCohort(discovery.leads,new Map([...discovery.snapshotByContact].map(([id,s])=>[id,{...s.snapshot as CanonicalCustomerGate,state:s.state}])),discovery.range);
+  const cohort=acquisition.customers,eligible=acquisition.meta;
   const eligibleIds = new Set(eligible.map(lead => lead.leadId));
   const observed = discovery.allCandidates.filter(c => eligibleIds.has(c.leadId) && c.eventTime &&
-    c.reasons.every(reason => ["verified_meta_paid_origin", "event_outside_meta_age_window", "before_production_activation"].includes(reason)));
+    c.reasons.every(reason => ["verified_meta_paid_origin", "event_outside_meta_age_window", "before_production_activation", "canonical_do_not_contact", "do_not_contact", "missing_supported_customer_match"].includes(reason)));
   const booked = new Set(observed.filter(c => c.stage === "WALKTHROUGH_BOOKED").map(c => c.leadId)).size;
   const customers = new Set(observed.filter(c => c.stage === "JOB_WON").map(c => c.leadId)).size;
   const attributionHealth: Record<string, number> = {}, matchingHealth: Record<string, number> = {};
   for (const lead of cohort) {
-    const a = classifyAttribution(lead);
+    const a = acquisitionAttribution(lead);
     attributionHealth[a.classification] = (attributionHealth[a.classification] ?? 0) + 1;
     if (a.classification !== "non_meta") for (const field of a.matching.fields) matchingHealth[field] = (matchingHealth[field] ?? 0) + 1;
   }
@@ -307,9 +305,9 @@ export async function conversionStatus(options: ConversionOptions = {}) {
     failures: records.filter(row => row.status === "failed" || row.error?.includes("manual_review")).slice(0, discovery.range.limit).map(publicLedger),
     recentAccepted: accepted.slice(0, discovery.range.limit).map(publicLedger), attributionHealth, matchingHealth,
     cohort: { from: discovery.range.from.toISOString(), to: discovery.range.to.toISOString(), allLeads: cohort.length,
-      eligibleMetaLeads: eligible.length, booked, customers, stillUnqualified: Math.max(0, eligible.length - new Set(observed.map(c => c.leadId)).size),
+      eligibleMetaLeads: eligible.length, metaAttributedSalesLeads:eligible.length, acquisitionCoverage:acquisition.coverage, booked, customers, stillUnqualified: Math.max(0, eligible.length - new Set(observed.map(c => c.leadId)).size),
       walkthroughRate: eligible.length ? booked / eligible.length : null, customerRate: eligible.length ? customers / eligible.length : null,
-      qualification: "Observed current legitimate stages; missing historical win timestamps are excluded." },
+      qualification: "Historical sales acquisition cohort, not contactability or Meta delivery eligibility. Later DNC/loss remains in the denominator; explicit non-customers are excluded and unknown identities are held. Observed source-backed stages exclude missing historical win timestamps." },
     deliveryByEventName: [...new Set(records.map(r=>r.eventType))].sort().map(eventName=>({
       eventName, scope:"accepted_at_in_requested_window",
       accepted:accepted.filter(r=>r.eventType===eventName).length,

@@ -674,3 +674,15 @@ test('an interrupted Purchase with changed sale amount does not retry a stale fi
  await syncConversions({days:7,dryRun:false});assert.equal(productionRequests().length,1);
  const held=(await eventRows()).find(r=>r.id===prior.id);assert.equal(held.status,'skipped');assert.equal(held.error,'purchase_sale_evidence_changed_manual_review');
 });
+
+test('acquisition cohort excludes applicants, holds missing identity, and retains later DNC without enabling delivery',async()=>{
+ const customer=await seedWalkthrough(),applicant=await seedLead();
+ await db.update(schema.contacts).set({tags:['applicant-active']}).where(eq(schema.contacts.id,applicant.contact.id));
+ await reconcile();
+ const before=await conversionStatus({days:7});assert.equal(before.cohort.allLeads,1);assert.equal(before.cohort.eligibleMetaLeads,1);assert.equal(before.cohort.booked,1);assert.equal(before.cohort.acquisitionCoverage.excludedCount,1);
+ await db.update(schema.contacts).set({raw:{...customer.contact.raw,dnd:true},tags:['dnc']}).where(eq(schema.contacts.id,customer.contact.id));
+ await db.update(schema.leads).set({doNotContact:true}).where(eq(schema.leads.id,customer.lead.id));await reconcile();
+ const after=await conversionStatus({days:7});assert.equal(after.cohort.allLeads,before.cohort.allLeads);assert.equal(after.cohort.eligibleMetaLeads,before.cohort.eligibleMetaLeads);assert.equal(after.cohort.booked,before.cohort.booked);
+ const preview=await previewCanonicalConversions({days:7});assert.equal(preview.events.filter(e=>e.contactId===customer.contact.id&&e.eligible).length,0);
+ const missing=await seedLead();const held=await conversionStatus({days:7});assert.equal(held.cohort.allLeads,1);assert.equal(held.cohort.acquisitionCoverage.complete,false);assert.ok(held.cohort.acquisitionCoverage.heldIdentity.some(c=>c.contactId===missing.contact.id&&c.reason==='missing_canonical_identity'));assert.equal(requests.length,0);
+});
