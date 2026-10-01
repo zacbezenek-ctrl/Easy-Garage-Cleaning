@@ -4,6 +4,7 @@ import concurrent.futures
 import hashlib
 import json
 import re
+import subprocess
 import time
 import urllib.request
 from pathlib import Path
@@ -12,7 +13,9 @@ BASE='https://easygaragecleaning.com'
 ROOT=Path(__file__).resolve().parents[2]
 OUT=ROOT/'simple-page-review'
 OUT.mkdir(exist_ok=True)
-manifest=json.loads((ROOT/'gallery-simple.json').read_text())
+# Use the same canonical release and asset list as the renderer, not a stale imported JSON snapshot.
+manifest=json.loads(subprocess.check_output(['node','--input-type=module','-e',
+    "import {gallerySimpleVersion,gallerySimplePairs} from './functions/_lib/gallery-simple-data.js'; console.log(JSON.stringify({release:gallerySimpleVersion,pairs:gallerySimplePairs}));"],cwd=ROOT,text=True))
 
 def get(path):
     request=urllib.request.Request(path if path.startswith('http') else BASE+path,headers={'User-Agent':'Mozilla/5.0 EGC public gallery release verification','Cache-Control':'no-cache'})
