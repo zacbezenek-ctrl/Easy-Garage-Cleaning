@@ -4436,7 +4436,7 @@ def audit_seo_meta(fix_long_titles=False):
         "Junk Removal Fort Collins � $139 Flat Rate, Same-Day | Easy Garage Cleaning": "$139 Junk Removal Fort Collins | Easy Garage",
         "House & Property Cleanouts Fort Collins CO | Move-Out, Estate & More": "Property Cleanouts Fort Collins | Easy Garage",
     }
-    index_title = "Easy Garage Cleaning | Fort Collins Garage Cleanouts"
+    index_title = "Junk Removal &amp; Garage Cleaning | Fort Collins, CO"
     for path in site_html_files():
         rel = path.relative_to(ROOT).as_posix()
         fix = fix_long_titles and generator_owns(rel)
@@ -4619,6 +4619,10 @@ def main():
             print(" ", issue)
     else:
         print("SEO audit: OK")
+
+    # Keep the public-only load guide in generated pricing/service pages.
+    import runpy
+    runpy.run_path(str(ROOT / "tools/public-site/install-estimator.py"))["install"]()
 
     # /before-after links (homepage nav, drawer, footer, CTA) and its sitemap entry.
     publish_gallery_links(ROOT)
