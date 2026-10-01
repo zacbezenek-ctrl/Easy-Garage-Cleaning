@@ -2,6 +2,9 @@
 (function () {
   'use strict';
 
+  // Previews and local QA must never enter the live advertising audience.
+  if (!/^(?:www\.)?easygaragecleaning\.com$/i.test(window.location?.hostname || '')) return;
+
   var loaderScript = document.currentScript;
   var requestedPixel = loaderScript && loaderScript.getAttribute('data-meta-pixel-id');
   var metaPixelId = /^\d{8,20}$/.test(requestedPixel || '') ? requestedPixel : '970332989051988';

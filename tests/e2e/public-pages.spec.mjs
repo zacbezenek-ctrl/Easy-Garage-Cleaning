@@ -51,3 +51,23 @@ test('before-after compare controls are 44px tall on a 1023px touch tablet',asyn
  expect((await slider.boundingBox()).height).toBeGreaterThanOrEqual(44);
  expect(await tapTargetViolations(page,'.ba-card .controls input, .ba-card .controls button, .ba-card [data-expand]')).toEqual([]);
 });
+
+// Truck load planning never creates leads or marketing events in this isolated harness.
+test('truck load guide has working keyboard endpoints, presets, reduced motion and responsive screenshots',async({page},info)=>{
+ await page.emulateMedia({reducedMotion:'reduce'});
+ await open(page,'/index.html');
+ await page.screenshot({path:info.outputPath('public-home-after.png')});
+ const root=page.locator('[data-load-estimator]');
+ const slider=root.getByRole('slider',{name:'Choose your estimated load size'});
+ await slider.scrollIntoViewIfNeeded();
+ await slider.press('Home');await expect(slider).toHaveValue('1');
+ await expect(slider).toHaveAttribute('aria-valuetext','⅛ truck, 12.5 percent of truck space');
+ await slider.press('End');await expect(slider).toHaveValue('8');
+ await expect(slider).toHaveAttribute('aria-valuetext','Full truck, 100 percent of truck space');
+ await root.getByRole('button',{name:'½ truck',exact:true}).click();await expect(slider).toHaveValue('4');
+ await expect(root.locator('[data-load-price]')).toHaveText('Get an on-site quote');
+ expect(await root.locator('.load-fill').evaluate(el=>getComputedStyle(el).transitionDuration)).toBe('0s');
+ await assertNoHorizontalScroll(page);
+ expect(await page.evaluate(()=>typeof window.fbq)).toBe('undefined');
+ await root.screenshot({path:info.outputPath('truck-load-guide-after.png')});
+});
