@@ -87,7 +87,11 @@ test('FAQ announces empty/results states and mobile section navigation remains a
 });
 
 test('gallery viewer is centered and Escape restores focus',async({page},info)=>{
- await open(page,'/before-after.html');const expand=page.getByRole('button',{name:'Expand ↗',exact:true}).first();
+ await open(page,'/before-after.html');
+ const call=page.getByRole('link',{name:'Call (970) 999-1818',exact:true});
+ expect(await call.evaluate(el=>getComputedStyle(el).color)).toBe('rgb(16, 43, 67)');
+ await expect(page.locator('.ba-kicker').filter({hasText:'AI-generated planning example'})).toHaveCount(6);
+ const expand=page.getByRole('button',{name:'Expand ↗',exact:true}).first();
  await expand.click();const dialog=page.getByRole('dialog');await expect(dialog).toBeVisible();
  const box=await dialog.boundingBox();expect(Math.abs((box.x+box.width/2)-page.viewportSize().width/2)).toBeLessThanOrEqual(2);
  await page.screenshot({path:info.outputPath('gallery-viewer-after.png'),scale:'css'});
