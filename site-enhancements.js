@@ -10,6 +10,12 @@
   var close = widget.querySelector('.contact-widget-close');
   if (!toggle || !panel) return;
 
+  // Keep the persistent contact controls clear of footer policy links.
+  var footerStyle = document.createElement('style');
+  footerStyle.id = 'egc-footer-contact-clearance';
+  footerStyle.textContent = '@media(min-width:1024px){.site-footer .foot-bar{padding-bottom:76px}}';
+  document.head.appendChild(footerStyle);
+
   function setOpen(open) {
     toggle.setAttribute('aria-expanded', String(open));
     panel.hidden = !open;
@@ -23,7 +29,7 @@
   toggle.addEventListener('click', function () {
     setOpen(toggle.getAttribute('aria-expanded') !== 'true');
   });
-  if (close) close.addEventListener('click', function () { setOpen(false); });
+  if (close) close.addEventListener('click', function () { setOpen(false); toggle.focus(); });
   document.addEventListener('keydown', function (event) {
     if (event.key === 'Escape' && toggle.getAttribute('aria-expanded') === 'true') {
       setOpen(false);
