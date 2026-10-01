@@ -97,6 +97,16 @@ test('an unverified certificate save keeps the same retry request without claimi
  assert.equal(p.context.state.request,null);assert.equal(p.context.state.uncertain,false);
 });
 
+test('a lost certificate upload retains only a locked upload form beside the exact original retry',async()=>{
+ const p=portal();p.requests[0].resolve(reply(certificate()));await flush();
+ p.context.state.file={name:'Selected.pdf',size:100,dataUrl:'synthetic'};p.context.state.expiresOn='2027-04-01';
+ const body={action:'upload',requestId:'synthetic-upload',expectedRevision:'synthetic-r1',filename:'Selected.pdf',dataUrl:'synthetic',expiresOn:'2027-04-01'};
+ const pending=p.context.submit(body);p.requests[1].resolve(reply({ok:false,error:'Save outcome unknown'},503));await pending;
+ assert.equal(p.context.state.request,body);assert.match(p.host.textContent,/Retry original upload/);
+ const upload=p.host.querySelectorAll('button').find(b=>b.textContent==='Upload certificate');assert.ok(upload);assert.equal(upload.hasAttribute('disabled'),true);
+ assert.doesNotMatch(p.host.textContent,/Current|Open the saved PDF/);
+});
+
 test('portal authorization failures and logout cannot leave a downloadable stale certificate',async()=>{
  const p=portal();p.requests[0].resolve(reply(certificate()));await flush();
  for(const status of [401,403]){

@@ -111,7 +111,7 @@ function render(){
   if(S.loading)body.push(h('div',{class:'pd-skeleton','aria-hidden':'true'}),h('div',{class:'pd-skeleton short','aria-hidden':'true'}),h('p',{class:'pd-muted',role:'status'},'Loading portal documents…'));
   else if(S.data)body.push(statusBlock(),formBlock(),history());
   else if(S.denied)body.push(h('p',{class:'pd-muted'},'Only the owner or a manager can manage the certificate of insurance customers download.'));
-  else if(S.error&&S.errorStatus!==401)body.push(h('p',{class:'pd-muted'},S.request&&S.uncertain?'Certificate status and the save outcome are unverified. Retry the original request to check what was saved.':'Certificate status is unavailable. Nothing was changed.'));
+  else if(S.error&&S.errorStatus!==401){body.push(h('p',{class:'pd-muted'},S.request&&S.uncertain?'Certificate status and the save outcome are unverified. Retry the original request to check what was saved.':'Certificate status is unavailable. Nothing was changed.'));if(S.request&&S.uncertain&&S.request.action==='upload'&&S.errorStatus!==403)body.push(formBlock());}
   S.root.replaceChildren(head,feedback(),...body.filter(Boolean),h('p',{class:'pd-muted'},'The guarantee and service terms customers see come from the published website copy and are versioned in the Hub code.'));
 }
 // An upload in flight guards the whole tab; a request waiting for Retry only while its button is on screen.
