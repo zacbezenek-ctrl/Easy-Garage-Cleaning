@@ -3223,16 +3223,16 @@ TRUST_STRIP_BLOCK = """<div class="trust-strip" aria-label="Trust signals">
   </div>
 </div>"""
 
-SEASONAL_BANNER_BLOCK = """<div id="seasonal-banner" class="seasonal-banner" role="region" aria-label="Spring promotion" hidden>
+SEASONAL_BANNER_BLOCK = """<div id="seasonal-banner" class="seasonal-banner" role="region" aria-label="Free walkthrough" hidden>
   <div class="wrap seasonal-banner-inner">
-    <span>🌱 <strong>Spring cleanout</strong> — book now and park inside before hail season.</span>
+    <span><strong>Make room for a fresh start.</strong> Request a free walkthrough for junk removal or garage cleaning.</span>
     <a href="/book.html">Request walkthrough →</a>
     <button type="button" class="seasonal-banner-dismiss" aria-label="Dismiss banner">×</button>
   </div>
 </div>
 <script>
 (function(){{
-  var k='egc-spring-banner-2026';
+  var k='egc-space-banner';
   var b=document.getElementById('seasonal-banner');
   if(!b||localStorage.getItem(k))return;
   b.hidden=false;

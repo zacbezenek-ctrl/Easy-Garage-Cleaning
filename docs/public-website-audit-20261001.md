@@ -1,6 +1,6 @@
 # Public website audit — October 1, 2026
 
-Status: local implementation prepared; **not visually signed off or ready to publish**.
+Status: draft PR #101 and Cloudflare branch preview prepared; **not approved for production**. Desktop preview inspected; mobile screenshots, final CI, pricing approval and production recovery remain open.
 
 ## Critical production finding
 
@@ -8,6 +8,8 @@ At 19:34 UTC the actual cloud browser opened https://easygaragecleaning.com/ and
 
 ## Changes prepared
 
+- Replaced the stale summer promotion with a year-round free-walkthrough message
+- Preview/local marketing analytics now stay disabled; canonical production host tracking is preserved
 - Homepage now explicitly presents junk removal and garage cleaning as two service paths, with direct service links and appropriate lead-form project options
 - A responsive SVG box-truck load guide is integrated into the homepage, pricing page and both principal Fort Collins junk-removal pages
 - Eight native slider positions, keyboard value descriptions, shortcut buttons, animated cargo fill, reduced-motion styling and a no-JavaScript booking fallback
@@ -23,14 +25,15 @@ Existing public prices conflict across pages: the homepage advertises $400–$3,
 
 ## Verification
 
-- Focused final Node suite: 46/46 passing (estimator, public performance structural checks, pricing privacy, security hardening and generator reproducibility)
+- Focused final Node suite before the seasonal-copy update: 48/48 passing (estimator, public performance structural checks, pricing privacy, security hardening and generator reproducibility)
 - Estimator JavaScript syntax and Python installer/generator compilation pass
 - Installer runs byte-for-byte idempotently; the complete generator also reproduces checked-in output twice while preserving private surfaces
 - Local links/assets and duplicate IDs checked on homepage, pricing, junk removal, garage cleaning and booking: no missing local targets or duplicate IDs
 - Unit coverage includes all eight unconfigured tiers, exact configured prices, invalid configurations, out-of-range inputs, preset changes, aria values and cargo fill updates
 - Added isolated desktop/mobile acceptance script `tests/browser/test_public_load_estimator_ui.py` for 320, 375, 768 and 1440 pixels, reduced motion, keyboard, no-JS and screenshots
-- Browser tests could not start: environment denies Chromium's process-singleton socket, including the escalated run. The cloud browser also refuses the local preview URL. Therefore there are no verified local after screenshots and no claim of a visual/mobile, Lighthouse or live lead-flow pass
-- No real lead submissions, Meta events, payments, outgoing messages, publication or deployment were performed
+- Local browser tests could not start: environment denies Chromium's process-singleton socket, including the escalated run. Cloud browser also refuses the local preview URL. A real Cloudflare preview subsequently provided desktop visual verification of the homepage, truck slider, garage-cleaning page, junk-removal page and quote anchor. Slider keyboard endpoints worked; observed pages had no horizontal overflow or broken loaded images. Final mobile screenshots are produced by the isolated CI device suite; mobile/Lighthouse/lead-submission pass is not claimed here.
+- Complete local root suite at the initial implementation: 4,365 passed, 11 skipped, zero failures. Final remote CI must be checked for the final head.
+- No real lead submissions, payments, customer messages or production deployment were performed. The first preview exposed the existing all-host analytics initialization; the follow-up host guard prevents live marketing script loads on preview/local hosts. The authorized branch and draft PR were published for review.
 
 ## Release checklist
 
