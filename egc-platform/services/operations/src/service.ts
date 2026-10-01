@@ -7,7 +7,9 @@ import {getDb,schema} from "@egc/database";
 import {buildDueWorkSnapshot,collectTaskPages,pageDueWork,type QueueSnapshot,type SourceCoverage,type WaitingOn} from "@egc/lead-audit/operations-core";
 import {authorize,commandSchema,OperationsError,PORTAL_PASSTHROUGH,RECURRING_HORIZON_COMMAND,WRITE_COMMANDS,type Actor,type Command} from "./contracts.js";
 import {assertCompletion,assertEditable,assertTiming,digest,jsonRecord,requestDigest,withoutEmptyAttachments} from "./policy.js";
+import {assertSmsDraftSender,validSmsFromNumbers,isSmsFromNumber} from "./sms-senders.js";
 import {isMessageTaskKind} from "./action-kinds.js";
+import {approvedCommunicationBodyMatches} from "./communication-body-evidence.js";
 import {isSpendRequest,spendRead,spendWrite} from "./spend-service.js";
 import type {BridgeIssuer} from "./bridge-command-policy.js";
 
@@ -36,6 +38,7 @@ export interface PortalJobReference {
 }
 export interface OperationsConfiguration {
   workspace:string;
+  smsFromNumbers?:readonly string[];
   now?:()=>Date;
   resolvePortalJob?:(id:string)=>Promise<PortalJobReference>;
   resolveOwner?:(id:string)=>Promise<boolean>;
@@ -201,6 +204,7 @@ export class OperationsService {
         task=updated;edited=true;
         await this.event(tx,actor,task,"task.edit",{changes:{draft:command.draft},via:"task.send"});
       }
+      assertSmsDraftSender(task.draftPayload!,this.config.smsFromNumbers);
       this.assertSendWindow(task,now);
       const preview=await this.preview(tx,task),end=new Date(String(task.draftPayload!.sendWindowEnd));
       const expiresAt=new Date(Math.min(end.valueOf(),now.valueOf()+24*60*60*1000));
@@ -226,18 +230,20 @@ export class OperationsService {
   }
   /** Re-checked immediately before a provider send: the approved revision is still current,
    * still approved by this approval, inside its window and unchanged in context. */
-  async sendReadiness(actor:Actor,taskId:string,revision:number,approvalId:string) {
-    return this.db.transaction(async tx=>{
-      const now=this.now(),task=await this.task(tx,actor,taskId);
+  async sendReadiness(actor:Actor,taskId:string,revision:number,approvalId:string,claimTx?:Tx) {
+    const check=async(tx:Tx)=>{
+      const now=this.now(),task=await this.task(tx,actor,taskId,Boolean(claimTx));
       this.assertRevision(task,revision);assertEditable(actor,task);
       if(!isMessageTaskKind(task.kind) || !task.draftPayload || !task.contactId) throw new OperationsError("task_has_no_message_draft",409);
       if(task.status==="blocked") throw new OperationsError("blocked_task_requires_review",409);
+      assertSmsDraftSender(task.draftPayload,this.config.smsFromNumbers);
       this.assertSendWindow(task,now);
       const [approval]=await tx.select().from(schema.operationApprovals).where(and(eq(schema.operationApprovals.id,approvalId),eq(schema.operationApprovals.workspaceId,actor.workspace),eq(schema.operationApprovals.taskId,task.id),eq(schema.operationApprovals.taskRevision,revision))).limit(1);
       if(!approval || approval.expiresAt<=now || task.approvalStatus!=="approved") throw new OperationsError("send_approval_not_current",409,{taskId:task.id});
       if((await this.preview(tx,task)).hash!==approval.fingerprint) throw new OperationsError("approval_preview_changed",409,{taskId:task.id});
       return {task,approval};
-    },{isolationLevel:"repeatable read",accessMode:"read only"});
+    };
+    return claimTx?check(claimTx):this.db.transaction(check,{isolationLevel:"repeatable read",accessMode:"read only"});
   }
   /** Links the approved revision to its durable communication execution (once per execution). */
   async recordExecutionStarted(actor:Actor,taskId:string,revision:number,evidence:{executionId:string}&Record<string,unknown>) {
@@ -285,6 +291,7 @@ export class OperationsService {
     switch(command.command) {
       case "status": return {ok:true,contractVersion:1,workspace:actor.workspace,actor,health:await operationalHealth(tx,actor.workspace),
         capabilities:{tasks:true,exactDraftApprovals:true,persistedBriefs:true,externalExecution:false,actionSend:Boolean(this.config.sendTaskMessage),portalIdentity:Boolean(this.config.resolvePortalJob)},
+        smsFromNumbers:validSmsFromNumbers(this.config.smsFromNumbers),
         tenancy:"single-workspace-deployment",release:process.env.RAILWAY_GIT_COMMIT_SHA??process.env.EGC_RELEASE_SHA??null,externalExecutionReason:"Action draft review never sends. Explicitly authorized messaging and scheduling use separate durable execution tools."};
       case "queue": {
         const now=this.now();
@@ -312,8 +319,9 @@ export class OperationsService {
         const approvals=await tx.select().from(schema.operationApprovals).where(and(eq(schema.operationApprovals.workspaceId,actor.workspace),eq(schema.operationApprovals.taskId,task.id))).orderBy(desc(schema.operationApprovals.createdAt)).limit(50);
         const history=await tx.select().from(schema.operationEvents).where(and(eq(schema.operationEvents.workspaceId,actor.workspace),eq(schema.operationEvents.taskId,task.id))).orderBy(desc(schema.operationEvents.occurredAt),desc(schema.operationEvents.id)).limit(100);
         const approval=approvals.find(a=>a.taskRevision===task.revision && a.fingerprint===preview.hash && a.expiresAt>this.now());
-        return {ok:true,task,previewHash:preview.hash,approvalScope:"draft_review",effectiveApproval:task.approvalStatus==="approved"?(approval?"approved":"invalidated_or_expired"):task.approvalStatus,
-          approvals,history,historyLimit:100,historyMayHaveMore:history.length===100,externalExecution:false,actionSend:{available:Boolean(this.config.sendTaskMessage)}};
+        const senderReady=task.draftPayload?.channel!=="sms"||isSmsFromNumber(task.draftPayload.fromNumber)&&validSmsFromNumbers(this.config.smsFromNumbers).includes(task.draftPayload.fromNumber);
+        return {ok:true,task,previewHash:preview.hash,approvalScope:"draft_review",effectiveApproval:task.approvalStatus==="approved"?(approval&&senderReady?"approved":"invalidated_or_expired"):task.approvalStatus,
+          approvals,history,historyLimit:100,historyMayHaveMore:history.length===100,externalExecution:false,actionSend:{available:Boolean(this.config.sendTaskMessage),smsFromNumbers:validSmsFromNumbers(this.config.smsFromNumbers)}};
       }
       case "brief.latest": {
         const [brief]=await tx.select({id:schema.operationBriefs.id}).from(schema.operationBriefs).where(eq(schema.operationBriefs.workspaceId,actor.workspace)).orderBy(desc(schema.operationBriefs.generatedAt)).limit(1);
@@ -396,6 +404,7 @@ export class OperationsService {
         this.assertRevision(task,item.revision);assertEditable(actor,task);assertTiming(task);
         if(!isMessageTaskKind(task.kind) || !task.draftPayload) throw new OperationsError("task_has_no_message_draft",409);
         if(task.status==="blocked") throw new OperationsError("blocked_task_requires_review",409);
+        assertSmsDraftSender(task.draftPayload,this.config.smsFromNumbers);
         if(new Date(String(task.draftPayload.sendWindowEnd))<=now)throw new OperationsError("draft_window_expired",409);
         const preview=await this.preview(tx,task);
         if(preview.hash!==item.previewHash) throw new OperationsError("approval_preview_changed",409,{taskId:task.id});
@@ -472,8 +481,7 @@ export class OperationsService {
       if(used)throw new OperationsError("message_execution_already_completed_task",409);
       const evidence=execution.response.matchEvidence as Record<string,unknown>|undefined,draft=task.draftPayload;
       const occurredAt=typeof evidence?.occurredAt==="string"?new Date(evidence.occurredAt):null;
-      const bodyHash=createHash("sha256").update(String(draft.body)).digest("hex");
-      if(!evidence||evidence.version!==1||evidence.payloadHash!==execution.payloadHash||evidence.bodyHash!==bodyHash||evidence.channel!==draft.channel||evidence.recipient!==draft.recipient||(draft.channel==="email"&&evidence.subject!==draft.subject)||!sameAttachmentUrls(execution.payload.attachments,draft.attachments)||!occurredAt||!Number.isFinite(occurredAt.valueOf())||occurredAt>now||occurredAt<new Date(String(draft.sendWindowStart))||occurredAt>new Date(String(draft.sendWindowEnd)))throw new OperationsError("message_draft_delivery_mismatch",409);
+      if(!evidence||evidence.payloadHash!==execution.payloadHash||!approvedCommunicationBodyMatches(evidence,draft.body,execution.payload.message,execution.payload.type)||evidence.channel!==draft.channel||evidence.recipient!==draft.recipient||(draft.channel==="sms"&&(!isSmsFromNumber(draft.fromNumber)||execution.payload.fromNumber!==draft.fromNumber||evidence.fromNumber!==draft.fromNumber))||(draft.channel==="email"&&evidence.subject!==draft.subject)||!sameAttachmentUrls(execution.payload.attachments,draft.attachments)||!occurredAt||!Number.isFinite(occurredAt.valueOf())||occurredAt>now||occurredAt<new Date(String(draft.sendWindowStart))||occurredAt>new Date(String(draft.sendWindowEnd)))throw new OperationsError("message_draft_delivery_mismatch",409);
       const [contact]=await tx.select().from(schema.contacts).where(eq(schema.contacts.id,task.contactId)).limit(1);
       if(!contact||contact.provider!=="ghl"||contact.providerId!==execution.payload.contactId)throw new OperationsError("message_contact_evidence_mismatch",409);
       // The matching sent message itself legitimately invalidated the draft. Its

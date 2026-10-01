@@ -2,6 +2,7 @@ import {afterEach,describe,expect,it,vi} from 'vitest';
 import * as z from 'zod/v4';
 import type {McpServer} from '@modelcontextprotocol/server';
 import {schema} from '@egc/database';
+import {EXTRACTOR_VERSION} from '@egc/customer-state';
 import {getTableColumns} from 'drizzle-orm';
 import {crmReadTools} from '../src/tools/domains/crm-reads.js';
 import {registerTools} from '../src/tools/define.js';
@@ -399,6 +400,25 @@ describe('record reads and enrichment',()=>{
     const contacts=harness(slicer(WALKS[0]!,3));const c=await contacts.call('contacts.search',{limit:2});
     expect(c.items.map((x:any)=>x.operational)).toEqual([{coverage:{complete:false,error:'customer_not_reconciled'}},{coverage:{complete:false,error:'customer_not_reconciled'}}]);
     expect(contacts.log.find(s=>s.table==='customer_state_snapshots')!.params).toEqual([id(0),id(1)]);
+  });
+  it.each([
+    {complete:false,version:EXTRACTOR_VERSION,errors:['semantic_provider_http_429']},
+    {complete:true,version:'older-extractor'},
+    undefined,
+  ])('qualifies old cached CRM context without changing business or provider state: %j',async extraction=>{
+    const walk=WALKS.find(w=>w.name==='leads.search')!,rows=slicer(walk,1);
+    const snapshot={state:'JOB_SOLD',reconciliationStatus:'fully_reconciled',humanReviewNeeded:false,eventIds:['verified-sale'],nextRequiredAction:'Schedule accepted work',discrepancies:[]};
+    const h=harness(s=>s.table==='customer_state_snapshots'?[dbRow(schema.customerStateSnapshots,{contactId:id(0,'b'),snapshot,coverage:{extraction},lastReconciledAt:iso(NOW.valueOf())})]:rows(s));
+    const r=await h.call('leads.search',{limit:2}),item=r.items[0];
+    expect(r.items).toHaveLength(1);expect(item.lead.currentState).toBe('JOB_SOLD');expect(item.lead.providerState).toBe('NEVER_CONTACTED');
+    expect(item.operational).toMatchObject({state:'JOB_SOLD',reconciliationStatus:'reconciliation_needed',humanReviewNeeded:true,eventIds:['verified-sale'],nextRequiredAction:'Schedule accepted work'});
+    expect(item.operational.discrepancies.some((d:any)=>d.code==='extraction_incomplete')).toBe(true);
+    expect(snapshot).toMatchObject({reconciliationStatus:'fully_reconciled',humanReviewNeeded:false,discrepancies:[]});
+  });
+  it('keeps current complete CRM enrichment fully reconciled',async()=>{
+    const walk=WALKS.find(w=>w.name==='leads.search')!,rows=slicer(walk,1),snapshot={state:'JOB_SOLD',reconciliationStatus:'fully_reconciled',humanReviewNeeded:false,discrepancies:[]};
+    const h=harness(s=>s.table==='customer_state_snapshots'?[dbRow(schema.customerStateSnapshots,{contactId:id(0,'b'),snapshot,coverage:{extraction:{complete:true,version:EXTRACTOR_VERSION}},lastReconciledAt:iso(NOW.valueOf())})]:rows(s));
+    const r=await h.call('leads.search',{limit:2});expect(r.items[0].operational).toMatchObject(snapshot);
   });
   it('gets return one record with a refreshed canonical timeline, and not-found as an error result',async()=>{
     const job=dbRow(schema.jobs,{id:CONTACT,contactId:OTHER,status:'scheduled'}),h=harness(s=>s.table==='jobs'?[job]:[]);

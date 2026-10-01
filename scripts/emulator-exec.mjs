@@ -9,6 +9,7 @@
 //   node scripts/emulator-exec.mjs [--project demo-egc-x] [--config firebase.emulator.json]
 //     [--keep-logs] [--] '<command run with FIRESTORE_EMULATOR_HOST set>'
 import {spawn} from 'node:child_process';
+import {randomUUID} from 'node:crypto';
 import {existsSync,mkdirSync,readFileSync,rmSync,writeFileSync} from 'node:fs';
 import {createRequire} from 'node:module';
 import {createServer} from 'node:net';
@@ -17,7 +18,6 @@ import {fileURLToPath,pathToFileURL} from 'node:url';
 
 export const ROOT=fileURLToPath(new URL('../',import.meta.url));
 const USAGE="Usage: node scripts/emulator-exec.mjs [--project demo-egc-x] [--config firebase.emulator.json] [--keep-logs] [--] '<command>'";
-let sequence=0;
 
 export function parseArgs(argv){
  const options={project:'demo-egc-field-rules',config:'firebase.emulator.json',keepLogs:false},rest=[];
@@ -81,7 +81,9 @@ export function firebaseCommand(env=process.env){
 }
 
 async function attempt({project,config,script,keepLogs,root,cwd,env,stdio,onChild,log,pickPorts}){
- const baseConfig=resolve(root,config),id=`${process.pid}${sequence++?'-'+sequence:''}`;
+ // Separate sandbox/process namespaces can report the same PID while sharing
+ // this checkout. A per-attempt UUID prevents config and log collisions there.
+ const baseConfig=resolve(root,config),id=`${process.pid}-${randomUUID()}`;
  const [firestore,websocket,hub,logging]=await pickPorts(4);
  const privateConfig=join(dirname(baseConfig),`.firebase-emulator.${id}.json`),logDir=resolve(root,'test-results',`emulator-${id}`),started=join(logDir,'.command-started');
  let code=1,output='';

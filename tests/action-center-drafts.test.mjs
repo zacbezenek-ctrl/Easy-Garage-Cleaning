@@ -20,7 +20,7 @@ const attachments=[
   {kind:'portal_quote',url:'https://easygaragecleaning.com/portal/quote/synthetic-1',label:'Your quote',refId:'quote:synthetic-1'},
   {kind:'before_after_gallery',url:'https://easygaragecleaning.com/gallery/synthetic?set=2#top',label:'Before and after photos',refId:null}
 ];
-const draft={channel:'sms',recipient:'+15555550100',subject:'',body:'Synthetic exact message',sendWindowStart:'2026-10-01T15:00:00.000Z',sendWindowEnd:'2026-10-02T03:00:00.000Z',attachments};
+const draft={channel:'sms',fromNumber:'+15555551644',recipient:'+15555550100',subject:'',body:'Synthetic exact message',sendWindowStart:'2026-10-01T15:00:00.000Z',sendWindowEnd:'2026-10-02T03:00:00.000Z',attachments};
 const form={channel:'email',recipient:'synthetic@example.invalid',subject:'Synthetic subject',body:'Edited synthetic body',sendWindowStart:'2026-10-01T09:00',sendWindowEnd:'2026-10-01T21:30'};
 
 test('the Hub message and attachment kinds are exactly the platform contract lists',()=>{
@@ -59,7 +59,7 @@ test('draft review lists every attachment link with its kind, label and host',()
     {kind:'before_after_gallery',kindLabel:'Before and after photos',label:'Before and after photos',url:attachments[1].url,host:'easygaragecleaning.com',refId:null,verifiable:true}
   ]);
   const {attachments:_,...legacy}=draft;const old=drafts.draftReview(legacy);assert.equal(old.ok,true);assert.deepEqual(plain(old.attachments),[]);
-  assert.equal(drafts.draftReview({...draft,channel:'email',recipient:'synthetic@example.invalid',subject:'Synthetic subject',attachments:[]}).ok,true);
+  assert.equal(drafts.draftReview({...draft,channel:'email',fromNumber:null,recipient:'synthetic@example.invalid',subject:'Synthetic subject',attachments:[]}).ok,true);
 });
 
 test('a draft the Hub cannot show in full is never approvable here',()=>{
@@ -91,4 +91,15 @@ test('a draft the Hub cannot show in full is never approvable here',()=>{
   }
   const unknown=drafts.draftReview(withLink({kind:'__proto__'}));assert.equal(unknown.attachments[0].kindLabel,'Unknown kind');
   const bad=drafts.draftReview(withLink({url:'http://easygaragecleaning.com/q'}));assert.equal(bad.attachments[0].verifiable,false);assert.equal(bad.attachments[0].host,'');assert.equal(bad.attachments[1].verifiable,true);
+});
+
+test('sender edits are explicit and every reviewed SMS displays a configured exact sender',()=>{
+ const sms={...form,channel:'sms',recipient:draft.recipient,fromNumber:'+15555551818'};
+ const built=drafts.buildDraft('send_quote',sms,draft);assert.equal(built.fromNumber,'+15555551818');assert.equal(draft.fromNumber,'+15555551644');
+ assert.equal(drafts.buildDraft('send_quote',{...sms,fromNumber:''},draft).fromNumber,null);
+ const {fromNumber:_,...disabledSender}=sms;assert.equal(drafts.buildDraft('send_quote',disabledSender,draft).fromNumber,draft.fromNumber);
+ assert.equal(drafts.buildDraft('send_quote',form,draft).fromNumber,undefined);
+ for(const fromNumber of [null,undefined,'+1 555 555 1644'])assert.equal(drafts.draftReview({...draft,fromNumber}).ok,false);
+ assert.equal(drafts.draftReview(draft,['+15555551818']).ok,false);assert.equal(drafts.draftReview(draft,['+15555551644']).ok,true);
+ assert.match(source,/value:'',label:'Choose a sender'/);assert.match(source,/\['From',d.fromNumber\|\|'Not selected'\]/);
 });

@@ -27,6 +27,7 @@
     "test:operations:integration": "node --test test/operations-postgres.check.mjs"
   },
   "dependencies": {
+    "@egc/customer-state": "workspace:*",
     "@egc/database": "workspace:*",
     "@egc/schemas": "workspace:*",
     "drizzle-orm": "0.44.5"

@@ -97,6 +97,37 @@ test('unknown provider status cannot be reported as accepted',async()=>{
 test('documented SMS from/to fields provide exact recipient proof',async()=>{
  const i=input();i.payload.toNumber='+12025550100';saved.to=i.payload.toNumber;saved.dateAdded=new Date().toISOString();saved.status='delivered';const r=await executeCommunication(i,provider,db);assert.equal(r.ok,true);assert.equal(r.matchEvidence.recipient,saved.to);assert.equal(r.matchEvidence.channel,'sms');
 });
+test('SMS apostrophe readback keeps raw authorization and both body hashes without resend',async()=>{
+ const i=input();i.payload.message='We\u2019ll keep your exact approved plan.';i.payload.toNumber='+12025550100';saved.body="We'll keep your exact approved plan.";saved.to=i.payload.toNumber;saved.dateAdded=new Date().toISOString();saved.status='delivered';
+ const expected=normalizedCommunicationPayload(i.payload),r=await executeCommunication(i,provider,db);
+ assert.equal(r.ok,true);assert.equal(r.matchEvidence.version,2);assert.equal(r.matchEvidence.providerBody,saved.body);assert.equal(r.matchEvidence.approvedBodyHash,createHash('sha256').update(i.payload.message).digest('hex'));assert.equal(r.matchEvidence.providerBodyHash,createHash('sha256').update(saved.body).digest('hex'));
+ const [row]=await db.select().from(schema.communicationExecutions);assert.equal(row.payload.message,i.payload.message);assert.equal(row.payloadHash,expected.hash);assert.equal(r.matchEvidence.payloadHash,expected.hash);
+ const replay=await executeCommunication(i,provider,db);assert.equal(replay.delivered,true);assert.equal(writes,1);
+});
+test('transformed SMS still requires exact provider ID, contact, recipient, channel and bounded time',async()=>{
+ const i=input();i.payload.message='We\u2019ll keep the approved plan.';i.payload.toNumber='+12025550100';
+ const valid={...saved,body:"We'll keep the approved plan.",to:i.payload.toNumber,dateAdded:new Date().toISOString(),status:'delivered'};
+ for(const changes of [{id:'wrong'},{contactId:'wrong'},{to:'+12025550199'},{messageType:'TYPE_EMAIL'},{direction:'inbound'},{dateAdded:undefined},{dateAdded:'2000-01-01T00:00:00Z'},{dateAdded:new Date(Date.now()+3600000).toISOString()}]){
+  await db.execute(sql`truncate communication_executions`);saved={...valid,...changes};provider.sendMessage=async()=>{writes++;return {messageId:valid.id};};
+  assert.equal((await executeCommunication({...i,requestId:randomUUID()},provider,db)).error,'message_verification_pending');
+ }
+});
+test('email, reverse conversion and broader punctuation changes never borrow SMS normalization',async()=>{
+ for(const [type,approved,observed] of [['Email','We\u2019ll help.',"We'll help."],['SMS',"We'll help.",'We\u2019ll help.'],['SMS','We\u2019ll help. ',"We'll help."],['SMS','We\u2019ll help—soon.',"We'll help-soon."]]){
+  await db.execute(sql`truncate communication_executions`);const i=input();i.payload={...i.payload,type,message:approved,toNumber:'+12025550100'};saved={...saved,body:observed,to:i.payload.toNumber,dateAdded:new Date().toISOString(),messageType:type==='SMS'?'TYPE_SMS':'TYPE_EMAIL'};
+  assert.equal((await executeCommunication(i,provider,db)).error,'message_verification_pending');
+ }
+});
+test('normalized undelivered 30003 stays failed and an explicit replay never resends',async()=>{
+ const i=input();i.payload.message='We\u2019ll help.';i.payload.toNumber='+12025550100';saved={...saved,body:"We'll help.",to:i.payload.toNumber,dateAdded:new Date().toISOString(),status:'undelivered',errorCode:30003};
+ const r=await executeCommunication(i,provider,db);assert.equal(r.ok,false);assert.equal(r.delivered,false);assert.equal(r.status,'undelivered');assert.equal(r.providerMessage.errorCode,30003);assert.equal((await db.select().from(schema.communicationExecutions))[0].status,'failed');
+ assert.equal((await executeCommunication(i,provider,db)).ok,false);assert.equal(writes,1);
+});
+test('unknown transformed SMS reconciles by exact ID with no send retry',async()=>{
+ const i=input();i.payload.message='We\u2019ll help.';i.payload.toNumber='+12025550100';provider.sendMessage=async()=>{writes++;throw new Error('after commit');};const unknown=await executeCommunication(i,provider,db);
+ saved={...saved,body:"We'll help.",to:i.payload.toNumber,dateAdded:new Date().toISOString(),status:'delivered'};
+ const reconciled=await reconcileCommunication(unknown.executionId,saved.id,'reviewer',provider,db);assert.equal(reconciled.ok,true);assert.equal(reconciled.matchEvidence.version,2);assert.equal(writes,1);
+});
 test('documented email child read supplies exact subject and single recipient proof',async()=>{
  const i=input({payload:{type:'Email',contactId:'synthetic-provider-id',message:'Synthetic authorized message',subject:'Exact subject',emailTo:'synthetic@example.invalid'}});saved.messageType='TYPE_EMAIL';saved.meta={email:{email:{messageIds:['email-child']}}};saved.dateAdded=new Date().toISOString();provider.getEmailMessage=async id=>({id,threadId:saved.id,contactId:saved.contactId,conversationId:saved.conversationId,direction:'outbound',body:saved.body,subject:'Exact subject',to:['synthetic@example.invalid'],from:'sender@example.invalid',status:'delivered',dateAdded:saved.dateAdded});const r=await executeCommunication(i,provider,db);assert.equal(r.ok,true);assert.equal(r.matchEvidence.recipient,'synthetic@example.invalid');assert.equal(r.matchEvidence.subject,'Exact subject');assert.equal(r.delivered,true);
 });
@@ -112,4 +143,17 @@ test('the shared execution keeps the pre-attachment hash for plain messages and 
 });
 test('ambiguous email children do not guess which exact email was sent',async()=>{
  const i=input({payload:{type:'Email',contactId:'synthetic-provider-id',message:'Synthetic authorized message',subject:'Exact subject',emailTo:'synthetic@example.invalid'}});saved.messageType='TYPE_EMAIL';saved.meta={email:{email:{messageIds:['first','second']}}};provider.getEmailMessage=async()=>{throw new Error('must not guess');};assert.equal((await executeCommunication(i,provider,db)).error,'message_verification_pending');
+});
+
+test('explicit SMS sender must match readback and cannot change on replay',async()=>{
+ const i=input();i.payload.fromNumber='+15555551818';i.payload.toNumber='+15555550100';saved.to=i.payload.toNumber;saved.from='+15555551644';
+ const first=await executeCommunication(i,provider,db);assert.equal(first.error,'message_verification_pending');assert.equal(writes,1);
+ await assert.rejects(executeCommunication({...i,payload:{...i.payload,fromNumber:'+15555551644'}},provider,db),/message_request_conflict/);assert.equal(writes,1);
+ delete saved.from;assert.equal((await executeCommunication(i,provider,db)).error,'message_verification_pending');
+ saved.fromNumber=i.payload.fromNumber;saved.from='+15555551644';assert.equal((await executeCommunication(i,provider,db)).error,'message_verification_pending');
+ saved.from=i.payload.fromNumber;const exact=await executeCommunication(i,provider,db);assert.equal(exact.ok,true);assert.equal(exact.matchEvidence.fromNumber,i.payload.fromNumber);assert.equal(writes,1);
+});
+test('a failed atomic approval guard makes no execution claim and no provider request',async()=>{
+ await assert.rejects(executeCommunication(input(),provider,db,{beforeClaim:async()=>{throw new Error('synthetic_stale_sender_approval');}}),/synthetic_stale_sender_approval/);
+ assert.equal(writes,0);assert.equal((await db.select().from(schema.communicationExecutions)).length,0);assert.equal((await db.select().from(schema.auditLogs)).length,0);
 });

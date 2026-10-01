@@ -436,8 +436,18 @@ export async function onRequestGet({ request, env }) {
       }
       return reply(200, { ok: true, jobId, asOf: now, employees: [...employees.values()], legacyAssociationOnlyCount, needsReviewCount, source: 'explicit_employee_job_segments' });
     }
-    const rows = await readAll(env), viewedAt = new Date().toISOString();
-    const collections = Object.fromEntries([...COLLECTIONS].map(name => [name, []]));
+    // Chat's 15-second refresh reads only message families. Authorization below is
+    // identical to the full view, including current job-assignment checks.
+    const messagesOnly = params.get('view') === 'messages';
+    const names = messagesOnly ? ['teamMessages', 'jobMessages', 'messageReads'] : [...COLLECTIONS];
+    // A missing index or legacy-query setting needs only one shared fallback scan.
+    let fallbackRows;
+    const fallback = () => fallbackRows ??= readAll(env);
+    const rows = messagesOnly
+      ? (await Promise.all(names.map(async collection => (await readCollection(env, collection, { fallback })).map(data => ({ collection, data }))))).flat()
+      : await readAll(env);
+    const viewedAt = new Date().toISOString();
+    const collections = Object.fromEntries(names.map(name => [name, []]));
     const jobAccess = new Map();
     const assignments = createJobAssignmentAccess(env, session);
     for (const row of rows) {
@@ -449,6 +459,7 @@ export async function onRequestGet({ request, env }) {
       if (!jobAccess.has(jobId)) jobAccess.set(jobId, manager(session) || await readJob(env, jobId).then(job => jobMember(session, job, assignments)));
       if (jobAccess.get(jobId)) collections.jobMessages.push(row.data);
     }
+    if (messagesOnly) return reply(200, { ok: true, collections });
     // Approval establishes team membership before the employee creates a profile.
     // Project only roster fields; application credentials and review data stay private.
     const accounts = manager(session) ? await listEmployeeApplications(env) : [];

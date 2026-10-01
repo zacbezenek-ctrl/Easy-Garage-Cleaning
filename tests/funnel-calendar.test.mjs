@@ -93,9 +93,10 @@ test('the web-lead relay payload is byte-identical to the legacy output over the
     const href = String(url);
     if (href.startsWith('https://hooks.example.test/lead')) { relays.push({ url: href, body: options.body }); return new Response('{}', { status: 200 }); }
     assert.ok(href.startsWith('https://services.leadconnectorhq.com/'), href);
-    if (href.endsWith('/contacts/upsert')) return Response.json({ contact: { id: 'contact-synthetic' } });
+    if (href.endsWith('/contacts/upsert')) return Response.json({ contact: { id: 'contact-synthetic', tags: [] }, new: true });
     if (href.includes('/opportunities/pipelines?')) return Response.json({ pipelines: [{ id: 'pipe-1', stages: [{ id: 'stage-new' }] }] });
-    if (href.endsWith('/opportunities/upsert')) return Response.json({ opportunity: { id: 'opp-synthetic' } });
+    if (href.includes('/opportunities/search?')) return Response.json({ opportunities: [], meta: { total: 0 } });
+    if (href.endsWith('/opportunities/')) return Response.json({ opportunity: { id: 'opp-synthetic' } });
     return Response.json({ messageId: 'message-synthetic' });
   });
   const baseline = new Map();

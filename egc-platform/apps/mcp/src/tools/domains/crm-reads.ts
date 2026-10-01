@@ -2,7 +2,7 @@ import * as z from "zod/v4";
 import {and,asc,desc,eq,exists,getTableColumns,gt,gte,ilike,inArray,lt,lte,or,sql,type SQL} from "drizzle-orm";
 import type {AnyPgColumn,PgTable} from "drizzle-orm/pg-core";
 import {getDb,schema} from "@egc/database";
-import {getCustomerTimeline,OPERATIONAL_STATES} from "@egc/customer-state";
+import {getCustomerTimeline,OPERATIONAL_STATES,qualifyExtractionCoverage,type CustomerProjection} from "@egc/customer-state";
 import {defineTool,type ToolDef} from "../define.js";
 import {CursorError,keysetOf,MAX_PAGE_LIMIT,pageFields,pageOf,readCursor,type CursorState} from "../pagination.js";
 
@@ -36,7 +36,7 @@ const LEAD_STATE_ALIASES:Record<string,string[]>={NEVER_CONTACTED:["NEW_LEAD"],O
 export async function canonicalReadContexts(contactIds:string[],db:Db=getDb()):Promise<Map<string,Record<string,unknown>>> {
   if(!contactIds.length)return new Map<string,Record<string,unknown>>();
   const rows=await db.select().from(schema.customerStateSnapshots).where(inArray(schema.customerStateSnapshots.contactId,[...new Set(contactIds)]));
-  return new Map(rows.map(row=>[row.contactId,{...row.snapshot,coverage:row.coverage,lastReconciledAt:row.lastReconciledAt}]));
+  return new Map(rows.map(row=>[row.contactId,{...qualifyExtractionCoverage(row.snapshot as unknown as CustomerProjection,row.coverage),coverage:row.coverage,lastReconciledAt:row.lastReconciledAt}]));
 }
 export async function withCanonicalContexts<T extends {contactId:string}>(rows:T[],db:Db=getDb()) {
   const canonical=await canonicalReadContexts(rows.map(row=>row.contactId),db);

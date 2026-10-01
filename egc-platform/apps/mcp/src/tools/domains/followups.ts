@@ -61,7 +61,7 @@ function draftPreview(task:Task) {
   const draft=task.draftPayload;
   if(!isRecord(draft))return null;
   const body=text(draft.body)??"";
-  return {channel:text(draft.channel),recipient:text(draft.recipient),subject:text(draft.subject)??"",
+  return {channel:text(draft.channel),fromNumber:text(draft.fromNumber),recipient:text(draft.recipient),subject:text(draft.subject)??"",
     bodyPreview:body.length>DRAFT_PREVIEW_CHARS?`${body.slice(0,DRAFT_PREVIEW_CHARS)}…`:body,bodyLength:body.length,
     sendWindowStart:text(draft.sendWindowStart),sendWindowEnd:text(draft.sendWindowEnd),
     // Labels only: a link can carry access to a customer record, so the full attachment stays behind actions.review.
@@ -83,7 +83,7 @@ const str=z.string(),nstr=z.string().nullable(),count=z.number().int().min(0);
 const itemOutput=z.object({taskId:str,title:str,kind:str,owner:nstr,status:nstr,priority:nstr,waitingOn:nstr,attentionAt:nstr,overdueMinutes:count.nullable(),dueAt:nstr,reviewAt:nstr,
   portalJobId:nstr,portalVisitId:nstr,contactId:nstr,revision:z.number().int().nullable(),approvalStatus:nstr,
   sourceEvidence:z.array(z.object({source:str,id:str,excerpt:str}).strict()),sourceEvidenceCount:count,
-  draft:z.object({channel:nstr,recipient:nstr,subject:str,bodyPreview:str,bodyLength:count,sendWindowStart:nstr,sendWindowEnd:nstr,
+  draft:z.object({channel:nstr,fromNumber:nstr,recipient:nstr,subject:str,bodyPreview:str,bodyLength:count,sendWindowStart:nstr,sendWindowEnd:nstr,
     attachments:z.array(z.object({kind:nstr,label:nstr}).strict()),approvalStatus:nstr}).strict().nullable()}).strict();
 const kindCounts=z.array(z.object({kind:str,count}).strict());
 const output=z.object({

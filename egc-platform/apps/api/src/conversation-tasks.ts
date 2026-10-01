@@ -16,8 +16,8 @@ export function recordingTaskProposals(conversation:ConversationExtraction,recor
       task:{title:action.title,description:action.commitment,kind:action.kind,priority:'medium' as const,assignedUserId:null,dueAt:null,timeZone:'America/Denver',waitingOn:'none' as const,reviewAt:null,
         portalJobId:recording.portalJobId,portalVisitId:recording.portalVisitId,contactId:null,jobId:null,completionCondition:null,
         sourceEvidence:[{source:'recording' as const,id:recording.id,excerpt:action.sourceQuote}],dependencies:[] as string[],
-        draft:message?{channel,recipient:null,subject:suggestion?.subject??'',body:suggestion?.body??'',sendWindowStart:null,sendWindowEnd:null,attachments:[] as never[]}:null},
-      reviewRequired:['assignedUserId','dueAt','completionCondition',...(message?['draft.recipient','draft.sendWindowStart','draft.sendWindowEnd',...(suggestion?[]:['draft.body']),...action.attachmentsNeeded.map(kind=>`draft.attachments.${kind}`)]:[])],
+        draft:message?{channel,fromNumber:null,recipient:null,subject:suggestion?.subject??'',body:suggestion?.body??'',sendWindowStart:null,sendWindowEnd:null,attachments:[] as never[]}:null},
+      reviewRequired:['assignedUserId','dueAt','completionCondition',...(message?[...(channel==='sms'?['draft.fromNumber']:[]),'draft.recipient','draft.sendWindowStart','draft.sendWindowEnd',...(suggestion?[]:['draft.body']),...action.attachmentsNeeded.map(kind=>`draft.attachments.${kind}`)]:[])],
       attachmentsNeeded:action.attachmentsNeeded,ownerMention:action.ownerMention,dueMention:action.dueMention,requestedChannel:action.requestedChannel,questionText:action.questionText,confidence:action.confidence};
   });
 }

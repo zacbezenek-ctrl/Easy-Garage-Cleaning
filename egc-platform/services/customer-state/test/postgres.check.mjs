@@ -6,7 +6,7 @@ const url=new URL(process.env.DATABASE_URL??'http://invalid');
 if(process.env.EGC_CUSTOMER_STATE_TEST!=='isolated'||!['localhost','127.0.0.1'].includes(url.hostname)||!['/egc_operations_test','/egc_customer_state_test'].includes(url.pathname)||!['postgres:','postgresql:'].includes(url.protocol))throw new Error('Customer-state integration requires EGC_CUSTOMER_STATE_TEST=isolated and explicitly named loopback test database');
 const {getDb,schema}=await import('@egc/database');
 const {eq,sql}=await import('drizzle-orm');
-const {reconcileCustomerState,recordUserConfirmedOutcome,getCustomerTimeline,getCanonicalReport,getOperationalEventEvidence,getCustomerStateDiagnostics}=await import('../dist/index.js');
+const {reconcileCustomerState,recordUserConfirmedOutcome,getCustomerTimeline,getCanonicalReport,getOperationalEventEvidence,getCustomerStateDiagnostics,EXTRACTOR_VERSION}=await import('../dist/index.js');
 const db=getDb(),created=[];
 const originalFetch=globalThis.fetch;
 globalThis.fetch=async()=>{throw new Error('All external HTTP disabled in isolated customer-state integration test');};
@@ -93,6 +93,30 @@ test('read refresh preserves the worker semantic provider error on cached partia
   const [source]=await db.select().from(schema.customerEvidence).where(eq(schema.customerEvidence.sourceRecordId,providerId));
   assert.equal(source.error,'semantic_provider_http_429');
   const timeline=await getCustomerTimeline({contactId:contact.id});assert.ok(timeline.coverage.extraction.errors.includes('semantic_provider_http_429'));
+  assert.equal(timeline.customer.reconciliationStatus,'reconciliation_needed');assert.equal(timeline.customer.humanReviewNeeded,true);
+  assert.ok(timeline.customer.discrepancies.some(d=>d.code==='extraction_incomplete'&&d.sourceIds.includes(providerId)));
+  const [snapshot]=await db.select().from(schema.customerStateSnapshots).where(eq(schema.customerStateSnapshots.contactId,contact.id));assert.equal(snapshot.reconciliationStatus,'reconciliation_needed');
+});
+
+test('read-only timeline, report and diagnostics qualify older snapshots without changing stored facts',async()=>{
+  await reconcileCustomerState({contactIds:[contact.id],useAI:false,portalRecords:[{id:`read-guard-${contact.id}`,highlevelContactId:contact.providerId,kind:'job',status:'completed',createdAt:prior.toISOString(),completedAt:at.toISOString(),financials:{quote:{at:prior.toISOString(),amountCents:13900,source:'customer_approval'},payments:[{key:`read-guard-receipt-${contact.id}`,at:at.toISOString(),amountCents:13900}]}}]});
+  const [saved]=await db.select().from(schema.customerStateSnapshots).where(eq(schema.customerStateSnapshots.contactId,contact.id));
+  const original={...saved.snapshot,reconciliationStatus:'fully_reconciled',humanReviewNeeded:false,discrepancies:[]};
+  const complete={...saved.coverage,extraction:{complete:true,version:EXTRACTOR_VERSION,errors:[],partialSourceIds:[]},portal:{complete:true},providerNotes:{complete:true}};
+  await db.update(schema.customerStateSnapshots).set({snapshot:original,reconciliationStatus:'fully_reconciled',coverage:complete}).where(eq(schema.customerStateSnapshots.contactId,contact.id));
+  const window={since:prior,until:new Date()},baseline=await getCanonicalReport(window),baselineTimeline=await getCustomerTimeline({contactId:contact.id});
+  assert.equal(baselineTimeline.customer.reconciliationStatus,'fully_reconciled');
+  for(const extraction of [{...complete.extraction,complete:false,errors:['semantic_provider_http_429'],partialSourceIds:['cached-call']},{...complete.extraction,version:'older-extractor'},{}]){
+    await db.update(schema.customerStateSnapshots).set({coverage:{...complete,extraction}}).where(eq(schema.customerStateSnapshots.contactId,contact.id));
+    const timeline=await getCustomerTimeline({contactId:contact.id}),report=await getCanonicalReport(window),diagnostics=await getCustomerStateDiagnostics();
+    for(const customer of [timeline.customer,report.customers.find(c=>c.contactId===contact.id),diagnostics.unresolvedDiscrepancies.find(c=>c.contactId===contact.id)]){
+      assert.equal(customer.reconciliationStatus,'reconciliation_needed');assert.equal(customer.humanReviewNeeded,true);assert.equal(customer.state,original.state);assert.deepEqual(customer.eventIds,original.eventIds);assert.ok(customer.discrepancies.some(d=>d.code==='extraction_incomplete'));
+    }
+    assert.equal(report.coverage.complete,false);assert.ok(diagnostics.extractionIncomplete.some(c=>c.contactId===contact.id));
+    for(const key of ['periodActivity','cohort','soldRevenue','collectedRevenue','countedEvents'])assert.deepEqual(report[key],baseline[key]);
+    assert.deepEqual(timeline.events,baselineTimeline.events);
+    const [unchanged]=await db.select().from(schema.customerStateSnapshots).where(eq(schema.customerStateSnapshots.contactId,contact.id));assert.deepEqual(unchanged.snapshot,original);assert.equal(unchanged.reconciliationStatus,'fully_reconciled');
+  }
 });
 
 test('worker bulk window includes recent leads and older leads with recent call activity',async()=>{

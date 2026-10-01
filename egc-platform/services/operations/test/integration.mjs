@@ -18,7 +18,7 @@ const NOW='2026-10-01T15:00:00.000Z';
 let now,service;
 const at=(hours=1)=>new Date(now.valueOf()+hours*3600000).toISOString();
 const base=(extra={})=>({title:'Synthetic internal callback',kind:'callback',assignedUserId:owner.id,dueAt:at(),completionCondition:'Record the attempted call and outcome',...extra});
-const draft=(extra={})=>({channel:'sms',recipient:'+15555550100',subject:'',body:'Synthetic test only',sendWindowStart:at(),sendWindowEnd:at(12),...extra});
+const draft=(extra={})=>({channel:'sms',fromNumber:'+15555551644',recipient:'+15555550100',subject:'',body:'Synthetic test only',sendWindowStart:at(),sendWindowEnd:at(12),...extra});
 const call=(body,actor=owner,id=randomUUID())=>service.execute(actor,body,id);
 const create=async(extra={},actor=owner,id=randomUUID())=>(await call({command:'task.create',task:base(extra)},actor,id)).task;
 const queue=(extra={})=>call({command:'queue',view:'all',dueBefore:at(24),offset:0,limit:200,...extra});
@@ -28,7 +28,7 @@ const rejects=async(p,code)=>assert.rejects(p,e=>e.code===code);
 beforeEach(async()=>{
  await db.execute(sql`truncate operation_events,operation_approvals,operation_requests,operation_briefs,tasks,contacts cascade`);
  now=new Date(NOW);
- service=new OperationsService(db,{workspace:'egc',now:()=>now,resolveOwner:async id=>[owner.id,manager.id,sales.id].includes(id),resolvePortalJob:async id=>({id,revision:'portal-v1',type:'job',highlevelContactId:null,sourceWalkthroughId:'portal-visit-a',customer:'Synthetic',status:'scheduled'})});
+ service=new OperationsService(db,{workspace:'egc',smsFromNumbers:['+15555551644','+15555551818'],now:()=>now,resolveOwner:async id=>[owner.id,manager.id,sales.id].includes(id),resolvePortalJob:async id=>({id,revision:'portal-v1',type:'job',highlevelContactId:null,sourceWalkthroughId:'portal-visit-a',customer:'Synthetic',status:'scheduled'})});
 });
 after(async()=>{globalThis.fetch=originalFetch;await db.$client.end({timeout:5});});
 
@@ -71,7 +71,7 @@ test('same idempotency key cannot be reused for a different payload',async()=>{
  const key=randomUUID();await create({},owner,key);await rejects(create({title:'Changed payload'},owner,key),'idempotency_key_payload_conflict');assert.equal((await queue()).total,1);
 });
 test('request results survive service reconstruction rather than memory-only dedupe',async()=>{
- const key=randomUUID(),t=await create({},owner,key);service=new OperationsService(db,{workspace:'egc',now:()=>now,resolveOwner:async()=>true});const replay=await create({},owner,key);assert.equal(replay.id,t.id);
+ const key=randomUUID(),t=await create({},owner,key);service=new OperationsService(db,{workspace:'egc',smsFromNumbers:['+15555551644','+15555551818'],now:()=>now,resolveOwner:async()=>true});const replay=await create({},owner,key);assert.equal(replay.id,t.id);
 });
 test('competing editors only one expected revision can succeed',async()=>{
  const t=await create();const outcomes=await Promise.allSettled(['first','second'].map(title=>call({command:'task.edit',taskId:t.id,revision:t.revision,changes:{title}},owner)));

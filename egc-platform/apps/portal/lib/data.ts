@@ -1,5 +1,6 @@
 import { and, desc, eq, gte, inArray, lt, sql } from "drizzle-orm";
 import { getDb, schema } from "@egc/database";
+import {qualifyExtractionCoverage,type CustomerProjection} from "@egc/customer-state";
 
 async function providerNames(resourceTypes: string[]) {
   const db = getDb();
@@ -77,7 +78,7 @@ export async function getDashboardData() {
 
 export async function getLeads(limit = 200) {
   const db = getDb();
-  return db.select({
+  const rows=await db.select({
     lead: schema.leads,
     contact: schema.contacts,
     customerState: schema.customerStateSnapshots,
@@ -88,6 +89,11 @@ export async function getLeads(limit = 200) {
     .leftJoin(schema.leadOriginalAttribution,eq(schema.leadOriginalAttribution.leadId,schema.leads.id))
     .orderBy(desc(schema.leads.createdAt))
     .limit(limit);
+  return rows.map(row=>{
+    if(!row.customerState)return row;
+    const snapshot=qualifyExtractionCoverage(row.customerState.snapshot as unknown as CustomerProjection,row.customerState.coverage);
+    return {...row,customerState:{...row.customerState,reconciliationStatus:snapshot.reconciliationStatus,snapshot:{...snapshot}}};
+  });
 }
 
 export async function getFollowups(limit = 200) {

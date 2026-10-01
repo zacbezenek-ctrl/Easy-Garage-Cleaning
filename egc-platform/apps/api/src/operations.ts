@@ -5,7 +5,7 @@ import {getDb,schema} from "@egc/database";
 import {InboundActionReconciler,INBOUND_TASKS_DISABLED,inboundTasksEnabled,type InboundPolicy} from "./inbound-actions.js";
 import {syncPortalSchedule} from "./scheduling.js";
 import {ensureProviderNote} from "./provider-notes.js";
-import {actionSendEnabled,actionSendHook} from "./action-send.js";
+import {actionSendEnabled,actionSendHook,actionSmsFromNumbers} from "./action-send.js";
 import {getCanonicalReport,getCustomerTimeline,getCustomerStateDiagnostics} from '@egc/customer-state';
 import {reconcileHubBookings} from './booking-worker.js';
 import {auditLogWriter,claimsIssuer,recordIssuerRefusal,serviceAuthEnabled,signApiServiceRequest,verifyDelegatedClaims,verifyOperationsClaims,type AuditRow} from './service-bridge.js';
@@ -67,7 +67,7 @@ export async function registerOperationsRoutes(app:FastifyInstance,options:{serv
     // One-tap Action Center send stays off unless EGC_OPERATIONS_ACTION_SEND_ENABLED is exactly "true".
     const sendTaskMessage=actionSendHook(env,()=>service!,{log:event=>app.log.warn(event,"Action Center send needs attention")});
     if(actionSendEnabled(env)&&!sendTaskMessage)app.log.warn({code:"action_send_not_configured"},"One-tap send needs GHL_PRIVATE_INTEGRATION_TOKEN and GHL_LOCATION_ID; task.send stays disabled");
-    service=operationsService({workspace,...(sendTaskMessage?{sendTaskMessage}:{}),canonicalRead:async(_actor,command)=>{
+    service=operationsService({workspace,smsFromNumbers:actionSmsFromNumbers(env),...(sendTaskMessage?{sendTaskMessage}:{}),canonicalRead:async(_actor,command)=>{
       if(command.command==='intelligence.report')return getCanonicalReport({since:command.since,until:command.until,...(command.cohortSince?{cohortSince:command.cohortSince}:{}),...(command.cohortUntil?{cohortUntil:command.cohortUntil}:{}),refresh:true});
       if(command.command==='intelligence.customer')return getCustomerTimeline({contactId:command.contactId});
       return getCustomerStateDiagnostics();

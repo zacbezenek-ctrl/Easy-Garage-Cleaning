@@ -21,7 +21,7 @@ export const JOBS=[
 
 const FIREBASE=`(function(){
 const snap=name=>({docs:(name==='jobs'?(window.__egcJobs||[]):[]).map(row=>({id:row.id,data:()=>({...row})}))});
-const ref=name=>({onSnapshot(next){setTimeout(()=>next(snap(name)),0);return()=>{};},add:async()=>({id:'synthetic'}),get:async()=>snap(name),where(){return this;},orderBy(){return this;},limit(){return this;},
+const ref=name=>({onSnapshot(...args){const next=args.find(arg=>typeof arg==='function');setTimeout(()=>next(snap(name)),0);return()=>{};},add:async()=>({id:'synthetic'}),get:async()=>snap(name),where(){return this;},orderBy(){return this;},limit(){return this;},
   doc(){return{set:async()=>{},update:async()=>{},delete:async()=>{},get:async()=>({exists:false,data:()=>({})})};}});
 const db={collection:ref,batch:()=>({set(){},update(){},delete(){},commit:async()=>{}}),runTransaction:async()=>{throw new Error('Synthetic transactions are unavailable');}};
 window.firebase={initializeApp(){},firestore:Object.assign(()=>db,{FieldValue:{serverTimestamp:()=>({synthetic:'serverTimestamp'})}}),auth:()=>({signInWithCustomToken:async()=>({}),signOut:async()=>{}})};

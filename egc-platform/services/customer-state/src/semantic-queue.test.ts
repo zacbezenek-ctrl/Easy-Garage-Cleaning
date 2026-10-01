@@ -27,3 +27,26 @@ describe('bounded semantic extraction scheduling',()=>{
     expect(reconcile).toHaveBeenCalledTimes(2);expect(result.deferred).toBe(10);expect(result.complete).toBe(false);
   });
 });
+
+describe('customer isolation and provider quota circuit',()=>{
+  it('keeps hiring records out of customer semantic processing without excluding DNC customer history',async()=>{
+    const {customerSemanticEligible}=await import('./semantic-queue.js');
+    for(const tags of [['applicant'],['Applicant-active'],['applicant_interview'],['internal']])expect(customerSemanticEligible({tags})).toBe(false);
+    expect(customerSemanticEligible({tags:['dnc']})).toBe(true);expect(customerSemanticEligible({tags:['customer']})).toBe(true);
+  });
+  it('distinguishes confirmed quota exhaustion from bare429 and throttling',async()=>{
+    const {semanticQuotaExhausted}=await import('./semantic-queue.js');
+    expect(semanticQuotaExhausted(['semantic_provider_http_429;code=insufficient_quota'])).toBe(true);
+    for(const error of ['semantic_provider_http_429','semantic_provider_http_429;code=rate_limit_exceeded','semantic_provider_http_400;code=insufficient_quota'])expect(semanticQuotaExhausted([error])).toBe(false);
+    expect(semanticRetryDelay(['semantic_provider_http_429;code=insufficient_quota'],99,false)).toBe(3600000);
+  });
+  it('stops new work after confirmed exhausted quota, persists cooldown across runs, then probes once',async()=>{
+    let circuit:any=null,clock=now.valueOf();const writes:any[]=[];
+    const deps={candidates:async()=>({candidates:Array.from({length:12},(_,i)=>candidate(String(i))),truncated:false}),claim:async(c:SemanticCandidate)=>cursor({leaseToken:c.contactId,attemptedAt:new Date(clock).toISOString(),workKey:c.workKey}),finish:async()=>true,now:()=>new Date(clock),progress:async(v:any)=>{writes.push(v);},readProviderCircuit:async()=>circuit,writeProviderCircuit:async(v:any)=>{circuit=v;}};
+    const reconcile=vi.fn(async({contactIds})=>({failed:0,results:[{contactId:contactIds[0],coverage:{extraction:{complete:false,errors:['semantic_provider_http_429;code=insufficient_quota']}}}]}));
+    const first=await runSemanticQueue(reconcile,{concurrency:1},deps);expect(reconcile).toHaveBeenCalledTimes(1);expect(first).toMatchObject({pending:12,complete:false,deferred:11,providerCircuit:{reason:'insufficient_quota'}});
+    await runSemanticQueue(reconcile,{},deps);expect(reconcile).toHaveBeenCalledTimes(1);expect(writes.at(-1).status).toBe('provider_cooldown');
+    clock+=3600001;reconcile.mockImplementation(async({contactIds})=>({failed:0,results:[{contactId:contactIds[0],coverage:{extraction:{complete:true,errors:[]}}}]}));
+    const recovered=await runSemanticQueue(reconcile,{},deps);expect(reconcile).toHaveBeenCalledTimes(2);expect(recovered.selected).toBe(1);expect(circuit).toBeNull();
+  });
+});

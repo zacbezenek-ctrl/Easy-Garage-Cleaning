@@ -3,7 +3,7 @@ import { and, asc, desc, eq, gte, inArray, isNull, lt, lte, or, sql } from "driz
 import { getDb, schema } from "@egc/database";
 import { classifyAttribution, detectConversions, sha256, toConversionPreview, type ConversionCandidate, type ConversionLead } from "./core.js";
 import { configurationHealth, conversionConfig, conversionStart, productionBlockers, type ConversionConfig } from "./config.js";
-import { canonicalExclusionReasons, canonicalStageAliases, holdForCanonicalState, type CanonicalCustomerGate } from './canonical.js';
+import { canonicalExclusionReasons, canonicalStageAliases, sourceExtractionCoverage, holdForCanonicalState, type CanonicalCustomerGate } from './canonical.js';
 import { detectCanonicalFeedback } from './feedback.js';
 import { retrySafety, sendToMeta } from "./sender.js";
 
@@ -80,7 +80,7 @@ async function discover(options: ConversionOptions, config: ConversionConfig, no
   const canonicalCoverage={
     missingCustomers:leads.filter(l=>!snapshotByContact.has(l.contactId)).map(l=>({contactId:l.contactId,leadId:l.leadId,reason:'missing_canonical_state'})),
     excludedCustomers:snapshots.flatMap(s=>{const reasons=canonicalExclusionReasons({...s.snapshot as CanonicalCustomerGate,state:s.state});return reasons.length?[{contactId:s.contactId,reasons}]:[]}),
-    sourceExtractionHeldEvents:allCandidates.filter(c=>c.reasons.includes('canonical_source_extraction_incomplete')).map(c=>({eventId:c.eventId,contactId:c.contactId,canonicalEventId:c.canonicalEventId}))
+    ...sourceExtractionCoverage(allCandidates,range)
   };
   return { candidates, allCandidates, leads, range, canonicalCoverage };
 }

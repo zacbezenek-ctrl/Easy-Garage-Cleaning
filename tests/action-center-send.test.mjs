@@ -11,8 +11,8 @@ vm.runInNewContext(source,{window,URL,Intl,console},{filename:'employee-operatio
 const {sendEligibility,sendStarted}=window.EGCActionCenter.send;
 const NOW=Date.parse('2026-10-01T15:00:00.000Z');
 const links=[{kind:'portal_quote',url:'https://easygaragecleaning.com/portal/quote/synthetic-1',label:'Your quote',refId:null}];
-const draft=(extra={})=>({channel:'sms',recipient:'+15555550100',subject:'',body:'Synthetic approved message',sendWindowStart:'2026-10-01T14:00:00.000Z',sendWindowEnd:'2026-10-02T02:00:00.000Z',attachments:links,...extra});
-const result=(task={},extra={})=>({task:{id:'synthetic-task',kind:'send_quote',status:'open',assignedUserId:'synthetic-sales',revision:1,draftPayload:draft(),...task},effectiveApproval:'approved',actionSend:{available:true},previewHash:'a'.repeat(64),...extra});
+const draft=(extra={})=>({channel:'sms',fromNumber:'+15555551644',recipient:'+15555550100',subject:'',body:'Synthetic approved message',sendWindowStart:'2026-10-01T14:00:00.000Z',sendWindowEnd:'2026-10-02T02:00:00.000Z',attachments:links,...extra});
+const result=(task={},extra={})=>({task:{id:'synthetic-task',kind:'send_quote',status:'open',assignedUserId:'synthetic-sales',revision:1,draftPayload:draft(),...task},effectiveApproval:'approved',actionSend:{available:true,smsFromNumbers:['+15555551644','+15555551818']},previewHash:'a'.repeat(64),...extra});
 const owner={id:'synthetic-owner',role:'owner'},manager={id:'synthetic-manager',role:'manager'},sales={id:'synthetic-sales',role:'sales'},otherSales={id:'other-sales',role:'sales'};
 const reason=(r,actor=owner,now=NOW)=>sendEligibility(r,actor,now).reason;
 
@@ -51,4 +51,11 @@ test('once the current revision’s send started, only a status check is offered
   assert.equal(reason(result({revision:2},{...started(1),effectiveApproval:'pending'})),'not_approved');
   assert.equal(reason(result({},started()),otherSales),'not_owner');assert.equal(reason(result({status:'blocked'},started())),'not_sendable');assert.equal(reason(result({status:'completed'},started())),'not_sendable');
   assert.equal(reason(result({},{...started(),actionSend:{available:false}})),'disabled');
+});
+
+test('missing, malformed and unconfigured SMS sender cannot be newly sent',()=>{
+ for(const fromNumber of [undefined,null,'','+1 555 555 1644','+15555559999'])assert.equal(reason(result({draftPayload:draft({fromNumber})})),'not_reviewable');
+ assert.equal(reason(result({draftPayload:draft({fromNumber:'+15555551818'})})),'ready');
+ assert.equal(reason(result({},{actionSend:{available:true,smsFromNumbers:[]}})),'not_reviewable');
+ const legacy=result({draftPayload:draft({fromNumber:undefined})},{history:[{type:'message.execution_started',revision:1}]});assert.equal(reason(legacy),'check_status');
 });

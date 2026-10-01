@@ -63,6 +63,8 @@ export type MessageAttachment = z.infer<typeof messageAttachment>;
 export const messageDraft = z.object({
   channel: z.enum(["sms", "email"]),
   recipient: z.string().min(3).max(320),
+  // Absent legacy senders remain absent; approval requires an explicit configured line.
+  fromNumber: z.string().regex(/^\+[1-9]\d{6,14}$/).nullable().optional(),
   subject: z.string().max(250).default(""),
   body: z.string().min(1).max(10000),
   sendWindowStart: isoTime,
@@ -75,6 +77,8 @@ export const messageDraft = z.object({
     ctx.addIssue({code:"custom",message:"SMS recipient must be an E.164 phone number"});
   if (draft.channel === "email" && !z.string().email().safeParse(draft.recipient).success)
     ctx.addIssue({code:"custom",message:"Email recipient is invalid"});
+  if (draft.channel === "email" && draft.fromNumber != null)
+    ctx.addIssue({code:"custom",message:"Email drafts cannot specify an SMS sender",path:["fromNumber"]});
   // URLs are canonical here, so case, "\" and "//" spellings of one link are duplicates.
   if (Array.isArray(draft.attachments) && new Set(draft.attachments.map(a=>a?.url)).size !== draft.attachments.length)
     ctx.addIssue({code:"custom",message:"Each attachment URL may appear only once",path:["attachments"]});

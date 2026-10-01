@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
 import vm from 'node:vm';
 import { onRequest as middleware } from '../functions/_middleware.js';
 import { webLeadHandlers } from '../functions/api/web-lead.js';
@@ -31,6 +31,31 @@ function render(rows) {
   const bodies = new Map(), index = [];
   for (const [label, body] of rows) { bodies.set(sha(body), body); index.push(`${label} | ${sha(body)}`); }
   return `${index.join('\n')}\n${[...bodies].sort(([a], [b]) => a.localeCompare(b)).map(([hash, body]) => `======== ${hash}\n${body}\n`).join('')}`;
+}
+
+// Keep the historical snapshot immutable. The lead-safety revision changes only
+// opportunity discovery/creation, independently of BOOK-25. Apply that exact,
+// reviewable API-contract migration to expected fixture calls; every booking
+// field, relay byte, note, receipt and browser response still compares unchanged.
+function withLeadSafetyContract(text) {
+  const [index, ...sections] = text.split(/^======== /m);
+  const bodies = new Map(sections.map(section => {
+    const newline = section.indexOf('\n');
+    return [section.slice(0, newline), section.slice(newline + 1).replace(/\n$/, '')];
+  }));
+  return render(index.trimEnd().split('\n').map(line => {
+    const [label, hash] = line.split(' | '), body = bodies.get(hash);
+    if (!/^(?:web-lead |sync )/.test(label)) return [label, body];
+    const row = JSON.parse(body), create = row.calls.find(call => call.path === '/opportunities/upsert');
+    if (!create) return [label, body];
+    const data = JSON.parse(create.body);
+    const params = new URLSearchParams({ locationId: data.locationId, contactId: data.contactId, pipelineId: data.pipelineId, status: 'all', limit: '100', page: '1' });
+    row.calls.splice(row.calls.findIndex(call => call.path.endsWith('/notes')), 0, { to: 'highlevel', method: 'GET', path: `/opportunities/search?${params}`, headers: [['Version', 'v3']], body: null });
+    create.path = '/opportunities/';
+    delete data.followers; delete data.isRemoveAllFollowers; delete data.followersActionType;
+    create.body = JSON.stringify(data);
+    return [label, JSON.stringify(row)];
+  }));
 }
 
 // (a) /book: the fieldset as served, what the middleware does with a /book request (what it asks the asset server
@@ -120,10 +145,10 @@ function providers(t) {
     if (url.hostname === 'hooks.example.test') { calls.push({ to: 'zapier', method: options.method, query: url.search, contentType: options.headers?.['Content-Type'], body: options.body }); return new Response('{}', { status: 200 }); }
     assert.equal(url.hostname, 'services.leadconnectorhq.com', href);
     calls.push({ to: 'highlevel', method: options.method || 'GET', path: url.pathname + url.search, headers: Object.entries(options.headers || {}).filter(([name]) => name !== 'Authorization').sort(), body: options.body ?? null });
-    if (url.pathname === '/contacts/upsert') return Response.json({ contact: { id: 'contact-web' }, new: true });
+    if (url.pathname === '/contacts/upsert') return Response.json({ contact: { id: 'contact-web', tags: [] }, new: true });
     if (url.pathname.startsWith('/opportunities/pipelines')) return Response.json({ pipelines: [{ id: 'pipe-1', stages: [{ id: 'stage-new' }] }] });
     if (url.pathname === '/opportunities/search') return Response.json({ opportunities: [], meta: { total: 0 } });
-    if (url.pathname === '/opportunities/upsert') return Response.json({ opportunity: { id: 'opp-web' } });
+    if (url.pathname === '/opportunities/') return Response.json({ opportunity: { id: 'opp-web' } });
     return Response.json({});
   });
   return calls;
@@ -168,11 +193,11 @@ async function webLeadRows(calls, extra) {
   return rows;
 }
 
-test('with EGC_BOOKING_EXPLICIT_SLOTS anything but exactly "true", /book, /api/web-lead, the HighLevel note and the Zapier relay are byte-identical to before SALES-BOOKING', async t => {
+test('with EGC_BOOKING_EXPLICIT_SLOTS anything but exactly "true", /book, /api/web-lead, booking fields, HighLevel note and Zapier relay retain their historical bytes after the explicit lead-safety API migration', async t => {
   const texts = {}, calls = providers(t);
   for (const [mode, extra] of Object.entries(OFF)) texts[mode] = render([...await bookRows(extra), ...await webLeadRows(calls, extra)]);
-  if (process.env.UPDATE_SNAPSHOTS === '1') { mkdirSync(new URL('./snapshots/', import.meta.url), { recursive: true }); writeFileSync(snapshot, texts.unset); }
+  assert.notEqual(process.env.UPDATE_SNAPSHOTS, '1', 'the historical snapshot must not be overwritten by the lead-safety revision');
   assert.ok(existsSync(snapshot), 'the baseline snapshot was recorded from the code before SALES-BOOKING');
-  const baseline = readFileSync(snapshot, 'utf8');
+  const baseline = withLeadSafetyContract(readFileSync(snapshot, 'utf8'));
   for (const [mode, text] of Object.entries(texts)) assert.equal(text, baseline, `a flag-off output changed (${mode})`);
 });

@@ -35,6 +35,7 @@ function suite() {
       return env.postResponse ? env.postResponse(body) : response({ ok: true, record: { ...body.data, id: body.id } });
     }
     if (env.pending) return env.pending;
+    if (url.endsWith('?view=messages')) return response({ ok: true, collections: { teamMessages: [], jobMessages: [], messageReads: [] } });
     return response({ ok: true, collections: collections(), accounts: [] });
   };
   context.window = context;
@@ -163,10 +164,11 @@ test('active crew chat keeps 15-second updates and leaving chat restores minute 
   await env.advance(15000);
   assert.equal(env.reads(), initial + 2);
   env.api.S.active = 'my_day';
-  await env.advance(45000);
+  await env.advance(15000);
   assert.equal(env.reads(), initial + 2);
   await env.advance(15000);
-  assert.equal(env.reads(), initial + 3);
+  assert.equal(env.reads(), initial + 3, 'the full refresh remains due one minute after the last full read');
+  assert.ok(env.calls.at(-1).url.includes('?include=accounts'));
 });
 
 test('manual and post-write employee refreshes run immediately between automatic polls', async () => {
@@ -341,4 +343,48 @@ test('polling and visibility changes share one request and logout discards its r
   await env.documentEvents.visibilitychange();
   await env.advance(60000);
   assert.equal(env.reads(), initial + 1, 'logout must stop visibility-triggered reads too');
+});
+
+
+test('chat polls only message families between full-minute refreshes and preserves employee/account state', async () => {
+  const env = suite();await env.api.startPeopleListeners();const {S}=env.api;
+  S.active='crew_chat';S.people.timeEntries=[{id:'shift',employee:'ZacB',status:'active'}];S.people.accounts=[{username:'crew.one'}];S.people.payVisibility='all';S.clockInWithoutFix=true;S.timecardCorrections=true;
+  const fullAt=S.peopleLastFullRefreshAt;
+  await env.advance(45000);
+  assert.deepEqual(env.calls.filter(call=>call.method==='GET').slice(-3).map(call=>call.url),Array(3).fill('/api/employee-hub?view=messages'));
+  assert.equal(S.people.timeEntries[0].id,'shift');assert.equal(S.people.accounts[0].username,'crew.one');
+  assert.equal(S.people.payVisibility,'all');assert.equal(S.clockInWithoutFix,true);assert.equal(S.timecardCorrections,true);assert.equal(S.peopleLastFullRefreshAt,fullAt);
+  await env.advance(15000);assert.equal(env.calls.at(-1).url,'/api/employee-hub?include=accounts');
+  assert.equal(S.peopleLastFullRefreshAt,fullAt+60000);
+});
+
+test('a messages-only refresh preserves queued clock-outs and rebases pending chat messages',async()=>{
+ const env=suite();await env.api.startPeopleListeners();const {S}=env.api;
+ const clockOut={collection:'timeEntries',id:'shift',requestId:'clock-out',data:{status:'submitted'}},message={collection:'teamMessages',id:'message',requestId:'message-save',data:{body:'Unsent message'}};
+ env.context.EGCHubOffline={showing:()=>true,revision:()=>1,records:async()=>[clockOut,message]};
+ const shown={collection:'timeEntries',id:'shift',base:{id:'shift',status:'active'},requests:[clockOut]};
+ S.queuedShown.set('timeEntries/shift',shown);S.people.timeEntries=[{id:'shift',status:'submitted',pendingSync:true}];
+ const sequence=S.readSeq;
+ await env.api.refreshPeople({messagesOnly:true});
+ assert.equal(S.queuedShown.get('timeEntries/shift'),shown);assert.equal(S.people.timeEntries[0].status,'submitted');assert.equal(S.people.timeEntries[0].pendingSync,true);
+ assert.equal(S.people.teamMessages[0].body,'Unsent message');assert.equal(S.people.teamMessages[0].pendingSync,true);
+ assert.equal(S.readSeq,sequence,'chat cannot resolve a timecard pause without reading timecards');
+});
+
+test('manual refresh overlapping chat schedules a full read instead of silently accepting a partial read',async()=>{
+ const env=suite();await env.api.startPeopleListeners();let release;
+ env.pending=new Promise(resolve=>{release=resolve;});
+ const messages=env.api.refreshPeople({messagesOnly:true});const manual=env.api.refreshPeople();
+ env.pending=null;release(response({ok:true,collections:{teamMessages:[],jobMessages:[],messageReads:[]}}));
+ await Promise.all([messages,manual]);for(let turn=0;turn<30;turn++)await Promise.resolve();
+ assert.deepEqual(env.calls.filter(call=>call.method==='GET').slice(-2).map(call=>call.url),['/api/employee-hub?view=messages','/api/employee-hub?include=accounts']);
+});
+
+test('a malformed chat response cannot wipe messages or qualify stale employee data, and logout fences late chat',async()=>{
+ const env=suite();await env.api.startPeopleListeners();env.api.S.people.teamMessages=[{id:'kept',body:'Kept message'}];
+ env.pending=response({ok:true,collections:{teamMessages:[]}});
+ assert.equal(await env.api.refreshPeople({messagesOnly:true}),false);assert.equal(env.api.S.people.teamMessages[0].id,'kept');assert.match(env.api.S.peopleState.error,/incomplete/);
+ env.pending=null;await env.api.refreshPeople();
+ let release;env.pending=new Promise(resolve=>{release=resolve;});const read=env.api.refreshPeople({messagesOnly:true});env.events['egc:signout']();
+ release(response({ok:true,collections:{teamMessages:[{id:'private-old'}],jobMessages:[],messageReads:[]}}));assert.equal(await read,false);assert.equal(env.api.S.people.teamMessages.length,0);
 });

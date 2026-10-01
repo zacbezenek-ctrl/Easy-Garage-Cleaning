@@ -68,7 +68,7 @@ describe('egc.whats_overdue is a read-only registry tool',()=>{
 describe('grouping and the item projection',()=>{
   const rows=[
     task(1,{kind:'followup_message',assignedUserId:'tylerg',sourceEvidence:[1,2,3,4].map(i=>({source:'call',id:`call-${i}`,excerpt:`Customer said to call back Friday (${i})`})),
-      draftPayload:{channel:'sms',recipient:'+15555550100',subject:'',body:'x'.repeat(300),sendWindowStart:iso(NOW.valueOf()-HOUR),sendWindowEnd:iso(NOW.valueOf()+DAY),
+      draftPayload:{channel:'sms',fromNumber:'+15555551644',recipient:'+15555550100',subject:'',body:'x'.repeat(300),sendWindowStart:iso(NOW.valueOf()-HOUR),sendWindowEnd:iso(NOW.valueOf()+DAY),
         attachments:[{kind:'portal_quote',url:'https://easygaragecleaning.com/portal/quote/synthetic-1',label:'Your quote',refId:'quote:synthetic-1'}]},approvalStatus:'pending'}),
     task(2,{kind:'callback',assignedUserId:'tylerg'}),
     task(3,{kind:'callback',assignedUserId:'zacb'}),
@@ -91,7 +91,7 @@ describe('grouping and the item projection',()=>{
     const [first,,, quote,waiting]=r.items;
     expect(first).toMatchObject({title:'Synthetic follow-up 1',kind:'followup_message',owner:'tylerg',attentionAt:iso(NOW.valueOf()-2*HOUR),overdueMinutes:120,revision:2,approvalStatus:'pending',sourceEvidenceCount:4});
     expect(first.sourceEvidence).toEqual([1,2,3].map(i=>({source:'call',id:`call-${i}`,excerpt:`Customer said to call back Friday (${i})`})));
-    expect(first.draft).toEqual({channel:'sms',recipient:'+15555550100',subject:'',bodyPreview:'x'.repeat(280)+'…',bodyLength:300,sendWindowStart:iso(NOW.valueOf()-HOUR),sendWindowEnd:iso(NOW.valueOf()+DAY),
+    expect(first.draft).toEqual({channel:'sms',fromNumber:'+15555551644',recipient:'+15555550100',subject:'',bodyPreview:'x'.repeat(280)+'…',bodyLength:300,sendWindowStart:iso(NOW.valueOf()-HOUR),sendWindowEnd:iso(NOW.valueOf()+DAY),
       attachments:[{kind:'portal_quote',label:'Your quote'}],approvalStatus:'pending'});
     expect(quote).toMatchObject({owner:null,draft:{channel:'email',subject:'Your quote',bodyPreview:'Short body',bodyLength:10,attachments:[]}});
     expect(waiting).toMatchObject({waitingOn:'customer',attentionAt:iso(NOW.valueOf()-90*MIN),overdueMinutes:90},'waiting work is overdue by its review time');

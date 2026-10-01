@@ -5,6 +5,7 @@ import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { AUTOMATION_REGISTRY, automationById, registryHash, templateMatches } from '../functions/_lib/automation-registry.js';
 import { DOC, REPO_ROOT, inventoryDrift, main, missingReferences, renderRegistryMarkdown, scanRepository, scanSendPaths } from '../scripts/automation-inventory.mjs';
+import { webLeadRelayHold } from '../functions/_lib/web-lead-intake.js';
 import { renderScript } from '../functions/api/quo-send.js';
 import { sendAcceptedQuotePortal } from '../functions/_lib/portal-invitation.js';
 import { decodeFirestoreFields, encodeFirestoreFields } from '../functions/_lib/firestore-job.js';
@@ -23,6 +24,17 @@ test('every send path, tag write, lifecycle event and approved-send kind in the 
   assert.deepEqual(inventoryDrift(AUTOMATION_REGISTRY, scan), [], 'classify the new path in functions/_lib/automation-registry-data.js, then run node scripts/automation-inventory.mjs --write');
   assert.deepEqual(scan.inventory, AUTOMATION_REGISTRY.codeInventory);
   assert.deepEqual(missingReferences(AUTOMATION_REGISTRY), [], 'every file the registry cites exists');
+});
+
+test('the website hook configuration read performs no send and preserves the registered paths', t => {
+  const outbound = t.mock.method(globalThis, 'fetch', () => assert.fail('a relay hold must perform no I/O'));
+  const env = { WEBSITE_LEAD_HOOK_URL: 'https://hooks.example.test/lead' };
+  assert.deepEqual(webLeadRelayHold(env, { salesRoutingHeld: 'job_applicant' }), { configured: true, sent: false, skipped: 'job_applicant' });
+  assert.deepEqual(webLeadRelayHold({}, { salesRoutingHeld: 'identity_unknown' }), { configured: false, sent: false, skipped: 'identity_unknown' });
+  assert.equal(webLeadRelayHold(env, {}), null);
+  assert.equal(outbound.mock.callCount(), 0);
+  assert.equal(scan.inventory['functions/_lib/web-lead-intake.js'].zapier_hook, 2);
+  assert.deepEqual(AUTOMATION_REGISTRY.automations.filter(entry => entry.id.startsWith('zapier.website_lead')).map(entry => entry.id), ['zapier.website_lead_ai_textback', 'zapier.website_lead_team_alert']);
 });
 
 test('the generated owner document matches the registry', async () => {

@@ -2,10 +2,20 @@
 (function(){
 'use strict';
 let host=null,controller=null,timer=null,generation=0;
-const TZ='America/Denver',closed=new Set(['completed','paid','invoiced','review_requested','cancelled','canceled','closed','noshow','no_show','no-show']);
+const TZ='America/Denver',REQUEST_TIMEOUT=30000,closed=new Set(['completed','paid','invoiced','review_requested','cancelled','canceled','closed','noshow','no_show','no-show']);
 const today=()=>new Intl.DateTimeFormat('en-CA',{timeZone:TZ,year:'numeric',month:'2-digit',day:'2-digit'}).format(new Date());
 const addDays=(date,count)=>new Date(Date.parse(date+'T12:00:00Z')+count*86400000).toISOString().slice(0,10);
-const onDate=(job,date)=>{const end=job.endDate&&job.endDate>job.date&&job.endTime==='00:00'?addDays(job.endDate,-1):job.endDate||job.date;return job.date<=date&&end>=date;};
+const validDate=value=>typeof value==='string'&&/^\d{4}-\d{2}-\d{2}$/.test(value)&&Number.isFinite(Date.parse(value+'T12:00:00Z'))&&new Date(value+'T12:00:00Z').toISOString().slice(0,10)===value;
+const spansDate=(job,date)=>{if(!validDate(job?.date)||!validDate(job.endDate||job.date))return false;const end=job.endDate&&job.endDate>job.date&&job.endTime==='00:00'?addDays(job.endDate,-1):job.endDate||job.date;return job.date<=date&&end>=date;};
+// A split job's dates are a hull, not a continuous assignment. The server
+// projects only the viewer's segments; recorded visits may include other days.
+const onDate=(job,date)=>{
+ if(job.visits?.today===date&&job.visits.assignedToday===false)return false;
+ if(Array.isArray(job.assignmentSegments))return job.assignmentSegments.some(segment=>spansDate(segment,date));
+ if(Array.isArray(job.visits?.days))return job.visits.days.some(day=>day?.date===date&&day.scheduled===true);
+ return spansDate(job,date);
+};
+const forDate=(job,date)=>{const segment=(Array.isArray(job.assignmentSegments)?job.assignmentSegments:[]).filter(segment=>spansDate(segment,date)).sort((a,b)=>String(a.date+a.time).localeCompare(String(b.date+b.time)))[0];return segment?{...job,...segment,id:job.id}:job;};
 function h(tag,props,...children){const el=document.createElement(tag);for(const[k,v]of Object.entries(props||{})){if(v==null)continue;if(k==='class')el.className=v;else if(k.startsWith('on'))el.addEventListener(k.slice(2),v);else el.setAttribute(k,v);}for(const child of children.flat(Infinity))if(child!=null)el.append(child instanceof Node?child:document.createTextNode(String(child)));return el;}
 const words=value=>String(value||'scheduled').replaceAll('_',' ');
 const time=value=>{const m=/^(\d\d):(\d\d)$/.exec(value||'');if(!m)return'Time needed';const hour=+m[1];return(hour%12||12)+':'+m[2]+(hour<12?' AM':' PM');};
@@ -43,12 +53,12 @@ function walkCard(walk){
 }
 function render(data){
  if(!host?.isConnected)return;
- const date=today(),jobs=data.jobs||[],walks=(data.walkthroughs||[]).filter(w=>w.date>=date&&w.walkthroughState!=='cancelled').sort((a,b)=>((a.walkthroughState||'open')!=='open')-((b.walkthroughState||'open')!=='open')||String(a.date+a.time).localeCompare(String(b.date+b.time))),dayJobs=jobs.filter(j=>onDate(j,date)),open=dayJobs.filter(j=>!closed.has(j.status)),current=open.find(j=>['dispatched','arrived','in_progress'].includes(j.status))||open[0],next=open.find(j=>j.id!==current?.id)||jobs.find(j=>j.date>date&&!closed.has(j.status));
+ const date=today(),tomorrow=addDays(date,1),jobs=data.jobs||[],walks=(data.walkthroughs||[]).filter(w=>w.date>=date&&w.walkthroughState!=='cancelled').sort((a,b)=>((a.walkthroughState||'open')!=='open')-((b.walkthroughState||'open')!=='open')||String(a.date+a.time).localeCompare(String(b.date+b.time))),dayJobs=jobs.filter(j=>onDate(j,date)).map(j=>forDate(j,date)),open=dayJobs.filter(j=>!closed.has(j.status)),current=open.find(j=>['dispatched','arrived','in_progress'].includes(j.status))||open[0],nextToday=open.find(j=>j.id!==current?.id),next=nextToday||jobs.filter(j=>j.id!==current?.id&&!closed.has(j.status)&&onDate(j,tomorrow)).map(j=>forDate(j,tomorrow)).sort((a,b)=>String(a.date+a.time).localeCompare(String(b.date+b.time)))[0];
  host.replaceChildren(h('header',{class:'ft-head'},h('div',{},h('span',{class:'ft-eyebrow'},'YOUR FIELD DAY'),h('h2',{},'Today’s jobs')),h('button',{class:'ft-button',type:'button',onclick:()=>load()},'Refresh')));
  if(dayJobs.some(j=>['cancelled','canceled'].includes(j.status)))host.append(h('p',{class:'ft-warning'},dayJobs.filter(j=>['cancelled','canceled'].includes(j.status)).map(j=>j.customer||'Job').join(', ')+': cancelled. Check your remaining assignments.'));
  if(current)host.append(card(current,'CURRENT JOB'));
  else host.append(h('div',{class:'ft-empty'},h('h3',{},dayJobs.length?'No remaining active jobs today':walks.length?'No field jobs today':'No jobs assigned today'),h('p',{},'Your current assignments are checked with the Hub on every refresh.'),h('a',{class:'ft-button',href:'/crew/job.html'},'Open field schedule')));
- if(next)host.append(card(next,next.date>date?'NEXT JOB · TOMORROW':'NEXT JOB'));
+ if(next)host.append(card(next,nextToday?'NEXT JOB':'NEXT JOB · TOMORROW'));
  const later=open.filter(j=>j.id!==current?.id&&j.id!==next?.id);
  if(later.length)host.append(h('section',{class:'ft-later'},h('h3',{},'Later today'),later.map(j=>h('a',{class:'ft-later-job',href:jobLink(j)},h('strong',{},time(j.time)+' · '+(j.customer||'Job')),h('span',{},j.address||'Address needed')))));
  if(walks.length)host.append(h('section',{class:'ft-walks','aria-label':'Your walkthroughs'},h('h3',{},'Your walkthroughs'),walks.map(walkCard)));
@@ -56,15 +66,32 @@ function render(data){
  if(completed.length)host.append(h('details',{class:'ft-completed'},h('summary',{},'Completed today · '+completed.length),completed.map(j=>h('a',{class:'ft-later-job',href:jobLink(j)},j.customer||'Job'))));
  host.append(h('p',{class:'ft-updated'},'Mountain Time · '+(data.generatedAt?'Checked '+new Intl.DateTimeFormat('en-US',{timeZone:TZ,hour:'numeric',minute:'2-digit'}).format(new Date(data.generatedAt)):'Current Hub assignments')));
 }
+async function request(controller){
+ const signal=controller.signal;let timeout,abort;
+ const cancelled=new Promise((_,reject)=>{abort=()=>reject(Object.assign(new Error('Schedule request cancelled.'),{name:'AbortError'}));signal.addEventListener('abort',abort,{once:true});if(signal.aborted)abort();});
+ const deadline=new Promise((_,reject)=>{timeout=setTimeout(()=>{reject(Object.assign(new Error('Checking your assigned jobs timed out. Retry before dispatching.'),{name:'TimeoutError'}));controller.abort();},REQUEST_TIMEOUT);});
+ try{
+  // Race the entire read, including a stalled response body. Abort alone does
+  // not settle all fetch implementations; no late result may render on its own.
+  return await Promise.race([cancelled,deadline,(async()=>{
+   const response=await fetch('/api/field-jobs?'+new URLSearchParams({date:today(),days:'2',status:'all'}),{credentials:'same-origin',cache:'no-store',signal});
+   if(signal.aborted)throw Object.assign(new Error('Schedule request cancelled.'),{name:'AbortError'});
+   const data=await response.json().catch(()=>({}));return{response,data};
+  })()]);
+ }finally{clearTimeout(timeout);signal.removeEventListener('abort',abort);}
+}
 async function load(){
  if(!host?.isConnected)return;
- const mine=++generation;controller?.abort();controller=new AbortController();
- if(!host.childNodes.length)host.append(h('p',{role:'status'},'Loading your assigned jobs…'));
- try{const response=await fetch('/api/field-jobs?'+new URLSearchParams({date:today(),days:'2',status:'all'}),{credentials:'same-origin',cache:'no-store',signal:controller.signal}),data=await response.json().catch(()=>({}));if(mine!==generation||!host?.isConnected)return;if(!response.ok||data.ok!==true||!Array.isArray(data.jobs)||data.jobs.some(job=>!job||typeof job.id!=='string')||data.walkthroughs!==undefined&&(!Array.isArray(data.walkthroughs)||data.walkthroughs.some(walk=>!walk||typeof walk.id!=='string')))throw Object.assign(new Error(data.error||'Your current schedule could not be verified. Retry before dispatching.'),{status:response.ok?503:response.status});render(data);}
+ const mine=++generation;controller?.abort();const active=controller=new AbortController();
+ host.replaceChildren(h('p',{role:'status'},'Loading your assigned jobs…'));
+ try{if(window.navigator?.onLine===false)throw new Error('You are offline. Reconnect and retry to verify your current assignments.');const{response,data}=await request(active);if(mine!==generation||!host?.isConnected)return;if(!response.ok||data?.ok!==true||!Array.isArray(data.jobs)||data.jobs.some(job=>!job||typeof job.id!=='string')||data.walkthroughs!==undefined&&(!Array.isArray(data.walkthroughs)||data.walkthroughs.some(walk=>!walk||typeof walk.id!=='string')))throw Object.assign(new Error(data?.error||'Your current schedule could not be verified. Retry before dispatching.'),{status:response.ok?503:response.status});render(data);}
  catch(error){if(error.name==='AbortError'||mine!==generation||!host?.isConnected)return;host.replaceChildren(...[h('h2',{},'Today’s jobs'),h('p',{class:'ft-warning',role:'alert'},error.message),h('button',{class:'ft-button',type:'button',onclick:()=>load()},'Retry'),error.status===401?h('a',{class:'ft-button',href:'/crew/job.html'},'Sign in again'):null].filter(Boolean));}
+ finally{if(controller===active)controller=null;}
 }
 function unmount(){host?.replaceChildren();controller?.abort();generation++;if(timer)clearInterval(timer);timer=null;host=null;}
 function mount(target){if(host===target&&target?.isConnected)return;unmount();if(!target)return;host=target;host.classList.add('egc-field-today');void load();timer=setInterval(()=>{if(!document.hidden)void load();},60000);}
 window.addEventListener('egc:signout',unmount);
+window.addEventListener('offline',()=>void load());
+window.addEventListener('online',()=>void load());
 window.EGCFieldToday={mount,unmount,refresh:load};
 })();

@@ -1,4 +1,5 @@
 import {asRecord,buildReport,REPORT_METRICS} from './core.js';
+import {extractionCoverageComplete} from './extraction-coverage.js';
 import type {CanonicalEvent,CustomerProjection,EvidenceRef} from './types.js';
 
 const sourceRef=({sourceType,sourceRecordId}:EvidenceRef)=>({sourceType,sourceRecordId});
@@ -26,8 +27,8 @@ export function formatOperationalBriefing<T extends ReturnType<typeof buildRepor
   const total=typeof page.total==='number'?page.total:report.countedEvents.length,limit=typeof page.limit==='number'?Math.min(40,page.limit):40,shown=report.countedEvents.slice(0,limit);
   const periodActivity=Object.fromEntries(Object.entries(report.periodActivity).map(([key,{eventIds,...metric}])=>[key,{...metric,evidenceEventCount:eventIds.length,eventTypes:REPORT_METRICS[key]??[]}])) as Record<string,{count:number;unit:string;contactIds:string[];evidenceEventCount:number;eventTypes:string[]}>;
   const customers=report.customers.map(customerSummary);
-  const pipeline=(name:keyof typeof report.pipelines)=>report.pipelines[name].map(c=>({contactId:c.contactId,customerName:c.customerName,state:c.state,intentStage:c.intentStage,nextRequiredAction:c.nextRequiredAction}));
-  const sourceCoverage=Array.isArray(coverage.customers)?coverage.customers.map(c=>{const row=asRecord(c),sources=asRecord(row.coverage);return {contactId:row.contactId,lastReconciledAt:row.lastReconciledAt,semanticComplete:asRecord(sources.extraction).complete===true,portalComplete:asRecord(sources.portal).complete===true,providerNotesComplete:asRecord(sources.providerNotes).complete===true};}):[];
+  const pipeline=(name:keyof typeof report.pipelines)=>report.pipelines[name].map(c=>({contactId:c.contactId,customerName:c.customerName,state:c.state,intentStage:c.intentStage,nextRequiredAction:c.nextRequiredAction,reconciliationStatus:c.reconciliationStatus,humanReviewNeeded:c.humanReviewNeeded,discrepancies:c.discrepancies}));
+  const sourceCoverage=Array.isArray(coverage.customers)?coverage.customers.map(c=>{const row=asRecord(c),sources=asRecord(row.coverage);return {contactId:row.contactId,lastReconciledAt:row.lastReconciledAt,semanticComplete:extractionCoverageComplete(sources),extractionErrors:asRecord(sources.extraction).errors??[],portalComplete:asRecord(sources.portal).complete===true,providerNotesComplete:asRecord(sources.providerNotes).complete===true};}):[];
   return {...report,presentation:'compact_operational_briefing',periodActivity,customers,
     pipelines:{walkthrough:pipeline('walkthrough'),videoQuote:pipeline('videoQuote'),directJob:pipeline('directJob')},
     countedEvents:shown.map(eventSummary),countedEventsPage:{...page,offset,limit,total,nextOffset:offset+shown.length<total?offset+shown.length:null},

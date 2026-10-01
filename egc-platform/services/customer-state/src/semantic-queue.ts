@@ -1,7 +1,7 @@
 import {randomUUID} from 'node:crypto';
 import {and,eq,sql} from 'drizzle-orm';
 import {getDb,schema} from '@egc/database';
-import {asRecord,hash,EXTRACTOR_VERSION,exclusionReasons} from './core.js';
+import {asRecord,hash,EXTRACTOR_VERSION,exclusionReasons,excludedFromCustomerReporting} from './core.js';
 import {customerActivityPredicate} from './selection.js';
 import type {Json,ReconcileOptions} from './types.js';
 
@@ -14,6 +14,9 @@ export interface SemanticCandidate {
   contactId:string;leadCreatedAt:string;lastActivityAt:string;material:boolean;complete:boolean;
   workKey:string;pendingSourceCount:number;missingTranscriptCount:number;cursor:SemanticCursor|null;
 }
+export const customerSemanticEligible=(row:Parameters<typeof exclusionReasons>[0])=>!excludedFromCustomerReporting(exclusionReasons(row));
+export const semanticQuotaExhausted=(errors:readonly string[])=>errors.some(error=>/^semantic_provider_http_429(?:;|$)/.test(error)&&/(?:^|;)code=insufficient_quota(?:;|$)/.test(error));
+const QUOTA_COOLDOWN_MS=60*60_000;
 const due=(candidate:SemanticCandidate,now:number)=>{
   const cursor=candidate.cursor;if(cursor?.status==='processing'&&Date.parse(cursor.leaseUntil??'')>now)return false;
   return !cursor||cursor.workKey!==candidate.workKey||!Number.isFinite(Date.parse(cursor.nextAttemptAt))||Date.parse(cursor.nextAttemptAt)<=now;
@@ -31,6 +34,7 @@ export function selectSemanticWork(candidates:SemanticCandidate[],now:Date,limit
 }
 export function semanticRetryDelay(errors:string[],failureCount:number,complete:boolean,missingTranscripts=false) {
   if(complete)return 30*60_000;
+  if(semanticQuotaExhausted(errors))return QUOTA_COOLDOWN_MS;
   if(errors.length&&errors.every(e=>e==='semantic_batch_budget_deferred'))return 15_000;
   if(missingTranscripts&&!errors.length)return 5*60_000;
   if(errors.some(e=>/http_(400|401|403|404)/.test(e)))return Math.min(60*60_000,5*60_000*2**Math.min(4,Math.max(0,failureCount-1)));
@@ -42,7 +46,7 @@ export async function semanticQueueCandidates(since:Date):Promise<{candidates:Se
     lastActivityAt:sql<string>`greatest(${schema.leads.createdAt},coalesce((select max(m.occurred_at) from messages m where m.contact_id=${schema.contacts.id}),${schema.leads.createdAt}),coalesce((select max(c.started_at) from calls c where c.contact_id=${schema.contacts.id}),${schema.leads.createdAt}))::text`,
     evidenceFingerprint:sql<string>`coalesce((select md5(string_agg(e.id||e.source_hash||e.status,',' order by e.id)) from customer_evidence e where e.contact_id=${schema.contacts.id} and e.status<>'complete'),'none')`
   }).from(schema.leads).innerJoin(schema.contacts,eq(schema.contacts.id,schema.leads.contactId)).leftJoin(schema.customerStateSnapshots,eq(schema.customerStateSnapshots.contactId,schema.contacts.id)).leftJoin(schema.syncCursors,sql`${schema.syncCursors.key}='customer_state:semantic:'||${schema.contacts.id}::text`).where(customerActivityPredicate(since)).orderBy(sql`${schema.leads.createdAt} desc`).limit(2001);
-  return {truncated:rows.length>2000,candidates:rows.slice(0,2000).filter(row=>!exclusionReasons(row).includes('test_internal_or_vendor')).map(row=>{
+  return {truncated:rows.length>2000,candidates:rows.slice(0,2000).filter(customerSemanticEligible).map(row=>{
     const extraction=asRecord(row.coverage?.extraction),calls=asRecord(row.coverage?.calls),lastActivityAt=new Date(row.lastActivityAt).toISOString();
     let cursor:SemanticCursor|null=null;try{if(row.cursor)cursor=JSON.parse(row.cursor) as SemanticCursor;}catch{/* Reconstruct a corrupt scheduling cursor, never business evidence. */}
     const stale=!row.lastReconciledAt||new Date(lastActivityAt)>row.lastReconciledAt;
@@ -67,16 +71,26 @@ export async function finishSemanticWork(candidate:SemanticCandidate,claim:Seman
 }
 type Reconciler=(options:ReconcileOptions)=>Promise<{failed:number;results:Array<{contactId:string;coverage?:Json;error?:string}>}>;
 const saveSemanticProgress=async(value:Json)=>{const row={key:'customer_state:semantic_queue',cursor:JSON.stringify(value),updatedAt:new Date()};await getDb().insert(schema.syncCursors).values(row).onConflictDoUpdate({target:schema.syncCursors.key,set:row});};
-export async function runSemanticQueue(reconcile:Reconciler,options:{since?:Date;limit?:number;concurrency?:number;deadlineMs?:number;stopped?:()=>boolean}={},deps={candidates:semanticQueueCandidates,claim:claimSemanticWork,finish:finishSemanticWork,now:()=>new Date(),progress:saveSemanticProgress}) {
+type ProviderCircuit={reason:'insufficient_quota';openedAt:string;retryAt:string};
+const circuitKey='customer_state:semantic_provider_circuit';
+async function readProviderCircuit():Promise<ProviderCircuit|null>{const [row]=await getDb().select().from(schema.syncCursors).where(eq(schema.syncCursors.key,circuitKey));try{const value=JSON.parse(row?.cursor??'null');return value?.reason==='insufficient_quota'&&Number.isFinite(Date.parse(value.retryAt))?value:null;}catch{return null;}}
+async function writeProviderCircuit(value:ProviderCircuit|null){const row={key:circuitKey,cursor:JSON.stringify(value),updatedAt:new Date()};await getDb().insert(schema.syncCursors).values(row).onConflictDoUpdate({target:schema.syncCursors.key,set:row});}
+type QueueDependencies={candidates:typeof semanticQueueCandidates;claim:typeof claimSemanticWork;finish:typeof finishSemanticWork;now:()=>Date;progress:(value:Json)=>Promise<void>;readProviderCircuit?:()=>Promise<ProviderCircuit|null>;writeProviderCircuit?:(value:ProviderCircuit|null)=>Promise<void>};
+export async function runSemanticQueue(reconcile:Reconciler,options:{since?:Date;limit?:number;concurrency?:number;deadlineMs?:number;stopped?:()=>boolean}={},deps:QueueDependencies={candidates:semanticQueueCandidates,claim:claimSemanticWork,finish:finishSemanticWork,now:()=>new Date(),progress:saveSemanticProgress,readProviderCircuit,writeProviderCircuit}) {
   const start=deps.now(),{candidates,truncated}=await deps.candidates(options.since??new Date(start.valueOf()-30*86400000));
-  const selected=selectSemanticWork(candidates,start,Math.max(1,Math.min(20,options.limit??12))),concurrency=Math.max(1,Math.min(3,options.concurrency??3));
+  let providerCircuit=await deps.readProviderCircuit?.()??null;
+  const circuitOpen=Boolean(providerCircuit&&Date.parse(providerCircuit.retryAt)>start.valueOf()),probe=Boolean(providerCircuit&&!circuitOpen);
+  const selected=circuitOpen?[]:selectSemanticWork(candidates,start,probe?1:Math.max(1,Math.min(20,options.limit??12))),concurrency=probe?1:Math.max(1,Math.min(3,options.concurrency??3));
+  let quotaDetected=circuitOpen;
   let next=0,inspected=0,completed=0,partialCustomers=0,failed=0,deferred=0;const results:Array<{contactId:string;complete:boolean;errors:string[]}>=[];
   let progress=Promise.resolve();
-  const publish=(status:string)=>{const finished=new Set(results.filter(r=>r.complete).map(r=>r.contactId));const state={status,startedAt:start.toISOString(),updatedAt:deps.now().toISOString(),selected:selected.length,inspected,completed,partialCustomers,failed,deferred,pending:candidates.filter(c=>!c.complete&&!finished.has(c.contactId)).length,remainingInChunk:selected.length-next,totalCandidates:candidates.length,truncated};progress=progress.then(()=>deps.progress(state));return progress;};
+  const publish=(status:string)=>{const finished=new Set(results.filter(r=>r.complete).map(r=>r.contactId));const state={status,startedAt:start.toISOString(),updatedAt:deps.now().toISOString(),selected:selected.length,inspected,completed,partialCustomers,failed,deferred,pending:candidates.filter(c=>!c.complete&&!finished.has(c.contactId)).length,remainingInChunk:selected.length-next,totalCandidates:candidates.length,truncated,providerCircuit};progress=progress.then(()=>deps.progress(state));return progress;};
   await publish('processing');
-  const worker=async()=>{while(next<selected.length){if(options.stopped?.()||deps.now().valueOf()-start.valueOf()>=(options.deadlineMs??150_000))return;const candidate=selected[next++]!,claim=await deps.claim(candidate,deps.now());if(!claim){deferred++;continue;}inspected++;
+  const worker=async()=>{while(next<selected.length){if(quotaDetected||options.stopped?.()||deps.now().valueOf()-start.valueOf()>=(options.deadlineMs??150_000))return;const candidate=selected[next++]!,claim=await deps.claim(candidate,deps.now());if(!claim){deferred++;continue;}inspected++;
     await publish('processing');
     try{const result=await reconcile({contactIds:[candidate.contactId],useAI:true,maxContacts:1,semanticMaxBatches:1,semanticTimeoutMs:75_000}),row=result.results.find(r=>r.contactId===candidate.contactId),extraction=asRecord(row?.coverage?.extraction),calls=asRecord(row?.coverage?.calls),complete=!result.failed&&extraction.complete===true,errors=Array.isArray(extraction.errors)?extraction.errors.filter((e):e is string=>typeof e==='string'):[];
+      if(semanticQuotaExhausted(errors)){quotaDetected=true;providerCircuit={reason:'insufficient_quota',openedAt:deps.now().toISOString(),retryAt:new Date(deps.now().valueOf()+QUOTA_COOLDOWN_MS).toISOString()};await deps.writeProviderCircuit?.(providerCircuit);}
+      else if(probe&&complete){providerCircuit=null;await deps.writeProviderCircuit?.(null);}
       const hadFailure=result.failed>0||!row;if(hadFailure){failed++;errors.push('customer_reconciliation_failed');}else if(complete)completed++;else partialCustomers++;
       await deps.finish(candidate,claim,{complete,errors,missingTranscripts:Array.isArray(calls.missingTranscriptIds)&&calls.missingTranscriptIds.length>0,failed:hadFailure},deps.now());results.push({contactId:candidate.contactId,complete,errors});
     }catch{failed++;await deps.finish(candidate,claim,{complete:false,errors:['customer_reconciliation_failed'],missingTranscripts:false,failed:true},deps.now());results.push({contactId:candidate.contactId,complete:false,errors:['customer_reconciliation_failed']});}
@@ -84,6 +98,6 @@ export async function runSemanticQueue(reconcile:Reconciler,options:{since?:Date
   }};
   await Promise.all(Array.from({length:concurrency},worker));
   const completedIds=new Set(results.filter(r=>r.complete).map(r=>r.contactId)),pending=candidates.filter(c=>!c.complete&&!completedIds.has(c.contactId)).length;
-  await publish('chunk_finished');
-  return {startedAt:start.toISOString(),finishedAt:deps.now().toISOString(),selected:selected.length,inspected,completed,partialCustomers,failed,deferred:deferred+selected.length-next,pending,truncated,complete:!truncated&&pending===0&&!failed&&!partialCustomers,results};
+  await publish(quotaDetected?'provider_cooldown':'chunk_finished');
+  return {startedAt:start.toISOString(),finishedAt:deps.now().toISOString(),selected:selected.length,inspected,completed,partialCustomers,failed,deferred:deferred+selected.length-next,pending,truncated,providerCircuit,complete:!quotaDetected&&!truncated&&pending===0&&!failed&&!partialCustomers,results};
 }

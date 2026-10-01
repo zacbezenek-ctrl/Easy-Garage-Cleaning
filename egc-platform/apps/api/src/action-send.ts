@@ -1,7 +1,7 @@
 import {and,asc,eq} from "drizzle-orm";
 import {getDb,schema} from "@egc/database";
 import {GhlClient,asDate} from "@egc/ghl";
-import {executeCommunication,OperationsError,persistOutboundMessage,preflightRecipient,reconcileCommunication,taskSendRequestId,type Actor,type Command,type CommunicationProvider,type OperationsConfiguration,type OperationsService} from "@egc/operations";
+import {executeCommunication,assertSmsDraftSender,validSmsFromNumbers,OperationsError,persistOutboundMessage,preflightRecipient,reconcileCommunication,taskSendRequestId,type Actor,type Command,type CommunicationProvider,type OperationsConfiguration,type OperationsService} from "@egc/operations";
 import {stableUuid} from "./recording-contracts.js";
 
 type Db=ReturnType<typeof getDb>;
@@ -12,6 +12,7 @@ type Execution=typeof schema.communicationExecutions.$inferSelect;
 export interface ActionSendDependencies {
   service:()=>Pick<OperationsService,"approveForSend"|"sendReadiness"|"recordExecutionStarted"|"execute">;
   provider:()=>ActionSendProvider;
+  smsFromNumbers?:readonly string[];
   db?:()=>Db;
   now?:()=>Date;
   log?:(event:{code:string;taskId:string;executionId:string|null})=>void;
@@ -19,6 +20,10 @@ export interface ActionSendDependencies {
   communication?:Partial<{prior:typeof priorTaskSendExecution;execute:typeof executeCommunication;reconcile:typeof reconcileCommunication;preflight:typeof preflightRecipient;persist:typeof persistOutboundMessage}>;
 }
 const record=(v:unknown):Json=>v&&typeof v==="object"&&!Array.isArray(v)?v as Json:{};
+export function actionSmsFromNumbers(env:NodeJS.ProcessEnv):string[]{
+  const raw=env.EGC_OPERATIONS_SMS_FROM_NUMBERS;
+  return raw?validSmsFromNumbers(raw.split(",").map(value=>value.trim())):[];
+}
 export const actionSendEnabled=(env:NodeJS.ProcessEnv)=>env.EGC_OPERATIONS_ACTION_SEND_ENABLED==="true";
 // One provider request per approved revision; approveForSend reads the same claim.
 export {taskSendRequestId};
@@ -48,8 +53,10 @@ export function createActionSender(deps:ActionSendDependencies) {
     if(prior) {
       // Retry, duplicate tap or another confirmer of the same revision: read back only.
       payload=prior.payload;
+      if(draft.channel==="sms"&&(payload.fromNumber??null)!==(draft.fromNumber??null))throw new OperationsError("message_sender_execution_mismatch",409,{sent:"unknown",retryMode:"reconcile_only"});
       result=await c.reconcile(prior.id,undefined,actor.id,provider,db(),options);
     } else {
+      assertSmsDraftSender(draft,deps.smsFromNumbers);
       const channel=draft.channel==="email"?"Email":"SMS",recipient=String(draft.recipient??"");
       const verified=await c.preflight({contactId,channel,...(channel==="SMS"?{toNumber:recipient}:{emailTo:recipient})},()=>provider,db());
       if(!verified.ok)throw new OperationsError(verified.error,verified.error==="contact_preflight_unavailable"?503:409,{sent:false});
@@ -58,11 +65,11 @@ export function createActionSender(deps:ActionSendDependencies) {
       const attachments=(Array.isArray(draft.attachments)?draft.attachments:[]).map(item=>record(item).url);
       if(attachments.some(url=>typeof url!=="string"||!url))throw new OperationsError("message_attachments_invalid",409,{sent:false});
       // The guard compares toNumber/emailTo with the approved recipient, so send exactly it.
-      payload={type:channel,contactId:verified.contact.providerId,message:String(draft.body??""),...(channel==="SMS"?{toNumber:recipient}:{emailTo:recipient,subject:String(draft.subject??"")}),...(attachments.length?{attachments}:{})};
+      payload={type:channel,contactId:verified.contact.providerId,message:String(draft.body??""),...(channel==="SMS"?{toNumber:recipient,fromNumber:draft.fromNumber}:{emailTo:recipient,subject:String(draft.subject??"")}),...(attachments.length?{attachments}:{})};
       // The last check before the provider, with no network call in between: a reply, a
       // rejection or an edit that landed during the live preflight stops the send here.
       await service.sendReadiness(actor,taskId,revision,approvalId);
-      try{result=await c.execute({requestId:sendRequestId,actorId:actor.id,contactId,payload},provider,db(),options);}
+      try{result=await c.execute({requestId:sendRequestId,actorId:actor.id,contactId,payload},provider,db(),{...options,beforeClaim:tx=>service.sendReadiness(actor,taskId,revision,approvalId,tx)});}
       catch(error){const code=error instanceof Error?error.message:"";if(knownExecutionFailure.test(code))throw new OperationsError(code,409,{sent:false});throw error;}
     }
     const executionId=typeof result.executionId==="string"?result.executionId:null;
@@ -97,5 +104,5 @@ export function actionSendHook(env:NodeJS.ProcessEnv,service:ActionSendDependenc
   if(!actionSendEnabled(env))return undefined;
   const token=env.GHL_PRIVATE_INTEGRATION_TOKEN,locationId=env.GHL_LOCATION_ID;
   if(!token||!locationId)return undefined;
-  return createActionSender({service,provider:()=>new GhlClient(token,locationId),...options});
+  return createActionSender({service,smsFromNumbers:actionSmsFromNumbers(env),provider:()=>new GhlClient(token,locationId),...options});
 }

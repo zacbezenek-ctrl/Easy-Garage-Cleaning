@@ -19,7 +19,7 @@ async function load(){
   if(!S.root||S.busy)return;
   const generation=++S.generation;S.controller?.abort();const controller=S.controller=new AbortController(),timer=setTimeout(()=>controller.abort(),25000);S.loading=true;S.error='';render();
   try{const data=await api(null,controller.signal);if(generation!==S.generation)return;S.data=data;S.errorStatus=0;S.denied=false;}
-  catch(error){if(generation!==S.generation)return;S.denied=error.status===403;S.error=S.denied?'':error.name==='AbortError'?'Portal documents did not respond. Retry shortly.':issue(error);S.errorStatus=error.status||0;if([401,403].includes(error.status))S.data=null;}
+  catch(error){if(generation!==S.generation)return;S.denied=error.status===403;S.error=S.denied?'':error.name==='AbortError'?'Portal documents did not respond. Retry shortly.':issue(error);S.errorStatus=error.status||0;S.data=null;S.notice='';}
   finally{clearTimeout(timer);if(generation===S.generation){S.loading=false;render();}}
 }
 async function submit(body){
@@ -31,14 +31,14 @@ async function submit(body){
   try{
     const data=await api(body,controller.signal);
     if(generation!==S.generation)return;
-    S.data={...S.data,...data};S.request=null;S.uncertain=false;
+    S.data={...S.data,...data};S.errorStatus=0;S.denied=false;S.request=null;S.uncertain=false;
     if(body.action==='upload'){S.file=null;S.expiresOn='';S.notice='Certificate saved. Customers can download it from their private portal.';}
     else S.notice='Certificate withdrawn. Customers are asked to call or text for a copy.';
   }catch(error){
     if(generation!==S.generation)return;
     const keep=error.name==='AbortError'||!error.status||error.status>=500||[401,403,408,429].includes(error.status);
     S.error=error.name==='AbortError'?'The save did not finish. Retry the original request to safely check it.':issue(error);
-    if(keep)S.uncertain=true;else{S.request=null;S.uncertain=false;}
+    if(keep){S.uncertain=true;S.data=null;S.errorStatus=error.status||0;}else{S.request=null;S.uncertain=false;}
     conflict=/REVISION_CONFLICT/.test(error.code||'');
   }finally{clearTimeout(timer);if(generation===S.generation){S.busy=false;render();}}
   if(conflict){const message=S.error;await load();if(generation===S.generation&&!S.error){S.error=message;render();}}
@@ -55,14 +55,14 @@ function readFile(file){
   reader.readAsDataURL(file);
 }
 function upload(){
-  if(S.busy||S.request||!S.data)return;
+  if(S.loading||S.busy||S.request||!S.data)return;
   if(!S.file){S.error='Choose the certificate PDF first.';render();return;}
   if(!validDate(S.expiresOn)||S.expiresOn<=today()){S.error='Enter the policy expiration date printed on the certificate. It must be in the future.';render();return;}
   void submit({action:'upload',requestId:uuid(),expectedRevision:S.data.revision,expiresOn:S.expiresOn,filename:S.file.name,dataUrl:S.file.dataUrl});
 }
 function closeDialog(){S.dialog?.close();S.dialog?.remove();S.dialog=null;}
 function confirmWithdraw(){
-  if(S.busy||S.request||!S.data||S.dialog)return;
+  if(S.loading||S.busy||S.request||!S.data||S.dialog)return;
   const dialog=h('dialog',{class:'pd-dialog','aria-labelledby':'pd-withdraw-title',onclose:()=>{if(S.dialog===dialog)S.dialog=null;dialog.remove();}},
     h('h2',{id:'pd-withdraw-title'},'Withdraw the certificate?'),
     h('p',{},'Customers will no longer be able to download it and will be asked to call or text for a copy. The file stays in Google Drive.'),
@@ -82,7 +82,7 @@ function statusBlock(){
     i.state!=='missing'&&d.driveConfigured!==false?h('a',{class:'pd-link',href:API+'?file=insurance',target:'_blank',rel:'noopener'},'Open the saved PDF'):null);
 }
 function formBlock(){
-  const locked=S.busy||Boolean(S.request)||!S.data;
+  const locked=S.loading||S.busy||Boolean(S.request)||!S.data;
   const fileInput=h('input',{type:'file',id:'pd-file',class:'pd-file',accept:'application/pdf,.pdf','aria-label':'Certificate PDF (5 MB max)',disabled:locked,onchange:e=>readFile(e.target.files&&e.target.files[0])});
   const dateInput=h('input',{type:'date',id:'pd-expires',value:S.expiresOn,min:addDays(today(),1),disabled:locked,oninput:e=>{S.expiresOn=e.target.value;}});
   return h('form',{class:'pd-form',onsubmit:e=>{e.preventDefault();upload();}},
@@ -108,10 +108,10 @@ function render(){
   if(!S.root)return;
   const head=h('div',{class:'pd-head'},h('div',{},h('span',{class:'pd-eyebrow'},'CUSTOMER PORTAL'),h('h2',{},'Portal documents')),h('button',{type:'button',class:'pd-button',disabled:S.loading||S.busy,onclick:()=>void load()},S.loading?'Checking…':'Refresh'));
   const body=[];
-  if(S.data)body.push(statusBlock(),formBlock(),history());
-  else if(S.loading)body.push(h('div',{class:'pd-skeleton','aria-hidden':'true'}),h('div',{class:'pd-skeleton short','aria-hidden':'true'}),h('p',{class:'pd-muted',role:'status'},'Loading portal documents…'));
+  if(S.loading)body.push(h('div',{class:'pd-skeleton','aria-hidden':'true'}),h('div',{class:'pd-skeleton short','aria-hidden':'true'}),h('p',{class:'pd-muted',role:'status'},'Loading portal documents…'));
+  else if(S.data)body.push(statusBlock(),formBlock(),history());
   else if(S.denied)body.push(h('p',{class:'pd-muted'},'Only the owner or a manager can manage the certificate of insurance customers download.'));
-  else if(S.error&&S.errorStatus!==401)body.push(h('p',{class:'pd-muted'},'Certificate status is unavailable. Nothing was changed.'));
+  else if(S.error&&S.errorStatus!==401)body.push(h('p',{class:'pd-muted'},S.request&&S.uncertain?'Certificate status and the save outcome are unverified. Retry the original request to check what was saved.':'Certificate status is unavailable. Nothing was changed.'));
   S.root.replaceChildren(head,feedback(),...body.filter(Boolean),h('p',{class:'pd-muted'},'The guarantee and service terms customers see come from the published website copy and are versioned in the Hub code.'));
 }
 // An upload in flight guards the whole tab; a request waiting for Retry only while its button is on screen.
