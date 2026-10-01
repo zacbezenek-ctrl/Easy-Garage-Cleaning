@@ -5,6 +5,8 @@ import {PRIMARY_CONTROLS,assertCameraCapture,assertInputKeyboards,assertKnownMis
 import {publicPages} from './helpers/public-pages.mjs';
 
 const PAGES=publicPages();
+// Save reviewable passing-page evidence for each distinct public marketing template.
+const VISUAL_REVIEW=new Set(['/index.html','/junk-removal-fort-collins-co.html','/garage-cleaning-fort-collins-co.html','/pricing.html','/book.html','/before-after.html','/about.html','/faq.html','/reviews.html','/service-areas.html','/blog/index.html','/blog/how-much-does-garage-cleanout-cost-fort-collins.html','/projects/index.html','/what-we-take.html','/garage-guard.html','/garage-turnaround-fort-collins-co.html','/privacy-policy.html','/404.html','/garage-cleanouts-loveland-co.html']);
 const PHOTO_UPLOADS=['/book.html','/pricing.html'];
 // TODO(mobile): known camera gaps. Each page must still load with its image
 // upload and library picker; only the missing capture="environment" option is
@@ -18,8 +20,9 @@ const NARROW={width:320,height:640};
 
 for(const path of PAGES){
  test.describe(path,()=>{
-  test('fits the viewport with no horizontal scroll',async({page})=>{
+  test('fits the viewport with no horizontal scroll',async({page},info)=>{
    await open(page,path);await assertNoHorizontalScroll(page);
+   if(VISUAL_REVIEW.has(path))await page.screenshot({path:info.outputPath('public-template-full-page.png'),fullPage:true});
   });
   test('fits a 320px phone with no horizontal scroll',async({page},info)=>{
    test.skip(info.project.name!=='iphone-375','The 320px check runs once, in the iPhone project.');
