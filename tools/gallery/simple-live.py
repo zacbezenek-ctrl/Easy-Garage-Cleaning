@@ -27,7 +27,9 @@ for attempt in range(30):
         assert ('name="egc-gallery-release" content="'+manifest['release']+'"').encode() in html,'Public HTML is not yet the tested release'
         assert len(re.findall(rb'class="ba-card"',html))==7
         assert b'/gallery-simple.js' in html and b'/gallery-simple.css' in html
-        assert not re.search(rb'\bAI\b|AI-generated|gallery-showcase|gallery-ideal-assets',html,re.I)
+        assert html.count(b'>AI-generated planning example</span>')==sum(p.get('type')=='concept' for p in manifest['pairs'])
+        assert b'they are not completed customer projects' in html
+        assert not re.search(rb'gallery-showcase|gallery-ideal-assets',html,re.I)
         for pair in manifest['pairs']:
             for state in ['before','after']:
                 assert ('src="'+pair[state]+'"').encode() in html
