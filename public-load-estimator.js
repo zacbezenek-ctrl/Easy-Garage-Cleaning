@@ -25,10 +25,12 @@ export function mountEstimator(root, config = PUBLIC_LOAD_PRICING) {
   function update() {
     const result = estimateLoad(slider.value, config);
     root.style.setProperty('--load-fill', `${result.percent}%`);
+    root.querySelectorAll('[data-load-segment]').forEach(segment => segment.classList.toggle('is-filled', Number(segment.dataset.loadSegment) <= Number(slider.value)));
+    root.querySelectorAll('[data-load-step]').forEach(button => button.setAttribute('aria-pressed', String(Number(button.dataset.loadStep) === Number(slider.value))));
     label.textContent = `${result.label} · ${result.percent}%`;
     slider.setAttribute('aria-valuetext', `${result.label}, ${result.percent} percent of truck space`);
     price.textContent = result.cents === null ? 'Get an on-site quote' : new Intl.NumberFormat('en-US', { style: 'currency', currency: config.currency || 'USD', minimumFractionDigits: 0, maximumFractionDigits: 2 }).format(result.cents / 100);
-    detail.textContent = result.cents === null ? 'Online volume pricing is not available yet. Choose a load size to visualize the space, then book a free walkthrough for your exact price.' : 'Planning estimate for junk removal only. We confirm contents, weight and access, then agree on the exact price before work begins.';
+    detail.textContent = result.cents === null ? 'Visual guide only. Your exact price is confirmed at a free walkthrough.' : 'Planning estimate for junk removal only. We confirm contents, weight and access, then agree on the exact price before work begins.';
     if (result.cubicYards !== null) detail.textContent += ` Approximately ${Number(result.cubicYards.toFixed(2))} cubic yards.`;
   }
   slider.addEventListener('input', update);

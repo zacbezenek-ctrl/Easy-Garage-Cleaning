@@ -61,15 +61,16 @@ test('truck load guide has working keyboard endpoints, presets, reduced motion a
  await open(page,'/index.html');
  await page.screenshot({path:info.outputPath('public-home-after.png'),scale:'css'});
  const root=page.locator('[data-load-estimator]');
- const slider=root.getByRole('slider',{name:'Choose your estimated load size'});
+ const slider=root.getByRole('slider',{name:'How much is going?'});
  await slider.scrollIntoViewIfNeeded();
  await slider.press('Home');await expect(slider).toHaveValue('1');
  await expect(slider).toHaveAttribute('aria-valuetext','⅛ truck, 12.5 percent of truck space');
  await slider.press('End');await expect(slider).toHaveValue('8');
  await expect(slider).toHaveAttribute('aria-valuetext','Full truck, 100 percent of truck space');
  await root.getByRole('button',{name:'½ truck',exact:true}).click();await expect(slider).toHaveValue('4');
+ await expect(root.locator('.cargo-segment.is-filled')).toHaveCount(4);
  await expect(root.locator('[data-load-price]')).toHaveText('Get an on-site quote');
- expect(await root.locator('.load-fill').evaluate(el=>getComputedStyle(el).transitionDuration)).toBe('0s');
+ expect(await root.locator('.cargo-segment').first().evaluate(el=>getComputedStyle(el).transitionDuration)).toBe('0s');
  await assertNoHorizontalScroll(page);
  expect(await page.evaluate(()=>typeof window.fbq)).toBe('undefined');
  await root.screenshot({path:info.outputPath('truck-load-guide-after.png'),scale:'css'});

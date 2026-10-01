@@ -33,7 +33,7 @@ test('mount updates animation, keyboard-facing value, exact prices and presets w
   const element=()=>({textContent:'',hidden:true,handlers:{},attrs:{},addEventListener(type,fn){this.handlers[type]=fn;},setAttribute(k,v){this.attrs[k]=v;}});
   const nodes=Object.fromEntries(['slider','label','price','detail','controls'].map(k=>[k,element()]));nodes.slider.value='4';
   const button=element();button.dataset={loadStep:'8'};const style={};
-  const root={style:{setProperty(k,v){style[k]=v;}},querySelector(selector){return nodes[selector.match(/data-load-(.*)\]/)[1]];},querySelectorAll(){return [button];}};
+  const root={style:{setProperty(k,v){style[k]=v;}},querySelector(selector){return nodes[selector.match(/data-load-(.*)\]/)[1]];},querySelectorAll(selector){return selector === "[data-load-segment]" ? [] : [button];}};
   mountEstimator(root,{tierCents:Array(8).fill(12345),capacityCubicYards:16,currency:'USD'});
   assert.equal(nodes.controls.hidden,false);assert.equal(style['--load-fill'],'50%');assert.equal(nodes.price.textContent,'$123.45');
   assert.equal(nodes.slider.attrs['aria-valuetext'],'½ truck, 50 percent of truck space');
