@@ -59,10 +59,10 @@ test('HTML media, external tabs, and forms keep release-safe attributes', () => 
 
 test('homepage prioritizes a responsive, compressed LCP image', () => {
   const html = read('index.html');
-  assert.match(html, /rel="preload"[^>]+job-before-after-1-824\.webp[^>]+imagesrcset=/);
-  assert.match(html, /<source type="image\/webp"[^>]+job-before-after-1-824\.webp 824w[^>]+job-before-after-1\.webp 1646w/);
-  assert.match(html, /<img[^>]+job-before-after-1\.jpg[^>]+fetchpriority="high"/);
-  assert.doesNotMatch(html, /<img[^>]+job-before-after-1\.jpg[^>]+loading="lazy"/);
+  assert.match(html, /rel="preload"[^>]+garage-after-768\.webp[^>]+imagesrcset=/);
+  assert.match(html, /<source type="image\/webp"[^>]+garage-after-768\.webp 768w[^>]+garage-after\.webp 1200w/);
+  assert.match(html, /<img[^>]+garage-after\.jpg[^>]+fetchpriority="high"/);
+  assert.doesNotMatch(html.match(/<figure class="hero-result">[\s\S]*?<\/figure>/)[0], /<img[^>]+garage-after\.jpg[^>]+loading="lazy"/);
 });
 
 test('homepage exposes an accessible first-party contact widget', () => {

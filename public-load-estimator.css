@@ -2,3 +2,4 @@
 @media(max-width:899px){.load-estimator{padding:52px 0 56px}.load-estimator .load-layout{grid-template-columns:1fr;gap:30px}.load-estimator h2{font-size:42px;margin:17px 0}.load-estimator h2 br{display:none}.load-estimator h2 br:after{content:' '}.load-estimator h2 em{display:block}.load-estimator p{max-width:420px;font-size:14px}.load-estimator .load-service-link{margin-top:16px}.load-estimator .load-truck{width:calc(100% + 24px);margin:-12px -12px 8px}.load-estimator .load-presets button{padding:8px 10px;flex:1;font-size:11px}.load-estimator output{font-size:28px}.load-estimator .load-price{margin-top:22px;padding-top:22px}.service-choice{grid-template-columns:1fr}}
 @media(prefers-reduced-motion:reduce){.load-estimator .load-fill,.load-estimator .cargo-segment{transition:none}}
 .load-estimator h2,.load-estimator output{font-family:'Fraunces',Georgia,serif}
+.load-estimator .load-service-link{min-height:44px;display:inline-flex;align-items:center;padding-bottom:0}

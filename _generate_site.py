@@ -4161,6 +4161,12 @@ def patch_performance_and_tracking(text, is_home=False):
         "",
         text,
     )
+    if 'class="home-editorial"' in text:
+        text = re.sub(r'<link rel="preload" as="image"[^>]*job-before-after-1[^>]*>\s*', '', text)
+        preload = '<link rel="preload" as="image" type="image/webp" href="/images/garage-after-768.webp" imagesrcset="/images/garage-after-768.webp 768w, /images/garage-after.webp 1200w" imagesizes="(max-width: 899px) 100vw, 50vw" fetchpriority="high">'
+        if 'rel="preload" as="image" type="image/webp" href="/images/garage-after-' not in text:
+            text = text.replace('<link rel="stylesheet" href="/styles.css', preload + '\n<link rel="stylesheet" href="/styles.css', 1)
+        return text
     hero_preload = '<link rel="preload" as="image" type="image/webp" href="/images/job-before-after-1-824.webp" imagesrcset="/images/job-before-after-1-824.webp 824w, /images/job-before-after-1.webp 1646w" imagesizes="(max-width: 899px) calc(100vw - 32px), 50vw" fetchpriority="high">'
     if "job-before-after-1-824.webp" not in text.split("</head>", 1)[0]:
         text = text.replace('<link rel="stylesheet" href="/styles.css', hero_preload + '\n<link rel="stylesheet" href="/styles.css', 1)
