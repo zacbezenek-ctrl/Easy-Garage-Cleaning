@@ -1,6 +1,16 @@
 import {describe,it,expect} from 'vitest';
 import {presentCustomerDiagnostics} from '../src/customer-diagnostics.js';
 describe('bounded diagnostics',()=>{
+ it('preserves database timestamps in summaries using JSON date semantics',()=>{
+  const updatedAt=new Date('2026-10-02T19:37:18.715Z'),invalid=new Date('invalid');
+  const source={customers:{semanticQueue:{cursor:{updatedAt}},rows:[{updatedAt}]},meta:{lastSync:{startedAt:updatedAt,finishedAt:invalid},lastSuccessfulMetaSync:updatedAt}};
+  const result=presentCustomerDiagnostics(source) as any;
+  expect(result.customers.semanticQueue.cursor.updatedAt).toBe(updatedAt.toISOString());
+  expect(result.meta.lastSync).toEqual({startedAt:updatedAt.toISOString(),finishedAt:null});
+  expect(result.meta.lastSuccessfulMetaSync).toBe(updatedAt.toISOString());
+  expect(source.customers.semanticQueue.cursor.updatedAt).toBe(updatedAt);
+  expect((presentCustomerDiagnostics(source,{section:'customers.rows'}) as any).items[0].updatedAt).toBe(updatedAt);
+ });
  const rows=Array.from({length:684},(_,i)=>({contactId:`customer-${i}`,supportingEvidence:[{excerpt:'private evidence '.repeat(300)}]}));
  const input={customers:{generatedAt:'2026-10-01T18:00:00Z',unresolvedDiscrepancies:rows,coverage:rows,semanticQueue:{cursor:{cursor:'x'.repeat(50000)},truncated:true,customers:rows.slice(0,500)}},meta:{counts:{accepted:29},canonicalCoverage:{sourceExtractionHeldEvents:rows}}};
  it('summarizes large repeated arrays without concealing total or upstream truncation',()=>{
