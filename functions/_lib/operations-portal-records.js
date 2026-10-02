@@ -61,7 +61,7 @@ export function calendarItem(r,timeZone) {
     portalCustomerId:r.customerId||null,portalProjectId:r.projectId||null,highlevelAppointmentId:r.highlevelAppointmentId||null,
     highlevelCalendarId:r.highlevelCalendarId||null,providerAppointmentStatus:r.providerAppointmentStatus||null,
     normalizedLocalJobId:r.normalizedLocalJobId||null,normalizedLocalAppointmentId:r.normalizedLocalAppointmentId||null,adoptionSource:r.adoptionSource||null,
-    syncStatus:r.syncStatus||'unknown',syncedAt:r.syncedAt||null,createdAt:r.createdAt||null,updatedAt:r.updatedAt||null,completedAt:r.completedAt||null};
+    syncStatus:r.syncStatus||'unknown',syncedAt:r.syncedAt||null,createdAt:r.createdAt||null,updatedAt:r.updatedAt||null,completedAt:r.completedAt||null,cancelledAt:r.cancelledAt||null,noShowAt:r.noShowAt||null};
 }
 export async function portalCalendar(env,command,fetcher=firestoreFetch) {
   const {startDate,endDate,timeZone='America/Denver',offset=0,limit=50}=command;
@@ -71,7 +71,7 @@ export async function portalCalendar(env,command,fetcher=firestoreFetch) {
   if(Date.parse(endDate)-Date.parse(startDate)>366*86400000)throw error('calendar_range_too_large',400);
   const docs=[],exceptions=[],ids=new Set();let token='',pages=0;const tokens=new Set();
   const fields=['recordType','type','date','endDate','time','endTime','customer','address','status','pipelineStatus','sourceWalkthroughId','highlevelContactId',
-    'customerId','projectId','highlevelAppointmentId','highlevelCalendarId','providerAppointmentStatus','syncStatus','syncedAt','createdAt','updatedAt','completedAt','normalizedLocalJobId','normalizedLocalAppointmentId','adoptionSource'];
+    'customerId','projectId','highlevelAppointmentId','highlevelCalendarId','providerAppointmentStatus','syncStatus','syncedAt','createdAt','updatedAt','completedAt','cancelledAt','noShowAt','normalizedLocalJobId','normalizedLocalAppointmentId','adoptionSource'];
   do {
     if(++pages>200)throw error('portal_calendar_scan_incomplete');
     const url=new URL(BASE);url.searchParams.set('pageSize','500');if(token)url.searchParams.set('pageToken',token);
@@ -99,7 +99,7 @@ export async function portalJob(env,id,fetcher=firestoreFetch) {
     kind:r.type==='walkthrough'?'walkthrough':'job',startAt:localInstant(r.date,r.time),endAt:localInstant(r.endDate||r.date,r.endTime),
     customerId:r.customerId||null,projectId:r.projectId||null,sourceWalkthroughId:r.sourceWalkthroughId||null,highlevelContactId:r.highlevelContactId||null,customer:r.customer||null,address:r.address||null,
     date:r.date||null,endDate:r.endDate||r.date||null,time:r.time||null,endTime:r.endTime||null,scope:r.jobInstructions||r.scope||null,
-    scopeApproval:r.acceptance?.acceptedAt?'customer_acceptance_recorded':'not_explicit_in_source',notes:r.notes||null,operationNotes:r.operationNotes||[],operationalScope:r.operationalScope||null,completedAt:r.completedAt||financials.completion?.at||null,soldAt:financials.quote?.at||null,
+    scopeApproval:r.acceptance?.acceptedAt?'customer_acceptance_recorded':'not_explicit_in_source',notes:r.notes||null,operationNotes:r.operationNotes||[],operationalScope:r.operationalScope||null,completedAt:r.completedAt||financials.completion?.at||null,cancelledAt:r.cancelledAt||null,noShowAt:r.noShowAt||null,soldAt:financials.quote?.at||null,
     highlevelAppointmentId:r.highlevelAppointmentId||null,highlevelCalendarId:r.highlevelCalendarId||null,providerAppointmentStatus:r.providerAppointmentStatus||null,
     normalizedLocalJobId:r.normalizedLocalJobId||null,normalizedLocalAppointmentId:r.normalizedLocalAppointmentId||null,adoptionSource:r.adoptionSource||null,adoptionOperationalScope:r.adoptionOperationalScope||null,originalServiceType:r.originalServiceType||null,
     syncStatus:r.syncStatus||'unknown',syncedAt:r.syncedAt||null,createdAt:r.createdAt||null,updatedAt:r.updatedAt||null},
@@ -114,7 +114,7 @@ export async function portalEvidence(env,command,fetcher=firestoreFetch){
   if(!Array.isArray(requested)||!requested.length||requested.length>500||requested.some(id=>typeof id!=='string'||!SAFE_ID.test(id)))throw error('invalid_portal_evidence_contacts',400);
   const contactIds=new Set(requested),records=[],seen=new Set(),tokens=new Set();let token='',pages=0;
   // financialFacts().eligible reads every FUN-01 eligibility field (isInternal too), so the mask carries them all.
-  const fields=[...hubEligibilityFields(),'type','highlevelContactId','customerId','projectId','sourceWalkthroughId','date','endDate','time','endTime','status','pipelineStatus','createdAt','updatedAt','adoptionOriginalBookingAt','originalBookingAt','completedAt','soldAt','highlevelAppointmentId','highlevelCalendarId','providerAppointmentStatus','syncStatus','syncedAt','address','estimate','customerApproval','payment','invoice','postJobChecklist','refunds','normalizedLocalJobId','normalizedLocalAppointmentId','adoptionSource','scope','jobInstructions','operationalScope','serviceType','notes','operationNotes','adoptionOperationalScope','originalServiceType'];
+  const fields=[...hubEligibilityFields(),'type','highlevelContactId','customerId','projectId','sourceWalkthroughId','date','endDate','time','endTime','status','pipelineStatus','createdAt','updatedAt','adoptionOriginalBookingAt','originalBookingAt','completedAt','cancelledAt','noShowAt','soldAt','highlevelAppointmentId','highlevelCalendarId','providerAppointmentStatus','syncStatus','syncedAt','address','estimate','customerApproval','payment','invoice','postJobChecklist','refunds','normalizedLocalJobId','normalizedLocalAppointmentId','adoptionSource','scope','jobInstructions','operationalScope','serviceType','notes','operationNotes','adoptionOperationalScope','originalServiceType'];
   do{
     if(++pages>200)throw error('portal_evidence_scan_incomplete');
     const url=new URL(BASE);url.searchParams.set('pageSize','500');if(token)url.searchParams.set('pageToken',token);for(const field of fields)url.searchParams.append('mask.fieldPaths',field);
@@ -126,7 +126,7 @@ export async function portalEvidence(env,command,fetcher=firestoreFetch){
       if(!['job','walkthrough','cleanout','reorg'].includes(r.type))continue;
       const financials=financialFacts(r),truncatedFields=new Set(),content=Object.fromEntries(['scope','jobInstructions','operationalScope','serviceType','notes','operationNotes','adoptionOperationalScope','originalServiceType'].map(field=>[field,safeOperationalContent(r[field],truncatedFields,field)]));
       records.push({id:r.id,highlevelContactId:r.highlevelContactId,kind:r.type==='walkthrough'?'walkthrough':'job',sourceType:r.type,status:r.pipelineStatus||r.status||'unknown',customerId:r.customerId||null,projectId:r.projectId||null,
-        createdAt:r.createdAt||null,updatedAt:r.updatedAt||null,originalBookingAt:r.adoptionOriginalBookingAt||r.originalBookingAt||r.adoptionSource?.originalBookingAt||null,completedAt:r.completedAt||financials.completion?.at||null,soldAt:financials.quote?.at||null,
+        createdAt:r.createdAt||null,updatedAt:r.updatedAt||null,originalBookingAt:r.adoptionOriginalBookingAt||r.originalBookingAt||r.adoptionSource?.originalBookingAt||null,completedAt:r.completedAt||financials.completion?.at||null,cancelledAt:r.cancelledAt||null,noShowAt:r.noShowAt||null,soldAt:financials.quote?.at||null,
         startAt:localInstant(String(r.date||''),String(r.time||'')),endAt:localInstant(String(r.endDate||r.date||''),String(r.endTime||'')),localDate:r.date||null,localEndDate:r.endDate||r.date||null,localStart:r.time||null,localEnd:r.endTime||null,timeZone:'America/Denver',
         sourceRevision:r.sourceRevision,highlevelAppointmentId:r.highlevelAppointmentId||null,highlevelCalendarId:r.highlevelCalendarId||null,providerAppointmentStatus:r.providerAppointmentStatus||null,syncStatus:r.syncStatus||'unknown',syncedAt:r.syncedAt||null,
         jobId:r.type==='walkthrough'?null:r.id,sourceWalkthroughId:r.sourceWalkthroughId||null,address:r.address||null,normalizedLocalJobId:r.normalizedLocalJobId||null,normalizedLocalAppointmentId:r.normalizedLocalAppointmentId||null,adoptionSource:r.adoptionSource||null,

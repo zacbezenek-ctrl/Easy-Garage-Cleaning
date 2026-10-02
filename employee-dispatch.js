@@ -127,7 +127,8 @@ async function load({quiet=false}={}) {
   if (!S.root || S.modal || S.pending) return;
   const generation=++S.generation;
   S.controller?.abort(); S.controller=new AbortController();
-  if (!quiet) {S.loading=true; S.error=''; render();}
+  // A refresh invalidates the displayed range until its current read is verified.
+  S.loading=true; S.error=''; render();
   try {
     const r=range(), params=new URLSearchParams({...r,includeUnscheduled:'true'});
     const data=await api('?'+params, null, S.controller.signal);
@@ -365,11 +366,11 @@ function dayColumn(date,jobs) {
 function renderBody() {
   const target=S.root?.querySelector('[data-dp-body]'); if(!target)return;
   target.replaceChildren();
-  if(S.loading&&!S.data){target.append(h('p',{class:'dp-loading',role:'status'},'Loading the Hub schedule…'));return;}
-  if(S.error) {target.append(notice(S.error,'error'),S.errorStatus===401?signInLink():btn('Retry',()=>load())); if(!S.data)return;}
+  if(S.loading){const subject=views.get(S.view)?.pendingSubject;target.append(subject?h('div',{class:'dc-skeleton','aria-busy':'true'},h('p',{class:'dc-sr',role:'status'},'Loading '+subject+'…'),h('span',{}),h('span',{}),h('span',{class:'dc-short'})):h('p',{class:'dp-loading',role:'status'},'Loading the Hub schedule…'));return;}
+  if(S.error) {const subject=views.get(S.view)?.pendingSubject;target.append(notice(subject?'The schedule for '+subject+' has not loaded, so nothing is shown for it. '+S.error:S.error,'error'),S.errorStatus===401?signInLink():btn('Retry',()=>load())); return;}
   if(!S.data)return;
   if(S.recovery){target.append(notice(S.recovery.invalid?'A saved request could not be read. Reopen this browser session before making another dispatch change.':'A previous dispatch save has not been verified. Review and retry its original request before making another change.','error'));if(!S.recovery.invalid)target.append(btn('Review unverified save',openRecovery,'primary'));}
-  if(S.data.coverage?.complete===false)target.append(notice('Some records could not be loaded. This schedule is incomplete; verify missing work before dispatching.','error'));
+  if(S.data.coverage?.complete===false){target.append(notice('Some records could not be loaded. This schedule is incomplete; verify missing work before dispatching.','error'),btn('Retry',()=>load()));return;}
   if(S.notice)target.append(notice(S.notice));
   const footnote=h('p',{class:'dp-footnote'},'All scheduling times use Mountain Time. '+(S.data.coverage?.asOf?'Updated '+new Intl.DateTimeFormat('en-US',{timeZone:TZ,hour:'numeric',minute:'2-digit'}).format(new Date(S.data.coverage.asOf))+'.':'')+' '+(S.view==='queue'?'Schedule or find a time for each job; every save is checked for conflicts.':views.get(S.view)?.help||'Drag a job onto a day to review its new time.'));
   if(S.view==='queue'){renderQueue(target);target.append(footnote);return;}
@@ -449,16 +450,18 @@ function reasonControls(parent,list,{who=false,required=true,value='',by:initiat
   parent.append(labeled('Reason',code),...(by?[labeled('Who asked for it?',by)]:[]));
   return Object.assign(()=>({...(code.value?{reasonCode:code.value}:{}),...(by?.value?{initiatedBy:by.value}:{})}),{controls:[code,by].filter(Boolean)});
 }
+function scheduleVerified(){return Boolean(S.data&&!S.loading&&!S.error&&S.data.coverage?.complete===true);}
 function render() {
   if(!S.root||S.modal)return;
+  const verified=scheduleVerified();
   const search=h('input',{type:'search',value:S.query,placeholder:'Filter this date range',oninput:e=>setFilter('query',e.target.value),'aria-label':'Search jobs'});
-  const waiting=S.data?queueCount():0,review=S.data?(S.data.jobs||[]).filter(j=>queued(j)&&j.needsDispatchReview===true).length:0;
+  const waiting=verified?queueCount():0,review=verified?(S.data.jobs||[]).filter(j=>queued(j)&&j.needsDispatchReview===true).length:0;
   const badge=waiting?h('button',{type:'button',class:'dp-queue-badge','data-dp-queue-badge':'',onclick:showQueue,'aria-label':waiting+' to schedule'+(review?', '+review+' need review':'')+'. Open To schedule.'},waiting+' to schedule',review?h('strong',{},' · '+review+' new'):null):null;
-  S.root.replaceChildren(h('header',{class:'dp-header'},h('div',{},h('span',{class:'dp-eyebrow'},'EGC OPERATIONS'),h('div',{class:'dp-title-row'},h('h1',{},'Dispatch'),badge),h('p',{},'Schedule, assign and run the day.')),h('div',{class:'dp-header-actions'},btn('Search all jobs',openSearch,'',{disabled:!S.data}),btn('Find opening',openOpenings,'',{disabled:!S.data}),booker()?null:btn('Block time',()=>openBlock(),'',{disabled:!S.data}),booker()?null:btn('Crews & vehicles',()=>openResources()),window.EGCRecurring&&!booker()?btn('Recurring plans',()=>window.EGCRecurring.open({onChange:()=>load({quiet:true})})):null,btn('Refresh',()=>load(),'',{disabled:S.loading}),btn('Create job',()=>openJob(),'primary',{disabled:!S.data}))));
-  S.root.querySelector('.dp-header-actions').insertBefore(btn('Drive times',openTravel,'',{disabled:!S.data}),S.root.querySelector('.dp-header-actions .primary'));
+  S.root.replaceChildren(h('header',{class:'dp-header'},h('div',{},h('span',{class:'dp-eyebrow'},'EGC OPERATIONS'),h('div',{class:'dp-title-row'},h('h1',{},'Dispatch'),badge),h('p',{},'Schedule, assign and run the day.')),h('div',{class:'dp-header-actions'},btn('Search all jobs',openSearch,'',{disabled:!verified}),btn('Find opening',openOpenings,'',{disabled:!verified}),booker()?null:btn('Block time',()=>openBlock(),'',{disabled:!verified}),booker()?null:btn('Crews & vehicles',()=>openResources()),window.EGCRecurring&&!booker()?btn('Recurring plans',()=>window.EGCRecurring.open({onChange:()=>load({quiet:true})})):null,btn('Refresh',()=>load(),'',{disabled:S.loading}),btn('Create job',()=>openJob(),'primary',{disabled:!verified}))));
+  S.root.querySelector('.dp-header-actions').insertBefore(btn('Drive times',openTravel,'',{disabled:!verified}),S.root.querySelector('.dp-header-actions .primary'));
   const modes=h('div',{class:'dp-modes',role:'group','aria-label':'Calendar view'});
   for(const [id,label]of [['day','Day'],['week','Week'],['crew','Crew'],['jobs','Jobs'],...[...views].map(([id,view])=>[id,view.label])])modes.append(btn(label,()=>{S.view=id;void load();},S.view===id?'selected':'',{'aria-pressed':S.view===id?'true':'false'}));
-  modes.append(btn(['To schedule',S.data?h('span',{class:'dp-badge','data-dp-queue-count':'','aria-hidden':'true'},String(waiting)):null],showQueue,'dp-queue-mode'+(S.view==='queue'?' selected':''),{'aria-pressed':S.view==='queue'?'true':'false','aria-label':S.data?'To schedule ('+waiting+')':'To schedule'}));
+  modes.append(btn(['To schedule',verified?h('span',{class:'dp-badge','data-dp-queue-count':'','aria-hidden':'true'},String(waiting)):null],showQueue,'dp-queue-mode'+(S.view==='queue'?' selected':''),{'aria-pressed':S.view==='queue'?'true':'false','aria-label':verified?'To schedule ('+waiting+')':'To schedule'}));
   // The queue has no date: its view leaves the date controls out.
   S.root.append(h('div',{class:'dp-controls'},S.view==='queue'?null:h('div',{class:'dp-date-controls'},btn('←',()=>move(-1),'',{'aria-label':'Previous period'}),labeled('Schedule date',h('input',{type:'date',value:S.date,onchange:e=>setDate(e.target.value)})),btn('→',()=>move(1),'',{'aria-label':'Next period'}),h('div',{class:'dp-date-shortcuts'},btn('Today',()=>setDate(today())),btn('Tomorrow',()=>setDate(addDays(today(),1))))),modes));
   S.root.append(h('div',{class:'dp-filters'},search,
@@ -1130,12 +1133,12 @@ function mount(host,options) {
   S.refreshTimer=setInterval(()=>{if(!document.hidden&&!S.modal&&!S.pending)void load({quiet:true});},60000);
 }
 // A dialog another screen opened off the board (openFor) is not the board's: unmount leaves it until it closes or sign-out.
-function unmount({force=false}={}) {if(!force&&S.detached&&S.modal===S.detached&&!S.root)return;S.detached=null;S.controller?.abort();S.generation++;if(S.refreshTimer)clearInterval(S.refreshTimer);S.refreshTimer=null;if(S.modal){S.modal.dialog.close();S.modal.dialog.remove();S.modal=null;}S.pending=false;S.root?.remove();S.root=null;S.host=null;S.data=null;S.viewer=null;S.recovery=null;S.pendingBook=null;}
+function unmount({force=false}={}) {if(!force&&S.detached&&S.modal===S.detached&&!S.root)return;S.detached=null;S.controller?.abort();S.generation++;if(S.refreshTimer)clearInterval(S.refreshTimer);S.refreshTimer=null;if(S.modal){S.modal.dialog.close();S.modal.dialog.remove();S.modal=null;}S.pending=false;S.root?.remove();S.root=null;S.host=null;S.data=null;S.loading=false;S.error='';S.errorStatus=0;S.viewer=null;S.recovery=null;S.pendingBook=null;}
 window.addEventListener('egc:signout',()=>{try{for(let i=sessionStorage.length-1;i>=0;i--){const name=sessionStorage.key(i);if(name?.startsWith(recoveryPrefix))sessionStorage.removeItem(name);}}catch{}unmount({force:true});});
 window.addEventListener('beforeunload',event=>{if(S.modal){event.preventDefault();event.returnValue='';}});
 function registerView(name,view) {
   if(!/^[a-z][a-z0-9_]{1,23}$/.test(name)||['day','week','crew','jobs','queue'].includes(name)||views.has(name)||typeof view?.label!=='string'||typeof view.range!=='function'||typeof view.render!=='function')throw new Error('Dispatch view '+name+' is invalid or already registered.');
-  views.set(name,Object.freeze({label:view.label,range:view.range,step:typeof view.step==='function'?view.step:null,render:view.render,help:typeof view.help==='string'?view.help:''}));
+  views.set(name,Object.freeze({label:view.label,range:view.range,step:typeof view.step==='function'?view.step:null,render:view.render,pendingSubject:typeof view.pendingSubject==='string'?view.pendingSubject:'',help:typeof view.help==='string'?view.help:''}));
   if(S.root&&!S.modal)render();
 }
 // Registered views share this client, its dialogs and the save-recovery protocol (same requestId on retry).

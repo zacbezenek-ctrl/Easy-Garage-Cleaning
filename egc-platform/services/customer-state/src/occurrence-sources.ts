@@ -8,7 +8,7 @@ const obj=(v:unknown):Json=>v&&typeof v==='object'&&!Array.isArray(v)?v as Json:
  * provider/local/Portal keys may join work; parent deal/visit links stay separate. */
 export function attachOccurrenceIdentities(records:SourceRecord[],bundle:SourceBundle):SourceRecord[] {
   return records.map(record=>record.events?({...record,events:record.events.map(event=>{
-    const kind=eventOccurrenceKind(event.eventType);if(!kind)return event;
+    const kind=eventOccurrenceKind(event.eventType,event.details?.occurrenceKind);if(!kind)return event;
     const aliases:OccurrenceAlias[]=[],parents:NonNullable<OccurrenceIdentity['parents']>=[];
     const alias=(namespace:string,id:unknown)=>{if(str(id))aliases.push({namespace,recordId:str(id),kind});};
     let authoritativePortalId:string|undefined;

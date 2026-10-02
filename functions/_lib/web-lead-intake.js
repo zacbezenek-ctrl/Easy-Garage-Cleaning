@@ -8,12 +8,13 @@
    receipt is abandoned. A failed sync is retried on the signed MSG-CRON tick
    (bounded, Denver quiet hours honoured).
    The Zapier relay, the one automatic customer text, only ever goes out from
-   the request that received the lead, exactly as before; a retry never sends it.
-   Nothing in HighLevel needs changing: a retried sync makes the same contact,
-   tag and note calls as an on-time one, so HighLevel's own automations start
-   when the lead reaches it, late or not, exactly as if it had just arrived. Its
-   detail note says it came late, and it never creates or moves an opportunity
-   someone may already have worked. Only with WEB_LEAD_DELAYED_SYNC_TAG=true
+   the request that received an eligible lead; a retry never sends it.
+   Explicit applicants and unknown provider identity get a review note, with no
+   sales tags, opportunity or Zapier relay. On-time and delayed intake both
+   preserve existing deals. A receipt-created contact may get a create-only
+   opportunity after an empty all-status check. Safe additive tags are separately
+   opt-in; audit provider workflows before enabling them. A delayed detail note
+   says it came late. Only with WEB_LEAD_DELAYED_SYNC_TAG=true
    does it also tag the contact egc-delayed-sync (removed again by the
    contact's next on-time sync), an optional extra for a HighLevel workflow
    filter that skips an instant reply that would now arrive late.
@@ -79,7 +80,7 @@ const later = (at, ms) => new Date(Date.parse(at) + ms).toISOString();
 
 // Read an env var tolerant of stray whitespace in the NAME — a dashboard var
 // saved as "WEBSITE_LEAD_HOOK_URL " (trailing space) is a silent footgun: it's
-// present but env.WEBSITE_LEAD_HOOK_URL reads undefined. Prefer the exact key;
+// present but a direct lookup reads undefined. Prefer the exact key;
 // otherwise match any key that trims to the requested name.
 export function envVar(env, name) {
   if (env && env[name]) return env[name];
@@ -93,7 +94,9 @@ export const webLeadReceiptsEnabled = env => envVar(env, 'WEB_LEAD_RECEIPTS_ENAB
 export const webLeadAdsRelayEnabled = env => envVar(env, 'WEB_LEAD_ADS_RELAY_ENABLED') === 'true';
 /** Opt-in: only then does a late sync add WEB_LEAD_DELAYED_TAG and an on-time one (ledger on) remove it. */
 export const webLeadDelayedSyncTagEnabled = env => envVar(env, 'WEB_LEAD_DELAYED_SYNC_TAG') === 'true';
-/** The ledger runs only with the flag on and Firestore configured; otherwise web-lead is exactly the legacy relay. */
+/** Opt-in after reviewing provider workflows; uses the supported additive tag endpoint without replacing existing tags. */
+export const webLeadSafeTagsEnabled = env => envVar(env, 'WEB_LEAD_SAFE_TAGS_ENABLED') === 'true';
+/** The ledger runs only with the flag on and Firestore configured; otherwise receipt storage is unused; intake safety still applies. */
 export const webLeadLedgerOn = env => webLeadReceiptsEnabled(env) && firebaseServiceAccountConfigured(env);
 export const webLeadInquiryId = value => typeof value === 'string' && UUID.test(value.trim()) ? value.trim().toLowerCase() : '';
 
@@ -127,12 +130,30 @@ async function highLevelRequest(config, path, options = {}, fetcher = fetch, tim
   return data;
 }
 
-// Why a delayed sync left the opportunity alone; the detail note says the same to the team.
+// Why an intake sync left the opportunity alone; the detail note says the same to the team.
 const OPPORTUNITY_SKIPPED = Object.freeze({
+  job_applicant: 'not created or changed, because this contact has an explicit applicant tag. Review in recruiting; do not enroll in sales follow-up.',
+  identity_unknown: 'not created or changed, because the provider identity or tags are unverified. Review the contact before sales follow-up.',
   existing_contact: 'not created or changed, because this contact already existed in HighLevel. Check its pipeline before adding one.',
   existing_opportunity: 'not created or changed, because this contact already has one in this pipeline (open, won, lost or abandoned). Check it before adding one or reopening it.',
   opportunity_check_failed: 'not created, because the contact\'s opportunities could not be checked. Add one if this lead needs it.',
 });
+
+// Only provider evidence may decide identity. A form's name, text, source or tags
+// never turns an applicant or an ambiguous response into a sales contact.
+function salesRoutingHold(result, contactId) {
+  const contact = result.contact;
+  const tags = contact?.tags;
+  if (Array.isArray(tags) && tags.some(tag => typeof tag === 'string' && /^applicant(?:$|[-_: ])/.test(tag.trim().toLowerCase()))) return 'job_applicant';
+  if (!contact || contact.id !== contactId || typeof result.new !== 'boolean' ||
+      (!Array.isArray(tags) || tags.some(tag => typeof tag !== 'string'))) return 'identity_unknown';
+  return null;
+}
+
+/** Suppress the request's automatic Zapier sales relay when provider identity needs review. */
+export const webLeadRelayHold = (env, result) => result?.salesRoutingHeld ? {
+  configured: Boolean(envVar(env, 'WEBSITE_LEAD_HOOK_URL')), sent: false, skipped: result.salesRoutingHeld,
+} : null;
 
 // A retry that ran out of tick time fails as a whole (and is retried), even
 // where a single call's failure is otherwise tolerated, so a lead is never
@@ -142,13 +163,12 @@ const tolerate = error => { if (error?.code === OUT_OF_TIME) throw error; };
 /**
  * The website lead -> HighLevel contact, tags, detail note and new-lead
  * opportunity (client hub help: an internal comment instead). options:
- * {delayed, createdContactId, timeLeft}. A delayed (cron) sync makes the same
- * contact, tag and note calls as an on-time one (its note says it is late),
+ * {delayed, createdContactId, timeLeft}. On-time and delayed (cron) sync use the same
+ * contact, tag and note paths (the delayed note says it is late),
  * and never creates or moves an opportunity for a contact that existed before
  * this lead (only for one this sync or an earlier attempt of the same receipt,
  * createdContactId, created, and then only when it has no opportunity in the
- * pipeline at all: an upsert would reopen a won, lost or abandoned one at the
- * new-lead stage). Only with WEB_LEAD_DELAYED_SYNC_TAG=true does a delayed
+ * pipeline at all; creation never upserts or moves an existing deal). Only with WEB_LEAD_DELAYED_SYNC_TAG=true does a delayed
  * sync first add WEB_LEAD_DELAYED_TAG with its own POST, and an on-time sync
  * of an existing contact (ledger on) remove one an earlier late sync left;
  * otherwise neither call is made. timeLeft() (ms) cuts each
@@ -159,7 +179,7 @@ const tolerate = error => { if (error?.code === OUT_OF_TIME) throw error; };
  */
 export async function syncHighLevelLead(env, lead, fetcher = (...args) => fetch(...args), { delayed = false, createdContactId = '', timeLeft = null } = {}) {
   const config = highLevelConfig(env);
-  if (!config.token || !config.locationId) return { configured: false, synced: false };
+  if (!config.token || !config.locationId) return { configured: false, synced: false, salesRoutingHeld: 'identity_unknown' };
   const isClientHubHelp = lead.flow_type === 'client_hub_help';
   const left = () => typeof timeLeft === 'function' ? Number(timeLeft()) : Infinity;
   const outOfTime = () => fail(OUT_OF_TIME, 'The retry ran out of time before HighLevel finished.');
@@ -181,10 +201,11 @@ export async function syncHighLevelLead(env, lead, fetcher = (...args) => fetch(
     }),
   });
   const contactId = contactResult.contact && contactResult.contact.id || contactResult.id || '';
-  if (!contactId) throw fail('highlevel_contact_missing', 'HighLevel did not return a contact ID');
+  if (typeof contactId !== 'string' || !contactId.trim()) throw fail('highlevel_contact_missing', 'HighLevel did not return a contact ID');
   const isNew = contactResult.new === true, created = isNew || (Boolean(createdContactId) && createdContactId === contactId);
+  const salesRoutingHeld = salesRoutingHold(contactResult, contactId);
   try {
-    return await syncHighLevelDetails({ env, config, lead, request, contactId, isNew, created, delayed, isClientHubHelp });
+    return await syncHighLevelDetails({ env, config, lead, request, contactId, isNew, created, delayed, isClientHubHelp, salesRoutingHeld });
   } catch (error) {
     if (isNew && error && typeof error === 'object') error.createdContactId = contactId;
     throw error;
@@ -195,12 +216,12 @@ export async function syncHighLevelLead(env, lead, fetcher = (...args) => fetch(
 // with EGC_BOOKING_EXPLICIT_SLOTS=true; off, the note's slot line is exactly as before, even for a lead received while on).
 const slotRemarks = lead => { const remarks = [lead.booking_slot_choice ? `chosen as "${lead.booking_slot_choice}"` : '', BOOKING_SLOT_PROBLEMS[lead.booking_slot_problem] || ''].filter(Boolean); return remarks.length ? ` (${remarks.join('; ')})` : ''; };
 
-async function syncHighLevelDetails({ env, config, lead, request, contactId, isNew, created, delayed, isClientHubHelp }) {
+async function syncHighLevelDetails({ env, config, lead, request, contactId, isNew, created, delayed, isClientHubHelp, salesRoutingHeld }) {
   const tagsPath = `/contacts/${encodeURIComponent(contactId)}/tags`;
   let delayedTag = null;
   // The tag is opt-in: without WEB_LEAD_DELAYED_SYNC_TAG no call adds or removes it, and a late
   // sync reaches HighLevel exactly as an on-time one does.
-  const markDelayed = webLeadDelayedSyncTagEnabled(env);
+  const markDelayed = !salesRoutingHeld && webLeadDelayedSyncTagEnabled(env);
   if (delayed && markDelayed) {
     // Before the source and consent tags, so a workflow those tags start already sees it.
     try { await request(tagsPath, { method: 'POST', body: JSON.stringify({ tags: [WEB_LEAD_DELAYED_TAG] }) }); delayedTag = 'added'; }
@@ -212,18 +233,28 @@ async function syncHighLevelDetails({ env, config, lead, request, contactId, isN
   }
   const consentTag = lead.sms_consent === 'yes' ? 'egc-sms-consent' : 'egc-no-sms-consent';
   const sourceTag = isClientHubHelp ? 'egc-client-hub-help' : 'egc-website-lead';
-  let consentTagSynced = true;
-  try {
-    await request(tagsPath, {
-      method: 'PUT',
-      body: JSON.stringify({ tags: [sourceTag, consentTag] }),
-    });
-  } catch (error) { tolerate(error); consentTagSynced = false; }
-  // A late sync may reach a deal someone already worked from the Web3Forms email: it never resets one.
-  let opportunitySkipped = null;
-  if (delayed && !isClientHubHelp && config.pipelineId) {
+  let consentTagSynced = false;
+  if (!salesRoutingHeld) {
+    const safeTags = webLeadSafeTagsEnabled(env);
+    try {
+      // The opt-in method preserves hiring/DNC/lifecycle tags; it removes nothing.
+      await request(tagsPath, {
+        method: safeTags ? 'POST' : 'PUT',
+        body: JSON.stringify({ tags: [sourceTag, consentTag] }),
+      });
+      consentTagSynced = true;
+    } catch (error) {
+      tolerate(error);
+      if (safeTags) throw fail('highlevel_tags_failed', 'HighLevel could not store the lead consent tags');
+    }
+  }
+  // On-time and delayed submissions can both find deals the team already worked.
+  // Only a contact created by this receipt may get a new opportunity, and only
+  // after every status is checked. Even a new contact may have a workflow-created deal.
+  let opportunitySkipped = salesRoutingHeld;
+  if (!opportunitySkipped && !isClientHubHelp && config.pipelineId) {
     if (!created) opportunitySkipped = 'existing_contact';
-    else if (!isNew) {
+    else {
       // Every status, not only open: the upsert matches the contact's opportunity in
       // this pipeline, so it would reopen a won, lost or abandoned deal at the new-lead stage.
       try {
@@ -232,10 +263,11 @@ async function syncHighLevelDetails({ env, config, lead, request, contactId, isN
         const rows = found.opportunities;
         if (!Array.isArray(rows) || rows.some(row => (row?.contactId || row?.contact?.id) !== contactId)) opportunitySkipped = 'opportunity_check_failed';
         else if (rows.length || Number(found.meta?.total || 0)) opportunitySkipped = 'existing_opportunity';
+        else if (found.meta?.total !== 0 && found.meta?.total !== '0') opportunitySkipped = 'opportunity_check_failed';
       } catch (error) { tolerate(error); opportunitySkipped = 'opportunity_check_failed'; }
     }
   }
-  const late = delayed ? { delayedTag, ...(opportunitySkipped ? { opportunitySkipped } : {}) } : delayedTag ? { delayedTag } : {};
+  const late = { ...(delayed || delayedTag ? { delayedTag } : {}), ...(opportunitySkipped ? { opportunitySkipped } : {}), ...(salesRoutingHeld ? { salesRoutingHeld } : {}) };
   const detailLines = [
     isClientHubHelp ? 'EGC CLIENT HUB HELP REQUEST' : 'EGC WEBSITE LEAD DETAILS',
     ...(delayed ? ['Delivered late by the Hub retry: the first HighLevel sync failed. Check whether someone already followed up.'] : []),
@@ -282,6 +314,7 @@ async function syncHighLevelDetails({ env, config, lead, request, contactId, isN
     if (!noteSynced && !internalCommentSynced) throw fail('highlevel_note_failed', 'HighLevel could not store the client hub request');
     return { configured: true, synced: true, contactId, opportunityId: '', consentTag, consentTagSynced, internalCommentSynced, ...late };
   }
+  if (!noteSynced) throw fail('highlevel_note_failed', 'HighLevel could not store the lead details');
   if (!config.pipelineId || opportunitySkipped) return { configured: true, synced: true, contactId, opportunityId: '', consentTag, consentTagSynced, ...late };
 
   let stageId = config.stageId;
@@ -300,17 +333,18 @@ async function syncHighLevelDetails({ env, config, lead, request, contactId, isN
     status: 'open',
     contactId,
     monetaryValue: 0,
-    followers: config.assignedTo ? [config.assignedTo] : [],
-    isRemoveAllFollowers: false,
-    followersActionType: 'add',
     ...(config.assignedTo ? { assignedTo: config.assignedTo } : {}),
   };
-  const result = await request('/opportunities/upsert', {
+  // Create-only closes the search/write race: an opportunity created or worked
+  // after our read must never be reset by this intake. Never fall back to upsert.
+  const result = await request('/opportunities/', {
     method: 'POST',
     headers: { 'Idempotency-Key': `website-lead:${contactId}:${config.pipelineId}` },
     body: JSON.stringify(body),
   });
-  return { configured: true, synced: true, contactId, opportunityId: result.opportunity && result.opportunity.id || result.id || '', consentTag, consentTagSynced, ...late };
+  const opportunityId = result.opportunity && result.opportunity.id || result.id || '';
+  if (typeof opportunityId !== 'string' || !opportunityId.trim()) throw fail('highlevel_opportunity_missing', 'HighLevel did not confirm the new opportunity');
+  return { configured: true, synced: true, contactId, opportunityId, consentTag, consentTagSynced, ...late };
 }
 
 function pathOf(url) {
@@ -483,7 +517,7 @@ export async function receiveWebLead(deps, input) {
 
   const { result, error, threw } = await attemptSync(sync, syncLead);
   // The relay goes out once, from this request, only when the sync did not throw (the legacy rule).
-  const relayed = threw ? null : await relay();
+  const relayed = threw ? null : webLeadRelayHold(env, result) || await relay();
   // Client hub help has no Web3Forms copy. A message nothing will retry (no sealed
   // payload), or one HighLevel refused outright (a 4xx other than 408/429, which a
   // retry would only repeat until it is abandoned ~45 hours later), answers as the

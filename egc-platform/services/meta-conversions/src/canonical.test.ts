@@ -27,3 +27,11 @@ describe('canonical Meta conversion evidence',()=>{
  it('cannot authorize the selected event timestamp using only unrelated later complete evidence',()=>{const [candidate]=detectCanonicalConversions(lead,[event({evidence:[{sourceType:'call_transcript',sourceRecordId:'unprocessed-call',occurredAt:'2026-09-21T18:00:00Z'},{sourceType:'appointment',sourceRecordId:'later-mirror',occurredAt:'2026-09-22T01:00:00Z'}]})],{...options,sourceStates:[]});expect(candidate?.eligible).toBe(false);});
  it.each(['test','test-lead','supplier'])('matches canonical explicit exclusion tags %s',tag=>{const [candidate]=detectCanonicalConversions({...lead,raw:{...lead.raw,tags:[tag]}},[event()],options);expect(candidate?.eligible).toBe(false);});
 });
+
+it('separates excluded extraction inventory from customer blockers and labels period coverage',async()=>{
+ const {sourceExtractionCoverage}=await import('./canonical.js');
+ const held=(id:string,extra:string[]=[],eventTime:string|null='2026-09-21T18:00:00Z')=>({eventId:id,contactId:id,canonicalEventId:id,reasons:['canonical_source_extraction_incomplete',...extra],eventTime});
+ const result=sourceExtractionCoverage([held('customer'),held('applicant',['canonical_customer_excluded']),held('dnc',['canonical_do_not_contact']),held('old',[],'2025-01-01T00:00:00Z'),held('undated',[],null)],{from:new Date('2026-09-20'),to:new Date('2026-09-22')});
+ expect(result.sourceExtractionHeldEvents.map(r=>r.contactId)).toEqual(['customer','old','undated']);expect(result.excludedSourceExtractionHeldEvents).toHaveLength(2);
+ expect(result.sourceExtractionHeldCounts).toMatchObject({total:5,customer:3,excluded:2,customerInRequestedPeriod:1,customerUnknownTime:1,scope:'all_discovery_inventory'});
+});

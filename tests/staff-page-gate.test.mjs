@@ -67,7 +67,7 @@ const GATED_URLS = [...new Set([
 const SPEC_GATED = ['/employee', '/employee.html', '/employee/', '/employee-suite.js', '/employee-suite.css', '/employee-dispatch.js', '/employee-operations.css',
   '/dispatch', '/dispatch.html', '/message-templates', '/message-templates.html', '/message-templates.js', '/message-templates.css', '/copilot', '/copilot.html',
   '/crew/gameplan', '/crew/gameplan.html', '/crew/prejob', '/crew/prejob.html', '/crew/postjob', '/crew/postjob.html', '/crew/job', '/crew/job.html', '/crew/job.js', '/crew/job.css',
-  '/crew/gameplan-handoff.js', '/crew/field-expenses.js', '/crew/field-expenses.css', '/crew/field-payments.js', '/crew/field-payments.css', '/crew/job-photo-sharing.js'];
+  '/crew/gameplan-handoff.js', '/crew/mounting-options.js', '/crew/mounting-options.css', '/crew/field-expenses.js', '/crew/field-expenses.css', '/crew/field-payments.js', '/crew/field-payments.css', '/crew/job-photo-sharing.js'];
 // The crew service worker installs and updates signed out, so it, the outbox it imports and the offline page stay public.
 const SPEC_PUBLIC = ['/crew/', '/crew', '/crew/index.html', '/crew/hub-auth.js', '/crew/crew-brand.css', '/crew/manifest.webmanifest', '/crew/sw.js', '/crew/field-outbox.js', '/crew/offline', '/crew/offline.html', '/crew/sw-config.json',
   '/hub-login-setup', '/hub-login-setup.html', '/hub-login-setup.js', '/staff-login', '/staff-login.html', '/staff-login.js', '/staff-paths.js', '/employee-signup', '/employee-signup.html',

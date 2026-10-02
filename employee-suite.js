@@ -1,10 +1,90 @@
+// Schedule freshness is installed here so the existing HTML configuration stays unchanged.
+var managerScheduleState = typeof managerScheduleState === 'undefined' ? {loaded:false,loading:true,error:'',fromCache:false,pending:false} : managerScheduleState;
+function startListeners() {
+  if (_listenersStarted) return;
+  _listenersStarted = true;
+  const generation = _dataGeneration;
+  const listen = (collection, onNext, onError) => {
+    const unsubscribe = db.collection(collection).onSnapshot(
+      ...(collection==='jobs'?[{includeMetadataChanges:true}]:[]),
+      snapshot => { if (generation === _dataGeneration) onNext(snapshot); },
+      error => { if (generation === _dataGeneration) onError(error); }
+    );
+    _dataUnsubscribers.push(unsubscribe);
+  };
+  updateFirebaseStatus();
+
+  if (!canRunBusiness()) {
+    void refreshCrewSchedule();
+    return;
+  }
+
+  listen('jobs', snap => {
+    const fromCache=snap.metadata?.fromCache===true,pending=snap.metadata?.hasPendingWrites===true;
+    managerScheduleState={loaded:!fromCache&&!pending,loading:false,error:'',fromCache,pending};
+    firebaseConn.jobs = fromCache||pending?'connecting':'connected';
+    jobsCache = snap.docs.map(d => ({ ...d.data(), id: d.id })).filter(j => j.recordType !== 'schedule_lock' && j.recordType !== 'employee_hub_v2' && !String(j.id).startsWith('_egc_') && !String(j.id).startsWith('secure_'));
+    updateFirebaseStatus();
+    refresh();
+  }, err => {
+    firebaseConn.jobs = 'error';
+    updateFirebaseStatus();
+    managerScheduleState={...managerScheduleState,loading:false,error:'Current Hub assignments could not be verified. Check your connection and refresh.'};
+    console.error('Jobs listener error', err);
+    refresh();
+  });
+
+  listen('customers', snap => {
+    firebaseConn.customers = 'connected';
+    custsCache = snap.docs.map(d => ({ ...d.data(), id: d.id }));
+    updateFirebaseStatus();
+    renderCustomersTab();
+    if (typeof bk !== 'undefined' && bk.step === 1 && document.getElementById('booking-overlay')?.classList.contains('open')) {
+      renderCustList(document.getElementById('cust-search')?.value || '');
+    }
+  }, err => {
+    firebaseConn.customers = 'error';
+    updateFirebaseStatus();
+    console.error('Customers listener error', err);
+  });
+
+  listen('blocked_days', snap => {
+    blockedDays = new Set(snap.docs.map(d => d.id));
+    if (scheduleTabActive()) renderCal();
+  }, err => console.error('blocked_days listener error', err));
+
+  listen('blocked_slots', snap => {
+    blockedSlots = new Set(snap.docs.map(d => d.id));
+    if (scheduleTabActive()) renderCal();
+  }, err => console.error('blocked_slots listener error', err));
+
+  // Lead history remains in Firestore, but the Hub intentionally starts fresh.
+  // The visible lead feed is sourced only from HighLevel after the reset cutoff.
+  leadsCache = [];
+  firebaseConn.leads = 'connected';
+  window._lastLeadsSync = Date.now();
+  updateFirebaseStatus();
+
+  // Lightweight tick (60s): refresh badge count + dashboard age displays.
+  // Heavy lists (leads, jobs) re-render only on actual data changes via onSnapshot,
+  // so scrolling/typing on those tabs is never interrupted.
+  if (_leadsTimer) clearInterval(_leadsTimer);
+  _leadsTimer = setInterval(() => {
+    updateLeadsBadge();
+    if (document.getElementById('tab-home')?.classList.contains('active') && typeof renderDashboard === 'function') {
+      renderDashboard();
+    }
+  }, 60000);
+}
+
+
 /* EGC Operating System — HighLevel is CRM; this hub runs the service. */
 (function(){
 'use strict';
 const employeeLoadState=()=>({loading:false,loaded:false,error:''});
 const S={active:'my_day',installed:false,integrations:{},ghl:{loading:true,error:'',pipelines:[],opportunities:[],leadResetAt:''},ghlTimer:null,walks:{loading:true,error:'',events:[]},weekAnchor:'',timesheetAnchor:'',availabilityAnchor:'',availabilitySelected:'',availabilityAllDay:true,booking:null,actionDialog:null,contactResults:[],trainingModule:'',chatChannel:'team',people:{profiles:[],timeEntries:[],announcements:[],requests:[],incidents:[],equipment:[],training:[],teamMessages:[],jobMessages:[],messageReads:[],accounts:[],listeners:false},locating:false,clockInWithoutFix:false,onboardingPrompted:false};
 const $=s=>document.querySelector(s),all=s=>Array.from(document.querySelectorAll(s));
-S.peopleState=employeeLoadState();S.accountState=employeeLoadState();S.integrationState=employeeLoadState();S.peopleTimer=null;S.peopleRequest=null;S.peopleGeneration=0;S.peopleLastRefreshAt=0;S.peoplePollFailures=0;
+S.peopleState=employeeLoadState();S.accountState=employeeLoadState();S.integrationState=employeeLoadState();S.peopleTimer=null;S.peopleRequest=null;S.peopleGeneration=0;S.peopleLastRefreshAt=0;S.peopleLastFullRefreshAt=0;S.peopleRequestKind='';S.peoplePollFailures=0;
 const esc=v=>String(v==null?'':v).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const money=v=>Number(v||0).toLocaleString('en-US',{style:'currency',currency:'USD',maximumFractionDigits:0});
 const payMoney=v=>Number(v||0).toLocaleString('en-US',{style:'currency',currency:'USD',minimumFractionDigits:2,maximumFractionDigits:2});
@@ -93,7 +173,14 @@ const jobs=()=>typeof jobsCache==='undefined'?[]:jobsCache.filter(j=>!isSchedule
 const availabilityRows=()=>typeof jobsCache==='undefined'?[]:jobsCache.filter(isAvailability);
 const jobStage=j=>typeof getPipelineStatus==='function'?getPipelineStatus(j):(j.pipelineStatus||j.status||'scheduled');
 const isToday=v=>Boolean(v)&&String(v).slice(0,10)===day();
-const todayJobs=()=>jobs().filter(j=>isToday(j.date||j.startTime)&&j.type!=='blocked');
+const scheduleDay=(date,count)=>new Date(Date.parse(date+'T12:00:00Z')+count*86400000).toISOString().slice(0,10);
+const scheduleDateValid=value=>typeof value==='string'&&/^\d{4}-\d{2}-\d{2}$/.test(value)&&Number.isFinite(Date.parse(value+'T12:00:00Z'))&&new Date(value+'T12:00:00Z').toISOString().slice(0,10)===value;
+function scheduleRowValid(row,segmented=false){if(!row||typeof row!=='object'||Array.isArray(row))return false;const start=String(row.date||row.startTime||'').slice(0,10),end=row.endDate||start;return !start?!segmented:scheduleDateValid(start)&&scheduleDateValid(end)&&end>=start;}
+function scheduleShapeVerified(job){if(!job||typeof job!=='object')return false;const segments=job.assignmentSegments;if(segments!=null&&!Array.isArray(segments))return false;return segments?.length?segments.every(row=>scheduleRowValid(row,true)):scheduleRowValid(job);}
+function scheduleRowsOnDate(job,date){if(!scheduleShapeVerified(job))return[];const rows=Array.isArray(job.assignmentSegments)&&job.assignmentSegments.length?job.assignmentSegments:[job];return rows.filter(row=>{const start=String(row.date||row.startTime||'').slice(0,10),end=row.endDate||start,last=end>start&&row.endTime==='00:00'?scheduleDay(end,-1):end;return start&&start<=date&&last>=date;});}
+const todayJobs=()=>jobs().filter(j=>j.type!=='blocked'&&scheduleRowsOnDate(j,day()).length);
+function managerScheduleVerified(){if(!jobs().every(scheduleShapeVerified))return false;if(typeof managerScheduleState==='undefined')return true;const state=managerScheduleState;return Boolean(state.loaded&&!state.loading&&!state.error&&!state.fromCache&&!state.pending);}
+function managerScheduleUnavailable(){if(managerScheduleVerified())return'';const state=typeof managerScheduleState==='undefined'?{}:managerScheduleState;return empty(state.loading?'Checking the Hub schedule':'Schedule could not be verified',state.error||'Waiting for current server assignments. Cached or pending changes cannot confirm an empty day.','<button class="ops-button" onclick="opsGo(\'schedule\')">Open current schedule</button>');}
 const todayWalkthroughs=()=>todayJobs().filter(j=>j.type==='walkthrough');
 const todayDelivery=()=>todayJobs().filter(j=>j.type!=='walkthrough');
 const openJobs=()=>jobs().filter(j=>j.type!=='walkthrough'&&j.type!=='blocked'&&!terminalScheduleStages.includes(jobStage(j)));
@@ -225,9 +312,17 @@ function askAction(dialog){if(actionResolve)actionResolve(null);return new Promi
 window.opsActionClose=()=>{const resolve=actionResolve;actionResolve=null;S.actionDialog=null;render(true);if(resolve)resolve(null)};
 window.opsActionSubmit=event=>{event.preventDefault();const values={};new FormData(event.currentTarget).forEach((value,key)=>values[key]=String(value).trim());const resolve=actionResolve;actionResolve=null;S.actionDialog=null;render(true);if(resolve)resolve(values)};
 
-function metrics(){const opp=S.ghl.opportunities,total=opp.reduce((a,o)=>a+Number(o.monetaryValue||0),0),deliveries=todayDelivery(),ready=deliveries.filter(j=>(j.notes||j.scope||j.walkthroughNotes)&&Number(j.priceQuoted||j.total||0)).length,reset=S.ghl.leadResetAt?new Date(S.ghl.leadResetAt).toLocaleDateString('en-US',{month:'short',day:'numeric',timeZone:'America/Denver'}):'the reset',billable=jobs().filter(j=>j.type==='job'),openBalance=billable.reduce((sum,j)=>sum+financeState(j).balance,0),overdue=billable.filter(j=>financeState(j).invoice==='overdue').reduce((sum,j)=>sum+financeState(j).balance,0);return`<div class="ops-metrics"><article><span>New HighLevel leads</span><strong>${S.ghl.error?'—':opp.length}</strong><small>${S.ghl.error?'Connect CRM when the key is ready':`${money(total)} open value · since ${reset}`}</small></article><article><span>Walkthroughs today</span><strong>${todayWalkthroughs().length}</strong><small>Scheduled in the EGC Hub</small></article><article><span>Jobs today</span><strong>${deliveries.length}</strong><small>${ready} handoff-ready · ${deliveries.length-ready} need attention</small></article><article class="accent"><span>Cash outstanding</span><strong>${money(openBalance)}</strong><small>${overdue?`${money(overdue)} overdue`:'No overdue invoices'}</small></article></div>`}
+function metrics(){const scheduleReady=managerScheduleVerified(),opp=S.ghl.opportunities,total=opp.reduce((a,o)=>a+Number(o.monetaryValue||0),0),deliveries=todayDelivery(),ready=deliveries.filter(j=>(j.notes||j.scope||j.walkthroughNotes)&&Number(j.priceQuoted||j.total||0)).length,reset=S.ghl.leadResetAt?new Date(S.ghl.leadResetAt).toLocaleDateString('en-US',{month:'short',day:'numeric',timeZone:'America/Denver'}):'the reset',billable=jobs().filter(j=>j.type==='job'),openBalance=billable.reduce((sum,j)=>sum+financeState(j).balance,0),overdue=billable.filter(j=>financeState(j).invoice==='overdue').reduce((sum,j)=>sum+financeState(j).balance,0);return`<div class="ops-metrics"><article><span>New HighLevel leads</span><strong>${S.ghl.error?'—':opp.length}</strong><small>${S.ghl.error?'Connect CRM when the key is ready':`${money(total)} open value · since ${reset}`}</small></article><article><span>Walkthroughs today</span><strong>${scheduleReady?todayWalkthroughs().length:'—'}</strong><small>${scheduleReady?'Scheduled in the EGC Hub':'Schedule not verified'}</small></article><article><span>Jobs today</span><strong>${scheduleReady?deliveries.length:'—'}</strong><small>${scheduleReady?`${ready} handoff-ready · ${deliveries.length-ready} need attention`:'Schedule not verified'}</small></article><article class="accent"><span>Cash outstanding</span><strong>${money(openBalance)}</strong><small>${overdue?`${money(overdue)} overdue`:'No overdue invoices'}</small></article></div>`}
 function flywheel(){const rows=[['01','Lead response','HIGHLEVEL','Respond fast; sell the free walkthrough.'],['02','Walkthrough','FIELD','Diagnose pain, design outcome, lock scope and price.'],['03','Crew handoff','EGC HUB','Carry every promise, hazard, keep item and photo forward.'],['04','Reveal','FIELD','Final walkthrough, surprise gift, collect, ask for review.'],['05','Proof loop','GROWTH','Publish the transformation and feed the winning hook.']];return`<section class="ops-card ops-fly"><div class="ops-card-head"><div><span class="ops-eyebrow">THE OPERATING LOOP</span><h2>One promise, carried all the way through</h2></div>${badge('Walkthrough-first','info')}</div><div class="ops-fly-row">${rows.map(r=>`<article><b>${r[0]}</b><span>${r[2]}</span><h3>${r[1]}</h3><p>${r[3]}</p></article>`).join('')}</div></section>`}
-function agenda(){const rows=todayJobs().map(x=>({...x,kind:x.type==='walkthrough'?'Walkthrough':'Job',at:x.date+'T'+(x.time||'08:00')})).sort((a,b)=>String(a.at).localeCompare(String(b.at)));if(!rows.length)return empty('Nothing scheduled today','Add a walkthrough, job, or blocked time in the Hub schedule.',`<button class="ops-button primary" onclick="opsOpenBooking()">Schedule work</button>`);return`<div class="ops-agenda">${rows.map(r=>`<article><time>${timeLabel(r.at)||'TBD'}</time><div><span>${r.kind} · ${esc(jobStage(r).replaceAll('_',' '))}</span><strong>${esc(r.customer||r.title||'Customer')}</strong><p>${esc(r.address||'Address not recorded')}</p></div><div class="ops-agenda-actions">${r.address?`<a href="${routeUrl(r.address)}" target="_blank" rel="noopener">Route</a>`:''}${r.kind==='Walkthrough'?walkthroughLink(r):`<a href="/crew/job.html?jobId=${encodeURIComponent(r.id)}">Open crew brief →</a>`}</div></article>`).join('')}</div>`}
+function agenda(){
+ const unavailable=managerScheduleUnavailable();if(unavailable)return unavailable;
+ const date=scheduleDay(day(),S.agendaOffset===1?1:0),label=S.agendaOffset===1?'tomorrow':'today';
+ const controls=`<div class="ops-agenda-days" role="group" aria-label="Field agenda day"><button class="ops-button" aria-pressed="${S.agendaOffset!==1}" onclick="opsAgendaDay(0)">Today</button><button class="ops-button" aria-pressed="${S.agendaOffset===1}" onclick="opsAgendaDay(1)">Tomorrow</button></div>`;
+ const rows=jobs().filter(job=>job.type!=='blocked').flatMap(job=>scheduleRowsOnDate(job,date).map(row=>({...job,kind:job.type==='walkthrough'?'Walkthrough':'Job',at:date+'T'+(row.date<date?'00:00':row.time||'08:00'),continued:row.date<date}))).sort((a,b)=>String(a.at).localeCompare(String(b.at)));
+ if(!rows.length)return controls+empty('Nothing scheduled '+label,'Add a walkthrough, job, or blocked time in the Hub schedule.',`<button class="ops-button primary" onclick="opsOpenBooking('${date}')">Schedule work</button>`);
+ return controls+`<div class="ops-agenda" aria-label="Field agenda for ${date}">${rows.map(r=>`<article><time>${r.continued?'Continues':timeLabel(r.at)||'TBD'}</time><div><span>${r.kind} · ${esc(jobStage(r).replaceAll('_',' '))}</span><strong>${esc(r.customer||r.title||'Customer')}</strong><p>${esc(r.address||'Address not recorded')}</p></div><div class="ops-agenda-actions">${r.address?`<a href="${routeUrl(r.address)}" target="_blank" rel="noopener">Route</a>`:''}${r.kind==='Walkthrough'?walkthroughLink(r):`<a href="/crew/job.html?jobId=${encodeURIComponent(r.id)}">Open crew brief →</a>`}</div></article>`).join('')}</div>`;
+}
+window.opsAgendaDay=offset=>{if(offset!==0&&offset!==1)return;S.agendaOffset=offset;render('action');};
 function walkthroughLink(r){const next=window.EGCWalkthroughState?.action(r)||{href:`/crew/gameplan.html?walkthroughId=${encodeURIComponent(r.id)}`,label:'Start walkthrough',badge:''};return`${next.badge?`<span class="ops-status ops-walk-badge">${esc(next.badge)}</span>`:''}<a href="${esc(next.href)}">${esc(next.label)} →</a>`}
 function attention(){const x=[];if(!S.peopleState.loaded||S.peopleState.error)x.push(['Employee records need attention',S.peopleState.error||'Employee records are still loading; readiness has not been checked.','people']);if(isOwnerAccount()&&(!S.accountState.loaded||S.accountState.error))x.push(['Account approvals have not been checked',S.accountState.error||'Pending account requests are still loading.','people']);if(S.ghl.error==='not-configured')x.push(['HighLevel is not connected','Add the API key and location ID in Cloudflare.','settings']);const pendingAccounts=S.accountState.loaded&&!S.accountState.error?(S.people.accounts||[]).filter(a=>a.status==='pending').length:0,pendingTime=(S.people.timeEntries||[]).filter(t=>t.approvalStatus==='pending'||t.status==='submitted'&&!['approved','rejected'].includes(t.approvalStatus)).length,pendingRequests=(S.people.requests||[]).filter(r=>r.status==='pending').length;if(pendingAccounts)x.push([`${pendingAccounts} employee account${pendingAccounts===1?'':'s'} waiting`,'Approve or reject access before the employee can sign in.','people']);if(pendingTime)x.push([`${pendingTime} timecard${pendingTime===1?'':'s'} awaiting approval`,'Review completed shifts before the payroll export.','timesheets']);const stale=correctionsOn()?staleShifts():[];if(stale.length)x.push([`${stale.length} shift${stale.length===1?'':'s'} open over 14 hours`,`${stale.slice(0,3).map(e=>e.employeeName||e.employee).join(', ')}${stale.length>3?' and others':''} may have forgotten to clock out. Close each shift in Time approvals.`,'timesheets']);if(pendingRequests)x.push([`${pendingRequests} employee request${pendingRequests===1?'':'s'} open`,'Review time off and schedule requests.','people']);jobs().filter(j=>financeState(j).invoice==='overdue').slice(0,3).forEach(j=>x.push([`${j.customer||'Customer'} has ${money(financeState(j).balance)} overdue`,`Invoice ${j.invoice?.number||''} was due ${j.invoice?.dueDate||'earlier'}.`,'finance']));jobs().filter(j=>(j.rebookingRequests||[]).some(r=>r.status==='pending')).slice(0,3).forEach(j=>x.push([`${j.customer||'Customer'} wants to rebook`,'Review their service, timing, and preferred-crew request.','customers']));jobs().filter(j=>(j.customerDecisions||[]).some(d=>d.status==='pending')).slice(0,3).forEach(j=>x.push([`${j.customer||'Customer'} has a decision waiting`,'The crew cannot assume an answer; follow up through the private portal.','delivery']));jobs().filter(j=>(j.giftWallet?.transferRequests||[]).some(t=>t.status==='pending')).slice(0,2).forEach(j=>x.push([`${j.customer||'Customer'} requested a gift-card transfer`,'Verify the recipient before moving customer credit.','customers']));jobs().filter(j=>j.communicationLastStatus==='needs_attention').slice(0,3).forEach(j=>x.push([`${j.customer||'Customer'} message needs retry`,'The Hub kept the HighLevel trigger and audit record.','communications']));jobs().filter(j=>j.closeoutSyncStatus==='error').slice(0,3).forEach(j=>x.push([`${j.customer||'Job'} closeout needs HighLevel retry`,'The full closeout is safe in the Hub. Retry it from customer history.','customers']));jobs().filter(j=>Number(j.photoCount||j.jobInstructions?.photoCount||0)>0&&!j.photoDriveUrl&&['device_only','needs_setup','error'].includes(j.photoSyncStatus)).slice(0,2).forEach(j=>x.push([`${j.customer||'Job'} photos are not in Drive`,j.photoSyncStatus==='needs_setup'?'Connect Google Drive, then reopen and save the walkthrough on the original device.':'Reopen and save the walkthrough on the original device to retry the upload.','delivery']));openJobs().slice(0,5).forEach(j=>{const crew=crewNames(j),needed=Math.max(1,Number(j.crewNeeded||1));if(!j.notes&&!j.scope&&!j.walkthroughNotes)x.push([`${j.customer||'Job'} has no crew brief`,'Carry the walkthrough promise into delivery.','delivery']);else if(!Number(j.priceQuoted||j.total||0))x.push([`${j.customer||'Job'} has no locked total`,'Confirm the flat rate before the crew rolls.','delivery']);else if(String(j.date||'')<=financeDatePlus(1)&&crew.length<needed)x.push([`${j.customer||'Job'} needs ${needed-crew.length} more crew`,'Fill the shift before tomorrow’s route.','schedule'])});if(!x.length)x.push(['The operating queue is clean','No overdue cash, access approvals, timecards, sync failures, or incomplete handoffs.','walkthroughs']);return`<div class="ops-attention">${x.slice(0,10).map(i=>`<button onclick="opsGo('${i[2]}')"><i></i><div><strong>${esc(i[0])}</strong><small>${esc(i[1])}</small></div><b>→</b></button>`).join('')}</div>`}
 
@@ -278,7 +373,7 @@ async function syncJobRecord(id,{manual=false}={}){const job=jobs().find(x=>x.id
 // invoice-overdue is not the server's: the Hub never sends payment reminders (HighLevel's egc-invoice-overdue workflow does), so the page adds that tag and retries it whatever serverMessaging says.
 const serverMessagingKey='egc.serverMessaging.v1',customerMilestoneEvents=['estimate-expiring'];
 function legacyMessageTriggers(){let known=S.integrationState.loaded&&!S.integrationState.error&&typeof S.integrations.serverMessaging==='boolean'?S.integrations.serverMessaging:null;try{if(known===null){const saved=sessionStorage.getItem(serverMessagingKey);known=saved==='true'?true:saved==='false'?false:null}else sessionStorage.setItem(serverMessagingKey,String(known))}catch{}return known===false}
-window.addEventListener('egc:signout',()=>{try{sessionStorage.removeItem(serverMessagingKey)}catch{}});
+window.addEventListener('egc:signout',()=>{managerScheduleState={loaded:false,loading:true,error:'',fromCache:false,pending:false};try{sessionStorage.removeItem(serverMessagingKey)}catch{}});
 // While /api/integration-status reports serverScheduleSync, the platform schedule-sync worker owns the HighLevel calendar mirror of these operations visits (the same rule as serverScheduleSyncOwned in functions/_lib/schedule-sync-queue.js), so page loads stop auto-retrying them; the manual retry buttons still work. An unknown status keeps today's page retries.
 function serverScheduleMirror(j){return S.integrationState.loaded&&!S.integrationState.error&&S.integrations.serverScheduleSync===true&&j.providerSyncOwner==='operations'&&['walkthrough','job','cleanout','reorg'].includes(j.type)&&typeof j.highlevelContactId==='string'&&Boolean(j.highlevelContactId)&&!(j.handoffVersion===1&&j.handoffSyncStatus!=='synced')&&!(['cancelled','canceled','noshow','no_show','no-show'].includes(String(j.pipelineStatus||j.status||'').toLowerCase())&&!j.highlevelAppointmentId)}
 // The platform schedule-sync worker wrote this visit's current failure (functions/_lib/schedule-sync-queue.js stamps syncFailedAt equal to syncLastAttemptAt; any page attempt moves syncLastAttemptAt). When page loads retry the visit again (flag rolled back or the worker silent), that backoff of up to about 21 hours does not delay them. The worker parks a visit (syncReviewRequired, shown as 'Sync needs review' whoever wrote the last failure) after 8 of its own failures on one key or at once on a ledger refusal no retry clears; a manual Retry (one visit or Retry all) clears syncFailureKey and syncReviewRequired so the worker starts a fresh budget, while syncAttempts stays the page's own count.
@@ -571,13 +666,17 @@ function keepPaused(){const ids=[...pausedShifts()].slice(-20);try{if(ids.length
 function pauseShift(id){pausedShifts().add(String(id));keepPaused()}
 // /api/employee-hub sends other employees' pay only to the owner (payVisibility 'all'); nobody else is shown a $0 stand-in.
 const payShown=account=>S.people.payVisibility==='all'||sameAccount(account,employeeIdentity());
-async function refreshPeople(){
-  if(S.peopleRequest)return S.peopleRequest;
+async function refreshPeople({messagesOnly=false}={}){
+  if(S.peopleRequest){if(!messagesOnly&&S.peopleRequestKind==='messages'){S.peopleFullReload=true;const pending=S.peopleRequest;return pending.then(result=>S.peopleRequest&&S.peopleRequest!==pending?S.peopleRequest:result);}return S.peopleRequest;}
   if(!employeeIdentity())return false;
   const generation=S.peopleGeneration;
+  messagesOnly=messagesOnly&&S.peopleState.loaded&&!S.peopleState.error;
+  const keys=messagesOnly?['teamMessages','jobMessages','messageReads']:Object.keys(peopleCollections);
+  S.peopleRequestKind=messagesOnly?'messages':'all';
   S.peopleLastRefreshAt=Date.now();
+  if(!messagesOnly)S.peopleLastFullRefreshAt=S.peopleLastRefreshAt;
   S.peopleState.loading=true;
-  const includeAccounts=isOwnerAccount()||Boolean(window.EGCStaffAccess?.approves?.());
+  const includeAccounts=!messagesOnly&&(isOwnerAccount()||Boolean(window.EGCStaffAccess?.approves?.()));
   if(includeAccounts)S.accountState.loading=true;
   S.peopleRequest=(async()=>{
     try{
@@ -586,45 +685,46 @@ async function refreshPeople(){
       for(let pass=0;;pass++){
         S.peopleReload=false;
         const revision=queue?queue.revision():0,before=queue?queuedKey(await queue.records()):'';
-        read=++S.readSeq;
-        const response=await hubFetch('/api/employee-hub'+(includeAccounts?'?include=accounts':''),{cache:'no-store'});data=await response.json().catch(()=>({}));
+        if(!messagesOnly)read=++S.readSeq;
+        const response=await hubFetch('/api/employee-hub'+(messagesOnly?'?view=messages':includeAccounts?'?include=accounts':''),{cache:'no-store'});data=await response.json().catch(()=>({}));
         if(!response.ok||!data.ok)throw new Error(data.error||'Employee records could not be loaded. Check the connection and retry.');
-        if(!data.collections||typeof data.collections!=='object'||Object.keys(peopleCollections).some(key=>!Array.isArray(data.collections[key])))throw new Error('The employee records response was incomplete. Retry before making changes.');
+        if(!data.collections||typeof data.collections!=='object'||keys.some(key=>!Array.isArray(data.collections[key])))throw new Error('The employee records response was incomplete. Retry before making changes.');
         if(generation!==S.peopleGeneration)return false;
         if(queue)queued=await queue.records();
         if(generation!==S.peopleGeneration)return false;
+        if(messagesOnly&&S.peopleReload){S.peopleFullReload=true;S.peopleReload=false;}
         if(!S.peopleReload&&(!queue||queue.revision()===revision&&queuedKey(queued)===before))break;
         if(pass>=2){S.peopleReload=true;stale=true;break}
       }
       // Offline saving switched off: an action an earlier setting left on this device is held, never sent. Found once per
       // page (no IndexedDB is opened on a device that never had a queue), so a shift whose clock-out waits here shows it
       // was not sent from this load on.
-      if(!queue&&typeof window.EGCHubOffline?.hold==='function'){await window.EGCHubOffline.hold().catch(()=>{});if(generation!==S.peopleGeneration)return false}
+      if(!messagesOnly&&!queue&&typeof window.EGCHubOffline?.hold==='function'){await window.EGCHubOffline.hold().catch(()=>{});if(generation!==S.peopleGeneration)return false}
       if(includeAccounts){
         if(data.accounts===undefined)await refreshAccountApplications();
         else if(Array.isArray(data.accounts)){S.people.accounts=data.accounts;S.accountState.loaded=true;S.accountState.error='';}
         else{S.accountState.error='The account request list was incomplete. Retry before reviewing accounts.';}
         if(generation!==S.peopleGeneration)return false;
       }
-      const shownBefore=S.queuedShown;S.queuedShown=new Map();
-      Object.keys(peopleCollections).forEach(key=>{S.people[key]=Array.isArray(data.collections[key])?data.collections[key]:[]});
-      S.people.payVisibility=data.payVisibility==='all'?'all':'own';S.clockInWithoutFix=data.clockInWithoutFix===true;S.timecardCorrections=data.timecardCorrections===true;
-      for(const row of queued)showQueued(row.collection,row.id,row.requestId,row.data);
-      pauseLostClockOuts(shownBefore,queued);pauseDroppedClockOuts();if(!stale)resolvePauses(read);
+      const shownBefore=S.queuedShown;S.queuedShown=messagesOnly?new Map([...shownBefore].filter(([,shown])=>!keys.includes(shown.collection))):new Map();
+      keys.forEach(key=>{S.people[key]=Array.isArray(data.collections[key])?data.collections[key]:[]});
+      if(!messagesOnly){S.people.payVisibility=data.payVisibility==='all'?'all':'own';S.clockInWithoutFix=data.clockInWithoutFix===true;S.timecardCorrections=data.timecardCorrections===true;}
+      for(const row of queued)if(keys.includes(row.collection))showQueued(row.collection,row.id,row.requestId,row.data);
+      if(!messagesOnly){pauseLostClockOuts(shownBefore,queued);pauseDroppedClockOuts();if(!stale)resolvePauses(read);}
       S.peopleState.loaded=true;S.peopleState.error='';S.peoplePollFailures=0;
-      followActiveShift();
-      notifyAnnouncements(S.people.announcements);notifyChatMessages();
+      if(!messagesOnly){followActiveShift();notifyAnnouncements(S.people.announcements);}
+      notifyChatMessages();
       return true;
     }catch(error){if(generation===S.peopleGeneration){S.peoplePollFailures=Math.min(4,(S.peoplePollFailures||0)+1);S.peopleState.error=error.message||'Employee records are unavailable. Check the connection and retry.';if(includeAccounts)S.accountState.error=S.peopleState.error;}return false}
     finally{
       if(generation===S.peopleGeneration){
         if(includeAccounts)S.accountState.loading=false;
-        S.peopleState.loading=false;S.peopleRequest=null;
+        S.peopleState.loading=false;S.peopleRequest=null;S.peopleRequestKind='';
         if(S.peopleState.loaded&&!S.peopleState.error&&!S.onboardingPrompted&&!sessionGrant('egc_business_access')&&!onboardingComplete(ownProfile())){S.onboardingPrompted=true;go('onboarding')}
         else if(!document.activeElement?.closest?.('.ops-onboarding,.ops-chat-compose,.ops-customer-thread form'))render();
         else updateQuickClock();
         // The queue, or the Hub's own save, changed after this load's last read of the server: read it again.
-        if(S.peopleReload){S.peopleReload=false;refreshPeople()}
+        if(S.peopleReload||S.peopleFullReload){S.peopleReload=false;S.peopleFullReload=false;refreshPeople()}
       }
     }
   })();
@@ -680,8 +780,9 @@ function pollPeople(){
   // Failed storage reads back off instead of repeatedly scanning an unavailable
   // vault. Explicit refresh, visibility return and post-save reads stay immediate.
   const interval=S.peoplePollFailures?Math.min(15*60000,60000*2**S.peoplePollFailures):S.active==='crew_chat'?15000:60000;
-  if(Date.now()-S.peopleLastRefreshAt<interval)return false;
-  return refreshPeople();
+  const fullDue=Date.now()-S.peopleLastFullRefreshAt>=60000;
+  if(Date.now()-(S.peoplePollFailures||S.active==='crew_chat'?S.peopleLastRefreshAt:S.peopleLastFullRefreshAt)<interval)return false;
+  return refreshPeople({messagesOnly:S.active==='crew_chat'&&!fullDue});
 }
 document.addEventListener('visibilitychange',()=>{
   if(!document.hidden&&S.people.listeners&&employeeIdentity())return refreshPeople();
@@ -690,7 +791,7 @@ document.addEventListener('visibilitychange',()=>{
 // (settleQueued, which needs no connection), then the server is read; a load already under way may have read the server
 // before that, so it reads again instead of being reused.
 window.addEventListener('egc:hub-offline-synced',()=>{if(!S.people.listeners||!employeeIdentity())return;const generation=S.peopleGeneration;void settleQueued().catch(()=>{}).then(()=>{if(generation!==S.peopleGeneration||!S.people.listeners)return;if(S.peopleRequest)S.peopleReload=true;else refreshPeople()})});
-window.addEventListener('egc:signout',()=>{S.queuedShown=new Map();S.pauseSeen=new Set();S.heldTold=new Set();S.locationPaused=null;S.clockSaving=0;S.pauseIfOpen=new Map();S.locating=false;S.clockInWithoutFix=false;S.timecardCorrections=false;try{sessionStorage.removeItem(PAUSED_KEY)}catch{}});
+window.addEventListener('egc:signout',()=>{managerScheduleState={loaded:false,loading:true,error:'',fromCache:false,pending:false};S.queuedShown=new Map();S.pauseSeen=new Set();S.heldTold=new Set();S.locationPaused=null;S.clockSaving=0;S.pauseIfOpen=new Map();S.locating=false;S.clockInWithoutFix=false;S.timecardCorrections=false;try{sessionStorage.removeItem(PAUSED_KEY)}catch{}});
 function startPeopleListeners(){if(!employeeIdentity())return Promise.resolve(false);const first=!S.people.listeners;S.people.listeners=true;if(!S.peopleTimer)S.peopleTimer=setInterval(pollPeople,15000);return refreshPeople().then(loaded=>{if(first&&loaded)return ensureOwnProfile();return loaded})}
 async function ensureOwnProfile(){const p=sessionProfile();if(!p.id)return;await peopleSet(peopleCollections.profiles,employeeKey(p.id),{username:p.id,displayName:p.displayName,role:p.role,payType:p.payType,hourlyRate:p.hourlyRate,lastSeenAt:new Date().toISOString(),status:'active'},'own-profile-mirror').catch(()=>{})}
 const activeTimeEntry=()=>S.people.timeEntries.find(x=>owned(x)&&x.status==='active'&&!x.clockOutAt)||null;
@@ -930,6 +1031,6 @@ function scoreFields(d){const fs=[['spend','Ad spend'],['leads','Qualified leads
 window.opsSaveScorecard=function(){const f=$('#ops-score-form');if(!f)return;const out={};new FormData(f).forEach((v,k)=>out[k]=Number(v||0));localStorage.setItem('egc_scorecard',JSON.stringify(out));render(true);if(typeof showToast==='function')showToast('Scorecard saved')};
 const legacyRefresh=window.refresh;window.refresh=function(){if(legacyRefresh)legacyRefresh();render()};
 const legacyBoot=window.bootDashboard;window.bootDashboard=function(){if(legacyBoot)legacyBoot();const fresh=!S.installed;install();if(!fresh&&typeof me!=='undefined'&&me)loadAll();render()};
-window.addEventListener('egc:signout',()=>{window.EGCHubScreens?.unmountAll();$('#ops-hub-layer')?.remove();S.fieldToday=null;S.renderedView='';S.bookerBoard=undefined;S.leadBooking=null;S.contactError='';S.viewHistory=false;S.customerQuery='';S.chatDrafts={};S.threadDrafts={};drawerObserver?.disconnect();drawerObserver=null;drawerUpdate=null;try{for(let i=sessionStorage.length-1;i>=0;i--){const key=sessionStorage.key(i);if(String(key||'').startsWith('egc.hub.pending.v1.'))sessionStorage.removeItem(key)}}catch{}window.EGCFieldToday?.unmount();window.EGCDispatch?.unmount();window.EGCAvailability?.unmount();S.shiftRequests={};S.peopleGeneration++;clearInterval(S.peopleTimer);clearInterval(S.ghlTimer);clearTimeout(onboardingDraftTimer);S.peopleTimer=null;S.ghlTimer=null;S.peopleRequest=null;Object.keys(peopleCollections).forEach(key=>{S.people[key]=[]});S.people.accounts=[];S.people.listeners=false;S.peoplePollFailures=0;S.peopleState=employeeLoadState();S.accountState=employeeLoadState();S.integrationState=employeeLoadState();S.integrations={};S.ghl={loading:true,error:'',pipelines:[],opportunities:[],leadResetAt:''};S.walks={loading:true,error:'',events:[]};S.onboardingPrompted=false;S.onboardingSaving=false;S.onboardingDraftVersion=Number(S.onboardingDraftVersion||0)+1;S.onboardingDraft=null;S.onboardingDraftUser='';S.chatChannel='team';S.booking=null;S.actionDialog=null;if(actionResolve)actionResolve(null);actionResolve=null;$('.ops-shell')?.remove();$('#dashboard')?.classList.remove('ops-installed');S.installed=false;S.active='my_day'});
+window.addEventListener('egc:signout',()=>{managerScheduleState={loaded:false,loading:true,error:'',fromCache:false,pending:false};window.EGCHubScreens?.unmountAll();$('#ops-hub-layer')?.remove();S.fieldToday=null;S.renderedView='';S.bookerBoard=undefined;S.leadBooking=null;S.contactError='';S.viewHistory=false;S.customerQuery='';S.chatDrafts={};S.threadDrafts={};drawerObserver?.disconnect();drawerObserver=null;drawerUpdate=null;try{for(let i=sessionStorage.length-1;i>=0;i--){const key=sessionStorage.key(i);if(String(key||'').startsWith('egc.hub.pending.v1.'))sessionStorage.removeItem(key)}}catch{}window.EGCFieldToday?.unmount();window.EGCDispatch?.unmount();window.EGCAvailability?.unmount();S.shiftRequests={};S.peopleGeneration++;clearInterval(S.peopleTimer);clearInterval(S.ghlTimer);clearTimeout(onboardingDraftTimer);S.peopleTimer=null;S.ghlTimer=null;S.peopleRequest=null;Object.keys(peopleCollections).forEach(key=>{S.people[key]=[]});S.people.accounts=[];S.people.listeners=false;S.peopleReload=false;S.peopleFullReload=false;S.peoplePollFailures=0;S.peopleLastRefreshAt=0;S.peopleLastFullRefreshAt=0;S.peopleRequestKind='';S.peopleState=employeeLoadState();S.accountState=employeeLoadState();S.integrationState=employeeLoadState();S.integrations={};S.ghl={loading:true,error:'',pipelines:[],opportunities:[],leadResetAt:''};S.walks={loading:true,error:'',events:[]};S.onboardingPrompted=false;S.onboardingSaving=false;S.onboardingDraftVersion=Number(S.onboardingDraftVersion||0)+1;S.onboardingDraft=null;S.onboardingDraftUser='';S.chatChannel='team';S.booking=null;S.actionDialog=null;if(actionResolve)actionResolve(null);actionResolve=null;$('.ops-shell')?.remove();$('#dashboard')?.classList.remove('ops-installed');S.installed=false;S.active='my_day';S.agendaOffset=0});
 window.addEventListener('DOMContentLoaded',()=>{if(typeof me!=='undefined'&&me){install();if(!isManager()&&S.active!=='onboarding')go('my_day')}});
 })();

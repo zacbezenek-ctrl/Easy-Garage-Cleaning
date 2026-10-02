@@ -2,7 +2,7 @@ import * as z from "zod/v4";
 import {and,asc,desc,eq,exists,getTableColumns,gt,gte,ilike,inArray,lt,lte,or,sql,type SQL} from "drizzle-orm";
 import type {AnyPgColumn,PgTable} from "drizzle-orm/pg-core";
 import {getDb,schema} from "@egc/database";
-import {getCustomerTimeline,OPERATIONAL_STATES} from "@egc/customer-state";
+import {getCustomerTimeline,OPERATIONAL_STATES,qualifyExtractionCoverage,type CustomerProjection} from "@egc/customer-state";
 import {defineTool,type ToolDef} from "../define.js";
 import {CursorError,keysetOf,MAX_PAGE_LIMIT,pageFields,pageOf,readCursor,type CursorState} from "../pagination.js";
 
@@ -36,7 +36,7 @@ const LEAD_STATE_ALIASES:Record<string,string[]>={NEVER_CONTACTED:["NEW_LEAD"],O
 export async function canonicalReadContexts(contactIds:string[],db:Db=getDb()):Promise<Map<string,Record<string,unknown>>> {
   if(!contactIds.length)return new Map<string,Record<string,unknown>>();
   const rows=await db.select().from(schema.customerStateSnapshots).where(inArray(schema.customerStateSnapshots.contactId,[...new Set(contactIds)]));
-  return new Map(rows.map(row=>[row.contactId,{...row.snapshot,coverage:row.coverage,lastReconciledAt:row.lastReconciledAt}]));
+  return new Map(rows.map(row=>[row.contactId,{...qualifyExtractionCoverage(row.snapshot as unknown as CustomerProjection,row.coverage),coverage:row.coverage,lastReconciledAt:row.lastReconciledAt}]));
 }
 export async function withCanonicalContexts<T extends {contactId:string}>(rows:T[],db:Db=getDb()) {
   const canonical=await canonicalReadContexts(rows.map(row=>row.contactId),db);
@@ -88,11 +88,11 @@ export function crmReadTools(deps:CrmReadDeps={}):ToolDef[] {
           q=>d.select(q.fields(getTableColumns(c))).from(c).where(q.where).orderBy(...q.orderBy).limit(q.limit).offset(q.offset),
         async rows=>{const canonical=await canonicalReadContexts(rows.map(row=>row.id),d);return rows.map(row=>({...row,operational:canonical.get(row.id)??UNRECONCILED}));});
       }}),
-    defineTool({name:"contacts.get",class:"read",description:"Get one normalized EGC contact by internal contact ID.",
+    defineTool({name:"contacts.get",class:"read",description:"Get one normalized EGC contact by internal contact ID with persisted canonical evidence and last-reconciled freshness; this read never reconciles.",
       input:z.object({contactId:uuid}).strict(),
       async handler({contactId}){
         const [row]=await db().select().from(schema.contacts).where(eq(schema.contacts.id,contactId)).limit(1);
-        return row?{...row,canonical:await timeline({contactId,refresh:true})}:{error:"contact_not_found"};
+        return row?{...row,canonical:await timeline({contactId,refresh:false})}:{error:"contact_not_found"};
       }}),
     defineTool({name:"leads.search",class:"read",output:pageOutput,
       description:"Search recent leads, optionally filtered by canonical lead state."+PAGED,
@@ -110,12 +110,12 @@ export function crmReadTools(deps:CrmReadDeps={}):ToolDef[] {
         async rows=>{const canonical=await canonicalReadContexts(rows.map(row=>row.contact.id),d);
           return rows.map(row=>{const operational=canonical.get(row.contact.id);return {...row,lead:{...row.lead,providerState:row.lead.currentState,currentState:operational?.state??row.lead.currentState},operational:operational??UNRECONCILED};});});
       }}),
-    defineTool({name:"leads.get",class:"read",description:"Get one lead with its contact by internal lead ID.",
+    defineTool({name:"leads.get",class:"read",description:"Get one lead with its contact by internal lead ID with persisted canonical evidence and last-reconciled freshness; this read never reconciles.",
       input:z.object({leadId:uuid}).strict(),
       async handler({leadId}){
         const [row]=await db().select({lead:schema.leads,contact:schema.contacts}).from(schema.leads).innerJoin(schema.contacts,eq(schema.leads.contactId,schema.contacts.id)).where(eq(schema.leads.id,leadId)).limit(1);
         if(!row)return {error:"lead_not_found"};
-        const canonical=await timeline({contactId:row.contact.id,refresh:true});
+        const canonical=await timeline({contactId:row.contact.id,refresh:false});
         return {...row,lead:{...row.lead,providerState:row.lead.currentState,currentState:canonical.customer?.state??row.lead.currentState},canonical};
       }}),
     defineTool({name:"conversations.search",class:"read",output:pageOutput,description:"Return conversations for a contact."+PAGED,
@@ -161,11 +161,11 @@ export function crmReadTools(deps:CrmReadDeps={}):ToolDef[] {
           q=>d.select(q.fields(getTableColumns(o))).from(o).where(q.where).orderBy(...q.orderBy).limit(q.limit).offset(q.offset),
         rows=>withCanonicalContexts(rows,d));
       }}),
-    defineTool({name:"opportunities.get",class:"read",description:"Get one normalized opportunity by internal ID.",
+    defineTool({name:"opportunities.get",class:"read",description:"Get one normalized opportunity by internal ID with persisted canonical evidence and last-reconciled freshness; this read never reconciles.",
       input:z.object({opportunityId:uuid}).strict(),
       async handler({opportunityId}){
         const [row]=await db().select().from(schema.opportunities).where(eq(schema.opportunities.id,opportunityId)).limit(1);
-        return row?{...row,canonical:await timeline({contactId:row.contactId,refresh:true})}:{error:"opportunity_not_found"};
+        return row?{...row,canonical:await timeline({contactId:row.contactId,refresh:false})}:{error:"opportunity_not_found"};
       }}),
     defineTool({name:"appointments.search",class:"read",output:pageOutput,description:"Search appointments in a relative time window, optionally for one contact, earliest start first. A matching appointment booked or updated after asOf marks later pages incomplete, because a reschedule can move an appointment across a page boundary either way."+PAGED,
       input:z.object({contactId:uuid.optional(),daysPast:z.number().int().min(0).max(365).default(30),daysFuture:z.number().int().min(0).max(730).default(90),...paged(200,500)}).strict(),
@@ -185,11 +185,11 @@ export function crmReadTools(deps:CrmReadDeps={}):ToolDef[] {
           q=>d.select(q.fields(getTableColumns(j))).from(j).where(q.where).orderBy(...q.orderBy).limit(q.limit).offset(q.offset),
         rows=>withCanonicalContexts(rows,d));
       }}),
-    defineTool({name:"jobs.get",class:"read",description:"Get one raw normalized EGC job by internal ID.",
+    defineTool({name:"jobs.get",class:"read",description:"Get one raw normalized EGC job by internal ID with persisted canonical evidence and last-reconciled freshness; this read never reconciles.",
       input:z.object({jobId:uuid}).strict(),
       async handler({jobId}){
         const [row]=await db().select().from(schema.jobs).where(eq(schema.jobs.id,jobId)).limit(1);
-        return row?{...row,canonical:await timeline({contactId:row.contactId,refresh:true})}:{error:"job_not_found"};
+        return row?{...row,canonical:await timeline({contactId:row.contactId,refresh:false})}:{error:"job_not_found"};
       }}),
     defineTool({name:"tasks.search",class:"read",output:pageOutput,description:"Search EGC operational tasks/todos by status, priority, assignment, linked entity, or due date."+PAGED,
       input:z.object({status:taskStatusSchema.optional(),priority:taskPrioritySchema.optional(),assignedUserId:z.string().max(200).optional(),contactId:uuid.optional(),jobId:uuid.optional(),opportunityId:uuid.optional(),

@@ -15,7 +15,7 @@ const integration={id:'synthetic-grant',role:'integration',kind:'integration',wo
 const links=[{kind:'portal_quote',url:'https://easygaragecleaning.com/portal/quote/synthetic-1',label:'Your quote',refId:null},{kind:'payment_link',url:'https://pay.example.com/synthetic-deposit',label:'Pay the deposit',refId:'job-synthetic-1'}];
 let now,service,provider,contact,lead,saved,live;
 const at=hours=>new Date(now.valueOf()+hours*3600000).toISOString();
-const draft=(extra={})=>({channel:'sms',recipient:'+15555550100',subject:'',body:'Synthetic approved quote message',sendWindowStart:at(-1),sendWindowEnd:at(12),attachments:links,...extra});
+const draft=(extra={})=>({channel:'sms',fromNumber:'+15555551644',recipient:'+15555550100',subject:'',body:'Synthetic approved quote message',sendWindowStart:at(-1),sendWindowEnd:at(12),attachments:links,...extra});
 const call=(body,actor=owner,id=randomUUID())=>service.execute(actor,body,id);
 const create=async(extra={},actor=owner)=>(await call({command:'task.create',task:{title:'Send synthetic quote',kind:'send_quote',assignedUserId:actor.id,dueAt:at(1),contactId:contact.id,completionCondition:'Verified delivery of the exact quote message',draft:draft(),...extra}},actor)).task;
 const get=id=>call({command:'task.get',taskId:id});
@@ -34,17 +34,17 @@ beforeEach(async()=>{
  [lead]=await db.insert(schema.leads).values({contactId:contact.id}).returning();
  provider={locationId:'synthetic-location',
   getContact:mock.fn(async()=>({contact:{...live}})),
-  sendMessage:mock.fn(async payload=>{const id='synthetic-message-'+(saved.size+1);saved.set(id,{id,contactId:payload.contactId,body:payload.message,direction:'outbound',status:'delivered',messageType:payload.type==='SMS'?'TYPE_SMS':'TYPE_EMAIL',conversationId:'synthetic-conversation',to:payload.toNumber,emailTo:payload.emailTo,subject:payload.subject,dateAdded:now.toISOString()});return{messageId:id,conversationId:'synthetic-conversation'};}),
+  sendMessage:mock.fn(async payload=>{const id='synthetic-message-'+(saved.size+1);saved.set(id,{id,contactId:payload.contactId,body:payload.message,direction:'outbound',status:'delivered',messageType:payload.type==='SMS'?'TYPE_SMS':'TYPE_EMAIL',conversationId:'synthetic-conversation',from:payload.fromNumber,to:payload.toNumber,emailTo:payload.emailTo,subject:payload.subject,dateAdded:now.toISOString()});return{messageId:id,conversationId:'synthetic-conversation'};}),
   getMessage:mock.fn(async id=>{const message=saved.get(id);if(!message)throw new Error('not found');return{message};})};
- const sender=createActionSender({service:()=>service,provider:()=>provider,now:()=>now,db:()=>db});
- service=new OperationsService(db,{workspace:'egc',now:()=>now,resolveOwner:async()=>true,sendTaskMessage:(...args)=>sender(...args)});
+ const sender=createActionSender({service:()=>service,provider:()=>provider,smsFromNumbers:['+15555551644','+15555551818'],now:()=>now,db:()=>db});
+ service=new OperationsService(db,{workspace:'egc',smsFromNumbers:['+15555551644','+15555551818'],now:()=>now,resolveOwner:async()=>true,sendTaskMessage:(...args)=>sender(...args)});
 });
 // Leave no rows behind: later suites clean up with plain deletes and must not trip over these.
 after(async()=>{await db.execute(sql`truncate operation_events,operation_approvals,operation_requests,operation_briefs,tasks,communication_executions,audit_logs,messages,conversations,leads,contacts cascade`);await db.$client.end({timeout:5});});
 test('an approved send carries the exact attachment URLs, sends once and completes from verified delivery through the database guard',async()=>{
  const t=await create(),command=await sendCommand(t),r=await call(command);
  assert.equal(sends(),1);const payload=provider.sendMessage.mock.calls[0].arguments[0];
- assert.deepEqual(payload,{type:'SMS',contactId:'synthetic-provider',message:t.draftPayload.body,toNumber:'+15555550100',attachments:links.map(l=>l.url)});
+ assert.deepEqual(payload,{type:'SMS',contactId:'synthetic-provider',message:t.draftPayload.body,fromNumber:'+15555551644',toNumber:'+15555550100',attachments:links.map(l=>l.url)});
  assert.equal(r.ok,true);assert.equal(r.sent,true);assert.equal(r.delivered,true);assert.equal(r.mirrored,true);assert.deepEqual(r.completion,{ok:true,status:'completed'});
  const [execution]=await executions();assert.equal(execution.requestId,taskSendRequestId(t.id,1));assert.equal(execution.actorId,owner.id);assert.deepEqual(execution.payload.attachments,links.map(l=>l.url));
  assert.equal(execution.payloadHash,normalizedCommunicationPayload(payload).hash);const {attachments:_,...bare}=payload;assert.notEqual(execution.payloadHash,normalizedCommunicationPayload(bare).hash);
@@ -66,7 +66,7 @@ test('a duplicate tap with the same request ID sends once, including concurrent 
  assert.equal((await history(t.id)).filter(e=>e.type==='message.execution_started').length,1);
 });
 test('a new tap or another manager on the same approved revision reconciles and never sends again',async()=>{
- const t=await create();provider.sendMessage.mock.mockImplementation(async payload=>{const id='synthetic-message-1';saved.set(id,{id,contactId:payload.contactId,body:payload.message,direction:'outbound',status:'sent',messageType:'TYPE_SMS',conversationId:'synthetic-conversation',to:payload.toNumber,dateAdded:now.toISOString()});return{messageId:id};});
+ const t=await create();provider.sendMessage.mock.mockImplementation(async payload=>{const id='synthetic-message-1';saved.set(id,{id,contactId:payload.contactId,body:payload.message,direction:'outbound',status:'sent',messageType:'TYPE_SMS',conversationId:'synthetic-conversation',from:payload.fromNumber,to:payload.toNumber,dateAdded:now.toISOString()});return{messageId:id};});
  const command=await sendCommand(t),first=await call(command);assert.equal(first.delivered,false);assert.equal(first.completion,null);assert.equal((await get(t.id)).task.status,'open');
  // The sent message changed the conversation, so the old preview is stale: nothing reaches the provider.
  const contactsBefore=provider.getContact.mock.callCount();await rejects(call(command),'approval_preview_changed',409);assert.equal(provider.getContact.mock.callCount(),contactsBefore);
@@ -78,7 +78,7 @@ test('a new tap or another manager on the same approved revision reconciles and 
 });
 test('a provider timeout is message_outcome_unknown, retries never resend, and provider-ID reconciliation completes it',async()=>{
  const t=await create(),command=await sendCommand(t),requestId=randomUUID();
- provider.sendMessage.mock.mockImplementation(async payload=>{saved.set('synthetic-late',{id:'synthetic-late',contactId:payload.contactId,body:payload.message,direction:'outbound',status:'delivered',messageType:'TYPE_SMS',conversationId:'synthetic-conversation',to:payload.toNumber,dateAdded:now.toISOString()});throw new Error('The operation was aborted due to timeout token=synthetic-secret');});
+ provider.sendMessage.mock.mockImplementation(async payload=>{saved.set('synthetic-late',{id:'synthetic-late',contactId:payload.contactId,body:payload.message,direction:'outbound',status:'delivered',messageType:'TYPE_SMS',conversationId:'synthetic-conversation',from:payload.fromNumber,to:payload.toNumber,dateAdded:now.toISOString()});throw new Error('The operation was aborted due to timeout token=synthetic-secret');});
  await assert.rejects(call(command,owner,requestId),e=>e.code==='message_outcome_unknown'&&e.status===503&&e.details.retryMode==='reconcile_only'&&!JSON.stringify(e.details).includes('synthetic-secret'));
  const [unknown]=await executions();assert.equal(unknown.status,'unknown');assert.equal(unknown.providerMessageId,null);
  await rejects(call(command,owner,requestId),'message_outcome_unknown',503);
@@ -155,13 +155,13 @@ test('a rejection that lands during the live recipient check stops the send befo
 test('an edited draft is sent as the new revision the approval covers, and completes',async()=>{
  const t=await create(),edited=draft({body:'Synthetic edited quote message',attachments:[links[1]]}),r=await call(await sendCommand(t,{draft:edited}));
  assert.equal(r.edited,true);assert.equal(r.approvedRevision,2);assert.equal(r.completion.ok,true);
- assert.deepEqual(provider.sendMessage.mock.calls[0].arguments[0],{type:'SMS',contactId:'synthetic-provider',message:'Synthetic edited quote message',toNumber:'+15555550100',attachments:[links[1].url]});
+ assert.deepEqual(provider.sendMessage.mock.calls[0].arguments[0],{type:'SMS',contactId:'synthetic-provider',message:'Synthetic edited quote message',fromNumber:'+15555551644',toNumber:'+15555550100',attachments:[links[1].url]});
  const [execution]=await executions();assert.equal(execution.requestId,taskSendRequestId(t.id,2));
  const [approval]=await db.select().from(schema.operationApprovals).where(eq(schema.operationApprovals.taskId,t.id));assert.equal(approval.taskRevision,2);assert.equal(approval.snapshot.task.draftPayload.body,'Synthetic edited quote message');
  const done=(await get(t.id)).task;assert.equal(done.status,'completed');assert.equal(done.completionEvidence[0].approvedRevision,2);assert.equal(done.draftPayload.body,'Synthetic edited quote message');
 });
 test('an email with no links sends the approved subject and recipient and completes',async()=>{
- const t=await create({draft:draft({channel:'email',recipient:'synthetic@example.invalid',subject:'Your synthetic quote',attachments:[]})}),r=await call(await sendCommand(t));
+ const t=await create({draft:draft({channel:'email',fromNumber:null,recipient:'synthetic@example.invalid',subject:'Your synthetic quote',attachments:[]})}),r=await call(await sendCommand(t));
  assert.deepEqual(provider.sendMessage.mock.calls[0].arguments[0],{type:'Email',contactId:'synthetic-provider',message:t.draftPayload.body,subject:'Your synthetic quote',emailTo:'synthetic@example.invalid'});
  assert.equal(r.delivered,true);assert.equal(r.completion.ok,true);assert.equal('attachments' in (await executions())[0].payload,false);
 });
@@ -170,4 +170,34 @@ test('a read-back outage reports a pending verification, then a retry verifies w
  const pending=await call(command,owner,requestId);assert.equal(pending.ok,true);assert.equal(pending.verification,'pending');assert.equal(pending.completion,null);assert.equal((await get(t.id)).task.status,'open');
  provider.getMessage.mock.mockImplementation(async id=>({message:saved.get(id)}));
  const verified=await call(command,owner,requestId);assert.equal(verified.delivered,true);assert.equal(verified.completion.ok,true);assert.equal(sends(),1);
+});
+
+test('provider readback from the other configured line stays unverified and retry never resends',async()=>{
+ const t=await create({draft:draft({fromNumber:'+15555551818'})}),command=await sendCommand(t),requestId=randomUUID();
+ provider.getMessage.mock.mockImplementation(async id=>({message:{...saved.get(id),from:'+15555551644'}}));
+ const r=await call(command,owner,requestId);assert.equal(r.verification,'pending');assert.equal(r.delivered,false);assert.equal(sends(),1);assert.equal((await get(t.id)).task.status,'open');
+ assert.equal(provider.sendMessage.mock.calls[0].arguments[0].fromNumber,'+15555551818');
+ const again=await call(command,owner,requestId);assert.equal(again.verification,'pending');assert.equal(sends(),1);
+ provider.getMessage.mock.mockImplementation(async id=>({message:saved.get(id)}));
+ const verified=await call(command,owner,requestId);assert.equal(verified.delivered,true);assert.equal(verified.completion.ok,true);assert.equal(sends(),1);
+});
+test('a sender edit between preflight readiness and the durable claim prevents stale sending',async()=>{
+ const t=await create(),command=await sendCommand(t),original=service.sendReadiness.bind(service);let first=true;
+ service.sendReadiness=async(...args)=>{const result=await original(...args);if(first){first=false;await call({command:'task.edit',taskId:t.id,revision:1,changes:{draft:draft({fromNumber:'+15555551818'})}});}return result;};
+ await rejects(call(command),'task_revision_conflict',409);assert.equal(sends(),0);assert.equal((await executions()).length,0);
+ const updated=(await get(t.id)).task;assert.equal(updated.revision,2);assert.equal(updated.approvalStatus,'invalidated');assert.equal(updated.draftPayload.fromNumber,'+15555551818');
+});
+
+test('persisted legacy approval and execution reconcile without a configured sender, with zero writes and no completion',async()=>{
+ const {fromNumber:_,...legacyDraft}=draft();const t=await create({draft:legacyDraft}),detail=await get(t.id);
+ // Historical rows from before sender binding: no number is assigned retroactively.
+ const [approval]=await db.insert(schema.operationApprovals).values({workspaceId:'egc',taskId:t.id,taskRevision:1,fingerprint:detail.previewHash,snapshot:{task:detail.task},actorId:owner.id,createdAt:now,expiresAt:new Date(at(6))}).returning();
+ await db.transaction(async tx=>{await tx.execute(sql`select set_config('egc.operations_actor',${owner.id},true)`);await tx.update(schema.tasks).set({approvalStatus:'approved'}).where(eq(schema.tasks.id,t.id));});
+ const raw={type:'SMS',contactId:contact.providerId,message:legacyDraft.body,toNumber:legacyDraft.recipient,attachments:links.map(l=>l.url)},normalized=normalizedCommunicationPayload(raw);
+ await db.insert(schema.communicationExecutions).values({requestId:taskSendRequestId(t.id,1),actorId:owner.id,contactId:contact.id,channel:'SMS',payload:normalized.payload,payloadHash:normalized.hash,providerMessageId:'legacy-message',status:'unknown',createdAt:now});
+ saved.set('legacy-message',{id:'legacy-message',contactId:contact.providerId,body:legacyDraft.body,direction:'outbound',status:'delivered',messageType:'TYPE_SMS',conversationId:'legacy-conversation',to:legacyDraft.recipient,from:'+15555551644',dateAdded:now.toISOString()});
+ const sender=createActionSender({service:()=>service,provider:()=>provider,smsFromNumbers:[],now:()=>now,db:()=>db});
+ service=new OperationsService(db,{workspace:'egc',now:()=>now,resolveOwner:async()=>true,sendTaskMessage:sender});
+ const result=await call(await sendCommand(t));assert.equal(result.delivered,true);assert.equal(result.completion.ok,false);assert.equal(result.completion.error,'message_draft_delivery_mismatch');assert.equal(result.approvalId,approval.id);assert.equal(sends(),0);assert.equal(provider.getContact.mock.callCount(),0);
+ const current=await get(t.id);assert.equal(current.task.status,'open');assert.equal(current.task.draftPayload.fromNumber,undefined);assert.equal((await approvals(t.id)).length,1);
 });

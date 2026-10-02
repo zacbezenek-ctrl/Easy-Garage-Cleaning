@@ -18,7 +18,7 @@ describe('recording task proposals (EGC_EXTRACTION_V2)',()=>{
   it('keep each P3-01 kind, carry drafts only on message kinds and leave every staff decision unset',()=>{
     const proposals=recordingTaskProposals(conversation(),recording);
     expect(proposals.map(p=>p.task.kind)).toEqual(['send_quote','send_before_afters','callback','schedule_job']);
-    expect(proposals[0]!.task.draft).toEqual({channel:'sms',recipient:null,subject:'',body:'Hi, here is your quote.',sendWindowStart:null,sendWindowEnd:null,attachments:[]});
+    expect(proposals[0]!.task.draft).toEqual({channel:'sms',fromNumber:null,recipient:null,subject:'',body:'Hi, here is your quote.',sendWindowStart:null,sendWindowEnd:null,attachments:[]});
     expect(proposals[1]!.task.draft).toMatchObject({channel:'email',body:''});
     expect(proposals[2]!.task.draft).toBeNull();expect(proposals[3]!.task.draft).toBeNull();
     for(const p of proposals){
@@ -27,7 +27,7 @@ describe('recording task proposals (EGC_EXTRACTION_V2)',()=>{
       expect(p.task.sourceEvidence[0]!.excerpt).toBe(conversation().proposedActions[p.index]!.sourceQuote);
       expect(isMessageTaskKind(p.task.kind)).toBe(p.task.draft!==null);
     }
-    expect(proposals[0]!.reviewRequired).toEqual(['assignedUserId','dueAt','completionCondition','draft.recipient','draft.sendWindowStart','draft.sendWindowEnd','draft.attachments.portal_quote']);
+    expect(proposals[0]!.reviewRequired).toEqual(['assignedUserId','dueAt','completionCondition','draft.fromNumber','draft.recipient','draft.sendWindowStart','draft.sendWindowEnd','draft.attachments.portal_quote']);
     expect(proposals[1]!.reviewRequired).toContain('draft.body');
     expect(proposals[3]).toMatchObject({dueMention:'the first week of October',ownerMention:null});
     expect(proposals[0]).toMatchObject({dueMention:'by Friday',ownerMention:'Tyler',attachmentsNeeded:['portal_quote'],requestedChannel:'sms'});

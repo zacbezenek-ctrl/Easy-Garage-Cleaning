@@ -9,19 +9,22 @@ const labels={manual:'Internal task',callback:'Callback',prepare_quote:'Prepare 
 // egc-platform/services/operations/src/action-kinds.ts; tests/action-center-drafts.test.mjs pins them.
 const MESSAGE_KINDS=Object.freeze(['followup_message','send_before_afters','send_insurance_certificate','send_quote','send_product_options','answer_question','deposit_reminder']);
 const ATTACHMENT_KINDS=Object.freeze({portal_quote:'Portal quote',before_after_gallery:'Before and after photos',insurance_certificate:'Insurance certificate',product_options:'Product options',payment_link:'Payment link',url:'Link'});
-const DRAFT_FIELDS=['channel','recipient','subject','body','sendWindowStart','sendWindowEnd','attachments'],ATTACHMENT_FIELDS=['kind','url','label','refId'];
+const DRAFT_FIELDS=['channel','fromNumber','recipient','subject','body','sendWindowStart','sendWindowEnd','attachments'],ATTACHMENT_FIELDS=['kind','url','label','refId'];
 function has(object,key){return Object.prototype.hasOwnProperty.call(object,key);}
 function isMessageKind(kind){return MESSAGE_KINDS.includes(kind);}
 function canComplete(kind){return !isMessageKind(kind)&&kind!=='verify_deposit';}
 // The approval fingerprint hashes the whole draft, so everything in it must be visible first.
 // A draft this screen cannot show in full (unknown fields, unreadable or non-canonical links)
 // is never approvable here.
-function draftReview(draft){
+function draftReview(draft,allowedSenders){
   const problems=[],attachments=[];
   if(!draft||typeof draft!=='object'||Array.isArray(draft))return{ok:false,problems:['The draft is missing or unreadable.'],attachments};
   for(const key of Object.keys(draft))if(!DRAFT_FIELDS.includes(key))problems.push('The draft has a field this screen cannot show: '+key+'.');
   if(!['sms','email'].includes(draft.channel))problems.push('The draft channel is not SMS or email.');
   if(typeof draft.recipient!=='string'||!draft.recipient)problems.push('The draft recipient is missing.');
+  if(draft.channel==='sms'&&!/^\+[1-9]\d{6,14}$/.test(draft.fromNumber||''))problems.push('Choose an explicit SMS sender and save the draft before reviewing.');
+  else if(draft.channel==='sms'&&allowedSenders!==undefined&&(!Array.isArray(allowedSenders)||!allowedSenders.includes(draft.fromNumber)))problems.push('The selected SMS sender is not configured for this Hub. Choose an available sender and save the draft.');
+  if(draft.channel==='email'&&draft.fromNumber!=null)problems.push('An email draft cannot include an SMS sender. Edit and save the correct channel.');
   if(typeof draft.body!=='string'||!draft.body)problems.push('The draft message is missing.');
   if(draft.subject!=null&&typeof draft.subject!=='string')problems.push('The draft subject is unreadable.');
   const list=has(draft,'attachments')?draft.attachments:[];
@@ -42,7 +45,7 @@ function draftReview(draft){
 }
 // Every message kind saves with its exact draft, on create and on edit. This screen cannot
 // change links yet, so an edit keeps the reviewed attachments exactly as they are.
-function buildDraft(kind,data,existing){if(!isMessageKind(kind))return null;const kept=existing&&Array.isArray(existing.attachments)?existing.attachments.map(item=>({...item})):[];return{channel:data.channel,recipient:data.recipient,subject:data.subject,body:data.body,sendWindowStart:localToIso(data.sendWindowStart),sendWindowEnd:localToIso(data.sendWindowEnd),attachments:kept};}
+function buildDraft(kind,data,existing){if(!isMessageKind(kind))return null;const kept=existing&&Array.isArray(existing.attachments)?existing.attachments.map(item=>({...item})):[];return{channel:data.channel,...(data.channel==='sms'?{fromNumber:has(data,'fromNumber')?(data.fromNumber||null):(existing?.fromNumber??null)}:{}),recipient:data.recipient,subject:data.subject,body:data.body,sendWindowStart:localToIso(data.sendWindowStart),sendWindowEnd:localToIso(data.sendWindowEnd),attachments:kept};}
 const errorLabels={
   operations_not_enabled:'The Action Center backend is not enabled. This is not an empty work queue.',
   operations_bridge_not_configured:'The Hub-to-backend connection needs configuration. No task data was loaded.',
@@ -61,6 +64,9 @@ const errorLabels={
   draft_window_expired:'The proposed message window has expired. Edit and review a new window.',
   message_draft_required:'Message actions must keep their exact draft. Nothing was changed.',
   task_has_no_message_draft:'Only a message action with an exact draft can be approved.',
+  sms_sender_required:'Choose and save an exact SMS sender, then review the updated draft. Nothing was sent.',
+  sms_sender_not_configured:'This sender is not configured for the Hub. Choose an available sender and review the updated draft. Nothing was sent.',
+  message_sender_execution_mismatch:'The saved execution has a different sender. It cannot certify this draft, and no new message was sent.',
   action_send_disabled:'One-tap sending is not enabled on the backend. Nothing was sent.',
   human_send_confirmation_required:'A signed-in person must confirm every customer send. Nothing was sent.',
   task_not_owned:'Only the action’s owner or a manager can do this. Nothing was changed or sent.',
@@ -101,7 +107,7 @@ function sendEligibility(result,actor,now){
   if(!(['owner','manager'].includes(actor?.role)||(actor?.id&&t.assignedUserId===actor.id)))return{ok:false,reason:'not_owner'};
   if(sendStarted(result))return{ok:true,reason:'check_status'};
   if(result.effectiveApproval!=='approved')return{ok:false,reason:'not_approved'};
-  if(!draftReview(d).ok)return{ok:false,reason:'not_reviewable'};
+  if(!draftReview(d,result.actionSend.smsFromNumbers||[]).ok)return{ok:false,reason:'not_reviewable'};
   const start=Date.parse(d.sendWindowStart),end=Date.parse(d.sendWindowEnd);
   if(!(end>now))return{ok:false,reason:'window_expired'};
   if(!(start<=now))return{ok:false,reason:'window_not_open'};
@@ -159,7 +165,11 @@ if(!editing)field(ui.grid,'portalJobId','EGC portal record ID (optional)','text'
 field(ui.grid,'description','Context / commitment','textarea',t.description||'',{wide:true,maxLength:5000});
 field(ui.grid,'completionCondition','What proves completion?','textarea',t.completionCondition||'',{wide:true,required:true,maxLength:1000});
 const draftGroup=h('div',{class:'ac-form-grid wide'});ui.grid.append(draftGroup);const d=t.draftPayload||{};
-field(draftGroup,'channel','Channel','select',['sms','email'].map(value=>({value,label:value.toUpperCase(),selected:value===(d.channel||'sms')})));
+const channel=field(draftGroup,'channel','Channel','select',['sms','email'].map(value=>({value,label:value.toUpperCase(),selected:value===(d.channel||'sms')})));
+const sender=field(draftGroup,'fromNumber','SMS sender','select',[{value:'',label:'Choose a sender',selected:!d.fromNumber},...(d.fromNumber?[{value:d.fromNumber,label:d.fromNumber+' (checking availability)',selected:true}]:[])],{help:'The exact sender is part of the review. Changing it requires a new approval.'});
+sender.disabled=true;
+void rpc({command:'status'}).then(result=>{if(state.dialog!==ui.dialog||!sender.isConnected||ui.attempt||state.busy)return;const list=Array.isArray(result.smsFromNumbers)?result.smsFromNumbers.filter(value=>typeof value==='string'&&/^\+[1-9]\d{6,14}$/.test(value)):[];sender.replaceChildren(h('option',{value:''},'Choose a sender'),...list.map(value=>h('option',{value},value)));if(d.fromNumber&&!list.includes(d.fromNumber))sender.append(h('option',{value:d.fromNumber,disabled:true},d.fromNumber+' (unavailable)'));sender.value=d.fromNumber||'';sender.disabled=channel.value!=='sms';if(!list.length)ui.error.textContent='No SMS sender is configured. This draft can be saved, but it cannot be approved or sent.';}).catch(()=>{if(state.dialog===ui.dialog)ui.error.textContent='SMS sender choices could not be loaded. Close and reopen this editor to retry.';});
+channel.addEventListener('change',()=>{sender.disabled=channel.value!=='sms';});
 field(draftGroup,'recipient','Exact recipient','text',d.recipient||'',{maxLength:320,help:'SMS uses +countrycode; email uses the full address.'});
 field(draftGroup,'subject','Email subject','text',d.subject||'',{wide:true,maxLength:250});
 field(draftGroup,'body','Exact draft · approval does not send','textarea',d.body||'',{wide:true,maxLength:10000});
@@ -242,18 +252,18 @@ async function bookingActions(task,ui,generation){
   }
 }
 async function detail(id){const generation=state.generation;const ui=openDialog('Action details');ui.body.append(h('p',{class:'ac-loading'},'Loading action…'));try{const result=await rpc({command:'task.get',taskId:id});if(generation!==state.generation||state.dialog!==ui.dialog)return;const task=result.task,activeTask=['open','in_progress','blocked'].includes(task.status);ui.body.replaceChildren();ui.body.append(h('span',{class:'ac-kicker'},labels[task.kind]||task.kind),h('h3',{},task.title));const list=h('dl',{class:'ac-detail-grid'}),words=value=>String(value||'Unknown').replace(/_/g,' ').replace(/^./,c=>c.toUpperCase()),facts=[['Owner',ownerName(task.assignedUserId)],['Status',words(task.status)],['Due / review',displayTime(attention(task))]];if(task.status==='completed')facts.push(['Completed',completedTime(task)]);if(result.effectiveApproval&&result.effectiveApproval!=='not_required')facts.push(['Approval',({pending:'Needs review',invalidated:'Needs a fresh review',approved:'Approved'})[result.effectiveApproval]||words(result.effectiveApproval)]);for(const [label,value] of facts)list.append(h('div',{},h('dt',{},label),h('dd',{},String(value))));ui.body.append(list);if(activeTask)void bookingActions(task,ui,generation);if(task.description)ui.body.append(h('p',{style:'white-space:pre-wrap'},task.description));if(activeTask)officeHandoff(task,ui,generation);ui.body.append(h('h4',{},'Completion condition'),h('p',{},task.completionCondition||'Missing: add the evidence required to close this action.'));
-if(task.draftPayload){const d=task.draftPayload,review=draftReview(d);ui.body.append(banner('Draft review only. Approving here does not send a message or mark this task complete.',''),h('h4',{},String(d.channel||'').toUpperCase()+' to '+d.recipient));if(d.subject)ui.body.append(h('p',{},'Subject: '+d.subject));ui.body.append(h('div',{class:'ac-message-preview'},d.body),h('p',{class:'ac-muted'},'Proposed window: '+displayTime(d.sendWindowStart)+' – '+displayTime(d.sendWindowEnd)+' · '+TZ),attachmentList(review));if(!review.ok)ui.body.append(reviewBlocked(review));}
+if(task.draftPayload){const d=task.draftPayload,review=draftReview(d,result.actionSend?.smsFromNumbers||[]);ui.body.append(banner('Draft review only. Approving here does not send a message or mark this task complete.',''),h('h4',{},String(d.channel||'').toUpperCase()+' to '+d.recipient));if(d.channel==='sms')ui.body.append(h('p',{},'From: '+(d.fromNumber||'Not selected')));if(d.subject)ui.body.append(h('p',{},'Subject: '+d.subject));ui.body.append(h('div',{class:'ac-message-preview'},d.body),h('p',{class:'ac-muted'},'Proposed window: '+displayTime(d.sendWindowStart)+' – '+displayTime(d.sendWindowEnd)+' · '+TZ),attachmentList(review));if(!review.ok)ui.body.append(reviewBlocked(review));}
 if(task.sourceEvidence?.length){ui.body.append(h('h4',{},'Source evidence'));for(const item of task.sourceEvidence)ui.body.append(h('p',{},h('b',{},item.source==='recording'?'Walkthrough transcript':item.source+' · '+item.id),h('br'),item.excerpt||''));}
 if(task.completionEvidence?.length){ui.body.append(h('h4',{},'Completion evidence'));for(const item of task.completionEvidence)ui.body.append(h('p',{},String(item.outcome||item.kind||'Recorded evidence')));}
 ui.body.append(h('h4',{},'Timeline'));const history=h('ol',{class:'ac-history'});for(const event of result.history||[])history.append(h('li',{},h('b',{},event.type),h('small',{},displayTime(event.occurredAt)+' · '+event.actorId+' · revision '+(event.revision??'—')),event.evidence?.reason?h('p',{},event.evidence.reason):null));ui.body.append(history);if(result.historyMayHaveMore)ui.body.append(h('p',{class:'ac-muted'},'Showing the newest 100 history entries. Older entries remain stored.'));
 ui.body.append(h('p',{},h('code',{},'Task '+task.id+' · review '+result.previewHash.slice(0,16))));
-if(activeTask){ui.foot.append(button('Edit',()=>newTask(task)),button('Snooze',()=>explainAction(task,'snooze')),button('Cancel action',()=>explainAction(task,'cancel'),'danger'));if(canComplete(task.kind))ui.foot.append(button('Complete',()=>explainAction(task,'complete'),'primary'));if(task.draftPayload&&task.status!=='blocked'&&['owner','manager'].includes(state.actor?.role)){ui.foot.append(button('Reject',()=>explainAction(task,'reject')));if(draftReview(task.draftPayload).ok)ui.foot.append(button('Review approval',()=>approvalDialog(result),'primary'));}const send=sendEligibility(result,state.actor,Date.now()),pending=pendingSend(task.id);if(send.ok||pending)ui.foot.append(button(pending?'Check pending send':send.reason==='check_status'?'Check send status':'Send now',()=>sendDialog(result),'primary ac-send-now'));else if(send.reason==='window_not_open')ui.body.append(h('p',{class:'ac-muted'},'Send now opens at '+displayTime(task.draftPayload.sendWindowStart)+'.'));}
+if(activeTask){ui.foot.append(button('Edit',()=>newTask(task)),button('Snooze',()=>explainAction(task,'snooze')),button('Cancel action',()=>explainAction(task,'cancel'),'danger'));if(canComplete(task.kind))ui.foot.append(button('Complete',()=>explainAction(task,'complete'),'primary'));if(task.draftPayload&&task.status!=='blocked'&&['owner','manager'].includes(state.actor?.role)){ui.foot.append(button('Reject',()=>explainAction(task,'reject')));if(draftReview(task.draftPayload,result.actionSend?.smsFromNumbers||[]).ok)ui.foot.append(button('Review approval',()=>approvalDialog(result),'primary'));}const send=sendEligibility(result,state.actor,Date.now()),pending=pendingSend(task.id);if(send.ok||pending)ui.foot.append(button(pending?'Check pending send':send.reason==='check_status'?'Check send status':'Send now',()=>sendDialog(result),'primary ac-send-now'));else if(send.reason==='window_not_open')ui.body.append(h('p',{class:'ac-muted'},'Send now opens at '+displayTime(task.draftPayload.sendWindowStart)+'.'));}
 }catch(error){if(error.name!=='AbortError'&&state.dialog===ui.dialog)ui.body.replaceChildren(banner(message(error),'error'));}}
-function approvalDialog(result){const t=result.task,d=t.draftPayload,review=draftReview(d);const ui=makeForm('Approve this exact draft');if(!review.ok){ui.body.prepend(reviewBlocked(review));ui.submit.disabled=true;ui.submit.textContent='Approval unavailable';return;}const links=review.attachments.length;ui.body.prepend(...[banner('This approval is for the displayed draft only. External sending is not enabled.',''),h('h3',{},t.title),h('p',{},d.channel.toUpperCase()+' · '+d.recipient),d.subject?h('p',{},'Subject: '+d.subject):null,h('div',{class:'ac-message-preview'},d.body),attachmentList(review),h('p',{class:'ac-muted'},'Revision '+t.revision+' · '+displayTime(d.sendWindowStart)+' – '+displayTime(d.sendWindowEnd)),h('p',{class:'ac-fingerprint'},h('code',{},'Review fingerprint '+result.previewHash.slice(0,16)),' covers the recipient, message, send window, '+(links===1?'1 attachment link':links+' attachment links')+' and revision '+t.revision+'. Any change needs a new review.')].filter(Boolean));ui.submit.textContent='Approve draft — does not send';const checkbox=field(ui.grid,'reviewed',links?'I reviewed the exact recipient, message, every attachment link, and revision':'I reviewed the exact recipient, message, and revision','checkbox','yes',{required:true,wide:true});ui.form.addEventListener('submit',event=>{event.preventDefault();if(!checkbox.checked)return;void submitMutation(ui,{command:'tasks.approve',items:[{taskId:t.id,revision:t.revision,previewHash:result.previewHash}],expiresAt:new Date(Date.now()+23*3600000).toISOString()},()=>load());});}
-function sendDialog(result){const t=result.task,d=t.draftPayload,review=draftReview(d),pending=pendingSend(t.id),mode=pending?'pending':sendStarted(result)?'check':'send';const ui=makeForm({pending:'Check the pending send',check:'Check send status',send:'Send this exact message'}[mode]);ui.busyLabel=mode==='check'?'Checking…':'Sending…';ui.idleLabel=mode==='send'?'Send now':'Reload action';ui.persist=attempt=>savePendingSend(t.id,attempt);if(pending){ui.attempt={requestId:pending.requestId,command:pending.command};ui.tried=true;}else if(mode==='send'&&!review.ok){ui.body.prepend(reviewBlocked(review));ui.submit.disabled=true;ui.submit.textContent='Sending unavailable';return;}const links=review.attachments.length,summary=h('dl',{class:'ac-detail-grid ac-send-summary'});for(const [label,value] of [['To',d.recipient],['Channel',String(d.channel||'').toUpperCase()],...(d.subject?[['Subject',d.subject]]:[])])summary.append(h('div',{},h('dt',{},label),h('dd',{},String(value))));
+function approvalDialog(result){const t=result.task,d=t.draftPayload,review=draftReview(d,result.actionSend?.smsFromNumbers||[]);const ui=makeForm('Approve this exact draft');if(!review.ok){ui.body.prepend(reviewBlocked(review));ui.submit.disabled=true;ui.submit.textContent='Approval unavailable';return;}const links=review.attachments.length;ui.body.prepend(...[banner('This approval is for the displayed draft only. External sending is not enabled.',''),h('h3',{},t.title),h('p',{},d.channel.toUpperCase()+' · To '+d.recipient),d.channel==='sms'?h('p',{},'From: '+(d.fromNumber||'Not selected')):null,d.subject?h('p',{},'Subject: '+d.subject):null,h('div',{class:'ac-message-preview'},d.body),attachmentList(review),h('p',{class:'ac-muted'},'Revision '+t.revision+' · '+displayTime(d.sendWindowStart)+' – '+displayTime(d.sendWindowEnd)),h('p',{class:'ac-fingerprint'},h('code',{},'Review fingerprint '+result.previewHash.slice(0,16)),' covers the sender, recipient, message, send window, '+(links===1?'1 attachment link':links+' attachment links')+' and revision '+t.revision+'. Any change needs a new review.')].filter(Boolean));ui.submit.textContent='Approve draft — does not send';const checkbox=field(ui.grid,'reviewed',links?(d.channel==='sms'?'I reviewed the exact sender, recipient, message, every attachment link, and revision':'I reviewed the exact recipient, message, every attachment link, and revision'):(d.channel==='sms'?'I reviewed the exact sender, recipient, message, and revision':'I reviewed the exact recipient, message, and revision'),'checkbox','yes',{required:true,wide:true});ui.form.addEventListener('submit',event=>{event.preventDefault();if(!checkbox.checked)return;void submitMutation(ui,{command:'tasks.approve',items:[{taskId:t.id,revision:t.revision,previewHash:result.previewHash}],expiresAt:new Date(Date.now()+23*3600000).toISOString()},()=>load());});}
+function sendDialog(result){const t=result.task,d=t.draftPayload,review=draftReview(d,result.actionSend?.smsFromNumbers||[]),pending=pendingSend(t.id),mode=pending?'pending':sendStarted(result)?'check':'send';const ui=makeForm({pending:'Check the pending send',check:'Check send status',send:'Send this exact message'}[mode]);ui.busyLabel=mode==='check'?'Checking…':'Sending…';ui.idleLabel=mode==='send'?'Send now':'Reload action';ui.persist=attempt=>savePendingSend(t.id,attempt);if(pending){ui.attempt={requestId:pending.requestId,command:pending.command};ui.tried=true;}else if(mode==='send'&&!review.ok){ui.body.prepend(reviewBlocked(review));ui.submit.disabled=true;ui.submit.textContent='Sending unavailable';return;}const links=review.attachments.length,summary=h('dl',{class:'ac-detail-grid ac-send-summary'});for(const [label,value] of [...(d.channel==='sms'?[['From',d.fromNumber||'Not selected']]:[]),['To',d.recipient],['Channel',String(d.channel||'').toUpperCase()],...(d.subject?[['Subject',d.subject]]:[])])summary.append(h('div',{},h('dt',{},label),h('dd',{},String(value))));
 const intro={pending:banner('A send of this action was started and its outcome is not confirmed. Retrying reuses the original request: it checks the provider and never sends a second copy.','warning'),check:banner('This message was already sent for revision '+t.revision+'. Checking only reads the provider’s result and completes the action once delivery is verified. Nothing is sent again.',''),send:banner('This sends the message below to the customer now, exactly as shown. Nothing else is sent.','')}[mode];
-ui.body.prepend(...[intro,pending&&pending.command.revision!==t.revision?h('p',{class:'ac-muted'},'The pending request was for revision '+pending.command.revision+'.'):null,h('h3',{},t.title),summary,h('div',{class:'ac-message-preview'},d.body),attachmentList(review),h('p',{class:'ac-muted'},'Revision '+t.revision+' · Window '+displayTime(d.sendWindowStart)+' – '+displayTime(d.sendWindowEnd)+' · '+TZ),h('p',{class:'ac-fingerprint'},h('code',{},'Review fingerprint '+result.previewHash.slice(0,16)),mode==='check'?' Checking does not record a new approval.':' Sending records your approval of exactly this recipient, message, '+(links===1?'1 attachment link':links+' attachment links')+' and revision '+t.revision+'.')].filter(Boolean));
-ui.submit.classList.add('ac-send-now');ui.submit.textContent={pending:'Retry original request',check:'Check send status',send:'Send now'}[mode];const checkbox=mode==='send'?field(ui.grid,'confirmSend',links?'I confirm sending exactly this message and every attachment link to this recipient':'I confirm sending exactly this message to this recipient','checkbox','yes',{required:true,wide:true,class:'ac-send-confirm'}):null;
+ui.body.prepend(...[intro,pending&&pending.command.revision!==t.revision?h('p',{class:'ac-muted'},'The pending request was for revision '+pending.command.revision+'.'):null,h('h3',{},t.title),summary,h('div',{class:'ac-message-preview'},d.body),attachmentList(review),h('p',{class:'ac-muted'},'Revision '+t.revision+' · Window '+displayTime(d.sendWindowStart)+' – '+displayTime(d.sendWindowEnd)+' · '+TZ),h('p',{class:'ac-fingerprint'},h('code',{},'Review fingerprint '+result.previewHash.slice(0,16)),mode==='check'?' Checking does not record a new approval.':' Sending records your approval of exactly this sender, recipient, message, '+(links===1?'1 attachment link':links+' attachment links')+' and revision '+t.revision+'.')].filter(Boolean));
+ui.submit.classList.add('ac-send-now');ui.submit.textContent={pending:'Retry original request',check:'Check send status',send:'Send now'}[mode];const checkbox=mode==='send'?field(ui.grid,'confirmSend',links?(d.channel==='sms'?'I confirm sending exactly this message and every attachment link from this sender to this recipient':'I confirm sending exactly this message and every attachment link to this recipient'):(d.channel==='sms'?'I confirm sending exactly this message from this sender to this recipient':'I confirm sending exactly this message to this recipient'),'checkbox','yes',{required:true,wide:true,class:'ac-send-confirm'}):null;
 // After a definite refusal of a retry or a status check, the button reloads the action so it
 // is never a dead control; the reloaded details offer only what the server would accept.
 ui.form.addEventListener('submit',event=>{event.preventDefault();if(ui.attempt){void submitMutation(ui,ui.attempt.command,sendOutcome);return;}const command={command:'task.send',taskId:t.id,revision:t.revision,previewHash:result.previewHash,confirm:true};if(mode!=='send'){if(ui.tried){closeDialog(true);void detail(t.id);return;}ui.tried=true;void submitMutation(ui,command,sendOutcome);return;}if(!checkbox?.checked)return;void submitMutation(ui,command,sendOutcome);});}
@@ -304,6 +314,7 @@ async function intelligenceCustomer(contactId){
   const ui=openDialog('Customer evidence');ui.body.append(h('p',{class:'ac-loading'},'Loading the customer event ledger…'));
   try{const result=await rpc({command:'intelligence.customer',contactId});if(state.dialog!==ui.dialog)return;const r=result.timeline||result;
     ui.body.replaceChildren(h('p',{class:'ac-muted'},'Each event retains its source evidence. User-confirmed outcomes stay visible while provider records catch up.'));
+    for(const issue of r.customer?.discrepancies||[])if(issue.code==='extraction_incomplete')ui.body.append(banner(issue.detail,'warning'));
     for(const event of r.events||r.items||[]){const card=h('article',{class:'ac-evidence-event'},h('h3',{},words(event.eventType||event.type||event.kind)),h('small',{},displayTime(event.occurredAt||event.at)+' · '+(event.source||'customer evidence')));
       for(const evidence of event.evidence||[])card.append(h('p',{style:'white-space:pre-wrap'},evidence.excerpt||''),h('small',{},evidence.sourceType+' · '+evidence.sourceRecordId));
       if(event.humanReviewNeeded)card.append(banner('This event needs review and is not a verified conversion.'));
@@ -311,6 +322,53 @@ async function intelligenceCustomer(contactId){
     }
   }catch(error){if(state.dialog===ui.dialog)ui.body.replaceChildren(banner(message(error),'error'));}
 }
+// Booking diagnostics are persisted by the reconciliation worker, not a second calendar.
+// Keep unknown times and unavailable coverage visible; rendering never schedules a visit.
+function bookingReviewModel(diagnostics,now=Date.now()){
+  const cursors=diagnostics?.meta?.cursors||diagnostics?.cursors;
+  const cursor=Array.isArray(cursors)?cursors.find(row=>row?.key==='customer_state:booking_reconciliation'):null;
+  if(!cursor)return{available:false,error:'Booking review has not been loaded. An empty calendar does not confirm there are no customer commitments.',findings:[]};
+  let value;try{value=JSON.parse(cursor.cursor);}catch{return{available:false,error:'Booking review could not be read. Refresh or ask operations to check synchronization.',findings:[]};}
+  if(!value||!Array.isArray(value.findings)||value.findings.some(row=>!row||typeof row!=='object'||Array.isArray(row)||typeof row.code!=='string'||typeof row.status!=='string'))return{available:false,error:'Booking review is incomplete or unreadable. Do not treat it as an all-clear.',findings:[]};
+  const updated=Date.parse(cursor.updatedAt);
+  return{available:true,updatedAt:cursor.updatedAt,fresh:Number.isFinite(updated)&&updated<=now+60000&&now-updated<=15*60000,coverageComplete:value.coverage?.portalComplete===true&&value.coverage?.providerComplete===true,findings:value.findings.filter(row=>row.status!=='fully_reconciled')};
+}
+function bookingSourceUrl(value){try{const url=new URL(value);return typeof value==='string'&&url.protocol==='https:'&&!url.username&&!url.password&&url.href===value&&!/[\s\u0000-\u001f\u007f]|\p{Cf}/u.test(value)?value:null;}catch{return null;}}
+function bookingReviewSection(diagnostics){
+  const review=bookingReviewModel(diagnostics),section=h('section',{class:'ac-pipeline-section','aria-label':'Booking commitments to review','data-booking-review':'true'},h('h3',{},'Booking commitments to review'+(review.available?' · '+review.findings.length:'')));
+  if(!review.available){section.append(banner(review.error,'warning'));return section;}
+  section.append(h('p',{class:'ac-muted'},'Saved reconciliation snapshot · '+displayTime(review.updatedAt)+'. These findings do not create or confirm appointments.'));
+  if(!review.coverageComplete)section.append(banner('Hub or provider coverage is incomplete. More commitments may be missing from this snapshot.','warning'));
+  if(!review.fresh)section.append(banner('This booking snapshot is not current. Refresh and verify the original customer evidence before acting.','warning'));
+  let shown=0;
+  function appendPage(){
+  for(const finding of review.findings.slice(shown,shown+50)){
+    const commitment=finding.commitment&&typeof finding.commitment==='object'?finding.commitment:{},kind=commitment.kind==='walkthrough'?'Walkthrough':commitment.kind==='job'?'Job':'Booking',card=h('article',{class:'ac-evidence-event'},h('h4',{},kind+' · '+words(finding.code)),h('span',{class:'ac-pill warn'},'Needs review'));
+    if(commitment.contactId)card.append(h('small',{},'Customer record: '+commitment.contactId));
+    if(commitment.startAt&&Number.isFinite(Date.parse(commitment.startAt)))card.append(h('p',{},'Time in source evidence: '+displayTime(commitment.startAt)+' · Not a confirmed Hub appointment'));
+    else if(finding.commitment)card.append(h('p',{},'Visit date and time need confirmation.'));
+    if(commitment.timeMention)card.append(h('p',{},'Original time wording: '+commitment.timeMention));
+    if(commitment.evidence)card.append(h('blockquote',{},commitment.evidence));
+    for(const reason of Array.isArray(commitment.reviewReasons)?commitment.reviewReasons:[])card.append(h('small',{},'Review: '+words(reason)));
+    card.append(h('p',{},'Next: '+(finding.nextAction||'Review the original source and exact Hub record before making changes.')));
+    for(const source of (Array.isArray(commitment.sourceReferences)?commitment.sourceReferences:[]).filter(source=>source&&typeof source==='object').slice(0,10)){
+      card.append(h('small',{},(source.sourceType||'Source')+' · '+(source.sourceRecordId||'Record unavailable')));
+      if(source.excerpt)card.append(h('blockquote',{},source.excerpt));
+      const url=bookingSourceUrl(source.sourcePointer);if(url)card.append(h('a',{href:url,target:'_blank',rel:'noopener noreferrer'},'Open source record'));
+      else if(source.sourcePointer)card.append(h('small',{},'Source reference: '+source.sourcePointer));
+    }
+    if(commitment.contactId)card.append(button('Customer evidence',()=>intelligenceCustomer(commitment.contactId)));
+    if(finding.portalVisitId)card.append(button('View Hub instructions',()=>portalInstructions(finding.portalVisitId)));
+    section.append(card);
+  }
+  shown=Math.min(review.findings.length,shown+50);
+  if(shown<review.findings.length){const more=button('Show next '+Math.min(50,review.findings.length-shown)+' findings ('+(review.findings.length-shown)+' remaining)',()=>{more.remove();appendPage();});section.append(more);}
+  }
+  appendPage();
+  if(!review.findings.length)section.append(h('p',{},'No unresolved findings in this saved snapshot. This is not a complete-history or empty-calendar guarantee.'));
+  return section;
+}
+
 async function loadIntelligence(generation){
   const since=localToIso(plusDays(today(),1-state.intelligenceDays)+'T00:00'),until=new Date().toISOString();
   const [reportResponse,diagnosticsResponse]=await Promise.all([rpc({command:'intelligence.report',since,until,cohortSince:since,cohortUntil:until}),rpc({command:'intelligence.diagnostics'})]);
@@ -325,9 +383,11 @@ async function loadIntelligence(generation){
   target.append(stats,h('h3',{},'Lead cohort conversion'));const table=h('table',{class:'ac-cohort-table'},h('thead',{},h('tr',{},h('th',{},'Outcome'),h('th',{},'Converted / leads'),h('th',{},'Observed rate')))),body=h('tbody');
   for(const [key,value] of Object.entries(r.cohort?.metrics||{}))body.append(h('tr',{},h('td',{},words(key)),h('td',{},`${value.numerator} / ${value.denominator}`),h('td',{},value.rate==null?'—':(value.rate*100).toFixed(1)+'%')));
   table.append(body);target.append(h('p',{class:'ac-muted'},'Only leads created in the selected window are in these denominators. Their outcomes are observed through '+displayTime(r.cohort?.observedThrough||until)+'. This is an immature cohort, not a final close rate.'),h('div',{class:'ac-table-scroll'},table));
+  target.append(bookingReviewSection(d));
   for(const [key,label] of [['walkthrough','Walkthrough pipeline'],['videoQuote','Video quote pipeline'],['directJob','Direct-job pipeline']]){
     const rows=r.pipelines?.[key]||[],section=h('section',{class:'ac-pipeline-section'},h('h3',{},label+' · '+rows.length));
     for(const customer of rows){const card=h('article',{class:'ac-evidence-event'},h('h4',{},customer.customerName||'Customer'),h('span',{class:'ac-pill'},words(customer.state)),h('p',{},'Next: '+customer.nextRequiredAction),h('small',{},words(customer.reconciliationStatus)+' · Intent: '+words(customer.intentStage)));
+      for(const issue of customer.discrepancies||[])if(issue.code==='extraction_incomplete')card.append(banner(issue.detail,'warning'));
       if(customer.videoQuoteStage)card.append(h('p',{},'Video quote: '+words(customer.videoQuoteStage)));
       for(const evidence of (customer.supportingEvidence||[]).slice(0,4))card.append(h('blockquote',{},evidence.excerpt),h('small',{},evidence.sourceType+' · '+displayTime(evidence.occurredAt)));
       card.append(button('Customer evidence',()=>intelligenceCustomer(customer.contactId)));section.append(card);
@@ -350,5 +410,5 @@ async function mount(host){if(!host)return;if(state.host===host&&state.root?.isC
 function unmount(){state.generation++;state.controller?.abort();state.controller=null;closeDialog(true);state.root?.remove();state.root=null;state.host=null;state.actor=null;state.owners=[];state.enabled=false;state.busy=false;state.briefId=null;state.offset=0;}
 window.addEventListener('beforeunload',event=>{if(state.dirty||state.busy){event.preventDefault();event.returnValue='';}});
 window.addEventListener('egc:signout',()=>{clearPendingSends();unmount();});
-window.EGCActionCenter={mount,unmount,canLeave:dirtyCheck,show,localToIso,drafts:Object.freeze({MESSAGE_KINDS,ATTACHMENT_KINDS,labels,isMessageKind,canComplete,draftReview,buildDraft}),send:Object.freeze({sendEligibility,sendStarted})};
+window.EGCActionCenter={bookingReview:Object.freeze({model:bookingReviewModel,sourceUrl:bookingSourceUrl}),mount,unmount,canLeave:dirtyCheck,show,localToIso,drafts:Object.freeze({MESSAGE_KINDS,ATTACHMENT_KINDS,labels,isMessageKind,canComplete,draftReview,buildDraft}),send:Object.freeze({sendEligibility,sendStarted})};
 })();

@@ -179,9 +179,9 @@ const legacyFamilyQuery = env => String(env?.EGC_EMPLOYEE_VAULT_QUERY ?? '').tri
 // means the filter was not honored, so the read fails closed. If Firestore
 // reports that the query needs an index, the read falls back to the whole-vault
 // query; every other failed or malformed response still fails closed.
-export async function readCollection(env, collection) {
+export async function readCollection(env, collection, { fallback } = {}) {
   if (!EMPLOYEE_HUB_COLLECTIONS.has(collection)) throw unsupportedCollection();
-  return (await familyRows(env, collection)).map(row => row.data);
+  return (await familyRows(env, collection, false, fallback)).map(row => row.data);
 }
 
 // The same fail-closed family read, keeping each record's vault document id and
@@ -193,15 +193,15 @@ export async function readCollectionRecords(env, collection) {
   return rows.map(({ documentId, updateTime, data }) => ({ documentId, updateTime, data }));
 }
 
-async function familyRows(env, collection, withRevision = false) {
+async function familyRows(env, collection, withRevision = false, fallback = () => readAll(env, withRevision)) {
   const where = { compositeFilter: { op: 'AND', filters: [equalTo('recordType', EMPLOYEE_HUB_RECORD_TYPE), equalTo('employeeHubType', collection)] } };
   if (collection === 'timeLocks') return decodeRows(env, await runQuery(env, where, 'employee_time_locks'), type => type === collection, withRevision);
   if (!EMPLOYEE_HUB_COLLECTIONS.has(collection)) throw unsupportedCollection();
-  if (legacyFamilyQuery(env)) return (await readAll(env, withRevision)).filter(row => row.collection === collection);
+  if (legacyFamilyQuery(env)) return (await fallback()).filter(row => row.collection === collection);
   const response = await runQuery(env, where);
   if (await indexRequired(response)) {
     console.warn(`Employee vault: the ${collection} family query needs a Firestore index (FAILED_PRECONDITION); using the whole-vault read.`);
-    return (await readAll(env, withRevision)).filter(row => row.collection === collection);
+    return (await fallback()).filter(row => row.collection === collection);
   }
   return decodeRows(env, response, type => type === collection, withRevision);
 }

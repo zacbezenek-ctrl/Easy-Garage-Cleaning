@@ -2,6 +2,7 @@ import {afterEach,describe,expect,it,vi} from 'vitest';
 import * as z from 'zod/v4';
 import type {McpServer} from '@modelcontextprotocol/server';
 import {schema} from '@egc/database';
+import {EXTRACTOR_VERSION} from '@egc/customer-state';
 import {getTableColumns} from 'drizzle-orm';
 import {crmReadTools} from '../src/tools/domains/crm-reads.js';
 import {registerTools} from '../src/tools/define.js';
@@ -400,16 +401,42 @@ describe('record reads and enrichment',()=>{
     expect(c.items.map((x:any)=>x.operational)).toEqual([{coverage:{complete:false,error:'customer_not_reconciled'}},{coverage:{complete:false,error:'customer_not_reconciled'}}]);
     expect(contacts.log.find(s=>s.table==='customer_state_snapshots')!.params).toEqual([id(0),id(1)]);
   });
-  it('gets return one record with a refreshed canonical timeline, and not-found as an error result',async()=>{
+  it.each([
+    {complete:false,version:EXTRACTOR_VERSION,errors:['semantic_provider_http_429']},
+    {complete:true,version:'older-extractor'},
+    undefined,
+  ])('qualifies old cached CRM context without changing business or provider state: %j',async extraction=>{
+    const walk=WALKS.find(w=>w.name==='leads.search')!,rows=slicer(walk,1);
+    const snapshot={state:'JOB_SOLD',reconciliationStatus:'fully_reconciled',humanReviewNeeded:false,eventIds:['verified-sale'],nextRequiredAction:'Schedule accepted work',discrepancies:[]};
+    const h=harness(s=>s.table==='customer_state_snapshots'?[dbRow(schema.customerStateSnapshots,{contactId:id(0,'b'),snapshot,coverage:{extraction},lastReconciledAt:iso(NOW.valueOf())})]:rows(s));
+    const r=await h.call('leads.search',{limit:2}),item=r.items[0];
+    expect(r.items).toHaveLength(1);expect(item.lead.currentState).toBe('JOB_SOLD');expect(item.lead.providerState).toBe('NEVER_CONTACTED');
+    expect(item.operational).toMatchObject({state:'JOB_SOLD',reconciliationStatus:'reconciliation_needed',humanReviewNeeded:true,eventIds:['verified-sale'],nextRequiredAction:'Schedule accepted work'});
+    expect(item.operational.discrepancies.some((d:any)=>d.code==='extraction_incomplete')).toBe(true);
+    expect(snapshot).toMatchObject({reconciliationStatus:'fully_reconciled',humanReviewNeeded:false,discrepancies:[]});
+  });
+  it('keeps current complete CRM enrichment fully reconciled',async()=>{
+    const walk=WALKS.find(w=>w.name==='leads.search')!,rows=slicer(walk,1),snapshot={state:'JOB_SOLD',reconciliationStatus:'fully_reconciled',humanReviewNeeded:false,discrepancies:[]};
+    const h=harness(s=>s.table==='customer_state_snapshots'?[dbRow(schema.customerStateSnapshots,{contactId:id(0,'b'),snapshot,coverage:{extraction:{complete:true,version:EXTRACTOR_VERSION}},lastReconciledAt:iso(NOW.valueOf())})]:rows(s));
+    const r=await h.call('leads.search',{limit:2});expect(r.items[0].operational).toMatchObject(snapshot);
+  });
+  it('gets return one record with a persisted canonical timeline, and not-found as an error result',async()=>{
     const job=dbRow(schema.jobs,{id:CONTACT,contactId:OTHER,status:'scheduled'}),h=harness(s=>s.table==='jobs'?[job]:[]);
     expect(await h.call('jobs.get',{jobId:CONTACT})).toMatchObject({id:CONTACT,status:'scheduled',canonical:{contactId:OTHER,customer:{state:'JOB_SOLD'}}});
-    expect(h.timeline).toHaveBeenCalledWith({contactId:OTHER,refresh:true});
+    expect(h.timeline).toHaveBeenCalledWith({contactId:OTHER,refresh:false});
     for(const [name,args,code] of [['contacts.get',{contactId:CONTACT},'contact_not_found'],['leads.get',{leadId:CONTACT},'lead_not_found'],['calls.get',{callId:CONTACT},'call_not_found'],['opportunities.get',{opportunityId:CONTACT},'opportunity_not_found'],['walkthroughs.get',{walkthroughId:CONTACT},'walkthrough_not_found'],['conversations.get',{conversationId:CONTACT},'conversation_not_found']] as const){
       const empty=harness(),r=await empty.raw(name,args);
       expect(r.isError,name).toBe(true);expect(r.structuredContent.result).toEqual({error:code});expect(empty.timeline).not.toHaveBeenCalled();
     }
     const lead=harness(s=>s.table==='leads'?[{...dbRow(schema.leads,{id:CONTACT,contactId:OTHER,currentState:'BOOKED'}),...dbRow(schema.contacts,{id:OTHER,providerId:'p'})}]:[]);
     expect(await lead.call('leads.get',{leadId:CONTACT})).toMatchObject({lead:{id:CONTACT,providerState:'BOOKED',currentState:'JOB_SOLD'},contact:{id:OTHER},canonical:{contactId:OTHER}});
+    expect(lead.timeline).toHaveBeenCalledWith({contactId:OTHER,refresh:false});
+    const contact=harness(s=>s.table==='contacts'?[dbRow(schema.contacts,{id:OTHER,providerId:'p'})]:[]);
+    expect(await contact.call('contacts.get',{contactId:OTHER})).toMatchObject({id:OTHER,canonical:{contactId:OTHER}});
+    expect(contact.timeline).toHaveBeenCalledWith({contactId:OTHER,refresh:false});
+    const opportunity=harness(s=>s.table==='opportunities'?[dbRow(schema.opportunities,{id:CONTACT,contactId:OTHER,providerId:'p'})]:[]);
+    expect(await opportunity.call('opportunities.get',{opportunityId:CONTACT})).toMatchObject({id:CONTACT,canonical:{contactId:OTHER}});
+    expect(opportunity.timeline).toHaveBeenCalledWith({contactId:OTHER,refresh:false});
     const call=harness(s=>s.table==='calls'?[dbRow(schema.calls,{id:CONTACT,providerMessageId:'m',contactId:OTHER,direction:'inbound',startedAt:iso(NOW.valueOf())})]:[]);
     expect(await call.call('calls.get',{callId:CONTACT})).toMatchObject({call:{id:CONTACT},transcript:null});
     const walkthrough=harness(s=>s.table==='walkthroughs'?[dbRow(schema.walkthroughs,{id:CONTACT,status:'draft',extraction:{garageSize:'2-car'}})]:[]);

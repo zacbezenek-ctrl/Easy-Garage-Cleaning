@@ -15,7 +15,7 @@ const NOW='2026-10-01T15:00:00.000Z';
 let now,service,contact,sent;
 const at=hours=>new Date(now.valueOf()+hours*3600000).toISOString();
 const links=[{kind:'portal_quote',url:'https://easygaragecleaning.com/portal/quote/synthetic-1',label:'Your quote',refId:null},{kind:'payment_link',url:'https://pay.example.com/synthetic-deposit',label:'Pay the deposit',refId:'job-synthetic-1'}];
-const draft=(extra={})=>({channel:'sms',recipient:'+15555550100',subject:'',body:'Synthetic approved message',sendWindowStart:at(-1),sendWindowEnd:at(12),attachments:links,...extra});
+const draft=(extra={})=>({channel:'sms',fromNumber:'+15555551644',recipient:'+15555550100',subject:'',body:'Synthetic approved message',sendWindowStart:at(-1),sendWindowEnd:at(12),attachments:links,...extra});
 const call=(body,actor=owner,id=randomUUID())=>service.execute(actor,body,id);
 const create=async(extra={},actor=owner)=>(await call({command:'task.create',task:{title:'Send synthetic quote',kind:'send_quote',assignedUserId:actor.id,dueAt:at(1),contactId:contact.id,completionCondition:'Verified delivery of the exact quote message',draft:draft(),...extra}},actor)).task;
 const get=id=>call({command:'task.get',taskId:id});
@@ -27,7 +27,7 @@ beforeEach(async()=>{
  await db.execute(sql`set client_min_messages to warning`);
  await db.execute(sql`truncate operation_events,operation_approvals,operation_requests,operation_briefs,tasks,communication_executions,messages,contacts cascade`);
  now=new Date(NOW);sent=[];
- service=new OperationsService(db,{workspace:'egc',now:()=>now,resolveOwner:async id=>[owner.id,manager.id,sales.id].includes(id),sendTaskMessage:async(actor,command,requestId)=>{sent.push({actor,command,requestId});return service.approveForSend(actor,command,requestId);}});
+ service=new OperationsService(db,{workspace:'egc',smsFromNumbers:['+15555551644','+15555551818'],now:()=>now,resolveOwner:async id=>[owner.id,manager.id,sales.id].includes(id),sendTaskMessage:async(actor,command,requestId)=>{sent.push({actor,command,requestId});return service.approveForSend(actor,command,requestId);}});
  [contact]=await db.insert(schema.contacts).values({provider:'ghl',providerId:'synthetic-provider',phone:'+15555550100'}).returning();
 });
 // Leave no rows behind: later suites clean up with plain deletes and must not trip over these.
@@ -120,8 +120,8 @@ test('once the approved revision’s send started, a second confirmer only gets 
 test('execute delegates task.send to the send adapter with the parsed command, and task.get reports availability',async()=>{
  const t=await create(),command=await sendCommand(t),requestId=randomUUID();
  const r=await call(command,owner,requestId);assert.equal(sent.length,1);assert.deepEqual(sent[0],{actor:owner,command,requestId});assert.equal(r.approvedRevision,1);
- assert.deepEqual((await get(t.id)).actionSend,{available:true});
- const off=new OperationsService(db,{workspace:'egc',now:()=>now});assert.deepEqual((await off.execute(owner,{command:'task.get',taskId:t.id},randomUUID())).actionSend,{available:false});
+ assert.deepEqual((await get(t.id)).actionSend,{available:true,smsFromNumbers:['+15555551644','+15555551818']});
+ const off=new OperationsService(db,{workspace:'egc',now:()=>now});assert.deepEqual((await off.execute(owner,{command:'task.get',taskId:t.id},randomUUID())).actionSend,{available:false,smsFromNumbers:[]});
  await assert.rejects(off.execute(owner,command,randomUUID()),e=>e.code==='action_send_disabled'&&e.status===503);
 });
 test('send readiness re-checks the approval, context, owner and window right before a send',async()=>{
@@ -139,4 +139,23 @@ test('execution start is recorded once per execution at the approved revision',a
  const t=await create(),r=await approve(await sendCommand(t));const [execution]=await db.insert(schema.communicationExecutions).values({requestId:randomUUID(),actorId:owner.id,contactId:contact.id,channel:'SMS',payloadHash:'synthetic',payload:{}}).returning();
  await Promise.all([1,2,3].map(()=>service.recordExecutionStarted(owner,t.id,r.approvedRevision,{executionId:execution.id})));
  const events=(await get(t.id)).history.filter(e=>e.type==='message.execution_started');assert.equal(events.length,1);assert.equal(events[0].evidence.executionId,execution.id);assert.equal(events[0].revision,1);
+});
+
+test('a sender change requires the new revision and fingerprint, never reuses the old approval',async()=>{
+ const t=await create(),first=await approve(await sendCommand(t));
+ assert.equal(first.approval.snapshot.task.draftPayload.fromNumber,'+15555551644');
+ const changed=(await call({command:'task.edit',taskId:t.id,revision:1,changes:{draft:draft({fromNumber:'+15555551818'})}})).task;
+ const detail=await get(t.id);assert.equal(changed.revision,2);assert.equal(changed.approvalStatus,'invalidated');assert.notEqual(detail.previewHash,first.approval.fingerprint);
+ await rejects(service.sendReadiness(owner,t.id,1,first.approval.id),'task_revision_conflict');
+ await rejects(service.sendReadiness(owner,t.id,2,first.approval.id),'send_approval_not_current');
+ const second=await approve(await sendCommand(changed));assert.equal(second.approval.snapshot.task.draftPayload.fromNumber,'+15555551818');assert.notEqual(second.approval.id,first.approval.id);
+});
+test('legacy unsent SMS stays readable but cannot acquire a sender approval without an explicit edit',async()=>{
+ const {fromNumber:_,...legacyDraft}=draft();const t=await create({draft:legacyDraft});const detail=await get(t.id);
+ assert.equal(detail.task.draftPayload.fromNumber,undefined);assert.equal(detail.effectiveApproval,'pending');
+ await rejects(approve(await sendCommand(t)),'sms_sender_required');
+ await rejects(call({command:'tasks.approve',items:[{taskId:t.id,revision:1,previewHash:detail.previewHash}],expiresAt:at(6)}),'sms_sender_required');
+ assert.equal((await approvals(t.id)).length,0);assert.equal((await get(t.id)).task.revision,1);
+ const bad=await create({draft:draft({fromNumber:'+15555559999'}),title:'Unknown line'});await rejects(approve(await sendCommand(bad)),'sms_sender_not_configured');
+ const updated=(await call({command:'task.edit',taskId:t.id,revision:1,changes:{draft:draft({fromNumber:'+15555551818'})}})).task;const reviewed=await approve(await sendCommand(updated));assert.equal(reviewed.approvedRevision,2);assert.equal(reviewed.task.draftPayload.fromNumber,'+15555551818');
 });

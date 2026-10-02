@@ -20,8 +20,8 @@ describe('one-step customer sends in operations mode',()=>{
     expect([...DIRECT_SEND_TOOLS].sort()).toEqual([...SEND_TOOLS].sort());
     for(const name of SEND_TOOLS)expect(blockedToolCall(name)).toBeNull();
     process.env.EGC_OPERATIONS_ENABLED='true';
-    // Hub approval does not send and no approved-draft send path exists yet; the instruction must not claim otherwise.
-    for(const name of SEND_TOOLS)expect(blockedToolCall(name)).toMatchObject({error:'direct_send_disabled_in_operations_mode',sent:false,instruction:expect.stringMatching(/^Nothing was sent\. .*actions\.propose \(kind followup_message\).*approval does not send\..*neither is enabled on this server yet.*EGC_MCP_DIRECT_SENDS_ENABLED=true.*has not been sent\.$/s)});
+    // Approval alone never sends; direct-send guidance points to the separately enabled reviewed Hub action without claiming a live capability.
+    for(const name of SEND_TOOLS)expect(blockedToolCall(name)).toMatchObject({error:'direct_send_disabled_in_operations_mode',sent:false,instruction:expect.stringMatching(/^Nothing was sent\. .*actions\.propose \(kind followup_message\).*approval does not send\..*server reports actionSend enabled.*do not bypass this gate.*has not been sent\.$/s)});
     expect(blockedToolCall('send_sms')!.instruction).not.toMatch(/sends? (?:it|them) from the Employee Hub/);
     expect(directSendsBlocked()).toBe(true);
     for(const name of ['actions.propose','communications.reconcile','contacts.search'])expect(blockedToolCall(name)).toBeNull();
@@ -58,7 +58,7 @@ describe('consent text, /mcp-info and audit identity are truthful',()=>{
   const modes:Record<string,AccessMode>={legacy:{operations:false,directSends:false,moneyTools:false},actionCenter:{operations:true,directSends:false,moneyTools:false},actionCenterSends:{operations:true,directSends:true,moneyTools:false}};
   it('describes sends, writes, approvals and payments from the live mode',()=>{
     expect(accessStatement(modes.legacy!).sends).toMatch(/can send SMS and email to customers/);
-    expect(accessStatement(modes.actionCenter!).sends).toMatch(/One-step MCP customer sends are paused.*approval does not send.*neither is enabled on this server yet/s);
+    expect(accessStatement(modes.actionCenter!).sends).toMatch(/One-step MCP customer sends are paused.*approval does not send.*server reports actionSend enabled/s);
     for(const mode of Object.values(modes))expect(Object.values(accessStatement(mode)).join(' ')).not.toMatch(/sends? (?:it|them) from the Employee Hub/);
     expect(accessStatement(modes.actionCenterSends!).sends).toMatch(/can send SMS and email to customers/);
     for(const mode of Object.values(modes))expect(accessStatement(mode).sends).toMatch(/notifications only when runAutomations is explicitly set to true/);

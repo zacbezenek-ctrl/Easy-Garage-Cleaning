@@ -2,9 +2,10 @@ import {AsyncLocalStorage} from "node:async_hooks";
 import {randomUUID} from "node:crypto";
 import type {McpServer} from "@modelcontextprotocol/server";
 import * as z from "zod/v4";
-import {signRequest,createTaskSchema,patchTaskSchema,type Actor,type Command,type Delegate} from "@egc/operations";
+import {signRequest,createTaskSchema,patchTaskSchema,WRITE_COMMANDS,type Actor,type Command,type Delegate} from "@egc/operations";
 import {DIRECT_SENDS_PAUSED,oauthSecurityMetadata,READ_SCOPE,WRITE_SCOPE} from "./oauth.js";
 import {getCustomerTimeline} from '@egc/customer-state';
+import {isRecord,safeDetails} from './tools/result.js';
 
 // A Hub-approved grant acts as the integration mcp:<hub user>:<grant id> on behalf of delegate {user, role}.
 export type Principal=Actor&{delegate?:Pick<Delegate,"user"|"role">};
@@ -43,7 +44,7 @@ export function blockedToolCall(toolName:string){
   if(LEGACY_MUTATIONS_DISABLED.has(toolName))return LEGACY_MUTATION_DISABLED;
   return DIRECT_SEND_TOOLS.has(toolName)&&!directSendsEnabled()?DIRECT_SEND_DISABLED:null;
 }
-const result=(value:unknown)=>({content:[{type:"text" as const,text:JSON.stringify(value,null,2)}],structuredContent:{result:value}});
+const result=(value:unknown)=>({content:[{type:"text" as const,text:JSON.stringify(value,null,2)}],structuredContent:{result:value},...(isRecord(value)&&typeof value.error==='string'?{isError:true as const}:{})});
 // The API refuses a Hub-approved grant whose stored approval no longer verifies (the Hub key was rotated, or it was altered).
 export const DELEGATE_RECONNECT="This connection's Employee Hub approval is no longer valid, for example because the Hub signing key changed. Nothing was done. Ask the user to disconnect and reconnect the EGC connector and approve again in the Employee Hub; retrying will not help.";
 export async function callOperations(command:Command,requestId:string=randomUUID(),fetcher:typeof fetch=fetch) {
@@ -54,14 +55,26 @@ export async function callOperations(command:Command,requestId:string=randomUUID
   if(delegate===null)return {error:"verified_principal_required"};
   const origin=process.env.EGC_OPERATIONS_API_ORIGIN,key=process.env.EGC_OPERATIONS_MCP_SIGNING_SECRET;
   if(!origin||!key||key.length<32)return {error:"operations_bridge_not_configured"};
+  const readOnly=!WRITE_COMMANDS.has(command.command);
+  const unavailable=(error:string,httpStatus?:number)=>({ok:false,error,requestId,...(httpStatus===undefined?{}:{httpStatus}),retryable:httpStatus===undefined||httpStatus===429||httpStatus>=500,
+    ...(readOnly?{coverage:{complete:false,reason:error},instruction:"The source could not be read. This is not evidence of no records. Retry the same read after the source recovers."}:
+      {retryMode:"same_request_id",instruction:"The write outcome is unknown. Retry exactly the same command and requestId. Do not create a fresh copy."})});
   try {
     const url=new URL(origin);
     if(url.protocol!=="https:"||url.pathname!=="/"||url.username||url.password||url.search||url.hash)return {error:"operations_bridge_not_configured"};
     const envelope=signRequest({v:1,iss:"mcp",aud:"egc-operations",iat:Math.floor(Date.now()/1000),nonce:randomUUID(),actor:bridgeActor(principal),...(delegate?{delegate}:{}),request:{requestId,body:command}},key);
     const response=await fetcher(new URL("/operations/rpc",url),{method:"POST",redirect:"error",headers:{"Content-Type":"application/json"},body:JSON.stringify({envelope}),signal:AbortSignal.timeout(20000)});
-    const body=await response.json() as Record<string,unknown>;
-    return {...body,httpStatus:response.status,requestId,...(body.error==="delegate_invalid"?{instruction:DELEGATE_RECONNECT}:{})};
-  }catch{return {error:"operations_outcome_unknown",requestId,instruction:"Retry exactly the same command and requestId. Do not create a fresh copy."};}
+    let body:unknown;
+    try{body=await response.json();}catch{body=undefined;}
+    const errorCode=isRecord(body)&&typeof body.error==='string'&&/^[a-z][a-z0-9_]{0,99}$/.test(body.error)?body.error:undefined;
+    // An HTTP failure cannot become an empty successful calendar, even if a
+    // proxy returns an inconsistent success body. Never echo raw edge errors.
+    if(!response.ok&&(!errorCode||!isRecord(body)||body.ok===true))return unavailable(readOnly?(response.status===429?'operations_rate_limited':'operations_upstream_unavailable'):'operations_outcome_unknown',response.status);
+    if(!isRecord(body))return unavailable(readOnly?'operations_response_invalid':'operations_outcome_unknown',response.status);
+    if(errorCode)return {...safeDetails(body),error:errorCode,httpStatus:response.status,requestId,...(response.status===429||response.status>=500?{retryable:true,...(readOnly?{coverage:{complete:false,reason:errorCode}}:{retryMode:'same_request_id'})}:{}),...(errorCode==="delegate_invalid"?{instruction:DELEGATE_RECONNECT}:{})};
+    if(body.error!==undefined||body.ok===false)return unavailable(readOnly?'operations_response_invalid':'operations_outcome_unknown',response.status);
+    return {...body,httpStatus:response.status,requestId};
+  }catch{return unavailable("operations_outcome_unknown");}
 }
 export function registerOperationsTools(server:McpServer,options:{includeAuthorityOverrides?:boolean}={}) {
   const read={annotations:{readOnlyHint:true,destructiveHint:false},...oauthSecurityMetadata([READ_SCOPE])};
@@ -82,5 +95,5 @@ export function registerOperationsTools(server:McpServer,options:{includeAuthori
   server.registerTool("actions.cancel",{description:"Cancel the named canonical action with a reason and exact revision, preserving history. Does not cancel a customer booking.",inputSchema:z.object({...revision,reason:z.string().min(3).max(2000)}),...write},async({requestId,...args})=>result(await callOperations({command:"task.cancel",...args},requestId)));
   server.registerTool("egc.daily_brief",{description:"Read a previously saved brief, its immutable task membership and separate current-change indicators. No brief creation, approval, send, or scheduling side effect.",inputSchema:z.object({briefId:z.string().uuid().optional(),...page}),...read},async({briefId,...args})=>result(await callOperations(briefId?{command:"brief.get",briefId,...args}:{command:"brief.latest",...args})));
   server.registerTool("egc.generate_brief",{description:"Explicitly save an immutable canonical-task brief snapshot with coverage warnings. This internal write sends no notification, changes no task, and creates no recurring schedule. Use egc.daily_brief to read it.",inputSchema:z.object({requestId:z.string().uuid(),dueBefore:z.string().datetime({offset:true}),timeZone:z.string().default("America/Denver")}),...write},async({requestId,...args})=>result(await callOperations({command:"brief.create",...args},requestId)));
-  if(options.includeAuthorityOverrides!==false)server.registerTool("egc.customer_history",{description:"Read a paginated customer timeline of messages, calls, visits, recordings, actions and notes with canonical sales evidence and durable user-confirmed outcomes. An exact contactId also reads all exactly linked Employee Hub records, including scope, original dates, quote, completion and verified payment evidence, bounded to 100 native records with explicit completeness and truncation. An exact portalJobId resolves its customer; explicit customer and job links must agree. Missing financial evidence or an unavailable native source remains unknown.",inputSchema:z.object({contactId:z.string().uuid().optional(),portalJobId:z.string().min(1).max(180).optional(),...page}).refine(value=>Boolean(value.contactId||value.portalJobId),{message:"An exact contactId or portalJobId is required"}),...read},async args=>{const history=await callOperations({command:"history",...args});return result({...history,...(args.contactId?{canonical:await getCustomerTimeline({contactId:args.contactId,refresh:true})}:{})});});
+  if(options.includeAuthorityOverrides!==false)server.registerTool("egc.customer_history",{description:"Read a paginated customer timeline of messages, calls, visits, recordings, actions and notes with canonical sales evidence and durable user-confirmed outcomes. An exact contactId also reads all exactly linked Employee Hub records, including scope, original dates, quote, completion and verified payment evidence, bounded to 100 native records with explicit completeness and truncation. An exact portalJobId resolves its customer; explicit customer and job links must agree. Missing financial evidence or an unavailable native source remains unknown. Canonical evidence is persisted, with last-reconciled freshness; this read never reconciles.",inputSchema:z.object({contactId:z.string().uuid().optional(),portalJobId:z.string().min(1).max(180).optional(),...page}).refine(value=>Boolean(value.contactId||value.portalJobId),{message:"An exact contactId or portalJobId is required"}),...read},async args=>{const history=await callOperations({command:"history",...args});return result({...history,...(args.contactId?{canonical:await getCustomerTimeline({contactId:args.contactId,refresh:false})}:{})});});
 }

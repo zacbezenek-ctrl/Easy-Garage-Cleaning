@@ -2,6 +2,7 @@ import {createHash} from "node:crypto";
 import {and,desc,eq,gte,inArray,isNull,or,sql} from "drizzle-orm";
 import {getDb,schema} from "@egc/database";
 import {recomputeLeadState} from "@egc/lead-audit";
+import {communicationBodyEvidence} from "./communication-body-evidence.js";
 /** Shared customer-message execution: one durable claim per logical request, provider
  * read-back before success, and no automatic resend of an unknown outcome. MCP sends and
  * Action Center sends use exactly this module; apps/mcp re-exports it unchanged.
@@ -10,11 +11,10 @@ type Db=ReturnType<typeof getDb>;
 export type CommunicationProvider={sendMessage:(payload:any)=>Promise<Record<string,unknown>>;getMessage:(id:string)=>Promise<Record<string,unknown>>;getEmailMessage?:(id:string)=>Promise<Record<string,unknown>>};
 // now: every persisted and compared instant (default: the process clock, as before).
 // source: the audit row source label (default "mcp", as before).
-export type CommunicationOptions={now?:()=>Date;source?:string};
+export type CommunicationOptions={now?:()=>Date;source?:string;beforeClaim?:(tx:Parameters<Parameters<Db["transaction"]>[0]>[0])=>Promise<unknown>};
 type Provider=CommunicationProvider;
 const text=(v:unknown)=>typeof v==="string"?v:null;
 const record=(v:unknown):Record<string,unknown>=>v&&typeof v==="object"&&!Array.isArray(v)?v as Record<string,unknown>:{};
-const bodyDigest=(body:string)=>createHash("sha256").update(body).digest("hex");
 /** The stored/sent payload and its hash. Attachments are exact URL strings in order and are
  * part of the hash; a payload without attachments keeps the key absent so its hash is the
  * same one computed before attachments existed (in-flight requests still replay).
@@ -27,7 +27,10 @@ export function normalizedCommunicationPayload(raw:Record<string,unknown>) {
 }
 async function readProviderMessage(provider:Provider,id:string,payload:Record<string,unknown>):Promise<Record<string,unknown>>{
   const response=await provider.getMessage(id),message=record(response.message??response);
-  if(payload.type==="SMS")return {...message,fromNumber:message.fromNumber??message.from,toNumber:message.toNumber??message.to};
+  if(payload.type==="SMS"){
+    if(message.fromNumber!=null&&message.from!=null&&message.fromNumber!==message.from)throw new Error("sms_sender_evidence_conflict");
+    return {...message,fromNumber:message.fromNumber??message.from,toNumber:message.toNumber??message.to};
+  }
   if(message.emailTo!==undefined)return message;
   const meta=record(record(message.meta).email),ids=meta.messageIds??record(meta.email).messageIds;
   if(!provider.getEmailMessage||!Array.isArray(ids)||ids.length!==1||typeof ids[0]!=="string")return message;
@@ -39,8 +42,12 @@ function channelMatches(message:Record<string,unknown>,expected:unknown) {
   const channel=String(message.messageType??message.type??"").toLowerCase();
   return expected==="SMS"?["sms","type_sms","2"].includes(channel):["email","type_email","3"].includes(channel);
 }
-function messageMatches(message:Record<string,unknown>,payload:Record<string,unknown>,id:string){
-  if(!channelMatches(message,payload.type)||message.id!==id||message.contactId!==payload.contactId||message.body!==payload.message||message.direction!=="outbound")return false;
+function messageMatches(message:Record<string,unknown>,payload:Record<string,unknown>,id:string,createdAt:Date){
+  const body=communicationBodyEvidence(payload.message,message.body,payload.type);
+  if(!channelMatches(message,payload.type)||message.id!==id||message.contactId!==payload.contactId||!body||message.direction!=="outbound")return false;
+  // Broader body proof is allowed only with an explicit exact recipient and the
+  // same bounded occurrence evidence required when recovering a missing ID.
+  if(body.version===2){const at=Date.parse(String(message.dateAdded??""));if(typeof payload.toNumber!=="string"||!payload.toNumber||message.toNumber!==payload.toNumber||!Number.isFinite(at)||at<createdAt.valueOf()-1000||at>createdAt.valueOf()+120000)return false;}
   // Explicit recipient/sender/subject constraints cannot be certified solely by
   // matching the contact and body. Missing provider evidence stays pending.
   return ["subject","emailFrom","emailTo","fromNumber","toNumber"].every(key=>payload[key]===null||payload[key]===undefined||message[key]===payload[key]);
@@ -61,6 +68,9 @@ export async function executeCommunication(input:{requestId:string;actorId:strin
     if(prior){if(prior.payloadHash!==hash||prior.contactId!==input.contactId)throw new Error("message_request_conflict");return {row:prior,created:false};}
     const [duplicate]=await tx.select().from(schema.communicationExecutions).where(and(eq(schema.communicationExecutions.contactId,input.contactId),eq(schema.communicationExecutions.payloadHash,hash),or(inArray(schema.communicationExecutions.status,["in_flight","unknown"]),gte(schema.communicationExecutions.createdAt,new Date(clock().valueOf()-(input.duplicateWindowMinutes??10)*60000))))).orderBy(desc(schema.communicationExecutions.createdAt)).limit(1);
     if(duplicate)return {row:duplicate,created:false};
+    // Lock/recheck the approved task in this same transaction as the execution claim.
+    // A task edit that wins this lock prevents a stale sender/body from being sent.
+    await options.beforeClaim?.(tx);
     // An injected clock also stamps the claim, so approval/claim ordering never mixes clocks.
     const [row]=await tx.insert(schema.communicationExecutions).values({requestId:input.requestId,actorId:input.actorId,contactId:input.contactId,channel:String(payload.type),payloadHash:hash,payload,...(options.now?{createdAt:clock(),updatedAt:clock()}:{})}).returning();
     if(!row)throw new Error("message_claim_failed");
@@ -87,10 +97,10 @@ export async function executeCommunication(input:{requestId:string;actorId:strin
   try {
     const message=await readProviderMessage(provider,messageId,payload);
     const status=text(message.status)?.toLowerCase()??"unknown";
-    if(!messageMatches(message,payload,messageId)||!failedStatuses.has(status)&&!acceptedStatuses.has(status))throw new Error("message_readback_mismatch");
+    if(!messageMatches(message,payload,messageId,claim.row.createdAt)||!failedStatuses.has(status)&&!acceptedStatuses.has(status))throw new Error("message_readback_mismatch");
     const failed=failedStatuses.has(status);
     const occurred=Date.parse(String(message.dateAdded??""));
-    const receipt={messageId,conversationId:text(message.conversationId),status,delivered:["delivered","read","opened","clicked"].includes(status),verifiedAt:clock().toISOString(),matchEvidence:{version:1,channel:payload.type==="SMS"?"sms":"email",recipient:text(payload.type==="SMS"?message.toNumber:message.emailTo),subject:text(message.subject)??"",bodyHash:bodyDigest(String(message.body)),occurredAt:Number.isFinite(occurred)?new Date(occurred).toISOString():null,payloadHash:hash}};
+    const receipt={messageId,conversationId:text(message.conversationId),status,delivered:["delivered","read","opened","clicked"].includes(status),verifiedAt:clock().toISOString(),matchEvidence:{...communicationBodyEvidence(payload.message,message.body,payload.type)!,channel:payload.type==="SMS"?"sms":"email",recipient:text(payload.type==="SMS"?message.toNumber:message.emailTo),...(payload.type==="SMS"?{fromNumber:text(message.fromNumber)}:{}),subject:text(message.subject)??"",occurredAt:Number.isFinite(occurred)?new Date(occurred).toISOString():null,payloadHash:hash}};
     const effective=await db.transaction(async tx=>{
       const [latest]=await tx.select().from(schema.communicationExecutions).where(eq(schema.communicationExecutions.id,claim.row.id)).for("update");
       if(!latest||latest.providerMessageId!==messageId)throw new Error("message_provider_id_conflict");
@@ -115,7 +125,7 @@ export async function reconcileCommunication(executionId:string,providerMessageI
     let message:Record<string,unknown>;
     try {message=await readProviderMessage(provider,providerMessageId,row.payload);}catch{return {ok:false,error:"provider_readback_unavailable"};}
     const at=Date.parse(String(message.dateAdded??""));
-    if(!messageMatches(message,row.payload,providerMessageId)||!Number.isFinite(at)||at<row.createdAt.valueOf()-1000||at>row.createdAt.valueOf()+120000)return {ok:false,error:"message_reconciliation_evidence_mismatch"};
+    if(!messageMatches(message,row.payload,providerMessageId,row.createdAt)||!Number.isFinite(at)||at<row.createdAt.valueOf()-1000||at>row.createdAt.valueOf()+120000)return {ok:false,error:"message_reconciliation_evidence_mismatch"};
     await db.transaction(async tx=>{
       const [locked]=await tx.select().from(schema.communicationExecutions).where(eq(schema.communicationExecutions.id,row.id)).for("update");
       if(!locked||locked.providerMessageId&&locked.providerMessageId!==providerMessageId)throw new Error("message_reconciliation_conflict");

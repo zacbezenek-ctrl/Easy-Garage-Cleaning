@@ -99,3 +99,14 @@ export function detectCanonicalConversions(lead: ConversionLead, events: readonl
     return {...candidate, canonicalEventId:event.eventId};
   });
 }
+
+/** Extraction failures on excluded identities are inventory, not customer blockers.
+ * These counts never relax sender eligibility or imply extraction alone permits sending. */
+export function sourceExtractionCoverage(candidates:readonly Pick<ConversionCandidate,'eventId'|'contactId'|'canonicalEventId'|'reasons'|'eventTime'>[],range:{from:Date;to:Date}) {
+  const held=candidates.filter(c=>c.reasons.includes('canonical_source_extraction_incomplete'));
+  const excluded=(c:typeof held[number])=>c.reasons.some(r=>['canonical_customer_excluded','canonical_do_not_contact','explicit_test_record','internal_or_vendor_record','do_not_contact'].includes(r));
+  const customer=held.filter(c=>!excluded(c)),nonCustomer=held.filter(excluded);
+  const inPeriod=(c:typeof held[number])=>Boolean(c.eventTime&&new Date(c.eventTime)>=range.from&&new Date(c.eventTime)<=range.to);
+  const row=(c:typeof held[number])=>({eventId:c.eventId,contactId:c.contactId,canonicalEventId:c.canonicalEventId});
+  return {sourceExtractionHeldEvents:customer.map(row),excludedSourceExtractionHeldEvents:nonCustomer.map(row),sourceExtractionHeldCounts:{scope:'all_discovery_inventory',total:held.length,customer:customer.length,excluded:nonCustomer.length,customerInRequestedPeriod:customer.filter(inPeriod).length,customerUnknownTime:customer.filter(c=>!c.eventTime).length,qualification:'Customer means not explicitly excluded/DNC; other event eligibility gates still apply.'}};
+}

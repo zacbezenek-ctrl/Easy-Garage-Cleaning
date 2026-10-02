@@ -21,3 +21,45 @@ describe("Hub-first booking reconciliation",()=>{
  it("bounded worker uses stable request identity and suppresses customer automations",async()=>{const syncVisit=vi.fn().mockResolvedValue({});const a=await reconcileBookingSnapshot(snapshot(),{syncVisit,dryRun:false});await reconcileBookingSnapshot(snapshot(),{syncVisit,dryRun:false});expect(a.results[0]?.status).toBe("reconciled");expect(syncVisit.mock.calls[0]).toEqual(syncVisit.mock.calls[1]);expect(syncVisit.mock.calls[0]?.[0]).toMatchObject({portalVisitId:"hub-visit",runAutomations:false});});
  it("worker defaults to dry run and redacts raw provider failures",async()=>{const syncVisit=vi.fn().mockRejectedValue(new Error("Bearer private-token"));expect((await reconcileBookingSnapshot(snapshot(),{syncVisit})).results[0]?.status).toBe("would_reconcile");expect(syncVisit).not.toHaveBeenCalled();const result=await reconcileBookingSnapshot(snapshot(),{syncVisit,dryRun:false});expect(result.results[0]).toMatchObject({status:"blocked",errorCode:"booking_reconciliation_unavailable"});expect(JSON.stringify(result)).not.toContain("private-token");});
 });
+
+describe('booking commitment review and cancellation safety',()=>{
+ const commitment=(changes:Record<string,unknown>={})=>({eventId:'agreed-text',contactId:'local-contact',contactProviderId:'contact',kind:'walkthrough' as const,startAt:null,evidence:'Friday at 4 works; 100 Synthetic Street',occurredAt:'2026-10-01T18:00:00Z',timeMention:'Friday at 4',sourceReferences:[{sourceType:'message',sourceRecordId:'text-one',excerpt:'Friday at 4 works'}],...changes});
+ it('never suppresses an undated agreement behind any old active visit or a null contact match',()=>{
+  for(const v of [visit(),visit({highlevelContactId:null})]){
+   const result=diagnoseBookingReconciliation({...snapshot([v]),verbalBookings:[commitment()]});
+   expect(result.findings).toContainEqual(expect.objectContaining({code:'verbal_booking_missing_hub_visit',automaticRepair:false,commitment:expect.objectContaining({startAt:null,timeMention:'Friday at 4',reviewReasons:['schedule_time_unresolved']})}));
+  }
+ });
+ it('surfaces review-needed commitments with exact source references without any scheduling write',async()=>{
+  const syncVisit=vi.fn(),result=await reconcileBookingSnapshot({...snapshot([],[]),verbalBookings:[commitment({humanReviewNeeded:true})]},{syncVisit,dryRun:false});
+  expect(result.findings[0]).toMatchObject({code:'booking_commitment_requires_review',automaticRepair:false,commitment:{humanReviewNeeded:true,sourceReferences:[{sourceType:'message',sourceRecordId:'text-one',excerpt:'Friday at 4 works'}]}});expect(syncVisit).not.toHaveBeenCalled();
+ });
+ it('keeps generic agreed times untyped and folds them into a same-source typed commitment',()=>{
+  const typed=commitment(),generic=commitment({eventId:'agreed-time',kind:null});
+  expect(diagnoseBookingReconciliation({...snapshot([],[]),verbalBookings:[generic]}).findings[0]).toMatchObject({code:'booking_commitment_requires_review',commitment:{kind:null}});
+  expect(diagnoseBookingReconciliation({...snapshot([],[]),verbalBookings:[generic,typed]}).findings).toHaveLength(1);
+ });
+ it('later cancellation makes an old commitment review-needed, without hiding an independent exact occurrence',()=>{
+  const result=diagnoseBookingReconciliation({...snapshot([],[]),verbalBookings:[commitment({occurrenceId:'visit-one'}),commitment({eventId:'independent',occurrenceId:'visit-two'})],commitmentOutcomes:[{contactId:'local-contact',occurrenceId:'visit-one',eventType:'appointment_cancelled',occurredAt:'2026-10-02T12:00:00Z'}]});
+  expect(result.findings[0]).toMatchObject({code:'booking_commitment_requires_review',commitment:{reviewReasons:expect.arrayContaining(['later_terminal_evidence_requires_review'])}});expect(result.findings[1]?.code).toBe('verbal_booking_missing_hub_visit');
+ });
+ it('does not automatically recreate an unlinked cancelled/no-show provider appointment',async()=>{
+  for(const status of ['cancelled','noshow']){
+   const syncVisit=vi.fn(),result=await reconcileBookingSnapshot(snapshot([visit()],[appointment({status})]),{syncVisit,dryRun:false});
+   expect(result.findings[0]).toMatchObject({code:'unlinked_terminal_provider_appointment',automaticRepair:false});expect(syncVisit).not.toHaveBeenCalled();
+  }
+ });
+ it('does not mirror unknown or draft Hub states as confirmed appointments',()=>{
+  for(const status of ['draft','unknown','invalid','deleted'])expect(diagnoseBookingReconciliation(snapshot([visit({status})])).findings[0]).toMatchObject({code:'hub_visit_status_unresolved',automaticRepair:false});
+ });
+ it('uses changed customer and calendar in durable request identity',async()=>{
+  const syncVisit=vi.fn();await reconcileBookingSnapshot(snapshot(),{syncVisit,dryRun:false});await reconcileBookingSnapshot(snapshot([visit({highlevelContactId:'corrected-contact',highlevelCalendarId:'job-calendar',sourceRevision:'revision-2'})]),{syncVisit,dryRun:false});expect(syncVisit.mock.calls[0]?.[0].requestId).not.toBe(syncVisit.mock.calls[1]?.[0].requestId);
+ });
+ it('does not interpret date-only, invalid calendar days, or timezone-less evidence as exact booking time',()=>{
+  for(const startAt of ['2026-10-02','2026-10-02T16:00:00','2026-02-30T16:00:00Z']){
+   const result=diagnoseBookingReconciliation({...snapshot([],[]),verbalBookings:[commitment({startAt})]});
+   expect(result.findings[0]?.commitment).toMatchObject({startAt:null,reviewReasons:['schedule_time_unresolved']});
+  }
+ });
+
+});

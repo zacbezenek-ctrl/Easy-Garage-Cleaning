@@ -1,5 +1,11 @@
 # HighLevel boundary
 
+> Website intake safety update: [WEB-LEAD-SAFETY.md](WEB-LEAD-SAFETY.md) supersedes
+> the older on-time opportunity-upsert guidance below. Existing deals are preserved
+> for on-time and delayed intake. Applicant/unknown identity is held from sales
+> routing. `WEB_LEAD_SAFE_TAGS_ENABLED` stays **off** until separately authorized
+> after a provider workflow and consent/DND audit.
+
 ## Owner rule
 
 > "don't fuck with GHL, all follow-ups and customer communication goes through high level, we just need tracking through high level" (owner, 2026-09-28)

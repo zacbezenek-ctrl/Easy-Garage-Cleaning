@@ -196,10 +196,10 @@ function leadProviders(t) {
     if (href.startsWith('https://hooks.example.test/lead')) { relays.push(JSON.parse(options.body)); return new Response('{}', { status: 200 }); }
     const url = new URL(href);
     assert.equal(url.hostname, 'services.leadconnectorhq.com', href);
-    if (url.pathname === '/contacts/upsert') return Response.json({ contact: { id: 'contact-web' }, new: true });
+    if (url.pathname === '/contacts/upsert') return Response.json({ contact: { id: 'contact-web', tags: [] }, new: true });
     if (url.pathname === '/contacts/contact-web/notes') { notes.push({ body: JSON.parse(options.body).body, key: options.headers?.['Idempotency-Key'] }); return Response.json({}); }
     if (url.pathname.startsWith('/opportunities/pipelines')) return Response.json({ pipelines: [{ id: 'pipe-1', stages: [{ id: 'stage-new' }] }] });
-    if (url.pathname === '/opportunities/upsert') return Response.json({ opportunity: { id: 'opp-web' } });
+    if (url.pathname === '/opportunities/') return Response.json({ opportunity: { id: 'opp-web' } });
     return Response.json({});
   });
   return { notes, relays };

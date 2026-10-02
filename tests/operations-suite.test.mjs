@@ -656,9 +656,10 @@ test('website leads go directly to HighLevel before the existing automation rela
   const calls=[],originalFetch=globalThis.fetch;
   globalThis.fetch=async(url,options={})=>{
     calls.push({url:String(url),options});
-    if(String(url).endsWith('/contacts/upsert'))return new Response(JSON.stringify({contact:{id:'contact-web'}}),{status:200});
+    if(String(url).endsWith('/contacts/upsert'))return new Response(JSON.stringify({contact:{id:'contact-web',tags:[]},new:true}),{status:200});
     if(String(url).includes('/opportunities/pipelines?'))return new Response(JSON.stringify({pipelines:[{id:'pipe-1',stages:[{id:'stage-new'}]}]}),{status:200});
-    if(String(url).endsWith('/opportunities/upsert'))return new Response(JSON.stringify({opportunity:{id:'opp-web'},new:true}),{status:200});
+    if(String(url).includes('/opportunities/search?'))return Response.json({opportunities:[],meta:{total:0}});
+    if(String(url).endsWith('/opportunities/'))return new Response(JSON.stringify({opportunity:{id:'opp-web'},new:true}),{status:200});
     return new Response('{}',{status:200});
   };
   try{
@@ -673,7 +674,7 @@ test('website leads go directly to HighLevel before the existing automation rela
     const detailNote=calls.find(call=>call.url.endsWith('/contacts/contact-web/notes'));
     assert.ok(detailNote,'website lead details were not written to HighLevel');
     for(const value of ['Garage Cleanout','Medium garage','Boxes and furniture','Full two-car garage','Fort Collins 80525','Tomorrow AM','$400–$650','SMS consent checked: yes','facebook · paid-social · fall-garages'])assert.match(JSON.parse(detailNote.options.body).body,new RegExp(value.replace(/[.*+?^${}()|[\]\\]/g,'\\$&')));
-    assert.equal(calls.filter(call=>call.url.endsWith('/opportunities/upsert')).length,1);
+    assert.equal(calls.filter(call=>call.url.endsWith('/opportunities/')).length,1);
     const consentTags=calls.find(call=>call.url.endsWith('/contacts/contact-web/tags'));
     assert.deepEqual(JSON.parse(consentTags.options.body).tags,['egc-website-lead','egc-sms-consent']);
     assert.equal(calls.filter(call=>call.url.startsWith('https://hooks.example.test/lead')).length,1);
@@ -683,7 +684,7 @@ test('website leads go directly to HighLevel before the existing automation rela
 test('website leads enter HighLevel but never trigger the text relay without explicit SMS consent',async()=>{
   const {onRequestPost}=await import('../functions/api/web-lead.js');
   const calls=[],originalFetch=globalThis.fetch;
-  globalThis.fetch=async(url,options={})=>{calls.push({url:String(url),options});if(String(url).endsWith('/contacts/upsert'))return new Response(JSON.stringify({contact:{id:'contact-no-consent'}}),{status:200});return new Response('{}',{status:200})};
+  globalThis.fetch=async(url,options={})=>{calls.push({url:String(url),options});if(String(url).endsWith('/contacts/upsert'))return new Response(JSON.stringify({contact:{id:'contact-no-consent',tags:[]},new:true}),{status:200});return new Response('{}',{status:200})};
   try{
     const request=new Request('https://easygaragecleaning.com/api/web-lead',{method:'POST',headers:{Origin:'https://easygaragecleaning.com','Content-Type':'application/json'},body:JSON.stringify({name:'Call Only',phone:'9705550198',items:'Garage cleanout',source:'Website'})});
     const response=await onRequestPost({request,env:{HIGHLEVEL_API_KEY:'test-key',HIGHLEVEL_LOCATION_ID:'location-1',WEBSITE_LEAD_HOOK_URL:'https://hooks.example.test/lead'}}),result=await response.json();
@@ -742,7 +743,7 @@ test('client hub help becomes a HighLevel conversation comment without creating 
   const calls=[],originalFetch=globalThis.fetch;
   globalThis.fetch=async(url,options={})=>{
     calls.push({url:String(url),options});
-    if(String(url).endsWith('/contacts/upsert'))return new Response(JSON.stringify({contact:{id:'contact-hub-help'}}),{status:200});
+    if(String(url).endsWith('/contacts/upsert'))return new Response(JSON.stringify({contact:{id:'contact-hub-help',tags:[]},new:false}),{status:200});
     if(String(url).endsWith('/conversations/messages'))return new Response(JSON.stringify({messageId:'message-help'}),{status:200});
     return new Response('{}',{status:200});
   };
@@ -759,7 +760,7 @@ test('client hub help becomes a HighLevel conversation comment without creating 
     assert.match(JSON.parse(note.options.body).body,/Message: Please send me a fresh project link\./);
     const comment=calls.find(call=>call.url.endsWith('/conversations/messages'));
     assert.deepEqual(JSON.parse(comment.options.body),{type:'InternalComment',contactId:'contact-hub-help',message:'Client hub help request from Dana Customer: Please send me a fresh project link.\nPhone: 9705550142\nEmail: dana@example.com',userId:'user-1'});
-    assert.equal(calls.some(call=>call.url.endsWith('/opportunities/upsert')),false);
+    assert.equal(calls.some(call=>call.url.endsWith('/opportunities/')),false);
     assert.equal(calls.some(call=>call.url.includes('/opportunities/pipelines?')),false);
   }finally{globalThis.fetch=originalFetch}
 });

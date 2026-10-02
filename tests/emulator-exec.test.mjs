@@ -82,6 +82,20 @@ test('two concurrent runs get separate emulators, run in the caller cwd and clea
  assert.notEqual(runs[0].config,runs[1].config);assert.deepEqual(leftovers(root),[]);
 });
 
+test('independent module instances with the same PID cannot collide on config or logs',async t=>{
+ const {root,env}=workspace(t);
+ const instances=await Promise.all(['namespace-a','namespace-b'].map(key=>import(`../scripts/emulator-exec.mjs?${key}`)));
+ const runs=await Promise.all(instances.map((module,index)=>module.runEmulatorExec({...quiet,root,env,cwd:root,keepLogs:true,project:`demo-egc-isolated-${index}`,script:`node probe.mjs isolated-${index}.json 200`})));
+ assert.deepEqual(runs.map(run=>run.code),[0,0]);
+ assert.notEqual(runs[0].config,runs[1].config);assert.notEqual(runs[0].logDir,runs[1].logDir);
+ for(const [index,run] of runs.entries()){
+  const seen=JSON.parse(readFileSync(join(root,`isolated-${index}.json`),'utf8'));
+  assert.equal(seen.project,`demo-egc-isolated-${index}`);assert.equal(seen.host,`127.0.0.1:${run.ports.firestore}`);
+  assert.equal(readFileSync(join(run.logDir,'firestore-debug.log'),'utf8'),'synthetic emulator log for '+run.ports.firestore);
+ }
+ assert.deepEqual(leftovers(root),[]);
+});
+
 test('a failing command keeps its exit code and emulator log but still removes the private config',async t=>{
  const {root,env}=workspace(t);
  const run=await runEmulatorExec({...quiet,root,env,cwd:root,script:'node probe.mjs out.json 0 3'});

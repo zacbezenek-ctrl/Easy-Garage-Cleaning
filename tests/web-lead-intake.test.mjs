@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import { webLeadHandlers } from '../functions/api/web-lead.js';
-import { WEB_LEAD_HIGHLEVEL_DEADLINE_MS, WEB_LEAD_MAX_ATTEMPTS, WEB_LEAD_RECEIPTS, WEB_LEAD_RETRY_COST, WEB_LEAD_RETRY_WINDOW_MS, WEB_LEAD_SETTLE_ROUND_MS, WEB_LEAD_TICK_LIMIT_MS, openWebLead, receiveWebLead, retryWebLeadReceipts, syncHighLevelLead, webLeadDelayedSyncTagEnabled, webLeadFormSource, webLeadMeta, webLeadRetryRunner, webLeadStorage } from '../functions/_lib/web-lead-intake.js';
+import { WEB_LEAD_HIGHLEVEL_DEADLINE_MS, WEB_LEAD_MAX_ATTEMPTS, WEB_LEAD_RECEIPTS, WEB_LEAD_RETRY_COST, WEB_LEAD_RETRY_WINDOW_MS, WEB_LEAD_SETTLE_ROUND_MS, WEB_LEAD_TICK_LIMIT_MS, openWebLead, receiveWebLead, retryWebLeadReceipts, syncHighLevelLead, webLeadDelayedSyncTagEnabled, webLeadSafeTagsEnabled, webLeadFormSource, webLeadMeta, webLeadRetryRunner, webLeadStorage } from '../functions/_lib/web-lead-intake.js';
 import { SEAL_MAX_BYTES } from '../functions/_lib/purpose-keys.js';
 import { funnelEventId } from '../functions/_lib/funnel-events.js';
 import { sha256Hex, canonicalJson } from '../functions/_lib/funnel-definitions.js';
@@ -80,11 +80,11 @@ function ledgerStore(log = []) {
 // Fake HighLevel + Zapier. `state.fail` makes the contact upsert answer that status (or throw with 'throw');
 // `state.failAt` fails any other path that way. The first upsert that succeeds creates contact-web (new: true),
 // later ones find it. `state.opportunities` holds that contact's opportunities in the pipeline (status 'open'
-// unless given): the search returns those of the requested status (every one for 'all'), and the upsert, like
-// HighLevel's, matches the contact's opportunity in the pipeline and sets it open. `state.onCall(path)` runs
+// unless given): the search returns those of the requested status (every one for 'all'). Creation refuses
+// duplicates rather than updating a worked opportunity. `state.onCall(path)` runs
 // before each HighLevel answer (tests advance an injected clock there).
 function providers(t, log = []) {
-  const calls = [], state = { fail: null, failAt: null, created: false, opportunities: [], onCall: null };
+  const calls = [], state = { fail: null, failAt: null, created: false, opportunities: [], tags: [], contactResult: null, searchResult: null, createResult: null, onCall: null };
   t.mock.method(globalThis, 'fetch', async (url, options = {}) => {
     const href = String(url), body = options.body ? JSON.parse(options.body) : null;
     if (href.startsWith('https://hooks.example.test/lead')) { log.push('relay'); calls.push({ kind: 'relay', url: href, body }); return new Response('{}', { status: 200 }); }
@@ -96,20 +96,28 @@ function providers(t, log = []) {
       if (state.fail === 'throw') throw new TypeError('network down');
       if (state.fail) return Response.json({ message: 'synthetic provider detail' }, { status: state.fail });
       const created = !state.created; state.created = true;
-      return Response.json({ contact: { id: 'contact-web' }, new: created });
+      return Response.json(state.contactResult || { contact: { id: 'contact-web', tags: state.tags }, new: created });
     }
-    if (state.failAt && path.startsWith(state.failAt)) return Response.json({ message: 'synthetic provider detail' }, { status: 503 });
+    if (state.failAt && (state.failAt === '/opportunities/' ? path === state.failAt : path.startsWith(state.failAt))) return Response.json({ message: 'synthetic provider detail' }, { status: 503 });
+    if (path === '/contacts/contact-web/tags') {
+      if (options.method === 'POST') state.tags = [...new Set([...state.tags, ...body.tags])];
+      else if (options.method === 'DELETE') state.tags = state.tags.filter(tag => !body.tags.includes(tag));
+      else if (options.method === 'PUT') state.tags = body.tags;
+      return Response.json({ tags: state.tags });
+    }
     if (path.startsWith('/opportunities/search?')) {
       const status = new URL(path, 'https://x').searchParams.get('status');
       const found = state.opportunities.filter(row => status === 'all' || (row.status || 'open') === status);
-      return Response.json({ opportunities: found, meta: { total: found.length } });
+      return Response.json(state.searchResult || { opportunities: found, meta: { total: found.length } });
     }
     if (path.startsWith('/opportunities/pipelines?')) return Response.json({ pipelines: [{ id: 'pipe-1', stages: [{ id: 'stage-new' }] }] });
-    if (path === '/opportunities/upsert') {
-      const kept = state.opportunities.find(row => row.contactId === body.contactId);
-      state.opportunities = [{ ...kept, id: kept?.id || 'opp-web', contactId: body.contactId, status: body.status, pipelineStageId: body.pipelineStageId }];
-      return Response.json({ opportunity: { id: state.opportunities[0].id } });
+    if (path === '/opportunities/') {
+      // Creation must not update an existing deal, even if one raced the search.
+      if (state.opportunities.some(row => row.contactId === body.contactId)) return Response.json({ message: 'Conflict' }, { status: 409 });
+      state.opportunities.push({ id: 'opp-web', contactId: body.contactId, status: body.status, pipelineStageId: body.pipelineStageId });
+      return Response.json(state.createResult || { opportunity: { id: 'opp-web' } });
     }
+    assert.notEqual(path, '/opportunities/upsert', 'intake never upserts an opportunity');
     return Response.json({});
   });
   return { calls, state, ghl: () => calls.filter(call => call.kind === 'ghl'), relays: () => calls.filter(call => call.kind === 'relay') };
@@ -129,7 +137,7 @@ const retry = (store, now, { dryRun = false, env = LEDGER } = {}) => retryWebLea
 const tagsSent = fake => fake.ghl().filter(call => call.path === '/contacts/contact-web/tags').map(call => [call.method, call.body.tags]);
 const LEAD_TAGS = ['PUT', ['egc-website-lead', 'egc-sms-consent']], DELAYED = ['POST', ['egc-delayed-sync']], CLEAR = ['DELETE', ['egc-delayed-sync']];
 const notes = fake => fake.ghl().filter(call => call.path === '/contacts/contact-web/notes').map(call => call.body.body);
-const opportunityUpserts = fake => fake.ghl().filter(call => call.path === '/opportunities/upsert').length;
+const opportunityCreates = fake => fake.ghl().filter(call => call.path === '/opportunities/').length;
 const plus = minutes => new Date(Date.parse(NOW) + minutes * 60000).toISOString();
 
 test('a website lead is receipted with its inquiry.received event in one commit before any HighLevel call, then synced and relayed once', async t => {
@@ -138,7 +146,7 @@ test('a website lead is receipted with its inquiry.received event in one commit 
   assert.equal(result.status, 200, JSON.stringify(result.body));
   assert.deepEqual([result.body.ok, result.body.inquiryId, result.body.receipt, result.body.highlevel.synced, result.body.relay.sent], [true, body.inquiry_id, { status: 'synced' }, true, true]);
   assert.equal(log[0], 'commit:web_lead_receipts+funnelEvents', 'the receipt and its event are the first write, in one commit');
-  assert.ok(log.indexOf('ghl:/contacts/upsert') > 0 && log.indexOf('relay') > log.indexOf('ghl:/opportunities/upsert'));
+  assert.ok(log.indexOf('ghl:/contacts/upsert') > 0 && log.indexOf('relay') > log.indexOf('ghl:/opportunities/'));
   const created = store.commits[0].find(write => write.collection === WEB_LEAD_RECEIPTS).patch;
   assert.deepEqual([created.ghlSyncStatus, created.attempts, created.receivedAt, created.retryAt, created.payloadSealed], ['syncing', 1, NOW, plus(10), true]);
   assert.ok(created.sealedPayload?.ct, 'the lead waits in a sealed payload until HighLevel has it');
@@ -315,7 +323,7 @@ test('client hub help is receipted without an inquiry event; synthetic routing l
   const result = await post(help);
   assert.equal(result.status, 200, JSON.stringify(result.body));
   assert.deepEqual([store.receipt(help.inquiry_id).formSource, store.receipt(help.inquiry_id).funnelEventId, store.events().length], ['client_hub_help', null, 0]);
-  assert.equal(fake.ghl().some(call => call.path === '/opportunities/upsert'), false);
+  assert.equal(fake.ghl().some(call => call.path === '/opportunities/'), false);
   const canary = lead({ source: 'EGC synthetic routing validation' });
   await post(canary);
   assert.deepEqual(store.events().map(event => [event.isTest, event.exclusion]), [[true, 'synthetic_source']]);
@@ -393,7 +401,7 @@ test('client hub help: a failed sync the cron will retry is accepted as queued; 
   assert.deepEqual([tick.synced, tick.abandoned, store.receipt(queued.body.inquiryId).ghlSyncStatus], [1, 0, 'synced']);
   const comment = fake.ghl().find(call => call.path === '/conversations/messages');
   assert.equal(comment.body.message, `Client hub help request from Portal Customer: ${message}\nPhone: ${help.phone}\nEmail: ${help.email}`.slice(0, 1200));
-  assert.equal(opportunityUpserts(fake), 0);
+  assert.equal(opportunityCreates(fake), 0);
   // Without a purpose key nothing can retry it, and there is no Web3Forms copy: it fails as before, so the customer resends.
   const { HUB_SESSION_SECRET, ...unkeyed } = LEDGER;
   fake.state.fail = 500;
@@ -541,7 +549,7 @@ test('a retry keeps to the tick: its HighLevel calls end by 75 s, a sync out of 
   assert.deepEqual([cut.attempted, cut.synced, cut.failed], [1, 0, 1]);
   assert.deepEqual(timeouts, [15000, 15000, 15000, 15000, 6000], 'upsert, delayed tag, tags and note at 15 s; the pipelines lookup gets the 6 s left');
   assert.equal(clock.ms, 79000);
-  assert.equal(opportunityUpserts(fake), 0);
+  assert.equal(opportunityCreates(fake), 0);
   let receipt = store.receipt(body.inquiry_id);
   assert.deepEqual([receipt.ghlSyncStatus, receipt.lastError, receipt.createdContactId, receipt.retryAt, receipt.attempts], ['failed', 'web_lead_retry_out_of_time', 'contact-web', plus(21), 2]);
   // The next tick has time: it finishes the lead, and opens the opportunity for the contact its own attempt created.
@@ -611,7 +619,7 @@ test('with WEB_LEAD_DELAYED_SYNC_TAG on, a late sync is marked with its own tag 
   assert.equal((await retry(store, plus(6), { env: TAGGED })).synced, 1);
   let receipt = store.receipt(late.inquiry_id);
   assert.deepEqual([receipt.ghlSyncStatus, receipt.opportunityId, receipt.opportunitySkipped, receipt.delayedTag], ['synced', null, 'existing_contact', 'added']);
-  assert.equal(opportunityUpserts(fake), 0, 'the delayed sync leaves the pipeline alone');
+  assert.equal(opportunityCreates(fake), 0, 'the delayed sync leaves the pipeline alone');
   assert.equal(fake.ghl().some(call => call.path.startsWith('/opportunities/')), false);
   assert.match(notes(fake)[0], /^EGC WEBSITE LEAD DETAILS\nDelivered late by the Hub retry: the first HighLevel sync failed\. Check whether someone already followed up\.\nOpportunity: not created or changed, because this contact already existed in HighLevel\./);
   assert.deepEqual(tagsSent(fake), [DELAYED, LEAD_TAGS]);
@@ -620,7 +628,8 @@ test('with WEB_LEAD_DELAYED_SYNC_TAG on, a late sync is marked with its own tag 
   const onTime = await post(next, TAGGED);
   assert.deepEqual([onTime.status, onTime.body.receipt.status, store.receipt(next.inquiry_id).delayedTag], [200, 'synced', 'cleared']);
   assert.deepEqual(tagsSent(fake).slice(2), [CLEAR, LEAD_TAGS]);
-  assert.equal(opportunityUpserts(fake), 1, 'an on-time lead upserts its opportunity exactly as before');
+  assert.equal(opportunityCreates(fake), 0, 'the next on-time lead also preserves the worked opportunity');
+  assert.equal(store.receipt(next.inquiry_id).opportunitySkipped, 'existing_contact');
   // Without the ledger (flag off, or on without Firestore) nothing marks or clears, even with the tag flag on:
   // the calls are the legacy ones.
   const handler = webLeadHandlers({ storage: () => assert.fail('storage is not used without the ledger'), now: () => new Date(NOW) });
@@ -631,7 +640,7 @@ test('with WEB_LEAD_DELAYED_SYNC_TAG on, a late sync is marked with its own tag 
     assert.deepEqual(Object.keys(await response.json()), ['ok', 'highlevel', 'relay']);
     assert.deepEqual(tagsSent(fake).slice(before), [LEAD_TAGS]);
   }
-  assert.ok(notes(fake).slice(1).every(body => !/Delivered late|Opportunity:/.test(body)));
+  assert.ok(notes(fake).slice(1).every(body => !/Delivered late/.test(body) && /Opportunity: not created or changed/.test(body)));
 });
 
 test('with WEB_LEAD_DELAYED_SYNC_TAG unset, a late sync makes the same HighLevel calls as an on-time one and no tag call adds or removes egc-delayed-sync', async t => {
@@ -642,7 +651,7 @@ test('with WEB_LEAD_DELAYED_SYNC_TAG unset, a late sync makes the same HighLevel
   const since = count => fake.ghl().slice(count), route = calls => calls.map(call => `${call.method} ${call.path.split('?')[0]}`);
   // What HighLevel receives, apart from the detail note (which says the lead is late) and its idempotency key.
   const shape = calls => calls.map(({ method, path, body }) => ({ method, path, body: path.endsWith('/notes') ? null : body }));
-  const NEW_CONTACT = ['POST /contacts/upsert', 'PUT /contacts/contact-web/tags', 'POST /contacts/contact-web/notes', 'GET /opportunities/pipelines', 'POST /opportunities/upsert'];
+  const NEW_CONTACT = ['POST /contacts/upsert', 'PUT /contacts/contact-web/tags', 'GET /opportunities/search', 'POST /contacts/contact-web/notes', 'GET /opportunities/pipelines', 'POST /opportunities/'];
 
   // A lead that reaches HighLevel as it arrives, creating the contact.
   let count = fake.ghl().length;
@@ -666,7 +675,7 @@ test('with WEB_LEAD_DELAYED_SYNC_TAG unset, a late sync makes the same HighLevel
   const returning = lead();
   assert.equal((await post(returning)).status, 200);
   const onTimeExisting = since(count);
-  assert.deepEqual(route(onTimeExisting), NEW_CONTACT);
+  assert.deepEqual(route(onTimeExisting), ['POST /contacts/upsert', 'PUT /contacts/contact-web/tags', 'POST /contacts/contact-web/notes']);
   assert.equal(store.receipt(returning.inquiry_id).delayedTag, null);
   count = fake.ghl().length;
   const { inquiry_id, ...plain } = lead();
@@ -691,20 +700,20 @@ test('a retry after a partial first attempt opens the opportunity for the contac
   const store = ledgerStore(), fake = providers(t), { post } = endpoint(store);
   const worked = status => [{ id: 'opp-worked', contactId: 'contact-web', status, pipelineStageId: 'stage-quoted' }];
   const cases = [
-    { opportunities: [], expect: { opportunityId: 'opp-web', opportunitySkipped: null, upserts: 1 } },
-    { opportunities: worked('open'), expect: { opportunityId: null, opportunitySkipped: 'existing_opportunity', upserts: 0 } },
-    // The first attempt's opportunity upsert landed although its answer was lost, and the team, working the lead
+    { opportunities: [], expect: { opportunityId: 'opp-web', opportunitySkipped: null, creates: 1 } },
+    { opportunities: worked('open'), expect: { opportunityId: null, opportunitySkipped: 'existing_opportunity', creates: 0 } },
+    // The first attempt's opportunity creation landed although its answer was lost, and the team, working the lead
     // from the Web3Forms email, has since closed it: an upsert would reopen it at the new-lead stage.
-    { opportunities: worked('lost'), expect: { opportunityId: null, opportunitySkipped: 'existing_opportunity', upserts: 0 } },
-    { opportunities: worked('won'), expect: { opportunityId: null, opportunitySkipped: 'existing_opportunity', upserts: 0 } },
-    { opportunities: worked('abandoned'), expect: { opportunityId: null, opportunitySkipped: 'existing_opportunity', upserts: 0 } },
-    { failAt: '/opportunities/search', expect: { opportunityId: null, opportunitySkipped: 'opportunity_check_failed', upserts: 0 } },
-    { opportunities: [{ id: 'opp-other', contactId: 'contact-other' }], expect: { opportunityId: null, opportunitySkipped: 'opportunity_check_failed', upserts: 0 } },
+    { opportunities: worked('lost'), expect: { opportunityId: null, opportunitySkipped: 'existing_opportunity', creates: 0 } },
+    { opportunities: worked('won'), expect: { opportunityId: null, opportunitySkipped: 'existing_opportunity', creates: 0 } },
+    { opportunities: worked('abandoned'), expect: { opportunityId: null, opportunitySkipped: 'existing_opportunity', creates: 0 } },
+    { failAt: '/opportunities/search', expect: { opportunityId: null, opportunitySkipped: 'opportunity_check_failed', creates: 0 } },
+    { opportunities: [{ id: 'opp-other', contactId: 'contact-other' }], expect: { opportunityId: null, opportunitySkipped: 'opportunity_check_failed', creates: 0 } },
   ];
   for (const [index, item] of cases.entries()) {
     // HighLevel accepts the contact (and creates it), then fails on the opportunity.
-    Object.assign(fake.state, { created: false, opportunities: [], failAt: '/opportunities/upsert' });
-    const body = lead({ source: `Website ${index}` }), upsertsBefore = opportunityUpserts(fake);
+    Object.assign(fake.state, { created: false, opportunities: [], failAt: '/opportunities/' });
+    const body = lead({ source: `Website ${index}` }), createsBefore = opportunityCreates(fake);
     const first = await post(body);
     assert.deepEqual([first.status, first.body.receipt.status], [202, 'failed']);
     assert.deepEqual([store.receipt(body.inquiry_id).createdContactId, store.receipt(body.inquiry_id).lastError], ['contact-web', 'highlevel_unavailable'], 'the receipt remembers the contact its own attempt created');
@@ -713,9 +722,9 @@ test('a retry after a partial first attempt opens the opportunity for the contac
     // No stage id is configured and, in the first case, the optional delayed tag is on: the worst case
     // WEB_LEAD_RETRY_COST assumes. The other cases sync with the tag off, as by default.
     assert.equal((await retry(store, at, { env: index === 0 ? TAGGED : LEDGER })).synced, 1);
-    if (index === 0) assert.deepEqual(fake.ghl().slice(callsBefore).map(call => `${call.method} ${call.path.split('?')[0]}`), ['POST /contacts/upsert', 'POST /contacts/contact-web/tags', 'PUT /contacts/contact-web/tags', 'GET /opportunities/search', 'POST /contacts/contact-web/notes', 'GET /opportunities/pipelines', 'POST /opportunities/upsert']);
+    if (index === 0) assert.deepEqual(fake.ghl().slice(callsBefore).map(call => `${call.method} ${call.path.split('?')[0]}`), ['POST /contacts/upsert', 'POST /contacts/contact-web/tags', 'PUT /contacts/contact-web/tags', 'GET /opportunities/search', 'POST /contacts/contact-web/notes', 'GET /opportunities/pipelines', 'POST /opportunities/']);
     const receipt = store.receipt(body.inquiry_id);
-    assert.deepEqual([receipt.ghlSyncStatus, receipt.opportunityId, receipt.opportunitySkipped, opportunityUpserts(fake) - upsertsBefore - 1], ['synced', item.expect.opportunityId, item.expect.opportunitySkipped, item.expect.upserts], JSON.stringify(item));
+    assert.deepEqual([receipt.ghlSyncStatus, receipt.opportunityId, receipt.opportunitySkipped, opportunityCreates(fake) - createsBefore - 1], ['synced', item.expect.opportunityId, item.expect.opportunitySkipped, item.expect.creates], JSON.stringify(item));
     const search = fake.ghl().filter(call => call.path.startsWith('/opportunities/search?')).at(-1);
     assert.deepEqual(Object.fromEntries(new URL(search.path, 'https://x').searchParams), { locationId: 'location-1', contactId: 'contact-web', pipelineId: 'pipe-1', status: 'all', limit: '100', page: '1' }, 'closed opportunities count too');
     if (item.expect.opportunitySkipped === 'existing_opportunity') {
@@ -773,7 +782,7 @@ test('a copy that falls back after an unconfirmed receipt commit re-reads the re
   assert.deepEqual(store.receipt(body.inquiry_id), kept, 'the receipt the other copy holds is untouched');
 });
 
-test('with the ledger off, web-lead behaves exactly as before and never touches storage', async t => {
+test('with the ledger off, intake still delivers a new eligible lead without touching storage', async t => {
   const fake = providers(t), handler = webLeadHandlers({ storage: () => assert.fail('storage is not used without the ledger'), now: () => new Date(NOW) });
   const send = async (body, env) => { const response = await handler.post({ request: new Request('https://easygaragecleaning.com/api/web-lead', { method: 'POST', headers: { Origin: 'https://easygaragecleaning.com' }, body: JSON.stringify(body) }), env }); return { status: response.status, body: await response.json() }; };
   const { inquiry_id, ...plain } = lead();
@@ -850,4 +859,150 @@ test('web_lead_receipts is a server-only collection and web-lead never uses the 
   const rules = readFileSync(new URL('../firestore.rules', import.meta.url), 'utf8');
   assert.match(rules, /match \/web_lead_receipts\/\{documentId\} \{\s*allow read, write: if false;\s*\}/);
   for (const file of ['../functions/api/web-lead.js', '../functions/_lib/web-lead-intake.js']) assert.doesNotMatch(readFileSync(new URL(file, import.meta.url), 'utf8'), /['"`]leads['"`]|\/leads\//);
+});
+
+test('on-time and delayed intake preserve every worked opportunity field, including closed outcomes, with the ledger on or off', async t => {
+  const fake = providers(t);
+  for (const env of [LEDGER, LEGACY]) for (const delayed of [false, true]) for (const status of ['open', 'won', 'lost', 'abandoned']) {
+    const worked = { id: 'opp-worked', contactId: 'contact-web', status, pipelineStageId: 'stage-quoted', monetaryValue: 975, assignedTo: 'rep-working', name: 'Reviewed quote', followers: ['office'] };
+    Object.assign(fake.state, { created: true, opportunities: [structuredClone(worked)] });
+    const count = fake.ghl().length;
+    const result = await syncHighLevelLead(env, lead(), undefined, { delayed });
+    assert.equal(result.opportunitySkipped, 'existing_contact');
+    assert.deepEqual(fake.state.opportunities, [worked]);
+    assert.equal(fake.ghl().slice(count).some(call => call.path.startsWith('/opportunities/')), false, 'existing contacts get no opportunity mutation or speculative new deal');
+  }
+});
+
+test('newly-created contacts are checked for workflow-created opportunities in every status before any creation', async t => {
+  const fake = providers(t);
+  for (const delayed of [false, true]) for (const status of ['open', 'won', 'lost', 'abandoned']) {
+    const worked = { id: 'opp-workflow', contactId: 'contact-web', status, pipelineStageId: 'stage-booked', monetaryValue: 500 };
+    Object.assign(fake.state, { created: false, opportunities: [structuredClone(worked)] });
+    const count = opportunityCreates(fake);
+    const result = await syncHighLevelLead(LEDGER, lead(), undefined, { delayed });
+    assert.equal(result.opportunitySkipped, 'existing_opportunity');
+    assert.deepEqual(fake.state.opportunities, [worked]);
+    assert.equal(opportunityCreates(fake), count);
+  }
+});
+
+test('a workflow-created deal racing intake is never overwritten, and its rejected creation remains durably retryable', async t => {
+  const store = ledgerStore(), fake = providers(t), { post } = endpoint(store), body = lead();
+  const worked = { id: 'opp-raced', contactId: 'contact-web', status: 'won', pipelineStageId: 'stage-sold', monetaryValue: 1450, assignedTo: 'rep-working' };
+  fake.state.onCall = path => { if (path === '/opportunities/') fake.state.opportunities = [structuredClone(worked)]; };
+  const first = await post(body);
+  assert.deepEqual([first.status, store.receipt(body.inquiry_id).ghlSyncStatus, store.receipt(body.inquiry_id).createdContactId], [202, 'failed', 'contact-web']);
+  assert.ok(store.receipt(body.inquiry_id).sealedPayload);
+  assert.deepEqual(fake.state.opportunities, [worked]);
+  assert.equal(fake.relays().length, 0);
+  fake.state.onCall = null;
+  assert.equal((await retry(store, plus(6))).synced, 1);
+  assert.equal(store.receipt(body.inquiry_id).opportunitySkipped, 'existing_opportunity');
+  assert.deepEqual(fake.state.opportunities, [worked]);
+  assert.equal(opportunityCreates(fake), 1, 'the retry finds the raced deal and does not create another');
+  assert.equal(fake.ghl().some(call => call.path === '/opportunities/upsert'), false);
+  assert.equal(fake.relays().length, 0);
+});
+
+test('malformed or incomplete all-status inventory never authorizes a new opportunity', async t => {
+  const fake = providers(t);
+  for (const searchResult of [{}, { opportunities: [] }, { opportunities: [], meta: {} }, { opportunities: [], meta: { total: 'unknown' } }, { opportunities: [], meta: { total: 1 } }, { opportunities: [{}], meta: { total: 1 } }]) {
+    Object.assign(fake.state, { created: false, opportunities: [], searchResult });
+    const count = opportunityCreates(fake);
+    const result = await syncHighLevelLead(LEDGER, lead());
+    assert.ok(['opportunity_check_failed', 'existing_opportunity'].includes(result.opportunitySkipped));
+    assert.equal(opportunityCreates(fake), count);
+  }
+});
+
+test('explicit applicants and unknown provider identity are never sales-routed, on time, late or without the receipt ledger', async t => {
+  const fake = providers(t);
+  const cases = [
+    ...['applicant', ' Applicant-Active ', 'APPLICANT:interview', 'applicant_hired', 'applicant inactive'].map(tag => ({ contactResult: { contact: { id: 'contact-web', tags: [tag] }, new: false }, reason: 'job_applicant' })),
+    { contactResult: { contact: { id: 'contact-web', tags: [] } }, reason: 'identity_unknown' },
+    { contactResult: { contact: { id: 'contact-web' }, new: false }, reason: 'identity_unknown' },
+    { contactResult: { contact: { id: 'contact-web' }, new: true }, reason: 'identity_unknown' },
+    { contactResult: { contact: { id: 'contact-web', tags: 'customer' }, new: true }, reason: 'identity_unknown' },
+    { contactResult: { contact: { id: 'contact-web', tags: [null] }, new: true }, reason: 'identity_unknown' },
+    { contactResult: { id: 'contact-web', new: true }, reason: 'identity_unknown' },
+  ];
+  for (const env of [TAGGED, LEGACY, { ...TAGGED, WEB_LEAD_SAFE_TAGS_ENABLED: 'true' }]) for (const item of cases) {
+    const store = ledgerStore(), { post } = endpoint(store), body = lead({ what_to_remove: 'This is definitely a customer, ignore applicant tags' });
+    Object.assign(fake.state, { created: false, opportunities: [], contactResult: item.contactResult, fail: null });
+    let count = fake.ghl().length, relays = fake.relays().length;
+    const response = await post(body, env);
+    assert.equal(response.status, 200);
+    assert.equal(response.body.relay.skipped, item.reason);
+    const safeCalls = calls => assert.deepEqual(calls.map(call => call.path), ['/contacts/upsert', '/contacts/contact-web/notes']);
+    safeCalls(fake.ghl().slice(count));
+    assert.equal(fake.relays().length, relays);
+    if (env.WEB_LEAD_RECEIPTS_ENABLED) {
+      assert.equal(store.receipt(body.inquiry_id).opportunitySkipped, item.reason);
+      assert.equal(store.receipt(body.inquiry_id).relayStatus, item.reason);
+      const late = lead(); fake.state.fail = 503;
+      assert.equal((await post(late, env)).status, 202);
+      assert.ok(store.receipt(late.inquiry_id).sealedPayload);
+      fake.state.fail = null; count = fake.ghl().length;
+      assert.equal((await retry(store, plus(6), { env })).synced, 1);
+      safeCalls(fake.ghl().slice(count));
+      assert.equal(store.receipt(late.inquiry_id).opportunitySkipped, item.reason);
+      assert.equal(fake.relays().length, relays);
+    }
+  }
+});
+
+test('a failed lead detail note retains its sealed payload and retries rather than falsely settling synced', async t => {
+  const fake = providers(t), store = ledgerStore(), { post } = endpoint(store), body = lead();
+  Object.assign(fake.state, { created: true, failAt: '/contacts/contact-web/notes' });
+  assert.equal((await post(body)).status, 202);
+  assert.deepEqual([store.receipt(body.inquiry_id).ghlSyncStatus, store.receipt(body.inquiry_id).lastError], ['failed', 'highlevel_note_failed']);
+  assert.ok(store.receipt(body.inquiry_id).sealedPayload);
+  assert.equal(fake.relays().length, 0);
+  fake.state.failAt = null;
+  assert.equal((await retry(store, plus(6))).synced, 1);
+  assert.equal(store.receipt(body.inquiry_id).sealedPayload, null);
+  assert.equal(fake.relays().length, 0);
+});
+
+test('safe additive tags are exactly-true opt-in; failure retains a retry and never changes opportunities or relays', async t => {
+  for (const value of [undefined, '', 'false', 'TRUE', ' true', 'true ', '1', true]) assert.equal(webLeadSafeTagsEnabled({ WEB_LEAD_SAFE_TAGS_ENABLED: value }), false);
+  const env = { ...LEDGER, WEB_LEAD_SAFE_TAGS_ENABLED: 'true' }, fake = providers(t), store = ledgerStore(), { post } = endpoint(store);
+  assert.equal(webLeadSafeTagsEnabled(env), true);
+  fake.state.tags = ['priority', 'customer-existing'];
+  const body = lead();
+  fake.state.failAt = '/contacts/contact-web/tags';
+  assert.equal((await post(body, env)).status, 202);
+  assert.equal(store.receipt(body.inquiry_id).lastError, 'highlevel_tags_failed');
+  assert.ok(store.receipt(body.inquiry_id).sealedPayload);
+  assert.equal(opportunityCreates(fake), 0);
+  assert.equal(fake.relays().length, 0);
+  fake.state.failAt = null;
+  assert.equal((await retry(store, plus(6), { env })).synced, 1);
+  assert.deepEqual(tagsSent(fake), Array(2).fill(['POST', ['egc-website-lead', 'egc-sms-consent']]));
+  assert.equal(fake.ghl().some(call => call.method === 'DELETE'), false, 'opt-in tag writes remove no existing tags');
+  assert.deepEqual(fake.state.tags, ['priority', 'customer-existing', 'egc-website-lead', 'egc-sms-consent']);
+});
+
+test('without provider identity, an unconfigured HighLevel never falls through to the Zapier sales relay', async t => {
+  const fake = providers(t), store = ledgerStore(), { post } = endpoint(store);
+  for (const env of [LEGACY, LEDGER]) {
+    const result = await post(lead(), { ...env, HIGHLEVEL_API_KEY: '' });
+    assert.equal(result.status, env.WEB_LEAD_RECEIPTS_ENABLED ? 202 : 503);
+  }
+  assert.equal(fake.ghl().length, 0);
+  assert.equal(fake.relays().length, 0);
+});
+
+test('an unconfirmed creation retains the sealed receipt; retry finds the existing deal without creating or reopening it', async t => {
+  const fake = providers(t), store = ledgerStore(), { post } = endpoint(store), body = lead();
+  fake.state.createResult = {};
+  assert.equal((await post(body)).status, 202);
+  assert.equal(store.receipt(body.inquiry_id).lastError, 'highlevel_opportunity_missing');
+  assert.ok(store.receipt(body.inquiry_id).sealedPayload);
+  const saved = structuredClone(fake.state.opportunities);
+  assert.equal((await retry(store, plus(6))).synced, 1);
+  assert.deepEqual(fake.state.opportunities, saved);
+  assert.equal(opportunityCreates(fake), 1);
+  assert.equal(fake.relays().length, 0);
 });

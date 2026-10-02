@@ -141,6 +141,19 @@ class DispatchCalendarTests(unittest.TestCase):
         self.read_failure = True; self.mode('Lanes')
         expect(self.page.get_by_role('alert').filter(has_text='The schedule for this date has not loaded')).to_be_visible(); expect(self.page.locator('.dc-item')).to_have_count(0)
 
+    def test_month_same_range_refresh_hides_old_cells_until_verified(self):
+        self.start(); self.mode('Month'); self.settled()
+        expect(self.page.locator('.dc-cell')).to_have_count(35)
+        self.hold_get = True; self.page.get_by_role('button', name='Refresh', exact=True).click()
+        expect(self.page.locator('.dc-skeleton[aria-busy="true"]')).to_be_visible()
+        expect(self.page.locator('.dc-cell')).to_have_count(0)
+        route, first, last = self.held; self.held = None
+        route.fulfill(status=503, content_type='application/json', body=json.dumps({'ok': False, 'code': 'dispatch_unavailable', 'error': 'Synthetic refresh failed'}))
+        expect(self.page.get_by_role('alert').filter(has_text='The schedule for this month has not loaded')).to_be_visible()
+        expect(self.page.locator('.dc-cell')).to_have_count(0)
+        self.page.get_by_role('button', name='Retry', exact=True).click(); self.settled()
+        expect(self.page.locator('.dc-cell')).to_have_count(35)
+
     def test_lane_drag_changes_time_and_employee_with_one_confirmed_post(self):
         self.start(); self.mode('Lanes'); self.assertEqual((self.gets[-1]['startDate'], self.gets[-1]['endDate']), ([DAY], ['2026-09-23']))
         expect(self.item('Crew One', 'Synthetic Johnson Garage')).to_have_count(1); expect(self.item('Lead One', 'Synthetic Johnson Garage')).to_have_count(1); expect(self.item('Unassigned', 'Synthetic Unassigned Garage')).to_have_count(1)

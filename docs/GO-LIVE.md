@@ -1,5 +1,11 @@
 # Go-live runbook: switching the EGC Hub on
 
+> Website intake safety update: [WEB-LEAD-SAFETY.md](WEB-LEAD-SAFETY.md) supersedes
+> the older on-time opportunity-upsert guidance below. Existing deals are preserved
+> for on-time and delayed intake. Applicant/unknown identity is held from sales
+> routing. `WEB_LEAD_SAFE_TAGS_ENABLED` stays **off** until separately authorized
+> after a provider workflow and consent/DND audit.
+
 **For:** the owner. **Checked against:** the code on the integration branch at `33aff4d` (unit GO-LIVE).
 
 Everything built so far is merged, but every new feature ships **switched off**. Nothing changes for the business until you turn a switch on. This page says what to switch on, in what order, how to check it from your phone, and how to switch it back off.
@@ -968,3 +974,7 @@ Not in this build. No steps yet; each will come with its own switch, off by defa
 - **FUN-30:** a register of every customer-facing automation.
 - **M5-SEND:** the Hub **Invoicing** screen (issue one invoice or a batch; HighLevel's `egc-invoice-issued` workflow sends it, the Hub sends nothing), under [5.2](#52-server-money-records).
 - Optional messaging (will sit under [Optional](#optional-only-if-you-want-the-hub-to-send-through-highlevel)): **CLIENT-LOGIN** (customer portal sign-in links), **CREW-NOTIFY** (crew schedule texts).
+
+### Exact sender for reviewed SMS
+
+Before using Action Center SMS sending, follow [SMS-SENDER-REVIEW.md](SMS-SENDER-REVIEW.md). Apply migration 0016, configure the explicit API sender allowlist, and review each draft with its chosen line. No sender is selected automatically and an old approval cannot authorize a newly selected line.

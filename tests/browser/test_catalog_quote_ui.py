@@ -151,4 +151,39 @@ class CatalogQuoteTests(unittest.TestCase):
         expect(self.page.get_by_role('dialog')).to_have_count(0)
         self.assertEqual(self.page.evaluate("Object.keys(sessionStorage).filter(k=>k.startsWith('egc.hub.draft.v1.catalogquote.'))"),[])
 
+    def test_walkthrough_mounting_comparison_and_quote_handoff(self):
+        data=copy.deepcopy(OVERVIEW); data['ok']=True
+        data['settings']['values']={'minimumJobCents':45000}
+        for item in data['catalog']['items']:
+            item.update(installRequirements=['wall-studs'],requires='Synthetic wall studs required',safetyNotes='Verify structural attachment, clearances and manufacturer load limits before installation.')
+        data['prices']['shelf'].update(quantity=1,customerSupplied=False,totalCents=25000,split={'productCents':10000,'markupCents':2500,'laborCents':11500,'disposalCents':1000})
+        self.page.route('**/api/catalog',lambda r:r.fulfill(status=200,content_type='application/json',body=json.dumps(data)))
+        self.page.goto(self.url)
+        css=(ROOT/'crew/gameplan.html').read_text().split('<style>',1)[1].split('</style>',1)[0]
+        fixture='<!doctype html><html><head><meta name="viewport" content="width=device-width,initial-scale=1"><style>'+css+'</style><link rel="stylesheet" href="/crew/mounting-options.css"><link rel="stylesheet" href="/employee-catalog-quote.css"><link rel="stylesheet" href="/crew/quote-draft.css"></head><body><main><section id="mounting-options" class="panel"></section></main><script src="/crew/quote-draft.js"></script><script src="/employee-catalog-quote.js"></script><script src="/crew/mounting-options.js"></script></body></html>'
+        self.page.set_content(fixture)
+        self.page.evaluate("EGCMountingOptions.mount(document.getElementById('mounting-options'),{fetch:(...a)=>fetch(...a),identity:'synthetic.owner',selections:[],quoteContext:()=>({draftScope:'walkthrough-test',client:{name:'Synthetic Customer',phone:'9705550100',address:'100 Synthetic Lane'}})})")
+        self.page.get_by_role('button',name='Compare',exact=True).first.click()
+        expect(self.page.get_by_role('button',name='Review installation quote')).to_be_disabled()
+        expect(self.page.get_by_text('$125.00',exact=True)).to_be_visible()
+        expect(self.page.get_by_text('$115.00',exact=True)).to_be_visible()
+        for width in (320,375,1280):
+            self.page.set_viewport_size({'width':width,'height':900})
+            self.assertFalse(self.page.evaluate('document.documentElement.scrollWidth>innerWidth'))
+            self.assertEqual(self.page.locator('#mounting-options').evaluate("root=>[...root.querySelectorAll('button,input:not([type=checkbox]),select')].filter(e=>{const r=e.getBoundingClientRect();return r.width&&r.height&&r.height<44}).length"),0)
+        self.page.get_by_role('checkbox').check()
+        self.page.screenshot(path=str(ROOT/'test-results/walkthrough-mounting-options-desktop.png'),full_page=True)
+        self.page.set_viewport_size({'width':375,'height':812})
+        self.page.screenshot(path=str(ROOT/'test-results/walkthrough-mounting-options-mobile.png'),full_page=True)
+        self.page.get_by_role('button',name='Review installation quote').click()
+        dialog=self.page.get_by_role('dialog',name='Build a catalog quote')
+        expect(dialog.get_by_label('Customer name',exact=True)).to_have_value('Synthetic Customer')
+        expect(dialog.get_by_text('1 × per shelf',exact=True)).to_be_visible()
+        expect(dialog.get_by_role('spinbutton')).to_have_count(0)
+        dialog.get_by_role('button',name='Close catalog quote').click()
+        expect(dialog).to_have_count(0)
+        self.page.get_by_role('spinbutton').fill('2'); self.page.get_by_role('spinbutton').press('Tab')
+        expect(self.page.get_by_role('button',name='Review installation quote')).to_be_disabled()
+        self.assertEqual(self.posts,[])
+
 if __name__=='__main__': unittest.main()

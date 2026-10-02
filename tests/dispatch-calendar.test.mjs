@@ -3,15 +3,16 @@ import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import vm from './helpers/vm-realm.mjs';
+import { createDocument } from './helpers/hub-dom.mjs';
 import { dispatchOverview, mutateDispatch } from '../functions/_lib/dispatch-service.js';
 
 const NOW = '2026-09-22T18:00:00.000Z', DAY = '2026-09-22';
 const source = name => readFileSync(new URL(`../${name}`, import.meta.url), 'utf8');
 // A realm with a fixed clock: nothing here reads the real time.
-function realm() {
+function realm(document = createDocument()) {
   const Fixed = class extends Date { constructor(...args) { super(...(args.length ? args : [NOW])); } static now() { return Date.parse(NOW); } };
   const window = { addEventListener() {} };
-  const context = vm.createContext({ window, Date: Fixed, Intl, console });
+  const context = vm.createContext({ window, document, Node: document.createElement('div').constructor, Date: Fixed, Intl, console });
   return { window, run: name => vm.runInContext(source(name), context, { filename: name }) };
 }
 const plain = value => value === undefined ? undefined : JSON.parse(JSON.stringify(value));
@@ -277,4 +278,21 @@ test('dispatch exposes registerView and its internals; the calendar registers mo
   dispatch.registerView('synthetic', view);
   dispatch.internals.show('month', '2026-09-22');
   assert.deepEqual([dispatch.internals.state().view, dispatch.internals.state().date], ['month', '2026-09-22']);
+});
+
+
+test('registered calendar views preserve their loading and failure labels without rendering stale same-range jobs', () => {
+  const document=createDocument(), {window,run}=realm(document);
+  run('employee-dispatch.js');run('employee-dispatch-calendar.js');
+  const api=window.EGCDispatch.internals,state=api.state(),root=document.createElement('main'),body=document.createElement('section');
+  body.setAttribute('data-dp-body','');root.append(body);state.root=root;
+  state.data={jobs:[job()],startDate:DAY,endDate:'2026-09-23',coverage:{complete:true}};
+  for(const [view,subject] of [['month','this month'],['lanes','this date']]){
+    state.view=view;state.loading=true;state.error='';api.redraw();
+    assert.equal(body.querySelector('[aria-busy="true"]')?.className,'dc-skeleton');
+    assert.match(body.textContent,new RegExp('Loading '+subject));assert.doesNotMatch(body.textContent,/Synthetic One/);
+    state.loading=false;state.error='Synthetic read failed';api.redraw();
+    assert.match(body.textContent,new RegExp('The schedule for '+subject+' has not loaded'));assert.doesNotMatch(body.textContent,/Synthetic One/);
+    assert.equal(body.querySelectorAll('button').filter(b=>b.textContent==='Retry').length,1);
+  }
 });

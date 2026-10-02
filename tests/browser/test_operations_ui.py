@@ -28,6 +28,8 @@ class BrowserTests(unittest.TestCase):
     def setUp(self):
         self.context=self.browser.new_context(viewport={'width':1360,'height':1000});self.page=self.context.new_page()
         self.items=[task()];self.calls=[];self.enabled=True;self.actor_role='owner';self.fail_once=False;self.stale=False;self.errors=[];self.calendar_available=False;self.send_available=False;self.send_errors=[];self.send_results=[];self.started=set();self.handoff_response=None;self.handoff_status=200;self.dispatch_reads=[]
+        self.extraction_warning=None
+        self.booking_diagnostics=None
         self.sold_revenue={'valueCents':None,'knownSubtotalCents':0,'unknownOccurrenceCount':1,'unknownValueCount':1,'missingValue':['confirmed-undated-sale'],'coverageIncomplete':True,'qualification':'Confirmed outcome has no verified occurrence date.','unknownOccurrenceEvents':[{'eventId':'confirmed-undated-sale','contactId':'synthetic-contact','valueCents':None,'currency':None}]}
         self.collected_revenue={'valueCents':None,'knownSubtotalCents':13900,'unknownOccurrenceCount':0,'unknownValueCount':0,'missingValue':[],'coverageIncomplete':True,'qualification':'Payment history is incomplete; the dated subtotal is not a complete total.','unknownOccurrenceEvents':[]}
         self.page.on('pageerror',lambda e:self.errors.append(str(e)))
@@ -43,10 +45,18 @@ class BrowserTests(unittest.TestCase):
             route.fulfill(status=self.handoff_status if self.handoff_response is not None else 404,content_type='application/json',body=json.dumps(self.handoff_response if self.handoff_response is not None else {'ok':False,'code':'dispatch_job_not_found'}));return
         if p.path!='/api/operations': route.continue_();return
         def send(body,status=200):
-            if body.get('authority')=='canonical_customer_event_ledger':body={**body,'soldRevenue':self.sold_revenue,'collectedRevenue':self.collected_revenue}
+            if body.get('authority')=='canonical_customer_event_ledger':
+                body={**body,'soldRevenue':self.sold_revenue,'collectedRevenue':self.collected_revenue}
+                if self.extraction_warning:
+                    body['coverage']={'complete':False}
+                    for rows in body.get('pipelines',{}).values():
+                        for customer in rows:
+                            customer.update({'reconciliationStatus':'reconciliation_needed','humanReviewNeeded':True,'discrepancies':[self.extraction_warning]})
+            if self.extraction_warning and 'events' in body:body={**body,'customer':{'discrepancies':[self.extraction_warning]}}
             route.fulfill(status=status,content_type='application/json',body=json.dumps(body))
         if req.method=='GET':send({'ok':True,'enabled':self.enabled,'actor':{'id':'test-owner','role':self.actor_role,'kind':'human'},'owners':[{'id':'test-owner','name':'Test owner','role':'owner'}]});return
         r=req.post_data_json;self.calls.append(r);c=r['body'];name=c['command']
+        if name=='status':send({'ok':True,'smsFromNumbers':['+15555551644','+15555551818']});return
         if name=='queue':
             rows=[t for t in self.items if t['status']=='completed'] if c['view']=='completed' else [t for t in self.items if t['status'] in ['open','in_progress','blocked']]
             if c['view']=='approvals':rows=[t for t in rows if t['approvalStatus'] in ['pending','invalidated']]
@@ -56,7 +66,7 @@ class BrowserTests(unittest.TestCase):
             send({'ok':True,'items':rows,'total':len(rows),'nextOffset':None,'coverage':{'registeredTasks':'complete','inferredCommitments':'not_complete'}})
         elif name=='task.get':
             t=next(t for t in self.items if t['id']==c['taskId']);history=[{'type':'message.execution_started','revision':t['revision'],'actorId':'test-owner','occurredAt':at(),'evidence':{'executionId':'synthetic-execution'}}] if t['id'] in self.started else []
-            send({'ok':True,'task':t,'previewHash':'a'*64,'effectiveApproval':t['approvalStatus'],'history':history,'approvals':[],'externalExecution':False,'actionSend':{'available':self.send_available}})
+            send({'ok':True,'task':t,'previewHash':'a'*64,'effectiveApproval':t['approvalStatus'],'history':history,'approvals':[],'externalExecution':False,'actionSend':{'available':self.send_available,'smsFromNumbers':['+15555551644','+15555551818']}})
         elif name in ['task.create','task.edit']:
             if self.fail_once:self.fail_once=False;send({'error':'operations_unavailable'},503);return
             if self.stale:send({'error':'task_revision_conflict','currentRevision':2},409);return
@@ -83,7 +93,7 @@ class BrowserTests(unittest.TestCase):
             else:send({'error':'portal_authority_unavailable'},503)
         elif name=='portal.job':send({'authority':'employee_hub','job':{'id':'exact-fixture-visit','projectId':'project-fixture','operationalScope':{'text':'Protect shelving <img src=x onerror="window.injected=true">','updatedAt':at(),'updatedBy':'test-owner'},'operationNotes':[{'id':'old','body':'Old note'},{'id':'current','body':'Reviewed note','supersedes':'old','createdAt':at(),'actorId':'test-owner'}]}})
         elif name=='intelligence.report':send({'authority':'canonical_customer_event_ledger','generatedAt':at(),'periodActivity':{'walkthroughsVerballyBooked':{'count':2},'videoQuoteOpportunities':{'count':3}},'cohort':{'observedThrough':at(),'metrics':{'walkthroughsVerballyBooked':{'numerator':1,'denominator':8,'rate':0.125}}},'soldRevenue':{'valueCents':0,'missingValue':['verified-sale-unpriced']},'pipelines':{'walkthrough':[{'contactId':'synthetic-contact','customerName':'Synthetic booked customer','state':'WALKTHROUGH_VERBALLY_BOOKED','intentStage':'high_intent','nextRequiredAction':'Save agreed visit in EGC Hub','reconciliationStatus':'verbally_booked_provider_pending','supportingEvidence':[{'sourceType':'call_transcript','sourceRecordId':'synthetic-call','occurredAt':at(),'excerpt':'Tuesday at 2:15 works <img src=x onerror="window.injected=true">'}]}],'videoQuote':[{'contactId':'synthetic-video','customerName':'Synthetic video customer','state':'VIDEO_QUOTE_RECEIVED','intentStage':'high_intent','videoQuoteStage':'media_received','nextRequiredAction':'Prepare quote','reconciliationStatus':'fully_reconciled','supportingEvidence':[]}],'directJob':[]}})
-        elif name=='intelligence.diagnostics':send({'verballyBookedProviderMissing':[{'contactId':'synthetic-contact','code':'provider_pending'}],'meta':{'accepted':3,'pending':2,'failed':0}})
+        elif name=='intelligence.diagnostics':send(self.booking_diagnostics if self.booking_diagnostics is not None else {'verballyBookedProviderMissing':[{'contactId':'synthetic-contact','code':'provider_pending'}],'meta':{'accepted':3,'pending':2,'failed':0}})
         elif name=='intelligence.customer':send({'events':[{'eventType':'walkthrough_verbally_booked','occurredAt':at(),'source':'call_transcript','evidence':[{'sourceType':'call_transcript','sourceRecordId':'synthetic-call','excerpt':'Tuesday at 2:15 works'}]}]})
         else:send({'ok':True})
     def open(self):
@@ -92,6 +102,16 @@ class BrowserTests(unittest.TestCase):
     def detail(self):self.page.locator('.ac-row').filter(has_text=self.items[0]['title']).first.click();expect(self.page.get_by_role('dialog')).to_contain_text('Completion condition')
     def fill_create(self):
         self.page.get_by_role('button',name='New action',exact=True).click();self.page.get_by_label('Action',exact=True).fill('New synthetic commitment');self.page.get_by_label('What proves completion?',exact=True).fill('A recorded callback outcome')
+    def test_booking_review_preserves_uncertain_time_and_source_navigation(self):
+        finding={'id':'synthetic-review','code':'booking_commitment_requires_review','status':'reconciliation_needed','nextAction':'Confirm the agreed date from the source.','automaticRepair':False,'commitment':{'contactId':'synthetic-contact','kind':None,'startAt':None,'timeMention':'next Friday','evidence':'Friday works <img src=x onerror="window.injected=true">','humanReviewNeeded':True,'reviewReasons':['schedule_time_unresolved'],'sourceReferences':[{'sourceType':'call_transcript','sourceRecordId':'synthetic-call','excerpt':'Friday works','sourcePointer':'https://app.gohighlevel.com/v2/location/example/contacts/detail/example'}]}}
+        self.booking_diagnostics={'meta':{'cursors':[{'key':'customer_state:booking_reconciliation','updatedAt':at(0),'cursor':json.dumps({'coverage':{'portalComplete':True,'providerComplete':False},'findings':[finding]})}]}}
+        self.open();self.page.get_by_role('tab',name='Sales evidence',exact=True).click();review=self.page.locator('[data-booking-review]')
+        expect(review).to_contain_text('Booking commitments to review · 1');expect(review).to_contain_text('Visit date and time need confirmation.');expect(review).to_contain_text('Original time wording: next Friday');expect(review).to_contain_text('coverage is incomplete');expect(review).to_contain_text('Friday works <img');self.assertEqual(review.locator('img').count(),0)
+        expect(review.get_by_role('link',name='Open source record')).to_have_attribute('rel','noopener noreferrer')
+        review.get_by_role('button',name='Customer evidence',exact=True).click();expect(self.page.get_by_role('dialog')).to_contain_text('Tuesday at 2:15 works');self.page.get_by_role('button',name='Close',exact=True).click();expect(review).to_be_visible()
+        self.assertFalse(any(c['body']['command'].startswith('schedule.') for c in self.calls))
+    def test_booking_review_missing_snapshot_is_not_an_all_clear(self):
+        self.open();self.page.get_by_role('tab',name='Sales evidence',exact=True).click();expect(self.page.locator('[data-booking-review]')).to_contain_text('An empty calendar does not confirm there are no customer commitments.')
     def test_walkthrough_task_has_copy_handoff_without_sending(self):
         self.items=[task(kind='manual',portalJobId='visit-synthetic',sourceEvidence=[{'source':'recording','id':'recording-synthetic','excerpt':'Send the shelving options.'}],description='Reviewed shelving options and next steps.')]
         self.page.add_init_script("Object.defineProperty(navigator,'clipboard',{value:{writeText:async text=>{window.copiedOfficeText=text}}})")
@@ -194,7 +214,7 @@ class BrowserTests(unittest.TestCase):
     def test_stale_edit_keeps_user_draft_and_does_not_overwrite(self):
         self.open();self.detail();self.page.get_by_role('button',name='Edit',exact=True).click();self.page.get_by_label('Action',exact=True).fill('My unsaved change');self.stale=True;self.page.get_by_role('button',name='Save',exact=True).click();expect(self.page.get_by_role('alert')).to_contain_text('Nothing was overwritten');expect(self.page.get_by_label('Action',exact=True)).to_have_value('My unsaved change');expect(self.page.get_by_label('Type',exact=True)).to_be_disabled()
     def test_approval_requires_exact_visible_payload_and_checkbox(self):
-        self.items=[task(kind='followup_message',approvalStatus='pending',draftPayload={'channel':'sms','recipient':'+15555550100','subject':'','body':'Exact synthetic quote text','sendWindowStart':at(),'sendWindowEnd':at(12)})];self.open();self.detail();self.page.get_by_role('button',name='Review approval').click();expect(self.page.get_by_role('dialog')).to_contain_text('+15555550100');expect(self.page.get_by_role('dialog')).to_contain_text('Exact synthetic quote text');self.page.get_by_label('I reviewed the exact recipient, message, and revision').check();self.page.get_by_role('button',name='Approve draft — does not send').click();expect(self.page.get_by_role('dialog')).to_have_count(0);writes=[r['body'] for r in self.calls if r['body']['command']=='tasks.approve'];self.assertEqual(writes[0]['items'],[{'taskId':self.items[0]['id'],'revision':1,'previewHash':'a'*64}]);self.assertFalse(any('send' in r['body']['command'] for r in self.calls))
+        self.items=[task(kind='followup_message',approvalStatus='pending',draftPayload={'channel':'sms','fromNumber':'+15555551644','recipient':'+15555550100','subject':'','body':'Exact synthetic quote text','sendWindowStart':at(),'sendWindowEnd':at(12)})];self.open();self.detail();self.page.get_by_role('button',name='Review approval').click();expect(self.page.get_by_role('dialog')).to_contain_text('+15555550100');expect(self.page.get_by_role('dialog')).to_contain_text('Exact synthetic quote text');self.page.get_by_label('I reviewed the exact sender, recipient, message, and revision').check();self.page.get_by_role('button',name='Approve draft — does not send').click();expect(self.page.get_by_role('dialog')).to_have_count(0);writes=[r['body'] for r in self.calls if r['body']['command']=='tasks.approve'];self.assertEqual(writes[0]['items'],[{'taskId':self.items[0]['id'],'revision':1,'previewHash':'a'*64}]);self.assertFalse(any('send' in r['body']['command'] for r in self.calls))
     def test_dst_invalid_or_ambiguous_times_are_rejected(self):
         self.open();self.assertTrue(self.page.evaluate("(()=>{try{EGCActionCenter.localToIso('2026-11-01T01:30');return false}catch{return true}})()"));self.assertTrue(self.page.evaluate("(()=>{try{EGCActionCenter.localToIso('2026-03-08T02:30');return false}catch{return true}})()"))
     def test_signout_removes_loaded_customer_data(self):
@@ -220,6 +240,25 @@ class BrowserTests(unittest.TestCase):
         self.open();self.page.get_by_role('tab',name='Sales evidence',exact=True).click();view=self.page.locator('[data-ac-content]');expect(view).to_contain_text('Activity in this period');expect(view).to_contain_text('1 / 8');expect(view).to_contain_text('12.5%');expect(view).to_contain_text('Walkthrough pipeline · 1');expect(view).to_contain_text('Video quote pipeline · 1');expect(view).to_contain_text('Tuesday at 2:15 works <img');expect(view).to_contain_text('Amount unverified: 1');self.assertEqual(view.locator('img').count(),0);self.assertIsNone(self.page.evaluate('window.injected'))
         self.page.get_by_role('button',name='Customer evidence',exact=True).first.click();expect(self.page.get_by_role('dialog')).to_contain_text('Tuesday at 2:15 works');self.page.get_by_role('button',name='Close',exact=True).click();self.page.get_by_label('Sales evidence reporting window').select_option('7');expect(view).to_contain_text('Synthetic booked customer');reads=[r['body'] for r in self.calls if r['body']['command']=='intelligence.report'];self.assertEqual(len(reads),2);self.assertNotEqual(reads[0]['since'],reads[1]['since']);self.assertEqual(reads[1]['cohortSince'],reads[1]['since'])
         self.page.set_viewport_size({'width':390,'height':900});self.assertLessEqual(self.page.evaluate('document.documentElement.scrollWidth'),391);out=ROOT/'test-results';out.mkdir(exist_ok=True);self.page.screenshot(path=str(out/'sales-evidence-mobile.png'),full_page=True)
+    def test_incomplete_extraction_is_visible_in_pipeline_and_customer_evidence(self):
+        self.extraction_warning={'code':'extraction_incomplete','detail':'Some customer evidence has not been fully extracted. semantic_provider_http_429 <img src=x onerror="window.injected=true">','sourceIds':['cached-call']}
+        self.open();self.page.get_by_role('tab',name='Sales evidence',exact=True).click();view=self.page.locator('[data-ac-content]')
+        expect(view).to_contain_text('Some customer sources remain incomplete')
+        card=view.locator('.ac-evidence-event').filter(has_text='Synthetic video customer')
+        expect(card).to_contain_text('VIDEO QUOTE RECEIVED',ignore_case=True)
+        expect(card).to_contain_text('reconciliation needed');expect(card).to_contain_text('Some customer evidence has not been fully extracted')
+        expect(view).to_contain_text('1 / 8');expect(view).to_contain_text('12.5%');expect(view).to_contain_text('Walkthrough pipeline · 1')
+        card.get_by_role('button',name='Customer evidence',exact=True).click();dialog=self.page.get_by_role('dialog')
+        expect(dialog).to_contain_text('Some customer evidence has not been fully extracted');expect(dialog).to_contain_text('semantic_provider_http_429');expect(dialog).to_contain_text('Tuesday at 2:15 works')
+        expect(self.page.locator('img')).to_have_count(0);self.assertIsNone(self.page.evaluate('window.injected'))
+        dialog.get_by_role('button',name='Close',exact=True).click();self.page.get_by_label('Sales evidence reporting window').select_option('7')
+        expect(view).to_contain_text('Some customer evidence has not been fully extracted')
+        self.assertTrue(all(row['body']['command'].startswith('intelligence.') or row['body']['command']=='queue' for row in self.calls))
+    def test_current_complete_customer_does_not_get_an_extraction_warning(self):
+        self.open();self.page.get_by_role('tab',name='Sales evidence',exact=True).click();view=self.page.locator('[data-ac-content]')
+        card=view.locator('.ac-evidence-event').filter(has_text='Synthetic video customer')
+        expect(card).to_contain_text('fully reconciled');expect(card).not_to_contain_text('extracted')
+        card.get_by_role('button',name='Customer evidence',exact=True).click();expect(self.page.get_by_role('dialog')).not_to_contain_text('extraction')
     def test_partial_revenue_keeps_known_subtotal_and_undated_outcomes_out_of_total(self):
         self.open();self.page.get_by_role('tab',name='Sales evidence',exact=True).click()
         sold=self.page.locator('[data-revenue-kind="Sold revenue"]');collected=self.page.locator('[data-revenue-kind="Collected revenue"]')
@@ -362,4 +401,15 @@ class BrowserTests(unittest.TestCase):
         self.started.add(self.items[0]['id']);self.send_errors=[(409,{'error':'message_send_already_started'})];details.get_by_role('button',name='Close',exact=True).click();expect(self.page.get_by_role('dialog')).to_have_count(0)
         self.open_task('Synthetic send_quote');self.page.get_by_role('dialog').get_by_role('button',name=self.CHECK,exact=True).click();dialog=self.page.get_by_role('dialog');dialog.get_by_role('button',name=self.CHECK,exact=True).click()
         expect(dialog.get_by_role('alert')).to_contain_text('already sent');dialog.get_by_role('button',name='Reload action',exact=True).click();expect(self.page.get_by_role('dialog')).to_contain_text('Completion condition');self.assertEqual(len(self.sends()),3)
+    def test_sms_sender_is_explicit_visible_and_kept_in_edit_at_phone_width(self):
+        self.fixed_context(375);item=self.message_task(links=[]);item['draftPayload'].update({'channel':'sms','recipient':'+15555550100','fromNumber':'+15555551644','subject':''});self.items=[item];self.open();self.open_task(item['title'])
+        dialog=self.page.get_by_role('dialog');expect(dialog).to_contain_text('From: +15555551644');dialog.get_by_role('button',name='Edit',exact=True).click()
+        sender=self.page.get_by_label('SMS sender',exact=True);expect(sender).to_be_enabled();expect(sender).to_have_value('+15555551644');sender.select_option('+15555551818')
+        self.assertLessEqual(self.page.evaluate('document.documentElement.scrollWidth'),375)
+        self.page.get_by_role('dialog').get_by_role('button',name='Save',exact=True).click();expect(self.page.get_by_role('dialog')).to_have_count(0)
+        edit=[r['body'] for r in self.calls if r['body']['command']=='task.edit'][-1];self.assertEqual(edit['changes']['draft']['fromNumber'],'+15555551818');self.assertEqual(edit['revision'],1)
+    def test_new_sms_sender_has_no_default_and_missing_legacy_sender_cannot_be_reviewed(self):
+        self.fixed_context();item=self.message_task(links=[]);item['draftPayload'].update({'channel':'sms','recipient':'+15555550100','subject':''});self.items=[item];self.open();self.open_task(item['title'])
+        dialog=self.page.get_by_role('dialog');expect(dialog).to_contain_text('Choose an explicit SMS sender');expect(dialog.get_by_role('button',name='Review approval')).to_have_count(0);dialog.get_by_role('button',name='Close',exact=True).click()
+        self.page.get_by_role('button',name='New action',exact=True).first.click();sender=self.page.get_by_label('SMS sender',exact=True);expect(sender).to_be_enabled();expect(sender).to_have_value('')
 if __name__=='__main__':unittest.main(verbosity=2)

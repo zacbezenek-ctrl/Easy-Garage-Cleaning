@@ -340,6 +340,9 @@ importers:
 
   services/lead-audit:
     dependencies:
+      '@egc/customer-state':
+        specifier: workspace:*
+        version: link:../customer-state
       '@egc/database':
         specifier: workspace:*
         version: link:../../packages/database

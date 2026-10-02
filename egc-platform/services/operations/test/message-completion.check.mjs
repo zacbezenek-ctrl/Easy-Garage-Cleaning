@@ -5,6 +5,7 @@ import {createHash,randomUUID} from 'node:crypto';
 import {getDb,schema} from '@egc/database';
 import {eq,sql} from 'drizzle-orm';
 import {OperationsService} from '../dist/index.js';
+import {communicationBodyEvidence} from '../dist/communication-body-evidence.js';
 const url=new URL(process.env.DATABASE_URL||'http://invalid');
 if(process.env.EGC_OPERATIONS_TEST!=='isolated'||!['localhost','127.0.0.1'].includes(url.hostname)||url.pathname!=='/egc_operations_test'||!['postgres:','postgresql:'].includes(url.protocol))throw new Error('Only isolated loopback egc_operations_test is allowed');
 globalThis.fetch=async()=>{throw new Error('No external HTTP in message completion tests');};
@@ -15,23 +16,46 @@ const call=(c,actor=owner,id=randomUUID())=>service.execute(actor,c,id);
 const complete=(extra={},requestId=randomUUID())=>call({command:'task.complete_from_message',taskId:task.id,revision:task.revision,executionId:execution.id,...extra},integration,requestId);
 // Creates, approves and records verified delivery for one message task. A legacy
 // draft is stored without the attachments key, as rows written before action kinds v2.
-async function setup({kind='followup_message',attachments,providerId='synthetic-provider',providerMessageId='synthetic-message',legacyDraft=false}={}){
+async function setup({kind='followup_message',attachments,providerId='synthetic-provider',providerMessageId='synthetic-message',legacyDraft=false,approvedBody='Synthetic exact approved message'}={}){
  [contact]=await db.insert(schema.contacts).values({provider:'ghl',providerId,phone:'+12025550100'}).returning();
- body='Synthetic exact approved message';const draft={channel:'sms',recipient:'+12025550100',subject:'',body,sendWindowStart:new Date(now-60000).toISOString(),sendWindowEnd:new Date(+now+3600000).toISOString(),...(attachments?{attachments}:{})};
+ body=approvedBody;const draft={channel:'sms',fromNumber:'+15555551644',recipient:'+12025550100',subject:'',body,sendWindowStart:new Date(now-60000).toISOString(),sendWindowEnd:new Date(+now+3600000).toISOString(),...(attachments?{attachments}:{})};
  task=(await call({command:'task.create',task:{title:'Send reviewed followup',kind,assignedUserId:owner.id,dueAt:new Date(+now+3600000).toISOString(),contactId:contact.id,completionCondition:'Verify exact message delivered',draft}})).task;
  if(legacyDraft){await db.transaction(async tx=>{await tx.execute(sql`select set_config('egc.operations_actor','legacy-row-fixture',true)`);const {attachments:_,...legacy}=task.draftPayload;await tx.update(schema.tasks).set({draftPayload:legacy}).where(eq(schema.tasks.id,task.id));});task=(await call({command:'task.get',taskId:task.id})).task;}
  const preview=await call({command:'task.get',taskId:task.id});await call({command:'tasks.approve',items:[{taskId:task.id,revision:task.revision,previewHash:preview.previewHash}],expiresAt:new Date(+now+3600000).toISOString()});
- const occurred=new Date(+now+1000);now=new Date(+now+2000);const payload={type:'SMS',contactId:contact.providerId,message:body,toNumber:draft.recipient,...(attachments?.length?{attachments:attachments.map(a=>a.url)}:{})};
- [execution]=await db.insert(schema.communicationExecutions).values({requestId:randomUUID(),actorId:integration.id,contactId:contact.id,channel:'SMS',payloadHash:'proofhash',payload,status:'accepted',providerMessageId,createdAt:occurred,verifiedAt:now,response:{messageId:providerMessageId,status:'delivered',delivered:true,matchEvidence:{version:1,channel:'sms',recipient:draft.recipient,subject:'',bodyHash:createHash('sha256').update(body).digest('hex'),payloadHash:'proofhash',occurredAt:occurred.toISOString()}}}).returning();
+ const occurred=new Date(+now+1000);now=new Date(+now+2000);const payload={type:'SMS',contactId:contact.providerId,message:body,fromNumber:draft.fromNumber,toNumber:draft.recipient,...(attachments?.length?{attachments:attachments.map(a=>a.url)}:{})};
+ [execution]=await db.insert(schema.communicationExecutions).values({requestId:randomUUID(),actorId:integration.id,contactId:contact.id,channel:'SMS',payloadHash:'proofhash',payload,status:'accepted',providerMessageId,createdAt:occurred,verifiedAt:now,response:{messageId:providerMessageId,status:'delivered',delivered:true,matchEvidence:{version:1,channel:'sms',fromNumber:'+15555551644',recipient:draft.recipient,subject:'',bodyHash:createHash('sha256').update(body).digest('hex'),payloadHash:'proofhash',occurredAt:occurred.toISOString()}}}).returning();
 }
 beforeEach(async()=>{
  await db.execute(sql`truncate operation_events,operation_approvals,operation_requests,operation_briefs,tasks,communication_executions,contacts cascade`);
- now=new Date(NOW);service=new OperationsService(db,{workspace:'egc',now:()=>now,resolveOwner:async()=>true});
+ now=new Date(NOW);service=new OperationsService(db,{workspace:'egc',smsFromNumbers:['+15555551644','+15555551818'],now:()=>now,resolveOwner:async()=>true});
  await setup();
 });
 after(async()=>{await db.$client.end({timeout:5});});
 test('verified delivered message completes exact task atomically and retries do not add evidence',async()=>{const id=randomUUID(),r=await complete({},id);assert.equal(r.task.status,'completed');assert.equal(r.task.completionEvidence[0].kind,'verified_communication');assert.equal(r.task.completionEvidence[0].approvedRevision,1);assert.equal((await complete({},id)).replayed,true);const [stored]=await db.select().from(schema.tasks).where(eq(schema.tasks.id,task.id));assert.equal(stored.completionEvidence.length,1);});
 test('matching outgoing mirror may invalidate approval without blocking evidence completion',async()=>{await db.insert(schema.messages).values({providerId:'synthetic-message',contactId:contact.id,type:'SMS',direction:'outbound',actorType:'human',body,occurredAt:new Date(+now-1000)});assert.equal((await call({command:'task.get',taskId:task.id})).task.approvalStatus,'invalidated');assert.equal((await complete()).task.status,'completed');});
+test('bounded SMS proof completes against the unchanged raw approval and payload',async()=>{
+ await setup({providerId:'synthetic-apostrophe',providerMessageId:'synthetic-apostrophe-message',approvedBody:'We\u2019ll send the exact approved plan.'});
+ const observed=body.replaceAll('\u2019',"'"),proof=communicationBodyEvidence(body,observed,'SMS');
+ assert.equal(proof.version,2);assert.notEqual(proof.approvedBodyHash,proof.providerBodyHash);
+ await db.update(schema.communicationExecutions).set({response:{...execution.response,matchEvidence:{...execution.response.matchEvidence,...proof}}}).where(eq(schema.communicationExecutions.id,execution.id));
+ await db.insert(schema.messages).values({providerId:execution.providerMessageId,contactId:contact.id,type:'SMS',direction:'outbound',actorType:'human',body:observed,occurredAt:new Date(+now-1000)});
+ const r=await complete();assert.equal(r.task.status,'completed');assert.equal(r.task.draftPayload.body,body);
+ const [stored]=await db.select().from(schema.communicationExecutions).where(eq(schema.communicationExecutions.id,execution.id));assert.equal(stored.payload.message,body);assert.equal(stored.payloadHash,'proofhash');assert.equal(stored.response.matchEvidence.providerBody,observed);
+});
+test('undelivered 30003 with matching SMS proof never completes an approved task',async()=>{
+ await setup({providerId:'synthetic-failed-apostrophe',providerMessageId:'synthetic-failed-apostrophe-message',approvedBody:'We\u2019ll send the exact approved plan.'});
+ const proof=communicationBodyEvidence(body,body.replaceAll('\u2019',"'"),'SMS');
+ await db.update(schema.communicationExecutions).set({status:'failed',response:{...execution.response,status:'undelivered',errorCode:30003,delivered:false,matchEvidence:{...execution.response.matchEvidence,...proof}}}).where(eq(schema.communicationExecutions.id,execution.id));
+ await assert.rejects(complete(),e=>e.code==='message_delivery_not_freshly_verified');assert.equal((await call({command:'task.get',taskId:task.id})).task.status,'open');
+});
+test('a tampered transformed body proof cannot borrow the raw approval',async()=>{
+ await setup({providerId:'synthetic-tampered-apostrophe',providerMessageId:'synthetic-tampered-message',approvedBody:'We\u2019ll send the exact approved plan.'});
+ const proof=communicationBodyEvidence(body,body.replaceAll('\u2019',"'"),'SMS');
+ for(const changes of [{providerBody:"We'll send a different plan."},{approvedBodyHash:'wrong'},{providerBodyHash:'wrong'},{bodyTransform:'generic_unicode'}]){
+  await db.update(schema.communicationExecutions).set({response:{...execution.response,matchEvidence:{...execution.response.matchEvidence,...proof,...changes}}}).where(eq(schema.communicationExecutions.id,execution.id));
+  await assert.rejects(complete(),e=>e.code==='message_draft_delivery_mismatch');
+ }
+});
 test('sent/queued, stale receipt and wrong recipient never complete',async()=>{for(const changes of [{response:{...execution.response,delivered:false}},{verifiedAt:new Date(+now-600001)},{response:{...execution.response,matchEvidence:{...execution.response.matchEvidence,recipient:'+12025550199'}}}]){await db.update(schema.communicationExecutions).set({...execution,...changes}).where(eq(schema.communicationExecutions.id,execution.id));await assert.rejects(complete());}assert.equal((await call({command:'task.get',taskId:task.id})).task.status,'open');});
 test('an approval recorded after the send never displaces the approval that covered it',async()=>{
  // A re-approval of the same content after the send (here a late rejection and a new review) is newer than the execution.
@@ -85,4 +109,16 @@ test('attachments submitted in a non-canonical spelling complete only from the c
  const canonical='https://easygaragecleaning.com/portal/quote/synthetic-7';assert.equal(task.draftPayload.attachments[0].url,canonical);
  const {attachments:_,...bare}=execution.payload;await withPayload({...bare,attachments:['HTTPS://EasyGarageCleaning.com\\portal\\quote\\synthetic-7']});await assert.rejects(complete(),e=>e.code==='message_draft_delivery_mismatch');
  await withPayload({...bare,attachments:[canonical]});const r=await complete();assert.equal(r.task.status,'completed');assert.equal(r.task.kind,'send_quote');
+});
+
+test('wrong-line and missing-sender receipts never complete a reviewed SMS',async()=>{
+ for(const patch of [{payload:{...execution.payload,fromNumber:'+15555551818'}},{response:{...execution.response,matchEvidence:{...execution.response.matchEvidence,fromNumber:'+15555551818'}}},{response:{...execution.response,matchEvidence:{...execution.response.matchEvidence,fromNumber:null}}}]){
+  await db.update(schema.communicationExecutions).set({...execution,...patch}).where(eq(schema.communicationExecutions.id,execution.id));await assert.rejects(complete(),e=>e.code==='message_draft_delivery_mismatch');
+ }
+ assert.equal((await call({command:'task.get',taskId:task.id})).task.status,'open');
+});
+test('the database completion guard independently rejects sender evidence from another line',async()=>{
+ const approval=(await db.select().from(schema.operationApprovals).where(eq(schema.operationApprovals.taskId,task.id)))[0];
+ await db.update(schema.communicationExecutions).set({response:{...execution.response,matchEvidence:{...execution.response.matchEvidence,fromNumber:'+15555551818'}}}).where(eq(schema.communicationExecutions.id,execution.id));
+ await assert.rejects(db.transaction(async tx=>{await tx.execute(sql`select set_config('egc.operations_actor',${owner.id},true),set_config('egc.communication_completion',${task.id},true)`);await tx.update(schema.tasks).set({status:'completed',completedAt:now,completionEvidence:[{kind:'verified_communication',executionId:execution.id,taskId:task.id,approvedRevision:task.revision,approvalId:approval.id,providerMessageId:execution.providerMessageId}]}).where(eq(schema.tasks.id,task.id));}),e=>String(e.cause?.message||e.message).includes('provider_evidence_completion_not_activated'));
 });

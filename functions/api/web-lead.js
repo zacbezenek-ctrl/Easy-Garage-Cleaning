@@ -37,7 +37,7 @@
 import { webLeadTiming } from '../_lib/funnel-calendar.js';
 import { bookingSlotLead, bookingSlotWords } from '../_lib/booking-slots.js';
 import { bookingExplicitSlotsEnabled } from '../_lib/booking-slots-flag.js';
-import { WEB_LEAD_FIELDS, envVar, highLevelConfig, receiveWebLead, syncHighLevelLead, webLeadHeld, webLeadInquiryId, webLeadLedgerOn, webLeadMeta, webLeadStorage } from '../_lib/web-lead-intake.js';
+import { WEB_LEAD_FIELDS, envVar, highLevelConfig, receiveWebLead, syncHighLevelLead, webLeadHeld, webLeadInquiryId, webLeadLedgerOn, webLeadMeta, webLeadRelayHold, webLeadStorage } from '../_lib/web-lead-intake.js';
 
 const ALLOWED_HOST_RE = /^(?:easygaragecleaning\.com|www\.easygaragecleaning\.com|easy-garage-cleaning\.pages\.dev|localhost(?::\d+)?|127\.0\.0\.1(?::\d+)?)$/;
 const MAX_BODY = 32 * 1024;
@@ -220,7 +220,7 @@ export function webLeadHandlers({ storage = webLeadStorage, now = () => new Date
       try { ownerStatus = await ownedElsewhere(); } catch {}
       if (ownerStatus) return json(200, { ok: true, inquiryId, receipt: { status: ownerStatus }, highlevel: highlevelAnswer, relay: { configured: !!hook, sent: false, skipped: 'already-received' } });
     }
-    const relay = await relayLead(hook, relayed.flat, relayed.params);
+    const relay = webLeadRelayHold(env, highlevel) || await relayLead(hook, relayed.flat, relayed.params);
     if (settleDelivered) {
       // Marking a receipt that landed after all keeps the cron from syncing this lead a second time.
       let settled = false;

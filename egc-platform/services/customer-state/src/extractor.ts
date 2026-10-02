@@ -36,12 +36,41 @@ Extract requested event types only. Preserve the difference between proposals, c
 A concrete quote can contain alternative prices tied to schedule options for the exact work the customer requested. For example, in response to a king bed/frame pickup request, "Normally we are at 350 for that, but if you book on a day when we have a truck out, we are at $250" is quote_delivered even if the customer later declines. It is not job_sold, and no single price option is accepted merely because it was offered. Generic ranges without a scoped work request remain price_expectation_given. Price acceptance must be an explicit customer acceptance of a quoted range or cost, not the representative explaining prices or 'sounds fair' about per-job charging without any price. Mere 'K, yeah' acknowledges information but is not strong price acceptance. 'If you like the price we can do it' is not accepted work. 'Let's do it' or 'we can do that' immediately following a concrete quote can establish both job_verbally_accepted and job_sold. Do not infer sold from booking an estimate. A direct pickup/service-job booking is not a walkthrough even if older automated messages mentioned free walkthroughs. No monetary amount may be invented or inferred; payment discussions are payment_discussed, never collected revenue. Explicit customer decline/loss or stop contact must not be treated as positive pipeline. An explicit final refusal of service because the customer is outside the service area supports lost; an alternative agreed video quote with viable crew travel remains active, not lost. A customer saying they do not need pickup is not necessarily declining garage cleaning/organization. A walkthrough going badly supports negative_outcome only when explicitly described, not a fabricated lost sale. A service vendor/barter pitch alone is not customer qualification or a paid sale.
 Each event MUST cite a short, exact contiguous excerpt from its own source record, preserving words (whitespace may differ). Use sourceRecordId exactly as supplied. Use the original source record time; don't invent dates or translate relative dates. Put actual spoken time/deadline in timeMention/deadlineMention, or null. Confidence >= 0.85 only for explicit supported facts, and set humanReviewNeeded for ambiguous speaker, conditional language, incomplete context, conflicting intent, or uncertain subject. Supporting text and reason must explain why the event is counted. Return one event of each type per source unless it explicitly describes distinct independently agreed jobs, visits, or quote revisions. For multiple separate work items only, set independentCommitment=true and commitmentAnchor to the exact unique service-description excerpt for that work item, contained in supportingText; use the same anchor for every event about that work item. Otherwise independentCommitment=false and commitmentAnchor=null. A reschedule, repeated agreement, payment installment, or reminder is not another job. Never output formal appointment, paid, or revenue events from dialogue alone. Explicit retrospective confirmation that an EGC walkthrough or job actually completed can establish walkthrough_completed/job_completed (for example customer thanks EGC for the completed visit and the human acknowledges); never infer completion from a scheduled date in the past. Exact occurrence time for retrospective statements will be kept unknown.`;
 
-export function semanticProviderDiagnostic(value:{status?:unknown;code?:unknown;type?:unknown;param?:unknown;request_id?:unknown}) {
+export function semanticProviderDiagnostic(value:{status?:unknown;code?:unknown;type?:unknown;param?:unknown;request_id?:unknown;headers?:unknown;error?:unknown}) {
   const codes=new Set(['invalid_api_key','invalid_json_schema','model_not_found','unsupported_parameter','invalid_value','invalid_request_error','rate_limit_exceeded','insufficient_quota','context_length_exceeded','server_error','timeout','account_deactivated','organization_deactivated','project_not_found']);
   const params=new Set(['model','input','text.format','text.format.schema','text.format.name','max_output_tokens','reasoning.effort']);
-  const types=new Set(['invalid_request_error','authentication_error','permission_error','rate_limit_error','server_error']);
+  const types=new Set(['invalid_request_error','authentication_error','permission_error','rate_limit_error','rate_limit_exceeded','insufficient_quota','server_error']);
+  const nested=asRecord(value.error);
+  const code=typeof value.code==='string'&&codes.has(value.code)?value.code:nested.code;
+  const type=typeof value.type==='string'&&types.has(value.type)?value.type:nested.type;
+  const metadata:string[]=[];
+  // Inspect only explicit response-header names. Never serialize provider errors,
+  // messages, bodies, arbitrary headers, or request configuration.
+  const header=(name:string):string|null=>{
+    try {
+      const headers=value.headers as {get?:(name:string)=>unknown}|undefined;
+      if(typeof headers?.get!=='function')return null;
+      const result=headers.get(name);
+      return typeof result==='string'&&result.length<=128?result:null;
+    }catch{return null;}
+  };
+  const numberHeader=(name:string,label:string,max:number,decimals=false)=>{
+    const raw=header(name);
+    if(raw!==null&&(decimals?/^(?:0|[1-9]\d{0,11})(?:\.\d{1,3})?$/:/^(?:0|[1-9]\d{0,11})$/).test(raw)&&Number(raw)<=max)metadata.push(`${label}=${raw}`);
+  };
+  numberHeader('retry-after','retry_after_seconds',604800,true);
+  numberHeader('retry-after-ms','retry_after_ms',604800000,true);
+  for(const unit of ['requests','tokens']){
+    for(const kind of ['limit','remaining'])numberHeader(`x-ratelimit-${kind}-${unit}`,`${kind}_${unit}`,100000000000);
+    const reset=header(`x-ratelimit-reset-${unit}`);
+    // OpenAI durations use ordered, optional day/hour/minute/second/ms parts.
+    // Bound both syntax and total duration, and output a normalized number only.
+    const match=reset?.match(/^(?:(\d{1,3})d)?(?:(\d{1,3})h)?(?:(\d{1,3})m)?(?:(\d{1,3}(?:\.\d{1,3})?)s)?(?:(\d{1,6})ms)?$/);
+    if(reset&&match){const ms=[86400000,3600000,60000,1000,1].reduce((sum,scale,i)=>sum+Number(match[i+1]??0)*scale,0);if(ms<=604800000)metadata.push(`reset_${unit}_ms=${Math.round(ms)}`);}
+  }
+  for(const [name,label,format] of [['openai-organization','provider_organization',/^org-[A-Za-z0-9]{6,64}$/],['openai-project','provider_project',/^proj_[A-Za-z0-9]{6,64}$/]] as const){const id=header(name);if(id&&format.test(id))metadata.push(`${label}=${id}`);}
   const status=typeof value.status==='number'&&value.status>=400&&value.status<=599?String(value.status):'unknown';
-  return [`semantic_provider_http_${status}`,...(typeof value.code==='string'&&codes.has(value.code)?[`code=${value.code}`]:[]),...(typeof value.type==='string'&&types.has(value.type)?[`type=${value.type}`]:[]),...(typeof value.param==='string'&&params.has(value.param)?[`param=${value.param}`]:[]),...(typeof value.request_id==='string'&&/^req_[A-Za-z0-9_-]{4,100}$/.test(value.request_id)?[`request_id=${value.request_id}`]:[])].join(';');
+  return [`semantic_provider_http_${status}`,...(typeof code==='string'&&codes.has(code)?[`code=${code}`]:[]),...(typeof type==='string'&&types.has(type)?[`type=${type}`]:[]),...(typeof value.param==='string'&&params.has(value.param)?[`param=${value.param}`]:[]),...(typeof value.request_id==='string'&&/^req_[A-Za-z0-9_-]{4,100}$/.test(value.request_id)?[`request_id=${value.request_id}`]:[]),...metadata].join(';');
 }
 export async function extractStructuredEvidence(records:SourceRecord[], context:SourceRecord[]=[], options:{useAI?:boolean;model?:string;timeoutMs?:number}={}):Promise<ExtractionResult> {
   const local=records.map(r=>({...r,events:extractEvidence(r,[...context,...records])}));

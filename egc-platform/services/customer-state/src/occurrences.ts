@@ -22,7 +22,8 @@ const digest=(s:string)=>createHash('sha256').update(s).digest('hex');
 const obj=(v:unknown):Json=>v&&typeof v==='object'&&!Array.isArray(v)?v as Json:{};
 const aliasKey=(a:OccurrenceAlias)=>`${a.kind}:${a.namespace}:${a.recordId}`;
 const accepted=(e:CanonicalEvent)=>['accepted','deduplicated'].includes(e.syncState);
-export function eventOccurrenceKind(type:CustomerEventType):OccurrenceKind|null {
+export function eventOccurrenceKind(type:CustomerEventType,lifecycleKind?:unknown):OccurrenceKind|null {
+  if(["appointment_cancelled","no_show"].includes(type)&&(lifecycleKind==='job'||lifecycleKind==='walkthrough'))return lifecycleKind;
   if(type.startsWith('walkthrough_'))return 'walkthrough';
   if(['job_verbally_accepted','job_sold','job_scheduled','job_completed','revenue_collected','deposit_collected','payment_discussed'].includes(type))return 'job';
   if(['video_quote_requested','video_quote_customer_agreed','video_quote_received','video_quote_in_progress','quote_prepared','quote_delivered','customer_deciding'].includes(type))return 'quote';
@@ -48,7 +49,8 @@ export function resolveCustomerOccurrences(input:{contactId:string;leadId:string
   const occurrences=new Map((input.existingOccurrences??[]).filter(o=>o.contactId===input.contactId).map(o=>[o.id,{...o,authoritativePortalIds:[...o.authoritativePortalIds],details:{...o.details}}]));
   const aliases=new Map<string,PersistedOccurrenceAlias>();
   for(const a of input.existingAliases??[]){if(a.contactId===input.contactId)aliases.set(aliasKey(a),{...a});else issues.push({code:'occurrence_cross_customer_alias',sourceIds:[a.recordId],detail:'An entity alias belongs to another customer; it was not attached.'});}
-  const records=input.records.map(r=>({...r,events:(r.events??[]).map(e=>({...e,details:{...e.details}}))}));
+  for(const record of input.records)if(record.contactId!==input.contactId)issues.push({code:'occurrence_cross_customer_source',sourceIds:[record.sourceRecordId],detail:'A source belongs to another customer and was excluded from occurrence resolution.'});
+  const records=input.records.filter(r=>r.contactId===input.contactId).map(r=>({...r,events:(r.events??[]).map(e=>({...e,details:{...e.details}}))}));
   type Claim={record:SourceRecord;event:EvidenceEvent;identity:OccurrenceIdentity};
   const claims:Claim[]=records.flatMap(record=>(record.events??[]).flatMap(event=>{const identity=readOccurrenceIdentity(event);return identity?[{record,event,identity}]:[];}));
   claims.sort((a,b)=>a.record.occurredAt.localeCompare(b.record.occurredAt)||Number(Boolean(b.identity.authoritativePortalId))-Number(Boolean(a.identity.authoritativePortalId))||a.identity.aliases.map(aliasKey).sort()[0]!.localeCompare(b.identity.aliases.map(aliasKey).sort()[0]!));
@@ -86,7 +88,7 @@ export function resolveCustomerOccurrences(input:{contactId:string;leadId:string
   for(const {event,identity} of claims){const from=event.details?.occurrenceId;if(typeof from!=='string')continue;for(const parent of identity.parents??[]){const to=aliases.get(aliasKey(parent.alias))?.occurrenceId;if(to&&to!==from)links.push({id:`egcol_${digest(`${from}:${parent.relationship}:${to}`)}`,contactId:input.contactId,fromOccurrenceId:from,toOccurrenceId:to,relationship:parent.relationship});}}
   const knownByKind=(kind:OccurrenceKind)=>[...new Set(claims.filter(c=>c.identity.kind===kind&&!c.event.humanReviewNeeded).map(c=>c.event.details?.occurrenceId).filter((id):id is string=>typeof id==='string'))];
   for(const record of records)for(const event of record.events??[]) {
-    const kind=eventOccurrenceKind(event.eventType);if(!kind||event.details?.occurrenceId||event.details?.occurrenceIdentityConflict)continue;
+    const kind=eventOccurrenceKind(event.eventType,event.details?.occurrenceKind);if(!kind||event.details?.occurrenceId||event.details?.occurrenceIdentityConflict)continue;
     const prior=legacyEvents.find(e=>e.eventType===event.eventType&&e.occurrenceId&&e.evidence.some(ref=>ref.sourceType===record.sourceType&&ref.sourceRecordId===record.sourceRecordId));
     if(prior?.occurrenceId){event.details={...event.details,occurrenceId:redirect(prior.occurrenceId),occurrenceKind:kind,occurrenceIdentityStatus:'unassigned'};continue;}
     // No invented aliases to a known job: an independently supported commitment
