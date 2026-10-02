@@ -2341,8 +2341,8 @@ def render_book():
 <section class="hero" id="top"><div class="wrap">
 <div class="hero-eyebrow mono">Book online</div>
 <a href="tel:{PHONE}" class="hero-phone">{PHONE_DISPLAY}<span class="hero-phone-sub">· schedule your free walkthrough</span></a>
-<h1 class="hero-title" style="max-width:none">Schedule your free <em>Garage Walkthrough</em></h1>
-<p class="hero-sub">We come to the property, learn what stays and what goes, and build a complete Garage Turnaround Plan with one exact price. Photos are optional and only help us prepare.</p>
+<h1 class="hero-title" style="max-width:none">Schedule your free <em>walkthrough</em></h1>
+<p class="hero-sub">Tell us what needs to go or what your garage needs. We visit the property, confirm the work, and agree on one exact price. Photos are optional and help us prepare.</p>
 </div></section>"""
     book_sidebar = """<aside class="book-sidebar reveal" aria-label="What happens during the walkthrough">
 <h3>What the walkthrough covers</h3>
@@ -3223,16 +3223,16 @@ TRUST_STRIP_BLOCK = """<div class="trust-strip" aria-label="Trust signals">
   </div>
 </div>"""
 
-SEASONAL_BANNER_BLOCK = """<div id="seasonal-banner" class="seasonal-banner" role="region" aria-label="Spring promotion" hidden>
+SEASONAL_BANNER_BLOCK = """<div id="seasonal-banner" class="seasonal-banner" role="region" aria-label="Free walkthrough" hidden>
   <div class="wrap seasonal-banner-inner">
-    <span>🌱 <strong>Spring cleanout</strong> — book now and park inside before hail season.</span>
+    <span><strong>Make room for a fresh start.</strong> Request a free walkthrough for junk removal or garage cleaning.</span>
     <a href="/book.html">Request walkthrough →</a>
     <button type="button" class="seasonal-banner-dismiss" aria-label="Dismiss banner">×</button>
   </div>
 </div>
 <script>
 (function(){{
-  var k='egc-spring-banner-2026';
+  var k='egc-space-banner';
   var b=document.getElementById('seasonal-banner');
   if(!b||localStorage.getItem(k))return;
   b.hidden=false;
@@ -3875,6 +3875,8 @@ FAQ_SEARCH_JS = """
     });
     if(status)status.textContent=q?(visible?visible+' answer'+(visible===1?'':'s')+' found':'No answers found. Try a broader search or call us.') : '';
   });
+  var sectionSelect=document.getElementById('faq-section-select');
+  if(sectionSelect){sectionSelect.addEventListener('change',function(){var t=this.value&&document.querySelector(this.value);if(t){t.scrollIntoView({behavior:window.matchMedia('(prefers-reduced-motion: reduce)').matches?'auto':'smooth',block:'start'});}});}
   var navLinks=document.querySelectorAll('.faq-nav-list a[href^="#"]');
   var sections=[].slice.call(document.querySelectorAll('.faq-sections .faq-section[id]'));
   function onScroll(){
@@ -4057,8 +4059,14 @@ def patch_iteration4_faq(text):
     if 'id="faq-search"' not in text and 'class="faq-layout"' in text:
         search = """<div class="wrap faq-search-wrap"><label class="sr-only" for="faq-search">Search FAQ</label><input type="search" id="faq-search" class="faq-search" placeholder="Search questions — pricing, donations, booking…" autocomplete="off" aria-describedby="faq-search-status"><p id="faq-search-status" class="faq-search-status" role="status" aria-live="polite"></p></div>\n"""
         text = text.replace('<div class="wrap">\n    <div class="faq-layout">', search + '<div class="wrap">\n    <div class="faq-layout">', 1)
-    if "faq-search" in text and "getElementById('faq-search')" not in text:
+    if 'id="faq-search"' in text and 'id="faq-search-status"' not in text:
+        text = re.sub(r'(<input[^>]*id="faq-search"[^>]*)(>)', r'\1 aria-describedby="faq-search-status"\2<p id="faq-search-status" class="faq-search-status" role="status" aria-live="polite"></p>', text, count=1)
+    if "getElementById('faq-search')" in text:
+        text = re.sub(r"<script>\s*\(function\(\)\{\s*var input=document.getElementById\('faq-search'\);[\s\S]*?</script>", FAQ_SEARCH_JS.strip(), text, count=1)
+    elif 'id="faq-search"' in text:
         text = text.replace("</body>", FAQ_SEARCH_JS + "\n</body>")
+    if 'faq-audit-20261001' not in text:
+        text = text.replace('</style>', '/* faq-audit-20261001 */\n.faq-nav-list{list-style:none;margin:0;padding:0}.faq-nav-list a{display:block;padding:10px 12px;min-height:44px;border-radius:6px}.faq-search-status{margin-top:10px;min-height:1.5em;color:var(--muted);font-size:14px}@media(max-width:820px){.faq-nav{display:none}.faq-nav-mobile{display:block}}\n</style>', 1)
     return text
 
 
@@ -4436,7 +4444,7 @@ def audit_seo_meta(fix_long_titles=False):
         "Junk Removal Fort Collins � $139 Flat Rate, Same-Day | Easy Garage Cleaning": "$139 Junk Removal Fort Collins | Easy Garage",
         "House & Property Cleanouts Fort Collins CO | Move-Out, Estate & More": "Property Cleanouts Fort Collins | Easy Garage",
     }
-    index_title = "Easy Garage Cleaning | Fort Collins Garage Cleanouts"
+    index_title = "Junk Removal &amp; Garage Cleaning | Fort Collins, CO"
     for path in site_html_files():
         rel = path.relative_to(ROOT).as_posix()
         fix = fix_long_titles and generator_owns(rel)
@@ -4619,6 +4627,10 @@ def main():
             print(" ", issue)
     else:
         print("SEO audit: OK")
+
+    # Keep the public-only load guide in generated pricing/service pages.
+    import runpy
+    runpy.run_path(str(ROOT / "tools/public-site/install-estimator.py"))["install"]()
 
     # /before-after links (homepage nav, drawer, footer, CTA) and its sitemap entry.
     publish_gallery_links(ROOT)

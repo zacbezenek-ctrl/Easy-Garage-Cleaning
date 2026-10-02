@@ -4,6 +4,7 @@ import concurrent.futures
 import hashlib
 import json
 import re
+import subprocess
 import time
 import urllib.request
 from pathlib import Path
@@ -12,7 +13,9 @@ BASE='https://easygaragecleaning.com'
 ROOT=Path(__file__).resolve().parents[2]
 OUT=ROOT/'simple-page-review'
 OUT.mkdir(exist_ok=True)
-manifest=json.loads((ROOT/'gallery-simple.json').read_text())
+# Use the same canonical release and asset list as the renderer, not a stale imported JSON snapshot.
+manifest=json.loads(subprocess.check_output(['node','--input-type=module','-e',
+    "import {gallerySimpleVersion,gallerySimplePairs} from './functions/_lib/gallery-simple-data.js'; console.log(JSON.stringify({release:gallerySimpleVersion,pairs:gallerySimplePairs}));"],cwd=ROOT,text=True))
 
 def get(path):
     request=urllib.request.Request(path if path.startswith('http') else BASE+path,headers={'User-Agent':'Mozilla/5.0 EGC public gallery release verification','Cache-Control':'no-cache'})
@@ -27,7 +30,9 @@ for attempt in range(30):
         assert ('name="egc-gallery-release" content="'+manifest['release']+'"').encode() in html,'Public HTML is not yet the tested release'
         assert len(re.findall(rb'class="ba-card"',html))==7
         assert b'/gallery-simple.js' in html and b'/gallery-simple.css' in html
-        assert not re.search(rb'\bAI\b|AI-generated|gallery-showcase|gallery-ideal-assets',html,re.I)
+        assert html.count(b'>AI-generated planning example</span>')==sum(p.get('type')=='concept' for p in manifest['pairs'])
+        assert b'they are not completed customer projects' in html
+        assert not re.search(rb'gallery-showcase|gallery-ideal-assets',html,re.I)
         for pair in manifest['pairs']:
             for state in ['before','after']:
                 assert ('src="'+pair[state]+'"').encode() in html
