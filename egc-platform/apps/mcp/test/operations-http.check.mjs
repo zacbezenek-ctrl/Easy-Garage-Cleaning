@@ -69,8 +69,18 @@ for(const enabled of [false,true]) {
       assert.ok(unauthorized.data.result._meta['mcp/www_authenticate']);
       const status=await server.rpc('tools/call',{name:'egc.operations_status',arguments:{}},true);
       assert.equal(status.status,200);
+      assert.equal(status.data.result.isError,true);
       const payload=JSON.parse(status.data.result.content[0].text);
       assert.equal(payload.error,enabled?'operations_bridge_not_configured':'operations_not_enabled');
+      for(const [name,args,error] of [
+        ['egc.visit_get',{portalVisitId:'synthetic-visit'},'operations_bridge_not_configured'],
+        ['recordings.list',{portalJobId:'synthetic-visit'},'recording_bridge_not_configured']
+      ]){
+        const unavailable=await server.rpc('tools/call',{name,arguments:args},true);
+        assert.equal(unavailable.status,200,name);
+        assert.equal(unavailable.data.result.isError,true,`${name} must expose unavailable sources as MCP errors`);
+        assert.equal(unavailable.data.result.structuredContent.result.error,enabled?error:'operations_not_enabled');
+      }
       if(enabled){
         for(const name of ['appointments.delete','tasks.update','jobs.add_note','walkthroughs.create_draft','walkthroughs.update_draft','walkthroughs.approve']){
           const denied=await server.rpc('tools/call',{name,arguments:{}},true);

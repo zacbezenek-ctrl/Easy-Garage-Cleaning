@@ -2,7 +2,7 @@ import {afterEach,beforeEach,describe,expect,it,vi} from 'vitest';
 import type {Actor,Command} from '@egc/operations';
 type Json=Record<string,unknown>;
 const f=vi.hoisted(()=>({providers:[] as Json[],syncs:[] as Json[],events:[] as Json[],contacts:[] as Json[],writes:[] as Json[],reconcileCustomerState:vi.fn(),syncPortalSchedule:vi.fn()}));
-vi.mock('@egc/customer-state',()=>({reconcileCustomerState:f.reconcileCustomerState,customerActivityPredicate:vi.fn(()=>true),customerRefreshOrder:vi.fn(()=>null)}));
+vi.mock('@egc/customer-state',async()=>{const actual=await vi.importActual<typeof import('@egc/customer-state')>('@egc/customer-state');return {reconcileCustomerState:f.reconcileCustomerState,customerActivityPredicate:vi.fn(()=>true),customerRefreshOrder:vi.fn(()=>null),exclusionReasons:actual.exclusionReasons,excludedFromCustomerReporting:actual.excludedFromCustomerReporting};});
 vi.mock('./scheduling.js',()=>({syncPortalSchedule:f.syncPortalSchedule}));
 vi.mock('./booking-adoption.js',()=>({reconcileExistingBookingAdoption:vi.fn(async()=>({dryRun:true,counts:{ready:0}}))}));
 vi.mock('@egc/operations',async()=>{const actual=await vi.importActual<typeof import('@egc/operations')>('@egc/operations');return {reconcileBookingSnapshot:actual.reconcileBookingSnapshot};});
@@ -80,4 +80,20 @@ describe('Hub booking worker source boundary',()=>{
   f.contacts=[];await reconcileHubBookings(portal(),{});expect(f.reconcileCustomerState).not.toHaveBeenCalled();
   const saved=JSON.parse(String(f.writes[0]?.cursor));expect(saved.portalEvidence.unmappedCalendarContacts).toEqual(['provider-contact-one']);
  });
+});
+
+describe('booking review queue ingestion',()=>{
+ it('preserves review-needed source commitments and date uncertainty in persisted diagnostics',async()=>{
+  f.events=[{providerContactId:'provider-contact-one',event:{eventId:'review-agreement',contactId:'contact-one',eventType:'walkthrough_verbally_booked',active:true,humanReviewNeeded:true,confidence:.8,occurredAt:new Date('2026-09-22T05:00:00Z'),details:{timeMention:'Friday at 4'},evidence:[{sourceType:'message',sourceRecordId:'source-text',excerpt:'Friday at 4 works',sourcePointer:'messages:local-text'}]}}];
+  await reconcileHubBookings(portal(),{});const saved=JSON.parse(String(f.writes[0]?.cursor));
+  expect(saved.findings).toContainEqual(expect.objectContaining({code:'booking_commitment_requires_review',automaticRepair:false,commitment:expect.objectContaining({startAt:null,timeMention:'Friday at 4',sourceReferences:[{sourceType:'message',sourceRecordId:'source-text',excerpt:'Friday at 4 works',sourcePointer:'messages:local-text'}]})}));expect(f.syncPortalSchedule).not.toHaveBeenCalled();
+ });
+ it('future provider success timestamps cannot enable repairs',async()=>{
+  f.syncs=[{cursor:'2026-09-22T07:00:00Z'}];const result=await reconcileHubBookings(portal(),{EGC_BOOKING_AUTO_RECONCILE:'true'});expect(result.providerComplete).toBe(false);expect(f.syncPortalSchedule).not.toHaveBeenCalled();
+ });
+ it('does not put applicant/internal contacts into the customer booking review queue',async()=>{
+  f.events=['applicant-active','egc-test'].map((tag,i)=>({providerContactId:`non-customer-${i}`,contactTags:[tag],contactRaw:{},contactSource:null,event:{eventId:`excluded-${i}`,contactId:`excluded-${i}`,eventType:'appointment_time_agreed',active:true,humanReviewNeeded:true,confidence:'0.8',occurredAt:new Date('2026-09-22T05:00:00Z'),details:{timeMention:'Friday at 4'},evidence:[{sourceType:'message',sourceRecordId:`source-${i}`,excerpt:'Friday at 4 works'}]}}));
+  await reconcileHubBookings(portal(),{});const saved=JSON.parse(String(f.writes[0]?.cursor));expect(saved.findings.every((f:Json)=>!f.commitment)).toBe(true);
+ });
+
 });

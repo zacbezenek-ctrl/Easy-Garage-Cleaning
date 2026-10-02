@@ -420,16 +420,23 @@ describe('record reads and enrichment',()=>{
     const h=harness(s=>s.table==='customer_state_snapshots'?[dbRow(schema.customerStateSnapshots,{contactId:id(0,'b'),snapshot,coverage:{extraction:{complete:true,version:EXTRACTOR_VERSION}},lastReconciledAt:iso(NOW.valueOf())})]:rows(s));
     const r=await h.call('leads.search',{limit:2});expect(r.items[0].operational).toMatchObject(snapshot);
   });
-  it('gets return one record with a refreshed canonical timeline, and not-found as an error result',async()=>{
+  it('gets return one record with a persisted canonical timeline, and not-found as an error result',async()=>{
     const job=dbRow(schema.jobs,{id:CONTACT,contactId:OTHER,status:'scheduled'}),h=harness(s=>s.table==='jobs'?[job]:[]);
     expect(await h.call('jobs.get',{jobId:CONTACT})).toMatchObject({id:CONTACT,status:'scheduled',canonical:{contactId:OTHER,customer:{state:'JOB_SOLD'}}});
-    expect(h.timeline).toHaveBeenCalledWith({contactId:OTHER,refresh:true});
+    expect(h.timeline).toHaveBeenCalledWith({contactId:OTHER,refresh:false});
     for(const [name,args,code] of [['contacts.get',{contactId:CONTACT},'contact_not_found'],['leads.get',{leadId:CONTACT},'lead_not_found'],['calls.get',{callId:CONTACT},'call_not_found'],['opportunities.get',{opportunityId:CONTACT},'opportunity_not_found'],['walkthroughs.get',{walkthroughId:CONTACT},'walkthrough_not_found'],['conversations.get',{conversationId:CONTACT},'conversation_not_found']] as const){
       const empty=harness(),r=await empty.raw(name,args);
       expect(r.isError,name).toBe(true);expect(r.structuredContent.result).toEqual({error:code});expect(empty.timeline).not.toHaveBeenCalled();
     }
     const lead=harness(s=>s.table==='leads'?[{...dbRow(schema.leads,{id:CONTACT,contactId:OTHER,currentState:'BOOKED'}),...dbRow(schema.contacts,{id:OTHER,providerId:'p'})}]:[]);
     expect(await lead.call('leads.get',{leadId:CONTACT})).toMatchObject({lead:{id:CONTACT,providerState:'BOOKED',currentState:'JOB_SOLD'},contact:{id:OTHER},canonical:{contactId:OTHER}});
+    expect(lead.timeline).toHaveBeenCalledWith({contactId:OTHER,refresh:false});
+    const contact=harness(s=>s.table==='contacts'?[dbRow(schema.contacts,{id:OTHER,providerId:'p'})]:[]);
+    expect(await contact.call('contacts.get',{contactId:OTHER})).toMatchObject({id:OTHER,canonical:{contactId:OTHER}});
+    expect(contact.timeline).toHaveBeenCalledWith({contactId:OTHER,refresh:false});
+    const opportunity=harness(s=>s.table==='opportunities'?[dbRow(schema.opportunities,{id:CONTACT,contactId:OTHER,providerId:'p'})]:[]);
+    expect(await opportunity.call('opportunities.get',{opportunityId:CONTACT})).toMatchObject({id:CONTACT,canonical:{contactId:OTHER}});
+    expect(opportunity.timeline).toHaveBeenCalledWith({contactId:OTHER,refresh:false});
     const call=harness(s=>s.table==='calls'?[dbRow(schema.calls,{id:CONTACT,providerMessageId:'m',contactId:OTHER,direction:'inbound',startedAt:iso(NOW.valueOf())})]:[]);
     expect(await call.call('calls.get',{callId:CONTACT})).toMatchObject({call:{id:CONTACT},transcript:null});
     const walkthrough=harness(s=>s.table==='walkthroughs'?[dbRow(schema.walkthroughs,{id:CONTACT,status:'draft',extraction:{garageSize:'2-car'}})]:[]);

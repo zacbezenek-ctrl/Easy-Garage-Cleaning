@@ -4,9 +4,9 @@ import {commandSchema,type Command} from "@egc/operations";
 import {callOperations,operationsEnabled} from "./operations.js";
 import {oauthSecurityMetadata,READ_SCOPE,WRITE_SCOPE} from "./oauth.js";
 import {AppointmentOperationError,appointmentStatus} from "./appointment-reliability.js";
+import {settle as result} from "./tools/result.js";
 type Json=Record<string,unknown>;
 const record=(v:unknown):Json=>v&&typeof v==="object"&&!Array.isArray(v)?v as Json:{};
-const result=(value:unknown)=>({content:[{type:"text" as const,text:JSON.stringify(value,null,2)}],structuredContent:{result:value}});
 export async function readHubVisit(portalVisitId:string):Promise<Json>{
   const response:Json=await callOperations({command:"schedule.resolve",portalVisitId});
   if(response.error||response.authority!=="employee_hub")throw new AppointmentOperationError(typeof response.error==="string"?response.error:"schedule_authority_unavailable");

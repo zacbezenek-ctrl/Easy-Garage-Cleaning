@@ -5,8 +5,17 @@ import { communicationSummary } from "./communications.js";
 export { communicationSummary, callContactEvidence, isCallMessage } from "./communications.js";
 import type { LeadState } from "@egc/schemas";
 
-/** Explicit EGC validation markers only. A name containing "test" is not evidence. */
-export const businessContactPredicate=()=>sql`not (${schema.contacts.tags} @> '["egc-test"]'::jsonb or lower(coalesce(${schema.contacts.source},'')) = 'egc synthetic routing validation')`;
+/** Explicit lifecycle markers only: names and message keywords never classify
+ * a customer. DNC remains acquisition history but is suppressed by queue rules. */
+export const businessContactPredicate=()=>sql`not (
+  exists(select 1 from jsonb_array_elements_text(${schema.contacts.tags}) as customer_tag(value)
+    where lower(trim(value)) in ('egc-test','test','test-lead','internal','egc-internal','vendor','supplier')
+      or lower(trim(value)) ~ '^applicant($|[-_: ])')
+  or ${schema.contacts.raw} @> '{"isTest":true}'::jsonb or ${schema.contacts.raw} @> '{"is_test":true}'::jsonb
+  or ${schema.contacts.raw} @> '{"isTestLead":true}'::jsonb or ${schema.contacts.raw} @> '{"is_test_lead":true}'::jsonb
+  or ${schema.contacts.raw} @> '{"isInternal":true}'::jsonb or ${schema.contacts.raw} @> '{"isVendor":true}'::jsonb
+  or lower(coalesce(${schema.contacts.source},'')) = 'egc synthetic routing validation'
+)`;
 
 export type LeadAuditRow = {
   leadId: string;
@@ -30,6 +39,7 @@ export type LeadAuditRow = {
   operationalState?: string;
   intentStage?: string;
   pipeline?: string;
+  pipelineDisposition?: string;
   nextRequiredAction?: string;
   reconciliationStatus?: string;
   humanReviewNeeded?: boolean;
@@ -215,11 +225,11 @@ async function recentLeadRows(days: number): Promise<LeadAuditRow[]> {
     const old=enrichLeadAuditRow(row),stored=canonical.find(c=>c.contactId===row.contactId),projection=stored?.snapshot;
     if(!projection)return old;
     const reconciliation=qualifyExtractionCoverage(projection as unknown as CustomerProjection,stored!.coverage);
-    const state=String(projection.state),terminal=["LOST","DO_NOT_CONTACT","JOB_SOLD","JOB_SCHEDULED","JOB_COMPLETED","CASH_COLLECTED"].includes(state)||projection.pipelineDisposition==="negative_outcome";
+    const state=String(projection.state),terminal=["LOST","DO_NOT_CONTACT","JOB_SOLD","JOB_SCHEDULED","JOB_COMPLETED","CASH_COLLECTED"].includes(state)||["negative_outcome","cancelled","lost","do_not_contact"].includes(String(projection.pipelineDisposition))||projection.excluded===true;
     // A real quote or verbal commitment retains its concrete next action. Do not
     // send closed/DNC customers back into generic lead-chasing queues.
     const actionable=["NEW_LEAD","OUTREACH_ATTEMPTED","TWO_WAY_CONTACT","QUALIFIED","PRICE_EXPECTATION_ACCEPTED","VIDEO_QUOTE_PENDING_CUSTOMER","VIDEO_QUOTE_RECEIVED","VIDEO_QUOTE_IN_PROGRESS","QUOTE_DELIVERED","WALKTHROUGH_VERBALLY_BOOKED","WALKTHROUGH_COMPLETED","FOLLOW_UP_PENDING","CUSTOMER_DECIDING","JOB_VERBALLY_ACCEPTED"].includes(state);
-    return {...old,operationalState:state,intentStage:String(projection.intentStage),pipeline:String(projection.pipeline),nextRequiredAction:String(projection.nextRequiredAction),reconciliationStatus:reconciliation.reconciliationStatus,humanReviewNeeded:reconciliation.humanReviewNeeded,discrepancies:reconciliation.discrepancies,supportingEvidence:Array.isArray(projection.supportingEvidence)?projection.supportingEvidence:[],needsFollowUp:!terminal&&actionable,followUpReason:!terminal&&actionable?String(projection.nextRequiredAction):null};
+    return {...old,operationalState:state,intentStage:String(projection.intentStage),pipelineDisposition:String(projection.pipelineDisposition),pipeline:String(projection.pipeline),nextRequiredAction:String(projection.nextRequiredAction),reconciliationStatus:reconciliation.reconciliationStatus,humanReviewNeeded:reconciliation.humanReviewNeeded,discrepancies:reconciliation.discrepancies,supportingEvidence:Array.isArray(projection.supportingEvidence)?projection.supportingEvidence:[],needsFollowUp:!terminal&&actionable,followUpReason:!terminal&&actionable?String(projection.nextRequiredAction):null};
   });
 }
 
@@ -231,6 +241,7 @@ export async function leadsNeedingContact(days = 3): Promise<LeadAuditRow[]> {
 export async function leadsNotResponding(days = 3): Promise<LeadAuditRow[]> {
   const rows = await recentLeadRows(days);
   return rows.filter((row) =>
+    !["cancelled","negative_outcome","lost","do_not_contact"].includes(row.pipelineDisposition??"") &&
     !["LOST","DO_NOT_CONTACT","JOB_SOLD","JOB_SCHEDULED","JOB_COMPLETED","CASH_COLLECTED","JOB_VERBALLY_ACCEPTED","WALKTHROUGH_VERBALLY_BOOKED","WALKTHROUGH_BOOKED","VIDEO_QUOTE_RECEIVED","VIDEO_QUOTE_IN_PROGRESS","QUOTE_DELIVERED"].includes(row.operationalState??"") &&
     row.state !== "BOOKED" &&
     row.state !== "LOST" &&

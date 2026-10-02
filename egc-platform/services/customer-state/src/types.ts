@@ -20,7 +20,7 @@ export type SourceType = "lead" | "message" | "call" | "call_transcript" | "appo
 export type Json = Record<string, unknown>;
 export type EvidenceRef = {
   sourceType: SourceType; sourceRecordId: string; occurredAt: string; excerpt: string;
-  sourcePointer?: string; confidence: number; humanReviewNeeded: boolean; excerptTruncated?: boolean;
+  sourcePointer?: string; confidence: number; humanReviewNeeded: boolean; excerptTruncated?: boolean; occurredAtVerified?: boolean;
 };
 export interface EvidenceEvent {
   eventType: CustomerEventType;
@@ -61,7 +61,7 @@ export interface CustomerProjection {
   state: OperationalState; intentStage: "unengaged" | "engaged" | "qualified" | "high_intent" | "accepted" | "converted" | "inactive";
   pipeline: "walkthrough" | "video_quote" | "direct_job" | "unclassified";
   videoQuoteStage: "requested" | "customer_agreed" | "media_received" | "estimator_review" | "quote_prepared" | "quote_sent" | "customer_deciding" | "accepted" | "lost" | null;
-  pipelineDisposition: "active" | "converted" | "negative_outcome" | "lost" | "do_not_contact";
+  pipelineDisposition: "active" | "converted" | "negative_outcome" | "lost" | "cancelled" | "do_not_contact";
   reconciliationStatus: "fully_reconciled" | "verbally_booked_provider_pending" | "provider_booking_confirmed" | "reconciliation_needed" | "duplicate_suspected";
   supportingEvidence: EvidenceRef[]; nextRequiredAction: string; humanReviewNeeded: boolean;
   followUpCommitment?: {occurredAt:string;deadline:unknown;action:string|null;evidence:EvidenceRef[]}|null;
@@ -72,6 +72,7 @@ export interface CustomerProjection {
 export interface PortalEvidenceRecord {
   id: string; highlevelContactId: string; kind: "walkthrough" | "job" | "payment";
   status: string; createdAt?: string | null; updatedAt?: string | null; completedAt?: string | null;
+  cancelledAt?: string | null; noShowAt?: string | null;
   startAt?: string | null; sourceRevision?: string | null; highlevelAppointmentId?: string | null;
   jobId?: string | null; sourceWalkthroughId?: string | null; address?: string | null;
   normalizedLocalJobId?: string | null; normalizedLocalAppointmentId?: string | null;

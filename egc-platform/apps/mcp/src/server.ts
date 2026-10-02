@@ -6,6 +6,7 @@ import {executeCommunication,reconcileCommunication,preflightRecipient,persistOu
 import {registerOperationsTools,operationsPrincipal,operationsEnabled,blockedToolCall,directSendsBlocked,DIRECT_SEND_DISABLED,callOperations,runAsPrincipal,type Principal} from "./operations.js";
 import {registerDomainTools,DOMAIN_TOOLS} from "./tools/index.js";
 import type {RegisterOptions} from "./tools/define.js";
+import {settle} from "./tools/result.js";
 import {taskPrioritySchema,taskStatusSchema,withCanonicalContexts} from "./tools/domains/crm-reads.js";
 import {connectorMode} from "./tools/domains/policy.js";
 import {registerRecordingTools} from "./recording-tools.js";
@@ -40,10 +41,7 @@ import {
 const auditActor=()=>operationsPrincipal.getStore()?.id??"unverified";
 
 function textResult(value: unknown) {
-  return {
-    content: [{ type: "text" as const, text: JSON.stringify(value, null, 2) }],
-    structuredContent: { result: value }
-  };
+  return settle(value);
 }
 
 const protectedToolMetadata = {

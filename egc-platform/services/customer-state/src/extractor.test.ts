@@ -3,12 +3,46 @@ const {create}=vi.hoisted(()=>({create:vi.fn()}));
 vi.mock('openai',()=>({default:class OpenAI {static APIError=class APIError extends Error{};responses={create};}}));
 import {extractStructuredEvidence,semanticProviderDiagnostic} from './extractor.js';
 import type {SourceRecord} from './types.js';
+import OpenAI from 'openai';
 const oldKey=process.env.OPENAI_API_KEY;
 afterEach(()=>{if(oldKey===undefined)delete process.env.OPENAI_API_KEY;else process.env.OPENAI_API_KEY=oldKey;create.mockReset();});
 describe('semantic extraction provider contract',()=>{
   it('keeps provider diagnostics useful without persisting arbitrary provider strings',()=>{
     expect(semanticProviderDiagnostic({status:400,code:'invalid_json_schema',param:'text.format.schema',type:'invalid_request_error',request_id:'req_synthetic123'})).toBe('semantic_provider_http_400;code=invalid_json_schema;type=invalid_request_error;param=text.format.schema;request_id=req_synthetic123');
     expect(semanticProviderDiagnostic({status:401,code:'sk-sensitive-token',param:'private@example.invalid',type:'Authorization: Bearer secret',request_id:'sk-private'})).toBe('semantic_provider_http_401');
+  });
+  it('retains only bounded rate-limit metadata and public provider identifiers',()=>{
+    const headers=new Headers({'retry-after':'1.5','retry-after-ms':'1500','x-ratelimit-limit-requests':'500','x-ratelimit-remaining-requests':'0','x-ratelimit-limit-tokens':'500000','x-ratelimit-remaining-tokens':'124','x-ratelimit-reset-requests':'1m2.5s','x-ratelimit-reset-tokens':'100ms','openai-organization':'org-SyntheticOrg123','openai-project':'proj_SyntheticProject123','authorization':'Bearer never-persist','x-customer-text':'never-persist'});
+    expect(semanticProviderDiagnostic({status:429,code:'rate_limit_exceeded',type:'rate_limit_error',headers})).toBe('semantic_provider_http_429;code=rate_limit_exceeded;type=rate_limit_error;retry_after_seconds=1.5;retry_after_ms=1500;limit_requests=500;remaining_requests=0;reset_requests_ms=62500;limit_tokens=500000;remaining_tokens=124;reset_tokens_ms=100;provider_organization=org-SyntheticOrg123;provider_project=proj_SyntheticProject123');
+  });
+  it('classifies known nested SDK fields without exposing provider messages',()=>{
+    expect(semanticProviderDiagnostic({status:429,error:{code:'insufficient_quota',type:'insufficient_quota',message:'never-persist',body:'never-persist'}})).toBe('semantic_provider_http_429;code=insufficient_quota;type=insufficient_quota');
+    expect(semanticProviderDiagnostic({status:429,error:{code:'never-persist',type:'never-persist'}})).toBe('semantic_provider_http_429');
+  });
+  it('does not require headers and tolerates a failed header accessor',()=>{
+    for(const headers of [undefined,null,{},'never-persist',{get:()=>{throw new Error('never-persist');}}])expect(semanticProviderDiagnostic({status:429,headers})).toBe('semantic_provider_http_429');
+  });
+  it('rejects malformed, secret-like, out-of-bounds and unrecognized header values',()=>{
+    const names=['retry-after','retry-after-ms','x-ratelimit-limit-requests','x-ratelimit-remaining-requests','x-ratelimit-limit-tokens','x-ratelimit-remaining-tokens','x-ratelimit-reset-requests','x-ratelimit-reset-tokens','openai-organization','openai-project'];
+    for(const value of ['Bearer secret','sk-private','customer@example.invalid','1;code=insufficient_quota','1\\nsecret','Infinity','NaN','-1','1e10','999999999999999999999999999999','x'.repeat(129),'']){
+      const headers={get:(name:string)=>names.includes(name)?value:null};
+      expect(semanticProviderDiagnostic({status:429,headers})).toBe('semantic_provider_http_429');
+    }
+    const headers=new Headers({'retry-after':'604801','retry-after-ms':'604800001','x-ratelimit-limit-tokens':'100000000001','x-ratelimit-reset-requests':'8d','x-ratelimit-reset-tokens':'2s1m','openai-organization':'org-abc;secret','openai-project':'proj_short'});
+    expect(semanticProviderDiagnostic({status:429,headers})).toBe('semantic_provider_http_429');
+  });
+  it('normalizes valid boundary durations without copying arbitrary strings',()=>{
+    const headers=new Headers({'retry-after':'0','x-ratelimit-remaining-tokens':'0','x-ratelimit-reset-requests':'7d','x-ratelimit-reset-tokens':'1h2m3s4ms'});
+    expect(semanticProviderDiagnostic({status:429,headers})).toBe('semantic_provider_http_429;retry_after_seconds=0;reset_requests_ms=604800000;remaining_tokens=0;reset_tokens_ms=3723004');
+  });
+  it('preserves partial extraction behavior while attaching safe SDK error diagnostics',async()=>{
+    process.env.OPENAI_API_KEY='synthetic-not-a-real-key';
+    const source:SourceRecord={sourceType:'message',sourceRecordId:'customer',contactId:'contact',occurredAt:'2026-09-21T12:00:00Z',actorType:'customer',direction:'inbound',text:'Can you call me?'};
+    const error=Object.assign(Object.create(OpenAI.APIError.prototype),{status:429,code:'rate_limit_exceeded',headers:new Headers({'retry-after':'2'}),message:'never-persist',body:'never-persist'});
+    create.mockRejectedValue(error);
+    const result=await extractStructuredEvidence([source]);
+    expect(result).toMatchObject({status:'partial',attempted:true,error:'semantic_provider_http_429;code=rate_limit_exceeded;retry_after_seconds=2'});
+    expect(result.records).toHaveLength(1);expect(result.records[0]!.text).toBe(source.text);
   });
   it('rejects model business events attributed to automation or context-only source records',async()=>{
     process.env.OPENAI_API_KEY='synthetic-not-a-real-key';

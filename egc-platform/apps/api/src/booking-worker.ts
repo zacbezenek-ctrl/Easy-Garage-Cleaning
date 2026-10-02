@@ -1,7 +1,7 @@
 import {getDb,schema} from '@egc/database';
 import {and,desc,eq,inArray,or,sql} from 'drizzle-orm';
 import {reconcileBookingSnapshot,type Actor,type Command,type BookingVisit,type BookingSnapshot} from '@egc/operations';
-import {reconcileCustomerState,customerActivityPredicate,customerRefreshOrder,type PortalEvidenceRecord} from '@egc/customer-state';
+import {reconcileCustomerState,customerActivityPredicate,customerRefreshOrder,exclusionReasons,excludedFromCustomerReporting,type PortalEvidenceRecord} from '@egc/customer-state';
 import {syncPortalSchedule} from './scheduling.js';
 import {reconcileExistingBookingAdoption} from './booking-adoption.js';
 import {ReconciliationFailure,reconciliationDiagnostic,type ReconciliationDiagnostic,type ReconciliationStage} from './reconciliation-diagnostics.js';
@@ -10,6 +10,10 @@ type Portal=(actor:Actor,command:Command)=>Promise<Json>;
 const rec=(v:unknown):Json=>v&&typeof v==='object'&&!Array.isArray(v)?v as Json:{};
 const str=(v:unknown)=>typeof v==='string'?v:null;
 const safeDate=(v:unknown)=>typeof v==='string'&&Number.isFinite(Date.parse(v))?v:null;
+const commitmentReferences=(value:unknown)=>(Array.isArray(value)?value:[]).flatMap(raw=>{
+ const ref=rec(raw),sourceType=str(ref.sourceType),sourceRecordId=str(ref.sourceRecordId),excerpt=str(ref.excerpt),sourcePointer=str(ref.sourcePointer);
+ return sourceType&&sourceRecordId&&excerpt?[{sourceType,sourceRecordId,excerpt:excerpt.slice(0,750),...(sourcePointer?{sourcePointer}:{})}]:[];
+});
 function exactEvidence(result:Json,requested:string[]){
  const returned=result.contactProviderIds,coverage=rec(result.coverage),allowed=new Set(requested),seen=new Set<string>();
  if(result.authority!=='employee_hub'||!Array.isArray(returned)||returned.length!==allowed.size||new Set(returned).size!==allowed.size||returned.some(id=>typeof id!=='string'||!allowed.has(id))||!Array.isArray(result.records)||!safeDate(coverage.asOf))throw new Error('hub_evidence_identity_or_coverage_invalid');
@@ -17,7 +21,7 @@ function exactEvidence(result:Json,requested:string[]){
  for(const raw of result.records){
   const r=rec(raw);
   if(typeof r.id!=='string'||!r.id||seen.has(r.id)||typeof r.highlevelContactId!=='string'||!allowed.has(r.highlevelContactId)||!['walkthrough','job','payment'].includes(String(r.kind))||typeof r.status!=='string'||!r.status)throw new Error('hub_evidence_record_identity_invalid');
-  if(['createdAt','updatedAt','completedAt','startAt','soldAt','paidAt'].some(key=>r[key]!=null&&!safeDate(r[key])))throw new Error('hub_evidence_record_date_invalid');
+  if(['createdAt','updatedAt','completedAt','cancelledAt','noShowAt','startAt','soldAt','paidAt'].some(key=>r[key]!=null&&!safeDate(r[key])))throw new Error('hub_evidence_record_date_invalid');
   if(['priceCents','paidCents'].some(key=>r[key]!=null&&(!Number.isSafeInteger(r[key])||Number(r[key])<0))||(r.financials!=null&&(typeof r.financials!=='object'||Array.isArray(r.financials))))throw new Error('hub_evidence_record_value_invalid');
   seen.add(r.id);records.push(r as unknown as PortalEvidenceRecord);
  }
@@ -43,7 +47,7 @@ export async function reconcileHubBookings(portal:Portal,env:NodeJS.ProcessEnv=p
    // Fetch exact job facts; calendar presence is never cash or an accepted quote.
    stage='hub_job';const detail=await portal(actor,{command:'portal.job',jobId:visit.id}),job=rec(detail.job);
    if(detail.authority!=='employee_hub'||job.id!==visit.id||job.highlevelContactId!==visit.highlevelContactId){complete=false;continue;}
-   portalRecords.push({id:visit.id,highlevelContactId:visit.highlevelContactId,kind:visit.kind,status:visit.status,createdAt:safeDate(job.createdAt),updatedAt:safeDate(job.updatedAt),completedAt:safeDate(job.completedAt),soldAt:safeDate(job.soldAt),startAt:visit.startAt,sourceRevision:visit.sourceRevision??null,highlevelAppointmentId:visit.highlevelAppointmentId??null,normalizedLocalJobId:str(job.normalizedLocalJobId),normalizedLocalAppointmentId:str(job.normalizedLocalAppointmentId),address:visit.address??null,financials:rec(detail.financials)});
+   portalRecords.push({id:visit.id,highlevelContactId:visit.highlevelContactId,kind:visit.kind,status:visit.status,createdAt:safeDate(job.createdAt),updatedAt:safeDate(job.updatedAt),completedAt:safeDate(job.completedAt),cancelledAt:safeDate(job.cancelledAt),noShowAt:safeDate(job.noShowAt),soldAt:safeDate(job.soldAt),startAt:visit.startAt,sourceRevision:visit.sourceRevision??null,highlevelAppointmentId:visit.highlevelAppointmentId??null,normalizedLocalJobId:str(job.normalizedLocalJobId),normalizedLocalAppointmentId:str(job.normalizedLocalAppointmentId),address:visit.address??null,financials:rec(detail.financials)});
   }
   if(result.nextOffset===null||result.nextOffset===undefined)break;
   stage='hub_calendar';if(typeof result.nextOffset!=='number'||result.nextOffset<=offset)throw new Error('hub_calendar_pagination_stalled');
@@ -54,7 +58,7 @@ export async function reconcileHubBookings(portal:Portal,env:NodeJS.ProcessEnv=p
  stage='provider_snapshot';const [providerRows,syncs,events,contactRows]=await Promise.all([
   db.select({appointment:schema.appointments,providerContactId:schema.contacts.providerId}).from(schema.appointments).innerJoin(schema.contacts,eq(schema.contacts.id,schema.appointments.contactId)),
   db.select().from(schema.syncCursors).where(eq(schema.syncCursors.key,'operations:ghl:last_success')).limit(1),
-  db.select({event:schema.customerEvents,providerContactId:schema.contacts.providerId}).from(schema.customerEvents).innerJoin(schema.contacts,eq(schema.contacts.id,schema.customerEvents.contactId)),
+  db.select({event:schema.customerEvents,providerContactId:schema.contacts.providerId,contactTags:schema.contacts.tags,contactRaw:schema.contacts.raw,contactSource:schema.contacts.source}).from(schema.customerEvents).innerJoin(schema.contacts,eq(schema.contacts.id,schema.customerEvents.contactId)),
   db.select({contactId:schema.contacts.id,providerId:schema.contacts.providerId}).from(schema.contacts).where(and(eq(schema.contacts.provider,'ghl'),or(
    calendarContactIds.length?inArray(schema.contacts.providerId,calendarContactIds):sql`false`,
    customerActivityPredicate(activitySince)
@@ -80,8 +84,19 @@ export async function reconcileHubBookings(portal:Portal,env:NodeJS.ProcessEnv=p
   }catch(error){evidenceError='hub_evidence_unavailable_or_invalid';evidenceFailure=reconciliationDiagnostic(error,'hub_evidence');}
  }
  stage='booking_repair';
- const providerComplete=Boolean(syncs[0]?.cursor&&Date.now()-Date.parse(syncs[0].cursor)<10*60000);
- const snapshot:BookingSnapshot={visits,appointments:providerRows.map(({appointment:a,providerContactId})=>({id:a.providerId,contactProviderId:providerContactId,calendarId:a.calendarId,status:a.status,startAt:a.appointmentStartAt.toISOString(),endAt:a.appointmentEndAt?.toISOString()??null,address:str(a.raw.address)})),verbalBookings:events.filter(({event:e})=>e.active&&!e.humanReviewNeeded&&['walkthrough_verbally_booked','job_verbally_accepted'].includes(e.eventType)).map(({event:e,providerContactId})=>({eventId:e.eventId,contactId:e.contactId,contactProviderId:providerContactId,kind:e.eventType==='walkthrough_verbally_booked'?'walkthrough':'job',startAt:safeDate(e.details.scheduledAt),evidence:'Canonical source-linked commitment',occurredAt:e.occurredAt.toISOString()})),coverage:{portalComplete:complete,providerComplete}};
+ const providerAge=syncs[0]?.cursor?Date.now()-Date.parse(syncs[0].cursor):NaN;
+ const providerComplete=Number.isFinite(providerAge)&&providerAge>=0&&providerAge<10*60000;
+ const customerEvents=events.filter(row=>!excludedFromCustomerReporting(exclusionReasons({tags:row.contactTags,raw:row.contactRaw,source:row.contactSource})));
+ const snapshot:BookingSnapshot={
+  visits,
+  appointments:providerRows.map(({appointment:a,providerContactId})=>({id:a.providerId,contactProviderId:providerContactId,calendarId:a.calendarId,status:a.status,startAt:a.appointmentStartAt.toISOString(),endAt:a.appointmentEndAt?.toISOString()??null,address:str(a.raw.address)})),
+  verbalBookings:customerEvents.filter(({event:e})=>e.active&&['walkthrough_verbally_booked','job_verbally_accepted','appointment_time_agreed'].includes(e.eventType)).map(({event:e,providerContactId})=>{
+   const sourceReferences=commitmentReferences(e.evidence),confidence=Number(e.confidence);
+   return {eventId:e.eventId,contactId:e.contactId,contactProviderId:providerContactId,kind:e.eventType==='walkthrough_verbally_booked'?'walkthrough':e.eventType==='job_verbally_accepted'?'job':null,startAt:safeDate(e.details.scheduledAt),evidence:sourceReferences.map(ref=>ref.excerpt).join(' / ').slice(0,1500)||'Canonical source-linked commitment',occurredAt:e.occurredAt.toISOString(),humanReviewNeeded:e.humanReviewNeeded||!Number.isFinite(confidence)||confidence<.85,timeMention:str(e.details.timeMention),occurrenceId:e.occurrenceId??null,portalVisitId:str(e.details.portalRecordId),sourceReferences};
+  }),
+  commitmentOutcomes:customerEvents.filter(({event:e})=>e.active&&!e.humanReviewNeeded&&Number(e.confidence)>=.85&&['appointment_cancelled','no_show','lost','do_not_contact','walkthrough_negative_outcome'].includes(e.eventType)).map(({event:e})=>({contactId:e.contactId,occurrenceId:e.occurrenceId??null,occurredAt:e.occurredAt.toISOString(),eventType:e.eventType})),
+  coverage:{portalComplete:complete,providerComplete}
+ };
  const result=await reconcileBookingSnapshot(snapshot,{dryRun:env.EGC_BOOKING_AUTO_RECONCILE!=='true',limit:25,syncVisit:input=>syncPortalSchedule(actor,{command:'schedule.sync_provider',...input},portal,{env})});
  let adoption:unknown;
  try{adoption=await reconcileExistingBookingAdoption(portal,{env,visits,portalComplete:complete&&evidenceComplete,providerComplete});}

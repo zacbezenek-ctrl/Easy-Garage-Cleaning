@@ -1,7 +1,13 @@
 name: EGC Business Hub Acceptance
 on:
+  workflow_dispatch:
   pull_request:
     paths:
+      # Shared Hub projections and workflows can affect business account behavior.
+      - 'egc-platform/**'
+      - 'employee-operations.js'
+      - 'functions/_lib/operations-portal-records.js'
+      - 'crew/gameplan.html'
       - 'business-hub*'
       - 'functions/_lib/business-hub*'
       - 'functions/api/business-hub.js'
@@ -26,6 +32,11 @@ on:
   push:
     branches: [main]
     paths:
+      # Shared Hub projections and workflows can affect business account behavior.
+      - 'egc-platform/**'
+      - 'employee-operations.js'
+      - 'functions/_lib/operations-portal-records.js'
+      - 'crew/gameplan.html'
       - 'business-hub*'
       - 'functions/_lib/business-hub*'
       - 'functions/api/business-hub.js'

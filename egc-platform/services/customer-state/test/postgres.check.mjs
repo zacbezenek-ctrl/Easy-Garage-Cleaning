@@ -246,3 +246,74 @@ test('completed call with no customer transcript is not two-way contact and inco
   await db.insert(schema.calls).values({providerMessageId:`synthetic-call-${randomUUID()}`,contactId:contact.id,direction:'outbound',actorType:'human',startedAt:at,status:'completed',answered:true,raw:{status:'completed',meta:{call:{status:'completed',duration:240}}}});
   const result=await refresh();assert.equal(result.failed,0);assert.equal(result.partialCustomers,1);const timeline=await getCustomerTimeline({contactId:contact.id});assert.ok(!timeline.events.some(e=>e.eventType==='two_way_contact'));assert.equal(timeline.coverage.extraction.complete,false);assert.equal(timeline.coverage.calls.missingTranscriptIds.length,1);
 });
+
+test('recent cancellation on an older appointment keeps its customer in reconciliation and reporting scope',async()=>{
+  const old=new Date(Date.now()-90*86400000);
+  await db.update(schema.leads).set({createdAt:old}).where(eq(schema.leads.id,lead.id));
+  await db.insert(schema.appointments).values({providerId:`cancelled-older-${randomUUID()}`,contactId:contact.id,status:'cancelled',appointmentCreatedAt:old,appointmentStartAt:old,createdAt:old,updatedAt:at});
+  const result=await reconcileCustomerState({since:new Date(Date.now()-7*86400000),until:new Date(),useAI:false});
+  assert.equal(result.failed,0);assert.ok(result.results.some(row=>row.contactId===contact.id));
+  const report=await getCanonicalReport({since:new Date(Date.now()-7*86400000),until:new Date()});
+  assert.ok(report.coverage.customers.some(row=>row.contactId===contact.id));
+  assert.ok(!report.cohort.metrics.leads.contactIds.includes(contact.id));
+});
+
+test('aged active accepted jobs remain in the worker window even without fresh messages or a schedule',async()=>{
+  const old=new Date(Date.now()-90*86400000);
+  await db.update(schema.leads).set({createdAt:old}).where(eq(schema.leads.id,lead.id));
+  await db.insert(schema.customerStateSnapshots).values({contactId:contact.id,leadId:lead.id,state:'JOB_SOLD',intentStage:'converted',pipeline:'direct_job',reconciliationStatus:'fully_reconciled',snapshot:{pipelineDisposition:'active'},coverage:{},lastReconciledAt:old});
+  const result=await reconcileCustomerState({since:new Date(Date.now()-7*86400000),useAI:false});
+  assert.equal(result.failed,0);assert.ok(result.results.some(row=>row.contactId===contact.id));
+});
+
+test('fresh applicant tag excludes stale customer snapshots and their evidence from report coverage and counts',async()=>{
+  await db.insert(schema.messages).values({providerId:`stale-applicant-${randomUUID()}`,contactId:contact.id,type:'SMS',direction:'outbound',actorType:'human',body:'Hello there',occurredAt:at});
+  await refresh();
+  let timeline=await getCustomerTimeline({contactId:contact.id});assert.equal(timeline.customer.excluded,false);
+  await db.update(schema.contacts).set({tags:['Applicant-Active']}).where(eq(schema.contacts.id,contact.id));
+  const since=new Date(Date.now()-7*86400000),until=new Date();
+  const report=await getCanonicalReport({since,until,refresh:false});
+  assert.ok(!report.countedEvents.some(row=>row.contactId===contact.id));
+  assert.ok(!report.coverage.customers.some(row=>row.contactId===contact.id));
+  assert.ok(!report.cohort.metrics.leads.contactIds.includes(contact.id));
+  const page=await getOperationalEventEvidence({since:since.toISOString(),until:until.toISOString(),eventIds:timeline.events.map(e=>e.eventId)});
+  assert.ok(!page.events.some(row=>row.contactId===contact.id));
+  timeline=await getCustomerTimeline({contactId:contact.id});assert.ok(timeline.events.length,'original evidence was preserved');
+});
+
+test('legacy lead queues exclude applicants by lifecycle tags and canceled work by current disposition',async()=>{
+  const {businessContactPredicate,leadsNeedingContact,leadsNotResponding}=await import('../../lead-audit/dist/index.js');
+  const {and}=await import('drizzle-orm');
+  for(const tag of ['applicant-active','APPLICANT: INTERVIEW','vendor','internal','test-lead']){
+    await db.update(schema.contacts).set({tags:[tag]}).where(eq(schema.contacts.id,contact.id));
+    const rows=await db.select().from(schema.contacts).where(and(eq(schema.contacts.id,contact.id),businessContactPredicate()));
+    assert.equal(rows.length,0,tag);
+  }
+  await db.update(schema.contacts).set({tags:[],name:'Applicant Testa'}).where(eq(schema.contacts.id,contact.id));
+  assert.equal((await db.select().from(schema.contacts).where(and(eq(schema.contacts.id,contact.id),businessContactPredicate()))).length,1,'names never determine customer eligibility');
+  await db.update(schema.leads).set({lastHumanOutreachAt:at}).where(eq(schema.leads.id,lead.id));
+  await db.insert(schema.customerStateSnapshots).values({contactId:contact.id,leadId:lead.id,state:'FOLLOW_UP_PENDING',intentStage:'inactive',pipeline:'direct_job',reconciliationStatus:'fully_reconciled',snapshot:{state:'FOLLOW_UP_PENDING',intentStage:'inactive',pipeline:'direct_job',pipelineDisposition:'cancelled',nextRequiredAction:'Reconcile cancellation',excluded:false},coverage:{},lastReconciledAt:at});
+  assert.ok(!(await leadsNeedingContact(7)).some(row=>row.contactId===contact.id));
+  assert.ok(!(await leadsNotResponding(7)).some(row=>row.contactId===contact.id));
+});
+
+test('legacy occurrence-disabled projection exposes a new booking after completed work without rewriting old milestone evidence',async()=>{
+  const old=new Date(Date.now()-10*86400000),done=new Date(Date.now()-9*86400000);
+  await db.update(schema.leads).set({createdAt:old}).where(eq(schema.leads.id,lead.id));
+  await db.insert(schema.appointments).values([
+    {providerId:`old-cycle-${contact.id}`,contactId:contact.id,title:'Free garage walkthrough',status:'confirmed',appointmentCreatedAt:old,appointmentStartAt:old,createdAt:old,updatedAt:old},
+    {providerId:`new-cycle-${contact.id}`,contactId:contact.id,title:'Free garage walkthrough',status:'confirmed',appointmentCreatedAt:at,appointmentStartAt:new Date(Date.now()+86400000),createdAt:at,updatedAt:at}
+  ]);
+  const portalRecords=[{id:`completed-cycle-${contact.id}`,highlevelContactId:contact.providerId,kind:'job',status:'completed',createdAt:old.toISOString(),completedAt:done.toISOString(),financials:{quote:{at:old.toISOString(),amountCents:30000,source:'customer_approval'},payments:[{key:`old-payment-${contact.id}`,at:done.toISOString(),amountCents:30000}]}}];
+  let result=await reconcileCustomerState({contactIds:[contact.id],useAI:false,occurrenceMode:'off',portalRecords});assert.equal(result.failed,0);
+  let timeline=await getCustomerTimeline({contactId:contact.id});
+  assert.equal(timeline.customer.state,'WALKTHROUGH_BOOKED');assert.equal(timeline.customer.pipelineDisposition,'active');
+  assert.deepEqual(timeline.customer.supportingEvidence.map(ref=>ref.sourceRecordId),[`new-cycle-${contact.id}`]);
+  const booked=timeline.events.find(event=>event.eventType==='walkthrough_booked');
+  assert.equal(booked.occurredAt,old.toISOString());assert.equal(booked.evidence.length,2);
+  const ids=timeline.events.map(event=>event.eventId).sort();
+  result=await reconcileCustomerState({contactIds:[contact.id],useAI:false,occurrenceMode:'off'});assert.equal(result.failed,0);
+  timeline=await getCustomerTimeline({contactId:contact.id});assert.equal(timeline.customer.state,'WALKTHROUGH_BOOKED');assert.deepEqual(timeline.events.map(event=>event.eventId).sort(),ids);
+  const report=await getCanonicalReport({since:new Date(Date.now()-2*86400000),until:new Date(),cohortSince:old});
+  assert.ok(report.cohort.metrics.jobsSold.contactIds.includes(contact.id));assert.ok(!report.periodActivity.jobsSold.contactIds.includes(contact.id));
+});

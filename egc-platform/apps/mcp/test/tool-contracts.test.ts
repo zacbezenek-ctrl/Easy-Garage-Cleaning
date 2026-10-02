@@ -4,9 +4,17 @@ import {getTableName,isTable,type Table} from 'drizzle-orm';
 
 // The full server is built through a capturing McpServer; the database runs on a fake postgres driver, workspace
 // services and the GHL client are recorded, and bridge calls are decoded from the signed envelope sent over fetch.
-const state=vi.hoisted(()=>({captured:new Map<string,{config:any;handler:(args:unknown)=>Promise<any>}>(),effects:[] as Record<string,any>[],rows:{} as Record<string,Record<string,unknown>[]>,db:undefined as any}));
+const state=vi.hoisted(()=>({captured:new Map<string,{config:any;handler:(args:unknown)=>Promise<any>}>(),effects:[] as Record<string,any>[],rows:{} as Record<string,Record<string,unknown>[]>,db:undefined as any,bridgeFailure:false}));
 const {AT,recorder}=vi.hoisted(()=>({AT:'2026-09-22T12:00:00.000Z',
-  recorder:(service:string,values:Record<string,unknown>)=>Object.fromEntries(Object.entries(values).map(([name,value])=>[name,vi.fn(async()=>{state.effects.push({kind:'service',name:`${service}.${name}`});return typeof value==='function'?value():value;})]))}));
+  recorder:(service:string,values:Record<string,unknown>)=>Object.fromEntries(Object.entries(values).map(([name,value])=>[name,vi.fn(async(...args:unknown[])=>{
+    state.effects.push({kind:'service',name:`${service}.${name}`});
+    // These service reads explicitly reconcile (and persist customer evidence,
+    // projections and cursors) when refresh=true. Keep that transitive mutation
+    // visible to the read gate instead of hiding it behind the service mock.
+    if(service==='customer-state'&&['getCanonicalReport','getCustomerTimeline'].includes(name)&&(args[0] as {refresh?:boolean}|undefined)?.refresh===true)
+      state.effects.push({kind:'service',name:'customer-state.reconcileCustomerState'});
+    return typeof value==='function'?value():value;
+  })]))}));
 vi.mock('@modelcontextprotocol/server',async importOriginal=>{
   const actual=await importOriginal<Record<string,unknown>>();
   class McpServer{registerTool(name:string,config:unknown,handler:any){if(state.captured.has(name))throw new Error(`Tool ${name} is already registered`);state.captured.set(name,{config,handler});}}
@@ -71,7 +79,7 @@ async function exercise(tool:{config:any;handler:(args:unknown)=>Promise<any>},c
   let result:any,thrown=false;
   try{result=await operationsPrincipal.run(actor,()=>tool.handler(tool.config.inputSchema.parse(contract.valid)));}catch{thrown=true;}
   const statements=[...driver.log],effects=[...state.effects];
-  return {result:result?.structuredContent?.result,thrown,statements,effects,
+  return {result:result?.structuredContent?.result,isError:result?.isError===true,thrown,statements,effects,
     bridge:effects.filter(e=>e.kind==='bridge'||e.kind==='recordings'),provider:effects.filter(e=>e.kind==='provider').map(e=>e.name),service:effects.filter(e=>e.kind==='service').map(e=>e.name)};
 }
 // Soft assertions so one run lists every tool that disagrees with its contract.
@@ -109,6 +117,7 @@ beforeAll(()=>{
   vi.stubGlobal('fetch',vi.fn(async(input:string|URL,init?:RequestInit)=>{
     const url=new URL(String(input)),claims=decodeEnvelope(init?.body);
     state.effects.push({kind:url.pathname==='/operations/rpc'?'bridge':url.pathname==='/recordings/rpc'?'recordings':'unexpected',name:claims.request.body.command,iss:claims.iss,aud:claims.aud,actor:claims.actor.id});
+    if(state.bridgeFailure)return Response.json({error:'source_temporarily_unavailable',message:'synthetic private upstream detail'},{status:503});
     return Response.json({ok:true,authority:'employee_hub',items:[],total:0,nextOffset:null,coverage:{complete:true}});
   }));
 });
@@ -176,6 +185,7 @@ describe('per-tool contract gate',()=>{
           if(contract.blocked&&!contract[mode]?.effect)continue;
           const run=await exercise(tool,contract);
           expectEffect(name,contract.effect,run);
+          if(typeof run.result?.error==='string')expect.soft(run.isError,`${name} returned an error payload without MCP isError`).toBe(true);
           if(typeof run.result?.asOf==='string')expect.soft(run.result.asOf,`${name} asOf comes from the fixed clock`).toBe(AT);
           if(contract.class==='read'){
             expect.soft(writesOf(run.statements),`${name} wrote to the database`).toEqual([]);
@@ -189,4 +199,23 @@ describe('per-tool contract gate',()=>{
       });
     });
   }
+  it('every bridge tool exposes an HTTP failure as MCP isError and never continues to a provider mutation',async()=>{
+    const tools=build('operations');state.bridgeFailure=true;
+    try{
+      for(const [name,tool] of tools){
+        const contract=contractFor(name,'operations');
+        if(!('bridge' in contract.effect)&&!('recordings' in contract.effect))continue;
+        const run=await exercise(tool,contract);
+        expect.soft(run.thrown,name).toBe(false);
+        expect.soft(run.isError,`${name} HTTP 503 must be an MCP tool error`).toBe(true);
+        expect.soft(run.result, name).toMatchObject({error:'source_temporarily_unavailable'});
+        // The overdue aggregate intentionally projects only the safe error code
+        // plus its own unavailable-source instruction; direct bridges retain HTTP.
+        if(name!=='egc.whats_overdue')expect.soft(run.result?.httpStatus,name).toBe(503);
+        expect.soft(JSON.stringify(run.result),name).not.toContain('synthetic private');
+        expect.soft(run.provider,name).toEqual([]);
+        expect.soft(run.bridge,name).toHaveLength(1);
+      }
+    }finally{state.bridgeFailure=false;}
+  });
 });

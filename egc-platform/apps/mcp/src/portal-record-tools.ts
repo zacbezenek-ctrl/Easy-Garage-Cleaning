@@ -2,7 +2,7 @@ import type {McpServer} from "@modelcontextprotocol/server";
 import * as z from "zod/v4";
 import {callOperations} from "./operations.js";
 import {oauthSecurityMetadata,READ_SCOPE,WRITE_SCOPE} from "./oauth.js";
-const result=(value:unknown)=>({content:[{type:"text" as const,text:JSON.stringify(value)}],structuredContent:{result:value}});
+import {settle as result} from "./tools/result.js";
 export function registerPortalRecordTools(server:McpServer){
  const write={annotations:{readOnlyHint:false,destructiveHint:false},...oauthSecurityMetadata([READ_SCOPE,WRITE_SCOPE])};
  const exact={requestId:z.string().uuid(),portalJobId:z.string().min(1).max(180),expectedRevision:z.string().min(1)};

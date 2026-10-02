@@ -322,6 +322,53 @@ async function intelligenceCustomer(contactId){
     }
   }catch(error){if(state.dialog===ui.dialog)ui.body.replaceChildren(banner(message(error),'error'));}
 }
+// Booking diagnostics are persisted by the reconciliation worker, not a second calendar.
+// Keep unknown times and unavailable coverage visible; rendering never schedules a visit.
+function bookingReviewModel(diagnostics,now=Date.now()){
+  const cursors=diagnostics?.meta?.cursors||diagnostics?.cursors;
+  const cursor=Array.isArray(cursors)?cursors.find(row=>row?.key==='customer_state:booking_reconciliation'):null;
+  if(!cursor)return{available:false,error:'Booking review has not been loaded. An empty calendar does not confirm there are no customer commitments.',findings:[]};
+  let value;try{value=JSON.parse(cursor.cursor);}catch{return{available:false,error:'Booking review could not be read. Refresh or ask operations to check synchronization.',findings:[]};}
+  if(!value||!Array.isArray(value.findings)||value.findings.some(row=>!row||typeof row!=='object'||Array.isArray(row)||typeof row.code!=='string'||typeof row.status!=='string'))return{available:false,error:'Booking review is incomplete or unreadable. Do not treat it as an all-clear.',findings:[]};
+  const updated=Date.parse(cursor.updatedAt);
+  return{available:true,updatedAt:cursor.updatedAt,fresh:Number.isFinite(updated)&&updated<=now+60000&&now-updated<=15*60000,coverageComplete:value.coverage?.portalComplete===true&&value.coverage?.providerComplete===true,findings:value.findings.filter(row=>row.status!=='fully_reconciled')};
+}
+function bookingSourceUrl(value){try{const url=new URL(value);return typeof value==='string'&&url.protocol==='https:'&&!url.username&&!url.password&&url.href===value&&!/[\s\u0000-\u001f\u007f]|\p{Cf}/u.test(value)?value:null;}catch{return null;}}
+function bookingReviewSection(diagnostics){
+  const review=bookingReviewModel(diagnostics),section=h('section',{class:'ac-pipeline-section','aria-label':'Booking commitments to review','data-booking-review':'true'},h('h3',{},'Booking commitments to review'+(review.available?' · '+review.findings.length:'')));
+  if(!review.available){section.append(banner(review.error,'warning'));return section;}
+  section.append(h('p',{class:'ac-muted'},'Saved reconciliation snapshot · '+displayTime(review.updatedAt)+'. These findings do not create or confirm appointments.'));
+  if(!review.coverageComplete)section.append(banner('Hub or provider coverage is incomplete. More commitments may be missing from this snapshot.','warning'));
+  if(!review.fresh)section.append(banner('This booking snapshot is not current. Refresh and verify the original customer evidence before acting.','warning'));
+  let shown=0;
+  function appendPage(){
+  for(const finding of review.findings.slice(shown,shown+50)){
+    const commitment=finding.commitment&&typeof finding.commitment==='object'?finding.commitment:{},kind=commitment.kind==='walkthrough'?'Walkthrough':commitment.kind==='job'?'Job':'Booking',card=h('article',{class:'ac-evidence-event'},h('h4',{},kind+' · '+words(finding.code)),h('span',{class:'ac-pill warn'},'Needs review'));
+    if(commitment.contactId)card.append(h('small',{},'Customer record: '+commitment.contactId));
+    if(commitment.startAt&&Number.isFinite(Date.parse(commitment.startAt)))card.append(h('p',{},'Time in source evidence: '+displayTime(commitment.startAt)+' · Not a confirmed Hub appointment'));
+    else if(finding.commitment)card.append(h('p',{},'Visit date and time need confirmation.'));
+    if(commitment.timeMention)card.append(h('p',{},'Original time wording: '+commitment.timeMention));
+    if(commitment.evidence)card.append(h('blockquote',{},commitment.evidence));
+    for(const reason of Array.isArray(commitment.reviewReasons)?commitment.reviewReasons:[])card.append(h('small',{},'Review: '+words(reason)));
+    card.append(h('p',{},'Next: '+(finding.nextAction||'Review the original source and exact Hub record before making changes.')));
+    for(const source of (Array.isArray(commitment.sourceReferences)?commitment.sourceReferences:[]).filter(source=>source&&typeof source==='object').slice(0,10)){
+      card.append(h('small',{},(source.sourceType||'Source')+' · '+(source.sourceRecordId||'Record unavailable')));
+      if(source.excerpt)card.append(h('blockquote',{},source.excerpt));
+      const url=bookingSourceUrl(source.sourcePointer);if(url)card.append(h('a',{href:url,target:'_blank',rel:'noopener noreferrer'},'Open source record'));
+      else if(source.sourcePointer)card.append(h('small',{},'Source reference: '+source.sourcePointer));
+    }
+    if(commitment.contactId)card.append(button('Customer evidence',()=>intelligenceCustomer(commitment.contactId)));
+    if(finding.portalVisitId)card.append(button('View Hub instructions',()=>portalInstructions(finding.portalVisitId)));
+    section.append(card);
+  }
+  shown=Math.min(review.findings.length,shown+50);
+  if(shown<review.findings.length){const more=button('Show next '+Math.min(50,review.findings.length-shown)+' findings ('+(review.findings.length-shown)+' remaining)',()=>{more.remove();appendPage();});section.append(more);}
+  }
+  appendPage();
+  if(!review.findings.length)section.append(h('p',{},'No unresolved findings in this saved snapshot. This is not a complete-history or empty-calendar guarantee.'));
+  return section;
+}
+
 async function loadIntelligence(generation){
   const since=localToIso(plusDays(today(),1-state.intelligenceDays)+'T00:00'),until=new Date().toISOString();
   const [reportResponse,diagnosticsResponse]=await Promise.all([rpc({command:'intelligence.report',since,until,cohortSince:since,cohortUntil:until}),rpc({command:'intelligence.diagnostics'})]);
@@ -336,6 +383,7 @@ async function loadIntelligence(generation){
   target.append(stats,h('h3',{},'Lead cohort conversion'));const table=h('table',{class:'ac-cohort-table'},h('thead',{},h('tr',{},h('th',{},'Outcome'),h('th',{},'Converted / leads'),h('th',{},'Observed rate')))),body=h('tbody');
   for(const [key,value] of Object.entries(r.cohort?.metrics||{}))body.append(h('tr',{},h('td',{},words(key)),h('td',{},`${value.numerator} / ${value.denominator}`),h('td',{},value.rate==null?'—':(value.rate*100).toFixed(1)+'%')));
   table.append(body);target.append(h('p',{class:'ac-muted'},'Only leads created in the selected window are in these denominators. Their outcomes are observed through '+displayTime(r.cohort?.observedThrough||until)+'. This is an immature cohort, not a final close rate.'),h('div',{class:'ac-table-scroll'},table));
+  target.append(bookingReviewSection(d));
   for(const [key,label] of [['walkthrough','Walkthrough pipeline'],['videoQuote','Video quote pipeline'],['directJob','Direct-job pipeline']]){
     const rows=r.pipelines?.[key]||[],section=h('section',{class:'ac-pipeline-section'},h('h3',{},label+' · '+rows.length));
     for(const customer of rows){const card=h('article',{class:'ac-evidence-event'},h('h4',{},customer.customerName||'Customer'),h('span',{class:'ac-pill'},words(customer.state)),h('p',{},'Next: '+customer.nextRequiredAction),h('small',{},words(customer.reconciliationStatus)+' · Intent: '+words(customer.intentStage)));
@@ -362,5 +410,5 @@ async function mount(host){if(!host)return;if(state.host===host&&state.root?.isC
 function unmount(){state.generation++;state.controller?.abort();state.controller=null;closeDialog(true);state.root?.remove();state.root=null;state.host=null;state.actor=null;state.owners=[];state.enabled=false;state.busy=false;state.briefId=null;state.offset=0;}
 window.addEventListener('beforeunload',event=>{if(state.dirty||state.busy){event.preventDefault();event.returnValue='';}});
 window.addEventListener('egc:signout',()=>{clearPendingSends();unmount();});
-window.EGCActionCenter={mount,unmount,canLeave:dirtyCheck,show,localToIso,drafts:Object.freeze({MESSAGE_KINDS,ATTACHMENT_KINDS,labels,isMessageKind,canComplete,draftReview,buildDraft}),send:Object.freeze({sendEligibility,sendStarted})};
+window.EGCActionCenter={bookingReview:Object.freeze({model:bookingReviewModel,sourceUrl:bookingSourceUrl}),mount,unmount,canLeave:dirtyCheck,show,localToIso,drafts:Object.freeze({MESSAGE_KINDS,ATTACHMENT_KINDS,labels,isMessageKind,canComplete,draftReview,buildDraft}),send:Object.freeze({sendEligibility,sendStarted})};
 })();

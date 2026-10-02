@@ -40,18 +40,23 @@ export function recordsFromSnapshot(bundle:SourceBundle):SourceRecord[] {
     return kinds.length===1?kinds[0]:kinds.length>1?'conflict':null;
   };
   for(const a of bundle.appointments??[]) {
-    if(!["new","confirmed","showed"].includes(str(a.status)))continue;
+    const status=str(a.status).toLowerCase(),cancelled=["cancelled","canceled"].includes(status),noShow=["noshow","no_show","no-show"].includes(status);
+    if(!["new","confirmed","showed"].includes(status)&&!cancelled&&!noShow)continue;
     const calendar=str(a.calendarId),raw=asRecord(a.raw),title=str(a.title);
     const portalKind=exactPortalKind(a.providerId),isJob=portalKind==='job'||(!portalKind&&(jobIds.has(calendar)||/^SERVICE JOB\b/i.test(title)));
     const walkthrough=portalKind==='walkthrough'||(!portalKind&&!isJob&&(walkIds.has(calendar)||/walk\s*through|walkthrough|consultation/i.test(title)));
     const creation=validDate(a.appointmentCreatedAt),events:EvidenceEvent[]=[];
-    if(walkthrough)events.push(event("walkthrough_booked",`Provider appointment ${str(a.providerId)}: ${title} (${str(a.status)})`,{scheduledAt:validDate(a.appointmentStartAt),address:raw.address??null,occurredAtVerified:Boolean(creation)}));
-    if(isJob)events.push(event("job_scheduled",`Service appointment ${str(a.providerId)}: ${title}`,{scheduledAt:validDate(a.appointmentStartAt),occurredAtVerified:Boolean(creation)}));
+    if(walkthrough&&!cancelled&&!noShow)events.push(event("walkthrough_booked",`Provider appointment ${str(a.providerId)}: ${title} (${str(a.status)})`,{scheduledAt:validDate(a.appointmentStartAt),address:raw.address??null,occurredAtVerified:Boolean(creation)}));
+    if(isJob&&!cancelled&&!noShow)events.push(event("job_scheduled",`Service appointment ${str(a.providerId)}: ${title}`,{scheduledAt:validDate(a.appointmentStartAt),occurredAtVerified:Boolean(creation)}));
     if(walkthrough&&a.status==="showed") {
       const completedAt=validDate(raw.completedAt??raw.showedAt??raw.statusChangedAt);
       events.push({...event("walkthrough_showed",`Provider marked appointment showed: ${title}`,{occurredAtVerified:Boolean(completedAt)}),occurredAt:completedAt??timestamp(a.updatedAt,a.appointmentStartAt)});
     }
-    if(!walkthrough&&!isJob)events.push({eventType:"walkthrough_booked",supportingText:`Appointment type unverified: ${title}`,confidence:.5,humanReviewNeeded:true,nextAction:"Confirm the calendar's appointment type",details:{calendarId:calendar,occurredAtVerified:Boolean(creation)}});
+    if(cancelled||noShow){
+      const changed=validDate((cancelled?raw.cancelledAt??raw.canceledAt:raw.noShowAt)??raw.statusChangedAt),observed=validDate(a.updatedAt);
+      events.push({...event(cancelled?'appointment_cancelled':'no_show',`Provider appointment ${str(a.providerId)}: ${title} (${status})`,{scheduledAt:validDate(a.appointmentStartAt),occurrenceKind:walkthrough?'walkthrough':isJob?'job':null,occurredAtVerified:Boolean(changed),lifecycleObservedAt:observed}),occurredAt:changed??timestamp(a.updatedAt,a.createdAt),...(!walkthrough&&!isJob?{humanReviewNeeded:true,confidence:.5,nextAction:"Confirm the cancelled appointment's exact work type"}:{})});
+    }
+    if(!walkthrough&&!isJob&&!cancelled&&!noShow)events.push({eventType:"walkthrough_booked",supportingText:`Appointment type unverified: ${title}`,confidence:.5,humanReviewNeeded:true,nextAction:"Confirm the calendar's appointment type",details:{calendarId:calendar,occurredAtVerified:Boolean(creation)}});
     add({sourceType:"appointment",sourceRecordId:str(a.providerId)||str(a.id),appointmentId:str(a.id),occurredAt:creation??timestamp(a.createdAt,a.appointmentStartAt),text:title,raw,events});
   }
   for(const o of bundle.opportunities??[]) {
@@ -66,11 +71,15 @@ export function recordsFromSnapshot(bundle:SourceBundle):SourceRecord[] {
     const linkedAppointment=(bundle.appointments??[]).find(a=>a.id===j.appointmentId);
     const portalKind=exactPortalKind(linkedAppointment?.providerId,j.id),serviceCalendar=Boolean(linkedAppointment&&jobIds.has(str(linkedAppointment.calendarId)));
     const walkthrough=portalKind==='walkthrough'||(!portalKind&&!serviceCalendar&&(/walk\s*through|estimate|consultation/i.test(str(j.serviceType)) || Boolean(linkedAppointment && (walkIds.has(str(linkedAppointment.calendarId)) || /walk\s*through|consultation/i.test(str(linkedAppointment.title)))))),events:EvidenceEvent[]=[],won=validDate(j.wonAt),status=str(j.status).toLowerCase();
-    if(!walkthrough && ["sold","won","confirmed","scheduled","in_progress","completed","paid","closed"].includes(status))events.push(event("job_sold",`EGC service job status ${status}`,{occurredAtVerified:Boolean(won)}));
+    if(!walkthrough && (["sold","won","confirmed","scheduled","in_progress","completed","paid","closed"].includes(status)||(won&&["cancelled","canceled","noshow","no_show","no-show"].includes(status))))events.push(event("job_sold",`EGC service job status ${status}`,{occurredAtVerified:Boolean(won)}));
     if(!walkthrough && validDate(j.scheduledAt)&&["confirmed","scheduled","in_progress","completed","paid","closed"].includes(status))events.push(event("job_scheduled",`EGC service job scheduled ${String(j.scheduledAt)}`,{scheduledAt:validDate(j.scheduledAt),occurredAtVerified:false}));
     if(!walkthrough && ["completed","paid","closed"].includes(status))events.push({...event("job_completed",`EGC service job status ${status}`,{occurredAtVerified:Boolean(validDate(j.completedAt))}),occurredAt:timestamp(j.completedAt,j.updatedAt)});
     // A quoted price or deposit field is not proof of payment.
     if(walkthrough&&validDate(j.scheduledAt)&&["scheduled","confirmed"].includes(status))events.push(event("walkthrough_verbally_booked",`Local walkthrough scheduled ${String(j.scheduledAt)}`,{scheduledAt:validDate(j.scheduledAt),address:j.serviceAddress??null,occurredAtVerified:false}));
+    if(["cancelled","canceled","noshow","no_show","no-show"].includes(status)){
+      const cancelled=["cancelled","canceled"].includes(status),changed=validDate((cancelled?j.cancelledAt??j.canceledAt:j.noShowAt)??j.statusChangedAt);
+      events.push({...event(cancelled?'appointment_cancelled':'no_show',`EGC ${walkthrough?'walkthrough':'service job'} status ${status}`,{occurrenceKind:walkthrough?'walkthrough':'job',scheduledAt:validDate(j.scheduledAt),occurredAtVerified:Boolean(changed),lifecycleObservedAt:validDate(j.updatedAt)}),occurredAt:changed??timestamp(j.updatedAt,j.createdAt)});
+    }
     add({sourceType:"job",sourceRecordId:str(j.id),jobId:str(j.id),opportunityId:str(j.opportunityId)||null,appointmentId:str(j.appointmentId)||null,occurredAt:won??timestamp(j.createdAt,j.updatedAt),text:`Job status ${status}. ${str(j.accessNotes)}`,events:portalKind==='conflict'?events.map(e=>({...e,humanReviewNeeded:true,details:{...e.details,occurrenceIdentityConflict:true},nextAction:'Resolve conflicting Portal work types for the exact appointment binding'})):events});
     if(str(j.accessNotes))add({sourceType:"job_note",sourceRecordId:`${str(j.id)}:access_notes`,jobId:str(j.id),occurredAt:timestamp(j.updatedAt,j.createdAt),text:str(j.accessNotes),raw:{occurredAtVerified:false}});
   }
@@ -86,12 +95,16 @@ export function recordsFromSnapshot(bundle:SourceBundle):SourceRecord[] {
     if(p.highlevelContactId!==contact.providerId)continue;
     const financials=p.financials??{},quote=asRecord(financials.quote),completion=asRecord(financials.completion);
     const events:EvidenceEvent[]=[],status=p.status.toLowerCase(),created=validDate(p.createdAt),completed=validDate(p.completedAt??completion.at),won=validDate(p.soldAt??quote.at),paid=validDate(p.paidAt);
-    const active=!["cancelled","canceled","deleted","draft","invalid"].includes(status);
+    const active=!["cancelled","canceled","noshow","no_show","no-show","deleted","draft","invalid"].includes(status);
     const exceptions=Array.isArray(financials.exceptions)?financials.exceptions.filter(x=>typeof x==="string"):[];
     const details:Json={portalRecordId:p.id,portalJobId:p.jobId??p.id,providerAppointmentId:p.highlevelAppointmentId??null,scheduledAt:p.startAt??null,address:p.address??null,sourceRevision:p.sourceRevision??null,occurredAtVerified:Boolean(created),financialExceptions:exceptions,revenueCoverageIncomplete:exceptions.some(e=>/^payment_/.test(String(e)))};
+    if(p.kind!=='payment'&&["cancelled","canceled","noshow","no_show","no-show"].includes(status)){
+      const cancelled=["cancelled","canceled"].includes(status),changed=validDate(cancelled?p.cancelledAt:p.noShowAt);
+      events.push({...event(cancelled?'appointment_cancelled':'no_show',`EGC Portal ${p.kind} ${p.id} (${status})`,{...details,occurrenceKind:p.kind,occurredAtVerified:Boolean(changed),lifecycleObservedAt:validDate(p.updatedAt)}),occurredAt:changed??timestamp(p.updatedAt,p.createdAt)});
+    }
     if(p.kind==="walkthrough"&&active&&p.startAt)events.push(event("walkthrough_booked",`EGC Portal walkthrough ${p.id} (${status})`,details));
     if(p.kind==="walkthrough"&&["completed","closed"].includes(status))events.push({...event("walkthrough_completed",`EGC Portal walkthrough completed ${p.id}`,{...details,occurredAtVerified:Boolean(completed)}),occurredAt:completed??timestamp(p.updatedAt,p.createdAt)});
-    if(p.kind==="job"&&((active&&["scheduled","confirmed","in_progress","completed","paid","invoiced","closed"].includes(status))||(won&&!['cancelled','canceled','deleted','invalid'].includes(status))))events.push({...event("job_sold",`EGC Portal accepted job ${p.id} (${status})`,{...details,occurredAtVerified:Boolean(won),valueSource:quote.source??null},amount(quote.amountCents)),occurredAt:won??timestamp(p.createdAt,p.updatedAt)});
+    if(p.kind==="job"&&((active&&["scheduled","confirmed","in_progress","completed","paid","invoiced","closed"].includes(status))||(won&&!['deleted','invalid'].includes(status))))events.push({...event("job_sold",`EGC Portal accepted job ${p.id} (${status})`,{...details,occurredAtVerified:Boolean(won),valueSource:quote.source??null},amount(quote.amountCents)),occurredAt:won??timestamp(p.createdAt,p.updatedAt)});
     if(p.kind==="job"&&active&&p.startAt)events.push(event("job_scheduled",`EGC Portal job scheduled ${p.id}`,details));
     if(p.kind==="job"&&["completed","paid","invoiced","closed"].includes(status))events.push({...event("job_completed",`EGC Portal job completed ${p.id}`,{...details,occurredAtVerified:Boolean(completed)}),occurredAt:completed??timestamp(p.updatedAt,p.createdAt)});
     const receipts=new Map<string,{at:string;amountCents:number;source:string;reference:string|null;recordedBy:string|null}>(),conflictingKeys=new Set<string>();

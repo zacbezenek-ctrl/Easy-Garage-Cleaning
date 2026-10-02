@@ -193,7 +193,7 @@ export function buildCanonicalEvents(records: SourceRecord[], attribution: Json 
     const eventId = retainedId??(occurrenceId&&!event.details?.paymentReceiptKey?`egcev_${hash(`egc:occurrence:${occurrenceId}:event:${event.eventType}`)}`:canonicalEventId(record.contactId,record.leadId,event.eventType,occurrence));
     const occurredAt = validDate(event.occurredAt ?? record.occurredAt)!;
     const excerptLimit=event.eventType==='human_outreach'?180:1600;
-    const evidence: EvidenceRef = {sourceType:record.sourceType,sourceRecordId:record.sourceRecordId,occurredAt,excerpt:event.supportingText.slice(0,excerptLimit),...(event.supportingText.length>excerptLimit?{excerptTruncated:true}:{}),confidence:event.confidence,humanReviewNeeded:event.humanReviewNeeded,sourcePointer:record.sourcePointer??`${record.sourceType}:${record.sourceRecordId}`};
+    const evidence: EvidenceRef = {sourceType:record.sourceType,sourceRecordId:record.sourceRecordId,occurredAt,excerpt:event.supportingText.slice(0,excerptLimit),...(event.supportingText.length>excerptLimit?{excerptTruncated:true}:{}),confidence:event.confidence,humanReviewNeeded:event.humanReviewNeeded,occurredAtVerified:event.details?.occurredAtVerified!==false,sourcePointer:record.sourcePointer??`${record.sourceType}:${record.sourceRecordId}`};
     const previous = events.get(eventId), trusted = !event.humanReviewNeeded && event.confidence >= .85;
     const timeVerified=event.details?.occurredAtVerified!==false,previousTimeVerified=previous?.details.occurredAtVerified!==false;
     const previousTrusted=Boolean(previous&&!previous.humanReviewNeeded&&previous.confidence>=.85),timeRank=Number(trusted)*2+Number(timeVerified),previousTimeRank=Number(previousTrusted)*2+Number(previousTimeVerified);
@@ -227,54 +227,98 @@ const nextActions: Record<OperationalState,string> = {
   NEW_LEAD:"Make the first human contact",OUTREACH_ATTEMPTED:"Follow up with the customer",TWO_WAY_CONTACT:"Qualify the service and agree the next step",QUALIFIED:"Arrange an EGC Portal walkthrough or video quote",PRICE_EXPECTATION_ACCEPTED:"Confirm the agreed appointment or quote step",VIDEO_QUOTE_PENDING_CUSTOMER:"Obtain the promised customer photos or video",VIDEO_QUOTE_RECEIVED:"Review customer media and prepare the quote",VIDEO_QUOTE_IN_PROGRESS:"Finish and send the quote",QUOTE_DELIVERED:"Obtain the customer's decision",WALKTHROUGH_VERBALLY_BOOKED:"Create or reconcile the agreed walkthrough through EGC Portal",WALKTHROUGH_BOOKED:"Complete the walkthrough through EGC Portal",WALKTHROUGH_COMPLETED:"Record the outcome and deliver the quote",FOLLOW_UP_PENDING:"Review the recorded outcome before further follow-up",CUSTOMER_DECIDING:"Follow up at the agreed decision deadline",JOB_VERBALLY_ACCEPTED:"Record the accepted work in EGC Portal and reconcile CRM closed-won",JOB_SOLD:"Schedule the accepted job through EGC Portal",JOB_SCHEDULED:"Complete the scheduled work",JOB_COMPLETED:"Verify payment and record collected revenue",CASH_COLLECTED:"Confirm completed service and reconcile payment records",LOST:"No active sales follow-up",DO_NOT_CONTACT:"Honor do-not-contact preferences"
 };
 
+/** Current-state ordering uses verified evidence time, never a future service
+ * date or the refresh time of an undated CRM mirror. Unknown-time owner facts
+ * can close stale work when asserted, but cannot fabricate a later recommitment. */
+export function latestLifecycleEvidenceTime(event:CanonicalEvent,requireVerified=false):string|null {
+  const verified=event.evidence.filter(ref=>!ref.humanReviewNeeded&&ref.confidence>=.85&&
+    (ref.occurredAtVerified??event.details.occurredAtVerified)!==false).map(ref=>ref.occurredAt);
+  if(event.details.occurredAtVerified!==false)verified.push(event.occurredAt);
+  if(verified.length)return verified.sort().at(-1)!;
+  if(requireVerified)return null;
+  return validDate(event.details.lifecycleObservedAt)??validDate(event.details.assertedAt)??event.occurredAt;
+}
+export const RECOMMITMENT_TYPES=new Set<CustomerEventType>(['video_quote_customer_agreed','video_quote_received','walkthrough_verbally_booked','walkthrough_booked','job_verbally_accepted','job_sold','job_scheduled']);
+export function hasRecommitmentAfter(events:CanonicalEvent[],after:string) {
+  return events.some(event=>!event.humanReviewNeeded&&event.confidence>=.85&&RECOMMITMENT_TYPES.has(event.eventType)&&(latestLifecycleEvidenceTime(event,true)??'')>after);
+}
+
+/** Projection-only work cycle. The acquisition ledger can merge repeated
+ * milestones under one historical ID, so use verified source evidence to expose
+ * a new commitment after a closed cycle without retiming or deleting the ledger. */
+function currentLifecycleEvents(events:CanonicalEvent[]) {
+  const closed=events.filter(event=>['lost','walkthrough_negative_outcome','appointment_cancelled','no_show','job_completed'].includes(event.eventType)||
+    (event.eventType==='revenue_collected'&&typeof event.details.paymentReceiptKey!=='string'&&event.evidence.some(ref=>ref.sourceType==='user_confirmed')));
+  const boundary=closed.map(event=>latestLifecycleEvidenceTime(event)!).sort().at(-1);
+  if(!boundary||!hasRecommitmentAfter(events,boundary))return events;
+  return events.flatMap(event=>{
+    const evidence=event.evidence.filter(ref=>!ref.humanReviewNeeded&&ref.confidence>=.85&&
+      (ref.occurredAtVerified??event.details.occurredAtVerified)!==false&&ref.occurredAt>boundary);
+    // Old cash receipts remain historical financial facts, not completion of a
+    // newly committed estimate/service. A deposit cannot close the new cycle.
+    if(event.eventType==='revenue_collected'&&typeof event.details.paymentReceiptKey==='string')return [];
+    if(!evidence.length)return !event.evidence.length&&event.details.occurredAtVerified!==false&&event.occurredAt>boundary?[event]:[];
+    return [{...event,evidence,occurredAt:evidence.map(ref=>ref.occurredAt).sort()[0]!,details:{...event.details,occurredAtVerified:true}}];
+  }).sort((a,b)=>a.occurredAt.localeCompare(b.occurredAt));
+}
+
 export function projectCustomer(input:{contactId:string;leadId?:string|null;customerName?:string|null;leadCreatedAt:string;events:CanonicalEvent[];assertions?:OperationalAssertion[];exclusionReasons?:string[];providerAppointmentCount?:number;missingJobLink?:boolean;missingTranscriptIds?:string[]}):CustomerProjection {
-  const trusted=input.events.filter(e=>!e.humanReviewNeeded && e.confidence>=.85).sort((a,b)=>a.occurredAt.localeCompare(b.occurredAt));
+  const customerEvents=input.events.filter(e=>e.contactId===input.contactId);
+  const trusted=customerEvents.filter(e=>!e.humanReviewNeeded && e.confidence>=.85).sort((a,b)=>a.occurredAt.localeCompare(b.occurredAt));
   const has=(t:CustomerEventType)=>trusted.some(e=>e.eventType===t);
+  const current=currentLifecycleEvents(trusted),hasCurrent=(type:CustomerEventType)=>current.some(event=>event.eventType===type);
   let state:OperationalState="NEW_LEAD";
-  for(const event of trusted) {const next=stageMap[event.eventType];if(next && (rank[next] ?? 0)>(rank[state] ?? 0))state=next;}
+  for(const event of current) {const next=stageMap[event.eventType];if(next && (rank[next] ?? 0)>(rank[state] ?? 0))state=next;}
+  // A processor/customer receipt may be a deposit. Money collected does not
+  // close work that is still explicitly accepted or scheduled without completion.
+  const openPaidWork=hasCurrent('revenue_collected')&&!hasCurrent('job_completed')&&
+    current.filter(e=>e.eventType==='revenue_collected').every(e=>typeof e.details.paymentReceiptKey==='string')&&
+    ['job_scheduled','job_sold','job_verbally_accepted'].some(type=>hasCurrent(type as CustomerEventType));
+  if(openPaidWork)state=hasCurrent('job_scheduled')?'JOB_SCHEDULED':hasCurrent('job_sold')?'JOB_SOLD':'JOB_VERBALLY_ACCEPTED';
   // An inbound reply alone is contact evidence, not a two-way conversation.
-  if(state==="TWO_WAY_CONTACT" && !has("two_way_contact"))state=has("human_outreach")?"OUTREACH_ATTEMPTED":"NEW_LEAD";
-  const followUp=trusted.filter(e=>e.eventType==="follow_up_commitment").at(-1);
+  if(state==="TWO_WAY_CONTACT" && !hasCurrent("two_way_contact"))state=hasCurrent("human_outreach")?"OUTREACH_ATTEMPTED":"NEW_LEAD";
+  const followUp=current.filter(e=>e.eventType==="follow_up_commitment").at(-1);
   if(followUp&&(rank[state]??0)<=rank.QUALIFIED!)state="FOLLOW_UP_PENDING";
-  const latestEvidenceTime=(e:CanonicalEvent)=>e.evidence.filter(r=>!r.humanReviewNeeded&&r.confidence>=.85).reduce((at,r)=>r.occurredAt>at?r.occurredAt:at,e.occurredAt);
-  const lastTerminal=trusted.filter(e=>["lost","do_not_contact","walkthrough_negative_outcome","appointment_cancelled","no_show"].includes(e.eventType)).sort((a,b)=>latestEvidenceTime(a).localeCompare(latestEvidenceTime(b))).at(-1);
-  const recommitmentTypes=new Set(["video_quote_customer_agreed","video_quote_received","walkthrough_verbally_booked","walkthrough_booked","job_verbally_accepted","job_sold","job_scheduled"]);
-  const laterRecommitment=lastTerminal&&trusted.some(e=>recommitmentTypes.has(e.eventType)&&latestEvidenceTime(e)>latestEvidenceTime(lastTerminal));
-  let disposition:CustomerProjection["pipelineDisposition"]=has("job_sold")||has("revenue_collected")?"converted":"active";
-  if(lastTerminal && !laterRecommitment && !has("job_sold") && !has("revenue_collected")) {
+  const lastTerminal=trusted.filter(e=>["lost","do_not_contact","walkthrough_negative_outcome","appointment_cancelled","no_show"].includes(e.eventType)).sort((a,b)=>latestLifecycleEvidenceTime(a)!.localeCompare(latestLifecycleEvidenceTime(b)!)).at(-1);
+  const terminalAt=lastTerminal?latestLifecycleEvidenceTime(lastTerminal)!:null;
+  const laterRecommitment=terminalAt&&hasRecommitmentAfter(trusted,terminalAt);
+  const laterCompletion=terminalAt&&trusted.some(e=>e.eventType==='job_completed'&&latestLifecycleEvidenceTime(e)!>terminalAt);
+  let disposition:CustomerProjection["pipelineDisposition"]=openPaidWork?"active":hasCurrent("job_sold")||hasCurrent("job_completed")||hasCurrent("revenue_collected")?"converted":"active";
+  if(lastTerminal && !laterRecommitment && !laterCompletion) {
     if(lastTerminal.eventType==="lost"){state="LOST";disposition="lost";}
     else if(lastTerminal.eventType==="walkthrough_negative_outcome"){state="FOLLOW_UP_PENDING";disposition="negative_outcome";}
-    else if(["appointment_cancelled","no_show"].includes(lastTerminal.eventType)){state="FOLLOW_UP_PENDING";}
+    else if(lastTerminal.eventType==="appointment_cancelled"){state="FOLLOW_UP_PENDING";disposition="cancelled";}
+    else if(lastTerminal.eventType==="no_show"){state="FOLLOW_UP_PENDING";disposition="active";}
   }
   if(has("do_not_contact") || input.exclusionReasons?.includes("do_not_contact")){state="DO_NOT_CONTACT";disposition="do_not_contact";}
   const assertions=input.assertions??[], discrepancies:CustomerProjection["discrepancies"]=[];
   for(const reason of new Set(trusted.flatMap(e=>Array.isArray(e.details.financialExceptions)?e.details.financialExceptions.filter((r):r is string=>typeof r==="string"):[])))discrepancies.push({code:reason,detail:`EGC Portal financial evidence requires reconciliation: ${reason}`,sourceIds:trusted.filter(e=>Array.isArray(e.details.financialExceptions)&&e.details.financialExceptions.includes(reason)).map(e=>e.eventId)});
   for(const a of assertions.filter(a=>a.status==="pending_reconciliation"))discrepancies.push({code:"user_confirmed_awaiting_backend",detail:`User-confirmed ${a.field}=${JSON.stringify(a.value)}; backend has not independently reconciled`,sourceIds:[a.id]});
-  if(has("walkthrough_verbally_booked")&&!has("walkthrough_booked")&&disposition==="active")discrepancies.push({code:"verbally_booked_provider_missing",detail:"Walkthrough agreed in call/text; provider appointment pending",sourceIds:trusted.filter(e=>e.eventType==="walkthrough_verbally_booked").map(e=>e.eventId)});
+  if(hasCurrent("walkthrough_verbally_booked")&&!hasCurrent("walkthrough_booked")&&disposition==="active")discrepancies.push({code:"verbally_booked_provider_missing",detail:"Walkthrough agreed in call/text; provider appointment pending",sourceIds:current.filter(e=>e.eventType==="walkthrough_verbally_booked").map(e=>e.eventId)});
   if(has("job_sold")&&!trusted.some(e=>e.eventType==="job_sold" && e.evidence.some(r=>["opportunity","job","portal_job"].includes(r.sourceType))))discrepancies.push({code:"accepted_job_awaiting_crm",detail:"Accepted job evidenced outside normalized CRM/job records",sourceIds:trusted.filter(e=>e.eventType==="job_sold").map(e=>e.eventId)});
   if(input.missingJobLink)discrepancies.push({code:"provider_missing_job_link",detail:"Provider booking is missing its EGC job link",sourceIds:[]});
   if((input.providerAppointmentCount??0)>1)discrepancies.push({code:"duplicate_appointment_suspected",detail:"Multiple active provider appointments share a customer and start time",sourceIds:[]});
   if(has("job_completed")&&!has("revenue_collected"))discrepancies.push({code:"closed_without_payment_evidence",detail:"Completed work has no verified collected-revenue evidence",sourceIds:[]});
   if(input.missingTranscriptIds?.length)discrepancies.push({code:"transcript_unavailable",detail:"Recent recorded calls are missing extractable transcripts",sourceIds:input.missingTranscriptIds});
   let pipeline:CustomerProjection["pipeline"]="unclassified";
-  const video=trusted.filter(e=>e.eventType.startsWith("video_quote_"));
-  const walk=trusted.filter(e=>e.eventType.startsWith("walkthrough_"));
+  const video=current.filter(e=>e.eventType.startsWith("video_quote_"));
+  const walk=current.filter(e=>e.eventType.startsWith("walkthrough_"));
   if(walk.length)pipeline="walkthrough";
   if(video.length && (!walk.length || video.at(-1)!.occurredAt>walk.at(-1)!.occurredAt))pipeline="video_quote";
-  if(pipeline==="unclassified"&&(has("quote_delivered")||has("job_sold")||has("job_verbally_accepted")))pipeline="direct_job";
+  if(pipeline==="unclassified"&&(hasCurrent("quote_delivered")||hasCurrent("job_sold")||hasCurrent("job_verbally_accepted")))pipeline="direct_job";
   let videoQuoteStage:CustomerProjection["videoQuoteStage"]=null;
-  if(video.length){videoQuoteStage="requested";for(const [type,stage] of [["video_quote_customer_agreed","customer_agreed"],["video_quote_received","media_received"],["video_quote_in_progress","estimator_review"],["quote_prepared","quote_prepared"],["quote_delivered","quote_sent"],["customer_deciding","customer_deciding"],["job_sold","accepted"],["lost","lost"]] as const)if(has(type))videoQuoteStage=stage;}
-  let intentStage:CustomerProjection["intentStage"]=has("two_way_contact")||has("customer_response")?"engaged":"unengaged";
-  if(has("qualified"))intentStage="qualified";
-  if(["price_expectation_accepted","appointment_time_agreed","walkthrough_verbally_booked","walkthrough_booked","video_quote_received"].some(t=>has(t as CustomerEventType)))intentStage="high_intent";
-  if(has("job_verbally_accepted"))intentStage="accepted";
-  if(has("job_sold")||has("revenue_collected"))intentStage="converted";
-  if(["negative_outcome","lost","do_not_contact"].includes(disposition))intentStage="inactive";
-  const supporting=trusted.filter(e=>stageMap[e.eventType]===state || (state==="FOLLOW_UP_PENDING"&&(e===lastTerminal||e===followUp)));
-  const reconciliationStatus:CustomerProjection["reconciliationStatus"]=(input.providerAppointmentCount??0)>1?"duplicate_suspected":discrepancies.some(d=>d.code==="verbally_booked_provider_missing")?"verbally_booked_provider_pending":discrepancies.length?"reconciliation_needed":has("walkthrough_booked")?"provider_booking_confirmed":"fully_reconciled";
+  if(video.length){videoQuoteStage="requested";for(const [type,stage] of [["video_quote_customer_agreed","customer_agreed"],["video_quote_received","media_received"],["video_quote_in_progress","estimator_review"],["quote_prepared","quote_prepared"],["quote_delivered","quote_sent"],["customer_deciding","customer_deciding"],["job_sold","accepted"],["lost","lost"]] as const)if(hasCurrent(type))videoQuoteStage=stage;}
+  let intentStage:CustomerProjection["intentStage"]=hasCurrent("two_way_contact")||hasCurrent("customer_response")?"engaged":"unengaged";
+  if(hasCurrent("qualified"))intentStage="qualified";
+  if(["price_expectation_accepted","appointment_time_agreed","walkthrough_verbally_booked","walkthrough_booked","video_quote_received"].some(t=>hasCurrent(t as CustomerEventType)))intentStage="high_intent";
+  if(hasCurrent("job_verbally_accepted"))intentStage="accepted";
+  if(hasCurrent("job_sold")||hasCurrent("revenue_collected"))intentStage="converted";
+  if(["negative_outcome","lost","cancelled","do_not_contact"].includes(disposition))intentStage="inactive";
+  const supporting=current.filter(e=>stageMap[e.eventType]===state || (state==="FOLLOW_UP_PENDING"&&(e===lastTerminal||e===followUp)));
+  const reconciliationStatus:CustomerProjection["reconciliationStatus"]=(input.providerAppointmentCount??0)>1?"duplicate_suspected":discrepancies.some(d=>d.code==="verbally_booked_provider_missing")?"verbally_booked_provider_pending":discrepancies.length?"reconciliation_needed":hasCurrent("walkthrough_booked")?"provider_booking_confirmed":"fully_reconciled";
   return {contactId:input.contactId,leadId:input.leadId??null,customerName:input.customerName??null,leadCreatedAt:input.leadCreatedAt,state,intentStage,pipeline,videoQuoteStage,pipelineDisposition:disposition,reconciliationStatus,
-    supportingEvidence:supporting.flatMap(e=>e.evidence),nextRequiredAction:state==="FOLLOW_UP_PENDING"&&disposition==="active"&&followUp?.nextAction?followUp.nextAction:nextActions[state],followUpCommitment:followUp?{occurredAt:followUp.occurredAt,deadline:followUp.details.deadline??followUp.details.followUpDeadline??followUp.details.deadlineMention??null,action:followUp.nextAction,evidence:followUp.evidence}:null,humanReviewNeeded:input.events.some(e=>e.humanReviewNeeded)||discrepancies.length>0,
-    discrepancies,excluded:excludedFromCustomerReporting(input.exclusionReasons??[]),exclusionReasons:input.exclusionReasons??[],eventIds:input.events.map(e=>e.eventId),lastEventAt:input.events.at(-1)?.occurredAt??input.leadCreatedAt};
+    supportingEvidence:supporting.flatMap(e=>e.evidence),nextRequiredAction:disposition==="cancelled"?"Reconcile the cancelled work; confirm a new customer commitment before rebooking":state==="FOLLOW_UP_PENDING"&&disposition==="active"&&followUp?.nextAction?followUp.nextAction:nextActions[state],followUpCommitment:followUp?{occurredAt:followUp.occurredAt,deadline:followUp.details.deadline??followUp.details.followUpDeadline??followUp.details.deadlineMention??null,action:followUp.nextAction,evidence:followUp.evidence}:null,humanReviewNeeded:customerEvents.some(e=>e.humanReviewNeeded)||discrepancies.length>0,
+    discrepancies,excluded:excludedFromCustomerReporting(input.exclusionReasons??[]),exclusionReasons:input.exclusionReasons??[],eventIds:customerEvents.map(e=>e.eventId),lastEventAt:customerEvents.map(e=>e.occurredAt).sort().at(-1)??input.leadCreatedAt};
 }
 
 export function assertionReconciled(assertion:OperationalAssertion, providerEvents:CanonicalEvent[]) {
@@ -299,23 +343,25 @@ export function paginateEventEvidence(events:CanonicalEvent[],offset=0,limit=100
 export function buildReport(input:{events:CanonicalEvent[];customers:CustomerProjection[];since:string;until:string;cohortSince?:string;cohortUntil?:string;asOf?:string;leadRoster?:Array<{contactId:string;leadCreatedAt:string;excluded:boolean}>}) {
   const since=validDate(input.since),until=validDate(input.until),cohortSince=validDate(input.cohortSince??input.since),cohortUntil=validDate(input.cohortUntil??input.until);
   if(!since||!until||!cohortSince||!cohortUntil||since>=until||cohortSince>=cohortUntil)throw new Error("invalid_report_window");
-  const asOf=validDate(input.asOf??new Date())!;
-  const customers=input.customers.filter(c=>!c.excluded),allowed=new Set(customers.map(c=>c.contactId));
-  const trusted=input.events.filter(e=>allowed.has(e.contactId)&&!e.humanReviewNeeded&&e.confidence>=.85&&e.occurredAt<until);
-  const roster=input.leadRoster??input.customers;
-  const activity=trusted.filter(e=>e.occurredAt>=since && e.details.occurredAtVerified !== false),cohort=roster.filter(c=>!c.excluded&&c.leadCreatedAt>=cohortSince && c.leadCreatedAt<cohortUntil),cohortIds=new Set(cohort.map(c=>c.contactId));
+  const asOf=validDate(input.asOf??new Date());if(!asOf)throw new Error("invalid_report_as_of");
+  const excludedRosterIds=new Set((input.leadRoster??[]).filter(c=>c.excluded).map(c=>c.contactId));
+  const customers=input.customers.filter(c=>!c.excluded&&!excludedRosterIds.has(c.contactId)),allowed=new Set(customers.map(c=>c.contactId));
+  const observedThrough=asOf<until?asOf:until;
+  const trusted=input.events.filter(e=>allowed.has(e.contactId)&&!e.humanReviewNeeded&&e.confidence>=.85&&e.occurredAt<observedThrough);
+  const roster=[...new Map((input.leadRoster??input.customers).map(c=>[c.contactId,c])).values()];
+  const activity=trusted.filter(e=>e.occurredAt>=since && e.details.occurredAtVerified !== false),cohort=roster.filter(c=>!c.excluded&&c.leadCreatedAt>=cohortSince && c.leadCreatedAt<cohortUntil&&c.leadCreatedAt<observedThrough),cohortIds=new Set(cohort.map(c=>c.contactId));
   const periodActivity:Record<string,{count:number;unit:string;eventIds:string[];contactIds:string[]}>= {};
   const cohortMetrics:Record<string,{numerator:number;denominator:number;rate:number|null;window:{since:string;until:string};observedThrough:string;contactIds:string[]}>= {};
   for(const [name,types] of Object.entries(REPORT_METRICS)) {
     const matches=activity.filter(e=>types.includes(e.eventType)),ids=[...new Set(matches.map(e=>e.contactId))];
     periodActivity[name]={count:ids.length,unit:"distinct_customers",...occurrenceMetric(matches,types),eventIds:matches.map(e=>e.eventId),contactIds:ids};
     const converted=[...new Set(trusted.filter(e=>cohortIds.has(e.contactId)&&types.includes(e.eventType)).map(e=>e.contactId))];
-    cohortMetrics[name]={numerator:converted.length,denominator:cohort.length,rate:cohort.length?converted.length/cohort.length:null,window:{since:cohortSince,until:cohortUntil},observedThrough:until,contactIds:converted};
+    cohortMetrics[name]={numerator:converted.length,denominator:cohort.length,rate:cohort.length?converted.length/cohort.length:null,window:{since:cohortSince,until:cohortUntil},observedThrough,contactIds:converted};
   }
   if(input.leadRoster){
     // Creation records are complete even when extraction failed for a customer.
     // Keep the true denominator and disclose missing reconciliation separately.
-    const periodLeads=roster.filter(c=>!c.excluded&&c.leadCreatedAt>=since&&c.leadCreatedAt<until).map(c=>c.contactId);
+    const periodLeads=roster.filter(c=>!c.excluded&&c.leadCreatedAt>=since&&c.leadCreatedAt<observedThrough).map(c=>c.contactId);
     periodActivity.leads={...periodActivity.leads!,count:periodLeads.length,contactIds:periodLeads};
     cohortMetrics.leads={...cohortMetrics.leads!,numerator:cohort.length,rate:cohort.length?1:null,contactIds:[...cohortIds]};
   }
@@ -327,9 +373,9 @@ export function buildReport(input:{events:CanonicalEvent[];customers:CustomerPro
     return {valueCents:known.length===rows.length&&!incomplete&&!undated.length&&!unallocated.length?knownSubtotalCents:null,knownSubtotalCents,currency:"USD",basis:type==="revenue_collected"?"verified_gross_customer_receipts":"accepted_customer_work",coverageIncomplete:incomplete||undated.length>0||unallocated.length>0,verifiedEvents:known.length,missingValue:unknownValue.map(e=>e.eventId),unknownValueCount:unknownValue.length,unknownOccurrenceCount:undated.length,unknownOccurrenceEvents:undated.map(e=>({eventId:e.eventId,contactId:e.contactId,valueCents:e.valueVerified?e.valueCents:null,currency:e.valueVerified?e.currency:null})),unallocatedVerifiedEvents:unallocated.map(e=>({eventId:e.eventId,contactId:e.contactId,valueCents:e.valueCents,currency:e.currency})),qualification:undated.length?"Confirmed outcomes have unknown occurrence time; they are not assigned to this period, so a complete period total is unavailable.":unallocated.length?"Verified amounts remain unassigned to exact work; they are disclosed separately and are not added to known jobs.":incomplete?"Payment history is incomplete; the verified dated subtotal is not a complete total.":unknownValue.length?"Some dated outcomes have unverified amounts; only the verified subtotal is known.":"Verified dated outcomes in this period."};
   };
   const active=customers.filter(c=>c.pipelineDisposition==="active");
-  return {authority:"canonical_customer_event_ledger",generatedAt:asOf,period:{since,until,boundaries:"inclusive_start_exclusive_end"},periodActivity,
-    soldRevenue:revenue("job_sold"),collectedRevenue:revenue("revenue_collected"),cohort:{window:{since:cohortSince,until:cohortUntil},denominator:cohort.length,observedThrough:until,
-      maturity:{youngestLeadAgeDays:cohort.length?Math.max(0,Math.min(...cohort.map(c=>(new Date(until).valueOf()-new Date(c.leadCreatedAt).valueOf())/86_400_000))):null,oldestLeadAgeDays:cohort.length?Math.max(...cohort.map(c=>(new Date(until).valueOf()-new Date(c.leadCreatedAt).valueOf())/86_400_000)):null,label:"observed_so_far_not_final_close_rate"},metrics:cohortMetrics},
+  return {authority:"canonical_customer_event_ledger",generatedAt:asOf,period:{since,until,observedThrough,boundaries:"inclusive_start_exclusive_end"},periodActivity,
+    soldRevenue:revenue("job_sold"),collectedRevenue:revenue("revenue_collected"),cohort:{window:{since:cohortSince,until:cohortUntil},denominator:cohort.length,observedThrough,
+      maturity:{youngestLeadAgeDays:cohort.length?Math.max(0,Math.min(...cohort.map(c=>(new Date(observedThrough).valueOf()-new Date(c.leadCreatedAt).valueOf())/86_400_000))):null,oldestLeadAgeDays:cohort.length?Math.max(...cohort.map(c=>(new Date(observedThrough).valueOf()-new Date(c.leadCreatedAt).valueOf())/86_400_000)):null,label:"observed_so_far_not_final_close_rate"},metrics:cohortMetrics},
     pipelines:{walkthrough:active.filter(c=>c.pipeline==="walkthrough"),videoQuote:active.filter(c=>c.pipeline==="video_quote"),directJob:active.filter(c=>c.pipeline==="direct_job")},customers,
-    countedEvents:activity,confirmedOutcomesWithUnknownTime:trusted.filter(e=>e.details.occurredAtVerified === false),reviewRequiredEvents:input.events.filter(e=>e.humanReviewNeeded&&allowed.has(e.contactId)),excludedCustomers:input.customers.filter(c=>c.excluded).map(c=>({contactId:c.contactId,reasons:c.exclusionReasons}))};
+    countedEvents:activity,confirmedOutcomesWithUnknownTime:trusted.filter(e=>e.details.occurredAtVerified === false),reviewRequiredEvents:input.events.filter(e=>e.humanReviewNeeded&&allowed.has(e.contactId)),excludedCustomers:input.customers.filter(c=>c.excluded||excludedRosterIds.has(c.contactId)).map(c=>({contactId:c.contactId,reasons:c.exclusionReasons.length?c.exclusionReasons:["current_acquisition_record_excluded"]}))};
 }
