@@ -15,7 +15,9 @@ export interface SemanticCandidate {
   workKey:string;pendingSourceCount:number;missingTranscriptCount:number;cursor:SemanticCursor|null;
 }
 export const customerSemanticEligible=(row:Parameters<typeof exclusionReasons>[0])=>!excludedFromCustomerReporting(exclusionReasons(row));
-export const semanticQuotaExhausted=(errors:readonly string[])=>errors.some(error=>/^semantic_provider_http_429(?:;|$)/.test(error)&&/(?:^|;)code=insufficient_quota(?:;|$)/.test(error));
+// Billing/quota failures can expose a specific code or only the broader SDK type.
+// Keep ordinary request/token throttling on the existing transient retry path.
+export const semanticQuotaExhausted=(errors:readonly string[])=>errors.some(error=>/^semantic_provider_http_429(?:;|$)/.test(error)&&(/(?:^|;)type=insufficient_quota(?:;|$)/.test(error)||/(?:^|;)code=(?:insufficient_quota|credit_balance_exhausted|organization_spend_limit_exceeded|project_spend_limit_exceeded|organization_usage_limit_exceeded)(?:;|$)/.test(error)));
 const QUOTA_COOLDOWN_MS=60*60_000;
 const due=(candidate:SemanticCandidate,now:number)=>{
   const cursor=candidate.cursor;if(cursor?.status==='processing'&&Date.parse(cursor.leaseUntil??'')>now)return false;

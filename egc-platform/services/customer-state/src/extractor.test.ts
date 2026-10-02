@@ -19,6 +19,11 @@ describe('semantic extraction provider contract',()=>{
     expect(semanticProviderDiagnostic({status:429,error:{code:'insufficient_quota',type:'insufficient_quota',message:'never-persist',body:'never-persist'}})).toBe('semantic_provider_http_429;code=insufficient_quota;type=insufficient_quota');
     expect(semanticProviderDiagnostic({status:429,error:{code:'never-persist',type:'never-persist'}})).toBe('semantic_provider_http_429');
   });
+  it.each(['credit_balance_exhausted','organization_spend_limit_exceeded','project_spend_limit_exceeded','organization_usage_limit_exceeded'])('retains the safe quota code %s without provider message content',(code)=>{
+    for(const fields of [{code,type:'insufficient_quota'},{error:{code,type:'insufficient_quota',message:'never-persist',body:'never-persist'}}]){
+      expect(semanticProviderDiagnostic({status:429,...fields})).toBe(`semantic_provider_http_429;code=${code};type=insufficient_quota`);
+    }
+  });
   it('does not require headers and tolerates a failed header accessor',()=>{
     for(const headers of [undefined,null,{},'never-persist',{get:()=>{throw new Error('never-persist');}}])expect(semanticProviderDiagnostic({status:429,headers})).toBe('semantic_provider_http_429');
   });
