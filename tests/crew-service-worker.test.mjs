@@ -18,7 +18,7 @@ const NOW = Date.parse('2026-09-22T15:00:00.000Z');
 const SHELL_CACHE = 'egc-crew-shell-20261006knock';
 // KNOCK: the canvassing page (crew/knock.html) and its modules share the crew shell. Its ES modules import each other
 // without ?v=, so those keys are bare paths. The map files load only when a rep opens the map.
-const KNOCK_ASSETS = ['/crew/knock-app.js?v=20261006knock', '/crew/knock-doors.js', '/crew/knock-leaflet.css?v=1.9.4', '/crew/knock-leaflet.js?v=1.9.4', '/crew/knock-map.js', '/crew/knock-money.js', '/crew/knock-outbox.js', '/crew/knock-rep.js', '/crew/knock-sale-rules.js', '/crew/knock-sale.js', '/crew/knock-settings.js', '/crew/knock-stats.js', '/crew/knock-time.js', '/crew/knock-ui.js', '/crew/knock.css?v=20261006knock'];
+const KNOCK_ASSETS = ['/crew/knock-app.js?v=20261006knock', '/crew/knock-doors.js', '/crew/knock-leaflet.css?v=1.9.4', '/crew/knock-leaflet.js?v=1.9.4', '/crew/knock-map.js', '/crew/knock-money.js', '/crew/knock-outbox.js', '/crew/knock-rep.js', '/crew/knock-sale-rules.js', '/crew/knock-sale.js', '/crew/knock-settings.js', '/crew/knock-stats-ui.js', '/crew/knock-stats.js', '/crew/knock-time.js', '/crew/knock-ui.js', '/crew/knock.css?v=20261006knock'];
 const KNOCK_PRESENT = KNOCK_ASSETS.filter(key => existsSync(new URL(`..${key.split('?')[0]}`, import.meta.url)));
 
 function harness({ config = { enabled: true }, indexedDB = fakeIndexedDB(), api = null, network = null } = {}) {

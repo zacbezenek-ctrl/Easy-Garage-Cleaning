@@ -335,6 +335,70 @@ function salesSection(params) {
   });
 }
 
+/* ---------- Money ---------- */
+
+function moneySection(params) {
+  return later(async () => {
+    const date = params.get('date') || zonedDate(Date.now());
+    const data = await load('money', { date }, { force: true });
+    const period = data.period;
+    const go = target => app.go('admin', { s: 'money', date: target });
+    const exportCsv = async kind => {
+      try {
+        const file = await app.api(`/api/knock-admin?view=export&kind=${kind}&date=${encodeURIComponent(period.start)}`);
+        downloadText(file.filename, file.csv);
+      } catch (error) { toast(error.message, { tone: 'bad' }); }
+    };
+    const payoutForm = row => {
+      const amount = h('input', { type: 'number', step: '0.01', min: '0', value: row.balance > 0 ? String(row.balance) : '', placeholder: 'Amount', 'aria-label': `Payout for ${row.name}`, style: { maxWidth: '8rem' } });
+      const note = h('input', { placeholder: 'Note (check #)', 'aria-label': 'Payout note', style: { maxWidth: '10rem' } });
+      return h('span', { class: 'row' }, amount, note, h('button', { type: 'button', onclick: async () => {
+        try { await action({ action: 'payout.add', requestId: uuid(), repKey: row.repKey, periodKey: period.key, amount: Number(amount.value), note: note.value }); invalidate('money'); app.render(); }
+        catch (error) { toast(error.message, { tone: 'bad' }); }
+      } }, 'Record paid'));
+    };
+    const total = key => data.statement.reduce((sum, r) => sum + Number(r[key] || 0), 0);
+    return h('div', {},
+      h('div', { class: 'row spread' },
+        h('button', { type: 'button', onclick: () => go(data.previous.start) }, '‹ Previous'),
+        h('b', {}, `${dateLabel(period.start)} to ${dateLabel(period.end)}`),
+        h('button', { type: 'button', onclick: () => go(data.next.start) }, 'Next ›')),
+      h('p', { class: 'muted' }, `Commission ${percent(data.rates.rate)} of collected revenue once a job is completed, paid and past its cancellation deadline${data.rates.acceleratorEnabled ? `; ${percent(data.rates.acceleratorRate)} above ${money(data.rates.acceleratorThreshold)} collected in a month` : ''}${data.rates.leadOverrideEnabled ? `; lead override ${percent(data.rates.leadOverrideRate)} of team collected revenue` : ''}. Training is paid at ${money(data.trainingHourlyRate, true)}/h. Pay periods: ${data.payroll.period}.`),
+      h('div', { class: 'row' },
+        h('button', { type: 'button', class: 'primary', onclick: () => exportCsv('commission') }, 'Commission CSV'),
+        h('button', { type: 'button', onclick: () => exportCsv('training') }, 'Training CSV'),
+        h('button', { type: 'button', onclick: () => exportCsv('sales') }, 'Sales CSV')),
+      h('div', { class: 'scroll-x', style: { marginTop: '.6rem' } }, h('table', { class: 'data' },
+        h('thead', {}, h('tr', {}, ['Rep', 'Sales', 'Booked', 'Pending', 'Earned', 'Override', 'Paid', 'Balance', 'Training'].map((label, i) => h('th', { class: i ? 'num' : '' }, label)))),
+        h('tbody', {},
+          data.statement.map(row => h('tr', {},
+            h('td', {}, row.name), h('td', { class: 'num' }, String(row.salesBooked)), h('td', { class: 'num' }, money(row.booked)), h('td', { class: 'num' }, money(row.pending, true)),
+            h('td', { class: 'num' }, money(row.earned, true)), h('td', { class: 'num' }, money(row.override, true)), h('td', { class: 'num' }, money(row.paid, true)),
+            h('td', { class: 'num' }, h('b', {}, money(row.balance, true))), h('td', { class: 'num' }, row.trainingMinutes ? `${hoursLabel(row.trainingMinutes * 60000)} · ${money(row.trainingPay, true)}` : '—'))),
+          h('tr', {}, h('td', {}, h('b', {}, 'Total')), h('td', { class: 'num' }, String(total('salesBooked'))), h('td', { class: 'num' }, money(total('booked'))), h('td', { class: 'num' }, money(total('pending'), true)),
+            h('td', { class: 'num' }, money(total('earned'), true)), h('td', { class: 'num' }, money(total('override'), true)), h('td', { class: 'num' }, money(total('paid'), true)), h('td', { class: 'num' }, h('b', {}, money(total('balance'), true))), h('td', { class: 'num' }, money(total('trainingPay'), true)))))),
+      h('section', { class: 'card', style: { marginTop: '.8rem' } }, h('h3', {}, 'Record a payout'),
+        data.statement.filter(r => r.earned || r.override || r.balance).length
+          ? h('ul', { class: 'list' }, data.statement.filter(r => r.earned || r.override || r.balance).map(row => h('li', {}, h('span', { style: { flex: '1' } }, `${row.name} · balance ${money(row.balance, true)}`), payoutForm(row))))
+          : h('p', { class: 'muted' }, 'Nothing earned in this period yet.'),
+        data.payouts.length ? h('p', { class: 'muted' }, `Recorded: ${data.payouts.map(p => `${p.repKey} ${money(p.amount, true)}${p.note ? ` (${p.note})` : ''}`).join('; ')}`) : null));
+  });
+}
+
+/* ---------- Scoreboard ---------- */
+
+function scoreboardSection(params) {
+  return later(async () => {
+    const { scoreboardBody } = await import('./knock-stats-ui.js');
+    const rangeKey = params.get('range') || 'week', groupBy = params.get('groupBy') || 'rep';
+    const data = await app.api(`/api/knock-reports?view=scoreboard&range=${encodeURIComponent(rangeKey)}&groupBy=${encodeURIComponent(groupBy)}`);
+    return scoreboardBody(data, {
+      onRange: key => app.go('admin', { s: 'scoreboard', range: key, groupBy }),
+      onGroup: key => app.go('admin', { s: 'scoreboard', range: rangeKey, groupBy: key }),
+    });
+  });
+}
+
 const extraSections = [];
 export function addSection(key, label, render) { extraSections.push([key, label, render]); }
 
@@ -344,6 +408,8 @@ export function install(appApi) {
   registerAdminSection('territory', 'Territory', territorySection);
   registerAdminSection('coverage', 'Coverage', coverageSection);
   registerAdminSection('sales', 'Sales', salesSection);
+  registerAdminSection('money', 'Money', moneySection);
+  registerAdminSection('scoreboard', 'Scoreboard', scoreboardSection);
   for (const extra of extraSections) registerAdminSection(...extra);
   registerAdminSection('settings', 'Settings', settingsSection);
   app.registerScreen('admin', adminScreen, { admin: true, tab: { label: 'Admin', glyph: '⚙', order: 90 } });

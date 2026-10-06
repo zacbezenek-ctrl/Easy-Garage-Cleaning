@@ -1,6 +1,7 @@
 // Local preview of the canvassing page with synthetic data and an in-memory Firestore fake.
 // Nothing here reaches production: Firestore calls are answered in memory.
-//   node tests/knock-dev-server.mjs [--port 8787] [--now 2026-10-06T17:00:00Z] [--houses houses.json]
+//   node tests/knock-dev-server.mjs [--now 2026-10-06T17:00:00Z] [--houses houses.json] [--demo]
+// --houses takes the JSON written by scripts/knock-import-larimer.mjs --out; --demo adds a synthetic week of results.
 // Users (password "Synthetic knock preview!"): ZacB (owner/admin), Rep.One (active, permit, English Ranch),
 // Rep.Two (pending), Lead.One (active lead).
 import { readFileSync } from 'node:fs';
@@ -44,6 +45,43 @@ export function previewSeed({ houses = null } = {}) {
   return seed;
 }
 
+/* A week of synthetic results (--demo) so the money, scoreboard and coverage screens have numbers. */
+export function demoActivity(nowMs = Date.now()) {
+  const docs = {};
+  const dayOf = offset => new Date(nowMs - offset * 86400000).toISOString().slice(0, 10);
+  const totals = (hours, sales) => ({
+    knockingMs: hours * 3600000, doors: Math.round(14.5 * hours), answers: Math.round(14.5 * hours * 0.33), looks: Math.round(14.5 * hours * 0.33 * 0.09),
+    sales, bookedRevenue: sales * 1650, skipped: 2, afterEnd: 0, car: { answers: Math.round(hours * 1.5), looks: Math.round(hours * 0.2) }, noCar: { answers: Math.round(hours * 3), looks: Math.round(hours * 0.2) },
+  });
+  const reps = [['rep.one', 5.5], ['lead.one', 6], ['zacb', 3]];
+  for (let offset = 1; offset <= 6; offset += 1) {
+    for (const [repKey, hours] of reps) {
+      const sales = (offset + repKey.length) % 3 === 0 ? 1 : 0;
+      docs[`knock_days/${repKey}_${dayOf(offset)}`] = { repKey, date: dayOf(offset), ...totals(hours, sales), byNeighborhood: { 'english-ranch': totals(hours, sales) }, flaggedDoors: 0 };
+    }
+  }
+  const sale = (id, repKey, offset, fields) => {
+    const soldAt = new Date(nowMs - offset * 86400000).toISOString();
+    docs[`knock_sales/${id}`] = {
+      repKey, leadKey: repKey === 'rep.one' ? 'lead.one' : '', knockId: `00000000-0000-4000-8000-0000000009${id.slice(-2)}`, houseId: 'h-2601-antelope-rd',
+      neighborhoodId: 'english-ranch', street: 'ANTELOPE RD', address: { number: '2601', street: 'ANTELOPE RD', unit: '' },
+      customer: { name: `Synthetic Customer ${id.slice(-2)}`, phone: '+19705550100', email: `synthetic${id.slice(-2)}@example.com` }, textConsent: true,
+      ticket: 1650, package: 'The Works', quotedAmount: 1650, depositRate: 0.2, depositAmount: 330, soldAt, saleDate: soldAt.slice(0, 10),
+      cancelDeadlineDate: new Date(nowMs - (offset - 3) * 86400000).toISOString().slice(0, 10), cancelEndsAt: new Date(nowMs - (offset - 4) * 86400000).toISOString(),
+      earliestJobDate: new Date(nowMs - (offset - 4) * 86400000).toISOString().slice(0, 10), jobDate: new Date(nowMs - (offset - 5) * 86400000).toISOString().slice(0, 10), jobStartTime: '08:00',
+      refundCutoffHours: 24, checklist: { contractSigned: true, noticesHanded: true, rightToCancelTold: true }, checklistConfirmedAt: soldAt, note: '',
+      statusHistory: [{ status: 'booked', at: soldAt, by: repKey }], completedAt: null, paidAt: null, cancelledAt: null, collectedAmount: null,
+      handoff: { job: { mode: 'manual', status: 'pending', ref: '' }, deposit: { mode: 'manual', status: 'pending', amount: 330 }, text: { mode: 'manual', status: 'pending' } },
+      createdAt: soldAt, updatedAt: soldAt, ...fields,
+    };
+  };
+  sale('demo-sale-01', 'rep.one', 6, { status: 'paid', completedAt: new Date(nowMs - 1 * 86400000).toISOString(), paidAt: new Date(nowMs - 1 * 86400000).toISOString(), collectedAmount: 1650 });
+  sale('demo-sale-02', 'rep.one', 2, {});
+  sale('demo-sale-03', 'lead.one', 3, { status: 'cancelled', cancelledAt: new Date(nowMs - 2 * 86400000).toISOString() });
+  docs['knock_training/demo-training-01'] = { repKey: 'rep.one', date: dayOf(5), minutes: 90, note: 'Door script and safety', loggedBy: 'ZacB', at: new Date(nowMs - 5 * 86400000).toISOString() };
+  return docs;
+}
+
 // Answer production Firestore URLs from the in-memory fake; everything else goes to the network.
 export function installFirestoreFake(fake) {
   const upstream = globalThis.fetch;
@@ -55,8 +93,8 @@ export function installFirestoreFake(fake) {
   return () => { globalThis.fetch = upstream; };
 }
 
-export async function startPreview({ now = null, houses = null, port = 0 } = {}) {
-  const fake = firestoreRest(previewSeed({ houses }));
+export async function startPreview({ now = null, houses = null, demo = false } = {}) {
+  const fake = firestoreRest({ ...previewSeed({ houses }), ...(demo ? demoActivity(now ? Date.parse(now) : Date.now()) : {}) });
   const restore = installFirestoreFake(fake);
   const env = {
     HUB_SESSION_SECRET: 'synthetic-knock-preview-session-secret-0123456789',
@@ -69,7 +107,7 @@ export async function startPreview({ now = null, houses = null, port = 0 } = {})
 
 if (import.meta.url === `file://${process.argv[1].replace(/\\/g, '/').replace(/^([A-Za-z]):/, '/$1:')}` || process.argv[1]?.endsWith('knock-dev-server.mjs')) {
   const houses = args.houses ? JSON.parse(readFileSync(args.houses, 'utf8')) : null;
-  const preview = await startPreview({ now: args.now || null, houses });
+  const preview = await startPreview({ now: args.now || null, houses, demo: process.argv.includes('--demo') });
   console.log(`Knock preview: ${preview.base}/crew/knock.html`);
   console.log(`Sign in as Rep.One, ZacB, Rep.Two or Lead.One with password: ${PASSWORD}`);
 }

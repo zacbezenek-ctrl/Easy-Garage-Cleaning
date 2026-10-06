@@ -474,6 +474,8 @@ async function loadRepModules() {
   rep.install(app);
   const sale = await import('./knock-sale.js');
   sale.install(app);
+  const stats = await import('./knock-stats-ui.js');
+  stats.install(app);
   try {
     const map = await import('./knock-map.js');
     map.install(app);

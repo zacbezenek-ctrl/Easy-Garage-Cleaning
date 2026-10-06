@@ -10,7 +10,8 @@ import { allSales, setJobDate, setSaleStatus } from '../_lib/knock-sales.js';
 import { customerMessage, integrationStatus, refundSummary, saleHandoff } from '../_lib/knock-handoff.js';
 import { loadSettings } from '../_lib/knock-access.js';
 import { rebuildDay } from '../_lib/knock-sync.js';
-import { errorResponse, forbiddenOrigin, readJson, reply, sameOrigin } from '../_lib/knock-http.js';
+import { addPayout, exportCsv, moneyView } from '../_lib/knock-reports.js';
+import { csvResponse, errorResponse, forbiddenOrigin, readJson, reply, sameOrigin } from '../_lib/knock-http.js';
 
 // A sale's status changes its rep's booked revenue for the sale day.
 async function afterSaleChange(store, result, nowIso) {
@@ -39,6 +40,11 @@ const VIEWS = {
       integrations: integrationStatus(env || {}, settings),
     };
   },
+  async money(store, params, now) { return moneyView(store, params, now.getTime(), await loadSettings(store)); },
+  async export(store, params, now) {
+    const { csv, filename } = await exportCsv(store, params, now.getTime(), await loadSettings(store));
+    return csvResponse(filename, csv);
+  },
 };
 
 const ACTIONS = {
@@ -55,6 +61,7 @@ const ACTIONS = {
   'sale.status': async (store, admin, body, nowIso) => afterSaleChange(store, await setSaleStatus(store, admin, body, nowIso), nowIso),
   'sale.jobDate': setJobDate,
   'sale.handoff': (store, admin, body, nowIso, env) => saleHandoff(store, admin, body, nowIso, env),
+  'payout.add': addPayout,
 };
 
 // Admin views (GET ?view=...) and changes (POST {action, ...}). Admins are Hub business users.
