@@ -2,7 +2,7 @@ import { getHubSession } from '../_lib/hub-session.js';
 import { createKnockStore, knockFailure } from '../_lib/knock-store.js';
 import { requireAdmin } from '../_lib/knock-access.js';
 import {
-  addTraining, clearNoKnock, excludeHouses, excludeUnits, importNoKnock, listAssignments, listReps, listTraining,
+  addTraining, clearNoKnock, coverageView, excludeHouses, excludeUnits, importNoKnock, listAssignments, listReps, listTraining,
   neighborhoodHouses, readSettings, seedNeighborhoods, setAssignment, updateNeighborhood, updateRep, updateSettings,
 } from '../_lib/knock-admin.js';
 import { loadNeighborhoods } from '../_lib/knock-territory.js';
@@ -19,6 +19,7 @@ const VIEWS = {
     return { neighborhoods: neighborhoods.map(({ __updateTime, ...n }) => n), assignments, reps };
   },
   async neighborhood(store, params) { return neighborhoodHouses(store, params.get('id')); },
+  async coverage(store, _params, now) { return coverageView(store, now.getTime()); },
 };
 
 const ACTIONS = {

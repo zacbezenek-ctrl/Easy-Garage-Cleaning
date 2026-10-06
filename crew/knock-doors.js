@@ -216,7 +216,8 @@ const SUFFIXES = {
   CIRCLE: 'CIR', BOULEVARD: 'BLVD', PARKWAY: 'PKWY', TRAIL: 'TRL', TERRACE: 'TER', HIGHWAY: 'HWY',
   WAY: 'WAY', POINT: 'PT', CROSSING: 'XING', SQUARE: 'SQ', LOOP: 'LOOP', COVE: 'CV', RUN: 'RUN', PASS: 'PASS',
 };
-const UNIT_WORDS = ['UNIT', 'APT', 'APARTMENT', 'STE', 'SUITE', 'BLDG', 'BUILDING', 'LOT', 'SPC', 'SPACE', 'TRLR', 'NO'];
+const SUFFIX_SET = new Set(Object.values(SUFFIXES));
+const UNIT_WORDS = ['UNIT', 'APT', 'APARTMENT', 'STE', 'SUITE', 'BLDG', 'BUILDING', 'LOT', 'SPC', 'SPACE', 'TRLR'];
 const UNIT_PATTERN = new RegExp(`(?:\\s+(?:${UNIT_WORDS.join('|')})\\.?\\s*|\\s*#\\s*)([A-Z0-9-]+)\\s*$`);
 
 function clean(text) {
@@ -231,14 +232,18 @@ export function parseAddress(text) {
   let line = parts[0] || '';
   // "123 Main St, Apt 4, Fort Collins" keeps the unit that followed the first comma.
   if (parts[1] && new RegExp(`^(?:${UNIT_WORDS.join('|')}|#)`).test(parts[1])) line += ' ' + parts[1];
-  line = clean(line).replace(/\s+(CO|COLORADO)\s+\d{5}(?:-\d{4})?$/, '').replace(/\s+\d{5}(?:-\d{4})?$/, '');
+  line = clean(line).replace(/\s+(CO|COLORADO)\s+\d{5}(?:-\d{4})?$/, '').replace(/\s+\d{5}(?:-\d{4})?$/, '').replace(/\s+(CO|COLORADO)$/, '')
+    .replace(/\s+(FORT COLLINS|FT COLLINS|TIMNATH|WINDSOR|LOVELAND|WELLINGTON|LAPORTE|BERTHOUD|SEVERANCE)$/, '');
   let unit = '';
   const unitMatch = line.match(UNIT_PATTERN);
   if (unitMatch) { unit = unitMatch[1]; line = line.slice(0, unitMatch.index).trim(); }
-  const match = line.match(/^(\d+)([A-Z])?(?:\s*-\s*\d+)?\s+(.+)$/);
+  const match = line.match(/^(\d+)([A-Z])?(?:\s*-\s*(\d+))?\s+(.+)$/);
   if (!match) return null;
   if (match[2] && !unit) unit = match[2];
-  const words = match[3].split(' ').map(word => DIRECTIONS[word] || SUFFIXES[word] || word);
+  if (match[3] && !unit) unit = match[3];
+  const words = match[4].split(' ').map(word => DIRECTIONS[word] || SUFFIXES[word] || word);
+  // "123 MAIN ST 101" / "123 MAIN ST A": a short token after the street suffix is a unit.
+  if (!unit && words.length >= 3 && SUFFIX_SET.has(words[words.length - 2]) && /^(?:\d{1,5}|[A-Z]\d{0,3})$/.test(words[words.length - 1])) unit = words.pop();
   return { number: match[1], street: words.join(' '), unit };
 }
 

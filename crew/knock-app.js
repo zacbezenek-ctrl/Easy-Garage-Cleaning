@@ -332,12 +332,18 @@ function parseRoute() {
   return { name, params: new URLSearchParams(query) };
 }
 
+let adminLoading = null;
+function ensureAdmin() {
+  if (modules.admin || !S.viewer?.admin) return Promise.resolve();
+  adminLoading ||= import('./knock-admin.js')
+    .then(module => { modules.admin = module; module.install(app); })
+    .catch(() => { adminLoading = null; toast('The admin screens need a connection the first time.', { tone: 'bad' }); });
+  return adminLoading;
+}
+
 async function route() {
   S.route = parseRoute();
-  if (S.route.name.startsWith('admin') && !modules.admin && S.viewer?.admin) {
-    try { modules.admin = await import('./knock-admin.js'); modules.admin.install(app); }
-    catch { toast('The admin screens need a connection the first time.', { tone: 'bad' }); }
-  }
+  if (S.route.name.startsWith('admin')) await ensureAdmin();
   render();
 }
 
@@ -354,6 +360,7 @@ export function render() {
   if (S.rep.status !== 'active') return renderWaiting();
   const screen = screens.get(S.route.name) || screens.get('home');
   if (screen.admin && !S.viewer.admin) return mount(main, h('p', { class: 'notice error' }, 'Only admins can open that screen.'));
+  if (screen.admin && !modules.admin) ensureAdmin().then(() => { if (modules.admin) render(); });
   try {
     mount(main, screen.render(app, S.route.params));
   } catch (error) {
@@ -463,10 +470,12 @@ registerScreen('home', homeScreen, { tab: { label: 'Home', glyph: '⌂', order: 
 registerScreen('admin', () => h('p', { class: 'loading' }, 'Loading admin…'), { tab: { label: 'Admin', glyph: '⚙', order: 90 }, admin: true });
 
 async function loadRepModules() {
+  const rep = await import('./knock-rep.js');
+  rep.install(app);
   try {
-    const rep = await import('./knock-rep.js');
-    rep.install(app);
-  } catch { /* Knocking screens arrive with the next build step. */ }
+    const map = await import('./knock-map.js');
+    map.install(app);
+  } catch { /* The list view works without the map module. */ }
 }
 
 /* ---------- boot ---------- */

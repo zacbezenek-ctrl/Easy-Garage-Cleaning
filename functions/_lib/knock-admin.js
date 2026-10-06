@@ -7,6 +7,7 @@ import { seedNeighborhoodDocs } from './knock-seed.js';
 import { DEFAULT_SETTINGS, mergeSettings, overlaySettings, validateSettings } from '../../crew/knock-settings.js';
 import { matchNoKnockList } from '../../crew/knock-doors.js';
 import { validDate } from '../../crew/knock-time.js';
+import { coverage } from '../../crew/knock-stats.js';
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const SAFE_KEY = /^(?:[a-z0-9._-]{1,64}|u_[0-9a-f]{2,120})$/;
@@ -173,6 +174,19 @@ export async function clearNoKnock(store, admin, { houseId }, nowIso) {
   if (house.summary?.signFlagged) throw knockFailure('A rep flagged a no-soliciting sign here. Void that knock to clear it.', 409, 'knock_sign_flagged');
   await store.commit([write.patch('knock_houses', house.id, { noKnock: null, updatedAt: nowIso, noKnockClearedBy: admin.user })]);
   return { cleared: true };
+}
+
+/* Coverage per neighborhood and street: houses knocked, percent, looks, sales, last knocked and
+   who is there now (an open shift whose last door was there within the configured minutes). */
+export async function coverageView(store, nowMs) {
+  const [settings, neighborhoods, houses, open, reps] = await Promise.all([
+    loadSettings(store), loadNeighborhoods(store),
+    store.query('knock_houses', { select: ['neighborhoodId', 'street', 'excluded', 'jurisdictionHold', 'noKnock', 'summary'] }),
+    store.query('knock_shifts', { where: [['endedAt', '==', null]] }),
+    listReps(store),
+  ]);
+  const rows = coverage({ houses, neighborhoods, activeShifts: open, reps, now: nowMs, hereNowMinutes: settings.coverage.hereNowMinutes });
+  return { coverage: rows.map(row => ({ ...row, tier: neighborhoods.find(n => n.id === row.id)?.tier || '', status: neighborhoods.find(n => n.id === row.id)?.status || '' })) };
 }
 
 export { repKeyFor };

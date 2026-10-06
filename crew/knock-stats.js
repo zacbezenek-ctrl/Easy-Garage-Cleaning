@@ -224,7 +224,7 @@ export function coverage({ houses = [], neighborhoods = [], activeShifts = [], r
   const blank = () => ({ total: 0, knocked: 0, looks: 0, sales: 0, lastKnockedAt: null, hereNow: [] });
   const byNbhd = new Map(neighborhoods.map(n => [n.id, { id: n.id, name: n.name, ...blank(), streets: new Map() }]));
   for (const house of houses) {
-    if (house.excluded || house.noKnock?.source === 'city') continue;
+    if (house.excluded || house.jurisdictionHold || house.noKnock?.source === 'city') continue;
     if (!byNbhd.has(house.neighborhoodId)) byNbhd.set(house.neighborhoodId, { id: house.neighborhoodId, name: house.neighborhoodId, ...blank(), streets: new Map() });
     const n = byNbhd.get(house.neighborhoodId);
     if (!n.streets.has(house.street)) n.streets.set(house.street, { street: house.street, ...blank() });
