@@ -14,9 +14,11 @@
 </head>
 <body>
   <header class="knock-header">
-    <a class="brand" href="/crew/knock.html#home">EGC <span>Knock</span></a>
-    <span id="knock-clock" class="clock" hidden></span>
-    <button id="knock-sync" type="button" class="sync-pill" hidden></button>
+    <div class="bar">
+      <a class="brand" href="/crew/knock.html#home">EGC <span>Knock</span></a>
+      <button id="knock-sync" type="button" class="sync-pill" hidden></button>
+    </div>
+    <div id="knock-clock" class="clock" role="timer" aria-live="off" hidden></div>
   </header>
   <main id="knock-main"><p class="loading" role="status">Opening canvassing…</p></main>
   <nav id="knock-tabs" class="tabs" aria-label="Canvassing" hidden></nav>

@@ -4,7 +4,7 @@
    Fields starting with "_" stay on the phone and are stripped before an event is sent. */
 
 const DB = 'egc-knock';
-const VERSION = 1;
+const VERSION = 2;
 const LOCK = 'egc-knock-outbox';
 
 function request(req) {
@@ -39,8 +39,10 @@ export async function openKnockStore(indexedDB = globalThis.indexedDB) {
     const open = indexedDB.open(DB, VERSION);
     open.onupgradeneeded = () => {
       const base = open.result;
+      // Pre-release builds kept the cache with out-of-line keys; it only holds re-downloadable copies.
+      if (base.objectStoreNames.contains('cache') && open.transaction?.objectStore('cache').keyPath !== 'key') base.deleteObjectStore('cache');
       if (!base.objectStoreNames.contains('events')) base.createObjectStore('events', { keyPath: 'id' });
-      if (!base.objectStoreNames.contains('cache')) base.createObjectStore('cache');
+      if (!base.objectStoreNames.contains('cache')) base.createObjectStore('cache', { keyPath: 'key' });
     };
     db = await request(open);
   } catch {
@@ -58,8 +60,8 @@ export async function openKnockStore(indexedDB = globalThis.indexedDB) {
       remove: id => writeOne('events', s => s.delete(id)),
     },
     cache: {
-      get: async key => (await request(tx('cache', 'readonly').get(key))) ?? null,
-      set: (key, value) => writeOne('cache', s => s.put(value, key)),
+      get: async key => (await request(tx('cache', 'readonly').get(key)))?.value ?? null,
+      set: (key, value) => writeOne('cache', s => s.put({ key, value })),
       remove: key => writeOne('cache', s => s.delete(key)),
     },
   };
@@ -103,12 +105,14 @@ export function createOutbox(store, { transport, locks = globalThis.navigator?.l
     });
   }
 
-  // Replace a queued (unsent) event's fields, e.g. editing the last door before it synced.
+  // Change a queued (unsent) event, e.g. editing the last door before it synced. `changes` is merged,
+  // or given a function it receives the event and returns the new one.
   function amend(id, changes) {
     return serial(async () => {
       const row = await store.events.get(id);
       if (!row || row.state !== 'queued') return null;
-      const next = { ...row, ...changes, id: row.id, seq: row.seq, user: row.user };
+      const updated = typeof changes === 'function' ? changes(structuredClone(row)) : { ...row, ...changes };
+      const next = { ...updated, id: row.id, seq: row.seq, user: row.user, type: row.type, state: row.state };
       await store.events.put(next);
       notify();
       return next;

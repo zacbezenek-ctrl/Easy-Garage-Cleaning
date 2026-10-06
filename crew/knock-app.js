@@ -341,8 +341,14 @@ async function route() {
   render();
 }
 
+let autoRouted = false;
 export function render() {
   if (!S.viewer) return renderSignIn();
+  // Pocket to door: with a shift running, opening the app lands on the knock screen.
+  if (!autoRouted && !location.hash && S.rep?.status === 'active' && screens.has('knock')) {
+    autoRouted = true;
+    if (currentShift()) { location.hash = '#knock'; return; }
+  }
   renderChrome();
   if (!S.rep) { mount(main, h('p', { class: 'loading' }, S.online ? 'Loading your canvassing profile…' : 'Connect once to load your canvassing profile.')); return; }
   if (S.rep.status !== 'active') return renderWaiting();
@@ -384,9 +390,9 @@ function renderChrome() {
   const window = knockingWindow(S.ui.houseId ? S.houses.get(S.ui.houseId) : null);
   clock.hidden = false;
   clock.className = `clock${window.warning ? ' warn' : ''}${window.phase === 'grace' || window.phase === 'closed' ? ' closed' : ''}`;
-  clock.textContent = window.phase === 'before' ? `Opens ${window.startLabel}`
-    : window.phase === 'open' ? `Sunset ${window.endLabel} · ${formatCountdown(window.msToEnd)}`
-    : window.phase === 'grace' ? `Past sunset · finish last door` : 'Done for today';
+  clock.textContent = window.phase === 'before' ? `Knocking opens ${window.startLabel} · sunset ${window.endLabel}`
+    : window.phase === 'open' ? `Sunset ${window.endLabel} · ${formatCountdown(window.msToEnd)} left`
+    : window.phase === 'grace' ? `Past sunset · finish the last door by ${formatClock(window.graceEndAt)}` : `Sunset was ${window.endLabel} · done for today`;
   syncPill.hidden = false;
   const pending = S.pending.length, problems = S.problems.length;
   syncPill.className = `sync-pill${problems ? ' problem' : !S.online ? ' offline' : ''}`;
@@ -411,7 +417,8 @@ function homeScreen() {
       h('p', { class: 'muted' }, window.phase === 'before' ? `Knocking opens at ${window.startLabel}. Sunset is ${window.endLabel}.`
         : window.phase === 'open' ? `Knock until sunset at ${window.endLabel}.` : `Sunset was ${window.endLabel}. Knocking is closed for today.`),
       S.eligibility.ok ? null : h('p', { class: 'notice' }, S.eligibility.reason),
-      shift ? h('p', { class: 'notice ok' }, `Shift running since ${formatClock(Date.parse(shift.startedAt))}.`) : null),
+      shift && !app.shiftCard ? h('p', { class: 'notice ok' }, `Shift running since ${formatClock(Date.parse(shift.startedAt))}.`) : null),
+    app.shiftCard ? app.shiftCard() : null,
     h('section', { class: 'card' },
       h('h2', {}, 'Your territory'),
       nbhds.length ? h('ul', { class: 'list' }, nbhds.map(n => h('li', {},

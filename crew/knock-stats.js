@@ -42,6 +42,31 @@ export function shiftTiming(shift, now = Date.now(), idleAutoEndHours = 4) {
   };
 }
 
+/* A shift record rebuilt from its append-only events (shift.start, shift.break_start, shift.break_end,
+   shift.end and knock events, any order). Voided knocks do not count as doors. */
+export function deriveShift(events, shiftId) {
+  const list = (events || []).filter(e => e && e.shiftId === shiftId).sort((a, b) => (ms(a.at) - ms(b.at)) || String(a.id).localeCompare(String(b.id)));
+  const start = list.find(e => e.type === 'shift.start');
+  if (!start) return null;
+  const voided = new Set((events || []).filter(e => e.type === 'knock.void').map(e => e.target));
+  const shift = {
+    repKey: start.repKey, startedAt: start.at, cityKey: start.cityKey || 'fort-collins', day: start.day || '',
+    breaks: [], endedAt: null, endReason: null, lastDoorAt: null, lastHouseId: null, lastNeighborhoodId: null,
+    lastStreet: null, doors: 0, flags: [...(start.flags || [])],
+  };
+  for (const event of list) {
+    if (event.type === 'shift.break_start' && !shift.breaks.some(b => !b.endAt)) shift.breaks.push({ startAt: event.at, endAt: null });
+    if (event.type === 'shift.break_end') { const open = shift.breaks.find(b => !b.endAt); if (open) open.endAt = event.at; }
+    if (event.type === 'shift.end' && !shift.endedAt) { shift.endedAt = event.at; shift.endReason = event.reason || 'manual'; }
+    if (event.type === 'knock' && !voided.has(event.id)) {
+      if (isDoor(event.outcome)) shift.doors += 1;
+      shift.lastDoorAt = event.at; shift.lastHouseId = event.houseId;
+      shift.lastNeighborhoodId = event.neighborhoodId || null; shift.lastStreet = event.street || null;
+    }
+  }
+  return shift;
+}
+
 /* Counts from effective knocks: doors exclude skipped (sign) houses; answers are doors where someone
    came to the door; looks include sales (a sale needs the garage look and price first). */
 export function countKnocks(knocks) {
