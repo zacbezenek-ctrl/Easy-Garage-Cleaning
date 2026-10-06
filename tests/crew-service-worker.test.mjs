@@ -15,7 +15,11 @@ const basic = response => Object.defineProperty(response, 'type', { value: 'basi
 // Inside a worker, relative request URLs resolve against the worker's origin.
 class WorkerRequest extends Request { constructor(input, init) { super(typeof input === 'string' ? new URL(input, ORIGIN).href : input, init); } }
 const NOW = Date.parse('2026-09-22T15:00:00.000Z');
-const SHELL_CACHE = 'egc-crew-shell-20260930launchpolish2';
+const SHELL_CACHE = 'egc-crew-shell-20261006knock';
+// KNOCK: the canvassing page (crew/knock.html) and its modules share the crew shell. Its ES modules import each other
+// without ?v=, so those keys are bare paths. The map files load only when a rep opens the map.
+const KNOCK_ASSETS = ['/crew/knock-app.js?v=20261006knock', '/crew/knock-doors.js', '/crew/knock-leaflet.css?v=1.9.4', '/crew/knock-leaflet.js?v=1.9.4', '/crew/knock-map.js', '/crew/knock-money.js', '/crew/knock-outbox.js', '/crew/knock-rep.js', '/crew/knock-sale-rules.js', '/crew/knock-settings.js', '/crew/knock-stats.js', '/crew/knock-time.js', '/crew/knock-ui.js', '/crew/knock.css?v=20261006knock'];
+const KNOCK_PRESENT = KNOCK_ASSETS.filter(key => existsSync(new URL(`..${key.split('?')[0]}`, import.meta.url)));
 
 function harness({ config = { enabled: true }, indexedDB = fakeIndexedDB(), api = null, network = null } = {}) {
   const listeners = {}, stores = new Map(), fetched = [], messages = [];
@@ -99,7 +103,7 @@ test('install caches only the static job shell under a versioned cache and activ
   // again (?v=20260929editwipe2) so a blank line or an emptied checklist editor, and a reason typed while this phone's own
   // queued status confirms, survive too.
   // FIELD-PAY adds a private payment UI and changes the job script; all three assets must reload offline.
-  assert.deepEqual(shell, ['/app-touch.css?v=20260930mobiletouch', '/crew/field-expenses.css?v=20260928fun19', '/crew/field-expenses.js?v=20260929multiday', '/crew/field-outbox.js?v=20260929crewtime2', '/crew/field-payments.css?v=20260929fieldpay2', '/crew/field-payments.js?v=20260929fieldpay2', '/crew/job-photo-sharing.css?v=20260927photo', '/crew/job-photo-sharing.js?v=20260929editwipe', '/crew/job.css?v=20260930launchpolish2', '/crew/job.html', '/crew/job.js?v=20260929fieldpay2', '/crew/manifest.webmanifest', '/crew/offline.html']);
+  assert.deepEqual(shell, ['/app-touch.css?v=20260930mobiletouch', '/crew/field-expenses.css?v=20260928fun19', '/crew/field-expenses.js?v=20260929multiday', '/crew/field-outbox.js?v=20260929crewtime2', '/crew/field-payments.css?v=20260929fieldpay2', '/crew/field-payments.js?v=20260929fieldpay2', '/crew/job-photo-sharing.css?v=20260927photo', '/crew/job-photo-sharing.js?v=20260929editwipe', '/crew/job.css?v=20260930launchpolish2', '/crew/job.html', '/crew/job.js?v=20260929fieldpay2', ...KNOCK_ASSETS, '/crew/knock.html', '/crew/manifest-knock.webmanifest', '/crew/manifest.webmanifest', '/crew/offline.html'].sort());
   await sw.dispatch('activate');
   assert.deepEqual([...sw.stores.keys()].sort(), [SHELL_CACHE, 'unrelated-cache'], 'older shell versions are removed; other caches are left alone');
   assert.equal(sw.state.claimed, 1); assert.equal(sw.state.unregistered, 0);
@@ -254,8 +258,9 @@ function gatedSite({ env = STAFF_ENV, accept = '*/*' } = {}) {
   phone.signIn = async () => { phone.cookie = (await createHubSessionCookie(env, 'synthetic.crew')).split(';')[0]; };
   return phone;
 }
-const PUBLIC_KEYS = ['/app-touch.css?v=20260930mobiletouch', '/crew/field-outbox.js?v=20260929crewtime2', '/crew/manifest.webmanifest', '/crew/offline.html'];
-const STAFF_KEYS = ['/crew/field-expenses.css?v=20260928fun19', '/crew/field-expenses.js?v=20260929multiday', '/crew/field-payments.css?v=20260929fieldpay2', '/crew/field-payments.js?v=20260929fieldpay2', '/crew/job-photo-sharing.css?v=20260927photo', '/crew/job-photo-sharing.js?v=20260929editwipe', '/crew/job.css?v=20260930launchpolish2', '/crew/job.html', '/crew/job.js?v=20260929fieldpay2'];
+const PUBLIC_KEYS = ['/app-touch.css?v=20260930mobiletouch', '/crew/field-outbox.js?v=20260929crewtime2', '/crew/manifest-knock.webmanifest', '/crew/manifest.webmanifest', '/crew/offline.html'];
+const STAFF_KEYS = ['/crew/field-expenses.css?v=20260928fun19', '/crew/field-expenses.js?v=20260929multiday', '/crew/field-payments.css?v=20260929fieldpay2', '/crew/field-payments.js?v=20260929fieldpay2', '/crew/job-photo-sharing.css?v=20260927photo', '/crew/job-photo-sharing.js?v=20260929editwipe', '/crew/job.css?v=20260930launchpolish2', '/crew/job.html', '/crew/job.js?v=20260929fieldpay2', ...KNOCK_PRESENT, '/crew/knock.html'];
+const PAGE_KEYS = new Set(['/crew/job.html', '/crew/knock.html']);
 const shellKeys = async sw => (await sw.cached()).filter(([name]) => name === SHELL_CACHE).map(([, path]) => path).sort();
 
 test('staff gate on: a signed-out install caches the public shell, refusals are never stored, and signing in fills in the job shell', async t => {
@@ -287,7 +292,8 @@ test('staff gate on: a signed-out install caches the public shell, refusals are 
   const job = await sw.fetchEvent('/crew/job?jobId=synthetic-job-1', { mode: 'navigate' });
   assert.equal(job.response.status, 200);
   assert.equal(job.response.headers.get('cache-control'), 'private, no-store');
-  for (const key of STAFF_KEYS.filter(key => key !== '/crew/job.html')) assert.equal((await sw.fetchEvent(key)).response.status, 200, key);
+  assert.equal((await sw.fetchEvent('/crew/knock', { mode: 'navigate' })).response.status, 200, 'the canvassing page joins the shell on a signed-in load');
+  for (const key of STAFF_KEYS.filter(key => !PAGE_KEYS.has(key))) assert.equal((await sw.fetchEvent(key)).response.status, 200, key);
   assert.deepEqual(await shellKeys(sw), [...PUBLIC_KEYS, ...STAFF_KEYS].sort(), 'a signed-in load fills in the job shell at runtime');
   sw.state.online = false;
   const offline = await sw.fetchEvent('/crew/job.html?jobId=synthetic-job-2', { mode: 'navigate' });

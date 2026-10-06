@@ -661,6 +661,51 @@ service cloud.firestore {
       allow read, write: if false;
     }
 
+    // Door-to-door canvassing (crew/knock.html). Every read and write goes through the
+    // /api/knock-* handlers, which check the Hub session: a rep reads and writes only their
+    // own shifts, knocks and sales and reads houses in their assigned territory; only admins
+    // read customer details, change settings or export. Houses hold addresses and outcomes
+    // only; customer contact details exist only on knock_sales. No client SDK access at all.
+    match /knock_settings/{documentId} {
+      allow read, write: if false;
+    }
+    match /knock_reps/{documentId} {
+      allow read, write: if false;
+    }
+    match /knock_neighborhoods/{documentId} {
+      allow read, write: if false;
+    }
+    match /knock_houses/{documentId} {
+      allow read, write: if false;
+    }
+    match /knock_assignments/{documentId} {
+      allow read, write: if false;
+    }
+    match /knock_shifts/{documentId} {
+      allow read, write: if false;
+    }
+    match /knock_events/{documentId} {
+      allow read, write: if false;
+    }
+    match /knock_sales/{documentId} {
+      allow read, write: if false;
+    }
+    match /knock_days/{documentId} {
+      allow read, write: if false;
+    }
+    match /knock_training/{documentId} {
+      allow read, write: if false;
+    }
+    match /knock_payouts/{documentId} {
+      allow read, write: if false;
+    }
+    match /knock_imports/{documentId} {
+      allow read, write: if false;
+    }
+    match /knock_receipts/{documentId} {
+      allow read, write: if false;
+    }
+
     match /{document=**} {
       allow read, write: if false;
     }
