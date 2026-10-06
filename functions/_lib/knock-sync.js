@@ -51,9 +51,11 @@ function shapeProblem(event, nowMs) {
   return null;
 }
 
-// The stored form of an event: client fields kept, identity and server facts added.
+// The stored form of an event: client fields kept, identity and server facts added. A sale event
+// keeps only its link to the door; the customer's details live on the knock_sales record alone.
 function storedEvent(event, rep, extra) {
-  const keep = ['type', 'shiftId', 'houseId', 'outcome', 'carOutside', 'quotedAmount', 'comeBackAt', 'note', 'at', 'target', 'cityKey', 'afterEnd', 'reason', 'lat', 'lng', 'accuracy', 'knockId'];
+  const keep = event.type === 'sale' ? ['type', 'houseId', 'at', 'knockId']
+    : ['type', 'shiftId', 'houseId', 'outcome', 'carOutside', 'quotedAmount', 'comeBackAt', 'note', 'at', 'target', 'cityKey', 'afterEnd', 'reason', 'lat', 'lng', 'accuracy'];
   const stored = { repKey: rep.repKey };
   for (const key of keep) if (event[key] !== undefined) stored[key] = event[key];
   if (stored.quotedAmount != null) stored.quotedAmount = Math.round(Number(stored.quotedAmount) * 100) / 100;
@@ -174,7 +176,8 @@ export async function applyBatch(store, rep, settings, events, nowMs) {
   // 1. The events themselves (append-only) and any sale records, in one commit.
   if (accepted.length) {
     const writes = accepted.map(({ id, ...data }) => write.create('knock_events', id, data));
-    for (const event of accepted.filter(e => e.type === 'sale')) writes.push(...await applySaleEvent(store, rep, settings, event, nowIso));
+    const originals = new Map(fresh.map(({ event }) => [event.id, event]));
+    for (const event of accepted.filter(e => e.type === 'sale')) writes.push(...await applySaleEvent(store, rep, settings, originals.get(event.id), nowIso, { houses }));
     try {
       await store.commit(writes);
     } catch (error) {

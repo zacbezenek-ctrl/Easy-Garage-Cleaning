@@ -132,6 +132,11 @@ input:focus, select:focus, textarea:focus { border-color: var(--focus); outline:
 .filters { display: flex; gap: .4rem; overflow-x: auto; padding-bottom: .4rem; margin-bottom: .4rem; }
 .filters button { min-height: 40px; padding: .3rem .8rem; white-space: nowrap; }
 .filters button[aria-pressed="true"] { background: #13203a; color: #fff; border-color: #13203a; }
+button.pkg { min-height: 60px; }
+button.pkg[aria-pressed="true"] { background: #e8581c; border-color: #e8581c; color: #fff; }
+.handoffs { display: grid; gap: .5rem; margin-top: .6rem; }
+.handoff { display: flex; flex-wrap: wrap; align-items: center; gap: .5rem; padding: .5rem .6rem; border: 2px solid var(--line); border-radius: 10px; }
+.handoff b { min-width: 5.5rem; }
 
 table.data { width: 100%; border-collapse: collapse; font-size: .92rem; }
 table.data th, table.data td { text-align: left; padding: .45rem .4rem; border-bottom: 1px solid var(--line); vertical-align: top; }

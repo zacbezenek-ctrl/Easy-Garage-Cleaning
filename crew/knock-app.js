@@ -472,6 +472,8 @@ registerScreen('admin', () => h('p', { class: 'loading' }, 'Loading admin…'), 
 async function loadRepModules() {
   const rep = await import('./knock-rep.js');
   rep.install(app);
+  const sale = await import('./knock-sale.js');
+  sale.install(app);
   try {
     const map = await import('./knock-map.js');
     map.install(app);

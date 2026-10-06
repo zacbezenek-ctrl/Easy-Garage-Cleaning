@@ -274,6 +274,67 @@ function coverageSection() {
   });
 }
 
+/* ---------- Sales ---------- */
+
+const SALE_TONE = { booked: 'warn', completed: 'ok', paid: 'ok', cancelled: 'locked' };
+
+function salesSection(params) {
+  return later(async () => {
+    const data = await load('sales', {}, { force: true });
+    const filter = params.get('f') || 'open';
+    const repName = key => data.reps.find(r => r.repKey === key)?.displayName || key;
+    const shown = data.sales.filter(s => filter === 'all' ? true : filter === 'open' ? ['booked', 'completed'].includes(s.status) : s.status === filter);
+    const refresh = () => { invalidate('sales'); app.render(); };
+    const act = async (body, message) => {
+      try { await action(body, { quiet: true }); toast(message); refresh(); }
+      catch (error) { toast(error.message, { tone: 'bad' }); if (error.details?.sale) refresh(); }
+    };
+    const stripe = data.integrations.deposit.available.includes('stripe');
+    const quo = data.integrations.text.available.includes('quo');
+    const card = sale => {
+      const d = sale.handoff?.deposit || {}, t = sale.handoff?.text || {}, j = sale.handoff?.job || {};
+      const ref = h('input', { placeholder: 'Hub job ID or Jobber link (optional)', value: j.ref || '', 'aria-label': 'Job reference' });
+      const paidAmount = h('input', { type: 'number', step: '0.01', min: '0', value: String(sale.collectedAmount ?? sale.ticket), 'aria-label': 'Amount collected', style: { maxWidth: '9rem' } });
+      const jobDate = h('input', { type: 'date', value: sale.jobDate, min: sale.earliestJobDate, 'aria-label': 'Job date', style: { maxWidth: '11rem' } });
+      return h('section', { class: 'card' },
+        h('div', { class: 'row spread' },
+          h('div', {}, h('h3', {}, `${sale.address.number} ${titleStreet(sale.address.street)}${sale.address.unit ? ` #${sale.address.unit}` : ''}`),
+            h('div', { class: 'muted' }, `${repName(sale.repKey)} · sold ${timeLabel(sale.soldAt)}`)),
+          h('span', { class: `badge ${SALE_TONE[sale.status] || ''}` }, sale.status)),
+        h('p', {}, h('b', {}, sale.customer.name), ' · ', h('a', { href: `tel:${sale.customer.phone}` }, sale.customer.phone), ' · ', h('a', { href: `mailto:${sale.customer.email}` }, sale.customer.email)),
+        h('p', {}, `${sale.package} · ${money(sale.ticket)} · deposit ${money(sale.depositAmount, true)} · job ${dateLabel(sale.jobDate)} ${sale.jobStartTime || ''}`),
+        h('p', { class: 'muted' }, `Cancel deadline: midnight ${dateLabel(sale.cancelDeadlineDate)}. ${sale.refund} Checklist confirmed ${timeLabel(sale.checklistConfirmedAt)}.${sale.textConsent ? '' : ' No text consent.'}`),
+        h('div', { class: 'handoffs' },
+          h('div', { class: 'handoff' }, h('b', {}, 'Job'), h('span', { class: 'badge' }, j.status || 'pending'), ref,
+            h('button', { type: 'button', onclick: () => act({ action: 'sale.handoff', saleId: sale.id, kind: 'job', op: 'mark', ref: ref.value }, 'Job marked created') }, j.status === 'created' ? 'Update' : 'Mark created')),
+          h('div', { class: 'handoff' }, h('b', {}, 'Deposit'), h('span', { class: `badge ${d.status === 'collected' ? 'ok' : ''}` }, d.status || 'pending'),
+            d.url ? h('a', { href: d.url, target: '_blank', rel: 'noopener' }, 'Payment link') : null,
+            stripe && d.status !== 'collected' && !d.url ? h('button', { type: 'button', class: 'primary', onclick: () => act({ action: 'sale.handoff', saleId: sale.id, kind: 'deposit', op: 'start' }, 'Stripe link created') }, 'Create Stripe link') : null,
+            d.url && d.status !== 'collected' ? h('button', { type: 'button', onclick: () => act({ action: 'sale.handoff', saleId: sale.id, kind: 'deposit', op: 'refresh' }, 'Checked with Stripe') }, 'Check payment') : null,
+            d.status !== 'collected' ? h('button', { type: 'button', onclick: () => act({ action: 'sale.handoff', saleId: sale.id, kind: 'deposit', op: 'mark' }, 'Deposit marked collected') }, 'Mark collected') : null),
+          h('div', { class: 'handoff' }, h('b', {}, 'Text'), h('span', { class: `badge ${t.status === 'sent' ? 'ok' : ''}` }, t.status || 'pending'),
+            quo && sale.textConsent && !['sent', 'uncertain', 'sending'].includes(t.status) ? h('button', { type: 'button', class: 'primary', onclick: async () => {
+              if (await confirmSheet('Send one text?', sale.message, 'Send text')) act({ action: 'sale.handoff', saleId: sale.id, kind: 'text', op: 'send' }, 'Text sent');
+            } }, 'Send via Quo') : null,
+            t.status !== 'sent' ? h('button', { type: 'button', onclick: () => act({ action: 'sale.handoff', saleId: sale.id, kind: 'text', op: 'mark' }, 'Text marked sent') }, 'Mark sent') : null,
+            t.error ? h('span', { class: 'notice error' }, t.error) : null)),
+        h('details', {}, h('summary', {}, 'Customer text'), h('p', {}, sale.message)),
+        h('div', { class: 'row', style: { marginTop: '.6rem' } },
+          sale.status === 'booked' ? h('button', { type: 'button', onclick: () => act({ action: 'sale.status', saleId: sale.id, status: 'completed' }, 'Marked completed') }, 'Job completed') : null,
+          ['booked', 'completed'].includes(sale.status) ? h('span', { class: 'row' }, paidAmount, h('button', { type: 'button', class: 'primary', onclick: () => act({ action: 'sale.status', saleId: sale.id, status: 'paid', collectedAmount: paidAmount.value }, 'Marked paid') }, 'Mark paid')) : null,
+          sale.status !== 'cancelled' ? h('button', { type: 'button', class: 'danger', onclick: async () => {
+            if (await confirmSheet('Cancel this sale?', 'A cancelled sale pays no commission. Refund the deposit according to the cancellation rules.', 'Cancel sale', 'danger')) act({ action: 'sale.status', saleId: sale.id, status: 'cancelled' }, 'Sale cancelled');
+          } }, 'Cancel sale') : h('button', { type: 'button', onclick: () => act({ action: 'sale.status', saleId: sale.id, status: 'booked' }, 'Sale reinstated') }, 'Reinstate'),
+          sale.status !== 'cancelled' ? h('span', { class: 'row' }, jobDate, h('button', { type: 'button', onclick: () => act({ action: 'sale.jobDate', saleId: sale.id, jobDate: jobDate.value }, 'Job date saved') }, 'Move job')) : null));
+    };
+    return h('div', {},
+      h('p', { class: 'muted' }, `Hand-offs: job ${data.integrations.job.mode}; deposit ${stripe ? 'Stripe link or manual' : 'manual (no Stripe key on the server)'}; text ${quo ? 'Quo or manual' : 'manual (no Quo key on the server)'}. One customer, one text: there is no bulk send.`),
+      h('div', { class: 'filters' }, [['open', 'Open'], ['booked', 'Booked'], ['completed', 'Completed'], ['paid', 'Paid'], ['cancelled', 'Cancelled'], ['all', 'All']].map(([key, label]) =>
+        h('button', { type: 'button', 'aria-pressed': String(filter === key), onclick: () => app.go('admin', { s: 'sales', f: key }) }, label))),
+      shown.length ? shown.map(card) : h('p', { class: 'muted' }, 'No sales here.'));
+  });
+}
+
 const extraSections = [];
 export function addSection(key, label, render) { extraSections.push([key, label, render]); }
 
@@ -282,6 +343,7 @@ export function install(appApi) {
   registerAdminSection('reps', 'Reps', repsSection);
   registerAdminSection('territory', 'Territory', territorySection);
   registerAdminSection('coverage', 'Coverage', coverageSection);
+  registerAdminSection('sales', 'Sales', salesSection);
   for (const extra of extraSections) registerAdminSection(...extra);
   registerAdminSection('settings', 'Settings', settingsSection);
   app.registerScreen('admin', adminScreen, { admin: true, tab: { label: 'Admin', glyph: '⚙', order: 90 } });
