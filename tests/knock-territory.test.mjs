@@ -49,6 +49,8 @@ test('reps see only their assignment: a whole neighborhood or single streets', a
   assert.deepEqual(two.neighborhoods[0].streets, ['B ST']);
   await act({ action: 'assignment.set', repKey: 'rep.one', neighborhoodId: 'english-ranch', active: false });
   assert.deepEqual((await houses(cookies.rep)).houses, [], 'unassigning removes the houses from the phone');
+  const typo = await act({ action: 'assignment.set', repKey: 'rep.two', neighborhoodId: 'english-ranch', street: 'B STREET' });
+  assert.deepEqual([typo.status, typo.body.code], [400, 'knock_unknown_street'], 'a street with no imported houses is refused');
 });
 
 test('unit addresses can be excluded in one tap and come back individually', async () => {

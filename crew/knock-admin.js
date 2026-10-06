@@ -156,6 +156,13 @@ function territorySection(params) {
         h('p', {}, 'Seed the 24 neighborhoods (tier, status and platted house count), then run the Larimer County import to load every house.'),
         h('button', { type: 'button', class: 'primary', onclick: () => run({ action: 'territory.seed' }, 'Neighborhoods added') }, 'Seed the 24 neighborhoods'));
     }
+    const streetList = h('datalist', { id: 'as-streets' });
+    const fillStreets = async neighborhoodId => {
+      try {
+        const houses = await load('neighborhood', { id: neighborhoodId });
+        mount(streetList, [...new Set(houses.houses.map(house => house.street))].sort().map(street => h('option', { value: street })));
+      } catch { mount(streetList); }
+    };
     const assignForm = h('form', { class: 'card', onsubmit: async event => {
       event.preventDefault();
       await run({ action: 'assignment.set', repKey: assignForm.rep.value, neighborhoodId: assignForm.nbhd.value, street: assignForm.street.value.trim(), active: true }, 'Assigned');
@@ -164,10 +171,11 @@ function territorySection(params) {
     h('p', { class: 'muted' }, 'Reps see only what is assigned to them. Leave the street blank for the whole neighborhood.'),
     h('div', { class: 'grid2' },
       h('div', {}, h('label', { for: 'as-rep' }, 'Rep'), h('select', { id: 'as-rep', name: 'rep', required: true }, reps.map(r => h('option', { value: r.repKey }, r.displayName)))),
-      h('div', {}, h('label', { for: 'as-nbhd' }, 'Neighborhood'), h('select', { id: 'as-nbhd', name: 'nbhd', required: true }, data.neighborhoods.map(n => h('option', { value: n.id }, n.name))))),
+      h('div', {}, h('label', { for: 'as-nbhd' }, 'Neighborhood'), h('select', { id: 'as-nbhd', name: 'nbhd', required: true, onchange: event => { assignForm.street.value = ''; fillStreets(event.target.value); } }, data.neighborhoods.map(n => h('option', { value: n.id }, n.name))))),
     h('label', { for: 'as-street' }, 'Street (optional)'),
-    h('input', { id: 'as-street', name: 'street', placeholder: 'e.g. BLUE LEAF DR', autocapitalize: 'characters' }),
+    h('input', { id: 'as-street', name: 'street', list: 'as-streets', placeholder: 'Whole neighborhood', autocapitalize: 'characters', autocomplete: 'off' }), streetList,
     h('p', {}), h('button', { type: 'submit', class: 'primary' }, 'Assign'));
+    if (data.neighborhoods[0]) fillStreets(data.neighborhoods[0].id);
 
     const noKnock = h('textarea', { rows: '6', placeholder: 'Paste the City\'s no-solicitation addresses, one per line', 'aria-label': 'No-solicitation list' });
     const noKnockResult = h('div', {});
@@ -385,6 +393,21 @@ function moneySection(params) {
   });
 }
 
+/* ---------- Flags ---------- */
+
+function flagsSection() {
+  return later(async () => {
+    const data = await load('flags', {}, { force: true });
+    if (!data.flags.length) return h('p', { class: 'muted' }, 'Nothing to review. Doors logged after sunset, outside the hours, on a City no-knock house or on an excluded house show here.');
+    return h('div', {},
+      h('p', { class: 'muted' }, 'Doors to review with the rep. After sunset a rep may finish the door they were at for 15 minutes; it is recorded and flagged here.'),
+      h('ul', { class: 'list' }, data.flags.map(flag => h('li', {},
+        h('span', { style: { flex: '1' } }, h('b', {}, flag.address || flag.type), ' · ', flag.rep, h('br', {}),
+          h('span', { class: 'muted' }, `${timeLabel(flag.at)}${flag.outcome ? ` · ${flag.outcome.replace('_', ' ')}` : ''}`)),
+        h('span', { class: 'row' }, flag.flags.map(f => h('span', { class: `badge ${f === 'after_sunset' ? 'warn' : 'locked'}` }, data.labels[f] || f)))))));
+  });
+}
+
 /* ---------- Scoreboard ---------- */
 
 function scoreboardSection(params) {
@@ -410,6 +433,7 @@ export function install(appApi) {
   registerAdminSection('sales', 'Sales', salesSection);
   registerAdminSection('money', 'Money', moneySection);
   registerAdminSection('scoreboard', 'Scoreboard', scoreboardSection);
+  registerAdminSection('flags', 'Flags', flagsSection);
   for (const extra of extraSections) registerAdminSection(...extra);
   registerAdminSection('settings', 'Settings', settingsSection);
   app.registerScreen('admin', adminScreen, { admin: true, tab: { label: 'Admin', glyph: '⚙', order: 90 } });

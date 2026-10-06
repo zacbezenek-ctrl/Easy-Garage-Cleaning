@@ -2,10 +2,10 @@ name: EGC Firestore Rules and Dispatch
 
 on:
   pull_request:
-    paths: ['firestore.rules','firebase*.json','firestore.indexes.json','functions/**','crew/**','employee-dispatch.*','dispatch.html','tests/firestore-emulator.test.mjs','tests/firestore-emulator-hub-audit.test.mjs','tests/firestore-emulator-money.test.mjs','tests/firestore-emulator-firebase-revocation.test.mjs','tests/firestore-emulator-funnel-feed.test.mjs','tests/firestore-emulator-crew-scope.test.mjs','tests/firestore-emulator-dispatch-window.test.mjs','scripts/backfill-customer-search-keys.mjs','scripts/backfill-change-orders.mjs','scripts/backfill-payment-ledger.mjs','scripts/backfill-numberless-invoices.mjs','scripts/business-operations-ttl-backfill.mjs','scripts/business-members-scope-export.mjs','scripts/backfill-customer-identity.mjs','tests/dispatch-field.browser.mjs','tests/field-execution.browser.mjs','tests/field-multiday.browser.mjs','tests/helpers/**','scripts/emulator-exec.mjs','tests/emulator-harness.test.mjs','employee.html','.github/workflows/egc-firestore-ci.yml']
+    paths: ['firestore.rules','firebase*.json','firestore.indexes.json','functions/**','crew/**','employee-dispatch.*','dispatch.html','tests/firestore-emulator.test.mjs','tests/firestore-emulator-hub-audit.test.mjs','tests/firestore-emulator-money.test.mjs','tests/firestore-emulator-firebase-revocation.test.mjs','tests/firestore-emulator-funnel-feed.test.mjs','tests/firestore-emulator-crew-scope.test.mjs','tests/firestore-emulator-dispatch-window.test.mjs','scripts/backfill-customer-search-keys.mjs','scripts/backfill-change-orders.mjs','scripts/backfill-payment-ledger.mjs','scripts/backfill-numberless-invoices.mjs','scripts/business-operations-ttl-backfill.mjs','scripts/business-members-scope-export.mjs','scripts/backfill-customer-identity.mjs','tests/dispatch-field.browser.mjs','tests/field-execution.browser.mjs','tests/field-multiday.browser.mjs','tests/helpers/**','scripts/emulator-exec.mjs','tests/emulator-harness.test.mjs','employee.html','tests/knock*','scripts/knock-import-larimer.mjs','.github/workflows/egc-firestore-ci.yml']
   push:
     branches: [main]
-    paths: ['firestore.rules','firebase*.json','firestore.indexes.json','functions/**','crew/**','employee-dispatch.*','dispatch.html','tests/firestore-emulator.test.mjs','tests/firestore-emulator-hub-audit.test.mjs','tests/firestore-emulator-money.test.mjs','tests/firestore-emulator-firebase-revocation.test.mjs','tests/firestore-emulator-funnel-feed.test.mjs','tests/firestore-emulator-crew-scope.test.mjs','tests/firestore-emulator-dispatch-window.test.mjs','scripts/backfill-customer-search-keys.mjs','scripts/backfill-change-orders.mjs','scripts/backfill-payment-ledger.mjs','scripts/backfill-numberless-invoices.mjs','scripts/business-operations-ttl-backfill.mjs','scripts/business-members-scope-export.mjs','scripts/backfill-customer-identity.mjs','tests/dispatch-field.browser.mjs','tests/field-execution.browser.mjs','tests/field-multiday.browser.mjs','tests/helpers/**','scripts/emulator-exec.mjs','tests/emulator-harness.test.mjs','employee.html','.github/workflows/egc-firestore-ci.yml']
+    paths: ['firestore.rules','firebase*.json','firestore.indexes.json','functions/**','crew/**','employee-dispatch.*','dispatch.html','tests/firestore-emulator.test.mjs','tests/firestore-emulator-hub-audit.test.mjs','tests/firestore-emulator-money.test.mjs','tests/firestore-emulator-firebase-revocation.test.mjs','tests/firestore-emulator-funnel-feed.test.mjs','tests/firestore-emulator-crew-scope.test.mjs','tests/firestore-emulator-dispatch-window.test.mjs','scripts/backfill-customer-search-keys.mjs','scripts/backfill-change-orders.mjs','scripts/backfill-payment-ledger.mjs','scripts/backfill-numberless-invoices.mjs','scripts/business-operations-ttl-backfill.mjs','scripts/business-members-scope-export.mjs','scripts/backfill-customer-identity.mjs','tests/dispatch-field.browser.mjs','tests/field-execution.browser.mjs','tests/field-multiday.browser.mjs','tests/helpers/**','scripts/emulator-exec.mjs','tests/emulator-harness.test.mjs','employee.html','tests/knock*','scripts/knock-import-larimer.mjs','.github/workflows/egc-firestore-ci.yml']
 
 permissions:
   contents: read
@@ -62,6 +62,17 @@ jobs:
         env:
           FIELD_PLAYWRIGHT_MODULE: ${{ github.workspace }}/node_modules/playwright/index.mjs
         run: node tests/field-multiday.browser.mjs
+      - name: Canvassing rules, per-rep API access and the Larimer import on the emulator
+        if: ${{ !cancelled() }}
+        env:
+          EGC_FIREBASE_EMULATOR_TEST: '1'
+        run: node scripts/emulator-exec.mjs --project demo-egc-knock 'node --test tests/knock-emulator.test.mjs'
+      - name: Canvassing on a phone - five doors offline, synced, seen by the admin
+        if: ${{ !cancelled() }}
+        env:
+          EGC_KNOCK_EMULATOR: '1'
+          FIELD_PLAYWRIGHT_MODULE: ${{ github.workspace }}/node_modules/playwright/index.mjs
+        run: node scripts/emulator-exec.mjs --project demo-egc-knock-day 'node tests/knock.browser.mjs'
       - uses: actions/upload-artifact@v4
         if: failure()
         with:

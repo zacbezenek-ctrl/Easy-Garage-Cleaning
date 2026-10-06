@@ -198,11 +198,7 @@ export async function applyBatch(store, rep, settings, events, nowMs) {
   // 2. Shifts, rebuilt from their events.
   for (const shiftId of touchedShifts) await rebuildShift(store, shiftId, settings, nowMs);
   // 3. House summaries, rebuilt from every rep's events on the house.
-  const updated = [];
-  for (const houseId of touchedHouses) {
-    const house = await rebuildHouse(store, houseId, settings, nowIso, nowMs);
-    if (house) updated.push(phoneHouse(house, rep.repKey));
-  }
+  const updated = (await rebuildHouses(store, [...touchedHouses], settings, nowIso, nowMs)).map(house => phoneHouse(house, rep.repKey));
   // 4. The rep's day summaries.
   for (const day of touchedDays) await rebuildDay(store, rep.repKey, day, settings, nowMs);
 
@@ -221,6 +217,45 @@ export async function rebuildShift(store, shiftId, settings, nowMs) {
   return { id: shiftId, ...doc };
 }
 
+function housePatch(house, events, settings, nowIso, nowMs) {
+  const summary = summarizeHouse(events, { seasonStart: settings.goBacks.seasonStart, now: nowMs });
+  const patch = { summary, updatedAt: nowIso };
+  // A rep's "no-soliciting sign" stays until that knock is voided; the City list is admin-managed.
+  if (summary.signFlagged && house.noKnock?.source !== 'city') {
+    const sign = effectiveKnocks(events).filter(k => k.outcome === 'skipped_sign').at(-1);
+    patch.noKnock = { source: 'sign', at: sign?.at || nowIso, by: sign?.repKey || '' };
+  } else if (!summary.signFlagged && house.noKnock?.source === 'sign') {
+    patch.noKnock = null;
+  }
+  return patch;
+}
+
+/* Rebuild the summaries of every house a batch touched with three storage calls: one read of the
+   houses, one query of their events (30 houses per query) and one guarded commit. If another sync
+   changed one of them meanwhile, each house is retried on its own. */
+export async function rebuildHouses(store, houseIds, settings, nowIso, nowMs) {
+  const ids = [...new Set(houseIds)];
+  if (!ids.length) return [];
+  const houses = await store.getMany('knock_houses', ids);
+  const byHouse = new Map();
+  for (let i = 0; i < ids.length; i += 30) {
+    for (const event of await store.query('knock_events', { where: [['houseId', 'in', ids.slice(i, i + 30)]] })) {
+      if (!byHouse.has(event.houseId)) byHouse.set(event.houseId, []);
+      byHouse.get(event.houseId).push(event);
+    }
+  }
+  const patches = [...houses.values()].map(house => ({ house, patch: housePatch(house, byHouse.get(house.id) || [], settings, nowIso, nowMs) }));
+  try {
+    await store.commit(patches.map(({ house, patch }) => write.patch('knock_houses', house.id, patch, house.__updateTime)));
+    return patches.map(({ house, patch }) => ({ ...house, ...patch }));
+  } catch (error) {
+    if (error.code !== 'knock_conflict') throw error;
+    const rebuilt = [];
+    for (const id of ids) { const house = await rebuildHouse(store, id, settings, nowIso, nowMs); if (house) rebuilt.push(house); }
+    return rebuilt;
+  }
+}
+
 /* Rebuild one house's outcome summary from every rep's events. Guarded by the house's revision so
    two syncs on the same house cannot leave an older summary on top; the loser re-reads and retries. */
 export async function rebuildHouse(store, houseId, settings, nowIso, nowMs) {
@@ -228,15 +263,7 @@ export async function rebuildHouse(store, houseId, settings, nowIso, nowMs) {
     const house = await store.get('knock_houses', houseId);
     if (!house) return null;
     const events = await eventsWhere(store, 'houseId', houseId);
-    const summary = summarizeHouse(events, { seasonStart: settings.goBacks.seasonStart, now: nowMs });
-    const patch = { summary, updatedAt: nowIso };
-    // A rep's "no-soliciting sign" stays until that knock is voided; the City list is admin-managed.
-    if (summary.signFlagged && house.noKnock?.source !== 'city') {
-      const sign = effectiveKnocks(events).filter(k => k.outcome === 'skipped_sign').at(-1);
-      patch.noKnock = { source: 'sign', at: sign?.at || nowIso, by: sign?.repKey || '' };
-    } else if (!summary.signFlagged && house.noKnock?.source === 'sign') {
-      patch.noKnock = null;
-    }
+    const patch = housePatch(house, events, settings, nowIso, nowMs);
     try {
       await store.commit([write.patch('knock_houses', houseId, patch, house.__updateTime)]);
       return { ...house, ...patch };

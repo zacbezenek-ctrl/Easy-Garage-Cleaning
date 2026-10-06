@@ -112,7 +112,11 @@ export async function setAssignment(store, admin, { repKey, neighborhoodId, stre
   const [rep, nbhd] = await Promise.all([store.get('knock_reps', key), store.get('knock_neighborhoods', String(neighborhoodId || ''))]);
   if (!rep) throw knockFailure('That rep was not found.', 404, 'knock_rep_missing');
   requireNeighborhood(nbhd);
-  const streetName = String(street || '').trim().toUpperCase().slice(0, 80);
+  const streetName = String(street || '').trim().toUpperCase().replace(/\s+/g, ' ').slice(0, 80);
+  if (streetName && active) {
+    const onStreet = await store.query('knock_houses', { where: [['neighborhoodId', '==', nbhd.id], ['street', '==', streetName]], limit: 1, select: ['street'] });
+    if (!onStreet.length) throw knockFailure(`No imported houses on ${streetName} in ${nbhd.name}. Pick a street from the list.`, 400, 'knock_unknown_street');
+  }
   const id = assignmentId(key, nbhd.id, streetName);
   const current = await store.get('knock_assignments', id);
   const doc = {
@@ -187,6 +191,34 @@ export async function coverageView(store, nowMs) {
   ]);
   const rows = coverage({ houses, neighborhoods, activeShifts: open, reps, now: nowMs, hereNowMinutes: settings.coverage.hereNowMinutes });
   return { coverage: rows.map(row => ({ ...row, tier: neighborhoods.find(n => n.id === row.id)?.tier || '', status: neighborhoods.find(n => n.id === row.id)?.status || '' })) };
+}
+
+/* Doors the admin should review: logged in the after-sunset grace, outside the hours, on a City
+   no-knock house or on an excluded house. Newest first. */
+export const FLAG_LABELS = Object.freeze({
+  after_sunset: 'Finished after sunset (grace)',
+  outside_hours: 'Logged outside knocking hours',
+  no_knock_list: 'Knocked a City no-knock house',
+  excluded_house: 'Knocked an excluded house',
+});
+
+export async function flagsView(store) {
+  const lists = await Promise.all(Object.keys(FLAG_LABELS).map(flag => store.query('knock_events', { where: [['flags', 'array-contains', flag]] })));
+  const byId = new Map();
+  for (const event of lists.flat()) byId.set(event.id, event);
+  const events = [...byId.values()].sort((a, b) => String(b.at).localeCompare(String(a.at))).slice(0, 300);
+  const [houses, reps] = await Promise.all([
+    events.length ? store.getMany('knock_houses', [...new Set(events.filter(e => e.houseId).map(e => e.houseId))]) : new Map(),
+    listReps(store),
+  ]);
+  return {
+    labels: FLAG_LABELS,
+    flags: events.map(e => ({
+      id: e.id, type: e.type, at: e.at, flags: e.flags, outcome: e.outcome || null,
+      rep: reps.find(r => r.repKey === e.repKey)?.displayName || e.repKey,
+      address: houses.get(e.houseId) ? `${houses.get(e.houseId).number} ${houses.get(e.houseId).street}` : e.houseId || '',
+    })),
+  };
 }
 
 export { repKeyFor };

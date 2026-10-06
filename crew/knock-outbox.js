@@ -79,7 +79,7 @@ export function classify(error) {
 
 /* transport(events) -> { results: [{ id, status: 'applied'|'duplicate'|'rejected', code?, error? }], ...rest }
    rejects with an Error carrying .status for HTTP failures (0 / missing for network). */
-export function createOutbox(store, { transport, locks = globalThis.navigator?.locks, batchSize = 40, now = () => Date.now() } = {}) {
+export function createOutbox(store, { transport, locks = globalThis.navigator?.locks, batchSize = 25, now = () => Date.now() } = {}) {
   const listeners = new Set();
   let flushing = null;
   let chain = Promise.resolve();

@@ -78,6 +78,21 @@ test('a shift and five doors sync once, update the houses, the shift and the day
   assert.equal(tampered.body.results[0].code, 'knock_event_conflict');
 });
 
+test('a full batch of 25 doors on 25 houses stays far under the per-request storage call budget', async () => {
+  const { world, send } = await setup();
+  for (let n = 3000; n < 3050; n += 2) world.fake.put(`knock_houses/h-${n}-blue-leaf-dr`, { neighborhoodId: 'english-ranch', street: 'BLUE LEAF DR', number: String(n), lat: 40.53, lng: -105.02, updatedAt: '2026-10-01T00:00:00.000Z' });
+  const shiftId = uuid();
+  await send([shiftStart(shiftId)]);
+  const before = world.fake.calls.length;
+  const doors = Array.from({ length: 25 }, (_, i) => knock(shiftId, 3000 + i * 2, i % 3 ? 'no_answer' : 'not_interested', NOW + (i + 1) * 20000));
+  const result = await send(doors);
+  assert.deepEqual(result.body.results.map(r => r.status), Array(25).fill('applied'));
+  assert.equal(result.body.houses.length, 25);
+  const calls = world.fake.calls.length - before;
+  assert.ok(calls <= 30, `a 25-door sync used ${calls} storage calls (Cloudflare's smallest plan allows 50 subrequests)`);
+  assert.equal(world.fake.get('knock_days/rep.one_2026-10-06').doors, 25);
+});
+
 test('doors need a shift, an assignment and an unlocked neighborhood', async () => {
   const { send } = await setup();
   const noShift = await send([knock(uuid(), 2900, 'no_answer', NOW)]);
@@ -105,6 +120,20 @@ test('after sunset a finishing door is flagged for the admin, and a door after t
   const stored = [...world.fake.documents.keys()].filter(p => p.startsWith('knock_events/')).map(p => world.fake.get(p)).filter(e => e.type === 'knock');
   assert.deepEqual(stored.map(e => e.flags).filter(f => f.length), [['after_sunset'], ['outside_hours']]);
   assert.equal(world.fake.get('knock_days/rep.one_2026-10-06').flaggedDoors, 2);
+});
+
+test('admins see flagged doors to review, newest first, with the rep and the address', async () => {
+  const { knockAdminHandlers } = await import('../functions/api/knock-admin.js');
+  const sunset = Date.parse('2026-10-07T00:34:00.000Z');
+  const { world, send, setClock, env } = await setup({ now: sunset - 30 * MIN });
+  const shiftId = uuid();
+  await send([shiftStart(shiftId, sunset - 30 * MIN), knock(shiftId, 2900, 'no_answer', sunset - 10 * MIN)]);
+  setClock(sunset + 30 * MIN);
+  await send([knock(shiftId, 2902, 'look', sunset + 5 * MIN, { afterEnd: true }), knock(shiftId, 2904, 'no_answer', sunset + 20 * MIN)]);
+  const admin = knockAdminHandlers({ storage: world.storage, now: () => new Date(sunset + 30 * MIN) });
+  const view = await call(admin.get, get('/api/knock-admin?view=flags', await cookieFor(env, 'ZacB')), env);
+  assert.deepEqual(view.body.flags.map(f => [f.address, f.flags, f.rep]), [['2904 BLUE LEAF DR', ['outside_hours'], 'Rep One'], ['2902 BLUE LEAF DR', ['after_sunset'], 'Rep One']]);
+  assert.equal((await call(admin.get, get('/api/knock-admin?view=flags', await cookieFor(env, 'Rep.One')), env)).status, 403);
 });
 
 test('undo appends a void, edit appends a replacement, and both rebuild the house, shift and day', async () => {
