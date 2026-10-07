@@ -211,12 +211,14 @@ validated before saving.
 
 The page and the functions deploy with the site (Cloudflare Pages from `main`). Then:
 
-1. **No Firebase deploy is required.** The live rules end with a deny-all catch-all, so the `knock_*`
-   collections are already server-only; the blocks in `firestore.rules` only make that explicit. The index
-   `knock_houses (neighborhoodId, updatedAt)` is optional: it makes the incremental territory sync cheaper, and
-   without it the sync reads each assigned neighborhood in full and filters on the server. Publishing either
-   file (needs the owner's Firebase login) also releases every other change to it on `main`, so do it
-   deliberately:
+1. **Rules:** no publish is required. The live rules end with a deny-all catch-all, so the `knock_*`
+   collections are already server-only; the blocks in `firestore.rules` only make that explicit.
+   **Index:** create `knock_houses (neighborhoodId, updatedAt)`. The phones refresh their houses after every
+   door, and with the index each refresh reads only the houses that changed. Without it nothing breaks, but
+   each refresh reads the rep's whole neighborhoods (about 500 document reads instead of a handful). The
+   index can be created on its own in the Firebase console (Firestore > Indexes > Composite). Publishing
+   either file with the command below (needs the owner's Firebase login) also releases every other change to
+   it on `main`, so do it deliberately:
 
 ```bash
 npx firebase deploy --only firestore:rules,firestore:indexes --project egcw-1ec83

@@ -76,7 +76,8 @@ export function phoneHouse(house, repKey) {
 /* Houses the rep may see: unlocked, assigned, not excluded. `since` (ISO) returns only houses
    changed since then (removed or newly locked areas are signalled by the territory list). */
 // A delta read (since) uses the knock_houses (neighborhoodId, updatedAt) index. Without that index
-// it reads the whole neighborhood and filters here instead, so the index only saves reads.
+// it reads the whole neighborhood and filters here instead: nothing breaks, but every refresh then
+// costs a read per house, so create the index.
 export async function territoryHouses(store, rep, territory, { since = '' } = {}) {
   const houses = [];
   let indexed = Boolean(since);
