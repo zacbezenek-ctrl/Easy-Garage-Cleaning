@@ -102,8 +102,8 @@ export const DEFAULT_SETTINGS = Object.freeze({
     maxZoom: 19,
   },
   integrations: {
-    // 'manual' keeps every hand-off on the admin screen. 'stripe' / 'quo' are used only when the
-    // server also has STRIPE_SECRET_KEY / QUO_API_KEY configured.
+    // 'manual' keeps every hand-off on the admin screen. 'stripe' / 'highlevel' are used only when
+    // the server also has STRIPE_SECRET_KEY / the HighLevel key and location configured.
     deposit: 'manual',
     text: 'manual',
     job: 'manual',
@@ -164,7 +164,7 @@ export function validateSettings(settings) {
   if (!Array.isArray(settings?.sale?.extraHolidays) || settings.sale.extraHolidays.some(d => !/^\d{4}-\d{2}-\d{2}$/.test(d))) problems.push('sale.extraHolidays must be a list of YYYY-MM-DD dates');
   if (typeof settings?.map?.tileUrl !== 'string' || !/^https:\/\/[^\s]+\{z\}[^\s]*\{x\}[^\s]*\{y\}/.test(settings.map.tileUrl)) problems.push('map.tileUrl must be an https URL with {z}, {x} and {y}');
   for (const key of ['deposit', 'text', 'job']) {
-    const allowed = { deposit: ['manual', 'stripe'], text: ['manual', 'quo'], job: ['manual'] }[key];
+    const allowed = { deposit: ['manual', 'stripe'], text: ['manual', 'highlevel'], job: ['manual'] }[key];
     if (!allowed.includes(settings?.integrations?.[key])) problems.push(`integrations.${key} must be one of ${allowed.join(', ')}`);
   }
   return problems;

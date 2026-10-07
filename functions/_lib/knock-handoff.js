@@ -1,28 +1,31 @@
-// Sale hand-offs: the job, the deposit link and the customer text. Each runs through an adapter:
-//   job     manual  - an admin creates the job (Hub dispatch or Jobber) and records it here
-//   deposit manual  - an admin marks the deposit collected
-//           stripe  - a Stripe Checkout link for the deposit (repo's Stripe helpers); its status is
-//                     read back from Stripe, so no webhook change is needed
-//   text    manual  - an admin texts the customer from Quo and records it here
-//           quo     - one text through Quo's API, at most once per sale, never in bulk
-// The repo's Jobber integration is read-only (client and request lookup), so job creation stays
-// manual. Credentials come only from the server environment; nothing is invented.
+// Sale hand-offs: the job, the deposit link and the customer text. Each runs through an adapter
+// chosen in settings.integrations (Admin > Settings):
+//   job     manual    - an admin creates the job (Hub dispatch or Jobber) and records it here
+//   deposit manual    - an admin marks the deposit collected
+//           stripe    - a Stripe Checkout link for the deposit (repo's Stripe helpers); its status is
+//                       read back from Stripe, so no webhook change is needed
+//   text    manual    - an admin texts the customer from HighLevel and records it here
+//           highlevel - one SMS through the repo's HighLevel messenger, at most once per sale, never in bulk
+// An adapter runs only when Settings choose it and the server has its credentials; manual always
+// works. The repo's Jobber integration is read-only (client and request lookup), so job creation
+// stays manual. Credentials come only from the server environment; nothing is invented.
 import { knockFailure, write } from './knock-store.js';
+import { loadSettings } from './knock-access.js';
 import { stripeRequest, stripeSecretKey } from './customer-payments.js';
+import { createGhlMessenger } from './ghl-messenger.js';
 import { formatClock, zonedDate, zonedInstant } from '../../crew/knock-time.js';
 
-const QUO_DEFAULT_FROM = '+19709991818';
 const SITE = 'https://easygaragecleaning.com';
 
-export function quoKey(env = {}) {
-  return String(env.QUO_API_KEY || env.QUO || '').trim();
-}
+// HighLevel upserts the contact from the sale's saved details, then checks its identity, Do Not
+// Disturb and the no-SMS-consent tag before anything is sent (functions/_lib/ghl-messenger.js).
+const highLevel = (env, { fetcher } = {}) => createGhlMessenger({ env, fetcher });
 
 export function integrationStatus(env, settings) {
   return {
     job: { mode: 'manual', available: ['manual'] },
     deposit: { mode: settings.integrations.deposit, available: ['manual', ...(stripeSecretKey(env) ? ['stripe'] : [])] },
-    text: { mode: settings.integrations.text, available: ['manual', ...(quoKey(env) ? ['quo'] : [])] },
+    text: { mode: settings.integrations.text, available: ['manual', ...(highLevel(env).configured() ? ['highlevel'] : [])] },
   };
 }
 
@@ -79,27 +82,28 @@ export async function refreshStripeDeposit(env, sale, { request = stripeRequest 
   return { paid, amount: Number(session?.amount_total || 0) / 100, status: session?.status || '', paymentStatus: session?.payment_status || '' };
 }
 
-/* ---- text through Quo ---- */
+/* ---- text through HighLevel ---- */
 
-export async function sendQuoText(env, to, content, { fetcher = (...args) => fetch(...args) } = {}) {
-  const key = quoKey(env);
-  if (!key) throw knockFailure('Quo is not set up on the server. Text the customer from Quo and mark it sent.', 409, 'knock_quo_unavailable');
-  const base = String(env.QUO_API_BASE || 'https://api.openphone.com/v1').replace(/\/$/, '');
-  let response;
-  try {
-    response = await fetcher(`${base}/messages`, {
-      method: 'POST',
-      headers: { Authorization: key, 'Content-Type': 'application/json' },
-      body: JSON.stringify({ from: String(env.QUO_FROM || QUO_DEFAULT_FROM), to: [to], content }),
-      signal: AbortSignal.timeout(15000),
-    });
-  } catch {
-    return { outcome: 'uncertain', error: 'Quo did not answer. Check the Quo app before sending anything again.' };
+const NOT_SENT = {
+  needs_contact: 'HighLevel could not find or create a contact with this phone number.',
+  contact_mismatch: 'The HighLevel contact does not match this phone number.',
+  suppressed: 'HighLevel has this customer on Do Not Disturb or marked as not agreeing to texts.',
+  unavailable: 'HighLevel did not answer before anything was sent. Try again in a minute.',
+};
+const providerReason = result => (result.httpStatus ? `http_${result.httpStatus}` : String(result.reason || result.status || ''));
+
+/* outcome 'sent'; 'rejected' when nothing went out (a retry is safe); 'uncertain' when HighLevel
+   may have sent it (never retried). */
+export async function sendHighLevelText(messenger, sale, message, { contactId = '', idempotencyKey = '' } = {}) {
+  const recipient = await messenger.resolveRecipient({ contactId, phone: sale.customer.phone, email: sale.customer.email, name: sale.customer.name, preferred: 'SMS', upsert: true });
+  if (recipient.status !== 'ready') {
+    return { outcome: 'rejected', contactId, reason: String(recipient.reason || recipient.status), error: `${NOT_SENT[recipient.status] || 'HighLevel refused the text.'} Nothing was sent.` };
   }
-  const data = await response.json().catch(() => ({}));
-  if (response.ok) return { outcome: 'sent', messageId: String(data?.data?.id || '') };
-  if (response.status >= 400 && response.status < 500) return { outcome: 'rejected', error: `Quo refused the text (${response.status}).` };
-  return { outcome: 'uncertain', error: `Quo answered ${response.status}. Check the Quo app before sending anything again.` };
+  const result = await messenger.send({ type: 'SMS', contactId: recipient.contactId, message, toNumber: recipient.toNumber, idempotencyKey });
+  const base = { contactId: recipient.contactId, reason: providerReason(result) };
+  if (result.status === 'submitted') return { ...base, outcome: 'sent', reason: '', messageId: result.messageId, conversationId: result.conversationId || '' };
+  if (result.status === 'failed') return { ...base, outcome: 'rejected', error: `HighLevel refused the text${result.httpStatus ? ` (${result.httpStatus})` : ''}. Nothing was sent.` };
+  return { ...base, outcome: 'uncertain', error: 'HighLevel did not confirm the text. Check the conversation in HighLevel before sending anything again.' };
 }
 
 /* ---- the admin action ---- */
@@ -112,7 +116,8 @@ export async function saleHandoff(store, admin, body, nowIso, env, deps = {}) {
   } catch (error) {
     if (typeof error?.code === 'string' && error.code.startsWith('knock_')) throw error;
     // The repo's Stripe helper throws its own errors; report them in canvassing terms.
-    throw knockFailure('Stripe could not be reached or refused the request. Try again, or use the manual deposit.', 502, 'knock_stripe_failed');
+    if (body?.kind === 'deposit') throw knockFailure('Stripe could not be reached or refused the request. Try again, or use the manual deposit.', 502, 'knock_stripe_failed');
+    throw knockFailure('The hand-off could not be saved. Refresh and check the sale before trying again.', 503, 'knock_handoff_failed');
   }
 }
 
@@ -139,6 +144,7 @@ async function runHandoff(store, admin, { saleId, kind, op, ref = '', amount }, 
   }
   if (kind === 'deposit' && op === 'start') {
     if (handoff.deposit?.status === 'collected') throw knockFailure('The deposit is already collected.', 409, 'knock_deposit_collected');
+    if ((await loadSettings(store)).integrations.deposit !== 'stripe') throw knockFailure('Stripe deposits are off in Settings. Use the manual deposit.', 409, 'knock_stripe_off');
     const link = await startStripeDeposit(env, { ...sale, id: sale.id }, deps);
     handoff.deposit = { ...handoff.deposit, mode: 'stripe', status: 'link_ready', url: link.url, sessionId: link.sessionId, amount: link.amount, by };
     return save();
@@ -155,18 +161,23 @@ async function runHandoff(store, admin, { saleId, kind, op, ref = '', amount }, 
   }
   if (kind === 'text' && op === 'send') {
     if (!sale.textConsent) throw knockFailure('The customer did not agree to a text.', 409, 'knock_text_no_consent');
-    // One customer, one message: a receipt is claimed before Quo is called, so a second tap,
-    // a retry or a second admin can never send it twice. Only a definite refusal frees it.
+    if ((await loadSettings(store)).integrations.text !== 'highlevel') throw knockFailure('Texting through HighLevel is off in Settings. Text the customer from HighLevel and mark it sent.', 409, 'knock_text_off');
+    const messenger = highLevel(env, deps);
+    if (!messenger.configured()) throw knockFailure('HighLevel is not set up on the server. Text the customer from HighLevel and mark it sent.', 409, 'knock_highlevel_unavailable');
+    // One customer, one message: a receipt is claimed before HighLevel is called, so a second tap,
+    // a retry or a second admin can never send it twice. Only an attempt that sent nothing frees it.
     const receiptId = `text_${sale.id}`;
     const receipt = await store.get('knock_receipts', receiptId);
-    if (receipt && receipt.outcome !== 'rejected') throw knockFailure(receipt.outcome === 'sent' ? 'This customer was already texted.' : 'A text may already have gone out. Check the Quo app, then mark it sent.', 409, 'knock_text_already');
+    if (receipt && receipt.outcome !== 'rejected') throw knockFailure(receipt.outcome === 'sent' ? 'This customer was already texted.' : 'A text may already have gone out. Check the conversation in HighLevel, then mark it sent.', 409, 'knock_text_already');
+    const attempts = Number(receipt?.attempts || 0) + 1;
     const message = customerMessage({ ...sale, handoff });
     await store.commit([receipt
-      ? write.patch('knock_receipts', receiptId, { outcome: 'sending', attempts: Number(receipt.attempts || 0) + 1, updatedAt: nowIso }, receipt.__updateTime)
-      : write.create('knock_receipts', receiptId, { kind: 'sale_text', saleId: sale.id, outcome: 'sending', attempts: 1, createdAt: nowIso, updatedAt: nowIso, by })]);
-    const result = await sendQuoText(env, sale.customer.phone, message, deps);
-    await store.commit([write.patch('knock_receipts', receiptId, { outcome: result.outcome, messageId: result.messageId || '', error: result.error || '', updatedAt: nowIso })]);
-    handoff.text = { ...handoff.text, mode: 'quo', status: result.outcome === 'sent' ? 'sent' : result.outcome, sentAt: result.outcome === 'sent' ? nowIso : null, messageId: result.messageId || '', error: result.error || '', by };
+      ? write.patch('knock_receipts', receiptId, { outcome: 'sending', attempts, updatedAt: nowIso }, receipt.__updateTime)
+      : write.create('knock_receipts', receiptId, { kind: 'sale_text', saleId: sale.id, outcome: 'sending', attempts, createdAt: nowIso, updatedAt: nowIso, by })]);
+    const result = await sendHighLevelText(messenger, sale, message, { contactId: handoff.text?.contactId || '', idempotencyKey: `egc-knock-sale-text-${sale.id}-${attempts}` });
+    await store.commit([write.patch('knock_receipts', receiptId, { outcome: result.outcome, channel: 'highlevel', contactId: result.contactId || '', messageId: result.messageId || '', reason: result.reason || '', error: result.error || '', updatedAt: nowIso })]);
+    handoff.text = { ...handoff.text, mode: 'highlevel', status: result.outcome, sentAt: result.outcome === 'sent' ? nowIso : null, contactId: result.contactId || '',
+      messageId: result.messageId || '', conversationId: result.conversationId || '', reason: result.reason || '', error: result.error || '', by };
     const saved = await save();
     if (result.outcome !== 'sent') throw knockFailure(result.error, result.outcome === 'rejected' ? 400 : 502, `knock_text_${result.outcome}`, { sale: saved.sale });
     return saved;

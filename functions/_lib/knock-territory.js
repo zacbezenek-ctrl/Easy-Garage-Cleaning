@@ -75,13 +75,22 @@ export function phoneHouse(house, repKey) {
 
 /* Houses the rep may see: unlocked, assigned, not excluded. `since` (ISO) returns only houses
    changed since then (removed or newly locked areas are signalled by the territory list). */
+// A delta read (since) uses the knock_houses (neighborhoodId, updatedAt) index. Without that index
+// it reads the whole neighborhood and filters here instead, so the index only saves reads.
 export async function territoryHouses(store, rep, territory, { since = '' } = {}) {
   const houses = [];
+  let indexed = Boolean(since);
   for (const n of territory.neighborhoods) {
     if (n.locked) continue;
-    const rows = await store.query('knock_houses', since
-      ? { where: [['neighborhoodId', '==', n.id], ['updatedAt', '>=', since]], orderBy: [['updatedAt', 'ASCENDING']] }
-      : { where: [['neighborhoodId', '==', n.id]] });
+    let rows = null;
+    if (indexed) {
+      rows = await store.query('knock_houses', { where: [['neighborhoodId', '==', n.id], ['updatedAt', '>=', since]], orderBy: [['updatedAt', 'ASCENDING']] }).catch(error => {
+        if (error?.code !== 'knock_index_required') throw error;
+        indexed = false;
+        return null;
+      });
+    }
+    if (!rows) rows = (await store.query('knock_houses', { where: [['neighborhoodId', '==', n.id]] })).filter(house => !since || String(house.updatedAt || '') >= since);
     for (const house of rows) {
       if (house.excluded || !houseInScope(house, territory)) continue;
       houses.push(phoneHouse(house, rep.repKey));

@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import { knockAdminHandlers } from '../functions/api/knock-admin.js';
 import { knockTerritoryHandlers } from '../functions/api/knock-territory.js';
 import { knockSyncHandlers } from '../functions/api/knock-sync.js';
+import { knockFailure } from '../functions/_lib/knock-store.js';
 import { call, cookieFor, get, knockEnv, knockWorld, post, uuid } from './helpers/knock-fixture.mjs';
 
 const NOW = Date.parse('2026-10-06T17:00:00.000Z');
@@ -51,6 +52,29 @@ test('reps see only their assignment: a whole neighborhood or single streets', a
   assert.deepEqual((await houses(cookies.rep)).houses, [], 'unassigning removes the houses from the phone');
   const typo = await act({ action: 'assignment.set', repKey: 'rep.two', neighborhoodId: 'english-ranch', street: 'B STREET' });
   assert.deepEqual([typo.status, typo.body.code], [400, 'knock_unknown_street'], 'a street with no imported houses is refused');
+});
+
+test('a delta sync sends only changed houses, and still works before the knock_houses index exists', async () => {
+  const { act, cookies, env, world } = await setup();
+  await act({ action: 'assignment.set', repKey: 'rep.one', neighborhoodId: 'english-ranch' });
+  await act({ action: 'house.exclude', houseIds: ['h-2-a-st'], excluded: false });
+  const delta = async storage => {
+    const handler = knockTerritoryHandlers({ storage, now: () => new Date(NOW + 60000) });
+    return (await call(handler.get, get(`/api/knock-territory?since=${encodeURIComponent(new Date(NOW).toISOString())}`, cookies.rep), env)).body;
+  };
+  const queries = [];
+  const noIndex = envArg => {
+    const store = world.storage(envArg);
+    return { ...store, query: (collection, q = {}) => {
+      queries.push(collection);
+      return q.where?.some(([field]) => field === 'updatedAt') ? Promise.reject(knockFailure('Canvassing storage is waiting for an index.', 503, 'knock_index_required')) : store.query(collection, q);
+    } };
+  };
+  const withIndex = await delta(world.storage);
+  assert.deepEqual([withIndex.full, withIndex.houses.map(h => h.id)], [false, ['h-2-a-st']]);
+  const without = await delta(noIndex);
+  assert.deepEqual([without.full, without.houses.map(h => h.id)], [false, ['h-2-a-st']], 'the same delta without the index');
+  assert.equal(queries.filter(c => c === 'knock_houses').length, 2, 'one failed indexed read, then one plain read');
 });
 
 test('unit addresses can be excluded in one tap and come back individually', async () => {

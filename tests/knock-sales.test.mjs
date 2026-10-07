@@ -6,6 +6,7 @@ import { knockReportsHandlers } from '../functions/api/knock-reports.js';
 import { knockTerritoryHandlers } from '../functions/api/knock-territory.js';
 import { customerMessage } from '../functions/_lib/knock-handoff.js';
 import { call, cookieFor, get, knockEnv, knockWorld, post, uuid } from './helpers/knock-fixture.mjs';
+import { fakeGhl } from './helpers/messaging-fixture.mjs';
 
 // Tuesday 2026-10-06, 11:00 am in Fort Collins.
 const NOW = Date.parse('2026-10-06T17:00:00.000Z');
@@ -25,11 +26,11 @@ function seed() {
   };
 }
 
-// Stripe and Quo are answered by fakes; nothing leaves the test.
+// Stripe and HighLevel are answered by fakes; nothing leaves the test.
 function fakeProviders() {
-  const calls = { stripe: [], quo: [] };
+  const calls = { stripe: [] };
+  const ghl = fakeGhl({ contacts: { 'contact-1': { id: 'contact-1', locationId: 'location-1', phone: '+19705550100', email: 'pat@example.com', dnd: false, tags: [] } } });
   const original = globalThis.fetch;
-  let quoStatus = 200;
   globalThis.fetch = async (input, init = {}) => {
     const url = new URL(String(input instanceof Request ? input.url : input));
     if (url.hostname === 'api.stripe.com') {
@@ -37,18 +38,16 @@ function fakeProviders() {
       if ((init.method || 'GET') === 'POST') return Response.json({ id: 'cs_test_synthetic', url: 'https://checkout.stripe.com/c/pay/cs_test_synthetic' });
       return Response.json({ id: 'cs_test_synthetic', status: 'complete', payment_status: 'paid', amount_total: 32000, client_reference_id: calls.saleId, metadata: { sale_id: calls.saleId } });
     }
-    if (url.hostname === 'api.openphone.com') {
-      calls.quo.push({ body: JSON.parse(init.body), auth: init.headers.Authorization });
-      return quoStatus === 200 ? Response.json({ data: { id: 'msg_synthetic_1' } }) : new Response('{}', { status: quoStatus });
-    }
+    if (url.hostname === 'services.leadconnectorhq.com') return ghl.fetcher(url.href, init);
     return original(input, init);
   };
-  return { calls, setQuoStatus: status => { quoStatus = status; }, restore: () => { globalThis.fetch = original; } };
+  return { calls, ghl, restore: () => { globalThis.fetch = original; } };
 }
 
-async function setup() {
-  const env = knockEnv({ STRIPE_SECRET_KEY: 'sk_test_syntheticKnockKey', QUO_API_KEY: 'synthetic-quo-test-key' });
-  const world = knockWorld(seed());
+// integrations: what Admin > Settings chose (manual by default); env: server settings to override.
+async function setup({ integrations = null, env: extra = {} } = {}) {
+  const env = knockEnv({ STRIPE_SECRET_KEY: 'sk_test_syntheticKnockKey', HIGHLEVEL_API_KEY: 'ghl-synthetic-key', HIGHLEVEL_LOCATION_ID: 'location-1', ...extra });
+  const world = knockWorld({ ...seed(), ...(integrations ? { 'knock_settings/current': { settings: { integrations } } } : {}) });
   let clock = NOW;
   const now = () => new Date(clock);
   const sync = knockSyncHandlers({ storage: world.storage, now });
@@ -142,7 +141,13 @@ test('admins move a sale through completed, paid and cancelled, and booked reven
 test('hand-offs: job and deposit can be marked by hand; Stripe makes one deposit link and confirms payment', async t => {
   const providers = fakeProviders();
   t.after(providers.restore);
-  const { world, send, act } = await setup();
+  const manual = await setup();
+  const first = saleBatch();
+  await manual.send(first.events);
+  assert.equal((await manual.act({ action: 'sale.handoff', saleId: first.saleId, kind: 'deposit', op: 'start' })).body.code, 'knock_stripe_off', 'Stripe stays off until Settings choose it');
+  assert.equal(providers.calls.stripe.length, 0);
+
+  const { world, send, act } = await setup({ integrations: { deposit: 'stripe' } });
   const { events, saleId } = saleBatch();
   providers.calls.saleId = saleId;
   await send(events);
@@ -159,31 +164,69 @@ test('hand-offs: job and deposit can be marked by hand; Stripe makes one deposit
   assert.deepEqual([checked.body.sale.handoff.deposit.status, checked.body.sale.handoff.deposit.collectedAmount, checked.body.sale.handoff.deposit.verifiedBy], ['collected', 320, 'stripe']);
 });
 
-test('one customer, one text: Quo sends once, a refusal can be retried, an unclear answer cannot', async t => {
+test('one customer, one text: HighLevel sends once, a refusal can be retried, an unclear answer cannot', async t => {
   const providers = fakeProviders();
   t.after(providers.restore);
-  const { world, send, act } = await setup();
+  const { world, send, act } = await setup({ integrations: { text: 'highlevel' } });
   const { events, saleId } = saleBatch();
   await send(events);
   const sent = await act({ action: 'sale.handoff', saleId, kind: 'text', op: 'send' });
-  assert.equal(sent.body.sale.handoff.text.status, 'sent');
-  assert.deepEqual(providers.calls.quo.map(c => [c.body.to, c.auth]), [[['+19705550100'], 'synthetic-quo-test-key']]);
-  assert.match(providers.calls.quo[0].body.content, /^Hi Pat, thanks for booking Easy Garage Cleaning: The Works, \$1,600/);
-  assert.match(providers.calls.quo[0].body.content, /cancel for a full refund until midnight Friday, October 9/);
+  const text = sent.body.sale.handoff.text;
+  assert.deepEqual([text.status, text.mode, text.contactId, text.messageId], ['sent', 'highlevel', 'contact-1', 'message-1'], JSON.stringify(sent.body));
+  const upsert = providers.ghl.calls.find(c => c.path === '/contacts/upsert');
+  assert.deepEqual([upsert.body.locationId, upsert.body.phone, upsert.body.email, upsert.body.name, upsert.headers.Authorization], ['location-1', '+19705550100', 'pat@example.com', 'Pat Synthetic', 'Bearer ghl-synthetic-key']);
+  const [message] = providers.ghl.sends();
+  assert.deepEqual([message.body.type, message.body.contactId, message.body.toNumber, message.headers['Idempotency-Key']], ['SMS', 'contact-1', '+19705550100', `egc-knock-sale-text-${saleId}-1`]);
+  assert.match(message.body.message, /^Hi Pat, thanks for booking Easy Garage Cleaning: The Works, \$1,600/);
+  assert.match(message.body.message, /cancel for a full refund until midnight Friday, October 9/);
   assert.equal((await act({ action: 'sale.handoff', saleId, kind: 'text', op: 'send' })).body.code, 'knock_text_already');
-  assert.equal(providers.calls.quo.length, 1, 'never a second message');
+  assert.equal(providers.ghl.sends().length, 1, 'never a second message');
 
   const second = saleBatch();
   second.events[1].houseId = second.events[2].houseId = 'h-2902-blue-leaf-dr';
   await send(second.events);
-  providers.setQuoStatus(400);
-  assert.equal((await act({ action: 'sale.handoff', saleId: second.saleId, kind: 'text', op: 'send' })).body.code, 'knock_text_rejected');
-  providers.setQuoStatus(503);
+  providers.ghl.state.sendStatus = 400;
+  const refused = await act({ action: 'sale.handoff', saleId: second.saleId, kind: 'text', op: 'send' });
+  assert.deepEqual([refused.body.code, refused.body.error], ['knock_text_rejected', 'HighLevel refused the text (400). Nothing was sent.']);
+  providers.ghl.state.sendStatus = 503;
   assert.equal((await act({ action: 'sale.handoff', saleId: second.saleId, kind: 'text', op: 'send' })).body.code, 'knock_text_uncertain');
-  providers.setQuoStatus(200);
+  assert.equal(providers.ghl.sends().at(-1).headers['Idempotency-Key'], `egc-knock-sale-text-${second.saleId}-2`, 'each allowed attempt has its own key');
+  providers.ghl.state.sendStatus = 200;
   assert.equal((await act({ action: 'sale.handoff', saleId: second.saleId, kind: 'text', op: 'send' })).body.code, 'knock_text_already', 'an unclear send is never retried automatically');
-  assert.equal(world.fake.get(`knock_receipts/text_${second.saleId}`).outcome, 'uncertain');
+  assert.equal(providers.ghl.sends().length, 3);
+  assert.deepEqual([world.fake.get(`knock_receipts/text_${second.saleId}`).outcome, world.fake.get(`knock_receipts/text_${second.saleId}`).attempts], ['uncertain', 2]);
   assert.equal((await act({ action: 'sale.handoff', saleId: second.saleId, kind: 'text', op: 'mark' })).body.sale.handoff.text.status, 'sent');
+});
+
+test('HighLevel texts only when Settings choose it and the server is set up, and never past Do Not Disturb', async t => {
+  const providers = fakeProviders();
+  t.after(providers.restore);
+  const manual = await setup();
+  const a = saleBatch();
+  await manual.send(a.events);
+  assert.equal((await manual.act({ action: 'sale.handoff', saleId: a.saleId, kind: 'text', op: 'send' })).body.code, 'knock_text_off');
+  const unset = await setup({ integrations: { text: 'highlevel' }, env: { HIGHLEVEL_API_KEY: '' } });
+  const b = saleBatch();
+  await unset.send(b.events);
+  assert.equal((await unset.act({ action: 'sale.handoff', saleId: b.saleId, kind: 'text', op: 'send' })).body.code, 'knock_highlevel_unavailable');
+  const unsetView = await call(unset.admin.get, get('/api/knock-admin?view=sales', unset.cookies.zac), unset.env);
+  assert.deepEqual(unsetView.body.integrations.text, { mode: 'highlevel', available: ['manual'] });
+  assert.equal(providers.ghl.calls.length, 0, 'HighLevel is never called when it is off or not set up');
+
+  const { world, send, act, admin, cookies, env } = await setup({ integrations: { text: 'highlevel' } });
+  const view = await call(admin.get, get('/api/knock-admin?view=sales', cookies.zac), env);
+  assert.deepEqual(view.body.integrations.text, { mode: 'highlevel', available: ['manual', 'highlevel'] });
+  const c = saleBatch();
+  await send(c.events);
+  providers.ghl.state.contacts['contact-1'].dndSettings = { SMS: { status: 'active' } };
+  const blocked = await act({ action: 'sale.handoff', saleId: c.saleId, kind: 'text', op: 'send' });
+  assert.equal(blocked.body.code, 'knock_text_rejected');
+  assert.match(blocked.body.error, /Do Not Disturb.*Nothing was sent/);
+  assert.equal(providers.ghl.sends().length, 0, 'Do Not Disturb stops the text before it is sent');
+  assert.deepEqual([world.fake.get(`knock_receipts/text_${c.saleId}`).outcome, world.fake.get(`knock_sales/${c.saleId}`).handoff.text.reason], ['rejected', 'contact_dnd_sms']);
+  providers.ghl.state.contacts['contact-1'].dndSettings = { SMS: { status: 'inactive' } };
+  assert.equal((await act({ action: 'sale.handoff', saleId: c.saleId, kind: 'text', op: 'send' })).body.sale.handoff.text.status, 'sent', 'nothing went out, so a retry is allowed');
+  assert.equal(providers.ghl.sends().length, 1);
 });
 
 test('no text without consent, and a rep sees only their own sales while admins see all with the message', async () => {
