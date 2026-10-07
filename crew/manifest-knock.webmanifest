@@ -1,0 +1,26 @@
+{
+  "id": "/crew/knock.html",
+  "name": "EGC Knock",
+  "short_name": "EGC Knock",
+  "description": "Easy Garage Cleaning door-to-door canvassing: doors, shifts, sales and territory.",
+  "start_url": "/crew/knock.html",
+  "scope": "/crew/",
+  "display": "standalone",
+  "orientation": "portrait",
+  "background_color": "#ffffff",
+  "theme_color": "#13203a",
+  "icons": [
+    {
+      "src": "/android-chrome-192x192.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "/android-chrome-512x512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any"
+    }
+  ]
+}

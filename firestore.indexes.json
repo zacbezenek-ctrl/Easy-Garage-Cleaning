@@ -55,6 +55,14 @@
         { "fieldPath": "highlevelContactId", "order": "ASCENDING" },
         { "fieldPath": "occurredAt", "order": "ASCENDING" }
       ]
+    },
+    {
+      "collectionGroup": "knock_houses",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "neighborhoodId", "order": "ASCENDING" },
+        { "fieldPath": "updatedAt", "order": "ASCENDING" }
+      ]
     }
   ],
   "fieldOverrides": [

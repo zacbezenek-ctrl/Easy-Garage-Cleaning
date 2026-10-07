@@ -11,6 +11,8 @@ export const STAFF_GATED_PATHS = Object.freeze([
   '/crew/gameplan*', '/crew/quote-draft*', '/crew/prejob*', '/crew/postjob*', '/crew/job*', '/crew/field-expenses*', '/crew/field-payments*', '/crew/walkthrough-pricing.js', '/crew/mounting-options.js', '/crew/mounting-options.css',
   // The crew photo page, its script and stylesheet (P4-07).
   '/crew/profile-photo*',
+  // Door-to-door canvassing: the knock page, its scripts, stylesheets and the bundled map library.
+  '/crew/knock*',
 ]);
 
 // Staff-adjacent files that stay reachable signed out: the sign-in pages and their scripts, and the crew app shell. The
@@ -21,6 +23,7 @@ export const STAFF_PUBLIC_PATHS = Object.freeze([
   '/staff-login', '/staff-login.html', '/staff-login.js', '/staff-paths.js',
   '/crew', '/crew/', '/crew/index.html', '/crew/hub-auth.js', '/crew/crew-brand.css',
   '/crew/manifest.webmanifest', '/crew/sw.js', '/crew/field-outbox.js', '/crew/offline', '/crew/offline.html', '/crew/sw-config.json',
+  '/crew/manifest-knock.webmanifest',
   '/employee-signup', '/employee-signup.html', '/hub-login-setup', '/hub-login-setup.html', '/hub-login-setup.js',
   '/employee.webmanifest',
 ]);
