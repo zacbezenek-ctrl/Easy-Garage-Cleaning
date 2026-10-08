@@ -897,6 +897,7 @@ FOOTER = """
       <div class="logo"><span class="logo-mark"></span>Easy Garage Cleaning</div>
       <p class="community">The easiest way to reclaim your garage. Locally owned in Fort Collins — not a franchise call center.</p>
       <p class="community">Partners: <a href="https://fortcollinschamber.com/" rel="noopener">Fort Collins Chamber</a>, <a href="/blog/habitat-for-humanity-restore-fort-collins.html">Habitat ReStore</a>.</p>
+      <nav class="foot-social" aria-label="Follow Easy Garage Cleaning"><a href="https://www.instagram.com/easygaragecleaning/" target="_blank" rel="noopener noreferrer">Instagram</a> · <a href="https://www.linkedin.com/company/easygaragecleaning" target="_blank" rel="noopener noreferrer">LinkedIn</a> · <a href="https://nextdoor.com/pages/easy-garage-cleaning-fort-collins-co/" target="_blank" rel="noopener noreferrer">Nextdoor</a></nav>
       <p class="foot-entity foot-nap"><strong>Easy Garage Cleaning</strong> · Easy Garage Cleaning LLC · Fort Collins, CO 80525 · <a href="tel:{phone}">{phone_display}</a> · <a href="mailto:{email}">{email}</a> · <a href="{SITE}/#business">Schema @id #business</a> · <a href="{SITE}/llms.txt">llms.txt</a></p>
     </div>
     <div class="foot-col">
