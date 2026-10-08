@@ -2,7 +2,7 @@
    offline reloads. API responses, customer data and non-GET requests are never
    intercepted or cached; queued work lives in the explicit field outbox. */
 'use strict';
-const VERSION = '20261006knock';
+const VERSION = '20261008redesign';
 const CACHE_PREFIX = 'egc-crew-shell-';
 const CACHE = `${CACHE_PREFIX}${VERSION}`;
 const CONFIG = '/crew/sw-config.json';
@@ -12,7 +12,7 @@ ASSETS.push('/app-touch.css?v=20260930mobiletouch');
 // Door-to-door canvassing (crew/knock.html). Its ES modules import each other without a ?v= query,
 // so those keys are bare paths; network-first keeps them current whenever the phone has signal.
 Object.assign(PAGES, { '/crew/knock.html': '/crew/knock.html', '/crew/knock': '/crew/knock.html' });
-ASSETS.push('/crew/knock.css?v=20261006knock', '/crew/knock-app.js?v=20261006knock', '/crew/manifest-knock.webmanifest',
+ASSETS.push('/crew/knock.css?v=20261008redesign', '/crew/knock-app.js?v=20261008redesign', '/crew/manifest-knock.webmanifest',
   '/crew/knock-ui.js', '/crew/knock-outbox.js', '/crew/knock-settings.js', '/crew/knock-time.js', '/crew/knock-doors.js',
   '/crew/knock-stats.js', '/crew/knock-money.js', '/crew/knock-sale-rules.js', '/crew/knock-rep.js', '/crew/knock-sale.js', '/crew/knock-stats-ui.js', '/crew/knock-map.js',
   '/crew/knock-leaflet.js?v=1.9.4', '/crew/knock-leaflet.css?v=1.9.4');

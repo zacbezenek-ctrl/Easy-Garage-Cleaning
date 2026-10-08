@@ -8,20 +8,18 @@
   <title>Knock · Easy Garage Cleaning</title>
   <link rel="manifest" href="/crew/manifest-knock.webmanifest">
   <link rel="apple-touch-icon" href="/apple-touch-icon.png">
-  <link rel="stylesheet" href="/crew/knock.css?v=20261006knock">
-  <script type="module" src="/crew/knock-app.js?v=20261006knock"></script>
+  <link rel="stylesheet" href="/crew/knock.css?v=20261008redesign">
+  <script type="module" src="/crew/knock-app.js?v=20261008redesign"></script>
   <link rel="stylesheet" href="/app-touch.css?v=20260930mobiletouch">
 </head>
-<body>
-  <header class="knock-header">
-    <div class="bar">
-      <a class="brand" href="/crew/knock.html#home">EGC <span>Knock</span></a>
-      <button id="knock-sync" type="button" class="sync-pill" hidden></button>
-    </div>
-    <div id="knock-clock" class="clock" role="timer" aria-live="off" hidden></div>
+<body class="app">
+  <header id="knock-top" class="topbar">
+    <a class="wordmark" href="/crew/knock.html#home">EGC <em>Knock</em></a>
+    <button id="knock-sync" type="button" class="sync" hidden></button>
   </header>
-  <main id="knock-main"><p class="loading" role="status">Opening canvassing…</p></main>
-  <nav id="knock-tabs" class="tabs" aria-label="Canvassing" hidden></nav>
+  <div id="knock-clock" class="sunbar" role="timer" aria-live="off" hidden></div>
+  <main id="knock-main"><p class="screen muted" role="status">Opening EGC Knock…</p></main>
+  <nav id="knock-tabs" class="tabbar" aria-label="Main" hidden></nav>
   <div id="knock-toast" class="toast" role="status" aria-live="polite" hidden></div>
 </body>
 </html>

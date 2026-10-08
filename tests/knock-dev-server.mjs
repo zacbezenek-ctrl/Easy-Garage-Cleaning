@@ -94,7 +94,8 @@ export function installFirestoreFake(fake) {
 }
 
 export async function startPreview({ now = null, houses = null, demo = false } = {}) {
-  const fake = firestoreRest({ ...previewSeed({ houses }), ...(demo ? demoActivity(now ? Date.parse(now) : Date.now()) : {}) });
+  const nowMs = typeof now === 'function' ? now().getTime() : now ? Date.parse(now) : Date.now();
+  const fake = firestoreRest({ ...previewSeed({ houses }), ...(demo ? demoActivity(nowMs) : {}) });
   const restore = installFirestoreFake(fake);
   const env = {
     HUB_SESSION_SECRET: 'synthetic-knock-preview-session-secret-0123456789',
