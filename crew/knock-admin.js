@@ -297,8 +297,12 @@ function salesSection(params) {
       try { await action(body, { quiet: true }); toast(message); refresh(); }
       catch (error) { toast(error.message, { tone: 'bad' }); if (error.details?.sale) refresh(); }
     };
-    const stripe = data.integrations.deposit.available.includes('stripe');
-    const quo = data.integrations.text.available.includes('quo');
+    // An adapter is offered only when Settings choose it and the server has its credentials.
+    const ready = (status, key) => status.mode === key && status.available.includes(key);
+    const why = (kind, key, name) => ready(data.integrations[kind], key) ? `${name} or manual`
+      : !data.integrations[kind].available.includes(key) ? `manual (${name} is not set up on the server)` : `manual (set integrations.${kind} to ${key} in Settings to use ${name})`;
+    const stripe = ready(data.integrations.deposit, 'stripe');
+    const highLevel = ready(data.integrations.text, 'highlevel');
     const card = sale => {
       const d = sale.handoff?.deposit || {}, t = sale.handoff?.text || {}, j = sale.handoff?.job || {};
       const ref = h('input', { placeholder: 'Hub job ID or Jobber link (optional)', value: j.ref || '', 'aria-label': 'Job reference' });
@@ -321,9 +325,9 @@ function salesSection(params) {
             d.url && d.status !== 'collected' ? h('button', { type: 'button', onclick: () => act({ action: 'sale.handoff', saleId: sale.id, kind: 'deposit', op: 'refresh' }, 'Checked with Stripe') }, 'Check payment') : null,
             d.status !== 'collected' ? h('button', { type: 'button', onclick: () => act({ action: 'sale.handoff', saleId: sale.id, kind: 'deposit', op: 'mark' }, 'Deposit marked collected') }, 'Mark collected') : null),
           h('div', { class: 'handoff' }, h('b', {}, 'Text'), h('span', { class: `badge ${t.status === 'sent' ? 'ok' : ''}` }, t.status || 'pending'),
-            quo && sale.textConsent && !['sent', 'uncertain', 'sending'].includes(t.status) ? h('button', { type: 'button', class: 'primary', onclick: async () => {
+            highLevel && sale.textConsent && !['sent', 'uncertain', 'sending'].includes(t.status) ? h('button', { type: 'button', class: 'primary', onclick: async () => {
               if (await confirmSheet('Send one text?', sale.message, 'Send text')) act({ action: 'sale.handoff', saleId: sale.id, kind: 'text', op: 'send' }, 'Text sent');
-            } }, 'Send via Quo') : null,
+            } }, 'Send via HighLevel') : null,
             t.status !== 'sent' ? h('button', { type: 'button', onclick: () => act({ action: 'sale.handoff', saleId: sale.id, kind: 'text', op: 'mark' }, 'Text marked sent') }, 'Mark sent') : null,
             t.error ? h('span', { class: 'notice error' }, t.error) : null)),
         h('details', {}, h('summary', {}, 'Customer text'), h('p', {}, sale.message)),
@@ -336,7 +340,7 @@ function salesSection(params) {
           sale.status !== 'cancelled' ? h('span', { class: 'row' }, jobDate, h('button', { type: 'button', onclick: () => act({ action: 'sale.jobDate', saleId: sale.id, jobDate: jobDate.value }, 'Job date saved') }, 'Move job')) : null));
     };
     return h('div', {},
-      h('p', { class: 'muted' }, `Hand-offs: job ${data.integrations.job.mode}; deposit ${stripe ? 'Stripe link or manual' : 'manual (no Stripe key on the server)'}; text ${quo ? 'Quo or manual' : 'manual (no Quo key on the server)'}. One customer, one text: there is no bulk send.`),
+      h('p', { class: 'muted' }, `Hand-offs: job ${data.integrations.job.mode}; deposit ${why('deposit', 'stripe', 'Stripe link')}; text ${why('text', 'highlevel', 'HighLevel')}. One customer, one text: there is no bulk send.`),
       h('div', { class: 'filters' }, [['open', 'Open'], ['booked', 'Booked'], ['completed', 'Completed'], ['paid', 'Paid'], ['cancelled', 'Cancelled'], ['all', 'All']].map(([key, label]) =>
         h('button', { type: 'button', 'aria-pressed': String(filter === key), onclick: () => app.go('admin', { s: 'sales', f: key }) }, label))),
       shown.length ? shown.map(card) : h('p', { class: 'muted' }, 'No sales here.'));

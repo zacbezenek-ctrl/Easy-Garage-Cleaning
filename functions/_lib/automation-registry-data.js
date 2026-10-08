@@ -117,6 +117,7 @@ export const AUTOMATION_REGISTRY = deepFreeze({
       write(HL_TAGS, [HL, TAG_OUTBOX], 'the shared ensureContact (GHL-TRACK-1 moved it here unchanged); the tag outbox calls it only outside a messaging dry run (EGC_MESSAGING_DRY_RUN=false) for a visit whose customer has no linked contact', true),
       write('functions/_lib/portal-invitation.js', [HL, 'functions/api/customer-portal-invitation.js'], 'recipient resolution before a portal invitation', true),
       write('functions/_lib/ghl-messenger.js', ['functions/api/messages.js'], 'recipient resolution before an approved send', false),
+      write('functions/_lib/ghl-messenger.js', ['functions/_lib/knock-handoff.js'], 'recipient resolution before an admin sends one canvassing sale text', false),
       write(MCP, [], 'MCP contacts.create or contacts.update (explicit user authorization)', false)]),
     trigger('contact_field:attribution', 'contact_field', 'Attribution custom fields (utm_*, gclid, fbclid, inquiry_id and similar)', [], 'Planned by FUN-35; nothing writes them today.'),
     trigger('appointment:created_notify', 'appointment_created', 'Appointment created or updated with toNotify true', [
@@ -277,12 +278,14 @@ export const AUTOMATION_REGISTRY = deepFreeze({
       notes: 'The page sends [TIME] and [N] literally; /api/quo-send fills them from the saved start time and crew size and refuses the send when it cannot, and sends the script only the day before the saved job date (LEGACY-SEND). Migrate to the approved day_before_reminder send.' }),
     entry({ id: 'quo.staff_free_text', name: 'Staff job text (Quo, typed by a manager)', system: 'quo', trigger: 'A business user types and sends a job text through /api/quo-send', audience: 'customer', channel: 'SMS',
       contentSource: 'human_authored', classification: 'human_approved', disposition: 'approved_human', sendsToday: 'yes', speedToLead: 'human_touch', code: code('functions/api/quo-send.js', 'quo_send'), evidence: ['functions/api/quo-send.js'] }),
-    entry({ id: 'quo.knock_sale_receipt', name: 'Door-to-door sale receipt text (Quo)', system: 'quo', trigger: 'An admin taps Send via Quo on one canvassing sale (crew/knock.html Admin > Sales); /api/knock-admin sale.handoff renders it from the saved sale',
+    // Hub sends.
+    entry({ id: 'hub.knock_sale_receipt', name: 'Door-to-door sale receipt text (HighLevel SMS)', system: 'hub', trigger: 'An admin taps Send via HighLevel on one canvassing sale (crew/knock.html Admin > Sales); /api/knock-admin sale.handoff renders it from the saved sale',
       audience: 'customer', channel: 'SMS', contentSource: 'fixed_template', classification: 'human_approved', disposition: 'approved_human', sendsToday: 'no', speedToLead: 'none',
       templateText: 'Hi [NAME], thanks for booking Easy Garage Cleaning: [PACKAGE], $[TICKET], on [JOB DATE]. Your $[DEPOSIT] deposit: [DEPOSIT LINK] You can cancel for a full refund until midnight [CANCEL DEADLINE]. Questions? Reply here.',
-      templateHash: '76e96e268c31fd370c1a858cc365f351c069170b3a615db2d07fad71000dcd59', code: code('functions/_lib/knock-handoff.js', 'quo_send'), evidence: ['functions/_lib/knock-handoff.js'],
-      notes: 'KNOCK: one text per sale, ever (a knock_receipts claim before Quo is called; an unclear answer is never retried), only with the customer\'s consent recorded at the door and only when settings.integrations.text is quo and QUO_API_KEY is set. Without a deposit link it says "Your deposit is $[DEPOSIT]." There is no bulk send.' }),
-    // Hub sends.
+      templateHash: '76e96e268c31fd370c1a858cc365f351c069170b3a615db2d07fad71000dcd59',
+      code: [...code('functions/_lib/ghl-messenger.js', 'ghl_message_send', 'ghl_contact_write'), ...code('functions/_lib/knock-handoff.js', 'hub_send_helper_call')], evidence: ['functions/_lib/knock-handoff.js', 'docs/knock-canvassing.md'],
+      notes: 'KNOCK: one text per sale, ever (a knock_receipts claim before HighLevel is called; an unclear answer is never retried), only with the customer\'s consent recorded at the door, only when settings.integrations.text is highlevel and the HighLevel key and location are set, and never to a contact on Do Not Disturb or tagged egc-no-sms-consent. The contact is upserted from the sale first (contact:upsert). Without a deposit link it says "Your deposit is $[DEPOSIT]." There is no bulk send.',
+      ownerCheck: 'Before switching integrations.text to highlevel, confirm no Contact Created workflow would also text a new canvassing customer (ghl.contact_change_workflows).' }),
     entry({ id: 'hub.portal_invitation', name: 'Accepted-quote portal invitation (SMS)', system: 'hub', trigger: 'A recorded approval (estimate-approved) or a signed walkthrough sync requests it; staff retry definite failures and a manager Hub refresh retries them',
       audience: 'customer', channel: 'SMS', contentSource: 'fixed_template', classification: 'owner_automation', disposition: 'approved_automatic', sendsToday: 'yes', speedToLead: 'none', msgCoreKind: 'portal_invitation_adapter',
       templateText: '{{opening}} quote is approved. Here is your private Easy Garage Cleaning project portal for job details, messages, and payments: {{portalLink}}',
@@ -447,7 +450,7 @@ export const AUTOMATION_REGISTRY = deepFreeze({
     // GHL-ALIGN: GET then POST contacts/{id}/tasks for the 6-month check-in (one path string, read first).
     'functions/_lib/highlevel-checkin.js': { ghl_note_task_write: 1 },
     // KNOCK: the door-to-door sale receipt text (one per sale, admin-tapped).
-    'functions/_lib/knock-handoff.js': { quo_send: 1 },
+    'functions/_lib/knock-handoff.js': { hub_send_helper_call: 1 },
     'functions/_lib/portal-invitation.js': { ghl_message_send: 1, ghl_contact_write: 2 },
     'functions/_lib/web-lead-intake.js': { ghl_message_send: 1, ghl_tag_write: 1, ghl_contact_write: 1, ghl_note_task_write: 1, ghl_opportunity_write: 1, zapier_hook: 2 },
     'functions/_lib/sales-followup-exit.js': { ghl_tag_write: 1, ghl_contact_write: 1, ghl_opportunity_write: 1, ghl_appointment_write: 1 },

@@ -70,7 +70,7 @@ export function demoActivity(nowMs = Date.now()) {
       cancelDeadlineDate: new Date(nowMs - (offset - 3) * 86400000).toISOString().slice(0, 10), cancelEndsAt: new Date(nowMs - (offset - 4) * 86400000).toISOString(),
       earliestJobDate: new Date(nowMs - (offset - 4) * 86400000).toISOString().slice(0, 10), jobDate: new Date(nowMs - (offset - 5) * 86400000).toISOString().slice(0, 10), jobStartTime: '08:00',
       refundCutoffHours: 24, checklist: { contractSigned: true, noticesHanded: true, rightToCancelTold: true }, checklistConfirmedAt: soldAt, note: '',
-      statusHistory: [{ status: 'booked', at: soldAt, by: repKey }], completedAt: null, paidAt: null, cancelledAt: null, collectedAmount: null,
+      status: 'booked', statusHistory: [{ status: 'booked', at: soldAt, by: repKey }], completedAt: null, paidAt: null, cancelledAt: null, collectedAmount: null,
       handoff: { job: { mode: 'manual', status: 'pending', ref: '' }, deposit: { mode: 'manual', status: 'pending', amount: 330 }, text: { mode: 'manual', status: 'pending' } },
       createdAt: soldAt, updatedAt: soldAt, ...fields,
     };

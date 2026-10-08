@@ -170,10 +170,13 @@ per neighborhood and per street.
   * **Deposit link:** manual (mark collected), or a Stripe Checkout link made with the repo's Stripe helpers
     when `STRIPE_SECRET_KEY` is set and settings say `stripe`. **Check payment** reads the session back from
     Stripe, so the existing webhook is untouched.
-  * **Customer text:** manual (mark sent), or **one** Quo text per sale when `QUO_API_KEY` is set, settings
-    say `quo` and the customer agreed at the door. It is claimed before sending, never sent twice and never
-    retried after an unclear answer. There is no bulk text anywhere. It is registered in the automation
-    registry as `quo.knock_sale_receipt`.
+  * **Customer text:** manual (text from HighLevel, then mark sent), or **one** HighLevel SMS per sale when the
+    server has `HIGHLEVEL_API_KEY` and `HIGHLEVEL_LOCATION_ID`, settings say `highlevel` and the customer agreed
+    at the door. It goes through the repo's HighLevel messenger: the contact is upserted from the sale, then
+    checked for Do Not Disturb and the `egc-no-sms-consent` tag. It is claimed before sending, never sent twice
+    and never retried after an unclear answer. There is no bulk text anywhere. It is registered in the
+    automation registry as `hub.knock_sale_receipt`. Before switching it on, check that no HighLevel Contact
+    Created workflow would also text a new canvassing customer.
 * **Walkthrough:** the Hub's walkthrough (`/crew/gameplan`) is business-only, so the Look sheet links to it only
   for business users. Pre-filling its address and writing its result back to the door needs a change in
   `crew/gameplan.html` (it reads only `walkthroughId` today).
@@ -206,23 +209,28 @@ validated before saving.
 
 ## Deploy
 
-Nothing here is deployed yet. When ready:
+The page and the functions deploy with the site (Cloudflare Pages from `main`). Then:
 
-1. Merge the `feature/knock` branch; Cloudflare Pages deploys the page and the functions with the site.
-2. **Publish the Firestore rules and the new index** (needs the owner's Firebase login):
+1. **Rules:** no publish is required. The live rules end with a deny-all catch-all, so the `knock_*`
+   collections are already server-only; the blocks in `firestore.rules` only make that explicit.
+   **Index:** create `knock_houses (neighborhoodId, updatedAt)`. The phones refresh their houses after every
+   door, and with the index each refresh reads only the houses that changed. Without it nothing breaks, but
+   each refresh reads the rep's whole neighborhoods (about 500 document reads instead of a handful). The
+   index can be created on its own in the Firebase console (Firestore > Indexes > Composite). Publishing
+   either file with the command below (needs the owner's Firebase login) also releases every other change to
+   it on `main`, so do it deliberately:
 
 ```bash
 npx firebase deploy --only firestore:rules,firestore:indexes --project egcw-1ec83
 ```
 
-   The rules add explicit server-only blocks for every `knock_*` collection; the index is
-   `knock_houses (neighborhoodId, updatedAt)` for incremental territory sync.
-3. No new environment variables are required. The server already has `HUB_SESSION_SECRET`,
-   `FIREBASE_SERVICE_ACCOUNT_JSON` and, for the optional hand-offs, `STRIPE_SECRET_KEY` and `QUO_API_KEY`/`QUO_FROM`.
-4. Sign in at `/crew/knock.html` as the owner, seed the neighborhoods, run the import with `--production`,
+2. No new environment variables are required. The server already has `HUB_SESSION_SECRET`,
+   `FIREBASE_SERVICE_ACCOUNT_JSON` and, for the optional hand-offs, `STRIPE_SECRET_KEY`, `HIGHLEVEL_API_KEY`
+   and `HIGHLEVEL_LOCATION_ID`.
+3. Sign in at `/crew/knock.html` as the owner, seed the neighborhoods, run the import with `--production`,
    approve reps, mark the permit list, assign territory.
-5. Before switching the deposit or text integration from `manual`, test with Stripe test keys and a Quo test
-   number.
+4. Before switching the deposit or text integration from `manual`, test with Stripe test keys and your own
+   phone as the HighLevel contact.
 
 ## Privacy and security
 
