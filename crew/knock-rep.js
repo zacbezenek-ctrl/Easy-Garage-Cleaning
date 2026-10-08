@@ -44,7 +44,13 @@ function statusText(entry) {
 function startWatchingPosition() {
   if (watchId != null || !navigator.geolocation) return;
   watchId = navigator.geolocation.watchPosition(position => {
+    const first = !S().position;
     S().position = { lat: position.coords.latitude, lng: position.coords.longitude, accuracy: position.coords.accuracy, at: Date.now() };
+    // A house picked before the first GPS fix was picked in street order: swap it for the nearest one.
+    if (first && S().ui.pickedWithoutGps) {
+      const near = nearestSuggestion(houseEntries().filter(e => e.status.knockable), S().position);
+      if (near) selectHouse(near.house).then(() => app.render());
+    }
   }, () => {}, { enableHighAccuracy: true, maximumAge: 15000, timeout: 20000 });
 }
 
@@ -63,7 +69,7 @@ function currentHouse() {
 }
 
 async function selectHouse(house, { previousNumber = null } = {}) {
-  await app.saveUi({ houseId: house?.id || null, previousNumber });
+  await app.saveUi({ houseId: house?.id || null, previousNumber, pickedWithoutGps: false });
 }
 
 /* ---------- shift ---------- */
@@ -77,7 +83,8 @@ async function startShift() {
   if (!unlocked.length) return toast('Nothing open is assigned to you yet.', { tone: 'bad' });
   const shiftId = crypto.randomUUID();
   await app.enqueue('shift.start', { shiftId, cityKey: unlocked[0].cityKey });
-  await app.saveUi({ graceDoorFor: null });
+  // A new shift starts at the house nearest the rep, not where the last shift stopped.
+  await app.saveUi({ graceDoorFor: null, houseId: null, previousNumber: null });
   startWatchingPosition();
   toast('Shift started. Knock safe and friendly.');
   app.go('knock');
@@ -269,7 +276,7 @@ function knockScreen() {
   let house = currentHouse();
   if (!house || !S().houses.has(house.id)) {
     house = suggestedHouse();
-    if (house) app.saveUi({ houseId: house.id });
+    if (house) app.saveUi({ houseId: house.id, pickedWithoutGps: !S().position });
   }
   if (!house) return h('div', {}, shiftCard(), h('section', { class: 'card' }, h('h2', {}, 'No houses to knock'), h('p', {}, 'Your assigned territory has no knockable houses on this phone yet. Sync, or ask an admin to assign more streets.'), h('button', { type: 'button', onclick: () => app.sync({ full: true }) }, 'Sync now')));
   const view = app.houseView(house.id);

@@ -151,7 +151,9 @@ nav.tabs a .glyph { font-size: 1.25rem; line-height: 1; }
 nav.tabs a[aria-current="page"] { color: #e8581c; box-shadow: inset 0 4px 0 #e8581c; }
 
 /* Map */
-#knock-map { height: calc(100vh - 220px); min-height: 360px; border: 2px solid var(--line-strong); border-radius: 12px; }
+/* Its own stacking context keeps Leaflet's layers (z-index up to 1000) under the header, tab bar and
+   toasts; the height leaves the map's bottom edge (and the OpenStreetMap credit) above the tab bar. */
+#knock-map { position: relative; z-index: 0; isolation: isolate; height: calc(100vh - 300px); height: calc(100dvh - 300px); min-height: 300px; border: 2px solid var(--line-strong); border-radius: 12px; }
 .map-tools { display: flex; gap: .5rem; margin-bottom: .5rem; flex-wrap: wrap; }
 .legend { display: flex; flex-wrap: wrap; gap: .5rem .9rem; font-size: .85rem; margin-top: .5rem; }
 .legend span { display: inline-flex; align-items: center; gap: .3rem; }
