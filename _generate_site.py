@@ -708,9 +708,13 @@ def dedupe_mobile_sheet_css(text):
         return text
     return text[:first + len(block)] + text[first + len(block):].replace(block, "")
 
+# analytics-loader.js is served immutable: every change to it bumps this version.
+ANALYTICS_LOADER_VERSION = "20261008a"
 GTAG_BLOCK = """<!-- Analytics events queue immediately; vendor libraries load after interaction. -->
-<script src="/analytics-loader.js?v=20260904b" defer></script>
+<script src="/analytics-loader.js?v=""" + ANALYTICS_LOADER_VERSION + """" defer></script>
 """
+# Google Tag Manager's fallback for visitors without JavaScript; analytics-loader.js loads the container itself.
+GTM_NOSCRIPT = '<noscript><iframe src="https://www.googletagmanager.com/ns.html?id=GTM-WXTBD8HG" height="0" width="0" style="display:none;visibility:hidden" title="Google Tag Manager"></iframe></noscript>'
 
 TRACKING_BLOCK = ""
 RESOURCE_HINTS = ""
@@ -4128,7 +4132,7 @@ def patch_performance_and_tracking(text, is_home=False):
         "",
         text,
     )
-    loader = '\n<!-- Analytics events queue immediately; vendor libraries load after interaction. -->\n<script src="/analytics-loader.js?v=20260904b" defer></script>\n'
+    loader = '\n<!-- Analytics events queue immediately; vendor libraries load after interaction. -->\n<script src="/analytics-loader.js?v=' + ANALYTICS_LOADER_VERSION + '" defer></script>\n'
     scrub_pattern = r'(<script>(?:(?!</script>)[\s\S])*?__egcGarageGuardReturn(?:(?!</script>)[\s\S])*?</script>\s*)'
     loader_pattern = r'\s*(?:<!-- Analytics events queue immediately; vendor libraries load after interaction\. -->\s*)?<script src="/analytics-loader\.js\?v=[^"]+" defer></script>\s*'
     scrub = re.search(scrub_pattern, text)
@@ -4141,6 +4145,8 @@ def patch_performance_and_tracking(text, is_home=False):
             text = text[:scrub.end()] + loader + text[scrub.end():]
         else:
             text = re.sub(r"(<head[^>]*>\s*)", lambda match: match.group(1) + loader, text, count=1, flags=re.I)
+    if "analytics-loader.js" in text and GTM_NOSCRIPT not in text:
+        text = re.sub(r"(<body\b[^>]*>)", lambda match: match.group(1) + "\n" + GTM_NOSCRIPT, text, count=1, flags=re.I)
     if not is_home:
         return text
 
@@ -4393,7 +4399,7 @@ def patch_static_pages():
         text = patch_performance_and_tracking(text)
         text = wrap_scroll_tables(text)
         text = mark_faq_more_link(text)
-        text = re.sub(r'/analytics-loader\.js\?v=[^"\']+', '/analytics-loader.js?v=20260904b', text)
+        text = re.sub(r'/analytics-loader\.js\?v=[^"\']+', '/analytics-loader.js?v=' + ANALYTICS_LOADER_VERSION, text)
         text = re.sub(r'^[ \t]+$', '', text, flags=re.M)
         text = re.sub(r'/styles\.css\?v=[^"\']+', '/styles.css?v=' + STYLES_VERSION, text)
         has_public_form = bool(re.search(r'<form[^>]*class=["\'][^"\']*(?:lead-form-lite|multi-step-form)', text, re.I))

@@ -8,7 +8,7 @@ const read = (path) => readFileSync(new URL(`../${path}`, import.meta.url), 'utf
 
 test('homepage loads analytics outside the critical rendering path', () => {
   const html = read('index.html');
-  assert.match(html, /<script src="\/analytics-loader\.js\?v=20260904b" defer><\/script>/);
+  assert.match(html, /<script src="\/analytics-loader\.js\?v=20261008a" defer><\/script>/);
   assert.doesNotMatch(html, /<script[^>]+src="https:\/\/www\.googletagmanager\.com\/gtag\/js/);
   assert.doesNotMatch(html, /<script[^>]*>[\s\S]*?connect\.facebook\.net\/en_US\/fbevents\.js[\s\S]*?<\/script>/);
   assert.doesNotMatch(html, /<script[^>]*>[\s\S]*?www\.clarity\.ms\/tag[\s\S]*?<\/script>/);
@@ -28,6 +28,40 @@ test('analytics is deferred site-wide and preserves the paid-campaign pixel mapp
   assert.match(loader,/setTimeout\(startAnalytics, 2500\)/);
   assert.match(read('ads.html'),/data-meta-pixel-id="861741726934219"/);
   assert.match(read('thank-you.html'),/data-meta-pixel-id="861741726934219"/);
+});
+
+test('Google Tag Manager loads through the deferred loader, with its noscript fallback on every public page', async () => {
+  const loader = read('analytics-loader.js');
+  assert.match(loader, /window\.dataLayer\.push\(\{ 'gtm\.start': new Date\(\)\.getTime\(\), event: 'gtm\.js' \}\)/);
+  assert.match(loader, /addScript\('https:\/\/www\.googletagmanager\.com\/gtm\.js\?id=GTM-WXTBD8HG'\)/);
+  // The loader is served immutable, so its markup version moves with it; /before-after renders the same tags.
+  const generator = read('_generate_site.py');
+  const version = generator.match(/^ANALYTICS_LOADER_VERSION = "(\d{8}[a-z])"$/m)[1];
+  const noscript = generator.match(/^GTM_NOSCRIPT = '(.+)'$/m)[1];
+  const { analyticsLoaderVersion, gtmNoscript } = await import('../functions/before-after.js');
+  assert.equal(analyticsLoaderVersion, version, 'functions/before-after.js uses ANALYTICS_LOADER_VERSION from _generate_site.py');
+  assert.equal(gtmNoscript, noscript, 'functions/before-after.js uses GTM_NOSCRIPT from _generate_site.py');
+  const root = new URL('../', import.meta.url);
+  const pages = sourceFiles(root)
+    .filter(entry => entry.isFile() && entry.name.endsWith('.html'))
+    .map(entry => ({ name: `${entry.parentPath}/${entry.name}`, html: readFileSync(`${entry.parentPath}/${entry.name}`, 'utf8') }));
+  let tagged = 0;
+  for (const page of pages) {
+    if (!page.html.includes('/analytics-loader.js')) {
+      assert.doesNotMatch(page.html, /GTM-WXTBD8HG/, `${page.name} carries GTM without the analytics loader`);
+      continue;
+    }
+    tagged++;
+    for (const [, used] of page.html.matchAll(/\/analytics-loader\.js\?v=([^"']+)/g)) assert.equal(used, version, page.name);
+    assert.ok(page.html.includes(noscript), `${page.name} is missing the GTM noscript fallback`);
+    assert.match(page.html, /<body\b[^>]*>\s*<noscript><iframe src="https:\/\/www\.googletagmanager\.com\/ns\.html\?id=GTM-WXTBD8HG"/, `${page.name}: the GTM noscript must open <body>`);
+  }
+  assert.ok(tagged >= 70, `only ${tagged} pages load analytics`);
+
+  const { onRequest } = await import('../functions/_middleware.js');
+  const response = await onRequest({ request: new Request('https://easygaragecleaning.com/'), env: {}, next: async () => new Response('public', { headers: { 'Content-Type': 'text/plain' } }) });
+  const csp = Object.fromEntries(response.headers.get('Content-Security-Policy').split('; ').map(rule => [rule.split(' ')[0], rule.split(' ').slice(1)]));
+  for (const directive of ['script-src', 'connect-src', 'frame-src']) assert.ok(csp[directive].includes('https://www.googletagmanager.com'), directive);
 });
 
 test('private employee portal does not load marketing analytics or preconnect to trackers', () => {
