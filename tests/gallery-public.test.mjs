@@ -44,7 +44,9 @@ test('metadata and accessible image text contain no production-method wording',(
  assert(html.includes(`<link rel="canonical" href="${galleryCanonical}">`));
  assert.match(html,/property="og:image"/);
  assert.match(html,/href="\/styles\.css/); assert.match(html,/class="site-footer"/); assert.match(html,/class="nav"/);
- assert.doesNotMatch(html,/\bAI\b|AI-generated|artificial intelligence|Higgsfield|GPT|Nano Banana/i);
+ assert.equal((html.match(/>AI-generated planning example<\/span>/g)||[]).length,pairs.filter(p=>p.type==='concept').length);
+ assert.match(html,/they are not completed customer projects/);
+ assert.doesNotMatch(html,/Higgsfield|GPT|Nano Banana/i);
  assert.equal((html.match(/garage:/g)||[]).length,14);
  const schema=JSON.parse(html.match(/<script type="application\/ld\+json">([\s\S]*?)<\/script>/)[1]);
  assert.equal(schema['@type'],'CollectionPage'); assert.equal(schema.url,galleryCanonical);

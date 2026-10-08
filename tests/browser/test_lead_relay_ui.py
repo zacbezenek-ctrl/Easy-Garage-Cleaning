@@ -59,6 +59,14 @@ class LeadRelayBrowserTests(unittest.TestCase):
         self.page.on('dialog',lambda dialog:dialog.accept())
         def route(route):
             request=route.request; url=urlparse(request.url)
+            # This suite tests production event IDs, while all provider requests remain mocked/blocked.
+            # Explicitly exercise the canonical-host branch of the real loader inside this local fixture;
+            # do not add a bypass switch to shipped code or re-enable marketing on actual previews.
+            if url.hostname=='127.0.0.1' and url.path=='/analytics-loader.js':
+                source=(ROOT/'analytics-loader.js').read_text()
+                host_expression="window.location?.hostname || ''"
+                assert source.count(host_expression)==1
+                return route.fulfill(status=200,content_type='application/javascript',body=source.replace(host_expression,"'easygaragecleaning.com'",1))
             if url.hostname=='127.0.0.1' and url.path=='/api/web-lead':
                 self.relayed.append(json.loads(request.post_data or '{}'))
                 if self.relay_reply: return route.fulfill(status=self.relay_reply[0],content_type='application/json',body=json.dumps(self.relay_reply[1]))

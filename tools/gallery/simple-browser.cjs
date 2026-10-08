@@ -34,7 +34,9 @@ async function paint(page,selector){
    assert(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth),'horizontal overflow at '+width);
    assert.equal(await page.locator('.showcase-card').count(),0);
    assert.equal(await page.locator('script[src*="gallery-preview-assets/gallery.js"]').count(),0); assert.equal(await page.locator('link[href*="styles.css"]').count(),1); assert.equal(await page.locator('.site-footer').count(),1); assert.equal(await page.locator('.nav').count(),1);
-   assert(!/\bAI\b|AI-generated|Higgsfield/i.test(await page.content()));
+   assert.equal(await page.locator('.ba-kicker').filter({hasText:'AI-generated planning example'}).count(),6,'generated concepts must be disclosed');
+   assert((await page.content()).includes('they are not completed customer projects'));
+   assert(!/Higgsfield|gallery-ideal-assets/i.test(await page.content()));
    const card=page.locator('#gallery .ba-card').first();
    const input=card.locator('input[type="range"]');
    await card.locator('[data-position="100"]').click();assert.equal(await input.inputValue(),'100');
