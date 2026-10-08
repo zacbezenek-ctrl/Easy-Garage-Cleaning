@@ -45,13 +45,13 @@ async function signIn(page, base, user) {
 }
 
 const syncPill = page => page.locator('#knock-sync');
-const address = page => page.locator('.house-card .address');
+const address = page => page.locator('.house .house__addr');
 
 async function logDoor(page, outcome, finish = null) {
   const before = await address(page).textContent();
   await page.getByRole('button', { name: outcome, exact: true }).click();
   if (finish) await finish();
-  await page.waitForFunction(previous => document.querySelector('.house-card .address')?.textContent !== previous, before);
+  await page.waitForFunction(previous => document.querySelector('.house .house__addr')?.textContent !== previous, before);
   return before;
 }
 
@@ -83,14 +83,18 @@ try {
   logged.push(await logDoor(page, 'Not interested'));
   await page.reload();
   await page.getByRole('button', { name: 'Come back', exact: true }).waitFor();
-  assert.match(await syncPill(page).textContent(), /2 to sync/, 'the first two doors survived an offline reload');
-  logged.push(await logDoor(page, 'Come back', () => page.getByRole('button', { name: 'No set time', exact: true }).click()));
+  assert.match(await syncPill(page).textContent(), /2 waiting/, 'the first two doors survived an offline reload');
+  logged.push(await logDoor(page, 'Come back', async () => {
+    await page.getByRole('button', { name: 'Tomorrow', exact: false }).click();
+    await page.getByLabel('Note').fill('Ask for the owner');
+    await page.getByRole('button', { name: 'Save come-back', exact: true }).click();
+  }));
   logged.push(await logDoor(page, 'Look', async () => {
     await page.getByLabel('Quoted price').fill('1500');
     await page.getByRole('button', { name: 'Save look', exact: true }).click();
   }));
   logged.push(await logDoor(page, 'No answer'));
-  await page.waitForFunction(() => /5 to sync/.test(document.getElementById('knock-sync')?.textContent || ''));
+  await page.waitForFunction(() => /5 waiting/.test(document.getElementById('knock-sync')?.textContent || ''));
   assert.equal(await server.knocks(), 0, 'nothing reached the server while offline');
   assert.equal(new Set(logged).size, 5, 'five different houses');
 
@@ -107,14 +111,15 @@ try {
   await signIn(admin, server.base, 'ZacB');
   await admin.waitForFunction(() => document.querySelector('#knock-tabs a[href="#admin"]'));
   await admin.goto(`${server.base}/crew/knock.html#admin?s=coverage`);
-  const row = admin.locator('table.data tbody tr', { hasText: 'English Ranch' }).first();
-  await row.waitFor();
-  const cells = await row.locator('td').allTextContents();
-  assert.equal(cells[1], '5/48', `coverage shows the five doors (${cells.join(' | ')})`);
-  assert.equal(cells[6], 'Rep One', 'the rep shows as here now');
+  const meter = admin.locator('.meter', { hasText: 'English Ranch' }).first();
+  await meter.waitFor();
+  const coverageText = await meter.textContent();
+  assert.match(coverageText, /5 \/ 48/, `coverage shows the five doors (${coverageText})`);
+  const knockingNow = await admin.locator('section.card', { hasText: 'Knocking right now' }).textContent();
+  assert.match(knockingNow, /Rep One/, 'the rep shows as knocking right now');
   await admin.goto(`${server.base}/crew/knock.html#admin?s=scoreboard&range=today`);
   await admin.getByText('Team total').waitFor();
-  const doors = await admin.locator('.stats .stat', { hasText: 'Doors' }).locator('b').textContent();
+  const doors = await admin.locator('.stat', { has: admin.locator('.stat__label', { hasText: /^Doors$/ }) }).first().locator('.stat__value').textContent();
   assert.equal(doors, '5', 'the scoreboard counts the five doors today');
 
   assert.deepEqual(errors, [], 'no page errors');

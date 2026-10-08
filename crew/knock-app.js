@@ -1,10 +1,10 @@
 /* EGC Knock: door-to-door canvassing for reps, leads and admins.
    Opens from the phone's own copy (IndexedDB) first so a rep can log doors with no signal, then
    refreshes from /api/knock-*. Every change is an append-only event in the outbox. */
-import { h, mount, toast, uuid } from './knock-ui.js';
+import { h, mount, toast, uuid, icon, badge, banner, kv, emptyState, sheet } from './knock-ui.js';
 import { createOutbox, httpTransport, openKnockStore } from './knock-outbox.js';
 import { DEFAULT_SETTINGS, mergeSettings } from './knock-settings.js';
-import { formatClock, formatCountdown, knockWindow } from './knock-time.js';
+import { formatClock, knockWindow } from './knock-time.js';
 import { applyLocalKnock, doorStatus } from './knock-doors.js';
 import { shiftTiming } from './knock-stats.js';
 
@@ -15,8 +15,10 @@ const SESSION_HOURS = 12;
 
 const main = document.getElementById('knock-main');
 const tabs = document.getElementById('knock-tabs');
+const top = document.getElementById('knock-top');
 const clock = document.getElementById('knock-clock');
 const syncPill = document.getElementById('knock-sync');
+syncPill.addEventListener('click', () => go('more'));
 
 const S = {
   online: navigator.onLine,
@@ -291,32 +293,42 @@ export async function signOut() {
 }
 
 function renderSignIn(error = '') {
-  tabs.hidden = true; clock.hidden = true; syncPill.hidden = true;
-  const form = h('form', { class: 'card accent', onsubmit: async event => {
+  tabs.hidden = true; clock.hidden = true; top.hidden = true;
+  document.body.classList.remove('admin-mode');
+  const password = h('input', { class: 'input', id: 'password', name: 'password', type: 'password', autocomplete: 'current-password', required: true });
+  const reveal = h('button', { type: 'button', class: 'ico-btn', 'aria-label': 'Show password', onclick: () => {
+    const show = password.type === 'password';
+    password.type = show ? 'text' : 'password';
+    reveal.setAttribute('aria-label', show ? 'Hide password' : 'Show password');
+  } }, icon('eye'));
+  const form = h('form', { class: 'screen signin', onsubmit: async event => {
     event.preventDefault();
     const button = form.querySelector('button[type=submit]');
     button.disabled = true;
     try { await signIn(form.username.value.trim(), form.password.value); }
-    catch (err) { renderSignIn(err.message); }
+    catch (err) { renderSignIn(err.status === 401 ? 'That username or password didn\'t work.' : err.message); }
     finally { button.disabled = false; }
   } },
-  h('span', { class: 'eyebrow' }, 'Canvassing sign in'),
-  h('h1', {}, 'Knock doors with EGC'),
-  h('p', { class: 'muted' }, 'Use your EGC Hub username and password. New here? Ask Zac for a Hub account first.'),
-  error ? h('p', { class: 'notice error', role: 'alert' }, error) : null,
-  h('label', { for: 'username' }, 'Username'),
-  h('input', { id: 'username', name: 'username', autocomplete: 'username', autocapitalize: 'none', required: true }),
-  h('label', { for: 'password' }, 'Password'),
-  h('input', { id: 'password', name: 'password', type: 'password', autocomplete: 'current-password', required: true }),
-  h('p', {}),
-  h('button', { type: 'submit', class: 'primary wide' }, 'Sign in'));
-  mount(main, form);
+  h('h1', {}, 'Sign in'),
+  error ? banner('error', 'alert', error, error.startsWith('That username') ? 'Check your caps lock and try again.' : '') : null,
+  h('div', { class: 'field' }, h('label', { class: 'label', for: 'username' }, 'Username'),
+    h('input', { class: 'input', id: 'username', name: 'username', autocomplete: 'username', autocapitalize: 'none', spellcheck: 'false', required: true })),
+  h('div', { class: 'field' }, h('label', { class: 'label', for: 'password' }, 'Password'), h('div', { class: 'password-field' }, password, reveal)),
+  h('button', { type: 'submit', class: 'btn btn--primary btn--xl btn--block' }, 'Sign in'),
+  h('p', { class: 'muted center' }, 'Use your EGC Hub sign-in. Can\'t sign in? Ask your lead or text the office.'),
+  h('div', { class: 'spacer' }),
+  banner('', 'wifiOff', 'Works offline', 'Once you\'ve signed in on this phone, you can keep knocking without signal.'));
+  mount(main,
+    h('div', { class: 'signin-hero' }, h('div', { class: 'wordmark' }, 'EGC ', h('em', {}, 'Knock')), h('p', {}, 'Easy Garage Cleaning · Fort Collins')),
+    form);
 }
 
 /* ---------- routing and rendering ---------- */
 
-export function registerScreen(name, render, { tab = null, admin = false, active = true } = {}) {
-  screens.set(name, { render, tab, admin, active });
+// tab: { label, icon, order } puts the screen in the tab bar; title and back give it a titled top bar
+// with a back arrow (back is a route, or a function of the route params).
+export function registerScreen(name, render, { tab = null, admin = false, active = true, title = '', back = '' } = {}) {
+  screens.set(name, { render, tab, admin, active, title, back });
 }
 
 export function go(name, params = {}) {
@@ -355,16 +367,18 @@ export function render() {
     autoRouted = true;
     if (currentShift()) { location.hash = '#knock'; return; }
   }
-  renderChrome();
-  if (!S.rep) { mount(main, h('p', { class: 'loading' }, S.online ? 'Loading your canvassing profile…' : 'Connect once to load your canvassing profile.')); return; }
-  if (S.rep.status !== 'active') return renderWaiting();
   const screen = screens.get(S.route.name) || screens.get('home');
-  if (screen.admin && !S.viewer.admin) return mount(main, h('p', { class: 'notice error' }, 'Only admins can open that screen.'));
+  document.body.classList.toggle('admin-mode', Boolean(S.rep?.status === 'active' && screen.admin));
+  renderChrome();
+  if (!S.rep) { mount(main, h('div', { class: 'screen' }, h('p', { class: 'muted', role: 'status' }, S.online ? 'Loading your canvassing profile…' : 'Connect once to load your canvassing profile.'))); return; }
+  if (S.rep.status !== 'active') return renderWaiting();
+  if (screen.admin && !S.viewer.admin) return mount(main, h('div', { class: 'screen' }, banner('error', 'lock', 'Only admins can open that screen.')));
   if (screen.admin && !modules.admin) ensureAdmin().then(() => { if (modules.admin) render(); });
   try {
     mount(main, screen.render(app, S.route.params));
   } catch (error) {
-    mount(main, h('section', { class: 'card' }, h('h1', {}, 'Something went wrong'), h('p', { class: 'notice error' }, error.message || String(error)), h('button', { type: 'button', onclick: () => location.reload() }, 'Reload')));
+    mount(main, h('div', { class: 'screen' }, banner('error', 'alert', 'Something went wrong', error.message || String(error),
+      h('button', { type: 'button', class: 'btn btn--sm btn--retry', onclick: () => location.reload() }, 'Reload'))));
   }
   renderTabs();
 }
@@ -372,86 +386,197 @@ export function render() {
 function renderWaiting() {
   tabs.hidden = true;
   const inactive = S.rep.status === 'inactive';
-  mount(main, h('section', { class: 'card accent' },
-    h('span', { class: 'eyebrow' }, inactive ? 'Access turned off' : 'Waiting for approval'),
-    h('h1', {}, inactive ? 'Canvassing is turned off for you' : `Thanks, ${S.rep.displayName}`),
-    h('p', {}, inactive ? 'Your canvassing access was turned off. Talk to Zac if this is a mistake.' : 'An admin has to approve your canvassing account before you can see territory or log doors. You will not lose anything while you wait.'),
-    h('div', { class: 'row' },
-      h('button', { type: 'button', class: 'primary', onclick: () => sync({ full: true }) }, 'Check again'),
-      h('button', { type: 'button', onclick: signOut }, 'Sign out'))));
+  mount(main, h('div', { class: 'screen' },
+    h('h1', {}, inactive ? 'Access turned off' : `Thanks, ${firstName()}`),
+    emptyState(inactive ? 'lock' : 'clock', inactive ? 'Canvassing is turned off for you' : 'Waiting for approval',
+      inactive ? 'Your canvassing access was turned off. Talk to Zac if this is a mistake.' : 'An admin approves new reps before territory shows up. Nothing is lost while you wait.',
+      h('button', { type: 'button', class: 'btn btn--primary', onclick: () => sync({ full: true }) }, icon('refresh'), 'Check again')),
+    h('button', { type: 'button', class: 'btn btn--quiet btn--block', onclick: signOut }, 'Sign out')));
 }
+
+const TAB_ICONS = { home: 'home', knock: 'door', list: 'list', map: 'map', more: 'more', admin: 'shield' };
 
 function renderTabs() {
   const items = [...screens.entries()].filter(([, s]) => s.tab && (!s.admin || S.viewer?.admin)).sort((a, b) => (a[1].tab.order ?? 50) - (b[1].tab.order ?? 50));
   tabs.hidden = !items.length;
-  mount(tabs, items.map(([name, s]) => h('a', { href: `#${name}`, 'aria-current': S.route.name === name || (name === 'admin' && S.route.name.startsWith('admin')) ? 'page' : false },
-    h('span', { class: 'glyph', 'aria-hidden': 'true' }, s.tab.glyph), s.tab.label)));
+  const current = screens.get(S.route.name);
+  // A screen without its own tab (Go-backs, My money…) lights the More tab; admin screens light Admin.
+  const activeTab = current?.tab ? S.route.name : current?.admin ? 'admin' : S.route.name === 'home' || !current ? 'home' : 'more';
+  mount(tabs, items.map(([name, s]) => h('a', { class: `tab${name === activeTab ? ' tab--active' : ''}`, href: `#${name}`, 'aria-current': name === activeTab ? 'page' : false },
+    icon(s.tab.icon || TAB_ICONS[name] || 'more'), s.tab.label)));
 }
 
 export function knockingWindow(house = null) {
   return knockWindow(cityRuleFor(house), Date.now());
 }
 
+// "2:14" for hours and minutes, "14 min" inside the last hour.
+function leftLabel(ms) {
+  const minutes = Math.max(0, Math.ceil(ms / 60000));
+  return minutes < 60 ? `${minutes} min` : `${Math.floor(minutes / 60)}:${String(minutes % 60).padStart(2, '0')}`;
+}
+
 function renderChrome() {
   if (!S.viewer) return;
+  const screen = screens.get(S.route.name);
+  top.hidden = false;
+  // A titled screen gets a back arrow and its name; the rest show the wordmark.
+  const back = screen?.title ? (typeof screen.back === 'function' ? screen.back(S.route.params) : screen.back) : '';
+  if (screen?.title && S.rep?.status === 'active') {
+    mount(top,
+      h('button', { type: 'button', class: 'ico-btn', 'aria-label': 'Back', onclick: () => (back ? go(back) : history.back()) }, icon('arrowLeft')),
+      h('span', { class: 'serif grow', style: { fontSize: '22px' } }, typeof screen.title === 'function' ? screen.title(S.route.params) : screen.title),
+      syncPill);
+  } else if (!top.querySelector('.wordmark')) {
+    mount(top, h('a', { class: 'wordmark', href: '/crew/knock.html#home' }, 'EGC ', h('em', {}, 'Knock')), syncPill);
+  }
+
   const window = knockingWindow(S.ui.houseId ? S.houses.get(S.ui.houseId) : null);
   clock.hidden = false;
-  clock.className = `clock${window.warning ? ' warn' : ''}${window.phase === 'grace' || window.phase === 'closed' ? ' closed' : ''}`;
-  clock.textContent = window.phase === 'before' ? `Knocking opens ${window.startLabel} · sunset ${window.endLabel}`
-    : window.phase === 'open' ? `Sunset ${window.endLabel} · ${formatCountdown(window.msToEnd)} left`
-    : window.phase === 'grace' ? `Past sunset · finish the last door by ${formatClock(window.graceEndAt)}` : `Sunset was ${window.endLabel} · done for today`;
+  const late = window.phase === 'grace' || window.phase === 'closed';
+  clock.className = `sunbar${window.warning ? ' sunbar--warn' : ''}${late ? ' sunbar--late' : ''}`;
+  mount(clock, icon('sun', { size: 'sm' }),
+    window.phase === 'before' ? `Knocking opens ${window.startLabel} · sunset ${window.endLabel}`
+      : window.phase === 'open' ? `Sunset ${window.endLabel} · ${leftLabel(window.msToEnd)} left`
+      : window.phase === 'grace' ? `Sun set ${window.endLabel} · this door only`
+      : `Sunset was ${window.endLabel} · closed for today`);
+
   syncPill.hidden = false;
-  const pending = S.pending.length, problems = S.problems.length;
-  syncPill.className = `sync-pill${problems ? ' problem' : !S.online ? ' offline' : ''}`;
-  syncPill.textContent = problems ? `${problems} problem${problems === 1 ? '' : 's'}`
-    : S.syncState === 'syncing' ? 'Syncing…'
-    : S.authRequired ? 'Sign in to sync'
-    : pending ? `${pending} to sync${S.online ? '' : ' · offline'}`
-    : S.online ? 'Synced' : 'Offline';
+  const { state, label } = syncSummary();
+  syncPill.className = `sync sync--${state}`;
+  syncPill.setAttribute('aria-label', `${label}. Opens the sync section.`);
+  mount(syncPill, h('span', { class: 'sync__dot' }), label);
+  document.querySelectorAll('[data-sync-pill]').forEach(pill => {
+    pill.className = `sync sync--${state}`;
+    mount(pill, h('span', { class: 'sync__dot' }), label);
+  });
 }
+
+// The sync pill is the single source of truth: Synced, N waiting, Offline or Sync problem.
+export function syncSummary() {
+  const pending = S.pending.length, problems = S.problems.length;
+  const state = problems || S.authRequired ? 'problem' : !S.online ? 'offline' : pending || S.syncState === 'syncing' ? 'waiting' : 'ok';
+  // Offline with doors queued shows the count (gray dot), so a rep always knows what is waiting.
+  const label = problems ? 'Sync problem' : S.authRequired ? 'Sign in to sync' : S.syncState === 'syncing' && S.online ? 'Syncing…' : pending ? `${pending} waiting` : !S.online ? 'Offline' : 'Synced';
+  return { state, label };
+}
+
+const firstName = () => String(S.rep?.displayName || S.viewer?.displayName || '').trim().split(/\s+/)[0] || 'there';
 
 /* ---------- home ---------- */
 
 function homeScreen() {
-  const shift = currentShift();
   const nbhds = S.territory.neighborhoods;
   const window = knockingWindow();
-  return h('div', {},
-    S.authRequired ? h('section', { class: 'card accent' }, h('p', { class: 'notice' }, 'Your sign-in expired. Your doors are safe on this phone; sign in to sync them.'), h('button', { type: 'button', class: 'primary', onclick: () => renderSignIn() }, 'Sign in again')) : null,
-    h('section', { class: 'card' },
-      h('span', { class: 'eyebrow' }, S.viewer.admin ? 'Admin' : S.rep.role === 'lead' ? 'Lead' : 'Knocker'),
-      h('h1', {}, `Hi, ${S.rep.displayName}`),
-      h('p', { class: 'muted' }, window.phase === 'before' ? `Knocking opens at ${window.startLabel}. Sunset is ${window.endLabel}.`
-        : window.phase === 'open' ? `Knock until sunset at ${window.endLabel}.` : `Sunset was ${window.endLabel}. Knocking is closed for today.`),
-      S.eligibility.ok ? null : h('p', { class: 'notice' }, S.eligibility.reason),
-      shift && !app.shiftCard ? h('p', { class: 'notice ok' }, `Shift running since ${formatClock(Date.parse(shift.startedAt))}.`) : null),
+  const today = new Date().toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric', timeZone: cityRuleFor(null)?.timeZone || 'America/Denver' });
+  const counts = new Map();
+  for (const house of S.houses.values()) {
+    const row = counts.get(house.n) || { total: 0, knocked: 0 };
+    row.total += 1;
+    if (houseView(house.id)?.summary?.lastOutcome) row.knocked += 1;
+    counts.set(house.n, row);
+  }
+  const permit = S.rep.permitListed !== false;
+  return h('div', { class: 'screen' },
+    S.authRequired ? banner('warn', 'alert', 'Your sign-in expired', 'Your doors are safe on this phone. Sign in to sync them.',
+      h('button', { type: 'button', class: 'btn btn--sm btn--primary', onclick: () => renderSignIn() }, 'Sign in')) : null,
+    h('div', { class: 'row row--between' }, h('h1', {}, `Hi ${firstName()}`), h('span', { class: 'muted' }, today)),
+    h('section', { class: 'card', style: { gap: '8px' } },
+      h('h2', {}, 'Today\'s status'),
+      kv('Account', badge('Approved', 'success', 'check')),
+      kv('City permit list', permit ? badge('On the list', 'success', 'check') : badge('Not on the list', 'warning', 'alert')),
+      kv('Knocking window', `${window.startLabel} – ${window.endLabel}`)),
+    S.eligibility.ok ? null : banner('warn', 'alert', 'You can\'t start a shift yet', S.eligibility.reason),
     app.shiftCard ? app.shiftCard() : null,
-    h('section', { class: 'card' },
-      h('h2', {}, 'Your territory'),
-      nbhds.length ? h('ul', { class: 'list' }, nbhds.map(n => h('li', {},
-        h('div', { style: { flex: '1' } }, h('b', {}, n.name), h('div', { class: 'muted' }, n.streets ? `Streets: ${n.streets.join(', ')}` : 'Whole neighborhood')),
-        n.tier === 'Premium' ? h('span', { class: 'badge premium' }, 'Premium') : null,
-        n.locked ? h('span', { class: 'badge locked', title: n.lockReason }, n.lockReason) : h('span', { class: 'badge ok' }, 'Open'))))
-        : h('p', { class: 'muted' }, 'Nothing is assigned to you yet. An admin assigns neighborhoods or streets.')),
-    h('section', { class: 'card' },
-      h('h2', {}, 'This phone'),
-      h('p', {}, S.pending.length ? `${S.pending.length} change${S.pending.length === 1 ? '' : 's'} waiting to sync.` : 'Everything is synced.'),
-      store?.persistent === false ? h('p', { class: 'notice error' }, 'This browser is not saving offline data. Keep signal or use the installed app.') : null,
-      problemsList(),
-      h('div', { class: 'row' },
-        h('button', { type: 'button', onclick: () => sync({ full: true }) }, 'Sync now'),
-        h('button', { type: 'button', onclick: cycleTheme }, `Theme: ${recall(THEME_KEY) || 'auto'}`),
-        h('button', { type: 'button', class: 'ghost', onclick: signOut }, 'Sign out'))));
+    h('section', { class: 'stack' },
+      h('div', { class: 'row row--between' }, h('h2', { style: { fontSize: '18px' } }, 'Your neighborhoods'), h('span', { class: 'caption muted' }, `${nbhds.length} assigned`)),
+      nbhds.length ? nbhds.map(n => {
+        const count = counts.get(n.id) || { total: n.importedCount || 0, knocked: 0 };
+        const sub = n.locked ? n.lockReason : `${(count.total || n.importedCount || 0).toLocaleString('en-US')} houses · ${count.knocked} knocked${n.streets ? ` · ${n.streets.length} street${n.streets.length === 1 ? '' : 's'}` : ''}`;
+        const tier = n.tier === 'Premium' ? badge('Premium', 'navy') : badge(n.tier || 'Volume');
+        if (n.locked) {
+          return h('div', { class: 'list-row list-row--card list-row--static', style: { opacity: '.85' } },
+            h('span', { class: 'list-row__main' }, h('span', { class: 'list-row__title' }, n.name), h('span', { class: 'list-row__sub' }, sub)),
+            badge(n.status === 'hold' ? 'On hold' : 'Locked', 'warning', 'lock'));
+        }
+        return h('a', { class: 'list-row list-row--card', href: `#list?n=${encodeURIComponent(n.id)}` },
+          h('span', { class: 'list-row__main' }, h('span', { class: 'list-row__title' }, n.name), h('span', { class: 'list-row__sub' }, sub)),
+          tier, icon('chevronRight'));
+      }) : emptyState('map', 'Nothing assigned yet', 'Ask your lead for a neighborhood. It shows up here once it\'s assigned.')));
 }
 
-function problemsList() {
-  if (!S.problems.length) return null;
-  return h('div', {},
-    h('p', { class: 'notice error' }, 'These changes were refused by the server and were not saved:'),
-    h('ul', { class: 'list problems' }, S.problems.map(event => h('li', {},
-      h('div', { style: { flex: '1' } }, h('b', {}, event.type.replace('.', ' ')), h('div', { class: 'muted' }, event.error?.message || 'Refused')),
-      h('button', { type: 'button', onclick: async () => { await outbox.retry(event.id); await refreshPending(); scheduleSync(0); } }, 'Retry'),
-      h('button', { type: 'button', class: 'danger', onclick: async () => { await outbox.remove(event.id); await refreshPending(); render(); } }, 'Discard')))));
+/* ---------- more: profile, links, sync and the phone's settings ---------- */
+
+function initials(name) {
+  return String(name || '').trim().split(/\s+/).slice(0, 2).map(part => part[0] || '').join('').toUpperCase() || '?';
+}
+
+const EVENT_NAMES = { knock: 'Door', sale: 'Sale', 'knock.void': 'Undo', 'knock.edit': 'Change', 'shift.start': 'Shift start', 'shift.end': 'Shift end', 'shift.break_start': 'Break', 'shift.break_end': 'Break end' };
+
+function problemTitle(event) {
+  const house = event.houseId ? S.houses.get(event.houseId) : null;
+  const where = house ? `${house.number} ${house.street.split(' ').map(w => w.charAt(0) + w.slice(1).toLowerCase()).join(' ')}` : '';
+  const extra = event.type === 'sale' ? [event.customer?.name?.split(' ').slice(-1)[0], event.ticket ? `$${Number(event.ticket).toLocaleString('en-US')}` : ''] : [];
+  return [EVENT_NAMES[event.type] || event.type, where, ...extra].filter(Boolean).join(' · ');
+}
+
+function syncCard() {
+  const pending = S.pending.length, problems = S.problems;
+  const state = problems.length ? badge(`${problems.length} need a look`, 'error') : !S.online ? badge('Offline') : pending ? badge(`${pending} waiting`, 'warning') : badge('Synced', 'success', 'check');
+  return h('section', { class: 'card', id: 'sync' },
+    h('div', { class: 'row row--between' }, h('h2', {}, 'Sync'), state),
+    pending ? h('p', {}, h('b', {}, `${pending} change${pending === 1 ? '' : 's'} saved on this phone.`), ' They\'ll sync when you have signal. You can keep knocking.')
+      : h('p', {}, 'Everything on this phone is synced.'),
+    store?.persistent === false ? banner('error', 'alert', 'This browser isn\'t saving offline data', 'Keep signal, or add EGC Knock to your home screen.') : null,
+    h('div', { class: 'row' },
+      h('button', { type: 'button', class: 'btn btn--secondary grow', onclick: () => sync({ full: true }) }, icon('refresh'), 'Sync now'),
+      h('span', { class: 'caption muted', style: { textAlign: 'right' } }, 'Last synced', h('br', {}), S.lastSync ? new Date(S.lastSync).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' }).toLowerCase() : 'not yet')),
+    problems.length ? h('div', { class: 'stack stack--tight' },
+      h('span', { class: 'bold', style: { color: 'var(--error)' } }, `${problems.length} need${problems.length === 1 ? 's' : ''} a look`),
+      problems.map(event => banner('error', 'alert', problemTitle(event), `${event.error?.message || 'The server refused this change.'} Nothing else was lost.`,
+        h('div', { class: 'stack stack--tight', style: { alignItems: 'flex-end' } },
+          h('button', { type: 'button', class: 'btn btn--sm btn--retry', onclick: async () => { await outbox.retry(event.id); await refreshPending(); scheduleSync(0); } }, 'Retry'),
+          h('button', { type: 'button', class: 'link caption', onclick: async () => { await outbox.remove(event.id); await refreshPending(); render(); } }, 'Discard'))))) : null);
+}
+
+function rulesSheet() {
+  const s = S.settings, city = cityRuleFor(null), window = knockingWindow();
+  return sheet('Help & the rules', () => h('div', { class: 'stack', style: { gap: '0' } },
+    kv('Knocking hours', `${window.startLabel} until sunset (${window.endLabel} today)`),
+    kv('Sunset warning', `${city?.warnMinutes ?? 15} minutes before`),
+    kv('After sunset', `Only the door you're at, for ${city?.graceMinutes ?? 15} min, and it's flagged`),
+    kv('Go-backs', `${s.goBacks.maxAttemptsPerSeason} tries per house each season`),
+    kv('Not interested', `Rests for ${s.goBacks.notInterestedRestMonths ?? 6} months`),
+    kv('Commission', `${Math.round(s.commission.rate * 100)}% once the job is completed, paid and past its cancellation deadline`),
+    s.commission.acceleratorEnabled ? kv('Higher rate', `${Math.round(s.commission.acceleratorRate * 100)}% above $${Number(s.commission.acceleratorThreshold).toLocaleString('en-US')} a month`) : null,
+    s.commission.leadOverrideEnabled ? kv('Lead bonus', `${Math.round(s.commission.leadOverrideRate * 1000) / 10}% of the team's collected revenue`) : null,
+    kv('Deposit', `${Math.round(s.sale.depositRate * 100)}%, fully refundable for ${s.sale.cancelBusinessDays} business days`)));
+}
+
+function moreScreen() {
+  const theme = recall(THEME_KEY) || 'auto';
+  const links = [...(app.moreLinks || [])].sort((a, b) => (a.order ?? 50) - (b.order ?? 50));
+  const role = S.viewer.admin ? 'Admin' : S.rep.role === 'lead' ? 'Lead' : 'Knocker';
+  const training = S.rep.trainingMinutes ? `${Math.round(S.rep.trainingMinutes / 6) / 10} h training` : '';
+  return h('div', { class: 'screen' },
+    h('div', { class: 'row' },
+      h('span', { class: 'avatar', 'aria-hidden': 'true' }, initials(S.rep.displayName)),
+      h('div', { class: 'grow' }, h('div', { class: 'lead bold' }, S.rep.displayName),
+        h('div', { class: 'caption muted' }, [role, S.rep.premiumCleared ? 'Premium cleared' : '', training].filter(Boolean).join(' · '))),
+      h('button', { type: 'button', class: 'btn btn--quiet btn--sm', onclick: signOut }, 'Sign out')),
+    links.length ? h('div', { class: 'list list--boxed' }, links.map(link => h('a', { class: 'list-row', href: `#${link.route}` },
+      icon(link.icon),
+      h('span', { class: 'list-row__main' }, h('span', { class: 'list-row__title' }, link.label), h('span', { class: 'list-row__sub' }, typeof link.hint === 'function' ? link.hint() : link.hint)),
+      icon('chevronRight')))) : null,
+    syncCard(),
+    h('div', { class: 'list list--boxed' },
+      h('button', { type: 'button', class: 'list-row', onclick: cycleTheme },
+        h('span', { class: 'list-row__main' }, h('span', { class: 'list-row__title' }, 'Dark mode')),
+        h('span', { class: 'caption muted' }, { auto: 'Auto', light: 'Off', dark: 'On' }[theme]), icon('chevronRight')),
+      h('button', { type: 'button', class: 'list-row', onclick: rulesSheet },
+        h('span', { class: 'list-row__main' }, h('span', { class: 'list-row__title' }, 'Help & the rules'), h('span', { class: 'list-row__sub' }, 'Knocking hours, go-backs, commission')),
+        icon('chevronRight'))),
+    h('p', { class: 'caption muted center' }, 'EGC Knock 2.0 · Easy Garage Cleaning · Fort Collins, CO'));
 }
 
 function cycleTheme() {
@@ -464,10 +589,11 @@ function cycleTheme() {
 
 /* ---------- the app object handed to screen modules ---------- */
 
-export const app = { S, api, go, render, registerScreen, enqueue, sync, scheduleSync, houseView, neighborhoodOf, cityRuleFor, currentShift, knockingWindow, saveUi, signOut, outboxApi: () => outbox, refreshPending };
+export const app = { S, api, go, render, registerScreen, enqueue, sync, scheduleSync, houseView, neighborhoodOf, cityRuleFor, currentShift, knockingWindow, saveUi, signOut, outboxApi: () => outbox, refreshPending, syncSummary, moreLinks: [] };
 
-registerScreen('home', homeScreen, { tab: { label: 'Home', glyph: '⌂', order: 0 } });
-registerScreen('admin', () => h('p', { class: 'loading' }, 'Loading admin…'), { tab: { label: 'Admin', glyph: '⚙', order: 90 }, admin: true });
+registerScreen('home', homeScreen, { tab: { label: 'Home', icon: 'home', order: 0 } });
+registerScreen('more', moreScreen, { tab: { label: 'More', icon: 'more', order: 40 } });
+registerScreen('admin', () => h('div', { class: 'screen' }, h('p', { class: 'muted', role: 'status' }, 'Loading admin…')), { tab: { label: 'Admin', icon: 'shield', order: 90 }, admin: true });
 
 async function loadRepModules() {
   const rep = await import('./knock-rep.js');
@@ -532,7 +658,8 @@ async function boot() {
       else { S.authRequired = true; render(); }
     } else {
       S.online = false;
-      if (!cached) mount(main, h('section', { class: 'card' }, h('h1', {}, 'No connection'), h('p', {}, 'Open canvassing once with signal on this phone. After that it works offline.'), h('button', { type: 'button', class: 'primary', onclick: () => location.reload() }, 'Try again')));
+      if (!cached) mount(main, h('div', { class: 'screen' }, emptyState('wifiOff', 'No signal yet', 'Open EGC Knock once with signal on this phone. After that it works offline.',
+        h('button', { type: 'button', class: 'btn btn--primary', onclick: () => location.reload() }, 'Try again'))));
       else render();
     }
   } finally {

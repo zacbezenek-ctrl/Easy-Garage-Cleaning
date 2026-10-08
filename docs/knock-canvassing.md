@@ -16,6 +16,18 @@ signs in with the existing **Hub accounts**, and stores everything in the existi
 | County import | `scripts/knock-import-larimer.mjs` |
 | Tests | `tests/knock-*.test.mjs`, `tests/knock-emulator.test.mjs`, `tests/knock.browser.mjs`, preview server `tests/knock-dev-server.mjs` |
 
+## Look and feel
+
+The screens follow the EGC Knock redesign (Claude Design, October 2026).
+- **Design system:** the tokens and components are in `crew/knock.css`: colors with a dark set, type, spacing, buttons, outcome buttons, dots, badges, cards, meters, sheets, toast, tab bar and the admin shell.
+- **Icons and building blocks:** the 24px line icons and shared pieces (`icon`, `dot`, `badge`, `banner`, `seg`, `meter`, `sheet`) are in `crew/knock-ui.js`. Icons are drawn with SVG elements, never HTML strings.
+- **Rules the screens keep:**
+  - Outcome buttons sit in the thumb zone and are at least 72px tall.
+  - Every outcome color comes with a label or a letter (N, C, X, L, $, S).
+  - The sync pill is the one place that says whether the phone is synced.
+  - The toast sits under the sunset bar, never over the outcome buttons.
+  - Admins get a navy sidebar on a laptop, and the Admin tab with section chips on a phone.
+
 ## Roles and accounts
 
 * **Sign-in is the Hub's.** A knocker needs a Hub account (employee signup, then the owner approves it in the

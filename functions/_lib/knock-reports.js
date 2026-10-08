@@ -54,7 +54,8 @@ async function myMoney({ store, rep, settings, nowMs, params }) {
   const commissions = new Map(saleCommissions(own.sales, settings.commission, { now: nowMs }).map(c => [c.saleId, c]));
   const bySale = own.sales.sort((a, b) => String(b.soldAt).localeCompare(String(a.soldAt))).map(sale => ({
     id: sale.id, saleDate: sale.saleDate, address: sale.address, package: sale.package, ticket: sale.ticket, status: sale.status,
-    collectedAmount: sale.collectedAmount, cancelDeadlineDate: sale.cancelDeadlineDate,
+    collectedAmount: sale.collectedAmount, cancelDeadlineDate: sale.cancelDeadlineDate, jobDate: sale.jobDate,
+    completedAt: sale.completedAt || null, paidAt: sale.paidAt || null,
     commission: sale.status === 'cancelled' ? { state: 'cancelled', amount: 0 }
       : isEarned(sale, nowMs) ? { state: 'earned', amount: commissions.get(sale.id)?.total ?? 0, earnedAt: new Date(earnedAt(sale)).toISOString() }
       : { state: 'pending', amount: projectedCommission(sale, settings.commission) },
