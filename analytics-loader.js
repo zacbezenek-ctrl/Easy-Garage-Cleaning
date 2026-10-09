@@ -11,6 +11,8 @@
   window.gtag('js', new Date());
   window.gtag('config', 'G-CV7HJ2QGHX');
   window.gtag('config', 'AW-18102284288');
+  // Google Tag Manager container (GTM-WXTBD8HG): its start event queues now, gtm.js loads with the rest.
+  window.dataLayer.push({ 'gtm.start': new Date().getTime(), event: 'gtm.js' });
 
   if (!window.fbq) {
     var fbq = window.fbq = function () {
@@ -42,6 +44,7 @@
       window.removeEventListener(eventName, startAnalytics);
     });
     addScript('https://www.googletagmanager.com/gtag/js?id=G-CV7HJ2QGHX');
+    addScript('https://www.googletagmanager.com/gtm.js?id=GTM-WXTBD8HG');
     addScript('https://connect.facebook.net/en_US/fbevents.js');
     addScript('https://www.clarity.ms/tag/wf7ba129jm');
   }

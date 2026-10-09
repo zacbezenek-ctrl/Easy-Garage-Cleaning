@@ -17,19 +17,21 @@ function privatePath(pathname) {
   return PRIVATE_PATH.test(path) || PRIVATE_PATH.test(`/${segments.join('/')}`);
 }
 
+// Google Tag Manager (analytics-loader.js) needs www.googletagmanager.com for its script, beacons and noscript
+// iframe; tagmanager.google.com serves Tag Assistant preview mode.
 const CSP = [
   "default-src 'self'",
   "base-uri 'self'",
   "object-src 'none'",
   "frame-ancestors 'none'",
   "form-action 'self' https://api.web3forms.com",
-  "script-src 'self' 'unsafe-inline' https://www.gstatic.com https://maps.googleapis.com https://www.googletagmanager.com https://connect.facebook.net https://www.clarity.ms https://scripts.clarity.ms",
-  "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com",
+  "script-src 'self' 'unsafe-inline' https://www.gstatic.com https://maps.googleapis.com https://www.googletagmanager.com https://tagmanager.google.com https://connect.facebook.net https://www.clarity.ms https://scripts.clarity.ms",
+  "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com https://tagmanager.google.com",
   "font-src 'self' https://fonts.gstatic.com data:",
   "img-src 'self' data: blob: https:",
   "media-src 'self' blob: https:",
-  "connect-src 'self' https://*.googleapis.com https://*.firebaseio.com https://*.firebaseapp.com https://api.web3forms.com https://www.google-analytics.com https://region1.google-analytics.com https://*.clarity.ms https://connect.facebook.net",
-  "frame-src 'self' https://www.youtube-nocookie.com https://www.youtube.com https://maps.google.com https://www.google.com https://js.stripe.com https://checkout.stripe.com",
+  "connect-src 'self' https://*.googleapis.com https://*.firebaseio.com https://*.firebaseapp.com https://api.web3forms.com https://www.google-analytics.com https://region1.google-analytics.com https://www.googletagmanager.com https://*.clarity.ms https://connect.facebook.net",
+  "frame-src 'self' https://www.youtube-nocookie.com https://www.youtube.com https://maps.google.com https://www.google.com https://js.stripe.com https://checkout.stripe.com https://www.googletagmanager.com",
   "upgrade-insecure-requests",
 ].join('; ');
 
