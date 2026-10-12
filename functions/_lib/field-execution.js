@@ -152,7 +152,7 @@ export function fieldJobProjection(job, events = [], options = {}) {
     customerInstructions: crew(fieldText(job.customerInstructions || instructions.customerNotes || job.customerNotesSummary)),
     requiredEquipment: textList(job.requiredEquipment || logistics.requiredEquipment), materials: fieldMaterials(job),
     checklist: fieldChecklist(job),
-    photos: fieldPhotos(job).map(photo => ({ id: photo.id, category: photo.category, caption: fieldText(photo.caption, 500), createdAt: photo.createdAt, actorName: photo.actorName, bytes: photo.bytes, url: `/api/field-jobs?jobId=${encodeURIComponent(job.id)}&photoId=${encodeURIComponent(photo.id)}` })),
+    photos: fieldPhotos(job).map(photo => ({ id: photo.id, category: photo.category, caption: fieldText(photo.caption, 500), ...(photo.category === 'storage' ? { bin: fieldText(photo.bin, 24), items: fieldText(photo.items, 500) } : {}), createdAt: photo.createdAt, actorName: photo.actorName, bytes: photo.bytes, url: `/api/field-jobs?jobId=${encodeURIComponent(job.id)}&photoId=${encodeURIComponent(photo.id)}` })),
     history: events.map(event => fieldEventProjection(event, options.manager)).filter(Boolean).map(event => signed ? { ...event, summary: stripCrewMoney(event.summary) } : event),
     attention: fieldAttention(job, options.manager === true), canAddManagementNote: options.manager === true,
     jobTime: fieldJobTime(job, options.now),

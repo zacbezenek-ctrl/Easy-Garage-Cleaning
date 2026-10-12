@@ -9,9 +9,15 @@ import { localInstant } from './operations-portal-records.js';
 // wins, and a malformed share record never counts as a share. The optional
 // FIELD_CUSTOMER_PHOTOS_SINCE (a Denver date) limits the automatic rule to
 // photos added from that day on, so enabling the flag need not expose older jobs.
-export const CUSTOMER_PHOTO_STANDARD = Object.freeze(['before', 'after']);
-const ORDER = ['before', 'progress', 'after', 'damage', 'walkthrough'];
-const NAMES = { before: 'Before', after: 'After', progress: 'Progress', damage: 'Damage', walkthrough: 'Walkthrough' };
+// Storage photos (one per labeled bin) are made for the customer's storage map, so
+// they follow the before/after rule rather than the sensitive-category rule.
+export const CUSTOMER_PHOTO_STANDARD = Object.freeze(['before', 'after', 'storage']);
+const ORDER = ['before', 'progress', 'after', 'storage', 'damage', 'walkthrough'];
+const NAMES = { before: 'Before', after: 'After', progress: 'Progress', damage: 'Damage', walkthrough: 'Walkthrough', storage: 'Storage' };
+// A storage bin label as crews write it on the bin ("A1", "Shelf 2 – B3"). Anything else is dropped.
+export const STORAGE_BIN = /^[A-Za-z0-9][A-Za-z0-9 .#/–-]{0,23}$/;
+export const storageBin = value => { const text = String(value ?? '').trim().replace(/\s+/g, ' '); return STORAGE_BIN.test(text) ? text : ''; };
+export const storageItems = value => String(value ?? '').replace(/[\u0000-\u0008\u000b-\u001f\u007f]/g, '').trim().slice(0, 500);
 const INSTANT = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,9})?Z$/;
 const stamp = value => value && typeof value === 'object' && !Array.isArray(value) && typeof value.at === 'string' && INSTANT.test(value.at) && typeof value.actorId === 'string' && value.actorId ? value : null;
 const category = photo => Object.hasOwn(NAMES, photo?.category) ? photo.category : 'other';
@@ -54,7 +60,12 @@ export const customerVisiblePhotos = (job, policy = {}) => sorted(fieldPhotos(jo
 // addedAt is when the server verified the upload, not when the camera took it
 // (offline drafts can upload later), so the portal says "Added".
 export function customerPhotoProjection(job, policy = {}) {
-  return customerVisiblePhotos(job, policy).map(photo => ({ photoId: photo.id, category: category(photo), addedAt: INSTANT.test(photo.createdAt || '') ? photo.createdAt : '', label: `${NAMES[category(photo)] || 'Project'} photo` }));
+  return customerVisiblePhotos(job, policy).map(photo => {
+    const row = { photoId: photo.id, category: category(photo), addedAt: INSTANT.test(photo.createdAt || '') ? photo.createdAt : '', label: `${NAMES[category(photo)] || 'Project'} photo` };
+    // Storage photos carry the bin label and the item list the crew wrote for the customer (never the internal caption).
+    if (row.category === 'storage') { const bin = storageBin(photo.bin); if (!bin) return null; Object.assign(row, { bin, items: storageItems(photo.items), label: `Bin ${bin}` }); }
+    return row;
+  }).filter(Boolean);
 }
 
 export function customerPortalPhoto(job, photoId, policy = {}) {

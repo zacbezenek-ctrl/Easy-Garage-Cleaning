@@ -291,7 +291,7 @@
     if (input.action === 'material') return `${S.job?.materials.find(row => row.id === input.materialId)?.name || 'Material'}: ${label(input.state)}`;
     if (input.action === 'note') return `${input.issue ? 'Issue' : 'Note'}: ${input.body}`;
     if (input.action === 'status') return `Status: ${statusText(input.status)}${input.reason ? ` — ${input.reason}` : ''}`;
-    if (input.action === 'photo') return `${capital(label(input.category))} photo${input.caption ? ` — ${input.caption}` : ''}`;
+    if (input.action === 'photo') return input.category === 'storage' ? `Storage photo — bin ${input.bin || '?'}` : `${capital(label(input.category))} photo${input.caption ? ` — ${input.caption}` : ''}`;
     if (input.action === 'end_day') return `${input.visitDate && input.visitDate !== S.job?.visits?.today ? `End the ${dateLabel(input.visitDate)} visit` : 'End today’s visit'}: ${input.notes}`;
     return capital(label(input.action));
   }
@@ -405,7 +405,7 @@
   function photoForm() {
     if (!S.photosAvailable) return '<p class="notice error">Photo storage is unavailable. Contact operations; no upload will be reported as saved.</p>';
     const chosen = getDraft('photoCategory', 'before'), locked = S.preparing ? 'disabled' : '';
-    return `<details open><summary>Add photos</summary><div class="field"><label for="photo-category">Photo category</label><select id="photo-category" data-draft="photoCategory">${['before', 'progress', 'after', 'damage'].map(category => `<option value="${category}" ${category === chosen ? 'selected' : ''}>${label(category)}</option>`).join('')}</select></div><div class="field"><label for="photo-caption">Caption (optional)</label><input id="photo-caption" data-draft="photoCaption" maxlength="500" placeholder="Area, item or issue shown" value="${esc(getDraft('photoCaption'))}"></div><div class="field"><label for="photo-camera">Take a photo</label><input id="photo-camera" type="file" accept="image/*" capture="environment" ${locked}></div><div class="field"><label for="photo-library">Choose photos from library</label><input id="photo-library" type="file" accept="image/*" multiple ${locked}></div><small>Each photo is resized and saved on this phone, then uploads in order, even after a lost signal. It counts only after the server verifies and saves it. Up to 8 photos per selection.</small></details>`;
+    return `<details open><summary>Add photos</summary><div class="field"><label for="photo-category">Photo category</label><select id="photo-category" data-draft="photoCategory">${['before', 'progress', 'after', 'damage', 'storage'].map(category => `<option value="${category}" ${category === chosen ? 'selected' : ''}>${category === 'storage' ? 'storage bin (customer storage map)' : label(category)}</option>`).join('')}</select></div><div id="storage-fields" ${chosen === 'storage' ? '' : 'hidden'}><div class="field"><label for="photo-bin">Bin label</label><input id="photo-bin" data-draft="photoBin" maxlength="24" autocapitalize="characters" placeholder="Exactly as written on the bin, like A1" value="${esc(getDraft('photoBin'))}"></div><div class="field"><label for="photo-items">What's inside (the customer sees this)</label><textarea id="photo-items" data-draft="photoItems" maxlength="500" rows="3" placeholder="Holiday lights, wreath, extension cords">${esc(getDraft('photoItems'))}</textarea></div><small>One photo per bin, taken with the lid open. The customer can search these words in their storage map.</small></div><div class="field"><label for="photo-caption">Caption (optional)</label><input id="photo-caption" data-draft="photoCaption" maxlength="500" placeholder="Area, item or issue shown" value="${esc(getDraft('photoCaption'))}"></div><div class="field"><label for="photo-camera">Take a photo</label><input id="photo-camera" type="file" accept="image/*" capture="environment" ${locked}></div><div class="field"><label for="photo-library">Choose photos from library</label><input id="photo-library" type="file" accept="image/*" multiple ${locked}></div><small>Each photo is resized and saved on this phone, then uploads in order, even after a lost signal. It counts only after the server verifies and saves it. Up to 8 photos per selection.</small></details>`;
   }
   function historyMarkup(events) { return events.length ? events.map(event => `<article class="history-item"><strong>${esc(event.summary || label(event.action))}</strong><small>${esc(event.actorName || event.actorId)} · ${esc(stamp(event.createdAt))}${event.visibility === 'management' ? ' · Management only' : ''}</small>${event.body ? `<p class="text-block">${esc(event.body)}</p>` : ''}</article>`).join('') : '<p class="empty">No field activity recorded yet.</p>'; }
   function completionMarkup() {
@@ -592,7 +592,10 @@
   async function queuePhotos(files) {
     if (!S.job || !S.user || !S.photosAvailable || S.preparing) return;
     const selected = Array.from(files), user = S.user.user, category = document.getElementById('photo-category').value, caption = document.getElementById('photo-caption').value;
+    const storage = category === 'storage' ? { bin: (document.getElementById('photo-bin')?.value || '').trim(), items: (document.getElementById('photo-items')?.value || '').trim() } : null;
     if (!selected.length) return;
+    if (storage && !/^[A-Za-z0-9][A-Za-z0-9 .#/–-]{0,23}$/.test(storage.bin)) return message('Enter the bin label exactly as written on the bin, like A1.', true);
+    if (storage && selected.length > 1) return message('Storage photos go one bin at a time. Choose one photo for this bin.', true);
     if (selected.length > 8) return message('Choose up to 8 photos at a time.', true);
     if (queuedPhotos().length + selected.length > 20) return message('Wait for the saved photos to upload, or discard some, before adding more (20 per job on this phone).', true);
     S.preparing = true; renderJob(); message('Preparing photos…');
@@ -603,13 +606,14 @@
         try { dataUrl = await compressPhoto(file); } catch (error) { problem = true; message(`${file.name || 'Photo'}: ${error.message}`, true); continue; }
         if (S.user?.user !== user || !S.job) return;
         const requestId = crypto.randomUUID();
-        try { await outbox.enqueue({ requestId, kind: 'field', user, jobId, payload: { jobId, requestId, expectedRevision: S.job.expectedRevision, expectedUser: user, action: 'photo', category, caption, dataUrl } }); saved++; }
+        try { await outbox.enqueue({ requestId, kind: 'field', user, jobId, payload: { jobId, requestId, expectedRevision: S.job.expectedRevision, expectedUser: user, action: 'photo', category, caption, ...(storage || {}), dataUrl } }); saved++; }
         catch (error) { problem = true; message(error.message, true); break; }
         await refreshOutbox(); renderPhotoQueue(); renderOutbox();
       }
     } finally { S.preparing = false; }
     if (S.user?.user !== user || !S.job) return;
     if (saved) setDraft('photoCaption', '');
+    if (saved && storage) { setDraft('photoBin', ''); setDraft('photoItems', ''); }
     await refreshOutbox(); renderJob();
     if (!saved) return;
     if (offline()) { requestBackgroundSync(); if (!problem) message(outbox.persistent ? `${saved} photo${saved === 1 ? ' is' : 's are'} saved on this phone and will upload in order when you reconnect.` : `${saved} photo${saved === 1 ? ' is' : 's are'} only on this page. Keep it open until ${saved === 1 ? 'it uploads' : 'they upload'} when you reconnect.`); return; }
@@ -623,6 +627,7 @@
     try { await outbox.adoptPhotoDrafts(S.user.user); } catch { /* The drafts stay in the old store and move on the next load. */ }
   }
   main.addEventListener('input', event => { const suffix = event.target.dataset.draft; if (suffix) setDraft(suffix, event.target.value); });
+  main.addEventListener('change', event => { if (event.target.id === 'photo-category') { const fields = document.getElementById('storage-fields'); if (fields) fields.hidden = event.target.value !== 'storage'; } });
   main.addEventListener('input', event => { if (event.target.id === 'reason' && S.statusForm) S.statusForm.reason = event.target.value; });
   // Runs after the data-draft listener above: an edit back to where it started is no edit; an emptied editor is kept as one.
   main.addEventListener('input', event => {

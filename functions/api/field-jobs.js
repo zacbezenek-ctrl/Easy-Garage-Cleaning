@@ -18,6 +18,7 @@ import { jobStatusMovesTime } from '../_lib/employee-job-time.js';
 import { clockInWithoutFix } from '../_lib/employee-timecards.js';
 import { addDays } from '../_lib/dispatch-time.js';
 import { walkthroughCard } from '../_lib/walkthrough-state.js';
+import { storageBin, storageItems } from '../_lib/customer-photo-visibility.js';
 
 const reply = (status, body) => Response.json(body, { status, headers: { 'Cache-Control': 'private, no-store', 'X-Content-Type-Options': 'nosniff' } });
 const mutationOriginAllowed = request => {
@@ -160,7 +161,10 @@ async function readInput(request) {
 }
 
 async function savePhoto(ctx, env, job, input, fingerprint, receipt) {
-  if (!['before', 'progress', 'after', 'damage', 'walkthrough'].includes(input.category) || typeof input.caption !== 'string' || input.caption.length > 500) throw fieldFailure('Choose a photo category and a caption no longer than 500 characters.');
+  if (!['before', 'progress', 'after', 'damage', 'walkthrough', 'storage'].includes(input.category) || typeof input.caption !== 'string' || input.caption.length > 500) throw fieldFailure('Choose a photo category and a caption no longer than 500 characters.');
+  const storage = input.category === 'storage' ? { bin: storageBin(input.bin), items: storageItems(input.items) } : null;
+  if (storage && !storage.bin) throw fieldFailure('Storage photos need the bin label written on the bin, like A1 (letters, numbers, spaces or dashes, up to 24 characters).');
+  if (storage && (typeof input.items !== 'string' || input.items.length > 500)) throw fieldFailure('List what is in the bin in 500 characters or fewer.');
   if(input.category==='walkthrough'&&!ctx.manager)throw fieldFailure('Only a manager can attach the signed walkthrough reference photos.',403,'FIELD_REFERENCE_PHOTO_MANAGER_REQUIRED');
   if (fieldCancelled(job)) throw fieldFailure(fieldStage(job) === 'cancelled' ? 'This job is cancelled. Ask operations before adding evidence.' : 'This job was marked a no-show. Ask operations before adding evidence.', 409, 'FIELD_JOB_CLOSED');
   if (fieldPhotos(job).length >= 100) throw fieldFailure('This job already has 100 field photos. Contact operations to archive photos before adding more.', 409, 'FIELD_PHOTO_LIMIT');
@@ -168,7 +172,7 @@ async function savePhoto(ctx, env, job, input, fingerprint, receipt) {
   let pending = receipt;
   if (!pending) {
     const fileId = await client.allocate(), now = new Date().toISOString();
-    pending = { id: input.requestId, action: 'photo', actorId: ctx.session.user, actorName: ctx.session.displayName || ctx.session.user, createdAt: now, state: 'pending', visibility: 'crew', fingerprint, fileId, category: input.category, caption: fieldText(input.caption, 500) };
+    pending = { id: input.requestId, action: 'photo', actorId: ctx.session.user, actorName: ctx.session.displayName || ctx.session.user, createdAt: now, state: 'pending', visibility: 'crew', fingerprint, fileId, category: input.category, caption: fieldText(input.caption, 500), ...(storage || {}) };
     await ctx.store.commit(job, { fieldPhotoPendingAt: now }, pending);
     pending = await ctx.store.readEvent(job.id, input.requestId);
   }
@@ -185,8 +189,8 @@ async function savePhoto(ctx, env, job, input, fingerprint, receipt) {
     if (fieldCancelled(latest)) throw fieldFailure('The job was cancelled or marked a no-show during upload. The photo has not been added to the job.', 409, 'FIELD_JOB_CLOSED');
     const existing = fieldPhotos(latest);
     if (existing.length >= 100) throw fieldFailure('This job already has 100 field photos. Contact operations.', 409, 'FIELD_PHOTO_LIMIT');
-    const now = new Date().toISOString(), photo = { id: input.requestId, fileId: pending.fileId, category: input.category, caption: fieldText(input.caption, 500), actorId: ctx.session.user, actorName: pending.actorName, createdAt: now, verified: true, mime: picture.mime, bytes: picture.bytes.length };
-    const event = { ...pending, state: 'applied', createdAt: now, photoId: photo.id, summary: `${input.category} photo uploaded`, body: photo.caption }; delete event.__updateTime;
+    const now = new Date().toISOString(), photo = { id: input.requestId, fileId: pending.fileId, category: input.category, caption: fieldText(input.caption, 500), ...(storage || {}), actorId: ctx.session.user, actorName: pending.actorName, createdAt: now, verified: true, mime: picture.mime, bytes: picture.bytes.length };
+    const event = { ...pending, state: 'applied', createdAt: now, photoId: photo.id, summary: storage ? `Storage photo uploaded for bin ${storage.bin}` : `${input.category} photo uploaded`, body: photo.caption }; delete event.__updateTime;
     try { await ctx.store.commit(latest, { fieldExecution: { ...(latest.fieldExecution || {}), photos: [...existing, photo] }, updatedAt: now, ...(input.category==='walkthrough'?{walkthroughPhotoAt:now,photoSyncStatus:'verified_in_job'}:{fieldLastActionAt:now}) }, event, currentReceipt); return; }
     catch (error) { if (error.code !== 'FIELD_REVISION_CONFLICT' || attempt === 2) throw error; }
   }
