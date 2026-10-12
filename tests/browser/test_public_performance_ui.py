@@ -111,9 +111,9 @@ class PublicPerformanceBrowserTests(unittest.TestCase):
             page.wait_for_timeout(100)
         posted = page.evaluate('window.__posted'); field = lambda name: posted[name]
         self.assertEqual(field('phone'), '+19705550101'); self.assertEqual(field('name'), 'Synthetic Walkthrough'); self.assertEqual(field('serviceZip'), '80525')
-        self.assertEqual(field('items'), 'Garage Cleanout — Medium garage ($400–$650)')
+        self.assertEqual(field('items'), 'Garage Cleanout — Medium garage')
         self.assertEqual(field('booking_slot'), 'Tomorrow AM'); self.assertEqual(field('flow_type'), 'walkthrough')
-        self.assertEqual(field('What to remove'), 'Garage Cleanout — Medium garage ($400–$650) — Fort Collins — Slot: Tomorrow AM — Flow: walkthrough')
+        self.assertEqual(field('What to remove'), 'Garage Cleanout — Medium garage — Fort Collins — Slot: Tomorrow AM — Flow: walkthrough')
         self.assertEqual([lead['phone'] for lead in self.relayed], ['+19705550101'], 'fb-capture.js relays the finalized fields once')
 
     def test_book_page_ships_its_business_contact_in_the_bar(self):

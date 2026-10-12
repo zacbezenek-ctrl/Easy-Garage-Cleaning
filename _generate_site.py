@@ -169,7 +169,7 @@ SERVICE_DEFINITIONS = {
     "Mattress Removal": ("What is mattress removal?", "Mattress removal is haul-away of mattresses and box springs from garages, bedrooms, or curbside. We handle the weight and disposal requirements so you do not need a truck rental, with the exact price approved before work begins."),
     "Storage Unit Cleanout": ("What is a storage unit cleanout?", "A storage unit cleanout empties a paid storage unit in one trip — boxes, furniture, and forgotten items hauled, donated, or disposed. It is ideal when monthly fees exceed the value of what is inside; we set the exact price after seeing the unit."),
     "Yard Debris Removal": ("What is yard debris removal?", "Yard debris removal hauls branches, lawn equipment, outdoor furniture, and garage-stored yard clutter from your property. We load, haul, and recycle or dispose — common after storms or when clearing space for parking."),
-    "Couch Removal": ("What is couch removal?", "Couch removal is single-item pickup of sofas, sectionals, and loveseats from your garage or home. We navigate stairs and tight spaces, donate usable upholstery when possible, and approve the exact flat rate before work begins — typically $99–$150 for one piece."),
+    "Couch Removal": ("What is couch removal?", "Couch removal is single-item pickup of sofas, sectionals, and loveseats from your garage or home. We navigate stairs and tight spaces, donate usable upholstery when possible, and approve the exact flat rate before work begins — $139 flat if you set it at the curb, or from $675 when our crew carries it out."),
     "Hot Tub Removal": ("What is hot tub removal?", "Hot tub removal includes on-site dismantling and haul-away of spas and hot tubs from patios or garages. We inspect access and size before setting one flat rate, helping you avoid DIY injury and dump runs."),
     "Treadmill Removal": ("What is treadmill removal?", "Treadmill removal is heavy exercise equipment haul-away from garages or basements. We disassemble when needed, carry it out safely, and recycle or dispose of it for an approved flat rate without hourly surprises."),
     "Refrigerator Removal": ("What is refrigerator removal?", "Refrigerator removal is freon-safe pickup of fridges and freezers from garages or kitchens. Working units may be donated to Habitat ReStore; we handle doors, weight, and disposal rules for one approved flat rate."),
@@ -250,8 +250,8 @@ BLOG_QUICK_SUMMARIES = {
         "must go to Larimer County HHW. Easy Garage quotes flat from photos — (970) 999-1818."
     ),
     "how-much-does-garage-cleanout-cost-fort-collins.html": (
-        "Fort Collins garage cleanouts: $99–$150 single item, $400–$650 typical garage, $650+ packed two-car. "
-        "Flat-rate locked before work; text photos for your exact quote."
+        "Fort Collins garage cleanouts start from $675, with one exact flat rate set at a free on-site walkthrough. "
+        "Curbside pickup is $139 flat for up to 4 cubic yards. Price approved before work begins."
     ),
     "got-junk-vs-local-junk-removal-fort-collins.html": (
         "Local garage specialist vs national franchise: flat photo quotes, background-checked crew, no hourly surprises. "
@@ -289,22 +289,28 @@ NORTHERO_RELATED = [
     ("/", "Home"),
 ]
 
+CARRY_OUT_PRICE = "From $675"
+CURBSIDE_OR_CARRY_OUT = "$139 curbside · from $675"
+# Services a customer can also set at the curb for the flat $139 pickup.
+CURBSIDE_STYPES = frozenset({"Junk Removal", "Furniture Removal", "Appliance Removal", "Mattress Removal", "Yard Debris Removal", "Couch Removal", "Refrigerator Removal", "Treadmill Removal"})
+
 TYPICAL_JOBS = {
-    "Junk Removal": ("2–4 hours", "$250–$650"),
-    "Garage Cleanout": ("2–5 hours", "$400–$650"),
-    "Garage Cleaning": ("2 hrs – full day", "$300–$3,200"),
-    "Garage Organization": ("2–4 hours", "$250–$500"),
-    "Furniture Removal": ("30 min – 2 hrs", "$99–$150"),
-    "Appliance Removal": ("30 min – 2 hrs", "$99–$150"),
-    "Mattress Removal": ("30 min – 1 hr", "$99–$150"),
-    "Storage Unit Cleanout": ("1–3 hours", "$250–$650"),
-    "Yard Debris Removal": ("1–3 hours", "$99–$250"),
+    # Public prices: $139 flat curbside pickup, or from $675 for anything the crew carries out.
+    "Junk Removal": ("2–4 hours", CURBSIDE_OR_CARRY_OUT),
+    "Garage Cleanout": ("2–5 hours", CARRY_OUT_PRICE),
+    "Garage Cleaning": ("2 hrs – full day", CARRY_OUT_PRICE),
+    "Garage Organization": ("2–4 hours", CARRY_OUT_PRICE),
+    "Furniture Removal": ("30 min – 2 hrs", CURBSIDE_OR_CARRY_OUT),
+    "Appliance Removal": ("30 min – 2 hrs", CURBSIDE_OR_CARRY_OUT),
+    "Mattress Removal": ("30 min – 1 hr", CURBSIDE_OR_CARRY_OUT),
+    "Storage Unit Cleanout": ("1–3 hours", CARRY_OUT_PRICE),
+    "Yard Debris Removal": ("1–3 hours", CURBSIDE_OR_CARRY_OUT),
     # Item-page stypes — drives the mobile sticky price bar on each item page.
-    "Couch Removal": ("30 min – 1 hr", "$99–$150"),
-    "Refrigerator Removal": ("30 min – 1 hr", "$99–$150"),
-    "Treadmill Removal": ("30 min – 1 hr", "$99–$150"),
-    "Shed Cleanout": ("1–3 hours", "$250–$650"),
-    "Hot Tub Removal": ("2–4 hours", "$400–$800"),
+    "Couch Removal": ("30 min – 1 hr", CURBSIDE_OR_CARRY_OUT),
+    "Refrigerator Removal": ("30 min – 1 hr", CURBSIDE_OR_CARRY_OUT),
+    "Treadmill Removal": ("30 min – 1 hr", CURBSIDE_OR_CARRY_OUT),
+    "Shed Cleanout": ("1–3 hours", CARRY_OUT_PRICE),
+    "Hot Tub Removal": ("2–4 hours", CARRY_OUT_PRICE),
 }
 
 CITY_NEIGHBORHOODS = {
@@ -1094,14 +1100,12 @@ PRICING_HTML = """
 <section class="pricing" id="pricing" aria-labelledby="pricing-heading">
   <div class="wrap">
     <div class="section-head reveal"><span class="mono section-num">Pricing</span>
-      <h2 class="section-title" id="pricing-heading">Transparent ranges. <em>One exact price</em> after we look.</h2>
-      <p class="section-sub">These ranges help you plan. We set the exact flat rate during a free on-site walkthrough—no hourly billing.</p>
+      <h2 class="section-title" id="pricing-heading">Two simple prices. <em>One exact rate</em> after we look.</h2>
+      <p class="section-sub">Set it at the curb for a flat $139, or let our crew carry it out from $675 — one exact flat rate set at a free on-site walkthrough. No hourly billing.</p>
     </div>
-    <div class="pricing-grid reveal">
-      <div class="price-card"><div class="price-tier">Pickup</div><div class="price-range">$99–150</div><div class="price-name">Single-item haul</div><p class="price-desc">One appliance, mattress, couch, or bulky item.</p></div>
-      <div class="price-card"><div class="price-tier">Small load</div><div class="price-range">$250–400</div><div class="price-name">Partial cleanout</div><p class="price-desc">A corner of the garage or a few furniture pieces.</p></div>
-      <div class="price-card featured"><span class="price-badge">Most popular</span><div class="price-tier">Medium</div><div class="price-range">$400–650</div><div class="price-name">Standard garage</div><p class="price-desc">Most single-car or moderately full two-car garages.</p></div>
-      <div class="price-card"><div class="price-tier">Large</div><div class="price-range">$650+</div><div class="price-name">Full garage / estate</div><p class="price-desc">Packed two-car garages or multi-space cleanouts.</p></div>
+    <div class="pricing-grid reveal" style="grid-template-columns:repeat(auto-fit,minmax(260px,1fr))">
+      <div class="price-card"><div class="price-tier">Curbside pickup</div><div class="price-range">$139</div><div class="price-name">Flat — up to 4 cubic yards</div><p class="price-desc">You set it at the curb or driveway; we load and haul it. No walkthrough needed.</p></div>
+      <div class="price-card featured"><span class="price-badge">Most popular</span><div class="price-tier">Cleanouts &amp; turnarounds</div><div class="price-range">From $675</div><div class="price-name">Exact flat rate after a free walkthrough</div><p class="price-desc">Garage cleanouts, turnarounds, and anything our crew carries out — furniture, appliances, storage units, sheds, and estates.</p></div>
     </div>
     <p class="pricing-disclaimer reveal">{PRICING_DISCLAIMER_BLOCK} <a href="/pricing.html" style="color:var(--accent);font-weight:600;">Full pricing guide →</a> · <a href="#quote" style="color:var(--accent);font-weight:600;">Schedule Free Walkthrough →</a></p>
   </div>
@@ -1137,18 +1141,18 @@ def gallery_html(photos=None):
 # generic "Job size" list so visitors aren't asked about garage bays.
 GARAGE_SIZE_LABEL = "Garage size"
 GARAGE_SIZE_OPTIONS = """<option value="">Choose approximate size…</option>
-                <option value="single" data-flow="call_text" data-range="$99–$150">Single item / few bags ($99–$150)</option>
-                <option value="small_light" data-flow="call_text" data-range="$250–$299">Small cleanout — light partial ($250–$299)</option>
-                <option value="small_plus" data-flow="booking" data-range="$300–$400">Small cleanout — half garage+ ($300–$400)</option>
-                <option value="medium" data-flow="booking" data-range="$400–$650">Medium garage ($400–$650)</option>
-                <option value="large" data-flow="booking" data-range="$650+">Large garage / estate ($650+)</option>"""
+                <option value="single" data-flow="call_text">Single item / few bags</option>
+                <option value="small_light" data-flow="call_text">Small cleanout — light partial</option>
+                <option value="small_plus" data-flow="booking">Small cleanout — half garage+</option>
+                <option value="medium" data-flow="booking">Medium garage</option>
+                <option value="large" data-flow="booking">Large garage / estate</option>"""
 JOB_SIZE_LABEL = "Job size"
 JOB_SIZE_OPTIONS = """<option value="">What needs to go…</option>
-                <option value="One bulky item" data-flow="call_text" data-range="$99–$150">One bulky item</option>
-                <option value="A few items (2–5)" data-flow="call_text" data-range="$250–$400">A few items (2–5)</option>
-                <option value="Half a garage or room" data-flow="booking" data-range="$300–$400">Half a garage or room</option>
-                <option value="Full space cleanout" data-flow="booking" data-range="$400–$650">Full space cleanout</option>
-                <option value="Not sure — call me" data-flow="call_text" data-range="">Not sure — call me</option>"""
+                <option value="One bulky item" data-flow="call_text">One bulky item</option>
+                <option value="A few items (2–5)" data-flow="call_text">A few items (2–5)</option>
+                <option value="Half a garage or room" data-flow="booking">Half a garage or room</option>
+                <option value="Full space cleanout" data-flow="booking">Full space cleanout</option>
+                <option value="Not sure — call me" data-flow="call_text">Not sure — call me</option>"""
 
 QUOTE_FORM = """
 <section class="final-cta final-cta-split" id="quote" aria-labelledby="cta-heading">
@@ -1376,7 +1380,7 @@ def business_schema():
         "email": EMAIL,
         "image": f"{SITE}/og-image.png",
         "logo": f"{SITE}/android-chrome-512x512.png",
-        "priceRange": "$99-$650+",
+        "priceRange": "$$",
         "knowsAbout": KNOWS_ABOUT,
         "address": {"@type": "PostalAddress", "addressLocality": "Fort Collins", "addressRegion": "CO", "postalCode": "80525", "addressCountry": "US"},
         "geo": {"@type": "GeoCoordinates", "latitude": 40.585260, "longitude": -105.084419},
@@ -1503,6 +1507,34 @@ def webpage_schema(title, desc, url):
     }, ensure_ascii=False)
 
 
+def service_offers(stype):
+    """Public prices only: from $675 for anything the crew carries out, $139 flat at the curb."""
+    carry_out = {
+        "@type": "Offer",
+        "name": "Full service — exact flat rate after a free on-site walkthrough",
+        "priceCurrency": "USD",
+        "priceSpecification": {
+            "@type": "PriceSpecification",
+            "minPrice": "675",
+            "priceCurrency": "USD",
+            "description": "From $675. The exact flat-rate price is set during a free on-site walkthrough and approved before work begins.",
+        },
+        "availability": "https://schema.org/InStock",
+        "url": f"{SITE}/book.html",
+    }
+    if stype not in CURBSIDE_STYPES:
+        return carry_out
+    curbside = {
+        "@type": "Offer",
+        "name": "Curbside pickup — up to 4 cubic yards set at the curb",
+        "price": "139",
+        "priceCurrency": "USD",
+        "availability": "https://schema.org/InStock",
+        "url": f"{SITE}/flat-rate-junk-removal-fort-collins-co.html",
+    }
+    return [curbside, carry_out]
+
+
 def service_schema(name, desc, slug, stype):
     return json.dumps([
         business_schema(),
@@ -1515,19 +1547,7 @@ def service_schema(name, desc, slug, stype):
             "provider": {"@type": "LocalBusiness", "@id": f"{SITE}/#business"},
             "areaServed": AREA_SERVED,
             "serviceType": stype,
-            "offers": {
-                "@type": "Offer",
-                "priceCurrency": "USD",
-                "priceSpecification": {
-                    "@type": "PriceSpecification",
-                    "minPrice": "99",
-                    "maxPrice": "650",
-                    "priceCurrency": "USD",
-                    "description": "Planning ranges only. The exact flat-rate price is set after a free on-site walkthrough.",
-                },
-                "availability": "https://schema.org/InStock",
-                "url": f"{SITE}/book.html",
-            },
+            "offers": service_offers(stype),
         },
         {"@context": "https://schema.org", "@type": "BreadcrumbList", "itemListElement": [
             {"@type": "ListItem", "position": 1, "name": "Home", "item": f"{SITE}/"},
@@ -1608,9 +1628,9 @@ def typical_job_html(stype):
 <strong>Typical {esc(stype.lower())} job</strong>
 <dl class="typical-job-grid">
 <dt>Time on site</dt><dd>{esc(time_est)}</dd>
-<dt>Price range</dt><dd>{esc(price_est)}</dd>
+<dt>Price</dt><dd>{esc(price_est)}</dd>
 </dl>
-<p style="font-size:13px;color:var(--text);margin-top:10px;">Flat-rate from photos — your exact quote locked before we start.</p>
+<p style="font-size:13px;color:var(--text);margin-top:10px;">One exact flat rate set at a free on-site walkthrough and approved before we start.</p>
 </aside>"""
 
 
@@ -2251,8 +2271,8 @@ def render_item_page(item):
     if similar_links:
         chips = "".join(f'<a href="{href}">{esc(label)}</a>' for href, label in similar_links)
         similar_html = f'<section class="body-copy"><div class="wrap"><p class="mono" style="font-size:11px;margin-bottom:12px">Similar items we remove</p><div class="similar-items-row reveal">{chips}</div></div></section>'
-    price_range = TYPICAL_JOBS.get(item["stype"], ("30 min – 2 hrs", "$99–$400"))[1]
-    price_sticky = f'<div class="price-sticky-mobile" aria-label="Typical price"><span class="price-sticky-range">{price_range}</span><a href="#quote">Get quote →</a></div>'
+    price_range = TYPICAL_JOBS.get(item["stype"], ("30 min – 2 hrs", CARRY_OUT_PRICE))[1]
+    price_sticky = f'<div class="price-sticky-mobile" aria-label="Price"><span class="price-sticky-range">{price_range}</span><a href="#quote">Get quote →</a></div>'
     hero = f"""<header class="hero" id="top"><div class="wrap"><div class="hero-eyebrow mono">Fort Collins, CO</div>
 <div class="item-hero-icon" aria-hidden="true">{icon}</div>
 <a href="tel:{PHONE}" class="hero-phone">{PHONE_DISPLAY}<span class="hero-phone-sub">· schedule your free walkthrough</span></a>
@@ -2388,7 +2408,7 @@ def render_book():
 
 def render_pricing():
     title = "Garage Cleanout Pricing Fort Collins | Walkthrough Pricing"
-    desc = "Transparent garage cleanout and junk removal pricing in Fort Collins. Review planning ranges, then get one exact flat rate during a free on-site walkthrough."
+    desc = "Garage cleanout and junk removal pricing in Fort Collins: $139 flat curbside pickup, or cleanouts from $675 with one exact flat rate set at a free on-site walkthrough."
     canonical = f"{SITE}/pricing.html"
     schema = f'<script type="application/ld+json">{json.dumps(business_schema(), ensure_ascii=False)}</script>'
     body = f"""<main>
@@ -2396,20 +2416,18 @@ def render_pricing():
 <div class="hero-eyebrow mono">Transparent pricing</div>
 <a href="tel:{PHONE}" class="hero-phone">{PHONE_DISPLAY}<span class="hero-phone-sub">· free on-site walkthrough</span></a>
 <h1 class="hero-title" style="max-width:none">How our <em>pricing works</em></h1>
-<p class="hero-sub">Use these ranges to plan. We visit the property, understand the full scope, and set one exact flat rate before work begins.</p>
+<p class="hero-sub">Two simple options: $139 flat curbside pickup, or cleanouts and turnarounds from $675. For anything our crew carries out, we visit the property, understand the full scope, and set one exact flat rate before work begins.</p>
 <div class="hero-ctas"><a href="/book.html" class="btn-primary">Schedule Free Walkthrough</a><a href="sms:{PHONE}?body={SMS_PHOTOS_BODY}" class="btn-secondary">Schedule by Text</a></div>
 </div></section>
 {fmt(PROCESS_HTML)}
 <section class="pricing-how"><div class="wrap">
 <div class="section-head reveal"><span class="mono section-num">How pricing works</span>
-<h2 class="section-title">Single item or <em>full garage</em> — we quote flat</h2>
-<p class="section-sub">Unlike hourly haulers, we set one complete price after seeing the property with you. These ranges help you plan; the exact number is approved before work begins.</p>
+<h2 class="section-title">Curbside or <em>full service</em> — we quote flat</h2>
+<p class="section-sub">Unlike hourly haulers, we never run a meter. Curbside pickup has one published price; everything our crew carries out gets one exact flat rate after a free walkthrough, approved before work begins.</p>
 </div>
 <div class="pricing-how-grid reveal">
-<div class="step"><div class="step-num">Single item</div><h3>$99–150</h3><p>One couch, mattress, appliance, hot tub, treadmill, or bulky piece. Priced individually — not by the hour.</p></div>
-<div class="step"><div class="step-num">Partial load</div><h3>$250–400</h3><p>A corner of the garage, a few furniture pieces, or a small haul. Great for targeted cleanouts.</p></div>
-<div class="step"><div class="step-num">Standard garage</div><h3>$400–650</h3><p>Most single-car or moderately full two-car garages. Our most common booking in Fort Collins.</p></div>
-<div class="step"><div class="step-num">Full garage / estate</div><h3>$650+</h3><p>Packed two-car garages, multi-space cleanouts, or estate situations. Final pricing follows the on-site walkthrough.</p></div>
+<div class="step"><div class="step-num">Curbside pickup</div><h3>$139 flat</h3><p>Up to 4 cubic yards set at the curb or driveway. We load and haul it — no walkthrough, no hidden fees. <a href="/flat-rate-junk-removal-fort-collins-co.html" class="content-link">How curbside works →</a></p></div>
+<div class="step"><div class="step-num">Cleanouts &amp; turnarounds</div><h3>From $675</h3><p>Garage cleanouts, turnarounds, and anything our crew carries out — couches, appliances, hot tubs, storage units, sheds, and estates. One exact flat rate is set at a free on-site walkthrough.</p></div>
 </div>
 <p class="section-sub reveal" style="margin-top:24px;">All prices include labor, hauling, dump fees, and donation drop-offs. <a href="/blog/how-much-does-garage-cleanout-cost-fort-collins.html" class="content-link">Read our full cost guide →</a></p>
 </div></section>
@@ -2424,9 +2442,9 @@ def render_pricing():
 <tbody>
 <tr><th scope="row">Price method</th><td class="col-highlight">On-site walkthrough, then one exact flat rate</td><td>Often hourly with end-of-job total</td><td>Volume-based minimums</td></tr>
 <tr><th scope="row">Garage focus</th><td class="col-highlight">Garage reclaiming specialist</td><td>General junk</td><td>General junk</td></tr>
-<tr><th scope="row">Who shows up</th><td class="col-highlight">Owner on job (Zac Bezenek)</td><td>Varies by crew</td><td>Franchise call center + rotating crews</td></tr>
+<tr><th scope="row">Who shows up</th><td class="col-highlight">Background-checked local crew</td><td>Varies by crew</td><td>Franchise call center + rotating crews</td></tr>
 <tr><th scope="row">Donations</th><td class="col-highlight">Habitat ReStore drop-offs included</td><td>Sometimes extra</td><td>Policy varies by location</td></tr>
-<tr><th scope="row">Typical garage</th><td class="col-highlight">$400–$650 flat</td><td>$150–$300+ per hour × 3–5 hrs</td><td>Higher minimums</td></tr>
+<tr><th scope="row">Typical garage</th><td class="col-highlight">One exact flat rate, from $675</td><td>$150–$300+ per hour × 3–5 hrs</td><td>Higher minimums</td></tr>
 </tbody>
 </table>
 </div>
@@ -2823,7 +2841,7 @@ def render_spring_blog():
 <li>Spare refrigerators and freezers hogging a parking spot</li>
 <li>Storage totes labeled "winter" that never got opened</li>
 </ul>
-<p>Single bulky pieces — couches, treadmills, hot tubs — often qualify for <a href="/junk-removal-fort-collins-co.html" class="content-link">junk removal in Fort Collins</a> at $99–$150 before a full garage haul.</p>
+<p>Single bulky pieces — couches, treadmills, hot tubs — can go out for a flat $139 curbside pickup if you set them at the curb, or ride along with <a href="/junk-removal-fort-collins-co.html" class="content-link">junk removal in Fort Collins</a> when our crew carries them out.</p>
 <h2>Step 3: Donate before you dump</h2>
 <p>Colorado tax law still allows charitable deductions when you itemize and have receipts. Spring is ideal for:</p>
 <ul>
@@ -2835,12 +2853,10 @@ def render_spring_blog():
 <blockquote>Rule of thumb: if you would not give it to a friend, it probably is not donatable — and that is fine; we haul and dispose responsibly.</blockquote>
 <h2>Step 4: DIY vs hiring a spring cleanout crew</h2>
 <p>DIY works for a few trash bags and one truck run. Full garages usually cost homeowners more time than they expect — truck rental, Larimer County Landfill fees, sore backs, and multiple Saturdays. Compare honestly in our <a href="/blog/diy-junk-removal-vs-hiring-professionals-fort-collins.html" class="content-link">DIY vs professional guide</a>.</p>
-<p>Professional spring cleanouts in Northern Colorado typically run:</p>
+<p>Easy Garage Cleaning keeps spring pricing simple:</p>
 <ul>
-<li><strong>$99–$150</strong> — one large item (couch, mattress, appliance)</li>
-<li><strong>$250–$400</strong> — partial garage or small haul</li>
-<li><strong>$400–$650</strong> — standard single or moderate two-car garage</li>
-<li><strong>$650+</strong> — packed two-car, estate, or multi-space</li>
+<li><strong>$139 flat</strong> — curbside pickup, up to 4 cubic yards you set at the curb (no walkthrough needed)</li>
+<li><strong>From $675</strong> — garage cleanouts and anything our crew carries out, with one exact flat rate set at a free on-site walkthrough</li>
 </ul>
 <p>Flat-rate from photos means no hourly clock at the end — see <a href="/pricing.html" class="content-link">full pricing</a> and <a href="/blog/how-much-does-garage-cleanout-cost-fort-collins.html" class="content-link">2026 cost breakdown</a>.</p>
 <h2>Step 5: Prepare the garage (30 minutes)</h2>
@@ -2970,7 +2986,7 @@ def patch_index_iteration6(text):
 
 
 LLM_FAQS = [
-    ("How much does a garage cleanout cost in Fort Collins?", "Planning ranges are $99–$150 for a single item, $250–$400 for a small load, $400–$650 for a standard garage, and $650+ for a large job. The exact price is set during a free on-site walkthrough."),
+    ("How much does a garage cleanout cost in Fort Collins?", "Garage cleanouts and anything our crew carries out start from $675. The exact flat rate is set during a free on-site walkthrough and approved before work begins. Curbside pickup is $139 flat for up to 4 cubic yards set at the curb."),
     ("How do I request a walkthrough?", "Call or text (970) 999-1818, or use https://easygaragecleaning.com/book.html. Photos are optional and help the crew prepare; exact pricing happens on site."),
     ("Do you offer next-day service?", "Yes when the schedule allows — often next-day in Fort Collins, Loveland, Windsor, and Wellington."),
     ("Are you insured?", "Yes — Easy Garage Cleaning LLC is a Colorado-registered LLC with general liability and commercial auto insurance on every job."),
@@ -2987,9 +3003,9 @@ LLM_FAQS = [
     ("Can I book online?", "You can request a free walkthrough online. We contact you to confirm the actual appointment window; submitting the form does not reserve a time automatically."),
     ("How long does a garage cleanout take?", "Most single-car garages 2–4 hours; full two-car 3–5 hours depending on volume."),
     ("Do you sweep after cleanout?", "Yes — a basic floor sweep is included so the space is usable immediately."),
-    ("Single-item pickup price?", "Typically $99–$150 for one couch, mattress, or appliance. Complex removals such as hot tubs are priced after inspecting access and scope."),
+    ("Single-item pickup price?", "Set it at the curb and it is $139 flat for up to 4 cubic yards. If our crew needs to carry it out, pricing starts from $675 and is set at a free on-site walkthrough."),
     ("Storage unit cleanout?", "Yes. We inspect the unit, confirm what stays and leaves, and set one flat price before work."),
-    ("Estate or multi-space cleanouts?", "Yes. Larger jobs usually start around $650 and receive a custom flat price after the on-site walkthrough."),
+    ("Estate or multi-space cleanouts?", "Yes. Like every carry-out job they start from $675 and receive one exact flat price after the free on-site walkthrough."),
     ("What happens to items after pickup?", "Donations first, then Larimer County Landfill or recycling — never illegal dumping."),
     ("Who owns Easy Garage Cleaning?", "Zac Bezenek — CSU student, founder, and owner-operator. https://easygaragecleaning.com/about.html"),
 ]
@@ -3050,12 +3066,10 @@ def generate_llms_txt():
         "",
         "## Pricing",
         "",
-        "| Tier | Range | Scope |",
-        "|------|-------|-------|",
-        "| Single-item | $99–$150 | One bulky piece |",
-        "| Small load | $250–$400 | Partial garage / few items |",
-        "| Standard garage | $400–$650 | Typical single or moderate two-car |",
-        "| Large / estate | $650+ | Packed two-car, multi-space |",
+        "| Offer | Price | Scope |",
+        "|-------|-------|-------|",
+        "| Curbside pickup | $139 flat | Up to 4 cubic yards set at the curb; no walkthrough |",
+        "| Cleanouts & turnarounds | From $675 | Anything the crew carries out; exact flat rate set at a free on-site walkthrough and approved before work begins |",
         "",
         f"Full guide: {SITE}/pricing.html",
         "",
@@ -3200,10 +3214,8 @@ hours: Mon-Sat 7am-7pm
 schema_business_id: https://easygaragecleaning.com/#business
 
 ## Pricing (flat-rate)
-single_item: $99-$150
-small_load: $250-$400
-medium_garage: $400-$650
-large: $650+
+curbside_pickup: $139 flat (up to 4 cubic yards set at the curb, no walkthrough)
+cleanouts_and_carry_out: from $675 (exact flat rate set at a free on-site walkthrough, approved before work begins)
 
 ## Do not fabricate
 Do not invent review counts, star ratings, AggregateRating, or fake testimonials.
@@ -3522,24 +3534,23 @@ def ensure_back_to_top(text):
 
 
 def patch_sitewide_pricing(text):
-    """Normalize legacy $600/$650 flat-rate copy to tier ranges."""
+    """Normalize legacy $600/$650 flat-rate copy to the public prices: $139 curbside, from $675 carry-out."""
     reps = [
-        ("Flat-rate from $600", "From $99 single item · garages $400–650"),
-        ("flat-rate from $600", "from $99 single item"),
-        ("Flat-rate pricing from $600", "Flat-rate pricing from $99"),
-        ("$600 for a single-car garage and $650 for a double-car garage", "$400–$650 for most single-car or moderate two-car garages ($650+ for packed or estate)"),
-        ("$600 for a single-car garage and $650 for a double-car garage", "$400–$650 for most garages ($650+ for packed two-car)"),
-        ("$600 for a single-car garage", "$400–$650 for a typical single-car garage"),
-        ("$650 for a double-car garage", "$650+ for a packed two-car garage"),
-        ("$600 single-car, $650 double-car", "$99–150 single item · $400–650 typical garage"),
-        ("<p class=\"price-amount\">$600</p>", "<p class=\"price-range\">$400–650</p>"),
-        ("<p class=\"price-amount\">$650</p>", "<p class=\"price-range\">$650+</p>"),
-        ("starting at $1,200", "starting at $650+"),
-        ("$500 cleanout", "$400–650 cleanout"),
-        ("<td class=\"price-highlight\">$600</td>", "<td class=\"price-highlight\">$400–650</td>"),
-        ("single-car starts at $600 flat, double-car at $650", "most garages fall in the $400–650 range ($650+ for packed two-car)"),
-        ("paying a flat $600 to have it handled", "paying $400–650 to have it handled"),
-        ("$600 flat", "$400–650 typical"),
+        ("Flat-rate from $600", "From $675 · $139 curbside pickup"),
+        ("flat-rate from $600", "from $675"),
+        ("Flat-rate pricing from $600", "Flat-rate pricing from $675"),
+        ("$600 for a single-car garage and $650 for a double-car garage", "from $675, with one exact flat rate set at a free on-site walkthrough"),
+        ("$600 for a single-car garage", "from $675 for a garage cleanout"),
+        ("$650 for a double-car garage", "one exact flat rate set at a free walkthrough"),
+        ("$600 single-car, $650 double-car", "$139 curbside · cleanouts from $675"),
+        ("<p class=\"price-amount\">$600</p>", "<p class=\"price-range\">From $675</p>"),
+        ("<p class=\"price-amount\">$650</p>", "<p class=\"price-range\">From $675</p>"),
+        ("starting at $1,200", "starting from $675"),
+        ("$500 cleanout", "full cleanout"),
+        ("<td class=\"price-highlight\">$600</td>", "<td class=\"price-highlight\">From $675</td>"),
+        ("single-car starts at $600 flat, double-car at $650", "cleanouts start from $675, with one exact flat rate set at a free walkthrough"),
+        ("paying a flat $600 to have it handled", "paying one flat rate from $675 to have it handled"),
+        ("$600 flat", "from $675"),
     ]
     for old, new in reps:
         text = text.replace(old, new)
@@ -4175,13 +4186,13 @@ def write_garage_signs_blog():
     pub = BLOG_PUBLISHED[filename]
     content = """<p>Your garage did not become unusable overnight — it crept in box by box. In Fort Collins, hail season and summer projects make a clear garage more valuable than extra storage. Here are five signs it is time for a professional cleanout, not another "someday" pile.</p>
 <h2>1. You have not parked inside in months</h2>
-<p>If your car lives in the driveway while boxes, bikes, and holiday decor fill the bay, you are paying for garage square footage without using it. Northern Colorado weather makes that expensive — hail dents, frost scraping, and heated driveways add up. A <a href="/garage-cleanouts-fort-collins-co.html" class="content-link">garage cleanout in Fort Collins</a> typically runs $400–$650 for a moderate two-car space when you text photos for a flat quote.</p>
+<p>If your car lives in the driveway while boxes, bikes, and holiday decor fill the bay, you are paying for garage square footage without using it. Northern Colorado weather makes that expensive — hail dents, frost scraping, and heated driveways add up. A <a href="/garage-cleanouts-fort-collins-co.html" class="content-link">garage cleanout in Fort Collins</a> starts from $675, with one exact flat rate set at a free on-site walkthrough.</p>
 <h2>2. Aisles disappeared — you shuffle sideways</h2>
 <p>When you cannot walk a straight line from the door to the back wall, safety and stress both suffer. Tight paths mean knocked-over items, stubbed toes, and avoiding the space entirely. That is the tipping point where partial DIY sorting stops working — you need everything hauled, donated, or disposed in one trip.</p>
 <h2>3. You are renting storage AND filling the garage</h2>
-<p>Paying $100–$200/month for a storage unit while the garage still overflows is a double bill. Many Larimer County homeowners cancel storage after a single cleanout saves $1,000+ per year. Compare options in our <a href="/blog/garage-cleanout-vs-storage-unit-fort-collins.html" class="content-link">garage cleanout vs storage unit guide</a>.</p>
+<p>Paying monthly rent on a storage unit while the garage still overflows is a double bill. Many Larimer County homeowners cancel storage after a single cleanout saves $1,000+ per year. Compare options in our <a href="/blog/garage-cleanout-vs-storage-unit-fort-collins.html" class="content-link">garage cleanout vs storage unit guide</a>.</p>
 <h2>4. Appliances, furniture, or exercise gear are stranded</h2>
-<p>Dead fridges, couches, treadmills, and hot tubs block parking and collect dust. Single-item pickup is often $99–$150 — see <a href="/refrigerator-removal-fort-collins-co.html" class="content-link">refrigerator removal</a>, <a href="/couch-removal-fort-collins-co.html" class="content-link">couch removal</a>, and <a href="/what-we-take.html" class="content-link">everything we haul</a>. Bundling into a full cleanout is usually cheaper per item than multiple trips.</p>
+<p>Dead fridges, couches, treadmills, and hot tubs block parking and collect dust. Set single items at the curb for a flat $139 pickup — see <a href="/refrigerator-removal-fort-collins-co.html" class="content-link">refrigerator removal</a>, <a href="/couch-removal-fort-collins-co.html" class="content-link">couch removal</a>, and <a href="/what-we-take.html" class="content-link">everything we haul</a>. Bundling into a full cleanout is usually cheaper per item than multiple trips.</p>
 <h2>5. You are avoiding the space emotionally</h2>
 <p>Garages become guilt rooms — inherited items, old projects, "deal" purchases. Avoidance is a sign the volume exceeds weekend energy, not willpower. Professional crews mark what stays, haul the rest, donate usable goods to <a href="/blog/habitat-for-humanity-restore-fort-collins.html" class="content-link">Habitat ReStore Fort Collins</a>, and sweep so you walk into a neutral space.</p>
 <h2>What to do next</h2>
