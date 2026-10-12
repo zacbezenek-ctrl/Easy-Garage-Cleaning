@@ -7,6 +7,8 @@ import {
   type WalkthroughModelOutput
 } from "@egc/schemas";
 import { DEFAULT_EXTRACTION_MODEL, DEFAULT_TRANSCRIBE_MODEL, modelName as model, openaiClient as client } from "./provider.js";
+import { claudeClient, claudeExtractionModel, extractionProvider } from "./claude.js";
+export { DEFAULT_CLAUDE_EXTRACTION_MODEL, claudeSchema, extractionProvider } from "./claude.js";
 import { isMessageTaskKind } from "@egc/operations/action-kinds";
 import type { ConversationExtraction } from "./conversation-extraction.js";
 
@@ -44,7 +46,29 @@ export async function transcribeWalkthrough(
   return transcript.text;
 }
 
+const WALKTHROUGH_RULES = [
+  "Extract Easy Garage Cleaning walkthrough scope.",
+  "Never invent facts.",
+  "If a field is unknown, use null/unknown/empty values allowed by the schema.",
+  "Preserve customer distinctions between remove, keep, and relocate.",
+  "Pest observations are observations only; do not infer an active infestation.",
+  "Proposed actions are drafts, never completed work. Extract explicit promises and follow-ups with an exact source quote.",
+  "Never invent an owner, deadline, price, payment, customer approval, or a promise. Leave unknown ownerMention and dueMention null.",
+  "Evidence lists at most one entry per extracted field, with the exact transcript words that support it; omit fields the transcript does not support.",
+  "Return structured data only."
+].join(" ");
+
 export async function extractWalkthrough(transcript: string): Promise<WalkthroughExtraction> {
+  if (extractionProvider() === "anthropic") {
+    const response = await claudeClient().responses.create({
+      model: claudeExtractionModel(),
+      input: [{ role: "system", content: [{ type: "input_text", text: WALKTHROUGH_RULES }] }, { role: "user", content: [{ type: "input_text", text: transcript }] }],
+      text: { format: { schema: zodTextFormat(walkthroughModelOutputSchema, "egc_walkthrough").schema as Record<string, unknown> } }
+    });
+    let output: unknown;
+    try { output = JSON.parse(response.output_text); } catch { throw new Error("Walkthrough extraction returned no structured output"); }
+    return walkthroughExtractionFromModel(output);
+  }
   const response = await client().responses.parse({
     model: model("OPENAI_EXTRACTION_MODEL", DEFAULT_EXTRACTION_MODEL),
     input: [
