@@ -157,13 +157,13 @@ test('offline with no saved tables the walkthrough says so instead of guessing a
 test('with the fetched tables the review screen shows the rates from the config, and never the owner\'s targets', () => {
   const { context } = walkthroughPage({ pricing: servedPricing(), state: { hazards: ['Pest waste'], finish: ['cleanout', 'pressure_wash', 'mouse_trapping'] } });
   const review = context.reviewScreen();
-  assert.match(review, /<div class="price">\$1,850<\/div>/);
-  assert.match(review, /Truckload pricing uses \$1,000 per full load, plus selected extras\. One-car pressure washing adds \$400; pest waste adds \$200; non-toxic mouse trapping adds \$250 when selected\./);
-  assert.match(review, /Pest waste \(\+\$200\)/);
-  assert.match(review, /One-car pressure wash \(\+\$400\)/);
+  assert.match(review, /<div class="price">\$2,225<\/div>/);
+  assert.match(review, /Truckload pricing uses \$950 per full load, plus selected extras\. One-car pressure washing adds \$600; pest waste adds \$300; non-toxic mouse trapping adds \$375 when selected\./);
+  assert.match(review, /Pest waste \(\+\$300\)/);
+  assert.match(review, /One-car pressure wash \(\+\$600\)/);
   assert.match(review, /id="signature"/);
   assert.doesNotMatch(review, /target|2,250/i);
-  assert.equal(context.S.lockedPrice, '1850');
+  assert.equal(context.S.lockedPrice, '2225');
   assert.match(context.scheduleScreen(), /<h2>4 hours<\/h2>/, '60 + 90 per load + 30 medium fill + 60 one-car wash');
   const priced = walkthroughPage({ pricing: { ...servedPricing(), perLoad: 1200 } }).context;
   assert.equal(priced.recommend(), 1200, 'the page prices with whatever the server serves');
@@ -174,13 +174,13 @@ test('prices that arrive after a draft opens re-price only unsigned automatic to
     [{ lockedPrice: '900', pricingVersion: '2026-09-older' }, ''],
     [{ lockedPrice: '900', pricingVersion: '2026-09-older', priceManuallySet: true }, '900'],
     [{ lockedPrice: '900', pricingVersion: '2026-09-older', approved: true, signature: 'data:image/png;base64,c2lnbmVk' }, '900'],
-    [{ lockedPrice: '900', pricingVersion: '2026-09-pest200-traps250' }, '900'],
+    [{ lockedPrice: '900', pricingVersion: '2026-10-optionB-truck950' }, '900'],
   ];
   for (const [state, lockedPrice] of drafts) {
     const { context, calls } = walkthroughPage({ state, load: async user => ({ pricing: user === 'zacb' ? servedPricing() : null, source: 'cache' }) });
     await context.loadPricing();
     assert.equal(context.S.lockedPrice, lockedPrice, JSON.stringify(state));
-    assert.equal(context.S.pricingVersion, '2026-09-pest200-traps250');
+    assert.equal(context.S.pricingVersion, '2026-10-optionB-truck950');
     assert.equal(context.PRICING_ERROR, '');
     assert.deepEqual([calls.saves, calls.renders], [1, 1]);
   }
@@ -220,14 +220,14 @@ test('an appointment walkthrough approved before a reload keeps its approval and
     if (!pricesFirst) await first.loadPricing();
     first.reviewScreen();
     first.setApproval(true);
-    assert.equal(first.S.pricingVersion, '2026-09-pest200-traps250', `stamped (${pricesFirst ? 'prices first' : 'prices after'})`);
+    assert.equal(first.S.pricingVersion, '2026-10-optionB-truck950', `stamped (${pricesFirst ? 'prices first' : 'prices after'})`);
     const saved = JSON.parse(device.getItem('egc_walkthrough_v3:walkthrough-9')).S;
-    assert.deepEqual([saved.lockedPrice, saved.approved, saved.acceptanceAt, saved.pricingVersion], ['1000', true, '2026-09-22T15:00:00.000Z', '2026-09-pest200-traps250']);
+    assert.deepEqual([saved.lockedPrice, saved.approved, saved.acceptanceAt, saved.pricingVersion], ['950', true, '2026-09-22T15:00:00.000Z', '2026-10-optionB-truck950']);
 
     const reload = devicePage(device);
     reload.resetForWalkthrough('walkthrough-9'); reload.restore('walkthrough-9'); reload.walkthroughReady = true;
     await reload.loadPricing();
-    assert.deepEqual([reload.S.lockedPrice, reload.S.approved, reload.S.acceptanceAt, reload.S.acceptanceBy, reload.S.pricingVersion], ['1000', true, '2026-09-22T15:00:00.000Z', 'Synthetic Customer', '2026-09-pest200-traps250']);
+    assert.deepEqual([reload.S.lockedPrice, reload.S.approved, reload.S.acceptanceAt, reload.S.acceptanceBy, reload.S.pricingVersion], ['950', true, '2026-09-22T15:00:00.000Z', 'Synthetic Customer', '2026-10-optionB-truck950']);
   }
 });
 
@@ -238,8 +238,8 @@ test('a draft saved before any prices loaded adopts the loaded version, while an
     const page = devicePage(device);
     page.restore('walkthrough-9'); page.walkthroughReady = true;
     await page.loadPricing();
-    assert.deepEqual([page.S.lockedPrice, page.S.approved, page.S.pricingVersion], [lockedPrice, approved, '2026-09-pest200-traps250'], JSON.stringify(version));
-    assert.equal(JSON.parse(device.getItem('egc_walkthrough_v3:walkthrough-9')).S.pricingVersion, '2026-09-pest200-traps250');
+    assert.deepEqual([page.S.lockedPrice, page.S.approved, page.S.pricingVersion], [lockedPrice, approved, '2026-10-optionB-truck950'], JSON.stringify(version));
+    assert.equal(JSON.parse(device.getItem('egc_walkthrough_v3:walkthrough-9')).S.pricingVersion, '2026-10-optionB-truck950');
   }
 });
 

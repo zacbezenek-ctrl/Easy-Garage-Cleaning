@@ -18,15 +18,21 @@ import { WALKTHROUGH_SERVICE_ITEMS } from '../_data/walkthrough-services.js';
 // Bump whenever any walkthrough price or minute changes: unsigned automatic totals
 // saved under another version are recalculated, and the handoff records it as the
 // quote's catalog_version. tests/pricing-config.test.mjs pins the tables to this label.
-export const WALKTHROUGH_PRICING_VERSION = '2026-09-pest200-traps250';
+export const WALKTHROUGH_PRICING_VERSION = '2026-10-optionB-truck950';
 
 const WALKTHROUGH_TABLES = {
-  sizeBase: { 1: 450, 2: 650, 3: 850, other: 1100 }, defaultSize: '2',
+  sizeBase: { 1: 675, 2: 975, 3: 1275, other: 1650 }, defaultSize: '2',
   fill: { light: 0.75, medium: 1, full: 1.35, packed: 1.7 },
-  perLoad: 1000,
-  special: { Mattress: 45, 'Refrigerator / freezer': 60, Tires: 50, 'Paint / chemicals': 45, Electronics: 25, Appliances: 40, 'Piano / safe': 150, 'Very heavy items': 100 },
-  access: { 'Long carry': 75, Stairs: 125 },
-  minimum: 450, roundTo: 25,
+  perLoad: 950,
+  // Per-item special handling. The walkthrough lists every key here, in this order, with a quantity.
+  special: {
+    Mattress: 70, 'Box spring': 70, 'Couch / sofa / loveseat': 70, Sectional: 135, 'Recliner / armchair': 70, 'Dresser / armoire / desk': 70,
+    'Refrigerator / freezer': 90, Washer: 75, Dryer: 75, 'Water heater': 90, Appliances: 60, 'BBQ grill': 60, Electronics: 40,
+    Tires: 75, 'Paint / chemicals': 70, 'Treadmill / elliptical': 115, 'Home gym / weight set': 150, 'Very heavy items': 150,
+    'Piano / safe': 225, 'Hot tub / spa': 600,
+  },
+  access: { 'Long carry': 115, Stairs: 190 },
+  minimum: 675, roundTo: 25,
 };
 // Elapsed job minutes, calibrated to a 2-person crew (the catalog's service crewSize).
 const WALKTHROUGH_MINUTES = {
@@ -65,7 +71,7 @@ const B2B_RATE_CARD = {
     { value: '15%', title: 'Coordinated properties', detail: 'Three or more properties approved together and serviced within 30 days.' },
   ],
   terms: [
-    'Discounts do not stack. The full-service reset base has a $450 minimum after discounts; standalone services have a $99 minimum. Products, specialty handling, access charges and the fixed $139 curbside offer are excluded. Your accepted quote controls.',
+    'Discounts do not stack. The full-service reset base has a $675 minimum after discounts; standalone services have a $99 minimum. Products, specialty handling, access charges and the fixed $139 curbside offer are excluded. Your accepted quote controls.',
     'Full-service projects: 50% upfront and 50% on completion. Credit terms require a written agreement.',
   ],
 };

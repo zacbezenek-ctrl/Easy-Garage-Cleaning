@@ -245,7 +245,7 @@ test('optionsForNeed returns active options by need or zone, sorted good to best
   assert.equal(optionsForNeed(shipped, 'floor-coating', { includeReferral: true }).length, 4);
   const ceiling = optionsForNeed(shipped, 'ceiling');
   assert.ok(ceiling.length > 20 && ceiling.every(item => item.zones.includes('ceiling')));
-  assert.deepEqual(optionsForNeed(shipped, 'egc-shelving-unit').map(item => item.fixedPriceCents), [34900, 44900, 49900]);
+  assert.deepEqual(optionsForNeed(shipped, 'egc-shelving-unit').map(item => item.fixedPriceCents), [52500, 67500, 75000]);
   assert.throws(() => optionsForNeed(shipped, 'teleporter'), error => error.code === 'catalog_unknown_need' && error.status === 404);
   const power = optionsForNeed(shipped, 'power-equipment-wall'), verified = optionsForNeed(shipped, 'power-equipment-wall', { verifiedOnly: true });
   assert.ok(power.some(item => item.priceEvidence === 'estimate'));
@@ -273,7 +273,7 @@ test('deposit and minimum placeholders match the current walkthrough pricing in 
   context.S = vm.runInContext('freshState()', context);
   Object.assign(context.S, { garageSize: '1', fill: 'light', loads: '' });
   for (const prefix of ['function recommend(', 'function walkthroughDeposit(']) vm.runInContext(line(prefix), context);
-  assert.equal(context.recommend() * 100, defaults.minimumJobCents, 'the lightest one-car job lands on the $450 floor');
+  assert.equal(context.recommend() * 100, 67500, 'the lightest one-car job lands on the walkthrough\'s $675 floor (Option B); the catalog minimum is set separately when the owner approves catalog settings');
   assert.equal(Math.round(context.walkthroughDeposit(1000.01).amount * 100), Math.round(100001 * defaults.depositPct / 100));
 });
 

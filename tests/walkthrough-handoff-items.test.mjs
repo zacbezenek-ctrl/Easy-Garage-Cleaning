@@ -269,17 +269,17 @@ test('walkthrough line items add up to the locked total for every walkthrough-pr
     assert.ok(items.every(line => line.totalCents > 0 && Number.isSafeInteger(line.totalCents)), label);
     assert.equal(items[0].id, 'cleanout', label);
     assert.equal(quote.line_items.some(line => line.id === 'adjustment'), false, label);
-    assert.equal(quote.catalog_version, '2026-09-pest200-traps250');
+    assert.equal(quote.catalog_version, '2026-10-optionB-truck950');
     const normalized = normalizeHandoffPlan({ ...plan(), quote: { ...plan().quote, ...JSON.parse(JSON.stringify(quote)) }, scope: JSON.parse(JSON.stringify(h.payload().scope)) }, NOW);
     assert.equal(estimateTotals(normalized.quote.estimate_line_items).totalCents, Math.round(total * 100), label);
   }
-  // One load ($1,000) plus $1,484 of add-ons rounds to $2,475, so the cleanout line carries $991 of it.
+  // One load ($950) plus $2,230 of add-ons rounds to $3,175, so the cleanout line carries $945 of it.
   const addOns = JSON.parse(JSON.stringify(gameplan({ hazards: ['Pest waste'], finish: ['cleanout', 'pressure_wash', 'mouse_trapping', 'shelving', 'totes'], shelfQty: 2, toteQty: 4 }).recommend(true)));
-  assert.deepEqual(addOns.map(line => [line.id, line.quantity, line.unitCents]), [['cleanout', 1, 99100], ['pressure-wash', 1, 40000], ['shelving', 2, 49900], ['totes', 4, 2150], ['pest-waste', 1, 20000], ['mouse-trapping', 1, 25000]]);
+  assert.deepEqual(addOns.map(line => [line.id, line.quantity, line.unitCents]), [['cleanout', 1, 94500], ['pressure-wash', 1, 60000], ['shelving', 2, 75000], ['totes', 4, 3250], ['pest-waste', 1, 30000], ['mouse-trapping', 1, 37500]]);
 });
 
 test('a manually changed walkthrough rate sends an explicit adjustment line with the customer-facing reason', () => {
-  const h = gameplan({ finish: ['cleanout', 'pressure_wash'], lockedPrice: '1500', priceManuallySet: true });
+  const h = gameplan({ finish: ['cleanout', 'pressure_wash'], lockedPrice: '1650', priceManuallySet: true });
   assert.ok(Array.from(h.readyToSend()).includes('the customer-facing reason for the changed rate'));
   h.S.priceAdjustmentReason = 'Second haul trailer agreed on site';
   assert.equal(Array.from(h.readyToSend()).includes('the customer-facing reason for the changed rate'), false);
@@ -287,7 +287,7 @@ test('a manually changed walkthrough rate sends an explicit adjustment line with
   assert.deepEqual(JSON.parse(JSON.stringify(adjustment)), { id: 'adjustment', kind: 'fee', name: 'Price adjustment', description: 'Second haul trailer agreed on site', quantity: 1, unitCents: 10000, totalCents: 10000 });
   assert.equal(normalizeHandoffPlan({ ...plan(), quote: { ...plan().quote, ...JSON.parse(JSON.stringify(quote)) } }, NOW).quote.line_items.at(-1).total, 100);
   const lower = gameplan({ lockedPrice: '925.50', priceManuallySet: true, priceAdjustmentReason: 'Repeat customer courtesy' }).payload().quote;
-  assert.deepEqual([lower.line_items.at(-1).kind, lower.line_items.at(-1).totalCents, lower.deposit], ['discount', -7450, 462.75]);
+  assert.deepEqual([lower.line_items.at(-1).kind, lower.line_items.at(-1).totalCents, lower.deposit], ['discount', -2450, 462.75]);
 });
 
 async function clientSave(planInput) {
@@ -324,20 +324,20 @@ test('the HighLevel job brief lists itemized lines and leaves a legacy single-li
 });
 
 test('the review screen shows the homeowner the itemized lines, including a price adjustment and its reason, above the signature', () => {
-  const h = gameplan({ finish: ['cleanout', 'pressure_wash', 'totes'], toteQty: 4, lockedPrice: '1575', priceManuallySet: true, priceAdjustmentReason: 'Second haul <trailer> agreed on site' });
+  const h = gameplan({ finish: ['cleanout', 'pressure_wash', 'totes'], toteQty: 4, lockedPrice: '1775', priceManuallySet: true, priceAdjustmentReason: 'Second haul <trailer> agreed on site' });
   vm.runInContext([sourceLine(walkthrough, 'const $=id=>'), sourceLine(walkthrough, 'const money='), sourceLine(walkthrough, 'const addOn='), sourceLine(walkthrough, 'const hazardLabel='), sourceLine(walkthrough, 'const pricingNote='), sourceLine(walkthrough, 'function quoteLinesMarkup('), sourceLine(walkthrough, 'function depositSummary('), sourceLine(walkthrough, 'function durationText('), sourceLine(walkthrough, 'function reviewScreen(')].join('\n'), h);
   Object.assign(h, { buildJobInstructions: () => ({}), buildClientChecklists: () => ({ preJob: [], postJob: [] }) });
   const html = h.reviewScreen(), lines = html.slice(html.indexOf('id="quote-lines"'), html.indexOf('<div class="approve">'));
   assert.ok(html.indexOf('id="quote-lines"') > 0 && html.indexOf('id="quote-lines"') < html.indexOf('id="signature"'), 'the lines are shown before the homeowner signs');
-  assert.match(lines, /Garage cleanout and reset<\/span><b>\$989\.00<\/b>/);
-  assert.match(lines, /One-car garage pressure wash<\/span><b>\$400\.00<\/b>/);
-  assert.match(lines, /Storage tote × 4<\/span><b>\$86\.00<\/b>/);
+  assert.match(lines, /Garage cleanout and reset<\/span><b>\$945\.00<\/b>/);
+  assert.match(lines, /One-car garage pressure wash<\/span><b>\$600\.00<\/b>/);
+  assert.match(lines, /Storage tote × 4<\/span><b>\$130\.00<\/b>/);
   assert.match(lines, /Price adjustment — Second haul &lt;trailer&gt; agreed on site<\/span><b>\$100\.00<\/b>/);
   assert.doesNotMatch(lines, /<trailer>/, 'the reason is escaped');
   // The list is exactly what the signed payload sends.
   const sent = h.payload().quote.line_items;
   assert.equal((lines.match(/class="quote-line"/g) || []).length, sent.length);
-  assert.equal(sent.reduce((sum, line) => sum + line.totalCents, 0), 157500);
+  assert.equal(sent.reduce((sum, line) => sum + line.totalCents, 0), 177500);
 });
 
 test('typing a new rate or reason refreshes the itemized lines shown for signature', () => {
@@ -345,11 +345,11 @@ test('typing a new rate or reason refreshes the itemized lines shown for signatu
   const h = gameplan({ finish: ['cleanout'], priceManuallySet: true });
   vm.runInContext([sourceLine(walkthrough, 'const $=id=>'), sourceLine(walkthrough, 'function quoteLinesMarkup('), sourceLine(walkthrough, 'function depositSummary('), sourceLine(walkthrough, 'function updateField(')].join('\n'), h);
   h.document = { getElementById: id => nodes[id] };
-  h.updateField('lockedPrice', '950');
+  h.updateField('lockedPrice', '900');
   assert.match(nodes['quote-lines'].innerHTML, /Price adjustment<\/span><b>-\$50\.00<\/b>/);
   h.updateField('priceAdjustmentReason', 'Repeat customer courtesy');
   assert.match(nodes['quote-lines'].innerHTML, /Price adjustment — Repeat customer courtesy<\/span><b>-\$50\.00<\/b>/);
-  h.updateField('lockedPrice', '1000');
+  h.updateField('lockedPrice', '950');
   assert.doesNotMatch(nodes['quote-lines'].innerHTML, /Price adjustment/);
 });
 

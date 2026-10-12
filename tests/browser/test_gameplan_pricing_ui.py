@@ -131,14 +131,14 @@ class GameplanPricingBrowserTests(unittest.TestCase):
         page.wait_for_function('() => PRICING !== null')
         self.assertEqual(self.cached(page), [f'egc_walkthrough_pricing.v1.zacb.{VERSION}'])
         self.screen(page, 2)
-        expect(page.locator('#screen')).to_contain_text('$1,000 per full truckload; partial loads are proportional.')
-        expect(page.locator('#screen')).to_contain_text('Pest waste (+$200)')
+        expect(page.locator('#screen')).to_contain_text('$950 per full truckload; partial loads are proportional.')
+        expect(page.locator('#screen')).to_contain_text('Pest waste (+$300)')
         self.audit(page, 'scope')
         self.screen(page, 3)
-        expect(page.locator('#screen')).to_contain_text('+$400 for a one-car garage floor.')
-        expect(page.locator('#screen')).to_contain_text('+$250 · Add trap placement')
+        expect(page.locator('#screen')).to_contain_text('+$600 for a one-car garage floor.')
+        expect(page.locator('#screen')).to_contain_text('+$375 · Add trap placement')
         self.screen(page, 5)
-        expect(page.locator('.price-card .price')).to_have_text('$1,000')
+        expect(page.locator('.price-card .price')).to_have_text('$950')
         expect(page.locator('#screen')).not_to_contain_text('2,250')
         expect(page.locator('#signature')).to_be_visible()
         self.audit(page, 'review')
@@ -146,7 +146,7 @@ class GameplanPricingBrowserTests(unittest.TestCase):
         self.online = False; page.reload(); expect(page.locator('#app')).to_be_visible()
         page.wait_for_function('() => PRICING !== null')
         self.screen(page, 5)
-        expect(page.locator('.price-card .price')).to_have_text('$1,000')
+        expect(page.locator('.price-card .price')).to_have_text('$950')
         # Lock (sign-out) removes the saved tables from the device.
         page.get_by_role('button', name='Lock').click()
         expect(page.locator('#gate')).to_be_visible()
@@ -172,7 +172,7 @@ class GameplanPricingBrowserTests(unittest.TestCase):
         self.online = True
         self.screen(page, 5)
         page.get_by_role('button', name='Retry loading prices').click()
-        expect(page.locator('.price-card .price')).to_have_text('$1,000')
+        expect(page.locator('.price-card .price')).to_have_text('$950')
         self.assertEqual(self.cached(page), [f'egc_walkthrough_pricing.v1.zacb.{VERSION}'])
 
     def test_a_hub_outage_while_online_says_so_instead_of_claiming_the_device_is_offline(self):
@@ -192,13 +192,13 @@ class GameplanPricingBrowserTests(unittest.TestCase):
         self.pricing_failure = None
         self.screen(page, 5)
         page.get_by_role('button', name='Retry loading prices').click()
-        expect(page.locator('.price-card .price')).to_have_text('$1,000')
+        expect(page.locator('.price-card .price')).to_have_text('$950')
         self.assertEqual(self.cached(page), [f'egc_walkthrough_pricing.v1.zacb.{VERSION}'])
         # With saved tables the same outage still prices from the device.
         self.pricing_failure = 'pricing_config_unavailable'; page.reload(); expect(page.locator('#app')).to_be_visible()
         page.wait_for_function('() => PRICING !== null')
         self.screen(page, 5)
-        expect(page.locator('.price-card .price')).to_have_text('$1,000')
+        expect(page.locator('.price-card .price')).to_have_text('$950')
 
     def test_a_signed_walkthrough_reaches_the_crew_job_page_without_any_price(self):
         fixture = subprocess.Popen(['node', str(ROOT / 'tests' / 'browser' / 'crew_scope_fixture.mjs')], cwd=ROOT, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
@@ -213,16 +213,16 @@ class GameplanPricingBrowserTests(unittest.TestCase):
           await new Promise(done => { const tx = db.transaction('p', 'readwrite'); for (let i = 0; i < 3; i++) tx.objectStore('p').put({ id: 'synthetic-photo-' + i, job: S.photoDraftJobId || S.jobId, tag: 'before', dataUrl: 'data:image/jpeg;base64,/9j/', at: i }); tx.oncomplete = done; });
           await refreshPhotoCount(); return PHOTO_COUNT; }""")
         self.assertEqual(count, 3)
-        # A walkthrough the homeowner signed with pest waste ($200), mouse trapping ($250) and a pressure wash ($400).
+        # A walkthrough the homeowner signed with pest waste ($300), mouse trapping ($375) and a pressure wash ($600).
         self.screen(page, 5, {'sourceWalkthroughId': 'w1', 'name': 'Synthetic Customer', 'phone': '9705550100', 'email': 'test@example.invalid', 'address': '100 Fixture Lane', 'highlevelContactId': 'provider1',
             'whyNow': 'Moving soon', 'outcome': 'Park two cars', 'garageSize': '1', 'fill': 'medium', 'loads': '1', 'sortMethod': 'keep_donate_trash', 'truckPlacement': 'Driveway', 'hazards': ['Pest waste'],
             'finish': ['cleanout', 'pressure_wash', 'mouse_trapping'], 'keepNotes': 'Blue bicycle', 'jobDate': '2026-09-24', 'startTime': '08:00', 'endTime': '13:00', 'crewSize': '1', 'assignedTo': 'Crew One',
             'notes': 'Dog in the yard', 'signature': 'data:image/png;base64,iVBORw0KGgo=', 'approved': True, 'acceptanceAt': '2026-09-22T14:45:00.000Z', 'acceptanceBy': 'Synthetic Customer'})
-        expect(page.locator('#screen')).to_contain_text('Pest waste (+$200)')
+        expect(page.locator('#screen')).to_contain_text('Pest waste (+$300)')
         page.get_by_role('button', name='Save brief + schedule').click()
         expect(page.locator('#send-status')).to_contain_text('Job and CRM schedule verified', timeout=20000)
         plan = self.handoff_posts[-1]['plan']
-        for priced in ('Pest waste (+$200)', 'Non-toxic mouse trapping (+$250)', 'One-car garage pressure wash (+$400)'): self.assertIn(priced, plan['internal_notes'])
+        for priced in ('Pest waste (+$300)', 'Non-toxic mouse trapping (+$375)', 'One-car garage pressure wash (+$600)'): self.assertIn(priced, plan['internal_notes'])
         self.assertTrue(plan['crew_brief'].startswith('EGC CREW JOB BRIEF'))
         self.assertIsNone(MONEY.search(plan['crew_brief']))
         job_id = page.evaluate('S.handoffJobId')
