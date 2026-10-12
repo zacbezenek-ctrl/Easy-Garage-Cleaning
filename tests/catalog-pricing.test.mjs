@@ -203,7 +203,7 @@ const legacyTotalDollars = (baseDollars, lines) => {
 };
 
 test('legacy service items keep today\'s fixed prices exactly', () => {
-  const expected = { 'svc-pressure-wash-1car': 40000, 'svc-mouse-trapping': 25000, 'svc-pest-waste': 20000, 'svc-shelving-unit-metal': 49900, 'svc-shelving-unit-wood': 44900, 'svc-shelving-unit-plastic': 34900, 'svc-labeled-tote': 2150, 'svc-deep-clean-1car': 12500, 'svc-deep-clean-2car': 22000, 'svc-deep-clean-3car': 32000, 'svc-deep-clean-large': 42000 };
+  const expected = { 'svc-pressure-wash-1car': 60000, 'svc-mouse-trapping': 37500, 'svc-pest-waste': 30000, 'svc-shelving-unit-metal': 75000, 'svc-shelving-unit-wood': 67500, 'svc-shelving-unit-plastic': 52500, 'svc-labeled-tote': 3250, 'svc-deep-clean-1car': 19000, 'svc-deep-clean-2car': 33000, 'svc-deep-clean-3car': 48000, 'svc-deep-clean-large': 63000 };
   assert.deepEqual(Object.fromEntries(catalog.items.filter(entry => entry.kind === 'service').map(entry => [entry.id, entry.fixedPriceCents])), expected);
   for (const [id, cents] of Object.entries(expected)) {
     assert.deepEqual(computeSellPriceCents(item(id), defaults, { quantity: 2 }), { productCents: 0, laborCents: 0, laborMinutes: item(id).installMinutes * 2, markupCents: 0, disposalCents: 0, fixedCents: cents * 2, totalCents: cents * 2, unitCents: cents, quantity: 2, priceVerified: true, priceEvidence: 'egc_price_list' });
@@ -216,7 +216,7 @@ test('legacy service items keep today\'s fixed prices exactly', () => {
 
 test('catalog service prices reproduce recommend() totals from crew/gameplan.html', () => {
   const base = gameplan().recommend();
-  assert.equal(base, 1000, 'one load, nothing extra');
+  assert.equal(base, 950, 'one load, nothing extra');
   assert.equal(gameplan({ finish: ['cleanout', 'pressure_wash'] }).recommend(), legacyTotalDollars(base, [['svc-pressure-wash-1car', 1]]));
   assert.equal(gameplan({ finish: ['cleanout', 'mouse_trapping'] }).recommend(), legacyTotalDollars(base, [['svc-mouse-trapping', 1]]));
   assert.equal(gameplan({ hazards: ['Pest waste'] }).recommend(), legacyTotalDollars(base, [['svc-pest-waste', 1]]));
@@ -231,7 +231,7 @@ test('catalog service prices reproduce recommend() totals from crew/gameplan.htm
   for (const qty of [1, 4, 12]) assert.equal(gameplan({ finish: ['cleanout', 'totes'], toteQty: qty }).recommend(), legacyTotalDollars(base, [['svc-labeled-tote', qty]]), `totes x${qty}`);
   const everything = gameplan({ finish: ['cleanout', 'pressure_wash', 'deep_clean', 'shelving', 'totes', 'mouse_trapping'], hazards: ['Pest waste'], shelfType: 'wood', shelfQty: 2, toteQty: 6 });
   assert.equal(everything.recommend(), legacyTotalDollars(base, [['svc-pressure-wash-1car', 1], ['svc-deep-clean-1car', 1], ['svc-shelving-unit-wood', 2], ['svc-labeled-tote', 6], ['svc-mouse-trapping', 1], ['svc-pest-waste', 1]]));
-  assert.equal(everything.recommend(), 3000, 'pinned: 1000 + 400 + 125 + 898 + 129 = 2552 rounds to 2550, then + 250 trapping + 200 pest waste');
+  assert.equal(everything.recommend(), 3950, 'pinned: 950 + 600 + 190 + 1350 + 195 = 3285 rounds to 3275, then + 375 trapping + 300 pest waste');
 });
 
 test('legacy service minutes match estimatedJobMinutes() at the default 2-person crew', () => {

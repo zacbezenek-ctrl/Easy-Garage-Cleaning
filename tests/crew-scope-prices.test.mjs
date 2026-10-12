@@ -125,7 +125,7 @@ function gameplan(overrides = {}) {
 test('the gameplan sends a crew brief with labels only and keeps the priced brief for managers', () => {
   const h = gameplan(), instructions = h.buildJobInstructions({}), internal = h.buildInternalNotes(instructions), crew = h.buildCrewBrief(instructions);
   assert.match(internal, /^EGC INTERNAL JOB BRIEF\n/);
-  for (const priced of ['Pest waste (+$200)', 'One-car garage pressure wash (+$400)', 'Non-toxic mouse trapping (+$250)']) assert.ok(internal.includes(priced), priced);
+  for (const priced of ['Pest waste (+$300)', 'One-car garage pressure wash (+$600)', 'Non-toxic mouse trapping (+$375)']) assert.ok(internal.includes(priced), priced);
   assert.match(crew, /^EGC CREW JOB BRIEF\n/);
   assert.doesNotMatch(crew, MONEY);
   for (const label of ['HAZARDS: Pest waste', 'One-car garage pressure wash', 'Non-toxic mouse trapping', 'MATERIALS: 2 metal shelf unit(s) · 3 tote(s)', 'CREW / WINDOW: Crew One · 1 crew · 08:00–13:00']) assert.ok(crew.includes(label), label);
@@ -136,7 +136,7 @@ test('the gameplan sends a crew brief with labels only and keeps the priced brie
   assert.equal(sent.sent_at, NOW, 'the page reads the injected clock');
   assert.equal(sent.internal_notes, internal);
   assert.doesNotMatch(sent.crew_brief, MONEY);
-  assert.ok(sent.internal_notes.includes('(+$200)'));
+  assert.ok(sent.internal_notes.includes('(+$300)'));
 });
 
 // In-memory dispatch store (tests/walkthrough-handoff.test.mjs fixture shape) with a mask-aware jobRecords scan.
@@ -218,7 +218,7 @@ test('a signed walkthrough with pest waste, trapping and pressure wash reaches c
   assert.ok(job.operationalScope.text.includes('HAZARDS: Pest waste\n'));
   assert.doesNotMatch(JSON.stringify(job.jobInstructions), MONEY);
   // The manager-only brief and the signed snapshot the HighLevel Job Brief is written from keep every price.
-  for (const priced of ['Pest waste (+$200)', 'Non-toxic mouse trapping (+$250)', 'One-car garage pressure wash (+$400)']) {
+  for (const priced of ['Pest waste (+$300)', 'Non-toxic mouse trapping (+$375)', 'One-car garage pressure wash (+$600)']) {
     assert.ok(job.internalNotes.includes(priced), priced);
     assert.ok(job.acceptedHandoffPayload.internal_notes.includes(priced), priced);
   }
@@ -230,9 +230,9 @@ test('a signed walkthrough with pest waste, trapping and pressure wash reaches c
   // Managers read the priced brief from the stored job document: firestore.rules let business users, never crew, read
   // jobs/{id} (pinned on the emulator by tests/firestore-emulator-crew-scope.test.mjs). No Hub API returns internalNotes.
   const record = firestore.get(`jobs/${job.id}`);
-  assert.ok(record.internalNotes.includes('Pest waste (+$200)'));
-  assert.ok(record.internalNotes.includes('Non-toxic mouse trapping (+$250)'));
-  assert.ok(record.internalNotes.includes('One-car garage pressure wash (+$400)'));
+  assert.ok(record.internalNotes.includes('Pest waste (+$300)'));
+  assert.ok(record.internalNotes.includes('Non-toxic mouse trapping (+$375)'));
+  assert.ok(record.internalNotes.includes('One-car garage pressure wash (+$600)'));
 });
 
 test('a page saved before the fix (no crew_brief) still stores a price-free crew scope', async () => {
@@ -243,7 +243,7 @@ test('a page saved before the fix (no crew_brief) still stores a price-free crew
   const job = store.rows.get(`jobs/${saved.result.job.id}`);
   assert.equal(job.operationalScope.text, stripCrewMoney(planInput.internal_notes));
   assert.doesNotMatch(job.operationalScope.text, MONEY);
-  assert.ok(job.internalNotes.includes('(+$250)'));
+  assert.ok(job.internalNotes.includes('(+$375)'));
   // Crew checks, instructions and notes typed with an amount lose it; the signed scope and notes keep it for managers.
   const typed = plain(gameplan({ notes: 'Customer adds $50 for the old fridge' }).payload());
   typed.client_checklists.preJob.push({ id: 'extra', label: 'Collect the agreed $75 disposal fee', detail: 'USD 75 in cash', critical: false });

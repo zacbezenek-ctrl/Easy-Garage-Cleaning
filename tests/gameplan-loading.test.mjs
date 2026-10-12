@@ -203,7 +203,7 @@ test('an unsigned automatic draft discards its old-rate total while preserving f
   await h.context.openApp();
   assert.equal(h.context.S.lockedPrice, '');
   assert.equal(h.context.S.notes, 'Keep these field notes');
-  assert.equal(h.context.S.pricingVersion, '2026-09-pest200-traps250');
+  assert.equal(h.context.S.pricingVersion, '2026-10-optionB-truck950');
 });
 
 test('a pricing update preserves both manually quoted totals and already signed totals', async () => {
@@ -225,5 +225,5 @@ test('an unsigned draft under the previous truck rates recalculates a newly char
   await h.context.openApp();
   assert.equal(h.context.S.lockedPrice, '');
   assert.equal(h.context.S.hazards[0], 'Pest waste');
-  assert.equal(h.context.S.pricingVersion, '2026-09-pest200-traps250');
+  assert.equal(h.context.S.pricingVersion, '2026-10-optionB-truck950');
 });
