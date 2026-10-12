@@ -38,6 +38,8 @@ describe('recording processing diagnostics', () => {
     expect(recordingFailureDiagnostic({ name: 'APIConnectionTimeoutError' })).toEqual({ code: 'ai_timeout' });
     expect(recordingFailureDiagnostic({ name: 'APIConnectionError' })).toEqual({ code: 'ai_connection_failed' });
     expect(recordingFailureDiagnostic(new Error('OPENAI_API_KEY is required'))).toEqual({ code: 'ai_key_missing' });
+    expect(recordingFailureDiagnostic(new Error('ANTHROPIC_API_KEY is required'))).toEqual({ code: 'ai_key_missing' });
+    expect(recordingFailureDiagnostic(Object.assign(new Error('Claude request failed (credit_balance_exhausted)'), { status: 429, code: 'credit_balance_exhausted' }))).toEqual({ code: 'credit_balance_exhausted', status: 429 });
     for (const status of ['400', 200, 599.5, 600, NaN]) {
       expect(recordingFailureDiagnostic({ status })).toEqual({ code: 'processing_failed' });
     }

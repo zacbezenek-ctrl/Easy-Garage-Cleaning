@@ -4,6 +4,7 @@ import { INTERNAL_TASK_KINDS, MESSAGE_ATTACHMENT_KINDS, MESSAGE_TASK_KINDS, isMe
 import { CONVERSATION_EXTRACTION_VERSION, CONVERSATION_LIMITS as L, SCHEDULING_DAY_PARTS, SCHEDULING_WEEKDAYS, conversationExtractionSchemas, conversationSourceKindSchema, schedulingConstraintSchemas, walkthroughModelOutputSchema, type SchedulingConstraints } from "@egc/schemas";
 import type { CatalogIndexItem } from "./catalog-index.js";
 import { DEFAULT_EXTRACTION_MODEL, modelName, openaiClient } from "./provider.js";
+import { claudeClient, claudeExtractionModel, extractionProvider } from "./claude.js";
 import { spokenDayParts, spokenNumbers, spokenUrgencies, spokenWeekdays } from "./scheduling-constraints.js";
 
 /** Conversation extraction v2 (P3-02): follow-up actions with the Action Center kinds, draft
@@ -321,8 +322,10 @@ export async function extractConversation(transcript: string, options: Conversat
   const context = contextSchema.safeParse(options.context);
   if (!context.success) return { ok: false, code: "conversation_context_invalid", retryable: false };
   const catalog = Array.isArray(options.catalog) ? options.catalog : [];
-  const model = options.model?.trim() || modelName("OPENAI_EXTRACTION_MODEL", DEFAULT_EXTRACTION_MODEL);
-  const client: ConversationClient = options.client ?? openaiClient();
+  // An injected client keeps its own model rules; otherwise the configured provider decides (Claude when ANTHROPIC_API_KEY is set).
+  const claude = !options.client && extractionProvider() === "anthropic";
+  const model = options.model?.trim() || (claude ? claudeExtractionModel() : modelName("OPENAI_EXTRACTION_MODEL", DEFAULT_EXTRACTION_MODEL));
+  const client: ConversationClient = options.client ?? (claude ? claudeClient() as unknown as ConversationClient : openaiClient());
   const response = await client.responses.create({
     model,
     input: [

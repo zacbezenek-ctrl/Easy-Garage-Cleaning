@@ -97,7 +97,8 @@ The signed messaging cron is off unless `EGC_MESSAGING_CRON_ENABLED=true` (`EGC_
 
 ```
 API_BEARER_TOKEN=<random 32+ byte value>
-OPENAI_API_KEY=<OpenAI API key>
+OPENAI_API_KEY=<OpenAI API key, audio transcription>
+ANTHROPIC_API_KEY=<Claude API key from platform.claude.com, transcript extraction>
 GHL_LOCATION_ID=<EGC location>
 GHL_PRIVATE_INTEGRATION_TOKEN=<existing private integration token>
 STORAGE_DRIVER=filesystem
