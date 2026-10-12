@@ -7,7 +7,9 @@ import { servedPricing } from './helpers/walkthrough-pricing.mjs';
 
 const readJson = path => JSON.parse(fs.readFileSync(new URL(path, import.meta.url), 'utf8'));
 const catalog = readJson('../functions/_data/garage-catalog.json');
-const defaults = readJson('../functions/_data/pricing-settings.defaults.json');
+// Engine arithmetic is pinned to the 20% worked example in GARAGE-CATALOG.md, independent of the owner's live markup.
+const shipped = readJson('../functions/_data/pricing-settings.defaults.json');
+const defaults = { ...shipped, markupPct: { default: 20, byCategory: Object.fromEntries(Object.keys(shipped.markupPct.byCategory).map(id => [id, 20])) } };
 const item = id => catalog.items.find(entry => entry.id === id) || assert.fail(`missing ${id}`);
 const settings = (patch = {}) => ({ ...structuredClone(defaults), ...patch });
 const LINE_KEYS = ['productCents', 'laborCents', 'laborMinutes', 'markupCents', 'disposalCents', 'fixedCents', 'totalCents', 'unitCents', 'quantity', 'priceVerified', 'priceEvidence'];
