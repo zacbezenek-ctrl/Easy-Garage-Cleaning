@@ -5,7 +5,9 @@ import { priceCatalogQuote } from '../functions/_lib/catalog-quote.js';
 
 const source = path => JSON.parse(readFileSync(new URL(path, import.meta.url), 'utf8'));
 const catalog = source('../functions/_data/garage-catalog.json');
-const defaults = source('../functions/_data/pricing-settings.defaults.json');
+// Pinned to the 20% worked-example markup, independent of the owner's live markup.
+const shipped = source('../functions/_data/pricing-settings.defaults.json');
+const defaults = { ...shipped, markupPct: { default: 20, byCategory: Object.fromEntries(Object.keys(shipped.markupPct.byCategory).map(id => [id, 20])) } };
 const state = (settings = {}) => ({ catalog, publication: { version: catalog.catalogVersion },
   settings: { ...structuredClone(defaults), mustSetBeforeCustomerUse: false, ...settings } });
 const rack = catalog.items.find(item => item.id === 'overhead-rack-fleximounts-gr48-classic-4x8');

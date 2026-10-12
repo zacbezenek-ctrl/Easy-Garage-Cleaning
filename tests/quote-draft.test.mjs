@@ -26,7 +26,9 @@ const CATALOG_ENV = { ...ENV, CATALOG_QUOTES_ENABLED: 'true' };
 const CATALOG_NOW = '2026-09-30T18:00:00.000Z';
 const catalogState = () => {
   const catalog = JSON.parse(readFileSync(new URL('../functions/_data/garage-catalog.json', import.meta.url), 'utf8'));
-  const settings = JSON.parse(readFileSync(new URL('../functions/_data/pricing-settings.defaults.json', import.meta.url), 'utf8'));
+  const shipped = JSON.parse(readFileSync(new URL('../functions/_data/pricing-settings.defaults.json', import.meta.url), 'utf8'));
+  // Pinned to the 20% worked-example markup, independent of the owner's live markup.
+  const settings = { ...shipped, markupPct: { default: 20, byCategory: Object.fromEntries(Object.keys(shipped.markupPct.byCategory).map(id => [id, 20])) } };
   Object.assign(settings, { mustSetBeforeCustomerUse: false, depositPct: 30 });
   return { catalog, publication: { version: catalog.catalogVersion }, settings };
 };
