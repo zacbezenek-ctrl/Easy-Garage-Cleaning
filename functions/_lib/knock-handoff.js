@@ -1,19 +1,22 @@
 // Sale hand-offs: the job, the deposit link and the customer text. Each runs through an adapter
 // chosen in settings.integrations (Admin > Settings):
-//   job     manual    - an admin creates the job (Hub dispatch or Jobber) and records it here
+//   job     hub       - "Create Hub job": the Hub customer and one unscheduled job in Dispatch's To schedule
+//                       queue, through the Hub's own customer resolution and dispatch create (knock-hub-job.js);
+//                       always available to an admin, never sends anything
+//           manual    - an admin creates the job by hand and records its reference here (the fallback)
 //   deposit manual    - an admin marks the deposit collected
 //           stripe    - a Stripe Checkout link for the deposit (repo's Stripe helpers); its status is
 //                       read back from Stripe, so no webhook change is needed
 //   text    manual    - an admin texts the customer from HighLevel and records it here
 //           highlevel - one SMS through the repo's HighLevel messenger, at most once per sale, never in bulk
 // An adapter runs only when Settings choose it and the server has its credentials; manual always
-// works. The repo's Jobber integration is read-only (client and request lookup), so job creation
-// stays manual. Credentials come only from the server environment; nothing is invented.
+// works. Credentials come only from the server environment; nothing is invented.
 import { knockFailure, write } from './knock-store.js';
 import { loadSettings } from './knock-access.js';
 import { stripeRequest, stripeSecretKey } from './customer-payments.js';
 import { createGhlMessenger } from './ghl-messenger.js';
 import { formatClock, zonedDate, zonedInstant } from '../../crew/knock-time.js';
+import { createHubJob } from './knock-hub-job.js';
 
 const SITE = 'https://easygaragecleaning.com';
 
@@ -23,7 +26,7 @@ const highLevel = (env, { fetcher } = {}) => createGhlMessenger({ env, fetcher }
 
 export function integrationStatus(env, settings) {
   return {
-    job: { mode: 'manual', available: ['manual'] },
+    job: { mode: 'manual', available: ['manual', 'hub'] },
     deposit: { mode: settings.integrations.deposit, available: ['manual', ...(stripeSecretKey(env) ? ['stripe'] : [])] },
     text: { mode: settings.integrations.text, available: ['manual', ...(highLevel(env).configured() ? ['highlevel'] : [])] },
   };
@@ -108,8 +111,8 @@ export async function sendHighLevelText(messenger, sale, message, { contactId = 
 
 /* ---- the admin action ---- */
 
-/* kind: 'job' | 'deposit' | 'text'; op: 'mark' (manual), 'start' (deposit link), 'refresh' (deposit),
-   'send' (text). Returns the updated sale. */
+/* kind: 'job' | 'deposit' | 'text'; op: 'mark' (manual), 'create' (Hub job), 'start' (deposit link),
+   'refresh' (deposit), 'send' (text). Returns the updated sale ({sale, hubJob} for a Hub job). */
 export async function saleHandoff(store, admin, body, nowIso, env, deps = {}) {
   try {
     return await runHandoff(store, admin, body, nowIso, env, deps);
@@ -132,7 +135,10 @@ async function runHandoff(store, admin, { saleId, kind, op, ref = '', amount }, 
     return { sale: { ...sale, handoff, updatedAt: nowIso } };
   };
 
+  if (kind === 'job' && op === 'create') return createHubJob(store, admin, sale, nowIso, env, deps);
   if (kind === 'job' && op === 'mark') {
+    // A Hub job made from this sale stays the sale's job; its reference is never overwritten by hand.
+    if (handoff.job?.mode === 'hub' && handoff.job?.status === 'created') throw knockFailure(`This sale already has Hub job ${handoff.job.ref}. Change it in Dispatch.`, 409, 'knock_job_hub_created');
     handoff.job = { ...handoff.job, mode: 'manual', status: 'created', ref: String(ref || '').slice(0, 200), at: nowIso, by };
     return save();
   }

@@ -370,6 +370,7 @@ async function coverageSection(params) {
 const SALE_BADGE = { booked: ['Booked', 'info'], completed: ['Completed', 'success'], paid: ['Paid', 'success'], cancelled: ['Cancelled', 'error'] };
 
 function needsMe(sale, highLevel) {
+  if (sale.hubJobWarning) return true;
   if (!['booked', 'completed'].includes(sale.status)) return false;
   const d = sale.handoff?.deposit || {}, t = sale.handoff?.text || {}, j = sale.handoff?.job || {};
   return j.status !== 'created' || d.status !== 'collected' || (sale.textConsent && t.status !== 'sent') || sale.status === 'completed' || (highLevel && t.status === 'uncertain');
@@ -388,13 +389,43 @@ async function salesSection(params) {
   const open = shown.find(s => s.id === params.get('sale')) || shown[0];
   const refresh = () => { invalidate('sales'); app.render(); };
   const act = async (body, message) => {
-    try { await action(body, { quiet: true }); toast(message); refresh(); }
+    try {
+      const result = await action(body, { quiet: true });
+      // A cancelled sale whose Hub job is still open says so instead of a plain "saved".
+      if (result.warnings?.length) toast(message, { tone: 'bad', iconName: 'alert', sub: result.warnings.map(w => w.message).join(' · ') });
+      else toast(message);
+      refresh();
+    }
     catch (error) { toast(error.message, { tone: 'bad' }); if (error.details?.sale) refresh(); }
   };
+  // "Create Hub job": one unscheduled job in Dispatch's To schedule queue. Online only (nothing is queued on the
+  // phone for it); the button shows its own progress and a second tap while it runs does nothing.
+  const createHubJob = async (sale, button) => {
+    if (!app.S.online) { toast('No connection. Create the Hub job when you have signal.', { tone: 'bad' }); return; }
+    if (button.disabled) return;
+    button.disabled = true;
+    button.setAttribute('aria-busy', 'true');
+    mount(button, 'Creating Hub job…');
+    try {
+      const result = await action({ action: 'sale.handoff', saleId: sale.id, kind: 'job', op: 'create' }, { quiet: true });
+      toast(result.hubJob?.created === false ? 'Hub job already created' : 'Hub job created', { sub: result.hubJob?.id ? `${result.hubJob.id} · in Dispatch > To schedule` : '' });
+      refresh();
+    } catch (error) {
+      toast(error.message, { tone: 'bad' });
+      button.disabled = false;
+      button.removeAttribute('aria-busy');
+      mount(button, 'Create Hub job');
+      if (error.details?.sale || error.code === 'knock_job_in_progress') refresh();
+    }
+  };
+  const HUB_SCHEDULE = '/employee.html?view=schedule';
   const address = sale => `${sale.address.number} ${titleStreet(sale.address.street)}${sale.address.unit ? ` #${sale.address.unit}` : ''}`;
   const card = sale => {
     const d = sale.handoff?.deposit || {}, t = sale.handoff?.text || {}, j = sale.handoff?.job || {};
-    const ref = h('input', { class: 'input input--sm', placeholder: 'Hub job ID or Jobber link', value: j.ref || '', 'aria-label': 'Job reference' });
+    const ref = h('input', { class: 'input input--sm', placeholder: 'Hub job ID', value: j.ref || '', 'aria-label': 'Job reference' });
+    const hubJob = j.mode === 'hub' && j.status === 'created';
+    const canCreate = j.status !== 'created' && sale.status !== 'cancelled';
+    const createButton = canCreate ? h('button', { type: 'button', class: 'btn btn--primary btn--sm', disabled: !app.S.online, onclick: event => createHubJob(sale, event.currentTarget) }, 'Create Hub job') : null;
     const windowOpen = Date.now() < Date.parse(sale.cancelEndsAt || 0);
     const [label, tone] = SALE_BADGE[sale.status] || [sale.status, ''];
     return h('section', { class: 'card card--accent', style: { gap: '14px' } },
@@ -406,9 +437,15 @@ async function salesSection(params) {
         h('div', { class: 'row wrap', style: { gap: '6px' } }, badge(label, tone), sale.status === 'booked' ? badge(windowOpen ? `Refund window to ${dateLabel(sale.cancelDeadlineDate)}` : 'Refund window closed', windowOpen ? 'warning' : '') : null)),
       h('div', { class: 'handoffs' },
         h('div', { class: 'card card--line', style: { gap: '10px' } },
-          h('div', { class: 'row row--between' }, h('h3', {}, '1 · Job'), j.status === 'created' ? badge('Created', 'success', 'check') : badge('Not created', 'warning')),
-          j.ref ? kv('Reference', j.ref) : null, ref,
-          h('button', { type: 'button', class: 'btn btn--quiet btn--sm', onclick: () => act({ action: 'sale.handoff', saleId: sale.id, kind: 'job', op: 'mark', ref: ref.value }, 'Job marked created') }, j.status === 'created' ? 'Update reference' : 'Mark created')),
+          h('div', { class: 'row row--between' }, h('h3', {}, '1 · Job'), j.status === 'created' ? badge(hubJob ? 'In the Hub' : 'Created', 'success', 'check') : badge('Not created', 'warning')),
+          sale.hubJobWarning ? banner('warn', 'alert', sale.hubJobWarning.message, 'Cancelling the sale here does not cancel the Hub job.') : null,
+          hubJob ? kv('Hub job', j.ref) : j.ref ? kv('Reference', j.ref) : null,
+          hubJob ? h('p', { class: 'caption muted' }, h('a', { href: HUB_SCHEDULE, target: '_blank', rel: 'noopener' }, 'Open Dispatch'), ` · waiting in To schedule for a time and crew${j.at ? ` · created ${timeLabel(j.at)}` : ''}`) : null,
+          createButton,
+          canCreate ? h('p', { class: 'caption muted' }, app.S.online ? 'Adds the customer and one unscheduled job to Dispatch (To schedule). Notify customer stays off; nothing is sent.' : 'Connect to create the Hub job.') : null,
+          hubJob ? null : h('details', {}, h('summary', { class: 'caption' }, 'Record a job made by hand'),
+            h('div', { class: 'stack stack--tight', style: { marginTop: '6px' } }, ref,
+              h('button', { type: 'button', class: 'btn btn--quiet btn--sm', onclick: () => act({ action: 'sale.handoff', saleId: sale.id, kind: 'job', op: 'mark', ref: ref.value }, 'Job marked created') }, j.status === 'created' ? 'Update reference' : 'Mark created')))),
         h('div', { class: 'card card--line', style: { gap: '10px' } },
           h('div', { class: 'row row--between' }, h('h3', {}, `2 · Deposit · ${money(sale.depositAmount, sale.depositAmount % 1 !== 0)}`),
             d.status === 'collected' ? badge('Collected', 'success', 'check') : d.url ? badge('Link sent', 'warning') : badge('Not paid')),
@@ -431,6 +468,7 @@ async function salesSection(params) {
   };
   const nextLabel = sale => {
     const d = sale.handoff?.deposit || {}, t = sale.handoff?.text || {}, j = sale.handoff?.job || {};
+    if (sale.hubJobWarning) return 'Cancel Hub job';
     if (sale.status === 'cancelled' || sale.status === 'paid') return '';
     if (j.status !== 'created') return 'Create job';
     if (d.status !== 'collected') return 'Deposit';
@@ -451,7 +489,7 @@ async function salesSection(params) {
           return h('tr', {},
             h('td', {}, h('b', {}, sale.customer.name), h('div', { class: 'caption muted' }, `${money(sale.ticket)} · ${sale.package}`)),
             h('td', {}, repName(sale.repKey)),
-            h('td', {}, j.status === 'created' ? `${j.ref || 'Created'} · ${dateLabel(sale.jobDate)}` : badge('Not created', 'warning')),
+            h('td', {}, sale.hubJobWarning ? badge(`${j.ref} still open`, 'error') : j.status === 'created' ? `${j.ref || 'Created'} · ${dateLabel(sale.jobDate)}` : badge('Not created', 'warning')),
             h('td', {}, d.status === 'collected' ? badge('Collected', 'success') : d.url ? badge('Link sent', 'warning') : badge('None')),
             h('td', {}, t.status === 'sent' ? badge('Sent', 'success') : badge(sale.textConsent ? 'Not sent' : 'No consent')),
             h('td', {}, badge(label, tone)),

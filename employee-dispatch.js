@@ -305,7 +305,7 @@ function jobCard(job, {compact=false,date=null}={}) {
 function empty(text='No jobs match these filters.') { return h('div',{class:'dp-empty'},h('h3',{},text),h('p',{},'Change the date or filters, or schedule work for a customer.'),btn('Create job',()=>openJob(),'primary')); }
 // FIX-DISPATCH-QUEUE: the To schedule view. The server sends each queued job's queue facts ({since, sinceKind, ageDays,
 // source, jobber?}) in oldest-first order; a row shows who, what, since when, from where and the price and deposit chips.
-const QUEUE_SOURCE={walkthrough:'Walkthrough',portal:'Portal approval',jobber:'Jobber',hub:'Hub'},QUEUE_SINCE={sold:'Sold',approved:'Approved',created:'Added'};
+const QUEUE_SOURCE={walkthrough:'Walkthrough',portal:'Portal approval',jobber:'Jobber',door_to_door:'Door-to-door sale',hub:'Hub'},QUEUE_SINCE={sold:'Sold',approved:'Approved',created:'Added'};
 const QUEUE_REVIEW={portal_approval:'Approved online: needs review',sold_schedule_later:'Sold, schedule later: needs review',jobber_import:'From Jobber: needs review'};
 const DATE=/^\d{4}-\d{2}-\d{2}$/,TIME=/^\d{2}:\d{2}$/;
 const queueCount=()=>(S.data?.jobs||[]).filter(queued).length;

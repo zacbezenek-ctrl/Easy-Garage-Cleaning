@@ -1,4 +1,5 @@
 import { getHubSession } from '../_lib/hub-session.js';
+import { dispatchStorage } from '../_lib/dispatch-storage.js';
 import { createKnockStore, knockFailure } from '../_lib/knock-store.js';
 import { requireAdmin } from '../_lib/knock-access.js';
 import {
@@ -8,6 +9,7 @@ import {
 import { loadNeighborhoods } from '../_lib/knock-territory.js';
 import { allSales, setJobDate, setSaleStatus } from '../_lib/knock-sales.js';
 import { customerMessage, integrationStatus, refundSummary, saleHandoff } from '../_lib/knock-handoff.js';
+import { openHubJobWarnings } from '../_lib/knock-hub-job.js';
 import { loadSettings } from '../_lib/knock-access.js';
 import { rebuildDay } from '../_lib/knock-sync.js';
 import { addPayout, exportCsv, moneyView } from '../_lib/knock-reports.js';
@@ -33,10 +35,12 @@ const VIEWS = {
   async neighborhood(store, params) { return neighborhoodHouses(store, params.get('id')); },
   async coverage(store, _params, now) { return coverageView(store, now.getTime()); },
   async flags(store) { return flagsView(store); },
-  async sales(store, params, now, env) {
+  async sales(store, params, now, env, { hub } = {}) {
     const [sales, reps, settings] = await Promise.all([allSales(store, { from: params.get('from') || '', to: params.get('to') || '' }), listReps(store), loadSettings(store)]);
+    // A cancelled sale whose Hub job is still open says so; the Hub job is never cancelled from canvassing.
+    const open = hub ? await openHubJobWarnings(sales, hub) : new Map();
     return {
-      sales: sales.map(sale => ({ ...sale, refund: refundSummary(sale, now.getTime()), message: customerMessage(sale) })),
+      sales: sales.map(sale => ({ ...sale, refund: refundSummary(sale, now.getTime()), message: customerMessage(sale), ...(open.has(sale.id) ? { hubJobWarning: open.get(sale.id) } : {}) })),
       reps: reps.map(r => ({ repKey: r.repKey, displayName: r.displayName })),
       integrations: integrationStatus(env || {}, settings),
     };
@@ -59,14 +63,19 @@ const ACTIONS = {
   'neighborhood.excludeUnits': excludeUnits,
   'noknock.import': importNoKnock,
   'noknock.clear': clearNoKnock,
-  'sale.status': async (store, admin, body, nowIso) => afterSaleChange(store, await setSaleStatus(store, admin, body, nowIso), nowIso),
+  'sale.status': async (store, admin, body, nowIso, _env, { hub } = {}) => {
+    const result = await afterSaleChange(store, await setSaleStatus(store, admin, body, nowIso), nowIso);
+    const open = result.sale?.status === 'cancelled' && hub ? await openHubJobWarnings([result.sale], hub) : new Map();
+    return open.size ? { ...result, warnings: [...open.values()] } : result;
+  },
   'sale.jobDate': setJobDate,
-  'sale.handoff': (store, admin, body, nowIso, env) => saleHandoff(store, admin, body, nowIso, env),
+  'sale.handoff': (store, admin, body, nowIso, env, { hub } = {}) => saleHandoff(store, admin, body, nowIso, env, { dispatchStore: hub }),
   'payout.add': addPayout,
 };
 
 // Admin views (GET ?view=...) and changes (POST {action, ...}). Admins are Hub business users.
-export function knockAdminHandlers({ session = getHubSession, storage = createKnockStore, now = () => new Date(), views = VIEWS, actions = ACTIONS } = {}) {
+// hubStorage: the Hub's dispatch store, for "Create Hub job" and the open-Hub-job warning on a cancelled sale.
+export function knockAdminHandlers({ session = getHubSession, storage = createKnockStore, hubStorage = dispatchStorage, now = () => new Date(), views = VIEWS, actions = ACTIONS } = {}) {
   return {
     async get({ request, env }) {
       try {
@@ -74,7 +83,7 @@ export function knockAdminHandlers({ session = getHubSession, storage = createKn
         const params = new URL(request.url).searchParams;
         const view = views[params.get('view') || ''];
         if (!view) throw knockFailure('Unknown admin view.', 404, 'knock_unknown_view');
-        const result = await view(storage(env), params, now(), env);
+        const result = await view(storage(env), params, now(), env, { hub: hubStorage(env) });
         return result instanceof Response ? result : reply(200, { ok: true, serverTime: now().toISOString(), ...result });
       } catch (error) {
         return errorResponse(error);
@@ -87,7 +96,7 @@ export function knockAdminHandlers({ session = getHubSession, storage = createKn
         const body = await readJson(request, 262144);
         const action = actions[String(body.action || '')];
         if (!action) throw knockFailure('Unknown admin action.', 400, 'knock_unknown_action');
-        const result = await action(storage(env), admin, body, now().toISOString(), env);
+        const result = await action(storage(env), admin, body, now().toISOString(), env, { hub: hubStorage(env) });
         return reply(200, { ok: true, ...result });
       } catch (error) {
         return errorResponse(error);

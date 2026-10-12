@@ -177,8 +177,35 @@ per neighborhood and per street.
 * **Lifecycle** (Admin > Sales): booked, completed, paid (with the amount collected), cancelled; reinstate and
   move the job date.
 * **Hand-offs**, each with a manual fallback that works with no integration at all:
-  * **Job:** manual. The repo's Jobber connection is read-only (client and request lookup), so an admin
-    creates the job in the Hub or Jobber and records the reference here.
+  * **Job:** **Create Hub job** (the primary button in Admin > Sales), with **Record a job made by hand** as the
+    fallback. Create Hub job uses the Hub's own server paths, the same ones a quote draft uses
+    (`functions/_lib/knock-hub-job.js`):
+    1. The Hub customer comes from `resolveCustomer` (`customer-resolution.js`) with the sale's name, phone, email and
+       address. An existing customer with the same phone or email is reused, never duplicated; if the details match
+       more than one customer, or conflict, nothing is created and the admin is told to check the customer in the Hub
+       (`knock_hub_customer_review`), then use the manual fallback.
+    2. One job is created through Dispatch's own `schedule.create` (`mutateDispatch`) **with no date**: it waits in
+       Dispatch > **To schedule** as a **Door-to-door sale** (`needsDispatchReview`, reason `sold_schedule_later`,
+       `leadSource: 'door_to_door'`) for a manager to give it a time and a crew. The job carries the package as the
+       service and title, the address, the ticket as the quoted price (`total`, `priceQuoted`), the 20% deposit as
+       `deposit.amount`, the requested date and time (`preferredDate`, `preferredTime`), the sale's facts
+       (`knockSale`: rep, sale and cancel-deadline dates, package, ticket, deposit and its status in Knock) and an
+       internal note (`opsNotes`): "Door-to-door sale by <rep> on <date>; right-to-cancel deadline <date>
+       (midnight); knock sale <id>", the requested date, price and deposit. The crew-visible scope has no amounts.
+    3. **Notify customer is off** (`notify: false`, `customerAutomationEnabled: false`). Nothing is sent: no text or
+       email, no HighLevel contact, tag or appointment (an undated job has none, and this path also turns the tag
+       outbox and crew notices off for its one commit), no funnel booking event until a manager books it.
+    * **Once only.** The customer and job request ids are derived from the sale id, so the job id is fixed per sale
+      (`dispatch_<id>`). A second tap returns the same job; a lost response is found again on retry; a concurrent
+      double tap is stopped by a `knock_receipts/job_<saleId>` claim (`knock_job_in_progress`). The sale records
+      `handoff.job = {mode: 'hub', status: 'created', ref: <Hub job id>, customerId, at, by}` in the same commit
+      that closes the claim. A manual reference cannot overwrite a Hub job, and a sale with a manual job is not given
+      a second one.
+    * **Cancelling the sale never cancels the Hub job.** A cancelled sale whose Hub job is still open shows
+      "Hub job <id> still open — cancel it in Dispatch" on the sale (and in the cancel response) until Dispatch
+      cancels or closes it.
+    * Admins only; the button needs a connection (it is not queued offline). The deposit itself is still recorded
+      in Knock (manual or Stripe below), not in the Hub's payment ledger.
   * **Deposit link:** manual (mark collected), or a Stripe Checkout link made with the repo's Stripe helpers
     when `STRIPE_SECRET_KEY` is set and settings say `stripe`. **Check payment** reads the session back from
     Stripe, so the existing webhook is untouched.
