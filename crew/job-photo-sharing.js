@@ -4,7 +4,7 @@
   // job.js re-renders #field-main wholesale, so this module decorates each
   // render from its own server state and never edits the job record itself.
   const PREFIX = 'egc.photo-sharing.pending.v1.';
-  const NAMES = { before: 'Before', after: 'After', progress: 'Progress', damage: 'Damage', walkthrough: 'Walkthrough' };
+  const NAMES = { before: 'Before', after: 'After', progress: 'Progress', damage: 'Damage', walkthrough: 'Walkthrough', storage: 'Storage' };
   const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
   const S = { host: null, jobId: '', gen: 0, data: null, manager: false, failed: '', busy: '', pending: null, status: '', statusError: false, needsRefresh: '', observer: null, refreshTimer: 0, restoreFocus: '' };
 
