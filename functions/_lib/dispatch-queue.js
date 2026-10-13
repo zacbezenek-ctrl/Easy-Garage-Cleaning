@@ -2,15 +2,16 @@
    when it was sold (funnelSale.soldAt: the live sale FUN-03 records for a signed walkthrough or a portal approval, only
    when funnelSale.jobId names this job, as liveSale() requires), else when its estimate was accepted
    (estimate.acceptedAt, customerApproval.approvedAt), else when the job was created. Each row says where the work came
-   from: a Walkthrough sale, a Portal approval, a Jobber import or the Hub, and an imported Jobber job
+   from: a Walkthrough sale, a Portal approval, a Jobber import, a Door-to-door sale (an EGC Knock sale handed to the
+   Hub, leadSource 'door_to_door', knock-hub-job.js) or the Hub, and an imported Jobber job
    (scheduleSource 'jobber_import') shows the first visit Jobber had for it, even after the customer approves it online.
 
    needsDispatchReview (optional; legacy jobs have none and behave as before) flags undated work the office has not
    booked yet: an online approval (customer-portal.js approve_estimate, reason 'portal_approval') and an imported Jobber
    job (jobber-import-map.js futureJobRecord, 'jobber_import'). 'sold_schedule_later' is reserved for a signed sale
-   saved to schedule later: walkthrough-handoff.js has no undated path yet, and the unit that adds one spreads
-   dispatchReviewPatch('sold_schedule_later', now) into that create. The first save that leaves the job scheduled
-   clears it, with who and when: a dispatch save (dispatch-service.js) or a bridge schedule update (MCP
+   saved to schedule later: an EGC Knock door-to-door sale's "Create Hub job" (knock-hub-job.js) spreads
+   dispatchReviewPatch('sold_schedule_later', now) into its create; walkthrough-handoff.js has no undated path yet.
+   The first save that leaves the job scheduled clears it, with who and when: a dispatch save (dispatch-service.js) or a bridge schedule update (MCP
    egc.schedule_visit, operations-scheduling.js). Queue facts are read-only and are added only to the Hub's GET
    /api/dispatch board (dispatchOverview option readiness, which also sends queueFacts:true so the page lists exactly
    the jobs that carry them), never to the signed hub.dispatch.overview bridge. They carry no money: a sale's amount
@@ -19,9 +20,9 @@ import { denverToday, scheduleInterval, validDate } from './dispatch-time.js';
 import { walkthroughClosed } from './walkthrough-state.js';
 
 export const DISPATCH_REVIEW_REASONS = Object.freeze(['portal_approval', 'sold_schedule_later', 'jobber_import']);
-export const QUEUE_SOURCES = Object.freeze(['walkthrough', 'portal', 'jobber', 'hub']);
+export const QUEUE_SOURCES = Object.freeze(['walkthrough', 'portal', 'jobber', 'door_to_door', 'hub']);
 // The job fields the queue reads beyond the board's own, as Firestore mask paths (dispatch-storage.js JOB_FIELDS).
-export const QUEUE_JOB_FIELDS = Object.freeze(['needsDispatchReview', 'dispatchReviewReason', 'funnelSale.soldAt', 'funnelSale.jobId', 'estimate.acceptedAt', 'customerApproval.approvedAt', 'customerApproval.source', 'jobber.visits']);
+export const QUEUE_JOB_FIELDS = Object.freeze(['needsDispatchReview', 'dispatchReviewReason', 'funnelSale.soldAt', 'funnelSale.jobId', 'estimate.acceptedAt', 'customerApproval.approvedAt', 'customerApproval.source', 'jobber.visits', 'leadSource']);
 const TERMINAL = new Set(['cancelled', 'canceled', 'completed', 'invoiced', 'paid', 'review_requested', 'closed', 'noshow', 'no_show', 'no-show']);
 const VISIT_TYPES = new Set(['job', 'walkthrough', 'cleanout', 'reorg']);
 const TIME = /^\d{2}:\d{2}$/, INSTANT = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(?::\d{2}(?:\.\d{1,9})?)?(?:Z|[+-]\d{2}:\d{2})$/;
@@ -52,6 +53,8 @@ export function dispatchReviewCleared(current, scheduled, actor, now) {
 /** Where the work came from: the review reason first, then the job's own record of its origin. */
 export function queueSource(job) {
   const reason = job?.dispatchReviewReason;
+  // A door-to-door sale is sold work saved to schedule later; its lead source says where it came from.
+  if (job?.leadSource === 'door_to_door' && reason !== 'portal_approval') return 'door_to_door';
   if (reason === 'portal_approval') return 'portal';
   if (reason === 'sold_schedule_later') return 'walkthrough';
   if (reason === 'jobber_import' || job?.scheduleSource === 'jobber_import') return 'jobber';

@@ -250,7 +250,7 @@
  * have neither). The first save that leaves a flagged job scheduled (a dispatch save or a bridge schedule update)
  * saves needsDispatchReview:false with dispatchReviewClearedAt/By. Only GET /api/dispatch's board (option readiness,
  * never the signed bridge) adds queue:{since,sinceKind:'sold'|'approved'|'created'|null,ageDays,
- * source:'walkthrough'|'portal'|'jobber'|'hub',jobber?:{date,time,endDate,endTime,allDay?,timeNeedsReview?,usable,past}}
+ * source:'walkthrough'|'portal'|'jobber'|'door_to_door'|'hub',jobber?:{date,time,endDate,endTime,allDay?,timeNeedsReview?,usable,past}}
  * to each undated active customer job (To schedule), sends those jobs oldest first and sets queueFacts:true on the
  * response (the queued jobs are exactly those with queue); queue facts carry no money.
  * suggestedDurationMin (integer minutes, a multiple of 15, or null when the
