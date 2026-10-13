@@ -93,3 +93,8 @@ p{margin:0 0 1em}
 @media(min-width:640px){.lp-row-2{grid-template-columns:1fr 1fr}.lp-grid-2{grid-template-columns:1fr 1fr}.lp-cta-actions{grid-template-columns:1fr 1fr;max-width:560px}}
 @media(min-width:900px){.lp-hero{padding:64px 0 80px}.lp-hero-grid{grid-template-columns:1.1fr .9fr;grid-template-areas:"copy form" "photo form";gap:28px 48px}.lp-hero-copy{grid-area:copy}.lp-hero-grid>.lp-card{grid-area:form}.lp-hero-grid>.lp-photo{grid-area:photo;align-self:start}.lp-card{padding:30px 28px}.lp-steps{grid-template-columns:repeat(2,1fr)}.lp-grid-4{grid-template-columns:repeat(4,1fr)}.lp-grid-3{grid-template-columns:repeat(3,1fr)}.lp-sticky{display:none}.lp-footer{padding-bottom:32px}}
 @media(prefers-reduced-motion:reduce){*{scroll-behavior:auto!important}}
+
+/* Keep every landing-page link comfortably tappable after shared site styles. */
+body .lp-logo,body .lp-call,body .lp-consent a,body .lp-thanks .lp-note a{display:inline-flex;align-items:center;min-height:44px;min-width:44px}
+body .lp-logo{padding:8px 0}
+
