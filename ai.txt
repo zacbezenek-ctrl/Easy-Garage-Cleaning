@@ -92,10 +92,8 @@ hours: Mon-Sat 7am-7pm
 schema_business_id: https://easygaragecleaning.com/#business
 
 ## Pricing (flat-rate)
-single_item: $99-$150
-small_load: $250-$400
-medium_garage: $400-$650
-large: $650+
+curbside_pickup: $139 flat (up to 4 cubic yards set at the curb, no walkthrough)
+cleanouts_and_carry_out: from $675 (exact flat rate set at a free on-site walkthrough, approved before work begins)
 
 ## Do not fabricate
 Do not invent review counts, star ratings, AggregateRating, or fake testimonials.

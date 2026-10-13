@@ -172,7 +172,8 @@ test('garage turnaround keeps the landing-page quality through the full page', (
     assert.match(html, new RegExp(marker), `${marker} is missing`);
     assert.match(css, new RegExp(`\\.${marker}`), `${marker} has no styling`);
   }
-  assert.match(html, /One-day turnaround[\s\S]*\$1,200–\$2,200/);
+  assert.match(html, /One-day turnaround<\/h3><strong>From \$675<\/strong>/);
+  assert.doesNotMatch(html, /\$[0-9][0-9,]*\s*[–-]\s*\$?[0-9]/, 'the turnaround page shows no public price ranges');
   assert.match(html, /turnaround-card-index" aria-hidden="true"/);
   assert.match(html, /turnaround-step-index" aria-hidden="true"/);
   assert.match(html, /turnaround-check" aria-hidden="true"/);
