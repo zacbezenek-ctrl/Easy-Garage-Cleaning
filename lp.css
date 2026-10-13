@@ -98,3 +98,4 @@ p{margin:0 0 1em}
 body .lp-logo,body .lp-call,body .lp-consent a,body .lp-thanks .lp-note a{display:inline-flex;align-items:center;min-height:44px;min-width:44px}
 body .lp-logo{padding:8px 0}
 
+body .lp-note a{display:inline-flex;align-items:center;min-height:44px;min-width:44px}
