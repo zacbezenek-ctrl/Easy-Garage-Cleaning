@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { projectSetterAttribution, recordSetterAttribution, setterAttributions } from '../functions/_lib/knock-setters.js';
 import { knockAdminHandlers } from '../functions/api/knock-admin.js';
+import { commissionAllocations } from '../functions/_lib/knock-allocations.js';
 import { call, cookieFor, knockEnv, knockWorld, post, uuid } from './helpers/knock-fixture.mjs';
 
 const now = '2026-10-20T18:00:00Z', admin = { user: 'test-owner' };
@@ -45,7 +46,7 @@ test('booking, no-show and unclosed quotes never earn setter commission', () => 
   assert.equal(projectSetterAttribution(record(), visit(), { ...job(), estimate: { status: 'draft' } }).state, 'awaiting_close');
 });
 
-test('closed and collected setter work is separate from estimator credit and held for the unanswered stacking policy', () => {
+test('closed and collected setter work keeps the confirmed two-recipient split but holds an unknown base', () => {
   const row = projectSetterAttribution(record(), visit(), job(), [], Date.parse(now));
   assert.equal(row.rate, 0.12);
   assert.equal(row.setterKey, 'rep.one');
@@ -59,9 +60,36 @@ test('closed and collected setter work is separate from estimator credit and hel
   assert.equal(row.qualifyingAt, new Date(now).toISOString());
   assert.equal(row.earnedCommission, null);
   assert.equal(row.payableCommission, null);
-  assert.ok(row.reviewReasons.includes('estimator_stacking_unconfigured'));
+  assert.ok(row.reviewReasons.includes('calculation_base_unconfigured'));
+  assert.deepEqual(row.allocations.map(item => [item.role, item.rate, item.amountCents]), [['setter', 0.12, null], ['estimator', 0.07, null]]);
   const duplicate = job(); duplicate.payment.stripeSessions.push({ ...duplicate.payment.stripeSessions[0] });
   assert.equal(projectSetterAttribution(record(), visit(), duplicate, [], Date.parse(now)).customerCollectedRevenue, 1000);
+});
+
+test('verified arithmetic allocates 19 percent to two distinct recipients without adding direct-sale commission', () => {
+  const input = { channel: 'appointment_setter', jobId: 'job-1', serviceClassification: 'garage', setterKey: 'rep.one', estimatorKey: 'estimator.one',
+    base: { verified: true, amountCents: 100000, reference: 'synthetic-base-review' } };
+  const result = commissionAllocations(input);
+  assert.equal(result.state, 'calculated');
+  assert.equal(result.totalCents, 19000);
+  assert.deepEqual(result.allocations.map(row => [row.repKey, row.amountCents]), [['rep.one', 12000], ['estimator.one', 7000]]);
+  assert.equal(result.payable, false, 'arithmetic is not a payroll approval or execution');
+  assert.deepEqual(commissionAllocations(input).allocations, result.allocations, 'stable allocation IDs let retries be deduplicated');
+  const overlap = commissionAllocations({ ...input, directRepKey: 'rep.one' });
+  assert.equal(overlap.totalCents, null);
+  assert.ok(overlap.reviewReasons.includes('channel_attribution_conflict'));
+  assert.equal(commissionAllocations({ ...input, serviceClassification: 'junk_removal' }).totalCents, 0);
+});
+
+test('direct-estimator and direct-sale routes remain 7 and 25 percent, with unknown inputs held', () => {
+  const base = { verified: true, amountCents: 100000, reference: 'synthetic-base-review' };
+  assert.equal(commissionAllocations({ channel: 'direct_estimator', jobId: 'job-1', serviceClassification: 'garage', estimatorKey: 'estimator.one', base }).totalCents, 7000);
+  assert.equal(commissionAllocations({ channel: 'direct_sale', jobId: 'job-1', serviceClassification: 'garage', directRepKey: 'rep.one', base }).totalCents, 25000);
+  const input = { channel: 'appointment_setter', jobId: 'job-1', serviceClassification: 'garage', setterKey: 'rep.one', estimatorKey: 'estimator.one', base };
+  assert.ok(commissionAllocations({ ...input, base: null }).reviewReasons.includes('calculation_base_unconfigured'));
+  assert.ok(commissionAllocations({ ...input, estimatorKey: '' }).reviewReasons.includes('recipient_unverified'));
+  assert.ok(commissionAllocations({ ...input, estimatorKey: 'rep.one' }).reviewReasons.includes('recipient_overlap_review'));
+  assert.ok(commissionAllocations({ ...input, base: { ...base, amountCents: 3 } }).reviewReasons.includes('rounding_policy_unconfigured'));
 });
 
 test('junk, partial/refunded receipts, conflicting direct-sale credit and missing links stay safe', () => {

@@ -168,9 +168,10 @@ release blockers.
 Direct door closes retain the 25% eligible-garage channel. A rep who instead
 sets a walkthrough has a separate 12% setter channel, requiring a converted,
 closed and collected eligible garage job. Booking, a no-show, an unclosed quote
-or a missing conversion link never earns setter commission. The 7% estimator
-channel remains separate; whether it adds to or shares the setter rate is
-unresolved. This implementation does not add 25% and 12%, or 12% and 7%.
+or a missing conversion link never earns setter commission. The setter route
+allocates 12% to the setter plus 7% to the estimator, 19% total, as separately
+identified recipients. Direct-estimator-only work remains 7%; a direct D2D close
+remains 25%. The direct 25% route is never added to the setter route.
 
 The rep money screen links to the existing permission-checked Hub walkthrough
 booking flow. An admin records the setter against its canonical walkthrough ID
@@ -190,8 +191,12 @@ directions, and a linked direct-sale claim is flagged instead of combined.
 
 Setter rows remain outside direct-sale commission and receipt totals to avoid
 double counting. Close and full collection evidence may establish a qualifying
-time, but setter earned/payable amounts remain unknown until estimator stacking,
-calculation base and payroll anchor are resolved. Partial receipts, refunds,
+time, but setter earned/payable amounts remain unknown until recipient evidence,
+calculation base and payroll anchor are resolved. The pure allocation helper
+requires an explicitly verified base, assigns stable job/channel/recipient IDs,
+and treats arithmetic as distinct from payroll approval. Missing recipients,
+overlapping roles/channels or an unresolved fractional-cent rounding choice
+remain holds. Partial receipts, refunds,
 cancellations, missing source data and unclassified services remain review
 states; verified junk classification is excluded. No compensation approval or
 historical signed snapshot is written by this tracking flow.
@@ -202,8 +207,9 @@ historical signed snapshot is written by this tracking flow.
   duplicates and a rebooked walkthrough; only one attribution may exist.
 - [ ] Test booking, no-show, close without collection, partial/full collection,
   refunds, missing conversion data and an existing direct-sale claim.
-- [ ] Confirm setter and estimator identities remain distinct and no commission
-  is added to payable totals while the stacking decision is unresolved.
+- [ ] Confirm the setter and estimator get separate 12% and 7% allocations from
+  an explicitly verified base, with no added 25% route and no duplicate IDs.
+  Payable totals stay held while the base, recipients or payroll anchor are unverified.
 
 ## Customer photo access in Hub readiness
 

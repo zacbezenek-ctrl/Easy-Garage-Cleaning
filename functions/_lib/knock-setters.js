@@ -4,6 +4,7 @@ import { knockFailure, write } from './knock-store.js';
 import { dispatchStorage } from './dispatch-storage.js';
 import { customerMoneyTotals, paymentLedger } from './money-core.js';
 import { walkthroughStatus } from './walkthrough-state.js';
+import { commissionAllocations } from './knock-allocations.js';
 
 const ID = /^[A-Za-z0-9_-]{1,120}$/;
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
@@ -12,9 +13,9 @@ const FIELDS = ['type', 'status', 'pipelineStatus', 'convertedJobId', 'sourceWal
   'acceptance.recordedBy', 'acceptance.acceptedAt', 'total', 'priceQuoted', 'lockedTotal', 'rate',
   'payment', 'deposit', 'invoice', 'refunds', 'changeOrders', 'giftWallet'];
 
-export const setterPolicy = Object.freeze({ channel: 'appointment_setter', rate: 0.12,
+export const setterPolicy = Object.freeze({ channel: 'appointment_setter', rate: 0.12, estimatorRate: 0.07, totalRate: 0.19,
   earningTrigger: 'closed_and_collected', payoutCadence: 'biweekly',
-  approval: 'unconfigured', gaps: ['estimator_stacking', 'calculation_base', 'payroll_cycle_anchor', 'partial_collections', 'refund_clawbacks'] });
+  approval: 'unconfigured', gaps: ['recipient_verification', 'calculation_base', 'payroll_cycle_anchor', 'partial_collections', 'refund_clawbacks'] });
 
 export function setterJobReader(env) {
   const store = dispatchStorage(env);
@@ -67,7 +68,7 @@ export function projectSetterAttribution(record, visit, job, directSales = [], n
     setterKey: record.setterKey, estimatorKey: record.estimatorKey || null, estimatorEvidence: record.estimatorKey ? 'admin_recorded_unreconciled' : 'unverified',
     closingActorKey: null, directSaleRepKey: null, serviceClassification: record.serviceClassification,
     state: 'awaiting_close', rate: 0.12, earnedCommission: null, payableCommission: null,
-    customerCollectedRevenue: null, qualifyingAt: null, reviewReasons: [], settlement: 'not_reconciled' };
+    customerCollectedRevenue: null, qualifyingAt: null, allocations: [], reviewReasons: [], settlement: 'not_reconciled' };
   if (record.serviceClassification === 'junk_removal') return { ...result, state: 'excluded', earnedCommission: 0, payableCommission: 0 };
   if (!visit || visit.id !== record.walkthroughId || visit.type !== 'walkthrough' || !visit.revision) return { ...result, state: 'review_required', reviewReasons: ['walkthrough_unverified'] };
   const status = walkthroughStatus(visit);
@@ -91,8 +92,10 @@ export function projectSetterAttribution(record, visit, job, directSales = [], n
   if (!times.length || times.some(time => !Number.isFinite(time))) return { ...result, state: 'review_required', reviewReasons: ['collection_time_unverified'] };
   const qualifyingAt = Math.max(Date.parse(closedAt), ...times);
   if (qualifyingAt > nowMs) return { ...result, state: 'review_required', reviewReasons: ['event_time_unverified'] };
-  return { ...result, state: 'review_required', qualifyingAt: new Date(qualifyingAt).toISOString(),
-    reviewReasons: ['estimator_stacking_unconfigured', 'calculation_base_unconfigured', 'payroll_anchor_unconfigured'] };
+  const allocation = commissionAllocations({ channel: 'appointment_setter', jobId: job.id, serviceClassification: record.serviceClassification,
+    setterKey: record.setterKey, estimatorKey: record.estimatorKey || '', directRepKey: result.directSaleRepKey || '' });
+  return { ...result, state: 'review_required', qualifyingAt: new Date(qualifyingAt).toISOString(), allocations: allocation.allocations,
+    reviewReasons: [...allocation.reviewReasons, 'payroll_anchor_unconfigured'] };
 }
 
 export async function setterAttributions(store, env, { repKey = null, nowMs = Date.now(), readJob = setterJobReader(env) } = {}) {

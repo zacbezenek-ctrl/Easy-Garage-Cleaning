@@ -497,7 +497,7 @@ async function settersSection() {
   const estimator = h('input', { class: 'input', id: 'setter-estimator', placeholder: 'Staff key, or leave unverified' });
   const estimatorReference = h('input', { class: 'input', id: 'setter-estimator-reference', placeholder: 'Estimator attribution review reference' });
   return { subtitle: '12% setting channel; separate from direct-close and estimator attribution.', body: [
-    banner('warning', 'info', 'Setter pay needs policy review', 'A booking or no-show earns nothing. A closed and collected job still needs the estimator-stacking, calculation-base and payroll decisions before a payable amount is shown.'),
+    banner('warning', 'info', 'Setter pay needs policy review', 'A booking or no-show earns nothing. A closed and collected job allocates 12% to its setter and 7% to its estimator. Verify both recipients, the calculation base and payroll anchor before any payable amount is shown.'),
     h('section', { class: 'card stack' }, h('h2', {}, 'Record walkthrough setter'),
       field('Walkthrough ID', visit, null, 'setter-visit'), field('Setter', setter, null, 'setter-rep'),
       field('Service classification', scope, null, 'setter-scope'), field('Review reference', reference, null, 'setter-reference'),

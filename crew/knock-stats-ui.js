@@ -187,7 +187,7 @@ function moneyScreen(_app, params) {
             : `${money(rates.acceleratorThreshold - collectedThisMonth)} more collected this month and every dollar after that pays ${percent(rates.acceleratorRate)}.`,
         }) : null),
       h('section', { class: 'card stack' }, h('h2', {}, 'Walkthrough setting — 12%'),
-        h('p', {}, 'The setter is tracked separately from the estimator and direct-sale rep. Booking or a no-show earns nothing. Close and collection must be verified. Stacking with estimator pay is unresolved; no automatic 25% + 12% or 12% + 7% payment is calculated.'),
+        h('p', {}, 'The closed and collected setter route allocates 12% to the setter plus 7% to the estimator, 19% total. Booking or a no-show earns nothing. Direct-estimator work stays at 7%, direct D2D closes at 25%, and junk at zero. Unknown recipients, base or payroll anchor keep amounts on hold; 25% is never added to the setter route.'),
         (data.setters?.rows || []).map(row => h('div', { class: 'list-row list-row--static' },
           h('span', {}, `${row.walkthroughId}: ${row.state.replaceAll('_', ' ')}`),
           h('span', { class: 'caption muted' }, (row.reviewReasons || []).join(', ').replaceAll('_', ' ')))),
