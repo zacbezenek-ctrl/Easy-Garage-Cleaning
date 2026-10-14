@@ -48,7 +48,9 @@ correct version first. New sales snapshot the approved server-side terms and
 approval time in `commissionTerms`; client-supplied terms are ignored. Current
 rate, accelerator and override changes never replace that snapshot. Legacy sales
 without verified snapshots require review and are not backfilled from current
-settings. This candidate does not migrate or reconcile historical accruals.
+settings. An offline sale dated before the current policy approval also remains
+held; it never silently inherits the later rate. This candidate does not migrate
+or reconcile historical accruals.
 Training hours remain visible while unconfigured; training pay is not promised.
 
 ## Sync and access

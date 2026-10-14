@@ -67,7 +67,7 @@ export async function applySaleEvent(store, rep, settings, event, nowIso, { hous
     customer: { name: String(event.customer.name).trim(), phone: normalizePhone(event.customer.phone), email: String(event.customer.email).trim().toLowerCase() },
     textConsent: event.textConsent === true,
     ticket, package: event.package, quotedAmount: event.quotedAmount != null ? Number(event.quotedAmount) : null,
-    commissionTerms: snapshotCommissionTerms(settings.commission),
+    commissionTerms: snapshotCommissionTerms(settings.commission, event.at),
     depositRate: settings.sale.depositRate, depositAmount: depositAmount(ticket, settings.sale.depositRate),
     soldAt: event.at, saleDate, cancelDeadlineDate: window.deadlineDate, cancelEndsAt: new Date(window.cancelEndsAt).toISOString(),
     earliestJobDate: window.earliestJobDate, jobDate: event.jobDate, jobStartTime: event.jobStartTime || settings.sale.defaultJobStartTime,

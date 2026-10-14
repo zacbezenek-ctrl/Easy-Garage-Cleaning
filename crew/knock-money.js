@@ -10,8 +10,10 @@ const TERM_FIELDS = ['rate', 'acceleratorEnabled', 'acceleratorThreshold', 'acce
 
 // Created only by the server when booking under an evidenced contract. Current
 // settings must never replace the terms captured on an older sale.
-export function snapshotCommissionTerms(commission) {
+export function snapshotCommissionTerms(commission, soldAt) {
   if (commission?.verified !== true || !Number.isFinite(ms(commission.approvedAt))) return null;
+  // A delayed offline sale cannot silently inherit a policy approved later.
+  if (soldAt != null && (!Number.isFinite(ms(soldAt)) || ms(soldAt) < ms(commission.approvedAt))) return null;
   return { contract: 'knock-v1', approvedAt: commission.approvedAt,
     policy: Object.fromEntries(TERM_FIELDS.map(key => [key, commission[key]])) };
 }
@@ -21,6 +23,7 @@ function saleTerms(sale, commission) {
   if (terms != null) {
     const p = terms.policy;
     if (terms.contract !== 'knock-v1' || !Number.isFinite(ms(terms.approvedAt)) ||
+      !Number.isFinite(ms(sale.soldAt)) || ms(sale.soldAt) < ms(terms.approvedAt) ||
       !['rate', 'acceleratorRate', 'leadOverrideRate'].every(key => typeof p?.[key] === 'number' && p[key] >= 0 && p[key] <= 1) ||
       !['acceleratorEnabled', 'leadOverrideEnabled'].every(key => typeof p?.[key] === 'boolean') ||
       !Number.isFinite(p?.acceleratorThreshold) || p.acceleratorThreshold <= 0) return null;

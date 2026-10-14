@@ -51,6 +51,7 @@ test('current rate and override changes cannot recalculate historical sale terms
   assert.equal(leadOverrides([oldSale], changed.commission, { now: nowMs })[0].amount, 48);
   assert.equal(snapshot.policy.rate, 0.25);
   assert.equal(snapshotCommissionTerms({ ...changed.commission, verified: false }), null);
+  assert.equal(snapshotCommissionTerms(settings.commission, '2026-09-30T12:00:00Z'), null, 'offline history cannot receive a later approval');
 });
 
 test('legacy sales without approved terms require review even after current settings are approved', async () => {
