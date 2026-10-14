@@ -19,7 +19,8 @@ rep payments. A recorded payment is not proof of bank or payroll settlement.
 - Incomplete paid records, partial/excess paid snapshots, refunds and cancelled
   collections produce a review state. No automatic clawback or reversal is
   inferred. Historical earnings are unknown during an unresolved adjustment,
-  not silently rewritten as a confirmed zero.
+  not silently rewritten as a confirmed zero. Reinstating a cancelled sale does
+  not clear the review hold or automatically earn the commission again.
 - Rep payments remain administrative records in `knock_payouts`; the report
   exposes `commissionPaymentEvidence=admin_recorded_unreconciled` and a null
   `commissionSettled`. Request IDs are stable for a form's retries. Reusing an ID

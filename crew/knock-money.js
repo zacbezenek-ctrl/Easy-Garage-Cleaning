@@ -84,7 +84,8 @@ export function commissionIssues(sale, commission) {
       (i > 0 && event.previousTotal !== history[i - 1].total)) ||
       (history.length && history.at(-1).total !== payment.gross)) issues.push('collection_history_invalid');
   }
-  if (sale?.status === 'cancelled' && (payment.gross > 0 || sale.completedAt)) issues.push('cancellation_review');
+  const wasCancelled = sale?.status === 'cancelled' || sale?.statusHistory?.some(event => event?.status === 'cancelled');
+  if (wasCancelled && (payment.gross > 0 || sale.completedAt)) issues.push('cancellation_review');
   return issues;
 }
 

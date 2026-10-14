@@ -89,7 +89,8 @@ test('missing, partial, overpaid and incomplete receipts never earn commission',
 });
 
 test('refund and cancellation preserve customer receipts and prior rep payments without inventing clawback', () => {
-  for (const patch of [{ refundedAmount: 300, refundedAt: now }, { status: 'cancelled' }]) {
+  for (const patch of [{ refundedAmount: 300, refundedAt: now }, { status: 'cancelled' },
+    { statusHistory: [{ status: 'booked' }, { status: 'cancelled' }, { status: 'booked' }, { status: 'paid' }] }]) {
     const row = statement([paid(patch)], [{ id: 'p', repKey: 'rep.one', periodKey: '2026-10-19_2026-11-01', amount: 400 }]);
     assert.equal(row.customerCollectedRevenue, 1600);
     assert.equal(row.commissionPaid, 400);
