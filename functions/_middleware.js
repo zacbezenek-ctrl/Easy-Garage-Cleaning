@@ -130,7 +130,7 @@ export async function onRequest(context) {
   // business entry in server-rendered navigation, even with JavaScript disabled.
   if (response.status === 200 && response.headers.get('Content-Type')?.includes('text/html') && typeof HTMLRewriter !== 'undefined') {
     const rewriter = new HTMLRewriter()
-      .on('script[src^="/site-enhancements.js"]', { element(el) { el.setAttribute('src', '/site-enhancements.js?v=20260923business'); } })
+      .on('script[src^="/site-enhancements.js"]', { element(el) { el.setAttribute('src', '/site-enhancements.js?v=fa0d5b13ae36'); } })
       .on('nav.nav .nav-links', { element(el) { el.setAttribute('style', 'flex-wrap:wrap;gap:8px 14px'); el.append('<li><a href="/business-hub">Business Hub</a></li>', { html: true }); } })
       .on('#nav-drawer .drawer-cta', { element(el) { el.before('<a href="/business-hub" class="drawer-link-row">Business Client Hub</a>', { html: true }); } });
     // EGC_BOOKING_EXPLICIT_SLOTS on: tell booking-slots.js to render /book's windows. Unmarked, the page keeps its static choices.
