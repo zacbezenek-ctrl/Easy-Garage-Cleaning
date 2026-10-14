@@ -6,8 +6,8 @@ import {
   neighborhoodHouses, readSettings, seedNeighborhoods, setAssignment, updateNeighborhood, updateRep, updateSettings,
 } from '../_lib/knock-admin.js';
 import { loadNeighborhoods } from '../_lib/knock-territory.js';
-import { allSales, setJobDate, setSaleStatus } from '../_lib/knock-sales.js';
-import { customerMessage, integrationStatus, refundSummary, saleHandoff } from '../_lib/knock-handoff.js';
+import { allSales, setJobDate, setSaleStatus, recordSaleCollection } from '../_lib/knock-sales.js';
+import { customerMessage, integrationStatus, refundSummary, saleHandoff, saleSyncSummaries } from '../_lib/knock-handoff.js';
 import { loadSettings } from '../_lib/knock-access.js';
 import { rebuildDay } from '../_lib/knock-sync.js';
 import { addPayout, exportCsv, moneyView } from '../_lib/knock-reports.js';
@@ -35,8 +35,9 @@ const VIEWS = {
   async flags(store) { return flagsView(store); },
   async sales(store, params, now, env) {
     const [sales, reps, settings] = await Promise.all([allSales(store, { from: params.get('from') || '', to: params.get('to') || '' }), listReps(store), loadSettings(store)]);
+    const sync = await saleSyncSummaries(store, sales);
     return {
-      sales: sales.map(sale => ({ ...sale, refund: refundSummary(sale, now.getTime()), message: customerMessage(sale) })),
+      sales: sales.map(sale => ({ ...sale, sync: sync.get(sale.id), refund: refundSummary(sale, now.getTime()), message: customerMessage(sale) })),
       reps: reps.map(r => ({ repKey: r.repKey, displayName: r.displayName })),
       integrations: integrationStatus(env || {}, settings),
     };
@@ -61,6 +62,7 @@ const ACTIONS = {
   'noknock.clear': clearNoKnock,
   'sale.status': async (store, admin, body, nowIso) => afterSaleChange(store, await setSaleStatus(store, admin, body, nowIso), nowIso),
   'sale.jobDate': setJobDate,
+  'sale.collection': recordSaleCollection,
   'sale.handoff': (store, admin, body, nowIso, env) => saleHandoff(store, admin, body, nowIso, env),
   'payout.add': addPayout,
 };

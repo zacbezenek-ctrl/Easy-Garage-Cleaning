@@ -108,8 +108,8 @@ const TRANSITIONS = {
   cancelled: ['booked'],
 };
 
-/* Admin: move a sale to booked, cancelled, completed or paid. Paid records the collected amount
-   (the ticket unless given) and completes the job if it was not marked complete. */
+/* Job status and customer receipts are independent facts. Reopening or cancelling
+   never erases money already recorded, and collecting money never completes work. */
 export async function setSaleStatus(store, admin, { saleId, status, collectedAmount, note }, nowIso) {
   if (!SALE_STATUSES.includes(status)) throw knockFailure('Unknown sale status.', 400, 'knock_invalid_status');
   const sale = await store.get('knock_sales', String(saleId || ''));
@@ -118,17 +118,42 @@ export async function setSaleStatus(store, admin, { saleId, status, collectedAmo
   if (!TRANSITIONS[sale.status]?.includes(status)) throw knockFailure(`A ${sale.status} sale cannot become ${status}.`, 409, 'knock_invalid_transition');
   const patch = { status, updatedAt: nowIso, statusHistory: [...(sale.statusHistory || []), { status, at: nowIso, by: admin.user, ...(note ? { note: String(note).slice(0, 200) } : {}) }] };
   if (status === 'cancelled') patch.cancelledAt = nowIso;
-  if (status === 'booked') { patch.cancelledAt = null; patch.completedAt = null; patch.paidAt = null; patch.collectedAmount = null; }
-  if (status === 'completed') { patch.completedAt = sale.completedAt || nowIso; patch.paidAt = null; patch.collectedAmount = null; }
+  if (status === 'booked') { patch.cancelledAt = null; patch.completedAt = null; }
+  if (status === 'completed') {
+    patch.completedAt = sale.completedAt || nowIso;
+    if (sale.paidAt && sale.collectedAmount >= sale.ticket) patch.status = 'paid';
+  }
   if (status === 'paid') {
-    const amount = collectedAmount == null || collectedAmount === '' ? Number(sale.ticket) : Number(collectedAmount);
+    if (!sale.completedAt) throw knockFailure('Record completion separately. Use customer collection for an advance receipt.', 409, 'knock_completion_required');
+    const amount = collectedAmount == null || collectedAmount === '' ? NaN : Number(collectedAmount);
     if (!Number.isFinite(amount) || amount <= 0 || amount > 100000) throw knockFailure('Enter the amount collected.', 400, 'knock_invalid_amount');
+    if (Math.round(amount * 100) !== Math.round(Number(sale.ticket) * 100)) throw knockFailure('Paid requires the full ticket amount. Record partial customer receipts separately.', 409, 'knock_partial_collection');
     patch.collectedAmount = Math.round(amount * 100) / 100;
     patch.paidAt = nowIso;
-    patch.completedAt = sale.completedAt || nowIso;
   }
   await store.commit([write.patch('knock_sales', sale.id, patch, sale.__updateTime)]);
   return { sale: repSaleView({ ...sale, ...patch }) };
+}
+
+// Cumulative customer receipts include the deposit. This records evidence only;
+// it does not charge a customer or pay a rep. Identical totals are idempotent.
+export async function recordSaleCollection(store, admin, { saleId, collectedAmount }, nowIso) {
+  const sale = await store.get('knock_sales', String(saleId || ''));
+  if (!sale) throw knockFailure('That sale was not found.', 404, 'knock_sale_missing');
+  const amount = collectedAmount == null || collectedAmount === '' ? NaN : Number(collectedAmount);
+  if (!Number.isFinite(amount) || amount <= 0 || amount > Number(sale.ticket)) throw knockFailure('Enter the cumulative amount received, up to the ticket total.', 400, 'knock_invalid_amount');
+  if (sale.status === 'cancelled') throw knockFailure('Reconcile cancelled receipts with finance.', 409, 'knock_collection_review');
+  const value = Math.round(amount * 100) / 100;
+  const prior = Number(sale.collectedAmount ?? sale.handoff?.deposit?.collectedAmount ?? 0);
+  if (!Number.isFinite(prior) || prior < 0) throw knockFailure('Existing receipt data needs finance review before another entry.', 409, 'knock_collection_review');
+  if (value < prior) throw knockFailure('A reduced receipt needs refund review; it cannot overwrite collected money.', 409, 'knock_collection_review');
+  if (value === Number(sale.collectedAmount)) return { sale: repSaleView(sale), duplicate: true };
+  const patch = { collectedAmount: value, paidAt: nowIso, updatedAt: nowIso,
+    collectionHistory: [...(sale.collectionHistory || []), { total: value, previousTotal: prior,
+      previousAt: sale.paidAt || sale.handoff?.deposit?.collectedAt || null, at: nowIso, by: admin.user }],
+    ...(sale.completedAt && value === Number(sale.ticket) ? { status: 'paid' } : {}) };
+  await store.commit([write.patch('knock_sales', sale.id, patch, sale.__updateTime)]);
+  return { sale: repSaleView({ ...sale, ...patch }), duplicate: false };
 }
 
 export async function setJobDate(store, admin, { saleId, jobDate, jobStartTime }, nowIso) {

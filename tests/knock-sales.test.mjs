@@ -126,8 +126,11 @@ test('admins move a sale through completed, paid and cancelled, and booked reven
   const { events, saleId } = saleBatch();
   await send(events);
   assert.equal((await act({ action: 'sale.status', saleId, status: 'completed' })).body.sale.status, 'completed');
-  const paid = await act({ action: 'sale.status', saleId, status: 'paid', collectedAmount: '1550' });
-  assert.deepEqual([paid.body.sale.status, paid.body.sale.collectedAmount], ['paid', 1550]);
+  assert.equal((await act({ action: 'sale.status', saleId, status: 'paid', collectedAmount: '1550' })).body.code, 'knock_partial_collection');
+  const partial = await act({ action: 'sale.collection', saleId, collectedAmount: '1550' });
+  assert.deepEqual([partial.body.sale.status, partial.body.sale.collectedAmount], ['completed', 1550]);
+  const paid = await act({ action: 'sale.collection', saleId, collectedAmount: '1600' });
+  assert.deepEqual([paid.body.sale.status, paid.body.sale.collectedAmount], ['paid', 1600]);
   assert.ok(world.fake.get(`knock_sales/${saleId}`).paidAt);
   const cancelled = await act({ action: 'sale.status', saleId, status: 'cancelled' });
   assert.equal(cancelled.body.sale.status, 'cancelled');

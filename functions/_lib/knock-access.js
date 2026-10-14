@@ -3,7 +3,7 @@
 // Admins are the Hub's business users (owner and managers); leads and knockers are set per rep.
 import { hasBusinessAccess } from './hub-session.js';
 import { knockFailure, write } from './knock-store.js';
-import { mergeSettings, ROLES } from '../../crew/knock-settings.js';
+import { mergeSettings, ROLES, validateSettings } from '../../crew/knock-settings.js';
 
 const SAFE_KEY = /^[a-z0-9._-]{1,64}$/;
 
@@ -20,9 +20,26 @@ export function repKeyFor(username) {
 
 export const isAdmin = session => Boolean(session?.user) && hasBusinessAccess(session);
 
+const sameSettings = (a, b) => {
+  if (a === b) return true;
+  if (!a || !b || typeof a !== 'object' || typeof b !== 'object') return false;
+  const keys = Object.keys(a).sort();
+  return keys.length === Object.keys(b).length && keys.every(key => Object.hasOwn(b, key) && sameSettings(a[key], b[key]));
+};
+
 export async function loadSettings(store) {
   const doc = await store.get('knock_settings', 'current');
-  return mergeSettings(doc?.settings || {});
+  const settings = mergeSettings(doc?.settings || {});
+  // Rates alone do not verify the basis, attribution, trigger or payout timing.
+  // No current UI writes this approval. A reviewed integration must supply the
+  // evidence for the complete existing knock-v1 contract, bound to its settings.
+  const fields = ['rate', 'acceleratorEnabled', 'acceleratorThreshold', 'acceleratorRate', 'leadOverrideEnabled', 'leadOverrideRate'];
+  const approval = doc?.compensationApproval;
+  settings.commission.verified = Boolean(doc?.updatedBy && Number.isFinite(Date.parse(doc?.updatedAt)) &&
+    fields.every(key => Object.hasOwn(doc?.settings?.commission || {}, key)) && !validateSettings(doc.settings).length &&
+    approval?.contract === 'knock-v1' && approval.reference && approval.reviewedBy && Number.isFinite(Date.parse(approval.reviewedAt)) &&
+    sameSettings(approval.commission, doc.settings.commission) && sameSettings(approval.payroll, doc.settings.payroll));
+  return settings;
 }
 
 const publicRep = rep => rep && ({

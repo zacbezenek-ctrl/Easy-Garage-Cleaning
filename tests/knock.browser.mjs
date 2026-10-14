@@ -122,6 +122,23 @@ try {
   const doors = await admin.locator('.stat', { has: admin.locator('.stat__label', { hasText: /^Doors$/ }) }).first().locator('.stat__value').textContent();
   assert.equal(doors, '5', 'the scoreboard counts the five doors today');
 
+  // 5. Money remains a distinct, fail-closed view at narrow phone/tablet widths.
+  await page.goto(`${server.base}/crew/knock.html#money`);
+  await page.getByText('Projected commission', { exact: true }).waitFor();
+  for (const label of ['Earned commission', 'Customer collected', 'Payable commission', 'Commission paid to you']) {
+    await page.getByText(label, { exact: true }).waitFor();
+  }
+  assert.match(await page.locator('#knock-main').textContent(), /Compensation is unconfigured/);
+  assert.match(await page.locator('#knock-main').textContent(), /settlement unverified/);
+  for (const width of [320, 390, 768]) {
+    await page.setViewportSize({ width, height: 844 });
+    assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true, `money screen fits ${width}px`);
+  }
+  assert.equal(await page.locator('#knock-tabs a[href="#admin"]').count(), 0, 'rep has no admin tab');
+  await admin.goto(`${server.base}/crew/knock.html#admin?s=money`);
+  await admin.getByText('Commission paid to reps', { exact: true }).waitFor();
+  assert.match(await admin.locator('#knock-main').textContent(), /Compensation unconfigured/);
+
   assert.deepEqual(errors, [], 'no page errors');
   assert.deepEqual(server.serverErrors, [], 'no server errors');
   console.log(`knock browser smoke test passed (${server.mode} Firestore): 5 offline doors synced and visible to the admin.`);

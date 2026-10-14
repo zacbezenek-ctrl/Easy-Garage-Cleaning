@@ -1,0 +1,141 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import { DEFAULT_SETTINGS } from '../crew/knock-settings.js';
+import { customerCollection, isEarned, payPeriodFor, periodStatement, saleCommissions } from '../crew/knock-money.js';
+import { loadSettings } from '../functions/_lib/knock-access.js';
+import { recordSaleCollection, setSaleStatus } from '../functions/_lib/knock-sales.js';
+import { addPayout } from '../functions/_lib/knock-reports.js';
+import { saleSyncSummary } from '../functions/_lib/knock-handoff.js';
+import { knockAdminHandlers } from '../functions/api/knock-admin.js';
+import { knockReportsHandlers } from '../functions/api/knock-reports.js';
+import { approvedKnockSettings, call, cookieFor, get, knockEnv, knockWorld, post, uuid } from './helpers/knock-fixture.mjs';
+
+const now = '2026-10-20T18:00:00Z', nowMs = Date.parse(now), admin = { user: 'test-owner' };
+const paid = (patch = {}) => ({ id: 'sale-1', repKey: 'rep.one', leadKey: '', ticket: 1600,
+  saleDate: '2026-10-19', soldAt: '2026-10-19T12:00:00Z', status: 'paid',
+  cancelEndsAt: '2026-10-19T00:00:00Z', completedAt: '2026-10-19T18:00:00Z',
+  paidAt: '2026-10-19T19:00:00Z', collectedAmount: 1600, handoff: {}, ...patch });
+const statement = (sales, payouts = [], settings = DEFAULT_SETTINGS, date = '2026-10-20') => periodStatement({
+  sales, payouts, settings, period: payPeriodFor(date, settings.payroll), now: nowMs,
+  reps: [{ repKey: 'rep.one', status: 'active' }],
+}).find(r => r.repKey === 'rep.one');
+
+test('percentages alone do not configure compensation terms', async () => {
+  for (const document of [null, { settings: DEFAULT_SETTINGS }, { ...approvedKnockSettings(), compensationApproval: undefined }]) {
+    const settings = await loadSettings({ get: async () => document });
+    assert.equal(settings.commission.verified, false);
+    const row = statement([paid()], [{ id: 'p', repKey: 'rep.one', periodKey: '2026-10-19_2026-11-01', amount: 80 }], settings);
+    assert.deepEqual([row.projectedCommission, row.earnedCommission, row.payableCommission], [null, null, null]);
+    assert.equal(row.commissionPaid, 80);
+    assert.equal(row.customerCollectedRevenue, 1600);
+  }
+});
+
+test('synthetic policy approval is bound to the exact settings and invalidated by an edit', async () => {
+  const doc = approvedKnockSettings();
+  doc.compensationApproval.commission = Object.fromEntries(Object.entries(doc.compensationApproval.commission).reverse());
+  assert.equal((await loadSettings({ get: async () => doc })).commission.verified, true);
+  doc.settings.commission.rate = 0.4;
+  assert.equal((await loadSettings({ get: async () => doc })).commission.verified, false);
+});
+
+test('malformed receipt history is held for review, not paid or silently dropped', () => {
+  for (const collectionHistory of [[null], [{ total: 1600, previousTotal: 1000, at: 'invalid' }], { length: 1 }]) {
+    const row = statement([paid({ collectionHistory })]);
+    assert.equal(row.payableCommission, null);
+    assert.ok(row.reviewReasons.includes('collection_history_invalid'));
+  }
+});
+
+test('customer collection, earned commission, payable and rep paid remain separate', () => {
+  const periodKey = '2026-10-19_2026-11-01';
+  const payout = { id: 'p1', repKey: 'rep.one', periodKey, amount: 75 };
+  const row = statement([paid(), paid()], [payout, payout]);
+  assert.deepEqual([row.projectedCommission, row.customerCollectedRevenue, row.earnedCommission, row.payableCommission, row.commissionPaid], [400, 1600, 400, 325, 75]);
+});
+
+test('missing, partial, overpaid and incomplete receipts never earn commission', () => {
+  for (const patch of [{ collectedAmount: null }, { collectedAmount: 320 }, { collectedAmount: 1700 }, { completedAt: null }, { cancelEndsAt: null }, { paidAt: null }]) {
+    const sale = paid(patch);
+    assert.equal(isEarned(sale, nowMs), false, JSON.stringify(patch));
+    assert.deepEqual(saleCommissions([sale], DEFAULT_SETTINGS.commission, { now: nowMs }), []);
+    assert.equal(statement([sale]).payableCommission, null);
+  }
+  assert.equal(customerCollection(paid({ collectedAmount: null })).gross, null, 'no ticket fallback');
+});
+
+test('refund and cancellation preserve customer receipts and prior rep payments without inventing clawback', () => {
+  for (const patch of [{ refundedAmount: 300, refundedAt: now }, { status: 'cancelled' }]) {
+    const row = statement([paid(patch)], [{ id: 'p', repKey: 'rep.one', periodKey: '2026-10-19_2026-11-01', amount: 400 }]);
+    assert.equal(row.customerCollectedRevenue, 1600);
+    assert.equal(row.commissionPaid, 400);
+    assert.equal(row.payableCommission, null);
+    assert.equal(row.compensationState, 'review_required');
+  }
+});
+
+test('deposit is included in final collection, not added twice', () => {
+  const handoff = { deposit: { status: 'collected', collectedAmount: 320, verifiedBy: 'stripe', collectedAt: now } };
+  assert.equal(customerCollection(paid({ handoff })).gross, 1600);
+  assert.equal(customerCollection(paid({ handoff, collectedAmount: null })).gross, 320);
+  assert.equal(customerCollection(paid({ collectedAmount: null, handoff: { deposit: { ...handoff.deposit, verifiedBy: '' } } })).gross, null);
+});
+
+test('partial receipts cross pay periods once; collecting does not complete the job', async () => {
+  const env = knockEnv(), world = knockWorld({ 'knock_sales/sale-1': paid({ status: 'booked', completedAt: null, paidAt: null, collectedAmount: null, saleDate: '2026-10-06' }) });
+  const store = world.storage(env);
+  const first = await recordSaleCollection(store, admin, { saleId: 'sale-1', collectedAmount: 320 }, '2026-10-10T18:00:00Z');
+  assert.equal(first.sale.status, 'booked');
+  assert.equal(first.sale.completedAt, null);
+  assert.equal((await recordSaleCollection(store, admin, { saleId: 'sale-1', collectedAmount: 320 }, now)).duplicate, true);
+  const second = await recordSaleCollection(store, admin, { saleId: 'sale-1', collectedAmount: 1600 }, now);
+  assert.equal(second.sale.status, 'booked');
+  assert.equal(statement([second.sale], [], DEFAULT_SETTINGS, '2026-10-06').customerCollectedRevenue, 320);
+  assert.equal(statement([second.sale]).customerCollectedRevenue, 1280);
+  const completed = await setSaleStatus(store, admin, { saleId: 'sale-1', status: 'completed' }, now);
+  assert.equal(completed.sale.status, 'paid');
+  assert.equal(isEarned(completed.sale, nowMs), true);
+  await assert.rejects(recordSaleCollection(store, admin, { saleId: 'sale-1', collectedAmount: 1500 }, now), { code: 'knock_collection_review' });
+});
+
+test('status edits cannot invent completion or erase receipts on cancellation and reinstatement', async () => {
+  const world = knockWorld({ 'knock_sales/sale-1': paid({ status: 'booked', completedAt: null }) }), store = world.storage(knockEnv());
+  await assert.rejects(setSaleStatus(store, admin, { saleId: 'sale-1', status: 'paid', collectedAmount: 1600 }, now), { code: 'knock_completion_required' });
+  await setSaleStatus(store, admin, { saleId: 'sale-1', status: 'cancelled' }, now);
+  const reopened = await setSaleStatus(store, admin, { saleId: 'sale-1', status: 'booked' }, now);
+  assert.equal(reopened.sale.collectedAmount, 1600);
+  assert.equal(reopened.sale.paidAt, '2026-10-19T19:00:00Z');
+});
+
+test('rep payment retries are idempotent and conflicting request reuse is refused', async () => {
+  const store = knockWorld({ 'knock_reps/rep.one': { repKey: 'rep.one' } }).storage(knockEnv());
+  const body = { requestId: uuid(), repKey: 'rep.one', periodKey: '2026-10-19_2026-11-01', amount: 100, note: 'Synthetic recorded payment' };
+  const results = await Promise.all([addPayout(store, admin, body, now), addPayout(store, admin, body, now)]);
+  assert.equal(results.filter(r => r.duplicate).length, 1);
+  await assert.rejects(addPayout(store, admin, { ...body, amount: 200 }, now), { code: 'knock_payout_conflict' });
+});
+
+test('a claimed HighLevel receipt is visibly uncertain and cannot be treated as a synced appointment', () => {
+  const sync = saleSyncSummary(paid({ handoff: { text: { mode: 'highlevel', status: 'pending' } } }), { outcome: 'sending', updatedAt: now });
+  assert.equal(sync.highlevel.state, 'uncertain');
+  assert.equal(sync.highlevel.retryAllowed, false);
+  assert.equal(sync.appointment, 'not_verified');
+  assert.equal(saleSyncSummary(paid(), { outcome: 'rejected' }).highlevel.retryAllowed, true);
+});
+
+test('rep cannot write receipts or payouts, cannot select another rep, and failed storage is not zero earnings', async () => {
+  const env = knockEnv();
+  const world = knockWorld({ 'knock_reps/rep.one': { repKey: 'rep.one', status: 'active', role: 'knocker' },
+    'knock_sales/other': paid({ repKey: 'rep.two' }) });
+  const cookie = await cookieFor(env, 'Rep.One');
+  const writes = knockAdminHandlers({ storage: world.storage });
+  for (const action of ['sale.collection', 'payout.add']) {
+    assert.equal((await call(writes.post, post('/api/knock-admin', { action, saleId: 'other', collectedAmount: 1600 }, cookie), env)).status, 403);
+  }
+  const reports = knockReportsHandlers({ storage: world.storage, now: () => new Date(now) });
+  const result = await call(reports.get, get('/api/knock-reports?view=my-money&repKey=rep.two', cookie), env);
+  assert.equal(result.status, 200);
+  assert.deepEqual(result.body.sales, []);
+  const broken = knockReportsHandlers({ storage: () => ({ get: async () => { throw new Error('Storage unavailable'); } }) });
+  assert.notEqual((await call(broken.get, get('/api/knock-reports?view=my-money', cookie), env)).status, 200);
+});
