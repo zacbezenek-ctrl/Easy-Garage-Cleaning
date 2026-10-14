@@ -327,7 +327,12 @@ function cancelDrag() { clearPreview(); C.drag?.node.classList.remove('dc-draggi
 // A redraw (the background refresh, a save elsewhere) replaces the dragged node, so the drag ends with it.
 function redrawn() { if (!C.drag) return; if (C.drag.moved) C.message='The schedule refreshed during the drag, so nothing was moved. Drag the job again.'; cancelDrag(); }
 // A removed node's lost capture is fired at the document, so this listens above it.
-window.addEventListener('lostpointercapture',event => { if (C.drag && event.pointerId===C.drag.pointerId) cancelDrag(); },true);
+window.addEventListener('lostpointercapture',event => {
+  if (!C.drag || event.pointerId!==C.drag.pointerId) return;
+  // A loading redraw removes the node before renderLanes runs. Preserve its
+  // cancellation notice even when the browser releases pointer capture first.
+  if (!C.drag.node.isConnected) redrawn(); else cancelDrag();
+},true);
 function dragEnd(event) {
   const drag=C.drag; if (!drag || event.pointerId!==drag.pointerId) return;
   if (event.currentTarget!==drag.node || !drag.node.isConnected) { cancelDrag(); return; }
