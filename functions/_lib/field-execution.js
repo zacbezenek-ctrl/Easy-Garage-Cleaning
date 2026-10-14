@@ -3,6 +3,7 @@ import { advanceFieldTime, fieldJobTime } from './field-execution-time.js';
 import { segmented, jobSegments } from './dispatch-segments.js';
 import { occupiedDays } from './dispatch-time.js';
 import { signedBriefJob, stripCrewMoney } from './crew-money.js';
+import { walkthroughCrewBrief } from './walkthrough-crew-brief.js';
 
 export const fieldFailure = (message, status = 400, code = 'FIELD_REQUEST_INVALID', details = {}) => Object.assign(new Error(message), { status, code, ...details });
 export const fieldId = value => typeof value === 'string' && /^[A-Za-z0-9_-]{1,180}$/.test(value) && !/^(_egc_|secure_)/.test(value);
@@ -149,6 +150,7 @@ export function fieldJobProjection(job, events = [], options = {}) {
     exclusions: crew(description(instructions.exclusions || scope.exclusions)), hazards: crew(textList(instructions.hazards || scope.hazards)),
     accessInstructions: crew(fieldText(job.accessInstructions || instructions.accessNotes || logistics.notes)), access: crew(textList(instructions.access || scope.access || logistics.access)),
     truckPlacement: crew(fieldText(instructions.truckPlacement || logistics.truck_placement)),
+    walkthroughBrief: walkthroughCrewBrief(instructions),
     customerInstructions: crew(fieldText(job.customerInstructions || instructions.customerNotes || job.customerNotesSummary)),
     requiredEquipment: textList(job.requiredEquipment || logistics.requiredEquipment), materials: fieldMaterials(job),
     checklist: fieldChecklist(job),

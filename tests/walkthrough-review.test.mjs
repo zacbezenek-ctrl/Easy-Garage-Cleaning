@@ -1,6 +1,7 @@
 import test from 'node:test';import assert from 'node:assert/strict';import {randomUUID} from 'node:crypto';
 import {normalizeWalkthroughReview,walkthroughReviewGaps,readWalkthroughReview,saveWalkthroughReview} from '../functions/_lib/walkthrough-review.js';
 import {walkthroughCaptureHandlers} from '../functions/api/walkthrough-capture.js';
+import {crewJobProjection} from '../functions/_lib/crew-job-projection.js';
 const owner={user:'zacb',role:'owner',businessAccess:true},sales={user:'rep',role:'sales',staffRoles:['sales']},env={EGC_STAFF_ROLE_PERMISSIONS:'true'},now='2026-10-14T17:00:00Z';
 const complete=()=>({customerName:'Synthetic Customer',address:'123 Test Lane',serviceType:'organization',scopeSummary:'Organize the existing bins',customerConfirmed:true,addressConfirmed:true,accessReviewed:true,boundariesReviewed:true,decisionsReviewed:true,hazardsReviewed:true,damageReviewed:true,measurementsReviewed:true,measurementsNeeded:false,equipmentReviewed:true,questionsReviewed:true,pricingReviewed:true,exclusions:'None',crewSize:2,estimatedDurationMin:90,photoUnavailableReason:'Customer declined photographs',pricingStatus:'needs_quote',pricingReviewNote:'Quote to follow after stock is checked',handoffNotes:'Keep bins labelled and leave walkway clear'});
 function fixture(){const rows=new Map([['customers/c1',{id:'c1',revision:'c0',name:'Synthetic Customer',address:'123 Test Lane'}],['jobs/w1',{id:'w1',revision:'r0',type:'walkthrough',customerId:'c1',assignedCrew:['rep']}]]);let n=0,lose=false;const commits=[];const store={read:async(c,id)=>structuredClone(rows.get(c+'/'+id)||null),commit:async writes=>{for(const w of writes){const old=rows.get(w.collection+'/'+w.id);if(w.revision?old?.revision!==w.revision:!!old)throw new Error('conflict');}commits.push(writes);for(const w of writes)if(!w.verify)rows.set(w.collection+'/'+w.id,{...rows.get(w.collection+'/'+w.id),...structuredClone(w.patch),id:w.id,revision:'r'+ ++n});if(lose){lose=false;throw new Error('lost reply');}}};return{rows,store,commits,lose:()=>{lose=true;},input:(action='save',data={},extra={})=>({jobId:'w1',action,data,requestId:randomUUID(),expectedRevision:rows.get('jobs/w1').walkthroughReview?.revision||0,...extra})};}
@@ -46,4 +47,27 @@ test('finalized capture links exact server quote revision and prepares only an i
  const result=await saveWalkthroughReview(f.store,owner,f.input('finalize',{...complete(),quoteJobId:'q1',pricingStatus:'quote_saved',pricingReviewNote:'Private override analysis $99',handoffNotes:'Move 3 bins ($20)'}),now,{env});
  assert.equal(result.review.latestFinalized.quote.revision,4);const q=f.rows.get('jobs/q1');assert.equal(q.estimate.revision,4);assert.equal(q.walkthroughCaptureSync.status,'pending');assert.doesNotMatch(q.walkthroughCaptureSync.body,/Private override|\$20/);
  q.estimate.amount=950;assert.equal((await readWalkthroughReview(f.store,owner,'w1',{env})).pricingChanged,true);
+});
+
+test('finalized walkthrough reaches linked job crew brief without private review or money', async()=>{
+ const f=fixture();
+ f.rows.set('jobs/q1',{id:'q1',revision:'q0',type:'job',customerId:'c1',sourceWalkthroughId:'w1',quoteDraft:{version:1},estimate:{number:'EST1',revision:1,amount:900,lineItems:[]},internalNotes:'PRIVATE-MANAGER'});
+ const data={...complete(),quoteJobId:'q1',pricingStatus:'quote_saved',pricingReviewNote:'PRIVATE-PRICING',customerQuestions:'PRIVATE-QUESTION',donateItems:'Blue chair',hazards:['Unstable shelf'],hazardPlan:'Do not move the shelf until braced',damageNotes:'Existing wall scratch',measurements:'Door is 36 inches',equipment:'Bring moving blankets ($50)',sortMethod:'Customer labels first',specialItems:['Piano'],finish:['shelving'],shelfQty:2,shelfType:'Steel',toteQty:3};
+ await saveWalkthroughReview(f.store,owner,f.input('save',data),now,{env});
+ assert.deepEqual(crewJobProjection(f.rows.get('jobs/q1')).walkthroughBrief,[],'draft capture does not publish crew instructions');
+ await saveWalkthroughReview(f.store,owner,f.input('finalize'),now,{env});
+ const job=f.rows.get('jobs/q1'),dto=crewJobProjection(job),brief=Object.fromEntries(dto.walkthroughBrief.map(item=>[item.label,item.text]));
+ assert.equal(dto.scope,data.handoffNotes);assert.equal(dto.customerGoal,data.scopeSummary);
+ assert.equal(brief.Donate,'Blue chair');assert.equal(brief['Hazard handling / stop-work plan'],data.hazardPlan);
+ assert.equal(brief['Existing damage'],data.damageNotes);assert.equal(brief.Measurements,data.measurements);
+ assert.equal(brief['Equipment notes'],'Bring moving blankets');assert.equal(brief['Sorting method'],data.sortMethod);
+ assert.equal(brief['Special items'],'Piano');assert.equal(brief['Shelf quantity'],'2');assert.equal(brief['Estimated on-site minutes'],'90');
+ assert.doesNotMatch(JSON.stringify(dto),/PRIVATE-|\$50/);
+ assert.equal(job.sourceWalkthroughId,'w1');assert.equal(job.walkthroughReviewReference.sourceJobId,'w1');
+ assert.equal(job.estimate.revision,1);assert.equal(job.signature,undefined);
+ await saveWalkthroughReview(f.store,owner,f.input('amend',{}, {reason:'Access plan changed'}),now,{env});
+ await saveWalkthroughReview(f.store,owner,f.input('save',{hazardPlan:'Use the other door'}),now,{env});
+ assert.equal(crewJobProjection(f.rows.get('jobs/q1')).walkthroughBrief.find(item=>item.label.startsWith('Hazard')).text,data.hazardPlan,'unfinalized amendment preserves published brief');
+ await saveWalkthroughReview(f.store,owner,f.input('finalize'),now,{env});
+ assert.equal(crewJobProjection(f.rows.get('jobs/q1')).walkthroughBrief.find(item=>item.label.startsWith('Hazard')).text,'Use the other door');
 });

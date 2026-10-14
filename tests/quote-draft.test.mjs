@@ -12,6 +12,8 @@ import { MESSAGE_SENDS, ledgerId } from '../functions/_lib/message-send-store.js
 import { createGhlMessenger } from '../functions/_lib/ghl-messenger.js';
 import { CONFIRM_TOKEN_COLLECTION } from '../functions/_lib/confirm-token.js';
 import { readFileSync } from 'node:fs';
+import { saveWalkthroughReview } from '../functions/_lib/walkthrough-review.js';
+import { crewJobProjection } from '../functions/_lib/crew-job-projection.js';
 import { priceCatalogQuote } from '../functions/_lib/catalog-quote.js';
 import { normalizeUnsignedCapture } from '../functions/_lib/unsigned-walkthrough-capture.js';
 import { fieldJobProjection } from '../functions/_lib/field-execution.js';
@@ -234,6 +236,25 @@ function fixture() {
 }
 const save = (f, value, actor = owner, env = ENV, at = NOW, options = {}) => saveQuoteDraft(f.store, actor, value, at, { env, ...options });
 const revise = (f, jobId, change = () => {}, extra = {}) => ({ requestId: randomUUID(), customerId: 'c1', sourceWalkthroughId: 'w1', jobId, expectedRevision: f.job(jobId).revision, draft: draft(change), ...extra });
+
+test('review finalized before quote creation keeps provenance, crew details and a new-job note intent on replay', async () => {
+  const f = fixture(), data = {customerName:'Synthetic Customer',address:'100 Fixture Lane',serviceType:'organization',scopeSummary:'Organize bins',customerConfirmed:true,addressConfirmed:true,accessReviewed:true,boundariesReviewed:true,decisionsReviewed:true,hazardsReviewed:true,damageReviewed:true,measurementsReviewed:true,equipmentReviewed:true,questionsReviewed:true,pricingReviewed:true,exclusions:'No attic work',crewSize:2,estimatedDurationMin:90,photoUnavailableReason:'Customer declined',pricingStatus:'needs_quote',pricingReviewNote:'PRIVATE price review',handoffNotes:'Keep walkway clear',hazards:['Unstable shelf'],hazardPlan:'Brace before moving',equipment:'Moving blankets',donateItems:'Blue chair'};
+  await saveWalkthroughReview(f.store, owner, {jobId:'w1',action:'finalize',requestId:randomUUID(),expectedRevision:0,data}, NOW, {env:ENV});
+  const source = structuredClone(f.rows.get('jobs/w1')), input = f.input();
+  const result = await save(f, input), job = f.job(result.job.id), crew = crewJobProjection(job);
+  assert.equal(job.walkthroughReviewReference.sourceJobId, 'w1');
+  assert.equal(job.walkthroughReviewReference.requestId, source.walkthroughReview.latestFinalized.requestId);
+  assert.equal(job.walkthroughCaptureSync.status, 'pending');
+  assert.match(job.walkthroughCaptureSync.body, new RegExp('Hub job: ' + job.id));
+  assert.match(job.walkthroughCaptureSync.body, /Brace before moving/);
+  assert.doesNotMatch(job.walkthroughCaptureSync.body, /PRIVATE/);
+  assert.equal(crew.walkthroughBrief.find(item=>item.label==='Donate').text,'Blue chair');
+  assert.equal(crew.scope,'Keep walkway clear');
+  const before = f.calls.length, replay = await save(f,input);
+  assert.equal(replay.job.id,job.id);assert.equal(f.calls.length,before);
+  assert.deepEqual(f.rows.get('jobs/w1'),source);
+  assert.equal(f.delivered.length,0);assert.equal(f.writesTo(MESSAGE_SENDS).length,0);
+});
 async function sendFlow(f, jobId, { actor = owner, env = ENV, deliver = f.deliver } = {}) {
   const preview = await previewQuoteSend(f.store, actor, { jobId, expectedRevision: f.job(jobId).revision }, NOW, { env });
   const body = { requestId: randomUUID(), jobId, expectedRevision: f.job(jobId).revision, confirmToken: preview.confirmToken };
