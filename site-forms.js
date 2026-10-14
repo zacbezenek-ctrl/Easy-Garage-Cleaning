@@ -83,7 +83,7 @@ function initMultiStepForm(form){
     if(n===2){if(sizeSel&&!sizeSel.value){showErr(panel,'Please choose an approximate job size.');sizeSel.focus();return false;}}
     if(n===3){if(!showQuoteResult())return false;syncBookingSlot();if(!form.querySelector('[name="booking_slot_choice"]:checked')){showErr(panel,'Please choose a preferred walkthrough window.');return false;}}
     if(n===4){const city=form.querySelector('[name="City"]');if(city&&!city.value){showErr(panel,'Please select your city so we can confirm service area.');city.focus();return false;}}
-    if(n===6){const name=form.querySelector('[name="Name"]');const phone=form.querySelector('[name="Phone"]');if(name&&!name.value.trim()){showErr(panel,'Please enter your name.');name.focus();return false;}if(phone&&!phone.value.trim()){showErr(panel,'Please enter a phone number so we can call with your quote.');phone.focus();return false;}}
+    if(n===6){const name=form.querySelector('[name="Name"]');const phone=form.querySelector('[name="Phone"]');if(name&&!name.value.trim()){showErr(panel,'Please enter your name.');name.focus();return false;}const digits=phone?.value.replace(/\D/g,'')||'';if(phone&&!(digits.length===10||(digits.length===11&&digits[0]==='1')||(digits.length>=12&&digits.length<=15))){showErr(panel,'Please enter a complete phone number so we can confirm your walkthrough.');phone.focus();return false;}}
     return true;
   }
   form.querySelectorAll('[name="booking_slot_choice"]').forEach(r=>r.addEventListener('change',syncBookingSlot));
@@ -108,6 +108,13 @@ function initMultiStepForm(form){
     });
   }
   let submitting=false;
+  const submitButton=form.querySelector('[type="submit"]');
+  const submitLabel=submitButton?.textContent||'Request walkthrough →';
+  window.addEventListener('pageshow',(event)=>{
+    if(!event.persisted)return;
+    submitting=false;
+    if(submitButton){submitButton.disabled=false;submitButton.classList.remove('is-loading');submitButton.textContent=submitLabel;}
+  });
   function syncZapierLeadFields(form){
     const normPhone=(raw)=>{const d=String(raw||'').replace(/\D/g,'');if(d.length===10)return'+1'+d;if(d.length===11&&d[0]==='1')return'+'+d;return String(raw||'').trim();};
     const phone=form.querySelector('[name="Phone"]');const zapPhone=form.querySelector('[name="phone"]');
@@ -123,6 +130,7 @@ function initMultiStepForm(form){
     if(zapItems&&svc){const size=sizeSel?.options[sizeSel.selectedIndex]?.text||'';zapItems.value=[svc.value||'',size].filter(Boolean).join(' — ');}
   }
   form.addEventListener('submit',(e)=>{
+    if(submitting||!validateStep(6)){e.preventDefault();return;}
     syncBookingSlot();
     syncZapierLeadFields(form);
     const svc=form.querySelector('[name="Service type"]:checked')||form.querySelector('[name="Service type"]');
@@ -130,7 +138,6 @@ function initMultiStepForm(form){
     const size=sizeSel?.options[sizeSel.selectedIndex]?.text||'';
     const combined=form.querySelector('[name="What to remove"]');
     if(combined&&svc){const parts=[svc.value||'',size,city&&city.value?city.value:'',rangeInput?.value?'Est. '+rangeInput.value:'',slotInput?.value?'Slot: '+slotInput.value:'',flowInput?.value?'Flow: '+flowInput.value:'',desc&&desc.value?desc.value:''].filter(Boolean);combined.value=parts.join(' — ');}
-    if(submitting){e.preventDefault();return;}
     submitting=true;
     const btn=form.querySelector('[type="submit"]');
     if(btn){btn.disabled=true;btn.classList.add('is-loading');btn.textContent='Sending…';}

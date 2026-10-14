@@ -83,12 +83,15 @@ test('private source trees, tooling and deploy configs return a noindex 404 at t
     '/functions/_data/garage-catalog.json', '/functions/_data/pricing-settings.defaults.json',
     '/tools/', '/tools/gallery/publish-links.py', '/tools/gallery/showcase-browser.cjs', '/tools/gallery/simple-import.json',
     '/.github/workflows/egc-firestore-ci.yml', '/.claude/settings.json', '/.claude/worktrees/unit/employee.html',
+    '/.git/config', '/.dev.vars', '/.dev.vars.local', '/.env.local', '/.env.production', '/.wrangler/state/data.json', '/.lighthouseci/report.json',
+    '/test-results/portal.png', '/field-qa/customer.png', '/lighthouse-reports/report.html', '/e2e-report.json', '/firestore-debug.log',
     '/node_modules/@noble/hashes/package.json', '/node_modules/.pnpm/tslib@2.8.1/node_modules/tslib/tslib.html',
     '/firebase.json', '/firebase.emulator.json', '/firebase.field-day.json', '/pnpm-lock.yaml', '/pnpm-workspace.yaml',
     '/_finalize_urls.py', '/_services_data.py', '/__pycache__/_services_data.cpython-312.pyc', '/blog/generator.py', '/images/any.PY', '/deep/nested/tool.py/',
     '/FUNCTIONS/_lib/hub-session.js', '/.GitHub/workflows/egc-platform-ci.yml', '/Firebase.Emulator.json',
     '/%66unctions/_lib/hub-session.js', '/functions%2F_lib%2Fhub-session.js', '//functions/_lib/hub-session.js', '/%2Ffunctions/_lib/hub-session.js',
     '/images/..%2Ffunctions/_lib/hub-session.js', '/crew/%2e%2e%2Ftools/gallery/simple-import.json', '/images%5C..%5Cegc-platform%5Cpackage.json', '/%E0%A4%A',
+    '/%2edev.vars', '/images/..%2F.env.local', '/images%5C..%5Ctest-results%5Cportal.png',
   ];
   for (const path of blocked) {
     const { response, continued } = await edge(path);

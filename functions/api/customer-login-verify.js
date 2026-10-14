@@ -28,7 +28,7 @@ function page(status, title, body) {
 <title>${escape(title)} · Easy Garage Cleaning</title>
 <link rel="icon" href="/favicon.ico">
 <link rel="stylesheet" href="/client-login.css?v=20260928b">
-<script src="/client-login.js?v=20260928b" defer></script>
+<script src="/client-login.js?v=20261013probe" defer></script>
 </head>
 <body>
 <main class="cl-shell">

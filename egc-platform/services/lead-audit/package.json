@@ -30,7 +30,7 @@
     "@egc/customer-state": "workspace:*",
     "@egc/database": "workspace:*",
     "@egc/schemas": "workspace:*",
-    "drizzle-orm": "0.44.5"
+    "drizzle-orm": "0.45.2"
   },
   "devDependencies": {
     "typescript": "^6.0.2",

@@ -101,7 +101,13 @@
   // Off (404), not ready (503) or unreachable: offer the text line before anyone types. Anything else leaves the form to the POST.
   async function probe() {
     var controller = new AbortController(), timer = setTimeout(function () { controller.abort(); }, PROBE_MS), status = 0;
-    try { status = (await fetch('/api/customer-login', { method: 'GET', credentials: 'same-origin', cache: 'no-store', signal: controller.signal })).status; }
+    try {
+      var response = await fetch('/api/customer-login', { method: 'GET', credentials: 'same-origin', cache: 'no-store', signal: controller.signal });
+      status = response.status;
+      // Finish the small readiness response before releasing its deadline.
+      // Leaving its body unread can keep the browser's request in flight.
+      await response.text();
+    }
     catch (ignore) { status = 0; }
     finally { clearTimeout(timer); }
     if ((status === 404 || status === 503 || status === 0) && !busy && !form.hidden) fallback();

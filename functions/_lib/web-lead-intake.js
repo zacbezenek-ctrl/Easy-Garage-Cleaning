@@ -33,6 +33,25 @@ import { bookingExplicitSlotsEnabled } from './booking-slots-flag.js';
 export const WEB_LEAD_RECEIPTS = 'web_lead_receipts';
 export const WEB_LEAD_FIELDS = Object.freeze(['name', 'phone', 'email', 'items', 'service_type', 'job_size', 'what_to_remove', 'photo_description', 'source', 'subject', 'city', 'serviceZip', 'preferred_date', 'preferred_timing', 'booking_slot', 'estimated_range', 'flow_type', 'sms_consent', 'request_id', 'fbc', 'fbp', 'fbclid', 'utm_source', 'utm_medium', 'utm_campaign', 'utm_content', 'utm_term', 'gclid', 'msclkid', 'landing_url', 'referrer', 'page_url']);
 export const WEB_LEAD_ATTRIBUTION_FIELDS = Object.freeze(['utm_source', 'utm_medium', 'utm_campaign', 'utm_content', 'utm_term', 'gclid', 'msclkid', 'fbclid', 'fbc', 'fbp', 'landing_url', 'referrer']);
+const ATTRIBUTION_QUERY_FIELDS = new Set(['utm_source', 'utm_medium', 'utm_campaign', 'utm_content', 'utm_term', 'gclid', 'msclkid', 'fbclid', 'gbraid', 'wbraid']);
+
+// Portal, sign-in and invitation URLs can carry bearer credentials. Only the
+// page address and supported campaign attribution may leave intake for a CRM
+// note, relay or receipt; never URL credentials, fragments or other query data.
+export function webLeadAttributionUrl(value) {
+  if (!value) return '';
+  try {
+    const url = new URL(value);
+    if (!['https:', 'http:'].includes(url.protocol)) return '';
+    url.username = '';
+    url.password = '';
+    url.hash = '';
+    for (const name of [...url.searchParams.keys()]) {
+      if (!ATTRIBUTION_QUERY_FIELDS.has(name.toLowerCase())) url.searchParams.delete(name);
+    }
+    return url.href;
+  } catch { return ''; }
+}
 export const WEB_LEAD_MAX_ATTEMPTS = 8;
 // A claimed attempt that never settles (a lost worker) is due again after this.
 export const WEB_LEAD_CLAIM_MS = 10 * 60000;
@@ -178,6 +197,8 @@ const tolerate = error => { if (error?.code === OUT_OF_TIME) throw error; };
  * createdContactId when this attempt created the contact.
  */
 export async function syncHighLevelLead(env, lead, fetcher = (...args) => fetch(...args), { delayed = false, createdContactId = '', timeLeft = null } = {}) {
+  // Also scrub receipts saved by older releases before a delayed retry writes a note.
+  lead = { ...lead, ...Object.fromEntries(['page_url', 'landing_url', 'referrer'].map(key => [key, webLeadAttributionUrl(lead[key])])) };
   const config = highLevelConfig(env);
   if (!config.token || !config.locationId) return { configured: false, synced: false, salesRoutingHeld: 'identity_unknown' };
   const isClientHubHelp = lead.flow_type === 'client_hub_help';

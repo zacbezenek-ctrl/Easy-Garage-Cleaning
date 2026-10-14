@@ -188,12 +188,16 @@
     try { const registration = await navigator.serviceWorker?.getRegistration('/crew/'); await registration?.sync?.register(Outbox.SYNC_TAG); } catch { /* The page also syncs when it is back online. */ }
   }
   async function api(url, input) {
-    let response;
-    try { response = await fetch(url, { credentials: 'same-origin', cache: 'no-store', ...(input ? { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(input) } : {}), signal: AbortSignal.timeout(input?.action === 'photo' ? 120000 : 30000) }); }
-    catch { throw new Error('The server did not confirm this action. Check your connection, then retry; the same action will not be saved twice.'); }
-    const data = await response.json().catch(() => ({}));
-    if (!response.ok || !data.ok) { const error = Object.assign(new Error(data.error || 'Job services are unavailable. Retry shortly.'), { status: response.status, code: data.code, missing: data.missing }); if (response.status === 401) { S.job = null; forgetSnapshots(); renderLogin(error.message); } throw error; }
-    return data;
+    // AbortController also works on the older iPads used in the field; AbortSignal.timeout requires Safari 16+.
+    const controller = new AbortController(), timer = setTimeout(() => controller.abort(), input?.action === 'photo' ? 120000 : 30000);
+    try {
+      let response;
+      try { response = await fetch(url, { credentials: 'same-origin', cache: 'no-store', ...(input ? { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(input) } : {}), signal: controller.signal }); }
+      catch { throw new Error('The server did not confirm this action. Check your connection, then retry; the same action will not be saved twice.'); }
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok || !data.ok) { const error = Object.assign(new Error(data.error || 'Job services are unavailable. Retry shortly.'), { status: response.status, code: data.code, missing: data.missing }); if (response.status === 401) { S.job = null; forgetSnapshots(); renderLogin(error.message); } throw error; }
+      return data;
+    } finally { clearTimeout(timer); }
   }
   function acceptViewer(user) {
     if (recall(viewerKey)?.user && recall(viewerKey).user !== user.user) forgetSnapshots();
@@ -751,7 +755,8 @@
     if (S.busy || S.initializing || Date.now() - reconnectCheckedAt < 30000) return;
     reconnectCheckedAt = Date.now();
     // A quiet probe first, so a connection that is still down never redraws the page.
-    try { const response = await fetch('/api/hub-auth', { credentials: 'same-origin', cache: 'no-store', signal: AbortSignal.timeout(10000) }); if (response.status >= 500) return; } catch { return; }
+    const controller = new AbortController(), timer = setTimeout(() => controller.abort(), 10000);
+    try { const response = await fetch('/api/hub-auth', { credentials: 'same-origin', cache: 'no-store', signal: controller.signal }); if (response.status >= 500) return; } catch { return; } finally { clearTimeout(timer); }
     await initialize();
   }
   document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') resume(); });

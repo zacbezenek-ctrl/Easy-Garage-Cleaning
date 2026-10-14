@@ -39,7 +39,7 @@ class LighthouseFixturePagesTests(unittest.TestCase):
     def tearDownClass(cls):
         cls.browser.close(); cls.pw.stop(); cls.server.terminate(); cls.server.wait(10)
 
-    def open(self, path, timezone, now):
+    def open(self, path, timezone, now, ready_path=None):
         self.context = self.browser.new_context(viewport={'width': 375, 'height': 812}, device_scale_factor=3, is_mobile=True, has_touch=True, timezone_id=timezone)
         self.page = self.context.new_page(); self.page.set_default_timeout(8000)
         self.page.clock.install(time=now)
@@ -47,20 +47,29 @@ class LighthouseFixturePagesTests(unittest.TestCase):
         self.page.add_init_script("window.__shifts=[];new PerformanceObserver(list=>{for(const entry of list.getEntries())if(!entry.hadRecentInput)window.__shifts.push(entry.value)}).observe({type:'layout-shift',buffered:true});")
         self.errors, self.failed, self.api = [], [], []
         self.page.on('pageerror', lambda error: self.errors.append(str(error)))
-        self.context.route('**/*', lambda route: route.continue_() if urlparse(route.request.url).hostname == '127.0.0.1' else route.abort())
+        # Do not intercept local requests: routing them can hide an unread fetch
+        # response body by consuming it on the browser's behalf.
+        self.context.route(re.compile(r'^https?://(?!127\.0\.0\.1(?=[:/]))'), lambda route: route.abort())
         def response(res):
             url = urlparse(res.url)
             if url.hostname != '127.0.0.1': return
             if url.path.startswith('/api/'): self.api.append((res.request.method, url.path, parse_qs(url.query), res.status))
-            if res.status >= 400: self.failed.append(f'{res.status} {url.path}')
+            expected_ready = res.request.method == 'GET' and url.path == '/api/customer-login' and res.status == 405
+            if res.status >= 400 and not expected_ready: self.failed.append(f'{res.status} {url.path}')
         self.page.on('response', response)
-        self.page.goto(self.url + path)
+        if ready_path:
+            with self.page.expect_request_finished(lambda req: urlparse(req.url).path == ready_path):
+                with self.page.expect_response(lambda res: urlparse(res.url).path == ready_path) as ready:
+                    self.page.goto(self.url + path)
+            self.assertEqual(ready.value.status, 405, 'the real readiness probe must succeed before checking the form')
+        else:
+            self.page.goto(self.url + path)
         return self.page
 
     def tearDown(self):
         self.assertEqual(self.errors, [])
         self.assertEqual(self.failed, [], 'every same-origin request, fixture API included, succeeds')
-        self.assertTrue(self.api and all(status == 200 for _, _, _, status in self.api), self.api)
+        self.assertTrue(self.api and all(status == (405 if method == 'GET' and path == '/api/customer-login' else 200) for method, path, _, status in self.api), self.api)
         self.assertLessEqual(self.page.evaluate('document.documentElement.scrollWidth'), 375)
         self.context.close()
 
@@ -76,6 +85,18 @@ class LighthouseFixturePagesTests(unittest.TestCase):
         self.assertIn(('GET', '/api/customer-portal'), [(method, path) for method, path, _, _ in self.api])
         self.assertLess(sum(page.evaluate('window.__shifts')), 0.01, 'the loading screen holds the layout until the project renders')
         page.screenshot(path=str(OUT / 'customer-portal.png'), full_page=True)
+
+    def test_client_login_shows_the_usable_sign_in_form_after_readiness_probe(self):
+        page = self.open('/client-login', 'America/Denver', NOW, ready_path='/api/customer-login')
+        expect(page.locator('#cl-form')).to_be_visible()
+        expect(page.locator('#cl-fallback')).to_be_hidden()
+        expect(page.get_by_label('Mobile number')).to_be_visible()
+        expect(page.get_by_role('button', name='Send my sign-in link')).to_be_enabled()
+        page.locator('label.cl-tab', has_text='Email').click()
+        expect(page.get_by_label('Email address')).to_be_visible()
+        self.assertIn(('GET', '/api/customer-login', {}, 405), self.api)
+        self.assertEqual([method for method, _, _, _ in self.api], ['GET'], 'the read-only harness never sends a sign-in link')
+        page.screenshot(path=str(OUT / 'client-login.png'), full_page=True)
 
     def test_business_hub_shows_the_signed_in_company_overview(self):
         data = fixture('business-hub')

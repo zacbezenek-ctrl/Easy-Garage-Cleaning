@@ -8,3 +8,6 @@ onlyBuiltDependencies:
   - esbuild
 overrides:
   rollup: npm:@rollup/wasm-node@4.63.4
+  # Patched transitive versions for GHSA-wq5f-xc86-pv6w and GHSA-68fv-2mgg-jv7q.
+  sharp: 0.35.5
+  source-map-js: 1.2.2

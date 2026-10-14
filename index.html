@@ -59,7 +59,7 @@
 <link href="https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght@0,9..144,400;0,9..144,500;0,9..144,700;1,9..144,400&family=Inter:wght@400;500;600;700;800;900&family=JetBrains+Mono:wght@400&display=swap" rel="stylesheet" media="print" onload="this.media='all'">
 <noscript><link href="https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght@0,9..144,400;0,9..144,500;0,9..144,700;1,9..144,400&family=Inter:wght@400;500;600;700;800;900&family=JetBrains+Mono:wght@400&display=swap" rel="stylesheet"></noscript>
 
-<link rel="stylesheet" href="/styles.css?v=20260928p">
+<link rel="stylesheet" href="/styles.css?v=20261013b">
 <style>
 .btn-white { background: var(--white); color: var(--accent); }
 .btn-white:hover { background: var(--paper); color: var(--accent-deep); }
@@ -326,7 +326,7 @@ a:focus-visible,button:focus-visible{outline:2px solid #ff5b1f;outline-offset:2p
       <div class="quote-form hero-form" id="turnaround-plan">
         <div class="hero-form-heading">
           <span class="hero-form-kicker">Free · No obligation</span>
-          <h3>Get your Garage Turnaround Plan</h3>
+          <h2 class="form-heading">Get your Garage Turnaround Plan</h2>
           <p class="form-note">Three quick details. We&rsquo;ll call or text to schedule the walkthrough.</p>
         </div>
         <form class="lead-form-lite" action="https://api.web3forms.com/submit" method="POST">
@@ -342,8 +342,8 @@ a:focus-visible,button:focus-visible{outline:2px solid #ff5b1f;outline-offset:2p
           <input type="hidden" name="landing_url" value="">
           <input type="hidden" name="referrer" value="">
           <div class="form-row two hero-contact-row">
-            <div class="field"><label for="hf-name">Name</label><input type="text" id="hf-name" name="name" required autocomplete="name" placeholder="First name"></div>
-            <div class="field"><label for="hf-phone">Phone</label><input type="tel" id="hf-phone" name="phone" required autocomplete="tel" inputmode="tel" placeholder="Mobile number"></div>
+            <div class="field"><label for="hf-name">Name</label><input type="text" id="hf-name" name="name" required autocomplete="name" placeholder="First name" pattern=".*\S.*" title="Enter your name."></div>
+            <div class="field"><label for="hf-phone">Phone</label><input type="tel" id="hf-phone" name="phone" required autocomplete="tel" inputmode="tel" placeholder="Mobile number" pattern="(?:[^0-9]*[0-9]){10}[^0-9]*|[^0-9]*1(?:[^0-9]*[0-9]){10}[^0-9]*|(?:[^0-9]*[0-9]){12,15}[^0-9]*" title="Enter a complete phone number, including area or country code."></div>
           </div>
           <div class="form-row"><div class="field"><label for="hf-size">Garage size</label>
             <select id="hf-size" name="items" required>
@@ -729,8 +729,8 @@ a:focus-visible,button:focus-visible{outline:2px solid #ff5b1f;outline-offset:2p
           <input type="hidden" name="fbclid" value="">
           <input type="hidden" name="landing_url" value="">
           <input type="hidden" name="referrer" value="">
-          <div class="form-row"><div class="field"><label for="lf-name">Name</label><input type="text" id="lf-name" name="name" required autocomplete="name" placeholder="First name"></div></div>
-          <div class="form-row"><div class="field"><label for="lf-phone">Phone</label><input type="tel" id="lf-phone" name="phone" required autocomplete="tel" inputmode="tel" placeholder="Your mobile number"></div></div>
+          <div class="form-row"><div class="field"><label for="lf-name">Name</label><input type="text" id="lf-name" name="name" required autocomplete="name" placeholder="First name" pattern=".*\S.*" title="Enter your name."></div></div>
+          <div class="form-row"><div class="field"><label for="lf-phone">Phone</label><input type="tel" id="lf-phone" name="phone" required autocomplete="tel" inputmode="tel" placeholder="Your mobile number" pattern="(?:[^0-9]*[0-9]){10}[^0-9]*|[^0-9]*1(?:[^0-9]*[0-9]){10}[^0-9]*|(?:[^0-9]*[0-9]){12,15}[^0-9]*" title="Enter a complete phone number, including area or country code."></div></div>
           <div class="form-row"><div class="field"><label for="lf-size">Garage size</label>
             <select id="lf-size" name="items" required>
               <option value="" disabled selected>Choose your garage&hellip;</option>
@@ -759,7 +759,7 @@ a:focus-visible,button:focus-visible{outline:2px solid #ff5b1f;outline-offset:2p
       <p class="community">The easiest way to reclaim your garage. Locally owned in Fort Collins — not a franchise call center.</p>
       <p class="community">Partners: <a href="https://fortcollinschamber.com/" rel="noopener">Fort Collins Chamber</a>, <a href="/blog/habitat-for-humanity-restore-fort-collins">Habitat ReStore</a>.</p>
       <nav class="foot-social" aria-label="Easy Garage Cleaning profiles and credentials" style="display:flex;flex-wrap:wrap;gap:8px;margin-top:16px"><a class="profile-badge" href="https://www.facebook.com/profile.php?id=61560763061868" target="_blank" rel="noopener noreferrer" style="display:inline-flex;align-items:center;gap:7px;min-height:44px;padding:8px 12px;border:1px solid rgba(245,241,234,.3);border-radius:8px;background:rgba(245,241,234,.06);color:#f5f1ea;font-size:12px;font-weight:600;line-height:1.4"><span aria-hidden="true" style="display:inline-flex;align-items:center;justify-content:center;width:22px;height:22px;border-radius:50%;background:#f5f1ea;color:#0a1628;font-size:14px;font-weight:800">f</span>Facebook</a><a class="profile-badge" href="https://www.instagram.com/easygaragecleaning/" target="_blank" rel="noopener noreferrer" style="display:inline-flex;align-items:center;gap:7px;min-height:44px;padding:8px 12px;border:1px solid rgba(245,241,234,.3);border-radius:8px;background:rgba(245,241,234,.06);color:#f5f1ea;font-size:12px;font-weight:600;line-height:1.4"><span aria-hidden="true" style="display:inline-flex;align-items:center;justify-content:center;width:22px;height:22px;border-radius:50%;background:#f5f1ea;color:#0a1628;font-size:14px;font-weight:800">◎</span>Instagram</a><a class="profile-badge" href="https://www.linkedin.com/company/easygaragecleaning" target="_blank" rel="noopener noreferrer" style="display:inline-flex;align-items:center;gap:7px;min-height:44px;padding:8px 12px;border:1px solid rgba(245,241,234,.3);border-radius:8px;background:rgba(245,241,234,.06);color:#f5f1ea;font-size:12px;font-weight:600;line-height:1.4"><span aria-hidden="true" style="display:inline-flex;align-items:center;justify-content:center;width:22px;height:22px;border-radius:50%;background:#f5f1ea;color:#0a1628;font-size:14px;font-weight:800">in</span>LinkedIn</a><a class="profile-badge" href="https://nextdoor.com/pages/easy-garage-cleaning-fort-collins-co/" target="_blank" rel="noopener noreferrer" style="display:inline-flex;align-items:center;gap:7px;min-height:44px;padding:8px 12px;border:1px solid rgba(245,241,234,.3);border-radius:8px;background:rgba(245,241,234,.06);color:#f5f1ea;font-size:12px;font-weight:600;line-height:1.4"><span aria-hidden="true" style="display:inline-flex;align-items:center;justify-content:center;width:22px;height:22px;border-radius:50%;background:#f5f1ea;color:#0a1628;font-size:14px;font-weight:800">n</span>Nextdoor</a><a class="profile-badge" href="https://www.bbb.org/us/co/fort-collins/profile/garage-organizers/easy-garage-cleaning-0805-46155789" target="_blank" rel="noopener noreferrer" style="display:inline-flex;align-items:center;gap:7px;min-height:44px;padding:8px 12px;border:1px solid rgba(245,241,234,.3);border-radius:8px;background:rgba(245,241,234,.06);color:#f5f1ea;font-size:12px;font-weight:600;line-height:1.4"><span aria-hidden="true" style="display:inline-flex;align-items:center;justify-content:center;width:22px;height:22px;border-radius:50%;background:#f5f1ea;color:#0a1628;font-size:14px;font-weight:800">✓</span>BBB Accredited</a><a class="profile-badge" href="https://www.thumbtack.com/co/fort-collins/junk-removal/easy-garage-cleaning/service/577746408076951557" target="_blank" rel="noopener noreferrer" style="display:inline-flex;align-items:center;gap:7px;min-height:44px;padding:8px 12px;border:1px solid rgba(245,241,234,.3);border-radius:8px;background:rgba(245,241,234,.06);color:#f5f1ea;font-size:12px;font-weight:600;line-height:1.4"><span aria-hidden="true" style="display:inline-flex;align-items:center;justify-content:center;width:22px;height:22px;border-radius:50%;background:#f5f1ea;color:#0a1628;font-size:14px;font-weight:800">t</span>Thumbtack</a></nav>
-      <p class="foot-entity foot-nap"><strong>Easy Garage Cleaning</strong> · Easy Garage Cleaning LLC · Fort Collins, CO 80525 · <a href="tel:+19709991818">(970) 999-1818</a> · <a href="mailto:contact@easygaragecleaning.com">contact@easygaragecleaning.com</a> · <a href="https://easygaragecleaning.com/#business">Schema @id #business</a> · <a href="https://easygaragecleaning.com/llms.txt">llms.txt</a> · <a href="/humans.txt">humans.txt</a></p>
+      <p class="foot-entity foot-nap"><strong>Easy Garage Cleaning</strong> · Easy Garage Cleaning LLC · Fort Collins, CO 80525 · <a href="tel:+19709991818">(970) 999-1818</a> · <a href="mailto:contact@easygaragecleaning.com">contact@easygaragecleaning.com</a> · <a href="/humans.txt">humans.txt</a></p>
     </div>
     <div class="foot-col">
       <h3>Services</h3>

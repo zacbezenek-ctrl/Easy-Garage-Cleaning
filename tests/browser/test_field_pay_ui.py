@@ -82,10 +82,13 @@ class FieldPayBrowserTests(unittest.TestCase):
             self.context.close()
         self.assertEqual(self.errors, [])
 
-    def page_open(self, *, manager=False, width=390, url=None, expect_payment=True):
+    def page_open(self, *, manager=False, width=390, url=None, expect_payment=True, legacy_abort=False):
         self.manager = manager
         self.context = self.browser.new_context(viewport={'width': width, 'height': 844}, timezone_id='Asia/Tokyo', is_mobile=True, has_touch=True, service_workers='block')
         page = self.context.new_page()
+        if legacy_abort:
+            # iPadOS 15.4/15.5 supports AbortController but not AbortSignal.timeout.
+            page.add_init_script('delete AbortSignal.timeout;')
         page.set_default_timeout(8000)
         page.clock.install(time=datetime.datetime(2026, 9, 22, 16, tzinfo=datetime.timezone.utc))
         page.on('pageerror', lambda error: self.errors.append(str(error)))
@@ -194,6 +197,11 @@ class FieldPayBrowserTests(unittest.TestCase):
                 send({'ok': True, 'sessionId': 'cs_test_syntheticfieldpay', 'url': 'https://checkout.stripe.com/c/pay/syntheticfieldpay'})
         else:
             route.continue_()
+
+    def test_job_and_payments_work_without_abort_signal_timeout(self):
+        page = self.page_open(legacy_abort=True)
+        expect(page.get_by_role('heading', name='Synthetic Drafts Garage')).to_be_visible()
+        self.assertGreater(self.payment_gets, 0)
 
     def test_exact_card_balance_and_tip_are_separate(self):
         page = self.page_open()

@@ -302,7 +302,7 @@ test('GET renders a link-scanner-safe confirm page and never consumes the token'
     assert.match(html, /<form id="cl-confirm" class="cl-form" method="post" action="\/api\/customer-login-verify">/);
     assert.ok(html.includes(`<input type="hidden" name="token" value="${token}">`));
     assert.match(html, /<button class="cl-button" type="submit">Sign in to my projects<\/button>/);
-    assert.deepEqual(html.match(/<script\b[^>]*>/gi), ['<script src="/client-login.js?v=20260928b" defer>'], 'only the same-origin double-tap guard; the form works without it');
+    assert.deepEqual(html.match(/<script\b[^>]*>/gi), ['<script src="/client-login.js?v=20261013probe" defer>'], 'only the same-origin double-tap guard; the form works without it');
     assert.doesNotMatch(html, /<script[^>]*>[^<]/i);
   }
   h.store.hooks.failRead = null;

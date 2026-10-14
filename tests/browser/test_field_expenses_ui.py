@@ -144,6 +144,12 @@ class FieldExpensesBrowserTests(unittest.TestCase):
         send(reply)
     def open(self, query=''):
         self.page.goto(self.url + '/' + query)
+    def test_costs_work_without_abort_signal_timeout(self):
+        # iPadOS 15.4/15.5 supports AbortController but not AbortSignal.timeout.
+        self.page.add_init_script('delete AbortSignal.timeout;')
+        self.open()
+        expect(self.page.get_by_label('Amount paid (USD)')).to_be_visible()
+        self.assertEqual(self.expense_reads, 1)
     def assert_phone_layout(self):
         self.assertFalse(self.page.evaluate('document.documentElement.scrollWidth>innerWidth'))
         self.assertIsNone(re.search(r'\bnull\b|\bundefined\b|NaN', self.page.locator('#host').inner_text()))

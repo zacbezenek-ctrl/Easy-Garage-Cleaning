@@ -35,7 +35,7 @@
 
   <script type="application/ld+json">{"@context": "https://schema.org", "@type": "FAQPage", "mainEntity": [{"@type": "Question", "name": "How much does junk removal cost in Fort Collins?", "acceptedAnswer": {"@type": "Answer", "text": "Single-item pickups start at $150, which covers most furniture pieces, appliances, or similar items. Full-load hauling is flat-rate — you pay one price regardless of how we pack the truck, never by volume. Specific items like tires are $50 each, fridges $60, and washer/dryers $50. Call (970) 999-1818 for an exact quote in minutes."}}, {"@type": "Question", "name": "Do you haul just one item, or do you require a minimum load?", "acceptedAnswer": {"@type": "Answer", "text": "We haul single items all the time — one couch, one fridge, one hot tub. There's no minimum load requirement. Single-item pickups start at $150. If you have more, we do full loads at a flat rate. Either way, you get the same flat-rate promise: one price, no surprises."}}, {"@type": "Question", "name": "How quickly can you pick up junk in Fort Collins?", "acceptedAnswer": {"@type": "Answer", "text": "Next-day appointments are frequently available throughout Fort Collins — Old Town, Midtown, Fossil Creek, the Harmony corridor, and South College. Call (970) 999-1818 Monday through Saturday, 7 AM to 7 PM, and we'll often be able to schedule you that day."}}, {"@type": "Question", "name": "Are you insured for junk removal in Fort Collins?", "acceptedAnswer": {"@type": "Answer", "text": "Yes. Easy Garage Cleaning LLC is fully insured. We carry general liability coverage on every job. Your property is protected from the moment we arrive. You're not dealing with an uninsured hauler operating out of a personal truck — this is a real local business."}}]}</script>
 
-  <link rel="stylesheet" href="/styles.css?v=20260928p">
+  <link rel="stylesheet" href="/styles.css?v=20261013b">
 <style>
 .form-card {
       background: var(--navy-soft);
@@ -428,8 +428,8 @@
           <input type="hidden" name="landing_url" value="">
           <input type="hidden" name="referrer" value="">
           <input type="checkbox" name="botcheck" class="sr-only" tabindex="-1" autocomplete="off" aria-hidden="true" hidden>
-          <label><span class="sr-only">Name</span><input type="text" name="name" required autocomplete="name" placeholder="Your name"></label>
-          <label><span class="sr-only">Phone number</span><input type="tel" name="phone" required autocomplete="tel" placeholder="Phone number" inputmode="tel"></label>
+          <label><span class="sr-only">Name</span><input type="text" name="name" required autocomplete="name" placeholder="Your name" pattern=".*\S.*" title="Enter your name."></label>
+          <label><span class="sr-only">Phone number</span><input type="tel" name="phone" required autocomplete="tel" placeholder="Phone number" inputmode="tel" pattern="(?:[^0-9]*[0-9]){10}[^0-9]*|[^0-9]*1(?:[^0-9]*[0-9]){10}[^0-9]*|(?:[^0-9]*[0-9]){12,15}[^0-9]*" title="Enter a complete phone number, including area or country code."></label>
           <label class="sms-consent"><input type="checkbox" name="sms_consent" value="yes"><span>I agree to receive text messages from Easy Garage Cleaning about my quote and appointment at the number provided. Consent is not a condition of purchase. Message frequency varies; message and data rates may apply. Reply STOP to opt out or HELP for help. See our <a href="/privacy-policy">Privacy Policy</a> and <a href="/terms-of-service">Terms of Service</a>.</span></label>
          <button type="submit">Get My Free Quote &rarr;</button>
         </form>

@@ -49,13 +49,16 @@
   function remember() { const d = S.draft; if (S.jobId && S.user) store('draft', d.amount || d.vendor || d.note || d.kind !== 'material' || d.payer || d.photos.length || d.split ? d : null); }
   function persistPending() { S.volatile = S.pending ? !store('pending', S.pending) : (store('pending', null), false); }
   async function api(url, input) {
-    let response;
-    try { response = await fetch(url, { credentials: 'same-origin', cache: 'no-store', ...(input ? { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(input) } : {}), signal: AbortSignal.timeout(input?.receiptDataUrl ? 120000 : 30000) }); }
-    catch { throw Object.assign(new Error('The server did not confirm this cost. Check your connection, then retry; the same entry will not be saved twice.'), { status: 0 }); }
-    const data = await response.json().catch(() => ({}));
-    if (!response.ok || !data.ok) throw Object.assign(new Error(data.error || 'Job costs are unavailable. Retry shortly.'), { status: response.status, code: data.code });
-    if (data.jobId !== S.jobId || !Array.isArray(data.entries) || !data.totals || !Number.isSafeInteger(data.totals.totalCents)) throw Object.assign(new Error('Job costs could not be verified. Retry before relying on these totals.'), { status: 0 });
-    return data;
+    const controller = new AbortController(), timer = setTimeout(() => controller.abort(), input?.receiptDataUrl ? 120000 : 30000);
+    try {
+      let response;
+      try { response = await fetch(url, { credentials: 'same-origin', cache: 'no-store', ...(input ? { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(input) } : {}), signal: controller.signal }); }
+      catch { throw Object.assign(new Error('The server did not confirm this cost. Check your connection, then retry; the same entry will not be saved twice.'), { status: 0 }); }
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok || !data.ok) throw Object.assign(new Error(data.error || 'Job costs are unavailable. Retry shortly.'), { status: response.status, code: data.code });
+      if (data.jobId !== S.jobId || !Array.isArray(data.entries) || !data.totals || !Number.isSafeInteger(data.totals.totalCents)) throw Object.assign(new Error('Job costs could not be verified. Retry before relying on these totals.'), { status: 0 });
+      return data;
+    } finally { clearTimeout(timer); }
   }
   async function load() {
     const generation = ++S.generation;
@@ -71,14 +74,15 @@
   async function loadShareJobs() {
     const token = ++S.shareToken, jobId = S.jobId;
     S.shareLoading = true; S.shareError = ''; render();
+    const controller = new AbortController(), timer = setTimeout(() => controller.abort(), 30000);
     try {
-      const response = await fetch(`/api/field-expenses?jobId=${encodeURIComponent(jobId)}&view=share_jobs`, { credentials: 'same-origin', cache: 'no-store', signal: AbortSignal.timeout(30000) });
+      const response = await fetch(`/api/field-expenses?jobId=${encodeURIComponent(jobId)}&view=share_jobs`, { credentials: 'same-origin', cache: 'no-store', signal: controller.signal });
       const data = await response.json().catch(() => ({}));
       if (!response.ok || !data.ok) throw new Error(data.error || 'Your other jobs could not be loaded. Retry.');
       if (data.jobId !== jobId || !Array.isArray(data.jobs)) throw new Error('Your other jobs could not be verified. Retry.');
       if (token === S.shareToken) S.shareJobs = data.jobs.filter(item => item && typeof item.jobId === 'string' && item.jobId !== jobId);
-    } catch (error) { if (token === S.shareToken) S.shareError = error.name === 'TimeoutError' || error instanceof TypeError ? 'Your other jobs could not be loaded. Check your connection and retry.' : error.message; }
-    finally { if (token === S.shareToken) { S.shareLoading = false; render(); } }
+    } catch (error) { if (token === S.shareToken) S.shareError = error.name === 'TimeoutError' || error.name === 'AbortError' || error instanceof TypeError ? 'Your other jobs could not be loaded. Check your connection and retry.' : error.message; }
+    finally { clearTimeout(timer); if (token === S.shareToken) { S.shareLoading = false; render(); } }
   }
   function settle(message, isError = false) { S.feedback = message; S.feedbackError = isError; }
   function success(input, data) {

@@ -7,7 +7,7 @@ export const gallerySimpleScriptHash='e03b4b7252a3';
 export const galleryCanonical='https://easygaragecleaning.com/before-after';
 // Same stylesheet version and Google Fonts URL as the generated pages (STYLES_VERSION and
 // GOOGLE_FONTS_URL in _generate_site.py; tests/public-performance.test.mjs keeps them equal).
-export const stylesVersion='20260928p';
+export const stylesVersion='20261013b';
 export const googleFontsUrl='https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght@0,9..144,400;0,9..144,500;0,9..144,700;1,9..144,400&family=Inter:wght@400;500;600;700;800;900&family=JetBrains+Mono:wght@400&display=swap';
 // Same analytics-loader.js version and GTM noscript fallback as the generated pages (ANALYTICS_LOADER_VERSION and
 // GTM_NOSCRIPT in _generate_site.py; tests/public-audit-fixes.test.mjs keeps them equal).

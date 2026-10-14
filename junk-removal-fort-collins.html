@@ -38,7 +38,7 @@
   <link href="https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght@0,9..144,400;0,9..144,500;0,9..144,700;1,9..144,400&family=Inter:wght@400;500;600;700;800;900&display=swap" rel="stylesheet" media="print" onload="this.media='all'">
   <noscript><link href="https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght@0,9..144,400;0,9..144,500;0,9..144,700;1,9..144,400&family=Inter:wght@400;500;600;700;800;900&display=swap" rel="stylesheet"></noscript>
 
-  <link rel="stylesheet" href="/styles.css?v=20260928p">
+  <link rel="stylesheet" href="/styles.css?v=20261013b">
   <style>
     /* Page-scoped styles — layers on top of /styles.css tokens */
     .ppc-topbar{background:var(--ink);color:var(--paper);padding:12px 0;border-bottom:2px solid var(--accent)}
@@ -188,7 +188,7 @@
       <div class="quote-form">
         <!-- class "lead-form-lite" wires this into fb-capture.js → /api/web-lead
              (Zapier instant-text alert), same pipeline as every other site form -->
-        <form class="lead-form-lite" id="ppcQuoteForm" action="https://api.web3forms.com/submit" method="POST" novalidate>
+        <form class="lead-form-lite" id="ppcQuoteForm" action="https://api.web3forms.com/submit" method="POST">
           <input type="hidden" name="access_key" value="3c4fe752-ac1d-45b9-89dd-4275ea162d22">
           <input type="hidden" name="subject" value="New PPC Lead — Junk Removal Fort Collins ($139 landing page)">
           <input type="hidden" name="from_name" value="Easy Garage Cleaning Website">
@@ -201,11 +201,11 @@
           <input type="hidden" name="referrer" value="">
           <div class="form-row"><div class="field">
             <label for="ppc-name">Name</label>
-            <input type="text" id="ppc-name" name="name" required autocomplete="name" placeholder="First name">
+            <input type="text" id="ppc-name" name="name" required autocomplete="name" placeholder="First name" pattern=".*\S.*" title="Enter your name.">
           </div></div>
           <div class="form-row"><div class="field">
             <label for="ppc-phone">Phone</label>
-            <input type="tel" id="ppc-phone" name="phone" required autocomplete="tel" inputmode="tel" placeholder="Your mobile number">
+            <input type="tel" id="ppc-phone" name="phone" required autocomplete="tel" inputmode="tel" placeholder="Your mobile number" pattern="(?:[^0-9]*[0-9]){10}[^0-9]*|[^0-9]*1(?:[^0-9]*[0-9]){10}[^0-9]*|(?:[^0-9]*[0-9]){12,15}[^0-9]*" title="Enter a complete phone number, including area or country code.">
           </div></div>
           <div class="form-row"><div class="field">
             <label for="ppc-items">What do you need gone?</label>
@@ -371,39 +371,50 @@
     fireConversion(isCall ? 'call' : 'sms', a.getAttribute('data-cta') || '');
   });
 
-  /* (c) quote form — AJAX submit, inline confirmation, conversion event.
-     fb-capture.js sees the same submit event (capture phase) and mirrors the
-     lead to /api/web-lead → Zapier instant-text, so the crew gets pinged even
-     while the Web3Forms email is in flight. */
+  /* This form cancels native navigation, so explicitly use the first-party
+     lead relay. Only show confirmation after the email provider accepts it. */
   var form = document.getElementById('ppcQuoteForm');
   var success = document.getElementById('ppcSuccess');
   var errEl = document.getElementById('ppcFormError');
   var btn = document.getElementById('ppcSubmitBtn');
   if (form) {
+    var sending = false;
+    var submitLabel = btn.textContent;
     form.addEventListener('submit', function (e) {
       e.preventDefault();
+      if (sending) return;
       var bot = form.querySelector('input[name="botcheck"]');
       if (bot && bot.checked) return;
       var name = (form.querySelector('[name="name"]').value || '').trim();
-      var digits = (form.querySelector('[name="phone"]').value || '').replace(/\D/g, '');
       var items = (form.querySelector('[name="items"]').value || '').trim();
-      if (!name || digits.length < 7 || !items) {
+      if (!name || !items || !form.checkValidity()) {
+        errEl.textContent = 'Please add your name, a complete phone number, and what you need removed.';
         errEl.classList.add('visible');
         return;
       }
       errEl.classList.remove('visible');
+      sending = true;
       btn.disabled = true;
       btn.textContent = 'Sending…';
-      fireConversion('form', 'quote-form');
+      if (window.EGCLeadCapture) window.EGCLeadCapture.relay(form);
       fetch(form.action, {
         method: 'POST',
         body: new FormData(form),
         headers: { 'Accept': 'application/json' }
-      }).catch(function () { /* relay leg via fb-capture already fired */ })
-        .then(function () {
+      }).then(function (response) {
+        return response.json().then(function (result) {
+          if (!response.ok || result.success !== true) throw new Error('Request not confirmed');
           form.hidden = true;
           success.hidden = false;
+          fireConversion('form', 'quote-form');
         });
+      }).catch(function () {
+        errEl.textContent = "We couldn't confirm your request. Please try again or call (970) 999-1308.";
+        errEl.classList.add('visible');
+        sending = false;
+        btn.disabled = false;
+        btn.textContent = submitLabel;
+      });
     });
   }
 })();

@@ -36,7 +36,7 @@ test('no analytics, lead-form classes, inline scripts or inline styles, so the s
   assert.doesNotMatch(page, /analytics-loader|googletagmanager|gtag\(|fbevents|clarity\.ms|fb-capture|site-enhancements/);
   assert.doesNotMatch(page, /lead-form-lite|multi-step-form|sms_consent/);
   const scripts = tags(page, 'script');
-  assert.deepEqual(scripts, ['<script src="/client-login.js?v=20260928b" defer>']);
+  assert.deepEqual(scripts, ['<script src="/client-login.js?v=20261013probe" defer>']);
   assert.doesNotMatch(page, /<script>(?!<\/script>)|<script [^>]*>[^<]+<\/script>/);
   assert.doesNotMatch(page, /\sstyle="|<style|\son[a-z]+="/i);
   assert.doesNotMatch(script, /innerHTML|outerHTML|insertAdjacentHTML|document\.write|eval\(|new Function/);
@@ -75,7 +75,7 @@ function harness({ html = page, search = '', fetch }) {
   const panel = () => ['cl-form', 'cl-sent', 'cl-fallback'].filter(id => !$(id).hidden);
   return { $, calls, replaced, window, confirmButton, fire, settle, panel };
 }
-const answer = status => async () => ({ status, json: async () => (status === 202 ? { ok: true, message: 'Synthetic generic message' } : { ok: false }) });
+const answer = status => async () => ({ status, text: async () => '', json: async () => (status === 202 ? { ok: true, message: 'Synthetic generic message' } : { ok: false }) });
 
 test('on load the page asks the API once and shows "Text us" straight away when sign-in is off, not ready or unreachable', async () => {
   for (const [label, reply] of [['off', answer(404)], ['not ready', answer(503)], ['offline', async () => { throw new TypeError('Failed to fetch'); }]]) {
@@ -92,7 +92,7 @@ test('on load the page asks the API once and shows "Text us" straight away when 
 
 test('a slow probe never replaces a request the customer already sent', async () => {
   let release;
-  const h = harness({ fetch: (url, options) => options.method === 'GET' ? new Promise(resolve => { release = () => resolve({ status: 404 }); }) : answer(202)() });
+  const h = harness({ fetch: (url, options) => options.method === 'GET' ? new Promise(resolve => { release = () => resolve({ status: 404, text: async () => '' }); }) : answer(202)() });
   h.$('cl-phone').value = '970 555 0101';
   h.fire(h.$('cl-form'), 'submit');
   await h.settle();
@@ -101,6 +101,14 @@ test('a slow probe never replaces a request the customer already sent', async ()
   release(); await h.settle();
   assert.deepEqual(h.panel(), ['cl-sent'], 'the late 404 does not hide the sent message');
   assert.deepEqual(h.calls.map(call => call.method), ['GET', 'POST']);
+});
+
+test('the readiness probe consumes its body so the browser can finish the request', async () => {
+  let consumed = false;
+  const h = harness({ fetch: async () => ({ status: 405, text: async () => { consumed = true; return '{}'; } }) });
+  await h.settle();
+  assert.equal(consumed, true);
+  assert.deepEqual(h.panel(), ['cl-form']);
 });
 
 test('a link used a moment ago says so and offers the portal; other statuses do not', async () => {
@@ -164,7 +172,7 @@ test('the link-confirm page is private, works without script, loads only the sam
   assert.equal(response.headers.get('X-Frame-Options'), 'DENY');
   assert.match(html, /<html lang="en">/);
   assert.equal(tags(html, 'h1').length, 1);
-  assert.deepEqual(tags(html, 'script'), ['<script src="/client-login.js?v=20260928b" defer>']);
+  assert.deepEqual(tags(html, 'script'), ['<script src="/client-login.js?v=20261013probe" defer>']);
   assert.doesNotMatch(html, /<script[^>]*>[^<]|\sstyle="|<style|\son[a-z]+="/i);
   assert.match(html, /<form id="cl-confirm" class="cl-form" method="post" action="\/api\/customer-login-verify">/, 'a plain form POST: it signs in with script off');
   for (const tag of tags(html, 'button')) assert.match(tag, /type="submit"/);
@@ -183,7 +191,7 @@ test('the retry page (a sign-in that did not finish) is private, re-offers the s
   assert.deepEqual(['Cache-Control', 'X-Frame-Options', 'Referrer-Policy'].map(name => response.headers.get(name)), ['no-store', 'DENY', 'strict-origin']);
   assert.match(response.headers.get('X-Robots-Tag'), /noindex/);
   assert.equal(tags(html, 'h1').length, 1);
-  assert.deepEqual(tags(html, 'script'), ['<script src="/client-login.js?v=20260928b" defer>']);
+  assert.deepEqual(tags(html, 'script'), ['<script src="/client-login.js?v=20261013probe" defer>']);
   assert.doesNotMatch(html, /<script[^>]*>[^<]|\sstyle="|<style|\son[a-z]+="/i);
   assert.match(html, /<form id="cl-confirm" class="cl-form" method="post" action="\/api\/customer-login-verify">\n<input type="hidden" name="token" value="A{43}">/);
   for (const tag of tags(html, 'button')) assert.match(tag, /type="submit"/);

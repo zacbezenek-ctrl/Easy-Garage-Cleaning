@@ -9,6 +9,6 @@
     "test": "vitest run",
     "test:integration": "node --test test/postgres.check.mjs"
   },
-  "dependencies": { "@egc/database": "workspace:*", "drizzle-orm": "0.44.5" },
+  "dependencies": { "@egc/database": "workspace:*", "drizzle-orm": "0.45.2" },
   "devDependencies": { "@types/node": "^24.5.2", "typescript": "^6.0.2", "vitest": "^3.2.4", "postgres": "3.4.7" }
 }

@@ -194,6 +194,66 @@ class CustomerPhotosBrowserTests(unittest.TestCase):
         self.assertIsNone(self.page.locator('#photo-input').get_attribute('capture'))
         expect(self.page.get_by_text('Take a photo')).to_be_visible(); self.no_horizontal_scroll()
 
+    def storage_photo(self):
+        self.portal['beforeAfter'].append({'photoId': IDS[5], 'category': 'storage', 'bin': 'A1', 'items': 'Holiday lights', 'label': 'Storage photo', 'addedAt': NOW})
+
+    def test_revoked_access_closes_both_private_photo_viewers(self):
+        self.storage_photo()
+        for kind, selector in [('gallery', '.ba-thumb'), ('storage', '.storage-bin')]:
+            with self.subTest(viewer=kind):
+                self.open_portal(); self.page.locator(selector).first.tap()
+                viewer = self.page.locator(f'#{kind}-viewer'); expect(viewer).to_be_visible()
+                def revoked(route):
+                    self.json(route, 403, {'ok': False, 'code': 'CUSTOMER_PORTAL_ACCESS_REVOKED', 'error': 'Your access to this private project has changed.'})
+                self.page.route('**/api/customer-portal', revoked)
+                self.page.evaluate('load(true)')
+                expect(self.page.locator('#error')).to_be_visible()
+                expect(viewer).to_be_hidden()
+                self.assertIsNone(self.page.locator(f'#{kind}-image').get_attribute('src'))
+                self.page.unroute('**/api/customer-portal', revoked)
+
+    def test_a_withdrawn_storage_photo_closes_its_open_viewer(self):
+        self.storage_photo(); self.open_portal()
+        self.page.locator('.storage-bin').tap()
+        expect(self.page.locator('#storage-viewer')).to_be_visible()
+        self.portal['beforeAfter'] = [photo for photo in self.portal['beforeAfter'] if photo['photoId'] != IDS[5]]
+        self.page.evaluate('load(true)')
+        expect(self.page.locator('#storage-card')).to_be_hidden()
+        expect(self.page.locator('#storage-viewer')).to_be_hidden()
+        self.assertIsNone(self.page.locator('#storage-image').get_attribute('src'))
+
+    def test_a_late_storage_close_event_keeps_a_reopened_photo(self):
+        self.storage_photo(); self.open_portal()
+        self.page.locator('.storage-bin').tap()
+        expect(self.page.locator('#storage-viewer')).to_be_visible()
+        self.page.evaluate("document.getElementById('storage-viewer').dispatchEvent(new Event('close'))")
+        expect(self.page.locator('#storage-image')).to_have_attribute('src', f'/api/customer-portal-photo?photoId={IDS[5]}')
+
+    def test_help_request_does_not_forward_private_link_parameters(self):
+        self.page.goto(self.url + '/customer-portal.html?token=private-token&access=private-access#private-fragment')
+        expect(self.page.locator('#portal')).to_be_visible()
+        self.page.evaluate("showError('Open your private link.')")
+        self.page.locator('#hub-help-name').fill('Synthetic Customer')
+        self.page.locator('#hub-help-phone').fill('9705550123')
+        self.page.locator('#hub-help-message').fill('Please send me a fresh project link.')
+        posted = []
+        def received(route):
+            posted.append(route.request.post_data_json)
+            self.json(route, 200, {'ok': True})
+        self.page.route('**/api/web-lead', received)
+        self.page.get_by_role('button', name='Send to the team', exact=True).tap()
+        expect(self.page.locator('#hub-help-state')).to_contain_text('Message sent.')
+        self.assertEqual(posted[0]['page_url'], self.url + '/customer-portal.html')
+
+    def test_mobile_text_fields_do_not_trigger_focus_zoom(self):
+        self.open_portal()
+        self.page.locator('details').evaluate_all('nodes => nodes.forEach(node => node.open = true)')
+        small = self.page.locator('input:not([type=checkbox]):not([type=radio]):not([type=file]), textarea, select').evaluate_all("""nodes => nodes
+            .filter(node => node.offsetWidth && node.offsetHeight && !node.closest('.sr-only'))
+            .map(node => ({id: node.id, size: getComputedStyle(node).fontSize}))
+            .filter(node => parseFloat(node.size) < 16)""")
+        self.assertEqual(small, [], 'Editable fields use at least 16px text on a phone so iOS does not zoom on focus')
+
     # Manager share toggles on the field job page
     def open_job(self):
         self.page.goto(self.url + '/crew/job.html?jobId=job-1'); expect(self.page.get_by_role('heading', name='Job photos')).to_be_visible()

@@ -98,6 +98,7 @@ test('missing and private paths return the real 404 page with a 404 status', () 
 test('the local denial list blocks exactly what the production middleware blocks', async () => {
   const { onRequest } = await import('../../functions/_middleware.js');
   const samples = ['/', '/book', '/tests', '/tests/lighthouse/serve.mjs', '/TESTS/x', '/docs/a.md', '/scripts/x.mjs', '/contracts/x.html', '/auth-verifier/src/index.js', '/sop', '/sop.html', '/tyler-contract.html', '/EGC-Lead-System-SOP.pdf', '/package.json', '/package-lock.json', '/README.md', '/firebase.json', '/firestore.rules', '/.firebaserc', '/.env', '/.env.example', '/_generate_site.py', '/_headers', '/blog/', '/testsuite', '/docsite', '/crew/job', '/functions/_lib/catalog.js', '/functions/_data/garage-catalog.json', '/egc-platform/package.json', '/tools/gallery/publish-links.py', '/.github/workflows/egc-root-ci.yml', '/.claude/settings.json', '/node_modules/x/package.json', '/firebase.emulator.json', '/pnpm-lock.yaml', '/deep/tool.py', '/functional', '/toolshed'];
+  samples.push('/.dev.vars', '/.dev.vars.local', '/.env.local', '/.git/config', '/.wrangler/state/data.json', '/.lighthouseci/report.json', '/test-results/portal.png', '/field-qa/customer.png', '/lighthouse-reports/report.html', '/e2e-report.json', '/firestore-debug.log', '/firestore.indexes.json', '/.well-known/security.txt');
   for (const path of samples) {
     let continued = false;
     const response = await onRequest({ request: new Request(`https://easygaragecleaning.com${path}`), env: {}, next: async () => { continued = true; return new Response('ok', { headers: { 'Content-Type': 'text/plain' } }); } });
@@ -163,7 +164,7 @@ test('fixture APIs return only synthetic data', async () => {
   const nameKeys = new Set(['name', 'firstName', 'customer', 'authorName', 'displayName', 'company', 'author', 'approvedBy', 'decisionMaker', 'payer', 'createdBy', 'onsiteContact', 'contact', 'crewName']);
   for (const path of FIXTURE_APIS) {
     const response = get(handle, `${path}?date=2026-09-22&days=2&status=all`);
-    assert.equal(response.status, 200, path);
+    assert.equal(response.status, path === '/api/customer-login' ? 405 : 200, path);
     assert.equal(response.headers['cache-control'], 'no-store', path);
     const body = json(response), text = JSON.stringify(body);
     for (const user of realUsers) assert.doesNotMatch(text, new RegExp(`\\b${user}\\b`, 'i'), `${path} names real user ${user}`);
@@ -196,6 +197,15 @@ test('fixtures carry the fields the real pages render', () => {
   assert.ok(fieldJobs.jobs.some(job => job.status === 'in_progress'), 'the crew screen shows a current job');
   assert.equal(hubAuth.ok, true);
   assert.equal(hubAuth.businessAccess, false);
+});
+
+test('Client Login readiness uses the shipped customer-login GET contract', () => {
+  const response = get(handler(), '/api/customer-login');
+  assert.equal(response.status, 405, '405 means ready for a sign-in POST, not unavailable');
+  assert.deepEqual(json(response), { ok: false, code: 'CUSTOMER_LOGIN_METHOD_NOT_ALLOWED', error: 'Use the Client Login page to request a sign-in link.' });
+  assert.equal(response.headers['cache-control'], 'no-store');
+  assert.match(read('client-login.js').toString(), /fetch\('\/api\/customer-login', \{ method: 'GET'/);
+  assert.equal(get(handler(), '/api/client-login').status, 200, 'legacy fixture remains compatible');
 });
 
 test('field jobs follow the requested Mountain date and otherwise the injected fixed clock', () => {

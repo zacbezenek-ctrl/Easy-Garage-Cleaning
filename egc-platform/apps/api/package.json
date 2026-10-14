@@ -21,7 +21,7 @@
     "@egc/schemas": "workspace:*",
     "@egc/storage": "workspace:*",
     "@fastify/multipart": "^9.2.1",
-    "drizzle-orm": "0.44.5",
+    "drizzle-orm": "0.45.2",
     "fastify": "^5.6.1",
     "fastify-raw-body": "^5.0.0",
     "zod": "4.6.4",

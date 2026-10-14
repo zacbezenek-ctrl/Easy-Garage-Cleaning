@@ -140,6 +140,32 @@ const notes = fake => fake.ghl().filter(call => call.path === '/contacts/contact
 const opportunityCreates = fake => fake.ghl().filter(call => call.path === '/opportunities/').length;
 const plus = minutes => new Date(Date.parse(NOW) + minutes * 60000).toISOString();
 
+test('lead URL attribution excludes private credentials from receipts, CRM notes and relay requests', async t => {
+  const store = ledgerStore(), fake = providers(t), { post } = endpoint(store);
+  const privateUrl = 'https://synthetic-user:synthetic-password@easygaragecleaning.com/customer-portal?token=synthetic-private-token&code=synthetic-private-code&utm_source=facebook&fbclid=synthetic-click#synthetic-private-fragment';
+  const body = lead({ page_url: privateUrl, landing_url: privateUrl, referrer: privateUrl });
+  const result = await post(body);
+  assert.equal(result.status, 200);
+  const safeUrl = 'https://easygaragecleaning.com/customer-portal?utm_source=facebook&fbclid=synthetic-click';
+  const receipt = store.commits[0].find(write => write.collection === WEB_LEAD_RECEIPTS).patch;
+  const opened = await openWebLead(LEDGER, body.inquiry_id, receipt.sealedPayload);
+  for (const key of ['page_url', 'landing_url', 'referrer']) {
+    assert.equal(opened[key], safeUrl, `sealed ${key}`);
+    assert.equal(fake.relays()[0].body[key], safeUrl, `relay ${key}`);
+    assert.equal(new URL(fake.relays()[0].url).searchParams.get(key), safeUrl, `relay query ${key}`);
+  }
+  assert.ok(notes(fake).some(note => note.includes(`Landing page: ${safeUrl}`)));
+  assert.doesNotMatch(JSON.stringify(fake.calls), /synthetic-(?:private|user|password)/);
+});
+
+test('delayed sync scrubs credentials in URLs from receipts saved by earlier releases', async t => {
+  const fake = providers(t);
+  const result = await syncHighLevelLead(LEDGER, lead({ page_url: 'https://easygaragecleaning.com/customer-portal?TOKEN=synthetic-private-token#synthetic-private-fragment' }), undefined, { delayed: true });
+  assert.equal(result.synced, true);
+  assert.ok(notes(fake).some(note => note.includes('Landing page: https://easygaragecleaning.com/customer-portal\n')));
+  assert.doesNotMatch(JSON.stringify(fake.calls), /synthetic-private/);
+});
+
 test('a website lead is receipted with its inquiry.received event in one commit before any HighLevel call, then synced and relayed once', async t => {
   const log = [], store = ledgerStore(log), fake = providers(t, log), { post } = endpoint(store), body = lead();
   const result = await post(body);

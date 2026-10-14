@@ -37,7 +37,7 @@
 import { webLeadTiming } from '../_lib/funnel-calendar.js';
 import { bookingSlotLead, bookingSlotWords } from '../_lib/booking-slots.js';
 import { bookingExplicitSlotsEnabled } from '../_lib/booking-slots-flag.js';
-import { WEB_LEAD_FIELDS, envVar, highLevelConfig, receiveWebLead, syncHighLevelLead, webLeadHeld, webLeadInquiryId, webLeadLedgerOn, webLeadMeta, webLeadRelayHold, webLeadStorage } from '../_lib/web-lead-intake.js';
+import { WEB_LEAD_FIELDS, envVar, highLevelConfig, receiveWebLead, syncHighLevelLead, webLeadAttributionUrl, webLeadHeld, webLeadInquiryId, webLeadLedgerOn, webLeadMeta, webLeadRelayHold, webLeadStorage } from '../_lib/web-lead-intake.js';
 
 const ALLOWED_HOST_RE = /^(?:easygaragecleaning\.com|www\.easygaragecleaning\.com|easy-garage-cleaning\.pages\.dev|localhost(?::\d+)?|127\.0\.0\.1(?::\d+)?)$/;
 const MAX_BODY = 32 * 1024;
@@ -78,7 +78,8 @@ function relayFields(body, name, phone, inquiryId, now) {
   const params = new URLSearchParams();
   const flat = {};
   for (const k of WEB_LEAD_FIELDS) {
-    const v = String(body[k] || '').trim();
+    const raw = String(body[k] || '').trim();
+    const v = ['page_url', 'landing_url', 'referrer'].includes(k) ? webLeadAttributionUrl(raw) : raw;
     flat[k] = v;
     if (v) params.set(k, v);
   }

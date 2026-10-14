@@ -20,7 +20,7 @@
     "@modelcontextprotocol/server": "^2.0.0",
     "express": "^5.1.0",
     "zod": "4.6.4",
-    "drizzle-orm": "0.44.5",
+    "drizzle-orm": "0.45.2",
     "@egc/schemas": "workspace:*",
     "@egc/ghl": "workspace:*",
     "@egc/operations": "workspace:*"

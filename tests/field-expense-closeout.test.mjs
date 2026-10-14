@@ -409,7 +409,7 @@ async function crewCard(user) {
     if (options.body) posts.push(JSON.parse(options.body));
     return handlers[request.method === 'POST' ? 'post' : 'get']({ env, request });
   };
-  const context = { document, Node: document.Node, fetch, sessionStorage: sessionStore(), crypto, AbortSignal, Intl, Date, Number, String, Object, Array, JSON, Math, Map, Set, Promise, Error, TypeError, URL, console, addEventListener() {} };
+  const context = { document, Node: document.Node, fetch, sessionStorage: sessionStore(), crypto, AbortSignal, AbortController, setTimeout, clearTimeout, Intl, Date, Number, String, Object, Array, JSON, Math, Map, Set, Promise, Error, TypeError, URL, console, addEventListener() {} };
   context.window = context; vm.createContext(context);
   vm.runInContext(readFileSync(new URL('../crew/field-expenses.js', import.meta.url), 'utf8'), context);
   const host = document.createElement('section'); document.body.append(host);

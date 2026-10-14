@@ -16,7 +16,7 @@
     "@egc/lead-audit": "workspace:*",
     "@egc/operations": "workspace:*",
     "@egc/meta-conversions": "workspace:*",
-    "drizzle-orm": "0.44.5"
+    "drizzle-orm": "0.45.2"
   },
   "devDependencies": {
     "@types/node": "^24.5.2",

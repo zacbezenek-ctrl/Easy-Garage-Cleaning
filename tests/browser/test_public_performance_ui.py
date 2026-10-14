@@ -116,6 +116,132 @@ class PublicPerformanceBrowserTests(unittest.TestCase):
         self.assertEqual(field('What to remove'), 'Garage Cleanout — Medium garage — Fort Collins — Slot: Tomorrow AM — Flow: walkthrough')
         self.assertEqual([lead['phone'] for lead in self.relayed], ['+19705550101'], 'fb-capture.js relays the finalized fields once')
 
+    def walkthrough_to_contact(self, path):
+        page = self.open(path); form = page.locator('form.multi-step-form')
+        form.locator('[name="Service type"]').first.check()
+        form.locator('[data-step="1"] [data-next]').click()
+        form.locator('[name="Job size"]').select_option(index=1)
+        form.locator('[data-step="2"] [data-next]').click()
+        form.locator('[name="booking_slot_choice"]').first.check()
+        form.locator('[data-step="3"] [data-next]').click()
+        form.locator('[name="City"]').select_option('Fort Collins')
+        form.locator('[data-step="4"] [data-next]').click()
+        form.locator('[data-step="5"] [data-next]').click()
+        # Observe successful validation without sending customer data anywhere.
+        form.evaluate("""form => {window.__accepted = 0; form.addEventListener('submit', event => {
+            if (!event.defaultPrevented) window.__accepted++;
+            event.preventDefault();
+        });}""")
+        return page, form
+
+    def check_walkthrough_contact_validation(self, path):
+        page, form = self.walkthrough_to_contact(path)
+        submit = form.locator('[type="submit"]')
+        for name, phone, message in [
+            ('   ', '(970) 555-0101', 'Please enter your name.'),
+            ('Synthetic Walkthrough', '1', 'Please enter a complete phone number'),
+            ('Synthetic Walkthrough', '22345678901', 'Please enter a complete phone number'),
+            ('Synthetic Walkthrough', '1234567890123456', 'Please enter a complete phone number'),
+        ]:
+            form.locator('[name="Name"]').fill(name)
+            form.locator('[name="Phone"]').fill(phone)
+            form.evaluate("form => form.requestSubmit(form.querySelector('[type=submit]'))")
+            self.assertEqual(page.evaluate('window.__accepted'), 0)
+            expect(form.locator('[data-step="6"] .form-error.visible')).to_contain_text(message)
+            expect(submit).to_be_enabled()
+        self.assertEqual(self.relayed, [])
+        form.locator('[name="Phone"]').fill('(970) 555-0101')
+        form.evaluate("form => form.requestSubmit(form.querySelector('[type=submit]'))")
+        self.assertEqual(page.evaluate('window.__accepted'), 1)
+        expect(submit).to_be_disabled()
+
+    def test_paid_landing_page_preserves_failed_requests_and_relays_once(self):
+        page = self.open('/junk-removal-fort-collins.html')
+        form = page.locator('#ppcQuoteForm'); submit = page.locator('#ppcSubmitBtn')
+        requests = []; outcome = ['network']
+        def provider(route):
+            requests.append(route.request)
+            if outcome[0] == 'network': return route.abort('failed')
+            status, body = outcome[0]
+            route.fulfill(status=status, content_type='application/json', body=body)
+        page.route('https://api.web3forms.com/submit', provider)
+        page.evaluate("window.__conversions=[];window.gtag=(...args)=>window.__conversions.push(args)")
+        form.locator('[name="name"]').fill('Synthetic Walkthrough')
+        form.locator('[name="phone"]').fill('(970) 555-0101')
+        form.locator('[name="items"]').fill('Synthetic test couch')
+        failures = ['network', (500, '{"success":false}'), (200, '{"success":false}')]
+        for index, response in enumerate(failures):
+            outcome[0] = response
+            if index == 0:
+                with page.expect_request('**/api/web-lead'):
+                    form.evaluate('form => form.requestSubmit()')
+            else:
+                form.evaluate('form => form.requestSubmit()')
+            expect(page.locator('#ppcFormError')).to_contain_text("couldn't confirm your request")
+            expect(submit).to_be_enabled(); expect(form).to_be_visible()
+            expect(page.locator('#ppcSuccess')).to_be_hidden()
+            expect(form.locator('[name="name"]')).to_have_value('Synthetic Walkthrough')
+            self.assertEqual(len(requests), index + 1)
+            self.assertEqual(len(self.relayed), 1, 'retries retain the inquiry id and do not duplicate the CRM request')
+            self.assertEqual(page.evaluate("window.__conversions.filter(args => args[0] === 'event' && args[1] === 'generate_lead')"), [], 'failed email attempts are not confirmed conversions')
+        outcome[0] = (200, '{"success":true}')
+        form.evaluate('form => form.requestSubmit()')
+        expect(page.locator('#ppcSuccess')).to_be_visible(); expect(form).to_be_hidden()
+        self.assertEqual(len(requests), 4); self.assertEqual(len(self.relayed), 1)
+        events = page.evaluate("window.__conversions.filter(args => args[0] === 'event' && args[1] === 'generate_lead')")
+        self.assertEqual(len(events), 1); self.assertEqual(events[0][1], 'generate_lead')
+
+    def test_short_lead_forms_reject_incomplete_contact_details_natively(self):
+        paths = ['/index.html', '/ads.html', '/estate-cleanout-fort-collins.html',
+                 '/flat-rate-junk-removal-fort-collins-co.html', '/garage-cleanouts-laporte-co.html',
+                 '/garage-cleanouts-severance-co.html', '/garage-turnaround-fort-collins-co.html',
+                 '/junk-removal-fort-collins.html']
+        for path in paths:
+            with self.subTest(path=path):
+                page = self.open(path)
+                page.evaluate("document.addEventListener('submit', event => {window.__submitted = true; event.preventDefault();}, true)")
+                for form in page.locator('form.lead-form-lite').all():
+                    name = form.locator('input[name="name"][type="text"]')
+                    phone = form.locator('input[name="phone"][type="tel"]')
+                    name.fill('Synthetic Walkthrough')
+                    for value in ['1', '22345678901', '1234567890123456']:
+                        phone.fill(value)
+                        self.assertFalse(phone.evaluate('field => field.checkValidity()'), (path, value))
+                        form.evaluate('form => form.requestSubmit()')
+                        self.assertFalse(page.evaluate('!!window.__submitted'))
+                    for value in ['(970) 555-0101', '+1 (970) 555-0101', '+44 207 555 0101']:
+                        phone.fill(value)
+                        self.assertTrue(phone.evaluate('field => field.checkValidity()'), (path, value))
+                    name.fill('   ')
+                    self.assertFalse(name.evaluate('field => field.checkValidity()'))
+                    form.evaluate('form => form.requestSubmit()')
+                    self.assertFalse(page.evaluate('!!window.__submitted'))
+                    name.fill('Synthetic Walkthrough')
+                    self.assertTrue(name.evaluate('field => field.checkValidity()'))
+                self.assertEqual(self.errors, [])
+                self.assertEqual(self.relayed, [])
+                if path != paths[-1]: self.context.close()
+
+    def test_book_rejects_incomplete_contact_details_before_submission(self):
+        self.check_walkthrough_contact_validation('/book.html')
+
+    def test_pricing_rejects_incomplete_contact_details_before_submission(self):
+        self.check_walkthrough_contact_validation('/pricing.html')
+
+    def test_back_forward_restoration_allows_walkthrough_submission_again(self):
+        page, form = self.walkthrough_to_contact('/book.html')
+        form.locator('[name="Name"]').fill('Synthetic Walkthrough')
+        form.locator('[name="Phone"]').fill('(970) 555-0101')
+        submit = form.locator('[type="submit"]')
+        form.evaluate("form => form.requestSubmit(form.querySelector('[type=submit]'))")
+        self.assertEqual(page.evaluate('window.__accepted'), 1)
+        expect(submit).to_be_disabled()
+        page.evaluate("window.dispatchEvent(new PageTransitionEvent('pageshow', {persisted:true}))")
+        expect(submit).to_be_enabled(); expect(submit).to_have_text('Request walkthrough →')
+        expect(form.locator('[name="Name"]')).to_have_value('Synthetic Walkthrough')
+        form.evaluate("form => form.requestSubmit(form.querySelector('[type=submit]'))")
+        self.assertEqual(page.evaluate('window.__accepted'), 2)
+
     def test_book_page_ships_its_business_contact_in_the_bar(self):
         page = self.open('/book.html')
         page.wait_for_function("!!document.querySelector('#nav-drawer a[href=\"/customer-portal\"]')")

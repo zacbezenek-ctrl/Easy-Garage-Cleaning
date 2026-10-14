@@ -29,7 +29,7 @@ Pages (`tests/lighthouse/lighthouserc.cjs`):
 | `/blog/how-much-does-garage-cleanout-cost-fort-collins` | Blog article |
 | `/garage-turnaround-fort-collins-co` | Landing page |
 | `/before-after` | The committed static fallback (`before-after.html`); production renders it through `functions/before-after.js` |
-| `/client-login` | Added automatically as soon as Client Login ships in any shape Pages serves: `client-login.html`, a Pages Function (`functions/client-login.js`, `functions/client-login/index.js` or an optional catch-all such as `functions/client-login/[[path]].js`), or `client-login/index.html` (audited as `/client-login/`). It does not exist yet on this branch, so the job summary lists it as "not measured (page missing)" |
+| `/client-login` | Shipped Client Login form, with its real `GET /api/customer-login` readiness probe answered by a synthetic 405 ready response. Automatically detects static, directory-index and Pages Function entry points |
 | `/customer-portal` | Customer portal with the synthetic `/api/customer-portal` fixture (signed-in project view) |
 | `/business-hub` | Business Client Hub with the synthetic `/api/business-hub` fixture (signed-in company overview) |
 | `/field-today` | Harness `tests/lighthouse/pages/field-today.html` that mounts the real `employee-field-today.js` and `.css` (crew Today) |
@@ -45,9 +45,11 @@ matter to a page load:
   plus dot folders (except `/.well-known`) and `node_modules`. A test proves the denial matches the middleware path by path.
 - A subset of `_headers` (exact paths and `*` wildcards) is applied, and HTML, CSS, JS, JSON and SVG are sent with brotli or
   gzip like the CDN, so transfer sizes in the simulation are realistic.
-- `/api/customer-portal`, `/api/business-hub`, `/api/field-jobs`, `/api/hub-auth` and `/api/client-login` return synthetic
+- `/api/customer-portal`, `/api/business-hub`, `/api/field-jobs`, `/api/hub-auth` and legacy `/api/client-login` return synthetic
   fixtures from `tests/lighthouse/fixtures/`. Every name is labeled "Synthetic", phones use the 555 exchange and email
   addresses use `example.invalid`; a test enforces this and rejects the real Hub usernames and business phone numbers.
+- `GET /api/customer-login` returns the production readiness contract: 405 with `CUSTOMER_LOGIN_METHOD_NOT_ALLOWED`.
+  This keeps the shipped sign-in form visible; no sign-in request is accepted or sent.
 - The server is read-only: every method other than GET and HEAD returns 405, and it never calls the network.
 - The clock is fixed at `2026-09-22T15:00:00Z`. The crew Today screen asks for the browser's Mountain date, so the
   field-jobs fixture (anchored to 2026-09-22) is moved to the requested date to always show a current and a next job.
@@ -58,14 +60,15 @@ matter to a page load:
   needs a real binding fails with a 500 instead of being measured as a different page. `/before-after` stays the static
   fallback on purpose.
 
-The `/api/client-login` fixture is a placeholder (`signedIn:false`). The unit that ships Client Login must replace it with
-that endpoint's real GET response shape and make sure its page renders without secrets.
+The old `/api/client-login` fixture remains for compatibility. Client Login itself uses `/api/customer-login`; the
+browser check waits for its 405 readiness response and verifies that both phone and email entry remain usable.
 
 `tests/browser/test_lighthouse_pages_ui.py` proves the fixtures still produce the signed-in screens Lighthouse is meant
-to score. It starts `serve.mjs` exactly as `lhci` does, loads `/customer-portal`, `/business-hub` and `/field-today` in a
+to score. It starts `serve.mjs` exactly as `lhci` does, loads `/client-login`, `/customer-portal`, `/business-hub` and `/field-today` in a
 375x812 phone context with an installed clock (Tokyo and Los Angeles zones), and requires `#portal` with the fixture's
 welcome, service, address and estimate number, the business `#app` (not `#gate`) with the fixture company, and the crew
-current and next job for the Mountain date. It also requires no `pageerror`, no same-origin 4xx/5xx, no horizontal
+current and next job for the Mountain date. It also requires no `pageerror`, no unexpected same-origin 4xx/5xx (the
+Client Login readiness 405 is expected), no horizontal
 scroll and no analytics on the crew harness. If a fixture drifts from the real API shape, this check fails before
 Lighthouse can quietly score an error or sign-in screen.
 

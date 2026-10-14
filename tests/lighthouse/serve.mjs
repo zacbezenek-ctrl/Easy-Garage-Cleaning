@@ -11,12 +11,12 @@ export const FIXED_NOW = '2026-09-22T15:00:00.000Z';
 export const DEFAULT_PORT = 9393;
 export const READY_MESSAGE = 'EGC Lighthouse server listening on';
 // Same denial as functions/_middleware.js PRIVATE_PATH, so /tests stays unreachable exactly as in production.
-export const PRIVATE_PATH = /^(?:\/(?:auth-verifier|contracts|docs|scripts|tests|egc-platform|functions|tools|\.github|\.claude|node_modules)(?:\/|$)|\/(?:sop|tyler-contract)(?:\.html)?\/?$|\/EGC-Lead-System-SOP\.pdf$|\/(?:package(?:-lock)?\.json|README\.md|firebase(?:\.emulator|\.field-day)?\.json|firestore\.rules|pnpm-(?:lock|workspace)\.yaml|\.firebaserc|\.env(?:\.example)?|_[^/]+)(?:$|\/)|\/.*\.py\/?$)/i;
+export const PRIVATE_PATH = /^(?:\/(?:auth-verifier|contracts|docs|scripts|tests|test-results|field-qa|lighthouse-reports|egc-platform|functions|tools|node_modules)(?:\/|$)|\/(?!\.well-known(?:\/|$))\.[A-Za-z0-9_.-]+(?:\/|$)|\/(?:sop|tyler-contract)(?:\.html)?\/?$|\/EGC-Lead-System-SOP\.pdf$|\/(?:package(?:-lock)?\.json|README\.md|firebase(?:\.emulator|\.field-day)?\.json|firestore\.(?:rules|indexes\.json)|pnpm-(?:lock|workspace)\.yaml|e2e-report\.json|firestore-debug\.log|_[^/]+)(?:$|\/)|\/.*\.py\/?$)/i;
 // Local checkouts also hold dot folders and installed packages that never deploy (/.well-known is public).
 const LOCAL_ONLY = /(?:^|\/)(?:\.(?!well-known(?:\/|$))[^/]*|node_modules)(?:\/|$)/;
 // Harness pages live under /tests (blocked above); they are reachable only through these aliases.
 export const HARNESS = Object.freeze({ '/field-today': 'tests/lighthouse/pages/field-today.html' });
-export const FIXTURE_APIS = Object.freeze(['/api/business-hub', '/api/client-login', '/api/customer-portal', '/api/field-jobs', '/api/hub-auth']);
+export const FIXTURE_APIS = Object.freeze(['/api/business-hub', '/api/client-login', '/api/customer-login', '/api/customer-portal', '/api/field-jobs', '/api/hub-auth']);
 // Pages Functions that production routes ahead of static files. Only Client Login is wired: /before-after is measured as its
 // committed static fallback. The lookup is shared with lighthouserc.cjs so the audited URL list and the server always agree.
 const { clientLoginFunction } = createRequire(import.meta.url)('./lighthouserc.cjs');
@@ -70,6 +70,9 @@ export function fieldJobsResponse(fixture, params, now) {
 export function fixtureApi(pathname, params, { fixtures, now }) {
   if (pathname === '/api/business-hub') return [200, fixtures.businessHub];
   if (pathname === '/api/client-login') return [200, fixtures.clientLogin];
+  // The shipped sign-in page probes this route; 405 means configured and ready
+  // for POST, exactly as the production API answers. All POSTs remain refused.
+  if (pathname === '/api/customer-login') return [405, { ok: false, code: 'CUSTOMER_LOGIN_METHOD_NOT_ALLOWED', error: 'Use the Client Login page to request a sign-in link.' }];
   if (pathname === '/api/customer-portal') return [200, fixtures.customerPortal];
   if (pathname === '/api/field-jobs') return fieldJobsResponse(fixtures.fieldJobs, params, now);
   if (pathname === '/api/hub-auth') return [200, fixtures.hubAuth];

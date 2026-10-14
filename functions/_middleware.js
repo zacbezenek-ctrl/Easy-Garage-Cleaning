@@ -3,7 +3,7 @@ import { gateStaffPage, privateStaffResponse } from './_lib/staff-page-gate.js';
 import { BOOKING_SLOTS_MARKER, bookingSlotsPageRequest } from './_lib/booking-slots-flag.js';
 
 // Source trees, tooling and deploy configs sit beside the static site; never serve them.
-const PRIVATE_PATH = /^(?:\/(?:auth-verifier|contracts|docs|scripts|tests|egc-platform|functions|tools|\.github|\.claude|node_modules)(?:\/|$)|\/(?:sop|tyler-contract)(?:\.html)?\/?$|\/EGC-Lead-System-SOP\.pdf$|\/(?:package(?:-lock)?\.json|README\.md|firebase(?:\.emulator|\.field-day)?\.json|firestore\.(?:rules|indexes\.json)|pnpm-(?:lock|workspace)\.yaml|\.firebaserc|\.env(?:\.example)?|_[^/]+)(?:$|\/)|\/.*\.py\/?$)/i;
+const PRIVATE_PATH = /^(?:\/(?:auth-verifier|contracts|docs|scripts|tests|test-results|field-qa|lighthouse-reports|egc-platform|functions|tools|node_modules)(?:\/|$)|\/(?!\.well-known(?:\/|$))\.[A-Za-z0-9_.-]+(?:\/|$)|\/(?:sop|tyler-contract)(?:\.html)?\/?$|\/EGC-Lead-System-SOP\.pdf$|\/(?:package(?:-lock)?\.json|README\.md|firebase(?:\.emulator|\.field-day)?\.json|firestore\.(?:rules|indexes\.json)|pnpm-(?:lock|workspace)\.yaml|e2e-report\.json|firestore-debug\.log|_[^/]+)(?:$|\/)|\/.*\.py\/?$)/i;
 
 function privatePath(pathname) {
   let path;

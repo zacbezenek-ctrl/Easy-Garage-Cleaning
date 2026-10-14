@@ -728,7 +728,7 @@ CALLRAIL_BLOCK = ""
 
 # styles.css is served immutable: every change to it bumps this one version, which
 # HEAD, patch_static_pages and functions/before-after.js all use.
-STYLES_VERSION = "20260928p"
+STYLES_VERSION = "20261013b"
 # The one Google Fonts stylesheet for pages built on styles.css. Every face is used by
 # the shared CSS (tests/public-performance.test.mjs checks the weights); it always loads
 # with the media=print swap so it never blocks the first render.
@@ -908,7 +908,7 @@ FOOTER = """
       <p class="community">The easiest way to reclaim your garage. Locally owned in Fort Collins — not a franchise call center.</p>
       <p class="community">Partners: <a href="https://fortcollinschamber.com/" rel="noopener">Fort Collins Chamber</a>, <a href="/blog/habitat-for-humanity-restore-fort-collins.html">Habitat ReStore</a>.</p>
       <nav class="foot-social" aria-label="Easy Garage Cleaning profiles and credentials" style="display:flex;flex-wrap:wrap;gap:8px;margin-top:16px"><a class="profile-badge" href="https://www.facebook.com/profile.php?id=61560763061868" target="_blank" rel="noopener noreferrer" style="display:inline-flex;align-items:center;gap:7px;min-height:44px;padding:8px 12px;border:1px solid rgba(245,241,234,.3);border-radius:8px;background:rgba(245,241,234,.06);color:#f5f1ea;font-size:12px;font-weight:600;line-height:1.4"><span aria-hidden="true" style="display:inline-flex;align-items:center;justify-content:center;width:22px;height:22px;border-radius:50%;background:#f5f1ea;color:#0a1628;font-size:14px;font-weight:800">f</span>Facebook</a><a class="profile-badge" href="https://www.instagram.com/easygaragecleaning/" target="_blank" rel="noopener noreferrer" style="display:inline-flex;align-items:center;gap:7px;min-height:44px;padding:8px 12px;border:1px solid rgba(245,241,234,.3);border-radius:8px;background:rgba(245,241,234,.06);color:#f5f1ea;font-size:12px;font-weight:600;line-height:1.4"><span aria-hidden="true" style="display:inline-flex;align-items:center;justify-content:center;width:22px;height:22px;border-radius:50%;background:#f5f1ea;color:#0a1628;font-size:14px;font-weight:800">◎</span>Instagram</a><a class="profile-badge" href="https://www.linkedin.com/company/easygaragecleaning" target="_blank" rel="noopener noreferrer" style="display:inline-flex;align-items:center;gap:7px;min-height:44px;padding:8px 12px;border:1px solid rgba(245,241,234,.3);border-radius:8px;background:rgba(245,241,234,.06);color:#f5f1ea;font-size:12px;font-weight:600;line-height:1.4"><span aria-hidden="true" style="display:inline-flex;align-items:center;justify-content:center;width:22px;height:22px;border-radius:50%;background:#f5f1ea;color:#0a1628;font-size:14px;font-weight:800">in</span>LinkedIn</a><a class="profile-badge" href="https://nextdoor.com/pages/easy-garage-cleaning-fort-collins-co/" target="_blank" rel="noopener noreferrer" style="display:inline-flex;align-items:center;gap:7px;min-height:44px;padding:8px 12px;border:1px solid rgba(245,241,234,.3);border-radius:8px;background:rgba(245,241,234,.06);color:#f5f1ea;font-size:12px;font-weight:600;line-height:1.4"><span aria-hidden="true" style="display:inline-flex;align-items:center;justify-content:center;width:22px;height:22px;border-radius:50%;background:#f5f1ea;color:#0a1628;font-size:14px;font-weight:800">n</span>Nextdoor</a><a class="profile-badge" href="https://www.bbb.org/us/co/fort-collins/profile/garage-organizers/easy-garage-cleaning-0805-46155789" target="_blank" rel="noopener noreferrer" style="display:inline-flex;align-items:center;gap:7px;min-height:44px;padding:8px 12px;border:1px solid rgba(245,241,234,.3);border-radius:8px;background:rgba(245,241,234,.06);color:#f5f1ea;font-size:12px;font-weight:600;line-height:1.4"><span aria-hidden="true" style="display:inline-flex;align-items:center;justify-content:center;width:22px;height:22px;border-radius:50%;background:#f5f1ea;color:#0a1628;font-size:14px;font-weight:800">✓</span>BBB Accredited</a><a class="profile-badge" href="https://www.thumbtack.com/co/fort-collins/junk-removal/easy-garage-cleaning/service/577746408076951557" target="_blank" rel="noopener noreferrer" style="display:inline-flex;align-items:center;gap:7px;min-height:44px;padding:8px 12px;border:1px solid rgba(245,241,234,.3);border-radius:8px;background:rgba(245,241,234,.06);color:#f5f1ea;font-size:12px;font-weight:600;line-height:1.4"><span aria-hidden="true" style="display:inline-flex;align-items:center;justify-content:center;width:22px;height:22px;border-radius:50%;background:#f5f1ea;color:#0a1628;font-size:14px;font-weight:800">t</span>Thumbtack</a></nav>
-      <p class="foot-entity foot-nap"><strong>Easy Garage Cleaning</strong> · Easy Garage Cleaning LLC · Fort Collins, CO 80525 · <a href="tel:{phone}">{phone_display}</a> · <a href="mailto:{email}">{email}</a> · <a href="{SITE}/#business">Schema @id #business</a> · <a href="{SITE}/llms.txt">llms.txt</a></p>
+      <p class="foot-entity foot-nap"><strong>Easy Garage Cleaning</strong> · Easy Garage Cleaning LLC · Fort Collins, CO 80525 · <a href="tel:{phone}">{phone_display}</a> · <a href="mailto:{email}">{email}</a></p>
     </div>
     <div class="foot-col">
       <h3>Services</h3>
@@ -1030,7 +1030,7 @@ function initMultiStepForm(form){{
     if(n===2){{if(sizeSel&&!sizeSel.value){{showErr(panel,'Please choose an approximate job size.');sizeSel.focus();return false;}}}}
     if(n===3){{if(!showQuoteResult())return false;syncBookingSlot();if(!form.querySelector('[name="booking_slot_choice"]:checked')){{showErr(panel,'Please choose a preferred walkthrough window.');return false;}}}}
     if(n===4){{const city=form.querySelector('[name="City"]');if(city&&!city.value){{showErr(panel,'Please select your city so we can confirm service area.');city.focus();return false;}}}}
-    if(n===6){{const name=form.querySelector('[name="Name"]');const phone=form.querySelector('[name="Phone"]');if(name&&!name.value.trim()){{showErr(panel,'Please enter your name.');name.focus();return false;}}if(phone&&!phone.value.trim()){{showErr(panel,'Please enter a phone number so we can call with your quote.');phone.focus();return false;}}}}
+    if(n===6){{const name=form.querySelector('[name="Name"]');const phone=form.querySelector('[name="Phone"]');if(name&&!name.value.trim()){{showErr(panel,'Please enter your name.');name.focus();return false;}}const digits=phone?.value.replace(/\\D/g,'')||'';if(phone&&!(digits.length===10||(digits.length===11&&digits[0]==='1')||(digits.length>=12&&digits.length<=15))){{showErr(panel,'Please enter a complete phone number so we can confirm your walkthrough.');phone.focus();return false;}}}}
     return true;
   }}
   form.querySelectorAll('[name="booking_slot_choice"]').forEach(r=>r.addEventListener('change',syncBookingSlot));
@@ -1055,6 +1055,13 @@ function initMultiStepForm(form){{
     }});
   }}
   let submitting=false;
+  const submitButton=form.querySelector('[type="submit"]');
+  const submitLabel=submitButton?.textContent||'Request walkthrough →';
+  window.addEventListener('pageshow',(event)=>{{
+    if(!event.persisted)return;
+    submitting=false;
+    if(submitButton){{submitButton.disabled=false;submitButton.classList.remove('is-loading');submitButton.textContent=submitLabel;}}
+  }});
   function syncZapierLeadFields(form){{
     const normPhone=(raw)=>{{const d=String(raw||'').replace(/\\D/g,'');if(d.length===10)return'+1'+d;if(d.length===11&&d[0]==='1')return'+'+d;return String(raw||'').trim();}};
     const phone=form.querySelector('[name="Phone"]');const zapPhone=form.querySelector('[name="phone"]');
@@ -1070,6 +1077,7 @@ function initMultiStepForm(form){{
     if(zapItems&&svc){{const size=sizeSel?.options[sizeSel.selectedIndex]?.text||'';zapItems.value=[svc.value||'',size].filter(Boolean).join(' — ');}}
   }}
   form.addEventListener('submit',(e)=>{{
+    if(submitting||!validateStep(6)){{e.preventDefault();return;}}
     syncBookingSlot();
     syncZapierLeadFields(form);
     const svc=form.querySelector('[name="Service type"]:checked')||form.querySelector('[name="Service type"]');
@@ -1077,7 +1085,6 @@ function initMultiStepForm(form){{
     const size=sizeSel?.options[sizeSel.selectedIndex]?.text||'';
     const combined=form.querySelector('[name="What to remove"]');
     if(combined&&svc){{const parts=[svc.value||'',size,city&&city.value?city.value:'',rangeInput?.value?'Est. '+rangeInput.value:'',slotInput?.value?'Slot: '+slotInput.value:'',flowInput?.value?'Flow: '+flowInput.value:'',desc&&desc.value?desc.value:''].filter(Boolean);combined.value=parts.join(' — ');}}
-    if(submitting){{e.preventDefault();return;}}
     submitting=true;
     const btn=form.querySelector('[type="submit"]');
     if(btn){{btn.disabled=true;btn.classList.add('is-loading');btn.textContent='Sending…';}}
@@ -2388,6 +2395,7 @@ def render_book():
     card_start = form.index('<div class="quote-form">')
     card_end = form.index('\n      </div>\n    </div>\n  </div>\n</section>', card_start) + len('\n      </div>')
     form_card = form[card_start:card_end].replace('</form>', '</form>\n' + BOOK_TRUST_BADGES, 1)
+    form_card = form_card.replace('<h3>Schedule Your Free Walkthrough</h3>', '<h2 class="form-heading">Schedule Your Free Walkthrough</h2>', 1)
     # FUN-13: fb-capture.js reports this form's Meta Lead, with the relay's inquiry id as the eventID (CAPI deduplication).
     form_card = form_card.replace('<form class="multi-step-form"', '<form class="multi-step-form" data-meta-lead="walkthrough_request"', 1)
     book_form = f'''<section class="book-section" id="quote" aria-label="Walkthrough request">
@@ -3591,6 +3599,7 @@ def mark_faq_more_link(text):
 
 def patch_index_home_fixes(text):
     text = normalize_final_cta_section(text)
+    text = text.replace('<h3>Get your Garage Turnaround Plan</h3>', '<h2 class="form-heading">Get your Garage Turnaround Plan</h2>', 1)
     if "<title>Garage Cleanouts Fort Collins CO | Get Your Garage Back Fast</title>" in text:
         text = text.replace(
             "<title>Garage Cleanouts Fort Collins CO | Get Your Garage Back Fast</title>",
@@ -4267,6 +4276,33 @@ def patch_blog_index_garage_signs(text):
     return text
 
 
+def validate_public_lite_forms(text):
+    """Native validation for short lead forms, including when JavaScript is unavailable."""
+    phone_pattern = r"(?:[^0-9]*[0-9]){10}[^0-9]*|[^0-9]*1(?:[^0-9]*[0-9]){10}[^0-9]*|(?:[^0-9]*[0-9]){12,15}[^0-9]*"
+
+    def patch_form(match):
+        def patch_input(field):
+            tag = field.group(0)
+            name = (_html_attr(tag, "name") or "").lower()
+            kind = (_html_attr(tag, "type") or "text").lower()
+            if name not in {"name", "phone"} or kind not in {"text", "tel"}:
+                return tag
+            pattern, title = (r".*\S.*", "Enter your name.") if name == "name" else (phone_pattern, "Enter a complete phone number, including area or country code.")
+            if _html_attr(tag, "pattern") is None:
+                tag = re.sub(r"\s*/?>$", lambda end: f' pattern="{pattern}"' + end.group(0), tag)
+            if _html_attr(tag, "title") is None:
+                tag = re.sub(r"\s*/?>$", lambda end: f' title="{title}"' + end.group(0), tag)
+            return tag
+        return re.sub(r"<input\b[^>]*>", patch_input, match.group(0), flags=re.I)
+
+    return re.sub(r'<form\b[^>]*class=["\'][^"\']*\blead-form-lite\b[^"\']*["\'][^>]*>[\s\S]*?</form>', patch_form, text, flags=re.I)
+
+
+def clean_footer_metadata(text):
+    """Keep schema identifiers and machine-readable inventories out of contact links."""
+    return re.sub(r' · <a href="https://easygaragecleaning\.com/(?:#business|llms\.txt)">(?:Schema @id #business|llms\.txt)</a>', "", text)
+
+
 def patch_static_pages():
     unified_nav_home = fmt(NAV, quote_href="/book.html", service_areas_href="/service-areas.html", reviews_href="/reviews.html", process_href="/#process", pricing_href="/pricing.html")
     unified_nav_book = fmt(NAV, quote_href="#quote", service_areas_href="/service-areas.html", reviews_href="/reviews.html", process_href="#process", pricing_href="/pricing.html")
@@ -4401,7 +4437,7 @@ def patch_static_pages():
         if not generator_owns(path.relative_to(ROOT)):
             continue
         original = path.read_text(encoding="utf-8")
-        text = dedupe_mobile_sheet_css(original)
+        text = validate_public_lite_forms(clean_footer_metadata(dedupe_mobile_sheet_css(original)))
         text = patch_nav_drawer_a11y(text)
         text = inject_footer_tap_css(text)
         text = defer_google_fonts(text)
