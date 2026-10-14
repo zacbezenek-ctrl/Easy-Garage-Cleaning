@@ -2,12 +2,13 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { knockReportsHandlers } from '../functions/api/knock-reports.js';
 import { knockAdminHandlers } from '../functions/api/knock-admin.js';
-import { approvedKnockSettings, call, cookieFor, get, knockEnv, knockWorld, post, uuid } from './helpers/knock-fixture.mjs';
+import { approvedKnockSettings, approvedKnockTerms, call, cookieFor, get, knockEnv, knockWorld, post, uuid } from './helpers/knock-fixture.mjs';
 
 // Tuesday 2026-10-20 noon in Fort Collins; the biweekly period is 2026-10-19 to 2026-11-01.
 const NOW = Date.parse('2026-10-20T18:00:00.000Z');
 
 const sale = (id, repKey, fields) => ({
+  commissionTerms: approvedKnockTerms(),
   repKey, leadKey: repKey === 'rep.one' ? 'lead.one' : '', knockId: uuid(), houseId: `h-${id}`, neighborhoodId: 'english-ranch',
   address: { number: '1', street: 'A ST', unit: '' }, customer: { name: `Customer ${id}`, phone: '+19705550100', email: `${id}@example.com` },
   textConsent: true, package: 'The Works', depositRate: 0.2, statusHistory: [], handoff: {}, ...fields,
@@ -91,7 +92,9 @@ test('admins see every rep, record a payout once, and export commission, trainin
   assert.equal(csv.headers.get('Content-Type'), 'text/csv; charset=utf-8');
   assert.match(csv.headers.get('Content-Disposition'), /egc-knock-commission-2026-10-19-2026-11-01\.csv/);
   const text = await csv.text();
-  assert.match(text, /^period_start,period_end,rep,username,sales_booked,booked_revenue,pending_commission,earned_commission,accelerator_included,lead_override,commission_paid_to_rep,calculated_balance,projected_commission,customer_collected_revenue/);
+  assert.match(text, /^period_start,period_end,rep,username,sales_booked,booked_revenue,pending_commission,earned_commission,accelerator_included,lead_override,rep_payments_recorded,calculated_balance,projected_commission,customer_collected_revenue/);
+  assert.match(text, /rep_payment_evidence,settled_commission/);
+  assert.match(text, /admin_recorded_unreconciled,/);
   assert.match(text, /2026-10-19,2026-11-01,Rep One,rep\.one,1,2000\.00,500\.00,400\.00,0\.00,0\.00,400\.00,0\.00/);
   const training = await (await admin.get({ request: get('/api/knock-admin?view=export&kind=training&date=2026-10-20', cookies.zac), env })).text();
   assert.match(training, /2026-10-19,Rep One,rep\.one,120,2\.00,15\.16,30\.32,Ride-along/);

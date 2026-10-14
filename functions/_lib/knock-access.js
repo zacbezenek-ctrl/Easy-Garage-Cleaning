@@ -39,6 +39,7 @@ export async function loadSettings(store) {
     fields.every(key => Object.hasOwn(doc?.settings?.commission || {}, key)) && !validateSettings(doc.settings).length &&
     approval?.contract === 'knock-v1' && approval.reference && approval.reviewedBy && Number.isFinite(Date.parse(approval.reviewedAt)) &&
     sameSettings(approval.commission, doc.settings.commission) && sameSettings(approval.payroll, doc.settings.payroll));
+  settings.commission.approvedAt = settings.commission.verified ? approval.reviewedAt : null;
   return settings;
 }
 

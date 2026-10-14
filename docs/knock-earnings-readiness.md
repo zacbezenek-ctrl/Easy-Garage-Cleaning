@@ -44,8 +44,11 @@ fixture and must never be copied into production.
 
 Before supplying an approval, finance must verify that the actual agreement
 matches the entire existing contract. If it does not, implement and review the
-correct version first. Rate changes and historical accruals need versioned terms
-per sale/accrual; this candidate does not migrate or reconcile old records.
+correct version first. New sales snapshot the approved server-side terms and
+approval time in `commissionTerms`; client-supplied terms are ignored. Current
+rate, accelerator and override changes never replace that snapshot. Legacy sales
+without verified snapshots require review and are not backfilled from current
+settings. This candidate does not migrate or reconcile historical accruals.
 Training hours remain visible while unconfigured; training pay is not promised.
 
 ## Sync and access

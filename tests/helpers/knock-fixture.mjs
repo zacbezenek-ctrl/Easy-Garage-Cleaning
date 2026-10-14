@@ -13,6 +13,8 @@ export function approvedKnockSettings() {
       reviewedAt: '2026-10-01T12:00:00Z', commission: structuredClone(settings.commission), payroll: structuredClone(settings.payroll) } };
 }
 
+export const approvedKnockTerms = () => ({ contract: 'knock-v1', approvedAt: '2026-10-01T12:00:00Z', policy: structuredClone(DEFAULT_SETTINGS.commission) });
+
 export const ORIGIN = 'https://easygaragecleaning.com';
 
 export const knockEnv = (extra = {}) => ({

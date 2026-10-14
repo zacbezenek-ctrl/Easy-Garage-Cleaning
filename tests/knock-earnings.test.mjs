@@ -1,17 +1,18 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { DEFAULT_SETTINGS } from '../crew/knock-settings.js';
-import { customerCollection, isEarned, payPeriodFor, periodStatement, saleCommissions } from '../crew/knock-money.js';
+import { customerCollection, isEarned, payPeriodFor, periodStatement, saleCommissions, leadOverrides, snapshotCommissionTerms } from '../crew/knock-money.js';
 import { loadSettings } from '../functions/_lib/knock-access.js';
 import { recordSaleCollection, setSaleStatus } from '../functions/_lib/knock-sales.js';
 import { addPayout } from '../functions/_lib/knock-reports.js';
 import { saleSyncSummary } from '../functions/_lib/knock-handoff.js';
 import { knockAdminHandlers } from '../functions/api/knock-admin.js';
 import { knockReportsHandlers } from '../functions/api/knock-reports.js';
-import { approvedKnockSettings, call, cookieFor, get, knockEnv, knockWorld, post, uuid } from './helpers/knock-fixture.mjs';
+import { approvedKnockSettings, approvedKnockTerms, call, cookieFor, get, knockEnv, knockWorld, post, uuid } from './helpers/knock-fixture.mjs';
 
 const now = '2026-10-20T18:00:00Z', nowMs = Date.parse(now), admin = { user: 'test-owner' };
 const paid = (patch = {}) => ({ id: 'sale-1', repKey: 'rep.one', leadKey: '', ticket: 1600,
+  commissionTerms: approvedKnockTerms(),
   saleDate: '2026-10-19', soldAt: '2026-10-19T12:00:00Z', status: 'paid',
   cancelEndsAt: '2026-10-19T00:00:00Z', completedAt: '2026-10-19T18:00:00Z',
   paidAt: '2026-10-19T19:00:00Z', collectedAmount: 1600, handoff: {}, ...patch });
@@ -37,6 +38,28 @@ test('synthetic policy approval is bound to the exact settings and invalidated b
   assert.equal((await loadSettings({ get: async () => doc })).commission.verified, true);
   doc.settings.commission.rate = 0.4;
   assert.equal((await loadSettings({ get: async () => doc })).commission.verified, false);
+});
+
+test('current rate and override changes cannot recalculate historical sale terms', async () => {
+  const original = approvedKnockSettings();
+  const settings = await loadSettings({ get: async () => original });
+  const snapshot = snapshotCommissionTerms(settings.commission);
+  assert.ok(snapshot);
+  const oldSale = paid({ leadKey: 'lead.one', commissionTerms: snapshot });
+  const changed = { ...settings, commission: { ...settings.commission, rate: 0.8, acceleratorRate: 0.9, leadOverrideRate: 0.2 } };
+  assert.equal(statement([oldSale], [], changed).earnedCommission, 400);
+  assert.equal(leadOverrides([oldSale], changed.commission, { now: nowMs })[0].amount, 48);
+  assert.equal(snapshot.policy.rate, 0.25);
+  assert.equal(snapshotCommissionTerms({ ...changed.commission, verified: false }), null);
+});
+
+test('legacy sales without approved terms require review even after current settings are approved', async () => {
+  const settings = await loadSettings({ get: async () => approvedKnockSettings() });
+  const row = statement([paid({ commissionTerms: null })], [], settings);
+  assert.equal(row.earnedCommission, null);
+  assert.equal(row.projectedCommission, null);
+  assert.equal(row.payableCommission, null);
+  assert.ok(row.reviewReasons.includes('commission_terms_missing_or_invalid'));
 });
 
 test('malformed receipt history is held for review, not paid or silently dropped', () => {

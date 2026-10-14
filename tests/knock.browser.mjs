@@ -125,7 +125,7 @@ try {
   // 5. Money remains a distinct, fail-closed view at narrow phone/tablet widths.
   await page.goto(`${server.base}/crew/knock.html#money`);
   await page.getByText('Projected commission', { exact: true }).waitFor();
-  for (const label of ['Earned commission', 'Customer collected', 'Payable commission', 'Commission paid to you']) {
+  for (const label of ['Earned commission', 'Customer collected', 'Payable commission', 'Commission paid (recorded)']) {
     await page.getByText(label, { exact: true }).waitFor();
   }
   assert.match(await page.locator('#knock-main').textContent(), /Compensation is unconfigured/);
@@ -136,8 +136,21 @@ try {
   }
   assert.equal(await page.locator('#knock-tabs a[href="#admin"]').count(), 0, 'rep has no admin tab');
   await admin.goto(`${server.base}/crew/knock.html#admin?s=money`);
-  await admin.getByText('Commission paid to reps', { exact: true }).waitFor();
+  await admin.getByText('Rep payments recorded', { exact: true }).waitFor();
   assert.match(await admin.locator('#knock-main').textContent(), /Compensation unconfigured/);
+
+  // An admin's record of a past payment is not payroll/bank settlement.
+  const recorded = await admin.evaluate(async () => {
+    const report = await (await fetch('/api/knock-admin?view=money')).json();
+    return (await fetch('/api/knock-admin', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ action: 'payout.add', requestId: crypto.randomUUID(), repKey: 'rep.one',
+        periodKey: report.period.key, amount: 77, note: 'Synthetic recorded payment only' }) })).json();
+  });
+  assert.equal(recorded.ok, true);
+  await page.reload();
+  const payment = page.locator('.stat').filter({ has: page.getByText('Commission paid (recorded)', { exact: true }) });
+  await payment.getByText('$77.00', { exact: true }).waitFor();
+  assert.match(await payment.textContent(), /admin recorded; settlement unverified/);
 
   assert.deepEqual(errors, [], 'no page errors');
   assert.deepEqual(server.serverErrors, [], 'no server errors');

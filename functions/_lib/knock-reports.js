@@ -59,9 +59,9 @@ async function myMoney({ store, rep, settings, nowMs, params }) {
     collectedAmount: sale.collectedAmount, cancelDeadlineDate: sale.cancelDeadlineDate, jobDate: sale.jobDate,
     completedAt: sale.completedAt || null, paidAt: sale.paidAt || null,
     customerCollection: customerCollection(sale), sync: sync.get(sale.id),
-    reviewReasons: commissionIssues(sale),
+    reviewReasons: commissionIssues(sale, settings.commission),
     commission: settings.commission.verified === false ? { state: 'unconfigured', amount: null }
-      : commissionIssues(sale).length ? { state: 'review_required', amount: null }
+      : commissionIssues(sale, settings.commission).length ? { state: 'review_required', amount: null }
       : sale.status === 'cancelled' ? { state: 'cancelled', amount: 0 }
       : isEarned(sale, nowMs) ? { state: 'earned', amount: commissions.get(sale.id)?.total ?? 0, earnedAt: new Date(earnedAt(sale)).toISOString() }
       : { state: 'pending', amount: projectedCommission(sale, settings.commission) },
@@ -131,7 +131,7 @@ export async function exportCsv(store, params, nowMs, settings) {
     const rows = sales.filter(s => s.saleDate >= period.start && s.saleDate <= period.end).sort((a, b) => String(a.soldAt).localeCompare(String(b.soldAt))).map(s => [
       s.saleDate, reps.find(r => r.repKey === s.repKey)?.displayName || s.repKey, s.repKey, `${s.address.number} ${s.address.street}${s.address.unit ? ` #${s.address.unit}` : ''}`,
       s.package, Number(s.ticket).toFixed(2), Number(s.depositAmount).toFixed(2), s.status, s.collectedAmount == null ? '' : Number(s.collectedAmount).toFixed(2),
-      s.cancelDeadlineDate, s.jobDate, settings.commission.verified === false || commissionIssues(s).length ? '' : (commissions.get(s.id)?.total ?? 0).toFixed(2), s.handoff?.deposit?.status || '', s.handoff?.job?.status || '',
+      s.cancelDeadlineDate, s.jobDate, settings.commission.verified === false || commissionIssues(s, settings.commission).length ? '' : (commissions.get(s.id)?.total ?? 0).toFixed(2), s.handoff?.deposit?.status || '', s.handoff?.job?.status || '',
     ]);
     return { csv: toCsv(['sale_date', 'rep', 'username', 'address', 'package', 'ticket', 'deposit', 'status', 'collected', 'cancel_deadline', 'job_date', 'commission_earned', 'deposit_status', 'job_status'], rows), filename: `egc-knock-sales-${period.start}-${period.end}.csv` };
   }

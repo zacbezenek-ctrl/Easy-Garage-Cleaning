@@ -6,6 +6,30 @@ import { addDays, validDate, zonedDate } from './knock-time.js';
 
 const money = value => Math.round(Number(value || 0) * 100) / 100;
 const ms = value => (typeof value === 'number' ? value : Date.parse(value));
+const TERM_FIELDS = ['rate', 'acceleratorEnabled', 'acceleratorThreshold', 'acceleratorRate', 'leadOverrideEnabled', 'leadOverrideRate'];
+
+// Created only by the server when booking under an evidenced contract. Current
+// settings must never replace the terms captured on an older sale.
+export function snapshotCommissionTerms(commission) {
+  if (commission?.verified !== true || !Number.isFinite(ms(commission.approvedAt))) return null;
+  return { contract: 'knock-v1', approvedAt: commission.approvedAt,
+    policy: Object.fromEntries(TERM_FIELDS.map(key => [key, commission[key]])) };
+}
+
+function saleTerms(sale, commission) {
+  const terms = sale?.commissionTerms;
+  if (terms != null) {
+    const p = terms.policy;
+    if (terms.contract !== 'knock-v1' || !Number.isFinite(ms(terms.approvedAt)) ||
+      !['rate', 'acceleratorRate', 'leadOverrideRate'].every(key => typeof p?.[key] === 'number' && p[key] >= 0 && p[key] <= 1) ||
+      !['acceleratorEnabled', 'leadOverrideEnabled'].every(key => typeof p?.[key] === 'boolean') ||
+      !Number.isFinite(p?.acceleratorThreshold) || p.acceleratorThreshold <= 0) return null;
+    return p;
+  }
+  // Arithmetic-only callers can exercise the legacy calculator. Server reports
+  // always supply verified true/false and never use this fallback for history.
+  return commission?.verified === undefined ? commission : null;
+}
 
 export function collectedAmount(sale) {
   return customerCollection(sale).gross ?? 0;
@@ -40,8 +64,9 @@ function collectionEvents(sale) {
   ].filter(event => Number.isFinite(event.amount) && event.amount >= 0 && Number.isFinite(ms(event.at)));
 }
 
-export function commissionIssues(sale) {
+export function commissionIssues(sale, commission) {
   const payment = customerCollection(sale), issues = [];
+  if ((sale?.commissionTerms != null || commission?.verified === true) && !saleTerms(sale, commission)) issues.push('commission_terms_missing_or_invalid');
   if (sale?.status === 'paid') {
     if (!sale.completedAt || !Number.isFinite(ms(sale.completedAt))) issues.push('completion_unverified');
     if (!sale.paidAt || !Number.isFinite(ms(sale.paidAt)) || payment.gross === null) issues.push('collection_unverified');
@@ -89,7 +114,7 @@ export function saleCommissions(sales, commission, { now = Date.now(), timeZone 
   if (commission?.verified === false) return [];
   const groups = new Map();
   for (const sale of unique(sales || [])) {
-    if (!isEarned(sale, now)) continue;
+    if (!isEarned(sale, now) || !saleTerms(sale, commission)) continue;
     const month = zonedDate(ms(sale.paidAt), timeZone).slice(0, 7);
     const key = `${sale.repKey}|${month}`;
     if (!groups.has(key)) groups.set(key, []);
@@ -101,7 +126,7 @@ export function saleCommissions(sales, commission, { now = Date.now(), timeZone 
     let running = 0;
     for (const sale of group) {
       const collected = collectedAmount(sale);
-      const { base, accelerator } = tieredCommission(running, collected, commission);
+      const { base, accelerator } = tieredCommission(running, collected, saleTerms(sale, commission));
       running += collected;
       rows.push({
         saleId: sale.id, repKey: sale.repKey, month: zonedDate(ms(sale.paidAt), timeZone).slice(0, 7),
@@ -121,15 +146,14 @@ export function monthlyCommission(collected, commission) {
 /* Lead override: a share of each team member's collected revenue, paid to the lead recorded on
    the sale when it was booked. The lead's own sales earn ordinary commission, not an override. */
 export function leadOverrides(sales, commission, { now = Date.now() } = {}) {
-  if (commission?.verified === false || commission?.leadOverrideEnabled === false) return [];
-  const rate = Number(commission?.leadOverrideRate ?? 0.03);
+  if (commission?.verified === false) return [];
   return unique(sales || [])
-    .filter(sale => sale.leadKey && sale.leadKey !== sale.repKey && isEarned(sale, now))
-    .map(sale => ({ saleId: sale.id, leadKey: sale.leadKey, repKey: sale.repKey, amount: money(collectedAmount(sale) * rate), earnedAt: earnedAt(sale) }));
+    .filter(sale => sale.leadKey && sale.leadKey !== sale.repKey && isEarned(sale, now) && saleTerms(sale, commission)?.leadOverrideEnabled)
+    .map(sale => ({ saleId: sale.id, leadKey: sale.leadKey, repKey: sale.repKey, amount: money(collectedAmount(sale) * saleTerms(sale, commission).leadOverrideRate), earnedAt: earnedAt(sale) }));
 }
 
 // Commission a booked sale would pay at the base rate (for "pending").
-export const projectedCommission = (sale, commission) => commission?.verified === false ? null : sale?.status === 'cancelled' ? 0 : money(Number(sale?.ticket || 0) * Number(commission?.rate ?? 0.25));
+export const projectedCommission = (sale, commission) => commission?.verified === false || !saleTerms(sale, commission) ? null : sale?.status === 'cancelled' ? 0 : money(Number(sale?.ticket || 0) * Number(saleTerms(sale, commission).rate));
 
 /* ---- Pay periods ---- */
 
@@ -199,7 +223,7 @@ export function periodStatement({ sales = [], payouts = [], training = [], reps 
   for (const rep of reps) if (rep.status === 'active') row(rep.repKey);
   for (const sale of sales) {
     const r = row(sale.repKey), payment = customerCollection(sale);
-    const issues = commissionIssues(sale);
+    const issues = commissionIssues(sale, commission);
     // Unresolved adjustments may affect prior payouts or monthly tiers; never invent a clawback.
     r.reviewReasons.push(...issues);
     if (sale.leadKey && sale.leadKey !== sale.repKey) row(sale.leadKey).reviewReasons.push(...issues);
@@ -253,6 +277,7 @@ export function periodStatement({ sales = [], payouts = [], training = [], reps 
       // A refund does not prove historical earnings should be clawed back.
       // Keep the total unknown until finance supplies the adjustment decision.
       r.earned = r.accelerator = r.override = r.balance = null;
+      if (r.reviewReasons.includes('commission_terms_missing_or_invalid')) r.projectedCommission = r.pending = null;
     }
     r.earnedCommission = r.earned === null ? null : money(r.earned + r.override);
     r.payableCommission = r.compensationState === 'configured' ? Math.max(0, r.balance) : null;
@@ -275,8 +300,8 @@ export function toCsv(header, rows) {
 
 export function commissionCsv(statement, period) {
   return toCsv(
-    ['period_start', 'period_end', 'rep', 'username', 'sales_booked', 'booked_revenue', 'pending_commission', 'earned_commission', 'accelerator_included', 'lead_override', 'commission_paid_to_rep', 'calculated_balance', 'projected_commission', 'customer_collected_revenue', 'customer_refunded_revenue', 'payable_commission', 'compensation_state', 'review_reasons', 'collection_unknown_count'],
-    statement.map(r => [period.start, period.end, r.name, r.repKey, r.salesBooked, ...[r.booked, r.pending, r.earned, r.accelerator, r.override, r.commissionPaid, r.balance, r.projectedCommission, r.customerCollectedRevenue, r.customerRefundedRevenue, r.payableCommission].map(v => v == null ? '' : v.toFixed(2)), r.compensationState, r.reviewReasons.join(';'), r.collectionUnknownCount]),
+    ['period_start', 'period_end', 'rep', 'username', 'sales_booked', 'booked_revenue', 'pending_commission', 'earned_commission', 'accelerator_included', 'lead_override', 'rep_payments_recorded', 'calculated_balance', 'projected_commission', 'customer_collected_revenue', 'customer_refunded_revenue', 'payable_commission', 'compensation_state', 'review_reasons', 'collection_unknown_count', 'rep_payment_evidence', 'settled_commission'],
+    statement.map(r => [period.start, period.end, r.name, r.repKey, r.salesBooked, ...[r.booked, r.pending, r.earned, r.accelerator, r.override, r.commissionPaid, r.balance, r.projectedCommission, r.customerCollectedRevenue, r.customerRefundedRevenue, r.payableCommission].map(v => v == null ? '' : v.toFixed(2)), r.compensationState, r.reviewReasons.join(';'), r.collectionUnknownCount, r.commissionPaymentEvidence, r.commissionSettled == null ? '' : r.commissionSettled.toFixed(2)]),
   );
 }
 

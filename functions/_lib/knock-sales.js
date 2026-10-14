@@ -5,6 +5,7 @@ import { knockFailure, write } from './knock-store.js';
 import { PACKAGES, SALE_STATUSES } from '../../crew/knock-settings.js';
 import { cancellationWindow, depositAmount, saleDateOf } from '../../crew/knock-sale-rules.js';
 import { validDate } from '../../crew/knock-time.js';
+import { snapshotCommissionTerms } from '../../crew/knock-money.js';
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const EMAIL = /^[^\s@<>()",;:]{1,64}@[A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)+$/;
@@ -66,6 +67,7 @@ export async function applySaleEvent(store, rep, settings, event, nowIso, { hous
     customer: { name: String(event.customer.name).trim(), phone: normalizePhone(event.customer.phone), email: String(event.customer.email).trim().toLowerCase() },
     textConsent: event.textConsent === true,
     ticket, package: event.package, quotedAmount: event.quotedAmount != null ? Number(event.quotedAmount) : null,
+    commissionTerms: snapshotCommissionTerms(settings.commission),
     depositRate: settings.sale.depositRate, depositAmount: depositAmount(ticket, settings.sale.depositRate),
     soldAt: event.at, saleDate, cancelDeadlineDate: window.deadlineDate, cancelEndsAt: new Date(window.cancelEndsAt).toISOString(),
     earliestJobDate: window.earliestJobDate, jobDate: event.jobDate, jobStartTime: event.jobStartTime || settings.sale.defaultJobStartTime,

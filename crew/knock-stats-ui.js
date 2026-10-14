@@ -160,7 +160,7 @@ function moneyScreen(_app, params) {
         older.length ? h('button', { type: 'button', class: 'btn btn--quiet btn--sm', 'aria-expanded': String(showPast), onclick: () => app.go('money', showPast ? {} : { past: '1' }) },
           'Past periods', icon(showPast ? 'chevronRight' : 'chevronDown', { size: 'sm' })) : null),
       showPast ? h('div', { class: 'card card--line table-wrap' }, h('table', { class: 'table' },
-        h('thead', {}, h('tr', {}, ['Period', 'Booked', 'Projected', 'Earned', 'Paid to you'].map((label, i) => h('th', { class: i ? 'num' : '' }, label)))),
+        h('thead', {}, h('tr', {}, ['Period', 'Booked', 'Projected', 'Earned', 'Recorded payments'].map((label, i) => h('th', { class: i ? 'num' : '' }, label)))),
         h('tbody', {}, older.map(p => h('tr', {}, h('td', {}, periodLabel(p.period.start, p.period.end)),
           h('td', { class: 'num' }, money(p.booked)), h('td', { class: 'num' }, earningsMoney(p.projectedCommission)), h('td', { class: 'num' }, earningsMoney(p.earnedCommission)), h('td', { class: 'num' }, earningsMoney(p.commissionPaid))))))) : null,
       h('div', { class: 'stats' },
@@ -169,7 +169,7 @@ function moneyScreen(_app, params) {
         stat('Earned commission', earningsMoney(current.earnedCommission), { sub: 'eligible jobs in this period', tone: 'success' }),
         stat('Customer collected', earningsMoney(current.customerCollectedRevenue), { sub: `recorded receipts; ${current.collectionUnknownCount} sale(s) missing receipt evidence` }),
         stat('Payable commission', earningsMoney(current.payableCommission), { sub: 'after recorded rep payments and review' }),
-        stat('Commission paid to you', earningsMoney(current.commissionPaid), { sub: 'admin recorded; settlement unverified' })),
+        stat('Commission paid (recorded)', earningsMoney(current.commissionPaid), { sub: 'admin recorded; settlement unverified' })),
       current.compensationState !== 'configured' ? h('p', { class: 'banner banner--warning' },
         current.compensationState === 'unconfigured' ? 'Compensation is unconfigured: finance must verify the saved rates. Default rates are not a pay promise.'
           : `Finance review required: ${current.reviewReasons.join(', ').replaceAll('_', ' ')}. No automatic clawback is calculated.`) : null,
