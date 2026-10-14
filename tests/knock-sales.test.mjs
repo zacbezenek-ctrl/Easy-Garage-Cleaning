@@ -5,7 +5,7 @@ import { knockAdminHandlers } from '../functions/api/knock-admin.js';
 import { knockReportsHandlers } from '../functions/api/knock-reports.js';
 import { knockTerritoryHandlers } from '../functions/api/knock-territory.js';
 import { customerMessage } from '../functions/_lib/knock-handoff.js';
-import { call, cookieFor, get, knockEnv, knockWorld, post, uuid } from './helpers/knock-fixture.mjs';
+import { approvedKnockSettings, call, cookieFor, get, knockEnv, knockWorld, post, uuid } from './helpers/knock-fixture.mjs';
 import { fakeGhl } from './helpers/messaging-fixture.mjs';
 
 // Tuesday 2026-10-06, 11:00 am in Fort Collins.
@@ -45,9 +45,9 @@ function fakeProviders() {
 }
 
 // integrations: what Admin > Settings chose (manual by default); env: server settings to override.
-async function setup({ integrations = null, env: extra = {} } = {}) {
+async function setup({ integrations = null, settingsDoc = null, env: extra = {} } = {}) {
   const env = knockEnv({ STRIPE_SECRET_KEY: 'sk_test_syntheticKnockKey', HIGHLEVEL_API_KEY: 'ghl-synthetic-key', HIGHLEVEL_LOCATION_ID: 'location-1', ...extra });
-  const world = knockWorld({ ...seed(), ...(integrations ? { 'knock_settings/current': { settings: { integrations } } } : {}) });
+  const world = knockWorld({ ...seed(), ...(settingsDoc ? { 'knock_settings/current': settingsDoc } : {}), ...(integrations ? { 'knock_settings/current': { settings: { integrations } } } : {}) });
   let clock = NOW;
   const now = () => new Date(clock);
   const sync = knockSyncHandlers({ storage: world.storage, now });
@@ -89,6 +89,65 @@ test('a sale records the deadline, the 20% deposit and the customer only on the 
   const houses = [...world.fake.documents.keys()].filter(p => p.startsWith('knock_houses/') || p.startsWith('knock_events/')).map(p => JSON.stringify(world.fake.get(p)));
   assert.equal(houses.some(text => /Pat Synthetic|555-0100|example\.com/.test(text)), false, 'houses and events never hold customer details');
   assert.equal(world.fake.get('knock_days/rep.one_2026-10-06').bookedRevenue, 1600);
+  assert.equal(sale.commissionTerms, null, 'unconfigured sales never inherit default compensation as approved terms');
+});
+
+test('a rep cannot supply their own approved commission terms', async () => {
+  const { world, send } = await setup();
+  const batch = saleBatch({ commissionTerms: { contract: 'knock-v1', approvedAt: '2026-01-01T00:00:00Z', policy: { rate: 1 } } });
+  await send(batch.events);
+  assert.equal(world.fake.get(`knock_sales/${batch.saleId}`).commissionTerms, null);
+});
+
+test('booking freezes approved server terms and later scope approval preserves the earned amount', async () => {
+  const settingsDoc = approvedKnockSettings();
+  const { world, send, act, setClock, reports, cookies, env } = await setup({ settingsDoc });
+  const { events, saleId } = saleBatch({ commissionTerms: { policy: { rate: 1 } } });
+  await send(events);
+  assert.deepEqual(world.fake.get(`knock_sales/${saleId}`).commissionTerms.policy, settingsDoc.settings.commission);
+  setClock(Date.parse('2026-10-20T18:00:00Z'));
+  await act({ action: 'sale.status', saleId, status: 'completed' });
+  await act({ action: 'sale.collection', saleId, collectedAmount: 1600 });
+  const changed = approvedKnockSettings();
+  changed.compensationApproval.scope.garageOnlyPackages = ['Garage Transformation'];
+  world.fake.put('knock_settings/current', changed);
+  const result = await call(reports.get, get('/api/knock-reports?view=my-money', cookies.rep), env);
+  assert.equal(result.body.sales[0].commission.amount, 400);
+  assert.equal(result.body.periods[0].commissionPaid, 0, 'customer collection never implies a rep payment');
+  assert.equal(result.body.periods[0].commissionSettled, null);
+});
+
+test('current sale earns on full collection while job completion remains separate', async () => {
+  const { world, send, act, reports, cookies, env } = await setup({ settingsDoc: approvedKnockSettings() });
+  const { events, saleId } = saleBatch();
+  await send(events);
+  await act({ action: 'sale.collection', saleId, collectedAmount: 1600 });
+  assert.equal(world.fake.get(`knock_sales/${saleId}`).status, 'booked');
+  assert.equal(world.fake.get(`knock_sales/${saleId}`).completedAt, null);
+  const result = await call(reports.get, get('/api/knock-reports?view=my-money', cookies.rep), env);
+  assert.equal(result.body.sales[0].commission.state, 'earned');
+  assert.equal(result.body.sales[0].commission.amount, 400);
+  assert.equal(result.body.sales[0].commission.earnedAt, new Date(NOW).toISOString());
+  assert.equal(result.body.periods[0].commissionPaid, 0);
+});
+
+test('booking uses approved service scope, ignores client eligibility and holds mixed work', async () => {
+  for (const [packageName, state, amount] of [['Quick Clear', 'excluded', 0], ['Full Property Reset', 'review_required', null]]) {
+    const settingsDoc = approvedKnockSettings();
+    settingsDoc.compensationApproval.scope.garageOnlyPackages = ['Garage Transformation'];
+    settingsDoc.compensationApproval.scope.junkRemovalPackages = ['Quick Clear'];
+    const { send, act, setClock, reports, cookies, env, world } = await setup({ settingsDoc });
+    const { events, saleId } = saleBatch({ package: packageName, commissionTerms: { contract: 'knock-garage-v2', policy: { rate: 1 } }, eligibility: 'garage' });
+    await send(events);
+    assert.equal(world.fake.get(`knock_sales/${saleId}`).commissionTerms.policy.rate, 0.25);
+    setClock(Date.parse('2026-10-20T18:00:00Z'));
+    await act({ action: 'sale.status', saleId, status: 'completed' });
+    await act({ action: 'sale.collection', saleId, collectedAmount: 1600 });
+    const { body } = await call(reports.get, get('/api/knock-reports?view=my-money', cookies.rep), env);
+    assert.deepEqual(body.sales[0].commission, { state, amount });
+    assert.equal(body.periods[0].customerCollectedRevenue, 1600);
+    assert.equal(body.periods[0].commissionPaid, 0);
+  }
 });
 
 test('a sale needs the checklist, a job date after the deadline, contact details and a sold door', async () => {
@@ -126,8 +185,11 @@ test('admins move a sale through completed, paid and cancelled, and booked reven
   const { events, saleId } = saleBatch();
   await send(events);
   assert.equal((await act({ action: 'sale.status', saleId, status: 'completed' })).body.sale.status, 'completed');
-  const paid = await act({ action: 'sale.status', saleId, status: 'paid', collectedAmount: '1550' });
-  assert.deepEqual([paid.body.sale.status, paid.body.sale.collectedAmount], ['paid', 1550]);
+  assert.equal((await act({ action: 'sale.status', saleId, status: 'paid', collectedAmount: '1550' })).body.code, 'knock_partial_collection');
+  const partial = await act({ action: 'sale.collection', saleId, collectedAmount: '1550' });
+  assert.deepEqual([partial.body.sale.status, partial.body.sale.collectedAmount], ['completed', 1550]);
+  const paid = await act({ action: 'sale.collection', saleId, collectedAmount: '1600' });
+  assert.deepEqual([paid.body.sale.status, paid.body.sale.collectedAmount], ['paid', 1600]);
   assert.ok(world.fake.get(`knock_sales/${saleId}`).paidAt);
   const cancelled = await act({ action: 'sale.status', saleId, status: 'cancelled' });
   assert.equal(cancelled.body.sale.status, 'cancelled');

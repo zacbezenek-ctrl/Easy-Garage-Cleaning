@@ -20,7 +20,7 @@ export function knockReportsHandlers({ session = getHubSession, storage = create
         requireActive(rep);
         const params = new URL(request.url).searchParams;
         const view = params.get('view') || '';
-        const context = { store, rep, settings, admin: isAdmin(viewer), nowMs: at.getTime(), params };
+        const context = { store, rep, settings, admin: isAdmin(viewer), nowMs: at.getTime(), params, env };
         if (view === 'my-sales') {
           const sales = await repSales(store, rep.repKey);
           return reply(200, { ok: true, serverTime: at.toISOString(), sales: sales.map(sale => ({ ...sale, refund: refundSummary(sale, at.getTime()) })) });

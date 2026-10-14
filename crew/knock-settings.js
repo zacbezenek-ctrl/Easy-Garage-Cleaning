@@ -139,6 +139,9 @@ const TIME = /^([01]\d|2[0-3]):[0-5]\d$/;
 // Returns a list of human-readable problems; empty means valid.
 export function validateSettings(settings) {
   const problems = [];
+  for (const key of ['acceleratorEnabled', 'leadOverrideEnabled']) {
+    if (typeof settings?.commission?.[key] !== 'boolean') problems.push(`commission.${key} must be true or false`);
+  }
   for (const [group, key] of RATE_FIELDS) {
     const value = settings?.[group]?.[key];
     if (!(typeof value === 'number' && value >= 0 && value <= 1)) problems.push(`${group}.${key} must be a fraction between 0 and 1`);

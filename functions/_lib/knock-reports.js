@@ -5,7 +5,9 @@ import { knockFailure, write } from './knock-store.js';
 import { listReps } from './knock-admin.js';
 import { loadNeighborhoods } from './knock-territory.js';
 import { addDays, validDate, zonedDate } from '../../crew/knock-time.js';
-import { commissionCsv, csvCell, earnedAt, isEarned, leadOverrides, payPeriodFor, periodStatement, previousPayPeriod, projectedCommission, saleCommissions, toCsv, trainingCsv } from '../../crew/knock-money.js';
+import { commissionCsv, commissionEligibility, commissionIssues, customerCollection, csvCell, earnedAt, isEarned, leadOverrides, payPeriodFor, periodStatement, previousPayPeriod, projectedCommission, saleCommissions, toCsv, trainingCsv } from '../../crew/knock-money.js';
+import { saleSyncSummaries } from './knock-handoff.js';
+import { setterAttributions } from './knock-setters.js';
 import { emptyTotals, addTotals, gateStatus, metrics, planComparison, scoreboard, teamTotals } from '../../crew/knock-stats.js';
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
@@ -39,7 +41,7 @@ async function loadMoney(store, { repKey = null } = {}) {
 }
 
 /* A rep's pay: this period and the five before, plus each sale's commission state. */
-async function myMoney({ store, rep, settings, nowMs, params }) {
+async function myMoney({ store, rep, settings, nowMs, params, env }) {
   const own = await loadMoney(store, { repKey: rep.repKey });
   // A lead's override comes from their team's sales, so those are read too (amounts only, no customers).
   const team = rep.role === 'lead' ? (await store.query('knock_sales', { where: [['leadKey', '==', rep.repKey]] })).map(clean) : [];
@@ -52,16 +54,23 @@ async function myMoney({ store, rep, settings, nowMs, params }) {
     period = previousPayPeriod(period, settings.payroll);
   }
   const commissions = new Map(saleCommissions(own.sales, settings.commission, { now: nowMs }).map(c => [c.saleId, c]));
+  const sync = await saleSyncSummaries(store, own.sales);
   const bySale = own.sales.sort((a, b) => String(b.soldAt).localeCompare(String(a.soldAt))).map(sale => ({
     id: sale.id, saleDate: sale.saleDate, address: sale.address, package: sale.package, ticket: sale.ticket, status: sale.status,
     collectedAmount: sale.collectedAmount, cancelDeadlineDate: sale.cancelDeadlineDate, jobDate: sale.jobDate,
     completedAt: sale.completedAt || null, paidAt: sale.paidAt || null,
-    commission: sale.status === 'cancelled' ? { state: 'cancelled', amount: 0 }
+    customerCollection: customerCollection(sale), sync: sync.get(sale.id), eligibility: commissionEligibility(sale),
+    reviewReasons: commissionIssues(sale, settings.commission),
+    commission: settings.commission.verified === false ? { state: 'unconfigured', amount: null }
+      : commissionIssues(sale, settings.commission).length ? { state: 'review_required', amount: null }
+      : commissionEligibility(sale) === 'excluded' ? { state: 'excluded', amount: 0 }
+      : sale.status === 'cancelled' ? { state: 'cancelled', amount: 0 }
       : isEarned(sale, nowMs) ? { state: 'earned', amount: commissions.get(sale.id)?.total ?? 0, earnedAt: new Date(earnedAt(sale)).toISOString() }
       : { state: 'pending', amount: projectedCommission(sale, settings.commission) },
   }));
   const overrides = rep.role === 'lead' ? leadOverrides(team, settings.commission, { now: nowMs }).filter(o => o.leadKey === rep.repKey) : [];
-  return { periods, sales: bySale, overrides: overrides.map(o => ({ amount: o.amount, earnedAt: new Date(o.earnedAt).toISOString() })), rates: settings.commission, trainingHourlyRate: settings.payroll.trainingHourlyRate };
+  return { periods, sales: bySale, setters: await setterAttributions(store, env, { repKey: rep.repKey, nowMs }),
+    overrides: overrides.map(o => ({ amount: o.amount, earnedAt: new Date(o.earnedAt).toISOString() })), rates: settings.commission, trainingHourlyRate: settings.payroll.trainingHourlyRate };
 }
 
 /* Scoreboard rows for the viewer's scope: a rep sees themselves, a lead their team, an admin all. */
@@ -78,12 +87,12 @@ async function scoreboardView({ store, rep, settings, admin, nowMs, params }) {
   const team = teamTotals(days);
   const body = {
     range: { from, to, preset }, groupBy, scope: admin ? 'all' : rep.role === 'lead' ? 'team' : 'self',
-    rows: rows.map(r => ({ key: r.key, label: r.label, metrics: r.metrics, plan: planComparison(r.metrics, settings.plan) })),
-    totals: { metrics: team.metrics, plan: planComparison(team.metrics, settings.plan) },
+    rows: rows.map(r => ({ key: r.key, label: r.label, metrics: r.metrics, plan: settings.plan.verified ? planComparison(r.metrics, settings.plan) : [] })),
+    totals: { metrics: team.metrics, plan: settings.plan.verified ? planComparison(team.metrics, settings.plan) : [] },
     car: { withCar: team.metrics.carLookRate, withoutCar: team.metrics.noCarLookRate, answersWithCar: team.totals.car.answers, answersWithoutCar: team.totals.noCar.answers },
-    planTargets: settings.plan,
+    planTargets: settings.plan.verified ? settings.plan : null, benchmarkState: settings.plan.verified ? 'configured' : 'unconfigured',
   };
-  if (admin) {
+  if (admin && settings.plan.verified) {
     // The go/fix/stop gate is the company's question, over every knocking hour so far.
     const lifetime = teamTotals(allDays.map(clean));
     body.gate = { hours: lifetime.metrics.knockingHours, revenuePerHour: lifetime.metrics.revenuePerHour, ...gateStatus(lifetime.metrics.knockingHours, lifetime.metrics.revenuePerHour, settings.gate), thresholds: settings.gate };
@@ -112,20 +121,21 @@ export async function moneyView(store, params, nowMs, settings) {
 export async function exportCsv(store, params, nowMs, settings) {
   const kind = params.get('kind') || 'commission';
   const period = periodFromParams(params, settings, nowMs);
+  if (period.configured === false) throw knockFailure('The two-week payroll anchor is unconfigured. Preview dates cannot be exported as a payroll cycle.', 409, 'knock_payroll_unconfigured');
   const [{ sales, payouts, training }, reps] = await Promise.all([loadMoney(store), listReps(store)]);
   if (kind === 'commission') {
     const statement = periodStatement({ sales, payouts, training, reps, settings, period, now: nowMs });
     return { csv: commissionCsv(statement, period), filename: `egc-knock-commission-${period.start}-${period.end}.csv` };
   }
   if (kind === 'training') {
-    return { csv: trainingCsv(training, reps, period, settings.payroll.trainingHourlyRate), filename: `egc-knock-training-${period.start}-${period.end}.csv` };
+    return { csv: trainingCsv(training, reps, period, settings.commission.verified ? settings.payroll.trainingHourlyRate : null), filename: `egc-knock-training-${period.start}-${period.end}.csv` };
   }
   if (kind === 'sales') {
     const commissions = new Map(saleCommissions(sales, settings.commission, { now: nowMs }).map(c => [c.saleId, c]));
     const rows = sales.filter(s => s.saleDate >= period.start && s.saleDate <= period.end).sort((a, b) => String(a.soldAt).localeCompare(String(b.soldAt))).map(s => [
       s.saleDate, reps.find(r => r.repKey === s.repKey)?.displayName || s.repKey, s.repKey, `${s.address.number} ${s.address.street}${s.address.unit ? ` #${s.address.unit}` : ''}`,
       s.package, Number(s.ticket).toFixed(2), Number(s.depositAmount).toFixed(2), s.status, s.collectedAmount == null ? '' : Number(s.collectedAmount).toFixed(2),
-      s.cancelDeadlineDate, s.jobDate, (commissions.get(s.id)?.total ?? 0).toFixed(2), s.handoff?.deposit?.status || '', s.handoff?.job?.status || '',
+      s.cancelDeadlineDate, s.jobDate, settings.commission.verified === false || commissionIssues(s, settings.commission).length ? '' : (commissions.get(s.id)?.total ?? 0).toFixed(2), s.handoff?.deposit?.status || '', s.handoff?.job?.status || '',
     ]);
     return { csv: toCsv(['sale_date', 'rep', 'username', 'address', 'package', 'ticket', 'deposit', 'status', 'collected', 'cancel_deadline', 'job_date', 'commission_earned', 'deposit_status', 'job_status'], rows), filename: `egc-knock-sales-${period.start}-${period.end}.csv` };
   }
@@ -140,9 +150,18 @@ export async function addPayout(store, admin, { requestId, repKey, periodKey, am
   const rep = await store.get('knock_reps', String(repKey || ''));
   if (!rep) throw knockFailure('That rep was not found.', 404, 'knock_rep_missing');
   const existing = await store.get('knock_payouts', requestId);
-  if (existing) return { duplicate: true, payout: clean(existing) };
   const payout = { repKey: rep.id, periodKey, amount: Math.round(value * 100) / 100, note: String(note || '').slice(0, 200), paidAt: nowIso, by: admin.user };
-  await store.commit([write.create('knock_payouts', requestId, payout)]);
+  const replay = saved => {
+    if (['repKey', 'periodKey', 'amount', 'note'].some(key => saved[key] !== payout[key])) throw knockFailure('This request id already records a different payout. Refresh and review the recorded payment.', 409, 'knock_payout_conflict');
+    return { duplicate: true, payout: clean(saved) };
+  };
+  if (existing) return replay(existing);
+  try { await store.commit([write.create('knock_payouts', requestId, payout)]); }
+  catch (error) {
+    const saved = await store.get('knock_payouts', requestId);
+    if (saved) return replay(saved);
+    throw error;
+  }
   return { duplicate: false, payout: { id: requestId, ...payout } };
 }
 

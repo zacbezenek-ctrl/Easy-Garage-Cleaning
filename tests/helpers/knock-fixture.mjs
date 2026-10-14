@@ -3,6 +3,23 @@
 import { createHubSessionCookie } from '../../functions/_lib/hub-session.js';
 import { createKnockStore } from '../../functions/_lib/knock-store.js';
 import { firestoreRest } from './firestore-rest-queries.mjs';
+import { DEFAULT_SETTINGS, PACKAGES } from '../../crew/knock-settings.js';
+
+// Synthetic approval only: never use this fixture as a business compensation decision.
+export function approvedKnockSettings() {
+  const settings = structuredClone(DEFAULT_SETTINGS);
+  return { settings, updatedAt: '2026-10-01T12:00:00Z', updatedBy: 'test-owner',
+    // Synthetic package classification only, not a production service mapping.
+    compensationApproval: { contract: 'knock-collected-v3', reference: 'synthetic-test-only', reviewedBy: 'test-finance', payrollAnchorConfirmed: true,
+      collectionPolicy: { earnedOn: 'customer_collection', payoutCadence: 'biweekly', calculationBase: 'eligible_collected_amount',
+        attribution: 'recorded_rep', partialCollections: 'review_required', refunds: 'review_required' },
+      scope: { service: 'garage_only', channel: 'door_to_door', estimatorStacking: false, garageOnlyPackages: [...PACKAGES], junkRemovalPackages: [] },
+      reviewedAt: '2026-10-01T12:00:00Z', commission: structuredClone(settings.commission), payroll: structuredClone(settings.payroll) },
+    planApproval: { channel: 'door_to_door', reference: 'synthetic-test-only', reviewedBy: 'test-finance', reviewedAt: '2026-10-01T12:00:00Z',
+      plan: structuredClone(settings.plan), gate: structuredClone(settings.gate) } };
+}
+
+export const approvedKnockTerms = () => ({ contract: 'knock-v1', approvedAt: '2026-10-01T12:00:00Z', policy: structuredClone(DEFAULT_SETTINGS.commission) });
 
 export const ORIGIN = 'https://easygaragecleaning.com';
 

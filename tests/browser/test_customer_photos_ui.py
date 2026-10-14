@@ -214,6 +214,29 @@ class CustomerPhotosBrowserTests(unittest.TestCase):
                 finally:
                     self.page.unroute('**/api/customer-portal', revoked)
 
+    def test_private_photo_sources_clear_before_queued_close_events(self):
+        # A dialog hides synchronously, but its close listener runs later. Check
+        # the source in the same JS task so retained private pixels cannot pass.
+        self.storage_photo()
+        for kind, selector in [('gallery', '.ba-thumb'), ('storage', '.storage-bin')]:
+            for change in ('revoke', 'withdraw'):
+                with self.subTest(viewer=kind, change=change):
+                    self.open_portal(); self.page.locator(selector).first.tap()
+                    expect(self.page.locator(f'#{kind}-viewer')).to_be_visible()
+                    result = self.page.evaluate("""({kind, change}) => {
+                        const image = document.getElementById(kind + '-image');
+                        const wasLoaded = Boolean(image.getAttribute('src'));
+                        if (change === 'revoke') showError('Your access has changed.');
+                        else {
+                            const data = structuredClone(portalData);
+                            data.beforeAfter = [];
+                            (kind === 'gallery' ? renderGallery : renderStorage)(data);
+                        }
+                        return {wasLoaded, source: image.getAttribute('src'),
+                            open: document.getElementById(kind + '-viewer').open};
+                    }""", {'kind': kind, 'change': change})
+                    self.assertEqual(result, {'wasLoaded': True, 'source': None, 'open': False})
+
     def test_a_withdrawn_storage_photo_closes_its_open_viewer(self):
         self.storage_photo(); self.open_portal()
         self.page.locator('.storage-bin').tap()
