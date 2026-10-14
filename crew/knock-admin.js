@@ -683,7 +683,7 @@ async function settingsSection() {
           segFor('payroll.period', [['weekly', 'Weekly'], ['biweekly', 'Every 2 weeks'], ['semimonthly', '1st & 16th'], ['monthly', 'Monthly']], 'Pay period'),
           row('Weekly and two-week periods start on', text('payroll.anchorDate', { type: 'date' }), 'A Monday.')),
         card('Plan targets',
-          h('p', { class: 'caption muted' }, 'What the Scoreboard compares every rep against.'),
+          h('p', { class: 'caption muted' }, 'Draft targets only until separately approved for D2D. Direct-estimator average ticket and margin do not establish D2D performance.'),
           h('div', { class: 'fields-2' },
             row('Doors / hour', num('plan.doorsPerHour', { step: '0.5', width: '100%' })), row('Answer rate', num('plan.answerRate', { scale: 100, unit: '%', step: '1' })),
             row('Look rate', num('plan.lookRate', { scale: 100, unit: '%', step: '0.5' })), row('Close rate', num('plan.closeRate', { scale: 100, unit: '%', step: '1' })),

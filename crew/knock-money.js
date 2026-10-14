@@ -3,18 +3,38 @@
    The accelerator applies to the part of a rep's collected revenue above the monthly threshold,
    counted in the order payments were collected (calendar month in the company time zone). */
 import { addDays, validDate, zonedDate } from './knock-time.js';
+import { PACKAGES } from './knock-settings.js';
 
 const money = value => Math.round(Number(value || 0) * 100) / 100;
 const ms = value => (typeof value === 'number' ? value : Date.parse(value));
 const TERM_FIELDS = ['rate', 'acceleratorEnabled', 'acceleratorThreshold', 'acceleratorRate', 'leadOverrideEnabled', 'leadOverrideRate'];
 
+// Package names alone do not prove which part of a job is garage work. Finance
+// must explicitly classify whole-ticket garage packages; mixed/unknown work is held.
+export function validCommissionScope(scope) {
+  const garage = scope?.garageOnlyPackages, junk = scope?.junkRemovalPackages;
+  return scope?.service === 'garage_only' && scope.channel === 'door_to_door' && scope.estimatorStacking === false &&
+    Array.isArray(garage) && garage.length > 0 && Array.isArray(junk) &&
+    [...garage, ...junk].every(name => PACKAGES.includes(name)) &&
+    new Set([...garage, ...junk]).size === garage.length + junk.length;
+}
+
+export function commissionEligibility(sale) {
+  const terms = sale?.commissionTerms;
+  if (terms?.contract === 'knock-v1') return 'legacy';
+  if (terms?.contract !== 'knock-garage-v2' || !validCommissionScope(terms.scope) || terms.package !== sale.package) return 'unverified';
+  return terms.scope.junkRemovalPackages.includes(sale.package) ? 'excluded'
+    : terms.scope.garageOnlyPackages.includes(sale.package) ? 'garage' : 'unverified';
+}
+
 // Created only by the server when booking under an evidenced contract. Current
 // settings must never replace the terms captured on an older sale.
-export function snapshotCommissionTerms(commission, soldAt) {
-  if (commission?.verified !== true || !Number.isFinite(ms(commission.approvedAt))) return null;
+export function snapshotCommissionTerms(commission, soldAt, packageName) {
+  if (commission?.verified !== true || commission.rate !== 0.25 || !PACKAGES.includes(packageName) || !Number.isFinite(ms(commission.approvedAt)) || !validCommissionScope(commission.scope)) return null;
   // A delayed offline sale cannot silently inherit a policy approved later.
   if (soldAt != null && (!Number.isFinite(ms(soldAt)) || ms(soldAt) < ms(commission.approvedAt))) return null;
-  return { contract: 'knock-v1', approvedAt: commission.approvedAt,
+  return { contract: 'knock-garage-v2', approvedAt: commission.approvedAt, package: packageName,
+    scope: structuredClone(commission.scope),
     policy: Object.fromEntries(TERM_FIELDS.map(key => [key, commission[key]])) };
 }
 
@@ -22,11 +42,17 @@ function saleTerms(sale, commission) {
   const terms = sale?.commissionTerms;
   if (terms != null) {
     const p = terms.policy;
-    if (terms.contract !== 'knock-v1' || !Number.isFinite(ms(terms.approvedAt)) ||
+    if (!['knock-v1', 'knock-garage-v2'].includes(terms.contract) || !Number.isFinite(ms(terms.approvedAt)) ||
       !Number.isFinite(ms(sale.soldAt)) || ms(sale.soldAt) < ms(terms.approvedAt) ||
       !['rate', 'acceleratorRate', 'leadOverrideRate'].every(key => typeof p?.[key] === 'number' && p[key] >= 0 && p[key] <= 1) ||
       !['acceleratorEnabled', 'leadOverrideEnabled'].every(key => typeof p?.[key] === 'boolean') ||
       !Number.isFinite(p?.acceleratorThreshold) || p.acceleratorThreshold <= 0) return null;
+    if (terms.contract === 'knock-garage-v2') {
+      if (p.rate !== 0.25) return null;
+      const eligibility = commissionEligibility(sale);
+      if (eligibility === 'unverified') return null;
+      if (eligibility === 'excluded') return { ...p, rate: 0, acceleratorEnabled: false, leadOverrideEnabled: false };
+    }
     return p;
   }
   // Arithmetic-only callers can exercise the legacy calculator. Server reports
@@ -69,6 +95,7 @@ function collectionEvents(sale) {
 
 export function commissionIssues(sale, commission) {
   const payment = customerCollection(sale), issues = [];
+  if (sale?.commissionTerms?.contract === 'knock-garage-v2' && commissionEligibility(sale) === 'unverified') issues.push('commission_scope_unverified');
   if ((sale?.commissionTerms != null || commission?.verified === true) && !saleTerms(sale, commission)) issues.push('commission_terms_missing_or_invalid');
   if (sale?.status === 'paid') {
     if (!sale.completedAt || !Number.isFinite(ms(sale.completedAt))) issues.push('completion_unverified');
@@ -118,7 +145,7 @@ export function saleCommissions(sales, commission, { now = Date.now(), timeZone 
   if (commission?.verified === false) return [];
   const groups = new Map();
   for (const sale of unique(sales || [])) {
-    if (!isEarned(sale, now) || !saleTerms(sale, commission)) continue;
+    if (!isEarned(sale, now) || !saleTerms(sale, commission) || commissionEligibility(sale) === 'excluded') continue;
     const month = zonedDate(ms(sale.paidAt), timeZone).slice(0, 7);
     const key = `${sale.repKey}|${month}`;
     if (!groups.has(key)) groups.set(key, []);

@@ -23,6 +23,7 @@ const RANGE_WORDS = { today: 'today', week: 'this week', month: 'this month', se
 const toneFor = ratio => (ratio == null ? '' : ratio >= 1 ? 'success' : ratio >= 0.8 ? '' : 'warning');
 
 export function planMeters(plan) {
+  if (!plan.length) return [h('p', { class: 'caption muted' }, 'D2D benchmarks are unconfigured. Direct-estimator averages do not apply; measured results are shown without a target.')];
   return plan.filter(row => row.key !== 'revenuePerHour').map(row => {
     const [label, fmt] = METRIC_LABELS[row.key];
     return meter({ label, value: h('span', {}, row.actual == null ? '—' : fmt(row.actual), h('span', { class: 'muted' }, ` / ${fmt(row.plan)}`)), ratio: row.ratio ?? 0, tone: toneFor(row.ratio) });
@@ -133,7 +134,7 @@ function statsScreen(_app, params) {
   return box;
 }
 
-const COMMISSION_BADGE = { earned: ['Earned', 'success'], pending: ['Pending', 'warning'], cancelled: ['Cancelled', 'error'] };
+const COMMISSION_BADGE = { earned: ['Earned', 'success'], pending: ['Pending', 'warning'], cancelled: ['Cancelled', 'error'], excluded: ['No commission', ''] };
 const earningsMoney = value => value == null ? 'Needs review' : money(value, true);
 
 // "Oct 5 – 18", or "Sep 28 – Oct 11" across a month.
@@ -149,7 +150,7 @@ function moneyScreen(_app, params) {
     const [current, ...older] = data.periods;
     const rates = data.rates;
     const thisMonth = zonedDate(Date.now()).slice(0, 7);
-    const collectedThisMonth = data.sales.filter(s => s.status === 'paid' && s.paidAt && zonedDate(s.paidAt).slice(0, 7) === thisMonth).reduce((sum, s) => sum + collectedAmount(s), 0);
+    const collectedThisMonth = data.sales.filter(s => ['garage', 'legacy'].includes(s.eligibility) && s.status === 'paid' && s.paidAt && zonedDate(s.paidAt).slice(0, 7) === thisMonth).reduce((sum, s) => sum + collectedAmount(s), 0);
     const inPeriod = data.sales.filter(s => s.saleDate >= current.period.start && s.saleDate <= current.period.end
       || (s.paidAt && zonedDate(s.paidAt) >= current.period.start && zonedDate(s.paidAt) <= current.period.end));
     const lead = app.S.rep.role === 'lead';
@@ -176,6 +177,7 @@ function moneyScreen(_app, params) {
       h('section', { class: 'card', style: { gap: '10px' } },
         h('h2', {}, 'How commission works'),
         h('p', {}, 'Rates alone do not establish the commission basis, attribution, earning trigger or payout timing. Customer receipts and recorded payments to you are separate; settlement is unverified. Refunds and disputed data need finance review.'),
+        h('p', { class: 'caption muted' }, 'Current policy: eligible garage work only; no junk-removal commission. The estimator rate is separate and is not added to D2D pay. Mixed or unclassified work needs review; historical signed terms are preserved.'),
         rates.verified && rates.acceleratorEnabled ? meter({
           label: `${percent(rates.acceleratorRate)} rate above ${money(rates.acceleratorThreshold)} this month`, value: `${money(collectedThisMonth)} / ${money(rates.acceleratorThreshold)}`,
           ratio: collectedThisMonth / rates.acceleratorThreshold, tone: 'orange', goal: 1,

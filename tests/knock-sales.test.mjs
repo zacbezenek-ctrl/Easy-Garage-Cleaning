@@ -99,7 +99,7 @@ test('a rep cannot supply their own approved commission terms', async () => {
   assert.equal(world.fake.get(`knock_sales/${batch.saleId}`).commissionTerms, null);
 });
 
-test('booking freezes approved server terms and later rate approval preserves the earned amount', async () => {
+test('booking freezes approved server terms and later scope approval preserves the earned amount', async () => {
   const settingsDoc = approvedKnockSettings();
   const { world, send, act, setClock, reports, cookies, env } = await setup({ settingsDoc });
   const { events, saleId } = saleBatch({ commissionTerms: { policy: { rate: 1 } } });
@@ -109,12 +109,31 @@ test('booking freezes approved server terms and later rate approval preserves th
   await act({ action: 'sale.status', saleId, status: 'completed' });
   await act({ action: 'sale.collection', saleId, collectedAmount: 1600 });
   const changed = approvedKnockSettings();
-  changed.settings.commission.rate = changed.compensationApproval.commission.rate = 0.5;
+  changed.compensationApproval.scope.garageOnlyPackages = ['Garage Transformation'];
   world.fake.put('knock_settings/current', changed);
   const result = await call(reports.get, get('/api/knock-reports?view=my-money', cookies.rep), env);
   assert.equal(result.body.sales[0].commission.amount, 400);
   assert.equal(result.body.periods[0].commissionPaid, 0, 'customer collection never implies a rep payment');
   assert.equal(result.body.periods[0].commissionSettled, null);
+});
+
+test('booking uses approved service scope, ignores client eligibility and holds mixed work', async () => {
+  for (const [packageName, state, amount] of [['Quick Clear', 'excluded', 0], ['Full Property Reset', 'review_required', null]]) {
+    const settingsDoc = approvedKnockSettings();
+    settingsDoc.compensationApproval.scope.garageOnlyPackages = ['Garage Transformation'];
+    settingsDoc.compensationApproval.scope.junkRemovalPackages = ['Quick Clear'];
+    const { send, act, setClock, reports, cookies, env, world } = await setup({ settingsDoc });
+    const { events, saleId } = saleBatch({ package: packageName, commissionTerms: { contract: 'knock-garage-v2', policy: { rate: 1 } }, eligibility: 'garage' });
+    await send(events);
+    assert.equal(world.fake.get(`knock_sales/${saleId}`).commissionTerms.policy.rate, 0.25);
+    setClock(Date.parse('2026-10-20T18:00:00Z'));
+    await act({ action: 'sale.status', saleId, status: 'completed' });
+    await act({ action: 'sale.collection', saleId, collectedAmount: 1600 });
+    const { body } = await call(reports.get, get('/api/knock-reports?view=my-money', cookies.rep), env);
+    assert.deepEqual(body.sales[0].commission, { state, amount });
+    assert.equal(body.periods[0].customerCollectedRevenue, 1600);
+    assert.equal(body.periods[0].commissionPaid, 0);
+  }
 });
 
 test('a sale needs the checklist, a job date after the deadline, contact details and a sold door', async () => {

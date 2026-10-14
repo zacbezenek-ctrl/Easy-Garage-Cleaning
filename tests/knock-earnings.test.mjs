@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { DEFAULT_SETTINGS } from '../crew/knock-settings.js';
-import { customerCollection, isEarned, payPeriodFor, periodStatement, saleCommissions, leadOverrides, snapshotCommissionTerms } from '../crew/knock-money.js';
+import { commissionEligibility, customerCollection, isEarned, payPeriodFor, periodStatement, projectedCommission, saleCommissions, leadOverrides, snapshotCommissionTerms } from '../crew/knock-money.js';
 import { loadSettings } from '../functions/_lib/knock-access.js';
 import { recordSaleCollection, setSaleStatus } from '../functions/_lib/knock-sales.js';
 import { addPayout } from '../functions/_lib/knock-reports.js';
@@ -43,15 +43,16 @@ test('synthetic policy approval is bound to the exact settings and invalidated b
 test('current rate and override changes cannot recalculate historical sale terms', async () => {
   const original = approvedKnockSettings();
   const settings = await loadSettings({ get: async () => original });
-  const snapshot = snapshotCommissionTerms(settings.commission);
+  const snapshot = snapshotCommissionTerms(settings.commission, undefined, 'Garage Transformation');
   assert.ok(snapshot);
-  const oldSale = paid({ leadKey: 'lead.one', commissionTerms: snapshot });
+  const oldSale = paid({ leadKey: 'lead.one', package: 'Garage Transformation', commissionTerms: snapshot });
   const changed = { ...settings, commission: { ...settings.commission, rate: 0.8, acceleratorRate: 0.9, leadOverrideRate: 0.2 } };
   assert.equal(statement([oldSale], [], changed).earnedCommission, 400);
   assert.equal(leadOverrides([oldSale], changed.commission, { now: nowMs })[0].amount, 48);
   assert.equal(snapshot.policy.rate, 0.25);
   assert.equal(snapshotCommissionTerms({ ...changed.commission, verified: false }), null);
-  assert.equal(snapshotCommissionTerms(settings.commission, '2026-09-30T12:00:00Z'), null, 'offline history cannot receive a later approval');
+  assert.equal(snapshotCommissionTerms(settings.commission, '2026-09-30T12:00:00Z', 'Garage Transformation'), null, 'offline history cannot receive a later approval');
+  assert.equal(snapshotCommissionTerms(settings.commission, now), null, 'missing package identity cannot become signed eligibility');
 });
 
 test('legacy sales without approved terms require review even after current settings are approved', async () => {
@@ -61,6 +62,75 @@ test('legacy sales without approved terms require review even after current sett
   assert.equal(row.projectedCommission, null);
   assert.equal(row.payableCommission, null);
   assert.ok(row.reviewReasons.includes('commission_terms_missing_or_invalid'));
+});
+
+test('current approval requires garage-only D2D scope and cannot stack or substitute estimator rates', async () => {
+  const mutations = [
+    doc => { doc.compensationApproval.contract = 'knock-v1'; },
+    doc => { delete doc.compensationApproval.scope; },
+    doc => { doc.compensationApproval.scope.channel = 'direct_estimator'; },
+    doc => { doc.compensationApproval.scope.estimatorStacking = true; },
+    doc => { doc.compensationApproval.scope.junkRemovalPackages = ['The Works']; },
+    doc => { doc.settings.commission.rate = doc.compensationApproval.commission.rate = 0.32; },
+    doc => { doc.settings.commission.rate = doc.compensationApproval.commission.rate = 0.07; },
+  ];
+  for (const mutate of mutations) {
+    const doc = approvedKnockSettings(); mutate(doc);
+    assert.equal((await loadSettings({ get: async () => doc })).commission.verified, false);
+  }
+});
+
+test('junk receipts never produce commission, lead overrides or accelerator progress under current terms', async () => {
+  const doc = approvedKnockSettings();
+  doc.compensationApproval.scope.garageOnlyPackages = ['Garage Transformation'];
+  doc.compensationApproval.scope.junkRemovalPackages = ['Quick Clear'];
+  const settings = await loadSettings({ get: async () => doc });
+  const currentSale = (id, packageName, ticket) => paid({ id, package: packageName, ticket, collectedAmount: ticket,
+    leadKey: 'lead.one', commissionTerms: snapshotCommissionTerms(settings.commission, '2026-10-19T12:00:00Z', packageName) });
+  const junk = currentSale('a-junk', 'Quick Clear', 10000), garage = currentSale('b-garage', 'Garage Transformation', 400);
+  assert.equal(commissionEligibility(junk), 'excluded');
+  assert.equal(projectedCommission(junk, settings.commission), 0);
+  assert.deepEqual(leadOverrides([junk], settings.commission, { now: nowMs }), []);
+  const earnings = saleCommissions([junk, garage], settings.commission, { now: nowMs });
+  assert.deepEqual(earnings.map(row => [row.saleId, row.total]), [['b-garage', 100]]);
+  assert.equal(statement([junk, garage], [], settings).customerCollectedRevenue, 10400);
+  const mixed = currentSale('mixed', 'Full Property Reset', 900);
+  assert.equal(projectedCommission(mixed, settings.commission), null);
+  const held = statement([mixed], [], settings);
+  assert.equal(held.payableCommission, null);
+  assert.ok(held.reviewReasons.includes('commission_scope_unverified'));
+});
+
+test('new eligibility cannot rewrite an existing signed snapshot or backfill unsnapshotted history', async () => {
+  const doc = approvedKnockSettings();
+  doc.compensationApproval.scope.garageOnlyPackages = ['Garage Transformation'];
+  doc.compensationApproval.scope.junkRemovalPackages = ['Quick Clear'];
+  const settings = await loadSettings({ get: async () => doc });
+  const historical = paid({ package: 'Quick Clear' });
+  const before = JSON.stringify(historical);
+  assert.equal(statement([historical], [], settings).earnedCommission, 400);
+  assert.equal(JSON.stringify(historical), before);
+  assert.equal(statement([paid({ commissionTerms: null, package: 'Garage Transformation' })], [], settings).payableCommission, null);
+  const frozenGarage = paid({ package: 'Garage Transformation', commissionTerms: snapshotCommissionTerms(settings.commission, '2026-10-19T12:00:00Z', 'Garage Transformation') });
+  settings.commission.scope.garageOnlyPackages = ['The Works'];
+  settings.commission.scope.junkRemovalPackages = ['Garage Transformation'];
+  assert.equal(statement([frozenGarage], [], settings).earnedCommission, 400);
+});
+
+test('direct-estimator benchmarks cannot become D2D targets or a go/fix/stop verdict', async () => {
+  for (const channel of [undefined, 'direct_estimator']) {
+    const doc = approvedKnockSettings();
+    if (channel) doc.planApproval.channel = channel; else delete doc.planApproval;
+    const env = knockEnv(), world = knockWorld({ 'knock_settings/current': doc,
+      'knock_reps/rep.one': { repKey: 'rep.one', status: 'active', role: 'knocker' } });
+    const handlers = knockReportsHandlers({ storage: world.storage, now: () => new Date(now) });
+    const result = await call(handlers.get, get('/api/knock-reports?view=scoreboard', await cookieFor(env, 'ZacB')), env);
+    assert.equal(result.status, 200);
+    assert.equal(result.body.benchmarkState, 'unconfigured');
+    assert.equal(result.body.planTargets, null);
+    assert.deepEqual(result.body.totals.plan, []);
+    assert.equal(result.body.gate, undefined);
+  }
 });
 
 test('malformed receipt history is held for review, not paid or silently dropped', () => {

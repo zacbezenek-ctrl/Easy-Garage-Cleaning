@@ -5,7 +5,7 @@ import { knockFailure, write } from './knock-store.js';
 import { listReps } from './knock-admin.js';
 import { loadNeighborhoods } from './knock-territory.js';
 import { addDays, validDate, zonedDate } from '../../crew/knock-time.js';
-import { commissionCsv, commissionIssues, customerCollection, csvCell, earnedAt, isEarned, leadOverrides, payPeriodFor, periodStatement, previousPayPeriod, projectedCommission, saleCommissions, toCsv, trainingCsv } from '../../crew/knock-money.js';
+import { commissionCsv, commissionEligibility, commissionIssues, customerCollection, csvCell, earnedAt, isEarned, leadOverrides, payPeriodFor, periodStatement, previousPayPeriod, projectedCommission, saleCommissions, toCsv, trainingCsv } from '../../crew/knock-money.js';
 import { saleSyncSummaries } from './knock-handoff.js';
 import { emptyTotals, addTotals, gateStatus, metrics, planComparison, scoreboard, teamTotals } from '../../crew/knock-stats.js';
 
@@ -58,10 +58,11 @@ async function myMoney({ store, rep, settings, nowMs, params }) {
     id: sale.id, saleDate: sale.saleDate, address: sale.address, package: sale.package, ticket: sale.ticket, status: sale.status,
     collectedAmount: sale.collectedAmount, cancelDeadlineDate: sale.cancelDeadlineDate, jobDate: sale.jobDate,
     completedAt: sale.completedAt || null, paidAt: sale.paidAt || null,
-    customerCollection: customerCollection(sale), sync: sync.get(sale.id),
+    customerCollection: customerCollection(sale), sync: sync.get(sale.id), eligibility: commissionEligibility(sale),
     reviewReasons: commissionIssues(sale, settings.commission),
     commission: settings.commission.verified === false ? { state: 'unconfigured', amount: null }
       : commissionIssues(sale, settings.commission).length ? { state: 'review_required', amount: null }
+      : commissionEligibility(sale) === 'excluded' ? { state: 'excluded', amount: 0 }
       : sale.status === 'cancelled' ? { state: 'cancelled', amount: 0 }
       : isEarned(sale, nowMs) ? { state: 'earned', amount: commissions.get(sale.id)?.total ?? 0, earnedAt: new Date(earnedAt(sale)).toISOString() }
       : { state: 'pending', amount: projectedCommission(sale, settings.commission) },
@@ -84,12 +85,12 @@ async function scoreboardView({ store, rep, settings, admin, nowMs, params }) {
   const team = teamTotals(days);
   const body = {
     range: { from, to, preset }, groupBy, scope: admin ? 'all' : rep.role === 'lead' ? 'team' : 'self',
-    rows: rows.map(r => ({ key: r.key, label: r.label, metrics: r.metrics, plan: planComparison(r.metrics, settings.plan) })),
-    totals: { metrics: team.metrics, plan: planComparison(team.metrics, settings.plan) },
+    rows: rows.map(r => ({ key: r.key, label: r.label, metrics: r.metrics, plan: settings.plan.verified ? planComparison(r.metrics, settings.plan) : [] })),
+    totals: { metrics: team.metrics, plan: settings.plan.verified ? planComparison(team.metrics, settings.plan) : [] },
     car: { withCar: team.metrics.carLookRate, withoutCar: team.metrics.noCarLookRate, answersWithCar: team.totals.car.answers, answersWithoutCar: team.totals.noCar.answers },
-    planTargets: settings.plan,
+    planTargets: settings.plan.verified ? settings.plan : null, benchmarkState: settings.plan.verified ? 'configured' : 'unconfigured',
   };
-  if (admin) {
+  if (admin && settings.plan.verified) {
     // The go/fix/stop gate is the company's question, over every knocking hour so far.
     const lifetime = teamTotals(allDays.map(clean));
     body.gate = { hours: lifetime.metrics.knockingHours, revenuePerHour: lifetime.metrics.revenuePerHour, ...gateStatus(lifetime.metrics.knockingHours, lifetime.metrics.revenuePerHour, settings.gate), thresholds: settings.gate };

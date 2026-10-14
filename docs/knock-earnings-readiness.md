@@ -32,21 +32,41 @@ rep payments. A recorded payment is not proof of bank or payroll settlement.
 
 Percentages alone do not establish gross/net basis, tax or discount exclusions,
 lead/estimator attribution and stacking, earning trigger, accelerator/override
-eligibility, clawbacks or payout timing. The existing calculator is retained as
-the **knock-v1 calculation contract**, not endorsed as an agreement.
+eligibility, clawbacks or payout timing. Existing signed `knock-v1` snapshots are
+retained without rewriting their historical rates or service eligibility.
 
 Report calculations require a complete valid settings record and a separately
 reviewed `compensationApproval` on `knock_settings/current`. It must identify
-`contract: knock-v1`, `reference`, `reviewedBy`, `reviewedAt`, and exact copies of
-the approved `commission` and `payroll` objects. This is an evidence binding, not
+`contract: knock-garage-v2`, `reference`, `reviewedBy`, `reviewedAt`, and exact copies of
+the approved `commission` and `payroll` objects. The D2D base rate must be 25%.
+The approval must also include an explicit `scope`: `service: garage_only`,
+`channel: door_to_door`, `estimatorStacking: false`, and nonoverlapping arrays
+`garageOnlyPackages` and `junkRemovalPackages` using actual package identifiers.
+At least one garage package must be classified. This is an evidence binding, not
 a new approval action. No UI/API added by this change writes that approval. The
 ordinary settings save invalidates it. The synthetic test approval is only a
 fixture and must never be copied into production.
 
+Only packages independently verified as wholly eligible garage work belong in
+`garageOnlyPackages`. Names alone do not establish this. Junk-removal packages
+earn zero commission and do not advance accelerator revenue or lead overrides;
+customer receipts still appear. Mixed or unclassified packages need review and
+have no projected, earned or payable commission. A rep cannot supply their own
+terms or eligibility. A changed package invalidates its saved eligibility.
+
+Estimator compensation applies separately to eligible garage jobs and is not
+added to D2D compensation by this app. Direct-estimator ticket and margin
+assumptions do not establish D2D performance, and estimator commission is a
+separate cost. D2D performance is unknown. Scoreboard comparisons and
+Go/Fix/Stop verdicts require separate
+`planApproval` evidence bound to the exact `plan` and `gate`, with
+`channel: door_to_door`, reference, reviewer and review time; otherwise only
+measured results appear and benchmarks remain unconfigured.
+
 Before supplying an approval, finance must verify that the actual agreement
 matches the entire existing contract. If it does not, implement and review the
 correct version first. New sales snapshot the approved server-side terms and
-approval time in `commissionTerms`; client-supplied terms are ignored. Current
+scope, package and approval time in `commissionTerms`; client-supplied terms are ignored. Current
 rate, accelerator and override changes never replace that snapshot. Legacy sales
 without verified snapshots require review and are not backfilled from current
 settings. An offline sale dated before the current policy approval also remains
@@ -91,6 +111,10 @@ disabled. Record release identity, test identity, timestamp and result per step.
   verify the deposit is counted once across pay periods.
 - [ ] Check all five money categories and both CSVs with unconfigured terms. Then
   test a separately approved synthetic contract; never use fixture approval live.
+- [ ] Verify the approved garage-only package classification. Junk receipts must
+  produce no commission or accelerator progress; mixed and unknown work stays
+  held. Verify historical snapshots do not change and estimator pay never stacks
+  automatically. D2D benchmarks remain absent without their own approval.
 - [ ] Record a synthetic rep payment, retry the same request and change its
   payload. Only the original record remains; settlement stays unverified.
 - [ ] Exercise missing payment timestamps, refund and cancellation evidence.

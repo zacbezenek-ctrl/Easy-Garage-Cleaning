@@ -4,6 +4,7 @@
 import { hasBusinessAccess } from './hub-session.js';
 import { knockFailure, write } from './knock-store.js';
 import { mergeSettings, ROLES, validateSettings } from '../../crew/knock-settings.js';
+import { validCommissionScope } from '../../crew/knock-money.js';
 
 const SAFE_KEY = /^[a-z0-9._-]{1,64}$/;
 
@@ -32,14 +33,20 @@ export async function loadSettings(store) {
   const settings = mergeSettings(doc?.settings || {});
   // Rates alone do not verify the basis, attribution, trigger or payout timing.
   // No current UI writes this approval. A reviewed integration must supply the
-  // evidence for the complete existing knock-v1 contract, bound to its settings.
+  // evidence for the complete contract and garage-only scope, bound to its settings.
   const fields = ['rate', 'acceleratorEnabled', 'acceleratorThreshold', 'acceleratorRate', 'leadOverrideEnabled', 'leadOverrideRate'];
   const approval = doc?.compensationApproval;
   settings.commission.verified = Boolean(doc?.updatedBy && Number.isFinite(Date.parse(doc?.updatedAt)) &&
     fields.every(key => Object.hasOwn(doc?.settings?.commission || {}, key)) && !validateSettings(doc.settings).length &&
-    approval?.contract === 'knock-v1' && approval.reference && approval.reviewedBy && Number.isFinite(Date.parse(approval.reviewedAt)) &&
+    approval?.contract === 'knock-garage-v2' && settings.commission.rate === 0.25 && validCommissionScope(approval.scope) && approval.reference && approval.reviewedBy && Number.isFinite(Date.parse(approval.reviewedAt)) &&
     sameSettings(approval.commission, doc.settings.commission) && sameSettings(approval.payroll, doc.settings.payroll));
   settings.commission.approvedAt = settings.commission.verified ? approval.reviewedAt : null;
+  settings.commission.scope = settings.commission.verified ? structuredClone(approval.scope) : null;
+  // Direct-estimator economics are not a D2D benchmark. Keep measured results,
+  // but show no targets or go/fix/stop verdict without a separate D2D approval.
+  const planApproval = doc?.planApproval;
+  settings.plan.verified = Boolean(planApproval?.channel === 'door_to_door' && planApproval.reference && planApproval.reviewedBy &&
+    Number.isFinite(Date.parse(planApproval.reviewedAt)) && sameSettings(planApproval.plan, doc?.settings?.plan) && sameSettings(planApproval.gate, doc?.settings?.gate));
   return settings;
 }
 

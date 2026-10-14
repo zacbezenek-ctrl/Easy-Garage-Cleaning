@@ -121,6 +121,8 @@ try {
   await admin.getByText('Team total').waitFor();
   const doors = await admin.locator('.stat', { has: admin.locator('.stat__label', { hasText: /^Doors$/ }) }).first().locator('.stat__value').textContent();
   assert.equal(doors, '5', 'the scoreboard counts the five doors today');
+  await admin.getByText('D2D benchmarks are unconfigured.', { exact: false }).waitFor();
+  assert.equal(await admin.getByRole('heading', { name: 'Go / Fix / Stop', exact: true }).count(), 0, 'unapproved D2D benchmarks never produce a verdict');
 
   // 5. Money remains a distinct, fail-closed view at narrow phone/tablet widths.
   await page.goto(`${server.base}/crew/knock.html#money`);
@@ -130,6 +132,7 @@ try {
   }
   assert.match(await page.locator('#knock-main').textContent(), /Compensation is unconfigured/);
   assert.match(await page.locator('#knock-main').textContent(), /settlement unverified/);
+  assert.match(await page.locator('#knock-main').textContent(), /no junk-removal commission/);
   for (const width of [320, 390, 768]) {
     await page.setViewportSize({ width, height: 844 });
     assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true, `money screen fits ${width}px`);
