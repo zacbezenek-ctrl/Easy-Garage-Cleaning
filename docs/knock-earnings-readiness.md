@@ -116,3 +116,19 @@ No production migration, messages, charges, payouts, credential changes or
 deployment are part of this change. Live roster, policy approval, historical
 reconciliation, provider synchronization and physical-device acceptance remain
 release blockers.
+
+## Customer photo access in Hub readiness
+
+The same Hub rollout serves customers through the private project portal. When
+access is revoked or a shared photo is withdrawn, the gallery and storage image
+sources now clear synchronously before their dialogs close. Waiting for the
+queued close event can retain private photo pixels after access has changed.
+Existing close handlers still preserve focus and newly reopened viewers.
+
+The access-error cleanup and regression-test route cleanup were independently
+ported from snapshot `a88e0d7`, limited to `customer-portal.html` and
+`tests/browser/test_customer_photos_ui.py`. The same immediate source cleanup
+also covers withdrawn gallery/storage photos, with a regression check in the
+same JavaScript task before queued close events. This has no dependency on the
+snapshot's payment-schedule change or its separate public-gallery upload batch;
+those changes and their payloads are excluded. Fixtures remain synthetic.
