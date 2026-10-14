@@ -344,6 +344,13 @@ async function createDraft(store, actor, input, draft, customer, now, env, { rec
       if (!target) throw fail('commit_incomplete', 'The complete quote draft could not be prepared.', 503);
       const plan = quotePatch(null, draft, actor, now, target.id, newQuotePaymentPolicy), saved = record(null, plan, target.id);
       Object.assign(target.patch, plan.patch, capturePatch(target.patch, draft, actor, now), { quoteDraft: saved.quoteDraft });
+      // A review can finish before its quote exists. Preserve the finalized
+      // source receipt and create the same gated note intent as finalize-after-
+      // quote, using the new canonical job/contact identity, never the old one.
+      if (draft.walkthroughCapture === undefined && source?.walkthroughReview?.stage === 'finalized' && source.walkthroughReview.latestFinalized) {
+        target.patch.walkthroughReviewReference = { sourceJobId: source.id, ...source.walkthroughReview.latestFinalized };
+        target.patch.walkthroughCaptureSync = prepareWalkthroughCaptureSync(target.patch, now);
+      }
       function fence(collection, row, patch) {
         const found = writes.find(write => write.collection === collection && write.id === row.id);
         if (found) {

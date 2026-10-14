@@ -446,5 +446,22 @@ class CrewJobDraftsBrowserTests(unittest.TestCase):
         expect(page.locator('#status-superseded')).to_have_count(0)
 
 
+    def test_walkthrough_details_render_in_phone_crew_brief_without_saving(self):
+        page = self.open(375)
+        self.job['walkthroughBrief'] = [
+            {'label': 'Hazard handling / stop-work plan', 'text': 'Brace shelf before moving'},
+            {'label': 'Donate', 'text': 'Blue chair'},
+            {'label': 'Equipment notes', 'text': '<script>not executable</script>'},
+            {'label': 'Measurements', 'text': 'Door: 36 inches'},
+        ]
+        page.get_by_role('button', name='Refresh job', exact=True).click()
+        for item in self.job['walkthroughBrief']:
+            expect(page.locator('#scope-card').get_by_role('heading', name=item['label'], exact=True)).to_be_visible()
+            expect(page.locator('#scope-card')).to_contain_text(item['text'])
+        self.assertEqual(page.locator('#scope-card script').count(), 0)
+        self.assertEqual(self.posts, [])
+        self.assert_phone_layout()
+
+
 if __name__ == '__main__':
     unittest.main()
