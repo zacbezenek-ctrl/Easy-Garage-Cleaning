@@ -442,5 +442,3 @@ body:has(.contact-widget) .back-to-top{right:112px}
 @media(max-width:899px){.home-simple .hero{padding:40px 0}.home-simple .hero-grid{gap:32px}.home-simple .hero-title{font-size:44px;max-width:13ch}.home-simple .hero-sub{font-size:17px}.home-simple .hero-visual{width:100%}.home-simple .hero-ctas .btn-primary{width:100%;text-align:center}.home-simple .hero-result figcaption{gap:8px;font-size:11px}.nav-cta{font-size:12px;padding:12px}.home-simple .gallery{padding:40px 0}}
 
 .home-simple .gallery .btn-primary{background:transparent;color:var(--accent-deep);box-shadow:none;padding:8px 0;text-decoration:underline;text-underline-offset:4px}
-
-.pickup-action{display:inline-flex;align-items:center;min-height:44px;min-width:44px}

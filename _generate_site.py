@@ -4562,9 +4562,9 @@ def preserve_curbside_intent(text):
       <h2 class="section-title" id="compare-heading">Curbside pickup or <em>full service</em></h2>
       <p class="section-sub">Choose based on where the items are and who moves them outside.</p></div>
       <div class="pricing-how-grid reveal">
-      <div class="step"><h3>$139 curbside pickup</h3><p>Stage up to 4 cubic yards at the curb, driveway, or open garage. Our crew loads and hauls the staged items. No walkthrough needed.</p><a href="#quote" class="content-link pickup-action">Request curbside pickup &rarr;</a></div>
-      <div class="step"><h3>Full service from $675</h3><p>Need the crew to carry items out or clear a garage? The exact flat rate is confirmed after a free on-site walkthrough, before work begins.</p><a href="/book" class="content-link pickup-action">Request a free walkthrough &rarr;</a></div>
-      </div><p class="pricing-disclaimer reveal"><a href="/pricing" class="content-link pickup-action">See full pricing and service details &rarr;</a></p>
+      <div class="step"><h3>$139 curbside pickup</h3><p>Stage up to 4 cubic yards at the curb, driveway, or open garage. Our crew loads and hauls the staged items. No walkthrough needed.</p><a href="#quote" class="content-link" style="display:inline-flex;align-items:center;min-height:44px;min-width:44px">Request curbside pickup &rarr;</a></div>
+      <div class="step"><h3>Full service from $675</h3><p>Need the crew to carry items out or clear a garage? The exact flat rate is confirmed after a free on-site walkthrough, before work begins.</p><a href="/book" class="content-link" style="display:inline-flex;align-items:center;min-height:44px;min-width:44px">Request a free walkthrough &rarr;</a></div>
+      </div><p class="pricing-disclaimer reveal"><a href="/pricing" class="content-link" style="display:inline-flex;align-items:center;min-height:44px;min-width:44px">See full pricing and service details &rarr;</a></p>
     </div></section>'''
     text = re.sub(r'<section class="pricing" id="pricing" aria-labelledby="compare-heading">[\s\S]*?</section>', comparison, text, count=1)
     return text
