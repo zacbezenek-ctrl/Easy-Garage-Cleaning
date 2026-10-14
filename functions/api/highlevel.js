@@ -168,7 +168,10 @@ function localBounds(day) {
 
 async function getWalkthroughs(c, day) {
   const calendarId = await findCalendar(c, 'walkthrough');
-  if (!calendarId) return { calendarId: '', events: [] };
+  const list = await calendarList(c);
+  if (!calendarId || !list.some(calendar => calendar.id === calendarId)) {
+    throw new Error('The configured walkthrough calendar is unavailable. Verify the customer calendar configuration.');
+  }
   const bounds = localBounds(day);
   const params = new URLSearchParams({ locationId: c.locationId, calendarId,
     startTime: String(bounds.start), endTime: String(bounds.end) });
@@ -204,14 +207,15 @@ async function getSchedule(c, start, end) {
   const list = await calendarList(c);
   const configured = [c.walkthroughCalendarId, c.jobCalendarId].filter(Boolean);
   const ids = configured.length ? [...new Set(configured)] : list.map(x => x.id).filter(Boolean);
+  if (!ids.length || configured.some(id => !list.some(calendar => calendar.id === id))) {
+    throw new Error('A configured customer calendar is unavailable. Verify the customer calendar configuration.');
+  }
   const bounds = rangeBounds(start, end);
   const batches = await Promise.all(ids.slice(0, 12).map(async calendarId => {
     const params = new URLSearchParams({ locationId: c.locationId, calendarId,
       startTime: String(bounds.start), endTime: String(bounds.end) });
-    try {
-      const data = await ghl(c, `/calendars/events?${params}`);
-      return (data.events || []).map(event => ({ ...event, calendarId }));
-    } catch { return []; }
+    const data = await ghl(c, `/calendars/events?${params}`);
+    return (data.events || []).map(event => ({ ...event, calendarId }));
   }));
   const seen = new Set();
   const events = batches.flat().filter(event => event.id && !seen.has(event.id) && seen.add(event.id)).map(event => ({
