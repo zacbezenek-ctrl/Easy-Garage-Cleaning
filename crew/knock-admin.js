@@ -485,6 +485,37 @@ function lifecycle(sale, act) {
 
 /* ---------- Money ---------- */
 
+async function settersSection() {
+  const data = await load('setters', {}, { force: true });
+  const requestId = uuid();
+  const visit = h('input', { class: 'input', id: 'setter-visit', placeholder: 'Canonical walkthrough ID' });
+  const setter = h('select', { class: 'input', id: 'setter-rep' },
+    data.reps.filter(rep => rep.status === 'active').map(rep => h('option', { value: rep.repKey }, rep.displayName || rep.repKey)));
+  const scope = h('select', { class: 'input', id: 'setter-scope' },
+    [['unverified', 'Needs classification'], ['garage', 'Verified garage work'], ['junk_removal', 'Junk removal — no commission']].map(([value, label]) => h('option', { value }, label)));
+  const reference = h('input', { class: 'input', id: 'setter-reference', placeholder: 'Classification review reference (no customer details)' });
+  const estimator = h('input', { class: 'input', id: 'setter-estimator', placeholder: 'Staff key, or leave unverified' });
+  const estimatorReference = h('input', { class: 'input', id: 'setter-estimator-reference', placeholder: 'Estimator attribution review reference' });
+  return { subtitle: '12% setting channel; separate from direct-close and estimator attribution.', body: [
+    banner('warning', 'info', 'Setter pay needs policy review', 'A booking or no-show earns nothing. A closed and collected job still needs the estimator-stacking, calculation-base and payroll decisions before a payable amount is shown.'),
+    h('section', { class: 'card stack' }, h('h2', {}, 'Record walkthrough setter'),
+      field('Walkthrough ID', visit, null, 'setter-visit'), field('Setter', setter, null, 'setter-rep'),
+      field('Service classification', scope, null, 'setter-scope'), field('Review reference', reference, null, 'setter-reference'),
+      field('Estimator (separate attribution)', estimator, null, 'setter-estimator'), field('Estimator review reference', estimatorReference, null, 'setter-estimator-reference'),
+      h('button', { class: 'btn btn--primary', type: 'button', onclick: async () => {
+        try { await action({ action: 'setter.record', requestId, walkthroughId: visit.value.trim(), setterKey: setter.value,
+          serviceClassification: scope.value, classificationReference: reference.value.trim(), estimatorKey: estimator.value.trim(), estimatorReference: estimatorReference.value.trim() }); invalidate('setters'); app.render(); }
+        catch (error) { toast(error.message, { tone: 'bad' }); }
+      } }, 'Record setter attribution')),
+    h('div', { class: 'card table-wrap' }, h('table', { class: 'table' },
+      h('thead', {}, h('tr', {}, ['Walkthrough', 'Setter', 'Estimator evidence', 'State', 'Review'].map(label => h('th', {}, label)))),
+      h('tbody', {}, data.rows.map(row => h('tr', {}, h('td', {}, row.walkthroughId), h('td', {}, row.setterKey),
+        h('td', {}, row.estimatorKey || 'Unverified'), h('td', {}, row.state.replaceAll('_', ' ')),
+        h('td', {}, (row.reviewReasons || []).join(', ').replaceAll('_', ' '))))))),
+    data.truncated ? banner('warning', 'info', 'More records need review', 'Only the first 100 setter records are shown.') : null,
+  ] };
+}
+
 async function moneySection(params) {
   const date = params.get('date') || zonedDate(Date.now());
   const data = await load('money', { date }, { force: true });
@@ -501,11 +532,12 @@ async function moneySection(params) {
   return {
     title: h('div', { class: 'row', style: { gap: '12px' } },
       h('a', { class: 'btn btn--secondary btn--sm', href: `#admin?s=money&date=${encodeURIComponent(data.previous.start)}`, 'aria-label': 'Previous pay period', style: { padding: '0 10px' } }, icon('chevronLeft')),
-      h('div', {}, h('h1', {}, periodLabel(period.start, period.end)), h('p', { class: 'muted' }, `Pay period · ${{ weekly: 'weekly', biweekly: 'every 2 weeks', semimonthly: '1st & 16th', monthly: 'monthly' }[data.payroll.period] || data.payroll.period}`)),
+      h('div', {}, h('h1', {}, period.configured === false ? 'Two-week payroll cycle needs setup' : periodLabel(period.start, period.end)), h('p', { class: 'muted' }, 'Payout cadence: every 2 weeks')),
       h('a', { class: 'btn btn--secondary btn--sm', href: `#admin?s=money&date=${encodeURIComponent(data.next.start)}`, 'aria-label': 'Next pay period', style: { padding: '0 10px' } }, icon('chevronRight'))),
     actions: [['commission', 'Commission CSV'], ['training', 'Training CSV'], ['sales', 'Sales CSV']].map(([kind, label]) =>
-      h('button', { type: 'button', class: 'btn btn--quiet btn--sm', onclick: () => exportCsv(kind) }, icon('download', { size: 'sm' }), label)),
+      h('button', { type: 'button', class: 'btn btn--quiet btn--sm', disabled: period.configured === false, onclick: () => exportCsv(kind) }, icon('download', { size: 'sm' }), label)),
     body: [
+      period.configured === false ? banner('warning', 'info', 'Payroll anchor unconfigured', 'These date groupings are previews, not an approved pay cycle. Confirm the two-week anchor before payroll export.') : null,
       h('div', { class: 'stats stats--4' },
         stat('Sales booked', String(total('salesBooked')), { sub: `${money(total('booked'))} customer revenue booked` }),
         stat('Projected commission', amount(reviewedTotal('projectedCommission'))),
@@ -677,11 +709,11 @@ async function settingsSection() {
           toggle('commission.leadOverrideEnabled', 'Leads earn a bonus on their team'),
           h('div', { class: 'fields-2' }, row('Higher rate', num('commission.acceleratorRate', { scale: 100, unit: '%', step: '0.5' })), row('once monthly revenue passes', num('commission.acceleratorThreshold', { prefix: '$', step: '100', width: '120px' }))),
           toggle('commission.acceleratorEnabled', 'Use the higher rate'),
-          h('p', { class: 'caption muted' }, 'Rates alone do not verify the commission basis, attribution, earning trigger or payout timing. Finance approval is still required.'),
+          h('p', { class: 'caption muted' }, 'Earning on collection and a two-week payout cadence are confirmed. Basis, attribution, partial collections, refunds and the payroll anchor still require finance review.'),
           row('Training pay', num('payroll.trainingHourlyRate', { prefix: '$', unit: 'per hour, paid separately', step: '0.01' }))),
         card('Pay period',
-          segFor('payroll.period', [['weekly', 'Weekly'], ['biweekly', 'Every 2 weeks'], ['semimonthly', '1st & 16th'], ['monthly', 'Monthly']], 'Pay period'),
-          row('Weekly and two-week periods start on', text('payroll.anchorDate', { type: 'date' }), 'A Monday.')),
+          segFor('payroll.period', [['biweekly', 'Every 2 weeks']], 'Pay period'),
+          row('Unconfirmed cycle anchor', text('payroll.anchorDate', { type: 'date' }), 'A draft date until explicitly confirmed by finance.')),
         card('Plan targets',
           h('p', { class: 'caption muted' }, 'Draft targets only until separately approved for D2D. Direct-estimator average ticket and margin do not establish D2D performance.'),
           h('div', { class: 'fields-2' },
@@ -723,6 +755,7 @@ export function install(appApi) {
   registerAdminSection('territory', 'Territory', 'map', territorySection);
   registerAdminSection('coverage', 'Coverage', 'chart', coverageSection);
   registerAdminSection('sales', 'Sales', 'dollar', salesSection);
+  registerAdminSection('setters', 'Setters', 'user', settersSection);
   registerAdminSection('money', 'Money', 'cash', moneySection);
   registerAdminSection('scoreboard', 'Scoreboard', 'trophy', scoreboardSection);
   registerAdminSection('flags', 'Flags', 'flag', flagsSection);

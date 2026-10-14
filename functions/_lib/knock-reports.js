@@ -7,6 +7,7 @@ import { loadNeighborhoods } from './knock-territory.js';
 import { addDays, validDate, zonedDate } from '../../crew/knock-time.js';
 import { commissionCsv, commissionEligibility, commissionIssues, customerCollection, csvCell, earnedAt, isEarned, leadOverrides, payPeriodFor, periodStatement, previousPayPeriod, projectedCommission, saleCommissions, toCsv, trainingCsv } from '../../crew/knock-money.js';
 import { saleSyncSummaries } from './knock-handoff.js';
+import { setterAttributions } from './knock-setters.js';
 import { emptyTotals, addTotals, gateStatus, metrics, planComparison, scoreboard, teamTotals } from '../../crew/knock-stats.js';
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
@@ -40,7 +41,7 @@ async function loadMoney(store, { repKey = null } = {}) {
 }
 
 /* A rep's pay: this period and the five before, plus each sale's commission state. */
-async function myMoney({ store, rep, settings, nowMs, params }) {
+async function myMoney({ store, rep, settings, nowMs, params, env }) {
   const own = await loadMoney(store, { repKey: rep.repKey });
   // A lead's override comes from their team's sales, so those are read too (amounts only, no customers).
   const team = rep.role === 'lead' ? (await store.query('knock_sales', { where: [['leadKey', '==', rep.repKey]] })).map(clean) : [];
@@ -68,7 +69,8 @@ async function myMoney({ store, rep, settings, nowMs, params }) {
       : { state: 'pending', amount: projectedCommission(sale, settings.commission) },
   }));
   const overrides = rep.role === 'lead' ? leadOverrides(team, settings.commission, { now: nowMs }).filter(o => o.leadKey === rep.repKey) : [];
-  return { periods, sales: bySale, overrides: overrides.map(o => ({ amount: o.amount, earnedAt: new Date(o.earnedAt).toISOString() })), rates: settings.commission, trainingHourlyRate: settings.payroll.trainingHourlyRate };
+  return { periods, sales: bySale, setters: await setterAttributions(store, env, { repKey: rep.repKey, nowMs }),
+    overrides: overrides.map(o => ({ amount: o.amount, earnedAt: new Date(o.earnedAt).toISOString() })), rates: settings.commission, trainingHourlyRate: settings.payroll.trainingHourlyRate };
 }
 
 /* Scoreboard rows for the viewer's scope: a rep sees themselves, a lead their team, an admin all. */
@@ -119,6 +121,7 @@ export async function moneyView(store, params, nowMs, settings) {
 export async function exportCsv(store, params, nowMs, settings) {
   const kind = params.get('kind') || 'commission';
   const period = periodFromParams(params, settings, nowMs);
+  if (period.configured === false) throw knockFailure('The two-week payroll anchor is unconfigured. Preview dates cannot be exported as a payroll cycle.', 409, 'knock_payroll_unconfigured');
   const [{ sales, payouts, training }, reps] = await Promise.all([loadMoney(store), listReps(store)]);
   if (kind === 'commission') {
     const statement = periodStatement({ sales, payouts, training, reps, settings, period, now: nowMs });

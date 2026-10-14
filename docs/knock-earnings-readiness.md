@@ -30,14 +30,16 @@ rep payments. A recorded payment is not proof of bank or payroll settlement.
 
 ## Compensation is intentionally unconfigured
 
-Percentages alone do not establish gross/net basis, tax or discount exclusions,
-lead/estimator attribution and stacking, earning trigger, accelerator/override
-eligibility, clawbacks or payout timing. Existing signed `knock-v1` snapshots are
-retained without rewriting their historical rates or service eligibility.
+The current concepts are confirmed: commission is earned when the eligible job
+is collected, and payouts follow a two-week cadence. Partial collections,
+gross/net basis and exclusions, attribution/stacking, accelerator/override
+eligibility, refunds/clawbacks and the payroll-cycle anchor still need review.
+Existing signed `knock-v1` and `knock-garage-v2` snapshots retain their original
+rates, service eligibility and earning-time conditions.
 
 Report calculations require a complete valid settings record and a separately
 reviewed `compensationApproval` on `knock_settings/current`. It must identify
-`contract: knock-garage-v2`, `reference`, `reviewedBy`, `reviewedAt`, and exact copies of
+`contract: knock-collected-v3`, `reference`, `reviewedBy`, `reviewedAt`, and exact copies of
 the approved `commission` and `payroll` objects. The D2D base rate must be 25%.
 The approval must also include an explicit `scope`: `service: garage_only`,
 `channel: door_to_door`, `estimatorStacking: false`, and nonoverlapping arrays
@@ -46,6 +48,22 @@ At least one garage package must be classified. This is an evidence binding, not
 a new approval action. No UI/API added by this change writes that approval. The
 ordinary settings save invalidates it. The synthetic test approval is only a
 fixture and must never be copied into production.
+
+The approval must explicitly bind `collectionPolicy` with
+`earnedOn: customer_collection`, `payoutCadence: biweekly`,
+`calculationBase: eligible_collected_amount`, `attribution: recorded_rep`,
+`partialCollections: review_required` and `refunds: review_required`. This names
+the supported calculation contract, not a decision that the unknown basis or
+attribution is correct. Finance must confirm it or implement the actual rule.
+The saved payroll period must be `biweekly`, include an explicit anchor date and
+have `payrollAnchorConfirmed: true` on its approval. The default date never
+confirms an anchor. Until then, date groupings are labeled previews, commission
+remains unconfigured and payroll exports are refused.
+
+Under a complete new contract, an evidenced full collection earns at its
+collection timestamp without adding a completion or cancellation-deadline
+delay. Partial or excess collections and refund/cancellation evidence remain
+held for review. No pro-rata rule, clawback or payment execution is introduced.
 
 Only packages independently verified as wholly eligible garage work belong in
 `garageOnlyPackages`. Names alone do not establish this. Junk-removal packages
@@ -109,6 +127,10 @@ disabled. Record release identity, test identity, timestamp and result per step.
   a partial receipt. The job is not complete and no commission is claimed earned.
 - [ ] Complete work separately, record the final cumulative receipt, retry it and
   verify the deposit is counted once across pay periods.
+- [ ] Verify new collection-based terms earn at the full collection time, while
+  older signed terms keep their original timing. Partial receipts stay held.
+- [ ] Confirm the actual first date of the two-week cycle. Before approval,
+  payroll dates must be labeled previews and payroll exports must be refused.
 - [ ] Check all five money categories and both CSVs with unconfigured terms. Then
   test a separately approved synthetic contract; never use fixture approval live.
 - [ ] Verify the approved garage-only package classification. Junk receipts must
@@ -140,6 +162,48 @@ No production migration, messages, charges, payouts, credential changes or
 deployment are part of this change. Live roster, policy approval, historical
 reconciliation, provider synchronization and physical-device acceptance remain
 release blockers.
+
+## Walkthrough setters are a separate channel
+
+Direct door closes retain the 25% eligible-garage channel. A rep who instead
+sets a walkthrough has a separate 12% setter channel, requiring a converted,
+closed and collected eligible garage job. Booking, a no-show, an unclosed quote
+or a missing conversion link never earns setter commission. The 7% estimator
+channel remains separate; whether it adds to or shares the setter rate is
+unresolved. This implementation does not add 25% and 12%, or 12% and 7%.
+
+The rep money screen links to the existing permission-checked Hub walkthrough
+booking flow. An admin records the setter against its canonical walkthrough ID
+in the Setters section. `knock_setters` stores this attribution separately from
+`knock_sales`; it does not create an appointment, contact, message or payout.
+The setter is an active canvassing account. Estimator attribution has its own
+optional staff key and review reference, labeled admin-recorded/unreconciled;
+the quote recorder is kept separately and is never assumed to be the estimator.
+An unknown estimator stays unverified.
+
+One create-only record per walkthrough and a request receipt prevent duplicate
+credit. Equal requests replay safely; reusing a request or walkthrough with a
+different setter/classification is a conflict needing review. Rescheduling the
+same walkthrough cannot create another attribution. Reports re-read canonical
+walkthrough/job revisions and payment evidence. A conversion must link in both
+directions, and a linked direct-sale claim is flagged instead of combined.
+
+Setter rows remain outside direct-sale commission and receipt totals to avoid
+double counting. Close and full collection evidence may establish a qualifying
+time, but setter earned/payable amounts remain unknown until estimator stacking,
+calculation base and payroll anchor are resolved. Partial receipts, refunds,
+cancellations, missing source data and unclassified services remain review
+states; verified junk classification is excluded. No compensation approval or
+historical signed snapshot is written by this tracking flow.
+
+- [ ] Book a synthetic Hub walkthrough with the intended staff role, record its
+  setter once, and verify another rep cannot claim or read it.
+- [ ] Replay identical and conflicting attribution requests, including concurrent
+  duplicates and a rebooked walkthrough; only one attribution may exist.
+- [ ] Test booking, no-show, close without collection, partial/full collection,
+  refunds, missing conversion data and an existing direct-sale claim.
+- [ ] Confirm setter and estimator identities remain distinct and no commission
+  is added to payable totals while the stacking decision is unresolved.
 
 ## Customer photo access in Hub readiness
 

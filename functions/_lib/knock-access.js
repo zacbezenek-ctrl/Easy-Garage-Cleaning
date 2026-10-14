@@ -4,7 +4,7 @@
 import { hasBusinessAccess } from './hub-session.js';
 import { knockFailure, write } from './knock-store.js';
 import { mergeSettings, ROLES, validateSettings } from '../../crew/knock-settings.js';
-import { validCommissionScope } from '../../crew/knock-money.js';
+import { validCollectionPolicy, validCommissionScope } from '../../crew/knock-money.js';
 
 const SAFE_KEY = /^[a-z0-9._-]{1,64}$/;
 
@@ -31,17 +31,28 @@ const sameSettings = (a, b) => {
 export async function loadSettings(store) {
   const doc = await store.get('knock_settings', 'current');
   const settings = mergeSettings(doc?.settings || {});
-  // Rates alone do not verify the basis, attribution, trigger or payout timing.
+  // Known collection timing and cadence do not verify basis, attribution or the payroll anchor.
   // No current UI writes this approval. A reviewed integration must supply the
   // evidence for the complete contract and garage-only scope, bound to its settings.
   const fields = ['rate', 'acceleratorEnabled', 'acceleratorThreshold', 'acceleratorRate', 'leadOverrideEnabled', 'leadOverrideRate'];
   const approval = doc?.compensationApproval;
   settings.commission.verified = Boolean(doc?.updatedBy && Number.isFinite(Date.parse(doc?.updatedAt)) &&
     fields.every(key => Object.hasOwn(doc?.settings?.commission || {}, key)) && !validateSettings(doc.settings).length &&
-    approval?.contract === 'knock-garage-v2' && settings.commission.rate === 0.25 && validCommissionScope(approval.scope) && approval.reference && approval.reviewedBy && Number.isFinite(Date.parse(approval.reviewedAt)) &&
+    approval?.contract === 'knock-collected-v3' && settings.commission.rate === 0.25 && validCommissionScope(approval.scope) && validCollectionPolicy(approval.collectionPolicy) &&
+    approval.payrollAnchorConfirmed === true && doc.settings.payroll?.period === 'biweekly' && Object.hasOwn(doc.settings.payroll, 'anchorDate') &&
+    approval.reference && approval.reviewedBy && Number.isFinite(Date.parse(approval.reviewedAt)) &&
     sameSettings(approval.commission, doc.settings.commission) && sameSettings(approval.payroll, doc.settings.payroll));
   settings.commission.approvedAt = settings.commission.verified ? approval.reviewedAt : null;
   settings.commission.scope = settings.commission.verified ? structuredClone(approval.scope) : null;
+  settings.commission.collectionPolicy = settings.commission.verified ? structuredClone(approval.collectionPolicy) : null;
+  settings.commission.knownPolicy = { earnedOn: 'customer_collection', payoutCadence: 'biweekly' };
+  settings.commission.policyGaps = [
+    ...(!validCollectionPolicy(approval?.collectionPolicy) ? ['calculation_base_and_attribution'] : []),
+    ...(!settings.commission.verified ? ['payroll_cycle_anchor'] : []),
+    'partial_collections', 'refund_clawbacks',
+  ];
+  settings.payroll.anchorVerified = settings.commission.verified;
+  settings.payroll.period = 'biweekly';
   // Direct-estimator economics are not a D2D benchmark. Keep measured results,
   // but show no targets or go/fix/stop verdict without a separate D2D approval.
   const planApproval = doc?.planApproval;

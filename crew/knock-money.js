@@ -1,5 +1,5 @@
 /* Commission, pay periods and payroll rows for canvassing reps.
-   Commission is earned only when a sale is completed, paid and past its cancellation deadline.
+   Current terms earn on collection. Older signed terms retain their original timing.
    The accelerator applies to the part of a rep's collected revenue above the monthly threshold,
    counted in the order payments were collected (calendar month in the company time zone). */
 import { addDays, validDate, zonedDate } from './knock-time.js';
@@ -8,6 +8,12 @@ import { PACKAGES } from './knock-settings.js';
 const money = value => Math.round(Number(value || 0) * 100) / 100;
 const ms = value => (typeof value === 'number' ? value : Date.parse(value));
 const TERM_FIELDS = ['rate', 'acceleratorEnabled', 'acceleratorThreshold', 'acceleratorRate', 'leadOverrideEnabled', 'leadOverrideRate'];
+
+export function validCollectionPolicy(policy) {
+  return policy?.earnedOn === 'customer_collection' && policy.payoutCadence === 'biweekly' &&
+    policy.calculationBase === 'eligible_collected_amount' && policy.attribution === 'recorded_rep' &&
+    policy.partialCollections === 'review_required' && policy.refunds === 'review_required';
+}
 
 // Package names alone do not prove which part of a job is garage work. Finance
 // must explicitly classify whole-ticket garage packages; mixed/unknown work is held.
@@ -22,7 +28,7 @@ export function validCommissionScope(scope) {
 export function commissionEligibility(sale) {
   const terms = sale?.commissionTerms;
   if (terms?.contract === 'knock-v1') return 'legacy';
-  if (terms?.contract !== 'knock-garage-v2' || !validCommissionScope(terms.scope) || terms.package !== sale.package) return 'unverified';
+  if (!['knock-garage-v2', 'knock-collected-v3'].includes(terms?.contract) || !validCommissionScope(terms.scope) || terms.package !== sale.package) return 'unverified';
   return terms.scope.junkRemovalPackages.includes(sale.package) ? 'excluded'
     : terms.scope.garageOnlyPackages.includes(sale.package) ? 'garage' : 'unverified';
 }
@@ -30,11 +36,11 @@ export function commissionEligibility(sale) {
 // Created only by the server when booking under an evidenced contract. Current
 // settings must never replace the terms captured on an older sale.
 export function snapshotCommissionTerms(commission, soldAt, packageName) {
-  if (commission?.verified !== true || commission.rate !== 0.25 || !PACKAGES.includes(packageName) || !Number.isFinite(ms(commission.approvedAt)) || !validCommissionScope(commission.scope)) return null;
+  if (commission?.verified !== true || commission.rate !== 0.25 || !PACKAGES.includes(packageName) || !Number.isFinite(ms(commission.approvedAt)) || !validCommissionScope(commission.scope) || !validCollectionPolicy(commission.collectionPolicy)) return null;
   // A delayed offline sale cannot silently inherit a policy approved later.
   if (soldAt != null && (!Number.isFinite(ms(soldAt)) || ms(soldAt) < ms(commission.approvedAt))) return null;
-  return { contract: 'knock-garage-v2', approvedAt: commission.approvedAt, package: packageName,
-    scope: structuredClone(commission.scope),
+  return { contract: 'knock-collected-v3', approvedAt: commission.approvedAt, package: packageName,
+    scope: structuredClone(commission.scope), collectionPolicy: structuredClone(commission.collectionPolicy),
     policy: Object.fromEntries(TERM_FIELDS.map(key => [key, commission[key]])) };
 }
 
@@ -42,12 +48,13 @@ function saleTerms(sale, commission) {
   const terms = sale?.commissionTerms;
   if (terms != null) {
     const p = terms.policy;
-    if (!['knock-v1', 'knock-garage-v2'].includes(terms.contract) || !Number.isFinite(ms(terms.approvedAt)) ||
+    if (!['knock-v1', 'knock-garage-v2', 'knock-collected-v3'].includes(terms.contract) || !Number.isFinite(ms(terms.approvedAt)) ||
       !Number.isFinite(ms(sale.soldAt)) || ms(sale.soldAt) < ms(terms.approvedAt) ||
       !['rate', 'acceleratorRate', 'leadOverrideRate'].every(key => typeof p?.[key] === 'number' && p[key] >= 0 && p[key] <= 1) ||
       !['acceleratorEnabled', 'leadOverrideEnabled'].every(key => typeof p?.[key] === 'boolean') ||
       !Number.isFinite(p?.acceleratorThreshold) || p.acceleratorThreshold <= 0) return null;
-    if (terms.contract === 'knock-garage-v2') {
+    if (terms.contract === 'knock-collected-v3' && !validCollectionPolicy(terms.collectionPolicy)) return null;
+    if (terms.contract !== 'knock-v1') {
       if (p.rate !== 0.25) return null;
       const eligibility = commissionEligibility(sale);
       if (eligibility === 'unverified') return null;
@@ -95,13 +102,18 @@ function collectionEvents(sale) {
 
 export function commissionIssues(sale, commission) {
   const payment = customerCollection(sale), issues = [];
-  if (sale?.commissionTerms?.contract === 'knock-garage-v2' && commissionEligibility(sale) === 'unverified') issues.push('commission_scope_unverified');
+  const collectedTerms = sale?.commissionTerms?.contract === 'knock-collected-v3';
+  if (['knock-garage-v2', 'knock-collected-v3'].includes(sale?.commissionTerms?.contract) && commissionEligibility(sale) === 'unverified') issues.push('commission_scope_unverified');
   if ((sale?.commissionTerms != null || commission?.verified === true) && !saleTerms(sale, commission)) issues.push('commission_terms_missing_or_invalid');
   if (sale?.status === 'paid') {
-    if (!sale.completedAt || !Number.isFinite(ms(sale.completedAt))) issues.push('completion_unverified');
+    if (!collectedTerms && (!sale.completedAt || !Number.isFinite(ms(sale.completedAt)))) issues.push('completion_unverified');
     if (!sale.paidAt || !Number.isFinite(ms(sale.paidAt)) || payment.gross === null) issues.push('collection_unverified');
     if (payment.gross !== null && money(payment.gross) !== money(sale.ticket)) issues.push('partial_or_excess_collection');
-    if (!Number.isFinite(ms(sale.cancelEndsAt))) issues.push('cancellation_deadline_missing');
+    if (!collectedTerms && !Number.isFinite(ms(sale.cancelEndsAt))) issues.push('cancellation_deadline_missing');
+  }
+  if (collectedTerms && payment.gross > 0) {
+    if (!payment.at) issues.push('collection_unverified');
+    if (money(payment.gross) !== money(sale.ticket)) issues.push('partial_collection_policy_unconfigured');
   }
   if (payment.refunded === null || payment.refunded > 0) issues.push('refund_review');
   if (sale?.collectionHistory != null) {
@@ -120,7 +132,12 @@ const unique = rows => [...new Map(rows.map((row, i) => [row.id || `row-${i}`, r
 
 // The instant commission becomes earned, or null if it is not (yet) earned.
 export function earnedAt(sale) {
-  if (sale?.status !== 'paid' || commissionEligibility(sale) === 'excluded' || commissionIssues(sale).length) return null;
+  if (commissionEligibility(sale) === 'excluded' || commissionIssues(sale).length) return null;
+  if (sale?.commissionTerms?.contract === 'knock-collected-v3') {
+    const payment = customerCollection(sale);
+    return payment.gross > 0 && money(payment.gross) === money(sale.ticket) && payment.at ? ms(payment.at) : null;
+  }
+  if (sale?.status !== 'paid') return null;
   const times = [ms(sale.paidAt), ms(sale.completedAt), ms(sale.cancelEndsAt)];
   return times.every(Number.isFinite) ? Math.max(...times) : null;
 }
@@ -198,7 +215,7 @@ function lastDayOfMonth(date) {
 }
 
 // The pay period containing a date: { key, start, end } (inclusive dates).
-export function payPeriodFor(date, payroll) {
+function calculatePayPeriod(date, payroll) {
   if (!validDate(date)) return null;
   const period = payroll?.period || 'biweekly';
   if (period === 'monthly') {
@@ -217,6 +234,11 @@ export function payPeriodFor(date, payroll) {
   const start = addDays(anchor, offset);
   const end = addDays(start, length - 1);
   return { key: `${start}_${end}`, start, end };
+}
+
+export function payPeriodFor(date, payroll) {
+  const period = calculatePayPeriod(date, payroll);
+  return period && payroll?.anchorVerified === false ? { ...period, configured: false } : period;
 }
 
 export function previousPayPeriod(period, payroll) {

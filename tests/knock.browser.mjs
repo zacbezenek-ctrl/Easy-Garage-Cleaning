@@ -133,6 +133,10 @@ try {
   assert.match(await page.locator('#knock-main').textContent(), /Compensation is unconfigured/);
   assert.match(await page.locator('#knock-main').textContent(), /settlement unverified/);
   assert.match(await page.locator('#knock-main').textContent(), /no junk-removal commission/);
+  assert.match(await page.locator('#knock-main').textContent(), /Payroll anchor unconfigured/);
+  assert.match(await page.locator('#knock-main').textContent(), /payouts every two weeks/);
+  await page.getByRole('heading', { name: 'Walkthrough setting — 12%', exact: true }).waitFor();
+  assert.equal(await page.getByRole('link', { name: 'Book a walkthrough in the Hub', exact: true }).getAttribute('href'), '/employee.html?view=walkthroughs');
   for (const width of [320, 390, 768]) {
     await page.setViewportSize({ width, height: 844 });
     assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true, `money screen fits ${width}px`);
@@ -154,6 +158,9 @@ try {
   const payment = page.locator('.stat').filter({ has: page.getByText('Commission paid (recorded)', { exact: true }) });
   await payment.getByText('$77.00', { exact: true }).waitFor();
   assert.match(await payment.textContent(), /admin recorded; settlement unverified/);
+  await admin.goto(`${server.base}/crew/knock.html#admin?s=setters`);
+  await admin.getByRole('heading', { name: 'Record walkthrough setter', exact: true }).waitFor();
+  assert.match(await admin.locator('#knock-main').textContent(), /booking or no-show earns nothing/);
 
   assert.deepEqual(errors, [], 'no page errors');
   assert.deepEqual(server.serverErrors, [], 'no server errors');

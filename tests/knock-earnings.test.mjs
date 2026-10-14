@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { DEFAULT_SETTINGS } from '../crew/knock-settings.js';
-import { commissionEligibility, customerCollection, isEarned, payPeriodFor, periodStatement, projectedCommission, saleCommissions, leadOverrides, snapshotCommissionTerms } from '../crew/knock-money.js';
+import { commissionEligibility, customerCollection, earnedAt, isEarned, payPeriodFor, periodStatement, projectedCommission, saleCommissions, leadOverrides, snapshotCommissionTerms } from '../crew/knock-money.js';
 import { loadSettings } from '../functions/_lib/knock-access.js';
 import { recordSaleCollection, setSaleStatus } from '../functions/_lib/knock-sales.js';
 import { addPayout } from '../functions/_lib/knock-reports.js';
@@ -62,6 +62,56 @@ test('legacy sales without approved terms require review even after current sett
   assert.equal(row.projectedCommission, null);
   assert.equal(row.payableCommission, null);
   assert.ok(row.reviewReasons.includes('commission_terms_missing_or_invalid'));
+});
+
+test('new terms earn at full collection without inventing a completion or cancellation-delay condition', async () => {
+  const settings = await loadSettings({ get: async () => approvedKnockSettings() });
+  const sale = paid({ package: 'Garage Transformation', status: 'booked', completedAt: null, cancelEndsAt: '2026-10-25T00:00:00Z',
+    commissionTerms: snapshotCommissionTerms(settings.commission, '2026-10-19T12:00:00Z', 'Garage Transformation') });
+  assert.equal(isEarned(sale, nowMs), true);
+  assert.equal(earnedAt(sale), Date.parse(sale.paidAt));
+  assert.equal(statement([sale], [], settings).earnedCommission, 400);
+  for (const patch of [{ collectedAmount: 320 }, { refundedAmount: 20 }, { status: 'cancelled' }, { paidAt: null }]) {
+    const changed = { ...sale, ...patch };
+    assert.equal(isEarned(changed, nowMs), false);
+    assert.equal(statement([changed], [], settings).payableCommission, null);
+  }
+});
+
+test('collection timing does not rewrite v1 or v2 signed earning conditions', async () => {
+  const settings = await loadSettings({ get: async () => approvedKnockSettings() });
+  const snapshot = snapshotCommissionTerms(settings.commission, '2026-10-19T12:00:00Z', 'Garage Transformation');
+  for (const terms of [approvedKnockTerms(), { ...snapshot, contract: 'knock-garage-v2' }]) {
+    const sale = paid({ package: 'Garage Transformation', commissionTerms: terms, completedAt: '2026-10-25T18:00:00Z', cancelEndsAt: '2026-10-24T00:00:00Z' });
+    const before = JSON.stringify(sale);
+    assert.equal(isEarned(sale, nowMs), false);
+    assert.equal(earnedAt(sale), Date.parse(sale.completedAt));
+    assert.equal(isEarned(sale, Date.parse('2026-10-26T00:00:00Z')), true);
+    assert.equal(JSON.stringify(sale), before);
+  }
+});
+
+test('two-week cadence never silently approves a default anchor, base or attribution', async () => {
+  for (const gap of ['anchor', 'base', 'attribution', 'cadence']) {
+    const doc = approvedKnockSettings();
+    if (gap === 'anchor') delete doc.compensationApproval.payrollAnchorConfirmed;
+    if (gap === 'base') delete doc.compensationApproval.collectionPolicy.calculationBase;
+    if (gap === 'attribution') delete doc.compensationApproval.collectionPolicy.attribution;
+    if (gap === 'cadence') doc.settings.payroll.period = doc.compensationApproval.payroll.period = 'weekly';
+    const settings = await loadSettings({ get: async () => doc });
+    assert.equal(settings.commission.verified, false);
+    assert.deepEqual(settings.commission.knownPolicy, { earnedOn: 'customer_collection', payoutCadence: 'biweekly' });
+    assert.equal(settings.payroll.anchorVerified, false);
+    assert.equal(payPeriodFor('2026-10-20', settings.payroll).configured, false);
+    const world = knockWorld({ 'knock_settings/current': doc }), env = knockEnv();
+    const handlers = knockAdminHandlers({ storage: world.storage, now: () => new Date(now) });
+    const result = await call(handlers.get, get('/api/knock-admin?view=export&kind=commission', await cookieFor(env, 'ZacB')), env);
+    assert.equal(result.status, 409);
+    assert.equal(result.body.code, 'knock_payroll_unconfigured');
+  }
+  const settings = await loadSettings({ get: async () => approvedKnockSettings() });
+  const period = payPeriodFor('2026-10-20', settings.payroll);
+  assert.equal((Date.parse(period.end) - Date.parse(period.start)) / 86400000 + 1, 14);
 });
 
 test('current approval requires garage-only D2D scope and cannot stack or substitute estimator rates', async () => {

@@ -117,6 +117,20 @@ test('booking freezes approved server terms and later scope approval preserves t
   assert.equal(result.body.periods[0].commissionSettled, null);
 });
 
+test('current sale earns on full collection while job completion remains separate', async () => {
+  const { world, send, act, reports, cookies, env } = await setup({ settingsDoc: approvedKnockSettings() });
+  const { events, saleId } = saleBatch();
+  await send(events);
+  await act({ action: 'sale.collection', saleId, collectedAmount: 1600 });
+  assert.equal(world.fake.get(`knock_sales/${saleId}`).status, 'booked');
+  assert.equal(world.fake.get(`knock_sales/${saleId}`).completedAt, null);
+  const result = await call(reports.get, get('/api/knock-reports?view=my-money', cookies.rep), env);
+  assert.equal(result.body.sales[0].commission.state, 'earned');
+  assert.equal(result.body.sales[0].commission.amount, 400);
+  assert.equal(result.body.sales[0].commission.earnedAt, new Date(NOW).toISOString());
+  assert.equal(result.body.periods[0].commissionPaid, 0);
+});
+
 test('booking uses approved service scope, ignores client eligibility and holds mixed work', async () => {
   for (const [packageName, state, amount] of [['Quick Clear', 'excluded', 0], ['Full Property Reset', 'review_required', null]]) {
     const settingsDoc = approvedKnockSettings();

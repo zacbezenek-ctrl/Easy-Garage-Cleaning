@@ -10,7 +10,9 @@ export function approvedKnockSettings() {
   const settings = structuredClone(DEFAULT_SETTINGS);
   return { settings, updatedAt: '2026-10-01T12:00:00Z', updatedBy: 'test-owner',
     // Synthetic package classification only, not a production service mapping.
-    compensationApproval: { contract: 'knock-garage-v2', reference: 'synthetic-test-only', reviewedBy: 'test-finance',
+    compensationApproval: { contract: 'knock-collected-v3', reference: 'synthetic-test-only', reviewedBy: 'test-finance', payrollAnchorConfirmed: true,
+      collectionPolicy: { earnedOn: 'customer_collection', payoutCadence: 'biweekly', calculationBase: 'eligible_collected_amount',
+        attribution: 'recorded_rep', partialCollections: 'review_required', refunds: 'review_required' },
       scope: { service: 'garage_only', channel: 'door_to_door', estimatorStacking: false, garageOnlyPackages: [...PACKAGES], junkRemovalPackages: [] },
       reviewedAt: '2026-10-01T12:00:00Z', commission: structuredClone(settings.commission), payroll: structuredClone(settings.payroll) },
     planApproval: { channel: 'door_to_door', reference: 'synthetic-test-only', reviewedBy: 'test-finance', reviewedAt: '2026-10-01T12:00:00Z',

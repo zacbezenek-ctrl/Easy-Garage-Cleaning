@@ -11,6 +11,7 @@ import { customerMessage, integrationStatus, refundSummary, saleHandoff, saleSyn
 import { loadSettings } from '../_lib/knock-access.js';
 import { rebuildDay } from '../_lib/knock-sync.js';
 import { addPayout, exportCsv, moneyView } from '../_lib/knock-reports.js';
+import { recordSetterAttribution, setterAttributions } from '../_lib/knock-setters.js';
 import { csvResponse, errorResponse, forbiddenOrigin, readJson, reply, sameOrigin } from '../_lib/knock-http.js';
 
 // A sale's status changes its rep's booked revenue for the sale day.
@@ -43,6 +44,7 @@ const VIEWS = {
     };
   },
   async money(store, params, now) { return moneyView(store, params, now.getTime(), await loadSettings(store)); },
+  async setters(store, _params, now, env) { return { ...(await setterAttributions(store, env, { nowMs: now.getTime() })), reps: await listReps(store) }; },
   async export(store, params, now) {
     const { csv, filename } = await exportCsv(store, params, now.getTime(), await loadSettings(store));
     return csvResponse(filename, csv);
@@ -64,6 +66,7 @@ const ACTIONS = {
   'sale.jobDate': setJobDate,
   'sale.collection': recordSaleCollection,
   'sale.handoff': (store, admin, body, nowIso, env) => saleHandoff(store, admin, body, nowIso, env),
+  'setter.record': recordSetterAttribution,
   'payout.add': addPayout,
 };
 
