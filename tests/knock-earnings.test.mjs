@@ -89,6 +89,7 @@ test('junk receipts never produce commission, lead overrides or accelerator prog
     leadKey: 'lead.one', commissionTerms: snapshotCommissionTerms(settings.commission, '2026-10-19T12:00:00Z', packageName) });
   const junk = currentSale('a-junk', 'Quick Clear', 10000), garage = currentSale('b-garage', 'Garage Transformation', 400);
   assert.equal(commissionEligibility(junk), 'excluded');
+  assert.equal(isEarned(junk, nowMs), false);
   assert.equal(projectedCommission(junk, settings.commission), 0);
   assert.deepEqual(leadOverrides([junk], settings.commission, { now: nowMs }), []);
   const earnings = saleCommissions([junk, garage], settings.commission, { now: nowMs });

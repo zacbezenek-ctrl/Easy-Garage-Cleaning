@@ -120,7 +120,7 @@ const unique = rows => [...new Map(rows.map((row, i) => [row.id || `row-${i}`, r
 
 // The instant commission becomes earned, or null if it is not (yet) earned.
 export function earnedAt(sale) {
-  if (sale?.status !== 'paid' || commissionIssues(sale).length) return null;
+  if (sale?.status !== 'paid' || commissionEligibility(sale) === 'excluded' || commissionIssues(sale).length) return null;
   const times = [ms(sale.paidAt), ms(sale.completedAt), ms(sale.cancelEndsAt)];
   return times.every(Number.isFinite) ? Math.max(...times) : null;
 }
