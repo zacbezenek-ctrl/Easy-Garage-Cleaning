@@ -5,6 +5,7 @@ import { customerMoneyTotals, invoiceLineItems, invoiceNumber, invoiceStatus, pa
 import { LEGACY_ENTRY_ID, reconcileLedger } from './money-ledger.js';
 import { cashPayment } from './payment-events.js';
 import { customerLineItem, estimateTotals, included, legacyLineItems, singleLineItem, unsentQuoteDraft } from './quote-model.js';
+import { publicQuotePaymentSchedule, quotePaymentSummary } from './quote-payment-policy.js';
 
 /**
  * Server-rendered, branded customer money documents (estimate, invoice,
@@ -210,6 +211,7 @@ export function moneyDocumentModel(job, { kind, now, payUrl = null, contact = tr
   if (withheld && kind !== 'receipt') throw fail('unavailable', `Your ${kind} is being updated. Easy Garage Cleaning will send it to you for review.`, 409);
   if (withheld) return withheldReceipt(job, totals, at, contact, invoiceState ? { status: invoiceStatus(job, at, { unified, invoiceState }) } : null);
   const estimate = plain(job.estimate) ? job.estimate : {}, invoice = plain(job.invoice) ? job.invoice : {};
+  const paymentSchedule = publicQuotePaymentSchedule(estimate);
   const today = denverToday(new Date(at)), approval = approvalOf(job);
   let lines, status, statusLabel, number, dates;
   if (kind === 'estimate') {
@@ -218,6 +220,7 @@ export function moneyDocumentModel(job, { kind, now, payUrl = null, contact = tr
     number = invoiceNumber(job.id, 'estimate', clean(estimate.number, 80));
     dates = [['Prepared', instantDay(estimate.createdAt || estimate.updatedAt) || instantDay(at)], ['Valid through', dayLabel(estimate.validUntil) || 'Not specified']];
     if (Number.isSafeInteger(estimate.revision) && estimate.revision > 0) dates.push(['Revision', String(estimate.revision)]);
+    if (paymentSchedule) dates.push(['25% deposit due', dayLabel(paymentSchedule.depositDueDate)], ['75% remainder due', dayLabel(paymentSchedule.remainderDueDate)], ['Business timezone', paymentSchedule.timeZone]);
   } else {
     const projected = invoiceLineItems(job, totals);
     issues.push(...projected.issues);
@@ -250,11 +253,12 @@ export function moneyDocumentModel(job, { kind, now, payUrl = null, contact = tr
   } else {
     if (kind === 'estimate' && totals.approvedChangeCents > 0) rows.push({ label: 'Estimate', cents: totals.quoteCents }, { label: 'Approved changes', cents: totals.approvedChangeCents });
     rows.push({ label: 'Total', cents: totals.totalCents });
-    if (kind === 'estimate') rows.push({ label: totals.depositRequiredCents === 0 ? 'No deposit required' : 'Deposit due upfront', cents: totals.depositRequiredCents });
+    if (kind === 'estimate') rows.push({ label: totals.depositRequiredCents === 0 ? 'No deposit required' : paymentSchedule ? '25% deposit due '+paymentSchedule.depositDueDate : 'Deposit due upfront', cents: totals.depositRequiredCents });
+    if (kind === 'estimate' && paymentSchedule) rows.push({label:'Scheduled 75% remainder due '+paymentSchedule.remainderDueDate,cents:paymentSchedule.remainderCents});
     rows.push({ label: 'Payments received', cents: totals.appliedCents });
   }
   if (totals.overpaidCents > 0) rows.push({ label: 'Overpayment on file', cents: totals.overpaidCents });
-  rows.push({ label: kind === 'receipt' ? 'Balance remaining' : 'Balance due', cents: totals.balanceCents, due: true });
+  rows.push({ label: kind === 'receipt' ? 'Balance remaining' : kind === 'estimate' && paymentSchedule ? 'Total unpaid' : 'Balance due', cents: totals.balanceCents, due: true });
   const url = safePayUrl(payUrl), cancelled = [job.status, job.pipelineStatus].some(value => ['cancelled', 'canceled', 'superseded', 'lost'].includes(lower(value)));
   const closed = kind === 'invoice' && ['void', 'superseded'].includes(status) || kind === 'estimate' && ['expired', 'superseded'].includes(status);
   const due = Number.isSafeInteger(totals.dueNowCents) && totals.dueNowCents > 0, deposit = totals.purpose === 'deposit';
@@ -284,7 +288,7 @@ export function moneyDocumentModel(job, { kind, now, payUrl = null, contact = tr
     service, scope: scope && !lines.some(line => line.description === scope) ? scope : '',
     lines, rows, payments: ledger.rows, paymentsReconciled: ledger.reconciled,
     approval: (kind === 'estimate' || kind === 'invoice') && approval.approved ? `Estimate approved${approval.by ? ` by ${approval.by}` : ''}${approval.at ? ` on ${instantDay(approval.at)}` : ''}${approval.portal ? ' in the customer portal' : ''}` : '',
-    termsVersion: clean((kind === 'estimate' ? estimate.termsVersion : invoice.termsVersion || estimate.termsVersion) || DEFAULT_TERMS_VERSION, 40), terms: TERMS[kind],
+    termsVersion: clean((kind === 'estimate' ? estimate.termsVersion : invoice.termsVersion || estimate.termsVersion) || DEFAULT_TERMS_VERSION, 40), terms: kind==='estimate'&&paymentSchedule ? 'This flat-rate estimate covers only the scope shown. '+quotePaymentSummary(paymentSchedule)+' Any material scope change requires customer approval before additional work or charges.' : TERMS[kind],
     pay, payNote, totals, issues: [...new Set(issues)],
   };
 }

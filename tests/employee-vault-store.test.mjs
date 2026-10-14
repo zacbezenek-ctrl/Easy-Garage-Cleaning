@@ -611,7 +611,7 @@ test('employee.html stores the owner grant and enters business mode from busines
 });
 
 test('employee.html canRunBusiness() and the legacy admin controls use only the server businessAccess flag', () => {
-  const page = read('employee.html');
+  const page = read('employee.html').replace(/\r\n/g, '\n');
   const pick = name => { const start = page.indexOf(`function ${name}(`); assert.ok(start > 0, name); return page.slice(start, page.indexOf('\n}\n', start) + 3); };
   const legacy = (me, session, local = {}) => {
     const context = browser(session, local), writes = [];

@@ -34,7 +34,7 @@ import { syncNativeNote } from '../_lib/operations-note-sync.js';
 import { operationsEnabled } from '../_lib/operations-service-auth.js';
 import { ensureHighLevelCheckin } from '../_lib/highlevel-checkin.js';
 import { addTags, completeAppointment, ensureContact, ghl, highLevelConfig } from '../_lib/highlevel-tags.js';
-import { ghlTagOutboxEnabled, handOffScheduleTags, scheduleTagOwner } from '../_lib/ghl-tag-outbox.js';
+import { handOffScheduleTags, scheduleTagOwner } from '../_lib/ghl-tag-outbox.js';
 import { can } from '../_lib/staff-roles.js';
 import { leadDetailsFromNotes } from '../_lib/booking-slots.js';
 
@@ -605,19 +605,19 @@ export async function onRequestPost({ request, env, waitUntil }) {
     if (!contactId) return reply(502, { ok: false, error: 'HighLevel did not return a contact ID' });
     if (payload.tool === 'schedule') {
       if (!payload.start_time || !payload.end_time) return reply(400, { ok: false, error: 'Schedule start and end are required' });
-      // EGC_GHL_TAG_OUTBOX (GHL-TRACK-1): the saved visit is read first, so a cancelled or no-show visit's appointment is
-      // written with that status and toNotify false, as the outbox writes it (never re-confirmed, never created), and a
-      // visit whose tag outbox entry is current leaves its scheduled tags to the outbox. Off: the requests are exactly as before.
-      const outbox = ghlTagOutboxEnabled(env), saved = outbox && payload.job_id ? await readJob(env, payload.job_id).catch(() => null) : null;
-      const closed = outbox ? { cancelled: 'cancelled', canceled: 'cancelled', noshow: 'noshow', no_show: 'noshow', 'no-show': 'noshow' }[String(saved?.pipelineStatus || saved?.status || '').toLowerCase()] || '' : '';
+      // Terminal state belongs to the saved visit, independently of who owns its tags.
+      // A retry must never revive a cancellation/no-show when the outbox is disabled.
+      const saved = payload.job_id ? await readJob(env, payload.job_id).catch(() => null) : null;
+      if(payload.job_id&&!saved&&!operationsEnabled(env))return reply(503,{ok:false,code:'SCHEDULE_SOURCE_UNAVAILABLE',error:'The saved Hub visit could not be verified. Retry after its record is available.'});
+      const closed = { cancelled: 'cancelled', canceled: 'cancelled', noshow: 'noshow', no_show: 'noshow', 'no-show': 'noshow' }[String(saved?.pipelineStatus || saved?.status || '').toLowerCase()] || '';
       const event = closed && !payload.appointment_id && !operationsEnabled(env) ? { updated: false, reason: 'visit-closed' } : await createAppointment(c, closed ? { ...payload, status: closed, notify: false } : payload, contactId);
       if (payload.silent_update) return reply(200, { ok: true, contactId, ...event, pipeline: { updated: false, reason: 'silent-appointment-update' }, automation: { silent: true, notificationsRequested: false } });
       // Notify customer (payload.notify) governs the appointment's own automations and the reminder tag only; the
       // scheduled tags and the Scheduled stage follow every scheduled visit. A cancelled visit (read from storage, never
       // the browser) is synced as its cancellation alone: no scheduled or reminder tag, and no move to Scheduled.
-      const stored = outbox ? saved : payload.job_id ? await readJob(env, payload.job_id).catch(() => null) : null;
+      const stored = payload.job_id ? await readJob(env, payload.job_id).catch(() => null) : null;
       if (['cancelled', 'canceled'].includes(String(stored?.pipelineStatus || stored?.status || '').toLowerCase())) return finish(contactId, { ok: true, contactId, ...event, pipeline: { updated: false, reason: 'visit-cancelled' }, automation: { trigger: '', reminderTrigger: '', cancelled: true, notificationsRequested: payload.notify !== false } });
-      if (closed === 'noshow') return finish(contactId, { ok: true, contactId, ...event, pipeline: { updated: false, reason: 'visit-no-show' }, automation: { trigger: '', reminderTrigger: '', noShow: true, notificationsRequested: payload.notify !== false } });
+      if (['noshow','no_show','no-show'].includes(String(stored?.pipelineStatus || stored?.status || '').toLowerCase())) return finish(contactId, { ok: true, contactId, ...event, pipeline: { updated: false, reason: 'visit-no-show' }, automation: { trigger: '', reminderTrigger: '', noShow: true, notificationsRequested: payload.notify !== false } });
       const typeTag = payload.event_type === 'job' ? 'egc-job-scheduled' : 'egc-walkthrough-scheduled';
       const reminderDays = Math.min(30, Math.max(1, Number(payload.reminder_days || 2)));
       const reminderTag = payload.notify === false ? '' : `egc-reminder-${reminderDays}d`;

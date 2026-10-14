@@ -749,6 +749,6 @@ test('the schedule sync of a moved signed job keeps its scheduled tags and stage
     assert.equal(after.some(call => call.includes('/tags')), false, 'no scheduled or reminder tag for a cancelled job');
     assert.equal(after.some(call => call.includes('/opportunities')), false, 'a cancelled job is never moved to Scheduled');
     const appointment = h.rpc.filter(body => body.command === 'schedule.sync_provider').at(-1);
-    assert.deepEqual([appointment.portalVisitId, appointment.requestId, appointment.runAutomations], [id, cancelled.syncIdempotencyKey, true]);
+    assert.deepEqual([appointment.portalVisitId, appointment.requestId, appointment.runAutomations], [id, cancelled.syncIdempotencyKey, false], 'cancelled visits never restart customer automations');
   } finally { h.restore(); }
 });

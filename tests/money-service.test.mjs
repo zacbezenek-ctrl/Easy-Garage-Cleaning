@@ -5,6 +5,15 @@ import { mutateMoney, moneyProjection, moneySnapshot, paymentNeedsVerification, 
 import { reconcileLedger } from '../functions/_lib/money-ledger.js';
 import { moneyStorage } from '../functions/_lib/money-storage.js';
 import { applyWrite } from './helpers/commit-write.mjs';
+import { PROPOSED_25_75 } from '../functions/_lib/quote-payment-policy.js';
+
+test('legacy money editor cannot reinterpret or issue a staged versioned payment-policy quote', async () => {
+  const f = fixture({ estimate: { number: 'EST-FIXTURE', revision: 1, status: 'draft', amount: 1400, depositRequired: 350, commercialPolicy: PROPOSED_25_75 } });
+  for (const action of ['estimate.save', 'estimate.mark_sent', 'estimate.record_approval', 'invoice.issue']) {
+    await assert.rejects(f.run(action, {}), error => error.code === 'money_payment_policy_workflow_required' && error.status === 409);
+  }
+  assert.equal(f.commits.length, 0);
+});
 
 const NOW = '2026-09-22T18:00:00.000Z'; // noon in Denver on 2026-09-22
 const LATER = '2026-09-23T18:00:00.000Z';

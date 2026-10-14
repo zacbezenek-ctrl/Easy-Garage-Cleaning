@@ -43,6 +43,7 @@ main{max-width:1060px;margin:auto;padding:28px 22px 118px}.screen-head{display:f
 <div id="gate"><form class="gate-card" onsubmit="login(event)"><div class="gate-mark">EGC</div><h1>Crew sign-in</h1><p>Use your employee portal login.</p><label for="user">Username</label><input id="user" autocomplete="username"><label for="pass">Password</label><input id="pass" type="password" autocomplete="current-password"><button type="submit">Unlock walkthrough</button><div class="gate-error" id="gate-error">Incorrect username or password.</div></form></div>
 <div id="app">
   <header class="top"><div class="top-row"><div class="brand">EGC</div><div class="top-copy"><strong>Walkthrough</strong><span id="customer-label">New customer</span></div><div class="top-status"><i></i><span id="save-label">Saved on this device</span></div><button class="lock" onclick="logout()">Lock</button></div><nav class="steps" id="steps"></nav></header>
+  <button type="button" class="lock" style="display:block;margin:8px auto" onclick="openWalkthroughReview()">Review / save staff capture</button>
   <main id="screen"></main>
   <footer class="bottom"><div class="bottom-in"><button class="back" id="back" onclick="move(-1)">Back</button><button class="next" id="next" onclick="move(1)">Continue</button></div></footer>
 </div>
@@ -188,11 +189,18 @@ async function highLevelScheduleConflict(){try{const start=new Date(`${S.jobDate
 async function saveHubJob(){return window.EGCWalkthroughHandoff.save()}
 async function sendHighLevel(btn){return window.EGCWalkthroughHandoff.send(btn)}
 function sendOptionsForReview(btn){return window.EGCWalkthroughHandoff.sendOptions(btn)}
+async function openWalkthroughReview(){if(!walkthroughReady||!window.EGCWalkthroughReview)return;return EGCWalkthroughReview.open({
+  actor:async()=>{const user=await validSession();return user?.user||'';},jobId:()=>S.quoteDraftJobId||S.handoffJobId||S.sourceWalkthroughId||'',storage:localStorage,fetcher:(...args)=>EGCHubAuth.fetch(...args),
+  base:()=>({customerName:S.name,phone:S.phone,address:S.address,serviceType:'garage_cleanout',scopeSummary:S.outcome,sortMethod:S.sortMethod,garageSize:S.garageSize,fullness:S.fill,loadEstimate:String(S.loads||''),specialItems:(S.special||[]).map(specialName),keepItems:S.keepNotes,removeItems:S.removeNotes,exclusions:S.valuables,hazards:[...(S.hazards||[])],accessNotes:S.accessNotes,parkingNotes:S.truckPlacement,finish:[...(S.finish||[])],shelfType:S.shelfType,shelfQty:Number(S.shelfQty||0),toteQty:Number(S.toteQty||0),crewSize:Number(S.crewSize||0)||null,estimatedDurationMin:estimatedJobMinutes(),quoteJobId:S.quoteDraftJobId||S.handoffJobId||'',pricingStatus:S.quoteDraftJobId||S.handoffJobId?'quote_saved':'',handoffNotes:S.notes}),
+  onSaved:data=>{invalidateAcceptance();if(!S.priceManuallySet)S.lockedPrice='';Object.assign(S,{name:data.customerName||S.name,phone:data.phone||S.phone,address:data.address||S.address,keepNotes:data.keepItems||'',removeNotes:data.removeItems||'',valuables:data.exclusions||'',accessNotes:data.accessNotes||'',truckPlacement:data.parkingNotes||'',notes:data.handoffNotes||'',hazards:data.hazards||S.hazards,finish:data.finish||S.finish,crewSize:data.crewSize?String(data.crewSize):S.crewSize,shelfType:data.shelfType||S.shelfType,shelfQty:data.shelfQty??S.shelfQty,toteQty:data.toteQty??S.toteQty});save();render();}
+});}
 function writeActive(){const total=Number(S.lockedPrice||recommend()),jobMinutes=estimatedJobMinutes(),plan=payload(),instructions=buildJobInstructions(plan);localStorage.setItem('egc_active_job',JSON.stringify({jobId:S.jobId,customerId:customerDocId(),sourceWalkthroughId:S.sourceWalkthroughId,highlevelContactId:S.highlevelContactId,highlevelOpportunityId:S.highlevelOpportunityId,highlevelAppointmentId:S.highlevelJobAppointmentId,name:S.name,phone:S.phone,email:S.email,addr:S.address,pkg:(Array.isArray(S.finish)?S.finish:[]).join(', '),total,rate:total,deposit:Math.round(Math.round(total*100)/2)/100,jobdate:S.jobDate,startTime:S.startTime,endTime:S.endTime,estimatedDurationMin:jobMinutes,estimatedDurationHours:jobMinutes/60,expectedShiftHours:(jobMinutes+90)/60,assignedTo:S.assignedTo,crewSize:Number(S.crewSize||0),pain:S.whyNow,customerNotesSummary:S.notes||S.outcome||S.whyNow,internalNotes:buildInternalNotes(instructions),clientChecklists:buildClientChecklists(instructions),discovery:plan.discovery,scope:plan.scope,logistics:plan.logistics,instructions,photosBefore:PHOTO_COUNT,savedAt:new Date().toISOString()}))}
 document.addEventListener('input',save);
 window.addEventListener('DOMContentLoaded',async()=>{if(await validSession())openApp()},{once:true});
 </script>
 <script src="/crew/quote-draft.js?v=20260929rules" defer></script>
+<link rel="stylesheet" href="/crew/walkthrough-review.css?v=20261014">
+<script src="/crew/walkthrough-review.js?v=20261014" defer></script>
 <script src="/crew/gameplan-handoff.js?v=20260929rulesbrief" defer></script>
 <script src="/employee-catalog-quote.js?v=20261002" defer></script>
 <script src="/crew/mounting-options.js?v=20261002" defer></script>

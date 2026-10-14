@@ -1873,9 +1873,12 @@ const gateHold = () => { const gate = { held: false }; gate.promise = new Promis
 // The Hub's clock and the server's move together to that many minutes after NOW.
 const later = (t, minutes, ...pages) => { t.mock.timers.setTime(Date.parse(at(minutes))); for (const p of pages) pageTime(p.hub, at(minutes)); };
 const clockInKind = body => body.data?.clockOutAt ? 'clock-out' : body.data?.clockInAt ? 'clock-in' : body.data?.lastLocation ? 'location' : body.data?.breaks ? 'break' : 'other';
-// The Hub's first load is followed by its profile save and a second load; this waits for both, so a test that makes the
-// Hub's records stale starts from settled ones.
-const ready = async (...pages) => { for (const p of pages) { await until(() => p.snapshots.length >= 2 && p.posts.some(body => body.collection === 'profiles') && !p.S.peopleRequest, 4000); await p.settle(); } };
+// A complete existing profile needs no write or second load. Wait for verified records and let any real profile
+// save settle, rather than spending the polling budget waiting for a write the Hub correctly does not make.
+const ready = async (...pages) => { for (const p of pages) {
+  assert.ok(await until(() => p.snapshots.length >= 1 && p.S.peopleState.loaded && !p.S.peopleRequest, 4000), 'Hub records loaded');
+  await p.settle();
+} };
 
 test('a queue from before clock-out records (version 1) is upgraded in place: its actions stay and are sent, and a clock-out queued now is remembered for 12 hours after it leaves the queue', async () => {
   const indexedDB = fakeIndexedDB(), { api } = load();

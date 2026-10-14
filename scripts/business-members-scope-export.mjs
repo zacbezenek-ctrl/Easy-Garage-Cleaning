@@ -94,6 +94,9 @@ export function parseArgs(argv){
 
 /** Replaces any earlier file, which would otherwise keep its old permissions. */
 export async function writeExport(path,json){
+  // Node's mode option does not establish a private DACL on Windows. Do not
+  // replace an existing file or claim a private export on that platform.
+  if(process.platform==='win32')throw Object.assign(new Error('Private file export requires a POSIX host.'),{code:'private_export_permissions_unavailable'});
   await rm(path,{force:true});
   await writeFile(path,json+'\n',{mode:0o600,flag:'wx'});
 }
@@ -114,7 +117,7 @@ export async function runExport(argv,{env=process.env,fetcher=firestoreFetch,now
   // The file is the private copy: its people never also go to the terminal, and a failed private write prints none of them.
   if(options.out){
     try{await writeExport(options.out,json);}
-    catch{stderr.write('The export file could not be written privately, so nothing was saved or printed. Choose another --out path and run it again.\n');return 1;}
+    catch(error){stderr.write('The export file could not be written privately, so nothing was saved or printed. '+(error.code==='private_export_permissions_unavailable'?'Run this private export on a POSIX host.':'Choose another --out path and run it again.')+'\n');return 1;}
   }
   else stdout.write(json+'\n');
   const inactive=report.members.filter(m=>m.widensOnRollback&&m.accountStatus!=='active').length;

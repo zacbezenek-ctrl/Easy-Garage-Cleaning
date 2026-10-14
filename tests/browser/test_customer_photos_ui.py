@@ -206,11 +206,13 @@ class CustomerPhotosBrowserTests(unittest.TestCase):
                 def revoked(route):
                     self.json(route, 403, {'ok': False, 'code': 'CUSTOMER_PORTAL_ACCESS_REVOKED', 'error': 'Your access to this private project has changed.'})
                 self.page.route('**/api/customer-portal', revoked)
-                self.page.evaluate('load(true)')
-                expect(self.page.locator('#error')).to_be_visible()
-                expect(viewer).to_be_hidden()
-                self.assertIsNone(self.page.locator(f'#{kind}-image').get_attribute('src'))
-                self.page.unroute('**/api/customer-portal', revoked)
+                try:
+                    self.page.evaluate('load(true)')
+                    expect(self.page.locator('#error')).to_be_visible()
+                    expect(viewer).to_be_hidden()
+                    self.assertIsNone(self.page.locator(f'#{kind}-image').get_attribute('src'))
+                finally:
+                    self.page.unroute('**/api/customer-portal', revoked)
 
     def test_a_withdrawn_storage_photo_closes_its_open_viewer(self):
         self.storage_photo(); self.open_portal()

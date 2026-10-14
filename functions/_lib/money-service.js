@@ -497,6 +497,13 @@ async function execute(store, actor, input, now, fingerprint, receiptId, via, re
   if (!moneyJob(job)) throw fail('job_not_found', 'This job is not available for money changes.', 404);
   if (typeof job.revision !== 'string' || !job.revision) throw fail('storage_incomplete', 'The job has no verifiable revision. Retry.', 503);
   if (job.revision !== input.expectedRevision) throw fail('revision_conflict', 'This job changed after you opened it. Refresh and review the latest money details.', 409);
+  // The staged versioned 25/75 policy is authored through quote drafts. The
+  // legacy editor would otherwise apply its separate 50% fallback or issue an
+  // invoice with unrelated due dates. Keep these paths closed until their
+  // policy-aware customer terms and billing rollout are explicitly completed.
+  if (job.estimate?.commercialPolicy !== undefined && ['estimate.save', 'estimate.mark_sent', 'estimate.record_approval', 'invoice.issue'].includes(input.action)) {
+    throw fail('payment_policy_workflow_required', 'This versioned payment-policy quote must stay in the quote workflow. Its customer terms and billing rollout are not enabled here.', 409);
+  }
   let fieldReviewFence = null;
   if (job.fieldPaymentCardRequestId && input.action !== 'costs.save') {
     if (input.action === 'payment.record_offline') {

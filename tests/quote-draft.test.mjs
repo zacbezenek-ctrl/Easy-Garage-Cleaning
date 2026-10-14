@@ -13,6 +13,159 @@ import { createGhlMessenger } from '../functions/_lib/ghl-messenger.js';
 import { CONFIRM_TOKEN_COLLECTION } from '../functions/_lib/confirm-token.js';
 import { readFileSync } from 'node:fs';
 import { priceCatalogQuote } from '../functions/_lib/catalog-quote.js';
+import { normalizeUnsignedCapture } from '../functions/_lib/unsigned-walkthrough-capture.js';
+import { fieldJobProjection } from '../functions/_lib/field-execution.js';
+import { PROPOSED_25_75, FINAL_25_75 } from '../functions/_lib/quote-payment-policy.js';
+import { syncWalkthroughCapture } from '../functions/_lib/walkthrough-capture-sync.js';
+
+test('saved authenticated capture reaches the canonical contact through a retryable internal-note intent', async () => {
+  const f = fixture(), input = f.input();
+  input.draft.walkthrough_capture = { keepItems: 'Albums', removeItems: 'Old couch', accessNotes: 'Side gate', crewBrief: 'Keep albums; carry couch' };
+  const saved = await saveQuoteDraft(f.store, owner, input, NOW, { env: ENV });
+  let writes = 0;
+  const result = await syncWalkthroughCapture(f.store, owner, { jobId: saved.job.id, syncKey: saved.job.captureSync.key }, LATER, {
+    env: { ...ENV, EGC_WALKTHROUGH_CAPTURE_SYNC: 'true', EGC_MESSAGING_DRY_RUN: 'false' },
+    note: async (env, actor, body) => { writes++; assert.equal(body.contactId, 'provider1'); assert.equal(body.portalJobId, saved.job.id); assert.match(body.body, /Keep: Albums/); return { providerSync: 'verified', note: { id: 'verified-note' } }; },
+  });
+  assert.equal(result.state.status, 'synced'); assert.equal(writes, 1);
+  assert.equal(f.job(saved.job.id).estimate.status, 'draft');
+  assert.equal(f.delivered.length, 0, 'customer messaging remains separate');
+});
+
+test('server-only proposed payment policy applies to new drafts and blocks issue while timing is unresolved', async () => {
+  const f = fixture(), input = f.input();
+  const result = await saveQuoteDraft(f.store, owner, input, NOW, { env: ENV, newQuotePaymentPolicy: PROPOSED_25_75 });
+  const job = f.job(result.job.id);
+  assert.equal(job.estimate.depositRequiredCents, Math.round(job.estimate.amountCents / 4));
+  assert.deepEqual(job.estimate.commercialPolicy, PROPOSED_25_75);
+  assert.equal(job.estimate.termsVersion, PROPOSED_25_75.version);
+  assert.equal(job.customerApproval, undefined);
+  const replay = await saveQuoteDraft(f.store, owner, input, NOW, { env: ENV, newQuotePaymentPolicy: { ...PROPOSED_25_75, version: 'fixture-later', depositDueRule: 'walkthrough_day' } });
+  assert.equal(replay.replayed, true);
+  assert.deepEqual(f.job(job.id).estimate.commercialPolicy, PROPOSED_25_75, 'a changed server proposal cannot rewrite an already saved request');
+  const preview = { jobId: job.id, expectedRevision: job.revision };
+  await assert.rejects(previewQuoteSend(f.store, owner, preview, NOW, { env: ENV }), error => error.code === 'quote_draft_payment_timing_pending');
+  await assert.rejects(sendQuoteDraft(f.store, owner, { ...preview, requestId: randomUUID(), confirmToken: 'unusable' }, NOW, { env: ENV, deliver: f.deliver }), error => error.code === 'quote_draft_payment_timing_pending');
+  assert.equal(f.delivered.length, 0);
+  const edited = { ...input, requestId: randomUUID(), jobId: job.id, expectedRevision: job.revision, draft: draft(d => { d.line_items[0].unitCents += 100; d.line_items[0].totalCents += 100; }) };
+  await saveQuoteDraft(f.store, owner, edited, LATER, { env: ENV });
+  assert.deepEqual(f.job(job.id).estimate.commercialPolicy, PROPOSED_25_75);
+  assert.equal(f.job(job.id).estimate.depositRequiredCents, Math.round(f.job(job.id).estimate.amountCents / 4));
+});
+
+test('new policy never rewrites legacy quote terms and cannot be selected by an HTTP payload', async () => {
+  const f = fixture(), input = f.input();
+  const created = await saveQuoteDraft(f.store, owner, input, NOW, { env: ENV });
+  const job = f.job(created.job.id), previous = structuredClone(job.estimate);
+  await saveQuoteDraft(f.store, owner, { ...input, requestId: randomUUID(), jobId: job.id, expectedRevision: job.revision }, LATER, { env: ENV, newQuotePaymentPolicy: PROPOSED_25_75 });
+  const next = f.job(job.id).estimate;
+  assert.equal(next.depositRequiredCents, previous.depositRequiredCents);
+  assert.equal(next.termsVersion, previous.termsVersion);
+  assert.equal(next.revision, previous.revision);
+  assert.equal(next.commercialPolicy, undefined);
+  const attempts = f.calls.length;
+  await assert.rejects(saveQuoteDraft(f.store, owner, { ...f.input(), newQuotePaymentPolicy: PROPOSED_25_75 }, NOW, { env: ENV }), error => error.code === 'quote_draft_invalid_request');
+  assert.equal(f.calls.length, attempts);
+});
+test('issued due dates remain frozen and changed walkthrough dates invalidate a pending send',async()=>{
+ const f=fixture(),input=f.input();const saved=await saveQuoteDraft(f.store,owner,input,NOW,{env:ENV,newQuotePaymentPolicy:FINAL_25_75});const job=f.job(saved.job.id);job.date='2026-10-02';
+ const preview=await previewQuoteSend(f.store,owner,{jobId:job.id,expectedRevision:job.revision},NOW,{env:ENV});
+ f.job('w1').completedAt='2026-09-29T17:00:00Z';
+ await assert.rejects(sendQuoteDraft(f.store,owner,{jobId:job.id,expectedRevision:job.revision,requestId:randomUUID(),confirmToken:preview.confirmToken},NOW,{env:ENV}),e=>/^confirm_token_/.test(e.code));
+ const current=await previewQuoteSend(f.store,owner,{jobId:job.id,expectedRevision:job.revision},NOW,{env:ENV});
+ await sendQuoteDraft(f.store,owner,{jobId:job.id,expectedRevision:job.revision,requestId:randomUUID(),confirmToken:current.confirmToken},NOW,{env:ENV});
+ assert.equal(f.job(job.id).estimate.paymentSchedule.depositDueDate,'2026-09-29');f.job(job.id).date='2026-11-01';assert.equal(f.job(job.id).estimate.paymentSchedule.remainderDueDate,'2026-10-02');
+ await save(f,revise(f,job.id,d=>{d.scope='Explicitly revised scope';}));
+ await assert.rejects(previewQuoteSend(f.store,owner,{jobId:job.id,expectedRevision:f.job(job.id).revision},NOW,{env:ENV}),e=>e.code==='quote_draft_payment_schedule_amendment_required');
+});
+
+test('new commercial policy preserves server catalog prices and its snapshot across revisions', async () => {
+  const f = fixture(), state = catalogState(), descriptor = catalogSelection(state), priced = priceCatalogQuote(state, descriptor, CATALOG_NOW);
+  const input = f.input({ sourceWalkthroughId: undefined, sourceRevision: undefined, draft: {
+    ...draft(), line_items: priced.lineItems, catalog_version: priced.catalogVersion,
+    catalog_pricing: descriptor, valid_until: '2026-10-15',
+  } });
+  const options = { env: CATALOG_ENV, catalogState: async () => state, newQuotePaymentPolicy: PROPOSED_25_75 };
+  const result = await saveQuoteDraft(f.store, owner, input, CATALOG_NOW, options);
+  const job = f.job(result.job.id), revision = job.estimate.revision;
+  assert.equal(job.estimate.amountCents, priced.totalCents);
+  assert.equal(job.estimate.depositRequiredCents, Math.round(priced.totalCents / 4));
+  assert.equal(job.estimate.depositPct, 25);
+  assert.equal(job.estimate.pricingSettingsVersion, priced.settingsVersion);
+  await saveQuoteDraft(f.store, owner, { ...input, requestId: randomUUID(), jobId: job.id, expectedRevision: job.revision }, CATALOG_NOW, options);
+  assert.equal(f.job(job.id).estimate.revision, revision, 'unchanged commercial/catalog provenance is not a new quote revision');
+  assert.deepEqual(f.job(job.id).estimate.commercialPolicy, PROPOSED_25_75);
+});
+
+test('unsigned capture is optional, bounded and rejects malformed or authority-bearing fields', () => {
+  assert.equal(normalizeUnsignedCapture(undefined), undefined);
+  assert.deepEqual(normalizeUnsignedCapture({}), {});
+  assert.deepEqual(normalizeUnsignedCapture({ keepItems: '  ', hazards: [] }), { keepItems: '', hazards: [] });
+  for (const value of [null, [], 'scope', { keepItems: {} }, { removeItems: 2 }, { exclusions: 'x'.repeat(4001) },
+    { crewBrief: 'x'.repeat(4901) }, { hazards: 'stairs' }, { access: [null] }, { finish: [''] },
+    { specialItems: Array(51).fill('item') }, { hazards: ['x'.repeat(301)] },
+    { signature: 'fake' }, { terms_accepted: true }, { deposit: 0 }, { assignedTo: 'owner' }, { internal_notes: 'private' }]) {
+    assert.throws(() => normalizeUnsignedCapture(value), error => error.code === 'quote_draft_invalid_capture' && error.status === 400);
+  }
+});
+
+test('unsigned staff capture survives create, replay and revision without changing customer terms', async () => {
+  const f = fixture(), input = f.input();
+  input.draft.walkthrough_capture = { customerGoal: 'Park inside', whyNow: 'Moving', sortMethod: 'Sort together', keepItems: 'Family albums',
+    removeItems: 'Old couch', exclusions: 'Locked cabinet', hazards: ['Pest waste (+$200)'], access: ['Stairs'],
+    specialItems: ['2x mattress'], finish: ['cleanout'], accessNotes: 'Use side gate', truckPlacement: 'Driveway', crewBrief: 'Carry couch ($100) and keep 2 albums' };
+  const result = await saveQuoteDraft(f.store, owner, input, NOW, { env: ENV });
+  const job = f.job(result.job.id), field = fieldJobProjection(job);
+  assert.deepEqual([field.keepItems, field.removeItems, field.exclusions, field.accessInstructions, field.truckPlacement], ['Family albums', 'Old couch', 'Locked cabinet', 'Use side gate', 'Driveway']);
+  assert.deepEqual(field.hazards, ['Pest waste']); assert.deepEqual(field.access, ['Stairs']);
+  assert.equal(field.scope, 'Carry couch and keep 2 albums');
+  assert.equal(job.jobInstructions.whyNow, 'Moving'); assert.deepEqual(job.jobInstructions.specialItems, ['2x mattress']);
+  assert.equal(job.walkthroughCaptureSync.status, 'pending');
+  assert.equal(result.job.captureSync.status, 'pending');
+  assert.equal(result.job.captureSync.body, undefined);
+  assert.equal(job.estimate.scope, input.draft.scope); assert.equal(job.estimate.status, 'draft');
+  assert.equal(job.acceptance, undefined); assert.equal(job.customerApproval, undefined); assert.equal(job.signature, undefined);
+  assert.equal(JSON.stringify(result).includes('Family albums'), false, 'quote author/customer-facing DTO does not expose operational notes');
+  const calls = f.calls.length;
+  assert.equal((await saveQuoteDraft(f.store, owner, input, NOW, { env: ENV })).replayed, true);
+  assert.equal(f.calls.length, calls);
+  const revision = job.estimate.revision;
+  const update = { ...input, requestId: randomUUID(), jobId: job.id, expectedRevision: job.revision, draft: draft() };
+  await saveQuoteDraft(f.store, owner, update, LATER, { env: ENV });
+  assert.equal(f.job(job.id).jobInstructions.keepItems, 'Family albums', 'old clients preserve instructions');
+  update.requestId = randomUUID(); update.expectedRevision = f.job(job.id).revision;
+  update.draft.walkthrough_capture = { keepItems: '', access: [], accessNotes: '', crewBrief: '' };
+  await saveQuoteDraft(f.store, owner, update, LATER, { env: ENV });
+  const changed = f.job(job.id);
+  assert.equal(changed.jobInstructions.keepItems, ''); assert.deepEqual(changed.jobInstructions.access, []);
+  assert.equal(changed.accessInstructions, ''); assert.equal(changed.operationalScope.text, '');
+  assert.equal(changed.jobInstructions.removeItems, 'Old couch');
+  assert.equal(changed.estimate.revision, revision, 'staff-only edits do not revise customer prices/terms');
+  assert.equal(f.delivered.length, 0); assert.equal(f.job('w1').payment.verified, true);
+});
+
+test('public, unauthorized and cross-origin capture submissions never access storage', async () => {
+  let reads = 0;
+  const storage = () => { reads++; throw new Error('must not access storage'); };
+  for (const [actor, status] of [[null, 401], [crew, 403]]) {
+    const handlers = quoteDraftHandlers({ session: async () => actor, storage });
+    const body = { action: 'save', ...fixture().input() };
+    body.draft.walkthrough_capture = { keepItems: 'Private scope' };
+    const response = await handlers.post({ request: request('POST', body), env: ENV });
+    assert.equal(response.status, status);
+  }
+  const handlers = quoteDraftHandlers({ session: async () => owner, storage });
+  assert.equal((await handlers.post({ request: request('POST', { action: 'save' }, { Origin: 'https://public-form.example', 'Sec-Fetch-Site': 'cross-site' }), env: ENV })).status, 403);
+  assert.equal(reads, 0);
+});
+
+test('malformed capture and forged approval stop an authenticated save before any write', async () => {
+  for (const capture of [{ hazards: { unknown: true } }, { signature: 'forged' }, { terms_accepted: true }, { payment: { verified: true } }]) {
+    const f = fixture(), input = f.input(); input.draft.walkthrough_capture = capture;
+    await assert.rejects(saveQuoteDraft(f.store, owner, input, NOW, { env: ENV }), error => error.code === 'quote_draft_invalid_capture');
+    assert.equal(f.calls.length, 0);
+  }
+});
 
 const NOW = '2026-09-22T18:00:00.000Z';
 const LATER = '2026-09-22T18:02:00.000Z';
@@ -124,11 +277,14 @@ test('a catalog quote saves only server-computed products, once-only minimum, co
   const value = f.input({ sourceWalkthroughId: undefined, sourceRevision: undefined, draft: {
     ...draft(), title: 'Catalog product installation', scope: 'Supply and install an overhead rack.',
     line_items: preview.lineItems, catalog_version: preview.catalogVersion, catalog_pricing: descriptor, valid_until: '2026-10-15',
+    walkthrough_capture: { keepItems: 'Existing ceiling light', crewBrief: 'Install below ceiling light' },
   } });
   let current = state;
   const options = { catalogState: async () => current };
   const saved = await save(f, value, owner, CATALOG_ENV, CATALOG_NOW, options);
   const job = f.job(saved.job.id);
+  assert.equal(job.jobInstructions.keepItems, 'Existing ceiling light');
+  assert.equal(job.operationalScope.text, 'Install below ceiling light');
   assert.deepEqual([job.estimate.amountCents, job.estimate.depositRequiredCents, job.estimate.depositPct, job.estimate.pricingSettingsVersion], [45000, 13500, 30, state.settings.settingsVersion]);
   assert.deepEqual(job.estimate.lineItems.map(line => [line.id, line.totalCents]), [['catalog-1', 39399], ['catalog-minimum', 5601]]);
   assert.equal(job.estimate.lineItems[0].split.productCents, 19499);
@@ -614,10 +770,17 @@ test('quote draft API: quote authors only, same origin, bounded JSON and a proje
   assert.equal((await post({ action: 'save', ...f.input() }, { 'Content-Type': 'text/plain' })).status, 415);
   assert.equal((await post({ action: 'save', ...f.input() }, { 'Content-Length': '70000' })).status, 413);
   assert.equal((await post({ action: 'publish' })).status, 400);
+  assert.equal(f.job(id).estimate.commercialPolicy.version,'2026-10-14-deposit25-v1');
+  const needsDate=await post({ action:'send_preview',jobId:id,expectedRevision:f.job(id).revision });
+  assert.equal(needsDate.status,409,'new policy needs verified job and walkthrough dates before issue');
+  f.job(id).date='2026-10-02';
   const preview = await (await post({ action: 'send_preview', jobId: id, expectedRevision: f.job(id).revision })).json();
   assert.equal(typeof preview.confirmToken, 'string'); assert.equal(preview.delivery.mode, 'off');
+  assert.equal(preview.job.estimate.paymentSchedule.depositDueDate,'2026-09-25');
+  assert.match(preview.summary,/25% deposit.*2026-09-25.*75% remainder.*2026-10-02.*America\/Denver/);
   const sent = await post({ action: 'send', requestId: randomUUID(), jobId: id, expectedRevision: f.job(id).revision, confirmToken: preview.confirmToken });
   assert.equal(sent.status, 200); assert.equal(f.job(id).estimate.status, 'sent');
+  assert.equal(f.job(id).estimate.paymentSchedule.remainderDueDate,'2026-10-02');
   for (const person of [null, crew, sales]) {
     actor = person;
     const response = await post({ action: 'save', ...f.input() });

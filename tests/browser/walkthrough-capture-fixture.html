@@ -1,0 +1,16 @@
+<!doctype html><html lang="en"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="robots" content="noindex,nofollow"><title>Local staff capture UI fixture</title><link rel="stylesheet" href="/crew/quote-draft.css">
+<style>body{font:16px system-ui;margin:32px;background:#f8f5ef;color:#071b37}button{font:inherit;padding:12px;margin:8px}aside{border:3px solid #ff5318;padding:16px}</style>
+<aside><strong>LOCAL STAFF UI SIMULATION ONLY</strong><p>No authentication session, real customer, provider request or GHL write is used by this fixture.</p></aside>
+<h1>Walkthrough capture recovery</h1><button id="failed">Open failed-sync example</button><button id="disabled">Open sync-off example</button>
+<script src="/crew/quote-draft.js"></script><script>
+function openFixture(enabled){
+  let status=enabled?'error':'pending';
+  const job=()=>({id:'local-fixture',revision:status,estimate:{number:'LOCAL-ONLY',revision:1,amountCents:90000,validUntil:'2026-11-01',lineItems:[]},captureSync:{key:'local-only',status}});
+  const client={pendingSave:async()=>null,savedCapture:async()=>({job:job(),captureSyncEnabled:enabled}),clear(){},
+    syncCapture:async()=>{status='synced';return{job:job(),captureSyncEnabled:enabled};}};
+  EGCQuoteDraft.open({client,plan:()=>({client:{name:'Synthetic customer'},quote:{line_items:[{id:'service',name:'Synthetic service',quantity:1,totalCents:90000}]}}),now:()=>Date.parse('2026-10-14T12:00:00Z')});
+}
+document.querySelector('#failed').onclick=()=>openFixture(true);
+document.querySelector('#disabled').onclick=()=>openFixture(false);
+</script></html>
