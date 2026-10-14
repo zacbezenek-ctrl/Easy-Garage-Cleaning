@@ -49,12 +49,12 @@ class PublicPerformanceBrowserTests(unittest.TestCase):
 
     def test_generated_page_paints_its_final_layout_with_small_images(self):
         page = self.open(SERVICE)
-        # site-enhancements.js still adds its drawer link, but the booking bar was already in the HTML.
-        page.wait_for_function("!!document.querySelector('#nav-drawer a[href=\"/customer-portal\"]')")
-        self.assertEqual(page.locator('#egc-customer-access').count(), 1)
-        self.assertEqual(page.locator('#egc-customer-access-style').count(), 0, 'styles.css styles the static bar; the script adds no copy')
-        self.assertEqual(page.evaluate("document.querySelector('main').firstElementChild.id"), 'egc-customer-access')
-        for link in page.locator('#egc-customer-access a').all(): self.assertGreaterEqual(link.bounding_box()['height'], 44)
+        # Account links are in the server-rendered footer; no script adds a band above the hero.
+        expect(page.locator('.site-footer a[href="/customer-portal"]')).to_have_count(1)
+        expect(page.locator('.site-footer a[href="/business-hub"]')).to_have_count(1)
+        self.assertEqual(page.locator('#egc-customer-access').count(), 0)
+        self.assertEqual(page.locator('#egc-customer-access-style').count(), 0)
+        self.assertNotEqual(page.evaluate("document.querySelector('main').firstElementChild.id"), 'egc-customer-access')
         page.evaluate("new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)))")
         self.assertLess(sum(page.evaluate('window.__shifts')), 0.01, 'nothing moves the hero after it paints')
         hero = page.locator('.hero-ba img').first
@@ -242,30 +242,30 @@ class PublicPerformanceBrowserTests(unittest.TestCase):
         form.evaluate("form => form.requestSubmit(form.querySelector('[type=submit]'))")
         self.assertEqual(page.evaluate('window.__accepted'), 2)
 
-    def test_book_page_ships_its_business_contact_in_the_bar(self):
+    def test_book_page_ships_its_business_contact_without_an_account_banner(self):
         page = self.open('/book.html')
-        page.wait_for_function("!!document.querySelector('#nav-drawer a[href=\"/customer-portal\"]')")
-        expect(page.locator('#egc-customer-access .egc-business-contact a[href="tel:+19709991403"]')).to_have_count(1)
+        expect(page.locator('.egc-business-contact a[href="tel:+19709991403"]')).to_have_count(1)
+        expect(page.locator('.site-footer a[href="/customer-portal"]')).to_have_count(1)
+        self.assertEqual(page.locator('#egc-customer-access').count(), 0)
         self.assertEqual(page.locator('.egc-business-contact').count(), 1)
         self.assertLess(sum(page.evaluate('window.__shifts')), 0.01)
 
-    def test_site_enhancements_still_builds_the_bar_on_a_page_without_it(self):
-        self.context = self.browser.new_context(viewport={'width': 375, 'height': 812}, is_mobile=True, has_touch=True)
+    def test_account_access_is_server_rendered_without_javascript(self):
+        self.context = self.browser.new_context(viewport={'width': 375, 'height': 812}, is_mobile=True, has_touch=True, java_script_enabled=False)
         self.page = self.context.new_page(); self.page.set_default_timeout(8000); self.errors = []
         self.page.on('pageerror', lambda error: self.errors.append(str(error)))
         def route(route):
             url = urlparse(route.request.url)
             if url.hostname != '127.0.0.1': return route.abort()
-            if url.path != SERVICE: return route.continue_()
-            html = route.fetch().text()
-            stripped = re.sub(r'<nav id="egc-customer-access"[\s\S]*?</nav>', '', html, count=1)
-            self.assertNotEqual(stripped, html)
-            route.fulfill(status=200, content_type='text/html; charset=utf-8', body=stripped)
+            return route.continue_()
         self.context.route('**/*', route)
         self.page.goto(self.url + SERVICE)
-        self.page.wait_for_function("!!document.getElementById('egc-customer-access-style')")
-        self.assertEqual(self.page.evaluate("document.querySelector('main').firstElementChild.id"), 'egc-customer-access')
-        self.assertEqual(self.page.locator('#nav-drawer a[href="/customer-portal"]').count(), 1)
+        self.assertEqual(self.page.locator('#egc-customer-access').count(), 0)
+        self.assertEqual(self.page.locator('#egc-customer-access-style').count(), 0)
+        for target in ('/customer-portal', '/business-hub'):
+            link = self.page.locator(f'.site-footer a[href="{target}"]')
+            expect(link).to_have_count(1)
+            self.assertGreaterEqual(link.bounding_box()['height'], 44)
 
     def test_gallery_cards_use_thumbnails_on_a_2x_phone_and_the_viewer_the_full_photo(self):
         page = self.open('/before-after.html', scale=2)

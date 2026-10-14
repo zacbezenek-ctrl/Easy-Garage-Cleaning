@@ -19,6 +19,7 @@ import { estimateFingerprint, included, legacyLineItems, unsentQuoteDraft } from
 import { crewPublicProfilesEnabled, customerCrew, customerCrewProjection, readCrewPublicProfiles } from '../_lib/crew-public-profile.js';
 import { liveSale, portalApprovalWrites, portalFunnelWrite, vocabularyValue } from '../_lib/job-funnel-events.js';
 import { dispatchReviewPatch, queued } from '../_lib/dispatch-queue.js';
+import { publicQuotePaymentSchedule, quotePaymentSummary } from '../_lib/quote-payment-policy.js';
 
 const HOST = /^(?:easygaragecleaning\.com|www\.easygaragecleaning\.com|easy-garage-cleaning\.pages\.dev|localhost(?::\d+)?|127\.0\.0\.1(?::\d+)?)$/;
 const DEFAULT_REVIEW_URL = 'https://search.google.com/local/writereview?placeid=ChIJ17AGfBiyRIsRyJ3k4mDtX8Q';
@@ -114,11 +115,12 @@ function estimateLines(job, finance) {
 // A digest of exactly what the estimate card shows (total, deposit, scope and
 // lines); an approval must name it, so a scope or line edit that keeps the
 // revision and total still needs a fresh review.
-const shownFingerprint = estimate => estimateFingerprint({ amount: estimate.amount, depositRequired: estimate.depositRequired, scope: estimate.scope, lineItems: estimate.lineItems });
+const shownFingerprint = estimate => estimateFingerprint({ amount: estimate.amount, depositRequired: estimate.depositRequired, scope: estimate.scope, lineItems: estimate.lineItems, ...(estimate.paymentSchedule?{paymentSchedule:estimate.paymentSchedule}:{}), ...(estimate.commercialPolicy?{commercialPolicy:estimate.commercialPolicy}:{}) });
 
 // The estimate card shows the signed quote; billed change orders are part of
 // the payment total, never of the estimate an approval binds to.
 function estimateState(job, finance, today, draftsRejected = false) {
+  const schedule = publicQuotePaymentSchedule(job.estimate);
   const quote = { ...finance, total: customerQuoteTotal(job) };
   const rawStatus = String(job.customerApproval?.status || job.estimate?.status || job.quoteStatus || (quote.total ? 'ready' : 'not_ready')).toLowerCase();
   const validUntil = safe(job.estimate?.validUntil || '', 30);
@@ -136,8 +138,9 @@ function estimateState(job, finance, today, draftsRejected = false) {
     approvable: !approvalBlocked(job, draftsRejected),
     depositRequired: customerDepositState(job, finance).required,
     lineItems: estimateLines(job, quote),
-    terms: CUSTOMER_PORTAL_CONTENT.estimateTerms,
-    termsVersion: CUSTOMER_PORTAL_TERMS_VERSION,
+    terms: schedule ? 'This flat-rate estimate covers the scope shown. '+quotePaymentSummary(schedule)+' Any material scope change requires your approval before additional work or charges.' : CUSTOMER_PORTAL_CONTENT.estimateTerms,
+    termsVersion: schedule ? schedule.policyVersion : CUSTOMER_PORTAL_TERMS_VERSION,
+    ...(schedule?{paymentSchedule:schedule,commercialPolicy:job.estimate.commercialPolicy}:{}),
   };
   return { ...estimate, fingerprint: shownFingerprint(estimate) };
 }
@@ -488,7 +491,8 @@ async function handlePost({ request, env }, { clock, read }) {
     // The approval records the terms version the page displayed (a page from
     // before versioning is recorded as having shown only the estimate terms).
     // A page opened before the copy changed must reload rather than approve unseen terms.
-    const termsVersion = approvalTermsVersion(body.terms_version);
+    const paymentSchedule = publicQuotePaymentSchedule(result.job.estimate);
+    const termsVersion = paymentSchedule ? body.terms_version === paymentSchedule.policyVersion ? paymentSchedule.policyVersion : null : approvalTermsVersion(body.terms_version);
     if (!termsVersion) return reply(409, { ok: false, code: 'CUSTOMER_PORTAL_TERMS_CHANGED', error: 'Our estimate terms were updated. Review the latest terms, then approve again.' });
     const approval = { status: 'approved', approvedAt: now, approvedBy: signedName, amount: quote, source: 'customer_portal', termsVersion };
     const deposit = customerDepositState(result.job, finance), actor = approvalActor(result.session.actorId);

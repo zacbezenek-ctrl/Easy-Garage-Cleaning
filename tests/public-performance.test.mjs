@@ -13,7 +13,7 @@ import { sourceFiles } from './source-files.mjs';
 // small header/footer logos, responsive priority hero images, no full-size CloudFront image
 // above the fold, and the shared page script as one immutable, content-versioned file.
 const root = fileURLToPath(new URL('..', import.meta.url));
-const read = path => readFileSync(join(root, path), 'utf8');
+const read = path => readFileSync(join(root, path), 'utf8').replace(/\r\n/g, '\n');
 // Mirrors PRIVATE_HTML / PRIVATE_DIRS in _generate_site.py (tests/nav-a11y.test.mjs uses the same split).
 const privateNames = new Set(['business-hub.html', 'client-login.html', 'copilot.html', 'customer-portal.html', 'dispatch.html', 'hub-login-setup.html', 'message-templates.html', 'quote.html', 'sop.html', 'tyler-contract.html']);
 const privateDirs = new Set(['crew', 'contracts', 'docs', 'egc-platform', 'functions', 'tests', 'tools', 'scripts', 'auth-verifier', 'internal-gallery-assets', 'venv', 'field-qa', 'test-results', 'dist', 'node_modules']);
@@ -227,52 +227,13 @@ test('pages build on one styles.css version and carry no inline footer stopgap',
   }
 });
 
-test('pages that load site-enhancements.js render its booking bar in the HTML', () => {
-  let bars = 0;
+test('account links are rendered in the footer without a new band above the hero', () => {
   for (const page of publicPages) {
     if (!page.html.includes('<script src="/site-enhancements.js')) continue;
-    const main = page.html.match(/<main\b[^>]*\bid="main-content"[^>]*>/);
-    assert.ok(main, page.rel);
-    const after = page.html.slice(main.index + main[0].length);
-    assert.ok(after.startsWith('<nav id="egc-customer-access" class="egc-customer-access" aria-label="Booking and customer portal">'), `${page.rel}: the bar is the first thing in main, so the script never inserts it above the hero`);
-    assert.equal((page.html.match(/id="egc-customer-access"/g) || []).length, 1, page.rel);
-    assert.match(after, /^<nav[^>]*><div class="egc-customer-access-inner">[\s\S]*?<a href="\/book">Book a Free Walkthrough<\/a><a href="\/customer-portal">Customer Portal<\/a>/);
-    assert.equal(after.includes('class="egc-business-contact"'), page.rel === 'book.html', page.rel);
-    bars++;
+    assert.doesNotMatch(page.html, /id="egc-customer-access"/, page.rel);
+    const footer = page.html.match(/<footer[\s\S]*?<\/footer>/)?.[0] || '';
+    assert.match(footer, /href="\/customer-portal"/, page.rel);
+    assert.match(footer, /href="\/business-hub"/, page.rel);
   }
-  assert.ok(bars >= 40, `expected the generated pages, found ${bars}`);
-  assert.match(read('styles.css'), /\.egc-customer-access\{background:#f4f2ec;/);
-});
-
-// The bar site-enhancements.js builds (run against a minimal DOM), serialized like the generator writes it.
-function scriptedCustomerAccess(pathname) {
-  const element = tag => ({ tag, id: '', className: '', href: '', textContent: '', attributes: [], children: [],
-    setAttribute(name, value) { this.attributes.push([name, String(value)]); },
-    appendChild(child) { this.children.push(child); return child; },
-    insertBefore(child, before) { this.children.splice(before ? this.children.indexOf(before) : this.children.length, 0, child); return child; },
-    get firstChild() { return this.children[0] || null; } });
-  const main = element('main'), head = element('head');
-  const document = { readyState: 'complete', head, getElementById: id => (id === 'main-content' ? main : null), createElement: element,
-    createTextNode: text => ({ text }), querySelector: () => null, querySelectorAll: () => [], addEventListener() {} };
-  vm.runInNewContext(read('site-enhancements.js'), { window: { location: { pathname } }, document });
-  const escape = text => text.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
-  const html = node => {
-    if (!node.tag) return escape(node.text);
-    const attrs = [['id', node.id], ['class', node.className], ...node.attributes, ['href', node.href]].filter(([, value]) => value).map(([name, value]) => ` ${name}="${value}"`).join('');
-    return `<${node.tag}${attrs}>${node.children.length ? node.children.map(html).join('') : escape(node.textContent)}</${node.tag}>`;
-  };
-  assert.equal(main.children.length, 1);
-  return html(main.children[0]);
-}
-
-test('the booking bar in the HTML matches the one site-enhancements.js builds, business contact included', () => {
-  // BOOK_BUSINESS_CONTACT in _generate_site.py and site-enhancements.js carry the same partnership contact;
-  // the script is no-cache so it updates live, and book.html must not keep an old phone or email.
-  for (const [pathname, page] of [['/book', 'book.html'], ['/pricing', 'pricing.html'], ['/', 'index.html']]) {
-    const html = read(page), start = html.indexOf('<nav id="egc-customer-access"');
-    assert.ok(start >= 0, page);
-    assert.equal(html.slice(start, html.indexOf('</nav>', start) + 6), scriptedCustomerAccess(pathname), `${page}: the static bar and site-enhancements.js differ`);
-  }
-  assert.match(scriptedCustomerAccess('/book'), /<p class="egc-business-contact">Business partnerships: [^<]+<a href="tel:\+1\d{10}">[^<]+<\/a> \| <a href="mailto:[^"@]+@easygaragecleaning\.com">/);
-  assert.doesNotMatch(scriptedCustomerAccess('/pricing'), /egc-business-contact/);
+  assert.doesNotMatch(read('site-enhancements.js'), /insertCustomerAccess|createElement/);
 });

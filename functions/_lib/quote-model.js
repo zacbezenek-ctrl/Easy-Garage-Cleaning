@@ -557,6 +557,10 @@ export function estimateFingerprint(estimate) {
   const stored = Array.isArray(source.lineItems) ? source.lineItems.map(line => plain(line) ? Object.fromEntries(Object.entries(line).filter(([key]) => !INTERNAL_FIELDS.has(key))) : line) : source.lineItems;
   const money = value => value === undefined || value === null ? null : moneyCents(value) ?? `invalid:${exactCanonical(value)}`;
   const body = { v: 2, lines: lineItems.map(line => Object.fromEntries(MATERIAL.map(key => [key, line[key]]))), stored, amountCents: money(source.amount), depositCents: money(source.depositRequired), scope: source.scope };
+  // Preserve every legacy fingerprint byte; new commercial terms are part of
+  // the reviewed contract and must invalidate prior approval if changed.
+  if (source.commercialPolicy !== undefined) body.commercialPolicy = source.commercialPolicy;
+  if (source.paymentSchedule !== undefined) body.paymentSchedule = source.paymentSchedule;
   return hex(sha256(new TextEncoder().encode(exactCanonical(body))));
 }
 

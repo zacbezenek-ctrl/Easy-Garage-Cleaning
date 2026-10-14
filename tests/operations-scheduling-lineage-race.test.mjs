@@ -42,7 +42,7 @@ function load() {
     // The real shared classifier, so commit error paths map as in production.
     commitConflict, commitFailure,
   });
-  vm.runInContext(source.replace(/^import .*;\n/gm, '').replace(/^export /gm, '') +
+  vm.runInContext(source.replace(/^import .*;\r?\n/gm, '').replace(/^export /gm, '') +
     '\nglobalThis.api = {mutateScheduledVisit, schedulingStorage};', context);
   return context.api;
 }

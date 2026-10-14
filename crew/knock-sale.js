@@ -140,6 +140,8 @@ function saleCard(sale, commission) {
   const [depLabel, depTone] = DEPOSIT_BADGE[depositState] || [depositState, ''];
   const windowOpen = Date.now() < Date.parse(sale.cancelEndsAt || 0);
   const commissionText = !commission ? '—'
+    : ['unconfigured', 'review_required'].includes(commission.state) ? 'Needs review'
+    : commission.state === 'excluded' ? '$0 - not commission eligible'
     : commission.state === 'earned' ? `${money(commission.amount, true)} · earned`
     : commission.state === 'cancelled' ? '$0'
     : `${money(commission.amount, true)} · ${sale.status === 'completed' ? 'waiting on customer payment' : `earned after ${dateLabel(sale.jobDate)}`}`;

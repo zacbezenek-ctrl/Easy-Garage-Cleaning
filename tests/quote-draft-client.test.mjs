@@ -18,6 +18,29 @@ const payload = () => ({ client: { name: 'Synthetic Customer', phone: '+19705550
   { id: 'adjustment', kind: 'fee', name: 'Price adjustment', description: 'Long carry agreed', quantity: 1, unitCents: 41400, totalCents: 41400 },
 ] }, logistics: { crew_size: 2 }, signature: 'data:image/png;base64,UNUSED', raw: { secret: 'never sent' } });
 
+test('walkthrough conversion carries only explicit operational capture to the authenticated draft', () => {
+  const plan = payload();
+  Object.assign(plan, { scope: { keep_items: 'Albums', remove_items: 'Couch', exclusions: 'Cabinet', hazards: ['Dust'], access: ['Stairs'], finish: ['cleanout'], special_items: ['Mattress'], hazard_details: { price: 999 } },
+    discovery: { success: 'Park car', why_now: 'Moving', lead_source: 'private' },
+    logistics: { crew_size: 2, notes: 'Side gate', truck_placement: 'Driveway', assigned_to: 'owner' }, crew_brief: 'Keep albums', internal_notes: 'Manager margin 99%', terms_accepted: true });
+  const draft = plain(draftFromWalkthrough(plan, '2026-10-06'));
+  assert.deepEqual(draft.walkthrough_capture, { customerGoal: 'Park car', whyNow: 'Moving', keepItems: 'Albums', removeItems: 'Couch', exclusions: 'Cabinet', hazards: ['Dust'], access: ['Stairs'], specialItems: ['Mattress'], finish: ['cleanout'], accessNotes: 'Side gate', truckPlacement: 'Driveway', crewBrief: 'Keep albums' });
+  assert.doesNotMatch(JSON.stringify(draft), /signature|terms_accepted|internal_notes|assigned_to|lead_source|hazard_details|Manager margin/);
+  draft.walkthrough_capture.hazards.push('Other'); assert.deepEqual(plan.scope.hazards, ['Dust']);
+  assert.deepEqual(plain(draftFromWalkthrough({}, '2026-10-06').walkthrough_capture), {});
+});
+test('capture sync client submits only saved job/intent IDs, never form content or destination', async () => {
+  let body, accepted;
+  const client = createClient({ actor: async () => 'zacb', savedJobId: () => 'job-1', accept: result => { accepted = result; }, fetch: async (url, options) => {
+    body = options?.body ? JSON.parse(options.body) : null;
+    return reply({ ok: true, job: { id: 'job-1', captureSync: { key: 'intent-1', status: 'synced' } }, captureSyncEnabled: true });
+  } });
+  const result = await client.syncCapture({ id: 'job-1', captureSync: { key: 'intent-1' }, internalNotes: 'never send', highlevelContactId: 'never send' });
+  assert.deepEqual(body, { action: 'sync_capture', actorId: 'zacb', jobId: 'job-1', syncKey: 'intent-1' });
+  assert.equal(result.job.captureSync.status, 'synced'); assert.equal(accepted, result);
+  assert.equal((await client.savedCapture()).job.id, 'job-1');
+});
+
 function fixture() {
   let user = 'sales.person', lose = 0, refuse = null, n = 0, manual = 0, garble = [];
   // The server replays a committed save by its request id, like saveQuoteDraft's receipt.

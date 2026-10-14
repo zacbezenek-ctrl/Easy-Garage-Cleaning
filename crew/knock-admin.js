@@ -393,7 +393,8 @@ async function salesSection(params) {
   };
   const address = sale => `${sale.address.number} ${titleStreet(sale.address.street)}${sale.address.unit ? ` #${sale.address.unit}` : ''}`;
   const card = sale => {
-    const d = sale.handoff?.deposit || {}, t = sale.handoff?.text || {}, j = sale.handoff?.job || {};
+    const d = sale.handoff?.deposit || {}, j = sale.handoff?.job || {};
+    const t = { ...sale.handoff?.text, status: sale.sync?.highlevel?.state || sale.handoff?.text?.status };
     const ref = h('input', { class: 'input input--sm', placeholder: 'Hub job ID or Jobber link', value: j.ref || '', 'aria-label': 'Job reference' });
     const windowOpen = Date.now() < Date.parse(sale.cancelEndsAt || 0);
     const [label, tone] = SALE_BADGE[sale.status] || [sale.status, ''];
@@ -462,14 +463,14 @@ async function salesSection(params) {
 }
 
 function lifecycle(sale, act) {
-  const paid = h('input', { class: 'input input--sm', type: 'number', step: '0.01', min: '0', value: String(sale.collectedAmount ?? sale.ticket), 'aria-label': 'Amount collected', style: { width: '9rem' } });
+  const paid = h('input', { class: 'input input--sm', type: 'number', step: '0.01', min: '0', inputmode: 'decimal', value: String(sale.collectedAmount ?? ''), 'aria-label': 'Cumulative customer receipts including deposit', style: { width: '9rem' } });
   const jobDate = h('input', { class: 'input input--sm', type: 'date', value: sale.jobDate, min: sale.earliestJobDate, 'aria-label': 'Job date', style: { width: '11rem' } });
   return h('div', { class: 'card card--line', style: { gap: '10px' } },
     h('h3', {}, 'Lifecycle'),
     h('div', { class: 'row wrap', style: { gap: '10px' } },
-      sale.status === 'booked' ? h('button', { type: 'button', class: 'btn btn--success btn--sm', onclick: () => act({ action: 'sale.status', saleId: sale.id, status: 'completed' }, 'Marked completed') }, icon('check'), 'Job completed') : null,
-      ['booked', 'completed'].includes(sale.status) ? h('span', { class: 'row', style: { gap: '6px' } }, paid,
-        h('button', { type: 'button', class: 'btn btn--secondary btn--sm', onclick: () => act({ action: 'sale.status', saleId: sale.id, status: 'paid', collectedAmount: paid.value }, 'Marked paid') }, 'Mark paid')) : null,
+      sale.status !== 'cancelled' && !sale.completedAt ? h('button', { type: 'button', class: 'btn btn--success btn--sm', onclick: () => act({ action: 'sale.status', saleId: sale.id, status: 'completed' }, 'Marked completed') }, icon('check'), 'Job completed') : null,
+      sale.status !== 'cancelled' ? h('span', { class: 'row wrap', style: { gap: '6px' } }, paid,
+        h('button', { type: 'button', class: 'btn btn--secondary btn--sm', onclick: () => act({ action: 'sale.collection', saleId: sale.id, collectedAmount: paid.value }, 'Customer receipts recorded') }, 'Record customer receipts')) : null,
       sale.status !== 'cancelled' ? h('span', { class: 'row', style: { gap: '6px' } }, jobDate,
         h('button', { type: 'button', class: 'btn btn--quiet btn--sm', onclick: () => act({ action: 'sale.jobDate', saleId: sale.id, jobDate: jobDate.value }, 'Job date saved') }, 'Move job')) : null,
       h('span', { class: 'spacer' }),
@@ -478,10 +479,42 @@ function lifecycle(sale, act) {
           if (await confirmSheet('Cancel this sale?', 'A cancelled sale pays no commission. Refund the deposit by the cancellation rules.', 'Cancel sale', 'danger')) act({ action: 'sale.status', saleId: sale.id, status: 'cancelled' }, 'Sale cancelled');
         } }, 'Cancel sale…')
         : h('button', { type: 'button', class: 'btn btn--secondary btn--sm', onclick: () => act({ action: 'sale.status', saleId: sale.id, status: 'booked' }, 'Sale reinstated') }, 'Reinstate')),
-    h('p', { class: 'caption muted' }, `The job can't be before ${dateLabel(sale.earliestJobDate)}. Commission is earned once the job is completed, paid and past the cancellation deadline.`));
+    h('p', { class: 'caption muted' }, `Enter total customer receipts including the deposit, not an additional payment. This does not charge the customer or pay the rep. Record completion separately. The job can't be before ${dateLabel(sale.earliestJobDate)}.`),
+    h('p', { class: 'caption muted' }, `Job link: ${sale.sync?.job || 'unverified'}. HighLevel: ${sale.sync?.highlevel?.state || 'unverified'}. Appointment sync: not verified. Check provider history before retrying an uncertain send.`));
 }
 
 /* ---------- Money ---------- */
+
+async function settersSection() {
+  const data = await load('setters', {}, { force: true });
+  const requestId = uuid();
+  const visit = h('input', { class: 'input', id: 'setter-visit', placeholder: 'Canonical walkthrough ID' });
+  const setter = h('select', { class: 'input', id: 'setter-rep' },
+    data.reps.filter(rep => rep.status === 'active').map(rep => h('option', { value: rep.repKey }, rep.displayName || rep.repKey)));
+  const scope = h('select', { class: 'input', id: 'setter-scope' },
+    [['unverified', 'Needs classification'], ['garage', 'Verified garage work'], ['junk_removal', 'Junk removal — no commission']].map(([value, label]) => h('option', { value }, label)));
+  const reference = h('input', { class: 'input', id: 'setter-reference', placeholder: 'Classification review reference (no customer details)' });
+  const estimator = h('input', { class: 'input', id: 'setter-estimator', placeholder: 'Staff key, or leave unverified' });
+  const estimatorReference = h('input', { class: 'input', id: 'setter-estimator-reference', placeholder: 'Estimator attribution review reference' });
+  return { subtitle: '12% setting channel; separate from direct-close and estimator attribution.', body: [
+    banner('warning', 'info', 'Setter pay needs policy review', 'A booking or no-show earns nothing. A closed and collected job allocates 12% to its setter and 7% to its estimator. Verify both recipients, the calculation base and payroll anchor before any payable amount is shown.'),
+    h('section', { class: 'card stack' }, h('h2', {}, 'Record walkthrough setter'),
+      field('Walkthrough ID', visit, null, 'setter-visit'), field('Setter', setter, null, 'setter-rep'),
+      field('Service classification', scope, null, 'setter-scope'), field('Review reference', reference, null, 'setter-reference'),
+      field('Estimator (separate attribution)', estimator, null, 'setter-estimator'), field('Estimator review reference', estimatorReference, null, 'setter-estimator-reference'),
+      h('button', { class: 'btn btn--primary', type: 'button', onclick: async () => {
+        try { await action({ action: 'setter.record', requestId, walkthroughId: visit.value.trim(), setterKey: setter.value,
+          serviceClassification: scope.value, classificationReference: reference.value.trim(), estimatorKey: estimator.value.trim(), estimatorReference: estimatorReference.value.trim() }); invalidate('setters'); app.render(); }
+        catch (error) { toast(error.message, { tone: 'bad' }); }
+      } }, 'Record setter attribution')),
+    h('div', { class: 'card table-wrap' }, h('table', { class: 'table' },
+      h('thead', {}, h('tr', {}, ['Walkthrough', 'Setter', 'Estimator evidence', 'State', 'Review'].map(label => h('th', {}, label)))),
+      h('tbody', {}, data.rows.map(row => h('tr', {}, h('td', {}, row.walkthroughId), h('td', {}, row.setterKey),
+        h('td', {}, row.estimatorKey || 'Unverified'), h('td', {}, row.state.replaceAll('_', ' ')),
+        h('td', {}, (row.reviewReasons || []).join(', ').replaceAll('_', ' '))))))),
+    data.truncated ? banner('warning', 'info', 'More records need review', 'Only the first 100 setter records are shown.') : null,
+  ] };
+}
 
 async function moneySection(params) {
   const date = params.get('date') || zonedDate(Date.now());
@@ -494,39 +527,45 @@ async function moneySection(params) {
     } catch (error) { toast(error.message, { tone: 'bad' }); }
   };
   const total = key => data.statement.reduce((sum, r) => sum + Number(r[key] || 0), 0);
-  const owed = total('balance');
+  const amount = value => value == null ? 'Needs review' : money(value, true);
+  const reviewedTotal = key => data.statement.some(r => r[key] == null) ? null : total(key);
   return {
     title: h('div', { class: 'row', style: { gap: '12px' } },
       h('a', { class: 'btn btn--secondary btn--sm', href: `#admin?s=money&date=${encodeURIComponent(data.previous.start)}`, 'aria-label': 'Previous pay period', style: { padding: '0 10px' } }, icon('chevronLeft')),
-      h('div', {}, h('h1', {}, periodLabel(period.start, period.end)), h('p', { class: 'muted' }, `Pay period · ${{ weekly: 'weekly', biweekly: 'every 2 weeks', semimonthly: '1st & 16th', monthly: 'monthly' }[data.payroll.period] || data.payroll.period}`)),
+      h('div', {}, h('h1', {}, period.configured === false ? 'Two-week payroll cycle needs setup' : periodLabel(period.start, period.end)), h('p', { class: 'muted' }, 'Payout cadence: every 2 weeks')),
       h('a', { class: 'btn btn--secondary btn--sm', href: `#admin?s=money&date=${encodeURIComponent(data.next.start)}`, 'aria-label': 'Next pay period', style: { padding: '0 10px' } }, icon('chevronRight'))),
     actions: [['commission', 'Commission CSV'], ['training', 'Training CSV'], ['sales', 'Sales CSV']].map(([kind, label]) =>
-      h('button', { type: 'button', class: 'btn btn--quiet btn--sm', onclick: () => exportCsv(kind) }, icon('download', { size: 'sm' }), label)),
+      h('button', { type: 'button', class: 'btn btn--quiet btn--sm', disabled: period.configured === false, onclick: () => exportCsv(kind) }, icon('download', { size: 'sm' }), label)),
     body: [
+      period.configured === false ? banner('warning', 'info', 'Payroll anchor unconfigured', 'These date groupings are previews, not an approved pay cycle. Confirm the two-week anchor before payroll export.') : null,
       h('div', { class: 'stats stats--4' },
-        stat('Sales booked', String(total('salesBooked')), { sub: `${money(total('booked'))} commission booked` }),
-        stat('Commission earned', money(total('earned') + total('override')), { sub: `${data.statement.filter(r => r.earned || r.override).length} reps` }),
-        h('div', { class: 'stat' }, h('span', { class: 'stat__label' }, 'Still to pay'), h('span', { class: 'stat__value', style: { color: owed > 0 ? 'var(--warning)' : 'var(--success)' } }, money(owed)), h('span', { class: 'stat__sub' }, 'earned minus paid')),
-        stat('Training hours', `${number(total('trainingMinutes') / 60, 1)} h`, { sub: `${money(total('trainingPay'), true)} · paid separately` })),
-      h('p', { class: 'caption muted' }, `Commission ${percent(data.rates.rate)} of collected revenue once a job is completed, paid and past its cancellation deadline${data.rates.acceleratorEnabled ? `; ${percent(data.rates.acceleratorRate)} above ${money(data.rates.acceleratorThreshold)} collected in a month` : ''}${data.rates.leadOverrideEnabled ? `; leads get ${percent(data.rates.leadOverrideRate, 1)} of their team` : ''}. Training ${money(data.trainingHourlyRate, true)}/h.`),
+        stat('Sales booked', String(total('salesBooked')), { sub: `${money(total('booked'))} customer revenue booked` }),
+        stat('Projected commission', amount(reviewedTotal('projectedCommission'))),
+        stat('Commission earned', amount(reviewedTotal('earnedCommission'))),
+        stat('Customer collected', amount(total('customerCollectedRevenue')), { sub: 'recorded receipts, including deposits' }),
+        stat('Payable commission', amount(reviewedTotal('payableCommission'))),
+        stat('Rep payments recorded', amount(total('commissionPaid'))),
+        stat('Training hours', `${number(total('trainingMinutes') / 60, 1)} h`, { sub: `${amount(reviewedTotal('trainingPay'))} · paid separately` })),
+      h('p', { class: 'caption muted' }, data.rates.verified ? 'Using saved compensation settings. Customer receipts are separate from rep payments. Refunds and incomplete records require review.' : 'Compensation unconfigured: no complete, valid, audited settings record. Finance must verify rates; defaults are not a pay promise.'),
       h('div', { class: 'card card--line table-wrap' }, h('table', { class: 'table' },
-        h('thead', {}, h('tr', {}, ['Rep', 'Booked', 'Earned', 'Paid', 'Owed', 'Training', ''].map((label, i) => h('th', { class: i && i < 6 ? 'num' : '' }, label)))),
+        h('thead', {}, h('tr', {}, ['Rep', 'Booked', 'Earned', 'Recorded payments', 'Payable', 'Training', ''].map((label, i) => h('th', { class: i && i < 6 ? 'num' : '' }, label)))),
         h('tbody', {}, data.statement.length ? data.statement.map(row => h('tr', {},
           h('td', {}, h('b', {}, row.name), row.override ? h('div', { class: 'caption muted' }, `includes ${money(row.override, true)} lead bonus`) : null),
-          h('td', { class: 'num' }, money(row.booked)), h('td', { class: 'num' }, money(row.earned + row.override, true)), h('td', { class: 'num' }, money(row.paid, true)),
-          h('td', { class: 'num' }, h('b', { style: { color: row.balance > 0 ? 'var(--warning)' : 'var(--success)' } }, money(row.balance, true))),
+          h('td', { class: 'num' }, money(row.booked)), h('td', { class: 'num' }, amount(row.earnedCommission)), h('td', { class: 'num' }, amount(row.commissionPaid)),
+          h('td', { class: 'num' }, h('b', {}, amount(row.payableCommission)), row.compensationState !== 'configured' ? h('div', { class: 'caption muted' }, row.compensationState.replaceAll('_', ' ')) : null),
           h('td', { class: 'num' }, row.trainingMinutes ? `${hoursLabel(row.trainingMinutes * 60000)} h` : '–'),
-          h('td', {}, row.balance > 0 ? h('button', { type: 'button', class: 'btn btn--primary btn--sm', onclick: () => payoutSheet(row, period) }, 'Record payout…') : row.paid > 0 ? badge('Paid', 'success') : null))) : h('tr', {}, h('td', { colspan: '7', class: 'muted' }, 'Nothing earned in this period yet.'))))),
+          h('td', {}, row.payableCommission > 0 ? h('button', { type: 'button', class: 'btn btn--primary btn--sm', onclick: () => payoutSheet(row, period) }, 'Record payout…') : row.paid > 0 ? badge('Recorded; unverified', 'warning') : null))) : h('tr', {}, h('td', { colspan: '7', class: 'muted' }, 'Nothing earned in this period yet.'))))),
       data.payouts.length ? h('section', { class: 'stack stack--tight' }, h('h2', { style: { fontSize: '18px' } }, 'Payouts recorded'),
         h('div', { class: 'list list--boxed' }, data.payouts.map(p => h('div', { class: 'list-row list-row--static' },
-          h('span', { class: 'list-row__main' }, h('span', { class: 'list-row__title' }, `${data.statement.find(r => r.repKey === p.repKey)?.name || p.repKey} · ${money(p.amount, true)}`), h('span', { class: 'list-row__sub' }, [p.note, p.at ? timeLabel(p.at) : ''].filter(Boolean).join(' · '))))))) : null,
-      h('p', { class: 'caption muted' }, 'Payouts can\'t be deleted, only reversed with a second entry, so the CSV always matches the books.'),
+          h('span', { class: 'list-row__main' }, h('span', { class: 'list-row__title' }, `${data.statement.find(r => r.repKey === p.repKey)?.name || p.repKey} · ${money(p.amount, true)}`), h('span', { class: 'list-row__sub' }, [p.note, p.paidAt ? timeLabel(p.paidAt) : '', 'Admin recorded; settlement unverified'].filter(Boolean).join(' · '))))))) : null,
+      h('p', { class: 'caption muted' }, 'Rep payment records do not transfer money. Corrections and clawbacks need finance review; no automatic reversal is applied.'),
     ],
   };
 }
 
 function payoutSheet(row, period) {
   return sheet('Record a payout', close => {
+    const requestId = uuid();
     let how = 'Payroll';
     const amount = h('input', { class: 'input', id: 'po-amount', type: 'number', step: '0.01', min: '0', inputmode: 'decimal', value: String(row.balance) });
     const note = h('input', { class: 'input', id: 'po-note', placeholder: 'e.g. Gusto run #214' });
@@ -539,7 +578,7 @@ function payoutSheet(row, period) {
       field(h('span', {}, 'Note ', h('span', { class: 'muted', style: { fontWeight: '400' } }, '(optional)')), note, null, 'po-note'),
       h('button', { type: 'button', class: 'btn btn--primary btn--block', onclick: async () => {
         try {
-          await action({ action: 'payout.add', requestId: uuid(), repKey: row.repKey, periodKey: period.key, amount: Number(amount.value), note: [how, note.value.trim()].filter(Boolean).join(' · ') }, { quiet: true });
+          await action({ action: 'payout.add', requestId, repKey: row.repKey, periodKey: period.key, amount: Number(amount.value), note: [how, note.value.trim()].filter(Boolean).join(' · ') }, { quiet: true });
           toast(`Recorded ${money(Number(amount.value), true)}`, { sub: row.name });
           close(true); invalidate('money'); app.render();
         } catch (error) { toast(error.message, { tone: 'bad' }); }
@@ -670,13 +709,13 @@ async function settingsSection() {
           toggle('commission.leadOverrideEnabled', 'Leads earn a bonus on their team'),
           h('div', { class: 'fields-2' }, row('Higher rate', num('commission.acceleratorRate', { scale: 100, unit: '%', step: '0.5' })), row('once monthly revenue passes', num('commission.acceleratorThreshold', { prefix: '$', step: '100', width: '120px' }))),
           toggle('commission.acceleratorEnabled', 'Use the higher rate'),
-          h('p', { class: 'caption muted' }, 'Commission is earned when the job is completed, paid in full and past the cancellation deadline.'),
+          h('p', { class: 'caption muted' }, 'Earning on collection and a two-week payout cadence are confirmed. Basis, attribution, partial collections, refunds and the payroll anchor still require finance review.'),
           row('Training pay', num('payroll.trainingHourlyRate', { prefix: '$', unit: 'per hour, paid separately', step: '0.01' }))),
         card('Pay period',
-          segFor('payroll.period', [['weekly', 'Weekly'], ['biweekly', 'Every 2 weeks'], ['semimonthly', '1st & 16th'], ['monthly', 'Monthly']], 'Pay period'),
-          row('Weekly and two-week periods start on', text('payroll.anchorDate', { type: 'date' }), 'A Monday.')),
+          segFor('payroll.period', [['biweekly', 'Every 2 weeks']], 'Pay period'),
+          row('Unconfirmed cycle anchor', text('payroll.anchorDate', { type: 'date' }), 'A draft date until explicitly confirmed by finance.')),
         card('Plan targets',
-          h('p', { class: 'caption muted' }, 'What the Scoreboard compares every rep against.'),
+          h('p', { class: 'caption muted' }, 'Draft targets only until separately approved for D2D. Direct-estimator average ticket and margin do not establish D2D performance.'),
           h('div', { class: 'fields-2' },
             row('Doors / hour', num('plan.doorsPerHour', { step: '0.5', width: '100%' })), row('Answer rate', num('plan.answerRate', { scale: 100, unit: '%', step: '1' })),
             row('Look rate', num('plan.lookRate', { scale: 100, unit: '%', step: '0.5' })), row('Close rate', num('plan.closeRate', { scale: 100, unit: '%', step: '1' })),
@@ -716,6 +755,7 @@ export function install(appApi) {
   registerAdminSection('territory', 'Territory', 'map', territorySection);
   registerAdminSection('coverage', 'Coverage', 'chart', coverageSection);
   registerAdminSection('sales', 'Sales', 'dollar', salesSection);
+  registerAdminSection('setters', 'Setters', 'user', settersSection);
   registerAdminSection('money', 'Money', 'cash', moneySection);
   registerAdminSection('scoreboard', 'Scoreboard', 'trophy', scoreboardSection);
   registerAdminSection('flags', 'Flags', 'flag', flagsSection);

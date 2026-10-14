@@ -339,14 +339,27 @@ test('the read-only scope export lists limited members without secrets and never
   for(const argv of [['--out'],['--apply'],['--write']])assert.throws(()=>parseArgs(argv));
   const dir=await mkdtemp(join(tmpdir(),'egc-scope-export-')),file=join(dir,'scope.json');
   try{
-    await writeFile(file,'stale',{mode:0o644});await writeExport(file,JSON.stringify(report));assert.equal((await stat(file)).mode&0o777,0o600);assert.deepEqual(JSON.parse(await readFile(file,'utf8')),JSON.parse(JSON.stringify(report)));
+    await writeFile(file,'stale',{mode:0o644});
+    if(process.platform==='win32'){
+      await assert.rejects(writeExport(file,JSON.stringify(report)),error=>error.code==='private_export_permissions_unavailable');
+      assert.equal(await readFile(file,'utf8'),'stale','unsupported permissions never replace the existing file');
+    }else{
+      await writeExport(file,JSON.stringify(report));assert.equal((await stat(file)).mode&0o777,0o600);assert.deepEqual(JSON.parse(await readFile(file,'utf8')),JSON.parse(JSON.stringify(report)));
+    }
     // The command line: with --out the people go only to the private file; the terminal gets one summary line.
     const env={FIREBASE_SERVICE_ACCOUNT_JSON:JSON.stringify({type:'service_account',project_id:'egcw-1ec83',client_email:'synthetic@egcw-1ec83.iam.gserviceaccount.com',private_key:'-----BEGIN PRIVATE KEY-----\nAAAA\n-----END PRIVATE KEY-----'})};
     const cli=async argv=>{const out=[],err=[];const code=await runExport(argv,{env,fetcher,now:()=>new Date(START).toISOString(),stdout:{write:v=>out.push(v)},stderr:{write:v=>err.push(v)}});return {code,out:out.join(''),err:err.join('')};};
     const saved=join(dir,'cli.json'),toFile=await cli(['--out',saved]);
-    assert.equal(toFile.code,0);assert.equal(toFile.out,'','nothing is printed to stdout');
-    assert.match(toFile.err,/^READ-ONLY: 2 business accounts, 5 members limited to selected properties, 4 would see every property after a rollback past B2B-SCOPE \(1 of them in inactive companies\)\. Members written only to .*cli\.json \(private\)\.\n$/);
-    assert.equal((await stat(saved)).mode&0o777,0o600);assert.deepEqual(JSON.parse(await readFile(saved,'utf8')).members,JSON.parse(JSON.stringify(rows)));
+    assert.equal(toFile.out,'','nothing is printed to stdout');
+    if(process.platform==='win32'){
+      assert.equal(toFile.code,1);assert.match(toFile.err,/could not be written privately, so nothing was saved or printed/);
+      assert.match(toFile.err,/POSIX host/);
+      await assert.rejects(stat(saved),error=>error.code==='ENOENT','no file with inherited permissions is created');
+    }else{
+      assert.equal(toFile.code,0);
+      assert.match(toFile.err,/^READ-ONLY: 2 business accounts, 5 members limited to selected properties, 4 would see every property after a rollback past B2B-SCOPE \(1 of them in inactive companies\)\. Members written only to .*cli\.json \(private\)\.\n$/);
+      assert.equal((await stat(saved)).mode&0o777,0o600);assert.deepEqual(JSON.parse(await readFile(saved,'utf8')).members,JSON.parse(JSON.stringify(rows)));
+    }
     // A private write that fails prints none of the people and exits non-zero.
     const failed=await cli(['--out',join(dir,'missing','cli.json')]);
     assert.equal(failed.code,1);assert.equal(failed.out,'');assert.match(failed.err,/could not be written privately, so nothing was saved or printed/);

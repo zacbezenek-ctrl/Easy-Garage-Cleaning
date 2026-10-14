@@ -7,12 +7,15 @@ import { stripeRequest, stripeSecretKey } from '../_lib/customer-payments.js';
 import { moneyTotalsMode } from '../_lib/money-core.js';
 import { catalogQuotesEnabled, catalogStorage, readCatalogState } from '../_lib/catalog-store.js';
 import { priceCatalogQuote } from '../_lib/catalog-quote.js';
+import { syncWalkthroughCapture, walkthroughCaptureSyncEnabled } from '../_lib/walkthrough-capture-sync.js';
+import { FINAL_25_75 } from '../_lib/quote-payment-policy.js';
 
 /** Quote drafts (P2-07). Same-origin JSON, quote authors only (P2-12).
  * GET  /api/quote-draft?jobId=ID  => {ok, job: quote author DTO}
  * POST {action:'save', requestId, customerId, sourceWalkthroughId?, sourceRevision?, jobId?, expectedRevision?, draft}
  * POST {action:'send_preview', jobId, expectedRevision}  => {confirmToken, expiresAt, delivery, summary}
  * POST {action:'send', requestId, jobId, expectedRevision, confirmToken}
+ * POST {action:'sync_capture', actorId?, jobId, syncKey} => saved internal note status
  * POST {action:'catalog_preview',catalogPricing:{catalogVersion,settingsVersion,items:[{id,itemId,quantity,customerSupplied}]}}
  * Retry a lost response with the SAME requestId and body. */
 const LIMIT = 64000;
@@ -29,14 +32,14 @@ function sameOrigin(request) {
 const stripeFor = env => { const secret = stripeSecretKey(env); return secret ? (path, options) => stripeRequest(secret, path, options) : null; };
 
 export function quoteDraftHandlers({ session = getHubSession, storage = dispatchStorage, now = () => new Date(), delivery = (env, store) => createEstimateReadyDelivery({ store, env, clock: now }), stripe = stripeFor,
-  catalogState = env => readCatalogState(catalogStorage(env)) } = {}) {
+  catalogState = env => readCatalogState(catalogStorage(env)), captureNote } = {}) {
   return {
     async get({ request, env }) {
       try {
         const actor = await session(request, env); requireQuoteAuthor(actor, env);
         const params = new URL(request.url).searchParams;
         if ([...params.keys()].length !== new Set(params.keys()).size) return reply(400, { ok: false, code: 'quote_draft_invalid_request', error: 'The quote lookup is invalid.' });
-        return reply(200, { ...await readQuoteDraft(storage(env), actor, Object.fromEntries(params), { env }), viewer: { id: actor.user } });
+        return reply(200, { ...await readQuoteDraft(storage(env), actor, Object.fromEntries(params), { env }), viewer: { id: actor.user }, captureSyncEnabled: walkthroughCaptureSyncEnabled(env) });
       } catch (error) { return failure(error); }
     },
     async post({ request, env }) {
@@ -56,10 +59,14 @@ export function quoteDraftHandlers({ session = getHubSession, storage = dispatch
           const { storedLineItems, ...priced } = priceCatalogQuote(await catalogState(env), input.catalogPricing, at);
           return reply(200, { ok: true, authority: 'employee_hub', ...priced });
         }
-        if (action === 'save') return reply(200, await saveQuoteDraft(store, actor, input, at, { env, catalogState, checkouts: job => expireStaleCheckout({ store, job, stripe: stripe(env), now: at, mode: moneyTotalsMode(env) }) }));
+        if (action === 'save') return reply(200, { ...await saveQuoteDraft(store, actor, input, at, { env, catalogState, newQuotePaymentPolicy: FINAL_25_75, checkouts: job => expireStaleCheckout({ store, job, stripe: stripe(env), now: at, mode: moneyTotalsMode(env) }) }), captureSyncEnabled: walkthroughCaptureSyncEnabled(env) });
+        if (action === 'sync_capture') {
+          const sync = await syncWalkthroughCapture(store, actor, input, at, { env, ...(captureNote ? { note: captureNote } : {}) });
+          return reply(200, { ...await readQuoteDraft(store, actor, { jobId: input.jobId }, { env }), captureSyncEnabled: sync.enabled });
+        }
         if (action === 'send_preview') return reply(200, await previewQuoteSend(store, actor, input, at, { env }));
         if (action === 'send') return reply(200, await sendQuoteDraft(store, actor, input, at, { env, deliver: delivery(env, store).deliver }));
-        return reply(400, { ok: false, code: 'quote_draft_invalid_request', error: 'Choose save, catalog_preview, send_preview or send.' });
+        return reply(400, { ok: false, code: 'quote_draft_invalid_request', error: 'Choose save, sync_capture, catalog_preview, send_preview or send.' });
       } catch (error) { return failure(error); }
     },
   };

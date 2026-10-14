@@ -1,0 +1,8 @@
+// Local visual fixture only: no real customer, payment link or provider call.
+import http from 'node:http';
+import fs from 'node:fs';
+import {renderMoneyDocument} from '../../functions/_lib/money-document.js';
+import {FINAL_25_75,quotePaymentDates,quotePaymentSchedule,PAYMENT_TIME_ZONE} from '../../functions/_lib/quote-payment-policy.js';
+const dates=quotePaymentDates(FINAL_25_75,{walkthroughDate:'2026-10-18',jobDate:'2026-10-24'}),amounts=quotePaymentSchedule(100000,FINAL_25_75);
+const job={id:'local-payment-fixture',type:'job',customer:'Synthetic customer — local fixture',address:'Example property',total:1000,priceQuoted:1000,quoteDraft:{version:1},deposit:{amount:250,status:'required'},estimate:{number:'LOCAL-ONLY',status:'sent',revision:1,sentRevision:1,amount:1000,amountCents:100000,depositRequired:250,depositRequiredCents:25000,scope:'Synthetic garage organization example.',lineItems:[{id:'service',kind:'service',name:'Synthetic service',quantity:1,unitCents:100000,totalCents:100000}],validUntil:'2026-10-24',termsVersion:FINAL_25_75.version,commercialPolicy:FINAL_25_75,paymentSchedule:{...dates,timeZone:PAYMENT_TIME_ZONE,policyVersion:FINAL_25_75.version,depositCents:amounts.depositCents,remainderCents:amounts.remainderCents}}};
+http.createServer((req,res)=>{if(/^\/images\/[a-zA-Z0-9_-]+\.png$/.test(req.url)){try{res.writeHead(200,{'Content-Type':'image/png'});res.end(fs.readFileSync(new URL('../..'+req.url,import.meta.url)));return;}catch{res.end();return;}}res.writeHead(200,{'Content-Type':'text/html; charset=utf-8'});res.end(renderMoneyDocument(job,{kind:'estimate',now:'2026-10-14T18:00:00Z'}));}).listen(8770,'127.0.0.1',()=>console.log('Local payment policy fixture: http://127.0.0.1:8770'));

@@ -4,7 +4,7 @@ import { createHash } from 'node:crypto';
 import { readFileSync, readdirSync } from 'node:fs';
 import test from 'node:test';
 
-const read = (path) => readFileSync(new URL(`../${path}`, import.meta.url), 'utf8');
+const read = (path) => readFileSync(new URL(`../${path}`, import.meta.url), 'utf8').replace(/\r\n/g, '\n');
 
 test('homepage loads analytics outside the critical rendering path', () => {
   const html = read('index.html');
@@ -117,7 +117,7 @@ test('client hub empty-state logo preserves its aspect ratio', () => {
 // branches that each changed it, fails here until the version is bumped everywhere (HEAD and the
 // patch_static_pages regex in _generate_site.py, functions/before-after.js, the private shells,
 // then a rebuild) and this pin names the new version and hash.
-const STYLES_RELEASE = { version: '20261013b', sha256: '31abe7f8592b24c686b28164a2cfc24fcd4dce7cec975cf97cee2aa07a9a3a50' };
+const STYLES_RELEASE = { version: '20261014a', sha256: '647def38cd9d036b02f8063b4a11bfcd6484f7c845c37e7e2bcdde5d909f970f' };
 
 test('Cloudflare caches versioned public assets', () => {
   const headers = read('_headers');

@@ -44,7 +44,7 @@ def record_build_date(value, path=None):
             return False
     except OSError:
         pass
-    path.write_text(text, encoding="utf-8")
+    path.write_text(text, encoding="utf-8", newline="\n")
     return True
 
 
@@ -728,7 +728,7 @@ CALLRAIL_BLOCK = ""
 
 # styles.css is served immutable: every change to it bumps this one version, which
 # HEAD, patch_static_pages and functions/before-after.js all use.
-STYLES_VERSION = "20261013b"
+STYLES_VERSION = "20261014a"
 # The one Google Fonts stylesheet for pages built on styles.css. Every face is used by
 # the shared CSS (tests/public-performance.test.mjs checks the weights); it always loads
 # with the media=print swap so it never blocks the first render.
@@ -969,7 +969,7 @@ FOOTER = """
     <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 5h14v10H9l-4 4V5z"></path></svg><span>Chat</span>
   </button>
   <section class="contact-widget-panel" id="contact-widget-panel" role="dialog" aria-label="Chat with Easy Garage Cleaning" hidden>
-    <div class="contact-widget-head"><div><strong>Easy Garage Cleaning</strong><span><i aria-hidden="true"></i> Usually replies in 5 minutes</span></div><button type="button" class="contact-widget-close" aria-label="Close chat">&times;</button></div>
+    <div class="contact-widget-head"><div><strong>Easy Garage Cleaning</strong><span><i aria-hidden="true"></i> Contact our local team</span></div><button type="button" class="contact-widget-close" aria-label="Close chat">&times;</button></div>
     <p>Hi! Schedule a free on-site walkthrough, or ask us a question before you book.</p>
     <div class="contact-widget-actions">
       <a class="contact-widget-primary" href="sms:{phone}?body=Hi!%20I'd%20like%20to%20schedule%20a%20free%20on-site%20walkthrough.">Schedule by text</a>
@@ -2411,6 +2411,8 @@ def render_book():
     if SITE_FORMS_SCRIPT_SRC not in page:
         raise RuntimeError("book.html lost its site-forms.js tag; booking-slots.js must load before it")
     page = page.replace(SITE_FORMS_SCRIPT_SRC, booking_slots_script() + SITE_FORMS_SCRIPT_SRC, 1)
+    page = page.replace('</head>', '<link rel="stylesheet" href="/booking-highlevel.css?v=20261014">\n</head>')
+    page = page.replace('</body>', '<script src="/booking-highlevel.js?v=20261014" defer></script>\n</body>')
     return page.replace('<body>', '<body class="book-page">', 1)
 
 
@@ -2427,7 +2429,6 @@ def render_pricing():
 <p class="hero-sub">Two simple options: $139 flat curbside pickup, or cleanouts and turnarounds from $675. For anything our crew carries out, we visit the property, understand the full scope, and set one exact flat rate before work begins.</p>
 <div class="hero-ctas"><a href="/book.html" class="btn-primary">Schedule Free Walkthrough</a><a href="sms:{PHONE}?body={SMS_PHOTOS_BODY}" class="btn-secondary">Schedule by Text</a></div>
 </div></section>
-{fmt(PROCESS_HTML)}
 <section class="pricing-how"><div class="wrap">
 <div class="section-head reveal"><span class="mono section-num">How pricing works</span>
 <h2 class="section-title">Curbside or <em>full service</em> — we quote flat</h2>
@@ -2458,7 +2459,7 @@ def render_pricing():
 </div>
 <p class="section-sub reveal more-link"><a href="/blog/got-junk-vs-local-junk-removal-fort-collins.html" class="content-link">Full GOT-JUNK vs local comparison →</a></p>
 </div></section>
-{fmt(PRICING_HTML)}
+{fmt(PROCESS_HTML)}
 {quote_form_for("Garage Cleanout", cta_title="Schedule your <em>free walkthrough</em>", form_subject="Pricing Page Walkthrough Request", sms_body=SMS_PHOTOS_BODY)}
 </main>"""
     return page_shell(title, desc, canonical, schema, body)
@@ -4168,7 +4169,8 @@ def patch_performance_and_tracking(text, is_home=False):
     if "analytics-loader.js" in text and GTM_NOSCRIPT not in text:
         text = re.sub(r"(<body\b[^>]*>)", lambda match: match.group(1) + "\n" + GTM_NOSCRIPT, text, count=1, flags=re.I)
     if not is_home:
-        return text
+        text = re.sub(r'^[ \t]+$', '', text, flags=re.M)
+        return re.sub(r'\n{3,}', '\n\n', text)
 
     text = re.sub(
         r'<link rel="preload" as="image"[^>]+garage-(?:before|after)\.webp[^>]*>\s*',
@@ -4536,6 +4538,117 @@ def publish_gallery_links(root):
     module.apply(root)
 
 
+def preserve_curbside_intent(text):
+    """Curbside has its own pickup intake; do not route it through /book."""
+    text = text.replace('Schedule a free on-site walkthrough online or by text or through our booking form.', 'Request curbside pickup by text or through the short form below. No walkthrough needed.')
+    text = text.replace('to help us prepare for the walkthrough.', 'to help us confirm your curbside pickup.')
+    text = text.replace('fast walkthrough scheduling', 'curbside pickup scheduling')
+    text = text.replace('Schedule a walkthrough', 'Request curbside pickup')
+    text = text.replace('Schedule by Text', 'Text to Request Pickup')
+    text = text.replace('Schedule by text', 'Text to request pickup')
+    text = text.replace("Hi!%20I'd%20like%20to%20schedule%20a%20free%20on-site%20walkthrough.", 'Hi!%20I%20would%20like%20to%20request%20the%20%24139%20curbside%20pickup%20for%20up%20to%204%20cubic%20yards.')
+    # Keep the offer specific: the customer stages the load; the crew loads it.
+    text = text.replace('We do all lifting - you don\'t touch a thing', 'Stage items at the curb, driveway, or open garage; we load and haul them')
+    text = re.sub(r'<div class="cta-point">[^<]*you don(?:’|\')t touch a thing</div>', '<div class="cta-point">Stage items at the curb, driveway, or open garage; we load and haul them</div>', text)
+    text = text.replace('We do all lifting', 'We load your staged items')
+    text = text.replace('we reply in 5 minutes', 'we will confirm availability')
+    text = text.replace("Most national haulers won't tell you a price until a truck is in your driveway. We publish ours.", 'Our curbside offer has a published price: $139 for up to 4 cubic yards of items staged for pickup.')
+    text = text.replace('$139 for up to 4 cubic yards - the nationals make you wait for an on-site estimate.', '$139 for up to 4 cubic yards staged at the curb, driveway, or open garage. No walkthrough needed.')
+    text = re.sub(r'\$400\s*(?:-|–|—|to)\s*\$?3,?500', 'a flat rate confirmed after a free on-site walkthrough', text)
+    text = re.sub(r'<p>\$139 for up to 4 cubic yards[^<]*the nationals[^<]*</p>', '<p>$139 for up to 4 cubic yards staged at the curb, driveway, or open garage. No walkthrough needed.</p>', text)
+    # Compare our actual routes instead of unsourced competitor rates or blanket claims.
+    comparison = '''<section class="pricing" id="pricing" aria-labelledby="compare-heading"><div class="wrap">
+      <div class="section-head reveal"><span class="mono section-num">Choose your service</span>
+      <h2 class="section-title" id="compare-heading">Curbside pickup or <em>full service</em></h2>
+      <p class="section-sub">Choose based on where the items are and who moves them outside.</p></div>
+      <div class="pricing-how-grid reveal">
+      <div class="step"><h3>$139 curbside pickup</h3><p>Stage up to 4 cubic yards at the curb, driveway, or open garage. Our crew loads and hauls the staged items. No walkthrough needed.</p><a href="#quote" class="content-link" style="display:inline-flex;align-items:center;min-height:44px;min-width:44px">Request curbside pickup &rarr;</a></div>
+      <div class="step"><h3>Full service from $675</h3><p>Need the crew to carry items out or clear a garage? The exact flat rate is confirmed after a free on-site walkthrough, before work begins.</p><a href="/book" class="content-link" style="display:inline-flex;align-items:center;min-height:44px;min-width:44px">Request a free walkthrough &rarr;</a></div>
+      </div><p class="pricing-disclaimer reveal"><a href="/pricing" class="content-link" style="display:inline-flex;align-items:center;min-height:44px;min-width:44px">See full pricing and service details &rarr;</a></p>
+    </div></section>'''
+    text = re.sub(r'<section class="pricing" id="pricing" aria-labelledby="compare-heading">[\s\S]*?</section>', comparison, text, count=1)
+    return text
+
+
+def declutter_public_page(text, is_home=False):
+    """Final UI pass: retain destinations/content while reducing competing entry points."""
+    text = text.replace("Usually replies in 5 minutes", "Contact our local team")
+    text = re.sub(r'<div id="seasonal-banner"[\s\S]*?</script>', '', text)
+    text = re.sub(r'<div class="trust-strip"[^>]*>[\s\S]*?</div>\s*</div>', '', text)
+    business_contact = re.search(r'<p class="egc-business-contact">[\s\S]*?</p>', text)
+    if business_contact and business_contact.group(0) not in text.split('<footer')[-1]:
+        text = text.replace('</footer>', '<div class="wrap">' + business_contact.group(0) + '</div></footer>', 1)
+    text = re.sub(r'<nav id="egc-customer-access"[\s\S]*?</nav>', '', text)
+    nav_match = re.search(r'<nav class="nav"[\s\S]*?</nav>', text)
+    if nav_match:
+        nav = nav_match.group(0)
+        # Preserve all service destinations in the existing disclosure.
+        nav = re.sub(r'<li class="nav-dropdown nav-dropdown-locations">[\s\S]*?</li>', '', nav)
+        nav = re.sub(r'<li><a[^>]*>(?:How It Works|Reviews|FAQ|Blog|Before &amp; After|Results|Garage Guard|Business Hub|Customer Portal)</a></li>', '', nav)
+        nav = nav.replace('<li><a href="/about">About</a></li>', '<li><a href="/before-after">Results</a></li>\n      <li><a href="/about">About</a></li>')
+        nav = re.sub(r'(<a href=")[^"]*(" class="nav-cta"[^>]*>)[^<]*', r'\1/book\2Request Free Walkthrough', nav)
+        text = text[:nav_match.start()] + nav + text[nav_match.end():]
+    drawer_match = re.search(r'<aside class="nav-drawer"[\s\S]*?</aside>', text)
+    if drawer_match:
+        drawer = drawer_match.group(0)
+        drawer = re.sub(r'<a[^>]*class="drawer-link-row"[^>]*>(?:How It Works|Reviews|FAQ|Blog|Before &amp; After|Results|Garage Guard|Business Hub|Customer Portal)</a>', '', drawer)
+        drawer = drawer.replace('<a href="/about" class="drawer-link-row">About</a>', '<a href="/before-after" class="drawer-link-row">Results</a>\n  <a href="/about" class="drawer-link-row">About</a>')
+        drawer = re.sub(r'(<a href=")[^"]*(" class="drawer-cta"[^>]*>)[^<]*', r'\1/book\2Request Free Walkthrough', drawer)
+        text = text[:drawer_match.start()] + drawer + text[drawer_match.end():]
+    # Utility links are available without JavaScript, outside the consumer navigation.
+    footer = re.search(r'<div class="foot-col">\s*<h3>Company</h3>[\s\S]*?</div>', text)
+    if footer:
+        block = footer.group(0)
+        for label, href in [('Customer Portal', '/customer-portal'), ('Business Hub', '/business-hub'), ('Reviews', '/reviews')]:
+            if f'href="{href}"' not in block:
+                block = block.replace('</ul>', f'<li><a href="{href}">{label}</a></li>\n      </ul>')
+        text = text[:footer.start()] + block + text[footer.end():]
+    if not is_home:
+        text = re.sub(r'^[ \t]+$', '', text, flags=re.M)
+        return re.sub(r'\n{3,}', '\n\n', text)
+    text = text.replace('<body>', '<body class="home-simple">')
+    text = re.sub(r'<a[^>]*class="hero-phone"[\s\S]*?</a>', '', text)
+    text = re.sub(r'<h1 class="hero-title">[\s\S]*?</h1>', '<h1 class="hero-title">Reclaim <em>your garage.</em></h1>', text, count=1)
+    text = re.sub(r'<p class="hero-sub">[\s\S]*?</p>', '<p class="hero-sub">Garage cleanouts, cleaning, and organization in Fort Collins. Start with a free walkthrough and a clear plan for your space.</p>', text, count=1)
+    text = re.sub(r'<p class="hero-contact">[\s\S]*?</p>', '', text)
+    text = re.sub(r'<div class="hero-ctas">[\s\S]*?</div>', '<div class="hero-ctas"><a href="/book" class="btn-primary" data-cta="hero-plan">Request Free Walkthrough</a></div><p class="hero-contact">Prefer to talk? <a href="tel:+19709991818">(970) 999-1818</a></p>', text, count=1)
+    text = re.sub(r'<div class="quote-form hero-form"[^>]*>[\s\S]*?</form>\s*</div>', '', text, count=1)
+    text = re.sub(r'<section class="related" aria-labelledby="explore-heading">[\s\S]*?</section>', '', text)
+    text = re.sub(r'<section class="[^"]*final-cta[^"]*"[^>]*>[\s\S]*?</section>', '<section class="final-cta home-request" id="quote" aria-labelledby="cta-heading"><div class="wrap"><span id="turnaround-plan"></span><h2 id="cta-heading">Start with a free walkthrough.</h2><p>Get your Garage Turnaround Plan. Keep it whether you hire us or do it yourself.</p><a class="btn-primary" href="/book" data-cta="final-walkthrough">Request Free Walkthrough</a></div></section>', text, count=1)
+    text = re.sub(r'href="(?:#quote|#turnaround-plan|/book#quote)"', 'href="/book"', text)
+    # One section introduces trust, with the detailed comparison available on demand.
+    stats = re.search(r'<section class="stats-bar"[\s\S]*?</section>', text)
+    compare = re.search(r'<section class="compare-mini"[\s\S]*?</section>', text)
+    trust = re.search(r'<section class="trust"[\s\S]*?</section>', text)
+    if compare and trust and '<summary>Our approach and how we compare</summary>' not in text:
+        detail = (stats.group(0) if stats else '') + compare.group(0)
+        trust_block = trust.group(0).replace('</section>', '<div class="wrap"><details class="home-details"><summary>Our approach and how we compare</summary>' + detail + '</details></div></section>')
+        text = text.replace(trust.group(0), trust_block).replace(compare.group(0), '', 1)
+        if stats:
+            text = text.replace(stats.group(0), '', 1)
+    for ident, label in [('service-area', 'See our Northern Colorado service area'), ('problem-heading', 'Is a garage cleanout right for you?'), ('recent-jobs', 'Explore customer-approved project stories')]:
+        if '<summary>' + label + '</summary>' in text:
+            continue
+        pattern = r'<section\b[^>]*(?:id="' + ident + r'"|aria-labelledby="' + ident + r'")[^>]*>[\s\S]*?</section>'
+        match = re.search(pattern, text)
+        if match and 'home-details' not in match.group(0):
+            text = text.replace(match.group(0), '<div class="wrap"><details class="home-details"><summary>' + label + '</summary>' + match.group(0) + '</details></div>')
+    # Show actual work immediately after the introduction.
+    gallery = re.search(r'<section class="gallery" id="work"[\s\S]*?</section>', text)
+    if gallery:
+        text = text.replace(gallery.group(0), '')
+        text = text.replace('</header>', '</header>\n' + gallery.group(0), 1)
+    text = re.sub(r'<div class="mobile-quote-sheet"[\s\S]*?</div>', '', text)
+    text = re.sub(r'<div class="mobile-sticky-cta"[\s\S]*?</div>', '', text)
+    text = re.sub(r'<a[^>]*class="mobile-text-chip"[\s\S]*?</a>', '', text)
+    if is_home:
+        text = re.sub(r'\s*<script src="/fb-capture\.js[^"]*"[^>]*></script>', '', text)
+    text = re.sub(r'^[ \t]+$', '', text, flags=re.M)
+    return re.sub(r'\n{3,}', '\n\n', text)
+
+
+
+
 def main():
     from _services_data import SERVICES, CITIES, ITEM_PAGES, COMPARISON_PAGES
     try:
@@ -4676,6 +4789,17 @@ def main():
 
     # /before-after links (homepage nav, drawer, footer, CTA) and its sitemap entry.
     publish_gallery_links(ROOT)
+
+    # Apply after gallery publishing and URL normalization; repeated builds are stable.
+    for page in site_html_files():
+        if not generator_owns(page.relative_to(ROOT)):
+            continue
+        original = page.read_text(encoding="utf-8")
+        updated = declutter_public_page(original, page.name == "index.html" and page.parent == ROOT)
+        if page.name == "flat-rate-junk-removal-fort-collins-co.html":
+            updated = preserve_curbside_intent(updated)
+        if updated != original:
+            page.write_text(updated, encoding="utf-8")
 
     if record_build_date(TODAY):
         print(f"Build date {TODAY} recorded in tools/site-build.json; commit it with the regenerated pages.")

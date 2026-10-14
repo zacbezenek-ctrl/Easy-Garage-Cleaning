@@ -40,7 +40,24 @@
       client: { name: String(p?.client?.name || ''), phone: String(p?.client?.phone || ''), email: String(p?.client?.email || ''), address: String(p?.client?.address || ''), highlevel_contact_id: String(p?.client?.highlevel_contact_id || '') },
       title: String(p?.quote?.title || 'EGC Garage Service').slice(0, 200), scope: scopeText(lines), line_items: lines, valid_until: validUntil,
       catalog_version: String(p?.quote?.catalog_version || ''), crew_size: Number.isInteger(crew) && crew >= 1 && crew <= 20 ? crew : null, estimated_duration_min: Number.isInteger(minutes) && minutes >= 15 ? minutes : null,
+      walkthrough_capture: captureFromWalkthrough(p),
     };
+  }
+  function captureFromWalkthrough(p) {
+    const capture = {};
+    // Pick explicit operational fields only. Let the server reject malformed
+    // values rather than stringify objects, silently drop data or infer consent.
+    for (const [key, value] of Object.entries({
+      customerGoal: p?.discovery?.success, whyNow: p?.discovery?.why_now,
+      sortMethod: p?.scope?.sort_method, keepItems: p?.scope?.keep_items,
+      removeItems: p?.scope?.remove_items, exclusions: p?.scope?.exclusions,
+      hazards: p?.scope?.hazards, access: p?.scope?.access,
+      specialItems: p?.scope?.special_items, finish: p?.scope?.finish,
+      accessNotes: p?.logistics?.notes,
+      truckPlacement: p?.logistics?.truck_placement ?? p?.scope?.truck_placement,
+      crewBrief: p?.crew_brief,
+    })) if (value !== undefined) capture[key] = Array.isArray(value) ? [...value] : value;
+    return capture;
   }
   function missing(draft) {
     const miss = [], lines = draft.line_items;
@@ -122,6 +139,20 @@
       await actor();
       return request('/api/quote-draft', { action: 'send_preview', jobId: job.id, expectedRevision: job.revision });
     }
+    async function savedCapture() {
+      const id = d.savedJobId();
+      if (!id) return null;
+      await actor();
+      return request('/api/quote-draft?jobId=' + encodeURIComponent(id));
+    }
+    async function syncCapture(job) {
+      const user = await actor();
+      const result = await request('/api/quote-draft', { action: 'sync_capture', actorId: user, jobId: job.id, syncKey: job.captureSync?.key });
+      if (await d.actor() !== user) throw new Error('The signed-in employee changed. Reopen the saved quote.');
+      if (result.job?.id !== job.id) throw new Error('The walkthrough sync response did not match this job. Reload it in the Hub.');
+      d.accept?.(result);
+      return result;
+    }
     async function send(job, previewed) {
       const user = await actor(), key = sendKey(user, job);
       let pending = read(key);
@@ -135,7 +166,7 @@
     }
     const pendingSend = async job => { const user = await d.actor(); return user ? read(sendKey(user, job)) : null; };
     function clear() { if (typeof d.storage.key !== 'function') return; for (let index = d.storage.length - 1; index >= 0; index -= 1) { const key = d.storage.key(index) || ''; if (/^egc-quote-(draft|send)-v1:/.test(key)) d.storage.removeItem(key); } }
-    return { save, pendingSave, preview, send, pendingSend, clear };
+    return { save, pendingSave, preview, savedCapture, syncCapture, send, pendingSend, clear };
   }
 
   const MODES = {
@@ -162,6 +193,13 @@
       S.frozen = pending ? pending.draft : null; S.retry = Boolean(pending);
       if (pending?.draft?.valid_until) S.validUntil = pending.draft.valid_until;
       render();
+      if (!pending && typeof client.savedCapture === 'function') {
+        let saved;
+        try { saved = await client.savedCapture(); }
+        catch { if (generation === S.generation && !S.busy) { S.captureLoadError = 'Saved walkthrough sync status could not be loaded. Reopen the quote to retry.'; render(); } return; }
+        if (generation !== S.generation || S.busy || !saved?.job?.captureSync) return;
+        S.saved = saved.job; S.syncEnabled = saved.captureSyncEnabled === true; render();
+      }
     }
     const totalOf = list => list.reduce((sum, line) => sum + (line.selected === false ? 0 : Number(line.totalCents) || 0), 0);
     function lines(list) {
@@ -181,8 +219,14 @@
         const job = S.preview.job;
         children.push(h('p', { class: 'qd-summary' }, S.preview.summary), lines(job.estimate.lineItems), h('p', { class: 'qd-total' }, 'Total ', h('b', {}, money(job.estimate.amountCents)), ` · valid through ${dayText(job.estimate.validUntil)}`), Number.isSafeInteger(job.estimate.depositRequiredCents) ? h('p', {}, 'Deposit due: ', money(job.estimate.depositRequiredCents)) : null, h('p', { class: 'qd-mode' }, (MODES[S.preview.delivery.mode] || MODES.off)(S.preview.delivery.recipient?.masked || '')));
       } else children.push(h('p', { class: 'qd-done' }, S.status));
+      const capture = S.saved?.captureSync;
+      if (capture) {
+        const labels = { pending: 'Walkthrough saved in Hub; HighLevel sync pending.', syncing: 'Walkthrough HighLevel sync is in progress.', synced: 'Walkthrough note verified in HighLevel.', error: 'Walkthrough HighLevel sync failed. Retry the saved capture.', needs_link: 'Link the canonical HighLevel contact before retrying.', needs_review: 'This walkthrough needs review before it can sync to HighLevel.' };
+        children.push(h('p', { class: 'qd-mode', role: 'status' }, labels[capture.status] || 'Walkthrough sync needs review.', !S.syncEnabled && capture.status !== 'synced' ? ' HighLevel capture sync is currently off.' : ''),
+          h('button', { type: 'button', class: 'qd-secondary', disabled: S.busy || !S.syncEnabled || ['synced', 'needs_review'].includes(capture.status), onclick: syncCapture }, 'Retry walkthrough sync'));
+      }
       if (S.busy) children.push(h('div', { class: 'qd-skeleton', 'aria-hidden': 'true' }, h('span'), h('span')));
-      children.push(h('p', { class: 'qd-status', 'aria-live': 'polite' }, S.step === 'done' ? '' : S.status), S.error ? h('p', { class: 'qd-error', role: 'alert' }, S.error) : null);
+      children.push(h('p', { class: 'qd-status', 'aria-live': 'polite' }, S.step === 'done' ? '' : S.status), S.error || S.captureLoadError ? h('p', { class: 'qd-error', role: 'alert' }, S.error || S.captureLoadError) : null);
       body.replaceChildren(...children.filter(Boolean));
       const primary = S.step === 'review' ? h('button', { type: 'button', class: 'qd-primary', disabled: S.busy, onclick: S.reprice ? refreshPrices : saveDraft }, S.busy ? 'Saving draft…' : S.reprice ? 'Review updated prices' : S.retry ? 'Retry original save' : 'Save draft')
         : S.step === 'confirm' ? h('button', { type: 'button', class: 'qd-primary', disabled: S.busy, onclick: confirmSend }, S.busy ? 'Sending…' : S.retry ? 'Retry original send' : S.preview.delivery.mode === 'automation' ? 'Send to customer' : 'Mark as sent')
@@ -206,6 +250,7 @@
         const { result, retrying, draft: saved } = await client.save(current);
         if (generation !== S.generation) return;
         S.saved = result.job; S.retry = false; S.frozen = null; S.status = [`Draft ${result.job.estimate.number} revision ${result.job.estimate.revision} saved.`, ...(result.warnings || []).map(warning => String(warning?.message || ''))].filter(Boolean).join(' ');
+        S.syncEnabled = result.captureSyncEnabled === true;
         // The retried save was the frozen one: later walkthrough edits are not in
         // it, so they must be saved (and reviewed) before anything is previewed.
         if (retrying && !sameDraft(saved, current)) { S.status = `The original save is confirmed: ${S.status} Your later changes to the walkthrough are not saved yet. Review them and save again before sending.`; return; }
@@ -220,6 +265,22 @@
         S.retry = Boolean(pending); S.frozen = pending ? pending.draft : null; S.error = error.message || 'The quote could not be saved. Retry.';
         S.reprice = !pending && typeof options.reprice === 'function' && /^quote_draft_catalog_(version_changed|price_changed|price_unverified|item_unavailable)$/.test(error.code || '');
       } finally { if (generation === S.generation) { S.busy = false; render(); } }
+    }
+    async function syncCapture() {
+      if (S.busy || !S.saved || !S.syncEnabled) return;
+      const generation = S.generation;
+      const restorePreview = S.step === 'confirm';
+      if (restorePreview) { S.preview = null; S.step = 'review'; }
+      S.busy = true; S.error = ''; render();
+      try {
+        const result = await client.syncCapture(S.saved);
+        if (generation !== S.generation) return;
+        S.saved = result.job; S.syncEnabled = result.captureSyncEnabled === true;
+        // Sync status writes change the job revision, so any prior send preview
+        // must be replaced before the employee can confirm a customer send.
+        if (restorePreview) { S.preview = await client.preview(S.saved); S.step = 'confirm'; }
+      } catch (error) { if (generation === S.generation) S.error = error.message || 'The saved walkthrough sync needs a retry.'; }
+      finally { if (generation === S.generation) { S.busy = false; render(); } }
     }
     async function confirmSend() {
       const generation = S.generation;

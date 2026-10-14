@@ -415,3 +415,30 @@ body:has(.contact-widget) .back-to-top{right:112px}
 .local-grid .local-item>span,.typical-job .typical-job-grid dt{color:#5c697b}
 .price-card .price-badge,.before-after-page .image-label.label-after{color:var(--ink)}
 .compare-table thead th.col-highlight{color:var(--ink)}
+
+/* Calm public entry: one consumer action, with supporting detail on demand. */
+.nav-phone{font-size:13px;font-weight:500;color:#596473}
+.nav-cta{white-space:nowrap}
+.home-simple{padding-bottom:0}
+.home-simple .hero{padding:72px 0;background:#0b1e32}
+.home-simple .hero-grid{align-items:center;gap:56px}
+.home-simple .hero-title{max-width:11ch;font-size:clamp(42px,5vw,64px);line-height:1.08}
+.home-simple .hero-sub{max-width:44ch;font-size:18px;line-height:1.65}
+.home-simple .hero-result{margin:0;aspect-ratio:auto;border-radius:12px;overflow:hidden}
+.home-simple .hero-result picture,.home-simple .hero-result img{display:block;width:100%;height:auto;aspect-ratio:auto;object-fit:contain}
+.home-simple .hero-result figcaption{position:static;display:flex;justify-content:space-between;padding:12px 16px;background:#fff;color:#24374c;font-size:12px}
+.home-simple .hero-result figcaption span,.home-simple .hero-result figcaption strong{background:none;color:inherit;padding:0;border-radius:0}
+.hero-contact{font-size:14px;color:#c5cdd7;margin-top:20px}
+.hero-contact a{color:inherit;text-decoration:underline;text-underline-offset:4px}
+.home-details{border-top:1px solid #cbd1d8;padding:0;margin:16px 0}
+.home-details summary{cursor:pointer;padding:22px 8px;font-size:17px;font-weight:600;color:#20354b;min-height:48px}
+.home-details summary:focus-visible{outline:3px solid #d94208;outline-offset:3px}
+.home-details section{padding:24px 0}
+.home-simple .home-details .wrap{width:100%;max-width:none}
+.home-simple .home-request{text-align:center;padding:64px 0}
+.home-request h2{font-size:clamp(28px,4vw,42px);margin-bottom:16px}
+.home-request p{margin:0 auto 24px;max-width:45ch}
+.home-simple .gallery{padding:56px 0}
+@media(max-width:899px){.home-simple .hero{padding:40px 0}.home-simple .hero-grid{gap:32px}.home-simple .hero-title{font-size:44px;max-width:13ch}.home-simple .hero-sub{font-size:17px}.home-simple .hero-visual{width:100%}.home-simple .hero-ctas .btn-primary{width:100%;text-align:center}.home-simple .hero-result figcaption{gap:8px;font-size:11px}.nav-cta{font-size:12px;padding:12px}.home-simple .gallery{padding:40px 0}}
+
+.home-simple .gallery .btn-primary{background:transparent;color:var(--accent-deep);box-shadow:none;padding:8px 0;text-decoration:underline;text-underline-offset:4px}

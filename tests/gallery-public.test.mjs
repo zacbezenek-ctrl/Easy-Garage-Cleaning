@@ -7,6 +7,11 @@ import { galleryPreviewPairs } from '../functions/_lib/gallery-preview-data.js';
 import { gallerySimplePairs as pairs, gallerySimpleVersion } from '../functions/_lib/gallery-simple-data.js';
 
 const html = renderPublicGallery();
+test('live verification manifest matches the canonical gallery release and assets',()=>{
+ const manifest=JSON.parse(readFileSync('gallery-simple.json','utf8'));
+ assert.equal(manifest.release,gallerySimpleVersion);
+ assert.deepEqual(manifest.pairs,pairs);
+});
 test('anonymous GET is public and indexable without cookies or staff access', async () => {
  const response = onRequest({request:new Request(galleryCanonical)});
  assert.equal(response.status,200);

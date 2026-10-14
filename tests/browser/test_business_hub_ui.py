@@ -528,7 +528,7 @@ class BusinessHubBrowserTests(unittest.TestCase):
         self.tab(page, 'Properties'); expect(page.get_by_role('heading', name='Add a property')).to_have_count(0)
         expect(page.locator('details summary')).to_have_count(1)
         self.tab(page, 'Team access'); expect(page.locator('[data-ext-scope]')).to_have_count(0); expect(page.locator('form[data-form=invite]')).to_have_count(0)
-        expect(page.locator('thead th')).to_have_text(['Person', 'Role / access', ''])
+        expect(page.locator('thead th')).to_have_text(['Person', 'Role / access', 'Actions'])
         desktop = self.open('/business-hub', 1280, 800); expect(desktop.locator('#content .scope-note .scope-badge')).to_have_text('Access limited to 1 property')
         self.assertLessEqual(desktop.evaluate('document.documentElement.scrollWidth'), 1280)
 
@@ -618,7 +618,7 @@ class BusinessHubBrowserTests(unittest.TestCase):
         self.role = 'viewer'; viewer = self.open('/business-hub'); self.tab(viewer, 'Team access')
         expect(viewer.locator('[data-ext-invite]')).to_have_count(0); expect(viewer.locator('td[data-label="Invitation"] .pill')).to_have_count(0)
         desktop = self.open('/business-hub', 1280, 800); self.tab(desktop, 'Team access')
-        expect(desktop.locator('thead th')).to_have_text(['Person', 'Role / access', '']); expect(desktop.locator('td[data-label="Invitation"]')).to_have_count(0)
+        expect(desktop.locator('thead th')).to_have_text(['Person', 'Role / access', 'Actions']); expect(desktop.locator('td[data-label="Invitation"]')).to_have_count(0)
 
     def test_invoices_show_the_server_status_denver_due_dates_and_view_only_for_roles_without_pay(self):
         # FIX-B2B-BILLING: an Overdue pill from the server's effective status, due dates as Denver calendar days

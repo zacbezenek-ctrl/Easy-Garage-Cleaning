@@ -21,6 +21,26 @@ const SITE = 'https://easygaragecleaning.com';
 // Disturb and the no-SMS-consent tag before anything is sent (functions/_lib/ghl-messenger.js).
 const highLevel = (env, { fetcher } = {}) => createGhlMessenger({ env, fetcher });
 
+// A sent SMS or a manually recorded job is not evidence of a synchronized GHL
+// appointment. Read the durable receipt as well as the sale: a crash may leave
+// the receipt claimed while the sale still says pending.
+export function saleSyncSummary(sale, receipt = null) {
+  const text = sale.handoff?.text || {};
+  const outcome = receipt?.outcome || text.status || 'missing';
+  const state = outcome === 'sending' ? 'uncertain' : outcome;
+  return {
+    job: sale.handoff?.job?.status === 'created' ? 'manual_reference_recorded' : 'unlinked',
+    highlevel: { state, mode: text.mode || 'manual', retryAllowed: state === 'rejected',
+      checkedAt: receipt?.updatedAt || text.sentAt || null },
+    appointment: 'not_verified',
+  };
+}
+
+export async function saleSyncSummaries(store, sales) {
+  const receipts = sales.length ? await store.getMany('knock_receipts', sales.map(s => `text_${s.id}`)) : new Map();
+  return new Map(sales.map(s => [s.id, saleSyncSummary(s, receipts.get(`text_${s.id}`))]));
+}
+
 export function integrationStatus(env, settings) {
   return {
     job: { mode: 'manual', available: ['manual'] },

@@ -23,6 +23,7 @@ const RANGE_WORDS = { today: 'today', week: 'this week', month: 'this month', se
 const toneFor = ratio => (ratio == null ? '' : ratio >= 1 ? 'success' : ratio >= 0.8 ? '' : 'warning');
 
 export function planMeters(plan) {
+  if (!plan.length) return [h('p', { class: 'caption muted' }, 'D2D benchmarks are unconfigured. Direct-estimator averages do not apply; measured results are shown without a target.')];
   return plan.filter(row => row.key !== 'revenuePerHour').map(row => {
     const [label, fmt] = METRIC_LABELS[row.key];
     return meter({ label, value: h('span', {}, row.actual == null ? '—' : fmt(row.actual), h('span', { class: 'muted' }, ` / ${fmt(row.plan)}`)), ratio: row.ratio ?? 0, tone: toneFor(row.ratio) });
@@ -133,7 +134,8 @@ function statsScreen(_app, params) {
   return box;
 }
 
-const COMMISSION_BADGE = { earned: ['Earned', 'success'], pending: ['Pending', 'warning'], cancelled: ['Cancelled', 'error'] };
+const COMMISSION_BADGE = { earned: ['Earned', 'success'], pending: ['Pending', 'warning'], cancelled: ['Cancelled', 'error'], excluded: ['No commission', ''] };
+const earningsMoney = value => value == null ? 'Needs review' : money(value, true);
 
 // "Oct 5 – 18", or "Sep 28 – Oct 11" across a month.
 export function periodLabel(start, end) {
@@ -148,49 +150,61 @@ function moneyScreen(_app, params) {
     const [current, ...older] = data.periods;
     const rates = data.rates;
     const thisMonth = zonedDate(Date.now()).slice(0, 7);
-    const collectedThisMonth = data.sales.filter(s => s.status === 'paid' && s.paidAt && zonedDate(s.paidAt).slice(0, 7) === thisMonth).reduce((sum, s) => sum + collectedAmount(s), 0);
+    const collectedThisMonth = data.sales.filter(s => ['garage', 'legacy'].includes(s.eligibility) && s.status === 'paid' && s.paidAt && zonedDate(s.paidAt).slice(0, 7) === thisMonth).reduce((sum, s) => sum + collectedAmount(s), 0);
     const inPeriod = data.sales.filter(s => s.saleDate >= current.period.start && s.saleDate <= current.period.end
       || (s.paidAt && zonedDate(s.paidAt) >= current.period.start && zonedDate(s.paidAt) <= current.period.end));
     const lead = app.S.rep.role === 'lead';
     mount(box,
       h('div', { class: 'row row--between row--top' },
-        h('div', {}, h('h1', { style: { fontSize: '22px' } }, `Pay period ${periodLabel(current.period.start, current.period.end)}`),
-          h('p', { class: 'caption muted' }, `Balance due ${money(current.balance, true)}`)),
+        h('div', {}, h('h1', { style: { fontSize: '22px' } }, current.period.configured === false ? 'Two-week payroll cycle needs setup' : `Pay period ${periodLabel(current.period.start, current.period.end)}`),
+          h('p', { class: 'caption muted' }, `Payable commission: ${earningsMoney(current.payableCommission)}`)),
         older.length ? h('button', { type: 'button', class: 'btn btn--quiet btn--sm', 'aria-expanded': String(showPast), onclick: () => app.go('money', showPast ? {} : { past: '1' }) },
           'Past periods', icon(showPast ? 'chevronRight' : 'chevronDown', { size: 'sm' })) : null),
       showPast ? h('div', { class: 'card card--line table-wrap' }, h('table', { class: 'table' },
-        h('thead', {}, h('tr', {}, ['Period', 'Booked', 'Pending', 'Earned', 'Paid'].map((label, i) => h('th', { class: i ? 'num' : '' }, label)))),
+        h('thead', {}, h('tr', {}, ['Period', 'Booked', 'Projected', 'Earned', 'Recorded payments'].map((label, i) => h('th', { class: i ? 'num' : '' }, label)))),
         h('tbody', {}, older.map(p => h('tr', {}, h('td', {}, periodLabel(p.period.start, p.period.end)),
-          h('td', { class: 'num' }, money(p.booked)), h('td', { class: 'num' }, money(p.pending)), h('td', { class: 'num' }, money(p.earned + p.override)), h('td', { class: 'num' }, money(p.paid))))))) : null,
+          h('td', { class: 'num' }, money(p.booked)), h('td', { class: 'num' }, earningsMoney(p.projectedCommission)), h('td', { class: 'num' }, earningsMoney(p.earnedCommission)), h('td', { class: 'num' }, earningsMoney(p.commissionPaid))))))) : null,
+      current.period.configured === false ? banner('warning', 'info', 'Payroll anchor unconfigured', 'Dates and past-period groupings are previews. Finance must confirm the first date of the two-week cycle; no payroll calendar is approved.') : null,
       h('div', { class: 'stats' },
         stat('Booked', money(current.booked), { sub: `${current.salesBooked} sale${current.salesBooked === 1 ? '' : 's'} this period` }),
-        stat('Pending', money(current.pending), { sub: 'not earned yet' }),
-        stat('Earned', money(current.earned + current.override), { sub: current.override ? `includes ${money(current.override, true)} lead bonus` : 'ready to pay', tone: 'success' }),
-        stat('Paid', money(current.paid), { sub: 'this period' })),
+        stat('Projected commission', earningsMoney(current.projectedCommission), { sub: 'estimate on bookings; not earned' }),
+        stat('Earned commission', earningsMoney(current.earnedCommission), { sub: 'eligible jobs in this period', tone: 'success' }),
+        stat('Customer collected', earningsMoney(current.customerCollectedRevenue), { sub: `recorded receipts; ${current.collectionUnknownCount} sale(s) missing receipt evidence` }),
+        stat('Payable commission', earningsMoney(current.payableCommission), { sub: 'after recorded rep payments and review' }),
+        stat('Commission paid (recorded)', earningsMoney(current.commissionPaid), { sub: 'admin recorded; settlement unverified' })),
+      current.compensationState !== 'configured' ? h('p', { class: 'banner banner--warning' },
+        current.compensationState === 'unconfigured' ? 'Compensation is unconfigured: finance must verify the saved rates. Default rates are not a pay promise.'
+          : `Finance review required: ${current.reviewReasons.join(', ').replaceAll('_', ' ')}. No automatic clawback is calculated.`) : null,
       h('section', { class: 'card', style: { gap: '10px' } },
         h('h2', {}, 'How commission works'),
-        h('p', {}, 'You earn ', h('b', {}, percent(rates.rate)), ' of a sale once the job is ', h('b', {}, 'completed'), ', ', h('b', {}, 'paid'), ', and past its ', h('b', {}, 'cancellation deadline'), '. A cancelled job pays nothing.'),
-        rates.acceleratorEnabled ? meter({
+        h('p', {}, 'Current policy: commission is earned when the eligible job is collected, with payouts every two weeks. Partial collections, calculation base, attribution, refunds and the payroll anchor still need review. Customer receipts are separate from recorded rep payments; settlement is unverified.'),
+        h('p', { class: 'caption muted' }, 'Current policy: eligible garage work only; no junk-removal commission. The estimator rate is separate and is not added to D2D pay. Mixed or unclassified work needs review; historical signed terms are preserved.'),
+        h('a', { class: 'btn btn--secondary', href: '/employee.html?view=walkthroughs' }, 'Book a walkthrough in the Hub'),
+        rates.verified && rates.acceleratorEnabled ? meter({
           label: `${percent(rates.acceleratorRate)} rate above ${money(rates.acceleratorThreshold)} this month`, value: `${money(collectedThisMonth)} / ${money(rates.acceleratorThreshold)}`,
           ratio: collectedThisMonth / rates.acceleratorThreshold, tone: 'orange', goal: 1,
           note: collectedThisMonth >= rates.acceleratorThreshold ? `You're past the line: collected sales this month pay ${percent(rates.acceleratorRate)} on the amount above it.`
             : `${money(rates.acceleratorThreshold - collectedThisMonth)} more collected this month and every dollar after that pays ${percent(rates.acceleratorRate)}.`,
         }) : null),
-      lead && rates.leadOverrideEnabled ? h('section', { class: 'card', style: { gap: '8px' } },
+      h('section', { class: 'card stack' }, h('h2', {}, 'Walkthrough setting — 12%'),
+        h('p', {}, 'The closed and collected setter route allocates 12% to the setter plus 7% to the estimator, 19% total. Booking or a no-show earns nothing. Direct-estimator work stays at 7%, direct D2D closes at 25%, and junk at zero. Unknown recipients, base or payroll anchor keep amounts on hold; 25% is never added to the setter route.'),
+        (data.setters?.rows || []).map(row => h('div', { class: 'list-row list-row--static' },
+          h('span', {}, `${row.walkthroughId}: ${row.state.replaceAll('_', ' ')}`),
+          h('span', { class: 'caption muted' }, (row.reviewReasons || []).join(', ').replaceAll('_', ' ')))),
+        data.setters?.truncated ? h('p', { class: 'caption muted' }, 'More setter records need review.') : null),
+      lead && rates.verified && current.compensationState === 'configured' && rates.leadOverrideEnabled ? h('section', { class: 'card', style: { gap: '8px' } },
         h('div', { class: 'row row--between' }, h('h2', {}, `Lead bonus · ${percent(rates.leadOverrideRate, 1)} of your team`), badge('Lead', 'navy')),
         kv('Earned this period', money(current.override, true)),
         kv('Earned so far', money((data.overrides || []).reduce((sum, o) => sum + o.amount, 0), true))) : null,
       h('section', { class: 'card', style: { gap: '8px' } },
         h('div', { class: 'row row--between' }, h('h2', {}, 'Training hours'), badge('Paid by the hour')),
         kv('This period', `${hoursLabel((current.trainingMinutes || 0) * 60000)} h`),
-        kv('Pay', `${money(current.trainingPay, true)} at ${money(data.trainingHourlyRate, true)}/h`)),
+        kv('Pay', current.trainingPay == null ? 'Needs finance review' : `${money(current.trainingPay, true)} at ${money(data.trainingHourlyRate, true)}/h`)),
       h('section', { class: 'stack stack--tight' },
         h('h2', { style: { fontSize: '18px' } }, 'This period\'s sales'),
         inPeriod.length ? h('div', { class: 'list list--boxed' }, inPeriod.map(s => {
-          const [label, tone] = s.status === 'booked' && s.commission.state === 'pending' ? ['Booked', 'info'] : (COMMISSION_BADGE[s.commission.state] || [s.commission.state, '']);
-          const sub = s.status === 'paid' ? `Paid${s.paidAt ? ` ${dateLabel(zonedDate(s.paidAt))}` : ''} · ${money(s.commission.amount, true)} ${s.commission.state === 'earned' ? 'earned' : 'after the deadline'}`
-            : s.status === 'completed' ? `Completed${s.completedAt ? ` ${dateLabel(zonedDate(s.completedAt))}` : ''} · not paid yet`
-            : s.status === 'cancelled' ? 'Cancelled · no commission' : `Job ${dateLabel(s.jobDate)} · refund window to ${dateLabel(s.cancelDeadlineDate)}`;
+          const [label, tone] = COMMISSION_BADGE[s.commission.state] || [s.commission.state.replaceAll('_', ' '), 'warning'];
+          const sub = `${s.status} · customer collected ${earningsMoney(s.customerCollection.gross)} · commission ${earningsMoney(s.commission.amount)} · HighLevel ${s.sync.highlevel.state}; appointment not verified`;
           return h('div', { class: 'list-row list-row--static' }, dot('sold', { large: true }),
             h('span', { class: 'list-row__main' }, h('span', { class: 'list-row__title' }, `${s.address.number} ${s.address.street.split(' ').map(w => w.charAt(0) + w.slice(1).toLowerCase()).join(' ')} · ${money(s.ticket)}`), h('span', { class: 'list-row__sub' }, sub)),
             badge(label, tone));
@@ -204,6 +218,6 @@ export function install(appApi) {
   app.registerScreen('stats', statsScreen, { title: 'Scoreboard', back: 'more' });
   app.registerScreen('money', moneyScreen, { title: 'My money', back: 'more' });
   app.moreLinks.push(
-    { route: 'money', label: 'My money', icon: 'cash', order: 30, hint: 'Booked, pending, earned and paid' },
+    { route: 'money', label: 'My money', icon: 'cash', order: 30, hint: 'Projected, earned, collected and paid to you' },
     { route: 'stats', label: 'Scoreboard', icon: 'chart', order: 40, hint: 'Your numbers against the plan' });
 }

@@ -249,7 +249,7 @@ test("labels are plain text: '&' and quotes are accepted and escaped by the shel
 });
 
 test('one invalid MANIFEST line is skipped with a console warning and every other screen still registers', () => {
-  const source = readFileSync(new URL('../employee-hub-screens.js', import.meta.url), 'utf8');
+  const source = readFileSync(new URL('../employee-hub-screens.js', import.meta.url), 'utf8').replace(/\r\n/g, '\n');
   // Screens have landed (FUN-19 stocked_costs, TEAM-UI staff, P3-04 followup_settings), so the fixtures are appended after the shipped lines, and
   // every shipped line must itself register cleanly.
   const manifest = /const MANIFEST=\[\n((?:\{[^\n]*\},\n)*)\];/.exec(source);

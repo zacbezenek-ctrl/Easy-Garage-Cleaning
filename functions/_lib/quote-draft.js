@@ -15,6 +15,9 @@ import { messagingFlags } from './approved-send.js';
 import { maskRecipient, normalizeEmail, normalizePhone } from './ghl-messenger.js';
 import { catalogQuotesEnabled, catalogStorage, readCatalogState } from './catalog-store.js';
 import { priceCatalogQuote } from './catalog-quote.js';
+import { normalizeUnsignedCapture, unsignedCapturePatch } from './unsigned-walkthrough-capture.js';
+import { quotePaymentSchedule, requireQuotePaymentTiming, quotePaymentDates, quotePaymentSummary, businessPaymentDate, PAYMENT_TIME_ZONE } from './quote-payment-policy.js';
+import { prepareWalkthroughCaptureSync, walkthroughCaptureSyncView } from './walkthrough-capture-sync.js';
 
 /**
  * P2-07 unsigned quote drafts and an explicit human send.
@@ -49,7 +52,7 @@ export const MAX_DRAFT_LINES = 40;
 // The customer portal lists at most 12 charged lines (money-service MAX_ESTIMATE_LINES).
 export const MAX_INCLUDED_LINES = 12;
 const SEND_ACTION = 'quote.send';
-const DRAFT_KEYS = ['client', 'title', 'scope', 'line_items', 'valid_until', 'catalog_version', 'crew_size', 'estimated_duration_min'];
+const DRAFT_KEYS = ['client', 'title', 'scope', 'line_items', 'valid_until', 'catalog_version', 'crew_size', 'estimated_duration_min', 'walkthrough_capture'];
 const SAVE_KEYS = ['actorId', 'requestId', 'customerId', 'sourceWalkthroughId', 'sourceRevision', 'jobId', 'expectedRevision', 'draft'];
 const PREVIEW_KEYS = ['actorId', 'jobId', 'expectedRevision'];
 const SEND_KEYS = ['actorId', 'requestId', 'jobId', 'expectedRevision', 'confirmToken'];
@@ -110,17 +113,23 @@ export function normalizeQuoteDraft(value, now = new Date().toISOString()) {
   const crew = value.crew_size ?? null, minutes = value.estimated_duration_min ?? null;
   if (crew !== null && (!Number.isInteger(crew) || crew < 1 || crew > 20)) throw fail('invalid_draft', 'Choose a crew size from 1 to 20.', 400);
   if (minutes !== null && (!Number.isInteger(minutes) || minutes < 15 || minutes > 1440)) throw fail('invalid_draft', 'The estimated job duration is invalid.', 400);
-  return { client, title: text(value.title, 'Quote title', 200) || 'EGC Garage Service', scope: text(value.scope, 'The customer-facing scope', 1600, true), lineItems, totalCents: totals.totalCents, depositCents: depositCents(totals.totalCents, 50), validUntil, catalogVersion: version === '' ? null : version, crewSize: crew, estimatedDurationMin: minutes };
+  return { client, title: text(value.title, 'Quote title', 200) || 'EGC Garage Service', scope: text(value.scope, 'The customer-facing scope', 1600, true), lineItems, totalCents: totals.totalCents, depositCents: depositCents(totals.totalCents, 50), validUntil, catalogVersion: version === '' ? null : version, crewSize: crew, estimatedDurationMin: minutes, walkthroughCapture: normalizeUnsignedCapture(value.walkthrough_capture) };
 }
 
 // The quote fields of a draft save. A material change (lines, choice, total,
 // deposit or scope) bumps the revision and returns the quote to draft, retiring
 // an approval and an issued invoice; recorded payments are never touched.
-function quotePatch(job, draft, actor, now, jobId) {
+function quotePatch(job, inputDraft, actor, now, jobId, newQuotePaymentPolicy) {
   const current = plain(job?.estimate) ? job.estimate : {}, deposits = plain(job?.deposit) ? job.deposit : {}, approval = plain(job?.customerApproval) ? job.customerApproval : null;
+  // A new server policy applies only when creating a new quote job. Existing
+  // quotes keep their snapshot (or legacy behavior), never today's new policy.
+  const policy = job ? current.commercialPolicy : newQuotePaymentPolicy;
+  const schedule = policy === undefined ? null : quotePaymentSchedule(inputDraft.totalCents, policy);
+  const draft = schedule ? { ...inputDraft, depositCents: schedule.depositCents, depositPct: schedule.policy.depositPct } : inputDraft;
   const next = { ...current, number: invoiceNumber(jobId, 'estimate', current.number), amount: draft.totalCents / 100, amountCents: draft.totalCents, depositRequired: draft.depositCents / 100, depositRequiredCents: draft.depositCents, scope: draft.scope, lineItems: structuredClone(draft.lineItems), validUntil: draft.validUntil, termsVersion: current.termsVersion || job?.termsVersion || '2026-09', catalogVersion: draft.catalogVersion,
     ...(draft.catalogPricing ? { pricingSettingsVersion: draft.pricingSettingsVersion, depositPct: draft.depositPct } : current.pricingSettingsVersion ? { pricingSettingsVersion: null, depositPct: null } : {}),
     source: 'quote_draft', createdAt: current.createdAt || now, updatedAt: now, updatedBy: actor.user };
+  if (schedule) Object.assign(next, { commercialPolicy: schedule.policy, depositPct: schedule.policy.depositPct, termsVersion: current.termsVersion || schedule.policy.version });
   // Catalog provenance is part of the terms a customer reviewed. A new
   // approved settings/catalog version can leave every visible cent unchanged,
   // but must still retire the earlier send and approval. The same applies when
@@ -153,6 +162,12 @@ function quotePatch(job, draft, actor, now, jobId) {
   return { patch, warnings, material, revisedRelease: material && !fresh && (wasSent || wasApproved) };
 }
 
+function capturePatch(job, draft, actor, now) {
+  const patch = unsignedCapturePatch(job, draft.walkthroughCapture, actor, now);
+  if (Object.keys(patch).length) patch.walkthroughCaptureSync = prepareWalkthroughCaptureSync({ ...job, ...patch }, now);
+  return patch;
+}
+
 /** Quote author DTO: the quote, its options and send state; never signatures, payment evidence, notes or provider IDs. */
 export function quoteDraftView(job) {
   const estimate = plain(job?.estimate) ? job.estimate : {}, lines = Array.isArray(estimate.lineItems) ? normalizeLineItems(estimate.lineItems).lineItems : [];
@@ -160,10 +175,13 @@ export function quoteDraftView(job) {
     id: job.id, revision: job.revision, customerId: job.customerId || '', customer: String(job.customer || '').slice(0, 200), projectId: job.projectId || '', sourceWalkthroughId: job.sourceWalkthroughId || '', status: stage(job), quoteStatus: job.quoteStatus || '',
     estimate: { number: estimate.number || '', revision: Number.isSafeInteger(estimate.revision) ? estimate.revision : null, status: estimate.status || 'draft', amountCents: Number.isSafeInteger(estimate.amountCents) ? estimate.amountCents : null, depositRequiredCents: Number.isSafeInteger(estimate.depositRequiredCents) ? estimate.depositRequiredCents : null, validUntil: validDate(estimate.validUntil) ? estimate.validUntil : null, scope: String(estimate.scope || '').slice(0, 1600), sentAt: estimate.sentAt || null, sentRevision: Number.isSafeInteger(estimate.sentRevision) ? estimate.sentRevision : null, fingerprint: estimateFingerprint(estimate),
       ...(estimate.pricingSettingsVersion ? { catalogVersion: estimate.catalogVersion, pricingSettingsVersion: estimate.pricingSettingsVersion, depositPct: estimate.depositPct } : {}),
+      ...(estimate.commercialPolicy !== undefined ? { commercialPolicy: estimate.commercialPolicy, depositPct: estimate.depositPct } : {}),
+      ...(estimate.paymentSchedule ? { paymentSchedule: estimate.paymentSchedule } : {}),
       lineItems: lines.map(line => ({ id: line.id, kind: line.kind, name: line.name, description: line.description, quantity: line.quantity, unitCents: line.unitCents, totalCents: line.totalCents, customerSupplied: line.customerSupplied === true, optional: line.optional, selected: line.selected, included: included(line), group: line.group ? { id: line.group.id, label: line.group.label, selection: line.group.selection, required: line.group.required } : null, tier: line.tier })),
       options: packageTotals(lines).map(group => ({ groupId: group.groupId, label: group.label, selection: group.selection, required: group.required, tiers: group.tiers, selectedTier: group.selectedTier })) },
     ...(plain(job.quoteDraft?.catalogPricing) ? { catalogPricing: job.quoteDraft.catalogPricing } : {}),
     approval: pick(job.customerApproval, ['status', 'approvedAt', 'supersededAt']),
+    ...(walkthroughCaptureSyncView(job) ? { captureSync: walkthroughCaptureSyncView(job) } : {}),
     delivery: pick(job.estimateReady, ['requestId', 'revision', 'mode', 'status', 'reason', 'attempts', 'recipient', 'tagReset', 'at']),
   };
 }
@@ -213,7 +231,7 @@ export async function readQuoteDraft(store, actor, query = {}, { env = {} } = {}
   return { ok: true, authority: 'employee_hub', job: quoteDraftView(await readJobFor(store, query.jobId)) };
 }
 
-export async function saveQuoteDraft(store, actor, input, now = new Date().toISOString(), { env = {}, checkouts = null, catalogState = catalogStateDefault } = {}) {
+export async function saveQuoteDraft(store, actor, input, now = new Date().toISOString(), { env = {}, checkouts = null, catalogState = catalogStateDefault, newQuotePaymentPolicy } = {}) {
   requireQuoteAuthor(actor, env);
   keys(input, SAVE_KEYS, 'The quote draft needs a stable request and customer identity.');
   if (!uuid(input.requestId) || !safeId(input.customerId) || input.jobId && !safeId(input.jobId) || input.sourceWalkthroughId && !safeId(input.sourceWalkthroughId)) throw fail('invalid_request', 'The quote draft needs a stable request and customer identity.', 400);
@@ -265,7 +283,7 @@ export async function saveQuoteDraft(store, actor, input, now = new Date().toISO
       editable(job);
       // An in-person signature is revised only through a new signed walkthrough handoff.
       if (approved(job.estimate?.status) && job.estimate?.acceptanceMethod === 'in_person_signature') throw fail('signed', 'The customer signed this quote in person. Start a signed revision in the walkthrough instead.');
-      const plan = quotePatch(job, draft, actor, now, job.id), saved = record(job, plan, job.id), patch = { ...plan.patch, quoteDraft: saved.quoteDraft, updatedAt: now };
+      const plan = quotePatch(job, draft, actor, now, job.id), saved = record(job, plan, job.id), patch = { ...plan.patch, ...capturePatch(job, draft, actor, now), quoteDraft: saved.quoteDraft, updatedAt: now };
       // FUN-03: a material revision ends the job's live sale (a portal approval of
       // an earlier revision), as the Hub estimate editor does: deal.approval_superseded
       // and the cleared funnelSale are in this revision's commit.
@@ -283,7 +301,7 @@ export async function saveQuoteDraft(store, actor, input, now = new Date().toISO
         ...(retired ? [retired] : []),
         ...crossing.writes,
       ]);
-    } else await createDraft(store, actor, input, draft, customer, now, env, { record, audit, receiptId });
+    } else await createDraft(store, actor, input, draft, customer, now, env, { record, audit, receiptId, newQuotePaymentPolicy });
   } catch (error) {
     if (FINAL.has(error.code)) throw error;
     const recovered = await replay(false).catch(problem => { if (FINAL.has(problem.code)) throw problem; return null; });
@@ -296,7 +314,7 @@ export async function saveQuoteDraft(store, actor, input, now = new Date().toISO
   return saved;
 }
 
-async function createDraft(store, actor, input, draft, customer, now, env, { record, audit, receiptId }) {
+async function createDraft(store, actor, input, draft, customer, now, env, { record, audit, receiptId, newQuotePaymentPolicy }) {
   let source = null, sourceProject = null;
   if (input.sourceWalkthroughId) {
     source = await store.read('jobs', input.sourceWalkthroughId); requireRevision(source);
@@ -324,8 +342,8 @@ async function createDraft(store, actor, input, draft, customer, now, env, { rec
     commit: async writes => {
       const target = writes.find(write => write.collection === 'jobs' && write.patch?.dispatchRequestId === input.requestId);
       if (!target) throw fail('commit_incomplete', 'The complete quote draft could not be prepared.', 503);
-      const plan = quotePatch(null, draft, actor, now, target.id), saved = record(null, plan, target.id);
-      Object.assign(target.patch, plan.patch, { quoteDraft: saved.quoteDraft });
+      const plan = quotePatch(null, draft, actor, now, target.id, newQuotePaymentPolicy), saved = record(null, plan, target.id);
+      Object.assign(target.patch, plan.patch, capturePatch(target.patch, draft, actor, now), { quoteDraft: saved.quoteDraft });
       function fence(collection, row, patch) {
         const found = writes.find(write => write.collection === collection && write.id === row.id);
         if (found) {
@@ -352,14 +370,29 @@ function deliveryPlan(job, env) {
   const mode = job.notify === false ? 'suppressed' : !flags.enabled ? 'off' : flags.dryRun ? 'dry_run' : 'automation';
   return { mode, recipient };
 }
-function sendBinding(job, delivery) {
-  return { jobId: job.id, jobRevision: job.revision, customerId: job.customerId || '', estimateNumber: job.estimate.number, estimateRevision: job.estimate.revision, estimateFingerprint: estimateFingerprint(job.estimate), delivery: delivery.mode };
+function sendBinding(job, delivery, paymentSchedule) {
+  return { jobId: job.id, jobRevision: job.revision, customerId: job.customerId || '', estimateNumber: job.estimate.number, estimateRevision: job.estimate.revision, estimateFingerprint: estimateFingerprint(paymentSchedule ? {...job.estimate,paymentSchedule} : job.estimate), delivery: delivery.mode };
+}
+async function paymentScheduleFor(store, job) {
+  if (!job.estimate?.commercialPolicy) return null;
+  // Issued agreements retain their exact schedule. Rescheduling cannot silently
+  // rewrite those dates; a future explicit terms amendment is required.
+  const source = job.sourceWalkthroughId ? await store.read('jobs', job.sourceWalkthroughId) : null;
+  if (job.estimate.paymentSchedule) {
+    const saved=job.estimate.paymentSchedule,walk=businessPaymentDate(source?.walkthroughCompletedAt||source?.completedAt||source?.date),day=businessPaymentDate(job.date);
+    if(day&&saved.remainderDueDate!==day||walk&&saved.depositDueDate<walk)throw fail('payment_schedule_amendment_required','The schedule changed after these payment dates were issued. Review an explicit payment-terms amendment; the saved agreement was not changed.');
+    const amounts=quotePaymentSchedule(job.estimate.amountCents,job.estimate.commercialPolicy);return {...saved,depositCents:amounts.depositCents,remainderCents:amounts.remainderCents};
+  }
+  const dates = quotePaymentDates(job.estimate.commercialPolicy,{walkthroughDate:source?.walkthroughCompletedAt || source?.completedAt || source?.date,jobDate:job.date});
+  const amounts = quotePaymentSchedule(job.estimate.amountCents,job.estimate.commercialPolicy);
+  return {...dates,timeZone:PAYMENT_TIME_ZONE,policyVersion:job.estimate.commercialPolicy.version,depositCents:amounts.depositCents,remainderCents:amounts.remainderCents,sourceWalkthroughId:source.id,sourceRevision:source.revision};
 }
 function sendable(job, now, env) {
   editable(job);
   if (plain(job.quoteDraft?.catalogPricing) && !catalogQuotesEnabled(env)) throw fail('catalog_disabled', 'Catalog quotes are turned off. Keep this saved quote for review.', 404);
   const estimate = plain(job.estimate) ? job.estimate : null;
   if (!estimate?.number || !Number.isSafeInteger(estimate.revision)) throw fail('estimate_missing', 'Save the quote before sending it.');
+  requireQuotePaymentTiming(estimate.commercialPolicy);
   if (approved(estimate.status) || approved(job.customerApproval?.status)) throw fail('already_approved', 'The customer already approved this quote. Revise it first if they are reviewing a change.');
   if (estimate.status === 'sent' && estimate.sentRevision === estimate.revision) throw fail('already_sent', `Revision ${estimate.revision} was already sent. Revise the quote to send an updated version.`);
   let lines;
@@ -377,10 +410,10 @@ export async function previewQuoteSend(store, actor, input, now = new Date().toI
   const job = await readJobFor(store, input.jobId);
   if (job.revision !== input.expectedRevision) throw fail('revision_conflict', 'This quote changed after you opened it. Reload it and review the latest version.');
   sendable(job, now, env);
-  const delivery = deliveryPlan(job, env), estimate = job.estimate;
-  const summary = `Send ${estimate.number} revision ${estimate.revision} (${usd(estimate.amountCents)}) to ${String(job.customer || 'the customer').slice(0, 80)}`;
-  const confirmation = await issueConfirmation(env, { actorId: actor.user, action: SEND_ACTION, entityId: `jobs/${job.id}`, payload: sendBinding(job, delivery), summary, now });
-  return { ok: true, authority: 'employee_hub', job: quoteDraftView(job), delivery, summary: confirmation.summary, confirmToken: confirmation.token, expiresAt: confirmation.expiresAt };
+  const delivery = deliveryPlan(job, env), estimate = job.estimate, paymentSchedule = await paymentScheduleFor(store,job);
+  const summary = `Send ${estimate.number} revision ${estimate.revision} (${usd(estimate.amountCents)}) to ${String(job.customer || 'the customer').slice(0, 80)}`+(paymentSchedule?'. '+quotePaymentSummary(paymentSchedule):'');
+  const confirmation = await issueConfirmation(env, { actorId: actor.user, action: SEND_ACTION, entityId: `jobs/${job.id}`, payload: sendBinding(job, delivery, paymentSchedule), summary, now });
+  return { ok: true, authority: 'employee_hub', job: quoteDraftView(paymentSchedule?{...job,estimate:{...estimate,paymentSchedule}}:job), delivery, summary: confirmation.summary, confirmToken: confirmation.token, expiresAt: confirmation.expiresAt };
 }
 
 /**
@@ -414,9 +447,9 @@ export async function sendQuoteDraft(store, actor, input, now = new Date().toISO
   const job = await readJobFor(store, input.jobId);
   if (job.revision !== input.expectedRevision) throw fail('revision_conflict', 'This quote changed after the preview. Preview it again before sending.');
   sendable(job, now, env);
-  const delivery = deliveryPlan(job, env), estimate = job.estimate;
+  const delivery = deliveryPlan(job, env), estimate = job.estimate, paymentSchedule = await paymentScheduleFor(store,job);
   const patch = {
-    estimate: { ...estimate, status: 'sent', sentAt: now, sentBy: actor.user, sentChannel: 'estimate_ready', sentRevision: estimate.revision, sentFingerprint: estimateFingerprint(estimate), sentRequestId: input.requestId, updatedAt: now },
+    estimate: { ...estimate, ...(paymentSchedule?{paymentSchedule}:{}), status: 'sent', sentAt: now, sentBy: actor.user, sentChannel: 'estimate_ready', sentRevision: estimate.revision, sentFingerprint: estimateFingerprint(paymentSchedule?{...estimate,paymentSchedule}:estimate), sentRequestId: input.requestId, updatedAt: now },
     quoteStatus: 'sent',
     // The confirmed delivery mode: the deliverer never goes further than the person agreed to.
     estimateReady: { requestId: input.requestId, revision: estimate.revision, mode: delivery.mode, status: ['automation', 'dry_run'].includes(delivery.mode) ? 'pending' : delivery.mode === 'suppressed' ? 'suppressed' : 'messaging_disabled', attempts: 0, recipient: delivery.recipient.masked, requestedAt: now, requestedBy: actor.user },
@@ -429,7 +462,8 @@ export async function sendQuoteDraft(store, actor, input, now = new Date().toISO
     { collection: QUOTE_DRAFT_RECEIPTS, id: receiptId, patch: { fingerprint, actorId: actor.user, action: 'send', customerId: job.customerId || '', jobId: job.id, estimateRevision: estimate.revision, delivery: delivery.mode, warnings, createdAt: now } },
     auditWrite({ actor: { id: actor.user, kind: 'human', role: actor.role }, via: 'hub', action: SEND_ACTION, entity: { collection: 'jobs', id: job.id }, before: moneySnapshot(job), after: moneySnapshot({ ...job, ...patch }), requestId: input.requestId, reason: `delivery:${delivery.mode}`, now }),
   ];
-  try { await consumeConfirmation(env, store, input.confirmToken, { actorId: actor.user, action: SEND_ACTION, entityId: `jobs/${job.id}`, payload: sendBinding(job, delivery), now, requestId: input.requestId }, writes); }
+  if (paymentSchedule && !estimate.paymentSchedule) writes.push({collection:'jobs',id:paymentSchedule.sourceWalkthroughId,revision:paymentSchedule.sourceRevision,verify:true});
+  try { await consumeConfirmation(env, store, input.confirmToken, { actorId: actor.user, action: SEND_ACTION, entityId: `jobs/${job.id}`, payload: sendBinding(job, delivery, paymentSchedule), now, requestId: input.requestId }, writes); }
   catch (error) {
     const recovered = await replay(false).catch(problem => { if (FINAL.has(problem.code)) throw problem; return null; });
     if (recovered) return recovered;
