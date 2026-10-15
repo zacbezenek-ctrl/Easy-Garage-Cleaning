@@ -7,6 +7,7 @@ import {
 } from './knock-ui.js';
 import { zonedDate } from './knock-time.js';
 import { cancellationWindow } from './knock-sale-rules.js';
+import { nativeRecoveryAdmin } from './knock-native-form.js';
 import { periodLabel } from './knock-stats-ui.js';
 
 let app;
@@ -756,6 +757,7 @@ export function install(appApi) {
   registerAdminSection('coverage', 'Coverage', 'chart', coverageSection);
   registerAdminSection('sales', 'Sales', 'dollar', salesSection);
   registerAdminSection('setters', 'Setters', 'user', settersSection);
+  registerAdminSection('native-forms', 'GHL requests', 'refresh', () => nativeRecoveryAdmin(app));
   registerAdminSection('money', 'Money', 'cash', moneySection);
   registerAdminSection('scoreboard', 'Scoreboard', 'trophy', scoreboardSection);
   registerAdminSection('flags', 'Flags', 'flag', flagsSection);

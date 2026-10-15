@@ -1,5 +1,5 @@
 // Online-only native forms. The offline sales/door outbox never submits a provider form.
-import { h, mount, fullScreen, banner, kv, loadingState } from './knock-ui.js';
+import { h, mount, fullScreen, banner, kv, loadingState, confirmSheet, uuid } from './knock-ui.js';
 import { houseLabel } from './knock-doors.js';
 
 const ENDPOINT = '/api/knock-form-handoff';
@@ -33,10 +33,7 @@ export function createNativeFormSession({ api, online, pending, houseId }) {
       return api(ENDPOINT, { method: 'POST', body: { action: 'open', reference: result.handoff.reference } });
     },
     async open(reference) { ready(); return api(ENDPOINT, { method: 'POST', body: { action: 'open', reference } }); },
-    async verify(reference, contactId, submissionId) {
-      ready();
-      return api(ENDPOINT, { method: 'POST', body: { action: 'verify', reference, contactId, submissionId } });
-    },
+    async discover(reference) { ready(); return api(ENDPOINT, { method: 'POST', body: { action: 'discover', reference } }); },
   };
 }
 
@@ -65,6 +62,7 @@ function statusPanel(handoff) {
   const s = handoff.states;
   return h('section', { class: 'card' },
     h('strong', {}, CHANNEL_LABEL[handoff.channel]),
+    handoff.revoked ? h('p', {}, 'Released by a manager. This old reference cannot be used again.') : null,
     kv('Hub saved', s.hubSaved ? 'Yes' : 'No'),
     kv('GHL submission verified', s.submissionVerified ? 'Yes' : 'Not yet'),
     kv('GHL contact linked', s.contactLinked ? 'Yes, to this receipt' : 'Not yet'),
@@ -83,19 +81,17 @@ async function openPanel(app, house) {
     async function show(result) {
       embedded?.dispose();
       const handoff = result.handoff;
-      const contact = h('input', { class: 'input', 'aria-label': 'Exact GHL contact ID', placeholder: 'GHL contact ID', autocomplete: 'off' });
-      const submission = h('input', { class: 'input', 'aria-label': 'Exact GHL submission ID', placeholder: 'GHL submission ID', autocomplete: 'off' });
-      const feedback = h('p', { role: 'status' });
+      const feedback = h('p', { role: 'status' }, result.discovery === 'not_visible_yet' ? 'No matching submission is visible yet. If you submitted, wait and check again before resubmitting.' : '');
       const check = h('button', { type: 'button', class: 'btn btn--secondary', onclick: async () => {
         check.disabled = true;
-        try { await show(await session.verify(handoff.reference, contact.value.trim(), submission.value.trim())); }
+        try { await show(await session.discover(handoff.reference)); }
         catch (err) { feedback.textContent = err.message; check.disabled = false; }
-      } }, 'Check GHL receipt');
+      } }, 'Check submission');
       embedded = result.launch && !handoff.states.submissionVerified ? nativeFrame(result.launch, handoff.reference) : null;
       mount(box, statusPanel(handoff), embedded?.element,
-        handoff.states.submissionVerified ? null : h('section', { class: 'card' },
-          h('p', {}, 'Use the exact contact and submission IDs from GHL to verify this request. A form submission does not book a job or award commission.'),
-          contact, submission, check, feedback,
+        handoff.states.submissionVerified || handoff.revoked ? null : h('section', { class: 'card' },
+          h('p', {}, 'Check for this request in GHL after submitting. A form submission does not book a job or award commission.'),
+          check, feedback,
           h('button', { type: 'button', class: 'btn btn--quiet', onclick: async () => { try { await show(await session.open(handoff.reference)); } catch (err) { feedback.textContent = err.message; } } }, 'Reopen same form reference')),
         h('button', { type: 'button', class: 'btn btn--quiet', onclick: load }, 'Back to saved requests'));
     }
@@ -118,7 +114,7 @@ async function openPanel(app, house) {
           h('button', { class: 'btn btn--primary', disabled: !data.setup.enabled || !data.sources.length, onclick: start('direct_sale') }, CHANNEL_LABEL.direct_sale),
           h('button', { class: 'btn btn--secondary', disabled: !data.setup.enabled || !data.sources.length, onclick: start('walkthrough_request') }, CHANNEL_LABEL.walkthrough_request), feedback,
           data.handoffs.map(handoff => h('section', { class: 'card' }, statusPanel(handoff),
-            h('button', { class: 'btn btn--quiet', onclick: async () => { try { await show(await session.open(handoff.reference)); } catch (err) { feedback.textContent = err.message; } } }, 'Open saved request'))));
+            h('button', { class: 'btn btn--quiet', onclick: () => show({ handoff }) }, 'View saved request'))));
       } catch (err) { error(err); }
     }
     load();
@@ -128,3 +124,37 @@ async function openPanel(app, house) {
 }
 
 export function install(app) { app.nativeFormForHouse = house => openPanel(app, house); }
+
+export async function nativeRecoveryAdmin(app) {
+  const box = h('div', { class: 'screen' }), feedback = h('p', { role: 'status' });
+  const house = h('input', { class: 'input', 'aria-label': 'House record ID', placeholder: 'House record ID' });
+  const detail = h('div');
+  async function inspect(houseId) {
+    try {
+      const data = await app.api(`/api/knock-form-recovery?houseId=${encodeURIComponent(houseId)}`);
+      const reason = h('textarea', { class: 'input', 'aria-label': 'Reason for releasing abandoned requests', maxLength: 500 });
+      const requestId = uuid();
+      const release = h('button', { class: 'btn btn--danger', disabled: !data.recoverable, onclick: async () => {
+        if (reason.value.trim().length < 10) { feedback.textContent = 'Enter a reason of at least 10 characters.'; return; }
+        if (!await confirmSheet('Release abandoned requests?', 'Every current form reference for this house will stop working. No sale, job, payment or commission will change. A rep must explicitly create a new request.', 'Release requests', 'danger')) return;
+        release.disabled = true;
+        try {
+          await app.api('/api/knock-form-recovery', { method: 'POST', body: { action: 'release', houseId, requestId,
+            expectedGeneration: data.generation, expectedSnapshot: data.snapshot, reason: reason.value.trim(), confirmation: 'release_abandoned_forms' } });
+          feedback.textContent = 'Released and recorded in the audit history. Old references cannot be reused.';
+          await inspect(houseId);
+        } catch (error) { feedback.textContent = error.message; release.disabled = false; }
+      } }, 'Release abandoned requests');
+      mount(detail, h('section', { class: 'card' }, h('strong', {}, houseId),
+        kv('Current rep', data.claim?.repKey || 'None'), kv('Channel', CHANNEL_LABEL[data.claim?.channel] || 'None'),
+        data.recoverable ? h('p', {}, 'Only unverified requests can be released. Confirm abandonment with the rep first.') : h('p', {}, `Review required: ${data.blockers.join(', ')}`),
+        data.references.map(r => h('p', {}, r.reference)), reason, release));
+    } catch (error) { feedback.textContent = error.message; }
+  }
+  const data = await app.api('/api/knock-form-recovery');
+  mount(box, h('p', {}, 'Recent requests. Release only after confirming they were abandoned; verified submissions and sales require separate review.'),
+    data.limited ? h('p', {}, 'Showing the most recent 25 requests. Enter a house record ID for older requests.') : null,
+    data.rows.map(row => h('button', { class: 'btn btn--secondary', onclick: () => inspect(row.houseId) }, `${row.houseId} · ${row.claim?.repKey || 'released'}`)),
+    house, h('button', { class: 'btn btn--secondary', onclick: () => inspect(house.value.trim()) }, 'Find house'), detail, feedback);
+  return { body: box };
+}

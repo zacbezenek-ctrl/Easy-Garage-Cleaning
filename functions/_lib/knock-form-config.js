@@ -2,6 +2,7 @@
 import { highLevelConfig } from './highlevel-tags.js';
 
 export const FORM_CHANNELS = Object.freeze(['direct_sale', 'walkthrough_request']);
+export const FORM_CHANNEL_VALUES = Object.freeze({ direct_sale: 'Direct D2D quote', walkthrough_request: 'Walkthrough request' });
 export const FORM_HOSTS = Object.freeze(['api.leadconnectorhq.com', 'links.easygaragecleaning.com']);
 const ID = /^[A-Za-z0-9_-]{8,120}$/;
 const isId = value => typeof value === 'string' && ID.test(value);
@@ -30,17 +31,27 @@ export function nativeFormConfig(doc, env, nowMs = Date.now()) {
       blockers.push(`${channel}_form_mapping_missing`);
       continue;
     }
+    const channelBound = form.channelFieldId !== undefined || form.channelValue !== undefined;
+    if (channelBound && (!isId(form.channelFieldId) || form.channelValue !== FORM_CHANNEL_VALUES[channel])) {
+      blockers.push(`${channel}_channel_mapping_invalid`);
+      continue;
+    }
     const verifiedAt = Date.parse(acceptance?.verifiedAt);
     if (!acceptance || acceptance.locationId !== doc.locationId || !BINDING.every(key => acceptance[key] === form[key]) ||
         acceptance.prefillVerified !== true || acceptance.submissionReadVerified !== true || acceptance.formsReadonlyVerified !== true ||
         !Number.isFinite(verifiedAt) || verifiedAt > nowMs || typeof acceptance.verifiedBy !== 'string' || !acceptance.verifiedBy.trim() ||
-        typeof acceptance.evidence !== 'string' || !acceptance.evidence.trim()) blockers.push(`${channel}_acceptance_missing`);
+        typeof acceptance.evidence !== 'string' || !acceptance.evidence.trim() ||
+        channelBound && (acceptance.channelFieldId !== form.channelFieldId || acceptance.channelValue !== form.channelValue || acceptance.channelSubmissionVerified !== true)) blockers.push(`${channel}_acceptance_missing`);
     forms[channel] = form;
   }
-  if (forms.direct_sale?.formId === forms.walkthrough_request?.formId) blockers.push('distinct_forms_required');
+  const direct = forms.direct_sale, walkthrough = forms.walkthrough_request;
+  if (direct && walkthrough && direct.formId === walkthrough.formId &&
+      (!direct.channelFieldId || direct.channelFieldId !== walkthrough.channelFieldId ||
+       direct.referenceFieldId !== walkthrough.referenceFieldId || direct.referenceQueryKey !== walkthrough.referenceQueryKey ||
+       direct.url !== walkthrough.url || direct.channelValue === walkthrough.channelValue)) blockers.push('shared_form_channel_mapping_required');
   return { enabled: blockers.length === 0, blockers, forms, locationId: integration.locationId, integration };
 }
 
 export const loadNativeFormConfig = async (store, env, nowMs) => nativeFormConfig(await store.get('knock_settings', 'native_forms'), env, nowMs);
 export const nativeFormSetup = config => ({ enabled: config.enabled, blockers: config.blockers,
-  message: config.enabled ? 'Native forms are available online.' : 'GHL forms are not ready. Dedicated form mappings and verified prefill/receipt evidence are required. Nothing has been sent.' });
+  message: config.enabled ? 'Native forms are available online.' : 'GHL forms are not ready. Verified form/channel mappings and prefill/receipt evidence are required. Nothing has been sent.' });

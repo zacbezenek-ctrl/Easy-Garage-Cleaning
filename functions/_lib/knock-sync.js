@@ -9,7 +9,7 @@ import { OUTCOMES } from '../../crew/knock-settings.js';
 import { knockWindow, zonedDate } from '../../crew/knock-time.js';
 import { effectiveKnocks, summarizeHouse } from '../../crew/knock-doors.js';
 import { daySummary, deriveShift, shiftTiming } from '../../crew/knock-stats.js';
-import { nativeHouseClaimId } from './knock-form-claims.js';
+import { nativeHouseClaimId, nativeClaimActive } from './knock-form-claims.js';
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const ISO = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,9})?(?:Z|[+-]\d{2}:\d{2})$/;
@@ -142,7 +142,7 @@ export async function applyBatch(store, rep, settings, events, nowMs) {
       if (!house) { results.set(event.id, refuse('knock_house_missing', 'That house is not in canvassing.')); continue; }
       if (event.outcome === 'sold') {
         const claimId = await nativeHouseClaimId(house.id), claim = await store.get('knock_receipts', claimId);
-        if (claim && (claim.channel !== 'direct_sale' || claim.repKey !== rep.repKey)) {
+        if (nativeClaimActive(claim) && (claim.channel !== 'direct_sale' || claim.repKey !== rep.repKey)) {
           results.set(event.id, refuse('knock_form_channel_conflict', 'This house has a different form channel or rep. Review attribution before logging Sold.')); continue;
         }
         saleClaimGuards.set(claimId, claim ? write.verify('knock_receipts', claimId, claim.__updateTime) : write.verifyMissing('knock_receipts', claimId));
@@ -173,7 +173,7 @@ export async function applyBatch(store, rep, settings, events, nowMs) {
       const saleDoor = accepted.find(a => a.id === event.knockId) || targets.get(event.knockId) || await store.get('knock_events', event.knockId);
       const claimId = await nativeHouseClaimId(event.houseId || saleDoor.houseId);
       const claim = await store.get('knock_receipts', claimId);
-      if (claim && (claim.channel !== 'direct_sale' || claim.repKey !== rep.repKey)) {
+      if (nativeClaimActive(claim) && (claim.channel !== 'direct_sale' || claim.repKey !== rep.repKey)) {
         results.set(event.id, refuse('knock_form_channel_conflict', 'This house has a different form channel or rep. Review attribution before saving a direct sale.')); continue;
       }
       saleClaimGuards.set(claimId, claim ? write.verify('knock_receipts', claimId, claim.__updateTime) : write.verifyMissing('knock_receipts', claimId));

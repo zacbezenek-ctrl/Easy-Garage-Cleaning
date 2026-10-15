@@ -5,12 +5,14 @@ import { houseInScope, repTerritory } from './knock-territory.js';
 import { effectiveKnocks } from '../../crew/knock-doors.js';
 import { normalizePhone } from './knock-sales.js';
 import { FORM_CHANNELS, nativeFormSetup } from './knock-form-config.js';
-import { formDigest, nativeHouseClaimId } from './knock-form-claims.js';
+import { formDigest, nativeHouseClaimId, nativeClaimActive, nativeClaimGeneration } from './knock-form-claims.js';
 
 const REFERENCE = /^kf_[0-9a-f]{32}$/;
 const HASH = /^[0-9a-f]{64}$/;
 const PROVIDER_ID = /^[A-Za-z0-9_-]{1,180}$/;
 const fail = (message, code = 'knock_form_invalid', status = 409) => knockFailure(message, status, code);
+const mappingDigest = (config, form) => formDigest([config.locationId, form.formId, form.url, form.referenceFieldId, form.referenceQueryKey, form.acceptance,
+  ...(form.channelFieldId ? [form.channelFieldId, form.channelValue] : [])]);
 
 export function onlyFormFields(body, keys) {
   if (!body || typeof body !== 'object' || Array.isArray(body) || Object.keys(body).some(key => !keys.includes(key)))
@@ -54,15 +56,18 @@ async function sourceFor(store, rep, house, source) {
   return { descriptor: { kind: source.kind, id: source.id, revision }, raw, canonical, guards, directSold };
 }
 
-export function formHandoffView(handoff, receipt = null) {
+export function formHandoffView(handoff, receipt = null, revoked = false) {
   return { reference: handoff.reference, houseId: handoff.houseId, channel: handoff.channel, source: handoff.source,
     createdAt: handoff.createdAt, expiresAt: handoff.expiresAt,
-    status: receipt ? 'submission_verified' : 'awaiting_submission',
+    status: revoked ? 'revoked' : receipt ? 'submission_verified' : 'awaiting_submission', revoked,
     states: { hubSaved: true, submissionVerified: Boolean(receipt), contactLinked: Boolean(receipt),
       jobLinked: false, walkthroughLinked: false, collected: 'not_evaluated', commissionEligible: 'not_evaluated', commissionPayable: 'not_evaluated' } };
 }
 
-async function view(store, handoff) { return formHandoffView(handoff, await store.get('knock_receipts', `native_ref_${handoff.reference}`)); }
+async function view(store, handoff) {
+  const [receipt, claim, revoked] = await Promise.all([store.get('knock_receipts', `native_ref_${handoff.reference}`), store.get('knock_receipts', await nativeHouseClaimId(handoff.houseId)), store.get('knock_receipts', `native_revoked_${handoff.reference}`)]);
+  return formHandoffView(handoff, receipt, Boolean(revoked) || !nativeClaimActive(claim) || nativeClaimGeneration(claim) !== (handoff.claimGeneration || 0));
+}
 
 export async function nativeFormContext(store, rep, settings, houseId, config) {
   const house = await houseFor(store, rep, settings, houseId);
@@ -102,8 +107,9 @@ export async function createNativeFormHandoff(store, rep, settings, body, config
   if (body.channel === 'walkthrough_request' && (source.directSold || sales.some(s => s.status !== 'cancelled'))) throw fail('A direct sale already exists. Review attribution before requesting a walkthrough.', 'knock_form_channel_conflict');
   const claimId = await nativeHouseClaimId(house.id);
   const claim = await store.get('knock_receipts', claimId);
-  if (claim && (claim.repKey !== rep.repKey || claim.channel !== body.channel)) throw fail('This house already has a different form channel or rep. Attribution needs review.', 'knock_form_channel_conflict');
-  const requestId = `native_request_${await formDigest([rep.repKey, body.channel, source.descriptor])}`;
+  if (nativeClaimActive(claim) && (claim.repKey !== rep.repKey || claim.channel !== body.channel)) throw fail('This house already has a different form channel or rep. Attribution needs review.', 'knock_form_channel_conflict');
+  const generation = nativeClaimGeneration(claim);
+  const requestId = `native_request_${await formDigest(generation ? [rep.repKey, body.channel, source.descriptor, generation] : [rep.repKey, body.channel, source.descriptor])}`;
   const prior = await store.get('knock_receipts', requestId);
   if (prior) {
     const handoff = await ownedHandoff(store, rep, prior.reference);
@@ -113,12 +119,16 @@ export async function createNativeFormHandoff(store, rep, settings, body, config
   const form = config.forms[body.channel];
   const reference = `kf_${crypto.randomUUID().replaceAll('-', '')}`;
   const handoff = { reference, repKey: rep.repKey, houseId: house.id, channel: body.channel, source: source.descriptor,
+    claimGeneration: generation,
     locationId: config.locationId, formId: form.formId, referenceFieldId: form.referenceFieldId,
-    mappingDigest: await formDigest([config.locationId, form.formId, form.url, form.referenceFieldId, form.referenceQueryKey, form.acceptance]),
+    ...(form.channelFieldId ? { channelFieldId: form.channelFieldId, channelValue: form.channelValue } : {}),
+    mappingDigest: await mappingDigest(config, form),
     status: 'awaiting_submission', createdAt: nowIso, expiresAt: new Date(Date.parse(nowIso) + 86400000).toISOString() };
   try {
     await store.commit([...source.guards,
-      ...(!claim ? [write.create('knock_receipts', claimId, { repKey: rep.repKey, channel: body.channel, houseId: house.id })] : []),
+      ...(!claim ? [write.create('knock_receipts', claimId, { repKey: rep.repKey, channel: body.channel, houseId: house.id, generation, state: 'active' })]
+        : nativeClaimActive(claim) ? [write.patch('knock_receipts', claimId, { lastRequestReference: reference }, claim.__updateTime)]
+          : [write.patch('knock_receipts', claimId, { repKey: rep.repKey, channel: body.channel, state: 'active', lastRequestReference: reference }, claim.__updateTime)]),
       write.create('knock_receipts', requestId, { reference }), write.create('knock_form_handoffs', reference, handoff)]);
   } catch (error) {
     // Recover a lost response or concurrent equivalent request, never a different rep/channel.
@@ -129,24 +139,28 @@ export async function createNativeFormHandoff(store, rep, settings, body, config
   return { handoff: formHandoffView(handoff), duplicate: false };
 }
 
-async function currentHandoff(store, rep, settings, config, reference, nowIso) {
+async function currentHandoff(store, rep, settings, config, reference, nowIso, { allowExpired = false } = {}) {
   const handoff = await ownedHandoff(store, rep, reference);
+  if (await store.get('knock_receipts', `native_revoked_${reference}`)) throw fail('This form reference was released by a manager. It cannot be reused.', 'knock_form_revoked');
   if (!config.enabled) throw fail(nativeFormSetup(config).message, 'knock_form_setup');
   const form = config.forms[handoff.channel];
-  if (handoff.mappingDigest !== await formDigest([config.locationId, form.formId, form.url, form.referenceFieldId, form.referenceQueryKey, form.acceptance]))
+  if (handoff.mappingDigest !== await mappingDigest(config, form))
     throw fail('The form setup changed. Reconcile the old reference before continuing.', 'knock_form_setup');
+  const claimId = await nativeHouseClaimId(handoff.houseId), claim = await store.get('knock_receipts', claimId);
+  if (!nativeClaimActive(claim) || nativeClaimGeneration(claim) !== (handoff.claimGeneration || 0))
+    throw fail('This form reference was released by a manager. It cannot be reused.', 'knock_form_revoked');
+  if (claim.repKey !== rep.repKey || claim.channel !== handoff.channel)
+    throw fail('This house has conflicting form attribution. Reconcile it before continuing.', 'knock_form_channel_conflict');
   const house = await houseFor(store, rep, settings, handoff.houseId);
   const source = await sourceFor(store, rep, house, handoff.source);
-  const claimId = await nativeHouseClaimId(house.id), claim = await store.get('knock_receipts', claimId);
-  if (!claim || claim.repKey !== rep.repKey || claim.channel !== handoff.channel)
-    throw fail('This house has conflicting form attribution. Reconcile it before continuing.', 'knock_form_channel_conflict');
   source.guards.push(write.verify('knock_receipts', claimId, claim.__updateTime));
+  source.guards.push(write.verifyMissing('knock_receipts', `native_revoked_${reference}`));
   if (handoff.channel === 'walkthrough_request') {
     const sales = await store.query('knock_sales', { where: [['houseId', '==', house.id]] });
     if (source.directSold || sales.some(sale => sale.status !== 'cancelled'))
       throw fail('A direct sale conflicts with this walkthrough request. Attribution needs review.', 'knock_form_channel_conflict');
   }
-  if (Date.parse(nowIso) < Date.parse(handoff.createdAt) || Date.parse(nowIso) > Date.parse(handoff.expiresAt)) throw fail('This reference expired. Nothing was marked submitted.', 'knock_form_expired');
+  if (Date.parse(nowIso) < Date.parse(handoff.createdAt) || !allowExpired && Date.parse(nowIso) > Date.parse(handoff.expiresAt)) throw fail('This reference expired. Nothing was marked submitted.', 'knock_form_expired');
   return { handoff, source, form };
 }
 
@@ -162,7 +176,7 @@ export async function openNativeFormHandoff(store, rep, settings, body, config, 
 export async function verifyNativeFormReceipt(store, rep, settings, body, config, nowIso, readSubmission) {
   onlyFormFields(body, ['action', 'reference', 'contactId', 'submissionId']);
   if (![body.contactId, body.submissionId].every(id => typeof id === 'string' && PROVIDER_ID.test(id))) throw fail('Enter the exact GHL contact and submission IDs.', 'knock_form_invalid', 400);
-  const { handoff, source } = await currentHandoff(store, rep, settings, config, body.reference, nowIso);
+  const { handoff, source } = await currentHandoff(store, rep, settings, config, body.reference, nowIso, { allowExpired: true });
   const receiptId = `native_submission_${await formDigest([handoff.locationId, body.submissionId])}`;
   const refReceiptId = `native_ref_${handoff.reference}`;
   const same = receipt => receipt?.reference === handoff.reference && receipt.repKey === rep.repKey && receipt.formId === handoff.formId &&
@@ -180,10 +194,12 @@ export async function verifyNativeFormReceipt(store, rep, settings, body, config
       contact.locationId !== handoff.locationId || row.locationId != null && row.locationId !== handoff.locationId ||
       !Number.isFinite(time) || time < Date.parse(handoff.createdAt) || time > Date.parse(handoff.expiresAt) || time > Date.parse(nowIso) ||
       !Object.hasOwn(row.others || {}, handoff.referenceFieldId) || row.others[handoff.referenceFieldId] !== handoff.reference ||
+      handoff.channelFieldId && row.others[handoff.channelFieldId] !== handoff.channelValue ||
       customer && (!normalizePhone(customer.phone) || normalizePhone(contact.phone) !== normalizePhone(customer.phone) || !customer.email || String(contact.email || '').trim().toLowerCase() !== customer.email.toLowerCase()))
     throw fail('GHL evidence does not match this form, contact, reference, time and saved revision.', 'knock_form_mismatch');
   const receipt = { kind: 'native_form_submission', reference: handoff.reference, repKey: rep.repKey, channel: handoff.channel,
     sourceRevision: handoff.source.revision, locationId: handoff.locationId, formId: handoff.formId,
+    ...(handoff.channelFieldId ? { channelFieldId: handoff.channelFieldId, channelValue: handoff.channelValue } : {}),
     contactId: body.contactId, submissionId: body.submissionId, submittedAt: row.createdAt, verifiedAt: nowIso };
   try {
     await store.commit([...source.guards, write.verify('knock_form_handoffs', handoff.reference, handoff.__updateTime),
@@ -195,4 +211,16 @@ export async function verifyNativeFormReceipt(store, rep, settings, body, config
     return { handoff: formHandoffView(handoff, saved), duplicate: true };
   }
   return { handoff: formHandoffView(handoff, receipt), duplicate: false };
+}
+
+export async function discoverNativeFormReceipt(store, rep, settings, body, config, nowIso, discover) {
+  onlyFormFields(body, ['action', 'reference']);
+  const { handoff } = await currentHandoff(store, rep, settings, config, body.reference, nowIso, { allowExpired: true });
+  const saved = await store.get('knock_receipts', `native_ref_${handoff.reference}`);
+  if (saved) return verifyNativeFormReceipt(store, rep, settings, { action: 'verify', reference: handoff.reference, contactId: saved.contactId, submissionId: saved.submissionId }, config, nowIso, () => { throw fail('Saved receipt is incomplete.'); });
+  if (typeof discover !== 'function') throw fail('GHL receipt discovery is unavailable.', 'knock_form_provider_unavailable', 424);
+  const evidence = await discover(handoff);
+  if (!evidence) return { handoff: formHandoffView(handoff), discovery: 'not_visible_yet' };
+  return { ...await verifyNativeFormReceipt(store, rep, settings, { action: 'verify', reference: handoff.reference,
+    contactId: evidence.row?.contactId, submissionId: evidence.row?.id }, config, nowIso, async () => evidence), discovery: 'verified' };
 }

@@ -8,3 +8,5 @@ export async function formDigest(value) {
 }
 
 export const nativeHouseClaimId = async houseId => `native_house_${await formDigest(houseId)}`;
+export const nativeClaimActive = claim => Boolean(claim) && claim.state !== 'released';
+export const nativeClaimGeneration = claim => Number.isSafeInteger(claim?.generation) && claim.generation >= 0 ? claim.generation : 0;

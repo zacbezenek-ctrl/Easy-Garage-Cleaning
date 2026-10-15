@@ -3,7 +3,7 @@ import { createKnockStore, knockFailure } from '../_lib/knock-store.js';
 import { ensureRep, requireActive, loadSettings } from '../_lib/knock-access.js';
 import { errorResponse, forbiddenOrigin, readJson, reply, sameOrigin, signInRequired } from '../_lib/knock-http.js';
 import { loadNativeFormConfig, nativeFormSetup } from '../_lib/knock-form-config.js';
-import { nativeFormContext, createNativeFormHandoff, openNativeFormHandoff, verifyNativeFormReceipt } from '../_lib/knock-form-handoff.js';
+import { nativeFormContext, createNativeFormHandoff, openNativeFormHandoff, discoverNativeFormReceipt } from '../_lib/knock-form-handoff.js';
 import { nativeFormReader } from '../_lib/knock-form-provider.js';
 
 export function knockFormHandlers({ session = getHubSession, storage = createKnockStore, now = () => new Date(), reader = nativeFormReader } = {}) {
@@ -32,7 +32,7 @@ export function knockFormHandlers({ session = getHubSession, storage = createKno
         let result;
         if (body.action === 'create') result = await createNativeFormHandoff(store, rep, settings, body, config, nowIso);
         else if (body.action === 'open') result = await openNativeFormHandoff(store, rep, settings, body, config, nowIso);
-        else if (body.action === 'verify') result = await verifyNativeFormReceipt(store, rep, settings, body, config, nowIso, reader(config.integration));
+        else if (body.action === 'discover') result = await discoverNativeFormReceipt(store, rep, settings, body, config, nowIso, reader(config.integration).discover);
         else throw knockFailure('Unknown native form action.', 400, 'knock_form_invalid');
         return reply(200, { ok: true, ...result });
       } catch (error) { return errorResponse(error); }

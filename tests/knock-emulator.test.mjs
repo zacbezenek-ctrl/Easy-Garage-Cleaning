@@ -142,6 +142,50 @@ test('native form source guards and receipts commit against real Firestore witho
   } finally { await hub.close(); }
 });
 
+test('shared native form recovery revokes old receipts and permits only an explicit new request on real Firestore', { skip: !enabled, timeout: 120000 }, async () => {
+  const { startEmulatorHarness } = await import('./helpers/emulator-harness.mjs');
+  const { createKnockStore } = await import('../functions/_lib/knock-store.js');
+  const { DEFAULT_SETTINGS } = await import('../crew/knock-settings.js');
+  const { nativeFormConfig, FORM_CHANNEL_VALUES } = await import('../functions/_lib/knock-form-config.js');
+  const { nativeFormContext, createNativeFormHandoff, discoverNativeFormReceipt, openNativeFormHandoff } = await import('../functions/_lib/knock-form-handoff.js');
+  const { recoverNativeFormClaim, nativeRecoveryContext } = await import('../functions/_lib/knock-form-recovery.js');
+  const now = '2026-10-15T20:00:00.000Z', later = '2026-10-15T20:01:00.000Z';
+  const hub = await startEmulatorHarness({ projectId: project(), now });
+  const rep = { repKey: 'rep.one', role: 'knocker', status: 'active' }, quoteId = randomUUID();
+  try {
+    await hub.seed(db => Promise.all(Object.entries({
+      'knock_neighborhoods/recovery-area': { name: 'Recovery test', tier: 'Volume', status: 'open', cityKey: 'fort-collins' },
+      'knock_assignments/recovery-assignment': { repKey: rep.repKey, neighborhoodId: 'recovery-area', active: true },
+      'knock_houses/recovery-house': { neighborhoodId: 'recovery-area', number: '123', street: 'SYNTHETIC ST' },
+      [`knock_events/${quoteId}`]: { type: 'knock', outcome: 'look', houseId: 'recovery-house', repKey: rep.repKey, at: now },
+    }).map(([path, data]) => db.doc(path).set(data))));
+    const store = createKnockStore(hub.env);
+    const forms = Object.fromEntries(Object.entries(FORM_CHANNEL_VALUES).map(([channel, channelValue]) => {
+      const form = { formId: 'syntheticShared', url: 'https://links.easygaragecleaning.com/widget/form/syntheticShared',
+        referenceFieldId: 'syntheticRef', referenceQueryKey: 'handoff_ref', channelFieldId: 'syntheticChannel', channelValue };
+      return [channel, { ...form, acceptance: { ...form, locationId: 'syntheticLocation', prefillVerified: true,
+        submissionReadVerified: true, formsReadonlyVerified: true, channelSubmissionVerified: true, verifiedBy: 'synthetic-test', verifiedAt: now, evidence: 'synthetic-only' } }];
+    }));
+    const config = nativeFormConfig({ enabled: true, locationId: 'syntheticLocation', forms }, { HIGHLEVEL_LOCATION_ID: 'syntheticLocation', HIGHLEVEL_API_KEY: 'synthetic-only' }, Date.parse(now));
+    assert.equal(config.enabled, true);
+    const source = (await nativeFormContext(store, rep, DEFAULT_SETTINGS, 'recovery-house', config)).sources[0];
+    const body = { action: 'create', houseId: 'recovery-house', channel: 'direct_sale', source };
+    const old = (await createNativeFormHandoff(store, rep, DEFAULT_SETTINGS, body, config, now)).handoff;
+    const recovery = await recoverNativeFormClaim(store, { user: 'ZacB', businessAccess: true }, { action: 'release', houseId: 'recovery-house',
+      expectedGeneration: 0, expectedSnapshot: (await nativeRecoveryContext(store, { user: 'ZacB', businessAccess: true }, 'recovery-house')).snapshot,
+      requestId: randomUUID(), reason: 'Synthetic abandoned request only.', confirmation: 'release_abandoned_forms' }, later);
+    assert.deepEqual(recovery.recovery.revokedReferences, [old.reference]);
+    await assert.rejects(openNativeFormHandoff(store, rep, DEFAULT_SETTINGS, { action: 'open', reference: old.reference }, config, later), { code: 'knock_form_revoked' });
+    const next = (await createNativeFormHandoff(store, rep, DEFAULT_SETTINGS, { ...body, channel: 'walkthrough_request' }, config, later)).handoff;
+    const verified = await discoverNativeFormReceipt(store, rep, DEFAULT_SETTINGS, { action: 'discover', reference: next.reference }, config, later,
+      async () => ({ row: { id: 'syntheticSubmission', contactId: 'syntheticContact', formId: 'syntheticShared', createdAt: later,
+        others: { syntheticRef: next.reference, syntheticChannel: 'Walkthrough request' } }, contact: { id: 'syntheticContact', locationId: 'syntheticLocation' } }));
+    assert.equal(verified.handoff.states.submissionVerified, true);
+    assert.equal((await store.list('knock_form_handoffs')).length, 2);
+    for (const name of ['knock_sales', 'knock_setters', 'knock_payouts']) assert.deepEqual(await store.list(name), []);
+  } finally { await hub.close(); }
+});
+
 test('the Larimer import stores a neighborhood on the emulator and reads its count back', { skip: !enabled, timeout: 120000 }, async () => {
   const { startEmulatorHarness } = await import('./helpers/emulator-harness.mjs');
   const { buildHouses, storeNeighborhood } = await import('../scripts/knock-import-larimer.mjs');

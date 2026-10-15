@@ -107,7 +107,10 @@ test('owner-verified preview mapping stays inert without receipt acceptance', ()
   assert.equal(formBaseUrl(candidate.forms.direct_sale.url, candidate.forms.direct_sale.formId), candidate.forms.direct_sale.url);
   assert.equal(candidate.forms.direct_sale.referenceQueryKey, 'egc_d2d_handoff_ref', 'query key comes from the coordinator-verified preview');
   assert.equal(candidate.forms.direct_sale.acceptance, null);
-  assert.equal(candidate.forms.walkthrough_request, null, 'one shared draft does not fabricate a second form');
+  assert.equal(candidate.forms.walkthrough_request.formId, candidate.forms.direct_sale.formId, 'both paths use the real shared form');
+  assert.equal(candidate.forms.walkthrough_request.channelFieldId, '2wb3K0KNSDKEWOUFtWj7');
+  assert.equal(candidate.forms.walkthrough_request.channelValue, 'Walkthrough request');
+  assert.equal(candidate.forms.walkthrough_request.acceptance, null, 'preview prefill is not submitted-channel acceptance');
   assert.equal(candidate.providerDraft.fields.handoffReference.key, 'egc_d2d_handoff_ref');
   assert.equal(candidate.providerDraft.prefillEvidence.previewDisplayedExactValue, true);
   assert.equal(candidate.providerDraft.prefillEvidence.submissionMade, false);
@@ -389,7 +392,7 @@ test('offline records never enter native form transport; explicit retry uses the
   online = true; pending = true;
   await assert.rejects(session.begin('direct_sale', body.source), /not been sent/); assert.equal(calls, 0);
   await assert.rejects(session.open('kf_' + '0'.repeat(32)), /not been sent/); assert.equal(calls, 0);
-  await assert.rejects(session.verify('kf_' + '0'.repeat(32), 'contact', 'submission'), /not been sent/); assert.equal(calls, 0);
+  await assert.rejects(session.discover('kf_' + '0'.repeat(32)), /not been sent/); assert.equal(calls, 0);
   pending = false;
   await assert.rejects(session.begin('direct_sale', body.source), /connection lost/);
   const retried = await session.begin('direct_sale', body.source);
