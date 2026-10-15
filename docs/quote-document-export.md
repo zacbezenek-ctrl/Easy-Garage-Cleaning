@@ -98,6 +98,37 @@ version, deposit/remainder percentages and due rules; percentages must total
 100. A valid saved `estimate.paymentSchedule` is mandatory for exceptions.
 Legacy terms are never upgraded to 25/75 and custom due rules are not recalculated.
 
+### Existing upstream schedule gaps
+
+As inspected at base `fe93d9a`, two existing callers are weaker than this export
+boundary. They are not changed by this PR:
+
+- `publicQuotePaymentSchedule()` in `functions/_lib/quote-payment-policy.js`
+  checks integer amounts, valid individual dates and Denver time, but not
+  nonnegative amounts, conservation of the canonical total, the exact reviewed
+  split, matching policy version or deposit-before-remainder date order.
+- `paymentScheduleFor()` in `functions/_lib/quote-draft.js` copies an issued
+  schedule's dates but replaces its stored installment amounts with newly
+  calculated values. Its amendment guard handles changed job/walkthrough dates;
+  it does not reject a mismatched stored installment amount or policy version
+  before that replacement. This can conceal inconsistent issued terms in the
+  send projection. It is not evidence that the original saved terms were valid.
+
+The exporter reads the original saved schedule. Exact equality to the validated
+nonnegative canonical deposit and `total - deposit` requires safe integer amounts
+and conservation; it also checks matching policy version, valid dates, order and
+time zone. Any mismatch blocks with `saved_payment_schedule_invalid` and leaves
+the input untouched. **Do not normalize the saved schedule through a weaker
+reader or quote-send helper before calling this adapter.** An upstream repair
+needs its own reviewed change and an explicit amendment path for issued terms,
+not a silent rewrite or upgrade. Malformed-schedule regression cases here refresh
+the review binding first, so they prove schedule validation independently of
+stale-approval rejection.
+
+This adapter does not calculate or change catalog prices, labor cost or margin.
+The owner's new cost/margin inputs require a separately approved pricing change;
+they must not reprice the reviewed canonical snapshot during document export.
+
 `paymentCollected` is separate from contractual amounts and dates. Known ledger
 states require `{status, appliedCents, evidenceId, recordedAt, jobId, customerId}`.
 Supported states are `unknown`, `unpaid`, `partial`, `paid`, `overpaid`; arithmetic

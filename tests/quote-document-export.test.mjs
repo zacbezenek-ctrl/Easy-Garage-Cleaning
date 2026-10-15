@@ -207,6 +207,27 @@ test('issued schedule is preserved after rescheduling; mismatched amounts or pol
   const mismatch = fixture(); mismatch.job.estimate.depositRequired = 500; blocked(approve(mismatch), 'canonical_deposit_mismatch');
 });
 
+test('saved schedule rejects malformed cents, lost conservation, version and date errors without repair', () => {
+  const changes = [
+    { depositCents: -1 }, { remainderCents: -1 },
+    { depositCents: 25000.01 }, { remainderCents: 75001.01 },
+    { depositCents: NaN }, { remainderCents: Infinity },
+    { depositCents: '25000' }, { remainderCents: '75001' },
+    { depositCents: null }, { remainderCents: undefined },
+    { depositCents: 25000, remainderCents: 75000 },
+    { depositCents: 25001, remainderCents: 75000 }, // conserves total but changes reviewed split
+    { policyVersion: null }, { policyVersion: '2026-10-14-deposit25-pending' },
+    { depositDueDate: '2026-10-25', remainderDueDate: '2026-10-24' },
+    { depositDueDate: '2026-02-30' }, { remainderDueDate: '2026-10-24T00:00:00Z' },
+    { timeZone: 'UTC' },
+  ];
+  for (const change of changes) {
+    const s = savedSchedule(fixture(), change), before = clone(s);
+    blocked(s, 'saved_payment_schedule_invalid');
+    assert.deepEqual(s, before, 'invalid issued terms are never normalized or rewritten');
+  }
+});
+
 test('legacy terms and customer exceptions are retained only with explicit review and saved schedule', () => {
   const missing = fixture(); delete missing.job.estimate.commercialPolicy; blocked(approve(missing), 'canonical_payment_policy_missing');
   for (const kind of ['legacy_terms', 'customer_exception']) {
