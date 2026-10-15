@@ -2,6 +2,8 @@
 
 This integration is **disabled by default**. This change does not write production settings, create forms, change workflows, add credentials/scopes, send live provider requests, approve compensation, merge, or deploy. The existing website form and retired `/api/lead-intake` are unchanged.
 
+The separate template worker's proposed canonical mapping and exact missing links are in [knock-template-mapping.md](knock-template-mapping.md). Form values never become final quote prices or accepted legal terms; no document sender is part of this foundation.
+
 ## Entry paths and evidence boundaries
 
 The crew app's **GHL quote / walkthrough request** opens two separate actions:
