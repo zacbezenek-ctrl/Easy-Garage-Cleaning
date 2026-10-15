@@ -14,11 +14,13 @@ The existing signed `/api/ghl-tag-drain` worker and its dispatch Command center 
 
 - The linked contact must match the canonical job and configured HighLevel location. No contact is created or guessed.
 - A revision-fenced claim prevents competing worker attempts. The sending intent and contact are persisted **before** the external POST.
+- The same claim transaction verifies the canonical job revision. The worker rechecks the job's completion and contact after the HighLevel preflight, immediately before POST, and before recording verified delivery. A cancellation or contact change after a possible POST keeps the receipt parked and visible rather than treating it as safely superseded.
 - A per-contact ownership record in the existing server-only `ghlTagDrainState` collection is acquired in that same transaction. Different jobs cannot compete for the same contact-level tag or treat another job's uncertain send as their own receipt. Ownership stays with an uncertain request; after a verified/rejected result, another job may acquire it only after checking that the old tag is absent.
 - The worker reads HighLevel tags back after a successful POST. A lost response or failed final database save leaves a durable sending intent. The next attempt reads back only; it cannot blindly POST again.
 - A confirmed 4xx refusal other than 408 can back off and retry. An uncertain result parks for review. A manager retry preserves the sending intent, so it still only reconciles.
 - If an earlier job already left `egc-job-complete` on the contact, this completion parks as `ghl_tag_completion_preexisting`; it is not falsely marked delivered. Operations must review the existing workflow's reset/re-entry behavior. This change never removes tags.
 - Cancellation, replacement of completion evidence, or a changed canonical contact cannot send a stale completion. An unknown/missing outbox record is visibly unknown.
+- Each completion consumes three of the existing drain's five subrequest-budget units because canonical transactions and provider read-back cost more than a schedule tag. A backlog continues on subsequent two-minute ticks.
 
 ## Activation blockers — not changed by this PR
 

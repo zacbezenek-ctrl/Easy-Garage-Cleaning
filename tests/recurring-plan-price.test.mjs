@@ -124,29 +124,29 @@ test('applyToBooked moves future unstarted visits to the new time and crew in th
   const [first, second, third] = priced(f);
   // One visit started in the field, one was retimed in Dispatch, one is untouched.
   f.rows.set('jobs/' + first.id, { ...f.rows.get('jobs/' + first.id), fieldLastActionAt:'2026-09-22T11:00:00.000Z', revision:'field-r' });
-  await f.mutate({ action:'schedule.update', jobId:second.id, expectedRevision:f.job(second.id).revision, changes:{ time:'07:00', endTime:'09:00' } });
+  await f.mutate({ action:'schedule.update', jobId:second.id, expectedRevision:f.job(second.id).revision, changes:{ time:'07:00', endTime:'10:00' } });
   const current = f.saved(result.plan.id);
-  const update = await f.plan({ action:'update', planId:current.id, expectedRevision:current.revision, applyToBooked:true, plan:{ time:'09:00', endTime:'11:00', assignment:{ assignedCrew:['crew2'] } } });
+  const update = await f.plan({ action:'update', planId:current.id, expectedRevision:current.revision, applyToBooked:true, plan:{ time:'10:00', endTime:'11:00', assignment:{ assignedCrew:['crew2'] } } });
   assert.deepEqual(update.warnings.map(row => row.code), ['booked_visits_updating', 'booked_visits_kept']);
   assert.deepEqual(update.warnings[0].visits.map(row => row.date), ['2026-10-14']);
   assert.deepEqual(update.warnings[1].visits.map(row => [row.date, row.reason]), [['2026-09-30', 'started'], ['2026-10-07', 'changed_in_dispatch']]);
   assert.equal(update.plan.occurrences.find(row => row.date === '2026-10-14').state, 'updating');
-  assert.equal(f.job(third.id).time, '08:00', 'nothing moves inside the plan save itself');
+  assert.equal(f.job(third.id).time, '09:30', 'nothing moves inside the plan save itself');
   const run = await extendHorizon(f.store, manager, { pricing:true, now:NOW });
   assert.deepEqual(run.plans[0].updated, [{ date:'2026-10-14', jobId:third.id, from:'2026-10-14' }]);
   const moved = f.job(third.id);
-  assert.deepEqual([moved.date, moved.time, moved.endTime, moved.assignedCrew, moved.startAt], ['2026-10-14', '09:00', '11:00', ['crew2'], '2026-10-14T15:00:00.000Z']);
+  assert.deepEqual([moved.date, moved.time, moved.endTime, moved.assignedCrew, moved.startAt], ['2026-10-14', '10:00', '11:00', ['crew2'], '2026-10-14T16:00:00.000Z']);
   const requestId = await occurrenceRequestId(result.plan.id, '2026-10-14', `apply:${update.requestId}`);
   assert.equal(moved.dispatchRequestId, requestId); assert.ok(f.rows.get('dispatchOperations/' + requestId));
-  assert.deepEqual(['start','end','assignedCrew'].map(key => f.rows.get('jobs/_egc_schedule_lock_2026-10-14').entries.find(entry => entry.id === third.id)[key]), ['09:00', '11:00', ['crew2']]);
+  assert.deepEqual(['start','end','assignedCrew'].map(key => f.rows.get('jobs/_egc_schedule_lock_2026-10-14').entries.find(entry => entry.id === third.id)[key]), ['10:00', '11:00', ['crew2']]);
   const entry = f.saved(result.plan.id).occurrences['2026-10-14'];
-  assert.equal(entry.apply, undefined); assert.deepEqual(entry.slot, { date:'2026-10-14', time:'09:00', endDate:'2026-10-14', endTime:'11:00' });
-  assert.deepEqual([f.job(first.id).time, f.job(second.id).time], ['08:00', '07:00']);
+  assert.equal(entry.apply, undefined); assert.deepEqual(entry.slot, { date:'2026-10-14', time:'10:00', endDate:'2026-10-14', endTime:'11:00' });
+  assert.deepEqual([f.job(first.id).time, f.job(second.id).time], ['09:30', '07:00']);
   const commits = f.commits.length;
   assert.deepEqual((await extendHorizon(f.store, manager, { pricing:true, now:NOW })).plans[0].updated, []); assert.equal(f.commits.length, commits);
   // The rolling window then books new dates at the new time with the new crew.
   const later = await extendHorizon(f.store, manager, { pricing:true, now:'2026-09-29T12:00:00.000Z' });
-  assert.deepEqual(later.plans[0].created.map(job => [job.date, job.time]), [['2026-10-21', '09:00']]);
+  assert.deepEqual(later.plans[0].created.map(job => [job.date, job.time]), [['2026-10-21', '10:00']]);
 });
 
 test('a weekday change moves each booked visit to the nearest new date and reserves it', async () => {
@@ -176,7 +176,7 @@ test('a booked visit the new slot conflicts with keeps its time, returns to its 
   await f.plan({ action:'update', planId:current.id, expectedRevision:current.revision, applyToBooked:true, plan:{ time:'12:00', endTime:'13:00' } });
   const run = await extendHorizon(f.store, manager, { pricing:true, now:NOW });
   assert.deepEqual(run.plans[0].updated, []); assert.equal(run.complete, true);
-  assert.equal(f.job(visit.id).time, '08:00');
+  assert.equal(f.job(visit.id).time, '09:30');
   const saved = f.saved(result.plan.id);
   assert.equal(saved.occurrences['2026-09-30'].apply, undefined); assert.equal(saved.occurrences['2026-09-30'].jobId, visit.id);
   assert.equal(saved.warnings.at(-1).code, 'booked_visit_not_updated'); assert.equal(saved.warnings.at(-1).reason, 'dispatch_conflict');
@@ -243,7 +243,7 @@ test('a date a moved visit left behind is booked again under a new request and n
   assert.equal(saved.lastRun.status, 'ok'); assert.equal(saved.warnings.some(row => row.code === 'plan_blocked'), false);
   // A week later the rolling window keeps adding visits.
   const later = await extendHorizon(f.store, manager, { now:'2026-09-29T12:00:00.000Z' });
-  assert.equal(later.plans[0].blocked, null); assert.deepEqual(later.plans[0].created.map(job => [job.date, job.time]), [['2026-10-21', '08:00']]);
+  assert.equal(later.plans[0].blocked, null); assert.deepEqual(later.plans[0].created.map(job => [job.date, job.time]), [['2026-10-21', '09:30']]);
 });
 
 test('a plan that meets an already spent create request takes the next generation itself', async () => {
@@ -352,22 +352,22 @@ test('applyToBooked never moves a booked visit onto a date and time the customer
   const f = recurringFixture(), { result } = await f.create({ horizonDays:10 }), id = result.plan.id;
   await extendHorizon(f.store, manager, { now:NOW });
   const [visit] = priced(f);
-  assert.deepEqual([visit.date, visit.time, visit.assignedCrew], ['2026-09-30', '08:00', ['crew1']]);
-  // A separate booking for the same customer on Thu 2026-10-01 08:00 with crew2; schedule.create refuses a second one there.
+  assert.deepEqual([visit.date, visit.time, visit.assignedCrew], ['2026-09-30', '09:30', ['crew1']]);
+  // A separate booking for the same customer on Thu 2026-10-01 09:30 with crew2; schedule.create refuses a second one there.
   const other = await f.book({ date:'2026-10-01', assignedCrew:['crew2'] });
   await assert.rejects(f.book({ date:'2026-10-01', assignedCrew:[] }), error => error.code === 'dispatch_job_already_exists');
   const current = f.saved(id);
   const update = await f.plan({ action:'update', planId:id, expectedRevision:current.revision, applyToBooked:true, plan:{ startDate:'2026-09-24' } });
   const held = update.warnings.find(row => row.code === 'booked_visits_slot_taken');
   assert.deepEqual(held.visits, [{ date:'2026-09-30', jobId:visit.id, reason:'slot_taken', to:'2026-10-01' }]);
-  assert.match(held.message, /NOT moved because the customer already has another booking at the new time \(2026-09-30 → 2026-10-01 08:00\)/);
+  assert.match(held.message, /NOT moved because the customer already has another booking at the new time \(2026-09-30 → 2026-10-01 09:30\)/);
   assert.equal(update.warnings.some(row => row.code === 'booked_visits_updating'), false);
   assert.equal(f.saved(id).occurrences['2026-09-30'].apply, undefined);
   const run = await extendHorizon(f.store, manager, { now:NOW });
   assert.deepEqual([run.plans[0].updated, run.plans[0].kept], [[], []]);
   assert.deepEqual(run.plans[0].adopted, [{ date:'2026-10-01', jobId:other.id }], 'the separate booking stands in for the new date');
   assert.deepEqual(run.plans[0].created.map(job => job.date), ['2026-09-24']);
-  assert.deepEqual([f.job(visit.id).date, f.job(visit.id).time], ['2026-09-30', '08:00']);
+  assert.deepEqual([f.job(visit.id).date, f.job(visit.id).time], ['2026-09-30', '09:30']);
   noDoubleBooking(f);
 });
 
@@ -384,11 +384,11 @@ test('a booking made at the new time after the edit keeps the visit where it is,
   const run = await extendHorizon(f.store, manager, { now:NOW });
   assert.deepEqual(run.plans[0].updated, []);
   assert.deepEqual(run.plans[0].kept, [{ date:'2026-09-30', jobId:visit.id, reason:'slot_taken' }]);
-  assert.deepEqual([f.job(visit.id).date, f.job(visit.id).time, f.job(visit.id).revision], ['2026-09-30', '08:00', visit.revision], 'the visit was not written');
+  assert.deepEqual([f.job(visit.id).date, f.job(visit.id).time, f.job(visit.id).revision], ['2026-09-30', '09:30', visit.revision], 'the visit was not written');
   const saved = f.saved(id), warning = saved.warnings.find(row => row.code === 'booked_visit_not_updated');
   assert.equal(saved.occurrences['2026-09-30'].jobId, visit.id); assert.equal(saved.occurrences['2026-09-30'].apply, undefined);
   assert.deepEqual([warning.reason, warning.date, warning.jobId], ['slot_taken', '2026-09-30', visit.id]);
-  assert.match(warning.message, /not moved to 2026-10-01 08:00 because the customer already has another booking at that time/);
+  assert.match(warning.message, /not moved to 2026-10-01 09:30 because the customer already has another booking at that time/);
   // The date the move gave up is booked in the same run: the separate booking stands in for it.
   assert.deepEqual(run.plans[0].adopted, [{ date:'2026-10-01', jobId:other.id }]);
   assert.equal(run.plans[0].complete, true);
@@ -407,7 +407,7 @@ test('a time change never moves a booked visit onto a time the customer already 
   assert.deepEqual(update.warnings.find(row => row.code === 'booked_visits_updating').visits.map(row => row.date), ['2026-10-07']);
   const run = await extendHorizon(f.store, manager, { now:NOW });
   assert.deepEqual(run.plans[0].updated.map(row => row.date), ['2026-10-07']);
-  assert.deepEqual([f.job(first.id).time, f.job(second.id).time], ['08:00', '10:00']);
+  assert.deepEqual([f.job(first.id).time, f.job(second.id).time], ['09:30', '10:00']);
   noDoubleBooking(f);
 });
 

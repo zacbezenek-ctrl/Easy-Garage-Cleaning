@@ -159,9 +159,9 @@ test('calls in which every booked-visit change is dropped count as progress, so 
   const visits = f.jobs().filter(job => job.recurringPlanId === id);
   assert.equal(visits.length, 8);
   const current = f.saved(id);
-  await f.plan({ action:'update', planId:id, expectedRevision:current.revision, applyToBooked:true, plan:{ time:'09:00', endTime:'11:00' } });
+  await f.plan({ action:'update', planId:id, expectedRevision:current.revision, applyToBooked:true, plan:{ time:'10:00', endTime:'11:00' } });
   // Every booked visit is then retimed in Dispatch, so each pending change drops.
-  for (const visit of visits) await f.mutate({ action:'schedule.update', jobId:visit.id, expectedRevision:f.job(visit.id).revision, changes:{ time:'07:00', endTime:'09:00' } });
+  for (const visit of visits) await f.mutate({ action:'schedule.update', jobId:visit.id, expectedRevision:f.job(visit.id).revision, changes:{ time:'12:00', endTime:'14:00' } });
   const first = await run(f, command({ limit:4 }));
   assert.deepEqual(first.plans.map(row => [row.planId, row.kept, row.updated, row.created, row.complete]), [[id, 4, 0, 0, false]]);
   assert.equal(first.totals.kept, 4);
@@ -169,7 +169,7 @@ test('calls in which every booked-visit change is dropped count as progress, so 
   const second = await run(f, command({ limit:4 }));
   assert.deepEqual([second.totals.kept, second.complete, second.more], [4, true, false]);
   assert.equal(Object.values(f.saved(id).occurrences).some(entry => entry.apply), false);
-  assert.ok(visits.every(visit => f.job(visit.id).time === '07:00'));
+  assert.ok(visits.every(visit => f.job(visit.id).time === '12:00'));
   assert.equal(f.saved(id).warnings.filter(row => row.code === 'booked_visit_not_updated' && row.reason === 'changed_in_dispatch').length, 8);
   assert.deepEqual((await run(f)).plans, []);
 });
@@ -215,7 +215,7 @@ test('a booked-visit move that keeps failing with a 5xx is recorded once, names 
   const f = recurringFixture(), { result } = await f.create({ horizonDays:10 }), id = result.plan.id;
   await run(f);
   const [visit] = f.jobs().filter(job => job.recurringPlanId === id);
-  assert.deepEqual([visit.date, visit.time], ['2026-09-30', '08:00']);
+  assert.deepEqual([visit.date, visit.time], ['2026-09-30', '09:30']);
   let current = f.saved(id);
   await f.plan({ action:'update', planId:id, expectedRevision:current.revision, applyToBooked:true, plan:{ startDate:'2026-09-24' } });
   // A malformed schedule lock on the visit's own day: dispatch answers dispatch_lock_unavailable (503) for the move only.
@@ -240,7 +240,7 @@ test('a booked-visit move that keeps failing with a 5xx is recorded once, names 
   const resumed = await run(f);
   assert.deepEqual([resumed.totals.created, resumed.totals.updated, resumed.totals.errors, resumed.complete], [2, 0, 0, true]);
   assert.equal(f.saved(id).lastRun.status, 'ok');
-  assert.deepEqual([f.job(visit.id).date, f.job(visit.id).time], ['2026-09-30', '08:00']);
+  assert.deepEqual([f.job(visit.id).date, f.job(visit.id).time], ['2026-09-30', '09:30']);
   assert.deepEqual(f.jobs().filter(job => job.recurringPlanId === id).map(job => job.date).sort(), ['2026-09-24', '2026-09-30', '2026-10-01']);
   assert.deepEqual((await run(f)).plans, []);
 });

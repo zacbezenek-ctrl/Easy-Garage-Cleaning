@@ -40,15 +40,15 @@ test('assigned lead completion atomically queues one canonical tag intent; dupli
 
 async function fixture() {
   const job = ready(), result = close(job), intent = await fieldCompletionTagWrites({ job, patch: result.patch, requestId: result.requestId, now });
-  const rows = new Map([['jobs/job-1', { ...job, ...result.patch, fieldCompletionTagEntry: intent.pointer }], [`${GHL_TAG_OUTBOX}/${intent.write.id}`, { ...intent.write.patch, revision: 'r0' }]]);
-  let revision = 0, tags = [], postMode = 'ok', readMode = 'ok', failFinal = false;
+  const rows = new Map([['jobs/job-1', { ...job, ...result.patch, fieldCompletionTagEntry: intent.pointer, revision: 'job-r0' }], [`${GHL_TAG_OUTBOX}/${intent.write.id}`, { ...intent.write.patch, revision: 'r0' }]]);
+  let revision = 0, tags = [], postMode = 'ok', readMode = 'ok', failFinal = false, onTagRead = null;
   const calls = [];
   const store = {
     read: async (collection, id) => structuredClone(rows.get(`${collection}/${id}`) || null),
     async commit(writes) {
       for (const write of writes) { const old = rows.get(`${write.collection}/${write.id}`); if (write.revision !== old?.revision) throw Object.assign(Error('conflict'), { status: 409 }); }
-      if (failFinal && writes.some(write => write.patch.status === 'done')) { failFinal = false; throw Error('lost storage response'); }
-      for (const write of writes) { const key = `${write.collection}/${write.id}`; rows.set(key, { ...rows.get(key), ...structuredClone(write.patch), revision: `r${++revision}` }); }
+      if (failFinal && writes.some(write => write.patch?.status === 'done')) { failFinal = false; throw Error('lost storage response'); }
+      for (const write of writes) { if (write.verify) continue; const key = `${write.collection}/${write.id}`; rows.set(key, { ...rows.get(key), ...structuredClone(write.patch), revision: `r${++revision}` }); }
     },
     due: async () => ({ rows: [...rows.values()].filter(row => row.status === 'pending'), truncated: false }),
     parked: async () => ({ rows: [...rows.values()].filter(row => row.status === 'parked'), truncated: false }),
@@ -57,6 +57,7 @@ async function fixture() {
     const path = new URL(url).pathname, method = init.method || 'GET'; calls.push({ path, method, body: init.body && JSON.parse(init.body) });
     assert.ok(path.startsWith('/contacts/contact-1')); assert.ok(['GET', 'POST'].includes(method));
     if (method === 'GET') {
+      if (onTagRead) { const callback = onTagRead; onTagRead = null; callback(); }
       if (readMode === 'fail') throw Error('unavailable');
       return Response.json({ contact: { id: 'contact-1', locationId: readMode === 'wrong' ? 'other' : 'location-1', tags } });
     }
@@ -69,7 +70,7 @@ async function fixture() {
   };
   const drain = (at = now, config = env, options = {}) => drainGhlTagOutbox(store, { env: config, now: at, fetcher, ...options });
   const retry = async () => retryGhlTags(store, { user: 'zacb', role: 'owner', businessAccess: true }, { action: 'retry', jobId: job.id, requestId: crypto.randomUUID() }, '2026-10-15T18:10:00.000Z', env);
-  return { rows, calls, store, drain, retry, entry: () => rows.get(`${GHL_TAG_OUTBOX}/${intent.write.id}`), job: rows.get('jobs/job-1'), post: value => postMode = value, read: value => readMode = value, tags: value => tags = value, failFinal: () => failFinal = true };
+  return { rows, calls, store, drain, retry, entry: () => rows.get(`${GHL_TAG_OUTBOX}/${intent.write.id}`), job: rows.get('jobs/job-1'), post: value => postMode = value, read: value => readMode = value, tags: value => tags = value, onTagRead: callback => onTagRead = callback, failFinal: () => failFinal = true };
 }
 
 test('completion tag needs both explicit flags and verified field evidence', async () => {
@@ -144,7 +145,7 @@ test('Command center projected reads keep failed completion visible instead of d
 async function secondCompletion(f) {
   const job = { ...ready(), id: 'job-2' }, result = close(job);
   const intent = await fieldCompletionTagWrites({ job, patch: result.patch, requestId: result.requestId, now });
-  f.rows.set('jobs/job-2', { ...job, ...result.patch });
+  f.rows.set('jobs/job-2', { ...job, ...result.patch, revision: 'job-r2' });
   f.rows.set(GHL_TAG_OUTBOX + '/' + intent.write.id, { ...intent.write.patch, revision: 'second' });
   return intent.write.id;
 }
@@ -162,5 +163,76 @@ test('another job cannot take over an uncertain contact receipt even if the tag 
   const second = await secondCompletion(f); await f.drain(now, env, { ids: [second] });
   const row = f.rows.get(GHL_TAG_OUTBOX + '/' + second);
   assert.equal(row.status, 'parked'); assert.equal(row.lastError, 'ghl_tag_completion_contact_busy');
+  assert.equal(f.calls.filter(call => call.method === 'POST').length, 1);
+});
+
+for (const change of ['cancel', 'contact']) test('canonical '+change+' during preflight cannot notify the old contact', async () => {
+  const f = await fixture();
+  f.onTagRead(() => { if (change === 'cancel') f.job.pipelineStatus = 'cancelled'; else f.job.highlevelContactId = 'contact-2'; f.job.revision = 'changed'; });
+  await f.drain();
+  assert.equal(f.calls.some(call => call.method === 'POST'), false);
+  assert.equal(f.entry().status, 'parked');
+  assert.equal(f.entry().lastError, 'ghl_tag_completion_job_changed');
+});
+test('canonical job revision is fenced in the send claim and checked again immediately before POST', async () => {
+  const f = await fixture(), commit = f.store.commit; let fenced = false;
+  f.store.commit = async writes => {
+    await commit(writes);
+    if (writes.some(write => write.collection === 'jobs' && write.verify)) {
+      fenced = true; f.job.highlevelContactId = 'contact-2'; f.job.revision = 'changed-after-claim';
+    }
+  };
+  await f.drain();
+  assert.equal(fenced, true); assert.equal(f.calls.some(call => call.method === 'POST'), false);
+  assert.equal(f.entry().status, 'parked'); assert.equal(f.entry().steps.completionTag, undefined);
+});
+test('canonical change after POST preserves uncertainty and never claims the new contact was notified', async () => {
+  const f = await fixture(); let reads = 0;
+  const read = f.store.read;
+  f.store.read = async (collection, id) => {
+    if (collection === 'jobs' && ++reads === 4) { f.job.highlevelContactId = 'contact-2'; f.job.revision = 'changed-after-post'; }
+    return read(collection, id);
+  };
+  await f.drain();
+  assert.equal(f.calls.filter(call => call.method === 'POST').length, 1);
+  assert.equal(f.entry().status, 'parked'); assert.equal(f.entry().steps.completionTag, 'sending');
+  assert.equal(f.entry().lastError, 'ghl_tag_completion_receipt_unknown');
+});
+
+test('a concurrent canonical write rejects the whole send claim transaction', async () => {
+  const f = await fixture(), commit = f.store.commit;
+  f.store.commit = async writes => {
+    if (writes.some(write => write.collection === 'jobs' && write.verify)) f.job.revision = 'concurrent-job-change';
+    return commit(writes);
+  };
+  await f.drain();
+  assert.equal(f.calls.some(call => call.method === 'POST'), false);
+  assert.equal(f.entry().steps.completionTag, undefined);
+  assert.equal([...f.rows.values()].some(row => row.entryId && row.status === 'sending'), false);
+});
+
+test('cancellation or deletion after an uncertain POST keeps the receipt visible in the Command center', async () => {
+  const f = await fixture(); f.post('lost-present'); await f.drain();
+  f.job.pipelineStatus = 'cancelled'; f.job.revision = 'cancelled-after-post';
+  assert.equal((await ghlTagStuck(f.store, now)).parked, 1);
+  await f.retry(); await f.drain('2026-10-15T18:10:00.000Z');
+  assert.equal(f.entry().status, 'parked');
+  f.rows.delete('jobs/job-1');
+  assert.equal((await ghlTagStuck(f.store, now)).parked, 1);
+  assert.equal(f.calls.filter(call => call.method === 'POST').length, 1);
+});
+
+test('completion drain reserves subrequest budget for canonical transactions and read-back', async () => {
+  const f = await fixture(); await secondCompletion(f);
+  const result = await f.drain();
+  assert.equal(result.due, 2); assert.equal(result.attempted, 1);
+  assert.equal([...f.rows.values()].filter(row => row.kind === 'field_completion' && row.status === 'pending').length, 1);
+});
+
+test('parallel internal-note metadata updates keep the same canonical completion eligible', async () => {
+  const f = await fixture();
+  f.onTagRead(() => { f.job.fieldCompletionSync = { status: 'synced' }; f.job.revision = 'internal-note-update'; });
+  assert.equal((await f.drain()).done, 1);
+  assert.equal(f.entry().steps.completionTag, 'verified');
   assert.equal(f.calls.filter(call => call.method === 'POST').length, 1);
 });

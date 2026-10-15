@@ -298,7 +298,7 @@ class DispatchBrowserTests(unittest.TestCase):
     def test_quote_duration_prefills_unscheduled_work_and_keeps_the_end_with_the_start(self):
         self.jobs = [job(), self.quoted_backlog()]; self.open(); self.schedule('Synthetic Quoted Garage')
         length = self.page.get_by_role('combobox', name='Expected duration', exact=True); end_date = self.page.get_by_label('End date', exact=True); end = self.page.get_by_label('End time', exact=True); start = self.page.get_by_label('Start time', exact=True)
-        expect(length).to_have_value('165'); expect(length.locator('option:checked')).to_have_text('2 hr 45 min · suggested'); expect(end).to_have_value('10:45')
+        expect(length).to_have_value('165'); expect(length.locator('option:checked')).to_have_text('2 hr 45 min · suggested'); expect(end).to_have_value('12:15')
         self.assertEqual(length.evaluate("el=>document.getElementById(el.getAttribute('aria-describedby')).textContent"), 'Suggested from the sold quote: 2 hr 45 min for a crew of 3.')
         self.page.get_by_label('Keep unscheduled', exact=True).uncheck(); self.page.get_by_label('Start date', exact=True).fill('2026-09-24'); start.fill('22:30')
         expect(end_date).to_have_value('2026-09-25'); expect(end).to_have_value('01:15')
@@ -357,10 +357,10 @@ class DispatchBrowserTests(unittest.TestCase):
     def test_changing_the_crew_size_drops_an_applied_suggestion_until_the_server_recalculates_it(self):
         self.jobs = [job(), self.quoted_backlog()]; self.open(); self.schedule('Synthetic Quoted Garage')
         length = self.page.get_by_role('combobox', name='Expected duration', exact=True); crew = self.page.get_by_label('Required crew size', exact=True); hint = self.page.locator('.dp-duration-hint'); end = self.page.get_by_label('End time', exact=True)
-        expect(length).to_have_value('165'); expect(end).to_have_value('10:45'); expect(hint).to_have_attribute('aria-live', 'polite')
+        expect(length).to_have_value('165'); expect(end).to_have_value('12:15'); expect(hint).to_have_attribute('aria-live', 'polite')
         crew.fill('4'); expect(length).to_have_value(''); expect(hint).to_have_text('Suggested from the sold quote: 2 hr 45 min for a crew of 3. The crew size changed, so check the end time; the suggestion is recalculated after you save.')
         crew.fill('3'); expect(hint).to_have_text('Suggested from the sold quote: 2 hr 45 min for a crew of 3.'); expect(length).to_have_value('')
-        self.page.get_by_label('Keep unscheduled', exact=True).uncheck(); self.page.get_by_label('Start time', exact=True).fill('13:00'); expect(end).to_have_value('10:45'); self.assertEqual(self.calls, [])
+        self.page.get_by_label('Keep unscheduled', exact=True).uncheck(); self.page.get_by_label('Start time', exact=True).fill('13:00'); expect(end).to_have_value('12:15'); self.assertEqual(self.calls, [])
     def test_an_opening_is_booked_with_the_buffer_employees_and_lead_it_was_checked_with(self):
         self.jobs = [job(), self.quoted_backlog()]; self.open(); self.to_schedule(); self.page.get_by_role('button', name='Find a time for Synthetic Quoted Garage', exact=True).click()
         self.page.get_by_label('Travel buffer (minutes)', exact=True).fill('50'); self.page.get_by_label('Crew One', exact=True).uncheck(); self.submit('Check openings')
