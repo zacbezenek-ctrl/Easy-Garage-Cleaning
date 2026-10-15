@@ -2,13 +2,14 @@
    offline reloads. API responses, customer data and non-GET requests are never
    intercepted or cached; queued work lives in the explicit field outbox. */
 'use strict';
-const VERSION = '20261015completion';
+const VERSION = '20261015w19';
 const CACHE_PREFIX = 'egc-crew-shell-';
 const CACHE = `${CACHE_PREFIX}${VERSION}`;
 const CONFIG = '/crew/sw-config.json';
 const PAGES = { '/crew/job.html': '/crew/job.html', '/crew/job': '/crew/job.html', '/crew/offline.html': '/crew/offline.html', '/crew/offline': '/crew/offline.html' };
 const ASSETS = ['/crew/job.css?v=20260930launchpolish2', '/crew/job.js?v=20261015completion', '/crew/field-outbox.js?v=20260929crewtime2', '/crew/field-expenses.css?v=20260928fun19', '/crew/field-expenses.js?v=20261013compat', '/crew/field-payments.css?v=20260929fieldpay2', '/crew/field-payments.js?v=20261013compat', '/crew/job-photo-sharing.css?v=20260927photo', '/crew/job-photo-sharing.js?v=20261012storage', '/crew/manifest.webmanifest'];
 ASSETS.push('/app-touch.css?v=20260930mobiletouch');
+ASSETS.push('/crew/job-completion-handoff.js?v=20261015w19');
 // Door-to-door canvassing (crew/knock.html). Its ES modules import each other without a ?v= query,
 // so those keys are bare paths; network-first keeps them current whenever the phone has signal.
 Object.assign(PAGES, { '/crew/knock.html': '/crew/knock.html', '/crew/knock': '/crew/knock.html' });
