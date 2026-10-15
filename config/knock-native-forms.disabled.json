@@ -1,0 +1,50 @@
+{
+  "enabled": false,
+  "locationId": null,
+  "forms": {
+    "direct_sale": {
+      "formId": "t7xlEHRoJsl2DNBrub1A",
+      "url": "https://links.easygaragecleaning.com/widget/form/t7xlEHRoJsl2DNBrub1A",
+      "referenceFieldId": "d7ChXmwhqPhCSgF1l2Jz",
+      "referenceQueryKey": null,
+      "acceptance": null
+    },
+    "walkthrough_request": null
+  },
+  "providerDraft": {
+    "name": "DRAFT EGC D2D Quote Request",
+    "source": "owner-supplied draft inventory, not submission-tested",
+    "observedDate": "2026-10-15",
+    "formId": "t7xlEHRoJsl2DNBrub1A",
+    "entryChoices": ["Direct D2D quote", "Walkthrough request"],
+    "fields": {
+      "serviceCategory": { "id": "f7sr6FamPgpih9cEaV8z", "key": "egc_d2d_service_category", "choices": ["Garage", "Junk removal", "Mixed or other"] },
+      "intakeChannel": { "id": "2wb3K0KNSDKEWOUFtWj7", "key": "egc_d2d_intake_channel", "choices": ["Direct D2D quote", "Walkthrough request"] },
+      "scope": { "id": "T3JeL4TNUwaTKYoCPKWY", "key": "egc_d2d_scope" },
+      "requestedService": { "id": "avzUx3bJ7KpmuW8mnahe", "key": "egc_d2d_service" },
+      "accessHazards": { "id": "OSvrkpN6oQ6r4KWUkDgc", "key": "egc_d2d_access_hazards" },
+      "handoffReference": { "id": "d7ChXmwhqPhCSgF1l2Jz", "key": "egc_d2d_handoff_ref" },
+      "quoteReference": { "id": "sb5Xf3qCnPo8qALNUJxN", "key": "egc_d2d_quote_reference", "authority": "informational_only" },
+      "quotedAmountContext": { "id": "6dCtjB68nQgMf3BOIHFS", "key": "egc_d2d_quoted_amount_context", "authority": "informational_only" },
+      "preferredTime": { "id": "33aD27JAY0B5aeExhbvl", "key": "egc_d2d_preferred_time", "authority": "request_only" },
+      "repDisplay": { "id": "6gbcoGr6vhCHv6SgFeZ9", "key": "egc_d2d_rep_display", "authority": "informational_only" },
+      "smsConsent": { "id": "l9OuGT9YdnpGgFzbqV8T", "key": "egc_d2d_sms_consent", "required": false, "defaultChecked": false }
+    },
+    "standardFields": ["first_name", "last_name", "phone", "email", "address", "city", "state", "country", "postal_code"],
+    "required": ["name", "phone", "address", "requestedService", "intakeChannel", "scope", "accessHazards", "handoffReference"],
+    "emailRequiredFor": "direct_contract",
+    "facebookOptionConfigured": false,
+    "w19Identity": null
+  },
+  "blockers": [
+    "configured_location_not_verified",
+    "reference_query_prefill_not_verified",
+    "submission_receipt_shape_not_verified",
+    "existing_provider_read_access_not_verified",
+    "workflow_trigger_isolation_not_verified",
+    "one_shared_draft_form_but_runtime_requires_distinct_entry_forms",
+    "facebook_direct_lead_source_mapping_missing",
+    "canonical_quote_document_link_and_export_missing",
+    "w19_identity_unknown"
+  ]
+}

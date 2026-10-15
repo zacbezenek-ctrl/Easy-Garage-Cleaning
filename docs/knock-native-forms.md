@@ -19,7 +19,11 @@ The app displays Hub saved, submission verified, contact linked, job/walkthrough
 
 ## Configuration still required
 
-No production IDs are supplied in code. An authorized operator must separately review the exact stored configuration in server-only `knock_settings/native_forms`. There is no new settings-writing API or automatic migration. Until both dedicated forms and their acceptance records pass the checks, all form launches and receipt verification remain blocked.
+The owner-supplied draft form and field inventory is preserved in [`config/knock-native-forms.disabled.json`](../config/knock-native-forms.disabled.json). This is an inert review manifest, not imported runtime configuration or a Firestore seed. It contains the real draft ID `t7xlEHRoJsl2DNBrub1A`, reference field `d7ChXmwhqPhCSgF1l2Jz`, and the reported field keys. `enabled` remains false, `referenceQueryKey` and acceptance are null, and no provider-prefill behavior is assumed from a suffix/key.
+
+The supplied draft is **one shared form** with Direct D2D quote / Walkthrough request choices. The current runtime requires distinct allowlisted forms for the two entry paths, so walkthrough mapping stays null. Either a second verified form or a separately reviewed shared-form design is needed; an editable channel choice must never override the server-bound handoff channel. No Facebook-direct option exists yet. `W19` identity is unknown and has no mapping. Email is optional on the draft but remains required for a direct contract; informational amount/quote/rep fields and preferred time are not price, attribution, schedule or legal authority. Optional SMS consent is reported as unchecked and does not itself send a message.
+
+An authorized operator must separately review the exact stored configuration in server-only `knock_settings/native_forms`. There is no new settings-writing API or automatic migration. Until both dedicated forms and their acceptance records pass the checks, all form launches and receipt verification remain blocked.
 
 Required document shape (empty values deliberately keep this disabled):
 
