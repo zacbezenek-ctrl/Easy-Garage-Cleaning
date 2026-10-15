@@ -101,7 +101,8 @@ const createJob=async(service,start,end)=>{
 try{
  await login(managerPage,'ZacB');await managerPage.goto(base+'/dispatch.html');await managerPage.getByRole('heading',{name:'Dispatch',exact:true}).waitFor();
  await managerPage.waitForFunction(()=>document.querySelector('.dp-header-actions .primary')?.disabled===false);
- await createJob('Morning garage service','09:30','11:30');await managerPage.getByRole('dialog').waitFor({state:'detached'});
+ await createJob('Morning garage service','09:29','11:30');await managerPage.getByRole('alert').filter({hasText:'9:30 AM'}).waitFor();
+ await managerPage.getByLabel('Start time',{exact:true}).fill('09:30');await managerPage.getByRole('dialog').getByRole('button',{name:'Create job',exact:true}).click();await managerPage.getByRole('dialog').waitFor({state:'detached'});
  const firstCard=managerPage.locator('.dp-job').filter({hasText:'Morning garage service'});await firstCard.waitFor();
  const id=new URL(await firstCard.getByRole('link',{name:'Open job',exact:true}).getAttribute('href'),base).searchParams.get('jobId');
  assert.equal((await readJob(id)).operationalScope.text,'Install shelving and preserve the heirloom cabinet.');
