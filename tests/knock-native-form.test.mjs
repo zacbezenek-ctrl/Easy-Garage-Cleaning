@@ -247,6 +247,28 @@ test('transaction detects a new fence between guarded read and receipt commit; n
   assert.equal(await w.store.get('knock_receipts', `native_ref_${w.handoff.reference}`), null);
 });
 
+test('transaction guards accept an emulator namespace rewrite but reject a different document path', async () => {
+  for (const wrongPath of [false, true]) {
+    const w = await started();
+    const store = createKnockStore(ENV, async (env, url, options) => {
+      const response = await w.fake.fetcher(env, url, options);
+      if (!url.endsWith(':batchGet') || !JSON.parse(options.body).transaction) return response;
+      const rows = await response.json();
+      for (const row of rows) {
+        if (row.found) row.found.name = row.found.name.replace('projects/egcw-1ec83/', 'projects/demo-native/');
+        if (row.missing) row.missing = row.missing.replace('projects/egcw-1ec83/', 'projects/demo-native/');
+      }
+      if (wrongPath) rows[0].found.name = rows[0].found.name.replace(w.quoteId, 'foreign-document');
+      return Response.json(rows);
+    });
+    const result = verifyNativeFormReceipt(store, REP, DEFAULT_SETTINGS, verifyBody(w.handoff), w.config, AFTER, async () => evidence(w));
+    if (wrongPath) {
+      await assert.rejects(result, { code: 'knock_storage_unavailable' });
+      assert.equal(await w.store.get('knock_receipts', `native_ref_${w.handoff.reference}`), null);
+    } else assert.equal((await result).handoff.states.submissionVerified, true);
+  }
+});
+
 test('a later direct sale blocks opening or verifying an existing walkthrough reference', async () => {
   const w = await started(world(), 'walkthrough_request');
   w.fake.put('knock_sales/later-sale', { repKey: 'rep.one', houseId: 'house-one', status: 'booked' });

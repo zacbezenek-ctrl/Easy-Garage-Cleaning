@@ -164,22 +164,28 @@ export function createKnockStore(env, fetcher = firestoreFetch) {
       const rollback = () => send(`${BASE}:rollback`, post({ transaction })).catch(() => null);
       try {
         const expected = new Map();
+        // Compare the requested document paths as dispatch-storage does. The
+        // isolated emulator harness rewrites the project namespace on the wire.
+        // batchGet is still sent to this store's scoped endpoint; another path,
+        // duplicate or incomplete result remains an error.
+        const keyOf = name => typeof name === 'string' ? /^projects\/[^/]+\/databases\/[^/]+\/documents\/([^/]+\/[^/]+)$/.exec(name)?.[1] : null;
         for (const check of checks) {
           const version = check.currentDocument?.exists === false ? null : check.currentDocument?.updateTime;
-          if (expected.has(check.verify) && expected.get(check.verify) !== version) throw knockFailure('The source changed while saving.', 409, 'knock_conflict');
-          expected.set(check.verify, version);
+          const key = keyOf(check.verify);
+          if (!key || expected.has(key) && expected.get(key).version !== version) throw knockFailure('The source changed while saving.', 409, 'knock_conflict');
+          expected.set(key, { name: check.verify, version });
         }
-        const read = await send(`${BASE}:batchGet`, post({ documents: [...expected.keys()], mask: { fieldPaths: ['id'] }, transaction }));
+        const read = await send(`${BASE}:batchGet`, post({ documents: [...expected.values()].map(item => item.name), mask: { fieldPaths: ['id'] }, transaction }));
         if (!read.ok) throw unavailable();
         const rows = await read.json().catch(() => null), found = new Map();
         if (!Array.isArray(rows)) throw unavailable();
         for (const row of rows) {
-          const name = row.found?.name || row.missing;
-          if (!expected.has(name) || found.has(name)) throw unavailable();
-          found.set(name, row.found ? row.found.updateTime : null);
+          const key = keyOf(row.found?.name || row.missing);
+          if (!expected.has(key) || found.has(key)) throw unavailable();
+          found.set(key, row.found ? row.found.updateTime : null);
         }
         if (found.size !== expected.size) throw unavailable();
-        for (const [name, version] of expected) if (found.get(name) !== version)
+        for (const [key, { version }] of expected) if (found.get(key) !== version)
           throw knockFailure('That source changed while saving. Reload and retry.', 409, 'knock_conflict');
         const response = await send(`${BASE}:commit`, post({ transaction, writes: mutations }));
         if (!response.ok) {
