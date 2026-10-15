@@ -23,7 +23,7 @@
 
 import { savedHandoffPayload } from '../_lib/walkthrough-handoff.js';
 import { requireDispatcher } from '../_lib/dispatch-service.js';
-import { getHubSession, hasBusinessAccess } from '../_lib/hub-session.js';
+import { getHubSession, hasBusinessAccess, isHubOwner } from '../_lib/hub-session.js';
 import { sendAcceptedQuotePortal } from '../_lib/portal-invitation.js';
 import { syncSalesFollowupExit, salesExitMilestone } from '../_lib/sales-followup-exit.js';
 import { readJob, patchJob } from '../_lib/firestore-job.js';
@@ -457,6 +457,42 @@ export async function onRequestOptions() {
 // with the flag off can() never grants schedule.book.
 const BOOKER_VIEWS = new Set(['command', 'contacts', 'lead']);
 const CONTACT_ID = /^[A-Za-z0-9_-]{1,180}$/;
+const NATIVE_FORM_ID = 'DeiRNO6itxjLiTk3Nkj0';
+const plainObject = value => value !== null && typeof value === 'object' && !Array.isArray(value);
+
+// Owner-only diagnostic: preserve provider values on the server and expose presence, never attribution contents.
+async function nativeFormSubmissions(c, url) {
+  const ids = url.searchParams.getAll('contactId');
+  if (ids.length !== 1 || !CONTACT_ID.test(ids[0])) return reply(400, { ok: false, error: 'Choose one HighLevel contact.' });
+  const contactId = ids[0];
+  const params = new URLSearchParams({ locationId: c.locationId, formId: NATIVE_FORM_ID, q: contactId, limit: '100' });
+  try {
+    const data = await ghl(c, `/forms/submissions?${params}`, { method: 'GET' });
+    if (!plainObject(data) || !Array.isArray(data.submissions) || data.submissions.length > 100) throw new Error('Invalid submissions');
+    const submissions = [];
+    for (const row of data.submissions) {
+      if (!plainObject(row) || typeof row.formId !== 'string' || typeof row.contactId !== 'string') throw new Error('Invalid submission scope');
+      // Provider q is a broad search; never accept a name/email/phone match as the requested contact.
+      if (row.formId !== NATIVE_FORM_ID || row.contactId !== contactId) continue;
+      if (typeof row.id !== 'string' || !CONTACT_ID.test(row.id) || typeof row.createdAt !== 'string' || row.createdAt.length > 40 || !Number.isFinite(Date.parse(row.createdAt)) ||
+          !plainObject(row.others) || Object.keys(row.others).length > 100 || Object.keys(row.others).some(key => key.length > 180)) throw new Error('Invalid submission');
+      const event = row.others.eventData;
+      if (event !== undefined && !plainObject(event)) throw new Error('Invalid event data');
+      const present = key => typeof event?.[key] === 'string' && event[key].trim().length > 0;
+      submissions.push({ id: row.id, createdAt: row.createdAt, formId: row.formId, contactId: row.contactId,
+        otherKeys: Object.keys(row.others).sort(), attribution: {
+          eventDataAvailable: plainObject(event), fbcAvailable: present('fbc'), fbpAvailable: present('fbp'), fbEventIdAvailable: present('fbEventId'),
+          campaignMetadataAvailable: ['campaign', 'campaignId', 'campaignName', 'utm_campaign'].some(present),
+          adMetadataAvailable: ['adSource', 'adId', 'adName', 'adSetId', 'adSetName'].some(present),
+        } });
+    }
+    return reply(200, { ok: true, formId: NATIVE_FORM_ID, contactId, submissions, limit: 100,
+      moreAvailable: Number.isInteger(data.meta?.nextPage) && data.meta.nextPage > 1 });
+  } catch (error) {
+    return reply(502, { ok: false, error: 'Native form submissions are unavailable.',
+      ...(Number.isInteger(error.status) && error.status >= 400 && error.status <= 599 ? { providerStatus: error.status } : {}) });
+  }
+}
 // A booker's lead feed: who to call and where the lead stands, never the opportunity's value.
 const bookerOpportunity = row => ({ id: row.id, name: row.name, status: row.status, source: row.source, pipelineId: row.pipelineId, pipelineStageId: row.pipelineStageId, createdAt: row.createdAt,
   contactId: row.contactId || row.contact?.id || '', contact: { id: row.contact?.id || row.contactId || '', name: row.contact?.name || '', phone: row.contact?.phone || '', email: row.contact?.email || '' } });
@@ -487,11 +523,13 @@ export async function onRequestGet({ request, env }) {
   const session = await getHubSession(request, env);
   if (!session) return reply(401, { ok: false, code: 'HUB_AUTH_REQUIRED', error: 'Sign in to the EGC Hub' });
   const url = new URL(request.url), view = url.searchParams.get('view') || 'command';
+  if (view === 'native-form-submissions' && !isHubOwner(session)) return reply(403, { ok: false, code: 'OWNER_ACCESS_REQUIRED', error: 'Owner access is required.' });
   if (!hasBusinessAccess(session) && !(BOOKER_VIEWS.has(view) && can(session, 'schedule.book', env))) return reply(403, { ok: false, code: 'BUSINESS_ACCESS_REQUIRED', error: 'Business access is required for CRM records and handoffs. Open the assigned field job for crew actions.' });
   const c = config(env);
   if (!c.token || !c.locationId) return reply(501, { ok: false, code: 'HIGHLEVEL_NOT_CONFIGURED', error: 'HighLevel needs an API key and location ID' });
   if (view === 'walkthroughs' && !hasBusinessAccess(session)) return reply(403, { ok: false, code: 'BUSINESS_ACCESS_REQUIRED', error: 'Walkthrough access is limited to Zac, Tyler, and Alex' });
   try {
+    if (view === 'native-form-submissions') return await nativeFormSubmissions(c, url);
     if (view === 'lead') return await leadView(c, String(url.searchParams.get('contactId') || '').trim());
     if (view === 'contacts') {
       const q = String(url.searchParams.get('q') || '').trim();
