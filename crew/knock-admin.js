@@ -699,7 +699,7 @@ async function settingsSection() {
           toggle(`${city}.requiresPermit`, 'Reps must be on the City permit list'),
           h('p', { class: 'caption muted' }, `Sunset is worked out for ${get(draft, `${city}.name`) || 'the city'} every day, so it moves with the season on its own.`)),
         card('Deposit & cancellation',
-          row('Deposit at the door', num('sale.depositRate', { scale: 100, unit: '% of the price', step: '1' })),
+          row('Deposit rate', num('sale.depositRate', { scale: 100, unit: '% of the price', step: '1' })),
           row('Customer can cancel for a full refund within', num('sale.cancelBusinessDays', { unit: 'business days, until midnight', step: '1' }), 'Sundays and federal holidays don\'t count; Saturdays do.'),
           row('After that, refundable until', num('sale.refundCutoffHours', { unit: 'hours before the job', step: '1' })),
           row('Default job start', text('sale.defaultJobStartTime', { type: 'time' })),

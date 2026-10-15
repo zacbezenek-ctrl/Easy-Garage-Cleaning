@@ -70,13 +70,18 @@ export async function startStripeDeposit(env, sale, { request = stripeRequest } 
   if (!secret) throw knockFailure('Stripe is not set up on the server. Use the manual deposit.', 409, 'knock_stripe_unavailable');
   const cents = Math.round(Number(sale.depositAmount) * 100);
   if (!(cents >= 50)) throw knockFailure('The deposit amount is too small for card payment.', 400, 'knock_invalid_amount');
+  // Describe the saved agreement, never today's settings. Older records without
+  // a valid rate keep their saved amount without inventing a percentage.
+  const depositLabel = Number.isFinite(sale.depositRate) && sale.depositRate > 0 && sale.depositRate <= 1
+    ? `${new Intl.NumberFormat('en-US', { style: 'percent', maximumFractionDigits: 6 }).format(sale.depositRate)} deposit`
+    : 'Deposit';
   const body = new URLSearchParams({
     mode: 'payment',
     'line_items[0][quantity]': '1',
     'line_items[0][price_data][currency]': 'usd',
     'line_items[0][price_data][unit_amount]': String(cents),
     'line_items[0][price_data][product_data][name]': `Easy Garage Cleaning deposit: ${sale.package}`,
-    'line_items[0][price_data][product_data][description]': `20% deposit on a ${money(sale.ticket)} garage service. Fully refundable until midnight ${sale.cancelDeadlineDate}.`,
+    'line_items[0][price_data][product_data][description]': `${depositLabel} on a ${money(sale.ticket)} garage service. Fully refundable until midnight ${sale.cancelDeadlineDate}.`,
     customer_email: sale.customer?.email || '',
     client_reference_id: sale.id,
     'metadata[kind]': 'egc_knock_deposit',

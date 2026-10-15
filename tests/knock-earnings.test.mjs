@@ -25,6 +25,10 @@ test('percentages alone do not configure compensation terms', async () => {
   for (const document of [null, { settings: DEFAULT_SETTINGS }, { ...approvedKnockSettings(), compensationApproval: undefined }]) {
     const settings = await loadSettings({ get: async () => document });
     assert.equal(settings.commission.verified, false);
+    assert.equal(settings.commission.approvedAt, null);
+    assert.equal(settings.commission.scope, null);
+    assert.equal(settings.commission.collectionPolicy, null);
+    assert.equal(settings.payroll.anchorVerified, false);
     const row = statement([paid()], [{ id: 'p', repKey: 'rep.one', periodKey: '2026-10-19_2026-11-01', amount: 80 }], settings);
     assert.deepEqual([row.projectedCommission, row.earnedCommission, row.payableCommission], [null, null, null]);
     assert.equal(row.commissionPaid, 80);
@@ -40,15 +44,31 @@ test('synthetic policy approval is bound to the exact settings and invalidated b
   assert.equal((await loadSettings({ get: async () => doc })).commission.verified, false);
 });
 
+test('explicit stored deposit and compensation settings override defaults without migration', async () => {
+  const doc = approvedKnockSettings();
+  doc.settings.sale.depositRate = 0.2;
+  doc.settings.commission.acceleratorEnabled = doc.compensationApproval.commission.acceleratorEnabled = true;
+  doc.settings.commission.leadOverrideEnabled = doc.compensationApproval.commission.leadOverrideEnabled = true;
+  const before = JSON.stringify(doc);
+  const settings = await loadSettings({ get: async () => doc });
+  assert.deepEqual([settings.sale.depositRate, settings.commission.acceleratorEnabled, settings.commission.leadOverrideEnabled], [0.2, true, true]);
+  assert.equal(settings.commission.verified, true, 'an existing exact approval is not silently rewritten');
+  assert.equal(JSON.stringify(doc), before);
+});
+
 test('current rate and override changes cannot recalculate historical sale terms', async () => {
   const original = approvedKnockSettings();
+  original.settings.commission.acceleratorEnabled = original.compensationApproval.commission.acceleratorEnabled = true;
+  original.settings.commission.leadOverrideEnabled = original.compensationApproval.commission.leadOverrideEnabled = true;
   const settings = await loadSettings({ get: async () => original });
   const snapshot = snapshotCommissionTerms(settings.commission, undefined, 'Garage Transformation');
   assert.ok(snapshot);
   const oldSale = paid({ leadKey: 'lead.one', package: 'Garage Transformation', commissionTerms: snapshot });
-  const changed = { ...settings, commission: { ...settings.commission, rate: 0.8, acceleratorRate: 0.9, leadOverrideRate: 0.2 } };
+  const changed = { ...settings, commission: { ...settings.commission, rate: 0.8, acceleratorEnabled: false, acceleratorRate: 0.9, leadOverrideEnabled: false, leadOverrideRate: 0.2 } };
   assert.equal(statement([oldSale], [], changed).earnedCommission, 400);
   assert.equal(leadOverrides([oldSale], changed.commission, { now: nowMs })[0].amount, 48);
+  const largerSale = { ...oldSale, ticket: 10000, collectedAmount: 10000 };
+  assert.equal(saleCommissions([largerSale], changed.commission, { now: nowMs })[0].total, 2600);
   assert.equal(snapshot.policy.rate, 0.25);
   assert.equal(snapshotCommissionTerms({ ...changed.commission, verified: false }), null);
   assert.equal(snapshotCommissionTerms(settings.commission, '2026-09-30T12:00:00Z', 'Garage Transformation'), null, 'offline history cannot receive a later approval');

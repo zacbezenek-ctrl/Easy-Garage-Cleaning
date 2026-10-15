@@ -92,7 +92,7 @@ export function jobDateAllowed(jobDate, saleDate, options = {}) {
   return Boolean(window && validDate(jobDate) && jobDate >= window.earliestJobDate);
 }
 
-export function depositAmount(ticket, depositRate = 0.2) {
+export function depositAmount(ticket, depositRate = 0.25) {
   const value = Number(ticket);
   if (!Number.isFinite(value) || value <= 0) return 0;
   return Math.round(value * depositRate * 100) / 100;

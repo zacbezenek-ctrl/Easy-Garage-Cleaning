@@ -40,7 +40,7 @@ The screens follow the EGC Knock redesign (Claude Design, October 2026).
   and logged training minutes. A rep can start a shift only when **active and on the permit list**.
 * **Admins** are the Hub's business users (`zacb`, `tylerg`, `alexk`, or managers with staff-role access).
   Only admins read customer details, change settings, assign territory or export payroll.
-* **Leads** knock like reps, see their team's scoreboard and earn the lead override.
+* **Leads** knock like reps and see their team's scoreboard. No team lead commission is enabled by default.
 
 ## Run it locally
 
@@ -164,15 +164,20 @@ per neighborhood and per street.
 ## Sales
 
 * **Sold** opens the form: package (The Works, Full Property Reset, Garage Transformation, Quick Clear),
-  ticket, 20% deposit, customer name, phone and email, job date, and the checklist the rep must tick:
+  ticket, 25% default deposit, customer name, phone and email, job date, and the checklist the rep must tick:
   contract signed on the device and emailed; two printed cancellation notices handed over; customer told
   about the right to cancel. Nothing is saved until every item is ticked.
 * **Right to cancel:** ends at midnight at the end of the third business day after the sale. Business days
   exclude Sundays and federal holidays and include Saturdays; when a fixed-date holiday falls on a weekend
   both the date and the observed weekday are skipped (only ever lengthening the window). The job date cannot
   be before the day after the deadline.
-* **Deposit:** 20% of the ticket, fully refundable until the deadline, then refundable until 24 hours before
-  the job.
+* **Deposit:** defaults to 25% of the ticket ($400 on $1,600), fully refundable until the deadline, then
+  refundable until 24 hours before the job. Each sale saves its own rate and amount; later settings changes
+  do not change that agreement or its Stripe description.
+* **Payment dates:** Hub quotes use `FINAL_25_75`: deposit due seven calendar days before the job, or on
+  walkthrough day when the walkthrough falls within that week; remainder due on job day, in America/Denver.
+  Knock direct sales do not store a verified walkthrough date, so their form does not assert that the deposit
+  is due today or invent a walkthrough-based due date.
 * **Customer contact details exist only on the sale** (`knock_sales`). Houses and door records never hold them.
 * **Lifecycle** (Admin > Sales): booked, completed, paid (with the amount collected), cancelled; reinstate and
   move the job date.
@@ -195,14 +200,20 @@ per neighborhood and per street.
 
 ## Money
 
-* **Commission:** 25% of collected revenue, earned only when the job is completed, paid and past the
-  cancellation deadline. A cancelled job pays nothing. Accelerator: 30% on a rep's collected revenue above
-  $8,000 in a calendar month (marginal). Lead override: 3% of the team's collected revenue (not the lead's own).
+* **Commission:** D2D direct close is 25%; appointment setter is 12% plus estimator 7% (19% total);
+  direct estimator is 7%. Junk removal is excluded, and there is no team lead commission or accelerator
+  enabled by default. These channel rates must not stack. Service classification, calculation base,
+  attribution and contract approval remain required before monetary results are payable.
+* **Earning:** current `knock-collected-v3` terms earn on recorded full customer collection, independently of
+  job completion. Partial receipts, refunds, cancellations with receipts and unverified terms stay under
+  review. Older saved contracts retain their original conditions and enabled bonuses; current settings
+  never rewrite historical terms. A customer receipt is not a commission payout.
 * **Per rep, per pay period:** booked, pending, earned, paid and balance. Reps see their own (More > My money);
   admins see everyone, record payouts and export **Commission**, **Training** and **Sales** CSVs
-  (Admin > Money). Pay periods default to biweekly from Monday 2026-10-05.
+  (Admin > Money). Payout cadence is biweekly; the default 2026-10-05 anchor is an unconfirmed draft.
+  Payroll export remains blocked until the complete contract and anchor have explicit approval.
 * **Training** is logged separately (Admin > Reps) and exported at the hourly rate in settings ($15.16).
-* Knockers are 1099 contractors (per the owner), so there is no minimum-wage top-up check on commission.
+* Worker classification and payroll setup require their own review; these percentages do not approve either.
 
 ## Scoreboard
 
@@ -218,6 +229,19 @@ Admin > Settings edits every number above (city rules, shift idle hours, deposit
 days, refund cutoff, extra holidays, checklist text, commission rates and accelerator, lead override, training
 rate, pay period, plan targets, gate thresholds, go-back limits, map tile URL, integration modes). Values are
 validated before saving.
+
+### Existing settings: explicit operator action before launch
+
+`loadSettings` overlays the stored `knock_settings/current.settings` document on the defaults. A stored
+20% deposit or enabled accelerator/lead override therefore remains effective after this code change.
+Production overrides have not been verified by this change, and no stored settings or sales are migrated.
+
+An authorized operator must inspect **Admin > Settings** and, if the stored policy differs from the launch
+requirements, explicitly save a 25% deposit with the accelerator and lead override disabled for future
+sales. Preserve the other reviewed settings. A compensation edit invalidates approval bound to the old
+values; the reviewed approval process must reconfirm the exact contract, service scope, collection policy
+and actual payroll anchor. Do not infer a pay date or copy an approval from defaults. Existing sales retain
+their deposit and commission snapshots; discrepancies in signed terms require individual finance review.
 
 ## Deploy
 

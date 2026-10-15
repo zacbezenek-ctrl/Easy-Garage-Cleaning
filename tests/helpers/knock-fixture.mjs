@@ -19,7 +19,9 @@ export function approvedKnockSettings() {
       plan: structuredClone(settings.plan), gate: structuredClone(settings.gate) } };
 }
 
-export const approvedKnockTerms = () => ({ contract: 'knock-v1', approvedAt: '2026-10-01T12:00:00Z', policy: structuredClone(DEFAULT_SETTINGS.commission) });
+// Historical v1 terms stay explicit when launch defaults change.
+export const approvedKnockTerms = () => ({ contract: 'knock-v1', approvedAt: '2026-10-01T12:00:00Z',
+  policy: { rate: 0.25, acceleratorEnabled: true, acceleratorThreshold: 8000, acceleratorRate: 0.3, leadOverrideEnabled: true, leadOverrideRate: 0.03 } });
 
 export const ORIGIN = 'https://easygaragecleaning.com';
 

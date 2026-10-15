@@ -40,7 +40,7 @@ export const DEFAULT_SETTINGS = Object.freeze({
     idleAutoEndHours: 4,
   },
   sale: {
-    depositRate: 0.2,
+    depositRate: 0.25,
     cancelBusinessDays: 3,
     refundCutoffHours: 24,
     defaultJobStartTime: '08:00',
@@ -54,10 +54,10 @@ export const DEFAULT_SETTINGS = Object.freeze({
   },
   commission: {
     rate: 0.25,
-    acceleratorEnabled: true,
+    acceleratorEnabled: false,
     acceleratorThreshold: 8000,
     acceleratorRate: 0.3,
-    leadOverrideEnabled: true,
+    leadOverrideEnabled: false,
     leadOverrideRate: 0.03,
   },
   payroll: {
