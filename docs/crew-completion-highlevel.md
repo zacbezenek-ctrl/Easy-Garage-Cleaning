@@ -30,6 +30,32 @@ The existing signed `/api/ghl-tag-drain` worker and its dispatch Command center 
 
 There is no historical backfill. Jobs completed while the new flag is off receive no new tag entry. A parked unknown receipt must be reconciled in HighLevel before an operator decides any further action; clearing an outbox sending marker is not a supported retry procedure.
 
+### Current configuration evidence (2026-10-15)
+
+Read-only GETs to `https://easygaragecleaning.com/api/operations-service-keys` and `https://egc-api-production-faeb.up.railway.app/operations/service-keys` both returned HTTP 200, `egc-service-auth-v2`, workspace `egc`, the expected issuer, and one public key. No keys, credentials or customer records were collected. This proves public-key discovery is available; it does **not** prove a worker is enabled, a signed drain succeeds, or HighLevel delivery works.
+
+This execution environment has no connected Cloudflare/Railway configuration reader, authenticated Hub session, or runtime flag values. Therefore the current production values of `EGC_GHL_TAG_OUTBOX`, `EGC_GHL_FIELD_COMPLETION_TAG`, `EGC_GHL_TAG_DRAIN_ENABLED` and `FIELD_LEAD_ONLY_COMPLETE` are **unverified**, not assumed off. The blank `.env.example` values are examples, not deployment evidence. No flags were changed.
+
+| Required check before activation | Owner/operator evidence to retain |
+| --- | --- |
+| Cloudflare Pages `EGC_GHL_FIELD_COMPLETION_TAG` remains unset/false until approval | Read the actual production and preview variables; do not infer from source defaults |
+| Pages `EGC_GHL_TAG_OUTBOX=true` for delivery | Preserve existing schedule integration; do not toggle this shared switch just to test completion |
+| Railway **egc-worker** `EGC_GHL_TAG_DRAIN_ENABLED=true` | Recent `ghl_tag_drain` completed result and non-stale Hub Command center worker check-in (tick every 2 minutes; stale at 10 minutes) |
+| Hub service auth resolves to v2 and operations is enabled | `EGC_OPERATIONS_SERVICE_AUTH=v2` or existing v2 default, valid existing `HUB_SESSION_SECRET`, operations not explicitly disabled, and matching workspace `egc` |
+| Worker can sign as API service | Existing `API_BEARER_TOKEN` is valid for the API public key; identity is integration `ghl-tag-worker`, path `/api/ghl-tag-drain`, command `ghl_tags.drain`. Do not copy or rotate secrets for this test |
+| Hub can store canonical receipts/outbox/claims | Existing Firebase service-account configuration can commit jobs, field events, `ghlTagOutbox`, `ghlTagDrainState`, and service nonces; browser access remains denied |
+| HighLevel exact contact/location access | Existing `HIGHLEVEL_API_KEY` and `HIGHLEVEL_LOCATION_ID` (or GHL aliases) identify the intended location and can read contact tags and add the completion tag |
+| Lead-only closeout, if required operationally | Verify actual `FIELD_LEAD_ONLY_COMPLETE=true`; named job crew lead and assignment must be correct. This PR preserves the existing flag-controlled policy |
+
+### Safe acceptance and deployment order
+
+1. Require independent review and all required CI green before merge. The scheduling policy has no activation flag; a deployment containing this PR changes new/rescheduled starts immediately. If scheduling must ship separately, extract only the policy/UI changes into a separately reviewed PR; do not turn on GHL delivery as part of that deployment.
+2. Run the synthetic completion, retry, concurrency, scheduling and registry tests below. Their provider traffic is mocked. Use local/emulator fixtures or an isolated non-production environment; do not submit a test closeout against a live job. Turning the new tag flag off does not disable the pre-existing CRM note/check-in behavior.
+3. Inventory **all** HighLevel workflows on `egc-job-complete`, including tag-added, opportunity, contact-change and re-entry paths. Record their customer messages, review-request actions, waits and tag-reset behavior. Existing tags from previous jobs park new entries. Approval to deploy code is not approval to send these messages; obtain the owner's explicit decision before enabling delivery. The automation registry keeps these listeners unverified.
+4. After separate authorization for a provider write, use a dedicated test location/contact with customer communications disabled and synthetic jobs only. Verify one canonical receipt, one outbox entry and one contact claim; observe a verified read-back, and repeat the same request to prove no second tag addition. Simulate unknown responses in mocks, never by disrupting a live request.
+5. Only then enable the new completion flag in the intended environment through the normal approved configuration process. Observe both the worker check-in and a real authorized job's outbox receipt before describing delivery as live. A successful deployment or public-key GET alone is insufficient.
+6. If delivery is uncertain, keep the job completed, inspect its parked entry and contact claim, and reconcile the provider record. Do not clear `steps.completionTag`, delete a claim or blindly retry a POST. Disabling only `EGC_GHL_FIELD_COMPLETION_TAG` stops completion sends while preserving the shared scheduling outbox; queued entries remain available for review.
+
 ## Earliest job start
 
 Effective for dates **2026-10-15 onward**, new or changed starts for `job`, `cleanout`, and `reorg` must be **09:30 or later in `America/Denver`**. Both authoritative writers (`mutateDispatch` and `mutateScheduledVisit`) enforce the same policy. Split jobs validate each newly placed segment, not merely the overall start. Normal Denver instant conversion still rejects nonexistent or ambiguous DST times.

@@ -35,7 +35,7 @@ const deepFreeze = value => { if (value && typeof value === 'object') { Object.v
 
 export const AUTOMATION_REGISTRY = deepFreeze({
   schemaVersion: 1,
-  registryVersion: '2026-09-29.1',
+  registryVersion: '2026-10-15.1',
   timeZone: 'America/Denver',
   ghlLocationId: 'KlgLwRaQSPz5G1YXsmc6',
   sources: {
@@ -76,7 +76,9 @@ export const AUTOMATION_REGISTRY = deepFreeze({
     trigger('tag:egc-visit-no-show', 'tag_added', 'Tag egc-visit-no-show', [write(TAG_OUTBOX, ['functions/_lib/dispatch-service.js', 'functions/api/dispatch.js', 'functions/api/ghl-tag-drain.js'], `${OUTBOX_WHEN}: a job marked a no-show in Dispatch, with its appointment set to noshow; never for a booking HighLevel never heard of (no appointment and no earlier time told)`, true)], 'GHL-TRACK-1: no HighLevel workflow listens to it until the owner builds one.'),
     trigger('tag:egc-quote-ready', 'tag_added', 'Tag egc-quote-ready', [write(HL, [HANDOFF], 'tool=game_plan while the saved estimate is sent or open and no sales-exit milestone is reached (HIGHLEVEL_QUOTE_READY_TAGS replaces the list)', true)]),
     trigger('tag:gc-quote-open', 'tag_added', 'Tag gc-quote-open', [write(HL, [HANDOFF], 'tool=game_plan while the saved estimate is sent or open and no sales-exit milestone is reached (HIGHLEVEL_QUOTE_READY_TAGS replaces the list)', true)]),
-    trigger('tag:egc-job-complete', 'tag_added', 'Tag egc-job-complete', [write(HL, [SUITE], 'tool=post_job: closeout sync after a job is closed out', true)]),
+    trigger('tag:egc-job-complete', 'tag_added', 'Tag egc-job-complete', [
+      write(HL, [SUITE], 'tool=post_job: closeout sync after a job is closed out', true),
+      write(TAG_OUTBOX, ['functions/api/field-jobs.js', 'functions/api/ghl-tag-drain.js'], 'Only with EGC_GHL_TAG_OUTBOX=true and EGC_GHL_FIELD_COMPLETION_TAG=true (off): verified crew completion queues the tag atomically; the signed worker adds it after contact-level claiming and verifies it by read-back. Unknown receipts and prior-job tags require review.', true)]),
     trigger('tag:egc-review-ready', 'tag_added', 'Tag egc-review-ready', [write(HL, [SUITE], 'tool=post_job: closeout sync after a job is closed out', true)]),
     trigger('tag:egc-garage-sales-exit', 'tag_added', 'Tag egc-garage-sales-exit', [write('functions/_lib/sales-followup-exit.js', [HL, 'functions/api/customer-portal.js', SUITE], 'after a verified accepted, booked or completed garage job (handoff sync, portal approval or manager recheck); one dispatch per estimate revision', true)]),
     trigger('tag:egc-junk-sales-exit', 'tag_added', 'Tag egc-junk-sales-exit', [write('functions/_lib/sales-followup-exit.js', [HL, 'functions/api/customer-portal.js', SUITE], 'after a verified accepted, booked or completed junk job (handoff sync, portal approval or manager recheck); one dispatch per estimate revision', true)]),
@@ -207,7 +209,7 @@ export const AUTOMATION_REGISTRY = deepFreeze({
     lifecycle('decision-needed', 'needs_owner_approval', 'remote decision request'),
     lifecycle('rebooking-received', 'needs_owner_approval', 'no button today'),
     unverifiedGhl('ghl.closeout_workflows', 'HighLevel workflows on egc-job-complete and egc-review-ready (unverified)', 'Tags written by the closeout sync', ['tag:egc-job-complete', 'tag:egc-review-ready'],
-      { code: code(HL, 'ghl_tag_helper_call'), ownerCheck: 'Record every workflow on these tags (they may start review requests) with its texts, or disable it so review asks go through the approved review_request send.' }),
+      { code: [...code(HL, 'ghl_tag_helper_call'), ...code(TAG_OUTBOX, 'ghl_tag_helper_call', 'ghl_contact_write')], notes: 'The field-completion outbox contact request is read-only identity/tag verification. Crew completion adds only egc-job-complete, never egc-review-ready. No downstream workflow is approved by this registry entry.', ownerCheck: 'Before enabling EGC_GHL_FIELD_COMPLETION_TAG, record every workflow on these tags (they may start review requests) with its texts and reset/re-entry behavior, or disable it so review asks go through the approved review_request send.' }),
     unverifiedGhl('ghl.walkthrough_complete_workflows', 'HighLevel workflows on egc-walkthrough-complete (unverified)', 'Tag written by the signed walkthrough sync', ['tag:egc-walkthrough-complete'],
       { code: [...code(HL, 'ghl_tag_helper_call'), ...code(TAG_OUTBOX, 'ghl_tag_helper_call')], ownerCheck: 'Record every workflow on this tag with its texts.' }),
     unverifiedGhl('ghl.visit_change_workflows', 'HighLevel workflows on the visit-change and walkthrough-outcome tags (none until the owner builds them)', 'Tags egc-visit-rescheduled, egc-visit-cancelled, egc-visit-no-show, egc-walkthrough-no-show, egc-walkthrough-lost and egc-quote-to-follow, written by the Hub tag outbox only with EGC_GHL_TAG_OUTBOX=true (off)',
@@ -449,7 +451,7 @@ export const AUTOMATION_REGISTRY = deepFreeze({
     'functions/_lib/funnel-dimensions.js': { ghl_contact_write: 1 },
     'functions/_lib/ghl-messenger.js': { ghl_message_send: 1, ghl_tag_write: 1, ghl_contact_write: 2 },
     // GHL-TRACK-1: the tag outbox drain adds tags through the shared writer (addTags); its contact, appointment and note writes are the shared helpers below.
-    'functions/_lib/ghl-tag-outbox.js': { ghl_tag_helper_call: 1 },
+    'functions/_lib/ghl-tag-outbox.js': { ghl_tag_helper_call: 2, ghl_contact_write: 1 },
     // GHL-TRACK-1: ensureContact, addTags and completeAppointment moved here unchanged from highlevel.js, plus the outbox's internal note.
     'functions/_lib/highlevel-tags.js': { ghl_tag_write: 1, ghl_contact_write: 1, ghl_note_task_write: 1, ghl_appointment_write: 1 },
     // GHL-ALIGN: GET then POST contacts/{id}/tasks for the 6-month check-in (one path string, read first).
