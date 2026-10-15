@@ -1,5 +1,5 @@
-/* Progressive enhancement only. Set data-highlevel-form-url on .quote-form
- * only after the public form and delivery workflow have passed verification. */
+/* Progressive enhancement for the owner-selected existing public inquiry form.
+ * The native form owns submission; this wrapper never infers a receipt. */
 (function (root) {
   'use strict';
   function verifiedUrl(value) {
@@ -45,7 +45,7 @@
     heading.textContent = 'Request your free walkthrough';
     const intro = doc.createElement('p');
     intro.className = 'ghl-booking-intro';
-    intro.textContent = 'Tell us what you need, and we will contact you to confirm a time.';
+    intro.textContent = 'We will confirm a time with you; your request does not book an appointment.';
     header.append(heading, intro);
     const body = doc.createElement('div');
     body.className = 'ghl-booking-body';

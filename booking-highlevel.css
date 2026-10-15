@@ -2,6 +2,7 @@
 .book-page:has(.ghl-enabled) .hero,.book-page:has(.ghl-enabled) .book-sidebar,.book-page:has(.ghl-enabled) #process,.book-page:has(.ghl-enabled) .site-footer,.book-page:has(.ghl-enabled) .nav-links,.book-page:has(.ghl-enabled) .nav-right,.book-page:has(.ghl-enabled) .nav-toggle,.book-page:has(.ghl-enabled) .nav-drawer,.book-page:has(.ghl-enabled) .nav-overlay,.book-page:has(.ghl-enabled) .mobile-sticky-cta,.book-page:has(.ghl-enabled) .back-to-top{display:none!important}
 .book-page:has(.ghl-enabled) .nav{position:static;background:#fff;border:0;box-shadow:none;backdrop-filter:none}
 .book-page:has(.ghl-enabled) .nav-inner{max-width:720px;padding:24px 20px 16px;justify-content:flex-start}
+.book-page:has(.ghl-enabled) .nav .logo{min-height:44px}
 .book-page:has(.ghl-enabled) .book-section{padding:20px 0 48px;background:#fff}
 .book-page:has(.ghl-enabled) .book-section>.wrap{max-width:720px;padding:0 20px}
 .book-page:has(.ghl-enabled) .book-layout{display:block}

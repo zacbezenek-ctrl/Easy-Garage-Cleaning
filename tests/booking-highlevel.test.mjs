@@ -95,7 +95,7 @@ test('branded wrapper keeps the native form and safe direct fallback together', 
   const recovery = byClass(card.shell, 'ghl-booking-recovery');
   assert.equal(recovery.tag, 'details');
   assert.ok(descendants(recovery).includes(direct), 'alternate links stay in secondary help');
-  assert.match(byClass(card.shell, 'ghl-booking-intro').textContent, /contact you to confirm a time/);
+  assert.match(byClass(card.shell, 'ghl-booking-intro').textContent, /confirm a time.*does not book an appointment/);
   assert.equal(descendants(card.shell).filter(node => node.tag === 'input' || node.tag === 'form').length, 0,
     'the wrapper must not duplicate contact fields or consent outside the native form');
   assert.equal(frame.events.message, undefined, 'no inferred cross-origin success handling');
@@ -137,11 +137,15 @@ test('recovery still focuses the first available field if no choice is selected'
   assert.equal(original.focused, true);
   assert.equal(original.hidden, false);
 });
-test('live page and generator load enhancement without enabling an unverified form', () => {
+test('booking page and generator select only the existing public HighLevel form and retain recovery', () => {
+  const approved = 'https://links.easygaragecleaning.com/widget/form/DeiRNO6itxjLiTk3Nkj0';
   for (const filename of ['book.html', '_generate_site.py']) {
     const text = fs.readFileSync(new URL('../' + filename, import.meta.url), 'utf8');
     assert.match(text, /booking-highlevel\.js/); assert.match(text, /booking-highlevel\.css/);
-    assert.doesNotMatch(text, /data-highlevel-form-url=/);
+    assert.deepEqual([...text.matchAll(/data-highlevel-form-url="([^"]+)"/g)].map(match => match[1]), [approved]);
+  }
+  for (const filename of ['index.html', 'ads.html', 'pricing.html']) {
+    assert.doesNotMatch(fs.readFileSync(new URL('../' + filename, import.meta.url), 'utf8'), /data-highlevel-form-url=/);
   }
   assert.match(fs.readFileSync(new URL('../book.html', import.meta.url), 'utf8'), /action="https:\/\/api.web3forms.com\/submit"/);
 });

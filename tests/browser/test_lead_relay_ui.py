@@ -85,6 +85,11 @@ class LeadRelayBrowserTests(unittest.TestCase):
     def lead_events(self):
         return [call for call in self.page.evaluate(PIXEL_CALLS) if call[:2]==['track','Lead']]
 
+    def use_standard_booking_recovery(self):
+        # The default is native HighLevel; these tests cover the retained Web3Forms relay.
+        self.page.get_by_text('Need help with the form?', exact=True).press('Enter')
+        self.page.get_by_role('button', name='Use the standard request form', exact=True).press('Enter')
+
     def test_ads_landing_page_relays_each_set_of_answers_once_with_its_meta_lead_event_id(self):
         self.page.goto(self.url+'/ads.html'); self.page.wait_for_function('() => !!window.EGCLeadCapture')
         self.assertLessEqual(self.page.evaluate('document.documentElement.scrollWidth'),375)
@@ -125,6 +130,7 @@ class LeadRelayBrowserTests(unittest.TestCase):
     def test_book_page_relays_once_and_reports_its_lead_with_the_inquiry_id(self):
         self.web3forms_status=204
         self.page.goto(self.url+'/book.html'); self.page.wait_for_function('() => !!window.EGCLeadCapture')
+        self.use_standard_booking_recovery()
         self.assertLessEqual(self.page.evaluate('document.documentElement.scrollWidth'),375)
         form=self.page.locator('form.multi-step-form')
         self.assertEqual(form.get_attribute('data-meta-lead'),'walkthrough_request')
@@ -157,6 +163,7 @@ class LeadRelayBrowserTests(unittest.TestCase):
         self.web3forms_status=204
         self.page.route('**/book.html',mark_book_slots)
         self.page.goto(self.url+'/book.html'); self.page.wait_for_function('() => !!window.EGCLeadCapture')
+        self.use_standard_booking_recovery()
         self.page.wait_for_function('() => !!document.querySelector("fieldset.booking-slots[data-slots-rendered]")')
         self.assertLessEqual(self.page.evaluate('document.documentElement.scrollWidth'),375)
         form=self.page.locator('form.multi-step-form')
