@@ -91,8 +91,8 @@ function saleForm(house, onSave) {
         h('h2', { style: { fontSize: '18px' } }, 'Package'), pkg.el,
         field('sale-ticket', 'Price', h('div', { class: 'money-field' }, h('span', {}, '$'), ticket))),
       h('section', { class: 'card', style: { gap: '6px' } },
-        kv(`${Math.round(settings.sale.depositRate * 100)}% deposit today`, deposit),
-        kv('Due on the day', due),
+        kv(`${Math.round(settings.sale.depositRate * 100)}% deposit`, deposit),
+        kv('Remainder due on job day', due),
         h('div', { style: { marginTop: '6px' } }, banner('info', 'info', `Full refund if cancelled before midnight ${longDateLabel(window.deadlineDate)}`,
           `So the job can't start before ${longDateLabel(window.earliestJobDate)}. After that the deposit is refundable until ${settings.sale.refundCutoffHours ?? 24} hours before the job.`))),
       h('section', { class: 'stack' },
@@ -144,7 +144,7 @@ function saleCard(sale, commission) {
     : commission.state === 'excluded' ? '$0 - not commission eligible'
     : commission.state === 'earned' ? `${money(commission.amount, true)} · earned`
     : commission.state === 'cancelled' ? '$0'
-    : `${money(commission.amount, true)} · ${sale.status === 'completed' ? 'waiting on customer payment' : `earned after ${dateLabel(sale.jobDate)}`}`;
+    : `${money(commission.amount, true)} · pending collection and review`;
   return h('article', { class: 'card card--line', style: { gap: '10px', opacity: sale.status === 'cancelled' ? '.8' : null } },
     h('div', { class: 'row row--between' }, h('span', { class: 'serif', style: { fontSize: '20px' } }, sale.customer?.name || address), badge(label, tone, glyph)),
     h('div', { class: 'caption muted' }, `${address} · ${sale.package} · ${when}`),

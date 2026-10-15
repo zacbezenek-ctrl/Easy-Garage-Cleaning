@@ -4,7 +4,7 @@ import { knockSyncHandlers } from '../functions/api/knock-sync.js';
 import { knockAdminHandlers } from '../functions/api/knock-admin.js';
 import { knockReportsHandlers } from '../functions/api/knock-reports.js';
 import { knockTerritoryHandlers } from '../functions/api/knock-territory.js';
-import { customerMessage } from '../functions/_lib/knock-handoff.js';
+import { customerMessage, startStripeDeposit } from '../functions/_lib/knock-handoff.js';
 import { approvedKnockSettings, call, cookieFor, get, knockEnv, knockWorld, post, uuid } from './helpers/knock-fixture.mjs';
 import { fakeGhl } from './helpers/messaging-fixture.mjs';
 
@@ -36,7 +36,7 @@ function fakeProviders() {
     if (url.hostname === 'api.stripe.com') {
       calls.stripe.push({ path: url.pathname, method: init.method || 'GET', body: init.body ? String(init.body) : '', headers: init.headers });
       if ((init.method || 'GET') === 'POST') return Response.json({ id: 'cs_test_synthetic', url: 'https://checkout.stripe.com/c/pay/cs_test_synthetic' });
-      return Response.json({ id: 'cs_test_synthetic', status: 'complete', payment_status: 'paid', amount_total: 32000, client_reference_id: calls.saleId, metadata: { sale_id: calls.saleId } });
+      return Response.json({ id: 'cs_test_synthetic', status: 'complete', payment_status: 'paid', amount_total: calls.depositCents ?? 40000, client_reference_id: calls.saleId, metadata: { sale_id: calls.saleId } });
     }
     if (url.hostname === 'services.leadconnectorhq.com') return ghl.fetcher(url.href, init);
     return original(input, init);
@@ -74,14 +74,16 @@ function saleBatch(overrides = {}) {
   };
 }
 
-test('a sale records the deadline, the 20% deposit and the customer only on the sale', async () => {
+test('a new sale records the deadline, the 25% deposit and the customer only on the sale', async () => {
   const { world, send } = await setup();
   const { saleId, events } = saleBatch();
   const result = await send(events);
   assert.deepEqual(result.body.results.map(r => r.status), ['applied', 'applied', 'applied'], JSON.stringify(result.body));
   const sale = world.fake.get(`knock_sales/${saleId}`);
   assert.deepEqual([sale.saleDate, sale.cancelDeadlineDate, sale.cancelEndsAt, sale.earliestJobDate], ['2026-10-06', '2026-10-09', '2026-10-10T06:00:00.000Z', '2026-10-10']);
-  assert.deepEqual([sale.ticket, sale.depositRate, sale.depositAmount, sale.status], [1600, 0.2, 320, 'booked']);
+  assert.deepEqual([sale.ticket, sale.depositRate, sale.depositAmount, sale.status], [1600, 0.25, 400, 'booked']);
+  assert.equal(sale.handoff.deposit.amount, 400);
+  assert.deepEqual([sale.handoff.deposit.mode, sale.handoff.text.mode, sale.handoff.job.mode], ['manual', 'manual', 'manual']);
   assert.deepEqual(sale.customer, { name: 'Pat Synthetic', phone: '+19705550100', email: 'pat@example.com' });
   assert.deepEqual([sale.leadKey, sale.address.number, sale.neighborhoodId], ['lead.one', '2900', 'english-ranch']);
   const stored = world.fake.get(`knock_events/${saleId}`);
@@ -219,11 +221,46 @@ test('hand-offs: job and deposit can be marked by hand; Stripe makes one deposit
   assert.equal(link.body.sale.handoff.deposit.url, 'https://checkout.stripe.com/c/pay/cs_test_synthetic');
   const create = providers.calls.stripe[0];
   assert.equal(create.path, '/v1/checkout/sessions');
-  assert.match(create.body, /unit_amount%5D=32000/);
+  assert.match(create.body, /unit_amount%5D=40000/);
+  assert.match(new URLSearchParams(create.body).get('line_items[0][price_data][product_data][description]'), /^25% deposit/);
   assert.match(create.body, /metadata%5Bkind%5D=egc_knock_deposit/);
   assert.equal(create.headers['Idempotency-Key'], `egc-knock-deposit-${saleId}`);
   const checked = await act({ action: 'sale.handoff', saleId, kind: 'deposit', op: 'refresh' });
-  assert.deepEqual([checked.body.sale.handoff.deposit.status, checked.body.sale.handoff.deposit.collectedAmount, checked.body.sale.handoff.deposit.verifiedBy], ['collected', 320, 'stripe']);
+  assert.deepEqual([checked.body.sale.handoff.deposit.status, checked.body.sale.handoff.deposit.collectedAmount, checked.body.sale.handoff.deposit.verifiedBy], ['collected', 400, 'stripe']);
+});
+
+test('saved 20% deposits keep their amount and Stripe description after settings change', async t => {
+  const providers = fakeProviders();
+  t.after(providers.restore);
+  const settingsDoc = { settings: { sale: { depositRate: 0.2 }, integrations: { deposit: 'stripe' } } };
+  const { world, send, act } = await setup({ settingsDoc });
+  const { events, saleId } = saleBatch();
+  await send(events);
+  const saved = world.fake.get(`knock_sales/${saleId}`);
+  assert.deepEqual([saved.depositRate, saved.depositAmount], [0.2, 320]);
+  world.fake.put('knock_settings/current', { settings: { sale: { depositRate: 0.25 }, integrations: { deposit: 'stripe' } } });
+  providers.calls.saleId = saleId;
+  providers.calls.depositCents = 32000;
+  await act({ action: 'sale.handoff', saleId, kind: 'deposit', op: 'start' });
+  const body = new URLSearchParams(providers.calls.stripe[0].body);
+  assert.equal(body.get('line_items[0][price_data][unit_amount]'), '32000');
+  assert.match(body.get('line_items[0][price_data][product_data][description]'), /^20% deposit/);
+  const checked = await act({ action: 'sale.handoff', saleId, kind: 'deposit', op: 'refresh' });
+  assert.deepEqual([checked.body.sale.depositRate, checked.body.sale.depositAmount, checked.body.sale.handoff.deposit.collectedAmount], [0.2, 320, 320]);
+});
+
+test('Stripe does not invent a percentage for historical sales with missing or invalid saved rates', async () => {
+  for (const depositRate of [undefined, null, '0.2', NaN, -0.2, 1.2]) {
+    let body;
+    await startStripeDeposit({ STRIPE_SECRET_KEY: 'sk_test_syntheticKnockKey' }, {
+      id: 'legacy-rate', package: 'The Works', ticket: 1600, depositAmount: 320, depositRate, cancelDeadlineDate: '2026-10-09',
+    }, { request: async (_secret, _path, options) => {
+      body = options.body;
+      return { id: 'cs_test_synthetic', url: 'https://checkout.stripe.com/c/pay/cs_test_synthetic' };
+    } });
+    assert.equal(body.get('line_items[0][price_data][unit_amount]'), '32000');
+    assert.match(body.get('line_items[0][price_data][product_data][description]'), /^Deposit on/);
+  }
 });
 
 test('one customer, one text: HighLevel sends once, a refusal can be retried, an unclear answer cannot', async t => {

@@ -68,7 +68,9 @@ test('federal holidays include observed weekdays, and both the date and the obse
   assert.equal(isBusinessDay('2027-12-31'), false);
 });
 
-test('deposit is 20% of the ticket, fully refundable until the deadline, then until 24 hours before the job', () => {
+test('deposit defaults to 25%, preserves explicit historical rates and keeps the refund window', () => {
+  assert.equal(depositAmount(1600), 400);
+  assert.equal(depositAmount(1234.56), 308.64);
   assert.equal(depositAmount(1600, 0.2), 320);
   assert.equal(depositAmount(1234.56, 0.2), 246.91);
   const window = cancellationWindow('2026-10-06');
@@ -101,28 +103,39 @@ test('commission is not earned before the job is completed, paid and past the ca
   assert.deepEqual(saleCommissions([completedOnly], DEFAULT_SETTINGS.commission, { now: Date.parse('2026-11-01T00:00:00Z') }), []);
 });
 
-test('accelerator: $10,000 collected in one month earns $2,600', () => {
-  assert.equal(monthlyCommission(10000, DEFAULT_SETTINGS.commission), 2600);
-  assert.equal(monthlyCommission(10000, { ...DEFAULT_SETTINGS.commission, acceleratorEnabled: false }), 2500);
+test('launch defaults pay a flat 25% without an accelerator or team lead override', () => {
+  assert.equal(DEFAULT_SETTINGS.sale.depositRate, 0.25);
+  assert.equal(DEFAULT_SETTINGS.commission.acceleratorEnabled, false);
+  assert.equal(DEFAULT_SETTINGS.commission.leadOverrideEnabled, false);
+  assert.equal(monthlyCommission(10000, DEFAULT_SETTINGS.commission), 2500);
+  const sales = [paid('launch', 10000, '2026-10-20T18:00:00Z', { leadKey: 'lead.one' })];
+  const options = { now: Date.parse('2026-12-01T00:00:00Z') };
+  assert.equal(saleCommissions(sales, DEFAULT_SETTINGS.commission, options)[0].accelerator, 0);
+  assert.deepEqual(leadOverrides(sales, DEFAULT_SETTINGS.commission, options), []);
+});
+
+test('explicit historical accelerator: $10,000 collected in one month earns $2,600', () => {
+  const commission = { ...DEFAULT_SETTINGS.commission, acceleratorEnabled: true };
+  assert.equal(monthlyCommission(10000, commission), 2600);
   // Split across several sales the marginal rate still lands on the revenue above $8,000.
   const now = Date.parse('2026-12-01T00:00:00Z');
   const rows = saleCommissions([
     paid('a', 4000, '2026-10-12T18:00:00Z'), paid('b', 3000, '2026-10-15T18:00:00Z'), paid('c', 3000, '2026-10-28T18:00:00Z'),
-  ], DEFAULT_SETTINGS.commission, { now });
+  ], commission, { now });
   assert.equal(rows.reduce((sum, r) => sum + r.total, 0), 2600);
   assert.deepEqual(rows.map(r => r.total), [1000, 750, 850]);
   // A new month starts below the threshold again.
-  const nextMonth = saleCommissions([paid('d', 9000, '2026-10-30T18:00:00Z'), paid('e', 1000, '2026-11-02T18:00:00Z')], DEFAULT_SETTINGS.commission, { now });
+  const nextMonth = saleCommissions([paid('d', 9000, '2026-10-30T18:00:00Z'), paid('e', 1000, '2026-11-02T18:00:00Z')], commission, { now });
   assert.deepEqual(nextMonth.map(r => r.total), [2300, 250]);
 });
 
-test('lead override pays 3% of team collected revenue to the lead on the sale, never on the lead\'s own sales', () => {
+test('explicit historical lead override pays 3% of team collected revenue, never on the lead\'s own sales', () => {
   const now = Date.parse('2026-12-01T00:00:00Z');
   const overrides = leadOverrides([
     paid('a', 2000, '2026-10-20T18:00:00Z', { leadKey: 'lead.one' }),
     paid('b', 1500, '2026-10-21T18:00:00Z', { repKey: 'lead.one', leadKey: 'lead.one' }),
     paid('c', 1000, '2026-10-22T18:00:00Z'),
-  ], DEFAULT_SETTINGS.commission, { now });
+  ], { ...DEFAULT_SETTINGS.commission, leadOverrideEnabled: true }, { now });
   assert.deepEqual(overrides.map(o => [o.leadKey, o.amount]), [['lead.one', 60]]);
 });
 
