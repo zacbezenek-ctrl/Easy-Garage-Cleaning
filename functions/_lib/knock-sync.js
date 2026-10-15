@@ -9,6 +9,7 @@ import { OUTCOMES } from '../../crew/knock-settings.js';
 import { knockWindow, zonedDate } from '../../crew/knock-time.js';
 import { effectiveKnocks, summarizeHouse } from '../../crew/knock-doors.js';
 import { daySummary, deriveShift, shiftTiming } from '../../crew/knock-stats.js';
+import { nativeHouseClaimId } from './knock-form-claims.js';
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const ISO = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,9})?(?:Z|[+-]\d{2}:\d{2})$/;
@@ -105,6 +106,7 @@ export async function applyBatch(store, rep, settings, events, nowMs) {
   const targetIds = valid.filter(e => e.target).map(e => e.target);
   const targets = targetIds.length ? await store.getMany('knock_events', targetIds) : new Map();
   const accepted = [];
+  const saleClaimGuards = new Map();
   const touchedHouses = new Set(), touchedShifts = new Set(), touchedDays = new Set();
 
   for (const { event, fp } of fresh) {
@@ -138,6 +140,13 @@ export async function applyBatch(store, rep, settings, events, nowMs) {
       if (priorShift.endedAt && priorShift.endReason !== 'idle' && at > Date.parse(priorShift.endedAt) + 60000) { results.set(event.id, refuse('knock_shift_ended', 'That shift already ended. Start a new shift.')); continue; }
       const house = houses.get(event.houseId);
       if (!house) { results.set(event.id, refuse('knock_house_missing', 'That house is not in canvassing.')); continue; }
+      if (event.outcome === 'sold') {
+        const claimId = await nativeHouseClaimId(house.id), claim = await store.get('knock_receipts', claimId);
+        if (claim && (claim.channel !== 'direct_sale' || claim.repKey !== rep.repKey)) {
+          results.set(event.id, refuse('knock_form_channel_conflict', 'This house has a different form channel or rep. Review attribution before logging Sold.')); continue;
+        }
+        saleClaimGuards.set(claimId, claim ? write.verify('knock_receipts', claimId, claim.__updateTime) : write.verifyMissing('knock_receipts', claimId));
+      }
       const nbhd = neighborhoods.get(house.neighborhoodId);
       if (!nbhd || !houseInScope(house, territory)) { results.set(event.id, refuse('knock_not_assigned', 'That house is not in your assigned territory.')); continue; }
       const lock = neighborhoodLock({ ...nbhd, status: nbhd.status, holdReason: nbhd.holdReason }, rep, settings);
@@ -161,6 +170,13 @@ export async function applyBatch(store, rep, settings, events, nowMs) {
     } else if (event.type === 'sale') {
       const problem = await validateSaleEvent(store, rep, settings, event, { accepted, targets, houses, nowMs });
       if (problem) { results.set(event.id, problem); continue; }
+      const saleDoor = accepted.find(a => a.id === event.knockId) || targets.get(event.knockId) || await store.get('knock_events', event.knockId);
+      const claimId = await nativeHouseClaimId(event.houseId || saleDoor.houseId);
+      const claim = await store.get('knock_receipts', claimId);
+      if (claim && (claim.channel !== 'direct_sale' || claim.repKey !== rep.repKey)) {
+        results.set(event.id, refuse('knock_form_channel_conflict', 'This house has a different form channel or rep. Review attribution before saving a direct sale.')); continue;
+      }
+      saleClaimGuards.set(claimId, claim ? write.verify('knock_receipts', claimId, claim.__updateTime) : write.verifyMissing('knock_receipts', claimId));
       extra = { day: zonedDate(at, 'America/Denver') };
     }
 
@@ -176,6 +192,11 @@ export async function applyBatch(store, rep, settings, events, nowMs) {
   // 1. The events themselves (append-only) and any sale records, in one commit.
   if (accepted.length) {
     const writes = accepted.map(({ id, ...data }) => write.create('knock_events', id, data));
+    // The fence changes in the event commit, before asynchronous house-summary rebuilding.
+    // Receipt verification therefore cannot miss a concurrent new edit/void/sale event.
+    for (const houseId of new Set(accepted.map(event => event.houseId).filter(Boolean)))
+      writes.push(write.set('knock_form_revisions', houseId, { revision: crypto.randomUUID() }));
+    writes.push(...saleClaimGuards.values());
     const originals = new Map(fresh.map(({ event }) => [event.id, event]));
     for (const event of accepted.filter(e => e.type === 'sale')) writes.push(...await applySaleEvent(store, rep, settings, originals.get(event.id), nowIso, { houses }));
     try {

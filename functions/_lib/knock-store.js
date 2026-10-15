@@ -10,7 +10,7 @@ const BASE = `https://firestore.googleapis.com/v1/${ROOT}`;
 
 export const KNOCK_COLLECTIONS = Object.freeze([
   'knock_settings', 'knock_reps', 'knock_neighborhoods', 'knock_houses', 'knock_assignments', 'knock_shifts',
-  'knock_events', 'knock_sales', 'knock_days', 'knock_training', 'knock_payouts', 'knock_imports', 'knock_receipts', 'knock_setters',
+  'knock_events', 'knock_sales', 'knock_days', 'knock_training', 'knock_payouts', 'knock_imports', 'knock_receipts', 'knock_setters', 'knock_form_handoffs', 'knock_form_revisions',
 ]);
 
 const COLLECTION = new Set(KNOCK_COLLECTIONS);
@@ -44,6 +44,12 @@ const strip = data => Object.fromEntries(Object.entries(data || {}).filter(([key
 /* Write builders. create: only if absent. set: replace whole document. patch: named fields only,
    guarded by updateTime when given, else by the document existing. upsert: named fields, no guard. */
 export const write = {
+  verifyMissing: (collection, id) => ({ verify: docName(collection, id), currentDocument: { exists: false } }),
+  // Assert the canonical source revision without changing it in an evidence-only commit.
+  verify: (collection, id, updateTime) => {
+    if (!updateTime) throw knockFailure('A canonical revision is required.', 409, 'knock_conflict');
+    return { verify: docName(collection, id), currentDocument: { updateTime } };
+  },
   create: (collection, id, data) => ({ update: { name: docName(collection, id), fields: encodeFirestoreFields(strip(data)) }, currentDocument: { exists: false } }),
   set: (collection, id, data) => ({ update: { name: docName(collection, id), fields: encodeFirestoreFields(strip(data)) } }),
   patch: (collection, id, data, updateTime = '') => {
@@ -145,6 +151,47 @@ export function createKnockStore(env, fetcher = firestoreFetch) {
   // Applies writes atomically (chunks of 450 are separate commits; callers keep related writes small).
   async function commit(writes) {
     const all = writes.filter(Boolean);
+    const checks = all.filter(item => item.verify), mutations = all.filter(item => !item.verify);
+    if (checks.length) {
+      // Public REST Write has no read-only verify operation. Read the guards in a
+      // transaction, check their versions (including absence), then commit only mutations.
+      // Firestore aborts if one of those reads changes before the commit.
+      if (all.length > 450) throw knockFailure('Guarded changes must fit one transaction.', 400, 'knock_request_too_large');
+      const begin = await send(`${BASE}:beginTransaction`, post({ options: { readWrite: {} } }));
+      if (!begin.ok) throw unavailable();
+      const transaction = (await begin.json().catch(() => null))?.transaction;
+      if (typeof transaction !== 'string' || !transaction) throw unavailable();
+      const rollback = () => send(`${BASE}:rollback`, post({ transaction })).catch(() => null);
+      try {
+        const expected = new Map();
+        for (const check of checks) {
+          const version = check.currentDocument?.exists === false ? null : check.currentDocument?.updateTime;
+          if (expected.has(check.verify) && expected.get(check.verify) !== version) throw knockFailure('The source changed while saving.', 409, 'knock_conflict');
+          expected.set(check.verify, version);
+        }
+        const read = await send(`${BASE}:batchGet`, post({ documents: [...expected.keys()], mask: { fieldPaths: ['id'] }, transaction }));
+        if (!read.ok) throw unavailable();
+        const rows = await read.json().catch(() => null), found = new Map();
+        if (!Array.isArray(rows)) throw unavailable();
+        for (const row of rows) {
+          const name = row.found?.name || row.missing;
+          if (!expected.has(name) || found.has(name)) throw unavailable();
+          found.set(name, row.found ? row.found.updateTime : null);
+        }
+        if (found.size !== expected.size) throw unavailable();
+        for (const [name, version] of expected) if (found.get(name) !== version)
+          throw knockFailure('That source changed while saving. Reload and retry.', 409, 'knock_conflict');
+        const response = await send(`${BASE}:commit`, post({ transaction, writes: mutations }));
+        if (!response.ok) {
+          const kind = await commitFailure(response);
+          if (kind === 'exists') throw knockFailure('That record already exists.', 409, 'knock_exists');
+          if (kind === 'stale') throw knockFailure('That source changed while saving. Reload and retry.', 409, 'knock_conflict');
+          if (kind === 'rejected') throw knockFailure('Canvassing storage refused the change.', 400, 'knock_rejected');
+          throw unavailable();
+        }
+      } catch (error) { await rollback(); throw error; }
+      return;
+    }
     for (let i = 0; i < all.length; i += 450) {
       const response = await send(`${BASE}:commit`, post({ writes: all.slice(i, i + 450) }));
       if (!response.ok) {

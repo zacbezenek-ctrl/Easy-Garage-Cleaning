@@ -705,6 +705,12 @@ service cloud.firestore {
     match /knock_receipts/{documentId} {
       allow read, write: if false;
     }
+    match /knock_form_handoffs/{documentId} {
+      allow read, write: if false;
+    }
+    match /knock_form_revisions/{documentId} {
+      allow read, write: if false;
+    }
 
     match /{document=**} {
       allow read, write: if false;
