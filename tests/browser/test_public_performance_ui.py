@@ -132,6 +132,10 @@ class PublicPerformanceBrowserTests(unittest.TestCase):
         form.locator('[name="City"]').select_option('Fort Collins')
         form.locator('[data-step="4"] [data-next]').click()
         form.locator('[data-step="5"] [data-next]').click()
+        # Step navigation schedules focus. Wait for the contact step to finish
+        # moving focus before fill() inserts text into a field on a busy runner.
+        expect(form.locator('[data-step="6"]')).to_have_class(re.compile(r'\bactive\b'))
+        expect(form.locator('[name="Name"]')).to_be_focused()
         # Observe successful validation without sending customer data anywhere.
         form.evaluate("""form => {window.__accepted = 0; form.addEventListener('submit', event => {
             if (!event.defaultPrevented) window.__accepted++;
@@ -150,12 +154,16 @@ class PublicPerformanceBrowserTests(unittest.TestCase):
         ]:
             form.locator('[name="Name"]').fill(name)
             form.locator('[name="Phone"]').fill(phone)
+            expect(form.locator('[name="Name"]')).to_have_value(name)
+            expect(form.locator('[name="Phone"]')).to_have_value(phone)
             form.evaluate("form => form.requestSubmit(form.querySelector('[type=submit]'))")
-            self.assertEqual(page.evaluate('window.__accepted'), 0)
+            self.assertEqual(page.evaluate('window.__accepted'), 0, (name, phone))
             expect(form.locator('[data-step="6"] .form-error.visible')).to_contain_text(message)
             expect(submit).to_be_enabled()
         self.assertEqual(self.relayed, [])
         form.locator('[name="Phone"]').fill('(970) 555-0101')
+        expect(form.locator('[name="Name"]')).to_have_value('Synthetic Walkthrough')
+        expect(form.locator('[name="Phone"]')).to_have_value('(970) 555-0101')
         form.evaluate("form => form.requestSubmit(form.querySelector('[type=submit]'))")
         self.assertEqual(page.evaluate('window.__accepted'), 1)
         expect(submit).to_be_disabled()
