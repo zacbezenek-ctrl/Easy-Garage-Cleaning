@@ -300,3 +300,15 @@ test('production Firestore adapter atomically fences the nested completion event
   const saved = await store.read('jobs', 'job-a');
   assert.deepEqual(saved.payment, job().payment); assert.deepEqual(saved.invoice, job().invoice); assert.deepEqual(saved.commission, job().commission);
 });
+
+test('schema discovery returns the canonical response shape with proceed false and cannot touch jobs or providers', async () => {
+  const handlers = w19CompletionGateHandlers({ storage: () => assert.fail('Schema discovery must never read or write storage'), configured: () => assert.fail('Schema discovery needs no credential'), submission: () => assert.fail('Schema discovery must not call HighLevel') });
+  const response = await handlers.post({ request: request('/api/w19-completion-gate', { schemaOnly: true }), env: {} });
+  assert.equal(response.status, 200); const body = await response.json();
+  assert.equal(body.ok, true); assert.equal(body.proceed, false); assert.equal(body.schemaOnly, true); assert.equal(body.opportunity.canUpdate, false);
+  assert.deepEqual(body.balance, { approvedTotalCents: 0, confirmedAppliedCents: 0, balanceDueCents: 0, currency: 'USD' });
+  for (const input of [{ schemaOnly: false }, { schemaOnly: true, reference: 'w19_' + 'x'.repeat(43) }, { schemaOnly: true, contactId: 'real-contact' }]) {
+    const rejected = await handlers.post({ request: request('/api/w19-completion-gate', input), env: {} });
+    assert.equal(rejected.status, 400); assert.equal((await rejected.json()).proceed, false);
+  }
+});
