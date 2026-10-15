@@ -11,13 +11,13 @@ SERVICES = [
     {
         "slug": "junk-removal-fort-collins-co.html",
         "title": "Junk Removal Fort Collins CO | Fast Next-Day Service",
-        "desc": "Reclaim garage space fast — Fort Collins junk removal with photo quotes in 5 minutes. Flat-rate, no hidden fees. Text photos now for next-day availability.",
+        "desc": "Fort Collins junk removal with flat-rate pricing and no hidden fees. Curbside pickup or full-service carryout. Contact our local team for availability.",
         "body_copy": """<p>When your garage becomes a junk room, <a href="/garage-cleanouts-fort-collins-co.html" class="content-link">garage cleanouts in Fort Collins</a> are the fastest path to parking inside again. We also handle single-item pickups like <a href="/couch-removal-fort-collins-co.html" class="content-link">couch removal</a>, <a href="/refrigerator-removal-fort-collins-co.html" class="content-link">refrigerator removal</a>, and <a href="/mattress-removal-fort-collins-co.html" class="content-link">mattress haul-away</a>.</p>
 <p>Serving Loveland and Windsor? See <a href="/junk-removal-loveland-co.html" class="content-link">junk removal in Loveland</a> and <a href="/junk-removal-windsor-co.html" class="content-link">junk removal in Windsor</a>. Read our guide on <a href="/blog/fort-collins-junk-removal-what-you-can-cant-throw-away.html" class="content-link">what you can and can't throw away in Fort Collins</a>, or compare options in <a href="/blog/junk-removal-vs-dumpster-rental-fort-collins.html" class="content-link">junk removal vs dumpster rental</a>.</p>
 <p>See <a href="/projects/" class="content-link">customer-approved project stories</a> published with permission.</p>""",
         "h1": "Junk Removal Fort Collins CO",
         "hero_em": "Without the franchise runaround",
-        "hero_sub": "That pile in the garage corner? The old couch in the basement? We haul it — flat-rate, fully insured, and usually next-day in Fort Collins. Text photos for a quote in 5 minutes.",
+        "hero_sub": "That pile in the garage corner? The old couch in the basement? We haul it — flat-rate, fully insured, and usually next-day in Fort Collins. Schedule a free on-site walkthrough.",
         "sms": "Hi! I need junk removal in Fort Collins.",
         "stype": "Junk Removal",
         "problem_title": "Junk shouldn't steal <em>your weekend</em>",
@@ -32,7 +32,7 @@ SERVICES = [
         "related": [("/garage-cleanouts-fort-collins-co.html", "Garage Cleanouts"), ("/furniture-removal-fort-collins-co.html", "Furniture Removal"), ("/couch-removal-fort-collins-co.html", "Couch Removal"), ("/appliance-removal-fort-collins-co.html", "Appliance Removal"), ("/blog/junk-removal-vs-dumpster-rental-fort-collins.html", "vs Dumpster Rental"), ("/junk-removal-loveland-co.html", "Loveland Junk Removal"), ("/projects/windsor-garage-junk-removal.html", "Windsor Project"), ("/", "Home")],
         "faqs": [
             ("How much does junk removal cost in Fort Collins?", "Curbside pickup is $139 flat for up to 4 cubic yards set at the curb — no walkthrough needed. When our crew carries items out of the garage or house, jobs start from $675, with one exact flat rate set at a free on-site walkthrough and approved before work begins."),
-            ("Do you offer next-day junk removal in Fort Collins?", "Yes — when our schedule allows. We respond within 5 minutes and often book next-day in Fort Collins."),
+            ("Do you offer next-day junk removal in Fort Collins?", "Yes — when our schedule allows. Contact our local team for availability."),
             ("What items can you not haul?", "We cannot take liquid paint, gasoline, asbestos, medical waste, or live ammunition. See our blog guide for Fort Collins disposal options."),
             ("Do you haul from inside the garage?", "Yes. We carry items from garage, basement, or anywhere on the ground floor. Point us to what's going."),
             ("Is there a minimum load size?", "Curbside pickup is a flat $139 for up to 4 cubic yards. Jobs where our crew carries items out start from $675, priced at a free on-site walkthrough."),

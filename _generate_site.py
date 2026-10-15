@@ -4540,7 +4540,7 @@ def publish_gallery_links(root):
 
 
 def preserve_curbside_intent(text):
-    """Curbside has its own pickup intake; do not route it through /book."""
+    """Keep curbside copy distinct from carryout, retaining the existing intake destinations."""
     text = text.replace('Schedule a free on-site walkthrough online or by text or through our booking form.', 'Request curbside pickup by text or through the short form below. No walkthrough needed.')
     text = text.replace('to help us prepare for the walkthrough.', 'to help us confirm your curbside pickup.')
     text = text.replace('fast walkthrough scheduling', 'curbside pickup scheduling')
@@ -4568,6 +4568,20 @@ def preserve_curbside_intent(text):
       </div><p class="pricing-disclaimer reveal"><a href="/pricing" class="content-link" style="display:inline-flex;align-items:center;min-height:44px;min-width:44px">See full pricing and service details &rarr;</a></p>
     </div></section>'''
     text = re.sub(r'<section class="pricing" id="pricing" aria-labelledby="compare-heading">[\s\S]*?</section>', comparison, text, count=1)
+    # These links and forms request service; they do not confirm a pickup slot.
+    text = text.replace('Request Free Walkthrough', 'Request a Quote')
+    text = text.replace('Book Online', 'Request a Quote')
+    text = text.replace('Book My $139 Pickup', 'Request My $139 Pickup')
+    text = text.replace('Book your $139 curbside pickup', 'Request your $139 curbside pickup')
+    text = text.replace('Book $139 Curbside Pickup', 'Request $139 Curbside Pickup')
+    text = text.replace('Book your slot', 'Request pickup')
+    text = text.replace('Get your flat-rate quote', 'Request your curbside quote')
+    text = text.replace('Get My Flat-Rate Quote', 'Request My Curbside Quote')
+    text = text.replace('3 fields, 30 seconds. We call or text back with a locked price.', 'We will contact you to confirm load size and availability.')
+    text = text.replace('we reply as quickly as we can and confirm the flat $139.', 'We will contact you to confirm load size and availability.')
+    text = text.replace('to help us confirm your curbside pickup.', 'to help us review load size and access.')
+    text = text.replace('for the fastest confirmation.', 'to help us review load size and access.')
+    text = re.sub(r'3 fields, 30 seconds [—-] we call or text you back\.', 'We will contact you to confirm load size and availability.', text)
     return text
 
 
