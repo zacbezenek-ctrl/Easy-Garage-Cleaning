@@ -48,14 +48,14 @@ function fixture(){
 
 test('synthetic booking, recovered create, replay, crew assignment, reschedule, cancel and restore keep one exact appointment',async()=>{
  const f=fixture();
- const created=await f.mutate({action:'schedule.create',customerId:'synthetic-customer',kind:'job',changes:{date:'2026-10-19',time:'09:00',endTime:'11:00',assignedCrew:['synthetic-crew'],jobInstructions:'Synthetic fixture only',notify:false}});
+ const created=await f.mutate({action:'schedule.create',customerId:'synthetic-customer',kind:'job',changes:{date:'2026-10-19',time:'09:30',endTime:'11:30',assignedCrew:['synthetic-crew'],jobInstructions:'Synthetic fixture only',notify:false}});
  const id=created.job.id;
  assert.deepEqual(created.job.assignedCrew,['synthetic-crew']);
  f.loseResponse();const first=await f.mirror(id,'synthetic-create');assert.equal(first.source,'provider-recovery');
  await f.mirror(id,'synthetic-linked-replay');assert.equal(f.writes(),1);assert.equal(f.events.size,1);
  let current=f.rows.get('jobs/'+id);
- await f.mutate({action:'schedule.update',jobId:id,expectedRevision:current.revision,changes:{date:'2026-12-02',time:'09:00',endTime:'11:00'}});
- await f.mirror(id,'synthetic-reschedule');assert.equal(f.events.get('synthetic-appointment').startTime,'2026-12-02T16:00:00.000Z');
+ await f.mutate({action:'schedule.update',jobId:id,expectedRevision:current.revision,changes:{date:'2026-12-02',time:'09:30',endTime:'11:30'}});
+ await f.mirror(id,'synthetic-reschedule');assert.equal(f.events.get('synthetic-appointment').startTime,'2026-12-02T16:30:00.000Z');
  current=f.rows.get('jobs/'+id);
  await f.mutate({action:'schedule.cancel',jobId:id,expectedRevision:current.revision,cancellationReason:'Synthetic test cancellation',changes:{}});
  await f.mirror(id,'synthetic-cancel');assert.equal(f.events.get('synthetic-appointment').appointmentStatus,'cancelled');
@@ -68,7 +68,7 @@ test('synthetic booking, recovered create, replay, crew assignment, reschedule, 
 
 test('synthetic completed, invoice and payment states only mirror attendance and never collect money',async()=>{
  const f=fixture();
- const {job}=await f.mutate({action:'schedule.create',customerId:'synthetic-customer',kind:'job',changes:{date:'2026-10-19',time:'09:00',endTime:'11:00',assignedCrew:['synthetic-crew'],jobInstructions:'Synthetic fixture only',notify:false}});
+ const {job}=await f.mutate({action:'schedule.create',customerId:'synthetic-customer',kind:'job',changes:{date:'2026-10-19',time:'09:30',endTime:'11:30',assignedCrew:['synthetic-crew'],jobInstructions:'Synthetic fixture only',notify:false}});
  await f.mirror(job.id,'synthetic-status-create');
  for(const status of ['completed','invoiced','paid']){
   // Simulate a separately persisted Hub status; no invoice/payment API is called.

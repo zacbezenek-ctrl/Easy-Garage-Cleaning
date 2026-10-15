@@ -23,7 +23,7 @@ import { decodeFirestoreFields } from './firestore-job.js';
 import { dispatchStorage } from './dispatch-storage.js';
 import { canDispatch } from './dispatch-permissions.js';
 import { scheduleInterval } from './dispatch-time.js';
-import { addContactNote, addTags, completeAppointment, ensureContact, ghlTagOutboxEnabled, highLevelConfig } from './highlevel-tags.js';
+import { addContactNote, addTags, completeAppointment, ensureContact, ghl, ghlTagOutboxEnabled, highLevelConfig } from './highlevel-tags.js';
 
 export { ghlTagOutboxEnabled };
 // Server-only collection; firestore.rules denies every browser read and write.
@@ -73,6 +73,7 @@ export async function ghlTagEntryId(jobId, changeKey) {
 export const ghlTagChangeKey = (source, requestId) => `${source}:${String(requestId || '').toLowerCase()}`;
 export const ghlTagBackoffMinutes = attempts => GHL_TAG_BACKOFF_MINUTES[Math.min(Math.max(attempts, 1), GHL_TAG_BACKOFF_MINUTES.length) - 1];
 export const ghlTagWaitMinutes = waits => GHL_TAG_WAIT_MINUTES[Math.min(Math.max(waits, 1), GHL_TAG_WAIT_MINUTES.length) - 1];
+export const fieldCompletionTagsEnabled = env => ghlTagOutboxEnabled(env) && env?.EGC_GHL_FIELD_COMPLETION_TAG === 'true';
 const count = value => Number.isSafeInteger(value) && value > 0 ? value : 0;
 
 // The confirmation and reminder tags today's browser sync adds (highlevel.js tool=schedule); the reminder follows Notify customer.
@@ -132,6 +133,22 @@ export async function outcomeTagWrites({ visit, outcome, reasonCode = null, requ
   return entryWrite(id, visit.id, changeKey, kind, fields, requestId, now, 'walkthrough_visit', visit);
 }
 
+/** Only the verified field closeout creates this intent, atomically with its
+ * canonical job/receipt. Separate pointer preserves the last schedule change.
+ * Deliberately no review-ready tag, appointment, opportunity or money write. */
+export async function fieldCompletionTagWrites({ job, patch, requestId, now }) {
+  const after = { ...job, ...patch };
+  if (!['job', 'cleanout', 'reorg'].includes(after.type) || !safeId(after.id) || after.recordType ||
+      after.completionEvidence?.kind !== 'verified_field_execution' || after.completionEvidence.requestId !== requestId ||
+      after.fieldExecution?.completion?.completedAt !== after.completedAt) return null;
+  const changeKey = ghlTagChangeKey('field-completion', requestId), id = await ghlTagEntryId(job.id, changeKey);
+  const result = entryWrite(id, job.id, changeKey, 'field_completion', {
+    addTags: ['egc-job-complete'], expect: { state: 'field_completed', completionRequestId: requestId, completedAt: after.completedAt },
+  }, requestId, now, 'field_execution', after);
+  result.write.patch.contactId = job.highlevelContactId || '';
+  return result;
+}
+
 /** The flag is on and the visit's newest entry was written at its current time: that entry speaks for the scheduled tags. */
 export function outboxOwnsScheduleTags(env, job) {
   const pointer = job?.ghlTagEntry;
@@ -185,6 +202,9 @@ function stillCurrent(entry, job, at) {
   if (expect.state === 'cancelled') return CANCELLED.has(state(job));
   if (expect.state === 'no_show') return NO_SHOW.has(state(job));
   if (expect.state === 'outcome') return object(job.walkthroughOutcome) && job.walkthroughOutcome.requestId === expect.outcomeRequestId;
+  if (expect.state === 'field_completed') return FINISHED.has(state(job)) && !job.recordType &&
+    job.completionEvidence?.kind === 'verified_field_execution' && job.completionEvidence.requestId === expect.completionRequestId &&
+    job.completedAt === expect.completedAt && job.fieldExecution?.completion?.completedAt === expect.completedAt;
   return false;
 }
 
@@ -213,9 +233,89 @@ async function earlierTimeTold(store, entry, at) {
   return true;
 }
 
-async function settle(store, claimed, patch, outcome) {
-  try { await store.commit([{ collection: GHL_TAG_OUTBOX, id: claimed.id, revision: claimed.revision, patch: { ...patch, claimId: '', claimedUntil: '' } }]); return outcome; }
+async function settle(store, claimed, patch, outcome, extra = []) {
+  try { await store.commit([{ collection: GHL_TAG_OUTBOX, id: claimed.id, revision: claimed.revision, patch: { ...patch, claimId: '', claimedUntil: '' } }, ...extra]); return outcome; }
   catch { return 'busy'; }
+}
+
+// A lost POST response is not permission to POST again. Persist the attempt
+// before touching HighLevel; retries read the exact contact and reconcile only.
+async function deliverFieldCompletion(store, c, env, claimed, job, now, attempts) {
+  let row = claimed, steps = { ...(claimed.steps || {}) }, contactId = claimed.contactId || job.highlevelContactId || '';
+  let guard = null, guardId = '';
+  const guardWrite = status => guard?.entryId === claimed.id ? [{ collection: GHL_TAG_DRAIN_STATE, id: guardId, revision: guard.revision, patch: { status, updatedAt: now } }] : [];
+  const jobFence = () => ({ collection: 'jobs', id: job.id, revision: job.revision, verify: true });
+  const revalidateJob = async () => {
+    const current = await store.read('jobs', claimed.jobId);
+    if (!current?.revision || !stillCurrent(claimed, current, Date.parse(now)) || current.highlevelContactId !== contactId) {
+      throw fail('ghl_tag_completion_job_changed', 'The job or linked contact changed during completion delivery.');
+    }
+    // The independent internal-note handoff can update the revision while the
+    // same completion/contact remains valid. Fence its latest revision rather
+    // than treating unrelated metadata as a changed completion.
+    job = current;
+  };
+  try {
+    if (!fieldCompletionTagsEnabled(env)) throw fail('ghl_tag_completion_disabled', 'Completion tags are disabled.');
+    if (!contactId || contactId !== job.highlevelContactId) throw fail('ghl_tag_completion_contact_review', 'Link or review the canonical job contact.');
+    // Tags are contact-wide. Two jobs cannot both own the same tag-added
+    // transition, nor use one another's tag as an uncertain request's receipt.
+    guardId = `completion_${hex(await crypto.subtle.digest('SHA-256', new TextEncoder().encode(contactId))).slice(0, 40)}`;
+    guard = await store.read(GHL_TAG_DRAIN_STATE, guardId);
+    if (guard && (!ENTRY_ID.test(guard.entryId || '') || !['sending', 'verified', 'rejected'].includes(guard.status))) throw fail('ghl_tag_completion_contact_review', 'The contact completion ownership needs review.');
+    if (guard?.entryId !== claimed.id && guard?.status === 'sending') throw fail('ghl_tag_completion_contact_busy', 'Another completion owns this contact until its receipt is reconciled.');
+    if (steps.completionTag && guard?.entryId !== claimed.id) throw fail('ghl_tag_completion_receipt_unknown', 'The prior completion request has no matching contact ownership.');
+    const readTag = async () => {
+      const result = await ghl(c, `/contacts/${encodeURIComponent(contactId)}`), contact = result.contact;
+      if (!contact || contact.id !== contactId || contact.locationId !== c.locationId || !Array.isArray(contact.tags)) throw fail('ghl_tag_completion_read_unverified', 'The exact contact tags could not be verified.', 503);
+      return contact.tags.includes('egc-job-complete');
+    };
+    let present = await readTag();
+    await revalidateJob();
+    // A tag left by an earlier job is not evidence that THIS completion was
+    // delivered, and re-adding it would not re-enter a tag-added workflow.
+    if (present && !steps.completionTag) throw fail('ghl_tag_completion_preexisting', 'The completion tag already exists; operations must review the workflow reset.');
+    if (!present && steps.completionTag) throw fail('ghl_tag_completion_receipt_unknown', 'The prior completion request needs reconciliation.');
+    if (!present) {
+      const previousSteps = { ...steps };
+      steps.completionTag = 'sending';
+      try {
+        await store.commit([
+          { collection: GHL_TAG_OUTBOX, id: row.id, revision: row.revision, patch: { steps, contactId } },
+          { collection: GHL_TAG_DRAIN_STATE, id: guardId, revision: guard?.revision, patch: { entryId: claimed.id, jobId: claimed.jobId, status: 'sending', updatedAt: now } },
+          jobFence(),
+        ]);
+      } catch {
+        // If the transaction applied but its answer was lost, row's old
+        // revision prevents the catch below from erasing the sending marker.
+        steps = previousSteps;
+        throw fail('ghl_tag_storage_unavailable', 'The completion claim could not be confirmed.', 503);
+      }
+      [row, guard] = await Promise.all([store.read(GHL_TAG_OUTBOX, row.id), store.read(GHL_TAG_DRAIN_STATE, guardId)]);
+      if (row?.claimId !== claimed.claimId || guard?.entryId !== claimed.id) return 'busy';
+      // A canonical change after the claim but before the POST is known not
+      // to have sent anything. Release our sending marker/ownership safely.
+      try { await revalidateJob(); }
+      catch (error) { if (error.code === 'ghl_tag_completion_job_changed') delete steps.completionTag; throw error; }
+      try { await addTags(c, contactId, ['egc-job-complete']); }
+      catch (error) {
+        // A definitive rejection is safe to retry. Timeouts, network failures,
+        // 408s and 5xx responses may have applied; retain the durable intent.
+        if (Number.isInteger(error.status) && error.status >= 400 && error.status < 500 && error.status !== 408) delete steps.completionTag;
+        throw error;
+      }
+      present = await readTag();
+      if (!present) throw fail('ghl_tag_completion_receipt_unknown', 'HighLevel has not confirmed the completion tag.');
+      // Once POST was attempted, a changed job leaves an uncertain receipt;
+      // never clear its sending marker or claim that the new link was notified.
+      await revalidateJob();
+    }
+    return settle(store, row, { status: 'done', doneAt: now, contactId, steps: { ...steps, completionTag: 'verified' }, sentTags: ['egc-job-complete'], lastError: '' }, 'done', [...guardWrite('verified'), jobFence()]);
+  } catch (error) {
+    const review = Boolean(steps.completionTag) || ['ghl_tag_completion_disabled', 'ghl_tag_completion_contact_review', 'ghl_tag_completion_preexisting', 'ghl_tag_completion_contact_busy', 'ghl_tag_completion_job_changed'].includes(error.code);
+    const parked = review || attempts >= GHL_TAG_PARK_ATTEMPTS;
+    return settle(store, row, { status: parked ? 'parked' : 'pending', contactId, steps, nextAttemptAt: iso(Date.parse(now) + ghlTagBackoffMinutes(attempts) * 60000), lastError: steps.completionTag ? 'ghl_tag_completion_receipt_unknown' : failureCode(error) }, parked ? 'parked' : 'retrying', !steps.completionTag ? guardWrite('rejected') : []);
+  }
 }
 
 async function deliver(store, c, env, entry, now, claim, mirrored = false) {
@@ -229,7 +329,11 @@ async function deliver(store, c, env, entry, now, claim, mirrored = false) {
   let contactId = typeof claimed.contactId === 'string' ? claimed.contactId : '';
   try {
     const job = await store.read('jobs', claimed.jobId);
-    if (!job || !stillCurrent(claimed, job, at)) return settle(store, claimed, { status: 'done', doneAt: now, skipped: job ? 'superseded' : 'job_missing' }, 'skipped');
+    if (!job || !stillCurrent(claimed, job, at)) {
+      if (claimed.kind === 'field_completion' && claimed.steps?.completionTag) return settle(store, claimed, { status: 'parked', lastError: 'ghl_tag_completion_receipt_unknown' }, 'parked');
+      return settle(store, claimed, { status: 'done', doneAt: now, skipped: job ? 'superseded' : 'job_missing' }, 'skipped');
+    }
+    if (claimed.kind === 'field_completion') return deliverFieldCompletion(store, c, env, claimed, job, now, attempts + 1);
     if (!contactId) contactId = job.highlevelContactId || (safeId(job.customerId) ? (await store.read('customers', job.customerId))?.highlevelContactId : '') || '';
     // Waiting is not a failed attempt: the claim's count is given back and the next check follows the wait schedule.
     const wait = waitingFor => settle(store, claimed, { status: 'pending', attempts, waits: waits + 1, waitingFor, nextAttemptAt: iso(at + ghlTagWaitMinutes(waits + 1) * 60000), lastError: '', contactId, steps }, 'waiting');
@@ -295,7 +399,13 @@ export async function drainGhlTagOutbox(store, { env = {}, now = new Date().toIS
   const at = Date.parse(now), queue = rows.filter(entry => ghlTagDue(entry, at))
     .sort((a, b) => String(a.nextAttemptAt || '').localeCompare(String(b.nextAttemptAt || '')) || String(a.createdAt || '').localeCompare(String(b.createdAt || '')) || a.id.localeCompare(b.id));
   summary.due = queue.length;
-  for (const entry of queue.slice(0, limit)) {
+  // Completion's canonical-job transactions and contact/read-back checks cost
+  // more subrequests than a schedule tag. Keep the same bounded worker budget.
+  let budget = limit, processed = 0;
+  for (const entry of queue) {
+    const weight = entry.kind === 'field_completion' ? 3 : 1;
+    if (budget <= 0 || processed && weight > budget) break;
+    budget -= weight; processed++;
     const outcome = await deliver(store, c, env, entry, now, claimId(), mirrored.includes(entry.id));
     summary[outcome]++;
     if (outcome !== 'busy') summary.attempted++;
@@ -330,7 +440,7 @@ export function ghlTagDrainView(beat, at) {
 }
 
 // The job fields stillCurrent reads.
-const CURRENT_JOB_FIELDS = ['type', 'status', 'pipelineStatus', 'date', 'time', 'endDate', 'endTime', 'walkthroughOutcome.requestId'];
+const CURRENT_JOB_FIELDS = ['type', 'recordType', 'status', 'pipelineStatus', 'date', 'time', 'endDate', 'endTime', 'walkthroughOutcome.requestId', 'completedAt', 'completionEvidence.kind', 'completionEvidence.requestId', 'fieldExecution.completion.completedAt'];
 async function jobsById(store, ids) {
   const found = new Map();
   if (typeof store.readMany === 'function') {
@@ -353,7 +463,9 @@ export async function ghlTagStuck(store, now) {
   const at = Date.parse(now);
   const [{ rows, truncated }, beat] = await Promise.all([actionable(store, at), store.read(GHL_TAG_DRAIN_STATE, GHL_TAG_DRAIN_STATE_ID)]);
   const candidates = rows.filter(row => safeId(row.jobId)), jobs = await jobsById(store, [...new Set(candidates.map(row => row.jobId))]);
-  const stuck = candidates.filter(row => jobs.has(row.jobId) && stillCurrent(row, jobs.get(row.jobId), at)), counted = new Set(stuck);
+  // Once a POST may have happened, a cancelled/missing/relinked job does not
+  // make the receipt certain. Keep it visible for operator reconciliation.
+  const stuck = candidates.filter(row => row.kind === 'field_completion' && row.steps?.completionTag || jobs.has(row.jobId) && stillCurrent(row, jobs.get(row.jobId), at)), counted = new Set(stuck);
   for (const row of candidates.filter(row => !counted.has(row)).slice(0, GHL_TAG_STUCK_CLOSE_LIMIT)) {
     try { await store.commit([{ collection: GHL_TAG_OUTBOX, id: row.id, revision: row.revision, patch: { status: 'done', doneAt: now, skipped: jobs.has(row.jobId) ? 'superseded' : 'job_missing', waitingFor: '', claimId: '', claimedUntil: '' } }]); }
     catch { /* A drain or a Retry changed it first; it is not counted either way. */ }

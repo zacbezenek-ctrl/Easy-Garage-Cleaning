@@ -15,7 +15,8 @@ const byName = (a, b) => a.name < b.name ? -1 : a.name > b.name ? 1 : 0;
 const json = (body, status = 200) => new Response(JSON.stringify(body), { status, headers: { 'Content-Type': 'application/json' } });
 
 export function firestoreRest(seed = {}) {
-  const documents = new Map(), calls = [];
+  const documents = new Map(), calls = [], transactions = new Map();
+  let transactionCounter = 0;
   let clock = 0;
   const stamp = () => `2026-09-22T10:00:00.${String(++clock).padStart(6, '0')}Z`;
   const put = (path, data) => { documents.set(path, { name: `${ROOT}/${path}`, fields: encodeFirestoreFields(data), updateTime: stamp() }); return documents.get(path); };
@@ -56,8 +57,15 @@ export function firestoreRest(seed = {}) {
     const fields = Object.fromEntries(aggregations.map(item => [item.alias, { integerValue: String(rows.length) }]));
     return json([{ result: { aggregateFields: fields }, readTime: '2026-09-22T10:00:00Z' }]);
   }
-  function commit({ writes = [] }) {
+  function commit({ writes = [], transaction }) {
+    if (transaction) {
+      const reads = transactions.get(transaction);
+      if (!reads) return json({ error: { status: 'ABORTED' } }, 409);
+      for (const [name, version] of reads) if ((documents.get(name.split('/documents/')[1])?.updateTime || null) !== version)
+        return json({ error: { status: 'ABORTED' } }, 409);
+    }
     for (const write of writes) {
+      if (write.verify) return json({ error: { status: 'INVALID_ARGUMENT', message: 'REST Write has no verify operation' } }, 400);
       const current = documents.get(write.update.name.split('/documents/')[1]);
       if (write.currentDocument?.exists === false && current) return json({ error: { status: 'ALREADY_EXISTS' } }, 409);
       if (write.currentDocument?.updateTime && current?.updateTime !== write.currentDocument.updateTime) return json({ error: { status: 'FAILED_PRECONDITION' } }, 400);
@@ -66,6 +74,7 @@ export function firestoreRest(seed = {}) {
       const path = write.update.name.split('/documents/')[1], patch = decodeFirestoreFields(write.update.fields || {});
       put(path, { ...(documents.has(path) ? row(documents.get(path)) : {}), ...Object.fromEntries((write.updateMask?.fieldPaths || Object.keys(patch)).map(field => [field, patch[field]])) });
     }
+    if (transaction) transactions.delete(transaction);
     return json({ commitTime: '2026-09-22T10:00:00Z', writeResults: writes.map(() => ({})) });
   }
   async function fetcher(_env, input, options = {}) {
@@ -75,11 +84,17 @@ export function firestoreRest(seed = {}) {
     calls.push({ method, path, body, query: url.search });
     if (method === 'POST' && path === ':runQuery') return runQuery(body.structuredQuery);
     if (method === 'POST' && path === ':runAggregationQuery') return aggregate(body.structuredAggregationQuery);
-    if (method === 'POST' && path === ':batchGet') return json(body.documents.map(name => { const document = documents.get(name.split('/documents/')[1]); return document ? { found: project(document, body.mask?.fieldPaths) } : { missing: name }; }));
+    if (method === 'POST' && path === ':batchGet') return json(body.documents.map(name => {
+      const document = documents.get(name.split('/documents/')[1]);
+      if (body.transaction) transactions.get(body.transaction)?.set(name, document?.updateTime || null);
+      return document ? { found: project(document, body.mask?.fieldPaths) } : { missing: name };
+    }));
     if (method === 'POST' && path === ':commit') return commit(body);
-    // Lineage verification opens a transaction; this single-writer fake needs no isolation.
-    if (method === 'POST' && path === ':beginTransaction') return json({ transaction: 'synthetic-transaction' });
-    if (method === 'POST' && path === ':rollback') return json({});
+    if (method === 'POST' && path === ':beginTransaction') {
+      const transaction = `synthetic-transaction-${++transactionCounter}`;
+      transactions.set(transaction, new Map()); return json({ transaction });
+    }
+    if (method === 'POST' && path === ':rollback') { transactions.delete(body.transaction); return json({}); }
     if (method !== 'GET') throw new Error(`Unsupported ${method} ${path}`);
     const parts = path.split('/');
     if (parts.length % 2 === 0) return documents.has(path) ? json(project(documents.get(path), url.searchParams.getAll('mask.fieldPaths'))) : json({ error: { status: 'NOT_FOUND' } }, 404);

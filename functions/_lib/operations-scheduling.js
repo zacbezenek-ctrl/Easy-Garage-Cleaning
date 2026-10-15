@@ -15,6 +15,7 @@ import {eventDimensions,firstPlacementDimensions,legacyDimensionFacts,projectDim
 import {commitConflict,commitFailure} from './firestore-errors.js';
 import {bridgeCommandDenial,bridgeCommandPolicy} from '../../egc-platform/services/operations/src/bridge-command-policy.ts';
 import {dispatchReviewCleared} from './dispatch-queue.js';
+import {jobStartProblem} from './job-start-policy.js';
 const ROOT='projects/egcw-1ec83/databases/(default)/documents';
 const URL=`https://firestore.googleapis.com/v1/${ROOT}`;
 const safeId=id=>typeof id==='string'&&/^[A-Za-z0-9_-]{1,180}$/.test(id)&&!/^(_egc_|secure_)/.test(id);
@@ -177,6 +178,8 @@ export async function mutateScheduledVisit(store,actor,input,now=new Date().toIS
   }
   const next={...current,...patch},start=localInstant(next.date,next.time),end=localInstant(next.date,next.endTime);
   if(!start||!end||end<=start)throw failure('schedule_time_invalid_or_ambiguous',400);
+  const startProblem=input.mode!=='cancel'&&jobStartProblem(current,next);
+  if(startProblem)throw Object.assign(new Error(startProblem),{code:'schedule_job_start_too_early',status:400});
   // Single-day visits keep the dispatch-derived instants in step with the wall time.
   Object.assign(patch,{endDate:next.date,startAt:start,endAt:end,timeZone:DISPATCH_TIME_ZONE});Object.assign(next,patch);
   // FIX-DISPATCH-QUEUE: an update that books work waiting in To schedule clears its review flag, as a dispatch save does (dispatch-queue.js).

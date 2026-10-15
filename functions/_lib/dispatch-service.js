@@ -20,6 +20,7 @@ import { scheduleTagWrites, withGhlTagStatus } from './ghl-tag-outbox.js';
 import { notifyPatch, withDispatchReadiness } from './dispatch-readiness.js';
 import { walkthroughStatusFields } from './walkthrough-state.js';
 import { dispatchReviewCleared, withQueueFacts } from './dispatch-queue.js';
+import { jobStartProblem } from './job-start-policy.js';
 
 const TERMINAL = new Set(['cancelled','canceled','completed','invoiced','paid','review_requested','closed','noshow','no_show','no-show']);
 const JOB_TYPES = new Set(['job','walkthrough','cleanout','reorg','blocked']);
@@ -523,6 +524,8 @@ async function executeDispatch(store, session, input, now, options = {}) {
     }
     const hasSchedule = Boolean(next.date || next.time || next.endDate || next.endTime), interval = scheduleInterval(next);
     if (!cancel && hasSchedule && !interval) throw fail('dispatch_time_invalid','Choose valid Denver start and end times within 31 days. Missing or repeated DST hours cannot be scheduled.');
+    const startProblem = !cancel && jobStartProblem(current, next, { restore });
+    if (startProblem) throw fail('dispatch_job_start_too_early', startProblem);
     if (!cancel && next.type === 'blocked' && !interval) throw fail('dispatch_block_invalid','A company-wide scheduling block needs valid start and end times.');
     // FIX-DISPATCH-READY: when Notify customer was last set; an imported Jobber job's first booking turns it on (EGC_DISPATCH_NOTIFY_IMPORTED_ON).
     if (!create && !cancel && next.type !== 'blocked') { const notify = notifyPatch(current,input.changes || {},next,now,{importedOn:store.notifyImportedOn === true}); Object.assign(patch,notify); next = {...next,...notify}; }

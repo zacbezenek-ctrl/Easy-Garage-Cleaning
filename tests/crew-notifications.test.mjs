@@ -312,7 +312,7 @@ test('split-crew dispatch queues one notice per segment crew member, in the disp
 });
 
 test('a recurring-plan run batches the visits it creates; a dispatcher repeating a job by hand does not', async () => {
-  const f = dispatchFixture(), template = (await f.mutate(f.create())).job;
+  const f = dispatchFixture(), template = (await f.mutate(f.create({time:'09:30'}))).job;
   const created = await mutateRecurringPlan(f.store, manager, { requestId: randomUUID(), action: 'create', plan: { templateJobId: template.id, cadence: { frequency: 'weekly' }, horizonDays: 28 } }, NOW, { enabled: true });
   const run = await extendHorizon(f.store, manager, { now: NOW });
   const visits = run.plans[0].created.map(row => row.id), key = `recurring:${created.plan.id}:${NOW}`;
@@ -324,7 +324,7 @@ test('a recurring-plan run batches the visits it creates; a dispatcher repeating
   await mutateRecurringPlan(f.store, manager, { requestId: extend, action: 'extend', planId: plan.id, expectedRevision: plan.revision, limit: 1 }, '2026-09-29T12:00:00.000Z', { enabled: true });
   const added = f.notices().filter(row => row.batchKey && row.batchKey !== key);
   assert.deepEqual(added.map(row => row.batchKey), [`recurring:${created.plan.id}:${extend}`], 'a dispatcher\'s extend request is its own run');
-  const repeat = { action: 'schedule.create', requestId: randomUUID(), customerId: 'c1', kind: 'job', sourceTemplateJobId: template.id, changes: { date: '2026-10-28', time: '08:00', endTime: '10:00', assignedCrew: ['crew1'] } };
+  const repeat = { action: 'schedule.create', requestId: randomUUID(), customerId: 'c1', kind: 'job', sourceTemplateJobId: template.id, changes: { date: '2026-10-28', time: '09:30', endTime: '10:00', assignedCrew: ['crew1'] } };
   const manual = (await f.mutate(repeat)).job;
   assert.deepEqual(f.notices().filter(row => row.jobId === manual.id).map(row => [row.intent, row.batchKey]), [['assigned', '']], 'a manual repeat is texted on its own');
 });

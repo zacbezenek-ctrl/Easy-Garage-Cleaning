@@ -456,6 +456,7 @@ function knockScreen() {
       h('span', { class: 'muted' }, `Last: ${houseLabel(lastHouse)} · ${OUTCOME_LABELS[last.outcome]}`),
       h('span', { class: 'row', style: { gap: '14px' } }, h('button', { type: 'button', class: 'link caption', onclick: undoLast }, 'Undo'), h('button', { type: 'button', class: 'link caption', onclick: editLast }, 'Change'))) : null,
     h('div', { class: 'spacer' }),
+    h('button', { type: 'button', class: 'btn btn--secondary btn--block', onclick: () => app.nativeFormForHouse(house) }, 'GHL quote / walkthrough request'),
     !view.status.knockable ? banner('', 'info', 'This house can\'t be knocked', statusText(entry)) : null,
     h('div', { class: 'outcomes', role: 'group', 'aria-label': 'Door outcome' }, OUTCOME_ORDER.map(outcome =>
       outcomeButton(outcome, { disabled: !canLog, onclick: event => tapOutcome(house, outcome, event.currentTarget) }))));
