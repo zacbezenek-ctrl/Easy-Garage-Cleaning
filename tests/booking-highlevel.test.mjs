@@ -14,10 +14,12 @@ function setup() {
       remove() { this.removed = true; }, focus() { this.focused = true; } };
   }
   const original = element('form');
-  const card = { dataset: {}, classList: { add() {}, remove() {} }, children: [original], ownerDocument: { createElement: element },
+  const bodyClasses = new Set();
+  const body = { classList: { add(value) { bodyClasses.add(value); }, remove(value) { bodyClasses.delete(value); } } };
+  const card = { dataset: {}, classList: { add() {}, remove() {} }, children: [original], ownerDocument: { createElement: element, body },
     querySelector(selector) { return selector === '.ghl-booking' ? (this.shell?.removed ? null : this.shell) : original; },
     prepend(node) { this.shell = node; } };
-  return { api: context.EGCBookingHighLevel, card, original, timeout: () => timeout() };
+  return { api: context.EGCBookingHighLevel, card, original, bodyClasses, timeout: () => timeout() };
 }
 function descendants(node) {
   return [node, ...(node.children || []).flatMap(descendants)];
@@ -59,7 +61,7 @@ test('ambiguous or invalid campaign values are omitted and unavailable storage s
   assert.ok(encoded.length <= 4096, 'encoded attribution cannot exceed the iframe URL budget');
 });
 test('embed recovery preserves existing form and never declares submission success', () => {
-  const { api, card, original, timeout } = setup();
+  const { api, card, original, bodyClasses, timeout } = setup();
   card.dataset.highlevelFormUrl = 'https://api.leadconnectorhq.com/widget/form/verifiedFixture';
   api.mount(card);
   const status = byClass(card.shell, 'ghl-booking-status');
@@ -67,6 +69,7 @@ test('embed recovery preserves existing form and never declares submission succe
   const retry = byText(card.shell, 'Reload request form');
   const fallback = byText(card.shell, 'Use the standard request form');
   assert.equal(original.hidden, true);
+  assert.equal(bodyClasses.has('native-booking'), true);
   assert.equal(frame.title, 'Easy Garage Cleaning walkthrough request');
   timeout(); assert.match(status.textContent, /Taking longer/); assert.equal(status.hidden, false);
   retry.events.click(); assert.match(status.textContent, /Loading/); assert.equal(status.hidden, false);
@@ -74,6 +77,7 @@ test('embed recovery preserves existing form and never declares submission succe
   assert.doesNotMatch(status.textContent, /confirmed|received|success/i);
   frame.events.error(); assert.match(status.textContent, /could not load/); assert.equal(status.hidden, false);
   fallback.events.click(); assert.equal(original.hidden, false);
+  assert.equal(bodyClasses.has('native-booking'), false);
   assert.equal(original.focused, true); assert.equal(frame.src, undefined);
 });
 test('branded wrapper keeps the native form and safe direct fallback together', () => {
@@ -148,4 +152,6 @@ test('booking page and generator select only the existing public HighLevel form 
     assert.doesNotMatch(fs.readFileSync(new URL('../' + filename, import.meta.url), 'utf8'), /data-highlevel-form-url=/);
   }
   assert.match(fs.readFileSync(new URL('../book.html', import.meta.url), 'utf8'), /action="https:\/\/api.web3forms.com\/submit"/);
+  assert.match(fs.readFileSync(new URL('../book.html', import.meta.url), 'utf8'), /<body class="book-page native-booking">/,
+    'the native layout must apply before deferred JavaScript to avoid shifting the old page away');
 });

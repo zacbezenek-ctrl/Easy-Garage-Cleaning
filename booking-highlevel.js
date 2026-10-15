@@ -34,8 +34,10 @@
   }
   function mount(card) {
     const url = verifiedUrl(card.dataset.highlevelFormUrl);
-    if (!url || card.querySelector('.ghl-booking')) return;
+    if (!url) { card.ownerDocument.body?.classList.remove('native-booking'); return; }
+    if (card.querySelector('.ghl-booking')) return;
     const doc = card.ownerDocument;
+    doc.body?.classList.add('native-booking');
     const shell = doc.createElement('section');
     shell.className = 'ghl-booking';
     shell.setAttribute('aria-label', 'Request a free walkthrough');
@@ -82,6 +84,7 @@
     const restore = () => {
       clearTimeout(timer); frame.removeAttribute('src'); shell.remove();
       card.classList.remove('ghl-enabled');
+      doc.body?.classList.remove('native-booking');
       children.forEach(child => { child.hidden = originalHidden.get(child); });
       const selectedChoice = card.querySelector('.form-panel.active input[type="radio"]:checked');
       const firstField = selectedChoice || card.querySelector('.form-panel.active select, .form-panel.active input:not([type="hidden"]):not([type="radio"]), .form-panel.active button');

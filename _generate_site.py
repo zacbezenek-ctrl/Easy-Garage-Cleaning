@@ -2413,9 +2413,10 @@ def render_book():
     if SITE_FORMS_SCRIPT_SRC not in page:
         raise RuntimeError("book.html lost its site-forms.js tag; booking-slots.js must load before it")
     page = page.replace(SITE_FORMS_SCRIPT_SRC, booking_slots_script() + SITE_FORMS_SCRIPT_SRC, 1)
-    page = page.replace('</head>', '<link rel="stylesheet" href="/booking-highlevel.css?v=20261015-clean">\n</head>')
-    page = page.replace('</body>', '<script src="/booking-highlevel.js?v=20261015-clean" defer></script>\n</body>')
-    return page.replace('<body>', '<body class="book-page">', 1)
+    page = page.replace('</head>', '<link rel="stylesheet" href="/booking-highlevel.css?v=20261015-stable">\n</head>')
+    page = page.replace('</body>', '<script src="/booking-highlevel.js?v=20261015-stable" defer></script>\n</body>')
+    # Apply the native layout before deferred JavaScript to avoid shifting the full page away.
+    return page.replace('<body>', '<body class="book-page native-booking">', 1)
 
 
 def render_pricing():

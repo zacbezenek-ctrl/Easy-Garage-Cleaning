@@ -1,11 +1,11 @@
-.book-page:has(.ghl-enabled){background:#fff;padding-bottom:0}
-.book-page:has(.ghl-enabled) .hero,.book-page:has(.ghl-enabled) .book-sidebar,.book-page:has(.ghl-enabled) #process,.book-page:has(.ghl-enabled) .site-footer,.book-page:has(.ghl-enabled) .nav-links,.book-page:has(.ghl-enabled) .nav-right,.book-page:has(.ghl-enabled) .nav-toggle,.book-page:has(.ghl-enabled) .nav-drawer,.book-page:has(.ghl-enabled) .nav-overlay,.book-page:has(.ghl-enabled) .mobile-sticky-cta,.book-page:has(.ghl-enabled) .back-to-top{display:none!important}
-.book-page:has(.ghl-enabled) .nav{position:static;background:#fff;border:0;box-shadow:none;backdrop-filter:none}
-.book-page:has(.ghl-enabled) .nav-inner{max-width:720px;padding:24px 20px 16px;justify-content:flex-start}
-.book-page:has(.ghl-enabled) .nav .logo{min-height:44px}
-.book-page:has(.ghl-enabled) .book-section{padding:20px 0 48px;background:#fff}
-.book-page:has(.ghl-enabled) .book-section>.wrap{max-width:720px;padding:0 20px}
-.book-page:has(.ghl-enabled) .book-layout{display:block}
+.book-page.native-booking{background:#fff;padding-bottom:0}
+.book-page.native-booking .hero,.book-page.native-booking .book-sidebar,.book-page.native-booking #process,.book-page.native-booking .site-footer,.book-page.native-booking .nav-links,.book-page.native-booking .nav-right,.book-page.native-booking .nav-toggle,.book-page.native-booking .nav-drawer,.book-page.native-booking .nav-overlay,.book-page.native-booking .mobile-sticky-cta,.book-page.native-booking .back-to-top{display:none!important}
+.book-page.native-booking .nav{position:static;background:#fff;border:0;box-shadow:none;backdrop-filter:none}
+.book-page.native-booking .nav-inner{max-width:720px;padding:24px 20px 16px;justify-content:flex-start}
+.book-page.native-booking .nav .logo{min-height:44px}
+.book-page.native-booking .book-section{padding:20px 0 48px;background:#fff}
+.book-page.native-booking .book-section>.wrap{max-width:720px;padding:0 20px}
+.book-page.native-booking .book-layout{display:block}
 .book-page .quote-form.ghl-enabled{padding:0;background:transparent;border:0;box-shadow:none;min-width:0}
 .book-page .quote-form.ghl-enabled>[hidden]{display:none!important}
 .ghl-booking{padding:0;color:#0a1628;background:#fff;border:0;box-shadow:none;overflow-wrap:anywhere}
@@ -23,5 +23,5 @@
 .ghl-booking-actions button,.ghl-booking-actions a{display:inline-flex;align-items:center;min-height:44px;padding:10px 0;border:0;background:transparent;color:#0a1628;font:inherit;font-size:13px;text-align:left;text-decoration:underline;text-underline-offset:3px;cursor:pointer}
 .ghl-booking :focus-visible{outline:3px solid #d94208;outline-offset:4px}
 .book-page .service-pick-card:has(input:focus-visible){outline:3px solid #ff5b1f;outline-offset:3px}
-@media(min-width:768px){.ghl-booking-frame{height:800px}.book-page:has(.ghl-enabled) .book-section{padding-top:32px}}
+@media(min-width:768px){.ghl-booking-frame{height:800px}.book-page.native-booking .book-section{padding-top:32px}}
 @media(max-width:380px){.ghl-booking-header{padding-left:8px;padding-right:8px}.ghl-booking-frame{height:1080px}}
