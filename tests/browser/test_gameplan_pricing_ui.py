@@ -126,6 +126,23 @@ class GameplanPricingBrowserTests(unittest.TestCase):
         self.assertLessEqual(result['scroll'], result['width'], f'{where}: horizontal scroll')
         for height in result['retry']: self.assertGreaterEqual(height, 44, f'{where}: retry tap target')
 
+    def test_customer_request_is_readable_on_phone_without_replacing_staff_notes(self):
+        page = self.open()
+        page.evaluate("""() => {
+            APPTS = [{id:'qa-walkthrough', customer:'Synthetic Customer', phone:'2025550150',
+                customerInstructions:'Website inquiry\\nGarage size: 3-car or larger\\nRequested service: Organization <img src=x>'}];
+            useAppointment(0);
+            S.notes = 'Staff-only estimating note'; render();
+        }""")
+        panel = page.get_by_role('region', name='Customer request', exact=True)
+        expect(panel).to_contain_text('3-car or larger')
+        expect(panel).to_contain_text('Organization <img src=x>')
+        expect(panel.locator('img')).to_have_count(0)
+        expect(panel).not_to_contain_text('Staff-only estimating note')
+        self.assertEqual(page.evaluate('S.notes'), 'Staff-only estimating note')
+        self.assertEqual(page.evaluate('S.garageSize'), '2')
+        self.audit(page, 'customer request')
+
     def test_prices_load_after_sign_in_render_from_the_tables_and_are_cached_for_this_user(self):
         page = self.open()
         page.wait_for_function('() => PRICING !== null')

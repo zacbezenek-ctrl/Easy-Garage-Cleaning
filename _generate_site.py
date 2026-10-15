@@ -1298,7 +1298,7 @@ PROCESS_HTML = """
       <p class="section-sub">We come to you, look at the full space, and give you a practical plan with one exact price.</p>
     </div>
     <div class="steps reveal">
-      <div class="step"><div class="step-num">Step 01</div><h3>Schedule the Walkthrough</h3><p>Choose a convenient window online, call <a href="tel:{phone}">{phone_display}</a>, or schedule by text.</p></div>
+      <div class="step"><div class="step-num">Step 01</div><h3>Schedule the Walkthrough</h3><p>Request a free walkthrough online, call <a href="tel:{phone}">{phone_display}</a>, or schedule by text.</p></div>
       <div class="step"><div class="step-num">Step 02</div><h3>Walk the Space Together</h3><p>You show us what stays, what goes, and what you want the garage to do better. We build the plan and set one exact price.</p></div>
       <div class="step"><div class="step-num">Step 03</div><h3>Approve the Plan</h3><p>Keep the plan either way. If you hire us, the crew handles removal, donation, cleaning, organization, and the final reset.</p></div>
     </div>

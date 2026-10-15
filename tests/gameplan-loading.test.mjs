@@ -73,6 +73,30 @@ function harness({ requestedId = 'walkthrough-1', draft = null, manualDraft = nu
 
 const saved = (sourceWalkthroughId, name = 'Saved customer') => ({ flow: '2026-09-simple', index: 2, S: { sourceWalkthroughId, name, notes: 'Keep these field notes', signature: 'saved-signature', approved: true, termsVersion: '2026-09-deposit50', jobId: 'prepared-job' } });
 
+test('booked customer instructions stay visible without becoming staff notes or estimated scope', async () => {
+  const h = harness({ draft: saved('walkthrough-1') });
+  h.requested.customerInstructions = 'Website inquiry\nGarage size: 3-car or larger\nRequested service: Organization <script>';
+  await h.context.openApp();
+  assert.equal(h.context.S.customerRequest, h.requested.customerInstructions);
+  assert.equal(h.context.S.notes, 'Keep these field notes');
+  assert.equal(h.context.S.garageSize, '2', 'customer input cannot silently change the priced scope');
+  assert.equal(h.context.S.approved, true);
+  vm.runInContext(line('function customerRequestMarkup('), h.context);
+  const markup = h.context.customerRequestMarkup();
+  assert.match(markup, /aria-label="Customer request"/);
+  assert.match(markup, /Organization &lt;script>/);
+  assert.doesNotMatch(markup, /Keep these field notes/);
+  h.context.APPTS.push({ id: 'another', customer: 'Another customer' });
+  h.context.useAppointment(h.context.APPTS.length - 1);
+  assert.equal(h.context.S.customerRequest, '', 'a different walkthrough cannot inherit the previous request');
+  h.context.S.customerRequest = 'Previous request';
+  h.context.LOOK = [{ id: 'different-contact', name: 'Different contact' }];
+  h.context.invalidateAcceptance = () => {};
+  vm.runInContext(line('function useContact('), h.context);
+  h.context.useContact(0);
+  assert.equal(h.context.S.customerRequest, '', 'choosing a different CRM contact clears the request');
+});
+
 test('requested walkthrough stays blocked while loading and a failed read preserves the complete saved draft', async () => {
   const draft = saved('walkthrough-1'), h = harness({ draft });
   let resume;
