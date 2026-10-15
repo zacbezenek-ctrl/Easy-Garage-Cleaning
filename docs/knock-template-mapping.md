@@ -26,7 +26,7 @@ These are logical input keys, **not actual GHL field IDs or verified merge synta
 | `jobsite.propertyId`, `address` | `job.propertyId`, `job.address`, verified through existing customer/property lineage | Use the service location, which may differ from the customer's account/mailing address. Never substitute the Knock address without reviewed linkage. |
 | `scope.title`, `description` | `job.title`, `job.estimate.scope` | Preserve multiline text, render escaped. Current Knock package/note is only intake context and may not contain agreed scope. |
 | `scope.exclusions` | explicit reviewed contractual exclusions in the quote snapshot | No canonical dedicated exclusions field is guaranteed. `jobInstructions.exclusions` is operational capture and must not silently become legal scope; unresolved stays null/blocker. |
-| `serviceItems[]` | `normalizeLineItems(job.estimate.lineItems, {strict:true})` plus `included()` and `validateSelection()` | Preserve stable line ID, kind, name, description, quantity, unitCents, totalCents, optional, selected, taxable. Group/tier are retained for grouping and selection; quote proposals label unselected options clearly. Agreements include only the accepted selection. |
+| `serviceItems[]` | `normalizeLineItems(job.estimate.lineItems, {strict:true})`, then `applySelection(lines, estimate.selectedIds)` when that field is present, before `included()`/totals | Validate the canonical selectedIds override, matching `estimateFingerprint()`. Preserve stable line ID, kind, name, description, quantity, unitCents, totalCents, optional, selected, taxable. Group/tier are retained for grouping and selection; quote proposals label unselected options clearly. Agreements include only the accepted selection. |
 | `totals.currency` | current canonical quote currency contract | USD only for this proposed adapter; block unsupported currency. Do not infer currency from a typed symbol. |
 | `totals.subtotalCents`, `discountCents`, `totalCents` | `estimateTotals()` over canonical lines, cross-checked with `estimate.amountCents` | Require `complete:true`, valid selection and exact total match. Discount total is positive; discount line amounts are negative. Exclude tips; optional unselected lines are not charged. Unknown is null, never zero. |
 | `totals.taxCents`, `taxSummary` | explicit canonical tax policy/amount if the quote supports one | Not established by current Knock intake or by a line's taxable flag. Do not invent zero tax or calculate a new tax in GHL; flag absent tax treatment for review. |
@@ -37,6 +37,19 @@ These are logical input keys, **not actual GHL field IDs or verified merge synta
 | `acceptance.status`, `acceptedAt`, `acceptedBy`, `method`, `estimateRevision`, `estimateFingerprint` | canonical `estimate` acceptance and `customerApproval` evidence checked against this revision/fingerprint | Missing, mismatched or superseded evidence means unaccepted. No GHL form checkbox/load/submission becomes acceptance. This PR adds no send/sign action. |
 
 Do not put internal cost splits, markup, catalog internals, staff notes, crew instructions, commission rates, attribution IDs or receipt diagnostics into customer-facing rows. `quote-model.js` exposes `CUSTOMER_LINE_FIELDS` for the customer subset; grouping metadata can drive layout without exposing internal pricing provenance.
+
+The exporter must resolve selection before formatting or totaling. Use the same saved estimate for identity/fingerprint and line selection; reject malformed overrides rather than falling back to line flags:
+
+```js
+let { lineItems } = normalizeLineItems(estimate.lineItems, { strict: true });
+if (estimate.selectedIds !== undefined) lineItems = applySelection(lineItems, estimate.selectedIds);
+if (!validateSelection(lineItems).ok) throw new Error('Canonical selection needs review');
+const totals = estimateTotals(lineItems);
+const chosenRows = lineItems.filter(included);
+const fingerprint = estimateFingerprint(estimate);
+```
+
+Equal-priced alternatives must still render the exact chosen service IDs. Matching totals alone does not prove the selection is correct. Include this case in template acceptance tests.
 
 ## Envelope and release checks
 
