@@ -25,6 +25,9 @@ function descendants(node) {
 function byClass(node, className) {
   return descendants(node).find(child => child.className === className);
 }
+function byText(node, text) {
+  return descendants(node).find(child => child.textContent === text);
+}
 test('absent or unverified URLs leave existing intake untouched', () => {
   const {api, card, original} = setup();
   for (const value of ['', 'https://evil.example/widget/form/abc', 'https://api.leadconnectorhq.com.evil.example/widget/form/abc', 'http://api.leadconnectorhq.com/widget/form/abc', 'https://api.leadconnectorhq.com/widget/form/abc?phone=private', 'https://api.leadconnectorhq.com/widget/form/abc#private']) {
@@ -61,14 +64,15 @@ test('embed recovery preserves existing form and never declares submission succe
   api.mount(card);
   const status = byClass(card.shell, 'ghl-booking-status');
   const frame = byClass(card.shell, 'ghl-booking-frame');
-  const [retry, fallback] = byClass(card.shell, 'ghl-booking-actions').children;
+  const retry = byText(card.shell, 'Reload request form');
+  const fallback = byText(card.shell, 'Use the standard request form');
   assert.equal(original.hidden, true);
   assert.equal(frame.title, 'Easy Garage Cleaning walkthrough request');
-  timeout(); assert.match(status.textContent, /Taking longer/);
-  retry.events.click(); assert.match(status.textContent, /Loading/);
-  frame.events.load(); assert.match(status.textContent, /blank/);
+  timeout(); assert.match(status.textContent, /Taking longer/); assert.equal(status.hidden, false);
+  retry.events.click(); assert.match(status.textContent, /Loading/); assert.equal(status.hidden, false);
+  frame.events.load(); assert.equal(status.textContent, ''); assert.equal(status.hidden, true);
   assert.doesNotMatch(status.textContent, /confirmed|received|success/i);
-  frame.events.error(); assert.match(status.textContent, /could not load/);
+  frame.events.error(); assert.match(status.textContent, /could not load/); assert.equal(status.hidden, false);
   fallback.events.click(); assert.equal(original.hidden, false);
   assert.equal(original.focused, true); assert.equal(frame.src, undefined);
 });
@@ -76,18 +80,22 @@ test('branded wrapper keeps the native form and safe direct fallback together', 
   const { api, card } = setup();
   card.dataset.highlevelFormUrl = 'https://links.easygaragecleaning.com/widget/form/DeiRNO6itxjLiTk3Nkj0';
   api.mount(card);
-  const logo = byClass(card.shell, 'ghl-booking-logo');
-  assert.equal(logo.alt, 'Easy Garage Cleaning');
-  assert.equal(logo.src, '/images/brand/egc-logo-horizontal-white-368.png');
+  assert.equal(descendants(card.shell).filter(node => node.tag === 'img').length, 0,
+    'the wrapper reuses the site header logo rather than adding a second one');
+  const headings = descendants(card.shell).filter(node => /^h[1-6]$/.test(node.tag));
+  assert.equal(headings.length, 1);
+  assert.equal(headings[0].tag, 'h1');
+  assert.equal(headings[0].textContent, 'Request your free walkthrough');
   const frame = byClass(card.shell, 'ghl-booking-frame');
   const direct = byClass(card.shell, 'ghl-booking-direct');
   assert.equal(frame.src, card.dataset.highlevelFormUrl);
   assert.equal(direct.href, frame.src);
   assert.equal(direct.target, '_blank');
   assert.equal(direct.rel, 'noopener noreferrer');
-  assert.equal(byClass(card.shell, 'ghl-booking-recovery').tag, 'details');
-  assert.match(byClass(card.shell, 'ghl-booking-note').textContent, /does not confirm an appointment/);
-  assert.match(byClass(card.shell, 'ghl-booking-eyebrow').textContent, /Junk removal/);
+  const recovery = byClass(card.shell, 'ghl-booking-recovery');
+  assert.equal(recovery.tag, 'details');
+  assert.ok(descendants(recovery).includes(direct), 'alternate links stay in secondary help');
+  assert.match(byClass(card.shell, 'ghl-booking-intro').textContent, /contact you to confirm a time/);
   assert.equal(descendants(card.shell).filter(node => node.tag === 'input' || node.tag === 'form').length, 0,
     'the wrapper must not duplicate contact fields or consent outside the native form');
   assert.equal(frame.events.message, undefined, 'no inferred cross-origin success handling');
@@ -101,7 +109,7 @@ test('mount is idempotent and recovery preserves pre-existing hidden state', () 
   const shell = card.shell;
   api.mount(card);
   assert.equal(card.shell, shell);
-  byClass(shell, 'ghl-booking-actions').children[1].events.click();
+  byText(shell, 'Use the standard request form').events.click();
   assert.equal(original.hidden, false);
   assert.equal(alreadyHidden.hidden, true);
 });
@@ -113,7 +121,7 @@ test('recovery returns focus to the selected service instead of skipping to Next
     ? selectedService : query(selector);
   card.dataset.highlevelFormUrl = 'https://links.easygaragecleaning.com/widget/form/DeiRNO6itxjLiTk3Nkj0';
   api.mount(card);
-  byClass(card.shell, 'ghl-booking-actions').children[1].events.click();
+  byText(card.shell, 'Use the standard request form').events.click();
   assert.equal(selectedService.focused, true);
   assert.equal(original.focused, undefined, 'the selected choice takes priority over later fields');
   assert.equal(original.hidden, false);
@@ -125,7 +133,7 @@ test('recovery still focuses the first available field if no choice is selected'
     ? null : query(selector);
   card.dataset.highlevelFormUrl = 'https://links.easygaragecleaning.com/widget/form/DeiRNO6itxjLiTk3Nkj0';
   api.mount(card);
-  byClass(card.shell, 'ghl-booking-actions').children[1].events.click();
+  byText(card.shell, 'Use the standard request form').events.click();
   assert.equal(original.focused, true);
   assert.equal(original.hidden, false);
 });

@@ -41,25 +41,14 @@
     shell.setAttribute('aria-label', 'Request a free walkthrough');
     const header = doc.createElement('header');
     header.className = 'ghl-booking-header';
-    const logo = doc.createElement('img');
-    logo.className = 'ghl-booking-logo';
-    logo.src = '/images/brand/egc-logo-horizontal-white-368.png';
-    logo.alt = 'Easy Garage Cleaning';
-    logo.width = 184; logo.height = 44;
-    const eyebrow = doc.createElement('p');
-    eyebrow.className = 'ghl-booking-eyebrow';
-    eyebrow.textContent = 'Garage cleanouts · Junk removal · Organization';
-    const heading = doc.createElement('h2');
+    const heading = doc.createElement('h1');
     heading.textContent = 'Request your free walkthrough';
     const intro = doc.createElement('p');
     intro.className = 'ghl-booking-intro';
-    intro.textContent = 'Tell us what you need. We will contact you to confirm the details and a walkthrough time. No pressure. No obligation.';
-    header.append(logo, eyebrow, heading, intro);
+    intro.textContent = 'Tell us what you need, and we will contact you to confirm a time.';
+    header.append(heading, intro);
     const body = doc.createElement('div');
     body.className = 'ghl-booking-body';
-    const note = doc.createElement('p');
-    note.className = 'ghl-booking-note';
-    note.textContent = 'Choose your service in the form below. Your request does not confirm an appointment.';
     const status = doc.createElement('p');
     status.className = 'ghl-booking-status';
     status.setAttribute('role', 'status');
@@ -77,7 +66,7 @@
     const recovery = doc.createElement('details');
     recovery.className = 'ghl-booking-recovery';
     const summary = doc.createElement('summary');
-    summary.textContent = 'Having trouble with the form?';
+    summary.textContent = 'Need help with the form?';
     const caution = doc.createElement('p');
     caution.textContent = 'If you already submitted, call us before sending another request.';
     const actions = doc.createElement('div');
@@ -102,21 +91,23 @@
     let timer;
     const load = () => {
       clearTimeout(timer);
+      status.hidden = false;
       status.textContent = 'Loading the request form…';
       // A load event cannot prove a cross-origin form rendered or submitted.
-      timer = setTimeout(() => { status.textContent = 'Taking longer than expected? Reload or use the standard form below. If you already submitted, call us before sending another request.'; }, 15000);
+      timer = setTimeout(() => { status.hidden = false; status.textContent = 'Taking longer than expected? Open the help options below.'; }, 15000);
       frame.src = attributedUrl(url);
     };
     frame.addEventListener('load', () => {
       clearTimeout(timer);
-      status.textContent = 'If the form is blank or does not respond, open it in a new tab or use the options below.';
+      status.textContent = '';
+      status.hidden = true;
     });
-    frame.addEventListener('error', () => { clearTimeout(timer); status.textContent = 'The request form could not load. Use the standard form below or call us.'; });
+    frame.addEventListener('error', () => { clearTimeout(timer); status.hidden = false; status.textContent = 'The request form could not load. Open the help options below.'; });
     retry.addEventListener('click', load);
     fallback.addEventListener('click', restore);
-    actions.append(retry, fallback);
+    actions.append(nativeLink, retry, fallback, help);
     recovery.append(summary, caution, actions);
-    body.append(note, frame, status, nativeLink, recovery, help);
+    body.append(frame, status, recovery);
     shell.append(header, body);
     children.forEach(child => { child.hidden = true; });
     card.classList.add('ghl-enabled');

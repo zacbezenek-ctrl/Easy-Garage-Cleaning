@@ -2,8 +2,9 @@
 
 The QR destination stays `https://easygaragecleaning.com/book`.
 
-This change prepares the EGC navy/orange wrapper around the existing public website
-HighLevel form. It does not activate the embed, create a second form, submit data,
+This change prepares a clean white EGC booking page around the existing public website
+HighLevel form. It reuses one small site logo, one navy heading, and one short sentence;
+alternate links stay inside secondary help. It does not activate the embed, create a second form, submit data,
 or change workflows, consent, pricing, guarantees, or financial terms.
 
 ## Exact activation switch
@@ -42,7 +43,7 @@ HighLevel; parent-page CSS cannot change it across origins.
    conditional. Verify the chosen service is retained without mapping it to a
    garage cleanout. Do not use “Not sure” to silently recategorize the request.
 2. Finish any inner-form branding in HighLevel and recheck the actual mobile
-   embed. The wrapper supplies the EGC logo, colors, heading, and recovery links.
+   embed. The page reuses the EGC logo and supplies the heading and recovery links.
 3. Retain accepted native-receipt evidence for this exact form and verify the
    current trigger configuration is isolated from internal quote and completion
    forms. Earlier QA receipts demonstrate persistence; they do not by themselves
