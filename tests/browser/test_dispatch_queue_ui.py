@@ -89,7 +89,7 @@ class DispatchQueueBrowserTests(unittest.TestCase):
     def tearDown(self):
         if self.context:
             result = self._outcome.result
-            failed = bool(self.errors) or any(case is self for case, _ in result.failures + result.errors)
+            failed = bool(self.errors) or any(case is self or getattr(case, 'test_case', None) is self for case, _ in result.failures + result.errors)
             try:
                 if failed:
                     out = ROOT / 'test-results'; out.mkdir(exist_ok=True)
@@ -259,6 +259,33 @@ class DispatchQueueBrowserTests(unittest.TestCase):
         expect(search).to_have_value('Queue 34')
         expect(search).to_be_focused()
         self.assertEqual(search.evaluate("input => [input.selectionStart, input.selectionEnd, input.selectionDirection]"), [2, 5, 'backward'])
+        self.assertEqual(self.calls, [])
+
+    def test_history_navigation_keeps_the_search_input_in_sync(self):
+        self.open(width=320, height=700)
+        self.queue_button().click()
+        history = {job['id']: job for job in self.jobs}
+        def history_result(route):
+            job_id = parse_qs(urlparse(route.request.url).query)['q'][0]
+            route.fulfill(status=200, content_type='application/json', body=json.dumps({
+                'ok': True, 'coverage': {'complete': True}, 'results': [{'job': history[job_id]}], 'total': 1}))
+        self.page.route('**/api/dispatch-search?*', history_result)
+        search = self.page.get_by_role('searchbox', name='Search jobs', exact=True)
+        for job_id, expected in [('q01', 'q01'), ('day-1', '')]:
+            with self.subTest(job=job_id):
+                search.fill('Queue 34')
+                self.page.get_by_role('button', name='Search all jobs', exact=True).click()
+                dialog = self.page.get_by_role('dialog')
+                dialog.get_by_label('Search all dates', exact=True).fill(job_id)
+                dialog.get_by_role('button', name='Search history', exact=True).click()
+                dialog.get_by_role('button', name='Show in dispatch', exact=True).click()
+                expect(dialog).to_have_count(0)
+                expect(search).to_have_value(expected)
+                if expected:
+                    expect(self.rows()).to_have_count(1)
+                    expect(self.rows().first).to_contain_text('Synthetic Queue 35')
+                else:
+                    expect(self.page.locator('.dp-job')).to_have_count(2)
         self.assertEqual(self.calls, [])
 
     def test_a_viewer_without_money_sees_the_queue_without_deposit_chips(self):
