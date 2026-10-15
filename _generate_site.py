@@ -2370,11 +2370,19 @@ def render_book():
 <script type="application/ld+json">{howto_schema()}</script>
 {top_faq_schema_scripts(5)}"""
     body = f"""<main>
-<section class="hero" id="top"><div class="wrap">
-<div class="hero-eyebrow mono">Book online</div>
-<a href="tel:{PHONE}" class="hero-phone">{PHONE_DISPLAY}<span class="hero-phone-sub">· schedule your free walkthrough</span></a>
-<h1 class="hero-title" style="max-width:none">Schedule your free <em>Garage Walkthrough</em></h1>
-<p class="hero-sub">We come to the property, learn what stays and what goes, and build a complete Garage Turnaround Plan with one exact price. Photos are optional and only help us prepare.</p>
+<section class="hero booking-landing" id="top" aria-labelledby="booking-title"><div class="wrap booking-landing-grid">
+<div class="booking-landing-copy">
+<p class="hero-eyebrow mono">Garage cleaning &amp; junk removal</p>
+<h1 class="hero-title" id="booking-title">Make room for <em>what matters.</em></h1>
+<p class="hero-sub">Reclaim your space in Fort Collins and Northern Colorado. Start with a free on-site walkthrough, a clear plan, and one exact price before work begins.</p>
+<p class="booking-landing-note">Not sure what you need? We’ll help you figure it out.</p>
+<a href="#quote" class="btn-primary booking-landing-cta">Request a free walkthrough</a>
+<p class="booking-landing-reassurance">No pressure. No obligation. Your plan is yours to keep.</p>
+</div>
+<figure class="booking-landing-visual">
+<img src="/images/garage-after-600.webp" alt="An organized garage with a clear floor and belongings stored on shelves" width="600" height="600" fetchpriority="high" decoding="async">
+<figcaption><a href="/before-after">Explore our work <span aria-hidden="true">→</span></a></figcaption>
+</figure>
 </div></section>"""
     book_sidebar = """<aside class="book-sidebar reveal" aria-label="What happens during the walkthrough">
 <h3>What the walkthrough covers</h3>
@@ -2413,8 +2421,8 @@ def render_book():
     if SITE_FORMS_SCRIPT_SRC not in page:
         raise RuntimeError("book.html lost its site-forms.js tag; booking-slots.js must load before it")
     page = page.replace(SITE_FORMS_SCRIPT_SRC, booking_slots_script() + SITE_FORMS_SCRIPT_SRC, 1)
-    page = page.replace('</head>', '<link rel="stylesheet" href="/booking-highlevel.css?v=20261015-stable">\n</head>')
-    page = page.replace('</body>', '<script src="/booking-highlevel.js?v=20261015-stable" defer></script>\n</body>')
+    page = page.replace('</head>', '<link rel="stylesheet" href="/booking-highlevel.css?v=20261015-landing">\n</head>')
+    page = page.replace('</body>', '<script src="/booking-highlevel.js?v=20261015-landing" defer></script>\n</body>')
     # Apply the native layout before deferred JavaScript to avoid shifting the full page away.
     return page.replace('<body>', '<body class="book-page native-booking">', 1)
 

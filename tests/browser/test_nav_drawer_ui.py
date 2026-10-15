@@ -9,7 +9,7 @@ ROOT = pathlib.Path(__file__).resolve().parents[2]
 SHOTS = ROOT / 'test-results'
 # Generator-patched home, a generated service page, a hand-authored landing page,
 # a blog article and the server-rendered gallery fallback (gallery-simple.js).
-PAGES = ['/index.html', '/garage-cleanouts-fort-collins-co.html', '/garage-guard.html', '/blog/how-much-does-garage-cleanout-cost-fort-collins.html', '/before-after.html']
+PAGES = ['/index.html', '/garage-cleanouts-fort-collins-co.html', '/garage-guard.html', '/blog/how-much-does-garage-cleanout-cost-fort-collins.html', '/before-after.html', '/book.html']
 IN_DRAWER = "() => !!document.activeElement && !!document.activeElement.closest('#nav-drawer')"
 
 class Handler(SimpleHTTPRequestHandler):
@@ -74,6 +74,38 @@ class NavDrawerBrowserTests(unittest.TestCase):
                 self.assertTrue(any(link['brand'] for link in links),f'{path}: footer brand links were not measured')
                 short=[link for link in links if link['height']<44]
                 self.assertEqual(short,[],path)
+
+    def test_booking_landing_keeps_native_form_and_responsive_site_navigation(self):
+        for width in [320, 375, 768, 1440]:
+            with self.subTest(width=width):
+                self.page.set_viewport_size({'width':width,'height':900})
+                self.page.goto(self.url+'/book.html')
+                expect(self.page.locator('.booking-landing h1')).to_have_text('Make room for what matters.')
+                expect(self.page.locator('.ghl-booking h2')).to_have_text('Request your free walkthrough')
+                expect(self.page.locator('iframe.ghl-booking-frame')).to_be_visible()
+                expect(self.page.locator('iframe.ghl-booking-frame')).to_have_attribute('src','https://links.easygaragecleaning.com/widget/form/DeiRNO6itxjLiTk3Nkj0')
+                expect(self.page.locator('form.multi-step-form')).to_be_hidden()
+                expect(self.page.locator('#process')).to_be_visible()
+                expect(self.page.locator('.site-footer')).to_be_visible()
+                self.assertLessEqual(self.page.evaluate('document.documentElement.scrollWidth'),width)
+                if width == 1440:
+                    expect(self.page.locator('.nav-links a[href="/pricing"]')).to_be_visible()
+                    expect(self.page.locator('.nav-toggle')).to_be_hidden()
+                else:
+                    toggle=self.page.locator('.nav-toggle')
+                    expect(toggle).to_be_visible()
+                    toggle.press('Enter')
+                    expect(self.page.locator('#nav-drawer a[href="/pricing"]')).to_be_visible()
+                    expect(self.page.locator('#nav-drawer a[href="/before-after"]')).to_be_visible()
+                    self.page.keyboard.press('Escape')
+                    expect(toggle).to_be_focused()
+                    expect(toggle).to_have_attribute('aria-expanded','false')
+                expect(self.page.locator('.booking-landing-cta')).to_have_attribute('href','#quote')
+                self.page.locator('.booking-landing-cta').press('Enter')
+                self.page.clock.run_for(1200)
+                self.assertTrue(self.page.url.endswith('#quote'))
+                bounds=self.page.evaluate("() => ({header:document.querySelector('.nav').getBoundingClientRect().bottom,form:document.querySelector('.ghl-booking').getBoundingClientRect().top})")
+                self.assertGreaterEqual(bounds['form'],bounds['header'],'the sticky header must not cover the form heading')
 
 if __name__ == '__main__':
     unittest.main()

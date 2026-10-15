@@ -88,7 +88,7 @@ test('branded wrapper keeps the native form and safe direct fallback together', 
     'the wrapper reuses the site header logo rather than adding a second one');
   const headings = descendants(card.shell).filter(node => /^h[1-6]$/.test(node.tag));
   assert.equal(headings.length, 1);
-  assert.equal(headings[0].tag, 'h1');
+  assert.equal(headings[0].tag, 'h2');
   assert.equal(headings[0].textContent, 'Request your free walkthrough');
   const frame = byClass(card.shell, 'ghl-booking-frame');
   const direct = byClass(card.shell, 'ghl-booking-direct');
