@@ -19,6 +19,7 @@ import { clockInWithoutFix } from '../_lib/employee-timecards.js';
 import { addDays } from '../_lib/dispatch-time.js';
 import { walkthroughCard } from '../_lib/walkthrough-state.js';
 import { storageBin, storageItems } from '../_lib/customer-photo-visibility.js';
+import { fieldCompletionTagsEnabled, fieldCompletionTagWrites, firstGhlTagAttempt, ghlTagOutboxStorage, GHL_TAG_OUTBOX, ghlTagStatusView } from '../_lib/ghl-tag-outbox.js';
 
 const reply = (status, body) => Response.json(body, { status, headers: { 'Cache-Control': 'private, no-store', 'X-Content-Type-Options': 'nosniff' } });
 const mutationOriginAllowed = request => {
@@ -85,6 +86,10 @@ async function detail(ctx, env, jobId, cursor = '') {
   const job = await authorizedJob(ctx, jobId);
   const [history, display, allowed] = await Promise.all([ctx.store.events(jobId, cursor), displayContext(ctx, env, [job]), capabilities(ctx, env, job)]);
   const view = await projection(ctx, job, history.events, { ...display(job), capabilities: allowed });
+  if (job.fieldCompletionTagEntry?.id) {
+    const entry = await ghlTagOutboxStorage(env).read(GHL_TAG_OUTBOX, job.fieldCompletionTagEntry.id).catch(() => null);
+    view.completionTags = entry ? ghlTagStatusView(entry, { at: Date.now(), job }) : { status: 'unknown' };
+  }
   // With FIELD_EXPENSE_CLOSEOUT_REQUIRED on, an open job lists its missing cost closeout (no amounts).
   if (view.canEdit) view.completionMissing.push(...await fieldExpenseCloseoutMissing(env, job.id, { safe: true }));
   // features lets the job page skip optional modules (and their API calls) that are switched off. The CREW-TIME switches
@@ -221,7 +226,10 @@ export async function onRequestPost(handlerContext) {
       const result = (ctx.visits ? fieldVisitCommand : fieldCommand)(job, { ...ctx.session, manager: ctx.manager, capabilities: await capabilities(ctx, env, job) }, input, new Date().toISOString());
       // FUN-03: a dispatched/arrived/started/completed milestone commits its funnel event with the job and receipt, at the receipt's server time.
       const funnel = result.funnel ? [await fieldFunnelWrite(job, ctx.session, { requestId: input.requestId, type: fieldFunnelType(result.funnel.milestone), fromStatus: result.funnel.fromStatus, toStatus: result.funnel.toStatus }, result.event.createdAt)].filter(Boolean) : [];
+      const tags = input.action === 'complete' && fieldCompletionTagsEnabled(env) ? await fieldCompletionTagWrites({ job, patch: result.patch, requestId: input.requestId, now: result.event.createdAt }) : null;
+      if (tags) { result.patch.fieldCompletionTagEntry = tags.pointer; funnel.push(tags.write); }
       await ctx.store.commit(job, result.patch, { ...result.event, fingerprint }, null, funnel);
+      if (tags) firstGhlTagAttempt(handlerContext, [tags.pointer.id], result.event.createdAt);
       if (input.action === 'complete' && typeof handlerContext.waitUntil === 'function') {
         handlerContext.waitUntil(syncFieldCompletion(env, job.id, { actor: ctx.session }));
       }

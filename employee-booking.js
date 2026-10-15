@@ -6,6 +6,17 @@ const prefix='egc-booking-request-v1:', seriesPrefix='egc-booking-series-v1:', m
 const plain=value=>value!==null&&typeof value==='object'&&!Array.isArray(value);
 const canonical=value=>Array.isArray(value)?'['+value.map(canonical).join(',')+']':plain(value)?'{'+Object.entries(value).filter(([,value])=>value!==undefined).sort(([a],[b])=>a.localeCompare(b)).map(([key,value])=>JSON.stringify(key)+':'+canonical(value)).join(',')+'}':JSON.stringify(value);
 const error=(message,code='booking_invalid',status=400)=>Object.assign(new Error(message),{code,status});
+// Mirrors the authoritative job-start policy in functions/_lib/job-start-policy.js.
+function jobStartProblem(before,after,{restore=false}={}){
+  if(!['job','cleanout','reorg'].includes(after?.type))return null;
+  const rows=value=>Array.isArray(value?.assignmentSegments)&&value.assignmentSegments.length?value.assignmentSegments:value?[value]:[];
+  for(const row of rows(after)){
+    if(!/^\d{4}-\d{2}-\d{2}$/.test(row.date||'')||row.date<'2026-10-15'||!/^\d{2}:\d{2}$/.test(row.time||''))continue;
+    if(!restore&&rows(before).some(old=>(old.id||'')===(row.id||'')&&old.date===row.date&&old.time===row.time))continue;
+    if(row.time<'09:30')return 'Job work must start at 9:30 AM or later in America/Denver. Choose a later start time.';
+  }
+  return null;
+}
 const user=()=>String(sessionStorage.getItem('egc_u')||'').trim().toLowerCase();
 // Dispatch reports a cleared customer arrival window as a warning. Callers read it
 // from saved.arrivalNotice; it is non-enumerable so it never enters job caches.
@@ -84,6 +95,7 @@ async function request(key,fingerprint,build,{endpoint='/api/dispatch',field='jo
 async function retryPending(key){if(key.startsWith('series:'))return saveSeries(null,{}, {operationKey:key.slice(7)});const record=pending(key);if(!record)throw error('There is no saved request to retry.');return request(key,record.fingerprint,async()=>record.request,{endpoint:record.endpoint||(key.startsWith('customer:')?'/api/customer-resolve':'/api/dispatch'),field:record.field||(key.startsWith('customer:')?'customer':'job')});}
 async function save(job,previous={},options={}){
   const key=options.operationKey||job.id||'booking',draft=intent(job,previous),fingerprint=canonical(draft);
+  if(!pending(key)){const problem=jobStartProblem(previous,{...previous,...job,type:draft.kind});if(problem)throw error(problem,'booking_job_start_too_early');}
   return request(key,fingerprint,async()=>{
     let data,customerId=draft.customerId;
     if(previous?.id){
@@ -171,6 +183,6 @@ function clear(){generation++;memory.clear();busy.clear();try{for(const key of O
 window.addEventListener('egc:signout',clear);
 window.addEventListener('beforeunload',event=>{if(recoveries().length||busy.size){event.preventDefault();event.returnValue='';}});
 window.addEventListener('DOMContentLoaded',recoveryPanel);
-window.EGCBooking={save,saveSeries,cancel,snapshot,resolveCustomer,roster,pending,message,recoveries,retryPending,canLeave:()=>recoveries().length===0&&busy.size===0};
+window.EGCBooking={save,saveSeries,cancel,snapshot,resolveCustomer,roster,pending,message,recoveries,retryPending,jobStartProblem,canLeave:()=>recoveries().length===0&&busy.size===0};
 recoveryPanel();
 })();

@@ -61,7 +61,7 @@ test('global blocked time uses a customerless command and blocks subsequent crew
   await assert.rejects(f.ui.save(draft({id:'other-draft'})),problem=>problem.code==='dispatch_conflict');
 });
 test('recurring visit links canonical template without cloning payments or execution',async()=>{
-  const f=fixture(),original=await f.ui.save(draft({recurrence:'weekly',shiftPickupEnabled:true}));Object.assign(f.rows.get('jobs/'+original.id),{payment:{amount:1200},fieldExecution:{completedAt:'before'}});
+  const f=fixture(),original=await f.ui.save(draft({time:'09:30',recurrence:'weekly',shiftPickupEnabled:true}));Object.assign(f.rows.get('jobs/'+original.id),{payment:{amount:1200},fieldExecution:{completedAt:'before'}});
   const next=await f.ui.save({...original,id:'next-draft',date:'2026-09-30',endDate:'2026-09-30',sourceTemplateJobId:original.id});const raw=f.rows.get('jobs/'+next.id);assert.equal(raw.sourceTemplateJobId,original.id);assert.equal(raw.recurrence,'weekly');assert.equal(raw.payment,undefined);assert.equal(raw.fieldExecution,undefined);
 });
 test('cancellation saves required reason and releases capacity with stable retry identity',async()=>{
@@ -80,7 +80,7 @@ test('recurring series resumes after a lost response and clamps month ends in Mo
 });
 test('recurring series stops on a definite resource conflict and reports its exact partial result',async()=>{
   const f=fixture();f.rows.set('dispatchResources/timeoff',{id:'timeoff',recordType:'availability',employeeId:'crew.one',date:'2026-09-30',allDay:true,status:'active'});
-  const result=await f.ui.saveSeries(draft({recurrence:'weekly'}),{}, {operationKey:'blocked-series'});assert.equal(result.visits.length,1);assert.equal(result.remaining,8);assert.match(result.warning,/Remaining visits were not created/);assert.equal((await f.store.jobs()).filter(row=>row.type==='job').length,1);assert.equal(f.ui.canLeave(),true);
+  const result=await f.ui.saveSeries(draft({time:'09:30',recurrence:'weekly'}),{}, {operationKey:'blocked-series'});assert.equal(result.visits.length,1);assert.equal(result.remaining,8);assert.match(result.warning,/Remaining visits were not created/);assert.equal((await f.store.jobs()).filter(row=>row.type==='job').length,1);assert.equal(f.ui.canLeave(),true);
 });
 test('a late save response after signout cannot restore another session draft',async()=>{
   const f=fixture(),original=f.context.fetch;let release,started;const waiting=new Promise(resolve=>release=resolve),sent=new Promise(resolve=>started=resolve);
@@ -89,7 +89,7 @@ test('a late save response after signout cannot restore another session draft',a
 });
 test('with recurring plans off, a repeating booking only checks the setting and keeps the legacy fixed series',async t=>{
   clock(t);
-  const f=fixture(),result=await f.ui.saveSeries(draft({recurrence:'biweekly'}),{}, {operationKey:'legacy-off'});
+  const f=fixture(),result=await f.ui.saveSeries(draft({time:'09:30',recurrence:'biweekly'}),{}, {operationKey:'legacy-off'});
   assert.equal(result.visits.length,7);assert.equal(result.plan,undefined);
   assert.deepEqual(f.calls.filter(call=>call.path.startsWith('/api/recurring-plans')).map(call=>[call.path,call.body]),[['/api/recurring-plans?view=status',null]]);
   assert.equal((await f.store.recurringPlans()).length,0);
@@ -97,7 +97,7 @@ test('with recurring plans off, a repeating booking only checks the setting and 
 test('with recurring plans on, a repeating booking saves its first visit then a server plan adds rolling visits',async t=>{
   clock(t);
   const f=fixture();f.env.EGC_RECURRING_PLANS_ENABLED='true';
-  const result=await f.ui.saveSeries(draft({recurrence:'weekly'}),{}, {operationKey:'plan-series'});
+  const result=await f.ui.saveSeries(draft({time:'09:30',recurrence:'weekly'}),{}, {operationKey:'plan-series'});
   const plans=await f.store.recurringPlans(),jobs=(await f.store.jobs()).filter(row=>row.type==='job');
   assert.equal(plans.length,1);assert.equal(plans[0].templateJobId,result.job.id);assert.equal(plans[0].notifyCustomer,true,'wizard series keep legacy reminder behavior');assert.deepEqual(plans[0].cadence,{frequency:'weekly'});assert.equal(plans[0].horizonDays,56);
   assert.deepEqual([...result.visits.map(job=>job.date)],['2026-09-23','2026-09-30','2026-10-07','2026-10-14','2026-10-21','2026-10-28','2026-11-04','2026-11-11']);
@@ -109,7 +109,7 @@ test('with recurring plans on, a repeating booking saves its first visit then a 
 test('a lost recurring-plan response resumes the saved series after reload without duplicate visits',async t=>{
   clock(t);
   const f=fixture();f.env.EGC_RECURRING_PLANS_ENABLED='true';f.lostPlan='extend';
-  await assert.rejects(f.ui.saveSeries(draft({recurrence:'weekly'}),{}, {operationKey:'lost-plan'}),problem=>problem.status===503);
+  await assert.rejects(f.ui.saveSeries(draft({time:'09:30',recurrence:'weekly'}),{}, {operationKey:'lost-plan'}),problem=>problem.status===503);
   assert.equal(f.ui.canLeave(),false);f.reload();
   const recovery=f.ui.recoveries();assert.equal(recovery.length,1);assert.equal(recovery[0].series,true);
   const result=await f.ui.retryPending(recovery[0].key);
@@ -121,7 +121,7 @@ test('recurring conflicts are saved unscheduled and reported instead of silently
   clock(t);
   const f=fixture();f.env.EGC_RECURRING_PLANS_ENABLED='true';
   f.rows.set('dispatchResources/timeoff',{id:'timeoff',recordType:'availability',employeeId:'crew.one',date:'2026-10-07',allDay:true,status:'active'});
-  const result=await f.ui.saveSeries(draft({recurrence:'weekly'}),{}, {operationKey:'conflict-plan'});
+  const result=await f.ui.saveSeries(draft({time:'09:30',recurrence:'weekly'}),{}, {operationKey:'conflict-plan'});
   assert.match(result.warning,/1 recurring visit\(s\) conflicted/);
   const conflict=(await f.store.jobs()).find(row=>row.occurrenceDate==='2026-10-07');assert.equal(conflict.status,'unscheduled');assert.equal(conflict.recurrenceConflict.code,'dispatch_conflict');
   assert.equal(result.visits.filter(job=>!job.date).length,1);
@@ -137,16 +137,16 @@ test('with recurring plans on, a rejected first visit creates no plan and leaves
   clock(t);
   const f=fixture();f.env.EGC_RECURRING_PLANS_ENABLED='true';
   f.rows.set('dispatchResources/timeoff',{id:'timeoff',recordType:'availability',employeeId:'crew.one',date:'2026-09-23',allDay:true,status:'active'});
-  await assert.rejects(f.ui.saveSeries(draft({recurrence:'monthly'}),{}, {operationKey:'rejected-plan'}),problem=>problem.code==='dispatch_conflict');
+  await assert.rejects(f.ui.saveSeries(draft({time:'09:30',recurrence:'monthly'}),{}, {operationKey:'rejected-plan'}),problem=>problem.code==='dispatch_conflict');
   assert.equal((await f.store.recurringPlans()).length,0);assert.equal(f.calls.filter(call=>call.path==='/api/recurring-plans').length,0);assert.equal(f.ui.canLeave(),true);assert.equal(f.ui.recoveries().length,0);
 });
 test('a failed recurring settings check saves nothing and says so, for network and server failures',async t=>{
   clock(t);
   for(const failure of ['offline',503]){
     const f=fixture();f.statusDown=failure;
-    await assert.rejects(f.ui.saveSeries(draft({recurrence:'weekly'}),{}, {operationKey:'status-'+failure}),problem=>problem.code==='booking_recurring_status_unavailable'&&problem.status===503&&/nothing was saved/.test(problem.message));
+    await assert.rejects(f.ui.saveSeries(draft({time:'09:30',recurrence:'weekly'}),{}, {operationKey:'status-'+failure}),problem=>problem.code==='booking_recurring_status_unavailable'&&problem.status===503&&/nothing was saved/.test(problem.message));
     assert.deepEqual(f.calls.map(call=>call.path),['/api/recurring-plans?view=status']);assert.equal(f.batches.length,0);
     assert.equal(f.ui.recoveries().length,0);assert.equal(f.ui.canLeave(),true);
-    f.statusDown=null;const result=await f.ui.saveSeries(draft({recurrence:'weekly'}),{}, {operationKey:'status-'+failure});assert.equal(result.visits.length,9,'a plain retry books the legacy series once the check succeeds');
+    f.statusDown=null;const result=await f.ui.saveSeries(draft({time:'09:30',recurrence:'weekly'}),{}, {operationKey:'status-'+failure});assert.equal(result.visits.length,9,'a plain retry books the legacy series once the check succeeds');
   }
 });

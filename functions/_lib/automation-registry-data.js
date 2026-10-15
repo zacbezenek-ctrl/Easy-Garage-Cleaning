@@ -35,7 +35,7 @@ const deepFreeze = value => { if (value && typeof value === 'object') { Object.v
 
 export const AUTOMATION_REGISTRY = deepFreeze({
   schemaVersion: 1,
-  registryVersion: '2026-09-29.1',
+  registryVersion: '2026-10-15.1',
   timeZone: 'America/Denver',
   ghlLocationId: 'KlgLwRaQSPz5G1YXsmc6',
   sources: {
@@ -76,7 +76,9 @@ export const AUTOMATION_REGISTRY = deepFreeze({
     trigger('tag:egc-visit-no-show', 'tag_added', 'Tag egc-visit-no-show', [write(TAG_OUTBOX, ['functions/_lib/dispatch-service.js', 'functions/api/dispatch.js', 'functions/api/ghl-tag-drain.js'], `${OUTBOX_WHEN}: a job marked a no-show in Dispatch, with its appointment set to noshow; never for a booking HighLevel never heard of (no appointment and no earlier time told)`, true)], 'GHL-TRACK-1: no HighLevel workflow listens to it until the owner builds one.'),
     trigger('tag:egc-quote-ready', 'tag_added', 'Tag egc-quote-ready', [write(HL, [HANDOFF], 'tool=game_plan while the saved estimate is sent or open and no sales-exit milestone is reached (HIGHLEVEL_QUOTE_READY_TAGS replaces the list)', true)]),
     trigger('tag:gc-quote-open', 'tag_added', 'Tag gc-quote-open', [write(HL, [HANDOFF], 'tool=game_plan while the saved estimate is sent or open and no sales-exit milestone is reached (HIGHLEVEL_QUOTE_READY_TAGS replaces the list)', true)]),
-    trigger('tag:egc-job-complete', 'tag_added', 'Tag egc-job-complete', [write(HL, [SUITE], 'tool=post_job: closeout sync after a job is closed out', true)]),
+    trigger('tag:egc-job-complete', 'tag_added', 'Tag egc-job-complete', [
+      write(HL, [SUITE], 'tool=post_job: closeout sync after a job is closed out', true),
+      write(TAG_OUTBOX, ['functions/api/field-jobs.js', 'functions/api/ghl-tag-drain.js'], 'Only with EGC_GHL_TAG_OUTBOX=true and EGC_GHL_FIELD_COMPLETION_TAG=true (off): verified crew completion queues the tag atomically; the signed worker adds it after contact-level claiming and verifies it by read-back. Unknown receipts and prior-job tags require review.', true)]),
     trigger('tag:egc-review-ready', 'tag_added', 'Tag egc-review-ready', [write(HL, [SUITE], 'tool=post_job: closeout sync after a job is closed out', true)]),
     trigger('tag:egc-garage-sales-exit', 'tag_added', 'Tag egc-garage-sales-exit', [write('functions/_lib/sales-followup-exit.js', [HL, 'functions/api/customer-portal.js', SUITE], 'after a verified accepted, booked or completed garage job (handoff sync, portal approval or manager recheck); one dispatch per estimate revision', true)]),
     trigger('tag:egc-junk-sales-exit', 'tag_added', 'Tag egc-junk-sales-exit', [write('functions/_lib/sales-followup-exit.js', [HL, 'functions/api/customer-portal.js', SUITE], 'after a verified accepted, booked or completed junk job (handoff sync, portal approval or manager recheck); one dispatch per estimate revision', true)]),
@@ -207,7 +209,7 @@ export const AUTOMATION_REGISTRY = deepFreeze({
     lifecycle('decision-needed', 'needs_owner_approval', 'remote decision request'),
     lifecycle('rebooking-received', 'needs_owner_approval', 'no button today'),
     unverifiedGhl('ghl.closeout_workflows', 'HighLevel workflows on egc-job-complete and egc-review-ready (unverified)', 'Tags written by the closeout sync', ['tag:egc-job-complete', 'tag:egc-review-ready'],
-      { code: code(HL, 'ghl_tag_helper_call'), ownerCheck: 'Record every workflow on these tags (they may start review requests) with its texts, or disable it so review asks go through the approved review_request send.' }),
+      { code: [...code(HL, 'ghl_tag_helper_call'), ...code(TAG_OUTBOX, 'ghl_tag_helper_call', 'ghl_contact_write')], notes: 'The field-completion outbox contact request is read-only identity/tag verification. Crew completion adds only egc-job-complete, never egc-review-ready. No downstream workflow is approved by this registry entry.', ownerCheck: 'Before enabling EGC_GHL_FIELD_COMPLETION_TAG, record every workflow on these tags (they may start review requests) with its texts and reset/re-entry behavior, or disable it so review asks go through the approved review_request send.' }),
     unverifiedGhl('ghl.walkthrough_complete_workflows', 'HighLevel workflows on egc-walkthrough-complete (unverified)', 'Tag written by the signed walkthrough sync', ['tag:egc-walkthrough-complete'],
       { code: [...code(HL, 'ghl_tag_helper_call'), ...code(TAG_OUTBOX, 'ghl_tag_helper_call')], ownerCheck: 'Record every workflow on this tag with its texts.' }),
     unverifiedGhl('ghl.visit_change_workflows', 'HighLevel workflows on the visit-change and walkthrough-outcome tags (none until the owner builds them)', 'Tags egc-visit-rescheduled, egc-visit-cancelled, egc-visit-no-show, egc-walkthrough-no-show, egc-walkthrough-lost and egc-quote-to-follow, written by the Hub tag outbox only with EGC_GHL_TAG_OUTBOX=true (off)',
@@ -311,8 +313,8 @@ export const AUTOMATION_REGISTRY = deepFreeze({
       notes: 'Read-only GET under existing endpoint authorization. Displays only contact ID, name, source, garage size and requested service. No message, booking, task, workflow enrollment, dashboard navigation or outbox replay. The scanner conservatively counts the shared endpoint as a send signature.' }),
     entry({ id: 'hub.highlevel_reads', name: 'HighLevel reads (contact verification, the Hub HighLevel views and the service-line suggestion)', system: 'hub', trigger: 'Contact verification before a customer link, GET /api/highlevel views (contacts, schedule, command, walkthroughs, and lead: one contact and its notes for booking) from the Hub, the dispatch New customer search and crew pages, and GET /api/funnel-dimensions reading the lead-form field when FUNNEL_GHL_SERVICE_LINE_PREFILL_ENABLED is exactly "true" (FUN-29)',
       audience: 'none', channel: 'none', contentSource: 'none', classification: 'internal', disposition: 'internal', sendsToday: 'yes', speedToLead: 'none',
-      code: [...code('functions/_lib/customer-resolution.js', 'ghl_contact_write'), ...code('functions/_lib/funnel-dimensions.js', 'ghl_contact_write'), ...code(SUITE, 'hub_send_endpoint_call'), ...code('employee-dispatch.js', 'hub_send_endpoint_call'), ...code(HL, 'ghl_note_task_write'), ...code('crew/gameplan.html', 'hub_send_endpoint_call'), ...code('crew/prejob.html', 'hub_send_endpoint_call'), ...code('crew/postjob.html', 'hub_send_endpoint_call')],
-      evidence: ['functions/_lib/customer-resolution.js'], notes: 'Counted because the scanner cannot tell a read from a write on these paths; they write nothing and send nothing.' }),
+      code: [...code('functions/_lib/customer-resolution.js', 'ghl_contact_write'), ...code('functions/_lib/funnel-dimensions.js', 'ghl_contact_write'), ...code('functions/_lib/knock-form-provider.js', 'ghl_contact_write'), ...code(SUITE, 'hub_send_endpoint_call'), ...code('employee-dispatch.js', 'hub_send_endpoint_call'), ...code(HL, 'ghl_note_task_write'), ...code('crew/gameplan.html', 'hub_send_endpoint_call'), ...code('crew/prejob.html', 'hub_send_endpoint_call'), ...code('crew/postjob.html', 'hub_send_endpoint_call')],
+      evidence: ['functions/_lib/customer-resolution.js', 'functions/_lib/knock-form-provider.js'], notes: 'Counted because the scanner cannot tell a read from a write on these paths; they write nothing and send nothing. Knock native-form receipt verification reads exact submission/contact evidence only when dedicated form configuration and acceptance are enabled.' }),
     entry({ id: 'hub.booking_confirmation_email', name: 'Booking confirmation email (EmailJS)', system: 'emailjs', trigger: 'Staff tick "send confirmation email" when saving a booking in employee.html', audience: 'customer', channel: 'Email',
       contentSource: 'provider_template', classification: 'owner_automation', disposition: 'needs_owner_approval', sendsToday: 'yes', speedToLead: 'none',
       code: [...code('functions/api/email-confirmation.js', 'emailjs_send'), ...code('employee.html', 'hub_send_endpoint_call')], evidence: ['functions/api/email-confirmation.js'],
@@ -449,13 +451,15 @@ export const AUTOMATION_REGISTRY = deepFreeze({
     'functions/_lib/funnel-dimensions.js': { ghl_contact_write: 1 },
     'functions/_lib/ghl-messenger.js': { ghl_message_send: 1, ghl_tag_write: 1, ghl_contact_write: 2 },
     // GHL-TRACK-1: the tag outbox drain adds tags through the shared writer (addTags); its contact, appointment and note writes are the shared helpers below.
-    'functions/_lib/ghl-tag-outbox.js': { ghl_tag_helper_call: 1 },
+    'functions/_lib/ghl-tag-outbox.js': { ghl_tag_helper_call: 2, ghl_contact_write: 1 },
     // GHL-TRACK-1: ensureContact, addTags and completeAppointment moved here unchanged from highlevel.js, plus the outbox's internal note.
     'functions/_lib/highlevel-tags.js': { ghl_tag_write: 1, ghl_contact_write: 1, ghl_note_task_write: 1, ghl_appointment_write: 1 },
     // GHL-ALIGN: GET then POST contacts/{id}/tasks for the 6-month check-in (one path string, read first).
     'functions/_lib/highlevel-checkin.js': { ghl_note_task_write: 1 },
     // KNOCK: the door-to-door sale receipt text (one per sale, admin-tapped).
     'functions/_lib/knock-handoff.js': { hub_send_helper_call: 1 },
+    // KNOCK-NATIVE: GET-only contact identity verification; scanner conservatively counts the URL as a write.
+    'functions/_lib/knock-form-provider.js': { ghl_contact_write: 1 },
     'functions/_lib/portal-invitation.js': { ghl_message_send: 1, ghl_contact_write: 2 },
     'functions/_lib/web-lead-intake.js': { ghl_message_send: 1, ghl_tag_write: 1, ghl_contact_write: 1, ghl_note_task_write: 1, ghl_opportunity_write: 1, zapier_hook: 2 },
     'functions/_lib/sales-followup-exit.js': { ghl_tag_write: 1, ghl_contact_write: 1, ghl_opportunity_write: 1, ghl_appointment_write: 1 },

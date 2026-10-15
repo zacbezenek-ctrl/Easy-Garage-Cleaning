@@ -44,7 +44,7 @@ function scheduleSeed() {
     'jobs/history': visit('2026-08-10', '08:00', '2026-08-12', '17:00', ['crew1']),
     'jobs/history-done': visit('2025-03-01', '08:00', '2025-03-01', '10:00', ['crew1'], { status: 'completed' }),
     'jobs/at-floor': visit('2026-08-18', '08:00', '2026-08-18', '10:00', ['crew2']),
-    'jobs/future': visit('2027-10-01', '08:00', '2027-10-01', '10:00', ['crew1']),
+    'jobs/future': visit('2027-10-01', '09:30', '2027-10-01', '10:00', ['crew1']),
     'jobs/_egc_schedule_lock_2026-09-22': { recordType: 'schedule_lock', date: '2026-09-22', entries: [] },
   };
 }

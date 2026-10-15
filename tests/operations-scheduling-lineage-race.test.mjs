@@ -6,6 +6,7 @@ import vm from './helpers/vm-realm.mjs';
 import { arrivalWindowProblem, arrivalWindowFields } from '../functions/_lib/dispatch-arrival.js';
 import { crewNotificationWrites, crewNotificationsEnabled } from '../functions/_lib/crew-notifications.js';
 import { ghlTagOutboxEnabled, scheduleTagWrites } from '../functions/_lib/ghl-tag-outbox.js';
+import { jobStartProblem } from '../functions/_lib/job-start-policy.js';
 import * as funnel from '../functions/_lib/dispatch-funnel.js';
 import * as dimensions from '../functions/_lib/funnel-dimensions.js';
 import { commitConflict, commitFailure } from '../functions/_lib/firestore-errors.js';
@@ -24,7 +25,7 @@ function load() {
     scheduleDayEntry: row => ({ id: row.id, status: row.status }),
     encodeFirestoreFields: value => value,
     // Pure arrival-window rules run for real; these fixtures have no windows.
-    arrivalWindowProblem, arrivalWindowFields,
+    arrivalWindowProblem, arrivalWindowFields, jobStartProblem,
     // Crew notices run for real too; these stores leave the flag off.
     crewNotificationWrites, crewNotificationsEnabled,
     // GHL-TRACK-1 HighLevel tag outbox runs for real; these stores leave the flag off.

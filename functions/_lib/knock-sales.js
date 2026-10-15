@@ -6,6 +6,7 @@ import { PACKAGES, SALE_STATUSES } from '../../crew/knock-settings.js';
 import { cancellationWindow, depositAmount, saleDateOf } from '../../crew/knock-sale-rules.js';
 import { validDate } from '../../crew/knock-time.js';
 import { snapshotCommissionTerms } from '../../crew/knock-money.js';
+import { nativeHouseClaimId, nativeClaimActive } from './knock-form-claims.js';
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const EMAIL = /^[^\s@<>()",;:]{1,64}@[A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)+$/;
@@ -30,6 +31,9 @@ export async function validateSaleEvent(store, rep, settings, event, { accepted 
   const knock = accepted.find(a => a.id === event.knockId) || targets.get(event.knockId) || await store.get('knock_events', event.knockId);
   if (!knock || knock.type !== 'knock' || knock.outcome !== 'sold' || knock.repKey !== rep.repKey) return refuse('knock_sale_invalid', 'Log the door as Sold first.');
   if (event.houseId && event.houseId !== knock.houseId) return refuse('knock_sale_invalid', 'The sale and the door are different houses.');
+  const claim = await store.get('knock_receipts', await nativeHouseClaimId(knock.houseId));
+  if (nativeClaimActive(claim) && (claim.channel !== 'direct_sale' || claim.repKey !== rep.repKey))
+    return refuse('knock_form_channel_conflict', 'This house has a different form channel or rep. Review attribution before saving a direct sale.');
   const existing = await store.query('knock_sales', { where: [['knockId', '==', knock.id]], limit: 1 });
   if (existing.length || accepted.some(a => a.type === 'sale' && a.knockId === knock.id)) return refuse('knock_sale_exists', 'That door already has a sale.');
   const ticket = Number(event.ticket);

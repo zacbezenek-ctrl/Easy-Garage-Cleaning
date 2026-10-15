@@ -53,7 +53,7 @@ export function recurringFixture() {
       for (const write of writes) if (!write.verify) rows.set(`${write.collection}/${write.id}`, { ...rows.get(`${write.collection}/${write.id}`), ...clone(write.patch), id:write.id, revision:`r${++revision}` });
     },
   };
-  const book = async (changes = {}, extra = {}, now = NOW) => (await mutateDispatch(store, manager, { action:'schedule.create', requestId:randomUUID(), customerId:'c1', kind:'job', changes:{ date:'2026-09-23', time:'08:00', endTime:'10:00', assignedCrew:['crew1'], jobInstructions:'Reset the garage', serviceType:'Garage reset', ...changes }, ...extra }, now)).job;
+  const book = async (changes = {}, extra = {}, now = NOW) => (await mutateDispatch(store, manager, { action:'schedule.create', requestId:randomUUID(), customerId:'c1', kind:'job', changes:{ date:'2026-09-23', time:'09:30', endTime:'10:00', assignedCrew:['crew1'], jobInstructions:'Reset the garage', serviceType:'Garage reset', ...changes }, ...extra }, now)).job;
   const plan = (input, now = NOW, options = { enabled:true, pricing:true }, actor = manager) => mutateRecurringPlan(store, actor, { requestId:randomUUID(), ...input }, now, options);
   const create = async (fields = {}) => { const template = await book(); return { template, result: await plan({ action:'create', plan:{ templateJobId:template.id, cadence:{ frequency:'weekly' }, horizonDays:28, ...fields } }) }; };
   const jobs = () => all('jobs').filter(row => row.type === 'job');

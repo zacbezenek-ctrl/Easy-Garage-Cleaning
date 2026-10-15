@@ -316,7 +316,7 @@ test('recurring clone keeps operational requirements but cannot carry accepted p
   const f=fixture(),source=await f.mutate(f.create({recurrence:'monthly',materials:[{id:'shelf',name:'Shelf',quantity:2}],requiredEquipment:['Drill'],notes:'Use driveway'}));
   const raw=f.rows.get('jobs/'+source.job.id);
   Object.assign(raw,{status:'completed',pipelineStatus:'completed',completedAt:NOW,sourceWalkthroughId:'old-walkthrough',highlevelAppointmentId:'old-appointment',payment:{amount:500},estimate:{total:1000},acceptance:{accepted:true},fieldExecution:{photos:['old-photo']},photos:['old-photo'],jobInstructions:{customerGoal:'Storage access',hazards:['low beam'],photos:['hidden-photo'],price:1000},fieldCompletionSync:{status:'synced'},materials:[{id:'shelf',name:'Shelf',quantity:2,price:400}]});
-  const cloned=await f.mutate(f.create({date:'2026-10-23',assignedCrew:[]},{sourceTemplateJobId:source.job.id})),saved=f.rows.get('jobs/'+cloned.job.id);
+  const cloned=await f.mutate(f.create({date:'2026-10-23',time:'09:30',assignedCrew:[]},{sourceTemplateJobId:source.job.id})),saved=f.rows.get('jobs/'+cloned.job.id);
   assert.equal(saved.sourceTemplateJobId,source.job.id);assert.equal(saved.recurrenceParentId,source.job.id);assert.equal(saved.sourceTemplateRevision,raw.revision);
   assert.notEqual(saved.projectId,raw.projectId);assert.equal(saved.recurrence,'monthly');assert.equal(saved.notes,'Use driveway');assert.equal(saved.jobInstructions.customerGoal,'Storage access');assert.deepEqual(saved.jobInstructions.hazards,['low beam']);
   assert.deepEqual(saved.materials,[{id:'shelf',name:'Shelf',quantity:2}]);assert.deepEqual(saved.assignedCrew,[]);assert.equal(saved.openShift,false);

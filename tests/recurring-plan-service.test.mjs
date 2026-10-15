@@ -35,7 +35,7 @@ function fixture() {
       for (const write of writes) if (!write.verify) rows.set(`${write.collection}/${write.id}`, { ...rows.get(`${write.collection}/${write.id}`), ...clone(write.patch), id:write.id, revision:`r${++revision}` });
     },
   };
-  const book = async (changes = {}, extra = {}) => (await mutateDispatch(store, manager, { action:'schedule.create', requestId:randomUUID(), customerId:'c1', kind:'job', changes:{ date:'2026-09-23', time:'08:00', endTime:'10:00', assignedCrew:['crew1'], jobInstructions:'Reset the garage', ...changes }, ...extra }, NOW)).job;
+  const book = async (changes = {}, extra = {}) => (await mutateDispatch(store, manager, { action:'schedule.create', requestId:randomUUID(), customerId:'c1', kind:'job', changes:{ date:'2026-09-23', time:'09:30', endTime:'10:00', assignedCrew:['crew1'], jobInstructions:'Reset the garage', ...changes }, ...extra }, NOW)).job;
   const plan = (input, now = NOW, options = on) => mutateRecurringPlan(store, manager, { requestId:randomUUID(), ...input }, now, options);
   const create = async (fields = {}) => { const template = await book(); return { template, result: await plan({ action:'create', plan:{ templateJobId:template.id, cadence:{ frequency:'weekly' }, horizonDays:28, ...fields } }) }; };
   const jobs = () => all('jobs').filter(row => row.type === 'job');
@@ -47,7 +47,7 @@ function fixture() {
 
 test('a plan seeds its template visit and extendHorizon creates dated dispatch jobs through the canonical path', async () => {
   const f = fixture(), { template, result } = await f.create();
-  assert.equal(result.plan.status, 'active'); assert.equal(result.plan.customerId, 'c1'); assert.equal(result.plan.time, '08:00'); assert.deepEqual([...result.plan.assignment.assignedCrew], ['crew1']);
+  assert.equal(result.plan.status, 'active'); assert.equal(result.plan.customerId, 'c1'); assert.equal(result.plan.time, '09:30'); assert.deepEqual([...result.plan.assignment.assignedCrew], ['crew1']);
   assert.deepEqual(result.plan.occurrences.map(row => [row.date, row.state, row.jobId]), [['2026-09-23', 'template', template.id]]);
   const run = await extendHorizon(f.store, manager, { now:NOW });
   assert.deepEqual(run.plans[0].created.map(job => job.date), ['2026-09-30', '2026-10-07', '2026-10-14']);
@@ -56,7 +56,7 @@ test('a plan seeds its template visit and extendHorizon creates dated dispatch j
     const raw = f.rows.get('jobs/' + job.id), requestId = await occurrenceRequestId(result.plan.id, job.date);
     assert.equal(raw.recurringPlanId, result.plan.id); assert.equal(raw.occurrenceDate, job.date); assert.equal(raw.sourceTemplateJobId, template.id);
     assert.equal(raw.dispatchRequestId, requestId); assert.ok(f.rows.get('dispatchOperations/' + requestId)); assert.equal(raw.recurrence, 'none');
-    assert.equal(raw.scheduleSource, 'egc_hub'); assert.equal(raw.startAt, job.date + 'T14:00:00.000Z'); assert.deepEqual(raw.assignedCrew, ['crew1']);
+    assert.equal(raw.scheduleSource, 'egc_hub'); assert.equal(raw.startAt, job.date + 'T15:30:00.000Z'); assert.deepEqual(raw.assignedCrew, ['crew1']);
     assert.equal(raw.notify, false, 'generated visits send no customer reminders unless the plan opts in');
     assert.equal(f.rows.get(`jobs/_egc_schedule_lock_${job.date}`).entries.length, 1);
   }
@@ -109,7 +109,7 @@ test('a conflicting date becomes an unscheduled occurrence flagged recurrenceCon
   assert.equal(run.plans[0].conflicts.length, 1); assert.equal(run.plans[0].conflicts[0].date, '2026-10-07'); assert.equal(run.plans[0].conflicts[0].code, 'dispatch_conflict');
   const conflict = f.rows.get('jobs/' + run.plans[0].conflicts[0].jobId);
   assert.equal(conflict.status, 'unscheduled'); assert.equal(conflict.date, ''); assert.equal(conflict.occurrenceDate, '2026-10-07');
-  assert.equal(conflict.recurrenceConflict.date, '2026-10-07'); assert.equal(conflict.recurrenceConflict.time, '08:00'); assert.equal(conflict.recurrenceConflict.conflicts[0].otherJobId, busy.id);
+  assert.equal(conflict.recurrenceConflict.date, '2026-10-07'); assert.equal(conflict.recurrenceConflict.time, '09:30'); assert.equal(conflict.recurrenceConflict.conflicts[0].otherJobId, busy.id);
   assert.match(conflict.opsNotes, /Recurring visit for 2026-10-07/);
   assert.equal(conflict.dispatchRequestId, await occurrenceRequestId(result.plan.id, '2026-10-07', 'unscheduled'));
   const saved = f.rows.get('recurringPlans/' + result.plan.id);
@@ -168,17 +168,38 @@ test('a visit refused for an owner rule and for overlapping work names both on t
 });
 
 test('invalid daylight-saving wall times are saved unscheduled for review instead of guessed', async () => {
-  const f = fixture(), start = '2027-03-01T12:00:00.000Z';
-  const template = (await mutateDispatch(f.store, manager, { action:'schedule.create', requestId:randomUUID(), customerId:'c1', kind:'job', changes:{ date:'2027-03-07', time:'02:30', endTime:'04:00', assignedCrew:['crew1'] } }, start)).job;
+  // Before the start-time policy: this independently tests a nonexistent wall time.
+  const f = fixture(), start = '2026-02-25T12:00:00.000Z';
+  const template = (await mutateDispatch(f.store, manager, { action:'schedule.create', requestId:randomUUID(), customerId:'c1', kind:'job', changes:{ date:'2026-03-01', time:'02:30', endTime:'04:00', assignedCrew:['crew1'] } }, start)).job;
   const { plan } = await f.plan({ action:'create', plan:{ templateJobId:template.id, cadence:{ frequency:'weekly' }, horizonDays:14 } }, start);
   const run = await extendHorizon(f.store, manager, { now:start });
-  assert.deepEqual(run.plans[0].conflicts.map(row => [row.date, row.code]), [['2027-03-14', 'dispatch_time_invalid']]);
-  assert.equal(f.rows.get('recurringPlans/' + plan.id).occurrences['2027-03-14'].state, 'conflict');
+  assert.deepEqual(run.plans[0].conflicts.map(row => [row.date, row.code]), [['2026-03-08', 'dispatch_time_invalid']]);
+  assert.equal(f.rows.get('recurringPlans/' + plan.id).occurrences['2026-03-08'].state, 'conflict');
+});
+
+test('legacy early plans preserve booked history, block new early visits, and resume after a valid time update', async () => {
+  const f = fixture(), template = await f.book({ time:'08:00' });
+  const { plan } = await f.plan({ action:'create', plan:{ templateJobId:template.id, cadence:{ frequency:'weekly' }, horizonDays:35 } });
+  const blocked = await extendHorizon(f.store, manager, { now:NOW });
+  assert.deepEqual(blocked.plans[0].created.map(job => [job.date, job.time]), [['2026-09-30','08:00'], ['2026-10-07','08:00'], ['2026-10-14','08:00']]);
+  assert.equal(blocked.complete, false);
+  assert.equal(blocked.plans[0].blocked.code, 'dispatch_job_start_too_early');
+  assert.equal(blocked.plans[0].blocked.date, '2026-10-21');
+  assert.match(blocked.plans[0].blocked.message, /9:30 AM.*America\/Denver/);
+  const current = f.rows.get('recurringPlans/' + plan.id);
+  assert.equal(current.lastRun.status, 'blocked');
+  assert.equal(current.occurrences['2026-10-21'], undefined);
+  await f.plan({ action:'update', planId:plan.id, expectedRevision:current.revision, plan:{ time:'09:30' } });
+  const resumed = await extendHorizon(f.store, manager, { now:NOW });
+  assert.deepEqual(resumed.plans[0].created.map(job => [job.date, job.time]), [['2026-10-21','09:30']]);
+  assert.equal(resumed.complete, true);
+  assert.equal(f.job(template.id).time, '08:00');
+  assert.ok(f.jobs().filter(job => job.date < '2026-10-15').every(job => job.time === '08:00'));
 });
 
 test('an existing booking at the exact occurrence time is adopted rather than duplicated', async () => {
   const f = fixture(), { result } = await f.create();
-  const existing = await f.book({ date:'2026-10-14', time:'08:00', endTime:'10:00' });
+  const existing = await f.book({ date:'2026-10-14', time:'09:30', endTime:'10:00' });
   const run = await extendHorizon(f.store, manager, { now:NOW });
   assert.deepEqual(run.plans[0].adopted, [{ date:'2026-10-14', jobId:existing.id }]);
   assert.equal(f.rows.get('recurringPlans/' + result.plan.id).occurrences['2026-10-14'].state, 'existing');
@@ -198,7 +219,7 @@ async function assertServedOrFlagged(f, planId, dates) {
 
 test('a cancelled booking still holding the slot becomes an unscheduled conflict, never an adopted visit', async () => {
   const f = fixture(), { result } = await f.create();
-  const booked = await f.book({ date:'2026-10-14', time:'08:00', endTime:'10:00' });
+  const booked = await f.book({ date:'2026-10-14', time:'09:30', endTime:'10:00' });
   await f.mutate({ action:'schedule.cancel', jobId:booked.id, expectedRevision:booked.revision });
   const run = await extendHorizon(f.store, manager, { now:NOW });
   assert.deepEqual(run.plans[0].adopted, []); assert.equal(run.complete, true);
@@ -216,8 +237,8 @@ test('a cancelled booking still holding the slot becomes an unscheduled conflict
 
 test('a booking rescheduled away from the slot never records an empty existing occurrence', async () => {
   const f = fixture(), { result } = await f.create();
-  const booked = await f.book({ date:'2026-10-14', time:'08:00', endTime:'10:00' });
-  await f.mutate({ action:'schedule.update', jobId:booked.id, expectedRevision:booked.revision, changes:{ date:'2026-10-16', endDate:'2026-10-16', time:'08:00', endTime:'10:00' } });
+  const booked = await f.book({ date:'2026-10-14', time:'09:30', endTime:'10:00' });
+  await f.mutate({ action:'schedule.update', jobId:booked.id, expectedRevision:booked.revision, changes:{ date:'2026-10-16', endDate:'2026-10-16', time:'09:30', endTime:'10:00' } });
   const run = await extendHorizon(f.store, manager, { now:NOW });
   assert.deepEqual(run.plans[0].adopted, []);
   assert.deepEqual(run.plans[0].conflicts.map(row => [row.date, row.code]), [['2026-10-14', 'recurring_slot_taken']]);
@@ -253,15 +274,15 @@ test('ending a plan, cancelling its visits and recreating it at the same time fl
 
 test('the plan view reconciles generated visits with Dispatch: cancelled, moved, rescheduled and completed', async () => {
   const f = fixture(), { result } = await f.create({ horizonDays:35 });
-  await f.book({ date:'2026-10-21', time:'09:00', endTime:'11:00' }, { customerId:'c2' });
+  await f.book({ date:'2026-10-21', time:'09:30', endTime:'11:00' }, { customerId:'c2' });
   await extendHorizon(f.store, manager, { now:NOW });
   const index = () => f.rows.get('recurringPlans/' + result.plan.id).occurrences, visit = date => f.job(index()[date].jobId);
   let plan = (await f.overview())[0];
   assert.equal(plan.reconciled, true); assert.deepEqual(plan.attention.map(row => [row.date, row.state]), [['2026-10-21', 'conflict']]);
   const cancelled = visit('2026-09-30'), moved = visit('2026-10-07'), conflict = visit('2026-10-21');
   await f.mutate({ action:'schedule.cancel', jobId:cancelled.id, expectedRevision:cancelled.revision });
-  await f.mutate({ action:'schedule.update', jobId:moved.id, expectedRevision:moved.revision, changes:{ date:'2026-10-08', endDate:'2026-10-08', time:'08:00', endTime:'10:00' } });
-  await f.mutate({ action:'schedule.update', jobId:conflict.id, expectedRevision:conflict.revision, changes:{ date:'2026-10-22', endDate:'2026-10-22', time:'08:00', endTime:'10:00' } });
+  await f.mutate({ action:'schedule.update', jobId:moved.id, expectedRevision:moved.revision, changes:{ date:'2026-10-08', endDate:'2026-10-08', time:'09:30', endTime:'10:00' } });
+  await f.mutate({ action:'schedule.update', jobId:conflict.id, expectedRevision:conflict.revision, changes:{ date:'2026-10-22', endDate:'2026-10-22', time:'09:30', endTime:'10:00' } });
   plan = (await f.overview())[0];
   const state = date => plan.occurrences.find(row => row.date === date);
   assert.deepEqual([state('2026-09-30').state, state('2026-09-30').recorded], ['cancelled', 'scheduled']);
@@ -386,7 +407,7 @@ test('update validates the merged schedule, keeps generated visits and warns abo
   assert.deepEqual(updated.warnings.map(row => row.code), ['skip_date_already_scheduled', 'generated_visits_unchanged']);
   assert.equal(updated.plan.cadenceLabel, 'Every week'); assert.equal(updated.plan.occurrences.length, 4);
   current = f.rows.get('recurringPlans/' + result.plan.id);
-  assert.equal(current.time, '13:00'); assert.equal(f.rows.get('jobs/' + current.occurrences['2026-10-07'].jobId).time, '08:00');
+  assert.equal(current.time, '13:00'); assert.equal(f.rows.get('jobs/' + current.occurrences['2026-10-07'].jobId).time, '09:30');
   const run = await extendHorizon(f.store, manager, { now:'2026-10-20T12:00:00.000Z' });
   assert.deepEqual(run.plans[0].created.map(job => [job.date, job.time]), [['2026-10-21', '13:00'], ['2026-11-04', '13:00'], ['2026-11-11', '13:00']]);
 });

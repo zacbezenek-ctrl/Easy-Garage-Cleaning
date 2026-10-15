@@ -98,7 +98,8 @@ test('apply creates paused plans with receipts once, and a resumed plan books on
   // Paused plans book nothing until a manager resumes one.
   assert.deepEqual((await extendHorizon(f.store, manager, { now:NOW })).plans.filter(row => ids.includes(row.planId)), []);
   const plan = f.saved(ids[0]);
-  const resumed = await f.plan({ action:'resume', planId:plan.id, expectedRevision:plan.revision });
+  await f.plan({ action:'update', planId:plan.id, expectedRevision:plan.revision, plan:{time:'09:30'} });
+  const resumed = await f.plan({ action:'resume', planId:plan.id, expectedRevision:f.saved(plan.id).revision });
   assert.equal(f.saved(ids[0]).updatedBy, 'zacb', 'the resuming manager becomes accountable');
   const run = await extendHorizon(f.store, manager, { now:NOW, planId:resumed.plan.id });
   assert.deepEqual(run.plans[0].created.map(job => job.date), ['2026-10-14', '2026-10-21', '2026-10-28', '2026-11-04', '2026-11-11'], 'starts after the last live legacy visit and skips the cancelled one');
