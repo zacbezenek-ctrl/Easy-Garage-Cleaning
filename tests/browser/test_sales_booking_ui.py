@@ -33,7 +33,7 @@ class SalesBookingBrowserTests(HubShell, unittest.TestCase):
     @classmethod
     def tearDownClass(cls): cls.stop()
     def setUp(self):
-        self.errors = []; self.highlevel = None; self.contacts_down = False; self.resolves = []; self.saves = []; self.operations = []; self.lead_slot = None; self.dispatch_extra = []
+        self.errors = []; self.highlevel = None; self.contacts_down = False; self.resolves = []; self.saves = []; self.operations = []; self.lead_slot = None; self.dispatch_extra = []; self.native_inquiry = None
     def tearDown(self):
         self.close_page()
         self.assertEqual(self.errors, [])
@@ -49,6 +49,9 @@ class SalesBookingBrowserTests(HubShell, unittest.TestCase):
                 if view == 'lead':
                     lead = copy.deepcopy(LEAD)
                     if self.lead_slot: lead['lead']['requestedSlot'] = self.lead_slot
+                    if self.native_inquiry:
+                        lead['lead']['websiteInquiry'] = self.native_inquiry
+                        lead['lead']['service'] = self.native_inquiry['service']
                     send(lead); return
                 if view == 'contacts':
                     if self.contacts_down: send({'ok': False, 'error': 'HighLevel is unreachable'}, 502)
@@ -128,6 +131,19 @@ class SalesBookingBrowserTests(HubShell, unittest.TestCase):
         self.assertEqual([changes['date'], changes['time'], changes['endDate'], changes['endTime'], changes['address'], changes['serviceType']], ['2026-09-24', '13:00', '2026-09-24', '14:00', '123 Synthetic Way, Fort Collins, CO', 'Garage Cleanout'])
         self.assertEqual([changes['assignedCrew'], changes['crewId'], changes['crewLead'], changes['vehicleId']], [[], None, None, None], 'a booker saves no crew; a manager staffs the visit')
         self.assertFalse(any(call[1] == '/api/highlevel' and call[0] != 'GET' for call in self.calls), 'booking never writes to HighLevel from the Hub page')
+
+    def test_native_website_fields_prefill_reviewable_customer_instructions_without_creating_job(self):
+        self.native_inquiry = {'source':'Website-EasyGarageCleaning','garageSize':'2 car','service':'Organization'}
+        page = self.open('pipeline', width=375, height=812, profile=SALES)
+        page.locator('.ops-pipeline article').first.get_by_role('button', name='Book walkthrough', exact=True).click()
+        dialog = self.dialog()
+        expect(dialog.get_by_label('Service', exact=True)).to_have_value('Organization')
+        expect(dialog.get_by_label('Customer instructions', exact=True)).to_have_value('Website inquiry (customer-reported; confirm during walkthrough)\nGarage size: 2 car\nRequested service: Organization')
+        expect(dialog.get_by_role('combobox', name='Work type', exact=True)).to_have_value('walkthrough')
+        self.assertEqual(self.saves, [])
+        self.assertEqual(self.resolves, [])
+        self.assertFalse(any(call[1] == '/api/highlevel' and call[0] != 'GET' for call in self.calls))
+        self.assert_phone_fit(375, 'dialog.dp-dialog')
 
     def test_book_for_a_window_that_started_today_in_denver_is_not_prefilled(self):
         # Noon in Denver (the installed 18:00Z) is 03:00 the next day on this Asia/Tokyo device: this afternoon has started.

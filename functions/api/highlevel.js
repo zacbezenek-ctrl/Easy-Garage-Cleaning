@@ -37,6 +37,7 @@ import { addTags, completeAppointment, ensureContact, ghl, highLevelConfig } fro
 import { handOffScheduleTags, scheduleTagOwner } from '../_lib/ghl-tag-outbox.js';
 import { can } from '../_lib/staff-roles.js';
 import { leadDetailsFromNotes } from '../_lib/booking-slots.js';
+import { nativeWebsiteInquiry } from '../_lib/native-website-inquiry.js';
 
 const DEFAULT_LEAD_RESET_AT = '2026-09-03T21:51:19.314Z';
 const HOST = /^(?:easygaragecleaning\.com|www\.easygaragecleaning\.com|easy-garage-cleaning\.pages\.dev|localhost(?::\d+)?|127\.0\.0\.1(?::\d+)?)$/;
@@ -473,10 +474,11 @@ async function leadView(c, id) {
   }
   const found = contact.value || {};
   if (found.id !== id || found.locationId !== c.locationId) return reply(404, { ok: false, error: 'This HighLevel contact was not found.' });
-  const shape = contactShape(found), details = notes.status === 'fulfilled' ? leadDetailsFromNotes(notes.value?.notes) : null;
+  const shape = contactShape(found), details = notes.status === 'fulfilled' ? leadDetailsFromNotes(notes.value?.notes) : null, inquiry = nativeWebsiteInquiry(found);
   return reply(200, { ok: true, locationId: c.locationId, notesRead: notes.status === 'fulfilled', lead: {
     contactId: shape.id, name: shape.name, phone: shape.phone, email: shape.email || details?.email || '', address: shape.address,
-    service: details?.service || '', requestedSlot: details?.requestedSlot || null, requestedSlotText: details?.requestedSlotText || '',
+    service: inquiry ? inquiry.service : details?.service || '', requestedSlot: inquiry ? null : details?.requestedSlot || null, requestedSlotText: inquiry ? '' : details?.requestedSlotText || '',
+    ...(inquiry ? { websiteInquiry: inquiry } : {}),
   } });
 }
 

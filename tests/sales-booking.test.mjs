@@ -118,6 +118,17 @@ test('one lead: unreadable notes leave the window out, an unknown or foreign con
   assert.equal((await get(env, cookies['Config.Phone'], 'view=lead&contactId=contact-1')).status, 404, 'a contact whose location cannot be confirmed is not shown (the customer-resolution rule)');
 });
 
+test('native form fields reach authorized lead detail even without legacy notes; no writes or private fields', async t => {
+  const {env,cookies}=await sessions(t,{EGC_STAFF_ROLE_ACCESS:'true'});
+  const calls=highLevel(t,{'/contacts/contact-1':()=>Response.json({contact:{id:'contact-1',locationId:'location-synthetic',name:'Synthetic Native Lead',phone:'+19705550111',source:'Website-EasyGarageCleaning',customFields:[{id:'QHj6fV2cJQXHL2PNOXr1',value:'2 car'},{id:'LFY6ICXlG2RKhlg0vgTT',value:'Organization'},{id:'private',value:'PRIVATE-MARGIN'}]}})});
+  const result=await get(env,cookies['Config.Phone'],'view=lead&contactId=contact-1');
+  assert.equal(result.status,200);assert.equal(result.body.lead.service,'Organization');
+  assert.deepEqual(result.body.lead.websiteInquiry,{source:'Website-EasyGarageCleaning',garageSize:'2 car',service:'Organization'});
+  assert.equal(result.body.lead.requestedSlot,null);assert.doesNotMatch(JSON.stringify(result.body),/PRIVATE-MARGIN/);
+  assert.ok(calls.every(call=>call.method==='GET'));
+  assert.equal((await get(env,cookies['Config.Crew'],'view=lead&contactId=contact-1')).status,403);
+});
+
 test('outage wording: not configured is 501, a HighLevel failure is 502 without provider detail for a booker', async t => {
   const { env, cookies } = await sessions(t, { EGC_STAFF_ROLE_ACCESS: 'true' });
   highLevel(t, { '/opportunities/pipelines': () => Response.json({ message: 'synthetic provider detail' }, { status: 503 }) });
