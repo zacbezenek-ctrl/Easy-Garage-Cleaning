@@ -19,6 +19,10 @@ across jobs. Other quote authors need an exact canonical username on the job's
 `quoteDraft.createdBy`, its assigned crew IDs/usernames, or the same customer's
 linked walkthrough assignment. Display-name-only objects grant no access.
 Authorization is checked again on an idempotent replay.
+The shared access boundary verifies the linked record is a canonical walkthrough
+for the same customer before its assignment can grant access. Historical reads
+use that same boundary; a job, template, missing or foreign-customer record can
+never grant walkthrough-derived access.
 
 The API accepts only job/document IDs, a request UUID and expected versions. It
 does not accept prices, tax, clauses, signers, approval objects, contacts, payment
@@ -120,6 +124,10 @@ snapshot claims its own request receipt without rewriting the snapshot. A
 concurrent create loser rereads once; an unchanged result can become an
 idempotent receipt-only replay. A changed source, conflicting same revision,
 newer recorded head or reused UUID with changed content fails closed.
+Historical reads and receipt replays also require a present, consistent revision
+head whose target snapshot exists and matches its digest. A missing or corrupt
+head requires explicit reconciliation; replay never silently reconstructs it or
+claims success from an orphaned snapshot.
 
 Two jobs sharing one contact have different keys and heads. No quoted values are
 stored in mutable shared contact fields.

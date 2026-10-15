@@ -43,9 +43,11 @@ async function access(store, actor, input, env, enabled) {
   checkRecord(job);
   const sources = [verify('jobs', job)];
   let walk = null;
-  if (id(job.sourceWalkthroughId)) {
+  if (job.sourceWalkthroughId) {
+    if (!id(job.sourceWalkthroughId)) throw fail('lineage_mismatch', 'The linked walkthrough identity is invalid.');
     walk = await store.read('jobs', job.sourceWalkthroughId);
-    if (walk) checkRecord(walk);
+    if (!walk || walk.type !== 'walkthrough' || walk.recordType || walk.customerId !== job.customerId) throw fail('lineage_mismatch', 'The linked record must be a canonical walkthrough for this customer.');
+    checkRecord(walk);
   }
   const owns = actorKey(job.quoteDraft?.createdBy) === actorKey(actor.user) || assigned(job, actor) || walk?.customerId === job.customerId && assigned(walk, actor);
   if (!rights.dispatcher && !owns) throw fail('forbidden', 'Only this quote’s author, assigned rep or a manager can access its document drafts.', 403);
@@ -86,10 +88,19 @@ async function loadSource(store, accessResult, now) {
   return { snapshot, context, sources, binding: quoteDocumentReviewBinding(snapshot) };
 }
 function savedRecord(row, job, kind, estimateRevision) {
-  if (!row || row.schemaVersion !== 1 || row.jobId !== job.id || row.customerId !== job.customerId || row.documentKind !== kind || row.estimateRevision !== estimateRevision || row.id !== quoteDocumentSnapshotId(job.id, kind, estimateRevision) || row.draft?.renderState !== 'ready_for_mapping' || row.draft.deliveryStatus !== 'unsent_draft_only' || !hex(row.contentDigest) || row.contentDigest !== row.draft.contentDigest || row.draftDigest !== hash(row.draft) || !same(row.approval?.binding, row.binding)) throw fail('snapshot_invalid', 'The saved document snapshot needs reconciliation.');
+  const quote = row?.draft?.payload?.canonicalQuote;
+  if (!row || row.schemaVersion !== 1 || row.jobId !== job.id || row.customerId !== job.customerId || row.documentKind !== kind || row.estimateRevision !== estimateRevision || row.id !== quoteDocumentSnapshotId(job.id, kind, estimateRevision) || row.draft?.documentKind !== kind || quote?.jobId !== job.id || quote?.estimateRevision !== estimateRevision || quote?.estimateFingerprint !== row.binding?.estimateFingerprint || row.draft?.renderState !== 'ready_for_mapping' || row.draft.deliveryStatus !== 'unsent_draft_only' || !hex(row.contentDigest) || row.contentDigest !== row.draft.contentDigest || row.draftDigest !== hash(row.draft) || row.approval?.status !== 'approved' || row.approval?.evidenceId !== row.id || !same(row.approval?.binding, row.binding)) throw fail('snapshot_invalid', 'The saved document snapshot needs reconciliation.');
   checkRecord(row); return row;
 }
+async function requireSavedHead(store, row, job, knownHead) {
+  const head = knownHead === undefined ? await store.read(C.heads, headId(job.id, row.documentKind)) : knownHead;
+  if (!head || head.id !== headId(job.id, row.documentKind) || !revision(head.revision) || head.jobId !== job.id || head.documentKind !== row.documentKind || !Number.isSafeInteger(head.estimateRevision) || head.estimateRevision < row.estimateRevision || head.snapshotId !== quoteDocumentSnapshotId(job.id, row.documentKind, head.estimateRevision) || !hex(head.contentDigest)) throw fail('snapshot_invalid', 'The document revision index is missing or inconsistent. Reconcile it before retrying.');
+  const latest = head.snapshotId === row.id ? row : savedRecord(await store.read(C.snapshots, head.snapshotId), job, row.documentKind, head.estimateRevision);
+  if (head.contentDigest !== latest.contentDigest) throw fail('snapshot_invalid', 'The document revision index and its snapshot disagree.');
+  return head;
+}
 async function savedView(store, row, job) {
+  await requireSavedHead(store, row, job);
   const issued = await store.read(C.issues, row.id);
   if (issued && (issued.snapshotId !== row.id || issued.jobId !== job.id || issued.contentDigest !== row.contentDigest || !stamp(issued.issuedAt))) throw fail('issuance_unverified', 'The historical issue record needs reconciliation.');
   return {
@@ -174,12 +185,13 @@ export async function approveQuoteDocument(store, actor, input, now, { env = {},
   const snapshotId = quoteDocumentSnapshotId(a.job.id, input.documentKind, b.estimateRevision), indexId = headId(a.job.id, input.documentKind);
   const [existing, head] = await Promise.all([store.read(C.snapshots, snapshotId), store.read(C.heads, indexId)]);
   if (head && (head.jobId !== a.job.id || head.documentKind !== input.documentKind || !Number.isSafeInteger(head.estimateRevision))) throw fail('snapshot_invalid', 'The document revision index needs reconciliation.');
-  if (head && head.estimateRevision > b.estimateRevision) throw fail('revision_stale', 'A newer document revision is already saved.');
   if (head && !existing && head.estimateRevision === b.estimateRevision) throw fail('snapshot_invalid', 'The indexed snapshot is missing.');
   if (existing) {
     savedRecord(existing, a.job, input.documentKind, b.estimateRevision);
+    await requireSavedHead(store, existing, a.job, head);
     if (!same(existing.binding, b)) throw fail('revision_conflict', 'Different content already owns this document revision. Preserve it and review a new canonical revision.');
   }
+  if (head && head.estimateRevision > b.estimateRevision) throw fail('revision_stale', 'A newer document revision is already saved.');
   const approval = existing?.approval || { status: 'approved', approvedBy: actorKey(actor.user), approvedAt: now, evidenceId: snapshotId, binding: b };
   const draft = exportQuoteDocument({ ...loaded.snapshot, canonicalApproval: approval }, { documentKind: input.documentKind, existingSnapshots: existing ? [{ jobId: existing.jobId, documentKind: existing.documentKind, estimateRevision: existing.estimateRevision, idempotencyKey: existing.draft.idempotencyKey, contentDigest: existing.contentDigest }] : [] });
   if (draft.renderState !== 'ready_for_mapping') throw fail('blocked', 'The canonical quote needs review before an internal document snapshot can be saved.', 409, { blockers: draft.blockers });

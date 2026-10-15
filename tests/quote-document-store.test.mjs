@@ -233,6 +233,37 @@ test('ownership is rechecked even for a previously committed request', async () 
   await rejects(save(f, body, rep), 'forbidden'); assert.equal(f.writes.length, 1);
 });
 
+test('current and historical access never derive ownership from a non-walkthrough source', async () => {
+  for (const mutate of [
+    f => { f.rows.get('jobs/walk1').type = 'job'; },
+    f => { f.rows.get('jobs/walk1').customerId = 'other-customer'; },
+    f => { f.rows.get('jobs/walk1').recordType = 'template'; },
+    f => { f.rows.delete('jobs/walk1'); },
+  ]) {
+    const f = fixture(); await save(f, await input(f));
+    f.job.quoteDraft.createdBy = 'rep2';
+    mutate(f);
+    await rejects(preview(f, rep), 'lineage_mismatch');
+    await rejects(readQuoteDocument(f.store, rep, { ...query(), estimateRevision: 1 }, NOW, { env: ENV, enabled: true }), 'lineage_mismatch');
+    assert.equal(f.writes.length, 1);
+  }
+});
+
+test('missing or corrupted revision heads block receipts and duplicate approvals without repair', async () => {
+  for (const corrupt of ['missing', 'behind', 'digest', 'missing-target']) {
+    const f = fixture(), body = await input(f); await save(f, body);
+    const key = [...f.rows.keys()].find(key => key.startsWith(C.heads + '/'));
+    if (corrupt === 'missing') f.rows.delete(key);
+    else if (corrupt === 'behind') f.rows.get(key).estimateRevision = 0;
+    else if (corrupt === 'digest') f.rows.get(key).contentDigest = 'b'.repeat(64);
+    else { f.rows.get(key).estimateRevision = 2; f.rows.get(key).snapshotId = quoteDocumentSnapshotId('job1', 'service_agreement', 2); }
+    await rejects(save(f, body), 'snapshot_invalid');
+    await rejects(save(f, { ...body, requestId: randomUUID() }), 'snapshot_invalid');
+    await rejects(readQuoteDocument(f.store, owner, { ...query(), estimateRevision: 1 }, NOW, { env: ENV, enabled: true }), 'snapshot_invalid');
+    assert.equal(f.writes.length, 1, 'reconciliation must not silently reconstruct a head');
+  }
+});
+
 test('negative/invalid canonical money and saved installments block before any writes', async () => {
   for (const mutate of [
     f => { f.job.estimate.amountCents = -1; f.job.estimate.amount = -0.01; },
