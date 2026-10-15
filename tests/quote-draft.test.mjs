@@ -239,6 +239,7 @@ const revise = (f, jobId, change = () => {}, extra = {}) => ({ requestId: random
 
 test('review finalized before quote creation keeps provenance, crew details and a new-job note intent on replay', async () => {
   const f = fixture(), data = {customerName:'Synthetic Customer',address:'100 Fixture Lane',serviceType:'organization',scopeSummary:'Organize bins',customerConfirmed:true,addressConfirmed:true,accessReviewed:true,boundariesReviewed:true,decisionsReviewed:true,hazardsReviewed:true,damageReviewed:true,measurementsReviewed:true,equipmentReviewed:true,questionsReviewed:true,pricingReviewed:true,exclusions:'No attic work',crewSize:2,estimatedDurationMin:90,photoUnavailableReason:'Customer declined',pricingStatus:'needs_quote',pricingReviewNote:'PRIVATE price review',handoffNotes:'Keep walkway clear',hazards:['Unstable shelf'],hazardPlan:'Brace before moving',equipment:'Moving blankets',donateItems:'Blue chair'};
+  f.rows.get('jobs/w1').customerInstructions='Website inquiry (customer-reported; confirm during walkthrough)\nGarage size: 2 car\nRequested service: Organization';
   await saveWalkthroughReview(f.store, owner, {jobId:'w1',action:'finalize',requestId:randomUUID(),expectedRevision:0,data}, NOW, {env:ENV});
   const source = structuredClone(f.rows.get('jobs/w1')), input = f.input();
   const result = await save(f, input), job = f.job(result.job.id), crew = crewJobProjection(job);
@@ -250,6 +251,7 @@ test('review finalized before quote creation keeps provenance, crew details and 
   assert.doesNotMatch(job.walkthroughCaptureSync.body, /PRIVATE/);
   assert.equal(crew.walkthroughBrief.find(item=>item.label==='Donate').text,'Blue chair');
   assert.equal(crew.scope,'Keep walkway clear');
+  assert.equal(crew.customerInstructions,source.customerInstructions,'native inquiry context survives approved quote conversion into the crew brief');
   const before = f.calls.length, replay = await save(f,input);
   assert.equal(replay.job.id,job.id);assert.equal(f.calls.length,before);
   assert.deepEqual(f.rows.get('jobs/w1'),source);

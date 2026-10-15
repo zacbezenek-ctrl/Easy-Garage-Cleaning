@@ -1035,6 +1035,7 @@ function openJob(job=null,options={}) {
     if(['job','walkthrough'].includes(prefill.kind)){type.value=prefill.kind;type.dispatchEvent(new Event('change'));}
     if(typeof prefill.address==='string'&&prefill.address)address.value=prefill.address;
     if(typeof prefill.service==='string'&&prefill.service){service.value=prefill.service;service.dispatchEvent(new Event('input'));}
+    if(typeof prefill.customerInstructions==='string')model.form.elements.customerInstructions.value=prefill.customerInstructions.slice(0,4000);
     const slot=prefill.slot,said=slot?'The customer asked for '+slot.label+(SLOT_WORDS[slot.state]||'. Confirm the exact time with them.'):prefill.requestedSlotText?'The customer asked for: '+prefill.requestedSlotText+'. Agree the time with them.':'';
     if(said)model.fields.prepend(h('div',{class:'dp-wide'},notice(said)));
     if(typeof prefill.customerId==='string'&&prefill.customerId){
