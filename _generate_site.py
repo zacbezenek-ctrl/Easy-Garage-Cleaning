@@ -2406,7 +2406,8 @@ def render_book():
     </div>
   </div>
 </section>'''
-    body += book_form + f'\n{fmt(PROCESS_HTML, process_href="#process")}\n</main>'
+    book_process = PROCESS_HTML.replace("Choose a convenient window online, call", "Request a free walkthrough online, call")
+    body += book_form + f'\n{fmt(book_process, process_href="#process")}\n</main>'
     page = page_shell(title, desc, canonical, schema, body, quote_href="#quote", process_href="#process", pricing_href="/pricing.html")
     if SITE_FORMS_SCRIPT_SRC not in page:
         raise RuntimeError("book.html lost its site-forms.js tag; booking-slots.js must load before it")
