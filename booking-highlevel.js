@@ -10,6 +10,28 @@
         !url.username && !url.password && !url.port ? url.href : null;
     } catch { return null; }
   }
+  // Reuse the campaign values the existing capture script already retains.
+  // Never forward arbitrary page query data, contact details, tokens, or cookies.
+  function attributedUrl(value, pageUrl, storage) {
+    const base = verifiedUrl(value);
+    if (!base) return null;
+    let query;
+    try { query = new URL(pageUrl === undefined ? root.location.href : pageUrl).searchParams; }
+    catch { query = new URLSearchParams(); }
+    if (storage === undefined) { try { storage = root.localStorage; } catch {} }
+    const target = new URL(base);
+    for (const key of ['utm_source', 'utm_medium', 'utm_campaign', 'utm_content', 'utm_term', 'fbclid', 'gclid', 'msclkid']) {
+      const values = query.getAll(key);
+      if (values.length > 1) continue;
+      let candidate = values[0];
+      if (candidate === undefined) { try { candidate = storage?.getItem('egc_' + key); } catch {} }
+      if (typeof candidate === 'string' && candidate.length <= 512 && candidate.trim() && !/[\u0000-\u001f\u007f]/.test(candidate)) {
+        target.searchParams.set(key, candidate);
+        if (target.href.length > 4096) target.searchParams.delete(key);
+      }
+    }
+    return target.href;
+  }
   function mount(card) {
     const url = verifiedUrl(card.dataset.highlevelFormUrl);
     if (!url || card.querySelector('.ghl-booking')) return;
@@ -47,7 +69,7 @@
       status.textContent = 'Loading the request form…';
       // A load event cannot prove a cross-origin form rendered or submitted.
       timer = setTimeout(() => { status.textContent = 'Taking longer than expected? Reload or use the standard form below. If you already submitted, call us before sending another request.'; }, 15000);
-      frame.src = url;
+      frame.src = attributedUrl(url);
     };
     frame.addEventListener('load', () => {
       clearTimeout(timer);
@@ -61,6 +83,6 @@
     card.classList.add('ghl-enabled');
     card.prepend(shell); load();
   }
-  root.EGCBookingHighLevel = Object.freeze({ verifiedUrl, mount });
+  root.EGCBookingHighLevel = Object.freeze({ verifiedUrl, attributedUrl, mount });
   if (typeof document !== 'undefined') document.querySelectorAll('.book-page .quote-form[data-highlevel-form-url]').forEach(mount);
 })(globalThis);

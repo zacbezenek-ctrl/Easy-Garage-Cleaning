@@ -5,7 +5,7 @@ import vm from 'node:vm';
 const source = fs.readFileSync(new URL('../booking-highlevel.js', import.meta.url), 'utf8');
 function setup() {
   let timeout;
-  const context = { URL, setTimeout(fn) { timeout = fn; return 1; }, clearTimeout() {}, };
+  const context = { URL, URLSearchParams, setTimeout(fn) { timeout = fn; return 1; }, clearTimeout() {}, };
   vm.runInNewContext(source, context);
   function element(tag) {
     return { tag, children: [], hidden: false, attrs: {}, events: {},
@@ -30,6 +30,24 @@ test('only verified vendor and EGC branded embed hosts are accepted', () => {
   const { api } = setup();
   assert.equal(api.verifiedUrl('https://links.easygaragecleaning.com/widget/form/fixture'), 'https://links.easygaragecleaning.com/widget/form/fixture');
   assert.equal(api.verifiedUrl('https://links.easygaragecleaning.com.evil.example/widget/form/fixture'), null);
+});
+
+test('native embed forwards only bounded campaign context and never private page fields or cookies', () => {
+  const { api } = setup(), base = 'https://links.easygaragecleaning.com/widget/form/fixture';
+  const stored = { egc_utm_medium: 'qa', egc_fbclid: 'existing-click', egc_fbc: 'private-cookie', egc_phone: 'private-phone' };
+  const url = new URL(api.attributedUrl(base, 'https://easygaragecleaning.com/book?utm_source=egc-qa&utm_campaign=readiness&phone=private&token=secret#private', { getItem: key => stored[key] }));
+  assert.deepEqual(Object.fromEntries(url.searchParams), { utm_source: 'egc-qa', utm_medium: 'qa', utm_campaign: 'readiness', fbclid: 'existing-click' });
+  assert.doesNotMatch(url.href, /private|secret|[?&]fbc=|phone|token/);
+  assert.equal(api.attributedUrl(base + '?phone=private', 'https://easygaragecleaning.com/book', null), null);
+});
+
+test('ambiguous or invalid campaign values are omitted and unavailable storage stays usable', () => {
+  const { api } = setup(), base = 'https://links.easygaragecleaning.com/widget/form/fixture';
+  const url = new URL(api.attributedUrl(base, 'https://easygaragecleaning.com/book?utm_source=one&utm_source=two&utm_medium=%0Aqa&utm_campaign=' + 'x'.repeat(513), { getItem() { throw new Error('blocked'); } }));
+  assert.equal(url.search, '');
+  assert.equal(api.attributedUrl(base, undefined, null), base);
+  const encoded = api.attributedUrl(base, 'https://easygaragecleaning.com/book', { getItem: () => '語'.repeat(512) });
+  assert.ok(encoded.length <= 4096, 'encoded attribution cannot exceed the iframe URL budget');
 });
 test('embed recovery preserves existing form and never declares submission success', () => {
   const { api, card, original, timeout } = setup();
