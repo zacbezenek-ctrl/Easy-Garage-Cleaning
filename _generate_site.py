@@ -2412,8 +2412,8 @@ def render_book():
     if SITE_FORMS_SCRIPT_SRC not in page:
         raise RuntimeError("book.html lost its site-forms.js tag; booking-slots.js must load before it")
     page = page.replace(SITE_FORMS_SCRIPT_SRC, booking_slots_script() + SITE_FORMS_SCRIPT_SRC, 1)
-    page = page.replace('</head>', '<link rel="stylesheet" href="/booking-highlevel.css?v=20261014">\n</head>')
-    page = page.replace('</body>', '<script src="/booking-highlevel.js?v=20261014" defer></script>\n</body>')
+    page = page.replace('</head>', '<link rel="stylesheet" href="/booking-highlevel.css?v=20261015-brand">\n</head>')
+    page = page.replace('</body>', '<script src="/booking-highlevel.js?v=20261015-brand" defer></script>\n</body>')
     return page.replace('<body>', '<body class="book-page">', 1)
 
 

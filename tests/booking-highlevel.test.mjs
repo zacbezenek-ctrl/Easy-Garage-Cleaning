@@ -15,9 +15,15 @@ function setup() {
   }
   const original = element('form');
   const card = { dataset: {}, classList: { add() {}, remove() {} }, children: [original], ownerDocument: { createElement: element },
-    querySelector(selector) { return selector === '.ghl-booking' ? null : original; },
+    querySelector(selector) { return selector === '.ghl-booking' ? (this.shell?.removed ? null : this.shell) : original; },
     prepend(node) { this.shell = node; } };
   return { api: context.EGCBookingHighLevel, card, original, timeout: () => timeout() };
+}
+function descendants(node) {
+  return [node, ...(node.children || []).flatMap(descendants)];
+}
+function byClass(node, className) {
+  return descendants(node).find(child => child.className === className);
 }
 test('absent or unverified URLs leave existing intake untouched', () => {
   const {api, card, original} = setup();
@@ -53,7 +59,9 @@ test('embed recovery preserves existing form and never declares submission succe
   const { api, card, original, timeout } = setup();
   card.dataset.highlevelFormUrl = 'https://api.leadconnectorhq.com/widget/form/verifiedFixture';
   api.mount(card);
-  const [, , status, retry, fallback, , frame] = card.shell.children;
+  const status = byClass(card.shell, 'ghl-booking-status');
+  const frame = byClass(card.shell, 'ghl-booking-frame');
+  const [retry, fallback] = byClass(card.shell, 'ghl-booking-actions').children;
   assert.equal(original.hidden, true);
   assert.equal(frame.title, 'Easy Garage Cleaning walkthrough request');
   timeout(); assert.match(status.textContent, /Taking longer/);
@@ -63,6 +71,39 @@ test('embed recovery preserves existing form and never declares submission succe
   frame.events.error(); assert.match(status.textContent, /could not load/);
   fallback.events.click(); assert.equal(original.hidden, false);
   assert.equal(original.focused, true); assert.equal(frame.src, undefined);
+});
+test('branded wrapper keeps the native form and safe direct fallback together', () => {
+  const { api, card } = setup();
+  card.dataset.highlevelFormUrl = 'https://links.easygaragecleaning.com/widget/form/DeiRNO6itxjLiTk3Nkj0';
+  api.mount(card);
+  const logo = byClass(card.shell, 'ghl-booking-logo');
+  assert.equal(logo.alt, 'Easy Garage Cleaning');
+  assert.equal(logo.src, '/images/brand/egc-logo-horizontal-white-368.png');
+  const frame = byClass(card.shell, 'ghl-booking-frame');
+  const direct = byClass(card.shell, 'ghl-booking-direct');
+  assert.equal(frame.src, card.dataset.highlevelFormUrl);
+  assert.equal(direct.href, frame.src);
+  assert.equal(direct.target, '_blank');
+  assert.equal(direct.rel, 'noopener noreferrer');
+  assert.equal(byClass(card.shell, 'ghl-booking-recovery').tag, 'details');
+  assert.match(byClass(card.shell, 'ghl-booking-note').textContent, /does not confirm an appointment/);
+  assert.match(byClass(card.shell, 'ghl-booking-eyebrow').textContent, /Junk removal/);
+  assert.equal(descendants(card.shell).filter(node => node.tag === 'input' || node.tag === 'form').length, 0,
+    'the wrapper must not duplicate contact fields or consent outside the native form');
+  assert.equal(frame.events.message, undefined, 'no inferred cross-origin success handling');
+});
+test('mount is idempotent and recovery preserves pre-existing hidden state', () => {
+  const { api, card, original } = setup();
+  const alreadyHidden = { hidden: true };
+  card.children.push(alreadyHidden);
+  card.dataset.highlevelFormUrl = 'https://links.easygaragecleaning.com/widget/form/DeiRNO6itxjLiTk3Nkj0';
+  api.mount(card);
+  const shell = card.shell;
+  api.mount(card);
+  assert.equal(card.shell, shell);
+  byClass(shell, 'ghl-booking-actions').children[1].events.click();
+  assert.equal(original.hidden, false);
+  assert.equal(alreadyHidden.hidden, true);
 });
 test('live page and generator load enhancement without enabling an unverified form', () => {
   for (const filename of ['book.html', '_generate_site.py']) {
