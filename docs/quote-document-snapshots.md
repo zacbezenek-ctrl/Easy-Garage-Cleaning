@@ -128,6 +128,10 @@ Historical reads and receipt replays also require a present, consistent revision
 head whose target snapshot exists and matches its digest. A missing or corrupt
 head requires explicit reconciliation; replay never silently reconstructs it or
 claims success from an orphaned snapshot.
+Creating a newer estimate snapshot also validates the existing head and its
+target before advancing the index. The prior snapshot revision is included in
+the transaction's read checks, so corruption or a concurrent change cannot be
+hidden by an otherwise valid revision upgrade.
 
 Two jobs sharing one contact have different keys and heads. No quoted values are
 stored in mutable shared contact fields.

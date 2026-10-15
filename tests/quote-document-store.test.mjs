@@ -141,12 +141,45 @@ test('new estimate revision makes a new snapshot and never overwrites the earlie
   await rejects(save(f, await input(f)), 'revision_stale');
 });
 
+test('advancing to a new snapshot refuses a corrupt prior head or target without repairing it', async () => {
+  for (const corrupt of ['digest', 'pointer', 'missing-target', 'target-content']) {
+    const f = fixture(), first = await save(f, await input(f));
+    const headKey = [...f.rows.keys()].find(key => key.startsWith(C.heads + '/'));
+    const snapshotKey = `${C.snapshots}/${first.snapshot.snapshotId}`;
+    if (corrupt === 'digest') f.rows.get(headKey).contentDigest = 'b'.repeat(64);
+    else if (corrupt === 'pointer') f.rows.get(headKey).snapshotId = 'wrong-pointer';
+    else if (corrupt === 'missing-target') f.rows.delete(snapshotKey);
+    else f.rows.get(snapshotKey).draft.display.total = '$0.01';
+    const preserved = clone([...f.rows]);
+    f.job.estimate.revision = 2; f.job.revision = 'j2'; f.context.estimateRevision = 2; f.context.revision = 'ctx2';
+    await rejects(save(f, await input(f)), 'snapshot_invalid');
+    assert.equal(f.writes.length, 1, 'no revision 2 snapshot, approval, head, receipt or audit is written');
+    for (const [key, value] of preserved) if (!['jobs/job1', `${C.contexts}/job1`].includes(key)) assert.deepEqual(f.rows.get(key), value, key);
+    assert.equal(f.rows.has(`${C.snapshots}/${quoteDocumentSnapshotId('job1', 'service_agreement', 2)}`), false);
+  }
+});
+
+test('revision advance transaction rechecks the prior snapshot before replacing the head', async () => {
+  const f = fixture(), first = await save(f, await input(f));
+  f.job.estimate.revision = 2; f.job.revision = 'j2'; f.context.estimateRevision = 2; f.context.revision = 'ctx2';
+  const body = await input(f); let changed = false;
+  f.before(async () => {
+    if (changed) return; changed = true;
+    const prior = f.rows.get(`${C.snapshots}/${first.snapshot.snapshotId}`);
+    prior.revision = 'snapshot-raced'; prior.draft.display.total = '$0.01';
+  });
+  await rejects(save(f, body), 'snapshot_invalid');
+  assert.equal(f.writes.length, 1);
+  assert.equal(f.rows.has(`${C.snapshots}/${quoteDocumentSnapshotId('job1', 'service_agreement', 2)}`), false);
+});
+
 test('a concurrent newer head prevents an old revision from claiming a snapshot', async () => {
-  const f = fixture(), body = await input(f); let changed = false;
+  const f = fixture(), body = await input(f), newer = fixture(); let changed = false;
+  newer.job.estimate.revision = 2; newer.job.revision = 'j2'; newer.context.estimateRevision = 2; newer.context.revision = 'ctx2';
+  await save(newer, await input(newer));
   f.before(async writes => {
     if (changed) return; changed = true;
-    const head = writes.find(w => w.collection === C.heads);
-    f.rows.set(`${C.heads}/${head.id}`, { ...head.patch, id: head.id, revision: 'head-raced', estimateRevision: 2 });
+    for (const [key, row] of newer.rows) if (key.startsWith(C.heads + '/') || key.startsWith(C.snapshots + '/')) f.rows.set(key, clone(row));
   });
   await rejects(save(f, body), 'revision_stale');
   assert.equal(f.writes.length, 0);

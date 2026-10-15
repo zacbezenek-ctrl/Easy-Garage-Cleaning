@@ -184,12 +184,17 @@ export async function approveQuoteDocument(store, actor, input, now, { env = {},
   if (input.expectedJobRevision !== b.jobRevision || input.expectedEstimateRevision !== b.estimateRevision || input.expectedEstimateFingerprint !== b.estimateFingerprint || input.expectedContextRevision !== loaded.context.revision || input.expectedContextDigest !== b.contextDigest) throw fail('revision_conflict', 'The quote or reviewed terms changed. Reload and review again.');
   const snapshotId = quoteDocumentSnapshotId(a.job.id, input.documentKind, b.estimateRevision), indexId = headId(a.job.id, input.documentKind);
   const [existing, head] = await Promise.all([store.read(C.snapshots, snapshotId), store.read(C.heads, indexId)]);
+  let priorHeadSnapshot = null;
   if (head && (head.jobId !== a.job.id || head.documentKind !== input.documentKind || !Number.isSafeInteger(head.estimateRevision))) throw fail('snapshot_invalid', 'The document revision index needs reconciliation.');
   if (head && !existing && head.estimateRevision === b.estimateRevision) throw fail('snapshot_invalid', 'The indexed snapshot is missing.');
   if (existing) {
     savedRecord(existing, a.job, input.documentKind, b.estimateRevision);
     await requireSavedHead(store, existing, a.job, head);
     if (!same(existing.binding, b)) throw fail('revision_conflict', 'Different content already owns this document revision. Preserve it and review a new canonical revision.');
+  } else if (head) {
+    // Advancing a revision must not silently repair or conceal a corrupt head.
+    priorHeadSnapshot = savedRecord(await store.read(C.snapshots, quoteDocumentSnapshotId(a.job.id, input.documentKind, head.estimateRevision)), a.job, input.documentKind, head.estimateRevision);
+    await requireSavedHead(store, priorHeadSnapshot, a.job, head);
   }
   if (head && head.estimateRevision > b.estimateRevision) throw fail('revision_stale', 'A newer document revision is already saved.');
   const approval = existing?.approval || { status: 'approved', approvedBy: actorKey(actor.user), approvedAt: now, evidenceId: snapshotId, binding: b };
@@ -200,6 +205,7 @@ export async function approveQuoteDocument(store, actor, input, now, { env = {},
   const row = existing || { schemaVersion: 1, jobId: a.job.id, customerId: a.job.customerId, documentKind: input.documentKind, estimateRevision: b.estimateRevision, binding: b, contextRevision: loaded.context.revision, contentDigest: draft.contentDigest, approval, draft: savedDraft, draftDigest: hash(savedDraft), createdAt: now };
   if (new TextEncoder().encode(JSON.stringify(row)).byteLength > 512000) throw fail('snapshot_too_large', 'The document snapshot exceeds its storage limit.');
   const writes = [...loaded.sources, { collection: C.receipts, id: requestId, patch: { schemaVersion: 1, actorId: actorKey(actor.user), requestDigest, snapshotId, contentDigest: row.contentDigest, jobId: a.job.id, createdAt: now } }];
+  if (priorHeadSnapshot) writes.push(verify(C.snapshots, priorHeadSnapshot));
   if (existing) {
     writes.push(verify(C.snapshots, existing));
     if (head) writes.push(verify(C.heads, checkRecord(head)));
