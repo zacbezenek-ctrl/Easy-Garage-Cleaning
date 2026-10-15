@@ -47,14 +47,15 @@
     <label for="pass">Password</label>
     <input id="pass" name="password" type="password" autocomplete="current-password" required>
     <button type="submit" id="sl-submit" disabled aria-busy="true">Sign in</button>
+    <pre class="dest" id="sl-verification" role="status" aria-live="polite" style="white-space:pre-wrap" hidden></pre>
     <noscript><p class="error">Staff sign-in needs JavaScript. Turn it on and reload this page.</p></noscript>
-    <div class="links">
+    <div class="links" id="sl-links">
       <a href="/employee-signup">New employee? Create your account</a>
       <a href="/crew/">Crew tools sign-in</a>
     </div>
   </form>
 </main>
 <script src="/crew/hub-auth.js?v=20260904c"></script>
-<script type="module" src="/staff-login.js?v=20260928gate"></script>
+<script type="module" src="/staff-login.js?v=20261015verify"></script>
 </body>
 </html>

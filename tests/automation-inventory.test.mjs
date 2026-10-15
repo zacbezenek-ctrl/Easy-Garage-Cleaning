@@ -41,6 +41,17 @@ test('the generated owner document matches the registry', async () => {
   assert.equal(readFileSync(join(REPO_ROOT, DOC), 'utf8'), renderRegistryMarkdown(AUTOMATION_REGISTRY, await registryHash(AUTOMATION_REGISTRY)), 'run node scripts/automation-inventory.mjs --write');
 });
 
+test('staff lead verification is classified as an internal read with no sends', () => {
+  const entry = automationById(AUTOMATION_REGISTRY, 'hub.staff_lead_verification_read');
+  assert.equal(entry.classification, 'internal');
+  assert.equal(entry.disposition, 'internal');
+  assert.equal(entry.channel, 'none');
+  assert.equal(entry.contentSource, 'none');
+  assert.equal(entry.sendsToday, 'no');
+  assert.deepEqual(entry.code, [{ file: 'staff-login.js', signature: 'hub_send_endpoint_call' }]);
+  assert.equal(scan.inventory['staff-login.js'].hub_send_endpoint_call, 1);
+});
+
 test('the scanner finds a new send path anywhere in the Hub, crew pages or platform, and skips tests and the registry itself', () => {
   const root = tree({
     'functions/api/new-send.js': "const tags=['egc-new-thing',`egc-${kind}-done`];await fetch(API+'/conversations/messages',{method:'POST'});await fetch(API+`/contacts/${id}/tags`,{method:'POST'});const hook=env.NEW_LEAD_WEBHOOK_URL;",

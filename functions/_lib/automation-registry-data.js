@@ -305,6 +305,10 @@ export const AUTOMATION_REGISTRY = deepFreeze({
       contentSource: 'none', classification: 'internal', disposition: 'internal', sendsToday: 'yes', speedToLead: 'none', code: code('functions/api/customer-portal.js', 'hub_send_helper_call'), evidence: ['functions/api/customer-portal.js'] }),
     entry({ id: 'hub.client_hub_help_internal_comment', name: 'Client hub help request as a HighLevel internal comment', system: 'hub', trigger: 'Client hub help form (flow_type client_hub_help) through /api/web-lead', audience: 'staff', channel: 'none',
       contentSource: 'none', classification: 'internal', disposition: 'internal', sendsToday: 'yes', speedToLead: 'none', code: [...code(WEB_LEAD_INTAKE, 'ghl_message_send'), ...code('customer-portal.html', 'hub_send_endpoint_call')], evidence: [WEB_LEAD, WEB_LEAD_INTAKE] }),
+    entry({ id: 'hub.staff_lead_verification_read', name: 'Staff sign-in read-only lead verification', system: 'hub', trigger: 'A valid verifyLead contact ID on the staff sign-in page, after an existing authorized session check or explicit sign-in, issues GET /api/highlevel?view=lead&contactId=... and stays on the sign-in page',
+      audience: 'staff', channel: 'none', contentSource: 'none', classification: 'internal', disposition: 'internal', sendsToday: 'no', speedToLead: 'none',
+      code: code('staff-login.js', 'hub_send_endpoint_call'), evidence: ['staff-login.js', 'tests/staff-page-gate.test.mjs', 'tests/browser/test_staff_gate_ui.py'],
+      notes: 'Read-only GET under existing endpoint authorization. Displays only contact ID, name, source, garage size and requested service. No message, booking, task, workflow enrollment, dashboard navigation or outbox replay. The scanner conservatively counts the shared endpoint as a send signature.' }),
     entry({ id: 'hub.highlevel_reads', name: 'HighLevel reads (contact verification, the Hub HighLevel views and the service-line suggestion)', system: 'hub', trigger: 'Contact verification before a customer link, GET /api/highlevel views (contacts, schedule, command, walkthroughs, and lead: one contact and its notes for booking) from the Hub, the dispatch New customer search and crew pages, and GET /api/funnel-dimensions reading the lead-form field when FUNNEL_GHL_SERVICE_LINE_PREFILL_ENABLED is exactly "true" (FUN-29)',
       audience: 'none', channel: 'none', contentSource: 'none', classification: 'internal', disposition: 'internal', sendsToday: 'yes', speedToLead: 'none',
       code: [...code('functions/_lib/customer-resolution.js', 'ghl_contact_write'), ...code('functions/_lib/funnel-dimensions.js', 'ghl_contact_write'), ...code(SUITE, 'hub_send_endpoint_call'), ...code('employee-dispatch.js', 'hub_send_endpoint_call'), ...code(HL, 'ghl_note_task_write'), ...code('crew/gameplan.html', 'hub_send_endpoint_call'), ...code('crew/prejob.html', 'hub_send_endpoint_call'), ...code('crew/postjob.html', 'hub_send_endpoint_call')],
@@ -418,6 +422,7 @@ export const AUTOMATION_REGISTRY = deepFreeze({
   ],
   // Exact send-path occurrences scanned by scripts/automation-inventory.mjs (--scan prints the current values).
   codeInventory: {
+    'staff-login.js': { hub_send_endpoint_call: 1 },
     'crew/gameplan-handoff.js': { hub_send_endpoint_call: 1 },
     'crew/gameplan.html': { hub_send_endpoint_call: 2 },
     'crew/postjob.html': { hub_lifecycle_trigger: 1, hub_send_endpoint_call: 3 },

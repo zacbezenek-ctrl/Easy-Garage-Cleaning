@@ -31,7 +31,9 @@ const CSP = [
   "img-src 'self' data: blob: https:",
   "media-src 'self' blob: https:",
   "connect-src 'self' https://*.googleapis.com https://*.firebaseio.com https://*.firebaseapp.com https://api.web3forms.com https://www.google-analytics.com https://region1.google-analytics.com https://www.googletagmanager.com https://*.clarity.ms https://connect.facebook.net",
-  "frame-src 'self' https://www.youtube-nocookie.com https://www.youtube.com https://maps.google.com https://www.google.com https://js.stripe.com https://checkout.stripe.com https://www.googletagmanager.com",
+  // The branded HighLevel form owns its scripts and submissions inside this cross-origin frame.
+  // This permission does not enable the public embed or grant parent-page script/network access.
+  "frame-src 'self' https://www.youtube-nocookie.com https://www.youtube.com https://maps.google.com https://www.google.com https://js.stripe.com https://checkout.stripe.com https://www.googletagmanager.com https://links.easygaragecleaning.com",
   "upgrade-insecure-requests",
 ].join('; ');
 
