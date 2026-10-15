@@ -105,6 +105,30 @@ test('mount is idempotent and recovery preserves pre-existing hidden state', () 
   assert.equal(original.hidden, false);
   assert.equal(alreadyHidden.hidden, true);
 });
+test('recovery returns focus to the selected service instead of skipping to Next', () => {
+  const { api, card, original } = setup();
+  const selectedService = { focused: false, focus() { this.focused = true; } };
+  const query = card.querySelector.bind(card);
+  card.querySelector = selector => selector === '.form-panel.active input[type="radio"]:checked'
+    ? selectedService : query(selector);
+  card.dataset.highlevelFormUrl = 'https://links.easygaragecleaning.com/widget/form/DeiRNO6itxjLiTk3Nkj0';
+  api.mount(card);
+  byClass(card.shell, 'ghl-booking-actions').children[1].events.click();
+  assert.equal(selectedService.focused, true);
+  assert.equal(original.focused, undefined, 'the selected choice takes priority over later fields');
+  assert.equal(original.hidden, false);
+});
+test('recovery still focuses the first available field if no choice is selected', () => {
+  const { api, card, original } = setup();
+  const query = card.querySelector.bind(card);
+  card.querySelector = selector => selector === '.form-panel.active input[type="radio"]:checked'
+    ? null : query(selector);
+  card.dataset.highlevelFormUrl = 'https://links.easygaragecleaning.com/widget/form/DeiRNO6itxjLiTk3Nkj0';
+  api.mount(card);
+  byClass(card.shell, 'ghl-booking-actions').children[1].events.click();
+  assert.equal(original.focused, true);
+  assert.equal(original.hidden, false);
+});
 test('live page and generator load enhancement without enabling an unverified form', () => {
   for (const filename of ['book.html', '_generate_site.py']) {
     const text = fs.readFileSync(new URL('../' + filename, import.meta.url), 'utf8');

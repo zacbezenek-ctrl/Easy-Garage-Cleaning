@@ -94,7 +94,9 @@
       clearTimeout(timer); frame.removeAttribute('src'); shell.remove();
       card.classList.remove('ghl-enabled');
       children.forEach(child => { child.hidden = originalHidden.get(child); });
-      card.querySelector('.form-panel.active select, .form-panel.active input:not([type="hidden"]):not([type="radio"]), .form-panel.active button')?.focus();
+      const selectedChoice = card.querySelector('.form-panel.active input[type="radio"]:checked');
+      const firstField = selectedChoice || card.querySelector('.form-panel.active select, .form-panel.active input:not([type="hidden"]):not([type="radio"]), .form-panel.active button');
+      firstField?.focus();
     };
     const originalHidden = new Map(children.map(child => [child, child.hidden]));
     let timer;
