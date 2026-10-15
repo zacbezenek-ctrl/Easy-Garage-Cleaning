@@ -25,7 +25,10 @@
       if (values.length > 1) continue;
       let candidate = values[0];
       if (candidate === undefined) { try { candidate = storage?.getItem('egc_' + key); } catch {} }
-      if (typeof candidate === 'string' && candidate.length <= 512 && candidate.trim() && !/[\u0000-\u001f\u007f]/.test(candidate)) target.searchParams.set(key, candidate);
+      if (typeof candidate === 'string' && candidate.length <= 512 && candidate.trim() && !/[\u0000-\u001f\u007f]/.test(candidate)) {
+        target.searchParams.set(key, candidate);
+        if (target.href.length > 4096) target.searchParams.delete(key);
+      }
     }
     return target.href;
   }

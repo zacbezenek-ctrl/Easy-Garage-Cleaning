@@ -46,6 +46,8 @@ test('ambiguous or invalid campaign values are omitted and unavailable storage s
   const url = new URL(api.attributedUrl(base, 'https://easygaragecleaning.com/book?utm_source=one&utm_source=two&utm_medium=%0Aqa&utm_campaign=' + 'x'.repeat(513), { getItem() { throw new Error('blocked'); } }));
   assert.equal(url.search, '');
   assert.equal(api.attributedUrl(base, undefined, null), base);
+  const encoded = api.attributedUrl(base, 'https://easygaragecleaning.com/book', { getItem: () => '語'.repeat(512) });
+  assert.ok(encoded.length <= 4096, 'encoded attribution cannot exceed the iframe URL budget');
 });
 test('embed recovery preserves existing form and never declares submission success', () => {
   const { api, card, original, timeout } = setup();
