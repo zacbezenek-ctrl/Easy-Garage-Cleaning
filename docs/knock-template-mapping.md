@@ -85,6 +85,52 @@ The proposed exporter returns this logical structure; nulls are intentional bloc
 
 A proposal may be formatted for internal review once canonical identity, customer/jobsite, scope, selected items and complete totals match. An agreement additionally needs the exact approved legal/template version and resolved payment-policy schedule. Neither readiness level authorizes delivery. Customer release must continue through the existing explicit human confirmation and revision-bound send/acceptance gates. This PR does not call them.
 
+## Confirmed 25% / 75% mapping for both estimator paths
+
+For new standard quotes, **D2D and Facebook-direct estimator paths use the same canonical `FINAL_25_75` policy** from `functions/_lib/quote-payment-policy.js`; the lead channel does not select the percentage. The existing `/api/quote-draft` save route already supplies this policy for new Hub quote jobs. The native form must not accept editable percentage or due-rule values as authority.
+
+The total used is the final estimator-approved **saved canonical quote total**, validated against the selected service lines. A newly submitted total is an intake proposal until the authorized estimator saves/reviews it; it is neither customer contract acceptance nor money collected.
+
+| Template value | Required calculation / authority |
+| --- | --- |
+| Quote identity | `canonicalQuote.jobId`, `quoteNumber`, `estimateRevision`, `estimateFingerprint`; retain `jobRevision` too |
+| Full total | Canonical `estimate.amountCents`, after complete selected-item total matches it |
+| Deposit amount | `quotePaymentSchedule(totalCents, FINAL_25_75).depositCents`, equivalent to canonical whole-cent rounding of 25% |
+| Remaining amount | The helper's `remainderCents` = **totalCents minus depositCents**; never round 75% independently |
+| Deposit due date | Later of the verified walkthrough date and **job date minus seven calendar days** |
+| Remaining due date | Verified job date |
+| Due-date time zone | `America/Denver`, preserved in the document payload and labels |
+| Policy identity | `FINAL_25_75.version` (`2026-10-14-deposit25-v1`) for a new standard quote; persist the actual saved policy/version |
+
+Use `quotePaymentSchedule()` and `quotePaymentDates()` to prepare a new standard schedule from canonical dates. If the estimate already has an issued `paymentSchedule`, preserve it; a later schedule change requires explicit amendment review through the existing quote flow. Do not recalculate old agreements from current dates. A missing verified walkthrough date, job date, approved exception or inconsistent amount blocks complete agreement rendering.
+
+Exact rounding examples under the standard policy:
+
+| Final total | Deposit | Remaining |
+| --- | --- | --- |
+| $1,600.00 | $400.00 | $1,200.00 |
+| $1,000.01 | $250.00 | $750.01 |
+| $0.03 | $0.01 | $0.02 |
+
+Example date resolution: walkthrough October 20, job October 24 → deposit October 20; walkthrough October 10, job October 24 → deposit October 17. Remaining payment is due October 24 in both examples. These examples create no actual invoice, charge, reminder or customer request.
+
+**Preserve existing signed agreements and reviewed customer exceptions.** The above standard mapping does not migrate historical Knock deposits, unsigned legacy quote policies, signed dates or exception terms. A known exception needs its existing policy/evidence snapshot; an unknown or conflicting exception is a review blocker. Do not fill gaps by applying `FINAL_25_75` to an old record. Deposit, balance, dates and total are display/mapping facts only; this PR does not send invoices, charge customers, sign documents or activate workflows.
+
+## 9:30 AM job-start requirement: separate scheduling fix
+
+The owner now requires new job starts at or after **09:30 America/Denver**. This intake foundation does not place or reschedule Hub jobs, so enforcement is a separate scheduling change, not an untested addition to this PR. Current code still includes an 08:00 Knock default and 08:00 openings default; changing a form label or openings default alone would not enforce the rule.
+
+Proposed files and boundaries for that fix:
+
+- `functions/_lib/dispatch-service.js` (`mutateDispatch`, complete schedule validation) and `functions/_lib/operations-scheduling.js` (`mutateScheduledVisit`): enforce at the authoritative create/reschedule boundary for customer job types, including direct API callers. Do not reject unrelated edits to an unchanged historical early schedule or silently reschedule it.
+- `functions/_lib/dispatch-segments.js` (`validateSegments`): apply the job-type policy to each newly placed or time-changed work segment, not only the hull's first start. Preserve pure time parsing in `dispatch-time.js`; availability blocks and walkthroughs must not accidentally inherit a job-only rule.
+- `functions/_lib/dispatch-openings.js` and `dispatch-settings.js`: make new-job suggestions begin at the effective 09:30 floor, including callers that request 08:00. Keep historical settings readable; a settings default alone is not the security boundary.
+- `employee-dispatch.js` and its shared editor helpers: show the floor and reject early new placements before submit, using the same server-supplied policy.
+- `crew/knock-settings.js`, `crew/knock-sale.js`, `functions/_lib/knock-sales.js`: update the new-sale default/UI and authoritative sale/job-date validation together, preserving saved existing sale times. Explicit stored defaults must not permit new earlier jobs.
+- Add focused boundary tests for 09:29 rejection, 09:30 acceptance, Denver summer/winter offsets, multi-segment placement, attempted openings override, direct API/bridge bypass, and unchanged historical early jobs. Do not alter production schedules or saved settings as part of the patch.
+
+This scheduling fix remains **unimplemented** here. The template must use verified canonical job dates/times, and flag an early proposed new job for scheduling review rather than silently changing it. Crew-completion → GHL notification is owned by the separate assigned task.
+
 ## Exact gaps before real template population
 
 1. Dedicated GHL form IDs, reference field/query mappings, actual merge-field syntax, template IDs/versions and prefill/receipt acceptance are not supplied. This PR keeps all provider integration disabled.
