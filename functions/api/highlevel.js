@@ -489,7 +489,9 @@ async function nativeFormSubmissions(c, url) {
     return reply(200, { ok: true, formId: NATIVE_FORM_ID, contactId, submissions, limit: 100,
       moreAvailable: Number.isInteger(data.meta?.nextPage) && data.meta.nextPage > 1 });
   } catch (error) {
-    return reply(502, { ok: false, error: 'Native form submissions are unavailable.',
+    // Keep the diagnostic readable: the production proxy replaces 502 responses
+    // with its own HTML error page, hiding the safe provider status below.
+    return reply(424, { ok: false, error: 'Native form submissions are unavailable.',
       ...(Number.isInteger(error.status) && error.status >= 400 && error.status <= 599 ? { providerStatus: error.status } : {}) });
   }
 }

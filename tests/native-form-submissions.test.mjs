@@ -69,7 +69,7 @@ test('malformed provider responses and rows fail closed', async t => {
   for (const body of [{}, { submissions: {} }, { submissions: Array(101).fill(row()) }, { submissions: [null] },
     { submissions: [row({ contactId: undefined })] }, { submissions: [row({ id: undefined })] },
     { submissions: [row({ createdAt: 'invalid' })] }, { submissions: [row({ others: [] })] }, { submissions: [row({ others: { eventData: 'private' } })] }]) {
-    const result = await read(t, { body }); assert.equal(result.status, 502); assert.equal(result.body.submissions, undefined);
+    const result = await read(t, { body }); assert.equal(result.status, 424); assert.equal(result.body.submissions, undefined);
     assert.doesNotMatch(JSON.stringify(result.body), /private/);
   }
 });
@@ -78,7 +78,7 @@ test('provider failure exposes status only, never error detail or credential', a
   for (const status of [401, 403, 429, 503]) {
     const result = await read(t, { status, body: { message: 'private failure synthetic-ghl-key' } });
     assert.deepEqual(result.body, { ok: false, error: 'Native form submissions are unavailable.', providerStatus: status });
-    assert.equal(result.status, 502);
+    assert.equal(result.status, 424);
   }
   const result = await read(t, { networkError: true });
   assert.deepEqual(result.body, { ok: false, error: 'Native form submissions are unavailable.' });
