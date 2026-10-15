@@ -43,7 +43,7 @@
     shell.setAttribute('aria-label', 'Request a free walkthrough');
     const header = doc.createElement('header');
     header.className = 'ghl-booking-header';
-    const heading = doc.createElement('h1');
+    const heading = doc.createElement('h2');
     heading.textContent = 'Request your free walkthrough';
     const intro = doc.createElement('p');
     intro.className = 'ghl-booking-intro';

@@ -73,11 +73,23 @@ for(const path of PAGES){
 
 test('booking defaults to the existing native inquiry form and keeps explicit recovery',async({page})=>{
  await open(page,'/book.html');
+ await expect(page.locator('.booking-landing h1')).toHaveText('Make room for what matters.');
+ await expect(page.locator('#process')).toBeVisible();
+ const menu=page.locator('.nav-toggle');
+ if(await menu.isVisible()){
+  await menu.press('Enter');
+  await expect(page.locator('#nav-drawer a[href="/pricing"]')).toBeVisible();
+  await expect(page.locator('#nav-drawer a[href="/before-after"]')).toBeVisible();
+  await page.keyboard.press('Escape');
+  await expect(menu).toBeFocused();
+ }else{
+  await expect(page.locator('.nav-links a[href="/pricing"]')).toBeVisible();
+ }
  const frame=page.locator('iframe.ghl-booking-frame');
  await expect(frame).toBeVisible();
  await expect(frame).toHaveAttribute('src','https://links.easygaragecleaning.com/widget/form/DeiRNO6itxjLiTk3Nkj0');
  await expect(page.locator('form.multi-step-form')).toBeHidden();
- await expect(page.locator('.ghl-booking h1')).toHaveText('Request your free walkthrough');
+ await expect(page.locator('.ghl-booking h2')).toHaveText('Request your free walkthrough');
  await expect(page.locator('.ghl-booking-intro')).toContainText('does not book an appointment');
  await page.getByText('Need help with the form?',{exact:true}).press('Enter');
  await expect(page.getByRole('link',{name:'Open the form in a new tab',exact:true})).toHaveAttribute('href','https://links.easygaragecleaning.com/widget/form/DeiRNO6itxjLiTk3Nkj0');
