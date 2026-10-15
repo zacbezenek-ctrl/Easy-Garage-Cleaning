@@ -494,6 +494,11 @@ function formBusy(model,busy) {
 }
 async function save(model,body,success) {
   if(S.pending)return;
+  if(!model.request&&['schedule.create','schedule.update','schedule.restore'].includes(body.action)){
+    const before=S.data?.jobs?.find(job=>job.id===body.jobId)||null;
+    const problem=window.EGCBooking?.jobStartProblem(before,{...before,...body.changes,type:before?.type||body.kind},{restore:body.action==='schedule.restore'});
+    if(problem){model.status.replaceChildren(notice(problem,'error'));return;}
+  }
   if(model.request&&JSON.stringify({...body,requestId:model.request.requestId})!==JSON.stringify(model.request)) {
     model.status.replaceChildren(notice('The previous save has an unknown outcome. Retry its unchanged request before changing this draft.','error'));return;
   }
@@ -857,7 +862,8 @@ function openJob(job=null,options={}) {
   const unscheduled=h('input',{type:'checkbox',checked:job?!job.date&&!options.date:false,name:'unscheduled'});
   model.fields.append(h('label',{class:'dp-check dp-wide'},unscheduled,h('span',{},'Keep unscheduled')));
   const startDate=field(model,'date','Start date',date,'date',{required:true});
-  const startTime=field(model,'time','Start time',options.time||job?.time||'08:00','time',{required:true});
+  const startTime=field(model,'time','Start time',options.time||job?.time||(type.value==='walkthrough'?'08:00':'09:30'),'time',{required:true});
+  model.fields.append(h('small',{class:'dp-muted dp-wide'},'Job work starts at 9:30 AM or later (Mountain time). Walkthrough appointment times are separate.'));
   const endDate=field(model,'endDate','End date',options.moveTo?addDays(date,dayOffset):(options.endDate||job?.endDate||date),'date',{required:true});
   const endTime=field(model,'endTime','End time',options.endTime||job?.endTime||'10:00','time',{required:true});
   const timing=[startDate,startTime,endDate,endTime];
