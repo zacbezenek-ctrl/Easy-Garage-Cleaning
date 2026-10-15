@@ -36,6 +36,8 @@ Effective for dates **2026-10-15 onward**, new or changed starts for `job`, `cle
 
 Unchanged early starts remain intact when changing notes, crew or end time. Historical dates before the policy date are preserved; cancellations remain allowed; restoring an early future appointment requires a valid new start. The policy never silently moves appointments. Walkthroughs and company blocks are exempt. Booking/dispatch UI validates before saving and new service-job forms default to 09:30; walkthrough defaults remain independent. Capacity search may still show earlier generic openings because it also serves walkthroughs; selecting an early job opening is rejected by the booking boundary.
 
+Before extending existing recurring plans that start before 09:30, operations must review and update the plan's start time. Newly generated post-policy occurrences cannot book the earlier time; existing saved appointments are not shifted. Recurrence tests use valid 09:30 starts so they continue testing recurrence independently of the new scheduling rule.
+
 ## Verification
 
 New focused tests: `tests/crew-completion-ghl.test.mjs`, `tests/job-start-policy.test.mjs`. They cover assigned/lead access, required evidence, atomic duplicate receipts, financial separation, known refusal recovery, lost provider/final-store receipts, disabled configuration, changed contact/cancellation, 09:29 rejection/09:30 acceptance, winter/summer DST, historical preservation, split windows, UI parity and both server scheduling writers. All provider calls use synthetic fixtures; no live job or provider changes are used.
