@@ -18,7 +18,7 @@ test('curbside pickup retains its own intake and never texts a walkthrough reque
  const html=read('flat-rate-junk-removal-fort-collins-co.html');
  assert.match(html, /\$139/); assert.match(html, /4 cubic yards/);
  assert.match(html, /No walkthrough needed/);
- assert.match(html, /<form\b/); assert.match(html, /Book My \$139 Pickup/);
+ assert.match(html, /<form\b/); assert.match(html, /Request My \$139 Pickup/);
  assert.match(html, /Stage items at the curb, driveway, or open garage; we load and haul them/);
  assert.doesNotMatch(html, /you don(?:'|&rsquo;)t touch a thing|We do all lifting|(?:reply|replies|respond).*?5 minutes/i);
  assert.doesNotMatch(html, /\$400\s*(?:-|–|—|to)\s*\$?3,?500|nationals make you wait|Most national haulers|No - on-site estimate/);
