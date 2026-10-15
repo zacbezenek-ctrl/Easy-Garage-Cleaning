@@ -72,16 +72,41 @@ class DispatchQueueBrowserTests(unittest.TestCase):
         cls.browser.close(); cls.pw.stop(); cls.server.shutdown(); cls.server.server_close()
     def start(self, width=390, height=844, mobile=True):
         self.context = self.browser.new_context(viewport={'width': width, 'height': height}, is_mobile=mobile, has_touch=mobile, timezone_id='Asia/Tokyo')
+        self.context.tracing.start(screenshots=True, snapshots=True, sources=True)
         self.page = self.context.new_page(); self.page.set_default_timeout(10000); self.errors = []; self.calls = []; self.gets = []
         self.page.clock.install(time=DAY + 'T18:00:00Z')
+        self.page.add_init_script("""(() => {
+            window.dispatchSearchEvents = [];
+            for (const type of ['focusin', 'focusout', 'input']) document.addEventListener(type, event => {
+                if (event.target.getAttribute?.('aria-label') === 'Search jobs')
+                    dispatchSearchEvents.push({type, value:event.target.value, connected:event.target.isConnected, at:performance.now()});
+            }, true);
+        })();""")
         self.page.on('pageerror', lambda e: self.errors.append(str(e)))
         self.page.route('**/*', self.route)
     def setUp(self):
         self.jobs = board(); self.money = True; self.context = None
     def tearDown(self):
         if self.context:
-            self.assertEqual(self.errors, [], f'Browser errors: {self.errors}')
-            self.context.close()
+            result = self._outcome.result
+            failed = bool(self.errors) or any(case is self for case, _ in result.failures + result.errors)
+            try:
+                if failed:
+                    out = ROOT / 'test-results'; out.mkdir(exist_ok=True)
+                    name = self._testMethodName
+                    self.page.screenshot(path=str(out / f'{name}-failure.png'), full_page=True)
+                    state = self.page.evaluate("""() => ({events:window.dispatchSearchEvents || [],
+                        input:document.querySelector('[aria-label="Search jobs"]')?.value,
+                        query:window.EGCDispatch?.internals.state().query,
+                        loading:window.EGCDispatch?.internals.state().loading,
+                        rowCount:document.querySelectorAll('.dp-queue-row').length})""")
+                    (out / f'{name}-state.json').write_text(json.dumps(state, indent=2), encoding='utf-8')
+                    self.context.tracing.stop(path=str(out / f'{name}-trace.zip'))
+                else:
+                    self.context.tracing.stop()
+                self.assertEqual(self.errors, [], f'Browser errors: {self.errors}')
+            finally:
+                self.context.close()
     def route(self, route):
         req = route.request; parsed = urlparse(req.url)
         if parsed.hostname != '127.0.0.1': route.abort(); return
@@ -210,6 +235,30 @@ class DispatchQueueBrowserTests(unittest.TestCase):
         self.page.get_by_role('searchbox', name='Search jobs', exact=True).fill('')
         self.page.get_by_role('button', name='Day', exact=True).click(); expect(self.rows()).to_have_count(0)
         self.page.locator('[data-dp-queue-badge]').click(); expect(self.rows()).to_have_count(36)
+        self.assertEqual(self.calls, [])
+
+    def test_search_survives_a_refresh_between_focus_and_text_input(self):
+        self.open(width=320, height=700)
+        self.queue_button().click()
+        expect(self.rows()).to_have_count(36)
+        search = self.page.get_by_role('searchbox', name='Search jobs', exact=True)
+        # A background response can render after the field is focused but before
+        # the browser inserts text. Make that timing deterministic without sleeps.
+        search.evaluate("""input => {
+            window.queueSearchBeforeRefresh = input;
+            input.addEventListener('focus', () => void EGCDispatch.refresh(), {once:true});
+        }""")
+        search.fill('Queue 34')
+        expect(self.rows()).to_have_count(1)
+        expect(search).to_have_value('Queue 34')
+        expect(search).to_be_focused()
+        self.assertTrue(self.page.evaluate("window.queueSearchBeforeRefresh === document.querySelector('[aria-label=\"Search jobs\"]')"))
+        search.evaluate("input => input.setSelectionRange(2, 5, 'backward')")
+        self.page.evaluate("() => EGCDispatch.refresh()")
+        expect(self.rows()).to_have_count(1)
+        expect(search).to_have_value('Queue 34')
+        expect(search).to_be_focused()
+        self.assertEqual(search.evaluate("input => [input.selectionStart, input.selectionEnd, input.selectionDirection]"), [2, 5, 'backward'])
         self.assertEqual(self.calls, [])
 
     def test_a_viewer_without_money_sees_the_queue_without_deposit_chips(self):

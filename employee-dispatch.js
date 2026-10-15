@@ -454,7 +454,12 @@ function scheduleVerified(){return Boolean(S.data&&!S.loading&&!S.error&&S.data.
 function render() {
   if(!S.root||S.modal)return;
   const verified=scheduleVerified();
-  const search=h('input',{type:'search',value:S.query,placeholder:'Filter this date range',oninput:e=>setFilter('query',e.target.value),'aria-label':'Search jobs'});
+  // A read can finish between focus and text insertion. Keep the same input
+  // and restore its focus/selection so refresh never drops the pending input.
+  const currentSearch=S.root.querySelector('[data-dp-filter-search]');
+  const restoreSearch=currentSearch&&document.activeElement===currentSearch;
+  const selection=restoreSearch?[currentSearch.selectionStart,currentSearch.selectionEnd,currentSearch.selectionDirection]:null;
+  const search=currentSearch||h('input',{type:'search',value:S.query,placeholder:'Filter this date range',oninput:e=>setFilter('query',e.target.value),'aria-label':'Search jobs','data-dp-filter-search':''});
   const waiting=verified?queueCount():0,review=verified?(S.data.jobs||[]).filter(j=>queued(j)&&j.needsDispatchReview===true).length:0;
   const badge=waiting?h('button',{type:'button',class:'dp-queue-badge','data-dp-queue-badge':'',onclick:showQueue,'aria-label':waiting+' to schedule'+(review?', '+review+' need review':'')+'. Open To schedule.'},waiting+' to schedule',review?h('strong',{},' · '+review+' new'):null):null;
   S.root.replaceChildren(h('header',{class:'dp-header'},h('div',{},h('span',{class:'dp-eyebrow'},'EGC OPERATIONS'),h('div',{class:'dp-title-row'},h('h1',{},'Dispatch'),badge),h('p',{},'Schedule, assign and run the day.')),h('div',{class:'dp-header-actions'},btn('Search all jobs',openSearch,'',{disabled:!verified}),btn('Find opening',openOpenings,'',{disabled:!verified}),booker()?null:btn('Block time',()=>openBlock(),'',{disabled:!verified}),booker()?null:btn('Crews & vehicles',()=>openResources()),window.EGCRecurring&&!booker()?btn('Recurring plans',()=>window.EGCRecurring.open({onChange:()=>load({quiet:true})})):null,btn('Refresh',()=>load(),'',{disabled:S.loading}),btn('Create job',()=>openJob(),'primary',{disabled:!verified}))));
@@ -469,6 +474,7 @@ function render() {
     select([['','All employees'],...(S.data?.roster||[]).map(p=>[p.id,p.name])],S.employee,v=>setFilter('employee',v),{'aria-label':'Filter by employee'}),
     select([['','All work types'],['job','Jobs'],['walkthrough','Walkthroughs'],['blocked','Blocked time']],S.type,v=>setFilter('type',v),{'aria-label':'Filter by work type'})));
   S.root.append(h('div',{'data-dp-body':''}));renderBody();
+  if(restoreSearch){search.focus({preventScroll:true});if(selection[0]!==null&&selection[1]!==null)search.setSelectionRange(...selection);}
 }
 function modal(title,description,{recovery=false}={}) {
   if(S.modal)return null;
