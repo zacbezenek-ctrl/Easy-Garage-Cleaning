@@ -16,6 +16,31 @@ const KNOWN_NO_CAMERA={
 };
 const NARROW={width:320,height:640};
 
+test('curbside quote action reaches its form by keyboard and closes the mobile drawer',async({page})=>{
+ await open(page,'/flat-rate-junk-removal-fort-collins-co.html');
+ const original=page.url().split('#')[0],target=page.locator('#quote');
+ const desktop=page.locator('.nav-cta');
+ if(await desktop.isVisible()){
+  await desktop.focus();await page.keyboard.press('Enter');
+ }else{
+  await page.locator('.nav-toggle').click();
+  const action=page.locator('#nav-drawer .drawer-cta');
+  await action.focus();await page.keyboard.press('Enter');
+  await expect(page.locator('.nav-toggle')).toHaveAttribute('aria-expanded','false');
+  await expect(page.locator('#nav-drawer')).toHaveAttribute('aria-hidden','true');
+  expect(await page.locator('#nav-drawer').evaluate(el=>el.inert)).toBe(true);
+ }
+ await expect(page).toHaveURL(original+'#quote');
+ await expect(target).toBeFocused();
+ await expect(target.locator('form')).toBeVisible();
+ await expect.poll(async()=>{
+  const box=await target.boundingBox();
+  return box!==null&&box.y>=0&&box.y<page.viewportSize().height;
+ }).toBe(true);
+ await page.keyboard.press('Tab');
+ expect(await target.evaluate(el=>el.contains(document.activeElement))).toBe(true);
+});
+
 for(const path of PAGES){
  test.describe(path,()=>{
   test('fits the viewport with no horizontal scroll',async({page})=>{

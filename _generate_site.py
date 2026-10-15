@@ -4571,6 +4571,10 @@ def preserve_curbside_intent(text):
     # These links and forms request service; they do not confirm a pickup slot.
     text = text.replace('Request Free Walkthrough', 'Request a Quote')
     text = text.replace('Book Online', 'Request a Quote')
+    # Quote-labelled actions stay with this page's curbside intake. The separate
+    # full-service walkthrough link still goes to /book.
+    text = re.sub(r'(<a\b[^>]*\bhref=")/book("[^>]*>)(Request a Quote|Quote)(</a>)', r'\1#quote\2\3\4', text)
+    text = text.replace('id="quote" aria-labelledby="cta-heading"', 'id="quote" tabindex="-1" aria-labelledby="cta-heading"')
     text = text.replace('Book My $139 Pickup', 'Request My $139 Pickup')
     text = text.replace('Book your $139 curbside pickup', 'Request your $139 curbside pickup')
     text = text.replace('Book $139 Curbside Pickup', 'Request $139 Curbside Pickup')

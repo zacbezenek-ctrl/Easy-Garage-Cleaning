@@ -12,13 +12,19 @@ test('curbside primary actions request pickup or a quote without promising a boo
   const html = page('flat-rate-junk-removal-fort-collins-co');
   const links = anchors(html);
   const nav = links.filter(link => /(?:^|\s)(?:nav-cta|drawer-cta)(?:\s|$)/.test(link.className));
-  assert.deepEqual(nav.map(link => [link.href, link.label]), [['/book', 'Request a Quote'], ['/book', 'Request a Quote']]);
+  assert.deepEqual(nav.map(link => [link.href, link.label]), [['#quote', 'Request a Quote'], ['#quote', 'Request a Quote']]);
+  const quoteLinks = links.filter(link => /^(?:Request a Quote|Quote)$/.test(link.label));
+  assert.equal(quoteLinks.length, 4, 'nav, drawer, footer and mobile quote actions');
+  assert.ok(quoteLinks.every(link => link.href === '#quote'));
+  assert.ok(links.filter(link => link.href === '/book').every(link => /walkthrough/i.test(link.label)));
   assert.ok(links.some(link => link.href === '#quote' && link.label === 'Request My $139 Pickup'));
   const primary = links.filter(link => link.href === '#quote' || nav.includes(link));
   assert.doesNotMatch(primary.map(link => link.label).join(' '), /\b(?:book|schedule|walkthrough)\b/i);
   assert.match(html, /<h3>Request pickup<\/h3>/);
   assert.match(html, /We will contact you to confirm load size and availability\./);
   assert.doesNotMatch(html, /fastest confirmation|Book My \$139 Pickup|Book your slot/);
+  assert.equal((html.match(/\bid="quote"/g) || []).length, 1);
+  assert.match(html, /<section\b[^>]*id="quote"[^>]*tabindex="-1"[^>]*aria-labelledby="cta-heading"/);
 });
 
 test('curbside retains its two existing forms, field contracts and SMS request destination', () => {
@@ -50,6 +56,10 @@ test('curbside and full-service pricing and walkthrough requirements remain dist
   assert.ok(anchors(comparison).some(link => link.href === '/book' && link.label.startsWith('Request a free walkthrough')));
   assert.match(text(curbside), /No on-site estimate, no hourly clock/);
   assert.match(text(page('junk-removal-fort-collins-co')), /Curbside pickup is \$139 flat.*crew carries items out.*from \$675/);
+  for (const name of ['index', 'junk-removal-fort-collins-co']) {
+    const nav = anchors(page(name)).filter(link => /(?:^|\s)(?:nav-cta|drawer-cta)(?:\s|$)/.test(link.className));
+    assert.ok(nav.length > 0 && nav.every(link => link.href === '/book'), `${name} keeps its garage walkthrough navigation`);
+  }
 });
 
 test('junk metadata and contact widgets use neutral response copy without a five-minute promise', () => {
