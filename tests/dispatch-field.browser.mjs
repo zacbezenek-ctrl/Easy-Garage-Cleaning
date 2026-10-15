@@ -101,11 +101,11 @@ const createJob=async(service,start,end)=>{
 try{
  await login(managerPage,'ZacB');await managerPage.goto(base+'/dispatch.html');await managerPage.getByRole('heading',{name:'Dispatch',exact:true}).waitFor();
  await managerPage.waitForFunction(()=>document.querySelector('.dp-header-actions .primary')?.disabled===false);
- await createJob('Morning garage service','08:00','10:00');await managerPage.getByRole('dialog').waitFor({state:'detached'});
+ await createJob('Morning garage service','09:30','11:30');await managerPage.getByRole('dialog').waitFor({state:'detached'});
  const firstCard=managerPage.locator('.dp-job').filter({hasText:'Morning garage service'});await firstCard.waitFor();
  const id=new URL(await firstCard.getByRole('link',{name:'Open job',exact:true}).getAttribute('href'),base).searchParams.get('jobId');
  assert.equal((await readJob(id)).operationalScope.text,'Install shelving and preserve the heirloom cabinet.');
- await createJob('Second garage service','09:00','11:00');await managerPage.getByRole('alert').filter({hasText:'conflict'}).waitFor();
+ await createJob('Second garage service','10:00','12:00');await managerPage.getByRole('alert').filter({hasText:'conflict'}).waitFor();
  await managerPage.getByLabel('Start time',{exact:true}).fill('12:00');await managerPage.getByLabel('End time',{exact:true}).fill('14:00');
  await managerPage.getByRole('dialog').getByRole('button',{name:'Create job',exact:true}).click();await managerPage.getByRole('dialog').waitFor({state:'detached'});
  const nextCard=managerPage.locator('.dp-job').filter({hasText:'Second garage service'});
