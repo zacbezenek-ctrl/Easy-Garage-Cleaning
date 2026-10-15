@@ -6,7 +6,7 @@
       "formId": "t7xlEHRoJsl2DNBrub1A",
       "url": "https://links.easygaragecleaning.com/widget/form/t7xlEHRoJsl2DNBrub1A",
       "referenceFieldId": "d7ChXmwhqPhCSgF1l2Jz",
-      "referenceQueryKey": null,
+      "referenceQueryKey": "egc_d2d_handoff_ref",
       "acceptance": null
     },
     "walkthrough_request": null
@@ -15,6 +15,18 @@
     "name": "DRAFT EGC D2D Quote Request",
     "source": "owner-supplied draft inventory, not submission-tested",
     "observedDate": "2026-10-15",
+    "prefillEvidence": {
+      "status": "preview_verified_only",
+      "verifiedDate": "2026-10-15",
+      "source": "coordinator-reported native form builder and preview check",
+      "formId": "t7xlEHRoJsl2DNBrub1A",
+      "referenceFieldId": "d7ChXmwhqPhCSgF1l2Jz",
+      "referenceQueryKey": "egc_d2d_handoff_ref",
+      "syntheticValue": "egc-prefill-check-20261015-a",
+      "previewDisplayedExactValue": true,
+      "submissionMade": false,
+      "receiptPersistenceVerified": false
+    },
     "formId": "t7xlEHRoJsl2DNBrub1A",
     "entryChoices": ["Direct D2D quote", "Walkthrough request"],
     "fields": {
@@ -31,20 +43,22 @@
       "smsConsent": { "id": "l9OuGT9YdnpGgFzbqV8T", "key": "egc_d2d_sms_consent", "required": false, "defaultChecked": false }
     },
     "standardFields": ["first_name", "last_name", "phone", "email", "address", "city", "state", "country", "postal_code"],
-    "required": ["name", "phone", "address", "requestedService", "intakeChannel", "scope", "accessHazards", "handoffReference"],
+    "required": ["name", "phone", "address", "serviceCategory", "intakeChannel", "scope", "accessHazards", "handoffReference"],
     "emailRequiredFor": "direct_contract",
     "facebookOptionConfigured": false,
     "w19Identity": null
   },
   "blockers": [
     "configured_location_not_verified",
-    "reference_query_prefill_not_verified",
+    "reference_persistence_and_mobile_reopen_acceptance_not_verified",
     "submission_receipt_shape_not_verified",
     "existing_provider_read_access_not_verified",
     "workflow_trigger_isolation_not_verified",
     "one_shared_draft_form_but_runtime_requires_distinct_entry_forms",
     "facebook_direct_lead_source_mapping_missing",
     "canonical_quote_document_link_and_export_missing",
+    "automatic_receipt_discovery_missing",
+    "audited_handoff_claim_recovery_missing",
     "w19_identity_unknown"
   ]
 }

@@ -99,16 +99,21 @@ test('configuration is bound to both actual form mappings, existing location and
   ]) { const doc = configDocument(); change(doc); assert.equal(nativeFormConfig(doc, ENV, Date.parse(NOW)).enabled, false); }
 });
 
-test('owner-supplied draft IDs stay inert with unknown prefill and no acceptance', () => {
+test('owner-verified preview mapping stays inert without receipt acceptance', () => {
   const candidate = JSON.parse(fs.readFileSync(new URL('../config/knock-native-forms.disabled.json', import.meta.url), 'utf8'));
   assert.equal(candidate.enabled, false);
   assert.equal(candidate.forms.direct_sale.formId, 't7xlEHRoJsl2DNBrub1A');
   assert.equal(candidate.forms.direct_sale.referenceFieldId, 'd7ChXmwhqPhCSgF1l2Jz');
   assert.equal(formBaseUrl(candidate.forms.direct_sale.url, candidate.forms.direct_sale.formId), candidate.forms.direct_sale.url);
-  assert.equal(candidate.forms.direct_sale.referenceQueryKey, null, 'field key is not assumed to be a query-prefill parameter');
+  assert.equal(candidate.forms.direct_sale.referenceQueryKey, 'egc_d2d_handoff_ref', 'query key comes from the coordinator-verified preview');
   assert.equal(candidate.forms.direct_sale.acceptance, null);
   assert.equal(candidate.forms.walkthrough_request, null, 'one shared draft does not fabricate a second form');
   assert.equal(candidate.providerDraft.fields.handoffReference.key, 'egc_d2d_handoff_ref');
+  assert.equal(candidate.providerDraft.prefillEvidence.previewDisplayedExactValue, true);
+  assert.equal(candidate.providerDraft.prefillEvidence.submissionMade, false);
+  assert.equal(candidate.providerDraft.prefillEvidence.receiptPersistenceVerified, false);
+  assert.ok(candidate.providerDraft.required.includes('serviceCategory'));
+  assert.ok(!candidate.providerDraft.required.includes('requestedService'));
   assert.equal(candidate.providerDraft.fields.quotedAmountContext.authority, 'informational_only');
   assert.equal(candidate.providerDraft.fields.repDisplay.authority, 'informational_only');
   assert.equal(candidate.providerDraft.fields.smsConsent.defaultChecked, false);
