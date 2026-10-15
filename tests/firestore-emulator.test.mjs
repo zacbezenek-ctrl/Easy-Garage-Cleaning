@@ -538,7 +538,7 @@ test('actual Firestore rules isolate canonical operations from crew SDK access',
         assert.equal(target.hostname,hostname);
         return fetch(target,{...options,...(options.body ? {body:options.body.replaceAll('projects/egcw-1ec83/','projects/'+projectId+'/')} : {}),headers:{...options.headers,Authorization:'Bearer owner'}});
       });
-      const create=(customerId,changes={})=>({action:'schedule.create',requestId:crypto.randomUUID(),customerId,kind:'job',changes:{date:'2099-09-10',time:'08:00',endTime:'10:00',assignedCrew:['crew1'],jobInstructions:'Synthetic emulator work only',...changes}});
+      const create=(customerId,changes={})=>({action:'schedule.create',requestId:crypto.randomUUID(),customerId,kind:'job',changes:{date:'2099-09-10',time:'09:30',endTime:'11:30',assignedCrew:['crew1'],jobInstructions:'Synthetic emulator work only',...changes}});
       const input=create('customer');
       const accountBefore=await store.read('jobs','assigned');
       const copies=await Promise.all([mutateDispatch(store,actor,input),mutateDispatch(store,actor,input)]);
@@ -552,7 +552,7 @@ test('actual Firestore rules isolate canonical operations from crew SDK access',
       const changed=await mutateDispatch(store,actor,{action:'schedule.update',requestId:crypto.randomUUID(),jobId:job.id,expectedRevision:job.revision,changes:{date:'2099-09-11'}});
       assert.notEqual(changed.job.revision,job.revision);
       await assert.rejects(mutateDispatch(store,actor,{action:'schedule.update',requestId:crypto.randomUUID(),jobId:job.id,expectedRevision:job.revision,changes:{time:'12:00',endTime:'14:00'}}),error=>error.code==='dispatch_revision_conflict');
-      const claims=await Promise.allSettled([mutateDispatch(store,actor,create('customer',{date:'2099-09-12',assignedCrew:['crew2']})),mutateDispatch(store,actor,create('customer-two',{date:'2099-09-12',assignedCrew:['crew2'],time:'09:00',endTime:'11:00'}))]);
+      const claims=await Promise.allSettled([mutateDispatch(store,actor,create('customer',{date:'2099-09-12',assignedCrew:['crew2']})),mutateDispatch(store,actor,create('customer-two',{date:'2099-09-12',assignedCrew:['crew2'],time:'10:00',endTime:'12:00'}))]);
       assert.equal(claims.filter(result=>result.status==='fulfilled').length,1);
       const rejected=claims.find(result=>result.status==='rejected');
       assert.ok(['dispatch_conflict','dispatch_revision_conflict'].includes(rejected.reason.code),rejected.reason.code+': '+rejected.reason.message);
@@ -568,14 +568,14 @@ test('actual Firestore rules isolate canonical operations from crew SDK access',
       const unavailable=await handlers.post(availabilityRequest({action:'create',requestId:crypto.randomUUID(),changes:{date:'2099-09-14',allDay:true,reason:'Synthetic time off'}}));
       assert.equal(unavailable.status,200);const block=await unavailable.json();assert.equal(block.record.employee,'crew1');
       const {dispatchOpenings}=await import('../functions/_lib/dispatch-openings.js');
-      const capacityQuery={startDate:'2099-09-14',endDate:'2099-09-15',employeeIds:'crew1',durationMinutes:'60',travelBufferMinutes:'0'};
+      const capacityQuery={startDate:'2099-09-14',endDate:'2099-09-15',employeeIds:'crew1',durationMinutes:'60',travelBufferMinutes:'0',workdayStart:'09:30'};
       assert.deepEqual((await dispatchOpenings(store,actor,capacityQuery)).candidates,[]);
       await assert.rejects(mutateDispatch(store,actor,create('customer',{date:'2099-09-14'})),error=>error.code==='dispatch_conflict');
       const cancelled=await handlers.post(availabilityRequest({action:'cancel',requestId:crypto.randomUUID(),id:block.record.id,expectedRevision:block.record.revision}));
       assert.equal(cancelled.status,200);assert.equal((await cancelled.json()).record.status,'cancelled');
-      assert.equal((await dispatchOpenings(store,actor,capacityQuery)).candidates[0].time,'08:00');
+      assert.equal((await dispatchOpenings(store,actor,capacityQuery)).candidates[0].time,'09:30');
       assert.equal((await mutateDispatch(store,actor,create('customer',{date:'2099-09-14'}))).ok,true);
-      const capacity=await dispatchOpenings(store,actor,capacityQuery);assert.equal(capacity.candidates[0].time,'10:20');assert.ok(capacity.coverage.revision);
+      const capacity=await dispatchOpenings(store,actor,capacityQuery);assert.equal(capacity.candidates[0].time,'11:50');assert.ok(capacity.coverage.revision);
       await store.commit([{collection:'jobs',id:'assigned',revision:accountBefore.revision,patch:{lineageTestChange:true}}]);
       await assert.rejects(store.commit([{collection:'jobs',id:'assigned',revision:accountBefore.revision,verify:true},{collection:'jobs',id:'must-not-save',patch:{type:'job',customerId:'customer'}}]),error=>error.code==='dispatch_revision_conflict');
       assert.equal(await store.read('jobs','must-not-save'),null,'A stale ownership read cannot write another job.');
