@@ -129,6 +129,40 @@ class StaffGateBrowserTests(unittest.TestCase):
         page.reload()
         expect(page).to_have_url(self.url + '/staff-login?next=%2Femployee')
 
+    def test_read_only_lead_verification_never_loads_dashboard_or_writes_business_data(self):
+        calls = []
+        self.page.on('request', lambda request: calls.append((urlparse(request.url).path, request.method)))
+        self.context.route('**/api/highlevel?*', lambda route: route.fulfill(status=200, content_type='application/json', body=json.dumps({
+            'ok': True, 'lead': {'contactId': 'qa-contact', 'name': '<img src=x onerror=alert(1)>', 'phone': 'private-phone',
+            'notes': 'private-note', 'websiteInquiry': {'source': 'Website-EasyGarageCleaning', 'garageSize': '2 car', 'service': 'Organization'}}})))
+        target = self.url + '/staff-login?verifyLead=qa-contact&next=%2Femployee'
+        self.page.goto(target)
+        self.sign_in(self.page, '#user', '#pass', '#sl-submit', MANAGER)
+        expect(self.page.locator('#sl-verification')).to_contain_text('Garage size: 2 car')
+        expect(self.page).to_have_url(target)
+        expect(self.page.locator('#sl-links')).to_be_hidden()
+        expect(self.page.locator('#sl-verification img')).to_have_count(0)
+        self.assertNotIn('private-phone', self.page.locator('#sl-verification').inner_text())
+        self.assertNotIn('private-note', self.page.locator('#sl-verification').inner_text())
+        self.assertEqual(self.page.locator('#pass').input_value(), '')
+        self.assert_mobile_form(self.page, '#user', '#pass', '#sl-submit')
+        self.page.reload()
+        expect(self.page.locator('#sl-verification')).to_contain_text('Requested service: Organization')
+        expect(self.page).to_have_url(target)
+        self.assertFalse(any(path.startswith(('/employee', '/crew/field-outbox')) for path, method in calls))
+        self.assertEqual([(path, method) for path, method in calls if method != 'GET'], [('/api/hub-auth', 'POST')])
+        self.page.screenshot(path=str(OUT / 'read-only-lead.png'), full_page=True)
+
+    def test_invalid_verification_link_does_not_sign_in_or_navigate(self):
+        calls = []
+        self.page.on('request', lambda request: calls.append((urlparse(request.url).path, request.method)))
+        target = self.url + '/staff-login?verifyLead=&next=%2Femployee'
+        self.page.goto(target)
+        expect(self.page.get_by_role('alert')).to_contain_text('Invalid lead verification link')
+        expect(self.page.locator('#sl-submit')).to_be_disabled()
+        expect(self.page).to_have_url(target)
+        self.assertFalse(any(path.startswith('/api/') or path.startswith('/employee') for path, method in calls))
+
     def test_staff_scripts_answer_401_signed_out(self):
         page = self.page
         page.goto(self.url + '/staff-login')

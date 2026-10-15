@@ -12,7 +12,7 @@ import { STAFF_GATED_PATHS, STAFF_PUBLIC_PATHS, safeStaffNext, staffGatedPath } 
 import { sourceFiles } from './source-files.mjs';
 
 const root = fileURLToPath(new URL('..', import.meta.url));
-const read = path => readFileSync(join(root, path), 'utf8');
+const read = path => readFileSync(join(root, path), 'utf8').replace(/\r\n/g, '\n');
 const NOW = Date.parse('2026-09-28T16:00:00.000Z');
 const HOURS_12 = 12 * 60 * 60 * 1000;
 const ORIGIN = 'https://easygaragecleaning.com';
@@ -415,9 +415,11 @@ function tabStorage({ blocked = false } = {}) {
 }
 const settle = async () => { for (let i = 0; i < 20; i++) await new Promise(resolve => setImmediate(resolve)); };
 
-async function staffLogin(t, { search = '', form = true, session = 'none', storage = tabStorage(), signIn = async () => 'synthetic.crew' } = {}) {
+async function staffLogin(t, { search = '', form = true, session = 'none', storage = tabStorage(), signIn = async () => 'synthetic.crew', leadResponse = { ok: true, lead: { contactId: 'qa-contact', name: 'QA', websiteInquiry: { source: 'Website-EasyGarageCleaning', garageSize: '2 car', service: 'Organization' } } }, leadStatus = 200 } = {}) {
   const replaced = [], initialized = [], signIns = [], checks = [];
   const nodes = {
+    'sl-links': { hidden: false },
+    'sl-verification': { hidden: true, textContent: '' },
     'login-error': { hidden: true, textContent: '' },
     'sl-submit': { disabled: true, textContent: 'Sign in', attributes: { 'aria-busy': 'true' }, setAttribute(name, value) { this.attributes[name] = value; } },
     'sl-next': { hidden: true, children: [], replaceChildren(...children) { this.children = children; } },
@@ -430,6 +432,7 @@ async function staffLogin(t, { search = '', form = true, session = 'none', stora
     EGCHubAuth: { signIn: (...args) => { signIns.push(args); return signIn(...args); } },
     fetch: async (url, init = {}) => {
       checks.push([url, init.method || 'GET', init.credentials, init.cache]);
+      if (url.startsWith('/api/highlevel?')) return Response.json(leadResponse, { status: leadStatus });
       if (session === 'offline') throw new TypeError('Failed to fetch');
       return session === 'signed-in' ? Response.json({ ok: true, user: 'synthetic.crew' }) : Response.json({ ok: false, error: 'Sign in required' }, { status: 401 });
     },
@@ -580,5 +583,39 @@ test('the crew sign-in follows a safe next after signing in or on a restored ses
         assert.deepEqual(calls.slice(-2), [['signOut'], ['reload']], 'Sign in again signs out and reloads with the same next');
       }
     }
+  }
+});
+
+test('lead verification uses only authenticated reads and never forwards', async t => {
+  for (const session of ['none', 'signed-in']) {
+    const page = await staffLogin(t, { search: '?verifyLead=qa-contact&next=%2Femployee', session });
+    if (session === 'none') await page.submit();
+    assert.deepEqual(page.replaced, []);
+    assert.deepEqual(page.checks.map(call => call.slice(0, 2)), [['/api/hub-auth', 'GET'], ['/api/highlevel?view=lead&contactId=qa-contact', 'GET']]);
+    assert.match(page.nodes['sl-verification'].textContent, /Garage size: 2 car/);
+    assert.equal(page.nodes['sl-links'].hidden, true);
+    assert.equal(page.nodes['staff-login'].elements.password.value, '');
+    assert.equal(globalThis.EGCStaffNext.go(), false);
+    assert.equal(globalThis.EGCStaffNext.resume(), false);
+  }
+});
+test('invalid verification links fail closed even with dashboard next', async t => {
+  for (const value of ['', '%2Femployee', 'a&verifyLead=b', 'a'.repeat(181)]) {
+    const page = await staffLogin(t, { search: `?verifyLead=${value}&next=%2Femployee`, session: 'signed-in' });
+    await page.submit();
+    assert.deepEqual(page.checks, []);
+    assert.deepEqual(page.signIns, []);
+    assert.deepEqual(page.replaced, []);
+    assert.equal(page.nodes['sl-submit'].disabled, true);
+  }
+});
+test('denied or mismatched verification never renders contact data or navigates', async t => {
+  for (const leadStatus of [403, 200]) {
+    const page = await staffLogin(t, { search: '?verifyLead=qa-contact', session: 'signed-in', leadStatus,
+      leadResponse: { ok: true, lead: { contactId: 'different-contact', name: 'Private Name', notes: 'Private notes' } } });
+    assert.deepEqual(page.replaced, []);
+    assert.equal(page.nodes['sl-verification'].hidden, true);
+    assert.equal(page.nodes['sl-verification'].textContent, '');
+    assert.match(page.nodes['login-error'].textContent, /not permitted/);
   }
 });
