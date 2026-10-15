@@ -2395,6 +2395,7 @@ def render_book():
     card_start = form.index('<div class="quote-form">')
     card_end = form.index('\n      </div>\n    </div>\n  </div>\n</section>', card_start) + len('\n      </div>')
     form_card = form[card_start:card_end].replace('</form>', '</form>\n' + BOOK_TRUST_BADGES, 1)
+    form_card = form_card.replace('<div class="quote-form">', '<div class="quote-form" data-highlevel-form-url="https://links.easygaragecleaning.com/widget/form/DeiRNO6itxjLiTk3Nkj0">', 1)
     form_card = form_card.replace('<h3>Schedule Your Free Walkthrough</h3>', '<h2 class="form-heading">Schedule Your Free Walkthrough</h2>', 1)
     # FUN-13: fb-capture.js reports this form's Meta Lead, with the relay's inquiry id as the eventID (CAPI deduplication).
     form_card = form_card.replace('<form class="multi-step-form"', '<form class="multi-step-form" data-meta-lead="walkthrough_request"', 1)
@@ -2412,9 +2413,10 @@ def render_book():
     if SITE_FORMS_SCRIPT_SRC not in page:
         raise RuntimeError("book.html lost its site-forms.js tag; booking-slots.js must load before it")
     page = page.replace(SITE_FORMS_SCRIPT_SRC, booking_slots_script() + SITE_FORMS_SCRIPT_SRC, 1)
-    page = page.replace('</head>', '<link rel="stylesheet" href="/booking-highlevel.css?v=20261014">\n</head>')
-    page = page.replace('</body>', '<script src="/booking-highlevel.js?v=20261014" defer></script>\n</body>')
-    return page.replace('<body>', '<body class="book-page">', 1)
+    page = page.replace('</head>', '<link rel="stylesheet" href="/booking-highlevel.css?v=20261015-stable">\n</head>')
+    page = page.replace('</body>', '<script src="/booking-highlevel.js?v=20261015-stable" defer></script>\n</body>')
+    # Apply the native layout before deferred JavaScript to avoid shifting the full page away.
+    return page.replace('<body>', '<body class="book-page native-booking">', 1)
 
 
 def render_pricing():

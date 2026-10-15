@@ -117,7 +117,12 @@ class PublicPerformanceBrowserTests(unittest.TestCase):
         self.assertEqual([lead['phone'] for lead in self.relayed], ['+19705550101'], 'fb-capture.js relays the finalized fields once')
 
     def walkthrough_to_contact(self, path):
-        page = self.open(path); form = page.locator('form.multi-step-form')
+        page = self.open(path)
+        if path == '/book.html':
+            # These assertions exercise the retained standard-form recovery path.
+            page.get_by_text('Need help with the form?', exact=True).press('Enter')
+            page.get_by_role('button', name='Use the standard request form', exact=True).press('Enter')
+        form = page.locator('form.multi-step-form')
         form.locator('[name="Service type"]').first.check()
         form.locator('[data-step="1"] [data-next]').click()
         form.locator('[name="Job size"]').select_option(index=1)

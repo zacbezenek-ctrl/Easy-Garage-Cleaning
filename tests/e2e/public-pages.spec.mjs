@@ -59,12 +59,33 @@ for(const path of PAGES){
   });
   if(PHOTO_UPLOADS.includes(path))test('photo upload offers the rear camera and the photo library',async({page},info)=>{
    await open(page,path);
+   if(path==='/book.html'){
+    await page.getByText('Need help with the form?',{exact:true}).press('Enter');
+    await page.getByRole('button',{name:'Use the standard request form',exact:true}).press('Enter');
+    await expect(page.locator('form.multi-step-form')).toBeVisible();
+   }
    const gap=KNOWN_NO_CAMERA[path];
    if(gap){info.annotations.push({type:'known camera gap',description:gap});await assertKnownMissingCamera(page,gap);}
    else await assertCameraCapture(page);
   });
  });
 }
+
+test('booking defaults to the existing native inquiry form and keeps explicit recovery',async({page})=>{
+ await open(page,'/book.html');
+ const frame=page.locator('iframe.ghl-booking-frame');
+ await expect(frame).toBeVisible();
+ await expect(frame).toHaveAttribute('src','https://links.easygaragecleaning.com/widget/form/DeiRNO6itxjLiTk3Nkj0');
+ await expect(page.locator('form.multi-step-form')).toBeHidden();
+ await expect(page.locator('.ghl-booking h1')).toHaveText('Request your free walkthrough');
+ await expect(page.locator('.ghl-booking-intro')).toContainText('does not book an appointment');
+ await page.getByText('Need help with the form?',{exact:true}).press('Enter');
+ await expect(page.getByRole('link',{name:'Open the form in a new tab',exact:true})).toHaveAttribute('href','https://links.easygaragecleaning.com/widget/form/DeiRNO6itxjLiTk3Nkj0');
+ await page.getByRole('button',{name:'Use the standard request form',exact:true}).press('Enter');
+ await expect(frame).toHaveCount(0);
+ await expect(page.locator('form.multi-step-form')).toBeVisible();
+ await expect(page.locator('input[name="Service type"]:checked')).toBeFocused();
+});
 
 // The compare slider and its buttons at the top of the touch tablet range (the 1023px
 // edge of the styles.css tap block), where the slider used to render 20px tall.

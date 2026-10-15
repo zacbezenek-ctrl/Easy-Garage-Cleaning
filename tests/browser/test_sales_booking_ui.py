@@ -277,6 +277,9 @@ class BookSlotsBrowserTests(HubShell, unittest.TestCase):
         self.page.route('**/*', lambda route: route.continue_() if urlparse(route.request.url).hostname == '127.0.0.1' and not urlparse(route.request.url).path.startswith('/api/') else route.abort())
         if marked: self.page.route('**/book.html', mark_book_slots)
         self.page.goto(f'{self.url}/book.html')
+        # Explicit-window assertions target the standard-form recovery path.
+        self.page.get_by_text('Need help with the form?', exact=True).press('Enter')
+        self.page.get_by_role('button', name='Use the standard request form', exact=True).press('Enter')
         if marked: self.page.wait_for_function('document.querySelector("fieldset.booking-slots[data-slots-rendered]")')
         # Unmarked: once booking-slots.js has run (and site-forms.js has bound the form), the choices are final.
         else: self.page.wait_for_function('!!window.EGCBookingSlots && document.readyState === "complete"')
