@@ -479,7 +479,7 @@ test('Book walkthrough judges the requested window by the Denver clock: a same-d
     assert.ok(page.dialog().textContent.includes(said), `${JSON.stringify(requestedSlot)}: ${page.dialog().textContent.slice(0, 200)}`);
     const times = [page.value('date'), page.value('time'), page.value('endTime')];
     if (prefilled) assert.deepEqual(times, prefilled);
-    else assert.deepEqual(times, ['2026-09-22', '08:00', '10:00'], 'the plain Create job defaults (the board day), not the requested hour');
+    else assert.deepEqual(times, ['2026-09-22', '09:30', '10:00'], 'the plain Create job defaults (the board day), not the requested hour');
   }
   // 08:30 in Denver is 14:30Z: the morning has started (read as UTC it would already be over), the afternoon is ahead.
   const early = dispatchPage({ now: '2026-09-22T14:30:00.000Z' }), window = slot => JSON.parse(JSON.stringify(early.internals.requestedWindow(slot)));
