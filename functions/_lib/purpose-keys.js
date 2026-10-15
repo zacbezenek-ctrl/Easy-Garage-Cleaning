@@ -11,6 +11,7 @@ export const PURPOSES = Object.freeze({
   customerAccountSession: 'egc/customer-account-session/v1',
   magicLink: 'egc/magic-link/v1',
   rateLimit: 'egc/rate-limit/v1',
+  w19CompletionRef: 'egc/w19-completion-ref/v1',
 });
 const LABELS = new Set(Object.values(PURPOSES));
 const fail = (code, message, status = 503) => Object.assign(new Error(message), { code, status });
