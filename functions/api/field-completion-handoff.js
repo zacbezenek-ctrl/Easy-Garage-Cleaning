@@ -6,7 +6,7 @@ import { prepareW19Handoff, readW19Handoff, w19AssignedLead, w19Enabled } from '
 import { w19Error, w19OriginAllowed, w19ReadBody, w19Reply } from '../_lib/w19-http.js';
 
 const fail = (code, message, status = 400) => Object.assign(new Error(message), { code, status });
-export function fieldCompletionHandoffHandlers({ session = getHubSession, storage = dispatchStorage, configured = firebaseServiceAccountConfigured, now = () => new Date() } = {}) {
+export function fieldCompletionHandoffHandlers({ session = getHubSession, storage = dispatchStorage, configured = firebaseServiceAccountConfigured, now = () => new Date(), customerEmail } = {}) {
   async function context(request, env) {
     if (!w19Enabled(env)) throw fail('W19_DISABLED', 'Completion confirmation is not enabled.', 404);
     const actor = await session(request, env);
@@ -26,7 +26,7 @@ export function fieldCompletionHandoffHandlers({ session = getHubSession, storag
       const ctx = await context(request, env), params = [...new URL(request.url).searchParams];
       if (params.length !== 1 || params[0][0] !== 'jobId') throw fail('W19_JOB_INVALID', 'Choose one canonical job.');
       const job = await authorized(ctx, env, params[0][1]);
-      return w19Reply(200, await readW19Handoff(env, ctx.store, job, ctx.actor, now().toISOString()));
+      return w19Reply(200, await readW19Handoff(env, ctx.store, job, ctx.actor, now().toISOString(), { customerEmail }));
     } catch (error) { return w19Error(error); }
   }
   async function post({ request, env }) {
@@ -36,7 +36,7 @@ export function fieldCompletionHandoffHandlers({ session = getHubSession, storag
       if (input.action !== 'prepare' || !fieldId(input.jobId) || !fieldRequestId(input.requestId) || typeof input.expectedRevision !== 'string' || !input.expectedRevision || input.expectedRevision.length > 80) throw fail('W19_REQUEST_INVALID', 'Use the current job version and a unique action ID.');
       if (typeof input.expectedUser !== 'string' || input.expectedUser.toLowerCase() !== ctx.actor.user.toLowerCase()) throw fail('W19_ACCOUNT_CHANGED', 'Your signed-in account changed. Refresh before confirming completion.', 401);
       const job = await authorized(ctx, env, input.jobId);
-      return w19Reply(200, await prepareW19Handoff(env, ctx.store, job, ctx.actor, input, now().toISOString()));
+      return w19Reply(200, await prepareW19Handoff(env, ctx.store, job, ctx.actor, input, now().toISOString(), { customerEmail }));
     } catch (error) { return w19Error(error); }
   }
   return { get, post };

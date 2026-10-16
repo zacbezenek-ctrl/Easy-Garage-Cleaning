@@ -322,8 +322,8 @@ export const AUTOMATION_REGISTRY = deepFreeze({
     entry({ id: 'hub.w19_completion_verification', name: 'W19 native completion and opportunity verification (read only)', system: 'hub',
       trigger: 'The native completion workflow calls /api/w19-completion-gate with an opaque assigned-lead intent and exact native submission receipt; EGC_W19_COMPLETION_HANDOFF and verified workflow setup are required',
       audience: 'staff', channel: 'none', contentSource: 'none', classification: 'internal', disposition: 'internal', sendsToday: 'no', speedToLead: 'none',
-      code: code('functions/_lib/w19-form-submissions.js', 'ghl_opportunity_write'), evidence: ['docs/w19-native-completion-handoff.md', 'functions/_lib/w19-native-form.js'],
-      notes: 'The scanner counts the opportunity path, but this helper uses GET only and writes/sends nothing. Form 7HCRlKJs4VZx4KwNmDa6 and draft workflow 1fbd6b3e-d5fb-422f-ba33-ae437c3e92f7 remain separate provider configuration. The local gate verifies exact job/contact/location/evidence and atomically releases one bounded permission; it never submits a form, sends an invoice, marks payment or pays commission. Native task outcomes require exact-marker reconciliation.' }),
+      code: code('functions/_lib/w19-form-submissions.js', 'ghl_opportunity_write', 'ghl_contact_write'), evidence: ['docs/w19-native-completion-handoff.md', 'functions/_lib/w19-native-form.js'],
+      notes: 'The scanner counts the opportunity path, but this helper uses bounded GET only and writes/sends nothing. Form 7HCRlKJs4VZx4KwNmDa6 and draft workflow 1fbd6b3e-d5fb-422f-ba33-ae437c3e92f7 remain separate provider configuration. Canonical completion/receipt acceptance is independent of optional financial/opportunity/task readiness. Legacy proceed stays false, taskStatus is not_enabled and opportunity.canUpdate is false; only one acknowledged local completion claim permits completion-only mapping. Existing released_unconfirmed records require reconciliation. No form submission, invoice/payment/commission write or permission change.' }),
     msgCore('on_my_way', 'On my way (approved send)', 'SMS', { classification: 'human_approved', notes: 'Template plus a crew or dispatcher tap (template+human_trigger). EGC_MESSAGING_ENABLED gates every send.' }),
     msgCore('day_before_reminder', 'Day-before reminder (approved send)', 'SMS'),
     msgCore('crew_assignment', 'Crew assignment (approved send)', 'SMS', { audience: 'staff' }),
@@ -429,7 +429,7 @@ export const AUTOMATION_REGISTRY = deepFreeze({
   ],
   // Exact send-path occurrences scanned by scripts/automation-inventory.mjs (--scan prints the current values).
   codeInventory: {
-    'functions/_lib/w19-form-submissions.js': { ghl_opportunity_write: 1 },
+    'functions/_lib/w19-form-submissions.js': { ghl_opportunity_write: 1, ghl_contact_write: 1 },
     'staff-login.js': { hub_send_endpoint_call: 1 },
     'crew/gameplan-handoff.js': { hub_send_endpoint_call: 1 },
     'crew/gameplan.html': { hub_send_endpoint_call: 2 },

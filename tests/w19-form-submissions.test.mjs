@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { readW19Opportunity, readW19Submission, W19_FORM_ID } from '../functions/_lib/w19-form-submissions.js';
+import { readW19CustomerEmail, readW19Opportunity, readW19Submission, W19_FORM_ID } from '../functions/_lib/w19-form-submissions.js';
 
 const env = { HIGHLEVEL_API_KEY: 'private-provider-token', HIGHLEVEL_LOCATION_ID: 'location-1' };
 const bindings = { submissionId: 'submission-1', contactId: 'contact-1', locationId: 'location-1', jobId: 'job-1',
@@ -274,4 +274,84 @@ test('linked opportunity provider verification shares the bounded GET deadline',
   t.mock.timers.tick(5000);
   await rejected;
   assert.equal(signal.aborted, true);
+});
+
+const customerBindings = { contactId: 'contact-1', locationId: 'location-1' };
+const customerBody = overrides => ({ contact: { id: 'contact-1', locationId: 'location-1', email: ' Synthetic.Person+Garage@Example.INVALID ',
+  name: 'private name', phone: '+13035551234', customFields: [{ id: 'private-field', value: 'private notes' }], ...overrides } });
+
+test('customer email verification GETs the exact linked contact and returns only normalized bound identity', async () => {
+  const calls = [];
+  const result = await readW19CustomerEmail(env, customerBindings, fetchPages([customerBody()], calls));
+  assert.deepEqual(result, { contactId: 'contact-1', locationId: 'location-1', email: 'synthetic.person+garage@example.invalid' });
+  assert.equal(Object.isFrozen(result), true);
+  assert.equal(calls.length, 1);
+  assert.equal(calls[0].url.href, 'https://services.leadconnectorhq.com/contacts/contact-1');
+  assert.equal(calls[0].init.method, 'GET'); assert.equal(calls[0].init.body, undefined); assert.equal(calls[0].init.redirect, 'error');
+  assert.deepEqual(calls[0].init.headers, { Accept: 'application/json', Authorization: 'Bearer private-provider-token', Version: 'v3' });
+  assert.doesNotMatch(JSON.stringify(result), /private|name|phone|customFields|token/);
+  const mailto = await readW19CustomerEmail(env, customerBindings, fetchPages([customerBody({ email: 'mailto:SYNTHETIC@example.invalid' })]));
+  assert.equal(mailto.email, 'synthetic@example.invalid');
+});
+
+test('customer email verification rejects contact or location mismatches without following another record', async () => {
+  for (const body of [customerBody({ id: 'another-contact' }), customerBody({ locationId: 'another-location' }),
+    { ...customerBody(), locationId: 'another-location' }]) {
+    const calls = [];
+    await rejectsCode(readW19CustomerEmail(env, customerBindings, fetchPages([body], calls)), 'w19-customer-mismatch', 409);
+    assert.equal(calls.length, 1);
+    assert.equal(calls[0].url.pathname, '/contacts/contact-1');
+    assert.equal(calls[0].init.method, 'GET');
+  }
+});
+
+test('invalid customer selectors and configuration never search or write provider contacts', async () => {
+  let calls = 0;
+  const fetcher = async () => { calls += 1; throw new Error('must not call'); };
+  for (const input of [undefined, {}, { ...customerBindings, contactId: '' }, { ...customerBindings, contactId: '../search' },
+    { ...customerBindings, contactId: ['contact-1'] }, { ...customerBindings, locationId: null }]) {
+    await rejectsCode(readW19CustomerEmail(env, input, fetcher), 'w19-invalid-input', 400);
+  }
+  for (const config of [{}, { ...env, HIGHLEVEL_LOCATION_ID: 'another-location' }, { ...env, HIGHLEVEL_API_KEY: '' }]) {
+    await rejectsCode(readW19CustomerEmail(config, customerBindings, fetcher), 'w19-configuration');
+  }
+  assert.equal(calls, 0);
+});
+
+test('missing or malformed customer identity and email fail closed without fallback addresses', async () => {
+  const malformedEmails = ['', 'broken', 'two@@example.invalid', 'no-domain@', 'spaces in@example.invalid', 'a@b',
+    `${'x'.repeat(250)}@example.invalid`, null, 42, [], { email: 'synthetic@example.invalid' }];
+  for (const body of [null, [], {}, { contacts: [customerBody().contact] }, { contact: [] },
+    customerBody({ id: undefined }), customerBody({ id: 1 }), customerBody({ locationId: undefined }),
+    customerBody({ email: undefined, emailLower: 'synthetic@example.invalid', additionalEmails: ['synthetic@example.invalid'] }),
+    ...malformedEmails.map(email => customerBody({ email }))]) {
+    await rejectsCode(readW19CustomerEmail(env, customerBindings, fetchPages([body])), 'w19-provider-unavailable');
+  }
+});
+
+test('customer provider failures and oversized bodies expose no contact or credential details', async () => {
+  for (const response of [
+    ...[401, 403, 404, 429, 503].map(status => Response.json({ error: 'private-provider-token synthetic@example.invalid' }, { status })),
+    new Response('x'.repeat(512 * 1024 + 1), { headers: { 'Content-Type': 'application/json' } }),
+    new Response(JSON.stringify(customerBody()), { headers: { 'Content-Type': 'text/plain' } }),
+  ]) await rejectsCode(readW19CustomerEmail(env, customerBindings, fetchPages([response])), 'w19-provider-unavailable');
+  await rejectsCode(readW19CustomerEmail(env, customerBindings, async () => { throw new Error('private contact synthetic@example.invalid'); }), 'w19-provider-unavailable');
+});
+
+test('customer email provider GET and body share the bounded deadline', async t => {
+  t.mock.timers.enable({ apis: ['setTimeout'] });
+  let signal;
+  const pending = readW19CustomerEmail(env, customerBindings, (_url, init) => { signal = init.signal; return new Promise(() => {}); });
+  const rejected = rejectsCode(pending, 'w19-provider-unavailable');
+  t.mock.timers.tick(5000);
+  await rejected;
+  assert.equal(signal.aborted, true);
+  let canceled = false;
+  const stream = new ReadableStream({ cancel() { canceled = true; } });
+  const pendingBody = readW19CustomerEmail(env, customerBindings, async () => new Response(stream, { headers: { 'Content-Type': 'application/json' } }));
+  const bodyRejected = rejectsCode(pendingBody, 'w19-provider-unavailable');
+  await Promise.resolve(); await Promise.resolve();
+  t.mock.timers.tick(5000);
+  await bodyRejected;
+  assert.equal(canceled, true);
 });

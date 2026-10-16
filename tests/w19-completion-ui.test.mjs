@@ -8,16 +8,19 @@ const source = readFileSync(new URL('../crew/job-completion-handoff.js', import.
 const READY = {
   ok: true, jobId: 'job-a', viewer: 'Crew.Lead', expectedRevision: 'revision-a', eligible: true,
   status: 'ready', completedAt: '2026-10-16T00:10:00.000Z', completedDate: '2026-10-15', missing: [], message: '', canLaunch: true,
+  customerEmail: 'synthetic.customer@example.test', associationMode: 'manual_email',
 };
-const FORM = 'https://api.leadconnectorhq.com/widget/form/7HCRlKJs4VZx4KwNmDa6?synthetic-reference=opaque-test-capability';
-const CUSTOM_FORM = 'https://links.easygaragecleaning.com/widget/form/7HCRlKJs4VZx4KwNmDa6?notrack=true';
+const REFERENCE = `w19_${'a'.repeat(43)}`;
+const QUERY = `egc_completion_job_id=job-a&egc_completion_reference=${REFERENCE}`;
+const FORM = `https://api.leadconnectorhq.com/widget/form/7HCRlKJs4VZx4KwNmDa6?${QUERY}`;
+const CUSTOM_FORM = `https://links.easygaragecleaning.com/widget/form/7HCRlKJs4VZx4KwNmDa6?notrack=true&${QUERY}`;
 const dto = changes => ({ ...READY, ...changes });
 const answer = (body = READY, status = 200) => ({ status, body });
 const deferred = () => { let resolve, reject; const promise = new Promise((yes, no) => { resolve = yes; reject = no; }); return { promise, resolve, reject }; };
 const flush = async () => { for (let index = 0; index < 20; index++) await Promise.resolve(); };
 
-function page(t, { gets = [answer()], posts = [], online = true, search = '?jobId=job-a' } = {}) {
-  const document = createDocument(), events = new Map(), calls = [], observers = [], timers = new Map(), storageCalls = [], opened = [];
+function page(t, { gets = [answer()], posts = [], online = true, search = '?jobId=job-a', clipboard = async () => {} } = {}) {
+  const document = createDocument(), events = new Map(), calls = [], observers = [], timers = new Map(), storageCalls = [], opened = [], clipboardWrites = [];
   const proto = document.Element.prototype;
   Object.defineProperty(proto, 'disabled', { get() { return this.hasAttribute('disabled'); }, set(value) { this.toggleAttribute('disabled', value); } });
   const host = document.createElement('main'); host.id = 'field-main'; host.append(document.createElement('p')); document.body.append(host);
@@ -47,6 +50,7 @@ function page(t, { gets = [answer()], posts = [], online = true, search = '?jobI
       return { ok: next.status >= 200 && next.status < 300, status: next.status, json: async () => structuredClone(next.body) };
     },
   };
+  if (clipboard) context.navigator.clipboard = { writeText(value) { clipboardWrites.push(value); return clipboard(value); } };
   context.window = context;
   vm.runInNewContext(source, context, { filename: 'crew/job-completion-handoff.js' });
   t.after(() => context.EGCJobCompletionHandoff.unmount());
@@ -56,7 +60,7 @@ function page(t, { gets = [answer()], posts = [], online = true, search = '?jobI
   const fire = (name, more = {}) => { for (const listener of [...events.get(name) || []]) listener({ type: name, ...more }); };
   const mutate = records => { const observer = observers.find(item => item.connected); assert.ok(observer); observer.callback(records); };
   const runRefresh = async () => { for (const [id, timer] of [...timers]) if (timer.delay === 200) { timers.delete(id); timer.callback(); } await flush(); };
-  return { context, document, host, card, buttons, click, fire, calls, observers, mutate, runRefresh, gets, posts, timers, storageCalls, opened };
+  return { context, document, host, card, buttons, click, fire, calls, observers, mutate, runRefresh, gets, posts, timers, storageCalls, opened, clipboardWrites };
 }
 
 test('only a server-verified completed lead sees the card and its actual Denver completion date', async t => {
@@ -71,12 +75,86 @@ test('only a server-verified completed lead sees the card and its actual Denver 
   assert.deepEqual(p.calls.map(call => [call.method, call.url]), [['GET', '/api/field-completion-handoff?jobId=job-a']]);
   assert.equal(p.calls[0].options.credentials, 'same-origin'); assert.equal(p.calls[0].options.cache, 'no-store');
   assert.equal(p.card().querySelector('a'), null);
-  assert.equal(p.buttons()[0].textContent, 'Open completion confirmation');
+  assert.ok(p.buttons().find(button => button.textContent === 'Open completion confirmation'));
+});
+
+test('the authorized customer email is selectable and copied only by an explicit button click', async t => {
+  const p = page(t); await flush();
+  const field = p.card().querySelector('#completion-customer-email'); assert.ok(field);
+  assert.equal(field.getAttribute('value'), READY.customerEmail); assert.equal(field.hasAttribute('readonly'), true);
+  assert.equal(field.hasAttribute('disabled'), false); assert.equal(field.hasAttribute('name'), false); assert.equal(field.getAttribute('autocomplete'), 'off');
+  assert.match(p.card().textContent, /Paste this exact customer email into the required Customer email field/);
+  assert.match(p.card().textContent, /Do not use your crew email/);
+  assert.deepEqual(p.clipboardWrites, []); assert.deepEqual(p.storageCalls, []);
+  p.click('Copy customer email'); await flush();
+  assert.deepEqual(p.clipboardWrites, [READY.customerEmail]); assert.equal(p.calls.length, 1);
+  assert.match(p.card().textContent, /Customer email copied/); assert.deepEqual(p.storageCalls, []);
+});
+
+test('a missing customer email or permission stops the flow and directs the lead to operations', async t => {
+  const p = page(t, { gets: [answer(dto({ customerEmail: null, status: 'identity_required', canLaunch: false }))] }); await flush();
+  assert.ok(p.card()); assert.match(p.card().textContent, /Operations must verify access and the customer email before this form can open/);
+  assert.match(p.card().textContent, /Stop and contact operations/);
+  assert.equal(p.card().querySelector('input'), null); assert.equal(p.card().querySelector('a'), null);
+  assert.deepEqual(p.buttons().map(button => button.textContent), ['Check confirmation status']);
+  assert.deepEqual(p.clipboardWrites, []); assert.equal(p.calls.length, 1);
+});
+
+test('an expired handoff retains its reconciliation guidance when no email is exposed', async t => {
+  const p = page(t, { gets: [answer(dto({ customerEmail: null, status: 'expired', canLaunch: false, message: 'This completion confirmation expired. Ask operations to reconcile any submission before preparing another.' }))] }); await flush();
+  assert.match(p.card().textContent, /expired/); assert.match(p.card().textContent, /reconcile any submission before preparing another/);
+  assert.equal(p.card().querySelector('input'), null); assert.equal(p.card().querySelector('a'), null);
+  assert.deepEqual(p.buttons().map(button => button.textContent), ['Check confirmation status']); assert.deepEqual(p.clipboardWrites, []);
+});
+
+test('unavailable or rejected clipboard access leaves a manual selection fallback without another request', async t => {
+  for (const clipboard of [null, async () => { throw new Error('Synthetic clipboard refusal'); }]) {
+    const p = page(t, { clipboard }); await flush(); p.click('Copy customer email'); await flush();
+    assert.match(p.card().textContent, /Select the customer email above and copy it manually/);
+    const field = p.card().querySelector('#completion-customer-email'); assert.equal(field.getAttribute('value'), READY.customerEmail); assert.equal(field.hasAttribute('readonly'), true); assert.equal(field.hasAttribute('disabled'), false);
+    assert.equal(p.calls.length, 1); assert.deepEqual(p.storageCalls, []); p.context.EGCJobCompletionHandoff.unmount();
+  }
 });
 
 test('ineligible jobs and disabled, signed-out or forbidden reads expose no card or launch link', async t => {
   for (const next of [answer(dto({ eligible: false, status: 'not_completed', canLaunch: false, completedAt: null, completedDate: null })), ...[401, 403, 404].map(status => answer({ ok: false }, status))]) {
     const p = page(t, { gets: [next] }); await flush(); assert.equal(p.card(), null); assert.equal(p.calls.length, 1); p.context.EGCJobCompletionHandoff.unmount();
+  }
+});
+
+test('an initial failed read shows a generic manual recovery without identity or automatic retries', async t => {
+  for (const failure of [new TypeError('Synthetic network failure'), answer({ ok: false, error: 'Outage for forbidden.customer@example.test' }, 503), answer(dto({ jobId: 'other-job', customerEmail: 'forbidden.customer@example.test' }))]) {
+    const checking = deferred(), p = page(t, { gets: [failure, () => checking.promise] }); await flush();
+    assert.ok(p.card()); assert.match(p.card().textContent, /could not be checked/);
+    assert.equal(p.card().querySelector('input'), null); assert.equal(p.card().querySelector('a'), null); assert.equal(p.card().querySelector('time'), null);
+    assert.doesNotMatch(p.card().textContent, /forbidden.customer|other-job|Crew.Lead|2026-10-15/);
+    assert.deepEqual(p.buttons().map(button => button.textContent), ['Check confirmation status']);
+    assert.equal(p.calls.length, 1); assert.equal(p.timers.size, 0, 'no automatic recovery request is scheduled');
+    p.click('Check confirmation status'); assert.match(p.card().textContent, /Checking completion confirmation/); assert.equal(p.card().querySelector('input'), null);
+    checking.resolve(answer()); await flush();
+    assert.deepEqual(p.calls.map(call => call.method), ['GET', 'GET']); assert.equal(p.card().querySelector('#completion-customer-email').getAttribute('value'), READY.customerEmail);
+    assert.doesNotMatch(p.card().textContent, /could not be checked/); assert.deepEqual(p.clipboardWrites, []); p.context.EGCJobCompletionHandoff.unmount();
+  }
+});
+
+test('a failed refresh clears the previous identity and form link but keeps a generic recovery button', async t => {
+  for (const failure of [new TypeError('Synthetic network failure'), answer({ ok: false, error: 'Outage for forbidden.customer@example.test' }, 503), answer(dto({ associationMode: 'unverified', customerEmail: 'forbidden.customer@example.test' }))]) {
+    const p = page(t, { gets: [answer(), failure, answer(dto({ viewer: 'Other.Lead', customerEmail: 'next.customer@example.test' }))], posts: [answer(dto({ status: 'prepared', launchUrl: FORM }))] }); await flush();
+    p.click('Open completion confirmation'); await flush(); assert.ok(p.card().querySelector('input')); assert.ok(p.card().querySelector('a'));
+    p.click('Check confirmation status'); assert.equal(p.card(), null, 'previous identity is removed before the refresh response'); await flush();
+    assert.ok(p.card()); assert.match(p.card().textContent, /could not be checked/); assert.equal(p.card().querySelector('input'), null); assert.equal(p.card().querySelector('a'), null); assert.equal(p.card().querySelector('time'), null);
+    assert.doesNotMatch(p.card().textContent, /synthetic.customer|forbidden.customer|Crew.Lead|2026-10-15/);
+    assert.deepEqual(p.buttons().map(button => button.textContent), ['Check confirmation status']); assert.equal(p.calls.length, 3); assert.equal(p.timers.size, 0);
+    p.click('Check confirmation status'); await flush();
+    assert.deepEqual(p.calls.map(call => call.method), ['GET', 'POST', 'GET', 'GET']); assert.equal(p.card().querySelector('#completion-customer-email').getAttribute('value'), 'next.customer@example.test'); assert.equal(p.card().querySelector('a'), null);
+    assert.deepEqual(p.clipboardWrites, []); assert.deepEqual(p.storageCalls, []); p.context.EGCJobCompletionHandoff.unmount();
+  }
+});
+
+test('an authentication or permission failure hides the generic recovery card as well', async t => {
+  for (const status of [401, 403, 404]) {
+    const p = page(t, { gets: [answer({ ok: false }, 503), answer({ ok: false }, status)] }); await flush(); assert.ok(p.card());
+    p.click('Check confirmation status'); await flush(); assert.equal(p.card(), null); assert.deepEqual(p.calls.map(call => call.method), ['GET', 'GET']); p.context.EGCJobCompletionHandoff.unmount();
   }
 });
 
@@ -106,9 +184,11 @@ test('prepare binds the current actor and revision; a deliberate click-through o
   assert.equal(request.action, 'prepare'); assert.equal(request.jobId, 'job-a'); assert.equal(request.expectedRevision, READY.expectedRevision); assert.equal(request.expectedUser, READY.viewer);
   assert.match(request.requestId, /^[0-9a-f-]{36}$/);
   assert.deepEqual(Object.keys(request).sort(), ['action', 'expectedRevision', 'expectedUser', 'jobId', 'requestId']);
+  assert.equal(JSON.stringify(request).includes(READY.customerEmail), false);
   assert.equal(p.context.EGCJobCompletionHandoff.canLeave(), false);
   pending.resolve(answer(dto({ status: 'prepared', launchUrl: FORM }))); await flush();
   const link = p.card().querySelector('a'); assert.ok(link); assert.equal(link.href, FORM);
+  assert.equal(link.href.includes(READY.customerEmail), false); assert.equal(link.href.includes('contact'), false);
   assert.equal(link.getAttribute('target'), '_blank'); assert.equal(link.rel, 'noopener noreferrer'); assert.equal(link.getAttribute('referrerpolicy'), 'no-referrer');
   assert.equal(link.textContent, 'Continue to completion form'); assert.match(p.card().textContent, /Opening the form does not confirm submission/);
   assert.deepEqual(p.opened, []); assert.deepEqual(p.storageCalls, []); assert.equal(p.context.EGCJobCompletionHandoff.canLeave(), true);
@@ -151,15 +231,38 @@ test('links outside the exact native form, credentials, fragments and unsafe URL
   }
 });
 
+test('launch links reject identity parameters, unpinned keys, duplicates and mismatched job references', async t => {
+  const bad = [
+    `${FORM}&email=synthetic.customer%40example.test`, `${FORM}&contactId=synthetic-contact`, `${FORM}&contact_id=synthetic-contact`, `${FORM}&egc_customer_email=synthetic.customer%40example.test`,
+    `${FORM}&unknown=value`, `${FORM}&egc_completion_job_id=job-a`, `${FORM}&egc_completion_reference=${REFERENCE}`,
+    FORM.replace('job_id=job-a', 'job_id=other-job'), FORM.replace(REFERENCE, 'synthetic-reference'), FORM.replace('egc_completion_reference', 'reference'),
+    CUSTOM_FORM.replace('notrack=true', 'notrack=false'), `${CUSTOM_FORM}&notrack=true`, FORM.split('?')[0],
+  ];
+  for (const launchUrl of bad) {
+    const p = page(t, { gets: [answer(), answer(dto({ status: 'prepared' }))], posts: [answer(dto({ status: 'prepared', launchUrl }))] }); await flush();
+    p.click('Open completion confirmation'); await flush();
+    assert.equal(p.card().querySelector('a'), null, launchUrl); assert.deepEqual(p.calls.map(call => call.method), ['GET', 'POST', 'GET']); assert.deepEqual(p.opened, []);
+    assert.deepEqual(p.clipboardWrites, []); p.context.EGCJobCompletionHandoff.unmount();
+  }
+});
+
 test('manual status checks are reads, remove the old link immediately and never claim a Cesar task', async t => {
   const checking = deferred(), p = page(t, { gets: [answer(), () => checking.promise], posts: [answer(dto({ status: 'prepared', launchUrl: FORM }))] }); await flush();
   p.click('Open completion confirmation'); await flush(); assert.ok(p.card().querySelector('a'));
-  p.click('Check confirmation status'); assert.equal(p.card().querySelector('a'), null);
+  p.click('Check confirmation status'); assert.equal(p.card(), null, 'old identity and link disappear while the account is checked');
   checking.resolve(answer(dto({ status: 'released_unconfirmed', canLaunch: false, message: 'HighLevel completion received; Cesar task confirmation still needs review' }))); await flush();
   assert.deepEqual(p.calls.map(call => call.method), ['GET', 'POST', 'GET']);
   assert.match(p.card().textContent, /Cesar task confirmation still needs review/);
   assert.doesNotMatch(p.card().textContent, /task created|invoice paid|payment collected|commission earned/i);
   assert.deepEqual(p.buttons().map(button => button.textContent), ['Check confirmation status']);
+});
+
+test('a verified native submission is terminal and clearly says task creation is not enabled', async t => {
+  const p = page(t, { gets: [answer(dto({ status: 'completion_verified', canLaunch: false }))] }); await flush();
+  assert.match(p.card().textContent, /HighLevel submission verified/); assert.match(p.card().textContent, /Cesar task is not enabled/); assert.match(p.card().textContent, /Do not resubmit this form/);
+  assert.equal(p.card().querySelector('a'), null); assert.equal(p.card().querySelector('input'), null);
+  assert.deepEqual(p.buttons().map(button => button.textContent), ['Check confirmation status']);
+  assert.deepEqual(p.clipboardWrites, []); assert.equal(p.calls.length, 1);
 });
 
 test('sign-out removes links and invalidates a late prepare response', async t => {
@@ -191,6 +294,29 @@ test('host replacement clears launch state and verifies the new account; own car
   const current = p.card(); p.mutate([{ addedNodes: [current], removedNodes: [] }]); await flush(); assert.equal(p.calls.length, 4);
 });
 
+test('late clipboard results never restore an email or copied feedback after privacy state changes', async t => {
+  for (const transition of ['signout', 'offline', 'account', 'render']) {
+    for (const outcome of ['success', 'failure']) {
+      const pending = deferred(), other = dto({ viewer: 'Other.Lead', customerEmail: 'different.customer@example.test' });
+      const p = page(t, { gets: [answer(), answer(other)], clipboard: () => pending.promise }); await flush();
+      p.click('Copy customer email'); assert.deepEqual(p.clipboardWrites, [READY.customerEmail]);
+      if (transition === 'signout') p.fire('egc:signout');
+      else if (transition === 'offline') { p.context.navigator.onLine = false; p.fire('offline'); }
+      else if (transition === 'account') { p.context.EGCJobCompletionHandoff.refresh(); assert.equal(p.card(), null); await flush(); }
+      else {
+        const old = p.card(), replacement = p.document.createElement('h1'); p.host.replaceChildren(replacement);
+        p.mutate([{ addedNodes: [replacement], removedNodes: [old] }]); assert.equal(p.card(), null); await p.runRefresh();
+      }
+      if (outcome === 'success') pending.resolve(); else pending.reject(new Error('Synthetic late clipboard failure'));
+      await flush();
+      assert.doesNotMatch(p.host.textContent, /Customer email copied|Copy was unavailable/);
+      const field = p.host.querySelector('#completion-customer-email');
+      assert.equal(field?.getAttribute('value') ?? null, ['account', 'render'].includes(transition) ? other.customerEmail : null);
+      assert.deepEqual(p.storageCalls, []); p.context.EGCJobCompletionHandoff.unmount();
+    }
+  }
+});
+
 test('an unexpected actor in a prepare response and an authorization loss clear all private state', async t => {
   for (const post of [answer(dto({ viewer: 'Other.Lead', status: 'prepared', launchUrl: FORM })), ...[401, 403, 404].map(status => answer({ ok: false }, status))]) {
     const p = page(t, { posts: [post] }); await flush(); p.click('Open completion confirmation'); await flush();
@@ -199,7 +325,9 @@ test('an unexpected actor in a prepare response and an authorization loss clear 
 });
 
 test('a mismatched job or unverified completion DTO fails closed', async t => {
-  for (const data of [dto({ jobId: 'other-job' }), dto({ completedAt: '', completedDate: '' }), dto({ eligible: false, canLaunch: true }), dto({ status: 'released_unconfirmed', canLaunch: true })]) {
-    const p = page(t, { gets: [answer(data)] }); await flush(); assert.equal(p.card(), null); p.context.EGCJobCompletionHandoff.unmount();
+  for (const data of [dto({ jobId: 'other-job' }), dto({ completedAt: '', completedDate: '' }), dto({ eligible: false, canLaunch: true }), dto({ status: 'released_unconfirmed', canLaunch: true }), dto({ status: 'completion_verified', canLaunch: true }), dto({ associationMode: 'contact_query' }), dto({ customerEmail: null }), dto({ customerEmail: 'Customer@Example.Test' }), dto({ customerEmail: 'synthetic.customer@example.test\n' }), dto({ customerEmail: 'not-an-email' })]) {
+    const p = page(t, { gets: [answer(data)] }); await flush(); assert.ok(p.card()); assert.match(p.card().textContent, /could not be checked/);
+    assert.equal(p.card().querySelector('input'), null); assert.equal(p.card().querySelector('a'), null); assert.equal(p.card().querySelector('time'), null);
+    assert.deepEqual(p.buttons().map(button => button.textContent), ['Check confirmation status']); p.context.EGCJobCompletionHandoff.unmount();
   }
 });

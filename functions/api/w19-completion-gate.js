@@ -17,6 +17,7 @@ export function w19CompletionGateHandlers({ storage = dispatchStorage, configure
         // Harmless native Custom Webhook schema discovery. It is available
         // before activation and cannot release a task or touch any job.
         return w19Reply(200, { ok: true, proceed: false, schemaOnly: true, status: 'schema_only',
+          completion: { verified: false, proceed: false, status: 'schema_only' }, taskStatus: 'not_enabled', financial: { status: 'schema_only' },
           taskMarker: 'schema_only_no_task', jobId: 'schema_only_no_job', contactId: 'schema_only_no_contact', opportunityId: 'schema_only_no_opportunity',
           completedAt: '2000-01-01T19:00:00.000Z', completedDate: '2000-01-01', completionActorId: 'schema_only_no_actor', confirmingLeadId: 'schema_only_no_lead',
           verifiedWorkNotes: 'Schema only. No job, submission, payment or task is confirmed.', hasIssues: false, verifiedIssueNotes: '',
