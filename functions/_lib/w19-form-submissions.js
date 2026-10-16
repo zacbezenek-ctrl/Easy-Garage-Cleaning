@@ -1,4 +1,5 @@
 import { HIGHLEVEL_API, highLevelConfig } from './highlevel-tags.js';
+import { normalizeEmail } from './customer-identity.js';
 
 // This is the existing native completion form. The intake/estimate form is a
 // different form and cannot provide a W19 completion receipt.
@@ -183,4 +184,31 @@ export async function readW19Opportunity(env, input, fetcher = fetch) {
     throw fail('w19-opportunity-mismatch', 409, 'The linked opportunity does not match this job confirmation.');
   }
   return Object.freeze({ id: opportunityId, contactId, locationId });
+}
+
+/** Verify the email on the job's already-linked customer contact. No contact
+ * search, upsert, or fallback address is permitted. The caller must separately
+ * compare this normalized address with the canonical job email before exposing
+ * the job's existing value to an authorized lead.
+ */
+export async function readW19CustomerEmail(env, input, fetcher = fetch) {
+  const { contactId, locationId } = input || {};
+  if (![contactId, locationId].every(validId) || typeof fetcher !== 'function') {
+    throw fail('w19-invalid-input', 400, 'Completion customer bindings are invalid.');
+  }
+  const config = highLevelConfig(env || {});
+  if (typeof config.token !== 'string' || !config.token.trim() || config.token.length > 8192 || config.locationId !== locationId) {
+    throw fail('w19-configuration', 503, 'Completion customer verification is not configured.');
+  }
+  // Official GET /contacts/:contactId returns { contact: { id, locationId, email, ... } }.
+  const body = await readProvider(config, `/contacts/${encodeURIComponent(contactId)}`, fetcher);
+  const contact = body?.contact;
+  if (!plain(body) || !plain(contact) || ![contact.id, contact.locationId].every(validId)) throw unavailable();
+  if (contact.id !== contactId || contact.locationId !== locationId ||
+      (Object.hasOwn(body, 'locationId') && body.locationId !== locationId)) {
+    throw fail('w19-customer-mismatch', 409, 'The linked customer does not match this job confirmation.');
+  }
+  const email = normalizeEmail(contact.email);
+  if (!email) throw unavailable();
+  return Object.freeze({ contactId, locationId, email });
 }

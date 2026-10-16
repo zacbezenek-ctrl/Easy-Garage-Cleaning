@@ -11,15 +11,17 @@ import { W19_FORM_NAME, W19_FORM_URL, W19_NATIVE_FIELDS } from '../functions/_li
 const NOW = '2026-10-16T00:30:00.000Z', COMPLETED = '2026-10-16T00:00:00.000Z';
 const COMPLETE_ID = 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb';
 const PHOTO_IDS = ['aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa', 'cccccccc-cccc-4ccc-8ccc-cccccccccccc'];
-const LEAD = { user: 'lead.one', displayName: 'Synthetic Lead', role: 'crew_lead' };
+const LEAD = { user: 'zacb', displayName: 'Synthetic Lead', role: 'manager', businessAccess: true };
+const customerEmail = async (_, input) => ({ ...input, email: 'customer@example.test' });
 const env = () => ({ HUB_SESSION_SECRET: 'synthetic-w19-purpose-secret-0123456789abcdef', EGC_W19_COMPLETION_HANDOFF: 'true', EGC_W19_COMPLETION_WORKFLOW_READY: 'true',
   HIGHLEVEL_API_KEY: 'synthetic-provider-token', HIGHLEVEL_LOCATION_ID: 'location-1',
+  EGC_W19_COMPLETION_ASSOCIATION_MODE: 'manual_email',
   EGC_W19_COMPLETION_FORM_URL: `https://api.leadconnectorhq.com/widget/form/${W19_FORM_ID}`,
-  EGC_W19_COMPLETION_QUERY_KEYS_JSON: JSON.stringify({ jobId: 'verified_job_key', reference: 'verified_ref_key', contactId: 'verified_contact_key' }),
+  EGC_W19_COMPLETION_QUERY_KEYS_JSON: JSON.stringify({ jobId: W19_NATIVE_FIELDS.jobId.key, reference: W19_NATIVE_FIELDS.reference.key }),
   EGC_W19_COMPLETION_RECEIPT_FIELDS_JSON: JSON.stringify({ jobId: 'verifiedJobField', reference: 'verifiedRefField' }),
-  HUB_AUTH_USERS_JSON: JSON.stringify({ 'lead.one': { passwordHash: 'synthetic', displayName: 'Synthetic Lead', role: 'crew_lead' }, 'crew.two': { passwordHash: 'synthetic', role: 'crew' } }) });
+  HUB_AUTH_USERS_JSON: JSON.stringify({ zacb: { passwordHash: 'synthetic', displayName: 'Synthetic Lead', role: 'manager' }, 'crew.two': { passwordHash: 'synthetic', role: 'crew' } }) });
 function job(overrides = {}) {
-  return { id: 'job-a', type: 'job', date: '2026-10-15', time: '09:30', assignedCrew: ['lead.one', 'crew.two'], crewLead: 'lead.one',
+  return { id: 'job-a', type: 'job', date: '2026-10-15', time: '09:30', assignedCrew: ['zacb', 'crew.two'], crewLead: 'zacb', email: 'customer@example.test',
     highlevelContactId: 'contact-a', status: 'completed', pipelineStatus: 'completed', completedAt: COMPLETED,
     fieldExecution: { checklistTemplate: [{ id: 'finish', stage: 'finish', label: 'Clean up', required: true }], checks: { finish: { completed: true, at: COMPLETED, actorId: 'crew.two' } },
       photos: PHOTO_IDS.map((id, index) => ({ id, fileId: `verified-${index}`, verified: true, category: index ? 'after' : 'before' })),
@@ -48,7 +50,7 @@ function memory(initial = job()) {
     } };
 }
 const input = store => ({ action: 'prepare', jobId: 'job-a', requestId: crypto.randomUUID(), expectedRevision: store.get('jobs', 'job-a').revision, expectedUser: LEAD.user });
-async function prepare(store, settings = env(), actor = LEAD, extra = {}) { return prepareW19Handoff(settings, store, await store.read('jobs', 'job-a'), actor, { ...input(store), ...extra }, NOW); }
+async function prepare(store, settings = env(), actor = LEAD, extra = {}, reader = customerEmail) { return prepareW19Handoff(settings, store, await store.read('jobs', 'job-a'), actor, { ...input(store), ...extra }, NOW, { customerEmail: reader }); }
 const reference = store => [...store.rows.entries()].find(([key]) => key.startsWith(`${W19_HANDOFFS}/`))[1].reference;
 const receipt = (record, id = 'submission-a') => ({ reference: record.reference, submissionId: id, jobId: record.jobId, contactId: record.contactId, locationId: record.locationId, formId: W19_FORM_ID, createdAt: NOW });
 async function consume(store, { settings = env(), id = 'submission-a', reader, now = NOW, ...options } = {}) {
@@ -66,15 +68,17 @@ test('setup is fail closed and accepts only the pinned provider form with exact 
   assert.ok(w19Configuration({ ...env(), EGC_W19_COMPLETION_WORKFLOW_READY: 'false' }).missing.length);
 });
 
-test('verified native field mappings are available by default; absent contact association still blocks launch', () => {
+test('verified native v5 uses manual required customer email and only pinned job/reference URL keys', () => {
   const settings = env(); delete settings.EGC_W19_COMPLETION_QUERY_KEYS_JSON; delete settings.EGC_W19_COMPLETION_RECEIPT_FIELDS_JSON;
   const config = w19Configuration(settings);
   assert.equal(W19_FORM_NAME, 'EGC Job Completion Confirmation');
   assert.deepEqual(config.fieldIds, { jobId: 'pKArVLKFAIEzNPMPJ7EL', reference: 'WypOwqgzXpVP0we0Jf35' });
-  assert.equal(config.queryKeys, null); assert.ok(config.missing.some(item => /prefill/.test(item)));
-  const knownContact = w19Configuration({ ...settings, EGC_W19_COMPLETION_CONTACT_QUERY_KEY: 'fixture_verified_contact_key' });
+  assert.deepEqual(config.queryKeys, { jobId: 'egc_completion_job_id', reference: 'egc_completion_reference' });
+  assert.equal(config.associationMode, 'manual_email');
+  assert.ok(w19Configuration({ ...settings, EGC_W19_COMPLETION_ASSOCIATION_MODE: '' }).missing.length);
+  const knownContact = w19Configuration({ ...settings, EGC_W19_COMPLETION_CONTACT_QUERY_KEY: 'ignored_no_contact_url' });
   assert.equal(knownContact.queryKeys.jobId, 'egc_completion_job_id'); assert.equal(knownContact.queryKeys.reference, 'egc_completion_reference');
-  assert.equal(Object.keys(W19_NATIVE_FIELDS).length, 7);
+  assert.equal(Object.keys(W19_NATIVE_FIELDS).length, 8); assert.deepEqual(W19_NATIVE_FIELDS.customerEmail, { id: 'email', key: 'email' });
   delete settings.EGC_W19_COMPLETION_FORM_URL;
   assert.equal(w19Configuration(settings).formUrl, W19_FORM_URL);
 });
@@ -87,9 +91,9 @@ test('proof derives actual Denver completion date and preserves original actor s
   const record = await store.read(W19_HANDOFFS, reference(store));
   assert.equal(record.completionActorId, 'crew.two'); assert.equal(record.confirmingLeadId, LEAD.user);
   const url = new URL(view.launchUrl);
-  assert.deepEqual([...url.searchParams.keys()].sort(), ['verified_contact_key', 'verified_job_key', 'verified_ref_key']);
-  assert.equal(url.searchParams.get('verified_contact_key'), 'contact-a');
-  assert.doesNotMatch(view.launchUrl, /notes|payment|75000|Synthetic/);
+  assert.deepEqual([...url.searchParams.keys()].sort(), ['egc_completion_job_id', 'egc_completion_reference']);
+  assert.equal(view.customerEmail, 'customer@example.test');
+  assert.doesNotMatch(view.launchUrl, /email|contact|notes|payment|75000|Synthetic|example/);
 });
 
 test('missing form inputs, unassigned named lead, ordinary crew and unassigned managers cannot prepare', async () => {
@@ -118,7 +122,7 @@ test('repeated clicks, stale retry and secret rotation reuse one root-independen
   assert.equal((await prepare(store, rotated)).launchUrl, first.launchUrl);
   assert.equal([...store.rows.keys()].filter(key => key.startsWith(W19_HANDOFFS)).length, 1);
   assert.equal([...store.rows.keys()].filter(key => key.startsWith(W19_COMPLETIONS)).length, 1);
-  assert.equal((await consume(store, { settings: rotated })).proceed, true);
+  assert.equal((await consume(store, { settings: rotated })).completion.proceed, true);
   assert.equal((await consume(store)).proceed, false);
 });
 
@@ -128,15 +132,16 @@ test('lost local prepare response recovers the same intent; stale first preparat
   const stale = memory(); await assert.rejects(prepare(stale, env(), LEAD, { expectedRevision: 'stale' }), { code: 'W19_REVISION_CONFLICT' });
 });
 
-test('only one provider submission releases W19, with trusted date, notes and remaining balance', async () => {
+test('one provider receipt verifies completion independently, with trusted date and notes but no task release', async () => {
   const store = memory(), original = job(); await prepare(store);
   const result = await consume(store);
-  assert.equal(result.proceed, true); assert.equal(result.completedDate, '2026-10-15');
+  assert.equal(result.proceed, false); assert.equal(result.completedDate, '2026-10-15');
+  assert.deepEqual(result.completion, { verified: true, proceed: true, status: 'verified' }); assert.equal(result.taskStatus, 'not_enabled');
   assert.equal(result.verifiedWorkNotes, original.fieldExecution.completion.notes);
   assert.equal(result.opportunityId, null);
   assert.deepEqual((await store.read(W19_HANDOFFS, reference(store))).completionSnapshot.verifiedWorkNotes, original.fieldExecution.completion.notes);
   assert.deepEqual(result.balance, { approvedTotalCents: 100000, confirmedAppliedCents: 25000, balanceDueCents: 75000, currency: 'USD' });
-  assert.match(result.taskMarker, /^egc-w19:w19_/);
+  assert.equal(result.taskMarker, undefined);
   assert.equal((await consume(store)).proceed, false);
   assert.equal((await consume(store, { id: 'submission-b' })).proceed, false);
   const saved = await store.read('jobs', 'job-a');
@@ -149,31 +154,32 @@ test('reference-only reconciliation still requires exact workflow contact and re
   await assert.rejects(consumeW19Handoff(env(), store, { reference: row.reference, contactId: 'wrong-contact' }, NOW), { code: 'W19_CONTACT_MISMATCH' });
   await assert.rejects(consumeW19Handoff(env(), store, { reference: row.reference }, NOW), { code: 'W19_REQUEST_INVALID' });
   const result = await consume(store, { id: null, reader: async (_, hint) => { assert.equal(hint.submissionId, undefined); assert.equal(hint.contactId, row.contactId); return receipt(row); } });
-  assert.equal(result.proceed, true);
+  assert.equal(result.proceed, false); assert.equal(result.completion.proceed, true);
 });
 
 test('concurrent submissions cannot release duplicate tasks and a lost claim response never releases again', async () => {
   const store = memory(); await prepare(store);
   const results = await Promise.all([consume(store), consume(store, { id: 'submission-b' })]);
-  assert.equal(results.filter(row => row.proceed).length, 1);
+  assert.equal(results.filter(row => row.completion.proceed).length, 1); assert.equal(results.some(row => row.proceed), false);
   const lost = memory(); await prepare(lost); lost.failNextAfterCommit();
-  assert.deepEqual(await consume(lost), { ok: true, proceed: false, status: 'released_unconfirmed', reason: 'claim_response_unconfirmed' });
+  const recovered = await consume(lost); assert.equal(recovered.status, 'completion_verified'); assert.equal(recovered.reason, 'claim_response_unconfirmed');
+  assert.deepEqual(recovered.completion, { verified: true, proceed: false, status: 'verified' });
   assert.equal((await consume(lost)).proceed, false);
-  assert.equal((await lost.read(W19_HANDOFFS, reference(lost))).taskStatus, 'unknown');
+  assert.equal((await lost.read(W19_HANDOFFS, reference(lost))).taskStatus, 'not_enabled');
 });
 
 test('opportunity routing verifies only the exact saved job opportunity and never chooses the contact\'s newest deal', async () => {
   const store = memory(job({ highlevelOpportunityId: 'opportunity-a' })); await prepare(store); let lookups = 0;
   const result = await consume(store, { opportunity: async (_, bound) => { lookups++; assert.deepEqual(bound, { opportunityId: 'opportunity-a', contactId: 'contact-a', locationId: 'location-1' }); return { id: bound.opportunityId, contactId: bound.contactId, locationId: bound.locationId }; } });
-  assert.equal(lookups, 1); assert.deepEqual(result.opportunity, { status: 'verified', canUpdate: true, id: 'opportunity-a' });
+  assert.equal(lookups, 1); assert.deepEqual(result.opportunity, { status: 'verified', canUpdate: false, id: 'opportunity-a' });
   const missing = memory(); await prepare(missing);
   assert.deepEqual((await consume(missing, { opportunity: () => assert.fail('No search for a guessed opportunity') })).opportunity, { status: 'missing', canUpdate: false, id: null });
   const mismatch = memory(job({ highlevelOpportunityId: 'opportunity-a' })); await prepare(mismatch);
-  await assert.rejects(consume(mismatch, { opportunity: async () => ({ id: 'opportunity-a', contactId: 'wrong-contact', locationId: 'location-1' }) }), { code: 'W19_OPPORTUNITY_REVIEW_REQUIRED' });
-  assert.equal((await mismatch.read(W19_HANDOFFS, reference(mismatch))).state, 'prepared');
+  const mismatchResult = await consume(mismatch, { opportunity: async () => ({ id: 'opportunity-a', contactId: 'wrong-contact', locationId: 'location-1' }) });
+  assert.equal(mismatchResult.completion.verified, true); assert.equal(mismatchResult.opportunity.status, 'review_required'); assert.equal(mismatchResult.opportunityId, null);
   const changed = memory(job({ highlevelOpportunityId: 'opportunity-a' })); await prepare(changed);
   const saved = await changed.read('jobs', 'job-a'); changed.put('jobs', 'job-a', { ...saved, highlevelOpportunityId: 'opportunity-b' });
-  await assert.rejects(consume(changed), { code: 'W19_HANDOFF_STALE' });
+  assert.equal((await consume(changed, { opportunity: async () => { throw new Error('unavailable'); } })).completion.verified, true);
 });
 
 test('provider read failures are visible and recoverable without consuming or resubmitting the form', async () => {
@@ -183,9 +189,9 @@ test('provider read failures are visible and recoverable without consuming or re
   assert.equal(reads, 1);
   const row = await store.read(W19_HANDOFFS, reference(store));
   assert.equal(row.state, 'prepared'); assert.equal(row.lastCheckCode, 'w19-provider-unavailable');
-  const view = await readW19Handoff(env(), store, await store.read('jobs', 'job-a'), LEAD, NOW);
+  const view = await readW19Handoff(env(), store, await store.read('jobs', 'job-a'), LEAD, NOW, { customerEmail });
   assert.match(view.message, /do not submit the form again/);
-  assert.equal((await consume(store)).proceed, true);
+  assert.equal((await consume(store)).completion.proceed, true);
 });
 
 test('cancelled, removed, reassigned, changed-contact, changed-evidence and revoked-lead confirmations fail closed', async () => {
@@ -231,10 +237,105 @@ test('money needs current approval and fully reconciled verified job receipts; t
   assert.deepEqual(w19Balance(job({ payment: {} })), { approvedTotalCents: 100000, confirmedAppliedCents: 0, balanceDueCents: 100000, currency: 'USD' });
 });
 
+test('completion acceptance requires no task deadline, approved quote, reconciled balance or linked opportunity', async () => {
+  const original = job({ customerApproval: {}, estimate: {}, payment: { verified: false, amount: 250 }, highlevelOpportunityId: 'invalid opportunity' });
+  const store = memory(original); await prepare(store);
+  const result = await consume(store, { opportunity: () => assert.fail('Invalid opportunity must not be looked up') });
+  assert.equal(result.status, 'completion_verified'); assert.equal(result.completion.proceed, true); assert.equal(result.completion.verified, true);
+  assert.equal(result.proceed, false); assert.equal(result.taskStatus, 'not_enabled'); assert.equal(result.balance, null);
+  assert.deepEqual(result.financial, { status: 'review_required' }); assert.deepEqual(result.opportunity, { status: 'review_required', canUpdate: false, id: null });
+  const saved = await store.read('jobs', 'job-a');
+  for (const key of ['status', 'pipelineStatus', 'payment', 'invoice', 'commission', 'estimate', 'customerApproval']) assert.deepEqual(saved[key], original[key]);
+  const duplicate = await consume(store, { reader: () => assert.fail('A duplicate must not make another provider read') });
+  assert.equal(duplicate.completion.verified, true); assert.equal(duplicate.completion.proceed, false); assert.equal(duplicate.balance, null);
+});
+
+test('invalid actual receipts never create a completion or submission claim', async () => {
+  for (const patch of [{ reference: 'w19_' + 'x'.repeat(43) }, { jobId: 'job-b' }, { contactId: 'contact-b' }, { locationId: 'location-b' }, { formId: 'form-b' }, { submissionId: 'other-submission' }, { createdAt: 'bad' }, { createdAt: '2026-10-16T00:31:00.000Z' }]) {
+    const store = memory(); await prepare(store); const row = await store.read(W19_HANDOFFS, reference(store));
+    await assert.rejects(consume(store, { reader: async () => ({ ...receipt(row), ...patch }) }), { code: 'W19_RECEIPT_INVALID' });
+    assert.equal((await store.read(W19_HANDOFFS, row.id)).state, 'prepared');
+    assert.equal([...store.rows.keys()].some(key => key.startsWith(W19_SUBMISSIONS)), false);
+  }
+  const unknown = memory(); await prepare(unknown);
+  await assert.rejects(consumeW19Handoff(env(), unknown, { reference: 'w19_' + 'x'.repeat(43), contactId: 'contact-a' }, NOW), { code: 'W19_REFERENCE_INVALID' });
+});
+
+test('email copy reuses existing customer-data permission and exact canonical email, never a CRM-only fallback', async () => {
+  const ordinary = { user: 'lead.one', role: 'crew_lead', businessAccess: true }, store = memory(job({ assignedCrew: ['lead.one'], crewLead: 'lead.one' }));
+  const noRead = () => assert.fail('Ordinary crew must not trigger a CRM email read');
+  const view = await readW19Handoff(env(), store, await store.read('jobs', 'job-a'), ordinary, NOW, { customerEmail: noRead });
+  assert.equal(view.status, 'identity_required'); assert.equal(view.customerEmail, null); assert.equal(view.canLaunch, false);
+  await assert.rejects(prepare(store, env(), ordinary, {}, noRead), { code: 'W19_CUSTOMER_EMAIL_REQUIRED' });
+  assert.equal([...store.rows.keys()].some(key => key.startsWith(W19_HANDOFFS)), false);
+  for (const value of ['', 'bad email']) await assert.rejects(prepare(memory(job({ email: value })), env(), LEAD, {}, noRead), { code: 'W19_CUSTOMER_EMAIL_REQUIRED' });
+  for (const contact of [{ contactId: 'different', locationId: 'location-1', email: 'customer@example.test' }, { contactId: 'contact-a', locationId: 'other', email: 'customer@example.test' }, { contactId: 'contact-a', locationId: 'location-1', email: 'other@example.test' }]) {
+    await assert.rejects(prepare(memory(), env(), LEAD, {}, async () => contact), { code: 'W19_CUSTOMER_EMAIL_REQUIRED' });
+  }
+  const matched = await prepare(memory(job({ email: ' CUSTOMER@EXAMPLE.TEST ' })));
+  assert.equal(matched.customerEmail, 'customer@example.test'); assert.doesNotMatch(matched.launchUrl, /email|contact|example/);
+});
+
+test('email provider delay cannot expose identity after canonical assignment/contact changes', async () => {
+  const store = memory();
+  await assert.rejects(readW19Handoff(env(), store, await store.read('jobs', 'job-a'), LEAD, NOW, { customerEmail: async (_, bound) => {
+    store.put('jobs', 'job-a', { ...store.get('jobs', 'job-a'), assignedCrew: ['crew.two'], crewLead: 'crew.two' });
+    return { ...bound, email: 'customer@example.test' };
+  } }), { code: 'W19_HANDOFF_STALE' });
+  const prepareRace = memory();
+  await assert.rejects(prepare(prepareRace, env(), LEAD, {}, async (_, bound) => {
+    prepareRace.put('jobs', 'job-a', { ...prepareRace.get('jobs', 'job-a'), highlevelContactId: 'changed-contact' });
+    return { ...bound, email: 'customer@example.test' };
+  }), { code: 'dispatch_revision_conflict' });
+});
+
+test('terminal verified completion stays visible after expiry without provider readiness and legacy uncertainty is preserved', async () => {
+  const store = memory(); await prepare(store); await consume(store);
+  const later = '2026-10-24T00:30:00.000Z';
+  const dto = await readW19Handoff({ ...env(), EGC_W19_COMPLETION_WORKFLOW_READY: 'false' }, store, await store.read('jobs', 'job-a'), LEAD, later, { customerEmail: () => assert.fail('Terminal completion never needs another email read') });
+  assert.equal(dto.status, 'completion_verified'); assert.equal(dto.canLaunch, false); assert.equal(dto.customerEmail, null);
+  const result = await consume(store, { now: later, reader: () => assert.fail('Expiry cannot cause a new receipt read') });
+  assert.equal(result.completion.verified, true); assert.equal(result.completion.proceed, false);
+  const legacy = memory(); await prepare(legacy); const row = await legacy.read(W19_HANDOFFS, reference(legacy));
+  legacy.put(W19_HANDOFFS, row.id, { ...row, state: 'released_unconfirmed', taskStatus: 'unknown', taskMarker: `egc-w19:${row.reference}` });
+  const binding = legacy.get(W19_COMPLETIONS, row.businessKey); legacy.put(W19_COMPLETIONS, binding.id, { ...binding, state: 'released_unconfirmed' });
+  const oldResult = await consume(legacy, { now: later, reader: () => assert.fail('Legacy unknown task must never be retried') });
+  assert.equal(oldResult.status, 'released_unconfirmed'); assert.equal(oldResult.taskStatus, 'unknown'); assert.equal(oldResult.proceed, false); assert.equal(oldResult.completion.proceed, false);
+  assert.equal((await legacy.read(W19_HANDOFFS, row.id)).taskMarker, `egc-w19:${row.reference}`);
+});
+
+test('malformed terminal snapshots cannot override identity or completion/task authorization flags', async () => {
+  for (const patch of [{ proceed: true }, { ok: false }, { completion: { verified: true, proceed: true } }, { taskStatus: 'enabled' }, { jobId: 'other-job' }, { contactId: 'other-contact' }, { verifiedWorkNotes: 'altered' }]) {
+    const store = memory(); await prepare(store); await consume(store); const row = store.get(W19_HANDOFFS, reference(store));
+    store.put(W19_HANDOFFS, row.id, { ...row, completionSnapshot: { ...row.completionSnapshot, ...patch } });
+    await assert.rejects(consume(store), { code: 'W19_SNAPSHOT_REVIEW_REQUIRED' });
+  }
+  const flags = memory(); await prepare(flags); await consume(flags); const row = flags.get(W19_HANDOFFS, reference(flags));
+  flags.put(W19_HANDOFFS, row.id, { ...row, proceed: true, taskStatus: 'enabled',
+    opportunitySnapshot: { status: 'verified', canUpdate: true, id: 'unproven-opportunity' },
+    financialSnapshot: { status: 'ready', proceed: true }, balanceSnapshot: { approvedTotalCents: 1, confirmedAppliedCents: 0, balanceDueCents: 0, currency: 'USD', proceed: true } });
+  const result = await consume(flags);
+  assert.equal(result.proceed, false); assert.equal(result.taskStatus, 'not_enabled'); assert.equal(result.completion.proceed, false);
+  assert.equal(result.opportunity.canUpdate, false); assert.equal(result.opportunityId, null); assert.equal(result.balance, null); assert.deepEqual(result.financial, { status: 'review_required' });
+});
+
+test('verified state requires coherent durable receipt, business claim and job metadata', async () => {
+  for (const patch of [{ submissionId: '' }, { submissionCreatedAt: '' }, { submissionCreatedAt: '2026-10-15T00:00:00.000Z' }, { claimedAt: '' }, { claimedAt: '2026-10-15T00:00:00.000Z' }]) {
+    const store = memory(); await prepare(store); await consume(store); const row = store.get(W19_HANDOFFS, reference(store));
+    store.put(W19_HANDOFFS, row.id, { ...row, ...patch }); await assert.rejects(consume(store), { code: 'W19_HANDOFF_STALE' });
+  }
+  const missing = memory(); await prepare(missing); await consume(missing);
+  const key = [...missing.rows.keys()].find(key => key.startsWith(W19_SUBMISSIONS)); missing.rows.delete(key);
+  await assert.rejects(consume(missing), { code: 'W19_HANDOFF_STALE' });
+  const pointer = memory(); await prepare(pointer); await consume(pointer);
+  pointer.put('jobs', 'job-a', { ...pointer.get('jobs', 'job-a'), w19CompletionHandoff: { status: 'prepared' } });
+  await assert.rejects(consume(pointer), { code: 'W19_HANDOFF_STALE' });
+});
+
 const request = (path, body, headers = {}) => new Request(`https://hub.example${path}`, { method: body === undefined ? 'GET' : 'POST', headers: { 'Content-Type': 'application/json', Origin: 'https://hub.example', ...headers }, ...(body === undefined ? {} : { body: typeof body === 'string' ? body : JSON.stringify(body) }) });
 test('HTTP endpoints enforce origin, fresh account, assignment, bounded strict inputs and off switches', async () => {
   const store = memory(), settings = env(); let actor = LEAD;
-  const handlers = fieldCompletionHandoffHandlers({ session: async () => actor, storage: () => store, configured: () => true, now: () => new Date(NOW) });
+  const handlers = fieldCompletionHandoffHandlers({ session: async () => actor, storage: () => store, configured: () => true, now: () => new Date(NOW), customerEmail });
   const get = req => handlers.get({ request: req, env: settings });
   const post = (body, headers) => handlers.post({ request: request('/api/field-completion-handoff', body, headers), env: settings });
   assert.equal((await get(request('/api/field-completion-handoff?jobId=job-a'))).status, 200);
@@ -252,7 +353,7 @@ test('HTTP endpoints enforce origin, fresh account, assignment, bounded strict i
   const response = await gate.post({ request: request('/api/w19-completion-gate', { reference: reference(store), contactId: 'contact-a', submissionId: 'submission-a', paid: true }), env: settings });
   assert.equal(response.status, 400); assert.equal((await response.json()).proceed, false);
   const accepted = await gate.post({ request: request('/api/w19-completion-gate', { reference: reference(store), contactId: 'contact-a', submissionId: 'submission-a' }), env: settings });
-  assert.equal(accepted.status, 200); assert.equal((await accepted.json()).proceed, true);
+  assert.equal(accepted.status, 200); const acceptedBody = await accepted.json(); assert.equal(acceptedBody.proceed, false); assert.equal(acceptedBody.completion.proceed, true);
 });
 
 test('production Firestore adapter atomically fences the nested completion event and create-only business/submission claims', async t => {
@@ -287,10 +388,10 @@ test('production Firestore adapter atomically fences the nested completion event
     assert.equal(method, 'GET'); return documents.has(path) ? Response.json(documents.get(path)) : Response.json({}, { status: 404 });
   });
   const settings = { ...env(), FIREBASE_API_KEY: 'firebase-test-w19' }, store = dispatchStorage(settings), initial = await store.read('jobs', 'job-a');
-  const prepared = await prepareW19Handoff(settings, store, initial, LEAD, { action: 'prepare', requestId: crypto.randomUUID(), expectedRevision: initial.revision }, NOW);
-  const ref = new URL(prepared.launchUrl).searchParams.get('verified_ref_key'), record = await store.read(W19_HANDOFFS, ref);
+  const prepared = await prepareW19Handoff(settings, store, initial, LEAD, { action: 'prepare', requestId: crypto.randomUUID(), expectedRevision: initial.revision }, NOW, { customerEmail });
+  const ref = new URL(prepared.launchUrl).searchParams.get('egc_completion_reference'), record = await store.read(W19_HANDOFFS, ref);
   const released = await consumeW19Handoff(settings, store, { reference: ref, contactId: 'contact-a', submissionId: 'submission-a' }, NOW, { submission: async () => receipt(record) });
-  assert.equal(released.proceed, true);
+  assert.equal(released.proceed, false); assert.equal(released.completion.proceed, true);
   const again = await consumeW19Handoff(settings, store, { reference: ref, contactId: 'contact-a', submissionId: 'submission-b' }, NOW, { submission: async () => assert.fail('Already released gates must not query again') });
   assert.equal(again.proceed, false);
   assert.equal(calls.filter(call => call.path === ':commit').length, 2);
@@ -306,6 +407,7 @@ test('schema discovery returns the canonical response shape with proceed false a
   const response = await handlers.post({ request: request('/api/w19-completion-gate', { schemaOnly: true }), env: {} });
   assert.equal(response.status, 200); const body = await response.json();
   assert.equal(body.ok, true); assert.equal(body.proceed, false); assert.equal(body.schemaOnly, true); assert.equal(body.opportunity.canUpdate, false);
+  assert.deepEqual(body.completion, { verified: false, proceed: false, status: 'schema_only' }); assert.equal(body.taskStatus, 'not_enabled');
   assert.deepEqual(body.balance, { approvedTotalCents: 0, confirmedAppliedCents: 0, balanceDueCents: 0, currency: 'USD' });
   for (const input of [{ schemaOnly: false }, { schemaOnly: true, reference: 'w19_' + 'x'.repeat(43) }, { schemaOnly: true, contactId: 'real-contact' }]) {
     const rejected = await handlers.post({ request: request('/api/w19-completion-gate', input), env: {} });
