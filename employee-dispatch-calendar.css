@@ -32,6 +32,20 @@
 .dc-options{display:grid;gap:8px;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));min-width:0}.dc-options>h3{grid-column:1/-1}
 .dc-option{font:inherit;display:flex;flex-direction:column;align-items:flex-start;gap:2px;min-height:52px;min-width:0;padding:9px 12px;border:1px solid var(--dp-line);border-radius:9px;background:white;color:var(--dp-ink);text-align:left;cursor:pointer;overflow-wrap:anywhere}
 .dc-option:hover{background:#edf3f7}.dc-option:focus-visible{outline:3px solid #167bb0;outline-offset:2px}.dc-option small{color:var(--dp-muted);font-size:12px;max-width:100%}.dc-option-warn{border-color:#e0b27a;background:#fffaf2}.dc-option-warn small{color:#8b3c03}.dc-option:disabled{opacity:.6;cursor:default}
+/* Schedule board (Board view): crew and estimator groups, estimator open time, door-to-door marks and the D2D day. */
+.dc-group-head{margin:8px 0 0;font-size:13px;font-weight:800;letter-spacing:.08em;text-transform:uppercase;color:var(--dp-muted)}.dc-group-head:first-of-type{margin-top:2px}.dc-group-empty{margin:0 0 4px}
+.dc-lane-off .dc-lane-label strong{color:var(--dp-muted)}.dc-shade.dc-offday{background:repeating-linear-gradient(135deg,#eef1f4 0 6px,#f7f9fa 6px 12px);color:#6b7b8a}.dc-shade.dc-busy{background:repeating-linear-gradient(135deg,#d7e3ee 0 6px,#ebf1f7 6px 12px);color:#2c4a63}
+.dc-open{position:absolute;top:3px;height:48px;min-width:44px;display:flex;align-items:center;padding:3px 7px;border:2px dashed #2f7d5b;border-radius:7px;background:#eef8f2;color:#145c3e;font:inherit;font-size:12px;font-weight:750;text-align:left;overflow:hidden;z-index:1}.dc-open span{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+button.dc-open{cursor:pointer}button.dc-open:hover{background:#ddf1e5}button.dc-open:focus-visible{outline:3px solid #167bb0;outline-offset:-3px}
+.dc-item.dc-item-d2d{border-left-color:#6a3a9c}
+.dc-d2d{margin:14px 0 0;padding:14px;background:var(--dp-paper);border:1px solid var(--dp-line);border-radius:12px;min-width:0;overflow-wrap:anywhere}
+.dc-d2d-head{display:flex;justify-content:space-between;align-items:flex-start;gap:8px 12px;flex-wrap:wrap}.dc-d2d-head h3{margin:0;font-size:17px}.dc-d2d-head p{margin:2px 0 0}
+.dc-d2d-reps{display:grid;grid-template-columns:repeat(auto-fill,minmax(280px,1fr));gap:10px;margin-top:10px;min-width:0}
+.dc-d2d-rep{border:1px solid var(--dp-line);border-radius:10px;padding:12px;min-width:0;background:var(--dp-soft)}.dc-d2d-rep>header{display:flex;justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap}.dc-d2d-rep p{margin:4px 0;font-size:13px}
+.dc-d2d-areas{list-style:none;margin:6px 0;padding:0;display:flex;flex-wrap:wrap;gap:5px}.dc-d2d-areas li{font-size:12px;font-weight:700;background:white;border:1px solid var(--dp-line);border-radius:99px;padding:2px 9px}
+.dc-d2d-stats{display:grid;grid-template-columns:repeat(auto-fill,minmax(80px,1fr));gap:6px;margin:8px 0}.dc-d2d-stats div{background:white;border-radius:7px;padding:5px 7px;min-width:0}.dc-d2d-stats dt{font-size:11px;color:var(--dp-muted);font-weight:700;overflow-wrap:normal;line-height:1.3}.dc-d2d-stats dd{margin:0;font-size:17px;font-weight:800}
+.dc-d2d-jobs{list-style:none;margin:6px 0 0;padding:0;display:grid;gap:6px}.dc-d2d-jobs li{display:flex;flex-wrap:wrap;align-items:center;gap:4px 10px;font-size:13px;background:white;border-radius:7px;padding:6px 8px}.dc-d2d-jobs li>span{flex:1 1 180px;min-width:0}
+.dc-d2d-link{display:inline-flex;align-items:center;min-height:44px;color:#145481;font-weight:700}.dc-d2d-jobs .dp-btn{min-height:44px;padding:6px 10px;font-size:13px}.dc-d2d-booked h4{margin:12px 0 0;font-size:14px}
 @media(max-width:1000px){.dc-axis,.dc-lane{grid-template-columns:120px minmax(0,1fr)}.dc-axis-track{font-size:11px}.dc-axis-track span{padding-left:2px}}
 /* Phones: lanes become per-person agendas, the month shows counts, and assignment opens as a bottom sheet. */
 @media(max-width:680px){
@@ -41,7 +55,7 @@
 .dc-lane{grid-template-columns:minmax(0,1fr);gap:8px;background:var(--dp-paper);border:1px solid var(--dp-line);border-radius:12px;padding:12px}.dc-lane-unassigned{border-color:#c7874a;background:#fffaf5}
 .dc-lane-label{flex-direction:row;justify-content:space-between;align-items:baseline;gap:4px 10px;flex-wrap:wrap}.dc-lane-label strong{font-size:16px}.dc-lane-label small{font-size:13px}
 .dc-track{height:auto;display:grid;gap:6px;overflow:visible;border:0;border-radius:0;background:none}
-.dc-item,.dc-shade,.dc-gap,.dc-preview{position:static;left:auto!important;width:auto!important;min-width:0}
+.dc-item,.dc-shade,.dc-gap,.dc-preview,.dc-open{position:static;left:auto!important;width:auto!important;min-width:0}
 .dc-item{height:auto;min-height:52px;padding:8px 12px;font-size:15px;cursor:pointer}.dc-item span{white-space:normal;overflow-wrap:anywhere}.dc-item-time{font-weight:800}
 .dc-shade{padding:8px 12px;border-radius:7px;font-size:13px}.dc-shade span,.dc-gap span{white-space:normal;overflow-wrap:anywhere}
 .dc-gap{height:auto;border-top:0;border-left:3px solid #7d93a6;padding:2px 10px;text-align:left;font-size:13px;line-height:1.4}.dc-gap-short{border-left-color:#b3470f}.dc-gap-same_property{border-left-style:dotted}
@@ -51,4 +65,6 @@
 .dc-count{display:inline-flex;justify-content:center;min-width:22px;border-radius:11px;background:#193e5e;color:white;font-size:12px;font-weight:750;padding:1px 6px}.dc-count-open{background:#b3470f}
 .dp-dialog.dc-sheet{margin:auto 0 0;width:100%;max-width:100%;max-height:88dvh;border-radius:16px 16px 0 0;border-bottom:0}
 .dc-options{grid-template-columns:minmax(0,1fr)}.dc-option{min-height:56px;font-size:16px}.dc-option small{font-size:13px}
+.dc-open{height:auto;min-height:44px;padding:8px 12px;font-size:14px}.dc-open span{white-space:normal}
+.dc-d2d{padding:12px}.dc-d2d-reps{grid-template-columns:minmax(0,1fr)}.dc-d2d-head .dp-btn{width:100%}
 }

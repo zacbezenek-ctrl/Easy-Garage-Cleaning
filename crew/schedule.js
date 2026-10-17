@@ -1,6 +1,7 @@
 (function () {
   'use strict';
   // CREW-SCHEDULE (WP6, owner decision D6 2026-10-17): the crew's own schedule, read only, from /api/crew-schedule.
+  // An estimator's own walkthroughs show too, labelled Walkthrough, and open the game plan for that visit (D2D-BOARD).
   // Today or the next 7 days, per day: time, customer first name and city, crew and lead. A row opens the job page only
   // when the server says this viewer may open it (canOpen). A team lead, manager or owner (schedule.view: the role, or
   // business access) reads every crew and picks a crew; everyone else reads their own crews. Nothing here is stored on
@@ -109,29 +110,29 @@
     const time = continuing ? row.endDate === day && row.endTime ? `Until ${clock(row.endTime)}` : 'All day'
       : row.time ? `${clock(row.time)}${row.endTime && row.endDate === day ? `–${clock(row.endTime)}` : ''}` : 'Time TBD';
     const who = [row.customer || 'Customer', row.area].filter(Boolean).join(' · ');
-    const detail = [row.serviceType, crew?.name || row.crewName || (row.crewSize ? '' : 'No crew yet'), row.lead ? `Lead: ${row.lead}` : ''].filter(Boolean).join(' · ');
+    // D2D-BOARD: an estimator's own walkthrough is a Walkthrough row that opens its game plan; it has no crew.
+    const visit = row.type === 'walkthrough';
+    const detail = visit ? ['Walkthrough', row.serviceType].filter(Boolean).join(' · ') : [row.serviceType, crew?.name || row.crewName || (row.crewSize ? '' : 'No crew yet'), row.lead ? `Lead: ${row.lead}` : ''].filter(Boolean).join(' · ');
     const status = String(row.status || '');
-    const badges = [row.mine ? badge('You’re on this job', 'you') : null, status === 'in_progress' ? badge('In progress', 'live') : null,
+    const badges = [visit ? badge('Walkthrough', 'visit') : null, row.mine ? badge(visit ? 'Your walkthrough' : 'You’re on this job', 'you') : null, status === 'in_progress' ? badge('In progress', 'live') : null,
       ['completed', 'invoiced', 'paid', 'review_requested'].includes(status) ? badge('Done', 'done') : null,
-      row.crewSize < row.crewNeeded ? badge(row.crewSize ? `Needs ${row.crewNeeded - row.crewSize} more` : 'Needs crew', 'warn') : null,
+      !visit && row.crewSize < row.crewNeeded ? badge(row.crewSize ? `Needs ${row.crewNeeded - row.crewSize} more` : 'Needs crew', 'warn') : null,
       multi ? badge(continuing ? `Continues · through ${dayLabel(row.endDate, { weekday: 'short' })}` : `Multi-day · through ${dayLabel(row.endDate, { weekday: 'short', month: 'short', day: 'numeric' })}`) : null].filter(Boolean);
     const body = [h('time', {}, time, row.arrivalWindow && !continuing ? h('small', {}, `Arrive ${row.arrivalWindow}`) : null),
       h('span', { class: 'who' }, h('strong', {}, who), h('small', {}, detail), badges.length ? h('span', { class: 'badges' }, badges) : null)];
-    // A walkthrough (only ever the viewer's own) opens the walkthrough page, as crew home's walkthrough cards do.
-    const href = row.type === 'walkthrough' ? `/crew/gameplan?walkthroughId=${encodeURIComponent(row.id)}` : `/crew/job.html?jobId=${encodeURIComponent(row.id)}`;
-    if (row.canOpen) return h('a', { class: 'job-row', href, 'data-job': row.id }, ...body, h('b', { 'aria-hidden': 'true' }, '→'));
+    if (row.canOpen) return h('a', { class: 'job-row', href: visit ? `/crew/gameplan.html?walkthroughId=${encodeURIComponent(row.id)}` : `/crew/job.html?jobId=${encodeURIComponent(row.id)}`, 'data-job': row.id, ...(visit ? { 'data-type': 'walkthrough', 'aria-label': `Open the game plan for the walkthrough at ${time} with ${who}` } : {}) }, ...body, h('b', { 'aria-hidden': 'true' }, '→'));
     return h('div', { class: 'job-row locked', 'data-job': row.id }, ...body, h('small', { class: 'lock-note' }, 'Not on your assignment'));
   }
 
   function dayBlock(day, pairs) {
     const rows = pairs.filter(([, row]) => row.days.includes(day)).sort(([, a], [, b]) => `${a.date < day ? '00:00' : a.time || '99:99'}`.localeCompare(`${b.date < day ? '00:00' : b.time || '99:99'}`) || a.id.localeCompare(b.id));
     const crews = new Map();
-    for (const pair of rows) { const key = pair[0]?.id || 'none'; if (!crews.has(key)) crews.set(key, []); crews.get(key).push(pair); }
+    for (const pair of rows) { const key = pair[1].type === 'walkthrough' ? 'walkthroughs' : pair[0]?.id || 'none'; if (!crews.has(key)) crews.set(key, []); crews.get(key).push(pair); }
     const split = crews.size > 1;
     return h('section', { class: 'day', 'data-day': day },
       h('h2', {}, dayLabel(day), day === today() ? h('small', {}, 'Today') : null),
       !rows.length ? h('p', { class: 'empty' }, 'No crew jobs.') : split
-        ? [...crews.values()].map(list => h('div', { class: 'crew-block' }, h('h3', {}, list[0][0] ? `${list[0][0].name}${list[0][0].lead ? ` · Lead: ${list[0][0].lead}` : ''}` : 'Not on a crew'), h('div', { class: 'job-list' }, list.map(([crew, row]) => jobRow(crew, row, day)))))
+        ? [...crews.entries()].map(([key, list]) => h('div', { class: 'crew-block' }, h('h3', {}, key === 'walkthroughs' ? 'Your walkthroughs' : list[0][0] ? `${list[0][0].name}${list[0][0].lead ? ` · Lead: ${list[0][0].lead}` : ''}` : 'Not on a crew'), h('div', { class: 'job-list' }, list.map(([crew, row]) => jobRow(crew, row, day)))))
         : h('div', { class: 'job-list' }, rows.map(([crew, row]) => jobRow(crew, row, day))));
   }
 

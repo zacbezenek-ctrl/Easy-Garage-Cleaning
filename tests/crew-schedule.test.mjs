@@ -81,28 +81,27 @@ test('a crewmate sees every job booked for their crew, and only their own assign
   assert.deepEqual(calls.find(call => call[0] === 'jobs').slice(1, 3), ['2026-09-14', '2026-10-22']);
   assert.deepEqual(calls.find(call => call[0] === 'jobs')[3], [...CREW_SCHEDULE_FIELDS]);
   const ana = await get('ana', '?from=2026-10-16&to=2026-10-16');
-  assert.deepEqual(ids(ana), ['job_crew1_ana', 'job_multiday', 'walk_1']);
+  assert.deepEqual(ids(ana), ['job_crew1_ana', 'job_multiday', 'walk_1'], 'her own walkthrough is on her schedule (D2D-BOARD)');
   assert.deepEqual(rows(ana.body).map(row => [row.id, row.mine, row.canOpen]), [['job_crew1_ana', true, true], ['job_multiday', false, false], ['walk_1', true, true]]);
 });
 
-test('a walkthrough shows only to the person it is assigned to (an estimator\'s own visit), on no crew, first name and city only', async () => {
-  const { get } = harness();
-  for (const query of ['?from=2026-10-16&to=2026-10-16', '?from=2026-10-16&to=2026-10-16&scope=all']) {
-    const ana = await get('ana', query, { ...ENV, ...ACCESS });
-    if (ana.status === 403) continue;
-    const [walk] = ana.body.unassigned.filter(row => row.id === 'walk_1');
-    assert.deepEqual([walk.type, walk.serviceType, walk.customer, walk.area, walk.crewId, walk.crewName, walk.lead, walk.mine, walk.canOpen, walk.time], ['walkthrough', 'Walkthrough', 'Hal', 'Fort Collins', '', '', '', true, true, '09:30'], query);
-    assert.ok(!ana.body.groups.some(group => group.jobs.some(row => row.id === 'walk_1')), 'never inside a crew group');
+test('an estimator\'s own walkthroughs are on their schedule as Walkthrough rows; nobody else\'s ever shows', async () => {
+  const visit = (id, who, changes = {}) => job(id, { type: 'walkthrough', assignedCrew: [who], crewLead: who, serviceType: '', time: '10:00', endTime: '11:00', ...changes });
+  const jobs = [...JOBS, visit('walk_gus', 'gus.sales', { customer: 'Kai Synthetic', crewId: 'crew_one' }), visit('walk_gus_cancelled', 'gus.sales', { status: 'cancelled', pipelineStatus: 'cancelled' }), visit('walk_dee', 'dee.solo', { time: '14:00', endTime: '15:00' })];
+  const { get } = harness({ jobs });
+  const gus = await get('sales', '?from=2026-10-16&to=2026-10-16');
+  assert.equal(gus.status, 200, JSON.stringify(gus.body));
+  assert.deepEqual(gus.body.groups, [], 'a walkthrough is never filed under a crew, even with a crew id on it');
+  assert.deepEqual(gus.body.unassigned.map(row => [row.id, row.type, row.mine, row.canOpen, row.customer, row.area, row.crewId, row.time, row.endTime]),
+    [['walk_gus', 'walkthrough', true, true, 'Kai', 'Fort Collins', '', '10:00', '11:00']], 'only his own, never a cancelled visit');
+  for (const who of ['ben', 'cara', 'eli', 'tyler']) {
+    const other = await get(who, `?from=2026-10-16&to=2026-10-16${['eli', 'tyler'].includes(who) ? '&scope=all' : ''}`);
+    assert.ok(!/walk_gus|walk_dee|walk_1/.test(JSON.stringify(other.body)), `${who}: another person's walkthrough stays hidden`);
   }
-  // A crewmate, a team lead or a manager reading every crew never sees someone else's walkthrough.
-  for (const [who, query] of [['ben', '?from=2026-10-16&to=2026-10-16'], ['eli', '?from=2026-10-16&to=2026-10-16&scope=all'], ['tyler', '?from=2026-10-16&to=2026-10-16&scope=all']]) {
-    const answer = await get(who, query, { ...ENV, ...ACCESS });
-    assert.equal(answer.status, 200, who);
-    assert.ok(!ids(answer).includes('walk_1'), `${who} does not see ana's walkthrough`);
-  }
-  // A cancelled walkthrough is gone from the assignee's schedule too.
-  const cancelled = harness({ jobs: [job('walk_x', { type: 'walkthrough', assignedCrew: ['dee.solo'], status: 'cancelled', pipelineStatus: 'cancelled' })] });
-  assert.deepEqual(ids(await cancelled.get('dee', '?from=2026-10-16&to=2026-10-16')), []);
+  const { get: deeGet, lookups } = harness({ jobs });
+  const dee = await deeGet('dee', '?from=2026-10-16&to=2026-10-16');
+  assert.deepEqual(dee.body.unassigned.map(row => [row.id, row.type, row.lead]), [['job_dee_solo', 'job', ''], ['walk_dee', 'walkthrough', '']]);
+  assert.deepEqual(lookups, [], 'a walkthrough names no lead, so it costs no name lookup');
 });
 
 test('someone not on the crew never sees its jobs; their own work on no crew shows on its own', async () => {

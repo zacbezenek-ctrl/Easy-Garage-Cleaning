@@ -15,10 +15,9 @@ import { assignmentKey } from './job-assignment.js';
  *   scope=all: every crew's work in the window grouped by crew (crew priority, then name), plus the work on no crew.
  *   It needs schedule.view (staff-roles.js: business access, or the owner, manager or team_lead role; no flag, the
  *   stored role is the switch). Sales, Phone, crew leads and crew get 403 crew_schedule_forbidden.
- * Crew work is type job, cleanout or reorg; company blocks, time off and private records never show. A walkthrough
- * shows only to the person it is assigned to (an estimator's own visits, KNOCK-BRIDGE: a walkthrough a door-to-door rep
- * set lands on the estimator's schedule), in either scope, on no crew, as serviceType 'Walkthrough' with the same
- * first name and city only; nobody else's walkthroughs ever show.
+ * Crew work is type job, cleanout or reorg; company blocks, time off and private records never show. A walkthrough shows
+ * only to the people assigned to it (an estimator's own visits, D2D-BOARD 2026-10-17), in either scope, as a row of type
+ * 'walkthrough' on no crew; nobody else's walkthrough ever shows.
  * Each row is a crewJobProjection row narrowed to the schedule: day, time, arrival window, service, the customer's
  * first name, the city, crew and lead. No phone, street address, notes, instructions, conversation, crew roster or
  * money ever leaves here; the job page (/crew/job.html, which checks the assignment itself) stays the only way into a
@@ -113,18 +112,21 @@ export async function crewSchedule({ session, env = {}, crews, jobs, access, nam
   const known = new Map(crewRows.map(crew => [crew.id, crew]));
   const shown = [];
   for (const job of jobs) {
-    const walkthrough = job?.type === 'walkthrough';
-    if (!job || !CREW_WORK.has(job.type) && !walkthrough || job.recordType || !fieldId(job.id) || fieldCancelled(job)) continue;
+    const visit = job?.type === 'walkthrough';
+    if (!job || !(CREW_WORK.has(job.type) || visit) || job.recordType || !fieldId(job.id) || fieldCancelled(job)) continue;
     let open = null;
     for (const row of jobSegments(job)) {
       const days = windowDays(row, from, to);
       if (!days.length) continue;
-      const mine = await access.assigned(row), crew = !walkthrough && row.crewId ? known.get(row.crewId) || null : null;
-      if (walkthrough ? !mine : !all && !mine && !(crew && mineCrews.has(crew.id))) continue;
+      const mine = await access.assigned(row), crew = !visit && row.crewId ? known.get(row.crewId) || null : null;
+      // An estimator's walkthrough is on their own schedule only.
+      if (visit ? !mine : !all && !mine && !(crew && mineCrews.has(crew.id))) continue;
       // The job page opens for anyone on the job, whichever segment they work (/api/field-jobs checks the whole job).
       open ??= manager || await access.assigned(job);
       // A segment row is an unsplit job (jobSegments), so the projection reads its own window, crew and lead.
-      shown.push({ crew, days, mine, canOpen: open, segmentId: row.segmentId || '', view: crewJobProjection(row, { viewer: session.user, crewName: crew?.name || '' }) });
+      // A walkthrough names no lead (it is the viewer's own visit), so it never costs a lead-name lookup.
+      const view = crewJobProjection(row, { viewer: session.user, crewName: crew?.name || '' });
+      shown.push({ crew, days, mine, canOpen: open, segmentId: row.segmentId || '', view: visit ? { ...view, crewLead: null } : view });
     }
   }
   const groups = [...known.values()].sort(byCrew).map(crew => ({ crew, items: shown.filter(item => item.crew === crew) }))
@@ -136,7 +138,7 @@ export async function crewSchedule({ session, env = {}, crews, jobs, access, nam
   const rowView = ({ crew, days, mine, canOpen, segmentId, view }) => ({
     id: view.id, ...(segmentId ? { segmentId } : {}), type: view.type, status: view.status,
     date: view.date, endDate: view.endDate, time: view.time, endTime: view.endTime, arrivalWindow: view.arrivalWindow, days,
-    serviceType: view.type === 'walkthrough' ? 'Walkthrough' : view.serviceType, customer: firstName(view.customer), area: areaOf(view.address),
+    serviceType: view.serviceType, customer: firstName(view.customer), area: areaOf(view.address),
     crewId: crew ? crew.id : '', crewName: crew ? text(crew.name, 100) : text(view.crewName, 100),
     lead: view.crewLead ? name(view.crewLead) : crew?.leadId ? name(crew.leadId) : '',
     crewSize: view.assignedCrew.length, crewNeeded: Number.isFinite(view.crewNeeded) && view.crewNeeded > 0 ? view.crewNeeded : 1,

@@ -641,10 +641,13 @@ function openOpenings(source) {
   const crew=select([['','Choose employees individually'],...sortedCrews(S.data.crews.filter(row=>row.status==='active')).map(row=>[row.id,crewLabel(row)])],'',id=>{const selected=S.data.crews.find(row=>row.id===id);if(selected)for(const[id,input]of checks)input.checked=selected.memberIds.includes(id);});
   const truck=select([['','No vehicle required'],...S.data.vehicles.filter(row=>row.status==='available').map(row=>[row.id,row.name])],S.data.vehicles.some(row=>row.id===job?.vehicleId&&row.status==='available')?job.vehicleId:'',()=>{});
   // Job openings start at 9:30 or later (owner rule); a walkthrough may start with the workday.
-  const kind=select([['job','Service job (from 9:30)'],['walkthrough','Walkthrough']],job?.type==='walkthrough'?'walkthrough':'job',()=>{if(kind.value==='walkthrough'&&mode.value==='crews')mode.value='people';sync();},{disabled:Boolean(job)});
+  const kind=select([['job','Service job (from 9:30)'],['walkthrough','Walkthrough']],job?.type==='walkthrough'?'walkthrough':'job',()=>{if(kind.value==='walkthrough'&&mode.value==='crews')mode.value='people';else if(kind.value!=='walkthrough'&&anyCrew&&!modeChosen)mode.value='crews';sync();},{disabled:Boolean(job)});
   // Any crew (priority order): each active crew on the days it works, Crew 1 before Crew 2 (GET crews=auto).
   // Crews do service jobs, not walkthroughs; a booker moving a job a manager staffed searches that job's people.
-  const hasCrews=S.data.crews.some(row=>row.status==='active')&&!(booker()&&handStaffed(job)),mode=select([['people','Employees I choose'],...(hasCrews?[['crews','Any crew (priority order)']]:[])],hasCrews&&booker()&&crewAuto()&&kind.value!=='walkthrough'?'crews':'people',()=>sync());
+  // With crew auto-assign on, a service job's search starts on Any crew for everyone, unless a manager already chose
+  // its people (D2D-BOARD, owner 2026-10-17); with it off, the search starts on Employees I choose as before.
+  const hasCrews=S.data.crews.some(row=>row.status==='active')&&!(booker()&&handStaffed(job)),anyCrew=hasCrews&&crewAuto()&&!handStaffed(job);let modeChosen=false;
+  const mode=select([['people','Employees I choose'],...(hasCrews?[['crews','Any crew (priority order)']]:[])],anyCrew&&kind.value!=='walkthrough'?'crews':'people',()=>{modeChosen=true;sync();});
   const crewField=labeled('Saved crew to check',crew),searchField=labeled('Search',mode),crewMode=[...mode.querySelectorAll('option')].find(option=>option.value==='crews');
   model.fields.append(searchField,labeled('Visit type',kind),crewField,labeled('Vehicle to check',truck),members);
   const sync=()=>{if(crewMode)crewMode.disabled=kind.value==='walkthrough';const crews=mode.value==='crews';crewField.hidden=crews;members.hidden=crews;};sync();

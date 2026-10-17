@@ -50,7 +50,7 @@ class DispatchCalendarTests(unittest.TestCase):
         self.jobs = [job(), job(id='job-2', revision='rev-2', customer='Synthetic Unassigned Garage', time='13:00', endTime='15:00', assignedCrew=[], crewLead=None, crewId=None, vehicleId=None)]
         self.crews = [{'id': 'crew-main', 'revision': 'crew-rev-1', 'name': 'North Crew', 'memberIds': ['crew.one', 'lead.one'], 'leadId': 'lead.one', 'status': 'active'},
                       {'id': 'crew-south', 'revision': 'crew-rev-2', 'name': 'South Crew', 'memberIds': ['crew.two'], 'leadId': 'crew.two', 'status': 'active'}]
-        self.availability = []; self.warnings = []
+        self.availability = []; self.warnings = []; self.roster = ROSTER; self.d2d = None; self.d2d_gets = []
         self.context = None; self.page = None
     def start(self, width=1360, height=950, mobile=False):
         self.context = self.browser.new_context(viewport={'width': width, 'height': height}, timezone_id='Asia/Tokyo', **({'is_mobile': True, 'has_touch': True, 'device_scale_factor': 2} if mobile else {}))
@@ -66,6 +66,10 @@ class DispatchCalendarTests(unittest.TestCase):
     def route(self, route):
         req = route.request; parsed = urlparse(req.url)
         if parsed.hostname != '127.0.0.1': route.abort(); return
+        # D2D-BOARD: the door-to-door day for the Board view (off unless a test sets self.d2d).
+        if parsed.path == '/api/d2d-day':
+            self.d2d_gets.append(parse_qs(parsed.query)); status, data = self.d2d or (404, {'ok': False, 'code': 'd2d_day_disabled', 'error': 'The door-to-door board is turned off.'})
+            route.fulfill(status=status, content_type='application/json', body=json.dumps(data)); return
         if parsed.path != '/api/dispatch': route.continue_(); return
         def send(data, status=200): route.fulfill(status=status, content_type='application/json', body=json.dumps(data))
         if req.method == 'GET':
@@ -74,7 +78,7 @@ class DispatchCalendarTests(unittest.TestCase):
             first = params['startDate'][0]; last = params['endDate'][0]
             rows = [row for row in self.jobs if not row.get('date') or (row['date'] < last and (row.get('endDate') or row['date']) >= first)]
             if self.hold_get: self.hold_get = False; self.held = (route, first, last); return
-            send({'ok': True, 'viewer': {'id': self.viewer}, 'timeZone': 'America/Denver', 'jobs': rows, 'roster': ROSTER, 'crews': self.crews, 'vehicles': [{'id': 'truck-1', 'revision': 't1', 'name': 'Box Truck', 'status': 'available'}],
+            send({'ok': True, 'viewer': {'id': self.viewer, **({'booker': True} if self.viewer == 'sales.one' else {})}, 'timeZone': 'America/Denver', 'jobs': rows, 'roster': self.roster, 'crews': self.crews, 'vehicles': [{'id': 'truck-1', 'revision': 't1', 'name': 'Box Truck', 'status': 'available'}],
                   'availability': self.availability, 'warnings': self.warnings, 'coverage': {'complete': True, 'asOf': DAY+'T18:00:00Z'}, 'startDate': first, 'endDate': last, 'arrivalDefaults': {'enabled': False, 'minutes': 60},
                   **({'segments': self.segments} if self.segments else {}), **({'funnel': self.funnel} if self.funnel else {})}); return
         body = req.post_data_json; self.calls.append(copy.deepcopy(body))
@@ -389,5 +393,65 @@ class DispatchCalendarTests(unittest.TestCase):
         expect(sheet.get_by_role('link', name='Sold \u2192 open job', exact=True)).to_have_attribute('href', '/crew/job.html?jobId=job-sold')
         expect(sheet.get_by_role('button', name=re.compile('^Rebook'))).to_have_count(0)
         sheet.get_by_role('button', name='Back', exact=True).tap(); self.closed(); self.assertEqual(len(self.calls), 1)
+
+    # D2D-BOARD (owner 2026-10-17): one schedule board with the crews by priority, the estimators and the door-to-door day.
+    def board_fixture(self):
+        self.roster = ROSTER + [{'id': 'est.one', 'name': 'Est One', 'role': 'sales'}, {'id': 'est.two', 'name': 'Est Two', 'role': 'crew', 'skills': [{'id': 'walkthrough_estimating', 'level': 'lead'}]}]
+        self.crews = [dict(self.crews[0], name='Crew 1', priority=1, serviceDays=['mon', 'tue', 'wed', 'thu', 'fri']), dict(self.crews[1], name='Crew 2', priority=2, serviceDays=['mon', 'tue', 'wed', 'thu', 'fri']),
+                      {'id': 'crew-weekend', 'revision': 'crew-rev-3', 'name': 'Crew 3', 'memberIds': ['crew.two'], 'leadId': 'crew.two', 'status': 'active', 'priority': 3, 'serviceDays': ['sat', 'sun']}]
+        self.jobs.append(job(id='walk-1', revision='walk-rev-1', type='walkthrough', customer='Synthetic Walk Garage', serviceType='', time='12:30', endTime='13:30', assignedCrew=['est.one'], crewLead='est.one', crewId=None, vehicleId=None, crewNeeded=1))
+        self.d2d = (200, {'ok': True, 'authority': 'employee_hub', 'date': DAY, 'timeZone': 'America/Denver', 'totals': {'reps': 1, 'onShift': 1, 'doors': 41, 'sales': 1, 'walkthroughsSet': 1},
+            'reps': [{'repKey': 'rep.one', 'name': 'Synthetic Rep', 'onShift': True, 'onBreak': False, 'shifts': [{'startedAt': DAY + 'T15:05:00.000Z', 'endedAt': None, 'autoEnded': False}], 'knockingMinutes': 175,
+                      'areas': [{'id': 'nb1', 'name': 'Synthetic Park', 'claim': 'self', 'worked': True}], 'doors': 41, 'answers': 12, 'looks': 4, 'sales': 1, 'walkthroughsSet': 1,
+                      'saleList': [{'id': 'sale-1', 'status': 'booked', 'package': 'Synthetic Reset', 'jobDate': DAY, 'jobStartTime': '08:00', 'jobId': 'job-1'}],
+                      'jobs': [{'id': 'job-1', 'kind': 'sale', 'type': 'job', 'date': DAY, 'time': '08:00', 'status': 'scheduled'}, {'id': 'walk-set', 'kind': 'walkthrough', 'type': 'walkthrough', 'date': '2026-09-24', 'time': '10:00', 'status': 'scheduled'}]}],
+            'jobs': [{'id': 'job-1', 'kind': 'sale', 'repKey': 'rep.one', 'repName': 'Synthetic Rep', 'type': 'job', 'date': DAY, 'time': '08:00', 'status': 'scheduled', 'bookedToday': True, 'createdToday': True},
+                     {'id': 'walk-set', 'kind': 'walkthrough', 'repKey': 'rep.one', 'repName': 'Synthetic Rep', 'type': 'walkthrough', 'date': '2026-09-24', 'time': '10:00', 'status': 'scheduled', 'bookedToday': False, 'createdToday': True}],
+            'coverage': {'complete': True, 'truncated': [], 'missing': [], 'asOf': DAY + 'T18:00:00Z'}})
+
+    def test_board_groups_crews_then_estimators_then_door_to_door_and_stacks_on_a_phone(self):
+        self.board_fixture(); self.start(1360, 1700); self.mode('Board')
+        expect(self.page.locator('.dc-group-head')).to_have_text(['Crews', 'Estimators'])
+        expect(self.page.locator('.dc-lane .dc-lane-label strong')).to_have_text(['Unassigned', 'Crew 1', 'Crew 2', 'Crew 3 · Weekend', 'Est One', 'Est Two'])
+        expect(self.lane('Crew 3 · Weekend')).to_contain_text('Off today · works Sat, Sun')
+        expect(self.item('Est One', 'Synthetic Walk Garage')).to_contain_text('Walkthrough')
+        # Denver noon today: open walkthrough time runs from now, around Est One's 12:30 visit (too short before it).
+        expect(self.lane('Est One').locator('.dc-open')).to_have_text(['Open 1:30 PM – 5:00 PM'])
+        expect(self.lane('Est Two').locator('.dc-open')).to_have_text(['Open 12:00 PM – 5:00 PM'])
+        d2d = self.page.locator('.dc-d2d'); expect(d2d).to_contain_text('Synthetic Rep'); expect(d2d).to_contain_text('On shift'); expect(d2d).to_contain_text('Synthetic Park · claimed · worked today')
+        expect(d2d.get_by_role('link', name='Open walkthrough', exact=True)).to_have_attribute('href', '/crew/gameplan.html?walkthroughId=walk-set')
+        expect(self.item('Crew 1', 'Synthetic Johnson Garage')).to_contain_text('Door-to-door')
+        self.assertEqual([params['date'] for params in self.d2d_gets], [[DAY]])
+        out = ROOT/'test-results'; out.mkdir(exist_ok=True); self.page.screenshot(path=str(out/'dispatch-board-desktop.png'), full_page=True)
+        # An open slot books a walkthrough with that estimator at that time; nothing is sent until the form is saved.
+        self.lane('Est Two').locator('button.dc-open').click(); dialog = self.page.get_by_role('dialog')
+        expect(dialog.get_by_role('combobox', name='Work type', exact=True)).to_have_value('walkthrough'); expect(dialog.get_by_label('Start time', exact=True)).to_have_value('12:00')
+        expect(dialog.get_by_role('checkbox', name=re.compile('^Est Two'))).to_be_checked()
+        dialog.get_by_role('button', name='Back', exact=True).click(); self.closed(); self.assertEqual(self.calls, []); self.reloaded()
+        # A walkthrough drags to another estimator like a lane job.
+        self.drag(self.item('Est One', 'Synthetic Walk Garage'), 'Est Two', 780); dialog = self.page.get_by_role('dialog'); expect(dialog).to_contain_text('Est Two')
+        dialog.get_by_role('button', name='Save move', exact=True).click(); self.closed()
+        self.assertEqual([self.calls[-1]['jobId'], self.calls[-1]['changes']['assignedCrew'], self.calls[-1]['changes']['time']], ['walk-1', ['est.two'], '13:00'])
+        self.reloaded(); expect(self.item('Est Two', 'Synthetic Walk Garage')).to_have_count(1)
+        self.assertEqual(len(self.d2d_gets), 1, 'the board refresh does not read the door-to-door day again')
+        # Phone: the rows and the door-to-door day stack in one column with no sideways scroll.
+        self.page.set_viewport_size({'width': 375, 'height': 812}); self.no_overflow(375)
+        crew_one, est_two = self.lane('Crew 1').bounding_box(), self.lane('Est Two').bounding_box()
+        self.assertLess(abs(crew_one['x'] - est_two['x']), 2); self.assertGreater(est_two['y'], crew_one['y'])
+        for control in [self.page.get_by_role('button', name='Refresh door-to-door', exact=True), self.lane('Est One').locator('button.dc-open').first, self.page.get_by_role('button', name='Board', exact=True)]:
+            self.assertGreaterEqual(control.bounding_box()['height'], 44)
+        self.assertGreater(d2d.bounding_box()['y'], est_two['y']); self.page.screenshot(path=str(out/'dispatch-board-phone.png'), full_page=True)
+        self.page.get_by_role('button', name='Refresh door-to-door', exact=True).click(); expect(d2d).to_contain_text('Synthetic Rep'); self.assertEqual(len(self.d2d_gets), 2)
+
+    def test_board_door_to_door_is_hidden_when_off_and_never_asked_by_a_booker(self):
+        self.board_fixture(); self.d2d = (404, {'ok': False, 'code': 'd2d_day_disabled', 'error': 'The door-to-door board is turned off.'})
+        self.start(); self.mode('Board'); expect(self.page.locator('.dc-group-head')).to_have_count(2)
+        expect(self.page.locator('.dc-d2d')).to_have_count(0); self.assertEqual(len(self.d2d_gets), 1)
+        self.reloaded(); expect(self.page.locator('.dc-d2d')).to_have_count(0); self.assertEqual(len(self.d2d_gets), 1)
+        self.context.close(); self.context = None
+        self.viewer = 'sales.one'; self.d2d_gets = []; self.start(); self.mode('Board')
+        expect(self.page.locator('.dc-group-head')).to_have_count(2); expect(self.page.locator('.dc-d2d')).to_have_count(0)
+        expect(self.page.locator('button.dc-open')).to_have_count(0); expect(self.lane('Est Two').locator('.dc-open')).to_have_text(['Open 12:00 PM – 5:00 PM'])
+        self.assertEqual(self.d2d_gets, [])
 
 if __name__ == '__main__': unittest.main(verbosity=2)

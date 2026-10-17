@@ -27,7 +27,7 @@ class NativeBookingBrowserTests(unittest.TestCase):
  @classmethod
  def tearDownClass(cls):cls.browser.close();cls.pw.stop();cls.server.shutdown();cls.server.server_close()
  def setUp(self):
-  self.context=self.browser.new_context(viewport={'width':1360,'height':1000},timezone_id='Asia/Tokyo');self.page=self.context.new_page();self.page.set_default_timeout(6000);self.errors=[];self.calls=[];self.receipts={};self.jobs=[];self.lost=False;self.failure=None;self.plan_checks=0;self.roster=ROSTER;self.page.on('pageerror',lambda e:self.errors.append(str(e)));self.page.route('**/*',self.route)
+  self.context=self.browser.new_context(viewport={'width':1360,'height':1000},timezone_id='Asia/Tokyo');self.page=self.context.new_page();self.page.set_default_timeout(6000);self.errors=[];self.calls=[];self.receipts={};self.jobs=[];self.lost=False;self.failure=None;self.plan_checks=0;self.roster=ROSTER;self.auto={};self.page.on('pageerror',lambda e:self.errors.append(str(e)));self.page.route('**/*',self.route)
  def tearDown(self):self.assertEqual(self.errors,[]);self.context.close()
  def route(self,route):
   req=route.request;url=urlparse(req.url)
@@ -38,7 +38,7 @@ class NativeBookingBrowserTests(unittest.TestCase):
   if url.path=='/api/recurring-plans':self.plan_checks+=1;send({'ok':True,'enabled':False});return
   if url.path!='/api/dispatch':send({'ok':False,'error':'Synthetic provider unavailable'},503);return
   if req.method=='GET':
-   args=parse_qs(url.query);found=next((row for row in self.jobs if row['id']==args.get('jobId',[''])[0]),None);send({'ok':True,'jobs':self.jobs,'job':found,'roster':self.roster,'crews':[],'vehicles':[],'warnings':[]});return
+   args=parse_qs(url.query);found=next((row for row in self.jobs if row['id']==args.get('jobId',[''])[0]),None);send({'ok':True,'jobs':self.jobs,'job':found,'roster':self.roster,'crews':[],'vehicles':[],'warnings':[],**self.auto});return
   body=req.post_data_json;self.calls.append(copy.deepcopy(body))
   if body['requestId'] in self.receipts:send(self.receipts[body['requestId']]);return
   if self.failure:send({'ok':False,'error':'Crew unavailable','code':'dispatch_conflict'},409);return
@@ -77,4 +77,28 @@ class NativeBookingBrowserTests(unittest.TestCase):
   self.page.goto(self.url+'/legacy');self.page.evaluate('(p)=>{window.syntheticCustomer=p.c;openBooking(null,p.j)}',{'c':CUSTOMER,'j':job});crew=self.page.locator('#booking-crew');expect(crew.get_by_label('Office Owner',exact=True)).to_be_checked();expect(crew.get_by_label('Crew One',exact=True)).not_to_be_checked()
  def test_phone_size_review_and_save(self):
   self.page.set_viewport_size({'width':390,'height':844});self.legacy();self.review();self.assertLessEqual(self.page.evaluate('document.documentElement.scrollWidth'),390);self.page.locator('#btn-next').click();expect(self.page.locator('#booking-overlay')).not_to_have_class(re.compile('open'))
+ def oncall_job(self,auto=None):
+  self.page.evaluate('(c)=>{closeBooking();openOnCall();oc.customer=c;oc.step=3;renderOcStep()}',CUSTOMER);self.page.locator('#oc-type').select_option('job');self.page.locator('#oc-time').fill('13:00');self.page.locator('#oc-endtime').fill('14:00');self.page.locator('#oc-email').uncheck()
+  box=self.page.locator('#oncall-crew').get_by_label(AUTO_LABEL,exact=True)
+  if auto is not None:expect(box).to_be_checked();box.set_checked(auto)
+  self.page.locator('#oc-next').click();expect(self.page.locator('#oncall-overlay')).not_to_have_class(re.compile('open'))
+ def test_crew_auto_assign_says_so_and_a_manager_may_turn_it_off_for_one_new_booking(self):
+  # EGC_DISPATCH_CREW_AUTO_ASSIGN on: a new service job saved with nobody ticked asks the server for the first free crew.
+  self.auto={'crewAutoAssign':True,'viewer':{'id':'zacb'}};self.legacy()
+  expect(self.page.locator('#booking-crew .egc-crew-auto')).to_contain_text('first free crew');expect(self.page.locator('#booking-crew').get_by_label(AUTO_LABEL,exact=True)).to_be_checked()
+  self.oncall_job(auto=False);self.assertEqual([self.calls[-1]['action'],'autoCrew' in self.calls[-1],self.calls[-1]['changes']['assignedCrew']],['schedule.create',False,[]],'a manager turned the pick off for this booking')
+  self.oncall_job(auto=True);self.assertEqual([self.calls[-1]['action'],self.calls[-1].get('autoCrew')],['schedule.create',True])
+  # Changing a saved job never asks: no notice, no switch, no autoCrew on the update.
+  job={'id':'existing','revision':'r1','type':'job','customerId':CUSTOMER['id'],'customer':CUSTOMER['name'],'date':'2026-10-20','time':'10:00','endDate':'2026-10-20','endTime':'12:00','assignedCrew':[],'status':'scheduled'};self.jobs=[job];calls=len(self.calls)
+  self.page.goto(self.url+'/legacy');self.page.evaluate('(p)=>{window.syntheticCustomer=p.c;openBooking(null,p.j)}',{'c':CUSTOMER,'j':job});expect(self.page.locator('#booking-crew').get_by_label('Crew One',exact=True)).to_be_visible()
+  expect(self.page.locator('#booking-crew .egc-crew-auto')).to_have_count(0);expect(self.page.locator('#booking-crew').get_by_label(AUTO_LABEL,exact=True)).to_have_count(0)
+  self.page.locator('#btn-next').click();self.page.locator('#send-email').uncheck();self.page.locator('#btn-next').click();expect(self.page.locator('#booking-overlay')).not_to_have_class(re.compile('open'))
+  self.assertEqual(len(self.calls),calls+1);self.assertEqual([self.calls[-1]['action'],'autoCrew' in self.calls[-1]],['schedule.update',False])
+ def test_crew_auto_assign_booker_is_told_and_has_no_switch_and_flag_off_shows_nothing(self):
+  self.auto={'crewAutoAssign':True,'viewer':{'id':'sales.one','booker':True}};self.legacy()
+  expect(self.page.locator('#booking-crew .egc-crew-auto')).to_contain_text('first free crew');expect(self.page.locator('#booking-crew').get_by_label(AUTO_LABEL,exact=True)).to_have_count(0)
+  self.oncall_job();self.assertEqual(self.calls[-1].get('autoCrew'),True,'a booker\'s job is staffed by the server either way')
+  self.auto={};self.legacy();expect(self.page.locator('#booking-crew').get_by_label('Crew One',exact=True)).to_be_visible();expect(self.page.locator('#booking-crew .egc-crew-auto')).to_have_count(0)
+  self.oncall_job();self.assertNotIn('autoCrew',self.calls[-1])
+AUTO_LABEL='Assign the first free crew automatically when no one is chosen'
 if __name__=='__main__':unittest.main(verbosity=2)
