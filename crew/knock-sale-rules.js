@@ -92,6 +92,37 @@ export function jobDateAllowed(jobDate, saleDate, options = {}) {
   return Boolean(window && validDate(jobDate) && jobDate >= window.earliestJobDate);
 }
 
+/* Job start (owner rule, functions/_lib/job-start-policy.js): job work starts at 9:30 am or later in America/Denver
+   for job dates on and after 2026-10-15, and the job day ends at 5:00 pm. The phone and the server read these copies
+   (the browser cannot import functions/); tests/knock-sales.test.mjs checks they match the dispatch policy. */
+export const JOB_START_POLICY_DATE = '2026-10-15';
+export const JOB_START_MINIMUM = '09:30';
+export const JOB_DAY_END = '17:00';
+
+// The earliest start for a job on this date, or null when the date is before the policy.
+export const jobStartFloor = jobDate => (validDate(jobDate) && jobDate >= JOB_START_POLICY_DATE ? JOB_START_MINIMUM : null);
+
+export function jobStartAllowed(jobDate, time) {
+  const floor = jobStartFloor(jobDate);
+  return !floor || String(time || '') >= floor;
+}
+
+// The start a sale takes when the rep gave none: the settings default, never before the 9:30 floor.
+export function defaultJobStart(settings, jobDate) {
+  const stored = settings?.sale?.defaultJobStartTime || JOB_START_MINIMUM, floor = jobStartFloor(jobDate);
+  return floor && stored < floor ? floor : stored;
+}
+
+/* KNOCK-BRIDGE: how long a door sale's crew job is booked for, by package (minutes). These are planning defaults the
+   office adjusts in Dispatch; every one fits a 9:30 to 5:00 job day. Unknown packages take DEFAULT_JOB_MINUTES. */
+export const PACKAGE_JOB_MINUTES = Object.freeze({ 'Quick Clear': 180, 'Garage Transformation': 360, 'The Works': 420, 'Full Property Reset': 450 });
+export const DEFAULT_JOB_MINUTES = 360;
+export const jobMinutes = pkg => PACKAGE_JOB_MINUTES[pkg] || DEFAULT_JOB_MINUTES;
+
+// The offline choice when no slot list could load: morning or afternoon, and the start the server tries first.
+export const DAY_PARTS = Object.freeze({ am: Object.freeze({ label: 'Morning', start: '09:30' }), pm: Object.freeze({ label: 'Afternoon', start: '13:00' }) });
+export const dayPartOf = time => (String(time || '') < '12:00' ? 'am' : 'pm');
+
 export function depositAmount(ticket, depositRate = 0.25) {
   const value = Number(ticket);
   if (!Number.isFinite(value) || value <= 0) return 0;
@@ -102,7 +133,7 @@ export function depositAmount(ticket, depositRate = 0.25) {
    'full_cancel_right' - inside the legal cancellation window: fully refundable, no questions
    'refundable'        - after the window, until refundCutoffHours before the job start
    'non_refundable'    - inside the cutoff (EGC rule) */
-export function depositRefundStatus({ cancelEndsAt, jobDate, jobStartTime = '08:00', refundCutoffHours = 24, timeZone = 'America/Denver' }, now = Date.now()) {
+export function depositRefundStatus({ cancelEndsAt, jobDate, jobStartTime = JOB_START_MINIMUM, refundCutoffHours = 24, timeZone = 'America/Denver' }, now = Date.now()) {
   if (now < cancelEndsAt) return { status: 'full_cancel_right', until: cancelEndsAt };
   const jobStart = validDate(jobDate) ? zonedInstant(jobDate, jobStartTime, timeZone) : null;
   if (jobStart == null) return { status: 'refundable', until: null };

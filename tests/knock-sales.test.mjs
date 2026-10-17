@@ -172,6 +172,28 @@ test('a sale needs the checklist, a job date after the deadline, contact details
   assert.equal((await send(noAnswer)).body.results[2].code, 'knock_sale_invalid');
 });
 
+test('jobs start at 9:30 or later on and after 2026-10-15: 9:29 is refused, 9:30 accepted, a stored 8:00 default reads as 9:30', async () => {
+  // A stored settings copy saved before the rule keeps 8:00; it still loads (no settings are lost) and is read as 9:30.
+  const stored = { settings: { sale: { defaultJobStartTime: '08:00' } }, updatedAt: '2026-10-01T12:00:00Z', updatedBy: 'test-owner' };
+  const { world, send, act } = await setup({ settingsDoc: stored });
+  const early = saleBatch({ jobDate: '2026-10-19', jobStartTime: '09:29' });
+  assert.deepEqual((await send(early.events)).body.results.map(r => r.code || r.status), ['applied', 'applied', 'knock_sale_job_time']);
+  const exact = saleBatch({ jobDate: '2026-10-19', jobStartTime: '09:30' });
+  await send(exact.events, undefined);
+  assert.equal(world.fake.get(`knock_sales/${exact.saleId}`).jobStartTime, '09:30');
+  const omitted = saleBatch({ jobDate: '2026-10-19', jobStartTime: undefined });
+  await send(omitted.events);
+  assert.equal(world.fake.get(`knock_sales/${omitted.saleId}`).jobStartTime, '09:30', 'the 8:00 default never books an 8:00 job on a policy date');
+  const before = saleBatch({ jobDate: '2026-10-12', jobStartTime: undefined });
+  await send(before.events);
+  assert.equal(world.fake.get(`knock_sales/${before.saleId}`).jobStartTime, '08:00', 'dates before the policy keep the saved default');
+  // Admin date moves: an explicit early start is refused; a kept early start is raised to 9:30 and noted.
+  assert.equal((await act({ action: 'sale.jobDate', saleId: before.saleId, jobDate: '2026-10-20', jobStartTime: '09:00' })).body.code, 'knock_sale_job_time');
+  const moved = await act({ action: 'sale.jobDate', saleId: before.saleId, jobDate: '2026-10-20' });
+  assert.deepEqual([moved.body.sale.jobDate, moved.body.sale.jobStartTime], ['2026-10-20', '09:30']);
+  assert.match(moved.body.sale.statusHistory.at(-1).note, /start 09:30 \(jobs start at 9:30 or later\)/);
+});
+
 test('a sold door with a sale cannot be undone or edited by the rep, and one door gets one sale', async () => {
   const { send } = await setup();
   const { events, knockId } = saleBatch();

@@ -412,7 +412,12 @@ async function salesSection(params) {
       h('div', { class: 'handoffs' },
         h('div', { class: 'card card--line', style: { gap: '10px' } },
           h('div', { class: 'row row--between' }, h('h3', {}, '1 · Job'), j.status === 'created' ? badge('Created', 'success', 'check') : badge('Not created', 'warning')),
-          j.ref ? kv('Reference', j.ref) : null, ref,
+          j.ref ? kv('Reference', j.ref) : null,
+          // KNOCK-BRIDGE: a door sale books its own Hub job; this retries one the Hub could not take yet.
+          j.mode === 'hub' && j.message ? h('p', { class: 'caption muted' }, j.code ? `${j.message} (${j.code})` : j.message) : null,
+          j.mode === 'hub' && j.status !== 'created' && data.integrations.job.available.includes('hub')
+            ? h('button', { type: 'button', class: 'btn btn--primary btn--sm', onclick: () => act({ action: 'sale.book', saleId: sale.id }, 'Booked in the Hub') }, 'Book in Hub') : null,
+          ref,
           h('button', { type: 'button', class: 'btn btn--quiet btn--sm', onclick: () => act({ action: 'sale.handoff', saleId: sale.id, kind: 'job', op: 'mark', ref: ref.value }, 'Job marked created') }, j.status === 'created' ? 'Update reference' : 'Mark created')),
         h('div', { class: 'card card--line', style: { gap: '10px' } },
           h('div', { class: 'row row--between' }, h('h3', {}, `2 · Deposit · ${money(sale.depositAmount, sale.depositAmount % 1 !== 0)}`),

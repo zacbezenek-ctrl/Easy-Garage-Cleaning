@@ -214,6 +214,59 @@ per neighborhood and per street.
   for business users. Pre-filling its address and writing its result back to the door needs a change in
   `crew/gameplan.html` (it reads only `walkthroughId` today).
 
+## Booking into the Hub (Knock bridge)
+
+Behind `EGC_KNOCK_JOB_BRIDGE` (exactly `true`; owner decision D8, 2026-10-17). Unset, Knock sales stay manual hand-offs
+and every sync answer and record is as before. Code: `functions/_lib/knock-bridge.js`, `functions/_lib/knock-walkthroughs.js`,
+`functions/api/knock-job-bridge.js`, `knock-crew-openings.js`, `knock-walkthrough-slots.js`; phone: `crew/knock-sale.js`,
+`crew/knock-walkthrough.js`, the slot picker in `crew/knock-ui.js`.
+
+* **Start times (always on, owner rule):** jobs start at 9:30 am or later for job dates on and after 2026-10-15
+  (`functions/_lib/job-start-policy.js`). The sale form's start has a 9:30 minimum, the default start is 9:30, a sale
+  event with an earlier start is refused (`knock_sale_job_time`) and can be fixed with **Edit and resend**. A stored
+  8:00 default is read as 9:30 on those dates (never rejected, so no saved settings are lost). An admin moving a sale
+  with an 8:00 start onto such a date gets 9:30, noted in the sale's history.
+* **In-person sale:** the form adds **Town** (from the neighborhood) and **ZIP**, and **Crew and day**: the crew starts
+  the Hub has open on and after the earliest job date (`GET /api/knock-crew-openings`; each slot is only day, time,
+  end, crew label and priority), or, with no signal or nothing open, a day and morning/afternoon. After the sale syncs
+  (the sync answers `bridge:{kind:'sale',status:'pending'}`) the phone calls `POST /api/knock-job-bridge`, which:
+  1. resolves or creates the Hub customer (`resolveCustomer`, the canonical upsert; a new customer records
+     `acquisition {channel:'door_to_door', ...}`);
+  2. books the crew job through `mutateDispatch` as the server actor `knock-bridge`, request id = the sale id (a repeat
+     replays, never a second job); with `EGC_DISPATCH_CREW_AUTO_ASSIGN` on the server picks the crew: the time asked for
+     with any free crew (Crew 1 first), else the nearest other start that day, else the nearest day within a week, else
+     the asked-for time with no crew (Sold: needs crew). With auto-assign off the job waits as Sold: needs crew;
+  3. stores the outcome on the sale (`handoff.job` mode `hub`, the Hub job id, day, time, crew label). The rep sees
+     "Booked: Crew 2, Mon Oct 26, 9:30 am" or "Booked: office will confirm the crew" (My sales; My money adds the Hub
+     job's live day, crew and status). A Hub that cannot be reached leaves it pending and the phone retries on the next
+     sync; a customer the Hub cannot match safely is left for the office (Admin > Sales > **Book in Hub** retries).
+  The sale itself is never refused or lost because of scheduling; its signed job date stays as agreed and the office is
+  told in the job's notes when the booking moved.
+* **Booked length by package** (`crew/knock-sale-rules.js` `PACKAGE_JOB_MINUTES`, planning defaults Dispatch adjusts):
+  Quick Clear 3 h, Garage Transformation 6 h, The Works 7 h, Full Property Reset 7.5 h; anything else 6 h.
+* **Walkthrough set** (a seventh door outcome, letter W, teal; counts as an answered door and as "Walkthroughs set" on
+  the scoreboard): the rep takes the customer's name and phone and picks an estimator hour (`GET
+  /api/knock-walkthrough-slots`, next 10 days, 9:00-5:00, the estimator's first name and an opaque handle only), or a day
+  and morning/afternoon offline. Estimators are staff with the `walkthrough_estimating` skill (staff directory on), else
+  staff whose role is sales, never the rep who set it. Booking re-checks the hour: that estimator, else another free
+  then, else the nearest free hour, else an undated walkthrough in Dispatch's To schedule list. The same request writes
+  `knock_setters/<Hub walkthrough id>` (13% setter + 7% estimator, D6b; nothing is earned until the walkthrough
+  converts and is collected). The walkthrough is on the estimator's own day (crew home's walkthrough cards,
+  `/api/field-jobs`) and in Hub dispatch; the crew schedule page lists crew work only. Customer details live only on
+  `knock_walkthroughs` (server-only, like `knock_sales`).
+* **Switching to a sale:** the rep who set a walkthrough (or asked for a native GHL walkthrough request) may still log
+  Sold at that house; the sale's Hub job notes the walkthrough to cancel and the walkthrough record keeps
+  `supersededBySaleId`.
+* **HighLevel:** the bridge sends nothing to HighLevel. Each Knock-made job carries data for the schedule mirror
+  (`EGC_GHL_SCHEDULE_MIRROR`): `source: 'door_to_door'`, `d2d: {kind: 'sale'|'walkthrough', repKey, saleId |
+  setterEventId, houseId, contactSource: 'Door to door', at}` and `ghlTags: ['egc-d2d-sale']` or
+  `['egc-d2d-walkthrough']` (tags the mirror is meant to send; they are registered with that send path).
+* **Rep's day:** the door's time and the knocking window are taken when Sold or Walkthrough set is tapped, so a customer
+  still signing after sunset is not lost; a refused sale or walkthrough opens its form again with everything typed
+  (**Edit and resend**, same id).
+* **Reads:** each new sale or walkthrough costs one customer resolution (it scans the customer records once, masked),
+  one openings search over a week and one dispatch save; a repeat reads only the receipts.
+
 ## Money
 
 * **Commission:** D2D direct close is 25%; appointment setter is 13% plus estimator 7% (20% total, owner decision 2026-10-17);

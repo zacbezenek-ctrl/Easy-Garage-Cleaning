@@ -3,7 +3,8 @@
    fields. A house's state is always derived from its effective knocks, never edited in place. */
 import { zonedParts, zonedDate } from './knock-time.js';
 
-export const ANSWERED = new Set(['not_interested', 'come_back', 'look', 'sold']);
+// walkthrough_set (KNOCK-BRIDGE): someone answered and asked for an estimator; it is not a garage look by the rep.
+export const ANSWERED = new Set(['not_interested', 'come_back', 'look', 'sold', 'walkthrough_set']);
 export const LOOKED = new Set(['look', 'sold']);
 export const GO_BACK = new Set(['no_answer', 'come_back']);
 export const isDoor = outcome => outcome !== 'skipped_sign';
@@ -15,6 +16,7 @@ export const OUTCOME_COLORS = Object.freeze({
   not_interested: '#6b7280',
   look: '#7c3aed',
   sold: '#16a34a',
+  walkthrough_set: '#0d9488',
   skipped_sign: '#dc2626',
   blocked: '#dc2626',
 });
@@ -130,6 +132,8 @@ export function doorStatus(house, summary, settings, now = Date.now()) {
   if (!summary?.lastOutcome) return { knockable: true, status: 'new', reason: 'Not knocked yet' };
   const outcome = summary.lastOutcome;
   if (outcome === 'sold' || outcome === 'look') return { knockable: false, status: 'done', reason: outcome === 'sold' ? 'Sold' : 'Look done' };
+  // The rep who set the walkthrough may still close the sale at the door (knock-rep.js lets only Sold through).
+  if (outcome === 'walkthrough_set') return { knockable: false, status: 'done', reason: 'Walkthrough set' };
   if (outcome === 'not_interested') {
     const restUntil = addMonths(Date.parse(summary.lastAt), Number(goBacks.notInterestedRestMonths ?? 6));
     return now >= restUntil

@@ -56,6 +56,7 @@ async function logDoor(page, outcome, finish = null) {
 }
 
 const server = await startServer();
+let bridge = null;
 const browser = await chromium.launch({ headless: true, ...(process.env.PLAYWRIGHT_CHROMIUM_EXECUTABLE ? { executablePath: process.env.PLAYWRIGHT_CHROMIUM_EXECUTABLE } : {}) });
 const phone = { viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true, timezoneId: 'America/Denver', serviceWorkers: 'allow' };
 const errors = [];
@@ -291,10 +292,75 @@ try {
     assert.equal(await geo.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true, `Choose area fits ${width}px`);
   }
 
+  // 8. KNOCK-BRIDGE (EGC_KNOCK_JOB_BRIDGE on, its own preview): a door sale picks a crew slot and is booked into the
+  //    Hub with that crew; "Walkthrough set" books the estimator; both show on My sales. Rep-safe slots only.
+  bridge = await startPreview({ now: clock, bridge: true });
+  const bridgeContext = await browser.newContext({ ...phone, serviceWorkers: 'block' });
+  await bridgeContext.clock.install({ time: T0 + (Date.now() - startedAt) });
+  const rep = await bridgeContext.newPage();
+  rep.on('pageerror', error => errors.push(String(error)));
+  await signIn(rep, bridge.base, 'Rep.One');
+  await rep.getByRole('button', { name: 'Start shift', exact: true }).click();
+  await rep.getByRole('button', { name: 'Walkthrough set, Estimator visit', exact: true }).waitFor();
+  assert.equal(await rep.locator('.outcomes .oc').count(), 7, 'seven outcomes with the bridge on');
+  const soldAt = await address(rep).textContent();
+  await rep.getByRole('button', { name: 'Sold', exact: true }).click();
+  const form = rep.locator('dialog.fullscreen[aria-label="New sale"]');
+  await form.getByLabel('Name', { exact: true }).fill('Pat Synthetic');
+  await form.getByLabel('Phone', { exact: true }).fill('(970) 555-0142');
+  await form.getByLabel('Email', { exact: true }).fill('pat.synthetic@example.com');
+  await form.getByLabel('ZIP', { exact: true }).fill('80528');
+  assert.equal(await form.getByLabel('Town', { exact: true }).inputValue(), 'Fort Collins', 'the town comes from the neighborhood');
+  await form.getByRole('button', { name: 'Quick Clear', exact: true }).click();
+  await form.getByLabel('Price', { exact: true }).fill('1200');
+  const firstSlot = form.locator('[data-slot-picker="sale-slot"] .chips button').first();
+  await firstSlot.waitFor();
+  assert.match(await firstSlot.textContent(), /^\d{1,2}:\d{2} (am|pm) · Crew 1$/, 'a crew slot names the crew, nobody on it');
+  const slotText = await form.locator('[data-slot-picker="sale-slot"]').textContent();
+  assert.doesNotMatch(slotText, /Andy|Bo |crew\.a1|crew_one/);
+  for (const width of [320, 390]) {
+    await rep.setViewportSize({ width, height: 844 });
+    assert.equal(await rep.evaluate(() => document.querySelector('dialog.fullscreen').scrollWidth <= innerWidth), true, `the sale form fits ${width}px`);
+  }
+  await firstSlot.click();
+  for (const box of await form.locator('label.check input[type="checkbox"]').all()) if (!(await box.getAttribute('id'))) await box.check();
+  await form.getByRole('button', { name: /^Save sale/ }).click();
+  await rep.waitForFunction(() => document.getElementById('knock-sync')?.textContent === 'Synced', null, { timeout: 30000 });
+  await rep.goto(`${bridge.base}/crew/knock.html#mysales`);
+  const booked = rep.locator('[data-booking="booked"]');
+  await booked.waitFor({ timeout: 30000 });
+  assert.match(await booked.textContent(), /Booked: Crew 1, \w{3} \w{3} \d{1,2}, \d{1,2}:\d{2} (am|pm)/);
+  const jobs = () => [...bridge.fake.documents.keys()].filter(path => path.startsWith('jobs/') && !path.includes('_egc_')).map(path => bridge.fake.get(path));
+  const [saleJob] = jobs().filter(job => job.type === 'job');
+  assert.deepEqual([saleJob.crewId, saleJob.source, saleJob.ghlTags], ['crew_one', 'door_to_door', ['egc-d2d-sale']], 'the Hub job has Crew 1 and its D2D attribution');
+  assert.match(saleJob.address, /, Fort Collins, CO 80528$/);
+
+  // Walkthrough set at the next house: the estimator's first name only, booked on Alex's schedule.
+  await rep.goto(`${bridge.base}/crew/knock.html#knock`);
+  await rep.waitForFunction(previous => document.querySelector('.house .house__addr')?.textContent && document.querySelector('.house .house__addr').textContent !== previous, soldAt);
+  await rep.getByRole('button', { name: 'Walkthrough set, Estimator visit', exact: true }).click();
+  const walk = rep.locator('dialog.fullscreen[aria-label="Set a walkthrough"]');
+  await walk.getByLabel('Name', { exact: true }).fill('Lee Synthetic');
+  await walk.getByLabel('Phone', { exact: true }).fill('970-555-0143');
+  const hour = walk.locator('[data-slot-picker="walk-slot"] .chips button').first();
+  await hour.waitFor();
+  assert.match(await hour.textContent(), /^\d{1,2}:\d{2} (am|pm) · Alex$/, 'the estimator by first name only');
+  await hour.click();
+  await walk.getByRole('button', { name: 'Set walkthrough', exact: true }).click();
+  await rep.waitForFunction(() => document.getElementById('knock-sync')?.textContent === 'Synced', null, { timeout: 30000 });
+  await rep.goto(`${bridge.base}/crew/knock.html#mysales`);
+  await rep.getByRole('heading', { name: 'Walkthroughs you set', exact: true }).waitFor({ timeout: 30000 });
+  await rep.locator('[data-booking="booked"]', { hasText: 'Walkthrough booked:' }).waitFor({ timeout: 30000 });
+  const [visit] = jobs().filter(job => job.type === 'walkthrough');
+  assert.deepEqual([visit.assignedCrew, visit.ghlTags], [['est.alex'], ['egc-d2d-walkthrough']]);
+  assert.equal(bridge.fake.get(`knock_setters/${[...bridge.fake.documents.keys()].find(path => path.startsWith('jobs/') && bridge.fake.get(path).type === 'walkthrough').slice(5)}`).setterKey, 'rep.one');
+  assert.deepEqual(bridge.serverErrors, [], 'no bridge server errors');
+
   assert.deepEqual(errors, [], 'no page errors');
   assert.deepEqual(server.serverErrors, [], 'no server errors');
-  console.log(`knock browser smoke test passed (${server.mode} Firestore): 5 offline doors synced and visible to the admin; GPS map, Choose area claim and release work.`);
+  console.log(`knock browser smoke test passed (${server.mode} Firestore): 5 offline doors synced and visible to the admin; GPS map, Choose area claim and release work; a door sale and a door walkthrough were booked into the Hub.`);
 } finally {
   await browser.close();
+  if (bridge) await bridge.close();
   await server.close();
 }

@@ -3,7 +3,7 @@
 // Admins move a sale through booked, cancelled, completed and paid.
 import { knockFailure, write } from './knock-store.js';
 import { PACKAGES, SALE_STATUSES } from '../../crew/knock-settings.js';
-import { cancellationWindow, depositAmount, saleDateOf } from '../../crew/knock-sale-rules.js';
+import { cancellationWindow, dayPartOf, defaultJobStart, depositAmount, jobStartAllowed, jobStartFloor, saleDateOf } from '../../crew/knock-sale-rules.js';
 import { validDate } from '../../crew/knock-time.js';
 import { snapshotCommissionTerms } from '../../crew/knock-money.js';
 import { nativeHouseClaimId, nativeClaimActive } from './knock-form-claims.js';
@@ -11,7 +11,17 @@ import { nativeHouseClaimId, nativeClaimActive } from './knock-form-claims.js';
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const EMAIL = /^[^\s@<>()",;:]{1,64}@[A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)+$/;
 const TIME = /^([01]\d|2[0-3]):[0-5]\d$/;
+const ZIP = /^\d{5}$/;
 const refuse = (code, error) => ({ status: 'rejected', code, error });
+const START_TOO_EARLY = 'Jobs start at 9:30 am or later. Pick a later start time.';
+
+/* A native walkthrough-request claim blocks a direct sale on the house, except (KNOCK-BRIDGE, EGC_KNOCK_JOB_BRIDGE)
+   when the same rep who asked for the walkthrough now closes the sale at the door. */
+export function saleClaimConflict(claim, rep, { jobBridge = false } = {}) {
+  if (!nativeClaimActive(claim)) return false;
+  if (claim.channel === 'direct_sale' && claim.repKey === rep.repKey) return false;
+  return !(jobBridge && claim.channel === 'walkthrough_request' && claim.repKey === rep.repKey);
+}
 
 // US phone numbers to E.164 (+1XXXXXXXXXX); anything else is refused.
 export function normalizePhone(value) {
@@ -26,13 +36,13 @@ export function checklistComplete(settings, checklist) {
 }
 
 /* Validate a sale event against the rep's door. Returns a rejection or null. */
-export async function validateSaleEvent(store, rep, settings, event, { accepted = [], targets = new Map(), houses = new Map() } = {}) {
+export async function validateSaleEvent(store, rep, settings, event, { accepted = [], targets = new Map(), houses = new Map(), jobBridge = false } = {}) {
   if (!UUID.test(String(event.knockId || ''))) return refuse('knock_sale_invalid', 'The sale is missing its door.');
   const knock = accepted.find(a => a.id === event.knockId) || targets.get(event.knockId) || await store.get('knock_events', event.knockId);
   if (!knock || knock.type !== 'knock' || knock.outcome !== 'sold' || knock.repKey !== rep.repKey) return refuse('knock_sale_invalid', 'Log the door as Sold first.');
   if (event.houseId && event.houseId !== knock.houseId) return refuse('knock_sale_invalid', 'The sale and the door are different houses.');
   const claim = await store.get('knock_receipts', await nativeHouseClaimId(knock.houseId));
-  if (nativeClaimActive(claim) && (claim.channel !== 'direct_sale' || claim.repKey !== rep.repKey))
+  if (saleClaimConflict(claim, rep, { jobBridge }))
     return refuse('knock_form_channel_conflict', 'This house has a different form channel or rep. Review attribution before saving a direct sale.');
   const existing = await store.query('knock_sales', { where: [['knockId', '==', knock.id]], limit: 1 });
   if (existing.length || accepted.some(a => a.type === 'sale' && a.knockId === knock.id)) return refuse('knock_sale_exists', 'That door already has a sale.');
@@ -48,6 +58,15 @@ export async function validateSaleEvent(store, rep, settings, event, { accepted 
   const window = cancellationWindow(saleDateOf(event.at), { businessDays: settings.sale.cancelBusinessDays, extraHolidays: settings.sale.extraHolidays });
   if (!validDate(event.jobDate) || event.jobDate < window.earliestJobDate) return refuse('knock_sale_job_date', `The job date must be ${window.earliestJobDate} or later (after the cancellation deadline).`);
   if (event.jobStartTime != null && !TIME.test(String(event.jobStartTime))) return refuse('knock_sale_invalid', 'Job start time must be HH:MM.');
+  if (event.jobStartTime != null && !jobStartAllowed(event.jobDate, event.jobStartTime)) return refuse('knock_sale_job_time', START_TOO_EARLY);
+  // KNOCK-BRIDGE: the town and ZIP the Hub customer and job need, and the rep's slot or morning/afternoon choice.
+  if (jobBridge) {
+    if (event.zip != null && event.zip !== '' && !ZIP.test(String(event.zip))) return refuse('knock_sale_zip', 'Enter the 5-digit ZIP code.');
+    if (event.city != null && (typeof event.city !== 'string' || event.city.length > 60)) return refuse('knock_sale_invalid', 'Town must be at most 60 characters.');
+    if (event.dayPart != null && !['am', 'pm'].includes(event.dayPart)) return refuse('knock_sale_invalid', 'Choose morning or afternoon.');
+    if (event.slot != null && (typeof event.slot !== 'object' || Array.isArray(event.slot) || event.slot.date !== event.jobDate || event.slot.time !== event.jobStartTime ||
+      (event.slot.crewLabel != null && (typeof event.slot.crewLabel !== 'string' || event.slot.crewLabel.length > 100)))) return refuse('knock_sale_invalid', 'The picked crew slot does not match the job date and time.');
+  }
   if (event.quotedAmount != null && !(Number(event.quotedAmount) >= 0)) return refuse('knock_sale_invalid', 'Quoted amount must be a number.');
   if (event.note != null && String(event.note).length > 500) return refuse('knock_sale_invalid', 'Note is too long.');
   const house = houses.get(knock.houseId) || await store.get('knock_houses', knock.houseId);
@@ -57,7 +76,7 @@ export async function validateSaleEvent(store, rep, settings, event, { accepted 
 }
 
 /* The sale record. Returns the writes for the sync commit (the caller has validated it). */
-export async function applySaleEvent(store, rep, settings, event, nowIso, { houses = new Map() } = {}) {
+export async function applySaleEvent(store, rep, settings, event, nowIso, { houses = new Map(), jobBridge = false, cityName = '' } = {}) {
   const knock = await store.get('knock_events', event.knockId).catch(() => null);
   const houseId = event.houseId || knock?.houseId;
   const house = houses.get(houseId) || await store.get('knock_houses', houseId);
@@ -67,21 +86,27 @@ export async function applySaleEvent(store, rep, settings, event, nowIso, { hous
   const sale = {
     repKey: rep.repKey, leadKey: rep.leadKey || '', knockId: event.knockId, houseId,
     neighborhoodId: house?.neighborhoodId || '', street: house?.street || '',
-    address: { number: house?.number || '', street: house?.street || '', unit: house?.unit || '' },
+    address: { number: house?.number || '', street: house?.street || '', unit: house?.unit || '',
+      // KNOCK-BRIDGE: the town (the neighborhood's, unless the rep corrected it) and ZIP for the Hub customer and job.
+      ...(jobBridge ? { city: String(event.city || cityName || '').trim().slice(0, 60), state: 'CO', zip: ZIP.test(String(event.zip || '')) ? String(event.zip) : '' } : {}) },
     customer: { name: String(event.customer.name).trim(), phone: normalizePhone(event.customer.phone), email: String(event.customer.email).trim().toLowerCase() },
     textConsent: event.textConsent === true,
     ticket, package: event.package, quotedAmount: event.quotedAmount != null ? Number(event.quotedAmount) : null,
     commissionTerms: snapshotCommissionTerms(settings.commission, event.at, event.package),
     depositRate: settings.sale.depositRate, depositAmount: depositAmount(ticket, settings.sale.depositRate),
     soldAt: event.at, saleDate, cancelDeadlineDate: window.deadlineDate, cancelEndsAt: new Date(window.cancelEndsAt).toISOString(),
-    earliestJobDate: window.earliestJobDate, jobDate: event.jobDate, jobStartTime: event.jobStartTime || settings.sale.defaultJobStartTime,
+    earliestJobDate: window.earliestJobDate, jobDate: event.jobDate, jobStartTime: event.jobStartTime || defaultJobStart(settings, event.jobDate),
     refundCutoffHours: settings.sale.refundCutoffHours,
     checklist: Object.fromEntries((settings.sale.checklist || []).map(item => [item.key, true])), checklistConfirmedAt: event.at,
     note: event.note ? String(event.note).slice(0, 500) : '',
     status: 'booked', statusHistory: [{ status: 'booked', at: event.at, by: rep.repKey }],
     completedAt: null, paidAt: null, cancelledAt: null, collectedAmount: null,
+    // KNOCK-BRIDGE: what the rep picked (a crew slot, or a date and morning/afternoon while offline). The server
+    // books the Hub job from it after the sale syncs (knock-bridge.js); the slot is a suggestion, never a promise.
+    ...(jobBridge ? { schedule: event.slot ? { source: 'slot', date: event.slot.date, time: event.slot.time, crewLabel: String(event.slot.crewLabel || '').slice(0, 100), part: dayPartOf(event.slot.time) }
+      : { source: 'preference', date: event.jobDate, time: event.jobStartTime || defaultJobStart(settings, event.jobDate), crewLabel: '', part: event.dayPart || dayPartOf(event.jobStartTime || defaultJobStart(settings, event.jobDate)) } } : {}),
     handoff: {
-      job: { mode: settings.integrations.job, status: 'pending', ref: '', at: null, by: '' },
+      job: jobBridge ? { mode: 'hub', status: 'pending', ref: '', at: null, by: '' } : { mode: settings.integrations.job, status: 'pending', ref: '', at: null, by: '' },
       deposit: { mode: settings.integrations.deposit, status: 'pending', url: '', sessionId: '', amount: depositAmount(ticket, settings.sale.depositRate), collectedAt: null, by: '' },
       text: { mode: settings.integrations.text, status: event.textConsent ? 'pending' : 'no_consent', sentAt: null, messageId: '', error: '', by: '' },
     },
@@ -167,7 +192,11 @@ export async function setJobDate(store, admin, { saleId, jobDate, jobStartTime }
   if (!sale) throw knockFailure('That sale was not found.', 404, 'knock_sale_missing');
   if (!validDate(jobDate) || jobDate < sale.earliestJobDate) throw knockFailure(`The job date must be ${sale.earliestJobDate} or later (after the cancellation deadline).`, 400, 'knock_sale_job_date');
   if (jobStartTime != null && !TIME.test(String(jobStartTime))) throw knockFailure('Job start time must be HH:MM.', 400, 'knock_invalid_time');
-  const patch = { jobDate, ...(jobStartTime ? { jobStartTime } : {}), updatedAt: nowIso, statusHistory: [...(sale.statusHistory || []), { status: sale.status, at: nowIso, by: admin.user, note: `Job date ${jobDate}` }] };
+  if (jobStartTime != null && !jobStartAllowed(jobDate, jobStartTime)) throw knockFailure(START_TOO_EARLY, 400, 'knock_sale_job_time');
+  // A move that keeps a saved start before 9:30 onto a 9:30-policy date takes the 9:30 start (job-start-policy.js).
+  const raised = jobStartTime == null && sale.jobStartTime && !jobStartAllowed(jobDate, sale.jobStartTime) ? jobStartFloor(jobDate) : null;
+  const patch = { jobDate, ...(jobStartTime ? { jobStartTime } : raised ? { jobStartTime: raised } : {}), updatedAt: nowIso,
+    statusHistory: [...(sale.statusHistory || []), { status: sale.status, at: nowIso, by: admin.user, note: `Job date ${jobDate}${raised ? `, start ${raised} (jobs start at 9:30 or later)` : ''}` }] };
   await store.commit([write.patch('knock_sales', sale.id, patch, sale.__updateTime)]);
   return { sale: repSaleView({ ...sale, ...patch }) };
 }
