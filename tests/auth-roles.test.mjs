@@ -32,6 +32,8 @@ import * as hubAuth from '../functions/api/hub-auth.js';
 // responses byte for byte against the code before this unit.
 const ACCESS = { EGC_STAFF_ROLE_ACCESS: 'true' };
 const MANAGER = ROLE_CAPABILITIES.manager, SALES = ROLE_CAPABILITIES.sales, PHONE = ROLE_CAPABILITIES.phone;
+// Sales books and runs walkthroughs; schedule.view (TEAM-LEAD, every crew's schedule) is the owner's, managers' and team leads'.
+const SALES_ACCESS = ['schedule.book', 'walkthrough.perform'];
 const get = (cookie, path) => new Request(`${ORIGIN}${path}`, { headers: { Cookie: cookie } });
 const post = (cookie, path, body) => new Request(`${ORIGIN}${path}`, { method: 'POST', headers: { Origin: ORIGIN, 'Content-Type': 'application/json', Cookie: cookie }, body: JSON.stringify(body) });
 const json = async response => ({ status: response.status, body: await response.json() });
@@ -39,12 +41,14 @@ const json = async response => ({ status: response.status, body: await response.
 test('capabilities: the role-access capabilities exist only with the flag on, and never carry pay, cost or owner money', () => {
   const employee = staffRoles => ({ user: 'Staff.Account', displayName: 'Synthetic Staff', role: 'crew', businessAccess: false, source: 'employee-account', ...(staffRoles ? { staffRoles } : {}) });
   assert.deepEqual(capabilityNames({}), STAFF_CAPABILITIES); assert.deepEqual(capabilityMatrix({}), ROLE_CAPABILITIES);
-  assert.deepEqual(capabilityNames(ACCESS), [...STAFF_CAPABILITIES, 'schedule.book', 'walkthrough.perform']);
-  assert.deepEqual(capabilityMatrix(ACCESS), { owner: [...STAFF_CAPABILITIES, ...ACCESS_CAPABILITIES], manager: [...MANAGER, ...ACCESS_CAPABILITIES], crew_lead: [], crew: [], sales: [...SALES, ...ACCESS_CAPABILITIES], phone: [...PHONE, 'schedule.book'] });
+  assert.deepEqual(capabilityNames(ACCESS), [...STAFF_CAPABILITIES, 'schedule.book', 'walkthrough.perform', 'schedule.view']);
+  assert.deepEqual(capabilityMatrix(ACCESS), { owner: [...STAFF_CAPABILITIES, ...ACCESS_CAPABILITIES], manager: [...MANAGER, ...ACCESS_CAPABILITIES], team_lead: ['schedule.view'], crew_lead: [], crew: [], sales: [...SALES, ...SALES_ACCESS], phone: [...PHONE, 'schedule.book'] });
   for (const flags of [{}, { EGC_STAFF_ROLE_PERMISSIONS: 'true' }, { EGC_STAFF_ROLE_ACCESS: 'TRUE' }, { EGC_STAFF_ROLE_ACCESS: ' true' }]) {
     for (const capability of ACCESS_CAPABILITIES) assert.equal(can({ user: 'ZacB', role: 'owner', businessAccess: true }, capability, flags), false, `${capability} ${JSON.stringify(flags)}`);
   }
-  assert.deepEqual(staffCapabilities(employee(['sales']), ACCESS), [...SALES, ...ACCESS_CAPABILITIES]);
+  assert.deepEqual(staffCapabilities(employee(['sales']), ACCESS), [...SALES, ...SALES_ACCESS]);
+  assert.deepEqual(staffCapabilities(employee(['team_lead']), ACCESS), ['schedule.view'], 'a team lead reads every crew schedule and nothing more');
+  assert.deepEqual(staffCapabilities(employee(['team_lead', 'sales']), ACCESS), [...SALES, ...ACCESS_CAPABILITIES]);
   assert.deepEqual(staffCapabilities(employee(['phone']), ACCESS), [...PHONE, 'schedule.book']);
   assert.deepEqual(staffCapabilities(employee(['manager']), ACCESS), [...MANAGER, ...ACCESS_CAPABILITIES]);
   for (const roles of [['crew'], ['crew_lead'], ['owner'], [], undefined]) assert.deepEqual(staffCapabilities(employee(roles), ACCESS), [], JSON.stringify(roles));
@@ -56,9 +60,9 @@ test('capabilities: the role-access capabilities exist only with the flag on, an
   const tyler = { user: 'TylerG', role: 'manager', businessAccess: true }, alex = { user: 'AlexK', role: 'crew_lead', businessAccess: true };
   assert.equal(capabilityMode(tyler, ACCESS), 'legacy'); assert.equal(capabilityMode(employee(), ACCESS), 'staff_roles');
   assert.deepEqual(staffCapabilities(tyler, ACCESS), [...MANAGER, ...ACCESS_CAPABILITIES]);
-  assert.deepEqual(staffCapabilities(alex, ACCESS), [...MANAGER.filter(capability => capability !== 'dispatch.write'), 'walkthrough.perform'], 'business access runs walkthroughs; only a dispatcher books');
+  assert.deepEqual(staffCapabilities(alex, ACCESS), [...MANAGER.filter(capability => capability !== 'dispatch.write'), 'walkthrough.perform', 'schedule.view'], 'business access runs walkthroughs and reads every crew schedule; only a dispatcher books');
   // A signed sales invitation (role sales) without stored roles acts as sales; a claimed role never does.
-  assert.deepEqual(staffCapabilities({ ...employee(), role: 'sales' }, ACCESS), [...SALES, ...ACCESS_CAPABILITIES]);
+  assert.deepEqual(staffCapabilities({ ...employee(), role: 'sales' }, ACCESS), [...SALES, ...SALES_ACCESS]);
   assert.throws(() => can(employee(['sales']), 'schedule.delete', ACCESS), TypeError);
   for (const session of [null, 'zacb', {}, { user: ' ' }]) for (const capability of ACCESS_CAPABILITIES) assert.equal(can(session, capability, ACCESS), false);
 });
@@ -110,9 +114,9 @@ const EXPECT = {
   'staff-directory GET': () => true, 'staff-directory POST set_roles': any('accounts.approve'), 'staff-directory POST set_roles replay': any('accounts.approve'),
 };
 const EXPECTED_CAPABILITIES = {
-  ZacB: [...STAFF_CAPABILITIES, ...ACCESS_CAPABILITIES], TylerG: [...MANAGER, ...ACCESS_CAPABILITIES], AlexK: [...MANAGER.filter(name => name !== 'dispatch.write'), 'walkthrough.perform'], 'Crew.Static': [],
-  'Config.Manager': [...MANAGER, ...ACCESS_CAPABILITIES], 'Config.Phone': [...PHONE, 'schedule.book'], 'Mgr.Account': [...MANAGER, ...ACCESS_CAPABILITIES], 'Sales.Account': [...SALES, ...ACCESS_CAPABILITIES],
-  'Phone.Account': [...PHONE, 'schedule.book'], 'Lead.Account': [], 'Crew.Account': [], 'Legacy.Sales': [...SALES, ...ACCESS_CAPABILITIES], 'Owner.Claim': [],
+  ZacB: [...STAFF_CAPABILITIES, ...ACCESS_CAPABILITIES], TylerG: [...MANAGER, ...ACCESS_CAPABILITIES], AlexK: [...MANAGER.filter(name => name !== 'dispatch.write'), 'walkthrough.perform', 'schedule.view'], 'Crew.Static': [],
+  'Config.Manager': [...MANAGER, ...ACCESS_CAPABILITIES], 'Config.Phone': [...PHONE, 'schedule.book'], 'Mgr.Account': [...MANAGER, ...ACCESS_CAPABILITIES], 'Sales.Account': [...SALES, ...SALES_ACCESS],
+  'Phone.Account': [...PHONE, 'schedule.book'], 'Lead.Account': [], 'Crew.Account': [], 'Legacy.Sales': [...SALES, ...SALES_ACCESS], 'Owner.Claim': [],
 };
 const BUSINESS = new Set(['ZacB', 'TylerG', 'AlexK', 'Config.Manager', 'Mgr.Account']);
 

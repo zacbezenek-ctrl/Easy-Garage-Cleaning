@@ -7,7 +7,7 @@ export type ServiceIdentity = "hub" | "api";
 export const SERVICE_ORIGINS = Object.freeze({hub:"https://easygaragecleaning.com",api:"https://egc-api-production-faeb.up.railway.app"});
 export const SERVICE_AUTH_KEY_PATHS = Object.freeze({hub:"/api/operations-service-keys",api:"/operations/service-keys"});
 export const SERVICE_AUTH_PROTOCOL = "egc-service-auth-v2";
-type Actor = {id:string;kind:"human"|"integration";role:"owner"|"manager"|"sales"|"crew_lead"|"crew"|"integration";workspace:string};
+type Actor = {id:string;kind:"human"|"integration";role:"owner"|"manager"|"sales"|"team_lead"|"crew_lead"|"crew"|"integration";workspace:string};
 type ServiceRequest = {requestId:string;body:Record<string,unknown>};
 export type ServiceClaims = {v:2;alg:"EdDSA";kid:string;iss:string;aud:string;workspace:string;iat:number;nbf:number;exp:number;nonce:string;method:"POST";path:string;actor:Actor;request:ServiceRequest};
 export type ServicePublicJwk = JsonWebKey & {kty:"OKP";crv:"Ed25519";x:string;kid:string;use:"sig";alg:"EdDSA";key_ops:["verify"]};
@@ -51,7 +51,7 @@ function validateClaims(value:unknown,service:ServiceIdentity,workspace:string,p
   const c=value as ServiceClaims,from=counterpart(service);
   if(c.v!==2||c.alg!=="EdDSA"||c.iss!==SERVICE_ORIGINS[from]||c.aud!==SERVICE_ORIGINS[service]||workspace!=="egc"||c.workspace!==workspace||c.method!=="POST"||c.path!==path||!/^\/[a-z0-9/-]{1,100}$/.test(path)||!new RegExp(`^${from}-v2-[a-f0-9]{32}$`).test(c.kid)||typeof c.nonce!=="string"||!uuid.test(c.nonce))return fail("invalid_service_claims");
   if(![c.iat,c.nbf,c.exp].every(Number.isInteger)||c.nbf!==c.iat-5||c.exp!==c.iat+60||c.iat>Math.floor(now/1000)+5||c.nbf>Math.floor(now/1000)||c.exp<=Math.floor(now/1000))return fail("service_signature_expired");
-  if(!exact(c.actor,["id","kind","role","workspace"])||typeof c.actor.id!=="string"||!/^[A-Za-z0-9_:@.\-]{1,200}$/.test(c.actor.id)||c.actor.workspace!==workspace||!["human","integration"].includes(c.actor.kind)||!["owner","manager","sales","crew_lead","crew","integration"].includes(c.actor.role)||(c.actor.kind==="integration")!==(c.actor.role==="integration"))return fail("invalid_service_actor");
+  if(!exact(c.actor,["id","kind","role","workspace"])||typeof c.actor.id!=="string"||!/^[A-Za-z0-9_:@.\-]{1,200}$/.test(c.actor.id)||c.actor.workspace!==workspace||!["human","integration"].includes(c.actor.kind)||!["owner","manager","sales","team_lead","crew_lead","crew","integration"].includes(c.actor.role)||(c.actor.kind==="integration")!==(c.actor.role==="integration"))return fail("invalid_service_actor");
   if(!exact(c.request,["requestId","body"])||typeof c.request.requestId!=="string"||!uuid.test(c.request.requestId)||!c.request.body||typeof c.request.body!=="object"||Array.isArray(c.request.body))return fail("invalid_service_request");
   return c;
 }
@@ -126,13 +126,13 @@ export async function verifyServiceAssertion(token:unknown,options:{issuer:Servi
 export const MCP_GRANT = Object.freeze({typ:"egc-mcp-grant",aud:"egc-mcp",ttlSeconds:60});
 // The Hub signs the access and client label its approval page showed, so the MCP grants only what the approver saw.
 export const MCP_GRANT_SCOPES = Object.freeze(["egc:read","egc:read egc:write"] as const);
-export type McpGrantClaims = {hubUser:string;role:"owner"|"manager"|"sales"|"crew_lead"|"crew";businessAccess:boolean;grantNonce:string;resource:string;scope:typeof MCP_GRANT_SCOPES[number];client:string};
+export type McpGrantClaims = {hubUser:string;role:"owner"|"manager"|"sales"|"team_lead"|"crew_lead"|"crew";businessAccess:boolean;grantNonce:string;resource:string;scope:typeof MCP_GRANT_SCOPES[number];client:string};
 export const MCP_GRANT_NONCE = /^[A-Za-z0-9_-]{43}$/;
 /** The client label as the approval page shows it. Both sides normalise with this one function (idempotent, at most 120 code points), so the MCP compares it exactly. */
 export function mcpGrantLabel(value:unknown){return Array.from(String(value??"").replace(/[\p{Cc}\p{Cf}\p{Cs}]/gu,"").replace(/\s+/g," ").trim()).slice(0,120).join("").trim();}
 export function mcpGrantClaims(value:unknown):McpGrantClaims{
   const c=value as McpGrantClaims;
-  if(!exact(value,["hubUser","role","businessAccess","grantNonce","resource","scope","client"])||!(MCP_GRANT_SCOPES as readonly unknown[]).includes(c.scope)||typeof c.client!=="string"||c.client!==mcpGrantLabel(c.client)||typeof c.hubUser!=="string"||!/^[a-z0-9][a-z0-9_.@-]{0,119}$/.test(c.hubUser)||!["owner","manager","sales","crew_lead","crew"].includes(c.role)||typeof c.businessAccess!=="boolean"||typeof c.grantNonce!=="string"||!MCP_GRANT_NONCE.test(c.grantNonce)||typeof c.resource!=="string")return fail("invalid_mcp_grant");
+  if(!exact(value,["hubUser","role","businessAccess","grantNonce","resource","scope","client"])||!(MCP_GRANT_SCOPES as readonly unknown[]).includes(c.scope)||typeof c.client!=="string"||c.client!==mcpGrantLabel(c.client)||typeof c.hubUser!=="string"||!/^[a-z0-9][a-z0-9_.@-]{0,119}$/.test(c.hubUser)||!["owner","manager","sales","team_lead","crew_lead","crew"].includes(c.role)||typeof c.businessAccess!=="boolean"||typeof c.grantNonce!=="string"||!MCP_GRANT_NONCE.test(c.grantNonce)||typeof c.resource!=="string")return fail("invalid_mcp_grant");
   let origin:URL;try{origin=new URL(c.resource);}catch{return fail("invalid_mcp_grant");}
   if(origin.origin!==c.resource||!["https:","http:"].includes(origin.protocol))return fail("invalid_mcp_grant");
   return {hubUser:c.hubUser,role:c.role,businessAccess:c.businessAccess,grantNonce:c.grantNonce,resource:c.resource,scope:c.scope,client:c.client};

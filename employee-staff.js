@@ -7,8 +7,8 @@
 'use strict';
 if(window.EGCStaff)return;
 const API='/api/staff-directory',PENDING='egc.hub.pending.v1.staff.',TIMEOUT=30000,TZ='America/Denver';
-const ROLES=['owner','manager','crew_lead','crew','sales','phone'],EDITABLE_ROLES=ROLES.slice(1),DAYS=['mon','tue','wed','thu','fri','sat','sun'],LEVELS=['trainee','proficient','lead'],PAY_TYPES=['hourly','salary'];
-const ROLE_LABEL={owner:'Owner',manager:'Manager',crew_lead:'Crew lead',crew:'Crew',sales:'Sales · walkthroughs',phone:'Phone · calls and follow-ups'};
+const ROLES=['owner','manager','team_lead','crew_lead','crew','sales','phone'],EDITABLE_ROLES=ROLES.slice(1),DAYS=['mon','tue','wed','thu','fri','sat','sun'],LEVELS=['trainee','proficient','lead'],PAY_TYPES=['hourly','salary'];
+const ROLE_LABEL={owner:'Owner',manager:'Manager',team_lead:'Team lead · sees every crew',crew_lead:'Crew lead',crew:'Crew',sales:'Sales · walkthroughs',phone:'Phone · calls and follow-ups'};
 const DAY_LABEL={mon:'Monday',tue:'Tuesday',wed:'Wednesday',thu:'Thursday',fri:'Friday',sat:'Saturday',sun:'Sunday'};
 const LEVEL_LABEL={trainee:'Trainee',proficient:'Proficient',lead:'Lead'};
 const ACTION={roles:'set_roles',skills:'set_skills',pay:'set_pay',availability:'set_availability',gusto:'set_gusto_id'},EDIT_LABEL={roles:'Roles',skills:'Skills',pay:'Pay',availability:'Weekly availability',gusto:'Gusto employee ID'};

@@ -3,10 +3,14 @@ import assert from 'node:assert/strict';
 import { generateKeyPairSync } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import vm from 'node:vm';
-import { OWNER_CAPABILITIES, ROLE_CAPABILITIES, STAFF_CAPABILITIES, STAFF_ROLES, can, capabilityMode, defaultStaffRoles, primaryStaffRole, sanitizeStaffRoles, staffCapabilities } from '../functions/_lib/staff-roles.js';
+import { ACCESS_CAPABILITIES, OWNER_CAPABILITIES, ROLE_ACCESS_CAPABILITIES, ROLE_CAPABILITIES, STAFF_CAPABILITIES, STAFF_ROLES, can, capabilityMode, defaultStaffRoles, primaryStaffRole, sanitizeStaffRoles, staffCapabilities } from '../functions/_lib/staff-roles.js';
+import { SKILL_CATALOG, SKILL_CATALOG_VERSION, storedSkills } from '../functions/_lib/staff-skills.js';
+import { officeOnly } from '../functions/_lib/dispatch-storage.js';
+import { fieldCapabilities, fieldJobLead } from '../functions/_lib/field-permissions.js';
+import { createJobAssignmentAccess } from '../functions/_lib/job-assignment.js';
 import { getHubUserProfile, hasBusinessAccess, isHubOwner, listHubUserProfiles, authenticateHubCredential, getHubSession } from '../functions/_lib/hub-session.js';
 import { requireDispatcher } from '../functions/_lib/dispatch-service.js';
-import { employeeInvitationStore } from '../functions/_lib/employee-accounts.js';
+import { employeeInvitationStore, employeeSessionProfile } from '../functions/_lib/employee-accounts.js';
 import { decodeFirestoreFields } from '../functions/_lib/firestore-job.js';
 import { onRequestGet as firebaseSession } from '../functions/api/firebase-session.js';
 import * as hubAuth from '../functions/api/hub-auth.js';
@@ -23,11 +27,12 @@ const requiresDispatcher = session => { try { requireDispatcher(session); return
 const legacy = (session, capability) => OWNER_CAPABILITIES.includes(capability) ? isHubOwner(session) : capability === 'dispatch.write' ? dispatcher(session) : hasBusinessAccess(session);
 
 test('capability matrix: roles map only to known capabilities and owner-only capabilities stay with the owner role', () => {
-  assert.deepEqual(STAFF_ROLES, ['owner', 'manager', 'crew_lead', 'crew', 'sales', 'phone']);
+  // TEAM-LEAD (owner decision D6, 2026-10-17) adds team_lead between manager and crew_lead.
+  assert.deepEqual(STAFF_ROLES, ['owner', 'manager', 'team_lead', 'crew_lead', 'crew', 'sales', 'phone']);
   assert.deepEqual(OWNER_CAPABILITIES, ['pay.manage', 'accounts.approve', 'money.refund', 'money.charge_stored_card', 'catalog.manage', 'settings.manage']);
   assert.deepEqual(Object.keys(ROLE_CAPABILITIES), STAFF_ROLES);
   assert.deepEqual(ROLE_CAPABILITIES, {
-    owner: STAFF_CAPABILITIES, manager: MANAGER, crew_lead: [], crew: [],
+    owner: STAFF_CAPABILITIES, manager: MANAGER, team_lead: [], crew_lead: [], crew: [],
     sales: ['customer.send', 'followups.own', 'quotes.author'], phone: ['customer.send', 'followups.own'],
   });
   for (const [role, capabilities] of Object.entries(ROLE_CAPABILITIES)) {
@@ -203,4 +208,62 @@ test('only the owner changes roles; a change revokes the employee session, keeps
   const enabled = await login({ ...env, EGC_STAFF_ROLE_PERMISSIONS: 'true' }, 'Phone.Person');
   assert.deepEqual(enabled.profile.capabilities, ['customer.send', 'followups.own']);
   assert.equal(enabled.profile.role, 'crew', 'the legacy session role is unchanged');
+});
+
+// TEAM-LEAD (owner decision D6, 2026-10-17): one new staff role. A team lead reads every crew's schedule (schedule.view,
+// an EGC_STAFF_ROLE_ACCESS capability like schedule.book) and otherwise works at crew-lead level. Estimators and
+// door-to-door reps are skills (walkthrough_estimating, door_to_door), not roles. Eli is data: the owner sets his role.
+test('team_lead: schedule.view only with role access, nothing else, and every role list and cap holds all seven roles', () => {
+  const ACCESS = { EGC_STAFF_ROLE_ACCESS: 'true' };
+  const lead = staffRoles => ({ user: 'Team.Lead', displayName: 'Synthetic Team Lead', role: 'crew', businessAccess: false, source: 'employee-account', staffRoles });
+  assert.deepEqual(ACCESS_CAPABILITIES, ['schedule.book', 'walkthrough.perform', 'schedule.view']);
+  assert.deepEqual(Object.keys(ROLE_ACCESS_CAPABILITIES), STAFF_ROLES);
+  const views = Object.fromEntries(STAFF_ROLES.map(role => [role, ROLE_ACCESS_CAPABILITIES[role].includes('schedule.view')]));
+  assert.deepEqual(views, { owner: true, manager: true, team_lead: true, crew_lead: false, crew: false, sales: false, phone: false });
+  assert.deepEqual(ROLE_ACCESS_CAPABILITIES.team_lead, ['schedule.view']);
+  assert.deepEqual(ROLE_ACCESS_CAPABILITIES.sales, ['schedule.book', 'walkthrough.perform'], 'sales keeps exactly its booking and walkthrough rights');
+  assert.equal(can(lead(['team_lead']), 'schedule.view', ACCESS), true);
+  for (const flags of [{}, { EGC_STAFF_ROLE_PERMISSIONS: 'true' }, { EGC_STAFF_ROLE_ACCESS: 'TRUE' }, { EGC_STAFF_ROLE_ACCESS: '1' }]) {
+    assert.equal(can(lead(['team_lead']), 'schedule.view', flags), false, `flag off: ${JSON.stringify(flags)}`);
+    assert.equal(can({ user: 'TylerG', role: 'manager', businessAccess: true }, 'schedule.view', flags), false, 'no list reports an access capability with the flag off');
+  }
+  for (const capability of [...STAFF_CAPABILITIES, 'schedule.book', 'walkthrough.perform']) assert.equal(can(lead(['team_lead']), capability, ACCESS), false, `a team lead never gets ${capability}`);
+  assert.deepEqual(staffCapabilities(lead(['team_lead']), ACCESS), ['schedule.view']);
+  assert.deepEqual(staffCapabilities(lead(['team_lead']), { EGC_STAFF_ROLE_PERMISSIONS: 'true' }), [], 'stored-role permissions alone: crew-lead level');
+  assert.deepEqual(staffCapabilities(lead(['crew_lead']), ACCESS), [], 'a crew lead does not see every crew');
+  assert.deepEqual(sanitizeStaffRoles(['crew', 'team_lead', 'team_lead', 'wizard']), ['team_lead', 'crew']);
+  assert.deepEqual(defaultStaffRoles({ user: 'Config.Lead', role: 'team_lead', businessAccess: false }), ['team_lead']);
+  assert.equal(primaryStaffRole(['crew', 'crew_lead', 'team_lead']), 'team_lead');
+  assert.equal(primaryStaffRole(['team_lead', 'manager']), 'manager');
+  // A configured Hub user may carry the role, and the role caps (hub-session.js, employee-accounts.js) keep all seven.
+  const env = { HUB_AUTH_USERS_JSON: JSON.stringify({ 'Config.Lead': { passwordHash: 'synthetic', role: 'team_lead', displayName: 'Synthetic Config Lead', staffRoles: [...STAFF_ROLES].reverse() } }) };
+  const profile = getHubUserProfile(env, 'Config.Lead');
+  assert.equal(profile.role, 'team_lead');
+  assert.deepEqual(profile.staffRoles, [...STAFF_ROLES].reverse(), 'seven stored roles survive the configuration cap');
+  assert.deepEqual(employeeSessionProfile({ username: 'Seven.Roles', displayName: 'Synthetic Seven', staffRoles: [...STAFF_ROLES] }).staffRoles, [...STAFF_ROLES], 'and the employee-account cap');
+  // F19: an office manager who also leads the field stays on assignment lists.
+  assert.equal(officeOnly('manager', ['manager', 'team_lead']), false);
+  assert.equal(officeOnly('manager', ['manager']), true);
+});
+
+test('team_lead leads an unnamed job it is assigned to, like crew_lead (P1-08), and never one it is not on', async () => {
+  const env = { HUB_AUTH_USERS_JSON: JSON.stringify({ 'Crew.Two': { passwordHash: 'synthetic', role: 'crew', displayName: 'Synthetic Crew' } }) };
+  const person = staffRoles => ({ user: 'field.lead', displayName: 'Synthetic Field Lead', role: 'crew', staffRoles, businessAccess: false });
+  const job = changes => ({ id: 'job-1', type: 'job', status: 'scheduled', assignedCrew: ['field.lead', 'crew.two'], crewLead: null, ...changes });
+  const leads = async (staffRoles, changes = {}) => fieldJobLead({ session: person(staffRoles), job: job(changes), access: createJobAssignmentAccess(env, person(staffRoles)) });
+  assert.equal(await leads(['team_lead']), true);
+  assert.equal(await leads(['crew_lead']), true);
+  assert.equal(await leads(['crew']), false);
+  assert.equal(await leads(['team_lead'], { crewLead: 'crew.two' }), false, 'a named lead outranks the role');
+  assert.equal(await leads(['team_lead'], { assignedCrew: ['crew.two', 'crew.three'] }), false, 'not on the job');
+  assert.equal((await fieldCapabilities({ session: person(['team_lead']), job: job(), env: { ...env, FIELD_LEAD_ONLY_COMPLETE: 'true' }, access: createJobAssignmentAccess(env, person(['team_lead'])) })).complete, true);
+});
+
+test('skills: door_to_door marks the door-to-door reps next to walkthrough_estimating; adding it retires nothing', () => {
+  const ids = SKILL_CATALOG.map(skill => skill.id);
+  assert.equal(ids.indexOf('door_to_door'), ids.indexOf('walkthrough_estimating') + 1);
+  assert.equal(SKILL_CATALOG.find(skill => skill.id === 'door_to_door').label, 'Door-to-door sales');
+  assert.equal(SKILL_CATALOG_VERSION, '2026-10-staff-skills-v2');
+  const saved = storedSkills([{ id: 'walkthrough_estimating', level: 'lead', verifiedBy: 'zacb', verifiedAt: '2026-09-10T16:00:00.000Z' }, { id: 'door_to_door', level: 'trainee', verifiedBy: 'zacb', verifiedAt: '2026-10-17T16:00:00.000Z' }]);
+  assert.deepEqual(saved.map(skill => [skill.id, skill.retired === true]), [['walkthrough_estimating', false], ['door_to_door', false]]);
 });

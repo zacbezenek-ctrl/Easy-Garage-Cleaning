@@ -1,13 +1,15 @@
 // Versioned skill catalog for the staff directory. Retiring a skill means removing
 // it here and bumping the version; stored skills outside the catalog stay readable
 // (marked retired) and are dropped the next time a manager saves that person's skills.
-export const SKILL_CATALOG_VERSION = '2026-09-staff-skills-v1';
+// v2 (2026-10-17, owner decision D6): door_to_door marks the door-to-door (Knock) reps, as walkthrough_estimating marks
+// the estimators. Adding a skill retires nothing; saved skills keep their verification.
+export const SKILL_CATALOG_VERSION = '2026-10-staff-skills-v2';
 export const SKILL_LEVELS = Object.freeze(['trainee', 'proficient', 'lead']);
 export const SKILL_CATALOG = Object.freeze([
   ['cleanout', 'Garage cleanout'], ['deep_clean', 'Deep clean'], ['pressure_wash', 'Pressure washing'],
   ['mouse_trapping', 'Mouse trapping'], ['shelving', 'Shelving install'], ['overhead_storage', 'Overhead storage install'],
   ['heavy_lifting', 'Heavy lifting'], ['truck_driving', 'Truck driving'], ['trailer_towing', 'Trailer towing'],
-  ['dump_runs', 'Dump and donation runs'], ['walkthrough_estimating', 'Walkthrough estimating'],
+  ['dump_runs', 'Dump and donation runs'], ['walkthrough_estimating', 'Walkthrough estimating'], ['door_to_door', 'Door-to-door sales'],
   ['customer_phone', 'Customer phone follow-up'], ['crew_leadership', 'Crew leadership'], ['first_aid', 'First aid'],
 ].map(([id, label]) => Object.freeze({ id, label })));
 const catalog = new Set(SKILL_CATALOG.map(skill => skill.id));

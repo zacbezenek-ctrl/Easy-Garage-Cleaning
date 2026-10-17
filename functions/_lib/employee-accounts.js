@@ -268,8 +268,9 @@ export function employeeSessionProfile(account) {
     businessAccess: false,
     source: 'employee-account',
     sessionVersion: String(account.sessionVersion || ''),
-    // Owner-assigned staff directory roles (additive); staff-roles.js sanitizes them.
-    ...(Array.isArray(account.staffRoles) ? { staffRoles: account.staffRoles.filter(role => typeof role === 'string').slice(0, 6) } : {}),
+    // Owner-assigned staff directory roles (additive); staff-roles.js sanitizes them. The cap stays above the number
+    // of staff roles (7 with team_lead) so no real role is ever dropped.
+    ...(Array.isArray(account.staffRoles) ? { staffRoles: account.staffRoles.filter(role => typeof role === 'string').slice(0, 16) } : {}),
   };
 }
 

@@ -15,7 +15,9 @@ const basic = response => Object.defineProperty(response, 'type', { value: 'basi
 // Inside a worker, relative request URLs resolve against the worker's origin.
 class WorkerRequest extends Request { constructor(input, init) { super(typeof input === 'string' ? new URL(input, ORIGIN).href : input, init); } }
 const NOW = Date.parse('2026-09-22T15:00:00.000Z');
-const SHELL_CACHE = 'egc-crew-shell-20261016w19verify';
+const SHELL_CACHE = 'egc-crew-shell-20261017crewschedule';
+// CREW-SCHEDULE: the crew schedule page and its script join the shell (the schedule itself is /api data, never stored).
+const SCHEDULE_ASSETS = ['/crew/schedule.html', '/crew/schedule.js?v=20261017crewschedule'];
 // KNOCK: the canvassing page (crew/knock.html) and its modules share the crew shell. Its ES modules import each other
 // without ?v=, so those keys are bare paths. The map files load only when a rep opens the map.
 const KNOCK_ASSETS = ['/crew/knock-app.js?v=20261008redesign', '/crew/knock-doors.js', '/crew/knock-leaflet.css?v=1.9.4', '/crew/knock-leaflet.js?v=1.9.4', '/crew/knock-map.js', '/crew/knock-money.js', '/crew/knock-native-form.js', '/crew/knock-outbox.js', '/crew/knock-rep.js', '/crew/knock-sale-rules.js', '/crew/knock-sale.js', '/crew/knock-settings.js', '/crew/knock-stats-ui.js', '/crew/knock-stats.js', '/crew/knock-time.js', '/crew/knock-ui.js', '/crew/knock.css?v=20261008redesign'];
@@ -103,7 +105,7 @@ test('install caches only the static job shell under a versioned cache and activ
   // again (?v=20260929editwipe2) so a blank line or an emptied checklist editor, and a reason typed while this phone's own
   // queued status confirms, survive too.
   // FIELD-PAY adds a private payment UI and changes the job script; all three assets must reload offline.
-  assert.deepEqual(shell, ['/app-touch.css?v=20260930mobiletouch', '/crew/field-expenses.css?v=20260928fun19', '/crew/field-expenses.js?v=20261013compat', '/crew/field-outbox.js?v=20260929crewtime2', '/crew/field-payments.css?v=20260929fieldpay2', '/crew/field-payments.js?v=20261013compat', '/crew/job-photo-sharing.css?v=20260927photo', '/crew/job-photo-sharing.js?v=20261012storage', '/crew/job-completion-handoff.js?v=20261016w19verify', '/crew/job.css?v=20260930launchpolish2', '/crew/job.html', '/crew/job.js?v=20261015completion', ...KNOCK_ASSETS, '/crew/knock.html', '/crew/manifest-knock.webmanifest', '/crew/manifest.webmanifest', '/crew/offline.html'].sort());
+  assert.deepEqual(shell, ['/app-touch.css?v=20260930mobiletouch', '/crew/field-expenses.css?v=20260928fun19', '/crew/field-expenses.js?v=20261013compat', '/crew/field-outbox.js?v=20260929crewtime2', '/crew/field-payments.css?v=20260929fieldpay2', '/crew/field-payments.js?v=20261013compat', '/crew/job-photo-sharing.css?v=20260927photo', '/crew/job-photo-sharing.js?v=20261012storage', '/crew/job-completion-handoff.js?v=20261016w19verify', '/crew/job.css?v=20260930launchpolish2', '/crew/job.html', '/crew/job.js?v=20261015completion', ...KNOCK_ASSETS, '/crew/knock.html', '/crew/manifest-knock.webmanifest', '/crew/manifest.webmanifest', '/crew/offline.html', ...SCHEDULE_ASSETS].sort());
   await sw.dispatch('activate');
   assert.deepEqual([...sw.stores.keys()].sort(), [SHELL_CACHE, 'unrelated-cache'], 'older shell versions are removed; other caches are left alone');
   assert.equal(sw.state.claimed, 1); assert.equal(sw.state.unregistered, 0);
@@ -217,6 +219,12 @@ test('the precached shell matches the versioned files Today’s work and the off
   assert.ok(job.indexOf('field-outbox.js') < job.indexOf('/crew/job.js'), 'the outbox loads before the page script');
   assert.match(read('crew/job.js'), /navigator\.serviceWorker\.register\('\/crew\/sw\.js', \{ scope: '\/crew\/' \}\)/);
   assert.match(worker, /importScripts\('\/crew\/field-outbox\.js\?v=20260929crewtime2'\)/);
+  // CREW-SCHEDULE: the schedule page's own versioned script and the touch styles reload offline; the crew-brand logo and
+  // the sign-in helper are the public crew files the home page loads too, and the page works without them.
+  const schedule = read('crew/schedule.html');
+  for (const path of [...schedule.matchAll(/(?:src|href)="(\/(?:crew\/schedule[^"]*|app-touch\.css)\?v=[^"]+)"/g)].map(match => match[1])) assert.ok(assets.includes(path), `${path} must be precached for offline reloads`);
+  assert.match(schedule, /<script src="\/crew\/schedule\.js\?v=20261017crewschedule" defer><\/script>/);
+  assert.match(read('crew/schedule.js'), /navigator\.serviceWorker\.register\('\/crew\/sw\.js', \{ scope: '\/crew\/' \}\)/);
 });
 
 test('the manifest, headers and config scope the installable app to /crew/', () => {
@@ -259,8 +267,8 @@ function gatedSite({ env = STAFF_ENV, accept = '*/*' } = {}) {
   return phone;
 }
 const PUBLIC_KEYS = ['/app-touch.css?v=20260930mobiletouch', '/crew/field-outbox.js?v=20260929crewtime2', '/crew/manifest-knock.webmanifest', '/crew/manifest.webmanifest', '/crew/offline.html'];
-const STAFF_KEYS = ['/crew/field-expenses.css?v=20260928fun19', '/crew/field-expenses.js?v=20261013compat', '/crew/field-payments.css?v=20260929fieldpay2', '/crew/field-payments.js?v=20261013compat', '/crew/job-photo-sharing.css?v=20260927photo', '/crew/job-photo-sharing.js?v=20261012storage', '/crew/job-completion-handoff.js?v=20261016w19verify', '/crew/job.css?v=20260930launchpolish2', '/crew/job.html', '/crew/job.js?v=20261015completion', ...KNOCK_PRESENT, '/crew/knock.html'];
-const PAGE_KEYS = new Set(['/crew/job.html', '/crew/knock.html']);
+const STAFF_KEYS = ['/crew/field-expenses.css?v=20260928fun19', '/crew/field-expenses.js?v=20261013compat', '/crew/field-payments.css?v=20260929fieldpay2', '/crew/field-payments.js?v=20261013compat', '/crew/job-photo-sharing.css?v=20260927photo', '/crew/job-photo-sharing.js?v=20261012storage', '/crew/job-completion-handoff.js?v=20261016w19verify', '/crew/job.css?v=20260930launchpolish2', '/crew/job.html', '/crew/job.js?v=20261015completion', ...KNOCK_PRESENT, '/crew/knock.html', ...SCHEDULE_ASSETS];
+const PAGE_KEYS = new Set(['/crew/job.html', '/crew/knock.html', '/crew/schedule.html']);
 const shellKeys = async sw => (await sw.cached()).filter(([name]) => name === SHELL_CACHE).map(([, path]) => path).sort();
 
 test('staff gate on: a signed-out install caches the public shell, refusals are never stored, and signing in fills in the job shell', async t => {
@@ -293,6 +301,7 @@ test('staff gate on: a signed-out install caches the public shell, refusals are 
   assert.equal(job.response.status, 200);
   assert.equal(job.response.headers.get('cache-control'), 'private, no-store');
   assert.equal((await sw.fetchEvent('/crew/knock', { mode: 'navigate' })).response.status, 200, 'the canvassing page joins the shell on a signed-in load');
+  assert.equal((await sw.fetchEvent('/crew/schedule', { mode: 'navigate' })).response.status, 200, 'so does the crew schedule page');
   for (const key of STAFF_KEYS.filter(key => !PAGE_KEYS.has(key))) assert.equal((await sw.fetchEvent(key)).response.status, 200, key);
   assert.deepEqual(await shellKeys(sw), [...PUBLIC_KEYS, ...STAFF_KEYS].sort(), 'a signed-in load fills in the job shell at runtime');
   sw.state.online = false;

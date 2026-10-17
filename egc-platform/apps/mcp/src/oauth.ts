@@ -450,9 +450,9 @@ export function mcpAuthenticateChallenge(
   return `Bearer resource_metadata="${resourceMetadataUrl}", scope="${requiredScope}", error="${error}", error_description="Connect your Easy Garage Cleaning account to continue"`;
 }
 
-export type DelegateRole = "owner" | "manager" | "sales" | "crew_lead" | "crew";
+export type DelegateRole = "owner" | "manager" | "sales" | "team_lead" | "crew_lead" | "crew";
 export type VerifiedMcpPrincipal = { id: string; delegate?: { user: string; role: DelegateRole }; assertion?: string };
-const DELEGATE_ROLES: ReadonlySet<string> = new Set(["owner", "manager", "sales", "crew_lead", "crew"]);
+const DELEGATE_ROLES: ReadonlySet<string> = new Set(["owner", "manager", "sales", "team_lead", "crew_lead", "crew"]);
 
 /**
  * Resolves a bearer token to its principal. A Hub-approved grant acts as
