@@ -53,19 +53,28 @@ const sameAddress = (a, b) => Boolean(a?.address) && String(a.address).trim().to
 const nameOf = (data, id) => (data?.roster||[]).find(person => person.id===id)?.name || id;
 const jobLabel = job => job.customer || job.title || 'Job';
 
+// Crew registry v2 (functions/_lib/dispatch-crew-assign.js): crews are listed by priority (1 first; none
+// reads as 99), then name, and a crew that works only Saturday and/or Sunday is labelled Weekend.
+const DAYS = ['mon','tue','wed','thu','fri','sat','sun'];
+const crewPriority = crew => Number.isInteger(crew?.priority) && crew.priority >= 1 && crew.priority <= 99 ? crew.priority : 99;
+const crewDays = crew => { const days = Array.isArray(crew?.serviceDays) ? DAYS.filter(day => crew.serviceDays.includes(day)) : []; return days.length ? days : DAYS; };
+const weekendCrew = crew => crewDays(crew).every(day => day === 'sat' || day === 'sun');
+const sortCrews = crews => [...(crews||[])].sort((a, b) => crewPriority(a) - crewPriority(b) || String(a?.name||'').localeCompare(String(b?.name||'')) || String(a?.id||'').localeCompare(String(b?.id||'')));
+const crewLabel = crew => crew.name+(weekendCrew(crew) ? ' · Weekend' : '');
+
 /** Lanes for one Denver date: 'employee' mode has a row per roster employee, 'crew' mode a row per active
- * saved crew; both start with Unassigned. Items are placed per segment, stacked in tracks when they
+ * saved crew (by priority, then name); both start with Unassigned. Items are placed per segment, stacked in tracks when they
  * overlap, with availability and company-block shading and the travel gap between consecutive stops. */
 function laneModel(data, jobs, date, {mode='employee', employee=''}={}) {
   const lanes=new Map(), crews=data?.crews||[];
   const lane = (id, kind, label, extra={}) => { if (!lanes.has(id)) lanes.set(id,{id, kind, label, items:[], shades:[], gaps:[], memberIds:[], ...extra}); return lanes.get(id); };
   // Only active crews and roster employees take new work.
-  const crewLane = crew => lane('crew:'+crew.id, 'crew', crew.name+(crew.status==='active'?'':' · inactive'), {crew, memberIds:crew.memberIds||[], drop:crew.status==='active'});
+  const crewLane = crew => lane('crew:'+crew.id, 'crew', crewLabel(crew)+(crew.status==='active'?'':' · inactive'), {crew, memberIds:crew.memberIds||[], drop:crew.status==='active'});
   // Owner decision F19: an office-only owner or manager (fieldWork:false) gets a lane only for work
   // already assigned to them (or when the board is filtered to them) and never takes a drop.
   const employeeLane = id => { const found=(data?.roster||[]).find(person => person.id===id); return lane('employee:'+id, 'employee', found ? nameOf(data,id) : id+' · not on the active roster', {employeeId:id, memberIds:[id], drop:Boolean(found) && found.fieldWork!==false}); };
   lane('unassigned', 'unassigned', 'Unassigned');
-  if (mode==='crew') for (const crew of crews.filter(row => row.status==='active')) crewLane(crew);
+  if (mode==='crew') for (const crew of sortCrews(crews.filter(row => row.status==='active'))) crewLane(crew);
   else for (const person of data?.roster||[]) if (employee ? person.id===employee : person.fieldWork!==false) employeeLane(person.id);
   const company=[];
   for (const job of jobs) for (const row of rowsOf(job)) {
@@ -385,11 +394,11 @@ function openSheet(item) {
       people.append(h('button',{type:'button', class:'dc-option'+(list.length?' dc-option-warn':''), disabled:assigned, onclick:()=>send({id:'employee:'+person.id,kind:'employee',employeeId:person.id},person.name)},
         h('strong',{},person.name),h('small',{},assigned?'Already on this job':list.length?list.map(hint => hint.message).join(' · '):'Free on the loaded schedule')));
     }
-    const crews=(S.data.crews||[]).filter(crew => crew.status==='active'), teams=h('div',{class:'dc-options dp-wide',role:'group','aria-label':'Saved crews'},h('h3',{class:'dc-subhead'},'Assign a saved crew'));
+    const crews=sortCrews((S.data.crews||[]).filter(crew => crew.status==='active')), teams=h('div',{class:'dc-options dp-wide',role:'group','aria-label':'Saved crews'},h('h3',{class:'dc-subhead'},'Assign a saved crew'));
     for (const crew of crews) {
       const current=row.crewId===crew.id && sameSet(row.assignedCrew,crew.memberIds||[]), list=current?[]:hints(S.data,row,crew.memberIds||[]);
       teams.append(h('button',{type:'button', class:'dc-option'+(list.length?' dc-option-warn':''), disabled:current, onclick:()=>send({id:'crew:'+crew.id,kind:'crew',crew},crew.name)},
-        h('strong',{},crew.name),h('small',{},(crew.memberIds||[]).map(id => nameOf(S.data,id)).join(', ')+' · '+(current?'Already assigned':list.length?list.map(hint => hint.message).join(' · '):'Free on the loaded schedule'))));
+        h('strong',{},crewLabel(crew)),h('small',{},(crew.memberIds||[]).map(id => nameOf(S.data,id)).join(', ')+' · '+(current?'Already assigned':list.length?list.map(hint => hint.message).join(' · '):'Free on the loaded schedule'))));
     }
     model.fields.append(...[people,crews.length?teams:null].filter(Boolean));
   }
@@ -401,7 +410,7 @@ function openSheet(item) {
 
 // The last lane model holds customer schedule data; drop it with the rest of the Hub state.
 window.addEventListener('egc:signout',() => { cancelDrag(); lastModel=null; C.mode='employee'; C.message=''; C.statusNode=null; });
-window.EGCDispatchCalendar=Object.freeze({AXIS_START, AXIS_END, SLOT, monthGrid, addMonths, dayWindow, rowsOf, laneModel, untimed, hints, crewChange, moveChanges, startChanged});
+window.EGCDispatchCalendar=Object.freeze({AXIS_START, AXIS_END, SLOT, monthGrid, addMonths, dayWindow, rowsOf, laneModel, untimed, hints, crewChange, moveChanges, startChanged, sortCrews, crewLabel, weekendCrew});
 const dispatch=window.EGCDispatch;
 if (dispatch?.registerView) {
   dispatch.registerView('month',{label:'Month', pendingSubject:'this month', range:date => { const grid=monthGrid(date); return {startDate:grid.startDate, endDate:grid.endDate}; }, step:addMonths, render:renderMonth, help:'Tap a day to open it.'});

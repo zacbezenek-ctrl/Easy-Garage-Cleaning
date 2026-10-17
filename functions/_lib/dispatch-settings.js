@@ -7,8 +7,11 @@ import { SKILL_CATALOG } from './staff-skills.js';
  * through /api/dispatch-settings (owner, settings.manage). A missing document,
  * or a malformed field in it, reads as the default below, and the defaults are
  * exactly today's behaviour: every rule is a warning, no daily limits, a 20
- * minute travel buffer on new jobs, openings searched 08:00-17:00 and the
- * arrival window length from EGC_DISPATCH_DEFAULT_ARRIVAL_WINDOW_MINUTES (60).
+ * minute travel buffer on new jobs, openings searched 09:00-17:00 (the owner's
+ * job day, D5 2026-10-17; it was 08:00-17:00 before) and the arrival window
+ * length from EGC_DISPATCH_DEFAULT_ARRIVAL_WINDOW_MINUTES (60). Job openings
+ * still start no earlier than 9:30 on and after JOB_START_POLICY_DATE
+ * (dispatch-openings.js, job-start-policy.js); walkthroughs may start at 9:00.
  * block* turns that rule's warning into a 409 dispatch_conflict on save
  * (dispatch-rules.js); blockTravelShort adds to EGC_DISPATCH_BLOCK_TRAVEL_SHORT
  * and, like it, needs drive estimates (EGC_DISPATCH_TRAVEL_ESTIMATES). A save
@@ -16,7 +19,7 @@ import { SKILL_CATALOG } from './staff-skills.js';
  * settings cannot commit after them. No backfill: no job field is derived. */
 export const DISPATCH_SETTINGS_COLLECTION = 'dispatchSettings', DISPATCH_SETTINGS_ID = 'current';
 export const DISPATCH_SETTINGS_DEFAULTS = Object.freeze({
-  defaultTravelBufferMinutes: 20, defaultArrivalWindowMinutes: null, workdayStart: '08:00', workdayEnd: '17:00',
+  defaultTravelBufferMinutes: 20, defaultArrivalWindowMinutes: null, workdayStart: '09:00', workdayEnd: '17:00',
   blockCrewShort: false, blockSkillMissing: false, blockTravelShort: false, blockOverCapacity: false, blockOutsideHours: false,
   maxJobsPerEmployeePerDay: null, maxHoursPerEmployeePerDay: null,
 });

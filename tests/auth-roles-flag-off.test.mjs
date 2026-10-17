@@ -10,6 +10,10 @@ import { ACCOUNTS, responses, seedDirectoryTarget, staffSessions } from './helpe
 // recorded with UPDATE_SNAPSHOTS=1 by running this file and its harness, and nothing else of
 // AUTH-ROLES, on the code before AUTH-ROLES: the integration branch at 7747762 (GUSTO-EXPORT,
 // which shapes the staff directory's answers). Never re-record it on a tree that has AUTH-ROLES.
+// One audited exception (D5, owner 2026-10-17): the default workday start moved from 08:00 to
+// 09:00, and every changed body was diffed field by field before the update. The only changes are
+// dispatchRules.workdayStart on the board and, on openings, constraints.workdayStart and the first
+// candidate (08:00-10:00 became 09:00-11:00, gap 540 became 480 minutes).
 const ENVS = {
   off: {},
   permissions: { EGC_STAFF_ROLE_PERMISSIONS: 'true' },

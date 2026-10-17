@@ -159,3 +159,37 @@ test('all Hub read adapters retain exact normalized mirror links and adoption pr
  const job=await portalJob({},'existing',async()=>new Response(JSON.stringify(doc)));assert.equal(job.job.normalizedLocalJobId,sourceJob);
  const evidence=await portalEvidence({},{contactProviderIds:['provider-contact']},async (_env,url)=>{assert.ok(new URL(url).searchParams.getAll('mask.fieldPaths').includes('normalizedLocalAppointmentId'));return new Response(JSON.stringify({documents:[doc]}));});assert.equal(evidence.records[0].normalizedLocalAppointmentId,localAppointment);assert.equal(evidence.records[0].adoptionSource.type,'local_job');
 });
+
+// CREW-AUTO (EGC_DISPATCH_CREW_AUTO_ASSIGN): a newly adopted job is staffed with the first free eligible crew on the
+// adoption's own evidence; a walkthrough, the flag off or no free crew adopt exactly as before. 2026-09-22 is a Tuesday.
+test('with crew auto-assign a newly adopted job gets the first free weekday crew and its crew notices; otherwise adoption is unchanged',async()=>{
+ const crews=f=>{for(const [id,name,member,priority,serviceDays] of [['crew-1','Crew 1','crew-a',1,['mon','tue','wed','thu','fri']],['crew-2','Crew 2','crew-b',2,['mon','tue','wed','thu','fri']],['crew-3','Crew 3','crew-b',3,['sat','sun']]])f.rows.set(`dispatchResources/${id}`,{id,recordType:'crew',name,memberIds:[member],leadId:member,status:'active',priority,serviceDays,revision:`${id}r`});};
+ const f=fixture();crews(f);Object.assign(f.store,{crewAutoAssign:true,crewNotificationsEnabled:true});
+ f.rows.set('jobs/busy',{id:'busy',type:'job',date:'2026-09-22',time:'14:00',endTime:'15:00',assignedCrew:['crew-a'],status:'scheduled',pipelineStatus:'scheduled',revision:'b1'});
+ const r=await adoptScheduledVisit(f.store,actor,input({kind:'job'}),now),v=f.rows.get('jobs/'+r.jobId);
+ assert.deepEqual([v.crewId,v.assignedCrew,v.crewLead,v.crewAutoAssigned.crewId,v.crewAutoAssigned.mode,v.crewAutoAssigned.memberIds,v.crewAutoAssigned.leadId],['crew-2',['crew-b'],'crew-b','crew-2','pick',['crew-b'],'crew-b'],'Crew 1 is busy at 14:15, so Crew 2');
+ assert.deepEqual([...f.rows.values()].filter(row=>row.recordType==='schedule_adoption').map(row=>row.crewAutoAssigned?.crewId),['crew-2','crew-2'],'both receipts record the pick');
+ assert.deepEqual(f.rows.get('jobs/_egc_schedule_lock_2026-09-22').entries.find(entry=>entry.id===r.jobId).assignedCrew,['crew-b']);
+ assert.equal([...f.rows.keys()].filter(key=>key.startsWith('crewNotifications/')).length,1,'one notice for the one crew member');
+ const walk=fixture();crews(walk);walk.store.crewAutoAssign=true;
+ const w=await adoptScheduledVisit(walk.store,actor,input(),now);assert.equal(walk.rows.get('jobs/'+w.jobId).crewId,undefined,'walkthroughs are never crew-staffed');
+ const off=fixture();crews(off);
+ const o=await adoptScheduledVisit(off.store,actor,input({kind:'job'}),now),legacy=off.rows.get('jobs/'+o.jobId);
+ assert.deepEqual([legacy.crewId,legacy.assignedCrew,legacy.crewAutoAssigned],[undefined,undefined,undefined],'flag off: adopted as before');
+});
+test('with crew auto-assign and no free crew a job is still adopted: no crew, reserving nobody, Sold: needs crew',async()=>{
+ const crew=(id,member,priority)=>({id,recordType:'crew',name:id,memberIds:[member],leadId:member,status:'active',priority,serviceDays:['mon','tue','wed','thu','fri'],revision:`${id}r`});
+ const f=fixture();for(const row of [crew('crew-1','crew-a',1),crew('crew-2','crew-b',2)])f.rows.set(`dispatchResources/${row.id}`,row);Object.assign(f.store,{crewAutoAssign:true,crewNotificationsEnabled:true});
+ // Both crews are on other work over the whole visit (14:15-14:45 on Tuesday 2026-09-22).
+ for(const [id,member] of [['busy-a','crew-a'],['busy-b','crew-b']])f.rows.set(`jobs/${id}`,{id,type:'job',date:'2026-09-22',time:'14:00',endTime:'15:00',assignedCrew:[member],status:'scheduled',pipelineStatus:'scheduled',revision:`${id}r`});
+ const i=input({kind:'job'}),r=await adoptScheduledVisit(f.store,actor,i,now),v=f.rows.get('jobs/'+r.jobId);
+ assert.equal(r.adopted,true,'never refused for staffing');
+ assert.deepEqual([v.assignedCrew,v.assignedTo,v.crewId,v.crewAutoAssigned,v.soldNeedsCrew],[[],'',undefined,undefined,{at:now,by:actor.id,requestId:i.requestId,reason:'no_crew_free'}]);
+ assert.deepEqual(f.rows.get('jobs/_egc_schedule_lock_2026-09-22').entries.find(entry=>entry.id===r.jobId).assignedCrew,[],'its lock entry reserves nobody');
+ assert.deepEqual([...f.rows.values()].filter(row=>row.recordType==='schedule_adoption').map(row=>row.crewAutoAssigned),[{status:'unassigned',mode:'pick',crewId:null},{status:'unassigned',mode:'pick',crewId:null}]);
+ assert.equal([...f.rows.keys()].filter(key=>key.startsWith('crewNotifications/')).length,0,'nobody is told about work they do not have');
+ // Flag off, the same day refuses the unassigned visit as before (unknown capacity is global).
+ const off=fixture();for(const row of [crew('crew-1','crew-a',1),crew('crew-2','crew-b',2)])off.rows.set(`dispatchResources/${row.id}`,row);
+ for(const [id,member] of [['busy-a','crew-a']])off.rows.set(`jobs/${id}`,{id,type:'job',date:'2026-09-22',time:'14:00',endTime:'15:00',assignedCrew:[member],status:'scheduled',pipelineStatus:'scheduled',revision:`${id}r`});
+ await assert.rejects(adoptScheduledVisit(off.store,actor,input({kind:'job'}),now),/schedule_adoption_slot_conflict/);
+});

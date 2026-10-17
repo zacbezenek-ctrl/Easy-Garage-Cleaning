@@ -44,12 +44,13 @@ function fixture() {
 
 test('missing or malformed settings read as today\'s behaviour, field by field, and are reported for repair', async () => {
   assert.deepEqual(normalizeDispatchSettings(null), { values: DISPATCH_SETTINGS_DEFAULTS, invalidFields: [], source: 'defaults', revision: null, updatedAt: null, updatedBy: null });
-  assert.deepEqual(DISPATCH_SETTINGS_DEFAULTS, { defaultTravelBufferMinutes: 20, defaultArrivalWindowMinutes: null, workdayStart: '08:00', workdayEnd: '17:00', blockCrewShort: false, blockSkillMissing: false, blockTravelShort: false, blockOverCapacity: false, blockOutsideHours: false, maxJobsPerEmployeePerDay: null, maxHoursPerEmployeePerDay: null });
+  // D5 (owner, 2026-10-17): the job day is 9:00-5:00.
+  assert.deepEqual(DISPATCH_SETTINGS_DEFAULTS, { defaultTravelBufferMinutes: 20, defaultArrivalWindowMinutes: null, workdayStart: '09:00', workdayEnd: '17:00', blockCrewShort: false, blockSkillMissing: false, blockTravelShort: false, blockOverCapacity: false, blockOutsideHours: false, maxJobsPerEmployeePerDay: null, maxHoursPerEmployeePerDay: null });
   const stored = normalizeDispatchSettings({ revision: 'r9', blockCrewShort: 'yes', maxJobsPerEmployeePerDay: 0, maxHoursPerEmployeePerDay: 7.3, workdayStart: '18:00', workdayEnd: '09:00', defaultTravelBufferMinutes: 45, blockSkillMissing: true, updatedBy: 'zacb' });
   assert.deepEqual(stored.invalidFields.sort(), ['blockCrewShort', 'maxHoursPerEmployeePerDay', 'maxJobsPerEmployeePerDay', 'workdayEnd', 'workdayStart']);
   assert.equal(stored.values.blockCrewShort, false, 'an unreadable block setting stays a warning');
   assert.equal(stored.values.blockSkillMissing, true); assert.equal(stored.values.defaultTravelBufferMinutes, 45);
-  assert.deepEqual([stored.values.workdayStart, stored.values.workdayEnd], ['08:00', '17:00'], 'a reversed workday reads as the default');
+  assert.deepEqual([stored.values.workdayStart, stored.values.workdayEnd], ['09:00', '17:00'], 'a reversed workday reads as the default');
   assert.equal(stored.source, 'firestore'); assert.equal(stored.revision, 'r9'); assert.ok(Object.isFrozen(stored.values));
   assert.equal(normalizeDispatchSettings({ maxHoursPerEmployeePerDay: 7.25, workdayEnd: '24:00' }).invalidFields.length, 0);
   assert.equal(await dispatchRuleSettings({}), DISPATCH_SETTINGS_DEFAULTS, 'stores without read() use the defaults');

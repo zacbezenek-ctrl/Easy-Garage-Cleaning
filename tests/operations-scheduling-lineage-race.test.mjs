@@ -11,6 +11,8 @@ import * as funnel from '../functions/_lib/dispatch-funnel.js';
 import * as dimensions from '../functions/_lib/funnel-dimensions.js';
 import { commitConflict, commitFailure } from '../functions/_lib/firestore-errors.js';
 import { bridgeCommandDenial, bridgeCommandPolicy } from '../egc-platform/services/operations/src/bridge-command-policy.ts';
+import * as crewAssign from '../functions/_lib/dispatch-crew-assign.js';
+import { scheduleCrewIds } from '../functions/_lib/dispatch-conflicts.js';
 
 // Execute the actual scheduling mutator, isolating only imported I/O and time/
 // conflict helpers. This suite proves atomic dependency guards, not live
@@ -42,6 +44,9 @@ function load() {
     eventDimensions: dimensions.eventDimensions, firstPlacementDimensions: dimensions.firstPlacementDimensions, legacyDimensionFacts: dimensions.legacyDimensionFacts, projectDimensionPatch: dimensions.projectDimensionPatch, resolveDimensions: dimensions.resolveDimensions, visitDimensionFacts: dimensions.visitDimensionFacts,
     // The real shared classifier, so commit error paths map as in production.
     commitConflict, commitFailure,
+    // Crew auto-assign (EGC_DISPATCH_CREW_AUTO_ASSIGN) helpers run for real; these stores leave the flag off.
+    autoAssignedCrew: crewAssign.autoAssignedCrew, crewAssignment: crewAssign.crewAssignment, crewAutoAssignEnabled: crewAssign.crewAutoAssignEnabled, crewAutoRecord: crewAssign.crewAutoRecord,
+    crewPickOrder: crewAssign.crewPickOrder, eligibleCrews: crewAssign.eligibleCrews, pickCrew: crewAssign.pickCrew, scheduleCrewIds,
   });
   vm.runInContext(source.replace(/^import .*;\r?\n/gm, '').replace(/^export /gm, '') +
     '\nglobalThis.api = {mutateScheduledVisit, schedulingStorage};', context);

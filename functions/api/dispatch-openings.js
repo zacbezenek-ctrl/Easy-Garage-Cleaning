@@ -12,7 +12,7 @@ export function dispatchOpeningsHandlers({session=getHubSession,storage=dispatch
       const params=new URL(request.url).searchParams;
       if(new Set(params.keys()).size!==[...params.keys()].length)return reply(400,{ok:false,code:'dispatch_openings_invalid',error:'Each openings filter can only be supplied once.'});
       const store=storage(env);
-      return reply(200,await dispatchOpenings(store,actor,Object.fromEntries(params),now(),{travel:travel({env,store,now}),...(access.booker?{authorize:bookerAuthorize(env)}:{})}));
+      return reply(200,await dispatchOpenings(store,actor,Object.fromEntries(params),now(),{travel:travel({env,store,now}),...(access.booker?{authorize:bookerAuthorize(env),booker:true}:{})}));
     } catch(error) {
       if(error?.code?.startsWith('dispatch_'))return reply(error.status||503,{ok:false,code:error.code,error:error.message});
       return reply(503,{ok:false,code:'dispatch_openings_unavailable',error:'Scheduling capacity could not be verified. Retry before choosing a time.'});

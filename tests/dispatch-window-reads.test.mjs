@@ -285,9 +285,10 @@ test('openings treat an old lock entry for a job moved far away exactly as the c
     'jobs/_egc_schedule_lock_2026-09-25': { recordType: 'schedule_lock', date: '2026-09-25', entries: [
       { id: 'moved-away', type: 'job', start: '09:00', end: '11:00', label: 'Moved', status: 'scheduled', assignedCrew: ['crew2'], assignmentKnown: true, vehicleId: null },
       { id: 'deleted-job', type: 'job', start: '13:00', end: '15:00', label: 'Gone', status: 'scheduled', assignedCrew: ['crew2'], assignmentKnown: true, vehicleId: null }] } };
-  const results = {}, set = stores(seed), query = { startDate: '2026-09-25', endDate: '2026-09-26', employeeIds: 'crew2', durationMinutes: '60', travelBufferMinutes: '0' };
+  const results = {}, set = stores(seed), query = { startDate: '2026-09-25', endDate: '2026-09-26', employeeIds: 'crew2', durationMinutes: '60', travelBufferMinutes: '0', workdayStart: '08:00' };
   for (const [mode, { store }] of modes(set)) results[mode] = await dispatchOpenings(store, manager, query, NOW);
   assert.deepEqual(results.windowed, results.full); assert.deepEqual(results.shadow, results.full);
+  // (The 08:00 workday these fixtures were written for; D5 made 09:00 the default start.)
   // One candidate per gap: 08:00-13:00 is unbroken because the saved job is
   // authoritative over its old 09:00 entry; the orphan 13:00-15:00 still reserves.
   assert.deepEqual(results.full.candidates.map(row => [row.time, row.gapMinutes]), [['08:00', 300], ['15:00', 120]]);
