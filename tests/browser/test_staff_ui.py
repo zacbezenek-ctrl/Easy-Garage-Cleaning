@@ -301,7 +301,7 @@ class StaffDirectoryShellTests(HubShell, unittest.TestCase):
         # Bumped deliberately (GUSTO-EXPORT): the directory gained the owner's Gusto employee ID editor; (AUTH-ROLES on
         # GUSTO-EXPORT) one new tag for the sign-out outcome and the Gusto editor together; (STAFF-ACCESS) the first-rate
         # date and the owner's Apply rate to open weeks.
-        self.assertEqual(assets, ['employee-staff.css?v=20260929access', 'employee-staff.js?v=20260929access'])
+        self.assertEqual(assets, ['employee-staff.css?v=20261017profile', 'employee-staff.js?v=20261017profile'])
         self.assertEqual(page.evaluate('document.querySelectorAll(".egc-staff").length'), 1)
         scroll = self.no_horizontal_scroll()
         self.assertLessEqual(scroll['width'], 375, scroll)

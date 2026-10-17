@@ -176,3 +176,38 @@ test('the goods markup field and the Menu prices tab appear in the catalog scree
   for (let round = 0; round < 50; round++) await new Promise(resolve => setImmediate(resolve));
   assert.doesNotMatch(off.root().textContent, /Goods markup|Menu prices|installation is included/);
 });
+
+// Regression (tests/e2e-estimator-crew-day.test.mjs): with only the builder flag on there is no Pricing tab, so the
+// installation question is answered here, on Menu prices, and saved with the menu approvals (menu.approve).
+test('catalog pricing off: the owner answers the installation question on Menu prices, reviews it and can take it back', async () => {
+  const ui = screen();
+  await ui.settle(() => ui.root()?.textContent.includes('pricing-menu prices are drafts'), 'the menu prices');
+  assert.match(ui.root().textContent, /Catalog pricing is turned off/);
+  assert.match(ui.root().textContent, /also wait for your installation decision: the builder has no installation line\. Tick this if shelving and storage installation is included in the goods price\./);
+  const box = () => ui.root().querySelector('#cat-menu-installation');
+  assert.equal(box().checked, false);
+  box().checked = true; box().dispatchEvent({ type: 'change', target: box() });
+  ui.button('Review 1 change').click();
+  const dialog = ui.document.body.querySelector('dialog');
+  assert.match(dialog.textContent, /Answer the installation question/);
+  assert.match(dialog.textContent, /Shelving and storage installationNot confirmedIncluded in the goods price/);
+  ui.button('Save approvals').click();
+  await ui.settle(() => ui.root().textContent.includes('Shelving and storage installation is now confirmed as included in the goods price.'), 'the saved answer');
+  const post = ui.fs.posts.at(-1);
+  assert.deepEqual([post.action, post.approve, post.revoke, post.goodsInstallationIncluded], ['menu.approve', [], [], true]);
+  assert.equal(ui.fs.get('pricingMenuApprovals/current').goodsInstallationIncluded, true);
+  await ui.settle(() => ui.root().textContent.includes('You confirmed that shelving and storage installation is included in the goods price'), 'the reloaded answer');
+  assert.doesNotMatch(ui.root().textContent, /also wait for your installation decision/);
+  assert.equal(box().checked, true);
+  // Unticked and saved, goods quotes wait again.
+  box().checked = false; box().dispatchEvent({ type: 'change', target: box() });
+  ui.button('Review 1 change').click();
+  assert.match(ui.document.body.querySelector('dialog').textContent, /Shelving and storage installationIncluded in the goods priceNot confirmed/);
+  ui.button('Save approvals').click();
+  await ui.settle(() => ui.root().textContent.includes('Installation is no longer confirmed'), 'the withdrawn answer');
+  assert.equal(ui.fs.get('pricingMenuApprovals/current').goodsInstallationIncluded, false);
+  // A manager sees the question but cannot answer it.
+  const manager = screen({ who: MANAGER });
+  await manager.settle(() => manager.root()?.querySelector('#cat-menu-installation'), 'the question');
+  assert.ok(off(manager.root().querySelector('#cat-menu-installation')));
+});

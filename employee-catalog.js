@@ -530,7 +530,7 @@ function resultCheck(body){
 }
 // EGC_QUOTE_BUILDER_ENABLED: what the save did for signed jobs held for the owner's prices (the answer's heldJobs).
 const heldText=held=>!plain(held)?'':held.status==='deferred'?' Booked jobs waiting for approved prices could not be checked; they stay held until the next save.':Array.isArray(held.released)&&(held.released.length||held.waiting)?` ${held.released.length} booked job${held.released.length===1?'':'s'} released: the customer${held.released.length===1?' gets its':'s get their'} estimate and deposit request.${held.waiting?` ${held.waiting} still wait${held.waiting===1?'s':''} for approved prices.`:''}`:'';
-const describe=body=>body?.action==='menu.approve'?`Approve ${body.approve?.length||0} and revoke ${body.revoke?.length||0} pricing-menu prices`:body?.action==='settings.update'?`Save pricing settings ${body.settings?.settingsVersion||''}`.trim():`Publish catalog version ${body?.catalog?.catalogVersion||''}`.trim();
+const describe=body=>body?.action==='menu.approve'?`Approve ${body.approve?.length||0} and revoke ${body.revoke?.length||0} pricing-menu prices${typeof body.goodsInstallationIncluded==='boolean'?' and answer the installation question':''}`:body?.action==='settings.update'?`Save pricing settings ${body.settings?.settingsVersion||''}`.trim():`Publish catalog version ${body?.catalog?.catalogVersion||''}`.trim();
 // Server paths name catalog.items[N]; the owner knows the item by name.
 function invalidText(error,body){
   const path=String(error?.details?.path||''),match=/^catalog\.items\[(\d+)\]\.?(\w+)?/.exec(path),item=match&&body?.catalog?.items?.[Number(match[1])];
@@ -548,7 +548,9 @@ async function send(body){
     S.retry=null;
     if(body.action==='menu.approve'){
       S.menuPick=null;S.menuErrors={};
-      S.notice={kind:'success',text:`Approved ${body.approve.length} and revoked ${body.revoke.length} pricing-menu price${body.approve.length+body.revoke.length===1?'':'s'}.${data.approvals.current===false?' A newer approval replaced this one since; the latest is shown.':''} Builder quotes that use them can be sent now.${heldText(data.heldJobs)}`};
+      const answered=typeof body.goodsInstallationIncluded!=='boolean'?'':body.goodsInstallationIncluded?' Shelving and storage installation is now confirmed as included in the goods price.':' Installation is no longer confirmed: builder quotes with goods wait again.';
+      const changed=body.approve.length+body.revoke.length;
+      S.notice={kind:'success',text:`${changed?`Approved ${body.approve.length} and revoked ${body.revoke.length} pricing-menu price${changed===1?'':'s'}.`:''}${answered}${data.approvals.current===false?' A newer approval replaced this one since; the latest is shown.':''}${changed?' Builder quotes that use them can be sent now.':''}${heldText(data.heldJobs)}`.trim()};
     }else if(body.action==='settings.update'){
       // Show the saved values at once; the reload that follows refreshes the prices they produce.
       const result=data.settings,fresh=result.current!==false&&S.data?.settings;
@@ -781,6 +783,11 @@ async function loadMenu(){
 const menuItems=()=>S.menu?[...S.menu.services.map(item=>({...item,kind:'service'})),...S.menu.products.map(item=>({...item,kind:'product'}))]:[];
 const menuDrafts=()=>menuItems().filter(item=>!item.approved&&Number.isSafeInteger(item.unitCents));
 function menuPick(){return S.menuPick||(S.menuPick={approve:{},revoke:{}});}
+// The owner's answer to the builder's installation question (menu.approve goodsInstallationIncluded): the stored answer,
+// and the pending change (pick.installation, a boolean) when the owner ticked or unticked it. With catalog pricing off
+// this is the only place to give it: the Pricing tab and its settings are not available then.
+const installationConfirmed=()=>S.menu?.internal?.installationConfirmed===true;
+const installationChange=()=>typeof menuPick().installation==='boolean'?1:0;
 // The approval request the ticked rows describe, or {errors} for an amount that is not dollars and cents.
 function menuRequest(){
   const pick=menuPick(),approve=[],errors={};
@@ -789,7 +796,18 @@ function menuRequest(){
     if(cents==null||cents<1||cents>MAX_ITEM_CENTS)errors[id]='Enter the approved amount as dollars, like 70.00.';
     else approve.push({id,unitCents:cents});
   }
-  return{approve,revoke:Object.keys(pick.revoke),errors};
+  return{approve,revoke:Object.keys(pick.revoke),errors,...(typeof pick.installation==='boolean'?{installation:pick.installation}:{})};
+}
+// The installation question on Menu prices: asked while goods quotes wait for it, and kept (to take it back) once the
+// owner answered it here. An answer saved under Pricing (catalog pricing on) needs nothing here.
+function installationCard(m,frozen){
+  const pick=menuPick(),included=m.internal?.goodsInstallationIncluded===true,confirmed=installationConfirmed();
+  if(!m.internal||included&&!confirmed)return null;
+  const checked=typeof pick.installation==='boolean'?pick.installation:confirmed;
+  const box=h('input',{type:'checkbox',id:'cat-menu-installation',checked,disabled:frozen,onchange:event=>{const value=event.target.checked===true;if(value===confirmed)delete pick.installation;else pick.installation=value;render();}});
+  return h('div',{class:'hub-notice'+(included?'':' warning')},
+    included?'You confirmed that shelving and storage installation is included in the goods price, so builder quotes with goods can be sent once their prices are approved.':'Builder quotes with shelving or storage also wait for your installation decision: the builder has no installation line. Tick this if shelving and storage installation is included in the goods price.',
+    h('label',{class:'cat-check',for:'cat-menu-installation'},box,' Shelving and storage installation is included in the goods price'));
 }
 function menuRow(item,frozen){
   const pick=menuPick(),ticked=Boolean(pick.approve[item.id]),canAmount=item.kind==='service';
@@ -804,7 +822,7 @@ function menuRow(item,frozen){
 function menuPanel(){
   const m=S.menu,canApprove=m.viewer?.canApprove===true,frozen=locked()||!canApprove,pick=menuPick();
   const drafts=menuDrafts(),owner=menuItems().filter(item=>item.approved&&item.source==='owner'),fixed=menuItems().filter(item=>item.source==='menu');
-  const chosen=Object.keys(pick.approve).length+Object.keys(pick.revoke).length,room=Math.max(0,MENU_MAX-chosen);
+  const chosen=Object.keys(pick.approve).length+Object.keys(pick.revoke).length+installationChange(),room=Math.max(0,MENU_MAX-chosen);
   const table=(rows,head)=>h('div',{class:'cat-table-wrap'},h('table',{class:'cat-table cat-menu-table'},h('thead',{},h('tr',{},head.map(text=>h('th',{scope:'col'},text)))),h('tbody',{},rows)));
   const bySection=m.sections.map(section=>{const rows=drafts.filter(item=>item.section===section.id);return rows.length?h('section',{class:'hub-card cat-card'},h('h2',{},`${section.label}: ${rows.length} draft price${rows.length===1?'':'s'}`),
     // Ticks up to the per-request limit; cleaning bases are left for the owner to tick and price one by one.
@@ -813,7 +831,7 @@ function menuPanel(){
   return h('div',{class:'cat-menu'},
     h('div',{class:'hub-notice'+(drafts.length?' warning':' success')},drafts.length?`${drafts.length} pricing-menu price${drafts.length===1?' is a draft':'s are drafts'}. A builder quote that uses a draft price can be saved but not sent until you approve it here. Pricing menu ${m.menuVersion} · settings ${m.settingsVersion}.`:'Every pricing-menu price is approved.'),
     !canApprove?h('div',{class:'hub-notice'},'Only the owner can approve pricing-menu prices.'):null,
-    m.internal&&m.internal.goodsInstallationIncluded!==true?h('div',{class:'hub-notice warning'},'Builder quotes with shelving or storage also wait for your installation decision: the builder has no installation line, so confirm under Pricing that installation is included in the goods price.'):null,
+    installationCard(m,frozen),
     chosen>MENU_MAX?h('div',{class:'hub-notice warning'},`Approve or revoke at most ${MENU_MAX} prices at a time: untick ${chosen-MENU_MAX}, save, then tick the rest.`):null,
     ...bySection,
     owner.length?h('section',{class:'hub-card cat-card'},h('h2',{},`Approved by you (${owner.length})`),table(owner.map(item=>h('tr',{'data-item':item.id},
@@ -824,16 +842,18 @@ function menuPanel(){
 }
 function openMenuReview(){
   if(locked()||S.menu?.viewer?.canApprove!==true)return;
-  const {approve,revoke,errors}=menuRequest();
-  if(approve.length+revoke.length>MENU_MAX)return;
+  const {approve,revoke,errors,installation}=menuRequest(),answer=typeof installation==='boolean'?{goodsInstallationIncluded:installation}:{};
+  if(approve.length+revoke.length+(typeof installation==='boolean'?1:0)>MENU_MAX)return;
   S.menuErrors=errors;
   if(Object.keys(errors).length){S.tab='menu';render();return;}
   const byId=new Map(menuItems().map(item=>[item.id,item]));
-  const save=()=>{closeDialog();void send({action:'menu.approve',requestId:S.kit.requestId(),expectedRevision:S.menu.internal?.approvalsRevision??null,menuVersion:S.menu.menuVersion,settingsVersion:S.menu.settingsVersion,approve,revoke});};
-  openDialog({eyebrow:'Approve draft prices',title:`Approve ${approve.length} and revoke ${revoke.length} pricing-menu price${approve.length+revoke.length===1?'':'s'}`,onSubmit:save,
+  const save=()=>{closeDialog();void send({action:'menu.approve',requestId:S.kit.requestId(),expectedRevision:S.menu.internal?.approvalsRevision??null,menuVersion:S.menu.menuVersion,settingsVersion:S.menu.settingsVersion,approve,revoke,...answer});};
+  const included=value=>value?'Included in the goods price':'Not confirmed';
+  openDialog({eyebrow:'Approve draft prices',title:approve.length+revoke.length?`Approve ${approve.length} and revoke ${revoke.length} pricing-menu price${approve.length+revoke.length===1?'':'s'}`:'Answer the installation question',onSubmit:save,
     body:[h('div',{class:'cat-diff-table'},h('table',{},h('thead',{},h('tr',{},['Item','Now','After saving'].map(text=>h('th',{scope:'col'},text)))),h('tbody',{},
       ...approve.map(entry=>h('tr',{},h('th',{scope:'row'},byId.get(entry.id)?.name||entry.id),h('td',{},`Draft ${money(byId.get(entry.id)?.unitCents)}`),h('td',{},h('strong',{},`Approved ${money(entry.unitCents)}`)))),
-      ...revoke.map(id=>h('tr',{},h('th',{scope:'row'},byId.get(id)?.name||id),h('td',{},`Approved ${money(byId.get(id)?.unitCents)}`),h('td',{},h('strong',{},'Draft again'))))))),
+      ...revoke.map(id=>h('tr',{},h('th',{scope:'row'},byId.get(id)?.name||id),h('td',{},`Approved ${money(byId.get(id)?.unitCents)}`),h('td',{},h('strong',{},'Draft again')))),
+      ...(typeof installation==='boolean'?[h('tr',{},h('th',{scope:'row'},'Shelving and storage installation'),h('td',{},included(installationConfirmed())),h('td',{},h('strong',{},included(installation))))]:[])))),
       h('div',{class:'hub-notice warning'},'Approved prices can be sent to customers on builder quotes at once. Nothing is sent to any customer by saving.')],
     actions:[btn('Keep editing',closeDialog),btn('Save approvals',save,'primary')]});
 }

@@ -15,15 +15,17 @@ import { PRICING_MENU_JSON } from '../_data/pricing-menu.js';
  *              (retailPerPackCents) into the selling price per pack, rounded by settings.roundingRule.
  *   walkthrough the walkthrough price tables (pricing-config.js walkthroughPricing()), the DRAFT amounts of
  *              cleaning bases, cleaning add-ons, special items and access until the owner approves a price.
- *   approvals  pricingMenuApprovals/current: {items: {[menuItemId]: {unitCents, identity}}, revision}, written only
- *              by the owner's bulk approval (catalog-store.js menu.approve).
+ *   approvals  pricingMenuApprovals/current: {items: {[menuItemId]: {unitCents, identity}}, revision,
+ *              goodsInstallationIncluded?}, written only by the owner's bulk approval (catalog-store.js menu.approve).
  * A price is approved when the menu itself records an owner-approved amount (the $750 full truck) or the owner
  * approved that item at exactly that amount. An owner-approved service amount is the price; a product approval
  * holds only while cost x goodsMarkup still gives the approved amount. An approval also names the item it was
  * given for (menuItemIdentity): a re-import that renames or re-maps an item id puts it back into draft. Goods are
- * priced without installation, so a quote with goods also waits for the owner to confirm in the pricing settings
- * that installation is included in the goods price (goodsInstallationIncluded). Draft prices may be saved on an
- * unsent draft, never sent: quote-draft.js re-checks compositeApproval() at send preview and send.
+ * priced without installation, so a quote with goods also waits for the owner to confirm that installation is
+ * included in the goods price: in the pricing settings (goodsInstallationIncluded, Hub > Catalog & pricing > Pricing,
+ * only while CATALOG_QUOTES_ENABLED is on) or with the menu approvals (approvals.goodsInstallationIncluded, the owner's
+ * menu.approve on Menu prices, which the builder flag alone allows). Either confirmation counts. Draft prices may be
+ * saved on an unsent draft, never sent: quote-draft.js re-checks compositeApproval() at send preview and send.
  *
  * The customer-facing estimate keeps at most 12 charged lines (the portal limit): special-handling items, access
  * charges and each goods step (shelving, extra storage) roll up into one line each; the breakdown keeps every item.
@@ -171,7 +173,7 @@ export function validatePricingMenu(menu) {
 /** Approvals as stored in pricingMenuApprovals/current: {items: {[id]: {unitCents, identity, ...}}, revision}. */
 export function validateMenuApprovals(value) {
   if (value === null || value === undefined) return { items: {}, revision: null };
-  if (!plain(value) || !plain(value.items) || !(value.revision === null || typeof value.revision === 'string')) throw fail('approvals_invalid', 'The saved price approvals failed verification. Nothing was priced; the owner must re-save them.', 503);
+  if (!plain(value) || !plain(value.items) || !(value.revision === null || typeof value.revision === 'string') || !(value.goodsInstallationIncluded === undefined || typeof value.goodsInstallationIncluded === 'boolean')) throw fail('approvals_invalid', 'The saved price approvals failed verification. Nothing was priced; the owner must re-save them.', 503);
   for (const [id, entry] of Object.entries(value.items)) {
     if (!(PRODUCT_ID.test(id) || SERVICE_ID.test(id)) || !plain(entry) || !Number.isSafeInteger(entry.unitCents) || entry.unitCents < 1 || entry.unitCents > MAX_ITEM_CENTS
       || !(entry.identity === undefined || typeof entry.identity === 'string' && entry.identity.length <= 600)) throw fail('approvals_invalid', 'The saved price approvals failed verification. Nothing was priced; the owner must re-save them.', 503);
@@ -243,11 +245,13 @@ export function menuPrices(state) {
   return out;
 }
 
-// Goods are priced at cost x goodsMarkup with no installation line. Until the owner confirms in the pricing settings
-// that installation is included in that price, a quote with goods is saved but never sent.
-const installationIncluded = settings => settings?.goodsInstallationIncluded === true;
+// Goods are priced at cost x goodsMarkup with no installation line. Until the owner confirms that installation is
+// included in that price, a quote with goods is saved but never sent. The confirmation is the pricing settings'
+// goodsInstallationIncluded (the Pricing tab, which needs CATALOG_QUOTES_ENABLED) or the menu approvals' (Menu prices,
+// which the quote builder flag alone opens): with only the builder on, the settings cannot be saved at all.
+const installationIncluded = state => state?.settings?.goodsInstallationIncluded === true || state?.approvals?.goodsInstallationIncluded === true;
 const INSTALLATION_BLOCK = Object.freeze({ id: INSTALLATION_ID, name: 'Shelving and storage installation', unitCents: null,
-  reason: 'Shelving and storage installation is not priced: goods sell at public retail × the goods markup only, and the owner has not confirmed in Hub > Catalog & pricing > Pricing that installation is included in that price.' });
+  reason: 'Shelving and storage installation is not priced: goods sell at public retail × the goods markup only, and the owner has not confirmed in Hub > Catalog & pricing (Menu prices) that installation is included in that price.' });
 
 /** The builder's menu for one viewer. internal (owner/manager) adds the goods cost basis, the multiplier and the
  * approvals revision the owner's bulk approval needs; nobody else sees a cost. */
@@ -263,9 +267,11 @@ export function builderMenu(state, { internal = false, canApprove = false } = {}
     products: menu.products.map(product => ({ id: product.id, sku: product.sku, retailer: product.retailer, name: product.name, section: product.section, group: product.group,
       unitsPerPack: product.unitsPerPack, perOrderPackLimit: product.perOrderPackLimit, productUrl: product.productUrl, photoUrl: product.photoUrl, fitWarnings: product.fitWarnings,
       ...status(product.id), ...(internal ? { retailPerPackCents: product.retailPerPackCents, evidence: product.evidence } : {}) })),
-    ...(internal ? { internal: { goodsMarkup: goodsMarkupOf(settings).multiplier, goodsInstallationIncluded: installationIncluded(settings), roundingRule: settings.roundingRule, approvalsRevision: approvals.revision } } : {}),
+    // installationConfirmed: the owner's own answer on Menu prices (menu.approve), present once it was given.
+    ...(internal ? { internal: { goodsMarkup: goodsMarkupOf(settings).multiplier, goodsInstallationIncluded: installationIncluded(state), roundingRule: settings.roundingRule, approvalsRevision: approvals.revision,
+      ...(typeof approvals.goodsInstallationIncluded === 'boolean' ? { installationConfirmed: approvals.goodsInstallationIncluded } : {}) } } : {}),
     // Every viewer learns whether goods can be sent at all (no amount is involved): the builder shows it per step.
-    installation: installationIncluded(settings) ? { included: true } : { included: false, reason: INSTALLATION_BLOCK.reason },
+    installation: installationIncluded(state) ? { included: true } : { included: false, reason: INSTALLATION_BLOCK.reason },
     viewer: { internal, canApprove: internal && canApprove },
   };
 }
@@ -408,7 +414,7 @@ export function priceCompositeQuote(state, descriptor, { complete = false } = {}
   const steps = sections.filter(section => section.completed).map(section => ({ id: section.id, label: section.label, subtotalCents: section.subtotalCents, runningTotalCents: running += section.subtotalCents }));
   const breakdown = { version: COMPOSITE_SCHEMA_VERSION, source: 'composite', menuVersion: version, settingsVersion: settings.settingsVersion,
     sections: sections.map(({ completed, ...section }) => section), lines: detail, purchaseList: purchaseList(detail), totalCents };
-  return { compositePricing: selection, menuVersion: version, settingsVersion: settings.settingsVersion, lineItems, storedLineItems, breakdown, steps, totalCents, approval: approvalOf(detail, prices, settings) };
+  return { compositePricing: selection, menuVersion: version, settingsVersion: settings.settingsVersion, lineItems, storedLineItems, breakdown, steps, totalCents, approval: approvalOf(detail, prices, state) };
 }
 
 // What the crew buys or grabs: one row per product, with packs, units and the public product page. No cost.
@@ -417,7 +423,7 @@ function purchaseList(lines) {
     units: line.qty * line.unitsPerPack, productUrl: line.productUrl, perOrderPackLimit: line.perOrderPackLimit, overOrderLimit: line.perOrderPackLimit !== null && line.qty > line.perOrderPackLimit, fitWarnings: line.fitWarnings }));
 }
 
-function approvalOf(lines, prices, settings) {
+function approvalOf(lines, prices, state) {
   const blocked = lines.filter(line => {
     const price = prices.get(line.id);
     return !price || !price.approved || price.unitCents !== line.unitCents;
@@ -428,14 +434,14 @@ function approvalOf(lines, prices, settings) {
         : price.approved ? `The owner approved ${money(price.unitCents)} for ${line.name}, but this quote has ${money(line.unitCents)}. Save the quote again to use the approved price.`
           : `${line.name}: ${price.reason.charAt(0).toLowerCase()}${price.reason.slice(1)}` };
   });
-  if (lines.some(line => line.sku) && !installationIncluded(settings)) blocked.push({ ...INSTALLATION_BLOCK });
+  if (lines.some(line => line.sku) && !installationIncluded(state)) blocked.push({ ...INSTALLATION_BLOCK });
   return { ready: blocked.length === 0, blocked };
 }
 
 /** Send-time check of a saved breakdown against today's menu, settings and approvals: {ready, blocked}. */
 export function compositeApproval(breakdown, state) {
   if (!plain(breakdown) || breakdown.source !== 'composite' || !Array.isArray(breakdown.lines)) return { ready: false, blocked: [{ id: null, name: 'This quote', unitCents: null, reason: 'The saved builder breakdown is missing. Rebuild the quote before sending.' }] };
-  return approvalOf(breakdown.lines, menuPrices(state), state.settings);
+  return approvalOf(breakdown.lines, menuPrices(state), state);
 }
 
 /** The message and details a refused send carries: the reasons, in quote order, at most 8 named. */
