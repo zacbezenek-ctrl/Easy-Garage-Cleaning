@@ -5,6 +5,7 @@ import { prepareHandoff, saveWalkthroughHandoff } from '../_lib/walkthrough-hand
 import { expireStaleCheckout } from '../_lib/quote-draft.js';
 import { stripeRequest, stripeSecretKey } from '../_lib/customer-payments.js';
 import { moneyTotalsMode } from '../_lib/money-core.js';
+import { gameplanWalkthroughs, gameplanWalkthroughStorage } from '../_lib/gameplan-walkthroughs.js';
 const reply = (status, body) => Response.json(body, {status, headers:{'Cache-Control':'no-store','X-Content-Type-Options':'nosniff'}});
 // A refused save names each owner rule (or overlapping work) that stopped it. Only
 // each conflict's code and message leave the server, and no other details are
@@ -21,10 +22,16 @@ function failure(error) {
   return reply(503, {ok:false,code:'handoff_unavailable',error:'The handoff could not be verified. Keep the saved request and retry; do not create another job.'});
 }
 const stripeFor=env=>{const secret=stripeSecretKey(env);return secret?(path,options)=>stripeRequest(secret,path,options):null;};
-export function handoffHandlers({session=getHubSession,storage=dispatchStorage,now=()=>new Date(),stripe=stripeFor}={}) {
+export function handoffHandlers({session=getHubSession,storage=dispatchStorage,walkthroughs=gameplanWalkthroughStorage,now=()=>new Date(),stripe=stripeFor}={}) {
   return {
     async get({request,env}) {
-      try { const actor=await session(request,env); requireQuoteAuthor(actor,env); return reply(200,{...await prepareHandoff(storage(env),actor,Object.fromEntries(new URL(request.url).searchParams),{env}),viewer:{id:actor.user}}); }
+      try {
+        const actor=await session(request,env); requireQuoteAuthor(actor,env);
+        const query=Object.fromEntries(new URL(request.url).searchParams);
+        // view=walkthroughs: the gameplan's Today list and its requested walkthrough (gameplan-walkthroughs.js), no SDK read.
+        if('view' in query)return reply(200,{...await gameplanWalkthroughs(walkthroughs(env),actor,query,{env,now:now()}),viewer:{id:actor.user}});
+        return reply(200,{...await prepareHandoff(storage(env),actor,query,{env}),viewer:{id:actor.user}});
+      }
       catch(error) { return failure(error); }
     },
     async post({request,env}) {

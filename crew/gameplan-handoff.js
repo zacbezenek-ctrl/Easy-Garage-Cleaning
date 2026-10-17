@@ -37,8 +37,9 @@
     const jobsKey = actor => `egc-signed-handoff-jobs-v1:${actor}`;
     function savedJobs(actor) { try { const list = JSON.parse(d.shared?.getItem(jobsKey(actor)) || '[]'); return Array.isArray(list) ? list.filter(x => x && typeof x === 'object') : []; } catch { return []; } }
     function rememberJob(actor, entry) { try { d.shared?.setItem(jobsKey(actor), JSON.stringify([...savedJobs(actor).filter(x => x.customerId !== entry.customerId || x.acceptedAt !== entry.acceptedAt), entry].slice(-20))); } catch {} }
-    // crew_brief is internal_notes without prices, so a request frozen before it existed is the same signed version.
-    const identity = p => JSON.stringify({...p,crew_brief:undefined,client:{...p.client,highlevel_contact_id:undefined}});
+    // crew_brief is internal_notes without prices, so a request frozen before it existed is the same signed version;
+    // so is logistics.bring_list, the equipment list derived from the signed scope (WP14c).
+    const identity = p => JSON.stringify({...p,crew_brief:undefined,client:{...p.client,highlevel_contact_id:undefined},logistics:p.logistics&&typeof p.logistics==='object'?{...p.logistics,bring_list:undefined}:p.logistics});
     function remember(k, pending) { d.storage.setItem(k, JSON.stringify(pending)); }
     async function request(url, body) {
       const controller=new AbortController(),timer=setTimeout(()=>controller.abort(),60000);
