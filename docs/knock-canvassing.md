@@ -286,7 +286,10 @@ and every sync answer and record is as before. Code: `functions/_lib/knock-bridg
 * **HighLevel:** the bridge sends nothing to HighLevel. Each Knock-made job carries data for the schedule mirror
   (`EGC_GHL_SCHEDULE_MIRROR`): `source: 'door_to_door'`, `d2d: {kind: 'sale'|'walkthrough', repKey, saleId |
   setterEventId, houseId, contactSource: 'Door to door', at}` and `ghlTags: ['egc-d2d-sale']` or
-  `['egc-d2d-walkthrough']` (tags the mirror is meant to send; they are registered with that send path).
+  `['egc-d2d-walkthrough']`. The mirror writes `Door to door: sale|walkthrough set by <rep first name>` in its note
+  and the source "Door to door" on a contact or opportunity it creates. It adds the D2D tag to the contact only with
+  `EGC_GHL_D2D_TAGS=true` (off; registered as a potential workflow trigger, gate `D9B.d2d_tags`), once with the
+  booking. See [HIGHLEVEL-BOUNDARY.md](HIGHLEVEL-BOUNDARY.md).
 * **Rep's day:** the door's time and the knocking window are taken when Sold or Walkthrough set is tapped, so a customer
   still signing after sunset is not lost; a refused sale or walkthrough opens its form again with everything typed
   (**Edit and resend**, same id).
