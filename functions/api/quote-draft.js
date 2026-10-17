@@ -1,12 +1,13 @@
-import { getHubSession } from '../_lib/hub-session.js';
+import { getHubSession, isHubOwner } from '../_lib/hub-session.js';
 import { dispatchStorage } from '../_lib/dispatch-storage.js';
 import { requireQuoteAuthor } from '../_lib/quote-permissions.js';
 import { expireStaleCheckout, previewQuoteSend, readQuoteDraft, saveQuoteDraft, sendQuoteDraft } from '../_lib/quote-draft.js';
 import { createEstimateReadyDelivery } from '../_lib/estimate-ready.js';
 import { stripeRequest, stripeSecretKey } from '../_lib/customer-payments.js';
 import { moneyTotalsMode } from '../_lib/money-core.js';
-import { catalogQuotesEnabled, catalogStorage, readCatalogState } from '../_lib/catalog-store.js';
+import { catalogQuotesEnabled, catalogStorage, quoteBuilderEnabled, readCatalogState, readCompositeState } from '../_lib/catalog-store.js';
 import { priceCatalogQuote } from '../_lib/catalog-quote.js';
+import { builderMenu, priceCompositeQuote } from '../_lib/composite-quote.js';
 import { syncWalkthroughCapture, walkthroughCaptureSyncEnabled } from '../_lib/walkthrough-capture-sync.js';
 import { FINAL_25_75 } from '../_lib/quote-payment-policy.js';
 
@@ -17,6 +18,18 @@ import { FINAL_25_75 } from '../_lib/quote-payment-policy.js';
  * POST {action:'send', requestId, jobId, expectedRevision, confirmToken}
  * POST {action:'sync_capture', actorId?, jobId, syncKey} => saved internal note status
  * POST {action:'catalog_preview',catalogPricing:{catalogVersion,settingsVersion,items:[{id,itemId,quantity,customerSupplied}]}}
+ * With EGC_QUOTE_BUILDER_ENABLED=true (otherwise these answer exactly as before the builder existed):
+ * GET  /api/quote-draft?view=builder => {ok, enabled:true, menuVersion, settingsVersion, steps, sections, services,
+ *        products, installation:{included, reason?}, viewer:{internal,canApprove},
+ *        internal?:{goodsMarkup,goodsInstallationIncluded,roundingRule,approvalsRevision}}: the pricing menu with each
+ *        item's current price and approval; only owners and managers (internal) see a cost basis.
+ *        Pages ask for it only when /api/pricing-config or /api/catalog said quoteBuilder:true.
+ * While the flag is on, send_preview and send of a walkthrough-priced draft (no builder or catalog pricing) answer
+ *        409 quote_draft_builder_required; the draft stays saved.
+ * POST {action:'composite_preview', compositePricing:{menuVersion,settingsVersion,steps,removal,shelving,storage}}
+ *        => {ok, compositePricing, menuVersion, settingsVersion, lineItems, steps, breakdown, approval, totalCents};
+ *        steps may be a prefix of removal, shelving, storage (running totals); a save needs all three and sends
+ *        draft.composite_pricing with the previewed lines. Never a cost split.
  * Retry a lost response with the SAME requestId and body. */
 const LIMIT = 64000;
 const reply = (status, body) => Response.json(body, { status, headers: { 'Cache-Control': 'no-store', 'X-Content-Type-Options': 'nosniff' } });
@@ -32,13 +45,16 @@ function sameOrigin(request) {
 const stripeFor = env => { const secret = stripeSecretKey(env); return secret ? (path, options) => stripeRequest(secret, path, options) : null; };
 
 export function quoteDraftHandlers({ session = getHubSession, storage = dispatchStorage, now = () => new Date(), delivery = (env, store) => createEstimateReadyDelivery({ store, env, clock: now }), stripe = stripeFor,
-  catalogState = env => readCatalogState(catalogStorage(env)), captureNote } = {}) {
+  catalogState = env => readCatalogState(catalogStorage(env)), compositeState = env => readCompositeState(catalogStorage(env)), captureNote } = {}) {
   return {
     async get({ request, env }) {
       try {
-        const actor = await session(request, env); requireQuoteAuthor(actor, env);
+        const actor = await session(request, env), access = requireQuoteAuthor(actor, env);
         const params = new URL(request.url).searchParams;
         if ([...params.keys()].length !== new Set(params.keys()).size) return reply(400, { ok: false, code: 'quote_draft_invalid_request', error: 'The quote lookup is invalid.' });
+        if (quoteBuilderEnabled(env) && params.get('view') === 'builder' && [...params.keys()].length === 1) {
+          return reply(200, { ok: true, authority: 'employee_hub', enabled: true, ...builderMenu(await compositeState(env), { internal: access.dispatcher === true, canApprove: isHubOwner(actor) && actor.role === 'owner' }) });
+        }
         return reply(200, { ...await readQuoteDraft(storage(env), actor, Object.fromEntries(params), { env }), viewer: { id: actor.user }, captureSyncEnabled: walkthroughCaptureSyncEnabled(env) });
       } catch (error) { return failure(error); }
     },
@@ -59,13 +75,18 @@ export function quoteDraftHandlers({ session = getHubSession, storage = dispatch
           const { storedLineItems, ...priced } = priceCatalogQuote(await catalogState(env), input.catalogPricing, at);
           return reply(200, { ok: true, authority: 'employee_hub', ...priced });
         }
-        if (action === 'save') return reply(200, { ...await saveQuoteDraft(store, actor, input, at, { env, catalogState, newQuotePaymentPolicy: FINAL_25_75, checkouts: job => expireStaleCheckout({ store, job, stripe: stripe(env), now: at, mode: moneyTotalsMode(env) }) }), captureSyncEnabled: walkthroughCaptureSyncEnabled(env) });
+        if (action === 'composite_preview' && quoteBuilderEnabled(env)) {
+          if (Object.keys(input).some(key => key !== 'compositePricing')) return reply(400, { ok: false, code: 'quote_draft_invalid_request', error: 'Preview one builder selection at a time.' });
+          const { storedLineItems, ...priced } = priceCompositeQuote(await compositeState(env), input.compositePricing);
+          return reply(200, { ok: true, authority: 'employee_hub', ...priced });
+        }
+        if (action === 'save') return reply(200, { ...await saveQuoteDraft(store, actor, input, at, { env, catalogState, compositeState, newQuotePaymentPolicy: FINAL_25_75, checkouts: job => expireStaleCheckout({ store, job, stripe: stripe(env), now: at, mode: moneyTotalsMode(env) }) }), captureSyncEnabled: walkthroughCaptureSyncEnabled(env) });
         if (action === 'sync_capture') {
           const sync = await syncWalkthroughCapture(store, actor, input, at, { env, ...(captureNote ? { note: captureNote } : {}) });
           return reply(200, { ...await readQuoteDraft(store, actor, { jobId: input.jobId }, { env }), captureSyncEnabled: sync.enabled });
         }
-        if (action === 'send_preview') return reply(200, await previewQuoteSend(store, actor, input, at, { env }));
-        if (action === 'send') return reply(200, await sendQuoteDraft(store, actor, input, at, { env, deliver: delivery(env, store).deliver }));
+        if (action === 'send_preview') return reply(200, await previewQuoteSend(store, actor, input, at, { env, compositeState }));
+        if (action === 'send') return reply(200, await sendQuoteDraft(store, actor, input, at, { env, compositeState, deliver: delivery(env, store).deliver }));
         return reply(400, { ok: false, code: 'quote_draft_invalid_request', error: 'Choose save, sync_capture, catalog_preview, send_preview or send.' });
       } catch (error) { return failure(error); }
     },

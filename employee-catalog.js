@@ -86,15 +86,18 @@ function matchesFilters(row,filters){
 
 // ---- Pricing settings ----
 const MONEY_SETTINGS=[['laborRateCents','Labor rate per technician-hour',1,100000,'Billed per technician-minute of install time.'],['minimumJobCents','Minimum job',0,MAX_ITEM_CENTS,'Catalog quotes only, once per quote (never per line). The $450 walkthrough game plan minimum does not change here.'],['disposalCentsPerItem','Packaging haul-away per unit',0,100000,'Added per unit of items marked for haul-away while haul-away is on.']];
+// Pricing-menu goods sell at cost x goodsMarkup (functions/_lib/catalog.js DEFAULT_GOODS_MARKUP when a saved document predates it).
+const DEFAULT_GOODS_MARKUP=1.3;
+function multiplierOf(value){const text=trimmed(value);if(!/^\d(?:\.\d{1,4})?$/.test(text))return null;const number=Number(text);return number>=1&&number<=5?number:null;}
 function settingsForm(values,label){
-  const form={settingsVersion:label??values.settingsVersion,depositPct:String(values.depositPct),'markup.default':String(values.markupPct.default),includeDisposal:values.includeDisposal===true,roundingRule:values.roundingRule,ready:values.mustSetBeforeCustomerUse===false};
+  const form={settingsVersion:label??values.settingsVersion,depositPct:String(values.depositPct),'markup.default':String(values.markupPct.default),includeDisposal:values.includeDisposal===true,roundingRule:values.roundingRule,ready:values.mustSetBeforeCustomerUse===false,goodsMarkup:String(values.goodsMarkup??DEFAULT_GOODS_MARKUP),goodsInstallationIncluded:values.goodsInstallationIncluded===true};
   for(const [key] of MONEY_SETTINGS)form[key]=dollars(values[key]);
   for(const category of PRODUCT_CATEGORIES)form['markup.'+category]=values.markupPct.byCategory?.[category]==null?'':String(values.markupPct.byCategory[category]);
   return form;
 }
 // Form fields compared by what they mean: '500' and '500.00' are the same minimum. Unparseable text compares as typed.
 function formValue(key,value){
-  const number=MONEY_SETTINGS.some(([name])=>name===key)?centsOf(value):key==='depositPct'||key.startsWith('markup.')?(trimmed(value)?percentOf(value):''):value;
+  const number=MONEY_SETTINGS.some(([name])=>name===key)?centsOf(value):key==='depositPct'||key.startsWith('markup.')?(trimmed(value)?percentOf(value):''):key==='goodsMarkup'?multiplierOf(value):value;
   return number??value;
 }
 const sameField=(key,a,b)=>same(formValue(key,a),formValue(key,b));
@@ -115,6 +118,9 @@ function parseSettings(form,current){
   for(const category of PRODUCT_CATEGORIES){const value=percent('markup.'+category,500,true);if(value!=null)byCategory[category]=value;}
   next.markupPct.byCategory=byCategory;
   next.includeDisposal=form.includeDisposal===true;
+  if(form.goodsMarkup!==undefined){const multiplier=multiplierOf(form.goodsMarkup);if(multiplier==null)errors.goodsMarkup='Enter a multiplier from 1 to 5 with at most 4 decimals, like 1.30.';else if(multiplier!==(current.goodsMarkup??DEFAULT_GOODS_MARKUP)||current.goodsMarkup!==undefined)next.goodsMarkup=multiplier;}
+  // Like goodsMarkup, the installation confirmation is stored only once the owner sets it (or a saved document has it).
+  if(form.goodsInstallationIncluded!==undefined){const included=form.goodsInstallationIncluded===true;if(included!==(current.goodsInstallationIncluded===true)||current.goodsInstallationIncluded!==undefined)next.goodsInstallationIncluded=included;}
   if(!Object.hasOwn(ROUNDING,form.roundingRule))errors.roundingRule='Choose a rounding rule.';else next.roundingRule=form.roundingRule;
   const label=trimmed(form.settingsVersion);
   if(!LABEL.test(label)||!/[A-Za-z0-9]/.test(label))errors.settingsVersion='Use up to 80 letters, digits, dots, dashes, underscores or colons.';
@@ -133,6 +139,8 @@ function settingsChanges(before,after,labels={}){
   add('Charge packaging haul-away',before.includeDisposal,after.includeDisposal,value=>value?'Yes':'No');
   add('Deposit',before.depositPct,after.depositPct,pct);
   add('Rounding',before.roundingRule,after.roundingRule,value=>ROUNDING[value]||String(value));
+  add('Goods markup (pricing menu)',before.goodsMarkup??DEFAULT_GOODS_MARKUP,after.goodsMarkup??DEFAULT_GOODS_MARKUP,value=>`cost × ${value}`);
+  add('Installation included in goods prices (pricing menu)',before.goodsInstallationIncluded===true,after.goodsInstallationIncluded===true,value=>value?'Yes':'No');
   add('Default markup',before.markupPct?.default,after.markupPct?.default,pct);
   for(const category of PRODUCT_CATEGORIES){
     const a=before.markupPct?.byCategory?.[category],b=after.markupPct?.byCategory?.[category];
@@ -499,6 +507,8 @@ async function load(){
     const data=await S.kit.requestJSON(API+'?view=full',{prefix:'catalog',signal:controller.signal,fetcher:fetcher(),validate:validOverview});
     if(generation!==S.generation)return;
     S.data=data;S.loadedAt=now();S.base=data.enabled?data.catalog:null;
+    // The overview says whether the quote builder is on; only then is its pricing menu loaded.
+    if(data.quoteBuilder===true)void loadMenu();else{S.menu=null;S.menuError=null;}
     if(data.enabled){
       if(!S.draftLoaded){
         S.draftLoaded=true;const saved=readDraft();
@@ -514,10 +524,11 @@ async function load(){
 }
 
 function resultCheck(body){
+  if(body.action==='menu.approve')return data=>data.action==='menu.approve'&&data.requestId===body.requestId&&plain(data.approvals)&&plain(data.approvals.items);
   if(body.action==='settings.update')return data=>data.action==='settings.update'&&data.requestId===body.requestId&&plain(data.settings)&&data.settings.settingsVersion===body.settings.settingsVersion&&plain(data.settings.values)&&plain(data.settings.values.markupPct);
   return data=>data.action==='catalog.publish'&&data.requestId===body.requestId&&plain(data.publication)&&data.publication.version===body.catalog.catalogVersion;
 }
-const describe=body=>body?.action==='settings.update'?`Save pricing settings ${body.settings?.settingsVersion||''}`.trim():`Publish catalog version ${body?.catalog?.catalogVersion||''}`.trim();
+const describe=body=>body?.action==='menu.approve'?`Approve ${body.approve?.length||0} and revoke ${body.revoke?.length||0} pricing-menu prices`:body?.action==='settings.update'?`Save pricing settings ${body.settings?.settingsVersion||''}`.trim():`Publish catalog version ${body?.catalog?.catalogVersion||''}`.trim();
 // Server paths name catalog.items[N]; the owner knows the item by name.
 function invalidText(error,body){
   const path=String(error?.details?.path||''),match=/^catalog\.items\[(\d+)\]\.?(\w+)?/.exec(path),item=match&&body?.catalog?.items?.[Number(match[1])];
@@ -533,7 +544,10 @@ async function send(body){
     const saved=store.get(),data=saved&&saved.requestId===body.requestId?await store.replay(options):await store.submit(API,body,options);
     if(mount!==S.mountId)return;
     S.retry=null;
-    if(body.action==='settings.update'){
+    if(body.action==='menu.approve'){
+      S.menuPick=null;S.menuErrors={};
+      S.notice={kind:'success',text:`Approved ${body.approve.length} and revoked ${body.revoke.length} pricing-menu price${body.approve.length+body.revoke.length===1?'':'s'}.${data.approvals.current===false?' A newer approval replaced this one since; the latest is shown.':''} Builder quotes that use them can be sent now.`};
+    }else if(body.action==='settings.update'){
       // Show the saved values at once; the reload that follows refreshes the prices they produce.
       const result=data.settings,fresh=result.current!==false&&S.data?.settings;
       if(fresh)S.data.settings={...S.data.settings,revision:result.revision,source:'firestore',settingsVersion:result.settingsVersion,readyForCustomers:result.readyForCustomers,updatedAt:result.updatedAt,updatedBy:result.updatedBy,values:result.values};
@@ -554,7 +568,8 @@ async function send(body){
     const code=String(error?.code||'');
     if(S.kit.retryable(error)){S.retry=body;S.notice={kind:'error',text:S.kit.errorText(error)};return;}
     S.retry=null;
-    if(body.action==='settings.update'&&code==='catalog_revision_conflict'){S.conflict='settings';S.notice={kind:'error',text:'Pricing settings changed since you opened them. Your edits are kept: load the latest settings, review the changes again and save.'};}
+    if(body.action==='menu.approve'&&/^catalog_(revision_conflict|version_conflict|menu_price_changed|menu_item_unknown|menu_item_approved|menu_item_not_approved|changed_since_operation)$/.test(code)){S.notice={kind:'error',text:`${error.message} Your ticks are kept where the items still apply.`};reload=true;}
+    else if(body.action==='settings.update'&&code==='catalog_revision_conflict'){S.conflict='settings';S.notice={kind:'error',text:'Pricing settings changed since you opened them. Your edits are kept: load the latest settings, review the changes again and save.'};}
     else if(body.action==='catalog.publish'&&/^catalog_(version_conflict|revision_conflict|version_exists|version_not_newer)$/.test(code)){S.conflict='catalog';S.notice={kind:'error',text:'Another catalog version was published while you were editing. Your draft is kept: load the latest catalog, review the changes again and publish.'};}
     else if(/^catalog_settings_version_(used|unchanged)$/.test(code)){S.tab='settings';S.settingsErrors={settingsVersion:error.message};S.notice={kind:'error',text:error.message};}
     else if(code==='catalog_invalid'){S.tab='draft';S.notice={kind:'error',text:invalidText(error,body)};}
@@ -598,7 +613,7 @@ function feedback(){
   return h('div',{class:'cat-feedback','aria-live':'polite'},items);
 }
 function tabs(){
-  const entries=[['settings','Pricing'],['items','Items'],['draft',draftCount()?`Draft (${draftCount()})`:'Draft']];
+  const entries=[['settings','Pricing'],['items','Items'],['draft',draftCount()?`Draft (${draftCount()})`:'Draft'],...(S.menu?[['menu',menuDrafts().length?`Menu prices (${menuDrafts().length} draft)`:'Menu prices']]:[])];
   return h('div',{class:'cat-tabs',role:'tablist','aria-label':'Catalog sections'},entries.map(([id,label])=>h('button',{type:'button',role:'tab',id:'cat-tab-'+id,'aria-selected':String(S.tab===id),'aria-controls':'cat-panel',class:S.tab===id?'active':'',onclick:()=>{S.tab=id;render();S.root?.querySelector('#cat-tab-'+id)?.focus?.();}},label)));
 }
 function withError(node,error){
@@ -631,7 +646,10 @@ function settingsPanel(){
   const money=MONEY_SETTINGS.map(([key,label,,,help])=>bound({name:key,label:label+' ($)',type:'text',inputmode:'decimal',autocomplete:'off',help},form,errors,update));
   const fields=[...money,bound({name:'depositPct',label:'Deposit (% of the quote)',type:'text',inputmode:'decimal',autocomplete:'off',help:'Catalog quotes only. The walkthrough deposit in use today (50%, set by the deposit terms) does not change here.'},form,errors,update),
     bound({name:'includeDisposal',label:'Charge packaging haul-away',type:'checkbox'},form,errors,update),
-    bound({name:'roundingRule',label:'Cent rounding',type:'select',options:Object.entries(ROUNDING).map(([value,label])=>({value,label}))},form,errors,update)];
+    bound({name:'roundingRule',label:'Cent rounding',type:'select',options:Object.entries(ROUNDING).map(([value,label])=>({value,label}))},form,errors,update),
+    // Only the quote builder prices with the goods multiplier, so it shows only when the builder is on (S.menu).
+    S.menu&&bound({name:'goodsMarkup',label:'Goods markup (pricing-menu multiplier)',type:'text',inputmode:'decimal',autocomplete:'off',help:'Quote-builder goods sell at their public retail cost × this number, like 1.30. Each menu price still needs your approval under Menu prices.'},form,errors,update),
+    S.menu&&bound({name:'goodsInstallationIncluded',label:'Shelving and storage installation is included in the goods price',type:'checkbox',help:'The quote builder has no installation line: goods sell at cost × the goods markup. Until you tick this, builder quotes with shelving or storage are saved but cannot be sent.'},form,errors,update)].filter(Boolean);
   const markups=[bound({name:'markup.default',label:'Default markup (%)',type:'text',inputmode:'decimal',autocomplete:'off',help:'Used by any category left blank.'},form,errors,update),
     ...PRODUCT_CATEGORIES.map(category=>bound({name:'markup.'+category,label:(S.base.categories.find(entry=>entry.id===category)?.label||category)+' (%)',type:'text',inputmode:'decimal',autocomplete:'off',placeholder:'Default'},form,errors,update))];
   const saved=S.data.settings;
@@ -732,8 +750,93 @@ function draftPanel(){
       h('div',{class:'hub-actions'},item.kind==='product'?btn('Edit',()=>openEdit(id),'',{'aria-label':`Edit ${item.name}`,disabled:frozen||!canEdit()}):null,btn('Undo',()=>undoItem(id),'',{'aria-label':`Undo changes to ${item.name}`,disabled:frozen})));})),
     h('div',{class:'cat-sticky'},btn('Review & publish',openPublishReview,'primary',{disabled:frozen||!canEdit()}),btn('Discard draft',confirmDiscard,'danger',{disabled:frozen})));
 }
+// ---- Pricing menu approvals (quote builder, EGC_QUOTE_BUILDER_ENABLED) ----
+// GET /api/quote-draft?view=builder lists every pricing-menu item with its current price and why it is a draft (read
+// only when GET /api/catalog says quoteBuilder:true). One request changes at most MENU_MAX prices. The
+// owner ticks the draft prices to approve (a service at the amount entered, a product at exactly cost × goods markup)
+// or the approvals to revoke, reviews them and saves one menu.approve request through /api/catalog, which keeps the
+// catalog's receipt and audit trail. Estimators can send a builder quote only once all its prices are approved.
+const MENU_API='/api/quote-draft?view=builder',MENU_MAX=100;
+// A draft cleaning base is the walkthrough's old full-service price (hauling included): the owner types its amount.
+const ownerAmount=item=>item.kind==='service'&&item.group==='cleaning-base';
+const validMenu=data=>data?.enabled===true&&Array.isArray(data.services)&&Array.isArray(data.products)&&Array.isArray(data.sections)&&plain(data.viewer)&&typeof data.menuVersion==='string'&&typeof data.settingsVersion==='string';
+async function loadMenu(){
+  if(!S.root||!S.kit)return;
+  const mount=S.mountId;
+  try{
+    const data=await S.kit.requestJSON(MENU_API,{prefix:'quote_draft',fetcher:fetcher(),validate:validMenu});
+    if(mount!==S.mountId)return;
+    S.menu=data;S.menuError=null;
+    const known=new Set([...data.services,...data.products].map(item=>item.id));
+    if(S.menuPick)for(const id of Object.keys(S.menuPick.approve))if(!known.has(id))delete S.menuPick.approve[id];
+  }catch(error){
+    if(mount!==S.mountId)return;
+    // 400/404: the builder is off for this Hub, so there is no menu to approve.
+    S.menu=null;S.menuError=[400,404].includes(Number(error?.status))?null:error;
+  }
+  render();
+}
+const menuItems=()=>S.menu?[...S.menu.services.map(item=>({...item,kind:'service'})),...S.menu.products.map(item=>({...item,kind:'product'}))]:[];
+const menuDrafts=()=>menuItems().filter(item=>!item.approved&&Number.isSafeInteger(item.unitCents));
+function menuPick(){return S.menuPick||(S.menuPick={approve:{},revoke:{}});}
+// The approval request the ticked rows describe, or {errors} for an amount that is not dollars and cents.
+function menuRequest(){
+  const pick=menuPick(),approve=[],errors={};
+  for(const [id,entry] of Object.entries(pick.approve)){
+    const cents=centsOf(entry.amount);
+    if(cents==null||cents<1||cents>MAX_ITEM_CENTS)errors[id]='Enter the approved amount as dollars, like 70.00.';
+    else approve.push({id,unitCents:cents});
+  }
+  return{approve,revoke:Object.keys(pick.revoke),errors};
+}
+function menuRow(item,frozen){
+  const pick=menuPick(),ticked=Boolean(pick.approve[item.id]),canAmount=item.kind==='service';
+  const amount=ticked?pick.approve[item.id].amount:dollars(item.unitCents),error=S.menuErrors?.[item.id];
+  const box=h('input',{type:'checkbox',checked:ticked,disabled:frozen,'aria-label':`Approve ${item.name}`,onchange:event=>{if(event.target.checked)pick.approve[item.id]={amount:ownerAmount(item)?'':dollars(item.unitCents)};else delete pick.approve[item.id];S.menuErrors={};render();}});
+  const input=canAmount&&ticked?h('input',{class:'cat-menu-amount',type:'text',inputmode:'decimal',value:amount,placeholder:ownerAmount(item)?'Cleaning-only amount':null,'aria-label':`Approved amount for ${item.name}`,disabled:frozen,oninput:event=>{pick.approve[item.id].amount=event.target.value;}}):null;
+  return h('tr',{'data-item':item.id},
+    h('td',{},box),
+    h('td',{class:'cat-item-cell'},h('strong',{},item.name),h('span',{class:'cat-meta'},item.kind==='product'?`SKU ${item.sku}${item.unitsPerPack>1?` · pack of ${item.unitsPerPack}`:''}`:item.menuId),h('span',{class:'cat-meta'},item.reason||'')),
+    h('td',{'data-label':'Price'},input||h('span',{},money(item.unitCents)+(item.kind==='product'?' per pack':'')),item.kind==='product'&&Number.isSafeInteger(item.retailPerPackCents)?h('span',{class:'cat-meta'},`Public retail ${money(item.retailPerPackCents)} × ${S.menu.internal?.goodsMarkup??DEFAULT_GOODS_MARKUP}`):null,error?h('small',{class:'cat-error'},error):null));
+}
+function menuPanel(){
+  const m=S.menu,canApprove=m.viewer?.canApprove===true,frozen=locked()||!canApprove,pick=menuPick();
+  const drafts=menuDrafts(),owner=menuItems().filter(item=>item.approved&&item.source==='owner'),fixed=menuItems().filter(item=>item.source==='menu');
+  const chosen=Object.keys(pick.approve).length+Object.keys(pick.revoke).length,room=Math.max(0,MENU_MAX-chosen);
+  const table=(rows,head)=>h('div',{class:'cat-table-wrap'},h('table',{class:'cat-table cat-menu-table'},h('thead',{},h('tr',{},head.map(text=>h('th',{scope:'col'},text)))),h('tbody',{},rows)));
+  const bySection=m.sections.map(section=>{const rows=drafts.filter(item=>item.section===section.id);return rows.length?h('section',{class:'hub-card cat-card'},h('h2',{},`${section.label}: ${rows.length} draft price${rows.length===1?'':'s'}`),
+    // Ticks up to the per-request limit; cleaning bases are left for the owner to tick and price one by one.
+    h('div',{class:'hub-actions'},btn('Tick all in this step',()=>{let left=room;for(const item of rows){if(left<1)break;if(!pick.approve[item.id]&&!ownerAmount(item)){pick.approve[item.id]={amount:dollars(item.unitCents)};left--;}}render();},'',{disabled:frozen||!room})),
+    table(rows.map(item=>menuRow(item,frozen)),['Approve','Item','Price'])):null;}).filter(Boolean);
+  return h('div',{class:'cat-menu'},
+    h('div',{class:'hub-notice'+(drafts.length?' warning':' success')},drafts.length?`${drafts.length} pricing-menu price${drafts.length===1?' is a draft':'s are drafts'}. A builder quote that uses a draft price can be saved but not sent until you approve it here. Pricing menu ${m.menuVersion} · settings ${m.settingsVersion}.`:'Every pricing-menu price is approved.'),
+    !canApprove?h('div',{class:'hub-notice'},'Only the owner can approve pricing-menu prices.'):null,
+    m.internal&&m.internal.goodsInstallationIncluded!==true?h('div',{class:'hub-notice warning'},'Builder quotes with shelving or storage also wait for your installation decision: the builder has no installation line, so confirm under Pricing that installation is included in the goods price.'):null,
+    chosen>MENU_MAX?h('div',{class:'hub-notice warning'},`Approve or revoke at most ${MENU_MAX} prices at a time: untick ${chosen-MENU_MAX}, save, then tick the rest.`):null,
+    ...bySection,
+    owner.length?h('section',{class:'hub-card cat-card'},h('h2',{},`Approved by you (${owner.length})`),table(owner.map(item=>h('tr',{'data-item':item.id},
+      h('td',{},h('input',{type:'checkbox',checked:Boolean(pick.revoke[item.id]),disabled:frozen,'aria-label':`Revoke approval of ${item.name}`,onchange:event=>{if(event.target.checked)pick.revoke[item.id]=true;else delete pick.revoke[item.id];render();}})),
+      h('td',{class:'cat-item-cell'},h('strong',{},item.name)),h('td',{'data-label':'Price'},money(item.unitCents)))),['Revoke','Item','Approved price'])):null,
+    fixed.length?h('p',{class:'cat-muted'},`Approved in the pricing menu itself: ${fixed.map(item=>`${item.name} ${money(item.unitCents)}`).join(', ')}.`):null,
+    h('div',{class:'cat-sticky'},btn(`Review ${chosen||''} change${chosen===1?'':'s'}`.replace('  ',' '),openMenuReview,'primary',{disabled:frozen||!chosen||chosen>MENU_MAX}),btn('Clear ticks',()=>{S.menuPick=null;S.menuErrors={};render();},'',{disabled:frozen||!chosen})));
+}
+function openMenuReview(){
+  if(locked()||S.menu?.viewer?.canApprove!==true)return;
+  const {approve,revoke,errors}=menuRequest();
+  if(approve.length+revoke.length>MENU_MAX)return;
+  S.menuErrors=errors;
+  if(Object.keys(errors).length){S.tab='menu';render();return;}
+  const byId=new Map(menuItems().map(item=>[item.id,item]));
+  const save=()=>{closeDialog();void send({action:'menu.approve',requestId:S.kit.requestId(),expectedRevision:S.menu.internal?.approvalsRevision??null,menuVersion:S.menu.menuVersion,settingsVersion:S.menu.settingsVersion,approve,revoke});};
+  openDialog({eyebrow:'Approve draft prices',title:`Approve ${approve.length} and revoke ${revoke.length} pricing-menu price${approve.length+revoke.length===1?'':'s'}`,onSubmit:save,
+    body:[h('div',{class:'cat-diff-table'},h('table',{},h('thead',{},h('tr',{},['Item','Now','After saving'].map(text=>h('th',{scope:'col'},text)))),h('tbody',{},
+      ...approve.map(entry=>h('tr',{},h('th',{scope:'row'},byId.get(entry.id)?.name||entry.id),h('td',{},`Draft ${money(byId.get(entry.id)?.unitCents)}`),h('td',{},h('strong',{},`Approved ${money(entry.unitCents)}`)))),
+      ...revoke.map(id=>h('tr',{},h('th',{scope:'row'},byId.get(id)?.name||id),h('td',{},`Approved ${money(byId.get(id)?.unitCents)}`),h('td',{},h('strong',{},'Draft again'))))))),
+      h('div',{class:'hub-notice warning'},'Approved prices can be sent to customers on builder quotes at once. Nothing is sent to any customer by saving.')],
+    actions:[btn('Keep editing',closeDialog),btn('Save approvals',save,'primary')]});
+}
 function panel(){
-  const body=S.tab==='items'?itemsPanel():S.tab==='draft'?draftPanel():settingsPanel();
+  const body=S.tab==='items'?itemsPanel():S.tab==='draft'?draftPanel():S.tab==='menu'&&S.menu?menuPanel():settingsPanel();
   return h('div',{id:'cat-panel',role:'tabpanel','aria-labelledby':'cat-tab-'+S.tab,class:'cat-panel'},body);
 }
 function skeleton(){return h('div',{class:'hub-screen-loading','aria-busy':'true'},h('p',{class:'hub-sr-only',role:'status'},'Loading the catalog…'),h('span',{class:'hub-skeleton'}),h('span',{class:'hub-skeleton'}),h('span',{class:'hub-skeleton wide'}));}
@@ -747,7 +850,7 @@ function render(){
   S.list=null;
   const parts=[head(),feedback()];
   if(S.data?.enabled&&S.base)parts.push(tabs(),panel());
-  else if(S.data&&!S.data.enabled)parts.push(h('div',{class:'hub-notice warning'},h('strong',{},'Catalog pricing is turned off'),h('p',{},'Ask the owner to enable catalog pricing for the Hub. Items and settings will appear here when it is ready.')));
+  else if(S.data&&!S.data.enabled)parts.push(h('div',{class:'hub-notice warning'},h('strong',{},'Catalog pricing is turned off'),h('p',{},'Ask the owner to enable catalog pricing for the Hub. Items and settings will appear here when it is ready.')),...(S.menu?[h('div',{id:'cat-panel',class:'cat-panel'},menuPanel())]:[]));
   else if(S.loading)parts.push(skeleton());
   else if(S.loadError)parts.push(unavailable());
   const focused=document.activeElement&&S.root.contains(document.activeElement)?document.activeElement.id:'';
@@ -927,20 +1030,20 @@ function mount(host,ctx={}){
   S.kit=window.EGCHubKit;S.ctx=ctx||{};S.host=host;S.mountId++;
   S.root=S.kit.h('section',{class:'hub-screen egc-catalog','aria-label':'Catalog and pricing'});
   host.replaceChildren(S.root);
-  try{const saved=pendingStore().get();if(saved?.body&&['settings.update','catalog.publish'].includes(saved.body.action))S.retry=saved.body;}catch{}
+  try{const saved=pendingStore().get();if(saved?.body&&['settings.update','catalog.publish','menu.approve'].includes(saved.body.action))S.retry=saved.body;}catch{}
   render();
   void load();
 }
 function unmount(){
   S.generation++;S.mountId++;S.controller?.abort();S.controller=null;closeDialog();S.root?.remove();
-  Object.assign(S,{root:null,host:null,data:null,base:null,loading:false,loadError:null,busy:false,quoteLoading:false,notice:null,conflict:null,retry:null,list:null,settingsErrors:{}});
+  Object.assign(S,{root:null,host:null,data:null,base:null,loading:false,loadError:null,busy:false,quoteLoading:false,notice:null,conflict:null,retry:null,list:null,settingsErrors:{},menu:null,menuError:null,menuErrors:{}});
 }
 function reset(){
   unmount();
   try{for(let i=sessionStorage.length-1;i>=0;i--){const key=sessionStorage.key(i);if(String(key||'').startsWith(DRAFT_KEY))sessionStorage.removeItem(key);}}catch{}
-  Object.assign(S,{draft:emptyDraft(),draftLoaded:false,settingsForm:null,settingsValues:null,settingsRevision:null,settingsRebased:false,tab:'settings',filters:{q:'',category:'',tier:'',status:'',availability:'',min:'',max:''},filtersOpen:null,shown:PAGE,ctx:null});
+  Object.assign(S,{menuPick:null,draft:emptyDraft(),draftLoaded:false,settingsForm:null,settingsValues:null,settingsRevision:null,settingsRebased:false,tab:'settings',filters:{q:'',category:'',tier:'',status:'',availability:'',min:'',max:''},filtersOpen:null,shown:PAGE,ctx:null});
 }
 window.addEventListener('egc:signout',reset);
 window.EGCCatalog=Object.freeze({mount,unmount,refresh:()=>load(),canLeave:()=>!S.busy,
-  model:Object.freeze({nextVersion,priceStatus,matchesFilters,settingsForm,parseSettings,settingsChanges,rebaseSettingsForm,settingsAfterSave,verifyItem,editItem,newProduct,uniqueId,draftCatalog,catalogDiff,applyCoverage,rebaseItem,rebaseDraft,publishedDraft,formatValue,centsOf,percentOf,denverDay,dayCount})});
+  model:Object.freeze({multiplierOf,nextVersion,priceStatus,matchesFilters,settingsForm,parseSettings,settingsChanges,rebaseSettingsForm,settingsAfterSave,verifyItem,editItem,newProduct,uniqueId,draftCatalog,catalogDiff,applyCoverage,rebaseItem,rebaseDraft,publishedDraft,formatValue,centsOf,percentOf,denverDay,dayCount})});
 })();
