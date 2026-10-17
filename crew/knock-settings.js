@@ -4,6 +4,10 @@
 
 export const OUTCOMES = Object.freeze(['no_answer', 'not_interested', 'come_back', 'look', 'sold', 'skipped_sign']);
 
+// KNOCK-BRIDGE (EGC_KNOCK_JOB_BRIDGE): a rep may set an estimator walkthrough at the door. The outcome is accepted only
+// while the server flag is on (knock-sync.js), so with the flag off the outcome list above is exactly as before.
+export const WALKTHROUGH_OUTCOME = 'walkthrough_set';
+
 export const OUTCOME_LABELS = Object.freeze({
   no_answer: 'No answer',
   not_interested: 'Not interested',
@@ -11,6 +15,7 @@ export const OUTCOME_LABELS = Object.freeze({
   look: 'Look',
   sold: 'Sold',
   skipped_sign: 'Skipped (sign)',
+  walkthrough_set: 'Walkthrough set',
 });
 
 export const PACKAGES = Object.freeze(['The Works', 'Full Property Reset', 'Garage Transformation', 'Quick Clear']);
@@ -43,7 +48,9 @@ export const DEFAULT_SETTINGS = Object.freeze({
     depositRate: 0.25,
     cancelBusinessDays: 3,
     refundCutoffHours: 24,
-    defaultJobStartTime: '08:00',
+    // Jobs start at 9:30 or later (owner rule, job-start-policy.js); a stored earlier default is read as 9:30
+    // for job dates on and after 2026-10-15 (knock-sale-rules.js defaultJobStart).
+    defaultJobStartTime: '09:30',
     // Extra non-business days (YYYY-MM-DD), e.g. Colorado state holidays if legal review adds them.
     extraHolidays: [],
     checklist: [

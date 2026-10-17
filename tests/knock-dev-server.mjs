@@ -2,6 +2,8 @@
 // Nothing here reaches production: Firestore calls are answered in memory.
 //   node tests/knock-dev-server.mjs [--now 2026-10-06T17:00:00Z] [--houses houses.json] [--demo]
 // --houses takes the JSON written by scripts/knock-import-larimer.mjs --out; --demo adds a synthetic week of results.
+// --bridge turns on EGC_KNOCK_JOB_BRIDGE and crew auto-assign with two synthetic weekday crews and one estimator
+// (Est.Alex), so a door sale books a Hub crew job and "Walkthrough set" books the estimator.
 // Users (password "Synthetic knock preview!"): ZacB (owner/admin), Rep.One (active, permit, English Ranch),
 // Rep.Two (pending), Lead.One (active lead).
 import { readFileSync } from 'node:fs';
@@ -102,14 +104,25 @@ export function installFirestoreFake(fake) {
   return () => { globalThis.fetch = upstream; };
 }
 
-export async function startPreview({ now = null, houses = null, demo = false } = {}) {
+// KNOCK-BRIDGE preview: two weekday crews (Crew 1, Crew 2) and one estimator; the reps hold no sales role here, so
+// Est.Alex is the only estimator a walkthrough can be booked with.
+const WEEKDAYS = ['mon', 'tue', 'wed', 'thu', 'fri'];
+export const BRIDGE_USERS = [['ZacB', 'Zac', 'owner'], ['Rep.One', 'Rep One', 'crew'], ['Rep.Two', 'Rep Two', 'crew'], ['Lead.One', 'Lead One', 'crew'],
+  ['Crew.A1', 'Andy Alpha', 'crew'], ['Crew.B1', 'Bo Beta', 'crew'], ['Est.Alex', 'Alex Estimator', 'sales']];
+export const bridgeSeed = () => ({
+  'dispatchResources/crew_one': { recordType: 'crew', name: 'Crew 1', memberIds: ['crew.a1'], leadId: 'crew.a1', status: 'active', priority: 1, serviceDays: WEEKDAYS, code: 'crew-1' },
+  'dispatchResources/crew_two': { recordType: 'crew', name: 'Crew 2', memberIds: ['crew.b1'], leadId: 'crew.b1', status: 'active', priority: 2, serviceDays: WEEKDAYS, code: 'crew-2' },
+});
+
+export async function startPreview({ now = null, houses = null, demo = false, bridge = false } = {}) {
   const nowMs = typeof now === 'function' ? now().getTime() : now ? Date.parse(now) : Date.now();
-  const fake = firestoreRest({ ...previewSeed({ houses }), ...(demo ? demoActivity(nowMs) : {}) });
+  const fake = firestoreRest({ ...previewSeed({ houses }), ...(demo ? demoActivity(nowMs) : {}), ...(bridge ? bridgeSeed() : {}) });
   const restore = installFirestoreFake(fake);
   const env = {
     HUB_SESSION_SECRET: 'synthetic-knock-preview-session-secret-0123456789',
     FIREBASE_API_KEY: 'firebase-test-knock-preview',
-    HUB_AUTH_USERS_JSON: JSON.stringify(await hubUsers([['ZacB', 'Zac', 'owner'], ['Rep.One', 'Rep One', 'sales'], ['Rep.Two', 'Rep Two', 'sales'], ['Lead.One', 'Lead One', 'sales']], PASSWORD)),
+    HUB_AUTH_USERS_JSON: JSON.stringify(await hubUsers(bridge ? BRIDGE_USERS : [['ZacB', 'Zac', 'owner'], ['Rep.One', 'Rep One', 'sales'], ['Rep.Two', 'Rep Two', 'sales'], ['Lead.One', 'Lead One', 'sales']], PASSWORD)),
+    ...(bridge ? { EGC_KNOCK_JOB_BRIDGE: 'true', EGC_DISPATCH_CREW_AUTO_ASSIGN: 'true' } : {}),
   };
   const hub = await createHubServer({ env, now, password: PASSWORD });
   return { ...hub, fake, close: async () => { await hub.close(); restore(); } };
@@ -117,7 +130,7 @@ export async function startPreview({ now = null, houses = null, demo = false } =
 
 if (import.meta.url === `file://${process.argv[1].replace(/\\/g, '/').replace(/^([A-Za-z]):/, '/$1:')}` || process.argv[1]?.endsWith('knock-dev-server.mjs')) {
   const houses = args.houses ? JSON.parse(readFileSync(args.houses, 'utf8')) : null;
-  const preview = await startPreview({ now: args.now || null, houses, demo: process.argv.includes('--demo') });
+  const preview = await startPreview({ now: args.now || null, houses, demo: process.argv.includes('--demo'), bridge: process.argv.includes('--bridge') });
   console.log(`Knock preview: ${preview.base}/crew/knock.html`);
   console.log(`Sign in as Rep.One, ZacB, Rep.Two or Lead.One with password: ${PASSWORD}`);
 }

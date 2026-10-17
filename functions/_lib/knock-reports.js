@@ -8,6 +8,7 @@ import { addDays, validDate, zonedDate } from '../../crew/knock-time.js';
 import { commissionCsv, commissionEligibility, commissionIssues, customerCollection, csvCell, earnedAt, isEarned, leadOverrides, payPeriodFor, periodStatement, previousPayPeriod, projectedCommission, saleCommissions, toCsv, trainingCsv } from '../../crew/knock-money.js';
 import { saleSyncSummaries } from './knock-handoff.js';
 import { setterAttributions } from './knock-setters.js';
+import { hubJobsForSales, knockJobBridgeEnabled, saleJobView } from './knock-bridge.js';
 import { emptyTotals, addTotals, gateStatus, metrics, planComparison, scoreboard, teamTotals } from '../../crew/knock-stats.js';
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
@@ -41,7 +42,7 @@ async function loadMoney(store, { repKey = null } = {}) {
 }
 
 /* A rep's pay: this period and the five before, plus each sale's commission state. */
-async function myMoney({ store, rep, settings, nowMs, params, env }) {
+async function myMoney({ store, rep, settings, nowMs, params, env, dispatch = null }) {
   const own = await loadMoney(store, { repKey: rep.repKey });
   // A lead's override comes from their team's sales, so those are read too (amounts only, no customers).
   const team = rep.role === 'lead' ? (await store.query('knock_sales', { where: [['leadKey', '==', rep.repKey]] })).map(clean) : [];
@@ -55,12 +56,15 @@ async function myMoney({ store, rep, settings, nowMs, params, env }) {
   }
   const commissions = new Map(saleCommissions(own.sales, settings.commission, { now: nowMs }).map(c => [c.saleId, c]));
   const sync = await saleSyncSummaries(store, own.sales);
+  // KNOCK-BRIDGE: each statement line names its Hub job's day, crew label and status (one masked read of those jobs).
+  const hub = dispatch && knockJobBridgeEnabled(env) ? await hubJobsForSales(dispatch(env), own.sales).catch(() => new Map()) : null;
   const bySale = own.sales.sort((a, b) => String(b.soldAt).localeCompare(String(a.soldAt))).map(sale => ({
     id: sale.id, saleDate: sale.saleDate, address: sale.address, package: sale.package, ticket: sale.ticket, status: sale.status,
     collectedAmount: sale.collectedAmount, cancelDeadlineDate: sale.cancelDeadlineDate, jobDate: sale.jobDate,
     completedAt: sale.completedAt || null, paidAt: sale.paidAt || null,
     customerCollection: customerCollection(sale), sync: sync.get(sale.id), eligibility: commissionEligibility(sale),
     reviewReasons: commissionIssues(sale, settings.commission),
+    ...(hub && sale.handoff?.job?.mode === 'hub' ? { job: { ...saleJobView(sale), ...(hub.get(sale.id) ? { live: hub.get(sale.id) } : {}) } } : {}),
     commission: settings.commission.verified === false ? { state: 'unconfigured', amount: null }
       : commissionIssues(sale, settings.commission).length ? { state: 'review_required', amount: null }
       : commissionEligibility(sale) === 'excluded' ? { state: 'excluded', amount: 0 }

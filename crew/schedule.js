@@ -117,7 +117,9 @@
       multi ? badge(continuing ? `Continues · through ${dayLabel(row.endDate, { weekday: 'short' })}` : `Multi-day · through ${dayLabel(row.endDate, { weekday: 'short', month: 'short', day: 'numeric' })}`) : null].filter(Boolean);
     const body = [h('time', {}, time, row.arrivalWindow && !continuing ? h('small', {}, `Arrive ${row.arrivalWindow}`) : null),
       h('span', { class: 'who' }, h('strong', {}, who), h('small', {}, detail), badges.length ? h('span', { class: 'badges' }, badges) : null)];
-    if (row.canOpen) return h('a', { class: 'job-row', href: `/crew/job.html?jobId=${encodeURIComponent(row.id)}`, 'data-job': row.id }, ...body, h('b', { 'aria-hidden': 'true' }, '→'));
+    // A walkthrough (only ever the viewer's own) opens the walkthrough page, as crew home's walkthrough cards do.
+    const href = row.type === 'walkthrough' ? `/crew/gameplan?walkthroughId=${encodeURIComponent(row.id)}` : `/crew/job.html?jobId=${encodeURIComponent(row.id)}`;
+    if (row.canOpen) return h('a', { class: 'job-row', href, 'data-job': row.id }, ...body, h('b', { 'aria-hidden': 'true' }, '→'));
     return h('div', { class: 'job-row locked', 'data-job': row.id }, ...body, h('small', { class: 'lock-note' }, 'Not on your assignment'));
   }
 

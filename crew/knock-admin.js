@@ -392,7 +392,13 @@ async function salesSection(params) {
   const open = shown.find(s => s.id === params.get('sale')) || shown[0];
   const refresh = () => { invalidate('sales'); app.render(); };
   const act = async (body, message) => {
-    try { await action(body, { quiet: true }); toast(message); refresh(); }
+    try {
+      const result = await action(body, { quiet: true });
+      // KNOCK-BRIDGE: what happened in the Hub (booked, cancelled, restored, moved, or what the office must finish).
+      const hub = result?.hub || result?.hubJob || result?.booking;
+      toast(message, hub?.message ? { sub: hub.message, tone: hub.status === 'failed' ? 'bad' : undefined } : undefined);
+      refresh();
+    }
     catch (error) { toast(error.message, { tone: 'bad' }); if (error.details?.sale) refresh(); }
   };
   const address = sale => `${sale.address.number} ${titleStreet(sale.address.street)}${sale.address.unit ? ` #${sale.address.unit}` : ''}`;
@@ -412,7 +418,17 @@ async function salesSection(params) {
       h('div', { class: 'handoffs' },
         h('div', { class: 'card card--line', style: { gap: '10px' } },
           h('div', { class: 'row row--between' }, h('h3', {}, '1 · Job'), j.status === 'created' ? badge('Created', 'success', 'check') : badge('Not created', 'warning')),
-          j.ref ? kv('Reference', j.ref) : null, ref,
+          // A Hub job id is one long word: it wraps instead of pushing a phone's page sideways.
+          j.ref ? kv('Reference', h('span', { style: { overflowWrap: 'anywhere', wordBreak: 'break-all', minWidth: '0' } }, j.ref)) : null,
+          // KNOCK-BRIDGE: a door sale books its own Hub job; this retries one the Hub could not take yet.
+          j.mode === 'hub' && j.message ? h('p', { class: 'caption muted' }, j.code ? `${j.message} (${j.code}${j.error ? `: ${j.error}` : ''})` : j.message) : null,
+          j.mode === 'hub' && j.status === 'created' && j.moved ? banner('warning', 'calendar', 'Booked at another time than the rep asked',
+            `Asked for ${dateLabel(j.requested?.date)}${j.requested?.time ? `, ${wallTime(j.requested.time)}` : ''}; no crew was free then. The job date above is the booked one: confirm it with the customer before texting.`) : null,
+          j.mode === 'hub' && j.hubChange?.status === 'failed' ? banner('error', 'alert', 'The Hub job needs you', j.hubChange.message,
+            h('button', { type: 'button', class: 'btn btn--sm btn--secondary', onclick: () => act({ action: 'sale.status', saleId: sale.id, status: sale.status }, 'Tried the Hub again') }, 'Try again')) : null,
+          j.mode === 'hub' && j.status !== 'created' && data.integrations.job.available.includes('hub')
+            ? h('button', { type: 'button', class: 'btn btn--primary btn--sm', onclick: () => act({ action: 'sale.book', saleId: sale.id }, 'Booked in the Hub') }, 'Book in Hub') : null,
+          ref,
           h('button', { type: 'button', class: 'btn btn--quiet btn--sm', onclick: () => act({ action: 'sale.handoff', saleId: sale.id, kind: 'job', op: 'mark', ref: ref.value }, 'Job marked created') }, j.status === 'created' ? 'Update reference' : 'Mark created')),
         h('div', { class: 'card card--line', style: { gap: '10px' } },
           h('div', { class: 'row row--between' }, h('h3', {}, `2 · Deposit · ${money(sale.depositAmount, sale.depositAmount % 1 !== 0)}`),
@@ -442,10 +458,28 @@ async function salesSection(params) {
     if (sale.textConsent && t.status !== 'sent') return 'Text';
     return sale.status === 'completed' ? 'Mark paid' : 'Job day';
   };
+  // KNOCK-BRIDGE: walkthroughs set at the door that are not in the Hub yet, oldest first, with the reason and a retry.
+  const WALK_BADGE = { pending: ['Booking', ''], retry: ['Retrying', 'warning'], review: ['Needs you', 'error'] };
+  const walks = data.walkthroughs || [];
+  const walkCard = w => {
+    const [label, tone] = WALK_BADGE[w.booking.status] || WALK_BADGE.pending;
+    const asked = `${dateLabel(w.requested?.date)} ${w.requested?.time ? wallTime(w.requested.time) : w.requested?.part === 'pm' ? 'afternoon' : 'morning'}`;
+    return h('div', { class: 'card card--line', style: { gap: '6px' }, 'data-walkthrough': w.id },
+      h('div', { class: 'row row--between wrap', style: { gap: '6px' } }, h('b', {}, `${w.customer?.name || 'Customer'} · ${address(w)}`), badge(label, tone)),
+      h('span', { class: 'caption' }, w.customer?.phone ? h('a', { href: `tel:${w.customer.phone}` }, phoneLabel(w.customer.phone)) : null, ` · set ${timeLabel(w.setAt)} by ${repName(w.repKey)} · asked for ${asked}`),
+      w.booking.error || w.booking.code ? h('p', { class: 'caption muted' }, `${w.booking.error || w.booking.message}${w.booking.code ? ` (${w.booking.code})` : ''}`) : null,
+      w.note ? h('p', { class: 'caption' }, `Rep note: ${w.note}`) : null,
+      h('div', { class: 'row' }, h('button', { type: 'button', class: 'btn btn--primary btn--sm', onclick: () => act({ action: 'walkthrough.book', walkthroughId: w.id }, 'Sent to the Hub') }, 'Book in Hub')));
+  };
+  const walkthroughs = walks.length ? h('section', { class: 'card', style: { gap: '12px' }, 'data-office-walkthroughs': String(walks.length) },
+    h('div', { class: 'row row--between wrap' }, h('h2', { style: { fontSize: '20px' } }, 'Door walkthroughs not in the Hub yet'), badge(String(walks.length), 'warning')),
+    h('p', { class: 'caption muted' }, 'Set at the door but not booked yet: still booking, waiting to retry, or refused for you to look at. Book in Hub tries again (an undated walkthrough goes to To schedule when no estimator is free). A customer the Hub cannot match safely needs the duplicate fixed in the Hub first.'),
+    walks.map(walkCard)) : null;
   return {
     subtitle: 'One customer at a time. Every text goes to one person, never a batch.',
     actions: h('div', { style: { width: '420px', maxWidth: '100%' } }, seg([['needs', 'Needs me'], ['booked', 'Booked'], ['done', 'Done'], ['all', 'All']], filter, key => go('sales', { f: key }), { label: 'Filter sales' })),
     body: [
+      walkthroughs,
       open ? card(open) : emptyState('dollar', filter === 'needs' ? 'Nothing needs you' : 'No sales here', filter === 'needs' ? 'New sales show up here with their hand-offs.' : 'Try another filter.'),
       shown.length > 1 ? h('div', { class: 'card card--line table-wrap' }, h('table', { class: 'table' },
         h('thead', {}, h('tr', {}, ['Customer', 'Rep', 'Job', 'Deposit', 'Text', 'Status', 'Next'].map(label => h('th', {}, label)))),
@@ -480,7 +514,10 @@ function lifecycle(sale, act) {
       h('span', { class: 'spacer' }),
       sale.status !== 'cancelled'
         ? h('button', { type: 'button', class: 'btn btn--danger btn--sm', onclick: async () => {
-          if (await confirmSheet('Cancel this sale?', 'A cancelled sale pays no commission. Refund the deposit by the cancellation rules.', 'Cancel sale', 'danger')) act({ action: 'sale.status', saleId: sale.id, status: 'cancelled' }, 'Sale cancelled');
+          // KNOCK-BRIDGE: a sale the bridge booked cancels its Hub job too.
+          const hubJob = sale.handoff?.job?.mode === 'hub' && sale.handoff.job.status === 'created' && !sale.handoff.job.hubCancelled
+            ? ` Its Hub job (${[sale.handoff.job.crewLabel, dateLabel(sale.jobDate)].filter(Boolean).join(', ')}) is cancelled too, so no crew goes.` : '';
+          if (await confirmSheet('Cancel this sale?', `A cancelled sale pays no commission. Refund the deposit by the cancellation rules.${hubJob}`, 'Cancel sale', 'danger')) act({ action: 'sale.status', saleId: sale.id, status: 'cancelled' }, 'Sale cancelled');
         } }, 'Cancel sale…')
         : h('button', { type: 'button', class: 'btn btn--secondary btn--sm', onclick: () => act({ action: 'sale.status', saleId: sale.id, status: 'booked' }, 'Sale reinstated') }, 'Reinstate')),
     h('p', { class: 'caption muted' }, `Enter total customer receipts including the deposit, not an additional payment. This does not charge the customer or pay the rep. Record completion separately. The job can't be before ${dateLabel(sale.earliestJobDate)}.`),

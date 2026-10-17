@@ -15,12 +15,12 @@ const basic = response => Object.defineProperty(response, 'type', { value: 'basi
 // Inside a worker, relative request URLs resolve against the worker's origin.
 class WorkerRequest extends Request { constructor(input, init) { super(typeof input === 'string' ? new URL(input, ORIGIN).href : input, init); } }
 const NOW = Date.parse('2026-09-22T15:00:00.000Z');
-const SHELL_CACHE = 'egc-crew-shell-20261017grabschedule';
+const SHELL_CACHE = 'egc-crew-shell-20261017bridgegrab';
 // CREW-SCHEDULE: the crew schedule page and its script join the shell (the schedule itself is /api data, never stored).
-const SCHEDULE_ASSETS = ['/crew/schedule.html', '/crew/schedule.js?v=20261017crewschedule'];
+const SCHEDULE_ASSETS = ['/crew/schedule.html', '/crew/schedule.js?v=20261017knockbridge2'];
 // KNOCK: the canvassing page (crew/knock.html) and its modules share the crew shell. Its ES modules import each other
 // without ?v=, so those keys are bare paths. The map files load only when a rep opens the map.
-const KNOCK_ASSETS = ['/crew/knock-app.js?v=20261017territory', '/crew/knock-areas.js', '/crew/knock-doors.js', '/crew/knock-leaflet.css?v=1.9.4', '/crew/knock-leaflet.js?v=1.9.4', '/crew/knock-map.js', '/crew/knock-money.js', '/crew/knock-native-form.js', '/crew/knock-outbox.js', '/crew/knock-rep.js', '/crew/knock-sale-rules.js', '/crew/knock-sale.js', '/crew/knock-settings.js', '/crew/knock-stats-ui.js', '/crew/knock-stats.js', '/crew/knock-time.js', '/crew/knock-ui.js', '/crew/knock.css?v=20261017territory'];
+const KNOCK_ASSETS = ['/crew/knock-app.js?v=20261017knockbridge2', '/crew/knock-areas.js', '/crew/knock-doors.js', '/crew/knock-leaflet.css?v=1.9.4', '/crew/knock-leaflet.js?v=1.9.4', '/crew/knock-map.js', '/crew/knock-money.js', '/crew/knock-native-form.js', '/crew/knock-outbox.js', '/crew/knock-rep.js', '/crew/knock-sale-rules.js', '/crew/knock-sale.js', '/crew/knock-settings.js', '/crew/knock-stats-ui.js', '/crew/knock-stats.js', '/crew/knock-time.js', '/crew/knock-ui.js', '/crew/knock-walkthrough.js', '/crew/knock.css?v=20261017knockbridge'];
 const KNOCK_PRESENT = KNOCK_ASSETS.filter(key => existsSync(new URL(`..${key.split('?')[0]}`, import.meta.url)));
 
 function harness({ config = { enabled: true }, indexedDB = fakeIndexedDB(), api = null, network = null } = {}) {
@@ -224,7 +224,7 @@ test('the precached shell matches the versioned files Today’s work and the off
   // the sign-in helper are the public crew files the home page loads too, and the page works without them.
   const schedule = read('crew/schedule.html');
   for (const path of [...schedule.matchAll(/(?:src|href)="(\/(?:crew\/schedule[^"]*|app-touch\.css)\?v=[^"]+)"/g)].map(match => match[1])) assert.ok(assets.includes(path), `${path} must be precached for offline reloads`);
-  assert.match(schedule, /<script src="\/crew\/schedule\.js\?v=20261017crewschedule" defer><\/script>/);
+  assert.match(schedule, /<script src="\/crew\/schedule\.js\?v=20261017knockbridge2" defer><\/script>/);
   assert.match(read('crew/schedule.js'), /navigator\.serviceWorker\.register\('\/crew\/sw\.js', \{ scope: '\/crew\/' \}\)/);
 });
 

@@ -2,6 +2,7 @@ import { getHubSession } from '../_lib/hub-session.js';
 import { createKnockStore } from '../_lib/knock-store.js';
 import { ensureRep, isAdmin, loadSettings, shiftEligibility } from '../_lib/knock-access.js';
 import { repHome } from '../_lib/knock-territory.js';
+import { knockJobBridgeEnabled } from '../_lib/knock-bridge.js';
 import { errorResponse, reply, signInRequired } from '../_lib/knock-http.js';
 
 // GET /api/knock-me: the signed-in rep's canvassing profile, settings, territory summary and
@@ -18,7 +19,9 @@ export function knockMeHandlers({ session = getHubSession, storage = createKnock
         const [rep, settings] = await Promise.all([ensureRep(store, viewer, nowIso), loadSettings(store)]);
         const body = {
           ok: true, serverTime: nowIso,
-          viewer: { user: viewer.user, displayName: viewer.displayName || viewer.user, repKey: rep.repKey, admin: isAdmin(viewer), walkthrough: isAdmin(viewer) },
+          viewer: { user: viewer.user, displayName: viewer.displayName || viewer.user, repKey: rep.repKey, admin: isAdmin(viewer), walkthrough: isAdmin(viewer),
+            // KNOCK-BRIDGE: the phone offers crew slots, ZIP and "Walkthrough set" only while EGC_KNOCK_JOB_BRIDGE is on.
+            ...(knockJobBridgeEnabled(env) ? { jobBridge: true } : {}) },
           rep, settings, eligibility: shiftEligibility(rep),
         };
         if (rep.status === 'active') Object.assign(body, await repHome(store, rep, settings, at.getTime()));

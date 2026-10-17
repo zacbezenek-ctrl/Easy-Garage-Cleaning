@@ -16,7 +16,14 @@ const OUTCOME_BUTTONS = {
   look: ['look', 'eye', 'Look'],
   sold: ['sold', 'dollar', 'Sold'],
   skipped_sign: ['skip', 'ban', 'Skipped', 'No-soliciting sign'],
+  walkthrough_set: ['walk', 'calendar', 'Walkthrough set', 'Estimator visit'],
 };
+// KNOCK-BRIDGE: "Walkthrough set" is offered only while the server's EGC_KNOCK_JOB_BRIDGE is on (knock-me viewer.jobBridge).
+const bridgeOn = () => S().viewer?.jobBridge === true;
+// The six outcomes keep their places; "Walkthrough set" is a full-width last row (.outcomes--seven).
+const outcomeOrder = () => (bridgeOn() ? [...OUTCOME_ORDER, 'walkthrough_set'] : OUTCOME_ORDER);
+// Outcomes that open a form and save a record with the door: they can be neither undone nor changed here.
+const BOOKED = new Set(['sold', 'walkthrough_set']);
 const S = () => app.S;
 const tz = () => app.cityRuleFor(null)?.timeZone || 'America/Denver';
 
@@ -73,6 +80,7 @@ function statusText(entry) {
   if (st.status === 'new') return 'Not knocked yet';
   if (st.status === 'rested') return 'Rest period over · knock again';
   if (st.status === 'blocked') return st.reason.includes('City') ? 'City no-knock list · don\'t knock' : 'No-soliciting sign · don\'t knock';
+  if (st.status === 'done' && summary.lastOutcome === 'walkthrough_set') return `Walkthrough set${summary.lastAt ? ` · ${dateLabel(zonedDate(summary.lastAt, tz()))}` : ''}`;
   if (st.status === 'done') return summary.lastOutcome === 'sold' ? `Sold${summary.lastAt ? ` · ${dateLabel(zonedDate(summary.lastAt, tz()))}` : ''}` : `Look${summary.quotedAmount ? ` · quoted ${money(summary.quotedAmount)}` : ''}`;
   if (st.status === 'max_attempts') return `${st.reason} · done for the season`;
   return st.reason || st.status;
@@ -199,15 +207,25 @@ export function shiftCard({ onKnock = false } = {}) {
 
 /* ---------- logging a door ---------- */
 
-async function logDoor(house, outcome, details = {}) {
-  const shift = app.currentShift();
-  if (!shift) return toast('Start a shift first.', { tone: 'bad' });
-  if (shift.timing.onBreak) return toast('You\'re on a break', { tone: 'bad', sub: 'Tap Back on the clock to log doors.' });
+/* Whether a door may be logged right now (the knocking window, plus the one door a rep may finish after sunset),
+   with the time it is logged at. A sale or walkthrough takes this when its button is tapped, so a customer who is
+   still filling in the form when the sun sets is never lost: the door keeps the time the rep was at it. */
+function doorNow(house) {
   const window = app.knockingWindow(house);
   const today = zonedDate(Date.now());
   const finishing = window.phase === 'grace' && S().ui.graceDoorFor !== today;
   const allowed = doorAllowed(window, { finishingDoor: finishing });
-  if (!allowed.allowed) return toast(window.phase === 'before' ? `Knocking opens at ${window.startLabel}.` : 'Sunset has passed. New doors are closed for today.', { tone: 'bad' });
+  if (!allowed.allowed) { toast(window.phase === 'before' ? `Knocking opens at ${window.startLabel}.` : 'Sunset has passed. New doors are closed for today.', { tone: 'bad' }); return null; }
+  return { allowed, today, at: new Date().toISOString() };
+}
+
+async function logDoor(house, outcome, details = {}, opened = null) {
+  const shift = app.currentShift();
+  if (!shift) return toast('Start a shift first.', { tone: 'bad' });
+  if (shift.timing.onBreak) return toast('You\'re on a break', { tone: 'bad', sub: 'Tap Back on the clock to log doors.' });
+  const door = opened || doorNow(house);
+  if (!door) return null;
+  const { allowed, today } = door;
   const prev = app.houseView(house.id).summary;
   const carOutside = Boolean(S().ui.carOutside);
   const event = await app.enqueue('knock', {
@@ -217,6 +235,8 @@ async function logDoor(house, outcome, details = {}) {
     ...(details.note ? { note: details.note } : {}),
     ...(allowed.afterEnd ? { afterEnd: true } : {}),
     ...(S().position && Date.now() - S().position.at < 120000 ? { lat: S().position.lat, lng: S().position.lng, accuracy: Math.round(S().position.accuracy) } : {}),
+    // The time the rep tapped Sold or Walkthrough set, not the time the form was finished.
+    ...(opened ? { at: opened.at } : {}),
   });
   if (details.note) await rememberNote(house.id, details.note);
   const lastAction = { eventId: event.id, houseId: house.id, outcome, prev, knock: { at: event.at, shiftId: shift.id, carOutside, quotedAmount: details.quotedAmount ?? null, comeBackAt: details.comeBackAt ?? null, note: details.note ?? null } };
@@ -235,6 +255,7 @@ export async function undoLast() {
   const outbox = app.outboxApi();
   const queued = (await outbox.list(S().viewer.user)).find(e => e.id === last.eventId && e.state === 'queued');
   if (last.outcome === 'sold') return toast('A sale can\'t be undone here', { tone: 'bad', sub: 'Ask an admin to cancel it.' });
+  if (last.outcome === 'walkthrough_set') return toast('A walkthrough can\'t be undone here', { tone: 'bad', sub: 'Ask the office to cancel it in the Hub.' });
   if (queued) {
     // Never sent: drop it from this phone entirely.
     await outbox.remove(last.eventId);
@@ -250,14 +271,14 @@ export async function undoLast() {
 async function editLast() {
   const last = S().ui.lastAction;
   if (!last) return;
-  if (last.outcome === 'sold') return toast('A sale can\'t be changed here', { tone: 'bad', sub: 'Ask an admin.' });
+  if (BOOKED.has(last.outcome)) return toast(last.outcome === 'sold' ? 'A sale can\'t be changed here' : 'A walkthrough can\'t be changed here', { tone: 'bad', sub: last.outcome === 'sold' ? 'Ask an admin.' : 'Ask the office.' });
   const house = S().houses.get(last.houseId);
   const choice = await sheet('Change the last door', close => {
     let car = Boolean(last.knock.carOutside);
     return [
       h('label', { class: 'toggle' }, h('span', { class: 'row', style: { gap: '10px' } }, icon('car'), 'Car parked outside the garage'),
         h('input', { type: 'checkbox', checked: car, onchange: e => { car = e.target.checked; } }), h('span', { class: 'toggle__switch', 'aria-hidden': 'true' })),
-      h('div', { class: 'outcomes' }, OUTCOME_ORDER.filter(o => o !== 'sold').map(outcome => outcomeButton(outcome, { onclick: () => close({ outcome, carOutside: car }) }))),
+      h('div', { class: 'outcomes' }, OUTCOME_ORDER.filter(o => !BOOKED.has(o)).map(outcome => outcomeButton(outcome, { onclick: () => close({ outcome, carOutside: car }) }))),
     ];
   }, { subtitle: house ? houseLabel(house) : '' });
   if (!choice) return;
@@ -370,7 +391,16 @@ async function tapOutcome(house, outcome, button) {
   }
   if (outcome === 'sold') {
     if (!app.saleForm) return toast('Sales open in the next update.', { tone: 'bad' });
-    return app.saleForm(house, details => logDoor(house, 'sold', details));
+    // The door is checked (and timed) now, before the form: a sale finished after sunset still saves.
+    const opened = doorNow(house);
+    if (!opened) return;
+    return app.saleForm(house, details => logDoor(house, 'sold', details, opened));
+  }
+  if (outcome === 'walkthrough_set') {
+    if (!app.walkthroughForm) return toast('Walkthroughs open in the next update.', { tone: 'bad' });
+    const opened = doorNow(house);
+    if (!opened) return;
+    return app.walkthroughForm(house, details => logDoor(house, 'walkthrough_set', details, opened));
   }
   await logDoor(house, outcome);
 }
@@ -432,6 +462,10 @@ function knockScreen() {
   const window = app.knockingWindow(house);
   const finishing = window.phase === 'grace' && S().ui.graceDoorFor !== zonedDate(Date.now());
   const canLog = view.status.knockable && !shift.timing.onBreak && (window.phase === 'open' || finishing);
+  // KNOCK-BRIDGE: the rep who set a walkthrough here may still close the sale at the door (Sold only).
+  const switchToSale = bridgeOn() && view.summary?.lastOutcome === 'walkthrough_set' && (view.summary.byMe || view.summary.lastRepId === S().viewer?.repKey)
+    && !shift.timing.onBreak && (window.phase === 'open' || finishing);
+  const order = outcomeOrder();
   const last = S().ui.lastAction;
   const lastHouse = last ? S().houses.get(last.houseId) : null;
   const inNeighborhood = houseEntries({ neighborhoodId: house.n }).sort(byAddress);
@@ -465,9 +499,10 @@ function knockScreen() {
       h('span', { class: 'row', style: { gap: '14px' } }, h('button', { type: 'button', class: 'link caption', onclick: undoLast }, 'Undo'), h('button', { type: 'button', class: 'link caption', onclick: editLast }, 'Change'))) : null,
     h('div', { class: 'spacer' }),
     h('button', { type: 'button', class: 'btn btn--secondary btn--block', onclick: () => app.nativeFormForHouse(house) }, 'GHL quote / walkthrough request'),
-    !view.status.knockable ? banner('', 'info', 'This house can\'t be knocked', statusText(entry)) : null,
-    h('div', { class: 'outcomes', role: 'group', 'aria-label': 'Door outcome' }, OUTCOME_ORDER.map(outcome =>
-      outcomeButton(outcome, { disabled: !canLog, onclick: event => tapOutcome(house, outcome, event.currentTarget) }))));
+    switchToSale ? banner('', 'info', 'Walkthrough set', 'They can still buy now: tap Sold to close the sale at the door. Tell the office to cancel the walkthrough.')
+      : !view.status.knockable ? banner('', 'info', 'This house can\'t be knocked', statusText(entry)) : null,
+    h('div', { class: `outcomes${order.length === 7 ? ' outcomes--seven' : ''}`, role: 'group', 'aria-label': 'Door outcome' }, order.map(outcome =>
+      outcomeButton(outcome, { disabled: !(canLog || switchToSale && outcome === 'sold'), onclick: event => tapOutcome(house, outcome, event.currentTarget) }))));
 }
 
 async function step(house, siblings, direction) {

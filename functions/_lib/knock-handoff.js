@@ -14,6 +14,8 @@ import { loadSettings } from './knock-access.js';
 import { stripeRequest, stripeSecretKey } from './customer-payments.js';
 import { createGhlMessenger } from './ghl-messenger.js';
 import { formatClock, zonedDate, zonedInstant } from '../../crew/knock-time.js';
+import { JOB_START_MINIMUM } from '../../crew/knock-sale-rules.js';
+import { knockJobBridgeEnabled } from './knock-bridge.js';
 
 const SITE = 'https://easygaragecleaning.com';
 
@@ -29,7 +31,8 @@ export function saleSyncSummary(sale, receipt = null) {
   const outcome = receipt?.outcome || text.status || 'missing';
   const state = outcome === 'sending' ? 'uncertain' : outcome;
   return {
-    job: sale.handoff?.job?.status === 'created' ? 'manual_reference_recorded' : 'unlinked',
+    // KNOCK-BRIDGE: a job the bridge booked into the Hub (mode hub) is linked; a hand-typed reference is not verified.
+    job: sale.handoff?.job?.status === 'created' ? (sale.handoff.job.mode === 'hub' && sale.handoff.job.ref ? 'hub_job_linked' : 'manual_reference_recorded') : 'unlinked',
     highlevel: { state, mode: text.mode || 'manual', retryAllowed: state === 'rejected',
       checkedAt: receipt?.updatedAt || text.sentAt || null },
     appointment: 'not_verified',
@@ -43,7 +46,8 @@ export async function saleSyncSummaries(store, sales) {
 
 export function integrationStatus(env, settings) {
   return {
-    job: { mode: 'manual', available: ['manual'] },
+    // KNOCK-BRIDGE: with EGC_KNOCK_JOB_BRIDGE on, new door sales book their Hub job themselves (hub); manual stays.
+    job: knockJobBridgeEnabled(env) ? { mode: 'hub', available: ['manual', 'hub'] } : { mode: 'manual', available: ['manual'] },
     deposit: { mode: settings.integrations.deposit, available: ['manual', ...(stripeSecretKey(env) ? ['stripe'] : [])] },
     text: { mode: settings.integrations.text, available: ['manual', ...(highLevel(env).configured() ? ['highlevel'] : [])] },
   };
@@ -213,7 +217,7 @@ async function runHandoff(store, admin, { saleId, kind, op, ref = '', amount }, 
 export function refundSummary(sale, now = Date.now()) {
   const cancelEndsAt = Date.parse(sale.cancelEndsAt);
   if (now < cancelEndsAt) return `Deposit fully refundable until midnight ${longDate(sale.cancelDeadlineDate)} (right to cancel).`;
-  const start = zonedInstant(sale.jobDate, sale.jobStartTime || '08:00');
+  const start = zonedInstant(sale.jobDate, sale.jobStartTime || JOB_START_MINIMUM);
   const hours = Number(sale.refundCutoffHours || 24);
   const cutoff = start - hours * 3600000;
   return now < cutoff ? `Deposit refundable until ${formatClock(cutoff)} ${longDate(zonedDate(cutoff))} (${hours} hours before the job).` : `Deposit not refundable: inside ${hours} hours of the job.`;

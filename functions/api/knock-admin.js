@@ -6,13 +6,37 @@ import {
   neighborhoodHouses, readSettings, seedNeighborhoods, setAssignment, updateNeighborhood, updateRep, updateSettings,
 } from '../_lib/knock-admin.js';
 import { loadNeighborhoods } from '../_lib/knock-territory.js';
-import { allSales, setJobDate, setSaleStatus, recordSaleCollection } from '../_lib/knock-sales.js';
+import { allSales, repSaleView, setJobDate, setSaleStatus, recordSaleCollection } from '../_lib/knock-sales.js';
 import { customerMessage, integrationStatus, refundSummary, saleHandoff, saleSyncSummaries } from '../_lib/knock-handoff.js';
 import { loadSettings } from '../_lib/knock-access.js';
 import { rebuildDay } from '../_lib/knock-sync.js';
 import { addPayout, exportCsv, moneyView } from '../_lib/knock-reports.js';
 import { recordSetterAttribution, setterAttributions } from '../_lib/knock-setters.js';
 import { csvResponse, errorResponse, forbiddenOrigin, readJson, reply, sameOrigin } from '../_lib/knock-http.js';
+import { dispatchStorage } from '../_lib/dispatch-storage.js';
+import { bookSale, bookWalkthrough, followSaleStatus, knockJobBridgeEnabled, moveSaleJob } from '../_lib/knock-bridge.js';
+import { officeWalkthroughs } from '../_lib/knock-walkthroughs.js';
+
+// KNOCK-BRIDGE (EGC_KNOCK_JOB_BRIDGE): book (or retry booking) a door sale's Hub job or a door walkthrough from Admin.
+const bridged = run => async (store, admin, body, nowIso, env, { dispatch = dispatchStorage } = {}) => {
+  if (!knockJobBridgeEnabled(env)) throw knockFailure('Booking from canvassing is not turned on.', 404, 'knock_bridge_off');
+  return run(store, dispatch(env), body.saleId || body.walkthroughId, { env, now: new Date(nowIso), rep: null });
+};
+
+// KNOCK-BRIDGE: a cancelled or reinstated sale's Hub job follows it (the answer adds hub: what happened to the job).
+async function saleStatus(store, admin, body, nowIso, env, { dispatch = dispatchStorage } = {}) {
+  let result = await setSaleStatus(store, admin, body, nowIso);
+  if (knockJobBridgeEnabled(env)) {
+    const followed = await followSaleStatus(store, dispatch(env), result.sale, { now: new Date(nowIso) });
+    if (followed) result = { ...result, sale: repSaleView(followed.sale), hub: followed.hub };
+  }
+  return afterSaleChange(store, result, nowIso);
+}
+
+// KNOCK-BRIDGE: a new job date moves the sale's Hub job first (refused when the Hub cannot take it).
+const saleJobDate = (store, admin, body, nowIso, env, { dispatch = dispatchStorage } = {}) => (knockJobBridgeEnabled(env)
+  ? setJobDate(store, admin, body, nowIso, { jobBridge: true, moveHub: (sale, when) => moveSaleJob(dispatch(env), sale, when, { env, now: new Date(nowIso) }) })
+  : setJobDate(store, admin, body, nowIso));
 
 // A sale's status changes its rep's booked revenue for the sale day.
 async function afterSaleChange(store, result, nowIso) {
@@ -41,6 +65,8 @@ const VIEWS = {
       sales: sales.map(sale => ({ ...sale, sync: sync.get(sale.id), refund: refundSummary(sale, now.getTime()), message: customerMessage(sale) })),
       reps: reps.map(r => ({ repKey: r.repKey, displayName: r.displayName })),
       integrations: integrationStatus(env || {}, settings),
+      // KNOCK-BRIDGE: door walkthroughs not in the Hub yet (booking, retrying or refused), for the office to book.
+      ...(knockJobBridgeEnabled(env) ? { walkthroughs: await officeWalkthroughs(store) } : {}),
     };
   },
   async money(store, params, now) { return moneyView(store, params, now.getTime(), await loadSettings(store)); },
@@ -64,16 +90,18 @@ const ACTIONS = {
   'neighborhood.excludeUnits': excludeUnits,
   'noknock.import': importNoKnock,
   'noknock.clear': clearNoKnock,
-  'sale.status': async (store, admin, body, nowIso) => afterSaleChange(store, await setSaleStatus(store, admin, body, nowIso), nowIso),
-  'sale.jobDate': setJobDate,
+  'sale.status': saleStatus,
+  'sale.jobDate': saleJobDate,
   'sale.collection': recordSaleCollection,
   'sale.handoff': (store, admin, body, nowIso, env) => saleHandoff(store, admin, body, nowIso, env),
   'setter.record': recordSetterAttribution,
+  'sale.book': bridged(async (...args) => { const { sale, view } = await bookSale(...args); return { sale, booking: view }; }),
+  'walkthrough.book': bridged(async (...args) => { const { walkthrough, view } = await bookWalkthrough(...args); return { walkthrough, booking: view }; }),
   'payout.add': addPayout,
 };
 
 // Admin views (GET ?view=...) and changes (POST {action, ...}). Admins are Hub business users.
-export function knockAdminHandlers({ session = getHubSession, storage = createKnockStore, now = () => new Date(), views = VIEWS, actions = ACTIONS } = {}) {
+export function knockAdminHandlers({ session = getHubSession, storage = createKnockStore, now = () => new Date(), views = VIEWS, actions = ACTIONS, dispatch = dispatchStorage } = {}) {
   return {
     async get({ request, env }) {
       try {
@@ -94,7 +122,7 @@ export function knockAdminHandlers({ session = getHubSession, storage = createKn
         const body = await readJson(request, 262144);
         const action = actions[String(body.action || '')];
         if (!action) throw knockFailure('Unknown admin action.', 400, 'knock_unknown_action');
-        const result = await action(storage(env), admin, body, now().toISOString(), env);
+        const result = await action(storage(env), admin, body, now().toISOString(), env, { dispatch });
         return reply(200, { ok: true, ...result });
       } catch (error) {
         return errorResponse(error);

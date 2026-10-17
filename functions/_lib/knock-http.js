@@ -43,4 +43,8 @@ export function csvResponse(filename, text) {
 }
 
 export const signInRequired = () => knockFailure('Sign in to use canvassing.', 401, 'knock_sign_in_required');
+// KNOCK-BRIDGE: a schedule read for a rep failed. Canvassing errors pass through; anything from dispatch becomes one
+// generic answer, so a rep never sees a dispatch detail (a crew, an employee or another customer's visit).
+export const bridgeUnavailable = (error, message) => (typeof error?.code === 'string' && error.code.startsWith('knock_') ? error
+  : knockFailure(message, 503, 'knock_bridge_unavailable'));
 export const forbiddenOrigin = () => knockFailure('Open canvassing from the crew app.', 403, 'knock_origin_forbidden');

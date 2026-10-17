@@ -2,6 +2,7 @@ import { getHubSession } from '../_lib/hub-session.js';
 import { createKnockStore } from '../_lib/knock-store.js';
 import { ensureRep, loadSettings, requireActive } from '../_lib/knock-access.js';
 import { applyBatch } from '../_lib/knock-sync.js';
+import { knockJobBridgeEnabled } from '../_lib/knock-bridge.js';
 import { errorResponse, forbiddenOrigin, readJson, reply, sameOrigin, signInRequired } from '../_lib/knock-http.js';
 
 // POST /api/knock-sync {events: [...]}: the phone's queued shift, door and sale events, oldest first.
@@ -18,7 +19,8 @@ export function knockSyncHandlers({ session = getHubSession, storage = createKno
         const at = now();
         const [rep, settings] = await Promise.all([ensureRep(store, viewer, at.toISOString()), loadSettings(store)]);
         requireActive(rep);
-        const result = await applyBatch(store, rep, settings, body.events, at.getTime());
+        // EGC_KNOCK_JOB_BRIDGE: walkthroughs set at the door, and bridge:{status:'pending'} on new sales and walkthroughs.
+        const result = await applyBatch(store, rep, settings, body.events, at.getTime(), knockJobBridgeEnabled(env) ? { jobBridge: true } : {});
         return reply(200, { ok: true, serverTime: at.toISOString(), ...result });
       } catch (error) {
         return errorResponse(error);

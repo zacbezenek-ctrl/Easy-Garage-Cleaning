@@ -174,6 +174,10 @@ export function scheduleSync(delay = 0) {
 }
 
 async function onSynced(response) {
+  // KNOCK-BRIDGE: a new sale or walkthrough (or a replay of one still not booked) comes back bridge:{status:'pending'};
+  // it is booked into the Hub next.
+  const pending = (response?.results || []).filter(row => row.bridge?.status === 'pending' && ['sale', 'walkthrough'].includes(row.bridge.kind)).map(row => ({ kind: row.bridge.kind, id: row.id }));
+  if (pending.length) await queueBridges(pending);
   if (Array.isArray(response?.houses)) {
     for (const house of response.houses) S.houses.set(house.id, house);
     await store.cache.set(cacheKey('houses'), [...S.houses.values()]);
@@ -200,6 +204,8 @@ export async function sync({ full = false } = {}) {
     else await loadHouses();
     S.lastSync = Date.now();
     S.syncState = 'idle';
+    // KNOCK-BRIDGE: bookings run on their own (never holding up the next door's sync), only for what is due.
+    startBridges();
   } catch {
     S.syncState = S.online ? 'retry' : 'offline';
   } finally {
@@ -210,6 +216,66 @@ export async function sync({ full = false } = {}) {
     if (!(wasLoaded && screens.get(S.route.name)?.admin)) render();
   }
 }
+
+/* ---------- KNOCK-BRIDGE: booking synced sales and walkthroughs into the Hub ---------- */
+
+/* Each sale or walkthrough the server accepted is booked with POST /api/knock-job-bridge (idempotent on its id): the
+   Hub job with a crew, or the estimator walkthrough. A new one is tried at once. One the Hub could not take yet stays
+   queued with a growing wait (1 minute doubling to an hour, or the server's retryAt when later), so a phone with a
+   Hub problem never asks on every door; the server enforces the same wait. Answers the office must look at (review)
+   and records the server does not know leave the queue. The answer ('Booked: Crew 2, Mon Oct 20, 9:30 am') is kept
+   for My sales. */
+const BRIDGE_FIRST_WAIT = 60000, BRIDGE_MAX_WAIT = 3600000;
+const bridgeWait = tries => Math.min(BRIDGE_MAX_WAIT, BRIDGE_FIRST_WAIT * 2 ** Math.max(0, tries - 1));
+let bridgeRun = null;
+
+// Adds sales or walkthroughs ({kind, id}) to the booking queue (a known one keeps its place and wait).
+export async function queueBridges(items) {
+  const queue = [...(S.ui.bridgeQueue || [])];
+  for (const item of items) if (!queue.some(row => row.id === item.id)) queue.push({ kind: item.kind, id: item.id, tries: 0, nextAt: 0 });
+  if (queue.length !== (S.ui.bridgeQueue || []).length) await saveUi({ bridgeQueue: queue.slice(-50) });
+}
+
+export function runBridges() {
+  if (bridgeRun) return bridgeRun;
+  const now = Date.now(), due = (S.ui.bridgeQueue || []).filter(item => !(item.nextAt > now));
+  if (!due.length || !S.viewer?.jobBridge || !S.online) return Promise.resolve(false);
+  bridgeRun = (async () => {
+    const bookings = { ...(S.ui.bookings || {}) }, done = new Set(), later = new Map();
+    let last = null;
+    for (const item of due) {
+      try {
+        const { booking } = await api('/api/knock-job-bridge', { method: 'POST', body: { kind: item.kind, id: item.id } });
+        if (booking) bookings[item.id] = booking;
+        if (booking?.status === 'pending') {
+          const tries = Number(item.tries || 0) + 1, server = Date.parse(booking.retryAt || '') || 0;
+          later.set(item.id, { ...item, tries, nextAt: Math.max(Date.now() + bridgeWait(tries), server) });
+        } else { done.add(item.id); if (booking) last = booking; }
+      } catch (error) {
+        // No signal, signed out or a server fault: this and the rest wait their turn. A record the server does not
+        // know (or will not book from this phone) leaves the queue.
+        if (!error.status || error.status === 401 || error.status >= 500) {
+          for (const rest of due.slice(due.indexOf(item))) later.set(rest.id, { ...rest, tries: Number(rest.tries || 0) + 1, nextAt: Date.now() + bridgeWait(Number(rest.tries || 0) + 1) });
+          break;
+        }
+        done.add(item.id);
+      }
+    }
+    // Merged into the queue as it is now: a sale synced while this ran keeps its place.
+    const queue = (S.ui.bridgeQueue || []).filter(item => !done.has(item.id)).map(item => later.get(item.id) || item);
+    await saveUi({ bridgeQueue: queue, bookings: Object.fromEntries(Object.entries(bookings).slice(-50)) });
+    if (last) toast(last.message, { iconName: last.kind === 'walkthrough' ? 'calendar' : 'check', sub: last.kind === 'sale' && last.status === 'needs_crew' ? `${last.date ? `For ${new Date(`${last.date}T12:00:00Z`).toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric', timeZone: 'UTC' })}` : ''}` : '' });
+    return Boolean(last);
+  })().finally(() => { bridgeRun = null; });
+  return bridgeRun;
+}
+
+// Fire and forget: a screen showing bookings is drawn again once one lands.
+function startBridges() {
+  runBridges().then(changed => { if (changed && ['mysales', 'money'].includes(S.route.name)) render(); }, () => {});
+}
+
+export const bookingFor = id => S.ui.bookings?.[id] || null;
 
 /* ---------- location: one GPS watch for the whole app while an approved rep has it open ---------- */
 
@@ -633,12 +699,13 @@ function initials(name) {
   return String(name || '').trim().split(/\s+/).slice(0, 2).map(part => part[0] || '').join('').toUpperCase() || '?';
 }
 
-const EVENT_NAMES = { knock: 'Door', sale: 'Sale', 'knock.void': 'Undo', 'knock.edit': 'Change', 'shift.start': 'Shift start', 'shift.end': 'Shift end', 'shift.break_start': 'Break', 'shift.break_end': 'Break end' };
+const EVENT_NAMES = { knock: 'Door', sale: 'Sale', walkthrough: 'Walkthrough', 'knock.void': 'Undo', 'knock.edit': 'Change', 'shift.start': 'Shift start', 'shift.end': 'Shift end', 'shift.break_start': 'Break', 'shift.break_end': 'Break end' };
 
 function problemTitle(event) {
   const house = event.houseId ? S.houses.get(event.houseId) : null;
   const where = house ? `${house.number} ${house.street.split(' ').map(w => w.charAt(0) + w.slice(1).toLowerCase()).join(' ')}` : '';
-  const extra = event.type === 'sale' ? [event.customer?.name?.split(' ').slice(-1)[0], event.ticket ? `$${Number(event.ticket).toLocaleString('en-US')}` : ''] : [];
+  const extra = event.type === 'sale' ? [event.customer?.name?.split(' ').slice(-1)[0], event.ticket ? `$${Number(event.ticket).toLocaleString('en-US')}` : '']
+    : event.type === 'walkthrough' ? [event.customer?.name?.split(' ').slice(-1)[0]] : [];
   return [EVENT_NAMES[event.type] || event.type, where, ...extra].filter(Boolean).join(' · ');
 }
 
@@ -657,6 +724,8 @@ function syncCard() {
       h('span', { class: 'bold', style: { color: 'var(--error)' } }, `${problems.length} need${problems.length === 1 ? 's' : ''} a look`),
       problems.map(event => banner('error', 'alert', problemTitle(event), `${event.error?.message || 'The server refused this change.'} Nothing else was lost.`,
         h('div', { class: 'stack stack--tight', style: { alignItems: 'flex-end' } },
+          // A refused sale or walkthrough opens its form again with everything the rep typed; fixing it resends it.
+          app.fixers?.[event.type] ? h('button', { type: 'button', class: 'btn btn--sm btn--primary', onclick: () => app.fixers[event.type](event) }, 'Edit and resend') : null,
           h('button', { type: 'button', class: 'btn btn--sm btn--retry', onclick: async () => { await outbox.retry(event.id); await refreshPending(); scheduleSync(0); } }, 'Retry'),
           h('button', { type: 'button', class: 'link caption', onclick: async () => { await outbox.remove(event.id); await refreshPending(); render(); } }, 'Discard'))))) : null);
 }
@@ -716,7 +785,7 @@ function cycleTheme() {
 /* ---------- the app object handed to screen modules ---------- */
 
 export const app = { S, api, go, render, registerScreen, enqueue, sync, scheduleSync, houseView, neighborhoodOf, cityRuleFor, currentShift, knockingWindow, saveUi, signOut, outboxApi: () => outbox, refreshPending, syncSummary, moreLinks: [],
-  startLocation, onPosition, locationBanner, territoryEmpty, myNeighborhoods, awayLabel };
+  startLocation, onPosition, locationBanner, territoryEmpty, myNeighborhoods, awayLabel, runBridges, queueBridges, bookingFor, fixers: {} };
 
 registerScreen('home', homeScreen, { tab: { label: 'Home', icon: 'home', order: 0 } });
 registerScreen('more', moreScreen, { tab: { label: 'More', icon: 'more', order: 40 } });
@@ -727,6 +796,11 @@ async function loadRepModules() {
   rep.install(app);
   const sale = await import('./knock-sale.js');
   sale.install(app);
+  // KNOCK-BRIDGE: "Walkthrough set" at the door (shown only while the server's EGC_KNOCK_JOB_BRIDGE is on).
+  try {
+    const walkthrough = await import('./knock-walkthrough.js');
+    walkthrough.install(app);
+  } catch (error) { console.warn('EGC Knock: the walkthrough form failed to load.', error); }
   const nativeForm = await import('./knock-native-form.js');
   nativeForm.install(app);
   const stats = await import('./knock-stats-ui.js');

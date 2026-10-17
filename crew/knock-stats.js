@@ -89,6 +89,9 @@ export function countKnocks(knocks) {
       if (knock.carOutside === false) totals.noCar.looks += 1;
     }
     if (knock.outcome === 'sold') totals.sales += 1;
+    // Walkthroughs set at the door (KNOCK-BRIDGE). The key exists only once one is set, so a summary without any
+    // is exactly what it was before the outcome existed.
+    if (knock.outcome === 'walkthrough_set') totals.walkthroughs = (totals.walkthroughs || 0) + 1;
   }
   return totals;
 }
@@ -99,6 +102,7 @@ export function emptyTotals() {
 
 export function addTotals(into, more) {
   for (const key of ['knockingMs', 'doors', 'answers', 'looks', 'sales', 'bookedRevenue', 'skipped', 'afterEnd']) into[key] = (into[key] || 0) + Number(more?.[key] || 0);
+  if (Number(more?.walkthroughs) > 0) into.walkthroughs = (into.walkthroughs || 0) + Number(more.walkthroughs);
   for (const side of ['car', 'noCar']) for (const key of ['answers', 'looks']) into[side][key] += Number(more?.[side]?.[key] || 0);
   return into;
 }
@@ -110,6 +114,7 @@ export function metrics(totals) {
   return {
     knockingHours: round(hours, 2),
     doors: totals.doors, answers: totals.answers, looks: totals.looks, sales: totals.sales,
+    ...(totals.walkthroughs ? { walkthroughs: totals.walkthroughs } : {}),
     bookedRevenue: round(totals.bookedRevenue),
     doorsPerHour: ratio(totals.doors, hours),
     answerRate: ratio(totals.answers, totals.doors),

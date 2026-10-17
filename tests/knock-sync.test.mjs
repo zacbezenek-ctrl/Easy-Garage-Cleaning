@@ -28,8 +28,8 @@ function seed() {
   };
 }
 
-async function setup({ now = NOW } = {}) {
-  const env = knockEnv();
+async function setup({ now = NOW, env: extra = {} } = {}) {
+  const env = knockEnv(extra);
   const world = knockWorld(seed());
   let clock = now;
   const sync = knockSyncHandlers({ storage: world.storage, now: () => new Date(clock) });
@@ -159,6 +159,36 @@ test('after sunset a finishing door is flagged for the admin, and a door after t
   const stored = [...world.fake.documents.keys()].filter(p => p.startsWith('knock_events/')).map(p => world.fake.get(p)).filter(e => e.type === 'knock');
   assert.deepEqual(stored.map(e => e.flags).filter(f => f.length), [['after_sunset'], ['outside_hours']]);
   assert.equal(world.fake.get('knock_days/rep.one_2026-10-06').flaggedDoors, 2);
+});
+
+test('a sale is not lost at sunset: the door keeps the time Sold was tapped, and the sale finished after the grace still syncs', async () => {
+  // The phone checks and times the door when Sold is tapped (knock-rep.js doorNow), before the form: here 6:30 pm,
+  // four minutes before sunset. The rep finishes the contract at 7:10 pm, after the 15-minute grace.
+  const sunset = Date.parse('2026-10-07T00:34:00.000Z');
+  const { world, send, setClock } = await setup({ now: sunset - 40 * MIN });
+  const shiftId = uuid(), knockId = uuid(), saleId = uuid();
+  await send([shiftStart(shiftId, sunset - 40 * MIN)]);
+  setClock(sunset + 40 * MIN);
+  const result = await send([knock(shiftId, 2900, 'sold', sunset - 4 * MIN, { quotedAmount: 1600 }),
+    { id: saleId, type: 'sale', knockId, houseId: 'h-2900-blue-leaf-dr', at: iso(sunset + 36 * MIN), ticket: 1600, package: 'The Works', customer: { name: 'Pat Synthetic', phone: '9705550100', email: 'pat@example.com' },
+      checklist: { contractSigned: true, noticesHanded: true, rightToCancelTold: true }, jobDate: '2026-10-12', jobStartTime: '10:00', textConsent: false }].map((event, index) => (index === 0 ? { ...event, id: knockId } : event)));
+  assert.deepEqual(result.body.results.map(r => r.status), ['applied', 'applied']);
+  assert.equal(result.body.results[0].flags, undefined, 'the door was inside the window');
+  assert.equal(world.fake.get(`knock_sales/${saleId}`).status, 'booked');
+});
+
+test('a refused sale can be fixed and sent again under the same id; the server stored nothing for the refusal', async () => {
+  // The 9:30 refusal is the bridge's (EGC_KNOCK_JOB_BRIDGE); the bridge off stores an explicit start as sent.
+  const { world, send } = await setup({ env: { EGC_KNOCK_JOB_BRIDGE: 'true' } });
+  const shiftId = uuid(), knockId = uuid(), saleId = uuid();
+  const sale = { id: saleId, type: 'sale', knockId, houseId: 'h-2900-blue-leaf-dr', at: iso(NOW + 2 * MIN), ticket: 1600, package: 'The Works', customer: { name: 'Pat Synthetic', phone: '9705550100', email: 'pat@example.com' },
+    checklist: { contractSigned: true, noticesHanded: true, rightToCancelTold: true }, jobDate: '2026-10-19', jobStartTime: '08:00', textConsent: false };
+  const first = await send([shiftStart(shiftId), { ...knock(shiftId, 2900, 'sold', NOW + MIN), id: knockId }, sale]);
+  assert.deepEqual(first.body.results.map(r => r.code || r.status), ['applied', 'applied', 'knock_sale_job_time'], 'jobs start at 9:30 or later on and after 2026-10-15');
+  assert.equal(world.fake.get(`knock_events/${saleId}`), null);
+  const fixed = await send([{ ...sale, jobStartTime: '09:30' }]);
+  assert.deepEqual(fixed.body.results.map(r => r.status), ['applied']);
+  assert.equal(world.fake.get(`knock_sales/${saleId}`).jobStartTime, '09:30');
 });
 
 test('admins see flagged doors to review, newest first, with the rep and the address', async () => {
