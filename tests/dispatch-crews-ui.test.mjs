@@ -109,7 +109,7 @@ test('Find opening: Any crew (priority order) asks for crews=auto and a job kind
   p.dispatch.mount(p.host); await p.flush();
   p.button(p.host, 'Find opening').click(); await p.flush();
   const search = p.dialog().querySelectorAll('select').find(node => node.querySelectorAll('option').some(option => option.value === 'crews'));
-  assert.equal(search.value, 'people', 'a manager starts with the employees they choose');
+  assert.equal(search.value, 'crews', 'with crew auto-assign a manager\'s search starts on Any crew too (D2D-BOARD 2026-10-17)');
   assert.deepEqual(p.dialog().querySelectorAll('select').find(node => node.querySelectorAll('option').some(option => option.value === 'crew-three')).querySelectorAll('option').map(option => option.textContent), ['Choose employees individually', 'Crew 1', 'Crew 3 · Weekend', 'North'], 'saved crews by priority');
   search.value = 'crews'; search.dispatchEvent({ type: 'change', target: search });
   p.submit(); await p.flush();
@@ -177,6 +177,35 @@ test('a booker: a crew accepted from an opening is sent only for that opening; a
     assert.equal(body?.action, 'schedule.update', p.dialog()?.textContent);
     assert.deepEqual([body.changes.date, body.changes.crewId], changeDay ? ['2026-10-20', null] : ['2026-10-19', 'crew-one']);
   }
+});
+
+test('the Any crew default: on for every service-job search with crew auto-assign, off with it off or for a job a manager staffed', async () => {
+  const off = page(board(manager));
+  off.dispatch.mount(off.host); await off.flush();
+  off.button(off.host, 'Find opening').click(); await off.flush();
+  assert.equal(searchMode(off).value, 'people', 'flag off: the search starts on the employees a manager chooses, as before');
+  const on = page(board(manager, { crewAutoAssign: true }));
+  on.dispatch.mount(on.host); await on.flush();
+  on.button(on.host, 'Find opening').click(); await on.flush();
+  const kind = on.dialog().querySelectorAll('select').find(node => node.querySelectorAll('option').some(option => option.value === 'walkthrough'));
+  assert.equal(searchMode(on).value, 'crews');
+  kind.value = 'walkthrough'; kind.dispatchEvent({ type: 'change', target: kind });
+  assert.equal(searchMode(on).value, 'people', 'a walkthrough searches people');
+  kind.value = 'job'; kind.dispatchEvent({ type: 'change', target: kind });
+  assert.equal(searchMode(on).value, 'crews', 'back to a service job: Any crew again, since the manager did not choose');
+  const staffed = { ...QUEUED, assignedCrew: ['c9a'], assignedTo: 'c9a', crewId: 'crew-north', crewLead: 'c9a' };
+  const mine = page(board(manager, { crewAutoAssign: true, jobs: [staffed] }));
+  mine.dispatch.mount(mine.host); await mine.flush();
+  mine.dispatch.internals.show('queue'); await mine.flush();
+  mine.button(mine.host, 'Find a time').click(); await mine.flush();
+  assert.equal(searchMode(mine).value, 'people', 'a manager\'s own staffing is searched as chosen');
+  const unstaffed = page(board(manager, { crewAutoAssign: true, jobs: [QUEUED] }));
+  unstaffed.dispatch.mount(unstaffed.host); await unstaffed.flush();
+  unstaffed.dispatch.internals.show('queue'); await unstaffed.flush();
+  unstaffed.button(unstaffed.host, 'Find a time').click(); await unstaffed.flush();
+  assert.equal(searchMode(unstaffed).value, 'crews');
+  unstaffed.submit(); await unstaffed.flush();
+  assert.equal(unstaffed.gets.at(-1).get('crews'), 'auto');
 });
 
 test('Any crew is offered only for service jobs, and never to a booker moving a job a manager staffed', async () => {

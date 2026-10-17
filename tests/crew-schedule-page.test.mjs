@@ -23,14 +23,17 @@ const JOBS = [
   job('job_cara', { crewId: 'crew_two', assignedCrew: ['cara.crew'], crewLead: 'cara.crew', customer: 'Cy Synthetic', address: '2 Sample Ct, Loveland, CO 80537' }),
   job('job_open', { assignedCrew: [], customer: 'Dot Synthetic', time: '10:00', endTime: '11:00', crewNeeded: 2 }),
   job('job_week', { crewId: 'crew_one', assignedCrew: ['ben.crew'], customer: 'Eve Synthetic', date: '2026-10-20', endDate: '2026-10-21', time: '09:30', endTime: '15:00' }),
+  // An estimator's own walkthroughs (D2D-BOARD): on their schedule only.
+  job('walk_gus', { type: 'walkthrough', assignedCrew: ['gus.sales'], crewLead: 'gus.sales', customer: 'Fay Synthetic', serviceType: '', time: '10:00', endTime: '11:00' }),
+  job('walk_gus_later', { type: 'walkthrough', assignedCrew: ['gus.sales'], crewLead: 'gus.sales', customer: 'Gil Synthetic', serviceType: '', time: '14:00', endTime: '15:00' }),
 ];
-const SESSIONS = { ben: { user: 'ben.crew', role: 'crew' }, eli: { user: 'eli.team', role: 'crew', staffRoles: ['team_lead'] } };
+const SESSIONS = { ben: { user: 'ben.crew', role: 'crew' }, eli: { user: 'eli.team', role: 'crew', staffRoles: ['team_lead'] }, gus: { user: 'gus.sales', role: 'sales', staffRoles: ['sales'] } };
 // No role flag: a team lead reads every crew on the role alone (schedule.view).
-async function answer(who, url) {
+async function answer(who, url, jobs = JOBS) {
   const params = new URL(url, 'https://easygaragecleaning.com').searchParams, scope = params.get('scope'), session = SESSIONS[who];
   const canViewAll = who === 'eli';
   if (scope === 'all' && !canViewAll) return Response.json({ ok: false, code: 'crew_schedule_forbidden', error: 'Every crew’s schedule needs the Team lead or Manager role. Ask the owner.' }, { status: 403 });
-  const body = await crewSchedule({ session, env: {}, crews: CREWS, jobs: JOBS, from: params.get('from'), to: params.get('to'), scope, now: new Date(NOW),
+  const body = await crewSchedule({ session, env: {}, crews: CREWS, jobs, from: params.get('from'), to: params.get('to'), scope, now: new Date(NOW),
     access: { assigned: async row => (row.assignedCrew || []).includes(session.user), exactly: id => id === session.user }, names: { 'ana.lead': 'Ana Synthetic', 'ben.crew': 'Ben Synthetic', 'cara.crew': 'Cara Synthetic' } });
   return Response.json(body);
 }
@@ -66,6 +69,25 @@ test('a crew member sees today for their crew: their own jobs open the job page,
   assert.equal(main.querySelectorAll('.chips').length, 0, 'one crew: no crew switcher');
   assert.ok(!text(main).includes('990'), 'no money');
   assert.equal(main.querySelector('[data-range="today"]').getAttribute('aria-pressed'), 'true');
+});
+
+test('an estimator sees their own walkthroughs labelled Walkthrough, each opening the game plan for that visit', async () => {
+  const { main, calls } = await page({ respond: url => answer('gus', url) });
+  assert.deepEqual(calls, ['/api/crew-schedule?from=2026-10-16&to=2026-10-16&scope=mine']);
+  const rows = main.querySelectorAll('.job-row');
+  assert.deepEqual(rows.map(row => [row.tagName, row.getAttribute('data-job'), row.getAttribute('data-type'), row.getAttribute('href')]), [
+    ['A', 'walk_gus', 'walkthrough', '/crew/gameplan.html?walkthroughId=walk_gus'], ['A', 'walk_gus_later', 'walkthrough', '/crew/gameplan.html?walkthroughId=walk_gus_later']]);
+  assert.match(text(rows[0]), /^10:00 AM–11:00 AM Fay · Fort Collins Walkthrough Walkthrough Your walkthrough$/);
+  assert.equal(rows[0].getAttribute('aria-label'), 'Open the game plan for the walkthrough at 10:00 AM–11:00 AM with Fay · Fort Collins');
+  assert.ok(!text(main).includes('Needs crew') && !text(main).includes('No crew yet'), 'a walkthrough never asks for a crew');
+  // Someone on a crew who also holds a walkthrough sees it in its own block, apart from the crew's work.
+  const shared = JOBS.map(row => row.id === 'walk_gus_later' ? { ...row, assignedCrew: ['gus.sales', 'ben.crew'] } : row);
+  const ben = await page({ respond: url => answer('ben', url, shared) });
+  assert.deepEqual(ben.main.querySelectorAll('.crew-block h3').map(text), ['Crew 1 · Lead: Ana Synthetic', 'Your walkthroughs']);
+  assert.equal(ben.main.querySelector('[data-job="walk_gus_later"]').getAttribute('href'), '/crew/gameplan.html?walkthroughId=walk_gus_later');
+  assert.equal(ben.main.querySelectorAll('[data-job="walk_gus"]').length, 0, 'another estimator\'s walkthrough never shows');
+  const eli = await page({ respond: url => answer('eli', url), hint: { user: 'eli.team', capabilities: ['schedule.view'] } });
+  assert.equal(eli.main.querySelectorAll('[data-type="walkthrough"]').length, 0, 'every crew is crew work; walkthroughs stay with their estimator');
 });
 
 test('This week reads seven days from today, shows each day, and is remembered on this phone', async () => {
@@ -145,7 +167,7 @@ test('the page is a gated staff page that loads its own versioned script and the
   for (const path of ['/crew/schedule', '/crew/schedule.html', '/crew/schedule.js']) assert.equal(staffGatedPath(path), true, path);
   assert.match(html, /<meta name="robots" content="noindex,nofollow">/);
   assert.match(html, /<link rel="stylesheet" href="\/crew\/crew-brand\.css\?v=[^"]+">/);
-  assert.match(html, /<script src="\/crew\/hub-auth\.js\?v=[^"]+" defer><\/script>\n<script src="\/crew\/schedule\.js\?v=20261017crewschedule" defer><\/script>/);
+  assert.match(html, /<script src="\/crew\/hub-auth\.js\?v=[^"]+" defer><\/script>\n<script src="\/crew\/schedule\.js\?v=20261017hubboard" defer><\/script>/);
   assert.match(html, /<main id="schedule-main">/);
   assert.match(html, /\.job-row\{[^}]*min-height:64px/);
   assert.match(html, /:is\(\.seg,\.chips\) button:focus-visible/);

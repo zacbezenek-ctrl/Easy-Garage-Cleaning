@@ -118,7 +118,11 @@ async function save(job,previous={},options={}){
       changes.assignedCrew=ids(job,data.roster);
       if(changes.crewLead){const lead=ids({assignedCrew:[changes.crewLead]},data.roster)[0];changes.crewLead=lead;}
     }
-    return{action:previous?.id?'schedule.update':'schedule.create',requestId:crypto.randomUUID(),...(previous?.id?{jobId:previous.id,expectedRevision:data.job.revision}:{kind:draft.kind,...(customerId?{customerId}:{}),...(draft.sourceTemplateJobId?{sourceTemplateJobId:draft.sourceTemplateJobId}:{}),...(!draft.sourceTemplateJobId&&draft.sourceWalkthroughId?{sourceWalkthroughId:draft.sourceWalkthroughId}:{})}),changes};
+    // EGC_DISPATCH_CREW_AUTO_ASSIGN (Dispatch reports crewAutoAssign): a service job saved with nobody chosen is staffed
+    // by the server with the first free crew (Crew 1, then Crew 2; Saturdays and Sundays the weekend crew), as the Hub's
+    // own job form and Any crew openings do. Walkthroughs, blocks and chosen people never ask; flag off, nothing changes.
+    const autoCrew=data.crewAutoAssign===true&&draft.kind==='job'&&!changes.assignedCrew.length&&!changes.crewId;
+    return{action:previous?.id?'schedule.update':'schedule.create',requestId:crypto.randomUUID(),...(previous?.id?{jobId:previous.id,expectedRevision:data.job.revision}:{kind:draft.kind,...(customerId?{customerId}:{}),...(draft.sourceTemplateJobId?{sourceTemplateJobId:draft.sourceTemplateJobId}:{}),...(!draft.sourceTemplateJobId&&draft.sourceWalkthroughId?{sourceWalkthroughId:draft.sourceWalkthroughId}:{})}),changes,...(autoCrew?{autoCrew:true}:{})};
   });
 }
 async function cancel(job,reason,options={}){
