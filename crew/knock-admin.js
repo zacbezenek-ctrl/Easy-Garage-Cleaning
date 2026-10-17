@@ -262,8 +262,10 @@ async function assignCard(n, data, run) {
         invalidate('territory'); invalidate('coverage'); app.render();
       } }, 'Save assignment'),
     ] : h('p', { class: 'muted' }, 'Approve a rep first.'),
+    // A rep's own claim (source 'self') or an admin's assignment; Remove ends either.
     assigned.length ? h('div', { class: 'list list--boxed' }, assigned.map(a => h('div', { class: 'list-row list-row--static' },
-      h('span', { class: 'list-row__main' }, h('span', { class: 'list-row__title' }, repName(a.repKey)), h('span', { class: 'list-row__sub' }, a.street ? titleStreet(a.street) : 'Whole neighborhood')),
+      h('span', { class: 'list-row__main' }, h('span', { class: 'list-row__title' }, repName(a.repKey)),
+        h('span', { class: 'list-row__sub' }, `${a.street ? titleStreet(a.street) : 'Whole neighborhood'} · ${a.source === 'self' ? 'Self-picked' : 'Assigned by admin'}`)),
       h('button', { type: 'button', class: 'btn btn--danger btn--sm', onclick: () => run({ action: 'assignment.set', repKey: a.repKey, neighborhoodId: a.neighborhoodId, street: a.street, active: false }, 'Unassigned') }, 'Remove'))))
       : h('p', { class: 'caption muted' }, 'Nobody is assigned here yet.'));
 }
@@ -728,6 +730,9 @@ async function settingsSection() {
         card('Go-backs',
           h('div', { class: 'fields-2' }, row('Tries per house, per season', num('goBacks.maxAttemptsPerSeason', { step: '1' })), row('"Not interested" rests for', num('goBacks.notInterestedRestMonths', { unit: 'months', step: '1' }))),
           row('Season starts on (MM-DD)', text('goBacks.seasonStart', { placeholder: '01-01' }))),
+        card('Territory',
+          toggle('territory.selfClaim', 'Reps may claim open neighborhoods themselves'),
+          row('Neighborhoods a rep may claim at once', num('territory.maxSelfClaims', { step: '1' }), 'One rep per neighborhood. Holds, Premium clearance and town rules still apply; you can remove any claim on the Territory screen.')),
         card('Integrations',
           h('div', { class: 'field' }, h('span', { class: 'label' }, 'Deposit links'), segFor('integrations.deposit', [['manual', 'By hand'], ['stripe', 'Stripe']], 'Deposit links')),
           h('div', { class: 'field' }, h('span', { class: 'label' }, 'Customer texts'), segFor('integrations.text', [['manual', 'By hand'], ['highlevel', 'HighLevel']], 'Customer texts')),

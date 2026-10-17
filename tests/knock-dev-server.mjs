@@ -35,6 +35,15 @@ export function previewSeed({ houses = null } = {}) {
   const seed = {};
   for (const doc of seedNeighborhoodDocs(nowIso)) seed[`knock_neighborhoods/${doc.id}`] = doc;
   Object.assign(seed, houses || syntheticHouses());
+  if (!houses) {
+    // Two open neighborhoods nobody holds, south of English Ranch, for Choose area and "near me".
+    // They have no stored center: the server places them from their houses on first use.
+    Object.assign(seed, syntheticHouses('ridgewood-hills', { base: [40.5212, -105.0611], streets: ['SYNTHETIC RIDGE DR', 'SAMPLE HILL CT'], perSide: 6 }),
+      syntheticHouses('harvest-park', { base: [40.4975, -105.0158], streets: ['PREVIEW PARK LN'], perSide: 5 }));
+    seed['knock_neighborhoods/english-ranch'].importedCount = 48;
+    seed['knock_neighborhoods/ridgewood-hills'].importedCount = 24;
+    seed['knock_neighborhoods/harvest-park'].importedCount = 10;
+  }
   seed['knock_reps/zacb'] = { repKey: 'zacb', username: 'ZacB', displayName: 'Zac', role: 'admin', status: 'active', permitListed: true, premiumCleared: true, leadKey: '', trainingMinutes: 0, createdAt: nowIso };
   seed['knock_reps/rep.one'] = { repKey: 'rep.one', username: 'Rep.One', displayName: 'Rep One', role: 'knocker', status: 'active', permitListed: true, premiumCleared: false, leadKey: 'lead.one', trainingMinutes: 120, createdAt: nowIso, approvedAt: nowIso };
   seed['knock_reps/rep.two'] = { repKey: 'rep.two', username: 'Rep.Two', displayName: 'Rep Two', role: 'knocker', status: 'pending', permitListed: false, premiumCleared: false, leadKey: '', trainingMinutes: 0, createdAt: nowIso };

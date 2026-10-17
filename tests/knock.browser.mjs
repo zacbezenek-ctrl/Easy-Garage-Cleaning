@@ -162,9 +162,82 @@ try {
   await admin.getByRole('heading', { name: 'Record walkthrough setter', exact: true }).waitFor();
   assert.match(await admin.locator('#knock-main').textContent(), /booking or no-show earns nothing/);
 
+  // 6. Territory map and GPS: a newly approved rep with nothing yet sees why the map is empty, picks
+  //    the nearest open neighborhood (sorted by the phone's GPS), its houses download and drive the
+  //    knock screen and the map's "nearest", and releasing it frees it again. Tiles are stubbed.
+  const approved = await admin.evaluate(async () => (await fetch('/api/knock-admin', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ action: 'rep.update', repKey: 'rep.two', changes: { status: 'active', permitListed: true } }) })).json());
+  assert.equal(approved.ok, true, JSON.stringify(approved));
+  const tile = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNkYAAAAAYAAjCB0C8AAAAASUVORK5CYII=', 'base64');
+  // Standing on English Ranch (taken by other reps): Ridgewood Hills is about 2.7 mi away, Harvest Park farther.
+  const geoContext = await browser.newContext({ ...phone, serviceWorkers: 'block', geolocation: { latitude: 40.5556, longitude: -105.0362, accuracy: 12 }, permissions: ['geolocation'] });
+  await geoContext.clock.install({ time: T0 + (Date.now() - startedAt) });
+  await geoContext.route(/tile\.openstreetmap\.org/, route => route.fulfill({ status: 200, contentType: 'image/png', body: tile }));
+  const geo = await geoContext.newPage();
+  geo.on('pageerror', error => errors.push(String(error)));
+  await signIn(geo, server.base, 'Rep.Two');
+  await geo.getByText('No neighborhood yet', { exact: true }).waitFor();
+  await geo.goto(`${server.base}/crew/knock.html#map`);
+  await geo.locator('.leaflet-container').waitFor();
+  const overlay = geo.locator('.map__empty');
+  await overlay.getByText('No neighborhood yet', { exact: true }).waitFor();
+  assert.equal(await geo.locator('.map__banner').count(), 0, 'location is allowed: no location banner');
+  await overlay.getByRole('link', { name: 'Choose an area' }).click();
+  await geo.getByRole('button', { name: 'Claim Ridgewood Hills', exact: true }).waitFor();
+  await geo.waitForFunction(() => /mi away/.test(document.querySelector('[data-area]')?.textContent || ''));
+  assert.deepEqual(await geo.locator('[data-area]').evaluateAll(rows => rows.map(row => row.dataset.area)), ['ridgewood-hills', 'harvest-park'], 'nearest open neighborhood first');
+  assert.match(await geo.locator('[data-area="ridgewood-hills"]').textContent(), /2\.\d mi away · 24 houses/);
+  assert.match(await geo.locator('#knock-main').textContent(), /Not shown: 1 taken by other reps/);
+  assert.equal(/Rep One|Lead One/.test(await geo.locator('#knock-main').textContent()), false, 'other reps are never named');
+  await geo.getByRole('button', { name: 'Claim Ridgewood Hills', exact: true }).click();
+  const mine = geo.locator('[data-area="ridgewood-hills"]', { hasText: 'You picked' });
+  await mine.getByText('Working', { exact: true }).waitFor();
+  await geo.waitForFunction(() => document.getElementById('knock-sync')?.textContent === 'Synced');
+  assert.match(await mine.textContent(), /24 houses/, 'the claimed neighborhood\'s houses downloaded');
+  await geo.goto(`${server.base}/crew/knock.html#map`);
+  await geo.locator('.leaflet-container').waitFor();
+  await geo.waitForFunction(() => /Knock nearest · \d+ (Synthetic Ridge Dr|Sample Hill Ct) · [\d.]+ km/.test(document.querySelector('.map__nearest')?.textContent || ''));
+  assert.equal(await geo.locator('.map__empty').count(), 0, 'nothing to explain once houses are on the phone');
+  await geo.goto(`${server.base}/crew/knock.html#knock`);
+  await geo.getByRole('button', { name: 'Start shift', exact: true }).click();
+  await geo.getByRole('button', { name: 'No answer', exact: true }).waitFor();
+  assert.match(await address(geo).textContent(), /Synthetic Ridge Dr|Sample Hill Ct/, 'the working area drives the suggested house');
+  await geo.waitForFunction(() => document.getElementById('knock-sync')?.textContent === 'Synced');
+  await geo.goto(`${server.base}/crew/knock.html#areas`);
+  await geo.locator('[data-area="ridgewood-hills"]').getByRole('button', { name: 'Release', exact: true }).click();
+  await geo.locator('dialog.sheet').getByRole('button', { name: 'Release', exact: true }).click();
+  await geo.getByRole('button', { name: 'Claim Ridgewood Hills', exact: true }).waitFor();
+  assert.equal(await geo.locator('[data-area="ridgewood-hills"]', { hasText: 'You picked' }).count(), 0, 'released');
+
+  // Location refused: Home and the map say so and how to fix it; the map still opens on the territory.
+  const deniedContext = await browser.newContext({ ...phone, serviceWorkers: 'block' });
+  await deniedContext.clock.install({ time: T0 + (Date.now() - startedAt) });
+  await deniedContext.route(/tile\.openstreetmap\.org/, route => route.fulfill({ status: 200, contentType: 'image/png', body: tile }));
+  await deniedContext.addInitScript(() => {
+    navigator.geolocation.watchPosition = (_ok, fail) => { setTimeout(() => fail({ code: 1, message: 'User denied Geolocation' }), 20); return 7; };
+    navigator.geolocation.clearWatch = () => {};
+  });
+  const denied = await deniedContext.newPage();
+  denied.on('pageerror', error => errors.push(String(error)));
+  await signIn(denied, server.base, 'Lead.One');
+  await denied.locator('.banner', { hasText: 'Location is off for EGC Knock' }).getByRole('button', { name: 'Try again', exact: true }).waitFor();
+  await denied.goto(`${server.base}/crew/knock.html#map`);
+  await denied.locator('.map__banner .banner', { hasText: 'Allow location for this site' }).waitFor();
+  await denied.locator('.leaflet-container').waitFor();
+  await denied.waitForFunction(() => document.querySelector('.map__nearest')?.textContent === 'Location is off · open Knock');
+  // Without GPS the map opens fitted to the territory's houses (street level), not on the town at zoom 13.
+  await denied.waitForFunction(() => document.querySelector('.leaflet-tile[src]'));
+  const zoom = await denied.evaluate(() => Math.max(...[...document.querySelectorAll('.leaflet-tile[src]')].map(img => Number(new URL(img.src).pathname.split('/')[1]))));
+  assert.ok(zoom >= 16, `the map opens on the territory (zoom ${zoom})`);
+  assert.ok(await denied.locator('.leaflet-overlay-pane canvas, .map-pin').count() > 0, 'the houses are drawn');
+  for (const width of [320, 390]) {
+    await geo.setViewportSize({ width, height: 844 });
+    assert.equal(await geo.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true, `Choose area fits ${width}px`);
+  }
+
   assert.deepEqual(errors, [], 'no page errors');
   assert.deepEqual(server.serverErrors, [], 'no server errors');
-  console.log(`knock browser smoke test passed (${server.mode} Firestore): 5 offline doors synced and visible to the admin.`);
+  console.log(`knock browser smoke test passed (${server.mode} Firestore): 5 offline doors synced and visible to the admin; GPS map, Choose area claim and release work.`);
 } finally {
   await browser.close();
   await server.close();

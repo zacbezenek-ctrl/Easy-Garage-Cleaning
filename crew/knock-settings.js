@@ -101,6 +101,12 @@ export const DEFAULT_SETTINGS = Object.freeze({
     attribution: '&copy; OpenStreetMap contributors',
     maxZoom: 19,
   },
+  // Reps may claim open neighborhoods themselves (one rep per neighborhood) until they release it
+  // or an admin removes it. Holds, Premium clearance and town rules still lock a neighborhood.
+  territory: {
+    selfClaim: true,
+    maxSelfClaims: 2,
+  },
   integrations: {
     // 'manual' keeps every hand-off on the admin screen. 'stripe' / 'highlevel' are used only when
     // the server also has STRIPE_SECRET_KEY / the HighLevel key and location configured.
@@ -166,6 +172,12 @@ export function validateSettings(settings) {
   if (!TIME.test(settings?.sale?.defaultJobStartTime || '')) problems.push('sale.defaultJobStartTime must be HH:MM');
   if (!Array.isArray(settings?.sale?.extraHolidays) || settings.sale.extraHolidays.some(d => !/^\d{4}-\d{2}-\d{2}$/.test(d))) problems.push('sale.extraHolidays must be a list of YYYY-MM-DD dates');
   if (typeof settings?.map?.tileUrl !== 'string' || !/^https:\/\/[^\s]+\{z\}[^\s]*\{x\}[^\s]*\{y\}/.test(settings.map.tileUrl)) problems.push('map.tileUrl must be an https URL with {z}, {x} and {y}');
+  // A copy saved before territory settings existed takes their defaults (mergeSettings fills them in).
+  const territory = settings?.territory;
+  if (territory !== undefined) {
+    if (typeof territory?.selfClaim !== 'boolean') problems.push('territory.selfClaim must be true or false');
+    if (!(Number.isInteger(territory?.maxSelfClaims) && territory.maxSelfClaims >= 1 && territory.maxSelfClaims <= 10)) problems.push('territory.maxSelfClaims must be a whole number from 1 to 10');
+  }
   for (const key of ['deposit', 'text', 'job']) {
     const allowed = { deposit: ['manual', 'stripe'], text: ['manual', 'highlevel'], job: ['manual'] }[key];
     if (!allowed.includes(settings?.integrations?.[key])) problems.push(`integrations.${key} must be one of ${allowed.join(', ')}`);

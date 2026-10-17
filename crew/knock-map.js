@@ -2,12 +2,14 @@
    position and the nearest house not yet knocked. Leaflet (bundled as crew/knock-leaflet.*) loads on
    first open. Tiles come from settings.map.tileUrl and need signal; the houses and colors work offline.
    Zoomed out, houses are small canvas dots; at street level the houses on screen become lettered
-   dots (N, C, X, L, $, S) so color is never the only signal. */
+   dots (N, C, X, L, $, S) so color is never the only signal. It opens fitted to the rep's territory
+   (the working area when one is chosen) and moves to the rep at the first GPS fix unless they already
+   moved the map. With nothing to show, an overlay says why and what fixes it. */
 import { h, mount, toast, icon, dot, distanceLabel, OUTCOME_DOT } from './knock-ui.js';
-import { houseLabel, nearestSuggestion } from './knock-doors.js';
+import { distanceMeters, houseLabel, nearestSuggestion } from './knock-doors.js';
 import { OUTCOME_LABELS } from './knock-settings.js';
 import { formatClock, zonedDate } from './knock-time.js';
-import { colorFor, dotKind, houseEntries, selectHouse, statusText } from './knock-rep.js';
+import { colorFor, dotKind, houseEntries, selectHouse, statusText, suggestionEntries, workingNeighborhood } from './knock-rep.js';
 
 let app;
 let L = null;
@@ -18,10 +20,45 @@ let tileUrl = '';
 let canvasLayer = null, pinLayer = null;
 const circles = new Map(), pins = new Map();
 let gpsDot = null, gpsRing = null, suggestion = null, fitted = false, refresher = 0;
+// gpsCentered: the map has moved to the rep's first fix; userMoved: the rep panned or zoomed it.
+let gpsCentered = false, userMoved = false, fittedArea = '';
 let cardHouseId = null;
 let cardBox = null;
 // Houses sit 15-25 m apart: about 35-55 px at zoom 18, where lettered dots have room.
 const STREET_ZOOM = 18;
+// A first fix farther than this from the territory (at home, at the office) leaves the map on the territory.
+const NEAR_TERRITORY_METERS = 40000;
+
+/* The rep's territory on the map: the working area's houses, else every house on the phone, else the
+   neighborhoods' own boxes or centers (claimed or assigned, houses not downloaded yet). */
+function territoryBounds(entries, { area = true } = {}) {
+  const working = area ? workingNeighborhood() : null;
+  const scoped = working ? entries.filter(e => e.house.n === working.id) : [];
+  const points = (scoped.length ? scoped : entries).map(e => [e.house.lat, e.house.lng]);
+  if (!points.length) {
+    for (const n of app.S.territory.neighborhoods) {
+      if (Array.isArray(n.bbox) && n.bbox.length === 4) points.push([n.bbox[0], n.bbox[1]], [n.bbox[2], n.bbox[3]]);
+      else if (n.center) points.push([n.center.lat, n.center.lng]);
+    }
+  }
+  return points.length ? L.latLngBounds(points) : null;
+}
+
+function fitTerritory(bounds) {
+  // Clear of the controls on the right and the Knock nearest button at the bottom.
+  map.fitBounds(bounds, { paddingTopLeft: [24, 24], paddingBottomRight: [96, 104], maxZoom: STREET_ZOOM });
+}
+
+// Where the rep is relative to the territory: on it (street level on the rep) or near it (both in
+// view). Far away, the map does not move and this returns false.
+function showRep(position, bounds) {
+  const at = [position.lat, position.lng];
+  if (!bounds || bounds.pad(0.25).contains(at)) { map.setView(at, STREET_ZOOM); return true; }
+  const center = bounds.getCenter();
+  if (distanceMeters(position, { lat: center.lat, lng: center.lng }) >= NEAR_TERRITORY_METERS) return false;
+  fitTerritory(L.latLngBounds([at]).extend(bounds));
+  return true;
+}
 
 function loadLeaflet() {
   if (globalThis.L) return Promise.resolve(globalThis.L);
@@ -46,6 +83,10 @@ async function ensureMap() {
     map.attributionControl.setPrefix('');
     canvasLayer = L.layerGroup().addTo(map);
     pinLayer = L.layerGroup().addTo(map);
+    // A finger or wheel on the map is the rep moving it (Leaflet's own zoom events fire for code moves too).
+    const touched = () => { if (fitted) userMoved = true; };
+    container.addEventListener('pointerdown', touched, { passive: true });
+    container.addEventListener('wheel', touched, { passive: true });
     map.on('zoomend moveend', () => updateMarkers());
     map.on('click', () => { if (cardHouseId) { cardHouseId = null; renderCard(); } });
   }
@@ -98,14 +139,27 @@ function updateMarkers() {
   const selected = cardHouseId || app.S.ui.houseId;
   const position = app.S.position;
   if (!fitted) {
-    // The map needs a view before any marker is drawn. Open on the rep (or the selected house)
-    // at street level; "Whole territory" zooms out.
+    // The map needs a view before any marker is drawn: the rep when GPS already has them, the house
+    // they are working on during a shift, else the whole territory; the town only with nothing at all.
     fitted = true;
-    const anchor = entries.find(e => e.house.id === selected) || entries[0];
+    fittedArea = workingNeighborhood()?.id || '';
+    const bounds = territoryBounds(entries);
+    const anchor = entries.find(e => e.house.id === cardHouseId) || (app.currentShift() ? entries.find(e => e.house.id === selected) : null);
     const city = app.cityRuleFor(null);
-    if (position) map.setView([position.lat, position.lng], STREET_ZOOM);
+    if (position) gpsCentered = true;
+    if (position && showRep(position, bounds)) { /* On the rep. */ }
     else if (anchor) map.setView([anchor.house.lat, anchor.house.lng], STREET_ZOOM);
+    else if (bounds) fitTerritory(bounds);
     else map.setView([city.latitude, city.longitude], 13);
+  } else if ((workingNeighborhood()?.id || '') !== fittedArea) {
+    // A new working area: show it, with the rep when they are in or near it.
+    fittedArea = workingNeighborhood()?.id || '';
+    const bounds = territoryBounds(entries);
+    if (bounds && !(position && showRep(position, bounds))) fitTerritory(bounds);
+  } else if (position && !gpsCentered && !userMoved) {
+    // The first GPS fix after the map opened.
+    gpsCentered = true;
+    showRep(position, territoryBounds(entries));
   }
   const zoom = map.getZoom();
   const street = zoom >= STREET_ZOOM;
@@ -162,7 +216,8 @@ function updateMarkers() {
       gpsDot.setLatLng(at); gpsRing.setLatLng(at); gpsRing.setRadius(position.accuracy || 20);
     }
   }
-  const near = nearestSuggestion(entries.filter(e => e.status.knockable), position);
+  // Nearest inside the working area while it has houses left (suggestionEntries), like the knock screen.
+  const near = nearestSuggestion(suggestionEntries(), position);
   if (near) {
     const at = [near.house.lat, near.house.lng];
     if (!suggestion) suggestion = L.circleMarker(at, { radius: 22, color: '#e8581c', weight: 4, fill: false, interactive: false }).addTo(map);
@@ -176,10 +231,13 @@ function mapScreen() {
   cardBox = h('div', { class: 'map__card', hidden: true, role: 'dialog', 'aria-label': 'House' });
   const nearest = h('button', { type: 'button', class: 'btn btn--primary map__nearest', disabled: true }, icon('door'), 'Loading the map…');
   const status = h('p', { class: 'sr-only', role: 'status' });
+  // Nothing to show (not approved, nothing claimed or assigned, all locked, no houses yet): say why.
+  const empty = app.territoryEmpty();
+  if (empty) nearest.hidden = true;
   clearInterval(refresher);
   const refresh = () => {
     const near = updateMarkers();
-    mount(nearest, icon('door'), near ? `Knock nearest · ${houseLabel(near.house)} · ${distanceLabel(near.meters)}` : app.S.position ? 'Every house near you is done' : 'Open the Knock screen');
+    mount(nearest, icon('door'), near ? `Knock nearest · ${houseLabel(near.house)} · ${distanceLabel(near.meters)}` : app.S.position ? 'Every house near you is done' : app.S.positionError?.code === 'denied' ? 'Location is off · open Knock' : 'Open the Knock screen');
     nearest.disabled = false;
     nearest.onclick = async () => {
       if (near) await selectHouse(near.house);
@@ -202,20 +260,24 @@ function mapScreen() {
     }
   });
   const legend = [['none', 'Not knocked'], ['no_answer', 'No answer'], ['come_back', 'Come back'], ['not_interested', 'Not interested'], ['look', 'Look'], ['sold', 'Sold'], ['blocked', 'Skipped / no-knock']];
+  const located = app.locationBanner();
   return h('div', { class: 'map-screen' },
+    located ? h('div', { class: 'map__banner' }, located) : null,
     h('div', { class: 'legend', 'aria-label': 'Legend' }, legend.map(([key, label]) => h('span', {}, dot(key), label))),
     h('div', { class: 'map' },
       container,
       h('div', { class: 'map__ctl' },
         h('button', { type: 'button', class: 'btn btn--secondary', onclick: () => {
           const p = app.S.position;
-          if (p && map) map.setView([p.lat, p.lng], 18);
-          else toast('Location isn\'t available yet', { tone: 'bad', sub: 'Allow location for this site.' });
+          if (p && map) { userMoved = true; map.setView([p.lat, p.lng], STREET_ZOOM); }
+          else if (app.S.positionError?.code === 'denied') toast('Location is off for EGC Knock', { tone: 'bad', sub: 'Allow location for this site in your browser or phone settings.' });
+          else { app.startLocation(); toast('Finding your location…', { sub: 'This takes a few seconds outside.' }); }
         } }, icon('crosshair'), 'Center on me'),
         h('button', { type: 'button', class: 'btn btn--secondary', onclick: () => {
-          const points = houseEntries().filter(e => Number.isFinite(e.house.lat)).map(e => [e.house.lat, e.house.lng]);
-          if (map && points.length) map.fitBounds(L.latLngBounds(points), { padding: [24, 24] });
+          const bounds = map && territoryBounds(houseEntries().filter(e => Number.isFinite(e.house.lat) && Number.isFinite(e.house.lng)), { area: false });
+          if (bounds) { userMoved = true; fitTerritory(bounds); }
         } }, icon('map'), 'Whole territory')),
+      empty ? h('div', { class: 'map__empty' }, empty) : null,
       cardBox, nearest, status));
 }
 

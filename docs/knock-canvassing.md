@@ -129,6 +129,18 @@ Check those county keys before opening them.
 log only what is assigned to them. **Premium** neighborhoods need a rep cleared for Premium; **Hold**
 neighborhoods, and any neighborhood whose town has no rule in settings, are locked for everyone.
 
+**Reps choosing their own area:** with Settings > Territory "Reps may claim open neighborhoods" on (the
+default; `settings.territory.selfClaim`), a rep opens **Choose area** (Home or More) and sees their areas and
+the open neighborhoods they may claim, nearest first by the phone's GPS ("2.6 mi away", from the
+neighborhood's center, else its bbox, else its houses). A claim is a whole neighborhood, one rep per
+neighborhood, at most `settings.territory.maxSelfClaims` (default 2) at once; holds, Premium clearance, town
+rules and neighborhoods with no imported houses stay unclaimable, and other reps are never named. A claim
+lasts until the rep releases it or an admin removes it (Admin > Territory labels it "Self-picked"; an admin
+assignment of the same neighborhood replaces it). Claiming and releasing need signal; a release is blocked on
+the phone while doors there have not synced, and the server still accepts a door logged before the release
+but refuses one logged after it. The chosen area ("Work here") drives the knock screen's suggested house and
+the map's "Knock nearest". A neighborhood with no stored center is placed once from a sample of its houses.
+
 **No-knock list:** paste the City's no-solicitation addresses into Admin > Territory > No-knock list,
 **Preview**, then **Apply**. Reps flag a no-soliciting sign with **Skipped (sign)**. Either way the house
 never shows as knockable again (an admin can clear a City entry; a rep's sign is cleared only by undoing it).
@@ -144,7 +156,11 @@ per neighborhood and per street.
   app moves to the next house on the street (same side, then back along the other side). **Undo** and **Edit**
   the last door. Knocks are append-only: undo and edit are new records, never changes.
 * **Map and list views** color each house by its latest outcome, show the rep's GPS position and the nearest
-  house not yet knocked. Map tiles need signal; the list and the colors work offline.
+  house not yet knocked. Map tiles need signal; the list and the colors work offline. GPS starts with the
+  app (not only the Knock screen) and pauses while the app is hidden; a refused or missing location shows a
+  banner with the fix. The map opens on the rep's territory (or chosen area), moves to the rep at the first
+  fix, and when nothing can show it says why (not approved, nothing claimed or assigned, all locked, no
+  houses yet) with the button that fixes it.
 * **Go-backs:** a house whose last outcome is No answer or Come back, up to 3 tries a season, with a
   suggestion to try a different time of day. Not interested rests for 6 months.
 * **Offline:** the app opens from the phone's own copy, queues every tap in IndexedDB and syncs in order when
