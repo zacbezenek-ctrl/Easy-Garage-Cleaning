@@ -2,7 +2,7 @@
    offline reloads. API responses, customer data and non-GET requests are never
    intercepted or cached; queued work lives in the explicit field outbox. */
 'use strict';
-const VERSION = '20261017territory';
+const VERSION = '20261017crewschedule';
 const CACHE_PREFIX = 'egc-crew-shell-';
 const CACHE = `${CACHE_PREFIX}${VERSION}`;
 const CONFIG = '/crew/sw-config.json';
@@ -17,6 +17,10 @@ ASSETS.push('/crew/knock.css?v=20261017territory', '/crew/knock-app.js?v=2026101
   '/crew/knock-ui.js', '/crew/knock-outbox.js', '/crew/knock-settings.js', '/crew/knock-time.js', '/crew/knock-doors.js',
   '/crew/knock-stats.js', '/crew/knock-money.js', '/crew/knock-sale-rules.js', '/crew/knock-rep.js', '/crew/knock-sale.js', '/crew/knock-native-form.js', '/crew/knock-stats-ui.js', '/crew/knock-areas.js', '/crew/knock-map.js',
   '/crew/knock-leaflet.js?v=1.9.4', '/crew/knock-leaflet.css?v=1.9.4');
+// CREW-SCHEDULE: the crew schedule page (crew/schedule.html) and its script. The schedule itself is /api data, which this
+// worker never stores, so offline the page says it needs a connection instead of showing the generic offline page.
+Object.assign(PAGES, { '/crew/schedule.html': '/crew/schedule.html', '/crew/schedule': '/crew/schedule.html' });
+ASSETS.push('/crew/schedule.js?v=20261017crewschedule');
 const ASSET_PATHS = new Set(ASSETS.map(asset => asset.split('?')[0]));
 // With EGC_STAFF_PAGE_GATE=on the edge refuses the job page and its files without a Hub session (staff-paths.js). Every
 // install needs this public part; the rest is cached when the install, or a later signed-in load, receives it.

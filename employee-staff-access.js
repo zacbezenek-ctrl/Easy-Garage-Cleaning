@@ -7,7 +7,7 @@
 'use strict';
 if(window.EGCStaffAccess)return;
 const API='/api/employee-accounts',DIRECTORY='/api/staff-directory',PENDING='egc.hub.pending.v1.staffaccess.',TIMEOUT=30000,TZ='America/Denver';
-const ROLE_LABEL={manager:'Manager',crew_lead:'Crew lead',crew:'Crew',sales:'Sales · walkthroughs',phone:'Phone · calls and follow-ups'};
+const ROLE_LABEL={manager:'Manager',team_lead:'Team lead · sees every crew',crew_lead:'Crew lead',crew:'Crew',sales:'Sales · walkthroughs',phone:'Phone · calls and follow-ups'};
 const UUID=/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i,CODE=/^[A-Za-z][A-Za-z0-9_]{1,80}$/,DATE=/^\d{4}-\d{2}-\d{2}$/;
 const S={host:null,root:null,slot:null,ctx:null,generation:0,busy:false,dirty:false,dialog:null};
 

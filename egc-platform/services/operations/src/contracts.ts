@@ -17,7 +17,7 @@ export const timeZone = z.string().min(1).max(100).refine(value => {
 }, "Use an IANA timezone");
 export const actorSchema = z.object({
   id: z.string().min(1).max(200),
-  role: z.enum(["owner", "manager", "sales", "crew_lead", "crew", "integration"]),
+  role: z.enum(["owner", "manager", "sales", "team_lead", "crew_lead", "crew", "integration"]),
   workspace: z.string().min(1).max(100),
   kind: z.enum(["human", "integration"])
 }).strict();
@@ -25,7 +25,8 @@ export type Actor = z.infer<typeof actorSchema>;
 // A Hub user on whose behalf an MCP OAuth grant acts. The actor stays an integration;
 // the delegate only narrows what that grant may do. The assertion is the Hub-signed
 // grant (service-auth verifyMcpGrant), so a receiver need not trust the MCP's word.
-export const DELEGATE_ROLES = ["owner", "manager", "sales", "crew_lead", "crew"] as const;
+// team_lead (Hub TEAM-LEAD, 2026-10-17) mirrors the Hub session roles; like crew_lead it is never a business role here.
+export const DELEGATE_ROLES = ["owner", "manager", "sales", "team_lead", "crew_lead", "crew"] as const;
 export const delegateSchema = z.object({
   user: z.string().regex(/^[a-z0-9][a-z0-9_.@-]{0,119}$/),
   role: z.enum(DELEGATE_ROLES),

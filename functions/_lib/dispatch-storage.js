@@ -19,6 +19,8 @@ const ROOT = 'projects/egcw-1ec83/databases/(default)/documents';
 const BASE = `https://firestore.googleapis.com/v1/${ROOT}`;
 const failure = (code, message, status = 503) => Object.assign(new Error(message), { code, status });
 const CUSTOMER_FIELDS = ['name','firstName','lastName','phone','email','address','highlevelContactId'];
+// A crew record as the crew schedule reads it; priority, code and serviceDays are the crew registry v2 fields (D3).
+const CREW_RESOURCE_FIELDS = ['recordType','name','memberIds','leadId','status','priority','code','serviceDays'];
 function decode(document,collection,id) {
   const prefix=`/documents/${collection}/`,name=document?.name;
   const path=typeof name==='string'&&name.includes(prefix)?name.slice(name.indexOf(prefix)+prefix.length):'';
@@ -44,10 +46,11 @@ export const JOB_FIELDS = Object.freeze(['type','recordType','date','time','endD
 
 /** Owner decision F19: the owner and managers are office staff and join assignment
  * lists only when they take field work, recorded as stored staffRoles that also
- * include crew or crew_lead (staffRoles in the Hub user configuration for configured
- * users, or the Team screen's roles for employee accounts). */
+ * include crew, crew_lead or team_lead (staffRoles in the Hub user configuration for
+ * configured users, or the Team screen's roles for employee accounts). */
+const FIELD_ROLES = Object.freeze(['team_lead', 'crew_lead', 'crew']);
 export function officeOnly(role, roles) {
-  return ['owner', 'manager'].includes(role) && !(Array.isArray(roles) && roles.some(value => value === 'crew' || value === 'crew_lead'));
+  return ['owner', 'manager'].includes(role) && !(Array.isArray(roles) && roles.some(value => FIELD_ROLES.includes(value)));
 }
 
 // Roles come from stored staff roles (configuration or the encrypted account), else the
@@ -122,6 +125,32 @@ export function dispatchStorage(env, fetcher = firestoreFetch) {
     return response.json().catch(() => null);
   }
   const query = (collection, fields, limit) => spec => pagedQuery({ post: body => post('runQuery', body), decode: document => decode(document, collection), collection, spec, fields, limit });
+  // CREW-SCHEDULE: every jobs row whose start date is in [startDate,endDate], one bounded range on the single field
+  // `date` (no composite index), masked to `fields` and fully paginated. A malformed page, a row outside the range,
+  // a repeated row or more than `limit` rows fails closed; a partial schedule is never returned.
+  async function datedJobs(startDate, endDate, fields, limit = 5000) {
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(startDate) || !/^\d{4}-\d{2}-\d{2}$/.test(endDate) || endDate < startDate) throw failure('dispatch_range_invalid', 'Choose a valid date range.', 400);
+    if (!Array.isArray(fields) || !fields.length || !fields.includes('date')) throw failure('dispatch_storage_mask_required', 'A dated jobs query must name the fields it reads, including date.');
+    const field = { fieldPath: 'date' }, bound = (op, stringValue) => ({ fieldFilter: { field, op, value: { stringValue } } });
+    const rows = [], ids = new Set();
+    let after = null;
+    for (let page = 0; page <= Math.ceil(limit / 500); page++) {
+      const results = await post('runQuery', { structuredQuery: { from: [{ collectionId: 'jobs' }], select: { fields: fields.map(fieldPath => ({ fieldPath })) },
+        where: { compositeFilter: { op: 'AND', filters: [bound('GREATER_THAN_OR_EQUAL', startDate), bound('LESS_THAN_OR_EQUAL', endDate)] } },
+        orderBy: [{ field, direction: 'ASCENDING' }, { field: { fieldPath: '__name__' }, direction: 'ASCENDING' }], limit: 500,
+        ...(after ? { startAt: { values: [{ stringValue: after.date }, { referenceValue: after.name }], before: false } } : {}) } });
+      if (!Array.isArray(results) || results.some(result => !result || typeof result !== 'object' || Array.isArray(result)) || !results.some(result => result.document !== undefined || typeof result.readTime === 'string' && result.readTime)) throw failure('dispatch_storage_incomplete', 'The schedule query returned an incomplete answer. Retry.');
+      const documents = results.filter(result => result.document !== undefined).map(result => result.document);
+      for (const document of documents) {
+        const row = decode(document, 'jobs');
+        if (ids.has(row.id) || rows.length >= limit || typeof row.date !== 'string' || row.date < startDate || row.date > endDate) throw failure('dispatch_storage_incomplete', 'The schedule query could not be verified. Retry.');
+        ids.add(row.id); rows.push(row);
+      }
+      if (documents.length < 500) return rows;
+      after = { name: documents.at(-1).name, date: rows.at(-1).date };
+    }
+    throw failure('dispatch_storage_incomplete', 'The schedule query did not finish. Retry.');
+  }
   return {
     roster: () => dispatchRoster(env),
     jobs: () => scan('jobs', JOB_FIELDS),
@@ -132,6 +161,9 @@ export function dispatchStorage(env, fetcher = firestoreFetch) {
     // Every jobs row whose field equals value, whatever its dates (saveJobReads).
     jobsWhere: (field, value) => query('jobs', JOB_FIELDS)({ field, op: 'EQUAL', value }),
     customersByKey: key => query('customers', [...CUSTOMER_FIELDS, 'searchKeys'], 20000)({ field: 'searchKeys', op: 'ARRAY_CONTAINS', value: key }),
+    // CREW-SCHEDULE (functions/api/crew-schedule.js): the crew records alone, and the work dated in a bounded window.
+    crewResources: () => query('dispatchResources', CREW_RESOURCE_FIELDS, 2000)({ field: 'recordType', op: 'EQUAL', value: 'crew' }),
+    datedJobs,
     customerKeyCoverage: () => customerCoverage(async body => aggregateCount(await post('runAggregationQuery', body))),
     async customerRecords(fields) {
       if (!Array.isArray(fields) || !fields.length || fields.some(field => typeof field !== 'string' || !field)) throw failure('dispatch_storage_mask_required', 'A customers scan must name the fields it reads.');

@@ -30,7 +30,7 @@ describe("delegate in the MCP envelope",()=>{
 describe("authorizeDelegate",()=>{
   it("lets owner and manager delegates write and every delegate read",()=>{
     for(const role of ["owner","manager"] as const)expect(code(()=>authorizeDelegate({...actor,id:`mcp:u:${randomUUID()}`},create,{...delegate,user:"u",role}))).toBeNull();
-    for(const role of ["sales","crew_lead","crew"] as const){
+    for(const role of ["sales","team_lead","crew_lead","crew"] as const){
       expect(code(()=>authorizeDelegate({...actor,id:"mcp:u:x"},create,{...delegate,user:"u",role}))).toBe("delegate_write_forbidden");
       expect(code(()=>authorizeDelegate({...actor,id:"mcp:u:x"},{command:"status"},{...delegate,user:"u",role}))).toBeNull();
     }

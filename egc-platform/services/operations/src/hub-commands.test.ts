@@ -119,7 +119,7 @@ describe("FUN-37 funnel feed commands",()=>{
    denied(()=>authorize(sales,commandSchema.parse({command:name,...body}),"egc"),"hub_role_forbidden");
    denied(()=>authorize(worker,commandSchema.parse({command:name,...body}),"egc"),"hub_delegate_required");
    expect(()=>authorize(worker,commandSchema.parse({command:name,...body,delegate:"zacb"}),"egc")).not.toThrow();
-   for(const role of ["crew","crew_lead"] as const)denied(()=>authorize({...owner,role},commandSchema.parse({command:name,...body}),"egc"),"role_forbidden");
+   for(const role of ["crew","crew_lead","team_lead"] as const)denied(()=>authorize({...owner,role},commandSchema.parse({command:name,...body}),"egc"),"role_forbidden");
   }
  });
  it("forwards a feed read unchanged to the Hub without touching PostgreSQL",async()=>{
@@ -160,7 +160,7 @@ describe("hub authorization through authorize()",()=>{
   denied(()=>authorize(integration,roster,"egc"),"hub_delegate_required");
   expect(()=>authorize(integration,commandSchema.parse({command:"hub.staff.roster",delegate:"tylerg"}),"egc")).not.toThrow();
   denied(()=>authorize(owner,commandSchema.parse({command:"hub.staff.roster",delegate:"tylerg"}),"egc"),"hub_delegate_not_allowed");
-  for(const role of ["crew","crew_lead"] as const)denied(()=>authorize({...owner,role},roster,"egc"),"role_forbidden");
+  for(const role of ["crew","crew_lead","team_lead"] as const)denied(()=>authorize({...owner,role},roster,"egc"),"role_forbidden");
  });
  it("refuses every integration write and requires explicit confirmation where the policy says so",()=>{
   const write:HubCommandPolicy={write:true,integrationAllowed:false,roles:["owner","manager"],ownerOnly:false,confirmRequired:true,revisioned:false};

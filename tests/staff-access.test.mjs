@@ -261,7 +261,7 @@ test('approval: the owner must set a role and a starting rate; a granted manager
   assert.equal((await get(h.accounts, h.env, '/api/employee-accounts', manager)).status, 403);
   const granted = { ...h.env, EGC_STAFF_MANAGER_GRANTS: 'accounts.approve' };
   const listed = await get(h.accounts, granted, '/api/employee-accounts', manager);
-  assert.equal(listed.status, 200); assert.deepEqual(listed.body.staffAccess, { setsPay: false, roles: ['crew_lead', 'crew', 'sales', 'phone'], resets: false });
+  assert.equal(listed.status, 200); assert.deepEqual(listed.body.staffAccess, { setsPay: false, roles: ['team_lead', 'crew_lead', 'crew', 'sales', 'phone'], resets: false });
   assert.ok(listed.body.accounts.length && listed.body.accounts.every(account => !('hourlyRate' in account) && !('payType' in account)), 'a granted manager never sees account pay');
   // The Team page reads the same list through /api/employee-hub?include=accounts: the grant opens it, still without pay.
   const hub = async env => { const response = await employeeHubGet({ env, request: jsonRequest('/api/employee-hub?include=accounts', undefined, manager) }); return { status: response.status, body: await response.json() }; };

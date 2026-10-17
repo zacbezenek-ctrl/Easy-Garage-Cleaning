@@ -129,11 +129,12 @@ function userRecord(env, username) {
     username: canonical,
     passwordHash: String(record.passwordHash || record.hash || ''),
     displayName: String(record.displayName || canonical),
-    role: ['owner', 'manager', 'sales', 'crew_lead', 'crew'].includes(role) ? role : 'crew',
+    role: ['owner', 'manager', 'sales', 'team_lead', 'crew_lead', 'crew'].includes(role) ? role : 'crew',
     payType: String(record.payType || 'hourly'),
     hourlyRate: Math.max(0, Number(record.hourlyRate || 0)),
-    // Optional staff directory roles for configured users; staff-roles.js sanitizes them.
-    ...(Array.isArray(record.staffRoles) ? { staffRoles: record.staffRoles.filter(value => typeof value === 'string').slice(0, 6) } : {}),
+    // Optional staff directory roles for configured users; staff-roles.js sanitizes them. The cap only bounds the
+    // stored list: it stays above the number of staff roles (7 with team_lead) so no real role is ever dropped.
+    ...(Array.isArray(record.staffRoles) ? { staffRoles: record.staffRoles.filter(value => typeof value === 'string').slice(0, 16) } : {}),
   };
 }
 

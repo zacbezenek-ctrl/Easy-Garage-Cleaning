@@ -1,0 +1,77 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="robots" content="noindex,nofollow">
+<meta name="theme-color" content="#13203a">
+<title>Crew schedule · Easy Garage Cleaning</title>
+<link rel="manifest" href="/crew/manifest.webmanifest">
+<link href="https://fonts.googleapis.com/css2?family=Oswald:wght@500;600;700&family=Inter:wght@400;500;600;700;800;900&display=swap" rel="stylesheet">
+<style>
+  :root{--navy:#13203a;--navy2:#1d2d4f;--orange:#e8581c;--orange2:#c4470f;--cream:#f2e9dc;--paper:#faf5ec;--khaki:#8a8170;--line:#d9cdb8;--r:16px}
+  *{margin:0;padding:0;box-sizing:border-box;-webkit-tap-highlight-color:transparent}
+  body{font-family:'Inter',system-ui,sans-serif;background:var(--cream);color:var(--navy);min-height:100dvh;display:flex;flex-direction:column}
+  #topbar{background:var(--navy);color:#fff;padding:max(env(safe-area-inset-top),14px) 20px 14px}
+  #topbar .row{display:flex;align-items:center;justify-content:space-between;max-width:720px;margin:0 auto}
+  #brand{font-family:'Oswald','Arial Narrow',system-ui,sans-serif;font-weight:700;font-size:15px;letter-spacing:.06em;color:#fff;text-decoration:none}
+  #brand span{color:var(--orange)}
+  #chip{font-family:'Oswald','Arial Narrow',system-ui,sans-serif;font-weight:600;font-size:12px;letter-spacing:.08em;background:var(--orange);padding:3px 10px;border-radius:99px;text-transform:uppercase}
+  main{flex:1;width:100%;max-width:720px;margin:0 auto;padding:28px 20px 40px}
+  .eyebrow{font-family:'Oswald','Arial Narrow',system-ui,sans-serif;font-weight:600;font-size:12px;letter-spacing:.12em;color:#b63a0b;text-transform:uppercase}
+  h1{font-family:'Oswald','Arial Narrow',system-ui,sans-serif;font-weight:700;font-size:clamp(30px,7vw,42px);text-transform:uppercase;line-height:1.04;margin:6px 0 8px}
+  .sub{font-size:15px;color:var(--khaki);font-weight:600;line-height:1.5;margin-bottom:18px}
+  .controls{display:grid;gap:10px;margin:0 0 18px}
+  .seg{display:inline-grid;grid-template-columns:1fr 1fr;background:var(--paper);border:1.5px solid var(--line);border-radius:12px;padding:3px;max-width:320px}
+  .seg button,.chips button{min-height:44px;border:0;border-radius:9px;background:transparent;color:var(--navy);font:800 13px 'Inter',system-ui,sans-serif;cursor:pointer;padding:0 14px}
+  .seg button[aria-pressed="true"]{background:var(--navy);color:#fff}
+  .chips{display:flex;flex-wrap:wrap;gap:7px}
+  .chips button{background:var(--paper);border:1.5px solid var(--line);border-radius:99px}
+  .chips button[aria-pressed="true"]{background:var(--orange);border-color:var(--orange);color:#fff}
+  button:disabled{opacity:.6;cursor:wait}
+  :is(.seg,.chips) button:focus-visible,.job-row:focus-visible,.btn:focus-visible,.link:focus-visible{outline:3px solid rgba(232,88,28,.35);outline-offset:2px}
+  .day{margin:0 0 22px}
+  .day h2{font-family:'Oswald','Arial Narrow',system-ui,sans-serif;font-size:21px;text-transform:uppercase;margin:0 0 10px;display:flex;align-items:baseline;gap:10px}
+  .day h2 small{font-family:'Inter',system-ui,sans-serif;font-size:11px;font-weight:800;letter-spacing:.08em;color:#fff;background:var(--orange2);padding:3px 8px;border-radius:99px}
+  .crew-block{margin:0 0 12px}
+  .crew-block h3{font-size:12px;font-weight:800;letter-spacing:.08em;text-transform:uppercase;color:var(--khaki);margin:0 0 7px}
+  .job-list{display:grid;gap:9px}
+  .job-row{display:grid;grid-template-columns:86px 1fr auto;gap:12px;align-items:center;background:var(--paper);border:1.5px solid var(--line);border-radius:14px;padding:13px;text-decoration:none;color:var(--navy);min-height:64px}
+  .job-row time{font-family:'Oswald','Arial Narrow',system-ui,sans-serif;font-weight:700;color:#b63a0b;text-transform:uppercase;font-size:15px;line-height:1.25}
+  .job-row time small{display:block;font-family:'Inter',system-ui,sans-serif;font-size:11px;font-weight:700;text-transform:none;color:var(--khaki);margin-top:3px}
+  .job-row .who{min-width:0;overflow-wrap:anywhere}.job-row strong,.job-row .who>small{display:block}.job-row .who>small{color:var(--khaki);margin-top:3px;font-size:13px;line-height:1.4}
+  .job-row b{color:var(--orange);font-size:20px}
+  .job-row.locked{background:#f6efe3;border-style:dashed}.job-row .lock-note{color:var(--khaki);font-size:11px;font-weight:700;text-align:right}
+  .badges{display:flex;flex-wrap:wrap;gap:5px;margin-top:6px}
+  .badge{display:inline-block;padding:3px 8px;border-radius:99px;background:#efe6d6;color:#5d5546;font-size:11.5px;font-style:normal;font-weight:800}
+  .badge.you{background:var(--navy);color:#fff}.badge.live{background:#bd4310;color:#fff}.badge.done{background:#dcefe3;color:#17553a}.badge.warn{background:#fff0dc;color:#8a3a0c}
+  .empty,.load-note{padding:14px 16px;background:var(--paper);border:1.5px dashed var(--line);border-radius:14px;color:var(--khaki);font-size:14px}
+  .notice{background:#fff4ed;border:1px solid #f2b498;color:#8b3513;padding:12px 14px;margin:0 0 18px;border-radius:10px;font-size:14px;font-weight:700}
+  .notice .btn{margin-top:8px}
+  .card{background:var(--paper);border:1.5px solid var(--line);border-radius:var(--r);padding:20px;margin:0 0 18px}
+  .card h2{font-family:'Oswald','Arial Narrow',system-ui,sans-serif;font-size:24px;text-transform:uppercase;margin:0 0 6px}.card p{color:var(--khaki);margin:0 0 12px}
+  .btn{display:inline-flex;align-items:center;justify-content:center;min-height:44px;padding:0 16px;border:0;border-radius:10px;background:#fff;color:var(--navy);font:800 14px 'Inter',system-ui,sans-serif;text-decoration:none;cursor:pointer}
+  .btn.primary{background:#bd4310;color:#fff}
+  .stamp{color:var(--khaki);font-size:12px;font-weight:600;margin-top:6px}
+  .link{background:none;border:0;color:#b63a0b;font:800 12px 'Inter',system-ui,sans-serif;cursor:pointer;min-height:44px;padding:0 4px;text-decoration:underline}
+  footer{padding:0 20px max(env(safe-area-inset-bottom),24px);max-width:720px;margin:0 auto;width:100%}
+  footer a{display:inline-flex;align-items:center;min-height:44px;font-family:'Oswald','Arial Narrow',system-ui,sans-serif;font-weight:600;font-size:12px;letter-spacing:.08em;text-transform:uppercase;color:var(--khaki);text-decoration:none}
+  footer a:hover{color:var(--orange)}
+  @media(max-width:560px){main{padding:22px 14px 34px}.job-row{grid-template-columns:72px 1fr auto;gap:10px}.job-row .lock-note{grid-column:2/4;text-align:left}}
+</style>
+<link rel="stylesheet" href="/crew/crew-brand.css?v=20260930launchpolish">
+<script src="/crew/hub-auth.js?v=20260904c" defer></script>
+<script src="/crew/schedule.js?v=20261017crewschedule" defer></script>
+<link rel="stylesheet" href="/app-touch.css?v=20260930mobiletouch">
+</head>
+<body>
+<div id="topbar">
+  <div class="row">
+    <a id="brand" href="/crew/">EASY GARAGE <span>CLEANING</span></a>
+    <div id="chip">Schedule</div>
+  </div>
+</div>
+<main id="schedule-main"><p class="load-note" role="status">Loading the crew schedule…</p></main>
+<footer><a href="/crew/">&larr; Crew home</a></footer>
+</body>
+</html>

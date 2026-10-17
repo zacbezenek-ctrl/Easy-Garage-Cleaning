@@ -22,6 +22,12 @@ const ENVS = {
   accessFalsePermissions: { EGC_STAFF_ROLE_ACCESS: 'false', EGC_STAFF_ROLE_PERMISSIONS: 'true' },
 };
 const sha = text => createHash('sha256').update(text).digest('hex').slice(0, 16);
+// TEAM-LEAD (owner decision D6, 2026-10-17) added the team_lead role (staff-roles.js) and the door_to_door skill
+// (staff-skills.js, catalog v2) to the catalogs every staff kind reads, whatever the flags. Exactly those additions are
+// taken back out of each answer here, so every other byte still compares with the pre-AUTH-ROLES snapshot, which stays
+// as recorded. Anything else that changes still fails this test.
+const CATALOG_ADDITIONS = [['"team_lead",', ''], ['"team_lead":[],', ''], [',{"id":"door_to_door","label":"Door-to-door sales"}', ''], ['"2026-10-staff-skills-v2"', '"2026-09-staff-skills-v1"']];
+const withoutAdditions = body => CATALOG_ADDITIONS.reduce((text, [added, before]) => text.replaceAll(added, before), body);
 function render(matrix) {
   const bodies = new Map(), index = [];
   for (const [key, rows] of matrix) for (const [label, body] of rows) { bodies.set(sha(body), body); index.push(`${key} | ${label} | ${sha(body)}`); }
@@ -36,7 +42,7 @@ test('with EGC_STAFF_ROLE_ACCESS off every staff kind gets byte-identical respon
   for (const [mode, flags] of Object.entries(ENVS)) {
     // Each mode starts from the seeded vault, so one mode's staff directory demotion does not change the next.
     reseed();
-    for (const user of ACCOUNTS) matrix.push([`${mode} ${user}`, await responses(cookies[user], { ...env, ...flags })]);
+    for (const user of ACCOUNTS) matrix.push([`${mode} ${user}`, (await responses(cookies[user], { ...env, ...flags })).map(([label, body]) => [label, withoutAdditions(body)])]);
   }
   const text = render(matrix);
   if (process.env.UPDATE_SNAPSHOTS === '1') { mkdirSync(new URL('./snapshots/', import.meta.url), { recursive: true }); writeFileSync(snapshot, text); }
