@@ -135,7 +135,7 @@ try {
   assert.match(await page.locator('#knock-main').textContent(), /no junk-removal commission/);
   assert.match(await page.locator('#knock-main').textContent(), /Payroll anchor unconfigured/);
   assert.match(await page.locator('#knock-main').textContent(), /payouts every two weeks/);
-  await page.getByRole('heading', { name: 'Walkthrough setting — 12%', exact: true }).waitFor();
+  await page.getByRole('heading', { name: 'Walkthrough setting — 13%', exact: true }).waitFor();
   assert.equal(await page.getByRole('link', { name: 'Book a walkthrough in the Hub', exact: true }).getAttribute('href'), '/employee.html?view=walkthroughs');
   for (const width of [320, 390, 768]) {
     await page.setViewportSize({ width, height: 844 });
@@ -161,6 +161,41 @@ try {
   await admin.goto(`${server.base}/crew/knock.html#admin?s=setters`);
   await admin.getByRole('heading', { name: 'Record walkthrough setter', exact: true }).waitFor();
   assert.match(await admin.locator('#knock-main').textContent(), /booking or no-show earns nothing/);
+
+  // 6. Help states the same earning rule as My money, and only the owner approves the terms.
+  await page.goto(`${server.base}/crew/knock.html#money`);
+  await page.getByText('How commission works', { exact: true }).waitFor();
+  const moneyText = await page.locator('#knock-main').textContent();
+  await page.goto(`${server.base}/crew/knock.html#more`);
+  await page.getByRole('button', { name: /Help & the rules/ }).click();
+  const help = page.locator('dialog.sheet[aria-label="Help & the rules"]');
+  await help.getByText('Walkthrough you set', { exact: true }).waitFor();
+  const helpText = await help.textContent();
+  const rule = /Not approved yet: nothing is earned or payable until the owner approves the terms[^]*?held for review\./.exec(helpText)?.[0];
+  assert.ok(rule && moneyText.includes(rule), 'Help and My money state one commission rule');
+  assert.match(helpText, /a deposit alone does not count/);
+  assert.doesNotMatch(helpText, /cancellation deadline/);
+  assert.match(helpText, /13% to you when a walkthrough you set closes/);
+  await help.getByRole('button', { name: 'Close', exact: true }).click();
+  await admin.goto(`${server.base}/crew/knock.html#admin?s=settings`);
+  await admin.getByRole('heading', { name: 'Approve commission terms', exact: true }).waitFor();
+  await admin.getByText('Commission terms are not approved').waitFor();
+  await admin.getByText('Save the settings first').waitFor();
+  await admin.getByRole('button', { name: 'Save settings', exact: true }).first().click();
+  await admin.getByText('Settings saved', { exact: false }).waitFor();
+  await admin.goto(`${server.base}/crew/knock.html#admin?s=coverage`);
+  await admin.goto(`${server.base}/crew/knock.html#admin?s=settings`);
+  const approveButton = admin.getByRole('button', { name: 'Approve commission terms', exact: true });
+  await approveButton.waitFor();
+  await admin.getByRole('group', { name: 'How Garage Transformation is paid' }).getByRole('button', { name: 'Garage only', exact: true }).click();
+  await admin.getByLabel('Approval reference', { exact: true }).fill('synthetic-browser-approval');
+  await admin.getByLabel(/The two-week pay cycle starts/).check();
+  await approveButton.click();
+  const confirm = admin.locator('dialog.sheet[aria-label="Approve these commission terms?"]');
+  assert.match(await confirm.textContent(), /Garage only: Garage Transformation\. Held for review: The Works, Full Property Reset, Quick Clear\./);
+  await confirm.getByRole('button', { name: 'Approve terms', exact: true }).click();
+  await admin.locator('.banner', { hasText: 'Commission terms approved' }).waitFor();
+  assert.match(await admin.locator('#knock-main').textContent(), /reference synthetic-browser-approval/);
 
   assert.deepEqual(errors, [], 'no page errors');
   assert.deepEqual(server.serverErrors, [], 'no server errors');

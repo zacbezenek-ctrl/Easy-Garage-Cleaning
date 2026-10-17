@@ -44,9 +44,16 @@ the approved `commission` and `payroll` objects. The D2D base rate must be 25%.
 The approval must also include an explicit `scope`: `service: garage_only`,
 `channel: door_to_door`, `estimatorStacking: false`, and nonoverlapping arrays
 `garageOnlyPackages` and `junkRemovalPackages` using actual package identifiers.
-At least one garage package must be classified. This is an evidence binding, not
-a new approval action. No UI/API added by this change writes that approval. The
-ordinary settings save invalidates it. The synthetic test approval is only a
+At least one garage package must be classified. Only the owner writes it, from the
+owner-only "Approve commission terms" card in Admin > Settings (admin action
+`compensation.approve`). The request repeats the saved `commission` and `payroll`
+objects the owner reviewed and is refused if they changed; it also writes a
+`knock_receipts/compensation_<requestId>` audit record naming any prior approval.
+Retries and identical re-approvals write nothing and keep `reviewedAt`. Nothing is
+approved by default. An ordinary settings save patches only `settings`,
+`updatedAt` and `updatedBy`, so the approval (and `planApproval`) survives
+unrelated edits; changing the approved commission or payroll objects stops it
+verifying until the owner approves again. The synthetic test approval is only a
 fixture and must never be copied into production.
 
 The approval must explicitly bind `collectionPolicy` with
@@ -62,8 +69,13 @@ remains unconfigured and payroll exports are refused.
 
 Under a complete new contract, an evidenced full collection earns at its
 collection timestamp without adding a completion or cancellation-deadline
-delay. Partial or excess collections and refund/cancellation evidence remain
-held for review. No pro-rata rule, clawback or payment execution is introduced.
+delay. A sale-day deposit or running receipt on a job still in progress is
+pending, not partial. A short final collection (the job is completed or paid),
+an excess collection and refund/cancellation evidence remain held for review.
+A held sale holds only the pay periods it touches (sold, a receipt, completion,
+refund, cancellation or a status change), plus the rest of a receipt's calendar
+month when a monthly accelerator applies; other periods stay payable. No pro-rata
+rule, clawback or payment execution is introduced.
 
 Only packages independently verified as wholly eligible garage work belong in
 `garageOnlyPackages`. Names alone do not establish this. Junk-removal packages
@@ -166,10 +178,11 @@ release blockers.
 ## Walkthrough setters are a separate channel
 
 Direct door closes retain the 25% eligible-garage channel. A rep who instead
-sets a walkthrough has a separate 12% setter channel, requiring a converted,
+sets a walkthrough has a separate 13% setter channel, requiring a converted,
 closed and collected eligible garage job. Booking, a no-show, an unclosed quote
 or a missing conversion link never earns setter commission. The setter route
-allocates 12% to the setter plus 7% to the estimator, 19% total, as separately
+allocates 13% to the setter plus 7% to the estimator, 20% total (owner decision
+2026-10-17; previously 12% + 7%), as separately
 identified recipients. Direct-estimator-only work remains 7%; a direct D2D close
 remains 25%. The direct 25% route is never added to the setter route.
 
@@ -207,7 +220,7 @@ historical signed snapshot is written by this tracking flow.
   duplicates and a rebooked walkthrough; only one attribution may exist.
 - [ ] Test booking, no-show, close without collection, partial/full collection,
   refunds, missing conversion data and an existing direct-sale claim.
-- [ ] Confirm the setter and estimator get separate 12% and 7% allocations from
+- [ ] Confirm the setter and estimator get separate 13% and 7% allocations from
   an explicitly verified base, with no added 25% route and no duplicate IDs.
   Payable totals stay held while the base, recipients or payroll anchor are unverified.
 

@@ -2,7 +2,7 @@
    Leads: their team's scoreboard. Admins get the same scoreboard for everyone plus the gate,
    and the payroll screens live in knock-admin.js. */
 import { h, mount, money, percent, number, hoursLabel, dateLabel, icon, dot, badge, banner, kv, stat, meter, seg, chips, emptyState, loadingState, errorState } from './knock-ui.js';
-import { collectedAmount } from './knock-money.js';
+import { CHANNEL_PERCENTS, SETTER_RULE_TEXT, collectedAmount, commissionRuleText } from './knock-money.js';
 import { zonedDate } from './knock-time.js';
 
 let app;
@@ -177,7 +177,8 @@ function moneyScreen(_app, params) {
           : `Finance review required: ${current.reviewReasons.join(', ').replaceAll('_', ' ')}. No automatic clawback is calculated.`) : null,
       h('section', { class: 'card', style: { gap: '10px' } },
         h('h2', {}, 'How commission works'),
-        h('p', {}, 'Current policy: commission is earned when the eligible job is collected, with payouts every two weeks. Partial collections, calculation base, attribution, refunds and the payroll anchor still need review. Customer receipts are separate from recorded rep payments; settlement is unverified.'),
+        h('p', {}, commissionRuleText(rates)),
+        h('p', { class: 'caption muted' }, 'Customer receipts are separate from recorded rep payments; settlement is unverified.'),
         h('p', { class: 'caption muted' }, 'Current policy: eligible garage work only; no junk-removal commission. The estimator rate is separate and is not added to D2D pay. Mixed or unclassified work needs review; historical signed terms are preserved.'),
         h('a', { class: 'btn btn--secondary', href: '/employee.html?view=walkthroughs' }, 'Book a walkthrough in the Hub'),
         rates.verified && rates.acceleratorEnabled ? meter({
@@ -186,8 +187,9 @@ function moneyScreen(_app, params) {
           note: collectedThisMonth >= rates.acceleratorThreshold ? `You're past the line: collected sales this month pay ${percent(rates.acceleratorRate)} on the amount above it.`
             : `${money(rates.acceleratorThreshold - collectedThisMonth)} more collected this month and every dollar after that pays ${percent(rates.acceleratorRate)}.`,
         }) : null),
-      h('section', { class: 'card stack' }, h('h2', {}, 'Walkthrough setting — 12%'),
-        h('p', {}, 'The closed and collected setter route allocates 12% to the setter plus 7% to the estimator, 19% total. Booking or a no-show earns nothing. Direct-estimator work stays at 7%, direct D2D closes at 25%, and junk at zero. Unknown recipients, base or payroll anchor keep amounts on hold; 25% is never added to the setter route.'),
+      h('section', { class: 'card stack' }, h('h2', {}, `Walkthrough setting — ${CHANNEL_PERCENTS.setter}%`),
+        h('p', {}, SETTER_RULE_TEXT),
+        h('p', { class: 'caption muted' }, `Direct-estimator work stays at ${CHANNEL_PERCENTS.estimator}% and junk at zero.`),
         (data.setters?.rows || []).map(row => h('div', { class: 'list-row list-row--static' },
           h('span', {}, `${row.walkthroughId}: ${row.state.replaceAll('_', ' ')}`),
           h('span', { class: 'caption muted' }, (row.reviewReasons || []).join(', ').replaceAll('_', ' ')))),
