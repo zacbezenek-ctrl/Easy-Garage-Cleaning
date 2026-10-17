@@ -3,7 +3,7 @@
 // and day summaries are then rebuilt from the events, so a retry after any failure heals them.
 import { knockFailure, write } from './knock-store.js';
 import { shiftEligibility } from './knock-access.js';
-import { houseInScope, neighborhoodLock, phoneHouse, publicShift, repTerritory } from './knock-territory.js';
+import { endedAssignmentFor, houseInScope, neighborhoodLock, phoneHouse, publicShift, repTerritory } from './knock-territory.js';
 import { applySaleEvent, validateSaleEvent } from './knock-sales.js';
 import { OUTCOMES } from '../../crew/knock-settings.js';
 import { knockWindow, zonedDate } from '../../crew/knock-time.js';
@@ -105,6 +105,11 @@ export async function applyBatch(store, rep, settings, events, nowMs) {
   for (const shiftId of shiftIds) shiftEvents.set(shiftId, await eventsWhere(store, 'shiftId', shiftId));
   const targetIds = valid.filter(e => e.target).map(e => e.target);
   const targets = targetIds.length ? await store.getMany('knock_events', targetIds) : new Map();
+  const endedScopes = new Map(), formerNeighborhoods = new Map();
+  const formerNeighborhood = id => {
+    if (!formerNeighborhoods.has(id)) formerNeighborhoods.set(id, store.get('knock_neighborhoods', id));
+    return formerNeighborhoods.get(id);
+  };
   const accepted = [];
   const saleClaimGuards = new Map();
   const touchedHouses = new Set(), touchedShifts = new Set(), touchedDays = new Set();
@@ -147,8 +152,11 @@ export async function applyBatch(store, rep, settings, events, nowMs) {
         }
         saleClaimGuards.set(claimId, claim ? write.verify('knock_receipts', claimId, claim.__updateTime) : write.verifyMissing('knock_receipts', claimId));
       }
-      const nbhd = neighborhoods.get(house.neighborhoodId);
-      if (!nbhd || !houseInScope(house, territory)) { results.set(event.id, refuse('knock_not_assigned', 'That house is not in your assigned territory.')); continue; }
+      let nbhd = houseInScope(house, territory) ? neighborhoods.get(house.neighborhoodId) : null;
+      // A door logged offline while the rep still held the neighborhood counts after a release or an
+      // admin's removal; one logged after that is refused.
+      if (!nbhd && await endedAssignmentFor(store, rep.repKey, house, at, endedScopes)) nbhd = await formerNeighborhood(house.neighborhoodId);
+      if (!nbhd) { results.set(event.id, refuse('knock_not_assigned', 'That house is not in your assigned territory.')); continue; }
       const lock = neighborhoodLock({ ...nbhd, status: nbhd.status, holdReason: nbhd.holdReason }, rep, settings);
       if (lock.locked) { results.set(event.id, refuse('knock_locked', lock.reason)); continue; }
       const city = settings.cities[nbhd.cityKey];

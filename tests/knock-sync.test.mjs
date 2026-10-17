@@ -109,6 +109,45 @@ test('doors need a shift, an assignment and an unlocked neighborhood', async () 
   assert.deepEqual(result.body.results.map(r => r.code || r.status), ['applied', 'knock_not_assigned', 'knock_locked', 'knock_house_missing', 'knock_outcome_invalid', 'knock_event_future']);
 });
 
+test('after a rep releases a neighborhood, doors logged there later are refused; one logged before the release still syncs', async () => {
+  const env = knockEnv();
+  const ridge = n => ({ neighborhoodId: 'rigden-farm', street: 'RIDGE CT', number: String(n), lat: 40.53 + n / 1e5, lng: -105.04, updatedAt: '2026-10-01T00:00:00.000Z' });
+  const world = knockWorld({
+    ...seed(),
+    'knock_neighborhoods/rigden-farm': { name: 'Rigden Farm', tier: 'Volume', status: 'open', cityKey: 'fort-collins', holdReason: '', importedCount: 3 },
+    'knock_houses/h-1-ridge-ct': ridge(1), 'knock_houses/h-2-ridge-ct': ridge(2), 'knock_houses/h-3-ridge-ct': ridge(3),
+  });
+  let clock = NOW;
+  const sync = knockSyncHandlers({ storage: world.storage, now: () => new Date(clock) });
+  const territory = knockTerritoryHandlers({ storage: world.storage, now: () => new Date(clock) });
+  const cookie = await cookieFor(env, 'Rep.One');
+  const send = events => call(sync.post, post('/api/knock-sync', { events }, cookie), env);
+  const ridgeDoor = (shiftId, n, at) => ({ id: uuid(), type: 'knock', shiftId, houseId: `h-${n}-ridge-ct`, outcome: 'no_answer', at: iso(at), carOutside: false });
+
+  const before = await send([shiftStart(uuid(), NOW), ridgeDoor(uuid(), 1, NOW + MIN)]);
+  assert.equal(before.body.results[1].code, 'knock_shift_missing');
+  const shiftId = uuid();
+  const unclaimed = await send([shiftStart(shiftId, NOW + MIN), ridgeDoor(shiftId, 1, NOW + 2 * MIN)]);
+  assert.deepEqual(unclaimed.body.results.map(r => r.code || r.status), ['applied', 'knock_not_assigned'], 'not claimed yet');
+
+  const claimed = await call(territory.post, post('/api/knock-territory', { action: 'claim', neighborhoodId: 'rigden-farm' }, cookie), env);
+  assert.equal(claimed.status, 200, JSON.stringify(claimed.body));
+  clock = NOW + 4 * MIN;
+  const working = await send([ridgeDoor(shiftId, 1, NOW + 3 * MIN)]);
+  assert.deepEqual(working.body.results.map(r => r.status), ['applied'], 'a claimed neighborhood takes doors');
+  // Logged on the phone at +5 min with no signal; the rep releases the area at +10 min before it syncs.
+  const offline = ridgeDoor(shiftId, 2, NOW + 5 * MIN);
+  clock = NOW + 10 * MIN;
+  const released = await call(territory.post, post('/api/knock-territory', { action: 'release', neighborhoodId: 'rigden-farm' }, cookie), env);
+  assert.deepEqual([released.status, released.body.released], [200, true]);
+  clock = NOW + 12 * MIN;
+  const after = await send([offline, ridgeDoor(shiftId, 3, NOW + 11 * MIN)]);
+  assert.deepEqual(after.body.results.map(r => r.code || r.status), ['applied', 'knock_not_assigned']);
+  assert.equal(world.fake.get('knock_houses/h-2-ridge-ct').summary.lastOutcome, 'no_answer', 'the door from before the release counts');
+  assert.equal(world.fake.get('knock_houses/h-3-ridge-ct').summary, undefined, 'the door after it does not');
+  assert.equal(world.fake.get('knock_events/' + offline.id).neighborhoodId, 'rigden-farm');
+});
+
 test('after sunset a finishing door is flagged for the admin, and a door after the grace is flagged outside hours', async () => {
   const sunset = Date.parse('2026-10-07T00:34:00.000Z');
   const { world, send, setClock } = await setup({ now: sunset - 30 * MIN });

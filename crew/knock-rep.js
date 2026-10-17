@@ -7,7 +7,6 @@ import { doorAllowed, formatClock, zonedDate, zonedInstant, zonedParts, addDays,
 import { shiftTiming } from './knock-stats.js';
 
 let app;
-let watchId = null;
 
 const OUTCOME_ORDER = ['no_answer', 'not_interested', 'come_back', 'look', 'sold', 'skipped_sign'];
 const OUTCOME_BUTTONS = {
@@ -84,21 +83,30 @@ function lastOutcomeLine(summary) {
   return `Last: ${OUTCOME_LABELS[summary.lastOutcome]} · ${dateLabel(zonedDate(summary.lastAt, tz()))} · ${formatClock(Date.parse(summary.lastAt), tz())}`;
 }
 
-function startWatchingPosition() {
-  if (watchId != null || !navigator.geolocation) return;
-  watchId = navigator.geolocation.watchPosition(position => {
-    const first = !S().position;
-    S().position = { lat: position.coords.latitude, lng: position.coords.longitude, accuracy: position.coords.accuracy, at: Date.now() };
-    // A house picked before the first GPS fix was picked in street order: swap it for the nearest one.
-    if (first && S().ui.pickedWithoutGps) {
-      const near = nearestSuggestion(houseEntries().filter(e => e.status.knockable), S().position);
-      if (near) selectHouse(near.house).then(() => app.render());
-    }
-  }, () => {}, { enableHighAccuracy: true, maximumAge: 15000, timeout: 20000 });
+// A house picked before the first GPS fix was picked in street order: swap it for the nearest one.
+function onFirstFix(position, { first }) {
+  if (!first || !S().ui.pickedWithoutGps) return;
+  const near = nearestSuggestion(suggestionEntries(), position);
+  if (near) selectHouse(near.house).then(() => app.render());
+}
+
+/* The area the rep chose to work (Choose area, or the list's neighborhood picker), while it is still
+   theirs and unlocked; suggestions and "nearest" stay inside it. */
+export function workingNeighborhood() {
+  const id = S().ui.workingNeighborhood;
+  return id ? S().territory.neighborhoods.find(n => n.id === id && !n.locked) || null : null;
+}
+
+// Knockable houses to suggest from: the working area's, or every one when it has none left.
+export function suggestionEntries({ except = null } = {}) {
+  const area = workingNeighborhood();
+  const keep = e => e.status.knockable && e.house.id !== except;
+  const inArea = area ? houseEntries({ neighborhoodId: area.id }).filter(keep) : [];
+  return inArea.length ? inArea : houseEntries().filter(keep);
 }
 
 function suggestedHouse() {
-  const entries = houseEntries().filter(e => e.status.knockable);
+  const entries = suggestionEntries();
   if (!entries.length) return null;
   const near = nearestSuggestion(entries, S().position);
   if (near) return near.house;
@@ -131,12 +139,12 @@ async function startShift() {
   if (window.phase === 'before') return toast(`Knocking opens at ${window.startLabel}.`, { tone: 'bad' });
   if (window.phase !== 'open') return toast(`Sunset was ${window.endLabel}. Knocking is closed for today.`, { tone: 'bad' });
   const unlocked = S().territory.neighborhoods.filter(n => !n.locked);
-  if (!unlocked.length) return toast('Nothing open is assigned to you yet.', { tone: 'bad' });
+  if (!unlocked.length) return toast('Nothing open is assigned to you yet.', { tone: 'bad', sub: S().settings.territory?.selfClaim ? 'Choose an area from Home first.' : 'Ask your lead for a neighborhood.' });
   const shiftId = crypto.randomUUID();
-  await app.enqueue('shift.start', { shiftId, cityKey: unlocked[0].cityKey });
+  await app.enqueue('shift.start', { shiftId, cityKey: (workingNeighborhood() || unlocked[0]).cityKey });
   // A new shift starts at the house nearest the rep, not where the last shift stopped.
   await app.saveUi({ graceDoorFor: null, houseId: null, previousNumber: null });
-  startWatchingPosition();
+  app.startLocation();
   toast('Shift started', { sub: 'Knock safe and friendly.', iconName: 'play' });
   app.go('knock');
 }
@@ -400,7 +408,7 @@ function windowBanner(house, shift) {
 }
 
 function knockScreen() {
-  startWatchingPosition();
+  app.startLocation();
   const shift = app.currentShift();
   if (!shift) {
     return h('div', { class: 'screen' },
@@ -415,7 +423,7 @@ function knockScreen() {
   }
   if (!house) {
     return h('div', { class: 'screen' }, shiftCard({ onKnock: true }),
-      emptyState('door', 'No houses to knock', 'Your territory has nothing knockable on this phone yet. Sync, or ask your lead for more streets.',
+      app.territoryEmpty() || emptyState('door', 'No houses to knock', 'Your territory has nothing knockable on this phone yet. Sync, or ask your lead for more streets.',
         h('button', { type: 'button', class: 'btn btn--primary', onclick: () => app.sync({ full: true }) }, icon('refresh'), 'Sync now')));
   }
   const view = app.houseView(house.id);
@@ -429,7 +437,7 @@ function knockScreen() {
   const inNeighborhood = houseEntries({ neighborhoodId: house.n }).sort(byAddress);
   const position = inNeighborhood.findIndex(e => e.house.id === house.id) + 1;
   const siblings = inNeighborhood.filter(e => e.house.street === house.street);
-  const near = nearestSuggestion(houseEntries().filter(e => e.status.knockable && e.house.id !== house.id), S().position);
+  const near = nearestSuggestion(suggestionEntries({ except: house.id }), S().position);
   const last1 = lastOutcomeLine(view.summary);
   const note = myNote(house.id);
   return h('div', { class: 'screen screen--fill' },
@@ -486,20 +494,27 @@ function listRowSub(entry, { nearestId, nearestMeters, currentId }) {
   return parts.join(' · ');
 }
 
+// Picking a neighborhood here also makes it the working area, so the knock screen and the map's
+// "nearest" stay in it.
 async function pickNeighborhood(current) {
-  const unlocked = S().territory.neighborhoods.filter(n => !n.locked);
-  const picked = await sheet('Neighborhood', close => h('div', { class: 'list list--boxed' }, unlocked.map(n =>
+  const unlocked = app.myNeighborhoods().filter(n => !n.locked);
+  const picked = await sheet('Neighborhood', close => h('div', { class: 'stack' }, h('div', { class: 'list list--boxed' }, unlocked.map(n =>
     h('button', { type: 'button', class: `list-row${n.id === current ? ' list-row--now' : ''}`, onclick: () => close(n.id) },
-      h('span', { class: 'list-row__main' }, h('span', { class: 'list-row__title' }, n.name)),
-      n.tier === 'Premium' ? badge('Premium', 'navy') : badge(n.tier || 'Volume'), icon('chevronRight')))));
-  if (picked) { await app.saveUi({ listNeighborhood: picked }); app.go('list', { n: picked, f: S().ui.listFilter || 'todo' }); }
+      h('span', { class: 'list-row__main' }, h('span', { class: 'list-row__title' }, n.name), n.meters != null ? h('span', { class: 'list-row__sub' }, app.awayLabel(n.meters)) : null),
+      n.tier === 'Premium' ? badge('Premium', 'navy') : badge(n.tier || 'Volume'), icon('chevronRight')))),
+  S().settings.territory?.selfClaim ? h('a', { class: 'btn btn--quiet btn--block', href: '#areas', onclick: () => close(null) }, icon('map'), 'Choose another area') : null));
+  if (picked) {
+    if (picked !== S().ui.workingNeighborhood) await app.saveUi({ workingNeighborhood: picked, houseId: null, previousNumber: null });
+    await app.saveUi({ listNeighborhood: picked });
+    app.go('list', { n: picked, f: S().ui.listFilter || 'todo' });
+  }
 }
 
 function listScreen(_app, params) {
   const unlocked = S().territory.neighborhoods.filter(n => !n.locked);
-  const nbhdId = params.get('n') || S().ui.listNeighborhood || unlocked[0]?.id || '';
+  const nbhdId = params.get('n') || S().ui.listNeighborhood || workingNeighborhood()?.id || unlocked[0]?.id || '';
   const nbhd = unlocked.find(n => n.id === nbhdId) || unlocked[0];
-  if (!nbhd) return h('div', { class: 'screen' }, emptyState('list', 'Nothing assigned yet', 'Ask your lead for a neighborhood. Its houses show up here.'));
+  if (!nbhd) return h('div', { class: 'screen' }, app.territoryEmpty() || emptyState('list', 'Nothing assigned yet', 'Ask your lead for a neighborhood. Its houses show up here.'));
   const filter = params.get('f') || S().ui.listFilter || 'todo';
   const all = houseEntries({ neighborhoodId: nbhd.id });
   const entries = all.filter(e => filter === 'all' ? true : filter === 'todo' ? e.status.knockable : filter === 'goback' ? e.status.status === 'go_back' : !e.status.knockable).sort(byAddress);
@@ -608,6 +623,7 @@ export function install(appApi) {
   app.registerScreen('list', listScreen, { tab: { label: 'List', icon: 'list', order: 20 } });
   app.registerScreen('gobacks', goBacksScreen, { title: 'Go-backs', back: 'more' });
   app.shiftCard = shiftCard;
+  app.onPosition(onFirstFix);
   app.moreLinks.push({ route: 'gobacks', label: 'Go-backs', icon: 'comeBack', order: 10,
     hint: () => { const n = houseEntries().filter(e => e.status.status === 'go_back').length; return n ? `${n} house${n === 1 ? '' : 's'} to try again` : 'Houses to try again'; } });
 }

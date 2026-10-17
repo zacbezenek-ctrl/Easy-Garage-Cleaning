@@ -119,8 +119,9 @@ export async function setAssignment(store, admin, { repKey, neighborhoodId, stre
   }
   const id = assignmentId(key, nbhd.id, streetName);
   const current = await store.get('knock_assignments', id);
+  // source 'admin': an admin's assignment (a rep's own claim is 'self'); it replaces a claim of the same scope.
   const doc = {
-    repKey: key, neighborhoodId: nbhd.id, street: streetName, active: Boolean(active),
+    repKey: key, neighborhoodId: nbhd.id, street: streetName, active: Boolean(active), source: 'admin',
     assignedAt: active ? nowIso : (current?.assignedAt || nowIso), assignedBy: admin.user,
     endedAt: active ? null : nowIso, updatedAt: nowIso,
   };
