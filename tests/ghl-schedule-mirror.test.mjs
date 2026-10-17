@@ -15,8 +15,11 @@ import { GHL_TAG_DRAIN_PATH, ghlTagDrainHandlers } from '../functions/api/ghl-ta
 import { integrationStatusHandlers } from '../functions/api/integration-status.js';
 import { onRequestPost as highlevelPost } from '../functions/api/highlevel.js';
 import { mutateScheduledVisit } from '../functions/_lib/operations-scheduling.js';
-import { GHL_MIRROR_NEEDS_LINK, GHL_MIRROR_PARK_ATTEMPTS, GHL_MIRROR_STATUS_SCAN_LIMIT, GHL_SCHEDULE_MIRROR, GHL_SCHEDULE_MIRROR_LINKS, drainScheduleMirror, firstScheduleMirrorAttempt, ghlScheduleMirrorEnabled, retryScheduleMirror,
-  scheduleMirrorChangeKey, scheduleMirrorEntryId, scheduleMirrorEvent, scheduleMirrorIds, scheduleMirrorLinkId, scheduleMirrorStatus, scheduleMirrorStorage, scheduleMirrorWrites } from '../functions/_lib/ghl-schedule-mirror.js';
+import { GHL_D2D_SOURCE, GHL_D2D_TAGS, GHL_MIRROR_NEEDS_LINK, GHL_MIRROR_PARK_ATTEMPTS, GHL_MIRROR_STATUS_SCAN_LIMIT, GHL_SCHEDULE_MIRROR, GHL_SCHEDULE_MIRROR_LINKS, d2dAttribution, d2dNoteLine, drainScheduleMirror, firstScheduleMirrorAttempt,
+  ghlD2dTagsEnabled, ghlScheduleMirrorEnabled, retryScheduleMirror, scheduleMirrorChangeKey, scheduleMirrorEntryId, scheduleMirrorEvent, scheduleMirrorIds, scheduleMirrorLinkId, scheduleMirrorStatus, scheduleMirrorStorage,
+  scheduleMirrorWrites } from '../functions/_lib/ghl-schedule-mirror.js';
+import { D2D_CONTACT_SOURCE, D2D_GHL_TAGS } from '../functions/_lib/knock-bridge.js';
+import { MON, NOW as BRIDGE_NOW, MIN, bridgeWorld, iso, saleBatch } from './helpers/knock-bridge-fixture.mjs';
 import { EGC_JOB_SCHEDULED_STAGE, EGC_PIPELINE, EGC_WALKTHROUGH_APPOINTMENT_STAGE, schedulePipeline } from '../functions/_lib/highlevel-pipeline.js';
 import { EGC_JOB_CALENDAR, EGC_LOCATION, EGC_WALKTHROUGH_CALENDAR, calendarDeletedAnswer, customerCalendars } from '../functions/_lib/highlevel-calendars.js';
 import { estimatorHighLevelUserId, walkthroughEstimator } from '../functions/_lib/highlevel-users.js';
@@ -87,10 +90,11 @@ function fakeHighLevel({ opportunities = [], stages = STAGES, fail = () => 0 } =
     const match = /^\/opportunities\/([^/]+)$/.exec(path);
     if (match) { const deal = deals.get(match[1]); if (!deal) return json({ message: 'Not found' }, 404); if (method === 'PUT') Object.assign(deal, body); return json({ opportunity: deal }); }
     if (/^\/contacts\/[^/]+\/notes$/.test(path)) return json({ note: { id: `note-${calls.length}` } });
+    if (/^\/contacts\/[^/]+\/tags$/.test(path)) return json({ tags: body?.tags || [] });
     if (path === '/contacts/upsert') return json({ contact: { id: 'contact-new' } });
     return json({}, 404);
   }
-  return { calls, deals, fetcher, lines: () => calls.map(call => `${call.method} ${call.path}`), writes: () => calls.filter(call => call.method !== 'GET'), notes: () => calls.filter(call => call.path.endsWith('/notes')),
+  return { calls, deals, fetcher, lines: () => calls.map(call => `${call.method} ${call.path}`), writes: () => calls.filter(call => call.method !== 'GET'), notes: () => calls.filter(call => call.path.endsWith('/notes')), tags: () => calls.filter(call => call.path.endsWith('/tags')),
     creates: () => calls.filter(call => call.method === 'POST' && call.path === '/opportunities/'), upserts: () => calls.filter(call => call.path === '/opportunities/upsert') };
 }
 
@@ -679,4 +683,167 @@ test('a crew self-claim and release queue the mirror as a crew change, in the sa
   const release = { action: 'release', jobId: created.job.id, requestId: randomUUID() };
   await mutateDispatchSelfAssignment(store, { user: 'jo' }, release, NOW);
   assert.equal(store.entries().find(row => row.requestId === release.requestId).kind, 'crew_assigned');
+});
+
+// KNOCK-BRIDGE + D9b: a door-to-door job (the Knock bridge's source 'door_to_door', d2d and ghlTags) reaches HighLevel
+// attributed: a note line naming the rep, the source "Door to door" on what the mirror creates, and its own tag only
+// with EGC_GHL_D2D_TAGS (tags start HighLevel workflows).
+const D2D_ENV = Object.freeze({ ...ENV, EGC_GHL_D2D_TAGS: 'true' });
+const REPS = Object.freeze({ 'knock_reps/rep.one': { repKey: 'rep.one', username: 'Rep.One', displayName: 'Sam Rivera', status: 'active' } });
+const d2dSale = (extra = {}) => job({ projectId: 'project_d2d-sale', source: 'door_to_door', knockSaleId: 'sale-1', ghlTags: ['egc-d2d-sale'],
+  d2d: { kind: 'sale', repKey: 'rep.one', saleId: 'sale-1', houseId: 'h-1-synthetic-way', contactSource: 'Door to door', at: NOW }, ...extra });
+const d2dWalk = (extra = {}) => walkthrough({ projectId: 'project_d2d-walk', source: 'door_to_door', knockWalkthroughId: 'walk-evt-1', ghlTags: ['egc-d2d-walkthrough'],
+  d2d: { kind: 'walkthrough', repKey: 'rep.one', setterEventId: 'walk-evt-1', houseId: 'h-1-synthetic-way', contactSource: 'Door to door', at: NOW }, ...extra });
+const noteLines = ghl => ghl.notes().map(call => call.body.body.split('\n'));
+const twoOpenDeals = () => [{ id: 'opp-a', contactId: 'contact-1', pipelineId: EGC_PIPELINE, pipelineStageId: 'new-lead', status: 'open' }, { id: 'opp-b', contactId: 'contact-1', pipelineId: EGC_PIPELINE, pipelineStageId: 'new-lead', status: 'open' }];
+
+test('door to door: the attribution is read from the visit (the bridge\'s own values), never queued, and only the two D2D tags ever leave a job', async () => {
+  assert.equal(GHL_D2D_SOURCE, D2D_CONTACT_SOURCE);
+  assert.deepEqual({ ...GHL_D2D_TAGS }, { ...D2D_GHL_TAGS }, 'the mirror\'s copy matches the Knock bridge');
+  assert.deepEqual(d2dAttribution(d2dSale()), { kind: 'sale', repKey: 'rep.one', tags: ['egc-d2d-sale'] });
+  assert.deepEqual(d2dAttribution(d2dWalk()), { kind: 'walkthrough', repKey: 'rep.one', tags: ['egc-d2d-walkthrough'] });
+  for (const visit of [job(), job({ ghlTags: ['egc-d2d-sale'] }), d2dSale({ source: 'website' }), d2dSale({ d2d: { kind: 'flyer', repKey: 'rep.one' } }), d2dSale({ d2d: null }), d2dSale({ d2d: ['sale'] })]) assert.equal(d2dAttribution(visit), null);
+  assert.deepEqual(d2dAttribution(d2dSale({ ghlTags: ['egc-hub-scheduled', 'egc-d2d-sale', 'egc-reminder-1d', 'egc-d2d-sale'] })).tags, ['egc-d2d-sale'], 'an allowlist, never another tag the job holds');
+  assert.deepEqual(d2dAttribution(d2dSale({ ghlTags: 'egc-d2d-sale' })).tags, []);
+  for (const repKey of ['../knock_settings/current', '..', 'Rep.One', '']) assert.equal(d2dAttribution(d2dSale({ d2d: { kind: 'sale', repKey } })).repKey, '', `${repKey}: not a rep key, never read`);
+  assert.equal(d2dNoteLine('sale', 'Sam'), 'Door to door: sale set by Sam');
+  assert.equal(d2dNoteLine('walkthrough', ''), 'Door to door: walkthrough set by a door-to-door rep');
+  // The bridge attributes its job in the same commit, after the entry is built: the queued note is the change's own.
+  const [entry] = await scheduleMirrorWrites(memory(), { jobId: 'job-d2d', after: d2dSale(), action: 'schedule.create', requestId: randomUUID(), now: NOW, roster, resources });
+  assert.doesNotMatch(JSON.stringify(entry.patch), /Door to door|egc-d2d/);
+  assert.deepEqual(await scheduleMirrorWrites({ ghlScheduleMirror: false }, { jobId: 'job-d2d', after: d2dSale(), action: 'schedule.create', requestId: randomUUID(), now: NOW }), [], 'mirror off: nothing, whatever EGC_GHL_D2D_TAGS says');
+});
+
+test('door to door: the note names the rep by first name; a deal or contact the mirror creates says "Door to door", a moved deal keeps its own source', async () => {
+  const store = memory(REPS), ghl = fakeHighLevel();
+  await save(store, 'job-d2d', d2dSale());
+  assert.equal((await drain(store, ghl)).done, 1);
+  assert.deepEqual(ghl.lines(), ['GET /opportunities/pipelines', 'GET /opportunities/search', 'POST /opportunities/', 'POST /contacts/contact-1/notes'], 'no tag without EGC_GHL_D2D_TAGS');
+  const create = ghl.creates()[0];
+  assert.deepEqual([create.body.source, create.body.pipelineStageId, create.body.status, create.headers['Idempotency-Key']], ['Door to door', EGC_JOB_SCHEDULED_STAGE, 'open', 'egc-schedule-mirror:project_d2d-sale']);
+  const [lines] = noteLines(ghl), queued = store.entries()[0].note.body.split('\n');
+  assert.deepEqual(lines.slice(0, 3), ['EGC SCHEDULE UPDATE: Job scheduled', 'Door to door: sale set by Sam', 'Date: Thursday, October 22, 2026']);
+  assert.deepEqual([lines[0], ...lines.slice(2)], queued, 'the rest of the note is the change as it was queued');
+  assert.doesNotMatch(lines.join('\n'), /Rivera|rep\.one|sale-1|\$|1400/, 'first name only: no surname, rep key, sale id or price');
+  assert.deepEqual([store.entries()[0].steps.opportunity, store.entries()[0].steps.opportunitySource], ['created', 'set']);
+  // A walkthrough set at the door, twice for the same rep: one profile read per rep per drain pass.
+  const walks = memory(REPS), hl = fakeHighLevel(), read = walks.read;
+  let repReads = 0;
+  walks.read = async (collection, id) => { if (collection === 'knock_reps') repReads++; return read(collection, id); };
+  await save(walks, 'walk-d2d', d2dWalk());
+  await save(walks, 'walk-d2d-2', d2dWalk({ projectId: 'project_d2d-walk-2', highlevelContactId: 'contact-2' }));
+  await drain(walks, hl, { limit: 5 });
+  assert.deepEqual(noteLines(hl).map(rows => rows.slice(0, 2)), [['EGC SCHEDULE UPDATE: Walkthrough booked', 'Door to door: walkthrough set by Sam'], ['EGC SCHEDULE UPDATE: Walkthrough booked', 'Door to door: walkthrough set by Sam']]);
+  assert.equal(repReads, 1);
+  assert.deepEqual(hl.creates().map(call => [call.body.source, call.body.pipelineStageId]), [['Door to door', EGC_WALKTHROUGH_APPOINTMENT_STAGE], ['Door to door', EGC_WALKTHROUGH_APPOINTMENT_STAGE]]);
+  // A replaced change keeps its marker first; a rep with no canvassing profile is named generically.
+  const replaced = memory(), unnamed = fakeHighLevel();
+  await save(replaced, 'walk-d2d', d2dWalk());
+  replaced.rows.set('jobs/walk-d2d', { ...replaced.rows.get('jobs/walk-d2d'), time: '11:00', endTime: '12:00', revision: 'moved' });
+  await drain(replaced, unnamed);
+  assert.deepEqual(noteLines(unnamed)[0].slice(0, 3), ['Replaced: the Hub changed this visit again after this update. The Hub has the current schedule.', 'EGC SCHEDULE UPDATE: Walkthrough booked', 'Door to door: walkthrough set by a door-to-door rep']);
+  // The contact's own deal (a website lead) is moved, never given the door-to-door source.
+  const moved = memory(REPS), existing = fakeHighLevel({ opportunities: [{ id: 'opp-lead', contactId: 'contact-1', pipelineId: EGC_PIPELINE, name: 'Website lead', monetaryValue: 250, pipelineStageId: 'new-lead', status: 'open', source: 'Website' }] });
+  await save(moved, 'job-d2d', d2dSale());
+  await drain(moved, existing);
+  const put = existing.calls.find(call => call.method === 'PUT');
+  assert.deepEqual([put.path, 'source' in put.body, existing.deals.get('opp-lead').source, existing.creates().length, 'opportunitySource' in moved.entries()[0].steps], ['/opportunities/opp-lead', false, 'Website', 0, false]);
+  // A contact the mirror upserts (outside a dry run) for a door-to-door job: source "Door to door".
+  const live = memory({ ...REPS, 'customers/c9': { name: 'Synthetic Door Customer' } }), upserting = fakeHighLevel();
+  await save(live, 'job-d2d', d2dSale({ highlevelContactId: '', customerId: 'c9' }));
+  await drain(live, upserting, { env: { ...ENV, EGC_MESSAGING_DRY_RUN: 'false' } });
+  assert.deepEqual([upserting.calls[0].path, upserting.calls[0].body.source, upserting.creates()[0].body.source], ['/contacts/upsert', 'Door to door', 'Door to door']);
+});
+
+test('door to door: a refused source never costs the customer their deal; any other refusal fails the attempt as before', async () => {
+  const store = memory(REPS), ghl = fakeHighLevel({ fail: call => call.method === 'POST' && call.path === '/opportunities/' && 'source' in call.body ? { status: 422, body: { statusCode: 422, message: ['property source should not exist'] } } : 0 });
+  await save(store, 'job-d2d', d2dSale());
+  assert.equal((await drain(store, ghl)).done, 1);
+  const [refused, plain] = ghl.creates();
+  assert.deepEqual([refused.body.source, 'source' in plain.body, refused.headers['Idempotency-Key'], plain.headers['Idempotency-Key']], ['Door to door', false, 'egc-schedule-mirror:project_d2d-sale', 'egc-schedule-mirror:project_d2d-sale:plain']);
+  assert.deepEqual({ ...plain.body, source: 'Door to door' }, refused.body, 'the same deal, only without the source');
+  assert.deepEqual([store.entries()[0].steps.opportunity, store.entries()[0].steps.opportunityId, store.entries()[0].steps.opportunitySource, ghl.notes().length, ghl.deals.size], ['created', 'opp-new-1', 'refused', 1, 1]);
+  const other = memory(REPS), refusing = fakeHighLevel({ fail: call => call.method === 'POST' && call.path === '/opportunities/' ? { status: 422, body: { message: ['contactId must be a string'] } } : 0 });
+  await save(other, 'job-d2d', d2dSale());
+  const failed = await drain(other, refusing);
+  assert.deepEqual([failed.retrying, refusing.creates().length, other.entries()[0].lastError, refusing.notes().length], [1, 1, 'highlevel_422', 0]);
+  // A job that is not door to door never sends a source, so its refused create is never re-sent.
+  const plainJob = memory(REPS), plainRefused = fakeHighLevel({ fail: call => call.method === 'POST' && call.path === '/opportunities/' ? { status: 422, body: { message: ['property source should not exist'] } } : 0 });
+  await save(plainJob, 'job-1', job());
+  await drain(plainJob, plainRefused);
+  assert.deepEqual([plainRefused.creates().length, 'source' in plainRefused.creates()[0].body, plainJob.entries()[0].lastError], [1, false, 'highlevel_422']);
+});
+
+test('EGC_GHL_D2D_TAGS: a door-to-door job\'s own tag only with the flag, once with its booking, never for a visit cancelled first; off, the same requests without it', async () => {
+  for (const value of [undefined, '', 'TRUE', '1', 'yes', 'on']) assert.equal(ghlD2dTagsEnabled({ EGC_GHL_D2D_TAGS: value }), false, String(value));
+  assert.equal(ghlD2dTagsEnabled({ EGC_GHL_D2D_TAGS: 'true' }), true);
+  const requestId = randomUUID();
+  const run = async (env, visit = d2dSale({ ghlTags: ['egc-hub-scheduled', 'egc-d2d-sale'] }), id = 'job-d2d') => { const store = memory(REPS), ghl = fakeHighLevel(); await save(store, id, visit, { requestId }); await drain(store, ghl, { env }); return { store, ghl }; };
+  const on = await run(D2D_ENV), off = await run(ENV);
+  assert.deepEqual(on.ghl.lines(), ['GET /opportunities/pipelines', 'GET /opportunities/search', 'POST /opportunities/', 'POST /contacts/contact-1/notes', 'POST /contacts/contact-1/tags']);
+  assert.deepEqual(on.ghl.tags()[0].body, { tags: ['egc-d2d-sale'] }, 'only the D2D tag the job carries');
+  assert.deepEqual([on.store.entries()[0].status, on.store.entries()[0].steps.tags], ['done', ['egc-d2d-sale']]);
+  assert.deepEqual(off.ghl.calls, on.ghl.calls.slice(0, -1), 'flag off: the same requests, byte for byte, without the tag');
+  assert.equal('tags' in off.store.entries()[0].steps, false);
+  // A job that is not door to door: the flag changes nothing, and nothing carries a source.
+  for (const visit of [job(), job({ ghlTags: ['egc-d2d-sale'] }), walkthrough()]) {
+    const [withFlag, without] = [await run(D2D_ENV, visit, 'visit-1'), await run(ENV, visit, 'visit-1')];
+    assert.deepEqual(withFlag.ghl.calls, without.ghl.calls);
+    assert.equal(withFlag.ghl.calls.some(call => call.path.endsWith('/tags') || call.body?.source !== undefined || /Door to door/.test(call.body?.body || '')), false);
+  }
+  // Once: a move and a crew change add no tag again (each still gets its note).
+  const once = memory(REPS), ghl = fakeHighLevel(), movedSale = d2dSale({ date: '2026-10-23', endDate: '2026-10-23' });
+  await save(once, 'job-d2d', d2dSale());
+  await drain(once, ghl, { env: D2D_ENV });
+  await save(once, 'job-d2d', movedSale, { before: d2dSale(), at: later(1) });
+  await save(once, 'job-d2d', { ...movedSale, assignedCrew: ['eli'] }, { before: movedSale, at: later(2) });
+  await drain(once, ghl, { env: D2D_ENV, now: later(3), limit: 5 });
+  assert.deepEqual([ghl.tags().length, ghl.notes().length, once.entries().map(entry => entry.kind).sort()], [1, 3, ['crew_assigned', 'rescheduled', 'scheduled']]);
+  // Cancelled before HighLevel heard of it: the booking's note is told, no tag; a restore is a booking again.
+  const cancelled = memory(REPS), quiet = fakeHighLevel(), gone = d2dSale({ status: 'cancelled', pipelineStatus: 'cancelled' });
+  await save(cancelled, 'job-d2d', d2dSale());
+  cancelled.rows.set('jobs/job-d2d', { ...cancelled.rows.get('jobs/job-d2d'), status: 'cancelled', pipelineStatus: 'cancelled', revision: 'cancelled' });
+  await drain(cancelled, quiet, { env: D2D_ENV });
+  assert.deepEqual([quiet.notes().length, quiet.tags().length, cancelled.entries()[0].superseded], [1, 0, true]);
+  await save(cancelled, 'job-d2d', d2dSale(), { before: gone, action: 'schedule.restore', at: later(1) });
+  await drain(cancelled, quiet, { env: D2D_ENV, now: later(2) });
+  assert.deepEqual([quiet.tags().length, quiet.tags()[0].body.tags], [1, ['egc-d2d-sale']]);
+  // A failed tag request retries the tag alone: one deal, one note.
+  const flaky = memory(REPS), once503 = fakeHighLevel({ fail: call => call.path.endsWith('/tags') && once503.tags().length === 1 ? 503 : 0 });
+  await save(flaky, 'job-d2d', d2dSale());
+  const first = await drain(flaky, once503, { env: D2D_ENV });
+  assert.deepEqual([first.retrying, flaky.entries()[0].lastError, Boolean(flaky.entries()[0].steps.note), 'tags' in flaky.entries()[0].steps], [1, 'highlevel_503', true, false]);
+  await drain(flaky, once503, { env: D2D_ENV, now: later(1) });
+  assert.deepEqual([flaky.entries()[0].status, once503.creates().length, once503.notes().length, once503.tags().length], ['done', 1, 1, 2]);
+  // A deal that needs a person in HighLevel still gets the contact's tag once; the Retry that finishes the stage adds none.
+  const parked = memory(REPS), two = fakeHighLevel({ opportunities: twoOpenDeals() });
+  await save(parked, 'job-d2d', d2dSale());
+  await drain(parked, two, { env: D2D_ENV });
+  assert.deepEqual([parked.entries()[0].status, two.tags().length], ['parked', 1]);
+  two.deals.get('opp-b').status = 'lost';
+  const retried = await retryScheduleMirror(parked, owner, { action: 'retry', requestId: randomUUID() }, later(5), {});
+  await drain(parked, two, { env: D2D_ENV, now: later(5), ids: retried.ids });
+  assert.deepEqual([parked.entries()[0].status, parked.entries()[0].steps.opportunity, two.tags().length, two.notes().length], ['done', 'moved', 1, 1]);
+});
+
+test('a real Knock bridge sale reaches HighLevel as a door-to-door deal: "Door to door" contact and deal, the rep\'s note line and, with the flag, its tag', async () => {
+  const w = await bridgeWorld({ env: { EGC_GHL_SCHEDULE_MIRROR: 'true' } });
+  const { saleId, events } = saleBatch({ sale: { zip: '80528', city: 'Fort Collins', slot: { date: MON, time: '09:30', crewLabel: 'Crew 1' } } });
+  assert.equal((await w.send(events)).status, 200);
+  const booked = await w.book('sale', saleId);
+  assert.equal(booked.body.booking.status, 'booked', JSON.stringify(booked.body));
+  const [visit] = w.docs('jobs/').filter(row => row.type === 'job'), entries = w.docs(`${GHL_SCHEDULE_MIRROR}/`);
+  assert.deepEqual([visit.source, visit.ghlTags, visit.d2d.kind, visit.d2d.repKey], ['door_to_door', ['egc-d2d-sale'], 'sale', 'rep.one']);
+  assert.deepEqual(entries.map(entry => [entry.jobId, entry.kind, entry.stage]), [[visit.path.split('/').pop(), 'scheduled', 'job_scheduled']], 'the bridge\'s dispatch save queued the mirror in its commit');
+  const ghl = fakeHighLevel(), env = { ...w.env, ...D2D_ENV, EGC_MESSAGING_DRY_RUN: 'false' };
+  const summary = await drainScheduleMirror(scheduleMirrorStorage(env, w.fake.fetcher), { env, now: iso(BRIDGE_NOW + 2 * MIN), ids: entries.map(entry => entry.path.split('/').pop()), fetcher: ghl.fetcher });
+  assert.equal(summary.done, 1, JSON.stringify(summary));
+  assert.deepEqual(ghl.lines(), ['POST /contacts/upsert', 'GET /opportunities/pipelines', 'GET /opportunities/search', 'POST /opportunities/', 'POST /contacts/contact-new/notes', 'POST /contacts/contact-new/tags']);
+  assert.deepEqual([ghl.calls[0].body.source, ghl.calls[0].body.name], ['Door to door', 'Pat Synthetic 2900']);
+  assert.deepEqual([ghl.creates()[0].body.source, ghl.creates()[0].body.pipelineStageId], ['Door to door', EGC_JOB_SCHEDULED_STAGE]);
+  assert.deepEqual(noteLines(ghl)[0].slice(0, 2), ['EGC SCHEDULE UPDATE: Job scheduled', 'Door to door: sale set by Rep']);
+  assert.match(noteLines(ghl)[0].join('\n'), /Crew: Crew 1: /);
+  assert.deepEqual(ghl.tags()[0].body, { tags: ['egc-d2d-sale'] });
+  const done = w.fake.get(entries[0].path);
+  assert.deepEqual([done.status, done.steps.opportunitySource, done.steps.tags], ['done', 'set', ['egc-d2d-sale']]);
 });

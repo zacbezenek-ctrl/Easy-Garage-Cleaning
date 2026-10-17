@@ -18,8 +18,8 @@
 
    HighLevel: this lane sends nothing to HighLevel. Each Knock-made job carries plain D2D attribution the schedule mirror
    (EGC_GHL_SCHEDULE_MIRROR, another lane) reads: source 'door_to_door', d2d {kind, repKey, saleId | setterEventId,
-   houseId, contactSource 'Door to door', at} and ghlTags (egc-d2d-sale | egc-d2d-walkthrough: tags the mirror is
-   meant to send; registering them is the mirror's job). A customer this bridge creates carries acquisition {...}.
+   houseId, contactSource 'Door to door', at} and ghlTags (egc-d2d-sale | egc-d2d-walkthrough: the mirror adds them
+   only with EGC_GHL_D2D_TAGS, where they are registered). A customer this bridge creates carries acquisition {...}.
 
    Reps only ever see dates, times, a crew's label and an estimator's first name: never a roster, employee ids,
    another customer or a crew member's name.

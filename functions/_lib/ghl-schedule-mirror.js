@@ -20,8 +20,14 @@
      3. one internal contact note for the change: date, Denver time window, crew or estimator, address and the job
         breakdown the visit carries (no prices).
    A walkthrough's opportunity is assigned to its estimator's HighLevel user when the staff profile maps one
-   (highlevel-users.js), else HIGHLEVEL_USER_ID. Nothing here adds a tag, writes an appointment or sends a message:
-   booked-status tags stay with the tag outbox and the calendar stays an optional mirror (highlevel-calendars.js).
+   (highlevel-users.js), else HIGHLEVEL_USER_ID. Nothing here writes an appointment or sends a message: booked-status
+   tags stay with the tag outbox and the calendar stays an optional mirror (highlevel-calendars.js).
+   Door to door (the Knock bridge, knock-bridge.js): a job it made carries source 'door_to_door', d2d {kind, repKey}
+   and ghlTags. The bridge adds them in the same commit as the job but after this entry was built, so delivery reads
+   them from the visit: the note gets a "Door to door: sale|walkthrough set by <rep first name>" line, a contact the
+   mirror creates and an opportunity it creates get the source "Door to door" (an existing opportunity's source is
+   never changed), and, only with EGC_GHL_D2D_TAGS, the job's own D2D tag goes on the contact once, with its booking.
+   Tags start HighLevel workflows (a customer text), so they have their own switch; off, no tag is ever added here.
    Failures back off 1, 5, 15, 60 minutes and park after 8 attempts for a manager's Retry. */
 import { firestoreFetch } from './firebase-service-account.js';
 import { decodeFirestoreFields } from './firestore-job.js';
@@ -29,7 +35,7 @@ import { dispatchStorage } from './dispatch-storage.js';
 import { aggregateCount } from './dispatch-window-reads.js';
 import { canDispatch } from './dispatch-permissions.js';
 import { scheduleInterval } from './dispatch-time.js';
-import { addContactNote, ensureContact, ghl, ghlScheduleMirrorEnabled, highLevelConfig } from './highlevel-tags.js';
+import { addContactNote, addTags, ensureContact, ghl, ghlScheduleMirrorEnabled, highLevelConfig } from './highlevel-tags.js';
 import { schedulePipeline } from './highlevel-pipeline.js';
 import { estimatorHighLevelUserId, walkthroughEstimator } from './highlevel-users.js';
 import { GHL_TAG_DRAIN_STATE, GHL_TAG_DRAIN_STATE_ID, ghlTagDrainView } from './ghl-tag-outbox.js';
@@ -53,6 +59,14 @@ export const GHL_MIRROR_STAGES = Object.freeze({ walkthrough: 'walkthrough_appoi
 export const GHL_MIRROR_NEEDS_LINK = 'ghl_mirror_opportunity_needs_link';
 // The Integrations status reads at most this many pending entries (they drain within minutes; parked ones are counted).
 export const GHL_MIRROR_STATUS_SCAN_LIMIT = 100;
+/** EGC_GHL_D2D_TAGS: exactly "true" lets the mirror add a door-to-door job's own tag to its contact. Anything else: the
+ * mirror adds no tag and its requests are exactly what they are without this switch. */
+export const ghlD2dTagsEnabled = env => env?.EGC_GHL_D2D_TAGS === 'true';
+// The HighLevel source of a door-to-door contact or opportunity, and the only tags the mirror ever adds (the same
+// values as knock-bridge.js D2D_CONTACT_SOURCE and D2D_GHL_TAGS, which this module cannot import: dispatch imports it).
+export const GHL_D2D_SOURCE = 'Door to door';
+export const GHL_D2D_TAGS = Object.freeze({ sale: 'egc-d2d-sale', walkthrough: 'egc-d2d-walkthrough' });
+const D2D_TAG_LIST = Object.freeze(Object.values(GHL_D2D_TAGS)), REP_KEY = /^(?!\.{1,2}$)[a-z0-9_.-]{1,150}$/;
 const ENTRY_ID = /^gsm_[0-9a-f]{40}$/, UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const CANCELLED = new Set(['cancelled', 'canceled']), NO_SHOW = new Set(['noshow', 'no_show', 'no-show']);
 const FINISHED = new Set(['completed', 'invoiced', 'paid', 'review_requested', 'closed']);
@@ -172,6 +186,26 @@ export function scheduleMirrorNote({ kind, job, roster = [], resources = [] }) {
   return { title: `EGC schedule: ${label}`, body: lines.join('\n').slice(0, 3000) };
 }
 
+/** A door-to-door job's attribution, or null: the Knock bridge's source 'door_to_door' with d2d.kind 'sale' or
+ * 'walkthrough'. repKey is '' when it is not a rep key; tags are the job's ghlTags that are D2D tags (nothing else). */
+export function d2dAttribution(job) {
+  const d2d = object(job?.d2d) ? job.d2d : null;
+  if (job?.source !== 'door_to_door' || !d2d || !Object.hasOwn(GHL_D2D_TAGS, d2d.kind)) return null;
+  const carried = Array.isArray(job.ghlTags) ? job.ghlTags : [];
+  return { kind: d2d.kind, repKey: typeof d2d.repKey === 'string' && REP_KEY.test(d2d.repKey) ? d2d.repKey : '', tags: D2D_TAG_LIST.filter(tag => carried.includes(tag)) };
+}
+/** The note's door-to-door line: who brought the customer in, by first name only. */
+export const d2dNoteLine = (kind, firstName) => `Door to door: ${kind === 'sale' ? 'sale' : 'walkthrough'} set by ${firstName || 'a door-to-door rep'}`;
+// The line goes right under the note's heading (the first line), so it reads before the schedule details.
+const withLine = (body, line) => { const lines = String(body).split('\n'); lines.splice(1, 0, line); return lines.join('\n'); };
+const firstNameOf = name => clip(String(name ?? '').trim().split(/\s+/)[0], 40);
+// The rep's first name from their canvassing profile (knock_reps), read once per drain pass; '' when there is none.
+async function repFirstName(store, run, repKey) {
+  if (!repKey) return '';
+  if (!run.reps.has(repKey)) { const rep = await store.read('knock_reps', repKey); run.reps.set(repKey, firstNameOf(rep?.displayName || rep?.username)); }
+  return run.reps.get(repKey);
+}
+
 /** The mirror entry a schedule change commits with, as a list of writes ([] with the flag off or nothing to tell).
  * The writer passes its store (store.ghlScheduleMirror carries the flag), the visit before and after the change, its
  * request id and, for the note, the roster and dispatch resources it already holds. */
@@ -252,7 +286,7 @@ const SEARCH_LIMIT = 100;
 const review = detail => ({ outcome: 'needs_link', review: true, detail });
 /** Step 2: the customer job's one opportunity, moved forward to `stage`. Returns {outcome, opportunityId?, from?, linkPatch?},
  * or {review, detail} when a person has to decide in HighLevel. */
-async function mirrorOpportunity(store, run, { entry, job, stage, contactId, link, linkId, now }) {
+async function mirrorOpportunity(store, run, { entry, job, stage, contactId, link, linkId, now, d2d = null }) {
   const { c, pipeline } = run, target = stage === GHL_MIRROR_STAGES.walkthrough ? pipeline.walkthroughStageId : pipeline.jobScheduledStageId;
   if (!pipeline.pipelineId || !target) return { outcome: 'not_configured' };
   const stages = await pipelineStages(run), rank = id => stages.indexOf(id);
@@ -292,13 +326,25 @@ async function mirrorOpportunity(store, run, { entry, job, stage, contactId, lin
       catch { throw fail('ghl_mirror_opportunity_busy', 'Another schedule change is creating this customer job\'s opportunity.', 409); }
       const amount = Number(job.total ?? job.priceQuoted);
       // Create-only, never upsert: a deal created or closed after the search above is never reopened or reset by this.
-      const created = await run.ghl('/opportunities/', { method: 'POST', headers: { 'Idempotency-Key': `egc-schedule-mirror:${entry.projectKey}` }, body: JSON.stringify({
-        pipelineId: pipeline.pipelineId, locationId: c.locationId, name, pipelineStageId: target, status: 'open', contactId,
+      const body = { pipelineId: pipeline.pipelineId, locationId: c.locationId, name, pipelineStageId: target, status: 'open', contactId,
         monetaryValue: entry.visitType === 'job' && Number.isFinite(amount) && amount > 0 ? amount : 0, assignedTo: assignee || c.userId || undefined,
-      }) });
+        // A door-to-door customer's new deal says where it came from; only here, at create (a move never sends a source).
+        ...(d2d ? { source: GHL_D2D_SOURCE } : {}) };
+      const create = (payload, key) => run.ghl('/opportunities/', { method: 'POST', headers: { 'Idempotency-Key': key }, body: JSON.stringify(payload) });
+      let created, source = d2d ? 'set' : null;
+      try { created = await create(body, `egc-schedule-mirror:${entry.projectKey}`); }
+      catch (error) {
+        // HighLevel refused the source field itself: the deal is still created, without it (a refusal created nothing,
+        // so the plain create has its own key). Any other refusal is the attempt's failure, as before.
+        if (!d2d || ![400, 422].includes(error?.status) || !/source/i.test(String(error?.detail || ''))) throw error;
+        const plain = { ...body };
+        delete plain.source;
+        created = await create(plain, `egc-schedule-mirror:${entry.projectKey}:plain`);
+        source = 'refused';
+      }
       const createdId = created?.opportunity?.id || created?.id || '';
       if (typeof createdId !== 'string' || !createdId) throw fail('ghl_mirror_opportunity_unconfirmed', 'HighLevel returned no opportunity id.', 502);
-      return { outcome: 'created', opportunityId: createdId, linkPatch: { opportunityId: createdId, creatingEntryId: '', creatingUntil: '' } };
+      return { outcome: 'created', opportunityId: createdId, ...(source ? { source } : {}), linkPatch: { opportunityId: createdId, creatingEntryId: '', creatingUntil: '' } };
     }
   }
   const id = opportunity.id, current = opportunity.pipelineStageId || '', linkPatch = { opportunityId: id };
@@ -326,6 +372,8 @@ async function deliver(store, run, entry, now, claim) {
   try {
     const job = await store.read('jobs', claimed.jobId);
     if (!job) return settle(store, claimed, { status: 'done', doneAt: now, skipped: 'job_missing', lastError: '' }, 'skipped');
+    // Door to door: read from the visit (the bridge commits its attribution with the job, after this entry was built).
+    const d2d = d2dAttribution(job);
     // A change the visit has moved past is still told: its own note, marked as replaced. Its stage step follows the visit
     // as it is NOW (forward only), so a later change, or one that queued no entry (a crew self-claim), never leaves the
     // deal behind. A replaced cancellation or no-show moves no stage.
@@ -339,18 +387,19 @@ async function deliver(store, run, entry, now, claim) {
         if (job.syncStatus === 'not_needed') return settle(store, claimed, { status: 'done', doneAt: now, skipped: 'contact_not_linked', steps, lastError: '' }, 'skipped');
         throw fail('ghl_mirror_contact_not_linked', 'The visit has no linked HighLevel contact yet.', 409);
       }
-      contactId = await ensureContact(run.c, { name: job.customer || '', phone: job.phone || '', email: job.email || '', address: job.address || '' }, 'EGC Hub schedule');
+      contactId = await ensureContact(run.c, { name: job.customer || '', phone: job.phone || '', email: job.email || '', address: job.address || '' }, d2d ? GHL_D2D_SOURCE : 'EGC Hub schedule');
       if (!contactId) throw fail('ghl_mirror_contact_unresolved', 'HighLevel returned no contact.', 502);
     }
     steps.contactId = contactId;
     if (stage && !steps.opportunity) {
-      const result = await mirrorOpportunity(store, run, { entry: claimed, job, stage, contactId, link, linkId, now });
+      const result = await mirrorOpportunity(store, run, { entry: claimed, job, stage, contactId, link, linkId, now, d2d });
       if (result.review) { review = GHL_MIRROR_NEEDS_LINK; steps.opportunityReview = result.detail; }
       else {
         delete steps.opportunityReview;
         steps.opportunity = result.outcome;
         if (result.opportunityId) steps.opportunityId = result.opportunityId;
         if (result.from !== undefined) steps.opportunityFrom = result.from;
+        if (result.source) steps.opportunitySource = result.source;
         if (result.linkPatch) {
           const latest = await store.read(GHL_SCHEDULE_MIRROR_LINKS, linkId);
           links.push({ collection: GHL_SCHEDULE_MIRROR_LINKS, id: linkId, revision: latest?.revision, patch: { id: linkId, projectKey: claimed.projectKey, contactId, ...result.linkPatch, updatedAt: now } });
@@ -358,8 +407,15 @@ async function deliver(store, run, entry, now, claim) {
       }
     }
     if (!steps.note) {
-      const note = object(claimed.note) ? claimed.note : {}, title = String(note.title || 'EGC schedule update'), body = String(note.body || '');
+      const note = object(claimed.note) ? claimed.note : {}, title = String(note.title || 'EGC schedule update');
+      const body = d2d ? withLine(String(note.body || ''), d2dNoteLine(d2d.kind, await repFirstName(store, run, d2d.repKey))) : String(note.body || '');
       steps.note = await addContactNote(run.c, contactId, { title: (superseded ? `${title} (since changed)` : title).slice(0, 200), body: (superseded ? `${SUPERSEDED_LINE}\n${body}` : body).slice(0, 3000), idempotencyKey: claimed.id }) || now;
+    }
+    // EGC_GHL_D2D_TAGS: a door-to-door job's own tag, once (its booking or restore, kind 'scheduled'), and only while the
+    // visit is active (a stage to move to): a visit cancelled before HighLevel heard of it starts no tag workflow.
+    if (run.d2dTags && d2d?.tags.length && claimed.kind === 'scheduled' && stage && !steps.tags) {
+      await addTags(run.c, contactId, d2d.tags);
+      steps.tags = d2d.tags;
     }
     // A customer job with several open opportunities, only closed ones, or a link to someone else's, waits for a person:
     // the note is written, the stage is not guessed. A manager's Retry, once HighLevel is tidied, tries the stage again.
@@ -382,7 +438,7 @@ export async function drainScheduleMirror(store, { env = {}, now = new Date().to
   const c = highLevelConfig(env);
   if (!c.token || !c.locationId) return { ...summary, code: 'ghl_mirror_highlevel_not_configured' };
   c.fetch = (url, init = {}) => fetcher(url, { ...init, signal: AbortSignal.timeout(15000) });
-  const run = { c, env, pipeline: schedulePipeline(env), stages: null, users: new Map(), readProfile, ghl: (path, options) => ghl(c, path, options) };
+  const run = { c, env, pipeline: schedulePipeline(env), stages: null, users: new Map(), reps: new Map(), d2dTags: ghlD2dTagsEnabled(env), readProfile, ghl: (path, options) => ghl(c, path, options) };
   let rows;
   if (Array.isArray(ids)) rows = (await Promise.all([...new Set(ids)].filter(id => ENTRY_ID.test(id)).map(id => store.read(GHL_SCHEDULE_MIRROR, id)))).filter(Boolean);
   else { const due = await store.due(); rows = due.rows; summary.truncated = due.truncated === true; }
