@@ -187,7 +187,8 @@
       if(!recoverOriginal)writeActive();save();
       const portal=synced.portalInvitation,managerSync=synced.handoffSync?.status==='manager_required',pending=saved.result.pricing?.ready===false;
       // Builder prices the owner has not approved: the job is booked, and the estimate and deposit request wait for approval.
-      const pricingText=pending?`Prices pending owner approval${saved.result.pricing.pending?.length?` (${saved.result.pricing.pending.slice(0,4).join(', ')})`:''}: the estimate and deposit request go to the customer once the owner approves them. `:'';
+      // A walkthrough-priced quote (the builder on, not priced in it) waits until it is built in the builder or the owner releases it.
+      const pricingText=!pending?'':saved.result.pricing.source==='walkthrough'?'Walkthrough prices wait for the owner: the estimate and deposit request go to the customer once this quote is built in the quote builder and signed, or the owner releases these prices. ':`Prices pending owner approval${saved.result.pricing.pending?.length?` (${saved.result.pricing.pending.slice(0,4).join(', ')})`:''}: the estimate and deposit request go to the customer once the owner approves them. `;
       const crewText=crewOutcome(saved.result.crew);
       const portalText=managerSync||pending?'':portal?.status==='submitted'?(portal.channel==='Email'?'Portal email queued in HighLevel. ':'Portal text queued in HighLevel. '):portal?.status==='suppressed'?'Portal delivery is paused. ':'Portal delivery needs attention in Estimates & payments. ';
       const scheduleText=managerSync?'Job saved. A manager completes the CRM sync and the portal invitation from the Hub. ':synced.handoffSync?.status==='synced'?'Job and CRM schedule verified. ':'Job saved; CRM reconciliation still needs attention. ';

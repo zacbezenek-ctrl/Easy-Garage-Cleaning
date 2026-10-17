@@ -5,7 +5,7 @@ import { assignmentKey, jobCrewNames } from './job-assignment.js';
 import { localInstant } from './operations-portal-records.js';
 import { customerIdentityPatch } from './customer-identity.js';
 import { suggestedDurationMinutes } from './quote-duration.js';
-import { estimateTotals, included, normalizeLineItems, toWalkthroughLineItem, validateSelection } from './quote-model.js';
+import { estimateTotals, included, normalizeLineItems, toWalkthroughLineItem, validateSelection, withoutPurchaseFields } from './quote-model.js';
 import { funnelEventWrite } from './funnel-events.js';
 import { saleWrites } from './job-funnel-events.js';
 import { funnelHubId } from './funnel-definitions.js';
@@ -19,7 +19,7 @@ import { bringList, bringListMaterials, breakdownMaterials, handoffEquipment, ha
 import { breakdownLines, jobBreakdown } from './job-breakdown.js';
 import { crewAutoAssignEnabled, projectCrewOpenings } from './dispatch-crew-assign.js';
 import { dispatchOpenings } from './dispatch-openings.js';
-import { catalogStorage, quoteBuilderEnabled, readCompositeState } from './catalog-store.js';
+import { catalogStorage, quoteBuilderEnabled, readCompositeState, requireCatalogOwner } from './catalog-store.js';
 import { approvalRefusal, compositeApproval, priceCompositeQuote } from './composite-quote.js';
 
 // FIX-CREW-PRICE-LEAK: every crew-visible copy of the brief is written without currency amounts.
@@ -103,12 +103,16 @@ const dollars = cents => Number.isSafeInteger(cents) ? `${cents < 0 ? '-' : ''}$
 // must equal the signed total; a manual price change is an explicit line.
 // A builder quote (EGC_QUOTE_BUILDER_ENABLED) is signed with the server's own
 // priced lines and pricing-menu version (builder: priceCompositeQuote's result).
-function itemizedQuote(quote, totalCents, crewSize, minutes, builder = null) {
+// purchase (EGC_JOB_MATERIALS or EGC_QUOTE_BUILDER_ENABLED): a line may carry the
+// purchase fields (quote-model.js PURCHASE_LINE_FIELDS), read strictly; they say
+// what the crew buys (the job's materials) and the signed estimate stores the
+// lines without them. Off, they are unknown fields exactly as before.
+function itemizedQuote(quote, totalCents, crewSize, minutes, builder = null, purchase = false) {
   if (builder) quote = { ...quote, line_items: builder.lineItems, catalog_version: builder.menuVersion };
   if (quote.line_items === undefined || quote.line_items === null) return null;
   if (!Array.isArray(quote.line_items) || !quote.line_items.length) throw fail('invalid_line_items', 'An itemized quote needs at least one line item.', 400);
   let lineItems;
-  try { ({ lineItems } = normalizeLineItems(quote.line_items, { strict: true })); }
+  try { ({ lineItems } = normalizeLineItems(quote.line_items, { strict: true, purchase })); }
   catch (error) { if (/^quote_/.test(error?.code || '')) throw fail('invalid_line_items', `The itemized quote is invalid: ${error.message}`, 400); throw error; }
   if (lineItems.some(line => line.kind === 'tip')) throw fail('invalid_line_items', 'A signed quote cannot include a tip line.', 400);
   const adjustment = lineItems.find(line => line.id === 'adjustment');
@@ -123,7 +127,7 @@ function itemizedQuote(quote, totalCents, crewSize, minutes, builder = null) {
   const overridden = suggestion.source === 'line_items' && suggestion.minutes !== minutes;
   if (overridden && !reason) throw fail('invalid_duration', `The selected line items suggest ${suggestion.minutes} minutes on site. Use that estimate or record the manager's reason for overriding it.`, 400);
   const sold = lineItems.filter(included);
-  return { line_items: sold.map(toWalkthroughLineItem), line_items_count: sold.length, itemized: true, catalog_version: version === '' ? null : version, estimate_line_items: lineItems,
+  return { line_items: sold.map(toWalkthroughLineItem), line_items_count: sold.length, itemized: true, catalog_version: version === '' ? null : version, estimate_line_items: purchase ? lineItems.map(withoutPurchaseFields) : lineItems,
     duration_suggestion: { minutes: suggestion.minutes, source: suggestion.source }, duration_override_reason: overridden ? reason : '' };
 }
 const LABELS = { cleanout: 'Garage cleanout and reset', deep_clean: 'Deep clean', pressure_wash: 'One-car garage pressure wash', mouse_trapping: 'Non-toxic mouse trapping' };
@@ -194,13 +198,20 @@ function builderMismatch(quote, priced, signedCents) {
   if (version !== undefined && version !== null && version !== '' && version !== priced.menuVersion) return refusal();
   if (quote?.line_items !== undefined && quote.line_items !== null) {
     let lines = null;
-    try { ({ lineItems: lines } = normalizeLineItems(quote.line_items, { strict: true })); } catch { lines = null; }
+    try { ({ lineItems: lines } = normalizeLineItems(quote.line_items, { strict: true, purchase: true })); } catch { lines = null; }
     if (!lines || canonical(signedLines(lines)) !== canonical(signedLines(priced.lineItems))) return refusal();
   }
   return null;
 }
 // The builder selection a revision is priced from when its plan sends none: the signed job's, else its saved draft's.
 const savedSelection = job => plain(job?.compositeQuote?.compositePricing) ? job.compositeQuote.compositePricing : plain(job?.quoteDraft?.compositePricing) ? job.quoteDraft.compositePricing : null;
+// A Hub catalog quote draft (quoteDraft.catalogPricing, priced on the server by catalog-quote.js) signed with exactly the
+// lines the server saved for it: it keeps the catalog's own approval, as its send does.
+function catalogSigned(previous, plan) {
+  if (!plain(previous?.quoteDraft?.catalogPricing) || !plan.quote.itemized || !Array.isArray(previous.estimate?.lineItems)) return false;
+  const { lineItems: saved } = normalizeLineItems(previous.estimate.lineItems);
+  return saved.length > 0 && canonical(signedLines(saved)) === canonical(signedLines(plan.quote.estimate_line_items));
+}
 // The human job breakdown with a builder quote's shelving and storage as the packs sold, product by product.
 function builderBreakdown(summary, builder) {
   const lines = Array.isArray(builder?.breakdown?.lines) ? builder.breakdown.lines.filter(plain) : [];
@@ -209,7 +220,7 @@ function builderBreakdown(summary, builder) {
   return { ...summary, sections, summary: breakdownLines({ sections }).join('\n').slice(0, 2000) };
 }
 const listNames = names => names.slice(0, 8).join(', ') + (names.length > 8 ? ` and ${names.length - 8} more` : '');
-export function normalizeHandoffPlan(input, now = new Date().toISOString(), { builder = null } = {}) {
+export function normalizeHandoffPlan(input, now = new Date().toISOString(), { builder = null, purchase = false } = {}) {
   if (!plain(input) || !plain(input.client) || !plain(input.quote) || !plain(input.acceptance)) throw fail('invalid_plan', 'Review the complete walkthrough before saving.', 400);
   const quote = input.quote, acceptance = input.acceptance;
   const totalCents = cents(quote.total, 'Locked total'), depositCents = cents(quote.deposit, 'Deposit');
@@ -231,7 +242,7 @@ export function normalizeHandoffPlan(input, now = new Date().toISOString(), { bu
   if (!Number.isInteger(minutes) || minutes < 15 || minutes > 1440) throw fail('invalid_plan', 'The estimated job duration is invalid.', 400);
   const before = input.photos?.before;
   if (!Number.isInteger(before) || before < 0 || before > 1000) throw fail('invalid_plan', 'The walkthrough photo count is invalid.', 400);
-  const lines = itemizedQuote(quote, totalCents, logistics.crew_size, minutes, builder) || { line_items: [{ name: 'Garage cleanout and reset', qty: 1, total: totalCents / 100 }], line_items_count: 1 };
+  const lines = itemizedQuote(quote, totalCents, logistics.crew_size, minutes, builder, purchase) || { line_items: [{ name: 'Garage cleanout and reset', qty: 1, total: totalCents / 100 }], line_items_count: 1 };
   // The priced internal_notes stay manager-only; crew get crew_brief (older pages send none: it is the internal brief without amounts).
   const internalNotes = text(input.internal_notes, 'Job brief', 4900, true), crewBrief = input.crew_brief === undefined || input.crew_brief === null || input.crew_brief === '' ? internalNotes : text(input.crew_brief, 'Crew brief', 4900, true);
   return { client, quote: { title: text(quote.title || 'EGC Garage Service', 'Job title', 500, true), total: totalCents / 100, deposit: depositCents / 100, job_date: date, start_time: start, end_time: end, start_at: startAt, end_at: endAt, estimated_duration_min: minutes, expected_shift_hours: (minutes + 90) / 60, ...lines }, discovery, scope, logistics, internal_notes: internalNotes, crew_brief: stripCrewMoney(crewBrief), client_checklists: checks(input.client_checklists), signature, acceptance: { accepted_at: new Date(acceptedAt).toISOString(), accepted_by: text(acceptance.accepted_by, 'Signer name', 200, true), method: 'in_person_signature', terms_version: terms, signature_captured: true }, terms_version: terms, terms_accepted: true, photos: { before }, notes: text(input.notes || '', 'Customer notes', 8000) };
@@ -256,7 +267,9 @@ function financePatch(plan, previous, jobId, actor, now, builder = null) {
     acceptance: { acceptedAt: plan.acceptance.accepted_at, acceptedBy: plan.acceptance.accepted_by, method: 'in_person_signature', termsVersion: plan.terms_version, signatureCaptured: true, signatureData: plan.signature, recordedBy: actor.user, recordedAt: now },
     customerApproval: { status: 'approved', approvedAt: plan.acceptance.accepted_at, approvedBy: plan.acceptance.accepted_by, amount: total, source: 'in_person_signature' },
     estimate: { number: previous?.estimate?.number || `EST-${jobId.slice(-6).toUpperCase()}`, revision: Number.isInteger(previous?.estimate?.revision) ? previous.estimate.revision + 1 : 1, status: 'accepted', amount: total, depositRequired: amount, acceptedAt: plan.acceptance.accepted_at, acceptedBy: plan.acceptance.accepted_by, acceptanceMethod: 'in_person_signature', termsVersion: plan.terms_version, createdAt: previous?.estimate?.createdAt || now, source: 'walkthrough', scope: customerScopeSummary(plan.scope),
-      ...(plan.quote.itemized ? { lineItems: structuredClone(plan.quote.estimate_line_items), catalogVersion: plan.quote.catalog_version } : {}), ...(builder ? { pricingSettingsVersion: builder.settingsVersion } : {}) },
+      // A builder quote stores the builder's lines with their internal goods split (manager-only, never fingerprinted or
+      // shown to a customer or the crew), as a saved builder draft does; the signed snapshot keeps the lines without it.
+      ...(plan.quote.itemized ? { lineItems: structuredClone(builder ? builder.storedLineItems : plan.quote.estimate_line_items), catalogVersion: plan.quote.catalog_version } : {}), ...(builder ? { pricingSettingsVersion: builder.settingsVersion } : {}) },
     deposit: { ...prior, amount, paidAmount: paid, status: paid >= amount ? 'paid' : paid > 0 ? 'partial' : 'due' },
     ...(plan.quote.itemized || previous?.durationOverride ? { durationOverride: plan.quote.duration_override_reason ? { suggestedMinutes: plan.quote.duration_suggestion.minutes, minutes: plan.quote.estimated_duration_min, reason: plan.quote.duration_override_reason, recordedBy: actor.user, recordedAt: now } : null } : {}) };
   // Any change to what the customer signed (price, deposit, scope or, when
@@ -341,29 +354,64 @@ export async function handoffCrewOpenings(store, actor, query = {}, now = new Da
 }
 
 const compositeStateDefault = env => readCompositeState(catalogStorage(env));
-// A builder-priced job's prices as its author sees them: ready, or the menu items still waiting for the owner.
+const CLOSED_STATES = ['cancelled', 'canceled', 'noshow', 'no_show', 'completed', 'closed'];
+const isOwner = actor => { try { requireCatalogOwner(actor); return true; } catch { return false; } };
+// A held job's prices as its author sees them: ready, or what still waits for the owner (menu item names, or the
+// walkthrough-priced quote). source 'builder' for a builder quote, 'walkthrough' for one the builder did not price.
 function pricingView(job) {
   const pending = plain(job?.pricesPendingApproval) && Array.isArray(job.pricesPendingApproval.items) ? job.pricesPendingApproval.items.map(item => String(item?.name || '').slice(0, 160)).filter(Boolean) : [];
-  return { source: 'builder', ready: !plain(job?.pricesPendingApproval), pending };
+  return { source: plain(job?.compositeQuote) ? 'builder' : 'walkthrough', ready: !plain(job?.pricesPendingApproval), pending };
 }
 // EGC_QUOTE_BUILDER_ENABLED: what a signed builder quote saves on its job. compositeQuote keeps the priced selection
 // and its cost-free breakdown (sections, products, purchase list); prices the owner has not approved flag the job
-// pricesPendingApproval (menu item ids and names, no amount). A saved builder draft being signed takes the signed
-// selection, so the draft and the job never disagree.
+// pricesPendingApproval (reason draft_prices: menu item ids and names, no amount). A saved builder draft being signed
+// takes the signed selection, so the draft and the job never disagree.
 function builderPatch(builder, previous, actor, requestId, now) {
   const pending = builder.approval.ready ? [] : builder.approval.blocked.map(({ id, name }) => ({ id, name }));
   return {
     compositeQuote: { version: 1, requestId, compositePricing: structuredClone(builder.compositePricing), breakdown: structuredClone(builder.breakdown), menuVersion: builder.menuVersion, settingsVersion: builder.settingsVersion, approval: { ready: builder.approval.ready, pending }, pricedAt: now },
-    ...(pending.length ? { pricesPendingApproval: { status: 'pending', at: now, by: actor.user, requestId, items: pending } } : plain(previous?.pricesPendingApproval) ? { pricesPendingApproval: null } : {}),
+    ...(pending.length ? { pricesPendingApproval: { status: 'pending', reason: 'draft_prices', at: now, by: actor.user, requestId, items: pending } } : plain(previous?.pricesPendingApproval) ? { pricesPendingApproval: null } : {}),
     ...(plain(previous?.quoteDraft) && plain(previous.quoteDraft.compositePricing) ? { quoteDraft: { ...previous.quoteDraft, compositePricing: structuredClone(builder.compositePricing), breakdown: structuredClone(builder.breakdown) } } : {}),
   };
 }
+// EGC_QUOTE_BUILDER_ENABLED: a signed quote the builder did not price (the walkthrough's own lines or its single
+// signed total) is held like a draft-priced one (reason walkthrough_priced); a builder job re-signed this way loses its
+// builder prices.
+const WALKTHROUGH_PRICED = { id: null, name: 'Walkthrough-priced quote' };
+function walkthroughHold(previous, actor, requestId, now) {
+  return { pricesPendingApproval: { status: 'pending', reason: 'walkthrough_priced', at: now, by: actor.user, requestId, items: [WALKTHROUGH_PRICED] }, ...(plain(previous?.compositeQuote) ? { compositeQuote: null } : {}) };
+}
+// The quote-draft send gate's refusal of a walkthrough-priced quote (quote-draft.js compositeSendable), for a signed job.
+const builderRequired = () => Object.assign(new Error('With the quote builder on, a walkthrough-priced quote is sent only after it is built in the quote builder from the owner\'s pricing menu. The job stays booked: build the quote in the builder and have the customer sign it, or ask the owner to release these prices.'),
+  { code: 'quote_draft_builder_required', status: 409, details: { unapproved: [{ ...WALKTHROUGH_PRICED, unitCents: null, reason: 'Its lines were priced from the walkthrough tables, which the owner has not approved for the quote builder. Rebuild it in the quote builder (removal, then shelving, then extra storage) and sign that quote, or the owner releases this signed price.' }] } });
+// The builder's send gate for a held job: a builder quote passes when every price on its signed breakdown is
+// owner-approved now, at exactly the signed amount (compositeApproval, else approvalRefusal: 409
+// quote_draft_composite_prices_unapproved); a walkthrough-priced one never passes it (409 quote_draft_builder_required)
+// unless the owner, who approves prices, releases it (owner).
+function releaseGate(job, pricing, { owner = false } = {}) {
+  if (plain(job.compositeQuote)) {
+    const approval = compositeApproval(job.compositeQuote.breakdown, pricing);
+    if (!approval.ready) throw approvalRefusal(approval);
+    return 'approved_prices';
+  }
+  if (owner) return 'owner_release';
+  throw builderRequired();
+}
+// A release clears the hold, records it and asks for the portal invitation (customerPortalInvitationRequestedAt), which
+// the Hub's provider sync sends: the estimate and deposit request reach the customer only now.
+function releasePatch(job, actor, now, release) {
+  return { pricesPendingApproval: null, pricesRelease: { at: now, by: actor.user, ...release },
+    ...(plain(job.compositeQuote) ? { compositeQuote: { ...job.compositeQuote, approval: { ready: true, pending: [] }, releasedAt: now, releasedBy: actor.user } } : {}),
+    customerPortalInvitationRequestedAt: job.customerPortalInvitationRequestedAt || now, updatedAt: now };
+}
 
-/** EGC_QUOTE_BUILDER_ENABLED: a job booked with builder prices the owner had not approved (pricesPendingApproval) gets
- * its customer-facing estimate and deposit request only through the builder's send gate: compositeApproval re-checks
- * the saved breakdown against today's menu, settings and approvals and anything still unapproved is refused with
- * approvalRefusal (409 quote_draft_composite_prices_unapproved, every reason in details.unapproved). Once released, the
- * job asks for its portal invitation (customerPortalInvitationRequestedAt), which the Hub's provider sync sends.
+/** EGC_QUOTE_BUILDER_ENABLED: a job booked with prices the owner had not approved (pricesPendingApproval) gets its
+ * customer-facing estimate and deposit request only through the builder's send gate (releaseGate): a builder quote's
+ * saved breakdown is re-checked against today's menu, settings and approvals and anything still unapproved is refused
+ * (409 quote_draft_composite_prices_unapproved, every reason in details.unapproved); a walkthrough-priced quote is
+ * refused like an unbuilt quote draft (409 quote_draft_builder_required) unless the owner releases it. Once released,
+ * the job asks for its portal invitation. The owner's menu approvals also release covered jobs on their own
+ * (releaseHeldHandoffs).
  *   POST /api/walkthrough-handoff {action:'prices.release', requestId, jobId, expectedRevision, actorId?}
  *   => {ok, authority, requestId, replayed, released, job:{id, revision}, pricing:{source, ready, pending}} */
 export async function releaseHandoffPrices(store, actor, input, now = new Date().toISOString(), { env = {}, compositeState = compositeStateDefault } = {}) {
@@ -382,19 +430,40 @@ export async function releaseHandoffPrices(store, actor, input, now = new Date()
   const job = await store.read('jobs', input.jobId);
   if (!job) throw fail('job_missing', 'The selected job no longer exists.', 404);
   requireRevision(job);
-  if (!operational(job) || !plain(job.compositeQuote) || !plain(job.compositeQuote.breakdown)) throw fail('not_builder_quote', 'This job was not priced in the quote builder, so it has no builder prices to release.');
-  if (['cancelled', 'canceled', 'noshow', 'no_show', 'completed', 'closed'].includes(state(job))) throw fail('job_closed', 'This job is cancelled or finished, so its estimate is not sent.');
+  if (!operational(job) || !plain(job.compositeQuote) && !plain(job.pricesPendingApproval)) throw fail('not_builder_quote', 'This job was not priced in the quote builder, so it has no builder prices to release.');
+  if (CLOSED_STATES.includes(state(job))) throw fail('job_closed', 'This job is cancelled or finished, so its estimate is not sent.');
   if (!access.dispatcher && !authorsJob(job, null, actor)) throw fail('job_forbidden', 'Only an operations manager or owner can release this job. Start from its walkthrough or quote draft.', 403);
   if (job.revision !== input.expectedRevision) throw fail('job_changed', 'This job changed. Reload it before releasing its estimate.');
   if (!plain(job.pricesPendingApproval)) return view(job, false, false);
-  // The builder's send gate: every price on the signed breakdown is owner-approved now, at exactly the signed amount.
-  const approval = compositeApproval(job.compositeQuote.breakdown, await compositeState(env));
-  if (!approval.ready) throw approvalRefusal(approval);
-  const patch = { pricesPendingApproval: null, compositeQuote: { ...job.compositeQuote, approval: { ready: true, pending: [] }, releasedAt: now, releasedBy: actor.user }, customerPortalInvitationRequestedAt: job.customerPortalInvitationRequestedAt || now, updatedAt: now };
-  await store.commit([{ collection: 'jobs', id: job.id, revision: job.revision, patch }, { collection: 'walkthroughHandoffs', id: receiptId, patch: { kind: 'prices_release', actorId: actor.user, jobId: job.id, approvedItems: job.pricesPendingApproval.items || [], createdAt: now } }]);
+  const gate = releaseGate(job, plain(job.compositeQuote) ? await compositeState(env) : null, { owner: isOwner(actor) });
+  const patch = releasePatch(job, actor, now, { source: 'prices.release', requestId: input.requestId, gate });
+  await store.commit([{ collection: 'jobs', id: job.id, revision: job.revision, patch }, { collection: 'walkthroughHandoffs', id: receiptId, patch: { kind: 'prices_release', actorId: actor.user, jobId: job.id, gate, approvedItems: job.pricesPendingApproval.items || [], createdAt: now } }]);
   const saved = await store.read('jobs', job.id);
   if (!saved) throw fail('outcome_unknown', 'The release could not be read back. Retry the identical request.', 503);
   return view(saved, false, true);
+}
+
+/** EGC_QUOTE_BUILDER_ENABLED: after the owner approves pricing-menu prices or saves the pricing settings (POST
+ * /api/catalog menu.approve or settings.update), the held builder jobs those approvals now cover are released (the
+ * builder's send gate, releaseGate, on each), so the customer gets the estimate and deposit request without anyone
+ * posting prices.release by hand. Bounded: store.heldJobIds(limit + 1) (handoff-price-holds.js: one equality query on
+ * pricesPendingApproval.status) and at most `limit` job reads. A walkthrough-priced or still-unapproved job, a closed
+ * one and one that changed meanwhile keep waiting. Each release commits on its own, under the job's revision.
+ * => {released:[jobId], waiting:int, more:boolean} (more: further held jobs than this run read). */
+export const HELD_RELEASE_LIMIT = 25;
+export async function releaseHeldHandoffs(store, actor, now = new Date().toISOString(), { env = {}, compositeState = compositeStateDefault, source = 'menu.approve', requestId: approvalRequest = '', limit = HELD_RELEASE_LIMIT } = {}) {
+  if (!quoteBuilderEnabled(env)) return null;
+  const ids = await store.heldJobIds(limit + 1), pricing = await compositeState(env), released = [];
+  let waiting = 0;
+  for (const id of [...new Set(ids)].slice(0, limit)) {
+    const job = safeId(id) ? await store.read('jobs', id) : null;
+    if (!job || !plain(job.pricesPendingApproval)) continue;
+    if (!operational(job) || CLOSED_STATES.includes(state(job)) || !plain(job.compositeQuote) || typeof job.revision !== 'string' || !job.revision) { waiting++; continue; }
+    try { releaseGate(job, pricing); } catch { waiting++; continue; }
+    try { await store.commit([{ collection: 'jobs', id: job.id, revision: job.revision, patch: releasePatch(job, actor, now, { source, requestId: approvalRequest, gate: 'approved_prices' }) }]); released.push(job.id); }
+    catch { waiting++; }
+  }
+  return { released, waiting, more: ids.length > limit };
 }
 
 /** options.checkouts(job) (the API passes quote-draft expireStaleCheckout): a
@@ -407,11 +476,14 @@ export async function saveWalkthroughHandoff(store, actor, input, now = new Date
   if (input.actorId && input.actorId !== actor.user) throw fail('actor_changed', 'The signed-in employee changed. Reopen the original account to recover this request.', 403);
   // EGC_DISPATCH_CREW_AUTO_ASSIGN: the crew the page chose (logistics.crew_id) is read apart from the signed plan.
   // EGC_QUOTE_BUILDER_ENABLED: a plan with a builder selection (quote.composite_pricing) is read without the browser's
-  // lines; the server prices the selection below. Either flag off: the plan is read exactly as before.
-  const autoCrew = crewAutoAssignEnabled(env), builderOn = quoteBuilderEnabled(env), planInput = jobMaterialsEnabled(env) ? input.plan : withoutBringList(input.plan);
+  // lines; the server prices the selection below. Any sent value but a selection object (or null: none sent) is
+  // refused, so a falsy one can never skip the server's pricing. EGC_JOB_MATERIALS or the builder: a line may carry
+  // purchase fields (itemizedQuote). Every flag off: the plan is read exactly as before.
+  const autoCrew = crewAutoAssignEnabled(env), builderOn = quoteBuilderEnabled(env), structured = jobMaterialsEnabled(env), purchase = structured || builderOn, planInput = structured ? input.plan : withoutBringList(input.plan);
   const crewChoice = autoCrew ? requestedCrew(planInput) : null, signedInput = autoCrew ? withoutCrewChoice(planInput) : planInput;
   const builderSent = builderOn && plain(signedInput?.quote) && signedInput.quote.composite_pricing !== undefined && signedInput.quote.composite_pricing !== null;
-  let plan = normalizeHandoffPlan(builderSent ? withoutQuoteLines(signedInput) : signedInput, now);
+  if (builderSent && !plain(signedInput.quote.composite_pricing)) throw fail('invalid_plan', 'The quote builder selection is invalid. Reopen the quote builder, save the quote again and sign that quote.', 400);
+  let plan = normalizeHandoffPlan(builderSent ? withoutQuoteLines(signedInput) : signedInput, now, { purchase });
   const fingerprint = await hash({ actor: actor.user, input }), receiptId = input.requestId.toLowerCase();
   async function replay() {
     const receipt = await store.read('walkthroughHandoffs', receiptId);
@@ -430,7 +502,7 @@ export async function saveWalkthroughHandoff(store, actor, input, now = new Date
   // endTime} and, on the fresh answer, the crew openings when no crew was free; pricing: a builder quote's approval state.
   function result(saved, replayed, warnings, checkout = null, crew = null) {
     return { ok: true, authority: 'employee_hub', requestId: input.requestId, replayed, ...(checkout ? { checkout } : {}), job: { id: saved.id, revision: saved.revision, customerId: saved.customerId, projectId: saved.projectId, sourceWalkthroughId: saved.sourceWalkthroughId || '', date: saved.date, time: saved.time, endTime: saved.endTime, status: state(saved), assignedCrew: access.dispatcher ? saved.assignedCrew || [] : [], crewNeeded: saved.crewNeeded, highlevelContactId: saved.highlevelContactId || '', highlevelAppointmentId: saved.highlevelAppointmentId || '', highlevelOpportunityId: saved.highlevelOpportunityId || '', syncStatus: saved.syncStatus || 'pending' }, warnings: access.dispatcher ? warnings : authorRuleRows(warnings), financialState: 'accepted_quote_not_payment', fieldJobUrl: `/crew/job.html?jobId=${encodeURIComponent(saved.id)}`,
-      ...(plain(crew) ? { crew: { ...crew, date: saved.date || '', time: saved.time || '', endTime: saved.endTime || '' } } : {}), ...(plain(saved.compositeQuote) ? { pricing: pricingView(saved) } : {}) };
+      ...(plain(crew) ? { crew: { ...crew, date: saved.date || '', time: saved.time || '', endTime: saved.endTime || '' } } : {}), ...(plain(saved.compositeQuote) || plain(saved.pricesPendingApproval) ? { pricing: pricingView(saved) } : {}) };
   }
   const prior = await replay(); if (prior) return prior;
   const customer = await store.read('customers', input.customerId); requireRevision(customer);
@@ -476,9 +548,17 @@ export async function saveWalkthroughHandoff(store, actor, input, now = new Date
     builder = priceCompositeQuote(await compositeState(env), selection, { complete: true });
     const mismatch = builderMismatch(signedInput.quote, builder, Math.round(plan.quote.total * 100));
     if (mismatch) throw mismatch;
-    plan = normalizeHandoffPlan(withoutQuoteLines(signedInput), now, { builder });
+    plan = normalizeHandoffPlan(withoutQuoteLines(signedInput), now, { builder, purchase });
   }
-  const pricesPending = Boolean(builder && !builder.approval.ready);
+  // EGC_QUOTE_BUILDER_ENABLED: a quote the builder did not price (no builder selection sent or saved) is held as well
+  // (walkthroughHold: walkthrough_priced), like a quote draft priced outside the builder; a Hub catalog quote draft
+  // signed exactly as the server priced it keeps the catalog's own approval, as its send does (quote-draft.js), and the
+  // owner, who approves prices, signing it in person is that approval.
+  const walkthroughPriced = builderOn && !builder && !catalogSigned(previous, plan) && !isOwner(actor);
+  const pricesPending = Boolean(builder && !builder.approval.ready), held = pricesPending || walkthroughPriced;
+  // The sold lines with their purchase fields (the stored estimate has none): what the crew buys and the breakdown.
+  const purchaseLines = purchase && !builder && plan.quote.itemized ? normalizeLineItems(signedInput.quote.line_items, { strict: true, purchase: true }).lineItems : null;
+  const soldPlan = purchaseLines ? { ...plan, quote: { ...plan.quote, estimate_line_items: purchaseLines } } : plan;
   const roster = await store.roster(), assignedText = text(plan.logistics.assigned_to || '', 'Crew assignment', 500);
   // A quote author who is not a dispatcher keeps the saved crew exactly. Any other
   // name, one on the roster or not, gets the same refusal, so it cannot be used to
@@ -512,15 +592,15 @@ export async function saveWalkthroughHandoff(store, actor, input, now = new Date
   // Off: none of these is read or written. The job (or, for a new job, its walkthrough) is what the handoff revises:
   // a revision swaps only what the earlier bring list put in the equipment (job-materials.js handoffEquipment), so
   // equipment added in Dispatch stays; a page that sends no bring list keeps the earlier list, equipment and grab list.
-  const structured = jobMaterialsEnabled(env), sent = structured && plan.logistics.bring_list !== undefined && plan.logistics.bring_list !== null;
+  const sent = structured && plan.logistics.bring_list !== undefined && plan.logistics.bring_list !== null;
   const equipment = sent ? bringList(plan.logistics.bring_list) : null;
   if (sent && equipment === null) throw fail('invalid_plan', 'The equipment list could not be verified. Review the walkthrough and save it again.', 400);
   const base = previous || source, earlierBring = structured ? savedBringList(base?.jobInstructions) : [], bring = equipment ?? earlierBring;
-  const breakdown = structured ? builder ? builderBreakdown(jobBreakdown(plan), builder) : jobBreakdown(plan) : null, materialsSource = previous ? previous.materials : source?.materials;
+  const breakdown = structured ? builder ? builderBreakdown(jobBreakdown(plan), builder) : jobBreakdown(soldPlan) : null, materialsSource = previous ? previous.materials : source?.materials;
   const requiredEquipment = sent ? handoffEquipment({ current: base?.requiredEquipment, earlier: earlierBring, bring: equipment }) : null;
   const instructions = stripCrewMoneyDeep({ ...handoffInstructions(plan, source?.id || '', builder), ...(structured ? { ...(bring.length ? { bringList: bring } : {}), jobBreakdown: breakdownLines(breakdown) } : {}) }), crewNotes = stripCrewMoney(plan.notes);
   const changes = { date: plan.quote.job_date, endDate: plan.quote.job_date, time: plan.quote.start_time, endTime: plan.quote.end_time, title: plan.quote.title, address: placedAddress ?? plan.client.address, serviceType: 'Garage transformation', crewNeeded: plan.logistics.crew_size, assignedCrew, jobInstructions: stripCrewMoney(plan.crew_brief), accessInstructions: instructions.accessNotes, customerInstructions: crewNotes, notify: access.dispatcher || previous?.notify !== false,
-    ...(structured ? { ...(requiredEquipment ? { requiredEquipment } : {}), ...structuredMaterialChanges(plan, materialsSource, equipment, builder) } : materialChanges(plan, materialsSource, builder)) };
+    ...(structured ? { ...(requiredEquipment ? { requiredEquipment } : {}), ...structuredMaterialChanges(soldPlan, materialsSource, equipment, builder) } : materialChanges(plan, materialsSource, builder)) };
   const dispatchInput = previous ? { action: 'schedule.update', requestId: input.requestId, jobId: previous.id, expectedRevision: previous.revision, changes } : { action: 'schedule.create', requestId: input.requestId, customerId: customer.id, kind: 'job', ...(source ? { sourceWalkthroughId: source.id } : {}), booking: { channel: 'hub_in_person' }, changes };
   // The chosen crew replaces the (empty) people list: Dispatch copies the crew's members and lead, then picks.
   const choiceInput = chosenCrew ? { ...dispatchInput, changes: { ...Object.fromEntries(Object.entries(changes).filter(([key]) => key !== 'assignedCrew')), crewId: chosenCrew } } : null;
@@ -539,19 +619,22 @@ export async function saveWalkthroughHandoff(store, actor, input, now = new Date
       const providerPayload = { ...plan, signature: undefined, tool: 'game_plan', job_id: target.id, walkthrough_id: source?.id || '', idempotency_key: `walkthrough-handoff:${input.requestId}`, sent_at: now };
       delete providerPayload.signature;
       // Prices the owner has not approved yet: no portal invitation (the estimate and deposit request) is asked for, and
-      // one asked for earlier is withdrawn, until the builder's send gate releases the job (releaseHandoffPrices).
-      const invitation = !pricesPending ? { customerPortalInvitationRequestedAt: previous?.customerPortalInvitationRequestedAt || now } : previous?.customerPortalInvitationRequestedAt ? { customerPortalInvitationRequestedAt: null } : {};
+      // one asked for earlier is withdrawn, until the builder's send gate releases the job (releaseHandoffPrices); every
+      // customer surface withholds a held job (quote-model.js pricesPendingApproval).
+      const invitation = !held ? { customerPortalInvitationRequestedAt: previous?.customerPortalInvitationRequestedAt || now } : previous?.customerPortalInvitationRequestedAt ? { customerPortalInvitationRequestedAt: null } : {};
       Object.assign(target.patch, financePatch(plan, previous, target.id, actor, now, builder), { handoffVersion: 1, handoffRequestId: input.requestId, handoffFingerprint: fingerprint, acceptedHandoffPayload: providerPayload, sourceWalkthroughId: source?.id || '', customer: plan.client.name, phone: plan.client.phone, email: plan.client.email, scope: plan.scope, discovery: plan.discovery, logistics: plan.logistics, jobInstructions: instructions, internalNotes: plan.internal_notes, clientChecklists: plan.client_checklists, notes: plan.notes, customerNotesSummary: crewNotes || instructions.customerGoal, durationMin: (Date.parse(plan.quote.end_at) - Date.parse(plan.quote.start_at)) / 60000, estimatedDurationMin: plan.quote.estimated_duration_min, estimatedDurationHours: plan.quote.estimated_duration_min / 60, expectedShiftHours: plan.quote.expected_shift_hours, crewSize: plan.logistics.crew_size, photoCount: plan.photos.before, photoSyncStatus: previous?.photoSyncStatus || 'device_only', walkthroughSyncedAt: now, syncIdempotencyKey: providerPayload.idempotency_key, walkthroughAppointmentId: source?.highlevelAppointmentId || previous?.walkthroughAppointmentId || '', providerSyncOwner: 'operations', syncStatus: 'pending', ...invitation });
       if (typeof target.patch.operationalScope?.text === 'string') target.patch.operationalScope.text = stripCrewMoney(target.patch.operationalScope.text);
       if (soldNeedsCrew) target.patch.soldNeedsCrew = { at: now, by: actor.user, requestId: input.requestId };
       if (breakdown) target.patch.jobBreakdown = breakdown;
       if (builder) Object.assign(target.patch, builderPatch(builder, previous, actor, input.requestId, now));
-      // A walkthrough-priced revision (the builder switched off) leaves no stale builder prices behind.
+      else if (walkthroughPriced) Object.assign(target.patch, walkthroughHold(previous, actor, input.requestId, now));
+      // A walkthrough-priced revision (the builder switched off) or a catalog-priced one leaves no stale builder prices behind.
       else if (plain(previous?.compositeQuote) || plain(previous?.pricesPendingApproval)) Object.assign(target.patch, { compositeQuote: null, pricesPendingApproval: null });
       const pendingNames = pricesPending ? builder.approval.blocked.map(row => row.name) : [];
       const roleWarnings = [...(crewIgnored ? [{ code: 'crew_assignment_ignored', jobId: target.id, message: 'Crew names were not saved. A manager assigns the crew in Dispatch.' }] : []), ...(soldNeedsCrew ? [{ code: 'sold_needs_crew', jobId: target.id, message: 'Sold: needs crew. A manager assigns the crew in Dispatch.' }] : []),
         ...(choiceDropped ? [{ code: 'crew_choice_unavailable', jobId: target.id, message: 'The chosen crew can no longer take this visit, so Dispatch assigned the first free crew instead.' }] : []),
-        ...(pricesPending ? [{ code: 'prices_pending_approval', jobId: target.id, message: `Booked with ${pendingNames.length} price${pendingNames.length === 1 ? '' : 's'} the owner has not approved yet: ${listNames(pendingNames)}. The estimate and deposit request are not sent to the customer until the owner approves them in Hub > Catalog & pricing.` }] : [])];
+        ...(pricesPending ? [{ code: 'prices_pending_approval', jobId: target.id, message: `Booked with ${pendingNames.length} price${pendingNames.length === 1 ? '' : 's'} the owner has not approved yet: ${listNames(pendingNames)}. The estimate and deposit request are not sent to the customer until the owner approves them in Hub > Catalog & pricing.` }] : []),
+        ...(walkthroughPriced ? [{ code: 'prices_pending_approval', jobId: target.id, message: 'Booked with walkthrough prices, which the quote builder did not price. The estimate and deposit request are not sent to the customer until the quote is built in the quote builder and signed, or the owner releases these prices.' }] : [])];
       function fence(collection, row, patch) {
         requireRevision(row);
         const found = writes.find(write => write.collection === collection && write.id === row.id);
@@ -614,11 +697,15 @@ export async function saveWalkthroughHandoff(store, actor, input, now = new Date
   return { ...saved, replayed: false, ...(saved.crew && alternatives ? { crew: { ...saved.crew, alternatives } } : {}) };
 }
 
+// A builder job's estimate keeps the internal goods split its signed snapshot leaves out (financePatch): the two are
+// compared without it. Any other job compares its lines exactly, as before.
+const INTERNAL_LINE = ['split', 'durationMinutes'];
+const signedEstimateLines = (job, lines) => plain(job.compositeQuote) && Array.isArray(lines) ? lines.map(line => plain(line) ? Object.fromEntries(Object.entries(line).filter(([key]) => !INTERNAL_LINE.includes(key))) : line) : lines ?? null;
 /** Provider synchronization reads the saved signed snapshot, never an incoming
  * browser price, provider appointment, or claim that work/payment completed. */
 export function savedHandoffPayload(job, handoffRequestId) {
   const p = job?.acceptedHandoffPayload;
-  if (job?.handoffVersion !== 1 || !p || job.handoffRequestId !== handoffRequestId || !['accepted', 'approved'].includes(job.estimate?.status) || job.estimate.amount !== p.quote.total || job.estimate.depositRequired !== p.quote.deposit || job.acceptance?.acceptedAt !== p.acceptance.accepted_at || canonical(job.scope || {}) !== canonical(p.scope || {}) || p.quote.itemized === true && canonical(job.estimate.lineItems ?? null) !== canonical(p.quote.estimate_line_items ?? null) || ['cancelled','canceled','completed','paid','invoiced','closed'].includes(state(job))) throw fail('sync_snapshot_changed', 'The signed handoff changed. Review the current saved job before synchronizing it.');
+  if (job?.handoffVersion !== 1 || !p || job.handoffRequestId !== handoffRequestId || !['accepted', 'approved'].includes(job.estimate?.status) || job.estimate.amount !== p.quote.total || job.estimate.depositRequired !== p.quote.deposit || job.acceptance?.acceptedAt !== p.acceptance.accepted_at || canonical(job.scope || {}) !== canonical(p.scope || {}) || p.quote.itemized === true && canonical(signedEstimateLines(job, job.estimate.lineItems)) !== canonical(signedEstimateLines(job, p.quote.estimate_line_items)) || ['cancelled','canceled','completed','paid','invoiced','closed'].includes(state(job))) throw fail('sync_snapshot_changed', 'The signed handoff changed. Review the current saved job before synchronizing it.');
   const start = localInstant(job.date, job.time), end = localInstant(job.endDate || job.date, job.endTime);
   if (!start || !end || end <= start) throw fail('invalid_schedule', 'The current Hub schedule needs review before CRM synchronization.');
   // notify is the saved Dispatch choice: a job Dispatch marked silent never runs customer appointment automations.

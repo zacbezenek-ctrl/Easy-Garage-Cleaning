@@ -188,13 +188,17 @@ test('the crew projection adds source and purchase state to a structured materia
   assert.deepEqual(fieldMaterials(job), [
     { id: 'm1', name: 'Rope', quantity: 1, state: 'required', updatedAt: null, updatedBy: null },
     { id: 'material-1', name: 'Legacy tarp', quantity: null, state: 'required', updatedAt: null, updatedBy: null },
-    { id: 'quote-shelving', name: 'Metal shelving unit', quantity: 4, source: 'buy', purchaseState: 'purchased', unit: 'unit', category: 'shelving', unitsPerPack: 2, packs: 2, store: 'Home Depot', sku: 'HD-1', productUrl: 'https://www.homedepot.com/p/1', state: 'required', updatedAt: null, updatedBy: null },
+    { id: 'quote-shelving', name: 'Metal shelving unit', quantity: 4, source: 'buy', purchaseState: 'purchased', unit: 'unit', category: 'shelving', unitsPerPack: 2, packs: 2, state: 'required', updatedAt: null, updatedBy: null },
     { id: 'kit-bags', name: 'Contractor bags', quantity: 1, source: 'stock', category: 'consumable', note: 'Two boxes', state: 'loaded', updatedAt: '2026-10-17T15:00:00.000Z', updatedBy: 'Crew One' },
-  ], 'no price note reaches the crew; a buy item shows where it is bought (store, SKU, public product page)');
+  ], 'no price note, product link, SKU or store reaches the crew');
   assert.deepEqual(crewMaterialFields({ id: 'a', name: 'A', quantity: 1 }), {});
   assert.deepEqual(crewMaterialFields({ source: 'buy' }), { source: 'buy', purchaseState: 'to_buy' });
-  assert.deepEqual(crewMaterialFields({ source: 'stock', store: 'Yard', sku: 'S-1', productUrl: 'https://example.com/a' }), { source: 'stock' }, 'store, SKU and link are shown for buy items only');
-  assert.deepEqual(crewMaterialFields({ source: 'buy', productUrl: 'http://example.com/a' }), { source: 'buy', purchaseState: 'to_buy' }, 'only an https product page reaches the crew');
+  // EGC_JOB_MATERIALS on (/api/field-jobs passes purchaseDetails): a buy item also shows where it is bought.
+  assert.deepEqual(fieldMaterials(job, { purchaseDetails: true })[2], { id: 'quote-shelving', name: 'Metal shelving unit', quantity: 4, source: 'buy', purchaseState: 'purchased', unit: 'unit', category: 'shelving', unitsPerPack: 2, packs: 2, store: 'Home Depot', sku: 'HD-1', productUrl: 'https://www.homedepot.com/p/1', state: 'required', updatedAt: null, updatedBy: null },
+    'still no price note; a buy item shows where it is bought (store, SKU, public product page)');
+  assert.deepEqual(crewMaterialFields({ source: 'buy', store: 'Yard', sku: 'S-1', productUrl: 'https://example.com/a' }), { source: 'buy', purchaseState: 'to_buy' }, 'without purchaseDetails the projection is as before');
+  assert.deepEqual(crewMaterialFields({ source: 'stock', store: 'Yard', sku: 'S-1', productUrl: 'https://example.com/a' }, { purchaseDetails: true }), { source: 'stock' }, 'store, SKU and link are shown for buy items only');
+  assert.deepEqual(crewMaterialFields({ source: 'buy', productUrl: 'http://example.com/a' }, { purchaseDetails: true }), { source: 'buy', purchaseState: 'to_buy' }, 'only an https product page reaches the crew');
 });
 
 test('the job breakdown lists removal, then shelving, storage and cleaning, without money', () => {

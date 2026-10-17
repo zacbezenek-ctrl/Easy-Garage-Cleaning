@@ -63,12 +63,13 @@ export function fieldChecklist(job) {
   });
 }
 
-export function fieldMaterials(job) {
+// options.purchaseDetails (EGC_JOB_MATERIALS, /api/field-jobs): a buy item's store, SKU and product page (crewMaterialFields).
+export function fieldMaterials(job, { purchaseDetails = false } = {}) {
   return list(job.materials || job.requiredMaterials).slice(0, 100).map((item, index) => {
     const id = fieldText(item?.id, 100) || `material-${index}`;
     const state = job.fieldExecution?.materialStates?.[id];
     // WP14c: a structured material adds its buy/stock source and purchase state (job-materials.js); a legacy one projects as before.
-    return { id, name: fieldText(typeof item === 'string' ? item : item?.name, 200), quantity: typeof item?.quantity === 'number' && Number.isFinite(item.quantity) ? item.quantity : null, ...crewMaterialFields(item), state: ['required', 'loaded', 'used', 'missing'].includes(state?.state) ? state.state : 'required', updatedAt: state?.at || null, updatedBy: state?.actorName || state?.actorId || null };
+    return { id, name: fieldText(typeof item === 'string' ? item : item?.name, 200), quantity: typeof item?.quantity === 'number' && Number.isFinite(item.quantity) ? item.quantity : null, ...crewMaterialFields(item, { purchaseDetails }), state: ['required', 'loaded', 'used', 'missing'].includes(state?.state) ? state.state : 'required', updatedAt: state?.at || null, updatedBy: state?.actorName || state?.actorId || null };
   }).filter(item => item.name);
 }
 
@@ -154,7 +155,7 @@ export function fieldJobProjection(job, events = [], options = {}) {
     truckPlacement: crew(fieldText(instructions.truckPlacement || logistics.truck_placement)),
     walkthroughBrief: walkthroughCrewBrief(instructions),
     customerInstructions: crew(fieldText(job.customerInstructions || instructions.customerNotes || job.customerNotesSummary)),
-    requiredEquipment: textList(job.requiredEquipment || logistics.requiredEquipment), materials: fieldMaterials(job),
+    requiredEquipment: textList(job.requiredEquipment || logistics.requiredEquipment), materials: fieldMaterials(job, { purchaseDetails: options.purchaseDetails === true }),
     checklist: fieldChecklist(job),
     photos: fieldPhotos(job).map(photo => ({ id: photo.id, category: photo.category, caption: fieldText(photo.caption, 500), ...(photo.category === 'storage' ? { bin: fieldText(photo.bin, 24), items: fieldText(photo.items, 500) } : {}), createdAt: photo.createdAt, actorName: photo.actorName, bytes: photo.bytes, url: `/api/field-jobs?jobId=${encodeURIComponent(job.id)}&photoId=${encodeURIComponent(photo.id)}` })),
     history: events.map(event => fieldEventProjection(event, options.manager)).filter(Boolean).map(event => signed ? { ...event, summary: stripCrewMoney(event.summary) } : event),

@@ -51,20 +51,24 @@ export const MAX_QUANTITY = 10000;
 export const CUSTOMER_LINE_FIELDS = Object.freeze(['id', 'kind', 'name', 'description', 'quantity', 'unitCents', 'totalCents', 'amount', 'optional', 'selected', 'taxable']);
 /**
  * Purchase fields a quote-builder or catalog line may carry so the sold job's buy list (job-materials.js) knows what
- * to buy, where and in what packs: category, sku, unitsPerPack, productUrl, unit, store, source. Each is optional and
- * kept only when sent (null counts as not sent), so a line without them normalizes exactly as before. sku,
- * unitsPerPack, productUrl, store and source belong to product lines only; no purchase field rides on a discount or
- * tip. They are never customer-facing (CUSTOMER_LINE_FIELDS) and never fingerprinted. A strict write refuses a bad
- * value (quote_invalid_purchase_field); a lenient read drops it as a cosmetic repair.
+ * to buy, where and in what packs: category, sku, unitsPerPack, productUrl, unit, store, source. They are read only
+ * when the caller opts in (normalizeLineItems {purchase:true}: the signed walkthrough handoff while EGC_JOB_MATERIALS
+ * or EGC_QUOTE_BUILDER_ENABLED is on, which turns them into job materials and stores the estimate without them).
+ * Every other reader is unchanged: a strict write refuses them as unknown fields and a lenient read drops them. Each
+ * is optional and kept only when sent (null counts as not sent), so a line without them normalizes exactly as
+ * before. sku, unitsPerPack, productUrl, store and source belong to product lines only; no purchase field rides on a
+ * discount or tip. They are never customer-facing (CUSTOMER_LINE_FIELDS). With {purchase:true} a strict write
+ * refuses a bad value (quote_invalid_purchase_field) and a lenient read drops it as a cosmetic repair.
  */
 export const LINE_CATEGORIES = Object.freeze(['removal', 'shelving', 'storage', 'service', 'cleaning', 'consumable', 'equipment', 'other',
   'bikes', 'cabinets-workbenches', 'floors-lighting-extras', 'lawn-garden', 'overhead', 'small-items', 'sports-outdoor', 'wall-systems']);
 export const LINE_SOURCES = Object.freeze(['buy', 'stock']);
 export const PURCHASE_LINE_FIELDS = Object.freeze(['category', 'sku', 'unitsPerPack', 'productUrl', 'unit', 'store', 'source']);
 const PRODUCT_ONLY = new Set(['sku', 'unitsPerPack', 'productUrl', 'store', 'source']);
-const FIELDS = ['id', 'kind', 'name', 'description', 'quantity', 'unitCents', 'totalCents', 'amount', 'optional', 'selected', 'group', 'tier', 'package', 'catalog', 'customerSupplied', 'split', 'durationMinutes', 'taxable', ...PURCHASE_LINE_FIELDS];
-// Internal cost and scheduling data and purchase details: never customer-facing, never fingerprinted.
-const INTERNAL_FIELDS = new Set(['split', 'catalog', 'durationMinutes', ...PURCHASE_LINE_FIELDS]);
+const FIELDS = ['id', 'kind', 'name', 'description', 'quantity', 'unitCents', 'totalCents', 'amount', 'optional', 'selected', 'group', 'tier', 'package', 'catalog', 'customerSupplied', 'split', 'durationMinutes', 'taxable'];
+const PURCHASE_FIELDS = [...FIELDS, ...PURCHASE_LINE_FIELDS];
+// Internal cost and scheduling data: never customer-facing, never fingerprinted.
+const INTERNAL_FIELDS = new Set(['split', 'catalog', 'durationMinutes']);
 // Repairs that cannot change what is charged, included or attributed.
 const COSMETIC_ISSUES = new Set(['quote_invalid_text', 'quote_invalid_name', 'quote_invalid_id', 'quote_duplicate_id', 'quote_invalid_catalog', 'quote_invalid_duration', 'quote_unknown_field', 'quote_invalid_purchase_field']);
 const WALKTHROUGH_FIELDS = ['name', 'description', 'qty', 'total'];
@@ -112,9 +116,9 @@ function signed(value, parse) {
   return parse(value);
 }
 
-function context(strict) {
+function context(strict, purchase = false) {
   const issues = [];
-  return { strict, issues, problem(code, message, where = {}) {
+  return { strict, purchase, issues, problem(code, message, where = {}) {
     if (strict) throw fail(code, message, where);
     issues.push({ code: `quote_${code}`, message, ...where });
   } };
@@ -256,7 +260,7 @@ function normalizeLine(raw, index, ctx, fallbackName) {
   const walkthrough = ['qty', 'total'].some(key => key in raw), estimateShape = ['quantity', 'amount'].some(key => key in raw);
   const legacy = !['kind', 'unitCents', 'totalCents'].some(key => key in raw);
   if (walkthrough && (estimateShape || !legacy)) problem('mixed_shape', 'A line item cannot mix the walkthrough {qty,total} and estimate {quantity,amount} shapes.');
-  const unknown = Object.keys(raw).filter(key => !(walkthrough && legacy && !estimateShape ? WALKTHROUGH_FIELDS : FIELDS).includes(key));
+  const unknown = Object.keys(raw).filter(key => !(walkthrough && legacy && !estimateShape ? WALKTHROUGH_FIELDS : ctx.purchase ? PURCHASE_FIELDS : FIELDS).includes(key));
   if (ctx.strict && unknown.length) problem('unknown_field', `Unsupported line item field: ${unknown[0]}.`);
   let id = raw.id === undefined && legacy ? `line-${index + 1}` : raw.id;
   if (!safeId(id)) { problem('invalid_id', 'Each line item needs a stable id of letters, numbers, - or _.'); id = `line-${index + 1}`; }
@@ -300,18 +304,21 @@ function normalizeLine(raw, index, ctx, fallbackName) {
   return { legacy, line: {
     id, kind, name, description, quantity, unitCents: money.unitCents, totalCents: money.totalCents, amount: money.totalCents === null ? null : money.totalCents / 100,
     optional, selected, group, tier, package: pkg, catalog: normalizeCatalog(raw.catalog, problem), customerSupplied, split, durationMinutes, taxable: flag(raw.taxable, 'Taxable', problem),
-    ...purchaseFields(raw, kind, problem),
+    ...(ctx.purchase ? purchaseFields(raw, kind, problem) : {}),
   } };
 }
 
-/** @returns {{lineItems: object[], issues: object[], legacy: boolean}} */
-export function normalizeLineItems(items, { strict = false, fallbackName = 'Garage service' } = {}) {
-  return normalizeList(items, { strict, fallbackName, limit: MAX_LINE_ITEMS });
+/** purchase: also read the purchase fields (PURCHASE_LINE_FIELDS); off, they are unknown fields as before.
+ * @returns {{lineItems: object[], issues: object[], legacy: boolean}} */
+export function normalizeLineItems(items, { strict = false, fallbackName = 'Garage service', purchase = false } = {}) {
+  return normalizeList(items, { strict, fallbackName, limit: MAX_LINE_ITEMS, purchase });
 }
+/** A normalized line without its purchase fields (what a signed estimate stores). */
+export const withoutPurchaseFields = line => Object.fromEntries(Object.entries(line).filter(([key]) => !PURCHASE_LINE_FIELDS.includes(key)));
 
 // `limit` is MAX_LINE_ITEMS for every reader; only the fingerprint reads all lines.
-function normalizeList(items, { strict, fallbackName, limit }) {
-  const ctx = context(strict);
+function normalizeList(items, { strict, fallbackName, limit, purchase = false }) {
+  const ctx = context(strict, purchase);
   if (items === undefined || items === null) return { lineItems: [], issues: [], legacy: false };
   if (!Array.isArray(items)) { ctx.problem('invalid_line_items', 'Line items must be a list.'); return { lineItems: [], issues: ctx.issues, legacy: false }; }
   if (items.length > MAX_LINE_ITEMS) ctx.problem('too_many_lines', `An estimate can hold at most ${MAX_LINE_ITEMS} line items.`);
@@ -591,8 +598,7 @@ export const customerLineItem = line => Object.fromEntries(CUSTOMER_LINE_FIELDS.
  *     on line 101, text past a length cap, an invalid quantity or amount)
  *     still changes the fingerprint;
  *   - the saved amount and deposit in cents and the raw scope.
- * Only the internal fields split, catalog and durationMinutes and the purchase
- * fields (PURCHASE_LINE_FIELDS) are left out.
+ * Only the internal fields split, catalog and durationMinutes are left out.
  */
 export function estimateFingerprint(estimate) {
   const source = plain(estimate) ? estimate : {};
@@ -621,12 +627,28 @@ export const estimateChanged = (previous, next) => estimateFingerprint(previous)
  * draft never sent, or a revision saved after the last send) is unsent: every
  * customer surface withholds it and nothing can approve or pay it, whatever
  * CUSTOMER_PORTAL_REJECT_DRAFT_ESTIMATES says. Jobs not drafted here are never
- * affected (false).
+ * affected (false), except a held signed job (pricesPendingApproval below),
+ * which every customer surface withholds the same way.
  */
 export function unsentQuoteDraft(job) {
+  if (pricesPendingApproval(job)) return true;
   const estimate = plain(job?.estimate) ? job.estimate : null;
   if (!plain(job?.quoteDraft) && estimate?.source !== 'quote_draft') return false;
   const status = String(estimate?.status || '').toLowerCase();
   if (['accepted', 'approved'].includes(status)) return false;
   return !(status === 'sent' && Number.isSafeInteger(estimate.revision) && estimate.sentRevision === estimate.revision);
+}
+
+/**
+ * EGC_QUOTE_BUILDER_ENABLED: a signed walkthrough booked with prices the owner
+ * has not approved (quote-builder draft prices, or walkthrough prices the
+ * builder did not price; walkthrough-handoff.js) carries
+ * job.pricesPendingApproval until the builder's send gate releases it. Until
+ * then nothing customer-facing quotes it: the portal withholds its estimate and
+ * payment (unsentQuoteDraft), no portal invitation or deposit reminder is sent
+ * and no business-hub or account view lists the quote. Any saved hold counts
+ * (fails closed); a released job saves null. Jobs never held are unaffected.
+ */
+export function pricesPendingApproval(job) {
+  return plain(job?.pricesPendingApproval);
 }

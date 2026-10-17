@@ -245,9 +245,10 @@ export function effectivePurchaseState(material, crewState) {
   return PURCHASE_STATES.includes(material?.purchaseState) ? material.purchaseState : 'to_buy';
 }
 
-/** The crew-visible extras of a material (fieldMaterials): only those saved, so a legacy entry projects as before. A buy
- * item also shows where it is bought (its saved store), its SKU and its public product page, never a price. */
-export function crewMaterialFields(item) {
+/** The crew-visible extras of a material (fieldMaterials): only those saved, so a legacy entry projects as before. With
+ * purchaseDetails (EGC_JOB_MATERIALS on: /api/field-jobs passes jobMaterialsEnabled(env)) a buy item also shows where it
+ * is bought (its saved store), its SKU and its public product page, never a price; off, the projection is as before. */
+export function crewMaterialFields(item, { purchaseDetails = false } = {}) {
   if (!plain(item)) return {};
   const out = {};
   if (MATERIAL_SOURCES.includes(item.source)) out.source = item.source;
@@ -257,7 +258,7 @@ export function crewMaterialFields(item) {
   if (MATERIAL_CATEGORIES.includes(item.category)) out.category = item.category;
   if (note && !hasCrewMoney(note)) out.note = note;
   for (const key of ['unitsPerPack', 'packs']) if (Number.isInteger(item[key]) && item[key] >= 1) out[key] = item[key];
-  if (item.source === 'buy') {
+  if (purchaseDetails && item.source === 'buy') {
     const store = text(item.store, 80), sku = text(item.sku, 80), url = productUrl(item.productUrl);
     if (store) out.store = store;
     if (sku) out.sku = sku;

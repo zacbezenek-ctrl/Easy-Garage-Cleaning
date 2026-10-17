@@ -16,12 +16,13 @@ const reply = (status, body) => Response.json(body, {status, headers:{'Cache-Con
 // handoff) to name-free text (authorRuleRows): no employee name or id, no other
 // job id and no other job's workload.
 // EGC_QUOTE_BUILDER_ENABLED: a builder price refusal also says what the server priced (handoff_builder_price_mismatch:
-// the selection's total and menu version) or which menu prices still wait for the owner (the builder's send gate,
-// quote_draft_composite_prices_unapproved: id, name, unit price and reason of each), as the quote builder shows them.
+// the selection's total and menu version) or which prices still wait for the owner (the builder's send gate,
+// quote_draft_composite_prices_unapproved or, for a walkthrough-priced job, quote_draft_builder_required: id, name,
+// unit price and reason of each), as the quote builder shows them.
 function conflictDetails(error) {
   const rows = Array.isArray(error?.details?.conflicts) ? error.details.conflicts : null;
   if (error?.code === 'handoff_builder_price_mismatch' && Number.isSafeInteger(error.details?.totalCents)) return {details:{totalCents:error.details.totalCents, menuVersion:typeof error.details.menuVersion === 'string' ? error.details.menuVersion : null}};
-  if (error?.code === 'quote_draft_composite_prices_unapproved' && Array.isArray(error.details?.unapproved)) return {details:{unapproved:error.details.unapproved.slice(0, 60).map(row => ({id:typeof row?.id === 'string' ? row.id : null, name:String(row?.name || '').slice(0, 160), unitCents:Number.isSafeInteger(row?.unitCents) ? row.unitCents : null, reason:String(row?.reason || '').slice(0, 600)}))}};
+  if (['quote_draft_composite_prices_unapproved', 'quote_draft_builder_required'].includes(error?.code) && Array.isArray(error.details?.unapproved)) return {details:{unapproved:error.details.unapproved.slice(0, 60).map(row => ({id:typeof row?.id === 'string' ? row.id : null, name:String(row?.name || '').slice(0, 160), unitCents:Number.isSafeInteger(row?.unitCents) ? row.unitCents : null, reason:String(row?.reason || '').slice(0, 600)}))}};
   return rows ? {details:{conflicts:rows.filter(row => typeof row?.message === 'string' && row.message.trim()).slice(0, 10).map(row => ({code:typeof row.code === 'string' ? row.code : '', message:row.message.trim().slice(0, 600)}))}} : {};
 }
 function failure(error) {

@@ -19,6 +19,7 @@ import { clockInWithoutFix } from '../_lib/employee-timecards.js';
 import { addDays } from '../_lib/dispatch-time.js';
 import { walkthroughCard } from '../_lib/walkthrough-state.js';
 import { storageBin, storageItems } from '../_lib/customer-photo-visibility.js';
+import { jobMaterialsEnabled } from '../_lib/job-materials.js';
 import { fieldCompletionTagsEnabled, fieldCompletionTagWrites, firstGhlTagAttempt, ghlTagOutboxStorage, GHL_TAG_OUTBOX, ghlTagStatusView } from '../_lib/ghl-tag-outbox.js';
 
 const reply = (status, body) => Response.json(body, { status, headers: { 'Cache-Control': 'private, no-store', 'X-Content-Type-Options': 'nosniff' } });
@@ -77,7 +78,9 @@ async function displayContext(ctx, env, jobs) {
   const resources = new Map(await Promise.all(resourceIds.map(async id => [id, await ctx.store.readResource(id).catch(() => null)])));
   const resourceNames = Object.fromEntries([...resources].filter(([, row]) => row?.name).map(([id, row]) => [id, row.name]));
   // viewer limits a split job to the signed-in employee's own segments.
-  return job => ({ manager: ctx.manager, crewNames, vehicleName: resources.get(job.vehicleId)?.name || '', crewName: resources.get(job.crewId)?.name || '', viewer: ctx.session.user, resourceNames });
+  // purchaseDetails (EGC_JOB_MATERIALS): a buy material's store, SKU and product page on the crew's grab list.
+  const purchaseDetails = jobMaterialsEnabled(env);
+  return job => ({ manager: ctx.manager, crewNames, vehicleName: resources.get(job.vehicleId)?.name || '', crewName: resources.get(job.crewId)?.name || '', viewer: ctx.session.user, resourceNames, ...(purchaseDetails ? { purchaseDetails } : {}) });
 }
 
 const capabilities = (ctx, env, job) => fieldCapabilities({ session: ctx.session, manager: ctx.manager, job, env, access: ctx.access });
