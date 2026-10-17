@@ -26,7 +26,8 @@ const tabs = page => page.document.querySelectorAll('[data-ops-tab]').map(button
 // Password (My EGC) follows it and needs the 'password' capability, which the suite adds only when the server reports
 // password.change (EGC_STAFF_PASSWORD_RESET on, an employee account).
 // WT-OUTCOME: the Walkthroughs screen (employee-walkthroughs.js) replaces the suite's built-in Walkthroughs view in place.
-const SHIPPED = ['reviews', 'message_templates', 'stocked_costs', 'staff', 'invoicing', 'walkthroughs'];
+// WP14c's Purchase list (employee-purchase-list.js) follows Walkthroughs in RUN THE BUSINESS.
+const SHIPPED = ['reviews', 'message_templates', 'stocked_costs', 'staff', 'invoicing', 'walkthroughs', 'purchase_list'];
 const OWNER_SHIPPED = ['followup_settings', 'ad_spend', 'catalog', 'dispatch_rules'];
 const CREW_SHIPPED = ['crew_alerts'];
 const PASSWORD_SHIPPED = ['password'];

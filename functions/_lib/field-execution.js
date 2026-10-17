@@ -4,6 +4,7 @@ import { segmented, jobSegments } from './dispatch-segments.js';
 import { occupiedDays } from './dispatch-time.js';
 import { signedBriefJob, stripCrewMoney } from './crew-money.js';
 import { walkthroughCrewBrief } from './walkthrough-crew-brief.js';
+import { crewMaterialFields } from './job-materials.js';
 
 export const fieldFailure = (message, status = 400, code = 'FIELD_REQUEST_INVALID', details = {}) => Object.assign(new Error(message), { status, code, ...details });
 export const fieldId = value => typeof value === 'string' && /^[A-Za-z0-9_-]{1,180}$/.test(value) && !/^(_egc_|secure_)/.test(value);
@@ -66,7 +67,8 @@ export function fieldMaterials(job) {
   return list(job.materials || job.requiredMaterials).slice(0, 100).map((item, index) => {
     const id = fieldText(item?.id, 100) || `material-${index}`;
     const state = job.fieldExecution?.materialStates?.[id];
-    return { id, name: fieldText(typeof item === 'string' ? item : item?.name, 200), quantity: typeof item?.quantity === 'number' && Number.isFinite(item.quantity) ? item.quantity : null, state: ['required', 'loaded', 'used', 'missing'].includes(state?.state) ? state.state : 'required', updatedAt: state?.at || null, updatedBy: state?.actorName || state?.actorId || null };
+    // WP14c: a structured material adds its buy/stock source and purchase state (job-materials.js); a legacy one projects as before.
+    return { id, name: fieldText(typeof item === 'string' ? item : item?.name, 200), quantity: typeof item?.quantity === 'number' && Number.isFinite(item.quantity) ? item.quantity : null, ...crewMaterialFields(item), state: ['required', 'loaded', 'used', 'missing'].includes(state?.state) ? state.state : 'required', updatedAt: state?.at || null, updatedBy: state?.actorName || state?.actorId || null };
   }).filter(item => item.name);
 }
 

@@ -297,9 +297,10 @@ const PHONE_CAPS = ['customer.send', 'followups.own', 'schedule.book'];
 const MANAGER_CAPS = ['dispatch.write', 'time.approve', 'accounts.approve', 'customer.send', 'followups.own', 'quotes.author', 'schedule.book', 'walkthrough.perform'];
 const EMPLOYEE_VIEWS = ['my_day', 'my_shifts', 'open_shifts', 'earnings', 'crew_chat', 'availability', 'requests', 'training', 'safety', 'onboarding', 'crew_alerts'];
 // Recorded from the suite before SALES-BOOKING (merge base b04a617) with tests/helpers/hub-dom.mjs.
+// WP14c added the business Purchase list screen (RUN THE BUSINESS) after it.
 const BASE_NAV = {
-  owner: [...EMPLOYEE_VIEWS, 'today', 'action_center', 'schedule', 'timesheets', 'people', 'walkthroughs', 'delivery', 'dispatch_rules', 'reviews', 'staff', 'customers', 'finance', 'communications', 'invoicing', 'pipeline', 'scorecard', 'proof', 'playbook', 'ad_spend', 'settings', 'followup_settings', 'catalog', 'message_templates', 'stocked_costs'],
-  manager: [...EMPLOYEE_VIEWS, 'today', 'action_center', 'schedule', 'timesheets', 'people', 'walkthroughs', 'delivery', 'reviews', 'staff', 'customers', 'finance', 'communications', 'invoicing', 'pipeline', 'scorecard', 'proof', 'playbook', 'settings', 'message_templates', 'stocked_costs'],
+  owner: [...EMPLOYEE_VIEWS, 'today', 'action_center', 'schedule', 'timesheets', 'people', 'walkthroughs', 'delivery', 'dispatch_rules', 'reviews', 'staff', 'customers', 'finance', 'communications', 'invoicing', 'pipeline', 'scorecard', 'proof', 'playbook', 'ad_spend', 'settings', 'followup_settings', 'catalog', 'message_templates', 'stocked_costs', 'purchase_list'],
+  manager: [...EMPLOYEE_VIEWS, 'today', 'action_center', 'schedule', 'timesheets', 'people', 'walkthroughs', 'delivery', 'reviews', 'staff', 'customers', 'finance', 'communications', 'invoicing', 'pipeline', 'scorecard', 'proof', 'playbook', 'settings', 'message_templates', 'stocked_costs', 'purchase_list'],
   employee: EMPLOYEE_VIEWS,
 };
 const PROFILES = {

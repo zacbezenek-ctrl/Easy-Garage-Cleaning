@@ -8,7 +8,9 @@ const FIELDS = [
   ['measurements', 'Measurements'], ['equipment', 'Equipment notes'],
   ['specialItems', 'Special items'], ['finish', 'Finishing work'],
   ['shelfType', 'Shelf type'], ['shelfQty', 'Shelf quantity'], ['toteQty', 'Tote quantity'],
-  ['crewSize', 'Estimated crew size'], ['estimatedJobMinutes', 'Estimated on-site minutes']
+  ['crewSize', 'Estimated crew size'], ['estimatedJobMinutes', 'Estimated on-site minutes'],
+  // EGC_JOB_MATERIALS: the signed handoff's job breakdown lines (job-breakdown.js), removal, shelving, storage, cleaning.
+  ['jobBreakdown', 'Job breakdown']
 ];
 
 export function walkthroughCrewBrief(instructions) {

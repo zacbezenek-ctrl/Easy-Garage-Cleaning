@@ -1,0 +1,35 @@
+/* Purchase list screen (WP14c). Scoped to .egc-purchase; colours come from the Hub kit tokens. */
+.egc-purchase{padding-bottom:var(--hub-space-4)}
+.egc-purchase h2{font-size:24px}
+.egc-purchase .pl-filters{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr) auto auto;gap:var(--hub-space-3);align-items:end}
+.egc-purchase .pl-filters .hub-btn{white-space:normal}
+.egc-purchase .pl-done[aria-pressed="true"]{border-color:var(--hub-green);color:var(--hub-green);background:#f5fbf8}
+.egc-purchase :is(input,select){font-size:16px}
+.egc-purchase .pl-coverage,.egc-purchase .pl-refresh{margin:0;color:var(--hub-muted);font-weight:600}
+.egc-purchase .pl-store h3{font-size:18px;margin:0 0 8px}
+.egc-purchase .pl-products,.egc-purchase .pl-jobs{list-style:none;margin:0;padding:0}
+.egc-purchase .pl-products{border:1px solid var(--hub-line);border-radius:var(--hub-radius);background:#fff}
+.egc-purchase .pl-product{display:grid;gap:8px;padding:12px 14px;border-top:1px solid var(--hub-line);min-width:0}
+.egc-purchase .pl-product:first-child{border-top:0}
+.egc-purchase .pl-product-head{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:var(--hub-space-3);align-items:start}
+.egc-purchase .pl-product-text{min-width:0;overflow-wrap:anywhere}
+.egc-purchase .pl-product-text strong{display:block;font-size:15px;line-height:1.35}
+.egc-purchase .pl-product-text small{display:block;color:var(--hub-muted);font-size:13px}
+.egc-purchase .pl-qty{text-align:right}
+.egc-purchase .pl-big{display:block;font-size:24px;font-weight:800;line-height:1}
+.egc-purchase .pl-qty small{color:var(--hub-muted);font-size:12px}
+.egc-purchase .pl-states{margin:0;color:var(--hub-muted);font-size:13px}
+.egc-purchase details summary{cursor:pointer;font-weight:700;min-height:var(--hub-tap);display:flex;align-items:center}
+.egc-purchase .pl-job{display:grid;grid-template-columns:minmax(0,1fr) auto auto;gap:8px;align-items:center;padding:8px 0;border-top:1px solid var(--hub-line)}
+.egc-purchase .pl-job-text{min-width:0;overflow-wrap:anywhere}
+.egc-purchase .pl-job-text small{display:block;color:var(--hub-muted)}
+.egc-purchase .pl-job-actions{display:flex;gap:6px;flex-wrap:wrap;justify-content:flex-end}
+.egc-purchase .pl-state{font-size:12px;font-weight:700;border-radius:20px;padding:4px 10px;background:#eef1f4;white-space:nowrap}
+.egc-purchase .pl-state.ordered{background:#fff0dc}
+.egc-purchase .pl-state.purchased,.egc-purchase .pl-state.loaded{background:#e3f2e8;color:var(--hub-green)}
+@media (max-width:680px){
+  .egc-purchase .pl-filters{grid-template-columns:minmax(0,1fr) minmax(0,1fr)}
+  .egc-purchase .pl-job{grid-template-columns:minmax(0,1fr) auto}
+  .egc-purchase .pl-job-actions{grid-column:1/-1;justify-content:flex-start}
+  .egc-purchase .hub-actions .hub-btn{flex:1 1 auto}
+}

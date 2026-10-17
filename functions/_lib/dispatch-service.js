@@ -24,6 +24,7 @@ import { dispatchReviewCleared, withQueueFacts } from './dispatch-queue.js';
 import { jobStartProblem } from './job-start-policy.js';
 import { DEFAULT_CREWS, NO_CREW, autoAssignedCrew, autoCrewJob, crewAssignment, crewAutoRecord, crewCode, crewCodeInput, crewJobDates, crewPickOrder, crewServes, eligibleCrews, handStaffed, projectCrewOpenings, serviceDaysInput } from './dispatch-crew-assign.js';
 import { dispatchOpenings } from './dispatch-openings.js';
+import { normalizeJobMaterials } from './job-materials.js';
 
 const TERMINAL = new Set(['cancelled','canceled','completed','invoiced','paid','review_requested','closed','noshow','no_show','no-show']);
 const JOB_TYPES = new Set(['job','walkthrough','cleanout','reorg','blocked']);
@@ -347,17 +348,8 @@ function schedulePatch(changes, current, resources, roster, now, actor, segments
     if (!Array.isArray(changes.requiredEquipment) || changes.requiredEquipment.length > 100) throw fail('dispatch_equipment_invalid','Enter at most 100 pieces of required equipment.');
     patch.requiredEquipment = [...new Set(changes.requiredEquipment.map(value => text(value,'Equipment',200)).filter(Boolean))];
   }
-  if ('materials' in changes) {
-    if (!Array.isArray(changes.materials) || changes.materials.length > 100) throw fail('dispatch_materials_invalid','Enter at most 100 required materials.');
-    patch.materials = changes.materials.map(material => {
-      onlyKeys(material,['id','name','quantity']);
-      if (!safeId(material.id) || typeof material.quantity !== 'number' || !Number.isFinite(material.quantity) || material.quantity <= 0 || material.quantity > 100000) throw fail('dispatch_materials_invalid','Each material needs a stable ID and a positive quantity.');
-      const name = text(material.name,'Material name',200);
-      if (!name) throw fail('dispatch_materials_invalid','Each material needs a name.');
-      return { id: material.id, name, quantity: material.quantity };
-    });
-    if (new Set(patch.materials.map(item => item.id)).size !== patch.materials.length) throw fail('dispatch_materials_invalid','Material IDs must be unique.');
-  }
+  // WP14c: {id,name,quantity} exactly as before, plus the optional buy/stock fields (job-materials.js).
+  if ('materials' in changes) patch.materials = normalizeJobMaterials(changes.materials,fail);
   if ('crewId' in changes && patch.crewId) {
     const crew = resources.find(row => row.recordType === 'crew' && row.id === patch.crewId && row.status === 'active');
     if (!crew) throw fail('dispatch_crew_inactive','Choose an active crew.');
