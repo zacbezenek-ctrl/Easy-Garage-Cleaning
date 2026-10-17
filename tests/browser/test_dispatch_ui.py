@@ -364,7 +364,7 @@ class DispatchBrowserTests(unittest.TestCase):
     def test_an_opening_is_booked_with_the_buffer_employees_and_lead_it_was_checked_with(self):
         self.jobs = [job(), self.quoted_backlog()]; self.open(); self.to_schedule(); self.page.get_by_role('button', name='Find a time for Synthetic Quoted Garage', exact=True).click()
         self.page.get_by_label('Travel buffer (minutes)', exact=True).fill('50'); self.page.get_by_label('Crew One', exact=True).uncheck(); self.submit('Check openings')
-        query = self.opening_queries[-1]; self.assertEqual((query['travelBufferMinutes'], query['employeeIds']), (['50'], ['crew.two']))
+        expect(self.page.get_by_role('button', name='Use this opening', exact=True)).to_be_visible(); query = self.opening_queries[-1]; self.assertEqual((query['travelBufferMinutes'], query['employeeIds']), (['50'], ['crew.two']))
         self.page.get_by_role('button', name='Use this opening', exact=True).click(); expect(self.page.get_by_role('dialog')).to_have_attribute('aria-label', 'Edit / assign job')
         expect(self.page.get_by_label('Travel buffer (minutes)', exact=True)).to_have_value('50'); expect(self.page.get_by_role('combobox', name='Crew lead', exact=True)).to_have_value('')
         self.submit('Save changes'); self.closed(); changes = self.calls[-1]['changes']

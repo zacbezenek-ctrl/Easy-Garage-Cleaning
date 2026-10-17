@@ -58,6 +58,8 @@ FAKES = """
 })();
 """
 
+WT_FIRST = {'id': 'wt-1', 'type': 'walkthrough', 'status': 'scheduled', 'customer': 'Synthetic Customer', 'phone': '9705550100', 'address': '100 Synthetic Lane', 'date': '2026-09-22', 'time': '09:00'}
+WT_SECOND = {'id': 'wt-2', 'type': 'walkthrough', 'status': 'scheduled', 'customer': 'Synthetic Neighbour', 'phone': '9705550101', 'address': '102 Synthetic Lane', 'date': '2026-09-22', 'time': '11:00'}
 SECOND = "window.__wtRows.push({ id: 'wt-2', type: 'walkthrough', status: 'scheduled', customer: 'Synthetic Neighbour', phone: '9705550101', address: '102 Synthetic Lane', date: '2026-09-22', time: '11:00' })"
 
 # At the bottom of the page: the plan controls the fixed footer (with the recording bar) covers.
@@ -116,6 +118,7 @@ class GameplanRecorderTests(unittest.TestCase):
         self.errors = []; self.posts = []; self.gets = 0; self.upload_calls = 0; self.upload_refused = False
         self.post_offline = False; self.upload_offline = False; self.get_offline = False; self.get_status = None
         self.enabled = True; self.revision = 1; self.receipts = {}; self.accepted = []; self.server_now = NOW
+        self.wt_rows = [dict(WT_FIRST)]
         self.shift = {'available': True, 'clockedIn': True, 'onBreak': False, 'needsReview': False, 'current': None}
         self.visit = {'id': 'wt-1', 'revision': 'r1', 'type': 'walkthrough', 'customer': 'Synthetic Customer', 'date': '2026-09-22', 'time': '09:00', 'status': 'scheduled',
                       'walkthroughVisit': None, 'walkthroughOutcome': None, 'walkthroughCompletedAt': None, 'rebookPending': False, 'previousOccurrences': 0}
@@ -144,6 +147,11 @@ class GameplanRecorderTests(unittest.TestCase):
             return self.json(route, 200, {'ok': True, 'token': 'synthetic-token'})
         if url.path == '/api/walkthrough-visit':
             return self.visit_api(route, request, url)
+        # WP5: the schedule comes from the server (a Sales estimator has no Firestore schedule access), not the SDK.
+        if url.path == '/api/walkthrough-handoff' and request.method == 'GET':
+            rows = self.wt_rows
+            wanted = parse_qs(url.query).get('walkthroughId', [None])[0]
+            return self.json(route, 200, {'ok': True, 'walkthroughs': rows, 'requested': next((row for row in rows if row['id'] == wanted), None)})
         if url.path == '/api/operations-recordings':
             self.upload_calls += 1
             if self.upload_offline:
@@ -475,7 +483,7 @@ class GameplanRecorderTests(unittest.TestCase):
 
     def test_the_bar_finish_switches_back_to_the_recorded_appointment(self):
         self.start_page(PHONE)
-        self.page.add_init_script("window.__wtRows.push({ id: 'wt-2', type: 'walkthrough', status: 'scheduled', customer: 'Synthetic Neighbour', phone: '9705550101', address: '102 Synthetic Lane', date: '2026-09-22', time: '11:00' })")
+        self.page.add_init_script(SECOND); self.wt_rows.append(dict(WT_SECOND))
         self.open(); self.start_recording()
         # Still recording, the rep opens the next appointment from today's list.
         self.page.locator('#appointments').get_by_role('button', name=re.compile('Synthetic Neighbour')).click()
@@ -495,7 +503,7 @@ class GameplanRecorderTests(unittest.TestCase):
         self.assertEqual([(body['action'], body['visitId']) for body in self.accepted], [('start', 'wt-1'), ('finish', 'wt-1')])
 
     def test_an_offline_start_refused_after_switching_appointments_shows_its_choice_there(self):
-        self.start_page(PHONE); self.page.add_init_script(SECOND)
+        self.start_page(PHONE); self.page.add_init_script(SECOND); self.wt_rows.append(dict(WT_SECOND))
         self.open()
         self.post_offline = True
         self.start_recording(); self.run_for(5 * 60 * 1000)
@@ -524,7 +532,7 @@ class GameplanRecorderTests(unittest.TestCase):
         expect(self.page.locator('.wt-badge')).to_have_count(0)
 
     def bar_leaves_the_plan_clear(self, device, width, shot):
-        self.start_page(device); self.page.add_init_script(SECOND)
+        self.start_page(device); self.page.add_init_script(SECOND); self.wt_rows.append(dict(WT_SECOND))
         self.open()
         # The default-config worst case: an offline Start refused while still recording, a screen lock, and another
         # appointment on screen (the "not the one on screen" note), on the Review step with its signature pad.
