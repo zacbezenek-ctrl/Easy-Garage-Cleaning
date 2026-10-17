@@ -1193,3 +1193,214 @@ test('employee.html loads the staff directory before the suite with one cache-bu
   vm.runInContext(source, context);
   assert.equal(context.EGCStaff, first);
 });
+
+// ── D10 Team directory screen (employee-team-directory.js) on the real Hub UI kit ──
+const teamSource = readFileSync(new URL('../employee-team-directory.js', import.meta.url), 'utf8');
+const kitSource = readFileSync(new URL('../employee-ui-kit.js', import.meta.url), 'utf8');
+const SELF_REVISION = 'rev-crew-one-1', PHOTO = '/api/crew-public-profile?photo=crew.one&v=11111111-1111-4111-8111-111111111111';
+const member = (username, overrides = {}) => ({ username, displayName: `Synthetic ${username}`, staffRoles: ['crew'], primaryRole: 'crew', crews: [], photoUrl: null, shirtSize: null, birthday: null, self: false, ...overrides });
+const teamView = (people, viewer = { user: 'Crew.One', manager: false }, extra = {}) => ({ ok: true, authority: 'employee_hub', timeZone: 'America/Denver', today: TODAY, viewer,
+  sizes: ['XS', 'S', 'M', 'L', 'XL', '2XL', '3XL', '4XL'], people, coverage: { complete: true, crews: true, photos: true, asOf: NOW }, ...extra });
+const crewTeam = () => teamView([
+  member('Crew.One', { displayName: 'Uno', self: true, shirtSize: 'L', birthday: { month: 9, day: 22 }, birthDate: '1990-09-22', age: 36, birthdayVisibleToTeam: true, revision: SELF_REVISION, profileNeedsReview: false,
+    crews: [{ id: 'crew_1', name: 'Crew 1', lead: true }], photoUrl: PHOTO }),
+  member('Crew.Two', { shirtSize: 'M', birthday: { month: 10, day: 1 }, crews: [{ id: 'crew_1', name: 'Crew 1', lead: false }, { id: 'crew_3', name: 'Crew 3', lead: false }] }),
+  member('Sam.Sales', { staffRoles: ['sales'], primaryRole: 'sales', birthday: { month: 12, day: 25 } }),
+]);
+const managerTeam = () => teamView([
+  member('Crew.Two', { shirtSize: 'M', birthday: null, birthDate: '1985-03-02', age: 41, birthdayVisibleToTeam: false, revision: 'rev-crew-two-1', profileNeedsReview: false, phone: '9705550122',
+    emergencyContact: { name: 'Pat Two', phone: '9705550123' }, highlevelUserId: null }),
+  member('TylerG', { displayName: 'Synthetic Manager', staffRoles: ['manager'], primaryRole: 'manager', self: true, birthDate: null, age: null, birthdayVisibleToTeam: true, revision: 'rev-tylerg-1', profileNeedsReview: false,
+    phone: '', emergencyContact: { name: '', phone: '' }, highlevelUserId: null }),
+], { user: 'TylerG', manager: true }, { shirtSizes: { XS: 0, S: 0, M: 1, L: 0, XL: 0, '2XL': 0, '3XL': 0, '4XL': 0, unknown: 1 } });
+
+function teamUi({ identity = 'Crew.One', get, post } = {}) {
+  const document = createDocument(), calls = [], session = storage({ egc_u: identity });
+  const state = { get: get || (async () => ({ body: crewTeam() })), post: post || (async body => ({ body: { ok: true, authority: 'employee_hub', person: person(body.username, { revision: 'rev-saved-2' }) } })) };
+  const context = { console, URL, URLSearchParams, Intl, Promise, Set, Map, Error, JSON, Object, Array, Math, Number, String, AbortController, crypto, structuredClone,
+    Date: FixedDate, Node: document.Node, document, sessionStorage: session, setTimeout: () => 0, clearTimeout() {}, addEventListener() {}, location: { href: 'https://easygaragecleaning.com/employee' } };
+  context.window = context;
+  vm.createContext(context);
+  vm.runInContext(kitSource, context, { filename: 'employee-ui-kit.js' });
+  vm.runInContext(teamSource, context, { filename: 'employee-team-directory.js' });
+  const host = document.createElement('main');
+  document.body.append(host);
+  const hubFetch = async (url, init = {}) => {
+    const body = init.body ? JSON.parse(init.body) : null;
+    calls.push({ url, method: init.method || 'GET', body });
+    const result = await (body ? state.post(body) : state.get(url));
+    return { ok: (result.status || 200) < 400, status: result.status || 200, json: async () => structuredClone(result.body) };
+  };
+  const ctx = Object.freeze({ identity, role: 'crew', capabilities: ['crew', 'team_directory'], hubFetch, toast() {}, askAction: async () => null, go() {}, screen: 'team_directory' });
+  return { context, host, calls, state, session, mount: () => context.EGCTeamDirectory.mount(host, ctx), module: () => context.EGCTeamDirectory, text: () => host.textContent,
+    cards: () => all(host, 'article.td-card'), card: username => all(host, 'article.td-card').find(node => node.getAttribute('data-username') === username) };
+}
+const editForm = ui => ui.host.querySelector('form.td-editor');
+
+test('Team directory (crew): every teammate\'s card, crews, sizes, upcoming birthdays and search; only their own card is editable', async () => {
+  const ui = teamUi();
+  await ui.mount();
+  await settle();
+  assert.deepEqual(ui.calls.map(call => [call.url, call.method]), [['/api/staff-directory?view=team', 'GET']]);
+  assert.deepEqual(ui.cards().map(node => node.getAttribute('data-username')), ['Crew.One', 'Crew.Two', 'Sam.Sales']);
+  const own = ui.card('Crew.One'), other = ui.card('Crew.Two');
+  assert.equal(own.querySelector('img.td-avatar').getAttribute('src'), PHOTO);
+  assert.match(own.textContent, /Crew 1 · lead/);
+  assert.match(own.textContent, /Your birthdaySep 22, 1990 · age 36/);
+  assert.match(other.textContent, /Crew 1.*Crew 3/);
+  assert.match(other.textContent, /ShirtM/); assert.match(other.textContent, /BirthdayOct 1/);
+  assert.doesNotMatch(other.textContent, /Born|age|Phone|Emergency|HighLevel/);
+  assert.match(ui.card('Sam.Sales').textContent, /ShirtNot set/);
+  // Birthdays in the next 30 days, soonest first; Dec 25 is too far off.
+  const strip = ui.host.querySelector('.td-birthdays');
+  assert.deepEqual(all(strip, 'li').map(node => node.textContent), ['UnoToday', 'Synthetic Crew.TwoOct 1']);
+  assert.equal(ui.host.querySelector('.td-sizes'), null, 'uniform totals are for managers');
+  assert.deepEqual(all(ui.host, 'button').map(node => node.textContent).filter(text => /Edit/.test(text)), ['Edit my details']);
+  const search = ui.host.querySelector('input.td-search-input');
+  change(search, 'sales');
+  assert.deepEqual(ui.cards().map(node => node.getAttribute('data-username')), ['Sam.Sales']);
+  assert.equal(ui.host.querySelector('.td-count').textContent, '1 of 3');
+  assert.equal(ui.host.querySelector('input.td-search-input'), search, 'typing keeps the same search field');
+  change(search, 'crew 3');
+  assert.deepEqual(ui.cards().map(node => node.getAttribute('data-username')), ['Crew.Two']);
+  change(search, 'nobody here');
+  assert.match(ui.text(), /No one matches that search\./);
+});
+
+test('Team directory (crew): editing their own shirt size and birthday sends set_personal for themselves only, with the revision they saw', async () => {
+  const ui = teamUi();
+  await ui.mount();
+  await settle();
+  click(buttonText(ui.host, 'Edit my details'));
+  const form = editForm(ui);
+  assert.ok(form);
+  assert.equal(named(form, 'highlevelUserId'), undefined, 'the HighLevel user ID is a manager\'s field');
+  assert.deepEqual([named(form, 'shirtSize').value, named(form, 'birthDate').value, named(form, 'birthDate').getAttribute('max'), named(form, 'birthdayVisibleToTeam').checked], ['L', '1990-09-22', TODAY, true]);
+  named(form, 'shirtSize').value = 'XL';
+  named(form, 'birthdayVisibleToTeam').checked = false;
+  form.dispatchEvent({ type: 'change' });
+  assert.equal(ui.module().canLeave(), false, 'an edited card keeps the viewer on the screen');
+  form.dispatchEvent({ type: 'submit', preventDefault() {} });
+  await settle();
+  const posts = ui.calls.filter(call => call.method === 'POST');
+  assert.equal(posts.length, 1);
+  const { requestId, ...body } = posts[0].body;
+  assert.match(requestId, UUID);
+  assert.deepEqual(body, { action: 'set_personal', username: 'Crew.One', expectedRevision: SELF_REVISION, expectedUser: 'Crew.One', shirtSize: 'XL', birthDate: '1990-09-22', birthdayVisibleToTeam: false });
+  assert.equal(posts[0].url, '/api/staff-directory');
+  assert.equal(ui.calls.filter(call => call.method === 'GET').length, 2, 'the team reloads after the save');
+  assert.match(ui.host.querySelector('.hub-notice.success').textContent, /Your details are saved\./);
+  assert.equal(editForm(ui), null);
+  assert.equal(ui.module().canLeave(), true);
+});
+
+test('Team directory (manager): birth dates, ages, contacts and HighLevel user IDs, shirt-size totals, and anyone\'s details editable', async () => {
+  const ui = teamUi({ identity: 'TylerG', get: async () => ({ body: managerTeam() }) });
+  await ui.mount();
+  await settle();
+  const crewTwo = ui.card('Crew.Two');
+  assert.match(crewTwo.textContent, /BornMar 2, 1985 · age 41 · hidden from the team/);
+  assert.match(crewTwo.textContent, /Phone9705550122/); assert.match(crewTwo.textContent, /EmergencyPat Two · 9705550123/); assert.match(crewTwo.textContent, /HighLevel userNot linked/);
+  assert.equal(crewTwo.querySelector('a').getAttribute('href'), 'tel:9705550122');
+  const sizes = ui.host.querySelector('.td-sizes');
+  assert.ok(sizes);
+  assert.deepEqual(all(sizes, '.td-size-list li').map(node => node.textContent), ['0XS', '0S', '1M', '0L', '0XL', '02XL', '03XL', '04XL']);
+  assert.match(sizes.textContent, /1 person has no shirt size saved yet\./);
+  assert.ok(buttonText(sizes, 'Download sizes (CSV)'));
+  click(buttonLabel(ui.host, 'Edit details for Synthetic Crew.Two'));
+  const form = editForm(ui);
+  change(named(form, 'highlevelUserId'), '  ghlUser9  ');
+  named(form, 'shirtSize').value = '';
+  form.dispatchEvent({ type: 'submit', preventDefault() {} });
+  await settle();
+  const { requestId, ...body } = ui.calls.find(call => call.method === 'POST').body;
+  assert.deepEqual(body, { action: 'set_personal', username: 'Crew.Two', expectedRevision: 'rev-crew-two-1', expectedUser: 'TylerG', shirtSize: null, birthDate: '1985-03-02', birthdayVisibleToTeam: false, highlevelUserId: 'ghlUser9' });
+});
+
+test('Team directory: a changed card is reloaded with the draft kept, an unconfirmed save can be retried, and an unverifiable answer is not shown', async () => {
+  let answer = { status: 409, body: { ok: false, code: 'staff_directory_revision_conflict', error: 'This staff record changed since you opened it.' } };
+  const ui = teamUi({ post: async () => answer });
+  await ui.mount();
+  await settle();
+  click(buttonText(ui.host, 'Edit my details'));
+  named(editForm(ui), 'shirtSize').value = 'S';
+  editForm(ui).dispatchEvent({ type: 'input' });
+  editForm(ui).dispatchEvent({ type: 'submit', preventDefault() {} });
+  await settle();
+  assert.match(ui.host.querySelector('.hub-notice.error').textContent, /This card changed while you were editing\./);
+  assert.equal(named(editForm(ui), 'shirtSize').value, 'S', 'the draft stays open on the latest card');
+  assert.equal(ui.calls.filter(call => call.method === 'GET').length, 2);
+  assert.equal(ui.session.getItem('egc.hub.pending.v1.team_directory.crew.one'), null, 'a refused change is not kept for retry');
+  // A save whose answer never arrived is kept and retried unchanged.
+  answer = { status: 503, body: { ok: false, code: 'staff_directory_outcome_unknown', error: 'The save could not be verified.' } };
+  editForm(ui).dispatchEvent({ type: 'submit', preventDefault() {} });
+  await settle();
+  const kept = JSON.parse(ui.session.getItem('egc.hub.pending.v1.team_directory.crew.one'));
+  assert.equal(kept.body.shirtSize, 'S');
+  answer = { body: { ok: true, authority: 'employee_hub', person: person('Crew.One', { revision: 'rev-saved-3' }) } };
+  click(buttonText(ui.host, 'Retry saved change'));
+  await settle();
+  const posts = ui.calls.filter(call => call.method === 'POST');
+  assert.equal(posts.at(-1).body.requestId, kept.requestId, 'the retry resends the same request');
+  assert.match(ui.text(), /Your saved change was confirmed\./);
+  // An answer that does not have the documented shape is never drawn as the team.
+  const broken = teamUi({ get: async () => ({ body: { ...crewTeam(), people: [{ username: 'x' }] } }) });
+  await broken.mount();
+  await settle();
+  assert.equal(broken.cards().length, 0);
+  assert.ok(buttonText(broken.host, 'Retry'));
+});
+
+test('the Hub lists Team directory for every viewer only while the server reports the staff directory on, and the onboarding form asks for the size and birthday then', async () => {
+  for (const [who, on] of [[{}, true], [{ user: 'Crew.One', business: false, role: 'crew' }, true], [{ user: 'Crew.One', business: false, role: 'crew' }, false], [{}, false]]) {
+    const page = hubPage({ ...who, fetcher: async url => url.startsWith('/api/integration-status') ? json({ ok: true, status: {}, flags: { moneyApi: false, lifecycleApi: false, ...(on ? { teamDirectory: true } : {}) } })
+      : url.startsWith('/api/employee-hub') ? json({ ok: true, collections: collections(), accounts: [] }) : json({ ok: false, error: 'Synthetic service unavailable' }, 503) });
+    page.api.install();
+    await page.flush(); await settle(); await page.flush();
+    const tabs = page.document.querySelectorAll('[data-ops-tab]').map(node => node.getAttribute('data-ops-tab'));
+    assert.equal(tabs.includes('team_directory'), on, JSON.stringify(who));
+    assert.equal(page.api.hubCapabilities().includes('team_directory'), on);
+    assert.equal(page.api.canView('team_directory'), on);
+    page.api.go('onboarding');
+    await page.flush();
+    assert.equal(Boolean(page.main().querySelector('[name="shirtSize"]')), on, 'onboarding asks for the shirt size only with the directory on');
+    assert.equal(Boolean(page.main().querySelector('[name="birthdayVisibleToTeam"]')), on);
+  }
+  // The registry entry: My EGC, its own capability, lazily loaded files.
+  const registry = hubPage().context.EGCHubScreens, entry = registry.get('team_directory');
+  assert.deepEqual([entry.group, entry.label, entry.capability, entry.crewVisible, entry.module, entry.load.js, entry.load.css], ['MY EGC', 'Team directory', 'team_directory', false, 'EGCTeamDirectory', 'employee-team-directory.js', 'employee-team-directory.css']);
+  assert.ok(registry.allowed(entry, ['crew', 'team_directory']) && !registry.allowed(entry, ['crew', 'business', 'owner']));
+});
+
+test('the manager profile form edits the onboarding emergency contact fields, starting from an older single emergency contact and retiring it', async () => {
+  const posts = [];
+  const page = hubPage({ fetcher: async (url, init = {}) => {
+    if (url.startsWith('/api/employee-hub') && init.method === 'POST') { const body = JSON.parse(init.body); posts.push(body); return json({ ok: true, record: { ...body.data, id: body.id } }); }
+    if (url.startsWith('/api/employee-hub')) return json({ ok: true, collections: collections(), accounts: [] });
+    return json({ ok: false, error: 'Synthetic service unavailable' }, 503);
+  } });
+  page.api.install();
+  await page.flush(); await settle();
+  page.api.S.people.profiles = [{ id: 'crew.two', username: 'Crew.Two', displayName: 'Crew Two', role: 'crew', emergencyContact: 'Legacy Pat 9705550100' }];
+  const pending = page.context.opsEditProfile('crew.two'), dialog = page.document.querySelector('.ops-action-dialog');
+  assert.deepEqual(dialog.querySelectorAll('input').map(node => node.getAttribute('name')).filter(name => /emergency/i.test(name)), ['emergencyContactName', 'emergencyContactPhone']);
+  assert.equal(dialog.querySelector('[name="emergencyContactName"]').value, 'Legacy Pat 9705550100');
+  dialog.querySelector('[name="emergencyContactPhone"]').value = '9705550100';
+  page.context.opsActionSubmit({ preventDefault() {}, currentTarget: dialog });
+  await pending;
+  await page.flush();
+  const saved = posts.find(body => body.collection === 'profiles' && body.id === 'crew.two');
+  assert.ok(saved, 'the form saves the profile');
+  assert.deepEqual([saved.data.emergencyContactName, saved.data.emergencyContactPhone, saved.data.emergencyContact], ['Legacy Pat 9705550100', '9705550100', '']);
+});
+
+test('employee.html loads the new Hub registry and suite builds; the Team directory files ship beside them', () => {
+  const page = readFileSync(new URL('../employee.html', import.meta.url), 'utf8');
+  assert.equal(page.match(/<script src="employee-hub-screens\.js\?v=20261017team1"><\/script>/g)?.length, 1);
+  assert.equal(page.match(/<script src="employee-suite\.js\?v=20261017team1"><\/script>/g)?.length, 1);
+  assert.equal(page.includes('employee-team-directory.js'), false, 'the screen registry loads it only when it opens');
+  for (const file of ['employee-team-directory.js', 'employee-team-directory.css']) assert.ok(readFileSync(new URL('../' + file, import.meta.url), 'utf8').length > 100, file);
+  // The screen never shows a birth year, age or contact unless the server sent it.
+  assert.doesNotMatch(teamSource, /localStorage/);
+  assert.match(teamSource, /p\.phone!==undefined\?detail\('Phone'/);
+});

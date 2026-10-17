@@ -11,6 +11,7 @@ import { serverMessagingEnabled } from '../_lib/messaging-settings.js';
 import { serverScheduleSyncActive } from '../_lib/schedule-sync-queue.js';
 import { firebaseRevocations, firebaseRevocationStatus, reconcilesStaffRoster } from '../_lib/firebase-revocation.js';
 import { staffPageGateState } from '../_lib/staff-page-gate.js';
+import { staffDirectoryEnabled } from '../_lib/staff-directory.js';
 
 /** Returns configuration readiness and a bounded Firebase read check. Secret
  * values and Firestore documents never leave the server. Business users also
@@ -77,7 +78,8 @@ export function integrationStatusHandlers({session=getHubSession,revocations=fir
   // MONEY_UNIFIED_TOTALS=true and MONEY_API_ENABLED=true (the finance buttons then cap and record through /api/money, which
   // serves the same unified money), makes the Hub finance board show money-core's unified totals.
   const moneyApi=moneyApiEnabled(env);
-  const flags={moneyApi,lifecycleApi:lifecycleApiEnabled(env),...(moneyApi&&moneyTotalsMode(env)==='unified'?{unifiedTotals:true}:{})};
+  // teamDirectory, present only with EGC_STAFF_DIRECTORY_ENABLED=true, lists the Team directory screen (D10) for every viewer.
+  const flags={moneyApi,lifecycleApi:lifecycleApiEnabled(env),...(moneyApi&&moneyTotalsMode(env)==='unified'?{unifiedTotals:true}:{}),...(staffDirectoryEnabled(env)?{teamDirectory:true}:{})};
   return new Response(JSON.stringify({ok:true,status,flags}),{headers:{'Content-Type':'application/json','Cache-Control':'no-store'}});
   }};
 }
