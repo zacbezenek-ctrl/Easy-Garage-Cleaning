@@ -10,7 +10,31 @@
   function signedPlan(p) {
     return { ...select(p, ['discovery','scope','logistics','internal_notes','crew_brief','client_checklists','signature','acceptance','terms_version','terms_accepted','photos','notes']),
       client: select(p.client, ['name','phone','email','address','highlevel_contact_id']),
-      quote: select(p.quote, ['title','total','deposit','job_date','start_time','end_time','estimated_duration_min','line_items','catalog_version','duration_override_reason']) };
+      quote: select(p.quote, ['title','total','deposit','job_date','start_time','end_time','estimated_duration_min','line_items','catalog_version','duration_override_reason','composite_pricing']) };
+  }
+  // EGC_DISPATCH_CREW_AUTO_ASSIGN: crew openings as the estimator's choices, "Crew 1 · Mon 10/19 9:30am". Advisory: the
+  // signed save names the chosen crew and Dispatch picks again (the first free crew) when it saves the job.
+  const DAYS = ['Sun','Mon','Tue','Wed','Thu','Fri','Sat'];
+  const dayLabel = date => { const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(String(date || '')); if (!m) return String(date || ''); const d = new Date(Date.UTC(+m[1], +m[2] - 1, +m[3], 12)); return `${DAYS[d.getUTCDay()]} ${+m[2]}/${+m[3]}`; };
+  const clock = time => { const m = /^(\d{2}):(\d{2})$/.exec(String(time || '')); if (!m) return String(time || ''); const h = +m[1]; return `${h % 12 || 12}:${m[2]}${h < 12 ? 'am' : 'pm'}`; };
+  const crewSlots = (rows, limit = 6) => (Array.isArray(rows) ? rows : []).filter(row => row && typeof row.crewId === 'string' && row.crewId && /^\d{4}-\d{2}-\d{2}$/.test(row.date || '') && /^\d{2}:\d{2}$/.test(row.time || '') && /^\d{2}:\d{2}$/.test(row.endTime || ''))
+    .slice(0, limit).map(row => ({date:row.date,start:row.time,end:row.endTime,crewId:row.crewId,label:`${String(row.crewLabel || 'Crew').slice(0, 80)} · ${dayLabel(row.date)} ${clock(row.time)}`}));
+  // What Dispatch did with the sold job (the save's crew: status, crew name and the job's time; openings when no crew was free).
+  function crewOutcome(crew) {
+    if (!crew || typeof crew !== 'object') return '';
+    if (crew.status === 'assigned') return `${String(crew.crewName || 'A crew').slice(0, 80)} is booked for ${dayLabel(crew.date)} ${clock(crew.time)}. `;
+    if (crew.status === 'kept') return 'The job keeps its crew. ';
+    if (crew.status !== 'unassigned') return '';
+    const open = crewSlots(crew.alternatives, 3).map(slot => slot.label);
+    return `No crew is free at that time, so the office will assign a crew.${open.length ? ` Open crew times: ${open.join(', ')}.` : ''} `;
+  }
+  // EGC_QUOTE_BUILDER_ENABLED: the builder quote a "Send options for review" save returned (the quote draft's selection,
+  // total, menu version and charged lines) is what the customer signs; the Hub prices the selection again on save.
+  function builderQuoteOf(job) {
+    const pricing = job?.compositePricing, estimate = job?.estimate;
+    if (!pricing || typeof pricing !== 'object' || Array.isArray(pricing) || !estimate || !Number.isSafeInteger(estimate.amountCents) || estimate.amountCents <= 0 || !Array.isArray(estimate.lineItems)) return null;
+    const lineItems = estimate.lineItems.filter(line => line && typeof line === 'object' && line.included !== false).map(line => ({id:line.id,kind:line.kind,name:line.name,description:line.description || '',quantity:line.quantity,unitCents:line.unitCents,totalCents:line.totalCents}));
+    return {compositePricing:pricing,totalCents:estimate.amountCents,menuVersion:String(estimate.catalogVersion || ''),lineItems,jobId:String(job.id || '')};
   }
   // This controller owns one frozen, actor-scoped request through lost responses.
   // Neither a reload nor a CRM outage creates a second dispatch request.
@@ -123,7 +147,16 @@
     return {save,sync,release};
   }
   root.EGCWalkthroughHandoffClient=createClient;
+  root.EGCGameplanCrew=Object.freeze({crewSlots,crewOutcome,builderQuoteOf,dayLabel,clock});
   if (typeof S === 'undefined') return;
+  // A changed builder quote changes what the customer signs: the earlier signature is cleared.
+  function keepBuilderQuote(job) {
+    const next=builderQuoteOf(job);
+    if(JSON.stringify(next)===JSON.stringify(S.builderQuote||null))return;
+    if(typeof invalidateAcceptance==='function')invalidateAcceptance();
+    if(next)S.builderQuote=next;else delete S.builderQuote;
+    if(typeof render==='function')render();
+  }
   const actor=async()=>{const user=await EGCHubAuth.session();return typeof user==='string'?user:user?.user || '';};
   const client=createClient({storage:sessionStorage,shared:(()=>{try{return localStorage;}catch{return null;}})(),fetch:(...args)=>EGCHubAuth.fetch(...args),actor,managerSync:()=>EGCHubAuth.canRunBusiness(),uuid:()=>crypto.randomUUID(),plan:()=>payload(),source:()=>S.sourceWalkthroughId || '',savedJobId:()=>S.handoffJobId || S.quoteDraftJobId || '',photoDraftId:()=>S.photoDraftJobId || S.jobId,
     accept:(result,pending)=>{
@@ -152,14 +185,17 @@
       S.highlevelJobAppointmentId=synced.appointmentId || S.highlevelJobAppointmentId;
       S.highlevelOpportunityId=synced.pipeline?.opportunityId || S.highlevelOpportunityId;
       if(!recoverOriginal)writeActive();save();
-      const portal=synced.portalInvitation,managerSync=synced.handoffSync?.status==='manager_required';
-      const portalText=managerSync?'':portal?.status==='submitted'?(portal.channel==='Email'?'Portal email queued in HighLevel. ':'Portal text queued in HighLevel. '):portal?.status==='suppressed'?'Portal delivery is paused. ':'Portal delivery needs attention in Estimates & payments. ';
+      const portal=synced.portalInvitation,managerSync=synced.handoffSync?.status==='manager_required',pending=saved.result.pricing?.ready===false;
+      // Builder prices the owner has not approved: the job is booked, and the estimate and deposit request wait for approval.
+      const pricingText=pending?`Prices pending owner approval${saved.result.pricing.pending?.length?` (${saved.result.pricing.pending.slice(0,4).join(', ')})`:''}: the estimate and deposit request go to the customer once the owner approves them. `:'';
+      const crewText=crewOutcome(saved.result.crew);
+      const portalText=managerSync||pending?'':portal?.status==='submitted'?(portal.channel==='Email'?'Portal email queued in HighLevel. ':'Portal text queued in HighLevel. '):portal?.status==='suppressed'?'Portal delivery is paused. ':'Portal delivery needs attention in Estimates & payments. ';
       const scheduleText=managerSync?'Job saved. A manager completes the CRM sync and the portal invitation from the Hub. ':synced.handoffSync?.status==='synced'?'Job and CRM schedule verified. ':'Job saved; CRM reconciliation still needs attention. ';
       const photoText=photos.status==='synced'?'Walkthrough photos uploaded. ':photos.status==='needs_setup'?'Drive needs setup; photos remain on this device. ':'Photos remain on this device; upload needs attention. ';
-      const staffing=saved.result.warnings.some(x=>['unassigned','crew_size_short','missing_crew_lead'].includes(x.code))?'Assign the required crew in Dispatch before work. ':'';
+      const staffing=!crewText&&saved.result.warnings.some(x=>['unassigned','crew_size_short','missing_crew_lead'].includes(x.code))?'Assign the required crew in Dispatch before work. ':'';
       const arrival=saved.arrivalNotice?saved.arrivalNotice+' ':'';
       const checkout=saved.result.warnings.filter(x=>x?.code==='checkout_needs_review').map(x=>String(x.message||'')+' ').join('');
-      status.textContent=portalText+scheduleText+photoText+staffing+arrival+checkout+(recoverOriginal?'The original signed version was recovered; review any later form edits separately.':'');
+      status.textContent=portalText+scheduleText+crewText+pricingText+photoText+staffing+arrival+checkout+(recoverOriginal?'The original signed version was recovered; review any later form edits separately.':'');
       button.disabled=false;button.textContent=photos.status==='synced'&&['synced','manager_required'].includes(synced.handoffSync?.status)?'Saved — verify again':'Retry remaining synchronization';
       // Keep the same immutable request for photo/CRM retries. A signed revision
       // is a separate explicit action only after the original save is confirmed.
@@ -179,6 +215,15 @@
     try {
       const r=await EGCHubAuth.fetch('/api/walkthrough-handoff',{cache:'no-store'}),data=await r.json();
       if(!r.ok||!data.ok)throw new Error(data.error || 'The crew roster is unavailable.');
+      // EGC_DISPATCH_CREW_AUTO_ASSIGN: crew openings (crews=auto, kind=job: Crew 1, then Crew 2, Crew 3 on weekends), no roster.
+      if(data.crewAutoAssign===true){
+        const q=new URLSearchParams({view:'crew_openings',durationMinutes:String(estimatedJobMinutes()),travelBufferMinutes:'20'});
+        const response=await EGCHubAuth.fetch('/api/walkthrough-handoff?'+q,{cache:'no-store'}),body=await response.json().catch(()=>({}));
+        if(!response.ok||!body.ok)throw new Error(body.error || 'Crew openings could not be verified.');
+        SLOT_OPTIONS=crewSlots(body.openings);
+        if(!SLOT_OPTIONS.length)SLOT_ERROR='No crew is free for this job in the next seven days. Choose a time; the office will assign a crew.';
+        return;
+      }
       const names=String(S.assignedTo || '').split(/[,/;+&]/).map(x=>x.trim()).filter(Boolean);
       const key=x=>String(x).trim().toLowerCase();
       const ids=names.map(name=>{const exact=data.roster.filter(p=>p.id===key(name));const found=exact.length?exact:data.roster.filter(p=>key(p.name)===key(name));return found.length===1?found[0].id:null;});
@@ -229,7 +274,7 @@
   function sendOptions(button){
     if(!root.EGCQuoteDraft){$('send-status').textContent='Quote drafts are still loading. Try again in a moment.';return null;}
     return root.EGCQuoteDraft.open({storage:sessionStorage,fetch:(...args)=>EGCHubAuth.fetch(...args),actor,uuid:()=>crypto.randomUUID(),plan:()=>payload(),source:()=>S.sourceWalkthroughId || '',savedJobId:()=>S.quoteDraftJobId || S.handoffJobId || '',draftId:()=>S.photoDraftJobId || S.jobId || '',
-      accept:result=>{S.quoteDraftJobId=result.job.id;S.customerId=result.job.customerId;save();},onSent:()=>{if(button)button.textContent='Options sent — send again after changes';}});
+      accept:result=>{S.quoteDraftJobId=result.job.id;S.customerId=result.job.customerId;keepBuilderQuote(result.job);save();},onSent:()=>{if(button)button.textContent='Options sent — send again after changes';}});
   }
   root.EGCWalkthroughHandoff={save:()=>client.save(),send,openings,photos,sendOptions};
 })(window);

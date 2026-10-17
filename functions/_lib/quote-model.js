@@ -49,11 +49,24 @@ export const MAX_TOTAL_CENTS = 100000000;
 export const MAX_QUANTITY = 10000;
 /** The only line fields a customer document (invoice, receipt) may carry. */
 export const CUSTOMER_LINE_FIELDS = Object.freeze(['id', 'kind', 'name', 'description', 'quantity', 'unitCents', 'totalCents', 'amount', 'optional', 'selected', 'taxable']);
-const FIELDS = ['id', 'kind', 'name', 'description', 'quantity', 'unitCents', 'totalCents', 'amount', 'optional', 'selected', 'group', 'tier', 'package', 'catalog', 'customerSupplied', 'split', 'durationMinutes', 'taxable'];
-// Internal cost and scheduling data: never customer-facing, never fingerprinted.
-const INTERNAL_FIELDS = new Set(['split', 'catalog', 'durationMinutes']);
+/**
+ * Purchase fields a quote-builder or catalog line may carry so the sold job's buy list (job-materials.js) knows what
+ * to buy, where and in what packs: category, sku, unitsPerPack, productUrl, unit, store, source. Each is optional and
+ * kept only when sent (null counts as not sent), so a line without them normalizes exactly as before. sku,
+ * unitsPerPack, productUrl, store and source belong to product lines only; no purchase field rides on a discount or
+ * tip. They are never customer-facing (CUSTOMER_LINE_FIELDS) and never fingerprinted. A strict write refuses a bad
+ * value (quote_invalid_purchase_field); a lenient read drops it as a cosmetic repair.
+ */
+export const LINE_CATEGORIES = Object.freeze(['removal', 'shelving', 'storage', 'service', 'cleaning', 'consumable', 'equipment', 'other',
+  'bikes', 'cabinets-workbenches', 'floors-lighting-extras', 'lawn-garden', 'overhead', 'small-items', 'sports-outdoor', 'wall-systems']);
+export const LINE_SOURCES = Object.freeze(['buy', 'stock']);
+export const PURCHASE_LINE_FIELDS = Object.freeze(['category', 'sku', 'unitsPerPack', 'productUrl', 'unit', 'store', 'source']);
+const PRODUCT_ONLY = new Set(['sku', 'unitsPerPack', 'productUrl', 'store', 'source']);
+const FIELDS = ['id', 'kind', 'name', 'description', 'quantity', 'unitCents', 'totalCents', 'amount', 'optional', 'selected', 'group', 'tier', 'package', 'catalog', 'customerSupplied', 'split', 'durationMinutes', 'taxable', ...PURCHASE_LINE_FIELDS];
+// Internal cost and scheduling data and purchase details: never customer-facing, never fingerprinted.
+const INTERNAL_FIELDS = new Set(['split', 'catalog', 'durationMinutes', ...PURCHASE_LINE_FIELDS]);
 // Repairs that cannot change what is charged, included or attributed.
-const COSMETIC_ISSUES = new Set(['quote_invalid_text', 'quote_invalid_name', 'quote_invalid_id', 'quote_duplicate_id', 'quote_invalid_catalog', 'quote_invalid_duration', 'quote_unknown_field']);
+const COSMETIC_ISSUES = new Set(['quote_invalid_text', 'quote_invalid_name', 'quote_invalid_id', 'quote_duplicate_id', 'quote_invalid_catalog', 'quote_invalid_duration', 'quote_unknown_field', 'quote_invalid_purchase_field']);
 const WALKTHROUGH_FIELDS = ['name', 'description', 'qty', 'total'];
 const SPLIT_CENTS = ['productCents', 'laborCents', 'markupCents', 'disposalCents'];
 const SPLIT_FIELDS = [...SPLIT_CENTS, 'laborMinutes'];
@@ -165,6 +178,38 @@ function normalizeSplit(value, { kind, unitCents, customerSupplied, problem }) {
   return split;
 }
 
+const CONTROL = /[\u0000-\u001f\u007f]/;
+const SKU = /^[A-Za-z0-9][A-Za-z0-9._-]{0,79}$/;
+const UNIT = /^[a-z](?:[a-z -]{0,38}[a-z])?$/;
+// A public https page: no credentials, no spaces, at most 500 characters. Kept exactly as sent.
+function httpsLink(value) {
+  if (typeof value !== 'string' || !value || value.length > 500 || /\s/.test(value) || CONTROL.test(value)) return null;
+  let url;
+  try { url = new URL(value); } catch { return null; }
+  return url.protocol === 'https:' && url.hostname && !url.username && !url.password ? value : null;
+}
+const PURCHASE_RULES = {
+  category: [value => LINE_CATEGORIES.includes(value) ? value : null, `Line category must be one of ${LINE_CATEGORIES.join(', ')}.`],
+  sku: [value => typeof value === 'string' && SKU.test(value) ? value : null, 'A product SKU must be 1 to 80 letters, numbers, dots, dashes or underscores.'],
+  unitsPerPack: [value => Number.isSafeInteger(value) && value >= 1 && value <= 10000 ? value : null, 'Units per pack must be a whole number from 1 to 10000.'],
+  productUrl: [httpsLink, 'A product link must be a public https address of at most 500 characters.'],
+  unit: [value => typeof value === 'string' && UNIT.test(value) ? value : null, 'A unit must be 1 to 40 lowercase letters or spaces, such as pack or each.'],
+  store: [value => typeof value === 'string' && !CONTROL.test(value) && value.trim() && value.trim().length <= 80 ? value.trim() : null, 'A store name must be one line of at most 80 characters.'],
+  source: [value => LINE_SOURCES.includes(value) ? value : null, 'A line source must be buy or stock.'],
+};
+// The purchase fields a line was sent with, validated; only those present are returned (in PURCHASE_LINE_FIELDS order).
+function purchaseFields(raw, kind, problem) {
+  const out = {};
+  for (const key of PURCHASE_LINE_FIELDS) {
+    if (raw[key] === undefined || raw[key] === null) continue;
+    if (['discount', 'tip'].includes(kind) || PRODUCT_ONLY.has(key) && kind !== 'product') { problem('invalid_purchase_field', `${key} can only be saved on ${PRODUCT_ONLY.has(key) ? 'a product' : 'a charged'} line.`); continue; }
+    const [read, message] = PURCHASE_RULES[key], value = read(raw[key]);
+    if (value === null) { problem('invalid_purchase_field', message); continue; }
+    out[key] = value;
+  }
+  return out;
+}
+
 function lineMoney(raw, { kind, quantity, strict, problem }) {
   const whole = value => Number.isSafeInteger(value) && Math.abs(value) <= MAX_LINE_CENTS ? value : null;
   const legacyDollars = value => {
@@ -255,6 +300,7 @@ function normalizeLine(raw, index, ctx, fallbackName) {
   return { legacy, line: {
     id, kind, name, description, quantity, unitCents: money.unitCents, totalCents: money.totalCents, amount: money.totalCents === null ? null : money.totalCents / 100,
     optional, selected, group, tier, package: pkg, catalog: normalizeCatalog(raw.catalog, problem), customerSupplied, split, durationMinutes, taxable: flag(raw.taxable, 'Taxable', problem),
+    ...purchaseFields(raw, kind, problem),
   } };
 }
 
@@ -545,7 +591,8 @@ export const customerLineItem = line => Object.fromEntries(CUSTOMER_LINE_FIELDS.
  *     on line 101, text past a length cap, an invalid quantity or amount)
  *     still changes the fingerprint;
  *   - the saved amount and deposit in cents and the raw scope.
- * Only the internal fields split, catalog and durationMinutes are left out.
+ * Only the internal fields split, catalog and durationMinutes and the purchase
+ * fields (PURCHASE_LINE_FIELDS) are left out.
  */
 export function estimateFingerprint(estimate) {
   const source = plain(estimate) ? estimate : {};

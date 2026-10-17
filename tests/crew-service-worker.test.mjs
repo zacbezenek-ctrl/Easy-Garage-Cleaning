@@ -15,7 +15,7 @@ const basic = response => Object.defineProperty(response, 'type', { value: 'basi
 // Inside a worker, relative request URLs resolve against the worker's origin.
 class WorkerRequest extends Request { constructor(input, init) { super(typeof input === 'string' ? new URL(input, ORIGIN).href : input, init); } }
 const NOW = Date.parse('2026-09-22T15:00:00.000Z');
-const SHELL_CACHE = 'egc-crew-shell-20261017grabschedule';
+const SHELL_CACHE = 'egc-crew-shell-20261017buylinks';
 // CREW-SCHEDULE: the crew schedule page and its script join the shell (the schedule itself is /api data, never stored).
 const SCHEDULE_ASSETS = ['/crew/schedule.html', '/crew/schedule.js?v=20261017crewschedule'];
 // KNOCK: the canvassing page (crew/knock.html) and its modules share the crew shell. Its ES modules import each other
@@ -105,8 +105,8 @@ test('install caches only the static job shell under a versioned cache and activ
   // again (?v=20260929editwipe2) so a blank line or an emptied checklist editor, and a reason typed while this phone's own
   // queued status confirms, survive too.
   // FIELD-PAY adds a private payment UI and changes the job script; all three assets must reload offline.
-  // WP14c bumped the job page script and its styles (?v=20261017grablist) for the Grab before you go list.
-  assert.deepEqual(shell, ['/app-touch.css?v=20260930mobiletouch', '/crew/field-expenses.css?v=20260928fun19', '/crew/field-expenses.js?v=20261013compat', '/crew/field-outbox.js?v=20260929crewtime2', '/crew/field-payments.css?v=20260929fieldpay2', '/crew/field-payments.js?v=20261013compat', '/crew/job-photo-sharing.css?v=20260927photo', '/crew/job-photo-sharing.js?v=20261012storage', '/crew/job-completion-handoff.js?v=20261016w19verify', '/crew/job.css?v=20261017grablist', '/crew/job.html', '/crew/job.js?v=20261017grablist', ...KNOCK_ASSETS, '/crew/knock.html', '/crew/manifest-knock.webmanifest', '/crew/manifest.webmanifest', '/crew/offline.html', ...SCHEDULE_ASSETS].sort());
+  // WP14c bumped the job page script and its styles for the Grab before you go list; the estimator integration (?v=20261017buylinks) adds each bought product's store and product page.
+  assert.deepEqual(shell, ['/app-touch.css?v=20260930mobiletouch', '/crew/field-expenses.css?v=20260928fun19', '/crew/field-expenses.js?v=20261013compat', '/crew/field-outbox.js?v=20260929crewtime2', '/crew/field-payments.css?v=20260929fieldpay2', '/crew/field-payments.js?v=20261013compat', '/crew/job-photo-sharing.css?v=20260927photo', '/crew/job-photo-sharing.js?v=20261012storage', '/crew/job-completion-handoff.js?v=20261016w19verify', '/crew/job.css?v=20261017buylinks', '/crew/job.html', '/crew/job.js?v=20261017buylinks', ...KNOCK_ASSETS, '/crew/knock.html', '/crew/manifest-knock.webmanifest', '/crew/manifest.webmanifest', '/crew/offline.html', ...SCHEDULE_ASSETS].sort());
   await sw.dispatch('activate');
   assert.deepEqual([...sw.stores.keys()].sort(), [SHELL_CACHE, 'unrelated-cache'], 'older shell versions are removed; other caches are left alone');
   assert.equal(sw.state.claimed, 1); assert.equal(sw.state.unregistered, 0);
@@ -130,7 +130,7 @@ test('Today’s work loads network-first and falls back to the cached shell, or 
   sw.state.online = false;
   for (const path of ['/crew/job.html?jobId=job-b', '/crew/job?jobId=job-b']) assert.equal(await (await sw.fetchEvent(path, { mode: 'navigate' })).response.text(), 'network /crew/job.html', `${path} reloads offline from the shell`);
   assert.equal(await (await sw.fetchEvent('/crew/prejob.html?jobId=job-a', { mode: 'navigate' })).response.text(), 'network /crew/offline.html');
-  assert.equal(await (await sw.fetchEvent('/crew/job.js?v=20261017grablist')).response.text(), 'network /crew/job.js');
+  assert.equal(await (await sw.fetchEvent('/crew/job.js?v=20261017buylinks')).response.text(), 'network /crew/job.js');
   const missing = await sw.fetchEvent('/crew/job.js?v=never-cached');
   assert.equal(missing.response.status, 503);
 });
@@ -268,7 +268,7 @@ function gatedSite({ env = STAFF_ENV, accept = '*/*' } = {}) {
   return phone;
 }
 const PUBLIC_KEYS = ['/app-touch.css?v=20260930mobiletouch', '/crew/field-outbox.js?v=20260929crewtime2', '/crew/manifest-knock.webmanifest', '/crew/manifest.webmanifest', '/crew/offline.html'];
-const STAFF_KEYS = ['/crew/field-expenses.css?v=20260928fun19', '/crew/field-expenses.js?v=20261013compat', '/crew/field-payments.css?v=20260929fieldpay2', '/crew/field-payments.js?v=20261013compat', '/crew/job-photo-sharing.css?v=20260927photo', '/crew/job-photo-sharing.js?v=20261012storage', '/crew/job-completion-handoff.js?v=20261016w19verify', '/crew/job.css?v=20261017grablist', '/crew/job.html', '/crew/job.js?v=20261017grablist', ...KNOCK_PRESENT, '/crew/knock.html', ...SCHEDULE_ASSETS];
+const STAFF_KEYS = ['/crew/field-expenses.css?v=20260928fun19', '/crew/field-expenses.js?v=20261013compat', '/crew/field-payments.css?v=20260929fieldpay2', '/crew/field-payments.js?v=20261013compat', '/crew/job-photo-sharing.css?v=20260927photo', '/crew/job-photo-sharing.js?v=20261012storage', '/crew/job-completion-handoff.js?v=20261016w19verify', '/crew/job.css?v=20261017buylinks', '/crew/job.html', '/crew/job.js?v=20261017buylinks', ...KNOCK_PRESENT, '/crew/knock.html', ...SCHEDULE_ASSETS];
 const PAGE_KEYS = new Set(['/crew/job.html', '/crew/knock.html', '/crew/schedule.html']);
 const shellKeys = async sw => (await sw.cached()).filter(([name]) => name === SHELL_CACHE).map(([, path]) => path).sort();
 
@@ -289,7 +289,7 @@ test('staff gate on: a signed-out install caches the public shell, refusals are 
   const page = await sw.fetchEvent('/crew/job.html?jobId=synthetic-job-1', { mode: 'navigate' });
   assert.equal(page.response.type, 'opaqueredirect', 'the sign-in redirect goes back to the browser untouched');
   assert.deepEqual(phone.edge.at(-1), ['/crew/job.html?jobId=synthetic-job-1', 302, '/crew/?next=%2Fcrew%2Fjob.html%3FjobId%3Dsynthetic-job-1']);
-  const script = await sw.fetchEvent('/crew/job.js?v=20261017grablist');
+  const script = await sw.fetchEvent('/crew/job.js?v=20261017buylinks');
   assert.equal(script.response.status, 401);
   assert.equal(await script.response.text(), 'Sign in required.\n');
   assert.deepEqual(await shellKeys(sw), PUBLIC_KEYS, 'no redirect or 401 is stored');

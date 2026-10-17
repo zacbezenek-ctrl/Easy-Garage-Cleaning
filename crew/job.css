@@ -52,3 +52,5 @@ input:focus-visible,select:focus-visible,textarea:focus-visible{outline-color:#b
 #materials-card .grab-item small{overflow-wrap:anywhere}
 #materials-card .buying{margin:0 0 8px;padding-left:20px}
 #materials-card .buying li{padding:4px 0;overflow-wrap:anywhere}
+#materials-card .shop{display:block;overflow-wrap:anywhere}
+#materials-card .product-link{font-weight:700}
