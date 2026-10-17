@@ -19,7 +19,9 @@ const NOW=Date.parse('2026-09-22T12:00:00.000Z');
 const PAGE={id:'hub-schedule:zacb',kind:'integration',role:'integration',workspace:'egc'};
 // egc-api's own env: EGC_SCHEDULE_SYNC_WORKER=true runs the loop and turns on syncPortalSchedule's post-bind
 // read-back for every caller; the 'flag off' tests below set it back to {}.
-const FLAG_ON=Object.freeze({EGC_SCHEDULE_SYNC_WORKER:'true'});
+// D9b: the jobs calendar is env-only (no name-matched default), so every egc-api env here names the fixture's.
+const CALENDARS=Object.freeze({GHL_JOBS_CALENDAR_ID:'job'});
+const FLAG_ON=Object.freeze({EGC_SCHEDULE_SYNC_WORKER:'true',...CALENDARS});
 let clock,rows,revision,events,writes,provider,hub,contactId,failBind,failEvents,interleave,apiEnv;
 const minutes=n=>new Date(NOW+n*60000).toISOString();
 const iso=()=>new Date(clock).toISOString();
@@ -161,7 +163,7 @@ const pageRetry=id=>{const v=job(id);return service().execute(PAGE,{command:'sch
 
 test('flag off: an MCP sync that fails after its ledger reserve never blocks the page retry of the visit it scheduled',async()=>{
  // No schedule-sync tick runs here (EGC_SCHEDULE_SYNC_WORKER off): only MCP and the page sync.
- apiEnv={};
+ apiEnv=CALENDARS;
  const requestId=randomUUID(),id=await mcpSchedule(requestId,'09:00','11:00');
  assert.equal(job(id).syncIdempotencyKey,`schedule-mutate:${requestId}`,'the visit key is minted by the Hub, never the MCP requestId');
  failEvents=1;
@@ -178,7 +180,7 @@ test('flag off: an MCP sync that fails after its ledger reserve never blocks the
 });
 
 test('flag off: a page retry that fails after its ledger reserve never blocks MCP retrying its own requestId',async()=>{
- apiEnv={};
+ apiEnv=CALENDARS;
  const requestId=randomUUID(),id=await mcpSchedule(requestId,'13:00','15:00');
  failEvents=1;
  await assert.rejects(pageRetry(id),error=>error.code==='appointment_preflight_unavailable');
@@ -262,7 +264,7 @@ test('a stale worker write that binds while the visit is pending, before a newer
 });
 
 test('flag off: syncPortalSchedule never reads the appointment back after binding',async()=>{
- apiEnv={};
+ apiEnv=CALENDARS;
  seed(visit('quiet',{highlevelAppointmentId:'event-quiet'}));book('event-quiet',visit('quiet'),'2026-09-29T15:00:00.000Z','2026-09-29T17:00:00.000Z');
  let reads=0;const getAppointment=provider.getAppointment;provider.getAppointment=async id=>{reads++;return getAppointment(id);};
  assert.equal((await pageRetry('quiet')).providerSync,'verified');

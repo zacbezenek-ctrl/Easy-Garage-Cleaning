@@ -164,8 +164,11 @@ try {
 
   // 6. Help states the same earning rule as My money, and only the owner approves the terms.
   await page.goto(`${server.base}/crew/knock.html#money`);
-  await page.getByText('How commission works', { exact: true }).waitFor();
-  const moneyText = await page.locator('#knock-main').textContent();
+  // A finished background sync re-renders #knock-main, so the screen is read in the same step that sees the whole rule.
+  const moneyText = await (await page.waitForFunction(() => {
+    const text = document.getElementById('knock-main')?.textContent || '';
+    return /How commission works/.test(text) && /held for review\./.test(text) ? text : null;
+  })).jsonValue();
   await page.goto(`${server.base}/crew/knock.html#more`);
   await page.setViewportSize({ width: 320, height: 720 });
   await page.getByRole('button', { name: /Help & the rules/ }).click();
