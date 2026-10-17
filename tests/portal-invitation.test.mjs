@@ -101,6 +101,29 @@ test('unapproved, cancelled, and historical jobs do not send from automatic hook
   }
 });
 
+// EGC_QUOTE_BUILDER_ENABLED: a signed job held for the owner's price approval (walkthrough-handoff.js
+// pricesPendingApproval) gets no portal link from any sender: the handoff's request, the cron and the Hub's retry.
+test('a job held for the owner\'s price approval is never invited, by any sender, and records nothing', async () => {
+  const hold = { pricesPendingApproval: { status: 'pending', reason: 'draft_prices', items: [{ id: 'hd-1', name: 'Totes' }] } };
+  for (const options of [{ requireRequested: true }, {}]) {
+    await fixture(async ({ messages, upserts, ledger }) => {
+      assert.deepEqual(await sendAcceptedQuotePortal(env, 'job-1', options), { status: 'not_approved', reason: 'prices_pending_approval' });
+      assert.deepEqual([messages.length, upserts.length, ledger()], [0, 0, null]);
+    }, { job: hold });
+  }
+  // Held while HighLevel was being checked: the send stops before any message.
+  await fixture(async ({ messages }) => {
+    const state = await sendAcceptedQuotePortal(env, 'job-1');
+    assert.notEqual(state.status, 'submitted');
+    assert.equal(messages.length, 0);
+  }, { onContact: editJob => editJob(hold) });
+  // Released (null): it sends as any approved quote.
+  await fixture(async ({ messages }) => {
+    assert.equal((await sendAcceptedQuotePortal(env, 'job-1', { requireRequested: true })).status, 'submitted');
+    assert.equal(messages.length, 1);
+  }, { job: { pricesPendingApproval: null } });
+});
+
 test('job notifications and HighLevel DND suppress delivery without changing opt-outs', async () => {
   for (const options of [{ job: { notify: false } }, { contact: { dnd: true } }, { contact: { dndSettings: { SMS: { status: 'active' } } } }]) {
     await fixture(async ({ messages, upserts }) => {

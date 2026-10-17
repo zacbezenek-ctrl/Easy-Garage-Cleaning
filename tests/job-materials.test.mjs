@@ -193,6 +193,12 @@ test('the crew projection adds source and purchase state to a structured materia
   ], 'no price note, product link, SKU or store reaches the crew');
   assert.deepEqual(crewMaterialFields({ id: 'a', name: 'A', quantity: 1 }), {});
   assert.deepEqual(crewMaterialFields({ source: 'buy' }), { source: 'buy', purchaseState: 'to_buy' });
+  // EGC_JOB_MATERIALS on (/api/field-jobs passes purchaseDetails): a buy item also shows where it is bought.
+  assert.deepEqual(fieldMaterials(job, { purchaseDetails: true })[2], { id: 'quote-shelving', name: 'Metal shelving unit', quantity: 4, source: 'buy', purchaseState: 'purchased', unit: 'unit', category: 'shelving', unitsPerPack: 2, packs: 2, store: 'Home Depot', sku: 'HD-1', productUrl: 'https://www.homedepot.com/p/1', state: 'required', updatedAt: null, updatedBy: null },
+    'still no price note; a buy item shows where it is bought (store, SKU, public product page)');
+  assert.deepEqual(crewMaterialFields({ source: 'buy', store: 'Yard', sku: 'S-1', productUrl: 'https://example.com/a' }), { source: 'buy', purchaseState: 'to_buy' }, 'without purchaseDetails the projection is as before');
+  assert.deepEqual(crewMaterialFields({ source: 'stock', store: 'Yard', sku: 'S-1', productUrl: 'https://example.com/a' }, { purchaseDetails: true }), { source: 'stock' }, 'store, SKU and link are shown for buy items only');
+  assert.deepEqual(crewMaterialFields({ source: 'buy', productUrl: 'http://example.com/a' }, { purchaseDetails: true }), { source: 'buy', purchaseState: 'to_buy' }, 'only an https product page reaches the crew');
 });
 
 test('the job breakdown lists removal, then shelving, storage and cleaning, without money', () => {
@@ -213,4 +219,23 @@ test('the job breakdown lists removal, then shelving, storage and cleaning, with
   const legacy = jobBreakdown({ scope: { finish: ['shelving', 'totes', 'pressure_wash'], finish_details: { shelf_type: 'wood', shelf_qty: 1, tote_qty: 3 } }, quote: {} });
   assert.deepEqual(legacy.sections.map(section => section.items), [[], ['1 wood shelving unit'], ['3 storage totes'], ['One-car garage pressure wash']], 'a plan without line items still reads its finish details');
   assert.deepEqual(breakdownLines(legacy), ['Shelving: 1 wood shelving unit', 'Storage: 3 storage totes', 'Cleaning: One-car garage pressure wash']);
+});
+
+// Estimator integration: a builder quote's products (composite-quote.js breakdown) become the buy list.
+test('a builder breakdown becomes one buy material per product with packs, units, SKU, store and product page, and fit notes without price talk', async () => {
+  const { breakdownMaterials, soldMaterials } = await import('../functions/_lib/job-materials.js');
+  const row = (sku, name, section, packs, unitsPerPack, extra = {}) => ({ sku, name, retailer: 'The Home Depot', section, group: section, packs, unitsPerPack, units: packs * unitsPerPack, productUrl: `https://www.homedepot.com/p/x/${sku}`, perOrderPackLimit: null, overOrderLimit: false, fitWarnings: null, ...extra });
+  const breakdown = { source: 'composite', lines: [{ id: 'hd-100006678', lineItemId: 'shelving-goods', section: 'shelving', sku: '100006678' }, { id: 'hd-341048322', lineItemId: 'storage-goods', section: 'storage', sku: '341048322' }, { id: 'egc-026', lineItemId: 'removal-junk-full', section: 'removal', sku: null }],
+    purchaseList: [row('100006678', 'HDX plastic shelving', 'shelving', 6, 1, { perOrderPackLimit: 5, overOrderLimit: true, fitWarnings: 'Fixed 14.86 in shelf spacing. Limit 5 per order.' }),
+      row('341048322', 'HDX 27-gal totes, four-pack', 'storage', 2, 4, { fitWarnings: 'Four of single tote 327528802. No quantity discount. Visible page bundle total used; structured product markup exposes the price.' })] };
+  assert.deepEqual(breakdownMaterials(breakdown), [
+    { id: 'quote-hd-100006678', name: 'HDX plastic shelving', quantity: 6, sku: '100006678', unitsPerPack: 1, packs: 6, source: 'buy', purchaseState: 'to_buy', productUrl: 'https://www.homedepot.com/p/x/100006678', note: "More than the store's limit of 5 packs per order: split the order. Fixed 14.86 in shelf spacing. Limit 5 per order.", category: 'shelving', store: 'The Home Depot', catalogItemId: 'hd-100006678' },
+    { id: 'quote-hd-341048322', name: 'HDX 27-gal totes, four-pack', quantity: 8, sku: '341048322', unitsPerPack: 4, packs: 2, source: 'buy', purchaseState: 'to_buy', productUrl: 'https://www.homedepot.com/p/x/341048322', note: 'Four of single tote 327528802.', category: 'storage', store: 'The Home Depot', catalogItemId: 'hd-341048322' },
+  ]);
+  assert.ok(breakdownMaterials(breakdown).every(item => normalizeJobMaterial(item)), 'every one saves as a Dispatch material');
+  for (const bad of [null, {}, { purchaseList: 'x' }, { purchaseList: [{ sku: '1', name: 'A', packs: 0, unitsPerPack: 1 }] }, { purchaseList: [{ sku: '', name: 'A', packs: 1, unitsPerPack: 1 }] }]) assert.deepEqual(breakdownMaterials(bad), [], JSON.stringify(bad));
+  // The rolled-up goods lines are covered by the breakdown; any other product line still comes from its own fields.
+  const lines = [line('removal-base', 'service', 'Two-car garage base', 1), line('shelving-goods', 'product', 'Shelving', 1), line('storage-goods', 'product', 'Extra storage', 1), line('hooks', 'product', 'Bike hooks', 2, { sku: 'HK-2', store: "Lowe's" })];
+  assert.deepEqual(soldMaterials(lines, breakdown).map(item => item.id), ['quote-hd-100006678', 'quote-hd-341048322', 'quote-hooks']);
+  assert.deepEqual(soldMaterials(lines, null), quoteLineMaterials(lines), 'without a builder breakdown: exactly the line materials');
 });

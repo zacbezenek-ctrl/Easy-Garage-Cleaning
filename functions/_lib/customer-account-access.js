@@ -29,10 +29,10 @@ const ROOT_READS = 25;
 // Masked query: only these fields leave Firestore, and only the named subfields
 // of the quote, invoice and payment maps (never line items or signatures). The
 // money inputs mirror customerMoneyState and customerPaymentNeedsReview, the
-// quote inputs projectReleased.
+// quote inputs projectReleased (pricesPendingApproval.status: a signed job held for the owner's price approval).
 export const ACCOUNT_JOB_FIELDS = Object.freeze([
   'type', 'recordType', 'customerId', 'customerAccountOwnerJobId', 'customerPortalLinkVersion', 'businessAccountId', 'status', 'pipelineStatus', 'date', 'time', 'endTime', 'address', 'serviceType', 'arrivalWindow',
-  'quoteStatus', 'total', 'priceQuoted', 'lockedTotal', 'rate', 'createdAt', 'updatedAt',
+  'quoteStatus', 'total', 'priceQuoted', 'lockedTotal', 'rate', 'createdAt', 'updatedAt', 'pricesPendingApproval.status',
   'estimate.number', 'estimate.status', 'estimate.amount', 'estimate.sentAt', 'estimate.validUntil', 'estimate.acceptedAt',
   'customerApproval.status', 'customerApproval.approvedAt', 'customerApproval.amount',
   'invoice.number', 'invoice.status', 'invoice.dueDate', 'invoice.paid', 'invoice.amountPaid',

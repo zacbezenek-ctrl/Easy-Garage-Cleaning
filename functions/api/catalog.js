@@ -26,11 +26,17 @@
  *   (owner; only with EGC_QUOTE_BUILDER_ENABLED=true, which also allows it while CATALOG_QUOTES_ENABLED is off)
  *   bulk-approves draft pricing-menu prices for the quote builder; expectedRevision is the approvals revision from
  *   GET /api/quote-draft?view=builder (internal.approvalsRevision). => {ok,requestId,replayed,approvals:{revision,current,count,items}}
+ * With EGC_QUOTE_BUILDER_ENABLED a fresh menu.approve or settings.update also releases the signed jobs held for the
+ *   owner's price approval that it now covers (walkthrough-handoff.js releaseHeldHandoffs: their estimate and deposit
+ *   request go to the customer) and adds heldJobs {released:[jobId], waiting, more} or {status:'deferred'} when they
+ *   could not be checked (they stay held; the approval itself is saved either way).
  * Keep the same requestId and body when retrying; the same requestId with another body is a 409.
  * Errors: {ok:false,code,error,details?}; 400 validation, 401, 403, 404 disabled, 409 revision/version/
  * idempotency, 413, 415, 503 retry the same request. */
 import { getHubSession } from '../_lib/hub-session.js';
-import { catalogOverview, catalogQuotesEnabled, catalogStorage, mutateCatalog, quoteBuilderEnabled, requireCatalogOwner, requireCatalogViewer } from '../_lib/catalog-store.js';
+import { catalogOverview, catalogQuotesEnabled, catalogStorage, mutateCatalog, quoteBuilderEnabled, readCompositeState, requireCatalogOwner, requireCatalogViewer } from '../_lib/catalog-store.js';
+import { releaseHeldHandoffs } from '../_lib/walkthrough-handoff.js';
+import { heldReleaseStorage } from '../_lib/handoff-price-holds.js';
 
 // A published catalog is about 0.55 MB of JSON; settings documents are small.
 const LIMIT = 1000000, SETTINGS_LIMIT = 32000;
@@ -47,8 +53,16 @@ function errorResponse(error) {
   return reply(503, { ok:false, code:'catalog_unavailable', error:'The catalog could not complete this request. Keep your changes and retry the same request; it will not be saved twice.' });
 }
 
+// EGC_QUOTE_BUILDER_ENABLED: the held signed jobs an owner's approval or settings save now covers are released after
+// it is saved (heldJobs); a failure there never undoes the save.
+async function releaseHeld(held, env, actor, at, input, pricing) {
+  try { return await releaseHeldHandoffs(held(env), actor, at, { env, source: input.action, requestId: input.requestId, compositeState: pricing }); }
+  catch { return { status: 'deferred' }; }
+}
+
 // cache: this isolate's verified catalogs (catalog-store.js); tests pass a new Map for a cold isolate.
-export function catalogHandlers({ session = getHubSession, storage = catalogStorage, now = () => new Date(), cache, compositeState } = {}) {
+// held (tests): the jobs storage releaseHeldHandoffs reads and commits through (handoff-price-holds.js heldReleaseStorage).
+export function catalogHandlers({ session = getHubSession, storage = catalogStorage, now = () => new Date(), cache, compositeState, held = heldReleaseStorage } = {}) {
   return {
     async get({ request, env }) {
       try {
@@ -76,7 +90,9 @@ export function catalogHandlers({ session = getHubSession, storage = catalogStor
         // The quote builder flag alone opens only the pricing-menu approval, never settings or publishing.
         if (!catalogQuotesEnabled(env) && input?.action !== 'menu.approve') return disabled();
         if ((input?.action === 'settings.update' || builder && input?.action === 'menu.approve') && bytes > SETTINGS_LIMIT) return tooLarge();
-        return reply(200, await mutateCatalog(storage(env), actor, input, now().toISOString(), builder ? { menuApprovals: true, ...(compositeState ? { compositeState } : {}) } : {}));
+        const at = now().toISOString(), result = await mutateCatalog(storage(env), actor, input, at, builder ? { menuApprovals: true, ...(compositeState ? { compositeState } : {}) } : {});
+        if (builder && result?.replayed === false && ['menu.approve', 'settings.update'].includes(input.action)) result.heldJobs = await releaseHeld(held, env, actor, at, input, () => (compositeState || readCompositeState)(storage(env)));
+        return reply(200, result);
       } catch (error) { return errorResponse(error); }
     },
   };

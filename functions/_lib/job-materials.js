@@ -141,6 +141,44 @@ export function quoteLineMaterials(lineItems) {
   return out;
 }
 
+// The fit sentences of a menu product's warnings, for the crew: a sentence about price, pricing evidence or a discount
+// is left out, and so is any amount.
+const PRICE_TALK = /\b(?:price[ds]?|pricing|discounts?|markups?|costs?|totals?)\b|\$/i;
+const fitNote = value => text(value, 1000).split(/(?<=[.!?])\s+/).filter(sentence => sentence && !PRICE_TALK.test(sentence) && !hasCrewMoney(sentence)).join(' ').slice(0, 500).trim();
+/** Buy materials for the products of a quote-builder breakdown (composite-quote.js priceCompositeQuote breakdown, its
+ * purchaseList and lines): one per product, id quote-<menu item id>, quantity in units (packs x units per pack) with the
+ * packs, units per pack, SKU, store (the retailer), public product page, step (shelving or storage) and menu item.
+ * A fit warning without an amount, and a pack count over the store's per-order limit, become the note. Never a price.
+ * [] when the breakdown has no purchase list. */
+export function breakdownMaterials(breakdown) {
+  const rows = plain(breakdown) && Array.isArray(breakdown.purchaseList) ? breakdown.purchaseList : [], lines = plain(breakdown) && Array.isArray(breakdown.lines) ? breakdown.lines.filter(plain) : [];
+  const out = [], ids = new Set();
+  for (const row of rows) {
+    if (!plain(row)) continue;
+    const sku = text(row.sku, 80), name = text(row.name, 200), packs = row.packs, per = row.unitsPerPack;
+    if (!sku || !name || !Number.isInteger(packs) || packs < 1 || !Number.isInteger(per) || per < 1 || per > 10000 || packs * per > 100000) continue;
+    const line = lines.find(item => item.sku === row.sku), itemId = safeId(line?.id) && line.id.length <= 120 ? line.id : null;
+    const id = `quote-${itemId || `sku-${sku.replace(/[^A-Za-z0-9_-]/g, '-')}`}`;
+    if (ids.has(id) || !safeId(id)) continue;
+    const limit = Number.isInteger(row.perOrderPackLimit) && row.perOrderPackLimit >= 1 ? row.perOrderPackLimit : null, fit = fitNote(row.fitWarnings);
+    const note = [row.overOrderLimit === true && limit ? `More than the store's limit of ${limit} pack${limit === 1 ? '' : 's'} per order: split the order.` : '', fit].filter(Boolean).join(' ').slice(0, 500).trim();
+    const url = productUrl(row.productUrl), store = text(row.retailer, 80);
+    const material = { id, name, quantity: packs * per, sku, unitsPerPack: per, packs, source: 'buy', purchaseState: 'to_buy', ...(url ? { productUrl: url } : {}), ...(note ? { note } : {}),
+      category: row.section === 'shelving' ? 'shelving' : 'storage', ...(store ? { store } : {}), ...(itemId ? { catalogItemId: itemId } : {}) };
+    if (isJobMaterial(material)) { ids.add(id); out.push(material); }
+  }
+  return out;
+}
+/** The buy/stock materials of a sold quote: a builder quote's products from its breakdown (breakdownMaterials), then the
+ * product lines no builder product covers (quoteLineMaterials, which reads a line's own sku, unitsPerPack, productUrl,
+ * store, unit, category and source). Without a builder breakdown, exactly quoteLineMaterials(lineItems). */
+export function soldMaterials(lineItems, breakdown = null) {
+  const built = breakdownMaterials(breakdown);
+  if (!built.length) return quoteLineMaterials(lineItems);
+  const covered = new Set((Array.isArray(breakdown.lines) ? breakdown.lines : []).filter(line => plain(line) && line.sku).map(line => line.lineItemId)), ids = new Set(built.map(item => item.id));
+  return [...built, ...quoteLineMaterials((Array.isArray(lineItems) ? lineItems : []).filter(line => !covered.has(line?.id))).filter(item => !ids.has(item.id))];
+}
+
 /** The gameplan's bring list (plan.logistics.bring_list): up to 60 distinct non-empty strings of at most 200
  * characters. Anything else is refused (null) rather than partly read. */
 export function bringList(value) {
@@ -207,8 +245,10 @@ export function effectivePurchaseState(material, crewState) {
   return PURCHASE_STATES.includes(material?.purchaseState) ? material.purchaseState : 'to_buy';
 }
 
-/** The crew-visible extras of a material (fieldMaterials): only those saved, so a legacy entry projects as before. */
-export function crewMaterialFields(item) {
+/** The crew-visible extras of a material (fieldMaterials): only those saved, so a legacy entry projects as before. With
+ * purchaseDetails (EGC_JOB_MATERIALS on: /api/field-jobs passes jobMaterialsEnabled(env)) a buy item also shows where it
+ * is bought (its saved store), its SKU and its public product page, never a price; off, the projection is as before. */
+export function crewMaterialFields(item, { purchaseDetails = false } = {}) {
   if (!plain(item)) return {};
   const out = {};
   if (MATERIAL_SOURCES.includes(item.source)) out.source = item.source;
@@ -218,6 +258,12 @@ export function crewMaterialFields(item) {
   if (MATERIAL_CATEGORIES.includes(item.category)) out.category = item.category;
   if (note && !hasCrewMoney(note)) out.note = note;
   for (const key of ['unitsPerPack', 'packs']) if (Number.isInteger(item[key]) && item[key] >= 1) out[key] = item[key];
+  if (purchaseDetails && item.source === 'buy') {
+    const store = text(item.store, 80), sku = text(item.sku, 80), url = productUrl(item.productUrl);
+    if (store) out.store = store;
+    if (sku) out.sku = sku;
+    if (url.startsWith('https://')) out.productUrl = url;
+  }
   return out;
 }
 

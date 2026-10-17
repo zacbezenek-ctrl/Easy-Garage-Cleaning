@@ -528,6 +528,8 @@ function resultCheck(body){
   if(body.action==='settings.update')return data=>data.action==='settings.update'&&data.requestId===body.requestId&&plain(data.settings)&&data.settings.settingsVersion===body.settings.settingsVersion&&plain(data.settings.values)&&plain(data.settings.values.markupPct);
   return data=>data.action==='catalog.publish'&&data.requestId===body.requestId&&plain(data.publication)&&data.publication.version===body.catalog.catalogVersion;
 }
+// EGC_QUOTE_BUILDER_ENABLED: what the save did for signed jobs held for the owner's prices (the answer's heldJobs).
+const heldText=held=>!plain(held)?'':held.status==='deferred'?' Booked jobs waiting for approved prices could not be checked; they stay held until the next save.':Array.isArray(held.released)&&(held.released.length||held.waiting)?` ${held.released.length} booked job${held.released.length===1?'':'s'} released: the customer${held.released.length===1?' gets its':'s get their'} estimate and deposit request.${held.waiting?` ${held.waiting} still wait${held.waiting===1?'s':''} for approved prices.`:''}`:'';
 const describe=body=>body?.action==='menu.approve'?`Approve ${body.approve?.length||0} and revoke ${body.revoke?.length||0} pricing-menu prices`:body?.action==='settings.update'?`Save pricing settings ${body.settings?.settingsVersion||''}`.trim():`Publish catalog version ${body?.catalog?.catalogVersion||''}`.trim();
 // Server paths name catalog.items[N]; the owner knows the item by name.
 function invalidText(error,body){
@@ -546,7 +548,7 @@ async function send(body){
     S.retry=null;
     if(body.action==='menu.approve'){
       S.menuPick=null;S.menuErrors={};
-      S.notice={kind:'success',text:`Approved ${body.approve.length} and revoked ${body.revoke.length} pricing-menu price${body.approve.length+body.revoke.length===1?'':'s'}.${data.approvals.current===false?' A newer approval replaced this one since; the latest is shown.':''} Builder quotes that use them can be sent now.`};
+      S.notice={kind:'success',text:`Approved ${body.approve.length} and revoked ${body.revoke.length} pricing-menu price${body.approve.length+body.revoke.length===1?'':'s'}.${data.approvals.current===false?' A newer approval replaced this one since; the latest is shown.':''} Builder quotes that use them can be sent now.${heldText(data.heldJobs)}`};
     }else if(body.action==='settings.update'){
       // Show the saved values at once; the reload that follows refreshes the prices they produce.
       const result=data.settings,fresh=result.current!==false&&S.data?.settings;
@@ -556,7 +558,7 @@ async function send(body){
       const later=settingsAfterSave(S.settingsForm,S.settingsValues,body.settings,result.values,suggestedLabel(result.settingsVersion));
       S.settingsForm=later;S.settingsValues=later?clone(result.values):null;S.settingsRevision=later?result.revision:null;
       S.settingsErrors={};if(S.data?.enabled&&(fresh||!later))syncSettings();
-      S.notice={kind:'success',text:`Pricing settings saved as ${result.settingsVersion}${result.readyForCustomers?', approved for catalog quotes':', for internal estimates only'}.${result.current===false?' A newer save replaced them since; the latest values are shown.':''}${later&&settingsDirty()?' Your later edits are still in the form.':''}`};
+      S.notice={kind:'success',text:`Pricing settings saved as ${result.settingsVersion}${result.readyForCustomers?', approved for catalog quotes':', for internal estimates only'}.${result.current===false?' A newer save replaced them since; the latest values are shown.':''}${later&&settingsDirty()?' Your later edits are still in the form.':''}${heldText(data.heldJobs)}`};
     }else{
       S.draft=publishedDraft(S.draft,body.catalog,data.publication.version);S.tab='items';
       const left=draftCount();

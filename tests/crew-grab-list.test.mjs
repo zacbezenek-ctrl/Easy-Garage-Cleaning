@@ -84,10 +84,24 @@ test('a grab tick saves the Loaded material state through the existing material 
 });
 
 test('the job page, its styles and the crew shell cache move to the grab list build together', () => {
-  assert.match(html, /\/crew\/job\.js\?v=20261017grablist/);
-  assert.match(html, /\/crew\/job\.css\?v=20261017grablist/);
-  assert.match(worker, /const VERSION = '20261017boardbridge';/);
-  assert.match(worker, /'\/crew\/job\.js\?v=20261017grablist'/);
-  assert.match(worker, /'\/crew\/job\.css\?v=20261017grablist'/);
+  assert.match(html, /\/crew\/job\.js\?v=20261017buylinks/);
+  assert.match(html, /\/crew\/job\.css\?v=20261017buylinks/);
+  assert.match(worker, /const VERSION = '20261017estboard';/);
+  assert.match(worker, /'\/crew\/job\.js\?v=20261017buylinks'/);
+  assert.match(worker, /'\/crew\/job\.css\?v=20261017buylinks'/);
   assert.match(readFileSync(new URL('../crew/job.css', import.meta.url), 'utf8'), /#materials-card \.buying\{/);
+  assert.match(readFileSync(new URL('../crew/job.css', import.meta.url), 'utf8'), /#materials-card \.shop\{/);
+});
+
+test('a bought builder product names its store and SKU and links its product page; a stock item and a non-https link get no shop line', () => {
+  const api = page(), url = 'https://www.homedepot.com/p/sets/totes/341048322';
+  const job = { canEdit: true, requiredEquipment: [], materials: [
+    { id: 'quote-hd-341048322', name: 'HDX 27-gal totes, four-pack', quantity: 8, unitsPerPack: 4, packs: 2, source: 'buy', purchaseState: 'purchased', category: 'storage', store: 'The Home Depot', sku: '341048322', productUrl: url, state: 'required' },
+    { id: 'quote-hooks', name: 'Bike hooks', quantity: 2, source: 'buy', purchaseState: 'to_buy', store: "Lowe's <Main>", productUrl: 'http://example.com/hooks', state: 'required' },
+    { id: 'kit-dolly', name: 'Hand truck / dolly', quantity: 1, source: 'stock', category: 'equipment', store: 'Yard', state: 'required' },
+  ] };
+  const markup = api.materialsCard(job, false);
+  assert.ok(markup.includes(`data-grab="quote-hd-341048322"  ><span class="check-label">HDX 27-gal totes, four-pack<small>Qty 8 · 2 packs of 4 · Bought by the office</small><small class="shop">The Home Depot · SKU 341048322 · <a class="product-link" href="${url}" target="_blank" rel="noopener noreferrer">Product page</a></small>`));
+  assert.ok(markup.includes('<li><strong>Bike hooks</strong> <small>Qty 2 · Not bought yet</small><small class="shop">Lowe&#39;s &lt;Main&gt;</small></li>'), 'escaped, and no link that is not https');
+  assert.ok(markup.includes('data-grab="kit-dolly"  ><span class="check-label">Hand truck / dolly<small>Qty 1 · From stock</small></span>'), 'a stock item has no shop line');
 });
