@@ -5,15 +5,16 @@ import { fieldFingerprint, fieldId, fieldRequestId } from './field-execution.js'
 import { canDispatch } from './dispatch-permissions.js';
 import { hasBusinessAccess } from './hub-session.js';
 import { addDays, denverToday, validDate } from './dispatch-time.js';
-import { applyPurchaseState, purchaseList } from './job-materials.js';
+import { applyPurchaseState, purchaseJobOpen, purchaseList } from './job-materials.js';
 
 /** The office purchase list (WP14c, EGC_JOB_MATERIALS): the buy materials of upcoming jobs, grouped by store and
  * product with quantities summed across jobs (job-materials.js purchaseList), and the manager action that records
  * a purchase state on one job's materials.
  *   GET  /api/purchase-list?start=YYYY-MM-DD&end=YYYY-MM-DD   (default today and the next 13 days, at most 31 days)
  *        => {ok, authority, start, end, generatedAt, stores:[{store, products:[...]}], lines, jobs}
- *   POST /api/purchase-list {requestId, jobId, materialIds:[...], state: to_buy|ordered|purchased|loaded}
+ *   POST /api/purchase-list {requestId, jobId, materialIds:[...], state: to_buy|ordered|purchased}
  *        => {ok, alreadyApplied, jobId, changed:[{id, name, from, to}]}
+ *        (Loaded is the crew's tick on the job; a cancelled, finished or no-show job is refused: purchase_job_closed.)
  * Both need dispatch.write or field-manager (business) access. Reads: one bounded range query on jobs.date with a
  * field mask (materials, crew material states and the job's date, customer and status); more than 500 jobs in the
  * range is refused rather than truncated. A mark re-reads the job and writes its materials under the job's revision
@@ -90,6 +91,8 @@ export async function markPurchase(store, session, input, { env = {}, now = new 
       if (receipt.fingerprint !== fingerprint || receipt.state !== 'applied') throw fail('purchase_idempotency_conflict', 'This request ID was already used for a different change. Refresh before retrying.', 409);
       return { ok: true, alreadyApplied: true, jobId: job.id, changed: Array.isArray(receipt.changed) ? receipt.changed : [] };
     }
+    // A purchase-list tab opened before Dispatch cancelled or closed the job never rewrites that job's materials or history.
+    if (!purchaseJobOpen(job)) throw fail('purchase_job_closed', 'This job is cancelled or finished, so nothing more is bought for it. Refresh the purchase list.', 409);
     const { materials, changed } = applyPurchaseState(job, input.materialIds, input.state, session.user, at, fail);
     const event = { id: input.requestId, action: 'purchase_state', actorId: session.user, actorName: session.displayName || session.user, createdAt: at, state: 'applied', visibility: 'management', fingerprint,
       summary: changed.map(row => `${row.name}: ${label(row.from)} → ${label(row.to)}`).join('; ').slice(0, 1000), purchaseState: input.state, changed };

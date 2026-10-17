@@ -313,14 +313,16 @@
   }
   // The Materials card: every material's required/loaded/used/missing state, saved for the whole crew. A job with structured
   // materials (EGC_JOB_MATERIALS: source buy/stock) opens it with Grab before you go, the stock items and what the office
-  // has bought, ticked Loaded with the same material action; buy items not yet bought are listed, never ticked.
+  // has bought, ticked Loaded with the same material action; buy items not yet bought are listed, never ticked. A buy item
+  // the crew already loaded or used is in hand whatever the office recorded (the purchase list shows it Loaded too).
   const GRABBED = ['loaded', 'used'];
-  const grabList = j => j.materials.filter(item => item.source === 'stock' || item.source === 'buy' && ['purchased', 'loaded'].includes(item.purchaseState));
+  const inHand = item => ['purchased', 'loaded'].includes(item.purchaseState) || GRABBED.includes(item.state);
+  const grabList = j => j.materials.filter(item => item.source === 'stock' || item.source === 'buy' && inHand(item));
   function materialsCard(j, disabled) {
     if (!j.materials.length) return '';
     const locked = !j.canEdit || disabled;
     const row = item => `<div class="material"><div><strong>${esc(item.name)}</strong>${item.quantity != null ? `<br><small>Quantity: ${esc(item.quantity)}</small>` : ''}${item.queued ? '<small class="queued-tag">Waiting to sync</small>' : ''}</div><select aria-label="${esc(item.name)} state" data-material="${esc(item.id)}" ${locked ? 'disabled' : ''}>${['required', 'loaded', 'used', 'missing'].map(state => `<option value="${state}" ${state === item.state ? 'selected' : ''}>${label(state)}</option>`).join('')}</select></div>`;
-    const grab = grabList(j), buying = j.materials.filter(item => item.source === 'buy' && !['purchased', 'loaded'].includes(item.purchaseState));
+    const grab = grabList(j), buying = j.materials.filter(item => item.source === 'buy' && !inHand(item));
     if (!grab.length && !buying.length) return `<section class="card"><h2>Materials</h2>${j.materials.map(row).join('')}</section>`;
     const amount = item => [item.quantity != null ? `Qty ${item.quantity}${item.unit ? ` ${item.unit}` : ''}` : '', item.packs ? `${item.packs} pack${item.packs === 1 ? '' : 's'}${item.unitsPerPack ? ` of ${item.unitsPerPack}` : ''}` : ''].filter(Boolean).join(' · ');
     const from = item => item.source === 'stock' ? item.category === 'consumable' ? 'From stock · consumable' : 'From stock' : 'Bought by the office';

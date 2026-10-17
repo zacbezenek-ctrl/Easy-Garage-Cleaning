@@ -370,6 +370,8 @@ test('the signed deposit is half the total in cents, so odd-cent manual rates pa
 // model does not take sku/productUrl/unitsPerPack line fields yet (the quote builder adds them); job-materials tests cover them.
 const MATERIALS_ON = { EGC_JOB_MATERIALS: 'true' };
 const BRING = ['Hand truck / dolly', 'Contractor bags', '1 metal shelving unit(s)', 'Confirm propane tank removed before loading'];
+// Instructions and sold goods stay in the crew brief's bring list; the job's required equipment is what to carry.
+const KIT = ['Hand truck / dolly', 'Contractor bags'];
 const withKit = (change = () => {}) => itemized(p => { p.logistics.bring_list = [...BRING]; change(p); });
 const runWith = (f, env, value = f.input) => saveWalkthroughHandoff(f.store, owner, value, NOW, { env });
 
@@ -380,7 +382,7 @@ test('EGC_JOB_MATERIALS: a signed walkthrough saves buy and stock materials, the
     { id: 'kit-hand-truck-dolly', name: 'Hand truck / dolly', quantity: 1, source: 'stock', category: 'equipment' },
     { id: 'kit-contractor-bags', name: 'Contractor bags', quantity: 1, source: 'stock', category: 'consumable' },
   ], 'the declined totes are not bought; instructions and the sold shelving are not grabbed from stock');
-  assert.deepEqual(job.requiredEquipment, BRING);
+  assert.deepEqual(job.requiredEquipment, KIT, 'instructions and the sold shelving are not equipment');
   assert.deepEqual(job.jobBreakdown.sections.map(section => [section.id, section.items]), [
     ['removal', ['Remove / donate: Empty cartons', 'Keep: Blue bicycle', 'Do not move: Locked cabinet']], ['shelving', ['Metal shelving unit']], ['storage', []], ['cleaning', ['Pest-waste cleanup']]]);
   assert.deepEqual(job.jobInstructions.jobBreakdown, breakdownLines(job.jobBreakdown));
@@ -390,7 +392,7 @@ test('EGC_JOB_MATERIALS: a signed walkthrough saves buy and stock materials, the
   const crew = fieldJobProjection(job);
   assert.deepEqual(crew.materials.map(item => [item.id, item.source, item.purchaseState ?? null, item.state]), [['quote-shelving', 'buy', 'to_buy', 'required'], ['kit-hand-truck-dolly', 'stock', null, 'required'], ['kit-contractor-bags', 'stock', null, 'required']]);
   assert.deepEqual(crew.walkthroughBrief.find(block => block.label === 'Job breakdown'), { label: 'Job breakdown', text: breakdownLines(job.jobBreakdown).join('\n') });
-  assert.deepEqual(crew.requiredEquipment, BRING);
+  assert.deepEqual(crew.requiredEquipment, KIT);
 });
 
 test('EGC_JOB_MATERIALS: a signed revision keeps Dispatch entries and the purchase the office recorded for the same product', async () => {
@@ -405,11 +407,30 @@ test('EGC_JOB_MATERIALS: a signed revision keeps Dispatch entries and the purcha
     { id: 'kit-stud-finder', name: 'Stud finder', quantity: 1, source: 'stock', category: 'equipment' },
   ]);
   assert.deepEqual(f.rows.get(`jobs/${id}`).requiredEquipment, ['Hand truck / dolly', 'Stud finder']);
-  // A revision from a gameplan page that sends no bring list keeps the grab list and equipment saved before.
+  // A revision from a gameplan page that sends no bring list keeps the grab list, equipment and brief list saved before.
   const kept = f.rows.get(`jobs/${id}`).materials;
   await runWith(f, MATERIALS_ON, f.revise(itemized(p => { p.notes = 'Older page'; }), id));
   assert.deepEqual(f.rows.get(`jobs/${id}`).materials, kept);
   assert.deepEqual(f.rows.get(`jobs/${id}`).requiredEquipment, ['Hand truck / dolly', 'Stud finder']);
+  assert.deepEqual(f.rows.get(`jobs/${id}`).jobInstructions.bringList, ['Hand truck / dolly', 'Stud finder']);
+});
+
+test('EGC_JOB_MATERIALS: equipment added in Dispatch survives a signed revision; only the earlier bring list is swapped', async () => {
+  const sales = { user: 'sales.person', role: 'sales', businessAccess: false, displayName: 'Synthetic Sales', source: 'employee-account', staffRoles: ['sales'] };
+  for (const [actor, env] of [[owner, MATERIALS_ON], [sales, { ...MATERIALS_ON, EGC_STAFF_ROLE_PERMISSIONS: 'true' }]]) {
+    const f = fixture(withKit()), saved = await saveWalkthroughHandoff(f.store, actor, f.input, NOW, { env }), id = saved.job.id;
+    assert.deepEqual(f.rows.get(`jobs/${id}`).requiredEquipment, KIT, actor.user);
+    // A manager adds equipment in Dispatch (dispatch-service schedulePatch replaces requiredEquipment with the edited list).
+    const job = f.rows.get(`jobs/${id}`);
+    job.requiredEquipment = [...job.requiredEquipment, 'Ladder (added in Dispatch)'];
+    await saveWalkthroughHandoff(f.store, actor, f.revise(withKit(p => { p.notes = 'Changed customer note'; }), id), NOW, { env });
+    assert.deepEqual(f.rows.get(`jobs/${id}`).requiredEquipment, ['Ladder (added in Dispatch)', ...KIT], `${actor.user}: an unchanged bring list keeps the Dispatch entry`);
+    await saveWalkthroughHandoff(f.store, actor, f.revise(withKit(p => { p.logistics.bring_list = ['Hand truck / dolly', 'Stud finder', 'Ladder (added in Dispatch)', 'Confirm spa power is disconnected']; }), id), NOW, { env });
+    const revised = f.rows.get(`jobs/${id}`);
+    assert.deepEqual(revised.requiredEquipment, ['Ladder (added in Dispatch)', 'Hand truck / dolly', 'Stud finder'], `${actor.user}: the old bring list is swapped, the Dispatch entry is kept once, instructions stay out`);
+    assert.deepEqual(revised.jobInstructions.bringList, ['Hand truck / dolly', 'Stud finder', 'Ladder (added in Dispatch)', 'Confirm spa power is disconnected'], 'the crew brief keeps the whole signed list');
+    assert.deepEqual(fieldJobProjection(revised).requiredEquipment, revised.requiredEquipment);
+  }
 });
 
 test('EGC_JOB_MATERIALS: an unreadable bring list is refused before any write', async () => {
@@ -420,12 +441,17 @@ test('EGC_JOB_MATERIALS: an unreadable bring list is refused before any write', 
   }
 });
 
-test('EGC_JOB_MATERIALS off: a plan that carries a bring list saves the same job as before', async () => {
-  const fields = job => ({ materials: job.materials, requiredEquipment: job.requiredEquipment, jobBreakdown: job.jobBreakdown, jobInstructions: job.jobInstructions, operationalScope: job.operationalScope?.text, crewNeeded: job.crewNeeded, estimate: job.estimate });
+test('EGC_JOB_MATERIALS off: a plan that carries a bring list saves the same job, payload and receipt as before', async () => {
+  const fields = job => ({ materials: job.materials, requiredEquipment: job.requiredEquipment, jobBreakdown: job.jobBreakdown, jobInstructions: job.jobInstructions, operationalScope: job.operationalScope?.text, crewNeeded: job.crewNeeded, estimate: job.estimate, logistics: job.logistics,
+    acceptedHandoffPayload: { ...job.acceptedHandoffPayload, job_id: undefined, idempotency_key: undefined } });
+  const receipt = (f, id) => { const row = f.rows.get(`walkthroughHandoffs/${id}`); return { ...row.plan, job_id: undefined, idempotency_key: undefined }; };
   const before = fixture(itemized()), first = before.rows.get(`jobs/${(await before.run()).job.id}`);
+  assert.equal('bring_list' in first.logistics, false);
   for (const env of [{}, { EGC_JOB_MATERIALS: 'false' }, { EGC_JOB_MATERIALS: 'TRUE' }]) {
     const after = fixture(withKit(p => { p.logistics.bring_list = ['Not', 'checked', 42]; })), job = after.rows.get(`jobs/${(await runWith(after, env)).job.id}`);
     assert.deepEqual(fields(job), fields(first), JSON.stringify(env));
+    assert.deepEqual(receipt(after, after.input.requestId), receipt(before, before.input.requestId), 'the handoff receipt stores the same plan');
+    assert.deepEqual(savedHandoffPayload(job, after.input.requestId).logistics, savedHandoffPayload(first, before.input.requestId).logistics, 'the HighLevel sync payload carries no bring list');
     assert.deepEqual(job.materials, [{ id: 'quote-shelving', name: 'Metal shelving unit', quantity: 1 }]);
     for (const key of ['requiredEquipment', 'jobBreakdown']) assert.equal(key in job, false, key);
     for (const key of ['bringList', 'jobBreakdown']) assert.equal(key in job.jobInstructions, false, key);

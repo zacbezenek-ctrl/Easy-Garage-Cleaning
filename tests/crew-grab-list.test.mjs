@@ -57,9 +57,17 @@ test('Grab before you go lists stock and bought items to tick Loaded, shows what
   const locked = api.materialsCard(job, true);
   assert.equal([...locked.matchAll(/data-grab="[^"]+"[^>]*disabled/g)].length, 3, 'a locked page (busy, day locked or no edit) disables every tick');
   job.materials.forEach(item => { if (item.source) item.state = 'loaded'; });
-  assert.match(api.materialsCard(job, false), /<span class="badge done">3\/3 loaded<\/span>/);
+  assert.match(api.materialsCard(job, false), /<span class="badge done">5\/5 loaded<\/span>/, 'buy items the crew loaded count as in hand');
   assert.equal(api.equipmentText(structured()), 'Confirm propane tank removed before loading', 'equipment the grab list shows is not repeated');
   assert.equal(api.equipmentText({ ...structured(), requiredEquipment: ['Hand truck / dolly'] }), 'Listed under Grab before you go');
+  // The crew brought buy items the office has not marked bought: they are in hand, ticked, not still being bought.
+  const broughtAnyway = structured();
+  broughtAnyway.materials[4].state = 'loaded'; broughtAnyway.materials[3].state = 'used';
+  const brought = api.materialsCard(broughtAnyway, false);
+  assert.deepEqual([...brought.slice(0, brought.indexOf('<h3>')).matchAll(/data-grab="([^"]+)"/g)].map(match => match[1]), ['kit-hand-truck-dolly', 'kit-contractor-bags', 'quote-shelving', 'quote-totes', 'quote-hooks']);
+  assert.match(brought, /data-grab="quote-hooks" checked ><span class="check-label">Utility hooks<small>Qty 3 · Bought by the office<\/small>/);
+  assert.match(brought, /<span class="badge">4\/5 loaded<\/span>/, 'the contractor bags are still to load');
+  assert.equal(brought.includes('Still being bought'), false, 'nothing is listed as still being bought');
   const nothingYet = { canEdit: true, requiredEquipment: [], materials: [{ id: 'quote-hooks', name: 'Utility hooks', quantity: 3, source: 'buy', purchaseState: 'to_buy', state: 'required' }] };
   assert.match(api.materialsCard(nothingYet, false), /<span class="badge">0\/0 loaded<\/span><\/div><p>Tick each item[^<]*<\/p><p class="empty">Nothing to grab yet\.<\/p><h3>Still being bought<\/h3>/);
 });

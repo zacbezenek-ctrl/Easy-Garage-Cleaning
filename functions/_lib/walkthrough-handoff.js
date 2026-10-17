@@ -15,7 +15,7 @@ import { eventActor } from './dispatch-funnel.js';
 import { pendingProjectDimensions } from './funnel-dimensions.js';
 import { stripCrewMoney, stripCrewMoneyDeep } from './crew-money.js';
 import { staffRoleAccessEnabled } from './staff-roles.js';
-import { bringList, bringListMaterials, handoffJobMaterials, jobMaterialsEnabled, quoteLineMaterials } from './job-materials.js';
+import { bringList, bringListMaterials, handoffEquipment, handoffJobMaterials, jobMaterialsEnabled, quoteLineMaterials, savedBringList } from './job-materials.js';
 import { breakdownLines, jobBreakdown } from './job-breakdown.js';
 
 // FIX-CREW-PRICE-LEAK: every crew-visible copy of the brief is written without currency amounts.
@@ -145,14 +145,17 @@ function materialChanges(plan, existing) {
 // EGC_JOB_MATERIALS: the sold products become buy/stock materials with their purchase state, and the bring list
 // becomes stock materials (kit-) the crew grabs; both are regenerated on a revision, Dispatch's own entries are kept
 // as they are, and a purchase the office recorded stays with the same product (job-materials.js handoffJobMaterials).
-// A plan without a bring list (a gameplan page from before it was sent) keeps the grab list saved earlier.
+// A plan without a bring list (equipment null: a gameplan page from before it was sent) keeps the grab list saved earlier.
 function structuredMaterialChanges(plan, existing, equipment) {
   const list = Array.isArray(existing) ? existing : [], quoted = plan.quote.itemized ? quoteLineMaterials(plan.quote.estimate_line_items) : [];
-  const kit = plan.logistics.bring_list === undefined || plan.logistics.bring_list === null ? list.filter(item => /^kit-/.test(String(item?.id || ''))) : bringListMaterials(equipment);
+  const kit = equipment === null ? list.filter(item => /^kit-/.test(String(item?.id || ''))) : bringListMaterials(equipment);
   if (!quoted.length && !kit.length && !list.some(item => /^(?:quote|kit)-/.test(String(item?.id || '')))) return {};
   const materials = handoffJobMaterials({ previous: list, quoted, kit });
   return materials ? { materials } : {};
 }
+// EGC_JOB_MATERIALS off: the bring list every current gameplan page sends is dropped before the plan is read, so the
+// job, its accepted payload and the handoff receipt store exactly the plan they stored before the page sent it.
+const withoutBringList = input => plain(input) && plain(input.logistics) && Object.hasOwn(input.logistics, 'bring_list') ? { ...input, logistics: Object.fromEntries(Object.entries(input.logistics).filter(([key]) => key !== 'bring_list')) } : input;
 export function normalizeHandoffPlan(input, now = new Date().toISOString()) {
   if (!plain(input) || !plain(input.client) || !plain(input.quote) || !plain(input.acceptance)) throw fail('invalid_plan', 'Review the complete walkthrough before saving.', 400);
   const quote = input.quote, acceptance = input.acceptance;
@@ -275,7 +278,7 @@ export async function saveWalkthroughHandoff(store, actor, input, now = new Date
   const access = requireQuoteAuthor(actor, env);
   if (!plain(input) || Object.keys(input).some(key => !['actorId', 'requestId', 'customerId', 'sourceWalkthroughId', 'sourceRevision', 'jobId', 'expectedRevision', 'plan'].includes(key)) || !requestId(input.requestId) || !safeId(input.customerId) || input.jobId && !safeId(input.jobId)) throw fail('invalid_request', 'The accepted walkthrough needs a stable request and customer identity.', 400);
   if (input.actorId && input.actorId !== actor.user) throw fail('actor_changed', 'The signed-in employee changed. Reopen the original account to recover this request.', 403);
-  const plan = normalizeHandoffPlan(input.plan, now), fingerprint = await hash({ actor: actor.user, input }), receiptId = input.requestId.toLowerCase();
+  const plan = normalizeHandoffPlan(jobMaterialsEnabled(env) ? input.plan : withoutBringList(input.plan), now), fingerprint = await hash({ actor: actor.user, input }), receiptId = input.requestId.toLowerCase();
   async function replay() {
     const receipt = await store.read('walkthroughHandoffs', receiptId);
     if (!receipt) return null;
@@ -347,14 +350,20 @@ export async function saveWalkthroughHandoff(store, actor, input, now = new Date
     assignedCrew = previous?.assignedCrew || [];
   }
   const soldNeedsCrew = roleAccess && !assignedCrew.length;
-  // EGC_JOB_MATERIALS: the bring list is the job's required equipment and its grab list, and the sold scope is saved as
-  // the job breakdown (job.jobBreakdown, and its lines in the crew brief). Off: none of these is read or written.
-  const structured = jobMaterialsEnabled(env), equipment = structured ? bringList(plan.logistics.bring_list) : [];
-  if (equipment === null) throw fail('invalid_plan', 'The equipment list could not be verified. Review the walkthrough and save it again.', 400);
+  // EGC_JOB_MATERIALS: the bring list goes in the crew brief, becomes the job's grab list and is merged into its required
+  // equipment, and the sold scope is saved as the job breakdown (job.jobBreakdown, and its lines in the crew brief).
+  // Off: none of these is read or written. The job (or, for a new job, its walkthrough) is what the handoff revises:
+  // a revision swaps only what the earlier bring list put in the equipment (job-materials.js handoffEquipment), so
+  // equipment added in Dispatch stays; a page that sends no bring list keeps the earlier list, equipment and grab list.
+  const structured = jobMaterialsEnabled(env), sent = structured && plan.logistics.bring_list !== undefined && plan.logistics.bring_list !== null;
+  const equipment = sent ? bringList(plan.logistics.bring_list) : null;
+  if (sent && equipment === null) throw fail('invalid_plan', 'The equipment list could not be verified. Review the walkthrough and save it again.', 400);
+  const base = previous || source, earlierBring = structured ? savedBringList(base?.jobInstructions) : [], bring = equipment ?? earlierBring;
   const breakdown = structured ? jobBreakdown(plan) : null, materialsSource = previous ? previous.materials : source?.materials;
-  const instructions = stripCrewMoneyDeep({ ...handoffInstructions(plan, source?.id || ''), ...(structured ? { ...(equipment.length ? { bringList: equipment } : {}), jobBreakdown: breakdownLines(breakdown) } : {}) }), crewNotes = stripCrewMoney(plan.notes);
+  const requiredEquipment = sent ? handoffEquipment({ current: base?.requiredEquipment, earlier: earlierBring, bring: equipment }) : null;
+  const instructions = stripCrewMoneyDeep({ ...handoffInstructions(plan, source?.id || ''), ...(structured ? { ...(bring.length ? { bringList: bring } : {}), jobBreakdown: breakdownLines(breakdown) } : {}) }), crewNotes = stripCrewMoney(plan.notes);
   const changes = { date: plan.quote.job_date, endDate: plan.quote.job_date, time: plan.quote.start_time, endTime: plan.quote.end_time, title: plan.quote.title, address: placedAddress ?? plan.client.address, serviceType: 'Garage transformation', crewNeeded: plan.logistics.crew_size, assignedCrew, jobInstructions: stripCrewMoney(plan.crew_brief), accessInstructions: instructions.accessNotes, customerInstructions: crewNotes, notify: access.dispatcher || previous?.notify !== false,
-    ...(structured ? { ...(equipment.length ? { requiredEquipment: equipment } : {}), ...structuredMaterialChanges(plan, materialsSource, equipment) } : materialChanges(plan, materialsSource)) };
+    ...(structured ? { ...(requiredEquipment ? { requiredEquipment } : {}), ...structuredMaterialChanges(plan, materialsSource, equipment) } : materialChanges(plan, materialsSource)) };
   const dispatchInput = previous ? { action: 'schedule.update', requestId: input.requestId, jobId: previous.id, expectedRevision: previous.revision, changes } : { action: 'schedule.create', requestId: input.requestId, customerId: customer.id, kind: 'job', ...(source ? { sourceWalkthroughId: source.id } : {}), booking: { channel: 'hub_in_person' }, changes };
   const adapter = { ...store,
     // FUN-29: a job sold on a signed walkthrough plan came through the walkthrough path, and its signed lines are sold evidence.

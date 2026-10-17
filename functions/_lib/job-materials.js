@@ -17,6 +17,8 @@ export const jobMaterialsEnabled = env => env?.EGC_JOB_MATERIALS === 'true';
 
 export const MATERIAL_SOURCES = Object.freeze(['buy', 'stock']);
 export const PURCHASE_STATES = Object.freeze(['to_buy', 'ordered', 'purchased', 'loaded']);
+// The states the office records on the purchase list. Loaded is the crew's tick (fieldExecution.materialStates).
+export const OFFICE_PURCHASE_STATES = Object.freeze(['to_buy', 'ordered', 'purchased']);
 export const MATERIAL_CATEGORIES = Object.freeze(['shelving', 'storage', 'cleaning', 'removal', 'consumable', 'equipment', 'other']);
 const OPTIONAL = ['sku', 'unit', 'unitsPerPack', 'packs', 'source', 'purchaseState', 'productUrl', 'note', 'category', 'store', 'catalogItemId', 'purchaseUpdatedAt', 'purchaseUpdatedBy'];
 export const JOB_MATERIAL_KEYS = Object.freeze(['id', 'name', 'quantity', ...OPTIONAL]);
@@ -182,6 +184,23 @@ export function handoffJobMaterials({ previous, quoted = [], kit = [] }) {
   return validJobMaterials(materials) ? materials : null;
 }
 
+const EQUIPMENT_LIMIT = 100; // dispatch-service schedulePatch: at most 100 pieces of required equipment
+/** The bring list a handoff saved in the crew brief (job.jobInstructions.bringList), read leniently: [] when none. */
+export const savedBringList = instructions => plain(instructions) && Array.isArray(instructions.bringList) ? instructions.bringList.filter(item => typeof item === 'string' && item.trim()).map(item => item.trim()) : [];
+/** The job's required equipment after a signed handoff sends a bring list. Every entry the earlier bring list did not
+ * put there (added in Dispatch, or carried from the walkthrough) is kept as it is; the earlier bring list's entries
+ * are swapped for the new list's. Instructions and sold products ("Confirm ...", "Extra crew member", "4 metal
+ * shelving unit(s)") stay in the crew brief's bring list only. Dispatch's own entries come first and the bring list
+ * fills the room the 100-entry Dispatch limit leaves. Returns null when the list would not change. */
+export function handoffEquipment({ current, earlier = [], bring = [] }) {
+  const list = Array.isArray(current) ? current.filter(item => typeof item === 'string' && item.length <= 200).map(item => item.trim()).filter(Boolean) : [];
+  const old = new Set((Array.isArray(earlier) ? earlier : []).filter(item => typeof item === 'string').map(item => item.trim()));
+  const kept = [...new Set(list.filter(item => !old.has(item)))].slice(0, EQUIPMENT_LIMIT);
+  const kit = [...new Set((Array.isArray(bring) ? bring : []).filter(item => typeof item === 'string' && !NOT_GRABBED.test(item)).map(item => item.trim()).filter(item => item && !kept.includes(item)))];
+  const next = [...kept, ...kit.slice(0, EQUIPMENT_LIMIT - kept.length)];
+  return JSON.stringify(next) === JSON.stringify(Array.isArray(current) ? current : []) ? null : next;
+}
+
 /** The purchase state the office sees: the crew's Loaded (or Used) tick on the job outranks the office's record. */
 export function effectivePurchaseState(material, crewState) {
   if (['loaded', 'used'].includes(crewState)) return 'loaded';
@@ -205,7 +224,7 @@ export function crewMaterialFields(item) {
 /** Changes the office purchase state of some buy materials on a job. Returns {materials, changed:[{id,name,from,to}]};
  * every other entry (including a legacy string row) is kept exactly. */
 export function applyPurchaseState(job, materialIds, state, actor, now, fail = defaultFail) {
-  if (!PURCHASE_STATES.includes(state)) throw fail('purchase_state_invalid', 'Choose to buy, ordered, purchased or loaded.');
+  if (!OFFICE_PURCHASE_STATES.includes(state)) throw fail('purchase_state_invalid', 'Choose to buy, ordered or purchased. The crew ticks Loaded on the job.');
   if (!Array.isArray(materialIds) || !materialIds.length || materialIds.length > MATERIAL_LIMIT || materialIds.some(id => !safeId(id)) || new Set(materialIds).size !== materialIds.length) throw fail('purchase_materials_invalid', 'Choose up to 100 different materials on this job.');
   const list = Array.isArray(job?.materials) ? job.materials : [], changed = [];
   for (const id of materialIds) {
@@ -221,7 +240,9 @@ export function applyPurchaseState(job, materialIds, state, actor, now, fail = d
   return { materials, changed };
 }
 
-const OPEN = new Set(['cancelled', 'canceled', 'completed', 'paid', 'invoiced', 'closed', 'review_requested', 'noshow', 'no_show', 'no-show']);
+const CLOSED = new Set(['cancelled', 'canceled', 'completed', 'paid', 'invoiced', 'closed', 'review_requested', 'noshow', 'no_show', 'no-show']);
+/** A job the office still buys for: neither its pipeline status nor its status is cancelled, finished or a no-show. */
+export const purchaseJobOpen = job => plain(job) && ![job.pipelineStatus, job.status].some(value => CLOSED.has(String(value || '').toLowerCase()));
 const productKey = material => material.sku ? `sku:${material.sku.toLowerCase()}` : material.catalogItemId ? `item:${material.catalogItemId}` : `name:${material.name.toLowerCase()}|${(material.unit || '').toLowerCase()}`;
 /** The office purchase list for upcoming jobs: buy materials grouped by store, then product, quantities summed across
  * jobs with each job's share, state and link. Cancelled and finished jobs are left out. No money is read or returned. */
@@ -229,7 +250,7 @@ export function purchaseList(jobs) {
   const stores = new Map(), seen = new Set();
   let jobCount = 0;
   for (const job of Array.isArray(jobs) ? jobs : []) {
-    if (!plain(job) || !safeId(job.id) || job.recordType || !['job', 'cleanout', 'reorg'].includes(job.type) || OPEN.has(String(job.pipelineStatus || job.status || '').toLowerCase())) continue;
+    if (!plain(job) || !safeId(job.id) || job.recordType || !['job', 'cleanout', 'reorg'].includes(job.type) || !purchaseJobOpen(job)) continue;
     const crew = plain(job.fieldExecution?.materialStates) ? job.fieldExecution.materialStates : {};
     let counted = false;
     for (const material of Array.isArray(job.materials) ? job.materials : []) {

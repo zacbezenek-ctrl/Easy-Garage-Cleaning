@@ -24,7 +24,7 @@ function screen({ list = () => reply(LIST()), write = () => reply({ ok: true, al
     calls.push({ url, method: init.method || 'GET', body });
     if ((init.method || 'GET') === 'GET') return list(url);
     const answer = await write(body);
-    return answer.status === 200 ? reply({ ok: true, alreadyApplied: false, jobId: body.jobId, changed: [] }) : answer;
+    return answer.status === 200 ? reply({ ok: true, alreadyApplied: false, jobId: body.jobId, changed: body.materialIds.map(id => ({ id, name: 'Item', from: 'to_buy', to: body.state })) }) : answer;
   };
   const context = { console, URL, URLSearchParams, Intl, Promise, Map, Set, Error, JSON, Object, Array, Math, AbortController, crypto, structuredClone, Date: FixedDate, Node: document.Node, document,
     sessionStorage: storage({ egc_u: 'AlexK' }), setTimeout: () => 0, clearTimeout() {}, addEventListener() {}, location: { href: 'https://easygaragecleaning.com/employee' } };
@@ -61,20 +61,49 @@ test('the screen asks for today and the next 13 days and lists what to buy by st
   assert.equal(ui.module.canLeave(), true);
 });
 
-test('Mark all purchased sends one request per job for the lines still to buy or ordered, then reloads', async () => {
+test('Mark all purchased sends one request per job for the lines still to buy or ordered and updates the list in place', async () => {
   const ui = screen();
   await ui.mounted; await flush();
+  ui.button('Mark all ordered (1)').click();
+  await flush(120);
+  assert.deepEqual(ui.calls.filter(call => call.method === 'POST').map(call => [call.body.jobId, call.body.state]), [['job-b', 'ordered']]);
+  assert.match(ui.root().querySelector('.pl-product').textContent, /To buy 0 · Ordered 5 · Purchased 0 · Loaded 1/);
+  assert.equal(ui.root().querySelector('.pl-big').textContent, '0');
   ui.button('Mark all purchased (2)').click();
   await flush(120);
-  const posts = ui.calls.filter(call => call.method === 'POST');
+  const posts = ui.calls.filter(call => call.method === 'POST').slice(1);
   assert.deepEqual(posts.map(call => [call.url, call.body.jobId, call.body.materialIds, call.body.state]), [['/api/purchase-list', 'job-a', ['quote-shelving'], 'purchased'], ['/api/purchase-list', 'job-b', ['quote-shelving'], 'purchased']]);
   for (const post of posts) assert.match(post.body.requestId, UUID);
   assert.notEqual(posts[0].body.requestId, posts[1].body.requestId);
-  assert.equal(ui.calls.at(-1).method, 'GET', 'the list is read again after the marks');
+  assert.equal(ui.calls.filter(call => call.method === 'GET').length, 1, 'saved marks never re-read the whole date range');
   assert.match(ui.root().querySelector('.hub-notice.success').textContent, /Metal shelving unit marked purchased on 2 jobs\./);
-  ui.button('Mark all ordered (1)').click();
+  assert.equal(ui.root().querySelectorAll('.pl-product').length, 0, 'a fully bought product leaves the to-buy view');
+  ui.button('Show bought items').click();
+  const shelving = ui.root().querySelector('[data-product="sku:hd-100"]');
+  assert.match(shelving.textContent, /To buy 0 · Ordered 0 · Purchased 5 · Loaded 1/);
+  assert.deepEqual(shelving.querySelectorAll('.pl-state').map(node => node.textContent), ['Loaded', 'Purchased', 'Purchased']);
+  ui.button('Refresh').click();
   await flush(120);
-  assert.deepEqual(ui.calls.filter(call => call.method === 'POST').slice(2).map(call => [call.body.jobId, call.body.state]), [['job-b', 'ordered']]);
+  assert.deepEqual(ui.calls.at(-1), { url: '/api/purchase-list?start=2026-09-22&end=2026-10-05', method: 'GET', body: null }, 'Refresh reads the list again');
+});
+
+test('a single job line marks only that job, recounts the product and packs, and Undo puts it back to buy', async () => {
+  const ui = screen();
+  await ui.mounted; await flush();
+  const lineB = () => ui.root().querySelectorAll('.pl-job')[2];
+  ui.button('Purchased', lineB()).click();
+  await flush(120);
+  assert.deepEqual(ui.calls.map(call => [call.method, call.body?.jobId ?? null, call.body?.materialIds ?? null, call.body?.state ?? null]), [['GET', null, null, null], ['POST', 'job-b', ['quote-shelving'], 'purchased']]);
+  const row = ui.root().querySelector('.pl-product');
+  assert.match(row.textContent, /To buy 0 · Ordered 2 · Purchased 3 · Loaded 1/);
+  assert.equal(row.querySelector('.pl-qty').textContent, '0to buy', 'nothing left to buy, so no packs to buy');
+  assert.equal(lineB().querySelector('.pl-state').textContent, 'Purchased');
+  ui.button('Undo', lineB()).click();
+  await flush(120);
+  assert.deepEqual(ui.calls.at(-1).body.state, 'to_buy');
+  assert.match(ui.root().querySelector('.pl-product').textContent, /To buy 3 · Ordered 2 · Purchased 0 · Loaded 1/);
+  assert.equal(ui.root().querySelector('.pl-qty').textContent, '3to buy · 2 packs');
+  assert.equal(ui.calls.filter(call => call.method === 'GET').length, 1);
 });
 
 test('a refused mark stops, says why and still refreshes; a switched-off list explains itself', async () => {
@@ -86,6 +115,12 @@ test('a refused mark stops, says why and still refreshes; a switched-off list ex
   assert.equal(posts, 1, 'the next job is not sent after a refusal');
   assert.match(ui.root().querySelector('.hub-notice.error').textContent, /A material changed on its job/);
   assert.equal(ui.calls.at(-1).method, 'GET');
+  const closed = screen({ write: () => reply({ ok: false, code: 'purchase_job_closed', error: 'This job is cancelled or finished.' }, 409) });
+  await closed.mounted; await flush();
+  closed.button('Purchased', closed.root().querySelectorAll('.pl-job')[2]).click();
+  await flush(120);
+  assert.match(closed.root().querySelector('.hub-notice.error').textContent, /cancelled or finished, so nothing more is bought for it\. The list was refreshed\./);
+  assert.deepEqual(closed.calls.map(call => call.method), ['GET', 'POST', 'GET'], 'a refusal re-reads the list');
   const off = screen({ list: () => reply({ ok: false, code: 'purchase_list_disabled', error: 'The purchase list is not switched on for this Hub.' }, 404) });
   await off.mounted; await flush();
   assert.match(off.text(), /The purchase list is unavailable/);

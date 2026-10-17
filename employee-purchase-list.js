@@ -1,7 +1,7 @@
 /* Purchase list (WP14c, EGC_JOB_MATERIALS): what the office buys for upcoming jobs, grouped by store and product with
    quantities summed across jobs. Each job line links to its job; a manager marks lines ordered or purchased (POST
-   /api/purchase-list, one request per job, recorded in that job's history). The crew's Loaded tick on the job shows
-   here as Loaded. Registered in employee-hub-screens.js and runs standalone with the UI kit (window.EGCHubKit). No
+   /api/purchase-list, one request per job, recorded in that job's history) and the list updates in place; Refresh (or
+   a refused mark) reads the date range again. The crew's Loaded tick on the job shows here as Loaded. Registered in employee-hub-screens.js and runs standalone with the UI kit (window.EGCHubKit). No
    prices or costs are shown. */
 (function(){
 'use strict';
@@ -11,7 +11,7 @@ const kit=()=>window.EGCHubKit;
 const h=(...args)=>kit().h(...args);
 const fetcher=()=>S.ctx&&typeof S.ctx.hubFetch==='function'?S.ctx.hubFetch:undefined;
 const STATES={to_buy:'To buy',ordered:'Ordered',purchased:'Purchased',loaded:'Loaded'};
-const ERRORS={purchase_list_disabled:'The purchase list is not switched on for this Hub yet. Ask the owner to turn on structured job materials.',purchase_forbidden:'Only an operations manager or owner can open the purchase list.',purchase_range_too_large:'More than 500 jobs fall in this range. Choose fewer days.',purchase_material_missing:'A material changed on its job. The list was refreshed; check it and try again.',purchase_revision_conflict:'A job changed while the purchase was saved. The list was refreshed; check it and try again.'};
+const ERRORS={purchase_list_disabled:'The purchase list is not switched on for this Hub yet. Ask the owner to turn on structured job materials.',purchase_forbidden:'Only an operations manager or owner can open the purchase list.',purchase_range_too_large:'More than 500 jobs fall in this range. Choose fewer days.',purchase_material_missing:'A material changed on its job. The list was refreshed; check it and try again.',purchase_revision_conflict:'A job changed while the purchase was saved. The list was refreshed; check it and try again.',purchase_job_closed:'That job was cancelled or finished, so nothing more is bought for it. The list was refreshed.'};
 const count=value=>Number.isFinite(value)?String(Math.round(value*100)/100):'0';
 function valid(data){
   const k=kit();
@@ -33,19 +33,34 @@ async function load(){
   }catch(error){if(generation===S.generation)S.error=error;}
   finally{if(generation===S.generation){S.loading=false;render();}}
 }
+// A saved mark is applied to the list in place from the server's answer ({changed:[{id,to}]}), so a tap costs no re-read
+// of the whole date range; quantities per state are summed again from the product's job lines, as the server does.
+function applyChanged(jobId,changed){
+  const to=new Map(changed.filter(row=>row&&typeof row.id==='string'&&Object.hasOwn(STATES,row.to)).map(row=>[row.id,row.to]));
+  for(const store of S.data?.stores||[])for(const product of store.products){
+    const lines=product.jobs.filter(job=>job.jobId===jobId&&to.has(job.materialId)&&job.purchaseState!=='loaded');
+    if(!lines.length)continue;
+    for(const job of lines)job.purchaseState=to.get(job.materialId);
+    const byState=Object.fromEntries(Object.keys(STATES).map(state=>[state,0]));
+    for(const job of product.jobs)byState[job.purchaseState]+=Number(job.quantity)||0;
+    product.byState=Object.fromEntries(Object.entries(byState).map(([state,value])=>[state,Math.round(value*100)/100]));
+    product.toBuy=product.byState.to_buy;product.packsToBuy=product.unitsPerPack&&product.toBuy>0?Math.ceil(product.toBuy/product.unitsPerPack):null;
+  }
+}
 // One request per job, each with its own request id; the server re-reads the job and keeps the change in its history.
+// Only a refusal re-reads the list (the job changed under it); otherwise Refresh does.
 async function mark(lines,state,what){
   if(S.busy||!lines.length)return;
   S.busy=true;S.feedback='';render();
   const byJob=new Map();for(const line of lines){if(!byJob.has(line.jobId))byJob.set(line.jobId,[]);byJob.get(line.jobId).push(line.materialId);}
   let saved=0,failed=null;
   for(const [jobId,materialIds] of byJob){
-    try{await kit().requestJSON(PATH,{method:'POST',prefix:'purchase',body:{requestId:kit().requestId(),jobId,materialIds:[...new Set(materialIds)],state},fetcher:fetcher(),validate:data=>data.ok===true&&data.jobId===jobId});saved++;}
+    try{const data=await kit().requestJSON(PATH,{method:'POST',prefix:'purchase',body:{requestId:kit().requestId(),jobId,materialIds:[...new Set(materialIds)],state},fetcher:fetcher(),validate:data=>data.ok===true&&data.jobId===jobId&&Array.isArray(data.changed)});applyChanged(jobId,data.changed);saved++;}
     catch(error){failed=error;break;}
   }
   S.busy=false;
   S.feedback=failed?`${saved?`Saved ${saved} job${saved===1?'':'s'}. `:''}${kit().errorText(failed,ERRORS)}`:`${what} marked ${STATES[state].toLowerCase()} on ${saved} job${saved===1?'':'s'}.`;S.feedbackError=Boolean(failed);
-  await load();
+  if(failed)await load();else render();
 }
 function exportCsv(){
   if(!S.data)return;
@@ -80,6 +95,7 @@ function render(){
   const controls=h('div',{class:'pl-filters'},
     h('label',{class:'hub-field'},h('span',{},'From'),h('input',{id:'pl-start',type:'date',value:S.start,disabled:S.busy,onchange:event=>{if(kit().validDate(event.target.value)){S.start=event.target.value;load();}}})),
     h('label',{class:'hub-field'},h('span',{},'Days'),h('select',{id:'pl-days',disabled:S.busy,onchange:event=>{S.days=Number(event.target.value);load();}},DAYS.map(days=>h('option',{value:String(days),selected:days===S.days},`${days} days`)))),
+    kit().button('Refresh',()=>load(),'',{disabled:S.busy||S.loading}),
     kit().button(S.showDone?'✓ Show bought items':'Show bought items',()=>{S.showDone=!S.showDone;render();},'pl-done',{'aria-pressed':S.showDone?'true':'false'}),
     kit().button('Export CSV',exportCsv,'',{disabled:!S.data}));
   if(!S.data){

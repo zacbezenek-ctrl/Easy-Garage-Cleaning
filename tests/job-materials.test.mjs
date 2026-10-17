@@ -1,8 +1,8 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
-import { applyPurchaseState, bringList, bringListMaterials, crewMaterialFields, effectivePurchaseState, handoffJobMaterials, jobMaterialsEnabled, materialCategory, materialStore, NO_STORE,
-  normalizeJobMaterial, normalizeJobMaterials, purchaseList, quoteLineMaterials } from '../functions/_lib/job-materials.js';
+import { applyPurchaseState, bringList, bringListMaterials, crewMaterialFields, effectivePurchaseState, handoffEquipment, handoffJobMaterials, jobMaterialsEnabled, materialCategory, materialStore, NO_STORE,
+  normalizeJobMaterial, normalizeJobMaterials, purchaseJobOpen, purchaseList, quoteLineMaterials, savedBringList } from '../functions/_lib/job-materials.js';
 import { breakdownLines, jobBreakdown } from '../functions/_lib/job-breakdown.js';
 import { mutateDispatch } from '../functions/_lib/dispatch-service.js';
 import { fieldMaterials } from '../functions/_lib/field-execution.js';
@@ -131,6 +131,22 @@ test('a signed revision keeps Dispatch entries and the purchase recorded for an 
   assert.equal(handoffJobMaterials({ previous: ['Legacy tarp'], quoted, kit }), null, 'a list Dispatch cannot validate is left to the caller');
 });
 
+test('a signed bring list swaps only its own earlier entries in the required equipment and leaves instructions and sold goods out', () => {
+  const bring = ['Hand truck / dolly', 'Contractor bags', '4 metal shelving unit(s)', '6 totes', 'Confirm propane tank removed before loading', 'Extra crew member', 'Label maker'];
+  assert.deepEqual(handoffEquipment({ current: undefined, bring }), ['Hand truck / dolly', 'Contractor bags', 'Label maker'], 'a new job carries only what to bring');
+  assert.equal(handoffEquipment({ current: undefined, bring: [] }), null, 'nothing to change');
+  assert.equal(handoffEquipment({ current: ['Hand truck / dolly', 'Contractor bags', 'Label maker'], earlier: bring, bring }), null, 'an unchanged list is not rewritten');
+  const current = ['Hand truck / dolly', 'Ladder (Dispatch)', 'Contractor bags', 'Label maker', 'Shop vac'];
+  assert.deepEqual(handoffEquipment({ current, earlier: bring, bring: ['Hand truck / dolly', 'Shop vac', 'Stud finder'] }), ['Ladder (Dispatch)', 'Shop vac', 'Hand truck / dolly', 'Stud finder'],
+    'Dispatch entries stay first and once; earlier bring-list entries the new list drops are removed');
+  assert.deepEqual(handoffEquipment({ current: ['Drill'], earlier: [], bring: ['Hand truck / dolly'] }), ['Drill', 'Hand truck / dolly'], 'a job saved before the bring list keeps all its equipment');
+  assert.deepEqual(handoffEquipment({ current: ['Drill', 'Ladder'], earlier: ['Drill'], bring: [] }), ['Ladder'], 'an emptied bring list removes only its own entries');
+  const full = [...Array(99)].map((_, i) => `Dispatch item ${i}`);
+  assert.deepEqual(handoffEquipment({ current: full, bring: ['A', 'B'] }).slice(97), ['Dispatch item 97', 'Dispatch item 98', 'A'], 'the bring list fills only the room the 100-entry limit leaves');
+  assert.deepEqual(savedBringList({ bringList: [' Dolly ', '', 7, 'Bags'] }), ['Dolly', 'Bags']);
+  for (const value of [undefined, null, 'Dispatch text', { bringList: 'Dolly' }]) assert.deepEqual(savedBringList(value), []);
+});
+
 test('the purchase list sums buy quantities across jobs by store and product, follows the crew Loaded tick and skips closed jobs and stock', () => {
   const shelf = (id, quantity, extra = {}) => ({ id, name: 'Metal shelving unit', quantity, sku: 'HD-100', unitsPerPack: 2, source: 'buy', purchaseState: 'to_buy', productUrl: 'https://www.homedepot.com/p/100', category: 'shelving', ...extra });
   const jobs = [
@@ -151,6 +167,9 @@ test('the purchase list sums buy quantities across jobs by store and product, fo
   assert.equal(JSON.stringify(list).includes('Cents'), false);
   assert.equal(effectivePurchaseState({ purchaseState: 'ordered' }, 'used'), 'loaded');
   assert.equal(effectivePurchaseState({}, 'required'), 'to_buy');
+  for (const [job, open] of [[{ status: 'scheduled' }, true], [{ status: 'scheduled', pipelineStatus: 'in_progress' }, true], [{}, true], [{ status: 'scheduled', pipelineStatus: 'cancelled' }, false],
+    [{ status: 'Completed', pipelineStatus: 'scheduled' }, false], [{ pipelineStatus: 'no_show' }, false], [null, false]]) assert.equal(purchaseJobOpen(job), open, JSON.stringify(job));
+  assert.deepEqual(purchaseList([{ ...jobs[1], pipelineStatus: 'cancelled' }]), { stores: [], lines: 0, jobs: 0 }, 'a job closed in either status field is left out');
 });
 
 test('a purchase state change touches only the chosen buy materials and refuses anything else', () => {
@@ -158,7 +177,7 @@ test('a purchase state change touches only the chosen buy materials and refuses 
   const { materials, changed } = applyPurchaseState(job, ['quote-shelving'], 'purchased', 'zacb', '2026-10-17T16:00:00.000Z');
   assert.deepEqual(materials, ['Legacy tarp', { id: 'quote-shelving', name: 'Metal shelving unit', quantity: 2, source: 'buy', purchaseState: 'purchased', purchaseUpdatedAt: '2026-10-17T16:00:00.000Z', purchaseUpdatedBy: 'zacb' }, job.materials[2]]);
   assert.deepEqual(changed, [{ id: 'quote-shelving', name: 'Metal shelving unit', from: 'to_buy', to: 'purchased' }]);
-  for (const [ids, state, code] of [[['kit-dolly'], 'purchased', 'purchase_material_missing'], [['missing'], 'ordered', 'purchase_material_missing'], [['quote-shelving'], 'lost', 'purchase_state_invalid'], [[], 'ordered', 'purchase_materials_invalid'], [['quote-shelving', 'quote-shelving'], 'ordered', 'purchase_materials_invalid']]) {
+  for (const [ids, state, code] of [[['kit-dolly'], 'purchased', 'purchase_material_missing'], [['missing'], 'ordered', 'purchase_material_missing'], [['quote-shelving'], 'lost', 'purchase_state_invalid'], [['quote-shelving'], 'loaded', 'purchase_state_invalid'], [[], 'ordered', 'purchase_materials_invalid'], [['quote-shelving', 'quote-shelving'], 'ordered', 'purchase_materials_invalid']]) {
     assert.throws(() => applyPurchaseState(job, ids, state, 'zacb', '2026-10-17T16:00:00.000Z'), error => error.code === code, `${ids} ${state}`);
   }
 });

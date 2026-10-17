@@ -111,6 +111,23 @@ test('a manager marks a job\'s materials purchased under the job revision, with 
   assert.deepEqual(listed.body.stores[0].products[0].byState, { to_buy: 3, ordered: 0, purchased: 2, loaded: 0 });
 });
 
+test('a mark on a job Dispatch has since cancelled or closed is refused and writes nothing; an earlier mark still replays', async () => {
+  const f = fixture(), client = api(manager, f), requestId = randomUUID();
+  const saved = await client.post({ requestId, jobId: 'job-b', materialIds: ['quote-shelving'], state: 'ordered' });
+  assert.equal(saved.status, 200);
+  for (const [field, value] of [['status', 'cancelled'], ['pipelineStatus', 'completed'], ['pipelineStatus', 'no_show']]) {
+    const row = f.rows.get('job-b'), before = structuredClone(row);
+    Object.assign(row, { status: 'scheduled', pipelineStatus: 'scheduled', [field]: value });
+    const commits = f.calls.commits.length, events = f.events.size;
+    const refused = await client.post({ requestId: randomUUID(), jobId: 'job-b', materialIds: ['quote-shelving'], state: 'purchased' });
+    assert.deepEqual([refused.status, refused.body.code, f.calls.commits.length, f.events.size], [409, 'purchase_job_closed', commits, events], `${field}=${value}`);
+    assert.equal(f.rows.get('job-b').materials[0].purchaseState, 'ordered');
+    const replay = await client.post({ requestId, jobId: 'job-b', materialIds: ['quote-shelving'], state: 'ordered' });
+    assert.deepEqual([replay.status, replay.body.alreadyApplied], [200, true], 'a lost response for the earlier mark is still answered');
+    Object.assign(row, before);
+  }
+});
+
 test('a mark retries a revision race on the latest job, and refuses stock, missing or non-job records', async () => {
   const f = fixture(), client = api(owner, f);
   f.conflict(1);
@@ -122,6 +139,7 @@ test('a mark retries a revision race on the latest job, and refuses stock, missi
   for (const [body, status, code] of [
     [{ requestId: randomUUID(), jobId: 'job-a', materialIds: ['kit-dolly'], state: 'purchased' }, 409, 'purchase_material_missing'],
     [{ requestId: randomUUID(), jobId: 'job-a', materialIds: ['quote-shelving'], state: 'lost' }, 400, 'purchase_state_invalid'],
+    [{ requestId: randomUUID(), jobId: 'job-a', materialIds: ['quote-shelving'], state: 'loaded' }, 400, 'purchase_state_invalid'],
     [{ requestId: randomUUID(), jobId: 'walk-1', materialIds: ['quote-shelving'], state: 'ordered' }, 404, 'purchase_job_missing'],
     [{ requestId: randomUUID(), jobId: 'nope', materialIds: ['quote-shelving'], state: 'ordered' }, 404, 'purchase_job_missing'],
     [{ requestId: 'not-a-uuid', jobId: 'job-a', materialIds: ['quote-shelving'], state: 'ordered' }, 400, 'purchase_request_invalid'],
