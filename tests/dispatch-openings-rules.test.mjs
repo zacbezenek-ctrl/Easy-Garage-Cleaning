@@ -4,8 +4,9 @@ import { dispatchOpenings } from '../functions/_lib/dispatch-openings.js';
 import { dispatchOpeningsHandlers } from '../functions/api/dispatch-openings.js';
 
 const manager = { user: 'zacb', role: 'owner', businessAccess: true }, now = new Date('2026-09-22T12:00:00Z');
-// 2026-09-23 is a Wednesday.
-const query = { startDate: '2026-09-23', endDate: '2026-09-24', durationMinutes: '60', travelBufferMinutes: '0' };
+// 2026-09-23 is a Wednesday. D5 (2026-10-17) made 09:00 the default workday start; these
+// fixtures keep the 08:00 day they were written for (the defaults test below drops it).
+const query = { startDate: '2026-09-23', endDate: '2026-09-24', durationMinutes: '60', travelBufferMinutes: '0', workdayStart: '08:00' };
 const hours = wed => ({ mon: [], tue: [], wed, thu: [], fri: [], sat: [], sun: [] });
 function fixture(rules = null) {
   const data = {
@@ -94,18 +95,19 @@ test('owner decision F19: an office-only owner or manager is never proposed by a
 test('the owner workday and travel buffer are the openings defaults; explicit query values win', async () => {
   const f = fixture({ workdayStart: '09:00', workdayEnd: '11:00', defaultTravelBufferMinutes: 30 });
   f.data.jobs = [f.job('early', { assignedCrew: ['crew3'], time: '08:00', endTime: '09:00' })];
-  const defaults = await f.check({ employeeIds: 'crew3', travelBufferMinutes: undefined });
+  const defaults = await f.check({ employeeIds: 'crew3', travelBufferMinutes: undefined, workdayStart: undefined });
   assert.deepEqual([defaults.constraints.workdayStart, defaults.constraints.workdayEnd, defaults.constraints.travelBufferMinutes], ['09:00', '11:00', 30]);
   assert.deepEqual(slots(defaults), [['09:30', '10:30', 'crew3']]);
   const explicit = await f.check({ employeeIds: 'crew3', workdayStart: '08:00', workdayEnd: '17:00' });
   assert.deepEqual(explicit.candidates.map(row => row.time), ['09:00']);
   await assert.rejects(f.check({ employeeIds: 'crew3', workdayStart: '12:00' }), error => error.code === 'dispatch_openings_invalid', 'a start after the owner workday end is rejected');
-  const legacy = await fixture().check({ employeeIds: 'crew3', travelBufferMinutes: undefined });
-  assert.deepEqual([legacy.constraints.workdayStart, legacy.constraints.workdayEnd, legacy.constraints.travelBufferMinutes], ['08:00', '17:00', 20]);
+  const legacy = await fixture().check({ employeeIds: 'crew3', travelBufferMinutes: undefined, workdayStart: undefined });
+  assert.deepEqual([legacy.constraints.workdayStart, legacy.constraints.workdayEnd, legacy.constraints.travelBufferMinutes], ['09:00', '17:00', 20], 'D5: the job day is 9:00-5:00 when the owner saved none');
+  assert.equal(legacy.candidates[0].time, '09:00');
   // The dispatch dialog leaves out an unchanged 24:00 end (shown as 23:59), so a job ending at midnight is found.
-  const late = fixture({ workdayStart: '23:00', workdayEnd: '24:00' }), midnight = await late.check({ employeeIds: 'crew3' });
+  const late = fixture({ workdayStart: '23:00', workdayEnd: '24:00' }), midnight = await late.check({ employeeIds: 'crew3', workdayStart: undefined });
   assert.deepEqual(midnight.candidates.map(row => [row.time, row.endDate, row.endTime]), [['23:00', '2026-09-24', '00:00']]);
-  assert.equal((await late.check({ employeeIds: 'crew3', workdayEnd: '23:59' })).candidates.length, 0, 'a 23:59 end loses the last minute');
+  assert.equal((await late.check({ employeeIds: 'crew3', workdayStart: undefined, workdayEnd: '23:59' })).candidates.length, 0, 'a 23:59 end loses the last minute');
 });
 
 test('daily limits warn on openings and skip the date only when the owner blocks them', async () => {

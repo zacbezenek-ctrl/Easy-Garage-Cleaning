@@ -5,7 +5,8 @@ import { dispatchOpeningsHandlers } from '../functions/api/dispatch-openings.js'
 import { scheduleInterval } from '../functions/_lib/dispatch-time.js';
 
 const manager={user:'zacb',role:'owner',businessAccess:true},now=new Date('2026-09-22T12:00:00Z');
-const query={startDate:'2026-09-23',endDate:'2026-09-24',employeeIds:'crew1',durationMinutes:'60',travelBufferMinutes:'0'};
+// D5 (2026-10-17) made 09:00 the default workday start; these gap fixtures keep the 08:00 day they were written for.
+const query={startDate:'2026-09-23',endDate:'2026-09-24',employeeIds:'crew1',durationMinutes:'60',travelBufferMinutes:'0',workdayStart:'08:00'};
 function fixture() {
   const data={jobs:[],resources:[],roster:[{id:'crew1',name:'Crew One',role:'crew'},{id:'crew2',name:'Crew Two',role:'crew'}],guard:{revision:'r1'},locks:{}};
   const store={jobs:async()=>structuredClone(data.jobs),resources:async()=>structuredClone(data.resources),roster:async()=>structuredClone(data.roster),read:async(collection,id)=>structuredClone(collection==='dispatchState'?data.guard:data.locks[id]||null)};
@@ -91,11 +92,12 @@ test('repeated schedule movement fails clearly rather than returning a mixed or 
 test('DST gaps, repeated hours, next-day midnight and elapsed duration round-trip through canonical booking',async()=>{
   const f=fixture();
   for(const [startDate,endDate,durationMinutes,expectedEnd,gapMinutes] of [['2026-03-08','2026-03-09','180','04:00',180],['2026-11-01','2026-11-02','240','03:00',300]]) {
-    const result=await f.check({startDate,endDate,durationMinutes,workdayStart:'00:00',workdayEnd:'04:00'},new Date('2026-01-01T12:00:00Z'));
+    // A walkthrough search: from the policy date (2026-10-15) job openings start no earlier than 9:30.
+    const result=await f.check({startDate,endDate,durationMinutes,workdayStart:'00:00',workdayEnd:'04:00',kind:'walkthrough'},new Date('2026-01-01T12:00:00Z'));
     assert.equal(result.candidates[0].endTime,expectedEnd);assert.equal(result.candidates[0].gapMinutes,gapMinutes);
     const interval=scheduleInterval(result.candidates[0]);assert.equal((interval.end-interval.start)/60000,Number(durationMinutes));
   }
-  const ambiguous=await f.check({startDate:'2026-11-01',endDate:'2026-11-02',workdayStart:'00:00',workdayEnd:'04:00',durationMinutes:'90'},new Date('2026-01-01T12:00:00Z'));
+  const ambiguous=await f.check({startDate:'2026-11-01',endDate:'2026-11-02',workdayStart:'00:00',workdayEnd:'04:00',durationMinutes:'90',kind:'walkthrough'},new Date('2026-01-01T12:00:00Z'));
   assert.equal(ambiguous.candidates[0].time,'02:00');assert.equal(ambiguous.candidates[0].endTime,'03:30');
   const midnight=await f.check({workdayStart:'23:00',workdayEnd:'24:00'});assert.equal(midnight.candidates[0].endDate,'2026-09-24');assert.equal(midnight.candidates[0].endTime,'00:00');
   const bad=await f.check({startDate:'2026-03-08',endDate:'2026-03-09',workdayStart:'02:00'},new Date('2026-01-01T12:00:00Z'));assert.deepEqual(bad.candidates,[]);assert.equal(bad.warnings.at(-1).code,'workday_time_ambiguous');

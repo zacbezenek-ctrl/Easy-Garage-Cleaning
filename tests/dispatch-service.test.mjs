@@ -153,6 +153,23 @@ test('crew snapshots, lead validation, inactive employees, and out-of-service ve
   await assert.rejects(f.mutate(f.edit(created.job,{vehicleId:truck.resource.id})),error=>error.code==='dispatch_vehicle_unavailable');
 });
 
+test('crew registry v2: the board lists priority, days and code; a legacy crew save and its receipt keep the old shape',async () => {
+  const f=fixture();
+  const legacy=await f.mutate({action:'crew.save',requestId:randomUUID(),changes:{name:'North',memberIds:['crew1'],leadId:'crew1',status:'active'}});
+  assert.deepEqual(Object.keys(f.rows.get('dispatchOperations/'+legacy.requestId).after).sort(),['leadId','memberIds','name','status']);
+  const weekend=await f.mutate({action:'crew.save',requestId:randomUUID(),changes:{name:'Weekend',memberIds:['crew2'],leadId:'crew2',status:'active',priority:3,serviceDays:['sat','sun'],code:'crew-3'}});
+  const receipt=f.rows.get('dispatchOperations/'+weekend.requestId);
+  assert.deepEqual([receipt.before,receipt.after.priority,receipt.after.serviceDays,receipt.after.code],[null,3,['sat','sun'],'crew-3']);
+  const board=await dispatchOverview(f.store,manager,{startDate:'2026-09-22',endDate:'2026-09-29'});
+  const byName=Object.fromEntries(board.crews.map(row=>[row.name,row]));
+  assert.deepEqual([byName.Weekend.priority,byName.Weekend.serviceDays,byName.Weekend.code],[3,['sat','sun'],'crew-3']);
+  assert.deepEqual(['priority','serviceDays','code'].filter(key=>key in byName.North),[]);
+  // A hand-picked crew keeps working any day; with no auto-assign option nothing warns.
+  const input=f.create({crewId:weekend.resource.id});delete input.changes.assignedCrew;
+  const placed=await f.mutate(input);
+  assert.deepEqual([placed.job.crewId,placed.warnings.some(row=>row.code==='crew_off_day'),placed.autoCrew],[weekend.resource.id,false,undefined]);
+});
+
 test('customer search finds formatted phone numbers and unscheduled work remains visible',async () => {
   const f=fixture(),unscheduled=await f.mutate(f.create({date:'',time:'',endTime:''}));
   assert.equal(unscheduled.job.status,'unscheduled');

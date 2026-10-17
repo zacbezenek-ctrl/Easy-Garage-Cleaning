@@ -158,6 +158,32 @@ test('the dispatch board reports each booker’s walkthrough right while flag-of
   assert.equal((await board(off, cookies['Config.Phone'])).status, 403);
 });
 
+// CREW-AUTO (owner rule 2026-10-17, EGC_DISPATCH_CREW_AUTO_ASSIGN): a Sales or Phone booking of a job is staffed by the server
+// (Crew 1, then Crew 2), a booker may accept only an eligible crew, and hand-picked people stay a manager's decision.
+test('flag on with crew auto-assign: a booker\'s jobs get Crew 1 then Crew 2; raw crew stays 403; flag off they wait for a manager', async t => {
+  const { env, cookies } = await sessions(t, { EGC_STAFF_ROLE_ACCESS: 'true', EGC_DISPATCH_CREW_AUTO_ASSIGN: 'true' });
+  const store = memoryStore(env), roster = await store.roster();
+  store.roster = async () => [...structuredClone(roster), { id: 'crew.two', name: 'Synthetic Crew Two', role: 'crew' }];
+  for (const [id, name, member, priority] of [['crew-a', 'Crew 1', 'crew.one', 1], ['crew-b', 'Crew 2', 'crew.two', 2]]) store.rows.set(`dispatchResources/${id}`, { id, revision: `${id}r`, recordType: 'crew', name, memberIds: [member], leadId: member, status: 'active', priority, serviceDays: ['mon', 'tue', 'wed', 'thu', 'fri'] });
+  const send = async (cookie, body, flags = env) => {
+    const response = await dispatchHandlers({ storage: () => store, now: () => new Date(NOW) }).post({ env: flags, request: new Request(`${ORIGIN}/api/dispatch`, { method: 'POST', headers: { Origin: ORIGIN, 'Content-Type': 'application/json', Cookie: cookie }, body: JSON.stringify({ requestId: randomUUID(), ...body }) }) });
+    return { status: response.status, body: await response.json() };
+  };
+  // 2026-09-28 is a Monday.
+  const job = (time, extra = {}) => ({ action: 'schedule.create', customerId: 'c1', kind: 'job', sourceJobId: 'job-crewed', changes: { date: '2026-09-28', time, endTime: `${String(Number(time.slice(0, 2)) + 1).padStart(2, '0')}:59`, jobInstructions: 'Synthetic scope', ...extra } });
+  const first = await send(cookies['Config.Sales'], job('10:00'));
+  assert.equal(first.status, 200, JSON.stringify(first.body));
+  assert.deepEqual([first.body.job.crewId, first.body.job.assignedCrew, first.body.autoCrew.crewName], ['crew-a', ['crew.one'], 'Crew 1']);
+  const second = await send(cookies['Config.Phone'], job('10:30'));
+  assert.deepEqual([second.status, second.body.job.crewId, second.body.job.assignedCrew], [200, 'crew-b', ['crew.two']], 'Crew 1 is busy, so Crew 2');
+  const raw = await send(cookies['Config.Sales'], job('13:00', { assignedCrew: ['crew.one'] }));
+  assert.deepEqual([raw.status, raw.body.code], [403, 'dispatch_forbidden']);
+  const chosen = await send(cookies['Config.Sales'], job('14:00', { crewId: 'crew-b' }));
+  assert.deepEqual([chosen.status, chosen.body.job.crewId], [200, 'crew-b'], 'an eligible crew a booker accepts');
+  const off = await send(cookies['Config.Sales'], job('15:00'), { ...env, EGC_DISPATCH_CREW_AUTO_ASSIGN: 'false' });
+  assert.deepEqual([off.status, off.body.job.assignedCrew, off.body.autoCrew], [200, [], undefined], 'flag off: the job waits for a manager, as before');
+});
+
 // WT-OUTCOME after SALES-BOOKING: the Hub Walkthroughs screen also opens for a Sales or Phone booker and reads GET
 // /api/dispatch as one. The walkthrough outcome fields reach them; a price, deposit, estimate, private note or performer never does.
 test('a booker reads walkthrough outcomes from the dispatch board with no money, notes or performer', async t => {

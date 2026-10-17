@@ -125,6 +125,15 @@ test('crew lanes group work by saved crew, keep individual assignments apart and
   assert.deepEqual(model.lanes.map(entry => Boolean(entry.drop)), [false, true, true, false, false], 'only active crews take drops');
 });
 
+test('crew registry v2: crew lanes run by priority, then name, and a Saturday/Sunday-only crew reads Weekend', () => {
+  const ranked = [{ id: 'legacy', name: 'Alpha Legacy', memberIds: ['crew1'], status: 'active' }, { id: 'three', name: 'Crew 3', memberIds: ['crew2'], status: 'active', priority: 3, serviceDays: ['sat', 'sun'] },
+    { id: 'two', name: 'Crew 2', memberIds: ['lead1'], status: 'active', priority: 2, serviceDays: ['mon', 'tue', 'wed', 'thu', 'fri'] }, { id: 'one', name: 'Crew 1', memberIds: ['crew1'], status: 'active', priority: 1, serviceDays: ['mon', 'tue', 'wed', 'thu', 'fri'] }];
+  const model = cal.laneModel({ roster, crews: ranked, availability: [], warnings: [] }, [], DAY, { mode: 'crew' });
+  assert.deepEqual(model.lanes.map(entry => [entry.id, entry.label]), [['crew:one', 'Crew 1'], ['crew:two', 'Crew 2'], ['crew:three', 'Crew 3 · Weekend'], ['crew:legacy', 'Alpha Legacy']], 'a crew without a priority reads as 99');
+  assert.deepEqual(cal.sortCrews(ranked).map(row => row.id), ['one', 'two', 'three', 'legacy']);
+  assert.equal(cal.weekendCrew({ serviceDays: ['sat'] }), true); assert.equal(cal.weekendCrew({}), false);
+});
+
 test('travel gaps compare consecutive stops with the larger buffer or the server drive estimate', () => {
   const data = { roster, crews, availability: [], warnings: [{ code: 'travel_buffer_short', jobId: 'j5', otherJobId: 'j4', requiredMinutes: 45 }] };
   const jobs = [job({ assignedCrew: ['crew1'], crewLead: 'crew1', crewId: null }), job({ id: 'j4', address: '2 Other Rd', time: '10:10', endTime: '11:00', assignedCrew: ['crew1'], crewLead: 'crew1', crewId: null }),

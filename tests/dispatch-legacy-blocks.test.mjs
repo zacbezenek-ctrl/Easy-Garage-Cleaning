@@ -170,7 +170,8 @@ test('shift pickup on a blocked day is rejected only when enforced', async () =>
 });
 
 test('capacity suggestions skip legacy blocked days in warn and enforce modes', async () => {
-  const query = { startDate: '2026-09-23', endDate: '2026-09-25', employeeIds: 'crew1', durationMinutes: '60', travelBufferMinutes: '0' };
+  // The 08:00 workday these fixtures were written for (D5 made 09:00 the default start).
+  const query = { startDate: '2026-09-23', endDate: '2026-09-25', employeeIds: 'crew1', durationMinutes: '60', travelBufferMinutes: '0', workdayStart: '08:00' };
   for (const mode of ['warn', 'enforce']) {
     const f = fixture(mode), result = await dispatchOpenings(f.store, manager, query, new Date(NOW));
     assert.equal(result.candidates.some(row => row.date === '2026-09-23'), false);
