@@ -10,6 +10,8 @@ import { doorStatus } from '../crew/knock-doors.js';
 import { createJobAssignmentAccess } from '../functions/_lib/job-assignment.js';
 import { assignedDuring } from '../functions/_lib/field-execution-visits.js';
 import { dispatchOverview } from '../functions/_lib/dispatch-service.js';
+import { repSetterRows } from '../functions/_lib/knock-reports.js';
+import { installFirestoreFake } from './knock-dev-server.mjs';
 
 // KNOCK-BRIDGE (EGC_KNOCK_JOB_BRIDGE; owner decisions D8, D6b, 2026-10-17): a rep sets an estimator walkthrough at the
 // door. It lands on the estimator's schedule (assignedCrew) and in Hub dispatch, with the setter attribution recorded
@@ -302,4 +304,31 @@ test('the estimator handle is keyed by the server secret: a rep cannot test gues
   assert.notEqual(keyed, await estimatorRef('est.bea', { HUB_SESSION_SECRET: 'another-synthetic-secret-0123456789abcdef' }));
   assert.equal(keyed, await estimatorRef('est.bea', SECRET_ENV), 'stable for one secret');
   await assert.rejects(estimatorRef('est.bea', {}), { code: 'knock_bridge_unavailable' });
+});
+
+// E2E-D2D finding: a rep's My money listed each setter record as the office sees it, so every door walkthrough the bridge
+// booked showed the rep the estimator's staff key (which estimatorRef keeps from reps), and a converted job would have
+// shown the closer, any other rep's direct sale and the estimator's own allocation. The rep now sees only themselves.
+test('My money\'s setter records name only the rep: never the estimator, the closer, another rep or the estimator\'s pay', async () => {
+  const w = await bridgeWorld();
+  const { walkId, events } = walkBatch({ walk: { date: MON, time: '10:00', estimatorRef: await estimatorRef('est.bea', SECRET_ENV), dayPart: null } });
+  await w.send(events);
+  await w.book('walkthrough', walkId);
+  const visit = visits(w)[0];
+  assert.equal(w.fake.get(`knock_setters/${visit.id}`).estimatorKey, 'est.bea', 'the office record keeps the estimator');
+  // The setter projection reads the walkthrough through the production dispatch storage (global fetch): answer it from
+  // the same in-memory Firestore, so the full record is projected.
+  const restore = installFirestoreFake(w.fake);
+  let money, admin;
+  try { money = await w.report('my-money'); admin = await call(w.h.admin.get, get('/api/knock-admin?view=setters', w.cookies.zac), w.env); } finally { restore(); }
+  assert.equal(money.status, 200, JSON.stringify(money.body));
+  assert.deepEqual(money.body.setters.rows.map(row => [row.walkthroughId, row.setterKey, row.rate, row.state, row.estimatorEvidence]), [[visit.id, 'rep.one', 0.13, 'awaiting_close', 'admin_recorded_unreconciled']]);
+  assert.doesNotMatch(JSON.stringify(money.body), /est\.bea|estimatorKey|closingActorKey|directSaleRepKey/);
+  assert.deepEqual(admin.body.rows.map(row => [row.setterKey, row.estimatorKey, row.state]), [['rep.one', 'est.bea', 'awaiting_close']], 'Admin > Setters still names the estimator');
+
+  // A converted, collected walkthrough: of the allocations the rep sees their own 13% share only.
+  const converted = { id: 'w1', walkthroughId: 'w1', setterKey: 'rep.one', estimatorKey: 'est.bea', closingActorKey: 'est.bea', directSaleRepKey: 'rep.two', state: 'review_required', rate: 0.13,
+    allocations: [{ id: 'j1:appointment_setter:setter:rep.one', role: 'setter', repKey: 'rep.one', rate: 0.13, amountCents: 26000 }, { id: 'j1:appointment_setter:estimator:est.bea', role: 'estimator', repKey: 'est.bea', rate: 0.07, amountCents: 14000 }] };
+  const shown = repSetterRows({ rows: [converted, { ...converted, id: 'w2', walkthroughId: 'w2', setterKey: 'rep.two' }], truncated: false, policy: { rate: 0.13 } }, 'rep.one');
+  assert.deepEqual(shown, { rows: [{ id: 'w1', walkthroughId: 'w1', setterKey: 'rep.one', state: 'review_required', rate: 0.13, allocations: [converted.allocations[0]] }], truncated: false, policy: { rate: 0.13 } });
 });

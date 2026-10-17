@@ -12,6 +12,8 @@ import { decodeFirestoreFields, encodeFirestoreFields } from '../functions/_lib/
 import { staffDirectoryHandlers } from '../functions/api/staff-directory.js';
 import * as employeeHub from '../functions/api/employee-hub.js';
 import { vaultFirestore, staffEnv, cookieFor, seedAccount, login, jsonRequest } from './helpers/vault-fixture.mjs';
+import { storedHighlevelUserId } from '../functions/_lib/staff-directory.js';
+import { estimatorHighLevelUserId, storedHighLevelUserId } from '../functions/_lib/highlevel-users.js';
 
 const NOW = '2026-09-22T18:00:00.000Z';
 const clock = (iso = NOW) => () => new Date(iso);
@@ -630,6 +632,25 @@ test('set_personal: shirt size, birthday and its team visibility are validated, 
   // The legacy employee-hub profile form cannot write any of them.
   for (const field of ['shirtSize', 'birthDate', 'birthdayVisibleToTeam', 'highlevelUserId']) assert.ok(DIRECTORY_PROFILE_FIELDS.includes(field), field);
   assert.deepEqual(legacyProfileInput({ jobTitle: 'x', shirtSize: 'S', birthDate: '2000-01-01', birthdayVisibleToTeam: true, highlevelUserId: 'x' }), { jobTitle: 'x' });
+});
+
+// E2E-D2D finding: the directory saved (and showed as linked) IDs with dashes, underscores or under 8 characters that the
+// HighLevel schedule mirror and the walkthrough appointment then silently ignored, assigning the estimator's deal to the
+// default HighLevel user. The directory now accepts exactly the form those assign work to.
+test('a HighLevel user ID is saved only in the form the schedule mirror assigns an estimator\'s deals to', async () => {
+  const store = memory({ accounts: [account('Crew.One')] }), directory = service(store), first = await directory.mutate(people.TylerG, change('Crew.One', '', { action: 'set_personal', shirtSize: 'M' }));
+  for (const highlevelUserId of ['synthetic-ghl-user-alex', 'ghl_user_0001', 'ghlUser', 'abc', 'x'.repeat(65)]) {
+    await rejects(directory.mutate(people.TylerG, change('Crew.One', first.person.revision, { action: 'set_personal', highlevelUserId })), 'staff_directory_invalid_personal', 400);
+    assert.equal(storedHighlevelUserId(highlevelUserId), null, `${highlevelUserId} never reads as linked`);
+    assert.equal(storedHighLevelUserId(highlevelUserId), null);
+  }
+  assert.equal(store.rows.get('crew.one').data.highlevelUserId, undefined, 'nothing was saved');
+  await directory.mutate(people.TylerG, change('Crew.One', first.person.revision, { action: 'set_personal', highlevelUserId: ' SyntheticGhlUser01 ' }));
+  const saved = store.rows.get('crew.one').data;
+  assert.equal(saved.highlevelUserId, 'SyntheticGhlUser01');
+  // What the directory saved is exactly what the mirror assigns the estimator's walkthrough deal to.
+  const visit = { type: 'walkthrough', assignedCrew: ['crew.one'] };
+  assert.equal(await estimatorHighLevelUserId({ EGC_STAFF_DIRECTORY_ENABLED: 'true' }, visit, { read: async () => ({ data: saved }) }), 'SyntheticGhlUser01');
 });
 
 test('age is whole years on the Denver calendar date, a Feb 29 birthday counts on Mar 1, and the emergency contact reads the older single field', () => {

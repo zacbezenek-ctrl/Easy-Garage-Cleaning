@@ -73,8 +73,9 @@ export function storedWeeklyAvailability(value) {
 
 // A birthday is 14 to 100 years before today (Denver); never in the future.
 const MIN_AGE = 14, MAX_AGE = 100;
-// HighLevel user IDs are letters and digits (20 today); dashes and underscores are kept in case that changes.
-const HIGHLEVEL_USER_ID = /^[A-Za-z0-9_-]{1,64}$/;
+// HighLevel user IDs are letters and digits (20 today). The schedule mirror and the walkthrough appointment assign work
+// to exactly what this accepts (highlevel-users.js uses this pattern), so an ID saved here is never silently ignored there.
+export const HIGHLEVEL_USER_ID = /^[A-Za-z0-9]{8,64}$/;
 export const storedShirtSize = value => SHIRT_SIZES.includes(value) ? value : null;
 export const storedBirthDate = value => validDate(value) ? value : null;
 export const storedHighlevelUserId = value => typeof value === 'string' && HIGHLEVEL_USER_ID.test(value) ? value : null;
@@ -104,7 +105,7 @@ function personalValue(key, value, today) {
     return value;
   }
   const id = typeof value === 'string' ? value.trim() : '';
-  if (!HIGHLEVEL_USER_ID.test(id)) throw invalid('Enter the HighLevel user ID as HighLevel shows it: letters and digits, at most 64 characters. Leave it blank to remove it.');
+  if (!HIGHLEVEL_USER_ID.test(id)) throw invalid('Enter the HighLevel user ID as HighLevel shows it: 8 to 64 letters and digits. Leave it blank to remove it.');
   return id;
 }
 /** The personal fields an input sets, validated ({} when it names none). null or '' clears a field; birthdayVisibleToTeam

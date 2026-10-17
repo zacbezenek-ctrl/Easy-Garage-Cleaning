@@ -41,6 +41,16 @@ async function loadMoney(store, { repKey = null } = {}) {
   return { sales: sales.map(clean), payouts: payouts.map(clean), training: training.map(clean) };
 }
 
+/* A rep's own setter records (appointment setting, 13% / 7%), as the rep sees them: the estimator, whoever closed the job
+   and any other rep's direct sale stay with the office (Admin > Setters lists them); of the allocations only the rep's own
+   setter share is shown, never the estimator's pay. The bridge (knock-bridge.js) records the estimator on every door
+   walkthrough, whose staff key a rep otherwise never learns (estimatorRef). */
+export function repSetterRows(setters, repKey) {
+  const rows = (setters?.rows || []).filter(row => row?.setterKey === repKey).map(({ estimatorKey, closingActorKey, directSaleRepKey, allocations, ...row }) => ({
+    ...row, allocations: (Array.isArray(allocations) ? allocations : []).filter(item => item?.role === 'setter' && item.repKey === repKey) }));
+  return { ...setters, rows };
+}
+
 /* A rep's pay: this period and the five before, plus each sale's commission state. */
 async function myMoney({ store, rep, settings, nowMs, params, env, dispatch = null }) {
   const own = await loadMoney(store, { repKey: rep.repKey });
@@ -73,7 +83,7 @@ async function myMoney({ store, rep, settings, nowMs, params, env, dispatch = nu
       : { state: 'pending', amount: projectedCommission(sale, settings.commission) },
   }));
   const overrides = rep.role === 'lead' ? leadOverrides(team, settings.commission, { now: nowMs }).filter(o => o.leadKey === rep.repKey) : [];
-  return { periods, sales: bySale, setters: await setterAttributions(store, env, { repKey: rep.repKey, nowMs }),
+  return { periods, sales: bySale, setters: repSetterRows(await setterAttributions(store, env, { repKey: rep.repKey, nowMs }), rep.repKey),
     overrides: overrides.map(o => ({ amount: o.amount, earnedAt: new Date(o.earnedAt).toISOString() })), rates: settings.commission, trainingHourlyRate: settings.payroll.trainingHourlyRate };
 }
 
