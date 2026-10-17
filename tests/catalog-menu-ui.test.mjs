@@ -46,7 +46,7 @@ function firestore() {
     const key = path.slice(1), doc = docs.get(key);
     return doc ? Response.json({ name: ROOT + key, fields: doc.fields, updateTime: doc.updateTime }) : error('NOT_FOUND', 404, `Document "${ROOT}${key}" not found.`);
   }
-  return { docs, posts, fetcher, get: key => docs.has(key) ? decodeFirestoreFields(docs.get(key).fields) : null, put: (key, data) => docs.set(key, { fields: encodeFirestoreFields(data), updateTime: time() }) };
+  return { docs, posts, gets: [], fetcher, get: key => docs.has(key) ? decodeFirestoreFields(docs.get(key).fields) : null, put: (key, data) => docs.set(key, { fields: encodeFirestoreFields(data), updateTime: time() }) };
 }
 
 function screen({ who = OWNER, env = BUILDER, fs = firestore() } = {}) {
@@ -56,7 +56,7 @@ function screen({ who = OWNER, env = BUILDER, fs = firestore() } = {}) {
   async function hubFetch(url, init = {}) {
     const method = init.method || 'GET', request = new Request(ORIGIN + url, { method, headers: { ...(init.headers || {}), Origin: ORIGIN }, body: init.body });
     const handler = url.startsWith('/api/quote-draft') ? quotes : catalog;
-    if (method === 'POST') fs.posts.push(JSON.parse(init.body));
+    if (method === 'POST') fs.posts.push(JSON.parse(init.body)); else fs.gets.push(url);
     return method === 'POST' ? handler.post({ request, env }) : handler.get({ request, env });
   }
   const context = { console, Intl, URL, Promise, AbortController, crypto, setTimeout, clearTimeout, queueMicrotask, document, Node: document.Node, sessionStorage: session, location: { href: ORIGIN + '/employee.html' }, addEventListener() {}, removeEventListener() {} };
@@ -108,11 +108,39 @@ test('a manager sees the draft prices and reasons but cannot approve them', asyn
   assert.ok(off(ui.row(shelf.id).querySelector('input[type="checkbox"]')));
 });
 
-test('with the builder flag off the catalog screen shows no menu prices', async () => {
-  const ui = screen({ env: {} });
-  await ui.settle(() => ui.root()?.textContent.includes('Catalog pricing is turned off'), 'the screen');
-  for (let round = 0; round < 50; round++) await new Promise(resolve => setImmediate(resolve));
-  assert.doesNotMatch(ui.root().textContent, /pricing-menu/);
+test('with the builder flag off the catalog screen shows no menu prices and never asks for them', async () => {
+  for (const env of [{}, { CATALOG_QUOTES_ENABLED: 'true' }]) {
+    const ui = screen({ env });
+    await ui.settle(() => ui.root()?.textContent.includes(env.CATALOG_QUOTES_ENABLED ? 'Items' : 'Catalog pricing is turned off'), 'the screen');
+    for (let round = 0; round < 50; round++) await new Promise(resolve => setImmediate(resolve));
+    assert.doesNotMatch(ui.root().textContent, /pricing-menu/);
+    assert.deepEqual(ui.fs.gets.filter(url => url.startsWith('/api/quote-draft')), [], 'no builder request: the catalog overview says the builder is off');
+  }
+});
+
+test('cleaning bases are priced by the owner, Tick all leaves them out, and one request holds at most 100 changes', async () => {
+  const ui = screen();
+  await ui.settle(() => ui.root()?.textContent.includes('pricing-menu prices are drafts'), 'the menu prices');
+  assert.match(ui.root().textContent, /historical full-service base, which already included hauling/);
+  assert.match(ui.root().textContent, /also wait for your installation decision/);
+  const base = menu.services.find(item => item.name === 'Two-car garage base');
+  const tick = id => { const box = ui.row(id).querySelector('input[type="checkbox"]'); box.checked = !box.checked; box.dispatchEvent({ type: 'change', target: box }); };
+  tick(base.id);
+  const amount = ui.row(base.id).querySelector('input.cat-menu-amount');
+  assert.deepEqual([amount.value, amount.getAttribute('placeholder')], ['', 'Cleaning-only amount'], 'the owner types the cleaning-only amount');
+  ui.button('Review 1 change').click();
+  assert.match(ui.row(base.id).textContent, /Enter the approved amount as dollars/);
+  tick(base.id);
+  const ticks = () => ui.root().querySelectorAll('tbody input[type="checkbox"]').filter(box => box.checked && /^Approve /.test(box.getAttribute('aria-label'))).length;
+  ui.document.body.querySelectorAll('button').filter(node => node.textContent === 'Tick all in this step')[0].click();
+  assert.ok(menu.services.filter(item => item.group === 'cleaning-base').every(item => !ui.row(item.id).querySelector('input[type="checkbox"]').checked), 'Tick all leaves the cleaning bases unticked');
+  const removal = ticks();
+  ui.document.body.querySelectorAll('button').filter(node => node.textContent === 'Tick all in this step').at(-1).click();
+  assert.equal(ticks(), 100, `the storage step fills the request up to 100 (${removal} removal prices were ticked first)`);
+  assert.ok(!off(ui.button('Review 100 changes')));
+  tick(menu.products.filter(item => item.section === 'storage').find(item => !ui.row(item.id).querySelector('input[type="checkbox"]').checked).id);
+  assert.match(ui.root().textContent, /Approve or revoke at most 100 prices at a time: untick 1/);
+  assert.ok(off(ui.button('Review 101 changes')));
 });
 
 test('the goods markup setting is edited, validated and reviewed like every pricing setting', () => {
@@ -128,14 +156,23 @@ test('the goods markup setting is edited, validated and reviewed like every pric
   // The shipped settings (and any saved before the setting existed) keep no field until the owner changes it.
   assert.equal(Object.hasOwn(defaults, 'goodsMarkup'), false);
   assert.equal(Object.hasOwn(M.parseSettings(M.settingsForm(defaults, 'owner-older'), defaults).settings, 'goodsMarkup'), false);
+  // The installation confirmation works the same way.
+  assert.equal(form.goodsInstallationIncluded, false);
+  assert.equal(Object.hasOwn(M.parseSettings(form, defaults).settings, 'goodsInstallationIncluded'), false);
+  const included = M.parseSettings({ ...form, goodsInstallationIncluded: true }, defaults).settings;
+  assert.equal(included.goodsInstallationIncluded, true);
+  assert.doesNotThrow(() => validatePricingSettings(included));
+  assert.deepEqual(JSON.parse(JSON.stringify(M.settingsChanges(defaults, included))).find(row => row.label.startsWith('Installation included')), { label: 'Installation included in goods prices (pricing menu)', before: 'No', after: 'Yes' });
+  assert.equal(M.parseSettings(M.settingsForm(included, 'owner-again'), included).settings.goodsInstallationIncluded, true, 'once saved it is kept');
 });
 
 test('the goods markup field and the Menu prices tab appear in the catalog screen only when the builder is on', async () => {
   const on = screen({ env: { ...BUILDER, CATALOG_QUOTES_ENABLED: 'true' } });
   await on.settle(() => on.root()?.querySelector('.cat-tabs')?.textContent.includes('Menu prices'), 'the Menu prices tab');
   assert.match(on.root().textContent, /Goods markup \(pricing-menu multiplier\)/);
+  assert.match(on.root().textContent, /Shelving and storage installation is included in the goods price/);
   const off = screen({ env: { CATALOG_QUOTES_ENABLED: 'true' } });
   await off.settle(() => off.root()?.querySelector('.cat-tabs'), 'the catalog tabs');
   for (let round = 0; round < 50; round++) await new Promise(resolve => setImmediate(resolve));
-  assert.doesNotMatch(off.root().textContent, /Goods markup|Menu prices/);
+  assert.doesNotMatch(off.root().textContent, /Goods markup|Menu prices|installation is included/);
 });

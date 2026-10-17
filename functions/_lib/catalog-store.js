@@ -9,8 +9,8 @@
  *                                  for good, so the settingsVersion a quote records resolves to what priced it
  *   catalogOperations/<requestId>  receipts {action, fingerprint, actorId, requestId, at, result}
  *   pricingMenuApprovals/current   the owner's approved pricing-menu prices for the quote builder (EGC_QUOTE_BUILDER_ENABLED)
- *                                  {approvals:{[menuItemId]:{unitCents,kind,approvedAt,approvedBy,requestId,basis}}, menuVersion,
- *                                  settingsVersion, updatedAt, updatedBy, requestId}; written only by menu.approve
+ *                                  {approvals:{[menuItemId]:{unitCents,kind,identity,approvedAt,approvedBy,requestId,basis}},
+ *                                  menuVersion, settingsVersion, updatedAt, updatedBy, requestId}; written only by menu.approve
  * With no pointer the seed catalog (functions/_data/garage-catalog.json) is the published catalog, and with
  * no settings document the placeholder defaults apply (mustSetBeforeCustomerUse: true, internal use only).
  * A stored record that is malformed or fails verification fails closed (503) and never falls back to a seed.
@@ -26,8 +26,7 @@ import { auditWrite } from './hub-audit.js';
 import { CATALOG_SCHEMA_VERSION, catalogLinePricer, goodsMarkupOf, settingsReadyForCustomers, staleItems, validateCatalog, validatePricingSettings } from './catalog.js';
 import { denverToday } from './dispatch-time.js';
 import { SEED_CATALOG_JSON, SEED_SETTINGS_JSON } from '../_data/catalog-seed.js';
-import { PRICING_MENU_JSON } from '../_data/pricing-menu.js';
-import { menuPrices, parsePricingMenu, validateMenuApprovals } from './composite-quote.js';
+import { bundledPricingMenu, menuItemIdentity, menuPrices, validateMenuApprovals } from './composite-quote.js';
 import { walkthroughPricing, walkthroughServiceItems } from './pricing-config.js';
 
 export const CATALOG_VERSIONS = 'catalogVersions', PRICING_SETTINGS = 'pricingSettings', PRICING_SETTINGS_VERSIONS = 'pricingSettingsVersions', CATALOG_OPERATIONS = 'catalogOperations', CURRENT = 'current';
@@ -177,10 +176,8 @@ export async function readCatalogState(store, { cache = verifiedCatalogs } = {})
   return { ...await publishedCatalog(store, pointer, cache), settings, settingsState };
 }
 
-// The bundled pricing menu (functions/_data/pricing-menu.json via its generated module), parsed and validated once
-// per isolate. tests/composite-quote.test.mjs validates the shipped menu.
-let menu = null;
-export const bundledPricingMenu = () => menu || (menu = parsePricingMenu(PRICING_MENU_JSON));
+// The bundled pricing menu, parsed and validated once per isolate (composite-quote.js).
+export { bundledPricingMenu };
 
 function approvalsState(row) {
   if (!row) return { items: {}, revision: null };
@@ -371,7 +368,10 @@ async function publish(store, session, input, now, actor) {
   return publishResult(record, input.requestId, false, typeof updateTime === 'string' && updateTime ? { version, revision: updateTime } : await store.read(CATALOG_VERSIONS, CURRENT));
 }
 
-const MENU_ID = /^(?:hd-\d{6,12}|egc-\d{3})$/, MAX_MENU_CHANGES = 300;
+// One request changes at most 100 prices, so its owner-only audit entry (hub-audit.js keeps 100 keys per snapshot)
+// records every amount before and after; the Hub screen ticks at most 100 at a time.
+export const MAX_MENU_CHANGES = 100;
+const MENU_ID = /^(?:hd-\d{6,12}|egc-\d{3})$/;
 function approvalsResult(row, requestId, replayed, current = true) {
   const state = approvalsState(row);
   return { ok: true, authority: 'employee_hub', action: 'menu.approve', requestId, replayed, approvals: { revision: current ? state.revision : null, current, count: Object.keys(state.items).length, items: state.items } };
@@ -412,7 +412,8 @@ async function approveMenuPrices(store, session, input, now, actor, { compositeS
     if (price.source === 'menu') throw fail('menu_item_approved', `${price.item.name} already carries an owner-approved amount in the pricing menu.`, 400);
     if (price.kind === 'product' && unitCents !== price.unitCents) throw fail('menu_price_changed', `The price of ${price.item.name} is now $${(price.unitCents / 100).toFixed(2)} per pack. Reload and review it before approving.`, 409, { id, unitCents: price.unitCents });
     const basis = price.kind === 'product' ? { retailPerPackCents: price.item.retailPerPackCents, goodsMarkup: goodsMarkupOf(state.settings).multiplier } : { draftCents: price.unitCents };
-    items[id] = { unitCents, kind: price.kind, approvedAt: now, approvedBy: actor, requestId: input.requestId, basis };
+    // The identity ties the approval to this version of the item: a re-import that renames or re-maps the id voids it.
+    items[id] = { unitCents, kind: price.kind, identity: menuItemIdentity(price.item), approvedAt: now, approvedBy: actor, requestId: input.requestId, basis };
     changed.push({ id, unitCents, previous: state.approvals.items[id]?.unitCents ?? null });
   }
   for (const id of revoke) {
@@ -424,7 +425,8 @@ async function approveMenuPrices(store, session, input, now, actor, { compositeS
   const summary = list => Object.fromEntries(list.map(entry => [entry.id, entry]));
   const writes = [
     { collection: MENU_APPROVALS, id: CURRENT, revision, patch },
-    { collection: CATALOG_OPERATIONS, id: receiptId, patch: { action: input.action, fingerprint, actorId: actor, requestId: input.requestId, at: now, result: { approved: approve.map(entry => entry.id), revoked: revoke, menuVersion: state.menu.menuVersion } } },
+    // The receipt keeps every change with its amount and the amount it replaced, like the audit entry.
+    { collection: CATALOG_OPERATIONS, id: receiptId, patch: { action: input.action, fingerprint, actorId: actor, requestId: input.requestId, at: now, result: { approved: approve.map(entry => entry.id), revoked: revoke, menuVersion: state.menu.menuVersion, settingsVersion: state.settings.settingsVersion, changes: changed } } },
     auditWrite({ actor: { id: actor, kind: 'human', role: session.role }, via: 'hub', action: 'pricing_menu.approve', entity: { collection: MENU_APPROVALS, id: CURRENT },
       before: summary(changed.map(({ id, previous }) => ({ id, unitCents: previous }))), after: summary(changed.map(({ id, unitCents }) => ({ id, unitCents }))), requestId: input.requestId, visibility: 'owner', now }),
   ];

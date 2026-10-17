@@ -55,9 +55,11 @@ export function catalogHandlers({ session = getHubSession, storage = catalogStor
         const actor = await session(request, env); requireCatalogViewer(actor);
         const params = new URL(request.url).searchParams, names = [...params.keys()];
         if (new Set(names).size !== names.length || names.some(name => name !== 'view') || params.has('view') && !['status','full'].includes(params.get('view'))) return reply(400, { ok:false, code:'catalog_request_invalid', error:'The only catalog option is view=status or view=full.' });
-        if (!catalogQuotesEnabled(env)) return reply(200, { ok:true, authority:'employee_hub', enabled:false });
+        // quoteBuilder tells the Hub screen to load the pricing-menu approvals; absent (flag off) the answer is unchanged.
+        const builder = quoteBuilderEnabled(env) && params.get('view') !== 'status' ? { quoteBuilder: true } : {};
+        if (!catalogQuotesEnabled(env)) return reply(200, { ok:true, authority:'employee_hub', enabled:false, ...builder });
         if (params.get('view') === 'status') return reply(200, { ok:true, authority:'employee_hub', enabled:true });
-        return reply(200, await catalogOverview(storage(env), actor, now(), { full: params.get('view') === 'full', cache }));
+        return reply(200, { ...await catalogOverview(storage(env), actor, now(), { full: params.get('view') === 'full', cache }), ...builder });
       } catch (error) { return errorResponse(error); }
     },
     async post({ request, env }) {

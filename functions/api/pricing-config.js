@@ -1,10 +1,13 @@
 import { getHubSession, isHubOwner } from '../_lib/hub-session.js';
 import { can } from '../_lib/staff-roles.js';
 import { PRICING_PARTS, pricingConfig, walkthroughServiceItems } from '../_lib/pricing-config.js';
+import { quoteBuilderEnabled } from '../_lib/catalog-store.js';
 
 // Internal price tables for the signed-in role. Walkthrough and phone-quote tables go
 // to staff who author quotes; the labor baseline, wages and targets only to the owner.
 // Plain crew get nothing. GET ?parts=walkthrough,phone,owner (default: every permitted part).
+// With EGC_QUOTE_BUILDER_ENABLED=true a walkthrough answer also says quoteBuilder:true, so the walkthrough page opens
+// the guided quote builder without a request of its own; with the flag off the answer is unchanged.
 const reply = (status, body) => Response.json(body, { status, headers: { 'Cache-Control': 'no-store', 'X-Content-Type-Options': 'nosniff' } });
 const failure = (status, code, error) => reply(status, { ok: false, code: `pricing_config_${code}`, error });
 
@@ -21,7 +24,7 @@ export function pricingConfigHandlers({ session = getHubSession, catalog = walkt
       const parts = requested || [...permitted];
       if (!parts.length || parts.some(part => !permitted.has(part))) return failure(403, 'forbidden', 'This login cannot view internal prices.');
       try {
-        return reply(200, { ok: true, authority: 'employee_hub', ...await pricingConfig(parts, { catalog }) });
+        return reply(200, { ok: true, authority: 'employee_hub', ...await pricingConfig(parts, { catalog }), ...(quoteBuilderEnabled(env) && parts.includes('walkthrough') ? { quoteBuilder: true } : {}) });
       } catch (error) {
         if (error?.code?.startsWith('pricing_config_') && error.status < 500) return failure(error.status, error.code.slice('pricing_config_'.length), error.message);
         return failure(503, 'unavailable', 'Prices could not be loaded. Retry shortly; nothing was changed.');

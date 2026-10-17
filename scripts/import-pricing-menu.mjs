@@ -6,7 +6,9 @@
  * Only two sheets are read, and from them only allowlisted columns:
  *   Visual_products.csv  product name, Home Depot internet SKU, units per pack, public retail per pack (the goods cost
  *                        basis, like garage-catalog.json retailPriceHighCents), category, product / source / photo
- *                        URLs, per-order pack limit, fit warnings, retail evidence and the approval status
+ *                        URLs, per-order pack limit, fit warnings with every sentence that states a dollar amount
+ *                        removed (sales logins read them; the cost basis is internal), retail evidence and the
+ *                        approval status
  *   Item_menu.csv        item id, group, name, unit, owner-approval status, the approved amount of an APPROVED row
  *                        only, and its scope note with any sentence about money, margin or commission removed
  * The repository is public: margins, proposed or historical selling prices, commission, CAC, wage and labor
@@ -102,6 +104,10 @@ function url(value,where,{optional=false}={}){
 }
 const sentences=value=>oneLine(value).split(/(?<=[.;!?])\s+/).filter(Boolean);
 export const scrubNote=value=>{const kept=sentences(value).filter(sentence=>!SENSITIVE.test(sentence)).join(' ').slice(0,600).trim();return kept||null;};
+// Fit warnings reach sales logins and the job breakdown: a sentence stating a dollar amount (a retail price, which is
+// the goods cost basis) is dropped; sizes, weights and fit notes stay.
+const MONEY=/\$\s?\d|\d\s?(?:dollars?|usd)\b|\d\s?¢/i;
+export const scrubWarnings=value=>{const kept=sentences(value).filter(sentence=>!MONEY.test(sentence)).join(' ').slice(0,1000).trim();return kept||null;};
 
 const PRODUCT_COLUMNS=['Product / pack','Internet SKU','Units per pack','Retail per pack','Product / price source','Fit / sourcing warnings','Photo URL','Per-order pack limit','Category','Retail evidence / date','Offering / approval status','Product URL'];
 const ITEM_COLUMNS=['Item ID','Group','Item','Unit','Owner approval','Direct estimator price','Inclusions / exclusions'];
@@ -116,12 +122,12 @@ export function importProducts(text,{evidenceDate=EVIDENCE_DATE}={}){
     if(row.get('Offering / approval status')!==DRAFT_STATUS)throw new Error(`${where}: status "${row.get('Offering / approval status')}" is not the draft status; no approval is inferred from an import`);
     const mapped=CATEGORY_GROUPS[row.get('Category')];
     if(!mapped)throw new Error(`${where}: category "${row.get('Category')}" has no builder step`);
-    const limit=row.get('Per-order pack limit'),warnings=oneLine(row.get('Fit / sourcing warnings'));
+    const limit=row.get('Per-order pack limit'),warnings=scrubWarnings(row.get('Fit / sourcing warnings'));
     products.push({id:`hd-${sku}`,sku,retailer:'The Home Depot',name:oneLine(row.get('Product / pack')).slice(0,160),section:mapped[0],group:mapped[1],
       unitsPerPack:whole(row.get('Units per pack'),`${where} units per pack`),retailPerPackCents:cents(row.get('Retail per pack'),`${where} retail per pack`),
       perOrderPackLimit:!limit||/^not stated$/i.test(limit)?null:whole(limit,`${where} per-order pack limit`),
       productUrl:url(row.get('Product URL')||row.get('Product / price source'),`${where} product URL`),photoUrl:url(row.get('Photo URL'),`${where} photo URL`,{optional:true}),
-      fitWarnings:warnings?warnings.slice(0,1000):null,
+      fitWarnings:warnings,
       evidence:{checkedOn:evidenceDate,sourceUrl:url(row.get('Product / price source')||row.get('Product URL'),`${where} price source`),note:oneLine(row.get('Retail evidence / date')).slice(0,300)||'Public retail price'},
       status:'draft'});
   }

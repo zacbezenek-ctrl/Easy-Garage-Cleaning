@@ -90,15 +90,17 @@
     return out;
   }
   // The walkthrough's own capture pre-fills the removal step: garage size, truckloads, special items, access and
-  // cleaning add-ons. Shelving and storage are always chosen in the builder.
+  // cleaning add-ons. Shelving and storage are always chosen in the builder. The walkthrough's size base was its
+  // full-service price, which already covered hauling, so a base is pre-selected only for a walkthrough without
+  // truckloads; with loads the estimator chooses whether a cleaning base applies.
   function selectionFromWalkthrough(p, menu) {
     const sel = emptySelection(), services = Array.isArray(menu?.services) ? menu.services : [], scope = p?.scope || {};
     const find = test => services.find(test), list = value => Array.isArray(value) ? value : [];
     const size = String(scope.garages || '');
-    const base = find(item => item.group === 'cleaning-base' && item.garageSize === size);
+    const loads = Number(scope.loads || 0), hauling = Number.isFinite(loads) && loads > 0;
+    const base = hauling ? null : find(item => item.group === 'cleaning-base' && item.garageSize === size);
     if (base) sel.removal[base.id] = 1;
-    const loads = Number(scope.loads || 0);
-    if (Number.isFinite(loads) && loads > 0) {
+    if (hauling) {
       let full = Math.floor(loads), quarters = Math.round((loads - full) * 4);
       if (quarters === 4) { full += 1; quarters = 0; }
       const truck = find(item => item.junkFraction === 1), part = quarters ? find(item => item.junkFraction === quarters / 4) : null;
@@ -110,9 +112,16 @@
     for (const key of list(scope.access)) { const item = find(row => row.group === 'access' && row.walkthroughKey === key); if (item) sel.removal[item.id] = 1; }
     const finish = list(scope.finish), cleaning = key => find(row => row.group === 'cleaning' && row.walkthroughKey === key);
     if (finish.includes('deep_clean')) { const item = find(row => row.group === 'cleaning' && row.garageSize && row.garageSize === size); if (item) sel.removal[item.id] = 1; }
-    if (finish.includes('pressure_wash') && size === '1' && cleaning('pressure_wash')) sel.removal[cleaning('pressure_wash').id] = 1;
+    if (finish.includes('pressure_wash') && base?.garageSize === '1' && cleaning('pressure_wash')) sel.removal[cleaning('pressure_wash').id] = 1;
     if (finish.includes('mouse_trapping') && cleaning('mouse_trapping')) sel.removal[cleaning('mouse_trapping').id] = 1;
     if (list(scope.hazards).includes('Pest waste') && cleaning('Pest waste')) sel.removal[cleaning('Pest waste').id] = 1;
+    return sel;
+  }
+  // A saved quote's selection (job.compositePricing, the shape the server prices) in the builder's own shape.
+  function selectionOfPricing(pricing) {
+    const sel = emptySelection(), rows = value => Array.isArray(value) ? value.filter(entry => entry && typeof entry.id === 'string') : [];
+    for (const entry of rows(pricing?.removal)) sel.removal[entry.id] = entry.quantity;
+    for (const step of ['shelving', 'storage']) sel[step] = rows(pricing?.[step]).map(entry => ({ id: entry.id, quantity: entry.quantity }));
     return sel;
   }
   // The selection the server prices: the finished steps (a prefix of removal, shelving, storage) and their items.
@@ -154,8 +163,8 @@
     const saveKey = (actor, source) => `egc-quote-draft-v1:${actor}:${source || `manual:${String(d.draftId?.() || '')}`}`, sendKey = (actor, job) => `egc-quote-send-v1:${actor}:${job.id}:r${job.estimate?.revision ?? ''}`;
     function read(key) { try { return JSON.parse(d.storage.getItem(key) || 'null'); } catch { throw new Error('The saved quote request is unreadable. Review the quote in the Hub before saving again.'); } }
     const remember = (key, value) => value ? d.storage.setItem(key, JSON.stringify(value)) : d.storage.removeItem(key);
-    async function request(url, body) {
-      const controller = new AbortController(), timer = setTimeout(() => controller.abort(), 60000);
+    async function request(url, body, timeoutMs = 60000) {
+      const controller = new AbortController(), timer = setTimeout(() => controller.abort(), timeoutMs);
       let response;
       try { response = await d.fetch(url, body ? { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body), signal: controller.signal } : { cache: 'no-store', signal: controller.signal }); }
       catch { throw Object.assign(new Error('The server did not answer. Your request is kept; retry it unchanged.'), { status: 0 }); }
@@ -243,8 +252,9 @@
     const pendingSend = async job => { const user = await d.actor(); return user ? read(sendKey(user, job)) : null; };
     function clear() { if (typeof d.storage.key !== 'function') return; for (let index = d.storage.length - 1; index >= 0; index -= 1) { const key = d.storage.key(index) || ''; if (/^egc-quote-(draft|send|builder)-v1:/.test(key)) d.storage.removeItem(key); } }
     // The guided builder (removal, then shelving, then extra storage): the server's priced menu for this login and
-    // a server price check of the steps finished so far. Neither saves anything.
-    async function builder() { await actor(); return request('/api/quote-draft?view=builder'); }
+    // a server price check of the steps finished so far. Neither saves anything. The menu is asked for only while
+    // the Hub says the builder is on, and gives up after 15 s so the dialog can offer a retry.
+    async function builder() { await actor(); return request('/api/quote-draft?view=builder', null, 15000); }
     async function compositePreview(compositePricing) { await actor(); return request('/api/quote-draft', { action: 'composite_preview', compositePricing }); }
     // The builder selection of this walkthrough, kept on this device until the quote is saved or the person signs out.
     const builderKey = (user, source) => `egc-quote-builder-v1:${user}:${source || `manual:${String(d.draftId?.() || '')}`}`;
@@ -268,9 +278,11 @@
   function open(options) {
     if (active) return active.dialog;
     const client = options.client || createClient(options);
-    // A walkthrough quote opens the guided builder when the Hub offers it (EGC_QUOTE_BUILDER_ENABLED); otherwise,
-    // offline, or on request, the walkthrough's own itemized quote is reviewed exactly as before.
-    const builderWanted = typeof options.draft !== 'function' && typeof options.plan === 'function' && options.builder !== false && typeof client.builder === 'function';
+    // A walkthrough quote opens the guided builder when the Hub says it is on (EGC_QUOTE_BUILDER_ENABLED: the
+    // walkthrough's /api/pricing-config answer, crew/walkthrough-pricing.js quoteBuilder()); otherwise the
+    // walkthrough's own itemized quote is reviewed exactly as before, with no request of its own.
+    const hint = () => { try { return root.EGCWalkthroughPricing?.quoteBuilder?.() === true; } catch { return false; } };
+    const builderWanted = typeof options.draft !== 'function' && typeof options.plan === 'function' && typeof client.builder === 'function' && (options.builder === true || options.builder !== false && hint());
     const S = { step: 'review', mode: builderWanted ? 'probe' : 'legacy', busy: false, error: '', status: '', saved: null, preview: null, sent: null, validUntil: denverDate(options.now ? options.now() : Date.now(), 14), generation: 0 };
     const opener = document.activeElement, body = h('div', { class: 'qd-body' }), foot = h('div', { class: 'qd-foot' });
     const kicker = h('p', { class: 'qd-kicker' }, options.kicker || 'Not signing today?'), heading = h('h2', { id: 'qd-title' }, options.title || 'Send options for review');
@@ -279,39 +291,48 @@
     const signout = () => { client.clear(); close(); };
     const plan = () => { try { return options.plan() || {}; } catch { return {}; } };
     const draft = () => typeof options.draft === 'function' ? options.draft(S.validUntil) : S.mode === 'builder' ? compositeDraft(plan(), S.priced, S.validUntil) : draftFromWalkthrough(options.plan(), S.validUntil);
+    // An earlier save whose answer was lost, and the quote job this walkthrough already saved (its walkthrough sync
+    // status and, for a builder quote, its selection), read once when the dialog opens.
+    const opening = (async () => {
+      const pending = await client.pendingSave().catch(() => null);
+      if (pending || typeof client.savedCapture !== 'function') return { pending, saved: null, failed: false };
+      try { return { pending, saved: await client.savedCapture(), failed: false }; } catch { return { pending, saved: null, failed: true }; }
+    })();
     // An earlier save whose answer was lost is shown and retried exactly as it
     // was frozen, never the walkthrough as it reads now.
     async function detectFrozen() {
-      const generation = S.generation, pending = await client.pendingSave().catch(() => null);
+      const generation = S.generation, { pending, saved, failed } = await opening;
       if (generation !== S.generation || S.busy) return;
       S.frozen = pending ? pending.draft : null; S.retry = Boolean(pending);
       if (pending?.draft?.valid_until) S.validUntil = pending.draft.valid_until;
       if (pending) S.step = 'review';
+      if (failed) S.captureLoadError = 'Saved walkthrough sync status could not be loaded. Reopen the quote to retry.';
+      else if (saved?.job?.captureSync) { S.saved = saved.job; S.syncEnabled = saved.captureSyncEnabled === true; }
       render();
-      if (!pending && typeof client.savedCapture === 'function') {
-        let saved;
-        try { saved = await client.savedCapture(); }
-        catch { if (generation === S.generation && !S.busy) { S.captureLoadError = 'Saved walkthrough sync status could not be loaded. Reopen the quote to retry.'; render(); } return; }
-        if (generation !== S.generation || S.busy || !saved?.job?.captureSync) return;
-        S.saved = saved.job; S.syncEnabled = saved.captureSyncEnabled === true; render();
-      }
     }
     const totalOf = list => list.reduce((sum, line) => sum + (line.selected === false ? 0 : Number(line.totalCents) || 0), 0);
     function lines(list) {
       return h('ul', { class: 'qd-lines' }, list.map(line => h('li', { class: line.included === false || line.selected === false ? 'qd-line qd-muted' : 'qd-line' }, h('span', {}, line.name, line.customerSupplied ? ' (customer supplied)' : '', line.quantity !== 1 ? ` × ${line.quantity}` : '', line.group ? ` (${line.group.label}${line.tier ? ` · ${line.tier}` : ''})` : line.optional ? ' (optional)' : ''), h('b', {}, money(line.totalCents)))));
     }
     function render() {
-      if (S.mode === 'probe') {
-        body.replaceChildren(h('p', { class: 'qd-status', role: 'status' }, 'Loading the quote builder…'), h('div', { class: 'qd-skeleton', 'aria-hidden': 'true' }, h('span'), h('span'), h('span')));
-        foot.replaceChildren(h('button', { type: 'button', class: 'qd-secondary', onclick: close }, 'Close'));
+      // An unconfirmed earlier save (the review below) and any later step are shown whatever the builder is doing.
+      if (S.mode === 'probe' && !S.frozen && S.step === 'review') {
+        body.replaceChildren(...(S.probeError ? [h('p', { class: 'qd-error', role: 'alert' }, `The quote builder could not load. ${S.probeError}`), h('p', { class: 'qb-help' }, 'Walkthrough quotes are built in the quote builder from the owner\u2019s pricing menu. Check the connection and retry; nothing was saved.')]
+          : [h('p', { class: 'qd-status', role: 'status' }, 'Loading the quote builder…'), h('div', { class: 'qd-skeleton', 'aria-hidden': 'true' }, h('span'), h('span'), h('span'))]));
+        foot.replaceChildren(...[h('button', { type: 'button', class: 'qd-secondary', onclick: close }, 'Close'), S.probeError ? h('button', { type: 'button', class: 'qd-primary', onclick: () => probeBuilder() }, 'Retry') : null].filter(Boolean));
         return;
       }
-      if (S.mode === 'builder' && !S.frozen && BUILDER_VIEWS.includes(S.step)) return renderBuilder();
+      if (S.mode === 'builder' && !S.frozen && (BUILDER_VIEWS.includes(S.step) || S.step === 'saved')) return renderBuilder();
       const children = [];
       if (S.step === 'held') {
-        children.push(h('p', { class: 'qd-done' }, S.status), h('div', { class: 'qd-notice', role: 'status' }, h('p', {}, `Sending is blocked until the owner approves ${S.held.length === 1 ? 'this draft price' : `these ${S.held.length} draft prices`}:`), h('ul', { class: 'qb-reasons' }, S.held.map(row => h('li', {}, String(row?.reason || row?.name || '')))), h('p', {}, 'The owner approves draft prices in the Hub under Catalog & pricing. Reopen this quote to send it once they are approved; the saved draft is kept.')));
+        // Saved, but not sendable: draft prices wait for the owner, or (builder on) a walkthrough-priced quote must
+        // be rebuilt in the builder first.
+        const rebuild = S.heldKind === 'builder', reasons = h('ul', { class: 'qb-reasons' }, (S.held || []).map(row => h('li', {}, String(row?.reason || row?.name || ''))));
+        children.push(h('p', { class: 'qd-done' }, S.status), rebuild
+          ? h('div', { class: 'qd-notice', role: 'status' }, h('p', {}, 'Sending is blocked: with the quote builder on, this quote must be built in the builder before it is sent.'), reasons, h('p', {}, 'The saved draft is kept. Build the quote in the builder (removal, then shelving, then extra storage) and send that one.'))
+          : h('div', { class: 'qd-notice', role: 'status' }, h('p', {}, `Sending is blocked until the owner approves ${S.held.length === 1 ? 'this price' : `these ${S.held.length} prices`}:`), reasons, h('p', {}, 'The owner approves draft prices in the Hub under Catalog & pricing. The saved draft is kept: reopen this quote from the walkthrough and choose Send saved quote once they are approved.')));
         body.replaceChildren(...children);
-        foot.replaceChildren(h('button', { type: 'button', class: 'qd-primary', onclick: close }, 'Done'));
+        foot.replaceChildren(...(rebuild && typeof client.builder === 'function' ? [h('button', { type: 'button', class: 'qd-secondary', onclick: close }, 'Close'), h('button', { type: 'button', class: 'qd-primary', onclick: openBuilder }, 'Open the quote builder')] : [h('button', { type: 'button', class: 'qd-primary', onclick: close }, 'Done')]));
         return;
       }
       if (S.step === 'review' && S.frozen) {
@@ -382,8 +403,10 @@
       const pickPartial = id => { for (const item of partials) delete S.sel.removal[item.id]; if (id) S.sel.removal[id] = 1; changed(); };
       const deep = services('cleaning').filter(item => item.garageSize), deepNow = deep.find(item => S.sel.removal[item.id]), deepFor = deep.find(item => item.garageSize === base?.garageSize);
       const toggle = item => event => setRemoval(item.id, event.target.checked ? 1 : 0);
+      // A draft base is the walkthrough's old full-service price, which already covered hauling: say so next to the loads.
+      const baseHelp = bases.some(item => !item.approved) ? 'Flat cleaning price by garage size. Draft amounts are the walkthrough\u2019s historical full-service base, which already included hauling: choose a base for the cleaning work, not to cover the truck loads below.' : 'Flat cleaning price by garage size.';
       return [
-        section('Garage cleaning base', 'Flat cleaning price by garage size.', option('radio', 'qb-base', !base, () => chooseBase(''), 'No cleaning base'), ...bases.map(item => option('radio', 'qb-base', Boolean(S.sel.removal[item.id]), () => chooseBase(item.id), item.name, item))),
+        section('Garage cleaning base', baseHelp, option('radio', 'qb-base', !base, () => chooseBase(''), 'No cleaning base'), ...bases.map(item => option('radio', 'qb-base', Boolean(S.sel.removal[item.id]), () => chooseBase(item.id), item.name, item))),
         section('Junk removal', 'Full truck loads plus at most one partial load.',
           full ? h('div', { class: 'qb-row' }, h('span', { class: 'qb-name' }, 'Full truck loads'), h('span', { class: 'qb-price' }, `${money(full.unitCents)} each`, chip(full)), qtyControl('full truck loads', S.sel.removal[full.id] || 0, 20, n => setRemoval(full.id, n))) : null,
           option('radio', 'qb-partial', !partial, () => pickPartial(''), 'No partial load'), ...partials.map(item => option('radio', 'qb-partial', item === partial, () => pickPartial(item.id), item.name, item))),
@@ -427,7 +450,7 @@
       return [
         note,
         chosen.length ? section(`In this quote (${chosen.length})`, '', h('ul', { class: 'qb-products' }, chosen.map(item => productRow(item, step)))) : h('p', { class: 'qb-help' }, step === 'shelving' ? 'No shelving yet. Add units below, or continue with none.' : 'No extra storage yet. Add products below, or continue with none.'),
-        section(step === 'shelving' ? 'Shelving units' : 'Storage products', 'Goods are priced per purchase pack. Installation is part of the service package.', filters, results, more),
+        section(step === 'shelving' ? 'Shelving units' : 'Storage products', S.menu.installation?.included === true ? 'Goods are priced per purchase pack; installation is included in that price.' : 'Goods are priced per purchase pack, without installation. A quote with goods can be saved, and is sent once the owner confirms installation is included in the goods price.', filters, results, more),
       ];
     }
     function quoteStep() {
@@ -446,19 +469,34 @@
         h('input', { id: 'qd-valid', class: 'qd-input', type: 'date', value: S.validUntil, min: denverDate(options.now ? options.now() : Date.now()), required: true, oninput: event => { S.validUntil = event.target.value; } }),
       ];
     }
+    // The builder quote this walkthrough already saved and has not sent: send it as saved (for example once the owner
+    // approved its draft prices), or edit it from its saved selection.
+    function renderSaved() {
+      const job = S.savedBuild, breakdown = job.breakdown && Array.isArray(job.breakdown.sections) ? job.breakdown : null, lines = Array.isArray(breakdown?.lines) ? breakdown.lines : [];
+      body.replaceChildren(...[
+        h('p', {}, `Quote ${job.estimate.number} revision ${job.estimate.revision} is saved as a draft and has not been sent.`),
+        ...(breakdown ? breakdown.sections.filter(entry => lines.some(line => line.section === entry.id)).map(entry => section(`${entry.label} · ${money(entry.subtotalCents)}`, '', h('ul', { class: 'qd-lines' }, lines.filter(line => line.section === entry.id).map(line => h('li', { class: 'qd-line' }, h('span', {}, line.name, line.qty !== 1 ? ` × ${line.qty}${line.unit === 'pack' ? ' packs' : ''}` : ''), h('b', {}, money(line.totalCents))))))) : []),
+        h('p', { class: 'qd-total' }, 'Quote total ', h('b', {}, money(job.estimate.amountCents)), job.estimate.validUntil ? ` · valid through ${dayText(job.estimate.validUntil)}` : ''),
+        h('p', { class: 'qd-mode' }, 'Sending checks every price against the owner\u2019s approvals now. To change the quote, edit it: it opens on the saved selection.'),
+        S.busy ? h('div', { class: 'qd-skeleton', 'aria-hidden': 'true' }, h('span')) : null,
+        S.error ? h('p', { class: 'qd-error', role: 'alert' }, S.error) : null].filter(Boolean));
+      foot.replaceChildren(h('button', { type: 'button', class: 'qd-secondary', disabled: S.busy, onclick: close }, 'Close'),
+        h('button', { type: 'button', class: 'qd-secondary', disabled: S.busy, onclick: () => { S.step = 'removal'; S.error = ''; render(); } }, 'Edit quote'),
+        h('button', { type: 'button', class: 'qd-primary', disabled: S.busy, onclick: sendSaved }, S.busy ? 'Checking…' : 'Send saved quote'));
+    }
     function renderBuilder() {
+      if (S.step === 'saved') return renderSaved();
       const order = BUILDER_VIEWS, at = order.indexOf(S.step), totals = runningTotals(S.menu, S.sel);
       const nav = h('ol', { class: 'qb-steps' }, order.map((step, index) => h('li', {}, h('button', { type: 'button', class: step === S.step ? 'on' : index < at ? 'done' : '', disabled: S.busy || index > at, 'aria-current': step === S.step ? 'step' : null, onclick: () => { S.step = step; S.error = ''; render(); } }, `${index + 1} ${STEP_LABELS[step]}`))));
       const running = S.step === 'quote' ? null : h('div', { class: 'qb-total', role: 'status' }, h('span', {}, 'Running total'), h('b', {}, money(totals.total)),
         h('small', {}, `Removal ${money(totals.removal)} · Shelving ${money(totals.shelving)} · Storage ${money(totals.storage)}${totals.drafts ? ` · ${totals.drafts} draft price${totals.drafts === 1 ? '' : 's'} need owner approval before sending` : ''}`));
       const content = S.step === 'removal' ? removalStep() : S.step === 'quote' ? quoteStep() : productStep(S.step);
       body.replaceChildren(...[nav, running, ...content,
-        S.step === 'removal' ? h('button', { type: 'button', class: 'qb-link', disabled: S.busy, onclick: () => { S.mode = 'legacy'; S.step = 'review'; S.error = ''; dialog.classList.remove('qb-dialog'); render(); } }, 'Use the walkthrough’s own itemized quote instead') : null,
         S.busy ? h('div', { class: 'qd-skeleton', 'aria-hidden': 'true' }, h('span')) : null,
         S.status ? h('p', { class: 'qd-status', role: 'status' }, S.status) : null,
         S.error ? h('p', { class: 'qd-error', role: 'alert' }, S.error) : null,
         S.error && S.stale ? h('button', { type: 'button', class: 'qd-secondary qb-more', disabled: S.busy, onclick: reloadBuilder }, 'Reload current prices') : null].filter(Boolean));
-      const back = at === 0 ? h('button', { type: 'button', class: 'qd-secondary', disabled: S.busy, onclick: close }, 'Close') : h('button', { type: 'button', class: 'qd-secondary', disabled: S.busy, onclick: () => { S.step = order[at - 1]; S.error = ''; render(); } }, 'Back');
+      const back = at === 0 ? (S.savedBuild ? h('button', { type: 'button', class: 'qd-secondary', disabled: S.busy, onclick: () => { S.step = 'saved'; S.error = ''; render(); } }, 'Saved quote') : h('button', { type: 'button', class: 'qd-secondary', disabled: S.busy, onclick: close }, 'Close')) : h('button', { type: 'button', class: 'qd-secondary', disabled: S.busy, onclick: () => { S.step = order[at - 1]; S.error = ''; render(); } }, 'Back');
       const next = S.step === 'quote' ? h('button', { type: 'button', class: 'qd-primary', disabled: S.busy, onclick: S.priced ? saveDraft : () => advance('storage') }, S.busy ? 'Working…' : !S.priced ? 'Price the quote' : S.retry ? 'Retry original save' : 'Save draft')
         : h('button', { type: 'button', class: 'qd-primary', disabled: S.busy, onclick: () => advance(S.step) }, S.busy ? 'Checking prices…' : S.step === 'storage' ? 'Review quote' : `Continue to ${STEP_LABELS[order[at + 1]].toLowerCase()}`);
       foot.replaceChildren(back, next);
@@ -493,18 +531,55 @@
       } catch (error) { if (generation === S.generation) S.error = error.message || 'Current prices could not be loaded. Retry.'; }
       finally { if (generation === S.generation) { S.busy = false; render(); } }
     }
+    // The builder menu, asked for only while the Hub said the builder is on. A Hub that answers the builder is off
+    // (400 or 404) gets the walkthrough's own quote as before; no answer keeps the dialog on a retry, because a
+    // walkthrough-priced quote cannot be sent while the builder is on. The selection comes from this device's
+    // unsaved edits, else the saved builder quote, else the walkthrough capture.
     async function probeBuilder() {
       const generation = S.generation;
-      let menu = null;
-      try { menu = await client.builder(); } catch { menu = null; }
+      if (S.probeError) { S.probeError = ''; render(); }
+      let menu = null, failure = null;
+      try { menu = await client.builder(); } catch (error) { failure = error; }
       if (generation !== S.generation) return;
-      if (menu?.enabled !== true || !Array.isArray(menu.services) || !Array.isArray(menu.products)) { S.mode = 'legacy'; render(); return; }
-      const saved = await Promise.resolve().then(() => client.builderState?.() ?? null).catch(() => null);
+      if (failure ? [400, 404].includes(failure.status) : menu?.enabled !== true) { S.mode = 'legacy'; render(); return; }
+      if (failure || !Array.isArray(menu.services) || !Array.isArray(menu.products)) { S.probeError = failure?.message || 'The builder answer could not be read.'; render(); return; }
+      const [kept, opened] = await Promise.all([Promise.resolve().then(() => client.builderState?.() ?? null).catch(() => null), opening]);
       if (generation !== S.generation) return;
-      Object.assign(S, { mode: 'builder', menu, sel: saved?.selection ? validSelection(saved.selection, menu) : selectionFromWalkthrough(plan(), menu), priced: null, group: '', search: '', limit: 12 });
-      if (!S.frozen) S.step = 'removal';
+      const job = opened?.saved?.job && opened.saved.job.compositePricing && typeof opened.saved.job.compositePricing === 'object' ? opened.saved.job : null;
+      const unsent = job && job.estimate?.status === 'draft' && Number.isSafeInteger(job.estimate.amountCents) && job.estimate.number ? job : null;
+      Object.assign(S, { mode: 'builder', menu, sel: kept?.selection ? validSelection(kept.selection, menu) : job ? validSelection(selectionOfPricing(job.compositePricing), menu) : selectionFromWalkthrough(plan(), menu), priced: null, group: '', search: '', limit: 12, savedBuild: unsent });
+      // An unconfirmed earlier save (detectFrozen) keeps the review step until it is retried.
+      if (!S.frozen && !S.busy && S.step === 'review') S.step = unsent ? 'saved' : 'removal';
       kicker.textContent = 'Removal, then shelving, then extra storage'; heading.textContent = 'Build the itemized quote'; dialog.classList.add('qb-dialog');
       keep(); render();
+    }
+    // From a held walkthrough-priced quote: open the builder for this walkthrough.
+    function openBuilder() {
+      Object.assign(S, { step: 'review', held: null, heldKind: '', status: '', error: '', mode: 'probe', probeError: '' });
+      render(); probeBuilder();
+    }
+    // Send the saved builder quote as it is: the server checks its prices against today's approvals.
+    async function sendSaved() {
+      if (S.busy || !S.savedBuild) return;
+      const generation = S.generation, job = S.savedBuild;
+      S.busy = true; S.error = ''; render();
+      try {
+        const preview = await client.preview(job);
+        if (generation !== S.generation) return;
+        const pending = await client.pendingSend(job);
+        if (generation !== S.generation) return;
+        S.saved = job; S.preview = preview; S.retry = Boolean(pending); S.step = 'confirm';
+      } catch (error) {
+        if (generation !== S.generation) return;
+        if (held(error)) { S.saved = job; S.status = `Quote ${job.estimate.number} revision ${job.estimate.revision} stays saved as a draft.`; }
+        else S.error = `${error.message || 'The saved quote could not be checked.'}${error.status === 409 ? ' Edit the quote, review it and save it again.' : ''}`;
+      } finally { if (generation === S.generation) { S.busy = false; render(); } }
+    }
+    // A send preview or send the server refused because the quote may not be sent yet: show why and keep the draft.
+    function held(error) {
+      if (!['quote_draft_composite_prices_unapproved', 'quote_draft_builder_required'].includes(error?.code)) return false;
+      S.step = 'held'; S.held = Array.isArray(error.details?.unapproved) ? error.details.unapproved : []; S.heldKind = error.code === 'quote_draft_builder_required' ? 'builder' : 'prices'; S.error = '';
+      return true;
     }
     async function refreshPrices() {
       if (S.busy) return;
@@ -535,8 +610,9 @@
         S.retry = Boolean(pending); S.step = 'confirm';
       } catch (error) {
         if (generation !== S.generation) return;
-        // Saved, but a builder price is still a draft: the quote is kept and the send waits for the owner.
-        if (savedNow && error.code === 'quote_draft_composite_prices_unapproved') { S.step = 'held'; S.held = Array.isArray(error.details?.unapproved) ? error.details.unapproved : []; S.error = ''; return; }
+        // Saved, but not sendable yet (a draft price, or a walkthrough-priced quote while the builder is on): the
+        // quote is kept and the send waits.
+        if (savedNow && held(error)) { if (S.mode === 'builder') S.savedBuild = S.saved; return; }
         const pending = await client.pendingSave().catch(() => null);
         if (generation !== S.generation) return;
         S.retry = Boolean(pending); S.frozen = pending ? pending.draft : null; S.error = error.message || 'The quote could not be saved. Retry.';
@@ -575,7 +651,7 @@
         const pending = await client.pendingSend(S.saved).catch(() => null);
         if (generation !== S.generation) return;
         S.retry = Boolean(pending);
-        if (!S.retry && error.code === 'quote_draft_composite_prices_unapproved') { S.step = 'held'; S.held = Array.isArray(error.details?.unapproved) ? error.details.unapproved : []; S.error = ''; }
+        if (!S.retry && held(error)) { /* the held step says why */ }
         else if (!S.retry && S.saved) { S.error = `${error.message || 'The send was refused.'} Save and preview the quote again.`; S.step = S.mode === 'builder' ? 'quote' : 'review'; }
         else S.error = error.message || 'The send could not be confirmed. Retry the original send.';
       } finally { if (generation === S.generation) { S.busy = false; render(); } }
@@ -590,5 +666,5 @@
     if (S.mode === 'probe') probeBuilder();
     return dialog;
   }
-  root.EGCQuoteDraft = { open, createClient, draftFromWalkthrough, scopeText, missing, builder: Object.freeze({ steps: BUILDER_STEPS, selectionFromWalkthrough, validSelection, builderDescriptor, runningTotals, builderScope, compositeDraft }) };
+  root.EGCQuoteDraft = { open, createClient, draftFromWalkthrough, scopeText, missing, builder: Object.freeze({ steps: BUILDER_STEPS, selectionFromWalkthrough, selectionOfPricing, validSelection, builderDescriptor, runningTotals, builderScope, compositeDraft }) };
 })(window);

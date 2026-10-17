@@ -90,7 +90,7 @@ const MONEY_SETTINGS=[['laborRateCents','Labor rate per technician-hour',1,10000
 const DEFAULT_GOODS_MARKUP=1.3;
 function multiplierOf(value){const text=trimmed(value);if(!/^\d(?:\.\d{1,4})?$/.test(text))return null;const number=Number(text);return number>=1&&number<=5?number:null;}
 function settingsForm(values,label){
-  const form={settingsVersion:label??values.settingsVersion,depositPct:String(values.depositPct),'markup.default':String(values.markupPct.default),includeDisposal:values.includeDisposal===true,roundingRule:values.roundingRule,ready:values.mustSetBeforeCustomerUse===false,goodsMarkup:String(values.goodsMarkup??DEFAULT_GOODS_MARKUP)};
+  const form={settingsVersion:label??values.settingsVersion,depositPct:String(values.depositPct),'markup.default':String(values.markupPct.default),includeDisposal:values.includeDisposal===true,roundingRule:values.roundingRule,ready:values.mustSetBeforeCustomerUse===false,goodsMarkup:String(values.goodsMarkup??DEFAULT_GOODS_MARKUP),goodsInstallationIncluded:values.goodsInstallationIncluded===true};
   for(const [key] of MONEY_SETTINGS)form[key]=dollars(values[key]);
   for(const category of PRODUCT_CATEGORIES)form['markup.'+category]=values.markupPct.byCategory?.[category]==null?'':String(values.markupPct.byCategory[category]);
   return form;
@@ -119,6 +119,8 @@ function parseSettings(form,current){
   next.markupPct.byCategory=byCategory;
   next.includeDisposal=form.includeDisposal===true;
   if(form.goodsMarkup!==undefined){const multiplier=multiplierOf(form.goodsMarkup);if(multiplier==null)errors.goodsMarkup='Enter a multiplier from 1 to 5 with at most 4 decimals, like 1.30.';else if(multiplier!==(current.goodsMarkup??DEFAULT_GOODS_MARKUP)||current.goodsMarkup!==undefined)next.goodsMarkup=multiplier;}
+  // Like goodsMarkup, the installation confirmation is stored only once the owner sets it (or a saved document has it).
+  if(form.goodsInstallationIncluded!==undefined){const included=form.goodsInstallationIncluded===true;if(included!==(current.goodsInstallationIncluded===true)||current.goodsInstallationIncluded!==undefined)next.goodsInstallationIncluded=included;}
   if(!Object.hasOwn(ROUNDING,form.roundingRule))errors.roundingRule='Choose a rounding rule.';else next.roundingRule=form.roundingRule;
   const label=trimmed(form.settingsVersion);
   if(!LABEL.test(label)||!/[A-Za-z0-9]/.test(label))errors.settingsVersion='Use up to 80 letters, digits, dots, dashes, underscores or colons.';
@@ -138,6 +140,7 @@ function settingsChanges(before,after,labels={}){
   add('Deposit',before.depositPct,after.depositPct,pct);
   add('Rounding',before.roundingRule,after.roundingRule,value=>ROUNDING[value]||String(value));
   add('Goods markup (pricing menu)',before.goodsMarkup??DEFAULT_GOODS_MARKUP,after.goodsMarkup??DEFAULT_GOODS_MARKUP,value=>`cost × ${value}`);
+  add('Installation included in goods prices (pricing menu)',before.goodsInstallationIncluded===true,after.goodsInstallationIncluded===true,value=>value?'Yes':'No');
   add('Default markup',before.markupPct?.default,after.markupPct?.default,pct);
   for(const category of PRODUCT_CATEGORIES){
     const a=before.markupPct?.byCategory?.[category],b=after.markupPct?.byCategory?.[category];
@@ -500,11 +503,12 @@ async function load(){
   const generation=++S.generation;S.controller?.abort();
   const controller=S.controller=new AbortController();
   S.loading=true;S.loadError=null;render();
-  void loadMenu();
   try{
     const data=await S.kit.requestJSON(API+'?view=full',{prefix:'catalog',signal:controller.signal,fetcher:fetcher(),validate:validOverview});
     if(generation!==S.generation)return;
     S.data=data;S.loadedAt=now();S.base=data.enabled?data.catalog:null;
+    // The overview says whether the quote builder is on; only then is its pricing menu loaded.
+    if(data.quoteBuilder===true)void loadMenu();else{S.menu=null;S.menuError=null;}
     if(data.enabled){
       if(!S.draftLoaded){
         S.draftLoaded=true;const saved=readDraft();
@@ -644,7 +648,8 @@ function settingsPanel(){
     bound({name:'includeDisposal',label:'Charge packaging haul-away',type:'checkbox'},form,errors,update),
     bound({name:'roundingRule',label:'Cent rounding',type:'select',options:Object.entries(ROUNDING).map(([value,label])=>({value,label}))},form,errors,update),
     // Only the quote builder prices with the goods multiplier, so it shows only when the builder is on (S.menu).
-    S.menu&&bound({name:'goodsMarkup',label:'Goods markup (pricing-menu multiplier)',type:'text',inputmode:'decimal',autocomplete:'off',help:'Quote-builder goods sell at their public retail cost × this number, like 1.30. Each menu price still needs your approval under Menu prices.'},form,errors,update)].filter(Boolean);
+    S.menu&&bound({name:'goodsMarkup',label:'Goods markup (pricing-menu multiplier)',type:'text',inputmode:'decimal',autocomplete:'off',help:'Quote-builder goods sell at their public retail cost × this number, like 1.30. Each menu price still needs your approval under Menu prices.'},form,errors,update),
+    S.menu&&bound({name:'goodsInstallationIncluded',label:'Shelving and storage installation is included in the goods price',type:'checkbox',help:'The quote builder has no installation line: goods sell at cost × the goods markup. Until you tick this, builder quotes with shelving or storage are saved but cannot be sent.'},form,errors,update)].filter(Boolean);
   const markups=[bound({name:'markup.default',label:'Default markup (%)',type:'text',inputmode:'decimal',autocomplete:'off',help:'Used by any category left blank.'},form,errors,update),
     ...PRODUCT_CATEGORIES.map(category=>bound({name:'markup.'+category,label:(S.base.categories.find(entry=>entry.id===category)?.label||category)+' (%)',type:'text',inputmode:'decimal',autocomplete:'off',placeholder:'Default'},form,errors,update))];
   const saved=S.data.settings;
@@ -746,11 +751,14 @@ function draftPanel(){
     h('div',{class:'cat-sticky'},btn('Review & publish',openPublishReview,'primary',{disabled:frozen||!canEdit()}),btn('Discard draft',confirmDiscard,'danger',{disabled:frozen})));
 }
 // ---- Pricing menu approvals (quote builder, EGC_QUOTE_BUILDER_ENABLED) ----
-// GET /api/quote-draft?view=builder lists every pricing-menu item with its current price and why it is a draft. The
+// GET /api/quote-draft?view=builder lists every pricing-menu item with its current price and why it is a draft (read
+// only when GET /api/catalog says quoteBuilder:true). One request changes at most MENU_MAX prices. The
 // owner ticks the draft prices to approve (a service at the amount entered, a product at exactly cost × goods markup)
 // or the approvals to revoke, reviews them and saves one menu.approve request through /api/catalog, which keeps the
 // catalog's receipt and audit trail. Estimators can send a builder quote only once all its prices are approved.
-const MENU_API='/api/quote-draft?view=builder';
+const MENU_API='/api/quote-draft?view=builder',MENU_MAX=100;
+// A draft cleaning base is the walkthrough's old full-service price (hauling included): the owner types its amount.
+const ownerAmount=item=>item.kind==='service'&&item.group==='cleaning-base';
 const validMenu=data=>data?.enabled===true&&Array.isArray(data.services)&&Array.isArray(data.products)&&Array.isArray(data.sections)&&plain(data.viewer)&&typeof data.menuVersion==='string'&&typeof data.settingsVersion==='string';
 async function loadMenu(){
   if(!S.root||!S.kit)return;
@@ -784,8 +792,8 @@ function menuRequest(){
 function menuRow(item,frozen){
   const pick=menuPick(),ticked=Boolean(pick.approve[item.id]),canAmount=item.kind==='service';
   const amount=ticked?pick.approve[item.id].amount:dollars(item.unitCents),error=S.menuErrors?.[item.id];
-  const box=h('input',{type:'checkbox',checked:ticked,disabled:frozen,'aria-label':`Approve ${item.name}`,onchange:event=>{if(event.target.checked)pick.approve[item.id]={amount:dollars(item.unitCents)};else delete pick.approve[item.id];S.menuErrors={};render();}});
-  const input=canAmount&&ticked?h('input',{class:'cat-menu-amount',type:'text',inputmode:'decimal',value:amount,'aria-label':`Approved amount for ${item.name}`,disabled:frozen,oninput:event=>{pick.approve[item.id].amount=event.target.value;}}):null;
+  const box=h('input',{type:'checkbox',checked:ticked,disabled:frozen,'aria-label':`Approve ${item.name}`,onchange:event=>{if(event.target.checked)pick.approve[item.id]={amount:ownerAmount(item)?'':dollars(item.unitCents)};else delete pick.approve[item.id];S.menuErrors={};render();}});
+  const input=canAmount&&ticked?h('input',{class:'cat-menu-amount',type:'text',inputmode:'decimal',value:amount,placeholder:ownerAmount(item)?'Cleaning-only amount':null,'aria-label':`Approved amount for ${item.name}`,disabled:frozen,oninput:event=>{pick.approve[item.id].amount=event.target.value;}}):null;
   return h('tr',{'data-item':item.id},
     h('td',{},box),
     h('td',{class:'cat-item-cell'},h('strong',{},item.name),h('span',{class:'cat-meta'},item.kind==='product'?`SKU ${item.sku}${item.unitsPerPack>1?` · pack of ${item.unitsPerPack}`:''}`:item.menuId),h('span',{class:'cat-meta'},item.reason||'')),
@@ -794,24 +802,28 @@ function menuRow(item,frozen){
 function menuPanel(){
   const m=S.menu,canApprove=m.viewer?.canApprove===true,frozen=locked()||!canApprove,pick=menuPick();
   const drafts=menuDrafts(),owner=menuItems().filter(item=>item.approved&&item.source==='owner'),fixed=menuItems().filter(item=>item.source==='menu');
-  const chosen=Object.keys(pick.approve).length+Object.keys(pick.revoke).length;
+  const chosen=Object.keys(pick.approve).length+Object.keys(pick.revoke).length,room=Math.max(0,MENU_MAX-chosen);
   const table=(rows,head)=>h('div',{class:'cat-table-wrap'},h('table',{class:'cat-table cat-menu-table'},h('thead',{},h('tr',{},head.map(text=>h('th',{scope:'col'},text)))),h('tbody',{},rows)));
   const bySection=m.sections.map(section=>{const rows=drafts.filter(item=>item.section===section.id);return rows.length?h('section',{class:'hub-card cat-card'},h('h2',{},`${section.label}: ${rows.length} draft price${rows.length===1?'':'s'}`),
-    h('div',{class:'hub-actions'},btn('Tick all in this step',()=>{for(const item of rows)if(!pick.approve[item.id])pick.approve[item.id]={amount:dollars(item.unitCents)};render();},'',{disabled:frozen})),
+    // Ticks up to the per-request limit; cleaning bases are left for the owner to tick and price one by one.
+    h('div',{class:'hub-actions'},btn('Tick all in this step',()=>{let left=room;for(const item of rows){if(left<1)break;if(!pick.approve[item.id]&&!ownerAmount(item)){pick.approve[item.id]={amount:dollars(item.unitCents)};left--;}}render();},'',{disabled:frozen||!room})),
     table(rows.map(item=>menuRow(item,frozen)),['Approve','Item','Price'])):null;}).filter(Boolean);
   return h('div',{class:'cat-menu'},
     h('div',{class:'hub-notice'+(drafts.length?' warning':' success')},drafts.length?`${drafts.length} pricing-menu price${drafts.length===1?' is a draft':'s are drafts'}. A builder quote that uses a draft price can be saved but not sent until you approve it here. Pricing menu ${m.menuVersion} · settings ${m.settingsVersion}.`:'Every pricing-menu price is approved.'),
     !canApprove?h('div',{class:'hub-notice'},'Only the owner can approve pricing-menu prices.'):null,
+    m.internal&&m.internal.goodsInstallationIncluded!==true?h('div',{class:'hub-notice warning'},'Builder quotes with shelving or storage also wait for your installation decision: the builder has no installation line, so confirm under Pricing that installation is included in the goods price.'):null,
+    chosen>MENU_MAX?h('div',{class:'hub-notice warning'},`Approve or revoke at most ${MENU_MAX} prices at a time: untick ${chosen-MENU_MAX}, save, then tick the rest.`):null,
     ...bySection,
     owner.length?h('section',{class:'hub-card cat-card'},h('h2',{},`Approved by you (${owner.length})`),table(owner.map(item=>h('tr',{'data-item':item.id},
       h('td',{},h('input',{type:'checkbox',checked:Boolean(pick.revoke[item.id]),disabled:frozen,'aria-label':`Revoke approval of ${item.name}`,onchange:event=>{if(event.target.checked)pick.revoke[item.id]=true;else delete pick.revoke[item.id];render();}})),
       h('td',{class:'cat-item-cell'},h('strong',{},item.name)),h('td',{'data-label':'Price'},money(item.unitCents)))),['Revoke','Item','Approved price'])):null,
     fixed.length?h('p',{class:'cat-muted'},`Approved in the pricing menu itself: ${fixed.map(item=>`${item.name} ${money(item.unitCents)}`).join(', ')}.`):null,
-    h('div',{class:'cat-sticky'},btn(`Review ${chosen||''} change${chosen===1?'':'s'}`.replace('  ',' '),openMenuReview,'primary',{disabled:frozen||!chosen}),btn('Clear ticks',()=>{S.menuPick=null;S.menuErrors={};render();},'',{disabled:frozen||!chosen})));
+    h('div',{class:'cat-sticky'},btn(`Review ${chosen||''} change${chosen===1?'':'s'}`.replace('  ',' '),openMenuReview,'primary',{disabled:frozen||!chosen||chosen>MENU_MAX}),btn('Clear ticks',()=>{S.menuPick=null;S.menuErrors={};render();},'',{disabled:frozen||!chosen})));
 }
 function openMenuReview(){
   if(locked()||S.menu?.viewer?.canApprove!==true)return;
   const {approve,revoke,errors}=menuRequest();
+  if(approve.length+revoke.length>MENU_MAX)return;
   S.menuErrors=errors;
   if(Object.keys(errors).length){S.tab='menu';render();return;}
   const byId=new Map(menuItems().map(item=>[item.id,item]));

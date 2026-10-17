@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
-import { CATEGORY_GROUPS, ITEM_BASIS, buildPricingMenu, checkCommitted, importProducts, importServices, parseCsv, renderMenuJson, renderMenuModule, scrubNote } from '../scripts/import-pricing-menu.mjs';
+import { CATEGORY_GROUPS, ITEM_BASIS, buildPricingMenu, checkCommitted, importProducts, importServices, parseCsv, renderMenuJson, renderMenuModule, scrubNote, scrubWarnings } from '../scripts/import-pricing-menu.mjs';
 import { BUILDER_SECTIONS, validatePricingMenu } from '../functions/_lib/composite-quote.js';
 import { walkthroughPricing, walkthroughServiceItems } from '../functions/_lib/pricing-config.js';
 
@@ -81,6 +81,18 @@ test('scope notes keep handling guidance and drop money, margin and commission s
   assert.equal(scrubNote('Illustrative fraction of $750, not an approved rate. Minimum policy pending.'), 'Minimum policy pending.');
   assert.equal(scrubNote('Synthetic 99% margin note only.'), null);
   assert.equal(scrubNote('Synthetic goods at cost x9.99 only.'), null);
+});
+
+test('fit warnings keep sizes and fit guidance but drop every sentence that states a dollar amount (the cost basis)', () => {
+  assert.equal(scrubWarnings('Four of single tote 327528802. $39.92/bundle = $9.98/tote. No quantity discount.'), 'Four of single tote 327528802. No quantity discount.');
+  assert.equal(scrubWarnings('Retail discrepancy: earlier page $ 9.98; latest category 8.98 dollars used. Verify local price. 28.6 L × 19.6 W × 15.2 H in, 75 lb.'), 'Verify local price. 28.6 L × 19.6 W × 15.2 H in, 75 lb.');
+  assert.equal(scrubWarnings('Only $5.'), null);
+  assert.equal(scrubWarnings(''), null);
+  // A fixture row whose warning names its pack price imports without it.
+  const header = productsCsv.split('\n')[2], row = productsCsv.split('\n')[3];
+  const [shelf] = importProducts([header, row.replace('Limit 5 per order.', 'Limit 5 per order. Pack is $89.00 at checkout.')].join('\n')).products;
+  assert.match(shelf.fitWarnings, /Limit 5 per order\.$/);
+  assert.doesNotMatch(shelf.fitWarnings, /\$/);
 });
 
 test('the committed menu and its module agree (node scripts/import-pricing-menu.mjs --check)', () => {

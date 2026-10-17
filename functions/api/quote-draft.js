@@ -20,8 +20,12 @@ import { FINAL_25_75 } from '../_lib/quote-payment-policy.js';
  * POST {action:'catalog_preview',catalogPricing:{catalogVersion,settingsVersion,items:[{id,itemId,quantity,customerSupplied}]}}
  * With EGC_QUOTE_BUILDER_ENABLED=true (otherwise these answer exactly as before the builder existed):
  * GET  /api/quote-draft?view=builder => {ok, enabled:true, menuVersion, settingsVersion, steps, sections, services,
- *        products, viewer:{internal,canApprove}, internal?:{goodsMarkup,roundingRule,approvalsRevision}}: the pricing
- *        menu with each item's current price and approval; only owners and managers (internal) see a cost basis.
+ *        products, installation:{included, reason?}, viewer:{internal,canApprove},
+ *        internal?:{goodsMarkup,goodsInstallationIncluded,roundingRule,approvalsRevision}}: the pricing menu with each
+ *        item's current price and approval; only owners and managers (internal) see a cost basis.
+ *        Pages ask for it only when /api/pricing-config or /api/catalog said quoteBuilder:true.
+ * While the flag is on, send_preview and send of a walkthrough-priced draft (no builder or catalog pricing) answer
+ *        409 quote_draft_builder_required; the draft stays saved.
  * POST {action:'composite_preview', compositePricing:{menuVersion,settingsVersion,steps,removal,shelving,storage}}
  *        => {ok, compositePricing, menuVersion, settingsVersion, lineItems, steps, breakdown, approval, totalCents};
  *        steps may be a prefix of removal, shelving, storage (running totals); a save needs all three and sends

@@ -61,4 +61,12 @@ test('a saved Hub catalog quote exposes the same section breakdown as the builde
   assert.equal(breakdown.totalCents, priced.totalCents);
   assert.equal(sectionOfCatalogCategory(rack.category), 'storage');
   assert.doesNotMatch(JSON.stringify(breakdown), /"split"|productCents|markupCents/);
+  // With the catalog, products carry their product page and a purchase / grab row; a Home Depot page gives the SKU.
+  assert.deepEqual(breakdown.purchaseList.map(row => [row.name, row.packs, row.productUrl, row.sku]), [[breakdown.lines[0].name, 1, rack.sources[0].url, null], [breakdown.lines[1].name, 2, shelf.sources[0].url, breakdown.lines[1].sku]]);
+  const hook = catalog.items.find(item => item.id === 'bike-hook-everbilt-screw-in-25lb');
+  const hooks = priceCatalogQuote(state(), { ...selection(), items: [{ id: 'catalog-1', itemId: hook.id, quantity: 4, customerSupplied: false }, { id: 'catalog-2', itemId: rack.id, quantity: 1, customerSupplied: true }] }, day);
+  const grab = quoteBreakdown({ estimate: { lineItems: hooks.storedLineItems } }, { catalog });
+  assert.deepEqual(grab.purchaseList.map(row => [row.sku, row.retailer, row.packs, row.unitsPerPack, row.units, row.productUrl]), [['206585761', 'The Home Depot', 4, 1, 4, hook.sources[0].url]], 'a customer-supplied product is not bought');
+  assert.deepEqual([grab.lines[0].sku, grab.lines[0].productUrl], ['206585761', hook.sources[0].url]);
+  assert.deepEqual(quoteBreakdown({ estimate: { lineItems: hooks.storedLineItems } }).purchaseList, [], 'without the catalog nothing is resolved');
 });

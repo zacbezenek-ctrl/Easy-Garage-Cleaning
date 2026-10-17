@@ -33,8 +33,10 @@ const SETTINGS_KEYS = ['schemaVersion', 'settingsVersion', 'mustSetBeforeCustome
 // Optional settings: a document saved before they existed stays valid and uses the default.
 // goodsMarkup multiplies the pricing-menu goods cost (functions/_data/pricing-menu.json retailPerPackCents) into
 // the goods selling price: 1.3 is the owner's stated rule (landed cost x 1.30). It never prices garage-catalog
-// items, which keep markupPct, labor and disposal.
-const OPTIONAL_SETTINGS_KEYS = ['goodsMarkup'];
+// items, which keep markupPct, labor and disposal. goodsInstallationIncluded: true is the owner's confirmation that
+// shelving and storage installation is included in that goods price (the builder has no installation line); until
+// then a builder quote with goods is saved but never sent (composite-quote.js).
+const OPTIONAL_SETTINGS_KEYS = ['goodsMarkup', 'goodsInstallationIncluded'];
 export const DEFAULT_GOODS_MARKUP = 1.3;
 const MIN_GOODS_MARKUP = 1, MAX_GOODS_MARKUP = 5;
 
@@ -266,6 +268,7 @@ export function validatePricingSettings(settings) {
   if (typeof settings.depositPct !== 'number' || !Number.isFinite(settings.depositPct) || settings.depositPct < 0 || settings.depositPct > 100 || Math.abs(settings.depositPct * 100 - Math.round(settings.depositPct * 100)) > 1e-9) throw settingsInvalid('settings.depositPct', 'must be a percentage from 0 to 100 with at most 2 decimals');
   oneOf(settings.roundingRule, 'settings.roundingRule', ROUNDING_RULES, settingsInvalid);
   if (settings.goodsMarkup !== undefined) goodsMarkupBasisPoints(settings.goodsMarkup, 'settings.goodsMarkup');
+  if (settings.goodsInstallationIncluded !== undefined) flag(settings.goodsInstallationIncluded, 'settings.goodsInstallationIncluded', settingsInvalid);
   if (settings.comments !== undefined) {
     if (!plain(settings.comments)) throw settingsInvalid('settings.comments', 'must be an object');
     for (const [key, comment] of Object.entries(settings.comments)) {

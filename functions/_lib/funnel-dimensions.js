@@ -3,6 +3,7 @@ import { salesExitService } from './sales-followup-exit.js';
 import { included, normalizeLineItems } from './quote-model.js';
 import { scheduleInterval } from './dispatch-time.js';
 import { SEED_CATALOG_JSON } from '../_data/catalog-seed.js';
+import { compositeCatalogCategory } from './composite-quote.js';
 
 // FUN-29: the service line and funnel path of every project (§2.5). Both are
 // set on projects/{projectId} when a booking creates the project, and refined
@@ -37,8 +38,11 @@ export function seedCatalogCategory(itemId) {
   return seedCategories.get(itemId) || null;
 }
 
+// A quote-builder line names a pricing-menu item or goods step instead of a seed catalog item (composite-quote.js).
+const lineCatalogCategory = itemId => seedCatalogCategory(itemId) || compositeCatalogCategory(itemId);
+
 /** The catalog categories of the included lines that name a catalog item (P2-05 line items), sorted and unique. */
-export function lineItemCatalogCategories(lineItems, categoryOf = seedCatalogCategory) {
+export function lineItemCatalogCategories(lineItems, categoryOf = lineCatalogCategory) {
   if (!Array.isArray(lineItems) || !lineItems.length) return [];
   const lines = normalizeLineItems(lineItems).lineItems.filter(line => included(line) && line.catalog?.itemId);
   return [...new Set(lines.map(line => categoryOf(line.catalog.itemId)).filter(value => typeof value === 'string' && value))].sort();
@@ -74,7 +78,7 @@ export function dimensionPicks(booking, fail) {
  * job sold on a signed walkthrough handoff; `lineItems` are sold lines not yet
  * on the visit (a handoff's signed lines).
  */
-export function visitDimensionFacts(visit, { relatedProject = null, walkthroughSale = false, lineItems = null, categoryOf = seedCatalogCategory } = {}) {
+export function visitDimensionFacts(visit, { relatedProject = null, walkthroughSale = false, lineItems = null, categoryOf = lineCatalogCategory } = {}) {
   const row = plain(visit) ? visit : {}, kind = row.type === 'walkthrough' ? 'walkthrough' : OPERATIONAL.has(row.type) ? 'job' : null;
   return {
     visitPurpose: row.visitPurpose ?? null, bookingChannel: row.bookingChannel ?? null, businessAccountId: row.businessAccountId || null,

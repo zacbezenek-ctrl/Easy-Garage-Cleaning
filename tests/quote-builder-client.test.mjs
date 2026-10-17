@@ -26,11 +26,18 @@ const plan = () => ({ client: { name: 'Synthetic Customer', phone: '+19705550100
   scope: { garages: '2', loads: '1.5', special_items: ['Mattress', 'Couch / sofa / loveseat'], access: ['Stairs', 'Narrow gate / alley'], finish: ['cleanout', 'deep_clean', 'pressure_wash', 'mouse_trapping'], hazards: ['Pest waste'], keep_items: 'Albums' },
   raw: { specialQty: { Mattress: 2 } }, logistics: { crew_size: 2 }, signature: 'data:image/png;base64,UNUSED', discovery: { success: 'Park car' } });
 
-test('the walkthrough capture pre-fills the removal step: base, loads, special items, access and cleaning add-ons', () => {
+test('the walkthrough capture pre-fills the removal step: loads, special items, access and cleaning add-ons; a base only without loads', () => {
   const sel = plain(B.selectionFromWalkthrough(plan(), menu));
-  const named = Object.fromEntries(Object.entries(sel.removal).map(([id, qty]) => [menu.services.find(item => item.id === id).name, qty]));
-  assert.deepEqual(named, { 'Two-car garage base': 1, 'Full truck load': 1, 'Half load': 1, Mattress: 2, 'Sofa / loveseat': 1, Stairs: 1, 'Deep cleaning, two-car': 1, 'Mouse trapping': 1, 'Pest-waste cleanup': 1 });
+  const names = removal => Object.fromEntries(Object.entries(removal).map(([id, qty]) => [menu.services.find(item => item.id === id).name, qty]));
+  const named = names(sel.removal);
+  // The draft base is the walkthrough's old full-service price (hauling included): with truck loads it is not pre-selected.
+  assert.deepEqual(named, { 'Full truck load': 1, 'Half load': 1, Mattress: 2, 'Sofa / loveseat': 1, Stairs: 1, 'Deep cleaning, two-car': 1, 'Mouse trapping': 1, 'Pest-waste cleanup': 1 });
   assert.equal(named['Pressure washing, one-car'], undefined, 'a pressure wash is offered for a one-car garage only');
+  const cleaningOnly = names(B.selectionFromWalkthrough({ scope: { garages: '1', loads: '0', finish: ['deep_clean', 'pressure_wash'] } }, menu).removal);
+  assert.deepEqual(plain(cleaningOnly), { 'One-car garage base': 1, 'Pressure washing, one-car': 1, 'Deep cleaning, one-car': 1 }, 'a cleaning-only walkthrough gets its garage base');
+  const hauled = names(B.selectionFromWalkthrough({ scope: { garages: '1', loads: '1', finish: ['pressure_wash'] } }, menu).removal);
+  assert.deepEqual(plain(hauled), { 'Full truck load': 1 }, 'no base, so no pressure wash (it needs a one-car base)');
+  assert.ok(priceCompositeQuote(state, plain(B.builderDescriptor(menu, B.selectionFromWalkthrough(plan(), menu), 'removal'))), 'the server accepts the pre-filled step');
   assert.deepEqual([sel.shelving, sel.storage], [[], []], 'shelving and storage are always chosen in the builder');
   const loads = value => Object.keys(B.selectionFromWalkthrough({ scope: { loads: value } }, menu).removal).map(id => [menu.services.find(item => item.id === id).name, B.selectionFromWalkthrough({ scope: { loads: value } }, menu).removal[id]]);
   assert.deepEqual(plain(loads('0.25')), [['Quarter load', 1]]);
@@ -72,7 +79,7 @@ test('the saved draft carries the server-priced lines and selection, the walkthr
   assert.deepEqual(draft.composite_pricing, preview.compositePricing);
   assert.equal(draft.catalog_version, menu.menuVersion);
   assert.deepEqual([draft.client.name, draft.valid_until, draft.crew_size, draft.estimated_duration_min], ['Synthetic Customer', '2026-10-31', 2, 240]);
-  assert.match(draft.scope, /^Removal \/ cleanout: Two-car garage base; Full truck load; Half load; Mattress × 2;.*\. Extra storage: .+\.$/);
+  assert.match(draft.scope, /^Removal \/ cleanout: Full truck load; Half load; Mattress × 2;.*\. Extra storage: .+\.$/);
   assert.deepEqual(draft.walkthrough_capture.keepItems, 'Albums');
   assert.doesNotMatch(JSON.stringify(draft), /signature|"raw"|split|retailPerPackCents/);
 });
@@ -96,10 +103,47 @@ test('the client loads the builder menu and step prices read-only, keeps the sel
   await assert.rejects(refusing.compositePreview(descriptor), error => error.code === 'quote_draft_composite_prices_unapproved' && error.details.unapproved[0].name === 'Mattress');
 });
 
-test('the builder shows why a price blocks sending and offers the walkthrough quote when the builder is off', () => {
+test('a saved quote\'s selection reopens in the builder shape, checked against the current menu', () => {
+  const sel = B.selectionFromWalkthrough(plan(), menu);
+  sel.shelving.push({ id: shelf.id, quantity: 2 });
+  const pricing = plain(B.builderDescriptor(menu, sel, 'storage'));
+  assert.deepEqual(plain(B.validSelection(B.selectionOfPricing(pricing), menu)), plain(sel));
+  assert.deepEqual(plain(B.selectionOfPricing({ removal: [null, { id: 'egc-026', quantity: 2 }], shelving: 'x' })), { removal: { 'egc-026': 2 }, shelving: [], storage: [] });
+});
+
+test('the builder shows why a price blocks sending, has no way around it, and the walkthrough quote stays when the builder is off', () => {
   assert.match(source, /cannot be sent until the owner approves/);
   assert.match(source, /Sending is blocked until the owner approves/);
-  assert.match(source, /Use the walkthrough’s own itemized quote instead/);
-  assert.match(source, /menu\?\.enabled !== true[^]*S\.mode = 'legacy'/, 'without the builder flag the dialog falls back to the walkthrough quote');
+  assert.doesNotMatch(source, /walkthrough’s own itemized quote instead/, 'while the builder is on there is no switch to the walkthrough-priced quote');
+  assert.match(source, /\[400, 404\]\.includes\(failure\.status\) : menu\?\.enabled !== true\) \{ S\.mode = 'legacy'/, 'a Hub that answers the builder is off gets the walkthrough quote');
+  assert.match(source, /EGCWalkthroughPricing\?\.quoteBuilder\?\.\(\) === true/, 'the builder is asked for only when the Hub said it is on');
   assert.doesNotMatch(source, /retailPerPackCents|goodsMarkup/, 'the page never handles a cost basis');
+});
+
+// ---- How the walkthrough page learns the builder is on, without a request of its own (crew/walkthrough-pricing.js) ----
+const pricingSource = readFileSync(new URL('../crew/walkthrough-pricing.js', import.meta.url), 'utf8');
+function pricingPage() {
+  const values = new Map(), local = { get length() { return values.size; }, key: index => [...values.keys()][index] ?? null, getItem: key => values.get(key) ?? null, setItem: (key, value) => values.set(key, String(value)), removeItem: key => values.delete(key) };
+  const listeners = {}, page = { localStorage: local, Date, AbortController, setTimeout: () => 1, clearTimeout() {}, addEventListener: (name, listener) => { (listeners[name] ||= []).push(listener); } };
+  page.window = page;
+  vm.runInContext(pricingSource, vm.createContext(page));
+  return { api: page.EGCWalkthroughPricing, values, fire: name => (listeners[name] || []).forEach(listener => listener()) };
+}
+const servedTables = extra => ({ ok: true, status: 200, json: async () => ({ ok: true, authority: 'employee_hub', version: 'pc_1111111111111111', parts: { walkthrough: plain(walkthroughPricing(walkthroughServiceItems())) }, ...extra }) });
+
+test('the walkthrough price answer tells the page whether the builder is on; the device keeps it for offline opens', async () => {
+  const { api, values, fire } = pricingPage();
+  assert.equal(api.quoteBuilder(), false);
+  await api.load('sales.person', { fetcher: async () => servedTables() });
+  assert.equal(api.quoteBuilder(), false, 'flag off: the answer carries no builder field');
+  assert.doesNotMatch([...values.values()].join(), /quoteBuilder/, 'and the saved copy is unchanged');
+  await api.load('sales.person', { fetcher: async () => servedTables({ quoteBuilder: true }) });
+  assert.equal(api.quoteBuilder(), true);
+  await api.load('sales.person', { fetcher: async () => { throw new TypeError('Failed to fetch'); } });
+  assert.equal(api.quoteBuilder(), true, 'offline: the saved copy remembers the last answer');
+  await api.load('sales.person', { fetcher: async () => servedTables() });
+  assert.equal(api.quoteBuilder(), false, 'turned off again at the next answer');
+  await api.load('sales.person', { fetcher: async () => servedTables({ quoteBuilder: true }) });
+  fire('egc:signout');
+  assert.equal(api.quoteBuilder(), false, 'sign-out forgets it with the prices');
 });

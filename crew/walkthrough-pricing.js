@@ -2,7 +2,10 @@
    tables are fetched after sign-in and kept on this device per signed-in user and
    config version, so a walkthrough opened offline later still prices. Sign-out clears
    them. With no saved copy the walkthrough shows prices as unavailable instead of
-   guessing, and says whether the device is offline or the Hub answered without prices. */
+   guessing, and says whether the device is offline or the Hub answered without prices.
+   The Hub's answer also says whether the guided quote builder is on (quoteBuilder: true, only while
+   EGC_QUOTE_BUILDER_ENABLED is set); quoteBuilder() reports the latest answer for this page, so the quote
+   dialog (crew/quote-draft.js) knows without a request of its own. */
 (function () {
   'use strict';
   const PREFIX = 'egc_walkthrough_pricing.v1.';
@@ -40,19 +43,24 @@
     for (const name of keys(PREFIX + person(user) + '.')) {
       try {
         const saved = JSON.parse(localStorage.getItem(name) || 'null');
-        if (plain(saved) && saved.user === person(user) && name === PREFIX + saved.user + '.' + saved.version && valid(saved.pricing)) return { version: saved.version, pricing: saved.pricing };
+        if (plain(saved) && saved.user === person(user) && name === PREFIX + saved.user + '.' + saved.version && valid(saved.pricing)) return { version: saved.version, pricing: saved.pricing, quoteBuilder: saved.quoteBuilder === true };
       } catch {}
     }
     return null;
   }
-  function store(user, version, pricing) {
+  function store(user, version, pricing, quoteBuilder = false) {
     const name = PREFIX + person(user) + '.' + version;
     remove(keys(PREFIX + person(user) + '.').filter(key => key !== name));
-    try { localStorage.setItem(name, JSON.stringify({ user: person(user), version, pricing, savedAt: new Date().toISOString() })); } catch {}
+    try { localStorage.setItem(name, JSON.stringify({ user: person(user), version, pricing, ...(quoteBuilder ? { quoteBuilder: true } : {}), savedAt: new Date().toISOString() })); } catch {}
   }
-  const clear = () => remove(keys(PREFIX));
+  // The builder flag of the latest load: the Hub's own answer, or the saved copy's when the Hub was not reached.
+  let builder = { user: '', enabled: false };
+  const clear = () => { builder = { user: '', enabled: false }; remove(keys(PREFIX)); };
+  const quoteBuilder = () => builder.enabled === true;
 
   async function load(user, { fetcher = (...args) => window.EGCHubAuth.fetch(...args), timeoutMs = TIMEOUT } = {}) {
+    // Until the Hub answers, the device's saved copy says whether the builder was on.
+    if (builder.user !== person(user)) builder = { user: person(user), enabled: cached(user)?.quoteBuilder === true };
     if (!person(user)) return { pricing: null, source: 'none', error: OFFLINE };
     const controller = typeof AbortController === 'function' ? new AbortController() : null, timer = controller ? setTimeout(() => controller.abort(), timeoutMs) : null;
     let error = OFFLINE;
@@ -62,19 +70,21 @@
       // A reply cut off by the timeout is a connection problem; anything else came from the Hub.
       if (!controller?.signal.aborted) error = UNAVAILABLE;
       if (response.ok && body.ok === true && typeof body.version === 'string' && /^[A-Za-z0-9_-]{1,80}$/.test(body.version) && valid(body.parts?.walkthrough)) {
-        store(user, body.version, body.parts.walkthrough);
+        store(user, body.version, body.parts.walkthrough, body.quoteBuilder === true);
+        builder = { user: person(user), enabled: body.quoteBuilder === true };
         return { pricing: body.parts.walkthrough, source: 'network', version: body.version };
       }
       // A login that may no longer see prices keeps no copy of them.
-      if (response.status === 401 || response.status === 403) { remove(keys(PREFIX + person(user) + '.')); return { pricing: null, source: 'none', error: 'This login cannot load walkthrough prices. Ask the office to check your access.' }; }
+      if (response.status === 401 || response.status === 403) { builder = { user: person(user), enabled: false }; remove(keys(PREFIX + person(user) + '.')); return { pricing: null, source: 'none', error: 'This login cannot load walkthrough prices. Ask the office to check your access.' }; }
     } catch (failure) {
-      if (failure?.code === 'HUB_AUTH_REQUIRED') { remove(keys(PREFIX + person(user) + '.')); return { pricing: null, source: 'none', error: 'Sign in again to load walkthrough prices.' }; }
+      if (failure?.code === 'HUB_AUTH_REQUIRED') { builder = { user: person(user), enabled: false }; remove(keys(PREFIX + person(user) + '.')); return { pricing: null, source: 'none', error: 'Sign in again to load walkthrough prices.' }; }
     } finally { if (timer) clearTimeout(timer); }
     // Either way the saved copy still prices the walkthrough.
     const saved = cached(user);
+    if (saved) builder = { user: person(user), enabled: saved.quoteBuilder };
     return saved ? { pricing: saved.pricing, source: 'cache', version: saved.version } : { pricing: null, source: 'none', error };
   }
 
-  window.EGCWalkthroughPricing = Object.freeze({ load, cached, clear, valid, OFFLINE, UNAVAILABLE });
+  window.EGCWalkthroughPricing = Object.freeze({ load, cached, clear, valid, quoteBuilder, OFFLINE, UNAVAILABLE });
   window.addEventListener('egc:signout', clear);
 })();

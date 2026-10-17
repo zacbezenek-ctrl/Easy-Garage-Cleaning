@@ -1,8 +1,9 @@
 import { goodsMarkupOf, roundCents, validatePricingSettings } from './catalog.js';
 import { estimateTotals, included, normalizeLineItems } from './quote-model.js';
+import { PRICING_MENU_JSON } from '../_data/pricing-menu.js';
 
 /**
- * Guided estimator quote builder (WP14a/b). Pure: no I/O, no clock.
+ * Guided estimator quote builder (WP14a/b). Pure: no I/O, no clock (the bundled menu is parsed lazily, once).
  *
  * A composite quote is always built in one order: (1) Removal / cleanout (garage cleaning base, junk loads,
  * special-handling items, access, cleaning add-ons), (2) Shelving, (3) Extra storage. Each step is a section of
@@ -14,12 +15,18 @@ import { estimateTotals, included, normalizeLineItems } from './quote-model.js';
  *              (retailPerPackCents) into the selling price per pack, rounded by settings.roundingRule.
  *   walkthrough the walkthrough price tables (pricing-config.js walkthroughPricing()), the DRAFT amounts of
  *              cleaning bases, cleaning add-ons, special items and access until the owner approves a price.
- *   approvals  pricingMenuApprovals/current: {items: {[menuItemId]: {unitCents}}, revision}, written only by
- *              the owner's bulk approval (catalog-store.js menu.approve).
+ *   approvals  pricingMenuApprovals/current: {items: {[menuItemId]: {unitCents, identity}}, revision}, written only
+ *              by the owner's bulk approval (catalog-store.js menu.approve).
  * A price is approved when the menu itself records an owner-approved amount (the $750 full truck) or the owner
  * approved that item at exactly that amount. An owner-approved service amount is the price; a product approval
- * holds only while cost x goodsMarkup still gives the approved amount. Draft prices may be saved on an unsent
- * draft, never sent: quote-draft.js re-checks compositeApproval() at send preview and send.
+ * holds only while cost x goodsMarkup still gives the approved amount. An approval also names the item it was
+ * given for (menuItemIdentity): a re-import that renames or re-maps an item id puts it back into draft. Goods are
+ * priced without installation, so a quote with goods also waits for the owner to confirm in the pricing settings
+ * that installation is included in the goods price (goodsInstallationIncluded). Draft prices may be saved on an
+ * unsent draft, never sent: quote-draft.js re-checks compositeApproval() at send preview and send.
+ *
+ * The customer-facing estimate keeps at most 12 charged lines (the portal limit): special-handling items, access
+ * charges and each goods step (shelving, extra storage) roll up into one line each; the breakdown keeps every item.
  *
  * Money is integer cents. Error codes are quote_draft_composite_* (the quote-draft API passes them through).
  */
@@ -46,8 +53,15 @@ export const JUNK_FRACTIONS = Object.freeze([0.25, 0.5, 0.75, 1]);
 const WALKTHROUGH_TABLES = ['sizeBase', 'services', 'deep_clean', 'hazards', 'special', 'access'];
 const GARAGE_SIZES = ['1', '2', '3', 'other'];
 // The customer portal and quote drafts charge at most 12 lines (money-service MAX_ESTIMATE_LINES, quote-draft
-// MAX_INCLUDED_LINES); special-handling and access items roll up into one line each so a full quote fits.
+// MAX_INCLUDED_LINES); special-handling items, access charges and each goods step roll up into one line each, so
+// the largest removal step (9 lines) plus both goods lines always fits.
 export const MAX_CHARGED_LINES = 12;
+// The rolled-up goods line of each goods step. Its catalog reference names the step (compositeCatalogCategory).
+export const GOODS_LINES = Object.freeze({
+  shelving: Object.freeze({ id: 'shelving-goods', catalogId: 'menu-shelving', name: 'Shelving' }),
+  storage: Object.freeze({ id: 'storage-goods', catalogId: 'menu-storage', name: 'Extra storage' }),
+});
+export const INSTALLATION_ID = 'goods-installation';
 const MAX_ITEM_CENTS = 10000000, MAX_TOTAL_CENTS = 100000000, MAX_PACKS = 999, MAX_SPECIAL = 99, MAX_FULL_LOADS = 20, MAX_SELECTIONS = 60;
 const VERSION = /^\d{4}-\d{2}-\d{2}\.\d{1,3}$/, DATE = /^\d{4}-\d{2}-\d{2}$/;
 const PRODUCT_ID = /^hd-\d{6,12}$/, SERVICE_ID = /^egc-\d{3}$/;
@@ -154,14 +168,27 @@ export function validatePricingMenu(menu) {
   return menu;
 }
 
-/** Approvals as stored in pricingMenuApprovals/current: {items: {[id]: {unitCents, ...}}, revision}. */
+/** Approvals as stored in pricingMenuApprovals/current: {items: {[id]: {unitCents, identity, ...}}, revision}. */
 export function validateMenuApprovals(value) {
   if (value === null || value === undefined) return { items: {}, revision: null };
   if (!plain(value) || !plain(value.items) || !(value.revision === null || typeof value.revision === 'string')) throw fail('approvals_invalid', 'The saved price approvals failed verification. Nothing was priced; the owner must re-save them.', 503);
   for (const [id, entry] of Object.entries(value.items)) {
-    if (!(PRODUCT_ID.test(id) || SERVICE_ID.test(id)) || !plain(entry) || !Number.isSafeInteger(entry.unitCents) || entry.unitCents < 1 || entry.unitCents > MAX_ITEM_CENTS) throw fail('approvals_invalid', 'The saved price approvals failed verification. Nothing was priced; the owner must re-save them.', 503);
+    if (!(PRODUCT_ID.test(id) || SERVICE_ID.test(id)) || !plain(entry) || !Number.isSafeInteger(entry.unitCents) || entry.unitCents < 1 || entry.unitCents > MAX_ITEM_CENTS
+      || !(entry.identity === undefined || typeof entry.identity === 'string' && entry.identity.length <= 600)) throw fail('approvals_invalid', 'The saved price approvals failed verification. Nothing was priced; the owner must re-save them.', 503);
   }
   return value;
+}
+
+/**
+ * What an owner approval was given for. A menu re-import may keep an item id but rename or re-map it (another
+ * special item under EGC-031, a new pack size under the same SKU): the stored identity then no longer matches and
+ * the approval stops counting. A service is its menu id, name, unit, group, price basis and garage size; a product
+ * its SKU, units per pack and step (its price is checked separately against cost x goodsMarkup).
+ */
+export function menuItemIdentity(item) {
+  if (PRODUCT_ID.test(item?.id || '')) return `product|${item.sku}|${item.unitsPerPack}|${item.section}`;
+  const basis = item.basis.kind === 'junk' ? `junk:${item.basis.fraction}` : `${item.basis.table}:${item.basis.key}`;
+  return `service|${item.menuId}|${item.name}|${item.unit}|${item.group}|${basis}|${item.garageSize || ''}`;
 }
 
 // The draft amount of a walkthrough-table service, in cents. A broken mapping fails closed.
@@ -188,27 +215,39 @@ export function menuPrices(state) {
   if (!menu || !settings) throw fail('unavailable', 'The pricing menu could not be verified. Keep the quote and retry.', 503);
   validatePricingSettings(settings);
   const approvals = validateMenuApprovals(state.approvals).items, markup = goodsMarkupOf(settings).basisPoints;
+  // An owner approval counts only for the item it was given for; one for an earlier version of the item is stale.
+  const ownerOf = item => { const entry = approvals[item.id]; return entry ? { unitCents: entry.unitCents, stale: entry.identity !== menuItemIdentity(item) } : null; };
+  const staleReason = (owner, unitCents, unit = '') => `The owner approved ${money(owner.unitCents)}${unit} for an earlier version of this menu item; a menu re-import changed it (name, unit, pack or price basis), so the owner must approve it again. Draft price ${money(unitCents)}${unit}.`;
   const out = new Map();
-  const full = menu.services.find(service => service.basis.kind === 'junk' && service.basis.fraction === 1);
-  const fullCents = (full?.status === 'approved' ? full.approvedPriceCents : approvals[full?.id]?.unitCents) ?? null;
+  const full = menu.services.find(service => service.basis.kind === 'junk' && service.basis.fraction === 1), fullOwner = full ? ownerOf(full) : null;
+  const fullCents = (full?.status === 'approved' ? full.approvedPriceCents : fullOwner && !fullOwner.stale ? fullOwner.unitCents : null) ?? null;
   for (const service of menu.services) {
-    const fixed = service.status === 'approved' ? service.approvedPriceCents : null, owner = approvals[service.id]?.unitCents ?? null;
+    const fixed = service.status === 'approved' ? service.approvedPriceCents : null, prior = ownerOf(service), owner = prior && !prior.stale ? prior.unitCents : null;
     // A partial load is a proportional draft of the full-truck price until the owner approves its own amount;
     // with no full-truck price at all a load has no price and cannot be quoted.
     const draft = service.basis.kind === 'junk' ? (fullCents && service.basis.fraction < 1 ? Math.round(fullCents * service.basis.fraction) : null) : tableCents(walkthrough, service.basis);
     const unitCents = fixed ?? owner ?? draft;
     const source = fixed !== null ? 'menu' : owner !== null ? 'owner' : 'draft';
+    // The walkthrough's size base is its full-service reset price, which already covers hauling: the builder adds
+    // truck loads on top, so that number is only a placeholder until the owner sets the cleaning-only amount.
+    const draftReason = service.basis.table === 'sizeBase' ? `Draft price ${money(unitCents)} is the walkthrough's historical full-service base, which already included hauling; the owner sets the cleaning-only amount.` : `Draft price ${money(unitCents)}, not yet approved by the owner.`;
     out.set(service.id, { item: service, kind: 'service', unitCents, approved: source !== 'draft', source,
-      reason: unitCents === null ? 'No price yet: the owner must approve a full truck load price first.' : source === 'menu' ? service.approval : source === 'owner' ? 'Owner-approved price.' : `Draft price ${money(unitCents)}, not yet approved by the owner.` });
+      reason: unitCents === null ? 'No price yet: the owner must approve a full truck load price first.' : source === 'menu' ? service.approval : source === 'owner' ? 'Owner-approved price.' : prior?.stale ? staleReason(prior, unitCents) : draftReason });
   }
   for (const product of menu.products) {
-    const unitCents = roundCents(product.retailPerPackCents * markup, 10000, settings.roundingRule), owner = approvals[product.id]?.unitCents ?? null;
-    const approved = owner === unitCents;
+    const unitCents = roundCents(product.retailPerPackCents * markup, 10000, settings.roundingRule), owner = ownerOf(product);
+    const approved = Boolean(owner && !owner.stale && owner.unitCents === unitCents);
     out.set(product.id, { item: product, kind: 'product', unitCents, approved, source: approved ? 'owner' : 'draft',
-      reason: approved ? 'Owner-approved price.' : owner !== null ? `The owner approved ${money(owner)} per pack, but the current price is ${money(unitCents)}; the owner must approve the new price.` : `Draft price ${money(unitCents)} per pack, not yet approved by the owner.` });
+      reason: approved ? 'Owner-approved price.' : owner?.stale ? staleReason(owner, unitCents, ' per pack') : owner ? `The owner approved ${money(owner.unitCents)} per pack, but the current price is ${money(unitCents)}; the owner must approve the new price.` : `Draft price ${money(unitCents)} per pack, not yet approved by the owner.` });
   }
   return out;
 }
+
+// Goods are priced at cost x goodsMarkup with no installation line. Until the owner confirms in the pricing settings
+// that installation is included in that price, a quote with goods is saved but never sent.
+const installationIncluded = settings => settings?.goodsInstallationIncluded === true;
+const INSTALLATION_BLOCK = Object.freeze({ id: INSTALLATION_ID, name: 'Shelving and storage installation', unitCents: null,
+  reason: 'Shelving and storage installation is not priced: goods sell at public retail × the goods markup only, and the owner has not confirmed in Hub > Catalog & pricing > Pricing that installation is included in that price.' });
 
 /** The builder's menu for one viewer. internal (owner/manager) adds the goods cost basis, the multiplier and the
  * approvals revision the owner's bulk approval needs; nobody else sees a cost. */
@@ -224,7 +263,9 @@ export function builderMenu(state, { internal = false, canApprove = false } = {}
     products: menu.products.map(product => ({ id: product.id, sku: product.sku, retailer: product.retailer, name: product.name, section: product.section, group: product.group,
       unitsPerPack: product.unitsPerPack, perOrderPackLimit: product.perOrderPackLimit, productUrl: product.productUrl, photoUrl: product.photoUrl, fitWarnings: product.fitWarnings,
       ...status(product.id), ...(internal ? { retailPerPackCents: product.retailPerPackCents, evidence: product.evidence } : {}) })),
-    ...(internal ? { internal: { goodsMarkup: goodsMarkupOf(settings).multiplier, roundingRule: settings.roundingRule, approvalsRevision: approvals.revision } } : {}),
+    ...(internal ? { internal: { goodsMarkup: goodsMarkupOf(settings).multiplier, goodsInstallationIncluded: installationIncluded(settings), roundingRule: settings.roundingRule, approvalsRevision: approvals.revision } } : {}),
+    // Every viewer learns whether goods can be sent at all (no amount is involved): the builder shows it per step.
+    installation: installationIncluded(settings) ? { included: true } : { included: false, reason: INSTALLATION_BLOCK.reason },
     viewer: { internal, canApprove: internal && canApprove },
   };
 }
@@ -324,12 +365,14 @@ export function priceCompositeQuote(state, descriptor, { complete = false } = {}
     model.push({ id, kind, name, description, quantity: pair.entry.quantity, unitCents: pair.price.unitCents, totalCents: lineCents(pair.price.unitCents, pair.entry.quantity),
       optional: false, selected: true, taxable: false, catalog: { itemId: pair.price.item.id, version } });
   };
-  const rolled = (pairs, id, name) => {
+  // One customer-facing line for several picks: its description names each (with its quantity); the breakdown
+  // keeps every pick, pointing at the line it rolls into.
+  const listed = (pairs, label) => { const text = pairs.map(label).join('; '); return text.length > 600 ? `${text.slice(0, 599).trimEnd()}…` : text; };
+  const rolled = (pairs, id, name, { kind = 'fee', label = pair => pair.entry.quantity > 1 ? `${pair.price.item.name} × ${pair.entry.quantity}` : pair.price.item.name, extra = {} } = {}) => {
     if (!pairs.length) return;
     pairs.forEach(pair => itemize(pair, id));
     const total = pairs.reduce((sum, pair) => sum + lineCents(pair.price.unitCents, pair.entry.quantity), 0);
-    model.push({ id, kind: 'fee', name, description: pairs.map(pair => pair.entry.quantity > 1 ? `${pair.price.item.name} × ${pair.entry.quantity}` : pair.price.item.name).join('; ').slice(0, 600),
-      quantity: 1, unitCents: total, totalCents: lineCents(total, 1), optional: false, selected: true, taxable: false });
+    model.push({ id, kind, name, description: listed(pairs, label), quantity: 1, unitCents: total, totalCents: lineCents(total, 1), optional: false, selected: true, taxable: false, ...extra });
   };
   const inGroup = group => removal.filter(pair => pair.price.item.group === group);
   for (const pair of inGroup('cleaning-base')) single(pair, 'removal-base', 'service', pair.price.item.name, 'Flat garage cleaning base for the garage size.');
@@ -340,18 +383,20 @@ export function priceCompositeQuote(state, descriptor, { complete = false } = {}
   rolled(inGroup('special'), 'removal-special', 'Special-handling items');
   rolled(inGroup('access'), 'removal-access', 'Access charges');
   for (const pair of inGroup('cleaning')) single(pair, `service-${pair.price.item.id}`, 'service', pair.price.item.name);
-  for (const step of ['shelving', 'storage']) for (const pair of goods(step)) {
-    const item = pair.price.item;
-    single(pair, `${step}-${item.id}`, 'product', item.name, item.unitsPerPack > 1 ? `Priced per pack of ${item.unitsPerPack}.` : '');
+  // Each goods step is one line (every pack is itemized in the breakdown and the purchase list). The Hub job keeps
+  // the step's goods cost split (like catalog quotes); previews and the breakdown carry none.
+  const splits = new Map();
+  for (const step of ['shelving', 'storage']) {
+    const pairs = goods(step), line = GOODS_LINES[step];
+    if (!pairs.length) continue;
+    const packs = pair => `${pair.price.item.name} × ${pair.entry.quantity} pack${pair.entry.quantity === 1 ? '' : 's'}${pair.price.item.unitsPerPack > 1 ? ` of ${pair.price.item.unitsPerPack}` : ''}`;
+    rolled(pairs, line.id, line.name, { kind: 'product', label: packs, extra: { catalog: { itemId: line.catalogId, version } } });
+    const totalCents = model.at(-1).totalCents, productCents = pairs.reduce((sum, pair) => sum + lineCents(pair.price.item.retailPerPackCents, pair.entry.quantity), 0);
+    splits.set(line.id, { productCents, laborCents: 0, laborMinutes: 0, markupCents: totalCents - productCents, disposalCents: 0 });
   }
   if (!model.length) throw fail('empty', 'Add at least one removal, shelving or storage item to price the quote.');
-  if (model.filter(line => line.totalCents > 0).length > MAX_CHARGED_LINES) throw fail('too_many_lines', `A quote can charge at most ${MAX_CHARGED_LINES} lines so the customer portal shows every charge. Remove a product or split the work into two quotes.`, 400, { maxChargedLines: MAX_CHARGED_LINES });
-  // The goods cost split stays on the Hub job (like catalog quotes); previews and the breakdown carry none.
-  const goodsSplit = new Map(menu.products.map(product => [product.id, product]));
-  const stored = model.map(line => {
-    const product = line.catalog && goodsSplit.get(line.catalog.itemId);
-    return product ? { ...line, split: { productCents: product.retailPerPackCents, laborCents: 0, laborMinutes: 0, markupCents: line.unitCents - product.retailPerPackCents, disposalCents: 0 } } : line;
-  });
+  if (model.filter(line => line.totalCents > 0).length > MAX_CHARGED_LINES) throw fail('too_many_lines', `A quote can charge at most ${MAX_CHARGED_LINES} lines so the customer portal shows every charge. Remove a removal item or split the work into two quotes.`, 400, { maxChargedLines: MAX_CHARGED_LINES });
+  const stored = model.map(line => splits.has(line.id) ? { ...line, split: splits.get(line.id) } : line);
   let storedLineItems;
   try { storedLineItems = normalizeLineItems(stored, { strict: true }).lineItems; }
   catch (error) { throw fail('unavailable', `The builder quote could not be verified: ${error.message}`, 503); }
@@ -363,7 +408,7 @@ export function priceCompositeQuote(state, descriptor, { complete = false } = {}
   const steps = sections.filter(section => section.completed).map(section => ({ id: section.id, label: section.label, subtotalCents: section.subtotalCents, runningTotalCents: running += section.subtotalCents }));
   const breakdown = { version: COMPOSITE_SCHEMA_VERSION, source: 'composite', menuVersion: version, settingsVersion: settings.settingsVersion,
     sections: sections.map(({ completed, ...section }) => section), lines: detail, purchaseList: purchaseList(detail), totalCents };
-  return { compositePricing: selection, menuVersion: version, settingsVersion: settings.settingsVersion, lineItems, storedLineItems, breakdown, steps, totalCents, approval: approvalOf(detail, prices) };
+  return { compositePricing: selection, menuVersion: version, settingsVersion: settings.settingsVersion, lineItems, storedLineItems, breakdown, steps, totalCents, approval: approvalOf(detail, prices, settings) };
 }
 
 // What the crew buys or grabs: one row per product, with packs, units and the public product page. No cost.
@@ -372,7 +417,7 @@ function purchaseList(lines) {
     units: line.qty * line.unitsPerPack, productUrl: line.productUrl, perOrderPackLimit: line.perOrderPackLimit, overOrderLimit: line.perOrderPackLimit !== null && line.qty > line.perOrderPackLimit, fitWarnings: line.fitWarnings }));
 }
 
-function approvalOf(lines, prices) {
+function approvalOf(lines, prices, settings) {
   const blocked = lines.filter(line => {
     const price = prices.get(line.id);
     return !price || !price.approved || price.unitCents !== line.unitCents;
@@ -383,31 +428,43 @@ function approvalOf(lines, prices) {
         : price.approved ? `The owner approved ${money(price.unitCents)} for ${line.name}, but this quote has ${money(line.unitCents)}. Save the quote again to use the approved price.`
           : `${line.name}: ${price.reason.charAt(0).toLowerCase()}${price.reason.slice(1)}` };
   });
+  if (lines.some(line => line.sku) && !installationIncluded(settings)) blocked.push({ ...INSTALLATION_BLOCK });
   return { ready: blocked.length === 0, blocked };
 }
 
 /** Send-time check of a saved breakdown against today's menu, settings and approvals: {ready, blocked}. */
 export function compositeApproval(breakdown, state) {
   if (!plain(breakdown) || breakdown.source !== 'composite' || !Array.isArray(breakdown.lines)) return { ready: false, blocked: [{ id: null, name: 'This quote', unitCents: null, reason: 'The saved builder breakdown is missing. Rebuild the quote before sending.' }] };
-  return approvalOf(breakdown.lines, menuPrices(state));
+  return approvalOf(breakdown.lines, menuPrices(state), state.settings);
 }
 
 /** The message and details a refused send carries: the reasons, in quote order, at most 8 named. */
 export function approvalRefusal(approval) {
   const names = approval.blocked.map(line => line.name);
   const listed = names.slice(0, 8).join(', ') + (names.length > 8 ? ` and ${names.length - 8} more` : '');
-  return fail('prices_unapproved', `This quote has ${names.length} draft price${names.length === 1 ? '' : 's'} the owner has not approved: ${listed}. It stays saved as a draft and can be sent once the owner approves ${names.length === 1 ? 'it' : 'them'} in Hub > Catalog & pricing.`, 409,
+  return fail('prices_unapproved', `This quote has ${names.length} price${names.length === 1 ? '' : 's'} the owner has not approved: ${listed}. It stays saved as a draft and can be sent once the owner approves ${names.length === 1 ? 'it' : 'them'} in Hub > Catalog & pricing.`, 409,
     { unapproved: approval.blocked.map(({ id, name, unitCents, reason }) => ({ id, name, unitCents, reason })) });
 }
 
 /** The builder step a garage-catalog product belongs to (the Hub catalog quote): shelving or extra storage. */
 export const sectionOfCatalogCategory = category => category === 'shelving' ? 'shelving' : 'storage';
 
+// The public product page of a garage-catalog item (its first https source) and, for a Home Depot page, the internet
+// SKU the page URL ends with. Catalog quotes have no pack data: an item priced 'each' is one unit per pack.
+function catalogProduct(item) {
+  const source = (Array.isArray(item?.sources) ? item.sources : []).find(entry => typeof entry?.url === 'string' && /^https:\/\//.test(entry.url));
+  if (!source) return null;
+  let sku = null;
+  try { sku = source.retailer === 'The Home Depot' ? /\/(\d{6,12})\/?$/.exec(new URL(source.url).pathname)?.[1] || null : null; } catch { sku = null; }
+  return { productUrl: source.url, retailer: typeof source.retailer === 'string' ? source.retailer.slice(0, 80) : null, sku, unitsPerPack: item.priceUnit === 'each' ? 1 : null };
+}
+
 /**
  * The structured breakdown of any saved quote job, for the job breakdown and the purchase / grab list:
  *   a builder quote returns its saved breakdown (source 'composite');
  *   any other quote is derived from estimate.lineItems (source 'line_items'): catalog products by the garage
- *   catalog category (pass {catalog} to resolve it), walkthrough lines by their id. Derived lines carry no SKU.
+ *   catalog category, product page and (Home Depot) SKU when {catalog} resolves them, walkthrough lines by their
+ *   id. Customer-supplied products are not on the purchase list.
  * Lines: {id, lineItemId, section, category, group, menuId, sku, retailer, name, qty, unit, unitsPerPack, unitCents,
  *   totalCents, approved, productUrl, photoUrl, perOrderPackLimit, fitWarnings}. Never a cost.
  */
@@ -416,12 +473,12 @@ export function quoteBreakdown(job, { catalog = null } = {}) {
   if (plain(saved) && saved.source === 'composite' && Array.isArray(saved.lines)) return saved;
   const items = Array.isArray(job?.estimate?.lineItems) ? normalizeLineItems(job.estimate.lineItems).lineItems.filter(included) : [];
   if (!items.length) return null;
-  const categories = new Map((Array.isArray(catalog?.items) ? catalog.items : []).map(item => [item.id, item.category]));
+  const catalogItems = new Map((Array.isArray(catalog?.items) ? catalog.items : []).filter(item => plain(item) && typeof item.id === 'string').map(item => [item.id, item]));
   // A line nothing places (a minimum charge, an adjustment, a cleaning service) is a 'service' line in the step of the
   // line before it, or removal / cleanout when it comes first.
   let previous = 'removal';
   const sectionOf = line => {
-    const category = line.catalog?.itemId ? categories.get(line.catalog.itemId) : undefined;
+    const category = line.catalog?.itemId ? catalogItems.get(line.catalog.itemId)?.category : undefined;
     if (category && category !== 'services') return { section: sectionOfCatalogCategory(category), category: sectionOfCatalogCategory(category) };
     if (category === 'services') return { section: 'removal', category: 'service' };
     if (/^(?:cleanout|special-|access-|removal-)/.test(line.id)) return { section: 'removal', category: 'removal' };
@@ -430,12 +487,41 @@ export function quoteBreakdown(job, { catalog = null } = {}) {
     if (/^(?:totes|storage-)/.test(line.id) || line.kind === 'product') return { section: 'storage', category: 'storage' };
     return { section: previous, category: 'service' };
   };
-  const lines = items.map(line => { const placed = sectionOf(line); previous = placed.section; return { id: line.id, lineItemId: line.id, ...placed, group: null, menuId: null, sku: null, retailer: null, name: line.name, qty: line.quantity, unit: line.kind === 'product' ? 'each' : 'job', unitsPerPack: null,
-    unitCents: line.unitCents, totalCents: line.totalCents, approved: null, productUrl: null, photoUrl: null, perOrderPackLimit: null, fitWarnings: null }; });
+  const purchases = [];
+  const lines = items.map(line => {
+    const placed = sectionOf(line); previous = placed.section;
+    const item = line.catalog?.itemId ? catalogItems.get(line.catalog.itemId) : null, product = line.kind === 'product' && item?.kind === 'product' ? catalogProduct(item) : null;
+    const row = { id: line.id, lineItemId: line.id, ...placed, group: null, menuId: null, sku: product?.sku || null, retailer: product?.retailer || null, name: line.name, qty: line.quantity, unit: line.kind === 'product' ? 'each' : 'job', unitsPerPack: product?.unitsPerPack ?? null,
+      unitCents: line.unitCents, totalCents: line.totalCents, approved: null, productUrl: product?.productUrl || null, photoUrl: null, perOrderPackLimit: null, fitWarnings: null };
+    if (product && line.customerSupplied !== true) purchases.push({ sku: row.sku, name: row.name, retailer: row.retailer, section: row.section, group: null, packs: row.qty, unitsPerPack: row.unitsPerPack,
+      units: row.unitsPerPack ? row.qty * row.unitsPerPack : null, productUrl: row.productUrl, perOrderPackLimit: null, overOrderLimit: false, fitWarnings: null });
+    return row;
+  });
   const sections = BUILDER_STEPS.map(id => ({ id, label: SECTION_LABEL.get(id), subtotalCents: lines.filter(line => line.section === id).reduce((sum, line) => sum + (line.totalCents || 0), 0), lineIds: lines.filter(line => line.section === id).map(line => line.id) }));
-  return { version: COMPOSITE_SCHEMA_VERSION, source: 'line_items', menuVersion: null, settingsVersion: job?.estimate?.pricingSettingsVersion || null, sections, lines, purchaseList: [], totalCents: lines.reduce((sum, line) => sum + (line.totalCents || 0), 0) };
+  return { version: COMPOSITE_SCHEMA_VERSION, source: 'line_items', menuVersion: null, settingsVersion: job?.estimate?.pricingSettingsVersion || null, sections, lines, purchaseList: purchases, totalCents: lines.reduce((sum, line) => sum + (line.totalCents || 0), 0) };
 }
 
 /** A menu document from its JSON text, validated and frozen (the store parses the bundled one once per isolate). */
 export const parsePricingMenu = json => freeze(validatePricingMenu(JSON.parse(json)));
 export const groupLabel = id => GROUP_LABEL.get(id) || null;
+// The bundled pricing menu (functions/_data/pricing-menu.json via its generated module), parsed and validated once
+// per isolate. tests/composite-quote.test.mjs validates the shipped menu.
+let bundled = null;
+export const bundledPricingMenu = () => bundled || (bundled = parsePricingMenu(PRICING_MENU_JSON));
+
+/**
+ * The garage-catalog category (functions/_data/garage-catalog.json) a builder estimate line stands for, so funnel
+ * metrics (funnel-dimensions.js lineItemCatalogCategories) place builder quotes like catalog quotes: the shelving
+ * goods line is 'shelving', the extra-storage goods line 'wall-systems' (the catalog's general garage-storage
+ * category; every storage category maps to the same service line), a cleaning base or cleaning add-on 'services'.
+ * Junk loads, special items and access charges name no catalog category. Anything else is null.
+ */
+export function compositeCatalogCategory(itemId, menu = null) {
+  if (itemId === GOODS_LINES.shelving.catalogId) return 'shelving';
+  if (itemId === GOODS_LINES.storage.catalogId) return 'wall-systems';
+  if (typeof itemId !== 'string' || !SERVICE_ID.test(itemId)) return null;
+  let services;
+  try { services = (menu || bundledPricingMenu()).services; } catch { return null; }
+  const service = services.find(entry => entry.id === itemId);
+  return service && ['cleaning-base', 'cleaning'].includes(service.group) ? 'services' : null;
+}

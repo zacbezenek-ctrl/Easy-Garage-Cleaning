@@ -59,8 +59,6 @@ class QuoteDraftBrowserTests(unittest.TestCase):
             self.assertEqual(parse_qs(parsed.query), {'sourceWalkthroughId': ['walk-1']})
             send({'ok': True, 'viewer': {'id': 'sales.person'}, 'sourceRevision': 'w1r', 'customerId': 'customer-1', 'jobId': '', 'expectedRevision': '', 'roster': []}); return
         if parsed.path != '/api/quote-draft': route.continue_(); return
-        # The builder probe: this fixture is a Hub without EGC_QUOTE_BUILDER_ENABLED, so the walkthrough quote opens.
-        if req.method == 'GET' and parse_qs(parsed.query) == {'view': ['builder']}: send({'ok': False, 'code': 'quote_draft_invalid_request', 'error': 'The quote lookup is invalid.'}, 400); return
         body = req.post_data_json; self.posts.append(copy.deepcopy(body))
         if body['action'] == 'save' and self.abort_saves: self.abort_saves -= 1; route.abort('connectionreset'); return
         if body['action'] == 'save':

@@ -19,7 +19,7 @@ import { normalizeUnsignedCapture } from '../functions/_lib/unsigned-walkthrough
 import { fieldJobProjection } from '../functions/_lib/field-execution.js';
 import { PROPOSED_25_75, FINAL_25_75 } from '../functions/_lib/quote-payment-policy.js';
 import { syncWalkthroughCapture } from '../functions/_lib/walkthrough-capture-sync.js';
-import { priceCompositeQuote } from '../functions/_lib/composite-quote.js';
+import { BUILDER_SECTIONS, menuItemIdentity, priceCompositeQuote } from '../functions/_lib/composite-quote.js';
 import { walkthroughPricing, walkthroughServiceItems } from '../functions/_lib/pricing-config.js';
 
 test('saved authenticated capture reaches the canonical contact through a retryable internal-note intent', async () => {
@@ -916,8 +916,9 @@ test('the estimate-ready tag is cleared and applied again for each sent revision
 const BUILDER_ENV = { ...ENV, EGC_QUOTE_BUILDER_ENABLED: 'true' };
 const builderMenu = JSON.parse(readFileSync(new URL('../functions/_data/pricing-menu.json', import.meta.url), 'utf8'));
 const builderSettings = JSON.parse(readFileSync(new URL('../functions/_data/pricing-settings.defaults.json', import.meta.url), 'utf8'));
-const builderState = (approvals = {}) => ({ menu: builderMenu, settings: builderSettings, walkthrough: walkthroughPricing(walkthroughServiceItems()), approvals: { items: approvals, revision: Object.keys(approvals).length ? 'approvals-1' : null } });
+const builderState = (approvals = {}, settings = {}) => ({ menu: builderMenu, settings: { ...builderSettings, ...settings }, walkthrough: walkthroughPricing(walkthroughServiceItems()), approvals: { items: approvals, revision: Object.keys(approvals).length ? 'approvals-1' : null } });
 const menuItem = name => builderMenu.services.find(item => item.name === name) || builderMenu.products.find(item => item.name === name);
+const approvedAt = (item, unitCents) => ({ unitCents, identity: menuItemIdentity(item) });
 const SHELF = builderMenu.products.find(item => item.id === 'hd-100006678');
 const builderSelection = ({ steps = ['removal', 'shelving', 'storage'], removal = [{ id: menuItem('Two-car garage base').id, quantity: 1 }, { id: menuItem('Full truck load').id, quantity: 1 }, { id: menuItem('Mattress').id, quantity: 2 }], shelving = [{ id: SHELF.id, quantity: 2 }], storage = [] } = {}) =>
   ({ menuVersion: builderMenu.menuVersion, settingsVersion: builderSettings.settingsVersion, steps, removal, shelving, storage });
@@ -931,20 +932,20 @@ test('builder quote: the server re-prices and saves its lines, breakdown and sel
   const result = await saveQuoteDraft(f.store, owner, input, NOW, { env: BUILDER_ENV, compositeState: async () => state });
   const job = f.job(result.job.id);
   assert.deepEqual([job.estimate.amountCents, job.estimate.catalogVersion, job.estimate.pricingSettingsVersion, job.estimate.status], [priced.totalCents, builderMenu.menuVersion, builderSettings.settingsVersion, 'draft']);
-  assert.deepEqual(job.estimate.lineItems.map(line => line.id), ['removal-base', 'removal-junk-full', 'removal-special', `shelving-${SHELF.id}`]);
-  assert.deepEqual(job.estimate.lineItems.at(-1).split, { productCents: 8900, laborCents: 0, laborMinutes: 0, markupCents: 2670, disposalCents: 0 }, 'the Hub job keeps the goods cost split');
+  assert.deepEqual(job.estimate.lineItems.map(line => line.id), ['removal-base', 'removal-junk-full', 'removal-special', 'shelving-goods']);
+  assert.deepEqual(job.estimate.lineItems.at(-1).split, { productCents: 17800, laborCents: 0, laborMinutes: 0, markupCents: 5340, disposalCents: 0 }, 'the Hub job keeps the goods cost split');
   assert.deepEqual(job.quoteDraft.compositePricing, priced.compositePricing);
   assert.deepEqual(job.quoteDraft.breakdown, priced.breakdown);
   assert.deepEqual(result.job.breakdown.sections.map(section => [section.id, section.subtotalCents]), [['removal', 97500 + 75000 + 14000], ['shelving', 23140], ['storage', 0]]);
   assert.deepEqual(result.job.breakdown.purchaseList.map(row => [row.sku, row.packs, row.productUrl]), [[SHELF.sku, 2, SHELF.productUrl]]);
   assert.doesNotMatch(JSON.stringify(result), /"split"|productCents|markupCents|retailPerPackCents/, 'the quote author DTO carries no cost');
   // Draft prices: the save stands, the send preview and the send are refused with every reason, nothing is sent.
-  const blocked = error => error.code === 'quote_draft_composite_prices_unapproved' && error.status === 409 && error.details.unapproved.map(row => row.name).join('|') === `Two-car garage base|Mattress|${SHELF.name}` && /owner has not approved/.test(error.message);
+  const blocked = error => error.code === 'quote_draft_composite_prices_unapproved' && error.status === 409 && error.details.unapproved.map(row => row.name).join('|') === `Two-car garage base|Mattress|${SHELF.name}|Shelving and storage installation` && /owner has not approved/.test(error.message);
   await assert.rejects(previewQuoteSend(f.store, owner, { jobId: job.id, expectedRevision: job.revision }, NOW, { env: BUILDER_ENV, compositeState: async () => state }), blocked);
   await assert.rejects(sendQuoteDraft(f.store, owner, { requestId: randomUUID(), jobId: job.id, expectedRevision: job.revision, confirmToken: 'unused' }, NOW, { env: BUILDER_ENV, deliver: f.deliver, compositeState: async () => state }), blocked);
   assert.equal(f.delivered.length, 0);
-  // The owner approves exactly those prices (no re-save needed): the quote sends.
-  const approved = builderState({ [menuItem('Two-car garage base').id]: { unitCents: 97500 }, [menuItem('Mattress').id]: { unitCents: 7000 }, [SHELF.id]: { unitCents: 11570 } });
+  // The owner approves exactly those prices and confirms installation is in the goods price (no re-save needed): the quote sends.
+  const approved = builderState({ [menuItem('Two-car garage base').id]: approvedAt(menuItem('Two-car garage base'), 97500), [menuItem('Mattress').id]: approvedAt(menuItem('Mattress'), 7000), [SHELF.id]: approvedAt(SHELF, 11570) }, { goodsInstallationIncluded: true });
   const preview = await previewQuoteSend(f.store, owner, { jobId: job.id, expectedRevision: job.revision }, NOW, { env: BUILDER_ENV, compositeState: async () => approved });
   const sent = await sendQuoteDraft(f.store, owner, { requestId: randomUUID(), jobId: job.id, expectedRevision: job.revision, confirmToken: preview.confirmToken }, LATER, { env: BUILDER_ENV, deliver: f.deliver, compositeState: async () => approved });
   assert.equal(sent.job.estimate.status, 'sent');
@@ -953,6 +954,40 @@ test('builder quote: the server re-prices and saves its lines, breakdown and sel
   await save(f, revise(f, job.id, d => { d.scope = 'Revised walkthrough quote.'; }), owner, ENV);
   assert.equal(f.job(job.id).quoteDraft.compositePricing, null);
   assert.equal(f.job(job.id).quoteDraft.breakdown, null);
+});
+
+test('builder quote: a full removal step with shelving and every storage group saves within the portal line limit', async () => {
+  const f = fixture(), state = builderState(), item = name => ({ id: menuItem(name).id, quantity: 1 });
+  const storage = BUILDER_SECTIONS[2].groups.map(group => ({ id: builderMenu.products.find(entry => entry.group === group.id).id, quantity: 2 }));
+  const selection = builderSelection({ removal: [item('Two-car garage base'), { id: menuItem('Full truck load').id, quantity: 2 }, item('Half load'), item('Mattress'), item('Stairs'), item('Long carry'), item('Deep cleaning, two-car'), item('Mouse trapping'), item('Pest-waste cleanup')],
+    shelving: builderMenu.products.filter(entry => entry.section === 'shelving').slice(0, 2).map(entry => ({ id: entry.id, quantity: 3 })), storage });
+  const { priced, input } = builderInput(f, selection, state);
+  const result = await saveQuoteDraft(f.store, owner, input, NOW, { env: BUILDER_ENV, compositeState: async () => state });
+  const job = f.job(result.job.id);
+  assert.deepEqual(job.estimate.lineItems.map(line => line.id), ['removal-base', 'removal-junk-full', 'removal-junk-partial', 'removal-special', 'removal-access', 'service-egc-008', 'service-egc-011', 'service-egc-012', 'shelving-goods', 'storage-goods']);
+  assert.equal(job.estimate.amountCents, priced.totalCents);
+  assert.equal(job.quoteDraft.breakdown.purchaseList.length, 10, 'every pack is still on the purchase / grab list');
+  assert.ok(job.quoteDraft.breakdown.lines.filter(line => line.section === 'storage').every(line => line.lineItemId === 'storage-goods'));
+});
+
+test('builder on: a walkthrough-priced quote saves as before but is not sent until it is built in the builder', async () => {
+  const f = fixture(), unused = async () => { throw new Error('a walkthrough-priced quote reads no builder state'); };
+  const result = await save(f, f.input(), owner, BUILDER_ENV, NOW, { compositeState: unused });
+  const job = f.job(result.job.id);
+  assert.equal(job.quoteDraft.compositePricing, undefined);
+  const required = error => error.code === 'quote_draft_builder_required' && error.status === 409 && error.details.unapproved[0].name === 'Walkthrough-priced quote' && /built in the quote builder/.test(error.message);
+  await assert.rejects(previewQuoteSend(f.store, owner, { jobId: job.id, expectedRevision: job.revision }, NOW, { env: BUILDER_ENV, compositeState: unused }), required);
+  await assert.rejects(sendQuoteDraft(f.store, owner, { requestId: randomUUID(), jobId: job.id, expectedRevision: job.revision, confirmToken: 'unused' }, NOW, { env: BUILDER_ENV, deliver: f.deliver, compositeState: unused }), required);
+  assert.equal(f.delivered.length, 0);
+  // With the flag off the same draft previews and sends exactly as before.
+  const preview = await previewQuoteSend(f.store, owner, { jobId: job.id, expectedRevision: job.revision }, NOW, { env: ENV });
+  const sent = await sendQuoteDraft(f.store, owner, { requestId: randomUUID(), jobId: job.id, expectedRevision: job.revision, confirmToken: preview.confirmToken }, LATER, { env: ENV, deliver: f.deliver });
+  assert.equal(sent.job.estimate.status, 'sent');
+  // A catalog quote keeps its own approval rules with the builder on.
+  const g = fixture(), catalog = catalogState(), descriptor = catalogSelection(catalog), pricedCatalog = priceCatalogQuote(catalog, descriptor, CATALOG_NOW), env = { ...CATALOG_ENV, EGC_QUOTE_BUILDER_ENABLED: 'true' };
+  const saved = await saveQuoteDraft(g.store, owner, g.input({ sourceWalkthroughId: undefined, sourceRevision: undefined, draft: { ...draft(), line_items: pricedCatalog.lineItems, catalog_version: pricedCatalog.catalogVersion, catalog_pricing: descriptor, valid_until: '2026-10-15' } }), CATALOG_NOW, { env, catalogState: async () => catalog });
+  const catalogJob = g.job(saved.job.id);
+  assert.ok((await previewQuoteSend(g.store, owner, { jobId: catalogJob.id, expectedRevision: catalogJob.revision }, CATALOG_NOW, { env, compositeState: unused })).confirmToken);
 });
 
 test('builder quote: the owner-approved $750 full truck sends without any further approval', async () => {

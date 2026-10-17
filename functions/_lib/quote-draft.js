@@ -45,6 +45,8 @@ import { prepareWalkthroughCaptureSync, walkthroughCaptureSyncView } from './wal
  * shelving, then extra storage; composite-quote.js): the server re-prices it, saves its lines and the cost-free
  * section breakdown (quoteDraft.breakdown), and refuses a send preview or send while any of its prices is a draft
  * the owner has not approved (quote_draft_composite_prices_unapproved, with every reason in details.unapproved).
+ * While that flag is on, a walkthrough quote priced outside the builder (no composite or catalog pricing) is saved
+ * as before but its send preview and send are refused (quote_draft_builder_required, 409).
  * With FUNNEL_PAYMENT_EVENTS_ENABLED (and MONEY_API_ENABLED) a material revision
  * also carries the FUN-33 paid-in-full crossing it causes in its own commit
  * (payment-events.js moneyEventWrites): job.balance_reopened (estimate_revised)
@@ -434,8 +436,15 @@ function sendable(job, now, env) {
   if (!validDate(estimate.validUntil) || estimate.validUntil < denverToday(new Date(now))) throw fail('estimate_expired', 'This quote has expired. Save it with a new expiry date before sending.');
 }
 // A builder quote is sent only when every price on it is owner-approved now (approved after the save counts).
+// While the builder is on, a walkthrough quote priced outside it (the walkthrough's own itemized lines, priced from
+// the same tables the builder holds as owner-unapproved drafts) is kept but never sent: it is rebuilt in the
+// builder first. Catalog quotes keep their own catalog approval.
 async function compositeSendable(job, env, compositeState) {
-  if (!plain(job.quoteDraft?.compositePricing)) return;
+  if (!plain(job.quoteDraft?.compositePricing)) {
+    if (quoteBuilderEnabled(env) && !plain(job.quoteDraft?.catalogPricing)) throw fail('builder_required', 'With the quote builder on, a walkthrough quote is sent only after it is built in the quote builder from the owner\'s pricing menu. This draft stays saved: reopen "Send options for review" on the walkthrough and build it there.', 409,
+      { unapproved: [{ id: null, name: 'Walkthrough-priced quote', unitCents: null, reason: 'Its lines were priced from the walkthrough tables, which the owner has not approved for the quote builder. Rebuild it in the quote builder (removal, then shelving, then extra storage) and send that quote.' }] });
+    return;
+  }
   const approval = compositeApproval(job.quoteDraft.breakdown, await compositeState(env));
   if (!approval.ready) throw approvalRefusal(approval);
 }
