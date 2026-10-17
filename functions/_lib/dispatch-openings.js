@@ -1,4 +1,5 @@
 import { requireDispatcher } from './dispatch-service.js';
+import { canDispatch } from './dispatch-permissions.js';
 import { DISPATCH_TIME_ZONE } from './dispatch-contract.js';
 import { assignmentKey } from './job-assignment.js';
 import { sharedScheduleResources, scheduleRowsConflict, scheduleCrewIds } from './dispatch-conflicts.js';
@@ -108,11 +109,15 @@ function mergeIntervals(intervals,start,end) {
  * with active members as one group on the days it works, labels each candidate
  * {crewId,crewName,crewCode,priority,weekend} and sorts by date, then priority,
  * with a byDate summary. Job kinds start no earlier than 9:30 on and after
- * JOB_START_POLICY_DATE. options.booker (a schedule.book holder) never gets the
- * roster, and in crew mode no employee ids either (projectCrewOpenings is the
- * rep-safe projection for Knock and the estimator gameplan). */
-export async function dispatchOpenings(store,session,query={},now=new Date(),{travel=null,authorize=requireDispatcher,booker=false}={}) {
+ * JOB_START_POLICY_DATE. Only a dispatcher (dispatch.write) gets the roster, and in
+ * crew mode the employee ids: options.booker (a schedule.book holder) and any other
+ * session a custom authorize lets in never do, so a caller that forgets the flag is
+ * safe (projectCrewOpenings is the rep-safe projection for Knock and the estimator
+ * gameplan). */
+export async function dispatchOpenings(store,session,query={},now=new Date(),{travel=null,authorize=requireDispatcher,booker:asBooker=false}={}) {
   authorize(session);
+  // Fails closed: the roster and employee ids go to a dispatcher who was not asked to see the booker view.
+  const booker=asBooker===true||!canDispatch(session);
   const parsed=parseQuery(query,now),data=await snapshot(store,parsed.dates),legacy=await legacyBlockedDays(store,parsed.dates),settings=data.settings,input=withSettings(parsed,settings),crewMode=Array.isArray(input.crewIds);
   if (input.employeeIds.some(id=>!data.roster.some(person=>person.id===id))) throw fail('dispatch_employee_inactive','A selected employee is no longer active. Refresh the roster.');
   if (input.vehicleId&&!data.resources.some(row=>row.recordType==='vehicle'&&row.id===input.vehicleId&&row.status==='available')) throw fail('dispatch_vehicle_unavailable','The selected vehicle is missing, inactive, or out of service.');

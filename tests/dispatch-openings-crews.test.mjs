@@ -105,6 +105,22 @@ test('a booker never gets the roster, and in crew mode no employee ids; a dispat
   assert.deepEqual(limited.warnings.filter(row => row.code === 'employee_daily_capacity').map(row => [row.crewId, row.employeeId, row.employeeIds]), [['crew_one', undefined, undefined]]);
 });
 
+test('fails closed: a caller whose own authorize admits a non-dispatcher gets no roster or employee ids without passing booker', async () => {
+  const f = fixture(), rep = { user: 'synthetic.rep', displayName: 'Synthetic Rep', role: 'crew', businessAccess: false, source: 'employee-account', staffRoles: ['sales'] };
+  const admit = () => {};
+  for (const query of [{}, { crews: undefined, employeeIds: 'c1a' }]) {
+    const answer = await dispatchOpenings(f.store, rep, { startDate: '2026-10-19', endDate: '2026-10-20', durationMinutes: '120', travelBufferMinutes: '0', crews: 'auto', ...query }, now, { authorize: admit });
+    assert.equal(Object.hasOwn(answer, 'roster'), false, 'no roster for a rep-facing caller that forgot booker:true');
+    assert.ok(answer.candidates.length > 0);
+    if (query.employeeIds === undefined) {
+      assert.ok(answer.candidates.every(row => !Object.hasOwn(row, 'employeeIds')) && !Object.hasOwn(answer.constraints, 'searchedEmployeeIds'));
+      assert.ok(!JSON.stringify(answer).includes('c1a'), 'no member id anywhere');
+    }
+  }
+  // A dispatcher asking for the booker view gets it too.
+  assert.equal(Object.hasOwn(await f.check({}, { booker: true }), 'roster'), false);
+});
+
 test('the HTTP API gives a Sales booker crew openings without the roster', async () => {
   const f = fixture();
   const handler = actor => dispatchOpeningsHandlers({ session: async () => actor, storage: () => f.store, now: () => now });

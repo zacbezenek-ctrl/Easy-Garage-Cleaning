@@ -153,3 +153,52 @@ test('a booker with crew auto-assign searches any crew by default and the job fo
   plain.button(plain.host, 'Create job').click(); await plain.flush();
   assert.equal(plain.named('autoCrew').length, 0, 'flag off: no automatic crew choice');
 });
+
+// A To-schedule service job, as GET /api/dispatch lists it to a booker.
+const QUEUED = { id: 'job-q', revision: 'q1', type: 'job', customer: 'Synthetic Queue', customerId: 'cust-1', status: 'unscheduled', pipelineStatus: 'unscheduled', date: '', time: '', endDate: '', endTime: '', assignedCrew: [], assignedTo: '', crewId: null, crewLead: null, vehicleId: null, address: '1 Fixture Lane', crewNeeded: 2, travelBufferMinutes: 20, jobInstructions: 'Synthetic garage reset' };
+const MONDAY_OPENING = { ok: true, coverage: { complete: true, consistent: true }, warnings: [], total: 1, truncated: false,
+  candidates: [{ date: '2026-10-19', time: '09:30', endDate: '2026-10-19', endTime: '11:30', crewId: 'crew-one', crewName: 'Crew 1', crewCode: 'crew-1', priority: 1, weekend: false }],
+  byDate: [{ date: '2026-10-19', crews: [{ crewId: 'crew-one', crewName: 'Crew 1', priority: 1, weekend: false, open: true, count: 1, first: { time: '09:30', endDate: '2026-10-19', endTime: '11:30' } }] }] };
+const searchMode = p => p.dialog().querySelectorAll('select').find(node => node.querySelectorAll('option').some(option => option.value === 'people'));
+
+test('a booker: a crew accepted from an opening is sent only for that opening; another day drops it so the server picks', async () => {
+  for (const changeDay of [false, true]) {
+    const p = page(board(booker, { crewAutoAssign: true, jobs: [QUEUED] }));
+    p.state.openings = MONDAY_OPENING;
+    p.dispatch.mount(p.host); await p.flush();
+    p.dispatch.internals.show('queue'); await p.flush();
+    p.button(p.host, 'Find a time').click(); await p.flush();
+    assert.equal(searchMode(p).value, 'crews', 'an unstaffed job searches any crew');
+    p.submit(); await p.flush();
+    p.button(p.dialog(), 'Use this opening').click(); await p.flush();
+    if (changeDay) { const day = p.named('date')[0]; day.value = '2026-10-20'; day.dispatchEvent({ type: 'change', target: day }); }
+    p.submit(); await p.flush();
+    const body = p.posts.at(-1);
+    assert.equal(body?.action, 'schedule.update', p.dialog()?.textContent);
+    assert.deepEqual([body.changes.date, body.changes.crewId], changeDay ? ['2026-10-20', null] : ['2026-10-19', 'crew-one']);
+  }
+});
+
+test('Any crew is offered only for service jobs, and never to a booker moving a job a manager staffed', async () => {
+  const p = page(board(manager, { crewAutoAssign: true }));
+  p.dispatch.mount(p.host); await p.flush();
+  p.button(p.host, 'Find opening').click(); await p.flush();
+  const mode = searchMode(p), crewsOption = mode.querySelectorAll('option').find(option => option.value === 'crews');
+  mode.value = 'crews'; mode.dispatchEvent({ type: 'change', target: mode });
+  const kind = p.dialog().querySelectorAll('select').find(node => node.querySelectorAll('option').some(option => option.value === 'walkthrough'));
+  kind.value = 'walkthrough'; kind.dispatchEvent({ type: 'change', target: kind });
+  assert.deepEqual([mode.value, crewsOption.disabled], ['people', true], 'crews do service jobs, not walkthroughs');
+  kind.value = 'job'; kind.dispatchEvent({ type: 'change', target: kind });
+  assert.equal(crewsOption.disabled, false);
+  const staffed = { ...QUEUED, assignedCrew: ['c9a'], assignedTo: 'c9a', crewId: 'crew-north', crewLead: 'c9a' };
+  const hand = page(board(booker, { crewAutoAssign: true, jobs: [staffed] }));
+  hand.dispatch.mount(hand.host); await hand.flush();
+  hand.dispatch.internals.show('queue'); await hand.flush();
+  hand.button(hand.host, 'Find a time').click(); await hand.flush();
+  assert.deepEqual([searchMode(hand).value, searchMode(hand).querySelectorAll('option').map(option => option.value)], ['people', ['people']], 'the manager\'s crew is searched, not any crew');
+  const auto = page(board(booker, { crewAutoAssign: true, jobs: [{ ...staffed, crewAutoAssigned: { crewId: 'crew-north', memberIds: ['c9a'], leadId: 'c9a', mode: 'pick' } }] }));
+  auto.dispatch.mount(auto.host); await auto.flush();
+  auto.dispatch.internals.show('queue'); await auto.flush();
+  auto.button(auto.host, 'Find a time').click(); await auto.flush();
+  assert.equal(searchMode(auto).value, 'crews', 'a job the server staffed may take another offered crew');
+});

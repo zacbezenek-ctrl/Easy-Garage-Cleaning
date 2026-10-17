@@ -27,8 +27,10 @@ import { crewAutoAssignEnabled } from './dispatch-crew-assign.js';
  * weekend crew; dispatch-crew-assign.js, options.autoCrew), inside the dispatch guard and
  * day locks. A booker still cannot hand-pick people, leads, vehicles, segments or pickup
  * offers (403 as before); the one crew field they may change is crewId, and only to a crew
- * the server finds eligible for that visit (options.crewChoice; otherwise 403
- * dispatch_crew_not_eligible). Flag off: exactly the rule above. */
+ * the server finds eligible for that visit, on a new or unstaffed visit or one the server
+ * staffed (options.crewChoice; otherwise 403 dispatch_crew_not_eligible). A crew a manager
+ * chose stays a manager's to change, and a choice never unstaffs a visit. Flag off: exactly
+ * the rule above. */
 const fail = (code, message, status = 400) => Object.assign(new Error(message), { code, status });
 const plain = value => value !== null && typeof value === 'object' && !Array.isArray(value);
 const canonical = value => Array.isArray(value) ? `[${value.map(canonical).join(',')}]` : plain(value) ? `{${Object.keys(value).sort().map(key => `${JSON.stringify(key)}:${canonical(value[key])}`).join(',')}}` : JSON.stringify(value);

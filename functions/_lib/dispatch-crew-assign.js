@@ -103,12 +103,20 @@ export function crewAssignment(crew, members = ids => [...ids]) {
 /** No crew: what an auto-assigned job that lost its crew is saved with. */
 export const NO_CREW = Object.freeze({ crewId: null, assignedCrew: [], assignedTo: '', crewLead: null });
 
-/** The record saved on the job (crewAutoAssigned) and in its receipt. */
-export function crewAutoRecord(crew, { at, by, mode = 'pick' } = {}) {
-  return { crewId: crew.id, crewName: String(crew.name || '').slice(0, 100), crewCode: crewCode(crew), priority: crewPriority(crew), mode, at: at || null, by: by || null };
+/** The pick as answered and kept in the receipt; with the crewAssignment it set, the record
+ * saved on the job (crewAutoAssigned), which also keeps the member snapshot and lead it set. */
+export function crewAutoRecord(crew, { at, by, mode = 'pick' } = {}, assignment = null) {
+  return { crewId: crew.id, crewName: String(crew.name || '').slice(0, 100), crewCode: crewCode(crew), priority: crewPriority(crew), mode, at: at || null, by: by || null,
+    ...(assignment ? { memberIds: [...assignment.assignedCrew], leadId: assignment.crewLead || null } : {}) };
 }
-/** True when the job's crew is the one the server assigned (not a manager's hand pick). */
-export const autoAssignedCrew = job => isObject(job?.crewAutoAssigned) && typeof job.crewAutoAssigned.crewId === 'string' && job.crewAutoAssigned.crewId === job.crewId;
+const sameIds = (left, right) => Array.isArray(left) && Array.isArray(right) && left.length === right.length && [...left].sort().join('\n') === [...right].sort().join('\n');
+/** True when the job still has exactly the crew the server assigned: its crew, members and
+ * lead. A manager's change (a member swapped, another lead, another crew) or a pickup claim
+ * makes the crew a hand pick, which a later move never re-picks over (D4). */
+export const autoAssignedCrew = job => isObject(job?.crewAutoAssigned) && typeof job.crewAutoAssigned.crewId === 'string' && job.crewAutoAssigned.crewId === job.crewId
+  && sameIds(job.crewAutoAssigned.memberIds, job.assignedCrew) && (job.crewAutoAssigned.leadId || null) === (job.crewLead || null);
+/** A job a manager (or a pickup claim) staffed: people or a crew the server did not assign. */
+export const handStaffed = (job, members = row => (Array.isArray(row?.assignedCrew) ? row.assignedCrew : [])) => Boolean(job) && (members(job).length > 0 || Boolean(job.crewId)) && !autoAssignedCrew(job);
 
 /** Rep-safe projection of crew-mode openings (dispatch-openings.js candidates) for Knock,
  * the estimator gameplan and other non-dispatcher screens: no roster, no employee ids, no

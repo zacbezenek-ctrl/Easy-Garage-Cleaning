@@ -21,7 +21,7 @@ import { notifyPatch, withDispatchReadiness } from './dispatch-readiness.js';
 import { walkthroughStatusFields } from './walkthrough-state.js';
 import { dispatchReviewCleared, withQueueFacts } from './dispatch-queue.js';
 import { jobStartProblem } from './job-start-policy.js';
-import { DEFAULT_CREWS, NO_CREW, autoAssignedCrew, autoCrewJob, crewAssignment, crewAutoRecord, crewCode, crewCodeInput, crewJobDates, crewPickOrder, crewServes, eligibleCrews, projectCrewOpenings, serviceDaysInput } from './dispatch-crew-assign.js';
+import { DEFAULT_CREWS, NO_CREW, autoAssignedCrew, autoCrewJob, crewAssignment, crewAutoRecord, crewCode, crewCodeInput, crewJobDates, crewPickOrder, crewServes, eligibleCrews, handStaffed, projectCrewOpenings, serviceDaysInput } from './dispatch-crew-assign.js';
 import { dispatchOpenings } from './dispatch-openings.js';
 
 const TERMINAL = new Set(['cancelled','canceled','completed','invoiced','paid','review_requested','closed','noshow','no_show','no-show']);
@@ -404,15 +404,20 @@ function auditState(job) {
 // first); 'opt_in' (a dispatcher's Hub save) does so only when the input sends autoCrew:true,
 // while a move of an auto-assigned job to a day its crew does not work still re-picks.
 // options.crewChoice (a booker, dispatch-booking.js) lets changes.crewId name a crew; it must be
-// eligible (else 403 dispatch_crew_not_eligible) and is tried first. Without options.autoCrew
-// every save is exactly as before. The crew is chosen after the dispatchState guard, under the
-// same day locks and final conflict evidence as the save; when a racing save took that crew
-// first the save conflicts and is chosen again (at most three tries). No free crew never loses
-// the booking: it is saved unassigned with soldNeedsCrew, and the answer lists alternatives.
+// eligible (else 403 dispatch_crew_not_eligible) and is tried first. A choice never replaces a
+// crew a manager chose (403) and never unstaffs a job: on a job the server staffed, a chosen crew
+// that is not free leaves the job with its crew. Without options.autoCrew every save is exactly as
+// before. The crew is chosen after the dispatchState guard, under the same day locks and final
+// conflict evidence as the save; when a racing save took that crew first the save conflicts and
+// is chosen again (at most three tries). No free crew never loses the booking: it is saved
+// unassigned with soldNeedsCrew, and the answer lists alternatives when any crew could take one.
+// Any save that leaves the job with other people, lead or crew than the server's pick clears
+// that pick's record (crewAutoAssigned), so a later move never re-picks over a manager's crew.
 export async function mutateDispatch(store, session, input, now = new Date().toISOString(), options = {}) {
   (options.authorize || requireDispatcher)(session);
   for (let attempt = 0; ; attempt++) {
-    try { return await withCrewAlternatives(store,session,await executeDispatch(store,session,input,now,options),now,options); }
+    const context = {};
+    try { return await withCrewAlternatives(store,session,await executeDispatch(store,session,input,now,options,context),now,options,context); }
     catch (error) {
       if (error?.autoCrewRetry === true && attempt < 2) continue;
       // Another copy of the same request may commit between our initial receipt
@@ -427,21 +432,24 @@ export async function mutateDispatch(store, session, input, now = new Date().toI
 }
 
 // When no crew was free, the next crew openings (a week from the job's date, rep-safe:
-// projectCrewOpenings) come with the answer. Best effort: a failed search answers [].
-async function withCrewAlternatives(store,session,result,now,options) {
+// projectCrewOpenings) come with the answer. Best effort: a failed search answers []. The
+// search is skipped (no extra reads) when no crew could be staffed on any day of that week,
+// e.g. the flag is on before the crews have members (context.crewWeek from executeDispatch).
+const ALTERNATIVE_DAYS = 7;
+async function withCrewAlternatives(store,session,result,now,options,context = {}) {
   if (result?.autoCrew?.status !== 'unassigned' || result.replayed || !result.job?.startAt || !result.job?.endAt) return result;
   const minutes = Math.round((Date.parse(result.job.endAt) - Date.parse(result.job.startAt)) / 60000);
   let alternatives = [];
-  if (minutes >= 15 && minutes <= 1440 && validDate(result.job.date)) {
+  if (context.crewWeek !== false && minutes >= 15 && minutes <= 1440 && validDate(result.job.date)) {
     try {
-      const found = await dispatchOpenings(store,session,{crews:'auto',kind:result.job.type,startDate:result.job.date,endDate:addDays(result.job.date,7),durationMinutes:String(minutes),travelBufferMinutes:String(Number.isInteger(result.job.travelBufferMinutes) ? result.job.travelBufferMinutes : 0)},new Date(now),{authorize:options.authorize || requireDispatcher,booker:true});
+      const found = await dispatchOpenings(store,session,{crews:'auto',kind:result.job.type,startDate:result.job.date,endDate:addDays(result.job.date,ALTERNATIVE_DAYS),durationMinutes:String(minutes),travelBufferMinutes:String(Number.isInteger(result.job.travelBufferMinutes) ? result.job.travelBufferMinutes : 0)},new Date(now),{authorize:options.authorize || requireDispatcher,booker:true});
       alternatives = projectCrewOpenings(found,10);
     } catch { alternatives = []; }
   }
   return {...result,autoCrew:{...result.autoCrew,alternatives}};
 }
 
-async function executeDispatch(store, session, input, now, options = {}) {
+async function executeDispatch(store, session, input, now, options = {}, context = {}) {
   (options.authorize || requireDispatcher)(session);
   if (!isObject(input) || !DISPATCH_ACTIONS.includes(input.action) || !/^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/i.test(input.requestId || '')) throw fail('dispatch_request_invalid','Use a supported dispatch action with a unique request ID.');
   const autoMode = options.autoCrew === true ? 'on' : options.autoCrew === 'opt_in' ? 'opt_in' : null;
@@ -641,18 +649,38 @@ async function executeDispatch(store, session, input, now, options = {}) {
     if (autoPlan) {
       // The first crew whose whole job passes the same conflict test as the save itself.
       const chosen = crewOptions.find(option => !conflictsOf(option.job,finalJobs,resources,roster,inspection).length) || null;
-      autoResult = chosen ? {status:'assigned',...crewAutoRecord(chosen.crew,{at:now,by:session.user,mode:autoPlan.kind})} : {status:'unassigned',mode:autoPlan.kind,crewId:null};
-      if (autoPlan.preferred && autoPlan.kind === 'choice') autoResult.requestedCrewId = autoPlan.preferred;
-      Object.assign(patch,chosen ? {...crewAssignment(chosen.crew,ids => members(ids,roster)),crewAutoAssigned:crewAutoRecord(chosen.crew,{at:now,by:session.user,mode:autoPlan.kind})} : {...NO_CREW,...(current?.crewAutoAssigned !== undefined ? {crewAutoAssigned:null} : {})});
-      // Never lose the booking: with no free crew it waits in To schedule as Sold: needs crew.
-      if (!chosen && !isObject(current?.soldNeedsCrew)) patch.soldNeedsCrew = {at:now,by:session.user,requestId:input.requestId,reason:'no_crew_free'};
-      if (!chosen) autoWarnings.push({code:'no_crew_available',jobId:id,message:'No crew is free for this whole visit, so it was saved without a crew in To schedule. Pick another time, or a manager assigns the crew.'});
-      else if (autoPlan.kind === 'choice' && chosen.crew.id !== autoPlan.preferred) autoWarnings.push({code:'crew_choice_unavailable',jobId:id,crewId:autoPlan.preferred,message:`The chosen crew is no longer free at this time, so ${chosen.crew.name} was assigned instead.`});
-      if (current && Array.isArray(current.shiftClaims)) patch.shiftClaims = current.shiftClaims.filter(value => patch.assignedCrew.includes(resolveMember(value?.employee || value,roster,true)));
+      // A booker's crew choice on a job the server staffed never unstaffs it: with no crew free the
+      // job keeps its crew (and the final conflict check decides a move, as for any staffed job).
+      const kept = !chosen && autoPlan.kind === 'choice' && Boolean(autoPlan.keep);
+      if (chosen) {
+        const assignment = crewAssignment(chosen.crew,ids => members(ids,roster)), record = {at:now,by:session.user,mode:autoPlan.kind};
+        autoResult = {status:'assigned',...crewAutoRecord(chosen.crew,record)};
+        Object.assign(patch,assignment,{crewAutoAssigned:crewAutoRecord(chosen.crew,record,assignment)});
+      } else if (kept) {
+        autoResult = {status:'kept',mode:'choice',crewId:current.crewId};
+        for (const key of Object.keys(NO_CREW)) { if (current[key] === undefined) delete patch[key]; else patch[key] = current[key]; }
+      } else {
+        autoResult = {status:'unassigned',mode:autoPlan.kind,crewId:null};
+        Object.assign(patch,NO_CREW,current?.crewAutoAssigned !== undefined ? {crewAutoAssigned:null} : {});
+        // Never lose the booking: with no free crew it is saved on its date without a crew, as Sold: needs crew.
+        if (!isObject(current?.soldNeedsCrew)) patch.soldNeedsCrew = {at:now,by:session.user,requestId:input.requestId,reason:'no_crew_free'};
+        autoWarnings.push({code:'no_crew_available',jobId:id,message:`No crew is free for this whole visit, so it was saved on ${next.date} without a crew (Sold: needs crew). A manager assigns the crew in Dispatch, or pick another time.`});
+        // Alternatives are searched only when some crew could be staffed in the week they cover.
+        context.crewWeek = Array.from({length:ALTERNATIVE_DAYS},(_,index) => addDays(next.date,index)).some(date => eligibleCrews(resources,[date],roster).length > 0);
+      }
+      if (autoPlan.kind === 'choice') autoResult.requestedCrewId = autoPlan.preferred;
+      const crewName = crew => crew?.name || 'its crew';
+      if (kept) autoWarnings.push({code:'crew_choice_unavailable',jobId:id,crewId:autoPlan.preferred,message:`The chosen crew is not free at this time, so the visit keeps ${crewName(resources.find(row => row.recordType === 'crew' && row.id === current.crewId))}.`});
+      else if (chosen && autoPlan.kind === 'choice' && chosen.crew.id !== autoPlan.preferred) autoWarnings.push({code:'crew_choice_unavailable',jobId:id,crewId:autoPlan.preferred,message:chosen.crew.id === autoPlan.keep ? `The chosen crew is not free at this time, so the visit keeps ${crewName(chosen.crew)}.` : `The chosen crew is no longer free at this time, so ${crewName(chosen.crew)} was assigned instead.`});
+      if (!kept && current && Array.isArray(current.shiftClaims)) patch.shiftClaims = current.shiftClaims.filter(value => patch.assignedCrew.includes(resolveMember(value?.employee || value,roster,true)));
       next = {...current,...patch};
       patch.openShift = offeredForPickup(next,legacyMembers(next,roster).length,interval);
       next = {...next,...patch};
-    } else if (autoMode) autoWarnings.push(...crewDayWarnings({input,create,current,next,patch,resources,roster,id}));
+    } else {
+      if (autoMode) autoWarnings.push(...crewDayWarnings({input,create,current,next,patch,resources,roster,id}));
+      // A crew changed by hand (or by a pickup claim) is no longer the server's pick: its record goes.
+      if (isObject(current?.crewAutoAssigned) && !autoAssignedCrew(next)) { patch.crewAutoAssigned = null; next = {...next,crewAutoAssigned:null}; }
+    }
     for (const {date,lockId,lock} of locks) {
       const entries = (Array.isArray(lock?.entries) ? lock.entries : []).filter(entry => !ownsLockEntry(entry,id) && !TERMINAL.has(entry.status));
       if (activeJob(next) && segmentDays(next).includes(date)) entries.push(...segmentLockEntries(next,date,roster,now));
@@ -734,7 +762,10 @@ function autoCrewPlan({mode,input,options,create,current,next,patch,resources,ro
   // A booker's crew change is only ever an eligible crew for a dated job; anything else is refused.
   if (options.crewChoice === true && 'crewId' in changes && (changes.crewId || null) !== (current?.crewId || null)) {
     if (!mode || typeof changes.crewId !== 'string' || !changes.crewId || !['schedule.create','schedule.update'].includes(input.action) || !autoCrewJob(next)) throw fail('dispatch_crew_not_eligible','A crew can only be chosen from the offered crews for a dated job. Save the visit without a crew; the first free crew is assigned automatically.',403);
-    return {kind:'choice',preferred:changes.crewId};
+    // A crew a manager chose (people, a lead or a crew the server did not assign) is a manager's to change (D4).
+    if (handStaffed(current,job => legacyMembers(job,roster))) throw fail('dispatch_crew_not_eligible','A manager chose the crew for this visit, so only a manager can change it. Save the visit without a crew change.',403);
+    // keep: the crew of a job the server staffed, tried right after the chosen one and kept when no crew is free.
+    return {kind:'choice',preferred:changes.crewId,keep:current && legacyMembers(current,roster).length ? current.crewId : null};
   }
   if (!mode || input.autoCrew === false || !['schedule.create','schedule.update'].includes(input.action) || !autoCrewJob(next)) return null;
   const crewOf = job => canonical([legacyMembers(job,roster).sort(),job?.crewId || null]);
@@ -746,11 +777,12 @@ function autoCrewPlan({mode,input,options,create,current,next,patch,resources,ro
   const crew = resources.find(row => row.recordType === 'crew' && row.id === current.crewId);
   return wants || !crew || !crewServes(crew,crewJobDates(next)) ? {kind:'repick',preferred:current.crewId} : null;
 }
-// Every eligible crew for the job's days, in pick order, as the unstaffed job staffed by it.
+// Every eligible crew for the job's days, in pick order, as the unstaffed job staffed by it:
+// a booker's choice first, then the crew the job has (keep), then priority order.
 function autoCrewOptions(plan,next,resources,roster,interval) {
   const eligible = eligibleCrews(resources,crewJobDates(next),roster);
   if (plan.kind === 'choice' && !eligible.some(crew => crew.id === plan.preferred)) throw fail('dispatch_crew_not_eligible','That crew cannot take this visit: it is inactive, has no active members or does not work that day. Choose one of the offered crews.',403);
-  return crewPickOrder(eligible,plan.preferred).map(crew => {
+  return crewPickOrder(crewPickOrder(eligible,plan.keep || null),plan.preferred).map(crew => {
     const job = {...next,...crewAssignment(crew,ids => members(ids,roster))};
     return {crew,job:{...job,openShift:offeredForPickup(job,job.assignedCrew.length,interval)}};
   });

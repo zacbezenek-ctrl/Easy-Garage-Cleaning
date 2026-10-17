@@ -227,7 +227,7 @@ export async function mutateScheduledVisit(store,actor,input,now=new Date().toIS
         // The crew's whole visit must be free of its work, lock entries and time off on this day.
         const free=crew=>{const staffed={...next,...crewAssignment(crew)};return !resources.some(row=>row.recordType==='availability'&&scheduleRowsConflict(staffed,row,roster))&&!existing.some(x=>relevant(x)&&scheduleRowsConflict(staffed,x,roster))&&!entries.some(x=>scheduleLockConflict(staffed,x,date,roster));};
         const chosen=pickCrew(crewPickOrder(eligibleCrews(resources,[next.date],roster),autoPlan.preferred),free);
-        if(chosen){const record=crewAutoRecord(chosen,{at:now,by:actor.id,mode:autoPlan.mode});Object.assign(patch,crewAssignment(chosen),{crewAutoAssigned:record});autoResult={status:'assigned',...record};}
+        if(chosen){const assignment=crewAssignment(chosen),record={at:now,by:actor.id,mode:autoPlan.mode};Object.assign(patch,assignment,{crewAutoAssigned:crewAutoRecord(chosen,record,assignment)});autoResult={status:'assigned',...crewAutoRecord(chosen,record)};}
         else{Object.assign(patch,{crewId:null,assignedCrew:[],assignedTo:'',crewLead:null,...(current?.crewAutoAssigned!==undefined?{crewAutoAssigned:null}:{}),...(current?.soldNeedsCrew&&typeof current.soldNeedsCrew==='object'?{}:{soldNeedsCrew:{at:now,by:actor.id,requestId:input.requestId,reason:'no_crew_free'}})});autoResult={status:'unassigned',mode:autoPlan.mode,crewId:null};}
         Object.assign(next,patch);
       }

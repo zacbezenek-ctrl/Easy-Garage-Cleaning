@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
-import { mutateDispatch } from '../functions/_lib/dispatch-service.js';
+import { mutateDispatch, mutateDispatchSelfAssignment } from '../functions/_lib/dispatch-service.js';
 import { mutateBooking } from '../functions/_lib/dispatch-booking.js';
 import { dispatchHandlers } from '../functions/api/dispatch.js';
 import { mutateScheduledVisit } from '../functions/_lib/operations-scheduling.js';
@@ -214,6 +214,43 @@ test('flag off: bookings are exactly as before; the flag is read as exactly "tru
   assert.deepEqual([base.job.assignedCrew, base.autoCrew, g.job(base.job.id).crewAutoAssigned], [[], undefined, undefined]);
 });
 
+// Recorded from the code before crew auto-assign (fe998f5) running this exact flag-off sequence on
+// legacy crews: a booker books, a manager staffs Crew 1, the booker moves it, a manager staffs a
+// second visit by hand. Any new key or value in a flag-off save fails here, not only a difference
+// between flag values.
+const LEGACY_JOB_KEYS = ['address', 'assignedCrew', 'assignedTo', 'bookedBy', 'bookingChannel', 'bookingKey', 'channelSelfReported', 'createdAt', 'createdBy', 'crewId', 'crewLead', 'crewNeeded', 'crmLinkReason', 'customer', 'customerId', 'date', 'dispatchRequestId', 'dispatchUpdatedAt', 'email', 'endAt', 'endDate', 'endTime', 'highlevelContactId', 'id', 'openShift', 'operationalScope', 'phone', 'pipelineStatus', 'projectId', 'revision', 'scheduleOccurrence', 'scheduleSource', 'startAt', 'status', 'syncStatus', 'time', 'timeZone', 'travelBufferMinutes', 'type', 'updatedAt', 'updatedBy', 'vehicleId', 'visitPurpose'];
+const LEGACY_RECEIPT_KEYS = ['action', 'actorId', 'after', 'before', 'collection', 'createdAt', 'fingerprint', 'id', 'requestId', 'revision', 'targetId', 'warnings'];
+const LEGACY_AUDIT_KEYS = ['address', 'assignedCrew', 'assignedTo', 'bookingChannel', 'channelSelfReported', 'crewId', 'crewLead', 'crewNeeded', 'crmLinkReason', 'date', 'endDate', 'endTime', 'openShift', 'operationalScope', 'pipelineStatus', 'scheduleOccurrence', 'status', 'time', 'travelBufferMinutes', 'vehicleId', 'visitPurpose'];
+const LEGACY_SCOPE = { text: 'Synthetic garage reset', updatedBy: 'Sales.Account', updatedAt: NOW, reason: 'Updated in dispatch', approvalKind: 'staff_operational_instructions' };
+const LEGACY_MOVE_AUDIT = { date: MON, endDate: MON, status: 'scheduled', pipelineStatus: 'scheduled', assignedCrew: ['c1a', 'c1b'], assignedTo: 'c1a, c1b', crewId: 'crew_one', crewLead: 'c1a', vehicleId: null, operationalScope: LEGACY_SCOPE, crewNeeded: 1, travelBufferMinutes: 20, address: 'c1 Fixture Lane', openShift: false, visitPurpose: 'service', bookingChannel: null, channelSelfReported: null, crmLinkReason: null };
+const LEGACY_LOCK = { recordType: 'schedule_lock', date: MON, entries: [
+  { id: 'visit_f1147b7268d1337da5a2c865a507e03a12f82395', type: 'job', start: '13:00', end: '15:00', label: 'Synthetic Customer c1', status: 'scheduled', assignedCrew: ['c1a', 'c1b'], assignmentKnown: true, vehicleId: null, updatedAt: NOW },
+  { id: 'visit_2b843668c4bd2323db81859398ca1bb050adbd62', type: 'job', start: '10:00', end: '12:00', label: 'Synthetic Customer c2', status: 'scheduled', assignedCrew: ['c2a', 'c9z'], assignmentKnown: true, vehicleId: null, updatedAt: NOW }],
+  updatedAt: NOW, id: `_egc_schedule_lock_${MON}`, revision: 'r18' };
+test('flag off: saves, receipts and locks have exactly the keys and values the code before crew auto-assign stored', async () => {
+  for (const env of [ACCESS, { ...ACCESS, EGC_DISPATCH_CREW_AUTO_ASSIGN: 'false' }]) {
+    const f = fixture({ crews: [crew('crew_one', 'Crew 1', ['c1a', 'c1b']), crew('crew_two', 'Crew 2', ['c2a', 'c2b'])] }), id = n => `0b6f6c52-5a0d-4d2e-9a51-7d0e1c2a010${n}`;
+    const booked = await f.book({ ...f.create(), requestId: id(1) }, env);
+    assert.deepEqual([Object.keys(booked).sort(), booked.warnings.map(row => row.code)], [['job', 'ok', 'providerSync', 'requestId', 'warnings'], ['unassigned', 'crew_size_short']]);
+    const jobId = booked.job.id;
+    assert.equal(jobId, 'visit_f1147b7268d1337da5a2c865a507e03a12f82395');
+    assert.deepEqual([f.job(jobId).assignedCrew, f.job(jobId).crewId, f.job(jobId).crewLead, f.job(jobId).assignedTo], [[], null, null, '']);
+    const staffed = await mutateDispatch(f.store, owner, { ...f.edit(f.job(jobId), { crewId: 'crew_one' }), requestId: id(2) }, NOW);
+    const moved = await f.book({ ...f.edit(f.job(jobId), { time: '13:00', endTime: '15:00' }), requestId: id(3) }, env);
+    const second = await mutateDispatch(f.store, owner, { ...f.create({ assignedCrew: ['c2a', 'c9z'], crewLead: 'c2a', jobInstructions: 'Synthetic second job' }, { customerId: 'c2' }), requestId: id(4) }, NOW);
+    for (const result of [staffed, moved, second]) assert.deepEqual([Object.keys(result).sort(), result.warnings], [['job', 'ok', 'providerSync', 'requestId', 'warnings'], []]);
+    for (const visit of [jobId, second.job.id]) assert.deepEqual(Object.keys(f.job(visit)).sort(), LEGACY_JOB_KEYS, visit);
+    for (const n of [1, 2, 3, 4]) {
+      const receipt = f.rows.get(`dispatchOperations/${id(n)}`);
+      assert.deepEqual(Object.keys(receipt).sort(), LEGACY_RECEIPT_KEYS, `receipt ${n}: no metadata`);
+      assert.deepEqual(Object.keys(receipt.after).sort(), LEGACY_AUDIT_KEYS, `receipt ${n} audit`);
+    }
+    const move = f.rows.get(`dispatchOperations/${id(3)}`);
+    assert.deepEqual([move.before, move.after, move.warnings], [{ ...LEGACY_MOVE_AUDIT, time: '10:00', endTime: '12:00', scheduleOccurrence: 1 }, { ...LEGACY_MOVE_AUDIT, time: '13:00', endTime: '15:00', scheduleOccurrence: 2 }, []]);
+    assert.deepEqual(f.rows.get(`jobs/_egc_schedule_lock_${MON}`), LEGACY_LOCK);
+  }
+});
+
 test('the dispatch API: a booker is staffed by the server; a dispatcher opts in; GET says when the flag is on', async () => {
   const f = fixture(), post = (actor, env, body) => dispatchHandlers({ session: async () => actor, storage: () => f.store, now: () => new Date(NOW) }).post({ env, request: new Request('https://egc.test/api/dispatch', { method: 'POST', headers: { Origin: 'https://egc.test', 'Content-Type': 'application/json' }, body: JSON.stringify(body) }) });
   const booked = await post(sales, AUTO, f.create());
@@ -281,4 +318,96 @@ test('the operations scheduler (egc.schedule_visit) staffs the same way under it
   const off = await mutateScheduledVisit({ ...store, crewAutoAssign: false }, actor, { requestId: randomUUID(), mode: 'create', kind: 'job', portalCustomerId: 'c4', changes: { date: '2026-10-21', time: '10:00', endTime: '12:00' } }, NOW);
   const legacy = f.job(off.visit.portalVisitId);
   assert.deepEqual([off.autoCrew, legacy.assignedCrew, legacy.crewId], [undefined, undefined, undefined], 'flag off: as before');
+});
+
+test('a booker never replaces or wipes a crew a manager chose; resending the shown crew is still a booking', async () => {
+  const f = fixture();
+  // The owner staffs a Monday visit by hand with someone on no crew.
+  const hand = await mutateDispatch(f.store, owner, f.create({ assignedCrew: ['c9z'] }, { customerId: 'c4' }), NOW);
+  const before = f.job(hand.job.id);
+  await assert.rejects(f.book(f.edit(before, { crewId: 'crew_two' })), error => error.code === 'dispatch_crew_not_eligible' && error.status === 403 && /manager chose the crew/.test(error.message));
+  assert.deepEqual(f.job(hand.job.id), before, 'nothing saved');
+  // The owner puts the weekend crew on a Monday by hand while Crew 1 is busy all day: a booker's
+  // choice of Crew 1 is refused instead of clearing the visit to Sold: needs crew.
+  await mutateDispatch(f.store, owner, f.create({ time: '09:30', endTime: '17:00', assignedCrew: ['c1a', 'c1b'], crewId: 'crew_one' }, { customerId: 'c2' }), NOW);
+  const weekend = await mutateDispatch(f.store, owner, f.create({ assignedCrew: ['c3a'], crewId: 'crew_three' }, { customerId: 'c3' }), NOW);
+  for (const crewId of ['crew_one', 'crew_two']) await assert.rejects(f.book(f.edit(f.job(weekend.job.id), { crewId })), error => error.code === 'dispatch_crew_not_eligible' && error.status === 403, crewId);
+  const staffed = f.job(weekend.job.id);
+  assert.deepEqual([staffed.crewId, staffed.assignedCrew, staffed.soldNeedsCrew], ['crew_three', ['c3a'], undefined]);
+  assert.equal([...f.rows.keys()].filter(key => key.startsWith('dispatchOperations/')).length, 3, 'no refused save left a receipt');
+  // A reschedule that sends the shown crew back keeps the manager's crew, with the off-day warning.
+  const moved = await f.book(f.edit(staffed, { time: '13:00', endTime: '15:00', crewId: 'crew_three', assignedCrew: ['c3a'], crewLead: 'c3a' }));
+  assert.deepEqual([moved.job.crewId, moved.job.assignedCrew, moved.autoCrew], ['crew_three', ['c3a'], undefined]);
+  assert.ok(moved.warnings.some(row => row.code === 'crew_off_day'));
+});
+
+test('a crew choice on a job the server staffed never unstaffs it: its own crew is next, else it keeps its crew', async () => {
+  const f = fixture();
+  const booked = await f.book(f.create());
+  assert.deepEqual([booked.job.crewId, f.job(booked.job.id).crewAutoAssigned.memberIds, f.job(booked.job.id).crewAutoAssigned.leadId], ['crew_one', ['c1a', 'c1b'], 'c1a'], 'the job keeps the snapshot the pick set');
+  assert.equal(Object.hasOwn(booked.autoCrew, 'memberIds'), false, 'the answer and receipt name the crew, not its people');
+  // Crew 2 is busy then: the chosen crew is not free, so the job stays with Crew 1.
+  await mutateDispatch(f.store, owner, f.create({ time: '09:30', endTime: '17:00', assignedCrew: ['c2a', 'c2b'], crewId: 'crew_two' }, { customerId: 'c4' }), NOW);
+  const stay = await f.book(f.edit(f.job(booked.job.id), { crewId: 'crew_two' }));
+  assert.deepEqual([stay.job.crewId, stay.job.assignedCrew, stay.autoCrew.status, stay.autoCrew.mode, stay.autoCrew.requestedCrewId], ['crew_one', ['c1a', 'c1b'], 'assigned', 'choice', 'crew_two']);
+  assert.equal(stay.warnings.find(row => row.code === 'crew_choice_unavailable').message, 'The chosen crew is not free at this time, so the visit keeps Crew 1.');
+  // Crew 1 is made inactive and Crew 2 is still busy: nobody can be picked, and the visit keeps its people (status kept).
+  const crewOne = f.rows.get('dispatchResources/crew_one');
+  await mutateDispatch(f.store, owner, { action: 'crew.save', requestId: randomUUID(), id: 'crew_one', expectedRevision: crewOne.revision, changes: { status: 'inactive' } }, NOW);
+  const kept = await f.book(f.edit(f.job(booked.job.id), { crewId: 'crew_two' }));
+  const saved = f.job(booked.job.id);
+  assert.deepEqual([kept.autoCrew, saved.crewId, saved.assignedCrew, saved.crewLead, saved.soldNeedsCrew], [{ status: 'kept', mode: 'choice', crewId: 'crew_one', requestedCrewId: 'crew_two' }, 'crew_one', ['c1a', 'c1b'], 'c1a', undefined]);
+  assert.ok(!kept.warnings.some(row => row.code === 'no_crew_available'));
+  assert.deepEqual(f.rows.get(`dispatchOperations/${kept.requestId}`).metadata.crewAutoAssigned, kept.autoCrew);
+  // With a move its crew cannot make either, the save is refused: the visit stays where it was, staffed.
+  await mutateDispatch(f.store, owner, f.create({ time: '13:00', endTime: '15:00', assignedCrew: ['c1a'] }, { customerId: 'c3' }), NOW);
+  await assert.rejects(f.book(f.edit(f.job(booked.job.id), { crewId: 'crew_two', time: '13:00', endTime: '15:00' })), error => error.code === 'dispatch_conflict' && error.status === 409);
+  assert.deepEqual([f.job(booked.job.id).time, f.job(booked.job.id).assignedCrew], ['10:00', ['c1a', 'c1b']]);
+});
+
+test('a manager edit or a pickup claim makes the crew a hand pick: moves never re-pick over it (MCP moves too)', async () => {
+  const f = fixture();
+  const booked = await f.book(f.create());
+  const edited = await mutateDispatch(f.store, owner, f.edit(f.job(booked.job.id), { assignedCrew: ['c1a', 'c9z'], crewId: 'crew_one', crewLead: 'c1a' }), NOW, { autoCrew: 'opt_in' });
+  assert.deepEqual([f.job(booked.job.id).crewAutoAssigned, f.rows.get(`dispatchOperations/${edited.requestId}`).after.crewAutoAssigned], [null, null], 'the pick record goes with the hand edit');
+  const moved = await f.book(f.edit(f.job(booked.job.id), { time: '13:00', endTime: '15:00' }));
+  assert.deepEqual([moved.job.crewId, moved.job.assignedCrew, moved.autoCrew], ['crew_one', ['c1a', 'c9z'], undefined], 'c9z stays and c1b is not put back');
+  await assert.rejects(f.book(f.edit(f.job(booked.job.id), { crewId: 'crew_two' })), error => error.code === 'dispatch_crew_not_eligible');
+  // A lead change alone is a hand pick as well.
+  const g = fixture(), other = await g.book(g.create());
+  await mutateDispatch(g.store, owner, g.edit(g.job(other.job.id), { crewLead: 'c1b' }), NOW);
+  assert.equal(g.job(other.job.id).crewAutoAssigned, null);
+  assert.equal((await g.book(g.edit(g.job(other.job.id), { time: '13:00', endTime: '15:00' }))).job.crewLead, 'c1b');
+  // A pickup claim adds a member without touching the record: it no longer matches, so neither a
+  // booker's nor an egc.schedule_visit move re-picks the crew without the claimer.
+  const h = fixture(), open = await h.book(h.create());
+  await mutateDispatch(h.store, owner, h.edit(h.job(open.job.id), { crewNeeded: 3, shiftPickupEnabled: true }), NOW);
+  assert.equal(h.job(open.job.id).crewAutoAssigned.crewId, 'crew_one', 'offering a seat keeps the pick');
+  await mutateDispatchSelfAssignment(h.store, { user: 'c9z' }, { action: 'claim', jobId: open.job.id, requestId: randomUUID() }, NOW);
+  assert.deepEqual(h.job(open.job.id).assignedCrew, ['c1a', 'c1b', 'c9z']);
+  const store = { ...h.store, crewAutoAssign: true, day: async date => [...h.rows.values()].filter(row => row.date === date && !row.recordType) };
+  const job = h.job(open.job.id);
+  const mcp = await mutateScheduledVisit(store, { id: 'synthetic-owner', kind: 'human', role: 'owner' }, { requestId: randomUUID(), mode: 'update', portalCustomerId: 'c1', portalVisitId: job.id, expectedRevision: job.revision, changes: { date: MON, time: '13:00', endTime: '15:00' } }, NOW);
+  assert.deepEqual([mcp.autoCrew, h.job(open.job.id).assignedCrew, h.job(open.job.id).time], [undefined, ['c1a', 'c1b', 'c9z'], '13:00']);
+  const later = await h.book(h.edit(h.job(open.job.id), { time: '14:00', endTime: '16:00' }));
+  assert.deepEqual([later.autoCrew, later.job.assignedCrew, h.job(open.job.id).crewAutoAssigned], [undefined, ['c1a', 'c1b', 'c9z'], null]);
+});
+
+test('no free crew: the warning names the date; without a staffable crew all week no alternatives search runs', async () => {
+  const f = fixture();
+  for (const [id, crewId, members] of [['c3', 'crew_one', ['c1a', 'c1b']], ['c4', 'crew_two', ['c2a', 'c2b']]]) await mutateDispatch(f.store, owner, f.create({ time: '09:30', endTime: '17:00', assignedCrew: members, crewId }, { customerId: id }), NOW);
+  const full = await f.auto(f.create());
+  assert.equal(full.warnings.find(row => row.code === 'no_crew_available').message, 'No crew is free for this whole visit, so it was saved on 2026-10-19 without a crew (Sold: needs crew). A manager assigns the crew in Dispatch, or pick another time.');
+  assert.ok(full.autoCrew.alternatives.length > 0);
+  // The flag is on before any crew has members: the save is kept, and no openings snapshot is read.
+  const g = fixture({ crews: DEFAULT_CREWS.map(row => crew(`seed_${row.code.replace('-', '')}`, row.name, [], { priority: row.priority, serviceDays: [...row.serviceDays], code: row.code })) });
+  const reads = { roster: 0 }, roster = g.store.roster;
+  g.store.roster = async () => { reads.roster++; return roster(); };
+  const empty = await g.auto(g.create());
+  assert.deepEqual([empty.autoCrew.status, empty.autoCrew.alternatives, g.job(empty.job.id).soldNeedsCrew.reason], ['unassigned', [], 'no_crew_free']);
+  assert.equal(reads.roster, 1, 'only the save itself read the roster');
+  // Crews that work some other day of that week are still searched.
+  const h = fixture({ crews: [crew('crew_three', 'Crew 3', ['c3a'], { priority: 3, serviceDays: ['sat', 'sun'], code: 'crew-3' })] });
+  const monday = await h.auto(h.create());
+  assert.deepEqual([monday.autoCrew.status, monday.autoCrew.alternatives[0]], ['unassigned', { date: SAT, time: '09:30', endTime: '11:30', crewId: 'crew_three', crewLabel: 'Crew 3', priority: 3 }]);
 });

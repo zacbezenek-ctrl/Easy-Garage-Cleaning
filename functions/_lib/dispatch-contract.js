@@ -248,20 +248,31 @@
  * occupies; by priority, then name) whose whole visit passes the save's own conflict test,
  * after the dispatchState guard and under the same day locks; a racing save that took the crew
  * makes the commit conflict and the pick runs again (up to three tries). An auto-assigned job
- * (crewAutoAssigned.crewId === crewId) that moves is picked again, its crew first. A hand-picked
- * crew is never replaced; on a day it does not work the save warns crew_off_day. No crew free:
- * the job is saved without a crew, soldNeedsCrew {at,by,requestId,reason:'no_crew_free'} and a
+ * (crewAutoAssigned names its crewId and the exact memberIds and leadId it still has) that moves
+ * is picked again, its crew first. A hand-picked crew is never replaced; on a day it does not
+ * work the save warns crew_off_day. Any save (flag on or off) that leaves a job with other
+ * people, lead or crew than the pick (a manager's edit, a pickup claim) sets crewAutoAssigned
+ * null, so the job counts as hand-picked from then on. No crew free: the job is saved on its
+ * date without a crew, soldNeedsCrew {at,by,requestId,reason:'no_crew_free'} and a
  * no_crew_available warning; never refused for staffing. Bookers (options.autoCrew true,
  * options.crewChoice): always; changes.crewId may name only an eligible crew (403
- * dispatch_crew_not_eligible otherwise), tried first (crew_choice_unavailable when it was taken).
+ * dispatch_crew_not_eligible otherwise), tried first (crew_choice_unavailable when it was taken),
+ * and only on a new or unstaffed job or one the server staffed: a job a manager staffed answers
+ * 403 dispatch_crew_not_eligible. On a job the server staffed the chosen crew is tried first,
+ * then its own crew, then priority order; when none is free the job keeps its crew (autoCrew
+ * status 'kept', crew_choice_unavailable) and a move it cannot make is a 409 conflict: a crew
+ * choice never unstaffs a job.
  * Dispatchers through POST /api/dispatch (options.autoCrew 'opt_in'): only when the body sends
  * autoCrew:true (schedule.create/update; autoCrew:false asks no pick; with the flag off the key is
  * rejected as before); an auto-assigned job moved to a day its crew does not work is re-picked.
  * Saved: crewId, assignedCrew, assignedTo, crewLead and crewAutoAssigned {crewId,crewName,
- * crewCode,priority,mode:'pick'|'repick'|'choice',at,by} (a DispatchJob field when present);
- * the receipt metadata.crewAutoAssigned and the answer's autoCrew are {status:'assigned',...that
- * record} or {status:'unassigned',mode,crewId:null,requestedCrewId?}; an unassigned answer adds
- * alternatives: projectCrewOpenings of a week of crew openings from the job's date (at most 10).
+ * crewCode,priority,mode:'pick'|'repick'|'choice',at,by,memberIds,leadId} (a DispatchJob field
+ * when present); the receipt metadata.crewAutoAssigned and the answer's autoCrew are
+ * {status:'assigned',crewId,crewName,crewCode,priority,mode,at,by,requestedCrewId?} (no member
+ * ids), {status:'unassigned',mode,crewId:null,requestedCrewId?} or {status:'kept',mode:'choice',
+ * crewId,requestedCrewId}; an unassigned answer adds alternatives: projectCrewOpenings of a week
+ * of crew openings from the job's date (at most 10; [] without a search when no crew can be
+ * staffed on any day of that week).
  * Crew notices (EGC_CREW_NOTIFICATIONS_ENABLED) commit once with the save that staffs the job.
  * GET /api/dispatch adds crewAutoAssign:true while the flag is on (the Hub shows the choice).
  * {action:'vehicle.save',requestId,id?:string,expectedRevision?:string,
@@ -358,8 +369,9 @@
  * name, then start; at most 200 are returned. The answer adds byDate:[{date,crews:[{crewId,
  * crewName,crewCode,priority,weekend,open,count,first:{time,endDate,endTime}|null}]}] and
  * constraints mode:'crews', searchedCrewIds. Daily-limit warnings name the crew (crewId), not
- * its people. A schedule.book holder (booker) never gets roster, and in crew mode neither
- * candidate employeeIds nor constraints.searchedEmployeeIds. projectCrewOpenings(result,limit?)
+ * its people. Only a dispatcher (dispatch.write, and not called with booker:true) gets roster,
+ * and in crew mode candidate employeeIds and constraints.searchedEmployeeIds; a schedule.book
+ * holder or any session a custom authorize admits never does (fails closed). projectCrewOpenings(result,limit?)
  * => [{date,time,endTime,crewId,crewLabel,priority}] is the rep-safe projection (Knock, the
  * estimator gameplan). requiredSkills=
  * id1,id2 (skill catalog ids) with employeeIds checks that crew (warning

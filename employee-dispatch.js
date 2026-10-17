@@ -80,6 +80,11 @@ const sortedCrews=rows=>[...(rows||[])].sort((a,b)=>crewPriority(a)-crewPriority
 const daysText=c=>{const days=crewDays(c);return days.length===7?'Every day':days.join(',')==='mon,tue,wed,thu,fri'?'Mon–Fri':days.map(day=>DAY_LABEL[day]).join(', ');};
 // EGC_DISPATCH_CREW_AUTO_ASSIGN: the server staffs a dated job with the first free crew (GET /api/dispatch crewAutoAssign).
 const crewAuto=()=>S.data?.crewAutoAssign===true;
+// A job still staffed exactly as the server picked it (crewAutoAssigned: its crew, members and lead); any other
+// staffed job is a manager's crew, which a booker never changes (the server answers 403 dispatch_crew_not_eligible).
+const sameIds=(a,b)=>Array.isArray(a)&&Array.isArray(b)&&a.length===b.length&&[...a].sort().join('\n')===[...b].sort().join('\n');
+const autoStaffed=job=>Boolean(job?.crewAutoAssigned)&&job.crewAutoAssigned.crewId===job.crewId&&sameIds(job.crewAutoAssigned.memberIds,job.assignedCrew)&&(job.crewAutoAssigned.leadId||null)===(job.crewLead||null);
+const handStaffed=job=>Boolean(job)&&(Boolean((job.assignedCrew||[]).length)||Boolean(job.crewId))&&!autoStaffed(job);
 // Assignment segments: parallel crews or per-day windows (server flag EGC_DISPATCH_SEGMENTS).
 const segmentsOf = job => Array.isArray(job?.assignmentSegments) ? job.assignmentSegments : [];
 const segmentsOn = () => S.data?.segments?.enabled === true;
@@ -636,12 +641,13 @@ function openOpenings(source) {
   const crew=select([['','Choose employees individually'],...sortedCrews(S.data.crews.filter(row=>row.status==='active')).map(row=>[row.id,crewLabel(row)])],'',id=>{const selected=S.data.crews.find(row=>row.id===id);if(selected)for(const[id,input]of checks)input.checked=selected.memberIds.includes(id);});
   const truck=select([['','No vehicle required'],...S.data.vehicles.filter(row=>row.status==='available').map(row=>[row.id,row.name])],S.data.vehicles.some(row=>row.id===job?.vehicleId&&row.status==='available')?job.vehicleId:'',()=>{});
   // Job openings start at 9:30 or later (owner rule); a walkthrough may start with the workday.
-  const kind=select([['job','Service job (from 9:30)'],['walkthrough','Walkthrough']],job?.type==='walkthrough'?'walkthrough':'job',()=>{},{disabled:Boolean(job)});
+  const kind=select([['job','Service job (from 9:30)'],['walkthrough','Walkthrough']],job?.type==='walkthrough'?'walkthrough':'job',()=>{if(kind.value==='walkthrough'&&mode.value==='crews')mode.value='people';sync();},{disabled:Boolean(job)});
   // Any crew (priority order): each active crew on the days it works, Crew 1 before Crew 2 (GET crews=auto).
-  const hasCrews=S.data.crews.some(row=>row.status==='active'),mode=select([['people','Employees I choose'],...(hasCrews?[['crews','Any crew (priority order)']]:[])],hasCrews&&booker()&&crewAuto()?'crews':'people',()=>sync());
-  const crewField=labeled('Saved crew to check',crew),searchField=labeled('Search',mode);
+  // Crews do service jobs, not walkthroughs; a booker moving a job a manager staffed searches that job's people.
+  const hasCrews=S.data.crews.some(row=>row.status==='active')&&!(booker()&&handStaffed(job)),mode=select([['people','Employees I choose'],...(hasCrews?[['crews','Any crew (priority order)']]:[])],hasCrews&&booker()&&crewAuto()&&kind.value!=='walkthrough'?'crews':'people',()=>sync());
+  const crewField=labeled('Saved crew to check',crew),searchField=labeled('Search',mode),crewMode=[...mode.querySelectorAll('option')].find(option=>option.value==='crews');
   model.fields.append(searchField,labeled('Visit type',kind),crewField,labeled('Vehicle to check',truck),members);
-  const sync=()=>{const crews=mode.value==='crews';crewField.hidden=crews;members.hidden=crews;};sync();
+  const sync=()=>{if(crewMode)crewMode.disabled=kind.value==='walkthrough';const crews=mode.value==='crews';crewField.hidden=crews;members.hidden=crews;};sync();
   // 'Find a time' starts from the job's required skills.
   const skillQuery=window.EGCDispatchRules?.openingsFields(model,S.data,job?.requiredSkills)||null;
   const results=h('div',{class:'dp-openings-results dp-wide','aria-live':'polite'});model.fields.append(results);
@@ -977,7 +983,7 @@ function openJob(job=null,options={}) {
   // A booker's save keeps the crew Dispatch shows (the hidden controls hold it); a manager staffs the visit,
   // or with crew auto-assign the server does (a crew chosen from Any crew openings is checked again on save).
   const chosenCrew=crewChoice?S.data.crews.find(c=>c.id===crewChoice):null;
-  if(booker())model.fields.append(h('p',{class:'dp-muted dp-wide'},crewAuto()?(chosenCrew?'Crew: '+crewLabel(chosenCrew)+'. It is checked again when you save; if it was just booked, the next free crew is assigned.':'A service job gets the first free crew automatically when you save: Crew 1, then Crew 2, and the weekend crew on Saturdays and Sundays. A manager can change it.'):'A manager assigns the crew and vehicle in Dispatch. This visit is saved without crew changes.'));
+  if(booker())model.fields.append(h('p',{class:'dp-muted dp-wide'},crewAuto()?(chosenCrew?'Crew: '+crewLabel(chosenCrew)+'. It is checked again when you save; if it was just booked, the next free crew is assigned. Another day, time or visit type gets the first free crew instead.':'A service job gets the first free crew automatically when you save: Crew 1, then Crew 2, and the weekend crew on Saturdays and Sundays. A manager can change it.'):'A manager assigns the crew and vehicle in Dispatch. This visit is saved without crew changes.'));
   // A dispatcher asks the server for the first free crew instead of choosing people (owner rule 2026-10-17).
   const autoPick=crewAuto()&&!booker()?h('input',{type:'checkbox',name:'autoCrew',checked:!job&&!opening}):null;
   if(autoPick)model.fields.append(h('label',{class:'dp-check dp-wide dp-crew-only'},autoPick,h('span',{},'Assign the first free crew automatically when no one is chosen (Crew 1, then Crew 2; Saturdays and Sundays the weekend crew)')));
@@ -1089,6 +1095,9 @@ function openJob(job=null,options={}) {
     else if(hadSegments)changes.assignmentSegments=[];
     const facts=booking.channel?Object.fromEntries([['channel',booking.channel.value],['visitPurpose',type.value==='job'?booking.purpose.value:''],['reworkOfJobId',booking.original.required?booking.original.value.trim():''],['channelSelfReported',booking.heard.value],['crmLinkReason',booking.crm?.required?booking.crm.value:''],...Object.entries(booking.dimensions?.facts()||{})].filter(([,value])=>value)):null;
     const body=job?{action:'schedule.update',requestId:key(),jobId:job.id,expectedRevision:job.revision,changes,...(moved()?moveReason():{})}:{action:'schedule.create',requestId:key(),customerId:selectedCustomer.id,kind:type.value,...(sourceJobId?{sourceJobId}:{}),...(facts?{booking:facts}:{}),changes};
+    // A crew accepted from an opening holds only for that opening's service job, day and time; otherwise the
+    // visit is saved with the crew Dispatch shows and the server picks (a stale choice would be refused).
+    if(crewChoice&&!segments.length&&(type.value==='walkthrough'||['date','time','endDate','endTime'].some(name=>changes[name]!==options[name])))changes.crewId=job?.crewId||null;
     // Only an unstaffed, dated service job asks; the server picks inside its own checks.
     if(autoPick?.checked&&type.value!=='walkthrough'&&!segments.length&&!members.length&&!crewSelect.value&&changes.date)body.autoCrew=true;
     void save(model,body,job?(options.rebook?'Walkthrough moved to its new time.':'Job updated.'):from?'Job booked again.':'Job created.');

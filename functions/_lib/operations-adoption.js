@@ -99,7 +99,11 @@ const compatible=(v,p,customerId)=>v&&!v.recordType&&active(v)&&v.highlevelConta
  * With store.crewAutoAssign (EGC_DISPATCH_CREW_AUTO_ASSIGN) a newly adopted job is staffed
  * with the first eligible crew free on the same evidence (snapshot, time off and the day
  * lock, after the dispatch guard; dispatch-crew-assign.js) and that crew's assignment
- * notices commit with it (EGC_CREW_NOTIFICATIONS_ENABLED). No free crew: adopted as before. */
+ * notices commit with it (EGC_CREW_NOTIFICATIONS_ENABLED). No free crew never refuses the
+ * adoption for staffing: the job is adopted with no crew (assignedCrew [], reserving nobody)
+ * as Sold: needs crew (soldNeedsCrew), as the operations scheduler does; company blocks and
+ * vehicles still decide. Both receipts record the outcome (crewAutoAssigned). Flag off,
+ * walkthroughs and existing visits: exactly as before. */
 export async function adoptScheduledVisit(store,actor,input,now=new Date().toISOString()){
  const {p,from,to}=validate(actor,input,now),{verifiedAt,...stableProof}=p;
  const fingerprint=await digest(stableProof),sourceKey=await digest({source:p.source,id:p.sourceId}),sourceReceiptId=`_egc_adoption_source_${sourceKey.slice(0,40)}`,requestReceiptId=`_egc_adoption_request_${input.requestId.replaceAll('-','')}`;
@@ -136,11 +140,14 @@ export async function adoptScheduledVisit(store,actor,input,now=new Date().toISO
  // Preserve existing explicit resource assignments. A new unassigned imported
  // visit intentionally omits assignedCrew:[]: unknown legacy capacity is global.
  let candidate={...current,id,type:current?.type||p.kind,date:from.date,time:from.time,endTime:to.time};
- // AUTO-CREW: the first eligible crew whose staffed visit passes the three checks below.
+ // AUTO-CREW: the first eligible crew whose staffed visit passes the three checks below; none
+ // free adopts the job with no crew (reserving nobody) as Sold: needs crew.
  const clash=visit=>resources.some(row=>row.recordType==='availability'&&scheduleRowsConflict(visit,row,roster))||snapshot.some(row=>!(row.id===id||terminal(row.pipelineStatus||row.status)||!kind(row.type)&&!['blocked','block','availability'].includes(row.type)&&!['availability','crew_availability'].includes(row.recordType))&&scheduleRowsConflict(visit,row.type==='block'?{...row,type:'blocked'}:row,roster))||activeEntries.some(entry=>scheduleLockConflict(visit,entry,from.date,roster));
- const crew=!current&&store.crewAutoAssign===true&&p.kind==='job'?pickCrew(eligibleCrews(resources,[from.date],roster),option=>!clash({...candidate,...crewAssignment(option)})):null;
- const autoCrew=crew?crewAutoRecord(crew,{at:now,by:actor.id,mode:'pick'}):null;
- if(crew)candidate={...candidate,...crewAssignment(crew)};
+ const staffing=!current&&store.crewAutoAssign===true&&p.kind==='job';
+ const crew=staffing?pickCrew(eligibleCrews(resources,[from.date],roster),option=>!clash({...candidate,...crewAssignment(option)})):null;
+ const assignment=crew?crewAssignment(crew):staffing?{assignedCrew:[],assignedTo:''}:null,pick={at:now,by:actor.id,mode:'pick'};
+ const autoCrew=crew?{status:'assigned',...crewAutoRecord(crew,pick)}:staffing?{status:'unassigned',mode:'pick',crewId:null}:null;
+ if(assignment)candidate={...candidate,...assignment};
  if(candidate.vehicleId&&!resources.some(row=>row.id===candidate.vehicleId&&row.recordType==='vehicle'&&row.status==='available'))throw fail('schedule_adoption_vehicle_unavailable');
  if(resources.some(row=>row.recordType==='availability'&&scheduleRowsConflict(candidate,row,roster)))throw fail('schedule_adoption_slot_conflict');
  for(const row of snapshot){if(row.id===id||terminal(row.pipelineStatus||row.status)||!kind(row.type)&&!['blocked','block','availability'].includes(row.type)&&!['availability','crew_availability'].includes(row.recordType))continue;if(scheduleRowsConflict(candidate,row.type==='block'?{...row,type:'blocked'}:row,roster))throw fail('schedule_adoption_slot_conflict');}
@@ -150,7 +157,8 @@ export async function adoptScheduledVisit(store,actor,input,now=new Date().toISO
  const patch={id,type:current?.type||p.kind,customerId,projectId,highlevelContactId:p.contactProviderId,scheduleSource:'egc_hub',providerSyncOwner:'operations',adoptionSource:source,adoptedAt:current?.adoptedAt||now,adoptionOriginalBookingAt:p.originalBookingAt,updatedAt:now};
  if(!current)Object.assign(patch,{bookingKey,date:from.date,time:from.time,endTime:to.time,status:'scheduled',pipelineStatus:'scheduled',createdAt:p.originalBookingAt||p.sourceCreatedAt||null,createdBy:actor.id,title:p.title,serviceType:p.kind==='walkthrough'?'Free garage walkthrough':'Customer job',customer:p.providerContact.name||[p.providerContact.firstName,p.providerContact.lastName].filter(Boolean).join(' '),phone:p.providerContact.phone||'',email:p.providerContact.email||'',address:p.address,
   bookingChannel:p.source==='ghl_appointment'?'ghl_self_booking':null,channelSelfReported:null,visitPurpose:defaultVisitPurpose(p.kind)});
- if(crew)Object.assign(patch,crewAssignment(crew),{crewAutoAssigned:autoCrew});
+ if(crew)Object.assign(patch,assignment,{crewAutoAssigned:crewAutoRecord(crew,pick,assignment)});
+ else if(staffing)Object.assign(patch,assignment,{soldNeedsCrew:{at:now,by:actor.id,requestId:input.requestId,reason:'no_crew_free'}});
  if(!current&&p.operationalScope){
   const scope=p.operationalScope;
   patch.adoptionOperationalScope=structuredClone(scope);
@@ -172,7 +180,7 @@ export async function adoptScheduledVisit(store,actor,input,now=new Date().toISO
  activeEntries.push(scheduleDayEntry(next,from.date,roster,now));
  writes.push({collection:'jobs',id:lockId,revision:lock?.revision,patch:{recordType:'schedule_lock',date:from.date,entries:activeEntries,updatedAt:now}});
  for(const receiptId of [sourceReceiptId,requestReceiptId])writes.push({collection:'jobs',id:receiptId,patch:{recordType:'schedule_adoption',fingerprint,portalVisitId:id,portalCustomerId:customerId,source,adopted:!current,actorId:actor.id,createdAt:now,...(autoCrew?{crewAutoAssigned:autoCrew}:{})}});
- if(autoCrew&&store.crewNotificationsEnabled===true)writes.push(...await crewNotificationWrites({jobId:id,requestId:input.requestId,action:'schedule.adopt',actorId:actor.id,type:next.type,before:null,after:next,roster,now}));
+ if(crew&&store.crewNotificationsEnabled===true)writes.push(...await crewNotificationWrites({jobId:id,requestId:input.requestId,action:'schedule.adopt',actorId:actor.id,type:next.type,before:null,after:next,roster,now}));
  try{await store.commit(writes);}catch(error){const recovered=await store.read('jobs',sourceReceiptId).catch(()=>null),request=await store.read('jobs',requestReceiptId).catch(()=>null);if(recovered?.fingerprint!==fingerprint||request?.fingerprint!==fingerprint)throw error;}
  const saved=await store.read('jobs',id);if(!matches(saved,p))throw fail('schedule_adoption_changed_since_operation');
  return response(saved,p,!current,false);
