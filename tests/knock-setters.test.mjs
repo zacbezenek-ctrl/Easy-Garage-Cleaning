@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { projectSetterAttribution, recordSetterAttribution, setterAttributions } from '../functions/_lib/knock-setters.js';
+import { projectSetterAttribution, recordSetterAttribution, setterAttributions, setterPolicy } from '../functions/_lib/knock-setters.js';
 import { knockAdminHandlers } from '../functions/api/knock-admin.js';
 import { commissionAllocations } from '../functions/_lib/knock-allocations.js';
 import { call, cookieFor, knockEnv, knockWorld, post, uuid } from './helpers/knock-fixture.mjs';
@@ -48,7 +48,7 @@ test('booking, no-show and unclosed quotes never earn setter commission', () => 
 
 test('closed and collected setter work keeps the confirmed two-recipient split but holds an unknown base', () => {
   const row = projectSetterAttribution(record(), visit(), job(), [], Date.parse(now));
-  assert.equal(row.rate, 0.12);
+  assert.equal(row.rate, 0.13);
   assert.equal(row.setterKey, 'rep.one');
   assert.equal(row.estimatorKey, null, 'the quote recorder is not assumed to be the estimator');
   assert.equal(row.closingActorKey, 'estimator.one');
@@ -61,18 +61,19 @@ test('closed and collected setter work keeps the confirmed two-recipient split b
   assert.equal(row.earnedCommission, null);
   assert.equal(row.payableCommission, null);
   assert.ok(row.reviewReasons.includes('calculation_base_unconfigured'));
-  assert.deepEqual(row.allocations.map(item => [item.role, item.rate, item.amountCents]), [['setter', 0.12, null], ['estimator', 0.07, null]]);
+  assert.deepEqual(row.allocations.map(item => [item.role, item.rate, item.amountCents]), [['setter', 0.13, null], ['estimator', 0.07, null]]);
   const duplicate = job(); duplicate.payment.stripeSessions.push({ ...duplicate.payment.stripeSessions[0] });
   assert.equal(projectSetterAttribution(record(), visit(), duplicate, [], Date.parse(now)).customerCollectedRevenue, 1000);
 });
 
-test('verified arithmetic allocates 19 percent to two distinct recipients without adding direct-sale commission', () => {
+test('verified arithmetic allocates 20 percent (13 setter + 7 estimator) to two distinct recipients without adding direct-sale commission', () => {
   const input = { channel: 'appointment_setter', jobId: 'job-1', serviceClassification: 'garage', setterKey: 'rep.one', estimatorKey: 'estimator.one',
     base: { verified: true, amountCents: 100000, reference: 'synthetic-base-review' } };
   const result = commissionAllocations(input);
   assert.equal(result.state, 'calculated');
-  assert.equal(result.totalCents, 19000);
-  assert.deepEqual(result.allocations.map(row => [row.repKey, row.amountCents]), [['rep.one', 12000], ['estimator.one', 7000]]);
+  assert.equal(result.totalCents, 20000);
+  assert.deepEqual([setterPolicy.rate, setterPolicy.estimatorRate, setterPolicy.totalRate], [0.13, 0.07, 0.2], 'owner split 2026-10-17');
+  assert.deepEqual(result.allocations.map(row => [row.repKey, row.amountCents]), [['rep.one', 13000], ['estimator.one', 7000]]);
   assert.equal(result.payable, false, 'arithmetic is not a payroll approval or execution');
   assert.deepEqual(commissionAllocations(input).allocations, result.allocations, 'stable allocation IDs let retries be deduplicated');
   const overlap = commissionAllocations({ ...input, directRepKey: 'rep.one' });
@@ -102,7 +103,7 @@ test('junk, partial/refunded receipts, conflicting direct-sale credit and missin
   const conflict = projectSetterAttribution(record(), visit(), job(), direct);
   assert.equal(conflict.directSaleRepKey, 'rep.one');
   assert.ok(conflict.reviewReasons.includes('direct_close_attribution_conflict'));
-  assert.equal(conflict.payableCommission, null, '25% and 12% are never combined');
+  assert.equal(conflict.payableCommission, null, '25% and 13% are never combined');
   assert.ok(projectSetterAttribution(record(), visit(), { ...job(), sourceWalkthroughId: 'another' }).reviewReasons.includes('conversion_link_unverified'));
   assert.ok(projectSetterAttribution(record(), visit(), { ...job(), type: 'walkthrough' }).reviewReasons.includes('conversion_link_unverified'));
   assert.ok(projectSetterAttribution({ ...record(), serviceClassification: 'unverified' }, visit(), job()).reviewReasons.includes('service_scope_unverified'));

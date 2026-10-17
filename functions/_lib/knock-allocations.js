@@ -1,9 +1,13 @@
-// Known channel percentages, not approval of a calculation base or a payout.
-// Each allocation has a stable identity for downstream idempotent accounting.
+// Known channel percentages (CHANNEL_PERCENTS, owner-set 2026-10-17), not approval of a
+// calculation base or a payout. Each allocation has a stable identity for downstream
+// idempotent accounting.
+import { CHANNEL_PERCENTS } from '../../crew/knock-money.js';
+
 export function commissionAllocations({ channel, jobId, serviceClassification, setterKey = '', estimatorKey = '', directRepKey = '', base = null }) {
-  const definitions = channel === 'appointment_setter' ? [['setter', setterKey, 12], ['estimator', estimatorKey, 7]]
-    : channel === 'direct_estimator' ? [['estimator', estimatorKey, 7]]
-    : channel === 'direct_sale' ? [['direct_rep', directRepKey, 25]] : [];
+  const { directSale, setter, estimator } = CHANNEL_PERCENTS;
+  const definitions = channel === 'appointment_setter' ? [['setter', setterKey, setter], ['estimator', estimatorKey, estimator]]
+    : channel === 'direct_estimator' ? [['estimator', estimatorKey, estimator]]
+    : channel === 'direct_sale' ? [['direct_rep', directRepKey, directSale]] : [];
   if (serviceClassification === 'junk_removal') return { state: 'excluded', allocations: [], totalCents: 0, payable: false, reviewReasons: [] };
   const reviewReasons = [];
   if (serviceClassification !== 'garage') reviewReasons.push('service_scope_unverified');

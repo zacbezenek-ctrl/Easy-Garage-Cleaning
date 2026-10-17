@@ -216,7 +216,7 @@ per neighborhood and per street.
 
 ## Money
 
-* **Commission:** D2D direct close is 25%; appointment setter is 12% plus estimator 7% (19% total);
+* **Commission:** D2D direct close is 25%; appointment setter is 13% plus estimator 7% (20% total, owner decision 2026-10-17);
   direct estimator is 7%. Junk removal is excluded, and there is no team lead commission or accelerator
   enabled by default. These channel rates must not stack. Service classification, calculation base,
   attribution and contract approval remain required before monetary results are payable.

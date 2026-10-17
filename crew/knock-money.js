@@ -9,6 +9,35 @@ const money = value => Math.round(Number(value || 0) * 100) / 100;
 const ms = value => (typeof value === 'number' ? value : Date.parse(value));
 const TERM_FIELDS = ['rate', 'acceleratorEnabled', 'acceleratorThreshold', 'acceleratorRate', 'leadOverrideEnabled', 'leadOverrideRate'];
 
+// Owner-set channel percentages (2026-10-17) of the full garage job including goods: a
+// direct D2D close 25%; a D2D-set walkthrough 13% to the setter plus 7% to the estimator
+// (20% total); a direct walkthrough 7% to the estimator. Junk earns nothing and channels
+// never stack. Whole percents keep allocation arithmetic exact (knock-allocations.js).
+export const CHANNEL_PERCENTS = Object.freeze({ directSale: 25, setter: 13, estimator: 7 });
+
+const percentText = rate => `${Math.round(Number(rate) * 1000) / 10}%`;
+// The only base rate the knock-collected-v3 contract can approve (knock-admin.js approveCompensation).
+const CONTRACT_RATE = 0.25;
+
+/* The one statement of the current direct-sale earning rule that reps read, on the Help
+   sheet and on My money. Unapproved terms are never presented as a pay promise, and a
+   saved rate the contract cannot approve is never shown as the planned rate. */
+export function commissionRuleText(commission) {
+  const rate = commission?.rate ?? CONTRACT_RATE;
+  const share = rate === CONTRACT_RATE ? `${percentText(rate)} of each eligible garage sale` : 'Commission on each eligible garage sale at the approved rate';
+  const rule = `${share}, earned once the customer has paid the full price (a deposit alone does not count), with payouts every two weeks. A final payment that comes up short, a refund or a cancellation is held for review.`;
+  if (commission?.verified !== true) return `Not approved yet: nothing is earned or payable until the owner approves the terms, and the saved rate is not a pay promise. Planned once approved: ${rule}`;
+  return `${rule} Sales booked under older terms keep their own rules.`;
+}
+
+export const SETTER_RULE_TEXT = `${CHANNEL_PERCENTS.setter}% to you when a walkthrough you set closes and the customer pays in full; the estimator gets ${CHANNEL_PERCENTS.estimator}% (${CHANNEL_PERCENTS.setter + CHANNEL_PERCENTS.estimator}% total). Booking or a no-show earns nothing, and amounts stay on hold until finance confirms the recipients, base and pay cycle. It is never added to the ${CHANNEL_PERCENTS.directSale}% direct-sale rate.`;
+
+// The only collection policy and scope the knock-collected-v3 contract accepts. The owner's
+// approval screen shows these exact values; they are not adjustable settings.
+export const COLLECTED_V3_POLICY = Object.freeze({ earnedOn: 'customer_collection', payoutCadence: 'biweekly',
+  calculationBase: 'eligible_collected_amount', attribution: 'recorded_rep', partialCollections: 'review_required', refunds: 'review_required' });
+export const D2D_GARAGE_SCOPE = Object.freeze({ service: 'garage_only', channel: 'door_to_door', estimatorStacking: false });
+
 export function validCollectionPolicy(policy) {
   return policy?.earnedOn === 'customer_collection' && policy.payoutCadence === 'biweekly' &&
     policy.calculationBase === 'eligible_collected_amount' && policy.attribution === 'recorded_rep' &&
@@ -100,6 +129,18 @@ function collectionEvents(sale) {
   ].filter(event => Number.isFinite(event.amount) && event.amount >= 0 && Number.isFinite(ms(event.at)));
 }
 
+/* Receipts below the ticket with evidence that the closing collection happened: a 'paid'
+   status, or a receipt recorded at or after the job's completion. A finished job whose only
+   receipts predate completion (usually the sale-day deposit) is awaiting its balance, not
+   short. A finished job with no usable completion or receipt time is held, not assumed. */
+function shortFinalCollection(sale, payment) {
+  if (!(money(payment.gross) < money(sale?.ticket))) return false;
+  if (sale.status === 'paid') return true;
+  const completed = ms(sale.completedAt);
+  if (!Number.isFinite(completed)) return sale.status === 'completed';
+  return !payment.at || ms(payment.at) >= completed;
+}
+
 export function commissionIssues(sale, commission) {
   const payment = customerCollection(sale), issues = [];
   const collectedTerms = sale?.commissionTerms?.contract === 'knock-collected-v3';
@@ -113,7 +154,11 @@ export function commissionIssues(sale, commission) {
   }
   if (collectedTerms && payment.gross > 0) {
     if (!payment.at) issues.push('collection_unverified');
-    if (money(payment.gross) !== money(sale.ticket)) issues.push('partial_collection_policy_unconfigured');
+    // Collected terms earn only at full collection, so receipts below the ticket are not
+    // earned yet: the sale-day deposit, a running total, or a finished job still awaiting
+    // its balance. Only an overpayment or a short final collection needs the unapproved
+    // partial-collection policy (see shortFinalCollection).
+    if (money(payment.gross) > money(sale.ticket) || shortFinalCollection(sale, payment)) issues.push('partial_collection_policy_unconfigured');
   }
   if (payment.refunded === null || payment.refunded > 0) issues.push('refund_review');
   if (sale?.collectionHistory != null) {
@@ -246,13 +291,51 @@ export function previousPayPeriod(period, payroll) {
 }
 
 const inPeriod = (date, period) => Boolean(date && period && date >= period.start && date <= period.end);
+const datable = value => value != null && value !== '' && Number.isFinite(ms(value));
+
+// Calendar dates on which a sale changed: sold, each receipt, the deposit, completion,
+// payment, refund, cancellation and every status change. Older signed terms also earn at
+// the cancellation deadline, so that date counts for them.
+function activityDates(sale, timeZone) {
+  const history = list => (Array.isArray(list) ? list : []);
+  const deadline = sale.commissionTerms?.contract === 'knock-collected-v3' ? null : sale.cancelEndsAt;
+  const instants = [sale.soldAt, sale.paidAt, sale.completedAt, sale.refundedAt, sale.cancelledAt, deadline, sale.handoff?.deposit?.collectedAt,
+    ...collectionEvents(sale).map(event => event.at), ...history(sale.collectionHistory).flatMap(event => [event?.at, event?.previousAt]),
+    ...history(sale.statusHistory).map(event => event?.at)];
+  const dates = instants.filter(datable).map(value => zonedDate(ms(value), timeZone));
+  if (validDate(sale.saleDate)) dates.push(sale.saleDate);
+  return [...new Set(dates.filter(Boolean))];
+}
+
+/* A refund or cancellation under review with no usable date. Refund fields arrive from
+   outside Knock, so the adjustment it may need could land in any period, the current one
+   included; it holds them all until finance dates it. */
+function undatedAdjustment(sale, issues) {
+  if (issues.includes('refund_review') && !datable(sale.refundedAt)) return true;
+  const history = Array.isArray(sale.statusHistory) ? sale.statusHistory : [];
+  return issues.includes('cancellation_review') && !datable(sale.cancelledAt) && !history.some(event => event?.status === 'cancelled' && datable(event.at));
+}
+
+/* Whether a sale's unresolved review reasons hold this period's totals. They do when the
+   sale changed inside the period, or when it (or its refund or cancellation) cannot be dated.
+   With a monthly accelerator, a receipt also shifts the tier of the rep's later receipts that
+   month, so it holds every period from that receipt to the end of its calendar month. Another
+   period's unrelated problem never blanks a period whose own sales are complete. */
+function reviewScope(sale, issues, period, timeZone, tiered) {
+  const dates = activityDates(sale, timeZone);
+  const direct = !dates.length || undatedAdjustment(sale, issues) || dates.some(date => inPeriod(date, period));
+  if (direct || !tiered) return { rep: direct, lead: direct };
+  const receipts = [sale.paidAt, ...collectionEvents(sale).map(event => event.at)].filter(datable).map(value => zonedDate(ms(value), timeZone)).filter(Boolean);
+  return { rep: receipts.some(date => period.end >= date && period.start <= lastDayOfMonth(date)), lead: false };
+}
 
 /* Per rep for one pay period:
    booked   - revenue of sales sold in the period that are not cancelled
    pending  - base-rate commission on those sales that is not earned yet
    earned   - commission (incl. accelerator) that became earned in the period
    override - lead override that became earned in the period
-   paid     - payouts recorded against the period */
+   paid     - payouts recorded against the period
+   Review reasons come only from sales that touch the period (see reviewScope). */
 export function periodStatement({ sales = [], payouts = [], training = [], reps = [], settings, period, now = Date.now(), timeZone = 'America/Denver' }) {
   sales = unique(sales);
   payouts = unique(payouts);
@@ -260,6 +343,8 @@ export function periodStatement({ sales = [], payouts = [], training = [], reps 
   const trainingRate = Number(settings?.payroll?.trainingHourlyRate ?? 15.16);
   const commissions = saleCommissions(sales, commission, { now, timeZone });
   const overrides = leadOverrides(sales, commission, { now });
+  // Reps with any receipt counted under an enabled monthly accelerator.
+  const tieredReps = new Set(sales.filter(sale => saleTerms(sale, commission) && saleTerms(sale, commission).acceleratorEnabled !== false).map(sale => sale.repKey));
   const byRep = new Map();
   const row = repKey => {
     if (!byRep.has(repKey)) {
@@ -278,8 +363,12 @@ export function periodStatement({ sales = [], payouts = [], training = [], reps 
     const r = row(sale.repKey), payment = customerCollection(sale);
     const issues = commissionIssues(sale, commission);
     // Unresolved adjustments may affect prior payouts or monthly tiers; never invent a clawback.
-    r.reviewReasons.push(...issues);
-    if (sale.leadKey && sale.leadKey !== sale.repKey) row(sale.leadKey).reviewReasons.push(...issues);
+    const lead = sale.leadKey && sale.leadKey !== sale.repKey ? row(sale.leadKey) : null;
+    if (issues.length) {
+      const scope = reviewScope(sale, issues, period, timeZone, tieredReps.has(sale.repKey));
+      if (scope.rep) r.reviewReasons.push(...issues);
+      if (scope.lead && lead) lead.reviewReasons.push(...issues);
+    }
     for (const event of collectionEvents(sale)) {
       if (inPeriod(zonedDate(ms(event.at), timeZone), period)) r.customerCollectedRevenue = money(r.customerCollectedRevenue + event.amount);
     }

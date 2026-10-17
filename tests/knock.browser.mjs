@@ -135,7 +135,7 @@ try {
   assert.match(await page.locator('#knock-main').textContent(), /no junk-removal commission/);
   assert.match(await page.locator('#knock-main').textContent(), /Payroll anchor unconfigured/);
   assert.match(await page.locator('#knock-main').textContent(), /payouts every two weeks/);
-  await page.getByRole('heading', { name: 'Walkthrough setting — 12%', exact: true }).waitFor();
+  await page.getByRole('heading', { name: 'Walkthrough setting — 13%', exact: true }).waitFor();
   assert.equal(await page.getByRole('link', { name: 'Book a walkthrough in the Hub', exact: true }).getAttribute('href'), '/employee.html?view=walkthroughs');
   for (const width of [320, 390, 768]) {
     await page.setViewportSize({ width, height: 844 });
@@ -162,7 +162,63 @@ try {
   await admin.getByRole('heading', { name: 'Record walkthrough setter', exact: true }).waitFor();
   assert.match(await admin.locator('#knock-main').textContent(), /booking or no-show earns nothing/);
 
-  // 6. Territory map and GPS: a newly approved rep with nothing yet sees why the map is empty, picks
+  // 6. Help states the same earning rule as My money, and only the owner approves the terms.
+  await page.goto(`${server.base}/crew/knock.html#money`);
+  await page.getByText('How commission works', { exact: true }).waitFor();
+  const moneyText = await page.locator('#knock-main').textContent();
+  await page.goto(`${server.base}/crew/knock.html#more`);
+  await page.setViewportSize({ width: 320, height: 720 });
+  await page.getByRole('button', { name: /Help & the rules/ }).click();
+  const help = page.locator('dialog.sheet[aria-label="Help & the rules"]');
+  await help.getByText('Walkthrough you set', { exact: true }).waitFor();
+  const helpText = await help.textContent();
+  // On a 320px phone the two long rules read as paragraphs under their labels, not a bold right-hand column.
+  assert.deepEqual(await help.locator('.kv > p').evaluateAll(rules => rules.map(rule => [getComputedStyle(rule).textAlign, rule.getBoundingClientRect().width > 200])),
+    [['start', true], ['start', true]]);
+  const rule = /Not approved yet: nothing is earned or payable until the owner approves the terms[^]*?held for review\./.exec(helpText)?.[0];
+  assert.ok(rule && moneyText.includes(rule), 'Help and My money state one commission rule');
+  assert.match(helpText, /a deposit alone does not count/);
+  assert.doesNotMatch(helpText, /cancellation deadline/);
+  assert.match(helpText, /13% to you when a walkthrough you set closes/);
+  await help.getByRole('button', { name: 'Close', exact: true }).click();
+  await admin.goto(`${server.base}/crew/knock.html#admin?s=settings`);
+  await admin.getByRole('heading', { name: 'Approve commission terms', exact: true }).waitFor();
+  await admin.getByText('Commission terms are not approved').waitFor();
+  await admin.getByText('Save the settings first').waitFor();
+  await admin.getByRole('button', { name: 'Save settings', exact: true }).first().click();
+  await admin.getByText('Settings saved', { exact: false }).waitFor();
+  await admin.goto(`${server.base}/crew/knock.html#admin?s=coverage`);
+  await admin.goto(`${server.base}/crew/knock.html#admin?s=settings`);
+  const approveButton = admin.getByRole('button', { name: 'Approve commission terms', exact: true });
+  await approveButton.waitFor();
+  await admin.getByRole('group', { name: 'How Garage Transformation is paid' }).getByRole('button', { name: 'Garage only', exact: true }).click();
+  await admin.getByLabel('Approval reference', { exact: true }).fill('synthetic-browser-approval');
+  await admin.getByLabel(/The two-week pay cycle starts/).check();
+  await approveButton.click();
+  const confirm = admin.locator('dialog.sheet[aria-label="Approve these commission terms?"]');
+  assert.match(await confirm.textContent(), /Garage only: Garage Transformation\. Held for review: The Works, Full Property Reset, Quick Clear\./);
+  await confirm.getByRole('button', { name: 'Approve terms', exact: true }).click();
+  await admin.locator('.banner', { hasText: 'Commission terms approved' }).waitFor();
+  assert.match(await admin.locator('#knock-main').textContent(), /reference synthetic-browser-approval/);
+  // On a 320px phone every package choice fits and the page does not scroll sideways.
+  await admin.setViewportSize({ width: 320, height: 720 });
+  const clipped = await admin.locator('[role="group"][aria-label$=" is paid"] .seg__btn')
+    .evaluateAll(buttons => buttons.filter(button => button.scrollWidth > button.clientWidth + 1).map(button => button.textContent));
+  assert.deepEqual(clipped, [], 'package choices are not clipped at 320px');
+  assert.equal(await admin.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth), true, 'no sideways scroll at 320px');
+  // Correcting only the reference keeps the approval time, so unsynced sales keep their terms.
+  const approvedLine = await admin.locator('.banner', { hasText: 'Commission terms approved' }).textContent();
+  await admin.getByLabel('Approval reference', { exact: true }).fill('synthetic-browser-approval-b');
+  await admin.getByLabel(/The two-week pay cycle starts/).check();
+  await admin.getByRole('button', { name: 'Update approval', exact: true }).click();
+  const update = admin.locator('dialog.sheet[aria-label="Update the approved terms?"]');
+  assert.match(await update.textContent(), /Only the reference changes\. The approval time stays/);
+  await update.getByRole('button', { name: 'Update approval', exact: true }).click();
+  await admin.getByText('Approval reference updated', { exact: false }).waitFor();
+  const updatedLine = await admin.locator('.banner', { hasText: 'reference synthetic-browser-approval-b' }).textContent();
+  assert.equal(updatedLine.replace('synthetic-browser-approval-b', 'synthetic-browser-approval'), approvedLine, 'same approver and approval time');
+
+  // 7. Territory map and GPS: a newly approved rep with nothing yet sees why the map is empty, picks
   //    the nearest open neighborhood (sorted by the phone's GPS), its houses download and drive the
   //    knock screen and the map's "nearest", and releasing it frees it again. Tiles are stubbed.
   const approved = await admin.evaluate(async () => (await fetch('/api/knock-admin', { method: 'POST', headers: { 'Content-Type': 'application/json' },

@@ -2,7 +2,7 @@ import { getHubSession } from '../_lib/hub-session.js';
 import { createKnockStore, knockFailure } from '../_lib/knock-store.js';
 import { requireAdmin } from '../_lib/knock-access.js';
 import {
-  addTraining, clearNoKnock, coverageView, excludeHouses, excludeUnits, flagsView, importNoKnock, listAssignments, listReps, listTraining,
+  addTraining, approveCompensation, clearNoKnock, coverageView, excludeHouses, excludeUnits, flagsView, importNoKnock, listAssignments, listReps, listTraining,
   neighborhoodHouses, readSettings, seedNeighborhoods, setAssignment, updateNeighborhood, updateRep, updateSettings,
 } from '../_lib/knock-admin.js';
 import { loadNeighborhoods } from '../_lib/knock-territory.js';
@@ -26,7 +26,7 @@ const VIEWS = {
     const [reps, training] = await Promise.all([listReps(store), listTraining(store)]);
     return { reps, training: training.slice(0, 300) };
   },
-  async settings(store) { return readSettings(store); },
+  async settings(store, _params, _now, _env, viewer) { return readSettings(store, viewer); },
   async territory(store) {
     const [neighborhoods, assignments, reps] = await Promise.all([loadNeighborhoods(store), listAssignments(store), listReps(store)]);
     return { neighborhoods: neighborhoods.map(({ __updateTime, ...n }) => n), assignments, reps };
@@ -55,6 +55,8 @@ const ACTIONS = {
   'rep.update': updateRep,
   'training.add': addTraining,
   'settings.update': updateSettings,
+  // Owner only (checked inside): records compensationApproval for the saved terms.
+  'compensation.approve': approveCompensation,
   'territory.seed': (store, _admin, _body, nowIso) => seedNeighborhoods(store, nowIso),
   'neighborhood.update': updateNeighborhood,
   'assignment.set': setAssignment,
@@ -75,11 +77,11 @@ export function knockAdminHandlers({ session = getHubSession, storage = createKn
   return {
     async get({ request, env }) {
       try {
-        requireAdmin(await session(request, env));
+        const viewer = requireAdmin(await session(request, env));
         const params = new URL(request.url).searchParams;
         const view = views[params.get('view') || ''];
         if (!view) throw knockFailure('Unknown admin view.', 404, 'knock_unknown_view');
-        const result = await view(storage(env), params, now(), env);
+        const result = await view(storage(env), params, now(), env, viewer);
         return result instanceof Response ? result : reply(200, { ok: true, serverTime: now().toISOString(), ...result });
       } catch (error) {
         return errorResponse(error);

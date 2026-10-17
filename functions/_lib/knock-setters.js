@@ -5,6 +5,7 @@ import { dispatchStorage } from './dispatch-storage.js';
 import { customerMoneyTotals, paymentLedger } from './money-core.js';
 import { walkthroughStatus } from './walkthrough-state.js';
 import { commissionAllocations } from './knock-allocations.js';
+import { CHANNEL_PERCENTS } from '../../crew/knock-money.js';
 
 const ID = /^[A-Za-z0-9_-]{1,120}$/;
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
@@ -13,7 +14,10 @@ const FIELDS = ['type', 'status', 'pipelineStatus', 'convertedJobId', 'sourceWal
   'acceptance.recordedBy', 'acceptance.acceptedAt', 'total', 'priceQuoted', 'lockedTotal', 'rate',
   'payment', 'deposit', 'invoice', 'refunds', 'changeOrders', 'giftWallet'];
 
-export const setterPolicy = Object.freeze({ channel: 'appointment_setter', rate: 0.12, estimatorRate: 0.07, totalRate: 0.19,
+// Owner decision 2026-10-17: a D2D-set walkthrough pays 13% to the setter plus 7% to the
+// estimator, 20% total of the full garage job including goods (was 12% + 7%).
+export const setterPolicy = Object.freeze({ channel: 'appointment_setter', rate: CHANNEL_PERCENTS.setter / 100, estimatorRate: CHANNEL_PERCENTS.estimator / 100,
+  totalRate: (CHANNEL_PERCENTS.setter + CHANNEL_PERCENTS.estimator) / 100,
   earningTrigger: 'closed_and_collected', payoutCadence: 'biweekly',
   approval: 'unconfigured', gaps: ['recipient_verification', 'calculation_base', 'payroll_cycle_anchor', 'partial_collections', 'refund_clawbacks'] });
 
@@ -67,7 +71,7 @@ export function projectSetterAttribution(record, visit, job, directSales = [], n
   const result = { id: record.id || record.walkthroughId, walkthroughId: record.walkthroughId, channel: 'appointment_setter',
     setterKey: record.setterKey, estimatorKey: record.estimatorKey || null, estimatorEvidence: record.estimatorKey ? 'admin_recorded_unreconciled' : 'unverified',
     closingActorKey: null, directSaleRepKey: null, serviceClassification: record.serviceClassification,
-    state: 'awaiting_close', rate: 0.12, earnedCommission: null, payableCommission: null,
+    state: 'awaiting_close', rate: setterPolicy.rate, earnedCommission: null, payableCommission: null,
     customerCollectedRevenue: null, qualifyingAt: null, allocations: [], reviewReasons: [], settlement: 'not_reconciled' };
   if (record.serviceClassification === 'junk_removal') return { ...result, state: 'excluded', earnedCommission: 0, payableCommission: 0 };
   if (!visit || visit.id !== record.walkthroughId || visit.type !== 'walkthrough' || !visit.revision) return { ...result, state: 'review_required', reviewReasons: ['walkthrough_unverified'] };
@@ -107,7 +111,7 @@ export async function setterAttributions(store, env, { repKey = null, nowMs = Da
       const visit = await readJob(row.walkthroughId);
       const job = ID.test(String(visit?.convertedJobId || '')) ? await readJob(visit.convertedJobId) : null;
       return projectSetterAttribution(row, visit, job, directSales, nowMs);
-    } catch { return { id: row.id, walkthroughId: row.walkthroughId, setterKey: row.setterKey, channel: 'appointment_setter', rate: 0.12,
+    } catch { return { id: row.id, walkthroughId: row.walkthroughId, setterKey: row.setterKey, channel: 'appointment_setter', rate: setterPolicy.rate,
       state: 'review_required', earnedCommission: null, payableCommission: null, reviewReasons: ['source_unavailable'] }; }
   }));
   return { rows: projected, truncated: rows.length > 100, policy: setterPolicy };

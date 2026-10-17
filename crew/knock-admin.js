@@ -9,6 +9,7 @@ import { zonedDate } from './knock-time.js';
 import { cancellationWindow } from './knock-sale-rules.js';
 import { nativeRecoveryAdmin } from './knock-native-form.js';
 import { periodLabel } from './knock-stats-ui.js';
+import { CHANNEL_PERCENTS } from './knock-money.js';
 
 let app;
 const sections = [];
@@ -499,8 +500,8 @@ async function settersSection() {
   const reference = h('input', { class: 'input', id: 'setter-reference', placeholder: 'Classification review reference (no customer details)' });
   const estimator = h('input', { class: 'input', id: 'setter-estimator', placeholder: 'Staff key, or leave unverified' });
   const estimatorReference = h('input', { class: 'input', id: 'setter-estimator-reference', placeholder: 'Estimator attribution review reference' });
-  return { subtitle: '12% setting channel; separate from direct-close and estimator attribution.', body: [
-    banner('warning', 'info', 'Setter pay needs policy review', 'A booking or no-show earns nothing. A closed and collected job allocates 12% to its setter and 7% to its estimator. Verify both recipients, the calculation base and payroll anchor before any payable amount is shown.'),
+  return { subtitle: `${CHANNEL_PERCENTS.setter}% setting channel; separate from direct-close and estimator attribution.`, body: [
+    banner('warning', 'info', 'Setter pay needs policy review', `A booking or no-show earns nothing. A closed and collected job allocates ${CHANNEL_PERCENTS.setter}% to its setter and ${CHANNEL_PERCENTS.estimator}% to its estimator (${CHANNEL_PERCENTS.setter + CHANNEL_PERCENTS.estimator}% total). Verify both recipients, the calculation base and payroll anchor before any payable amount is shown.`),
     h('section', { class: 'card stack' }, h('h2', {}, 'Record walkthrough setter'),
       field('Walkthrough ID', visit, null, 'setter-visit'), field('Setter', setter, null, 'setter-rep'),
       field('Service classification', scope, null, 'setter-scope'), field('Review reference', reference, null, 'setter-reference'),
@@ -637,6 +638,91 @@ function put(obj, path, value) {
   target[keys.at(-1)] = value;
 }
 
+/* The owner's "Approve commission terms" card. It shows exactly what an approval records:
+   the SAVED commission and pay-period settings (not unsaved edits), the fixed
+   knock-collected-v3 collection policy and scope, and the owner's package classification.
+   Everyone else sees the status only. The server re-checks owner and saved values. */
+const POLICY_LABELS = {
+  earnedOn: ['Earned when', { customer_collection: 'the customer has paid the full price' }],
+  payoutCadence: ['Paid out', { biweekly: 'every two weeks' }],
+  calculationBase: ['Calculated on', { eligible_collected_amount: 'the eligible amount collected' }],
+  attribution: ['Credited to', { recorded_rep: 'the rep recorded on the sale' }],
+  partialCollections: ['Short final payment', { review_required: 'held for finance review (a deposit or balance still due is just pending)' }],
+  refunds: ['Refunds', { review_required: 'held for finance review' }],
+};
+
+const pct = value => `${Math.round(Number(value) * 1000) / 10}%`;
+
+function approvalCard(data, card) {
+  const c = data.compensation;
+  if (!c) return null;
+  const saved = data.settings, com = saved.commission, pay = saved.payroll;
+  const status = c.verified
+    ? banner('success', 'check', 'Commission terms approved', `Approved by ${c.approval.reviewedBy} ${timeLabel(c.approval.reviewedAt)} · reference ${c.approval.reference}. Sales booked from then on carry these terms.`)
+    : c.approval && !c.approval.matchesSavedSettings
+      ? banner('warn', 'alert', 'Approval no longer matches the saved terms', 'The commission or pay-period settings changed after the last approval. Commission stays unconfigured until the owner approves again.')
+      : banner('warn', 'alert', 'Commission terms are not approved', 'Reps see no earned or payable commission and payroll export is refused until the owner approves these terms.');
+  const terms = h('div', { class: 'stack', style: { gap: '0' } },
+    kv('Contract', c.terms.contract),
+    kv('Door-to-door rate', `${pct(com.rate)} of each eligible garage sale`),
+    kv('Higher rate', com.acceleratorEnabled ? `${pct(com.acceleratorRate)} above ${money(com.acceleratorThreshold)} collected a month` : 'Off'),
+    kv('Lead bonus', com.leadOverrideEnabled ? `${pct(com.leadOverrideRate)} of the team's collected revenue` : 'Off'),
+    kv('Pay period', `Every two weeks, first cycle starting ${longDateLabel(pay.anchorDate)} (${pay.anchorDate})`),
+    kv('Training pay', `${money(pay.trainingHourlyRate, true)} per hour`),
+    Object.entries(POLICY_LABELS).map(([key, [label, words]]) => kv(label, words[c.terms.collectionPolicy[key]] || c.terms.collectionPolicy[key])),
+    kv('Scope', 'Garage work sold door to door; the estimator rate is never added'));
+  const title = 'Approve commission terms';
+  if (!c.canApprove) return card(title, status, terms, h('p', { class: 'caption muted' }, 'Only the owner can approve these terms.'));
+  if (!c.settingsSaved) return card(title, status, terms, banner('info', 'info', 'Save the settings first', 'The approval binds to the saved settings record, never to defaults or unsaved edits.'));
+  if (com.rate !== c.terms.rate) return card(title, status, terms, banner('info', 'info', `Save a ${pct(c.terms.rate)} rate first`, `The door-to-door contract pays ${pct(c.terms.rate)}; other rates cannot be approved under it.`));
+  const requestId = uuid();
+  const prior = c.approval?.scope || {};
+  const classes = Object.fromEntries(c.terms.packages.map(name => [name,
+    (prior.garageOnlyPackages || []).includes(name) ? 'garage' : (prior.junkRemovalPackages || []).includes(name) ? 'junk' : 'review']));
+  const packageRow = name => {
+    const box = h('div', {});
+    // Short labels fit three across on a 320px phone; the caption above explains each.
+    const mountSeg = () => box.replaceChildren(seg([['garage', 'Garage only'], ['junk', 'Junk'], ['review', 'Needs review']], classes[name],
+      value => { classes[name] = value; mountSeg(); }, { label: `How ${name} is paid` }));
+    mountSeg();
+    return h('div', { class: 'field' }, h('span', { class: 'label' }, name), box);
+  };
+  const reference = h('input', { class: 'input', id: 'approve-reference', maxlength: '120', placeholder: 'Signed plan or decision record (no customer details)', value: c.approval?.reference || '' });
+  const anchor = h('input', { type: 'checkbox', id: 'approve-anchor' });
+  const approve = async () => {
+    const garageOnlyPackages = c.terms.packages.filter(name => classes[name] === 'garage');
+    const junkRemovalPackages = c.terms.packages.filter(name => classes[name] === 'junk');
+    if (!garageOnlyPackages.length) return toast('Mark at least one package as garage only.', { tone: 'bad' });
+    if (reference.value.trim().length < 3) return toast('Add the approval reference.', { tone: 'bad' });
+    if (!anchor.checked) return toast(`Confirm the pay cycle starts ${pay.anchorDate}.`, { tone: 'bad' });
+    const unclassified = c.terms.packages.filter(name => classes[name] === 'review');
+    const sameList = (a, b = []) => a.length === b.length && a.every(name => b.includes(name));
+    // Approved terms date the sales that carry them. Fixing only the reference keeps that time
+    // (the server checks the same); new terms start now and earlier sales never inherit them.
+    const referenceOnly = c.verified && sameList(garageOnlyPackages, prior.garageOnlyPackages) && sameList(junkRemovalPackages, prior.junkRemovalPackages);
+    const effect = !c.verified ? ' Sales booked after this approval carry these terms.'
+      : referenceOnly ? ` Only the reference changes. The approval time stays ${timeLabel(c.approval.reviewedAt)}, so every sale made since then keeps these terms.`
+        : ' These terms start now. A sale made before now on a phone that has not synced yet will not carry them and will be held for finance review.';
+    const summary = `${pct(com.rate)} of collected garage sales, earned at full payment and paid every two weeks from ${pay.anchorDate}. Garage only: ${garageOnlyPackages.join(', ')}.` +
+      `${junkRemovalPackages.length ? ` No commission: ${junkRemovalPackages.join(', ')}.` : ''}${unclassified.length ? ` Held for review: ${unclassified.join(', ')}.` : ''}${effect}`;
+    if (!await confirmSheet(c.verified ? 'Update the approved terms?' : 'Approve these commission terms?', summary, c.verified ? 'Update approval' : 'Approve terms')) return;
+    try {
+      const result = await action({ action: 'compensation.approve', requestId, contract: c.terms.contract, reference: reference.value.trim(), payrollAnchorConfirmed: true,
+        collectionPolicy: c.terms.collectionPolicy, scope: { ...c.terms.scope, garageOnlyPackages, junkRemovalPackages }, commission: com, payroll: pay }, { quiet: true });
+      toast(result.duplicate ? 'These terms were already approved' : result.referenceOnly ? 'Approval reference updated' : 'Commission terms approved',
+        { sub: result.referenceOnly ? 'The approval time and terms are unchanged.' : 'Reps see payable commission from now on.' });
+      invalidate('settings');
+      app.render();
+    } catch (error) { toast(error.message, { tone: 'bad' }); }
+  };
+  return card(title, status, terms,
+    h('p', { class: 'caption muted' }, 'These are the saved settings. Save any edits above first. Mark a package Garage only if it is wholly garage work (it earns commission), Junk if it is junk removal (no commission), or Needs review (held until classified).'),
+    c.terms.packages.map(packageRow),
+    field('Approval reference', reference, null, 'approve-reference'),
+    h('label', { class: 'check check--sm' }, anchor, `The two-week pay cycle starts ${longDateLabel(pay.anchorDate)} (${pay.anchorDate})`),
+    h('button', { type: 'button', class: 'btn btn--primary', onclick: approve }, c.verified ? 'Update approval' : title));
+}
+
 async function settingsSection() {
   const data = await load('settings', {}, { force: true });
   const draft = structuredClone(data.settings);
@@ -674,9 +760,13 @@ async function settingsSection() {
       hint ? h('span', { class: 'hint' }, hint) : null);
   };
   const save = async () => {
+    const termsChanged = ['commission', 'payroll'].some(key => JSON.stringify(draft[key]) !== JSON.stringify(data.settings[key]));
+    if (data.compensation?.verified && termsChanged && !await confirmSheet('Change approved commission terms?',
+      'Saving new commission or pay-period settings ends the current approval. Commission is unconfigured until the owner approves again.', 'Save anyway', 'danger')) return;
     try {
-      await action({ action: 'settings.update', settings: draft }, { quiet: true });
-      toast('Settings saved', { sub: 'They apply to new doors and sales.' });
+      const result = await action({ action: 'settings.update', settings: draft }, { quiet: true });
+      if (result.compensation?.approvalInvalidated) toast('Settings saved; commission needs approval again', { tone: 'bad', sub: 'The owner must approve the new terms before commission is payable.' });
+      else toast('Settings saved', { sub: 'They apply to new doors and sales.' });
       invalidate('settings');
       await app.sync({ full: true });
     } catch (error) {
@@ -712,11 +802,12 @@ async function settingsSection() {
           toggle('commission.leadOverrideEnabled', 'Leads earn a bonus on their team'),
           h('div', { class: 'fields-2' }, row('Higher rate', num('commission.acceleratorRate', { scale: 100, unit: '%', step: '0.5' })), row('once monthly revenue passes', num('commission.acceleratorThreshold', { prefix: '$', step: '100', width: '120px' }))),
           toggle('commission.acceleratorEnabled', 'Use the higher rate'),
-          h('p', { class: 'caption muted' }, 'Earning on collection and a two-week payout cadence are confirmed. Basis, attribution, partial collections, refunds and the payroll anchor still require finance review.'),
+          h('p', { class: 'caption muted' }, 'Earning on collection and a two-week payout cadence are confirmed. Changing a commission or pay-period number ends the owner\'s approval until it is approved again.'),
           row('Training pay', num('payroll.trainingHourlyRate', { prefix: '$', unit: 'per hour, paid separately', step: '0.01' }))),
         card('Pay period',
           segFor('payroll.period', [['biweekly', 'Every 2 weeks']], 'Pay period'),
-          row('Unconfirmed cycle anchor', text('payroll.anchorDate', { type: 'date' }), 'A draft date until explicitly confirmed by finance.')),
+          row(data.compensation?.verified ? 'Confirmed cycle anchor' : 'Unconfirmed cycle anchor', text('payroll.anchorDate', { type: 'date' }), data.compensation?.verified ? 'Confirmed by the owner\'s approval. Changing it ends that approval.' : 'A draft date until the owner confirms it in the approval below.')),
+        approvalCard(data, card),
         card('Plan targets',
           h('p', { class: 'caption muted' }, 'Draft targets only until separately approved for D2D. Direct-estimator average ticket and margin do not establish D2D performance.'),
           h('div', { class: 'fields-2' },

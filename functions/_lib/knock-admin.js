@@ -1,10 +1,11 @@
 // Admin reads and changes for canvassing: reps, training, settings and territory. Sales and money
 // live in knock-sales.js and knock-reports.js. Every function here assumes requireAdmin passed.
 import { knockFailure, write } from './knock-store.js';
-import { loadSettings, publicRep, repKeyFor, repPatch } from './knock-access.js';
+import { COMMISSION_FIELDS, isOwner, loadSettings, publicRep, repKeyFor, repPatch, requireOwner, sameSettings } from './knock-access.js';
 import { assignmentId, loadNeighborhoods, requireNeighborhood } from './knock-territory.js';
 import { seedNeighborhoodDocs } from './knock-seed.js';
-import { DEFAULT_SETTINGS, mergeSettings, overlaySettings, validateSettings } from '../../crew/knock-settings.js';
+import { DEFAULT_SETTINGS, mergeSettings, overlaySettings, PACKAGES, validateSettings } from '../../crew/knock-settings.js';
+import { COLLECTED_V3_POLICY, D2D_GARAGE_SCOPE, validCollectionPolicy, validCommissionScope } from '../../crew/knock-money.js';
 import { matchNoKnockList } from '../../crew/knock-doors.js';
 import { validDate } from '../../crew/knock-time.js';
 import { coverage } from '../../crew/knock-stats.js';
@@ -59,18 +60,122 @@ export async function listTraining(store, { repKey = '' } = {}) {
   return rows.map(({ __updateTime, ...row }) => row).sort((a, b) => b.date.localeCompare(a.date));
 }
 
-export async function readSettings(store) {
-  const stored = await store.get('knock_settings', 'current');
-  return { settings: mergeSettings(stored?.settings || {}), defaults: DEFAULT_SETTINGS, updatedAt: stored?.updatedAt || null, updatedBy: stored?.updatedBy || null };
+const fromDoc = doc => loadSettings({ get: async () => doc });
+
+/* Where the owner's commission approval stands against the saved settings. Admins see
+   it; only the owner may act on it. The fixed contract terms travel with it so the
+   approval card shows exactly what an approval would record. */
+export function compensationView(doc, settings, viewer) {
+  const approval = doc?.compensationApproval && typeof doc.compensationApproval === 'object' ? doc.compensationApproval : null;
+  const saved = doc?.settings || null;
+  return {
+    verified: settings.commission.verified === true, approvedAt: settings.commission.approvedAt || null, canApprove: isOwner(viewer),
+    settingsSaved: Boolean(saved && doc.updatedBy && Number.isFinite(Date.parse(doc.updatedAt)) && COMMISSION_FIELDS.every(key => Object.hasOwn(saved.commission || {}, key)) && !validateSettings(saved).length),
+    approval: approval && {
+      contract: approval.contract ?? null, reference: approval.reference ?? null, reviewedBy: approval.reviewedBy ?? null, reviewedAt: approval.reviewedAt ?? null,
+      payrollAnchorConfirmed: approval.payrollAnchorConfirmed === true, scope: approval.scope ?? null, collectionPolicy: approval.collectionPolicy ?? null,
+      matchesSavedSettings: Boolean(saved) && sameSettings(approval.commission, saved.commission) && sameSettings(approval.payroll, saved.payroll),
+    },
+    terms: { contract: 'knock-collected-v3', rate: 0.25, collectionPolicy: COLLECTED_V3_POLICY, scope: D2D_GARAGE_SCOPE, packages: PACKAGES },
+  };
 }
 
+export async function readSettings(store, viewer = null) {
+  const stored = await store.get('knock_settings', 'current');
+  return { settings: mergeSettings(stored?.settings || {}), defaults: DEFAULT_SETTINGS, updatedAt: stored?.updatedAt || null, updatedBy: stored?.updatedBy || null,
+    compensation: compensationView(stored, await fromDoc(stored), viewer) };
+}
+
+/* Saves the settings field only. The owner's compensationApproval and planApproval live
+   beside it in the same document and must survive an unrelated edit (a map tile, a
+   holiday). They are bound to the exact commission/payroll and plan/gate they approved,
+   so changing those terms stops them verifying until the owner approves again. */
 export async function updateSettings(store, admin, { settings }, nowIso) {
   if (!settings || typeof settings !== 'object' || Array.isArray(settings)) throw knockFailure('Send the settings to save.', 400, 'knock_invalid_settings');
   const candidate = overlaySettings(settings);
   const problems = validateSettings(candidate);
   if (problems.length) throw knockFailure('Some settings are out of range.', 400, 'knock_invalid_settings', { problems });
-  await store.commit([write.set('knock_settings', 'current', { settings: candidate, updatedAt: nowIso, updatedBy: admin.user })]);
-  return { settings: mergeSettings(candidate) };
+  const stored = await store.get('knock_settings', 'current');
+  const fields = { settings: candidate, updatedAt: nowIso, updatedBy: admin.user };
+  const [before, after] = await Promise.all([fromDoc(stored), fromDoc({ ...(stored || {}), ...fields })]);
+  await store.commit([write.upsert('knock_settings', 'current', fields)]);
+  return { settings: mergeSettings(candidate),
+    compensation: { verified: after.commission.verified, approvalInvalidated: before.commission.verified && !after.commission.verified } };
+}
+
+/* ---- Compensation approval (owner only) ---- */
+
+const UNSAFE_TEXT = /[\u0000-\u001f\u007f]/;
+const exactKeys = (value, keys) => value && typeof value === 'object' && !Array.isArray(value) &&
+  Object.keys(value).length === keys.length && keys.every(key => Object.hasOwn(value, key));
+const approvalContent = approval => ({ contract: approval?.contract, reference: approval?.reference, payrollAnchorConfirmed: approval?.payrollAnchorConfirmed,
+  scope: approval?.scope, collectionPolicy: approval?.collectionPolicy, commission: approval?.commission, payroll: approval?.payroll });
+const sameApproval = (a, b) => sameSettings(JSON.parse(JSON.stringify(approvalContent(a))), JSON.parse(JSON.stringify(approvalContent(b))));
+// The same terms, whatever the reference says.
+const sameTerms = (a, b) => sameApproval({ ...a, reference: null }, { ...b, reference: null });
+
+/* The owner records compensationApproval for the saved commission and payroll settings,
+   with the exact fields knock-access.js loadSettings verifies. The request repeats what
+   the owner saw; if the saved settings changed since, nothing is written. Nothing is
+   approved by default and no other path writes this field.
+   Body: { requestId, contract: 'knock-collected-v3', reference, payrollAnchorConfirmed: true,
+     collectionPolicy: COLLECTED_V3_POLICY, scope: { ...D2D_GARAGE_SCOPE, garageOnlyPackages, junkRemovalPackages },
+     commission, payroll }. Retrying the same request, or approving identical terms again,
+   changes nothing (reviewedAt is kept, so sales already snapshotted keep their terms).
+   Correcting only the reference of terms that already verify keeps reviewedBy/reviewedAt:
+   approvedAt dates the terms, and a sale made offline under them must still snapshot them
+   when it syncs. Any other change takes effect now; an earlier sale never inherits it. */
+export async function approveCompensation(store, owner, body, nowIso) {
+  requireOwner(owner);
+  const { requestId, contract, payrollAnchorConfirmed, collectionPolicy, scope } = body || {};
+  if (!UUID.test(String(requestId || ''))) throw knockFailure('Missing request id. Reload and retry.', 400, 'knock_invalid_request');
+  if (contract !== 'knock-collected-v3') throw knockFailure('Only the knock-collected-v3 contract can be approved.', 400, 'knock_approval_contract');
+  const reference = typeof body.reference === 'string' ? body.reference.trim() : '';
+  if (reference.length < 3 || reference.length > 120 || UNSAFE_TEXT.test(reference)) throw knockFailure('Give the approval a reference of 3 to 120 characters (the signed plan or decision record; no customer details).', 400, 'knock_approval_reference');
+  if (payrollAnchorConfirmed !== true) throw knockFailure('Confirm the first day of the two-week pay cycle.', 400, 'knock_approval_anchor');
+  if (!exactKeys(collectionPolicy, Object.keys(COLLECTED_V3_POLICY)) || !validCollectionPolicy(collectionPolicy)) throw knockFailure('The collection policy must be exactly the knock-collected-v3 terms.', 400, 'knock_approval_policy');
+  const scopeKeys = [...Object.keys(D2D_GARAGE_SCOPE), 'garageOnlyPackages', 'junkRemovalPackages'];
+  if (!exactKeys(scope, scopeKeys) || !validCommissionScope(scope)) throw knockFailure('Classify at least one package as garage-only work, each package at most once.', 400, 'knock_approval_scope');
+  const doc = await store.get('knock_settings', 'current');
+  const saved = doc?.settings;
+  if (!saved || !doc.updatedBy || !Number.isFinite(Date.parse(doc.updatedAt)) || !COMMISSION_FIELDS.every(key => Object.hasOwn(saved.commission || {}, key)) || validateSettings(saved).length)
+    throw knockFailure('Save the settings once, then approve the saved commission terms.', 409, 'knock_settings_unsaved');
+  if (saved.commission.rate !== 0.25) throw knockFailure('The door-to-door contract pays 25% of the collected garage job. Save a 25% base rate first.', 409, 'knock_approval_rate');
+  if (saved.payroll?.period !== 'biweekly' || !Object.hasOwn(saved.payroll, 'anchorDate')) throw knockFailure('Payroll must be every two weeks with a saved first day.', 409, 'knock_approval_payroll');
+  if (!sameSettings(body.commission, saved.commission) || !sameSettings(body.payroll, saved.payroll))
+    throw knockFailure('The saved commission or pay-period settings changed since you opened them. Reload and review them again.', 409, 'knock_settings_changed');
+  const approval = { contract, reference, reviewedBy: owner.user, reviewedAt: nowIso, payrollAnchorConfirmed: true,
+    collectionPolicy: { ...COLLECTED_V3_POLICY }, scope: { ...D2D_GARAGE_SCOPE, garageOnlyPackages: PACKAGES.filter(name => scope.garageOnlyPackages.includes(name)), junkRemovalPackages: PACKAGES.filter(name => scope.junkRemovalPackages.includes(name)) },
+    commission: structuredClone(saved.commission), payroll: structuredClone(saved.payroll) };
+  const receiptId = `compensation_${requestId.toLowerCase()}`;
+  const replay = async () => {
+    const receipt = await store.get('knock_receipts', receiptId);
+    if (!receipt) return null;
+    if (receipt.kind !== 'compensation_approval' || !sameApproval(receipt, approval)) throw knockFailure('That request already recorded different terms. Reload and review again.', 409, 'knock_approval_conflict');
+    const current = await store.get('knock_settings', 'current');
+    return { duplicate: true, referenceOnly: receipt.referenceOnly === true, compensation: compensationView(current, await fromDoc(current), owner) };
+  };
+  const prior = await replay();
+  if (prior) return prior;
+  const current = await fromDoc(doc);
+  if (current.commission.verified && sameApproval(doc.compensationApproval, approval)) return { duplicate: true, referenceOnly: false, compensation: compensationView(doc, current, owner) };
+  const referenceOnly = current.commission.verified && sameTerms(doc.compensationApproval, approval);
+  if (referenceOnly) Object.assign(approval, { reviewedBy: doc.compensationApproval.reviewedBy, reviewedAt: doc.compensationApproval.reviewedAt });
+  const next = { ...doc, compensationApproval: approval };
+  const verified = await fromDoc(next);
+  if (!verified.commission.verified) throw knockFailure('These terms would not verify against the saved settings. Nothing was approved.', 409, 'knock_approval_invalid');
+  const previous = doc.compensationApproval ? { reference: doc.compensationApproval.reference ?? null, reviewedBy: doc.compensationApproval.reviewedBy ?? null, reviewedAt: doc.compensationApproval.reviewedAt ?? null } : null;
+  try {
+    await store.commit([
+      write.patch('knock_settings', 'current', { compensationApproval: approval }, doc.__updateTime),
+      write.create('knock_receipts', receiptId, { kind: 'compensation_approval', ...approval, previous, referenceOnly, recordedBy: owner.user, recordedAt: nowIso }),
+    ]);
+  } catch (error) {
+    const replayed = await replay();
+    if (replayed) return replayed;
+    throw error;
+  }
+  return { duplicate: false, referenceOnly, compensation: compensationView(next, verified, owner) };
 }
 
 /* ---- Territory ---- */

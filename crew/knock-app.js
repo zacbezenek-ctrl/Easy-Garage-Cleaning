@@ -7,6 +7,7 @@ import { DEFAULT_SETTINGS, mergeSettings } from './knock-settings.js';
 import { formatClock, knockWindow } from './knock-time.js';
 import { applyLocalKnock, doorStatus, milesLabel, neighborhoodsByDistance, territoryState } from './knock-doors.js';
 import { shiftTiming } from './knock-stats.js';
+import { SETTER_RULE_TEXT, commissionRuleText } from './knock-money.js';
 
 const VIEWER_KEY = 'egc-knock:viewer';
 const SIGNED_OUT_KEY = 'egc-knock:signed-out-at';
@@ -659,15 +660,19 @@ function syncCard() {
 
 function rulesSheet() {
   const s = S.settings, city = cityRuleFor(null), window = knockingWindow();
+  // A paragraph-length rule reads as a paragraph under its label, not a bold right-aligned column.
+  const rule = (label, text) => h('div', { class: 'kv', style: { display: 'block' } }, h('span', {}, label), h('p', { style: { margin: '4px 0 0' } }, text));
   return sheet('Help & the rules', () => h('div', { class: 'stack', style: { gap: '0' } },
     kv('Knocking hours', `${window.startLabel} until sunset (${window.endLabel} today)`),
     kv('Sunset warning', `${city?.warnMinutes ?? 15} minutes before`),
     kv('After sunset', `Only the door you're at, for ${city?.graceMinutes ?? 15} min, and it's flagged`),
     kv('Go-backs', `${s.goBacks.maxAttemptsPerSeason} tries per house each season`),
     kv('Not interested', `Rests for ${s.goBacks.notInterestedRestMonths ?? 6} months`),
-    kv('Commission', `${Math.round(s.commission.rate * 100)}% once the job is completed, paid and past its cancellation deadline`),
-    s.commission.acceleratorEnabled ? kv('Higher rate', `${Math.round(s.commission.acceleratorRate * 100)}% above $${Number(s.commission.acceleratorThreshold).toLocaleString('en-US')} a month`) : null,
-    s.commission.leadOverrideEnabled ? kv('Lead bonus', `${Math.round(s.commission.leadOverrideRate * 1000) / 10}% of the team's collected revenue`) : null,
+    // Same wording as My money (knock-money.js), from the server's approval state.
+    rule('Commission', commissionRuleText(s.commission)),
+    s.commission.verified === true && s.commission.acceleratorEnabled ? kv('Higher rate', `${Math.round(s.commission.acceleratorRate * 100)}% above $${Number(s.commission.acceleratorThreshold).toLocaleString('en-US')} a month`) : null,
+    s.commission.verified === true && s.commission.leadOverrideEnabled ? kv('Lead bonus', `${Math.round(s.commission.leadOverrideRate * 1000) / 10}% of the team's collected revenue`) : null,
+    rule('Walkthrough you set', SETTER_RULE_TEXT),
     kv('Deposit', `${Math.round(s.sale.depositRate * 100)}%, fully refundable for ${s.sale.cancelBusinessDays} business days`)));
 }
 
