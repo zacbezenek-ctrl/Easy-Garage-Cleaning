@@ -4,14 +4,19 @@
    ONE ghlScheduleMirror entry in the SAME Firestore commit as the change (scheduleMirrorWrites: the id is derived from
    the visit and its change key, created once). The API that saved it may make the first attempt after its response
    (firstScheduleMirrorAttempt, ctx.waitUntil); the signed /api/ghl-tag-drain tick (egc-worker, every 2 minutes)
-   retries it. An attempt claims the entry first (compare-and-set) and re-reads the visit: a change the visit has
-   since moved past is closed without any request. Delivery, each step recorded so a retry never repeats it:
+   retries it. An attempt claims the entry first (compare-and-set) and re-reads the visit. A change the visit has since
+   moved past is still told (every change gets its note, marked as replaced), but its stage step follows the visit as it
+   is now, so a writer that queues nothing (or a later change) never leaves HighLevel behind. Delivery, each step
+   recorded so a retry never repeats it:
      1. the customer's HighLevel contact: the visit's or its customer's linked contact (or the one this customer job
         already used); a new one is upserted only outside a messaging dry run, as the GHL-TRACK-1 tag outbox does;
      2. ONE opportunity per customer job (the Hub project) in the EGC Pipeline, moved forward to Walkthrough
         Appointment or Job Scheduled (highlevel-pipeline.js): never backwards past a later stage (a Paid in Full deal
-        stays where it is), never a closed one, never a guess between several open ones (that parks for a person),
-        created only when the contact has no open opportunity in the pipeline;
+        stays where it is), never a closed one, never a guess between several open ones (that parks for a person).
+        A new one is created only when a search of EVERY status finds none for the contact in the pipeline, and only
+        through the create-only POST /opportunities/ (web-lead-intake.js, docs/WEB-LEAD-SAFETY.md): HighLevel's upsert
+        matches the contact's existing deal and would reopen a won or lost one. A contact with only closed deals (a
+        repeat customer) waits for a person, like several open ones;
      3. one internal contact note for the change: date, Denver time window, crew or estimator, address and the job
         breakdown the visit carries (no prices).
    A walkthrough's opportunity is assigned to its estimator's HighLevel user when the staff profile maps one
@@ -21,6 +26,7 @@
 import { firestoreFetch } from './firebase-service-account.js';
 import { decodeFirestoreFields } from './firestore-job.js';
 import { dispatchStorage } from './dispatch-storage.js';
+import { aggregateCount } from './dispatch-window-reads.js';
 import { canDispatch } from './dispatch-permissions.js';
 import { scheduleInterval } from './dispatch-time.js';
 import { addContactNote, ensureContact, ghl, ghlScheduleMirrorEnabled, highLevelConfig } from './highlevel-tags.js';
@@ -42,6 +48,11 @@ export const GHL_MIRROR_SCAN_LIMIT = 500;
 export const GHL_MIRROR_OVERDUE_MINUTES = 15;
 export const GHL_MIRROR_KINDS = Object.freeze(['scheduled', 'rescheduled', 'crew_assigned', 'cancelled', 'no_show']);
 export const GHL_MIRROR_STAGES = Object.freeze({ walkthrough: 'walkthrough_appointment', job: 'job_scheduled' });
+/** The park code of an entry whose opportunity needs a person in HighLevel (several open deals, only closed ones, or a
+ * link to someone else's); steps.opportunityReview says which. */
+export const GHL_MIRROR_NEEDS_LINK = 'ghl_mirror_opportunity_needs_link';
+// The Integrations status reads at most this many pending entries (they drain within minutes; parked ones are counted).
+export const GHL_MIRROR_STATUS_SCAN_LIMIT = 100;
 const ENTRY_ID = /^gsm_[0-9a-f]{40}$/, UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const CANCELLED = new Set(['cancelled', 'canceled']), NO_SHOW = new Set(['noshow', 'no_show', 'no-show']);
 const FINISHED = new Set(['completed', 'invoiced', 'paid', 'review_requested', 'closed']);
@@ -60,6 +71,7 @@ const hex = buffer => [...new Uint8Array(buffer)].map(byte => byte.toString(16).
 const sha = async text => hex(await crypto.subtle.digest('SHA-256', new TextEncoder().encode(text)));
 const clip = (value, size) => String(value ?? '').replace(/\s+/g, ' ').trim().slice(0, size);
 const opportunityPath = id => `/opportunities/${encodeURIComponent(id)}`;
+const equals = (field, value) => ({ field: { fieldPath: field }, op: 'EQUAL', value: { stringValue: value } });
 
 export const scheduleMirrorChangeKey = (source, requestId) => `${source}:${String(requestId || '').toLowerCase()}`;
 /** The entry id for one change: the same visit and change key always name the same entry. */
@@ -197,6 +209,12 @@ function stillCurrent(entry, job) {
   if (expect.state === 'no_show') return NO_SHOW.has(now);
   return false;
 }
+// The stage the visit as it is NOW calls for: an active, scheduled walkthrough or job; else none.
+function currentStage(job) {
+  const kind = visitKind(job?.type), now = state(job);
+  return kind && !job.recordType && !CANCELLED.has(now) && !NO_SHOW.has(now) && !FINISHED.has(now) && startOf(job) ? GHL_MIRROR_STAGES[kind] : null;
+}
+const SUPERSEDED_LINE = 'Replaced: the Hub changed this visit again after this update. The Hub has the current schedule.';
 
 // HighLevel's own refusals are highlevel_<status>; a storage failure mid-attempt keeps pointing at storage.
 function failureCode(error) {
@@ -230,10 +248,12 @@ async function estimatorUser(run, entry, job) {
   return run.users.get(key);
 }
 
-const OPEN_LIMIT = 100;
-/** Step 2: the customer job's one opportunity, moved forward to the entry's stage. Returns {outcome, opportunityId?, linkPatch?}. */
-async function mirrorOpportunity(store, run, { entry, job, contactId, link, linkId, now }) {
-  const { c, pipeline } = run, target = entry.stage === GHL_MIRROR_STAGES.walkthrough ? pipeline.walkthroughStageId : pipeline.jobScheduledStageId;
+const SEARCH_LIMIT = 100;
+const review = detail => ({ outcome: 'needs_link', review: true, detail });
+/** Step 2: the customer job's one opportunity, moved forward to `stage`. Returns {outcome, opportunityId?, from?, linkPatch?},
+ * or {review, detail} when a person has to decide in HighLevel. */
+async function mirrorOpportunity(store, run, { entry, job, stage, contactId, link, linkId, now }) {
+  const { c, pipeline } = run, target = stage === GHL_MIRROR_STAGES.walkthrough ? pipeline.walkthroughStageId : pipeline.jobScheduledStageId;
   if (!pipeline.pipelineId || !target) return { outcome: 'not_configured' };
   const stages = await pipelineStages(run), rank = id => stages.indexOf(id);
   if (rank(target) < 0) return { outcome: 'not_configured' };
@@ -247,41 +267,49 @@ async function mirrorOpportunity(store, run, { entry, job, contactId, link, link
     catch (error) { if (error?.status !== 404) throw error; }
     if (found?.id === linkedId) {
       // A link to another person's deal or another pipeline is never moved and never replaced by a guess.
-      if ((found.contactId || found.contact?.id) !== contactId || found.pipelineId !== pipeline.pipelineId) return { outcome: 'needs_link', review: true };
+      if ((found.contactId || found.contact?.id) !== contactId || found.pipelineId !== pipeline.pipelineId) return review('linked_elsewhere');
       opportunity = found;
     }
   }
   if (!opportunity) {
-    const params = new URLSearchParams({ locationId: c.locationId, contactId, status: 'open', limit: String(OPEN_LIMIT), page: '1' });
-    const found = await run.ghl(`/opportunities/search?${params}`);
-    if (!Array.isArray(found?.opportunities)) throw fail('ghl_mirror_opportunity_search_unverified', 'HighLevel returned no opportunity list.', 502);
-    if (found.opportunities.length >= OPEN_LIMIT || Number(found.meta?.total || 0) > found.opportunities.length) return { outcome: 'needs_link', review: true };
-    const open = found.opportunities.filter(row => object(row) && (row.contactId || row.contact?.id) === contactId && row.pipelineId === pipeline.pipelineId);
-    if (open.length > 1) return { outcome: 'needs_link', review: true };
+    // Every status, not only open (web-lead-intake.js, docs/WEB-LEAD-SAFETY.md): a contact with any deal in the pipeline,
+    // open or closed, never gets a new one here. Its one open deal is used; several open ones, or only closed ones (a
+    // repeat customer whose last job is won or lost), wait for a person. Empty means an empty list AND a total of 0.
+    const params = new URLSearchParams({ locationId: c.locationId, contactId, pipelineId: pipeline.pipelineId, status: 'all', limit: String(SEARCH_LIMIT), page: '1' });
+    const found = await run.ghl(`/opportunities/search?${params}`), rows = found?.opportunities, total = found?.meta?.total;
+    if (!Array.isArray(rows) || rows.some(row => !object(row))) throw fail('ghl_mirror_opportunity_search_unverified', 'HighLevel returned no opportunity list.', 502);
+    if (rows.length >= SEARCH_LIMIT || Number(total || 0) > rows.length) return review('too_many');
+    const deals = rows.filter(row => (row.contactId || row.contact?.id) === contactId && row.pipelineId === pipeline.pipelineId), open = deals.filter(row => row.status === 'open');
+    if (open.length > 1) return review('several_open');
     if (open.length === 1) opportunity = open[0];
+    else if (deals.length) return review('closed_only');
     else {
+      if (!rows.length && total !== 0 && total !== '0') throw fail('ghl_mirror_opportunity_search_unverified', 'HighLevel did not confirm that the contact has no opportunity.', 502);
       // Only one attempt creates a customer job's opportunity: the link record is claimed first (compare-and-set).
       // A claim another attempt holds waits its turn; an abandoned one is found again by the search above.
       if (link?.creatingEntryId && link.creatingEntryId !== entry.id && ms(link.creatingUntil) > Date.parse(now)) throw fail('ghl_mirror_opportunity_busy', 'Another schedule change is creating this customer job\'s opportunity.', 409);
       try { await store.commit([{ collection: GHL_SCHEDULE_MIRROR_LINKS, id: linkId, revision: link?.revision, patch: { id: linkId, projectKey: entry.projectKey, contactId, creatingEntryId: entry.id, creatingUntil: iso(Date.parse(now) + GHL_MIRROR_CLAIM_MINUTES * 60000), updatedAt: now } }]); }
       catch { throw fail('ghl_mirror_opportunity_busy', 'Another schedule change is creating this customer job\'s opportunity.', 409); }
       const amount = Number(job.total ?? job.priceQuoted);
-      const created = await run.ghl('/opportunities/upsert', { method: 'POST', headers: { 'Idempotency-Key': `egc-schedule-mirror:${entry.projectKey}` }, body: JSON.stringify({
+      // Create-only, never upsert: a deal created or closed after the search above is never reopened or reset by this.
+      const created = await run.ghl('/opportunities/', { method: 'POST', headers: { 'Idempotency-Key': `egc-schedule-mirror:${entry.projectKey}` }, body: JSON.stringify({
         pipelineId: pipeline.pipelineId, locationId: c.locationId, name, pipelineStageId: target, status: 'open', contactId,
         monetaryValue: entry.visitType === 'job' && Number.isFinite(amount) && amount > 0 ? amount : 0, assignedTo: assignee || c.userId || undefined,
       }) });
       const createdId = created?.opportunity?.id || created?.id || '';
-      if (!createdId) throw fail('ghl_mirror_opportunity_unconfirmed', 'HighLevel returned no opportunity id.', 502);
+      if (typeof createdId !== 'string' || !createdId) throw fail('ghl_mirror_opportunity_unconfirmed', 'HighLevel returned no opportunity id.', 502);
       return { outcome: 'created', opportunityId: createdId, linkPatch: { opportunityId: createdId, creatingEntryId: '', creatingUntil: '' } };
     }
   }
   const id = opportunity.id, current = opportunity.pipelineStageId || '', linkPatch = { opportunityId: id };
-  if (opportunity.status && opportunity.status !== 'open') return { outcome: 'closed', opportunityId: id, linkPatch };
+  // Only an opportunity HighLevel says is open moves (a won, lost, abandoned or unstated status stays where it is).
+  if (opportunity.status !== 'open') return { outcome: 'closed', opportunityId: id, linkPatch };
   if (current === target) return { outcome: 'at_stage', opportunityId: id, linkPatch };
   if (rank(current) < 0) return { outcome: 'stage_unknown', opportunityId: id, linkPatch };
   if (rank(current) > rank(target)) return { outcome: 'later_stage', opportunityId: id, linkPatch };
   const value = Number(opportunity.monetaryValue);
-  await run.ghl(opportunityPath(id), { method: 'PUT', body: JSON.stringify({ pipelineId: pipeline.pipelineId, name: opportunity.name || name, pipelineStageId: target, status: 'open',
+  // No status in the move: a deal closed in HighLevel since the read above is never reopened by it.
+  await run.ghl(opportunityPath(id), { method: 'PUT', body: JSON.stringify({ pipelineId: pipeline.pipelineId, name: opportunity.name || name, pipelineStageId: target,
     monetaryValue: Number.isFinite(value) ? value : 0, ...(assignee ? { assignedTo: assignee } : {}) }) });
   return { outcome: 'moved', opportunityId: id, from: current, linkPatch };
 }
@@ -297,7 +325,11 @@ async function deliver(store, run, entry, now, claim) {
   let review = '';
   try {
     const job = await store.read('jobs', claimed.jobId);
-    if (!job || !stillCurrent(claimed, job)) return settle(store, claimed, { status: 'done', doneAt: now, skipped: job ? 'superseded' : 'job_missing', lastError: '' }, 'skipped');
+    if (!job) return settle(store, claimed, { status: 'done', doneAt: now, skipped: 'job_missing', lastError: '' }, 'skipped');
+    // A change the visit has moved past is still told: its own note, marked as replaced. Its stage step follows the visit
+    // as it is NOW (forward only), so a later change, or one that queued no entry (a crew self-claim), never leaves the
+    // deal behind. A replaced cancellation or no-show moves no stage.
+    const superseded = !stillCurrent(claimed, job), stage = superseded ? claimed.stage ? currentStage(job) : null : claimed.stage;
     const linkId = await scheduleMirrorLinkId(claimed.projectKey || `visit_${claimed.jobId}`), link = await store.read(GHL_SCHEDULE_MIRROR_LINKS, linkId);
     let contactId = typeof steps.contactId === 'string' && steps.contactId ? steps.contactId : job.highlevelContactId || (safeId(job.customerId) ? (await store.read('customers', job.customerId))?.highlevelContactId : '') || link?.contactId || '';
     if (!contactId) {
@@ -311,10 +343,11 @@ async function deliver(store, run, entry, now, claim) {
       if (!contactId) throw fail('ghl_mirror_contact_unresolved', 'HighLevel returned no contact.', 502);
     }
     steps.contactId = contactId;
-    if (claimed.stage && !steps.opportunity) {
-      const result = await mirrorOpportunity(store, run, { entry: claimed, job, contactId, link, linkId, now });
-      if (result.review) review = 'ghl_mirror_opportunity_needs_link';
+    if (stage && !steps.opportunity) {
+      const result = await mirrorOpportunity(store, run, { entry: claimed, job, stage, contactId, link, linkId, now });
+      if (result.review) { review = GHL_MIRROR_NEEDS_LINK; steps.opportunityReview = result.detail; }
       else {
+        delete steps.opportunityReview;
         steps.opportunity = result.outcome;
         if (result.opportunityId) steps.opportunityId = result.opportunityId;
         if (result.from !== undefined) steps.opportunityFrom = result.from;
@@ -325,15 +358,16 @@ async function deliver(store, run, entry, now, claim) {
       }
     }
     if (!steps.note) {
-      const note = object(claimed.note) ? claimed.note : {};
-      steps.note = await addContactNote(run.c, contactId, { title: String(note.title || 'EGC schedule update').slice(0, 200), body: String(note.body || ''), idempotencyKey: claimed.id }) || now;
+      const note = object(claimed.note) ? claimed.note : {}, title = String(note.title || 'EGC schedule update'), body = String(note.body || '');
+      steps.note = await addContactNote(run.c, contactId, { title: (superseded ? `${title} (since changed)` : title).slice(0, 200), body: (superseded ? `${SUPERSEDED_LINE}\n${body}` : body).slice(0, 3000), idempotencyKey: claimed.id }) || now;
     }
-    // A customer job with several open opportunities, or a link to someone else's, waits for a person: the note is written,
-    // the stage is not guessed. A manager's Retry, once HighLevel is tidied, tries the opportunity step again.
-    if (review) return settle(store, claimed, { status: 'parked', steps, lastError: review }, 'parked', links);
-    const outcome = await settle(store, claimed, { status: 'done', doneAt: now, steps, lastError: '' }, 'done', links);
+    // A customer job with several open opportunities, only closed ones, or a link to someone else's, waits for a person:
+    // the note is written, the stage is not guessed. A manager's Retry, once HighLevel is tidied, tries the stage again.
+    const replaced = superseded ? { superseded: true } : {};
+    if (review) return settle(store, claimed, { status: 'parked', steps, lastError: review, ...replaced }, 'parked', links);
+    const outcome = await settle(store, claimed, { status: 'done', doneAt: now, steps, lastError: '', ...replaced }, 'done', links);
     // A lost link write (another attempt touched the record) never undoes the delivery: the next search finds the deal again.
-    return outcome === 'busy' && links.length ? settle(store, claimed, { status: 'done', doneAt: now, steps, lastError: '' }, 'done') : outcome;
+    return outcome === 'busy' && links.length ? settle(store, claimed, { status: 'done', doneAt: now, steps, lastError: '', ...replaced }, 'done') : outcome;
   } catch (error) {
     const tries = attempts + 1, park = tries >= GHL_MIRROR_PARK_ATTEMPTS;
     return settle(store, claimed, { status: park ? 'parked' : 'pending', nextAttemptAt: iso(at + ghlMirrorBackoffMinutes(tries) * 60000), lastError: failureCode(error), steps }, park ? 'parked' : 'retrying', links);
@@ -382,15 +416,22 @@ export async function firstScheduleMirrorAttemptFor(context, jobId, requestId, n
 /** The entry ids a commit's writes carry (for firstScheduleMirrorAttempt). */
 export const scheduleMirrorIds = writes => (Array.isArray(writes) ? writes : []).filter(write => write?.collection === GHL_SCHEDULE_MIRROR && ENTRY_ID.test(write.id || '')).map(write => write.id);
 
-/** The Integrations screen's view: parked entries (they need a manager) and pending ones the drain is overdue on (the
- * worker has stopped), counted by entry, plus the signed drain worker's last check-in (shared with the tag outbox).
- * Counts only, never a visit, contact or note. `now` is an ISO string. */
+// Parked entries never expire, so production counts them (a count aggregation: about one read per 1000 entries) rather
+// than reading them; a store without parkedCounts (tests) counts its rows.
+async function parkedCounts(store) {
+  if (typeof store.parkedCounts === 'function') return store.parkedCounts();
+  const { rows, truncated } = await store.parked(), parked = rows.filter(row => row.status === 'parked');
+  return { parked: parked.length, needsLink: parked.filter(row => row.lastError === GHL_MIRROR_NEEDS_LINK).length, complete: truncated !== true };
+}
+
+/** The Integrations screen's view: parked entries (they need a manager; counted, never read) and pending ones the drain
+ * is overdue on (the worker has stopped; at most GHL_MIRROR_STATUS_SCAN_LIMIT pending entries are read), plus the signed
+ * drain worker's last check-in (shared with the tag outbox). Counts only, never a visit, contact or note. `now` is ISO. */
 export async function scheduleMirrorStatus(store, now) {
-  const at = Date.parse(now), [parked, pending, beat] = await Promise.all([store.parked(), store.due(), store.read(GHL_TAG_DRAIN_STATE, GHL_TAG_DRAIN_STATE_ID).catch(() => null)]);
-  const rows = parked.rows.filter(row => row.status === 'parked');
-  return { enabled: true, parked: rows.length, needsLink: rows.filter(row => row.lastError === 'ghl_mirror_opportunity_needs_link').length,
-    overdue: pending.rows.filter(row => ghlMirrorOverdue(row, at)).length, pending: pending.rows.length, drain: ghlTagDrainView(beat, at),
-    complete: parked.truncated !== true && pending.truncated !== true, asOf: now };
+  const at = Date.parse(now), [parked, pending, beat] = await Promise.all([parkedCounts(store), store.due(GHL_MIRROR_STATUS_SCAN_LIMIT), store.read(GHL_TAG_DRAIN_STATE, GHL_TAG_DRAIN_STATE_ID).catch(() => null)]);
+  const rows = pending.rows.filter(row => row.status === 'pending');
+  return { enabled: true, parked: parked.parked, needsLink: parked.needsLink, overdue: rows.filter(row => ghlMirrorOverdue(row, at)).length, pending: rows.length,
+    drain: ghlTagDrainView(beat, at), complete: parked.complete !== false && pending.truncated !== true, asOf: now };
 }
 
 /** A manager's Retry: parked entries and pending ones the drain is overdue on (all, or one visit's) are due now with a
@@ -418,11 +459,21 @@ function decodeRow(document) {
 }
 
 /** Production store: dispatch storage reads and commits, plus the pending and parked queues (a single-field status
- * query). An unreadable or malformed answer is never an empty queue. The flag rides on the store for the writers. */
+ * query) and the parked counts (count aggregations on equality filters only, so no composite index). An unreadable or
+ * malformed answer is never an empty queue or a zero count. The flag rides on the store for the writers. */
 export function scheduleMirrorStorage(env, fetcher = firestoreFetch) {
   const dispatch = dispatchStorage(env, fetcher);
-  async function byStatus(status) {
-    const query = { structuredQuery: { from: [{ collectionId: GHL_SCHEDULE_MIRROR }], where: { fieldFilter: { field: { fieldPath: 'status' }, op: 'EQUAL', value: { stringValue: status } } }, limit: GHL_MIRROR_SCAN_LIMIT + 1 } };
+  async function count(filters) {
+    const where = filters.length === 1 ? { fieldFilter: filters[0] } : { compositeFilter: { op: 'AND', filters: filters.map(fieldFilter => ({ fieldFilter })) } };
+    const query = { structuredAggregationQuery: { structuredQuery: { from: [{ collectionId: GHL_SCHEDULE_MIRROR }], where }, aggregations: [{ alias: 'count', count: {} }] } };
+    let response;
+    try { response = await fetcher(env, `${BASE}:runAggregationQuery`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(query), signal: AbortSignal.timeout(15000) }); }
+    catch { throw fail('ghl_mirror_storage_unavailable', 'The HighLevel schedule mirror could not be counted.', 503); }
+    if (!response.ok) throw fail('ghl_mirror_storage_unavailable', 'The HighLevel schedule mirror could not be counted.', 503);
+    try { return aggregateCount(await response.json()).count; } catch { throw fail('ghl_mirror_storage_incomplete', 'The HighLevel schedule mirror returned an unreadable count.', 503); }
+  }
+  async function byStatus(status, limit = GHL_MIRROR_SCAN_LIMIT) {
+    const query = { structuredQuery: { from: [{ collectionId: GHL_SCHEDULE_MIRROR }], where: { fieldFilter: equals('status', status) }, limit: limit + 1 } };
     let response, rows;
     try { response = await fetcher(env, `${BASE}:runQuery`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(query), signal: AbortSignal.timeout(15000) }); }
     catch { throw fail('ghl_mirror_storage_unavailable', 'The HighLevel schedule mirror could not be read.', 503); }
@@ -430,7 +481,12 @@ export function scheduleMirrorStorage(env, fetcher = firestoreFetch) {
     try { rows = await response.json(); } catch { throw fail('ghl_mirror_storage_incomplete', 'The HighLevel schedule mirror returned an unreadable answer.', 503); }
     if (!Array.isArray(rows) || rows.some(row => !object(row))) throw fail('ghl_mirror_storage_incomplete', 'The HighLevel schedule mirror returned an unreadable answer.', 503);
     const documents = rows.filter(row => row.document).map(row => decodeRow(row.document)).filter(row => row.status === status);
-    return { rows: documents.slice(0, GHL_MIRROR_SCAN_LIMIT), truncated: documents.length > GHL_MIRROR_SCAN_LIMIT };
+    return { rows: documents.slice(0, limit), truncated: documents.length > limit };
   }
-  return { ghlScheduleMirror: ghlScheduleMirrorEnabled(env), read: (collection, id) => dispatch.read(collection, id), commit: writes => dispatch.commit(writes), due: () => byStatus('pending'), parked: () => byStatus('parked') };
+  async function parkedTotals() {
+    const parked = await count([equals('status', 'parked')]);
+    return { parked, needsLink: parked ? await count([equals('status', 'parked'), equals('lastError', GHL_MIRROR_NEEDS_LINK)]) : 0, complete: true };
+  }
+  return { ghlScheduleMirror: ghlScheduleMirrorEnabled(env), read: (collection, id) => dispatch.read(collection, id), commit: writes => dispatch.commit(writes),
+    due: limit => byStatus('pending', Number.isSafeInteger(limit) && limit > 0 ? Math.min(limit, GHL_MIRROR_SCAN_LIMIT) : GHL_MIRROR_SCAN_LIMIT), parked: () => byStatus('parked'), parkedCounts: parkedTotals };
 }

@@ -13,7 +13,11 @@
    D9b: with EGC_GHL_SCHEDULE_MIRROR exactly "true" the same signed tick also drains the HighLevel schedule mirror
    (functions/_lib/ghl-schedule-mirror.js: contact, EGC Pipeline stage and a schedule note; never a tag, appointment or
    message), reported as `mirror` beside the tag summary, and a manager's retry also requeues its parked entries. Either
-   flag lets the tick run; with both off it answers as before. */
+   flag lets the tick run; with both off it answers as before.
+   POST {action:'retry', requestId, jobId?, scope:'schedule_mirror'}
+                                    dispatchers, the Integrations screen's schedule-mirror Retry: requeues the mirror's
+                                    parked and overdue entries only (never a tag, which could start a customer workflow).
+                                    With the mirror off the scope is not read, so the answer is the tag outbox's as before. */
 import { getHubSession } from '../_lib/hub-session.js';
 import { canDispatch } from '../_lib/dispatch-permissions.js';
 import { operationsAuthMode, operationsEnabled, verifyApiServiceEnvelope } from '../_lib/operations-service-auth.js';
@@ -98,10 +102,14 @@ export function ghlTagDrainHandlers({ verify = verifyApiServiceEnvelope, session
         const viewer = await session(request, env);
         if (!viewer) return failure(401, 'ghl_tag_sign_in_required', 'Sign in to the Employee Hub to retry HighLevel tags.');
         const tags = ghlTagOutboxEnabled(env), mirrored = ghlScheduleMirrorEnabled(env);
+        // The schedule mirror's own Retry (Integrations) names its scope and requeues no tag. Mirror off: as before.
+        const scoped = mirrored && object(body) && Object.hasOwn(body, 'scope');
+        if (scoped && body.scope !== 'schedule_mirror') return failure(400, 'ghl_mirror_request_invalid', 'Send retry with scope schedule_mirror, or no scope.');
         if (!tags && !mirrored) return failure(409, 'ghl_tag_outbox_disabled', 'The HighLevel tag outbox is turned off.');
+        if (scoped) { const { scope, ...rest } = body; body = rest; }
         const at = now().toISOString();
         let result = null, mirror = null;
-        if (tags) {
+        if (tags && !scoped) {
           const store = storage(env);
           result = await retryGhlTags(store, viewer, body, at, env);
           // One attempt right away; the worker keeps retrying on its own schedule.

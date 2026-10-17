@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import vm from 'node:vm';
 import { randomUUID } from 'node:crypto';
-import { serverScheduleSyncOwned, scheduleSyncRequestId, scheduleSyncBackoffMinutes, selectScheduleSyncDue, recordScheduleSyncFailure, runScheduleSyncCommand, isScheduleSyncCommand, serverScheduleSyncActive, SCHEDULE_SYNC_BATCH_LIMIT, SCHEDULE_SYNC_WORKER_ID, SCHEDULE_SYNC_REVIEW_ATTEMPTS, SCHEDULE_SYNC_PARK_CODES } from '../functions/_lib/schedule-sync-queue.js';
+import { serverScheduleSyncOwned, scheduleSyncRequestId, scheduleSyncBackoffMinutes, selectScheduleSyncDue, recordScheduleSyncFailure, runScheduleSyncCommand, isScheduleSyncCommand, serverScheduleSyncActive, SCHEDULE_SYNC_BATCH_LIMIT, SCHEDULE_SYNC_WORKER_ID, SCHEDULE_SYNC_REVIEW_ATTEMPTS, SCHEDULE_SYNC_PARK_CODES, SCHEDULE_SYNC_CALENDAR_SKIP_CODES } from '../functions/_lib/schedule-sync-queue.js';
 import { resolveScheduledVisit, linkScheduledCustomer, bindScheduledProvider } from '../functions/_lib/operations-scheduling.js';
 import { localInstant } from '../functions/_lib/operations-portal-records.js';
 import { signOperationsEnvelope } from '../functions/_lib/operations-envelope.js';
@@ -238,8 +238,7 @@ test('a ledger refusal no retry can clear parks the visit at once, and a manual 
     assert.ok(item, `${id} is due at ${at}`);
     return recordScheduleSyncFailure(f.store, WORKER, { command: 'schedule.sync_failed', requestId: randomUUID(), portalVisitId: id, expectedRevision: item.expectedRevision, syncRequestId: item.requestId, code }, at);
   };
-  // D9b: a deleted or unconfigured HighLevel calendar parks the calendar mirror at once (calendar mirror skipped), never a retry every tick.
-  assert.deepEqual(SCHEDULE_SYNC_PARK_CODES, ['appointment_idempotency_payload_conflict', 'appointment_changed_since_acceptance', 'schedule_calendar_deleted', 'schedule_calendar_not_configured']);
+  assert.deepEqual(SCHEDULE_SYNC_PARK_CODES, ['appointment_idempotency_payload_conflict', 'appointment_changed_since_acceptance']);
   for (const code of SCHEDULE_SYNC_PARK_CODES) {
     // Each round is a new schedule change: a review flag left from an earlier key never parks the new one.
     f.set('refused', { syncStatus: 'pending', syncIdempotencyKey: randomUUID() });
@@ -260,6 +259,30 @@ test('a ledger refusal no retry can clear parks the visit at once, and a manual 
   assert.deepEqual([item.requestId, item.syncAttempts, resumed.counts.parked], [key, 0, 0], 'unparked on the same key, with no worker attempts counted');
   const fresh = await fail('refused', 'schedule_provider_sync_unavailable', minutes(11));
   assert.deepEqual([fresh.syncAttempts, fresh.reviewRequired, f.job('refused').syncWorkerAttempts, f.job('refused').syncAttempts], [1, false, 1, 1], 'a fresh worker budget, and the page\'s count stays its own');
+});
+
+test('D9b: a calendar skip from egc-api is no failure: the visit leaves the queue at once as synced with calendarMirror skipped', async () => {
+  const f = fixture([visit('deleted'), visit('unset', { dispatchUpdatedAt: '2026-09-21T11:00:00.000Z' }), visit('outage', { dispatchUpdatedAt: '2026-09-21T12:00:00.000Z' })]);
+  assert.deepEqual(SCHEDULE_SYNC_CALENDAR_SKIP_CODES, { schedule_calendar_deleted: 'calendar_deleted', schedule_calendar_not_configured: 'calendar_not_configured' });
+  const command = (id, item, code, requestId = randomUUID()) => ({ command: 'schedule.sync_failed', requestId, portalVisitId: id, expectedRevision: item.expectedRevision, syncRequestId: item.requestId, code });
+  const first = await selectScheduleSyncDue(f.store, DUE, AT), item = id => first.items.find(entry => entry.portalVisitId === id);
+  const skip = command('deleted', item('deleted'), 'schedule_calendar_deleted');
+  const saved = await recordScheduleSyncFailure(f.store, WORKER, skip, NOW);
+  assert.deepEqual([saved.syncStatus, saved.reviewRequired], ['synced', false]);
+  assert.deepEqual([f.job('deleted').syncStatus, f.job('deleted').syncError, f.job('deleted').calendarMirror, f.job('deleted').syncWorkerAttempts, f.job('deleted').syncReviewRequired],
+    ['synced', '', { status: 'skipped', reason: 'calendar_deleted', code: 'schedule_calendar_deleted', at: NOW }, undefined, false]);
+  await recordScheduleSyncFailure(f.store, WORKER, command('unset', item('unset'), 'schedule_calendar_not_configured'), NOW);
+  assert.deepEqual(f.job('unset').calendarMirror.reason, 'calendar_not_configured');
+  // A replay of the same report answers the saved state; the same request id with another code is refused.
+  assert.equal((await recordScheduleSyncFailure(f.store, WORKER, skip, NOW)).replayed, true);
+  await assert.rejects(recordScheduleSyncFailure(f.store, WORKER, { ...skip, code: 'schedule_calendar_not_configured' }, NOW), error => error.code === 'schedule_idempotency_conflict');
+  // Out of the queue (the due scan is pending/error/syncing only): never read or retried again, never an oldest failure or a park.
+  await recordScheduleSyncFailure(f.store, WORKER, command('outage', item('outage'), 'schedule_provider_sync_unavailable'), NOW);
+  const later = await selectScheduleSyncDue(f.store, DUE, new Date(minutes(7 * 24 * 60)));
+  assert.deepEqual([later.items.map(entry => entry.portalVisitId), later.counts.scanned, later.counts.parked, later.oldestFailureAt], [['outage'], 1, 0, NOW]);
+  // A new schedule change queues it again under a new key; a verified appointment then clears the skip.
+  f.set('deleted', { syncStatus: 'pending', syncIdempotencyKey: randomUUID(), time: '13:00', endTime: '15:00' });
+  assert.ok((await selectScheduleSyncDue(f.store, DUE, AT)).items.some(entry => entry.portalVisitId === 'deleted'));
 });
 
 test('only the schedule-sync worker reaches the queue commands, only while the Hub flag is on, and sync_due records its check-in', async () => {
@@ -433,7 +456,7 @@ function worker(f, provider, clock, env = ENV) {
 }
 // What the page's syncJobRecord leaves behind when its own attempt fails: an unconditional merge.
 const pageErrorWrite = (f, id, at) => f.set(id, { syncStatus: 'error', syncError: 'HighLevel sync failed', syncNextRetryAt: at, syncAttempts: 1, syncLastAttemptAt: NOW, updatedAt: NOW });
-const counts = extra => ({ due: 0, selected: 0, synced: 0, notNeeded: 0, failed: 0, conflicts: 0, stateConflicts: 0, unrecorded: 0, deferred: 0, complete: true, heartbeat: true, ...extra });
+const counts = extra => ({ due: 0, selected: 0, synced: 0, notNeeded: 0, calendarSkipped: 0, failed: 0, conflicts: 0, stateConflicts: 0, unrecorded: 0, deferred: 0, complete: true, heartbeat: true, ...extra });
 
 test('rerunning the worker never repeats a provider write, and a multi-day visit mirrors its true end instant', async () => {
   let at = Date.parse(NOW);
@@ -695,12 +718,16 @@ test('when page loads own retries again, a backoff the worker wrote never delays
   assert.match(syncState(visit('parked', { ...workerFailure(NOW), syncReviewRequired: true })), /opsRetrySync\('parked'\)/, 'the manager\'s Retry stays on the card');
 });
 
-test('D9b: a skipped calendar mirror reads "Calendar mirror skipped", is recorded on the visit, and a later appointment clears it', async () => {
+test('D9b: a skipped calendar mirror reads "Calendar skipped" (reason on hover), is recorded on the visit, and a later appointment clears it', async () => {
   const { syncState } = page(true, []).context.ui;
-  assert.match(syncState(visit('deleted', { syncStatus: 'error', syncError: 'schedule_calendar_deleted', syncReviewRequired: true })), /Calendar mirror skipped · calendar deleted in HighLevel/);
-  assert.match(syncState(visit('unset', { syncStatus: 'error', syncError: 'schedule_calendar_not_configured', syncReviewRequired: true })), /Calendar mirror skipped · no HighLevel calendar configured/);
-  assert.match(syncState(visit('page', { syncStatus: 'synced', calendarMirror: { status: 'skipped', reason: 'calendar_deleted' } })), /Calendar mirror skipped/);
-  assert.doesNotMatch(syncState(visit('deleted', { syncStatus: 'error', syncError: 'schedule_calendar_deleted', syncReviewRequired: true })), /opsRetrySync/, 'nothing to retry until a calendar is configured');
+  const server = syncState(visit('deleted', { syncStatus: 'synced', calendarMirror: { status: 'skipped', reason: 'calendar_deleted', code: 'schedule_calendar_deleted', at: NOW } }));
+  assert.match(server, />Calendar skipped<\/span>/);
+  assert.match(server, /title="Calendar mirror skipped: calendar deleted in HighLevel"/);
+  assert.match(syncState(visit('unset', { syncStatus: 'synced', calendarMirror: { status: 'skipped', reason: 'calendar_not_configured' } })), /aria-label="Calendar mirror skipped: no HighLevel calendar configured"/);
+  assert.ok(/>([^<]*)<\/span>/.exec(server)[1].length <= 16, 'a short label: the week column is about 150px wide');
+  assert.doesNotMatch(server, /opsRetrySync/, 'nothing to retry until a calendar is configured');
+  // Queued again by a new change: the ordinary state (and its Retry) until it is mirrored or skipped again.
+  assert.match(syncState(visit('moved', { syncStatus: 'pending', calendarMirror: { status: 'skipped', reason: 'calendar_deleted' } })), /Sync pending[\s\S]*opsRetrySync/);
   assert.match(syncState(visit('other', { syncStatus: 'error', syncError: 'appointment_changed_since_acceptance', syncReviewRequired: true })), /Sync needs review/);
   const skipped = page(false, [visit('skip', { syncStatus: 'error', syncAttempts: 1 })], { syncResponse: { ok: true, contactId: 'contact-a', appointmentId: '', calendarMirror: { status: 'skipped', reason: 'calendar_deleted' }, automation: { tagSynced: false, calendarSkipped: true } } });
   await skipped.load();

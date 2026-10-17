@@ -1,8 +1,10 @@
 // D9/D9b: the HighLevel schedule mirror (EGC_GHL_SCHEDULE_MIRROR). A Hub schedule change commits one ghlScheduleMirror
 // entry with it; the drain upserts nothing but the linked contact (outside a dry run it may upsert one), keeps ONE
-// opportunity per customer job in the EGC Pipeline moving forward only (Walkthrough Appointment, Job Scheduled), and
-// writes one internal note per change. It never depends on a calendar: a deleted or missing calendar is "calendar mirror
-// skipped", never a failure. A fake HighLevel records every request. Synthetic data, fixed clock, no network.
+// opportunity per customer job in the EGC Pipeline moving forward only (Walkthrough Appointment, Job Scheduled; created
+// only through the create-only POST /opportunities/, never upsert), and writes one internal note per change. It never
+// depends on a calendar: a deleted or missing calendar is "calendar mirror skipped", never a failure. A fake HighLevel
+// records every request and models upsert as HighLevel does (it matches the contact's existing deal, whatever its status).
+// Synthetic data, fixed clock, no network.
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
@@ -13,13 +15,15 @@ import { GHL_TAG_DRAIN_PATH, ghlTagDrainHandlers } from '../functions/api/ghl-ta
 import { integrationStatusHandlers } from '../functions/api/integration-status.js';
 import { onRequestPost as highlevelPost } from '../functions/api/highlevel.js';
 import { mutateScheduledVisit } from '../functions/_lib/operations-scheduling.js';
-import { GHL_MIRROR_PARK_ATTEMPTS, GHL_SCHEDULE_MIRROR, GHL_SCHEDULE_MIRROR_LINKS, drainScheduleMirror, firstScheduleMirrorAttempt, ghlScheduleMirrorEnabled, retryScheduleMirror,
-  scheduleMirrorChangeKey, scheduleMirrorEntryId, scheduleMirrorEvent, scheduleMirrorIds, scheduleMirrorLinkId, scheduleMirrorStatus, scheduleMirrorWrites } from '../functions/_lib/ghl-schedule-mirror.js';
+import { GHL_MIRROR_NEEDS_LINK, GHL_MIRROR_PARK_ATTEMPTS, GHL_MIRROR_STATUS_SCAN_LIMIT, GHL_SCHEDULE_MIRROR, GHL_SCHEDULE_MIRROR_LINKS, drainScheduleMirror, firstScheduleMirrorAttempt, ghlScheduleMirrorEnabled, retryScheduleMirror,
+  scheduleMirrorChangeKey, scheduleMirrorEntryId, scheduleMirrorEvent, scheduleMirrorIds, scheduleMirrorLinkId, scheduleMirrorStatus, scheduleMirrorStorage, scheduleMirrorWrites } from '../functions/_lib/ghl-schedule-mirror.js';
 import { EGC_JOB_SCHEDULED_STAGE, EGC_PIPELINE, EGC_WALKTHROUGH_APPOINTMENT_STAGE, schedulePipeline } from '../functions/_lib/highlevel-pipeline.js';
 import { EGC_JOB_CALENDAR, EGC_LOCATION, EGC_WALKTHROUGH_CALENDAR, calendarDeletedAnswer, customerCalendars } from '../functions/_lib/highlevel-calendars.js';
 import { estimatorHighLevelUserId, walkthroughEstimator } from '../functions/_lib/highlevel-users.js';
 import { createHubSessionCookie } from '../functions/_lib/hub-session.js';
-import { chooseScheduleCalendar } from '../egc-platform/apps/api/src/schedule-calendar.ts';
+import { CALENDAR_SKIP_CODES, calendarGoneOnUpdate, chooseScheduleCalendar } from '../egc-platform/apps/api/src/schedule-calendar.ts';
+import { SCHEDULE_SYNC_CALENDAR_SKIPS, runScheduleSyncTick, scheduleSyncAlerts } from '../egc-platform/apps/api/src/schedule-sync-worker.ts';
+import vm from 'node:vm';
 import { firestoreMemory } from './helpers/firestore-memory.mjs';
 import { recordingHighLevel } from './helpers/highlevel-recorder.mjs';
 import { FLAG_OFF_ENV } from './helpers/ghl-track-fixture.mjs';
@@ -72,15 +76,22 @@ function fakeHighLevel({ opportunities = [], stages = STAGES, fail = () => 0 } =
     const failure = fail(call);
     if (failure) return json(typeof failure === 'object' ? failure.body : { message: 'Synthetic HighLevel failure' }, typeof failure === 'object' ? failure.status : failure);
     if (path === '/opportunities/pipelines') return json({ pipelines: [{ id: 'other-pipeline', stages: [{ id: 'x', position: 0 }] }, { id: EGC_PIPELINE, name: 'EGC Pipeline', stages: stages.map((id, position) => ({ id, name: id, position })) }] });
-    if (path === '/opportunities/search') { const contact = parsed.searchParams.get('contactId'), rows = [...deals.values()].filter(row => row.contactId === contact && row.status === 'open'); return json({ opportunities: rows, meta: { total: rows.length } }); }
-    if (path === '/opportunities/upsert') { const id = `opp-new-${++n}`; deals.set(id, { id, ...body }); return json({ opportunity: { id } }); }
+    if (path === '/opportunities/search') {
+      const query = parsed.searchParams, status = query.get('status') || 'open', pipeline = query.get('pipelineId');
+      const rows = [...deals.values()].filter(row => row.contactId === query.get('contactId') && (status === 'all' || row.status === status) && (!pipeline || row.pipelineId === pipeline));
+      return json({ opportunities: rows.map(row => structuredClone(row)), meta: { total: rows.length } });
+    }
+    // HighLevel's upsert matches the contact's existing deal in the pipeline, whatever its status, and overwrites it.
+    if (path === '/opportunities/upsert') { const existing = [...deals.values()].find(row => row.contactId === body.contactId && row.pipelineId === body.pipelineId); const id = existing?.id || `opp-new-${++n}`; deals.set(id, { ...(existing || {}), id, ...body }); return json({ opportunity: { id } }); }
+    if (path === '/opportunities/' && method === 'POST') { const id = `opp-new-${++n}`; deals.set(id, { id, ...body }); return json({ opportunity: { id } }); }
     const match = /^\/opportunities\/([^/]+)$/.exec(path);
     if (match) { const deal = deals.get(match[1]); if (!deal) return json({ message: 'Not found' }, 404); if (method === 'PUT') Object.assign(deal, body); return json({ opportunity: deal }); }
     if (/^\/contacts\/[^/]+\/notes$/.test(path)) return json({ note: { id: `note-${calls.length}` } });
     if (path === '/contacts/upsert') return json({ contact: { id: 'contact-new' } });
     return json({}, 404);
   }
-  return { calls, deals, fetcher, lines: () => calls.map(call => `${call.method} ${call.path}`), writes: () => calls.filter(call => call.method !== 'GET'), notes: () => calls.filter(call => call.path.endsWith('/notes')) };
+  return { calls, deals, fetcher, lines: () => calls.map(call => `${call.method} ${call.path}`), writes: () => calls.filter(call => call.method !== 'GET'), notes: () => calls.filter(call => call.path.endsWith('/notes')),
+    creates: () => calls.filter(call => call.method === 'POST' && call.path === '/opportunities/'), upserts: () => calls.filter(call => call.path === '/opportunities/upsert') };
 }
 
 // The dispatch commit: the visit and its mirror entry together, or not at all.
@@ -160,7 +171,8 @@ test('a walkthrough with no opportunity creates one at Walkthrough Appointment; 
   assert.equal(booked.ids[0], await scheduleMirrorEntryId('walk-1', scheduleMirrorChangeKey('dispatch', booked.requestId)), 'derived from the visit and its change key');
   const first = await drain(store, ghl);
   assert.deepEqual([first.attempted, first.done], [1, 1]);
-  assert.deepEqual(ghl.lines(), ['GET /opportunities/pipelines', 'GET /opportunities/search', 'POST /opportunities/upsert', 'POST /contacts/contact-1/notes']);
+  assert.deepEqual(ghl.lines(), ['GET /opportunities/pipelines', 'GET /opportunities/search', 'POST /opportunities/', 'POST /contacts/contact-1/notes']);
+  assert.deepEqual(Object.fromEntries(new URLSearchParams(ghl.calls[1].search)), { locationId: EGC_LOCATION, contactId: 'contact-1', pipelineId: EGC_PIPELINE, status: 'all', limit: '100', page: '1' }, 'every status, in the pipeline');
   const create = ghl.calls[2];
   assert.deepEqual([create.body.pipelineId, create.body.pipelineStageId, create.body.contactId, create.body.status, create.body.monetaryValue, create.body.assignedTo, create.body.locationId],
     [EGC_PIPELINE, EGC_WALKTHROUGH_APPOINTMENT_STAGE, 'contact-1', 'open', 0, 'w92vfhwm3a8twTIowpQz', EGC_LOCATION], 'unmapped estimator: HIGHLEVEL_USER_ID as today');
@@ -177,10 +189,12 @@ test('a walkthrough with no opportunity creates one at Walkthrough Appointment; 
   await save(store, 'job-1', job());
   await drain(store, ghl);
   assert.deepEqual(ghl.lines(), ['GET /opportunities/pipelines', 'GET /opportunities/opp-new-1', 'PUT /opportunities/opp-new-1', 'POST /contacts/contact-1/notes']);
-  assert.deepEqual([ghl.calls[2].body.pipelineStageId, ghl.calls[2].body.status, ghl.calls[2].body.pipelineId], [EGC_JOB_SCHEDULED_STAGE, 'open', EGC_PIPELINE]);
+  assert.deepEqual([ghl.calls[2].body.pipelineStageId, ghl.calls[2].body.pipelineId], [EGC_JOB_SCHEDULED_STAGE, EGC_PIPELINE]);
   assert.equal('assignedTo' in ghl.calls[2].body, false, 'a job move never reassigns the deal');
+  assert.equal('status' in ghl.calls[2].body, false, 'a move never sets a status, so a deal closed since the read is never reopened');
   assert.equal(ghl.deals.size, 1);
   assert.equal(ghl.calls.some(call => /tags|appointments|conversations/.test(call.path)), false, 'no tag, appointment or message');
+  assert.equal(ghl.upserts().length, 0, 'never an upsert');
 });
 
 test('never moves backwards: a later-stage, closed or same-stage deal is left alone, and the note is still written', async () => {
@@ -189,7 +203,7 @@ test('never moves backwards: a later-stage, closed or same-stage deal is left al
     const store = memory(), ghl = fakeHighLevel({ opportunities: [{ id: 'opp-1', contactId: 'contact-1', pipelineId: EGC_PIPELINE, name: 'Synthetic deal', monetaryValue: 1400, ...deal }] });
     await save(store, 'walk-1', walkthrough({ highlevelOpportunityId: 'opp-1' }));
     await drain(store, ghl);
-    assert.equal(ghl.calls.some(call => call.method === 'PUT' || call.path === '/opportunities/upsert'), false, outcome);
+    assert.equal(ghl.calls.some(call => call.method === 'PUT' || call.path === '/opportunities/upsert' || call.path === '/opportunities/'), false, outcome);
     assert.equal(ghl.notes().length, 1, outcome);
     assert.deepEqual([store.entries()[0].status, store.entries()[0].steps.opportunity], ['done', outcome]);
   }
@@ -202,6 +216,38 @@ test('never moves backwards: a later-stage, closed or same-stage deal is left al
   assert.deepEqual([store.entries()[0].steps.opportunity, store.entries()[0].steps.opportunityFrom], ['moved', 'new-lead']);
 });
 
+test('a repeat customer\'s won or lost deal is never reopened: no upsert, no new deal; the note is written and the entry waits for a person', async () => {
+  for (const status of ['won', 'lost', 'abandoned']) {
+    const paid = { id: 'opp-paid', contactId: 'contact-1', pipelineId: EGC_PIPELINE, name: 'Last year\'s garage', monetaryValue: 2400, pipelineStageId: 'paid-in-full', status };
+    const store = memory(), ghl = fakeHighLevel({ opportunities: [paid] });
+    // A new customer job (project) for the same contact: no link to any deal yet.
+    await save(store, 'walk-2', walkthrough({ projectId: 'project_walk-2' }));
+    const summary = await drain(store, ghl);
+    assert.deepEqual([summary.parked, ghl.upserts().length, ghl.creates().length, ghl.calls.some(call => call.method === 'PUT'), ghl.notes().length], [1, 0, 0, false, 1], status);
+    assert.deepEqual(ghl.deals.get('opp-paid'), paid, `${status}: the closed deal is untouched (stage, status and value)`);
+    const [entry] = store.entries();
+    assert.deepEqual([entry.status, entry.lastError, entry.steps.opportunityReview, Boolean(entry.steps.note)], ['parked', GHL_MIRROR_NEEDS_LINK, 'closed_only', true], status);
+    // What an upsert would have done (the bug this guards against): HighLevel reopens and drags back the won deal.
+    if (status === 'won') {
+      const probe = fakeHighLevel({ opportunities: [paid] });
+      await probe.fetcher('https://services.leadconnectorhq.com/opportunities/upsert', { method: 'POST', body: JSON.stringify({ pipelineId: EGC_PIPELINE, contactId: 'contact-1', pipelineStageId: EGC_WALKTHROUGH_APPOINTMENT_STAGE, status: 'open', monetaryValue: 0 }) });
+      assert.deepEqual([probe.deals.get('opp-paid').status, probe.deals.get('opp-paid').pipelineStageId, probe.deals.get('opp-paid').monetaryValue], ['open', EGC_WALKTHROUGH_APPOINTMENT_STAGE, 0]);
+      // A person opens a deal for the new job in HighLevel and presses Retry: the mirror adopts it and moves it forward.
+      ghl.deals.set('opp-new-job', { id: 'opp-new-job', contactId: 'contact-1', pipelineId: EGC_PIPELINE, name: 'New garage job', monetaryValue: 0, pipelineStageId: 'new-lead', status: 'open' });
+      const retried = await retryScheduleMirror(store, owner, { action: 'retry', requestId: randomUUID() }, later(5), {});
+      await drain(store, ghl, { now: later(5), ids: retried.ids });
+      const done = store.entries()[0];
+      assert.deepEqual([done.status, done.steps.opportunity, done.steps.opportunityId, 'opportunityReview' in done.steps, ghl.notes().length], ['done', 'moved', 'opp-new-job', false, 1]);
+      assert.deepEqual(ghl.deals.get('opp-paid'), paid, 'still untouched');
+    }
+  }
+  // An empty search must say so (total 0): an empty list with no total is not proof, so nothing is created.
+  const store = memory(), unsure = fakeHighLevel({ fail: call => call.path === '/opportunities/search' ? { status: 200, body: { opportunities: [] } } : 0 });
+  await save(store, 'walk-1', walkthrough());
+  const summary = await drain(store, unsure);
+  assert.deepEqual([summary.retrying, unsure.creates().length, unsure.notes().length, store.entries()[0].lastError], [1, 0, 0, 'ghl_mirror_opportunity_search_unverified']);
+});
+
 test('idempotent per change: a replayed commit is refused, a done entry is never told twice, and concurrent drains write once', async () => {
   const store = memory(), ghl = fakeHighLevel();
   const { requestId } = await save(store, 'walk-1', walkthrough());
@@ -210,7 +256,7 @@ test('idempotent per change: a replayed commit is refused, a done entry is never
   const results = await Promise.all([drain(store, ghl), drain(store, ghl), drain(store, ghl, { ids: store.entries().map(entry => entry.id) })]);
   assert.equal(results.reduce((sum, row) => sum + row.done, 0), 1);
   assert.equal(ghl.notes().length, 1);
-  assert.equal(ghl.calls.filter(call => call.path === '/opportunities/upsert').length, 1);
+  assert.deepEqual([ghl.creates().length, ghl.upserts().length], [1, 0]);
   assert.equal((await drain(store, ghl, { now: later(60) })).attempted, 0);
   assert.equal(ghl.notes().length, 1);
   // A note that failed after the deal was created retries the note only.
@@ -219,20 +265,42 @@ test('idempotent per change: a replayed commit is refused, a done entry is never
   const failed = await drain(second, flaky);
   assert.deepEqual([failed.retrying, second.entries()[0].steps.opportunity, second.entries()[0].lastError, second.entries()[0].nextAttemptAt], [1, 'created', 'highlevel_503', later(1)]);
   await drain(second, flaky, { now: later(1) });
-  assert.deepEqual([second.entries()[0].status, flaky.calls.filter(call => call.path === '/opportunities/upsert').length, flaky.notes().length], ['done', 1, 2]);
+  assert.deepEqual([second.entries()[0].status, flaky.creates().length, flaky.notes().length], ['done', 1, 2]);
 });
 
-test('a change the visit moved past is closed with no request; each change still gets its own note', async () => {
+test('every change gets its own note, a replaced one marked as such; its stage follows the visit as it is now', async () => {
   const store = memory(), ghl = fakeHighLevel();
-  await save(store, 'walk-1', walkthrough());
-  await save(store, 'walk-1', walkthrough({ time: '11:00', endTime: '12:00' }), { before: walkthrough() });
-  await save(store, 'walk-1', walkthrough({ time: '11:00', endTime: '12:00', assignedCrew: ['eli'] }), { before: walkthrough({ time: '11:00', endTime: '12:00' }) });
+  // Three saves within one worker window, oldest first (the drain takes the oldest change first).
+  await save(store, 'walk-1', walkthrough(), { at: later(-3) });
+  await save(store, 'walk-1', walkthrough({ time: '11:00', endTime: '12:00' }), { before: walkthrough(), at: later(-2) });
+  await save(store, 'walk-1', walkthrough({ time: '11:00', endTime: '12:00', assignedCrew: ['eli'] }), { before: walkthrough({ time: '11:00', endTime: '12:00' }), at: later(-1) });
   const summary = await drain(store, ghl, { limit: 5 });
-  assert.deepEqual([summary.skipped, summary.done], [2, 1]);
-  const kinds = Object.fromEntries(store.entries().map(entry => [entry.kind, entry.skipped || entry.status]));
-  assert.deepEqual(kinds, { scheduled: 'superseded', rescheduled: 'superseded', crew_assigned: 'done' });
-  assert.equal(ghl.notes().length, 1);
-  assert.match(ghl.notes()[0].body.body, /Estimator assigned[\s\S]*Time: 11:00 AM – 12:00 PM[\s\S]*Estimator: Eli Lead/);
+  assert.deepEqual([summary.done, summary.skipped], [3, 0]);
+  const byKind = Object.fromEntries(store.entries().map(entry => [entry.kind, [entry.status, entry.superseded === true, entry.steps.opportunity]]));
+  assert.deepEqual(byKind, { scheduled: ['done', true, 'created'], rescheduled: ['done', true, 'at_stage'], crew_assigned: ['done', false, 'at_stage'] });
+  const notes = ghl.notes().map(call => call.body);
+  assert.deepEqual(notes.map(note => note.title), ['EGC schedule: Walkthrough booked (since changed)', 'EGC schedule: Walkthrough rescheduled (since changed)', 'EGC schedule: Estimator assigned'], 'one note per change, in order');
+  assert.match(notes[0].body, /^Replaced: the Hub changed this visit again after this update\. The Hub has the current schedule\.\nEGC SCHEDULE UPDATE: Walkthrough booked[\s\S]*Time: 9:00 AM/);
+  assert.match(notes[2].body, /^EGC SCHEDULE UPDATE: Estimator assigned[\s\S]*Time: 11:00 AM – 12:00 PM[\s\S]*Estimator: Eli Lead/);
+  assert.deepEqual([ghl.creates().length, ghl.calls.filter(call => call.method === 'PUT').length], [1, 0], 'one deal, never moved twice');
+  // A crew self-claim queues no entry of its own (until its dispatch call site lands): the booked job's entry is replaced,
+  // and still moves the deal to Job Scheduled from the visit as it is now, with its note.
+  const claimed = memory(), hl = fakeHighLevel();
+  await save(claimed, 'job-1', job({ crewId: null, assignedCrew: [], crewLead: null, openShift: true }));
+  claimed.rows.set('jobs/job-1', { ...claimed.rows.get('jobs/job-1'), assignedCrew: ['jo'], revision: 'claimed' });
+  const after = await drain(claimed, hl);
+  assert.deepEqual([after.done, after.skipped, claimed.entries()[0].superseded, claimed.entries()[0].steps.opportunity, hl.creates()[0].body.pipelineStageId, hl.notes().length], [1, 0, true, 'created', EGC_JOB_SCHEDULED_STAGE, 1]);
+  // A replaced change on a visit since cancelled moves no stage (the cancellation has its own entry); the note is kept.
+  const cancelled = memory(), gone = fakeHighLevel();
+  await save(cancelled, 'walk-1', walkthrough());
+  cancelled.rows.set('jobs/walk-1', { ...cancelled.rows.get('jobs/walk-1'), status: 'cancelled', pipelineStatus: 'cancelled', revision: 'cancelled' });
+  await drain(cancelled, gone);
+  assert.deepEqual([cancelled.entries()[0].status, 'opportunity' in cancelled.entries()[0].steps, gone.calls.some(call => call.path.startsWith('/opportunities')), gone.notes().length], ['done', false, false, 1]);
+  // A visit deleted since: nothing is told.
+  const missing = memory(), none = fakeHighLevel();
+  await save(missing, 'walk-1', walkthrough());
+  missing.rows.delete('jobs/walk-1');
+  assert.deepEqual([(await drain(missing, none)).skipped, none.calls.length, missing.entries()[0].skipped], [1, 0, 'job_missing']);
 });
 
 test('several open deals for the customer are never guessed: the note is written and the entry parks; Retry finishes the stage', async () => {
@@ -242,7 +310,7 @@ test('several open deals for the customer are never guessed: the note is written
   const summary = await drain(store, ghl);
   assert.deepEqual([summary.parked, ghl.notes().length, ghl.calls.some(call => call.method === 'PUT' || call.path === '/opportunities/upsert')], [1, 1, false]);
   const [parked] = store.entries();
-  assert.deepEqual([parked.status, parked.lastError, Boolean(parked.steps.note)], ['parked', 'ghl_mirror_opportunity_needs_link', true]);
+  assert.deepEqual([parked.status, parked.lastError, parked.steps.opportunityReview, Boolean(parked.steps.note)], ['parked', 'ghl_mirror_opportunity_needs_link', 'several_open', true]);
   assert.deepEqual(await scheduleMirrorStatus(store, NOW).then(row => [row.parked, row.needsLink, row.overdue]), [1, 1, 0]);
   await assert.rejects(retryScheduleMirror(store, crew, { action: 'retry', requestId: randomUUID() }, NOW, {}), error => error.code === 'ghl_mirror_forbidden');
   await assert.rejects(retryScheduleMirror(store, owner, { action: 'retry', requestId: 'not-a-uuid' }, NOW, {}), error => error.code === 'ghl_mirror_request_invalid');
@@ -263,7 +331,7 @@ test('calendar deleted or missing: the contact, deal and note still mirror (the 
   const store = memory(), ghl = fakeHighLevel();
   await save(store, 'job-1', job({ syncStatus: 'error', syncError: 'schedule_calendar_deleted', syncReviewRequired: true, highlevelAppointmentId: '' }));
   const summary = await drain(store, ghl);
-  assert.deepEqual([summary.done, ghl.lines()], [1, ['GET /opportunities/pipelines', 'GET /opportunities/search', 'POST /opportunities/upsert', 'POST /contacts/contact-1/notes']]);
+  assert.deepEqual([summary.done, ghl.lines()], [1, ['GET /opportunities/pipelines', 'GET /opportunities/search', 'POST /opportunities/', 'POST /contacts/contact-1/notes']]);
   assert.equal(ghl.calls[2].body.pipelineStageId, EGC_JOB_SCHEDULED_STAGE);
   assert.equal(ghl.calls[2].body.monetaryValue, 1400);
   // The verified calendars: the jobs calendar is env-only now; the walkthrough calendar keeps its default.
@@ -279,6 +347,20 @@ test('calendar deleted or missing: the contact, deal and note still mirror (the 
   assert.deepEqual(chooseScheduleCalendar('job', {}, [{ id: EGC_JOB_CALENDAR, name: 'EGC Customer Jobs' }]), { skip: 'schedule_calendar_not_configured' });
   assert.deepEqual(chooseScheduleCalendar('job', { GHL_JOBS_CALENDAR_ID: EGC_JOB_CALENDAR }, [{ id: EGC_WALKTHROUGH_CALENDAR, name: 'EGC Customer Walkthroughs' }]), { skip: 'schedule_calendar_deleted' });
   assert.deepEqual(chooseScheduleCalendar('walkthrough', {}, [{ id: EGC_WALKTHROUGH_CALENDAR, name: 'EGC Customer Walkthroughs' }]), { calendarId: EGC_WALKTHROUGH_CALENDAR });
+  // An existing appointment on the deleted calendar (the update path) is a skip too, never a retry.
+  assert.equal(calendarGoneOnUpdate({ status: 400, body: '{"message":"The calendar is deleted."}' }, 'job', {}), true);
+  assert.equal(calendarGoneOnUpdate({ status: 404, body: '{}' }, 'job', {}), true);
+  assert.equal(calendarGoneOnUpdate({ status: 404, body: '{}' }, 'walkthrough', {}), false);
+  assert.equal(calendarGoneOnUpdate({ status: 404, body: '{}' }, 'job', { GHL_JOBS_CALENDAR_ID: 'new-jobs' }), false);
+  // The schedule-sync worker hands the skip to the Hub and counts it as calendarSkipped, never failed (no failure alert).
+  assert.deepEqual([...SCHEDULE_SYNC_CALENDAR_SKIPS], [...CALENDAR_SKIP_CODES]);
+  const reported = [];
+  const tick = await runScheduleSyncTick({ now: () => Date.parse(NOW), execute: async (_actor, body) => {
+    if (body.command === 'schedule.sync_due') return { ok: true, authority: 'employee_hub', items: [{ portalVisitId: 'job-1', requestId: 'dispatch-key:mirror', expectedRevision: 'r1' }], counts: { due: 1 }, coverage: { complete: true }, heartbeat: true };
+    if (body.command === 'schedule.sync_provider') throw Object.assign(new Error('schedule_calendar_not_configured'), { code: 'schedule_calendar_not_configured', status: 409 });
+    reported.push(body.code); return { ok: true, authority: 'employee_hub', syncStatus: 'synced', reviewRequired: false };
+  } });
+  assert.deepEqual([tick.counts.calendarSkipped, tick.counts.failed, reported, scheduleSyncAlerts(tick)], [1, 0, ['schedule_calendar_not_configured'], []]);
 });
 
 async function browserSync(t, { env, fallback, job: visitJob, payload }) {
@@ -318,6 +400,23 @@ test('browser sync: no jobs calendar configured skips the appointment write enti
   assert.equal(ghl.calls.some(call => call.method !== 'GET'), false);
 });
 
+test('browser sync, mirror off: a job with a calendar still moves the legacy Scheduled stage as before', async t => {
+  const ghl = recordingHighLevel();
+  const result = await browserSync(t, { env: { ...FLAG_OFF_ENV }, fallback: ghl.fetcher, job: savedJob, payload: jobPayload });
+  assert.equal(result.status, 200);
+  assert.ok(ghl.calls.some(call => call.path.startsWith('/opportunities')), 'advanceOpportunity runs with the flag off');
+  assert.notEqual(result.body.pipeline.reason, 'schedule-mirror-owns-stage');
+});
+
+test('browser sync, mirror on: the mirror is the one stage writer, so the page moves no stage (two writers would disagree)', async t => {
+  const ghl = recordingHighLevel();
+  const result = await browserSync(t, { env: { ...FLAG_OFF_ENV, EGC_GHL_SCHEDULE_MIRROR: 'true' }, fallback: ghl.fetcher, job: savedJob, payload: jobPayload });
+  assert.equal(result.status, 200);
+  assert.deepEqual(result.body.pipeline, { updated: false, reason: 'schedule-mirror-owns-stage' });
+  assert.equal(ghl.calls.some(call => call.path.startsWith('/opportunities')), false);
+  assert.ok(ghl.calls.some(call => call.path === '/calendars/events/appointments'), 'the optional calendar mirror still runs when configured');
+});
+
 test('who is going: a walkthrough appointment and its new deal are assigned to the estimator\'s mapped HighLevel user', async t => {
   const profiles = { est1: { id: 'est1', username: 'est1', highlevelUserId: 'GhlEstimator01' } };
   const read = async (_collection, id) => ({ data: profiles[id] || null });
@@ -331,7 +430,7 @@ test('who is going: a walkthrough appointment and its new deal are assigned to t
   const store = memory(), ghl = fakeHighLevel();
   await save(store, 'walk-1', walkthrough());
   await drain(store, ghl, { env: { ...ENV, EGC_STAFF_DIRECTORY_ENABLED: 'true' }, readProfile: read });
-  assert.equal(ghl.calls.find(call => call.path === '/opportunities/upsert').body.assignedTo, 'GhlEstimator01');
+  assert.equal(ghl.creates()[0].body.assignedTo, 'GhlEstimator01');
   // The bridge-off browser sync passes the same user as the walkthrough appointment's assignedUserId.
   const recorder = recordingHighLevel();
   const result = await browserSync(t, { env: { ...FLAG_OFF_ENV }, fallback: recorder.fetcher, job: { ...savedJob, type: 'walkthrough', assignedCrew: ['est1'] }, payload: { ...jobPayload, event_type: 'walkthrough', title: 'EGC Free Walkthrough' } });
@@ -352,7 +451,7 @@ test('contacts: a dry run never creates one (a never-mirrored visit closes, a li
   const live = memory({ 'customers/c2': { name: 'Synthetic Unlinked' } }), upserting = fakeHighLevel();
   await save(live, 'walk-1', { ...unlinked, syncStatus: 'not_needed' });
   await drain(live, upserting, { env: { ...ENV, EGC_MESSAGING_DRY_RUN: 'false' } });
-  assert.deepEqual(upserting.lines(), ['POST /contacts/upsert', 'GET /opportunities/pipelines', 'GET /opportunities/search', 'POST /opportunities/upsert', 'POST /contacts/contact-new/notes']);
+  assert.deepEqual(upserting.lines(), ['POST /contacts/upsert', 'GET /opportunities/pipelines', 'GET /opportunities/search', 'POST /opportunities/', 'POST /contacts/contact-new/notes']);
   assert.equal(upserting.calls[0].body.source, 'EGC Hub schedule');
 });
 
@@ -421,25 +520,122 @@ test('the signed worker tick drains the mirror (with or without the tag outbox) 
   assert.deepEqual(Object.keys(tagsOnly.body), ['ok', 'summary', 'checkedIn']);
 });
 
-test('Integrations: the jobs calendar reads as optional, and the mirror reports its queue only with the flag on, counts only', async () => {
+test('Integrations: the jobs calendar reads as optional whatever the mirror flag says; the mirror reports its queue only with the flag on, counts only', async () => {
   const status = async (viewer, env, mirrorStatus) => (await (await integrationStatusHandlers({ session: async () => viewer, revocations: () => null, scheduleSync: async () => false, now: () => new Date(NOW), ...(mirrorStatus ? { mirrorStatus } : {}) })
     .get({ request: new Request(`${ORIGIN}/api/integration-status`), env })).json()).status;
-  const off = await status(owner, { HIGHLEVEL_LOCATION_ID: EGC_LOCATION, HIGHLEVEL_JOB_CALENDAR_ID: 'new-jobs' }, () => assert.fail('flag off: nothing is read'));
-  assert.equal(['ghlScheduleMirror', 'ghlScheduleMirrorState', 'highlevelJobCalendar'].some(key => key in off), false, 'flag off: the answer is unchanged');
-  assert.equal((await status(owner, ENV, async () => ({ enabled: true }))).highlevelJobCalendar, false, 'no default jobs calendar any more');
+  // The calendar change is live with the mirror off (env-only jobs calendar), so its state is too once HighLevel is
+  // configured; no mirror key is read or sent.
+  const live = { HIGHLEVEL_API_KEY: 'synthetic-ghl-key', HIGHLEVEL_LOCATION_ID: EGC_LOCATION };
+  const off = await status(owner, { ...live, HIGHLEVEL_JOB_CALENDAR_ID: 'new-jobs' }, () => assert.fail('flag off: nothing is read'));
+  assert.equal(['ghlScheduleMirror', 'ghlScheduleMirrorState'].some(key => key in off), false, 'flag off: no mirror key');
+  assert.equal(off.highlevelJobCalendar, true);
+  assert.equal((await status(owner, live, () => assert.fail('flag off: nothing is read'))).highlevelJobCalendar, false, 'no default jobs calendar any more, flag off too');
+  assert.equal('highlevelJobCalendar' in await status(owner, { HIGHLEVEL_LOCATION_ID: EGC_LOCATION, HIGHLEVEL_JOB_CALENDAR_ID: 'new-jobs' }), false, 'HighLevel not configured, mirror off: the answer is unchanged');
+  assert.equal((await status(owner, ENV, async () => ({ enabled: true }))).highlevelJobCalendar, false);
   assert.equal((await status(owner, { ...ENV, HIGHLEVEL_JOB_CALENDAR_ID: 'new-jobs' }, async () => ({ enabled: true }))).highlevelJobCalendar, true);
   const queue = { enabled: true, parked: 2, needsLink: 1, overdue: 0, pending: 3, drain: { lastRunAt: NOW, minutesSince: 0, stale: false }, complete: true, asOf: NOW };
   const on = await status(owner, ENV, async () => queue);
-  assert.deepEqual([on.ghlScheduleMirror, on.ghlScheduleMirrorState], [true, { ...queue, pipelineConfigured: true }]);
+  assert.deepEqual([on.ghlScheduleMirror, on.ghlScheduleMirrorState], [true, { ...queue, pipelineConfigured: true, canRetry: true }]);
   const crewView = await status(crew, ENV, () => assert.fail('crew: the queue is not read'));
   assert.deepEqual([crewView.ghlScheduleMirror, 'ghlScheduleMirrorState' in crewView], [true, false]);
   const broken = await status(owner, ENV, async () => { throw new Error('unavailable'); });
   assert.equal(broken.ghlScheduleMirrorState.state, 'unavailable');
 });
 
+test('Integrations reads stay small: parked entries are counted by aggregation (never read), pending ones are capped', async () => {
+  const requests = [];
+  const firestore = async (_env, url, init = {}) => {
+    const body = JSON.parse(init.body || '{}'); requests.push({ url: String(url), body });
+    if (String(url).endsWith(':runAggregationQuery')) {
+      const filters = body.structuredAggregationQuery.structuredQuery.where.compositeFilter?.filters.map(row => row.fieldFilter) || [body.structuredAggregationQuery.structuredQuery.where.fieldFilter];
+      const value = filters.length === 1 ? '120' : '7';
+      return Response.json([{ result: { aggregateFields: { count: { integerValue: value } } }, readTime: '2026-10-17T18:00:00.123456Z' }]);
+    }
+    if (String(url).endsWith(':runQuery')) return Response.json([]);
+    return new Response('{}', { status: 404 });
+  };
+  const store = scheduleMirrorStorage({}, firestore);
+  assert.deepEqual(await store.parkedCounts(), { parked: 120, needsLink: 7, complete: true });
+  const [parked, needsLink] = requests.map(row => row.body.structuredAggregationQuery);
+  assert.deepEqual(parked.structuredQuery.where, { fieldFilter: { field: { fieldPath: 'status' }, op: 'EQUAL', value: { stringValue: 'parked' } } });
+  assert.deepEqual(needsLink.structuredQuery.where.compositeFilter.filters.map(row => row.fieldFilter.value.stringValue), ['parked', GHL_MIRROR_NEEDS_LINK], 'equality filters only: no composite index');
+  assert.deepEqual(parked.aggregations, [{ alias: 'count', count: {} }]);
+  requests.length = 0;
+  await store.due(GHL_MIRROR_STATUS_SCAN_LIMIT);
+  assert.equal(requests[0].body.structuredQuery.limit, GHL_MIRROR_STATUS_SCAN_LIMIT + 1);
+  requests.length = 0;
+  await store.due();
+  assert.equal(requests[0].body.structuredQuery.limit, 501, 'the drain keeps its own scan');
+  // An unreadable count is never zero.
+  await assert.rejects(scheduleMirrorStorage({}, async () => Response.json([{ result: {} }])).parkedCounts(), error => error.code === 'ghl_mirror_storage_incomplete');
+  await assert.rejects(scheduleMirrorStorage({}, async () => new Response('{}', { status: 429 })).parkedCounts(), error => error.code === 'ghl_mirror_storage_unavailable');
+  // The status uses the counts and never reads the parked rows; a store without counts (tests) counts its rows.
+  const counted = { parkedCounts: async () => ({ parked: 120, needsLink: 7, complete: true }), parked: () => assert.fail('parked rows are not read'), due: async limit => { assert.equal(limit, GHL_MIRROR_STATUS_SCAN_LIMIT); return { rows: [], truncated: false }; }, read: async () => null };
+  assert.deepEqual(await scheduleMirrorStatus(counted, NOW).then(row => [row.parked, row.needsLink, row.overdue, row.pending, row.complete]), [120, 7, 0, 0, true]);
+});
+
+test('the Integrations Retry requeues only the schedule mirror (scope schedule_mirror), never a tag; mirror off, the scope is not read', async () => {
+  const store = memory(), ghl = fakeHighLevel({ opportunities: [{ id: 'opp-a', contactId: 'contact-1', pipelineId: EGC_PIPELINE, pipelineStageId: 'new-lead', status: 'open' }, { id: 'opp-b', contactId: 'contact-1', pipelineId: EGC_PIPELINE, pipelineStageId: 'new-lead', status: 'open' }] });
+  await save(store, 'walk-1', walkthrough());
+  await drain(store, ghl);
+  assert.equal(store.entries()[0].status, 'parked');
+  const tagStore = () => ({ parked: () => assert.fail('no tag is retried'), due: () => assert.fail('no tag is retried'), commit: () => assert.fail('no tag is retried') });
+  const handlers = (viewer = owner) => ghlTagDrainHandlers({ session: async () => viewer, storage: tagStore, mirrorStorage: () => store, now: () => new Date(later(5)), fetcher: ghl.fetcher });
+  const post = async (env, body, viewer) => { const response = await handlers(viewer).post({ request: new Request(`${ORIGIN}${GHL_TAG_DRAIN_PATH}`, { method: 'POST', headers: { 'Content-Type': 'application/json', Origin: ORIGIN }, body: JSON.stringify(body) }), env, waitUntil: () => {} }); return { status: response.status, body: await response.json() }; };
+  const both = { ...ENV, EGC_GHL_TAG_OUTBOX: 'true' };
+  assert.deepEqual((await post(both, { action: 'retry', requestId: randomUUID(), scope: 'tags' })).body.code, 'ghl_mirror_request_invalid');
+  assert.equal((await post(both, { action: 'retry', requestId: randomUUID(), scope: 'schedule_mirror' }, crew)).status, 403);
+  const retried = await post(both, { action: 'retry', requestId: randomUUID(), scope: 'schedule_mirror' });
+  assert.deepEqual([retried.status, retried.body.requeued, retried.body.mirror.requeued], [200, 0, 1]);
+  assert.equal(store.entries()[0].status, 'pending');
+  // Mirror off: the scope is not read, so the tag outbox answers exactly as it did before (it rejects the unknown key).
+  const tagsOnly = await ghlTagDrainHandlers({ session: async () => owner, storage: () => memory(), mirrorStorage: () => assert.fail('mirror off'), now: () => new Date(NOW) })
+    .post({ request: new Request(`${ORIGIN}${GHL_TAG_DRAIN_PATH}`, { method: 'POST', headers: { 'Content-Type': 'application/json', Origin: ORIGIN }, body: JSON.stringify({ action: 'retry', requestId: randomUUID(), scope: 'schedule_mirror' }) }), env: { ...ENV, EGC_GHL_SCHEDULE_MIRROR: '', EGC_GHL_TAG_OUTBOX: 'true' } });
+  assert.deepEqual([tagsOnly.status, (await tagsOnly.json()).code], [400, 'ghl_tag_request_invalid']);
+});
+
+// The real employee-suite.js in a VM with a fake Hub API: the Integrations rows for the mirror and the jobs calendar.
+function integrationsPage(integrations) {
+  const calls = [], response = body => ({ ok: true, status: 200, json: async () => body });
+  const values = new Map([['egc_u', 'ZacB'], ['egc_business_access', 'true'], ['egc_owner', 'true'], ['egc_role', 'owner']]);
+  const storage = { getItem: key => values.get(key) || null, setItem: (key, value) => values.set(key, String(value)), removeItem: key => values.delete(key) };
+  const context = {
+    console, URLSearchParams, Intl, Promise, Set, Map, Error, JSON, Math, Number, String, Array, Object, Date, crypto: { randomUUID },
+    sessionStorage: storage, localStorage: storage, navigator: {}, me: 'ZacB', location: { pathname: '/employee', search: '' }, jobsCache: [],
+    setTimeout: () => 1, clearTimeout() {}, setInterval: () => 1, clearInterval() {}, addEventListener() {},
+    document: { readyState: 'loading', hidden: false, activeElement: null, addEventListener() {}, querySelector: () => null, querySelectorAll: () => [] },
+  };
+  context.window = context;
+  context.hubFetch = async (url, init = {}) => { calls.push({ url, method: init.method || 'GET', body: init.body ? JSON.parse(init.body) : null }); return url === '/api/ghl-tag-drain' ? response({ ok: true, requestId: 'x', requeued: 0, ids: [], mirror: { ok: true, requeued: 2, ids: [] } }) : response({ ok: true, status: integrations }); };
+  const source = readFileSync(new URL('../employee-suite.js', import.meta.url), 'utf8').replace(/\}\)\(\);\s*$/, 'Object.assign(globalThis,{ui:{S,integrationRow}});})();');
+  vm.runInNewContext(source, context);
+  Object.assign(context.ui.S, { integrations, integrationState: { loaded: true, loading: false, error: '' } });
+  return { context, calls, row: key => context.ui.integrationRow([key, 'Synthetic', key, 'HINT']) };
+}
+
+test('Integrations UI: the gated mirror reads "Off" (info, not a warning); with parked entries a dispatcher gets a scoped Retry', async () => {
+  const off = integrationsPage({ highlevel: true, highlevelJobCalendar: false });
+  assert.match(off.row('ghlScheduleMirror'), /class="ops-status info">Off · gated on workflow audit</);
+  assert.doesNotMatch(off.row('ghlScheduleMirror'), /Needs setup|ops-status warn/);
+  assert.match(off.row('highlevelJobCalendar'), /class="ops-status info">Optional · not set</, 'the jobs calendar row shows with the mirror off');
+  assert.match(off.row('highlevelJobCalendar'), /job visits skip the calendar mirror; their HighLevel contact is still linked \(the schedule mirror is off\)/);
+  const queue = { enabled: true, parked: 2, needsLink: 1, overdue: 0, pending: 0, drain: { lastRunAt: NOW, minutesSince: 1, stale: false }, complete: true, pipelineConfigured: true, canRetry: true };
+  const on = integrationsPage({ highlevel: true, ghlScheduleMirror: true, ghlScheduleMirrorState: queue, highlevelJobCalendar: false });
+  const row = on.row('ghlScheduleMirror');
+  assert.match(row, /2 parked \(1 need a person in HighLevel/);
+  assert.match(row, /onclick="opsRetryScheduleMirror\(this\)">Retry<\/button>/);
+  assert.doesNotMatch(integrationsPage({ highlevel: true, ghlScheduleMirror: true, ghlScheduleMirrorState: { ...queue, canRetry: false }, highlevelJobCalendar: false }).row('ghlScheduleMirror'), /opsRetryScheduleMirror/, 'no Retry without dispatch.write');
+  assert.doesNotMatch(integrationsPage({ highlevel: true, ghlScheduleMirror: true, ghlScheduleMirrorState: { ...queue, parked: 0, needsLink: 0 }, highlevelJobCalendar: false }).row('ghlScheduleMirror'), /opsRetryScheduleMirror/, 'nothing to retry');
+  await on.context.opsRetryScheduleMirror(null);
+  const sent = on.calls.find(call => call.url === '/api/ghl-tag-drain');
+  assert.deepEqual([sent.method, sent.body.action, sent.body.scope, /^[0-9a-f-]{36}$/.test(sent.body.requestId)], ['POST', 'retry', 'schedule_mirror', true]);
+  assert.ok(on.calls.some(call => call.url === '/api/integration-status'), 'the counts are read again after the Retry');
+});
+
 // The dispatch writer (functions/_lib/dispatch-service.js) queues the mirror through scheduleMirrorWrites next to the tag
 // outbox, with dispatch-storage carrying the flag. This runs once that call site is merged; until then it is skipped.
-const DISPATCH_WIRED = readFileSync(new URL('../functions/_lib/dispatch-service.js', import.meta.url), 'utf8').includes('scheduleMirrorWrites(store,');
+const DISPATCH_SOURCE = readFileSync(new URL('../functions/_lib/dispatch-service.js', import.meta.url), 'utf8');
+const DISPATCH_WIRED = DISPATCH_SOURCE.includes('scheduleMirrorWrites(store,'), SHIFT_WIRED = DISPATCH_SOURCE.split('scheduleMirrorWrites(store,').length > 2;
 test('dispatch saves queue the mirror in the same commit: book, assign a crew, move; a notes-only save queues nothing', { skip: DISPATCH_WIRED ? false : 'the dispatch-service call site is not merged yet' }, async () => {
   const { mutateDispatch } = await import('../functions/_lib/dispatch-service.js');
   const store = memory({ 'customers/c1': { name: 'Synthetic Customer', phone: '+1 (970) 555-0123', email: 'synthetic@example.invalid', address: '1 Synthetic Way', highlevelContactId: 'contact-1' } });
@@ -457,9 +653,32 @@ test('dispatch saves queue the mirror in the same commit: book, assign a crew, m
   for (const entry of entries) assert.ok(store.commits.some(paths => paths.includes(`${GHL_SCHEDULE_MIRROR}/${entry.id}`) && paths.includes(`jobs/${id}`)), `${entry.kind} commits with its change`);
   const ghl = fakeHighLevel();
   const summary = await drain(store, ghl, { limit: 10 });
-  assert.deepEqual([summary.done, summary.skipped, ghl.notes().length], [1, 2, 1], 'only the change the visit still shows is told');
-  assert.match(ghl.notes()[0].body.body, /Job rescheduled[\s\S]*Friday, October 23, 2026[\s\S]*Crew: Eli Lead, Jo Member/);
+  assert.deepEqual([summary.done, summary.skipped, ghl.notes().length], [3, 0, 3], 'every change is told');
+  assert.equal(ghl.notes().filter(call => / \(since changed\)$/.test(call.body.title)).length, 2, 'the two replaced changes are marked');
+  const current = ghl.notes().map(call => call.body).find(note => note.title === 'EGC schedule: Job rescheduled');
+  assert.match(current.body, /^EGC SCHEDULE UPDATE: Job rescheduled[\s\S]*Friday, October 23, 2026[\s\S]*Crew: Eli Lead, Jo Member/);
+  assert.deepEqual([ghl.creates().length, ghl.upserts().length], [1, 0], 'one deal for the customer job, created once');
   store.ghlScheduleMirror = false;
   await mutate({ action: 'schedule.create', requestId: randomUUID(), customerId: 'c1', kind: 'walkthrough', changes: { date: '2026-10-24', time: '09:00', endTime: '10:00' } });
   assert.equal(store.entries().length, 3, 'flag off: dispatch writes no mirror entry');
+});
+
+// The crew self-claim and release (mutateDispatchSelfAssignment) queue the mirror too, once that call site is merged.
+test('a crew self-claim and release queue the mirror as a crew change, in the same commit', { skip: SHIFT_WIRED ? false : 'the dispatch self-assignment call site is not merged yet' }, async () => {
+  const { mutateDispatch, mutateDispatchSelfAssignment } = await import('../functions/_lib/dispatch-service.js');
+  const store = memory({ 'customers/c1': { name: 'Synthetic Customer', phone: '+1 (970) 555-0123', email: 'synthetic@example.invalid', address: '1 Synthetic Way', highlevelContactId: 'contact-1' } });
+  const people = [{ id: 'zacb', name: 'Synthetic Owner', role: 'owner' }, { id: 'eli', name: 'Eli Lead', role: 'crew' }, { id: 'jo', name: 'Jo Member', role: 'crew' }];
+  const all = prefix => [...store.rows].filter(([key]) => key.startsWith(prefix + '/')).map(([, row]) => structuredClone(row));
+  Object.assign(store, { jobs: async () => all('jobs'), resources: async () => all('dispatchResources'), customers: async () => all('customers'), roster: async () => structuredClone(people) });
+  const created = await mutateDispatch(store, owner, { action: 'schedule.create', requestId: randomUUID(), customerId: 'c1', kind: 'job', changes: { date: '2026-10-22', time: '09:30', endTime: '12:30', assignedCrew: ['eli'], crewNeeded: 2, jobInstructions: 'Synthetic job' } }, NOW);
+  Object.assign(store.rows.get(`jobs/${created.job.id}`), { openShift: true, shiftPickupEnabled: true });
+  const claim = { action: 'claim', jobId: created.job.id, requestId: randomUUID() };
+  await mutateDispatchSelfAssignment(store, { user: 'jo' }, claim, NOW);
+  const entry = store.entries().find(row => row.requestId === claim.requestId);
+  assert.deepEqual([entry.kind, entry.stage, entry.source], ['crew_assigned', 'job_scheduled', 'dispatch']);
+  assert.ok(store.commits.some(paths => paths.includes(`${GHL_SCHEDULE_MIRROR}/${entry.id}`) && paths.includes(`jobs/${created.job.id}`)), 'commits with the claim');
+  assert.match(entry.note.body, /Crew assigned[\s\S]*Crew: Eli Lead, Jo Member/);
+  const release = { action: 'release', jobId: created.job.id, requestId: randomUUID() };
+  await mutateDispatchSelfAssignment(store, { user: 'jo' }, release, NOW);
+  assert.equal(store.entries().find(row => row.requestId === release.requestId).kind, 'crew_assigned');
 });

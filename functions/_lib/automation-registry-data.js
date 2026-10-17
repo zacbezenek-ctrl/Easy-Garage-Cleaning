@@ -109,7 +109,7 @@ export const AUTOMATION_REGISTRY = deepFreeze({
     trigger('opportunity:created', 'opportunity_created', 'Opportunity created', [
       write(WEB_LEAD_INTAKE, [WEB_LEAD, 'fb-capture.js', MESSAGING_CRON], 'website lead when HIGHLEVEL_PIPELINE_ID is set (new-lead stage); a late cron retry never creates one for an existing contact', true),
       write(HL, [SUITE, HANDOFF], 'advanceOpportunity when the contact has no open opportunity', true),
-      write(SCHEDULE_MIRROR, MIRROR_WRITERS, `${MIRROR_WHEN}: one opportunity per customer job (project), created at Walkthrough Appointment or Job Scheduled only when the contact has no open opportunity in the EGC Pipeline`, true),
+      write(SCHEDULE_MIRROR, MIRROR_WRITERS, `${MIRROR_WHEN}: one opportunity per customer job (project), created at Walkthrough Appointment or Job Scheduled only through the create-only POST /opportunities/ (never upsert) and only when a search of every status finds no opportunity for the contact in the EGC Pipeline`, true),
       write(MCP, [], 'MCP opportunities.create (explicit user authorization)', false)]),
     trigger('opportunity_stage:scheduled', 'opportunity_stage', 'Pipeline stage Scheduled (06b78f36-b53d-4028-9e36-b41ac4d2da09)', [
       write(HL, [SUITE, HANDOFF], 'job booking sync and a Game Plan with a job date', true),
@@ -237,7 +237,7 @@ export const AUTOMATION_REGISTRY = deepFreeze({
     unverifiedGhl('ghl.opportunity_workflows', 'HighLevel Opportunity Created / Stage Changed / Status Changed workflows (unverified)', 'Opportunity creation, the Scheduled, Walkthrough complete and Job complete stages, and status lost',
       ['opportunity:created', 'opportunity_stage:walkthrough_appointment', 'opportunity_stage:job_scheduled', 'opportunity_stage:scheduled', 'opportunity_stage:walkthrough_complete', 'opportunity_stage:job_complete', 'opportunity_status:lost'],
       { speedToLead: 'automation_touch', code: [...code(HL, 'ghl_opportunity_write'), ...code(WEB_LEAD_INTAKE, 'ghl_opportunity_write'), ...code(SCHEDULE_MIRROR, 'ghl_opportunity_write')],
-        notes: 'D9b: the schedule mirror (EGC_GHL_SCHEDULE_MIRROR, off) reads the pipeline, searches and reads the contact\'s open opportunities, and writes only a create (no open deal) or a forward stage move; it adds no tag and sends nothing.',
+        notes: 'D9b: the schedule mirror (EGC_GHL_SCHEDULE_MIRROR, off) reads the pipeline, searches the contact\'s opportunities in every status and reads a linked one, and writes only a create-only POST /opportunities/ (never upsert, which would reopen a won or lost deal; only when the contact has no opportunity in the pipeline at all) or a forward stage move of an open one (no status in the move); it adds no tag and sends nothing.',
         ownerCheck: 'List pipeline workflows on these stages and statuses with their texts. FUN-12 (opportunity lost) stays gated until this is verified. Before EGC_GHL_SCHEDULE_MIRROR, confirm no workflow on Walkthrough Appointment or Job Scheduled messages a customer you did not intend to.' }),
     unverifiedGhl('ghl.appointment_status_workflows', 'HighLevel Customer Booked Appointment and Appointment Status workflows (unverified)', 'Every appointment the Hub creates or updates (status confirmed, with notify on or off) and the status changes it writes (completed, cancelled, confirmed, showed, noshow)',
       ['appointment:created', 'appointment_status:changed'], { code: [...code(HL, 'ghl_appointment_write'), ...code(HL_TAGS, 'ghl_appointment_write')],
@@ -470,7 +470,7 @@ export const AUTOMATION_REGISTRY = deepFreeze({
     // FUN-29: GET contacts/{id} for the lead-form service-line suggestion (read-only, flag off by default).
     'functions/_lib/funnel-dimensions.js': { ghl_contact_write: 1 },
     'functions/_lib/ghl-messenger.js': { ghl_message_send: 1, ghl_tag_write: 1, ghl_contact_write: 2 },
-    // D9b: the schedule mirror's opportunity read/move (one path helper) and its create (upsert); contact and note go through the shared helpers.
+    // D9b: the schedule mirror's opportunity read/move (one path helper) and its create-only POST /opportunities/; contact and note go through the shared helpers.
     'functions/_lib/ghl-schedule-mirror.js': { ghl_opportunity_write: 2 },
     // GHL-TRACK-1: the tag outbox drain adds tags through the shared writer (addTags); its contact, appointment and note writes are the shared helpers below.
     'functions/_lib/ghl-tag-outbox.js': { ghl_tag_helper_call: 2, ghl_contact_write: 1 },

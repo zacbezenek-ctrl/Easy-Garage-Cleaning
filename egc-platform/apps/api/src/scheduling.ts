@@ -4,7 +4,7 @@ import {GhlClient,asDate,asRecord,asString} from "@egc/ghl";
 import {recomputeLeadState} from "@egc/lead-audit";
 import {randomUUID} from "node:crypto";
 import {ReliableAppointments,postgresAppointmentStore,AppointmentOperationError,OperationsError,appointmentStatus,appointmentMatches,type Actor,type Command,type AppointmentProvider} from "@egc/operations";
-import {chooseScheduleCalendar} from "./schedule-calendar.js";
+import {calendarGoneOnUpdate,chooseScheduleCalendar} from "./schedule-calendar.js";
 type Json=Record<string,unknown>;
 type Sync=Extract<Command,{command:"schedule.sync_provider"}>;
 type Portal=(actor:Actor,command:Command)=>Promise<Json>;
@@ -59,7 +59,11 @@ export async function syncPortalSchedule(actor:Actor,command:Sync,portal:Portal,
     const context={contactId:contact.id,contactProviderId:providerContactId,portalVisitId:command.portalVisitId};
     let verified;
     if(providerId){
-      const existing=raw(await provider.getAppointment(providerId));
+      // D9b: an appointment whose calendar HighLevel says is gone (the deleted jobs calendar) is a calendar skip, not a
+      // retry: the Hub records "calendar mirror skipped" (schedule-calendar.ts calendarGoneOnUpdate).
+      let existing:Json;
+      try{existing=raw(await provider.getAppointment(providerId));}
+      catch(error){if(calendarGoneOnUpdate(error,String(visit.type),env))throw new OperationsError("schedule_calendar_deleted",409);throw error;}
       if(existing.id!==providerId||existing.contactId!==providerContactId)throw new OperationsError("schedule_provider_link_conflict",409);
       verified=await sender.update(providerId,payload,context,command.requestId);
     }else{

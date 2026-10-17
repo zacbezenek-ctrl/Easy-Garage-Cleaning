@@ -875,7 +875,7 @@ test('open-shift scheduling fields persist on the canonical job record',()=>{
   // attribute, business users get RUN THE BUSINESS first and a crew member who is not clocked in sees the time clock above
   // Today's jobs; (MOBILE-HUB after WT-OUTCOME) one combined tag; (D9b GHL schedule mirror) calendar-mirror-skipped badges
   // and the schedule mirror and optional jobs calendar rows on Integrations.
-  assert.match(employee,/employee-suite\.js\?v=20261017ghlmirror"/);
+  assert.match(employee,/employee-suite\.js\?v=20261017ghlmirrorfix"/);
 });
 
 test('recurring visits request a server-side handoff clone instead of copying prior execution or payments',()=>{

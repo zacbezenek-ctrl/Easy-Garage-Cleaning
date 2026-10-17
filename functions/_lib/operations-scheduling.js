@@ -262,7 +262,8 @@ export async function bindScheduledProvider(store,actor,input,now=new Date().toI
     }
     throw failure('schedule_provider_state_conflict');
   }
-  const patch={highlevelAppointmentId:event.id,highlevelCalendarId:event.calendarId||'',providerAppointmentStatus:providerStatus,syncStatus:'synced',syncedAt:now,updatedAt:now};
+  // D9b: a verified appointment ends an earlier "calendar mirror skipped" (only a visit that carries one gains the field).
+  const patch={highlevelAppointmentId:event.id,highlevelCalendarId:event.calendarId||'',providerAppointmentStatus:providerStatus,syncStatus:'synced',syncedAt:now,updatedAt:now,...(current.calendarMirror?{calendarMirror:null}:{})};
   if(receipt){
     // A replayed operation proves the same verified provider state. A later unconditional
     // page write (syncStatus 'error' under the same key) is healed here, never left to loop.

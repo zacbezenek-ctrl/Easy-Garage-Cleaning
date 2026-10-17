@@ -5,10 +5,13 @@
  * jobs. Walkthroughs keep GHL_WALKTHROUGH_CALENDAR_ID, else the single calendar named like "walkthrough".
  * A skip is a code, never a provider write:
  *   schedule_calendar_not_configured  no jobs calendar configured;
- *   schedule_calendar_deleted         the configured calendar is missing from the list or marked deleted/inactive.
- * The Hub parks both at once (functions/_lib/schedule-sync-queue.js SCHEDULE_SYNC_PARK_CODES) and its browser sync
- * reports "calendar mirror skipped" (functions/api/highlevel.js), so nothing is retried every tick, and the Hub save
- * and the Hub's schedule mirror (contact, opportunity, note) never wait on a calendar. */
+ *   schedule_calendar_deleted         the configured calendar is missing from the list or marked deleted/inactive, or
+ *                                     (calendarGoneOnUpdate) HighLevel's answer about a visit's existing appointment
+ *                                     says its calendar is gone.
+ * The Hub records both as "calendar mirror skipped" and takes the visit out of its queue at once
+ * (functions/_lib/schedule-sync-queue.js SCHEDULE_SYNC_CALENDAR_SKIP_CODES), and its browser sync reports the same
+ * (functions/api/highlevel.js), so nothing is retried every tick, and the Hub save and the Hub's schedule mirror
+ * (contact, opportunity, note) never wait on a calendar. */
 type Json=Record<string,unknown>;
 export const CALENDAR_SKIP_CODES=Object.freeze(["schedule_calendar_deleted","schedule_calendar_not_configured"] as const);
 export type CalendarChoice={calendarId:string}|{skip:typeof CALENDAR_SKIP_CODES[number]}|{ambiguous:true};
@@ -30,3 +33,13 @@ export function chooseScheduleCalendar(type:string,env:Record<string,string|unde
   return {calendarId:String(candidates[0]!.id)};
 }
 
+/** True when HighLevel's error for a visit's EXISTING appointment says the calendar is gone: a 400 naming a deleted
+ * calendar (the live answer for KuLHTd1509oEl3KntLmF on 2026-10-17), or a 404 for a job while no jobs calendar is
+ * configured (the jobs calendar is env-only, so such an appointment can only have been on the deleted one). A
+ * walkthrough's 404 stays an ordinary failure: its calendar is live, so the appointment itself is what is missing.
+ * Duck-typed (status, body or message) so this module stays import-free. */
+export function calendarGoneOnUpdate(error:unknown,type:string,env:Record<string,string|undefined>):boolean{
+  const e=object(error)?error:{};
+  if(e.status===400&&/calendar\s+(?:is\s+|was\s+|has\s+been\s+)?deleted/i.test(`${String(e.body??"")} ${String(e.message??"")}`))return true;
+  return e.status===404&&type!=="walkthrough"&&!env.GHL_JOBS_CALENDAR_ID;
+}

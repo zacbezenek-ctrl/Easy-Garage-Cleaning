@@ -32,11 +32,14 @@ const SCAN_LIMIT=1000;
  * new key) queues it again. The worker counts in syncWorkerAttempts; syncAttempts stays the
  * page's own count for its backoff. */
 export const SCHEDULE_SYNC_REVIEW_ATTEMPTS=8;
-/** Ledger refusals that no retry under the same key can clear: the visit is parked at once. D9b: a calendar mirror
- * egc-api skipped because the visit's HighLevel calendar is deleted or not configured (GHL_JOBS_CALENDAR_ID is
- * env-only) is parked the same way, with its code as the visit's syncError, never retried every tick; the Integrations
- * screen counts it as "calendar mirror skipped". The Hub save and the schedule mirror never wait on it. */
-export const SCHEDULE_SYNC_PARK_CODES=Object.freeze(['appointment_idempotency_payload_conflict','appointment_changed_since_acceptance','schedule_calendar_deleted','schedule_calendar_not_configured']);
+/** Ledger refusals that no retry under the same key can clear: the visit is parked at once. */
+export const SCHEDULE_SYNC_PARK_CODES=Object.freeze(['appointment_idempotency_payload_conflict','appointment_changed_since_acceptance']);
+/** D9b: the calendar mirror egc-api skipped because the visit's HighLevel calendar is deleted or not configured
+ * (GHL_JOBS_CALENDAR_ID is env-only; egc-platform/apps/api/src/schedule-calendar.ts). Not a failure: the visit leaves
+ * the queue at once as 'synced' with calendarMirror {status:'skipped', reason, code, at}, exactly as the browser sync
+ * records it, so the due scan never reads it again and the Dispatch card says "Calendar skipped". A new schedule change
+ * queues it again; a later verified appointment (bind_provider or the page) clears calendarMirror. */
+export const SCHEDULE_SYNC_CALENDAR_SKIP_CODES=Object.freeze({schedule_calendar_deleted:'calendar_deleted',schedule_calendar_not_configured:'calendar_not_configured'});
 const QUEUED_STATUSES=['pending','error','syncing'];
 const VISIT_TYPES=new Set(['walkthrough','job','cleanout','reorg']);
 // syncPortalSchedule answers not_needed (and never binds) for these without a provider appointment.
@@ -156,7 +159,8 @@ export async function selectScheduleSyncDue(store,command,now=new Date()){
     oldestFailureAt:Number.isFinite(oldestFailure)?new Date(oldestFailure).toISOString():null,coverage:{complete:!truncated,asOf:now.toISOString()}};
 }
 
-/** Failure writer: syncStatus 'error' plus a backoff counted per sync key in
+/** Failure writer (a SCHEDULE_SYNC_CALENDAR_SKIP_CODES code is no failure: see there): syncStatus 'error' plus a
+ * backoff counted per sync key in
  * syncWorkerAttempts (never the page's syncAttempts), written by CAS. It keeps the key's first
  * failure time, marks the visit for review (syncReviewRequired, which parks it) once the key
  * reaches SCHEDULE_SYNC_REVIEW_ATTEMPTS or at once on a SCHEDULE_SYNC_PARK_CODES refusal, and
@@ -174,7 +178,7 @@ export async function recordScheduleSyncFailure(store,actor,command,now=new Date
   const current=await store.read('jobs',input.portalVisitId);
   if(!current||current.id!==input.portalVisitId||current.recordType)throw failure('schedule_visit_not_found',404);
   if(current.syncFailureRequestId===input.requestId){
-    if(current.syncFailureKey!==input.syncRequestId||current.syncError!==input.code)throw failure('schedule_idempotency_conflict');
+    if(current.syncFailureKey!==input.syncRequestId||(current.syncError||current.calendarMirror?.code)!==input.code)throw failure('schedule_idempotency_conflict');
     return {...saved(current),replayed:true};
   }
   const waiting=awaitingMirror(current,Date.parse(now))&&serverScheduleSyncOwned(current),sameKey=await scheduleSyncRequestId(current)===input.syncRequestId;
@@ -185,7 +189,10 @@ export async function recordScheduleSyncFailure(store,actor,command,now=new Date
   const attempts=prior+1,next=new Date(Date.parse(now)+scheduleSyncBackoffMinutes(attempts)*60000).toISOString();
   const firstFailedAt=prior>0&&typeof current.syncFirstFailedAt==='string'&&current.syncFirstFailedAt?current.syncFirstFailedAt:now;
   const review=attempts>=SCHEDULE_SYNC_REVIEW_ATTEMPTS||SCHEDULE_SYNC_PARK_CODES.includes(input.code);
-  const patch={syncStatus:'error',syncError:input.code,syncNextRetryAt:next,syncWorkerAttempts:attempts,syncLastAttemptAt:now,syncFailureKey:input.syncRequestId,syncFailureRequestId:input.requestId,syncFailedBy:actor.id,syncFailedAt:now,syncFirstFailedAt:firstFailedAt,syncReviewRequired:review,updatedAt:now};
+  const skip=Object.hasOwn(SCHEDULE_SYNC_CALENDAR_SKIP_CODES,input.code)?SCHEDULE_SYNC_CALENDAR_SKIP_CODES[input.code]:'';
+  const patch=skip
+    ?{syncStatus:'synced',syncError:'',syncNextRetryAt:'',syncLastAttemptAt:now,syncFailureKey:input.syncRequestId,syncFailureRequestId:input.requestId,syncReviewRequired:false,calendarMirror:{status:'skipped',reason:skip,code:input.code,at:now},updatedAt:now}
+    :{syncStatus:'error',syncError:input.code,syncNextRetryAt:next,syncWorkerAttempts:attempts,syncLastAttemptAt:now,syncFailureKey:input.syncRequestId,syncFailureRequestId:input.requestId,syncFailedBy:actor.id,syncFailedAt:now,syncFirstFailedAt:firstFailedAt,syncReviewRequired:review,updatedAt:now};
   try{await store.commit([{collection:'jobs',id:current.id,revision:current.revision,patch}]);}
   catch(error){const latest=await store.read('jobs',current.id).catch(()=>null);if(latest?.syncFailureRequestId!==input.requestId)throw error;return saved(latest);}
   const latest=await store.read('jobs',current.id);

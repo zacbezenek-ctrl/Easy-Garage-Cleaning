@@ -35,7 +35,7 @@ import { syncNativeSchedule } from '../_lib/operations-schedule-sync.js';
 import { syncNativeNote } from '../_lib/operations-note-sync.js';
 import { operationsEnabled } from '../_lib/operations-service-auth.js';
 import { ensureHighLevelCheckin } from '../_lib/highlevel-checkin.js';
-import { addTags, completeAppointment, ensureContact, ghl, highLevelConfig } from '../_lib/highlevel-tags.js';
+import { addTags, completeAppointment, ensureContact, ghl, ghlScheduleMirrorEnabled, highLevelConfig } from '../_lib/highlevel-tags.js';
 import { handOffScheduleTags, scheduleTagOwner } from '../_lib/ghl-tag-outbox.js';
 import { can } from '../_lib/staff-roles.js';
 import { leadDetailsFromNotes } from '../_lib/booking-slots.js';
@@ -300,6 +300,9 @@ async function advanceOpportunity(c, contactId, stageId, fallbackTag, opportunit
 // that HighLevel answers is deleted, skips the appointment write and reports why; it is never a failed sync, so the
 // Hub save, the contact link and the schedule mirror (EGC_GHL_SCHEDULE_MIRROR) never wait on it and nothing retries it.
 const calendarSkipped = reason => ({ appointmentId: '', calendarId: '', updated: false, providerSync: 'skipped', calendarMirror: { status: 'skipped', reason } });
+// With EGC_GHL_SCHEDULE_MIRROR on, the mirror alone moves a job to Job Scheduled (forward only); two writers would aim
+// at two different "scheduled" stages and this one could move a later-stage deal back.
+const MIRROR_OWNS_STAGE = Object.freeze({ updated: false, reason: 'schedule-mirror-owns-stage' });
 
 async function createAppointment(c, payload, contactId) {
   if(c.operationsEnv&&operationsEnabled(c.operationsEnv)){
@@ -690,7 +693,8 @@ export async function onRequestPost({ request, env, waitUntil }) {
       const tagPlan = await scheduleTagOwner(env, stored), outboxTags = tagPlan.owner === 'outbox';
       let tagSynced = !outboxTags || tagPlan.status === 'done';
       if (!outboxTags) try { await addTags(c, contactId, ['egc-hub-scheduled', typeTag, reminderTag]); } catch { tagSynced = false; }
-      const stage = payload.event_type === 'job' ? await advanceOpportunity(c, contactId, c.scheduledStageId, typeTag, payload.opportunity_id || '', opportunityInput(payload, client)) : { updated: false, reason: 'walkthrough-is-not-a-booked-job' };
+      // D9b: with EGC_GHL_SCHEDULE_MIRROR on, the mirror is the one stage writer (forward only, ghl-schedule-mirror.js).
+      const stage = payload.event_type !== 'job' ? { updated: false, reason: 'walkthrough-is-not-a-booked-job' } : ghlScheduleMirrorEnabled(env) ? MIRROR_OWNS_STAGE : await advanceOpportunity(c, contactId, c.scheduledStageId, typeTag, payload.opportunity_id || '', opportunityInput(payload, client));
       const response = await finish(contactId, { ok: true, contactId, ...event, pipeline: stage, automation: { trigger: typeTag, reminderTrigger: reminderTag, tagSynced, notificationsRequested: payload.notify !== false, ...(outboxTags ? { tagOwner: 'outbox', tagStatus: tagPlan.status } : {}) } });
       await handOffTags(env, waitUntil, tagPlan);
       return response;
@@ -774,7 +778,10 @@ export async function onRequestPost({ request, env, waitUntil }) {
         let tagSynced = !calendarSkip && (!outboxTags || tagPlan.status === 'done');
         // The booking tags follow the job's appointment; with the calendar mirror skipped there is none, so none is added.
         if (!outboxTags && !calendarSkip) try { await addTags(c, contactId, ['egc-hub-scheduled', 'egc-job-scheduled']); } catch { tagSynced = false; }
-        const stage = await advanceOpportunity(c, contactId, c.scheduledStageId, 'egc-job-scheduled', payload.opportunity_id || '', opportunityInput(payload, client));
+        // Like tool=schedule: no Scheduled stage without an appointment, and none from here while the schedule mirror owns the
+        // stage (EGC_GHL_SCHEDULE_MIRROR, forward only). Otherwise the job's Scheduled stage moves as before.
+        const stage = calendarSkip ? { updated: false, reason: 'calendar-mirror-skipped' } : ghlScheduleMirrorEnabled(env) ? MIRROR_OWNS_STAGE
+          : await advanceOpportunity(c, contactId, c.scheduledStageId, 'egc-job-scheduled', payload.opportunity_id || '', opportunityInput(payload, client));
         const response = await finish(contactId, { ok: true, contactId, noteId: note.note?.id || '', taskId, ...scheduled, walkthrough, pipeline: stage, portalInvitation, automation: { trigger: calendarSkip ? '' : 'egc-job-scheduled', tagSynced, ...(calendarSkip ? { calendarSkipped: true } : {}), ...(outboxTags ? { tagOwner: 'outbox', tagStatus: tagPlan.status } : {}) } });
         if (!calendarSkip) await handOffTags(env, waitUntil, tagPlan);
         return response;
