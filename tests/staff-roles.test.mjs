@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { generateKeyPairSync } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import vm from 'node:vm';
-import { ACCESS_CAPABILITIES, OWNER_CAPABILITIES, ROLE_ACCESS_CAPABILITIES, ROLE_CAPABILITIES, STAFF_CAPABILITIES, STAFF_ROLES, can, capabilityMode, defaultStaffRoles, primaryStaffRole, sanitizeStaffRoles, staffCapabilities } from '../functions/_lib/staff-roles.js';
+import { ACCESS_CAPABILITIES, OWNER_CAPABILITIES, ROLE_ACCESS_CAPABILITIES, ROLE_CAPABILITIES, ROLE_VIEW_CAPABILITIES, STAFF_CAPABILITIES, STAFF_ROLES, VIEW_CAPABILITIES, can, capabilityMatrix, capabilityMode, capabilityNames, defaultStaffRoles, primaryStaffRole, sanitizeStaffRoles, staffCapabilities } from '../functions/_lib/staff-roles.js';
 import { SKILL_CATALOG, SKILL_CATALOG_VERSION, storedSkills } from '../functions/_lib/staff-skills.js';
 import { officeOnly } from '../functions/_lib/dispatch-storage.js';
 import { fieldCapabilities, fieldJobLead } from '../functions/_lib/field-permissions.js';
@@ -210,27 +210,46 @@ test('only the owner changes roles; a change revokes the employee session, keeps
   assert.equal(enabled.profile.role, 'crew', 'the legacy session role is unchanged');
 });
 
-// TEAM-LEAD (owner decision D6, 2026-10-17): one new staff role. A team lead reads every crew's schedule (schedule.view,
-// an EGC_STAFF_ROLE_ACCESS capability like schedule.book) and otherwise works at crew-lead level. Estimators and
-// door-to-door reps are skills (walkthrough_estimating, door_to_door), not roles. Eli is data: the owner sets his role.
-test('team_lead: schedule.view only with role access, nothing else, and every role list and cap holds all seven roles', () => {
-  const ACCESS = { EGC_STAFF_ROLE_ACCESS: 'true' };
-  const lead = staffRoles => ({ user: 'Team.Lead', displayName: 'Synthetic Team Lead', role: 'crew', businessAccess: false, source: 'employee-account', staffRoles });
-  assert.deepEqual(ACCESS_CAPABILITIES, ['schedule.book', 'walkthrough.perform', 'schedule.view']);
+// TEAM-LEAD (owner decision D6, 2026-10-17): one new staff role. A team lead reads every crew's schedule (schedule.view)
+// and otherwise works at crew-lead level. schedule.view needs no flag: the stored role is the switch, as it is for the
+// crew-lead field rights, so seeing every crew never requires EGC_STAFF_ROLE_ACCESS (which also opens every customer's
+// contact details to Sales and Phone). Estimators and door-to-door reps are skills (walkthrough_estimating,
+// door_to_door), not roles. Eli is data: the owner sets his role.
+test('team_lead: schedule.view with or without any role flag, nothing else, and every role list and cap holds all seven roles', () => {
+  const ACCESS = { EGC_STAFF_ROLE_ACCESS: 'true' }, PERMISSIONS = { EGC_STAFF_ROLE_PERMISSIONS: 'true' };
+  const lead = staffRoles => ({ user: 'Team.Lead', displayName: 'Synthetic Team Lead', role: 'crew', businessAccess: false, source: 'employee-account', ...(staffRoles ? { staffRoles } : {}) });
+  assert.deepEqual(ACCESS_CAPABILITIES, ['schedule.book', 'walkthrough.perform'], 'the role-access capabilities are unchanged');
+  assert.deepEqual(VIEW_CAPABILITIES, ['schedule.view']);
   assert.deepEqual(Object.keys(ROLE_ACCESS_CAPABILITIES), STAFF_ROLES);
-  const views = Object.fromEntries(STAFF_ROLES.map(role => [role, ROLE_ACCESS_CAPABILITIES[role].includes('schedule.view')]));
-  assert.deepEqual(views, { owner: true, manager: true, team_lead: true, crew_lead: false, crew: false, sales: false, phone: false });
-  assert.deepEqual(ROLE_ACCESS_CAPABILITIES.team_lead, ['schedule.view']);
+  assert.deepEqual(Object.keys(ROLE_VIEW_CAPABILITIES), STAFF_ROLES);
+  assert.deepEqual(Object.fromEntries(STAFF_ROLES.map(role => [role, ROLE_VIEW_CAPABILITIES[role].includes('schedule.view')])), { owner: true, manager: true, team_lead: true, crew_lead: false, crew: false, sales: false, phone: false });
+  assert.deepEqual(ROLE_ACCESS_CAPABILITIES.team_lead, []);
   assert.deepEqual(ROLE_ACCESS_CAPABILITIES.sales, ['schedule.book', 'walkthrough.perform'], 'sales keeps exactly its booking and walkthrough rights');
-  assert.equal(can(lead(['team_lead']), 'schedule.view', ACCESS), true);
-  for (const flags of [{}, { EGC_STAFF_ROLE_PERMISSIONS: 'true' }, { EGC_STAFF_ROLE_ACCESS: 'TRUE' }, { EGC_STAFF_ROLE_ACCESS: '1' }]) {
-    assert.equal(can(lead(['team_lead']), 'schedule.view', flags), false, `flag off: ${JSON.stringify(flags)}`);
-    assert.equal(can({ user: 'TylerG', role: 'manager', businessAccess: true }, 'schedule.view', flags), false, 'no list reports an access capability with the flag off');
+  const flagSets = [{}, PERMISSIONS, ACCESS, { EGC_STAFF_ROLE_ACCESS: 'TRUE' }, { EGC_STAFF_ROLE_ACCESS: '1' }, { EGC_STAFF_ROLE_ACCESS: 'false', EGC_STAFF_ROLE_PERMISSIONS: 'true' }];
+  for (const flags of flagSets) {
+    const at = JSON.stringify(flags);
+    assert.equal(can(lead(['team_lead']), 'schedule.view', flags), true, `team lead ${at}`);
+    assert.equal(can(lead(['crew', 'team_lead']), 'schedule.view', flags), true, `team lead who also works crew ${at}`);
+    assert.equal(can({ ...lead(), role: 'team_lead' }, 'schedule.view', flags), true, `an account whose own role is team_lead ${at}`);
+    assert.equal(can(lead(['manager']), 'schedule.view', flags), true, `stored manager ${at}`);
+    assert.equal(can({ user: 'TylerG', role: 'manager', businessAccess: true }, 'schedule.view', flags), true, `business access ${at}`);
+    assert.equal(can({ user: 'AlexK', role: 'crew_lead', businessAccess: true, staffRoles: ['crew_lead'] }, 'schedule.view', flags), true, `business access sees every crew whatever its roles ${at}`);
+    for (const roles of [['sales'], ['phone'], ['crew_lead'], ['crew'], ['owner'], [], undefined, ['wizard']]) assert.equal(can(lead(roles), 'schedule.view', flags), false, `${JSON.stringify(roles)} ${at}`);
+    for (const role of ['sales', 'phone', 'crew_lead', 'crew', 'manager', 'owner']) assert.equal(can({ ...lead(), role }, 'schedule.view', flags), false, `a claimed account role ${role} without business access ${at}`);
+    for (const session of [null, 'team.lead', {}, { user: ' ', staffRoles: ['team_lead'] }]) assert.equal(can(session, 'schedule.view', flags), false);
   }
-  for (const capability of [...STAFF_CAPABILITIES, 'schedule.book', 'walkthrough.perform']) assert.equal(can(lead(['team_lead']), capability, ACCESS), false, `a team lead never gets ${capability}`);
+  for (const flags of [{}, PERMISSIONS, ACCESS]) for (const capability of [...STAFF_CAPABILITIES, ...ACCESS_CAPABILITIES]) assert.equal(can(lead(['team_lead']), capability, flags), false, `a team lead never gets ${capability} ${JSON.stringify(flags)}`);
+  // Listed only with EGC_STAFF_ROLE_ACCESS on, so the capability lists answered with it off stay as recorded.
   assert.deepEqual(staffCapabilities(lead(['team_lead']), ACCESS), ['schedule.view']);
-  assert.deepEqual(staffCapabilities(lead(['team_lead']), { EGC_STAFF_ROLE_PERMISSIONS: 'true' }), [], 'stored-role permissions alone: crew-lead level');
+  assert.deepEqual(staffCapabilities(lead(['team_lead']), PERMISSIONS), []);
+  assert.deepEqual(staffCapabilities(lead(['team_lead']), {}), []);
+  assert.deepEqual([capabilityNames({}), capabilityNames(PERMISSIONS)], [STAFF_CAPABILITIES, STAFF_CAPABILITIES]);
+  assert.deepEqual([capabilityMatrix({}), capabilityMatrix(PERMISSIONS)], [ROLE_CAPABILITIES, ROLE_CAPABILITIES]);
+  assert.deepEqual(capabilityMatrix(ACCESS).team_lead, ['schedule.view']);
   assert.deepEqual(staffCapabilities(lead(['crew_lead']), ACCESS), [], 'a crew lead does not see every crew');
+  // The signed employee-account session carries the owner-set roles with every flag off, so the role alone decides.
+  assert.equal(can(employeeSessionProfile({ username: 'Eli.Team', displayName: 'Synthetic Eli', staffRoles: ['crew', 'team_lead'] }), 'schedule.view', {}), true);
+  assert.equal(can(employeeSessionProfile({ username: 'Gus.Sales', displayName: 'Synthetic Gus', role: 'sales', staffRoles: ['sales'] }), 'schedule.view', {}), false);
   assert.deepEqual(sanitizeStaffRoles(['crew', 'team_lead', 'team_lead', 'wizard']), ['team_lead', 'crew']);
   assert.deepEqual(defaultStaffRoles({ user: 'Config.Lead', role: 'team_lead', businessAccess: false }), ['team_lead']);
   assert.equal(primaryStaffRole(['crew', 'crew_lead', 'team_lead']), 'team_lead');

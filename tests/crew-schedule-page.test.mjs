@@ -25,11 +25,12 @@ const JOBS = [
   job('job_week', { crewId: 'crew_one', assignedCrew: ['ben.crew'], customer: 'Eve Synthetic', date: '2026-10-20', endDate: '2026-10-21', time: '09:30', endTime: '15:00' }),
 ];
 const SESSIONS = { ben: { user: 'ben.crew', role: 'crew' }, eli: { user: 'eli.team', role: 'crew', staffRoles: ['team_lead'] } };
+// No role flag: a team lead reads every crew on the role alone (schedule.view).
 async function answer(who, url) {
   const params = new URL(url, 'https://easygaragecleaning.com').searchParams, scope = params.get('scope'), session = SESSIONS[who];
   const canViewAll = who === 'eli';
   if (scope === 'all' && !canViewAll) return Response.json({ ok: false, code: 'crew_schedule_forbidden', error: 'Every crew’s schedule needs the Team lead or Manager role. Ask the owner.' }, { status: 403 });
-  const body = await crewSchedule({ session, env: canViewAll ? { EGC_STAFF_ROLE_ACCESS: 'true' } : {}, crews: CREWS, jobs: JOBS, from: params.get('from'), to: params.get('to'), scope, now: new Date(NOW),
+  const body = await crewSchedule({ session, env: {}, crews: CREWS, jobs: JOBS, from: params.get('from'), to: params.get('to'), scope, now: new Date(NOW),
     access: { assigned: async row => (row.assignedCrew || []).includes(session.user), exactly: id => id === session.user }, names: { 'ana.lead': 'Ana Synthetic', 'ben.crew': 'Ben Synthetic', 'cara.crew': 'Cara Synthetic' } });
   return Response.json(body);
 }
@@ -115,6 +116,28 @@ test('a stale hint falls back to the person’s own crews; 401 asks to sign in; 
   assert.match(text(down.main.querySelector('.notice')), /The crew schedule could not be loaded\. Retry when connected\. Try again/);
   const broken = await page({ respond: () => Response.json({ ok: true, scope: 'mine', groups: 'nope' }) });
   assert.match(text(broken.main.querySelector('.notice')), /incomplete/);
+});
+
+test('with no role flag the Hub lists no schedule.view, so a team lead’s first open asks twice and later opens once', async () => {
+  // /api/hub-auth lists schedule.view only with EGC_STAFF_ROLE_ACCESS on; the server still answers canViewAll.
+  const first = await page({ respond: url => answer('eli', url), hint: { user: 'eli.team', capabilities: [] } });
+  assert.deepEqual(first.calls.map(url => new URL(url, 'https://x.invalid').searchParams.get('scope')), ['mine', 'all']);
+  assert.equal(text(first.main.querySelector('h1')), 'Every crew');
+  const saved = first.local.getItem('egc.crew-schedule.v1');
+  assert.deepEqual(JSON.parse(saved), { range: 'today', crew: 'all', viewsAll: 'eli.team' }, 'this browser remembers who read every crew, and nothing of the schedule');
+  const later = await page({ respond: url => answer('eli', url), hint: { user: 'Eli.Team', capabilities: [] }, prefs: { 'egc.crew-schedule.v1': saved } });
+  assert.deepEqual(later.calls.map(url => new URL(url, 'https://x.invalid').searchParams.get('scope')), ['all'], 'one read');
+  const someoneElse = await page({ respond: url => answer('ben', url), hint: { user: 'ben.crew', capabilities: [] }, prefs: { 'egc.crew-schedule.v1': saved } });
+  assert.deepEqual(someoneElse.calls.map(url => new URL(url, 'https://x.invalid').searchParams.get('scope')), ['mine'], 'another person on the same phone asks for their own crews');
+  assert.equal(JSON.parse(someoneElse.local.getItem('egc.crew-schedule.v1')).viewsAll, undefined, 'and the remembered hint is dropped');
+});
+
+test('EGC_CREW_SCHEDULE=false: the page says the schedule is off, with nothing to retry', async () => {
+  const off = await page({ respond: () => Response.json({ ok: false, code: 'crew_schedule_disabled', error: 'The crew schedule is turned off. Ask your manager for this week’s schedule.' }, { status: 404 }) });
+  assert.equal(off.calls.length, 1);
+  assert.match(text(off.main), /Schedule is off The crew schedule is turned off\. Ask your manager for this week’s schedule\. Back to crew home/);
+  assert.equal(off.main.querySelector('a.btn').getAttribute('href'), '/crew/');
+  assert.equal(off.main.querySelectorAll('button').length, 0, 'no Try again, Refresh or range buttons');
 });
 
 test('the page is a gated staff page that loads its own versioned script and the crew look', () => {

@@ -66,7 +66,7 @@ function startingRate(value) {
   return Math.round(value * 100) / 100;
 }
 function approvalRoles(value, session) {
-  if (!Array.isArray(value) || !value.length || value.length > EDITABLE_ROLES.length || value.some(role => typeof role !== 'string' || !STAFF_ROLES.includes(role)) || new Set(value).size !== value.length) throw fail('invalid_roles', 'Choose the role this person starts with: manager, crew_lead, crew, sales or phone.');
+  if (!Array.isArray(value) || !value.length || value.length > EDITABLE_ROLES.length || value.some(role => typeof role !== 'string' || !STAFF_ROLES.includes(role)) || new Set(value).size !== value.length) throw fail('invalid_roles', 'Choose the role this person starts with: manager, team_lead, crew_lead, crew, sales or phone.');
   if (value.includes('owner')) throw fail('owner_role_reserved', 'The owner role belongs only to the configured owner account.', 403);
   if (value.includes('manager') && !isHubOwner(session)) throw fail('owner_role_reserved', 'Only the owner can approve someone as a manager.', 403);
   return EDITABLE_ROLES.filter(role => value.includes(role));

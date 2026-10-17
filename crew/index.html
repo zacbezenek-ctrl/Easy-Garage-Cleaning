@@ -191,7 +191,7 @@ function hours(entry){const start=Date.parse(entry.clockInAt||''),end=Date.parse
 // outbox (crew/field-outbox.js) posts to /api/employee-hub, the clock-in takes one location fix (nothing tracks it after),
 // and EGC_CLOCK_IN_WITHOUT_FIX (clockInWithoutFix from /api/employee-hub) decides whether a phone that finds no fix may
 // clock in anyway, flagged for a manager. Business users clock from the employee time clock, as on the job page.
-const clock={entry:null,withoutFix:false,pending:[],blocked:0,pay:null,failed:false,busy:false,locating:false,note:'',error:false,outbox:null};
+const clock={entry:null,withoutFix:false,pending:[],blocked:0,pay:null,failed:false,loaded:false,busy:false,locating:false,note:'',error:false,outbox:null};
 const locationNote=entry=>({missing:'no location at clock-in',shared:'location shared once at clock-in',tracked:'last tracked location on file'})[entry.jobTime?.clockInLocation||(entry.locationReview==='location_unavailable_at_clock_in'?'missing':!entry.lastLocation?'':entry.locationStatus==='tracking'?'tracked':'shared')]||'location not tracked';
 function clockOutbox(){if(!window.EGCFieldOutbox)return null;try{return clock.outbox||(clock.outbox=window.EGCFieldOutbox.create())}catch{return null}}
 // Queued clock actions (shown over the shift) and refused ones, which wait for Retry or Discard in Today's work.
@@ -203,11 +203,11 @@ function clockControls(profile,shift){
   if(!clockHere(profile))return'';
   const offline=!navigator.onLine,disabled=clock.busy||offline?' disabled':'',waiting=clock.pending.length;
   const button=shift?`<button type="button" class="clock-btn out" onclick="crewClock('clock_out')"${disabled}>Clock out</button>`:`<button type="button" class="clock-btn" onclick="crewClock('clock_in')"${disabled}>${clock.locating?'Getting your location…':'Clock in'}</button>`;
-  const note=clock.note?`<small class="clock-note${clock.error?' error':''}" role="status">${esc(clock.note)}</small>`:offline?'<small class="clock-note">Connect to clock in or out here.</small>':waiting?`<small class="clock-note">${waiting} time action${waiting===1?' is':'s are'} waiting to sync.</small>`:'';
+  const note=offline?'<small class="clock-note" role="status">Connect to clock in or out here.</small>':clock.note?`<small class="clock-note${clock.error?' error':''}" role="status">${esc(clock.note)}</small>`:waiting?`<small class="clock-note">${waiting} time action${waiting===1?' is':'s are'} waiting to sync.</small>`:'';
   return`<div class="clock-actions">${button}${note}${clock.blocked?'<a class="clock-review" href="/crew/job.html">Open Today’s work</a>':''}</div>`;
 }
 function renderOverview(profile){
-  const host=document.getElementById('crew-overview');
+  const host=document.getElementById('crew-overview');clock.loaded=true;
   if(clock.failed){host.innerHTML='<article class="status-card"><span>Time clock</span><strong>Open My Hub</strong><small>Time data could not load</small></article><article class="status-card"><span>Estimated pay</span><strong>Unavailable</strong><small>Refresh when connected</small></article>';return}
   const active=clock.entry,shift=shiftView(),pay=clock.pay||{gross:0,hours:0};
   const detail=shift&&active?`${hours(active).toFixed(2)} hours today · ${locationNote(active)}`:shift?'Clock-in waiting to sync':clockHere(profile)?'Clocking in shares your location once':'Open My Hub when your shift starts · clocking in shares your location once';
@@ -219,15 +219,18 @@ function currentPosition(options={enableHighAccuracy:true,maximumAge:60000,timeo
 // One position as the shift starts; a timeout or no fix is tried once more at lower accuracy, a denied permission is not.
 async function clockInPosition(){try{return await currentPosition()}catch(error){if(error?.code===1)throw error;return currentPosition({enableHighAccuracy:false,maximumAge:300000,timeout:10000})}}
 async function crewClock(op){
-  const profile=EGCHubAuth.profile(),user=profile.user,outbox=clockOutbox(),Outbox=window.EGCFieldOutbox;
-  if(!outbox||clock.busy||!user||!clockHere(profile)||!navigator.onLine)return;
-  await clockPending(profile);
-  const shift=shiftView(),say=(note,error=false)=>{clock.note=note;clock.error=error};
-  if(op==='clock_in'?shift:!shift)return renderOverview(profile);
-  if(op==='clock_out'&&!confirm('Clock out now? Your shift will be submitted for approval.'))return;
+  const profile=EGCHubAuth.profile(),user=profile.user,outbox=clockOutbox(),Outbox=window.EGCFieldOutbox,say=(note,error=false)=>{clock.note=note;clock.error=error};
+  if(!outbox||clock.busy||!user||!clockHere(profile))return;
+  if(!navigator.onLine)return renderOverview(profile);
+  // Busy before the first await, as crew/job.js does, so a second tap while the queue is read queues nothing.
   clock.busy=true;say('');renderOverview(profile);
+  let sent=false;
   try{
+    await clockPending(profile);
+    const shift=shiftView();
+    if(op==='clock_in'?shift:!shift)return;
     if(clock.blocked)return say('A saved time action needs review: open any job in Today’s work to retry or discard it before you clock in or out here.',true);
+    if(op==='clock_out'&&!confirm('Clock out now? Your shift will be submitted for approval.'))return;
     let payload;
     if(op==='clock_in'){
       let position=null,failure=null;clock.locating=true;renderOverview(profile);
@@ -236,7 +239,7 @@ async function crewClock(op){
       if(failure&&(failure.code===1||!clock.withoutFix))return say(failure.code===1?'Clock-in needs location access. Enable location for this site, then try again.':'Your phone could not find its location. Move near a window or outside, then try again.',true);
       payload={op,entryId:`time-${user.trim().toLowerCase()}-${Date.now().toString(36)}`,deviceCapturedAt:new Date().toISOString(),...(position?{lastLocation:{lat:Number(position.coords.latitude.toFixed(6)),lng:Number(position.coords.longitude.toFixed(6)),accuracy:Math.round(position.coords.accuracy||0)}}:{})};
     }else payload={op,entryId:shift.id,deviceCapturedAt:new Date().toISOString()};
-    const requestId=crypto.randomUUID(),queued=await outbox.enqueue({requestId,kind:'clock',user,jobId:'',payload});
+    const requestId=crypto.randomUUID();sent=true;const queued=await outbox.enqueue({requestId,kind:'clock',user,jobId:'',payload});
     const result=await outbox.flush({user,transport:Outbox.httpTransport(),direct:queued.direct?requestId:''}),stop=result.stopped;
     if(result.applied.some(row=>row.item.requestId===requestId))say(op==='clock_out'?'Clocked out. Your shift is submitted for approval.':payload.lastLocation?'Clocked in. Your location was shared once; nothing tracks it during your shift.':'Clocked in without a location. A manager will review this shift.');
     else if(stop?.item?.requestId===requestId&&stop.discarded)say(`${stop.error?.message||'The time clock did not accept this.'} Nothing was recorded.`,true);
@@ -245,7 +248,7 @@ async function crewClock(op){
     else if(stop?.reason==='rejected')say('A saved action was not accepted. Open any job in Today’s work to retry or discard it.',true);
     else{say('Saved on this phone. It syncs in order when the connection is back.');try{const registration=await navigator.serviceWorker?.getRegistration('/crew/');await registration?.sync?.register(Outbox.SYNC_TAG)}catch{}}
   }catch(error){say(error?.message||'The time clock could not save this. Try again.',true)}
-  finally{clock.busy=false;clock.locating=false;await loadEmployeeData(profile,false)}
+  finally{clock.busy=false;clock.locating=false;if(sent)await loadEmployeeData(profile,false);else renderOverview(profile)}
 }
 async function loadAssignedJobs(profile){try{const response=await EGCHubAuth.fetch('/api/crew-jobs',{cache:'no-store'}),data=await response.json();if(!response.ok||!data.ok)throw new Error(data.error||'Schedule unavailable');const walkthroughs=EGCHubAuth.canRunWalkthrough(profile.user),rows=(data.jobs||[]).filter(job=>job.recordType!=='schedule_lock'&&job.recordType!=='employee_hub_v2'&&job.recordType!=='crew_availability'&&job.type!=='availability'&&(walkthroughs||job.type!=='walkthrough')&&!terminal.has(job.pipelineStatus||job.status||'')&&String(job.date||'')>=today()&&assigned(job,profile)).sort((a,b)=>String(a.date+(a.time||'')).localeCompare(String(b.date+(b.time||''))));showJobs(rows)}catch{showScheduleUnavailable(profile)}}
 function showScheduleUnavailable(profile){
@@ -258,7 +261,8 @@ function showScheduleUnavailable(profile){
 function showJobs(rows){const next=rows.find(job=>(job.pipelineStatus||job.status)==='in_progress')||rows.find(job=>job.type!=='walkthrough'||!job.walkthroughState||job.walkthroughState==='open')||rows[0],host=document.getElementById('next-work');if(!next){host.className='next-card empty';host.innerHTML='<div class="next-top"><span>Next assigned work</span></div><h2>No upcoming assignment</h2><p>Your manager has not assigned another job yet. Check Open shifts in My Hub.</p><div class="next-actions"><a class="primary" href="/employee?view=open_shifts">See open shifts</a></div>';document.getElementById('assigned-jobs').innerHTML='<div class="load-note">No upcoming assigned jobs. Claimed and newly assigned shifts will appear here automatically.</div>';return}const stage=next.walkthroughBadge||(next.pipelineStatus||next.status||'scheduled').replaceAll('_',' '),route=next.address?`https://www.google.com/maps/dir/?api=1&destination=${encodeURIComponent(next.address)}`:'',phone=String(next.phone||'').replace(/[^+0-9]/g,'');host.className='next-card';host.innerHTML=`<div class="next-top"><span>${(next.pipelineStatus||next.status)==='in_progress'?'Active job':'Next assigned work'}</span><span class="job-stage">${esc(stage)}</span></div><h2>${esc(next.customer||next.serviceType||'Customer job')}</h2><p>${esc(next.address||'Address pending')}</p><div class="job-meta"><div><span>Date</span><strong>${esc(displayDate(next.date))}</strong></div><div><span>Time</span><strong>${esc(next.time||'TBD')}–${esc(next.endTime||'TBD')}</strong></div><div><span>Service</span><strong>${esc(next.serviceType||next.type||'Garage service')}</strong></div></div><div class="next-actions"><a class="primary" href="${workLink(next)}">${workLabel(next)}</a>${route?`<a href="${route}" target="_blank" rel="noopener">Route</a>`:''}${phone?`<a href="tel:${esc(phone)}">Call customer</a>`:''}<a class="subtle" href="tel:9709991818">Call office</a></div>`;document.getElementById('assigned-jobs').innerHTML=rows.slice(0,6).map(job=>`<a class="job-row" href="${workLink(job)}"><time>${esc(displayDate(job.date))}<small>${esc(job.time||'')}</small></time><span><strong>${esc(job.customer||job.serviceType||'Customer job')}</strong><small>${esc(job.address||'Address pending')}</small>${job.walkthroughBadge?`<em class="row-badge">${esc(job.walkthroughBadge)}</em>`:''}</span><b>→</b></a>`).join('')}
 async function openCrewHome(){const profile=EGCHubAuth.profile(),name=profile.displayName||profile.user||'Crew',business=EGCHubAuth.canRunBusiness(profile.user);document.getElementById('hello').textContent=`Hi, ${name}`;document.getElementById('dayline').textContent=`${new Date().toLocaleDateString('en-US',{weekday:'long',month:'long',day:'numeric'})} · Here’s what you need for work.`;document.getElementById('walkthrough-tool').hidden=!EGCHubAuth.canRunWalkthrough(profile.user);for(const id of ['prejob-tool','closeout-tool']){const tool=document.getElementById(id);tool.setAttribute('href',business?tool.dataset.businessHref:'/crew/job.html')}document.getElementById('field-flow').textContent=business?'Walkthrough → pre-job → closeout':'Pre-job → closeout';document.getElementById('access-note').hidden=new URLSearchParams(location.search).get('notice')!=='walkthrough-restricted';if(profile.roleAccess===true)document.getElementById('access-note').textContent='Walkthroughs need the Sales role. Ask the owner.';EGCHubAuth.mountCrewNav();await Promise.all([loadEmployeeData(profile),loadAssignedJobs(profile)])}
 function updateOnline(){document.getElementById('offline').classList.toggle('on',!navigator.onLine)}
-addEventListener('online',()=>{updateOnline();openCrewHome()});addEventListener('offline',updateOnline);updateOnline();
+// Offline, the clock buttons disable at once (crewClock also refuses); online, the home reloads and sends what waits.
+addEventListener('online',()=>{updateOnline();openCrewHome()});addEventListener('offline',()=>{updateOnline();if(clock.loaded)renderOverview(EGCHubAuth.profile())});updateOnline();
 </script>
 </body>
 </html>

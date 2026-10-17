@@ -2,19 +2,22 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { encodeFirestoreFields } from '../functions/_lib/firestore-job.js';
 import { dispatchStorage } from '../functions/_lib/dispatch-storage.js';
-import { CREW_SCHEDULE_FIELDS, CREW_SCHEDULE_LOOKBACK_DAYS, CREW_SCHEDULE_MAX_DAYS, areaOf, crewSchedule, firstName, scheduleWindow } from '../functions/_lib/crew-schedule.js';
+import { CREW_SCHEDULE_FIELDS, CREW_SCHEDULE_HISTORY_DAYS, CREW_SCHEDULE_LOOKBACK_DAYS, CREW_SCHEDULE_MAX_DAYS, areaOf, crewSchedule, firstName, scheduleWindow } from '../functions/_lib/crew-schedule.js';
 import { crewScheduleHandlers, leadNames } from '../functions/api/crew-schedule.js';
 
 // CREW-SCHEDULE (WP6, owner decision D6 2026-10-17): GET /api/crew-schedule. Synthetic people and customers only; the
 // clock is fixed at Friday 2026-10-16 09:00 Mountain Time.
 const NOW = new Date('2026-10-16T15:00:00.000Z');
 const ORIGIN = 'https://easygaragecleaning.com';
-const ACCESS = { EGC_STAFF_ROLE_ACCESS: 'true' };
+const ACCESS = { EGC_STAFF_ROLE_ACCESS: 'true' }, PERMISSIONS = { EGC_STAFF_ROLE_PERMISSIONS: 'true' };
 const ENV = { FIREBASE_API_KEY: 'firebase-test-crew-schedule' };
+// Every role-flag combination: seeing every crew must never depend on EGC_STAFF_ROLE_ACCESS (or EGC_STAFF_ROLE_PERMISSIONS).
+const FLAG_SETS = [{}, PERMISSIONS, ACCESS, { EGC_STAFF_ROLE_ACCESS: 'false', EGC_STAFF_ROLE_PERMISSIONS: 'true' }];
 const person = (user, extra = {}) => ({ user, displayName: `Synthetic ${user}`, role: 'crew', businessAccess: false, source: 'employee-account', ...extra });
 const SESSIONS = {
   ana: person('ana.lead'), ben: person('ben.crew'), cara: person('cara.crew'), dee: person('dee.solo'),
   eli: person('eli.team', { staffRoles: ['team_lead'] }), crewLead: person('fay.lead', { staffRoles: ['crew_lead'] }),
+  sales: person('gus.sales', { role: 'sales', staffRoles: ['sales'] }), phone: person('hal.phone', { staffRoles: ['phone'] }),
   tyler: { user: 'TylerG', displayName: 'Synthetic Manager', role: 'manager', businessAccess: true },
 };
 const CREWS = [
@@ -40,24 +43,24 @@ const JOBS = [
   job('_egc_schedule_lock_2026-10-16', { recordType: 'schedule_lock', crewId: 'crew_one', assignedCrew: ['ana.lead'] }),
   job('vault_row', { recordType: 'employee_hub_v2', crewId: 'crew_one', assignedCrew: ['ana.lead'] }),
   job('job_old_crew', { crewId: 'crew_old', assignedCrew: ['cara.crew'], customer: 'Ivy Synthetic' }),
-  job('job_split', { customer: 'Jo Synthetic', assignmentSegments: [
+  job('job_split', { customer: 'Jo Synthetic', assignedCrew: ['cara.crew', 'ana.lead'], assignmentSegments: [
     { id: 'seg-a', date: '2026-10-16', time: '09:30', endDate: '2026-10-16', endTime: '12:00', assignedCrew: ['cara.crew'], crewLead: 'cara.crew', crewId: 'crew_two' },
     { id: 'seg-b', date: '2026-10-19', time: '09:30', endDate: '2026-10-19', endTime: '12:00', assignedCrew: ['ana.lead'], crewLead: 'ana.lead', crewId: 'crew_one' },
   ] }),
 ];
 
 function harness({ jobs = JOBS, crews = CREWS, fail = false } = {}) {
-  const calls = [];
+  const calls = [], lookups = [];
   const storage = () => ({
     async crewResources() { calls.push(['crews']); if (fail) throw new Error('synthetic outage'); return structuredClone(crews); },
     async datedJobs(start, end, fields) { calls.push(['jobs', start, end, fields]); if (fail) throw new Error('synthetic outage'); return structuredClone(jobs).filter(row => row.date >= start && row.date <= end); },
   });
-  const handlers = crewScheduleHandlers({ session: async request => SESSIONS[request.headers.get('X-Synthetic-Session')] || null, storage, names: async (env, ids) => Object.fromEntries([...ids].map(id => [id, `Name of ${id}`])), now: () => NOW });
+  const handlers = crewScheduleHandlers({ session: async request => SESSIONS[request.headers.get('X-Synthetic-Session')] || null, storage, names: async (env, ids) => { lookups.push([...ids].sort()); return Object.fromEntries([...ids].map(id => [id, `Name of ${id}`])); }, now: () => NOW });
   const get = async (who, query = '', env = ENV) => {
     const response = await handlers.get({ request: new Request(`${ORIGIN}/api/crew-schedule${query}`, { headers: who ? { 'X-Synthetic-Session': who } : {} }), env });
     return { status: response.status, headers: response.headers, body: await response.json() };
   };
-  return { get, calls };
+  return { get, calls, lookups };
 }
 const rows = body => [...body.groups.flatMap(group => group.jobs), ...body.unassigned];
 const ids = result => rows(result.body || result).map(row => row.segmentId ? `${row.id}~${row.segmentId}` : row.id).sort();
@@ -95,8 +98,8 @@ test('someone not on the crew never sees its jobs; their own work on no crew sho
   assert.deepEqual([nobody.body.groups, nobody.body.unassigned], [[], []], 'a crew lead on no crew sees nothing');
 });
 
-test('scope=all: a team lead with role access reads every crew by priority plus the work on no crew; crew get 403', async () => {
-  const { get } = harness(), env = { ...ENV, ...ACCESS };
+test('scope=all: a team lead reads every crew by priority plus the work on no crew, with no role flag; crew get 403', async () => {
+  const { get } = harness(), env = { ...ENV };
   const eli = await get('eli', '?from=2026-10-16&to=2026-10-22&scope=all', env);
   assert.equal(eli.status, 200, JSON.stringify(eli.body));
   assert.deepEqual([eli.body.scope, eli.body.viewer.canViewAll], ['all', true]);
@@ -106,15 +109,19 @@ test('scope=all: a team lead with role access reads every crew by priority plus 
   assert.deepEqual(eli.body.unassigned.map(row => [row.id, row.time]), [['job_unassigned', '10:00'], ['job_dee_solo', '11:00']], 'by day, then time');
   assert.deepEqual(eli.body.unassigned.map(row => [row.crewSize, row.crewNeeded, row.canOpen]), [[0, 3, false], [1, 2, false]], 'a team lead reads the schedule; the job page still checks the assignment');
   assert.deepEqual(ids(eli), ['job_crew1_ana', 'job_crew2', 'job_dee_solo', 'job_multiday', 'job_next_week', 'job_old_crew', 'job_split~seg-a', 'job_split~seg-b', 'job_unassigned']);
-  for (const who of ['ben', 'cara', 'crewLead', 'dee']) {
-    const refused = await get(who, '?scope=all', env);
-    assert.deepEqual([refused.status, refused.body.code], [403, 'crew_schedule_forbidden'], who);
+  // The team lead's view never depends on a role flag, so it never needs EGC_STAFF_ROLE_ACCESS, which would also open
+  // every customer's contact details to Sales and Phone. Sales, Phone, crew leads and crew are refused under every flag.
+  for (const flags of FLAG_SETS) {
+    const at = JSON.stringify(flags), flagged = { ...ENV, ...flags };
+    const lead = await get('eli', '?from=2026-10-16&to=2026-10-22&scope=all', flagged);
+    assert.deepEqual([lead.status, lead.body.viewer?.canViewAll, ids(lead)], [200, true, ids(eli)], `team lead ${at}`);
+    assert.equal((await get('tyler', '?scope=all', flagged)).status, 200, `the manager (business access) ${at}`);
+    for (const who of ['ben', 'cara', 'crewLead', 'dee', 'sales', 'phone']) {
+      const refused = await get(who, '?scope=all', flagged);
+      assert.deepEqual([refused.status, refused.body.code], [403, 'crew_schedule_forbidden'], `${who} ${at}`);
+      assert.equal((await get(who, '?from=2026-10-16&to=2026-10-16', flagged)).body.viewer.canViewAll, false, `${who} ${at}`);
+    }
   }
-  // The manager reads every crew too; with EGC_STAFF_ROLE_ACCESS off schedule.view does not exist, so business access decides.
-  assert.equal((await get('tyler', '?scope=all', env)).status, 200);
-  assert.equal((await get('tyler', '?scope=all')).status, 200);
-  const off = await get('eli', '?scope=all');
-  assert.deepEqual([off.status, off.body.code], [403, 'crew_schedule_forbidden'], 'flag off: a team lead reads only their own crews');
   const mine = await get('eli', '?from=2026-10-16&to=2026-10-16', env);
   assert.deepEqual([mine.body.scope, mine.body.viewer.canViewAll, mine.body.groups.map(group => group.crew.id)], ['mine', true, ['crew_weekend']]);
   const manager = await get('tyler', '?from=2026-10-16&to=2026-10-16&scope=all');
@@ -135,14 +142,53 @@ test('no money, phone, street, notes or roster ever leaves; cancelled work, walk
   }
 });
 
+test('a split job opens for anyone on any of its segments, as the job page does; `mine` stays the row’s own segment', async () => {
+  const access = who => ({ assigned: async row => (row.assignedCrew || []).includes(who), exactly: id => id === who });
+  const all = await crewSchedule({ session: SESSIONS.ana, env: {}, from: '2026-10-16', to: '2026-10-19', scope: 'all', now: NOW, crews: CREWS, jobs: JOBS, access: access('ana.lead'), names: {} });
+  const split = rows(all).filter(row => row.id === 'job_split').map(row => [row.segmentId, row.mine, row.canOpen]).sort();
+  assert.deepEqual(split, [['seg-a', false, true], ['seg-b', true, true]], 'Cara’s day of the job is not Ana’s, but the job page opens for Ana');
+  const ben = await crewSchedule({ session: SESSIONS.ben, env: {}, from: '2026-10-16', to: '2026-10-19', scope: 'mine', now: NOW, crews: CREWS, jobs: JOBS, access: access('ben.crew'), names: {} });
+  assert.deepEqual(rows(ben).filter(row => row.id === 'job_split').map(row => [row.segmentId, row.mine, row.canOpen]), [['seg-b', false, false]], 'a crewmate on neither segment sees Crew 1’s day, locked');
+});
+
+test('lead names are looked up only for the leads an answer shows, and not at all when it shows none', async () => {
+  const { get, lookups } = harness();
+  // Dee's window holds only her own job on no crew with no lead; the lookback (32 days) and other crews' leads never
+  // trigger the encrypted employee-accounts read.
+  const dee = await get('dee', '?from=2026-10-16&to=2026-10-16');
+  assert.equal(dee.status, 200);
+  assert.deepEqual(lookups, [], 'no lead shown, no lookup');
+  const ben = await get('ben', '?from=2026-10-16&to=2026-10-16');
+  assert.deepEqual(rows(ben.body).map(row => row.lead), ['Name of ana.lead', 'Name of ana.lead']);
+  assert.deepEqual(lookups, [['ana.lead']], 'Crew 1’s lead only: never Crew 2’s, the inactive crew’s or a lookback row’s');
+  const cara = await get('cara', '?from=2026-10-16&to=2026-10-16');
+  assert.equal(cara.status, 200);
+  assert.deepEqual(lookups.at(-1), ['ben.crew', 'cara.crew'], 'Crew 2’s lead, and the retired crew’s because her own job there shows; never Crew 1’s');
+  assert.deepEqual(await leadNames({}, new Set()), {}, 'an empty set reads nothing');
+});
+
+test('EGC_CREW_SCHEDULE=false turns the schedule off before any read; anything else leaves it on', async () => {
+  const { get, calls, lookups } = harness();
+  for (const who of ['ben', 'eli', null]) {
+    const off = await get(who, '?scope=all', { ...ENV, EGC_CREW_SCHEDULE: 'false' });
+    assert.deepEqual([off.status, off.body.code, off.headers.get('Cache-Control')], [404, 'crew_schedule_disabled', 'private, no-store'], String(who));
+  }
+  assert.deepEqual([calls, lookups], [[], []], 'no storage or name read while off');
+  for (const value of ['true', 'FALSE', ' false', '0', '']) assert.equal((await get('ben', '', { ...ENV, EGC_CREW_SCHEDULE: value })).status, 200, JSON.stringify(value));
+});
+
 test('window, scope and session are validated; storage trouble is a 503, never a partial schedule', async () => {
   const { get } = harness();
   assert.deepEqual((await get(null)).body.code, 'crew_schedule_sign_in_required');
   assert.equal((await get(null)).status, 401);
-  for (const query of ['?from=2026-10-16&to=2026-10-30', '?from=2026-10-16&to=2026-10-15', '?from=2026-02-30', '?from=tomorrow', '?to=2027-01-01']) {
+  // At most CREW_SCHEDULE_HISTORY_DAYS (14) back: 2026-10-02 is the earliest start on 2026-10-16, for every viewer.
+  for (const query of ['?from=2026-10-16&to=2026-10-30', '?from=2026-10-16&to=2026-10-15', '?from=2026-02-30', '?from=tomorrow', '?to=2027-01-01', '?from=2026-10-01&to=2026-10-02', '?from=2025-10-16&to=2025-10-20']) {
     const { status, body } = await get('ben', query);
     assert.deepEqual([status, body.code], [400, 'crew_schedule_range_invalid'], query);
   }
+  assert.deepEqual((await get('eli', '?from=2026-09-01&to=2026-09-02&scope=all')).body.code, 'crew_schedule_range_invalid', 'a team lead pages no further back');
+  assert.equal(CREW_SCHEDULE_HISTORY_DAYS, 14);
+  assert.equal((await get('ben', '?from=2026-10-02&to=2026-10-02')).status, 200, 'two weeks back is the limit');
   assert.deepEqual((await get('ben', '?scope=everyone')).body.code, 'crew_schedule_scope_invalid');
   const fourteen = await get('ben', '?from=2026-10-16&to=2026-10-29');
   assert.equal(fourteen.status, 200, `${CREW_SCHEDULE_MAX_DAYS} days is the most one request reads`);

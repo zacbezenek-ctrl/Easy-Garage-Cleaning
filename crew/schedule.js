@@ -2,12 +2,12 @@
   'use strict';
   // CREW-SCHEDULE (WP6, owner decision D6 2026-10-17): the crew's own schedule, read only, from /api/crew-schedule.
   // Today or the next 7 days, per day: time, customer first name and city, crew and lead. A row opens the job page only
-  // when the server says this viewer may open it (canOpen). A team lead, manager or owner (schedule.view, or business
-  // access with EGC_STAFF_ROLE_ACCESS off) reads every crew and picks a crew; everyone else reads their own crews.
-  // Nothing here is stored on the phone except the chosen view (range and crew) in this browser.
+  // when the server says this viewer may open it (canOpen). A team lead, manager or owner (schedule.view: the role, or
+  // business access) reads every crew and picks a crew; everyone else reads their own crews. Nothing here is stored on
+  // the phone except the chosen view (range and crew) and whether this person last read every crew, in this browser.
   const API = '/api/crew-schedule', TIMEOUT = 30000, TZ = 'America/Denver', PREF = 'egc.crew-schedule.v1';
   const DATE = /^\d{4}-\d{2}-\d{2}$/, ID = /^[A-Za-z0-9_-]{1,180}$/;
-  const S = { range: 'today', crew: 'all', scope: '', data: null, loading: false, error: '', signedOut: false, seq: 0, loadedAt: '' };
+  const S = { range: 'today', crew: 'all', scope: '', viewsAll: '', data: null, loading: false, error: '', signedOut: false, disabled: false, seq: 0, loadedAt: '' };
   const main = document.getElementById('schedule-main');
 
   function h(tag, props, ...children) {
@@ -26,14 +26,22 @@
   const clock = time => { const m = /^(\d{2}):(\d{2})/.exec(time || ''); return m ? `${Number(m[1]) % 12 || 12}:${m[2]} ${Number(m[1]) < 12 ? 'AM' : 'PM'}` : ''; };
   const shownDates = () => { const from = today(); return { from, to: S.range === 'week' ? addDays(from, 6) : from }; };
   const offline = () => navigator.onLine === false;
-  // Display hint only (crew/hub-auth.js keeps the capabilities /api/hub-auth reported); the server decides.
+  const signedUser = () => { try { return String(window.EGCHubAuth?.profile?.()?.user || '').trim().toLowerCase(); } catch { return ''; } };
+  // Display hint only, so the first read asks for the right scope; the server decides. crew/hub-auth.js keeps the
+  // capabilities /api/hub-auth reported (schedule.view is listed only with EGC_STAFF_ROLE_ACCESS on), and this browser
+  // remembers who last read every crew here, so a team lead's later opens make one read, not two.
   function viewsAllHint() {
-    try { const profile = window.EGCHubAuth?.profile?.(); return Boolean(profile && (profile.businessAccess === true || (profile.capabilities || []).includes('schedule.view'))); } catch { return false; }
+    try { const profile = window.EGCHubAuth?.profile?.(); return Boolean(profile && (profile.businessAccess === true || (profile.capabilities || []).includes('schedule.view') || S.viewsAll && S.viewsAll === signedUser())); } catch { return false; }
   }
   function readPrefs() {
-    try { const saved = JSON.parse(localStorage.getItem(PREF) || 'null'); if (saved && ['today', 'week'].includes(saved.range)) S.range = saved.range; if (saved && typeof saved.crew === 'string' && saved.crew.length <= 200) S.crew = saved.crew; } catch { /* Defaults apply. */ }
+    try {
+      const saved = JSON.parse(localStorage.getItem(PREF) || 'null');
+      if (saved && ['today', 'week'].includes(saved.range)) S.range = saved.range;
+      if (saved && typeof saved.crew === 'string' && saved.crew.length <= 200) S.crew = saved.crew;
+      if (saved && typeof saved.viewsAll === 'string' && saved.viewsAll.length <= 120) S.viewsAll = saved.viewsAll;
+    } catch { /* Defaults apply. */ }
   }
-  function savePrefs() { try { localStorage.setItem(PREF, JSON.stringify({ range: S.range, crew: S.crew })); } catch { /* The view still works; it is not remembered. */ } }
+  function savePrefs() { try { localStorage.setItem(PREF, JSON.stringify({ range: S.range, crew: S.crew, ...(S.viewsAll ? { viewsAll: S.viewsAll } : {}) })); } catch { /* The view still works; it is not remembered. */ } }
 
   const rowOk = row => Boolean(row) && ID.test(row.id || '') && Array.isArray(row.days) && row.days.every(day => DATE.test(day)) && typeof row.canOpen === 'boolean' && typeof row.mine === 'boolean';
   const valid = data => Boolean(data) && data.ok === true && ['mine', 'all'].includes(data.scope) && DATE.test(data.from || '') && DATE.test(data.to || '') && Boolean(data.viewer) && typeof data.viewer.canViewAll === 'boolean'
@@ -65,8 +73,15 @@
     }
     if (seq !== S.seq) return;
     S.loading = false;
-    if (data) { S.data = data; S.scope = data.viewer.canViewAll ? 'all' : 'mine'; S.signedOut = false; S.loadedAt = new Date().toISOString(); if (data.scope !== S.scope) return load(); }
-    else { S.signedOut = error.status === 401; S.error = error.message; if (S.signedOut) S.data = null; }
+    if (data) {
+      S.data = data; S.scope = data.viewer.canViewAll ? 'all' : 'mine'; S.signedOut = false; S.disabled = false; S.loadedAt = new Date().toISOString();
+      const viewsAll = data.viewer.canViewAll ? signedUser() : '';
+      if (viewsAll !== S.viewsAll) { S.viewsAll = viewsAll; savePrefs(); }
+      if (data.scope !== S.scope) return load();
+    } else {
+      // EGC_CREW_SCHEDULE=false: the schedule is off; say so once, with nothing to retry.
+      S.signedOut = error.status === 401; S.disabled = error.code === 'crew_schedule_disabled'; S.error = error.message; if (S.signedOut || S.disabled) S.data = null;
+    }
     render();
   }
 
@@ -135,6 +150,10 @@
       h('p', { class: 'sub' }, from === to ? dayLabel(from) : `${dayLabel(from, { weekday: 'short', month: 'short', day: 'numeric' })} – ${dayLabel(to, { weekday: 'short', month: 'short', day: 'numeric' })}`, ' · Mountain Time'));
     if (S.signedOut) {
       nodes.push(h('section', { class: 'card' }, h('h2', {}, 'Sign in first'), h('p', {}, 'Sign in to the crew app, then come back to the schedule.'), h('a', { class: 'btn primary', href: '/crew/?next=%2Fcrew%2Fschedule' }, 'Sign in')));
+      main.replaceChildren(...nodes); return;
+    }
+    if (S.disabled) {
+      nodes.push(h('section', { class: 'card', role: 'status' }, h('h2', {}, 'Schedule is off'), h('p', {}, S.error), h('a', { class: 'btn primary', href: '/crew/' }, 'Back to crew home')));
       main.replaceChildren(...nodes); return;
     }
     nodes.push(controls(data));

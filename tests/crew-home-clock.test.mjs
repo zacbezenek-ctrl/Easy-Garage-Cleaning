@@ -15,13 +15,13 @@ const script = home.slice(home.lastIndexOf('<script>') + '<script>'.length, home
 const ENTRY = { id: 'time-crew.one-abc123', employee: 'Crew.One', status: 'active', clockInAt: '2026-10-16T15:00:00.000Z', breaks: [], lastLocation: { lat: 40.5, lng: -105.1 }, locationStatus: 'job_page_single_fix', hourlyRate: 20 };
 
 function crewHome({ business = false, online = true, position = 'ok', withoutFix = false, active = null, refuse = null, confirm = true, indexedDB = undefined, down = false } = {}) {
-  const nodes = new Map(), posts = [], reads = [], server = { active, withoutFix, down };
+  const nodes = new Map(), posts = [], reads = [], listeners = {}, server = { active, withoutFix, down };
   const element = id => { if (!nodes.has(id)) nodes.set(id, { id, hidden: false, textContent: '', innerHTML: '', className: '', dataset: { businessHref: '/crew/prejob' }, setAttribute() {}, classList: { toggle() {} } }); return nodes.get(id); };
   const geolocation = { getCurrentPosition(resolve, reject) { if (position === 'ok') resolve({ coords: { latitude: 40.5852601, longitude: -105.0844233, accuracy: 12.4 } }); else reject(Object.assign(new Error(position), { code: position === 'denied' ? 1 : 2 })); } };
   const respond = (status, body) => new Response(JSON.stringify(body), { status, headers: { 'Content-Type': 'application/json' } });
   const context = vm.createContext({
     Date, Intl, URLSearchParams, Promise, Set, Map, Number, String, Array, Math, JSON, Object, Error, TypeError, Boolean, encodeURIComponent, console, AbortSignal, Response,
-    location: { search: '' }, navigator: { onLine: online, geolocation }, addEventListener() {}, confirm: () => confirm, crypto: { randomUUID }, indexedDB,
+    location: { search: '' }, navigator: { onLine: online, geolocation }, addEventListener(type, listener) { listeners[type] = listener; }, confirm: () => confirm, crypto: { randomUUID }, indexedDB,
     document: { getElementById: element },
     // The outbox's transport: the session check, the own-shift view and the timecard write, as on the job page.
     async fetch(url, init = {}) {
@@ -50,7 +50,7 @@ function crewHome({ business = false, online = true, position = 'ok', withoutFix
   context.window = context;
   vm.runInContext(outbox, context);
   vm.runInContext(script, context);
-  return { context, card: () => element('crew-overview').innerHTML, posts, reads, server };
+  return { context, card: () => element('crew-overview').innerHTML, posts, reads, server, listeners };
 }
 
 test('a crew member clocks in from the crew home with one location fix, through the same outbox and timecard write as Today’s work', async () => {
@@ -127,11 +127,41 @@ test('a refused clock-in is reported and dropped; managers, offline phones and p
   assert.equal(manager.posts.length, 0, 'managers clock in from the employee time clock, as on the job page');
   const offline = crewHome({ online: false });
   await offline.context.openCrewHome();
-  assert.match(offline.card(), /<button type="button" class="clock-btn" onclick="crewClock\('clock_in'\)" disabled>Clock in<\/button><small class="clock-note">Connect to clock in or out here\.<\/small>/);
+  assert.match(offline.card(), /<button type="button" class="clock-btn" onclick="crewClock\('clock_in'\)" disabled>Clock in<\/button><small class="clock-note" role="status">Connect to clock in or out here\.<\/small>/);
   await offline.context.crewClock('clock_in');
   assert.equal(offline.posts.length, 0);
   assert.match(home, /<script src="\/crew\/field-outbox\.js\?v=20260929crewtime2"><\/script>/, 'the home loads the same outbox build the job page and worker use');
   assert.ok(home.indexOf('field-outbox.js') < home.lastIndexOf('<script>'), 'before the page script');
+});
+
+test('a quick double tap clocks in once: the button is busy before the first wait, as on the job page', async () => {
+  const page = crewHome({ indexedDB: fakeIndexedDB() });
+  await page.context.openCrewHome();
+  await Promise.all([page.context.crewClock('clock_in'), page.context.crewClock('clock_in')]);
+  assert.equal(page.posts.length, 1, 'the second tap queues nothing');
+  assert.equal((await page.context.window.EGCFieldOutbox.create().items('Crew.One')).length, 0, 'and leaves no refused clock-in to block the home');
+  assert.match(page.card(), /<strong>Clocked in<\/strong>.*Clocked in\. Your location was shared once/);
+  const out = crewHome({ active: { ...ENTRY } });
+  await out.context.openCrewHome();
+  await Promise.all([out.context.crewClock('clock_out'), out.context.crewClock('clock_out')]);
+  assert.equal(out.posts.length, 1);
+});
+
+test('losing the connection disables the clock buttons at once and says why; a tap then sends nothing', async () => {
+  const page = crewHome();
+  await page.context.openCrewHome();
+  assert.match(page.card(), /onclick="crewClock\('clock_in'\)">Clock in<\/button>/, 'online: enabled');
+  page.context.navigator.onLine = false;
+  page.listeners.offline();
+  assert.match(page.card(), /onclick="crewClock\('clock_in'\)" disabled>Clock in<\/button><small class="clock-note" role="status">Connect to clock in or out here\.<\/small>/);
+  await page.context.crewClock('clock_in');
+  assert.equal(page.posts.length, 0);
+  assert.match(page.card(), /disabled>Clock in<\/button><small class="clock-note" role="status">Connect to clock in or out here\.<\/small>/, 'the tap is answered, not ignored');
+  // Before the overview has loaded, going offline leaves the loading card alone.
+  const early = crewHome();
+  early.context.navigator.onLine = false;
+  early.listeners.offline();
+  assert.equal(early.card(), '');
 });
 
 test('a time action the connection dropped stays on this phone and is sent once, in order, when the crew home opens online', async () => {
