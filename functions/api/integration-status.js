@@ -12,6 +12,10 @@ import { serverScheduleSyncActive } from '../_lib/schedule-sync-queue.js';
 import { firebaseRevocations, firebaseRevocationStatus, reconcilesStaffRoster } from '../_lib/firebase-revocation.js';
 import { staffPageGateState } from '../_lib/staff-page-gate.js';
 import { staffDirectoryEnabled } from '../_lib/staff-directory.js';
+import { customerCalendars } from '../_lib/highlevel-calendars.js';
+import { schedulePipeline } from '../_lib/highlevel-pipeline.js';
+import { ghlScheduleMirrorEnabled, scheduleMirrorStatus, scheduleMirrorStorage } from '../_lib/ghl-schedule-mirror.js';
+import { canDispatch } from '../_lib/dispatch-permissions.js';
 
 /** Returns configuration readiness and a bounded Firebase read check. Secret
  * values and Firestore documents never leave the server. Business users also
@@ -20,8 +24,14 @@ import { staffDirectoryEnabled } from '../_lib/staff-directory.js';
  * and, on the production host only, reconciles removed or changed staff after
  * the response (context.waitUntil), including employee accounts whose stored
  * manager role gives them business access. With EGC_SCHEDULE_SYNC_WORKER on, it also
- * reads the schedule-sync worker's last check-in (3 s cap). */
-export function integrationStatusHandlers({session=getHubSession,revocations=firebaseRevocations,scheduleSync=serverScheduleSyncActive,firebaseRead=firebaseReadStatus,now=()=>new Date()}={}){
+ * reads the schedule-sync worker's last check-in (3 s cap). D9b: once HighLevel is configured, highlevelJobCalendar
+ * says whether the optional, env-only jobs calendar is configured (without one, job visits skip the calendar mirror;
+ * that holds whatever the mirror flag says). With EGC_GHL_SCHEDULE_MIRROR on, ghlScheduleMirror is true and business
+ * users also get the mirror's queue counts (parked, needing a person in HighLevel, overdue, the drain worker's last
+ * run; 3 s cap, 'unavailable' otherwise) and canRetry (dispatch.write, for its Retry). Flag off: no mirror key is read
+ * or sent. */
+const mirrorState=env=>{const store=scheduleMirrorStorage(env);return scheduleMirrorStatus(store,new Date().toISOString());};
+export function integrationStatusHandlers({session=getHubSession,revocations=firebaseRevocations,scheduleSync=serverScheduleSyncActive,firebaseRead=firebaseReadStatus,mirrorStatus=mirrorState,now=()=>new Date()}={}){
   return {async get(context){
   const {request,env}=context;
   const viewer=await session(request,env);
@@ -35,12 +45,15 @@ export function integrationStatusHandlers({session=getHubSession,revocations=fir
   const normalized=(...keys)=>{const wanted=keys.map(key=>key.toLowerCase().replace(/[^a-z0-9]/g,''));return Object.entries(env||{}).some(([key,value])=>Boolean(value)&&wanted.includes(key.toLowerCase().replace(/[^a-z0-9]/g,'')))};
   const defer=typeof context.waitUntil==='function'?work=>context.waitUntil(work):null;
   const profiles=business&&reconcilesStaffRoster(request.url)?()=>listHubAccessProfiles(env):null;
+  const mirrored=ghlScheduleMirrorEnabled(env);
+  const bounded=work=>{let timer;return Promise.race([Promise.resolve().then(work),new Promise(resolve=>{timer=setTimeout(()=>resolve({state:'unavailable'}),3000);})]).catch(()=>({state:'unavailable'})).finally(()=>clearTimeout(timer));};
   const checks=Promise.all([
     scheduleSync(env,{now:now()}),
     business?firebaseRevocationStatus(revocations(env),profiles,now().toISOString(),{defer}):null,
-    firebaseReadPromise
+    firebaseReadPromise,
+    business&&mirrored?bounded(()=>mirrorStatus(env)):null
   ]);
-  const [scheduleSyncState,revocationState,firebaseReadState]=await checks;
+  const [scheduleSyncState,revocationState,firebaseReadState,mirrorQueue]=await checks;
   const status={
     firebase:firebaseServiceAccountConfigured(env),
     employeeAccounts:employeeAccountsConfigured(env),
@@ -63,6 +76,14 @@ export function integrationStatusHandlers({session=getHubSession,revocations=fir
     // mirrors. Off, silent or unreadable: false, and page loads retry as before.
     serverScheduleSync:scheduleSyncState
   };
+  // D9b: the jobs calendar is an optional mirror (env-only, live whatever the mirror flag says); false means job visits
+  // skip the calendar mirror. Only once HighLevel is configured (or the mirror is on): before that it says nothing.
+  if(status.highlevel||mirrored)status.highlevelJobCalendar=Boolean(customerCalendars(env||{}).jobCalendarId);
+  if(mirrored){
+    const pipeline=schedulePipeline(env);
+    status.ghlScheduleMirror=true;
+    if(business)status.ghlScheduleMirrorState={...(mirrorQueue||{state:'unavailable'}),pipelineConfigured:Boolean(pipeline.pipelineId&&pipeline.walkthroughStageId&&pipeline.jobScheduledStageId),canRetry:canDispatch(viewer,env)};
+  }
   // OPS-08: once EGC_STAFF_PAGE_GATE is set, whether the edge gates the staff pages; a value that is neither on nor
   // off leaves them public, so business users also see that value to correct it.
   if(typeof env?.EGC_STAFF_PAGE_GATE==='string'&&env.EGC_STAFF_PAGE_GATE.trim()){

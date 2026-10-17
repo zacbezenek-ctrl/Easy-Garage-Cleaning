@@ -6,6 +6,7 @@ import { travelEstimator } from '../_lib/dispatch-travel.js';
 import { dispatchFunnelOptions } from '../_lib/dispatch-funnel.js';
 import { crewRosterPhotoStore } from '../_lib/crew-public-profile.js';
 import { firstGhlTagAttempt } from '../_lib/ghl-tag-outbox.js';
+import { firstScheduleMirrorAttemptFor } from '../_lib/ghl-schedule-mirror.js';
 import { can, staffRoleAccessEnabled } from '../_lib/staff-roles.js';
 import { crewAutoAssignEnabled } from '../_lib/dispatch-crew-assign.js';
 
@@ -64,7 +65,7 @@ async function customerHandoff(store, shown, jobId, env) {
 // A schedule.book holder (EGC_STAFF_ROLE_ACCESS, dispatch-booking.js) reads the
 // board and saves only what mutateBooking allows; everyone else needs dispatch.write.
 // Its viewer carries booker:true, so the board hides the crew controls it cannot save.
-export function dispatchHandlers({ session = getHubSession, storage = dispatchStorage, travel = travelEstimator, now = () => new Date(), ghlTags = firstGhlTagAttempt } = {}) {
+export function dispatchHandlers({ session = getHubSession, storage = dispatchStorage, travel = travelEstimator, now = () => new Date(), ghlTags = firstGhlTagAttempt, ghlMirror = firstScheduleMirrorAttemptFor } = {}) {
   return {
     async get({request,env}) {
       try {
@@ -95,6 +96,9 @@ export function dispatchHandlers({ session = getHubSession, storage = dispatchSt
         // EGC_GHL_TAG_OUTBOX: the HighLevel tags this save queued get their first attempt after the response.
         const entry = result.job?.ghlTagEntry;
         if (entry?.id && entry.requestId === String(input.requestId).toLowerCase()) ghlTags({env,waitUntil},[entry.id],at);
+        // EGC_GHL_SCHEDULE_MIRROR (D9b): the HighLevel schedule mirror this save queued gets its first attempt after the
+        // response; the egc-worker drain retries it. Flag off: nothing is read or sent.
+        await ghlMirror({env,waitUntil},result.job?.id,input.requestId,at).catch(() => false);
         return reply(200,result);
       } catch(error) { return errorResponse(error); }
     },

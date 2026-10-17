@@ -875,8 +875,9 @@ test('open-shift scheduling fields persist on the canonical job record',()=>{
   // staff-role capabilities; (WT-OUTCOME after SALES-BOOKING) one combined tag; (MOBILE-HUB) the view title carries a title
   // attribute, business users get RUN THE BUSINESS first and a crew member who is not clocked in sees the time clock above
   // Today's jobs; (MOBILE-HUB after WT-OUTCOME) one combined tag; (TEAM-DIRECTORY, D10) the Team directory nav entry, the
-  // profile form's two emergency contact fields and the onboarding form's shirt size and birthday.
-  assert.match(employee,/employee-suite\.js\?v=20261017team1"/);
+  // profile form's two emergency contact fields and the onboarding form's shirt size and birthday; (D9b GHL schedule mirror)
+  // calendar-mirror-skipped badges and the schedule mirror and optional jobs calendar rows on Integrations.
+  assert.match(employee,/employee-suite\.js\?v=20261017mirrorteam"/);
 });
 
 test('recurring visits request a server-side handoff clone instead of copying prior execution or payments',()=>{

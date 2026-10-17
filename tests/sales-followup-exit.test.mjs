@@ -231,10 +231,12 @@ test('reserved sales-exit lifecycle names are rejected before any external side 
 test('verified EGC staff calendars supply defaults only for EGC and bypass public booking hours only for those IDs', async () => {
   assert.deepEqual(customerCalendars({ HIGHLEVEL_LOCATION_ID: 'other' }), { jobCalendarId: '', walkthroughCalendarId: '' });
   const egc = { ...managerEnv, HIGHLEVEL_LOCATION_ID: 'KlgLwRaQSPz5G1YXsmc6', HIGHLEVEL_JOB_CALENDAR_ID: '', HIGHLEVEL_WALKTHROUGH_CALENDAR_ID: '' };
-  assert.deepEqual(customerCalendars(egc), { jobCalendarId: EGC_JOB_CALENDAR, walkthroughCalendarId: EGC_WALKTHROUGH_CALENDAR });
+  // D9b: the EGC jobs calendar was deleted in HighLevel (2026-10-17), so it is never a default; the walkthrough calendar keeps its default.
+  assert.deepEqual(customerCalendars(egc), { jobCalendarId: '', walkthroughCalendarId: EGC_WALKTHROUGH_CALENDAR });
+  assert.deepEqual(customerCalendars({ ...egc, HIGHLEVEL_JOB_CALENDAR_ID: EGC_JOB_CALENDAR }).jobCalendarId, EGC_JOB_CALENDAR, 'only when configured');
   const original = globalThis.fetch;
   try {
-    for (const scenario of [{ type: 'job', id: EGC_JOB_CALENDAR }, { type: 'walkthrough', id: EGC_WALKTHROUGH_CALENDAR }, { type: 'job', override: 'configured-public-calendar', id: 'configured-public-calendar' }]) {
+    for (const scenario of [{ type: 'job', id: null }, { type: 'job', env: { HIGHLEVEL_JOB_CALENDAR_ID: EGC_JOB_CALENDAR }, id: EGC_JOB_CALENDAR }, { type: 'walkthrough', id: EGC_WALKTHROUGH_CALENDAR }, { type: 'job', override: 'configured-public-calendar', id: 'configured-public-calendar' }]) {
       let body;
       globalThis.fetch = async (input, init = {}) => {
         const url = new URL(input);
@@ -242,8 +244,10 @@ test('verified EGC staff calendars supply defaults only for EGC and bypass publi
         if (url.pathname === '/calendars/events') return Response.json({ events: [] });
         return Response.json({});
       };
-      const response = await onRequestPost({ env: egc, request: handoffRequest({ tool: 'schedule', event_type: scenario.type, calendar_id: scenario.override, start_time: '2026-09-10T16:00:00Z', end_time: '2026-09-10T18:00:00Z', silent_update: true, notify: false, client: { highlevel_contact_id: 'contact-1' } }) });
-      assert.equal(response.status, 200); assert.equal(body.calendarId, scenario.id);
+      const response = await onRequestPost({ env: { ...egc, ...scenario.env }, request: handoffRequest({ tool: 'schedule', event_type: scenario.type, calendar_id: scenario.override, start_time: '2026-09-10T16:00:00Z', end_time: '2026-09-10T18:00:00Z', silent_update: true, notify: false, client: { highlevel_contact_id: 'contact-1' } }) });
+      assert.equal(response.status, 200);
+      if (!scenario.id) { assert.equal(body, undefined, 'no jobs calendar: the appointment write is skipped'); assert.deepEqual((await response.json()).calendarMirror, { status: 'skipped', reason: 'calendar_not_configured' }); continue; }
+      assert.equal(body.calendarId, scenario.id);
       assert.equal(body.ignoreFreeSlotValidation, scenario.override ? undefined : true);
       assert.equal(body.toNotify, false);
     }
@@ -257,11 +261,21 @@ test('resaving an accepted Game Plan never re-adds quote persuasion tags', () =>
   assert.equal(signals.filter(row => row.tags.includes('egc-garage-sales-exit')).length, 1);
 }));
 
-test('valid saved acceptance still exits sales when an unrelated calendar operation fails', () => fixture(async ({ signals }) => {
+test('valid saved acceptance still exits sales when an unrelated calendar operation fails', () => fixture(async ({ signals, calls }) => {
   const payload = { tool: 'game_plan', job_id: 'job-1', opportunity_id: 'opp-1', client: { highlevel_contact_id: 'contact-1' }, quote: { total: 900, job_date: '2026-09-10', start_time: '10:00', end_time: '12:00' } };
-  const response = await onRequestPost({ env: { ...managerEnv, HIGHLEVEL_JOB_CALENDAR_ID: '' }, request: handoffRequest(payload) }), result = await response.json();
+  // The configured jobs calendar's appointment request fails outright (the fixture refuses it).
+  const response = await onRequestPost({ env: managerEnv, request: handoffRequest(payload) }), result = await response.json();
   assert.equal(response.status, 502); assert.equal(result.salesFollowupExit.status, 'signalled');
   assert.equal(signals.filter(row => row.tags.includes('egc-garage-sales-exit')).length, 1);
+  // D9b: with no jobs calendar the calendar mirror is skipped, not failed, and the exit is still signalled once.
+  const before = calls.length;
+  const skipped = await onRequestPost({ env: { ...managerEnv, HIGHLEVEL_JOB_CALENDAR_ID: '' }, request: handoffRequest(payload) }), body = await skipped.json();
+  assert.deepEqual([skipped.status, body.calendarMirror, body.automation.calendarSkipped, body.salesFollowupExit.status], [200, { status: 'skipped', reason: 'calendar_not_configured' }, true, 'signalled']);
+  // Like tool=schedule: no Scheduled stage move without an appointment (the linked deal may already be further along).
+  assert.deepEqual(body.pipeline, { updated: false, reason: 'calendar-mirror-skipped' });
+  assert.equal(calls.slice(before).some(call => call.url.pathname.startsWith('/opportunities') && call.method !== 'GET'), false, 'no opportunity write');
+  assert.equal(signals.filter(row => row.tags.includes('egc-garage-sales-exit')).length, 1);
+  assert.equal(signals.some(row => row.tags.includes('egc-job-scheduled')), false, 'no booking tag without an appointment');
 }));
 
 test('foreign or unlinked opportunities are never moved, and walkthrough booking never advances service stage', async () => {

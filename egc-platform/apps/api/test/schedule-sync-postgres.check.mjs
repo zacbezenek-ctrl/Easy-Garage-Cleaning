@@ -73,7 +73,7 @@ const tick=()=>{const operations=service();return runScheduleSyncTick({execute:(
 // MCP egc.schedule_visit never uses the visit key: it syncs under its own requestId (mcpSync below).
 const pageSync=(portalVisitId,requestId)=>service().execute(PAGE,{command:'schedule.sync_provider',portalVisitId,requestId,runAutomations:true},randomUUID());
 const pageErrorWrite=(id,retryAt)=>set(id,{syncStatus:'error',syncError:'HighLevel sync failed',syncNextRetryAt:retryAt,syncAttempts:1,syncLastAttemptAt:iso(),updatedAt:iso()});
-const counts=extra=>({due:0,selected:0,synced:0,notNeeded:0,failed:0,conflicts:0,stateConflicts:0,unrecorded:0,deferred:0,complete:true,heartbeat:true,...extra});
+const counts=extra=>({due:0,selected:0,synced:0,notNeeded:0,calendarSkipped:0,failed:0,conflicts:0,stateConflicts:0,unrecorded:0,deferred:0,complete:true,heartbeat:true,...extra});
 
 test('reruns never repeat a provider write and a multi-day visit is mirrored with its true end',async()=>{
  seed(visit('single'),visit('multi-day',{date:'2026-10-30',time:'08:00',endDate:'2026-11-02',endTime:'12:00'}));

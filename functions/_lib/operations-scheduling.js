@@ -10,6 +10,7 @@ import {customerIdentityFields,withCustomerSearchKeys} from './customer-identity
 import {segmented} from './dispatch-segments.js';
 import {crewNotificationWrites,crewNotificationsEnabled} from './crew-notifications.js';
 import {ghlTagOutboxEnabled,scheduleTagWrites} from './ghl-tag-outbox.js';
+import {ghlScheduleMirrorEnabled,scheduleMirrorWrites} from './ghl-schedule-mirror.js';
 import {reasonInput,cancelPatch,visitFunnelWrites,requestKey,eventActor,eventVia,defaultVisitPurpose} from './dispatch-funnel.js';
 import {eventDimensions,firstPlacementDimensions,legacyDimensionFacts,projectDimensionPatch,resolveDimensions,visitDimensionFacts} from './funnel-dimensions.js';
 import {commitConflict,commitFailure} from './firestore-errors.js';
@@ -47,6 +48,8 @@ export function schedulingStorage(env,fetcher=firestoreFetch){return{
   ghlTagOutbox:ghlTagOutboxEnabled(env),
   // EGC_DISPATCH_CREW_AUTO_ASSIGN: a job this writer places without a crew gets the first free eligible crew (dispatch-crew-assign.js).
   crewAutoAssign:crewAutoAssignEnabled(env),
+  // EGC_GHL_SCHEDULE_MIRROR (D9b): bridge schedule changes queue their HighLevel schedule mirror in the same commit (ghl-schedule-mirror.js).
+  ghlScheduleMirror:ghlScheduleMirrorEnabled(env),
   legacyBlockedDays:dates=>dispatchStorage(env,fetcher).legacyBlockedDays(dates),
   async customers(providerId){const r=await fetcher(env,`${URL}:runQuery`,{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({structuredQuery:{from:[{collectionId:'customers'}],where:{fieldFilter:{field:{fieldPath:'highlevelContactId'},op:'EQUAL',value:{stringValue:providerId}}},limit:3}}),signal:AbortSignal.timeout(15000)});if(!r.ok)throw failure('schedule_source_unavailable',503);const rows=await r.json();if(!Array.isArray(rows))throw failure('schedule_source_incomplete',503);return rows.filter(x=>x.document).map(x=>fromDoc(x.document));},
   async read(collection,id){const r=await fetcher(env,`${URL}/${collection}/${encodeURIComponent(id)}`,{signal:AbortSignal.timeout(15000)});if(r.status===404)return null;if(!r.ok)throw failure('schedule_source_unavailable',503);return fromDoc(await r.json());},
@@ -246,6 +249,7 @@ export async function mutateScheduledVisit(store,actor,input,now=new Date().toIS
   if(store.crewNotificationsEnabled===true)writes.push(...await crewNotificationWrites({jobId:id,requestId:input.requestId,action:`schedule.${input.mode}`,actorId:actor.id,type:next.type,before:current,after:next,roster,now,baseRevision:current?.revision}));
   const tags=store.ghlTagOutbox===true?await scheduleTagWrites({jobId:id,before:current,after:{...current,...patch},action:`schedule.${input.mode}`,requestId:input.requestId,now,source:'bridge'}):null;
   if(tags){patch.ghlTagEntry=tags.pointer;writes.push(tags.write);}
+  writes.push(...await scheduleMirrorWrites(store,{jobId:id,before:current,after:{...current,...patch},action:`schedule.${input.mode}`,requestId:input.requestId,now,source:'bridge',roster,resources}));
   try{await store.commit(writes);}catch(error){const receipt=await store.read('jobs',receiptId).catch(()=>null);if(!receipt||receipt.fingerprint!==hash)throw error;}
   const saved=await store.read('jobs',id);
   if(!saved||await digest(scheduleState(saved))!==await digest(scheduleState(next)))throw failure('schedule_changed_since_operation');
@@ -282,7 +286,8 @@ export async function bindScheduledProvider(store,actor,input,now=new Date().toI
     }
     throw failure('schedule_provider_state_conflict');
   }
-  const patch={highlevelAppointmentId:event.id,highlevelCalendarId:event.calendarId||'',providerAppointmentStatus:providerStatus,syncStatus:'synced',syncedAt:now,updatedAt:now};
+  // D9b: a verified appointment ends an earlier "calendar mirror skipped" (only a visit that carries one gains the field).
+  const patch={highlevelAppointmentId:event.id,highlevelCalendarId:event.calendarId||'',providerAppointmentStatus:providerStatus,syncStatus:'synced',syncedAt:now,updatedAt:now,...(current.calendarMirror?{calendarMirror:null}:{})};
   if(receipt){
     // A replayed operation proves the same verified provider state. A later unconditional
     // page write (syncStatus 'error' under the same key) is healed here, never left to loop.

@@ -13,6 +13,9 @@ const TAG_OUTBOX = 'functions/_lib/ghl-tag-outbox.js', HL_TAGS = 'functions/_lib
 const OUTBOX_SCHEDULE = ['functions/_lib/dispatch-service.js', 'functions/_lib/operations-scheduling.js', 'functions/api/dispatch.js', 'functions/api/ghl-tag-drain.js'], OUTBOX_OUTCOME = ['functions/_lib/walkthrough-visit.js', 'functions/api/walkthrough-visit.js', 'functions/api/ghl-tag-drain.js'];
 const OUTBOX_WHEN = 'GHL-TRACK-1, only with EGC_GHL_TAG_OUTBOX=true (off): queued in the commit of the change, then added by the first attempt after the save or the egc-worker drain (EGC_GHL_TAG_DRAIN_ENABLED)';
 const HANDOFF_DOC = 'docs/highlevel-sales-handoff.md', ROUTING_DOC = 'docs/ghl-live-routing-2026-09-20.md';
+// D9b: the HighLevel schedule mirror (off unless EGC_GHL_SCHEDULE_MIRROR=true): contact, EGC Pipeline stage and a schedule note, no calendar needed.
+const SCHEDULE_MIRROR = 'functions/_lib/ghl-schedule-mirror.js', MIRROR_WRITERS = ['functions/_lib/dispatch-service.js', 'functions/_lib/operations-scheduling.js', 'functions/api/ghl-tag-drain.js'];
+const MIRROR_WHEN = 'D9b schedule mirror, only with EGC_GHL_SCHEDULE_MIRROR=true (off): queued in the commit of a dispatch or bridge schedule change (the dispatch-service call site is scheduleMirrorWrites), then delivered by the first attempt or the signed egc-worker drain (EGC_GHL_TAG_DRAIN_ENABLED); never a tag, appointment or message';
 const COMMUNICATION = 'egc-platform/services/operations/src/communication-execution.ts', SCHEDULING = 'egc-platform/apps/api/src/scheduling.ts', NOTE_OUTBOX = 'egc-platform/services/operations/src/note-outbox.ts';
 
 const write = (file, via, when, automatic) => ({ file, via, when, automatic });
@@ -35,7 +38,7 @@ const deepFreeze = value => { if (value && typeof value === 'object') { Object.v
 
 export const AUTOMATION_REGISTRY = deepFreeze({
   schemaVersion: 1,
-  registryVersion: '2026-10-15.1',
+  registryVersion: '2026-10-17.1',
   timeZone: 'America/Denver',
   ghlLocationId: 'KlgLwRaQSPz5G1YXsmc6',
   sources: {
@@ -106,10 +109,17 @@ export const AUTOMATION_REGISTRY = deepFreeze({
     trigger('opportunity:created', 'opportunity_created', 'Opportunity created', [
       write(WEB_LEAD_INTAKE, [WEB_LEAD, 'fb-capture.js', MESSAGING_CRON], 'website lead when HIGHLEVEL_PIPELINE_ID is set (new-lead stage); a late cron retry never creates one for an existing contact', true),
       write(HL, [SUITE, HANDOFF], 'advanceOpportunity when the contact has no open opportunity', true),
+      write(SCHEDULE_MIRROR, MIRROR_WRITERS, `${MIRROR_WHEN}: one opportunity per customer job (project), created at Walkthrough Appointment or Job Scheduled only through the create-only POST /opportunities/ (never upsert) and only when a search of every status finds no opportunity for the contact in the EGC Pipeline`, true),
       write(MCP, [], 'MCP opportunities.create (explicit user authorization)', false)]),
     trigger('opportunity_stage:scheduled', 'opportunity_stage', 'Pipeline stage Scheduled (06b78f36-b53d-4028-9e36-b41ac4d2da09)', [
       write(HL, [SUITE, HANDOFF], 'job booking sync and a Game Plan with a job date', true),
       write(MCP, [], 'MCP opportunities.update with a stage change (explicit user authorization)', false)]),
+    trigger('opportunity_stage:walkthrough_appointment', 'opportunity_stage', 'Pipeline stage Walkthrough Appointment (f14b91c5-a452-4e11-b0f9-bfcdd354b849)', [
+      write(SCHEDULE_MIRROR, MIRROR_WRITERS, `${MIRROR_WHEN}: a walkthrough booked, moved or given an estimator moves the customer job's one opportunity forward to this stage (never back from a later stage, never a closed or ambiguous one)`, true)],
+      'D9b: new Hub write. A Pipeline Stage Changed workflow on this stage could message the customer; audit before EGC_GHL_SCHEDULE_MIRROR (LAUNCH-ACCEPTANCE gate 2).'),
+    trigger('opportunity_stage:job_scheduled', 'opportunity_stage', 'Pipeline stage Job Scheduled (9e14286c-0c24-4773-b403-790e7bbc68de)', [
+      write(SCHEDULE_MIRROR, MIRROR_WRITERS, `${MIRROR_WHEN}: a job, cleanout or reorg scheduled, moved or given a crew moves the customer job's one opportunity forward to this stage (never back from a later stage such as Paid in Full)`, true)],
+      'D9b: new Hub write. A Pipeline Stage Changed workflow on this stage could message the customer; audit before EGC_GHL_SCHEDULE_MIRROR (LAUNCH-ACCEPTANCE gate 2).'),
     trigger('opportunity_stage:walkthrough_complete', 'opportunity_stage', 'Pipeline stage Walkthrough complete (85c56b3e-4886-4fc1-be95-87ad0b0d2bcc)', [write(HL, [HANDOFF], 'Game Plan without a job date', true)]),
     trigger('opportunity_stage:job_complete', 'opportunity_stage', 'Pipeline stage Job complete (0ccca1f9-3ffb-412a-b15a-3f4be1619514)', [write(HL, [SUITE], 'closeout sync (tool=post_job)', true)]),
     trigger('opportunity_status:lost', 'opportunity_status', 'Opportunity status lost', [write(MCP, [], 'MCP opportunities.update with a status change (explicit user authorization)', false)], 'The Hub never writes it today; FUN-12 stays flag-gated on this gate.'),
@@ -117,6 +127,7 @@ export const AUTOMATION_REGISTRY = deepFreeze({
       write(WEB_LEAD_INTAKE, [WEB_LEAD, 'fb-capture.js', 'customer-portal.html', MESSAGING_CRON], 'every website lead and client hub help request (also on a cron retry)', true),
       write(HL, [SUITE, HANDOFF], 'ensureContact when a sync has no linked contact id', true),
       write(HL_TAGS, [HL, TAG_OUTBOX], 'the shared ensureContact (GHL-TRACK-1 moved it here unchanged); the tag outbox calls it only outside a messaging dry run (EGC_MESSAGING_DRY_RUN=false) for a visit whose customer has no linked contact', true),
+      write(HL_TAGS, [SCHEDULE_MIRROR], `${MIRROR_WHEN}: the shared ensureContact, only outside a messaging dry run, for a visit whose customer (and customer job) has no linked contact`, true),
       write('functions/_lib/portal-invitation.js', [HL, 'functions/api/customer-portal-invitation.js'], 'recipient resolution before a portal invitation', true),
       write('functions/_lib/ghl-messenger.js', ['functions/api/messages.js'], 'recipient resolution before an approved send', false),
       write('functions/_lib/ghl-messenger.js', ['functions/_lib/knock-handoff.js'], 'recipient resolution before an admin sends one canvassing sale text', false),
@@ -139,7 +150,8 @@ export const AUTOMATION_REGISTRY = deepFreeze({
       write(HL, [SUITE, HANDOFF, 'crew/prejob.html', 'crew/postjob.html'], 'the Game Plan internal brief, the closeout note, and lifecycle notes (cancellations, communication notes, the verified crew card payment note and the crew-on-the-way note, which is written even when suppress_automation skips the tag)', true),
       write(WEB_LEAD_INTAKE, [WEB_LEAD, 'fb-capture.js', 'customer-portal.html', MESSAGING_CRON], 'the website lead details note and the client hub help note (also on a cron retry)', true),
       write(NOTE_OUTBOX, ['functions/_lib/operations-note-sync.js', FIELD_PAY_SYNC], 'with the operations bridge on, Hub notes and verified FIELD-PAY payment handoffs are written by the provider note outbox', true),
-      write(HL_TAGS, [TAG_OUTBOX], `${OUTBOX_WHEN}: the internal note with the reason code of a walkthrough lost as not interested`, true)]),
+      write(HL_TAGS, [TAG_OUTBOX], `${OUTBOX_WHEN}: the internal note with the reason code of a walkthrough lost as not interested`, true),
+      write(HL_TAGS, [SCHEDULE_MIRROR], `${MIRROR_WHEN}: one internal note per schedule change (date, Denver time window, crew or estimator, address, job breakdown; no prices)`, true)]),
     trigger('contact:task_added', 'task_added', 'Task added to a contact', [
       write(HL, [SUITE], 'tool=post_job: the 6-month garage check-in task after a legacy closeout retry with Hub operations off', true),
       write(CHECKIN, [HL, 'functions/_lib/field-execution-sync.js', 'functions/api/field-jobs.js'], 'GHL-ALIGN: the same 6-month garage check-in task, read back first so it is created once, after a closeout with Hub operations on and the egc-api note verified, or after each verified field completion while the bridge is on (Hub operations and egc-api EGC_OPERATIONS_ENABLED=true); none when egc-api reports its own platform task (EGC_OPERATIONS_CHECKIN_TASKS_ENABLED=true, off)', true)]),
@@ -223,9 +235,10 @@ export const AUTOMATION_REGISTRY = deepFreeze({
       ['contact:upsert', 'contact_field:attribution'], { speedToLead: 'automation_touch', code: [...code(WEB_LEAD_INTAKE, 'ghl_contact_write'), ...code(HL, 'ghl_contact_write'), ...code(HL_TAGS, 'ghl_contact_write')],
         ownerCheck: 'List workflows triggered by Contact Created, Contact Changed or custom-field changes, with their texts.' }),
     unverifiedGhl('ghl.opportunity_workflows', 'HighLevel Opportunity Created / Stage Changed / Status Changed workflows (unverified)', 'Opportunity creation, the Scheduled, Walkthrough complete and Job complete stages, and status lost',
-      ['opportunity:created', 'opportunity_stage:scheduled', 'opportunity_stage:walkthrough_complete', 'opportunity_stage:job_complete', 'opportunity_status:lost'],
-      { speedToLead: 'automation_touch', code: [...code(HL, 'ghl_opportunity_write'), ...code(WEB_LEAD_INTAKE, 'ghl_opportunity_write')],
-        ownerCheck: 'List pipeline workflows on these stages and statuses with their texts. FUN-12 (opportunity lost) stays gated until this is verified.' }),
+      ['opportunity:created', 'opportunity_stage:walkthrough_appointment', 'opportunity_stage:job_scheduled', 'opportunity_stage:scheduled', 'opportunity_stage:walkthrough_complete', 'opportunity_stage:job_complete', 'opportunity_status:lost'],
+      { speedToLead: 'automation_touch', code: [...code(HL, 'ghl_opportunity_write'), ...code(WEB_LEAD_INTAKE, 'ghl_opportunity_write'), ...code(SCHEDULE_MIRROR, 'ghl_opportunity_write')],
+        notes: 'D9b: the schedule mirror (EGC_GHL_SCHEDULE_MIRROR, off) reads the pipeline, searches the contact\'s opportunities in every status and reads a linked one, and writes only a create-only POST /opportunities/ (never upsert, which would reopen a won or lost deal; only when the contact has no opportunity in the pipeline at all) or a forward stage move of an open one (no status in the move); it adds no tag and sends nothing.',
+        ownerCheck: 'List pipeline workflows on these stages and statuses with their texts. FUN-12 (opportunity lost) stays gated until this is verified. Before EGC_GHL_SCHEDULE_MIRROR, confirm no workflow on Walkthrough Appointment or Job Scheduled messages a customer you did not intend to.' }),
     unverifiedGhl('ghl.appointment_status_workflows', 'HighLevel Customer Booked Appointment and Appointment Status workflows (unverified)', 'Every appointment the Hub creates or updates (status confirmed, with notify on or off) and the status changes it writes (completed, cancelled, confirmed, showed, noshow)',
       ['appointment:created', 'appointment_status:changed'], { code: [...code(HL, 'ghl_appointment_write'), ...code(HL_TAGS, 'ghl_appointment_write')],
         ownerCheck: 'List workflows triggered by Customer Booked Appointment or Appointment Status with their texts; toNotify false is not relied on to stop them. The FUN-11 booking dialog shows these texts even when the visit notify flag is off.' }),
@@ -426,6 +439,7 @@ export const AUTOMATION_REGISTRY = deepFreeze({
     { id: 'FUN-11.booking_notify_default', unit: 'FUN-11', label: 'Booking confirm dialog texts and the notify toggle default', surfaces: ['tag:egc-hub-scheduled', 'tag:egc-job-scheduled', 'tag:egc-walkthrough-scheduled', 'tag:egc-reminder-{n}d', 'appointment:created_notify', 'appointment:created', 'opportunity:created', 'opportunity_stage:scheduled', 'contact:upsert'] },
     { id: 'FUN-12.opportunity_lost_write', unit: 'FUN-12', label: 'Write GHL opportunity status lost', surfaces: ['opportunity_status:lost'] },
     { id: 'FUN-35.attribution_writes', unit: 'FUN-35', label: 'Write attribution fields, the repeat-inquiry tag and Hub-created opportunities', surfaces: ['contact_field:attribution', 'tag:egc-repeat-inquiry', 'opportunity:created'] },
+    { id: 'D9B.schedule_mirror', unit: 'D9B', label: 'HighLevel schedule mirror (EGC_GHL_SCHEDULE_MIRROR): EGC Pipeline stage moves, created opportunities, contact upserts and schedule notes', surfaces: ['opportunity_stage:walkthrough_appointment', 'opportunity_stage:job_scheduled', 'opportunity:created', 'contact:upsert', 'contact:note_added'] },
   ],
   // Exact send-path occurrences scanned by scripts/automation-inventory.mjs (--scan prints the current values).
   codeInventory: {
@@ -456,6 +470,8 @@ export const AUTOMATION_REGISTRY = deepFreeze({
     // FUN-29: GET contacts/{id} for the lead-form service-line suggestion (read-only, flag off by default).
     'functions/_lib/funnel-dimensions.js': { ghl_contact_write: 1 },
     'functions/_lib/ghl-messenger.js': { ghl_message_send: 1, ghl_tag_write: 1, ghl_contact_write: 2 },
+    // D9b: the schedule mirror's opportunity read/move (one path helper) and its create-only POST /opportunities/; contact and note go through the shared helpers.
+    'functions/_lib/ghl-schedule-mirror.js': { ghl_opportunity_write: 2 },
     // GHL-TRACK-1: the tag outbox drain adds tags through the shared writer (addTags); its contact, appointment and note writes are the shared helpers below.
     'functions/_lib/ghl-tag-outbox.js': { ghl_tag_helper_call: 2, ghl_contact_write: 1 },
     // GHL-TRACK-1: ensureContact, addTags and completeAppointment moved here unchanged from highlevel.js, plus the outbox's internal note.

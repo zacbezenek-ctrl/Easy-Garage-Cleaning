@@ -328,7 +328,9 @@ test('GET /api/automation-registry is business-only, no-store and reports the re
   assert.equal(body.attestation.status, 'never');
   assert.equal(body.summary.automations, AUTOMATION_REGISTRY.automations.length);
   assert.equal(body.summary.byDisposition.approved_automatic, 6);
-  assert.ok(body.gates.length === 3 && body.gates.every(gate => gate.go === false));
+  // FUN-11, FUN-12, FUN-35 and (D9b) the HighLevel schedule mirror's gate; none can open without the owner's audit.
+  assert.ok(body.gates.length === 4 && body.gates.every(gate => gate.go === false));
+  assert.deepEqual(body.gates.find(gate => gate.id === 'D9B.schedule_mirror')?.go, false);
   const booking = body.automations.find(entry => entry.id === 'ghl.booking_confirmation_workflows');
   assert.ok(booking.hubWrites.length > 0 && booking.cleared === false && !('code' in booking));
   assert.deepEqual(body.triggers.find(trigger => trigger.id === 'call:missed').listeners, ['ghl.missed_call_textback', 'ghl.missed_call_cooldown_helper']);

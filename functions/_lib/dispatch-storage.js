@@ -10,7 +10,7 @@ import { legacyPersonKeys, staffDirectoryEnabled, storedWeeklyAvailability } fro
 import { storedSkills } from './staff-skills.js';
 import { segmentsEnabled } from './dispatch-segments.js';
 import { crewNotificationsEnabled } from './crew-notifications.js';
-import { ghlTagOutboxEnabled } from './highlevel-tags.js';
+import { ghlScheduleMirrorEnabled, ghlTagOutboxEnabled } from './highlevel-tags.js';
 import { commitConflict, commitFailure } from './firestore-errors.js';
 import { dispatchReadMode, windowedJobs, pagedQuery, customerCoverage, aggregateCount } from './dispatch-window-reads.js';
 import { QUEUE_JOB_FIELDS } from './dispatch-queue.js';
@@ -182,6 +182,8 @@ export function dispatchStorage(env, fetcher = firestoreFetch) {
     crewNotificationsEnabled: crewNotificationsEnabled(env),
     // EGC_GHL_TAG_OUTBOX: schedule changes queue their HighLevel tags in the same commit (ghl-tag-outbox.js).
     ghlTagOutbox: ghlTagOutboxEnabled(env),
+    // EGC_GHL_SCHEDULE_MIRROR (D9b): schedule changes queue their HighLevel schedule mirror in the same commit (ghl-schedule-mirror.js).
+    ghlScheduleMirror: ghlScheduleMirrorEnabled(env),
     // EGC_DISPATCH_NOTIFY_IMPORTED_ON: an imported Jobber job's first booking turns reminders on (dispatch-readiness.js notifyPatch).
     notifyImportedOn: env?.EGC_DISPATCH_NOTIFY_IMPORTED_ON === 'true',
     async legacyBlockedDays(dates) {

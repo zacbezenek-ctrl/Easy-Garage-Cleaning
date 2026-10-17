@@ -6,6 +6,7 @@ import vm from './helpers/vm-realm.mjs';
 import { arrivalWindowProblem, arrivalWindowFields } from '../functions/_lib/dispatch-arrival.js';
 import { crewNotificationWrites, crewNotificationsEnabled } from '../functions/_lib/crew-notifications.js';
 import { ghlTagOutboxEnabled, scheduleTagWrites } from '../functions/_lib/ghl-tag-outbox.js';
+import { ghlScheduleMirrorEnabled, scheduleMirrorWrites } from '../functions/_lib/ghl-schedule-mirror.js';
 import { jobStartProblem } from '../functions/_lib/job-start-policy.js';
 import * as funnel from '../functions/_lib/dispatch-funnel.js';
 import * as dimensions from '../functions/_lib/funnel-dimensions.js';
@@ -32,6 +33,8 @@ function load() {
     crewNotificationWrites, crewNotificationsEnabled,
     // GHL-TRACK-1 HighLevel tag outbox runs for real; these stores leave the flag off.
     ghlTagOutboxEnabled, scheduleTagWrites,
+    // D9b HighLevel schedule mirror runs for real; these stores leave the flag off.
+    ghlScheduleMirrorEnabled, scheduleMirrorWrites,
     // The shared SEC-04 bridge policy runs for real (the owner actor below is allowed).
     bridgeCommandDenial, bridgeCommandPolicy,
     DISPATCH_TIME_ZONE: 'America/Denver',

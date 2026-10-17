@@ -17,6 +17,7 @@ import { bookingInput, bookingPatch, reasonInput, cancelPatch, noShowProblem, vi
 import { dispatchDurationFields, dispatchDurationOverride, dispatchCrewSize, withQuoteLines, ESTIMATED_DURATION_MIN } from './dispatch-duration.js';
 import { bookingDimensions, firstPlacementDimensions } from './funnel-dimensions.js';
 import { scheduleTagWrites, withGhlTagStatus } from './ghl-tag-outbox.js';
+import { scheduleMirrorWrites } from './ghl-schedule-mirror.js';
 import { notifyPatch, withDispatchReadiness } from './dispatch-readiness.js';
 import { walkthroughStatusFields } from './walkthrough-state.js';
 import { dispatchReviewCleared, withQueueFacts } from './dispatch-queue.js';
@@ -706,6 +707,8 @@ async function executeDispatch(store, session, input, now, options = {}, context
     // EGC_GHL_TAG_OUTBOX (GHL-TRACK-1): the HighLevel tags this change needs commit with it, or not at all.
     const tags = store.ghlTagOutbox === true ? await scheduleTagWrites({jobId:id,before:current,after:{...current,...patch},action:input.action,requestId:input.requestId,now}) : null;
     if (tags) { patch.ghlTagEntry = tags.pointer; writes.push(tags.write); }
+    // EGC_GHL_SCHEDULE_MIRROR (D9b): the HighLevel schedule mirror (contact, EGC Pipeline stage, note) commits with the change, or not at all.
+    writes.push(...await scheduleMirrorWrites(store,{jobId:id,before:current,after:{...current,...patch},action:input.action,requestId:input.requestId,now,roster,resources}));
   } else {
     collection = 'dispatchResources';
     id = input.id || `${input.action.split('.')[0]}_${receiptId.replaceAll('-','')}`;
@@ -946,6 +949,8 @@ export async function mutateDispatchSelfAssignment(store,session,input,now = new
     writes.push({collection:'dispatchState',id:'revision',revision:guard?.revision,patch:{updatedAt:now,lastRequestId:input.requestId}});
     writes.push({collection:'dispatchOperations',id:receiptId,patch:{fingerprint,actorId:identity,action:`shift.${input.action}`,collection:'jobs',targetId:job.id,requestId:input.requestId,createdAt:now,before:auditState(job),after:auditState(next)}});
     if (assignedCrew.length) writes.push(...(await visitFunnelWrites({action:'update',before:job,after:next,actor:eventActor({id:identity,kind:'human',role:session.role}),via:'hub',key:requestKey(input.requestId),source:{collection:'dispatchOperations',id:receiptId},crewChanged:true,now})).writes);
+    // EGC_GHL_SCHEDULE_MIRROR (D9b): a crew self-claim or release is a crew change HighLevel's second record is told about.
+    writes.push(...await scheduleMirrorWrites(store,{jobId:job.id,before:job,after:next,action:`shift.${input.action}`,requestId:input.requestId,now,roster,resources}));
     await store.commit(writes);
     const saved = await store.read('jobs',job.id);
     if (!saved || saved.dispatchRequestId !== input.requestId) throw fail('dispatch_changed_since_operation','Your assignment saved, but dispatch has changed it again. Refresh your schedule.',409);
