@@ -4,6 +4,8 @@
 'use strict';
 const KIT={js:'employee-ui-kit.js',css:'employee-ui-kit.css',v:'20260929mobilehub'};
 // One line per screen: {id, group, label, iconPath, capability:'business'|'owner' or crewVisible:true, load:{js, css, v}, module:'EGCName'}.
+// team_directory (Team directory, D10) is every signed-in viewer's, but employee-suite.js adds that capability only while the
+// server reports the staff directory on (/api/integration-status flags.teamDirectory, EGC_STAFF_DIRECTORY_ENABLED).
 // Capabilities come from the signed-in server profile (businessAccess and the owner flag), never a client staff list.
 // Group and label are plain text (the shell escapes them, so 'Estimates & payments' is fine); angle brackets,
 // backticks and control characters are refused. An invalid line is skipped with a console warning.
@@ -14,6 +16,7 @@ const KIT={js:'employee-ui-kit.js',css:'employee-ui-kit.css',v:'20260929mobilehu
 const MANIFEST=[
 {id:'crew_alerts',group:'MY EGC',label:'Schedule alerts',iconPath:'M12 3a6 6 0 0 0-6 6v4l-2 3h16l-2-3V9a6 6 0 0 0-6-6zM10 19a2 2 0 0 0 4 0',crewVisible:true,load:{js:'employee-crew-notifications.js',css:'employee-crew-notifications.css',v:'20260929editwipe'},module:'EGCCrewNotifications'},
 {id:'password',group:'MY EGC',label:'Password',iconPath:'M7 11V8a5 5 0 0 1 10 0v3M5 11h14v10H5zM12 15v2',capability:'password',load:{js:'employee-staff-access.js',css:'employee-staff-access.css',v:'20260929accessr2'},module:'EGCStaffAccess'},
+{id:'team_directory',group:'MY EGC',label:'Team directory',iconPath:'M8 11a3 3 0 1 0 0-6 3 3 0 0 0 0 6zM16 11a3 3 0 1 0 0-6 3 3 0 0 0 0 6zM2 20c0-3 3-5 6-5s6 2 6 5M12 20c0-3 3-5 6-5s4 2 4 5',capability:'team_directory',load:{js:'employee-team-directory.js',css:'employee-team-directory.css',v:'20261017team1'},module:'EGCTeamDirectory'},
 {id:'followup_settings',group:'SYSTEM',label:'Follow-up owner',iconPath:'M12 3a4 4 0 1 1 0 8 4 4 0 0 1 0-8zM4 21a8 8 0 0 1 16 0',capability:'owner',load:{js:'employee-followup-settings.js',css:'employee-followup-settings.css',v:'20260928followup'},module:'EGCFollowupSettings'},
 {id:'ad_spend',group:'GROW THE ENGINE',label:'Ad spend',iconPath:'M3 10v4h4l5 4V6l-5 4zM16 9a4 4 0 0 1 0 6M19 6a8 8 0 0 1 0 12',capability:'owner',load:{js:'employee-ad-spend.js',css:'employee-ad-spend.css',v:'20260928adspend'},module:'EGCAdSpend'},
 {id:'catalog',group:'SYSTEM',label:'Catalog & pricing',iconPath:'M4 4h7l9 9-7 7-9-9zM8 8h.01',capability:'owner',load:{js:'employee-catalog.js',css:'employee-catalog.css',v:'20260930catalogquote1'},module:'EGCCatalog'},

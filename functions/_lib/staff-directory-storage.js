@@ -4,10 +4,16 @@ import { employeeVaultReadOnly, employeeVaultSecret } from './employee-vault-key
 import { commitVaultDocuments, opaqueId, readCollectionRecords, sealedFields, vaultDigest } from './employee-vault.js';
 import { employeeAccountsConfigured, employeeInvitationStore, listEmployeeApplications, sealedAccountFields } from './employee-accounts.js';
 import { listHubUserProfiles } from './hub-session.js';
+import { decodeFirestoreFields } from './firestore-job.js';
+import { CREW_PROFILES, approvedCrewPhoto, crewProfileKey, staffCrewPhotoUrl } from './crew-public-profile.js';
 
 // Server-only receipts (default-deny Firestore rules). They hold a keyed digest of
 // the request, never pay, skills or account data.
 export const STAFF_DIRECTORY_RECEIPTS = 'staffDirectoryOperations';
+const BASE = 'https://firestore.googleapis.com/v1/projects/egcw-1ec83/databases/(default)/documents';
+// The team directory's crew names: only the crew records of dispatchResources (recordType 'crew', a handful of documents)
+// and only the fields it shows, never the whole resources collection.
+const CREW_FIELDS = ['recordType', 'name', 'memberIds', 'leadId', 'status', 'priority'], CREW_LIMIT = 200;
 const fail = (code, message, status = 503) => Object.assign(new Error(message), { code: 'staff_directory_' + code, status });
 
 // The profile, the account (role changes), the receipt and the SEC-02 audit entry
@@ -22,6 +28,21 @@ export function staffDirectoryStorage(env, fetcher = firestoreFetch) {
       return { configured: listHubUserProfiles(env), accounts: employeeAccountsConfigured(env) ? await listEmployeeApplications(env) : [] };
     },
     profiles: () => readCollectionRecords(env, 'profiles'),
+    async crews() {
+      const response = await fetcher(env, `${BASE}:runQuery`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ structuredQuery: {
+        from: [{ collectionId: 'dispatchResources' }], where: { fieldFilter: { field: { fieldPath: 'recordType' }, op: 'EQUAL', value: { stringValue: 'crew' } } },
+        select: { fields: CREW_FIELDS.map(fieldPath => ({ fieldPath })) }, limit: CREW_LIMIT } }) });
+      const rows = response.ok ? await response.json().catch(() => null) : null;
+      if (!Array.isArray(rows) || rows.some(row => !row || typeof row !== 'object' || row.error)) throw fail('storage_unavailable', 'Crews could not be loaded.');
+      return rows.filter(row => row.document?.fields).map(row => ({ ...decodeFirestoreFields(row.document.fields), id: String(row.document.name || '').split('/').pop() }))
+        .filter(crew => crew.id && crew.recordType === 'crew');
+    },
+    // Approved headshots (crew_public_profiles, the staff-only photo link dispatch shows), keyed by username.
+    async photoUrls(keys) {
+      const ids = [...new Set(keys.map(crewProfileKey).filter(Boolean))];
+      const rows = ids.length ? await documents.readMany(CREW_PROFILES, ids) : [];
+      return new Map(rows.map(row => [row.id, approvedCrewPhoto(row)]).filter(([, photo]) => photo).map(([id, photo]) => [id, staffCrewPhotoUrl(id, photo)]));
+    },
     readAccount: username => employeeInvitationStore(env).read(username),
     async readReceipt(id) {
       try { return await documents.read(STAFF_DIRECTORY_RECEIPTS, id); }

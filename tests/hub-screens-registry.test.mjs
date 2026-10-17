@@ -30,6 +30,9 @@ const SHIPPED = ['reviews', 'message_templates', 'stocked_costs', 'staff', 'invo
 const OWNER_SHIPPED = ['followup_settings', 'ad_spend', 'catalog', 'dispatch_rules'];
 const CREW_SHIPPED = ['crew_alerts'];
 const PASSWORD_SHIPPED = ['password'];
+// D10's Team directory (My EGC) follows Password and needs the 'team_directory' capability, which the suite adds only while
+// /api/integration-status reports flags.teamDirectory (EGC_STAFF_DIRECTORY_ENABLED on).
+const TEAM_SHIPPED = ['team_directory'];
 
 test('a registered screen joins the nav under its group only when the capability matches', () => {
   for (const [who, expected] of [[{}, true], [MANAGER, true], [CREW, false]]) {
@@ -291,7 +294,7 @@ test('the shipped screens register cleanly for business viewers only and lazy-lo
   vm.runInNewContext(readFileSync(new URL('../employee-hub-screens.js', import.meta.url), 'utf8'), context, { filename: 'employee-hub-screens.js' });
   assert.deepEqual(warnings, []);
   const registry = context.EGCHubScreens;
-  assert.deepEqual([...registry.list().map(entry => entry.id)], [...CREW_SHIPPED, ...PASSWORD_SHIPPED, ...OWNER_SHIPPED, ...SHIPPED]);
+  assert.deepEqual([...registry.list().map(entry => entry.id)], [...CREW_SHIPPED, ...PASSWORD_SHIPPED, ...TEAM_SHIPPED, ...OWNER_SHIPPED, ...SHIPPED]);
   const password = registry.get('password');
   assert.deepEqual([password.group, password.label, password.capability, password.crewVisible, password.module, password.load.js, password.load.css], ['MY EGC', 'Password', 'password', false, 'EGCStaffAccess', 'employee-staff-access.js', 'employee-staff-access.css']);
   assert.ok(!registry.allowed(password, ['crew', 'business', 'owner']) && registry.allowed(password, ['crew', 'password']));

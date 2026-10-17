@@ -2,7 +2,7 @@ import { getHubSession, hasBusinessAccess, listHubUserProfiles } from '../_lib/h
 import { OWNER_USERNAME } from '../_lib/business-users.js';
 import { firebaseServiceAccountConfigured, firestoreFetch } from '../_lib/firebase-service-account.js';
 import { employeeVaultSecret, employeeVaultReadOnly } from '../_lib/employee-vault-key.js';
-import { EMPLOYEE_HUB_COLLECTIONS, expectedDocument, firestoreDoc, readAll, readCollection, readOne, seal, unreadableStorage, writeOne } from '../_lib/employee-vault.js';
+import { EMPLOYEE_HUB_COLLECTIONS, expectedDocument, firestoreDoc, proveVaultKey, readAll, readCollection, readOne, seal, unreadableStorage, writeOne } from '../_lib/employee-vault.js';
 import { createJobAssignmentAccess } from '../_lib/job-assignment.js';
 import { listEmployeeApplications, normalizeEmployeeUsername } from '../_lib/employee-accounts.js';
 import { activeTimecard, authorizeTimecard, clockInWithoutFix, correctionJobId, timecardCorrectionsEnabled, timecardError } from '../_lib/employee-timecards.js';
@@ -11,7 +11,7 @@ import { fieldJobLead } from '../_lib/field-permissions.js';
 import { assignedOn, fieldVisitsEnabled } from '../_lib/field-execution-visits.js';
 import { denverToday } from '../_lib/dispatch-time.js';
 import { ptoOffOn } from '../_lib/pto-pay.js';
-import { legacyManagerProfile, legacyProfileView, mirrorLegacyPay, profileHourlyRate } from '../_lib/staff-directory.js';
+import { SELF_PERSONAL_FIELDS, legacyManagerProfile, legacyProfileView, mirrorLegacyPay, personalInput, profileHourlyRate, staffDirectoryEnabled } from '../_lib/staff-directory.js';
 import { assertNoOthersPay, assertPayUnchanged, canSetPay, payHidden, payOwnerField, seesOthersPay, visiblePay, withoutPayWrites } from '../_lib/pay-visibility.js';
 import { can, staffPasswordResetEnabled } from '../_lib/staff-roles.js';
 
@@ -110,6 +110,12 @@ async function writeTimecard(env, session, id, data, target) {
   const employee = personKey(data.employee);
   if (!employee) throw timecardError('An employee is required for an active timecard.');
   const lock = await readOne(env, 'timeLocks', employee);
+  // A verified lock (verifiedAt) answers whether another shift is open without the timecard scan (WP15): verifiedAt is
+  // set only when this guard's scan found no other open shift for the employee, and every later save that opened one
+  // went through this lock in the same commit, so its entryId is the only shift that can be open. It carries through
+  // later saves; a lock written without a scan (closing a shift saved before the guard existed) stays unverified, and
+  // the next clock-in scans as before.
+  let verifiedAt = typeof lock.data?.verifiedAt === 'string' && lock.data.verifiedAt ? lock.data.verifiedAt : '';
   if (activeTimecard(data)) {
     if (lock.data?.entryId && lock.data.entryId !== id) {
       const held = await readOne(env, 'timeEntries', lock.data.entryId);
@@ -117,9 +123,10 @@ async function writeTimecard(env, session, id, data, target) {
     }
     // Backfill the per-employee guard without ignoring shifts saved before it
     // existed. The guard version serializes concurrent attempts with new IDs.
-    if (!activeTimecard(target.data)) {
+    if (!activeTimecard(target.data) && !verifiedAt) {
       const other = (await readEmployeeTimecards(env)).find(entry => entry.id !== id && same(entry.employee, employee) && activeTimecard(entry));
       if (other) throw timecardError('You already have an active shift. Refresh and clock out before starting another.', 409);
+      verifiedAt = new Date().toISOString();
     }
   }
   const updatedAt = new Date().toISOString(), documentId = target.documentId;
@@ -128,7 +135,7 @@ async function writeTimecard(env, session, id, data, target) {
   if (assignedJobGuard) writes.push(assignedJobGuard);
   // Closing one legacy duplicate must not release another shift's guard.
   if (activeTimecard(data) || !lock.data?.entryId || lock.data.entryId === id) {
-    const lockData = { id: employee, entryId: activeTimecard(data) ? id : '', updatedAt, updatedBy: session.user };
+    const lockData = { id: employee, entryId: activeTimecard(data) ? id : '', updatedAt, updatedBy: session.user, ...(verifiedAt ? { verifiedAt } : {}) };
     const sealedLock = await seal(env, lock.documentId, lockData);
     writes.push({ update: { name: `projects/${PROJECT_ID}/databases/(default)/documents/employee_time_locks/${lock.documentId}`, ...firestoreDoc('timeLocks', lock.documentId, sealedLock, updatedAt) }, currentDocument: expectedDocument(lock) });
   }
@@ -331,8 +338,13 @@ async function authorizeMutation(env, session, collection, id, incoming, existin
       locationVerifiedAt: text(incoming.locationVerifiedAt, 40),
       locationVerificationAccuracy: Math.max(0, Math.min(10000, Number(incoming.locationVerificationAccuracy || 0))),
     } : {};
+    // EGC_STAFF_DIRECTORY_ENABLED (D10): the onboarding form also saves the employee's own shirt size, birth date and
+    // whether teammates see the birthday, validated as /api/staff-directory set_personal validates them (a completed
+    // form is refused with a bad value; a draft autosave leaves that value out). Off, they are dropped as before.
+    const personal = staffDirectoryEnabled(env) && !staleOnboarding && (incoming.onboardingCompletedAt || incoming.onboardingDraftAt)
+      ? personalInput(incoming, denverToday(new Date(now)), { fields: SELF_PERSONAL_FIELDS, lenient: !incoming.onboardingCompletedAt }) : {};
     return mirrorLegacyPay(existing, {
-      ...(existing || {}), ...onboarding, id, username: session.user, displayName: session.displayName,
+      ...(existing || {}), ...onboarding, ...personal, id, username: session.user, displayName: session.displayName,
       role: session.role, payType: session.payType, hourlyRate: await employeeRate(env, session, now),
       status: 'active', lastSeenAt: now,
     }, now);
@@ -409,7 +421,9 @@ export async function onRequestGet({ request, env }) {
     if (params.get('view') === 'own-job-time') {
       const lock = await readOne(env, 'timeLocks', personKey(session.user));
       let active = lock.data?.entryId ? (await readOne(env, 'timeEntries', lock.data.entryId)).data : null;
-      if (!activeTimecard(active) || !same(active.employee, session.user)) {
+      // A verified lock (writeTimecard) names the only shift that can be open: none open there means none anywhere.
+      if (!activeTimecard(active) && typeof lock.data?.verifiedAt === 'string' && lock.data.verifiedAt) active = null;
+      else if (!activeTimecard(active) || !same(active.employee, session.user)) {
         const candidates = (await readEmployeeTimecards(env)).filter(entry => same(entry.employee, session.user) && activeTimecard(entry));
         if (candidates.length > 1) return reply(409, { ok: false, error: 'More than one active shift needs manager review before job time can be started.' });
         active = candidates[0] || null;
@@ -549,8 +563,9 @@ export async function onRequestPost({ request, env }) {
           if (legacy.data) current = legacy;
         }
       }
-      // A different vault key changes IDs; a 404 alone cannot prove this is new.
-      if (!current.data) await readAll(env);
+      // A different vault key changes IDs; a 404 alone cannot prove this is new. One stored record opening with this key
+      // proves it (WP15: one document read, not a decrypt of the whole vault on every clock-in and chat message).
+      if (!current.data) await proveVaultKey(env);
       if (collection === 'timeEntries' && !current.data && !newTimecardId(id)) return reply(400, { ok: false, code: 'EMPLOYEE_TIMECARD_ID_INVALID', error: 'Invalid employee record' });
       const data = await authorizeMutation(env, session, collection, id, incoming, current.data, QUEUED_REQUEST.test(String(body.requestId ?? '')));
       try {

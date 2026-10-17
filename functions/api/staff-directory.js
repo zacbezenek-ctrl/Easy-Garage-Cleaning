@@ -37,6 +37,8 @@ export function staffDirectoryHandlers({ session = getHubSession, storage = staf
         const actor = await session(request, env);
         if (!actor?.user) return reply(401, { ok: false, code: 'staff_directory_sign_in_required', error: 'Sign in to view the staff directory.' });
         const params = new URL(request.url).searchParams, keys = [...params.keys()];
+        // ?view=team (D10): the team directory every signed-in staff member reads; ?username= stays the full record.
+        if (keys.length === 1 && keys[0] === 'view' && params.get('view') === 'team') return reply(200, await service(env).team(actor));
         if (keys.some(key => key !== 'username') || new Set(keys).size !== keys.length) return reply(400, { ok: false, code: 'staff_directory_invalid_query', error: 'Only one username filter is supported.' });
         return reply(200, await service(env).list(actor, params.has('username') ? { username: params.get('username') } : {}));
       } catch (error) { return errorResponse(error); }
