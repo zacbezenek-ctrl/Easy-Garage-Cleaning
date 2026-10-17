@@ -542,6 +542,8 @@ function syncCard() {
 
 function rulesSheet() {
   const s = S.settings, city = cityRuleFor(null), window = knockingWindow();
+  // A paragraph-length rule reads as a paragraph under its label, not a bold right-aligned column.
+  const rule = (label, text) => h('div', { class: 'kv', style: { display: 'block' } }, h('span', {}, label), h('p', { style: { margin: '4px 0 0' } }, text));
   return sheet('Help & the rules', () => h('div', { class: 'stack', style: { gap: '0' } },
     kv('Knocking hours', `${window.startLabel} until sunset (${window.endLabel} today)`),
     kv('Sunset warning', `${city?.warnMinutes ?? 15} minutes before`),
@@ -549,10 +551,10 @@ function rulesSheet() {
     kv('Go-backs', `${s.goBacks.maxAttemptsPerSeason} tries per house each season`),
     kv('Not interested', `Rests for ${s.goBacks.notInterestedRestMonths ?? 6} months`),
     // Same wording as My money (knock-money.js), from the server's approval state.
-    kv('Commission', commissionRuleText(s.commission)),
+    rule('Commission', commissionRuleText(s.commission)),
     s.commission.verified === true && s.commission.acceleratorEnabled ? kv('Higher rate', `${Math.round(s.commission.acceleratorRate * 100)}% above $${Number(s.commission.acceleratorThreshold).toLocaleString('en-US')} a month`) : null,
     s.commission.verified === true && s.commission.leadOverrideEnabled ? kv('Lead bonus', `${Math.round(s.commission.leadOverrideRate * 1000) / 10}% of the team's collected revenue`) : null,
-    kv('Walkthrough you set', SETTER_RULE_TEXT),
+    rule('Walkthrough you set', SETTER_RULE_TEXT),
     kv('Deposit', `${Math.round(s.sale.depositRate * 100)}%, fully refundable for ${s.sale.cancelBusinessDays} business days`)));
 }
 

@@ -111,6 +111,8 @@ const exactKeys = (value, keys) => value && typeof value === 'object' && !Array.
 const approvalContent = approval => ({ contract: approval?.contract, reference: approval?.reference, payrollAnchorConfirmed: approval?.payrollAnchorConfirmed,
   scope: approval?.scope, collectionPolicy: approval?.collectionPolicy, commission: approval?.commission, payroll: approval?.payroll });
 const sameApproval = (a, b) => sameSettings(JSON.parse(JSON.stringify(approvalContent(a))), JSON.parse(JSON.stringify(approvalContent(b))));
+// The same terms, whatever the reference says.
+const sameTerms = (a, b) => sameApproval({ ...a, reference: null }, { ...b, reference: null });
 
 /* The owner records compensationApproval for the saved commission and payroll settings,
    with the exact fields knock-access.js loadSettings verifies. The request repeats what
@@ -119,7 +121,10 @@ const sameApproval = (a, b) => sameSettings(JSON.parse(JSON.stringify(approvalCo
    Body: { requestId, contract: 'knock-collected-v3', reference, payrollAnchorConfirmed: true,
      collectionPolicy: COLLECTED_V3_POLICY, scope: { ...D2D_GARAGE_SCOPE, garageOnlyPackages, junkRemovalPackages },
      commission, payroll }. Retrying the same request, or approving identical terms again,
-   changes nothing (reviewedAt is kept, so sales already snapshotted keep their terms). */
+   changes nothing (reviewedAt is kept, so sales already snapshotted keep their terms).
+   Correcting only the reference of terms that already verify keeps reviewedBy/reviewedAt:
+   approvedAt dates the terms, and a sale made offline under them must still snapshot them
+   when it syncs. Any other change takes effect now; an earlier sale never inherits it. */
 export async function approveCompensation(store, owner, body, nowIso) {
   requireOwner(owner);
   const { requestId, contract, payrollAnchorConfirmed, collectionPolicy, scope } = body || {};
@@ -148,12 +153,14 @@ export async function approveCompensation(store, owner, body, nowIso) {
     if (!receipt) return null;
     if (receipt.kind !== 'compensation_approval' || !sameApproval(receipt, approval)) throw knockFailure('That request already recorded different terms. Reload and review again.', 409, 'knock_approval_conflict');
     const current = await store.get('knock_settings', 'current');
-    return { duplicate: true, compensation: compensationView(current, await fromDoc(current), owner) };
+    return { duplicate: true, referenceOnly: receipt.referenceOnly === true, compensation: compensationView(current, await fromDoc(current), owner) };
   };
   const prior = await replay();
   if (prior) return prior;
   const current = await fromDoc(doc);
-  if (current.commission.verified && sameApproval(doc.compensationApproval, approval)) return { duplicate: true, compensation: compensationView(doc, current, owner) };
+  if (current.commission.verified && sameApproval(doc.compensationApproval, approval)) return { duplicate: true, referenceOnly: false, compensation: compensationView(doc, current, owner) };
+  const referenceOnly = current.commission.verified && sameTerms(doc.compensationApproval, approval);
+  if (referenceOnly) Object.assign(approval, { reviewedBy: doc.compensationApproval.reviewedBy, reviewedAt: doc.compensationApproval.reviewedAt });
   const next = { ...doc, compensationApproval: approval };
   const verified = await fromDoc(next);
   if (!verified.commission.verified) throw knockFailure('These terms would not verify against the saved settings. Nothing was approved.', 409, 'knock_approval_invalid');
@@ -161,14 +168,14 @@ export async function approveCompensation(store, owner, body, nowIso) {
   try {
     await store.commit([
       write.patch('knock_settings', 'current', { compensationApproval: approval }, doc.__updateTime),
-      write.create('knock_receipts', receiptId, { kind: 'compensation_approval', ...approval, previous }),
+      write.create('knock_receipts', receiptId, { kind: 'compensation_approval', ...approval, previous, referenceOnly, recordedBy: owner.user, recordedAt: nowIso }),
     ]);
   } catch (error) {
     const replayed = await replay();
     if (replayed) return replayed;
     throw error;
   }
-  return { duplicate: false, compensation: compensationView(next, verified, owner) };
+  return { duplicate: false, referenceOnly, compensation: compensationView(next, verified, owner) };
 }
 
 /* ---- Territory ---- */

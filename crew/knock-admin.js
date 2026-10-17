@@ -645,7 +645,7 @@ const POLICY_LABELS = {
   payoutCadence: ['Paid out', { biweekly: 'every two weeks' }],
   calculationBase: ['Calculated on', { eligible_collected_amount: 'the eligible amount collected' }],
   attribution: ['Credited to', { recorded_rep: 'the rep recorded on the sale' }],
-  partialCollections: ['Partial payments', { review_required: 'held for finance review' }],
+  partialCollections: ['Short final payment', { review_required: 'held for finance review (a deposit or balance still due is just pending)' }],
   refunds: ['Refunds', { review_required: 'held for finance review' }],
 };
 
@@ -679,7 +679,8 @@ function approvalCard(data, card) {
     (prior.garageOnlyPackages || []).includes(name) ? 'garage' : (prior.junkRemovalPackages || []).includes(name) ? 'junk' : 'review']));
   const packageRow = name => {
     const box = h('div', {});
-    const mountSeg = () => box.replaceChildren(seg([['garage', 'Garage only'], ['junk', 'Junk: no commission'], ['review', 'Needs review']], classes[name],
+    // Short labels fit three across on a 320px phone; the caption above explains each.
+    const mountSeg = () => box.replaceChildren(seg([['garage', 'Garage only'], ['junk', 'Junk'], ['review', 'Needs review']], classes[name],
       value => { classes[name] = value; mountSeg(); }, { label: `How ${name} is paid` }));
     mountSeg();
     return h('div', { class: 'field' }, h('span', { class: 'label' }, name), box);
@@ -693,23 +694,31 @@ function approvalCard(data, card) {
     if (reference.value.trim().length < 3) return toast('Add the approval reference.', { tone: 'bad' });
     if (!anchor.checked) return toast(`Confirm the pay cycle starts ${pay.anchorDate}.`, { tone: 'bad' });
     const unclassified = c.terms.packages.filter(name => classes[name] === 'review');
+    const sameList = (a, b = []) => a.length === b.length && a.every(name => b.includes(name));
+    // Approved terms date the sales that carry them. Fixing only the reference keeps that time
+    // (the server checks the same); new terms start now and earlier sales never inherit them.
+    const referenceOnly = c.verified && sameList(garageOnlyPackages, prior.garageOnlyPackages) && sameList(junkRemovalPackages, prior.junkRemovalPackages);
+    const effect = !c.verified ? ' Sales booked after this approval carry these terms.'
+      : referenceOnly ? ` Only the reference changes. The approval time stays ${timeLabel(c.approval.reviewedAt)}, so every sale made since then keeps these terms.`
+        : ' These terms start now. A sale made before now on a phone that has not synced yet will not carry them and will be held for finance review.';
     const summary = `${pct(com.rate)} of collected garage sales, earned at full payment and paid every two weeks from ${pay.anchorDate}. Garage only: ${garageOnlyPackages.join(', ')}.` +
-      `${junkRemovalPackages.length ? ` No commission: ${junkRemovalPackages.join(', ')}.` : ''}${unclassified.length ? ` Held for review: ${unclassified.join(', ')}.` : ''} Sales booked after this approval carry these terms.`;
-    if (!await confirmSheet('Approve these commission terms?', summary, 'Approve terms')) return;
+      `${junkRemovalPackages.length ? ` No commission: ${junkRemovalPackages.join(', ')}.` : ''}${unclassified.length ? ` Held for review: ${unclassified.join(', ')}.` : ''}${effect}`;
+    if (!await confirmSheet(c.verified ? 'Update the approved terms?' : 'Approve these commission terms?', summary, c.verified ? 'Update approval' : 'Approve terms')) return;
     try {
       const result = await action({ action: 'compensation.approve', requestId, contract: c.terms.contract, reference: reference.value.trim(), payrollAnchorConfirmed: true,
         collectionPolicy: c.terms.collectionPolicy, scope: { ...c.terms.scope, garageOnlyPackages, junkRemovalPackages }, commission: com, payroll: pay }, { quiet: true });
-      toast(result.duplicate ? 'These terms were already approved' : 'Commission terms approved', { sub: 'Reps see payable commission from now on.' });
+      toast(result.duplicate ? 'These terms were already approved' : result.referenceOnly ? 'Approval reference updated' : 'Commission terms approved',
+        { sub: result.referenceOnly ? 'The approval time and terms are unchanged.' : 'Reps see payable commission from now on.' });
       invalidate('settings');
       app.render();
     } catch (error) { toast(error.message, { tone: 'bad' }); }
   };
   return card(title, status, terms,
-    h('p', { class: 'caption muted' }, 'These are the saved settings. Save any edits above first. Only packages that are wholly garage work earn commission.'),
+    h('p', { class: 'caption muted' }, 'These are the saved settings. Save any edits above first. Mark a package Garage only if it is wholly garage work (it earns commission), Junk if it is junk removal (no commission), or Needs review (held until classified).'),
     c.terms.packages.map(packageRow),
     field('Approval reference', reference, null, 'approve-reference'),
     h('label', { class: 'check check--sm' }, anchor, `The two-week pay cycle starts ${longDateLabel(pay.anchorDate)} (${pay.anchorDate})`),
-    h('button', { type: 'button', class: 'btn btn--primary', onclick: approve }, c.verified ? 'Approve again' : title));
+    h('button', { type: 'button', class: 'btn btn--primary', onclick: approve }, c.verified ? 'Update approval' : title));
 }
 
 async function settingsSection() {

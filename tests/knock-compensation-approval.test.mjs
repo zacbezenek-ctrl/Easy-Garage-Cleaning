@@ -4,6 +4,8 @@ import { DEFAULT_SETTINGS, PACKAGES } from '../crew/knock-settings.js';
 import { COLLECTED_V3_POLICY, D2D_GARAGE_SCOPE, snapshotCommissionTerms } from '../crew/knock-money.js';
 import { loadSettings } from '../functions/_lib/knock-access.js';
 import { approveCompensation } from '../functions/_lib/knock-admin.js';
+import { decodeFirestoreFields } from '../functions/_lib/firestore-job.js';
+import { createKnockStore } from '../functions/_lib/knock-store.js';
 import { knockAdminHandlers } from '../functions/api/knock-admin.js';
 import { approvedKnockSettings, call, cookieFor, get, knockEnv, knockWorld, post, uuid } from './helpers/knock-fixture.mjs';
 
@@ -21,9 +23,24 @@ const savedUnapproved = () => {
   return doc;
 };
 
-function setup(doc = savedUnapproved()) {
-  const world = knockWorld(doc ? { 'knock_settings/current': doc } : {});
-  const handlers = knockAdminHandlers({ storage: world.storage, now: () => new Date(now) });
+/* The shared fake merges every write. Firestore replaces the whole document when a write has
+   no updateMask, so after each successful commit this world does the same; a wholesale
+   settings write would then erase the approval here, as it would in production (V6). */
+function replacingWorld(seed) {
+  const world = knockWorld(seed);
+  const fetcher = async (env, input, options = {}) => {
+    const response = await world.fake.fetcher(env, input, options);
+    if (String(input).endsWith(':commit') && response.ok) for (const item of JSON.parse(options.body).writes || []) {
+      if (item.update && !item.updateMask) world.fake.put(item.update.name.split('/documents/')[1], decodeFirestoreFields(item.update.fields || {}));
+    }
+    return response;
+  };
+  return { ...world, storage: env => createKnockStore(env, fetcher) };
+}
+
+function setup(doc = savedUnapproved(), clock = () => now) {
+  const world = replacingWorld(doc ? { 'knock_settings/current': doc } : {});
+  const handlers = knockAdminHandlers({ storage: world.storage, now: () => new Date(clock()) });
   return { world, handlers };
 }
 
@@ -144,7 +161,7 @@ test('approval input is validated and nothing is written on a refusal', async ()
 });
 
 test('a settings change racing the approval wins; the approval is not written over it', async () => {
-  const world = knockWorld({ 'knock_settings/current': savedUnapproved() });
+  const world = replacingWorld({ 'knock_settings/current': savedUnapproved() });
   let raced = false;
   const storage = e => {
     const store = world.storage(e);
@@ -174,4 +191,41 @@ test('an approval survives a later unrelated settings save and is shown to admin
   const saved = await call(handlers.post, post('/api/knock-admin', { action: 'settings.update', settings }, cookie), env);
   assert.deepEqual(saved.body.compensation, { verified: true, approvalInvalidated: false });
   assert.equal((await loadSettings({ get: async () => stored(world) })).commission.verified, true);
+});
+
+test('correcting only the reference keeps when the terms were approved; new terms start now', async () => {
+  let clock = now;
+  const { world, handlers } = setup(savedUnapproved(), () => clock);
+  await approve(handlers, request());
+  const first = stored(world).compensationApproval;
+  // A rep sells offline under the approved terms; the owner fixes the reference before that phone syncs.
+  const offlineSoldAt = '2026-10-20T19:00:00.000Z';
+  clock = '2026-10-21T18:00:00.000Z';
+  const fix = request(DEFAULT_SETTINGS, { reference: 'synthetic-signed-plan-001a' });
+  const fixed = await approve(handlers, fix);
+  assert.deepEqual([fixed.status, fixed.body.duplicate, fixed.body.referenceOnly, fixed.body.compensation.approvedAt], [200, false, true, now]);
+  const doc = stored(world);
+  assert.deepEqual(doc.compensationApproval, { ...first, reference: 'synthetic-signed-plan-001a' });
+  const receipt = world.fake.get(`knock_receipts/compensation_${fix.requestId}`);
+  assert.deepEqual([receipt.referenceOnly, receipt.recordedBy, receipt.recordedAt, receipt.reviewedAt, receipt.previous.reference],
+    [true, 'ZacB', clock, now, 'synthetic-signed-plan-001']);
+  const settings = await loadSettings({ get: async () => doc });
+  assert.ok(snapshotCommissionTerms(settings.commission, offlineSoldAt, 'Garage Transformation'), 'the offline sale still carries the approved terms');
+  const retry = await approve(handlers, fix);
+  assert.deepEqual([retry.status, retry.body.duplicate, retry.body.referenceOnly], [200, true, true]);
+  // A new package classification is new terms: they start now and the earlier offline sale does not inherit them.
+  clock = '2026-10-22T18:00:00.000Z';
+  const rescoped = request(DEFAULT_SETTINGS, { reference: 'synthetic-signed-plan-002', scope: { ...D2D_GARAGE_SCOPE, garageOnlyPackages: ['The Works'], junkRemovalPackages: ['Quick Clear'] } });
+  const moved = await approve(handlers, rescoped);
+  assert.deepEqual([moved.status, moved.body.referenceOnly, moved.body.compensation.approvedAt], [200, false, clock]);
+  assert.equal(world.fake.get(`knock_receipts/compensation_${rescoped.requestId}`).referenceOnly, false);
+  const after = await loadSettings({ get: async () => stored(world) });
+  assert.equal(snapshotCommissionTerms(after.commission, offlineSoldAt, 'The Works'), null);
+  // An approval that no longer verifies is never 'corrected': approving it again starts now.
+  const edited = stored(world);
+  world.fake.put('knock_settings/current', { ...edited, settings: { ...edited.settings, payroll: { ...edited.settings.payroll, anchorDate: '2026-10-19' } } });
+  clock = '2026-10-23T18:00:00.000Z';
+  const changedPayroll = { ...DEFAULT_SETTINGS.payroll, anchorDate: '2026-10-19' };
+  const renewed = await approve(handlers, { ...rescoped, requestId: uuid(), payroll: changedPayroll });
+  assert.deepEqual([renewed.status, renewed.body.referenceOnly, renewed.body.compensation.approvedAt], [200, false, clock]);
 });

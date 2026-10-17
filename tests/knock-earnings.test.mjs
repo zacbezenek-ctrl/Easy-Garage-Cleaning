@@ -5,6 +5,7 @@ import { DEFAULT_SETTINGS } from '../crew/knock-settings.js';
 import { CHANNEL_PERCENTS, SETTER_RULE_TEXT, commissionEligibility, commissionIssues, commissionRuleText, customerCollection, earnedAt, isEarned, payPeriodFor, periodStatement, projectedCommission, saleCommissions, leadOverrides, snapshotCommissionTerms } from '../crew/knock-money.js';
 import { loadSettings } from '../functions/_lib/knock-access.js';
 import { createKnockStore } from '../functions/_lib/knock-store.js';
+import { decodeFirestoreFields } from '../functions/_lib/firestore-job.js';
 import { recordSaleCollection, setSaleStatus } from '../functions/_lib/knock-sales.js';
 import { addPayout } from '../functions/_lib/knock-reports.js';
 import { saleSyncSummary } from '../functions/_lib/knock-handoff.js';
@@ -315,14 +316,16 @@ test('rep cannot write receipts or payouts, cannot select another rep, and faile
 });
 
 // Real Firestore replaces the whole document on a write without an updateMask; the shared
-// REST fake merges. This wrapper restores replace semantics so a wholesale write shows up.
+// REST fake merges. After each successful commit this wrapper replaces such documents, so a
+// wholesale write shows up while create/updateTime preconditions still behave as before.
 function replacingWorld(seed) {
   const world = knockWorld(seed);
   const fetcher = async (env, input, options = {}) => {
-    if (String(input).endsWith(':commit')) for (const item of JSON.parse(options.body).writes || []) {
-      if (item.update && !item.updateMask) world.fake.documents.delete(item.update.name.split('/documents/')[1]);
+    const response = await world.fake.fetcher(env, input, options);
+    if (String(input).endsWith(':commit') && response.ok) for (const item of JSON.parse(options.body).writes || []) {
+      if (item.update && !item.updateMask) world.fake.put(item.update.name.split('/documents/')[1], decodeFirestoreFields(item.update.fields || {}));
     }
-    return world.fake.fetcher(env, input, options);
+    return response;
   };
   return { ...world, storage: env => createKnockStore(env, fetcher) };
 }
@@ -422,7 +425,7 @@ test('older signed terms hold the period of their cancellation deadline, when th
   assert.ok(statement([refunded]).reviewReasons.includes('refund_review'));
 });
 
-test('a deposit-only booked sale is pending, not a partial collection; a short finished job is', async () => {
+test('a deposit-only sale is pending, even once the job is completed; only a short final collection is partial', async () => {
   const { settings, terms } = await v3();
   const booked = { id: 'dep', repKey: 'rep.one', leadKey: 'lead.one', ticket: 1600, package: 'Garage Transformation', commissionTerms: terms('2026-10-19T12:00:00Z'),
     saleDate: '2026-10-19', soldAt: '2026-10-19T12:00:00Z', status: 'booked', collectedAmount: null, completedAt: null, paidAt: null,
@@ -432,15 +435,97 @@ test('a deposit-only booked sale is pending, not a partial collection; a short f
   assert.equal(customerCollection(booked).source, 'stripe_deposit');
   const row = statement([booked], [], settings);
   assert.deepEqual([row.pending, row.earnedCommission, row.payableCommission, row.compensationState, row.collectionUnknownCount], [400, 0, 0, 'configured', 0]);
+  // Finished work whose only receipt predates completion is awaiting its balance, not short.
   for (const patch of [{ status: 'completed', completedAt: '2026-10-20T12:00:00Z' }, { completedAt: '2026-10-20T12:00:00Z' }]) {
-    const short = { ...booked, ...patch };
-    assert.ok(commissionIssues(short, settings.commission).includes('partial_collection_policy_unconfigured'), JSON.stringify(patch));
-    assert.equal(statement([short], [], settings).payableCommission, null);
+    const awaiting = { ...booked, ...patch };
+    assert.deepEqual(commissionIssues(awaiting, settings.commission), [], JSON.stringify(patch));
+    const held = statement([awaiting], [], settings);
+    assert.deepEqual([held.pending, held.payableCommission, held.compensationState], [400, 0, 'configured'], JSON.stringify(patch));
   }
+  // Short evidence of the closing collection: a receipt at or after completion, a short 'paid'
+  // record from outside Knock, or a finished job with no usable completion time.
+  const completed = { ...booked, status: 'completed', completedAt: '2026-10-20T12:00:00Z' };
+  for (const patch of [{ collectedAmount: 1000, paidAt: '2026-10-20T12:00:00Z' },
+    { collectedAmount: 1000, paidAt: '2026-10-20T15:00:00Z', collectionHistory: [{ total: 1000, previousTotal: 400, previousAt: '2026-10-19T13:00:00Z', at: '2026-10-20T15:00:00Z', by: 'test-owner' }] },
+    { status: 'paid', collectedAmount: 1000, paidAt: '2026-10-19T15:00:00Z' }, { completedAt: null }, { completedAt: 'not a date' }]) {
+    const short = { ...completed, ...patch };
+    assert.ok(commissionIssues(short, settings.commission).includes('partial_collection_policy_unconfigured'), JSON.stringify(patch));
+    assert.equal(statement([short], [], settings).payableCommission, null, JSON.stringify(patch));
+  }
+  // A running receipt recorded before completion is still just pending.
+  const running = { ...completed, collectedAmount: 1000, paidAt: '2026-10-19T15:00:00Z' };
+  assert.deepEqual(commissionIssues(running, settings.commission), []);
   const over = { ...booked, handoff: { deposit: { ...booked.handoff.deposit, collectedAmount: 1700 } } };
   assert.ok(commissionIssues(over, settings.commission).includes('partial_collection_policy_unconfigured'));
   const unverified = { ...booked, handoff: { deposit: { ...booked.handoff.deposit, collectedAt: null } } };
   assert.ok(commissionIssues(unverified, settings.commission).includes('collection_unverified'));
+});
+
+test('recorded Knock writes: completing a deposit-only job awaits the balance; a short receipt after completion is partial', async () => {
+  const { settings, terms } = await v3();
+  const env = knockEnv(), world = knockWorld({ 'knock_sales/flow': { repKey: 'rep.one', leadKey: '', ticket: 1600, package: 'Garage Transformation',
+    commissionTerms: terms('2026-10-08T12:00:00Z'), saleDate: '2026-10-08', soldAt: '2026-10-08T12:00:00Z', status: 'booked',
+    statusHistory: [{ status: 'booked', at: '2026-10-08T12:00:00Z', by: 'rep.one' }], collectedAmount: null, completedAt: null, paidAt: null, cancelledAt: null,
+    handoff: { deposit: { status: 'collected', verifiedBy: 'stripe', collectedAmount: 500, collectedAt: '2026-10-08T12:30:00Z' } } } });
+  const store = world.storage(env);
+  const done = (await setSaleStatus(store, admin, { saleId: 'flow', status: 'completed' }, '2026-10-20T18:00:00.000Z')).sale;
+  assert.deepEqual(commissionIssues(done, settings.commission), []);
+  const short = (await recordSaleCollection(store, admin, { saleId: 'flow', collectedAmount: 1100 }, '2026-10-21T12:00:00.000Z')).sale;
+  assert.deepEqual(commissionIssues(short, settings.commission), ['partial_collection_policy_unconfigured']);
+  const full = (await recordSaleCollection(store, admin, { saleId: 'flow', collectedAmount: 1600 }, '2026-10-22T12:00:00.000Z')).sale;
+  assert.deepEqual([full.status, commissionIssues(full, settings.commission), earnedAt(full)], ['paid', [], Date.parse('2026-10-22T12:00:00.000Z')]);
+});
+
+test('a sale sold in one period and completed in the next with only its deposit leaves the first period payable (V7)', async () => {
+  const { settings, terms } = await v3();
+  const s1 = paid({ id: 's1', package: 'Garage Transformation', commissionTerms: terms('2026-10-06T12:00:00Z'), saleDate: '2026-10-06', soldAt: '2026-10-06T12:00:00Z',
+    cancelEndsAt: '2026-10-09T00:00:00Z', completedAt: '2026-10-12T18:00:00Z', paidAt: '2026-10-12T19:00:00Z' });
+  const s2 = { id: 's2', repKey: 'rep.one', leadKey: '', ticket: 1600, package: 'Garage Transformation', commissionTerms: terms('2026-10-08T12:00:00Z'),
+    saleDate: '2026-10-08', soldAt: '2026-10-08T12:00:00Z', status: 'completed', collectedAmount: null, completedAt: '2026-10-20T18:00:00Z', paidAt: null,
+    statusHistory: [{ status: 'booked', at: '2026-10-08T12:00:00Z' }, { status: 'completed', at: '2026-10-20T18:00:00Z' }],
+    handoff: { deposit: { status: 'collected', verifiedBy: 'stripe', collectedAmount: 500, collectedAt: '2026-10-08T12:30:00Z' } } };
+  const at = (sales, date) => periodStatement({ sales, settings, period: payPeriodFor(date, settings.payroll), now: Date.parse('2026-10-30T00:00:00Z'),
+    reps: [{ repKey: 'rep.one', status: 'active' }] }).find(r => r.repKey === 'rep.one');
+  const first = at([s1, s2], '2026-10-12');
+  assert.deepEqual([first.earnedCommission, first.payableCommission, first.compensationState, first.reviewReasons], [400, 400, 'configured', []]);
+  const next = at([s1, s2], '2026-10-20');
+  assert.deepEqual([next.earnedCommission, next.payableCommission, next.compensationState, next.reviewReasons], [0, 0, 'configured', []]);
+  // A short final receipt is a real partial collection. Until finance decides that policy it
+  // holds every period the sale touched, its sale-day deposit included.
+  const history = [{ total: 1100, previousTotal: 500, previousAt: '2026-10-08T12:30:00Z', at: '2026-10-21T12:00:00Z' }];
+  const short = { ...s2, collectedAmount: 1100, paidAt: '2026-10-21T12:00:00Z', collectionHistory: history };
+  for (const date of ['2026-10-12', '2026-10-20']) {
+    const held = at([s1, short], date);
+    assert.deepEqual([held.payableCommission, held.reviewReasons], [null, ['partial_collection_policy_unconfigured']], date);
+  }
+  assert.equal(at([s1, short], '2026-11-05').compensationState, 'configured');
+  // Collected in full: earned with the final receipt; both periods are payable again.
+  const full = { ...short, status: 'paid', collectedAmount: 1600, paidAt: '2026-10-22T12:00:00Z',
+    collectionHistory: [...history, { total: 1600, previousTotal: 1100, previousAt: '2026-10-21T12:00:00Z', at: '2026-10-22T12:00:00Z' }] };
+  assert.deepEqual([at([s1, full], '2026-10-12').payableCommission, at([s1, full], '2026-10-20').earnedCommission, at([s1, full], '2026-10-20').payableCommission], [400, 400, 400]);
+});
+
+test('a refund or cancellation with no usable date holds every period; a dated one holds only its own', async () => {
+  const { settings, terms } = await v3();
+  const earned = paid({ id: 'r1', package: 'Garage Transformation', commissionTerms: terms('2026-10-06T12:00:00Z'), saleDate: '2026-10-06', soldAt: '2026-10-06T12:00:00Z',
+    cancelEndsAt: '2026-10-09T00:00:00Z', completedAt: '2026-10-12T18:00:00Z', paidAt: '2026-10-12T19:00:00Z',
+    statusHistory: [{ status: 'booked', at: '2026-10-06T12:00:00Z' }, { status: 'paid', at: '2026-10-12T19:00:00Z' }] });
+  const at = (sales, date) => periodStatement({ sales, settings, period: payPeriodFor(date, settings.payroll), now: Date.parse('2026-11-10T00:00:00Z'),
+    reps: [{ repKey: 'rep.one', status: 'active' }] }).find(r => r.repKey === 'rep.one');
+  assert.deepEqual([at([earned], '2026-11-05').compensationState, at([earned], '2026-11-05').payableCommission], ['configured', 0]);
+  for (const patch of [{ refundedAmount: 200 }, { refundedAmount: 200, refundedAt: 'not a date' }, { refundedAmount: 'unknown' }, { status: 'cancelled' }]) {
+    const row = at([{ ...earned, ...patch }], '2026-11-05');
+    assert.deepEqual([row.compensationState, row.payableCommission], ['review_required', null], JSON.stringify(patch));
+    assert.ok(row.reviewReasons.some(reason => ['refund_review', 'cancellation_review'].includes(reason)), JSON.stringify(patch));
+  }
+  for (const patch of [{ refundedAmount: 200, refundedAt: '2026-10-27T12:00:00Z' },
+    { status: 'cancelled', cancelledAt: '2026-10-27T12:00:00Z', statusHistory: [...earned.statusHistory, { status: 'cancelled', at: '2026-10-27T12:00:00Z' }] },
+    // Reinstated: setSaleStatus clears cancelledAt, but the history still dates the cancellation.
+    { statusHistory: [...earned.statusHistory, { status: 'cancelled', at: '2026-10-27T12:00:00Z' }, { status: 'paid', at: '2026-10-28T12:00:00Z' }] }]) {
+    const sale = { ...earned, ...patch };
+    assert.equal(at([sale], '2026-11-05').compensationState, 'configured', JSON.stringify(patch));
+    assert.equal(at([sale], '2026-10-27').payableCommission, null, JSON.stringify(patch));
+  }
 });
 
 test('reps read one earning rule, matching the approval state and the collected-v3 terms', async () => {
@@ -452,6 +537,10 @@ test('reps read one earning rule, matching the approval state and the collected-
   assert.match(unapproved, /^Not approved yet: nothing is earned or payable/);
   assert.ok(unapproved.includes(approved.split(' Sales booked')[0]), 'the planned rule is the same sentence');
   assert.equal(commissionRuleText(undefined).startsWith('Not approved yet'), true);
+  // A saved rate the contract cannot approve is never shown as the planned rate.
+  const offContract = commissionRuleText({ ...settings.commission, verified: false, rate: 0.27 });
+  assert.doesNotMatch(offContract, /27%|25%/);
+  assert.match(offContract, /Planned once approved: Commission on each eligible garage sale at the approved rate, earned once the customer has paid the full price/);
   assert.match(SETTER_RULE_TEXT, /^13% to you .* estimator gets 7% \(20% total\)/);
   assert.deepEqual(CHANNEL_PERCENTS, { directSale: 25, setter: 13, estimator: 7 });
   const [help, money] = await Promise.all(['../crew/knock-app.js', '../crew/knock-stats-ui.js'].map(path => readFile(new URL(path, import.meta.url), 'utf8')));

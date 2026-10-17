@@ -49,8 +49,13 @@ owner-only "Approve commission terms" card in Admin > Settings (admin action
 `compensation.approve`). The request repeats the saved `commission` and `payroll`
 objects the owner reviewed and is refused if they changed; it also writes a
 `knock_receipts/compensation_<requestId>` audit record naming any prior approval.
-Retries and identical re-approvals write nothing and keep `reviewedAt`. Nothing is
-approved by default. An ordinary settings save patches only `settings`,
+Retries and identical re-approvals write nothing and keep `reviewedAt`. Correcting
+only the reference of terms that already verify also keeps `reviewedBy` and
+`reviewedAt` (the receipt records who changed it and when), because `reviewedAt`
+dates the terms: a sale made offline under them still carries them when it syncs.
+Any other change (a new package classification, or re-approving after the terms
+changed) takes effect at the new `reviewedAt`; an earlier sale synced later never
+inherits it, and the confirm sheet says so. Nothing is approved by default. An ordinary settings save patches only `settings`,
 `updatedAt` and `updatedBy`, so the approval (and `planApproval`) survives
 unrelated edits; changing the approved commission or payroll objects stops it
 verifying until the owner approves again. The synthetic test approval is only a
@@ -69,13 +74,17 @@ remains unconfigured and payroll exports are refused.
 
 Under a complete new contract, an evidenced full collection earns at its
 collection timestamp without adding a completion or cancellation-deadline
-delay. A sale-day deposit or running receipt on a job still in progress is
-pending, not partial. A short final collection (the job is completed or paid),
-an excess collection and refund/cancellation evidence remain held for review.
-A held sale holds only the pay periods it touches (sold, a receipt, completion,
-refund, cancellation or a status change), plus the rest of a receipt's calendar
-month when a monthly accelerator applies; other periods stay payable. No pro-rata
-rule, clawback or payment execution is introduced.
+delay. A sale-day deposit or a running receipt is pending, not partial, including
+on a completed job whose receipts all predate completion (it is awaiting its
+balance). A short final collection (a receipt recorded at or after completion
+that is still below the ticket, a short `paid` record, or a finished job with no
+usable completion time), an excess collection and refund/cancellation evidence
+remain held for review. A held sale holds only the pay periods it touches (sold,
+a receipt, completion, refund, cancellation or a status change), plus the rest of
+a receipt's calendar month when a monthly accelerator applies; other periods stay
+payable. A refund or cancellation under review with no usable date holds every
+period, since its adjustment could land in any of them. No pro-rata rule,
+clawback or payment execution is introduced.
 
 Only packages independently verified as wholly eligible garage work belong in
 `garageOnlyPackages`. Names alone do not establish this. Junk-removal packages

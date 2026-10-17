@@ -167,10 +167,14 @@ try {
   await page.getByText('How commission works', { exact: true }).waitFor();
   const moneyText = await page.locator('#knock-main').textContent();
   await page.goto(`${server.base}/crew/knock.html#more`);
+  await page.setViewportSize({ width: 320, height: 720 });
   await page.getByRole('button', { name: /Help & the rules/ }).click();
   const help = page.locator('dialog.sheet[aria-label="Help & the rules"]');
   await help.getByText('Walkthrough you set', { exact: true }).waitFor();
   const helpText = await help.textContent();
+  // On a 320px phone the two long rules read as paragraphs under their labels, not a bold right-hand column.
+  assert.deepEqual(await help.locator('.kv > p').evaluateAll(rules => rules.map(rule => [getComputedStyle(rule).textAlign, rule.getBoundingClientRect().width > 200])),
+    [['start', true], ['start', true]]);
   const rule = /Not approved yet: nothing is earned or payable until the owner approves the terms[^]*?held for review\./.exec(helpText)?.[0];
   assert.ok(rule && moneyText.includes(rule), 'Help and My money state one commission rule');
   assert.match(helpText, /a deposit alone does not count/);
@@ -196,6 +200,23 @@ try {
   await confirm.getByRole('button', { name: 'Approve terms', exact: true }).click();
   await admin.locator('.banner', { hasText: 'Commission terms approved' }).waitFor();
   assert.match(await admin.locator('#knock-main').textContent(), /reference synthetic-browser-approval/);
+  // On a 320px phone every package choice fits and the page does not scroll sideways.
+  await admin.setViewportSize({ width: 320, height: 720 });
+  const clipped = await admin.locator('[role="group"][aria-label$=" is paid"] .seg__btn')
+    .evaluateAll(buttons => buttons.filter(button => button.scrollWidth > button.clientWidth + 1).map(button => button.textContent));
+  assert.deepEqual(clipped, [], 'package choices are not clipped at 320px');
+  assert.equal(await admin.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth), true, 'no sideways scroll at 320px');
+  // Correcting only the reference keeps the approval time, so unsynced sales keep their terms.
+  const approvedLine = await admin.locator('.banner', { hasText: 'Commission terms approved' }).textContent();
+  await admin.getByLabel('Approval reference', { exact: true }).fill('synthetic-browser-approval-b');
+  await admin.getByLabel(/The two-week pay cycle starts/).check();
+  await admin.getByRole('button', { name: 'Update approval', exact: true }).click();
+  const update = admin.locator('dialog.sheet[aria-label="Update the approved terms?"]');
+  assert.match(await update.textContent(), /Only the reference changes\. The approval time stays/);
+  await update.getByRole('button', { name: 'Update approval', exact: true }).click();
+  await admin.getByText('Approval reference updated', { exact: false }).waitFor();
+  const updatedLine = await admin.locator('.banner', { hasText: 'reference synthetic-browser-approval-b' }).textContent();
+  assert.equal(updatedLine.replace('synthetic-browser-approval-b', 'synthetic-browser-approval'), approvedLine, 'same approver and approval time');
 
   assert.deepEqual(errors, [], 'no page errors');
   assert.deepEqual(server.serverErrors, [], 'no server errors');

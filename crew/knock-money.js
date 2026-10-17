@@ -16,11 +16,16 @@ const TERM_FIELDS = ['rate', 'acceleratorEnabled', 'acceleratorThreshold', 'acce
 export const CHANNEL_PERCENTS = Object.freeze({ directSale: 25, setter: 13, estimator: 7 });
 
 const percentText = rate => `${Math.round(Number(rate) * 1000) / 10}%`;
+// The only base rate the knock-collected-v3 contract can approve (knock-admin.js approveCompensation).
+const CONTRACT_RATE = 0.25;
 
 /* The one statement of the current direct-sale earning rule that reps read, on the Help
-   sheet and on My money. Unapproved terms are never presented as a pay promise. */
+   sheet and on My money. Unapproved terms are never presented as a pay promise, and a
+   saved rate the contract cannot approve is never shown as the planned rate. */
 export function commissionRuleText(commission) {
-  const rule = `${percentText(commission?.rate ?? 0.25)} of each eligible garage sale, earned once the customer has paid the full price (a deposit alone does not count), with payouts every two weeks. Partial payments, refunds and cancellations are held for review.`;
+  const rate = commission?.rate ?? CONTRACT_RATE;
+  const share = rate === CONTRACT_RATE ? `${percentText(rate)} of each eligible garage sale` : 'Commission on each eligible garage sale at the approved rate';
+  const rule = `${share}, earned once the customer has paid the full price (a deposit alone does not count), with payouts every two weeks. A final payment that comes up short, a refund or a cancellation is held for review.`;
   if (commission?.verified !== true) return `Not approved yet: nothing is earned or payable until the owner approves the terms, and the saved rate is not a pay promise. Planned once approved: ${rule}`;
   return `${rule} Sales booked under older terms keep their own rules.`;
 }
@@ -124,6 +129,18 @@ function collectionEvents(sale) {
   ].filter(event => Number.isFinite(event.amount) && event.amount >= 0 && Number.isFinite(ms(event.at)));
 }
 
+/* Receipts below the ticket with evidence that the closing collection happened: a 'paid'
+   status, or a receipt recorded at or after the job's completion. A finished job whose only
+   receipts predate completion (usually the sale-day deposit) is awaiting its balance, not
+   short. A finished job with no usable completion or receipt time is held, not assumed. */
+function shortFinalCollection(sale, payment) {
+  if (!(money(payment.gross) < money(sale?.ticket))) return false;
+  if (sale.status === 'paid') return true;
+  const completed = ms(sale.completedAt);
+  if (!Number.isFinite(completed)) return sale.status === 'completed';
+  return !payment.at || ms(payment.at) >= completed;
+}
+
 export function commissionIssues(sale, commission) {
   const payment = customerCollection(sale), issues = [];
   const collectedTerms = sale?.commissionTerms?.contract === 'knock-collected-v3';
@@ -137,12 +154,11 @@ export function commissionIssues(sale, commission) {
   }
   if (collectedTerms && payment.gross > 0) {
     if (!payment.at) issues.push('collection_unverified');
-    // Collected terms earn only at full collection, so receipts below the ticket on a job
-    // still in progress (the sale-day deposit, or a running total) are simply not earned yet.
-    // Only a short final collection (the job is completed or paid) or an overpayment
-    // needs the unapproved partial-collection policy.
-    const finished = ['completed', 'paid'].includes(sale.status) || Number.isFinite(ms(sale.completedAt));
-    if (money(payment.gross) > money(sale.ticket) || (money(payment.gross) < money(sale.ticket) && finished)) issues.push('partial_collection_policy_unconfigured');
+    // Collected terms earn only at full collection, so receipts below the ticket are not
+    // earned yet: the sale-day deposit, a running total, or a finished job still awaiting
+    // its balance. Only an overpayment or a short final collection needs the unapproved
+    // partial-collection policy (see shortFinalCollection).
+    if (money(payment.gross) > money(sale.ticket) || shortFinalCollection(sale, payment)) issues.push('partial_collection_policy_unconfigured');
   }
   if (payment.refunded === null || payment.refunded > 0) issues.push('refund_review');
   if (sale?.collectionHistory != null) {
@@ -275,6 +291,7 @@ export function previousPayPeriod(period, payroll) {
 }
 
 const inPeriod = (date, period) => Boolean(date && period && date >= period.start && date <= period.end);
+const datable = value => value != null && value !== '' && Number.isFinite(ms(value));
 
 // Calendar dates on which a sale changed: sold, each receipt, the deposit, completion,
 // payment, refund, cancellation and every status change. Older signed terms also earn at
@@ -285,22 +302,30 @@ function activityDates(sale, timeZone) {
   const instants = [sale.soldAt, sale.paidAt, sale.completedAt, sale.refundedAt, sale.cancelledAt, deadline, sale.handoff?.deposit?.collectedAt,
     ...collectionEvents(sale).map(event => event.at), ...history(sale.collectionHistory).flatMap(event => [event?.at, event?.previousAt]),
     ...history(sale.statusHistory).map(event => event?.at)];
-  const dates = instants.filter(value => value != null && value !== '' && Number.isFinite(ms(value))).map(value => zonedDate(ms(value), timeZone));
+  const dates = instants.filter(datable).map(value => zonedDate(ms(value), timeZone));
   if (validDate(sale.saleDate)) dates.push(sale.saleDate);
   return [...new Set(dates.filter(Boolean))];
 }
 
+/* A refund or cancellation under review with no usable date. Refund fields arrive from
+   outside Knock, so the adjustment it may need could land in any period, the current one
+   included; it holds them all until finance dates it. */
+function undatedAdjustment(sale, issues) {
+  if (issues.includes('refund_review') && !datable(sale.refundedAt)) return true;
+  const history = Array.isArray(sale.statusHistory) ? sale.statusHistory : [];
+  return issues.includes('cancellation_review') && !datable(sale.cancelledAt) && !history.some(event => event?.status === 'cancelled' && datable(event.at));
+}
+
 /* Whether a sale's unresolved review reasons hold this period's totals. They do when the
-   sale changed inside the period, or when it cannot be dated at all. With a monthly
-   accelerator, a receipt also shifts the tier of the rep's later receipts that month, so it
-   holds every period from that receipt to the end of its calendar month. Another period's
-   unrelated problem never blanks a period whose own sales are complete. */
-function reviewScope(sale, period, timeZone, tiered) {
+   sale changed inside the period, or when it (or its refund or cancellation) cannot be dated.
+   With a monthly accelerator, a receipt also shifts the tier of the rep's later receipts that
+   month, so it holds every period from that receipt to the end of its calendar month. Another
+   period's unrelated problem never blanks a period whose own sales are complete. */
+function reviewScope(sale, issues, period, timeZone, tiered) {
   const dates = activityDates(sale, timeZone);
-  const direct = !dates.length || dates.some(date => inPeriod(date, period));
+  const direct = !dates.length || undatedAdjustment(sale, issues) || dates.some(date => inPeriod(date, period));
   if (direct || !tiered) return { rep: direct, lead: direct };
-  const receipts = [sale.paidAt, ...collectionEvents(sale).map(event => event.at)]
-    .filter(value => value != null && value !== '' && Number.isFinite(ms(value))).map(value => zonedDate(ms(value), timeZone)).filter(Boolean);
+  const receipts = [sale.paidAt, ...collectionEvents(sale).map(event => event.at)].filter(datable).map(value => zonedDate(ms(value), timeZone)).filter(Boolean);
   return { rep: receipts.some(date => period.end >= date && period.start <= lastDayOfMonth(date)), lead: false };
 }
 
@@ -340,7 +365,7 @@ export function periodStatement({ sales = [], payouts = [], training = [], reps 
     // Unresolved adjustments may affect prior payouts or monthly tiers; never invent a clawback.
     const lead = sale.leadKey && sale.leadKey !== sale.repKey ? row(sale.leadKey) : null;
     if (issues.length) {
-      const scope = reviewScope(sale, period, timeZone, tieredReps.has(sale.repKey));
+      const scope = reviewScope(sale, issues, period, timeZone, tieredReps.has(sale.repKey));
       if (scope.rep) r.reviewReasons.push(...issues);
       if (scope.lead && lead) lead.reviewReasons.push(...issues);
     }
