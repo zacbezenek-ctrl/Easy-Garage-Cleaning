@@ -3,10 +3,10 @@
 // with none, or with the directory off, callers fall back to HIGHLEVEL_USER_ID exactly as before. Only that one
 // profile is read (one document per legacy spelling), never the whole staff vault.
 import { readOne } from './employee-vault.js';
-import { legacyPersonKeys, personKey, staffDirectoryEnabled } from './staff-directory.js';
+import { HIGHLEVEL_USER_ID, legacyPersonKeys, personKey, staffDirectoryEnabled } from './staff-directory.js';
 
-const HIGHLEVEL_USER = /^[A-Za-z0-9]{8,64}$/;
-export const storedHighLevelUserId = value => typeof value === 'string' && HIGHLEVEL_USER.test(value.trim()) ? value.trim() : null;
+// The staff directory accepts exactly this form (HIGHLEVEL_USER_ID), so a saved ID is never ignored here.
+export const storedHighLevelUserId = value => typeof value === 'string' && HIGHLEVEL_USER_ID.test(value.trim()) ? value.trim() : null;
 
 /** A walkthrough's estimator (roster id): its crew lead, else the first person assigned. '' for any other visit. */
 export function walkthroughEstimator(job) {

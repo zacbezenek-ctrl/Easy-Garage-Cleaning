@@ -1,5 +1,5 @@
 // Firestore REST fake for windowed dispatch reads: document GET, masked list
-// scans with page tokens, :runQuery (field EQUAL/GREATER_THAN_OR_EQUAL/IN/
+// scans with page tokens, :runQuery (field EQUAL/GREATER_THAN_OR_EQUAL/LESS_THAN_OR_EQUAL/IN/
 // ARRAY_CONTAINS, unary IS_NULL, orderBy with the implicit __name__ tiebreak,
 // startAt cursors, select, limit), :runAggregationQuery (count; a requested
 // readTime is recorded, not replayed), masked :batchGet, :commit with
@@ -31,6 +31,8 @@ export function firestoreRest(seed = {}) {
     if (found === undefined) return false;
     if (op === 'EQUAL') return kind(found) === kind(expected) && found === expected;
     if (op === 'GREATER_THAN_OR_EQUAL') return kind(found) === kind(expected) && found >= expected;
+    // A bounded range (dispatch-storage.js datedJobs: date >= start AND date <= end).
+    if (op === 'LESS_THAN_OR_EQUAL') return kind(found) === kind(expected) && found <= expected;
     if (op === 'IN') return expected.some(item => kind(item) === kind(found) && item === found);
     if (op === 'ARRAY_CONTAINS') return Array.isArray(found) && found.includes(expected);
     throw new Error('Unsupported field filter ' + op);
