@@ -103,7 +103,7 @@ def is_private_dir(name):
 # scripts/render-before-after.mjs); listed publicly but never rewritten here.
 EXTERNAL_HTML = frozenset({"before-after.html"})
 # Public conversion/utility pages that stay out of the llms.txt URL inventory.
-UNLISTED_HTML = frozenset({"404.html", "ads.html", "apply.html", "thank-you.html"})
+UNLISTED_HTML = frozenset({"404.html", "ads.html", "apply.html", "thank-you.html", "free-garage-walkthrough.html", "garage-cleanout-walkthrough.html", "lp-thank-you.html"})
 
 
 def is_private_html(rel):
