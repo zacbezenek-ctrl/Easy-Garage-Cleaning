@@ -10,7 +10,9 @@
  *   catalogOperations/<requestId>  receipts {action, fingerprint, actorId, requestId, at, result}
  *   pricingMenuApprovals/current   the owner's approved pricing-menu prices for the quote builder (EGC_QUOTE_BUILDER_ENABLED)
  *                                  {approvals:{[menuItemId]:{unitCents,kind,identity,approvedAt,approvedBy,requestId,basis}},
- *                                  menuVersion, settingsVersion, updatedAt, updatedBy, requestId}; written only by menu.approve
+ *                                  goodsInstallationIncluded?, menuVersion, settingsVersion, updatedAt, updatedBy, requestId};
+ *                                  written only by menu.approve. goodsInstallationIncluded is the owner's answer to the
+ *                                  builder's installation question, stored once it is given (composite-quote.js)
  * With no pointer the seed catalog (functions/_data/garage-catalog.json) is the published catalog, and with
  * no settings document the placeholder defaults apply (mustSetBeforeCustomerUse: true, internal use only).
  * A stored record that is malformed or fails verification fails closed (503) and never falls back to a seed.
@@ -26,7 +28,7 @@ import { auditWrite } from './hub-audit.js';
 import { CATALOG_SCHEMA_VERSION, catalogLinePricer, goodsMarkupOf, settingsReadyForCustomers, staleItems, validateCatalog, validatePricingSettings } from './catalog.js';
 import { denverToday } from './dispatch-time.js';
 import { SEED_CATALOG_JSON, SEED_SETTINGS_JSON } from '../_data/catalog-seed.js';
-import { bundledPricingMenu, menuItemIdentity, menuPrices, validateMenuApprovals } from './composite-quote.js';
+import { INSTALLATION_ID, bundledPricingMenu, menuItemIdentity, menuPrices, validateMenuApprovals } from './composite-quote.js';
 import { walkthroughPricing, walkthroughServiceItems } from './pricing-config.js';
 
 export const CATALOG_VERSIONS = 'catalogVersions', PRICING_SETTINGS = 'pricingSettings', PRICING_SETTINGS_VERSIONS = 'pricingSettingsVersions', CATALOG_OPERATIONS = 'catalogOperations', CURRENT = 'current';
@@ -181,11 +183,11 @@ export { bundledPricingMenu };
 
 function approvalsState(row) {
   if (!row) return { items: {}, revision: null };
-  try { return validateMenuApprovals({ items: plain(row.approvals) ? row.approvals : {}, revision: row.revision }); }
+  try { return validateMenuApprovals({ items: plain(row.approvals) ? row.approvals : {}, revision: row.revision, ...(row.goodsInstallationIncluded !== undefined ? { goodsInstallationIncluded: row.goodsInstallationIncluded } : {}) }); }
   catch { throw storageInvalid('pricing-menu approvals', { currentRevision: row.revision }); }
 }
 
-/** The quote builder's pricing state: {menu, settings, walkthrough, approvals:{items, revision}}. Two reads: the
+/** The quote builder's pricing state: {menu, settings, walkthrough, approvals:{items, revision, goodsInstallationIncluded?}}. Two reads: the
  * pricing settings and the owner's menu approvals; the menu and the walkthrough tables are bundled. */
 export async function readCompositeState(store, { pricingMenu = bundledPricingMenu, walkthrough = () => walkthroughPricing(walkthroughServiceItems()) } = {}) {
   const [settingsRow, approvalsRow] = await Promise.all([store.read(PRICING_SETTINGS, CURRENT), store.read(MENU_APPROVALS, CURRENT)]);
@@ -374,19 +376,27 @@ export const MAX_MENU_CHANGES = 100;
 const MENU_ID = /^(?:hd-\d{6,12}|egc-\d{3})$/;
 function approvalsResult(row, requestId, replayed, current = true) {
   const state = approvalsState(row);
-  return { ok: true, authority: 'employee_hub', action: 'menu.approve', requestId, replayed, approvals: { revision: current ? state.revision : null, current, count: Object.keys(state.items).length, items: state.items } };
+  return { ok: true, authority: 'employee_hub', action: 'menu.approve', requestId, replayed, approvals: { revision: current ? state.revision : null, current, count: Object.keys(state.items).length, items: state.items,
+    ...(state.goodsInstallationIncluded !== undefined ? { goodsInstallationIncluded: state.goodsInstallationIncluded } : {}) } };
 }
 
-/** menu.approve {requestId, expectedRevision, menuVersion, settingsVersion, approve:[{id, unitCents}], revoke:[id]}: the
- * owner's bulk approval of draft pricing-menu prices. A product is approved only at its current price (cost x
- * goodsMarkup), so the owner approves exactly what estimators see; a service is approved at the amount the owner
- * enters (the draft amount by default). The approvals, a catalogOperations receipt and a hub_audit entry commit
- * together; expectedRevision is the approvals revision the owner reviewed (null before the first approval). */
+/** menu.approve {requestId, expectedRevision, menuVersion, settingsVersion, approve:[{id, unitCents}], revoke:[id],
+ * goodsInstallationIncluded?}: the owner's bulk approval of draft pricing-menu prices. A product is approved only at its
+ * current price (cost x goodsMarkup), so the owner approves exactly what estimators see; a service is approved at the
+ * amount the owner enters (the draft amount by default). goodsInstallationIncluded (a boolean) answers the builder's
+ * installation question: true confirms that shelving and storage installation is included in the goods price, false
+ * takes that back. It is the only way to answer it while CATALOG_QUOTES_ENABLED is off (the pricing settings cannot be
+ * saved then), and a request may carry it with no price change. The approvals, a catalogOperations receipt and a
+ * hub_audit entry commit together; expectedRevision is the approvals revision the owner reviewed (null before the
+ * first approval). */
 async function approveMenuPrices(store, session, input, now, actor, { compositeState }) {
-  keys(input, ['action', 'requestId', 'expectedRevision', 'menuVersion', 'settingsVersion', 'approve', 'revoke']);
+  keys(input, ['action', 'requestId', 'expectedRevision', 'menuVersion', 'settingsVersion', 'approve', 'revoke', 'goodsInstallationIncluded']);
   if (!Object.hasOwn(input, 'expectedRevision') || input.expectedRevision !== null && (typeof input.expectedRevision !== 'string' || !input.expectedRevision || input.expectedRevision.length > 64)) throw fail('request_invalid', 'Reload the draft prices before approving: the approval needs the revision you reviewed (null before the first approval).');
-  const approve = input.approve ?? [], revoke = input.revoke ?? [];
-  if (!Array.isArray(approve) || !Array.isArray(revoke) || approve.length + revoke.length < 1 || approve.length + revoke.length > MAX_MENU_CHANGES) throw fail('request_invalid', `Choose 1 to ${MAX_MENU_CHANGES} prices to approve or revoke.`);
+  const approve = input.approve ?? [], revoke = input.revoke ?? [], installation = input.goodsInstallationIncluded;
+  if (installation !== undefined && typeof installation !== 'boolean') throw fail('request_invalid', 'Answer the installation question with yes or no.');
+  // The installation answer counts as one of the request's changes, so its audit entry still records every change.
+  const count = (Array.isArray(approve) ? approve.length : 0) + (Array.isArray(revoke) ? revoke.length : 0) + (installation === undefined ? 0 : 1);
+  if (!Array.isArray(approve) || !Array.isArray(revoke) || count < 1 || count > MAX_MENU_CHANGES) throw fail('request_invalid', `Choose 1 to ${MAX_MENU_CHANGES} prices to approve or revoke.`);
   const seen = new Set();
   for (const entry of approve) {
     if (!plain(entry) || Object.keys(entry).some(key => !['id', 'unitCents'].includes(key)) || typeof entry.id !== 'string' || !MENU_ID.test(entry.id) || !Number.isSafeInteger(entry.unitCents) || entry.unitCents < 1 || entry.unitCents > 10000000 || seen.has(entry.id)) throw fail('request_invalid', 'Each approval needs a distinct pricing-menu item and a whole-cent price.');
@@ -421,14 +431,18 @@ async function approveMenuPrices(store, session, input, now, actor, { compositeS
     changed.push({ id, unitCents: null, previous: items[id].unitCents });
     delete items[id];
   }
-  const patch = { approvals: items, menuVersion: state.menu.menuVersion, settingsVersion: state.settings.settingsVersion, updatedAt: now, updatedBy: actor, requestId: input.requestId };
+  // The installation answer is written only when this request gives one; otherwise the stored answer stays as it was.
+  const previousInstallation = state.approvals.goodsInstallationIncluded ?? null;
+  const patch = { approvals: items, ...(installation !== undefined ? { goodsInstallationIncluded: installation } : {}), menuVersion: state.menu.menuVersion, settingsVersion: state.settings.settingsVersion, updatedAt: now, updatedBy: actor, requestId: input.requestId };
   const summary = list => Object.fromEntries(list.map(entry => [entry.id, entry]));
+  const installed = installation !== undefined ? { installation: { included: installation, previous: previousInstallation } } : {};
+  const audited = (rows, value) => ({ ...summary(rows), ...(installation !== undefined ? { [INSTALLATION_ID]: { id: INSTALLATION_ID, included: value } } : {}) });
   const writes = [
     { collection: MENU_APPROVALS, id: CURRENT, revision, patch },
     // The receipt keeps every change with its amount and the amount it replaced, like the audit entry.
-    { collection: CATALOG_OPERATIONS, id: receiptId, patch: { action: input.action, fingerprint, actorId: actor, requestId: input.requestId, at: now, result: { approved: approve.map(entry => entry.id), revoked: revoke, menuVersion: state.menu.menuVersion, settingsVersion: state.settings.settingsVersion, changes: changed } } },
+    { collection: CATALOG_OPERATIONS, id: receiptId, patch: { action: input.action, fingerprint, actorId: actor, requestId: input.requestId, at: now, result: { approved: approve.map(entry => entry.id), revoked: revoke, menuVersion: state.menu.menuVersion, settingsVersion: state.settings.settingsVersion, changes: changed, ...installed } } },
     auditWrite({ actor: { id: actor, kind: 'human', role: session.role }, via: 'hub', action: 'pricing_menu.approve', entity: { collection: MENU_APPROVALS, id: CURRENT },
-      before: summary(changed.map(({ id, previous }) => ({ id, unitCents: previous }))), after: summary(changed.map(({ id, unitCents }) => ({ id, unitCents }))), requestId: input.requestId, visibility: 'owner', now }),
+      before: audited(changed.map(({ id, previous }) => ({ id, unitCents: previous })), previousInstallation), after: audited(changed.map(({ id, unitCents }) => ({ id, unitCents })), installation), requestId: input.requestId, visibility: 'owner', now }),
   ];
   const { recovered, committed } = await commitOrRecover(store, writes, replay);
   if (recovered) return recovered;

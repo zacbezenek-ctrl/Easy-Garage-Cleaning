@@ -22,10 +22,12 @@
  * POST {action:'catalog.publish',requestId,basedOnVersion,catalog} (owner)
  *   basedOnVersion is publication.version (null only to replace an unreadable pointer); catalog is a complete
  *   validateCatalog() document with a later catalogVersion, stored immutably. => {ok,requestId,replayed,publication}
- * POST {action:'menu.approve',requestId,expectedRevision,menuVersion,settingsVersion,approve:[{id,unitCents}],revoke:[id]}
+ * POST {action:'menu.approve',requestId,expectedRevision,menuVersion,settingsVersion,approve:[{id,unitCents}],revoke:[id],goodsInstallationIncluded?}
  *   (owner; only with EGC_QUOTE_BUILDER_ENABLED=true, which also allows it while CATALOG_QUOTES_ENABLED is off)
  *   bulk-approves draft pricing-menu prices for the quote builder; expectedRevision is the approvals revision from
- *   GET /api/quote-draft?view=builder (internal.approvalsRevision). => {ok,requestId,replayed,approvals:{revision,current,count,items}}
+ *   GET /api/quote-draft?view=builder (internal.approvalsRevision). goodsInstallationIncluded (boolean) answers the
+ *   builder's installation question, the only way to answer it while catalog pricing is off; it counts as one change.
+ *   => {ok,requestId,replayed,approvals:{revision,current,count,items,goodsInstallationIncluded?}}
  * With EGC_QUOTE_BUILDER_ENABLED a fresh menu.approve or settings.update also releases the signed jobs held for the
  *   owner's price approval that it now covers (walkthrough-handoff.js releaseHeldHandoffs: their estimate and deposit
  *   request go to the customer) and adds heldJobs {released:[jobId], waiting, more} or {status:'deferred'} when they
