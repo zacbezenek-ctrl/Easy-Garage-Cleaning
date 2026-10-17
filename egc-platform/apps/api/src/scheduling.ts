@@ -4,6 +4,7 @@ import {GhlClient,asDate,asRecord,asString} from "@egc/ghl";
 import {recomputeLeadState} from "@egc/lead-audit";
 import {randomUUID} from "node:crypto";
 import {ReliableAppointments,postgresAppointmentStore,AppointmentOperationError,OperationsError,appointmentStatus,appointmentMatches,type Actor,type Command,type AppointmentProvider} from "@egc/operations";
+import {chooseScheduleCalendar} from "./schedule-calendar.js";
 type Json=Record<string,unknown>;
 type Sync=Extract<Command,{command:"schedule.sync_provider"}>;
 type Portal=(actor:Actor,command:Command)=>Promise<Json>;
@@ -63,11 +64,13 @@ export async function syncPortalSchedule(actor:Actor,command:Sync,portal:Portal,
       verified=await sender.update(providerId,payload,context,command.requestId);
     }else{
       if(status==="cancelled"||status==="noshow")return{ok:true,authority:"employee_hub",portalVisitId:command.portalVisitId,providerSync:"not_needed",appointmentId:null};
+      // D9b: the calendar is an optional second record; the jobs calendar is env-only (schedule-calendar.ts). A deleted or
+      // unconfigured calendar is a skip code the Hub parks at once, before any provider write.
       const calendarPayload=await provider.getCalendars(),calendars=Array.isArray(calendarPayload.calendars)?calendarPayload.calendars.map(asRecord):[];
-      const configured=visit.type==="walkthrough"?env.GHL_WALKTHROUGH_CALENDAR_ID:env.GHL_JOBS_CALENDAR_ID;
-      const candidates=calendars.filter(c=>typeof c.id==="string"&&(configured?c.id===configured:visit.type==="walkthrough"?/walkthrough/i.test(String(c.name)):/customer.?jobs/i.test(String(c.name))));
-      if(candidates.length!==1||/employee|hiring|interview/i.test(String(candidates[0]?.name)))throw new OperationsError("schedule_calendar_ambiguous_or_unavailable",409);
-      verified=await sender.create({...payload,calendarId:candidates[0]!.id,contactId:providerContactId},context,null,command.requestId);
+      const choice=chooseScheduleCalendar(String(visit.type),env,calendars);
+      if("skip" in choice)throw new OperationsError(choice.skip,409);
+      if(!("calendarId" in choice))throw new OperationsError("schedule_calendar_ambiguous_or_unavailable",409);
+      verified=await sender.create({...payload,calendarId:choice.calendarId,contactId:providerContactId},context,null,command.requestId);
     }
     const event=verified.event;
     const [prior]=await db.select().from(schema.appointments).where(eq(schema.appointments.providerId,String(event.id))).limit(1);

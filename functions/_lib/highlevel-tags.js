@@ -9,6 +9,9 @@ import { customerCalendars, isStaffScheduledCalendar } from './highlevel-calenda
 export const HIGHLEVEL_API = 'https://services.leadconnectorhq.com';
 /** EGC_GHL_TAG_OUTBOX: exactly "true" queues schedule and walkthrough-outcome tags in the tag outbox (ghl-tag-outbox.js). */
 export const ghlTagOutboxEnabled = env => env?.EGC_GHL_TAG_OUTBOX === 'true';
+/** EGC_GHL_SCHEDULE_MIRROR (D9b): exactly "true" queues and delivers the HighLevel schedule mirror (ghl-schedule-mirror.js).
+ * Here, like the tag outbox flag, so dispatch storage can carry it without importing the mirror. */
+export const ghlScheduleMirrorEnabled = env => env?.EGC_GHL_SCHEDULE_MIRROR === 'true';
 
 export function highLevelConfig(env) {
   return {

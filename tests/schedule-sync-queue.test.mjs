@@ -238,7 +238,8 @@ test('a ledger refusal no retry can clear parks the visit at once, and a manual 
     assert.ok(item, `${id} is due at ${at}`);
     return recordScheduleSyncFailure(f.store, WORKER, { command: 'schedule.sync_failed', requestId: randomUUID(), portalVisitId: id, expectedRevision: item.expectedRevision, syncRequestId: item.requestId, code }, at);
   };
-  assert.deepEqual(SCHEDULE_SYNC_PARK_CODES, ['appointment_idempotency_payload_conflict', 'appointment_changed_since_acceptance']);
+  // D9b: a deleted or unconfigured HighLevel calendar parks the calendar mirror at once (calendar mirror skipped), never a retry every tick.
+  assert.deepEqual(SCHEDULE_SYNC_PARK_CODES, ['appointment_idempotency_payload_conflict', 'appointment_changed_since_acceptance', 'schedule_calendar_deleted', 'schedule_calendar_not_configured']);
   for (const code of SCHEDULE_SYNC_PARK_CODES) {
     // Each round is a new schedule change: a review flag left from an earlier key never parks the new one.
     f.set('refused', { syncStatus: 'pending', syncIdempotencyKey: randomUUID() });
@@ -601,7 +602,7 @@ test('the mirror never shares a provider key with the page or MCP: page first th
 // Loads the real employee-suite.js with a fake Hub API and runs the manager page-load retry. The fake
 // Firestore records every write (merge sets and transactional sets) against its own copy of the jobs;
 // onSync runs while /api/highlevel is in flight (a Hub write landing during the page's sync).
-function page(serverScheduleSync, jobs, { onSync = () => {} } = {}) {
+function page(serverScheduleSync, jobs, { onSync = () => {}, syncResponse = { ok: true, contactId: 'contact-a', appointmentId: 'appointment-page' } } = {}) {
   const now = Date.parse(NOW), timeouts = [], calls = [], writes = [];
   const docs = new Map(jobs.map(job => [job.id, structuredClone(job)]));
   const merge = (id, update) => docs.set(id, { ...(docs.get(id) || {}), ...structuredClone(update) });
@@ -627,7 +628,7 @@ function page(serverScheduleSync, jobs, { onSync = () => {} } = {}) {
     if (url.startsWith('/api/employee-hub')) return response(init.method === 'POST' ? { ok: true, record: JSON.parse(init.body).data } : { ok: true, collections: {}, accounts: [] });
     if (url.startsWith('/api/employee-accounts')) return response({ ok: true, accounts: [] });
     if (url.startsWith('/api/highlevel?')) return response({ ok: true, pipelines: [], opportunities: [], events: [] });
-    if (url === '/api/highlevel') { await onSync(JSON.parse(init.body), docs); return response({ ok: true, contactId: 'contact-a', appointmentId: 'appointment-page' }); }
+    if (url === '/api/highlevel') { await onSync(JSON.parse(init.body), docs); return response(syncResponse); }
     return response({ ok: false, error: 'unexpected' }, 404);
   };
   const source = readFileSync(new URL('../employee-suite.js', import.meta.url), 'utf8').replace(/\}\)\(\);\s*$/, 'Object.assign(globalThis,{ui:{S,loadAll,syncState,syncJobRecord}});})();');
@@ -692,6 +693,24 @@ test('when page loads own retries again, a backoff the worker wrote never delays
     label(visit('queued')),
   ], ['Sync needs review', 'Sync needs review', 'Sync needs review', 'Sync failed', 'Sync failed', 'Sync pending']);
   assert.match(syncState(visit('parked', { ...workerFailure(NOW), syncReviewRequired: true })), /opsRetrySync\('parked'\)/, 'the manager\'s Retry stays on the card');
+});
+
+test('D9b: a skipped calendar mirror reads "Calendar mirror skipped", is recorded on the visit, and a later appointment clears it', async () => {
+  const { syncState } = page(true, []).context.ui;
+  assert.match(syncState(visit('deleted', { syncStatus: 'error', syncError: 'schedule_calendar_deleted', syncReviewRequired: true })), /Calendar mirror skipped · calendar deleted in HighLevel/);
+  assert.match(syncState(visit('unset', { syncStatus: 'error', syncError: 'schedule_calendar_not_configured', syncReviewRequired: true })), /Calendar mirror skipped · no HighLevel calendar configured/);
+  assert.match(syncState(visit('page', { syncStatus: 'synced', calendarMirror: { status: 'skipped', reason: 'calendar_deleted' } })), /Calendar mirror skipped/);
+  assert.doesNotMatch(syncState(visit('deleted', { syncStatus: 'error', syncError: 'schedule_calendar_deleted', syncReviewRequired: true })), /opsRetrySync/, 'nothing to retry until a calendar is configured');
+  assert.match(syncState(visit('other', { syncStatus: 'error', syncError: 'appointment_changed_since_acceptance', syncReviewRequired: true })), /Sync needs review/);
+  const skipped = page(false, [visit('skip', { syncStatus: 'error', syncAttempts: 1 })], { syncResponse: { ok: true, contactId: 'contact-a', appointmentId: '', calendarMirror: { status: 'skipped', reason: 'calendar_deleted' }, automation: { tagSynced: false, calendarSkipped: true } } });
+  await skipped.load();
+  assert.deepEqual([skipped.docs.get('skip').syncStatus, skipped.docs.get('skip').calendarMirror], ['synced', { status: 'skipped', reason: 'calendar_deleted', at: NOW }], 'synced, never retried every page load');
+  const back = page(false, [visit('back', { syncStatus: 'error', syncAttempts: 1, calendarMirror: { status: 'skipped', reason: 'calendar_deleted', at: NOW } })]);
+  await back.load();
+  assert.deepEqual([back.docs.get('back').calendarMirror, back.docs.get('back').highlevelAppointmentId], [null, 'appointment-page']);
+  const plain = page(false, [visit('plain', { syncStatus: 'error', syncAttempts: 1 })]);
+  await plain.load();
+  assert.equal('calendarMirror' in plain.writes.find(write => write.id === 'plain' && write.update.syncStatus === 'synced').update, false, 'an ordinary sync writes no new field');
 });
 
 test('a manual Retry clears the worker\'s park so it starts a fresh budget; a page-load retry leaves the park to the worker', async () => {

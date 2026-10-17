@@ -873,8 +873,9 @@ test('open-shift scheduling fields persist on the canonical job record',()=>{
   // link instead of Start; (WT-OUTCOME review) the Walkthroughs screen also needs dispatch.write when the server reports
   // staff-role capabilities; (WT-OUTCOME after SALES-BOOKING) one combined tag; (MOBILE-HUB) the view title carries a title
   // attribute, business users get RUN THE BUSINESS first and a crew member who is not clocked in sees the time clock above
-  // Today's jobs; (MOBILE-HUB after WT-OUTCOME) one combined tag.
-  assert.match(employee,/employee-suite\.js\?v=20261015nativeform"/);
+  // Today's jobs; (MOBILE-HUB after WT-OUTCOME) one combined tag; (D9b GHL schedule mirror) calendar-mirror-skipped badges
+  // and the schedule mirror and optional jobs calendar rows on Integrations.
+  assert.match(employee,/employee-suite\.js\?v=20261017ghlmirror"/);
 });
 
 test('recurring visits request a server-side handoff clone instead of copying prior execution or payments',()=>{

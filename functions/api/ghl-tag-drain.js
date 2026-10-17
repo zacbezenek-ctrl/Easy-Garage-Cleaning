@@ -9,11 +9,16 @@
    POST {action:'retry', requestId, jobId?}
                                     dispatchers: parked and overdue entries are due again with a fresh budget and
                                     get one attempt at once.
-   Off unless EGC_GHL_TAG_OUTBOX is exactly "true". Nothing here sends a customer message. */
+   Off unless EGC_GHL_TAG_OUTBOX is exactly "true". Nothing here sends a customer message.
+   D9b: with EGC_GHL_SCHEDULE_MIRROR exactly "true" the same signed tick also drains the HighLevel schedule mirror
+   (functions/_lib/ghl-schedule-mirror.js: contact, EGC Pipeline stage and a schedule note; never a tag, appointment or
+   message), reported as `mirror` beside the tag summary, and a manager's retry also requeues its parked entries. Either
+   flag lets the tick run; with both off it answers as before. */
 import { getHubSession } from '../_lib/hub-session.js';
 import { canDispatch } from '../_lib/dispatch-permissions.js';
 import { operationsAuthMode, operationsEnabled, verifyApiServiceEnvelope } from '../_lib/operations-service-auth.js';
 import { drainGhlTagOutbox, ghlTagOutboxEnabled, ghlTagOutboxStorage, ghlTagStuck, recordGhlTagDrainCheckIn, retryGhlTags } from '../_lib/ghl-tag-outbox.js';
+import { drainScheduleMirror, ghlScheduleMirrorEnabled, retryScheduleMirror, scheduleMirrorStorage } from '../_lib/ghl-schedule-mirror.js';
 
 export const GHL_TAG_DRAIN_PATH = '/api/ghl-tag-drain';
 /** Must equal GHL_TAG_WORKER_ACTOR_ID in egc-platform/apps/worker/src/ghl-tag-worker.ts. */
@@ -31,7 +36,7 @@ function sameOrigin(request) {
 }
 
 function errorResponse(error) {
-  if (/^ghl_tag_[a-z_]+$/.test(error?.code || '')) return reply(error.status || 503, { ok: false, code: error.code, error: error.message });
+  if (/^ghl_(?:tag|mirror)_[a-z_]+$/.test(error?.code || '')) return reply(error.status || 503, { ok: false, code: error.code, error: error.message });
   return failure(503, 'ghl_tag_unavailable', 'HighLevel tag status could not be verified. Retry; nothing is sent twice.');
 }
 
@@ -43,7 +48,7 @@ function authFailure(error) {
   return failure(503, 'ghl_tag_drain_unavailable', 'The signed service request could not be checked. Retry with a new signature.');
 }
 
-export function ghlTagDrainHandlers({ verify = verifyApiServiceEnvelope, session = getHubSession, storage = ghlTagOutboxStorage, now = () => new Date(), fetcher = (...args) => fetch(...args) } = {}) {
+export function ghlTagDrainHandlers({ verify = verifyApiServiceEnvelope, session = getHubSession, storage = ghlTagOutboxStorage, mirrorStorage = scheduleMirrorStorage, now = () => new Date(), fetcher = (...args) => fetch(...args) } = {}) {
   async function tick(env, envelope) {
     // The legacy shared-secret envelope has no path binding or nonce, so it never drives HighLevel writes.
     let v2 = false; try { v2 = operationsEnabled(env) && operationsAuthMode(env) === 'v2'; } catch {}
@@ -56,12 +61,16 @@ export function ghlTagDrainHandlers({ verify = verifyApiServiceEnvelope, session
     if (actor?.workspace !== (env.EGC_OPERATIONS_WORKSPACE || 'egc')) return failure(403, 'ghl_tag_drain_forbidden', 'This workspace cannot drain HighLevel tags.');
     if (actor.id !== GHL_TAG_WORKER_ID || actor.kind !== 'integration' || actor.role !== 'integration') return failure(403, 'ghl_tag_drain_forbidden', 'Only the HighLevel tag worker can drain HighLevel tags.');
     if (!object(command) || Object.keys(command).length !== 1 || command.command !== 'ghl_tags.drain') return failure(400, 'ghl_tag_drain_command_invalid', 'Use ghl_tags.drain.');
-    if (!ghlTagOutboxEnabled(env)) return failure(409, 'ghl_tag_outbox_disabled', 'The HighLevel tag outbox is turned off. Nothing was sent.');
+    const tags = ghlTagOutboxEnabled(env), mirrored = ghlScheduleMirrorEnabled(env);
+    if (!tags && !mirrored) return failure(409, 'ghl_tag_outbox_disabled', 'The HighLevel tag outbox is turned off. Nothing was sent.');
     try {
-      const store = storage(env), summary = await drainGhlTagOutbox(store, { env, now: started.toISOString(), fetcher });
-      if (summary.code) return reply(503, { ok: false, code: summary.code, error: 'HighLevel is not configured for the Hub. Nothing was sent; the entries wait.', summary });
+      const store = storage(env), summary = tags ? await drainGhlTagOutbox(store, { env, now: started.toISOString(), fetcher }) : null;
+      if (summary?.code) return reply(503, { ok: false, code: summary.code, error: 'HighLevel is not configured for the Hub. Nothing was sent; the entries wait.', summary });
+      // The schedule mirror runs after the tags (confirmations and reminders first), with its own small entry budget.
+      const mirror = mirrored ? await drainScheduleMirror(mirrorStorage(env), { env, now: started.toISOString(), fetcher }) : null;
+      if (mirror?.code) return reply(503, { ok: false, code: mirror.code, error: 'HighLevel is not configured for the Hub. Nothing was sent; the entries wait.', ...(summary ? { summary } : {}), mirror });
       // Only a pass that ran counts: a stopped, unconfigured or refused worker leaves the check-in to go stale.
-      return reply(200, { ok: true, summary, checkedIn: await recordGhlTagDrainCheckIn(store, started.toISOString()) });
+      return reply(200, { ok: true, summary, ...(mirror ? { mirror } : {}), checkedIn: await recordGhlTagDrainCheckIn(store, started.toISOString()) });
     } catch (error) { return errorResponse(error); }
   }
   return {
@@ -88,11 +97,22 @@ export function ghlTagDrainHandlers({ verify = verifyApiServiceEnvelope, session
       try {
         const viewer = await session(request, env);
         if (!viewer) return failure(401, 'ghl_tag_sign_in_required', 'Sign in to the Employee Hub to retry HighLevel tags.');
-        if (!ghlTagOutboxEnabled(env)) return failure(409, 'ghl_tag_outbox_disabled', 'The HighLevel tag outbox is turned off.');
-        const at = now().toISOString(), store = storage(env), result = await retryGhlTags(store, viewer, body, at, env);
-        // One attempt right away; the worker keeps retrying on its own schedule.
-        if (result.ids.length && typeof waitUntil === 'function') waitUntil(drainGhlTagOutbox(store, { env, now: at, ids: result.ids, fetcher }).catch(() => null));
-        return reply(200, result);
+        const tags = ghlTagOutboxEnabled(env), mirrored = ghlScheduleMirrorEnabled(env);
+        if (!tags && !mirrored) return failure(409, 'ghl_tag_outbox_disabled', 'The HighLevel tag outbox is turned off.');
+        const at = now().toISOString();
+        let result = null, mirror = null;
+        if (tags) {
+          const store = storage(env);
+          result = await retryGhlTags(store, viewer, body, at, env);
+          // One attempt right away; the worker keeps retrying on its own schedule.
+          if (result.ids.length && typeof waitUntil === 'function') waitUntil(drainGhlTagOutbox(store, { env, now: at, ids: result.ids, fetcher }).catch(() => null));
+        }
+        if (mirrored) {
+          const store = mirrorStorage(env);
+          mirror = await retryScheduleMirror(store, viewer, body, at, env);
+          if (mirror.ids.length && typeof waitUntil === 'function') waitUntil(drainScheduleMirror(store, { env, now: at, ids: mirror.ids, fetcher }).catch(() => null));
+        }
+        return reply(200, result ? { ...result, ...(mirror ? { mirror } : {}) } : { ok: true, requestId: mirror.requestId, requeued: 0, ids: [], mirror });
       } catch (error) { return errorResponse(error); }
     },
   };

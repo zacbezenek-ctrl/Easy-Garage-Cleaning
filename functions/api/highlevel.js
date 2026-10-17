@@ -12,7 +12,8 @@
  *   HIGHLEVEL_LOCATION_ID (or GHL_LOCATION_ID)
  * Optional:
  *   HIGHLEVEL_WALKTHROUGH_CALENDAR_ID
- *   HIGHLEVEL_JOB_CALENDAR_ID
+ *   HIGHLEVEL_JOB_CALENDAR_ID (no default: the old EGC jobs calendar is deleted. Without a usable calendar a
+ *     visit's calendar mirror is skipped, never failed: calendarMirror {status:'skipped', reason})
  *   HIGHLEVEL_PIPELINE_ID
  *   HIGHLEVEL_PIPELINE_STAGE_SCHEDULED_ID
  *   HIGHLEVEL_PIPELINE_STAGE_WALKTHROUGH_COMPLETE_ID
@@ -27,7 +28,8 @@ import { getHubSession, hasBusinessAccess, isHubOwner } from '../_lib/hub-sessio
 import { sendAcceptedQuotePortal } from '../_lib/portal-invitation.js';
 import { syncSalesFollowupExit, salesExitMilestone } from '../_lib/sales-followup-exit.js';
 import { readJob, patchJob } from '../_lib/firestore-job.js';
-import { isStaffScheduledCalendar } from '../_lib/highlevel-calendars.js';
+import { CALENDAR_SKIP_CODES, calendarDeletedAnswer, isStaffScheduledCalendar } from '../_lib/highlevel-calendars.js';
+import { estimatorHighLevelUserId } from '../_lib/highlevel-users.js';
 import { createJobAssignmentAccess } from '../_lib/job-assignment.js';
 import { syncNativeSchedule } from '../_lib/operations-schedule-sync.js';
 import { syncNativeNote } from '../_lib/operations-note-sync.js';
@@ -294,12 +296,20 @@ async function advanceOpportunity(c, contactId, stageId, fallbackTag, opportunit
   }
 }
 
+// D9b: the HighLevel calendar is an optional second record of the Hub schedule. A calendar that is not configured, or
+// that HighLevel answers is deleted, skips the appointment write and reports why; it is never a failed sync, so the
+// Hub save, the contact link and the schedule mirror (EGC_GHL_SCHEDULE_MIRROR) never wait on it and nothing retries it.
+const calendarSkipped = reason => ({ appointmentId: '', calendarId: '', updated: false, providerSync: 'skipped', calendarMirror: { status: 'skipped', reason } });
+
 async function createAppointment(c, payload, contactId) {
-  if(c.operationsEnv&&operationsEnabled(c.operationsEnv))return syncNativeSchedule(c.operationsEnv,c.operationsSession,{portalVisitId:payload.job_id,requestId:payload.idempotency_key,contactProviderId:contactId,runAutomations:payload.notify!==false});
+  if(c.operationsEnv&&operationsEnabled(c.operationsEnv)){
+    try{return await syncNativeSchedule(c.operationsEnv,c.operationsSession,{portalVisitId:payload.job_id,requestId:payload.idempotency_key,contactProviderId:contactId,runAutomations:payload.notify!==false});}
+    catch(error){if(Object.hasOwn(CALENDAR_SKIP_CODES,error?.code||''))return calendarSkipped(CALENDAR_SKIP_CODES[error.code]);throw error;}
+  }
   const type = payload.event_type === 'job' ? 'job' : 'walkthrough';
   const calendarId = payload.calendar_id || await findCalendar(c, type);
   if (calendarId === '2yYX63nHYvUsL6KKhAc0') throw new Error('The Employee hiring calendar cannot be used for customer appointments');
-  if (!calendarId) throw new Error('No HighLevel calendar is available');
+  if (!calendarId) return calendarSkipped('calendar_not_configured');
   const body = {
     calendarId,
     startTime: payload.start_time, endTime: payload.end_time,
@@ -310,7 +320,9 @@ async function createAppointment(c, payload, contactId) {
     ...(isStaffScheduledCalendar(calendarId) ? { ignoreFreeSlotValidation: true } : {}),
   };
   if (payload.appointment_id) {
-    const appointment = await ghl(c, `/calendars/events/appointments/${encodeURIComponent(payload.appointment_id)}`, { method: 'PUT', headers: payload.idempotency_key ? { 'Idempotency-Key': payload.idempotency_key } : {}, body: JSON.stringify(body) });
+    let appointment;
+    try { appointment = await ghl(c, `/calendars/events/appointments/${encodeURIComponent(payload.appointment_id)}`, { method: 'PUT', headers: payload.idempotency_key ? { 'Idempotency-Key': payload.idempotency_key } : {}, body: JSON.stringify(body) }); }
+    catch (error) { if (calendarDeletedAnswer(error, { create: false })) return calendarSkipped('calendar_deleted'); throw error; }
     return { appointmentId: appointment.id || appointment.event?.id || payload.appointment_id, calendarId, updated: true };
   }
   try {
@@ -328,7 +340,9 @@ async function createAppointment(c, payload, contactId) {
       if (existing?.id) return { appointmentId: existing.id, calendarId, updated: false, reused: true };
     }
   } catch {}
-  const appointment = await ghl(c, '/calendars/events/appointments', { method: 'POST', headers: payload.idempotency_key ? { 'Idempotency-Key': payload.idempotency_key } : {}, body: JSON.stringify({ ...body, locationId: c.locationId, contactId }) });
+  let appointment;
+  try { appointment = await ghl(c, '/calendars/events/appointments', { method: 'POST', headers: payload.idempotency_key ? { 'Idempotency-Key': payload.idempotency_key } : {}, body: JSON.stringify({ ...body, locationId: c.locationId, contactId }) }); }
+  catch (error) { if (calendarDeletedAnswer(error)) return calendarSkipped('calendar_deleted'); throw error; }
   return { appointmentId: appointment.id || appointment.event?.id || appointment.appointment?.id || '', calendarId, updated: false };
 }
 
@@ -631,7 +645,7 @@ export async function onRequestPost({ request, env, waitUntil }) {
           if (result.appointmentId) patch.highlevelAppointmentId = result.appointmentId;
           if (handoffRequestId) {
             savedHandoffPayload(job,handoffRequestId);
-            const verified=operationsEnabled(env)&&result.providerSync==='verified'&&Boolean(result.noteId);
+            const verified=operationsEnabled(env)&&(result.providerSync==='verified'||result.calendarMirror?.status==='skipped')&&Boolean(result.noteId);
             Object.assign(patch,{handoffSyncStatus:verified?'synced':'pending',handoffSyncError:verified?'':'provider_evidence_incomplete',handoffLastSyncAt:new Date().toISOString(),handoffNoteId:result.noteId || '',pipelineSync:result.pipeline || {}});
           }
           await patchJob(env, payload.job_id, patch, job.__updateTime);
@@ -656,8 +670,13 @@ export async function onRequestPost({ request, env, waitUntil }) {
       const saved = payload.job_id ? await readJob(env, payload.job_id).catch(() => null) : null;
       if(payload.job_id&&!saved&&!operationsEnabled(env))return reply(503,{ok:false,code:'SCHEDULE_SOURCE_UNAVAILABLE',error:'The saved Hub visit could not be verified. Retry after its record is available.'});
       const closed = { cancelled: 'cancelled', canceled: 'cancelled', noshow: 'noshow', no_show: 'noshow', 'no-show': 'noshow' }[String(saved?.pipelineStatus || saved?.status || '').toLowerCase()] || '';
+      // Who is going: a saved walkthrough's estimator, when their staff profile maps a HighLevel user (else HIGHLEVEL_USER_ID).
+      if (!payload.assigned_user_id && saved?.type === 'walkthrough') { const assignee = await estimatorHighLevelUserId(env, saved); if (assignee) payload.assigned_user_id = assignee; }
       const event = closed && !payload.appointment_id && !operationsEnabled(env) ? { updated: false, reason: 'visit-closed' } : await createAppointment(c, closed ? { ...payload, status: closed, notify: false } : payload, contactId);
       if (payload.silent_update) return reply(200, { ok: true, contactId, ...event, pipeline: { updated: false, reason: 'silent-appointment-update' }, automation: { silent: true, notificationsRequested: false } });
+      // No appointment was written (no usable calendar): the booking and reminder tags and the Scheduled stage follow an
+      // appointment, so none is added here. The contact is linked; EGC_GHL_SCHEDULE_MIRROR carries the stage and a note.
+      if (event.calendarMirror?.status === 'skipped') return finish(contactId, { ok: true, contactId, ...event, pipeline: { updated: false, reason: 'calendar-mirror-skipped' }, automation: { trigger: '', reminderTrigger: '', tagSynced: false, calendarSkipped: true, notificationsRequested: payload.notify !== false } });
       // Notify customer (payload.notify) governs the appointment's own automations and the reminder tag only; the
       // scheduled tags and the Scheduled stage follow every scheduled visit. A cancelled visit (read from storage, never
       // the browser) is synced as its cancellation alone: no scheduled or reminder tag, and no move to Scheduled.
@@ -751,12 +770,13 @@ export async function onRequestPost({ request, env, waitUntil }) {
           end_time: q.end_at || `${q.job_date}T${q.end_time}:00-06:00`, title: q.title || 'EGC Garage Service',
           address: client.address, notes: appointmentInstructions(payload), notify: handoffRequestId ? payload.notify !== false : true, idempotency_key: payload.idempotency_key || '',
         }, contactId);
-        const tagPlan = await scheduleTagOwner(env, savedJob), outboxTags = tagPlan.owner === 'outbox';
-        let tagSynced = !outboxTags || tagPlan.status === 'done';
-        if (!outboxTags) try { await addTags(c, contactId, ['egc-hub-scheduled', 'egc-job-scheduled']); } catch { tagSynced = false; }
+        const tagPlan = await scheduleTagOwner(env, savedJob), outboxTags = tagPlan.owner === 'outbox', calendarSkip = scheduled.calendarMirror?.status === 'skipped';
+        let tagSynced = !calendarSkip && (!outboxTags || tagPlan.status === 'done');
+        // The booking tags follow the job's appointment; with the calendar mirror skipped there is none, so none is added.
+        if (!outboxTags && !calendarSkip) try { await addTags(c, contactId, ['egc-hub-scheduled', 'egc-job-scheduled']); } catch { tagSynced = false; }
         const stage = await advanceOpportunity(c, contactId, c.scheduledStageId, 'egc-job-scheduled', payload.opportunity_id || '', opportunityInput(payload, client));
-        const response = await finish(contactId, { ok: true, contactId, noteId: note.note?.id || '', taskId, ...scheduled, walkthrough, pipeline: stage, portalInvitation, automation: { trigger: 'egc-job-scheduled', tagSynced, ...(outboxTags ? { tagOwner: 'outbox', tagStatus: tagPlan.status } : {}) } });
-        await handOffTags(env, waitUntil, tagPlan);
+        const response = await finish(contactId, { ok: true, contactId, noteId: note.note?.id || '', taskId, ...scheduled, walkthrough, pipeline: stage, portalInvitation, automation: { trigger: calendarSkip ? '' : 'egc-job-scheduled', tagSynced, ...(calendarSkip ? { calendarSkipped: true } : {}), ...(outboxTags ? { tagOwner: 'outbox', tagStatus: tagPlan.status } : {}) } });
+        if (!calendarSkip) await handOffTags(env, waitUntil, tagPlan);
         return response;
       }
       const stage = await advanceOpportunity(c, contactId, c.walkthroughCompleteStageId, 'egc-walkthrough-complete', payload.opportunity_id || '', opportunityInput(payload, client));

@@ -32,8 +32,11 @@ const SCAN_LIMIT=1000;
  * new key) queues it again. The worker counts in syncWorkerAttempts; syncAttempts stays the
  * page's own count for its backoff. */
 export const SCHEDULE_SYNC_REVIEW_ATTEMPTS=8;
-/** Ledger refusals that no retry under the same key can clear: the visit is parked at once. */
-export const SCHEDULE_SYNC_PARK_CODES=Object.freeze(['appointment_idempotency_payload_conflict','appointment_changed_since_acceptance']);
+/** Ledger refusals that no retry under the same key can clear: the visit is parked at once. D9b: a calendar mirror
+ * egc-api skipped because the visit's HighLevel calendar is deleted or not configured (GHL_JOBS_CALENDAR_ID is
+ * env-only) is parked the same way, with its code as the visit's syncError, never retried every tick; the Integrations
+ * screen counts it as "calendar mirror skipped". The Hub save and the schedule mirror never wait on it. */
+export const SCHEDULE_SYNC_PARK_CODES=Object.freeze(['appointment_idempotency_payload_conflict','appointment_changed_since_acceptance','schedule_calendar_deleted','schedule_calendar_not_configured']);
 const QUEUED_STATUSES=['pending','error','syncing'];
 const VISIT_TYPES=new Set(['walkthrough','job','cleanout','reorg']);
 // syncPortalSchedule answers not_needed (and never binds) for these without a provider appointment.
