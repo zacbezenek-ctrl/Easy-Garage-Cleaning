@@ -115,6 +115,9 @@ export function projectDispatchJob(job, roster = [], now = new Date().toISOStrin
     ...(segmented(job) ? {assignmentSegments:projectSegments(job),...(segmentsInvalid(job) ? {segmentsInvalid:true} : {})} : {}),
     // WT-OUTCOME: a walkthrough's outcome, converted job and badge, and what a rebook prefills (walkthrough-state.js).
     ...walkthroughStatusFields(job),
+    // D2D-BOARD: the door-to-door bridge's mark (source 'door_to_door', d2d.kind sale|walkthrough) so every board shows
+    // it; never the rep, house or sale behind it, and no other source value.
+    ...(job.source === 'door_to_door' ? {source:'door_to_door'} : {}),...(['sale','walkthrough'].includes(job.d2d?.kind) ? {d2d:{kind:job.d2d.kind}} : {}),
     timeZone: DISPATCH_TIME_ZONE, timeNeedsReview: Boolean(job.date) && !interval };
 }
 

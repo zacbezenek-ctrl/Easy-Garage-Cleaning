@@ -131,11 +131,11 @@ test('door-to-door work is marked from the job itself or from the D2D day answer
 });
 
 // The rendered board, through the real dispatch screen with a fake /api/dispatch and /api/d2d-day.
-function mounted({ viewer = { id: 'manager.one' }, d2d = null, jobs = [] } = {}) {
+function mounted({ viewer = { id: 'manager.one' }, d2d = null, jobs = [], date = MONDAY, endDate = '2026-10-20' } = {}) {
   const document = createDocument(), calls = [], create = document.createElement.bind(document);
   // The small test DOM keeps style as a plain object; the lanes set custom properties on it.
   document.createElement = tag => { const node = create(tag); node.style.setProperty = (name, value) => { node.style[name] = String(value); }; return node; };
-  const overview = { ok: true, viewer, jobs, roster, crews, vehicles: [], availability: [], warnings: [], coverage: { complete: true, asOf: NOW }, startDate: MONDAY, endDate: '2026-10-20', dispatchRules: { workdayStart: '09:00', workdayEnd: '17:00' } };
+  const overview = { ok: true, viewer, jobs, roster, crews, vehicles: [], availability: [], warnings: [], coverage: { complete: true, asOf: NOW }, startDate: date, endDate, dispatchRules: { workdayStart: '09:00', workdayEnd: '17:00' } };
   const fetch = async (path) => {
     calls.push(String(path));
     if (String(path).startsWith('/api/d2d-day')) return d2d ? { ok: d2d.status === 200, status: d2d.status, json: async () => d2d.body } : new Promise(() => {});
@@ -146,7 +146,7 @@ function mounted({ viewer = { id: 'manager.one' }, d2d = null, jobs = [] } = {})
   run('employee-dispatch.js'); run('employee-dispatch-calendar.js');
   const api = window.EGCDispatch.internals, state = api.state(), root = document.createElement('main'), body = document.createElement('section');
   body.setAttribute('data-dp-body', ''); root.append(body); document.body.append(root); state.root = root;
-  state.data = overview; state.view = 'board'; state.date = MONDAY; state.loading = false; state.error = '';
+  state.data = overview; state.view = 'board'; state.date = date; state.loading = false; state.error = '';
   return { api, body, calls, window };
 }
 const settle = () => new Promise(resolve => setTimeout(resolve, 0));
@@ -207,4 +207,60 @@ test('a booker never asks for the door-to-door day, and a 403 or 404 hides the p
   failing.api.redraw(); await settle(); await settle();
   assert.match(failing.body.textContent, /Synthetic outage/);
   assert.ok(failing.body.querySelectorAll('button').some(button => button.textContent === 'Refresh door-to-door'));
+});
+
+test('with the staff directory on (rows carry skills), only the Walkthrough estimating skill makes an estimator', () => {
+  // D6: the Sales role stands in only while the roster carries no skills. A door-to-door rep with a Sales account is not an estimator.
+  const directory = [
+    { id: 'dee.est', name: 'Dee Estimator', role: 'crew', staffRoles: ['crew'], skills: [{ id: 'walkthrough_estimating', level: 'lead' }] },
+    { id: 'eve.sales', name: 'Eve Sales', role: 'sales', staffRoles: ['sales'], skills: [{ id: 'walkthrough_estimating', level: 'trained' }] },
+    { id: 'kim.knock', name: 'Kim Knock', role: 'sales', staffRoles: ['sales'], skills: [{ id: 'door_to_door', level: 'trained' }] },
+    { id: 'lou.sales', name: 'Lou Sales', role: 'sales', staffRoles: ['sales'], skills: [] },
+    { id: 'fay.multi', name: 'Fay Multi', role: 'crew_lead', staffRoles: ['crew_lead', 'sales'], skills: [] },
+  ];
+  assert.deepEqual(directory.map(person => cal.estimatorPerson(person)), [true, true, false, false, false]);
+  const model = cal.laneModel(data({ roster: directory }), [walk('w-kim', 'kim.knock', '10:00', '11:00')], MONDAY, { mode: 'board' });
+  assert.deepEqual(model.lanes.filter(entry => entry.group === 'estimators').map(entry => entry.id), ['estimator:dee.est', 'estimator:eve.sales', 'estimator:kim.knock']);
+  assert.deepEqual(keys(lane(model, 'estimator:kim.knock')), ['w-kim'], 'a walkthrough someone already holds still shows on a row for them');
+  // Directory off (no skills on any row): the Sales role, primary or stored, stands in.
+  assert.deepEqual([{ role: 'sales' }, { role: 'crew', staffRoles: ['crew', 'sales'] }, { role: 'crew' }, { role: 'phone', staffRoles: ['phone'] }].map(person => cal.estimatorPerson(person)), [true, true, false, false]);
+});
+
+test('a past day offers no open walkthrough time; today offers it from now; a future day all of it', async () => {
+  const past = mounted({ date: '2026-10-16', endDate: '2026-10-17', d2d: { status: 200, body: { ...D2D_ANSWER, date: '2026-10-16' } } });
+  past.api.redraw(); await settle();
+  assert.equal(past.body.querySelectorAll('button.dc-open').length, 0, 'no booking a walkthrough in the past');
+  assert.equal(past.body.querySelectorAll('.dc-open').length, 0);
+  assert.ok(past.body.textContent.includes('No walkthroughs · no open time'));
+  const future = mounted({ date: '2026-10-20', endDate: '2026-10-21' });
+  future.api.redraw();
+  assert.equal(future.body.querySelectorAll('button.dc-open').length, 3, 'one whole working day for each roster estimator');
+  // Today (Monday, 10:00 in Denver): open time starts at 10:00, not 9:00.
+  const today = mounted();
+  today.api.redraw();
+  assert.ok(today.body.querySelectorAll('button.dc-open').every(button => !button.textContent.includes('9:00')));
+  assert.ok(today.body.querySelectorAll('button.dc-open').some(button => button.textContent.includes('Open 10:00 AM')));
+});
+
+test('a door-to-door job is marked from its own Dispatch record, for a booker too (no door-to-door day read)', async () => {
+  const jobs = [job('d2d_sale', { source: 'door_to_door', d2d: { kind: 'sale' }, crewId: 'one', assignedCrew: ['ana.crew', 'fay.multi'] }), job('office', { crewId: 'two', assignedCrew: ['ben.crew'] })];
+  const page = mounted({ viewer: { id: 'sales.one', booker: true }, jobs });
+  page.api.redraw(); await settle();
+  assert.deepEqual(page.calls.filter(path => path.startsWith('/api/d2d-day')), []);
+  assert.deepEqual(page.body.querySelectorAll('.dc-item.dc-item-d2d').map(node => node.getAttribute('data-dc-item')), ['d2d_sale']);
+  assert.ok(page.body.querySelectorAll('.dc-item.dc-item-d2d')[0].textContent.includes('Door-to-door'));
+});
+
+test('the door-to-door panel says which part of the day could not be read', async () => {
+  for (const [coverage, expected, unexpected] of [
+    [{ complete: false, truncated: [], missing: ['areas'] }, 'The areas reps hold could not be read, so some may be missing. Refresh to try again.', 'job links'],
+    [{ complete: false, truncated: [], missing: ['jobs'] }, 'The Hub jobs door-to-door made could not be checked, so job links may be missing. Refresh to try again.', 'areas reps hold'],
+    [{ complete: false, truncated: ['shifts'], missing: [] }, 'There was more door-to-door activity than one view shows, so some of it is left out.', 'Refresh to try again.'],
+  ]) {
+    const page = mounted({ d2d: { status: 200, body: { ...D2D_ANSWER, coverage: { ...coverage, asOf: NOW } } } });
+    page.api.redraw(); await settle(); await settle();
+    const text = page.body.querySelectorAll('.dc-d2d')[0].textContent;
+    assert.ok(text.includes(expected), expected);
+    assert.ok(!text.includes(unexpected), unexpected);
+  }
 });

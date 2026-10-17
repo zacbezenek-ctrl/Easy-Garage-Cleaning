@@ -11,7 +11,9 @@ import { zonedInstant } from '../../crew/knock-time.js';
  * GET /api/d2d-day?date=YYYY-MM-DD (a Denver date, D2D_DAY_HISTORY_DAYS back to D2D_DAY_AHEAD_DAYS ahead of today).
  * Who: schedule.view (staff-roles.js: business access, or the owner, manager or team_lead role; no flag). Sales,
  * Phone, crew leads, crew and Knock reps get 403 d2d_day_forbidden.
- * What: the reps who were on shift that day (knock_shifts.day), plus any rep with a door sale that day; for each, the
+ * What: the reps who were on shift that day (knock_shifts.day), plus any rep with a door sale that day or a D2D job
+ * made that day (a walkthrough set from a phone that synced after its shift still counts, on the day it reached the
+ * Hub); for each, the
  * shift times, the areas they hold (active knock_assignments: self-claimed or admin) and worked that day, the doors,
  * answers and looks of the day (knock_days), the door sales of the day (knock_sales.saleDate, never cancelled ones in
  * the count) and the walkthroughs they set; and the Hub jobs the door-to-door bridge created (jobs.source
@@ -19,13 +21,16 @@ import { zonedInstant } from '../../crew/knock-time.js';
  * that day, as links. No customer name, phone, email, street address, ticket, deposit, commission or money of any
  * kind leaves here; a job is its id, type, date, time and status, and the Hub job page shows the rest to whoever may
  * see it.
- * Reads (all bounded by the date, never a whole-collection scan): the Knock settings document; one equality query on
- * knock_shifts.day and one on knock_sales.saleDate (masked, no customer fields); one batchGet each for the reps,
- * their knock_days summaries and the named neighborhoods; one equality query on the active knock_assignments; and on
- * jobs: date == day AND source == 'door_to_door' (equality only), createdAt inside the Denver day (one range on a
- * single field), and d2d.saleId IN the day's sales that neither found (chunks of 30). Every query is capped
- * (D2D_DAY_LIMIT); a capped answer says so in coverage.truncated, and Hub jobs that could not be read are named in
- * coverage.missing (the Knock day still shows); either way coverage.complete is false.
+ * Reads (all bounded by the date and the day's reps, never a whole-collection scan): the Knock settings document; one
+ * equality query on knock_shifts.day and one on knock_sales.saleDate (masked, no customer fields); on jobs: date ==
+ * day AND source == 'door_to_door' (equality only), source == 'door_to_door' AND createdAt inside the Denver day
+ * (the jobs/source+createdAt composite index in firestore.indexes.json), and d2d.saleId IN the day's sales that
+ * neither found (chunks of 30); then, for the reps who worked that day only, one batchGet each for the reps and
+ * their knock_days summaries and knock_assignments where repKey IN those reps (chunks of 30) AND active == true
+ * (equality filters only); and one batchGet of the named neighborhoods. Every query is capped (D2D_DAY_LIMIT); a
+ * capped answer says so in coverage.truncated, and Hub jobs or held areas that could not be read (a missing index
+ * included) are named in coverage.missing ('jobs', 'areas'; the Knock day still shows); either way
+ * coverage.complete is false.
  * EGC_D2D_BOARD exactly "false" turns this off: 404 d2d_day_disabled before any read. */
 export const D2D_DAY_HISTORY_DAYS = 62;
 export const D2D_DAY_AHEAD_DAYS = 31;
@@ -96,7 +101,9 @@ export function d2dJobReader(env, fetcher = firestoreFetch) {
   return {
     // Equality on two fields is served by Firestore's single-field indexes (no composite index).
     bookedOn: date => run(and([filter('date', 'EQUAL', date), filter('source', 'EQUAL', 'door_to_door')])),
-    createdBetween: (from, to) => run(and([filter('createdAt', 'GREATER_THAN_OR_EQUAL', from), filter('createdAt', 'LESS_THAN', to)]), [{ field: field('createdAt'), direction: 'ASCENDING' }, { field: field('__name__'), direction: 'ASCENDING' }]),
+    // Only the door-to-door jobs made that day (firestore.indexes.json: jobs source ASC, createdAt ASC), never the
+    // whole day's jobs and receipts.
+    createdBetween: (from, to) => run(and([filter('source', 'EQUAL', 'door_to_door'), filter('createdAt', 'GREATER_THAN_OR_EQUAL', from), filter('createdAt', 'LESS_THAN', to)]), [{ field: field('createdAt'), direction: 'ASCENDING' }, { field: field('__name__'), direction: 'ASCENDING' }]),
     async forSales(ids) {
       const out = { rows: [], truncated: false };
       for (let index = 0; index < ids.length; index += 30) {
@@ -113,6 +120,15 @@ async function capped(store, collection, options) {
   const rows = await store.query(collection, { ...options, limit: D2D_DAY_LIMIT + 1 });
   return { rows: rows.slice(0, D2D_DAY_LIMIT), truncated: rows.length > D2D_DAY_LIMIT };
 }
+// The areas the day's reps hold: their active assignments only (repKey IN, chunks of 30), never the whole territory's.
+async function heldAreas(store, repKeys) {
+  const out = { rows: [], truncated: false };
+  for (let index = 0; index < repKeys.length; index += 30) {
+    const part = await capped(store, 'knock_assignments', { where: [['repKey', 'in', repKeys.slice(index, index + 30)], ['active', '==', true]], select: ['repKey', 'neighborhoodId', 'active', 'source'] });
+    out.rows.push(...part.rows); out.truncated ||= part.truncated;
+  }
+  return out;
+}
 
 /** Everything the day needs, read once (see the read list above). `store` is a Knock store (knock-store.js), `jobs` a
  * d2dJobReader. */
@@ -122,28 +138,31 @@ export async function loadD2dDay({ store, jobs, date }) {
   // The Hub jobs are links on top of the Knock day: when they cannot be read the day still shows, marked incomplete.
   const soft = promise => promise.catch(() => { missing.push('jobs'); return { rows: [], truncated: false }; });
   const dayStart = zonedInstant(date), dayEnd = zonedInstant(addDays(date, 1));
-  const [settingsDoc, shiftPart, salePart, assignmentPart, bookedPart, createdPart] = await Promise.all([
+  const [settingsDoc, shiftPart, salePart, bookedPart, createdPart] = await Promise.all([
     store.get('knock_settings', 'current'),
     capped(store, 'knock_shifts', { where: [['day', '==', date]], select: SHIFT_FIELDS }),
     capped(store, 'knock_sales', { where: [['saleDate', '==', date]], select: [...D2D_SALE_FIELDS] }),
-    capped(store, 'knock_assignments', { where: [['active', '==', true]], select: ['repKey', 'neighborhoodId', 'active', 'source'] }),
     soft(jobs.bookedOn(date)),
     soft(jobs.createdBetween(new Date(dayStart).toISOString(), new Date(dayEnd).toISOString())),
   ]);
-  const shifts = note('shifts', shiftPart), sales = note('sales', salePart), assignments = note('assignments', assignmentPart);
+  const shifts = note('shifts', shiftPart), sales = note('sales', salePart);
   const found = [...note('jobs', bookedPart), ...note('jobs', createdPart).filter(row => d2dMarker(row) || row.source === 'door_to_door')];
   // A sale's job made on another day (a phone that synced later) is found by its sale id.
   const linked = new Set(found.map(row => d2dMarker(row)?.saleId).filter(Boolean));
   const unlinked = sales.map(sale => sale.id).filter(id => KEY.test(id) && !linked.has(id));
   if (unlinked.length && !missing.length) found.push(...note('jobs', await soft(jobs.forSales(unlinked))));
-  // Day summaries and areas only for the reps who worked that day; names also for the reps the day's jobs name.
-  const working = [...new Set([...shifts.map(row => row.repKey), ...sales.map(row => row.repKey)].filter(key => KEY.test(key || '')))];
+  // The reps who worked that day: a shift, a door sale or a D2D job made that day. Day summaries and areas only for
+  // them; names also for the reps the day's other jobs name.
+  const madeToday = row => { const at = Date.parse(row.createdAt); return Number.isFinite(at) && at >= dayStart && at < dayEnd; };
+  const working = [...new Set([...shifts.map(row => row.repKey), ...sales.map(row => row.repKey), ...found.filter(madeToday).map(row => d2dMarker(row)?.repKey)].filter(key => KEY.test(key || '')))];
   const repKeys = [...new Set([...working, ...found.map(row => d2dMarker(row)?.repKey)].filter(key => KEY.test(key || '')))];
-  const [reps, days] = await Promise.all([
+  const [reps, days, assignmentPart] = await Promise.all([
     repKeys.length ? store.getMany('knock_reps', repKeys) : new Map(),
     working.length ? store.getMany('knock_days', working.map(key => `${key}_${date}`).filter(id => KEY.test(id))) : new Map(),
+    // Areas are context on top of the day: when they cannot be read the day still shows, marked incomplete.
+    working.length ? heldAreas(store, working).catch(() => { missing.push('areas'); return { rows: [], truncated: false }; }) : { rows: [], truncated: false },
   ]);
-  const held = assignments.filter(row => row.active === true && working.includes(row.repKey));
+  const held = note('assignments', assignmentPart).filter(row => row.active === true && working.includes(row.repKey));
   const areaIds = new Set([...held.map(row => row.neighborhoodId), ...shifts.map(row => row.lastNeighborhoodId), ...sales.map(row => row.neighborhoodId),
     ...[...days.values()].flatMap(day => Object.keys(day?.byNeighborhood || {}))].filter(id => KEY.test(id || '') && id !== 'unknown'));
   const neighborhoods = areaIds.size ? await store.getMany('knock_neighborhoods', [...areaIds]) : new Map();
@@ -166,7 +185,8 @@ export function d2dDaySummary({ date, settings, shifts = [], sales = [], assignm
   const byId = new Map();
   for (const job of jobs) if (job && JOB_ID.test(job.id || '') && !job.recordType && (d2dMarker(job) || job.source === 'door_to_door')) byId.set(job.id, jobRow(job, date, dayStart, dayEnd));
   const jobRows = [...byId.values()].sort((a, b) => `${a.date} ${a.time}`.localeCompare(`${b.date} ${b.time}`) || a.id.localeCompare(b.id));
-  const repKeys = [...new Set([...shifts.map(row => row.repKey), ...sales.map(row => row.repKey)].filter(key => KEY.test(key || '')))];
+  // A rep with a shift or a door sale that day, or a D2D job made that day (a walkthrough set with no shift that day).
+  const repKeys = [...new Set([...shifts.map(row => row.repKey), ...sales.map(row => row.repKey), ...jobRows.filter(row => row.createdToday).map(row => row.repKey)].filter(key => KEY.test(key || '')))];
   const name = key => text(reps.get(key)?.displayName || reps.get(key)?.username, 80) || key;
   const rows = repKeys.map(repKey => {
     const own = shifts.filter(row => row.repKey === repKey).sort((a, b) => String(a.startedAt).localeCompare(String(b.startedAt)));

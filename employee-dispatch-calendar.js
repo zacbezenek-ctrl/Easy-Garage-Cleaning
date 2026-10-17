@@ -66,13 +66,14 @@ const crewWorks = (crew, date) => crewDays(crew).includes(DAY_KEYS[weekday(date)
 const crewDaysText = crew => { const days=crewDays(crew); return days.length===7 ? 'every day' : days.join(',')==='mon,tue,wed,thu,fri' ? 'Mon–Fri' : days.map(day => DAY_TEXT[day]).join(', '); };
 
 // Hub schedule board (D2D-BOARD, owner 2026-10-17: "the hub needs the weekend crew, the two weekday teams, all of the
-// door-to-door, and the estimator schedules"). Estimators are the people with the walkthrough_estimating skill (sent
-// with the staff directory on) or the Sales staff role (owner decision D6), plus anyone holding a walkthrough that day.
+// door-to-door, and the estimator schedules"). Estimators are the people with the walkthrough_estimating skill; only
+// when the roster carries no skills (the staff directory off) does the Sales staff role stand in (owner decision D6),
+// so a door-to-door rep with a Sales account is not an estimator. Anyone holding a walkthrough that day also gets a row.
 // Their open time is the part of their working window (weekly availability when recorded, inside the owner's workday;
 // walkthroughs may start at 9:00) with no visit, other work, time off or company block, in runs of at least an hour.
 const ESTIMATOR_SKILL = 'walkthrough_estimating', ESTIMATOR_GAP = 60;
-const estimatorPerson = person => Boolean(person) && ((Array.isArray(person.skills) && person.skills.some(skill => (skill?.id||skill)===ESTIMATOR_SKILL))
-  || (Array.isArray(person.staffRoles) && person.staffRoles.includes('sales')) || person.role==='sales');
+const estimatorPerson = person => Boolean(person) && (Array.isArray(person.skills) ? person.skills.some(skill => (skill?.id||skill)===ESTIMATOR_SKILL)
+  : (Array.isArray(person.staffRoles) && person.staffRoles.includes('sales')) || person.role==='sales');
 const laneEmployee = id => /^(?:employee|estimator):/.test(id||'') ? id.slice(id.indexOf(':')+1) : '';
 const CLOSED = new Set(['cancelled','canceled','noshow','no_show','no-show']);
 const closedJob = job => CLOSED.has(job?.status||job?.pipelineStatus);
@@ -401,7 +402,8 @@ function renderBoard(target, jobs) {
   const k=kit(), S=k.state(), {h}=k, wait=pending(k,S,{startDate:S.date, endDate:addDays(S.date,1)},'this date');
   if (wait) { target.append(wait); return; }
   void loadD2d(S.date);
-  const model=laneModel(S.data,jobs,S.date,{mode:'board', fromMinute:S.date===k.today()?denverMinute():null});
+  // Open walkthrough time is offered from now on: today from the current minute, a past day not at all.
+  const today=k.today(), model=laneModel(S.data,jobs,S.date,{mode:'board', fromMinute:S.date<today?1440:S.date===today?denverMinute():null});
   lastModel=model;
   C.statusNode=h('p',{class:'dc-status', role:'status', 'aria-live':'polite'},C.message); C.message='';
   const review=untimed(jobs,S.date).length, rows=[];
@@ -411,7 +413,7 @@ function renderBoard(target, jobs) {
     rows.push(laneNode(k,S,lane,boardStatus));
   }
   if (!model.lanes.some(lane => lane.group==='crews')) rows.splice(model.lanes[0]?.kind==='unassigned'?1:0,0,h('h3',{class:'dc-group-head', 'data-dc-group':'crews'},GROUPS.crews),h('p',{class:'dc-empty dc-group-empty'},'No active saved crews. Set up Crew 1, Crew 2 and Crew 3 in Crews & vehicles.'));
-  if (!model.lanes.some(lane => lane.group==='estimators')) rows.push(h('h3',{class:'dc-group-head', 'data-dc-group':'estimators'},GROUPS.estimators),h('p',{class:'dc-empty dc-group-empty'},'No estimators on the roster. Give people the Walkthrough estimating skill or the Sales role.'));
+  if (!model.lanes.some(lane => lane.group==='estimators')) rows.push(h('h3',{class:'dc-group-head', 'data-dc-group':'estimators'},GROUPS.estimators),h('p',{class:'dc-empty dc-group-empty'},'No estimators on the roster. Give people the Walkthrough estimating skill in People (the Sales role counts only while the staff directory is off).'));
   const axis=h('div',{class:'dc-axis','aria-hidden':'true'},h('span',{class:'dc-lane-label'}),h('div',{class:'dc-axis-track'},Array.from({length:SPAN/60},(_,index) => h('span',{},clock(hhmm(AXIS_START+index*60)).replace(':00','')))));
   C.d2dNode=d2dPanel(k,S);
   target.append(h('section',{class:'dc-lanes dc-board','aria-label':'Schedule board for '+k.dateText(S.date)},
@@ -490,7 +492,9 @@ function d2dPanel(k, S) {
   const section=h('section',{class:'dc-d2d','aria-label':'Door-to-door on '+k.dateText(S.date), 'aria-busy':entry?.loading?'true':'false'},head);
   if (!data) { section.append(entry?.error ? k.notice(entry.error,'error') : h('p',{class:'dp-muted', role:'status'},'Loading door-to-door…')); return section; }
   if (entry.error) section.append(k.notice('Showing the last loaded door-to-door day. '+entry.error,'error'));
-  if (!data.coverage.complete) section.append(k.notice(data.coverage.missing?.length ? 'The Hub jobs door-to-door made could not be checked, so job links may be missing. Refresh to try again.' : 'There was more door-to-door activity than one view shows, so some of it is left out.','error'));
+  if (!data.coverage.complete) { const missing=list(data.coverage.missing) ? data.coverage.missing : [];
+    section.append(k.notice([missing.includes('jobs') ? 'The Hub jobs door-to-door made could not be checked, so job links may be missing.' : '', missing.includes('areas') ? 'The areas reps hold could not be read, so some may be missing.' : '',
+      missing.length ? 'Refresh to try again.' : '', list(data.coverage.truncated) && data.coverage.truncated.length || !missing.length ? 'There was more door-to-door activity than one view shows, so some of it is left out.' : ''].filter(Boolean).join(' '),'error')); }
   const booked=data.jobs.filter(job => job.bookedToday);
   if (!data.reps.length) section.append(h('p',{class:'dc-empty'},'No door-to-door reps were on shift this day.'));
   else section.append(h('div',{class:'dc-d2d-reps'},data.reps.map(rep => h('article',{class:'dc-d2d-rep', 'data-d2d-rep':rep.repKey},

@@ -42,7 +42,9 @@ export const JOB_FIELDS = Object.freeze(['type','recordType','date','time','endD
   // WT-OUTCOME: where a walkthrough stands and what a no-show rebook prefills (walkthrough-state.js); never the rep's notes.
   'walkthroughOutcome.outcome','walkthroughOutcome.reasonCode','walkthroughOutcome.finishedAt','walkthroughOutcome.occurrence','walkthroughCompletedAt','convertedJobId','scheduleOccurrence','noShowReasonCode','noShowAt',
   // FIX-DISPATCH-QUEUE: To schedule's review flag, sold and approved dates and Jobber visits (dispatch-queue.js); no amounts.
-  ...QUEUE_JOB_FIELDS]);
+  ...QUEUE_JOB_FIELDS,
+  // D2D-BOARD: a door-to-door job's mark on the schedule (projectDispatchJob): its source and d2d.kind only, never the rep or house.
+  'source','d2d.kind']);
 
 /** Owner decision F19: the owner and managers are office staff and join assignment
  * lists only when they take field work, recorded as stored staffRoles that also

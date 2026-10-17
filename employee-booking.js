@@ -20,6 +20,9 @@ function jobStartProblem(before,after,{restore=false}={}){
 const user=()=>String(sessionStorage.getItem('egc_u')||'').trim().toLowerCase();
 // Dispatch reports a cleared customer arrival window as a warning. Callers read it
 // from saved.arrivalNotice; it is non-enumerable so it never enters job caches.
+// EGC_DISPATCH_CREW_AUTO_ASSIGN: the crew the server picked for a new service job (the answer's autoCrew), as
+// saved.crewNotice (non-enumerable, like arrivalNotice); '' when it picked none.
+const crewNotice=auto=>!plain(auto)?'':auto.status==='assigned'?String(auto.crewName||'The first free crew').slice(0,80)+' was assigned automatically.':auto.status==='unassigned'?'No crew is free then, so it was saved without a crew. Dispatch lists it as needing a crew.':'';
 const arrivalNotice=warnings=>(Array.isArray(warnings)?warnings:[]).filter(row=>row?.code==='arrival_window_reset').map(row=>String(row.message||'The saved arrival window was cleared. Review the arrival window the customer sees.')).join(' ');
 const cacheKey=key=>prefix+user()+':'+key;
 function pending(key){if(memory.has(cacheKey(key)))return memory.get(cacheKey(key));try{const row=JSON.parse(sessionStorage.getItem(cacheKey(key))||'null');if(row&&typeof row.fingerprint==='string'&&plain(row.request)){memory.set(cacheKey(key),row);return row;}}catch{}return null;}
@@ -69,7 +72,7 @@ function payloadFields(job){
   if(typeof job.jobInstructions==='string')changes.jobInstructions=job.jobInstructions;
   return changes;
 }
-function intent(job,previous){return{kind:job.type==='walkthrough'?'walkthrough':job.type==='blocked'?'blocked':'job',jobId:previous?.id||null,customerId:job.customerId||previous?.customerId||null,
+function intent(job,previous){return{kind:job.type==='walkthrough'?'walkthrough':job.type==='blocked'?'blocked':'job',jobId:previous?.id||null,customerId:job.customerId||previous?.customerId||null,autoCrew:job.autoCrew===false?false:undefined,
   customer:{name:job.customer||'',phone:job.phone||'',email:job.email||'',address:job.address||'',highlevelContactId:job.highlevelContactId||''},
   sourceTemplateJobId:job.sourceTemplateJobId||null,sourceWalkthroughId:job.sourceWalkthroughId||null,assignedCrew:job.assignedCrew,assignedTo:job.assignedTo||'',changes:payloadFields(job)};}
 async function request(key,fingerprint,build,{endpoint='/api/dispatch',field='job',whole=false}={}){
@@ -85,7 +88,7 @@ async function request(key,fingerprint,build,{endpoint='/api/dispatch',field='jo
     const result=await api('',record.request,endpoint);
     current();
     if(!result[field]?.id||!result[field].revision)throw error('The server returned an incomplete save. Retry this same booking to verify it.','booking_outcome_unknown',503);
-    if(field==='job')Object.defineProperty(result.job,'arrivalNotice',{value:arrivalNotice(result.warnings),enumerable:false});
+    if(field==='job'){Object.defineProperty(result.job,'arrivalNotice',{value:arrivalNotice(result.warnings),enumerable:false});Object.defineProperty(result.job,'crewNotice',{value:crewNotice(result.autoCrew),enumerable:false});}
     rememberStored(storageKey,null);return record.whole?result:result[field];
   }catch(problem){
     if(started===generation&&problem.status&&problem.status<500&&![401,403,408,429].includes(problem.status)&&problem.code!=='booking_pending_operation')rememberStored(storageKey,null);
@@ -118,10 +121,12 @@ async function save(job,previous={},options={}){
       changes.assignedCrew=ids(job,data.roster);
       if(changes.crewLead){const lead=ids({assignedCrew:[changes.crewLead]},data.roster)[0];changes.crewLead=lead;}
     }
-    // EGC_DISPATCH_CREW_AUTO_ASSIGN (Dispatch reports crewAutoAssign): a service job saved with nobody chosen is staffed
-    // by the server with the first free crew (Crew 1, then Crew 2; Saturdays and Sundays the weekend crew), as the Hub's
-    // own job form and Any crew openings do. Walkthroughs, blocks and chosen people never ask; flag off, nothing changes.
-    const autoCrew=data.crewAutoAssign===true&&draft.kind==='job'&&!changes.assignedCrew.length&&!changes.crewId;
+    // EGC_DISPATCH_CREW_AUTO_ASSIGN (Dispatch reports crewAutoAssign): a NEW service job saved with nobody chosen is
+    // staffed by the server with the first free crew (Crew 1, then Crew 2; Saturdays and Sundays the weekend crew), as
+    // the Hub's own job form does for a new job. A change to a saved job never asks (the job form leaves it unticked
+    // when editing), nor does a manager's opt-out (job.autoCrew false), a walkthrough, a block or chosen people; a
+    // booker's job is staffed by the server either way. Flag off, nothing changes.
+    const autoCrew=data.crewAutoAssign===true&&!previous?.id&&draft.kind==='job'&&draft.autoCrew!==false&&!changes.assignedCrew.length&&!changes.crewId;
     return{action:previous?.id?'schedule.update':'schedule.create',requestId:crypto.randomUUID(),...(previous?.id?{jobId:previous.id,expectedRevision:data.job.revision}:{kind:draft.kind,...(customerId?{customerId}:{}),...(draft.sourceTemplateJobId?{sourceTemplateJobId:draft.sourceTemplateJobId}:{}),...(!draft.sourceTemplateJobId&&draft.sourceWalkthroughId?{sourceWalkthroughId:draft.sourceWalkthroughId}:{})}),changes,...(autoCrew?{autoCrew:true}:{})};
   });
 }
@@ -182,11 +187,14 @@ async function saveSeries(job,previous={},options={}){
 async function resolveCustomer(customer,key='customer'){
   return request('customer:'+key,canonical(customer),async()=>({requestId:crypto.randomUUID(),customer}),{endpoint:'/api/customer-resolve',field:'customer'});
 }
-async function roster(){const result=await api();if(!Array.isArray(result.roster))throw error('The active crew roster could not be loaded.','booking_roster_unavailable',503);return result.roster;}
-function clear(){generation++;memory.clear();busy.clear();try{for(const key of Object.keys(sessionStorage))if(key.startsWith(prefix)||key.startsWith(seriesPrefix))sessionStorage.removeItem(key);}catch{}recoveryPanel();}
+// Whether Dispatch staffs a new service job itself (crewAutoAssign) and whether this viewer is a booker, as the
+// last roster read reported them; the booking crew pickers say so before a save.
+let autoState={on:false,booker:false};
+async function roster(){const result=await api();if(!Array.isArray(result.roster))throw error('The active crew roster could not be loaded.','booking_roster_unavailable',503);autoState={on:result.crewAutoAssign===true,booker:result.viewer?.booker===true};return result.roster;}
+function clear(){generation++;autoState={on:false,booker:false};memory.clear();busy.clear();try{for(const key of Object.keys(sessionStorage))if(key.startsWith(prefix)||key.startsWith(seriesPrefix))sessionStorage.removeItem(key);}catch{}recoveryPanel();}
 window.addEventListener('egc:signout',clear);
 window.addEventListener('beforeunload',event=>{if(recoveries().length||busy.size){event.preventDefault();event.returnValue='';}});
 window.addEventListener('DOMContentLoaded',recoveryPanel);
-window.EGCBooking={save,saveSeries,cancel,snapshot,resolveCustomer,roster,pending,message,recoveries,retryPending,jobStartProblem,canLeave:()=>recoveries().length===0&&busy.size===0};
+window.EGCBooking={save,saveSeries,cancel,snapshot,resolveCustomer,roster,crewAuto:()=>({...autoState}),pending,message,recoveries,retryPending,jobStartProblem,canLeave:()=>recoveries().length===0&&busy.size===0};
 recoveryPanel();
 })();

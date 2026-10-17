@@ -37,6 +37,7 @@ function fixture(env) {
       const request = new Request('https://easygaragecleaning.com' + path, { ...options, headers: { Origin: 'https://easygaragecleaning.com', ...(options.headers || {}) } });
       if (options.body && path.startsWith('/api/dispatch')) posts.push(JSON.parse(options.body));
       if (path.startsWith('/api/customer-resolve')) return customer({ request, env });
+      if (path.startsWith('/api/recurring-plans')) return Response.json({ ok: true, enabled: false });
       return routes[options.method === 'POST' ? 'post' : 'get']({ request, env });
     } };
   context.window = context;
@@ -50,11 +51,14 @@ test('flag on: a service job with nobody chosen asks for the first free crew: Cr
   const first = await f.ui.save(draft('first'));
   assert.equal(f.posts.at(-1).autoCrew, true);
   assert.deepEqual([first.crewId, [...first.assignedCrew].sort()], ['crew_one', ['c1a', 'c1b']]);
+  assert.equal(first.crewNotice, 'Crew 1 was assigned automatically.', 'the booking dialog says which crew the server picked');
+  assert.equal(Object.keys(first).includes('crewNotice'), false, 'the notice never enters job caches');
   const second = await f.ui.save(draft('second', { customerId: 'c2', customer: 'Synthetic Customer c2' }));
   assert.deepEqual([second.crewId, [...second.assignedCrew]], ['crew_two', ['c2a']], 'Crew 1 is booked, so Crew 2 takes the same time');
   const third = await f.ui.save(draft('third', { customerId: 'c3', customer: 'Synthetic Customer c3' }));
   assert.deepEqual([third.crewId || null, [...third.assignedCrew]], [null, []], 'no crew free: the booking is still saved, unstaffed');
   assert.equal(f.rows.get(`jobs/${third.id}`).soldNeedsCrew?.reason, 'no_crew_free');
+  assert.match(third.crewNotice, /^No crew is free then, so it was saved without a crew/);
   const saturday = await f.ui.save(draft('saturday', { date: SAT }));
   assert.equal(saturday.crewId, 'crew_three', 'the weekend crew on Saturday');
 });
@@ -81,4 +85,44 @@ test('flag off: the booking request is exactly as before, with no crew pick', as
   assert.deepEqual(Object.keys(body).sort(), ['action', 'changes', 'customerId', 'kind', 'requestId']);
   assert.deepEqual([saved.crewId || null, [...saved.assignedCrew]], [null, []]);
   assert.equal(f.rows.get(`jobs/${saved.id}`).soldNeedsCrew, undefined);
+});
+
+test('flag on: changing a saved job never asks for a crew, so a job left unstaffed stays unstaffed when it moves', async () => {
+  const f = fixture(AUTO);
+  const staffed = await f.ui.save(draft('first'));
+  await f.ui.save(draft('second', { customerId: 'c2', customer: 'Synthetic Customer c2' }));
+  const third = await f.ui.save(draft('third', { customerId: 'c3', customer: 'Synthetic Customer c3' }));
+  assert.deepEqual([third.crewId || null, [...third.assignedCrew]], [null, []]);
+  // An owner moves the unstaffed job to Tuesday, when Crew 1 is free: it is still saved as left, with nobody on it.
+  const moved = await f.ui.save({ ...third, date: '2026-10-20', endDate: '2026-10-20' }, third);
+  const body = f.posts.at(-1);
+  assert.deepEqual([body.action, 'autoCrew' in body], ['schedule.update', false]);
+  assert.deepEqual([moved.date, moved.crewId || null, [...moved.assignedCrew], moved.crewNotice], ['2026-10-20', null, [], '']);
+  // A job the server staffed keeps its crew on another weekday it works...
+  const tuesday = await f.ui.save({ ...staffed, date: '2026-10-20', endDate: '2026-10-20', time: '13:00', endTime: '15:00' }, staffed);
+  assert.equal('autoCrew' in f.posts.at(-1), false);
+  assert.equal(tuesday.crewId, 'crew_one');
+  // ...and the server alone re-picks it when it moves to a day its crew does not work (owner rule D4).
+  const saturday = await f.ui.save({ ...tuesday, date: SAT, endDate: SAT }, tuesday);
+  assert.equal('autoCrew' in f.posts.at(-1), false);
+  assert.equal(saturday.crewId, 'crew_three');
+});
+
+test('flag on: a manager may turn the crew pick off for one new booking; the dialogs learn the setting from the roster read', async () => {
+  const f = fixture(AUTO);
+  assert.deepEqual({ ...f.ui.crewAuto() }, { on: false, booker: false }, 'unknown until Dispatch answers');
+  await f.ui.roster();
+  assert.deepEqual({ ...f.ui.crewAuto() }, { on: true, booker: false });
+  const kept = await f.ui.save(draft('manual', { autoCrew: false }));
+  assert.equal('autoCrew' in f.posts.at(-1), false);
+  assert.deepEqual([kept.crewId || null, [...kept.assignedCrew], kept.crewNotice], [null, [], '']);
+  assert.equal(f.rows.get(`jobs/${kept.id}`).soldNeedsCrew, undefined, 'a deliberately unstaffed booking is not flagged as needing a crew');
+  // A recurring series asks for each new visit the same way: opted out, none of them is staffed.
+  const series = await f.ui.saveSeries(draft('weekly', { customerId: 'c2', customer: 'Synthetic Customer c2', recurrence: 'weekly', autoCrew: false }), {}, { operationKey: 'weekly' });
+  assert.ok(series.visits.length > 1);
+  assert.ok(series.visits.every(visit => !visit.crewId && !visit.assignedCrew.length));
+  assert.ok(f.posts.filter(post => post.action === 'schedule.create').slice(1).every(post => !('autoCrew' in post)));
+  const off = fixture({});
+  await off.ui.roster();
+  assert.deepEqual({ ...off.ui.crewAuto() }, { on: false, booker: false });
 });

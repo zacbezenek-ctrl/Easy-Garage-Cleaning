@@ -1,6 +1,9 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
 import { encodeFirestoreFields } from '../functions/_lib/firestore-job.js';
+import { projectDispatchJob } from '../functions/_lib/dispatch-service.js';
+import { JOB_FIELDS } from '../functions/_lib/dispatch-storage.js';
 import { D2D_DAY_LIMIT, D2D_JOB_FIELDS, D2D_SALE_FIELDS, canViewD2dDay, d2dDayDate, d2dDaySummary, d2dJobReader, d2dMarker, loadD2dDay } from '../functions/_lib/d2d-day.js';
 import { d2dDayHandlers } from '../functions/api/d2d-day.js';
 
@@ -50,7 +53,7 @@ const RECORDS = {
   forSales: [{ id: 'job_sale3', type: 'job', date: '2026-10-24', time: '10:00', status: 'scheduled', source: 'door_to_door', d2d: { repKey: 'bo.rep', saleId: 'sale-3', kind: 'sale' }, createdAt: '2026-10-18T22:00:00.000Z' }],
 };
 
-function fixture({ records = RECORDS, failKnock = false, failJobs = false, shiftsOverride = null } = {}) {
+function fixture({ records = RECORDS, failKnock = false, failJobs = false, failAreas = false, shiftsOverride = null } = {}) {
   const calls = [];
   const rows = (collection, list) => list.map(row => structuredClone(row));
   const store = {
@@ -62,12 +65,14 @@ function fixture({ records = RECORDS, failKnock = false, failJobs = false, shift
     },
     async query(collection, options) {
       calls.push(['query', collection, structuredClone(options)]);
+      if (failAreas && collection === 'knock_assignments') throw Object.assign(new Error('Synthetic index'), { code: 'knock_storage_unavailable' });
       const source = { knock_shifts: shiftsOverride || records.shifts, knock_sales: records.sales, knock_assignments: records.assignments }[collection];
       if (!source) throw new Error('unexpected query ' + collection);
-      const [[field, op, value]] = options.where;
-      assert.equal(op, '==');
+      // Equality and IN filters only (no range on a Knock collection, so no composite index).
+      for (const [, op, value] of options.where) { assert.ok(['==', 'in'].includes(op)); if (op === 'in') assert.ok(Array.isArray(value) && value.length >= 1 && value.length <= 30); }
+      const match = row => options.where.every(([field, op, value]) => op === 'in' ? value.includes(row[field]) : row[field] === value);
       // The store applies the field mask, as Firestore does.
-      return rows(collection, source).filter(row => row[field] === value).slice(0, options.limit).map(row => options.select ? Object.fromEntries(Object.entries(row).filter(([key]) => key === 'id' || options.select.includes(key))) : row);
+      return rows(collection, source).filter(match).slice(0, options.limit).map(row => options.select ? Object.fromEntries(Object.entries(row).filter(([key]) => key === 'id' || options.select.includes(key))) : row);
     },
     async list(collection) { calls.push(['list', collection]); throw new Error('no whole-collection reads'); },
   };
@@ -128,10 +133,11 @@ test('every read is bounded by the day: equality queries, capped, masked, and ba
   assert.equal(result.status, 200);
   assert.equal(calls.some(call => call[0] === 'list'), false, 'no whole-collection read');
   const queries = calls.filter(call => call[0] === 'query').map(([, collection, options]) => [collection, options.where, options.limit, options.select]);
+  // Areas only for the reps who worked that day (never every active assignment in the territory).
   assert.deepEqual(queries, [
     ['knock_shifts', [['day', '==', DAY]], D2D_DAY_LIMIT + 1, ['repKey', 'day', 'startedAt', 'endedAt', 'endReason', 'breaks', 'lastDoorAt', 'lastNeighborhoodId', 'doors']],
     ['knock_sales', [['saleDate', '==', DAY]], D2D_DAY_LIMIT + 1, [...D2D_SALE_FIELDS]],
-    ['knock_assignments', [['active', '==', true]], D2D_DAY_LIMIT + 1, ['repKey', 'neighborhoodId', 'active', 'source']],
+    ['knock_assignments', [['repKey', 'in', ['ana.rep', 'bo.rep', 'cy.rep']], ['active', '==', true]], D2D_DAY_LIMIT + 1, ['repKey', 'neighborhoodId', 'active', 'source']],
   ]);
   assert.ok(!D2D_SALE_FIELDS.some(field => ['customer', 'ticket', 'depositAmount', 'address', 'commissionTerms', 'quotedAmount', 'street'].includes(field)), 'the sale mask has no customer or money field');
   // Denver midnight to midnight (MDT, UTC-6) for the jobs made that day; the sale whose job was made earlier is found by its id.
@@ -213,8 +219,11 @@ test('the Hub jobs reader asks Firestore for bounded, masked queries and fails c
   assert.equal(first.body.structuredQuery.orderBy, undefined, 'equality only: no composite index');
   await reader.createdBetween('2026-10-19T06:00:00.000Z', '2026-10-20T06:00:00.000Z');
   const range = sent[1].body.structuredQuery;
-  assert.deepEqual(range.where.compositeFilter.filters.map(filter => [filter.fieldFilter.field.fieldPath, filter.fieldFilter.op, filter.fieldFilter.value.stringValue]), [['createdAt', 'GREATER_THAN_OR_EQUAL', '2026-10-19T06:00:00.000Z'], ['createdAt', 'LESS_THAN', '2026-10-20T06:00:00.000Z']]);
+  // Only the door-to-door jobs made that day, through the declared jobs source+createdAt index; never every job of the day.
+  assert.deepEqual(range.where.compositeFilter.filters.map(filter => [filter.fieldFilter.field.fieldPath, filter.fieldFilter.op, filter.fieldFilter.value.stringValue]), [['source', 'EQUAL', 'door_to_door'], ['createdAt', 'GREATER_THAN_OR_EQUAL', '2026-10-19T06:00:00.000Z'], ['createdAt', 'LESS_THAN', '2026-10-20T06:00:00.000Z']]);
   assert.deepEqual(range.orderBy.map(order => order.field.fieldPath), ['createdAt', '__name__']);
+  const indexes = JSON.parse(readFileSync(new URL('../firestore.indexes.json', import.meta.url), 'utf8')).indexes;
+  assert.ok(indexes.some(index => index.collectionGroup === 'jobs' && index.queryScope === 'COLLECTION' && index.fields.map(field => `${field.fieldPath}:${field.order}`).join() === 'source:ASCENDING,createdAt:ASCENDING'), 'the composite index the range query needs is declared');
   const ids = Array.from({ length: 31 }, (_, index) => `sale-${index}`);
   await reader.forSales(ids);
   assert.deepEqual(sent.slice(2).map(call => [call.body.structuredQuery.where.fieldFilter.field.fieldPath, call.body.structuredQuery.where.fieldFilter.op, call.body.structuredQuery.where.fieldFilter.value.arrayValue.values.length]), [['d2d.saleId', 'IN', 30], ['d2d.saleId', 'IN', 1]]);
@@ -237,4 +246,53 @@ test('loadD2dDay reads nothing more for a quiet day', async () => {
   const records = await loadD2dDay({ store, jobs, date: DAY });
   assert.deepEqual([records.shifts, records.sales, records.jobs, records.truncated, records.missing], [[], [], [], [], []]);
   assert.equal(calls.filter(call => call[0] === 'getMany').length, 0, 'no reps, days or areas to read');
+});
+
+test('a walkthrough set that day by a rep with no shift or sale that day still counts, on a row for that rep', async () => {
+  // A phone that synced after its shift: the walkthrough job reached the Hub today, and the rep has no shift today.
+  const late = { id: 'walk_late', type: 'walkthrough', date: '2026-10-22', time: '11:00', status: 'scheduled', source: 'door_to_door', d2d: { repKey: 'eve.rep', setterEventId: 'event-late', kind: 'walkthrough' }, createdAt: '2026-10-19T14:10:00.000Z' };
+  const records = { ...RECORDS, shifts: [], sales: [], booked: [], forSales: [], created: [late], reps: { 'eve.rep': { displayName: 'Eve Synthetic Rep' } },
+    assignments: [{ id: 'eve.rep__nb_park__all', repKey: 'eve.rep', neighborhoodId: 'nb_park', active: true, source: 'self' }, ...RECORDS.assignments] };
+  const { get, calls } = fixture({ records }), { body } = await get('owner');
+  assert.deepEqual(body.reps.map(rep => [rep.repKey, rep.name, rep.onShift, rep.shifts, rep.walkthroughsSet]), [['eve.rep', 'Eve Synthetic Rep', false, [], 1]]);
+  assert.deepEqual(body.reps[0].jobs, [{ id: 'walk_late', kind: 'walkthrough', type: 'walkthrough', date: '2026-10-22', time: '11:00', status: 'scheduled' }]);
+  assert.deepEqual(body.reps[0].areas, [{ id: 'nb_park', name: 'Synthetic Park', claim: 'self', worked: false }]);
+  assert.equal(body.totals.walkthroughsSet, 1);
+  assert.deepEqual(calls.filter(call => call[0] === 'query' && call[1] === 'knock_assignments').map(call => call[2].where), [[['repKey', 'in', ['eve.rep']], ['active', '==', true]]]);
+  assert.deepEqual(calls.find(call => call[0] === 'getMany' && call[1] === 'knock_days'), ['getMany', 'knock_days', ['eve.rep_2026-10-19']]);
+  // The pure summary agrees: the totals count every walkthrough set that day.
+  const summary = d2dDaySummary({ date: DAY, settings: {}, now: NOW, jobs: [late] });
+  assert.deepEqual([summary.reps.map(rep => rep.repKey), summary.totals.walkthroughsSet, summary.totals.reps], [['eve.rep'], 1, 1]);
+  // A D2D job booked today but made on another day is a link, not a rep row.
+  const booked = d2dDaySummary({ date: DAY, settings: {}, now: NOW, jobs: [{ ...late, id: 'walk_old', date: DAY, createdAt: '2026-10-12T14:10:00.000Z' }] });
+  assert.deepEqual([booked.reps, booked.totals.walkthroughsSet, booked.jobs.map(row => [row.id, row.bookedToday, row.createdToday])], [[], 0, [['walk_old', true, false]]]);
+});
+
+test('more than 30 working reps read their areas in IN chunks of 30, each capped', async () => {
+  const many = Array.from({ length: 31 }, (_, index) => shift(`s${index}`, `rep${String(index).padStart(2, '0')}`, '2026-10-19T15:00:00.000Z'));
+  const { get, calls } = fixture({ records: { ...RECORDS, shifts: many, sales: [], created: [], booked: [], forSales: [] } });
+  assert.equal((await get('owner')).status, 200);
+  const chunks = calls.filter(call => call[0] === 'query' && call[1] === 'knock_assignments').map(call => [call[2].where[0][2].length, call[2].where[1], call[2].limit]);
+  assert.deepEqual(chunks, [[30, ['active', '==', true], D2D_DAY_LIMIT + 1], [1, ['active', '==', true], D2D_DAY_LIMIT + 1]]);
+});
+
+test('the dispatch schedule carries a door-to-door job\'s mark, and nothing else of its D2D record', () => {
+  assert.ok(JOB_FIELDS.includes('source') && JOB_FIELDS.includes('d2d.kind'), 'the dispatch scan reads the mark');
+  assert.ok(!JOB_FIELDS.some(field => field === 'd2d' || (field.startsWith('d2d.') && field !== 'd2d.kind')), 'never the rep, house or sale behind it');
+  const base = { id: 'job_d2d', revision: 'r1', type: 'job', date: DAY, time: '09:30', endDate: DAY, endTime: '11:30', status: 'scheduled', assignedCrew: [] };
+  const marked = projectDispatchJob({ ...base, source: 'door_to_door', d2d: { kind: 'sale', repKey: 'ana.rep', saleId: 'sale-1', houseId: 'house-9' } });
+  assert.deepEqual([marked.source, marked.d2d], ['door_to_door', { kind: 'sale' }]);
+  assert.deepEqual(projectDispatchJob({ ...base, type: 'walkthrough', source: 'door_to_door', d2d: { kind: 'walkthrough' } }).d2d, { kind: 'walkthrough' });
+  for (const other of [{ source: 'hub' }, { source: 'jobber' }, {}, { d2d: { kind: 'other' } }]) {
+    const plain = projectDispatchJob({ ...base, ...other });
+    assert.deepEqual(['source' in plain, 'd2d' in plain], [false, false], JSON.stringify(other));
+  }
+});
+
+test('held areas that cannot be read are said, and the rest of the day still shows', async () => {
+  const { body, status } = await fixture({ failAreas: true }).get('owner');
+  assert.equal(status, 200);
+  assert.deepEqual([body.coverage.complete, body.coverage.missing, body.coverage.truncated], [false, ['areas'], []]);
+  const ana = body.reps.find(rep => rep.repKey === 'ana.rep');
+  assert.deepEqual([ana.doors, ana.sales, ana.areas], [40, 1, [{ id: 'nb_park', name: 'Synthetic Park', claim: null, worked: true }]], 'areas worked that day still show, without their claim');
 });
