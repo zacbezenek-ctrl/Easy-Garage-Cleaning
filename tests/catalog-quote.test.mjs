@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { priceCatalogQuote } from '../functions/_lib/catalog-quote.js';
+import { quoteBreakdown, sectionOfCatalogCategory } from '../functions/_lib/composite-quote.js';
 
 const source = path => JSON.parse(readFileSync(new URL(path, import.meta.url), 'utf8'));
 const catalog = source('../functions/_data/garage-catalog.json');
@@ -47,4 +48,17 @@ test('catalog preview refuses placeholders, old versions and unverified or stale
   assert.throws(() => priceCatalogQuote(state(), selection(rack, { quantity: 10000 }), day), { code: 'quote_draft_catalog_invalid_selection' });
   assert.throws(() => priceCatalogQuote(state(), { ...selection(), items: [selection().items[0], { ...selection().items[0], id: 'catalog-2' }] }, day), { code: 'quote_draft_catalog_invalid_selection' });
   assert.throws(() => priceCatalogQuote(state(), { ...selection(), items: [selection().items[0], { ...selection().items[0], customerSupplied: true }] }, day), { code: 'quote_draft_catalog_invalid_selection' });
+});
+
+test('a saved Hub catalog quote exposes the same section breakdown as the builder: shelving, then extra storage, no cost', () => {
+  const shelf = catalog.items.find(item => item.kind === 'product' && item.category === 'shelving' && item.availability === 'active' && item.priceVerified);
+  const priced = priceCatalogQuote(state(), { ...selection(), items: [
+    { id: 'catalog-1', itemId: rack.id, quantity: 1, customerSupplied: false }, { id: 'catalog-2', itemId: shelf.id, quantity: 2, customerSupplied: false }] }, day);
+  const breakdown = quoteBreakdown({ estimate: { lineItems: priced.storedLineItems } }, { catalog });
+  const minimum = priced.minimumAdjustmentCents ? ['catalog-minimum'] : [];
+  assert.deepEqual(breakdown.sections.map(section => [section.id, section.lineIds]), [['removal', []], ['shelving', ['catalog-2', ...minimum]], ['storage', ['catalog-1']]]);
+  assert.deepEqual(breakdown.lines.map(line => [line.id, line.section, line.category]), [['catalog-1', 'storage', 'storage'], ['catalog-2', 'shelving', 'shelving'], ...minimum.map(id => [id, 'shelving', 'service'])]);
+  assert.equal(breakdown.totalCents, priced.totalCents);
+  assert.equal(sectionOfCatalogCategory(rack.category), 'storage');
+  assert.doesNotMatch(JSON.stringify(breakdown), /"split"|productCents|markupCents/);
 });

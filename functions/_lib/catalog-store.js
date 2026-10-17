@@ -8,6 +8,9 @@
  *                                  readyForCustomers, savedAt, savedBy, requestId}: a label names one set of values
  *                                  for good, so the settingsVersion a quote records resolves to what priced it
  *   catalogOperations/<requestId>  receipts {action, fingerprint, actorId, requestId, at, result}
+ *   pricingMenuApprovals/current   the owner's approved pricing-menu prices for the quote builder (EGC_QUOTE_BUILDER_ENABLED)
+ *                                  {approvals:{[menuItemId]:{unitCents,kind,approvedAt,approvedBy,requestId,basis}}, menuVersion,
+ *                                  settingsVersion, updatedAt, updatedBy, requestId}; written only by menu.approve
  * With no pointer the seed catalog (functions/_data/garage-catalog.json) is the published catalog, and with
  * no settings document the placeholder defaults apply (mustSetBeforeCustomerUse: true, internal use only).
  * A stored record that is malformed or fails verification fails closed (503) and never falls back to a seed.
@@ -20,15 +23,22 @@ import { firestoreFetch } from './firebase-service-account.js';
 import { decodeFirestoreFields, encodeFirestoreFields } from './firestore-job.js';
 import { hasBusinessAccess, isHubOwner } from './hub-session.js';
 import { auditWrite } from './hub-audit.js';
-import { CATALOG_SCHEMA_VERSION, catalogLinePricer, settingsReadyForCustomers, staleItems, validateCatalog, validatePricingSettings } from './catalog.js';
+import { CATALOG_SCHEMA_VERSION, catalogLinePricer, goodsMarkupOf, settingsReadyForCustomers, staleItems, validateCatalog, validatePricingSettings } from './catalog.js';
 import { denverToday } from './dispatch-time.js';
 import { SEED_CATALOG_JSON, SEED_SETTINGS_JSON } from '../_data/catalog-seed.js';
+import { PRICING_MENU_JSON } from '../_data/pricing-menu.js';
+import { menuPrices, parsePricingMenu, validateMenuApprovals } from './composite-quote.js';
+import { walkthroughPricing, walkthroughServiceItems } from './pricing-config.js';
 
 export const CATALOG_VERSIONS = 'catalogVersions', PRICING_SETTINGS = 'pricingSettings', PRICING_SETTINGS_VERSIONS = 'pricingSettingsVersions', CATALOG_OPERATIONS = 'catalogOperations', CURRENT = 'current';
+export const MENU_APPROVALS = 'pricingMenuApprovals';
 export const CATALOG_ACTIONS = Object.freeze(['settings.update', 'catalog.publish']);
+export const MENU_ACTIONS = Object.freeze(['menu.approve']);
 // A Firestore document holds at most 1 MiB and the compact catalog JSON is one string field of its snapshot.
 export const MAX_CATALOG_BYTES = 900000;
 export const catalogQuotesEnabled = env => env?.CATALOG_QUOTES_ENABLED === 'true';
+// The guided estimator quote builder (removal, then shelving, then extra storage) priced from the pricing menu.
+export const quoteBuilderEnabled = env => env?.EGC_QUOTE_BUILDER_ENABLED === 'true';
 const ROOT = 'projects/egcw-1ec83/databases/(default)/documents';
 const BASE = `https://firestore.googleapis.com/v1/${ROOT}`;
 const VERSION = /^\d{4}-\d{2}-\d{2}\.\d{1,3}$/;
@@ -165,6 +175,24 @@ export async function readCatalogState(store, { cache = verifiedCatalogs } = {})
   const [pointer, settingsRow] = await Promise.all([store.read(CATALOG_VERSIONS, CURRENT), store.read(PRICING_SETTINGS, CURRENT)]);
   const { settings, settingsState } = pricingState(settingsRow);
   return { ...await publishedCatalog(store, pointer, cache), settings, settingsState };
+}
+
+// The bundled pricing menu (functions/_data/pricing-menu.json via its generated module), parsed and validated once
+// per isolate. tests/composite-quote.test.mjs validates the shipped menu.
+let menu = null;
+export const bundledPricingMenu = () => menu || (menu = parsePricingMenu(PRICING_MENU_JSON));
+
+function approvalsState(row) {
+  if (!row) return { items: {}, revision: null };
+  try { return validateMenuApprovals({ items: plain(row.approvals) ? row.approvals : {}, revision: row.revision }); }
+  catch { throw storageInvalid('pricing-menu approvals', { currentRevision: row.revision }); }
+}
+
+/** The quote builder's pricing state: {menu, settings, walkthrough, approvals:{items, revision}}. Two reads: the
+ * pricing settings and the owner's menu approvals; the menu and the walkthrough tables are bundled. */
+export async function readCompositeState(store, { pricingMenu = bundledPricingMenu, walkthrough = () => walkthroughPricing(walkthroughServiceItems()) } = {}) {
+  const [settingsRow, approvalsRow] = await Promise.all([store.read(PRICING_SETTINGS, CURRENT), store.read(MENU_APPROVALS, CURRENT)]);
+  return { menu: pricingMenu(), settings: pricingState(settingsRow).settings, walkthrough: walkthrough(), approvals: approvalsState(approvalsRow) };
 }
 
 const catalogOwner = session => isHubOwner(session) && session.role === 'owner';
@@ -343,17 +371,85 @@ async function publish(store, session, input, now, actor) {
   return publishResult(record, input.requestId, false, typeof updateTime === 'string' && updateTime ? { version, revision: updateTime } : await store.read(CATALOG_VERSIONS, CURRENT));
 }
 
+const MENU_ID = /^(?:hd-\d{6,12}|egc-\d{3})$/, MAX_MENU_CHANGES = 300;
+function approvalsResult(row, requestId, replayed, current = true) {
+  const state = approvalsState(row);
+  return { ok: true, authority: 'employee_hub', action: 'menu.approve', requestId, replayed, approvals: { revision: current ? state.revision : null, current, count: Object.keys(state.items).length, items: state.items } };
+}
+
+/** menu.approve {requestId, expectedRevision, menuVersion, settingsVersion, approve:[{id, unitCents}], revoke:[id]}: the
+ * owner's bulk approval of draft pricing-menu prices. A product is approved only at its current price (cost x
+ * goodsMarkup), so the owner approves exactly what estimators see; a service is approved at the amount the owner
+ * enters (the draft amount by default). The approvals, a catalogOperations receipt and a hub_audit entry commit
+ * together; expectedRevision is the approvals revision the owner reviewed (null before the first approval). */
+async function approveMenuPrices(store, session, input, now, actor, { compositeState }) {
+  keys(input, ['action', 'requestId', 'expectedRevision', 'menuVersion', 'settingsVersion', 'approve', 'revoke']);
+  if (!Object.hasOwn(input, 'expectedRevision') || input.expectedRevision !== null && (typeof input.expectedRevision !== 'string' || !input.expectedRevision || input.expectedRevision.length > 64)) throw fail('request_invalid', 'Reload the draft prices before approving: the approval needs the revision you reviewed (null before the first approval).');
+  const approve = input.approve ?? [], revoke = input.revoke ?? [];
+  if (!Array.isArray(approve) || !Array.isArray(revoke) || approve.length + revoke.length < 1 || approve.length + revoke.length > MAX_MENU_CHANGES) throw fail('request_invalid', `Choose 1 to ${MAX_MENU_CHANGES} prices to approve or revoke.`);
+  const seen = new Set();
+  for (const entry of approve) {
+    if (!plain(entry) || Object.keys(entry).some(key => !['id', 'unitCents'].includes(key)) || typeof entry.id !== 'string' || !MENU_ID.test(entry.id) || !Number.isSafeInteger(entry.unitCents) || entry.unitCents < 1 || entry.unitCents > 10000000 || seen.has(entry.id)) throw fail('request_invalid', 'Each approval needs a distinct pricing-menu item and a whole-cent price.');
+    seen.add(entry.id);
+  }
+  for (const id of revoke) { if (typeof id !== 'string' || !MENU_ID.test(id) || seen.has(id)) throw fail('request_invalid', 'Each revoked approval needs a distinct pricing-menu item.'); seen.add(id); }
+  const receiptId = input.requestId.toLowerCase(), fingerprint = await sha256(canonical({ actor, input }));
+  const replay = async () => {
+    if (!await priorReceipt(store, receiptId, fingerprint, actor, input.action)) return null;
+    const current = await store.read(MENU_APPROVALS, CURRENT);
+    if (current?.requestId !== input.requestId) throw fail('changed_since_operation', 'These approvals were saved and have changed since. Reload to see the latest approvals.', 409);
+    return approvalsResult(current, input.requestId, true);
+  };
+  const replayed = await replay();
+  if (replayed) return replayed;
+  const state = await compositeState(store), revision = state.approvals.revision;
+  if (input.expectedRevision !== revision) throw fail('revision_conflict', 'The approved prices changed since you opened them. Reload and review the latest draft prices.', 409, { currentRevision: revision });
+  if (input.menuVersion !== state.menu.menuVersion || input.settingsVersion !== state.settings.settingsVersion) throw fail('version_conflict', 'The pricing menu or settings changed since you opened the draft prices. Reload and review them again.', 409, { menuVersion: state.menu.menuVersion, settingsVersion: state.settings.settingsVersion });
+  const prices = menuPrices({ ...state, approvals: { items: {}, revision: null } }), items = { ...state.approvals.items }, changed = [];
+  for (const { id, unitCents } of approve) {
+    const price = prices.get(id);
+    if (!price) throw fail('menu_item_unknown', `${id} is not on the pricing menu. Reload the draft prices.`, 400);
+    if (price.source === 'menu') throw fail('menu_item_approved', `${price.item.name} already carries an owner-approved amount in the pricing menu.`, 400);
+    if (price.kind === 'product' && unitCents !== price.unitCents) throw fail('menu_price_changed', `The price of ${price.item.name} is now $${(price.unitCents / 100).toFixed(2)} per pack. Reload and review it before approving.`, 409, { id, unitCents: price.unitCents });
+    const basis = price.kind === 'product' ? { retailPerPackCents: price.item.retailPerPackCents, goodsMarkup: goodsMarkupOf(state.settings).multiplier } : { draftCents: price.unitCents };
+    items[id] = { unitCents, kind: price.kind, approvedAt: now, approvedBy: actor, requestId: input.requestId, basis };
+    changed.push({ id, unitCents, previous: state.approvals.items[id]?.unitCents ?? null });
+  }
+  for (const id of revoke) {
+    if (!items[id]) throw fail('menu_item_not_approved', `${prices.get(id)?.item.name || id} has no owner approval to revoke.`, 400);
+    changed.push({ id, unitCents: null, previous: items[id].unitCents });
+    delete items[id];
+  }
+  const patch = { approvals: items, menuVersion: state.menu.menuVersion, settingsVersion: state.settings.settingsVersion, updatedAt: now, updatedBy: actor, requestId: input.requestId };
+  const summary = list => Object.fromEntries(list.map(entry => [entry.id, entry]));
+  const writes = [
+    { collection: MENU_APPROVALS, id: CURRENT, revision, patch },
+    { collection: CATALOG_OPERATIONS, id: receiptId, patch: { action: input.action, fingerprint, actorId: actor, requestId: input.requestId, at: now, result: { approved: approve.map(entry => entry.id), revoked: revoke, menuVersion: state.menu.menuVersion } } },
+    auditWrite({ actor: { id: actor, kind: 'human', role: session.role }, via: 'hub', action: 'pricing_menu.approve', entity: { collection: MENU_APPROVALS, id: CURRENT },
+      before: summary(changed.map(({ id, previous }) => ({ id, unitCents: previous }))), after: summary(changed.map(({ id, unitCents }) => ({ id, unitCents }))), requestId: input.requestId, visibility: 'owner', now }),
+  ];
+  const { recovered, committed } = await commitOrRecover(store, writes, replay);
+  if (recovered) return recovered;
+  const updateTime = committed?.writeResults?.[0]?.updateTime;
+  if (typeof updateTime === 'string' && updateTime) return approvalsResult({ ...patch, revision: updateTime }, input.requestId, false);
+  const saved = await store.read(MENU_APPROVALS, CURRENT);
+  return saved?.requestId === input.requestId ? approvalsResult(saved, input.requestId, false) : approvalsResult({ ...patch, revision: null }, input.requestId, false, false);
+}
+
 /** Owner-only writes. settings.update {requestId, expectedRevision, settings, confirmCustomerUse?} replaces the
  * pricing settings; turning mustSetBeforeCustomerUse off needs confirmCustomerUse:true, and settingsVersion must be
  * a label never saved before (nor the placeholder's). catalog.publish {requestId, basedOnVersion, catalog} publishes
  * a new immutable, later version over exactly basedOnVersion (null only to replace an unreadable pointer). A replay
- * of the same requestId and body returns the saved result (replayed:true). */
-export async function mutateCatalog(store, session, input, now = new Date().toISOString()) {
+ * of the same requestId and body returns the saved result (replayed:true). With menuApprovals (the quote builder
+ * flag) menu.approve also applies: see approveMenuPrices. */
+export async function mutateCatalog(store, session, input, now = new Date().toISOString(), { menuApprovals = false, compositeState = readCompositeState } = {}) {
   requireCatalogOwner(session);
   if (typeof now !== 'string' || !INSTANT.test(now) || !Number.isFinite(Date.parse(now))) throw fail('clock_invalid', 'The server clock is unavailable. Retry.', 503);
   if (!plain(input)) throw fail('request_invalid', 'The catalog request was incomplete. Reload and try again.');
-  if (!CATALOG_ACTIONS.includes(input.action)) throw fail('action_invalid', 'Choose settings.update or catalog.publish.');
+  const menuAction = menuApprovals && MENU_ACTIONS.includes(input.action);
+  if (!CATALOG_ACTIONS.includes(input.action) && !menuAction) throw fail('action_invalid', 'Choose settings.update or catalog.publish.');
   if (typeof input.requestId !== 'string' || !UUID.test(input.requestId)) throw fail('request_invalid', 'Each catalog change needs a request ID. Reload and try again.');
   const actor = String(session.user).trim().toLowerCase();
+  if (menuAction) return approveMenuPrices(store, session, input, now, actor, { compositeState });
   return input.action === 'settings.update' ? updateSettings(store, session, input, now, actor) : publish(store, session, input, now, actor);
 }

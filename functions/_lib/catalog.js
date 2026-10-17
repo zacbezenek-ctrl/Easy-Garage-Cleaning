@@ -30,6 +30,13 @@ const IMAGE_URL = /https?:\/\/[^\s"'<>]+\.(?:png|jpe?g|gif|webp|avif|svg|bmp|tif
 const IMAGE_HOST = /(?:^|[/.@])(?:m\.media-amazon\.com|images-na\.ssl-images-amazon\.com|i5\.walmartimages\.com|images\.thdstatic\.com|mobileimages\.lowes\.com|cdn\.shopify\.com)(?:[/:?#]|$)/i;
 const IMAGE_KEY = /^(?:image|images|imageurl|photo|photos|photourl|thumbnail|thumb|img|picture)$/i;
 const SETTINGS_KEYS = ['schemaVersion', 'settingsVersion', 'mustSetBeforeCustomerUse', 'currency', 'laborRateCents', 'markupPct', 'minimumJobCents', 'includeDisposal', 'disposalCentsPerItem', 'depositPct', 'roundingRule'];
+// Optional settings: a document saved before they existed stays valid and uses the default.
+// goodsMarkup multiplies the pricing-menu goods cost (functions/_data/pricing-menu.json retailPerPackCents) into
+// the goods selling price: 1.3 is the owner's stated rule (landed cost x 1.30). It never prices garage-catalog
+// items, which keep markupPct, labor and disposal.
+const OPTIONAL_SETTINGS_KEYS = ['goodsMarkup'];
+export const DEFAULT_GOODS_MARKUP = 1.3;
+const MIN_GOODS_MARKUP = 1, MAX_GOODS_MARKUP = 5;
 
 const plain = value => value !== null && typeof value === 'object' && !Array.isArray(value);
 const fail = (code, message, status = 400, details) => Object.assign(new Error(message), { code: `catalog_${code}`, status, ...(details ? { details } : {}) });
@@ -240,7 +247,7 @@ export function validateCatalog(catalog) {
 }
 
 export function validatePricingSettings(settings) {
-  shape(settings, 'settings', SETTINGS_KEYS, ['comments'], settingsInvalid);
+  shape(settings, 'settings', SETTINGS_KEYS, [...OPTIONAL_SETTINGS_KEYS, 'comments'], settingsInvalid);
   if (settings.schemaVersion !== 1) throw settingsInvalid('settings.schemaVersion', 'must be 1');
   if (typeof settings.settingsVersion !== 'string' || !/^[A-Za-z0-9._:-]{1,80}$/.test(settings.settingsVersion)) throw settingsInvalid('settings.settingsVersion', 'must be a short version label');
   flag(settings.mustSetBeforeCustomerUse, 'settings.mustSetBeforeCustomerUse', settingsInvalid);
@@ -258,10 +265,11 @@ export function validatePricingSettings(settings) {
   integer(settings.disposalCentsPerItem, 'settings.disposalCentsPerItem', 0, 100000, settingsInvalid);
   if (typeof settings.depositPct !== 'number' || !Number.isFinite(settings.depositPct) || settings.depositPct < 0 || settings.depositPct > 100 || Math.abs(settings.depositPct * 100 - Math.round(settings.depositPct * 100)) > 1e-9) throw settingsInvalid('settings.depositPct', 'must be a percentage from 0 to 100 with at most 2 decimals');
   oneOf(settings.roundingRule, 'settings.roundingRule', ROUNDING_RULES, settingsInvalid);
+  if (settings.goodsMarkup !== undefined) goodsMarkupBasisPoints(settings.goodsMarkup, 'settings.goodsMarkup');
   if (settings.comments !== undefined) {
     if (!plain(settings.comments)) throw settingsInvalid('settings.comments', 'must be an object');
     for (const [key, comment] of Object.entries(settings.comments)) {
-      if (!SETTINGS_KEYS.includes(key)) throw settingsInvalid(`settings.comments.${key}`, 'is not a setting');
+      if (!SETTINGS_KEYS.includes(key) && !OPTIONAL_SETTINGS_KEYS.includes(key)) throw settingsInvalid(`settings.comments.${key}`, 'is not a setting');
       if (typeof comment !== 'string' || !comment.trim() || comment.length > 2000) throw settingsInvalid(`settings.comments.${key}`, 'must be text');
     }
   }
@@ -271,8 +279,19 @@ export function validatePricingSettings(settings) {
 // Placeholder settings (mustSetBeforeCustomerUse) may price internal estimates only.
 export const settingsReadyForCustomers = settings => validatePricingSettings(settings).mustSetBeforeCustomerUse === false;
 
+// The goods multiplier as whole basis points (1.3 -> 13000): a number from 1 to 5 with at most 4 decimals.
+function goodsMarkupBasisPoints(value, path) {
+  if (typeof value !== 'number' || !Number.isFinite(value) || value < MIN_GOODS_MARKUP || value > MAX_GOODS_MARKUP || Math.abs(value * 10000 - Math.round(value * 10000)) > 1e-6) throw settingsInvalid(path, `must be a multiplier from ${MIN_GOODS_MARKUP} to ${MAX_GOODS_MARKUP} with at most 4 decimals`);
+  return Math.round(value * 10000);
+}
+/** The goods multiplier of validated settings (DEFAULT_GOODS_MARKUP when unset), as {multiplier, basisPoints}. */
+export function goodsMarkupOf(settings) {
+  const multiplier = settings?.goodsMarkup === undefined ? DEFAULT_GOODS_MARKUP : settings.goodsMarkup;
+  return { multiplier, basisPoints: goodsMarkupBasisPoints(multiplier, 'settings.goodsMarkup') };
+}
+
 // Exact integer division of non-negative safe integers, following the settings rounding rule.
-function roundCents(numerator, denominator, rule) {
+export function roundCents(numerator, denominator, rule) {
   const n = BigInt(numerator), d = BigInt(denominator);
   return Number(rule === 'ceil_cent' ? (n + d - 1n) / d : (2n * n + d) / (2n * d));
 }

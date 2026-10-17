@@ -19,6 +19,8 @@ import { normalizeUnsignedCapture } from '../functions/_lib/unsigned-walkthrough
 import { fieldJobProjection } from '../functions/_lib/field-execution.js';
 import { PROPOSED_25_75, FINAL_25_75 } from '../functions/_lib/quote-payment-policy.js';
 import { syncWalkthroughCapture } from '../functions/_lib/walkthrough-capture-sync.js';
+import { priceCompositeQuote } from '../functions/_lib/composite-quote.js';
+import { walkthroughPricing, walkthroughServiceItems } from '../functions/_lib/pricing-config.js';
 
 test('saved authenticated capture reaches the canonical contact through a retryable internal-note intent', async () => {
   const f = fixture(), input = f.input();
@@ -908,4 +910,112 @@ test('the estimate-ready tag is cleared and applied again for each sent revision
   const page = readFileSync(new URL('../crew/quote-draft.js', import.meta.url), 'utf8');
   assert.match(page, /The estimate-ready tag was applied in HighLevel; its workflow notifies the customer if that workflow is on\./);
   assert.doesNotMatch(page, /HighLevel was asked to notify the customer/);
+});
+
+// ---- Guided builder quotes (EGC_QUOTE_BUILDER_ENABLED; functions/_lib/composite-quote.js) ----
+const BUILDER_ENV = { ...ENV, EGC_QUOTE_BUILDER_ENABLED: 'true' };
+const builderMenu = JSON.parse(readFileSync(new URL('../functions/_data/pricing-menu.json', import.meta.url), 'utf8'));
+const builderSettings = JSON.parse(readFileSync(new URL('../functions/_data/pricing-settings.defaults.json', import.meta.url), 'utf8'));
+const builderState = (approvals = {}) => ({ menu: builderMenu, settings: builderSettings, walkthrough: walkthroughPricing(walkthroughServiceItems()), approvals: { items: approvals, revision: Object.keys(approvals).length ? 'approvals-1' : null } });
+const menuItem = name => builderMenu.services.find(item => item.name === name) || builderMenu.products.find(item => item.name === name);
+const SHELF = builderMenu.products.find(item => item.id === 'hd-100006678');
+const builderSelection = ({ steps = ['removal', 'shelving', 'storage'], removal = [{ id: menuItem('Two-car garage base').id, quantity: 1 }, { id: menuItem('Full truck load').id, quantity: 1 }, { id: menuItem('Mattress').id, quantity: 2 }], shelving = [{ id: SHELF.id, quantity: 2 }], storage = [] } = {}) =>
+  ({ menuVersion: builderMenu.menuVersion, settingsVersion: builderSettings.settingsVersion, steps, removal, shelving, storage });
+function builderInput(f, selection = builderSelection(), state = builderState()) {
+  const priced = priceCompositeQuote(state, selection, { complete: true });
+  return { priced, input: f.input({ draft: { ...draft(), line_items: priced.lineItems, catalog_version: priced.menuVersion, composite_pricing: selection } }) };
+}
+
+test('builder quote: the server re-prices and saves its lines, breakdown and selection; draft prices block the send with reasons until the owner approves them', async () => {
+  const f = fixture(), state = builderState(), { priced, input } = builderInput(f, builderSelection(), state);
+  const result = await saveQuoteDraft(f.store, owner, input, NOW, { env: BUILDER_ENV, compositeState: async () => state });
+  const job = f.job(result.job.id);
+  assert.deepEqual([job.estimate.amountCents, job.estimate.catalogVersion, job.estimate.pricingSettingsVersion, job.estimate.status], [priced.totalCents, builderMenu.menuVersion, builderSettings.settingsVersion, 'draft']);
+  assert.deepEqual(job.estimate.lineItems.map(line => line.id), ['removal-base', 'removal-junk-full', 'removal-special', `shelving-${SHELF.id}`]);
+  assert.deepEqual(job.estimate.lineItems.at(-1).split, { productCents: 8900, laborCents: 0, laborMinutes: 0, markupCents: 2670, disposalCents: 0 }, 'the Hub job keeps the goods cost split');
+  assert.deepEqual(job.quoteDraft.compositePricing, priced.compositePricing);
+  assert.deepEqual(job.quoteDraft.breakdown, priced.breakdown);
+  assert.deepEqual(result.job.breakdown.sections.map(section => [section.id, section.subtotalCents]), [['removal', 97500 + 75000 + 14000], ['shelving', 23140], ['storage', 0]]);
+  assert.deepEqual(result.job.breakdown.purchaseList.map(row => [row.sku, row.packs, row.productUrl]), [[SHELF.sku, 2, SHELF.productUrl]]);
+  assert.doesNotMatch(JSON.stringify(result), /"split"|productCents|markupCents|retailPerPackCents/, 'the quote author DTO carries no cost');
+  // Draft prices: the save stands, the send preview and the send are refused with every reason, nothing is sent.
+  const blocked = error => error.code === 'quote_draft_composite_prices_unapproved' && error.status === 409 && error.details.unapproved.map(row => row.name).join('|') === `Two-car garage base|Mattress|${SHELF.name}` && /owner has not approved/.test(error.message);
+  await assert.rejects(previewQuoteSend(f.store, owner, { jobId: job.id, expectedRevision: job.revision }, NOW, { env: BUILDER_ENV, compositeState: async () => state }), blocked);
+  await assert.rejects(sendQuoteDraft(f.store, owner, { requestId: randomUUID(), jobId: job.id, expectedRevision: job.revision, confirmToken: 'unused' }, NOW, { env: BUILDER_ENV, deliver: f.deliver, compositeState: async () => state }), blocked);
+  assert.equal(f.delivered.length, 0);
+  // The owner approves exactly those prices (no re-save needed): the quote sends.
+  const approved = builderState({ [menuItem('Two-car garage base').id]: { unitCents: 97500 }, [menuItem('Mattress').id]: { unitCents: 7000 }, [SHELF.id]: { unitCents: 11570 } });
+  const preview = await previewQuoteSend(f.store, owner, { jobId: job.id, expectedRevision: job.revision }, NOW, { env: BUILDER_ENV, compositeState: async () => approved });
+  const sent = await sendQuoteDraft(f.store, owner, { requestId: randomUUID(), jobId: job.id, expectedRevision: job.revision, confirmToken: preview.confirmToken }, LATER, { env: BUILDER_ENV, deliver: f.deliver, compositeState: async () => approved });
+  assert.equal(sent.job.estimate.status, 'sent');
+  assert.deepEqual([sent.job.estimate.sentRevision, sent.job.delivery.mode], [1, 'off'], 'recorded as sent; messaging is off in this environment');
+  // A later walkthrough-priced revision clears the builder provenance.
+  await save(f, revise(f, job.id, d => { d.scope = 'Revised walkthrough quote.'; }), owner, ENV);
+  assert.equal(f.job(job.id).quoteDraft.compositePricing, null);
+  assert.equal(f.job(job.id).quoteDraft.breakdown, null);
+});
+
+test('builder quote: the owner-approved $750 full truck sends without any further approval', async () => {
+  const f = fixture(), state = builderState(), selection = builderSelection({ removal: [{ id: menuItem('Full truck load').id, quantity: 2 }], shelving: [] });
+  const { priced, input } = builderInput(f, selection, state);
+  assert.deepEqual([priced.totalCents, priced.approval.ready], [150000, true]);
+  const result = await saveQuoteDraft(f.store, owner, input, NOW, { env: BUILDER_ENV, compositeState: async () => state });
+  const job = f.job(result.job.id), preview = await previewQuoteSend(f.store, owner, { jobId: job.id, expectedRevision: job.revision }, NOW, { env: BUILDER_ENV, compositeState: async () => state });
+  assert.match(preview.summary, /\$1,500\.00/);
+  // A saved builder quote is kept but cannot be sent once the builder flag is turned off.
+  await assert.rejects(previewQuoteSend(f.store, owner, { jobId: job.id, expectedRevision: job.revision }, NOW, { env: ENV, compositeState: async () => state }), error => error.code === 'quote_draft_builder_disabled' && error.status === 404);
+});
+
+test('builder quote save refuses edited lines and an unfinished build; with the flag off a builder draft is refused exactly as before', async () => {
+  const f = fixture(), state = builderState(), options = { env: BUILDER_ENV, compositeState: async () => state };
+  const { input } = builderInput(f);
+  const edited = structuredClone(input); edited.draft.line_items[0].unitCents -= 100; edited.draft.line_items[0].totalCents -= 100;
+  await assert.rejects(saveQuoteDraft(f.store, owner, edited, NOW, options), error => error.code === 'quote_draft_composite_price_changed' && error.status === 409);
+  const unfinished = structuredClone(input); unfinished.draft.composite_pricing.steps = ['removal', 'shelving']; unfinished.draft.composite_pricing.storage = [];
+  await assert.rejects(saveQuoteDraft(f.store, owner, unfinished, NOW, options), error => error.code === 'quote_draft_composite_incomplete');
+  const both = structuredClone(input); both.draft.catalog_pricing = {};
+  await assert.rejects(saveQuoteDraft(f.store, owner, both, NOW, options), error => error.code === 'quote_draft_invalid_draft');
+  for (const env of [ENV, { ...ENV, EGC_QUOTE_BUILDER_ENABLED: 'yes' }]) {
+    await assert.rejects(saveQuoteDraft(f.store, owner, input, NOW, { env, compositeState: async () => { throw new Error('never read with the flag off'); } }), error => error.code === 'quote_draft_invalid_request' && /unsupported fields/.test(error.message));
+  }
+  assert.equal(f.calls.length, 0, 'nothing was written');
+});
+
+test('builder API: the menu and the step preview are flag-gated, read-only, author-only and give sales no cost', async () => {
+  const f = fixture(), state = builderState();
+  let actor = sales, reads = 0;
+  const handler = quoteDraftHandlers({ session: async () => actor, storage: () => f.store, now: () => new Date(NOW), compositeState: async () => { reads++; return state; } });
+  const env = { ...ROLES, EGC_QUOTE_BUILDER_ENABLED: 'true' }, off = ROLES;
+  const get = async (environment, query = '?view=builder') => { const response = await handler.get({ request: request('GET', null, {}, query), env: environment }); return { status: response.status, body: await response.json() }; };
+  const post = async (environment, body) => { const response = await handler.post({ request: request('POST', body), env: environment }); return { status: response.status, body: await response.json() }; };
+  // Flag off: the answers before the builder existed.
+  const offMenu = await get(off);
+  assert.deepEqual([offMenu.status, offMenu.body.code], [400, 'quote_draft_invalid_request']);
+  const offPreview = await post(off, { action: 'composite_preview', compositePricing: builderSelection() });
+  assert.deepEqual([offPreview.status, offPreview.body.code], [400, 'quote_draft_invalid_request']);
+  assert.match(offPreview.body.error, /^Choose save, sync_capture/);
+  assert.equal(reads, 0);
+  // Sales: sell prices, approval status and reasons, never a cost basis.
+  const menu = await get(env);
+  assert.equal(menu.status, 200);
+  assert.deepEqual([menu.body.enabled, menu.body.viewer.internal, menu.body.viewer.canApprove, menu.body.internal], [true, false, false, undefined]);
+  assert.doesNotMatch(JSON.stringify(menu.body), /retailPerPackCents|goodsMarkup|"split"/);
+  assert.equal(menu.body.products.find(item => item.id === SHELF.id).unitCents, 11570);
+  const step = await post(env, { action: 'composite_preview', compositePricing: builderSelection({ steps: ['removal'], shelving: [] }) });
+  assert.equal(step.status, 200);
+  assert.deepEqual(step.body.steps.map(row => row.id), ['removal']);
+  const full = await post(env, { action: 'composite_preview', compositePricing: builderSelection() });
+  assert.deepEqual([full.status, full.body.approval.ready, full.body.storedLineItems], [200, false, undefined]);
+  assert.doesNotMatch(JSON.stringify(full.body), /"split"|productCents|markupCents|retailPerPackCents/, 'sales never see a cost split');
+  const outOfOrder = await post(env, { action: 'composite_preview', compositePricing: builderSelection({ steps: ['shelving'] }) });
+  assert.deepEqual([outOfOrder.status, outOfOrder.body.code], [400, 'quote_draft_composite_order']);
+  assert.equal(f.calls.length, 0, 'previews write nothing');
+  // The owner sees the cost basis and may approve; crew may not open the builder at all.
+  actor = owner;
+  const own = await get(env);
+  assert.deepEqual([own.body.viewer.internal, own.body.viewer.canApprove, own.body.internal.goodsMarkup], [true, true, 1.3]);
+  assert.equal(own.body.products.find(item => item.id === SHELF.id).retailPerPackCents, 8900);
+  actor = crew;
+  assert.equal((await get(env)).status, 403);
+  assert.equal((await post(env, { action: 'composite_preview', compositePricing: builderSelection() })).status, 403);
 });

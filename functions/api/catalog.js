@@ -22,11 +22,15 @@
  * POST {action:'catalog.publish',requestId,basedOnVersion,catalog} (owner)
  *   basedOnVersion is publication.version (null only to replace an unreadable pointer); catalog is a complete
  *   validateCatalog() document with a later catalogVersion, stored immutably. => {ok,requestId,replayed,publication}
+ * POST {action:'menu.approve',requestId,expectedRevision,menuVersion,settingsVersion,approve:[{id,unitCents}],revoke:[id]}
+ *   (owner; only with EGC_QUOTE_BUILDER_ENABLED=true, which also allows it while CATALOG_QUOTES_ENABLED is off)
+ *   bulk-approves draft pricing-menu prices for the quote builder; expectedRevision is the approvals revision from
+ *   GET /api/quote-draft?view=builder (internal.approvalsRevision). => {ok,requestId,replayed,approvals:{revision,current,count,items}}
  * Keep the same requestId and body when retrying; the same requestId with another body is a 409.
  * Errors: {ok:false,code,error,details?}; 400 validation, 401, 403, 404 disabled, 409 revision/version/
  * idempotency, 413, 415, 503 retry the same request. */
 import { getHubSession } from '../_lib/hub-session.js';
-import { catalogOverview, catalogQuotesEnabled, catalogStorage, mutateCatalog, requireCatalogOwner, requireCatalogViewer } from '../_lib/catalog-store.js';
+import { catalogOverview, catalogQuotesEnabled, catalogStorage, mutateCatalog, quoteBuilderEnabled, requireCatalogOwner, requireCatalogViewer } from '../_lib/catalog-store.js';
 
 // A published catalog is about 0.55 MB of JSON; settings documents are small.
 const LIMIT = 1000000, SETTINGS_LIMIT = 32000;
@@ -44,7 +48,7 @@ function errorResponse(error) {
 }
 
 // cache: this isolate's verified catalogs (catalog-store.js); tests pass a new Map for a cold isolate.
-export function catalogHandlers({ session = getHubSession, storage = catalogStorage, now = () => new Date(), cache } = {}) {
+export function catalogHandlers({ session = getHubSession, storage = catalogStorage, now = () => new Date(), cache, compositeState } = {}) {
   return {
     async get({ request, env }) {
       try {
@@ -60,14 +64,17 @@ export function catalogHandlers({ session = getHubSession, storage = catalogStor
       if (!sameOrigin(request)) return reply(403, { ok:false, code:'catalog_origin_forbidden', error:'Open the catalog in the Employee Hub to save changes.' });
       try {
         const actor = await session(request, env); requireCatalogOwner(actor);
-        if (!catalogQuotesEnabled(env)) return reply(404, { ok:false, code:'catalog_disabled', error:'Catalog pricing is not enabled.' });
+        const builder = quoteBuilderEnabled(env), disabled = () => reply(404, { ok:false, code:'catalog_disabled', error:'Catalog pricing is not enabled.' });
+        if (!catalogQuotesEnabled(env) && !builder) return disabled();
         if (request.headers.get('Content-Type')?.split(';')[0].trim().toLowerCase() !== 'application/json') return reply(415, { ok:false, code:'catalog_json_required', error:'Catalog changes must be submitted as JSON.' });
         if (Number(request.headers.get('Content-Length')) > LIMIT) return tooLarge();
         const raw = await request.text(), bytes = new TextEncoder().encode(raw).byteLength;
         if (bytes > LIMIT) return tooLarge();
         let input; try { input = JSON.parse(raw); } catch { return reply(400, { ok:false, code:'catalog_json_invalid', error:'The catalog request was incomplete. Reload and try again.' }); }
-        if (input?.action === 'settings.update' && bytes > SETTINGS_LIMIT) return tooLarge();
-        return reply(200, await mutateCatalog(storage(env), actor, input, now().toISOString()));
+        // The quote builder flag alone opens only the pricing-menu approval, never settings or publishing.
+        if (!catalogQuotesEnabled(env) && input?.action !== 'menu.approve') return disabled();
+        if ((input?.action === 'settings.update' || builder && input?.action === 'menu.approve') && bytes > SETTINGS_LIMIT) return tooLarge();
+        return reply(200, await mutateCatalog(storage(env), actor, input, now().toISOString(), builder ? { menuApprovals: true, ...(compositeState ? { compositeState } : {}) } : {}));
       } catch (error) { return errorResponse(error); }
     },
   };
