@@ -186,6 +186,7 @@ async function onSynced(response) {
 
 export async function sync({ full = false } = {}) {
   if (!S.viewer || S.syncState === 'syncing') return;
+  const wasLoaded = S.loaded;
   S.syncState = 'syncing';
   renderChrome();
   try {
@@ -204,7 +205,9 @@ export async function sync({ full = false } = {}) {
   } finally {
     if (S.syncState === 'syncing') S.syncState = 'idle';
     renderChrome();
-    render();
+    // Admin screens read their own data and hold unsaved forms (settings, the commission approval), so a background
+    // sync never rebuilds one under the admin's hands once the app has loaded; the sync pill above still updates.
+    if (!(wasLoaded && screens.get(S.route.name)?.admin)) render();
   }
 }
 

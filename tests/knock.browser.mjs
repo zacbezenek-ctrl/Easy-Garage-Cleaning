@@ -197,6 +197,15 @@ try {
   await admin.getByRole('group', { name: 'How Garage Transformation is paid' }).getByRole('button', { name: 'Garage only', exact: true }).click();
   await admin.getByLabel('Approval reference', { exact: true }).fill('synthetic-browser-approval');
   await admin.getByLabel(/The two-week pay cycle starts/).check();
+  // A background sync finishing while the owner fills the form never rebuilds the admin screen under them.
+  const synced = admin.evaluate(() => new Promise(resolve => {
+    const pill = document.getElementById('knock-sync'), seen = new MutationObserver(() => { if (pill.textContent === 'Synced') { seen.disconnect(); resolve(); } });
+    seen.observe(pill, { childList: true, characterData: true, subtree: true });
+    dispatchEvent(new Event('online'));
+  }));
+  await synced;
+  assert.equal(await admin.getByLabel('Approval reference', { exact: true }).inputValue(), 'synthetic-browser-approval', 'a sync keeps the typed reference');
+  assert.equal(await admin.getByLabel(/The two-week pay cycle starts/).isChecked(), true, 'a sync keeps the confirmation');
   await approveButton.click();
   const confirm = admin.locator('dialog.sheet[aria-label="Approve these commission terms?"]');
   assert.match(await confirm.textContent(), /Garage only: Garage Transformation\. Held for review: The Works, Full Property Reset, Quick Clear\./);
