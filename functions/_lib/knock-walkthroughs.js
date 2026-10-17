@@ -15,6 +15,20 @@ const ZIP = /^\d{5}$/;
 const REF = /^[a-f0-9]{16}$/;
 const refuse = (code, error) => ({ status: 'rejected', code, error });
 
+/* The walkthroughs set at a house that still stand (not replaced by a sale): one bounded equality query. */
+export async function activeWalkthroughs(store, houseId) {
+  if (!houseId) return [];
+  const rows = await store.query('knock_walkthroughs', { where: [['houseId', '==', houseId]], limit: 10 });
+  return rows.filter(row => !row.supersededBySaleId && row.status !== 'superseded');
+}
+
+/* A Sold or "Walkthrough set" door at a house where another rep's walkthrough stands is refused while the bridge is
+   on: one house, one attribution, and no estimator sent to a customer who already bought. The rep who set it may still
+   sell (the walkthrough is then superseded); the office settles any other case. */
+export async function otherRepWalkthrough(store, houseId, repKey) {
+  return (await activeWalkthroughs(store, houseId)).some(row => row.repKey !== repKey);
+}
+
 /* Validate a walkthrough event against the rep's "Walkthrough set" door. Returns a rejection or null. */
 export async function validateWalkthroughEvent(store, rep, event, { accepted = [], targets = new Map(), houses = new Map() } = {}) {
   if (!UUID.test(String(event.knockId || ''))) return refuse('knock_walkthrough_invalid', 'The walkthrough is missing its door.');
@@ -23,6 +37,9 @@ export async function validateWalkthroughEvent(store, rep, event, { accepted = [
   if (event.houseId && event.houseId !== knock.houseId) return refuse('knock_walkthrough_invalid', 'The walkthrough and the door are different houses.');
   const existing = await store.query('knock_walkthroughs', { where: [['knockId', '==', knock.id]], limit: 1 });
   if (existing.length || accepted.some(a => a.type === 'walkthrough' && a.knockId === knock.id)) return refuse('knock_walkthrough_exists', 'That door already has a walkthrough.');
+  // One standing walkthrough per house: a second one would send a second estimator and split the setter credit.
+  if ((await activeWalkthroughs(store, knock.houseId)).length || accepted.some(a => a.type === 'walkthrough' && a.houseId === knock.houseId))
+    return refuse('knock_walkthrough_exists', 'This house already has a walkthrough set. Ask the office to change it in the Hub.');
   const name = String(event.customer?.name || '').trim();
   if (!name || name.length > 80) return refuse('knock_walkthrough_customer', 'Enter the customer\'s name.');
   if (!normalizePhone(event.customer?.phone)) return refuse('knock_walkthrough_customer', 'Enter a 10-digit US phone number.');
@@ -76,4 +93,19 @@ export function repWalkthroughView(row) {
 export async function repWalkthroughs(store, repKey) {
   const rows = await store.query('knock_walkthroughs', { where: [['repKey', '==', repKey]] });
   return rows.map(repWalkthroughView).sort((a, b) => String(b.setAt).localeCompare(String(a.setAt)));
+}
+
+export const OFFICE_WALKTHROUGH_LIMIT = 100;
+/* Admin > Sales (KNOCK-BRIDGE): the walkthroughs set at the door that are not in the Hub yet: still booking, waiting to
+   retry, or refused for the office to look at (a customer the Hub cannot match safely, a refused booking). Booked and
+   requested ones are in Dispatch and superseded ones replaced by a sale, so this is one bounded equality query on
+   status 'set', oldest first, with the reason the office needs (code and error) and the customer's contact details. */
+export async function officeWalkthroughs(store, limit = OFFICE_WALKTHROUGH_LIMIT) {
+  const rows = await store.query('knock_walkthroughs', { where: [['status', '==', 'set']], limit });
+  return rows.map(({ __updateTime, ...row }) => ({
+    id: row.id, repKey: row.repKey, houseId: row.houseId, address: row.address, customer: row.customer, textConsent: row.textConsent === true,
+    requested: row.requested, note: row.note || '', setAt: row.setAt,
+    booking: { status: row.booking?.status || 'pending', code: row.booking?.code || '', error: row.booking?.error || '', message: row.booking?.message || '',
+      attempts: Number(row.booking?.attempts || 0), retryAfter: row.booking?.retryAfter || null, at: row.booking?.at || null },
+  })).sort((a, b) => String(a.setAt).localeCompare(String(b.setAt)));
 }

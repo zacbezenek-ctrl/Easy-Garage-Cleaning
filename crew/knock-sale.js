@@ -3,7 +3,7 @@
    cancellation deadline; the door and the sale then queue together. */
 import { h, mount, money, toast, dateLabel, longDateLabel, timeLabel, icon, dot, badge, banner, kv, stat, seg, choiceGroup, emptyState, loadingState, errorState, fullScreen, slotPicker } from './knock-ui.js';
 import { PACKAGES } from './knock-settings.js';
-import { DAY_PARTS, cancellationWindow, dayPartOf, defaultJobStart, depositAmount, jobStartAllowed, jobStartFloor } from './knock-sale-rules.js';
+import { DAY_PARTS, cancellationWindow, dayPartOf, defaultJobStart, depositAmount, jobMinutes, jobStartAllowed, jobStartFloor } from './knock-sale-rules.js';
 import { addDays, zonedDate } from './knock-time.js';
 import { houseLabel } from './knock-doors.js';
 
@@ -34,7 +34,7 @@ function saleForm(house, onSave, { initial = null } = {}) {
     const phone = h('input', { class: 'input', id: 'sale-phone', type: 'tel', inputmode: 'tel', autocomplete: 'off', placeholder: '(970) 555-0100', required: true, value: initial?.customer?.phone || '' });
     const email = h('input', { class: 'input', id: 'sale-email', type: 'email', inputmode: 'email', autocomplete: 'off', autocapitalize: 'none', required: true, value: initial?.customer?.email || '' });
     const consent = h('input', { type: 'checkbox', id: 'sale-consent', checked: initial?.textConsent === true });
-    const pkg = choiceGroup(PACKAGES.map(p => [p, p]), initial?.package || '', () => { validate(); if (picker) picker.reload(); });
+    const pkg = choiceGroup(PACKAGES.map(p => [p, p]), initial?.package || '', () => { validate(); packageChanged(); });
     const ticket = h('input', { class: 'input input--money', id: 'sale-ticket', type: 'text', inputmode: 'decimal', autocomplete: 'off', value: initial?.ticket != null ? String(initial.ticket) : quoted ? String(quoted) : '', required: true });
     // KNOCK-BRIDGE: where the Hub customer and job are. The town comes from the neighborhood; the rep adds the ZIP.
     const town = h('input', { class: 'input', id: 'sale-city', autocomplete: 'off', autocapitalize: 'words', value: initial?.city ?? app.cityRuleFor(house)?.name ?? '' });
@@ -53,17 +53,27 @@ function saleForm(house, onSave, { initial = null } = {}) {
       h('input', { type: 'checkbox', checked: state.checklist[item.key] === true, onchange: event => { state.checklist[item.key] = event.target.checked; validate(); } }), item.label));
     const amount = () => Number(String(ticket.value).replace(/[$,\s]/g, ''));
     // The crew slots the server offers for this package on and after the earliest job date (GET /api/knock-crew-openings).
-    let picker = null;
+    // One read per job length for the life of the form: packages of the same length share it, and tapping back to a
+    // package reads nothing (each read is a schedule search on the server).
+    let picker = null, shownLength = null;
+    const slotReads = new Map();
     if (bridge) {
       const initialPick = initial?.slot ? { mode: 'slot', slot: { date: initial.slot.date, time: initial.slot.time, tag: initial.slot.crewLabel || 'Crew' } }
         : initial ? { mode: 'preference', date: firstDate, part: initial.dayPart || dayPartOf(initial.jobStartTime) } : null;
       picker = slotPicker({ min: window.earliestJobDate, initial: initialPick, offline: !app.S.online, idPrefix: 'sale-slot', noun: 'crew time', onChange: () => validate(),
-        load: async () => {
-          const query = new URLSearchParams({ from: window.earliestJobDate, days: '7', ...(pkg.value() ? { package: pkg.value() } : {}) });
-          const data = await app.api(`/api/knock-crew-openings?${query}`);
-          return data.slots.map(slot => ({ date: slot.date, time: slot.time, endTime: slot.endTime, tag: slot.crewLabel }));
+        load: () => {
+          const length = jobMinutes(pkg.value() || null);
+          shownLength = length;
+          if (!slotReads.has(length)) {
+            const query = new URLSearchParams({ from: window.earliestJobDate, days: '7', ...(pkg.value() ? { package: pkg.value() } : {}) });
+            slotReads.set(length, app.api(`/api/knock-crew-openings?${query}`).then(data => data.slots.map(slot => ({ date: slot.date, time: slot.time, endTime: slot.endTime, tag: slot.crewLabel })),
+              error => { slotReads.delete(length); throw error; }));
+          }
+          return slotReads.get(length);
         } });
     }
+    // A package of another length shows that length's slots; the same length keeps the list (and the rep's pick).
+    const packageChanged = () => { if (picker && jobMinutes(pkg.value() || null) !== shownLength) picker.reload(); };
 
     function schedule() {
       if (!bridge) return { jobDate: jobDate.value, jobStartTime: jobTime.value || defaultJobStart(settings, jobDate.value) };
@@ -214,7 +224,8 @@ function saleCard(sale, commission) {
     bookingLine(sale.hubJob || app.bookingFor(sale.id)));
 }
 
-const BOOKING_BADGE = { booked: ['Booked', 'success', 'check'], needs_crew: ['Crew to confirm', 'warning', 'clock'], requested: ['Office sets the time', 'warning', 'clock'], review: ['Office books it', 'warning', 'clock'], pending: ['Booking…', '', 'clock'] };
+const BOOKING_BADGE = { booked: ['Booked', 'success', 'check'], needs_crew: ['Crew to confirm', 'warning', 'clock'], requested: ['Office sets the time', 'warning', 'clock'], review: ['Office books it', 'warning', 'clock'], pending: ['Booking…', '', 'clock'],
+  cancelled: ['Cancelled', 'error', 'close'], superseded: ['Replaced by the sale', '', 'check'] };
 function bookingLine(booking) {
   if (!booking) return null;
   const [label, tone, glyph] = BOOKING_BADGE[booking.status] || BOOKING_BADGE.pending;
@@ -240,6 +251,11 @@ function mySalesScreen(_app, params) {
     const lastMonth = monthOf(addDays(`${thisMonth}-01`, -1));
     const shown = data.sales.filter(s => period === 'all' || monthOf(s.saleDate) === (period === 'month' ? thisMonth : lastMonth));
     const countOf = status => shown.filter(s => s.status === status).length;
+    // KNOCK-BRIDGE: a sale or walkthrough the server still lists as booking (its first answer lost, or the app closed
+    // before it was queued) goes back in the booking queue; the server answers it from the record until it is due.
+    const open = [...data.sales.filter(s => s.hubJob?.status === 'pending' && s.status !== 'cancelled').map(s => ({ kind: 'sale', id: s.id })),
+      ...(data.walkthroughs || []).filter(w => ['pending', 'retry'].includes(w.booking?.status || 'pending') && w.status === 'set').map(w => ({ kind: 'walkthrough', id: w.id }))];
+    if (open.length && app.queueBridges) app.queueBridges(open).then(() => app.runBridges()).then(changed => { if (changed && app.S.route.name === 'mysales') app.render(); }).catch(() => {});
     mount(box,
       h('div', { class: 'stats stats--3' }, stat('Booked', String(countOf('booked'))), stat('Completed', String(countOf('completed'))), stat('Paid', String(countOf('paid')))),
       seg([['month', 'This month'], ['last', 'Last month'], ['all', 'All']], period, key => app.go('mysales', { p: key }), { label: 'Period' }),

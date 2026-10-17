@@ -81,8 +81,28 @@ test('a crewmate sees every job booked for their crew, and only their own assign
   assert.deepEqual(calls.find(call => call[0] === 'jobs').slice(1, 3), ['2026-09-14', '2026-10-22']);
   assert.deepEqual(calls.find(call => call[0] === 'jobs')[3], [...CREW_SCHEDULE_FIELDS]);
   const ana = await get('ana', '?from=2026-10-16&to=2026-10-16');
-  assert.deepEqual(ids(ana), ['job_crew1_ana', 'job_multiday']);
-  assert.deepEqual(rows(ana.body).map(row => [row.id, row.mine, row.canOpen]), [['job_crew1_ana', true, true], ['job_multiday', false, false]]);
+  assert.deepEqual(ids(ana), ['job_crew1_ana', 'job_multiday', 'walk_1']);
+  assert.deepEqual(rows(ana.body).map(row => [row.id, row.mine, row.canOpen]), [['job_crew1_ana', true, true], ['job_multiday', false, false], ['walk_1', true, true]]);
+});
+
+test('a walkthrough shows only to the person it is assigned to (an estimator\'s own visit), on no crew, first name and city only', async () => {
+  const { get } = harness();
+  for (const query of ['?from=2026-10-16&to=2026-10-16', '?from=2026-10-16&to=2026-10-16&scope=all']) {
+    const ana = await get('ana', query, { ...ENV, ...ACCESS });
+    if (ana.status === 403) continue;
+    const [walk] = ana.body.unassigned.filter(row => row.id === 'walk_1');
+    assert.deepEqual([walk.type, walk.serviceType, walk.customer, walk.area, walk.crewId, walk.crewName, walk.lead, walk.mine, walk.canOpen, walk.time], ['walkthrough', 'Walkthrough', 'Hal', 'Fort Collins', '', '', '', true, true, '09:30'], query);
+    assert.ok(!ana.body.groups.some(group => group.jobs.some(row => row.id === 'walk_1')), 'never inside a crew group');
+  }
+  // A crewmate, a team lead or a manager reading every crew never sees someone else's walkthrough.
+  for (const [who, query] of [['ben', '?from=2026-10-16&to=2026-10-16'], ['eli', '?from=2026-10-16&to=2026-10-16&scope=all'], ['tyler', '?from=2026-10-16&to=2026-10-16&scope=all']]) {
+    const answer = await get(who, query, { ...ENV, ...ACCESS });
+    assert.equal(answer.status, 200, who);
+    assert.ok(!ids(answer).includes('walk_1'), `${who} does not see ana's walkthrough`);
+  }
+  // A cancelled walkthrough is gone from the assignee's schedule too.
+  const cancelled = harness({ jobs: [job('walk_x', { type: 'walkthrough', assignedCrew: ['dee.solo'], status: 'cancelled', pipelineStatus: 'cancelled' })] });
+  assert.deepEqual(ids(await cancelled.get('dee', '?from=2026-10-16&to=2026-10-16')), []);
 });
 
 test('someone not on the crew never sees its jobs; their own work on no crew shows on its own', async () => {
@@ -128,7 +148,7 @@ test('scope=all: a team lead reads every crew by priority plus the work on no cr
   assert.equal(rows(manager.body).every(row => row.canOpen), true, 'managers open any job, as /api/field-jobs allows them');
 });
 
-test('no money, phone, street, notes or roster ever leaves; cancelled work, walkthroughs, blocks and private rows never show', async () => {
+test('no money, phone, street, notes or roster ever leaves; cancelled work, other people\'s walkthroughs, blocks and private rows never show', async () => {
   const { get } = harness(), env = { ...ENV, ...ACCESS };
   const keys = ['area', 'arrivalWindow', 'canOpen', 'crewId', 'crewName', 'crewNeeded', 'crewSize', 'customer', 'date', 'days', 'endDate', 'endTime', 'id', 'lead', 'mine', 'serviceType', 'status', 'time', 'type'];
   for (const [who, query] of [['eli', '?from=2026-10-14&to=2026-10-27&scope=all'], ['ben', '?from=2026-10-14&to=2026-10-27'], ['tyler', '?from=2026-10-14&to=2026-10-27&scope=all']]) {

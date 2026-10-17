@@ -23,8 +23,10 @@ const JOBS = [
   job('job_cara', { crewId: 'crew_two', assignedCrew: ['cara.crew'], crewLead: 'cara.crew', customer: 'Cy Synthetic', address: '2 Sample Ct, Loveland, CO 80537' }),
   job('job_open', { assignedCrew: [], customer: 'Dot Synthetic', time: '10:00', endTime: '11:00', crewNeeded: 2 }),
   job('job_week', { crewId: 'crew_one', assignedCrew: ['ben.crew'], customer: 'Eve Synthetic', date: '2026-10-20', endDate: '2026-10-21', time: '09:30', endTime: '15:00' }),
+  // KNOCK-BRIDGE: a walkthrough a door-to-door rep set, booked with the estimator Bea.
+  job('walk_bea', { type: 'walkthrough', assignedCrew: ['est.bea'], customer: 'Fay Synthetic', serviceType: '', time: '10:00', endTime: '11:00' }),
 ];
-const SESSIONS = { ben: { user: 'ben.crew', role: 'crew' }, eli: { user: 'eli.team', role: 'crew', staffRoles: ['team_lead'] } };
+const SESSIONS = { ben: { user: 'ben.crew', role: 'crew' }, eli: { user: 'eli.team', role: 'crew', staffRoles: ['team_lead'] }, bea: { user: 'est.bea', role: 'sales' } };
 // No role flag: a team lead reads every crew on the role alone (schedule.view).
 async function answer(who, url) {
   const params = new URL(url, 'https://easygaragecleaning.com').searchParams, scope = params.get('scope'), session = SESSIONS[who];
@@ -66,6 +68,16 @@ test('a crew member sees today for their crew: their own jobs open the job page,
   assert.equal(main.querySelectorAll('.chips').length, 0, 'one crew: no crew switcher');
   assert.ok(!text(main).includes('990'), 'no money');
   assert.equal(main.querySelector('[data-range="today"]').getAttribute('aria-pressed'), 'true');
+});
+
+test('an estimator sees the walkthrough booked with them; it opens the walkthrough page, not the job page', async () => {
+  const { main } = await page({ respond: url => answer('bea', url) });
+  const rows = main.querySelectorAll('.job-row');
+  assert.deepEqual(rows.map(row => [row.tagName, row.getAttribute('data-job')]), [['A', 'walk_bea']]);
+  assert.equal(rows[0].getAttribute('href'), '/crew/gameplan?walkthroughId=walk_bea');
+  assert.match(text(rows[0]), /^10:00 AM–11:00 AM Fay · Fort Collins Walkthrough You’re on this job/);
+  const ben = await page({ respond: url => answer('ben', url) });
+  assert.ok(!ben.main.querySelectorAll('.job-row').some(row => row.getAttribute('data-job') === 'walk_bea'), 'nobody else sees it');
 });
 
 test('This week reads seven days from today, shows each day, and is remembered on this phone', async () => {
@@ -145,7 +157,7 @@ test('the page is a gated staff page that loads its own versioned script and the
   for (const path of ['/crew/schedule', '/crew/schedule.html', '/crew/schedule.js']) assert.equal(staffGatedPath(path), true, path);
   assert.match(html, /<meta name="robots" content="noindex,nofollow">/);
   assert.match(html, /<link rel="stylesheet" href="\/crew\/crew-brand\.css\?v=[^"]+">/);
-  assert.match(html, /<script src="\/crew\/hub-auth\.js\?v=[^"]+" defer><\/script>\n<script src="\/crew\/schedule\.js\?v=20261017crewschedule" defer><\/script>/);
+  assert.match(html, /<script src="\/crew\/hub-auth\.js\?v=[^"]+" defer><\/script>\n<script src="\/crew\/schedule\.js\?v=20261017knockbridge2" defer><\/script>/);
   assert.match(html, /<main id="schedule-main">/);
   assert.match(html, /\.job-row\{[^}]*min-height:64px/);
   assert.match(html, /:is\(\.seg,\.chips\) button:focus-visible/);

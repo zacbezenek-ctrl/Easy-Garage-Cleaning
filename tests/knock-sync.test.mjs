@@ -28,8 +28,8 @@ function seed() {
   };
 }
 
-async function setup({ now = NOW } = {}) {
-  const env = knockEnv();
+async function setup({ now = NOW, env: extra = {} } = {}) {
+  const env = knockEnv(extra);
   const world = knockWorld(seed());
   let clock = now;
   const sync = knockSyncHandlers({ storage: world.storage, now: () => new Date(clock) });
@@ -178,7 +178,8 @@ test('a sale is not lost at sunset: the door keeps the time Sold was tapped, and
 });
 
 test('a refused sale can be fixed and sent again under the same id; the server stored nothing for the refusal', async () => {
-  const { world, send } = await setup();
+  // The 9:30 refusal is the bridge's (EGC_KNOCK_JOB_BRIDGE); the bridge off stores an explicit start as sent.
+  const { world, send } = await setup({ env: { EGC_KNOCK_JOB_BRIDGE: 'true' } });
   const shiftId = uuid(), knockId = uuid(), saleId = uuid();
   const sale = { id: saleId, type: 'sale', knockId, houseId: 'h-2900-blue-leaf-dr', at: iso(NOW + 2 * MIN), ticket: 1600, package: 'The Works', customer: { name: 'Pat Synthetic', phone: '9705550100', email: 'pat@example.com' },
     checklist: { contractSigned: true, noticesHanded: true, rightToCancelTold: true }, jobDate: '2026-10-19', jobStartTime: '08:00', textConsent: false };

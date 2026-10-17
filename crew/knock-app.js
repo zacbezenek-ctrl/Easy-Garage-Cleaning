@@ -174,9 +174,10 @@ export function scheduleSync(delay = 0) {
 }
 
 async function onSynced(response) {
-  // KNOCK-BRIDGE: a new sale or walkthrough comes back bridge:{status:'pending'}; it is booked into the Hub next.
+  // KNOCK-BRIDGE: a new sale or walkthrough (or a replay of one still not booked) comes back bridge:{status:'pending'};
+  // it is booked into the Hub next.
   const pending = (response?.results || []).filter(row => row.bridge?.status === 'pending' && ['sale', 'walkthrough'].includes(row.bridge.kind)).map(row => ({ kind: row.bridge.kind, id: row.id }));
-  if (pending.length) await saveUi({ bridgeQueue: [...(S.ui.bridgeQueue || []).filter(item => !pending.some(row => row.id === item.id)), ...pending].slice(-50) });
+  if (pending.length) await queueBridges(pending);
   if (Array.isArray(response?.houses)) {
     for (const house of response.houses) S.houses.set(house.id, house);
     await store.cache.set(cacheKey('houses'), [...S.houses.values()]);
@@ -198,11 +199,12 @@ export async function sync({ full = false } = {}) {
     if (result.stopped?.reason === 'network') { S.online = false; S.syncState = 'offline'; return; }
     if (result.stopped) { S.syncState = 'retry'; scheduleSync(30000); return; }
     S.online = true;
-    await runBridges().catch(() => {});
     if (full || !S.loaded) await loadServer();
     else await loadHouses();
     S.lastSync = Date.now();
     S.syncState = 'idle';
+    // KNOCK-BRIDGE: bookings run on their own (never holding up the next door's sync), only for what is due.
+    startBridges();
   } catch {
     S.syncState = S.online ? 'retry' : 'offline';
   } finally {
@@ -215,28 +217,59 @@ export async function sync({ full = false } = {}) {
 /* ---------- KNOCK-BRIDGE: booking synced sales and walkthroughs into the Hub ---------- */
 
 /* Each sale or walkthrough the server accepted is booked with POST /api/knock-job-bridge (idempotent on its id): the
-   Hub job with a crew, or the estimator walkthrough. One the Hub could not take yet stays queued and is tried on the
-   next sync; the answer ('Booked: Crew 2, Mon Oct 20, 9:30 am') is kept for My sales. */
-export async function runBridges() {
+   Hub job with a crew, or the estimator walkthrough. A new one is tried at once. One the Hub could not take yet stays
+   queued with a growing wait (1 minute doubling to an hour, or the server's retryAt when later), so a phone with a
+   Hub problem never asks on every door; the server enforces the same wait. Answers the office must look at (review)
+   and records the server does not know leave the queue. The answer ('Booked: Crew 2, Mon Oct 20, 9:30 am') is kept
+   for My sales. */
+const BRIDGE_FIRST_WAIT = 60000, BRIDGE_MAX_WAIT = 3600000;
+const bridgeWait = tries => Math.min(BRIDGE_MAX_WAIT, BRIDGE_FIRST_WAIT * 2 ** Math.max(0, tries - 1));
+let bridgeRun = null;
+
+// Adds sales or walkthroughs ({kind, id}) to the booking queue (a known one keeps its place and wait).
+export async function queueBridges(items) {
   const queue = [...(S.ui.bridgeQueue || [])];
-  if (!queue.length || !S.viewer?.jobBridge) return;
-  const bookings = { ...(S.ui.bookings || {}) };
-  let keep = [], last = null;
-  for (const [index, item] of queue.entries()) {
-    try {
-      const { booking } = await api('/api/knock-job-bridge', { method: 'POST', body: { kind: item.kind, id: item.id } });
-      if (!booking) continue;
-      bookings[item.id] = booking;
-      if (booking.status === 'pending') keep.push(item);
-      else last = booking;
-    } catch (error) {
-      // No signal or signed out: try the rest later. A record the server does not know is not retried.
-      if (!error.status || error.status === 401 || error.status >= 500) { keep = [...keep, ...queue.slice(index)]; break; }
+  for (const item of items) if (!queue.some(row => row.id === item.id)) queue.push({ kind: item.kind, id: item.id, tries: 0, nextAt: 0 });
+  if (queue.length !== (S.ui.bridgeQueue || []).length) await saveUi({ bridgeQueue: queue.slice(-50) });
+}
+
+export function runBridges() {
+  if (bridgeRun) return bridgeRun;
+  const now = Date.now(), due = (S.ui.bridgeQueue || []).filter(item => !(item.nextAt > now));
+  if (!due.length || !S.viewer?.jobBridge || !S.online) return Promise.resolve(false);
+  bridgeRun = (async () => {
+    const bookings = { ...(S.ui.bookings || {}) }, done = new Set(), later = new Map();
+    let last = null;
+    for (const item of due) {
+      try {
+        const { booking } = await api('/api/knock-job-bridge', { method: 'POST', body: { kind: item.kind, id: item.id } });
+        if (booking) bookings[item.id] = booking;
+        if (booking?.status === 'pending') {
+          const tries = Number(item.tries || 0) + 1, server = Date.parse(booking.retryAt || '') || 0;
+          later.set(item.id, { ...item, tries, nextAt: Math.max(Date.now() + bridgeWait(tries), server) });
+        } else { done.add(item.id); if (booking) last = booking; }
+      } catch (error) {
+        // No signal, signed out or a server fault: this and the rest wait their turn. A record the server does not
+        // know (or will not book from this phone) leaves the queue.
+        if (!error.status || error.status === 401 || error.status >= 500) {
+          for (const rest of due.slice(due.indexOf(item))) later.set(rest.id, { ...rest, tries: Number(rest.tries || 0) + 1, nextAt: Date.now() + bridgeWait(Number(rest.tries || 0) + 1) });
+          break;
+        }
+        done.add(item.id);
+      }
     }
-  }
-  const recent = Object.fromEntries(Object.entries(bookings).slice(-50));
-  await saveUi({ bridgeQueue: keep, bookings: recent });
-  if (last) toast(last.message, { iconName: last.kind === 'walkthrough' ? 'calendar' : 'check', sub: last.kind === 'sale' && last.status === 'needs_crew' ? `${last.date ? `For ${new Date(`${last.date}T12:00:00Z`).toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric', timeZone: 'UTC' })}` : ''}` : '' });
+    // Merged into the queue as it is now: a sale synced while this ran keeps its place.
+    const queue = (S.ui.bridgeQueue || []).filter(item => !done.has(item.id)).map(item => later.get(item.id) || item);
+    await saveUi({ bridgeQueue: queue, bookings: Object.fromEntries(Object.entries(bookings).slice(-50)) });
+    if (last) toast(last.message, { iconName: last.kind === 'walkthrough' ? 'calendar' : 'check', sub: last.kind === 'sale' && last.status === 'needs_crew' ? `${last.date ? `For ${new Date(`${last.date}T12:00:00Z`).toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric', timeZone: 'UTC' })}` : ''}` : '' });
+    return Boolean(last);
+  })().finally(() => { bridgeRun = null; });
+  return bridgeRun;
+}
+
+// Fire and forget: a screen showing bookings is drawn again once one lands.
+function startBridges() {
+  runBridges().then(changed => { if (changed && ['mysales', 'money'].includes(S.route.name)) render(); }, () => {});
 }
 
 export const bookingFor = id => S.ui.bookings?.[id] || null;
@@ -749,7 +782,7 @@ function cycleTheme() {
 /* ---------- the app object handed to screen modules ---------- */
 
 export const app = { S, api, go, render, registerScreen, enqueue, sync, scheduleSync, houseView, neighborhoodOf, cityRuleFor, currentShift, knockingWindow, saveUi, signOut, outboxApi: () => outbox, refreshPending, syncSummary, moreLinks: [],
-  startLocation, onPosition, locationBanner, territoryEmpty, myNeighborhoods, awayLabel, runBridges, bookingFor, fixers: {} };
+  startLocation, onPosition, locationBanner, territoryEmpty, myNeighborhoods, awayLabel, runBridges, queueBridges, bookingFor, fixers: {} };
 
 registerScreen('home', homeScreen, { tab: { label: 'Home', icon: 'home', order: 0 } });
 registerScreen('more', moreScreen, { tab: { label: 'More', icon: 'more', order: 40 } });

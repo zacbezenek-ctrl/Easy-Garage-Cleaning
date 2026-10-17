@@ -172,10 +172,23 @@ test('a sale needs the checklist, a job date after the deadline, contact details
   assert.equal((await send(noAnswer)).body.results[2].code, 'knock_sale_invalid');
 });
 
+test('with the bridge off an explicit start is stored as sent and an admin move is exactly as before', async () => {
+  const { world, send, act } = await setup();
+  const early = saleBatch({ jobDate: '2026-10-19', jobStartTime: '08:00' });
+  assert.deepEqual((await send(early.events)).body.results.map(r => r.code || r.status), ['applied', 'applied', 'applied'], 'a sale queued with an 8:00 start is never refused with the bridge off');
+  assert.equal(world.fake.get(`knock_sales/${early.saleId}`).jobStartTime, '08:00');
+  const moved = await act({ action: 'sale.jobDate', saleId: early.saleId, jobDate: '2026-10-20', jobStartTime: '09:00' });
+  assert.deepEqual([moved.status, moved.body.sale.jobDate, moved.body.sale.jobStartTime, moved.body.sale.statusHistory.at(-1).note], [200, '2026-10-20', '09:00', 'Job date 2026-10-20']);
+  const kept = await act({ action: 'sale.jobDate', saleId: early.saleId, jobDate: '2026-10-21' });
+  assert.deepEqual([kept.body.sale.jobStartTime, kept.body.sale.statusHistory.at(-1).note], ['09:00', 'Job date 2026-10-21']);
+  assert.equal('hubJob' in kept.body, false);
+});
+
 test('jobs start at 9:30 or later on and after 2026-10-15: 9:29 is refused, 9:30 accepted, a stored 8:00 default reads as 9:30', async () => {
   // A stored settings copy saved before the rule keeps 8:00; it still loads (no settings are lost) and is read as 9:30.
+  // The refusal and the admin rule are the bridge's (EGC_KNOCK_JOB_BRIDGE); the default applies either way.
   const stored = { settings: { sale: { defaultJobStartTime: '08:00' } }, updatedAt: '2026-10-01T12:00:00Z', updatedBy: 'test-owner' };
-  const { world, send, act } = await setup({ settingsDoc: stored });
+  const { world, send, act } = await setup({ settingsDoc: stored, env: { EGC_KNOCK_JOB_BRIDGE: 'true' } });
   const early = saleBatch({ jobDate: '2026-10-19', jobStartTime: '09:29' });
   assert.deepEqual((await send(early.events)).body.results.map(r => r.code || r.status), ['applied', 'applied', 'knock_sale_job_time']);
   const exact = saleBatch({ jobDate: '2026-10-19', jobStartTime: '09:30' });

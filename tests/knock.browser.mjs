@@ -164,9 +164,13 @@ try {
   assert.match(await admin.locator('#knock-main').textContent(), /booking or no-show earns nothing/);
 
   // 6. Help states the same earning rule as My money, and only the owner approves the terms.
+  // The screen is read in one step once the rule itself is on it: a background sync re-draws the screen (and loads it
+  // again), so a heading seen a moment earlier does not mean the text read next is the loaded screen.
   await page.goto(`${server.base}/crew/knock.html#money`);
-  await page.getByText('How commission works', { exact: true }).waitFor();
-  const moneyText = await page.locator('#knock-main').textContent();
+  const moneyText = await (await page.waitForFunction(() => {
+    const text = document.querySelector('#knock-main')?.textContent || '';
+    return /How commission works/.test(text) && /Not approved yet: nothing is earned[^]*?held for review\./.test(text) ? text : false;
+  })).jsonValue();
   await page.goto(`${server.base}/crew/knock.html#more`);
   await page.setViewportSize({ width: 320, height: 720 });
   await page.getByRole('button', { name: /Help & the rules/ }).click();
@@ -354,6 +358,24 @@ try {
   const [visit] = jobs().filter(job => job.type === 'walkthrough');
   assert.deepEqual([visit.assignedCrew, visit.ghlTags], [['est.alex'], ['egc-d2d-walkthrough']]);
   assert.equal(bridge.fake.get(`knock_setters/${[...bridge.fake.documents.keys()].find(path => path.startsWith('jobs/') && bridge.fake.get(path).type === 'walkthrough').slice(5)}`).setterKey, 'rep.one');
+  // The office cancels the sale in Knock admin: the confirmation says its Hub job goes too, and it does.
+  const officeContext = await browser.newContext({ ...phone, serviceWorkers: 'block' });
+  await officeContext.clock.install({ time: T0 + (Date.now() - startedAt) });
+  const office = await officeContext.newPage();
+  office.on('pageerror', error => errors.push(String(error)));
+  await signIn(office, bridge.base, 'ZacB');
+  await office.getByRole('button', { name: 'Start shift', exact: true }).waitFor();
+  await office.goto(`${bridge.base}/crew/knock.html#admin?s=sales&f=all`);
+  await office.getByRole('button', { name: 'Cancel sale…', exact: true }).waitFor();
+  // The Hub job id (one long word) wraps: the admin sale card does not push a phone's page sideways.
+  assert.equal(await office.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true, 'no sideways scroll on the admin sale card at 390px');
+  await office.getByRole('button', { name: 'Cancel sale…', exact: true }).click();
+  const cancelSheet = office.locator('dialog.sheet[aria-label="Cancel this sale?"]');
+  assert.match(await cancelSheet.textContent(), /Its Hub job \(Crew 1, [^)]+\) is cancelled too, so no crew goes\./);
+  await cancelSheet.getByRole('button', { name: 'Cancel sale', exact: true }).click();
+  await office.getByText('Its Hub job was cancelled too.', { exact: true }).waitFor();
+  assert.equal(bridge.fake.get(`jobs/${saleJob.id}`).status, 'cancelled', 'no crew is sent to a customer who cancelled');
+  assert.equal(await office.locator('[data-office-walkthroughs]').count(), 0, 'every door walkthrough is in the Hub');
   assert.deepEqual(bridge.serverErrors, [], 'no bridge server errors');
 
   assert.deepEqual(errors, [], 'no page errors');

@@ -1,7 +1,8 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { MON, NOW, TUE, MIN, USERS, busy, bridgeWorld, id, iso, saleBatch } from './helpers/knock-bridge-fixture.mjs';
+import { MON, NOW, TUE, MIN, SECRET_ENV, USERS, busy, bridgeWorld, id, iso, saleBatch } from './helpers/knock-bridge-fixture.mjs';
 import { estimatorIds, estimatorRef } from '../functions/_lib/knock-bridge.js';
+import { call, get } from './helpers/knock-fixture.mjs';
 import { nativeHouseClaimId } from '../functions/_lib/knock-form-claims.js';
 import { setterPolicy } from '../functions/_lib/knock-setters.js';
 import { countKnocks, metrics, scoreboard } from '../crew/knock-stats.js';
@@ -49,13 +50,13 @@ test('slots: the next 10 days, 9:00 to 5:00, each with the estimator\'s first na
     assert.match(slot.ref, /^[a-f0-9]{16}$/);
   }
   assert.ok(slots.body.slots.every(slot => slot.date > '2026-10-20' || slot.time >= '11:00'), 'nothing earlier than now');
-  assert.equal(slots.body.slots[0].ref, await estimatorRef('est.alex'));
+  assert.equal(slots.body.slots[0].ref, await estimatorRef('est.alex', SECRET_ENV));
   assert.doesNotMatch(JSON.stringify(slots.body), /est\.alex|est\.bea|Estimator|Rep One|rep\.one|roster|employeeIds/, 'no staff key, surname, roster or the rep themself');
 });
 
 test('a walkthrough set at the door books the picked estimator, lands on their schedule and records the 13% / 7% setter split', async () => {
   const w = await bridgeWorld();
-  const ref = await estimatorRef('est.bea');
+  const ref = await estimatorRef('est.bea', SECRET_ENV);
   const { walkId, knockId, events } = walkBatch({ walk: { date: MON, time: '10:00', estimatorRef: ref, dayPart: null, zip: '80525' } });
   const synced = await w.send(events);
   assert.equal(synced.status, 200, JSON.stringify(synced.body));
@@ -96,7 +97,7 @@ test('a walkthrough set at the door books the picked estimator, lands on their s
 });
 
 test('the picked estimator is taken: another estimator then; both taken: the nearest free hour; nobody: To schedule', async () => {
-  const bea = await estimatorRef('est.bea');
+  const bea = await estimatorRef('est.bea', SECRET_ENV);
   const w = await bridgeWorld({ seed: { 'jobs/bea_busy': busy(MON, ['est.bea'], { type: 'walkthrough' }) } });
   const first = walkBatch({ walk: { date: MON, time: '10:00', estimatorRef: bea, dayPart: null } });
   await w.send(first.events);
@@ -199,4 +200,106 @@ test('the scoreboard counts walkthroughs set; a summary without any is exactly a
   const plain = countKnocks([{ outcome: 'no_answer' }, { outcome: 'look' }]);
   assert.equal('walkthroughs' in plain, false);
   assert.equal('walkthroughs' in metrics(plain), false);
+});
+
+/* ---------- review fixes: every walkthrough set at the door reaches the office ---------- */
+
+const officeList = async w => (await call(w.h.admin.get, get('/api/knock-admin?view=sales', w.cookies.zac), w.env)).body.walkthroughs;
+const restlessSchedule = store => ({ ...store, read: (collection, docId) => collection === 'dispatchState' ? Promise.resolve({ id: 'revision', revision: crypto.randomUUID() }) : store.read(collection, docId) });
+
+test('a lost sync answer: a replayed walkthrough not booked yet is marked pending again; once booked it is not', async () => {
+  const w = await bridgeWorld();
+  const { walkId, events } = walkBatch();
+  await w.send(events);
+  const replay = await w.send(events);
+  assert.deepEqual(replay.body.results.map(row => row.bridge || null), [null, null, { kind: 'walkthrough', status: 'pending' }]);
+  await w.book('walkthrough', walkId);
+  assert.deepEqual((await w.send(events)).body.results.map(row => row.bridge || null), [null, null, null]);
+});
+
+test('a dated walkthrough the Hub refuses still reaches Dispatch: an undated walkthrough in To schedule with the reason', async () => {
+  const w = await bridgeWorld();
+  const { walkId, events } = walkBatch({ walk: { date: MON, time: '10:00', estimatorRef: await estimatorRef('est.bea', SECRET_ENV), dayPart: null } });
+  await w.send(events);
+  // The save of the dated, assigned visit is refused (a refusal that does not clear by itself); the undated one is not.
+  w.wrapDispatch(store => ({ ...store, commit: writes => (writes.some(item => item.collection === 'jobs' && item.patch?.dispatchRequestId && item.patch.date)
+    ? Promise.reject(Object.assign(new Error('Synthetic refusal of the dated visit.'), { code: 'dispatch_skills_missing', status: 409 })) : store.commit(writes)) }));
+  const booked = await w.book('walkthrough', walkId);
+  assert.deepEqual([booked.body.booking.status, booked.body.booking.message], ['requested', 'Walkthrough request sent: the office will set the time']);
+  const [request] = visits(w);
+  assert.deepEqual([request.date, request.status, request.knockWalkthroughId], ['', 'unscheduled', walkId]);
+  assert.match(request.opsNotes, /asked for Mon Oct 26 10:00 am\. The Hub refused the Mon Oct 26 10:00 am booking: Synthetic refusal of the dated visit\. \(dispatch_skills_missing\); book it and call the customer\./);
+  assert.equal(w.fake.get(`knock_setters/${request.id}`).setterKey, 'rep.one', 'the setter is still credited');
+  assert.deepEqual(await officeList(w), [], 'it is in Dispatch, so not on the office list');
+});
+
+test('a customer the Hub cannot match safely: kept for review, listed for the office, never retried by the phone, booked once fixed', async () => {
+  const twin = { name: 'Lee Twin', phone: '+19705551902', email: '' };
+  const w = await bridgeWorld({ seed: { 'customers/customer_twin_a': { ...twin }, 'customers/customer_twin_b': { ...twin, name: 'Lee Twin B' } } });
+  const { walkId, events } = walkBatch();
+  await w.send(events);
+  const review = await w.book('walkthrough', walkId);
+  assert.deepEqual([review.body.booking.status, review.body.booking.message], ['review', 'Saved. The office will book the walkthrough.']);
+  assert.equal(visits(w).length, 0);
+  const [listed] = await officeList(w);
+  assert.deepEqual([listed.id, listed.customer.phone, listed.booking.status, listed.booking.code], [walkId, '+19705551902', 'review', 'customer_resolve_ambiguous_customer']);
+  assert.match(listed.booking.error, /More than one customer matches this phone or email/);
+  const before = w.fake.calls.length;
+  assert.equal((await w.book('walkthrough', walkId)).body.booking.status, 'review');
+  assert.equal(w.fake.calls.slice(before).filter(row => !row.path.includes('knock_')).length, 0, 'the phone does not retry it');
+  // The office merges the duplicate, then books it from Admin > Sales.
+  w.fake.put('customers/customer_twin_b', { name: 'Lee Twin B', phone: '+19705550000', email: '' });
+  const office = await w.admin({ action: 'walkthrough.book', walkthroughId: walkId });
+  assert.deepEqual([office.status, office.body.booking.status], [200, 'booked']);
+  assert.equal(visits(w)[0].customerId, 'customer_twin_a');
+  assert.deepEqual(await officeList(w), []);
+});
+
+test('a failed estimator search is retried later, never turned into a To schedule request', async () => {
+  const w = await bridgeWorld();
+  const { walkId, events } = walkBatch({ walk: { date: MON, time: '10:00', estimatorRef: await estimatorRef('est.bea', SECRET_ENV), dayPart: null } });
+  await w.send(events);
+  w.wrapDispatch(restlessSchedule);
+  const first = await w.book('walkthrough', walkId);
+  assert.deepEqual([first.body.booking.status, first.body.booking.retryAt], ['pending', iso(NOW + MIN)]);
+  assert.equal(visits(w).length, 0, 'the rep\'s pick is not given up');
+  assert.deepEqual((await officeList(w)).map(row => [row.id, row.booking.status, row.booking.code]), [[walkId, 'retry', 'dispatch_snapshot_changed']]);
+  w.wrapDispatch(null);
+  w.setClock(NOW + 2 * MIN);
+  const later = await w.book('walkthrough', walkId);
+  assert.deepEqual([later.body.booking.status, later.body.booking.estimator, later.body.booking.time], ['booked', 'Bea', '10:00']);
+});
+
+test('another rep cannot log Sold or Walkthrough set where a walkthrough stands; a sale by the setter withdraws one not booked yet', async () => {
+  const w = await bridgeWorld();
+  const walk = walkBatch({ n: 2902 });
+  await w.send(walk.events);
+  const shiftId = id();
+  const other = await w.send([{ id: id(), type: 'shift.start', shiftId, cityKey: 'fort-collins', at: iso(NOW - 20 * MIN) },
+    { id: id(), type: 'knock', shiftId, houseId: 'h-2902-blue-leaf-dr', outcome: 'sold', at: iso(NOW - 2 * MIN) },
+    { id: id(), type: 'knock', shiftId, houseId: 'h-2902-blue-leaf-dr', outcome: 'walkthrough_set', at: iso(NOW - MIN) },
+    { id: id(), type: 'knock', shiftId, houseId: 'h-2904-blue-leaf-dr', outcome: 'sold', at: iso(NOW) }], w.cookies.two);
+  assert.deepEqual(other.body.results.map(row => row.code || row.status), ['applied', 'knock_walkthrough_other_rep', 'knock_walkthrough_other_rep', 'applied']);
+  // The setter closes the sale at the door before the walkthrough was booked: it is withdrawn and never books.
+  const sale = saleBatch({ n: 2902, shiftId: walk.shiftId, at: NOW - MIN });
+  assert.deepEqual((await w.send(sale.events.slice(1))).body.results.map(row => row.status), ['applied', 'applied']);
+  await w.book('sale', sale.saleId);
+  const record = w.fake.get(`knock_walkthroughs/${walk.walkId}`);
+  assert.deepEqual([record.status, record.supersededBySaleId, record.booking.status], ['superseded', sale.saleId, 'superseded']);
+  const answer = await w.book('walkthrough', walk.walkId);
+  assert.deepEqual([answer.body.booking.status, answer.body.booking.message], ['superseded', 'Replaced by the sale at this house.']);
+  assert.equal(visits(w).length, 0, 'no estimator goes to a customer who bought');
+  assert.deepEqual(await officeList(w), []);
+  // Superseded, the house is open again to anyone.
+  assert.equal((await w.send([{ id: id(), type: 'knock', shiftId, houseId: 'h-2902-blue-leaf-dr', outcome: 'not_interested', at: iso(NOW) }], w.cookies.two)).body.results[0].status, 'applied');
+});
+
+test('the estimator handle is keyed by the server secret: a rep cannot test guessed usernames against it', async () => {
+  const keyed = await estimatorRef('est.bea', SECRET_ENV);
+  const plainHash = [...new Uint8Array(await crypto.subtle.digest('SHA-256', new TextEncoder().encode('egc-knock-estimator:est.bea')))].slice(0, 8).map(byte => byte.toString(16).padStart(2, '0')).join('');
+  assert.match(keyed, /^[a-f0-9]{16}$/);
+  assert.notEqual(keyed, plainHash);
+  assert.notEqual(keyed, await estimatorRef('est.bea', { HUB_SESSION_SECRET: 'another-synthetic-secret-0123456789abcdef' }));
+  assert.equal(keyed, await estimatorRef('est.bea', SECRET_ENV), 'stable for one secret');
+  await assert.rejects(estimatorRef('est.bea', {}), { code: 'knock_bridge_unavailable' });
 });

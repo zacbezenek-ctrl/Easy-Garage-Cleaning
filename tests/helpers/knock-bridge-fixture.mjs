@@ -60,11 +60,14 @@ export function seed(extra = {}) {
   };
 }
 
+// The session secret every bridge world signs with (estimator handles are keyed by it).
+export const SECRET_ENV = Object.freeze({ HUB_SESSION_SECRET: 'knock-bridge-test-session-secret-0123456789abcdef' });
+
 export async function bridgeWorld({ bridge = true, autoCrew = true, env: more = {}, seed: extra = {}, crews = true } = {}) {
   const base = seed(extra);
   if (!crews) for (const key of Object.keys(CREWS)) delete base[key];
   const env = {
-    HUB_SESSION_SECRET: 'knock-bridge-test-session-secret-0123456789abcdef', FIREBASE_API_KEY: 'firebase-test-knock', HUB_AUTH_USERS_JSON: JSON.stringify(USERS),
+    ...SECRET_ENV, FIREBASE_API_KEY: 'firebase-test-knock', HUB_AUTH_USERS_JSON: JSON.stringify(USERS),
     // No employee-account vault: the dispatch roster is the configured Hub users above.
     EMPLOYEE_HUB_LEGACY_KEY_SOURCE: 'none',
     ...(bridge ? { EGC_KNOCK_JOB_BRIDGE: 'true' } : {}), ...(autoCrew ? { EGC_DISPATCH_CREW_AUTO_ASSIGN: 'true' } : {}), ...more,
@@ -72,10 +75,12 @@ export async function bridgeWorld({ bridge = true, autoCrew = true, env: more = 
   const world = knockWorld(base);
   let clock = NOW;
   const now = () => new Date(clock);
-  let dispatchDown = false;
+  let dispatchDown = false, wrap = null;
   const dispatch = e => {
     const store = dispatchStorage(e, world.fake.fetcher);
-    return dispatchDown ? { ...store, read: async () => { throw Object.assign(new Error('Dispatch storage is unavailable.'), { code: 'dispatch_storage_unavailable', status: 503 }); } } : store;
+    const served = dispatchDown ? { ...store, read: async () => { throw Object.assign(new Error('Dispatch storage is unavailable.'), { code: 'dispatch_storage_unavailable', status: 503 }); } } : store;
+    // A test's own fault on the dispatch store (a refused save, a schedule that keeps changing).
+    return wrap ? wrap(served) : served;
   };
   const deps = { storage: world.storage, now, dispatch };
   const h = {
@@ -85,7 +90,7 @@ export async function bridgeWorld({ bridge = true, autoCrew = true, env: more = 
   const cookie = async user => (await createHubSessionCookie(env, user)).split(';')[0];
   const cookies = { rep: await cookie('Rep.One'), two: await cookie('Rep.Two'), zac: await cookie('ZacB') };
   return {
-    env, world, fake: world.fake, h, cookies, setClock: value => { clock = value; }, setDispatchDown: value => { dispatchDown = value; },
+    env, world, fake: world.fake, h, cookies, setClock: value => { clock = value; }, setDispatchDown: value => { dispatchDown = value; }, wrapDispatch: fn => { wrap = fn; },
     dispatchStore: () => dispatchStorage(env, world.fake.fetcher),
     send: (events, who = cookies.rep) => call(h.sync.post, post('/api/knock-sync', { events }, who), env),
     book: (kind, recordId, who = cookies.rep) => call(h.bridge.post, post('/api/knock-job-bridge', { kind, id: recordId }, who), env),

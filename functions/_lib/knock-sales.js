@@ -58,9 +58,11 @@ export async function validateSaleEvent(store, rep, settings, event, { accepted 
   const window = cancellationWindow(saleDateOf(event.at), { businessDays: settings.sale.cancelBusinessDays, extraHolidays: settings.sale.extraHolidays });
   if (!validDate(event.jobDate) || event.jobDate < window.earliestJobDate) return refuse('knock_sale_job_date', `The job date must be ${window.earliestJobDate} or later (after the cancellation deadline).`);
   if (event.jobStartTime != null && !TIME.test(String(event.jobStartTime))) return refuse('knock_sale_invalid', 'Job start time must be HH:MM.');
-  if (event.jobStartTime != null && !jobStartAllowed(event.jobDate, event.jobStartTime)) return refuse('knock_sale_job_time', START_TOO_EARLY);
-  // KNOCK-BRIDGE: the town and ZIP the Hub customer and job need, and the rep's slot or morning/afternoon choice.
+  // KNOCK-BRIDGE: the town and ZIP the Hub customer and job need, the rep's slot or morning/afternoon choice, and a
+  // start at 9:30 or later (the Hub books no job earlier; the phone's Edit and resend keeps everything else typed).
+  // With the bridge off an explicit start is stored as sent, as before (the office books those jobs by hand).
   if (jobBridge) {
+    if (event.jobStartTime != null && !jobStartAllowed(event.jobDate, event.jobStartTime)) return refuse('knock_sale_job_time', START_TOO_EARLY);
     if (event.zip != null && event.zip !== '' && !ZIP.test(String(event.zip))) return refuse('knock_sale_zip', 'Enter the 5-digit ZIP code.');
     if (event.city != null && (typeof event.city !== 'string' || event.city.length > 60)) return refuse('knock_sale_invalid', 'Town must be at most 60 characters.');
     if (event.dayPart != null && !['am', 'pm'].includes(event.dayPart)) return refuse('knock_sale_invalid', 'Choose morning or afternoon.');
@@ -187,16 +189,25 @@ export async function recordSaleCollection(store, admin, { saleId, collectedAmou
   return { sale: repSaleView({ ...sale, ...patch }), duplicate: false };
 }
 
-export async function setJobDate(store, admin, { saleId, jobDate, jobStartTime }, nowIso) {
+/* options (KNOCK-BRIDGE, EGC_KNOCK_JOB_BRIDGE; functions/api/knock-admin.js passes them only while it is on):
+   jobBridge: a start before 9:30 on a policy date is refused, and a kept early start is raised to 9:30 and noted;
+   moveHub(sale, {jobDate, jobStartTime}): moves the sale's Hub job first (knock-bridge.js moveSaleJob) and answers the
+   handoff.job fields saved with the new date, or null for a sale without one; it throws when the Hub refuses, so the
+   sale is not moved alone. Without options the change is exactly as before. */
+export async function setJobDate(store, admin, { saleId, jobDate, jobStartTime }, nowIso, { jobBridge = false, moveHub = null } = {}) {
   const sale = await store.get('knock_sales', String(saleId || ''));
   if (!sale) throw knockFailure('That sale was not found.', 404, 'knock_sale_missing');
   if (!validDate(jobDate) || jobDate < sale.earliestJobDate) throw knockFailure(`The job date must be ${sale.earliestJobDate} or later (after the cancellation deadline).`, 400, 'knock_sale_job_date');
   if (jobStartTime != null && !TIME.test(String(jobStartTime))) throw knockFailure('Job start time must be HH:MM.', 400, 'knock_invalid_time');
-  if (jobStartTime != null && !jobStartAllowed(jobDate, jobStartTime)) throw knockFailure(START_TOO_EARLY, 400, 'knock_sale_job_time');
+  if (jobBridge && jobStartTime != null && !jobStartAllowed(jobDate, jobStartTime)) throw knockFailure(START_TOO_EARLY, 400, 'knock_sale_job_time');
   // A move that keeps a saved start before 9:30 onto a 9:30-policy date takes the 9:30 start (job-start-policy.js).
-  const raised = jobStartTime == null && sale.jobStartTime && !jobStartAllowed(jobDate, sale.jobStartTime) ? jobStartFloor(jobDate) : null;
-  const patch = { jobDate, ...(jobStartTime ? { jobStartTime } : raised ? { jobStartTime: raised } : {}), updatedAt: nowIso,
-    statusHistory: [...(sale.statusHistory || []), { status: sale.status, at: nowIso, by: admin.user, note: `Job date ${jobDate}${raised ? `, start ${raised} (jobs start at 9:30 or later)` : ''}` }] };
+  const raised = jobBridge && jobStartTime == null && sale.jobStartTime && !jobStartAllowed(jobDate, sale.jobStartTime) ? jobStartFloor(jobDate) : null;
+  const hub = moveHub ? await moveHub(sale, { jobDate, jobStartTime: jobStartTime || raised || null }) : null;
+  const start = hub?.time || jobStartTime || raised;
+  const patch = { jobDate, ...(start ? { jobStartTime: start } : {}), updatedAt: nowIso,
+    ...(hub ? { handoff: { ...(sale.handoff || {}), job: { ...(sale.handoff?.job || {}), ...hub, by: admin.user } } } : {}),
+    statusHistory: [...(sale.statusHistory || []), { status: sale.status, at: nowIso, by: admin.user,
+      note: `Job date ${jobDate}${raised && !hub ? `, start ${raised} (jobs start at 9:30 or later)` : ''}${hub ? `; Hub job moved to ${hub.date} ${hub.time}${hub.crewLabel ? `, ${hub.crewLabel}` : ''}` : ''}` }] };
   await store.commit([write.patch('knock_sales', sale.id, patch, sale.__updateTime)]);
-  return { sale: repSaleView({ ...sale, ...patch }) };
+  return { sale: repSaleView({ ...sale, ...patch }), ...(hub ? { hubJob: { date: hub.date, time: hub.time, crewLabel: hub.crewLabel, assignment: hub.assignment, message: hub.message } } : {}) };
 }

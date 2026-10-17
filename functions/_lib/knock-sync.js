@@ -5,7 +5,7 @@ import { knockFailure, write } from './knock-store.js';
 import { shiftEligibility } from './knock-access.js';
 import { endedAssignmentFor, houseInScope, neighborhoodLock, phoneHouse, publicShift, repTerritory } from './knock-territory.js';
 import { applySaleEvent, saleClaimConflict, validateSaleEvent } from './knock-sales.js';
-import { applyWalkthroughEvent, validateWalkthroughEvent } from './knock-walkthroughs.js';
+import { applyWalkthroughEvent, otherRepWalkthrough, validateWalkthroughEvent } from './knock-walkthroughs.js';
 import { OUTCOMES, WALKTHROUGH_OUTCOME } from '../../crew/knock-settings.js';
 import { knockWindow, zonedDate } from '../../crew/knock-time.js';
 import { effectiveKnocks, summarizeHouse } from '../../crew/knock-doors.js';
@@ -73,6 +73,17 @@ async function eventsWhere(store, field, value) {
   return store.query('knock_events', { where: [[field, '==', value]] });
 }
 
+// A sale or walkthrough the bridge has not booked yet (not cancelled, not superseded and not waiting for the office).
+const openSale = sale => sale?.status !== 'cancelled' && sale?.handoff?.job?.mode === 'hub' && !['created', 'review'].includes(sale.handoff.job.status);
+const openWalkthrough = row => Boolean(row) && row.status === 'set' && !row.supersededBySaleId && row.booking?.status !== 'review';
+async function markOpenBookings(store, replays, results) {
+  const ids = kind => replays.filter(e => e.type === kind).map(e => e.id);
+  const [sales, walks] = await Promise.all([ids('sale').length ? store.getMany('knock_sales', ids('sale')) : new Map(), ids('walkthrough').length ? store.getMany('knock_walkthroughs', ids('walkthrough')) : new Map()]);
+  for (const event of replays) {
+    if (event.type === 'sale' ? openSale(sales.get(event.id)) : openWalkthrough(walks.get(event.id))) results.set(event.id, { status: 'duplicate', bridge: { kind: event.type, status: 'pending' } });
+  }
+}
+
 /* Process one batch for a signed-in, active rep. Returns { results, houses, shift }.
    options.jobBridge (EGC_KNOCK_JOB_BRIDGE, knock-bridge.js): accepts the "Walkthrough set" door and its walkthrough
    event, lets the rep who asked for a native walkthrough request close the sale, stores the town, ZIP and slot on a
@@ -103,6 +114,9 @@ export async function applyBatch(store, rep, settings, events, nowMs, { jobBridg
     if (!stored) { fresh.push({ event, fp }); continue; }
     results.set(event.id, stored.fingerprint === fp && stored.repKey === rep.repKey ? { status: 'duplicate' } : refuse('knock_event_conflict', 'A different change already used this id.'));
   }
+  // KNOCK-BRIDGE: a replayed sale or walkthrough whose booking is still open is marked pending again, so a phone that
+  // lost the first answer (or closed before it saved it) still books it. Read only for such replays.
+  if (jobBridge) await markOpenBookings(store, valid.filter(e => (e.type === 'sale' || e.type === 'walkthrough') && results.get(e.id)?.status === 'duplicate'), results);
 
   // Context for validation.
   const territory = await repTerritory(store, rep, settings);
@@ -154,6 +168,10 @@ export async function applyBatch(store, rep, settings, events, nowMs, { jobBridg
       if (priorShift.endedAt && priorShift.endReason !== 'idle' && at > Date.parse(priorShift.endedAt) + 60000) { results.set(event.id, refuse('knock_shift_ended', 'That shift already ended. Start a new shift.')); continue; }
       const house = houses.get(event.houseId);
       if (!house) { results.set(event.id, refuse('knock_house_missing', 'That house is not in canvassing.')); continue; }
+      // KNOCK-BRIDGE: another rep's walkthrough stands at this house: no Sold or second Walkthrough set over it.
+      if (jobBridge && (event.outcome === 'sold' || event.outcome === WALKTHROUGH_OUTCOME) && await otherRepWalkthrough(store, house.id, rep.repKey)) {
+        results.set(event.id, refuse('knock_walkthrough_other_rep', 'Another rep set a walkthrough at this house. Ask the office to review it before logging this door.')); continue;
+      }
       if (event.outcome === 'sold') {
         const claimId = await nativeHouseClaimId(house.id), claim = await store.get('knock_receipts', claimId);
         if (saleClaimConflict(claim, rep, { jobBridge })) {
@@ -192,6 +210,9 @@ export async function applyBatch(store, rep, settings, events, nowMs, { jobBridg
       const problem = await validateSaleEvent(store, rep, settings, event, { accepted, targets, houses, nowMs, jobBridge });
       if (problem) { results.set(event.id, problem); continue; }
       const saleDoor = accepted.find(a => a.id === event.knockId) || targets.get(event.knockId) || await store.get('knock_events', event.knockId);
+      if (jobBridge && await otherRepWalkthrough(store, saleDoor.houseId, rep.repKey)) {
+        results.set(event.id, refuse('knock_walkthrough_other_rep', 'Another rep set a walkthrough at this house. Ask the office to review it before saving a sale.')); continue;
+      }
       const claimId = await nativeHouseClaimId(event.houseId || saleDoor.houseId);
       const claim = await store.get('knock_receipts', claimId);
       if (saleClaimConflict(claim, rep, { jobBridge })) {

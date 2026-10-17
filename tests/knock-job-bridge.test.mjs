@@ -1,6 +1,8 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { MON, NOW, SAT, TUE, MIN, busy, bridgeWorld, id, iso, saleBatch } from './helpers/knock-bridge-fixture.mjs';
+import { call, get } from './helpers/knock-fixture.mjs';
+import { customerSearchFields } from '../functions/_lib/customer-identity.js';
 import { clockLabel, dayLabel, knockJobBridgeEnabled, nearestStart, repCrewSlots } from '../functions/_lib/knock-bridge.js';
 import { JOB_START_MINIMUM as POLICY_MINIMUM, JOB_START_POLICY_DATE as POLICY_DATE } from '../functions/_lib/job-start-policy.js';
 import { JOB_START_MINIMUM, JOB_START_POLICY_DATE, PACKAGE_JOB_MINUTES, defaultJobStart, jobMinutes } from '../crew/knock-sale-rules.js';
@@ -104,7 +106,15 @@ test('the picked slot is gone: Crew 2 the same time, else the nearest start, els
   assert.deepEqual([moved.body.booking.status, moved.body.booking.crewLabel, moved.body.booking.date, moved.body.booking.time, moved.body.booking.moved], ['booked', 'Crew 1', TUE, '09:30', true]);
   const [job] = jobsOf(v).filter(row => row.knockSaleId === second.saleId);
   assert.match(job.opsNotes, /asked for Mon Oct 26 9:30 am; booked Tue Oct 27 9:30 am instead because no crew was free then\. Confirm the day with the customer\./);
-  assert.equal(v.fake.get(`knock_sales/${second.saleId}`).jobDate, MON, 'the signed sale keeps the agreed day; the booking says where it landed');
+  // The sale moves with its job, so the customer text and the refund cutoff name the booked day; the ask is kept.
+  const movedSale = v.fake.get(`knock_sales/${second.saleId}`);
+  assert.deepEqual([movedSale.jobDate, movedSale.jobStartTime, movedSale.schedule.date, movedSale.handoff.job.requested], [TUE, '09:30', MON, { date: MON, time: '09:30' }]);
+  assert.match(movedSale.statusHistory.at(-1).note, /^Booked in the Hub for Tue Oct 27 9:30 am \(asked for Mon Oct 26 9:30 am\): no crew was free then\./);
+  const admin = await call(v.h.admin.get, get('/api/knock-admin?view=sales', v.cookies.zac), v.env);
+  const line = admin.body.sales.find(row => row.id === second.saleId);
+  assert.match(line.message, /Tuesday, October 27/, 'the customer text names the booked day');
+  assert.doesNotMatch(line.message, /Monday, October 26/);
+  assert.equal(line.handoff.job.moved, true, 'the admin card says it moved');
 
   // No crew at all (none set up yet): booked on the asked day and time without a crew, flagged Sold: needs crew.
   const u = await bridgeWorld({ crews: false });
@@ -125,11 +135,16 @@ test('with crew auto-assign off the job waits for a manager (Sold: needs crew); 
   w.setDispatchDown(true);
   const down = await w.book('sale', saleId);
   assert.equal(down.status, 200);
-  assert.deepEqual([down.body.booking.status, down.body.booking.message], ['pending', 'Saved. Booking it with the office…']);
+  assert.deepEqual([down.body.booking.status, down.body.booking.message, down.body.booking.retryAt], ['pending', 'Saved. Booking it with the office…', iso(NOW + MIN)]);
   const pending = w.fake.get(`knock_sales/${saleId}`).handoff.job;
-  assert.deepEqual([pending.status, pending.code, pending.attempts], ['retry', 'dispatch_storage_unavailable', 1]);
+  assert.deepEqual([pending.status, pending.code, pending.attempts, pending.retryAfter], ['retry', 'dispatch_storage_unavailable', 1, iso(NOW + MIN)]);
   assert.equal(jobsOf(w).length, 0);
   w.setDispatchDown(false);
+  // The phone asking again before the wait is over is answered from the sale: no dispatch read at all.
+  const reads = w.fake.calls.length;
+  assert.deepEqual((await w.book('sale', saleId)).body.booking.status, 'pending');
+  assert.equal(w.fake.calls.filter((call, index) => index >= reads && !call.path.startsWith('knock_') && !call.path.includes('knock_')).length, 0, 'only the sale was read');
+  w.setClock(NOW + 2 * MIN);
   const booked = await w.book('sale', saleId);
   assert.deepEqual([booked.body.booking.status, booked.body.booking.date, booked.body.booking.time], ['needs_crew', MON, '09:30']);
   const [job] = jobsOf(w);
@@ -259,4 +274,157 @@ test('flag off: sync, sale records, knock-me and the new endpoints are exactly a
   assert.equal('hubJob' in mySales.body.sales[0], false);
   const money = await w.report('my-money');
   assert.equal('job' in money.body.sales[0], false);
+  const adminSales = await call(w.h.admin.get, get('/api/knock-admin?view=sales', w.cookies.zac), w.env);
+  assert.equal('walkthroughs' in adminSales.body, false, 'no office walkthrough list');
+  const cancelled = await w.admin({ action: 'sale.status', saleId, status: 'cancelled' });
+  assert.deepEqual([cancelled.status, 'hub' in cancelled.body, cancelled.body.sale.handoff.job], [200, false, { mode: 'manual', status: 'pending', ref: '', at: null, by: '' }]);
 });
+
+/* ---------- review fixes: lost answers, retries, admin changes, reads ---------- */
+
+// The schedule keeps changing under the openings search (dispatch_snapshot_changed): a fault that clears by itself.
+const restlessSchedule = store => ({ ...store, read: (collection, docId) => collection === 'dispatchState' ? Promise.resolve({ id: 'revision', revision: crypto.randomUUID() }) : store.read(collection, docId) });
+// The dispatch save itself fails with `error` (thrown before anything is written).
+const failingSave = error => store => ({ ...store, commit: writes => (writes.some(item => item.collection === 'jobs' && item.patch?.dispatchRequestId) ? Promise.reject(error) : store.commit(writes)) });
+
+test('a lost sync answer: a replayed sale that is not booked yet is marked pending again; once booked it is not', async () => {
+  const w = await bridgeWorld();
+  const { saleId, events } = saleBatch();
+  assert.deepEqual((await w.send(events)).body.results[2].bridge, { kind: 'sale', status: 'pending' });
+  // The phone never saw that answer and sends the batch again: the sale still needs booking, and the replay says so.
+  const replay = await w.send(events);
+  assert.deepEqual(replay.body.results.map(row => [row.status, row.bridge || null]), [['duplicate', null], ['duplicate', null], ['duplicate', { kind: 'sale', status: 'pending' }]]);
+  assert.equal(w.docs('knock_sales/').length, 1);
+  await w.book('sale', saleId);
+  assert.deepEqual((await w.send(events)).body.results.map(row => Object.keys(row).sort().join()), ['id,status', 'id,status', 'id,status'], 'booked: a plain duplicate');
+});
+
+test('only a passing fault is retried, after a growing wait; anything else, or the eighth failed try, waits for the office', async () => {
+  const w = await bridgeWorld();
+  const { saleId, events } = saleBatch();
+  await w.send(events);
+  // The openings search fails: that is not "no crew free". Nothing is booked blind; it is retried a minute later.
+  w.wrapDispatch(restlessSchedule);
+  const first = await w.book('sale', saleId);
+  assert.deepEqual([first.body.booking.status, first.body.booking.retryAt], ['pending', iso(NOW + MIN)]);
+  assert.deepEqual(pick(w.fake.get(`knock_sales/${saleId}`).handoff.job, 'status', 'code', 'attempts'), { status: 'retry', code: 'dispatch_snapshot_changed', attempts: 1 });
+  assert.equal(jobsOf(w).length, 0);
+  w.setClock(NOW + 2 * MIN);
+  const second = await w.book('sale', saleId);
+  assert.equal(second.body.booking.retryAt, iso(NOW + 4 * MIN), 'the wait doubles');
+  // The eighth failed try goes to the office instead of retrying for ever.
+  const sale = w.fake.get(`knock_sales/${saleId}`);
+  w.fake.put(`knock_sales/${saleId}`, { ...sale, handoff: { ...sale.handoff, job: { ...sale.handoff.job, attempts: 7 } } });
+  w.setClock(NOW + 10 * MIN);
+  const eighth = await w.book('sale', saleId);
+  assert.deepEqual([eighth.body.booking.status, eighth.body.booking.message], ['review', 'Saved. The office will book the job.']);
+  assert.deepEqual(pick(w.fake.get(`knock_sales/${saleId}`).handoff.job, 'status', 'code', 'error', 'retryAfter'),
+    { status: 'review', code: 'dispatch_snapshot_changed', error: 'The Hub could not take this booking after 8 tries.', retryAfter: null });
+
+  // A fault that does not clear by itself (here a bug with no code) goes straight to the office, and the phone's
+  // later asks are answered from the sale without touching dispatch; the office's Book in Hub tries again.
+  const v = await bridgeWorld();
+  const other = saleBatch();
+  await v.send(other.events);
+  v.wrapDispatch(failingSave(new TypeError('synthetic bug')));
+  const refused = await v.book('sale', other.saleId);
+  assert.equal(refused.body.booking.status, 'review');
+  assert.deepEqual(pick(v.fake.get(`knock_sales/${other.saleId}`).handoff.job, 'status', 'code', 'error'), { status: 'review', code: 'bridge_error', error: 'synthetic bug' });
+  v.wrapDispatch(null);
+  const before = v.fake.calls.length;
+  assert.equal((await v.book('sale', other.saleId)).body.booking.status, 'review');
+  assert.equal(v.fake.calls.slice(before).filter(row => !row.path.includes('knock_')).length, 0, 'the phone does not retry what the office must look at');
+  const office = await v.admin({ action: 'sale.book', saleId: other.saleId });
+  assert.deepEqual([office.status, office.body.booking.status], [200, 'booked']);
+  assert.equal(jobsOf(v).length, 1);
+});
+
+test('an admin cancelling a booked sale cancels its Hub job, reinstating restores it, and a Hub failure never blocks the cancellation', async () => {
+  const w = await bridgeWorld();
+  const { saleId, events } = saleBatch();
+  await w.send(events);
+  await w.book('sale', saleId);
+  const [job] = jobsOf(w);
+  const cancelled = await w.admin({ action: 'sale.status', saleId, status: 'cancelled' });
+  assert.equal(cancelled.status, 200, JSON.stringify(cancelled.body));
+  assert.deepEqual(pick(cancelled.body.hub, 'action', 'status', 'message'), { action: 'cancel', status: 'done', message: 'Its Hub job was cancelled too.' });
+  assert.deepEqual([w.fake.get(job.path).status, w.fake.get(job.path).cancelledBy, w.fake.get(job.path).cancellationReasonCode], ['cancelled', 'knock-bridge', 'customer_changed_plans']);
+  assert.deepEqual([cancelled.body.sale.status, cancelled.body.sale.handoff.job.hubCancelled], ['cancelled', true]);
+  const mine = await w.report('my-sales');
+  assert.deepEqual(pick(mine.body.sales[0].hubJob, 'status', 'message'), { status: 'cancelled', message: 'The Hub job is cancelled.' });
+  const reinstated = await w.admin({ action: 'sale.status', saleId, status: 'booked' });
+  assert.deepEqual([reinstated.body.hub.status, w.fake.get(job.path).status, reinstated.body.sale.handoff.job.hubCancelled], ['done', 'scheduled', false]);
+
+  // The Hub is down: the sale is still cancelled (the customer's right), the failure is saved and shown, and running
+  // the cancellation again once the Hub is back cancels the job.
+  w.setDispatchDown(true);
+  const down = await w.admin({ action: 'sale.status', saleId, status: 'cancelled' });
+  assert.deepEqual([down.status, down.body.sale.status, down.body.hub.status], [200, 'cancelled', 'failed']);
+  assert.match(down.body.hub.message, /^The Hub job could not be cancelled: .* Cancel it in Dispatch\.$/);
+  assert.equal(w.fake.get(job.path).status, 'scheduled');
+  assert.deepEqual(pick(w.fake.get(`knock_sales/${saleId}`).handoff.job, 'hubCancelled'), { hubCancelled: false });
+  w.setDispatchDown(false);
+  const again = await w.admin({ action: 'sale.status', saleId, status: 'cancelled' });
+  assert.deepEqual([again.body.hub.status, w.fake.get(job.path).status], ['done', 'cancelled']);
+  // With the flag off the Hub is never touched.
+  const off = await call(w.h.admin.post, (await import('./helpers/knock-fixture.mjs')).post('/api/knock-admin', { action: 'sale.status', saleId, status: 'booked' }, w.cookies.zac), { ...w.env, EGC_KNOCK_JOB_BRIDGE: '' });
+  assert.deepEqual([off.status, 'hub' in off.body, w.fake.get(job.path).status], [200, false, 'cancelled']);
+});
+
+test('a new job date moves the Hub job first (the crew is picked again); a time the Hub cannot take is refused and nothing moves', async () => {
+  const WED = '2026-10-28';
+  const w = await bridgeWorld({ seed: { 'jobs/busy_c1_tue': busy(TUE, ['crew.a1', 'crew.a2'], { crewId: 'crew_one' }),
+    'jobs/busy_c1_wed': busy(WED, ['crew.a1', 'crew.a2'], { crewId: 'crew_one' }), 'jobs/busy_c2_wed': busy(WED, ['crew.b1', 'crew.b2'], { crewId: 'crew_two' }) } });
+  const { saleId, events } = saleBatch();
+  await w.send(events);
+  await w.book('sale', saleId);
+  const [job] = jobsOf(w).filter(row => row.knockSaleId === saleId);
+  assert.equal(job.crewId, 'crew_one');
+  const moved = await w.admin({ action: 'sale.jobDate', saleId, jobDate: TUE });
+  assert.equal(moved.status, 200, JSON.stringify(moved.body));
+  const hub = w.fake.get(job.path);
+  assert.deepEqual([hub.date, hub.time, hub.endTime, hub.crewId], [TUE, '09:30', '16:30', 'crew_two'], 'Crew 1 is out Tuesday: Crew 2 takes the job');
+  assert.deepEqual([moved.body.sale.jobDate, moved.body.sale.handoff.job.date, moved.body.sale.handoff.job.crewLabel, moved.body.hubJob.message], [TUE, TUE, 'Crew 2', 'Booked: Crew 2, Tue Oct 27, 9:30 am']);
+  assert.match(moved.body.sale.statusHistory.at(-1).note, /^Job date 2026-10-27; Hub job moved to 2026-10-27 09:30, Crew 2$/);
+  // A manager then staffs it by hand: a move that crew cannot make is refused, and neither the sale nor its job moves.
+  w.fake.put(job.path, { ...w.fake.get(job.path), crewAutoAssigned: null });
+  const refused = await w.admin({ action: 'sale.jobDate', saleId, jobDate: WED });
+  assert.deepEqual([refused.status, refused.body.code], [409, 'knock_hub_move_refused']);
+  assert.match(refused.body.error, /^The Hub job could not move to Wed Oct 28 9:30 am: .* Pick another day or time, or move it in Dispatch\.$/);
+  assert.deepEqual([w.fake.get(`knock_sales/${saleId}`).jobDate, w.fake.get(job.path).date], [TUE, TUE]);
+  // The bridge's 9:30 rule holds for an admin's start too.
+  assert.equal((await w.admin({ action: 'sale.jobDate', saleId, jobDate: TUE, jobStartTime: '09:00' })).body.code, 'knock_sale_job_time');
+  // An auto-assigned job moved to a day no crew is free is never lost: it waits on that day as Sold: needs crew.
+  const other = saleBatch({ n: 2902 });
+  await w.send(other.events);
+  await w.book('sale', other.saleId);
+  const full = await w.admin({ action: 'sale.jobDate', saleId: other.saleId, jobDate: WED });
+  assert.deepEqual([full.status, full.body.hubJob.assignment, full.body.hubJob.message], [200, 'unassigned', 'Booked: office will confirm the crew']);
+  const waiting = jobsOf(w).find(row => row.knockSaleId === other.saleId);
+  assert.deepEqual([waiting.date, waiting.assignedCrew, waiting.soldNeedsCrew.reason], [WED, [], 'no_crew_free']);
+});
+
+test('with windowed dispatch reads the door customer is matched through the search index, never a full customer scan', async () => {
+  const existing = { name: 'Pat Synthetic 2900', phone: '+19705550900', email: 'pat2900@example.com', address: '2900 Blue Leaf Dr, Fort Collins, CO 80528' };
+  const seedCustomer = { 'customers/customer_existing': { ...existing, ...customerSearchFields(existing) } };
+  const w = await bridgeWorld({ env: { EGC_DISPATCH_WINDOWED_READS: 'true' }, seed: seedCustomer });
+  const { saleId, events } = saleBatch();
+  await w.send(events);
+  const booked = await w.book('sale', saleId);
+  assert.equal(booked.body.booking.status, 'booked', JSON.stringify(booked.body));
+  assert.equal(jobsOf(w)[0].customerId, 'customer_existing', 'the same phone and email link the existing customer');
+  assert.equal(w.fake.scans('customers').length, 0, 'no full customer scan');
+  assert.ok(w.fake.queries('customers').length >= 1, 'keyed lookups instead');
+  assert.equal(w.fake.get('customers/customer_existing').acquisition, undefined, 'an existing customer is linked, never changed');
+  // Full reads (the default) scan as before.
+  const v = await bridgeWorld({ seed: seedCustomer });
+  const other = saleBatch();
+  await v.send(other.events);
+  await v.book('sale', other.saleId);
+  assert.ok(v.fake.scans('customers').length >= 1);
+  assert.equal(jobsOf(v)[0].customerId, 'customer_existing');
+});
+
+function pick(row, ...keys) {
+  return Object.fromEntries(keys.map(key => [key, row?.[key]]));
+}
