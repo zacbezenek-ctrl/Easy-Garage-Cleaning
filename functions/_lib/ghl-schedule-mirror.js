@@ -164,6 +164,12 @@ function breakdown(job) {
       if (value.trim()) lines.push(`${label}: ${clip(value, 300)}`);
     }
   }
+  // The signed walkthrough's job breakdown (job-breakdown.js: its summary, else the crew brief's copy of its lines), in
+  // the quote builder's order: one "Removal: …", "Shelving: …", "Storage: …", "Cleaning: …" line each.
+  const summary = typeof job.jobBreakdown?.summary === 'string' ? job.jobBreakdown.summary.split('\n')
+    : object(instructions) && Array.isArray(instructions.jobBreakdown) ? instructions.jobBreakdown : [];
+  const sections = summary.filter(line => typeof line === 'string' && line.trim()).slice(0, 8).map(line => clip(line, 400));
+  if (sections.length) lines.push('Job breakdown:', ...sections);
   const crewSize = Number(job.crewNeeded ?? job.requiredCrewSize);
   if (Number.isInteger(crewSize) && crewSize > 0) lines.push(`Crew size: ${crewSize}`);
   const minutes = Number(job.estimatedDurationMin ?? job.durationMin);
@@ -215,9 +221,12 @@ export async function scheduleMirrorWrites(store, { jobId, before = null, after,
   if (!kind || !safeId(jobId) || typeof requestId !== 'string' || !requestId || typeof now !== 'string') return [];
   const job = { ...after, id: jobId }, visit = visitKind(job.type), active = kind !== 'cancelled' && kind !== 'no_show';
   const changeKey = scheduleMirrorChangeKey(source, requestId), id = await scheduleMirrorEntryId(jobId, changeKey);
+  // A writer that adds fields to the visit after Dispatch's patch (the signed walkthrough handoff adds the job breakdown
+  // and time on site in its commit, walkthrough-handoff.js) names them on its store, so the note reads the visit as saved.
+  const facts = object(store.scheduleMirrorFacts) ? store.scheduleMirrorFacts : {};
   return [{ collection: GHL_SCHEDULE_MIRROR, id, patch: {
     id, jobId, changeKey, kind, visitType: visit, stage: active ? GHL_MIRROR_STAGES[visit] : null, projectKey: projectKeyOf(job),
-    customerId: safeId(job.customerId) ? job.customerId : '', estimatorId: walkthroughEstimator(job), note: scheduleMirrorNote({ kind, job, roster, resources }),
+    customerId: safeId(job.customerId) ? job.customerId : '', estimatorId: walkthroughEstimator(job), note: scheduleMirrorNote({ kind, job: { ...job, ...facts }, roster, resources }),
     expect: active ? { state: 'active', startAt: startOf(job), crew: crewKey(job) } : { state: kind },
     source, requestId: requestId.toLowerCase(), createdAt: now, attempts: 0, nextAttemptAt: now, status: 'pending',
   } }];

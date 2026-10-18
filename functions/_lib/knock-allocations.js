@@ -1,9 +1,11 @@
 // Known channel percentages (CHANNEL_PERCENTS, owner-set 2026-10-17), not approval of a
 // calculation base or a payout. Each allocation has a stable identity for downstream
-// idempotent accounting.
+// idempotent accounting. rounding 'nearest_cent' (the owner's approved setter terms,
+// SETTER_TERMS) rounds each share half up to the cent; without it a share that is not a
+// whole number of cents is held.
 import { CHANNEL_PERCENTS } from '../../crew/knock-money.js';
 
-export function commissionAllocations({ channel, jobId, serviceClassification, setterKey = '', estimatorKey = '', directRepKey = '', base = null }) {
+export function commissionAllocations({ channel, jobId, serviceClassification, setterKey = '', estimatorKey = '', directRepKey = '', base = null, rounding = null }) {
   const { directSale, setter, estimator } = CHANNEL_PERCENTS;
   const definitions = channel === 'appointment_setter' ? [['setter', setterKey, setter], ['estimator', estimatorKey, estimator]]
     : channel === 'direct_estimator' ? [['estimator', estimatorKey, estimator]]
@@ -21,7 +23,7 @@ export function commissionAllocations({ channel, jobId, serviceClassification, s
     amountCents: null,
   }));
   if (!reviewReasons.length) {
-    const amounts = definitions.map(([, , percent]) => base.amountCents * percent / 100);
+    const amounts = definitions.map(([, , percent]) => rounding === 'nearest_cent' ? Math.floor((base.amountCents * percent + 50) / 100) : base.amountCents * percent / 100);
     if (amounts.some(amount => !Number.isSafeInteger(amount))) reviewReasons.push('rounding_policy_unconfigured');
     else allocations.forEach((allocation, index) => { allocation.amountCents = amounts[index]; });
   }

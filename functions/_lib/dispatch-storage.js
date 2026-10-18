@@ -21,6 +21,7 @@ const failure = (code, message, status = 503) => Object.assign(new Error(message
 const CUSTOMER_FIELDS = ['name','firstName','lastName','phone','email','address','highlevelContactId'];
 // A crew record as the crew schedule reads it; priority, code and serviceDays are the crew registry v2 fields (D3).
 const CREW_RESOURCE_FIELDS = ['recordType','name','memberIds','leadId','status','priority','code','serviceDays'];
+const HANDOFF_LEDGER_FIELDS = ['kind','actorId','jobId','sourceWalkthroughId','createdAt'];
 function decode(document,collection,id) {
   const prefix=`/documents/${collection}/`,name=document?.name;
   const path=typeof name==='string'&&name.includes(prefix)?name.slice(name.indexOf(prefix)+prefix.length):'';
@@ -221,6 +222,10 @@ export function dispatchStorage(env, fetcher = firestoreFetch) {
     openingsCache: openingsCacheFor(fetcher),
     // Every jobs row whose field equals value, whatever its dates (saveJobReads).
     jobsWhere: (field, value) => query('jobs', JOB_FIELDS)({ field, op: 'EQUAL', value }),
+    // ESTIMATOR-COMMISSION (D6b, estimator-commission.js): the signed walkthrough handoff receipts, masked to who signed which
+    // job when (never the signature, plan or amount): one signer's ({field:'actorId', op:'EQUAL'}) or those created since a
+    // date ({field:'createdAt', op:'GREATER_THAN_OR_EQUAL'}). Complete and failing closed like every query here.
+    handoffLedger: spec => query('walkthroughHandoffs', HANDOFF_LEDGER_FIELDS, 5000)(spec),
     customersByKey: key => query('customers', [...CUSTOMER_FIELDS, 'searchKeys'], 20000)({ field: 'searchKeys', op: 'ARRAY_CONTAINS', value: key }),
     // CREW-SCHEDULE (functions/api/crew-schedule.js): the crew records alone, and the work dated in a bounded window.
     crewResources: () => query('dispatchResources', CREW_RESOURCE_FIELDS, 2000)({ field: 'recordType', op: 'EQUAL', value: 'crew' }),

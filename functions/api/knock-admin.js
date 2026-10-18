@@ -2,16 +2,18 @@ import { getHubSession } from '../_lib/hub-session.js';
 import { createKnockStore, knockFailure } from '../_lib/knock-store.js';
 import { requireAdmin } from '../_lib/knock-access.js';
 import {
-  addTraining, approveCompensation, clearNoKnock, coverageView, excludeHouses, excludeUnits, flagsView, importNoKnock, listAssignments, listReps, listTraining,
+  addTraining, approveCompensation, approveSetterTerms, clearNoKnock, coverageView, excludeHouses, excludeUnits, flagsView, importNoKnock, listAssignments, listReps, listTraining,
   neighborhoodHouses, readSettings, seedNeighborhoods, setAssignment, updateNeighborhood, updateRep, updateSettings,
 } from '../_lib/knock-admin.js';
 import { loadNeighborhoods } from '../_lib/knock-territory.js';
 import { allSales, repSaleView, setJobDate, setSaleStatus, recordSaleCollection } from '../_lib/knock-sales.js';
 import { customerMessage, integrationStatus, refundSummary, saleHandoff, saleSyncSummaries } from '../_lib/knock-handoff.js';
-import { loadSettings } from '../_lib/knock-access.js';
+import { loadSettings, loadSetterTerms } from '../_lib/knock-access.js';
 import { rebuildDay } from '../_lib/knock-sync.js';
-import { addPayout, exportCsv, moneyView } from '../_lib/knock-reports.js';
-import { recordSetterAttribution, setterAttributions } from '../_lib/knock-setters.js';
+import { addPayout, exportCsv, moneyView, periodFromParams } from '../_lib/knock-reports.js';
+import { classifySetter, recordSetterAttribution, setterAttributions, setterBatchReaderFor } from '../_lib/knock-setters.js';
+import { ESTIMATOR_LOOKBACK_DAYS, channelEarnings, estimatorLedger } from '../_lib/estimator-commission.js';
+import { addDays, zonedDate } from '../../crew/knock-time.js';
 import { csvResponse, errorResponse, forbiddenOrigin, readJson, reply, sameOrigin } from '../_lib/knock-http.js';
 import { dispatchStorage } from '../_lib/dispatch-storage.js';
 import { bookSale, bookWalkthrough, followSaleStatus, knockJobBridgeEnabled, moveSaleJob } from '../_lib/knock-bridge.js';
@@ -37,6 +39,13 @@ async function saleStatus(store, admin, body, nowIso, env, { dispatch = dispatch
 const saleJobDate = (store, admin, body, nowIso, env, { dispatch = dispatchStorage } = {}) => (knockJobBridgeEnabled(env)
   ? setJobDate(store, admin, body, nowIso, { jobBridge: true, moveHub: (sale, when) => moveSaleJob(dispatch(env), sale, when, { env, now: new Date(nowIso) }) })
   : setJobDate(store, admin, body, nowIso));
+
+/* D6b: the approved setter and estimator shares a pay period's statement adds (null, and nothing read, before the
+   owner approved the setter terms). */
+async function statementChannels(store, params, now, env, dispatch) {
+  const settings = await loadSettings(store), terms = await loadSetterTerms(store, settings);
+  return { settings, channels: await channelEarnings({ kstore: store, dispatch: dispatch(env), env, terms, nowMs: now.getTime(), period: periodFromParams(params, settings, now.getTime()) }) };
+}
 
 // A sale's status changes its rep's booked revenue for the sale day.
 async function afterSaleChange(store, result, nowIso) {
@@ -69,10 +78,23 @@ const VIEWS = {
       ...(knockJobBridgeEnabled(env) ? { walkthroughs: await officeWalkthroughs(store) } : {}),
     };
   },
-  async money(store, params, now) { return moneyView(store, params, now.getTime(), await loadSettings(store)); },
-  async setters(store, _params, now, env) { return { ...(await setterAttributions(store, env, { nowMs: now.getTime() })), reps: await listReps(store) }; },
-  async export(store, params, now) {
-    const { csv, filename } = await exportCsv(store, params, now.getTime(), await loadSettings(store));
+  async money(store, params, now, env, _viewer, { dispatch = dispatchStorage } = {}) {
+    const { settings, channels } = await statementChannels(store, params, now, env, dispatch);
+    return moneyView(store, params, now.getTime(), settings, { channels });
+  },
+  async setters(store, _params, now, env, _viewer, { dispatch = dispatchStorage } = {}) {
+    const terms = await loadSetterTerms(store, await loadSettings(store));
+    return { ...(await setterAttributions(store, env, { nowMs: now.getTime(), terms, readJobs: setterBatchReaderFor(dispatch(env)) })), reps: await listReps(store) };
+  },
+  // D6b: every estimator's 7% (door-to-door-set walkthroughs and direct walkthrough sales signed in the last year).
+  async estimators(store, _params, now, env, _viewer, { dispatch = dispatchStorage } = {}) {
+    const terms = await loadSetterTerms(store, await loadSettings(store));
+    const ledger = await estimatorLedger({ kstore: store, dispatch: dispatch(env), env, since: addDays(zonedDate(now.getTime()), -ESTIMATOR_LOOKBACK_DAYS), terms, nowMs: now.getTime() });
+    return { rows: ledger.rows, truncated: ledger.truncated, terms: { verified: terms.verified, approvedAt: terms.approvedAt }, lookbackDays: ESTIMATOR_LOOKBACK_DAYS };
+  },
+  async export(store, params, now, env, _viewer, { dispatch = dispatchStorage } = {}) {
+    const { settings, channels } = (params.get('kind') || 'commission') === 'commission' ? await statementChannels(store, params, now, env, dispatch) : { settings: await loadSettings(store), channels: null };
+    const { csv, filename } = await exportCsv(store, params, now.getTime(), settings, { channels });
     return csvResponse(filename, csv);
   },
 };
@@ -83,6 +105,8 @@ const ACTIONS = {
   'settings.update': updateSettings,
   // Owner only (checked inside): records compensationApproval for the saved terms.
   'compensation.approve': approveCompensation,
+  // Owner only (checked inside): records setterApproval, the fixed 13% setter + 7% estimator terms (D6b).
+  'setter.approve': approveSetterTerms,
   'territory.seed': (store, _admin, _body, nowIso) => seedNeighborhoods(store, nowIso),
   'neighborhood.update': updateNeighborhood,
   'assignment.set': setAssignment,
@@ -95,6 +119,7 @@ const ACTIONS = {
   'sale.collection': recordSaleCollection,
   'sale.handoff': (store, admin, body, nowIso, env) => saleHandoff(store, admin, body, nowIso, env),
   'setter.record': recordSetterAttribution,
+  'setter.classify': classifySetter,
   'sale.book': bridged(async (...args) => { const { sale, view } = await bookSale(...args); return { sale, booking: view }; }),
   'walkthrough.book': bridged(async (...args) => { const { walkthrough, view } = await bookWalkthrough(...args); return { walkthrough, booking: view }; }),
   'payout.add': addPayout,
@@ -109,7 +134,7 @@ export function knockAdminHandlers({ session = getHubSession, storage = createKn
         const params = new URL(request.url).searchParams;
         const view = views[params.get('view') || ''];
         if (!view) throw knockFailure('Unknown admin view.', 404, 'knock_unknown_view');
-        const result = await view(storage(env), params, now(), env, viewer);
+        const result = await view(storage(env), params, now(), env, viewer, { dispatch });
         return result instanceof Response ? result : reply(200, { ok: true, serverTime: now().toISOString(), ...result });
       } catch (error) {
         return errorResponse(error);

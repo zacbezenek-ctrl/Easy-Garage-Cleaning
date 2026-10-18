@@ -223,6 +223,29 @@ cancellations, missing source data and unclassified services remain review
 states; verified junk classification is excluded. No compensation approval or
 historical signed snapshot is written by this tracking flow.
 
+The owner approves these terms separately, in Admin > Settings > "Approve
+walkthrough-setting and estimator terms" (`setter.approve`, owner only, after the
+door-to-door terms, whose two-week pay cycle pays them). It records
+`knock_settings/current.setterApproval` with the fixed `SETTER_TERMS`
+(crew/knock-money.js): 13% setter + 7% estimator on a walkthrough a rep set, 7%
+on a walkthrough an estimator sold directly, of the job's whole price including
+goods, rounded to the cent, earned when the job is closed and paid in full (or
+at the approval, if later, so no closed period changes). Under them a signed
+walkthrough handoff for a garage transformation counts as garage work, and its
+signer is the estimator unless the office or the door booking recorded one.
+Until the approval verifies every row stays held exactly as described above. The
+office settles a setter record's classification once in Admin > Setters
+(`setter.classify`: garage or junk removal, and optionally its estimator, with a
+review reference; a settled classification is never changed there). Earned
+shares join the commission statement (Admin > Money, the commission CSV's
+`setter_commission_included` and `estimator_commission_included` columns, the
+rep's My money); an estimator who has no canvassing account is paid with a
+recorded payout under their Hub staff key. Admin > Estimators lists every
+estimator's 7% (walkthroughs signed in the last 365 days); each estimator sees
+their own in the Hub under My commission (`GET /api/estimator-commission`).
+Short payments, refunds, an unread record or more than 500 setter records hold
+the statement for review.
+
 - [ ] Book a synthetic Hub walkthrough with the intended staff role, record its
   setter once, and verify another rep cannot claim or read it.
 - [ ] Replay identical and conflicting attribution requests, including concurrent

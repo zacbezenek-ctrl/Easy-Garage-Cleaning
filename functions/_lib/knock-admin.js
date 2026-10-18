@@ -1,11 +1,11 @@
 // Admin reads and changes for canvassing: reps, training, settings and territory. Sales and money
 // live in knock-sales.js and knock-reports.js. Every function here assumes requireAdmin passed.
 import { knockFailure, write } from './knock-store.js';
-import { COMMISSION_FIELDS, isOwner, loadSettings, publicRep, repKeyFor, repPatch, requireOwner, sameSettings } from './knock-access.js';
+import { COMMISSION_FIELDS, isOwner, loadSettings, publicRep, repKeyFor, repPatch, requireOwner, sameSettings, setterTermsState } from './knock-access.js';
 import { assignmentId, loadNeighborhoods, requireNeighborhood } from './knock-territory.js';
 import { seedNeighborhoodDocs } from './knock-seed.js';
 import { DEFAULT_SETTINGS, mergeSettings, overlaySettings, PACKAGES, validateSettings } from '../../crew/knock-settings.js';
-import { COLLECTED_V3_POLICY, D2D_GARAGE_SCOPE, validCollectionPolicy, validCommissionScope } from '../../crew/knock-money.js';
+import { COLLECTED_V3_POLICY, D2D_GARAGE_SCOPE, SETTER_CONTRACT, SETTER_TERMS, validCollectionPolicy, validCommissionScope, validSetterTerms } from '../../crew/knock-money.js';
 import { matchNoKnockList } from '../../crew/knock-doors.js';
 import { validDate } from '../../crew/knock-time.js';
 import { coverage } from '../../crew/knock-stats.js';
@@ -80,10 +80,20 @@ export function compensationView(doc, settings, viewer) {
   };
 }
 
+/* Where the owner's approval of the appointment-setter and estimator terms (SETTER_TERMS, D6b) stands. Admins see it;
+   only the owner may act on it, and only once the door-to-door commission terms are approved. */
+export function setterTermsView(doc, settings, viewer) {
+  const approval = doc?.setterApproval && typeof doc.setterApproval === 'object' ? doc.setterApproval : null, state = setterTermsState(doc, settings);
+  return { verified: state.verified, approvedAt: state.approvedAt, canApprove: isOwner(viewer), compensationVerified: settings.commission.verified === true,
+    approval: approval && { contract: approval.contract ?? null, reference: approval.reference ?? null, reviewedBy: approval.reviewedBy ?? null, reviewedAt: approval.reviewedAt ?? null,
+      termsMatch: approval.contract === SETTER_CONTRACT && validSetterTerms(approval.terms) },
+    terms: { contract: SETTER_CONTRACT, ...SETTER_TERMS } };
+}
+
 export async function readSettings(store, viewer = null) {
-  const stored = await store.get('knock_settings', 'current');
+  const stored = await store.get('knock_settings', 'current'), loaded = await fromDoc(stored);
   return { settings: mergeSettings(stored?.settings || {}), defaults: DEFAULT_SETTINGS, updatedAt: stored?.updatedAt || null, updatedBy: stored?.updatedBy || null,
-    compensation: compensationView(stored, await fromDoc(stored), viewer) };
+    compensation: compensationView(stored, loaded, viewer), setter: setterTermsView(stored, loaded, viewer) };
 }
 
 /* Saves the settings field only. The owner's compensationApproval and planApproval live
@@ -176,6 +186,58 @@ export async function approveCompensation(store, owner, body, nowIso) {
     throw error;
   }
   return { duplicate: false, referenceOnly, compensation: compensationView(next, verified, owner) };
+}
+
+/* ---- Appointment-setter and estimator terms (owner only, D6b) ---- */
+
+/* The owner records setterApproval: the fixed SETTER_TERMS (13% setter + 7% estimator on a walkthrough a rep set, 7% on
+   a walkthrough an estimator sold directly), under the reference of the decision record. The request repeats the terms
+   the owner saw. It needs the door-to-door commission approval first (its pay cycle pays these shares). Nothing is
+   approved by default and no other path writes this field; until it verifies every setter and estimator share stays
+   held for review. Retrying the same request, or approving again, changes nothing; a new reference on terms that
+   already verify keeps reviewedBy/reviewedAt (a share earned since the approval keeps its earned time).
+   Body: { requestId, contract: SETTER_CONTRACT, reference, terms: SETTER_TERMS }. */
+export async function approveSetterTerms(store, owner, body, nowIso) {
+  requireOwner(owner);
+  const { requestId, contract, terms } = body || {};
+  if (!UUID.test(String(requestId || ''))) throw knockFailure('Missing request id. Reload and retry.', 400, 'knock_invalid_request');
+  if (contract !== SETTER_CONTRACT) throw knockFailure(`Only the ${SETTER_CONTRACT} terms can be approved here.`, 400, 'knock_approval_contract');
+  const reference = typeof body.reference === 'string' ? body.reference.trim() : '';
+  if (reference.length < 3 || reference.length > 120 || UNSAFE_TEXT.test(reference)) throw knockFailure('Give the approval a reference of 3 to 120 characters (the signed plan or decision record; no customer details).', 400, 'knock_approval_reference');
+  if (!validSetterTerms(terms)) throw knockFailure('The terms must be exactly the walkthrough-setting and estimator terms shown.', 400, 'knock_approval_terms');
+  const doc = await store.get('knock_settings', 'current');
+  const settings = await fromDoc(doc);
+  if (!settings.commission.verified) throw knockFailure('Approve the door-to-door commission terms and their pay cycle first; these shares are paid with them.', 409, 'knock_compensation_unapproved');
+  const approval = { contract, reference, reviewedBy: owner.user, reviewedAt: nowIso, terms: { ...SETTER_TERMS } };
+  const content = value => ({ contract: value?.contract, reference: value?.reference, terms: value?.terms });
+  const same = (a, b) => sameSettings(JSON.parse(JSON.stringify(content(a))), JSON.parse(JSON.stringify(content(b))));
+  const receiptId = `setter_terms_${requestId.toLowerCase()}`;
+  const replay = async () => {
+    const receipt = await store.get('knock_receipts', receiptId);
+    if (!receipt) return null;
+    if (receipt.kind !== 'setter_terms_approval' || !same(receipt, approval)) throw knockFailure('That request already recorded different terms. Reload and review again.', 409, 'knock_approval_conflict');
+    const current = await store.get('knock_settings', 'current');
+    return { duplicate: true, referenceOnly: receipt.referenceOnly === true, setter: setterTermsView(current, await fromDoc(current), owner) };
+  };
+  const prior = await replay();
+  if (prior) return prior;
+  const state = setterTermsState(doc, settings);
+  if (state.verified && same(doc.setterApproval, approval)) return { duplicate: true, referenceOnly: false, setter: setterTermsView(doc, settings, owner) };
+  const referenceOnly = state.verified;
+  if (referenceOnly) Object.assign(approval, { reviewedBy: doc.setterApproval.reviewedBy, reviewedAt: doc.setterApproval.reviewedAt });
+  const next = { ...doc, setterApproval: approval };
+  const previous = doc.setterApproval ? { reference: doc.setterApproval.reference ?? null, reviewedBy: doc.setterApproval.reviewedBy ?? null, reviewedAt: doc.setterApproval.reviewedAt ?? null } : null;
+  try {
+    await store.commit([
+      write.patch('knock_settings', 'current', { setterApproval: approval }, doc.__updateTime),
+      write.create('knock_receipts', receiptId, { kind: 'setter_terms_approval', ...approval, previous, referenceOnly, recordedBy: owner.user, recordedAt: nowIso }),
+    ]);
+  } catch (error) {
+    const replayed = await replay();
+    if (replayed) return replayed;
+    throw error;
+  }
+  return { duplicate: false, referenceOnly, setter: setterTermsView(next, settings, owner) };
 }
 
 /* ---- Territory ---- */
