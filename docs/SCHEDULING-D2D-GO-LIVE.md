@@ -67,7 +67,9 @@ Do these in order. Each step says where the switch lives, what it does, what mus
 
 **Before step 1 (developer):** deploy the merged commit everywhere, then publish the database rules and indexes with
 `firebase deploy --only firestore:rules,firestore:indexes --project egcw-1ec83` (see
-[GO-LIVE.md B4](GO-LIVE.md#b4-publish-firestore-rules-and-indexes)). This adds the index the door-to-door panel needs.
+[GO-LIVE.md B4](GO-LIVE.md#b4-publish-firestore-rules-and-indexes)). This adds the index the door-to-door panel needs,
+and the two that keep the crew schedule and a rep's My sales from re-reading old records (both still work, at the old
+read cost, until the indexes are built).
 
 1. **Faster schedule reads.** `EGC_DISPATCH_WINDOWED_READS=true` on Cloudflare Pages.
    - Does: Dispatch, bookings and the door-to-door bridge read only the dates they need instead of every job and

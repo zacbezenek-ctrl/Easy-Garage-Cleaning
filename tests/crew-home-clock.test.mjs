@@ -14,8 +14,10 @@ const home = read('crew/index.html'), outbox = read('crew/field-outbox.js');
 const script = home.slice(home.lastIndexOf('<script>') + '<script>'.length, home.lastIndexOf('</script>'));
 const ENTRY = { id: 'time-crew.one-abc123', employee: 'Crew.One', status: 'active', clockInAt: '2026-10-16T15:00:00.000Z', breaks: [], lastLocation: { lat: 40.5, lng: -105.1 }, locationStatus: 'job_page_single_fix', hourlyRate: 20 };
 
-function crewHome({ business = false, online = true, position = 'ok', withoutFix = false, active = null, refuse = null, confirm = true, indexedDB = undefined, down = false } = {}) {
-  const nodes = new Map(), posts = [], reads = [], listeners = {}, server = { active, withoutFix, down };
+// records: the timecard write answers with the saved timecard, as POST /api/employee-hub does (withJobTime(visiblePay(...)));
+// history: this person's other timecards in the full read.
+function crewHome({ business = false, online = true, position = 'ok', withoutFix = false, active = null, refuse = null, confirm = true, indexedDB = undefined, down = false, records = false, history = [] } = {}) {
+  const nodes = new Map(), posts = [], reads = [], listeners = {}, server = { active, withoutFix, down, closed: [...history] };
   const element = id => { if (!nodes.has(id)) nodes.set(id, { id, hidden: false, textContent: '', innerHTML: '', className: '', dataset: { businessHref: '/crew/prejob' }, setAttribute() {}, classList: { toggle() {} } }); return nodes.get(id); };
   const geolocation = { getCurrentPosition(resolve, reject) { if (position === 'ok') resolve({ coords: { latitude: 40.5852601, longitude: -105.0844233, accuracy: 12.4 } }); else reject(Object.assign(new Error(position), { code: position === 'denied' ? 1 : 2 })); } };
   const respond = (status, body) => new Response(JSON.stringify(body), { status, headers: { 'Content-Type': 'application/json' } });
@@ -32,8 +34,10 @@ function crewHome({ business = false, online = true, position = 'ok', withoutFix
         if (server.down) throw new TypeError('Failed to fetch');
         const body = JSON.parse(init.body); posts.push(body);
         if (refuse) return respond(refuse.status, { ok: false, error: refuse.error });
-        if (body.data.clockOutAt) server.active = null; else server.active = { ...ENTRY, id: body.id };
-        return respond(200, { ok: true });
+        let record;
+        if (body.data.clockOutAt) { record = { ...server.active, clockOutAt: body.data.clockOutAt, status: 'submitted' }; if (records) server.closed.push(record); server.active = null; }
+        else server.active = record = records ? { ...ENTRY, id: body.id, clockInAt: body.data.deviceCapturedAt, ...(body.data.lastLocation ? { lastLocation: body.data.lastLocation, locationStatus: body.data.locationStatus } : { lastLocation: null, locationStatus: body.data.locationStatus }), jobTime: { clockInLocation: body.data.lastLocation ? 'shared' : 'missing' } } : { ...ENTRY, id: body.id };
+        return respond(200, { ok: true, ...(records ? { record } : {}) });
       }
       throw new Error(`Unexpected ${init.method || 'GET'} ${path}`);
     },
@@ -42,7 +46,7 @@ function crewHome({ business = false, online = true, position = 'ok', withoutFix
       async fetch(path) {
         reads.push(path);
         if (path === '/api/crew-jobs') return Response.json({ ok: true, jobs: [] });
-        if (path === '/api/employee-hub') return Response.json({ ok: true, collections: { timeEntries: server.active ? [server.active] : [] }, clockInWithoutFix: server.withoutFix });
+        if (path === '/api/employee-hub') return Response.json({ ok: true, collections: { timeEntries: [...server.closed, ...(server.active ? [server.active] : [])] }, clockInWithoutFix: server.withoutFix });
         throw new Error(`Unexpected ${path}`);
       },
     },
@@ -182,4 +186,54 @@ test('a time action the connection dropped stays on this phone and is sent once,
   const again = crewHome({ indexedDB, active: reopened.server.active });
   await again.context.openCrewHome();
   assert.equal(again.posts.length, 0, 'nothing is sent twice');
+});
+
+// READ-BUDGET (review finding read-budget-perf-2): GET /api/employee-hub without a view decrypts every Employee Hub record.
+// A clock action answered with its saved timecard updates the card and the pay estimate on the phone instead of reading
+// all of them again, and the card reads exactly as a fresh full read of the same records shows it.
+const fullReads = page => page.reads.filter(path => path === '/api/employee-hub').length;
+const withoutNote = html => html.replace(/<small class="clock-note[^"]*" role="status">[^<]*<\/small>/, '');
+test('a clock action answered with its timecard costs no second full Employee Hub read; the card matches a fresh read', async () => {
+  const hour = 3600000, now = Date.now();
+  // This person's finished shift earlier in the current pay period (4 hours at $20) and an open one since 2 hours ago.
+  const done = { ...ENTRY, id: 'time-crew.one-done', status: 'approved', clockInAt: new Date(now - 6 * hour).toISOString(), clockOutAt: new Date(now - 2.5 * hour).toISOString(), breaks: [{ startAt: new Date(now - 5 * hour).toISOString(), endAt: new Date(now - 4.5 * hour).toISOString() }], jobTime: { clockInLocation: 'shared' } };
+  const page = crewHome({ records: true, history: [done], active: { ...ENTRY, clockInAt: new Date(now - 2 * hour).toISOString(), jobTime: { clockInLocation: 'shared' } } });
+  await page.context.openCrewHome();
+  assert.equal(fullReads(page), 1, 'the home reads the Hub once when it opens');
+  assert.match(page.card(), /<strong>Clocked in<\/strong><small>2\.00 hours today · location shared once at clock-in<\/small>/);
+  assert.match(page.card(), /<span>Estimated pay<\/span><strong>\$\d+\.\d\d<\/strong><small>\d+\.\d\d hours · current two-week period<\/small>/);
+  await page.context.crewClock('clock_out');
+  assert.equal(page.posts.length, 1);
+  assert.equal(fullReads(page), 1, 'clocking out reads nothing more: the saved timecard closes the shift and the pay estimate');
+  assert.match(page.card(), /<strong>Clocked out<\/strong>.*Clocked out\. Your shift is submitted for approval\./);
+  const fresh = crewHome({ records: true, history: page.server.closed });
+  await fresh.context.openCrewHome();
+  assert.equal(withoutNote(page.card()), withoutNote(fresh.card()), 'the same card a full read of the saved timecards shows');
+  await page.context.crewClock('clock_in');
+  assert.equal(fullReads(page), 1, 'clocking in reads nothing more either');
+  const freshIn = crewHome({ records: true, history: page.server.closed, active: page.server.active });
+  await freshIn.context.openCrewHome();
+  assert.match(page.card(), /<strong>Clocked in<\/strong><small>0\.00 hours today · location shared once at clock-in<\/small>/);
+  assert.equal(withoutNote(page.card()), withoutNote(freshIn.card()));
+  // Without the timecard in the answer (an older server, or an already-applied replay) the Hub is read again, as before.
+  const legacy = crewHome();
+  await legacy.context.openCrewHome();
+  await legacy.context.crewClock('clock_in');
+  assert.equal(fullReads(legacy), 2);
+});
+
+test('a queued time action sent as the home opens is applied from its answer: one full Employee Hub read, not two', async () => {
+  const indexedDB = fakeIndexedDB();
+  const dropped = crewHome({ indexedDB, down: true, records: true });
+  await dropped.context.openCrewHome();
+  await dropped.context.crewClock('clock_in');
+  assert.equal(dropped.posts.length, 0);
+  const reopened = crewHome({ indexedDB, records: true });
+  await reopened.context.openCrewHome();
+  assert.equal(reopened.posts.length, 1, 'sent once when the home opens online');
+  assert.equal(fullReads(reopened), 1, 'before: a second full read after the flush');
+  assert.match(reopened.card(), /<strong>Clocked in<\/strong><small>[\d.]+ hours today · location shared once at clock-in<\/small>/);
+  const fresh = crewHome({ records: true, active: reopened.server.active });
+  await fresh.context.openCrewHome();
+  assert.equal(reopened.card(), fresh.card());
 });

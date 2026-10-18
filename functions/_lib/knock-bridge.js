@@ -183,6 +183,11 @@ const estimatorQuery = (startDate, days) => ({ requiredSkills: ESTIMATOR_SKILL, 
 
 /* ---------- rep-facing searches ---------- */
 
+/* READ-BUDGET: every bridge search shares the dispatch store's openings snapshot cache (dispatch-openings.js), so the
+   sale form, the walkthrough form, a second package length and the booking's own search reuse one snapshot while the
+   schedule is unchanged: the guard, the day locks, the roster and the rules are read again, the jobs window is not. */
+const searchOptions = store => ({ authorize: bridgeAuthorize, booker: true, ...(store?.openingsCache instanceof Map ? { cache: store.openingsCache } : {}) });
+
 /* GET /api/knock-crew-openings: crew starts on and after the sale's earliest job date (the day after the right to
    cancel ends), for the package's length. query: from (YYYY-MM-DD), package, days (1-14, default 7). */
 export async function crewSlotsForRep(store, settings, query = {}, now = new Date()) {
@@ -191,7 +196,7 @@ export async function crewSlotsForRep(store, settings, query = {}, now = new Dat
   const from = validDate(query.from) && query.from > earliest ? query.from : earliest;
   const days = Math.min(CREW_SLOT_MAX_DAYS, Math.max(1, Number.parseInt(query.days, 10) || CREW_SLOT_DAYS));
   const pkg = PACKAGES.includes(query.package) ? query.package : null, minutes = jobMinutes(pkg);
-  const found = await dispatchOpenings(store, BRIDGE_ACTOR, { crews: 'auto', kind: 'job', startDate: from, endDate: addDays(from, days), durationMinutes: String(minutes) }, now, { authorize: bridgeAuthorize, booker: true });
+  const found = await dispatchOpenings(store, BRIDGE_ACTOR, { crews: 'auto', kind: 'job', startDate: from, endDate: addDays(from, days), durationMinutes: String(minutes) }, now, searchOptions(store));
   return { earliestJobDate: earliest, from, days, minutes, slots: repCrewSlots(found.candidates, { minutes }) };
 }
 
@@ -200,7 +205,7 @@ export async function crewSlotsForRep(store, settings, query = {}, now = new Dat
 export async function walkthroughSlotsForRep(store, env, rep, now = new Date()) {
   const today = denverToday(now), roster = await store.roster(), ids = estimatorIds(roster, env, rep?.repKey);
   if (!ids.length) return { from: today, days: WALKTHROUGH_SLOT_DAYS, minutes: WALKTHROUGH_MINUTES, slots: [] };
-  const found = await dispatchOpenings(estimatorStore(store, ids, roster), BRIDGE_ACTOR, estimatorQuery(today, WALKTHROUGH_SLOT_DAYS), now, { authorize: bridgeAuthorize, booker: true });
+  const found = await dispatchOpenings(estimatorStore(store, ids, roster), BRIDGE_ACTOR, estimatorQuery(today, WALKTHROUGH_SLOT_DAYS), now, searchOptions(store));
   const names = new Map(roster.map(person => [person.id, firstName(person.name)])), refs = new Map(await Promise.all(ids.map(async id => [id, await estimatorRef(id, env)])));
   const seen = new Set(), slots = [];
   for (const slot of expand(found.candidates, WALKTHROUGH_MINUTES, WALKTHROUGH_DAY.end, WALKTHROUGH_STEPS_PER_GAP)) {
@@ -379,7 +384,7 @@ async function bookSaleJob(store, kstore, sale, { env, now, confirmed = false })
   if (auto) {
     // Where a crew is free: the asked-for time when any crew is, else the nearest other start (dispatch re-checks).
     // A failed search is not "no crew": it is thrown, retried when it is a passing fault, never booked blind.
-    const found = await dispatchOpenings(store, BRIDGE_ACTOR, { crews: 'auto', kind: 'job', startDate: date, endDate: addDays(date, SEARCH_DAYS), durationMinutes: String(minutes) }, now, { authorize: bridgeAuthorize, booker: true });
+    const found = await dispatchOpenings(store, BRIDGE_ACTOR, { crews: 'auto', kind: 'job', startDate: date, endDate: addDays(date, SEARCH_DAYS), durationMinutes: String(minutes) }, now, searchOptions(store));
     const pick = nearestStart(found.candidates, { date, time, minutes });
     if (pick) ({ date, time } = pick);
   }
@@ -407,8 +412,10 @@ async function bookSaleJob(store, kstore, sale, { env, now, confirmed = false })
     ...(auto ? {} : { soldNeedsCrew: { at: nowIso, by: BRIDGE_ACTOR.user, requestId, reason: 'auto_assign_off' } }) });
   // The office cancelled the sale while this was searching: no job is made for a customer who used the right to cancel.
   if ((await kstore.get('knock_sales', sale.id))?.status === 'cancelled') throw knockFailure('That sale is cancelled.', 409, 'knock_sale_cancelled');
+  // READ-BUDGET: a no-free-crew answer's alternatives would repeat the search above (same week) and the rep never sees
+  // them, so none are searched (crewAlternatives:false).
   const result = await mutateDispatch(attributedStore(store, requestId, attribution), BRIDGE_ACTOR, input, nowIso,
-    { authorize: bridgeAuthorize, ...(auto ? { autoCrew: true } : {}), enforce: warning => warning.code !== 'crew_size_short' });
+    { authorize: bridgeAuthorize, ...(auto ? { autoCrew: true, crewAlternatives: false } : {}), enforce: warning => warning.code !== 'crew_size_short' });
   await supersedeWalkthroughs(kstore, walkthroughs, sale.id, nowIso);
   return bookedSale(result.job, result.autoCrew || null, customerId, requested);
 }
@@ -543,7 +550,7 @@ async function bookWalkthroughVisit(store, record, { env, now, confirmed = false
   // later), never read as "nobody free", so the rep's pick is not given up for a storage hiccup.
   let refused = null;
   for (let attempt = 0; ids.length && attempt < 2; attempt++) {
-    const found = await dispatchOpenings(estimatorStore(store, ids, attempt ? null : roster), BRIDGE_ACTOR, estimatorQuery(date, SEARCH_DAYS), now, { authorize: bridgeAuthorize, booker: true });
+    const found = await dispatchOpenings(estimatorStore(store, ids, attempt ? null : roster), BRIDGE_ACTOR, estimatorQuery(date, SEARCH_DAYS), now, searchOptions(store));
     const pick = nearestStart(found.candidates, { date, time, minutes: WALKTHROUGH_MINUTES, dayEnd: WALKTHROUGH_DAY.end, prefer: row => row.employeeIds?.[0] === wanted });
     const estimator = pick?.row.employeeIds?.[0];
     if (!pick || !ids.includes(estimator)) break;
@@ -748,7 +755,7 @@ export async function moveSaleJob(store, sale, { jobDate, jobStartTime = null },
     try {
       const result = await mutateDispatch(store, BRIDGE_ACTOR, { action: 'schedule.update', requestId, jobId: current.id, expectedRevision: current.revision,
         changes: { date: jobDate, time, endDate: jobDate, endTime: hhmm(end) } }, nowIso,
-      { authorize: bridgeAuthorize, ...(crewAutoAssignEnabled(env) ? { autoCrew: true } : {}), enforce: warning => warning.code !== 'crew_size_short' });
+      { authorize: bridgeAuthorize, ...(crewAutoAssignEnabled(env) ? { autoCrew: true, crewAlternatives: false } : {}), enforce: warning => warning.code !== 'crew_size_short' });
       current = { ...current, ...result.job };
       autoCrew = result.autoCrew || null;
     } catch (error) {

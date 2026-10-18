@@ -67,7 +67,10 @@ async function myMoney({ store, rep, settings, nowMs, params, env, dispatch = nu
   const commissions = new Map(saleCommissions(own.sales, settings.commission, { now: nowMs }).map(c => [c.saleId, c]));
   const sync = await saleSyncSummaries(store, own.sales);
   // KNOCK-BRIDGE: each statement line names its Hub job's day, crew label and status (one masked read of those jobs).
-  const hub = dispatch && knockJobBridgeEnabled(env) ? await hubJobsForSales(dispatch(env), own.sales).catch(() => new Map()) : null;
+  // READ-BUDGET: only for the lines My money lists (sold or paid in the pay period asked for, crew/knock-stats-ui.js),
+  // never every bridged sale of the season; any other sale keeps its booking view without the live read.
+  const listed = ({ start, end }) => sale => sale.saleDate >= start && sale.saleDate <= end || Boolean(sale.paidAt) && zonedDate(sale.paidAt) >= start && zonedDate(sale.paidAt) <= end;
+  const hub = dispatch && knockJobBridgeEnabled(env) ? await hubJobsForSales(dispatch(env), own.sales.filter(listed(periods[0].period))).catch(() => new Map()) : null;
   const bySale = own.sales.sort((a, b) => String(b.soldAt).localeCompare(String(a.soldAt))).map(sale => ({
     id: sale.id, saleDate: sale.saleDate, address: sale.address, package: sale.package, ticket: sale.ticket, status: sale.status,
     collectedAmount: sale.collectedAmount, cancelDeadlineDate: sale.cancelDeadlineDate, jobDate: sale.jobDate,

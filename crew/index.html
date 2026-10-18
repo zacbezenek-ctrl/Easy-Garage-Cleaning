@@ -191,7 +191,7 @@ function hours(entry){const start=Date.parse(entry.clockInAt||''),end=Date.parse
 // outbox (crew/field-outbox.js) posts to /api/employee-hub, the clock-in takes one location fix (nothing tracks it after),
 // and EGC_CLOCK_IN_WITHOUT_FIX (clockInWithoutFix from /api/employee-hub) decides whether a phone that finds no fix may
 // clock in anyway, flagged for a manager. Business users clock from the employee time clock, as on the job page.
-const clock={entry:null,withoutFix:false,pending:[],blocked:0,pay:null,failed:false,loaded:false,busy:false,locating:false,note:'',error:false,outbox:null};
+const clock={entry:null,entries:[],withoutFix:false,pending:[],blocked:0,pay:null,failed:false,loaded:false,busy:false,locating:false,note:'',error:false,outbox:null};
 const locationNote=entry=>({missing:'no location at clock-in',shared:'location shared once at clock-in',tracked:'last tracked location on file'})[entry.jobTime?.clockInLocation||(entry.locationReview==='location_unavailable_at_clock_in'?'missing':!entry.lastLocation?'':entry.locationStatus==='tracking'?'tracked':'shared')]||'location not tracked';
 function clockOutbox(){if(!window.EGCFieldOutbox)return null;try{return clock.outbox||(clock.outbox=window.EGCFieldOutbox.create())}catch{return null}}
 // Queued clock actions (shown over the shift) and refused ones, which wait for Retry or Discard in Today's work.
@@ -213,8 +213,15 @@ function renderOverview(profile){
   const detail=shift&&active?`${hours(active).toFixed(2)} hours today · ${locationNote(active)}`:shift?'Clock-in waiting to sync':clockHere(profile)?'Clocking in shares your location once':'Open My Hub when your shift starts · clocking in shares your location once';
   host.innerHTML=`<article class="status-card ${shift?'live':''}"><span>Time clock</span><strong>${shift?'Clocked in':'Clocked out'}</strong><small>${detail}</small>${clockControls(profile,shift)}</article><article class="status-card"><span>Estimated pay</span><strong>${money(pay.gross)}</strong><small>${pay.hours.toFixed(2)} hours · current two-week period</small></article>`;
 }
+// The shift and this pay period's estimate from this person's own timecards (clock.entries keeps them for appliedHere).
+function showEntries(profile,timeEntries){const entries=timeEntries.filter(entry=>normalized(entry.employee)===normalized(profile.user)),active=entries.find(entry=>entry.status==='active'&&!entry.clockOutAt),start=periodStart(),end=new Date(start);end.setDate(start.getDate()+14);const current=entries.filter(entry=>{const at=Date.parse(entry.clockInAt||'');return at>=start&&at<end}),gross=current.reduce((sum,entry)=>sum+hours(entry)*Number(entry.hourlyRate||0)+Number(entry.bonus||0)+Number(entry.tips||0),0),totalHours=current.reduce((sum,entry)=>sum+hours(entry),0);Object.assign(clock,{entries,entry:active||null,pay:{gross,hours:totalHours},failed:false})}
+// READ-BUDGET: a timecard write answers with the saved timecard exactly as the full read shows it (POST /api/employee-hub),
+// so a flush whose every sent action was a clock action answered that way updates the shift and the pay estimate here,
+// after a full read that loaded, instead of reading every Employee Hub record again. Anything else (a refusal, an action
+// left waiting, a job action, an already-applied answer without a timecard) reads the Hub again, as before.
+function appliedHere(profile,result){if(clock.failed||!result||result.stopped||!result.applied?.length||!result.applied.every(row=>row.item?.kind==='clock'&&typeof row.data?.record?.id==='string'&&normalized(row.data.record.employee)===normalized(profile.user)))return false;const entries=[...clock.entries];for(const {data:{record}} of result.applied){const index=entries.findIndex(entry=>entry.id===record.id);if(index<0)entries.push(record);else entries[index]=record}showEntries(profile,entries);return true}
 // Time actions still waiting on this phone are sent once per load, in order, as Today's work does when it opens.
-async function loadEmployeeData(profile,sync=true){try{const response=await EGCHubAuth.fetch('/api/employee-hub',{cache:'no-store'}),data=await response.json();if(!response.ok||!data.ok)throw new Error(data.error||'Hub data unavailable');const entries=(data.collections?.timeEntries||[]).filter(entry=>normalized(entry.employee)===normalized(profile.user)),active=entries.find(entry=>entry.status==='active'&&!entry.clockOutAt),start=periodStart(),end=new Date(start);end.setDate(start.getDate()+14);const current=entries.filter(entry=>{const at=Date.parse(entry.clockInAt||'');return at>=start&&at<end}),gross=current.reduce((sum,entry)=>sum+hours(entry)*Number(entry.hourlyRate||0)+Number(entry.bonus||0)+Number(entry.tips||0),0),totalHours=current.reduce((sum,entry)=>sum+hours(entry),0);Object.assign(clock,{entry:active||null,withoutFix:data.clockInWithoutFix===true,pay:{gross,hours:totalHours},failed:false})}catch{clock.failed=true}await clockPending(profile);if(sync&&clock.pending.length&&clockHere(profile)&&navigator.onLine&&!clock.busy){try{await clockOutbox().flush({user:profile.user,transport:window.EGCFieldOutbox.httpTransport()})}catch{}return loadEmployeeData(profile,false)}renderOverview(profile)}
+async function loadEmployeeData(profile,sync=true){try{const response=await EGCHubAuth.fetch('/api/employee-hub',{cache:'no-store'}),data=await response.json();if(!response.ok||!data.ok)throw new Error(data.error||'Hub data unavailable');showEntries(profile,data.collections?.timeEntries||[]);clock.withoutFix=data.clockInWithoutFix===true}catch{clock.failed=true}await clockPending(profile);if(sync&&clock.pending.length&&clockHere(profile)&&navigator.onLine&&!clock.busy){let result=null;try{result=await clockOutbox().flush({user:profile.user,transport:window.EGCFieldOutbox.httpTransport()})}catch{}if(!appliedHere(profile,result))return loadEmployeeData(profile,false);await clockPending(profile)}renderOverview(profile)}
 function currentPosition(options={enableHighAccuracy:true,maximumAge:60000,timeout:15000}){return new Promise((resolve,reject)=>{if(!navigator.geolocation)return reject(Object.assign(new Error('Location is unavailable.'),{code:2}));navigator.geolocation.getCurrentPosition(resolve,reject,options)})}
 // One position as the shift starts; a timeout or no fix is tried once more at lower accuracy, a denied permission is not.
 async function clockInPosition(){try{return await currentPosition()}catch(error){if(error?.code===1)throw error;return currentPosition({enableHighAccuracy:false,maximumAge:300000,timeout:10000})}}
@@ -224,7 +231,7 @@ async function crewClock(op){
   if(!navigator.onLine)return renderOverview(profile);
   // Busy before the first await, as crew/job.js does, so a second tap while the queue is read queues nothing.
   clock.busy=true;say('');renderOverview(profile);
-  let sent=false;
+  let sent=false,flushed=null;
   try{
     await clockPending(profile);
     const shift=shiftView();
@@ -240,7 +247,7 @@ async function crewClock(op){
       payload={op,entryId:`time-${user.trim().toLowerCase()}-${Date.now().toString(36)}`,deviceCapturedAt:new Date().toISOString(),...(position?{lastLocation:{lat:Number(position.coords.latitude.toFixed(6)),lng:Number(position.coords.longitude.toFixed(6)),accuracy:Math.round(position.coords.accuracy||0)}}:{})};
     }else payload={op,entryId:shift.id,deviceCapturedAt:new Date().toISOString()};
     const requestId=crypto.randomUUID();sent=true;const queued=await outbox.enqueue({requestId,kind:'clock',user,jobId:'',payload});
-    const result=await outbox.flush({user,transport:Outbox.httpTransport(),direct:queued.direct?requestId:''}),stop=result.stopped;
+    const result=flushed=await outbox.flush({user,transport:Outbox.httpTransport(),direct:queued.direct?requestId:''}),stop=result.stopped;
     if(result.applied.some(row=>row.item.requestId===requestId))say(op==='clock_out'?'Clocked out. Your shift is submitted for approval.':payload.lastLocation?'Clocked in. Your location was shared once; nothing tracks it during your shift.':'Clocked in without a location. A manager will review this shift.');
     else if(stop?.item?.requestId===requestId&&stop.discarded)say(`${stop.error?.message||'The time clock did not accept this.'} Nothing was recorded.`,true);
     else if(stop?.reason==='auth')say('Your session ended. Sign in again; the time action stays on this phone.',true);
@@ -248,7 +255,7 @@ async function crewClock(op){
     else if(stop?.reason==='rejected')say('A saved action was not accepted. Open any job in Today’s work to retry or discard it.',true);
     else{say('Saved on this phone. It syncs in order when the connection is back.');try{const registration=await navigator.serviceWorker?.getRegistration('/crew/');await registration?.sync?.register(Outbox.SYNC_TAG)}catch{}}
   }catch(error){say(error?.message||'The time clock could not save this. Try again.',true)}
-  finally{clock.busy=false;clock.locating=false;if(sent)await loadEmployeeData(profile,false);else renderOverview(profile)}
+  finally{clock.busy=false;clock.locating=false;if(!sent)renderOverview(profile);else if(appliedHere(profile,flushed)){await clockPending(profile);renderOverview(profile)}else await loadEmployeeData(profile,false)}
 }
 async function loadAssignedJobs(profile){try{const response=await EGCHubAuth.fetch('/api/crew-jobs',{cache:'no-store'}),data=await response.json();if(!response.ok||!data.ok)throw new Error(data.error||'Schedule unavailable');const walkthroughs=EGCHubAuth.canRunWalkthrough(profile.user),rows=(data.jobs||[]).filter(job=>job.recordType!=='schedule_lock'&&job.recordType!=='employee_hub_v2'&&job.recordType!=='crew_availability'&&job.type!=='availability'&&(walkthroughs||job.type!=='walkthrough')&&!terminal.has(job.pipelineStatus||job.status||'')&&String(job.date||'')>=today()&&assigned(job,profile)).sort((a,b)=>String(a.date+(a.time||'')).localeCompare(String(b.date+(b.time||''))));showJobs(rows)}catch{showScheduleUnavailable(profile)}}
 function showScheduleUnavailable(profile){

@@ -92,6 +92,25 @@ export async function dispatchRoster(env) {
   return profiles.sort((a, b) => a.name.localeCompare(b.name));
 }
 
+/* READ-BUDGET: one small openings snapshot cache per Firestore fetcher: one per isolate in production (firestoreFetch),
+   one per fake in tests. It holds no answer: dispatch-openings.js reuses an entry only while the dispatch guard and
+   every day lock it covers are unchanged, within a few minutes, and reads the roster and rules again each time. */
+const openingsCaches = new WeakMap();
+// spanningJobs: when Firestore last refused it for want of its index, per fetcher, so a missing index costs one refused
+// query every INDEX_RETRY_MS rather than one on every schedule read.
+const spanningRefused = new WeakMap(), INDEX_RETRY_MS = 10 * 60000;
+// Firestore refuses a query no index can serve with HTTP 400 FAILED_PRECONDITION, as {error} or as [{error}].
+async function indexRefusal(response) {
+  if (response.status !== 400) return false;
+  const body = await response.json().catch(() => null), error = Array.isArray(body) ? body[0]?.error : body?.error;
+  return error?.status === 'FAILED_PRECONDITION';
+}
+function openingsCacheFor(fetcher) {
+  if (typeof fetcher !== 'function') return null;
+  if (!openingsCaches.has(fetcher)) openingsCaches.set(fetcher, new Map());
+  return openingsCaches.get(fetcher);
+}
+
 export function dispatchStorage(env, fetcher = firestoreFetch) {
   async function send(url, options = {}) {
     try { return await fetcher(env, url, { ...options, signal: AbortSignal.timeout(20000) }); }
@@ -153,19 +172,59 @@ export function dispatchStorage(env, fetcher = firestoreFetch) {
     }
     throw failure('dispatch_storage_incomplete', 'The schedule query did not finish. Retry.');
   }
+  // READ-BUDGET (crew schedule): the jobs rows starting before startDate and ending on or after it (multi-day work running
+  // into a window that starts then), one query with ranges on endDate and date. Firestore serves it only from the
+  // composite index jobs(endDate ASC, date ASC) in firestore.indexes.json; until that is deployed it refuses the query
+  // (FAILED_PRECONDITION) and this throws dispatch_index_required, so the caller reads the longer date range instead.
+  // Masked, fully paginated and verified like datedJobs: anything else fails closed.
+  async function spanningJobs(startDate, fields, limit = 5000) {
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(startDate)) throw failure('dispatch_range_invalid', 'Choose a valid date range.', 400);
+    if (!Array.isArray(fields) || !fields.includes('date') || !fields.includes('endDate')) throw failure('dispatch_storage_mask_required', 'A multi-day jobs query must name the fields it reads, including date and endDate.');
+    const waiting = () => failure('dispatch_index_required', 'The multi-day schedule query is waiting for its index.');
+    if (typeof fetcher === 'function' && Date.now() - (spanningRefused.get(fetcher) ?? -Infinity) < INDEX_RETRY_MS) throw waiting();
+    const before = new Date(Date.parse(`${startDate}T12:00:00Z`) - 86400000).toISOString().slice(0, 10);
+    const filter = (fieldPath, op, stringValue) => ({ fieldFilter: { field: { fieldPath }, op, value: { stringValue } } });
+    const rows = [], ids = new Set();
+    let after = null;
+    for (let page = 0; page <= Math.ceil(limit / 500); page++) {
+      const response = await send(`${BASE}:runQuery`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ structuredQuery: { from: [{ collectionId: 'jobs' }], select: { fields: fields.map(fieldPath => ({ fieldPath })) },
+        where: { compositeFilter: { op: 'AND', filters: [filter('endDate', 'GREATER_THAN_OR_EQUAL', startDate), filter('date', 'LESS_THAN_OR_EQUAL', before)] } },
+        orderBy: ['endDate', 'date', '__name__'].map(fieldPath => ({ field: { fieldPath }, direction: 'ASCENDING' })), limit: 500,
+        ...(after ? { startAt: { values: [{ stringValue: after.endDate }, { stringValue: after.date }, { referenceValue: after.name }], before: false } } : {}) } }) });
+      if (!response.ok) {
+        if (!await indexRefusal(response)) throw failure('dispatch_storage_unavailable', 'The dispatch records could not be queried. Retry before scheduling.');
+        if (typeof fetcher === 'function') spanningRefused.set(fetcher, Date.now());
+        throw waiting();
+      }
+      const results = await response.json().catch(() => null);
+      if (!Array.isArray(results) || results.some(result => !result || typeof result !== 'object' || Array.isArray(result)) || !results.some(result => result.document !== undefined || typeof result.readTime === 'string' && result.readTime)) throw failure('dispatch_storage_incomplete', 'The schedule query returned an incomplete answer. Retry.');
+      const documents = results.filter(result => result.document !== undefined).map(result => result.document);
+      for (const document of documents) {
+        const row = decode(document, 'jobs');
+        if (ids.has(row.id) || rows.length >= limit || typeof row.endDate !== 'string' || row.endDate < startDate || typeof row.date !== 'string' || row.date > before) throw failure('dispatch_storage_incomplete', 'The schedule query could not be verified. Retry.');
+        ids.add(row.id); rows.push(row);
+      }
+      if (documents.length < 500) return rows;
+      after = { name: documents.at(-1).name, endDate: rows.at(-1).endDate, date: rows.at(-1).date };
+    }
+    throw failure('dispatch_storage_incomplete', 'The schedule query did not finish. Retry.');
+  }
   return {
     roster: () => dispatchRoster(env),
     jobs: () => scan('jobs', JOB_FIELDS),
     // EGC_DISPATCH_WINDOWED_READS: 'full' (default), 'shadow' or 'windowed'.
     // Windowed and indexed reads are complete and fail closed like the scans.
     windowedReads: dispatchReadMode(env),
-    jobsNear: (startDate, endDate) => windowedJobs(query('jobs', JOB_FIELDS), startDate, endDate),
+    // `bound` (optional): the bounded read, rows starting no later than it (dispatch-window-reads.js READ-BUDGET).
+    jobsNear: (startDate, endDate, bound = null) => windowedJobs(query('jobs', JOB_FIELDS), startDate, endDate, bound),
+    // READ-BUDGET: the openings snapshot cache a caller may opt into (dispatch-openings.js options.cache).
+    openingsCache: openingsCacheFor(fetcher),
     // Every jobs row whose field equals value, whatever its dates (saveJobReads).
     jobsWhere: (field, value) => query('jobs', JOB_FIELDS)({ field, op: 'EQUAL', value }),
     customersByKey: key => query('customers', [...CUSTOMER_FIELDS, 'searchKeys'], 20000)({ field: 'searchKeys', op: 'ARRAY_CONTAINS', value: key }),
     // CREW-SCHEDULE (functions/api/crew-schedule.js): the crew records alone, and the work dated in a bounded window.
     crewResources: () => query('dispatchResources', CREW_RESOURCE_FIELDS, 2000)({ field: 'recordType', op: 'EQUAL', value: 'crew' }),
-    datedJobs,
+    datedJobs, spanningJobs,
     customerKeyCoverage: () => customerCoverage(async body => aggregateCount(await post('runAggregationQuery', body))),
     async customerRecords(fields) {
       if (!Array.isArray(fields) || !fields.length || fields.some(field => typeof field !== 'string' || !field)) throw failure('dispatch_storage_mask_required', 'A customers scan must name the fields it reads.');

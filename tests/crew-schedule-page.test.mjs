@@ -38,19 +38,19 @@ async function answer(who, url, jobs = JOBS) {
   return Response.json(body);
 }
 
-async function page({ respond, hint = null, online = true, prefs = {} } = {}) {
-  const document = createDocument(), main = document.createElement('main'), calls = [], local = storage(prefs);
+async function page({ respond, hint = null, online = true, prefs = {}, clock = { now: NOW } } = {}) {
+  const document = createDocument(), main = document.createElement('main'), calls = [], local = storage(prefs), listeners = {};
   main.id = 'schedule-main'; document.body.append(main);
-  class FixedDate extends Date { constructor(...args) { super(...(args.length ? args : [NOW])); } static now() { return NOW; } }
+  class FixedDate extends Date { constructor(...args) { super(...(args.length ? args : [clock.now])); } static now() { return clock.now; } }
   const context = vm.createContext({ document, console, URL, URLSearchParams, Intl, Date: FixedDate, Promise, JSON, Math, Number, String, Array, Object, Set, Map, Error, Boolean, encodeURIComponent, AbortController, setTimeout, clearTimeout,
-    navigator: { onLine: online }, localStorage: local, addEventListener() {},
+    navigator: { onLine: online }, localStorage: local, addEventListener(type, listener) { listeners[type] = listener; },
     fetch: async (url, init) => { calls.push(url); assert.equal(init.credentials, 'same-origin'); return respond(url); } });
   context.window = context;
   if (hint) context.EGCHubAuth = { profile: () => hint };
   vm.runInContext(source, context);
   const settle = async () => { for (let index = 0; index < 20; index++) await new Promise(resolve => setImmediate(resolve)); };
   await settle();
-  return { document, main, calls, local, settle, context };
+  return { document, main, calls, local, settle, context, listeners, clock };
 }
 // Each text node is a separate word group, as a browser lays the row's blocks out.
 const leaves = node => node.nodeType === 3 ? [node.data] : node.childNodes.flatMap(leaves);
@@ -167,7 +167,7 @@ test('the page is a gated staff page that loads its own versioned script and the
   for (const path of ['/crew/schedule', '/crew/schedule.html', '/crew/schedule.js']) assert.equal(staffGatedPath(path), true, path);
   assert.match(html, /<meta name="robots" content="noindex,nofollow">/);
   assert.match(html, /<link rel="stylesheet" href="\/crew\/crew-brand\.css\?v=[^"]+">/);
-  assert.match(html, /<script src="\/crew\/hub-auth\.js\?v=[^"]+" defer><\/script>\n<script src="\/crew\/schedule\.js\?v=20261017boardbridge" defer><\/script>/);
+  assert.match(html, /<script src="\/crew\/hub-auth\.js\?v=[^"]+" defer><\/script>\n<script src="\/crew\/schedule\.js\?v=20261018readfix" defer><\/script>/);
   assert.match(html, /<main id="schedule-main">/);
   assert.match(html, /\.job-row\{[^}]*min-height:64px/);
   assert.match(html, /:is\(\.seg,\.chips\) button:focus-visible/);
@@ -175,4 +175,36 @@ test('the page is a gated staff page that loads its own versioned script and the
   assert.doesNotMatch(source, /sessionStorage|indexedDB/, 'no schedule data is kept on the phone');
   const home = read('crew/index.html');
   assert.match(home, /<a class="tool hot" id="schedule-tool" href="\/crew\/schedule">/, 'the crew home links the schedule');
+});
+
+// READ-BUDGET (review finding read-budget-perf-3): a phone whose signal comes and goes in a garage fires offline and
+// online again and again. A schedule loaded less than five minutes ago for the same days only loses the offline notice;
+// an older one, or one that failed, is read again as before.
+test('back online, a schedule loaded under five minutes ago is not read again; an older or failed one is', async () => {
+  const clock = { now: NOW };
+  const view = await page({ respond: url => answer('ben', url), clock });
+  assert.equal(view.calls.length, 1);
+  const goOffline = () => { view.context.navigator.onLine = false; view.listeners.offline(); };
+  const goOnline = async () => { view.context.navigator.onLine = true; await view.listeners.online(); await view.settle(); };
+  goOffline();
+  assert.match(text(view.main), /offline\. The crew schedule loads when you reconnect\./);
+  assert.equal(view.main.querySelectorAll('.job-row').length, 2, 'the loaded schedule stays on screen');
+  clock.now = NOW + 4 * 60000;
+  await goOnline();
+  assert.equal(view.calls.length, 1, 'four minutes later: no new read');
+  assert.doesNotMatch(text(view.main), /offline/, 'the offline notice goes');
+  assert.equal(view.main.querySelectorAll('.job-row').length, 2);
+  goOffline();
+  clock.now = NOW + 6 * 60000;
+  await goOnline();
+  assert.equal(view.calls.length, 2, 'six minutes after the load: read again, as before');
+  assert.doesNotMatch(text(view.main), /offline/);
+  // A load that failed is read again at once when the connection is back.
+  let fail = true;
+  const failed = await page({ respond: url => { if (fail) throw new Error('no network'); return answer('ben', url); } });
+  assert.equal(failed.calls.length, 1);
+  fail = false;
+  failed.context.navigator.onLine = true; await failed.listeners.online(); await failed.settle();
+  assert.equal(failed.calls.length, 2);
+  assert.equal(failed.main.querySelectorAll('.job-row').length, 2);
 });
