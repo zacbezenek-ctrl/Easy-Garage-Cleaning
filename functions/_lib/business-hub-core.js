@@ -1,6 +1,7 @@
 /* Account boundaries and public DTOs. No browser-supplied price or role is trusted. */
 import { businessRateCard } from './pricing-config.js';
 import { invoiceStatus } from './money-core.js';
+import { pricesPendingApproval } from './quote-model.js';
 export const LIMITS = Object.freeze({ properties: 100, requests: 300, projects: 100, members: 30, messages: 400 });
 export const ROLES = Object.freeze({
   admin: { view: true, request: true, decide: true, pay: true, team: true },
@@ -106,8 +107,10 @@ export function parseBusinessActor(actorId) {
   if (!match) throw fail(403, 'Business access is invalid.');
   return { accountId: match[1], memberId: match[2], version: Number(match[3]) };
 }
-// A prior sentAt timestamp or approval cannot publish a newly drafted revision.
+// A prior sentAt timestamp or approval cannot publish a newly drafted revision, and a signed job held for the owner's
+// price approval (pricesPendingApproval, EGC_QUOTE_BUILDER_ENABLED) is not released until the builder's send gate lets it.
 export function projectReleased(job) {
+  if (pricesPendingApproval(job)) return false;
   const statuses = [job?.estimate?.status, job?.quoteStatus].filter(Boolean).map(value => String(value).toLowerCase());
   if (statuses.some(value => ['draft', 'void', 'superseded', 'withdrawn', 'not_ready', 'not_issued'].includes(value))) return false;
   const state = String(job?.customerApproval?.status || job?.estimate?.status || job?.quoteStatus || '').toLowerCase();

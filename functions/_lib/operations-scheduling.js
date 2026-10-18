@@ -2,7 +2,7 @@ import {firestoreFetch} from './firebase-service-account.js';
 import {encodeFirestoreFields,decodeFirestoreFields} from './firestore-job.js';
 import {localInstant} from './operations-portal-records.js';
 import {dispatchStorage} from './dispatch-storage.js';
-import {scheduleRowsConflict,scheduleLockConflict,scheduleDayEntry} from './dispatch-conflicts.js';
+import {scheduleRowsConflict,scheduleLockConflict,scheduleDayEntry,scheduleCrewIds} from './dispatch-conflicts.js';
 import {arrivalWindowProblem,arrivalWindowFields} from './dispatch-arrival.js';
 import {DISPATCH_TIME_ZONE} from './dispatch-contract.js';
 import {legacyBlockMode,legacyBlockedDays} from './dispatch-legacy-blocks.js';
@@ -10,12 +10,14 @@ import {customerIdentityFields,withCustomerSearchKeys} from './customer-identity
 import {segmented} from './dispatch-segments.js';
 import {crewNotificationWrites,crewNotificationsEnabled} from './crew-notifications.js';
 import {ghlTagOutboxEnabled,scheduleTagWrites} from './ghl-tag-outbox.js';
+import {ghlScheduleMirrorEnabled,scheduleMirrorWrites} from './ghl-schedule-mirror.js';
 import {reasonInput,cancelPatch,visitFunnelWrites,requestKey,eventActor,eventVia,defaultVisitPurpose} from './dispatch-funnel.js';
 import {eventDimensions,firstPlacementDimensions,legacyDimensionFacts,projectDimensionPatch,resolveDimensions,visitDimensionFacts} from './funnel-dimensions.js';
 import {commitConflict,commitFailure} from './firestore-errors.js';
 import {bridgeCommandDenial,bridgeCommandPolicy} from '../../egc-platform/services/operations/src/bridge-command-policy.ts';
 import {dispatchReviewCleared} from './dispatch-queue.js';
 import {jobStartProblem} from './job-start-policy.js';
+import {autoAssignedCrew,crewAssignment,crewAutoAssignEnabled,crewAutoRecord,crewPickOrder,eligibleCrews,pickCrew} from './dispatch-crew-assign.js';
 const ROOT='projects/egcw-1ec83/databases/(default)/documents';
 const URL=`https://firestore.googleapis.com/v1/${ROOT}`;
 const safeId=id=>typeof id==='string'&&/^[A-Za-z0-9_-]{1,180}$/.test(id)&&!/^(_egc_|secure_)/.test(id);
@@ -44,6 +46,10 @@ export function schedulingStorage(env,fetcher=firestoreFetch){return{
   crewNotificationsEnabled:crewNotificationsEnabled(env),
   // EGC_GHL_TAG_OUTBOX: bridge schedule changes queue their HighLevel tags in the same commit (ghl-tag-outbox.js).
   ghlTagOutbox:ghlTagOutboxEnabled(env),
+  // EGC_DISPATCH_CREW_AUTO_ASSIGN: a job this writer places without a crew gets the first free eligible crew (dispatch-crew-assign.js).
+  crewAutoAssign:crewAutoAssignEnabled(env),
+  // EGC_GHL_SCHEDULE_MIRROR (D9b): bridge schedule changes queue their HighLevel schedule mirror in the same commit (ghl-schedule-mirror.js).
+  ghlScheduleMirror:ghlScheduleMirrorEnabled(env),
   legacyBlockedDays:dates=>dispatchStorage(env,fetcher).legacyBlockedDays(dates),
   async customers(providerId){const r=await fetcher(env,`${URL}:runQuery`,{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({structuredQuery:{from:[{collectionId:'customers'}],where:{fieldFilter:{field:{fieldPath:'highlevelContactId'},op:'EQUAL',value:{stringValue:providerId}}},limit:3}}),signal:AbortSignal.timeout(15000)});if(!r.ok)throw failure('schedule_source_unavailable',503);const rows=await r.json();if(!Array.isArray(rows))throw failure('schedule_source_incomplete',503);return rows.filter(x=>x.document).map(x=>fromDoc(x.document));},
   async read(collection,id){const r=await fetcher(env,`${URL}/${collection}/${encodeURIComponent(id)}`,{signal:AbortSignal.timeout(15000)});if(r.status===404)return null;if(!r.ok)throw failure('schedule_source_unavailable',503);return fromDoc(await r.json());},
@@ -99,7 +105,14 @@ export async function linkScheduledCustomer(store,actor,input,now=new Date().toI
 }
 
 /** Uses the Hub's existing jobs and per-day schedule-lock documents. The receipt,
- * visit and both affected day locks commit atomically with revision preconditions. */
+ * visit and both affected day locks commit atomically with revision preconditions.
+ * With store.crewAutoAssign (EGC_DISPATCH_CREW_AUTO_ASSIGN) a job, cleanout or reorg this
+ * places on a date or time without a crew (no assignedTo sent) is staffed with the first
+ * eligible crew free on that day's evidence (its jobs, lock entries and time off), read
+ * after the dispatch guard and under the day lock, as dispatch does (dispatch-crew-assign.js);
+ * an auto-assigned job that moves is picked again, its crew first. With no free crew the
+ * visit is saved with no crew (assignedCrew [], reserving nobody) and soldNeedsCrew, never
+ * refused for staffing. Flag off: exactly as before. */
 export async function mutateScheduledVisit(store,actor,input,now=new Date().toISOString(),{via='bridge'}={}){
   // SEC-04: the shared bridge policy's roles (owner/manager or integration) hold for every
   // caller; the signed bridge matched the exact integration principal before this runs.
@@ -191,8 +204,14 @@ export async function mutateScheduledVisit(store,actor,input,now=new Date().toIS
   }
   const dispatchGuard=await store.read('dispatchState','revision');
   const [resources,roster]=await Promise.all([store.resources?store.resources():[],store.roster?store.roster():[]]);
+  // AUTO-CREW: an unstaffed placement, or a move of a job the server staffed (its crew tried first).
+  const placedHere=input.mode==='create'||['date','time','endTime'].some(key=>next[key]!==current?.[key]);
+  const autoPlan=store.crewAutoAssign===true&&input.mode!=='cancel'&&['job','cleanout','reorg'].includes(next.type)&&placedHere&&!(typeof changes.assignedTo==='string'&&changes.assignedTo.trim())
+    ?(!scheduleCrewIds(next,roster).length&&!next.crewId?{mode:'pick',preferred:null}:autoAssignedCrew(current)?{mode:'repick',preferred:current.crewId}:null):null;
+  let autoResult=null;
   if(input.mode!=='cancel'&&next.vehicleId&&!resources.some(row=>row.id===next.vehicleId&&row.recordType==='vehicle'&&row.status==='available'))throw failure('schedule_vehicle_unavailable');
-  if(input.mode!=='cancel'&&resources.some(row=>row.recordType==='availability'&&scheduleRowsConflict(next,row,roster)))throw failure('schedule_slot_conflict');
+  // A crew picked below is checked against time off with the rest of its day's evidence.
+  if(input.mode!=='cancel'&&!autoPlan&&resources.some(row=>row.recordType==='availability'&&scheduleRowsConflict(next,row,roster)))throw failure('schedule_slot_conflict');
   // Arrival windows are chosen in dispatch. This writer keeps a saved window that
   // still contains the start time, re-derives the default label, or rejects.
   if(input.mode!=='cancel'){
@@ -206,14 +225,22 @@ export async function mutateScheduledVisit(store,actor,input,now=new Date().toIS
     if(lock&&(lock.recordType!=='schedule_lock'||!Array.isArray(lock.entries)))throw failure('schedule_lock_unavailable',503);
     const entries=(Array.isArray(lock?.entries)?lock.entries:[]).filter(x=>x.id!==id&&!terminal.has(x.status));
     if(date===next.date&&input.mode!=='cancel'){
-      const existing=await store.day(date);
-      const conflict=existing.find(x=>x.id!==next.id&&(visitKind(x.type)||x.type==='blocked'||x.type==='availability'||x.recordType==='crew_availability')&&(!terminal.has(x.pipelineStatus||x.status)&&x.customerId===next.customerId&&visitKind(x.type)===visitKind(next.type)&&x.date===next.date&&x.time===next.time||scheduleRowsConflict(next,x,roster)));
+      const existing=await store.day(date),relevant=x=>x.id!==next.id&&(visitKind(x.type)||x.type==='blocked'||x.type==='availability'||x.recordType==='crew_availability');
+      if(autoPlan){
+        // The crew's whole visit must be free of its work, lock entries and time off on this day.
+        const free=crew=>{const staffed={...next,...crewAssignment(crew)};return !resources.some(row=>row.recordType==='availability'&&scheduleRowsConflict(staffed,row,roster))&&!existing.some(x=>relevant(x)&&scheduleRowsConflict(staffed,x,roster))&&!entries.some(x=>scheduleLockConflict(staffed,x,date,roster));};
+        const chosen=pickCrew(crewPickOrder(eligibleCrews(resources,[next.date],roster),autoPlan.preferred),free);
+        if(chosen){const assignment=crewAssignment(chosen),record={at:now,by:actor.id,mode:autoPlan.mode};Object.assign(patch,assignment,{crewAutoAssigned:crewAutoRecord(chosen,record,assignment)});autoResult={status:'assigned',...crewAutoRecord(chosen,record)};}
+        else{Object.assign(patch,{crewId:null,assignedCrew:[],assignedTo:'',crewLead:null,...(current?.crewAutoAssigned!==undefined?{crewAutoAssigned:null}:{}),...(current?.soldNeedsCrew&&typeof current.soldNeedsCrew==='object'?{}:{soldNeedsCrew:{at:now,by:actor.id,requestId:input.requestId,reason:'no_crew_free'}})});autoResult={status:'unassigned',mode:autoPlan.mode,crewId:null};}
+        Object.assign(next,patch);
+      }
+      const conflict=existing.find(x=>relevant(x)&&(!terminal.has(x.pipelineStatus||x.status)&&x.customerId===next.customerId&&visitKind(x.type)===visitKind(next.type)&&x.date===next.date&&x.time===next.time||scheduleRowsConflict(next,x,roster)));
       if(conflict||entries.some(x=>scheduleLockConflict(next,x,date,roster)))throw failure('schedule_slot_conflict');
       entries.push(scheduleDayEntry(next,date,roster,now));
     }
     locks.push({collection:'jobs',id:lockId,revision:lock?.revision,patch:{recordType:'schedule_lock',date,entries,updatedAt:now}});
   }
-  const assigned=input.mode!=='cancel'&&typeof changes.assignedTo==='string'&&Boolean(changes.assignedTo.trim())&&changes.assignedTo!==(current?.assignedTo||'');
+  const assigned=input.mode!=='cancel'&&(typeof changes.assignedTo==='string'&&Boolean(changes.assignedTo.trim())&&changes.assignedTo!==(current?.assignedTo||'')||autoResult?.status==='assigned'&&next.assignedTo!==(current?.assignedTo||''));
   // FUN-29: an update that places a visit saved unscheduled books it with its project's values, as dispatch does.
   dimensions??=await firstPlacementDimensions(store,current,{...current,...patch});
   const funnel=await visitFunnelWrites({action:input.mode,before:current,after:{...current,...patch},actor:eventActor(actor),via:eventVia(via),key:requestKey(input.requestId),source:{collection:'jobs',id:receiptId},reason:{...reason,lateCancel:patch.lateCancel},crewChanged:assigned,dimensions,now});
@@ -222,10 +249,11 @@ export async function mutateScheduledVisit(store,actor,input,now=new Date().toIS
   if(store.crewNotificationsEnabled===true)writes.push(...await crewNotificationWrites({jobId:id,requestId:input.requestId,action:`schedule.${input.mode}`,actorId:actor.id,type:next.type,before:current,after:next,roster,now,baseRevision:current?.revision}));
   const tags=store.ghlTagOutbox===true?await scheduleTagWrites({jobId:id,before:current,after:{...current,...patch},action:`schedule.${input.mode}`,requestId:input.requestId,now,source:'bridge'}):null;
   if(tags){patch.ghlTagEntry=tags.pointer;writes.push(tags.write);}
+  writes.push(...await scheduleMirrorWrites(store,{jobId:id,before:current,after:{...current,...patch},action:`schedule.${input.mode}`,requestId:input.requestId,now,source:'bridge',roster,resources}));
   try{await store.commit(writes);}catch(error){const receipt=await store.read('jobs',receiptId).catch(()=>null);if(!receipt||receipt.fingerprint!==hash)throw error;}
   const saved=await store.read('jobs',id);
   if(!saved||await digest(scheduleState(saved))!==await digest(scheduleState(next)))throw failure('schedule_changed_since_operation');
-  return {ok:true,authority:'employee_hub',visit:visitIdentity(saved,customer),requestId:input.requestId};
+  return {ok:true,authority:'employee_hub',visit:visitIdentity(saved,customer),requestId:input.requestId,...(autoResult?{autoCrew:autoResult}:{})};
 }
 
 /** Provider state is only attached after its exact identity and schedule match the
@@ -258,7 +286,8 @@ export async function bindScheduledProvider(store,actor,input,now=new Date().toI
     }
     throw failure('schedule_provider_state_conflict');
   }
-  const patch={highlevelAppointmentId:event.id,highlevelCalendarId:event.calendarId||'',providerAppointmentStatus:providerStatus,syncStatus:'synced',syncedAt:now,updatedAt:now};
+  // D9b: a verified appointment ends an earlier "calendar mirror skipped" (only a visit that carries one gains the field).
+  const patch={highlevelAppointmentId:event.id,highlevelCalendarId:event.calendarId||'',providerAppointmentStatus:providerStatus,syncStatus:'synced',syncedAt:now,updatedAt:now,...(current.calendarMirror?{calendarMirror:null}:{})};
   if(receipt){
     // A replayed operation proves the same verified provider state. A later unconditional
     // page write (syncStatus 'error' under the same key) is healed here, never left to loop.

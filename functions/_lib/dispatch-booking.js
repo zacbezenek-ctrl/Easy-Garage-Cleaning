@@ -4,6 +4,7 @@ import { requiredSkillsOf } from './dispatch-rules.js';
 import { mutateDispatch, projectDispatchJob, requireDispatcher } from './dispatch-service.js';
 import { assignmentKey } from './job-assignment.js';
 import { can, staffRoleAccessEnabled } from './staff-roles.js';
+import { crewAutoAssignEnabled } from './dispatch-crew-assign.js';
 
 /** AUTH-ROLES (EGC_STAFF_ROLE_ACCESS): schedule.book, the booking right of the sales
  * and phone roles (owner decision 2026-09-29: walkthroughs AND service jobs, like a
@@ -19,7 +20,17 @@ import { can, staffRoleAccessEnabled } from './staff-roles.js';
  * fields there. A booker cannot staff a visit, so the owner's crew-size rule stays a
  * warning for them (the job waits in To schedule for a manager), as for a sales handoff.
  * With the flag off can() never grants schedule.book, so every check here is
- * requireDispatcher. */
+ * requireDispatcher.
+ * Owner rule 2026-10-17 (D2, reverses the 2026-09-29 crew rule above for bookings only):
+ * with EGC_DISPATCH_CREW_AUTO_ASSIGN exactly "true" a booker's job is staffed by the
+ * SERVER with the first free eligible crew (Crew 1, then Crew 2; Saturday and Sunday the
+ * weekend crew; dispatch-crew-assign.js, options.autoCrew), inside the dispatch guard and
+ * day locks. A booker still cannot hand-pick people, leads, vehicles, segments or pickup
+ * offers (403 as before); the one crew field they may change is crewId, and only to a crew
+ * the server finds eligible for that visit, on a new or unstaffed visit or one the server
+ * staffed (options.crewChoice; otherwise 403 dispatch_crew_not_eligible). A crew a manager
+ * chose stays a manager's to change, and a choice never unstaffs a visit. Flag off: exactly
+ * the rule above. */
 const fail = (code, message, status = 400) => Object.assign(new Error(message), { code, status });
 const plain = value => value !== null && typeof value === 'object' && !Array.isArray(value);
 const canonical = value => Array.isArray(value) ? `[${value.map(canonical).join(',')}]` : plain(value) ? `{${Object.keys(value).sort().map(key => `${JSON.stringify(key)}:${canonical(value[key])}`).join(',')}}` : JSON.stringify(value);
@@ -64,29 +75,31 @@ const crewValue = {
 };
 const pickupValue = { crewNeeded: value => Number(value) || 1, requiredSkills: value => canonical(requiredSkillsOf({ requiredSkills: value }).sort()) };
 const touchesCrew = changes => plain(changes) && [...CREW_FIELDS, ...PICKUP_FIELDS].some(key => Object.hasOwn(changes, key));
-export function changesCrew(changes, current = null, roster = [], now = new Date().toISOString()) {
+export function changesCrew(changes, current = null, roster = [], now = new Date().toISOString(), { crewChoice = false } = {}) {
   if (!plain(changes)) return false;
   const shown = current ? projectDispatchJob(current, roster, now) : null;
   const differs = (fields, key) => Object.hasOwn(changes, key) && fields[key](changes[key]) !== fields[key](shown ? shown[key] : undefined);
-  return CREW_FIELDS.some(key => differs(crewValue, key)) || current?.shiftPickupEnabled === true && PICKUP_FIELDS.some(key => differs(pickupValue, key));
+  // With crew auto-assign a crewId change is a crew choice the server checks (mutateDispatch).
+  return CREW_FIELDS.some(key => !(crewChoice && key === 'crewId') && differs(crewValue, key)) || current?.shiftPickupEnabled === true && PICKUP_FIELDS.some(key => differs(pickupValue, key));
 }
 
 /** A booker's change, checked against the booking right and then saved by mutateDispatch
- * exactly as a manager's would be. */
+ * exactly as a manager's would be. With EGC_DISPATCH_CREW_AUTO_ASSIGN the server staffs it
+ * (options.autoCrew) and a changed crewId must be a crew it finds eligible (options.crewChoice). */
 export async function mutateBooking(store, session, input, now = new Date().toISOString(), options = {}, env = {}) {
-  const authorize = bookerAuthorize(env);
+  const authorize = bookerAuthorize(env), autoCrew = crewAutoAssignEnabled(env), crew = { crewChoice: autoCrew };
   authorize(session);
   if (plain(input) && DISPATCH_ACTIONS.includes(input.action)) {
     if (!BOOKING_ACTIONS.includes(input.action) || input.action === 'schedule.create' && input.kind === 'blocked') throw fail('dispatch_forbidden', ROLE_DENIAL.action, 403);
-    if (input.action === 'schedule.create') { if (changesCrew(input.changes)) throw fail('dispatch_forbidden', ROLE_DENIAL.crew, 403); }
+    if (input.action === 'schedule.create') { if (changesCrew(input.changes, null, [], now, crew)) throw fail('dispatch_forbidden', ROLE_DENIAL.crew, 403); }
     else if (typeof input.jobId === 'string' && /^[A-Za-z0-9_-]{1,180}$/.test(input.jobId) && !/^(secure_|_egc_)/.test(input.jobId)) {
       const current = await store.read('jobs', input.jobId);
       // A company block, or crew changed against the revision the booker saw. Any other
       // mismatch (missing job, stale revision, replay) is mutateDispatch's to answer.
       if (current && !current.recordType && current.type === 'blocked') throw fail('dispatch_forbidden', ROLE_DENIAL.action, 403);
-      if (current && current.revision === input.expectedRevision && touchesCrew(input.changes) && changesCrew(input.changes, current, await store.roster(), now)) throw fail('dispatch_forbidden', ROLE_DENIAL.crew, 403);
+      if (current && current.revision === input.expectedRevision && touchesCrew(input.changes) && changesCrew(input.changes, current, await store.roster(), now, crew)) throw fail('dispatch_forbidden', ROLE_DENIAL.crew, 403);
     }
   }
   const enforce = warning => warning.code !== 'crew_size_short' && (typeof options.enforce !== 'function' || options.enforce(warning) === true);
-  return mutateDispatch(store, session, input, now, { ...options, authorize, enforce });
+  return mutateDispatch(store, session, input, now, { ...options, authorize, enforce, ...(autoCrew ? { autoCrew: true, crewChoice: true } : {}) });
 }

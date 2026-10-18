@@ -11,6 +11,10 @@ const BASE = `https://firestore.googleapis.com/v1/${ROOT}`;
 export const KNOCK_COLLECTIONS = Object.freeze([
   'knock_settings', 'knock_reps', 'knock_neighborhoods', 'knock_houses', 'knock_assignments', 'knock_shifts',
   'knock_events', 'knock_sales', 'knock_days', 'knock_training', 'knock_payouts', 'knock_imports', 'knock_receipts', 'knock_setters', 'knock_form_handoffs', 'knock_form_revisions',
+  // KNOCK-BRIDGE: a walkthrough a rep set at the door, with the customer's contact details (like knock_sales).
+  'knock_walkthroughs',
+  // D6b: the office's garage or junk classification of a direct walkthrough sale (estimator-commission.js estimator.classify).
+  'knock_estimator_jobs',
 ]);
 
 const COLLECTION = new Set(KNOCK_COLLECTIONS);

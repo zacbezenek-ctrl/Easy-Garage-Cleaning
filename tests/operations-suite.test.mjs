@@ -218,7 +218,10 @@ test('walkthrough conversion keeps canonical IDs and durable acceptance metadata
   for(const marker of ['sourceWalkthroughId','convertedJobId','conversionStatus','acceptedAt','acceptedBy','termsVersion','signatureCaptured','in_person_signature','syncIdempotencyKey'])assert.ok(handoff.includes(marker),marker+' is missing');
   // Updated deliberately (DISPATCH-RULES second review): the handoff also passes `enforce`, which keeps only the
   // crew-size shortfall a warning when staffing is left to Dispatch; every other owner block still applies.
-  assert.match(handoff,/await mutateDispatch\(adapter, actor, dispatchInput, now, \{ authorize: session => requireQuoteAuthor\(session, env\), enforce \}\)/);
+  // Updated deliberately (estimator integration): with EGC_DISPATCH_CREW_AUTO_ASSIGN on the same options also ask the
+  // server to staff the job (autoCrew), and an estimator's crew opening goes as a crew choice; off, the options are as before.
+  assert.match(handoff,/const options = \{ authorize: session => requireQuoteAuthor\(session, env\), enforce, \.\.\.\(autoCrew \? \{ autoCrew: true \} : \{\}\) \};/);
+  assert.match(handoff,/await mutateDispatch\(adapter, actor, choiceInput \|\| dispatchInput, now, choiceInput \? \{ \.\.\.options, crewChoice: true \} : options\)/);
   assert.match(handoff,/const staffingLeftToDispatch = !access\.dispatcher \|\| !assignedCrew\.length;\n\s*const enforce = warning => !\(staffingLeftToDispatch && warning\.code === 'crew_size_short'\);/);
   assert.match(handoff,/walkthroughHandoffs/);
   assert.doesNotMatch(handoff,/status: 'completed'|pipelineStatus: 'completed'/);
@@ -846,7 +849,8 @@ test('open-shift scheduling fields persist on the canonical job record',()=>{
   // base (tokens, element defaults, safe areas) moved in from the public /styles.css; (MOBILE-HUB after SALES-BOOKING) one
   // combined tag.
   // HUB-COMPLETION and FIELD-PAY refresh the integrated phone screens and finance collection display together.
-  assert.match(employee,/employee-suite\.css\?v=20260929hubready3/);
+  // (TEAM-DIRECTORY, D10) the onboarding form's shirt size select and birthday checkbox.
+  assert.match(employee,/employee-suite\.css\?v=20261017team1/);
   // Bumped deliberately (LEGACY-SEND): the customer thread delivery labels changed; (TEAM-UI) then (PAY-TIMESHEETS merged
   // with PRICE-SCRUB): the timesheet screen mounts the payroll week card and shows pay only where the server sent it;
   // (PAY-TIMESHEETS fourth check): the profile form's rate field only for a viewer who sets pay; (SYNC-QUEUE) page-load
@@ -873,8 +877,10 @@ test('open-shift scheduling fields persist on the canonical job record',()=>{
   // link instead of Start; (WT-OUTCOME review) the Walkthroughs screen also needs dispatch.write when the server reports
   // staff-role capabilities; (WT-OUTCOME after SALES-BOOKING) one combined tag; (MOBILE-HUB) the view title carries a title
   // attribute, business users get RUN THE BUSINESS first and a crew member who is not clocked in sees the time clock above
-  // Today's jobs; (MOBILE-HUB after WT-OUTCOME) one combined tag.
-  assert.match(employee,/employee-suite\.js\?v=20261015nativeform"/);
+  // Today's jobs; (MOBILE-HUB after WT-OUTCOME) one combined tag; (TEAM-DIRECTORY, D10) the Team directory nav entry, the
+  // profile form's two emergency contact fields and the onboarding form's shirt size and birthday; (D9b GHL schedule mirror)
+  // calendar-mirror-skipped badges and the schedule mirror and optional jobs calendar rows on Integrations.
+  assert.match(employee,/employee-suite\.js\?v=20261017hubboardfix"/);
 });
 
 test('recurring visits request a server-side handoff clone instead of copying prior execution or payments',()=>{

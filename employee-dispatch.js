@@ -69,6 +69,22 @@ const savedCrewIds = () => (S.data?.crews || []).filter(c => c.status === 'activ
 const assignable = (keep = []) => (S.data?.roster || []).filter(p => p.fieldWork !== false || keep.includes(p.id));
 const vehicle = id => S.data?.vehicles?.find(v => v.id === id)?.name || (id ? 'Vehicle unavailable' : 'No vehicle');
 const crewName = job => S.data?.crews?.find(c => c.id === job.crewId)?.name || (job.assignedCrew?.length ? job.assignedCrew.map(person).join(', ') : 'Unassigned');
+// Crew registry v2 (functions/_lib/dispatch-crew-assign.js): crews are listed by priority (1 first; none
+// reads as 99), then name; a crew that works only Saturday and/or Sunday is labelled Weekend.
+const CREW_DAYS=['mon','tue','wed','thu','fri','sat','sun'],DAY_LABEL={mon:'Mon',tue:'Tue',wed:'Wed',thu:'Thu',fri:'Fri',sat:'Sat',sun:'Sun'};
+const crewPriority=c=>Number.isInteger(c?.priority)&&c.priority>=1&&c.priority<=99?c.priority:99;
+const crewDays=c=>{const days=Array.isArray(c?.serviceDays)?CREW_DAYS.filter(day=>c.serviceDays.includes(day)):[];return days.length?days:CREW_DAYS;};
+const weekendCrew=c=>crewDays(c).every(day=>day==='sat'||day==='sun');
+const crewLabel=c=>(c?.name||'Crew')+(weekendCrew(c)?' · Weekend':'');
+const sortedCrews=rows=>[...(rows||[])].sort((a,b)=>crewPriority(a)-crewPriority(b)||String(a?.name||'').localeCompare(String(b?.name||''))||String(a?.id||'').localeCompare(String(b?.id||'')));
+const daysText=c=>{const days=crewDays(c);return days.length===7?'Every day':days.join(',')==='mon,tue,wed,thu,fri'?'Mon–Fri':days.map(day=>DAY_LABEL[day]).join(', ');};
+// EGC_DISPATCH_CREW_AUTO_ASSIGN: the server staffs a dated job with the first free crew (GET /api/dispatch crewAutoAssign).
+const crewAuto=()=>S.data?.crewAutoAssign===true;
+// A job still staffed exactly as the server picked it (crewAutoAssigned: its crew, members and lead); any other
+// staffed job is a manager's crew, which a booker never changes (the server answers 403 dispatch_crew_not_eligible).
+const sameIds=(a,b)=>Array.isArray(a)&&Array.isArray(b)&&a.length===b.length&&[...a].sort().join('\n')===[...b].sort().join('\n');
+const autoStaffed=job=>Boolean(job?.crewAutoAssigned)&&job.crewAutoAssigned.crewId===job.crewId&&sameIds(job.crewAutoAssigned.memberIds,job.assignedCrew)&&(job.crewAutoAssigned.leadId||null)===(job.crewLead||null);
+const handStaffed=job=>Boolean(job)&&(Boolean((job.assignedCrew||[]).length)||Boolean(job.crewId))&&!autoStaffed(job);
 // Assignment segments: parallel crews or per-day windows (server flag EGC_DISPATCH_SEGMENTS).
 const segmentsOf = job => Array.isArray(job?.assignmentSegments) ? job.assignmentSegments : [];
 const segmentsOn = () => S.data?.segments?.enabled === true;
@@ -97,7 +113,10 @@ async function api(query='', body=null, signal) {
   const {response,data}=await requestJSON('/api/dispatch'+query,{method:body?'POST':'GET',headers:body?{'Content-Type':'application/json'}:undefined,body:body?JSON.stringify(body):undefined},signal);
   if (!response.ok || data.ok !== true) throw Object.assign(new Error(data.error||'The dispatch response could not be verified. Retry the original request.'),{status:response.ok?503:response.status,code:data.code,details:data.details});
   const invalid=()=>Object.assign(new Error('The dispatch response was incomplete. Retry the original request to verify the outcome.'),{status:503,code:'dispatch_response_unverified'});
-  if(body) {
+  // crew.seed_defaults answers the crews it created, updated or found (functions/_lib/dispatch-service.js).
+  if(body?.action==='crew.seed_defaults') {
+    if(data.requestId!==body.requestId||!Array.isArray(data.resources)||!['created','updated','existing'].every(name=>Array.isArray(data[name])))throw invalid();
+  } else if(body) {
     const record=body.action.startsWith('schedule.')?data.job:data.resource;
     if(data.requestId!==body.requestId||!record||typeof record.id!=='string'||!record.id||typeof record.revision!=='string'||!record.revision||(body.jobId&&record.id!==body.jobId)||(body.id&&record.id!==body.id))throw invalid();
   } else if(new URLSearchParams(query.replace(/^\?/, '')).get('view')==='customers') {
@@ -110,7 +129,7 @@ function restoreRecovery(viewer) {
   try {
     const raw=sessionStorage.getItem(recoveryPrefix+viewer);if(!raw)return;
     const saved=JSON.parse(raw);
-    if(saved?.viewerId!==viewer||typeof saved.success!=='string'||!saved.request||!['schedule.create','schedule.update','schedule.cancel','schedule.restore','schedule.no_show','crew.save','vehicle.save','availability.save'].includes(saved.request.action)||!/^[a-f\d-]{36}$/i.test(saved.request.requestId||''))throw new Error('invalid');
+    if(saved?.viewerId!==viewer||typeof saved.success!=='string'||!saved.request||!['schedule.create','schedule.update','schedule.cancel','schedule.restore','schedule.no_show','crew.save','crew.seed_defaults','vehicle.save','availability.save'].includes(saved.request.action)||!/^[a-f\d-]{36}$/i.test(saved.request.requestId||''))throw new Error('invalid');
     S.recovery=saved;
   } catch {S.recovery={invalid:true};}
 }
@@ -516,7 +535,7 @@ async function save(model,body,success) {
     if(retry){const current=await api('?'+new URLSearchParams({...range(),includeUnscheduled:'true'}));if(current.viewer.id!==model.viewer)throw Object.assign(new Error('Sign in again with the manager account that started this save before retrying it.'),{status:503,code:'dispatch_account_changed'});}
     const result=await api('',model.request);
     if(S.modal!==model)return;
-    S.notice=success+(result.warnings?.length?' '+result.warnings.map(w=>w.message||words(w.code)).join(' '):'')+(result.providerSync==='pending'?' Customer calendar sync is pending.':'');
+    S.notice=success+(result.autoCrew?.status==='assigned'&&result.autoCrew.crewName?' '+result.autoCrew.crewName+' was assigned automatically.':'')+(result.warnings?.length?' '+result.warnings.map(w=>w.message||words(w.code)).join(' '):'')+(result.providerSync==='pending'?' Customer calendar sync is pending.':'');
     formBusy(model,false);model.request=null;model.saved=S.notice;clearRecovery();model.close();await load();
   } catch(error) {
     if(S.modal!==model)return;
@@ -587,6 +606,23 @@ function durationOptions(suggested) {
   if(found)found[1]+=' · suggested';else rows.splice(at<0?rows.length:at,0,[value,durationText(suggested.minutes)+' · suggested']);
   return rows;
 }
+// Crew-mode openings by date: each crew that works that day, open (its openings) or full.
+function crewOpenings(data,results,use) {
+  const dated=Array.isArray(data.byDate)?data.byDate:[];
+  for(const day of dated){
+    if(!day.crews?.length)continue;
+    const section=h('section',{class:'dp-search-result'},h('h4',{},dateText(day.date,true)));
+    for(const summary of day.crews){
+      const rows=data.candidates.filter(row=>row.date===day.date&&row.crewId===summary.crewId);
+      section.append(h('p',{class:summary.open?'':'dp-muted'},h('strong',{},summary.crewName+(summary.weekend?' · Weekend':'')),' · '+(summary.open?summary.count+' '+(summary.count===1?'opening':'openings')+', first '+clock(summary.first.time):'full')));
+      for(const candidate of rows){
+        if(!/^\d{4}-\d{2}-\d{2}$/.test(candidate.date||'')||!/^\d{2}:\d{2}$/.test(candidate.time||'')||!/^\d{2}:\d{2}$/.test(candidate.endTime||''))throw new Error('An opening had invalid dates. Retry before booking.');
+        section.append(h('article',{},h('div',{},h('strong',{},clock(candidate.time)+' – '+clock(candidate.endTime)),h('small',{},summary.crewName)),btn('Use this opening',()=>use(candidate),'primary')));
+      }
+    }
+    results.append(section);
+  }
+}
 function openOpenings(source) {
   // The toolbar passes its click event; a job card passes the job to book.
   if(!S.data)return;const job=source&&!(source instanceof Event)?source:null;
@@ -598,13 +634,23 @@ function openOpenings(source) {
   // The job's own buffer, else the owner's default (Dispatch rules), else 20.
   const rules=S.data.dispatchRules||{},buffer=field(model,'travelBufferMinutes','Travel buffer (minutes)',Number.isInteger(job?.travelBufferMinutes)?job.travelBufferMinutes:(rules.defaultTravelBufferMinutes??20),'number',{min:0,max:180,step:5,required:true});
   const destination=field(model,'destination','New job ZIP or address (optional)','','text',{maxLength:500,autocomplete:'off',placeholder:'80525 or street address'});
-  const begins=field(model,'workdayStart','Workday starts',rules.workdayStart||'08:00','time',{required:true});
+  const begins=field(model,'workdayStart','Workday starts',rules.workdayStart||'09:00','time',{required:true});
   const ends=field(model,'workdayEnd','Workday ends',rules.workdayEnd==='24:00'?'23:59':rules.workdayEnd||'17:00','time',{required:true});
   const checks=new Map(),members=h('fieldset',{class:'dp-wide'},h('legend',{},'Employees needed together'));
   for(const person of assignable([...(job?.assignedCrew||[]),...savedCrewIds()])){const input=h('input',{type:'checkbox',value:person.id,checked:job?(job.assignedCrew||[]).includes(person.id):S.employee===person.id});checks.set(person.id,input);members.append(h('label',{class:'dp-check'},input,person.name));}
-  const crew=select([['','Choose employees individually'],...S.data.crews.filter(row=>row.status==='active').map(row=>[row.id,row.name])],'',id=>{const selected=S.data.crews.find(row=>row.id===id);if(selected)for(const[id,input]of checks)input.checked=selected.memberIds.includes(id);});
+  const crew=select([['','Choose employees individually'],...sortedCrews(S.data.crews.filter(row=>row.status==='active')).map(row=>[row.id,crewLabel(row)])],'',id=>{const selected=S.data.crews.find(row=>row.id===id);if(selected)for(const[id,input]of checks)input.checked=selected.memberIds.includes(id);});
   const truck=select([['','No vehicle required'],...S.data.vehicles.filter(row=>row.status==='available').map(row=>[row.id,row.name])],S.data.vehicles.some(row=>row.id===job?.vehicleId&&row.status==='available')?job.vehicleId:'',()=>{});
-  model.fields.append(labeled('Saved crew to check',crew),labeled('Vehicle to check',truck),members);
+  // Job openings start at 9:30 or later (owner rule); a walkthrough may start with the workday.
+  const kind=select([['job','Service job (from 9:30)'],['walkthrough','Walkthrough']],job?.type==='walkthrough'?'walkthrough':'job',()=>{if(kind.value==='walkthrough'&&mode.value==='crews')mode.value='people';else if(kind.value!=='walkthrough'&&anyCrew&&!modeChosen)mode.value='crews';sync();},{disabled:Boolean(job)});
+  // Any crew (priority order): each active crew on the days it works, Crew 1 before Crew 2 (GET crews=auto).
+  // Crews do service jobs, not walkthroughs; a booker moving a job a manager staffed searches that job's people.
+  // With crew auto-assign on, a service job's search starts on Any crew for everyone, unless a manager already chose
+  // its people (D2D-BOARD, owner 2026-10-17); with it off, the search starts on Employees I choose as before.
+  const hasCrews=S.data.crews.some(row=>row.status==='active')&&!(booker()&&handStaffed(job)),anyCrew=hasCrews&&crewAuto()&&!handStaffed(job);let modeChosen=false;
+  const mode=select([['people','Employees I choose'],...(hasCrews?[['crews','Any crew (priority order)']]:[])],anyCrew&&kind.value!=='walkthrough'?'crews':'people',()=>{modeChosen=true;sync();});
+  const crewField=labeled('Saved crew to check',crew),searchField=labeled('Search',mode),crewMode=[...mode.querySelectorAll('option')].find(option=>option.value==='crews');
+  model.fields.append(searchField,labeled('Visit type',kind),crewField,labeled('Vehicle to check',truck),members);
+  const sync=()=>{if(crewMode)crewMode.disabled=kind.value==='walkthrough';const crews=mode.value==='crews';crewField.hidden=crews;members.hidden=crews;};sync();
   // 'Find a time' starts from the job's required skills.
   const skillQuery=window.EGCDispatchRules?.openingsFields(model,S.data,job?.requiredSkills)||null;
   const results=h('div',{class:'dp-openings-results dp-wide','aria-live':'polite'});model.fields.append(results);
@@ -612,10 +658,10 @@ function openOpenings(source) {
   const clearResults=()=>results.replaceChildren();for(const input of model.fields.querySelectorAll('input,select'))input.addEventListener('input',clearResults);
   model.form.addEventListener('submit',async event=>{
     event.preventDefault();if(S.pending)return;
-    const employeeIds=[...checks].filter(([,input])=>input.checked).map(([id])=>id),skills=skillQuery?.skills()||[];
-    if(!employeeIds.length&&!skills.length){model.status.replaceChildren(notice('Choose the employees who need an opening together, or the required skills to search every qualified employee.','error'));return;}
+    const crews=mode.value==='crews',employeeIds=crews?[]:[...checks].filter(([,input])=>input.checked).map(([id])=>id),skills=crews?[]:skillQuery?.skills()||[];
+    if(!crews&&!employeeIds.length&&!skills.length){model.status.replaceChildren(notice('Choose the employees who need an opening together, or the required skills to search every qualified employee.','error'));return;}
     // 23:59 stands in for the owner's 24:00 end, which a time input cannot show; left unchanged, the server applies 24:00.
-    const query={startDate:start.value,endDate:addDays(last.value,1),durationMinutes:duration.value,workdayStart:begins.value,...(rules.workdayEnd==='24:00'&&ends.value==='23:59'?{}:{workdayEnd:ends.value}),employeeIds:employeeIds.join(','),travelBufferMinutes:buffer.value,...(truck.value?{vehicleId:truck.value}:{}),...(skills.length?{requiredSkills:skills.join(',')}:{})};
+    const query={startDate:start.value,endDate:addDays(last.value,1),durationMinutes:duration.value,workdayStart:begins.value,...(rules.workdayEnd==='24:00'&&ends.value==='23:59'?{}:{workdayEnd:ends.value}),...(crews?{crews:'auto'}:{employeeIds:employeeIds.join(',')}),travelBufferMinutes:buffer.value,kind:kind.value,...(truck.value?{vehicleId:truck.value}:{}),...(skills.length?{requiredSkills:skills.join(',')}:{})};
     const place=destination.value.trim();if(place)query[/^\d{5}$/.test(place)?'zip':'address']=place;
     formBusy(model,true);results.replaceChildren();model.status.replaceChildren(notice('Checking recorded capacity…'));
     try{
@@ -625,6 +671,11 @@ function openOpenings(source) {
       if(S.modal!==model)return;
       model.status.replaceChildren(...data.warnings.map(warning=>notice(warning.message||words(warning.code))));
       results.append(h('h3',{},data.candidates.length?'Recorded openings':'No matching openings'),h('p',{},data.candidates.length?'Each suggestion is rechecked when you save the job.': 'Try different dates, employees, duration or vehicle.'));
+      if(crews){crewOpenings(data,results,candidate=>{
+        const saved=S.data.crews.find(row=>row.id===candidate.crewId);
+        // A manager books the crew the opening was found for; a booker's crew is checked again by the server (EGC_DISPATCH_CREW_AUTO_ASSIGN).
+        model.close();openJob(job,booker()?{date:candidate.date,time:candidate.time,endDate:candidate.endDate,endTime:candidate.endTime,travelBufferMinutes:Number(query.travelBufferMinutes),...(crewAuto()?{crewChoice:candidate.crewId}:{})}:{date:candidate.date,time:candidate.time,endDate:candidate.endDate,endTime:candidate.endTime,assignedCrew:candidate.employeeIds||saved?.memberIds||[],vehicleId:query.vehicleId||'',crewId:candidate.crewId,crewLead:saved?.leadId,travelBufferMinutes:Number(query.travelBufferMinutes),requiredSkills:[]});
+      });if(data.truncated)results.append(h('p',{},'Showing the first '+data.candidates.length+' openings. Narrow the search for later dates.'));return;}
       for(const candidate of data.candidates){
         if(!/^\d{4}-\d{2}-\d{2}$/.test(candidate.date||'')||!/^\d{2}:\d{2}$/.test(candidate.time||'')||!/^\d{4}-\d{2}-\d{2}$/.test(candidate.endDate||'')||!/^\d{2}:\d{2}$/.test(candidate.endTime||''))throw new Error('An opening had invalid dates. Retry before booking.');
         // With required skills and no employees chosen, each opening names the qualified employee.
@@ -923,7 +974,8 @@ function openJob(job=null,options={}) {
   for(const member of assignable(keep)){const input=h('input',{type:'checkbox',value:member.id,checked:selected.has(member.id)});checks.set(member.id,input);assignments.append(h('label',{class:'dp-check'},input,h('span',{},member.name),h('small',{},words(member.role))));}
   for(const member of selected)if(!checks.has(member)){const input=h('input',{type:'checkbox',value:member,checked:true});checks.set(member,input);assignments.append(h('label',{class:'dp-check'},input,h('span',{},member),h('small',{},'Unavailable employee — reassign before saving')));}
   if(!checks.size)assignments.append(h('p',{},'No active employees available. Review approved employee accounts.'));
-  const crewSelect=select([['','Temporary / individual assignment'],...(S.data.crews||[]).filter(c=>c.status==='active'||c.id===job?.crewId).map(c=>[c.id,c.name])],(opening?options.crewId:job?.crewId)||'',id=>{
+  const crewChoice=booker()&&crewAuto()&&typeof options.crewChoice==='string'?options.crewChoice:'';
+  const crewSelect=select([['','Temporary / individual assignment'],...sortedCrews((S.data.crews||[]).filter(c=>c.status==='active'||c.id===job?.crewId)).map(c=>[c.id,crewLabel(c)+(c.status==='active'?'':' · inactive')])],(opening?options.crewId:crewChoice||job?.crewId)||'',id=>{
     const crew=S.data.crews.find(c=>c.id===id);if(!crew)return;
     for(const [member,input]of checks)input.checked=crew.memberIds.includes(member);lead.value=crew.leadId||'';
   },{name:'crewId'});
@@ -931,8 +983,13 @@ function openJob(job=null,options={}) {
   const lead=select([['','No lead assigned'],...assignable(keep).map(p=>[p.id,p.name])],options.crewLead||(!opening||selected.has(job?.crewLead)?job?.crewLead:'')||'',()=>{}, {name:'crewLead'});
   const truck=select([['','No vehicle assigned'],...(S.data.vehicles||[]).filter(v=>v.status==='available'||v.id===job?.vehicleId).map(v=>[v.id,v.name+(v.status==='available'?'':' · '+words(v.status))])],(opening?options.vehicleId:job?.vehicleId)||'',()=>{},{name:'vehicleId'});
   model.fields.append(labeled('Crew lead',lead),labeled('Vehicle / truck',truck));lead.parentElement.classList.add('dp-crew-only');truck.parentElement.classList.add('dp-crew-only');
-  // A booker's save keeps the crew Dispatch shows (the hidden controls hold it); a manager staffs the visit.
-  if(booker())model.fields.append(h('p',{class:'dp-muted dp-wide'},'A manager assigns the crew and vehicle in Dispatch. This visit is saved without crew changes.'));
+  // A booker's save keeps the crew Dispatch shows (the hidden controls hold it); a manager staffs the visit,
+  // or with crew auto-assign the server does (a crew chosen from Any crew openings is checked again on save).
+  const chosenCrew=crewChoice?S.data.crews.find(c=>c.id===crewChoice):null;
+  if(booker())model.fields.append(h('p',{class:'dp-muted dp-wide'},crewAuto()?(chosenCrew?'Crew: '+crewLabel(chosenCrew)+'. It is checked again when you save; if it was just booked, the next free crew is assigned. Another day, time or visit type gets the first free crew instead.':'A service job gets the first free crew automatically when you save: Crew 1, then Crew 2, and the weekend crew on Saturdays and Sundays. A manager can change it.'):'A manager assigns the crew and vehicle in Dispatch. This visit is saved without crew changes.'));
+  // A dispatcher asks the server for the first free crew instead of choosing people (owner rule 2026-10-17).
+  const autoPick=crewAuto()&&!booker()?h('input',{type:'checkbox',name:'autoCrew',checked:!job&&!opening}):null;
+  if(autoPick)model.fields.append(h('label',{class:'dp-check dp-wide dp-crew-only'},autoPick,h('span',{},'Assign the first free crew automatically when no one is chosen (Crew 1, then Crew 2; Saturdays and Sundays the weekend crew)')));
   let segments=segmentsOf(job).map(s=>({...s,endDate:s.endDate||s.date,assignedCrew:[...(s.assignedCrew||[])],notes:s.notes||''}));
   if(options.moveTo&&segments.length&&job?.date&&segmentsOn()){const shift=Math.round((Date.parse(options.moveTo+'T12:00Z')-Date.parse(job.date+'T12:00Z'))/86400000);segments=segments.map(s=>({...s,date:addDays(s.date,shift),endDate:addDays(s.endDate,shift)}));}
   // Unreadable saved segments are cleared together with the job-level time and crew.
@@ -1041,6 +1098,11 @@ function openJob(job=null,options={}) {
     else if(hadSegments)changes.assignmentSegments=[];
     const facts=booking.channel?Object.fromEntries([['channel',booking.channel.value],['visitPurpose',type.value==='job'?booking.purpose.value:''],['reworkOfJobId',booking.original.required?booking.original.value.trim():''],['channelSelfReported',booking.heard.value],['crmLinkReason',booking.crm?.required?booking.crm.value:''],...Object.entries(booking.dimensions?.facts()||{})].filter(([,value])=>value)):null;
     const body=job?{action:'schedule.update',requestId:key(),jobId:job.id,expectedRevision:job.revision,changes,...(moved()?moveReason():{})}:{action:'schedule.create',requestId:key(),customerId:selectedCustomer.id,kind:type.value,...(sourceJobId?{sourceJobId}:{}),...(facts?{booking:facts}:{}),changes};
+    // A crew accepted from an opening holds only for that opening's service job, day and time; otherwise the
+    // visit is saved with the crew Dispatch shows and the server picks (a stale choice would be refused).
+    if(crewChoice&&!segments.length&&(type.value==='walkthrough'||['date','time','endDate','endTime'].some(name=>changes[name]!==options[name])))changes.crewId=job?.crewId||null;
+    // Only an unstaffed, dated service job asks; the server picks inside its own checks.
+    if(autoPick?.checked&&type.value!=='walkthrough'&&!segments.length&&!members.length&&!crewSelect.value&&changes.date)body.autoCrew=true;
     void save(model,body,job?(options.rebook?'Walkthrough moved to its new time.':'Job updated.'):from?'Job booked again.':'Job created.');
   });
   const prefill=!job&&options.prefill;
@@ -1076,10 +1138,12 @@ function openStatus(job,action) {
 function openResources() {
   if(!S.data)return;const model=modal('Crews, vehicles & availability','Crew membership is copied onto each assignment. Editing a crew does not silently change scheduled jobs.');if(!model)return;
   const list=h('div',{class:'dp-resource-list dp-wide'});
-  for(const [kind,label,rows]of [['crew','Crews',S.data.crews||[]],['vehicle','Vehicles',S.data.vehicles||[]],['availability','Availability',S.data.availability||[]]]) {
+  for(const [kind,label,rows]of [['crew','Crews',sortedCrews(S.data.crews)],['vehicle','Vehicles',S.data.vehicles||[]],['availability','Availability',S.data.availability||[]]]) {
     list.append(h('div',{class:'dp-resource-head'},h('h3',{},label),btn('Add '+(kind==='availability'?'time off':kind),()=>{model.close();openResource(kind);})));
+    // Crew 1 and Crew 2 (Mon-Fri) and Crew 3 (Sat and Sun), each only when no crew has its code yet.
+    if(kind==='crew'&&!['crew-1','crew-2','crew-3'].every(code=>rows.some(row=>row.code===code)))list.append(h('div',{class:'dp-resource-head'},h('p',{class:'dp-muted'},'Set up the standard crews: Crew 1 and Crew 2 work Monday to Friday, Crew 3 works Saturday and Sunday. Add their members after.'),btn('Create Crew 1/2/3',()=>void save(model,{action:'crew.seed_defaults',requestId:key()},'Crew 1, Crew 2 and Crew 3 are ready. Add their members.'))));
     if(!rows.length)list.append(h('p',{class:'dp-muted'},'None recorded.'));
-    for(const row of rows)list.append(h('article',{},h('div',{},h('strong',{},kind==='availability'?person(row.employeeId)+' · '+row.date:row.name),h('small',{},kind==='crew'?row.memberIds.map(person).join(', '):kind==='vehicle'?row.notes||words(row.status):(row.allDay?'All day':clock(row.time)+' – '+clock(row.endTime))+' · '+(row.reason||words(row.status)))),btn('Edit',()=>{model.close();openResource(kind,row);})));
+    for(const row of rows)list.append(h('article',{},h('div',{},h('strong',{},kind==='availability'?person(row.employeeId)+' · '+row.date:kind==='crew'?crewLabel(row)+(row.status==='active'?'':' · inactive'):row.name),h('small',{},kind==='crew'?['Priority '+crewPriority(row),daysText(row),row.memberIds.map(person).join(', ')||'No members yet'].join(' · '):kind==='vehicle'?row.notes||words(row.status):(row.allDay?'All day':clock(row.time)+' – '+clock(row.endTime))+' · '+(row.reason||words(row.status)))),btn('Edit',()=>{model.close();openResource(kind,row);})));
   }
   model.fields.append(list);model.footer.append(btn('Done',model.close));
 }
@@ -1092,6 +1156,12 @@ function openResource(kind,resource=null) {
     for(const p of listed)members.append(h('label',{class:'dp-check'},h('input',{type:'checkbox',name:'memberIds',value:p.id,checked:resource?.memberIds?.includes(p.id)}),p.name));
     model.fields.append(members,labeled('Crew lead',select([['','No lead'],...listed.map(p=>[p.id,p.name])],resource?.leadId||'',()=>{},{name:'leadId'})),
       labeled('Status',select([['active','Active'],['inactive','Inactive']],resource?.status||'active',()=>{},{name:'status'})));
+    // Crew registry v2: who is asked first and on which days (automatic crew assignment uses both).
+    field(model,'priority','Priority (1 is asked first)',Number.isInteger(resource?.priority)?resource.priority:'','number',{min:1,max:99,step:1,placeholder:'99'});
+    field(model,'code','Crew code (optional)',resource?.code||'','text',{maxLength:20,pattern:'[a-z0-9]([a-z0-9-]{0,18}[a-z0-9])?',placeholder:'crew-1',autocomplete:'off'});
+    const days=h('fieldset',{class:'dp-wide'},h('legend',{},'Works on'));
+    for(const day of CREW_DAYS)days.append(h('label',{class:'dp-check'},h('input',{type:'checkbox',name:'serviceDays',value:day,checked:crewDays(resource).includes(day)}),DAY_LABEL[day]));
+    model.fields.append(days);
   } else if(kind==='vehicle'){
     field(model,'name','Vehicle name',resource?.name||'','text',{required:true,maxLength:100});
     model.fields.append(labeled('Availability',select([['available','Available'],['out_of_service','Out of service'],['inactive','Inactive']],resource?.status||'available',()=>{},{name:'status'})));
@@ -1109,7 +1179,15 @@ function openResource(kind,resource=null) {
   model.footer.append(btn('Back',model.close),h('button',{type:'submit',class:'dp-btn primary'},'Save '+(kind==='availability'?'availability':kind)));
   model.form.addEventListener('submit',e=>{
     e.preventDefault();const data=new FormData(model.form);let changes=Object.fromEntries(data.entries());
-    if(kind==='crew')changes={...changes,memberIds:data.getAll('memberIds'),leadId:data.get('leadId')||null};
+    if(kind==='crew'){
+      // Priority, code and days are sent only when set or changed, so a legacy crew keeps its shape.
+      const {priority,code,serviceDays,...rest}=changes,days=CREW_DAYS.filter(day=>data.getAll('serviceDays').includes(day)),stored=Array.isArray(resource?.serviceDays)&&resource.serviceDays.length;
+      if(!days.length){model.status.replaceChildren(notice('Choose at least one day this crew works.','error'));return;}
+      changes={...rest,memberIds:data.getAll('memberIds'),leadId:data.get('leadId')||null,
+        ...(priority!==''?{priority:Number(priority)}:resource?.priority!=null?{priority:null}:{}),
+        ...(String(code||'').trim()?{code:String(code).trim()}:resource?.code?{code:null}:{}),
+        ...(stored||days.length!==CREW_DAYS.length?{serviceDays:days}:{})};
+    }
     if(kind==='availability')changes={...changes,allDay:data.has('allDay')};
     const body={action:kind+'.save',requestId:key(),...(resource?{id:resource.id,expectedRevision:resource.revision}:{}),changes};
     void save(model,body,words(kind)+' saved.');

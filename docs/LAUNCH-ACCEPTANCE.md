@@ -5,6 +5,8 @@ detailed runbook; its optional features and historical steps are not all launch
 requirements. A green build is not live acceptance. Record the exact release,
 time, test identity, observed result and evidence for each gate below.
 
+Crews, estimator quotes, door-to-door booking and the HighLevel schedule mirror have their own switch order and owner setup in [SCHEDULING-D2D-GO-LIVE.md](SCHEDULING-D2D-GO-LIVE.md); its HighLevel switches wait on gate 2.
+
 ## Ownership
 
 - **Hub:** authoritative jobs, visits, crew assignment, approved pricing, work

@@ -1,17 +1,19 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
-import { createStaffDirectoryService, effectivePayRate, profileHourlyRate, normalizeWeeklyAvailability, storedPayRates, legacyPersonKeys, legacyPayLocked, legacyProfileInput, legacyProfileView, mirrorLegacyPay, DIRECTORY_PROFILE_FIELDS, LEGACY_EFFECTIVE_FROM, WEEK_DAYS } from '../functions/_lib/staff-directory.js';
+import { createStaffDirectoryService, effectivePayRate, profileHourlyRate, normalizeWeeklyAvailability, storedPayRates, legacyPersonKeys, legacyPayLocked, legacyProfileInput, legacyProfileView, mirrorLegacyPay, DIRECTORY_PROFILE_FIELDS, LEGACY_EFFECTIVE_FROM, WEEK_DAYS, SHIRT_SIZES, ageOn, emergencyContact, personalInput } from '../functions/_lib/staff-directory.js';
 import { SKILL_CATALOG, storedSkills } from '../functions/_lib/staff-skills.js';
 import { namedStaffRole } from '../functions/_lib/staff-invitation-service.js';
 import { listAudit } from '../functions/_lib/hub-audit.js';
 import { listHubUserProfiles } from '../functions/_lib/hub-session.js';
 import { opaqueId, open, readCollectionRecords, writeOne } from '../functions/_lib/employee-vault.js';
 import { employeeInvitationStore } from '../functions/_lib/employee-accounts.js';
-import { decodeFirestoreFields } from '../functions/_lib/firestore-job.js';
+import { decodeFirestoreFields, encodeFirestoreFields } from '../functions/_lib/firestore-job.js';
 import { staffDirectoryHandlers } from '../functions/api/staff-directory.js';
 import * as employeeHub from '../functions/api/employee-hub.js';
 import { vaultFirestore, staffEnv, cookieFor, seedAccount, login, jsonRequest } from './helpers/vault-fixture.mjs';
+import { storedHighlevelUserId } from '../functions/_lib/staff-directory.js';
+import { estimatorHighLevelUserId, storedHighLevelUserId } from '../functions/_lib/highlevel-users.js';
 
 const NOW = '2026-09-22T18:00:00.000Z';
 const clock = (iso = NOW) => () => new Date(iso);
@@ -594,4 +596,186 @@ test('HTTP: with the directory on, only the owner changes pay through the legacy
   assert.equal((await save(enabled, owner, 'crew.account', { username: 'Crew.Account', hourlyRate: 23 })).hourlyRate, 23, 'the owner keeps today\'s legacy edit');
   assert.equal((await save(legacy, manager, 'crew.account', { username: 'Crew.Account', hourlyRate: 24, payType: 'salary' })).hourlyRate, 24, 'with the directory off, managers edit pay as today');
   assert.equal((await save(legacy, manager, 'tylerg', { username: 'TylerG', hourlyRate: 31 })).hourlyRate, 31);
+});
+
+// ── D10 profile fields and the team directory ──
+const crewDoc = (id, data) => [`dispatchResources/${id}`, { name: `projects/egcw-1ec83/databases/(default)/documents/dispatchResources/${id}`, updateTime: '2026-09-22T12:00:00.000001Z', fields: encodeFirestoreFields({ id, recordType: 'crew', ...data }) }];
+
+test('set_personal: shirt size, birthday and its team visibility are validated, crew set only their own, and only managers link a HighLevel user', async () => {
+  const store = memory({ accounts: [account('Crew.One'), account('Crew.Two')] }), directory = service(store), crew = employee('Crew.One');
+  const saved = await directory.mutate(crew, change('Crew.One', '', { action: 'set_personal', shirtSize: ' xl ', birthDate: '2000-10-21', birthdayVisibleToTeam: false }));
+  assert.equal(saved.ok, true);
+  let stored = store.rows.get('crew.one').data;
+  assert.deepEqual([stored.shirtSize, stored.birthDate, stored.birthdayVisibleToTeam, stored.username], ['XL', '2000-10-21', false, 'Crew.One']);
+  assert.deepEqual(stored.history.at(-1).changes, { before: { shirtSize: null, birthDate: null, birthdayVisibleToTeam: true, highlevelUserId: null }, after: { shirtSize: 'XL', birthDate: '2000-10-21', birthdayVisibleToTeam: false, highlevelUserId: null } });
+  // The plaintext audit entry says what changed without the date.
+  const audit = store.commits[0].audit.patch;
+  assert.deepEqual(JSON.parse(audit.after), { shirtSize: 'XL', birthDateSet: true, birthdayVisibleToTeam: false, highlevelUserIdSet: false });
+  assert.doesNotMatch(audit.before + audit.after, /2000|10-21/);
+  assert.equal(saved.person.personal, undefined, 'the full record keeps its shape; the team card serves these fields');
+  // Another person's card, and the HighLevel user ID, are a manager's.
+  await rejects(directory.mutate(crew, change('Crew.Two', '', { action: 'set_personal', shirtSize: 'M' })), 'staff_directory_forbidden', 403);
+  await rejects(directory.mutate(crew, change('Crew.One', saved.person.revision, { action: 'set_personal', highlevelUserId: 'ghlSelfLink01' })), 'staff_directory_forbidden', 403);
+  for (const input of [{ shirtSize: 'XXL' }, { shirtSize: 3 }, { birthDate: '2000-13-01' }, { birthDate: '2026-09-23' }, { birthDate: '2013-01-01' }, { birthDate: '1925-01-01' }, { birthDate: 20001021 },
+    { birthdayVisibleToTeam: 'yes' }, { birthdayVisibleToTeam: null }, {}]) {
+    await rejects(directory.mutate(crew, change('Crew.One', saved.person.revision, { action: 'set_personal', ...input })), 'staff_directory_invalid_personal', 400);
+  }
+  await rejects(directory.mutate(crew, change('Crew.One', saved.person.revision, { action: 'set_personal', shirtSize: 'M', nickname: 'x' })), 'staff_directory_invalid_request', 400);
+  // A 14th birthday today is the youngest accepted; 100 years ago the oldest.
+  for (const birthDate of ['2012-09-22', '1926-09-22']) assert.equal(personalInput({ birthDate }, '2026-09-22').birthDate, birthDate);
+  await rejects(directory.mutate(people.TylerG, change('Crew.One', saved.person.revision, { action: 'set_personal', highlevelUserId: 'bad id!' })), 'staff_directory_invalid_personal', 400);
+  const linked = await directory.mutate(people.TylerG, change('Crew.One', saved.person.revision, { action: 'set_personal', highlevelUserId: ' ghlUser0001 ', birthDate: null }));
+  stored = store.rows.get('crew.one').data;
+  assert.deepEqual([stored.highlevelUserId, stored.birthDate, stored.shirtSize, stored.history.at(-1).actor], ['ghlUser0001', null, 'XL', 'TylerG']);
+  const again = await directory.mutate(crew, change('Crew.One', linked.person.revision, { action: 'set_personal', shirtSize: 'XL', birthdayVisibleToTeam: false }));
+  assert.equal(again.unchanged, true); assert.equal(store.commits.length, 2, 'an identical change writes nothing');
+  // The legacy employee-hub profile form cannot write any of them.
+  for (const field of ['shirtSize', 'birthDate', 'birthdayVisibleToTeam', 'highlevelUserId']) assert.ok(DIRECTORY_PROFILE_FIELDS.includes(field), field);
+  assert.deepEqual(legacyProfileInput({ jobTitle: 'x', shirtSize: 'S', birthDate: '2000-01-01', birthdayVisibleToTeam: true, highlevelUserId: 'x' }), { jobTitle: 'x' });
+});
+
+// E2E-D2D finding: the directory saved (and showed as linked) IDs with dashes, underscores or under 8 characters that the
+// HighLevel schedule mirror and the walkthrough appointment then silently ignored, assigning the estimator's deal to the
+// default HighLevel user. The directory now accepts exactly the form those assign work to.
+test('a HighLevel user ID is saved only in the form the schedule mirror assigns an estimator\'s deals to', async () => {
+  const store = memory({ accounts: [account('Crew.One')] }), directory = service(store), first = await directory.mutate(people.TylerG, change('Crew.One', '', { action: 'set_personal', shirtSize: 'M' }));
+  for (const highlevelUserId of ['synthetic-ghl-user-alex', 'ghl_user_0001', 'ghlUser', 'abc', 'x'.repeat(65)]) {
+    await rejects(directory.mutate(people.TylerG, change('Crew.One', first.person.revision, { action: 'set_personal', highlevelUserId })), 'staff_directory_invalid_personal', 400);
+    assert.equal(storedHighlevelUserId(highlevelUserId), null, `${highlevelUserId} never reads as linked`);
+    assert.equal(storedHighLevelUserId(highlevelUserId), null);
+  }
+  assert.equal(store.rows.get('crew.one').data.highlevelUserId, undefined, 'nothing was saved');
+  await directory.mutate(people.TylerG, change('Crew.One', first.person.revision, { action: 'set_personal', highlevelUserId: ' SyntheticGhlUser01 ' }));
+  const saved = store.rows.get('crew.one').data;
+  assert.equal(saved.highlevelUserId, 'SyntheticGhlUser01');
+  // What the directory saved is exactly what the mirror assigns the estimator's walkthrough deal to.
+  const visit = { type: 'walkthrough', assignedCrew: ['crew.one'] };
+  assert.equal(await estimatorHighLevelUserId({ EGC_STAFF_DIRECTORY_ENABLED: 'true' }, visit, { read: async () => ({ data: saved }) }), 'SyntheticGhlUser01');
+});
+
+test('age is whole years on the Denver calendar date, a Feb 29 birthday counts on Mar 1, and the emergency contact reads the older single field', () => {
+  assert.deepEqual([ageOn('2000-10-21', '2026-10-20'), ageOn('2000-10-21', '2026-10-21'), ageOn('2000-02-29', '2026-02-28'), ageOn('2000-02-29', '2026-03-01'), ageOn('2026-10-22', '2026-10-21'), ageOn('x', '2026-10-21')], [25, 26, 25, 26, null, null]);
+  assert.deepEqual(SHIRT_SIZES, ['XS', 'S', 'M', 'L', 'XL', '2XL', '3XL', '4XL']);
+  assert.deepEqual(personalInput({ shirtSize: 'huge', birthDate: '2031-01-01', birthdayVisibleToTeam: true }, '2026-10-17', { lenient: true }), { birthdayVisibleToTeam: true }, 'a draft keeps only what it can use');
+  assert.deepEqual(emergencyContact({ emergencyContact: 'Pat (970) 555-0100' }), { name: 'Pat (970) 555-0100', phone: '' });
+  assert.deepEqual(emergencyContact({ emergencyContact: 'Old', emergencyContactName: 'Pat', emergencyContactPhone: '9705550100' }), { name: 'Pat', phone: '9705550100' });
+});
+
+test('team view: every signed-in staff member sees names, photos, roles, crews, shirt sizes and shared birthdays; birth year, age and contacts only for themselves and managers', async () => {
+  const store = memory({
+    accounts: [account('Crew.One', { phone: '9705550111' }), account('Crew.Two', { phone: '9705550122' })],
+    profiles: [
+      { id: 'crew.one', username: 'Crew.One', preferredName: 'Uno', phone: '9705550199', shirtSize: 'L', birthDate: '1990-10-25', emergencyContactName: 'Pat One', emergencyContactPhone: '9705550101', hourlyRate: 21 },
+      { id: 'crew.two', username: 'Crew.Two', shirtSize: 'M', birthDate: '1985-03-02', birthdayVisibleToTeam: false, emergencyContact: 'Legacy Contact 555', highlevelUserId: 'ghlUser123', hourlyRate: 24, skills: [{ id: 'cleanout', level: 'lead' }] },
+    ],
+  });
+  const reads = { crews: 0, photos: [] };
+  store.crews = async () => { reads.crews++; return [
+    { id: 'crew_2', recordType: 'crew', name: 'Crew 2', memberIds: ['crew.two'], leadId: 'crew.two', status: 'active', priority: 2 },
+    { id: 'crew_1', recordType: 'crew', name: 'Crew 1', memberIds: ['crew.one', 'crew.two'], leadId: 'crew.one', status: 'active', priority: 1 },
+    { id: 'crew_old', recordType: 'crew', name: 'Old crew', memberIds: ['crew.one'], leadId: null, status: 'inactive' },
+  ]; };
+  const photo = '/api/crew-public-profile?photo=crew.one&v=11111111-1111-4111-8111-111111111111';
+  store.photoUrls = async keys => { reads.photos.push([...keys].sort()); return new Map([['crew.one', photo]]); };
+  const directory = service(store), crew = employee('Crew.One');
+  const view = await directory.team(crew);
+  assert.deepEqual([view.today, view.viewer, view.coverage.complete, view.coverage.crews, view.coverage.photos], ['2026-09-22', { user: 'Crew.One', manager: false }, true, true, true]);
+  assert.deepEqual(view.people.map(card => card.username).sort(), ['AlexK', 'Crew.One', 'Crew.Static', 'Crew.Two', 'TylerG', 'ZacB'], 'the whole active roster');
+  assert.deepEqual(view.people.map(card => card.displayName), [...view.people.map(card => card.displayName)].sort((a, b) => a.localeCompare(b)), 'sorted by the name shown');
+  assert.deepEqual([reads.crews, reads.photos.length, reads.photos[0].length], [1, 1, 6], 'one crew read and one photo read per view');
+  const other = view.people.find(card => card.username === 'Crew.Two'), self = view.people.find(card => card.username === 'Crew.One');
+  assert.deepEqual(other, { username: 'Crew.Two', displayName: 'Synthetic Crew.Two', staffRoles: ['crew'], primaryRole: 'crew',
+    crews: [{ id: 'crew_1', name: 'Crew 1', lead: false }, { id: 'crew_2', name: 'Crew 2', lead: true }], photoUrl: null, shirtSize: 'M', birthday: null, self: false }, 'a teammate: no birth year, age, contacts, revision or pay');
+  assert.deepEqual([self.displayName, self.photoUrl, self.shirtSize, self.birthday, self.birthDate, self.age, self.birthdayVisibleToTeam, typeof self.revision, self.crews.map(c => c.name)],
+    ['Uno', photo, 'L', { month: 10, day: 25 }, '1990-10-25', 35, true, 'string', ['Crew 1']], 'their own card carries their birth date, age and revision');
+  for (const hidden of ['phone', 'emergencyContact', 'highlevelUserId']) assert.equal(Object.hasOwn(self, hidden), false, hidden);
+  assert.equal(view.shirtSizes, undefined, 'uniform totals are for managers');
+  assert.doesNotMatch(JSON.stringify(view), /1985|Legacy Contact|ghlUser123|9705550122|9705550111|hourlyRate|skills|history|cleanout/);
+  // A crew member still cannot read another person's full record.
+  await rejects(directory.list(crew, { username: 'Crew.Two' }), 'staff_directory_forbidden', 403);
+  // Managers see everyone's birth date, age, phone (profile, else account), emergency contact and HighLevel user, plus size totals.
+  const managerView = await directory.team(people.TylerG);
+  const managed = managerView.people.find(card => card.username === 'Crew.Two');
+  assert.deepEqual([managerView.viewer.manager, managed.birthDate, managed.age, managed.birthdayVisibleToTeam, managed.birthday, managed.phone, managed.emergencyContact, managed.highlevelUserId],
+    [true, '1985-03-02', 41, false, null, '9705550122', { name: 'Legacy Contact 555', phone: '' }, 'ghlUser123']);
+  assert.deepEqual(managerView.people.find(card => card.username === 'Crew.One').emergencyContact, { name: 'Pat One', phone: '9705550101' });
+  assert.equal(managerView.people.find(card => card.username === 'Crew.One').phone, '9705550199', 'the profile phone wins over the account phone');
+  assert.deepEqual(managerView.shirtSizes, { XS: 0, S: 0, M: 1, L: 1, XL: 0, '2XL': 0, '3XL': 0, '4XL': 0, unknown: 4 });
+  assert.doesNotMatch(JSON.stringify(managerView), /hourlyRate|skills|history/);
+  // Crews or photos that cannot be read leave the cards without them, and say so.
+  store.crews = async () => { throw new Error('Synthetic 429'); };
+  store.photoUrls = async () => { throw new Error('Synthetic 429'); };
+  const degraded = await directory.team(crew);
+  assert.deepEqual([degraded.coverage.crews, degraded.coverage.photos, degraded.people.every(card => !card.crews.length && card.photoUrl === null)], [false, false, true]);
+  await rejects(directory.team(null), 'staff_directory_sign_in_required', 401);
+  assert.equal(store.commits.length, 0, 'reading the team writes nothing');
+});
+
+test('HTTP: GET ?view=team is for signed-in staff with the directory on; it reads crew records with a query, never the resources collection', async t => {
+  const fire = vaultFirestore(t), handlers = staffDirectoryHandlers({ now: clock() }), enabled = { ...env, EGC_STAFF_DIRECTORY_ENABLED: 'true' };
+  t.mock.timers.enable({ apis: ['Date'], now: Date.parse(NOW) });
+  await seedAccount(env, 'Crew.Account');
+  await writeOne(env, 'profiles', 'crew.account', { username: 'Crew.Account', shirtSize: '2XL', birthDate: '1999-12-31' }, { data: null }, NOW);
+  for (const [key, doc] of [crewDoc('crew_one', { name: 'Crew 1', memberIds: ['crew.account'], leadId: 'crew.account', status: 'active', priority: 1 }), crewDoc('vehicle_1', { recordType: 'vehicle', name: 'Truck' })]) fire.documents.set(key, doc);
+  const { cookie: crew } = await login(env, 'Crew.Account');
+  const get = (path, cookie, hubEnv = enabled) => handlers.get({ env: hubEnv, request: jsonRequest(path, undefined, cookie) });
+  const off = await get('/api/staff-directory?view=team', crew, env);
+  assert.deepEqual([off.status, (await off.json()).code], [503, 'staff_directory_not_enabled'], 'off, nothing new is served');
+  assert.equal((await get('/api/staff-directory?view=team')).status, 401);
+  for (const path of ['/api/staff-directory?view=all', '/api/staff-directory?view=team&username=Crew.Account', '/api/staff-directory?view=team&view=team']) assert.equal((await get(path, crew)).status, 400, path);
+  const before = fire.requests.length, writes = fire.writes().length, response = await get('/api/staff-directory?view=team', crew);
+  assert.equal(response.status, 200, await response.clone().text());
+  const body = await response.json(), own = body.people.find(card => card.username === 'Crew.Account');
+  assert.deepEqual([own.self, own.shirtSize, own.birthday, own.birthDate, own.age, own.crews], [true, '2XL', { month: 12, day: 31 }, '1999-12-31', 26, [{ id: 'crew_one', name: 'Crew 1', lead: true }]]);
+  assert.equal(response.headers.get('Cache-Control'), 'no-store');
+  const requests = fire.requests.slice(before), resourceReads = requests.filter(request => request.url.pathname.includes('dispatchResources') || JSON.stringify(request.body || {}).includes('dispatchResources'));
+  assert.equal(resourceReads.length, 1, 'one crew query');
+  assert.deepEqual([resourceReads[0].url.pathname.endsWith(':runQuery'), resourceReads[0].body.structuredQuery.where.fieldFilter.value, resourceReads[0].body.structuredQuery.limit], [true, { stringValue: 'crew' }, 200]);
+  assert.equal(fire.writes().length, writes, 'reading the team writes nothing');
+  // Crew still get 403 for someone else's full record over HTTP.
+  const forbidden = await get('/api/staff-directory?username=TylerG', crew);
+  assert.deepEqual([forbidden.status, (await forbidden.json()).code], [403, 'staff_directory_forbidden']);
+});
+
+test('HTTP: the employee\'s own onboarding form saves their shirt size and birthday only with the directory on, validated; a manager\'s legacy save cannot write them', async t => {
+  const fire = vaultFirestore(t), enabled = { ...env, EGC_STAFF_DIRECTORY_ENABLED: 'true' };
+  t.mock.timers.enable({ apis: ['Date'], now: Date.parse(NOW) });
+  await seedAccount(env, 'Crew.Account');
+  const { cookie: crew } = await login(env, 'Crew.Account'), manager = await cookieFor(env, 'TylerG');
+  const acknowledgements = ['timekeeping', 'location_policy', 'safety', 'customer_care', 'hub_basics'];
+  const form = (at, extra = {}) => ({ preferredName: 'Synthetic', phone: '9705550100', emergencyContactName: 'Pat', emergencyContactPhone: '9705550101', onboardingCompletedAt: at, onboardingAcknowledgements: acknowledgements,
+    shirtSize: 'l', birthDate: '1999-05-05', birthdayVisibleToTeam: false, highlevelUserId: 'ghlForged01', ...extra });
+  const save = async (hubEnv, data, cookie = crew) => employeeHub.onRequestPost({ env: hubEnv, request: jsonRequest('/api/employee-hub', { collection: 'profiles', id: 'crew.account', data }, cookie) });
+  const stored = async () => (await decrypt(fire, 'profiles', 'crew.account')).data;
+  // Off: dropped exactly as before.
+  assert.equal((await save(env, form('2026-09-22T17:00:00.000Z'))).status, 200);
+  let profile = await stored();
+  for (const field of ['shirtSize', 'birthDate', 'birthdayVisibleToTeam', 'highlevelUserId']) assert.equal(Object.hasOwn(profile, field), false, field);
+  assert.equal(profile.emergencyContactName, 'Pat');
+  // On: saved, validated; the HighLevel user ID never comes from the employee.
+  assert.equal((await save(enabled, form('2026-09-22T17:01:00.000Z'))).status, 200);
+  profile = await stored();
+  assert.deepEqual([profile.shirtSize, profile.birthDate, profile.birthdayVisibleToTeam, Object.hasOwn(profile, 'highlevelUserId')], ['L', '1999-05-05', false, false]);
+  const refused = await save(enabled, form('2026-09-22T17:02:00.000Z', { birthDate: '2031-01-01' }));
+  assert.deepEqual([refused.status, (await refused.json()).code], [400, 'staff_directory_invalid_personal']);
+  assert.equal((await stored()).birthDate, '1999-05-05', 'a refused completion changes nothing');
+  // A draft autosave keeps what it can use and leaves out a half-typed date.
+  const draft = await save(enabled, { preferredName: 'Synthetic', onboardingDraftAt: '2026-09-22T17:03:00.000Z', shirtSize: 'XL', birthDate: '19', birthdayVisibleToTeam: true });
+  assert.equal(draft.status, 200, await draft.clone().text());
+  profile = await stored();
+  assert.deepEqual([profile.shirtSize, profile.birthDate, profile.birthdayVisibleToTeam], ['XL', '1999-05-05', true]);
+  // A manager's legacy profile save cannot set them (set_personal is the audited path).
+  assert.equal((await save(enabled, { username: 'Crew.Account', jobTitle: 'Synthetic lead', shirtSize: 'S', birthDate: '1980-01-01', birthdayVisibleToTeam: false, highlevelUserId: 'ghlForged02' }, manager)).status, 200);
+  profile = await stored();
+  assert.deepEqual([profile.jobTitle, profile.shirtSize, profile.birthDate, profile.birthdayVisibleToTeam, Object.hasOwn(profile, 'highlevelUserId')], ['Synthetic lead', 'XL', '1999-05-05', true, false]);
+});
+
+test('integration status reports flags.teamDirectory only with EGC_STAFF_DIRECTORY_ENABLED exactly "true"; off, the flags are exactly as before', async t => {
+  vaultFirestore(t);
+  const { onRequestGet } = await import('../functions/api/integration-status.js');
+  const crew = await cookieFor(env, 'Crew.Static');
+  const read = async extra => (await onRequestGet({ request: jsonRequest('/api/integration-status', undefined, crew), env: { ...env, ...extra } })).json();
+  assert.deepEqual((await read({})).flags, { moneyApi: false, lifecycleApi: false });
+  assert.deepEqual((await read({ EGC_STAFF_DIRECTORY_ENABLED: 'yes' })).flags, { moneyApi: false, lifecycleApi: false });
+  assert.deepEqual((await read({ EGC_STAFF_DIRECTORY_ENABLED: 'true' })).flags, { moneyApi: false, lifecycleApi: false, teamDirectory: true }, 'every signed-in viewer, crew included');
 });

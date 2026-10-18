@@ -6,11 +6,14 @@ import vm from './helpers/vm-realm.mjs';
 import { arrivalWindowProblem, arrivalWindowFields } from '../functions/_lib/dispatch-arrival.js';
 import { crewNotificationWrites, crewNotificationsEnabled } from '../functions/_lib/crew-notifications.js';
 import { ghlTagOutboxEnabled, scheduleTagWrites } from '../functions/_lib/ghl-tag-outbox.js';
+import { ghlScheduleMirrorEnabled, scheduleMirrorWrites } from '../functions/_lib/ghl-schedule-mirror.js';
 import { jobStartProblem } from '../functions/_lib/job-start-policy.js';
 import * as funnel from '../functions/_lib/dispatch-funnel.js';
 import * as dimensions from '../functions/_lib/funnel-dimensions.js';
 import { commitConflict, commitFailure } from '../functions/_lib/firestore-errors.js';
 import { bridgeCommandDenial, bridgeCommandPolicy } from '../egc-platform/services/operations/src/bridge-command-policy.ts';
+import * as crewAssign from '../functions/_lib/dispatch-crew-assign.js';
+import { scheduleCrewIds } from '../functions/_lib/dispatch-conflicts.js';
 
 // Execute the actual scheduling mutator, isolating only imported I/O and time/
 // conflict helpers. This suite proves atomic dependency guards, not live
@@ -30,6 +33,8 @@ function load() {
     crewNotificationWrites, crewNotificationsEnabled,
     // GHL-TRACK-1 HighLevel tag outbox runs for real; these stores leave the flag off.
     ghlTagOutboxEnabled, scheduleTagWrites,
+    // D9b HighLevel schedule mirror runs for real; these stores leave the flag off.
+    ghlScheduleMirrorEnabled, scheduleMirrorWrites,
     // The shared SEC-04 bridge policy runs for real (the owner actor below is allowed).
     bridgeCommandDenial, bridgeCommandPolicy,
     DISPATCH_TIME_ZONE: 'America/Denver',
@@ -42,6 +47,9 @@ function load() {
     eventDimensions: dimensions.eventDimensions, firstPlacementDimensions: dimensions.firstPlacementDimensions, legacyDimensionFacts: dimensions.legacyDimensionFacts, projectDimensionPatch: dimensions.projectDimensionPatch, resolveDimensions: dimensions.resolveDimensions, visitDimensionFacts: dimensions.visitDimensionFacts,
     // The real shared classifier, so commit error paths map as in production.
     commitConflict, commitFailure,
+    // Crew auto-assign (EGC_DISPATCH_CREW_AUTO_ASSIGN) helpers run for real; these stores leave the flag off.
+    autoAssignedCrew: crewAssign.autoAssignedCrew, crewAssignment: crewAssign.crewAssignment, crewAutoAssignEnabled: crewAssign.crewAutoAssignEnabled, crewAutoRecord: crewAssign.crewAutoRecord,
+    crewPickOrder: crewAssign.crewPickOrder, eligibleCrews: crewAssign.eligibleCrews, pickCrew: crewAssign.pickCrew, scheduleCrewIds,
   });
   vm.runInContext(source.replace(/^import .*;\r?\n/gm, '').replace(/^export /gm, '') +
     '\nglobalThis.api = {mutateScheduledVisit, schedulingStorage};', context);

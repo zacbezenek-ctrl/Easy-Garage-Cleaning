@@ -1,0 +1,36 @@
+/* Team directory (employee-team-directory.js) on the Hub UI kit tokens. */
+.td-root .td-muted{color:var(--hub-muted);margin:0;font-size:14px}
+.td-root .td-search{display:flex;align-items:center;gap:var(--hub-space-3);flex-wrap:wrap}
+.td-root .td-search-input{flex:1 1 260px;min-width:0;min-height:var(--hub-tap);padding:10px 12px;border:1px solid var(--hub-line);border-radius:var(--hub-radius);background:#fff;color:var(--hub-ink);font:500 16px/1.35 var(--hub-font)}
+.td-root .td-search-input:focus-visible{outline:3px solid rgba(238,92,43,.35);outline-offset:2px}
+.td-root .td-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(min(100%,260px),1fr));gap:var(--hub-space-4)}
+.td-root .td-card{display:grid;gap:var(--hub-space-3);align-content:start;padding:var(--hub-space-4)}
+.td-root .td-self{border-color:var(--hub-orange-bright)}
+.td-root .td-card-head{display:grid;grid-template-columns:56px minmax(0,1fr);gap:var(--hub-space-3);align-items:center}
+.td-root .td-card-head h3{font-size:18px}
+.td-root .td-roles{margin:2px 0 0;color:var(--hub-muted);font-size:13px}
+.td-root .td-avatar{width:56px;height:56px;border-radius:50%;object-fit:cover;background:var(--hub-soft);border:1px solid var(--hub-line)}
+.td-root .td-initials{display:inline-flex;align-items:center;justify-content:center;font:700 18px var(--hub-font);color:var(--hub-navy)}
+.td-root .td-crews{display:flex;flex-wrap:wrap;gap:6px;margin:0;padding:0;list-style:none}
+.td-root .td-chip{padding:3px 9px;border-radius:999px;background:var(--hub-soft);border:1px solid var(--hub-line);font:700 12px/1.4 var(--hub-font);color:var(--hub-navy)}
+.td-root .td-chip.td-lead{border-color:var(--hub-orange);color:var(--hub-orange-ink)}
+.td-root .td-details{display:grid;gap:6px;margin:0}
+.td-root .td-detail{display:grid;grid-template-columns:110px minmax(0,1fr);gap:var(--hub-space-2);font-size:14px}
+.td-root .td-detail dt{color:var(--hub-muted);font-weight:700}
+.td-root .td-detail dd{margin:0;overflow-wrap:anywhere}
+.td-root .td-detail a{color:var(--hub-blue)}
+.td-root .td-birthdays ul{display:flex;gap:var(--hub-space-2);margin:6px 0 0;padding:0 0 4px;list-style:none;overflow-x:auto;-webkit-overflow-scrolling:touch}
+.td-root .td-birthday{flex:0 0 auto;display:grid;gap:2px;padding:8px 12px;border:1px solid var(--hub-line);border-radius:var(--hub-radius);background:#fff;font-size:14px}
+.td-root .td-birthday span{color:var(--hub-muted);font-size:12px}
+.td-root .td-birthday.td-today{border-color:var(--hub-orange);background:#fff7f2}
+.td-root .td-sizes{display:grid;gap:var(--hub-space-3)}
+.td-root .td-size-list{display:grid;grid-template-columns:repeat(auto-fill,minmax(64px,1fr));gap:var(--hub-space-2);margin:0;padding:0;list-style:none}
+.td-root .td-size-list li{display:grid;justify-items:center;padding:8px 4px;border:1px solid var(--hub-line);border-radius:var(--hub-radius);background:#fff}
+.td-root .td-size-list strong{font:700 20px var(--hub-font);color:var(--hub-navy)}
+.td-root .td-size-list span{font:700 12px var(--hub-mono);color:var(--hub-muted)}
+.td-root .td-size-list .td-zero strong{color:var(--hub-muted)}
+.td-root .td-editor{display:grid;gap:var(--hub-space-3)}
+@media (max-width:680px){
+  .td-root .td-grid{grid-template-columns:1fr}
+  .td-root .td-detail{grid-template-columns:96px minmax(0,1fr)}
+}

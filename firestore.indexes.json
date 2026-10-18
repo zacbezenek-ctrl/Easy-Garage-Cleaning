@@ -9,6 +9,22 @@
       ]
     },
     {
+      "collectionGroup": "jobs",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "source", "order": "ASCENDING" },
+        { "fieldPath": "createdAt", "order": "ASCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "jobs",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "endDate", "order": "ASCENDING" },
+        { "fieldPath": "date", "order": "ASCENDING" }
+      ]
+    },
+    {
       "collectionGroup": "funnelEvents",
       "queryScope": "COLLECTION",
       "fields": [
@@ -54,6 +70,15 @@
       "fields": [
         { "fieldPath": "highlevelContactId", "order": "ASCENDING" },
         { "fieldPath": "occurredAt", "order": "ASCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "knock_walkthroughs",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "repKey", "order": "ASCENDING" },
+        { "fieldPath": "setAt", "order": "DESCENDING" },
+        { "fieldPath": "__name__", "order": "ASCENDING" }
       ]
     },
     {

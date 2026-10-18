@@ -182,7 +182,7 @@ test('with no saved settings every rule is only a warning, and new jobs keep the
   assert.deepEqual(legacy.warnings, []);
   const view = await dispatchOverview(f.store, owner, { startDate: '2026-09-23', endDate: '2026-09-24' }, now);
   assert.deepEqual(view.dispatchRules.blocking, { crewShort: false, skillMissing: false, travelShort: false, overCapacity: false, outsideHours: false });
-  assert.equal(view.dispatchRules.workdayStart, '08:00'); assert.equal(view.dispatchRules.defaultTravelBufferMinutes, 20);
+  assert.equal(view.dispatchRules.workdayStart, '09:00', 'D5: the job day starts at 9:00'); assert.equal(view.dispatchRules.defaultTravelBufferMinutes, 20);
   assert.ok(view.dispatchRules.skills.some(skill => skill.id === 'shelving' && skill.label === 'Shelving install'));
   assert.deepEqual(codes(view.warnings.filter(row => row.jobId === saved.job.id)).sort(), ['crew_size_short', 'outside_working_hours', 'skill_missing']);
   await assert.rejects(f.mutate(f.create({ requiredSkills: ['forklift'] })), error => error.code === 'dispatch_skills_invalid' && error.status === 400);
@@ -216,6 +216,10 @@ test('with no saved settings and the staff directory off, saves, receipts and jo
   assert.deepEqual(jobRules, dispatchRules);
   const { requiredSkills, mode, searchedEmployeeIds, ...constraints } = after.openings.constraints;
   assert.deepEqual([requiredSkills, mode, searchedEmployeeIds], [[], 'together', ['crew1']]);
+  // D5 (owner, 2026-10-17) moved the default workday start from 08:00 to 09:00; this scenario's
+  // openings begin later in the day, so only the reported start changes.
+  assert.deepEqual([before.openings.constraints.workdayStart, constraints.workdayStart], ['08:00', '09:00']);
+  constraints.workdayStart = before.openings.constraints.workdayStart;
   assert.ok(before.openings.candidates.length > 0 && after.openings.candidates.every(candidate => JSON.stringify(candidate.employeeIds) === '["crew1"]'));
   assert.equal(JSON.stringify({ ...after.openings, constraints, candidates: after.openings.candidates.map(({ employeeIds, ...candidate }) => candidate) }), JSON.stringify(before.openings));
 });

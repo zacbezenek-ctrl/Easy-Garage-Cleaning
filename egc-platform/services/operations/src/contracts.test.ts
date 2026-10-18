@@ -68,7 +68,7 @@ describe("task.send contract",()=>{
   const parsed=commandSchema.parse(send);expect(WRITE_COMMANDS.has("task.send")).toBe(true);
   errorCode(()=>authorize({id:"grant-1",kind:"integration",role:"integration",workspace:"egc"},parsed,"egc"),"human_send_confirmation_required");
   for(const role of ["owner","manager","sales"] as const)expect(()=>authorize({...owner,role},parsed,"egc")).not.toThrow();
-  for(const role of ["crew","crew_lead"] as const)errorCode(()=>authorize({...owner,role},parsed,"egc"),"role_forbidden");
+  for(const role of ["crew","crew_lead","team_lead"] as const)errorCode(()=>authorize({...owner,role},parsed,"egc"),"role_forbidden");
  });
  it("digests an edited draft the same with a missing or empty attachment list, but not the same as no edit",()=>{
   const digestOf=(value:object)=>requestDigest(owner,commandSchema.parse(value));

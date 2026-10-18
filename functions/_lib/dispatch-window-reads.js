@@ -36,7 +36,27 @@ import { customerSearchTerms, customerMatchesSearch, customerPhoneDigits, SEARCH
  * are conservative evidence in the complete scan only. That is an accepted
  * residual risk of 'true': shadow mode reports such rows before the switch,
  * and scripts/dispatch-window-audit.mjs (read only) reports them afterwards,
- * including rows written later through the browser SDK or an import. */
+ * including rows written later through the browser SDK or an import.
+ * READ-BUDGET: a bounded read (jobsNear(startDate,endDate,bound)) serves callers
+ * that never use a valid row starting after `bound`: openings (dispatch-openings.js
+ * keeps rows starting by the search's end date) and a dated save's conflict
+ * evidence (a travel day after its last day, plus a day of slack). It replaces
+ * the unbounded endDate and date passes, which return every dated row twice:
+ *  - openings read the rows starting in [floor, bound] (one bounded range on
+ *    `date`, the single-field index), so no later booking;
+ *  - a dated save (everyStart) reads every row starting on or after the floor
+ *    (the date pass alone): a malformed date string sorting after the bound
+ *    ('2026/10/26', '2026-10-5', 'Oct 26') is still conservative evidence for
+ *    the check that commits a crew;
+ *  - both read the rows starting before the floor and ending on or after it
+ *    (SPANS: a job longer than the margin, or a malformed date with a later
+ *    endDate) with one query on the composite index jobs(endDate, date)
+ *    (dispatch-storage.js spanningJobs); until that index is deployed, the
+ *    endDate pass it replaces, as before.
+ * The undated and availability queries are unchanged. The save's residual risk
+ * is the one above; openings, a suggestion the save checks again, also miss a
+ * malformed date string sorting after the bound, which shadow mode and the audit
+ * report. */
 export const WINDOW_MARGIN_DAYS = 35;
 const PAGE = 500;
 const fail = (code, message, status = 503) => Object.assign(new Error(message), { code, status });
@@ -51,11 +71,15 @@ export function dispatchReadMode(env) {
 export const windowFloor = startDate => addDays(startDate, -WINDOW_MARGIN_DAYS);
 export const dayWindow = date => ({ startDate: date, endDate: addDays(date, 1) });
 
-export function windowQueries(startDate) {
+export function windowQueries(startDate, bound = null, everyStart = false) {
   const floor = windowFloor(startDate);
   return [
-    { field: 'endDate', op: 'GREATER_THAN_OR_EQUAL', value: floor },
-    { field: 'date', op: 'GREATER_THAN_OR_EQUAL', value: floor },
+    // Bounded (READ-BUDGET): one range on the start date (every start from the floor for a save), then the rows
+    // starting before the floor and ending on or after it (SPANS). Else every row ending or starting on or after the floor.
+    ...(bound ? [everyStart ? { field: 'date', op: 'GREATER_THAN_OR_EQUAL', value: floor } : { field: 'date', op: 'RANGE', value: [floor, bound] },
+      { field: 'endDate', op: 'SPANS', value: floor }] : [
+      { field: 'endDate', op: 'GREATER_THAN_OR_EQUAL', value: floor },
+      { field: 'date', op: 'GREATER_THAN_OR_EQUAL', value: floor }]),
     { field: 'date', op: 'EQUAL', value: '' },
     { field: 'date', op: 'IS_NULL' },
     { field: 'type', op: 'EQUAL', value: 'availability' },
@@ -67,6 +91,7 @@ export function windowQueries(startDate) {
 function matches(row, { field, op, value }) {
   const found = row[field];
   if (op === 'GREATER_THAN_OR_EQUAL') return typeof found === 'string' && found >= value;
+  if (op === 'RANGE') return typeof found === 'string' && found >= value[0] && found <= value[1];
   if (op === 'EQUAL') return found === value;
   if (op === 'IS_NULL') return found === null;
   if (op === 'IN') return value.includes(found);
@@ -75,8 +100,10 @@ function matches(row, { field, op, value }) {
 }
 
 export function structuredQuery(collection, spec, fields, after = null) {
-  const field = { fieldPath: spec.field }, range = spec.op === 'GREATER_THAN_OR_EQUAL';
+  const field = { fieldPath: spec.field }, range = spec.op === 'GREATER_THAN_OR_EQUAL' || spec.op === 'RANGE';
+  const edge = (op, stringValue) => ({ fieldFilter: { field, op, value: { stringValue } } });
   const where = spec.op === 'IS_NULL' ? { unaryFilter: { op: 'IS_NULL', field } }
+    : spec.op === 'RANGE' ? { compositeFilter: { op: 'AND', filters: [edge('GREATER_THAN_OR_EQUAL', spec.value[0]), edge('LESS_THAN_OR_EQUAL', spec.value[1])] } }
     : { fieldFilter: { field, op: spec.op, value: spec.op === 'IN' ? { arrayValue: { values: spec.value.map(stringValue => ({ stringValue })) } } : { stringValue: spec.value } } };
   return { from: [{ collectionId: collection }], select: { fields: fields.map(fieldPath => ({ fieldPath })) }, where,
     orderBy: [...(range ? [{ field, direction: 'ASCENDING' }] : []), { field: { fieldPath: '__name__' }, direction: 'ASCENDING' }], limit: PAGE,
@@ -113,28 +140,35 @@ const newer = (left, right) => {
 };
 /** Union of windowQueries() through `query(spec)`, one row per id (the newest
  * revision when a row changed between queries), in document-id order like the
- * complete scan. */
-export async function windowedJobs(query, startDate, endDate) {
-  if (!validDate(startDate) || !validDate(endDate) || endDate <= startDate) throw fail('dispatch_range_invalid', 'Choose a valid date range. The end date is exclusive.', 400);
+ * complete scan. `bound` (a date on or after endDate) asks for the bounded read:
+ * rows starting no later than it, or with `everyStart` every row starting on or
+ * after the floor. `query` also answers the SPANS spec (rows with endDate on or
+ * after its value and a date string before it). */
+export async function windowedJobs(query, startDate, endDate, bound = null, everyStart = false) {
+  if (!validDate(startDate) || !validDate(endDate) || endDate <= startDate || bound !== null && (!validDate(bound) || bound < endDate)) throw fail('dispatch_range_invalid', 'Choose a valid date range. The end date is exclusive.', 400);
   const found = new Map();
-  for (const row of (await Promise.all(windowQueries(startDate).map(query))).flat()) {
+  for (const row of (await Promise.all(windowQueries(startDate, bound, everyStart === true).map(query))).flat()) {
     if (!found.has(row.id) || newer(row.revision, found.get(row.id).revision)) found.set(row.id, row);
   }
   return [...found.values()].sort(byId);
 }
 
 /** Whether a complete-scan row can affect dispatch for a window starting on
- * startDate; windowed reads must contain every such row. */
-export function windowRelevant(row, startDate) {
+ * startDate; windowed reads must contain every such row. For a bounded read
+ * that is a row ending no earlier than the day before the window (the travel
+ * day openings and saves look back) and starting by `bound`: a valid row is then
+ * inside the read (one longer than the margin through SPANS). */
+export function windowRelevant(row, startDate, bound = null) {
   if (unavailable(row)) return true;
   if (!row || PRIVATE.test(String(row.id)) || row.recordType || !OPERATIONAL.has(row.type)) return false;
-  return windowReason(row, startDate) !== null;
+  return windowReason(row, startDate, bound) !== null;
 }
-function windowReason(row, startDate) {
+function windowReason(row, startDate, bound = null) {
   if (unavailable(row)) return 'availability';
   if (!row.date) return 'undated';
   const end = row.endDate || row.date;
   if (!validDate(row.date) || !validDate(end) || end < row.date) return 'unverifiable_date';
+  if (bound) return end >= addDays(startDate, -1) && row.date <= bound ? 'dated' : null;
   return end >= windowFloor(startDate) ? 'dated' : null;
 }
 
@@ -144,32 +178,35 @@ function log(store, entry) {
   try { const out = store.log || console; (entry.match ? out.info : out.warn).call(out, JSON.stringify(entry)); } catch { /* logging never changes a dispatch answer */ }
 }
 
-/** Shadow comparison of one windowed read with the complete scan. */
-export function windowDiff(full, near, startDate) {
+/** Shadow comparison of one windowed read (bounded when `bound` is given) with the complete scan. */
+export function windowDiff(full, near, startDate, bound = null) {
   const seen = new Map(near.map(row => [row.id, row])), fullIds = new Set(full.map(row => row.id)), missing = [], changed = [];
   for (const row of full) {
-    if (!windowRelevant(row, startDate)) continue;
+    if (!windowRelevant(row, startDate, bound)) continue;
     const other = seen.get(row.id);
-    if (!other) missing.push({ id: row.id, reason: windowReason(row, startDate) });
+    if (!other) missing.push({ id: row.id, reason: windowReason(row, startDate, bound) });
     else if (other.revision !== row.revision) changed.push(row.id);
   }
   return { missing, changed, extra: near.filter(row => !fullIds.has(row.id)).map(row => row.id) };
 }
 
 /** Jobs rows for dispatch in a Denver window [startDate,endDate). `range` may be
- * an async function, called only when a window is read. `scan` is a complete
- * scan already started (a promise), used instead of a new one outside windowed
- * mode. Stores without jobsNear (tests, bridges) always scan everything. */
+ * an async function, called only when a window is read; its optional `bound`
+ * (and `everyStart`, a dated save) asks for the bounded read (READ-BUDGET,
+ * above). `scan` is a complete scan already started (a promise), used instead
+ * of a new one outside windowed mode. Stores without jobsNear (tests, bridges)
+ * always scan everything. */
 export async function jobsForWindow(store, range, label = 'dispatch', scan = null) {
   const mode = typeof store.jobsNear === 'function' ? store.windowedReads : 'full';
   if (mode !== 'windowed' && mode !== 'shadow') return scan ?? store.jobs();
-  const { startDate, endDate } = await (typeof range === 'function' ? range() : range);
-  if (mode === 'windowed') return store.jobsNear(startDate, endDate);
-  const [full, near] = await Promise.all([scan ?? store.jobs(), store.jobsNear(startDate, endDate).then(rows => ({ rows }), error => ({ error }))]);
-  const entry = { event: 'dispatch_window_shadow', label, startDate, endDate, fullRows: full.length };
+  const { startDate, endDate, bound = null, everyStart = false } = await (typeof range === 'function' ? range() : range);
+  const read = () => bound ? store.jobsNear(startDate, endDate, bound, everyStart === true) : store.jobsNear(startDate, endDate);
+  if (mode === 'windowed') return read();
+  const [full, near] = await Promise.all([scan ?? store.jobs(), read().then(rows => ({ rows }), error => ({ error }))]);
+  const entry = { event: 'dispatch_window_shadow', label, startDate, endDate, ...(bound ? { bound } : {}), fullRows: full.length };
   if (near.error) log(store, { ...entry, match: false, error: String(near.error.code || 'dispatch_window_read_failed') });
   else {
-    const diff = windowDiff(full, near.rows, startDate), reasons = {};
+    const diff = windowDiff(full, near.rows, startDate, bound), reasons = {};
     for (const { reason } of diff.missing) reasons[reason] = (reasons[reason] || 0) + 1;
     // A row edited between the two reads is still found; only a missing row is a mismatch.
     log(store, { ...entry, windowRows: near.rows.length, match: !diff.missing.length, missing: diff.missing.length, missingByReason: reasons, changed: diff.changed.length, extra: diff.extra.length,

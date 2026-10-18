@@ -7,13 +7,17 @@ import { configuredBusinessAccess, hasBusinessAccess, isHubOwner, staffRoleAcces
 // requireDispatcher (business access plus role owner|manager), and every other
 // capability needs hasBusinessAccess. Stored roles never grant an owner capability to
 // anyone but the configured owner.
-export const STAFF_ROLES = Object.freeze(['owner', 'manager', 'crew_lead', 'crew', 'sales', 'phone']);
+// TEAM-LEAD (owner decision D6, 2026-10-17): team_lead sees every crew's schedule (schedule.view, below, which
+// needs no flag) and otherwise works at crew-lead level (field-permissions.js counts it as a crew lead). Estimators
+// and door-to-door reps are skills (staff-skills.js), not roles.
+export const STAFF_ROLES = Object.freeze(['owner', 'manager', 'team_lead', 'crew_lead', 'crew', 'sales', 'phone']);
 export const STAFF_CAPABILITIES = Object.freeze(['dispatch.write', 'time.approve', 'pay.manage', 'accounts.approve', 'money.refund', 'money.charge_stored_card', 'customer.send', 'followups.own', 'quotes.author', 'mcp.write', 'b2b.manage', 'catalog.manage', 'settings.manage']);
 export const OWNER_CAPABILITIES = Object.freeze(['pay.manage', 'accounts.approve', 'money.refund', 'money.charge_stored_card', 'catalog.manage', 'settings.manage']);
 const MANAGER_CAPABILITIES = Object.freeze(['dispatch.write', 'time.approve', 'customer.send', 'followups.own', 'quotes.author', 'mcp.write', 'b2b.manage']);
 export const ROLE_CAPABILITIES = Object.freeze({
   owner: STAFF_CAPABILITIES,
   manager: MANAGER_CAPABILITIES,
+  team_lead: Object.freeze([]),
   crew_lead: Object.freeze([]),
   crew: Object.freeze([]),
   sales: Object.freeze(['customer.send', 'followups.own', 'quotes.author']),
@@ -29,10 +33,29 @@ export const ACCESS_CAPABILITIES = Object.freeze(['schedule.book', 'walkthrough.
 export const ROLE_ACCESS_CAPABILITIES = Object.freeze({
   owner: ACCESS_CAPABILITIES,
   manager: ACCESS_CAPABILITIES,
+  team_lead: Object.freeze([]),
   crew_lead: Object.freeze([]),
   crew: Object.freeze([]),
   sales: ACCESS_CAPABILITIES,
   phone: Object.freeze(['schedule.book']),
+});
+// TEAM-LEAD: schedule.view is read only: every crew's schedule on /api/crew-schedule (scope=all), projected like a
+// crew row (first name, city, time, crew and lead), with no booking, staffing, customer contact or money. It needs no
+// flag: the stored role is the switch (D6, "Eli is data"), as it already is for the crew-lead field rights
+// (field-permissions.js). Business access holds it in every mode (Dispatch already shows every crew). Otherwise, with
+// EGC_STAFF_ROLE_PERMISSIONS (or EGC_STAFF_ROLE_ACCESS) on, the capability roles decide; with both off, the stored
+// roles (else the account's own role, defaultStaffRoles) do, so a team lead sees every crew without either flag and
+// Sales, Phone, crew leads and crew never do. It is listed (capabilityNames, the matrix, hub-auth capabilities) only
+// with EGC_STAFF_ROLE_ACCESS on, so every capability list answered with that flag off stays as recorded.
+export const VIEW_CAPABILITIES = Object.freeze(['schedule.view']);
+export const ROLE_VIEW_CAPABILITIES = Object.freeze({
+  owner: VIEW_CAPABILITIES,
+  manager: VIEW_CAPABILITIES,
+  team_lead: VIEW_CAPABILITIES,
+  crew_lead: Object.freeze([]),
+  crew: Object.freeze([]),
+  sales: Object.freeze([]),
+  phone: Object.freeze([]),
 });
 // STAFF-ACCESS: capabilities that exist only with EGC_STAFF_PASSWORD_RESET on (staffPasswordResetEnabled).
 // accounts.reset issues a staff member's single-use sign-in reset link; it is the owner's. password.change is
@@ -42,15 +65,15 @@ export const ROLE_ACCESS_CAPABILITIES = Object.freeze({
 // never grantable). Flag off: can() answers false for these, grants are ignored and no list reports them.
 export const RESET_CAPABILITIES = Object.freeze(['accounts.reset', 'password.change']);
 export const MANAGER_GRANTABLE = Object.freeze(['accounts.reset', 'accounts.approve']);
-const ROLE_RESET_CAPABILITIES = Object.freeze({ owner: Object.freeze(['accounts.reset']), manager: Object.freeze([]), crew_lead: Object.freeze([]), crew: Object.freeze([]), sales: Object.freeze([]), phone: Object.freeze([]) });
+const ROLE_RESET_CAPABILITIES = Object.freeze({ owner: Object.freeze(['accounts.reset']), manager: Object.freeze([]), team_lead: Object.freeze([]), crew_lead: Object.freeze([]), crew: Object.freeze([]), sales: Object.freeze([]), phone: Object.freeze([]) });
 export const staffPasswordResetEnabled = env => env?.EGC_STAFF_PASSWORD_RESET === 'true';
 export function managerGrants(env = {}) {
   if (!staffPasswordResetEnabled(env)) return [];
   const named = String(env?.EGC_STAFF_MANAGER_GRANTS ?? '').split(',').map(name => name.trim());
   return MANAGER_GRANTABLE.filter(capability => named.includes(capability));
 }
-const ROLE_PRECEDENCE = ['owner', 'manager', 'crew_lead', 'sales', 'phone', 'crew'];
-const known = new Set(STAFF_ROLES), capabilities = new Set(STAFF_CAPABILITIES), ownerOnly = new Set(OWNER_CAPABILITIES), accessOnly = new Set(ACCESS_CAPABILITIES), resetOnly = new Set(RESET_CAPABILITIES);
+const ROLE_PRECEDENCE = ['owner', 'manager', 'team_lead', 'crew_lead', 'sales', 'phone', 'crew'];
+const known = new Set(STAFF_ROLES), capabilities = new Set(STAFF_CAPABILITIES), ownerOnly = new Set(OWNER_CAPABILITIES), accessOnly = new Set(ACCESS_CAPABILITIES), resetOnly = new Set(RESET_CAPABILITIES), viewOnly = new Set(VIEW_CAPABILITIES);
 const signedProfile = session => Boolean(session) && typeof session === 'object' && !Array.isArray(session) && typeof session.user === 'string' && Boolean(session.user.trim());
 
 export { staffRoleAccessEnabled };
@@ -91,7 +114,7 @@ export function defaultStaffRoles(profile) {
   if (isHubOwner(profile)) return ['owner'];
   const role = String(profile?.role || '').trim().toLowerCase();
   if (hasBusinessAccess(profile) && ['owner', 'manager'].includes(role)) return ['manager'];
-  return ['crew_lead', 'sales', 'phone'].includes(role) ? [role] : ['crew'];
+  return ['team_lead', 'crew_lead', 'sales', 'phone'].includes(role) ? [role] : ['crew'];
 }
 
 export function primaryStaffRole(roles) {
@@ -107,6 +130,13 @@ function legacyCan(session, capability) {
   return hasBusinessAccess(session);
 }
 
+// TEAM-LEAD: schedule.view (above) with no flag needed.
+function viewCan(session, capability, env) {
+  if (hasBusinessAccess(session)) return true;
+  const roles = capabilityMode(session, env) === 'staff_roles' ? capabilityRoles(session, env) : sanitizeStaffRoles(session.staffRoles, session) || defaultStaffRoles(session);
+  return roles.some(role => ROLE_VIEW_CAPABILITIES[role].includes(capability));
+}
+
 export function capabilityMode(session, env) {
   return staffRolePermissionsEnabled(env) && signedProfile(session) && capabilityRoles(session, env) ? 'staff_roles' : 'legacy';
 }
@@ -115,9 +145,10 @@ export function capabilityMode(session, env) {
 const grantedManager = (session, env, legacy) => legacy ? hasBusinessAccess(session) && ['owner', 'manager'].includes(session.role) : capabilityRoles(session, env).includes('manager');
 
 export function can(session, capability, env = {}) {
-  const access = accessOnly.has(capability), reset = resetOnly.has(capability);
-  if (!access && !reset && !capabilities.has(capability)) throw new TypeError(`Unknown staff capability: ${capability}`);
+  const access = accessOnly.has(capability), reset = resetOnly.has(capability), view = viewOnly.has(capability);
+  if (!access && !reset && !view && !capabilities.has(capability)) throw new TypeError(`Unknown staff capability: ${capability}`);
   if (!signedProfile(session) || access && !staffRoleAccessEnabled(env) || reset && !staffPasswordResetEnabled(env)) return false;
+  if (view) return viewCan(session, capability, env);
   if (capability === 'password.change') return session.source === 'employee-account';
   const legacy = capabilityMode(session, env) === 'legacy';
   if (managerGrants(env).includes(capability) && grantedManager(session, env, legacy)) return true;
@@ -131,12 +162,13 @@ export function can(session, capability, env = {}) {
 // off, exactly STAFF_CAPABILITIES and ROLE_CAPABILITIES.
 // With EGC_STAFF_PASSWORD_RESET on, the names add accounts.reset and password.change, and the matrix adds accounts.reset
 // to the owner and the owner's grants to managers (password.change follows the account, not a role).
+// schedule.view is answered with every flag off (TEAM-LEAD, above) but listed only with EGC_STAFF_ROLE_ACCESS on.
 export function capabilityNames(env = {}) {
-  const names = staffRoleAccessEnabled(env) ? [...STAFF_CAPABILITIES, ...ACCESS_CAPABILITIES] : STAFF_CAPABILITIES;
+  const names = staffRoleAccessEnabled(env) ? [...STAFF_CAPABILITIES, ...ACCESS_CAPABILITIES, ...VIEW_CAPABILITIES] : STAFF_CAPABILITIES;
   return staffPasswordResetEnabled(env) ? [...names, ...RESET_CAPABILITIES] : names;
 }
 export function capabilityMatrix(env = {}) {
-  const matrix = staffRoleAccessEnabled(env) ? Object.fromEntries(STAFF_ROLES.map(role => [role, [...ROLE_CAPABILITIES[role], ...ROLE_ACCESS_CAPABILITIES[role]]])) : ROLE_CAPABILITIES;
+  const matrix = staffRoleAccessEnabled(env) ? Object.fromEntries(STAFF_ROLES.map(role => [role, [...ROLE_CAPABILITIES[role], ...ROLE_ACCESS_CAPABILITIES[role], ...ROLE_VIEW_CAPABILITIES[role]]])) : ROLE_CAPABILITIES;
   if (!staffPasswordResetEnabled(env)) return matrix;
   const grants = managerGrants(env);
   return Object.fromEntries(STAFF_ROLES.map(role => [role, [...matrix[role], ...ROLE_RESET_CAPABILITIES[role], ...(role === 'manager' ? grants.filter(name => !matrix[role].includes(name)) : [])]]));

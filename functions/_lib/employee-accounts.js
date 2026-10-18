@@ -268,8 +268,9 @@ export function employeeSessionProfile(account) {
     businessAccess: false,
     source: 'employee-account',
     sessionVersion: String(account.sessionVersion || ''),
-    // Owner-assigned staff directory roles (additive); staff-roles.js sanitizes them.
-    ...(Array.isArray(account.staffRoles) ? { staffRoles: account.staffRoles.filter(role => typeof role === 'string').slice(0, 6) } : {}),
+    // Owner-assigned staff directory roles (additive); staff-roles.js sanitizes them. The cap stays above the number
+    // of staff roles (7 with team_lead) so no real role is ever dropped.
+    ...(Array.isArray(account.staffRoles) ? { staffRoles: account.staffRoles.filter(role => typeof role === 'string').slice(0, 16) } : {}),
   };
 }
 
@@ -287,6 +288,18 @@ export async function getEmployeeSessionProfile(env, username, sessionVersion) {
 export async function approvedEmployeeProfiles(env) {
   if (!employeeAccountsConfigured(env)) throw storageError();
   return (await accountRows(env)).filter(({ account }) => account.status === 'approved' && !isReservedEmployeeUsername(account.username)).map(({ account }) => employeeSessionProfile(account));
+}
+
+// READ-BUDGET: {username: display name} of the approved accounts among these usernames, one document read each (the
+// crew schedule's lead names), never every account. A missing, unapproved or unreadable account is left out.
+export async function approvedAccountNames(env, usernames) {
+  if (!employeeAccountsConfigured(env)) throw storageError();
+  const names = {};
+  await Promise.all([...new Set(usernames)].filter(username => normalizeEmployeeUsername(username)).map(async username => {
+    const account = await readAccount(env, username).catch(() => null);
+    if (account?.status === 'approved') names[String(account.username || '').trim().toLowerCase()] = String(account.displayName || account.username || '');
+  }));
+  return names;
 }
 
 export async function listEmployeeApplications(env) {

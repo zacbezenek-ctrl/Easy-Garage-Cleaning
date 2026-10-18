@@ -2,7 +2,7 @@
    Leads: their team's scoreboard. Admins get the same scoreboard for everyone plus the gate,
    and the payroll screens live in knock-admin.js. */
 import { h, mount, money, percent, number, hoursLabel, dateLabel, icon, dot, badge, banner, kv, stat, meter, seg, chips, emptyState, loadingState, errorState } from './knock-ui.js';
-import { collectedAmount } from './knock-money.js';
+import { CHANNEL_PERCENTS, collectedAmount, commissionRuleText, setterRuleText } from './knock-money.js';
 import { zonedDate } from './knock-time.js';
 
 let app;
@@ -108,7 +108,7 @@ export function scoreboardBody(data, { onRange, onGroup }) {
       h('section', { class: 'stack stack--tight' },
         h('h2', { style: { fontSize: '18px' } }, 'Against the plan'), planMeters(data.totals.plan),
         h('div', { class: 'stats stats--3', style: { marginTop: '6px' } },
-          stat('Doors', String(m.doors), { small: true }), stat('Answers', String(m.answers), { small: true }), stat('Looks · Sales', `${m.looks} · ${m.sales}`, { small: true })),
+          stat('Doors', String(m.doors), { small: true }), stat('Answers', String(m.answers), { small: true }), stat('Looks · Sales', `${m.looks} · ${m.sales}`, { small: true }), walkthroughStat(m)),
         carCard(data.car))),
     groupTable(data));
 }
@@ -125,7 +125,7 @@ function statsScreen(_app, params) {
       h('section', { class: 'stack stack--tight' },
         h('h2', { style: { fontSize: '18px' } }, 'Against the plan'), planMeters(data.totals.plan),
         h('div', { class: 'stats stats--3', style: { marginTop: '6px' } },
-          stat('Doors', String(m.doors), { small: true }), stat('Answers', String(m.answers), { small: true }), stat('Looks · Sales', `${m.looks} · ${m.sales}`, { small: true }))),
+          stat('Doors', String(m.doors), { small: true }), stat('Answers', String(m.answers), { small: true }), stat('Looks · Sales', `${m.looks} · ${m.sales}`, { small: true }), walkthroughStat(m))),
       gateCard(data.gate),
       carCard(data.car),
       rangeKey === 'week' ? dayBars(data.rows, data.planTargets?.revenuePerHour) : null);
@@ -133,6 +133,17 @@ function statsScreen(_app, params) {
   load();
   return box;
 }
+
+// KNOCK-BRIDGE: the Hub job behind a sale on a statement line: its day, crew and status, read live from the Hub.
+const JOB_STATUS = { scheduled: 'scheduled', unscheduled: 'to schedule', completed: 'done', cancelled: 'cancelled', canceled: 'cancelled', unavailable: 'not found' };
+function hubJobText(job) {
+  const live = job.live;
+  if (!live) return job.message;
+  const day = live.date ? new Date(`${live.date}T12:00:00Z`).toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric', timeZone: 'UTC' }) : 'no day yet';
+  return `Hub job ${day}${live.crewLabel ? `, ${live.crewLabel}` : ', crew to confirm'}, ${JOB_STATUS[live.status] || live.status.replaceAll('_', ' ')}`;
+}
+// KNOCK-BRIDGE: estimator walkthroughs set at the door, shown once there is one.
+const walkthroughStat = m => (m.walkthroughs ? stat('Walkthroughs set', String(m.walkthroughs), { small: true }) : null);
 
 const COMMISSION_BADGE = { earned: ['Earned', 'success'], pending: ['Pending', 'warning'], cancelled: ['Cancelled', 'error'], excluded: ['No commission', ''] };
 const earningsMoney = value => value == null ? 'Needs review' : money(value, true);
@@ -177,7 +188,8 @@ function moneyScreen(_app, params) {
           : `Finance review required: ${current.reviewReasons.join(', ').replaceAll('_', ' ')}. No automatic clawback is calculated.`) : null,
       h('section', { class: 'card', style: { gap: '10px' } },
         h('h2', {}, 'How commission works'),
-        h('p', {}, 'Current policy: commission is earned when the eligible job is collected, with payouts every two weeks. Partial collections, calculation base, attribution, refunds and the payroll anchor still need review. Customer receipts are separate from recorded rep payments; settlement is unverified.'),
+        h('p', {}, commissionRuleText(rates)),
+        h('p', { class: 'caption muted' }, 'Customer receipts are separate from recorded rep payments; settlement is unverified.'),
         h('p', { class: 'caption muted' }, 'Current policy: eligible garage work only; no junk-removal commission. The estimator rate is separate and is not added to D2D pay. Mixed or unclassified work needs review; historical signed terms are preserved.'),
         h('a', { class: 'btn btn--secondary', href: '/employee.html?view=walkthroughs' }, 'Book a walkthrough in the Hub'),
         rates.verified && rates.acceleratorEnabled ? meter({
@@ -186,10 +198,13 @@ function moneyScreen(_app, params) {
           note: collectedThisMonth >= rates.acceleratorThreshold ? `You're past the line: collected sales this month pay ${percent(rates.acceleratorRate)} on the amount above it.`
             : `${money(rates.acceleratorThreshold - collectedThisMonth)} more collected this month and every dollar after that pays ${percent(rates.acceleratorRate)}.`,
         }) : null),
-      h('section', { class: 'card stack' }, h('h2', {}, 'Walkthrough setting — 12%'),
-        h('p', {}, 'The closed and collected setter route allocates 12% to the setter plus 7% to the estimator, 19% total. Booking or a no-show earns nothing. Direct-estimator work stays at 7%, direct D2D closes at 25%, and junk at zero. Unknown recipients, base or payroll anchor keep amounts on hold; 25% is never added to the setter route.'),
+      h('section', { class: 'card stack' }, h('h2', {}, `Walkthrough setting — ${CHANNEL_PERCENTS.setter}%`),
+        h('p', {}, setterRuleText(rates.setter)),
+        h('p', { class: 'caption muted' }, `Direct-estimator work stays at ${CHANNEL_PERCENTS.estimator}% and junk at zero.`),
+        // Once the owner approved the setter terms, each walkthrough shows your 13%: earned, or projected at the closed price.
         (data.setters?.rows || []).map(row => h('div', { class: 'list-row list-row--static' },
-          h('span', {}, `${row.walkthroughId}: ${row.state.replaceAll('_', ' ')}`),
+          h('span', {}, `${row.walkthroughId}: ${row.state.replaceAll('_', ' ')}${row.state === 'earned' && Number.isFinite(row.earnedCommission) ? ` · ${money(row.earnedCommission, true)} earned`
+            : Number.isFinite(row.projectedCommission) ? ` · ${money(row.projectedCommission, true)} once paid in full` : ''}`),
           h('span', { class: 'caption muted' }, (row.reviewReasons || []).join(', ').replaceAll('_', ' ')))),
         data.setters?.truncated ? h('p', { class: 'caption muted' }, 'More setter records need review.') : null),
       lead && rates.verified && current.compensationState === 'configured' && rates.leadOverrideEnabled ? h('section', { class: 'card', style: { gap: '8px' } },
@@ -204,7 +219,7 @@ function moneyScreen(_app, params) {
         h('h2', { style: { fontSize: '18px' } }, 'This period\'s sales'),
         inPeriod.length ? h('div', { class: 'list list--boxed' }, inPeriod.map(s => {
           const [label, tone] = COMMISSION_BADGE[s.commission.state] || [s.commission.state.replaceAll('_', ' '), 'warning'];
-          const sub = `${s.status} · customer collected ${earningsMoney(s.customerCollection.gross)} · commission ${earningsMoney(s.commission.amount)} · HighLevel ${s.sync.highlevel.state}; appointment not verified`;
+          const sub = `${s.status} · customer collected ${earningsMoney(s.customerCollection.gross)} · commission ${earningsMoney(s.commission.amount)} · HighLevel ${s.sync.highlevel.state}; appointment not verified${s.job ? ` · ${hubJobText(s.job)}` : ''}`;
           return h('div', { class: 'list-row list-row--static' }, dot('sold', { large: true }),
             h('span', { class: 'list-row__main' }, h('span', { class: 'list-row__title' }, `${s.address.number} ${s.address.street.split(' ').map(w => w.charAt(0) + w.slice(1).toLowerCase()).join(' ')} · ${money(s.ticket)}`), h('span', { class: 'list-row__sub' }, sub)),
             badge(label, tone));

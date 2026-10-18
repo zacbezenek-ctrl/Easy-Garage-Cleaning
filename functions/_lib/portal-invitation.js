@@ -2,6 +2,7 @@ import { createCustomerPortalAccessToken, customerPortalConfigured } from './cus
 import { customerPortalLinkAccount } from './customer-portal-revocation.js';
 import { firebaseServiceAccountConfigured, firestoreFetch } from './firebase-service-account.js';
 import { readJob, patchJob, decodeFirestoreFields, encodeFirestoreFields } from './firestore-job.js';
+import { pricesPendingApproval } from './quote-model.js';
 
 const API = 'https://services.leadconnectorhq.com';
 const PORTAL = 'https://easygaragecleaning.com/api/customer-portal-session';
@@ -47,8 +48,9 @@ export function businessAccountJob(job) {
   return typeof value === 'string' ? value.trim() !== '' : value != null && value !== false;
 }
 
+// A signed job held for the owner's price approval (pricesPendingApproval) is not an approved quote to share yet.
 export function quoteApproved(job = {}) {
-  return job.type === 'job' && ![job.status, job.pipelineStatus].some(value => ['cancelled', 'superseded'].includes(String(value || '').toLowerCase())) &&
+  return job.type === 'job' && !pricesPendingApproval(job) && ![job.status, job.pipelineStatus].some(value => ['cancelled', 'superseded'].includes(String(value || '').toLowerCase())) &&
     ['accepted', 'approved'].includes(String(job.estimate?.status || '').toLowerCase()) &&
     Number(job.estimate?.amount || job.total || job.priceQuoted || 0) > 0;
 }
@@ -99,6 +101,9 @@ export async function sendAcceptedQuotePortal(env, jobId, { requireRequested = f
   let job;
   try { job = await readJob(env, jobId); } catch { return { status: 'storage_unavailable' }; }
   if (!job) return { status: 'needs_job' };
+  // EGC_QUOTE_BUILDER_ENABLED: every sender (the handoff's request, the Hub's retry, the cron) waits for the owner's
+  // price approval; nothing is recorded, so the release's own request sends it later.
+  if (pricesPendingApproval(job)) return { status: 'not_approved', reason: 'prices_pending_approval' };
   if (!quoteApproved(job)) return { status: 'not_approved' };
   if (requireRequested && !job.customerPortalInvitationRequestedAt) return { status: 'not_requested' };
   let ledger;
@@ -162,7 +167,7 @@ export async function sendAcceptedQuotePortal(env, jobId, { requireRequested = f
   let halt;
   try {
     const latest = await readJob(env, jobId);
-    halt = !latest ? { status: 'needs_job' } : businessAccountJob(latest) ? { status: 'suppressed', reason: 'business_account_job' }
+    halt = !latest ? { status: 'needs_job' } : pricesPendingApproval(latest) ? { status: 'not_approved', reason: 'prices_pending_approval' } : businessAccountJob(latest) ? { status: 'suppressed', reason: 'business_account_job' }
       : latest.notify === false ? { status: 'suppressed', reason: 'job_notifications_off' } : null;
   } catch { halt = { status: 'storage_unavailable' }; }
   if (halt) { const state = { ...base, ...halt }; return await settle(state) ? state : claimed; }

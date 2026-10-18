@@ -83,10 +83,13 @@ test('quotes follow the business hub release rule: drafts, void, withdrawn, repl
     'jobs/q-approval-draft': job('customer-q', { date: '2026-10-09', estimate: { number: 'Q8', status: 'sent', amount: 800, sentAt: '2026-09-20T12:00:00.000Z' }, customerApproval: { status: 'draft' } }),
     'jobs/q-declined': job('customer-q', { date: '2026-10-10', estimate: { number: 'Q9', status: 'sent', amount: 900, sentAt: '2026-09-20T12:00:00.000Z' }, customerApproval: { status: 'declined' } }),
     'jobs/q-accepted': job('customer-q', { date: '2026-10-11', estimate: { number: 'Q10', status: 'accepted', amount: 1000 } }),
+    // EGC_QUOTE_BUILDER_ENABLED: a signed job held for the owner's price approval stays hidden until it is released.
+    'jobs/q-held': job('customer-q', { date: '2026-10-12', estimate: { number: 'Q11', status: 'accepted', amount: 1100 }, pricesPendingApproval: { status: 'pending', reason: 'draft_prices', items: [{ id: 'hd-1', name: 'Totes' }] } }),
+    'jobs/q-held-released': job('customer-q', { date: '2026-10-13', estimate: { number: 'Q12', status: 'accepted', amount: 1200 }, pricesPendingApproval: null }),
   };
   const store = memory({ 'customers/customer-q': { name: 'Synthetic Quotes', phone: '9705550191' }, ...quotes });
   const { view } = await readCustomerAccountContext(store, { customerId: 'customer-q' }, { now: new Date(NOW) });
-  assert.deepEqual(view.quotes.map(quote => [quote.number, quote.status]), [['Q10', 'approved'], ['Q9', 'declined'], ['Q3', 'sent'], ['Q2', 'ready']]);
+  assert.deepEqual(view.quotes.map(quote => [quote.number, quote.status]), [['Q12', 'approved'], ['Q10', 'approved'], ['Q9', 'declined'], ['Q3', 'sent'], ['Q2', 'ready']]);
   // The same rows the business hub would release, read through the same field mask.
   const released = Object.entries(quotes).filter(([, row]) => projectReleased(maskRow(row, ACCOUNT_JOB_FIELDS)) && !['draft', 'superseded'].includes(row.customerApproval?.status)).map(([, row]) => row.estimate.number);
   assert.deepEqual(view.quotes.map(quote => quote.number).sort(), released.sort());

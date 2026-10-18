@@ -47,3 +47,10 @@ input[type=checkbox],.check input{accent-color:var(--field-orange)}
 input:focus-visible,select:focus-visible,textarea:focus-visible{outline-color:#bd4310}
 #feedback{background:var(--field-navy);border-left:4px solid #e8581c}
 .offline-stamp{color:#667282}
+/* WP14c Grab before you go: the stock and purchased items ticked Loaded, then what the office is still buying. */
+#materials-card h3{margin:20px 0 6px;font-size:16px}
+#materials-card .grab-item small{overflow-wrap:anywhere}
+#materials-card .buying{margin:0 0 8px;padding-left:20px}
+#materials-card .buying li{padding:4px 0;overflow-wrap:anywhere}
+#materials-card .shop{display:block;overflow-wrap:anywhere}
+#materials-card .product-link{font-weight:700}

@@ -4,6 +4,9 @@
 'use strict';
 const KIT={js:'employee-ui-kit.js',css:'employee-ui-kit.css',v:'20260929mobilehub'};
 // One line per screen: {id, group, label, iconPath, capability:'business'|'owner' or crewVisible:true, load:{js, css, v}, module:'EGCName'}.
+// team_directory (Team directory, D10) is every signed-in viewer's, but employee-suite.js adds that capability only while the
+// server reports the staff directory on (/api/integration-status flags.teamDirectory, EGC_STAFF_DIRECTORY_ENABLED).
+// my_commission (My commission, D6b) is the signed-in employee's own estimator 7%, read only; empty for anyone who sells no walkthroughs.
 // Capabilities come from the signed-in server profile (businessAccess and the owner flag), never a client staff list.
 // Group and label are plain text (the shell escapes them, so 'Estimates & payments' is fine); angle brackets,
 // backticks and control characters are refused. An invalid line is skipped with a console warning.
@@ -13,17 +16,20 @@ const KIT={js:'employee-ui-kit.js',css:'employee-ui-kit.css',v:'20260929mobilehu
 // this file is always loaded and a lazily loaded screen may never have run on the page.
 const MANIFEST=[
 {id:'crew_alerts',group:'MY EGC',label:'Schedule alerts',iconPath:'M12 3a6 6 0 0 0-6 6v4l-2 3h16l-2-3V9a6 6 0 0 0-6-6zM10 19a2 2 0 0 0 4 0',crewVisible:true,load:{js:'employee-crew-notifications.js',css:'employee-crew-notifications.css',v:'20260929editwipe'},module:'EGCCrewNotifications'},
-{id:'password',group:'MY EGC',label:'Password',iconPath:'M7 11V8a5 5 0 0 1 10 0v3M5 11h14v10H5zM12 15v2',capability:'password',load:{js:'employee-staff-access.js',css:'employee-staff-access.css',v:'20260929accessr2'},module:'EGCStaffAccess'},
+{id:'password',group:'MY EGC',label:'Password',iconPath:'M7 11V8a5 5 0 0 1 10 0v3M5 11h14v10H5zM12 15v2',capability:'password',load:{js:'employee-staff-access.js',css:'employee-staff-access.css',v:'20261017access3'},module:'EGCStaffAccess'},
+{id:'team_directory',group:'MY EGC',label:'Team directory',iconPath:'M8 11a3 3 0 1 0 0-6 3 3 0 0 0 0 6zM16 11a3 3 0 1 0 0-6 3 3 0 0 0 0 6zM2 20c0-3 3-5 6-5s6 2 6 5M12 20c0-3 3-5 6-5s4 2 4 5',capability:'team_directory',load:{js:'employee-team-directory.js',css:'employee-team-directory.css',v:'20261017team1'},module:'EGCTeamDirectory'},
+{id:'my_commission',group:'MY EGC',label:'My commission',iconPath:'M12 3v18M17 7.5c0-1.9-2.2-3-5-3s-5 1.1-5 3 2.2 2.8 5 3.5 5 1.6 5 3.5-2.2 3-5 3-5-1.1-5-3',crewVisible:true,load:{js:'employee-estimator-commission.js',css:'employee-estimator-commission.css',v:'20261018commfix'},module:'EGCEstimatorCommission'},
 {id:'followup_settings',group:'SYSTEM',label:'Follow-up owner',iconPath:'M12 3a4 4 0 1 1 0 8 4 4 0 0 1 0-8zM4 21a8 8 0 0 1 16 0',capability:'owner',load:{js:'employee-followup-settings.js',css:'employee-followup-settings.css',v:'20260928followup'},module:'EGCFollowupSettings'},
 {id:'ad_spend',group:'GROW THE ENGINE',label:'Ad spend',iconPath:'M3 10v4h4l5 4V6l-5 4zM16 9a4 4 0 0 1 0 6M19 6a8 8 0 0 1 0 12',capability:'owner',load:{js:'employee-ad-spend.js',css:'employee-ad-spend.css',v:'20260928adspend'},module:'EGCAdSpend'},
-{id:'catalog',group:'SYSTEM',label:'Catalog & pricing',iconPath:'M4 4h7l9 9-7 7-9-9zM8 8h.01',capability:'owner',load:{js:'employee-catalog.js',css:'employee-catalog.css',v:'20260930catalogquote1'},module:'EGCCatalog'},
+{id:'catalog',group:'SYSTEM',label:'Catalog & pricing',iconPath:'M4 4h7l9 9-7 7-9-9zM8 8h.01',capability:'owner',load:{js:'employee-catalog.js',css:'employee-catalog.css',v:'20261017menuinstall'},module:'EGCCatalog'},
 {id:'dispatch_rules',group:'RUN THE BUSINESS',label:'Dispatch rules',iconPath:'M4 6h11M4 12h7M4 18h5M14 15l2.5 2.5L21 13',capability:'owner',load:{js:'employee-dispatch-settings.js',css:'employee-dispatch-settings.css',v:'20260929rules4'},module:'EGCDispatchSettings'},
 {id:'reviews',group:'RUN THE BUSINESS',label:'Review queues',iconPath:'M9 3h6v3H9zM6 5h3v1h6V5h3v16H6zM9 13l2 2 4-4',capability:'business',load:{js:'employee-reviews.js',css:'employee-reviews.css',v:'20260930launchpolish'},module:'EGCReviews'},
 {id:'message_templates',group:'SYSTEM',label:'Message templates',iconPath:'M4 5h16v11H9l-5 4z',capability:'business',load:{js:'message-templates.js',css:'message-templates.css',v:'20260928crew'},module:'EGCMessageTemplates'},
 {id:'stocked_costs',group:'SYSTEM',label:'Stocked item costs',capability:'business',iconPath:'M4 7l8-4 8 4v10l-8 4-8-4zM4 7l8 4 8-4M12 11v10',load:{js:'employee-standard-costs.js',css:'employee-standard-costs.css',v:'20260928fun19'},module:'EGCStandardCosts'},
-{id:'staff',group:'RUN THE BUSINESS',label:'Staff directory',iconPath:'M9 11a3.5 3.5 0 1 0 0-7 3.5 3.5 0 0 0 0 7zM2 20c0-3.5 3-6 7-6s7 2.5 7 6M16 4.5a3.5 3.5 0 0 1 0 6.5M18 14c2.5.6 4 2.8 4 6',capability:'business',load:{js:'employee-staff.js',css:'employee-staff.css',v:'20260929access'},module:'EGCStaff'},
+{id:'staff',group:'RUN THE BUSINESS',label:'Staff directory',iconPath:'M9 11a3.5 3.5 0 1 0 0-7 3.5 3.5 0 0 0 0 7zM2 20c0-3.5 3-6 7-6s7 2.5 7 6M16 4.5a3.5 3.5 0 0 1 0 6.5M18 14c2.5.6 4 2.8 4 6',capability:'business',load:{js:'employee-staff.js',css:'employee-staff.css',v:'20261017profile'},module:'EGCStaff'},
 {id:'invoicing',group:'CLIENT WORK',label:'Invoicing',iconPath:'M6 3h9l3 3v15H6z M9 9h6 M9 13h6 M9 17h4',capability:'business',load:{js:'employee-money.js',css:'employee-money.css',v:'20260929invoicingr3'},module:'EGCMoney'},
 {id:'walkthroughs',group:'RUN THE BUSINESS',label:'Walkthroughs',iconPath:'M9 4h6l1 2h3v14H5V6h3zM9 13l2 2 4-4',capability:'business',load:{js:'employee-walkthroughs.js',css:'employee-walkthroughs.css',v:'20260929hubready1'},module:'EGCWalkthroughs'},
+{id:'purchase_list',group:'RUN THE BUSINESS',label:'Purchase list',iconPath:'M3 4h2l2.4 11h11.2L21 7H6.2M9 20a1 1 0 1 0 0-2 1 1 0 0 0 0 2zM18 20a1 1 0 1 0 0-2 1 1 0 0 0 0 2z',capability:'business',load:{js:'employee-purchase-list.js',css:'employee-purchase-list.css',v:'20261017purchase'},module:'EGCPurchaseList'},
 ];
 // Home widgets, one line each: {id, label, homes:['today'|'my_day',...], capability:'business'|'owner' or crewVisible:true, module:'EGCName', load?:{js, css, v}}.
 // employee-suite.js renders one #ops-home-widgets node on the Command center (today) and on My day. mountHome() gives each

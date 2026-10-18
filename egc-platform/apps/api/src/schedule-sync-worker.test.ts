@@ -56,7 +56,7 @@ describe("schedule sync tick",()=>{
  it("syncs each due visit with its own sync key and automations off",async()=>{
   const o=operations(),ids=["0f7c2a4e-5b6d-4e8f-9a1b-2c3d4e5f6a7b","1a2b3c4d-5e6f-4a1b-8c2d-3e4f5a6b7c8d","2b3c4d5e-6f7a-4b8c-9d0e-1f2a3b4c5d6e"];
   const result=await tick(o.execute,{requestId:()=>ids.shift()!});
-  expect(result).toEqual({status:"completed",code:"",counts:{due:2,selected:2,synced:2,notNeeded:0,failed:0,conflicts:0,stateConflicts:0,unrecorded:0,deferred:0,complete:true,heartbeat:true},backlog:EMPTY_BACKLOG});
+  expect(result).toEqual({status:"completed",code:"",counts:{due:2,selected:2,synced:2,notNeeded:0,calendarSkipped:0,failed:0,conflicts:0,stateConflicts:0,unrecorded:0,deferred:0,complete:true,heartbeat:true},backlog:EMPTY_BACKLOG});
   expect(o.syncSchedule.mock.calls.map(([actor,command])=>[actor,command])).toEqual([[WORKER,{command:"schedule.sync_provider",portalVisitId:"visit-a",requestId:"dispatch-key-visit-a",runAutomations:false}],[WORKER,{command:"schedule.sync_provider",portalVisitId:"visit-b",requestId:"dispatch-key-visit-b",runAutomations:false}]]);
   expect(o.hubCalls()).toEqual([{command:"schedule.sync_due",limit:25}]);
  });
@@ -140,7 +140,7 @@ describe("schedule sync tick",()=>{
    throw new OperationsError("schedule_sync_queue_disabled",409);
   },sync:async()=>{throw new OperationsError("schedule_provider_sync_unavailable",503);}});
   const result=await tick(o.execute);
-  expect(result).toEqual({status:"disabled",code:"schedule_sync_queue_disabled",counts:{due:3,selected:3,synced:0,notNeeded:0,failed:1,conflicts:0,stateConflicts:0,unrecorded:0,deferred:2,complete:true,heartbeat:true},backlog:EMPTY_BACKLOG});
+  expect(result).toEqual({status:"disabled",code:"schedule_sync_queue_disabled",counts:{due:3,selected:3,synced:0,notNeeded:0,calendarSkipped:0,failed:1,conflicts:0,stateConflicts:0,unrecorded:0,deferred:2,complete:true,heartbeat:true},backlog:EMPTY_BACKLOG});
   expect(o.syncSchedule).toHaveBeenCalledTimes(2);
   expect(o.hubCalls().filter(command=>command.command==="schedule.sync_failed").map(command=>command.portalVisitId)).toEqual(["visit-a","visit-b"]);
  });

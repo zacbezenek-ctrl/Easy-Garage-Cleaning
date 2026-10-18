@@ -128,11 +128,11 @@ export async function readOne(env, collection, id) {
 
 const equalTo = (fieldPath, value) => ({ fieldFilter: { field: { fieldPath }, op: 'EQUAL', value: stringField(value) } });
 
-function runQuery(env, where, collectionId = 'jobs') {
+function runQuery(env, where, collectionId = 'jobs', limit) {
   return firestoreFetch(env, `${DOCUMENTS}:runQuery`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ structuredQuery: { from: [{ collectionId }], where } }),
+    body: JSON.stringify({ structuredQuery: { from: [{ collectionId }], where, ...(limit ? { limit } : {}) } }),
   });
 }
 
@@ -157,6 +157,14 @@ async function decodeRows(env, response, accepts, withRevision = false) {
 
 export async function readAll(env, withRevision = false) {
   return decodeRows(env, await runQuery(env, equalTo('recordType', EMPLOYEE_HUB_RECORD_TYPE)), collection => EMPLOYEE_HUB_COLLECTIONS.has(collection), withRevision);
+}
+
+// IDs are key-derived, so a create never trusts a 404 until the vault opens with this key. One stored record (a
+// one-document query, a single read) proves the key as the whole-vault read did: that record fails closed when it was
+// sealed under another key or is malformed, and an empty vault has nothing to protect. (Every stored record still has
+// to open for the Hub's full read; this check no longer re-verifies all of them on each create.)
+export async function proveVaultKey(env) {
+  await decodeRows(env, await runQuery(env, equalTo('recordType', EMPLOYEE_HUB_RECORD_TYPE), 'jobs', 1), collection => EMPLOYEE_HUB_COLLECTIONS.has(collection));
 }
 
 // Firestore rejects a query it cannot serve without a composite index with

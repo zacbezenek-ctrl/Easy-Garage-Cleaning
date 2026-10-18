@@ -119,6 +119,19 @@ export function createOutbox(store, { transport, locks = globalThis.navigator?.l
     });
   }
 
+  // A refused event the rep corrected (Edit and resend): the fields are replaced and it queues again with the same id
+  // and place in line. The server stored nothing for a refused event, so the corrected copy is a fresh change.
+  function resend(id, changes) {
+    return serial(async () => {
+      const row = await store.events.get(id);
+      if (!row || row.state !== 'error') return null;
+      const next = { ...row, ...changes, id: row.id, seq: row.seq, user: row.user, type: row.type, at: row.at, state: 'queued', error: null, attempts: 0 };
+      await store.events.put(next);
+      notify();
+      return next;
+    });
+  }
+
   function remove(id) {
     return serial(async () => { await store.events.remove(id); notify(); });
   }
@@ -176,7 +189,7 @@ export function createOutbox(store, { transport, locks = globalThis.navigator?.l
     return flushing;
   }
 
-  return { enqueue, amend, remove, retry, list, flush, onChange: fn => { listeners.add(fn); return () => listeners.delete(fn); }, persistent: store.persistent };
+  return { enqueue, amend, resend, remove, retry, list, flush, onChange: fn => { listeners.add(fn); return () => listeners.delete(fn); }, persistent: store.persistent };
 }
 
 export function httpTransport(fetcher = (...args) => fetch(...args)) {

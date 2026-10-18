@@ -13,8 +13,9 @@ import { checkoutFingerprint } from './customer-payments.js';
 import { consumeConfirmation, issueConfirmation } from './confirm-token.js';
 import { messagingFlags } from './approved-send.js';
 import { maskRecipient, normalizeEmail, normalizePhone } from './ghl-messenger.js';
-import { catalogQuotesEnabled, catalogStorage, readCatalogState } from './catalog-store.js';
+import { catalogQuotesEnabled, catalogStorage, quoteBuilderEnabled, readCatalogState, readCompositeState } from './catalog-store.js';
 import { priceCatalogQuote } from './catalog-quote.js';
+import { approvalRefusal, compositeApproval, priceCompositeQuote } from './composite-quote.js';
 import { normalizeUnsignedCapture, unsignedCapturePatch } from './unsigned-walkthrough-capture.js';
 import { quotePaymentSchedule, requireQuotePaymentTiming, quotePaymentDates, quotePaymentSummary, businessPaymentDate, PAYMENT_TIME_ZONE } from './quote-payment-policy.js';
 import { prepareWalkthroughCaptureSync, walkthroughCaptureSyncView } from './walkthrough-capture-sync.js';
@@ -40,6 +41,12 @@ import { prepareWalkthroughCaptureSync, walkthroughCaptureSyncView } from './wal
  * total the customer sees. A material revision bumps estimate.revision, returns
  * the quote to draft, supersedes any approval and issued invoice (payments are
  * kept) and asks `checkouts` to expire an open portal checkout for the old terms.
+ * With EGC_QUOTE_BUILDER_ENABLED a draft may instead carry composite_pricing (the guided builder: removal, then
+ * shelving, then extra storage; composite-quote.js): the server re-prices it, saves its lines and the cost-free
+ * section breakdown (quoteDraft.breakdown), and refuses a send preview or send while any of its prices is a draft
+ * the owner has not approved (quote_draft_composite_prices_unapproved, with every reason in details.unapproved).
+ * While that flag is on, a walkthrough quote priced outside the builder (no composite or catalog pricing) is saved
+ * as before but its send preview and send are refused (quote_draft_builder_required, 409).
  * With FUNNEL_PAYMENT_EVENTS_ENABLED (and MONEY_API_ENABLED) a material revision
  * also carries the FUN-33 paid-in-full crossing it causes in its own commit
  * (payment-events.js moneyEventWrites): job.balance_reopened (estimate_revised)
@@ -57,6 +64,7 @@ const SAVE_KEYS = ['actorId', 'requestId', 'customerId', 'sourceWalkthroughId', 
 const PREVIEW_KEYS = ['actorId', 'jobId', 'expectedRevision'];
 const SEND_KEYS = ['actorId', 'requestId', 'jobId', 'expectedRevision', 'confirmToken'];
 const catalogStateDefault = env => readCatalogState(catalogStorage(env));
+const compositeStateDefault = env => readCompositeState(catalogStorage(env));
 // Delivery outcomes that never claimed a send, or a definite provider refusal, may be retried by the same send request.
 const RETRYABLE_DELIVERY = new Set(['pending', 'failed', 'unavailable', 'needs_contact', 'contact_mismatch', 'not_configured']);
 const FINAL = new Set(['quote_draft_idempotency_conflict', 'quote_draft_changed_since_save', 'quote_draft_changed_since_send', 'quote_draft_actor_changed']);
@@ -127,7 +135,7 @@ function quotePatch(job, inputDraft, actor, now, jobId, newQuotePaymentPolicy) {
   const schedule = policy === undefined ? null : quotePaymentSchedule(inputDraft.totalCents, policy);
   const draft = schedule ? { ...inputDraft, depositCents: schedule.depositCents, depositPct: schedule.policy.depositPct } : inputDraft;
   const next = { ...current, number: invoiceNumber(jobId, 'estimate', current.number), amount: draft.totalCents / 100, amountCents: draft.totalCents, depositRequired: draft.depositCents / 100, depositRequiredCents: draft.depositCents, scope: draft.scope, lineItems: structuredClone(draft.lineItems), validUntil: draft.validUntil, termsVersion: current.termsVersion || job?.termsVersion || '2026-09', catalogVersion: draft.catalogVersion,
-    ...(draft.catalogPricing ? { pricingSettingsVersion: draft.pricingSettingsVersion, depositPct: draft.depositPct } : current.pricingSettingsVersion ? { pricingSettingsVersion: null, depositPct: null } : {}),
+    ...(draft.catalogPricing ? { pricingSettingsVersion: draft.pricingSettingsVersion, depositPct: draft.depositPct } : draft.compositePricing ? { pricingSettingsVersion: draft.pricingSettingsVersion } : current.pricingSettingsVersion ? { pricingSettingsVersion: null, depositPct: null } : {}),
     source: 'quote_draft', createdAt: current.createdAt || now, updatedAt: now, updatedBy: actor.user };
   if (schedule) Object.assign(next, { commercialPolicy: schedule.policy, depositPct: schedule.policy.depositPct, termsVersion: current.termsVersion || schedule.policy.version });
   // Catalog provenance is part of the terms a customer reviewed. A new
@@ -136,7 +144,9 @@ function quotePatch(job, inputDraft, actor, now, jobId, newQuotePaymentPolicy) {
   // an author switches between catalog and legacy quote sources.
   const priorCatalog = plain(job?.quoteDraft?.catalogPricing) ? job.quoteDraft.catalogPricing : null;
   const nextCatalog = draft.catalogPricing || null;
-  const provenanceChanged = canonical(priorCatalog) !== canonical(nextCatalog) || Boolean(priorCatalog || nextCatalog) && (
+  // A builder quote's selection and menu/settings versions are provenance in the same way.
+  const priorComposite = plain(job?.quoteDraft?.compositePricing) ? job.quoteDraft.compositePricing : null, nextComposite = draft.compositePricing || null;
+  const provenanceChanged = canonical(priorComposite) !== canonical(nextComposite) || canonical(priorCatalog) !== canonical(nextCatalog) || Boolean(priorCatalog || nextCatalog) && (
     current.catalogVersion !== draft.catalogVersion || (current.pricingSettingsVersion ?? null) !== (draft.pricingSettingsVersion ?? null) ||
     (current.depositPct ?? null) !== (draft.depositPct ?? null));
   const fresh = !current.number, material = fresh || estimateChanged(current, next) || provenanceChanged, wasApproved = approved(current.status) || approved(approval?.status), wasSent = current.status === 'sent' || Boolean(current.sentAt);
@@ -180,6 +190,8 @@ export function quoteDraftView(job) {
       lineItems: lines.map(line => ({ id: line.id, kind: line.kind, name: line.name, description: line.description, quantity: line.quantity, unitCents: line.unitCents, totalCents: line.totalCents, customerSupplied: line.customerSupplied === true, optional: line.optional, selected: line.selected, included: included(line), group: line.group ? { id: line.group.id, label: line.group.label, selection: line.group.selection, required: line.group.required } : null, tier: line.tier })),
       options: packageTotals(lines).map(group => ({ groupId: group.groupId, label: group.label, selection: group.selection, required: group.required, tiers: group.tiers, selectedTier: group.selectedTier })) },
     ...(plain(job.quoteDraft?.catalogPricing) ? { catalogPricing: job.quoteDraft.catalogPricing } : {}),
+    // The builder selection and its cost-free breakdown (sections, itemized lines, purchase list).
+    ...(plain(job.quoteDraft?.compositePricing) ? { compositePricing: job.quoteDraft.compositePricing, breakdown: plain(job.quoteDraft.breakdown) ? job.quoteDraft.breakdown : null } : {}),
     approval: pick(job.customerApproval, ['status', 'approvedAt', 'supersededAt']),
     ...(walkthroughCaptureSyncView(job) ? { captureSync: walkthroughCaptureSyncView(job) } : {}),
     delivery: pick(job.estimateReady, ['requestId', 'revision', 'mode', 'status', 'reason', 'attempts', 'recipient', 'tagReset', 'at']),
@@ -231,7 +243,7 @@ export async function readQuoteDraft(store, actor, query = {}, { env = {} } = {}
   return { ok: true, authority: 'employee_hub', job: quoteDraftView(await readJobFor(store, query.jobId)) };
 }
 
-export async function saveQuoteDraft(store, actor, input, now = new Date().toISOString(), { env = {}, checkouts = null, catalogState = catalogStateDefault, newQuotePaymentPolicy } = {}) {
+export async function saveQuoteDraft(store, actor, input, now = new Date().toISOString(), { env = {}, checkouts = null, catalogState = catalogStateDefault, compositeState = compositeStateDefault, newQuotePaymentPolicy } = {}) {
   requireQuoteAuthor(actor, env);
   keys(input, SAVE_KEYS, 'The quote draft needs a stable request and customer identity.');
   if (!uuid(input.requestId) || !safeId(input.customerId) || input.jobId && !safeId(input.jobId) || input.sourceWalkthroughId && !safeId(input.sourceWalkthroughId)) throw fail('invalid_request', 'The quote draft needs a stable request and customer identity.', 400);
@@ -253,8 +265,21 @@ export async function saveQuoteDraft(store, actor, input, now = new Date().toISO
   const prior = await replay(true);
   if (prior) return prior;
   const catalogMode = input.draft?.catalog_pricing !== undefined;
+  // With the builder flag off a composite_pricing field stays an unsupported draft field, as before.
+  const compositeMode = quoteBuilderEnabled(env) && plain(input.draft) && input.draft.composite_pricing !== undefined;
   let draft;
-  if (catalogMode) {
+  if (compositeMode) {
+    if (catalogMode) throw fail('invalid_draft', 'A quote is priced by the builder or by the catalog, not both.', 400);
+    const priced = priceCompositeQuote(await compositeState(env), input.draft.composite_pricing, { complete: true });
+    if (input.draft.catalog_version !== priced.menuVersion || canonical(input.draft.line_items) !== canonical(priced.lineItems)) {
+      throw fail('composite_price_changed', 'The quote lines do not match the current builder prices. Review the quote in the builder again before saving.', 409);
+    }
+    const material = { ...input.draft, line_items: priced.storedLineItems };
+    delete material.composite_pricing;
+    draft = normalizeQuoteDraft(material, now);
+    if (draft.totalCents !== priced.totalCents) throw fail('composite_price_changed', 'The builder quote total changed. Review the quote in the builder again before saving.', 409);
+    Object.assign(draft, { pricingSettingsVersion: priced.settingsVersion, compositePricing: structuredClone(priced.compositePricing), breakdown: structuredClone(priced.breakdown) });
+  } else if (catalogMode) {
     if (!catalogQuotesEnabled(env)) throw fail('catalog_disabled', 'Catalog quotes are turned off. Keep this draft for review.', 404);
     const priced = priceCatalogQuote(await catalogState(env), input.draft.catalog_pricing, now);
     if (input.draft.catalog_version !== priced.catalogVersion || canonical(input.draft.line_items) !== canonical(priced.lineItems)) {
@@ -272,7 +297,8 @@ export async function saveQuoteDraft(store, actor, input, now = new Date().toISO
   const customer = await store.read('customers', input.customerId); requireRevision(customer);
   if (!identityMatches(draft.client, customer)) throw fail('customer_mismatch', 'The quote\'s customer details do not match the selected customer. Review the phone, email and CRM link.');
   const record = (job, plan, jobId) => ({ quoteDraft: { ...(plain(job?.quoteDraft) ? job.quoteDraft : { version: 1, createdAt: now, createdBy: actor.user }), requestId: input.requestId, fingerprint, savedAt: now, savedBy: actor.user, sourceWalkthroughId: input.sourceWalkthroughId || '',
-      ...(draft.catalogPricing ? { catalogPricing: draft.catalogPricing } : job?.quoteDraft?.catalogPricing ? { catalogPricing: null } : {}) },
+      ...(draft.catalogPricing ? { catalogPricing: draft.catalogPricing } : job?.quoteDraft?.catalogPricing ? { catalogPricing: null } : {}),
+      ...(draft.compositePricing ? { compositePricing: draft.compositePricing, breakdown: draft.breakdown } : job?.quoteDraft?.compositePricing ? { compositePricing: null, breakdown: null } : {}) },
     receipt: { fingerprint, actorId: actor.user, action: 'save', customerId: customer.id, jobId, sourceWalkthroughId: input.sourceWalkthroughId || '', estimateRevision: plan.patch.estimate.revision, material: plan.material, revisedRelease: plan.revisedRelease, warnings: plan.warnings, createdAt: now } });
   const audit = (job, patch, jobId) => auditWrite({ actor: { id: actor.user, kind: 'human', role: actor.role }, via: 'hub', action: 'quote.draft.save', entity: { collection: 'jobs', id: jobId }, before: job ? moneySnapshot(job) : null, after: moneySnapshot({ ...(job || {}), ...patch }), requestId: input.requestId, reason: null, now });
   try {
@@ -397,6 +423,7 @@ async function paymentScheduleFor(store, job) {
 function sendable(job, now, env) {
   editable(job);
   if (plain(job.quoteDraft?.catalogPricing) && !catalogQuotesEnabled(env)) throw fail('catalog_disabled', 'Catalog quotes are turned off. Keep this saved quote for review.', 404);
+  if (plain(job.quoteDraft?.compositePricing) && !quoteBuilderEnabled(env)) throw fail('builder_disabled', 'The quote builder is turned off. Keep this saved quote for review.', 404);
   const estimate = plain(job.estimate) ? job.estimate : null;
   if (!estimate?.number || !Number.isSafeInteger(estimate.revision)) throw fail('estimate_missing', 'Save the quote before sending it.');
   requireQuotePaymentTiming(estimate.commercialPolicy);
@@ -408,8 +435,21 @@ function sendable(job, now, env) {
   if (!validateSelection(lines).ok || !totals.complete || totals.totalCents !== estimate.amountCents || totals.totalCents <= 0) throw fail('estimate_invalid', 'The saved quote total no longer matches its lines. Save the quote again before sending.');
   if (!validDate(estimate.validUntil) || estimate.validUntil < denverToday(new Date(now))) throw fail('estimate_expired', 'This quote has expired. Save it with a new expiry date before sending.');
 }
+// A builder quote is sent only when every price on it is owner-approved now (approved after the save counts).
+// While the builder is on, a walkthrough quote priced outside it (the walkthrough's own itemized lines, priced from
+// the same tables the builder holds as owner-unapproved drafts) is kept but never sent: it is rebuilt in the
+// builder first. Catalog quotes keep their own catalog approval.
+async function compositeSendable(job, env, compositeState) {
+  if (!plain(job.quoteDraft?.compositePricing)) {
+    if (quoteBuilderEnabled(env) && !plain(job.quoteDraft?.catalogPricing)) throw fail('builder_required', 'With the quote builder on, a walkthrough quote is sent only after it is built in the quote builder from the owner\'s pricing menu. This draft stays saved: reopen "Send options for review" on the walkthrough and build it there.', 409,
+      { unapproved: [{ id: null, name: 'Walkthrough-priced quote', unitCents: null, reason: 'Its lines were priced from the walkthrough tables, which the owner has not approved for the quote builder. Rebuild it in the quote builder (removal, then shelving, then extra storage) and send that quote.' }] });
+    return;
+  }
+  const approval = compositeApproval(job.quoteDraft.breakdown, await compositeState(env));
+  if (!approval.ready) throw approvalRefusal(approval);
+}
 
-export async function previewQuoteSend(store, actor, input, now = new Date().toISOString(), { env = {} } = {}) {
+export async function previewQuoteSend(store, actor, input, now = new Date().toISOString(), { env = {}, compositeState = compositeStateDefault } = {}) {
   requireQuoteAuthor(actor, env);
   keys(input, PREVIEW_KEYS, 'Choose the saved quote to send.');
   if (!safeId(input.jobId) || typeof input.expectedRevision !== 'string' || !input.expectedRevision) throw fail('invalid_request', 'Choose the saved quote to send.', 400);
@@ -417,6 +457,7 @@ export async function previewQuoteSend(store, actor, input, now = new Date().toI
   const job = await readJobFor(store, input.jobId);
   if (job.revision !== input.expectedRevision) throw fail('revision_conflict', 'This quote changed after you opened it. Reload it and review the latest version.');
   sendable(job, now, env);
+  await compositeSendable(job, env, compositeState);
   const delivery = deliveryPlan(job, env), estimate = job.estimate, paymentSchedule = await paymentScheduleFor(store,job);
   const summary = `Send ${estimate.number} revision ${estimate.revision} (${usd(estimate.amountCents)}) to ${String(job.customer || 'the customer').slice(0, 80)}`+(paymentSchedule?'. '+quotePaymentSummary(paymentSchedule):'');
   const confirmation = await issueConfirmation(env, { actorId: actor.user, action: SEND_ACTION, entityId: `jobs/${job.id}`, payload: sendBinding(job, delivery, paymentSchedule), summary, now });
@@ -428,7 +469,7 @@ export async function previewQuoteSend(store, actor, input, now = new Date().toI
  * notify the customer. A retry of the same request replays the saved send and
  * lets the deliverer's own ledger decide; it never records a second send.
  */
-export async function sendQuoteDraft(store, actor, input, now = new Date().toISOString(), { env = {}, deliver = null } = {}) {
+export async function sendQuoteDraft(store, actor, input, now = new Date().toISOString(), { env = {}, deliver = null, compositeState = compositeStateDefault } = {}) {
   requireQuoteAuthor(actor, env);
   keys(input, SEND_KEYS, 'The send request contains unsupported fields.');
   if (!uuid(input.requestId) || !safeId(input.jobId) || typeof input.expectedRevision !== 'string' || !input.expectedRevision || typeof input.confirmToken !== 'string') throw fail('invalid_request', 'Preview the quote and confirm it before sending.', 400);
@@ -454,6 +495,7 @@ export async function sendQuoteDraft(store, actor, input, now = new Date().toISO
   const job = await readJobFor(store, input.jobId);
   if (job.revision !== input.expectedRevision) throw fail('revision_conflict', 'This quote changed after the preview. Preview it again before sending.');
   sendable(job, now, env);
+  await compositeSendable(job, env, compositeState);
   const delivery = deliveryPlan(job, env), estimate = job.estimate, paymentSchedule = await paymentScheduleFor(store,job);
   const patch = {
     estimate: { ...estimate, ...(paymentSchedule?{paymentSchedule}:{}), status: 'sent', sentAt: now, sentBy: actor.user, sentChannel: 'estimate_ready', sentRevision: estimate.revision, sentFingerprint: estimateFingerprint(paymentSchedule?{...estimate,paymentSchedule}:estimate), sentRequestId: input.requestId, updatedAt: now },

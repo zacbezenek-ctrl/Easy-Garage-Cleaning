@@ -13,6 +13,8 @@ export const STAFF_GATED_PATHS = Object.freeze([
   '/crew/profile-photo*',
   // Door-to-door canvassing: the knock page, its scripts, stylesheets and the bundled map library.
   '/crew/knock*',
+  // CREW-SCHEDULE: the crew schedule page and its script.
+  '/crew/schedule*',
 ]);
 
 // Staff-adjacent files that stay reachable signed out: the sign-in pages and their scripts, and the crew app shell. The

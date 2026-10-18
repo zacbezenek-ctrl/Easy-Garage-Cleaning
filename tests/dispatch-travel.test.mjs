@@ -168,7 +168,8 @@ test('dispatch HTTP handler reads the travel mode from env and injects the clock
 
 test('openings pad gaps with estimates from an optional zip or address and never shorten buffers',async()=>{
   const f=fixture();f.job('lv',{time:'09:00',endTime:'10:00',address:LOVELAND,travelBufferMinutes:0});
-  const query={startDate:'2026-09-23',endDate:'2026-09-24',employeeIds:'crew1',durationMinutes:'60',travelBufferMinutes:'0'};
+  // The 08:00 workday these fixtures were written for (D5 made 09:00 the default start).
+  const query={startDate:'2026-09-23',endDate:'2026-09-24',employeeIds:'crew1',durationMinutes:'60',travelBufferMinutes:'0',workdayStart:'08:00'};
   const times=result=>result.candidates.map(row=>row.time);
   assert.deepEqual(times(await dispatchOpenings(f.store,manager,query,now)),['08:00','10:00']);
   const padded=await dispatchOpenings(f.store,manager,{...query,zip:'80525'},now,{travel:f.travel()});

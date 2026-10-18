@@ -9,6 +9,7 @@ import { zonedDate } from './knock-time.js';
 import { cancellationWindow } from './knock-sale-rules.js';
 import { nativeRecoveryAdmin } from './knock-native-form.js';
 import { periodLabel } from './knock-stats-ui.js';
+import { CHANNEL_PERCENTS } from './knock-money.js';
 
 let app;
 const sections = [];
@@ -262,8 +263,10 @@ async function assignCard(n, data, run) {
         invalidate('territory'); invalidate('coverage'); app.render();
       } }, 'Save assignment'),
     ] : h('p', { class: 'muted' }, 'Approve a rep first.'),
+    // A rep's own claim (source 'self') or an admin's assignment; Remove ends either.
     assigned.length ? h('div', { class: 'list list--boxed' }, assigned.map(a => h('div', { class: 'list-row list-row--static' },
-      h('span', { class: 'list-row__main' }, h('span', { class: 'list-row__title' }, repName(a.repKey)), h('span', { class: 'list-row__sub' }, a.street ? titleStreet(a.street) : 'Whole neighborhood')),
+      h('span', { class: 'list-row__main' }, h('span', { class: 'list-row__title' }, repName(a.repKey)),
+        h('span', { class: 'list-row__sub' }, `${a.street ? titleStreet(a.street) : 'Whole neighborhood'} · ${a.source === 'self' ? 'Self-picked' : 'Assigned by admin'}`)),
       h('button', { type: 'button', class: 'btn btn--danger btn--sm', onclick: () => run({ action: 'assignment.set', repKey: a.repKey, neighborhoodId: a.neighborhoodId, street: a.street, active: false }, 'Unassigned') }, 'Remove'))))
       : h('p', { class: 'caption muted' }, 'Nobody is assigned here yet.'));
 }
@@ -389,7 +392,13 @@ async function salesSection(params) {
   const open = shown.find(s => s.id === params.get('sale')) || shown[0];
   const refresh = () => { invalidate('sales'); app.render(); };
   const act = async (body, message) => {
-    try { await action(body, { quiet: true }); toast(message); refresh(); }
+    try {
+      const result = await action(body, { quiet: true });
+      // KNOCK-BRIDGE: what happened in the Hub (booked, cancelled, restored, moved, or what the office must finish).
+      const hub = result?.hub || result?.hubJob || result?.booking;
+      toast(message, hub?.message ? { sub: hub.message, tone: hub.status === 'failed' ? 'bad' : undefined } : undefined);
+      refresh();
+    }
     catch (error) { toast(error.message, { tone: 'bad' }); if (error.details?.sale) refresh(); }
   };
   const address = sale => `${sale.address.number} ${titleStreet(sale.address.street)}${sale.address.unit ? ` #${sale.address.unit}` : ''}`;
@@ -409,7 +418,17 @@ async function salesSection(params) {
       h('div', { class: 'handoffs' },
         h('div', { class: 'card card--line', style: { gap: '10px' } },
           h('div', { class: 'row row--between' }, h('h3', {}, '1 · Job'), j.status === 'created' ? badge('Created', 'success', 'check') : badge('Not created', 'warning')),
-          j.ref ? kv('Reference', j.ref) : null, ref,
+          // A Hub job id is one long word: it wraps instead of pushing a phone's page sideways.
+          j.ref ? kv('Reference', h('span', { style: { overflowWrap: 'anywhere', wordBreak: 'break-all', minWidth: '0' } }, j.ref)) : null,
+          // KNOCK-BRIDGE: a door sale books its own Hub job; this retries one the Hub could not take yet.
+          j.mode === 'hub' && j.message ? h('p', { class: 'caption muted' }, j.code ? `${j.message} (${j.code}${j.error ? `: ${j.error}` : ''})` : j.message) : null,
+          j.mode === 'hub' && j.status === 'created' && j.moved ? banner('warning', 'calendar', 'Booked at another time than the rep asked',
+            `Asked for ${dateLabel(j.requested?.date)}${j.requested?.time ? `, ${wallTime(j.requested.time)}` : ''}; no crew was free then. The job date above is the booked one: confirm it with the customer before texting.`) : null,
+          j.mode === 'hub' && j.hubChange?.status === 'failed' ? banner('error', 'alert', 'The Hub job needs you', j.hubChange.message,
+            h('button', { type: 'button', class: 'btn btn--sm btn--secondary', onclick: () => act({ action: 'sale.status', saleId: sale.id, status: sale.status }, 'Tried the Hub again') }, 'Try again')) : null,
+          j.mode === 'hub' && j.status !== 'created' && data.integrations.job.available.includes('hub')
+            ? h('button', { type: 'button', class: 'btn btn--primary btn--sm', onclick: () => act({ action: 'sale.book', saleId: sale.id }, 'Booked in the Hub') }, 'Book in Hub') : null,
+          ref,
           h('button', { type: 'button', class: 'btn btn--quiet btn--sm', onclick: () => act({ action: 'sale.handoff', saleId: sale.id, kind: 'job', op: 'mark', ref: ref.value }, 'Job marked created') }, j.status === 'created' ? 'Update reference' : 'Mark created')),
         h('div', { class: 'card card--line', style: { gap: '10px' } },
           h('div', { class: 'row row--between' }, h('h3', {}, `2 · Deposit · ${money(sale.depositAmount, sale.depositAmount % 1 !== 0)}`),
@@ -439,10 +458,28 @@ async function salesSection(params) {
     if (sale.textConsent && t.status !== 'sent') return 'Text';
     return sale.status === 'completed' ? 'Mark paid' : 'Job day';
   };
+  // KNOCK-BRIDGE: walkthroughs set at the door that are not in the Hub yet, oldest first, with the reason and a retry.
+  const WALK_BADGE = { pending: ['Booking', ''], retry: ['Retrying', 'warning'], review: ['Needs you', 'error'] };
+  const walks = data.walkthroughs || [];
+  const walkCard = w => {
+    const [label, tone] = WALK_BADGE[w.booking.status] || WALK_BADGE.pending;
+    const asked = `${dateLabel(w.requested?.date)} ${w.requested?.time ? wallTime(w.requested.time) : w.requested?.part === 'pm' ? 'afternoon' : 'morning'}`;
+    return h('div', { class: 'card card--line', style: { gap: '6px' }, 'data-walkthrough': w.id },
+      h('div', { class: 'row row--between wrap', style: { gap: '6px' } }, h('b', {}, `${w.customer?.name || 'Customer'} · ${address(w)}`), badge(label, tone)),
+      h('span', { class: 'caption' }, w.customer?.phone ? h('a', { href: `tel:${w.customer.phone}` }, phoneLabel(w.customer.phone)) : null, ` · set ${timeLabel(w.setAt)} by ${repName(w.repKey)} · asked for ${asked}`),
+      w.booking.error || w.booking.code ? h('p', { class: 'caption muted' }, `${w.booking.error || w.booking.message}${w.booking.code ? ` (${w.booking.code})` : ''}`) : null,
+      w.note ? h('p', { class: 'caption' }, `Rep note: ${w.note}`) : null,
+      h('div', { class: 'row' }, h('button', { type: 'button', class: 'btn btn--primary btn--sm', onclick: () => act({ action: 'walkthrough.book', walkthroughId: w.id }, 'Sent to the Hub') }, 'Book in Hub')));
+  };
+  const walkthroughs = walks.length ? h('section', { class: 'card', style: { gap: '12px' }, 'data-office-walkthroughs': String(walks.length) },
+    h('div', { class: 'row row--between wrap' }, h('h2', { style: { fontSize: '20px' } }, 'Door walkthroughs not in the Hub yet'), badge(String(walks.length), 'warning')),
+    h('p', { class: 'caption muted' }, 'Set at the door but not booked yet: still booking, waiting to retry, or refused for you to look at. Book in Hub tries again (an undated walkthrough goes to To schedule when no estimator is free). A customer the Hub cannot match safely needs the duplicate fixed in the Hub first.'),
+    walks.map(walkCard)) : null;
   return {
     subtitle: 'One customer at a time. Every text goes to one person, never a batch.',
     actions: h('div', { style: { width: '420px', maxWidth: '100%' } }, seg([['needs', 'Needs me'], ['booked', 'Booked'], ['done', 'Done'], ['all', 'All']], filter, key => go('sales', { f: key }), { label: 'Filter sales' })),
     body: [
+      walkthroughs,
       open ? card(open) : emptyState('dollar', filter === 'needs' ? 'Nothing needs you' : 'No sales here', filter === 'needs' ? 'New sales show up here with their hand-offs.' : 'Try another filter.'),
       shown.length > 1 ? h('div', { class: 'card card--line table-wrap' }, h('table', { class: 'table' },
         h('thead', {}, h('tr', {}, ['Customer', 'Rep', 'Job', 'Deposit', 'Text', 'Status', 'Next'].map(label => h('th', {}, label)))),
@@ -477,7 +514,10 @@ function lifecycle(sale, act) {
       h('span', { class: 'spacer' }),
       sale.status !== 'cancelled'
         ? h('button', { type: 'button', class: 'btn btn--danger btn--sm', onclick: async () => {
-          if (await confirmSheet('Cancel this sale?', 'A cancelled sale pays no commission. Refund the deposit by the cancellation rules.', 'Cancel sale', 'danger')) act({ action: 'sale.status', saleId: sale.id, status: 'cancelled' }, 'Sale cancelled');
+          // KNOCK-BRIDGE: a sale the bridge booked cancels its Hub job too.
+          const hubJob = sale.handoff?.job?.mode === 'hub' && sale.handoff.job.status === 'created' && !sale.handoff.job.hubCancelled
+            ? ` Its Hub job (${[sale.handoff.job.crewLabel, dateLabel(sale.jobDate)].filter(Boolean).join(', ')}) is cancelled too, so no crew goes.` : '';
+          if (await confirmSheet('Cancel this sale?', `A cancelled sale pays no commission. Refund the deposit by the cancellation rules.${hubJob}`, 'Cancel sale', 'danger')) act({ action: 'sale.status', saleId: sale.id, status: 'cancelled' }, 'Sale cancelled');
         } }, 'Cancel sale…')
         : h('button', { type: 'button', class: 'btn btn--secondary btn--sm', onclick: () => act({ action: 'sale.status', saleId: sale.id, status: 'booked' }, 'Sale reinstated') }, 'Reinstate')),
     h('p', { class: 'caption muted' }, `Enter total customer receipts including the deposit, not an additional payment. This does not charge the customer or pay the rep. Record completion separately. The job can't be before ${dateLabel(sale.earliestJobDate)}.`),
@@ -497,8 +537,35 @@ async function settersSection() {
   const reference = h('input', { class: 'input', id: 'setter-reference', placeholder: 'Classification review reference (no customer details)' });
   const estimator = h('input', { class: 'input', id: 'setter-estimator', placeholder: 'Staff key, or leave unverified' });
   const estimatorReference = h('input', { class: 'input', id: 'setter-estimator-reference', placeholder: 'Estimator attribution review reference' });
-  return { subtitle: '12% setting channel; separate from direct-close and estimator attribution.', body: [
-    banner('warning', 'info', 'Setter pay needs policy review', 'A booking or no-show earns nothing. A closed and collected job allocates 12% to its setter and 7% to its estimator. Verify both recipients, the calculation base and payroll anchor before any payable amount is shown.'),
+  const approved = data.policy?.approval === 'approved';
+  // A share's amount: earned, else the projection at the closed price (approved terms only), else held.
+  const share = (row, role) => {
+    const cents = (row.allocations || []).find(item => item.role === role)?.amountCents;
+    if (row.state === 'excluded') return money(0, true);
+    if (!Number.isSafeInteger(cents)) return '–';
+    return row.state === 'earned' ? money(cents / 100, true) : `${money(cents / 100, true)} projected`;
+  };
+  // The office settles a record's classification (and, if needed, its estimator) with a review reference.
+  const classify = row => () => sheet(`Classify walkthrough ${row.walkthroughId}`, close => {
+    const scope = h('select', { class: 'input', id: 'classify-scope' }, [['garage', 'Verified garage work'], ['junk_removal', 'Junk removal — no commission']].map(([value, label]) => h('option', { value }, label)));
+    const ref = h('input', { class: 'input', id: 'classify-reference', placeholder: 'Review reference (no customer details)' });
+    const estimatorKey = h('input', { class: 'input', id: 'classify-estimator', placeholder: row.estimatorKey || 'Staff key (leave blank to keep)' });
+    const estimatorRef = h('input', { class: 'input', id: 'classify-estimator-reference', placeholder: 'Estimator review reference' });
+    const classifyId = uuid();
+    return [field('Service', scope, null, 'classify-scope'), field('Review reference', ref, null, 'classify-reference'),
+      field('Estimator', estimatorKey, null, 'classify-estimator'), field('Estimator review reference', estimatorRef, null, 'classify-estimator-reference'),
+      h('p', { class: 'caption muted' }, 'A classification is recorded once; finance reviews any later change. An estimator already recorded changes only to the one who signed the handoff, or by the owner.'),
+      h('button', { type: 'button', class: 'btn btn--primary btn--block', onclick: async () => {
+        try {
+          await action({ action: 'setter.classify', requestId: classifyId, walkthroughId: row.walkthroughId, serviceClassification: scope.value, classificationReference: ref.value.trim(),
+            estimatorKey: estimatorKey.value.trim(), estimatorReference: estimatorRef.value.trim() });
+          close(true); invalidate('setters'); app.render();
+        } catch (error) { toast(error.message, { tone: 'bad' }); }
+      } }, 'Save classification')];
+  });
+  return { subtitle: `${CHANNEL_PERCENTS.setter}% setting channel; separate from direct-close and estimator attribution.`, body: [
+    approved ? banner('success', 'check', 'Setter terms approved', `A booking or no-show earns nothing. A job paid in full pays ${CHANNEL_PERCENTS.setter}% to its setter and ${CHANNEL_PERCENTS.estimator}% to its estimator (${CHANNEL_PERCENTS.setter + CHANNEL_PERCENTS.estimator}% total), in Money's statement for the period it was earned. Short payments, refunds and unclassified work stay held.`)
+      : banner('warning', 'info', 'Setter pay needs policy review', `A booking or no-show earns nothing. A closed and collected job allocates ${CHANNEL_PERCENTS.setter}% to its setter and ${CHANNEL_PERCENTS.estimator}% to its estimator (${CHANNEL_PERCENTS.setter + CHANNEL_PERCENTS.estimator}% total). Nothing is payable until the owner approves the walkthrough-setting and estimator terms in Settings.`),
     h('section', { class: 'card stack' }, h('h2', {}, 'Record walkthrough setter'),
       field('Walkthrough ID', visit, null, 'setter-visit'), field('Setter', setter, null, 'setter-rep'),
       field('Service classification', scope, null, 'setter-scope'), field('Review reference', reference, null, 'setter-reference'),
@@ -509,11 +576,61 @@ async function settersSection() {
         catch (error) { toast(error.message, { tone: 'bad' }); }
       } }, 'Record setter attribution')),
     h('div', { class: 'card table-wrap' }, h('table', { class: 'table' },
-      h('thead', {}, h('tr', {}, ['Walkthrough', 'Setter', 'Estimator evidence', 'State', 'Review'].map(label => h('th', {}, label)))),
+      h('thead', {}, h('tr', {}, ['Walkthrough', 'Setter', 'Estimator evidence', 'State', `Setter ${CHANNEL_PERCENTS.setter}%`, `Estimator ${CHANNEL_PERCENTS.estimator}%`, 'Review', ''].map(label => h('th', {}, label)))),
       h('tbody', {}, data.rows.map(row => h('tr', {}, h('td', {}, row.walkthroughId), h('td', {}, row.setterKey),
         h('td', {}, row.estimatorKey || 'Unverified'), h('td', {}, row.state.replaceAll('_', ' ')),
-        h('td', {}, (row.reviewReasons || []).join(', ').replaceAll('_', ' '))))))),
+        h('td', { class: 'num' }, share(row, 'setter')), h('td', { class: 'num' }, share(row, 'estimator')),
+        h('td', {}, (row.reviewReasons || []).join(', ').replaceAll('_', ' ')),
+        h('td', {}, ['service_scope_unverified', 'recipient_unverified', 'estimator_attribution_conflict'].some(reason => (row.reviewReasons || []).includes(reason))
+          ? h('button', { type: 'button', class: 'btn btn--secondary btn--sm', onclick: classify(row) }, 'Classify…') : null)))))),
     data.truncated ? banner('warning', 'info', 'More records need review', 'Only the first 100 setter records are shown.') : null,
+  ] };
+}
+
+/* ---------- Estimators (D6b: the estimator's 7%) ---------- */
+
+async function estimatorsSection() {
+  const data = await load('estimators', {}, { force: true });
+  // A direct walkthrough sale whose signed handoff does not show garage work: the office settles it once (estimator.classify).
+  const classify = row => () => sheet(`Classify job ${row.jobId}`, close => {
+    const scope = h('select', { class: 'input', id: 'estimator-classify-scope' }, [['garage', 'Verified garage work'], ['junk_removal', 'Junk removal — no commission']].map(([value, label]) => h('option', { value }, label)));
+    const ref = h('input', { class: 'input', id: 'estimator-classify-reference', placeholder: 'Review reference (no customer details)' });
+    const classifyId = uuid();
+    return [field('Service', scope, null, 'estimator-classify-scope'), field('Review reference', ref, null, 'estimator-classify-reference'),
+      h('p', { class: 'caption muted' }, 'A classification is recorded once; finance reviews any later change.'),
+      h('button', { type: 'button', class: 'btn btn--primary btn--block', onclick: async () => {
+        try {
+          await action({ action: 'estimator.classify', requestId: classifyId, jobId: row.jobId, serviceClassification: scope.value, classificationReference: ref.value.trim() });
+          close(true); invalidate('estimators'); app.render();
+        } catch (error) { toast(error.message, { tone: 'bad' }); }
+      } }, 'Save classification')];
+  });
+  const amount = row => row.state === 'earned' ? money(row.earnedCommission, true) : Number.isFinite(row.projectedCommission) ? `${money(row.projectedCommission, true)} projected`
+    : row.earnedCommission === 0 ? money(0, true) : '–';
+  const totals = new Map();
+  for (const row of data.rows) {
+    const key = row.estimatorKey || 'Unverified', sum = totals.get(key) || { earned: 0, projected: 0, jobs: 0 };
+    sum.jobs += 1;
+    if (row.state === 'earned') sum.earned += row.earnedCommission;
+    else if (Number.isFinite(row.projectedCommission)) sum.projected += row.projectedCommission;
+    totals.set(key, sum);
+  }
+  return { subtitle: `${CHANNEL_PERCENTS.estimator}% to the estimator of each signed walkthrough sale, set at the door or sold directly; walkthroughs signed in the last ${data.lookbackDays} days.`, body: [
+    data.terms.verified ? banner('success', 'check', 'Estimator terms approved', 'A job paid in full makes its estimator\'s share earned; it is paid in Money\'s statement for the period it was earned, with recorded payouts.')
+      : banner('warning', 'info', 'Estimator pay needs the owner\'s approval', `Nothing is earned or payable, and no amount is shown, until the owner approves the walkthrough-setting and estimator terms in Settings.`),
+    totals.size ? h('div', { class: 'card card--line table-wrap' }, h('table', { class: 'table' },
+      h('thead', {}, h('tr', {}, ['Estimator', 'Jobs', 'Earned', 'Projected'].map((label, i) => h('th', { class: i ? 'num' : '' }, label)))),
+      h('tbody', {}, [...totals].sort(([a], [b]) => a.localeCompare(b)).map(([key, sum]) => h('tr', {}, h('td', {}, h('b', {}, key)), h('td', { class: 'num' }, String(sum.jobs)),
+        h('td', { class: 'num' }, data.terms.verified ? money(sum.earned, true) : '–'), h('td', { class: 'num' }, data.terms.verified ? money(sum.projected, true) : '–')))))) : null,
+    h('div', { class: 'card table-wrap' }, h('table', { class: 'table' },
+      h('thead', {}, h('tr', {}, ['Job', 'Job date', 'Estimator', 'How it was set', 'State', `Estimator ${CHANNEL_PERCENTS.estimator}%`, 'Review', ''].map(label => h('th', {}, label)))),
+      h('tbody', {}, data.rows.length ? data.rows.map(row => h('tr', {}, h('td', {}, row.jobId || row.walkthroughId), h('td', {}, row.jobDate ? dateLabel(row.jobDate) : '–'),
+        h('td', {}, row.estimatorKey || 'Unverified'), h('td', {}, row.channel === 'direct_estimator' ? 'Estimator\'s own sale' : `Set at the door${row.setterKey ? ` by ${row.setterKey}` : ''}`),
+        h('td', {}, row.state.replaceAll('_', ' ')), h('td', { class: 'num' }, amount(row)), h('td', {}, (row.reviewReasons || []).join(', ').replaceAll('_', ' ')),
+        h('td', {}, row.channel === 'direct_estimator' && row.jobId && (row.reviewReasons || []).includes('service_scope_unverified')
+          ? h('button', { type: 'button', class: 'btn btn--secondary btn--sm', onclick: classify(row) }, 'Classify…') : null)))
+        : h('tr', {}, h('td', { colspan: '8', class: 'muted' }, 'No signed walkthrough sales yet.'))))),
+    data.truncated ? banner('warning', 'info', 'More records need review', 'Not every setter record was read; Money holds the statements of the people they name until finance reviews them.') : null,
   ] };
 }
 
@@ -551,7 +668,9 @@ async function moneySection(params) {
       h('div', { class: 'card card--line table-wrap' }, h('table', { class: 'table' },
         h('thead', {}, h('tr', {}, ['Rep', 'Booked', 'Earned', 'Recorded payments', 'Payable', 'Training', ''].map((label, i) => h('th', { class: i && i < 6 ? 'num' : '' }, label)))),
         h('tbody', {}, data.statement.length ? data.statement.map(row => h('tr', {},
-          h('td', {}, h('b', {}, row.name), row.override ? h('div', { class: 'caption muted' }, `includes ${money(row.override, true)} lead bonus`) : null),
+          h('td', {}, h('b', {}, row.name), row.override ? h('div', { class: 'caption muted' }, `includes ${money(row.override, true)} lead bonus`) : null,
+            row.setterCommission ? h('div', { class: 'caption muted' }, `includes ${money(row.setterCommission, true)} walkthrough setting (${CHANNEL_PERCENTS.setter}%)`) : null,
+            row.estimatorCommission ? h('div', { class: 'caption muted' }, `includes ${money(row.estimatorCommission, true)} estimator (${CHANNEL_PERCENTS.estimator}%)`) : null),
           h('td', { class: 'num' }, money(row.booked)), h('td', { class: 'num' }, amount(row.earnedCommission)), h('td', { class: 'num' }, amount(row.commissionPaid)),
           h('td', { class: 'num' }, h('b', {}, amount(row.payableCommission)), row.compensationState !== 'configured' ? h('div', { class: 'caption muted' }, row.compensationState.replaceAll('_', ' ')) : null),
           h('td', { class: 'num' }, row.trainingMinutes ? `${hoursLabel(row.trainingMinutes * 60000)} h` : '–'),
@@ -635,6 +754,137 @@ function put(obj, path, value) {
   target[keys.at(-1)] = value;
 }
 
+/* The owner's "Approve commission terms" card. It shows exactly what an approval records:
+   the SAVED commission and pay-period settings (not unsaved edits), the fixed
+   knock-collected-v3 collection policy and scope, and the owner's package classification.
+   Everyone else sees the status only. The server re-checks owner and saved values. */
+const POLICY_LABELS = {
+  earnedOn: ['Earned when', { customer_collection: 'the customer has paid the full price' }],
+  payoutCadence: ['Paid out', { biweekly: 'every two weeks' }],
+  calculationBase: ['Calculated on', { eligible_collected_amount: 'the eligible amount collected' }],
+  attribution: ['Credited to', { recorded_rep: 'the rep recorded on the sale' }],
+  partialCollections: ['Short final payment', { review_required: 'held for finance review (a deposit or balance still due is just pending)' }],
+  refunds: ['Refunds', { review_required: 'held for finance review' }],
+};
+
+const pct = value => `${Math.round(Number(value) * 1000) / 10}%`;
+
+function approvalCard(data, card) {
+  const c = data.compensation;
+  if (!c) return null;
+  const saved = data.settings, com = saved.commission, pay = saved.payroll;
+  const status = c.verified
+    ? banner('success', 'check', 'Commission terms approved', `Approved by ${c.approval.reviewedBy} ${timeLabel(c.approval.reviewedAt)} · reference ${c.approval.reference}. Sales booked from then on carry these terms.`)
+    : c.approval && !c.approval.matchesSavedSettings
+      ? banner('warn', 'alert', 'Approval no longer matches the saved terms', 'The commission or pay-period settings changed after the last approval. Commission stays unconfigured until the owner approves again.')
+      : banner('warn', 'alert', 'Commission terms are not approved', 'Reps see no earned or payable commission and payroll export is refused until the owner approves these terms.');
+  const terms = h('div', { class: 'stack', style: { gap: '0' } },
+    kv('Contract', c.terms.contract),
+    kv('Door-to-door rate', `${pct(com.rate)} of each eligible garage sale`),
+    kv('Higher rate', com.acceleratorEnabled ? `${pct(com.acceleratorRate)} above ${money(com.acceleratorThreshold)} collected a month` : 'Off'),
+    kv('Lead bonus', com.leadOverrideEnabled ? `${pct(com.leadOverrideRate)} of the team's collected revenue` : 'Off'),
+    kv('Pay period', `Every two weeks, first cycle starting ${longDateLabel(pay.anchorDate)} (${pay.anchorDate})`),
+    kv('Training pay', `${money(pay.trainingHourlyRate, true)} per hour`),
+    Object.entries(POLICY_LABELS).map(([key, [label, words]]) => kv(label, words[c.terms.collectionPolicy[key]] || c.terms.collectionPolicy[key])),
+    kv('Scope', 'Garage work sold door to door; the estimator rate is never added'));
+  const title = 'Approve commission terms';
+  if (!c.canApprove) return card(title, status, terms, h('p', { class: 'caption muted' }, 'Only the owner can approve these terms.'));
+  if (!c.settingsSaved) return card(title, status, terms, banner('info', 'info', 'Save the settings first', 'The approval binds to the saved settings record, never to defaults or unsaved edits.'));
+  if (com.rate !== c.terms.rate) return card(title, status, terms, banner('info', 'info', `Save a ${pct(c.terms.rate)} rate first`, `The door-to-door contract pays ${pct(c.terms.rate)}; other rates cannot be approved under it.`));
+  const requestId = uuid();
+  const prior = c.approval?.scope || {};
+  const classes = Object.fromEntries(c.terms.packages.map(name => [name,
+    (prior.garageOnlyPackages || []).includes(name) ? 'garage' : (prior.junkRemovalPackages || []).includes(name) ? 'junk' : 'review']));
+  const packageRow = name => {
+    const box = h('div', {});
+    // Short labels fit three across on a 320px phone; the caption above explains each.
+    const mountSeg = () => box.replaceChildren(seg([['garage', 'Garage only'], ['junk', 'Junk'], ['review', 'Needs review']], classes[name],
+      value => { classes[name] = value; mountSeg(); }, { label: `How ${name} is paid` }));
+    mountSeg();
+    return h('div', { class: 'field' }, h('span', { class: 'label' }, name), box);
+  };
+  const reference = h('input', { class: 'input', id: 'approve-reference', maxlength: '120', placeholder: 'Signed plan or decision record (no customer details)', value: c.approval?.reference || '' });
+  const anchor = h('input', { type: 'checkbox', id: 'approve-anchor' });
+  const approve = async () => {
+    const garageOnlyPackages = c.terms.packages.filter(name => classes[name] === 'garage');
+    const junkRemovalPackages = c.terms.packages.filter(name => classes[name] === 'junk');
+    if (!garageOnlyPackages.length) return toast('Mark at least one package as garage only.', { tone: 'bad' });
+    if (reference.value.trim().length < 3) return toast('Add the approval reference.', { tone: 'bad' });
+    if (!anchor.checked) return toast(`Confirm the pay cycle starts ${pay.anchorDate}.`, { tone: 'bad' });
+    const unclassified = c.terms.packages.filter(name => classes[name] === 'review');
+    const sameList = (a, b = []) => a.length === b.length && a.every(name => b.includes(name));
+    // Approved terms date the sales that carry them. Fixing only the reference keeps that time
+    // (the server checks the same); new terms start now and earlier sales never inherit them.
+    const referenceOnly = c.verified && sameList(garageOnlyPackages, prior.garageOnlyPackages) && sameList(junkRemovalPackages, prior.junkRemovalPackages);
+    const effect = !c.verified ? ' Sales booked after this approval carry these terms.'
+      : referenceOnly ? ` Only the reference changes. The approval time stays ${timeLabel(c.approval.reviewedAt)}, so every sale made since then keeps these terms.`
+        : ' These terms start now. A sale made before now on a phone that has not synced yet will not carry them and will be held for finance review.';
+    const summary = `${pct(com.rate)} of collected garage sales, earned at full payment and paid every two weeks from ${pay.anchorDate}. Garage only: ${garageOnlyPackages.join(', ')}.` +
+      `${junkRemovalPackages.length ? ` No commission: ${junkRemovalPackages.join(', ')}.` : ''}${unclassified.length ? ` Held for review: ${unclassified.join(', ')}.` : ''}${effect}`;
+    if (!await confirmSheet(c.verified ? 'Update the approved terms?' : 'Approve these commission terms?', summary, c.verified ? 'Update approval' : 'Approve terms')) return;
+    try {
+      const result = await action({ action: 'compensation.approve', requestId, contract: c.terms.contract, reference: reference.value.trim(), payrollAnchorConfirmed: true,
+        collectionPolicy: c.terms.collectionPolicy, scope: { ...c.terms.scope, garageOnlyPackages, junkRemovalPackages }, commission: com, payroll: pay }, { quiet: true });
+      toast(result.duplicate ? 'These terms were already approved' : result.referenceOnly ? 'Approval reference updated' : 'Commission terms approved',
+        { sub: result.referenceOnly ? 'The approval time and terms are unchanged.' : 'Reps see payable commission from now on.' });
+      invalidate('settings');
+      app.render();
+    } catch (error) { toast(error.message, { tone: 'bad' }); }
+  };
+  return card(title, status, terms,
+    h('p', { class: 'caption muted' }, 'These are the saved settings. Save any edits above first. Mark a package Garage only if it is wholly garage work (it earns commission), Junk if it is junk removal (no commission), or Needs review (held until classified).'),
+    c.terms.packages.map(packageRow),
+    field('Approval reference', reference, null, 'approve-reference'),
+    h('label', { class: 'check check--sm' }, anchor, `The two-week pay cycle starts ${longDateLabel(pay.anchorDate)} (${pay.anchorDate})`),
+    h('button', { type: 'button', class: 'btn btn--primary', onclick: approve }, c.verified ? 'Update approval' : title));
+}
+
+/* The owner's "Approve walkthrough-setting and estimator terms" card (D6b): the fixed SETTER_TERMS the server records
+   (setter.approve), never adjustable. Until it is approved every setter and estimator share stays held for review.
+   It needs the door-to-door commission terms (their pay cycle) approved first. Everyone else sees the status only. */
+function setterApprovalCard(data, card) {
+  const s = data.setter;
+  if (!s) return null;
+  const t = s.terms;
+  const status = s.verified
+    ? banner('success', 'check', 'Walkthrough-setting and estimator terms approved', `Approved by ${s.approval.reviewedBy} ${timeLabel(s.approval.reviewedAt)} · reference ${s.approval.reference}. Setter and estimator shares of jobs paid in full are earned and payable from then on.`)
+    : s.approval && s.approval.termsMatch && !s.compensationVerified
+      ? banner('warn', 'alert', 'Waiting for the door-to-door approval', 'These terms are approved, but they are paid with the door-to-door commission, whose approval no longer verifies. Shares stay held until it is approved again.')
+      : banner('warn', 'alert', 'Walkthrough-setting and estimator terms are not approved', 'Every setter and estimator share stays held for review, with no amount, until the owner approves these terms.');
+  const terms = h('div', { class: 'stack', style: { gap: '0' } },
+    kv('Contract', t.contract),
+    kv('Walkthrough a rep set at the door', `${t.setterPercent}% to the rep who set it, ${t.estimatorPercent}% to its estimator (${t.setterPercent + t.estimatorPercent}% total)`),
+    kv('Walkthrough an estimator sold directly', `${t.directEstimatorPercent}% to the estimator`),
+    kv('Calculated on', 'the job\'s whole price, goods included, rounded to the cent'),
+    kv('Earned when', 'the job is closed and the customer has paid the full price (never before this approval)'),
+    kv('Paid out', 'every two weeks, with the door-to-door commission'),
+    kv('Garage work', 'a signed walkthrough for a garage transformation, unless the office classified it; junk removal earns nothing'),
+    kv('Estimator', 'the one the office or the door booking recorded, else whoever recorded the customer\'s signature'),
+    kv('Short payment or refund', 'held for finance review'),
+    kv('Stacking', `never added to the ${CHANNEL_PERCENTS.directSale}% direct door-to-door rate`));
+  const title = 'Approve walkthrough-setting and estimator terms';
+  if (!s.canApprove) return card(title, status, terms, h('p', { class: 'caption muted' }, 'Only the owner can approve these terms.'));
+  if (!s.compensationVerified) return card(title, status, terms, banner('info', 'info', 'Approve the door-to-door terms first', 'These shares are paid in the door-to-door commission\'s two-week pay cycle, which that approval confirms.'));
+  const requestId = uuid();
+  const reference = h('input', { class: 'input', id: 'setter-approve-reference', maxlength: '120', placeholder: 'Decision record (no customer details)', value: s.approval?.reference || '' });
+  const approve = async () => {
+    if (reference.value.trim().length < 3) return toast('Add the approval reference.', { tone: 'bad' });
+    const summary = `${t.setterPercent}% to the rep and ${t.estimatorPercent}% to the estimator of a walkthrough set at the door, ${t.directEstimatorPercent}% to the estimator of a walkthrough sold directly, of the whole price of jobs paid in full, every two weeks.${s.verified ? ' Only the reference changes; the approval time stays.' : ' Jobs already paid in full count from now on.'}`;
+    if (!await confirmSheet(s.verified ? 'Update the approval reference?' : 'Approve these terms?', summary, s.verified ? 'Update reference' : 'Approve terms')) return;
+    try {
+      const result = await action({ action: 'setter.approve', requestId, contract: t.contract, reference: reference.value.trim(),
+        terms: Object.fromEntries(Object.entries(t).filter(([key]) => key !== 'contract')) }, { quiet: true });
+      toast(result.duplicate ? 'These terms were already approved' : result.referenceOnly ? 'Approval reference updated' : 'Walkthrough-setting and estimator terms approved',
+        { sub: 'Setter and estimator shares of jobs paid in full are earned and payable.' });
+      invalidate('settings');
+      app.render();
+    } catch (error) { toast(error.message, { tone: 'bad' }); }
+  };
+  return card(title, status, terms,
+    field('Setter terms reference', reference, null, 'setter-approve-reference'),
+    h('button', { type: 'button', class: 'btn btn--primary', onclick: approve }, s.verified ? 'Update reference' : title));
+}
+
 async function settingsSection() {
   const data = await load('settings', {}, { force: true });
   const draft = structuredClone(data.settings);
@@ -672,9 +922,13 @@ async function settingsSection() {
       hint ? h('span', { class: 'hint' }, hint) : null);
   };
   const save = async () => {
+    const termsChanged = ['commission', 'payroll'].some(key => JSON.stringify(draft[key]) !== JSON.stringify(data.settings[key]));
+    if (data.compensation?.verified && termsChanged && !await confirmSheet('Change approved commission terms?',
+      'Saving new commission or pay-period settings ends the current approval. Commission is unconfigured until the owner approves again.', 'Save anyway', 'danger')) return;
     try {
-      await action({ action: 'settings.update', settings: draft }, { quiet: true });
-      toast('Settings saved', { sub: 'They apply to new doors and sales.' });
+      const result = await action({ action: 'settings.update', settings: draft }, { quiet: true });
+      if (result.compensation?.approvalInvalidated) toast('Settings saved; commission needs approval again', { tone: 'bad', sub: 'The owner must approve the new terms before commission is payable.' });
+      else toast('Settings saved', { sub: 'They apply to new doors and sales.' });
       invalidate('settings');
       await app.sync({ full: true });
     } catch (error) {
@@ -710,11 +964,13 @@ async function settingsSection() {
           toggle('commission.leadOverrideEnabled', 'Leads earn a bonus on their team'),
           h('div', { class: 'fields-2' }, row('Higher rate', num('commission.acceleratorRate', { scale: 100, unit: '%', step: '0.5' })), row('once monthly revenue passes', num('commission.acceleratorThreshold', { prefix: '$', step: '100', width: '120px' }))),
           toggle('commission.acceleratorEnabled', 'Use the higher rate'),
-          h('p', { class: 'caption muted' }, 'Earning on collection and a two-week payout cadence are confirmed. Basis, attribution, partial collections, refunds and the payroll anchor still require finance review.'),
+          h('p', { class: 'caption muted' }, 'Earning on collection and a two-week payout cadence are confirmed. Changing a commission or pay-period number ends the owner\'s approval until it is approved again.'),
           row('Training pay', num('payroll.trainingHourlyRate', { prefix: '$', unit: 'per hour, paid separately', step: '0.01' }))),
         card('Pay period',
           segFor('payroll.period', [['biweekly', 'Every 2 weeks']], 'Pay period'),
-          row('Unconfirmed cycle anchor', text('payroll.anchorDate', { type: 'date' }), 'A draft date until explicitly confirmed by finance.')),
+          row(data.compensation?.verified ? 'Confirmed cycle anchor' : 'Unconfirmed cycle anchor', text('payroll.anchorDate', { type: 'date' }), data.compensation?.verified ? 'Confirmed by the owner\'s approval. Changing it ends that approval.' : 'A draft date until the owner confirms it in the approval below.')),
+        approvalCard(data, card),
+        setterApprovalCard(data, card),
         card('Plan targets',
           h('p', { class: 'caption muted' }, 'Draft targets only until separately approved for D2D. Direct-estimator average ticket and margin do not establish D2D performance.'),
           h('div', { class: 'fields-2' },
@@ -728,6 +984,9 @@ async function settingsSection() {
         card('Go-backs',
           h('div', { class: 'fields-2' }, row('Tries per house, per season', num('goBacks.maxAttemptsPerSeason', { step: '1' })), row('"Not interested" rests for', num('goBacks.notInterestedRestMonths', { unit: 'months', step: '1' }))),
           row('Season starts on (MM-DD)', text('goBacks.seasonStart', { placeholder: '01-01' }))),
+        card('Territory',
+          toggle('territory.selfClaim', 'Reps may claim open neighborhoods themselves'),
+          row('Neighborhoods a rep may claim at once', num('territory.maxSelfClaims', { step: '1' }), 'One rep per neighborhood. Holds, Premium clearance and town rules still apply; you can remove any claim on the Territory screen.')),
         card('Integrations',
           h('div', { class: 'field' }, h('span', { class: 'label' }, 'Deposit links'), segFor('integrations.deposit', [['manual', 'By hand'], ['stripe', 'Stripe']], 'Deposit links')),
           h('div', { class: 'field' }, h('span', { class: 'label' }, 'Customer texts'), segFor('integrations.text', [['manual', 'By hand'], ['highlevel', 'HighLevel']], 'Customer texts')),
@@ -757,6 +1016,7 @@ export function install(appApi) {
   registerAdminSection('coverage', 'Coverage', 'chart', coverageSection);
   registerAdminSection('sales', 'Sales', 'dollar', salesSection);
   registerAdminSection('setters', 'Setters', 'user', settersSection);
+  registerAdminSection('estimators', 'Estimators', 'user', estimatorsSection);
   registerAdminSection('native-forms', 'GHL requests', 'refresh', () => nativeRecoveryAdmin(app));
   registerAdminSection('money', 'Money', 'cash', moneySection);
   registerAdminSection('scoreboard', 'Scoreboard', 'trophy', scoreboardSection);

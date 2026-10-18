@@ -9,6 +9,65 @@ const money = value => Math.round(Number(value || 0) * 100) / 100;
 const ms = value => (typeof value === 'number' ? value : Date.parse(value));
 const TERM_FIELDS = ['rate', 'acceleratorEnabled', 'acceleratorThreshold', 'acceleratorRate', 'leadOverrideEnabled', 'leadOverrideRate'];
 
+// Owner-set channel percentages (2026-10-17) of the full garage job including goods: a
+// direct D2D close 25%; a D2D-set walkthrough 13% to the setter plus 7% to the estimator
+// (20% total); a direct walkthrough 7% to the estimator. Junk earns nothing and channels
+// never stack. Whole percents keep allocation arithmetic exact (knock-allocations.js).
+export const CHANNEL_PERCENTS = Object.freeze({ directSale: 25, setter: 13, estimator: 7 });
+// A walkthrough-setting or estimator share is paid through the statement of the pay period it is earned in when its
+// source (the setter record, or the signed handoff of a direct walkthrough sale) is at most this many days older than
+// that period's start; the statement reads no older sources (functions/_lib/estimator-commission.js), so an older one
+// is held for review wherever it shows (periodStatement, the estimator's own view).
+export const CHANNEL_LOOKBACK_DAYS = 365;
+
+const percentText = rate => `${Math.round(Number(rate) * 1000) / 10}%`;
+// The only base rate the knock-collected-v3 contract can approve (knock-admin.js approveCompensation).
+const CONTRACT_RATE = 0.25;
+
+/* The one statement of the current direct-sale earning rule that reps read, on the Help
+   sheet and on My money. Unapproved terms are never presented as a pay promise, and a
+   saved rate the contract cannot approve is never shown as the planned rate. */
+export function commissionRuleText(commission) {
+  const rate = commission?.rate ?? CONTRACT_RATE;
+  const share = rate === CONTRACT_RATE ? `${percentText(rate)} of each eligible garage sale` : 'Commission on each eligible garage sale at the approved rate';
+  const rule = `${share}, earned once the customer has paid the full price (a deposit alone does not count), with payouts every two weeks. A final payment that comes up short, a refund or a cancellation is held for review.`;
+  if (commission?.verified !== true) return `Not approved yet: nothing is earned or payable until the owner approves the terms, and the saved rate is not a pay promise. Planned once approved: ${rule}`;
+  return `${rule} Sales booked under older terms keep their own rules.`;
+}
+
+export const SETTER_RULE_TEXT = `${CHANNEL_PERCENTS.setter}% to you when a walkthrough you set closes and the customer pays in full; the estimator gets ${CHANNEL_PERCENTS.estimator}% (${CHANNEL_PERCENTS.setter + CHANNEL_PERCENTS.estimator}% total). Booking or a no-show earns nothing, and amounts stay on hold until finance confirms the recipients, base and pay cycle. It is never added to the ${CHANNEL_PERCENTS.directSale}% direct-sale rate.`;
+
+/* The appointment-setter and estimator terms (owner decision D6b, 2026-10-17) the owner approves as one contract
+   (knock-admin.js approveSetterTerms): fixed values, never settings. A walkthrough a door-to-door rep set pays 13% to
+   the rep and 7% to its estimator, a walkthrough an estimator sells directly 7%, of the job's whole collected price
+   including goods, rounded to the nearest cent, earned once the job is closed and paid in full (or at the approval,
+   when that is later) and paid every two weeks with the door-to-door commission, whose approval it needs. Under them
+   a signed walkthrough handoff for a garage transformation is garage work and its signer is the estimator, unless
+   the office recorded otherwise. Junk removal earns nothing; a short or excess payment, a refund or a cancellation
+   is held for review; channels never stack. */
+export const SETTER_CONTRACT = 'knock-setter-v1';
+export const SETTER_TERMS = Object.freeze({ setterPercent: CHANNEL_PERCENTS.setter, estimatorPercent: CHANNEL_PERCENTS.estimator, directEstimatorPercent: CHANNEL_PERCENTS.estimator,
+  calculationBase: 'collected_job_total_including_goods', earnedOn: 'closed_and_paid_in_full', rounding: 'nearest_cent', payoutCadence: 'biweekly',
+  serviceScope: 'garage_only_signed_handoff_or_office', estimatorAttribution: 'office_recorded_else_handoff_signer',
+  partialCollections: 'review_required', refunds: 'review_required', stacking: false });
+
+export function validSetterTerms(terms) {
+  return Boolean(terms) && typeof terms === 'object' && !Array.isArray(terms) && Object.keys(terms).length === Object.keys(SETTER_TERMS).length &&
+    Object.entries(SETTER_TERMS).every(([key, value]) => Object.hasOwn(terms, key) && terms[key] === value);
+}
+
+// The setter rule a rep reads on My money, once the owner approved the setter terms (setter: {verified}).
+export function setterRuleText(setter) {
+  if (setter?.verified !== true) return SETTER_RULE_TEXT;
+  return `${CHANNEL_PERCENTS.setter}% to you when a walkthrough you set closes and the customer pays the whole price, goods included; the estimator gets ${CHANNEL_PERCENTS.estimator}% (${CHANNEL_PERCENTS.setter + CHANNEL_PERCENTS.estimator}% total). It is earned once the job is paid in full, rounded to the cent and paid every two weeks. Booking, a no-show or junk removal earns nothing, and a short payment, refund or cancellation is held for review. It is never added to the ${CHANNEL_PERCENTS.directSale}% direct-sale rate.`;
+}
+
+// The only collection policy and scope the knock-collected-v3 contract accepts. The owner's
+// approval screen shows these exact values; they are not adjustable settings.
+export const COLLECTED_V3_POLICY = Object.freeze({ earnedOn: 'customer_collection', payoutCadence: 'biweekly',
+  calculationBase: 'eligible_collected_amount', attribution: 'recorded_rep', partialCollections: 'review_required', refunds: 'review_required' });
+export const D2D_GARAGE_SCOPE = Object.freeze({ service: 'garage_only', channel: 'door_to_door', estimatorStacking: false });
+
 export function validCollectionPolicy(policy) {
   return policy?.earnedOn === 'customer_collection' && policy.payoutCadence === 'biweekly' &&
     policy.calculationBase === 'eligible_collected_amount' && policy.attribution === 'recorded_rep' &&
@@ -100,6 +159,18 @@ function collectionEvents(sale) {
   ].filter(event => Number.isFinite(event.amount) && event.amount >= 0 && Number.isFinite(ms(event.at)));
 }
 
+/* Receipts below the ticket with evidence that the closing collection happened: a 'paid'
+   status, or a receipt recorded at or after the job's completion. A finished job whose only
+   receipts predate completion (usually the sale-day deposit) is awaiting its balance, not
+   short. A finished job with no usable completion or receipt time is held, not assumed. */
+function shortFinalCollection(sale, payment) {
+  if (!(money(payment.gross) < money(sale?.ticket))) return false;
+  if (sale.status === 'paid') return true;
+  const completed = ms(sale.completedAt);
+  if (!Number.isFinite(completed)) return sale.status === 'completed';
+  return !payment.at || ms(payment.at) >= completed;
+}
+
 export function commissionIssues(sale, commission) {
   const payment = customerCollection(sale), issues = [];
   const collectedTerms = sale?.commissionTerms?.contract === 'knock-collected-v3';
@@ -113,7 +184,11 @@ export function commissionIssues(sale, commission) {
   }
   if (collectedTerms && payment.gross > 0) {
     if (!payment.at) issues.push('collection_unverified');
-    if (money(payment.gross) !== money(sale.ticket)) issues.push('partial_collection_policy_unconfigured');
+    // Collected terms earn only at full collection, so receipts below the ticket are not
+    // earned yet: the sale-day deposit, a running total, or a finished job still awaiting
+    // its balance. Only an overpayment or a short final collection needs the unapproved
+    // partial-collection policy (see shortFinalCollection).
+    if (money(payment.gross) > money(sale.ticket) || shortFinalCollection(sale, payment)) issues.push('partial_collection_policy_unconfigured');
   }
   if (payment.refunded === null || payment.refunded > 0) issues.push('refund_review');
   if (sale?.collectionHistory != null) {
@@ -246,29 +321,84 @@ export function previousPayPeriod(period, payroll) {
 }
 
 const inPeriod = (date, period) => Boolean(date && period && date >= period.start && date <= period.end);
+const datable = value => value != null && value !== '' && Number.isFinite(ms(value));
+
+// Calendar dates on which a sale changed: sold, each receipt, the deposit, completion,
+// payment, refund, cancellation and every status change. Older signed terms also earn at
+// the cancellation deadline, so that date counts for them.
+function activityDates(sale, timeZone) {
+  const history = list => (Array.isArray(list) ? list : []);
+  const deadline = sale.commissionTerms?.contract === 'knock-collected-v3' ? null : sale.cancelEndsAt;
+  const instants = [sale.soldAt, sale.paidAt, sale.completedAt, sale.refundedAt, sale.cancelledAt, deadline, sale.handoff?.deposit?.collectedAt,
+    ...collectionEvents(sale).map(event => event.at), ...history(sale.collectionHistory).flatMap(event => [event?.at, event?.previousAt]),
+    ...history(sale.statusHistory).map(event => event?.at)];
+  const dates = instants.filter(datable).map(value => zonedDate(ms(value), timeZone));
+  if (validDate(sale.saleDate)) dates.push(sale.saleDate);
+  return [...new Set(dates.filter(Boolean))];
+}
+
+/* A refund or cancellation under review with no usable date. Refund fields arrive from
+   outside Knock, so the adjustment it may need could land in any period, the current one
+   included; it holds them all until finance dates it. */
+function undatedAdjustment(sale, issues) {
+  if (issues.includes('refund_review') && !datable(sale.refundedAt)) return true;
+  const history = Array.isArray(sale.statusHistory) ? sale.statusHistory : [];
+  return issues.includes('cancellation_review') && !datable(sale.cancelledAt) && !history.some(event => event?.status === 'cancelled' && datable(event.at));
+}
+
+/* Whether a sale's unresolved review reasons hold this period's totals. They do when the
+   sale changed inside the period, or when it (or its refund or cancellation) cannot be dated.
+   With a monthly accelerator, a receipt also shifts the tier of the rep's later receipts that
+   month, so it holds every period from that receipt to the end of its calendar month. Another
+   period's unrelated problem never blanks a period whose own sales are complete. */
+function reviewScope(sale, issues, period, timeZone, tiered) {
+  const dates = activityDates(sale, timeZone);
+  const direct = !dates.length || undatedAdjustment(sale, issues) || dates.some(date => inPeriod(date, period));
+  if (direct || !tiered) return { rep: direct, lead: direct };
+  const receipts = [sale.paidAt, ...collectionEvents(sale).map(event => event.at)].filter(datable).map(value => zonedDate(ms(value), timeZone)).filter(Boolean);
+  return { rep: receipts.some(date => period.end >= date && period.start <= lastDayOfMonth(date)), lead: false };
+}
 
 /* Per rep for one pay period:
    booked   - revenue of sales sold in the period that are not cancelled
    pending  - base-rate commission on those sales that is not earned yet
    earned   - commission (incl. accelerator) that became earned in the period
    override - lead override that became earned in the period
-   paid     - payouts recorded against the period */
-export function periodStatement({ sales = [], payouts = [], training = [], reps = [], settings, period, now = Date.now(), timeZone = 'America/Denver' }) {
+   paid     - payouts recorded against the period
+   Review reasons come only from sales that touch the period (see reviewScope).
+   channels - only once the owner approved the setter terms (SETTER_TERMS): the appointment-setter and estimator shares
+              earned so far, [{repKey, role:'setter'|'estimator', amount, earnedAt (ms), name?, share?, sourceAt?}]. Each
+              adds to its recipient's earned commission in the period it was earned, and every row then also has
+              setterCommission and estimatorCommission. A share whose sourceAt (ms, or null when unknown) is more than
+              CHANNEL_LOOKBACK_DAYS before the period's start is not counted and holds its recipient
+              (statement_lookback_exceeded). channelReview: reasons that hold every row (the shares could not all be
+              read). channelHolds: [{repKey, reasons, dates?, from?, all?}] hold one recipient's row in the periods
+              holding one of dates, every period ending on or after from, or every period (all).
+              A payout recorded with channelItems (knock-reports.js addPayout: the shares it paid, by share =
+              jobId:role) holds its recipient's row (channel_share_changed) when one of them is no longer earned in
+              that period by that recipient at that amount, and holds any row where a share it paid is earned again
+              (another period or recipient): a share that changed after it was paid needs finance, never a silent
+              move or a second payment. Recorded payments above the period's earnings hold the row too
+              (payout_exceeds_earned).
+              Without channels the statement is exactly what it was. */
+export function periodStatement({ sales = [], payouts = [], training = [], reps = [], settings, period, now = Date.now(), timeZone = 'America/Denver', channels = null, channelReview = [], channelHolds = [] }) {
   sales = unique(sales);
   payouts = unique(payouts);
   const commission = settings?.commission || {};
   const trainingRate = Number(settings?.payroll?.trainingHourlyRate ?? 15.16);
   const commissions = saleCommissions(sales, commission, { now, timeZone });
   const overrides = leadOverrides(sales, commission, { now });
-  const byRep = new Map();
-  const row = repKey => {
+  // Reps with any receipt counted under an enabled monthly accelerator.
+  const tieredReps = new Set(sales.filter(sale => saleTerms(sale, commission) && saleTerms(sale, commission).acceleratorEnabled !== false).map(sale => sale.repKey));
+  const byRep = new Map(), withChannels = Array.isArray(channels);
+  const row = (repKey, name = '') => {
     if (!byRep.has(repKey)) {
       const rep = reps.find(r => r.repKey === repKey);
       byRep.set(repKey, {
-        repKey, name: rep?.displayName || repKey, salesBooked: 0, booked: 0, pending: 0,
+        repKey, name: rep?.displayName || name || repKey, salesBooked: 0, booked: 0, pending: 0,
         earned: 0, accelerator: 0, override: 0, paid: 0, trainingMinutes: 0, trainingPay: 0,
         projectedCommission: 0, customerCollectedRevenue: 0, customerRefundedRevenue: 0,
-        collectionUnknownCount: 0, reviewReasons: [],
+        collectionUnknownCount: 0, reviewReasons: [], ...(withChannels ? { setterCommission: 0, estimatorCommission: 0 } : {}),
       });
     }
     return byRep.get(repKey);
@@ -278,8 +408,12 @@ export function periodStatement({ sales = [], payouts = [], training = [], reps 
     const r = row(sale.repKey), payment = customerCollection(sale);
     const issues = commissionIssues(sale, commission);
     // Unresolved adjustments may affect prior payouts or monthly tiers; never invent a clawback.
-    r.reviewReasons.push(...issues);
-    if (sale.leadKey && sale.leadKey !== sale.repKey) row(sale.leadKey).reviewReasons.push(...issues);
+    const lead = sale.leadKey && sale.leadKey !== sale.repKey ? row(sale.leadKey) : null;
+    if (issues.length) {
+      const scope = reviewScope(sale, issues, period, timeZone, tieredReps.has(sale.repKey));
+      if (scope.rep) r.reviewReasons.push(...issues);
+      if (scope.lead && lead) lead.reviewReasons.push(...issues);
+    }
     for (const event of collectionEvents(sale)) {
       if (inPeriod(zonedDate(ms(event.at), timeZone), period)) r.customerCollectedRevenue = money(r.customerCollectedRevenue + event.amount);
     }
@@ -305,6 +439,28 @@ export function periodStatement({ sales = [], payouts = [], training = [], reps 
     const r = row(item.leadKey);
     r.override = money(r.override + item.amount);
   }
+  const windowStart = Date.parse(addDays(period.start, -CHANNEL_LOOKBACK_DAYS)), counted = [];
+  for (const item of withChannels ? channels : []) {
+    if (!Number.isFinite(item?.earnedAt) || !Number.isFinite(item.amount) || !inPeriod(zonedDate(item.earnedAt, timeZone), period)) continue;
+    const r = row(item.repKey, item.name), key = item.role === 'setter' ? 'setterCommission' : 'estimatorCommission';
+    if (item.sourceAt !== undefined && !(item.sourceAt >= windowStart)) { r.reviewReasons.push('statement_lookback_exceeded'); continue; }
+    counted.push(item);
+    r[key] = money(r[key] + item.amount);
+    r.earned = money(r.earned + item.amount);
+  }
+  for (const hold of withChannels ? channelHolds : []) {
+    const dated = (Array.isArray(hold?.dates) ? hold.dates : []).some(at => datable(at) && inPeriod(zonedDate(ms(at), timeZone), period));
+    if (hold?.repKey && (hold.all === true || dated || datable(hold.from) && zonedDate(ms(hold.from), timeZone) <= period.end)) row(hold.repKey).reviewReasons.push(...(hold.reasons || []));
+  }
+  if (withChannels) {
+    const cents = value => Math.round(Number(value) * 100), paid = payouts.flatMap(payout => (Array.isArray(payout.channelItems) ? payout.channelItems : []).map(item => ({ ...item, repKey: payout.repKey, periodKey: payout.periodKey })));
+    for (const item of paid) {
+      // Paid in this period and no longer earned here by its recipient at that amount.
+      if (item.periodKey === period.key && !counted.some(live => live.repKey === item.repKey && live.share === item.share && cents(live.amount) === item.amountCents)) row(item.repKey).reviewReasons.push('channel_share_changed');
+    }
+    // Earned here, and already paid with another period or to another recipient.
+    for (const live of counted) if (live.share && paid.some(item => item.share === live.share && (item.periodKey !== period.key || item.repKey !== live.repKey))) row(live.repKey).reviewReasons.push('channel_share_changed');
+  }
   for (const payout of payouts) {
     if (payout.periodKey !== period.key) continue;
     const r = row(payout.repKey);
@@ -321,7 +477,10 @@ export function periodStatement({ sales = [], payouts = [], training = [], reps 
     r.commissionPaid = r.paid;
     r.commissionPaymentEvidence = 'admin_recorded_unreconciled';
     r.commissionSettled = null;
-    r.reviewReasons = [...new Set(r.reviewReasons)];
+    // With the approved shares, payments recorded above what the period earned (a share that left a paid period) are
+    // finance's to settle, never a silent zero.
+    if (withChannels && r.balance < 0) r.reviewReasons.push('payout_exceeds_earned');
+    r.reviewReasons = [...new Set([...r.reviewReasons, ...(withChannels ? channelReview : [])])];
     r.compensationState = commission.verified === false ? 'unconfigured' : r.reviewReasons.length ? 'review_required' : 'configured';
     if (commission.verified === false) {
       r.pending = r.projectedCommission = r.earned = r.accelerator = r.override = r.balance = null;
@@ -332,6 +491,7 @@ export function periodStatement({ sales = [], payouts = [], training = [], reps 
       r.earned = r.accelerator = r.override = r.balance = null;
       if (r.reviewReasons.includes('commission_terms_missing_or_invalid')) r.projectedCommission = r.pending = null;
     }
+    if (withChannels && r.earned === null) r.setterCommission = r.estimatorCommission = null;
     r.earnedCommission = r.earned === null ? null : money(r.earned + r.override);
     r.payableCommission = r.compensationState === 'configured' ? Math.max(0, r.balance) : null;
   }
@@ -352,9 +512,13 @@ export function toCsv(header, rows) {
 }
 
 export function commissionCsv(statement, period) {
+  // A statement with the approved setter and estimator shares (periodStatement channels) adds their two columns.
+  const channels = statement.some(r => Object.hasOwn(r, 'setterCommission'));
   return toCsv(
-    ['period_start', 'period_end', 'rep', 'username', 'sales_booked', 'booked_revenue', 'pending_commission', 'earned_commission', 'accelerator_included', 'lead_override', 'rep_payments_recorded', 'calculated_balance', 'projected_commission', 'customer_collected_revenue', 'customer_refunded_revenue', 'payable_commission', 'compensation_state', 'review_reasons', 'collection_unknown_count', 'rep_payment_evidence', 'settled_commission'],
-    statement.map(r => [period.start, period.end, r.name, r.repKey, r.salesBooked, ...[r.booked, r.pending, r.earned, r.accelerator, r.override, r.commissionPaid, r.balance, r.projectedCommission, r.customerCollectedRevenue, r.customerRefundedRevenue, r.payableCommission].map(v => v == null ? '' : v.toFixed(2)), r.compensationState, r.reviewReasons.join(';'), r.collectionUnknownCount, r.commissionPaymentEvidence, r.commissionSettled == null ? '' : r.commissionSettled.toFixed(2)]),
+    ['period_start', 'period_end', 'rep', 'username', 'sales_booked', 'booked_revenue', 'pending_commission', 'earned_commission', 'accelerator_included', 'lead_override', 'rep_payments_recorded', 'calculated_balance', 'projected_commission', 'customer_collected_revenue', 'customer_refunded_revenue', 'payable_commission', 'compensation_state', 'review_reasons', 'collection_unknown_count', 'rep_payment_evidence', 'settled_commission',
+      ...(channels ? ['setter_commission_included', 'estimator_commission_included'] : [])],
+    statement.map(r => [period.start, period.end, r.name, r.repKey, r.salesBooked, ...[r.booked, r.pending, r.earned, r.accelerator, r.override, r.commissionPaid, r.balance, r.projectedCommission, r.customerCollectedRevenue, r.customerRefundedRevenue, r.payableCommission].map(v => v == null ? '' : v.toFixed(2)), r.compensationState, r.reviewReasons.join(';'), r.collectionUnknownCount, r.commissionPaymentEvidence, r.commissionSettled == null ? '' : r.commissionSettled.toFixed(2),
+      ...(channels ? [r.setterCommission, r.estimatorCommission].map(v => v == null ? '' : v.toFixed(2)) : [])]),
   );
 }
 

@@ -5,8 +5,9 @@ import { h, mount, toast, uuid, icon, badge, banner, kv, emptyState, sheet } fro
 import { createOutbox, httpTransport, openKnockStore } from './knock-outbox.js';
 import { DEFAULT_SETTINGS, mergeSettings } from './knock-settings.js';
 import { formatClock, knockWindow } from './knock-time.js';
-import { applyLocalKnock, doorStatus } from './knock-doors.js';
+import { applyLocalKnock, doorStatus, milesLabel, neighborhoodsByDistance, territoryState } from './knock-doors.js';
 import { shiftTiming } from './knock-stats.js';
+import { commissionRuleText, setterRuleText } from './knock-money.js';
 
 const VIEWER_KEY = 'egc-knock:viewer';
 const SIGNED_OUT_KEY = 'egc-knock:signed-out-at';
@@ -29,10 +30,14 @@ const S = {
   territory: { neighborhoods: [] },
   houses: new Map(),
   housesSyncedAt: '',
+  // The unlocked neighborhoods the cached houses cover; a new or reopened one needs a full download.
+  housesFor: null,
   shift: null,
   pending: [],
   problems: [],
   position: null,
+  // Why there is no GPS fix: null, or { code: 'denied' | 'unavailable' | 'timeout' | 'unsupported' }.
+  positionError: null,
   lastSync: null,
   syncState: 'idle',
   authRequired: false,
@@ -169,6 +174,10 @@ export function scheduleSync(delay = 0) {
 }
 
 async function onSynced(response) {
+  // KNOCK-BRIDGE: a new sale or walkthrough (or a replay of one still not booked) comes back bridge:{status:'pending'};
+  // it is booked into the Hub next.
+  const pending = (response?.results || []).filter(row => row.bridge?.status === 'pending' && ['sale', 'walkthrough'].includes(row.bridge.kind)).map(row => ({ kind: row.bridge.kind, id: row.id }));
+  if (pending.length) await queueBridges(pending);
   if (Array.isArray(response?.houses)) {
     for (const house of response.houses) S.houses.set(house.id, house);
     await store.cache.set(cacheKey('houses'), [...S.houses.values()]);
@@ -181,6 +190,7 @@ async function onSynced(response) {
 
 export async function sync({ full = false } = {}) {
   if (!S.viewer || S.syncState === 'syncing') return;
+  const wasLoaded = S.loaded;
   S.syncState = 'syncing';
   renderChrome();
   try {
@@ -194,13 +204,131 @@ export async function sync({ full = false } = {}) {
     else await loadHouses();
     S.lastSync = Date.now();
     S.syncState = 'idle';
+    // KNOCK-BRIDGE: bookings run on their own (never holding up the next door's sync), only for what is due.
+    startBridges();
   } catch {
     S.syncState = S.online ? 'retry' : 'offline';
   } finally {
     if (S.syncState === 'syncing') S.syncState = 'idle';
     renderChrome();
-    render();
+    // Admin screens read their own data and hold unsaved forms (settings, the commission approval), so a background
+    // sync never rebuilds one under the admin's hands once the app has loaded; the sync pill above still updates.
+    if (!(wasLoaded && screens.get(S.route.name)?.admin)) render();
   }
+}
+
+/* ---------- KNOCK-BRIDGE: booking synced sales and walkthroughs into the Hub ---------- */
+
+/* Each sale or walkthrough the server accepted is booked with POST /api/knock-job-bridge (idempotent on its id): the
+   Hub job with a crew, or the estimator walkthrough. A new one is tried at once. One the Hub could not take yet stays
+   queued with a growing wait (1 minute doubling to an hour, or the server's retryAt when later), so a phone with a
+   Hub problem never asks on every door; the server enforces the same wait. Answers the office must look at (review)
+   and records the server does not know leave the queue. The answer ('Booked: Crew 2, Mon Oct 20, 9:30 am') is kept
+   for My sales. */
+const BRIDGE_FIRST_WAIT = 60000, BRIDGE_MAX_WAIT = 3600000;
+const bridgeWait = tries => Math.min(BRIDGE_MAX_WAIT, BRIDGE_FIRST_WAIT * 2 ** Math.max(0, tries - 1));
+let bridgeRun = null;
+
+// Adds sales or walkthroughs ({kind, id}) to the booking queue (a known one keeps its place and wait).
+export async function queueBridges(items) {
+  const queue = [...(S.ui.bridgeQueue || [])];
+  for (const item of items) if (!queue.some(row => row.id === item.id)) queue.push({ kind: item.kind, id: item.id, tries: 0, nextAt: 0 });
+  if (queue.length !== (S.ui.bridgeQueue || []).length) await saveUi({ bridgeQueue: queue.slice(-50) });
+}
+
+export function runBridges() {
+  if (bridgeRun) return bridgeRun;
+  const now = Date.now(), due = (S.ui.bridgeQueue || []).filter(item => !(item.nextAt > now));
+  if (!due.length || !S.viewer?.jobBridge || !S.online) return Promise.resolve(false);
+  bridgeRun = (async () => {
+    const bookings = { ...(S.ui.bookings || {}) }, done = new Set(), later = new Map();
+    let last = null;
+    for (const item of due) {
+      try {
+        const { booking } = await api('/api/knock-job-bridge', { method: 'POST', body: { kind: item.kind, id: item.id } });
+        if (booking) bookings[item.id] = booking;
+        if (booking?.status === 'pending') {
+          const tries = Number(item.tries || 0) + 1, server = Date.parse(booking.retryAt || '') || 0;
+          later.set(item.id, { ...item, tries, nextAt: Math.max(Date.now() + bridgeWait(tries), server) });
+        } else { done.add(item.id); if (booking) last = booking; }
+      } catch (error) {
+        // No signal, signed out or a server fault: this and the rest wait their turn. A record the server does not
+        // know (or will not book from this phone) leaves the queue.
+        if (!error.status || error.status === 401 || error.status >= 500) {
+          for (const rest of due.slice(due.indexOf(item))) later.set(rest.id, { ...rest, tries: Number(rest.tries || 0) + 1, nextAt: Date.now() + bridgeWait(Number(rest.tries || 0) + 1) });
+          break;
+        }
+        done.add(item.id);
+      }
+    }
+    // Merged into the queue as it is now: a sale synced while this ran keeps its place.
+    const queue = (S.ui.bridgeQueue || []).filter(item => !done.has(item.id)).map(item => later.get(item.id) || item);
+    await saveUi({ bridgeQueue: queue, bookings: Object.fromEntries(Object.entries(bookings).slice(-50)) });
+    if (last) toast(last.message, { iconName: last.kind === 'walkthrough' ? 'calendar' : 'check', sub: last.kind === 'sale' && last.status === 'needs_crew' ? `${last.date ? `For ${new Date(`${last.date}T12:00:00Z`).toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric', timeZone: 'UTC' })}` : ''}` : '' });
+    return Boolean(last);
+  })().finally(() => { bridgeRun = null; });
+  return bridgeRun;
+}
+
+// Fire and forget: a screen showing bookings is drawn again once one lands.
+function startBridges() {
+  runBridges().then(changed => { if (changed && ['mysales', 'money'].includes(S.route.name)) render(); }, () => {});
+}
+
+export const bookingFor = id => S.ui.bookings?.[id] || null;
+
+/* ---------- location: one GPS watch for the whole app while an approved rep has it open ---------- */
+
+let watchId = null;
+// After a refusal the watch restarts only when the rep asks (Try again) or comes back to the app, so a
+// phone set to ask every time is not prompted on every screen.
+let refused = false;
+const positionListeners = [];
+// Screens that show the rep's position or a location banner re-render when location starts or fails.
+const LOCATION_SCREENS = new Set(['home', 'map', 'areas', 'knock', 'list']);
+
+export function onPosition(listener) { positionListeners.push(listener); }
+
+function locationChanged() {
+  if (LOCATION_SCREENS.has(S.route.name) && S.rep?.status === 'active') render();
+}
+
+export function startLocation({ retry = false } = {}) {
+  if (retry) refused = false;
+  if (watchId != null || refused || S.rep?.status !== 'active' || document.visibilityState === 'hidden') return;
+  if (!navigator.geolocation) {
+    if (!S.positionError) { S.positionError = { code: 'unsupported' }; locationChanged(); }
+    return;
+  }
+  watchId = navigator.geolocation.watchPosition(position => {
+    const first = !S.position, recovered = Boolean(S.positionError);
+    S.position = { lat: position.coords.latitude, lng: position.coords.longitude, accuracy: position.coords.accuracy, at: Date.now() };
+    S.positionError = null;
+    for (const listener of positionListeners) { try { listener(S.position, { first }); } catch { /* One screen's listener never stops the others. */ } }
+    if (first || recovered) locationChanged();
+  }, error => {
+    const code = error?.code === 1 ? 'denied' : error?.code === 2 ? 'unavailable' : 'timeout';
+    const changed = S.positionError?.code !== code;
+    S.positionError = { code };
+    // A refusal stands until the rep allows it (Try again, or coming back to the app); a weak signal keeps trying.
+    if (code === 'denied') { refused = true; stopLocation(); }
+    if (changed) locationChanged();
+  }, { enableHighAccuracy: true, maximumAge: 15000, timeout: 20000 });
+}
+
+export function stopLocation() {
+  if (watchId != null) navigator.geolocation?.clearWatch(watchId);
+  watchId = null;
+}
+
+// Why the phone has no location yet, with the fix. Null while location works (or is still starting).
+export function locationBanner() {
+  const code = S.position && Date.now() - S.position.at < 120000 ? '' : S.positionError?.code;
+  const retry = h('button', { type: 'button', class: 'btn btn--sm btn--secondary', onclick: () => { S.positionError = null; stopLocation(); startLocation({ retry: true }); render(); } }, 'Try again');
+  if (code === 'denied') return banner('warn', 'crosshair', 'Location is off for EGC Knock', 'Allow location for this site in your browser or phone settings so the map shows where you are and which houses and neighborhoods are closest. Doors still log without it.', retry);
+  if (code === 'unsupported') return banner('warn', 'crosshair', 'This browser can\'t share your location', 'Open EGC Knock in Safari or Chrome to see where you are on the map.');
+  if (code === 'unavailable' || code === 'timeout') return banner('info', 'crosshair', 'Looking for your location…', 'Your phone can\'t find you right now. Step outside or wait a moment. Doors still log without it.', retry);
+  return null;
 }
 
 /* ---------- loading ---------- */
@@ -227,15 +355,20 @@ async function loadHouses({ full = false } = {}) {
   if (S.rep?.status !== 'active') return;
   const since = full ? '' : S.housesSyncedAt;
   const data = await api(`/api/knock-territory${since ? `?since=${encodeURIComponent(since)}` : ''}`);
-  if (full || data.full) S.houses = new Map();
   const allowed = new Set((data.neighborhoods || []).filter(n => !n.locked).map(n => n.id));
+  // A delta carries only changed houses: a neighborhood claimed, assigned or reopened since the last
+  // download needs every house, so fetch the whole territory once.
+  if (!full && !data.full && [...allowed].some(id => !S.housesFor?.includes(id))) return loadHouses({ full: true });
+  if (full || data.full) S.houses = new Map();
   for (const house of data.houses || []) S.houses.set(house.id, house);
   // Drop houses from territory that is no longer assigned or is now locked.
   for (const [id, house] of S.houses) if (!allowed.has(house.n)) S.houses.delete(id);
   if (data.neighborhoods) S.territory = { neighborhoods: data.neighborhoods };
   S.housesSyncedAt = data.serverTime || '';
+  S.housesFor = [...allowed];
   await store.cache.set(cacheKey('houses'), [...S.houses.values()]);
   await store.cache.set(cacheKey('housesSyncedAt'), S.housesSyncedAt);
+  await store.cache.set(cacheKey('housesFor'), S.housesFor);
   await saveMe();
 }
 
@@ -248,6 +381,8 @@ async function restoreCache() {
   const houses = await store.cache.get(cacheKey('houses'));
   if (Array.isArray(houses)) S.houses = new Map(houses.map(h => [h.id, h]));
   S.housesSyncedAt = (await store.cache.get(cacheKey('housesSyncedAt'))) || '';
+  const covered = await store.cache.get(cacheKey('housesFor'));
+  S.housesFor = Array.isArray(covered) ? covered : null;
   S.ui = (await store.cache.get(cacheKey('ui'))) || {};
   await refreshPending();
   return Boolean(me);
@@ -289,6 +424,7 @@ export async function signOut() {
   remember(SIGNED_OUT_KEY, Date.now());
   forget(VIEWER_KEY);
   S.viewer = null; S.rep = null; S.houses = new Map(); S.pending = []; S.shift = null; S.loaded = false;
+  stopLocation(); refused = false; S.position = null; S.positionError = null;
   renderSignIn();
 }
 
@@ -374,6 +510,8 @@ export function render() {
   if (S.rep.status !== 'active') return renderWaiting();
   if (screen.admin && !S.viewer.admin) return mount(main, h('div', { class: 'screen' }, banner('error', 'lock', 'Only admins can open that screen.')));
   if (screen.admin && !modules.admin) ensureAdmin().then(() => { if (modules.admin) render(); });
+  // Location starts with the rep's first screen (not only Knock), so Home, Map and the lists know where they are.
+  if (!screen.admin) startLocation();
   try {
     mount(main, screen.render(app, S.route.params));
   } catch (error) {
@@ -463,10 +601,56 @@ export function syncSummary() {
 
 const firstName = () => String(S.rep?.displayName || S.viewer?.displayName || '').trim().split(/\s+/)[0] || 'there';
 
+/* ---------- territory: distances and why it is empty ---------- */
+
+// "0.4 mi away" from the phone's GPS, "you're here" inside a tenth of a mile.
+export function awayLabel(meters) {
+  const miles = milesLabel(meters);
+  return !miles ? '' : miles === 'here' ? 'you\'re here' : `${miles} away`;
+}
+
+// The rep's neighborhoods nearest first (name order without GPS), unlocked before locked.
+export function myNeighborhoods() {
+  const rows = neighborhoodsByDistance(S.position, S.territory.neighborhoods, { houses: S.houses.values() });
+  return [...rows.filter(n => !n.locked), ...rows.filter(n => n.locked)];
+}
+
+/* Why there is nothing to knock or map, with the one action that fixes it; null once houses with a
+   location are on this phone. Not approved, nothing claimed or assigned, all locked, none imported,
+   not downloaded yet, or houses without a location. */
+export function territoryEmpty() {
+  const state = territoryState({ rep: S.rep, neighborhoods: S.territory.neighborhoods, houses: S.houses.values() });
+  const selfClaim = S.settings.territory?.selfClaim === true;
+  const choose = (label = 'Choose an area') => h('a', { class: 'btn btn--primary', href: '#areas' }, icon('map'), label);
+  const check = label => h('button', { type: 'button', class: 'btn btn--primary', onclick: () => sync({ full: true }) }, icon('refresh'), label);
+  const count = S.territory.neighborhoods.length;
+  if (state === 'ok') return null;
+  if (state === 'pending') return emptyState('clock', 'Waiting for approval', 'An admin approves new reps before any territory shows up. Nothing is lost while you wait.', check('Check again'));
+  if (state === 'inactive') return emptyState('lock', 'Canvassing is turned off for you', 'Your canvassing access was turned off. Talk to Zac if this is a mistake.');
+  if (state === 'none') {
+    return selfClaim
+      ? emptyState('map', 'No neighborhood yet', 'Pick an open neighborhood near you to start knocking. Its houses download to this phone.', choose())
+      : emptyState('map', 'Nothing assigned yet', 'Ask your lead for a neighborhood. It shows up here once it\'s assigned.', check('Check again'));
+  }
+  if (state === 'locked') {
+    return emptyState('lock', count === 1 ? 'Your neighborhood is locked' : 'Your neighborhoods are locked',
+      `${S.territory.neighborhoods.map(n => `${n.name}: ${n.lockReason || 'locked'}`).join(' · ')}. Nothing there can be knocked until an admin opens it.`,
+      selfClaim ? choose('Choose another area') : check('Check again'));
+  }
+  if (state === 'empty') {
+    return emptyState('home', 'No houses loaded yet', 'Your neighborhood has no houses imported yet. Ask Zac to run the house import.', selfClaim ? choose('Choose another area') : check('Check again'));
+  }
+  if (state === 'not_loaded') {
+    return emptyState('refresh', 'Houses haven\'t downloaded yet', S.online ? 'Your neighborhood is ready. Sync to download its houses to this phone.' : 'Connect once to download your neighborhood\'s houses. After that they work offline.', check('Sync now'));
+  }
+  return emptyState('map', 'These houses have no map location', 'The list still works. Tell Zac so the houses can be imported again with their locations.', h('a', { class: 'btn btn--primary', href: '#list' }, 'Open the list'));
+}
+
 /* ---------- home ---------- */
 
 function homeScreen() {
-  const nbhds = S.territory.neighborhoods;
+  const nbhds = myNeighborhoods();
+  const working = S.ui.workingNeighborhood;
   const window = knockingWindow();
   const today = new Date().toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric', timeZone: cityRuleFor(null)?.timeZone || 'America/Denver' });
   const counts = new Map();
@@ -487,22 +671,26 @@ function homeScreen() {
       kv('City permit list', permit ? badge('On the list', 'success', 'check') : badge('Not on the list', 'warning', 'alert')),
       kv('Knocking window', `${window.startLabel} – ${window.endLabel}`)),
     S.eligibility.ok ? null : banner('warn', 'alert', 'You can\'t start a shift yet', S.eligibility.reason),
+    locationBanner(),
     app.shiftCard ? app.shiftCard() : null,
     h('section', { class: 'stack' },
-      h('div', { class: 'row row--between' }, h('h2', { style: { fontSize: '18px' } }, 'Your neighborhoods'), h('span', { class: 'caption muted' }, `${nbhds.length} assigned`)),
-      nbhds.length ? nbhds.map(n => {
+      h('div', { class: 'row row--between' }, h('h2', { style: { fontSize: '18px' } }, 'Your neighborhoods'),
+        screens.has('areas') ? h('a', { class: 'btn btn--quiet btn--sm', href: '#areas' }, icon('map'), 'Choose area') : h('span', { class: 'caption muted' }, `${nbhds.length} assigned`)),
+      nbhds.map(n => {
         const count = counts.get(n.id) || { total: n.importedCount || 0, knocked: 0 };
-        const sub = n.locked ? n.lockReason : `${(count.total || n.importedCount || 0).toLocaleString('en-US')} houses · ${count.knocked} knocked${n.streets ? ` · ${n.streets.length} street${n.streets.length === 1 ? '' : 's'}` : ''}`;
+        const away = awayLabel(n.meters);
+        const sub = n.locked ? n.lockReason : `${(count.total || n.importedCount || 0).toLocaleString('en-US')} houses · ${count.knocked} knocked${n.streets ? ` · ${n.streets.length} street${n.streets.length === 1 ? '' : 's'}` : ''}${away ? ` · ${away}` : ''}`;
         const tier = n.tier === 'Premium' ? badge('Premium', 'navy') : badge(n.tier || 'Volume');
         if (n.locked) {
           return h('div', { class: 'list-row list-row--card list-row--static', style: { opacity: '.85' } },
             h('span', { class: 'list-row__main' }, h('span', { class: 'list-row__title' }, n.name), h('span', { class: 'list-row__sub' }, sub)),
             badge(n.status === 'hold' ? 'On hold' : 'Locked', 'warning', 'lock'));
         }
-        return h('a', { class: 'list-row list-row--card', href: `#list?n=${encodeURIComponent(n.id)}` },
+        return h('a', { class: `list-row list-row--card${n.id === working ? ' list-row--now' : ''}`, href: `#list?n=${encodeURIComponent(n.id)}` },
           h('span', { class: 'list-row__main' }, h('span', { class: 'list-row__title' }, n.name), h('span', { class: 'list-row__sub' }, sub)),
-          tier, icon('chevronRight'));
-      }) : emptyState('map', 'Nothing assigned yet', 'Ask your lead for a neighborhood. It shows up here once it\'s assigned.')));
+          n.id === working ? badge('Working', 'orange') : tier, icon('chevronRight'));
+      }),
+      territoryEmpty()));
 }
 
 /* ---------- more: profile, links, sync and the phone's settings ---------- */
@@ -511,12 +699,13 @@ function initials(name) {
   return String(name || '').trim().split(/\s+/).slice(0, 2).map(part => part[0] || '').join('').toUpperCase() || '?';
 }
 
-const EVENT_NAMES = { knock: 'Door', sale: 'Sale', 'knock.void': 'Undo', 'knock.edit': 'Change', 'shift.start': 'Shift start', 'shift.end': 'Shift end', 'shift.break_start': 'Break', 'shift.break_end': 'Break end' };
+const EVENT_NAMES = { knock: 'Door', sale: 'Sale', walkthrough: 'Walkthrough', 'knock.void': 'Undo', 'knock.edit': 'Change', 'shift.start': 'Shift start', 'shift.end': 'Shift end', 'shift.break_start': 'Break', 'shift.break_end': 'Break end' };
 
 function problemTitle(event) {
   const house = event.houseId ? S.houses.get(event.houseId) : null;
   const where = house ? `${house.number} ${house.street.split(' ').map(w => w.charAt(0) + w.slice(1).toLowerCase()).join(' ')}` : '';
-  const extra = event.type === 'sale' ? [event.customer?.name?.split(' ').slice(-1)[0], event.ticket ? `$${Number(event.ticket).toLocaleString('en-US')}` : ''] : [];
+  const extra = event.type === 'sale' ? [event.customer?.name?.split(' ').slice(-1)[0], event.ticket ? `$${Number(event.ticket).toLocaleString('en-US')}` : '']
+    : event.type === 'walkthrough' ? [event.customer?.name?.split(' ').slice(-1)[0]] : [];
   return [EVENT_NAMES[event.type] || event.type, where, ...extra].filter(Boolean).join(' · ');
 }
 
@@ -535,21 +724,27 @@ function syncCard() {
       h('span', { class: 'bold', style: { color: 'var(--error)' } }, `${problems.length} need${problems.length === 1 ? 's' : ''} a look`),
       problems.map(event => banner('error', 'alert', problemTitle(event), `${event.error?.message || 'The server refused this change.'} Nothing else was lost.`,
         h('div', { class: 'stack stack--tight', style: { alignItems: 'flex-end' } },
+          // A refused sale or walkthrough opens its form again with everything the rep typed; fixing it resends it.
+          app.fixers?.[event.type] ? h('button', { type: 'button', class: 'btn btn--sm btn--primary', onclick: () => app.fixers[event.type](event) }, 'Edit and resend') : null,
           h('button', { type: 'button', class: 'btn btn--sm btn--retry', onclick: async () => { await outbox.retry(event.id); await refreshPending(); scheduleSync(0); } }, 'Retry'),
           h('button', { type: 'button', class: 'link caption', onclick: async () => { await outbox.remove(event.id); await refreshPending(); render(); } }, 'Discard'))))) : null);
 }
 
 function rulesSheet() {
   const s = S.settings, city = cityRuleFor(null), window = knockingWindow();
+  // A paragraph-length rule reads as a paragraph under its label, not a bold right-aligned column.
+  const rule = (label, text) => h('div', { class: 'kv', style: { display: 'block' } }, h('span', {}, label), h('p', { style: { margin: '4px 0 0' } }, text));
   return sheet('Help & the rules', () => h('div', { class: 'stack', style: { gap: '0' } },
     kv('Knocking hours', `${window.startLabel} until sunset (${window.endLabel} today)`),
     kv('Sunset warning', `${city?.warnMinutes ?? 15} minutes before`),
     kv('After sunset', `Only the door you're at, for ${city?.graceMinutes ?? 15} min, and it's flagged`),
     kv('Go-backs', `${s.goBacks.maxAttemptsPerSeason} tries per house each season`),
     kv('Not interested', `Rests for ${s.goBacks.notInterestedRestMonths ?? 6} months`),
-    kv('Commission', `${Math.round(s.commission.rate * 100)}% once the job is completed, paid and past its cancellation deadline`),
-    s.commission.acceleratorEnabled ? kv('Higher rate', `${Math.round(s.commission.acceleratorRate * 100)}% above $${Number(s.commission.acceleratorThreshold).toLocaleString('en-US')} a month`) : null,
-    s.commission.leadOverrideEnabled ? kv('Lead bonus', `${Math.round(s.commission.leadOverrideRate * 1000) / 10}% of the team's collected revenue`) : null,
+    // Same wording as My money (knock-money.js), from the server's approval state.
+    rule('Commission', commissionRuleText(s.commission)),
+    s.commission.verified === true && s.commission.acceleratorEnabled ? kv('Higher rate', `${Math.round(s.commission.acceleratorRate * 100)}% above $${Number(s.commission.acceleratorThreshold).toLocaleString('en-US')} a month`) : null,
+    s.commission.verified === true && s.commission.leadOverrideEnabled ? kv('Lead bonus', `${Math.round(s.commission.leadOverrideRate * 1000) / 10}% of the team's collected revenue`) : null,
+    rule('Walkthrough you set', setterRuleText(s.commission.setter)),
     kv('Deposit', `${Math.round(s.sale.depositRate * 100)}%, fully refundable for ${s.sale.cancelBusinessDays} business days`)));
 }
 
@@ -589,7 +784,8 @@ function cycleTheme() {
 
 /* ---------- the app object handed to screen modules ---------- */
 
-export const app = { S, api, go, render, registerScreen, enqueue, sync, scheduleSync, houseView, neighborhoodOf, cityRuleFor, currentShift, knockingWindow, saveUi, signOut, outboxApi: () => outbox, refreshPending, syncSummary, moreLinks: [] };
+export const app = { S, api, go, render, registerScreen, enqueue, sync, scheduleSync, houseView, neighborhoodOf, cityRuleFor, currentShift, knockingWindow, saveUi, signOut, outboxApi: () => outbox, refreshPending, syncSummary, moreLinks: [],
+  startLocation, onPosition, locationBanner, territoryEmpty, myNeighborhoods, awayLabel, runBridges, queueBridges, bookingFor, fixers: {} };
 
 registerScreen('home', homeScreen, { tab: { label: 'Home', icon: 'home', order: 0 } });
 registerScreen('more', moreScreen, { tab: { label: 'More', icon: 'more', order: 40 } });
@@ -600,14 +796,23 @@ async function loadRepModules() {
   rep.install(app);
   const sale = await import('./knock-sale.js');
   sale.install(app);
+  // KNOCK-BRIDGE: "Walkthrough set" at the door (shown only while the server's EGC_KNOCK_JOB_BRIDGE is on).
+  try {
+    const walkthrough = await import('./knock-walkthrough.js');
+    walkthrough.install(app);
+  } catch (error) { console.warn('EGC Knock: the walkthrough form failed to load.', error); }
   const nativeForm = await import('./knock-native-form.js');
   nativeForm.install(app);
   const stats = await import('./knock-stats-ui.js');
   stats.install(app);
   try {
+    const areas = await import('./knock-areas.js');
+    areas.install(app);
+  } catch (error) { console.warn('EGC Knock: the Choose area screen failed to load.', error); }
+  try {
     const map = await import('./knock-map.js');
     map.install(app);
-  } catch { /* The list view works without the map module. */ }
+  } catch (error) { console.warn('EGC Knock: the map failed to load; the list works without it.', error); }
 }
 
 /* ---------- boot ---------- */
@@ -632,7 +837,12 @@ async function boot() {
   window.addEventListener('hashchange', route);
   window.addEventListener('online', () => { S.online = true; scheduleSync(0); });
   window.addEventListener('offline', () => { S.online = false; renderChrome(); });
-  document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') { renderChrome(); scheduleSync(500); } });
+  document.addEventListener('visibilitychange', () => {
+    // GPS stops while the app is in the pocket or behind another app, to save the battery.
+    if (document.visibilityState !== 'visible') return stopLocation();
+    renderChrome(); scheduleSync(500);
+    if (S.viewer && S.rep?.status === 'active' && !screens.get(S.route.name)?.admin) startLocation({ retry: true });
+  });
   setInterval(() => { renderChrome(); if (S.pending.length && S.online) scheduleSync(0); }, 30000);
   setInterval(() => { if (document.visibilityState === 'visible') renderChrome(); }, 1000);
   S.route = parseRoute();

@@ -115,7 +115,7 @@ try{
  await managerPage.getByLabel('Search from',{exact:true}).fill(tomorrow);await managerPage.getByLabel('Search through',{exact:true}).fill(tomorrow);
  await managerPage.getByRole('combobox',{name:'Saved crew to check',exact:true}).selectOption('day-crew');await managerPage.getByRole('combobox',{name:'Vehicle to check',exact:true}).selectOption('day-truck');
  await managerPage.getByRole('button',{name:'Check openings',exact:true}).click();await managerPage.getByRole('button',{name:'Use this opening',exact:true}).first().click();
- assert.equal(await managerPage.getByLabel('Start date',{exact:true}).inputValue(),tomorrow);assert.equal(await managerPage.getByLabel('Start time',{exact:true}).inputValue(),'08:00');assert.equal(await managerPage.getByRole('combobox',{name:'Crew lead',exact:true}).inputValue(),'lead.one');
+ assert.equal(await managerPage.getByLabel('Start date',{exact:true}).inputValue(),tomorrow);assert.equal(await managerPage.getByLabel('Start time',{exact:true}).inputValue(),'09:30','the first job opening honors the 9:30 job start');assert.equal(await managerPage.getByRole('combobox',{name:'Crew lead',exact:true}).inputValue(),'lead.one');
  await managerPage.getByRole('button',{name:'Back',exact:true}).click();await managerPage.getByRole('dialog').waitFor({state:'detached'});
  await managerPage.getByRole('button',{name:'Search all jobs',exact:true}).click();await managerPage.getByLabel('Search all dates',{exact:true}).fill('Archived');await managerPage.getByRole('button',{name:'Search history',exact:true}).click();
  await managerPage.locator('.dp-search-result').filter({hasText:'2025-01-02'}).waitFor();await managerPage.getByRole('button',{name:'Show in dispatch',exact:true}).click();

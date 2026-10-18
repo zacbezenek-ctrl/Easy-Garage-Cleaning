@@ -10,7 +10,7 @@ import { legacyPersonKeys, staffDirectoryEnabled, storedWeeklyAvailability } fro
 import { storedSkills } from './staff-skills.js';
 import { segmentsEnabled } from './dispatch-segments.js';
 import { crewNotificationsEnabled } from './crew-notifications.js';
-import { ghlTagOutboxEnabled } from './highlevel-tags.js';
+import { ghlScheduleMirrorEnabled, ghlTagOutboxEnabled } from './highlevel-tags.js';
 import { commitConflict, commitFailure } from './firestore-errors.js';
 import { dispatchReadMode, windowedJobs, pagedQuery, customerCoverage, aggregateCount } from './dispatch-window-reads.js';
 import { QUEUE_JOB_FIELDS } from './dispatch-queue.js';
@@ -19,6 +19,9 @@ const ROOT = 'projects/egcw-1ec83/databases/(default)/documents';
 const BASE = `https://firestore.googleapis.com/v1/${ROOT}`;
 const failure = (code, message, status = 503) => Object.assign(new Error(message), { code, status });
 const CUSTOMER_FIELDS = ['name','firstName','lastName','phone','email','address','highlevelContactId'];
+// A crew record as the crew schedule reads it; priority, code and serviceDays are the crew registry v2 fields (D3).
+const CREW_RESOURCE_FIELDS = ['recordType','name','memberIds','leadId','status','priority','code','serviceDays'];
+const HANDOFF_LEDGER_FIELDS = ['kind','actorId','jobId','sourceWalkthroughId','createdAt'];
 function decode(document,collection,id) {
   const prefix=`/documents/${collection}/`,name=document?.name;
   const path=typeof name==='string'&&name.includes(prefix)?name.slice(name.indexOf(prefix)+prefix.length):'';
@@ -40,14 +43,17 @@ export const JOB_FIELDS = Object.freeze(['type','recordType','date','time','endD
   // WT-OUTCOME: where a walkthrough stands and what a no-show rebook prefills (walkthrough-state.js); never the rep's notes.
   'walkthroughOutcome.outcome','walkthroughOutcome.reasonCode','walkthroughOutcome.finishedAt','walkthroughOutcome.occurrence','walkthroughCompletedAt','convertedJobId','scheduleOccurrence','noShowReasonCode','noShowAt',
   // FIX-DISPATCH-QUEUE: To schedule's review flag, sold and approved dates and Jobber visits (dispatch-queue.js); no amounts.
-  ...QUEUE_JOB_FIELDS]);
+  ...QUEUE_JOB_FIELDS,
+  // D2D-BOARD: a door-to-door job's mark on the schedule (projectDispatchJob): its source and d2d.kind only, never the rep or house.
+  'source','d2d.kind']);
 
 /** Owner decision F19: the owner and managers are office staff and join assignment
  * lists only when they take field work, recorded as stored staffRoles that also
- * include crew or crew_lead (staffRoles in the Hub user configuration for configured
- * users, or the Team screen's roles for employee accounts). */
+ * include crew, crew_lead or team_lead (staffRoles in the Hub user configuration for
+ * configured users, or the Team screen's roles for employee accounts). */
+const FIELD_ROLES = Object.freeze(['team_lead', 'crew_lead', 'crew']);
 export function officeOnly(role, roles) {
-  return ['owner', 'manager'].includes(role) && !(Array.isArray(roles) && roles.some(value => value === 'crew' || value === 'crew_lead'));
+  return ['owner', 'manager'].includes(role) && !(Array.isArray(roles) && roles.some(value => FIELD_ROLES.includes(value)));
 }
 
 // Roles come from stored staff roles (configuration or the encrypted account), else the
@@ -87,6 +93,25 @@ export async function dispatchRoster(env) {
   return profiles.sort((a, b) => a.name.localeCompare(b.name));
 }
 
+/* READ-BUDGET: one small openings snapshot cache per Firestore fetcher: one per isolate in production (firestoreFetch),
+   one per fake in tests. It holds no answer: dispatch-openings.js reuses an entry only while the dispatch guard and
+   every day lock it covers are unchanged, within a few minutes, and reads the roster and rules again each time. */
+const openingsCaches = new WeakMap();
+// spanningJobs: when Firestore last refused it for want of its index, per fetcher, so a missing index costs one refused
+// query every INDEX_RETRY_MS rather than one on every schedule read.
+const spanningRefused = new WeakMap(), INDEX_RETRY_MS = 10 * 60000;
+// Firestore refuses a query no index can serve with HTTP 400 FAILED_PRECONDITION, as {error} or as [{error}].
+async function indexRefusal(response) {
+  if (response.status !== 400) return false;
+  const body = await response.json().catch(() => null), error = Array.isArray(body) ? body[0]?.error : body?.error;
+  return error?.status === 'FAILED_PRECONDITION';
+}
+function openingsCacheFor(fetcher) {
+  if (typeof fetcher !== 'function') return null;
+  if (!openingsCaches.has(fetcher)) openingsCaches.set(fetcher, new Map());
+  return openingsCaches.get(fetcher);
+}
+
 export function dispatchStorage(env, fetcher = firestoreFetch) {
   async function send(url, options = {}) {
     try { return await fetcher(env, url, { ...options, signal: AbortSignal.timeout(20000) }); }
@@ -122,16 +147,97 @@ export function dispatchStorage(env, fetcher = firestoreFetch) {
     return response.json().catch(() => null);
   }
   const query = (collection, fields, limit) => spec => pagedQuery({ post: body => post('runQuery', body), decode: document => decode(document, collection), collection, spec, fields, limit });
+  // CREW-SCHEDULE: every jobs row whose start date is in [startDate,endDate], one bounded range on the single field
+  // `date` (no composite index), masked to `fields` and fully paginated. A malformed page, a row outside the range,
+  // a repeated row or more than `limit` rows fails closed; a partial schedule is never returned.
+  async function datedJobs(startDate, endDate, fields, limit = 5000) {
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(startDate) || !/^\d{4}-\d{2}-\d{2}$/.test(endDate) || endDate < startDate) throw failure('dispatch_range_invalid', 'Choose a valid date range.', 400);
+    if (!Array.isArray(fields) || !fields.length || !fields.includes('date')) throw failure('dispatch_storage_mask_required', 'A dated jobs query must name the fields it reads, including date.');
+    const field = { fieldPath: 'date' }, bound = (op, stringValue) => ({ fieldFilter: { field, op, value: { stringValue } } });
+    const rows = [], ids = new Set();
+    let after = null;
+    for (let page = 0; page <= Math.ceil(limit / 500); page++) {
+      const results = await post('runQuery', { structuredQuery: { from: [{ collectionId: 'jobs' }], select: { fields: fields.map(fieldPath => ({ fieldPath })) },
+        where: { compositeFilter: { op: 'AND', filters: [bound('GREATER_THAN_OR_EQUAL', startDate), bound('LESS_THAN_OR_EQUAL', endDate)] } },
+        orderBy: [{ field, direction: 'ASCENDING' }, { field: { fieldPath: '__name__' }, direction: 'ASCENDING' }], limit: 500,
+        ...(after ? { startAt: { values: [{ stringValue: after.date }, { referenceValue: after.name }], before: false } } : {}) } });
+      if (!Array.isArray(results) || results.some(result => !result || typeof result !== 'object' || Array.isArray(result)) || !results.some(result => result.document !== undefined || typeof result.readTime === 'string' && result.readTime)) throw failure('dispatch_storage_incomplete', 'The schedule query returned an incomplete answer. Retry.');
+      const documents = results.filter(result => result.document !== undefined).map(result => result.document);
+      for (const document of documents) {
+        const row = decode(document, 'jobs');
+        if (ids.has(row.id) || rows.length >= limit || typeof row.date !== 'string' || row.date < startDate || row.date > endDate) throw failure('dispatch_storage_incomplete', 'The schedule query could not be verified. Retry.');
+        ids.add(row.id); rows.push(row);
+      }
+      if (documents.length < 500) return rows;
+      after = { name: documents.at(-1).name, date: rows.at(-1).date };
+    }
+    throw failure('dispatch_storage_incomplete', 'The schedule query did not finish. Retry.');
+  }
+  // READ-BUDGET (crew schedule): the jobs rows starting before startDate and ending on or after it (multi-day work running
+  // into a window that starts then), one query with ranges on endDate and date. Firestore serves it only from the
+  // composite index jobs(endDate ASC, date ASC) in firestore.indexes.json; until that is deployed it refuses the query
+  // (FAILED_PRECONDITION) and this throws dispatch_index_required, so the caller reads the longer date range instead.
+  // Masked, fully paginated and verified like datedJobs: anything else fails closed. `strict` (the windowed reads' SPANS
+  // net, dispatch-window-reads.js) filters date < startDate instead, so a malformed date string sorting between the day
+  // before and startDate is read too.
+  async function spanningJobs(startDate, fields, limit = 5000, strict = false) {
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(startDate)) throw failure('dispatch_range_invalid', 'Choose a valid date range.', 400);
+    if (!Array.isArray(fields) || !fields.includes('date') || !fields.includes('endDate')) throw failure('dispatch_storage_mask_required', 'A multi-day jobs query must name the fields it reads, including date and endDate.');
+    const waiting = () => failure('dispatch_index_required', 'The multi-day schedule query is waiting for its index.');
+    if (typeof fetcher === 'function' && Date.now() - (spanningRefused.get(fetcher) ?? -Infinity) < INDEX_RETRY_MS) throw waiting();
+    const dayBefore = new Date(Date.parse(`${startDate}T12:00:00Z`) - 86400000).toISOString().slice(0, 10);
+    const filter = (fieldPath, op, stringValue) => ({ fieldFilter: { field: { fieldPath }, op, value: { stringValue } } });
+    const rows = [], ids = new Set();
+    let after = null;
+    for (let page = 0; page <= Math.ceil(limit / 500); page++) {
+      const response = await send(`${BASE}:runQuery`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ structuredQuery: { from: [{ collectionId: 'jobs' }], select: { fields: fields.map(fieldPath => ({ fieldPath })) },
+        where: { compositeFilter: { op: 'AND', filters: [filter('endDate', 'GREATER_THAN_OR_EQUAL', startDate), strict ? filter('date', 'LESS_THAN', startDate) : filter('date', 'LESS_THAN_OR_EQUAL', dayBefore)] } },
+        orderBy: ['endDate', 'date', '__name__'].map(fieldPath => ({ field: { fieldPath }, direction: 'ASCENDING' })), limit: 500,
+        ...(after ? { startAt: { values: [{ stringValue: after.endDate }, { stringValue: after.date }, { referenceValue: after.name }], before: false } } : {}) } }) });
+      if (!response.ok) {
+        if (!await indexRefusal(response)) throw failure('dispatch_storage_unavailable', 'The dispatch records could not be queried. Retry before scheduling.');
+        if (typeof fetcher === 'function') spanningRefused.set(fetcher, Date.now());
+        throw waiting();
+      }
+      const results = await response.json().catch(() => null);
+      if (!Array.isArray(results) || results.some(result => !result || typeof result !== 'object' || Array.isArray(result)) || !results.some(result => result.document !== undefined || typeof result.readTime === 'string' && result.readTime)) throw failure('dispatch_storage_incomplete', 'The schedule query returned an incomplete answer. Retry.');
+      const documents = results.filter(result => result.document !== undefined).map(result => result.document);
+      for (const document of documents) {
+        const row = decode(document, 'jobs');
+        if (ids.has(row.id) || rows.length >= limit || typeof row.endDate !== 'string' || row.endDate < startDate || typeof row.date !== 'string' || (strict ? row.date >= startDate : row.date > dayBefore)) throw failure('dispatch_storage_incomplete', 'The schedule query could not be verified. Retry.');
+        ids.add(row.id); rows.push(row);
+      }
+      if (documents.length < 500) return rows;
+      after = { name: documents.at(-1).name, endDate: rows.at(-1).endDate, date: rows.at(-1).date };
+    }
+    throw failure('dispatch_storage_incomplete', 'The schedule query did not finish. Retry.');
+  }
+  // The windowed reads' queries. SPANS (rows starting before the floor and ending on or after it) is one spanningJobs
+  // query on the jobs(endDate, date) index; until that index is deployed, the endDate pass it replaces, as before.
+  const jobsQuery = query('jobs', JOB_FIELDS);
+  const windowQuery = spec => spec.op !== 'SPANS' ? jobsQuery(spec) : spanningJobs(spec.value, JOB_FIELDS, 10000, true)
+    .catch(error => { if (error?.code !== 'dispatch_index_required') throw error; return jobsQuery({ field: 'endDate', op: 'GREATER_THAN_OR_EQUAL', value: spec.value }); });
   return {
     roster: () => dispatchRoster(env),
     jobs: () => scan('jobs', JOB_FIELDS),
     // EGC_DISPATCH_WINDOWED_READS: 'full' (default), 'shadow' or 'windowed'.
     // Windowed and indexed reads are complete and fail closed like the scans.
     windowedReads: dispatchReadMode(env),
-    jobsNear: (startDate, endDate) => windowedJobs(query('jobs', JOB_FIELDS), startDate, endDate),
+    // `bound` (optional): the bounded read, rows starting no later than it, or every start with `everyStart` (a dated
+    // save), plus the SPANS net (dispatch-window-reads.js READ-BUDGET).
+    jobsNear: (startDate, endDate, bound = null, everyStart = false) => windowedJobs(windowQuery, startDate, endDate, bound, everyStart),
+    // READ-BUDGET: the openings snapshot cache a caller may opt into (dispatch-openings.js options.cache).
+    openingsCache: openingsCacheFor(fetcher),
     // Every jobs row whose field equals value, whatever its dates (saveJobReads).
     jobsWhere: (field, value) => query('jobs', JOB_FIELDS)({ field, op: 'EQUAL', value }),
+    // ESTIMATOR-COMMISSION (D6b, estimator-commission.js): the signed walkthrough handoff receipts, masked to who signed which
+    // job when (never the signature, plan or amount): one signer's ({field:'actorId', op:'EQUAL'}) or those created since a
+    // date ({field:'createdAt', op:'GREATER_THAN_OR_EQUAL'}). Complete and failing closed like every query here.
+    handoffLedger: spec => query('walkthroughHandoffs', HANDOFF_LEDGER_FIELDS, 5000)(spec),
     customersByKey: key => query('customers', [...CUSTOMER_FIELDS, 'searchKeys'], 20000)({ field: 'searchKeys', op: 'ARRAY_CONTAINS', value: key }),
+    // CREW-SCHEDULE (functions/api/crew-schedule.js): the crew records alone, and the work dated in a bounded window.
+    crewResources: () => query('dispatchResources', CREW_RESOURCE_FIELDS, 2000)({ field: 'recordType', op: 'EQUAL', value: 'crew' }),
+    datedJobs, spanningJobs,
     customerKeyCoverage: () => customerCoverage(async body => aggregateCount(await post('runAggregationQuery', body))),
     async customerRecords(fields) {
       if (!Array.isArray(fields) || !fields.length || fields.some(field => typeof field !== 'string' || !field)) throw failure('dispatch_storage_mask_required', 'A customers scan must name the fields it reads.');
@@ -150,6 +256,8 @@ export function dispatchStorage(env, fetcher = firestoreFetch) {
     crewNotificationsEnabled: crewNotificationsEnabled(env),
     // EGC_GHL_TAG_OUTBOX: schedule changes queue their HighLevel tags in the same commit (ghl-tag-outbox.js).
     ghlTagOutbox: ghlTagOutboxEnabled(env),
+    // EGC_GHL_SCHEDULE_MIRROR (D9b): schedule changes queue their HighLevel schedule mirror in the same commit (ghl-schedule-mirror.js).
+    ghlScheduleMirror: ghlScheduleMirrorEnabled(env),
     // EGC_DISPATCH_NOTIFY_IMPORTED_ON: an imported Jobber job's first booking turns reminders on (dispatch-readiness.js notifyPatch).
     notifyImportedOn: env?.EGC_DISPATCH_NOTIFY_IMPORTED_ON === 'true',
     async legacyBlockedDays(dates) {

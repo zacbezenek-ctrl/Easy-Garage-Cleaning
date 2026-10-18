@@ -455,7 +455,7 @@ export function createApprovedSendService({
           const delivery = { channel: state.channel === 'SMS' ? 'sms' : 'highlevel', status: state.status === 'submitted' ? 'sent' : ['failed', 'uncertain'].includes(state.status) ? state.status : 'queued', attemptedAt: at, messageId: state.messageId || '', conversationId: state.conversationId || '' };
           patch.customerConversation = appendConversationMessage(job, {
             id: `msg_${ctx.ledgerId.slice(0, 24)}_${state.attempts}`, requestId: `egc-send-${ctx.ledgerId.slice(0, 24)}-${state.attempts}`, providerMessageId: state.messageId || '',
-            direction: 'to_customer', authorRole: ['crew', 'crew_lead'].includes(ctx.actor.role) ? 'crew' : 'manager', authorName: ctx.automated ? 'Easy Garage Cleaning' : String(ctx.actor.displayName || 'Easy Garage Cleaning').slice(0, 120),
+            direction: 'to_customer', authorRole: ['crew', 'crew_lead', 'team_lead'].includes(ctx.actor.role) ? 'crew' : 'manager', authorName: ctx.automated ? 'Easy Garage Cleaning' : String(ctx.actor.displayName || 'Easy Garage Cleaning').slice(0, 120),
             body: state.body, createdAt: at, delivery,
           });
           patch.customerConversationUpdatedAt = at;

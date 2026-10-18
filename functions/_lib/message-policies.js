@@ -6,6 +6,7 @@ import { crewNoticeSendKey, slotUpcoming } from './crew-notifications.js';
 import { moneyCents } from './operations-financials.js';
 import { customerDepositState, customerMoneyState, customerPaymentNeedsReview } from './customer-payments.js';
 import { businessAccountJob } from './portal-invitation.js';
+import { pricesPendingApproval } from './quote-model.js';
 
 export const MESSAGE_TIME_ZONE = 'America/Denver';
 export const QUIET_HOURS = Object.freeze({ start: '08:00', end: '20:00' });
@@ -107,7 +108,8 @@ export const MESSAGE_POLICIES = Object.freeze({
   deposit_reminder: reminder('deposit_reminder', {
     billing: true, triggers: ['hub', 'mcp', 'cron'], approvals: ['preview_confirm', 'owner_automation'], quietHours: true,
     cadenceDays: 3, series: c => `deposit_reminder:${c.job.id}:${c.job.date || ''}`, anchor: c => c.job.date,
-    eligible: c => !accepted(c.job.estimate?.status) ? reason('quote_not_accepted') : !scheduled(c.job, c.today) ? reason('not_upcoming')
+    // A signed job held for the owner's price approval (EGC_QUOTE_BUILDER_ENABLED) asks for no deposit until it is released.
+    eligible: c => !accepted(c.job.estimate?.status) ? reason('quote_not_accepted') : pricesPendingApproval(c.job) ? reason('prices_pending_approval') : !scheduled(c.job, c.today) ? reason('not_upcoming')
       : customerPaymentNeedsReview(c.job) ? reason('payment_needs_review') : customerDepositState(c.job).purpose !== 'deposit' ? reason('balance_due')
       : !(depositDue(c.job) > 0) ? reason('nothing_due') : ok,
   }),

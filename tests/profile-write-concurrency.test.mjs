@@ -16,13 +16,13 @@ const completed = {
 };
 
 function fixture(t, conflictStatus = 412) {
-  const documents = new Map(), patches = [];
+  const documents = new Map(), patches = [], queries = [];
   let revision = 0, hold = null, rejectWrites = false, omitVersion = false, conflicts = 0;
   t.mock.method(globalThis, 'fetch', async (input, options = {}) => {
     const url = new URL(input), method = options.method || 'GET';
     assert.equal(url.hostname, 'firestore.googleapis.com', 'all storage transport is mocked');
     const envelope = (id, doc) => { const result = { name: `projects/egcw-1ec83/databases/(default)/documents/jobs/${id}`, ...doc }; if (omitVersion) delete result.updateTime; return result; };
-    if (url.pathname.endsWith('/documents:runQuery')) return Response.json([...documents].map(([id, doc]) => ({ document: envelope(id, doc) })));
+    if (url.pathname.endsWith('/documents:runQuery')) { queries.push(JSON.parse(options.body).structuredQuery); return Response.json([...documents].map(([id, doc]) => ({ document: envelope(id, doc) }))); }
     const id = decodeURIComponent(url.pathname.split('/').pop());
     if (method === 'PATCH') {
       patches.push({ exists: url.searchParams.get('currentDocument.exists'), updateTime: url.searchParams.get('currentDocument.updateTime'), id });
@@ -37,7 +37,7 @@ function fixture(t, conflictStatus = 412) {
     return documents.has(id) ? Response.json(envelope(id, documents.get(id))) : Response.json({}, { status: 404 });
   });
   return {
-    documents, patches, conflicts: () => conflicts,
+    documents, patches, queries, conflicts: () => conflicts,
     rejectWrites: () => { rejectWrites = true; }, omitVersion: () => { omitVersion = true; },
     pauseNext() {
       let release, started;
@@ -138,4 +138,15 @@ test('missing Firestore profile version fails safely before issuing an unguarded
   assert.equal((await response.json()).code, 'EMPLOYEE_HUB_STORAGE_UNREADABLE');
   assert.equal(store.patches.length, writes);
   assert.equal(JSON.stringify([...store.documents]), saved);
+});
+
+// WP15: a 404 cannot prove a record is new under a changed vault key, so one stored record must open first. That check is
+// a one-document query (one read), where it used to decrypt the whole vault on every new profile, timecard and message.
+test('a first profile save checks the vault key with a one-document query, and a save to an existing profile reads only that profile', async t => {
+  const store = fixture(t);
+  assert.equal((await store.post({ username: 'Crew.Test' })).status, 200);
+  assert.deepEqual(store.queries.map(query => [query.limit, query.where.fieldFilter.field.fieldPath, query.where.fieldFilter.value.stringValue]), [[1, 'recordType', 'employee_hub_v2']]);
+  store.queries.length = 0;
+  assert.equal((await store.post(completed)).status, 200);
+  assert.deepEqual(store.queries, []);
 });

@@ -265,7 +265,8 @@ test('with pay owner-only (payVisibility "own") the manager\'s own profile shows
   const before = posts.length;
   const pending = page.context.opsEditProfile('tylerg'), dialog = page.document.querySelector('.ops-action-dialog');
   assert.equal(dialog.querySelector('[name="hourlyRate"]'), null, 'no rate field on the manager\'s own profile');
-  assert.deepEqual(dialog.querySelectorAll('input').map(node => node.getAttribute('name')), ['displayName', 'jobTitle', 'phone', 'emergencyContact']);
+  // D10: the emergency contact uses the onboarding form's two fields (emergencyContactName, emergencyContactPhone).
+  assert.deepEqual(dialog.querySelectorAll('input').map(node => node.getAttribute('name')), ['displayName', 'jobTitle', 'phone', 'emergencyContactName', 'emergencyContactPhone']);
   assert.match(dialog.textContent, /Your hourly rate: \$30\.00\. Pay rates are set by the owner\./, 'the rate is shown read-only');
   assert.doesNotMatch(dialog.textContent, /Pay rate changes affect new timecards/);
   dialog.querySelector('[name="displayName"]').value = 'Synthetic Manager Renamed';

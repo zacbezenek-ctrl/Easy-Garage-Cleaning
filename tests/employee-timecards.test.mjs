@@ -6,6 +6,7 @@ import { onRequestGet, onRequestPost } from '../functions/api/employee-hub.js';
 import { encodeFirestoreFields } from '../functions/_lib/firestore-job.js';
 import { activeJobSegment } from '../functions/_lib/employee-job-time.js';
 import { matchesWhere } from './helpers/firestore-query.mjs';
+import { firestoreDoc, opaqueId, readOne, seal } from '../functions/_lib/employee-vault.js';
 
 const crew = { user: 'Crew.One', displayName: 'Crew One', role: 'crew', payType: 'hourly' };
 const manager = { user: 'ZacB', displayName: 'Manager', role: 'owner' };
@@ -161,14 +162,19 @@ const get = (user = 'Crew.One') => onRequestGet({ env, request: new Request(endp
 const clockIn = extra => ({ locationTracking: true, lastLocation: point, status: 'active', ...extra });
 
 function storage(t) {
-  const documents = new Map(), writes = []; let revision = 0, lostReply = false, barrierCount = 0, barrierResolve, commitHook;
+  const documents = new Map(), writes = [], queries = []; let revision = 0, lostReply = false, barrierCount = 0, barrierResolve, commitHook;
   let barrier;
   const nameOf = (collection, id) => `projects/egcw-1ec83/databases/(default)/documents/${collection}/${id}`;
   const nextVersion = () => `2026-09-22T01:00:00.${String(++revision).padStart(9, '0')}Z`;
   const matches = (current, condition) => condition?.exists === false ? !current : !condition?.updateTime || current?.updateTime === condition.updateTime;
   t.mock.method(globalThis, 'fetch', async (input, options = {}) => {
     const url = new URL(input), body = options.body ? JSON.parse(options.body) : null;
-    if (url.pathname.endsWith('/documents:runQuery')) return Response.json([...documents.values()].filter(doc => doc.name.includes('/documents/jobs/') && matchesWhere(doc, body.structuredQuery.where)).map(document => ({ document })));
+    // Every query is recorded (read-count assertions); a limit is honoured as Firestore does.
+    if (url.pathname.endsWith('/documents:runQuery')) {
+      queries.push(body.structuredQuery);
+      const rows = [...documents.values()].filter(doc => doc.name.includes('/documents/jobs/') && matchesWhere(doc, body.structuredQuery.where));
+      return Response.json(rows.slice(0, body.structuredQuery.limit ?? rows.length).map(document => ({ document })));
+    }
     if (url.pathname.endsWith('/documents:commit')) {
       if (commitHook) { const hook = commitHook; commitHook = null; hook(); }
       if (barrierCount) { barrierCount--; if (!barrierCount) barrierResolve(); await barrier; }
@@ -186,7 +192,7 @@ function storage(t) {
     }
     return documents.has(name) ? Response.json(documents.get(name)) : Response.json({}, { status: 404 });
   });
-  return { documents, writes, loseCommitReply: () => { lostReply = true; }, beforeCommit: fn => { commitHook = fn; }, barrier: count => { barrierCount = count; barrier = new Promise(resolve => { barrierResolve = resolve; }); },
+  return { documents, writes, queries, loseCommitReply: () => { lostReply = true; }, beforeCommit: fn => { commitHook = fn; }, barrier: count => { barrierCount = count; barrier = new Promise(resolve => { barrierResolve = resolve; }); },
     job: (id, data) => documents.set(nameOf('jobs', id), { name: nameOf('jobs', id), fields: encodeFirestoreFields(data), updateTime: nextVersion() }) };
 }
 
@@ -239,12 +245,17 @@ test('job labor association is checked on the server and unknown, unassigned job
 });
 
 test('approved crew edits fail without a storage write and manager correction atomically revokes approval', async t => {
-  const store = storage(t), base = new Date(Date.now() - 7200000).toISOString(), end = new Date(Date.now() - 3600000).toISOString();
+  // One frozen instant: the shift is 1 h, the manager corrects it to exactly 2 h. The corrected clock-out is that instant,
+  // not a second wall-clock read, so the hours never depend on how long the posts take (a stall of 1.8 s or more once
+  // made it 2.001 h). The tick below stands in for such a slow runner.
+  t.mock.timers.enable({ apis: ['Date'], now: Date.now() });
+  const store = storage(t), base = new Date(Date.now() - 7200000).toISOString(), end = new Date(Date.now() - 3600000).toISOString(), out = new Date().toISOString();
   assert.equal((await post('approved', { employee: crew.user, employeeName: crew.displayName, hourlyRate: 25, clockInAt: base, clockOutAt: end, status: 'submitted', approvalStatus: 'approved', breaks: [] }, 'ZacB')).status, 200);
   const before = store.writes.length;
   assert.equal((await post('approved', { clockInAt: new Date(Date.now() - 14400000).toISOString() })).status, 403);
   assert.equal(store.writes.length, before);
-  const corrected = await post('approved', { clockOutAt: new Date().toISOString() }, 'ZacB'); assert.equal(corrected.status, 200);
+  t.mock.timers.tick(5000);
+  const corrected = await post('approved', { clockOutAt: out }, 'ZacB'); assert.equal(corrected.status, 200);
   const card = (await corrected.json()).record; assert.equal(card.approvalStatus, 'pending'); assert.equal(card.hours, 2); assert.equal(card.history.at(-1).actor, 'ZacB');
 });
 
@@ -303,4 +314,78 @@ test('job segments deny unknown/unassigned/closed work and fence a concurrent cr
   const own = await (await view('view=own-job-time')).json();
   assert.equal(own.entry.current.kind, 'general');
   assert.equal(own.entry.summary.jobs.length, 0);
+});
+
+// ── WP15 read budget: the new-record key check and the open-shift guard ──
+const lockOf = async user => (await readOne(env, 'timeLocks', user.toLowerCase())).data;
+async function seedTimecard(store, data) {
+  const documentId = await opaqueId(env, 'timeEntries', data.id), name = `projects/egcw-1ec83/databases/(default)/documents/jobs/${documentId}`;
+  store.documents.set(name, { name, ...firestoreDoc('timeEntries', documentId, await seal(env, documentId, data), data.clockInAt), updateTime: '2026-09-22T00:00:00.000000001Z' });
+}
+const fullScans = queries => queries.filter(query => !query.limit);
+
+test('a new record proves the vault key with one stored document, and a verified shift lock answers the open-shift question without the timecard scan', async t => {
+  const store = storage(t);
+  const first = await post('first-shift', clockIn());
+  assert.equal(first.status, 200, await first.clone().text());
+  // The first clock-in: one one-document key check, then the timecard scan that verifies the new lock.
+  assert.deepEqual(store.queries.map(query => query.limit ?? 'all'), [1, 'all']);
+  assert.equal(JSON.stringify(store.queries[1].where).includes('timeEntries'), true, 'the scan reads the timecard family, not the whole vault');
+  const verifiedAt = (await lockOf('Crew.One')).verifiedAt;
+  assert.match(verifiedAt, /^\d{4}-\d{2}-\d{2}T/);
+  const started = (await first.json()).record;
+  t.mock.timers.enable({ apis: ['Date'], now: Date.parse(started.clockInAt) + 3600000 });
+  store.queries.length = 0;
+  assert.equal((await post('first-shift', { clockOutAt: 'now', status: 'submitted' })).status, 200);
+  assert.deepEqual(store.queries, [], 'an existing card needs no key check and closing it needs no scan');
+  assert.deepEqual([(await lockOf('Crew.One')).entryId, (await lockOf('Crew.One')).verifiedAt], ['', verifiedAt], 'clock-out releases the lock and keeps it verified');
+  // Its own-job-time view needs no scan either: a verified lock with no shift means no open shift.
+  assert.equal((await (await view('view=own-job-time')).json()).entry, null);
+  assert.deepEqual(store.queries, []);
+  // The next clock-in reads one document for the key check and nothing else from the vault.
+  t.mock.timers.tick(600000);
+  const second = await post('second-shift', clockIn());
+  assert.equal(second.status, 200, await second.clone().text());
+  assert.deepEqual(store.queries.map(query => query.limit ?? 'all'), [1]);
+  assert.deepEqual([(await lockOf('Crew.One')).entryId, (await lockOf('Crew.One')).verifiedAt], ['second-shift', verifiedAt]);
+  // The guard still holds: another shift is refused from the lock alone.
+  store.queries.length = 0;
+  assert.equal((await post('third-shift', clockIn())).status, 409);
+  assert.equal(fullScans(store.queries).length, 0);
+  // A first chat message checks the key with one document too (it used to decrypt the whole vault).
+  store.queries.length = 0;
+  const message = await onRequestPost({ env, request: new Request(endpoint, { method: 'POST', headers: { Cookie: cookies['Crew.One'], Origin: 'https://easygaragecleaning.com', 'Content-Type': 'application/json' }, body: JSON.stringify({ collection: 'teamMessages', id: 'msg-1', data: { body: 'Synthetic hello' } }) }) });
+  assert.equal(message.status, 200, await message.clone().text());
+  assert.deepEqual(store.queries.map(query => query.limit ?? 'all'), [1]);
+});
+
+test('a lock written without a scan stays unverified, so a duplicate open shift saved before the guard still blocks the next clock-in', async t => {
+  const store = storage(t), opened = new Date(Date.now() - 2 * 3600000).toISOString();
+  const legacy = id => ({ id, employee: crew.user, employeeName: crew.displayName, hourlyRate: 25, clockInAt: opened, clockOutAt: '', status: 'active', approvalStatus: 'open', breaks: [], history: [] });
+  await seedTimecard(store, legacy('legacy-a'));
+  await seedTimecard(store, legacy('legacy-b'));
+  // A manager closes one of them: the lock it writes was never checked against the other.
+  assert.equal((await post('legacy-a', { clockOutAt: new Date().toISOString(), status: 'submitted' }, 'ZacB')).status, 200);
+  const lock = await lockOf('Crew.One');
+  assert.deepEqual([lock.entryId, lock.verifiedAt], ['', undefined]);
+  store.queries.length = 0;
+  assert.equal((await post('new-shift', clockIn())).status, 409, 'the scan still finds the other open shift');
+  assert.equal(fullScans(store.queries).length, 1);
+  // The own-job-time view keeps scanning behind an unverified lock.
+  store.queries.length = 0;
+  assert.equal((await (await view('view=own-job-time')).json()).entry.id, 'legacy-b');
+  assert.equal(fullScans(store.queries).length, 1);
+  assert.equal((await post('legacy-b', { clockOutAt: new Date().toISOString(), status: 'submitted' }, 'ZacB')).status, 200);
+  assert.equal((await post('new-shift', clockIn())).status, 200);
+  assert.ok((await lockOf('Crew.One')).verifiedAt, 'the clock-in whose scan found nothing verifies the lock');
+});
+
+test('a changed vault key is still refused before a new timecard is written, from the one-document check', async t => {
+  const store = storage(t);
+  assert.equal((await post('keyed-shift', clockIn())).status, 200);
+  const before = store.writes.length;
+  const rotated = { ...env, EMPLOYEE_HUB_DATA_SECRET: 'another-timecard-vault-key' };
+  const response = await onRequestPost({ env: rotated, request: new Request(endpoint, { method: 'POST', headers: { Cookie: cookies['Crew.One'], Origin: 'https://easygaragecleaning.com', 'Content-Type': 'application/json' }, body: JSON.stringify({ collection: 'timeEntries', id: 'rotated-shift', data: clockIn() }) }) });
+  assert.deepEqual([response.status, (await response.json()).code], [502, 'EMPLOYEE_HUB_STORAGE_UNREADABLE']);
+  assert.equal(store.writes.length, before);
 });

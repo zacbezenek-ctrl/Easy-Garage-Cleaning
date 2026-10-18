@@ -25,7 +25,7 @@ describe("legacy bridge command policy (SEC-04)",()=>{
    // Every integration write names the principals that really send it.
    if(rule.kind!=="read")for(const actor of rule.actors)if(actor.kind==="integration")expect(actor.idPattern,name).toBeInstanceOf(RegExp);
    expect(BRIDGE_COMMAND_KINDS).toContain(rule.kind);
-   for(const actor of rule.actors){expect(["crew","crew_lead"]).not.toContain(actor.role);expect(actor.kind==="integration").toBe(actor.role==="integration");}
+   for(const actor of rule.actors){expect(["crew","crew_lead","team_lead"]).not.toContain(actor.role);expect(actor.kind==="integration").toBe(actor.role==="integration");}
    // Every write the Hub runs is also a write the API records for replay.
    if(rule.kind!=="read"&&!name.startsWith("recording."))expect(WRITE_COMMANDS.has(name),name).toBe(true);
   }
@@ -39,7 +39,7 @@ describe("legacy bridge command policy (SEC-04)",()=>{
   for(const actor of [owner,manager,integration])expect(()=>authorize(actor,schedule(),"egc")).not.toThrow();
   denied(()=>authorize(sales,schedule(),"egc"),"bridge_role_forbidden");
   denied(()=>authorize(sales,schedule({mode:"cancel",portalVisitId:"visit-a",expectedRevision:"r1",changes:{}}),"egc"),"bridge_role_forbidden");
-  for(const role of ["crew","crew_lead"] as const)denied(()=>authorize({...owner,role},schedule(),"egc"),"role_forbidden");
+  for(const role of ["crew","crew_lead","team_lead"] as const)denied(()=>authorize({...owner,role},schedule(),"egc"),"role_forbidden");
   denied(()=>authorize(sales,note,"egc"),"bridge_role_forbidden");
   expect(()=>authorize(integration,note,"egc")).not.toThrow();
   for(const actor of [owner,manager])denied(()=>authorize(actor,link,"egc"),"bridge_role_forbidden");

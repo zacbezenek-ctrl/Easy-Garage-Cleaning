@@ -2,7 +2,7 @@
  * GET /api/dispatch?startDate=2026-09-22&endDate=2026-09-29&includeUnscheduled=true
  *   endDate is EXCLUSIVE. Missing range defaults to today + 7 Denver calendar days.
  *   => {ok, timeZone:'America/Denver', jobs:[DispatchJob], roster:[{id,name,role}],
- *       crews:[{id,revision,name,memberIds,leadId,status}],
+ *       crews:[{id,revision,name,memberIds,leadId,status,priority?,serviceDays?,code?}],
  *       vehicles:[{id,revision,name,status,notes}],
  *       availability:[{id,revision,employeeId,date,endDate,time,endTime,allDay,reason,status}],
  *       warnings:[{code,jobId,message,...}], coverage:{complete,asOf},startDate,endDate,
@@ -225,7 +225,58 @@
  * => {ok,job:DispatchJob,warnings,requestId,replayed?,providerSync:'pending'|'not_needed'}
  *
  * {action:'crew.save',requestId,id?:string,expectedRevision?:string,
- *  changes:{name,memberIds:string[],leadId:string|null,status:'active'|'inactive'}}
+ *  changes:{name,memberIds:string[],leadId:string|null,status:'active'|'inactive',
+ *           priority?:integer 1..99|null,serviceDays?:('mon'|'tue'|'wed'|'thu'|'fri'|'sat'|'sun')[]|null,
+ *           code?:/^[a-z0-9](?:[a-z0-9-]{0,18}[a-z0-9])?$/|null}}
+ * Crew registry v2 (D3, functions/_lib/dispatch-crew-assign.js): priority (lower is asked
+ * first), serviceDays (the weekdays the crew works, each once; saved in week order) and code
+ * (a stable handle such as 'crew-1', unique among crews: 409 dispatch_crew_code_taken) are
+ * saved only when sent, so a legacy crew keeps exactly its old fields; null clears one. A crew
+ * without them reads as priority 99 working every day. 400 dispatch_invalid_field (priority),
+ * dispatch_crew_days_invalid, dispatch_crew_code_invalid. GET crews[] and the crew receipts'
+ * before/after carry them when saved.
+ * {action:'crew.seed_defaults',requestId} (dispatch.write; nothing else in the body) creates
+ * Crew 1 (code crew-1, priority 1, mon-fri), Crew 2 (crew-2, 2, mon-fri) and Crew 3 (crew-3, 3,
+ * sat+sun), each only when no crew holds its code; a crew with exactly that name and no code is
+ * given the code (and any priority or days it lacks) instead. No members: the owner adds them.
+ * => {ok,requestId,replayed?,created:[id],updated:[id],existing:[id],resources:[crew],warnings}
+ * (crew_members_needed when it created or updated one). Receipt-guarded like every action.
+ * AUTO-CREW (owner rule D2/D4, 2026-10-17; env EGC_DISPATCH_CREW_AUTO_ASSIGN exactly 'true',
+ * which callers read and then pass mutateDispatch options.autoCrew): the server staffs a
+ * job/cleanout/reorg placed on a (new) date or time without a crew with the first eligible crew
+ * (active, with members all on the active roster, serviceDays covering every Denver date it
+ * occupies; by priority, then name) whose whole visit passes the save's own conflict test,
+ * after the dispatchState guard and under the same day locks; a racing save that took the crew
+ * makes the commit conflict and the pick runs again (up to three tries). An auto-assigned job
+ * (crewAutoAssigned names its crewId and the exact memberIds and leadId it still has) that moves
+ * is picked again, its crew first. A hand-picked crew is never replaced; on a day it does not
+ * work the save warns crew_off_day. Any save (flag on or off) that leaves a job with other
+ * people, lead or crew than the pick (a manager's edit, a pickup claim) sets crewAutoAssigned
+ * null, so the job counts as hand-picked from then on. No crew free: the job is saved on its
+ * date without a crew, soldNeedsCrew {at,by,requestId,reason:'no_crew_free'} and a
+ * no_crew_available warning; never refused for staffing. Bookers (options.autoCrew true,
+ * options.crewChoice): always; changes.crewId may name only an eligible crew (403
+ * dispatch_crew_not_eligible otherwise), tried first (crew_choice_unavailable when it was taken),
+ * and only on a new or unstaffed job or one the server staffed: a job a manager staffed answers
+ * 403 dispatch_crew_not_eligible. On a job the server staffed the chosen crew is tried first,
+ * then its own crew, then priority order; when none is free the job keeps its crew (autoCrew
+ * status 'kept', crew_choice_unavailable) and a move it cannot make is a 409 conflict: a crew
+ * choice never unstaffs a job.
+ * Dispatchers through POST /api/dispatch (options.autoCrew 'opt_in'): only when the body sends
+ * autoCrew:true (schedule.create/update; autoCrew:false asks no pick; with the flag off the key is
+ * rejected as before); an auto-assigned job moved to a day its crew does not work is re-picked.
+ * Saved: crewId, assignedCrew, assignedTo, crewLead and crewAutoAssigned {crewId,crewName,
+ * crewCode,priority,mode:'pick'|'repick'|'choice',at,by,memberIds,leadId} (a DispatchJob field
+ * when present); the receipt metadata.crewAutoAssigned and the answer's autoCrew are
+ * {status:'assigned',crewId,crewName,crewCode,priority,mode,at,by,requestedCrewId?} (no member
+ * ids), {status:'unassigned',mode,crewId:null,requestedCrewId?} or {status:'kept',mode:'choice',
+ * crewId,requestedCrewId}; an unassigned answer adds alternatives: projectCrewOpenings of a week
+ * of crew openings from the job's date (at most 10; [] without a search when no crew can be
+ * staffed on any day of that week), unless the caller passes options.crewAlternatives:false
+ * (READ-BUDGET: no key and no search). POST /api/dispatch (bookers and dispatchers) and the Knock
+ * bridge pass it, as their screens never show alternatives; the walkthrough handoff shows them.
+ * Crew notices (EGC_CREW_NOTIFICATIONS_ENABLED) commit once with the save that staffs the job.
+ * GET /api/dispatch adds crewAutoAssign:true while the flag is on (the Hub shows the choice).
  * {action:'vehicle.save',requestId,id?:string,expectedRevision?:string,
  *  changes:{name,status:'available'|'out_of_service'|'inactive',notes?:string}}
  * {action:'availability.save',requestId,id?:string,expectedRevision?:string,
@@ -287,7 +338,7 @@
  * dispatch_conflict.
  *
  * GET /api/dispatch-openings?startDate=YYYY-MM-DD&endDate=exclusive&
- * durationMinutes=120&workdayStart=08:00&workdayEnd=17:00&employeeIds=id1,id2&
+ * durationMinutes=120&workdayStart=09:00&workdayEnd=17:00&employeeIds=id1,id2&
  * vehicleId=optional&travelBufferMinutes=20&address=optional|zip=optional&
  * requiredSkills=optional
  * Manager only; at most14days, duration15..1440min, buffer0..180min. Explicit
@@ -307,7 +358,24 @@
  * is inferred. A candidate is only a suggestion and MUST use ordinary dispatch
  * POST validation when booking.
  * Dispatch rules (P1-DS-06): workdayStart/workdayEnd/travelBufferMinutes default
- * to the owner settings (08:00/17:00/20 when none are saved). requiredSkills=
+ * to the owner settings (09:00/17:00/20 when none are saved; D5 2026-10-17, it was 08:00).
+ * kind=job|walkthrough|cleanout|reorg (default job): from JOB_START_POLICY_DATE (2026-10-15)
+ * job kinds never start before 09:30 (job-start-policy.js); walkthroughs keep the workday
+ * start. Every candidate ends by workdayEnd. kind is echoed in constraints when sent.
+ * Crew mode (D4, functions/_lib/dispatch-crew-assign.js): crews=auto (every crew) or
+ * crewIds=id1,id2 (1..20; a missing one is 400 dispatch_crew_inactive), never with
+ * employeeIds or requiredSkills. Each active crew whose members are all active is searched as
+ * one group, only on the days its serviceDays include; inactive or unstaffable crews add
+ * crew_inactive / crew_not_staffable warnings, none at all no_active_crews. Candidates add
+ * {crewId,crewName,crewCode,priority,weekend} and are sorted by date, then priority, then crew
+ * name, then start; at most 200 are returned. The answer adds byDate:[{date,crews:[{crewId,
+ * crewName,crewCode,priority,weekend,open,count,first:{time,endDate,endTime}|null}]}] and
+ * constraints mode:'crews', searchedCrewIds. Daily-limit warnings name the crew (crewId), not
+ * its people. Only a dispatcher (dispatch.write, and not called with booker:true) gets roster,
+ * and in crew mode candidate employeeIds and constraints.searchedEmployeeIds; a schedule.book
+ * holder or any session a custom authorize admits never does (fails closed). projectCrewOpenings(result,limit?)
+ * => [{date,time,endTime,crewId,crewLabel,priority}] is the rep-safe projection (Knock, the
+ * estimator gameplan). requiredSkills=
  * id1,id2 (skill catalog ids) with employeeIds checks that crew (warning
  * skill_missing; no candidates when the owner blocks it) and without
  * employeeIds searches each employee holding every skill at proficient or lead
@@ -339,4 +407,4 @@
  * dispatch_conflict (manual-buffer shortfalls stay warnings).
  */
 export const DISPATCH_TIME_ZONE = 'America/Denver';
-export const DISPATCH_ACTIONS = Object.freeze(['schedule.create','schedule.update','schedule.cancel','schedule.restore','schedule.no_show','crew.save','vehicle.save','availability.save']);
+export const DISPATCH_ACTIONS = Object.freeze(['schedule.create','schedule.update','schedule.cancel','schedule.restore','schedule.no_show','crew.save','crew.seed_defaults','vehicle.save','availability.save']);

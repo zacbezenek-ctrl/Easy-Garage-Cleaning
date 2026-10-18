@@ -35,6 +35,24 @@ test('browser booking policy agrees with server and rejects before any save', as
   await assert.rejects(window.EGCBooking.save(slot()), /9:30 AM/);
 });
 
+// D5 (owner, 2026-10-17): openings never suggest a job start the save would reject, and an
+// auto-assigned crew job keeps the same 9:30 rule (the crew pick never moves the start).
+test('openings and crew auto-assign agree with the 9:30 rule; walkthroughs may start at the workday start', async () => {
+  const { dispatchOpenings } = await import('../functions/_lib/dispatch-openings.js');
+  const owner = { user: 'zacb', role: 'owner', businessAccess: true }, f = memory();
+  f.rows.set('dispatchResources/crew_one', { id: 'crew_one', recordType: 'crew', name: 'Crew 1', memberIds: ['c1a'], leadId: 'c1a', status: 'active', priority: 1, serviceDays: ['mon', 'tue', 'wed', 'thu', 'fri'], revision: 'k1' });
+  const store = { ...f.store, resources: async () => [...f.rows].filter(([key]) => key.startsWith('dispatchResources/')).map(([, row]) => structuredClone(row)), roster: async () => [{ id: 'c1a', name: 'Synthetic Crew', role: 'crew' }] };
+  for (const workdayStart of ['06:00', '08:00', '09:00', '09:15']) for (const kind of ['job', 'cleanout', 'reorg', 'walkthrough']) {
+    const result = await dispatchOpenings(store, owner, { startDate: '2026-10-19', endDate: '2026-10-21', crews: 'auto', durationMinutes: '60', travelBufferMinutes: '0', workdayStart, kind }, new Date('2026-10-17T12:00:00Z'));
+    assert.ok(result.candidates.length > 0);
+    for (const row of result.candidates) assert.equal(jobStartProblem(null, { type: kind, date: row.date, time: row.time }), null, `${kind} ${workdayStart} ${row.time}`);
+    assert.equal(result.candidates[0].time, kind === 'walkthrough' ? workdayStart : '09:30');
+  }
+  await assert.rejects(mutateDispatch(store, owner, { action: 'schedule.create', requestId: crypto.randomUUID(), customerId: 'c1', kind: 'job', changes: { date: '2026-10-19', time: '09:00', endTime: '11:00' } }, '2026-10-17T12:00:00.000Z', { autoCrew: true }), /9:30 AM/);
+  const saved = await mutateDispatch(store, owner, { action: 'schedule.create', requestId: crypto.randomUUID(), customerId: 'c1', kind: 'job', changes: { date: '2026-10-19', time: '09:30', endTime: '11:30' } }, '2026-10-17T12:00:00.000Z', { autoCrew: true });
+  assert.deepEqual([saved.job.time, saved.job.crewId], ['09:30', 'crew_one']);
+});
+
 function memory() {
   const rows = new Map([['customers/c1', { id: 'c1', name: 'Synthetic', revision: 'c1' }]]); let revision = 0;
   const all = prefix => [...rows].filter(([key]) => key.startsWith(prefix + '/')).map(([, row]) => structuredClone(row));

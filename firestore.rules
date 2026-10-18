@@ -585,6 +585,10 @@ service cloud.firestore {
     match /catalogOperations/{documentId} {
       allow read, write: if false;
     }
+    // Owner approvals of pricing-menu prices (quote builder), written by /api/catalog menu.approve.
+    match /pricingMenuApprovals/{documentId} {
+      allow read, write: if false;
+    }
 
     // Funnel event ledger (FUN-01): append-only rows written only in the same
     // server commit as their business change. Staff read through the API and

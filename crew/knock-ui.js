@@ -72,6 +72,7 @@ const ICONS = {
   settings: [C(12, 12, 3), P('M12 2v3M12 19v3M2 12h3M19 12h3M4.9 4.9l2.1 2.1M17 17l2.1 2.1M4.9 19.1L7 17M17 7l2.1-2.1')],
   shield: [P('M12 2l8 4v6c0 5-3.5 8.5-8 10-4.5-1.5-8-5-8-10V6z')],
   download: [P('M12 3v12M6 11l6 6 6-6M4 21h16')],
+  calendar: [R(3, 5, 18, 16, 2), P('M3 10h18M8 3v4M16 3v4')],
   trophy: [P('M8 21h8M12 17v4M7 4h10v5a5 5 0 0 1-10 0z'), P('M17 5h3v2a3 3 0 0 1-3 3M7 5H4v2a3 3 0 0 0 3 3')],
 };
 
@@ -159,7 +160,7 @@ export function uuid() {
 // Door outcome to its dot style and letter (color is never the only signal).
 export const OUTCOME_DOT = Object.freeze({
   none: ['none', ''], no_answer: ['noanswer', 'N'], come_back: ['comeback', 'C'], not_interested: ['notint', 'X'],
-  look: ['look', 'L'], sold: ['sold', '$'], skipped_sign: ['skip', 'S'], blocked: ['skip', 'S'],
+  look: ['look', 'L'], sold: ['sold', '$'], skipped_sign: ['skip', 'S'], blocked: ['skip', 'S'], walkthrough_set: ['walk', 'W'],
 });
 
 export function dot(kind = 'none', { large = false } = {}) {
@@ -217,6 +218,60 @@ export function choiceGroup(options, initial = '', onChange = () => {}) {
     onclick: () => { current = key; buttons.forEach(b => b.setAttribute('aria-pressed', String(b.dataset.value === key))); onChange(key); },
   }, text, small ? h('small', {}, small) : null));
   return { el: h('div', { class: 'choice' }, buttons), value: () => current };
+}
+
+/* KNOCK-BRIDGE: pick a crew or estimator slot from the server's list, grouped by day, or (no signal, nothing open, or
+   the rep's choice) a day and morning/afternoon the office confirms. load() resolves to slot rows {date, time,
+   endTime, tag}; tag names the crew or estimator. Returns { el, value(), reload() }; value() is {mode: 'slot', slot}
+   or {mode: 'preference', date, part}, or null while nothing is picked. onChange runs after every pick. */
+export function slotPicker({ load, min, initial = null, offline = false, onChange = () => {}, idPrefix = 'slot', noun = 'time' }) {
+  const state = { mode: initial?.mode === 'preference' || offline ? 'preference' : 'slot', slot: initial?.mode === 'slot' ? initial.slot : null, rows: [], loading: false, failed: '' };
+  const box = h('div', { class: 'stack stack--tight', 'data-slot-picker': idPrefix });
+  const date = h('input', { class: 'input', id: `${idPrefix}-date`, type: 'date', min, value: initial?.date || min, onchange: () => { draw(); onChange(); } });
+  let part = initial?.part || 'am';
+  const timeLabelOf = time => { const [hh, mm] = time.split(':').map(Number); return `${hh % 12 || 12}:${String(mm).padStart(2, '0')} ${hh < 12 ? 'am' : 'pm'}`; };
+  const dayOf = day => new Date(`${day}T12:00:00Z`).toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric', timeZone: 'UTC' });
+  const pick = slot => { state.slot = slot; draw(); onChange(); };
+  function draw() {
+    if (state.mode === 'preference') {
+      mount(box,
+        state.failed ? banner('warn', 'wifiOff', state.failed, `Pick a day and morning or afternoon. The office confirms the ${noun} when this syncs.`) : null,
+        h('div', { class: 'field' }, h('label', { class: 'label', for: `${idPrefix}-date` }, 'Day'), date),
+        seg([['am', 'Morning'], ['pm', 'Afternoon']], part, key => { part = key; draw(); onChange(); }, { label: 'Morning or afternoon' }),
+        state.failed || offline ? null : h('button', { type: 'button', class: 'link caption', onclick: () => { state.mode = 'slot'; draw(); onChange(); } }, `Show open ${noun}s`));
+      return;
+    }
+    if (state.loading) return mount(box, h('p', { class: 'caption muted', role: 'status' }, `Loading open ${noun}s…`));
+    const byDay = new Map();
+    for (const row of state.rows) { if (!byDay.has(row.date)) byDay.set(row.date, []); byDay.get(row.date).push(row); }
+    mount(box,
+      byDay.size ? [...byDay.entries()].map(([day, rows]) => h('div', { class: 'stack stack--tight' },
+        h('span', { class: 'label' }, dayOf(day)),
+        h('div', { class: 'chips chips--wrap', role: 'group', 'aria-label': `Open ${noun}s ${dayOf(day)}` }, rows.map(row => {
+          const chosen = state.slot && state.slot.date === row.date && state.slot.time === row.time && state.slot.tag === row.tag;
+          return h('button', { type: 'button', class: 'seg__btn', 'aria-pressed': String(Boolean(chosen)), onclick: () => pick(row) }, `${timeLabelOf(row.time)} · ${row.tag}`);
+        }))))
+        : banner('info', 'calendar', `Nothing open in these days`, `Pick a day and morning or afternoon; the office confirms the ${noun}.`),
+      h('button', { type: 'button', class: 'link caption', onclick: () => { state.mode = 'preference'; draw(); onChange(); } }, `Pick a day instead (the office confirms the ${noun})`));
+  }
+  async function reload() {
+    if (offline) { draw(); return; }
+    state.loading = true; draw();
+    try {
+      state.rows = await load();
+      state.failed = '';
+      if (state.slot && !state.rows.some(row => row.date === state.slot.date && row.time === state.slot.time && row.tag === state.slot.tag)) state.slot = null;
+      if (!state.rows.length) state.mode = 'preference';
+    } catch (error) {
+      state.failed = error?.status === 0 ? 'No signal for open times' : `Open ${noun}s could not load`;
+      state.mode = 'preference';
+    } finally { state.loading = false; draw(); onChange(); }
+  }
+  draw();
+  return {
+    el: box, reload,
+    value: () => (state.mode === 'slot' ? (state.slot ? { mode: 'slot', slot: state.slot } : null) : date.value ? { mode: 'preference', date: date.value, part } : null),
+  };
 }
 
 export function emptyState(iconName, title, text, action = null) {

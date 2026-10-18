@@ -72,6 +72,24 @@ test('a refused event is kept as a problem with its reason; duplicates count as 
   assert.equal((await outbox.list('Rep.One'))[0].state, 'queued');
 });
 
+test('a refused sale is corrected and sent again with everything else the rep typed (Edit and resend)', async () => {
+  const outbox = createOutbox(await openKnockStore(fakeIndexedDB()), { transport: transport([
+    events => ({ results: events.map(e => ({ id: e.id, status: 'rejected', code: 'knock_sale_job_time', error: 'Jobs start at 9:30 am or later.' })) }),
+  ]) });
+  const sale = event(5, 'Rep.One', { type: 'sale', knockId: id(4), houseId: 'h-1', jobDate: '2026-10-26', jobStartTime: '08:00', slot: { date: '2026-10-26', time: '08:00', crewLabel: 'Crew 1' },
+    customer: { name: 'Pat Synthetic', phone: '+19705550100', email: 'pat@example.com' }, ticket: 1600, package: 'The Works' });
+  await outbox.enqueue(sale);
+  await outbox.flush({ user: 'Rep.One' });
+  const [refused] = await outbox.list('Rep.One');
+  assert.deepEqual([refused.state, refused.error.code], ['error', 'knock_sale_job_time']);
+  assert.equal(await outbox.resend(id(9), { jobStartTime: '09:30' }), null, 'only a refused event is resent');
+  await outbox.resend(id(5), { slot: undefined, jobStartTime: '09:30', dayPart: 'am' });
+  const [fixed] = plain(await outbox.list('Rep.One'));
+  assert.deepEqual([fixed.state, fixed.error, fixed.id, fixed.type, fixed.at, fixed.seq], ['queued', null, id(5), 'sale', sale.at, refused.seq], 'same id, kind, time and place in line');
+  assert.deepEqual([fixed.jobStartTime, fixed.dayPart, 'slot' in fixed, fixed.customer.name, fixed.ticket], ['09:30', 'am', false, 'Pat Synthetic', 1600]);
+  assert.equal(JSON.stringify(forServer((await outbox.list('Rep.One'))[0])).includes('"slot"'), false, 'the replaced slot is not sent');
+});
+
 test('an unsent door can be edited or removed in place; a sent one cannot', async () => {
   const outbox = createOutbox(await openKnockStore(fakeIndexedDB()), { transport: transport([]) });
   await outbox.enqueue(event(1, 'Rep.One', { quotedAmount: 900 }));

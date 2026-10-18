@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { CUSTOMER_LINE_FIELDS, MAX_LINE_CENTS, MAX_TOTAL_CENTS, applySelection, customerLineItem, depositCents, estimateChanged, estimateFingerprint, estimateTotals, exactCents, included, legacyLineItems, lineItemGroups, normalizeLineItems, packageTotals, quotedAmountCents, selectedTotalCents, singleLineItem, toLegacyLineItem, toWalkthroughLineItem, validateSelection } from '../functions/_lib/quote-model.js';
+import { CUSTOMER_LINE_FIELDS, MAX_LINE_CENTS, MAX_TOTAL_CENTS, applySelection, customerLineItem, depositCents, estimateChanged, estimateFingerprint, estimateTotals, exactCents, included, legacyLineItems, lineItemGroups, normalizeLineItems, packageTotals, quotedAmountCents, selectedTotalCents, singleLineItem, toLegacyLineItem, toWalkthroughLineItem, validateSelection, withoutPurchaseFields } from '../functions/_lib/quote-model.js';
 
 const strict = items => normalizeLineItems(items, { strict: true }).lineItems;
 const line = (extra = {}) => ({ id: 'reset', kind: 'service', name: 'Synthetic garage reset', unitCents: 100000, ...extra });
@@ -391,4 +391,33 @@ test('a dated catalog release (YYYY-MM-DD.N) is a valid catalog version for a re
     assert.throws(() => strict([line({ catalog: { itemId: item.id, version } })]), code('quote_invalid_catalog'), String(version));
   assert.equal(strict([line({ catalog: { itemId: item.id, version: 3 } })])[0].catalog.version, 3, 'integer versions still work');
   assert.equal(strict([line({ catalog: { itemId: item.id, version: 'v2' } })])[0].catalog.version, 'v2', 'id versions still work');
+});
+
+// Estimator integration: the purchase fields a quote-builder or catalog line carries for the job's buy list. They are
+// read only on request ({purchase:true}: the signed handoff while EGC_JOB_MATERIALS or the quote builder is on).
+test('purchase fields: read only on request, kept only when sent, validated strictly, dropped as cosmetic repairs when read leniently, never customer-facing', () => {
+  const buying = items => normalizeLineItems(items, { strict: true, purchase: true }).lineItems;
+  const product = line({ id: 'totes', kind: 'product', name: 'Storage totes (4-pack)', quantity: 2, unitCents: 6000 });
+  const full = { ...product, category: 'storage', sku: '341048322', unitsPerPack: 4, productUrl: 'https://www.homedepot.com/p/sets/totes/341048322', unit: 'pack', store: ' The Home Depot ', source: 'buy' };
+  // Without the request every reader is as before: a strict write refuses them as unknown fields, a lenient read drops them.
+  assert.throws(() => strict([full]), error => error.code === 'quote_unknown_field' && error.message === 'Unsupported line item field: category.');
+  assert.deepEqual(normalizeLineItems([full]), normalizeLineItems([product]), 'a lenient read drops them silently, as before');
+  const [plain] = strict([product]), [rich] = buying([full]);
+  assert.deepEqual(buying([product])[0], plain, 'a line without purchase fields normalizes exactly as before');
+  assert.deepEqual(rich, { ...plain, category: 'storage', sku: '341048322', unitsPerPack: 4, productUrl: 'https://www.homedepot.com/p/sets/totes/341048322', unit: 'pack', store: 'The Home Depot', source: 'buy' });
+  assert.deepEqual(buying([{ ...product, sku: null, store: null }])[0], plain, 'null is not sent');
+  for (const [key, value] of [['category', 'tools'], ['sku', 'two words'], ['sku', 'x'.repeat(81)], ['unitsPerPack', 0], ['unitsPerPack', 2.5], ['unitsPerPack', '4'], ['productUrl', 'http://www.homedepot.com/p/1'], ['productUrl', 'https://user:pw@example.com/a'],
+    ['productUrl', 'javascript:alert(1)'], ['productUrl', `https://example.com/${'a'.repeat(500)}`], ['unit', 'Pack'], ['unit', 'p'.repeat(41)], ['store', ''], ['store', 'a\nb'], ['store', 'x'.repeat(81)], ['source', 'borrow'], ['source', 7]]) {
+    assert.throws(() => buying([{ ...product, [key]: value }]), code('quote_invalid_purchase_field'), `${key}=${JSON.stringify(value)}`);
+  }
+  for (const key of ['sku', 'unitsPerPack', 'productUrl', 'store', 'source']) assert.throws(() => buying([line({ [key]: full[key] })]), code('quote_invalid_purchase_field'), `${key} on a service line`);
+  assert.equal(buying([line({ category: 'removal', unit: 'job' })])[0].category, 'removal', 'a service line may name its step and unit');
+  assert.throws(() => buying([line(), line({ id: 'off', kind: 'discount', unitCents: -100, category: 'removal' })]), code('quote_invalid_purchase_field'), 'never on a discount');
+  const lenient = normalizeLineItems([{ ...full, sku: 'two words' }], { purchase: true });
+  assert.deepEqual([lenient.issues.map(issue => issue.code), 'sku' in lenient.lineItems[0], lenient.lineItems[0].store], [['quote_invalid_purchase_field'], false, 'The Home Depot']);
+  assert.equal(estimateTotals([{ ...full, sku: 'two words' }]).complete, true, 'a purchase field never changes what is charged');
+  assert.deepEqual(Object.keys(customerLineItem(rich)), CUSTOMER_LINE_FIELDS);
+  // A signed estimate stores the lines without them, so the customer-reviewed fingerprint is exactly as before.
+  assert.deepEqual(withoutPurchaseFields(rich), plain);
+  assert.equal(estimateFingerprint({ lineItems: [withoutPurchaseFields(rich)] }), estimateFingerprint({ lineItems: [plain] }));
 });

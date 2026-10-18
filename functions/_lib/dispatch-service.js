@@ -11,16 +11,20 @@ import { legacyBlockedDays, legacyBlockWarning } from './dispatch-legacy-blocks.
 import { SEGMENT_HULL_KEYS, SEGMENT_LIMIT, segmented, segmentsInvalid, jobSegments, segmentDays, segmentLockEntries, ownsLockEntry, projectSegments, validateSegments } from './dispatch-segments.js';
 import { canDispatch } from './dispatch-permissions.js';
 import { dispatchRuleSettings, dispatchRulesView, effectiveArrivalSettings, DISPATCH_SETTINGS_DEFAULTS } from './dispatch-settings.js';
-import { capacityIndex, crewSizeShort, enforced, offeredForPickup, requiredSkillsOf, ruleWarnings, validateRequiredSkills } from './dispatch-rules.js';
+import { capacityIndex, crewSizeShort, enforced, offeredForPickup, requiredSkillsOf, ruleWarnings, validateRequiredSkills, weekdayOf } from './dispatch-rules.js';
 import { crewNotificationWrites } from './crew-notifications.js';
 import { bookingInput, bookingPatch, reasonInput, cancelPatch, noShowProblem, visitFunnelWrites, requestKey, eventActor } from './dispatch-funnel.js';
 import { dispatchDurationFields, dispatchDurationOverride, dispatchCrewSize, withQuoteLines, ESTIMATED_DURATION_MIN } from './dispatch-duration.js';
 import { bookingDimensions, firstPlacementDimensions } from './funnel-dimensions.js';
 import { scheduleTagWrites, withGhlTagStatus } from './ghl-tag-outbox.js';
+import { scheduleMirrorWrites } from './ghl-schedule-mirror.js';
 import { notifyPatch, withDispatchReadiness } from './dispatch-readiness.js';
 import { walkthroughStatusFields } from './walkthrough-state.js';
 import { dispatchReviewCleared, withQueueFacts } from './dispatch-queue.js';
 import { jobStartProblem } from './job-start-policy.js';
+import { DEFAULT_CREWS, NO_CREW, autoAssignedCrew, autoCrewJob, crewAssignment, crewAutoRecord, crewCode, crewCodeInput, crewJobDates, crewPickOrder, crewServes, eligibleCrews, handStaffed, projectCrewOpenings, serviceDaysInput } from './dispatch-crew-assign.js';
+import { dispatchOpenings } from './dispatch-openings.js';
+import { normalizeJobMaterials } from './job-materials.js';
 
 const TERMINAL = new Set(['cancelled','canceled','completed','invoiced','paid','review_requested','closed','noshow','no_show','no-show']);
 const JOB_TYPES = new Set(['job','walkthrough','cleanout','reorg','blocked']);
@@ -81,7 +85,7 @@ function legacyMembers(job, roster) {
   return [...new Set(ids)];
 }
 
-const DTO_FIELDS = ['id','revision','type','customerId','customer','phone','address','title','date','time','endDate','endTime','assignedTo','crewLead','crewId','vehicleId','crewNeeded','travelBufferMinutes','jobInstructions','accessInstructions','customerInstructions','opsNotes','requiredEquipment','materials','serviceType','syncStatus','highlevelAppointmentId','sourceWalkthroughId','sourceTemplateJobId','recurrence','recurrenceParentId','reminderDays','notify','shiftPickupEnabled','openShift','notes','durationMin','estimatedDurationMin','createdAt','updatedAt','completedAt','arrivalWindowStart','arrivalWindowEnd','arrivalWindow','requiredSkills','ghlTagEntry','noShowReasonCode','noShowAt','needsDispatchReview','dispatchReviewReason'];
+const DTO_FIELDS = ['id','revision','type','customerId','customer','phone','address','title','date','time','endDate','endTime','assignedTo','crewLead','crewId','vehicleId','crewNeeded','travelBufferMinutes','jobInstructions','accessInstructions','customerInstructions','opsNotes','requiredEquipment','materials','serviceType','syncStatus','highlevelAppointmentId','sourceWalkthroughId','sourceTemplateJobId','recurrence','recurrenceParentId','reminderDays','notify','shiftPickupEnabled','openShift','notes','durationMin','estimatedDurationMin','createdAt','updatedAt','completedAt','arrivalWindowStart','arrivalWindowEnd','arrivalWindow','requiredSkills','ghlTagEntry','noShowReasonCode','noShowAt','needsDispatchReview','dispatchReviewReason','crewAutoAssigned'];
 const scopeText = job => typeof job.operationalScope?.text === 'string' ? job.operationalScope.text : typeof job.jobInstructions === 'string' ? job.jobInstructions : job.jobInstructions?.operationalScope || (typeof job.scope === 'string' ? job.scope : '') || job.scopeOfWork || '';
 function recurringTemplateFields(source,actor,now) {
   const output={};
@@ -111,6 +115,9 @@ export function projectDispatchJob(job, roster = [], now = new Date().toISOStrin
     ...(segmented(job) ? {assignmentSegments:projectSegments(job),...(segmentsInvalid(job) ? {segmentsInvalid:true} : {})} : {}),
     // WT-OUTCOME: a walkthrough's outcome, converted job and badge, and what a rebook prefills (walkthrough-state.js).
     ...walkthroughStatusFields(job),
+    // D2D-BOARD: the door-to-door bridge's mark (source 'door_to_door', d2d.kind sale|walkthrough) so every board shows
+    // it; never the rep, house or sale behind it, and no other source value.
+    ...(job.source === 'door_to_door' ? {source:'door_to_door'} : {}),...(['sale','walkthrough'].includes(job.d2d?.kind) ? {d2d:{kind:job.d2d.kind}} : {}),
     timeZone: DISPATCH_TIME_ZONE, timeNeedsReview: Boolean(job.date) && !interval };
 }
 
@@ -344,17 +351,8 @@ function schedulePatch(changes, current, resources, roster, now, actor, segments
     if (!Array.isArray(changes.requiredEquipment) || changes.requiredEquipment.length > 100) throw fail('dispatch_equipment_invalid','Enter at most 100 pieces of required equipment.');
     patch.requiredEquipment = [...new Set(changes.requiredEquipment.map(value => text(value,'Equipment',200)).filter(Boolean))];
   }
-  if ('materials' in changes) {
-    if (!Array.isArray(changes.materials) || changes.materials.length > 100) throw fail('dispatch_materials_invalid','Enter at most 100 required materials.');
-    patch.materials = changes.materials.map(material => {
-      onlyKeys(material,['id','name','quantity']);
-      if (!safeId(material.id) || typeof material.quantity !== 'number' || !Number.isFinite(material.quantity) || material.quantity <= 0 || material.quantity > 100000) throw fail('dispatch_materials_invalid','Each material needs a stable ID and a positive quantity.');
-      const name = text(material.name,'Material name',200);
-      if (!name) throw fail('dispatch_materials_invalid','Each material needs a name.');
-      return { id: material.id, name, quantity: material.quantity };
-    });
-    if (new Set(patch.materials.map(item => item.id)).size !== patch.materials.length) throw fail('dispatch_materials_invalid','Material IDs must be unique.');
-  }
+  // WP14c: {id,name,quantity} exactly as before, plus the optional buy/stock fields (job-materials.js).
+  if ('materials' in changes) patch.materials = normalizeJobMaterials(changes.materials,fail);
   if ('crewId' in changes && patch.crewId) {
     const crew = resources.find(row => row.recordType === 'crew' && row.id === patch.crewId && row.status === 'active');
     if (!crew) throw fail('dispatch_crew_inactive','Choose an active crew.');
@@ -383,32 +381,80 @@ function conflictCheck(next, jobs, resources, roster,inspection,applies = () => 
   if (conflicts.length) throw fail('dispatch_conflict',message,409,{ conflicts });
 }
 
+// A dispatchResources crew record (never a jobs document). Crew registry v2 fields
+// (dispatch-crew-assign.js) are audited on crew records only.
+const DISPATCH_RESOURCE_CREW = 'crew';
+const CREW_V2_KEYS = ['priority','serviceDays','code'];
 function auditState(job) {
-  return Object.fromEntries(['date','time','endDate','endTime','status','pipelineStatus','assignedCrew','assignedTo','crewId','crewLead','vehicleId','jobInstructions','operationalScope','accessInstructions','customerInstructions','opsNotes','requiredEquipment','materials','crewNeeded','travelBufferMinutes','title','address','serviceType','name','memberIds','leadId','notes','employeeId','allDay','reason','recurrence','reminderDays','notify','shiftPickupEnabled','openShift','sourceTemplateJobId','recurrenceParentId','cancellationReason','arrivalWindowStart','arrivalWindowEnd','arrivalWindow','assignmentSegments','visitPurpose','reworkOfJobId','membershipId','bookingChannel','channelSelfReported','crmLinkReason','scheduleOccurrence','cancellationReasonCode','cancellationInitiatedBy','lateCancel','noShowReasonCode','estimatedDurationMin','durationOverride','requiredSkills'].filter(key => job?.[key] !== undefined).map(key => [key,job[key]]));
+  return Object.fromEntries([...(job?.recordType === 'crew' ? CREW_V2_KEYS : []),'date','time','endDate','endTime','status','pipelineStatus','assignedCrew','assignedTo','crewId','crewLead','vehicleId','jobInstructions','operationalScope','accessInstructions','customerInstructions','opsNotes','requiredEquipment','materials','crewNeeded','travelBufferMinutes','title','address','serviceType','name','memberIds','leadId','notes','employeeId','allDay','reason','recurrence','reminderDays','notify','shiftPickupEnabled','openShift','sourceTemplateJobId','recurrenceParentId','cancellationReason','arrivalWindowStart','arrivalWindowEnd','arrivalWindow','assignmentSegments','visitPurpose','reworkOfJobId','membershipId','bookingChannel','channelSelfReported','crmLinkReason','scheduleOccurrence','cancellationReasonCode','cancellationInitiatedBy','lateCancel','noShowReasonCode','estimatedDurationMin','durationOverride','requiredSkills','crewAutoAssigned'].filter(key => job?.[key] !== undefined).map(key => [key,job[key]]));
 }
 
 // options.authorize replaces requireDispatcher only for server-built inputs
 // (walkthrough handoffs and quote drafts run by a verified quote author) and for
 // a booker's input that mutateBooking (dispatch-booking.js) has checked, and
 // options.enforce(warning) lets such a caller keep an owner rule a warning.
+// AUTO-CREW (owner decisions D2-D4, 2026-10-17; dispatch-crew-assign.js). Callers read
+// EGC_DISPATCH_CREW_AUTO_ASSIGN (crewAutoAssignEnabled) and only then pass options.autoCrew:
+// true staffs every save that puts an unstaffed job/cleanout/reorg on a (new) date or time with
+// the first free eligible crew, and re-picks an auto-assigned job that moves (its own crew
+// first); 'opt_in' (a dispatcher's Hub save) does so only when the input sends autoCrew:true,
+// while a move of an auto-assigned job to a day its crew does not work still re-picks.
+// options.crewChoice (a booker, dispatch-booking.js) lets changes.crewId name a crew; it must be
+// eligible (else 403 dispatch_crew_not_eligible) and is tried first. A choice never replaces a
+// crew a manager chose (403) and never unstaffs a job: on a job the server staffed, a chosen crew
+// that is not free leaves the job with its crew. Without options.autoCrew every save is exactly as
+// before. The crew is chosen after the dispatchState guard, under the same day locks and final
+// conflict evidence as the save; when a racing save took that crew first the save conflicts and
+// is chosen again (at most three tries). No free crew never loses the booking: it is saved
+// unassigned with soldNeedsCrew, and the answer lists alternatives when any crew could take one.
+// Any save that leaves the job with other people, lead or crew than the server's pick clears
+// that pick's record (crewAutoAssigned), so a later move never re-picks over a manager's crew.
 export async function mutateDispatch(store, session, input, now = new Date().toISOString(), options = {}) {
   (options.authorize || requireDispatcher)(session);
-  try { return await executeDispatch(store,session,input,now,options); }
-  catch (error) {
-    // Another copy of the same request may commit between our initial receipt
-    // read and any later validation read, not merely during the final commit.
-    if (!['dispatch_changed_since_operation','dispatch_idempotency_conflict'].includes(error.code) && /^[a-f0-9-]{36}$/i.test(input?.requestId || '')) {
-      const receipt = await store.read('dispatchOperations',input.requestId.toLowerCase()).catch(() => null);
-      if (receipt?.fingerprint === await digest({actor:session.user,input})) return executeDispatch(store,session,input,now,options);
+  for (let attempt = 0; ; attempt++) {
+    const context = {};
+    try { return await withCrewAlternatives(store,session,await executeDispatch(store,session,input,now,options,context),now,options,context); }
+    catch (error) {
+      if (error?.autoCrewRetry === true && attempt < 2) continue;
+      // Another copy of the same request may commit between our initial receipt
+      // read and any later validation read, not merely during the final commit.
+      if (!['dispatch_changed_since_operation','dispatch_idempotency_conflict'].includes(error.code) && /^[a-f0-9-]{36}$/i.test(input?.requestId || '')) {
+        const receipt = await store.read('dispatchOperations',input.requestId.toLowerCase()).catch(() => null);
+        if (receipt?.fingerprint === await digest({actor:session.user,input})) return executeDispatch(store,session,input,now,options);
+      }
+      throw error;
     }
-    throw error;
   }
 }
 
-async function executeDispatch(store, session, input, now, options = {}) {
+// When no crew was free, the next crew openings (a week from the job's date, rep-safe:
+// projectCrewOpenings) come with the answer. Best effort: a failed search answers []. The
+// search is skipped (no extra reads) when no crew could be staffed on any day of that week,
+// e.g. the flag is on before the crews have members (context.crewWeek from executeDispatch).
+// READ-BUDGET: alternatives are asked for, not assumed. A caller whose answer never shows them
+// passes options.crewAlternatives:false (bookers, the Hub's opt-in save, the Knock bridge) and
+// gets no alternatives key and no openings snapshot; the walkthrough handoff shows them.
+const ALTERNATIVE_DAYS = 7, SAVE_BOUND_DAYS = 2;
+async function withCrewAlternatives(store,session,result,now,options,context = {}) {
+  if (options.crewAlternatives === false || result?.autoCrew?.status !== 'unassigned' || result.replayed || !result.job?.startAt || !result.job?.endAt) return result;
+  const minutes = Math.round((Date.parse(result.job.endAt) - Date.parse(result.job.startAt)) / 60000);
+  let alternatives = [];
+  if (context.crewWeek !== false && minutes >= 15 && minutes <= 1440 && validDate(result.job.date)) {
+    try {
+      const found = await dispatchOpenings(store,session,{crews:'auto',kind:result.job.type,startDate:result.job.date,endDate:addDays(result.job.date,ALTERNATIVE_DAYS),durationMinutes:String(minutes),travelBufferMinutes:String(Number.isInteger(result.job.travelBufferMinutes) ? result.job.travelBufferMinutes : 0)},new Date(now),{authorize:options.authorize || requireDispatcher,booker:true});
+      alternatives = projectCrewOpenings(found,10);
+    } catch { alternatives = []; }
+  }
+  return {...result,autoCrew:{...result.autoCrew,alternatives}};
+}
+
+async function executeDispatch(store, session, input, now, options = {}, context = {}) {
   (options.authorize || requireDispatcher)(session);
   if (!isObject(input) || !DISPATCH_ACTIONS.includes(input.action) || !/^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/i.test(input.requestId || '')) throw fail('dispatch_request_invalid','Use a supported dispatch action with a unique request ID.');
-  onlyKeys(input,['action','requestId','customerId','kind','sourceWalkthroughId','sourceTemplateJobId','sourceJobId','jobId','id','expectedRevision','changes','cancellationReason','booking','reasonCode','initiatedBy']);
+  const autoMode = options.autoCrew === true ? 'on' : options.autoCrew === 'opt_in' ? 'opt_in' : null;
+  onlyKeys(input,['action','requestId','customerId','kind','sourceWalkthroughId','sourceTemplateJobId','sourceJobId','jobId','id','expectedRevision','changes','cancellationReason','booking','reasonCode','initiatedBy',...(autoMode ? ['autoCrew'] : [])]);
+  if ('autoCrew' in input && (typeof input.autoCrew !== 'boolean' || !['schedule.create','schedule.update'].includes(input.action))) throw fail('dispatch_auto_crew_invalid','Automatic crew assignment can only be asked for (true or false) when creating or moving a visit.');
+  if (input.action === 'crew.seed_defaults' && Object.keys(input).some(key => !['action','requestId'].includes(key))) throw fail('dispatch_patch_not_allowed','Creating the default crews takes only a request ID.');
   if ('cancellationReason' in input && input.action !== 'schedule.cancel') throw fail('dispatch_cancel_patch_invalid','A cancellation reason can only be saved when cancelling a job.');
   // FUN-02: booking facts on a customer visit create; a reason on a move, cancel or no-show.
   if ('booking' in input && (input.action !== 'schedule.create' || input.kind === 'blocked')) throw fail('dispatch_booking_invalid','Booking details can only be saved when creating a customer visit.');
@@ -423,17 +469,19 @@ async function executeDispatch(store, session, input, now, options = {}) {
   const prior = await store.read('dispatchOperations',receiptId);
   if (prior) {
     if (prior.fingerprint !== fingerprint) throw fail('dispatch_idempotency_conflict','This request ID was already used for different changes. Refresh before saving.',409);
+    if (input.action === 'crew.seed_defaults') return seededCrews(store,input,prior,true);
     const saved = await store.read(prior.collection,prior.targetId);
     if (!saved) throw fail('dispatch_saved_record_missing','The previously saved record is no longer available. Refresh and review.',409);
     if (saved.dispatchRequestId !== input.requestId) throw fail('dispatch_changed_since_operation','That request saved successfully, but dispatch has since changed this record. Refresh to see its current state.',409);
-    return { ok: true, requestId: input.requestId, replayed: true, ...(prior.collection === 'jobs' ? { job: projectDispatchJob(saved), providerSync: saved.syncStatus === 'pending' ? 'pending' : 'not_needed' } : { resource: saved }), warnings: prior.warnings || [] };
+    return { ok: true, requestId: input.requestId, replayed: true, ...(prior.collection === 'jobs' ? { job: projectDispatchJob(saved), providerSync: saved.syncStatus === 'pending' ? 'pending' : 'not_needed' } : { resource: saved }), warnings: prior.warnings || [], ...(prior.metadata?.crewAutoAssigned ? { autoCrew: prior.metadata.crewAutoAssigned } : {}) };
   }
   // Every native dispatch mutation touches this revision before any business
   // reads. It serializes assignment checks with resource/availability changes.
   const guard = await store.read('dispatchState','revision');
+  if (input.action === 'crew.seed_defaults') return seedDefaultCrews(store,session,input,now,{guard,fingerprint,receiptId});
   const reads = saveJobReads(store);
   const [resources,roster,,rules] = await Promise.all([store.resources(),store.roster(),reads.all,dispatchRuleSettings(store)]);
-  let collection, id, current, patch, warnings = [], writes = [], providerSync = 'not_needed', fieldTimeSegment = null, lineage = null;
+  let collection, id, current, patch, warnings = [], writes = [], providerSync = 'not_needed', fieldTimeSegment = null, lineage = null, autoResult = null;
   if (input.action.startsWith('schedule.')) {
     collection = 'jobs';
     // A no-show closes the visit like a cancellation, without a provider appointment change.
@@ -569,20 +617,27 @@ async function executeDispatch(store, session, input, now, options = {}) {
       Object.assign(patch,{syncStatus:'pending',syncIdempotencyKey:input.requestId,providerSyncOwner:'operations'}); providerSync = 'pending';
     } else if (create) patch.syncStatus = 'not_needed';
     next = { ...current, ...patch };
-    // Segments lock only their own days, one entry each (`${jobId}~${segmentId}`).
-    const days = [...new Set([...segmentDays(current),...segmentDays(next)])].sort();
+    // AUTO-CREW: what this save asks of the server crew pick (null: nothing, exactly as before).
+    const autoPlan = autoCrewPlan({mode:autoMode,input,options,create,current,next,patch,resources,roster}), autoWarnings = [];
+    // Segments lock only their own days, one entry each (`${jobId}~${segmentId}`). A crew pick
+    // never changes the days, so each day's lock is read here and written once the crew is known.
+    const days = [...new Set([...segmentDays(current),...segmentDays(next)])].sort(), locks = [];
     for (const date of days) {
       const lockId = `_egc_schedule_lock_${date}`, lock = await store.read('jobs',lockId);
       if (lock && (lock.recordType !== 'schedule_lock' || !Array.isArray(lock.entries))) throw fail('dispatch_lock_unavailable','A scheduling guard needs review before this date can be changed.',503);
-      const entries = (Array.isArray(lock?.entries) ? lock.entries : []).filter(entry => !ownsLockEntry(entry,id) && !TERMINAL.has(entry.status));
-      if (activeJob(next) && segmentDays(next).includes(date)) entries.push(...segmentLockEntries(next,date,roster,now));
-      writes.push({collection:'jobs',id:lockId,revision:lock?.revision,patch:{recordType:'schedule_lock',date,entries,updatedAt:now}});
+      locks.push({date,lockId,lock});
     }
     // The older operations scheduler shares day locks but not dispatchState.
     // Read final conflict evidence AFTER acquiring each affected day revision;
     // either we see an older sender's job or its commit invalidates our lock.
-    const finalJobs = days.length ? await jobsForWindow(store,{startDate:days[0],endDate:addDays(days.at(-1),1)},'save') : await reads.near(() => rowsWindow([current,next],new Date(now)));
-    const inspection=await withTravel(scheduleInspection(finalJobs,resources,roster,rules),[next],roster,options.travel);
+    // READ-BUDGET: windowed, only valid rows starting by SAVE_BOUND_DAYS after the last day (jobWarnings' potentiallyNear
+    // reaches one travel day: buffers are at most 180 minutes and drive windows 240) are conflict evidence. The save still
+    // reads every row starting from the floor on (everyStart): a malformed date string sorting after the bound is
+    // conservative evidence (rowsConflict), so a crew is never committed past a row the complete scan would refuse on.
+    const finalJobs = days.length ? await jobsForWindow(store,{startDate:days[0],endDate:addDays(days.at(-1),1),bound:addDays(days.at(-1),SAVE_BOUND_DAYS),everyStart:true},'save') : await reads.near(() => rowsWindow([current,next],new Date(now)));
+    // Each eligible crew in pick order (a preferred crew first), as the job it would make.
+    const crewOptions = autoPlan ? autoCrewOptions(autoPlan,next,resources,roster,interval) : [];
+    const inspection=await withTravel(scheduleInspection(finalJobs,resources,roster,rules),[next,...crewOptions.map(option => option.job)],roster,options.travel);
     if(rules.blockTravelShort&&options.travel?.enabled)inspection.blockTravelShort=true;
     // Effective values, so a full form re-sending a legacy row's defaults (an
     // endDate, assignedCrew for an assignedTo name, crewNeeded 1) is no change.
@@ -594,8 +649,48 @@ async function executeDispatch(store, session, input, now, options = {}) {
     // options.enforce (server-built saves and checked bookings only, e.g. a signed
     // handoff that leaves staffing to Dispatch) can keep a rule a warning; it never adds a block.
     else if(typeof options.enforce==='function')inspection.rules.enforce=warning=>options.enforce(warning)===true;
+    if (autoPlan) {
+      // The first crew whose whole job passes the same conflict test as the save itself.
+      const chosen = crewOptions.find(option => !conflictsOf(option.job,finalJobs,resources,roster,inspection).length) || null;
+      // A booker's crew choice on a job the server staffed never unstaffs it: with no crew free the
+      // job keeps its crew (and the final conflict check decides a move, as for any staffed job).
+      const kept = !chosen && autoPlan.kind === 'choice' && Boolean(autoPlan.keep);
+      if (chosen) {
+        const assignment = crewAssignment(chosen.crew,ids => members(ids,roster)), record = {at:now,by:session.user,mode:autoPlan.kind};
+        autoResult = {status:'assigned',...crewAutoRecord(chosen.crew,record)};
+        Object.assign(patch,assignment,{crewAutoAssigned:crewAutoRecord(chosen.crew,record,assignment)});
+      } else if (kept) {
+        autoResult = {status:'kept',mode:'choice',crewId:current.crewId};
+        for (const key of Object.keys(NO_CREW)) { if (current[key] === undefined) delete patch[key]; else patch[key] = current[key]; }
+      } else {
+        autoResult = {status:'unassigned',mode:autoPlan.kind,crewId:null};
+        Object.assign(patch,NO_CREW,current?.crewAutoAssigned !== undefined ? {crewAutoAssigned:null} : {});
+        // Never lose the booking: with no free crew it is saved on its date without a crew, as Sold: needs crew.
+        if (!isObject(current?.soldNeedsCrew)) patch.soldNeedsCrew = {at:now,by:session.user,requestId:input.requestId,reason:'no_crew_free'};
+        autoWarnings.push({code:'no_crew_available',jobId:id,message:`No crew is free for this whole visit, so it was saved on ${next.date} without a crew (Sold: needs crew). A manager assigns the crew in Dispatch, or pick another time.`});
+        // Alternatives are searched only when some crew could be staffed in the week they cover.
+        context.crewWeek = Array.from({length:ALTERNATIVE_DAYS},(_,index) => addDays(next.date,index)).some(date => eligibleCrews(resources,[date],roster).length > 0);
+      }
+      if (autoPlan.kind === 'choice') autoResult.requestedCrewId = autoPlan.preferred;
+      const crewName = crew => crew?.name || 'its crew';
+      if (kept) autoWarnings.push({code:'crew_choice_unavailable',jobId:id,crewId:autoPlan.preferred,message:`The chosen crew is not free at this time, so the visit keeps ${crewName(resources.find(row => row.recordType === 'crew' && row.id === current.crewId))}.`});
+      else if (chosen && autoPlan.kind === 'choice' && chosen.crew.id !== autoPlan.preferred) autoWarnings.push({code:'crew_choice_unavailable',jobId:id,crewId:autoPlan.preferred,message:chosen.crew.id === autoPlan.keep ? `The chosen crew is not free at this time, so the visit keeps ${crewName(chosen.crew)}.` : `The chosen crew is no longer free at this time, so ${crewName(chosen.crew)} was assigned instead.`});
+      if (!kept && current && Array.isArray(current.shiftClaims)) patch.shiftClaims = current.shiftClaims.filter(value => patch.assignedCrew.includes(resolveMember(value?.employee || value,roster,true)));
+      next = {...current,...patch};
+      patch.openShift = offeredForPickup(next,legacyMembers(next,roster).length,interval);
+      next = {...next,...patch};
+    } else {
+      if (autoMode) autoWarnings.push(...crewDayWarnings({input,create,current,next,patch,resources,roster,id}));
+      // A crew changed by hand (or by a pickup claim) is no longer the server's pick: its record goes.
+      if (isObject(current?.crewAutoAssigned) && !autoAssignedCrew(next)) { patch.crewAutoAssigned = null; next = {...next,crewAutoAssigned:null}; }
+    }
+    for (const {date,lockId,lock} of locks) {
+      const entries = (Array.isArray(lock?.entries) ? lock.entries : []).filter(entry => !ownsLockEntry(entry,id) && !TERMINAL.has(entry.status));
+      if (activeJob(next) && segmentDays(next).includes(date)) entries.push(...segmentLockEntries(next,date,roster,now));
+      writes.push({collection:'jobs',id:lockId,revision:lock?.revision,patch:{recordType:'schedule_lock',date,entries,updatedAt:now}});
+    }
     conflictCheck(next,finalJobs,resources,roster,inspection);
-    warnings = jobWarnings(next,finalJobs,resources,roster,inspection);
+    warnings = [...jobWarnings(next,finalJobs,resources,roster,inspection),...autoWarnings];
     const placed = create || restore || ['date','time','endDate','endTime'].some(key => key in patch && patch[key] !== current?.[key]) || 'assignmentSegments' in patch && canonical(patch.assignmentSegments) !== canonical(current?.assignmentSegments ?? null);
     const legacy = placed && activeJob(next) && next.type !== 'blocked' ? await legacyBlockedDays(store,segmentDays(next)) : null;
     if (legacy?.rows.length) {
@@ -614,6 +709,8 @@ async function executeDispatch(store, session, input, now, options = {}) {
     // EGC_GHL_TAG_OUTBOX (GHL-TRACK-1): the HighLevel tags this change needs commit with it, or not at all.
     const tags = store.ghlTagOutbox === true ? await scheduleTagWrites({jobId:id,before:current,after:{...current,...patch},action:input.action,requestId:input.requestId,now}) : null;
     if (tags) { patch.ghlTagEntry = tags.pointer; writes.push(tags.write); }
+    // EGC_GHL_SCHEDULE_MIRROR (D9b): the HighLevel schedule mirror (contact, EGC Pipeline stage, note) commits with the change, or not at all.
+    writes.push(...await scheduleMirrorWrites(store,{jobId:id,before:current,after:{...current,...patch},action:input.action,requestId:input.requestId,now,roster,resources}));
   } else {
     collection = 'dispatchResources';
     id = input.id || `${input.action.split('.')[0]}_${receiptId.replaceAll('-','')}`;
@@ -622,7 +719,7 @@ async function executeDispatch(store, session, input, now, options = {}) {
     if (input.id && (!current || !input.expectedRevision || current.revision !== input.expectedRevision)) throw fail('dispatch_revision_conflict','This resource changed. Refresh before saving.',409);
     const recordType = input.action.split('.')[0];
     if (current && current.recordType !== recordType) throw fail('dispatch_resource_invalid','This is a different kind of dispatch resource.',409);
-    patch = resourcePatch(recordType,input.changes || {},current,roster);
+    patch = resourcePatch(recordType,input.changes || {},current,roster,{id,resources});
     Object.assign(patch,{id,recordType,updatedAt:now,updatedBy:session.user,dispatchRequestId:input.requestId,...(!current ? {createdAt:now,createdBy:session.user} : {})});
     const next = {...current,...patch};
     if (recordType === 'availability' && next.status !== 'cancelled') {
@@ -638,7 +735,7 @@ async function executeDispatch(store, session, input, now, options = {}) {
   }
   writes.push({collection,id,revision:current?.revision,patch});
   writes.push({collection:'dispatchState',id:'revision',revision:guard?.revision,patch:{updatedAt:now,lastRequestId:input.requestId}});
-  writes.push({collection:'dispatchOperations',id:receiptId,patch:{fingerprint,actorId:session.user,action:input.action,collection,targetId:id,requestId:input.requestId,createdAt:now,before:current ? auditState(current) : null,after:auditState({...current,...patch}),warnings,...(fieldTimeSegment || lineage?.metadata ? {metadata:{...(fieldTimeSegment?{fieldTimeSegment}:{}),...(lineage?.metadata?{customerLineage:lineage.metadata}:{})}} : {})}});
+  writes.push({collection:'dispatchOperations',id:receiptId,patch:{fingerprint,actorId:session.user,action:input.action,collection,targetId:id,requestId:input.requestId,createdAt:now,before:current ? auditState(current) : null,after:auditState({...current,...patch}),warnings,...(fieldTimeSegment || lineage?.metadata || autoResult ? {metadata:{...(fieldTimeSegment?{fieldTimeSegment}:{}),...(lineage?.metadata?{customerLineage:lineage.metadata}:{}),...(autoResult?{crewAutoAssigned:autoResult}:{})}} : {})}});
   // EGC_CREW_NOTIFICATIONS_ENABLED: crew notices commit with the change and its receipt, or not at all.
   // A recurring-plan run names itself (store.crewNoticeBatch) so its new visits are one text per employee.
   if (collection === 'jobs' && store.crewNotificationsEnabled === true) writes.push(...await crewNotificationWrites({jobId:id,requestId:input.requestId,action:input.action,actorId:session.user,type:(current || patch).type,before:current ? auditState(current) : null,after:auditState({...current,...patch}),roster,now,batch:typeof store.crewNoticeBatch === 'string' ? store.crewNoticeBatch : '',baseRevision:current?.revision}));
@@ -650,27 +747,126 @@ async function executeDispatch(store, session, input, now, options = {}) {
   try { await store.commit(writes); }
   catch (error) {
     const receipt = await store.read('dispatchOperations',receiptId).catch(() => null);
+    // AUTO-CREW: another save took the guard (perhaps the crew picked here) first; mutateDispatch picks again.
+    if (!receipt && autoResult && error && typeof error === 'object' && (error.code === 'dispatch_revision_conflict' || error.status === 409)) error.autoCrewRetry = true;
     if (!receipt || receipt.fingerprint !== fingerprint) throw error;
   }
   const saved = await store.read(collection,id);
   if (!saved) throw fail('dispatch_outcome_unknown','The saved record could not be verified. Retry the same request.',503);
   if (saved.dispatchRequestId !== input.requestId) throw fail('dispatch_changed_since_operation','The save succeeded, but dispatch has changed again. Refresh to review the latest schedule.',409);
-  return {ok:true,requestId:input.requestId,warnings,...(collection === 'jobs' ? {job:projectDispatchJob(saved,roster),providerSync} : {resource:saved})};
+  return {ok:true,requestId:input.requestId,warnings,...(collection === 'jobs' ? {job:projectDispatchJob(saved,roster),providerSync} : {resource:saved}),...(autoResult ? {autoCrew:autoResult} : {})};
 }
 
-function resourcePatch(kind,changes,current,roster) {
+// AUTO-CREW (dispatch-crew-assign.js): the save's crew pick, or null when it asks none.
+// 'pick': an unstaffed job placed on a (new) date or time. 'repick': an auto-assigned job that
+// moves (its crew first); in 'opt_in' mode without input.autoCrew only when its crew does not
+// work the new day. 'choice': a booker's changes.crewId (options.crewChoice), checked eligible.
+// A crew the save sets or clears by hand is never replaced; input.autoCrew:false asks no pick.
+function autoCrewPlan({mode,input,options,create,current,next,patch,resources,roster}) {
+  const changes = isObject(input.changes) ? input.changes : {}, wants = mode === 'on' || input.autoCrew === true;
+  // A booker's crew change is only ever an eligible crew for a dated job; anything else is refused.
+  if (options.crewChoice === true && 'crewId' in changes && (changes.crewId || null) !== (current?.crewId || null)) {
+    if (!mode || typeof changes.crewId !== 'string' || !changes.crewId || !['schedule.create','schedule.update'].includes(input.action) || !autoCrewJob(next)) throw fail('dispatch_crew_not_eligible','A crew can only be chosen from the offered crews for a dated job. Save the visit without a crew; the first free crew is assigned automatically.',403);
+    // A crew a manager chose (people, a lead or a crew the server did not assign) is a manager's to change (D4).
+    if (handStaffed(current,job => legacyMembers(job,roster))) throw fail('dispatch_crew_not_eligible','A manager chose the crew for this visit, so only a manager can change it. Save the visit without a crew change.',403);
+    // keep: the crew of a job the server staffed, tried right after the chosen one and kept when no crew is free.
+    return {kind:'choice',preferred:changes.crewId,keep:current && legacyMembers(current,roster).length ? current.crewId : null};
+  }
+  if (!mode || input.autoCrew === false || !['schedule.create','schedule.update'].includes(input.action) || !autoCrewJob(next)) return null;
+  const crewOf = job => canonical([legacyMembers(job,roster).sort(),job?.crewId || null]);
+  const byHand = current ? crewOf(current) !== crewOf(next) : legacyMembers(next,roster).length > 0 || Boolean(next.crewId);
+  const placed = create || ['date','time','endDate','endTime'].some(key => key in patch && patch[key] !== current?.[key]);
+  if (byHand || !placed) return null;
+  if (!legacyMembers(next,roster).length) return wants ? {kind:'pick',preferred:null} : null;
+  if (!autoAssignedCrew(current)) return null;
+  const crew = resources.find(row => row.recordType === 'crew' && row.id === current.crewId);
+  return wants || !crew || !crewServes(crew,crewJobDates(next)) ? {kind:'repick',preferred:current.crewId} : null;
+}
+// Every eligible crew for the job's days, in pick order, as the unstaffed job staffed by it:
+// a booker's choice first, then the crew the job has (keep), then priority order.
+function autoCrewOptions(plan,next,resources,roster,interval) {
+  const eligible = eligibleCrews(resources,crewJobDates(next),roster);
+  if (plan.kind === 'choice' && !eligible.some(crew => crew.id === plan.preferred)) throw fail('dispatch_crew_not_eligible','That crew cannot take this visit: it is inactive, has no active members or does not work that day. Choose one of the offered crews.',403);
+  return crewPickOrder(crewPickOrder(eligible,plan.keep || null),plan.preferred).map(crew => {
+    const job = {...next,...crewAssignment(crew,ids => members(ids,roster))};
+    return {crew,job:{...job,openShift:offeredForPickup(job,job.assignedCrew.length,interval)}};
+  });
+}
+// The conflicts conflictCheck would refuse the save for.
+const conflictsOf = (job,jobs,resources,roster,inspection) => jobWarnings(job,jobs,resources,roster,inspection).filter(warning => ['schedule_overlap','employee_unavailable','unverifiable_assignment'].includes(warning.code) || warning.blocking === true);
+const DAY_LABELS = {mon:'Mondays',tue:'Tuesdays',wed:'Wednesdays',thu:'Thursdays',fri:'Fridays',sat:'Saturdays',sun:'Sundays'};
+// A manager's own crew on a day it does not work stays, with a warning (D4).
+function crewDayWarnings({input,create,current,next,patch,resources,roster,id}) {
+  if (!['schedule.create','schedule.update'].includes(input.action) || !autoCrewJob(next) || !next.crewId || !legacyMembers(next,roster).length) return [];
+  const moved = create || ['date','time','endDate','endTime','crewId'].some(key => key in patch && patch[key] !== current?.[key]);
+  const crew = resources.find(row => row.recordType === 'crew' && row.id === next.crewId), dates = crewJobDates(next);
+  if (!moved || !crew || crewServes(crew,dates)) return [];
+  const off = [...new Set(dates.map(date => DAY_LABELS[weekdayOf(date)]))];
+  return [{code:'crew_off_day',jobId:id,crewId:crew.id,message:`${crew.name} does not work ${off.join(' or ')}. Check the crew or move the visit.`}];
+}
+
+// crew.seed_defaults (owner or manager, dispatch.write): Crew 1 and Crew 2 (Mon-Fri, priority 1
+// and 2) and Crew 3 (Sat and Sun, priority 3), each only when no crew holds its code. A crew
+// with that exact name and no code yet is given the code (and the priority and days it lacks)
+// instead of a second crew of the same name. Members and leads are added afterwards. Receipt-
+// guarded like every dispatch action: the same requestId replays, a racing save conflicts.
+async function seedDefaultCrews(store,session,input,now,{guard,fingerprint,receiptId}) {
+  const resources = await store.resources(), crews = resources.filter(row => row.recordType === 'crew'), writes = [], targets = [], created = [], updated = [], existing = [];
+  const named = name => crews.filter(row => !crewCode(row) && String(row.name || '').trim().toLowerCase() === name.toLowerCase());
+  for (const crew of DEFAULT_CREWS) {
+    const held = crews.find(row => crewCode(row) === crew.code);
+    if (held) { existing.push(held.id); continue; }
+    const same = named(crew.name);
+    if (same.length === 1) {
+      const row = same[0], patch = {code:crew.code,...(row.priority === undefined || row.priority === null ? {priority:crew.priority} : {}),...(row.serviceDays === undefined || row.serviceDays === null ? {serviceDays:[...crew.serviceDays]} : {}),updatedAt:now,updatedBy:session.user,dispatchRequestId:input.requestId};
+      writes.push({collection:'dispatchResources',id:row.id,revision:row.revision,patch});
+      targets.push(row.id); updated.push(row.id);
+      continue;
+    }
+    const id = `crew_${crew.code.replaceAll('-','')}_${receiptId.replaceAll('-','')}`;
+    writes.push({collection:'dispatchResources',id,patch:{name:crew.name,memberIds:[],leadId:null,status:'active',priority:crew.priority,serviceDays:[...crew.serviceDays],code:crew.code,id,recordType:DISPATCH_RESOURCE_CREW,createdAt:now,createdBy:session.user,updatedAt:now,updatedBy:session.user,dispatchRequestId:input.requestId}});
+    targets.push(id); created.push(id);
+  }
+  const warnings = created.length || updated.length ? [{code:'crew_members_needed',message:'Add the members and crew lead of each new crew before it can take jobs.'}] : [];
+  writes.push({collection:'dispatchState',id:'revision',revision:guard?.revision,patch:{updatedAt:now,lastRequestId:input.requestId}});
+  writes.push({collection:'dispatchOperations',id:receiptId,patch:{fingerprint,actorId:session.user,action:input.action,collection:'dispatchResources',targetId:targets[0] || null,targetIds:targets,requestId:input.requestId,createdAt:now,before:null,after:{created,updated,existing},warnings}});
+  try { await store.commit(writes); }
+  catch (error) {
+    const receipt = await store.read('dispatchOperations',receiptId).catch(() => null);
+    if (!receipt || receipt.fingerprint !== fingerprint) throw error;
+  }
+  return seededCrews(store,input,{targetIds:targets,warnings,after:{created,updated,existing}},false);
+}
+async function seededCrews(store,input,receipt,replayed) {
+  const ids = Array.isArray(receipt?.targetIds) ? receipt.targetIds : [], resources = (await Promise.all(ids.map(id => store.read('dispatchResources',id)))).filter(Boolean);
+  const after = isObject(receipt?.after) ? receipt.after : {};
+  return {ok:true,requestId:input.requestId,...(replayed ? {replayed:true} : {}),created:Array.isArray(after.created) ? after.created : [],updated:Array.isArray(after.updated) ? after.updated : [],existing:Array.isArray(after.existing) ? after.existing : [],resources,warnings:Array.isArray(receipt?.warnings) ? receipt.warnings : []};
+}
+
+function resourcePatch(kind,changes,current,roster,{id = null,resources = []} = {}) {
   const patch = {};
   if (kind === 'crew') {
-    onlyKeys(changes,['name','memberIds','leadId','status']);
+    onlyKeys(changes,['name','memberIds','leadId','status',...CREW_V2_KEYS]);
     if ('name' in changes) patch.name = text(changes.name,'Crew name',100);
     if ('memberIds' in changes) patch.memberIds = members(changes.memberIds,roster);
     if ('leadId' in changes) patch.leadId = changes.leadId ? resolveMember(changes.leadId,roster) : null;
     if (changes.leadId && !patch.leadId) throw fail('dispatch_employee_inactive','Choose an active employee as crew lead.');
     if ('status' in changes) { if (!['active','inactive'].includes(changes.status)) throw fail('dispatch_resource_invalid','Choose active or inactive.'); patch.status = changes.status; }
+    // Crew registry v2 (dispatch-crew-assign.js): saved only when sent; null clears one back to its default.
+    if ('priority' in changes) patch.priority = changes.priority === null ? null : integer(changes.priority,'Crew priority',1,99);
+    if ('serviceDays' in changes) {
+      patch.serviceDays = changes.serviceDays === null ? null : serviceDaysInput(changes.serviceDays);
+      if (changes.serviceDays !== null && !patch.serviceDays) throw fail('dispatch_crew_days_invalid','Choose the days this crew works: one or more of mon, tue, wed, thu, fri, sat and sun, each once.');
+    }
+    if ('code' in changes) {
+      patch.code = changes.code === null || changes.code === '' ? null : crewCodeInput(changes.code);
+      if (changes.code && !patch.code) throw fail('dispatch_crew_code_invalid','A crew code is 1 to 20 lowercase letters, digits or dashes, such as crew-1.');
+      if (patch.code && resources.some(row => row.recordType === 'crew' && row.id !== id && row.code === patch.code)) throw fail('dispatch_crew_code_taken','Another crew already uses this code. Choose a different code.',409);
+    }
     const next = {status:'active',memberIds:[],leadId:null,...current,...patch};
     if (!next.name) throw fail('dispatch_name_required','Enter the crew name.');
     if (next.leadId && !next.memberIds.includes(next.leadId)) throw fail('dispatch_lead_not_assigned','The crew lead must belong to this crew.');
-    return {name:next.name,memberIds:next.memberIds,leadId:next.leadId,status:next.status};
+    return {name:next.name,memberIds:next.memberIds,leadId:next.leadId,status:next.status,...Object.fromEntries(CREW_V2_KEYS.filter(key => next[key] !== undefined).map(key => [key,next[key]]))};
   }
   if (kind === 'vehicle') {
     onlyKeys(changes,['name','status','notes']);
@@ -755,6 +951,8 @@ export async function mutateDispatchSelfAssignment(store,session,input,now = new
     writes.push({collection:'dispatchState',id:'revision',revision:guard?.revision,patch:{updatedAt:now,lastRequestId:input.requestId}});
     writes.push({collection:'dispatchOperations',id:receiptId,patch:{fingerprint,actorId:identity,action:`shift.${input.action}`,collection:'jobs',targetId:job.id,requestId:input.requestId,createdAt:now,before:auditState(job),after:auditState(next)}});
     if (assignedCrew.length) writes.push(...(await visitFunnelWrites({action:'update',before:job,after:next,actor:eventActor({id:identity,kind:'human',role:session.role}),via:'hub',key:requestKey(input.requestId),source:{collection:'dispatchOperations',id:receiptId},crewChanged:true,now})).writes);
+    // EGC_GHL_SCHEDULE_MIRROR (D9b): a crew self-claim or release is a crew change HighLevel's second record is told about.
+    writes.push(...await scheduleMirrorWrites(store,{jobId:job.id,before:job,after:next,action:`shift.${input.action}`,requestId:input.requestId,now,roster,resources}));
     await store.commit(writes);
     const saved = await store.read('jobs',job.id);
     if (!saved || saved.dispatchRequestId !== input.requestId) throw fail('dispatch_changed_since_operation','Your assignment saved, but dispatch has changed it again. Refresh your schedule.',409);

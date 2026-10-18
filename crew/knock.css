@@ -28,6 +28,7 @@
   --o-notint: #6b7280;
   --o-look: #7c3aed;
   --o-sold: #16a34a;
+  --o-walk: #0d9488;
   --o-skip: #dc2626;
   --gps: #2563eb;
   /* shape */
@@ -52,7 +53,7 @@
   --success: #4ade80; --success-bg: #0f2a1b; --warning: #fbbf24; --warning-bg: #2d1f08;
   --error: #fb7185; --error-bg: #331016; --info: #93c5fd; --info-bg: #0f1f3d;
   --o-none: #0a1120; --o-none-ring: #f2f5fb; --o-noanswer: #fbbf24; --o-comeback: #60a5fa; --o-notint: #9ca3af;
-  --o-look: #a78bfa; --o-sold: #4ade80; --o-skip: #f87171; --gps: #60a5fa;
+  --o-look: #a78bfa; --o-sold: #4ade80; --o-walk: #2dd4bf; --o-skip: #f87171; --gps: #60a5fa;
   --shadow: 0 2px 10px rgba(0, 0, 0, .55);
   color-scheme: dark;
 }
@@ -64,7 +65,7 @@
     --success: #4ade80; --success-bg: #0f2a1b; --warning: #fbbf24; --warning-bg: #2d1f08;
     --error: #fb7185; --error-bg: #331016; --info: #93c5fd; --info-bg: #0f1f3d;
     --o-none: #0a1120; --o-none-ring: #f2f5fb; --o-noanswer: #fbbf24; --o-comeback: #60a5fa; --o-notint: #9ca3af;
-    --o-look: #a78bfa; --o-sold: #4ade80; --o-skip: #f87171; --gps: #60a5fa;
+    --o-look: #a78bfa; --o-sold: #4ade80; --o-walk: #2dd4bf; --o-skip: #f87171; --gps: #60a5fa;
     --shadow: 0 2px 10px rgba(0, 0, 0, .55);
     color-scheme: dark;
   }
@@ -169,7 +170,10 @@ body.app { margin: 0; min-height: 100vh; min-height: 100dvh; background: var(--b
 .oc--look { --oc: var(--o-look); }
 .oc--sold { --oc: var(--o-sold); }
 .oc--skip { --oc: var(--o-skip); }
+.oc--walk { --oc: var(--o-walk); }
 .oc--noanswer .oc__disc, .oc--sold .oc__disc { color: #0a1120; }
+/* Seven outcomes (KNOCK-BRIDGE): the six keep their places and Walkthrough set takes a whole last row. */
+.outcomes--seven > .oc:last-child { grid-column: 1 / -1; }
 .oc:disabled { opacity: .4; cursor: not-allowed; }
 .oc.is-pressed { background: var(--oc); color: #fff; }
 
@@ -182,6 +186,7 @@ body.app { margin: 0; min-height: 100vh; min-height: 100dvh; background: var(--b
 .dot--look { --oc: var(--o-look); }
 .dot--sold { --oc: var(--o-sold); color: #0a1120; }
 .dot--skip { --oc: var(--o-skip); }
+.dot--walk { --oc: var(--o-walk); }
 .dot--navy { --oc: var(--navy); }
 .dot--lg { width: 28px; height: 28px; font-size: 14px; }
 
@@ -214,6 +219,11 @@ body.app { margin: 0; min-height: 100vh; min-height: 100dvh; background: var(--b
 .list-row__main { flex: 1 1 auto; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
 .list-row__title { font-weight: 700; }
 .list-row__sub { font-size: var(--t-caption); color: var(--muted); }
+/* Choose area rows: name, distance and badges, with Work here / Release / Claim on the right. */
+.area-row { align-items: flex-start; }
+.area-row__badges { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 4px; }
+.area-row__actions { display: flex; flex-direction: column; gap: 6px; flex: none; align-items: stretch; }
+.area-row__actions .btn { min-width: 96px; }
 .list-head { position: sticky; top: calc(var(--top) + var(--sun)); z-index: 2; background: var(--surface); padding: 8px 16px; font: 700 14px/1 var(--font-body); color: var(--muted); text-transform: uppercase; letter-spacing: .06em; border-bottom: 1px solid var(--line); }
 .kv { display: flex; justify-content: space-between; align-items: center; gap: 12px; padding: 10px 0; border-bottom: 1px solid var(--line); }
 .kv:last-child { border-bottom: 0; }
@@ -275,6 +285,8 @@ select.input { padding-right: 8px; }
 @media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) .seg__btn--on, :root:not([data-theme="light"]) .seg__btn[aria-pressed="true"] { background: var(--text); color: var(--bg); } }
 .chips { display: flex; gap: 6px; overflow-x: auto; padding: 4px; background: var(--surface); border-radius: var(--r); scrollbar-width: none; }
 .chips .seg__btn { flex: none; padding: 0 14px; }
+/* KNOCK-BRIDGE slot picker: every open time stays in view (the times wrap instead of scrolling sideways). */
+.chips--wrap { flex-wrap: wrap; overflow: visible; }
 .check { display: flex; align-items: center; gap: 12px; min-height: var(--tap); padding: 8px 12px; border: 2px solid var(--line); border-radius: var(--r); font-weight: 700; cursor: pointer; background: var(--bg); }
 .check input { width: 28px; height: 28px; margin: 0; accent-color: var(--success); flex: none; }
 .check--on, .check:has(input:checked) { border-color: var(--success); background: var(--success-bg); }
@@ -342,6 +354,10 @@ dialog.fullscreen .screen { padding-bottom: calc(24px + env(safe-area-inset-bott
 .map__card { position: absolute; left: 12px; right: 12px; bottom: 98px; z-index: 6; background: var(--bg); color: var(--text); border-radius: var(--r-lg); padding: 14px; box-shadow: var(--shadow); display: flex; flex-direction: column; gap: 10px; border: 1px solid var(--line); }
 /* Sits above the OpenStreetMap credit, which the tile licence requires to stay visible. */
 .map__nearest { position: absolute; left: 12px; right: 12px; bottom: 24px; z-index: 5; min-height: 60px; box-shadow: var(--shadow); font-size: 18px; }
+/* Why the map is empty, and the action that fixes it. The map stays usable around it. */
+.map__empty { position: absolute; left: 12px; right: 12px; bottom: 24px; z-index: 6; max-height: calc(100% - 48px); overflow-y: auto; background: var(--bg); border-radius: var(--r-lg); box-shadow: var(--shadow); }
+.map__empty .state { padding: 20px 16px; }
+.map__banner { padding: 8px 12px 0; background: var(--bg); }
 .map-pin { display: grid; place-items: center; background: none; border: 0; }
 .map-pin .dot { box-shadow: 0 1px 3px rgba(0, 0, 0, .35); }
 .map-pin--selected .dot { outline: 4px solid var(--orange); outline-offset: 2px; }

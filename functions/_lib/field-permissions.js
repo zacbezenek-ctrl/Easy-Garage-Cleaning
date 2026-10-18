@@ -7,14 +7,15 @@ import { customerPhotosEnabled } from './customer-photo-visibility.js';
 // its "on my way" message. Unset: every assigned crew member can, exactly as before.
 export const fieldLeadOnlyComplete = env => env?.FIELD_LEAD_ONLY_COMPLETE === 'true';
 
-// The P1-08 crew_lead role: stored staff roles when present, else the account's configured role.
-const crewLeadRole = session => (sanitizeStaffRoles(session?.staffRoles, session) || defaultStaffRoles(session)).includes('crew_lead');
+// The P1-08 crew_lead role: stored staff roles when present, else the account's configured role. A team_lead
+// (TEAM-LEAD, D6) works at crew-lead level on the jobs they are assigned to.
+const crewLeadRole = session => (sanitizeStaffRoles(session?.staffRoles, session) || defaultStaffRoles(session)).some(role => role === 'crew_lead' || role === 'team_lead');
 
 /**
  * Whether the signed-in employee leads this job. A named job.crewLead must match the session exactly by
  * username (a legacy display-name lead counts only when that name is unique, via the assignment matcher).
  * A job without a named lead is led by its only assigned member, or by an assigned member holding the
- * crew_lead role.
+ * crew_lead or team_lead role.
  */
 export async function fieldJobLead({ session, job, access }) {
   if (!session?.user || !job) return false;

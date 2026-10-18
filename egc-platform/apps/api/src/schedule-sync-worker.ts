@@ -9,7 +9,9 @@ import type {Actor} from "@egc/operations";
  * for the current change (never the page's visit key or an MCP requestId), so a
  * rerun replays the provider ledger instead of writing again. Off unless
  * EGC_SCHEDULE_SYNC_WORKER=true. Type-only imports keep this module loadable by the
- * root Hub tests. */
+ * root Hub tests. D9b: a calendar skip (no jobs calendar, or a deleted one) is handed to
+ * the Hub the same way; the Hub records it as "calendar mirror skipped" and takes the
+ * visit out of the queue, and the tick counts it as calendarSkipped, never failed. */
 type Json=Record<string,unknown>;
 type Env=Record<string,string|undefined>;
 type Logger=Pick<Console,"error">&Partial<Pick<Console,"info">>;
@@ -26,6 +28,8 @@ export const SCHEDULE_SYNC_WORKER_ACTOR_ID="schedule-sync-worker";
 export const SCHEDULE_SYNC_BATCH_LIMIT=25;
 const RESULT_CURSOR="schedule_sync:last_result",SUCCESS_CURSOR="schedule_sync:last_success";
 const DISABLED="schedule_sync_queue_disabled";
+/** D9b: must equal CALENDAR_SKIP_CODES in ./schedule-calendar.ts (checked by a test; kept here so this module needs no import). */
+export const SCHEDULE_SYNC_CALENDAR_SKIPS:ReadonlySet<string>=new Set(["schedule_calendar_deleted","schedule_calendar_not_configured"]);
 // The visit changed after selection (its mirror landed or it was rescheduled); the next tick re-reads it.
 const CHANGED_SINCE_SELECTION=new Set(["schedule_revision_conflict","schedule_sync_changed_since_selection"]);
 // The provider held a different schedule than the Hub when the sync tried to bind, or no longer
@@ -73,7 +77,7 @@ export async function runScheduleSyncTick({execute,workspace="egc",limit=SCHEDUL
   return {status:status!==null&&status<500?"rejected":"failed",code:code||"schedule_sync_queue_unavailable",counts:{}};
  }
  if(!items)return {status:"failed",code:"schedule_sync_queue_unverified",counts:{}};
- const counts={due,selected:items.length,synced:0,notNeeded:0,failed:0,conflicts:0,stateConflicts:0,unrecorded:0,deferred:0,complete,heartbeat};
+ const counts={due,selected:items.length,synced:0,notNeeded:0,calendarSkipped:0,failed:0,conflicts:0,stateConflicts:0,unrecorded:0,deferred:0,complete,heartbeat};
  for(const [index,item] of items.entries()){
   if(now()-started>=deadlineMs){counts.deferred=items.length-index;break;}
   let code:string;
@@ -86,7 +90,7 @@ export async function runScheduleSyncTick({execute,workspace="egc",limit=SCHEDUL
   }catch(error){code=failureOf(error).code||"schedule_provider_sync_unavailable";}
   if(STATE_CONFLICTS.has(code))counts.stateConflicts++;
   const id=requestId();
-  try{await execute(actor,{command:"schedule.sync_failed",requestId:id,portalVisitId:item.portalVisitId,expectedRevision:item.expectedRevision,syncRequestId:item.requestId,code},id);counts.failed++;}
+  try{await execute(actor,{command:"schedule.sync_failed",requestId:id,portalVisitId:item.portalVisitId,expectedRevision:item.expectedRevision,syncRequestId:item.requestId,code},id);if(SCHEDULE_SYNC_CALENDAR_SKIPS.has(code))counts.calendarSkipped++;else counts.failed++;}
   catch(error){
    const failure=failureOf(error);
    if(failure.code===DISABLED){counts.deferred=items.length-index;return {status:"disabled",code:DISABLED,counts,backlog};}

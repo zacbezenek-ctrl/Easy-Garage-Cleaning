@@ -10,6 +10,10 @@ import { ACCOUNTS, responses, seedDirectoryTarget, staffSessions } from './helpe
 // recorded with UPDATE_SNAPSHOTS=1 by running this file and its harness, and nothing else of
 // AUTH-ROLES, on the code before AUTH-ROLES: the integration branch at 7747762 (GUSTO-EXPORT,
 // which shapes the staff directory's answers). Never re-record it on a tree that has AUTH-ROLES.
+// One audited exception (D5, owner 2026-10-17): the default workday start moved from 08:00 to
+// 09:00, and every changed body was diffed field by field before the update. The only changes are
+// dispatchRules.workdayStart on the board and, on openings, constraints.workdayStart and the first
+// candidate (08:00-10:00 became 09:00-11:00, gap 540 became 480 minutes).
 const ENVS = {
   off: {},
   permissions: { EGC_STAFF_ROLE_PERMISSIONS: 'true' },
@@ -18,6 +22,12 @@ const ENVS = {
   accessFalsePermissions: { EGC_STAFF_ROLE_ACCESS: 'false', EGC_STAFF_ROLE_PERMISSIONS: 'true' },
 };
 const sha = text => createHash('sha256').update(text).digest('hex').slice(0, 16);
+// TEAM-LEAD (owner decision D6, 2026-10-17) added the team_lead role (staff-roles.js) and the door_to_door skill
+// (staff-skills.js, catalog v2) to the catalogs every staff kind reads, whatever the flags. Exactly those additions are
+// taken back out of each answer here, so every other byte still compares with the pre-AUTH-ROLES snapshot, which stays
+// as recorded. Anything else that changes still fails this test.
+const CATALOG_ADDITIONS = [['"team_lead",', ''], ['"team_lead":[],', ''], [',{"id":"door_to_door","label":"Door-to-door sales"}', ''], ['"2026-10-staff-skills-v2"', '"2026-09-staff-skills-v1"']];
+const withoutAdditions = body => CATALOG_ADDITIONS.reduce((text, [added, before]) => text.replaceAll(added, before), body);
 function render(matrix) {
   const bodies = new Map(), index = [];
   for (const [key, rows] of matrix) for (const [label, body] of rows) { bodies.set(sha(body), body); index.push(`${key} | ${label} | ${sha(body)}`); }
@@ -32,7 +42,7 @@ test('with EGC_STAFF_ROLE_ACCESS off every staff kind gets byte-identical respon
   for (const [mode, flags] of Object.entries(ENVS)) {
     // Each mode starts from the seeded vault, so one mode's staff directory demotion does not change the next.
     reseed();
-    for (const user of ACCOUNTS) matrix.push([`${mode} ${user}`, await responses(cookies[user], { ...env, ...flags })]);
+    for (const user of ACCOUNTS) matrix.push([`${mode} ${user}`, (await responses(cookies[user], { ...env, ...flags })).map(([label, body]) => [label, withoutAdditions(body)])]);
   }
   const text = render(matrix);
   if (process.env.UPDATE_SNAPSHOTS === '1') { mkdirSync(new URL('./snapshots/', import.meta.url), { recursive: true }); writeFileSync(snapshot, text); }

@@ -6,7 +6,9 @@ import { travelEstimator } from '../_lib/dispatch-travel.js';
 import { dispatchFunnelOptions } from '../_lib/dispatch-funnel.js';
 import { crewRosterPhotoStore } from '../_lib/crew-public-profile.js';
 import { firstGhlTagAttempt } from '../_lib/ghl-tag-outbox.js';
+import { firstScheduleMirrorAttemptFor } from '../_lib/ghl-schedule-mirror.js';
 import { can, staffRoleAccessEnabled } from '../_lib/staff-roles.js';
+import { crewAutoAssignEnabled } from '../_lib/dispatch-crew-assign.js';
 
 function reply(status, body) {
   return new Response(JSON.stringify(body), { status, headers: { 'Content-Type':'application/json','Cache-Control':'no-store','X-Content-Type-Options':'nosniff' } });
@@ -63,7 +65,7 @@ async function customerHandoff(store, shown, jobId, env) {
 // A schedule.book holder (EGC_STAFF_ROLE_ACCESS, dispatch-booking.js) reads the
 // board and saves only what mutateBooking allows; everyone else needs dispatch.write.
 // Its viewer carries booker:true, so the board hides the crew controls it cannot save.
-export function dispatchHandlers({ session = getHubSession, storage = dispatchStorage, travel = travelEstimator, now = () => new Date(), ghlTags = firstGhlTagAttempt } = {}) {
+export function dispatchHandlers({ session = getHubSession, storage = dispatchStorage, travel = travelEstimator, now = () => new Date(), ghlTags = firstGhlTagAttempt, ghlMirror = firstScheduleMirrorAttemptFor } = {}) {
   return {
     async get({request,env}) {
       try {
@@ -71,7 +73,7 @@ export function dispatchHandlers({ session = getHubSession, storage = dispatchSt
         const params = Object.fromEntries(new URL(request.url).searchParams.entries());
         const store = storage(env), photos = crewRosterPhotoStore(store), overview = await dispatchOverview(photos.store,actor,params,now(),{travel:travel({env,store,now}),readiness:true,...(access.booker ? {authorize:bookerAuthorize(env)} : {})});
         // Approved crew headshots (P4-07), read alongside the job scans; an unreadable profile store leaves the roster unchanged.
-        return reply(200,{...overview,...(params.view === 'job' ? {customerHandoff:await customerHandoff(photos.store,overview.job,params.jobId,env)} : {}),...(Array.isArray(overview.roster) ? {roster:await photos.attach(overview.roster)} : {}),...(access.booker && Array.isArray(overview.availability) ? {availability:overview.availability.map(away)} : {}),viewer:{id:actor.user,...(access.booker ? {booker:true} : {}),...(staffRoleAccessEnabled(env) ? {canPerformWalkthrough:can(actor,'walkthrough.perform',env)} : {})},funnel:dispatchFunnelOptions()});
+        return reply(200,{...overview,...(params.view === 'job' ? {customerHandoff:await customerHandoff(photos.store,overview.job,params.jobId,env)} : {}),...(Array.isArray(overview.roster) ? {roster:await photos.attach(overview.roster)} : {}),...(access.booker && Array.isArray(overview.availability) ? {availability:overview.availability.map(away)} : {}),viewer:{id:actor.user,...(access.booker ? {booker:true} : {}),...(staffRoleAccessEnabled(env) ? {canPerformWalkthrough:can(actor,'walkthrough.perform',env)} : {})},funnel:dispatchFunnelOptions(),...(crewAutoAssignEnabled(env) ? {crewAutoAssign:true} : {})});
       } catch(error) { return errorResponse(error); }
     },
     async post({request,env,waitUntil}) {
@@ -86,12 +88,18 @@ export function dispatchHandlers({ session = getHubSession, storage = dispatchSt
         const store = storage(env), at = now().toISOString();
         // Saves read cached drive times only: no provider call or cache write
         // runs between the day locks and the schedule commit.
-        const options = {travel:travel({env,store,now,googleLimit:0,cacheWrites:false})};
+        // EGC_DISPATCH_CREW_AUTO_ASSIGN: a dispatcher's save picks a crew when it asks (autoCrew:true);
+        // a booker's is always staffed by the server (mutateBooking reads the flag itself). READ-BUDGET: the Hub's
+        // booking and dispatch screens never show a no-free-crew answer's alternatives, so none are searched for them.
+        const options = {travel:travel({env,store,now,googleLimit:0,cacheWrites:false}),...(crewAutoAssignEnabled(env) ? {crewAlternatives:false,...(!access.booker ? {autoCrew:'opt_in'} : {})} : {})};
         // mutateBooking saves through mutateDispatch, so a booker's save queues its HighLevel tags the same way.
         const result = access.booker ? await mutateBooking(store,actor,input,at,options,env) : await mutateDispatch(store,actor,input,at,options);
         // EGC_GHL_TAG_OUTBOX: the HighLevel tags this save queued get their first attempt after the response.
         const entry = result.job?.ghlTagEntry;
         if (entry?.id && entry.requestId === String(input.requestId).toLowerCase()) ghlTags({env,waitUntil},[entry.id],at);
+        // EGC_GHL_SCHEDULE_MIRROR (D9b): the HighLevel schedule mirror this save queued gets its first attempt after the
+        // response; the egc-worker drain retries it. Flag off: nothing is read or sent.
+        await ghlMirror({env,waitUntil},result.job?.id,input.requestId,at).catch(() => false);
         return reply(200,result);
       } catch(error) { return errorResponse(error); }
     },

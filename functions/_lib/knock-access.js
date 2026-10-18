@@ -1,12 +1,14 @@
 // Who may do what in canvassing. Identity is the existing Hub session; canvassing adds its own
 // profile per rep (knock_reps) that an admin must approve before the rep can do anything.
 // Admins are the Hub's business users (owner and managers); leads and knockers are set per rep.
-import { hasBusinessAccess } from './hub-session.js';
+import { hasBusinessAccess, isHubOwner } from './hub-session.js';
 import { knockFailure, write } from './knock-store.js';
 import { mergeSettings, ROLES, validateSettings } from '../../crew/knock-settings.js';
-import { validCollectionPolicy, validCommissionScope } from '../../crew/knock-money.js';
+import { SETTER_CONTRACT, validCollectionPolicy, validCommissionScope, validSetterTerms } from '../../crew/knock-money.js';
 
 const SAFE_KEY = /^[a-z0-9._-]{1,64}$/;
+// Every stored commission field an approval binds to.
+export const COMMISSION_FIELDS = Object.freeze(['rate', 'acceleratorEnabled', 'acceleratorThreshold', 'acceleratorRate', 'leadOverrideEnabled', 'leadOverrideRate']);
 
 function hexKey(text) {
   return [...new TextEncoder().encode(text)].map(b => b.toString(16).padStart(2, '0')).join('').slice(0, 120);
@@ -20,8 +22,10 @@ export function repKeyFor(username) {
 }
 
 export const isAdmin = session => Boolean(session?.user) && hasBusinessAccess(session);
+// Compensation approval is the owner's alone; managers keep every other admin action.
+export const isOwner = session => isAdmin(session) && isHubOwner(session) && session.role === 'owner';
 
-const sameSettings = (a, b) => {
+export const sameSettings = (a, b) => {
   if (a === b) return true;
   if (!a || !b || typeof a !== 'object' || typeof b !== 'object') return false;
   const keys = Object.keys(a).sort();
@@ -32,9 +36,9 @@ export async function loadSettings(store) {
   const doc = await store.get('knock_settings', 'current');
   const settings = mergeSettings(doc?.settings || {});
   // Known collection timing and cadence do not verify basis, attribution or the payroll anchor.
-  // No current UI writes this approval. A reviewed integration must supply the
-  // evidence for the complete contract and garage-only scope, bound to its settings.
-  const fields = ['rate', 'acceleratorEnabled', 'acceleratorThreshold', 'acceleratorRate', 'leadOverrideEnabled', 'leadOverrideRate'];
+  // Only the owner's compensation.approve action (knock-admin.js) writes this approval, with
+  // the evidence for the complete contract and garage-only scope, bound to its settings.
+  const fields = COMMISSION_FIELDS;
   const approval = doc?.compensationApproval;
   settings.commission.verified = Boolean(doc?.updatedBy && Number.isFinite(Date.parse(doc?.updatedAt)) &&
     fields.every(key => Object.hasOwn(doc?.settings?.commission || {}, key)) && !validateSettings(doc.settings).length &&
@@ -58,7 +62,25 @@ export async function loadSettings(store) {
   const planApproval = doc?.planApproval;
   settings.plan.verified = Boolean(planApproval?.channel === 'door_to_door' && planApproval.reference && planApproval.reviewedBy &&
     Number.isFinite(Date.parse(planApproval.reviewedAt)) && sameSettings(planApproval.plan, doc?.settings?.plan) && sameSettings(planApproval.gate, doc?.settings?.gate));
+  // Only once the owner approved the setter terms (setterTermsState), so a rep's rule text says they pay; absent before.
+  const setter = setterTermsState(doc, settings);
+  if (setter.verified) settings.commission.setter = { verified: true, approvedAt: setter.approvedAt };
   return settings;
+}
+
+/* The owner's approval of the appointment-setter and estimator terms (crew/knock-money.js SETTER_TERMS, D6b), written
+   only by knock-admin.js approveSetterTerms beside compensationApproval. Its shares are paid every two weeks with the
+   door-to-door commission, so it verifies only while that approval (and its pay cycle) does. Kept out of loadSettings,
+   whose settings go to every rep: callers that pay or show these shares read it with loadSetterTerms. */
+export function setterTermsState(doc, settings) {
+  const approval = doc?.setterApproval;
+  const verified = Boolean(settings?.commission?.verified === true && approval && approval.contract === SETTER_CONTRACT && validSetterTerms(approval.terms) &&
+    typeof approval.reference === 'string' && approval.reference.trim() && typeof approval.reviewedBy === 'string' && approval.reviewedBy && Number.isFinite(Date.parse(approval.reviewedAt)));
+  return { verified, approvedAt: verified ? approval.reviewedAt : null, reference: verified ? approval.reference : null };
+}
+
+export async function loadSetterTerms(store, settings) {
+  return setterTermsState(await store.get('knock_settings', 'current'), settings);
 }
 
 const publicRep = rep => rep && ({
@@ -107,6 +129,12 @@ export function requireActive(rep) {
 export function requireAdmin(session) {
   if (!session?.user) throw knockFailure('Sign in to use canvassing.', 401, 'knock_sign_in_required');
   if (!isAdmin(session)) throw knockFailure('Only an admin can do that.', 403, 'knock_admin_required');
+  return session;
+}
+
+export function requireOwner(session) {
+  requireAdmin(session);
+  if (!isOwner(session)) throw knockFailure('Only the owner can approve commission terms.', 403, 'knock_owner_required');
   return session;
 }
 

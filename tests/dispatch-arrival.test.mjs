@@ -305,7 +305,8 @@ test('legacy booking saves carry the arrival reset warning for the Hub toast wit
   const series = await booking.saveSeries({...again.job,time:'16:00',endTime:'17:00',recurrence:'none'},again.job);
   assert.match(series.job.arrivalNotice,/was cleared/,'the older series booking form gets the same notice');
   const suite = readFileSync(new URL('../employee-suite.js',import.meta.url),'utf8'), hub = readFileSync(new URL('../employee.html',import.meta.url),'utf8');
-  assert.match(suite,/'Saved in Hub dispatch\.'\)\+\(saved\.arrivalNotice\?' '\+saved\.arrivalNotice:''\)\)/,'opsSaveBooking appends the notice to its toast');
+  // Updated deliberately (D2D-BOARD fix): with crew auto-assign the toast also says which crew the server picked, before the arrival notice.
+  assert.match(suite,/'Saved in Hub dispatch\.'\)\+\(saved\.crewNotice\?' '\+saved\.crewNotice:''\)\+\(saved\.arrivalNotice\?' '\+saved\.arrivalNotice:''\)\)/,'opsSaveBooking appends the notice to its toast');
   assert.match(hub,/\+\(result\.job\?\.arrivalNotice\?' '\+result\.job\.arrivalNotice:''\);/,'confirmBooking appends the notice to its toast');
 });
 

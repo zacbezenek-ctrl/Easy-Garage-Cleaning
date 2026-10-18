@@ -147,6 +147,8 @@ The rules keep every new server-only record (audit log, money receipts, website-
 | Funnel tracking events and the AI funnel reads | Six `funnelEvents` indexes: (type, denverDate), (projectId, occurredAt), (jobId, occurredAt), (type, recordedAt), (walkthroughId, occurredAt), (highlevelContactId, occurredAt) | The command above (`firestore.indexes.json`) |
 | Field-cost totals by date ([4.5](#45-field-costs)) | Single-field exemption: collection group `fieldExpenses`, field `incurredOn`, collection-group scope, Ascending | Firebase console → Firestore → Indexes → Single field → Add exemption |
 | Audit log with filters (`/api/hub-audit?entity=…`) | The one Firestore asks for | Create it if a filtered read answers `hub_audit_unavailable` |
+| Crew schedule reads only its own days plus multi-day jobs running into them | `jobs` (endDate, date) | The command above. Until it is built the schedule still loads; it just reads 32 days of jobs each time |
+| Door-to-door My sales reads only the rep's newest 50 walkthroughs (and any still booking) | `knock_walkthroughs` (repKey, setAt descending, `__name__`) | The command above. Until it is built My sales still loads; it reads every walkthrough the rep set |
 | Business hub sign-in clean-up | Keep the automatic index on `business_sessions.expiresAt` | Do **not** add an exemption |
 
 Everything else (timecards, website-lead retries) uses Firestore's automatic indexes.
@@ -357,6 +359,7 @@ Every website lead already goes to HighLevel. Stage 2 makes that durable (nothin
 - **Set:** `EGC_STAFF_DIRECTORY_ENABLED=true`
 - **Where:** Cloudflare Pages, plain.
 - **Turns on:** Hub → Staff directory: roles (including **Sales** for the walkthrough rep and **Phone** for the phone person), skills, pay history with future-dated raises, and weekly availability. While `EGC_STAFF_ROLE_PERMISSIONS` stays off (recommended for now), saved roles are recorded but do not change what anyone can open.
+- **Also turns on (D10, 2026-10-17):** Hub → My EGC → **Team directory** for every signed-in staff member: names, approved photos, roles, crews, shirt sizes and birthdays (month and day, only for people who leave "Show my birthday" on). Birth year, age, phones, emergency contacts and the HighLevel user ID are shown only to the owner and managers, who also get the shirt-size totals and a CSV for uniform orders. Each employee sets their own shirt size and birthday there or on Getting started; managers edit anyone's. Customers and the public never see any of it.
 - **Needs first:**
   1. Run the two staff migrations, dry run then apply: `staff-profile-pay-roles-v1` and `employee-account-staff-roles-v1`. They run from a laptop browser signed in as you; the steps are in `docs/employee-vault-migrations.md` (or ask your developer).
   2. Tell managers: once this is on, pay changes go through you in the directory, not the old profile form.

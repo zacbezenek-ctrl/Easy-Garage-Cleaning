@@ -3,7 +3,8 @@
    fields. A house's state is always derived from its effective knocks, never edited in place. */
 import { zonedParts, zonedDate } from './knock-time.js';
 
-export const ANSWERED = new Set(['not_interested', 'come_back', 'look', 'sold']);
+// walkthrough_set (KNOCK-BRIDGE): someone answered and asked for an estimator; it is not a garage look by the rep.
+export const ANSWERED = new Set(['not_interested', 'come_back', 'look', 'sold', 'walkthrough_set']);
 export const LOOKED = new Set(['look', 'sold']);
 export const GO_BACK = new Set(['no_answer', 'come_back']);
 export const isDoor = outcome => outcome !== 'skipped_sign';
@@ -15,6 +16,7 @@ export const OUTCOME_COLORS = Object.freeze({
   not_interested: '#6b7280',
   look: '#7c3aed',
   sold: '#16a34a',
+  walkthrough_set: '#0d9488',
   skipped_sign: '#dc2626',
   blocked: '#dc2626',
 });
@@ -130,6 +132,8 @@ export function doorStatus(house, summary, settings, now = Date.now()) {
   if (!summary?.lastOutcome) return { knockable: true, status: 'new', reason: 'Not knocked yet' };
   const outcome = summary.lastOutcome;
   if (outcome === 'sold' || outcome === 'look') return { knockable: false, status: 'done', reason: outcome === 'sold' ? 'Sold' : 'Look done' };
+  // The rep who set the walkthrough may still close the sale at the door (knock-rep.js lets only Sold through).
+  if (outcome === 'walkthrough_set') return { knockable: false, status: 'done', reason: 'Walkthrough set' };
   if (outcome === 'not_interested') {
     const restUntil = addMonths(Date.parse(summary.lastAt), Number(goBacks.notInterestedRestMonths ?? 6));
     return now >= restUntil
@@ -181,6 +185,90 @@ export function nearestSuggestion(entries, position) {
     if (best) return best;
   }
   return null;
+}
+
+/* ---- Neighborhoods: where they are and how far ---- */
+
+const coordinate = value => (typeof value === 'number' ? value : typeof value === 'string' && value.trim() ? Number(value) : NaN);
+const validPoint = p => Boolean(p) && Number.isFinite(coordinate(p.lat)) && Number.isFinite(coordinate(p.lng)) &&
+  Math.abs(coordinate(p.lat)) <= 90 && Math.abs(coordinate(p.lng)) <= 180 && !(coordinate(p.lat) === 0 && coordinate(p.lng) === 0);
+const round6 = value => Math.round(value * 1e6) / 1e6;
+
+// [minLat, minLng, maxLat, maxLng] (as the house import writes it) to its middle, or null.
+export function bboxCenter(bbox) {
+  if (!Array.isArray(bbox) || bbox.length !== 4 || !bbox.every(Number.isFinite)) return null;
+  const point = { lat: round6((bbox[0] + bbox[2]) / 2), lng: round6((bbox[1] + bbox[3]) / 2) };
+  return validPoint(point) ? point : null;
+}
+
+// The mean point and bounding box of some houses: { center, bbox, count }, or null with none placed.
+export function pointsSummary(points) {
+  let count = 0, lat = 0, lng = 0, minLat = Infinity, minLng = Infinity, maxLat = -Infinity, maxLng = -Infinity;
+  for (const p of points || []) {
+    if (!validPoint(p)) continue;
+    const a = Number(p.lat), b = Number(p.lng);
+    count += 1; lat += a; lng += b;
+    minLat = Math.min(minLat, a); minLng = Math.min(minLng, b); maxLat = Math.max(maxLat, a); maxLng = Math.max(maxLng, b);
+  }
+  return count ? { center: { lat: round6(lat / count), lng: round6(lng / count) }, bbox: [minLat, minLng, maxLat, maxLng], count } : null;
+}
+
+/* Where a neighborhood is: its stored center, else the middle of its bbox, else the mean of its houses
+   (phone records carry the neighborhood id as n, server records as neighborhoodId). */
+export function neighborhoodCenter(nbhd, houses = null) {
+  if (validPoint(nbhd?.center)) return { lat: Number(nbhd.center.lat), lng: Number(nbhd.center.lng) };
+  const middle = bboxCenter(nbhd?.bbox);
+  if (middle || !houses) return middle;
+  const own = [];
+  for (const house of houses) if ((house?.n ?? house?.neighborhoodId) === nbhd?.id) own.push(house);
+  return pointsSummary(own)?.center || null;
+}
+
+/* Neighborhoods nearest the phone first: [{ ...n, center, meters }]. meters is null without a GPS fix
+   or a known center; those rows keep name order after the placed ones. houses (optional) places a
+   neighborhood that has no stored center from the houses on the phone. */
+export function neighborhoodsByDistance(position, list, { houses = null } = {}) {
+  const here = validPoint(position) ? { lat: Number(position.lat), lng: Number(position.lng) } : null;
+  let byNeighborhood = null;
+  const housesFor = () => {
+    if (byNeighborhood) return byNeighborhood;
+    byNeighborhood = new Map();
+    for (const house of houses || []) {
+      const id = house?.n ?? house?.neighborhoodId;
+      if (!byNeighborhood.has(id)) byNeighborhood.set(id, []);
+      byNeighborhood.get(id).push(house);
+    }
+    return byNeighborhood;
+  };
+  const rows = (list || []).map(n => {
+    const center = neighborhoodCenter(n) || (houses ? pointsSummary(housesFor().get(n.id))?.center || null : null);
+    return { ...n, center, meters: here && center ? Math.round(distanceMeters(here, center)) : null };
+  });
+  const name = (a, b) => String(a.name || '').localeCompare(String(b.name || ''));
+  return rows.sort((a, b) => (a.meters == null) - (b.meters == null) || (a.meters ?? 0) - (b.meters ?? 0) || name(a, b));
+}
+
+// "0.4 mi", "12 mi"; under a tenth of a mile reads "here".
+export function milesLabel(meters) {
+  if (!Number.isFinite(meters)) return '';
+  const miles = meters / 1609.344;
+  if (miles < 0.1) return 'here';
+  return miles < 10 ? `${miles.toFixed(1)} mi` : `${Math.round(miles)} mi`;
+}
+
+/* Why a rep's map and lists are empty, most basic cause first: 'pending' / 'inactive' (not approved),
+   'none' (no neighborhood claimed or assigned), 'locked' (every one locked), 'empty' (no houses imported),
+   'not_loaded' (houses not on this phone yet), 'unmapped' (houses without a location), or 'ok'. */
+export function territoryState({ rep = null, neighborhoods = [], houses = [] } = {}) {
+  if (rep?.status === 'inactive') return 'inactive';
+  if (rep?.status !== 'active') return 'pending';
+  if (!neighborhoods.length) return 'none';
+  const open = neighborhoods.filter(n => !n.locked);
+  if (!open.length) return 'locked';
+  const openIds = new Set(open.map(n => n.id));
+  const mine = [...houses].filter(house => openIds.has(house?.n ?? house?.neighborhoodId));
+  if (!mine.length) return open.every(n => n.importedCount === 0) ? 'empty' : 'not_loaded';
+  return mine.some(validPoint) ? 'ok' : 'unmapped';
 }
 
 export const houseNumberValue = number => {

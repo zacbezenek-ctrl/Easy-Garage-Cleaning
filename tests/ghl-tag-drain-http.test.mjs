@@ -183,6 +183,24 @@ test('/api/dispatch starts the first attempt after the save (waitUntil) only whe
   assert.deepEqual(ghl.lines(), ['POST /contacts/contact-1/tags']);
 });
 
+test('/api/dispatch hands the saved visit to the schedule mirror (D9b) once, after the save; a mirror failure never fails the save', async () => {
+  const run = async mirror => {
+    const store = memory();
+    store.rows.set('customers/c1', { id: 'c1', name: 'Synthetic Customer', highlevelContactId: 'contact-1', revision: 'c1r' });
+    Object.assign(store, { jobs: async () => [...store.rows].filter(([key]) => key.startsWith('jobs/')).map(([, row]) => structuredClone(row)), resources: async () => [], roster: async () => [{ id: 'crew1', name: 'Synthetic Crew', role: 'crew' }] });
+    const handlers = dispatchHandlers({ session: async () => owner, storage: () => store, travel: () => null, now: () => new Date(NOW), ghlTags: () => false, ghlMirror: mirror });
+    const requestId = randomUUID();
+    const response = await handlers.post({ request: new Request(`${ORIGIN}/api/dispatch`, { method: 'POST', headers: { Origin: ORIGIN, 'Content-Type': 'application/json' }, body: JSON.stringify({ action: 'schedule.create', requestId, customerId: 'c1', kind: 'walkthrough', changes: { date: '2026-09-23', time: '09:00', endTime: '10:00', assignedCrew: ['crew1'], jobInstructions: 'Synthetic walkthrough' } }) }), env: {}, waitUntil: () => {} });
+    return { response, requestId, body: await response.json() };
+  };
+  const calls = [];
+  const saved = await run(async (context, jobId, requestId, at) => { calls.push({ jobId, requestId, at, waitUntil: typeof context.waitUntil }); return false; });
+  assert.equal(saved.response.status, 200);
+  assert.deepEqual(calls, [{ jobId: saved.body.job.id, requestId: saved.requestId, at: NOW, waitUntil: 'function' }]);
+  const failing = await run(async () => { throw new Error('mirror down'); });
+  assert.equal(failing.response.status, 200, 'the Hub save stands whatever the mirror does');
+});
+
 test('/api/walkthrough-visit starts the first attempt for an outcome it queued', async () => {
   const store = memory(), calls = [];
   store.rows.set('jobs/w1', { id: 'w1', type: 'walkthrough', status: 'scheduled', pipelineStatus: 'scheduled', customerId: 'c1', customer: 'Synthetic Customer', date: '2026-09-22', time: '09:00', endTime: '10:00', assignedCrew: ['zacb'], projectId: 'project_w1', highlevelContactId: 'contact-1', revision: 'w1r' });
