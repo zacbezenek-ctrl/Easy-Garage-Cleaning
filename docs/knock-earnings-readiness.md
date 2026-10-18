@@ -230,21 +230,36 @@ door-to-door terms, whose two-week pay cycle pays them). It records
 (crew/knock-money.js): 13% setter + 7% estimator on a walkthrough a rep set, 7%
 on a walkthrough an estimator sold directly, of the job's whole price including
 goods, rounded to the cent, earned when the job is closed and paid in full (or
-at the approval, if later, so no closed period changes). Under them a signed
-walkthrough handoff for a garage transformation counts as garage work, and its
-signer is the estimator unless the office or the door booking recorded one.
-Until the approval verifies every row stays held exactly as described above. The
-office settles a setter record's classification once in Admin > Setters
-(`setter.classify`: garage or junk removal, and optionally its estimator, with a
-review reference; a settled classification is never changed there). Earned
+at the approval, or when the office recorded or settled the setter record or
+classification, if later, so no closed period changes). Under them a signed
+walkthrough handoff counts as garage work when what was signed shows it (a
+charged service, product or labor line that is not junk removal, or a finishing
+option of a single signed total); a junk-only quote stays unverified. Its signer
+is the estimator unless the office recorded one; an estimator the door booking
+recorded who did not sign is held (`estimator_attribution_conflict`) until the
+office settles it. Until the approval verifies every row stays held exactly as
+described above. The office settles a setter record's classification once in
+Admin > Setters (`setter.classify`: garage or junk removal, and optionally its
+estimator, with a review reference; a settled classification is never changed
+there, and a recorded estimator changes only to the handoff's signer or by the
+owner; nobody but the owner names themselves), and a direct sale's
+classification once in Admin > Estimators (`estimator.classify`). Earned
 shares join the commission statement (Admin > Money, the commission CSV's
 `setter_commission_included` and `estimator_commission_included` columns, the
-rep's My money); an estimator who has no canvassing account is paid with a
-recorded payout under their Hub staff key. Admin > Estimators lists every
-estimator's 7% (walkthroughs signed in the last 365 days); each estimator sees
-their own in the Hub under My commission (`GET /api/estimator-commission`).
-Short payments, refunds, an unread record or more than 500 setter records hold
-the statement for review.
+rep's My money, which also counts the 7% of an employee who signs walkthroughs);
+an estimator who has no canvassing account is paid with a recorded payout under
+their Hub staff key. A payout records the shares it paid (`channelItems`): a
+share that later changes, moves or is earned again, and payments above what a
+period earned, hold the statement for finance (`channel_share_changed`,
+`payout_exceeds_earned`); nothing is clawed back or paid twice automatically.
+Admin > Estimators lists every estimator's 7% (walkthroughs signed in the last
+365 days); each estimator sees their own in the Hub under My commission
+(`GET /api/estimator-commission`). The statement reads setter records and
+signed handoffs from the 365 days before its pay period; an older one is held
+(`statement_lookback_exceeded`) wherever it shows. Short payments, refunds or
+cancellations after money was collected, and a door sale linked to the job, hold
+the shares and their recipients' statements for review; an unread record holds
+the people it names (or every row when its estimator is unknown).
 
 - [ ] Book a synthetic Hub walkthrough with the intended staff role, record its
   setter once, and verify another rep cannot claim or read it.

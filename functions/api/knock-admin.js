@@ -12,7 +12,7 @@ import { loadSettings, loadSetterTerms } from '../_lib/knock-access.js';
 import { rebuildDay } from '../_lib/knock-sync.js';
 import { addPayout, exportCsv, moneyView, periodFromParams } from '../_lib/knock-reports.js';
 import { classifySetter, recordSetterAttribution, setterAttributions, setterBatchReaderFor } from '../_lib/knock-setters.js';
-import { ESTIMATOR_LOOKBACK_DAYS, channelEarnings, estimatorLedger } from '../_lib/estimator-commission.js';
+import { ESTIMATOR_LOOKBACK_DAYS, channelEarnings, classifyEstimatorJob, estimatorLedger } from '../_lib/estimator-commission.js';
 import { addDays, zonedDate } from '../../crew/knock-time.js';
 import { csvResponse, errorResponse, forbiddenOrigin, readJson, reply, sameOrigin } from '../_lib/knock-http.js';
 import { dispatchStorage } from '../_lib/dispatch-storage.js';
@@ -121,6 +121,8 @@ const ACTIONS = {
   'sale.handoff': (store, admin, body, nowIso, env) => saleHandoff(store, admin, body, nowIso, env),
   'setter.record': recordSetterAttribution,
   'setter.classify': classifySetter,
+  // D6b: garage or junk for a direct walkthrough sale whose signed handoff does not show garage work.
+  'estimator.classify': classifyEstimatorJob,
   'sale.book': bridged(async (...args) => { const { sale, view } = await bookSale(...args); return { sale, booking: view }; }),
   'walkthrough.book': bridged(async (...args) => { const { walkthrough, view } = await bookWalkthrough(...args); return { walkthrough, booking: view }; }),
   'payout.add': addPayout,

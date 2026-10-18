@@ -554,7 +554,7 @@ async function settersSection() {
     const classifyId = uuid();
     return [field('Service', scope, null, 'classify-scope'), field('Review reference', ref, null, 'classify-reference'),
       field('Estimator', estimatorKey, null, 'classify-estimator'), field('Estimator review reference', estimatorRef, null, 'classify-estimator-reference'),
-      h('p', { class: 'caption muted' }, 'A classification is recorded once; finance reviews any later change.'),
+      h('p', { class: 'caption muted' }, 'A classification is recorded once; finance reviews any later change. An estimator already recorded changes only to the one who signed the handoff, or by the owner.'),
       h('button', { type: 'button', class: 'btn btn--primary btn--block', onclick: async () => {
         try {
           await action({ action: 'setter.classify', requestId: classifyId, walkthroughId: row.walkthroughId, serviceClassification: scope.value, classificationReference: ref.value.trim(),
@@ -581,7 +581,7 @@ async function settersSection() {
         h('td', {}, row.estimatorKey || 'Unverified'), h('td', {}, row.state.replaceAll('_', ' ')),
         h('td', { class: 'num' }, share(row, 'setter')), h('td', { class: 'num' }, share(row, 'estimator')),
         h('td', {}, (row.reviewReasons || []).join(', ').replaceAll('_', ' ')),
-        h('td', {}, (row.reviewReasons || []).includes('service_scope_unverified') || (row.reviewReasons || []).includes('recipient_unverified')
+        h('td', {}, ['service_scope_unverified', 'recipient_unverified', 'estimator_attribution_conflict'].some(reason => (row.reviewReasons || []).includes(reason))
           ? h('button', { type: 'button', class: 'btn btn--secondary btn--sm', onclick: classify(row) }, 'Classify…') : null)))))),
     data.truncated ? banner('warning', 'info', 'More records need review', 'Only the first 100 setter records are shown.') : null,
   ] };
@@ -591,6 +591,20 @@ async function settersSection() {
 
 async function estimatorsSection() {
   const data = await load('estimators', {}, { force: true });
+  // A direct walkthrough sale whose signed handoff does not show garage work: the office settles it once (estimator.classify).
+  const classify = row => () => sheet(`Classify job ${row.jobId}`, close => {
+    const scope = h('select', { class: 'input', id: 'estimator-classify-scope' }, [['garage', 'Verified garage work'], ['junk_removal', 'Junk removal — no commission']].map(([value, label]) => h('option', { value }, label)));
+    const ref = h('input', { class: 'input', id: 'estimator-classify-reference', placeholder: 'Review reference (no customer details)' });
+    const classifyId = uuid();
+    return [field('Service', scope, null, 'estimator-classify-scope'), field('Review reference', ref, null, 'estimator-classify-reference'),
+      h('p', { class: 'caption muted' }, 'A classification is recorded once; finance reviews any later change.'),
+      h('button', { type: 'button', class: 'btn btn--primary btn--block', onclick: async () => {
+        try {
+          await action({ action: 'estimator.classify', requestId: classifyId, jobId: row.jobId, serviceClassification: scope.value, classificationReference: ref.value.trim() });
+          close(true); invalidate('estimators'); app.render();
+        } catch (error) { toast(error.message, { tone: 'bad' }); }
+      } }, 'Save classification')];
+  });
   const amount = row => row.state === 'earned' ? money(row.earnedCommission, true) : Number.isFinite(row.projectedCommission) ? `${money(row.projectedCommission, true)} projected`
     : row.earnedCommission === 0 ? money(0, true) : '–';
   const totals = new Map();
@@ -609,12 +623,14 @@ async function estimatorsSection() {
       h('tbody', {}, [...totals].sort(([a], [b]) => a.localeCompare(b)).map(([key, sum]) => h('tr', {}, h('td', {}, h('b', {}, key)), h('td', { class: 'num' }, String(sum.jobs)),
         h('td', { class: 'num' }, data.terms.verified ? money(sum.earned, true) : '–'), h('td', { class: 'num' }, data.terms.verified ? money(sum.projected, true) : '–')))))) : null,
     h('div', { class: 'card table-wrap' }, h('table', { class: 'table' },
-      h('thead', {}, h('tr', {}, ['Job', 'Job date', 'Estimator', 'How it was set', 'State', `Estimator ${CHANNEL_PERCENTS.estimator}%`, 'Review'].map(label => h('th', {}, label)))),
+      h('thead', {}, h('tr', {}, ['Job', 'Job date', 'Estimator', 'How it was set', 'State', `Estimator ${CHANNEL_PERCENTS.estimator}%`, 'Review', ''].map(label => h('th', {}, label)))),
       h('tbody', {}, data.rows.length ? data.rows.map(row => h('tr', {}, h('td', {}, row.jobId || row.walkthroughId), h('td', {}, row.jobDate ? dateLabel(row.jobDate) : '–'),
         h('td', {}, row.estimatorKey || 'Unverified'), h('td', {}, row.channel === 'direct_estimator' ? 'Estimator\'s own sale' : `Set at the door${row.setterKey ? ` by ${row.setterKey}` : ''}`),
-        h('td', {}, row.state.replaceAll('_', ' ')), h('td', { class: 'num' }, amount(row)), h('td', {}, (row.reviewReasons || []).join(', ').replaceAll('_', ' '))))
-        : h('tr', {}, h('td', { colspan: '7', class: 'muted' }, 'No signed walkthrough sales yet.'))))),
-    data.truncated ? banner('warning', 'info', 'More records need review', 'Not every setter record was read; Money holds its statement until finance reviews them.') : null,
+        h('td', {}, row.state.replaceAll('_', ' ')), h('td', { class: 'num' }, amount(row)), h('td', {}, (row.reviewReasons || []).join(', ').replaceAll('_', ' ')),
+        h('td', {}, row.channel === 'direct_estimator' && row.jobId && (row.reviewReasons || []).includes('service_scope_unverified')
+          ? h('button', { type: 'button', class: 'btn btn--secondary btn--sm', onclick: classify(row) }, 'Classify…') : null)))
+        : h('tr', {}, h('td', { colspan: '8', class: 'muted' }, 'No signed walkthrough sales yet.'))))),
+    data.truncated ? banner('warning', 'info', 'More records need review', 'Not every setter record was read; Money holds the statements of the people they name until finance reviews them.') : null,
   ] };
 }
 

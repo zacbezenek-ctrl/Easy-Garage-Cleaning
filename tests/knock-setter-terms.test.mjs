@@ -22,13 +22,14 @@ const env = knockEnv({ HUB_AUTH_USERS_JSON: JSON.stringify({
   TylerG: { passwordHash: 'test', role: 'manager', displayName: 'Tyler' },
   'Rep.One': { passwordHash: 'test', role: 'sales', displayName: 'Rep One' },
   'Estimator.One': { passwordHash: 'test', role: 'sales', displayName: 'Estimator One' },
+  'Estimator.Two': { passwordHash: 'test', role: 'sales', displayName: 'Estimator Two' },
 }) });
 const owner = { user: 'ZacB', role: 'owner', businessAccess: true }, office = { user: 'TylerG', role: 'manager', businessAccess: true };
 const setterApproval = (extra = {}) => ({ contract: SETTER_CONTRACT, reference: 'synthetic-d6b-record', reviewedBy: 'ZacB', reviewedAt: APPROVED_AT, terms: { ...SETTER_TERMS }, ...extra });
 // The $3,000 job of the review's scenario: a rep set the walkthrough at the door, the estimator signed it, the customer
 // paid in full by a verified card payment.
 const paidJob = (id, walkthroughId, amount = 3000, extra = {}) => ({ type: 'job', status: 'scheduled', date: '2026-10-19', sourceWalkthroughId: walkthroughId,
-  handoffVersion: 1, handoffRequestId: `req-${id}`, serviceType: 'Garage transformation', customer: 'Synthetic Customer',
+  handoffVersion: 1, handoffRequestId: `req-${id}`, serviceType: 'Garage transformation', scope: { finish: ['cleanout', 'shelving'] }, customer: 'Synthetic Customer',
   estimate: { status: 'accepted', amount, acceptedAt: '2026-10-17T15:00:00Z' }, acceptance: { recordedBy: 'Estimator.One', acceptedAt: '2026-10-17T14:55:00Z' },
   payment: { amount, verified: true, stripeSessions: [{ sessionId: `cs_test_${id.replace(/-/g, "")}`, paymentIntentId: `pi_${id.replace(/-/g, "")}`, amount, purpose: 'balance', verifiedAt: '2026-10-19T20:00:00Z' }] }, ...extra });
 const visit = (id, jobId) => ({ type: 'walkthrough', status: 'completed', convertedJobId: jobId, walkthroughOutcome: { outcome: 'sold_on_site' }, assignedCrew: ['estimator.one'] });
@@ -51,7 +52,9 @@ function world({ approved = true, settings = approvedKnockSettings(), seed = {} 
   });
   return { fake, knock: () => createKnockStore(env, fake.fetcher), dispatch: () => dispatchStorage(env, fake.fetcher) };
 }
-const admin = (w, clock = NOW) => knockAdminHandlers({ storage: () => w.knock(), dispatch: () => w.dispatch(), now: () => new Date(clock) });
+// The dispatch roster (the staff an estimator or a payout may name), without the employee-account store.
+const ROSTER = [{ id: 'estimator.one', name: 'Estimator One', role: 'sales' }, { id: 'estimator.two', name: 'Estimator Two', role: 'sales' }, { id: 'tylerg', name: 'Tyler', role: 'manager' }, { id: 'zacb', name: 'Zac', role: 'owner' }];
+const admin = (w, clock = NOW) => knockAdminHandlers({ storage: () => w.knock(), dispatch: () => ({ ...w.dispatch(), roster: async () => ROSTER }), now: () => new Date(clock) });
 const reports = (w, clock = NOW) => knockReportsHandlers({ storage: () => w.knock(), dispatch: () => w.dispatch(), now: () => new Date(clock) });
 const as = async (user, request) => request(await cookieFor(env, user));
 
@@ -183,16 +186,20 @@ test('periodStatement adds channel shares only in their period and holds every r
   assert.doesNotMatch(commissionCsv(periodStatement({ reps: [], settings, period }), period), /setter_commission/);
 });
 
-test('the office classifies a bridged setter record once (junk earns nothing) and can name its estimator; retries are idempotent', async () => {
+test('the office classifies a bridged setter record once (junk earns nothing); only the owner changes its recorded estimator to someone who did not sign; retries are idempotent', async () => {
   const w = world();
   const body = { requestId: uuid(), walkthroughId: 'walk-1', serviceClassification: 'junk_removal', classificationReference: 'synthetic-scope-review' };
   await assert.rejects(classifySetter(w.knock(), office, { ...body, serviceClassification: 'unverified' }, NOW), { code: 'knock_setter_scope' });
   await assert.rejects(classifySetter(w.knock(), office, { ...body, walkthroughId: 'walk-9' }, NOW), { code: 'knock_setter_missing' });
-  await assert.rejects(classifySetter(w.knock(), office, { ...body, estimatorKey: 'Estimator.Two' }, NOW), { code: 'knock_setter_estimator' });
-  const result = await call(admin(w).post, await as('TylerG', cookie => post('/api/knock-admin', { action: 'setter.classify', ...body, estimatorKey: 'Estimator.Two', estimatorReference: 'synthetic-roster-review' }, cookie)), env);
+  await assert.rejects(classifySetter(w.knock(), office, { ...body, estimatorKey: 'Estimator.Two' }, NOW), { code: 'knock_setter_estimator' }, 'a reference is required');
+  // A manager cannot move the bridge's estimator to someone who did not sign the handoff (Estimator.One signed it).
+  const classify = { action: 'setter.classify', ...body, estimatorKey: 'Estimator.Two', estimatorReference: 'synthetic-roster-review' };
+  const refused = await call(admin(w).post, await as('TylerG', cookie => post('/api/knock-admin', classify, cookie)), env);
+  assert.deepEqual([refused.status, refused.body.code, w.fake.get('knock_setters/walk-1').estimatorKey], [409, 'knock_setter_conflict', 'estimator.one'], 'nothing was reassigned');
+  const result = await call(admin(w).post, await as('ZacB', cookie => post('/api/knock-admin', classify, cookie)), env);
   assert.equal(result.status, 200);
   const saved = w.fake.get('knock_setters/walk-1');
-  assert.deepEqual([saved.serviceClassification, saved.classificationReference, saved.estimatorKey, saved.classifiedBy], ['junk_removal', 'synthetic-scope-review', 'estimator.two', 'TylerG']);
+  assert.deepEqual([saved.serviceClassification, saved.classificationReference, saved.estimatorKey, saved.classifiedBy, saved.estimatorClassifiedBy], ['junk_removal', 'synthetic-scope-review', 'estimator.two', 'ZacB', 'ZacB']);
   assert.deepEqual({ ...w.fake.get(`knock_receipts/setter_classify_${body.requestId}`).previous }, { serviceClassification: 'unverified', classificationReference: '', estimatorKey: 'estimator.one', estimatorReference: 'knock-walkthrough:kw-1' });
   assert.equal((await classifySetter(w.knock(), office, { ...body, estimatorKey: 'estimator.two', estimatorReference: 'synthetic-roster-review' }, NOW)).duplicate, true);
   await assert.rejects(classifySetter(w.knock(), office, { ...body, requestId: uuid(), serviceClassification: 'garage' }, NOW), { code: 'knock_setter_conflict' }, 'a settled classification is never changed here');

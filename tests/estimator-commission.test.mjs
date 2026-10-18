@@ -20,7 +20,7 @@ const env = knockEnv({ HUB_AUTH_USERS_JSON: JSON.stringify({
   'Estimator.Two': { passwordHash: 'test', role: 'sales', displayName: 'Estimator Two' },
 }) });
 const job = (id, walkthroughId, amount, signer = 'Estimator.One', extra = {}) => ({ type: 'job', status: 'scheduled', date: '2026-10-19', sourceWalkthroughId: walkthroughId,
-  handoffVersion: 1, handoffRequestId: `req${id}`, serviceType: 'Garage transformation', customer: 'Synthetic Customer', phone: '9705550100',
+  handoffVersion: 1, handoffRequestId: `req${id}`, serviceType: 'Garage transformation', scope: { finish: ['cleanout'] }, customer: 'Synthetic Customer', phone: '9705550100',
   estimate: { status: 'accepted', amount, acceptedAt: '2026-10-17T15:00:00Z' }, acceptance: { recordedBy: signer, acceptedAt: '2026-10-17T14:55:00Z' },
   payment: { amount, verified: true, stripeSessions: [{ sessionId: `cs_test_${id}`, paymentIntentId: `pi_${id}`, amount, purpose: 'balance', verifiedAt: '2026-10-19T20:00:00Z' }] }, ...extra });
 const visit = convertedJobId => ({ type: 'walkthrough', status: 'completed', convertedJobId, walkthroughOutcome: { outcome: 'sold_on_site' } });
@@ -32,7 +32,7 @@ function world({ approved = true } = {}) {
     'knock_settings/current': { ...approvedKnockSettings(), ...(approved ? { setterApproval: { contract: SETTER_CONTRACT, reference: 'synthetic-d6b-record', reviewedBy: 'ZacB', reviewedAt: APPROVED_AT, terms: { ...SETTER_TERMS } } } : {}) },
     'knock_reps/rep.one': { repKey: 'rep.one', displayName: 'Rep One', status: 'active' },
     // w1: set at the door by rep.one (the bridge's record names the estimator); w2, w4: sold directly; w3: another estimator's sale.
-    'knock_setters/w1': { walkthroughId: 'w1', setterKey: 'rep.one', serviceClassification: 'unverified', classificationReference: '', estimatorKey: 'estimator.one', estimatorReference: 'knock-walkthrough:kw-1', channel: 'appointment_setter' },
+    'knock_setters/w1': { walkthroughId: 'w1', setterKey: 'rep.one', serviceClassification: 'unverified', classificationReference: '', estimatorKey: 'estimator.one', estimatorReference: 'knock-walkthrough:kw-1', channel: 'appointment_setter', recordedAt: '2026-10-16T18:00:00Z' },
     'jobs/w1': visit('j1'), 'jobs/j1': job('j1', 'w1', 3000),
     'jobs/w2': visit('j2'), 'jobs/j2': job('j2', 'w2', 1234.56),
     'jobs/w3': visit('j3'), 'jobs/j3': job('j3', 'w3', 2000, 'Estimator.Two'),
