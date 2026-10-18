@@ -33,7 +33,9 @@ window.firebase = window.firebase || {
 """
 # A quote built in the quote builder, as crew/gameplan-handoff.js keeps it on the page (builderQuoteOf).
 BUILT_QUOTE = """() => { S.builderQuote = { compositePricing: { steps: ['removal'], labor: { manHours: 6 } }, totalCents: 123456, menuVersion: 'menu-v1', jobId: 'draft-1',
-  lineItems: [{ id: 'removal', kind: 'service', name: 'Removal', description: '', quantity: 1, unitCents: 99456, totalCents: 99456 }, { id: 'labor', kind: 'service', name: 'Labor', description: '', quantity: 1, unitCents: 24000, totalCents: 24000 }] }; render(); }"""
+  lineItems: [{ id: 'removal', kind: 'service', name: 'Removal', description: '', quantity: 1, unitCents: 99456, totalCents: 99456 }, { id: 'labor', kind: 'labor', name: 'Labor', description: '', quantity: 1, unitCents: 24000, totalCents: 24000 }] }; render(); }"""
+# The same quote as a builder draft saved before the pricing changes of 2026-10-18 (its Labor line named the man-hours).
+STALE_QUOTE = """() => { S.builderQuote.lineItems[1] = { ...S.builderQuote.lineItems[1], name: 'Labor: 6 man-hours × $40.00', description: 'Crew time on site, billed per man-hour.' }; render(); }"""
 AUDIT = """() => ({
   scroll: document.documentElement.scrollWidth, width: innerWidth,
   retry: [...document.querySelectorAll('button')].filter(b => /Retry loading prices/.test(b.textContent)).map(b => b.getBoundingClientRect().height),
@@ -296,6 +298,15 @@ class GameplanPricingBrowserTests(unittest.TestCase):
         expect(page.get_by_role('button', name='Save brief + schedule')).to_be_enabled()
         self.audit(page, 'review, builder on, built')
         page.screenshot(path=str(out / 'gameplan-review-builder-mobile.png'), full_page=True)
+        # Review: a quote built before the pricing changes is not signed; the estimator edits and saves it again first.
+        page.evaluate(STALE_QUOTE)
+        expect(page.get_by_role('button', name='Edit the quote')).to_be_visible()
+        expect(page.locator('#builder-sign-gate')).to_contain_text('built before the pricing changes of 2026-10-18')
+        for missing in ('#approved', '#signature', '#deposit-summary'): expect(page.locator(missing)).to_have_count(0)
+        expect(page.locator('#builder-total-blocked')).to_have_text('Not ready')
+        expect(page.get_by_role('button', name='Save brief + schedule')).to_be_disabled()
+        expect(screen).not_to_contain_text('man-hour')
+        self.audit(page, 'review, builder on, stale quote')
 
     def test_an_expired_session_removes_the_saved_tables_without_a_sign_out(self):
         page = self.open()

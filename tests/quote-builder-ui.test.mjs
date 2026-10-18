@@ -505,15 +505,18 @@ test('a junk-only quote is reviewed, saved and reopened with no Labor line: the 
   assert.match(h.text(), /Labor · noneJunk-only quote: the truck-load price covers the crew’s time to load, haul and dispose, so this quote has no Labor line\./);
   assert.match(h.text(), /Quote total \$820\.00/);
   assert.doesNotMatch(h.text(), /man-hour/);
+  // The walkthrough sold three shelving units: a junk-only quote prices none of them, and the homeowner cannot sign it there.
+  assert.match(h.text(), /The walkthrough records garage work this junk-only quote does not price: 3 shelving units\. The homeowner cannot sign it on that walkthrough\./);
   assert.equal(h.button('Save draft').hasAttribute('disabled'), false, 'no man-hours to apply: it can be saved');
   h.button('Save draft').click(); await flush();
   const save = h.calls.find(call => call.body?.action === 'save');
   assert.deepEqual([save.body.draft.line_items.map(line => line.id), 'labor' in save.body.draft.composite_pricing], [['removal-junk-full', 'removal-special'], false]);
   assert.doesNotMatch(save.body.draft.scope, /Labor/);
+  assert.equal(save.body.draft.scope, 'Junk removal only: Full truck load; Mattress. Loading, hauling and disposal; no sorting, organizing or reset.');
   assert.match(h.text(), /Sending is blocked until the owner approves this price/, 'only the mattress\'s draft price waits');
   h.button('Done').click();
   h.open(memoryStorage()); await flush();
-  assert.match(h.text(), /Junk-only quote: the truck-load price covers the crew’s time, so it has no Labor line\./);
+  assert.match(h.text(), /Junk-only quote: the truck-load price covers the crew’s time, so it has no Labor line\.The walkthrough records garage work this junk-only quote does not price: 3 shelving units\./);
   assert.doesNotMatch(h.text(), /no Labor line yet/);
   // Adding garage work brings the Labor line back.
   h.button('Edit quote').click();

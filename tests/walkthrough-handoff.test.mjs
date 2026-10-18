@@ -7,6 +7,7 @@ import { SIGNED_25_75, publicQuotePaymentSchedule, quotePaymentSummary } from '.
 import { customerDepositState } from '../functions/_lib/customer-payments.js';
 import { customerMoneyTotals } from '../functions/_lib/money-core.js';
 import { createHash } from 'node:crypto';
+import { moneyDocumentModel } from '../functions/_lib/money-document.js';
 // The handoff's request fingerprint (walkthrough-handoff.js hash): sha256 of the canonical JSON.
 const canonical=value=>Array.isArray(value)?`[${value.map(canonical).join(',')}]`:value!==null&&typeof value==='object'?`{${Object.keys(value).sort().map(key=>`${JSON.stringify(key)}:${canonical(value[key])}`).join(',')}}`:JSON.stringify(value);
 const sha=async value=>createHash('sha256').update(canonical(value)).digest('hex');
@@ -143,8 +144,17 @@ test('a job signed on the earlier 50% terms keeps them: its lost-response retry 
  const kept=f.rows.get('jobs/job-earlier');
  assert.deepEqual([kept.estimate.depositRequired,kept.estimate.commercialPolicy,publicQuotePaymentSchedule(kept.estimate),customerDepositState(kept).required,customerMoneyTotals(kept).depositRequiredCents],[700,undefined,null,700,70000]);
  assert.equal(savedHandoffPayload(kept,input.requestId).quote.deposit,700);
- // Re-signed later, it is a new signature on the current terms: 25% (a deposit already paid stays paid).
- kept.deposit={amount:700,paidAmount:700,status:'paid'};
+ // Re-signed later, it is a new signature on the current terms, 25/75. Money paid is never asked for twice: with its 50%
+ // deposit paid, the deposit is what was paid and the remainder the rest, so the schedule, the deposit and the balance agree.
+ kept.deposit={amount:700,paidAmount:700,status:'paid'};kept.payment={amount:700,verified:true};
  const resigned=await saveWalkthroughHandoff(f.store,owner,{...f.input,requestId:randomUUID(),jobId:'job-earlier',expectedRevision:'je1'},NOW),now=f.rows.get('jobs/'+resigned.job.id);
- assert.deepEqual([now.estimate.depositRequired,now.deposit.amount,now.deposit.paidAmount,now.deposit.status,now.estimate.commercialPolicy.version],[350,350,700,'paid','2026-10-deposit25']);
+ assert.deepEqual([now.estimate.depositRequired,now.deposit.amount,now.deposit.paidAmount,now.deposit.status,now.estimate.commercialPolicy.version],[700,700,700,'paid','2026-10-deposit25']);
+ assert.deepEqual([now.estimate.paymentSchedule.depositCents,now.estimate.paymentSchedule.remainderCents,now.estimate.depositRequiredCents],[70000,70000,70000]);
+ assert.equal(savedHandoffPayload(now,resigned.requestId).quote.deposit,700,'the signed snapshot keeps the estimate\'s deposit, so the CRM sync still reads it');
+ const doc=moneyDocumentModel({...now},{kind:'estimate',now:NOW});
+ assert.deepEqual(doc.rows.map(row=>[row.label,row.cents]),[['Total',140000],['50% deposit due 2026-09-22',70000],['Scheduled 50% remainder due 2026-09-24',70000],['Payments received',70000],['Total unpaid',70000]]);
+ assert.match(doc.terms,/50% deposit \$700\.00 due 2026-09-22; 50% remainder \$700\.00 due 2026-09-24/);
+ // Unpaid, the same revision is 25/75.
+ const unpaid=fixture(),fresh=await saveWalkthroughHandoff(unpaid.store,owner,unpaid.input,NOW),row=unpaid.rows.get('jobs/'+fresh.job.id);
+ assert.deepEqual([row.estimate.depositRequired,row.estimate.paymentSchedule.depositCents,row.estimate.paymentSchedule.remainderCents],[350,35000,105000]);
 });

@@ -194,7 +194,7 @@ test('prices that arrive after a draft opens re-price only unsigned automatic to
 // signed with its 25% due today and 75% on the job day (D-DEPOSIT). With the builder off, Review is unchanged.
 test('with the quote builder on, Review hides the flat rates and waits for a builder total before the signature and the save', () => {
   const BUILT = { compositePricing: { steps: ['removal'], labor: { manHours: 6 } }, totalCents: 123456, menuVersion: 'menu-v1', jobId: 'draft-1',
-    lineItems: [{ id: 'removal', kind: 'service', name: 'Removal', description: '', quantity: 1, unitCents: 99456, totalCents: 99456 }, { id: 'labor', kind: 'service', name: 'Labor', description: '', quantity: 1, unitCents: 24000, totalCents: 24000 }] };
+    lineItems: [{ id: 'removal', kind: 'service', name: 'Removal', description: '', quantity: 1, unitCents: 99456, totalCents: 99456 }, { id: 'labor', kind: 'labor', name: 'Labor', description: '', quantity: 1, unitCents: 24000, totalCents: 24000 }] };
   const page = (builder, state = {}) => { const { context } = walkthroughPage({ pricing: servedPricing(), state: { approved: true, acceptanceAt: '2026-10-01T15:00:00.000Z', signature: 'data:image/png;base64,c2ln', ...state } }); if (builder) context.window.EGCWalkthroughPricing.quoteBuilder = () => true; return context; };
   const FLAT = /Recommended flat rate|Final flat rate|id="locked-price"|id="price-reason"|Truckload pricing uses/;
   // On, not built yet: no flat rate, no approval box or signature pad, no deposit, and Save brief + schedule is disabled.
@@ -228,10 +228,11 @@ test('with the quote builder on, Review hides the flat rates and waits for a bui
 });
 
 // D-SIGN with D-JUNK, D-LABOR-TEXT and D-DEPOSIT: the homeowner signs the builder total. A junk-only quote is the trucks
-// alone (no Labor line, and no "no Labor line" warning), and a garage quote's Labor line is one amount, even one saved
-// when it named the man-hours; either way 25% is due today and 75% on the job day.
+// alone (no Labor line, and no "no Labor line" warning), and a garage quote's Labor line is one amount; either way 25% is
+// due today and 75% on the job day. A quote built before the pricing changes of 2026-10-18 (a Labor line naming the
+// man-hours) is not signed: Review asks for it to be edited and saved again, as the server would refuse it.
 test('with the quote builder on, the homeowner signs a junk-only quote at $750 per truck and a garage quote\'s Labor line as one amount, 25% now and 75% on the job day', () => {
-  const page = builderQuote => { const { context } = walkthroughPage({ pricing: servedPricing(), state: { approved: true, acceptanceAt: '2026-10-01T15:00:00.000Z', signature: 'data:image/png;base64,c2ln', builderQuote } }); context.window.EGCWalkthroughPricing.quoteBuilder = () => true; return context; };
+  const page = (builderQuote, state = {}) => { const { context } = walkthroughPage({ pricing: servedPricing(), state: { approved: true, acceptanceAt: '2026-10-01T15:00:00.000Z', signature: 'data:image/png;base64,c2ln', builderQuote, ...state } }); context.window.EGCWalkthroughPricing.quoteBuilder = () => true; return context; };
   const JUNK = { compositePricing: { steps: ['removal'] }, totalCents: 150000, menuVersion: 'menu-v1', jobId: 'draft-2',
     lineItems: [{ id: 'removal-junk-full', kind: 'service', name: 'Full truck load', description: '', quantity: 2, unitCents: 75000, totalCents: 150000 }] };
   const junk = page(JUNK), review = junk.reviewScreen();
@@ -241,13 +242,53 @@ test('with the quote builder on, the homeowner signs a junk-only quote at $750 p
   assert.doesNotMatch(review, /builder-no-labor|Labor|man-hour/i, 'the truck price covers the crew\'s time: no Labor line and no warning about one');
   assert.match(review, /<p id="deposit-summary">25% deposit due today: \$375\.00\. Remaining 75% due on the job day \(Thu, Oct 1\): \$1125\.00\.<\/p>/);
   assert.deepEqual(Array.from(junk.readyToSend()), []);
-  const GARAGE = { compositePricing: { steps: ['removal', 'shelving'], labor: { manHours: 6, fullness: 'medium' } }, totalCents: 123456, menuVersion: 'menu-v1', jobId: 'draft-3',
-    lineItems: [{ id: 'removal', kind: 'service', name: 'Removal', description: '', quantity: 1, unitCents: 99456, totalCents: 99456 }, { id: 'labor', kind: 'labor', name: 'Labor: 6 man-hours × $40.00', description: 'Crew time on site, billed per man-hour.', quantity: 1, unitCents: 24000, totalCents: 24000 }] };
-  const garage = page(GARAGE), signed = garage.reviewScreen();
+  const GARAGE = { compositePricing: { steps: ['removal', 'shelving'], labor: { manHours: 6, fullness: 'medium' } }, totalCents: 123456, menuVersion: 'menu-v1', jobId: 'draft-3', scope: 'Removal / cleanout: Two-car garage base. Labor.',
+    lineItems: [{ id: 'removal-base', kind: 'service', name: 'Two-car garage base', description: '', quantity: 1, unitCents: 99456, totalCents: 99456 }, { id: 'labor', kind: 'labor', name: 'Labor', description: '', quantity: 1, unitCents: 24000, totalCents: 24000 }] };
+  const garage = page(GARAGE, { sortMethod: 'zones' }), signed = garage.reviewScreen();
   assert.equal(garage.builderJunkOnly(), false);
+  assert.equal(garage.builderSignGate(), '');
   assert.match(signed, /<span class="quote-line"><span>Labor<\/span><b>\$240\.00<\/b><\/span>/);
-  assert.doesNotMatch(signed, /man-hour|per hour|hourly|billed per|\$40\.00|builder-no-labor/i);
+  assert.match(signed, /<b>Quote scope<\/b><span id="review-finish">Removal \/ cleanout: Two-car garage base\. Labor\.<\/span>/, 'the homeowner reads the priced scope, not the walkthrough\'s Cleanout + reset');
+  assert.doesNotMatch(signed, /man-hour|per hour|hourly|billed per|\$40\.00|builder-no-labor|Cleanout \+ reset/i);
   assert.match(signed, /<p id="deposit-summary">25% deposit due today: \$308\.64\. Remaining 75% due on the job day \(Thu, Oct 1\): \$925\.92\.<\/p>/);
+  // Built before 2026-10-18 (the Labor line named the man-hours): the server prices it differently, so Review stops
+  // before the signature with Edit the quote, shows its lines as the customer reads them and disables the save.
+  const stale = page({ ...GARAGE, lineItems: [GARAGE.lineItems[0], { ...GARAGE.lineItems[1], name: 'Labor: 6 man-hours × $40.00', description: 'Crew time on site, billed per man-hour.' }] }), old = stale.reviewScreen();
+  assert.equal(stale.builderSignGate(), 'stale');
+  assert.match(old, /<div class="send-options" id="builder-sign-gate" data-gate="stale"><button type="button" id="build-quote" onclick="sendOptionsForReview\(this\)">Edit the quote<\/button><p role="status">This quote was built before the pricing changes of 2026-10-18/);
+  assert.match(old, /<div class="price" id="builder-total-blocked">Not ready<\/div>/);
+  assert.match(old, /<button class="save-btn" onclick="sendHighLevel\(this\)" disabled>Save brief \+ schedule<\/button>/);
+  assert.doesNotMatch(old, /id="approved"|id="signature"|id="deposit-summary"|man-hour|billed per/);
+  assert.ok(Array.from(stale.readyToSend()).includes('the quote saved again in the quote builder (Edit the quote)'));
+  // So is a junk-only quote that still has a Labor line, and a garage quote without one (unless it revises a signed job).
+  assert.equal(page({ ...JUNK, lineItems: [...JUNK.lineItems, { ...GARAGE.lineItems[1] }] }).builderSignGate(), 'stale');
+  assert.equal(page({ ...GARAGE, lineItems: [GARAGE.lineItems[0]] }).builderSignGate(), 'stale');
+  assert.equal(page({ ...GARAGE, lineItems: [GARAGE.lineItems[0]] }, { handoffJobId: 'job-signed' }).builderSignGate(), '');
+});
+
+// D-JUNK (review blocker): a junk-only quote prices the hauling only, so the homeowner signs one only on a walkthrough that
+// records no garage work: crew sorting (customer sorts with crew, crew-staged zones) and the reset of what stays, cleaning
+// add-ons, shelving, totes or pest-waste cleanup. "Everything goes" and "Customer labels before arrival" are junk removal.
+test('with the quote builder on, a junk-only quote is not signed on a walkthrough that records garage work it does not price', () => {
+  const page = state => { const { context } = walkthroughPage({ pricing: servedPricing(), state: { approved: true, acceptanceAt: '2026-10-01T15:00:00.000Z', signature: 'data:image/png;base64,c2ln',
+    builderQuote: { compositePricing: { steps: ['removal'] }, totalCents: 75000, menuVersion: 'menu-v1', jobId: 'draft-4', scope: 'Junk removal only: Full truck load. Loading, hauling and disposal; no sorting, organizing or reset.', lineItems: [{ id: 'removal-junk-full', kind: 'service', name: 'Junk removal: full truck load', description: '', quantity: 1, unitCents: 75000, totalCents: 75000 }] }, ...state } }); context.window.EGCWalkthroughPricing.quoteBuilder = () => true; return context; };
+  for (const sortMethod of ['remove_all', 'labels']) {
+    const junk = page({ sortMethod }), review = junk.reviewScreen();
+    assert.equal(junk.builderSignGate(), '', sortMethod);
+    assert.match(review, /<b>Quote scope<\/b><span id="review-finish">Junk removal only: Full truck load\. Loading, hauling and disposal; no sorting, organizing or reset\.<\/span>/);
+    assert.match(review, /id="approved"[^]*id="signature"/);
+  }
+  const sorted = page({ sortMethod: 'zones', finish: ['cleanout', 'shelving'], shelfQty: 3, hazards: ['Pest waste'] }), blocked = sorted.reviewScreen();
+  assert.deepEqual(Array.from(sorted.walkthroughGarageWork()), ['sorting into keep / donate / haul zones and resetting what stays', '3 shelving units', 'pest-waste cleanup']);
+  assert.equal(sorted.builderSignGate(), 'garage');
+  assert.match(blocked, /data-gate="garage"><button type="button" id="build-quote" onclick="sendOptionsForReview\(this\)">Edit the quote<\/button><p role="status">This junk-only quote prices the hauling only: \$750 per truck covers the crew’s time and it has no Labor line\. The walkthrough records garage work it does not price: sorting into keep \/ donate \/ haul zones and resetting what stays, 3 shelving units, pest-waste cleanup\./);
+  assert.doesNotMatch(blocked, /id="approved"|id="signature"|id="deposit-summary"/);
+  assert.match(blocked, /disabled>Save brief \+ schedule/);
+  assert.ok(Array.from(sorted.readyToSend()).includes('a quote that prices the garage work the walkthrough records (Edit the quote)'));
+  assert.equal(page({ sortMethod: 'customer' }).builderSignGate(), 'garage');
+  // A quote of special items or access alone is not junk-only (D-JUNK: they are priced on top of a truck): it keeps its Labor line.
+  assert.equal(page({}).builderJunkOnly([{ id: 'removal-special', kind: 'service', name: 'Special-handling items', quantity: 1, totalCents: 7000 }]), false);
+  assert.equal(page({}).builderJunkOnly([{ id: 'removal-junk-partial', kind: 'service', name: 'Junk removal: quarter load', quantity: 1, totalCents: 18750 }, { id: 'removal-access', kind: 'service', name: 'Access charges', quantity: 1, totalCents: 12000 }]), true);
 });
 
 test('the walkthrough page loads its tables after sign-in and ships none of its own', () => {

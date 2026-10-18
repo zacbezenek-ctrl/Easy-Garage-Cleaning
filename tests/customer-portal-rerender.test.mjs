@@ -409,3 +409,24 @@ test('renderExperience keeps one closeout note and never removes the due-now lin
     assert.deepEqual([closeout.className, closeout.textContent], [className, text]);
   }
 });
+
+// Review (D-DEPOSIT): a quote sent or signed on the 25/75 terms words the payment card from its schedule, as the estimate
+// card and the signing page do: the deposit due today (or by its date) with its percent, the 75% on the job day. Without
+// a schedule the earlier wording stays: the deposit upfront, the rest on completion.
+test('the payment card words a 25/75 quote\'s deposit and job-day remainder from its schedule', () => {
+  const nodes = new Map(), node = id => nodes.get(id) || nodes.set(id, { ...element(id, false), dataset: {}, disabled: false, classList: { toggle() {} } }).get(id);
+  const context = vm.createContext({ $: node, setText: (id, value) => { node(id).textContent = value; }, money: value => `$${Number(value).toFixed(2)}`, Intl, Date });
+  vm.runInContext(portalScript(html, ['function dateLabel(', 'function renderPayment(']), context);
+  const today = new Intl.DateTimeFormat('en-CA', { timeZone: 'America/Denver', year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date());
+  const view = (schedule, payment = {}) => ({ estimate: { status: 'approved', ...(schedule ? { paymentSchedule: schedule } : {}) }, appointment: { status: 'scheduled' },
+    payment: { total: 1127.6, paid: 0, balance: 1127.6, dueNow: 281.9, purpose: 'deposit', ...payment } });
+  const schedule = { depositCents: 28190, remainderCents: 84570, depositDueDate: today, remainderDueDate: '2026-10-20', timeZone: 'America/Denver', policyVersion: '2026-10-deposit25' };
+  context.renderPayment(view(schedule));
+  assert.equal(node('payment-due-now').textContent, '$281.90 deposit due today (25%). $845.70 (75%) due on the job day, Tuesday, October 20, 2026.');
+  context.renderPayment(view({ ...schedule, depositDueDate: '2099-01-05' }));
+  assert.match(node('payment-due-now').textContent, /^\$281\.90 deposit due by Monday, January 5, 2099 \(25%\)\. \$845\.70 \(75%\) due on the job day/);
+  context.renderPayment(view(schedule, { paid: 281.9, balance: 845.7, dueNow: 0 }));
+  assert.equal(node('payment-due-now').textContent, 'Deposit received. $845.70 remaining, due on the job day, Tuesday, October 20, 2026.');
+  context.renderPayment(view(null));
+  assert.equal(node('payment-due-now').textContent, '$281.90 deposit due upfront. $845.70 remaining after your deposit, due on completion.');
+});

@@ -97,16 +97,28 @@
   const clockHours = minutes => `${Number((minutes / 60).toFixed(2))} hour${minutes === 60 ? '' : 's'}`;
   const laborCents = (hours, rate) => Math.round(Math.round(hours * 4) * rate / 4);
   const haulingGroups = menu => Array.isArray(menu?.labor?.haulingGroups) ? menu.labor.haulingGroups : HAULING_GROUPS;
-  // A junk-only selection (composite-quote.js junkOnly): something chosen, all of it truck loads, special items or access.
+  // A junk-only selection (composite-quote.js junkOnly): at least one truck load, and the rest special items or access
+  // (priced on top of a truck on the job: alone, they keep the Labor line).
   function junkOnly(menu, sel) {
     const services = new Map((menu?.services || []).map(item => [item.id, item])), picked = Object.entries(sel?.removal || {}).filter(([, qty]) => qty > 0);
-    return picked.length > 0 && !(sel.shelving || []).length && !(sel.storage || []).length && picked.every(([id]) => haulingGroups(menu).includes(services.get(id)?.group));
+    return picked.some(([id]) => services.get(id)?.group === 'junk') && !(sel.shelving || []).length && !(sel.storage || []).length && picked.every(([id]) => haulingGroups(menu).includes(services.get(id)?.group));
   }
   // The same test on saved breakdown lines (a saved quote's), by their step and group.
-  const junkOnlyLines = (menu, lines) => Array.isArray(lines) && lines.length > 0 && lines.every(line => line && line.section === 'removal' && haulingGroups(menu).includes(line.group));
+  const junkOnlyLines = (menu, lines) => Array.isArray(lines) && lines.some(line => line && line.group === 'junk') && lines.every(line => line && line.section === 'removal' && haulingGroups(menu).includes(line.group));
   // A saved Labor line priced before the owner's Labor decisions of 2026-10-18 (no version: its estimate counted the
   // truck loads) whose man-hours the estimator did not set by hand: reopened, it follows the new estimate.
   const staleLabor = (menu, breakdown) => Boolean(breakdown?.labor && typeof breakdown.labor === 'object' && breakdown.labor.version !== (Number(menu?.labor?.version) || LABOR_VERSION) && breakdown.labor.adjusted !== true);
+  // D-JUNK: the garage work a walkthrough records beyond junk removal (walkthrough-handoff.js walkthroughGarageWork): crew
+  // sorting and the reset of what stays ("Customer sorts with crew", "Crew stages keep / donate / haul zones"), the
+  // cleaning add-ons, shelving, totes and pest-waste cleanup. A junk-only quote prices none of it, so the homeowner signs
+  // one only on a walkthrough that records none; the builder says so while the estimator builds it.
+  function walkthroughGarageWork(p) {
+    const scope = p?.scope || {}, finish = Array.isArray(scope.finish) ? scope.finish : [], details = scope.finish_details || {};
+    const count = (qty, label) => Number.isInteger(qty) && qty > 0 ? `${qty} ${label}${qty === 1 ? '' : 's'}` : '';
+    return [{ customer: 'sorting with the customer and resetting what stays', zones: 'sorting into keep / donate / haul zones and resetting what stays' }[scope.sort_method] || '', finish.includes('deep_clean') ? 'a deep clean' : '', finish.includes('pressure_wash') ? 'a pressure wash' : '',
+      finish.includes('mouse_trapping') ? 'mouse trapping' : '', finish.includes('shelving') ? count(details.shelf_qty, 'shelving unit') : '', finish.includes('totes') ? count(details.tote_qty, 'storage tote') : '', Array.isArray(scope.hazards) && scope.hazards.includes('Pest waste') ? 'pest-waste cleanup' : ''].filter(Boolean);
+  }
+  const garageWorkNote = work => work.length ? h('p', { class: 'qd-notice qb-garage-work', role: 'status' }, `The walkthrough records garage work this junk-only quote does not price: ${work.join(', ')}. The homeowner cannot sign it on that walkthrough. Add the work here (a garage cleaning base for sorting and reset, cleaning, shelving or storage), or, if they want junk removal only, change the walkthrough (Everything goes or Customer labels before arrival; no finish options).`) : null;
   // The walkthrough's garage fullness ("How full is it?"): the one input of the server's labor time estimate that the
   // builder selection does not hold. The crew size and the scheduled minutes are not inputs: the man-hours of the work
   // are the same for any crew.
@@ -216,14 +228,14 @@
     return { removal, shelving, storage, labor, laborHours, junkOnly: junk, total: removal + shelving + storage + labor, drafts };
   }
   // The customer-facing scope of a priced builder quote, step by step, then the labor: one word, never the man-hours
-  // (D-LABOR-TEXT).
+  // (D-LABOR-TEXT). A junk-only quote says it is junk removal only (D-JUNK). The same text as the server's
+  // (composite-quote.js compositeScope), which a signed walkthrough builder quote saves.
   function builderScope(priced) {
-    const lines = Array.isArray(priced?.breakdown?.lines) ? priced.breakdown.lines : [];
-    const parts = (priced?.breakdown?.sections || []).map(section => {
-      const names = lines.filter(line => line.section === section.id).map(line => line.qty !== 1 ? `${line.name} × ${line.qty}` : line.name);
-      return names.length ? `${section.label}: ${names.join('; ')}` : '';
-    }).filter(Boolean);
-    if (typeof priced?.labor?.manHours === 'number') parts.push('Labor');
+    const lines = Array.isArray(priced?.breakdown?.lines) ? priced.breakdown.lines.filter(line => line && typeof line === 'object') : [];
+    const names = section => lines.filter(line => line.section === section).map(line => line.qty !== 1 ? `${line.name} × ${line.qty}` : line.name);
+    if (junkOnlyLines(null, lines)) return `Junk removal only: ${names('removal').join('; ')}. Loading, hauling and disposal; no sorting, organizing or reset.`.slice(0, 1600);
+    const parts = (priced?.breakdown?.sections || []).map(section => names(section.id).length ? `${section.label}: ${names(section.id).join('; ')}` : '').filter(Boolean);
+    if (typeof (priced?.labor ?? priced?.breakdown?.labor)?.manHours === 'number') parts.push('Labor');
     return `${parts.join('. ')}.`.slice(0, 1600);
   }
   // The draft a builder quote saves: the previewed server lines and the selection they were priced from.
@@ -583,7 +595,8 @@
     function laborSection(priced) {
       // D-JUNK: a junk-only quote is the truck-load price alone; the review says why it has no Labor line.
       if (priced.junkOnly === true) return h('section', { class: 'qb-section qb-labor', 'data-labor': 'none' }, h('h3', {}, 'Labor · none'),
-        h('p', { class: 'qb-help' }, 'Junk-only quote: the truck-load price covers the crew\u2019s time to load, haul and dispose, so this quote has no Labor line. Add a cleaning base, a cleaning add-on, shelving or storage and the Labor line comes back.'));
+        h('p', { class: 'qb-help' }, 'Junk-only quote: the truck-load price covers the crew\u2019s time to load, haul and dispose, so this quote has no Labor line. Add a cleaning base, a cleaning add-on, shelving or storage and the Labor line comes back.'),
+        garageWorkNote(walkthroughGarageWork(plan())));
       const labor = priced.labor || { manHours: null, rateCents: S.menu.labor?.rateCents, totalCents: null, prefilledManHours: null, adjusted: false, belowEstimate: false, estimate: null }, estimate = labor.estimate;
       const estimated = labor.prefilledManHours !== null && estimate, gap = installGap(labor);
       // The fullness is the sorting time of a garage with a cleaning base (D-JUNK): named only when it counted.
@@ -654,7 +667,7 @@
       body.replaceChildren(...[
         h('p', {}, `Quote ${job.estimate.number} revision ${job.estimate.revision} is saved as a draft and has not been sent.`),
         ...(breakdown ? breakdown.sections.filter(entry => lines.some(line => line.section === entry.id)).map(entry => section(`${entry.label} · ${money(entry.subtotalCents)}`, '', h('ul', { class: 'qd-lines' }, lines.filter(line => line.section === entry.id).map(line => h('li', { class: 'qd-line' }, h('span', {}, line.name, line.qty !== 1 ? ` × ${line.qty}${line.unit === 'pack' ? ' packs' : ''}` : ''), h('b', {}, money(line.totalCents))))))) : []),
-        junkOnlyLines(S.menu, lines) ? h('p', { class: breakdown.labor ? 'qd-notice' : 'qd-mode', role: 'status', 'data-labor': 'none' }, breakdown.labor ? 'This junk-only quote still has a Labor line from before the owner\u2019s decision of 2026-10-18: the truck-load price covers the crew\u2019s time. Edit the quote and save it again to drop it before sending it.' : 'Junk-only quote: the truck-load price covers the crew\u2019s time, so it has no Labor line.')
+        junkOnlyLines(S.menu, lines) ? h('div', { class: 'qb-junk' }, h('p', { class: breakdown.labor ? 'qd-notice' : 'qd-mode', role: 'status', 'data-labor': 'none' }, breakdown.labor ? 'This junk-only quote still has a Labor line from before the owner\u2019s decision of 2026-10-18: the truck-load price covers the crew\u2019s time. Edit the quote and save it again to drop it before sending it.' : 'Junk-only quote: the truck-load price covers the crew\u2019s time, so it has no Labor line.'), garageWorkNote(walkthroughGarageWork(plan())))
           : typeof breakdown?.labor?.manHours === 'number' ? savedLabor(breakdown.labor)
             : breakdown ? h('p', { class: 'qd-notice', role: 'status' }, 'This quote has no Labor line yet. Edit the quote to add the man-hours before sending it.') : null,
         h('p', { class: 'qd-total' }, 'Quote total ', h('b', {}, money(job.estimate.amountCents)), job.estimate.validUntil ? ` · valid through ${dayText(job.estimate.validUntil)}` : ''),
@@ -865,5 +878,5 @@
     if (S.mode === 'probe') probeBuilder();
     return dialog;
   }
-  root.EGCQuoteDraft = { open, createClient, draftFromWalkthrough, scopeText, missing, builder: Object.freeze({ steps: BUILDER_STEPS, selectionFromWalkthrough, selectionOfPricing, validSelection, builderDescriptor, runningTotals, builderScope, compositeDraft, fullnessOf, estimateLabor, junkOnly }) };
+  root.EGCQuoteDraft = { open, createClient, draftFromWalkthrough, scopeText, missing, builder: Object.freeze({ steps: BUILDER_STEPS, selectionFromWalkthrough, selectionOfPricing, validSelection, builderDescriptor, runningTotals, builderScope, compositeDraft, fullnessOf, estimateLabor, junkOnly, walkthroughGarageWork }) };
 })(window);

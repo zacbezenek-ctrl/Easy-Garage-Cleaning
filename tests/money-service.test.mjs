@@ -5,7 +5,7 @@ import { mutateMoney, moneyProjection, moneySnapshot, paymentNeedsVerification, 
 import { reconcileLedger } from '../functions/_lib/money-ledger.js';
 import { moneyStorage } from '../functions/_lib/money-storage.js';
 import { applyWrite } from './helpers/commit-write.mjs';
-import { PROPOSED_25_75 } from '../functions/_lib/quote-payment-policy.js';
+import { FINAL_25_75, PROPOSED_25_75, SIGNED_25_75 } from '../functions/_lib/quote-payment-policy.js';
 
 test('legacy money editor cannot reinterpret or issue a staged versioned payment-policy quote', async () => {
   const f = fixture({ estimate: { number: 'EST-FIXTURE', revision: 1, status: 'draft', amount: 1400, depositRequired: 350, commercialPolicy: PROPOSED_25_75 } });
@@ -13,6 +13,27 @@ test('legacy money editor cannot reinterpret or issue a staged versioned payment
     await assert.rejects(f.run(action, {}), error => error.code === 'money_payment_policy_workflow_required' && error.status === 409);
   }
   assert.equal(f.commits.length, 0);
+});
+
+// D-DEPOSIT (review): a job the homeowner signed in person on the 25/75 terms is invoiced here for its balance, due no
+// earlier than the signed job day (its 75% remainder's due date); the estimate itself stays in the walkthrough workflow,
+// and a sent quote's FINAL_25_75 terms stay closed here as before.
+test('a job signed in person on the 25/75 terms is invoiced for its balance, due no earlier than the signed job day', async () => {
+  const signed = { number: 'EST-SIGNED', revision: 1, status: 'accepted', amount: 1400, amountCents: 140000, depositRequired: 350, depositRequiredCents: 35000, depositPct: 25, termsVersion: SIGNED_25_75.version, commercialPolicy: { ...SIGNED_25_75 },
+    paymentSchedule: { depositCents: 35000, remainderCents: 105000, depositDueDate: '2026-09-22', remainderDueDate: '2026-09-24', timeZone: 'America/Denver', policyVersion: SIGNED_25_75.version }, lineItems: LINES };
+  const f = fixture({ total: 1400, estimate: signed, deposit: { amount: 350, paidAmount: 350, status: 'paid' }, payment: { amount: 350, verified: true } });
+  await assert.rejects(f.run('invoice.issue', { dueDate: '2026-09-23' }), error => error.code === 'money_invalid_due_date' && error.status === 400 && error.details.earliestDueDate === '2026-09-24' && /due on 2026-09-24 or later/.test(error.message));
+  for (const action of ['estimate.save', 'estimate.mark_sent', 'estimate.record_approval']) await assert.rejects(f.run(action, {}), error => error.code === 'money_payment_policy_workflow_required');
+  assert.equal(f.commits.length, 0);
+  const result = await f.run('invoice.issue', { dueDate: '2026-09-24' }), job = f.job();
+  assert.deepEqual([job.invoice.dueDate, Math.round(job.invoice.amount * 100), result.job.totals.balanceCents], ['2026-09-24', 140000, 105000]);
+  assert.equal(result.job.estimate.remainderDueDate, '2026-09-24', 'the Hub form pre-fills the signed job day');
+  assert.deepEqual(job.estimate, signed, 'the signed estimate and its schedule are untouched');
+  // A sent quote's terms (FINAL_25_75) are not opened by this, nor is a signed schedule that no longer matches its estimate.
+  const sent = fixture({ estimate: { ...signed, status: 'sent', termsVersion: FINAL_25_75.version, commercialPolicy: { ...FINAL_25_75 } } });
+  await assert.rejects(sent.run('invoice.issue', { dueDate: '2026-09-24' }), error => error.code === 'money_payment_policy_workflow_required');
+  const edited = fixture({ estimate: { ...signed, amount: 1800 } });
+  await assert.rejects(edited.run('invoice.issue', { dueDate: '2026-09-24' }), error => error.code === 'money_payment_policy_workflow_required' && error.status === 409);
 });
 
 const NOW = '2026-09-22T18:00:00.000Z'; // noon in Denver on 2026-09-22

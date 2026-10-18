@@ -34,8 +34,11 @@
     const pricing = job?.compositePricing, estimate = job?.estimate;
     if (!pricing || typeof pricing !== 'object' || Array.isArray(pricing) || !estimate || !Number.isSafeInteger(estimate.amountCents) || estimate.amountCents <= 0 || !Array.isArray(estimate.lineItems)) return null;
     const lineItems = estimate.lineItems.filter(line => line && typeof line === 'object' && line.included !== false).map(line => ({id:line.id,kind:line.kind,name:line.name,description:line.description || '',quantity:line.quantity,unitCents:line.unitCents,totalCents:line.totalCents}));
-    return {compositePricing:pricing,totalCents:estimate.amountCents,menuVersion:String(estimate.catalogVersion || ''),lineItems,jobId:String(job.id || '')};
+    // scope: the priced scope the homeowner reads on Review (the builder's, as the signed estimate saves it).
+    return {compositePricing:pricing,totalCents:estimate.amountCents,menuVersion:String(estimate.catalogVersion || ''),lineItems,scope:String(estimate.scope || '').slice(0,1600),jobId:String(job.id || '')};
   }
+  // The refusals that mean nothing was saved and the signed request can never succeed unchanged (perform releases them).
+  const RELEASED = new Set(['dispatch_conflict', 'handoff_terms_outdated', 'handoff_builder_price_mismatch', 'handoff_builder_junk_only_garage_work', 'quote_draft_composite_labor_required', 'quote_draft_composite_version_changed']);
   // This controller owns one frozen, actor-scoped request through lost responses.
   // Neither a reload nor a CRM outage creates a second dispatch request.
   function createClient(d) {
@@ -120,8 +123,13 @@
         // released and the corrected plan goes out as a new request. Every tab learns
         // of the release, so none of them resends this request later. So is a signature
         // on the earlier 50% deposit terms (handoff_terms_outdated): the homeowner signs
-        // the current terms again and that goes out as a new request.
-        if (error.status === 409 && ['dispatch_conflict', 'handoff_terms_outdated'].includes(error.code)) { markReleased(actor, String(pending.requestId).toLowerCase()); if (read(k)?.requestId === pending.requestId) d.storage.removeItem(k); error.refused = true; }
+        // the current terms again and that goes out as a new request. So is a quote the
+        // server prices differently (a builder quote saved before the pricing changes of
+        // 2026-10-18 or the menu changed since: builder_price_mismatch, the composite
+        // labor_required and version_changed) or a junk-only quote on a walkthrough that
+        // records garage work: the server refuses them after finding no saved copy, the
+        // quote is built again and the homeowner signs that.
+        if (RELEASED.has(error.code) && [400, 409].includes(error.status)) { markReleased(actor, String(pending.requestId).toLowerCase()); if (read(k)?.requestId === pending.requestId) d.storage.removeItem(k); error.refused = true; }
         throw error;
       }
       if (result.requestId !== pending.requestId || !result.job?.id || result.job.customerId !== pending.body.customerId) throw new Error('The saved job identity did not match the request. Review Dispatch before retrying.');

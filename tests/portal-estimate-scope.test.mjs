@@ -8,7 +8,7 @@ import { invoiceLineItems } from '../functions/_lib/money-core.js';
 import { CUSTOMER_LINE_FIELDS, normalizeLineItems } from '../functions/_lib/quote-model.js';
 import { portalStore, portalCookie, portalHandlers, portalView, portalPost } from './helpers/portal-fixture.mjs';
 import { moneyDocumentModel } from '../functions/_lib/money-document.js';
-import { SIGNED_25_75 } from '../functions/_lib/quote-payment-policy.js';
+import { FINAL_25_75, SIGNED_25_75 } from '../functions/_lib/quote-payment-policy.js';
 
 class FixedDate extends Date { constructor(...args) { super(...(args.length ? args : ['2026-09-22T18:00:00.000Z'])); } static now() { return Date.parse('2026-09-22T18:00:00.000Z'); } }
 
@@ -89,9 +89,9 @@ test('an estimate valid through a Denver day can still be approved at 11:30 PM t
 
 // The Hub estimate dialog lives in employee-suite.js; only this finance slice is loaded.
 const suite = fs.readFileSync(new URL('../employee-suite.js', import.meta.url), 'utf8');
-function financeHarness(job, input = null) {
+function financeHarness(job, input = null, extra = {}) {
   const captured = {};
-  const context = vm.createContext({ Date: FixedDate, jobStage: row => row.pipelineStatus || row.status || 'scheduled', window: {}, jobs: () => [job], financeDatePlus: () => '2026-10-06', money: String, askAction: async options => { captured.form = options; return input; }, patchJob: async (id, update) => { captured.update = JSON.parse(JSON.stringify(update)); }, syncCustomerCommunication: async () => true, render: () => {}, employeeIdentity: () => 'ZacB' });
+  const context = vm.createContext({ ...extra, Date: FixedDate, jobStage: row => row.pipelineStatus || row.status || 'scheduled', window: {}, jobs: () => [job], financeDatePlus: () => '2026-10-06', money: String, askAction: async options => { captured.form = options; return input; }, patchJob: async (id, update) => { captured.update = JSON.parse(JSON.stringify(update)); }, syncCustomerCommunication: async () => true, render: () => {}, employeeIdentity: () => 'ZacB' });
   vm.runInContext(suite.slice(suite.indexOf('window.opsFinanceAction='), suite.indexOf('function addCalendarMonths')), context);
   return { context, captured };
 }
@@ -144,6 +144,26 @@ test('a Hub scope edit of an older estimate with no stored revision moves it pas
   const unchanged = financeHarness({ ...legacy, estimate: { ...legacy.estimate, revision: 3 } }, { amount: '800', scope: 'Cleanout and sweep', deposit: '400', validUntil: '2026-10-01' });
   await unchanged.context.window.opsFinanceAction('job-1', 'estimate');
   assert.equal(unchanged.captured.update.estimate.revision, 3);
+});
+
+// Review (D-DEPOSIT): the Hub's browser estimate editor (MONEY_API_ENABLED off, the default) neither revises nor records
+// an approval of a quote on the 25/75 terms, as the server's money editor refuses: it would write a second deposit next
+// to the saved schedule. Its invoice for such a job is due on the job day the terms name.
+test('the Hub browser estimate editor leaves a 25/75 quote to its own workflow and invoices it for the job day', async () => {
+  const schedule = { depositCents: 35000, remainderCents: 105000, depositDueDate: '2026-09-22', remainderDueDate: '2026-10-20', timeZone: 'America/Denver', policyVersion: SIGNED_25_75.version };
+  const job = { id: 'job-1', customer: 'Synthetic Customer', serviceType: 'Garage transformation', total: 1400, status: 'scheduled', estimate: { number: 'EST-1', status: 'accepted', amount: 1400, amountCents: 140000, depositRequired: 350, depositRequiredCents: 35000, commercialPolicy: SIGNED_25_75, paymentSchedule: schedule, scope: 'Junk removal only: Full truck load × 2.' } };
+  for (const [estimate, action, said] of [[job.estimate, 'estimate', /signed revision on the walkthrough/], [job.estimate, 'accept', /signed revision on the walkthrough/], [{ ...job.estimate, status: 'sent', commercialPolicy: FINAL_25_75 }, 'accept', /quote builder \(Edit quote\)/]]) {
+    const toasts = [], hub = financeHarness({ ...job, estimate }, { amount: '1800', scope: 'x', deposit: '450', validUntil: '2026-10-06', acceptedBy: 'Synthetic' }, { showToast: message => toasts.push(message) });
+    await hub.context.window.opsFinanceAction('job-1', action);
+    assert.equal(hub.captured.form, undefined, action); assert.equal(hub.captured.update, undefined, action);
+    assert.match(toasts[0], /25% deposit \/ 75% job-day terms/); assert.match(toasts[0], said);
+  }
+  const invoice = financeHarness(job, null);
+  await invoice.context.window.opsFinanceAction('job-1', 'invoice');
+  assert.equal(invoice.captured.form.fields.find(field => field.name === 'dueDate').value, '2026-10-20');
+  const legacy = financeHarness({ ...job, estimate: { number: 'EST-1', status: 'accepted', amount: 1400, depositRequired: 700 } }, null);
+  await legacy.context.window.opsFinanceAction('job-1', 'invoice');
+  assert.equal(legacy.captured.form.fields.find(field => field.name === 'dueDate').value, '2026-10-06', 'any other job keeps its default');
 });
 
 test('the Hub Issue invoice action copies only sold lines in their customer-facing shape', async () => {

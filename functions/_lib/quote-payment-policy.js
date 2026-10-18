@@ -1,4 +1,4 @@
-import { depositCents } from './quote-model.js';
+import { MAX_TOTAL_CENTS, depositCents, exactCents } from './quote-model.js';
 import { addDays, validDate } from './dispatch-time.js';
 
 // Server-owned proposal. Never selected by an HTTP input or a live flag here.
@@ -64,11 +64,27 @@ export function businessPaymentDate(value) {
   if (typeof value !== 'string' || !/(?:Z|[+-]\d{2}:\d{2})$/.test(value) || !Number.isFinite(Date.parse(value))) return null;
   return new Intl.DateTimeFormat('en-CA',{timeZone:PAYMENT_TIME_ZONE,year:'numeric',month:'2-digit',day:'2-digit'}).format(new Date(value));
 }
-export function quotePaymentSummary(schedule) {
-  return `25% deposit ${new Intl.NumberFormat('en-US',{style:'currency',currency:'USD'}).format(schedule.depositCents/100)} due ${schedule.depositDueDate}; 75% remainder ${new Intl.NumberFormat('en-US',{style:'currency',currency:'USD'}).format(schedule.remainderCents/100)} due ${schedule.remainderDueDate} (${PAYMENT_TIME_ZONE}).`;
+// The split a schedule states, in whole percents of its total: 25/75 by the policy, or more upfront when a job signed
+// again had already been paid more than the new 25% deposit (walkthrough-handoff.js signedPaymentTerms). Every customer
+// surface names the deposit and remainder by it, so the labels always match the amounts.
+export function scheduleSplit(schedule) {
+  const total = schedule.depositCents + schedule.remainderCents, deposit = total > 0 ? Math.round(schedule.depositCents * 100 / total) : 0;
+  return { depositPct: deposit, remainderPct: 100 - deposit };
 }
+export function quotePaymentSummary(schedule) {
+  const split = scheduleSplit(schedule);
+  return `${split.depositPct}% deposit ${new Intl.NumberFormat('en-US',{style:'currency',currency:'USD'}).format(schedule.depositCents/100)} due ${schedule.depositDueDate}; ${split.remainderPct}% remainder ${new Intl.NumberFormat('en-US',{style:'currency',currency:'USD'}).format(schedule.remainderCents/100)} due ${schedule.remainderDueDate} (${PAYMENT_TIME_ZONE}).`;
+}
+// The saved schedule a customer surface may show. It fails closed: only while it is still the estimate's own split, its
+// deposit the estimate's deposit and the two parts its total (estimate.amount and amountCents, depositRequired and
+// depositRequiredCents, whichever are saved, must all agree). An estimate changed after the schedule was saved (the Hub's
+// legacy estimate editor writes a new amount and deposit and keeps the rest) shows no schedule, so no surface states two
+// different deposits or remainders.
 export function publicQuotePaymentSchedule(estimate) {
   const s=estimate?.paymentSchedule;
-  if(!estimate?.commercialPolicy||!s||!validDate(s.depositDueDate)||!validDate(s.remainderDueDate)||s.timeZone!==PAYMENT_TIME_ZONE||!Number.isSafeInteger(s.depositCents)||!Number.isSafeInteger(s.remainderCents))return null;
+  if(!estimate?.commercialPolicy||!s||!validDate(s.depositDueDate)||!validDate(s.remainderDueDate)||s.timeZone!==PAYMENT_TIME_ZONE||!Number.isSafeInteger(s.depositCents)||!Number.isSafeInteger(s.remainderCents)||s.depositCents<0||s.remainderCents<0)return null;
+  const saved=(dollars,cents)=>[dollars===undefined||dollars===null?undefined:exactCents(dollars,MAX_TOTAL_CENTS),cents===undefined||cents===null?undefined:cents].filter(value=>value!==undefined);
+  const totals=saved(estimate.amount,estimate.amountCents),deposits=saved(estimate.depositRequired,estimate.depositRequiredCents);
+  if(!totals.length||!deposits.length||totals.some(value=>value!==s.depositCents+s.remainderCents)||deposits.some(value=>value!==s.depositCents))return null;
   return {depositDueDate:s.depositDueDate,remainderDueDate:s.remainderDueDate,timeZone:PAYMENT_TIME_ZONE,depositCents:s.depositCents,remainderCents:s.remainderCents,policyVersion:s.policyVersion};
 }

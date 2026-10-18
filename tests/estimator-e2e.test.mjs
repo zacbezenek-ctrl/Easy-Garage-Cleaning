@@ -14,7 +14,7 @@ import { heldJobIds, heldJobsQuery } from '../functions/_lib/handoff-price-holds
 import { catalogHandlers } from '../functions/api/catalog.js';
 import { handoffHandlers } from '../functions/api/walkthrough-handoff.js';
 import { purchaseListHandlers } from '../functions/api/purchase-list.js';
-import { priceCompositeQuote } from '../functions/_lib/composite-quote.js';
+import { compositeScope, priceCompositeQuote } from '../functions/_lib/composite-quote.js';
 import { fieldJobProjection, fieldMaterials } from '../functions/_lib/field-execution.js';
 import { GHL_SCHEDULE_MIRROR } from '../functions/_lib/ghl-schedule-mirror.js';
 import { normalizeLineItems, unsentQuoteDraft } from '../functions/_lib/quote-model.js';
@@ -507,9 +507,10 @@ test('the gameplan page: crew-mode slot choices, the builder quote it signs and 
   }
   // The builder quote a saved draft returned is what payload() signs: its total, lines, menu version and selection, plus the chosen crew.
   const state = builderState(), priced = priceCompositeQuote(state, selection(), { complete: true });
-  const draftView = { id: 'job-1', compositePricing: priced.compositePricing, estimate: { amountCents: priced.totalCents, catalogVersion: priced.menuVersion, lineItems: priced.lineItems.map(line => ({ ...line, included: true })) } };
+  const draftView = { id: 'job-1', compositePricing: priced.compositePricing, estimate: { amountCents: priced.totalCents, catalogVersion: priced.menuVersion, scope: compositeScope(priced), lineItems: priced.lineItems.map(line => ({ ...line, included: true })) } };
   const builder = JSON.parse(JSON.stringify(builderQuoteOf(draftView)));
-  assert.deepEqual(builder, { compositePricing: priced.compositePricing, totalCents: priced.totalCents, menuVersion: priced.menuVersion, lineItems: priced.lineItems.map(line => ({ id: line.id, kind: line.kind, name: line.name, description: line.description, quantity: line.quantity, unitCents: line.unitCents, totalCents: line.totalCents })), jobId: 'job-1' });
+  // scope: the priced scope Review shows the homeowner (the one the signed estimate saves).
+  assert.deepEqual(builder, { compositePricing: priced.compositePricing, totalCents: priced.totalCents, menuVersion: priced.menuVersion, lineItems: priced.lineItems.map(line => ({ id: line.id, kind: line.kind, name: line.name, description: line.description, quantity: line.quantity, unitCents: line.unitCents, totalCents: line.totalCents })), scope: compositeScope(priced), jobId: 'job-1' });
   assert.equal(builderQuoteOf({ id: 'job-2', estimate: { amountCents: 140000, lineItems: [] } }), null, 'a walkthrough-priced draft is not a builder quote');
   const page = vm.createContext({ PRICING: null, save() {}, render() {}, invalidateAcceptance() {}, PHOTO_COUNT: 2, uid: () => 'local', normPhone: value => value, recommend: () => 1400, signedLines: () => [{ id: 'cleanout', kind: 'service', name: 'Garage cleanout and reset', quantity: 1, unitCents: 140000, totalCents: 140000 }], estimatedJobMinutes: () => 180,
     buildJobInstructions: () => ({ bringList: ['Hand truck / dolly'] }), buildInternalNotes: () => 'brief', buildCrewBrief: () => 'crew brief', buildClientChecklists: () => ({ preJob: [], postJob: [] }) });
@@ -523,7 +524,7 @@ test('the gameplan page: crew-mode slot choices, the builder quote it signs and 
   assert.deepEqual([sent.quote.total, sent.quote.deposit, sent.quote.catalog_version, sent.quote.composite_pricing, sent.quote.line_items, sent.logistics.crew_id], [priced.totalCents / 100, Math.round(priced.totalCents / 4) / 100, priced.menuVersion, priced.compositePricing, builder.lineItems, 'crew_one']);
   assert.match(lineOf('function chooseSlot('), /S\.requestedCrewId=slot\.crewId\|\|''/);
   assert.match(lineOf('function updateField('), /if\(\['jobDate','startTime','endTime'\]\.includes\(key\)&&S\.requestedCrewId\)S\.requestedCrewId=''/, 'a time typed by hand drops the offered crew');
-  assert.match(html, /\/crew\/gameplan-handoff\.js\?v=20261018deposit25/);
+  assert.match(html, /\/crew\/gameplan-handoff\.js\?v=20261018rebuild1/);
 });
 
 test('the employee-leak check names employees, never the tail of a random request or job id', () => {

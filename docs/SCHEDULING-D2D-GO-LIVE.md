@@ -224,6 +224,14 @@ Each has a recommendation. Until you decide, the Hub keeps doing what the item s
   and no quote's labor estimate counts truck-load, hauling or disposal time. Builder quotes saved earlier that day (an
   estimate with truck-load time, a line naming the man-hours) are saved again before they are sent; signed jobs keep
   what was signed.
+- **Junk-only quotes on a cleanout walkthrough.** *Applied 2026-10-18, owner to confirm:* a junk-only quote prices the
+  hauling only, so the homeowner signs one only when the walkthrough records no garage work (sorting plan "Everything
+  goes" or "Customer labels before arrival", no deep clean, pressure wash, mouse trapping, shelving, totes or pest-waste
+  cleanup). A sorted cleanout needs the garage cleaning base (and its Labor line), which is held until you approve the
+  base's cleaning-only amount in Menu prices. The signed estimate's scope is the quote's own lines ("Junk removal only:
+  …" for a junk-only quote), never the walkthrough's "Garage cleanout and reset". Builder quotes sent before the
+  2026-10-18 Labor rules and not yet approved are held from the customer until the office saves and sends them again
+  (`node scripts/stale-builder-quotes.mjs` lists them).
 - **Install times for storage goods.** *Open:* the app times shelving units (1 hour each) and totes, nothing else yet.
   Until install times are set for racks, cabinets, hooks and tracks, a quote with them waits for the estimator to set
   the man-hours by hand. *Recommended:* give install times per product (or per group) so the estimate covers them.

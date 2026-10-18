@@ -669,6 +669,39 @@ test('opsPrintDocument delegates to the hand-off and otherwise writes its own pr
   assert.ok(employee.indexOf('employee-money-document.js?v=20260928m4') > 0 && employee.indexOf('employee-money-document.js') < employee.indexOf('employee-suite.js?v='), 'the hand-off loads before the suite');
 });
 
+// Review (D-LABOR-TEXT, D-DEPOSIT): the Hub's own printed estimate (MONEY_DOCUMENT_ENABLED off, the default) shows the
+// builder's Labor line as one amount and a 25/75 quote's split with its dates, as the server documents do; an estimate
+// edited after its schedule was saved prints the deposit it now asks for, never the stale split.
+test('the Hub printed estimate shows the Labor line as one amount and the 25/75 terms a quote was signed on', async () => {
+  const suite = read('employee-suite.js'), line = prefix => suite.split(/\r?\n/).find(item => item.startsWith(prefix));
+  const source = ['const esc=', 'const payMoney=', 'function financeState(', 'function customerDocumentTerms(', 'window.opsPrintDocument='].map(line).join('\n');
+  const print = async job => {
+    let html = '';
+    class FixedDate extends Date { constructor(...args) { super(...(args.length ? args : [FIXED])); } static now() { return FIXED; } }
+    const win = { document: { write: value => { html += value; }, close() {} } };
+    const context = vm.createContext({ Date: FixedDate, window: { open: () => win }, jobs: () => [job], location: { origin: ORIGIN }, day: () => '2026-09-22', dateLabel: String });
+    vm.runInContext(source, context);
+    await context.window.opsPrintDocument(job.id, 'estimate');
+    return html.replace(/<style>[^]*<\/style>/, '').replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ');
+  };
+  const schedule = { depositCents: 28190, remainderCents: 84570, depositDueDate: '2026-10-17', remainderDueDate: '2026-10-20', timeZone: 'America/Denver', policyVersion: '2026-10-deposit25' };
+  const job = { id: 'job-print', customer: 'Synthetic', total: 1127.6, status: 'scheduled', estimate: { number: 'EST-P', status: 'accepted', amount: 1127.6, amountCents: 112760, depositRequired: 281.9, depositRequiredCents: 28190, termsVersion: '2026-10-deposit25',
+    commercialPolicy: { version: '2026-10-deposit25', depositPct: 25, remainderPct: 75, depositDueRule: 'walkthrough_day', remainderDueRule: 'job_day' }, paymentSchedule: schedule, scope: 'Removal / cleanout: Full truck load. Labor: 3.5 man-hours.',
+    lineItems: [{ id: 'removal-junk-full', kind: 'service', name: 'Junk removal: full truck load', description: '', quantity: 1, amount: 750, totalCents: 75000 }, { id: 'shelving-goods', kind: 'product', name: 'Shelving', description: '', quantity: 1, amount: 237.6, totalCents: 23760 },
+      { id: 'labor', kind: 'labor', name: 'Labor: 3.5 man-hours × $40.00', description: 'Crew time on site, billed per man-hour, including installing the shelving and storage.', quantity: 1, amount: 140, totalCents: 14000 }] }, deposit: { amount: 281.9, paidAmount: 0 } };
+  const text = await print(job);
+  assert.match(text, / Labor Includes installing the shelving and storage\. \$140\.00 /);
+  assert.doesNotMatch(text, /man-hour|billed per|\$40\.00|Deposit due upfront|on completion/);
+  assert.match(text, /25% deposit due 2026-10-17 \$281\.90 75% remainder due 2026-10-20 \$845\.70 /);
+  assert.match(text, /Estimate terms · version 2026-10-deposit25 This flat-rate estimate covers only the scope shown\. 25% deposit \$281\.90 due 2026-10-17; 75% remainder \$845\.70 due 2026-10-20 \(America\/Denver\)\./);
+  // Edited in the legacy editor after signing ($1,800 with $450 down): the earlier terms, with the deposit it asks for now.
+  const edited = await print({ ...job, total: 1800, estimate: { ...job.estimate, amount: 1800, depositRequired: 450, lineItems: [{ name: 'Garage transformation', description: job.estimate.scope, quantity: 1, amount: 1800 }] } });
+  assert.match(edited, /Deposit due upfront \$450\.00 /);
+  assert.doesNotMatch(edited, /25% deposit|\$281\.90|\$845\.70/);
+  // No line items: the scope prints as the customer reads it.
+  assert.match(await print({ ...job, estimate: { ...job.estimate, lineItems: [] } }), /Removal \/ cleanout: Full truck load\. Labor\. /);
+});
+
 test('Print receipt opens only the server document and says so when it is off', async () => {
   const win = popup(), on = hubModule(() => Response.json({ ok: true, enabled: true }), { popups: [win] });
   assert.equal(await on.module.print(multi().id, 'receipt'), true);

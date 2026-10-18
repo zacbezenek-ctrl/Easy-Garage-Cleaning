@@ -1,5 +1,5 @@
 import { goodsMarkupOf, roundCents, validatePricingSettings } from './catalog.js';
-import { LABOR_INSTALL_NOTE, LABOR_LINE_NAME, estimateTotals, included, normalizeLineItems } from './quote-model.js';
+import { BUILDER_LABOR_VERSION, HAULING_GROUPS, LABOR_INSTALL_NOTE, LABOR_LINE_NAME, builderJunkOnly, estimateTotals, included, normalizeLineItems } from './quote-model.js';
 import { PRICING_MENU_JSON } from '../_data/pricing-menu.js';
 
 /**
@@ -44,9 +44,11 @@ import { PRICING_MENU_JSON } from '../_data/pricing-menu.js';
  * them (HAULING_GROUPS). So (1) the labor estimate never counts truck-load, hauling or disposal time: of the walkthrough
  * time model it keeps the set-up and sweep-out (base), the sorting of the garage's contents (the fullness minutes, with a
  * garage cleaning base), the cleaning add-ons and the install time of the goods, and drops the per-load minutes, the
- * special-item minutes and the access minutes (laborTime); (2) a junk-only quote (junkOnly: nothing but truck loads,
- * special-handling items and access charges; no cleaning base, cleaning add-on, shelving or storage) has no Labor line at
- * all and is complete, sendable and signable without one: it is $750 per truck. Every quote with garage work (sorting
+ * special-item minutes and the access minutes (laborTime); (2) a junk-only quote (junkOnly: at least one truck load, and
+ * otherwise only special-handling items and access charges; no cleaning base, cleaning add-on, shelving or storage) has
+ * no Labor line at all and is complete, sendable and signable without one: it is $750 per truck. Special items and
+ * access charges are priced on top of a truck already on the job, so a quote of only those (no truck load) is not
+ * junk-only: nothing else would pay the crew's time, and it keeps its Labor line. Every quote with garage work (sorting
  * and organizing, shelving, storage, installation, cleaning) still needs its Labor line.
  *
  * What the customer sees (owner decision D-LABOR-TEXT, 2026-10-18): the Labor line is one amount, "Labor" (and, with
@@ -91,13 +93,18 @@ export const MAX_CHARGED_LINES = 12;
 export const LABOR_ID = 'labor';
 // The Labor rules a priced labor records (breakdown.labor.version): 2 is D-JUNK and D-LABOR-TEXT (no hauling in the
 // estimate, no Labor line on a junk-only quote, one amount for the customer). Labor priced before (no version) is 1.
-export const LABOR_VERSION = 2;
+// (quote-model.js BUILDER_LABOR_VERSION, which the customer surfaces read too.)
+export const LABOR_VERSION = BUILDER_LABOR_VERSION;
 // D-JUNK: the removal groups whose own prices pay the crew's time (truck loads; special-handling items and access charges,
-// which go with them). A quote of nothing else is junk-only (junkOnly): no Labor line, $750 per truck.
-export const HAULING_GROUPS = Object.freeze(['junk', 'special', 'access']);
-/** A junk-only quote (D-JUNK): its builder lines (breakdown lines, or anything with section and group) are all truck loads,
- * special-handling items or access charges. A quote with a cleaning base, a cleaning add-on, shelving or storage is not. */
-export const junkOnly = lines => Array.isArray(lines) && lines.length > 0 && lines.every(line => plain(line) && line.section === 'removal' && HAULING_GROUPS.includes(line.group));
+// which go with them). A quote of at least one truck load and nothing else is junk-only (junkOnly): no Labor line, $750
+// per truck.
+export { HAULING_GROUPS };
+/** A junk-only quote (D-JUNK; quote-model.js builderJunkOnly): its builder lines (breakdown lines, or anything with section
+ * and group) are all truck loads, special-handling items or access charges, and at least one is a truck load (group
+ * 'junk'): the special items' "incremental disposal/handling" and the access charges' "incremental labor only" assume a
+ * truck on the job. A quote with a cleaning base, a cleaning add-on, shelving or storage is not, and neither is one of
+ * special items or access alone (it keeps its Labor line). */
+export const junkOnly = builderJunkOnly;
 export const DEFAULT_LABOR_RATE_CENTS = 4000;
 export const LABOR_RATE_LIMITS = Object.freeze({ min: 100, max: 100000 });
 export const LABOR_MAN_HOURS = Object.freeze({ min: 0.5, max: 200, step: 0.25 });
@@ -638,6 +645,20 @@ export function priceCompositeQuote(state, descriptor, { complete = false, requi
   const breakdown = { version: COMPOSITE_SCHEMA_VERSION, source: 'composite', menuVersion: version, settingsVersion: settings.settingsVersion,
     sections: sections.map(({ completed, ...section }) => section), lines: detail, purchaseList: purchaseList(detail), ...(labor ? { labor } : {}), totalCents };
   return { compositePricing: selection, menuVersion: version, settingsVersion: settings.settingsVersion, lineItems, storedLineItems, breakdown, steps, labor, junkOnly: junk, totalCents, approval: approvalOf(detail, prices, state, labor, { requireLabor }) };
+}
+
+/** The customer-facing scope of a priced builder quote (priceCompositeQuote's result, or {breakdown, labor}): each step's
+ * items, then "Labor" (one word, never the man-hours: D-LABOR-TEXT). A junk-only quote (D-JUNK) says it is junk removal
+ * only, so its scope never reads as a garage cleanout it does not price. The quote builder's sent quotes write the same
+ * text (crew/quote-draft.js builderScope), and a signed walkthrough builder quote saves it as estimate.scope
+ * (walkthrough-handoff.js): the customer signs and reads exactly the priced lines. */
+export function compositeScope(priced) {
+  const lines = Array.isArray(priced?.breakdown?.lines) ? priced.breakdown.lines.filter(plain) : [];
+  const names = section => lines.filter(line => line.section === section).map(line => line.qty !== 1 ? `${line.name} × ${line.qty}` : line.name);
+  if (junkOnly(lines)) return `Junk removal only: ${names('removal').join('; ')}. Loading, hauling and disposal; no sorting, organizing or reset.`.slice(0, 1600);
+  const parts = (Array.isArray(priced?.breakdown?.sections) ? priced.breakdown.sections : []).map(section => names(section.id).length ? `${section.label}: ${names(section.id).join('; ')}` : '').filter(Boolean);
+  if (typeof (priced?.labor ?? priced?.breakdown?.labor)?.manHours === 'number') parts.push('Labor');
+  return `${parts.join('. ')}.`.slice(0, 1600);
 }
 
 // What the crew buys or grabs: one row per product, with packs, units and the public product page. No cost.

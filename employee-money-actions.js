@@ -107,7 +107,8 @@ function freshDraft(){
   if(S.view==='accept')return{approvedBy:job.customer||''};
   if(S.view==='deposit')return{amount:dollars(t.depositDueCents),method:'check',reference:''};
   if(S.view==='payment')return{amount:dollars(t.balanceCents),method:'check',reference:''};
-  if(S.view==='invoice')return{dueDate:job.invoice.dueDate&&job.invoice.dueDate>=today()?job.invoice.dueDate:addDays(today(),7),customerReference:job.invoice.customerReference||''};
+  // A job signed in person on the 25/75 terms: its balance is due on the signed job day (money-service.js issueInvoice).
+  if(S.view==='invoice'){const signed=job.estimate?.remainderDueDate&&job.estimate.remainderDueDate>today()?job.estimate.remainderDueDate:job.estimate?.remainderDueDate?today():'';return{dueDate:job.invoice.dueDate&&job.invoice.dueDate>=(signed||today())?job.invoice.dueDate:signed||addDays(today(),7),customerReference:job.invoice.customerReference||''};}
   if(S.view==='sent')return{channel:'email',note:''};
   if(S.view==='void')return{reason:''};
   if(S.view==='change')return{changeOrderId:S.draft?.changeOrderId||'',reason:''};
