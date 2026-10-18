@@ -177,19 +177,21 @@ export function dispatchStorage(env, fetcher = firestoreFetch) {
   // into a window that starts then), one query with ranges on endDate and date. Firestore serves it only from the
   // composite index jobs(endDate ASC, date ASC) in firestore.indexes.json; until that is deployed it refuses the query
   // (FAILED_PRECONDITION) and this throws dispatch_index_required, so the caller reads the longer date range instead.
-  // Masked, fully paginated and verified like datedJobs: anything else fails closed.
-  async function spanningJobs(startDate, fields, limit = 5000) {
+  // Masked, fully paginated and verified like datedJobs: anything else fails closed. `strict` (the windowed reads' SPANS
+  // net, dispatch-window-reads.js) filters date < startDate instead, so a malformed date string sorting between the day
+  // before and startDate is read too.
+  async function spanningJobs(startDate, fields, limit = 5000, strict = false) {
     if (!/^\d{4}-\d{2}-\d{2}$/.test(startDate)) throw failure('dispatch_range_invalid', 'Choose a valid date range.', 400);
     if (!Array.isArray(fields) || !fields.includes('date') || !fields.includes('endDate')) throw failure('dispatch_storage_mask_required', 'A multi-day jobs query must name the fields it reads, including date and endDate.');
     const waiting = () => failure('dispatch_index_required', 'The multi-day schedule query is waiting for its index.');
     if (typeof fetcher === 'function' && Date.now() - (spanningRefused.get(fetcher) ?? -Infinity) < INDEX_RETRY_MS) throw waiting();
-    const before = new Date(Date.parse(`${startDate}T12:00:00Z`) - 86400000).toISOString().slice(0, 10);
+    const dayBefore = new Date(Date.parse(`${startDate}T12:00:00Z`) - 86400000).toISOString().slice(0, 10);
     const filter = (fieldPath, op, stringValue) => ({ fieldFilter: { field: { fieldPath }, op, value: { stringValue } } });
     const rows = [], ids = new Set();
     let after = null;
     for (let page = 0; page <= Math.ceil(limit / 500); page++) {
       const response = await send(`${BASE}:runQuery`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ structuredQuery: { from: [{ collectionId: 'jobs' }], select: { fields: fields.map(fieldPath => ({ fieldPath })) },
-        where: { compositeFilter: { op: 'AND', filters: [filter('endDate', 'GREATER_THAN_OR_EQUAL', startDate), filter('date', 'LESS_THAN_OR_EQUAL', before)] } },
+        where: { compositeFilter: { op: 'AND', filters: [filter('endDate', 'GREATER_THAN_OR_EQUAL', startDate), strict ? filter('date', 'LESS_THAN', startDate) : filter('date', 'LESS_THAN_OR_EQUAL', dayBefore)] } },
         orderBy: ['endDate', 'date', '__name__'].map(fieldPath => ({ field: { fieldPath }, direction: 'ASCENDING' })), limit: 500,
         ...(after ? { startAt: { values: [{ stringValue: after.endDate }, { stringValue: after.date }, { referenceValue: after.name }], before: false } } : {}) } }) });
       if (!response.ok) {
@@ -202,7 +204,7 @@ export function dispatchStorage(env, fetcher = firestoreFetch) {
       const documents = results.filter(result => result.document !== undefined).map(result => result.document);
       for (const document of documents) {
         const row = decode(document, 'jobs');
-        if (ids.has(row.id) || rows.length >= limit || typeof row.endDate !== 'string' || row.endDate < startDate || typeof row.date !== 'string' || row.date > before) throw failure('dispatch_storage_incomplete', 'The schedule query could not be verified. Retry.');
+        if (ids.has(row.id) || rows.length >= limit || typeof row.endDate !== 'string' || row.endDate < startDate || typeof row.date !== 'string' || (strict ? row.date >= startDate : row.date > dayBefore)) throw failure('dispatch_storage_incomplete', 'The schedule query could not be verified. Retry.');
         ids.add(row.id); rows.push(row);
       }
       if (documents.length < 500) return rows;
@@ -210,14 +212,20 @@ export function dispatchStorage(env, fetcher = firestoreFetch) {
     }
     throw failure('dispatch_storage_incomplete', 'The schedule query did not finish. Retry.');
   }
+  // The windowed reads' queries. SPANS (rows starting before the floor and ending on or after it) is one spanningJobs
+  // query on the jobs(endDate, date) index; until that index is deployed, the endDate pass it replaces, as before.
+  const jobsQuery = query('jobs', JOB_FIELDS);
+  const windowQuery = spec => spec.op !== 'SPANS' ? jobsQuery(spec) : spanningJobs(spec.value, JOB_FIELDS, 10000, true)
+    .catch(error => { if (error?.code !== 'dispatch_index_required') throw error; return jobsQuery({ field: 'endDate', op: 'GREATER_THAN_OR_EQUAL', value: spec.value }); });
   return {
     roster: () => dispatchRoster(env),
     jobs: () => scan('jobs', JOB_FIELDS),
     // EGC_DISPATCH_WINDOWED_READS: 'full' (default), 'shadow' or 'windowed'.
     // Windowed and indexed reads are complete and fail closed like the scans.
     windowedReads: dispatchReadMode(env),
-    // `bound` (optional): the bounded read, rows starting no later than it (dispatch-window-reads.js READ-BUDGET).
-    jobsNear: (startDate, endDate, bound = null) => windowedJobs(query('jobs', JOB_FIELDS), startDate, endDate, bound),
+    // `bound` (optional): the bounded read, rows starting no later than it, or every start with `everyStart` (a dated
+    // save), plus the SPANS net (dispatch-window-reads.js READ-BUDGET).
+    jobsNear: (startDate, endDate, bound = null, everyStart = false) => windowedJobs(windowQuery, startDate, endDate, bound, everyStart),
     // READ-BUDGET: the openings snapshot cache a caller may opt into (dispatch-openings.js options.cache).
     openingsCache: openingsCacheFor(fetcher),
     // Every jobs row whose field equals value, whatever its dates (saveJobReads).
