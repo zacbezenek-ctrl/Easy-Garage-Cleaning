@@ -17,10 +17,11 @@ export function estimatorCommissionHandlers({ session = getHubSession, knock = c
       try { viewer = await session(request, env); } catch { viewer = null; }
       if (!viewer?.user) return reply(401, { ok: false, code: 'estimator_commission_sign_in', error: 'Sign in to see your commission.' });
       try {
-        const kstore = knock(env), at = now();
-        const terms = await loadSetterTerms(kstore, await loadSettings(kstore));
+        const kstore = knock(env), at = now(), settings = await loadSettings(kstore);
+        const terms = await loadSetterTerms(kstore, settings);
         const ledger = await estimatorLedger({ kstore, dispatch: dispatch(env), env, estimatorKey: viewer.user, actorId: viewer.user, terms, nowMs: at.getTime() });
-        return reply(200, { ok: true, generatedAt: at.toISOString(), ...estimatorView(ledger, terms) });
+        // The pay cycle: a share the statement of its pay period does not read is shown held, never as earned.
+        return reply(200, { ok: true, generatedAt: at.toISOString(), ...estimatorView(ledger, terms, { payroll: settings.payroll }) });
       } catch {
         return reply(503, { ok: false, code: 'estimator_commission_unavailable', error: 'Your commission could not be loaded. Retry in a moment.' });
       }

@@ -7,6 +7,8 @@ import { CHANNEL_PERCENTS } from '../../crew/knock-money.js';
 
 export function commissionAllocations({ channel, jobId, serviceClassification, setterKey = '', estimatorKey = '', directRepKey = '', base = null, rounding = null }) {
   const { directSale, setter, estimator } = CHANNEL_PERCENTS;
+  // Staff and rep keys are lowercase wherever they are paid (payout.add) or read back: one person, one key.
+  [setterKey, estimatorKey, directRepKey] = [setterKey, estimatorKey, directRepKey].map(key => String(key || '').trim().toLowerCase());
   const definitions = channel === 'appointment_setter' ? [['setter', setterKey, setter], ['estimator', estimatorKey, estimator]]
     : channel === 'direct_estimator' ? [['estimator', estimatorKey, estimator]]
     : channel === 'direct_sale' ? [['direct_rep', directRepKey, directSale]] : [];

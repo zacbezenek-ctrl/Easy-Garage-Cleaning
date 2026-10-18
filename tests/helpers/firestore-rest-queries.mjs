@@ -22,12 +22,14 @@ export function firestoreRest(seed = {}) {
   const put = (path, data) => { documents.set(path, { name: `${ROOT}/${path}`, fields: encodeFirestoreFields(data), updateTime: stamp() }); return documents.get(path); };
   for (const [path, data] of Object.entries(seed)) put(path, data);
   const row = document => decodeFirestoreFields(document.fields || {});
+  // A dotted field path reads into maps, as Firestore does (handoff.job.ref).
+  const field = (document, path) => { const data = row(document); return Object.hasOwn(data, path) ? data[path] : path.split('.').reduce((value, key) => value && typeof value === 'object' ? value[key] : undefined, data); };
   const collection = id => [...documents].filter(([path]) => path.startsWith(id + '/') && !path.slice(id.length + 1).includes('/')).map(([, document]) => document).sort(byName);
   const project = (document, paths) => paths?.length ? { ...document, fields: Object.fromEntries(Object.entries(document.fields || {}).filter(([key]) => paths.some(path => path.split('.')[0] === key))) } : document;
   function filter(where, document) {
-    if (where.unaryFilter) { if (where.unaryFilter.op !== 'IS_NULL') throw new Error('Unsupported unary filter'); return row(document)[where.unaryFilter.field.fieldPath] === null; }
+    if (where.unaryFilter) { if (where.unaryFilter.op !== 'IS_NULL') throw new Error('Unsupported unary filter'); return field(document, where.unaryFilter.field.fieldPath) === null; }
     if (where.compositeFilter) return where.compositeFilter.filters.every(item => filter(item, document));
-    const { field, op, value } = where.fieldFilter, found = row(document)[field.fieldPath], expected = decode(value);
+    const { op, value } = where.fieldFilter, found = field(document, where.fieldFilter.field.fieldPath), expected = decode(value);
     if (found === undefined) return false;
     if (op === 'EQUAL') return kind(found) === kind(expected) && found === expected;
     if (op === 'GREATER_THAN_OR_EQUAL') return kind(found) === kind(expected) && found >= expected;
@@ -37,7 +39,7 @@ export function firestoreRest(seed = {}) {
     if (op === 'ARRAY_CONTAINS') return Array.isArray(found) && found.includes(expected);
     throw new Error('Unsupported field filter ' + op);
   }
-  const key = (document, path) => path === '__name__' ? document.name : row(document)[path];
+  const key = (document, path) => path === '__name__' ? document.name : field(document, path);
   const compare = (a, b) => a < b ? -1 : a > b ? 1 : 0;
   function runQuery(query) {
     const orderBy = query.orderBy || [], range = query.where?.fieldFilter?.op === 'GREATER_THAN_OR_EQUAL' ? query.where.fieldFilter.field.fieldPath : null;

@@ -182,7 +182,10 @@ Each has a recommendation. Until you decide, the Hub keeps doing what the item s
   After that, jobs paid in full pay the setter's 13% and the estimator's 7% (7% on an estimator's own walkthrough
   sales) in the Money statement. *Recommended:* approve once the direct-sale terms are approved. Until then the Knock
   reports show which rep set each walkthrough, so nothing is lost. Also update your pricing workbook's door-to-door
-  split row to 13% and 7% so it matches the app.
+  split row to 13% and 7% so it matches the app. Record every payout in Money: a share that changes after it was
+  paid (a later price change, refund or cancellation, or a different estimator) then holds the statement for you
+  instead of being paid twice, and nothing is clawed back automatically. A junk-only quote, and a walkthrough signed
+  by someone other than the estimator the door booking named, wait until the office classifies them.
 - **Short payments, overpayments, refunds and rounding.** No rule exists, so these hold commission for review.
   *Recommended:* keep holding them until you write the rule.
 - **Team directory privacy.** Teammates see shirt size and birthday month and day by default; each person can hide

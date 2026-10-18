@@ -14,6 +14,11 @@ const TERM_FIELDS = ['rate', 'acceleratorEnabled', 'acceleratorThreshold', 'acce
 // (20% total); a direct walkthrough 7% to the estimator. Junk earns nothing and channels
 // never stack. Whole percents keep allocation arithmetic exact (knock-allocations.js).
 export const CHANNEL_PERCENTS = Object.freeze({ directSale: 25, setter: 13, estimator: 7 });
+// A walkthrough-setting or estimator share is paid through the statement of the pay period it is earned in when its
+// source (the setter record, or the signed handoff of a direct walkthrough sale) is at most this many days older than
+// that period's start; the statement reads no older sources (functions/_lib/estimator-commission.js), so an older one
+// is held for review wherever it shows (periodStatement, the estimator's own view).
+export const CHANNEL_LOOKBACK_DAYS = 365;
 
 const percentText = rate => `${Math.round(Number(rate) * 1000) / 10}%`;
 // The only base rate the knock-collected-v3 contract can approve (knock-admin.js approveCompensation).
@@ -362,11 +367,21 @@ function reviewScope(sale, issues, period, timeZone, tiered) {
    paid     - payouts recorded against the period
    Review reasons come only from sales that touch the period (see reviewScope).
    channels - only once the owner approved the setter terms (SETTER_TERMS): the appointment-setter and estimator shares
-              earned so far, [{repKey, role:'setter'|'estimator', amount, earnedAt (ms), name?}]. Each adds to its
-              recipient's earned commission in the period it was earned, and every row then also has setterCommission
-              and estimatorCommission. channelReview: reasons that hold every row (the shares could not all be read).
+              earned so far, [{repKey, role:'setter'|'estimator', amount, earnedAt (ms), name?, share?, sourceAt?}]. Each
+              adds to its recipient's earned commission in the period it was earned, and every row then also has
+              setterCommission and estimatorCommission. A share whose sourceAt (ms, or null when unknown) is more than
+              CHANNEL_LOOKBACK_DAYS before the period's start is not counted and holds its recipient
+              (statement_lookback_exceeded). channelReview: reasons that hold every row (the shares could not all be
+              read). channelHolds: [{repKey, reasons, dates?, from?, all?}] hold one recipient's row in the periods
+              holding one of dates, every period ending on or after from, or every period (all).
+              A payout recorded with channelItems (knock-reports.js addPayout: the shares it paid, by share =
+              jobId:role) holds its recipient's row (channel_share_changed) when one of them is no longer earned in
+              that period by that recipient at that amount, and holds any row where a share it paid is earned again
+              (another period or recipient): a share that changed after it was paid needs finance, never a silent
+              move or a second payment. Recorded payments above the period's earnings hold the row too
+              (payout_exceeds_earned).
               Without channels the statement is exactly what it was. */
-export function periodStatement({ sales = [], payouts = [], training = [], reps = [], settings, period, now = Date.now(), timeZone = 'America/Denver', channels = null, channelReview = [] }) {
+export function periodStatement({ sales = [], payouts = [], training = [], reps = [], settings, period, now = Date.now(), timeZone = 'America/Denver', channels = null, channelReview = [], channelHolds = [] }) {
   sales = unique(sales);
   payouts = unique(payouts);
   const commission = settings?.commission || {};
@@ -424,11 +439,27 @@ export function periodStatement({ sales = [], payouts = [], training = [], reps 
     const r = row(item.leadKey);
     r.override = money(r.override + item.amount);
   }
+  const windowStart = Date.parse(addDays(period.start, -CHANNEL_LOOKBACK_DAYS)), counted = [];
   for (const item of withChannels ? channels : []) {
     if (!Number.isFinite(item?.earnedAt) || !Number.isFinite(item.amount) || !inPeriod(zonedDate(item.earnedAt, timeZone), period)) continue;
     const r = row(item.repKey, item.name), key = item.role === 'setter' ? 'setterCommission' : 'estimatorCommission';
+    if (item.sourceAt !== undefined && !(item.sourceAt >= windowStart)) { r.reviewReasons.push('statement_lookback_exceeded'); continue; }
+    counted.push(item);
     r[key] = money(r[key] + item.amount);
     r.earned = money(r.earned + item.amount);
+  }
+  for (const hold of withChannels ? channelHolds : []) {
+    const dated = (Array.isArray(hold?.dates) ? hold.dates : []).some(at => datable(at) && inPeriod(zonedDate(ms(at), timeZone), period));
+    if (hold?.repKey && (hold.all === true || dated || datable(hold.from) && zonedDate(ms(hold.from), timeZone) <= period.end)) row(hold.repKey).reviewReasons.push(...(hold.reasons || []));
+  }
+  if (withChannels) {
+    const cents = value => Math.round(Number(value) * 100), paid = payouts.flatMap(payout => (Array.isArray(payout.channelItems) ? payout.channelItems : []).map(item => ({ ...item, repKey: payout.repKey, periodKey: payout.periodKey })));
+    for (const item of paid) {
+      // Paid in this period and no longer earned here by its recipient at that amount.
+      if (item.periodKey === period.key && !counted.some(live => live.repKey === item.repKey && live.share === item.share && cents(live.amount) === item.amountCents)) row(item.repKey).reviewReasons.push('channel_share_changed');
+    }
+    // Earned here, and already paid with another period or to another recipient.
+    for (const live of counted) if (live.share && paid.some(item => item.share === live.share && (item.periodKey !== period.key || item.repKey !== live.repKey))) row(live.repKey).reviewReasons.push('channel_share_changed');
   }
   for (const payout of payouts) {
     if (payout.periodKey !== period.key) continue;
@@ -446,6 +477,9 @@ export function periodStatement({ sales = [], payouts = [], training = [], reps 
     r.commissionPaid = r.paid;
     r.commissionPaymentEvidence = 'admin_recorded_unreconciled';
     r.commissionSettled = null;
+    // With the approved shares, payments recorded above what the period earned (a share that left a paid period) are
+    // finance's to settle, never a silent zero.
+    if (withChannels && r.balance < 0) r.reviewReasons.push('payout_exceeds_earned');
     r.reviewReasons = [...new Set([...r.reviewReasons, ...(withChannels ? channelReview : [])])];
     r.compensationState = commission.verified === false ? 'unconfigured' : r.reviewReasons.length ? 'review_required' : 'configured';
     if (commission.verified === false) {
