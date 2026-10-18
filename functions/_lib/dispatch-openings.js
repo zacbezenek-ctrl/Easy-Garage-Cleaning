@@ -74,7 +74,9 @@ function withSettings(input,settings) {
 // reads using the global dispatch guard, legacy day locks and active roster.
 // One bounded retry tolerates ordinary dispatch activity without hiding races.
 // READ-BUDGET: the jobs are the bounded window read (rows starting by the search's
-// end date; nearRange below never uses a later one). With options.cache (the
+// end date, and any running into it from before the margin; nearRange below never
+// uses a later one). A malformed date string sorting after that date is not read:
+// a suggestion only, the save reads it (dispatch-window-reads.js). With options.cache (the
 // store's openingsCache; the Knock bridge opts in) the jobs and resources of a
 // snapshot are reused for SNAPSHOT_TTL_MS while the dispatch guard and every day
 // lock of its dates keep their revisions, which every dispatch save and the older

@@ -35,13 +35,14 @@ test('the window audit reports rows written after the switch that the windowed r
   assert.ok(!JSON.stringify(report).includes('9705550100'));
 });
 
-// READ-BUDGET: openings and dated saves read a bounded window (rows starting by the day after it); the audit also
-// reports what only that read misses: a date string sorting after the bound and a row longer than the margin.
-test('the window audit also reports rows only the bounded read (openings, dated saves) cannot find', async () => {
+// READ-BUDGET: openings read a bounded window (rows starting by the day after it, and any running into it from before
+// the margin); the audit also reports what only that read misses: a date string sorting after the bound. A row longer
+// than the margin is read (the SPANS query), so it is not missing (review reads-bounded-1).
+test('the window audit also reports rows only the bounded read (openings) cannot find', async () => {
   const fs = firestoreRest({ ...seed(), 'jobs/later-word': job('TBD', ''), 'jobs/over-long': job('2026-06-01', '2026-09-30'), 'jobs/next-week': job('2026-09-29', '2026-09-29') });
   const report = await audit(fs);
-  assert.deepEqual([report.missing.count, report.missing.byReason, report.missing.jobIds], [2, { unverifiable_date: 1, dated: 1 }, ['later-word', 'over-long']]);
-  assert.deepEqual(report.jobs, { scanned: 8, windowed: 7, bounded: 4 }, 'a valid later booking is not missing: no bounded caller uses it');
+  assert.deepEqual([report.missing.count, report.missing.byReason, report.missing.jobIds], [1, { unverifiable_date: 1 }, ['later-word']]);
+  assert.deepEqual(report.jobs, { scanned: 8, windowed: 7, bounded: 5 }, 'a valid later booking is not missing: no bounded caller uses it');
 });
 
 test('the audit command refuses to run without credentials or with unknown arguments', () => {

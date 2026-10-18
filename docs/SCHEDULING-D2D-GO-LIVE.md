@@ -75,7 +75,10 @@ read cost, until the indexes are built).
    - Does: Dispatch, bookings and the door-to-door bridge read only the dates they need instead of every job and
      customer. This keeps the database under its daily read limit.
    - First: your developer runs `node scripts/backfill-customer-search-keys.mjs` (a preview), then the same with
-     `--apply`. Setting the value `shadow` for a day first is optional: it compares old and new reads in the logs.
+     `--apply`. Then, required, `node scripts/dispatch-window-audit.mjs` (read only): it lists jobs whose date the
+     faster reads cannot place, which would stop counting as busy time. Repair each one's date in the Hub and run it
+     again until it lists none; run it again after any import of jobs. Setting the value `shadow` for a day first is
+     optional: it compares old and new reads in the logs.
    - Roll back: delete it. Reads go back to full scans.
 2. **Team roles, skills and Team directory.** `EGC_STAFF_DIRECTORY_ENABLED=true` on Cloudflare Pages.
    - Does: turns on roles and skills in Hub → Staff directory, the Team directory and the shirt size and birthday

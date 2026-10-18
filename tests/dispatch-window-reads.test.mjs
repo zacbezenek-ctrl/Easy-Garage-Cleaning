@@ -10,6 +10,7 @@ import { dispatchOpeningsHandlers } from '../functions/api/dispatch-openings.js'
 import { dispatchReadMode, windowQueries, windowFloor, pagedQuery, windowRelevant, windowDiff, rowsWindow, aggregateCount, customerCoverage, scanOnlyReason, WINDOW_MARGIN_DAYS } from '../functions/_lib/dispatch-window-reads.js';
 import { customerSearchFields, customerSearchKeys, SEARCH_KEYS_VERSION } from '../functions/_lib/customer-identity.js';
 import { firestoreRest, ROOT } from './helpers/firestore-rest-queries.mjs';
+import { addDays } from '../functions/_lib/dispatch-time.js';
 
 const NOW = new Date('2026-09-22T12:00:00.000Z');
 const START = '2026-09-22', END = '2026-09-29';
@@ -423,4 +424,45 @@ test('the dispatch APIs take the mode from the Pages environment and answer iden
   }
   assert.deepEqual(bodies.true, bodies.undefined); assert.deepEqual(bodies.shadow, bodies.undefined);
   assert.equal(bodies.true.board.viewer.id, 'zacb'); assert.equal(bodies.true.board.coverage.complete, true);
+});
+
+// READ-BUDGET review (reads-bounded-1): a dated save and openings read a bounded window. A malformed date string
+// sorting after the bound, or a row longer than the margin running into the day, is conflict evidence in the complete
+// scan; the save that commits a crew must still refuse over it, and openings must not offer a slot over the long row.
+test('a windowed save refuses a crew over a malformed later date or a row longer than the margin, as the complete scan does', async () => {
+  const now = new Date('2026-10-18T15:00:00.000Z'), day = '2026-10-26', floor = windowFloor(day);
+  const customers = { 'customers/c1': { name: 'Synthetic Customer', phone: '(970) 555-0100', address: '100 Synthetic Way' }, 'customers/c2': { name: 'Second Synthetic', phone: '(970) 555-0111', address: '200 Synthetic Way' } };
+  const rows = {
+    slash: visit('2026/10/26', '09:00', '2026/10/26', '17:00'), padless: visit('2026-10-5', '09:00', '', '17:00'), word: visit('Oct 26 2026', '09:00', 'Oct 26 2026', '17:00'),
+    long: visit('2026-09-18', '09:00', '2026-10-28', '17:00'), control: visit(day, '09:00', day, '17:00'), elsewhere: visit('2026-11-20', '09:00', '2026-11-20', '17:00'),
+  };
+  const world = (row, flag, fetcher = null) => { const fs = firestoreRest({ ...customers, 'jobs/other_row': row }); return { fs, store: { ...dispatchStorage(flag ? { EGC_DISPATCH_WINDOWED_READS: flag } : {}, fetcher ? fetcher(fs) : fs.fetcher), roster: async () => structuredClone(ROSTER), log: { info() {}, warn() {} } } }; };
+  const save = store => mutateDispatch(store, manager, { action: 'schedule.create', requestId: '00000000-0000-4000-8000-000000000001', customerId: 'c2', kind: 'job',
+    changes: { jobInstructions: 'Synthetic scope', date: day, time: '09:30', endTime: '12:00', assignedCrew: ['crew1'] } }, now.toISOString()).then(result => ({ saved: true, warnings: result.warnings.map(warning => warning.code) }), error => ({ error: error.code }));
+  const open = store => dispatchOpenings(store, manager, { startDate: day, endDate: addDays(day, 1), employeeIds: 'crew1', durationMinutes: '60', travelBufferMinutes: '0' }, now);
+  for (const [name, row] of Object.entries(rows)) {
+    const full = await save(world(row).store), windowed = world(row, 'true'), outcome = await save(windowed.store);
+    assert.deepEqual(outcome, full, name);
+    assert.equal(outcome.error, name === 'elsewhere' ? undefined : 'dispatch_conflict', name);
+    // No endDate pass: the save reads every start from the floor once, and the rows running into it through one indexed query.
+    const queries = windowed.fs.queries('jobs').map(call => call.body.structuredQuery);
+    assert.ok(!queries.some(query => query.where.fieldFilter?.field.fieldPath === 'endDate'), name);
+    assert.deepEqual(queries.find(query => query.where.compositeFilter?.filters.some(item => item.fieldFilter.field.fieldPath === 'endDate')).where.compositeFilter.filters.map(item => [item.fieldFilter.field.fieldPath, item.fieldFilter.op, item.fieldFilter.value.stringValue]),
+      [['endDate', 'GREATER_THAN_OR_EQUAL', floor], ['date', 'LESS_THAN', floor]], name);
+  }
+  // Openings read rows starting by the search's end, and the long row through the same indexed query: no slot over it.
+  const longFull = await open(world(rows.long).store), longWindowed = await open(world(rows.long, 'true').store);
+  assert.deepEqual(longWindowed, longFull);
+  assert.equal(longWindowed.candidates.length, 0);
+  // Until the jobs(endDate, date) index is deployed Firestore refuses that query: the endDate pass, as before the bound.
+  const refusing = fs => async (env, url, options = {}) => String(url).endsWith(':runQuery') && JSON.parse(options.body).structuredQuery.where.compositeFilter?.filters.some(item => item.fieldFilter?.field.fieldPath === 'endDate')
+    ? new Response(JSON.stringify([{ error: { code: 400, status: 'FAILED_PRECONDITION', message: 'The query requires an index.' } }]), { status: 400 }) : fs.fetcher(env, url, options);
+  const fallback = world(rows.long, 'true', refusing);
+  assert.equal((await save(fallback.store)).error, 'dispatch_conflict');
+  assert.ok(fallback.fs.queries('jobs').some(call => call.body.structuredQuery.where.fieldFilter?.field.fieldPath === 'endDate'), 'the endDate pass');
+  assert.equal((await open(world(rows.long, 'true', refusing).store)).candidates.length, 0);
+  // Flag off: the complete scan, no query.
+  const off = world(rows.slash);
+  await save(off.store);
+  assert.equal(off.fs.queries('jobs').length, 0);
 });

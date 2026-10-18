@@ -48,12 +48,14 @@ test('Knock crew slots: one bounded jobs read, then the snapshot is reused while
   const first = await meter.measure(() => w.crewSlots(QUICK));
   assert.equal(first.result.status, 200, JSON.stringify(first.result.body));
   assert.ok(first.result.body.slots.some(slot => slot.date === MON && slot.crewLabel === 'Crew 1'), 'Crew 1 is free Monday morning');
-  // The window read: rows starting from 35 days before the search to its end (one range, single-field index), plus
+  // The window read: rows starting from 35 days before the search to its end (one range, single-field index), the rows
+  // running into it from before then (one query on the jobs(endDate, date) index: none here, billed as one read), plus
   // the four undated and availability queries; no endDate pass and no later booking.
   const floor = windowFloor(MON), end = addDays(MON, 7);
   assert.equal(readsOf(first.byKey, 'query:jobs:date+date'), startingIn(seed, floor, end));
-  assert.equal(readsOf(first.byKey, 'query:jobs:endDate'), 0);
-  assert.equal(readsOf(first.byKey, 'query:jobs'), startingIn(seed, floor, end) + 4);
+  assert.equal(first.byKey['query:jobs:endDate'], undefined, 'no endDate pass');
+  assert.equal(first.byKey['query:jobs:endDate+date'], 1);
+  assert.equal(readsOf(first.byKey, 'query:jobs'), startingIn(seed, floor, end) + 5);
   assert.ok(readsOf(first.byKey, 'query:jobs') < unbounded(seed, floor), `bounded ${readsOf(first.byKey, 'query:jobs')} vs before ${unbounded(seed, floor)}`);
 
   // Another package on the same form (or another rep's form): the guard and day locks are unchanged, so the jobs and
@@ -95,13 +97,20 @@ test('Knock walkthrough slots reuse the snapshot too, and a booking reuses the f
   assert.equal((await w.send(events)).status, 200);
   const booked = await meter.measure(() => w.book('sale', saleId));
   assert.deepEqual([booked.result.body.booking.status, booked.result.body.booking.date, booked.result.body.booking.time], ['needs_crew', MON, '09:30']);
-  // The booking's search reused the form's snapshot; the save read its own bounded window once (its day, two days on).
-  assert.equal(readsOf(booked.byKey, 'query:jobs:date+date'), startingIn(seed, windowFloor(MON), addDays(MON, 2)));
+  // The booking's search reused the form's snapshot (no range query). The save read its own window once: every row
+  // starting from the floor on (a malformed later date is still conflict evidence: review reads-bounded-1), the rows
+  // running into it (one indexed query) and the undated '' and null queries (one read each here); no endDate pass.
+  assert.equal(booked.byKey['query:jobs:date+date'], undefined);
+  assert.equal(booked.byKey['query:jobs:date'], startingIn(seed, windowFloor(MON), '9999-12-31') + 2);
+  assert.equal(booked.byKey['query:jobs:endDate+date'], 1);
+  assert.equal(booked.byKey['query:jobs:endDate'], undefined);
   assert.equal(readsOf(booked.byKey, 'list:dispatchResources'), 3, 'one crew read: the save\'s own');
   assert.equal(booked.byKey['get:dispatchState'], 2, 'the search\'s guard check and the save\'s guard');
 });
 
-test('a dated windowed save reads its conflict evidence bounded: no endDate pass and nothing starting over two days after it', async () => {
+// Review reads-bounded-1: the save that commits a crew reads every start from the floor (a malformed date string
+// sorting after any bound is conflict evidence in the complete scan), but never the endDate pass, which read every row twice.
+test('a dated windowed save reads its conflict evidence once: no endDate pass, every start from the floor, one indexed query for rows running into it', async () => {
   const seed = { ...history({ back: 50, ahead: 40 }), 'customers/c1': { name: 'Synthetic Customer', phone: '9705550100', address: '1 Fixture Way' } };
   const fs = firestoreRest(seed), meter = readMeter(fs);
   const store = { ...dispatchStorage(WINDOWED, fs.fetcher), roster: async () => [{ id: 'crew.a1', name: 'Andy Alpha', role: 'crew' }, { id: 'crew.a2', name: 'Abe Alpha', role: 'crew' }] };
@@ -109,11 +118,17 @@ test('a dated windowed save reads its conflict evidence bounded: no endDate pass
   const saved = await meter.measure(() => mutateDispatch(store, owner, { action: 'schedule.create', requestId: randomUUID(), customerId: 'c1', kind: 'job',
     changes: { date: MON, time: '09:30', endTime: '12:00', assignedCrew: ['crew.a1', 'crew.a2'], crewLead: 'crew.a1', jobInstructions: 'Synthetic scope', address: '1 Fixture Way' } }, new Date(NOW).toISOString()));
   assert.equal(saved.result.job.date, MON);
-  assert.equal(readsOf(saved.byKey, 'query:jobs:endDate'), 0);
-  assert.equal(readsOf(saved.byKey, 'query:jobs:date+date'), startingIn(seed, windowFloor(MON), addDays(MON, 2)));
-  const query = fs.queries('jobs').map(call => call.body.structuredQuery).find(item => item.where.compositeFilter);
-  assert.deepEqual(query.where.compositeFilter.filters.map(item => [item.fieldFilter.field.fieldPath, item.fieldFilter.op, item.fieldFilter.value.stringValue]),
-    [['date', 'GREATER_THAN_OR_EQUAL', windowFloor(MON)], ['date', 'LESS_THAN_OR_EQUAL', addDays(MON, 2)]]);
+  const floor = windowFloor(MON);
+  assert.equal(saved.byKey['query:jobs:endDate'], undefined, 'no endDate pass');
+  assert.equal(saved.byKey['query:jobs:endDate+date'], 1, 'no row runs into the window from before the floor: one read');
+  assert.equal(saved.byKey['query:jobs:date'], startingIn(seed, floor, '9999-12-31') + 2, 'every start from the floor, and the undated \'\' and null queries');
+  assert.ok(readsOf(saved.byKey, 'query:jobs') < unbounded(seed, floor), `${readsOf(saved.byKey, 'query:jobs')} vs before ${unbounded(seed, floor)}`);
+  const queries = fs.queries('jobs').map(call => call.body.structuredQuery);
+  assert.ok(queries.some(item => JSON.stringify(item.where) === JSON.stringify({ fieldFilter: { field: { fieldPath: 'date' }, op: 'GREATER_THAN_OR_EQUAL', value: { stringValue: floor } } })));
+  const spans = queries.find(item => item.where.compositeFilter);
+  assert.deepEqual(spans.where.compositeFilter.filters.map(item => [item.fieldFilter.field.fieldPath, item.fieldFilter.op, item.fieldFilter.value.stringValue]),
+    [['endDate', 'GREATER_THAN_OR_EQUAL', floor], ['date', 'LESS_THAN', floor]]);
+  assert.deepEqual(spans.orderBy.map(item => item.field.fieldPath), ['endDate', 'date', '__name__']);
 });
 
 // POST /api/dispatch (bookers and dispatchers) never shows a no-free-crew answer's alternatives: none are searched.
@@ -281,9 +296,10 @@ test('My sales lists the rep\'s newest walkthroughs with one bounded query; befo
   w.fake.put('knock_walkthroughs/other-rep', record(0, 'rep.two'));
   const mine = await meter.measure(() => w.report('my-sales'));
   assert.equal(mine.result.status, 200, JSON.stringify(mine.result.body));
-  assert.equal(readsOf(mine.byKey, 'query:knock_walkthroughs'), REP_WALKTHROUGH_LIMIT, `the newest ${REP_WALKTHROUGH_LIMIT}, not all ${REP_WALKTHROUGH_LIMIT + extra}`);
+  assert.equal(mine.byKey['query:knock_walkthroughs:repKey'], REP_WALKTHROUGH_LIMIT, `the newest ${REP_WALKTHROUGH_LIMIT}, not all ${REP_WALKTHROUGH_LIMIT + extra}`);
+  assert.equal(mine.byKey['query:knock_walkthroughs:repKey+status'], 1, 'and the rep\'s walkthroughs still booking: none here, one read');
   assert.deepEqual(mine.result.body.walkthroughs.map(row => row.id), Array.from({ length: REP_WALKTHROUGH_LIMIT }, (_, index) => `wt-${String(index).padStart(3, '0')}`), 'newest first');
-  const query = w.fake.queries('knock_walkthroughs').at(-1).body.structuredQuery;
+  const query = w.fake.queries('knock_walkthroughs').filter(call => call.body.structuredQuery.orderBy.some(item => item.field.fieldPath === 'setAt')).at(-1).body.structuredQuery;
   assert.deepEqual([query.orderBy.map(item => [item.field.fieldPath, item.direction]), query.limit], [[['setAt', 'DESCENDING'], ['__name__', 'ASCENDING']], REP_WALKTHROUGH_LIMIT]);
   // Firestore without the index refuses the ordered query: the full read, as before, showing the same newest ones.
   const inner = w.world.fake.fetcher;
@@ -291,6 +307,36 @@ test('My sales lists the rep\'s newest walkthroughs with one bounded query; befo
     ? new Response(JSON.stringify([{ error: { code: 400, status: 'FAILED_PRECONDITION', message: 'The query requires an index.' } }]), { status: 400 }) : inner(env, url, options);
   const fallback = await meter.measure(() => w.report('my-sales'));
   assert.equal(fallback.result.status, 200);
-  assert.equal(readsOf(fallback.byKey, 'query:knock_walkthroughs'), REP_WALKTHROUGH_LIMIT + extra);
+  assert.equal(readsOf(fallback.byKey, 'query:knock_walkthroughs'), REP_WALKTHROUGH_LIMIT + extra + 1);
   assert.deepEqual(fallback.result.body.walkthroughs, mine.result.body.walkthroughs);
+});
+
+// Review reads-mysales-1: My sales puts a walkthrough still booking back in the phone's booking queue (crew/knock-sale.js
+// mySalesScreen), the way one whose phone lost its queue gets booked. One older than the rep's newest 50 is still listed.
+test('My sales still lists a walkthrough waiting to book that is older than the rep\'s newest 50, with or without the index', async () => {
+  const w = await bridgeWorld(), meter = readMeter(w.world.fake), count = REP_WALKTHROUGH_LIMIT + 5;
+  const record = (index, booking) => ({ repKey: 'rep.one', leadKey: '', knockId: `knock-${index}`, houseId: `h-${3000 + index}-blue-leaf-dr`, neighborhoodId: 'english-ranch', street: 'BLUE LEAF DR',
+    address: { number: String(3000 + index), street: 'BLUE LEAF DR', unit: '', city: 'Fort Collins', state: 'CO', zip: '' }, customer: { name: `Synthetic ${index}`, phone: '+19705550100', email: '' }, textConsent: false,
+    requested: { date: MON, time: null, part: 'am', estimatorRef: null, source: 'preference' }, note: '', setAt: new Date(NOW - (count - index) * 3600000).toISOString(),
+    status: booking.status === 'booked' ? 'booked' : 'set', booking, createdAt: '2026-10-01T00:00:00.000Z', updatedAt: '2026-10-01T00:00:00.000Z' });
+  for (let index = 0; index < count; index++) w.fake.put(`knock_walkthroughs/wt-${String(index).padStart(3, '0')}`, record(index, index === 0
+    ? { status: 'retry', jobId: '', code: 'dispatch_storage_unavailable', attempts: 1, retryAfter: new Date(NOW - 3600000).toISOString() }
+    : { status: 'booked', jobId: `visit-${index}`, date: MON, time: '10:00', endTime: '11:00', estimator: 'Alex', message: '' }));
+  // What mySalesScreen puts back in the booking queue.
+  const requeued = body => body.walkthroughs.filter(row => ['pending', 'retry'].includes(row.booking?.status || 'pending') && row.status === 'set').map(row => row.id);
+  const mine = await meter.measure(() => w.report('my-sales'));
+  assert.equal(mine.result.status, 200, JSON.stringify(mine.result.body));
+  assert.equal(mine.result.body.walkthroughs.length, REP_WALKTHROUGH_LIMIT + 1, 'the newest 50 and the older one still booking');
+  assert.equal(mine.result.body.walkthroughs.at(-1).id, 'wt-000', 'newest first: the old one last');
+  assert.deepEqual(requeued(mine.result.body), ['wt-000']);
+  assert.deepEqual([mine.byKey['query:knock_walkthroughs:repKey'], mine.byKey['query:knock_walkthroughs:repKey+status']], [REP_WALKTHROUGH_LIMIT, 1], 'still two bounded queries');
+  const open = w.fake.queries('knock_walkthroughs').at(-1).body.structuredQuery;
+  assert.deepEqual([open.where.compositeFilter.filters.map(item => [item.fieldFilter.field.fieldPath, item.fieldFilter.op, item.fieldFilter.value.stringValue]), open.orderBy.map(item => item.field.fieldPath), open.limit],
+    [[['repKey', 'EQUAL', 'rep.one'], ['status', 'EQUAL', 'set']], ['__name__'], REP_WALKTHROUGH_LIMIT], 'equality only: no composite index');
+  // Before the index is deployed: the full read, the same list.
+  const inner = w.world.fake.fetcher;
+  w.world.fake.fetcher = async (env, url, options = {}) => String(url).endsWith(':runQuery') && String(options.body || '').includes('"setAt"')
+    ? new Response(JSON.stringify([{ error: { code: 400, status: 'FAILED_PRECONDITION', message: 'The query requires an index.' } }]), { status: 400 }) : inner(env, url, options);
+  const fallback = await w.report('my-sales');
+  assert.deepEqual(fallback.body.walkthroughs, mine.result.body.walkthroughs);
 });

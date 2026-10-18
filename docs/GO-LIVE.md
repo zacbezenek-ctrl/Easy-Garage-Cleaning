@@ -148,7 +148,7 @@ The rules keep every new server-only record (audit log, money receipts, website-
 | Field-cost totals by date ([4.5](#45-field-costs)) | Single-field exemption: collection group `fieldExpenses`, field `incurredOn`, collection-group scope, Ascending | Firebase console → Firestore → Indexes → Single field → Add exemption |
 | Audit log with filters (`/api/hub-audit?entity=…`) | The one Firestore asks for | Create it if a filtered read answers `hub_audit_unavailable` |
 | Crew schedule reads only its own days plus multi-day jobs running into them | `jobs` (endDate, date) | The command above. Until it is built the schedule still loads; it just reads 32 days of jobs each time |
-| Door-to-door My sales reads only the rep's newest 50 walkthroughs | `knock_walkthroughs` (repKey, setAt descending, `__name__`) | The command above. Until it is built My sales still loads; it reads every walkthrough the rep set |
+| Door-to-door My sales reads only the rep's newest 50 walkthroughs (and any still booking) | `knock_walkthroughs` (repKey, setAt descending, `__name__`) | The command above. Until it is built My sales still loads; it reads every walkthrough the rep set |
 | Business hub sign-in clean-up | Keep the automatic index on `business_sessions.expiresAt` | Do **not** add an exemption |
 
 Everything else (timecards, website-lead retries) uses Firestore's automatic indexes.
