@@ -365,6 +365,20 @@
       else if (saved?.job?.captureSync) { S.saved = saved.job; S.syncEnabled = saved.captureSyncEnabled === true; }
       render();
     }
+    // A new quote's 25% deposit and 75% balance are due on dates the server works out from its walkthrough date and its
+    // job date (quote-payment-policy.js FINAL_25_75), so a saved quote job with no date yet cannot be previewed or sent
+    // (quote_draft_payment_dates_pending). Saving it again never adds a date: a quote from a Hub walkthrough waits for the
+    // office to book the job; a manual walkthrough (or a catalog quote) has no walkthrough date, so it is never sent.
+    function datesNotice() {
+      let walk = S.saved?.sourceWalkthroughId;
+      if (typeof walk !== 'string') { try { walk = String(options.source?.() || ''); } catch { walk = ''; } }
+      const lines = walk ? ['Sending waits for the job date: the 25% deposit and 75% balance due dates come from the walkthrough date and the job date.',
+        `Ask the office to book this job in Team schedule (To schedule). Then ${S.mode === 'builder' ? 'reopen this quote from the walkthrough and choose Send saved quote' : 'open Send options for review on the walkthrough again to send it'}.`]
+        : options.variant === 'catalog' ? ['A catalog quote can\u2019t be sent for review: its 25% deposit and 75% balance due dates need a walkthrough booked in the Hub and a job date.', 'Quote this customer from a walkthrough booked in the Hub instead.']
+          : ['A quote from a manual walkthrough can\u2019t be sent for review: its 25% deposit and 75% balance due dates need a walkthrough booked in the Hub.',
+            'Get the homeowner\u2019s signature on the walkthrough\u2019s Review step and choose Save brief + schedule, or ask the office to book a walkthrough for this customer in the Hub and quote from that walkthrough.'];
+      return h('div', { class: 'qd-notice', role: 'status', 'data-held': walk ? 'job-date' : 'no-walkthrough' }, lines.map(text => h('p', {}, text)));
+    }
     const totalOf = list => list.reduce((sum, line) => sum + (line.selected === false ? 0 : Number(line.totalCents) || 0), 0);
     function lines(list) {
       return h('ul', { class: 'qd-lines' }, list.map(line => h('li', { class: line.included === false || line.selected === false ? 'qd-line qd-muted' : 'qd-line' }, h('span', {}, line.name, line.customerSupplied ? ' (customer supplied)' : '', line.quantity !== 1 ? ` × ${line.quantity}` : '', line.group ? ` (${line.group.label}${line.tier ? ` · ${line.tier}` : ''})` : line.optional ? ' (optional)' : ''), h('b', {}, money(line.totalCents)))));
@@ -381,11 +395,11 @@
       const children = [];
       if (S.step === 'held') {
         // Saved, but not sendable: draft prices wait for the owner, the estimator must edit and save the quote again
-        // (its labor rate changed, it has no Labor line, or its man-hours leave out installing some goods), or (builder
-        // on) a walkthrough-priced quote must be rebuilt in the builder first.
+        // (its labor rate changed, it has no Labor line, or its man-hours leave out installing some goods), (builder
+        // on) a walkthrough-priced quote must be rebuilt in the builder first, or its payment dates wait for a job date.
         const rebuild = S.heldKind === 'builder', resave = S.heldKind === 'resave', reasons = h('ul', { class: 'qb-reasons' }, (S.held || []).map(row => h('li', {}, String(row?.reason || row?.name || ''))));
         const editable = S.mode === 'builder' && S.savedBuild && (S.held || []).some(row => ESTIMATOR_FIXES.has(row?.id));
-        children.push(h('p', { class: 'qd-done' }, S.status), rebuild
+        children.push(h('p', { class: 'qd-done' }, S.status), S.heldKind === 'date' ? datesNotice() : rebuild
           ? h('div', { class: 'qd-notice', role: 'status' }, h('p', {}, 'Sending is blocked: with the quote builder on, this quote must be built in the builder before it is sent.'), reasons, h('p', {}, 'The saved draft is kept. Build the quote in the builder (removal, then shelving, then extra storage) and send that one.'))
           : resave ? h('div', { class: 'qd-notice', role: 'status' }, h('p', {}, 'Sending is blocked until you edit this quote and save it again:'), reasons, h('p', {}, 'The saved draft is kept. Choose Edit quote, check the Labor line on the review step and save the quote again; no owner approval is needed for this.'))
             : h('div', { class: 'qd-notice', role: 'status' }, h('p', {}, editable ? 'Sending is blocked until the owner approves the draft prices below and you save the quote again:' : `Sending is blocked until the owner approves ${S.held.length === 1 ? 'this price' : `these ${S.held.length} prices`}:`), reasons, h('p', {}, `The owner approves draft prices in the Hub under Catalog & pricing.${editable ? ' The Labor or installation reason is yours to fix: choose Edit quote, check the man-hours and save the quote again.' : ''} The saved draft is kept: reopen this quote from the walkthrough and choose Send saved quote once they are approved.`)));
@@ -700,7 +714,8 @@
       Object.assign(S, { step: 'review', held: null, heldKind: '', status: '', error: '', mode: 'probe', probeError: '' });
       render(); probeBuilder();
     }
-    // Send the saved builder quote as it is: the server checks its prices against today's approvals.
+    // Send the saved builder quote as it is: the server checks its prices against today's approvals and, for a new quote,
+    // that its job is dated. A refusal held() takes shows the held step; the edit-and-save advice is only for the others.
     async function sendSaved() {
       if (S.busy || !S.savedBuild) return;
       const generation = S.generation, job = S.savedBuild;
@@ -714,13 +729,14 @@
       } catch (error) {
         if (generation !== S.generation) return;
         if (held(error)) { S.saved = job; S.status = `Quote ${job.estimate.number} revision ${job.estimate.revision} stays saved as a draft.`; }
-        else S.error = `${error.message || 'The saved quote could not be checked.'}${error.status === 409 ? ' Edit the quote, review it and save it again.' : ''}`;
+        else S.error = `${error.message || 'The saved quote could not be checked.'}${error.status === 409 && !/_payment_dates_/.test(String(error.code || '')) ? ' Edit the quote, review it and save it again.' : ''}`;
       } finally { if (generation === S.generation) { S.busy = false; render(); } }
     }
     // A send preview or send the server refused because the quote may not be sent yet: show why and keep the draft.
     // A refusal whose every reason is the estimator's to fix (the Labor line, or installation the man-hours leave out) is
-    // a re-save, not a wait for the owner.
+    // a re-save, not a wait for the owner. Payment dates that wait for a job date (datesNotice) are neither.
     function held(error) {
+      if (error?.code === 'quote_draft_payment_dates_pending') { S.step = 'held'; S.held = []; S.heldKind = 'date'; S.error = ''; return true; }
       if (!['quote_draft_composite_prices_unapproved', 'quote_draft_builder_required'].includes(error?.code)) return false;
       const rows = Array.isArray(error.details?.unapproved) ? error.details.unapproved : [];
       S.step = 'held'; S.held = rows; S.error = '';
@@ -759,8 +775,8 @@
         S.retry = Boolean(pending); S.step = 'confirm';
       } catch (error) {
         if (generation !== S.generation) return;
-        // Saved, but not sendable yet (a draft price, or a walkthrough-priced quote while the builder is on): the
-        // quote is kept and the send waits.
+        // Saved, but not sendable yet (a draft price, a walkthrough-priced quote while the builder is on, or payment
+        // dates that wait for the job date): the quote is kept and the send waits, never a second Save draft.
         if (savedNow && held(error)) { if (S.mode === 'builder') S.savedBuild = S.saved; return; }
         const pending = await client.pendingSave().catch(() => null);
         if (generation !== S.generation) return;

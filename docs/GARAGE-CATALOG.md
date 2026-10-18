@@ -321,6 +321,8 @@ The browser never sends a price or a time estimate: for labor it sends only the 
 
 **Reopening a saved quote.** When the walkthrough already saved an unsent builder quote, reopening the dialog shows it (**Send saved quote** or **Edit quote**); editing starts from its saved selection (or from this device's unsaved edits). So a quote held for the owner's approval is sent later without rebuilding it.
 
+**Waiting for the job date.** A new quote's 25% deposit and 75% balance are due on dates the server works out from the walkthrough date and the job date (`FINAL_25_75`), and a new quote job has no date, so its send preview is refused with `quote_draft_payment_dates_pending` (409) until the job is booked. The dialog keeps the saved draft and shows one **Done** button, never **Save draft** again (saving adds no date). A quote from a Hub walkthrough says to ask the office to book the job in **Team schedule** (**To schedule**), then reopen the quote and choose **Send saved quote**. A quote from a manual walkthrough (**Open a manual walkthrough**, no Hub walkthrough) has no walkthrough date, so it is never sent for review even once the job is dated: the dialog points to the homeowner's signature on the walkthrough's **Review** step (**Save brief + schedule**) or to a walkthrough booked in the Hub. A catalog quote has no walkthrough either and says so.
+
 ### The pricing menu
 
 `node scripts/import-pricing-menu.mjs --from <folder> --write` reads the owner's pricing workbook exported as CSV and writes `functions/_data/pricing-menu.json` (reviewed in diffs) and the plain module `functions/_data/pricing-menu.js` the Worker bundles. It reads only two sheets and only allowlisted columns:

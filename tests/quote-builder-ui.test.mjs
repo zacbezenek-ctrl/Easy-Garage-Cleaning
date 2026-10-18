@@ -19,7 +19,9 @@ const plan = () => ({ client: { name: 'Synthetic Customer', phone: '+19705550100
 const flush = async () => { for (let i = 0; i < 12; i++) await new Promise(resolve => setImmediate(resolve)); };
 
 // hub: {builder} is the Hub's EGC_QUOTE_BUILDER_ENABLED; hint is what the walkthrough's /api/pricing-config answer said.
-function harness({ builder = true, hint = builder, stale = false, stall = false, hub = null, walkthrough = plan } = {}) {
+// walkthroughId is the walkthrough's Hub walkthrough id ('' for a manual walkthrough). datesPending: the send preview is refused
+// until the job has a date and a source walkthrough, as the server's 25/75 payment dates are (quote_draft_payment_dates_pending).
+function harness({ builder = true, hint = builder, stale = false, stall = false, hub = null, walkthrough = plan, walkthroughId = 'walk-1', datesPending = false } = {}) {
   const document = createDocument(), calls = [], timers = [];
   const server = hub || { state: baseState(), jobs: new Map(), sent: [] };
   // The 15-second builder timer is held so a test can let it run out.
@@ -29,7 +31,7 @@ function harness({ builder = true, hint = builder, stale = false, stall = false,
   context.window = context;
   vm.runInNewContext(source, context);
   const reply = (body, status = 200) => ({ ok: status < 300, status, json: async () => structuredClone(body) });
-  const view = job => ({ id: job.id, revision: job.revision, customerId: 'customer-1', estimate: { number: 'EST-JOB1', revision: job.estimateRevision, status: job.status, amountCents: job.priced.totalCents, depositRequiredCents: null, validUntil: '2026-10-31', lineItems: job.priced.lineItems },
+  const view = job => ({ id: job.id, revision: job.revision, customerId: 'customer-1', sourceWalkthroughId: job.sourceWalkthroughId || '', estimate: { number: 'EST-JOB1', revision: job.estimateRevision, status: job.status, amountCents: job.priced.totalCents, depositRequiredCents: null, validUntil: '2026-10-31', lineItems: job.priced.lineItems },
     ...(job.priced.compositePricing ? { compositePricing: job.priced.compositePricing, breakdown: job.priced.breakdown } : {}) });
   const fetch = async (url, options = {}) => {
     const body = options.body ? JSON.parse(options.body) : null;
@@ -47,14 +49,14 @@ function harness({ builder = true, hint = builder, stale = false, stall = false,
     }
     if (url === '/api/quote-draft' && body.action === 'save' && !body.draft.composite_pricing) {
       // A walkthrough-priced draft: saved as before (the gate is at send).
-      const job = { id: 'job-1', revision: 'r1', estimateRevision: 1, status: 'draft', priced: { totalCents: body.draft.line_items.reduce((sum, line) => sum + line.totalCents, 0), lineItems: body.draft.line_items } };
+      const job = { id: 'job-1', revision: 'r1', estimateRevision: 1, status: 'draft', sourceWalkthroughId: body.sourceWalkthroughId, priced: { totalCents: body.draft.line_items.reduce((sum, line) => sum + line.totalCents, 0), lineItems: body.draft.line_items } };
       server.jobs.set(job.id, job);
       return reply({ ok: true, requestId: body.requestId, job: view(job), warnings: [] });
     }
     if (url === '/api/quote-draft' && body.action === 'save') {
       const { storedLineItems, ...priced } = priceCompositeQuote(server.state, body.draft.composite_pricing, { complete: true });
       assert.deepEqual(body.draft.line_items, structuredClone(priced.lineItems), 'the saved lines are the server preview');
-      const job = { id: 'job-1', revision: 'r1', estimateRevision: 1, status: 'draft', priced };
+      const job = { id: 'job-1', revision: 'r1', estimateRevision: 1, status: 'draft', sourceWalkthroughId: body.sourceWalkthroughId, priced };
       server.jobs.set(job.id, job);
       return reply({ ok: true, requestId: body.requestId, job: view(job), warnings: [] });
     }
@@ -63,8 +65,9 @@ function harness({ builder = true, hint = builder, stale = false, stall = false,
       if (body.expectedRevision !== job.revision) return reply({ ok: false, code: 'quote_draft_revision_conflict', error: 'This quote changed.' }, 409);
       if (!job.priced.compositePricing && builder) return reply({ ok: false, code: 'quote_draft_builder_required', error: 'With the quote builder on, a walkthrough quote is sent only after it is built in the quote builder.',
         details: { unapproved: [{ id: null, name: 'Walkthrough-priced quote', unitCents: null, reason: 'Its lines were priced from the walkthrough tables, which the owner has not approved for the quote builder.' }] } }, 409);
-      const approval = compositeApproval(job.priced.breakdown, server.state);
+      const approval = job.priced.compositePricing ? compositeApproval(job.priced.breakdown, server.state) : { ready: true };
       if (!approval.ready) return reply({ ok: false, code: 'quote_draft_composite_prices_unapproved', error: 'This quote has prices the owner has not approved.', details: { unapproved: approval.blocked } }, 409);
+      if (datesPending && !(job.date && job.sourceWalkthroughId)) return reply({ ok: false, code: 'quote_draft_payment_dates_pending', error: 'Verified walkthrough/job dates are needed to resolve payment dates.' }, 409);
       return reply({ ok: true, job: view(job), summary: `Send EST-JOB1 revision 1 to Synthetic Customer`, delivery: { mode: 'off' }, confirmToken: 'token-1' });
     }
     if (url === '/api/quote-draft' && body.action === 'send') {
@@ -79,8 +82,9 @@ function harness({ builder = true, hint = builder, stale = false, stall = false,
   const text = () => dialog()?.textContent || '';
   const button = label => dialog().querySelectorAll('button').find(node => node.textContent === label || node.getAttribute('aria-label') === label);
   let savedJobId = '';
-  const open = (store = memoryStorage()) => context.EGCQuoteDraft.open({ storage: store, fetch, actor: async () => 'sales.person', uuid: () => crypto.randomUUID(), plan: walkthrough, source: () => 'walk-1', savedJobId: () => savedJobId, draftId: () => 'draft-1', accept: result => { savedJobId = result.job.id; }, now: () => Date.parse('2026-10-17T18:00:00Z') });
-  return { document, calls, timers, server, dialog, text, button, open };
+  const open = (store = memoryStorage()) => context.EGCQuoteDraft.open({ storage: store, fetch, actor: async () => 'sales.person', uuid: () => crypto.randomUUID(), plan: walkthrough, source: () => walkthroughId, savedJobId: () => savedJobId, draftId: () => 'draft-1', accept: result => { savedJobId = result.job.id; }, now: () => Date.parse('2026-10-17T18:00:00Z') });
+  const footer = () => dialog().querySelector('.qd-foot').querySelectorAll('button').map(node => node.textContent);
+  return { context, document, calls, timers, server, dialog, text, button, footer, open };
 }
 
 test('the walkthrough quote opens the guided builder: removal, shelving, extra storage, review; each step is priced by the server in order', async () => {
@@ -466,4 +470,85 @@ test('goods the estimate cannot time are named on the review step, and the quote
   assert.match(h.text(), /Every price on this quote is owner-approved/);
   h.button('Save draft').click(); await flush();
   assert.match(h.text(), /Send EST-JOB1 revision 1 to Synthetic Customer/);
+});
+
+// A new quote's 25% deposit and 75% balance are due on dates worked out from its walkthrough date and its job date
+// (quote-payment-policy.js FINAL_25_75), and a new quote job has no date, so its send preview is refused
+// (quote_draft_payment_dates_pending). The quote stays saved and the dialog says what happens next; saving it again never
+// adds a date, so Save draft is never the next step.
+const truckOnly = () => ({ ...plan(), scope: { ...plan().scope, special_items: [] } });
+const toSavedTruck = async h => {
+  h.open(); await flush();
+  h.button('Continue to shelving').click(); await flush();
+  h.button('Continue to extra storage').click(); await flush();
+  h.button('Review quote').click(); await flush();
+  assert.match(h.text(), /Every price on this quote is owner-approved/, 'nothing waits for the owner: only the dates');
+  h.button('Save draft').click(); await flush();
+};
+const waitsWithoutDeadEnd = h => {
+  assert.deepEqual(h.footer(), ['Done'], 'one button: nothing to save or retry');
+  assert.doesNotMatch(h.text(), /save it again|Verified walkthrough\/job dates/i, 'no re-save advice and no raw refusal');
+  assert.equal(h.dialog().querySelector('.qd-error'), null, 'no red alert');
+};
+
+test('a quote from a Hub walkthrough is saved and waits for its job date; Send saved quote says the same until the office books the job', async () => {
+  const h = harness({ walkthrough: truckOnly, datesPending: true });
+  await toSavedTruck(h);
+  assert.equal(h.calls.at(-1).body.action, 'send_preview');
+  assert.match(h.text(), /Draft EST-JOB1 revision 1 saved\.Sending waits for the job date: the 25% deposit and 75% balance due dates come from the walkthrough date and the job date\.Ask the office to book this job in Team schedule \(To schedule\)\. Then reopen this quote from the walkthrough and choose Send saved quote\./);
+  waitsWithoutDeadEnd(h);
+  h.button('Done').click();
+  // Reopened before the job is booked: Send saved quote shows the same wait, never the edit-and-save advice.
+  h.open(memoryStorage()); await flush();
+  h.button('Send saved quote').click(); await flush();
+  assert.match(h.text(), /Quote EST-JOB1 revision 1 stays saved as a draft\.Sending waits for the job date/);
+  waitsWithoutDeadEnd(h);
+  h.button('Done').click();
+  // The office books the job in Team schedule: the saved quote is previewed and sent as it is, never saved again.
+  h.server.jobs.get('job-1').date = '2026-10-21';
+  h.open(memoryStorage()); await flush();
+  h.button('Send saved quote').click(); await flush();
+  assert.match(h.text(), /Send EST-JOB1 revision 1 to Synthetic Customer/);
+  h.button('Mark as sent').click(); await flush();
+  assert.equal(h.server.sent.length, 1);
+  assert.equal(h.calls.filter(call => call.body?.action === 'save').length, 1);
+});
+
+test('a quote from a manual walkthrough is saved but cannot be sent for review: the dialog points to the signature or a Hub-booked walkthrough', async () => {
+  const h = harness({ walkthrough: truckOnly, datesPending: true, walkthroughId: '' });
+  await toSavedTruck(h);
+  assert.equal(h.calls.find(call => call.body?.action === 'save').body.sourceWalkthroughId, '', 'a manual walkthrough has no Hub walkthrough');
+  assert.match(h.text(), /Draft EST-JOB1 revision 1 saved\.A quote from a manual walkthrough can’t be sent for review: its 25% deposit and 75% balance due dates need a walkthrough booked in the Hub\.Get the homeowner’s signature on the walkthrough’s Review step and choose Save brief \+ schedule, or ask the office to book a walkthrough for this customer in the Hub and quote from that walkthrough\./);
+  assert.doesNotMatch(h.text(), /Team schedule|Send saved quote/, 'booking this job gives it no walkthrough date');
+  waitsWithoutDeadEnd(h);
+  h.button('Done').click();
+  // Even with a job date there is no walkthrough date: Send saved quote says the same.
+  h.server.jobs.get('job-1').date = '2026-10-21';
+  h.open(memoryStorage()); await flush();
+  h.button('Send saved quote').click(); await flush();
+  assert.match(h.text(), /Quote EST-JOB1 revision 1 stays saved as a draft\.A quote from a manual walkthrough can’t be sent for review/);
+  waitsWithoutDeadEnd(h);
+  assert.equal(h.server.sent.length, 0);
+});
+
+test('with the builder off, a walkthrough quote waiting for its job date says to send it from the walkthrough once the job is booked', async () => {
+  const h = harness({ builder: false, datesPending: true });
+  h.open(); await flush();
+  h.button('Save draft').click(); await flush();
+  assert.match(h.text(), /Draft EST-JOB1 revision 1 saved\.Sending waits for the job date: the 25% deposit and 75% balance due dates come from the walkthrough date and the job date\.Ask the office to book this job in Team schedule \(To schedule\)\. Then open Send options for review on the walkthrough again to send it\./);
+  waitsWithoutDeadEnd(h);
+});
+
+test('a catalog quote held for its payment dates says it needs a Hub-booked walkthrough, with no walkthrough step to follow', async () => {
+  const h = harness({ builder: false });
+  const job = { id: 'job-9', revision: 'r1', customerId: 'customer-1', sourceWalkthroughId: '', estimate: { number: 'EST-JOB9', revision: 1, status: 'draft', amountCents: 50000, lineItems: [] } };
+  const client = { pendingSave: async () => null, pendingSend: async () => null, clear() {}, save: async draft => ({ result: { job, warnings: [] }, retrying: false, draft }),
+    preview: async () => { throw Object.assign(new Error('Verified walkthrough/job dates are needed to resolve payment dates.'), { status: 409, code: 'quote_draft_payment_dates_pending' }); } };
+  h.context.EGCQuoteDraft.open({ client, variant: 'catalog', title: 'Review catalog quote', kicker: 'Products & installation', now: () => Date.parse('2026-10-17T18:00:00Z'),
+    draft: validUntil => ({ client: { name: 'Synthetic Customer', phone: '+19705550100', email: '', address: '100 Fixture Lane', highlevel_contact_id: '' }, title: 'Catalog quote', scope: 'Included: shelving.', line_items: [{ id: 'catalog-1', kind: 'product', name: 'Shelving unit', quantity: 1, unitCents: 50000, totalCents: 50000 }], valid_until: validUntil }) });
+  await flush();
+  h.button('Save draft').click(); await flush();
+  assert.match(h.text(), /Draft EST-JOB9 revision 1 saved\.A catalog quote can’t be sent for review: its 25% deposit and 75% balance due dates need a walkthrough booked in the Hub and a job date\.Quote this customer from a walkthrough booked in the Hub instead\./);
+  assert.doesNotMatch(h.text(), /Save brief \+ schedule|Team schedule/);
+  waitsWithoutDeadEnd(h);
 });

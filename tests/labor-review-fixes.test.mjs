@@ -191,5 +191,5 @@ test('flow-4: the gameplan warns on the review screen when the builder quote it 
   const html = readFileSync(new URL('../crew/gameplan.html', import.meta.url), 'utf8');
   const card = html.slice(html.indexOf('Quote builder total'), html.indexOf('Recommended flat rate'));
   assert.match(card, /\$\{S\.builderQuote\.compositePricing\.labor\?'':'<p class="required" role="status" id="builder-no-labor">This builder quote has no Labor line: it was saved before builder quotes charged labor\. Open Send options for review, check the man-hours on the review step and save it again before the customer signs\./);
-  assert.match(html, /<script src="\/crew\/quote-draft\.js\?v=20261018labor2" defer><\/script>/, 'the changed builder script has a new version');
+  assert.match(html, /<script src="\/crew\/quote-draft\.js\?v=20261018datewait1" defer><\/script>/, 'the changed builder script has a new version');
 });
