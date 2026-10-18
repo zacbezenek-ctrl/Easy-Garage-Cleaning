@@ -200,6 +200,9 @@ export function d2dAttribution(job) {
   const carried = Array.isArray(job.ghlTags) ? job.ghlTags : [];
   return { kind: d2d.kind, repKey: typeof d2d.repKey === 'string' && REP_KEY.test(d2d.repKey) ? d2d.repKey : '', tags: D2D_TAG_LIST.filter(tag => carried.includes(tag)) };
 }
+// A door sale's signed price (knock-bridge.js d2d.ticket): its deal's value while the Hub job has no price of its own
+// (Knock collects a door sale's money, so the bridge never makes it a Hub price).
+const doorTicket = job => job?.source === 'door_to_door' && object(job.d2d) && job.d2d.kind === 'sale' ? job.d2d.ticket : undefined;
 /** The note's door-to-door line: who brought the customer in, by first name only. */
 export const d2dNoteLine = (kind, firstName) => `Door to door: ${kind === 'sale' ? 'sale' : 'walkthrough'} set by ${firstName || 'a door-to-door rep'}`;
 // The line goes right under the note's heading (the first line), so it reads before the schedule details.
@@ -333,7 +336,7 @@ async function mirrorOpportunity(store, run, { entry, job, stage, contactId, lin
       if (link?.creatingEntryId && link.creatingEntryId !== entry.id && ms(link.creatingUntil) > Date.parse(now)) throw fail('ghl_mirror_opportunity_busy', 'Another schedule change is creating this customer job\'s opportunity.', 409);
       try { await store.commit([{ collection: GHL_SCHEDULE_MIRROR_LINKS, id: linkId, revision: link?.revision, patch: { id: linkId, projectKey: entry.projectKey, contactId, creatingEntryId: entry.id, creatingUntil: iso(Date.parse(now) + GHL_MIRROR_CLAIM_MINUTES * 60000), updatedAt: now } }]); }
       catch { throw fail('ghl_mirror_opportunity_busy', 'Another schedule change is creating this customer job\'s opportunity.', 409); }
-      const amount = Number(job.total ?? job.priceQuoted);
+      const amount = Number(job.total ?? job.priceQuoted ?? doorTicket(job));
       // Create-only, never upsert: a deal created or closed after the search above is never reopened or reset by this.
       const body = { pipelineId: pipeline.pipelineId, locationId: c.locationId, name, pipelineStageId: target, status: 'open', contactId,
         monetaryValue: entry.visitType === 'job' && Number.isFinite(amount) && amount > 0 ? amount : 0, assignedTo: assignee || c.userId || undefined,

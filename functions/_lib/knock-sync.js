@@ -192,7 +192,7 @@ export async function applyBatch(store, rep, settings, events, nowMs, { jobBridg
       }
       // KNOCK-BRIDGE: no walkthrough over a sale (any rep's, this one's too) or another channel's native form claim.
       if (jobBridge && event.outcome === WALKTHROUGH_OUTCOME) {
-        if (await houseSold(store, house.id, accepted)) { results.set(event.id, refuse('knock_house_sold', HOUSE_SOLD)); continue; }
+        if (await houseSold(store, house.id, accepted, nowMs)) { results.set(event.id, refuse('knock_house_sold', HOUSE_SOLD)); continue; }
         const claimProblem = await walkthroughClaim(house.id);
         if (claimProblem) { results.set(event.id, claimProblem); continue; }
       }
@@ -250,7 +250,7 @@ export async function applyBatch(store, rep, settings, events, nowMs, { jobBridg
     } else if (event.type === 'walkthrough') {
       const door = await doorOf(event);
       if (door?.houseId) await readFence(door.houseId);
-      const problem = await validateWalkthroughEvent(store, rep, event, { accepted, targets, houses }) || await walkthroughClaim(door.houseId);
+      const problem = await validateWalkthroughEvent(store, rep, event, { accepted, targets, houses, nowMs }) || await walkthroughClaim(door.houseId);
       if (problem) { results.set(event.id, problem); continue; }
       extra = { day: zonedDate(at, 'America/Denver'), houseId: door.houseId };
     }

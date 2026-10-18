@@ -2,8 +2,9 @@
    Behind EGC_KNOCK_JOB_BRIDGE (exactly "true"); with it off nothing here runs and Knock behaves as before.
 
    A door sale (knock_sales) becomes a Hub customer (customer-resolution.js resolveCustomer, the canonical upsert; an
-   existing customer under another name only after the office's review) and a crew job quoted at the sale's ticket
-   (dispatch-service.js mutateDispatch, under the server actor BRIDGE_ACTOR), idempotent on the sale's id: the
+   existing customer under another name only after the office's review) and a crew job carrying the sale's ticket for
+   the HighLevel deal only (d2d.ticket: Knock collects the deposit and the rest, so the Hub prices nothing and charges
+   nothing; dispatch-service.js mutateDispatch, under the server actor BRIDGE_ACTOR), idempotent on the sale's id: the
    phone's sale event id is the request id of both the customer resolution and the dispatch save, so any retry replays
    the first answer and never makes a second job. With EGC_DISPATCH_CREW_AUTO_ASSIGN on, the server picks the crew
    inside the dispatch guard (options.autoCrew): first the time the rep picked (any eligible crew free then, Crew 1
@@ -246,15 +247,21 @@ export async function candidateCustomers(store, customer) {
 
 /* An existing Hub customer is linked by exact phone or email (resolveCustomer, D8), but a rep's typo, a phone a family
    shares or misuse would then put a crew job and its HighLevel booking on someone else's record with nobody looking.
-   So a match whose name shares no word with the door's (titles aside) waits for the office (review,
-   customer_identity_review); the office's own Book in Hub after that review links them. A household (one surname), a
-   fuller or shorter name, or a record with no name links as before. */
+   So a match whose name does not agree with the door's waits for the office (review, customer_identity_review); the
+   office's own Book in Hub after that review links them. Titles and household words (Mrs, the, family) are not names.
+   Two full names agree on a shared word other than both their first names (a surname: a household, or a fuller name);
+   a one-word name on any shared word (a shorter name). A record with no name links as before; a door name with
+   nothing to compare ('J', 'Mrs') never agrees with a named record. */
 export const IDENTITY_REVIEW = 'customer_identity_review';
-const NAME_FILLER = new Set(['mr', 'mrs', 'ms', 'miss', 'dr', 'jr', 'sr', 'and']);
-const nameWords = name => new Set(String(name || '').toLowerCase().normalize('NFKD').replace(/[\u0300-\u036f]/g, '').split(/[^a-z0-9]+/).filter(word => word.length > 1 && !NAME_FILLER.has(word)));
-export function namesAgree(left, right) {
-  const a = nameWords(left), b = nameWords(right);
-  return !a.size || !b.size || [...a].some(word => b.has(word));
+const NAME_FILLER = new Set(['mr', 'mrs', 'ms', 'miss', 'dr', 'jr', 'sr', 'and', 'the', 'family', 'household', 'home', 'homeowner', 'owner', 'owners', 'residence', 'llc', 'inc']);
+const nameWords = name => [...new Set(String(name || '').toLowerCase().normalize('NFKD').replace(/[\u0300-\u036f]/g, '').split(/[^a-z0-9]+/).filter(word => word.length > 1 && !NAME_FILLER.has(word)))];
+/** Whether the Hub customer's name (hubName) and the name typed at the door (doorName) can be the same person. */
+export function namesAgree(hubName, doorName) {
+  const hub = nameWords(hubName), door = nameWords(doorName);
+  if (!hub.length) return true;
+  const shared = door.filter(word => hub.includes(word));
+  if (hub.length === 1 || door.length < 2) return shared.length > 0;
+  return shared.some(word => word !== hub[0] || word !== door[0]);
 }
 const phoneKey = value => String(value || '').replace(/\D/g, '').replace(/^1(?=\d{10}$)/, '');
 const emailKey = value => String(value || '').trim().toLowerCase();
@@ -376,6 +383,8 @@ async function bookSaleJob(store, kstore, sale, { env, now, confirmed = false })
   const requested = saleRequest(sale);
   const prior = await savedSaleJob(store, sale, requested);
   if (prior) return prior;
+  // Cancelled since this request read it: no Hub customer is made or linked for it either (one Knock read).
+  if ((await kstore.get('knock_sales', sale.id))?.status === 'cancelled') throw knockFailure('That sale is cancelled.', 409, 'knock_sale_cancelled');
   const customerId = await bridgeCustomer(store, sale, 'sale', nowIso, { confirmed });
   const minutes = jobMinutes(sale.package), auto = crewAutoAssignEnabled(env);
   // Never before the day after the right to cancel ends, nor before tomorrow; the start inside the 9:30-5:00 day.
@@ -389,9 +398,15 @@ async function bookSaleJob(store, kstore, sale, { env, now, confirmed = false })
     if (pick) ({ date, time } = pick);
   }
   // A house switched from a walkthrough to a sale: a booked walkthrough is named in the job's notes for the office to
-  // cancel; one not booked yet is withdrawn so it never books (supersedeWalkthroughs, after the save).
-  const walkthroughs = (await kstore.query('knock_walkthroughs', { where: [['houseId', '==', sale.houseId]], limit: 10 }).catch(() => []))
-    .filter(row => !row.supersededBySaleId && row.status !== 'superseded');
+  // cancel; one not booked yet is withdrawn so it never books (supersedeWalkthroughs, after the save). One whose visit
+  // was saved but whose answer was lost is booked: its dispatch receipt finds the visit (one read per such walkthrough),
+  // which is named like any booked one; the walkthrough's own next booking call records it.
+  const walkthroughs = [];
+  for (const row of (await kstore.query('knock_walkthroughs', { where: [['houseId', '==', sale.houseId]], limit: 10 }).catch(() => []))
+    .filter(row => !row.supersededBySaleId && row.status !== 'superseded')) {
+    const visit = row.booking?.jobId ? null : await savedVisit(store, row);
+    walkthroughs.push(visit ? { ...row, booking: { ...(row.booking || {}), ...visit } } : row);
+  }
   const booked = walkthroughs.filter(row => row.booking?.jobId);
   const moved = date !== requested.date || time !== requested.time;
   const asked = sale.schedule?.date ? { date: sale.schedule.date, time: sale.schedule.time } : requested, officeSet = asked.date !== requested.date || asked.time !== requested.time;
@@ -404,10 +419,12 @@ async function bookSaleJob(store, kstore, sale, { env, now, confirmed = false })
       opsNotes, estimatedDurationMin: minutes } };
   const ticket = Math.round(Number(sale.ticket) * 100) / 100;
   const attribution = () => ({ source: 'door_to_door', knockSaleId: sale.id, ghlTags: [D2D_GHL_TAGS.sale],
-    d2d: { kind: 'sale', repKey: sale.repKey, saleId: sale.id, houseId: sale.houseId || '', contactSource: D2D_CONTACT_SOURCE, at: nowIso },
-    // The price signed at the door: the Hub job's quoted price, so the HighLevel deal the schedule mirror creates
-    // carries it (its value is job.total ?? job.priceQuoted). Crew projections never include it.
-    ...(Number.isFinite(ticket) && ticket > 0 ? { priceQuoted: ticket } : {}),
+    // The price signed at the door (d2d.ticket) is the value of the HighLevel deal the schedule mirror creates
+    // (ghl-schedule-mirror.js doorTicket) and nothing else: never the Hub's quoted price (priceQuoted or total), so the
+    // Hub's money (its 50% deposit, the balance, the closeout card and field pay) never charges a door sale whose
+    // deposit and payments Knock collects (handoff.deposit, collectedAmount). Crew projections never include d2d.
+    d2d: { kind: 'sale', repKey: sale.repKey, saleId: sale.id, houseId: sale.houseId || '', contactSource: D2D_CONTACT_SOURCE, at: nowIso,
+      ...(Number.isFinite(ticket) && ticket > 0 ? { ticket } : {}) },
     // With crew auto-assign off the job waits for a manager, flagged as a sale that needs a crew.
     ...(auto ? {} : { soldNeedsCrew: { at: nowIso, by: BRIDGE_ACTOR.user, requestId, reason: 'auto_assign_off' } }) });
   // The office cancelled the sale while this was searching: no job is made for a customer who used the right to cancel.
@@ -421,7 +438,8 @@ async function bookSaleJob(store, kstore, sale, { env, now, confirmed = false })
 }
 
 // Each walkthrough on a house that became a sale: marked supersededBySaleId; one not booked yet also becomes
-// 'superseded' (never booked, off the office's list). A booked one stays for the office to cancel in the Hub.
+// 'superseded' (never booked, off the office's list; a visit saved for it anyway is cancelled, withdrawVisit). A booked
+// one (also one whose visit its receipt found) stays for the office to cancel in the Hub.
 async function supersedeWalkthroughs(kstore, rows, saleId, nowIso) {
   for (const row of rows) {
     const patch = { supersededBySaleId: saleId, updatedAt: nowIso, ...(row.booking?.jobId ? {} : { status: 'superseded',
@@ -434,27 +452,39 @@ async function supersedeWalkthroughs(kstore, rows, saleId, nowIso) {
    longer says what it was booked for), or after the earlier call whose answer was lost (the receipt's bookedAt). */
 const officeMoved = (sale, { requested, bookedAt }) => Boolean(requested) && (sale.jobDate !== requested.date || sale.jobStartTime !== requested.time)
   || Boolean(bookedAt) && (sale.statusHistory || []).some(row => row?.by !== BRIDGE_ACTOR.user && /^Job date /.test(String(row?.note || '')) && String(row.at || '') > bookedAt);
+// The Hub job's day against the sale's, for the office: "The Hub job is on Mon Oct 26 9:30 am, but this sale's job date
+// is Tue Oct 27 1:00 pm. <tail>"
+const apartMessage = (job, sale, tail) => `The Hub job is on ${dayLabel(job.date)} ${clockLabel(job.time)}, but this sale's job date is ${dayLabel(sale.jobDate)} ${clockLabel(sale.jobStartTime)}. ${tail}`.slice(0, 600);
+// A check for a Hub job to cancel that failed (followSaleStatus, a cancelled sale not linked yet).
+const failedCancelCheck = job => job?.hubChange?.action === 'cancel' && job.hubChange.status === 'failed';
+// The office's job date that the sale's linked Hub job has not followed yet (saveSaleJob's marker, or a failed move).
+const pendingMove = sale => hubLinked(sale) && sale.status !== 'cancelled' && !sale.handoff.job.hubCancelled && sale.handoff.job.hubChange?.action === 'move' && sale.handoff.job.hubChange.status === 'failed';
 
 /* Saves the outcome on the sale (handoff.job), re-reading when an admin changed the sale meanwhile. A job a person
-   recorded by hand is never replaced. A job booked on another day or start than the sale's (no crew was free then)
-   moves the sale's jobDate and jobStartTime with it, so the customer text, the refund cutoff and every list name the
-   booked time; what the rep asked for stays in schedule and handoff.job.requested, and the history says why. A date
-   the office set after the booking started is never overwritten: the history says where the Hub job is instead, and
-   setting the date again moves it (the job is linked now). A cancelled sale's date is left alone. */
+   recorded by hand is never replaced, nor a job already linked (an older answer for it, or the office's move since).
+   A job booked on another day or start than the sale's (no crew was free then) moves the sale's jobDate and
+   jobStartTime with it, so the customer text, the refund cutoff and every list name the booked time; what the rep
+   asked for stays in schedule and handoff.job.requested, and the history says why. A date the office set after the
+   booking started is never overwritten: the Hub job follows it instead (bookSale, followSaleDate). Until it has moved,
+   handoff.job.hubChange {action 'move', status 'failed'} names both days (Admin's "The Hub job needs you", whose Try
+   again moves it) and moved stays false: the office's date is not a time no crew was free. A cancelled sale's date is
+   left alone. A failed check for a job to cancel is moot once the sale is booked again and its job linked. */
 async function saveSaleJob(kstore, saleId, { bookedAt = '', ...outcome }, nowIso) {
   for (let attempt = 0; attempt < 3; attempt++) {
     const sale = await kstore.get('knock_sales', saleId);
     if (!sale) throw knockFailure('That sale was not found.', 404, 'knock_sale_missing');
     const prior = sale.handoff?.job || {};
-    if (prior.status === 'created' && outcome.status !== 'created') return sale;
+    if (prior.status === 'created' && (outcome.status !== 'created' || prior.ref === outcome.ref)) return sale;
     const job = { ...prior, mode: 'hub', ...outcome, at: nowIso, by: BRIDGE_ACTOR.user, attempts: Number(prior.attempts || 0) + 1 };
     job.message = outcome.message || saleMessage(job);
+    if (job.status === 'created' && sale.status !== 'cancelled' && failedCancelCheck(prior)) delete job.hubChange;
     const handoff = { ...(sale.handoff || {}), job };
     const patch = { handoff, updatedAt: nowIso };
     const differs = job.status === 'created' && sale.status !== 'cancelled' && validDate(job.date) && TIME.test(job.time || '') && (job.date !== sale.jobDate || job.time !== sale.jobStartTime);
     if (differs && officeMoved(sale, { requested: outcome.requested, bookedAt })) {
+      Object.assign(job, { moved: false, hubChange: { action: 'move', status: 'failed', code: 'knock_hub_job_date', at: nowIso, message: apartMessage(job, sale, 'Try again to move it there, or move it in Dispatch.') } });
       patch.statusHistory = [...(sale.statusHistory || []), { status: sale.status, at: nowIso, by: BRIDGE_ACTOR.user,
-        note: `Booked in the Hub for ${dayLabel(job.date)} ${clockLabel(job.time)} before the job date changed to ${dayLabel(sale.jobDate)} ${clockLabel(sale.jobStartTime)}. Set the job date again to move the Hub job, or move it in Dispatch.` }];
+        note: `Booked in the Hub for ${dayLabel(job.date)} ${clockLabel(job.time)} before the job date changed to ${dayLabel(sale.jobDate)} ${clockLabel(sale.jobStartTime)}.` }];
     } else if (differs && job.date >= (sale.earliestJobDate || '')) {
       Object.assign(patch, { jobDate: job.date, jobStartTime: job.time, statusHistory: [...(sale.statusHistory || []), { status: sale.status, at: nowIso, by: BRIDGE_ACTOR.user,
         note: `Booked in the Hub for ${dayLabel(job.date)} ${clockLabel(job.time)} (asked for ${dayLabel(sale.jobDate)} ${clockLabel(sale.jobStartTime)}): no crew was free then. Confirm the day with the customer.` }] });
@@ -496,6 +526,9 @@ export async function bookSale(kstore, store, saleId, { env = {}, now = new Date
   // Cancelled by the office while this booking was in flight: the job just saved is cancelled with the sale (a Hub
   // failure is saved and shown with Try again), so no crew goes to a customer who used the right to cancel.
   if (saved.status === 'cancelled' && hubLinked(saved) && !saved.handoff.job.hubCancelled) saved = (await followSaleStatus(kstore, store, saved, { now }))?.sale || saved;
+  // The office changed the job date while this booking ran (or after the call whose answer was lost): the Hub job moves
+  // to that date now, so the customer is never texted one day while the crew goes on another.
+  else if (pendingMove(saved)) saved = (await followSaleDate(kstore, store, saved, { env, now }))?.sale || saved;
   return { sale: saved, view: saleJobView(saved) };
 }
 
@@ -525,14 +558,20 @@ function bookedWalkthrough(job, roster, customerId, requested) {
   return { ...out, message: walkthroughMessage(out) };
 }
 
+// A receipt means this walkthrough's visit was saved, perhaps by a call whose answer was lost: the outcome from it, else
+// null.
+async function savedVisit(store, record) {
+  const prior = await store.read('dispatchOperations', record.id.toLowerCase());
+  if (!prior) return null;
+  const [saved, roster] = await Promise.all([store.read(prior.collection, prior.targetId), store.roster()]);
+  if (!saved) throw Object.assign(new Error('The saved walkthrough could not be read back.'), { code: 'dispatch_outcome_unknown' });
+  return bookedWalkthrough(saved, roster, saved.customerId, record.requested || {});
+}
+
 async function bookWalkthroughVisit(store, record, { env, now, confirmed = false }) {
   const nowIso = now.toISOString(), requestId = record.id, requested = record.requested || {};
-  const prior = await store.read('dispatchOperations', requestId.toLowerCase());
-  if (prior) {
-    const [saved, roster] = await Promise.all([store.read(prior.collection, prior.targetId), store.roster()]);
-    if (!saved) throw Object.assign(new Error('The saved walkthrough could not be read back.'), { code: 'dispatch_outcome_unknown' });
-    return bookedWalkthrough(saved, roster, saved.customerId, requested);
-  }
+  const prior = await savedVisit(store, record);
+  if (prior) return prior;
   const customerId = await bridgeCustomer(store, record, 'walkthrough', nowIso, { confirmed });
   const roster = await store.roster(), ids = estimatorIds(roster, env, record.repKey);
   const today = denverToday(now), date = validDate(requested.date) && requested.date >= today ? requested.date : today;
@@ -591,12 +630,26 @@ export async function recordD2dSetter(kstore, record, booking, nowIso) {
   return { id: booking.jobId, ...row };
 }
 
+const superseded = record => record?.status === 'superseded' || record?.booking?.status === 'superseded';
+
+/* Saves a booking outcome on the walkthrough. A walkthrough withdrawn because its house became a sale never becomes
+   booked: a visit saved after that (a booking that was in flight, or found again by its receipt) is only recorded on it
+   (jobId and the estimator), for withdrawVisit to cancel; it stays superseded and earns no setter record. */
 async function saveWalkthroughBooking(kstore, id, outcome, nowIso) {
   for (let attempt = 0; attempt < 3; attempt++) {
     const record = await kstore.get('knock_walkthroughs', id);
     if (!record) throw knockFailure('That walkthrough was not found.', 404, 'knock_walkthrough_missing');
     const prior = record.booking || {};
-    if (['booked', 'requested', 'superseded'].includes(prior.status) && !['booked', 'requested'].includes(outcome.status)) return record;
+    if (superseded(record)) {
+      if (!['booked', 'requested'].includes(outcome.status) || !outcome.jobId || prior.jobId) return record;
+      const booking = { ...prior, status: 'superseded', jobId: outcome.jobId, revision: outcome.revision || '', customerId: outcome.customerId || '', estimatorKey: outcome.estimatorKey || '',
+        message: walkthroughMessage({ status: 'superseded' }), at: nowIso, by: BRIDGE_ACTOR.user };
+      try {
+        await kstore.commit([write.patch('knock_walkthroughs', id, { booking, updatedAt: nowIso }, record.__updateTime)]);
+        return { ...record, booking, updatedAt: nowIso };
+      } catch (error) { if (error.code !== 'knock_conflict') throw error; continue; }
+    }
+    if (['booked', 'requested'].includes(prior.status) && !['booked', 'requested'].includes(outcome.status)) return record;
     const booking = { ...prior, ...outcome, at: nowIso, by: BRIDGE_ACTOR.user, attempts: Number(prior.attempts || 0) + 1 };
     // The rep's message is the outcome's; a refusal's reason stays in code and error for the office.
     booking.message = walkthroughMessage(booking);
@@ -615,8 +668,12 @@ export async function bookWalkthrough(kstore, store, id, { env = {}, now = new D
   const record = await kstore.get('knock_walkthroughs', String(id || ''));
   if (!record || rep && record.repKey !== rep.repKey) throw knockFailure('That walkthrough was not found.', 404, 'knock_walkthrough_missing');
   const nowIso = now.toISOString();
-  // A walkthrough replaced by a sale at the house before it was booked never books.
-  if (record.status === 'superseded' || record.booking?.status === 'superseded') return { walkthrough: record, view: walkthroughView(record) };
+  // A walkthrough replaced by a sale at the house before it was booked never books; a visit saved for it anyway (an
+  // answer lost before the sale) is found by its receipt and cancelled.
+  if (superseded(record)) {
+    const withdrawn = await withdrawVisit(kstore, store, record, now);
+    return { walkthrough: withdrawn, view: walkthroughView(withdrawn) };
+  }
   let saved = record;
   if (!['booked', 'requested'].includes(record.booking?.status) || !record.booking?.jobId) {
     if (waiting(record.booking, rep, now.getTime())) return { walkthrough: record, view: walkthroughView(record) };
@@ -625,8 +682,55 @@ export async function bookWalkthrough(kstore, store, id, { env = {}, now = new D
     catch (error) { if (typeof error?.code === 'string' && error.code.startsWith('knock_')) throw error; outcome = failure(error, Number(record.booking?.attempts || 0) + 1, now.getTime()); }
     saved = await saveWalkthroughBooking(kstore, record.id, outcome, nowIso);
   }
-  if (['booked', 'requested'].includes(saved.booking?.status)) await recordD2dSetter(kstore, saved, saved.booking, nowIso);
+  // The house became a sale while this booked: the visit just saved is cancelled, and no setter record is made.
+  if (superseded(saved)) saved = await withdrawVisit(kstore, store, saved, now);
+  else if (['booked', 'requested'].includes(saved.booking?.status)) await recordD2dSetter(kstore, saved, saved.booking, nowIso);
   return { walkthrough: saved, view: walkthroughView(saved) };
+}
+
+/* The estimator visit of a walkthrough withdrawn because its house became a sale (supersedeWalkthroughs) that was saved
+   anyway: by a booking in flight then, or by a call whose answer was lost (found by the walkthrough's dispatch receipt,
+   one read). It is recorded on the walkthrough and cancelled in the Hub (reason duplicate_booking), so no estimator goes
+   to a customer who already bought. booking.withdrawn says it is settled: 'cancelled', 'closed' (the visit was already
+   closed: the office's) or 'missing'. A Hub that cannot be reached answers 503, so the phone asks again. */
+async function withdrawVisit(kstore, store, record, now) {
+  if (record.booking?.withdrawn) return record;
+  const nowIso = now.toISOString();
+  let current = record;
+  try {
+    if (!current.booking?.jobId) {
+      const visit = await savedVisit(store, current);
+      if (!visit) return current;
+      current = await saveWalkthroughBooking(kstore, current.id, visit, nowIso);
+      if (!current.booking?.jobId || !superseded(current)) return current;
+    }
+    const visit = await store.read('jobs', current.booking.jobId);
+    let withdrawn = !visit ? 'missing' : CANCELLED.has(jobState(visit)) ? 'cancelled' : CLOSED.has(jobState(visit)) ? 'closed' : '';
+    if (!withdrawn) {
+      const requestId = await changeRequestId(current.id, 'withdraw', visit.revision || '');
+      await mutateDispatch(store, BRIDGE_ACTOR, { action: 'schedule.cancel', requestId, jobId: visit.id, expectedRevision: visit.revision,
+        cancellationReason: `Replaced by the door-to-door sale at this house${current.supersededBySaleId ? ` (Knock sale ${current.supersededBySaleId})` : ''}.`, reasonCode: 'duplicate_booking' }, nowIso, { authorize: bridgeAuthorize });
+      withdrawn = 'cancelled';
+    }
+    return await patchWalkthroughBooking(kstore, current.id, { withdrawn, withdrawnAt: nowIso }, nowIso);
+  } catch (error) {
+    if (String(error?.code || '').startsWith('knock_')) throw error;
+    throw knockFailure('The Hub could not be reached. Try again in a moment.', 503, 'knock_bridge_unavailable');
+  }
+}
+
+// Merges fields into a walkthrough's booking, re-reading when it changed meanwhile.
+async function patchWalkthroughBooking(kstore, id, fields, nowIso) {
+  for (let attempt = 0; attempt < 3; attempt++) {
+    const record = await kstore.get('knock_walkthroughs', id);
+    if (!record) throw knockFailure('That walkthrough was not found.', 404, 'knock_walkthrough_missing');
+    const booking = { ...(record.booking || {}), ...fields };
+    try {
+      await kstore.commit([write.patch('knock_walkthroughs', id, { booking, updatedAt: nowIso }, record.__updateTime)]);
+      return { ...record, booking, updatedAt: nowIso };
+    } catch (error) { if (error.code !== 'knock_conflict') throw error; }
+  }
+  throw knockFailure('The walkthrough is busy. Retry in a moment.', 409, 'knock_retry');
 }
 
 /** What a rep sees of a walkthrough's booking: status booked | requested | review | superseded | pending (and retryAt
@@ -668,18 +772,58 @@ async function changeRequestId(...parts) {
   return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-4${hex.slice(13, 16)}-8${hex.slice(17, 20)}-${hex.slice(20, 32)}`;
 }
 
-// Merges fields into a sale's handoff.job, re-reading when the sale changed meanwhile.
-async function patchSaleJob(kstore, saleId, fields, nowIso) {
+// Merges fields into a sale's handoff.job (and adds `note` to its history), re-reading when the sale changed meanwhile.
+async function patchSaleJob(kstore, saleId, fields, nowIso, { note = '' } = {}) {
   for (let attempt = 0; attempt < 3; attempt++) {
     const sale = await kstore.get('knock_sales', saleId);
     if (!sale) throw knockFailure('That sale was not found.', 404, 'knock_sale_missing');
     const handoff = { ...(sale.handoff || {}), job: { ...(sale.handoff?.job || {}), ...fields } };
+    const patch = { handoff, updatedAt: nowIso, ...(note ? { statusHistory: [...(sale.statusHistory || []), { status: sale.status, at: nowIso, by: BRIDGE_ACTOR.user, note }] } : {}) };
     try {
-      await kstore.commit([write.patch('knock_sales', saleId, { handoff, updatedAt: nowIso }, sale.__updateTime)]);
-      return { ...sale, handoff, updatedAt: nowIso };
+      await kstore.commit([write.patch('knock_sales', saleId, patch, sale.__updateTime)]);
+      return { ...sale, ...patch };
     } catch (error) { if (error.code !== 'knock_conflict') throw error; }
   }
   throw knockFailure('The sale is busy. Retry in a moment.', 409, 'knock_retry');
+}
+
+/* The office's job date that a linked Hub job has not followed (pendingMove: the booking ran while the date changed):
+   the job moves there (moveSaleJob, as Admin's own change would), the history says so and hubChange is done. When the
+   Hub cannot take that time, hubChange stays failed and names both days and the reason (Try again runs this again).
+   Answers {sale, hub}, or null when there is no open Hub job to move. */
+async function followSaleDate(kstore, store, sale, { env = {}, now = new Date() } = {}) {
+  const nowIso = now.toISOString(), job = sale.handoff.job;
+  let fields;
+  try { fields = await moveSaleJob(store, sale, { jobDate: sale.jobDate, jobStartTime: sale.jobStartTime || null }, { env, now }); }
+  catch (error) {
+    const hub = { action: 'move', status: 'failed', code: String(error?.code || 'bridge_error').slice(0, 80), at: nowIso,
+      message: apartMessage(job, sale, `${String(error?.message || 'The Hub refused the move.').slice(0, 300)} Confirm the day with the customer before texting.`) };
+    return { sale: await patchSaleJob(kstore, sale.id, { hubChange: hub }, nowIso), hub };
+  }
+  if (!fields) return null;
+  const hub = { action: 'move', status: 'done', code: '', at: nowIso, message: `The Hub job moved to ${dayLabel(fields.date)} ${clockLabel(fields.time)}, the job date the office set.` };
+  return { sale: await patchSaleJob(kstore, sale.id, { ...fields, hubChange: hub }, nowIso, { note: `Hub job moved to ${fields.date} ${fields.time}${fields.crewLabel ? `, ${fields.crewLabel}` : ''}: the job date set while it was booking.` }), hub };
+}
+
+/* A bridged sale that is not cancelled and has no Hub job (reinstated, completed or paid): a failed check for a job to
+   cancel is moot now and is cleared; a booked (reinstated) sale is booked here as the office's Book in Hub would, so it
+   never waits as pending with nothing booking it (the phone dropped it when it was cancelled). One the office must
+   review keeps waiting for that review. Answers {sale, hub} or null. */
+async function followUnlinked(kstore, store, sale, { env = null, now = new Date() } = {}) {
+  const nowIso = now.toISOString(), job = sale.handoff.job;
+  const cleared = failedCancelCheck(job) ? await patchSaleJob(kstore, sale.id, { hubChange: null }, nowIso) : null;
+  if (sale.status === 'booked' && env && !['created', 'review'].includes(job.status)) {
+    let booked;
+    try { booked = await bookSale(kstore, store, sale.id, { env, now, rep: null }); }
+    catch (error) {
+      const hub = { action: 'book', status: 'failed', code: String(error?.code || 'bridge_error').slice(0, 80), at: nowIso, message: `The Hub job was not booked: ${String(error?.message || 'the Hub refused it.').slice(0, 300)} Use Book in Hub.` };
+      return { sale: cleared || sale, hub };
+    }
+    const done = ['booked', 'needs_crew'].includes(booked.view?.status), state = booked.sale.handoff?.job || {};
+    return { sale: booked.sale, hub: { action: 'book', status: done ? 'done' : 'failed', code: done ? '' : String(state.code || ''), at: nowIso,
+      message: done ? booked.view.message : `The Hub job was not booked yet: ${String(state.error || booked.view?.message || '').slice(0, 300)} Use Book in Hub.` } };
+  }
+  return cleared ? { sale: cleared, hub: { action: 'cancel', status: 'done', code: '', at: nowIso, message: 'The sale is not cancelled: there is no Hub job to cancel.' } } : null;
 }
 
 /** After an admin cancels or reinstates a sale in Knock (setSaleStatus has saved it), its Hub job follows: a cancelled
@@ -688,10 +832,14 @@ async function patchSaleJob(kstore, saleId, fields, nowIso) {
  * to finish in Dispatch (running the same change again retries it). handoff.job.hubCancelled says whether the Hub job
  * is cancelled. Answers {sale, hub: {action, status: 'done' | 'failed', code, message, at}}, or null when the sale has no
  * Hub job or nothing to follow. A cancelled bridged sale that does not know of a job is checked for one an earlier
- * booking saved without telling it (its answer lost), which is then recorded and cancelled too. */
-export async function followSaleStatus(kstore, store, sale, { now = new Date() } = {}) {
+ * booking saved without telling it (its answer lost), which is then recorded and cancelled too. A bridged sale that is
+ * not cancelled and has no job is followed by followUnlinked (env: the admin's, to book a reinstated sale). Running it
+ * again (Admin's Try again) retries what failed: a cancel or restore, the check for a job, or a job date the Hub job
+ * has not followed (followSaleDate); a failure the sale has since made moot (cancelled, then booked again) is cleared. */
+export async function followSaleStatus(kstore, store, sale, { now = new Date(), env = null } = {}) {
   if (!hubLinked(sale)) {
-    if (sale?.status !== 'cancelled' || sale.handoff?.job?.mode !== 'hub') return null;
+    if (sale?.handoff?.job?.mode !== 'hub') return null;
+    if (sale.status !== 'cancelled') return followUnlinked(kstore, store, sale, { env, now });
     const nowIso = now.toISOString(), checked = sale.handoff.job.hubChange?.status === 'failed';
     let adopted;
     try { adopted = await adoptSavedJob(kstore, store, sale, now); }
@@ -709,7 +857,13 @@ export async function followSaleStatus(kstore, store, sale, { now = new Date() }
     sale = adopted;
   }
   const job = sale.handoff.job, cancel = sale.status === 'cancelled';
-  if (cancel === Boolean(job.hubCancelled)) return null;
+  if (cancel === Boolean(job.hubCancelled)) {
+    if (pendingMove(sale)) return followSaleDate(kstore, store, sale, { env: env || {}, now });
+    if (!['cancel', 'restore'].includes(job.hubChange?.action) || job.hubChange.status !== 'failed') return null;
+    // A cancel or restore that failed before is moot: the Hub job already is what the sale says (cancelled, or open).
+    const hub = { action: job.hubChange.action, status: 'done', code: '', at: now.toISOString(), message: cancel ? 'Its Hub job is cancelled.' : 'Its Hub job is open.' };
+    return { sale: await patchSaleJob(kstore, sale.id, { hubChange: hub }, now.toISOString()), hub };
+  }
   const nowIso = now.toISOString(), action = cancel ? 'cancel' : 'restore';
   let failed = null;
   try {
@@ -738,9 +892,22 @@ export async function followSaleStatus(kstore, store, sale, { now = new Date() }
  * length, through mutateDispatch (the crew is picked again when EGC_DISPATCH_CREW_AUTO_ASSIGN is on). When the Hub
  * cannot take that time the change is refused (409 knock_hub_move_refused), so the sale and its job never disagree.
  * Answers the handoff.job fields to save with the sale ({date, time, endTime, crewId, crewLabel, assignment, ...}), or
- * null for a sale without an open Hub job. */
+ * null for a sale without an open Hub job. A bridged sale that does not know of its job yet (the booking's answer was
+ * lost, or it is still in flight) is checked for one by its dispatch receipt, as a cancellation is: a job found is moved
+ * and linked by this change (the answer adds the link). When the receipt cannot be read the sale's date changes alone,
+ * as before, and the booking moves its job when it finds it (bookSale, followSaleDate). */
 export async function moveSaleJob(store, sale, { jobDate, jobStartTime = null }, { env = {}, now = new Date() } = {}) {
-  if (!hubLinked(sale) || sale.handoff.job.hubCancelled) return null;
+  let link = null;
+  if (!hubLinked(sale)) {
+    if (sale?.handoff?.job?.mode !== 'hub' || sale.status === 'cancelled') return null;
+    let found = null;
+    try { found = await savedSaleJob(store, sale, saleRequest(sale)); } catch { return null; }
+    if (!found) return null;
+    const { bookedAt: _bookedAt, ...outcome } = found;
+    link = { ...outcome, ...(failedCancelCheck(sale.handoff.job) ? { hubChange: null } : {}) };
+    sale = { ...sale, handoff: { ...sale.handoff, job: { ...sale.handoff.job, ...link } } };
+  }
+  if (sale.handoff.job.hubCancelled) return null;
   const job = sale.handoff.job, nowIso = now.toISOString();
   let current, autoCrew = null;
   try { current = await store.read('jobs', job.ref); }
@@ -765,6 +932,8 @@ export async function moveSaleJob(store, sale, { jobDate, jobStartTime = null },
   }
   const assigned = Array.isArray(current.assignedCrew) && current.assignedCrew.length > 0, crewId = assigned ? current.crewId || null : null;
   const crewLabel = !assigned ? '' : autoCrew?.status === 'assigned' ? String(autoCrew.crewName || '') : crewId && crewId === job.crewId ? job.crewLabel || '' : 'Crew assigned';
-  const fields = { date: current.date || jobDate, time: current.time || time, endTime: current.endTime || hhmm(end), crewId, crewLabel, assignment: assigned ? 'assigned' : 'unassigned', moved: false, at: nowIso };
-  return { ...fields, message: saleMessage({ status: 'created', ...fields }) };
+  const fields = { date: current.date || jobDate, time: current.time || time, endTime: current.endTime || hhmm(end), crewId, crewLabel, assignment: assigned ? 'assigned' : 'unassigned', moved: false, at: nowIso,
+    // The job is on the sale's date now: a move that was waiting (or had failed) is done.
+    ...(job.hubChange?.action === 'move' ? { hubChange: { action: 'move', status: 'done', code: '', at: nowIso, message: `The Hub job is on ${dayLabel(current.date || jobDate)} ${clockLabel(current.time || time)}.` } } : {}) };
+  return { ...(link || {}), ...fields, message: saleMessage({ status: 'created', ...fields }) };
 }
