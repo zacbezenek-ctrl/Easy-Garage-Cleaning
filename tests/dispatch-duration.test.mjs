@@ -332,9 +332,9 @@ test('a length saved in dispatch wins over the lines and the walkthrough overrid
 // Synthetic signed itemized plan (the walkthrough-handoff-items.test.mjs shape): 120
 // person-minutes suggest 60 minutes for the crew of 2; the manager records 180.
 const signedPlan = () => ({ client: { name: 'Synthetic Customer', phone: '+1 (970) 555-0100', email: 'synthetic@example.invalid', address: '100 Synthetic Street' },
-  quote: { title: 'Garage reset', total: 1400, deposit: 700, job_date: '2026-09-24', start_time: '09:00', end_time: '12:00', estimated_duration_min: 180, duration_override_reason: 'Synthetic narrow alley adds carry time',
+  quote: { title: 'Garage reset', total: 1400, deposit: 350, job_date: '2026-09-24', start_time: '09:00', end_time: '12:00', estimated_duration_min: 180, duration_override_reason: 'Synthetic narrow alley adds carry time',
     line_items: [{ id: 'cleanout', kind: 'service', name: 'Garage cleanout and reset', description: 'Synthetic scope', quantity: 1, unitCents: 140000, totalCents: 140000, durationMinutes: 120 }] },
-  acceptance: { accepted_at: '2026-09-22T11:45:00.000Z', accepted_by: 'Synthetic Customer', signature_captured: true, method: 'in_person_signature', terms_version: '2026-09-deposit50' }, signature: 'data:image/png;base64,iVBORw0KGgo=', terms_version: '2026-09-deposit50', terms_accepted: true, photos: { before: 3 },
+  acceptance: { accepted_at: '2026-09-22T11:45:00.000Z', accepted_by: 'Synthetic Customer', signature_captured: true, method: 'in_person_signature', terms_version: '2026-10-deposit25' }, signature: 'data:image/png;base64,iVBORw0KGgo=', terms_version: '2026-10-deposit25', terms_accepted: true, photos: { before: 3 },
   scope: { keep_items: 'Blue bicycle', remove_items: 'Empty cartons', exclusions: 'Locked cabinet', finish: ['cleanout'] }, discovery: { success: 'Park a vehicle' }, logistics: { crew_size: 2, assigned_to: 'Crew of 2', notes: 'Use side gate' },
   internal_notes: 'Synthetic brief', notes: 'Synthetic note', client_checklists: { preJob: [{ id: 'keep-bike', label: 'Protect blue bicycle', detail: 'Move to safe area', critical: true }], postJob: [{ id: 'scope-review', label: 'Review with customer', detail: 'Confirm agreed scope' }] } });
 

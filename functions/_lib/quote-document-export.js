@@ -1,6 +1,6 @@
 import { sha256 } from '@noble/hashes/sha2.js';
 import { applySelection, CUSTOMER_LINE_FIELDS, depositCents, estimateFingerprint, estimateTotals, exactCents, included, MAX_TOTAL_CENTS, normalizeLineItems, validateSelection } from './quote-model.js';
-import { FINAL_25_75, PAYMENT_TIME_ZONE, quotePaymentDates, quotePaymentSchedule, snapshotQuotePaymentPolicy } from './quote-payment-policy.js';
+import { FINAL_25_75, PAYMENT_TIME_ZONE, SIGNED_25_75, quotePaymentDates, quotePaymentSchedule, snapshotQuotePaymentPolicy } from './quote-payment-policy.js';
 import { validDate } from './dispatch-time.js';
 
 /** Pure server-side adapter. No storage, clock, environment, provider or send APIs.
@@ -95,7 +95,8 @@ function validatePolicy(snapshot, total, issue) {
   } else {
     try {
       policy = snapshotQuotePaymentPolicy(estimate.commercialPolicy);
-      if (!same(policy, FINAL_25_75)) issue('payment_policy_requires_exception');
+      // The owner's two 25/75 policies: a sent quote's and an in-person signature's (deposit due the day it was signed).
+      if (!same(policy, FINAL_25_75) && !same(policy, SIGNED_25_75)) issue('payment_policy_requires_exception');
     } catch { issue('canonical_payment_policy_missing'); return {}; }
   }
   const expectedDeposit = depositCents(total, policy.depositPct);

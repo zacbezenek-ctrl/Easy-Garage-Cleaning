@@ -2,7 +2,10 @@
 // EGC_GHL_SCHEDULE_MIRROR unset, the signed walkthrough handoff stores and answers exactly what it did before the
 // estimator integration, even when the page sends the new fields (a builder selection on the quote, a chosen crew in
 // the logistics): every stored document and every answer of this scenario is compared with a snapshot recorded from
-// the code before the change (UPDATE_SNAPSHOTS=1 on c382a9e). The scenario: a manager signs a walkthrough into a new job;
+// the code before the change (UPDATE_SNAPSHOTS=1 on c382a9e), re-recorded once for the owner's deposit terms (D-DEPOSIT,
+// 2026-10-18), which apply with every flag: only the signed terms id, the 25% deposit (quote.deposit, deposit.amount,
+// estimate.depositRequired), the estimate's saved payment terms (amountCents, depositRequiredCents, depositPct,
+// commercialPolicy, paymentSchedule) and the request fingerprints changed. The scenario: a manager signs a walkthrough into a new job;
 // an estimator saves a walkthrough-priced quote draft and signs it into a scheduled job; the estimator asks for the
 // handoff preparation, the crew openings view and a price release, which are refused as before; a manager signs a line
 // carrying purchase fields (refused as before) and a plan with a false builder selection (not read); the crew projection

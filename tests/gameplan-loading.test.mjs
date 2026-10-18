@@ -66,7 +66,7 @@ function harness({ requestedId = 'walkthrough-1', draft = null, manualDraft = nu
   return { context, state, requested, rows, element, storage, writes };
 }
 
-const saved = (sourceWalkthroughId, name = 'Saved customer') => ({ flow: '2026-09-simple', index: 2, S: { sourceWalkthroughId, name, notes: 'Keep these field notes', signature: 'saved-signature', approved: true, termsVersion: '2026-09-deposit50', jobId: 'prepared-job' } });
+const saved = (sourceWalkthroughId, name = 'Saved customer') => ({ flow: '2026-09-simple', index: 2, S: { sourceWalkthroughId, name, notes: 'Keep these field notes', signature: 'saved-signature', approved: true, termsVersion: '2026-10-deposit25', jobId: 'prepared-job' } });
 
 test('booked customer instructions stay visible without becoming staff notes or estimated scope', async () => {
   const h = harness({ draft: saved('walkthrough-1') });
@@ -208,7 +208,7 @@ test('login input cannot save over a requested walkthrough before it has loaded'
 
 test('a saved draft under earlier deposit terms preserves its work but requires fresh customer approval', async () => {
   const draft=saved('walkthrough-1');
-  draft.S.termsVersion='2026-09-simple';
+  draft.S.termsVersion='2026-09-deposit50'; // the earlier 50% terms (D-DEPOSIT, 2026-10-18)
   draft.S.lockedPrice='1425';
   draft.S.priceManuallySet=true;
   const h=harness({draft});
@@ -218,7 +218,7 @@ test('a saved draft under earlier deposit terms preserves its work but requires 
   assert.equal(h.context.S.jobId,'prepared-job');
   assert.equal(h.context.S.approved,false);
   assert.equal(h.context.S.signature,'');
-  assert.equal(h.context.S.termsVersion,'2026-09-deposit50');
+  assert.equal(h.context.S.termsVersion,'2026-10-deposit25');
 });
 
 test('an unsigned automatic draft discards its old-rate total while preserving field work', async () => {

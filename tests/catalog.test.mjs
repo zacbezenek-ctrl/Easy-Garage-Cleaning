@@ -4,6 +4,8 @@ import vm from 'node:vm';
 import test from 'node:test';
 import { servedPricing } from './helpers/walkthrough-pricing.mjs';
 import { AUDIT_STATUS, GARAGE_SIZES, PRODUCT_CATEGORIES, optionsForNeed, settingsReadyForCustomers, staleItems, validateCatalog, validatePricingSettings } from '../functions/_lib/catalog.js';
+import { depositCents } from '../functions/_lib/quote-model.js';
+import { SIGNED_25_75 } from '../functions/_lib/quote-payment-policy.js';
 
 const readJson = path => JSON.parse(fs.readFileSync(new URL(path, import.meta.url), 'utf8'));
 const shipped = readJson('../functions/_data/garage-catalog.json');
@@ -264,7 +266,7 @@ test('default pricing settings are complete placeholders that block customer use
   assert.deepEqual(Object.keys(defaults.markupPct.byCategory).sort(), [...PRODUCT_CATEGORIES].sort());
 });
 
-test('deposit and minimum placeholders match the current walkthrough pricing in crew/gameplan.html', () => {
+test('the minimum placeholder matches the walkthrough pricing in crew/gameplan.html; the walkthrough deposit is the signed terms\' 25%', () => {
   const html = fs.readFileSync(new URL('../crew/gameplan.html', import.meta.url), 'utf8');
   const line = prefix => html.split(/\r?\n/).find(row => row.startsWith(prefix));
   // PRICE-SCRUB: the page prices with the tables /api/pricing-config serves.
@@ -274,7 +276,10 @@ test('deposit and minimum placeholders match the current walkthrough pricing in 
   Object.assign(context.S, { garageSize: '1', fill: 'light', loads: '' });
   for (const prefix of ['function recommend(', 'function walkthroughDeposit(']) vm.runInContext(line(prefix), context);
   assert.equal(context.recommend() * 100, 67500, 'the lightest one-car job lands on the walkthrough\'s $675 floor (Option B); the catalog minimum is set separately when the owner approves catalog settings');
-  assert.equal(Math.round(context.walkthroughDeposit(1000.01).amount * 100), Math.round(100001 * defaults.depositPct / 100));
+  // D-DEPOSIT: the walkthrough deposit is 25% (terms 2026-10-deposit25); the catalog placeholder (50%) reads only for catalog
+  // quote drafts saved before the 25/75 terms, since every new quote takes its policy's 25% (quote-draft.js quotePatch).
+  assert.equal(Math.round(context.walkthroughDeposit(1000.01).amount * 100), depositCents(100001, SIGNED_25_75.depositPct));
+  assert.equal(defaults.depositPct, 50);
 });
 
 test('validatePricingSettings rejects malformed settings with the exact path', () => {

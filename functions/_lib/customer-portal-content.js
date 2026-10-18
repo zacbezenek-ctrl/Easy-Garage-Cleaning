@@ -5,7 +5,7 @@
 // approvals record the version the customer was shown (P4-09), and
 // tests/customer-documents.test.mjs pins the copy to this version. It is the
 // portal's own version: in-person walkthrough acceptance keeps the Game Plan's
-// terms_version ('2026-09-deposit50', walkthrough-handoff.js) and the Hub
+// terms_version ('2026-10-deposit25', earlier '2026-09-deposit50'; walkthrough-handoff.js) and the Hub
 // estimate keeps estimate.termsVersion; approvals add acceptedTermsVersion.
 export const CUSTOMER_PORTAL_TERMS_VERSION = '2026-09-portal';
 // Portal pages served before versioning send no terms_version. They showed only

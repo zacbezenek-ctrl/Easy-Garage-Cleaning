@@ -23,6 +23,7 @@ import { quoteApproved } from '../functions/_lib/portal-invitation.js';
 import { projectReleased } from '../functions/_lib/business-hub-core.js';
 import { payable } from '../functions/_lib/customer-payments.js';
 import { moneyDocumentKinds } from '../functions/_lib/money-document.js';
+import { SIGNED_25_75 } from '../functions/_lib/quote-payment-policy.js';
 import { BASE_ENV, LABOR_CENTS, MON, NOW, LATER, ON_ENV, SAT, SHELF, TOTES, TUE, builderState, client, estimator, fixture, menuItem, owner, selection, signedPlan } from './helpers/estimator-fixture.mjs';
 import { walkthroughCrewBrief } from '../functions/_lib/walkthrough-crew-brief.js';
 import { scheduleMirrorNote } from '../functions/_lib/ghl-schedule-mirror.js';
@@ -126,7 +127,7 @@ test('estimator end to end: builder quote, crew opening, signed job on Crew 1 wi
   // the HighLevel opportunity's monetaryValue) include it, and the crew sees the man-hours, never the rate or the amount.
   assert.deepEqual(job.estimate.lineItems.at(-1).name, 'Labor: 6 man-hours × $40.00');
   assert.deepEqual(job.acceptedHandoffPayload.quote.line_items.at(-1), { name: 'Labor: 6 man-hours × $40.00', qty: 1, total: 240 });
-  assert.deepEqual([job.total, job.priceQuoted, job.estimate.depositRequired], [priced.totalCents / 100, priced.totalCents / 100, Math.round(priced.totalCents / 2) / 100]);
+  assert.deepEqual([job.total, job.priceQuoted, job.estimate.depositRequired], [priced.totalCents / 100, priced.totalCents / 100, Math.round(priced.totalCents / 4) / 100]);
   assert.ok(priced.totalCents - LABOR_CENTS === priced.breakdown.sections.reduce((sum, section) => sum + section.subtotalCents, 0), 'the menu steps plus the labor are the total');
   assert.deepEqual(job.compositeQuote.breakdown.labor, priced.labor);
   // The man-hours are the time sold, never an on-site time; below the server's estimate, the estimate shows (flow-8).
@@ -139,7 +140,11 @@ test('estimator end to end: builder quote, crew opening, signed job on Crew 1 wi
   assert.match(scheduleMirrorNote({ kind: 'scheduled', job }).body, /\nLabor: 6 man-hours sold \(below the estimate of 9 man-hours\)\n/);
   assert.deepEqual(job.acceptedHandoffPayload.quote.estimate_line_items, normalizeLineItems(priced.lineItems, { strict: true }).lineItems);
   assert.doesNotMatch(JSON.stringify([signed, job.acceptedHandoffPayload, job.jobInstructions]), /markupCents|productCents|"split":\{/);
-  assert.deepEqual([job.estimate.amount, job.estimate.depositRequired, job.estimate.status, job.estimate.catalogVersion, job.estimate.pricingSettingsVersion], [priced.totalCents / 100, Math.round(priced.totalCents / 2) / 100, 'accepted', priced.menuVersion, priced.settingsVersion]);
+  assert.deepEqual([job.estimate.amount, job.estimate.depositRequired, job.estimate.status, job.estimate.catalogVersion, job.estimate.pricingSettingsVersion], [priced.totalCents / 100, Math.round(priced.totalCents / 4) / 100, 'accepted', priced.menuVersion, priced.settingsVersion]);
+  // D-DEPOSIT: the in-person terms (2026-10-deposit25) with their exact dates: 25% due the day the homeowner signed
+  // (Saturday 2026-10-17 in Denver), the remaining 75% on the job day (Monday), saved as a sent quote's terms are.
+  assert.deepEqual([job.termsVersion, job.estimate.termsVersion, job.estimate.commercialPolicy, job.estimate.depositPct], ['2026-10-deposit25', '2026-10-deposit25', SIGNED_25_75, 25]);
+  assert.deepEqual(job.estimate.paymentSchedule, { depositCents: Math.round(priced.totalCents / 4), remainderCents: priced.totalCents - Math.round(priced.totalCents / 4), depositDueDate: '2026-10-17', remainderDueDate: MON, timeZone: 'America/Denver', policyVersion: '2026-10-deposit25' });
   assert.deepEqual(job.compositeQuote.compositePricing, priced.compositePricing);
   assert.deepEqual(job.compositeQuote.breakdown, priced.breakdown);
   assert.deepEqual(job.quoteDraft.breakdown, priced.breakdown, 'the saved draft takes the signed selection');
@@ -511,10 +516,10 @@ test('the gameplan page: crew-mode slot choices, the builder quote it signs and 
   assert.deepEqual([plain.quote.total, plain.quote.line_items.length, 'composite_pricing' in plain.quote, 'crew_id' in plain.logistics], [1400, 1, false, false], 'without a builder quote or a chosen crew the payload is as before');
   Object.assign(page.S, { builderQuote: builder, requestedCrewId: 'crew_one' });
   const sent = JSON.parse(JSON.stringify(page.payload()));
-  assert.deepEqual([sent.quote.total, sent.quote.deposit, sent.quote.catalog_version, sent.quote.composite_pricing, sent.quote.line_items, sent.logistics.crew_id], [priced.totalCents / 100, Math.round(priced.totalCents / 2) / 100, priced.menuVersion, priced.compositePricing, builder.lineItems, 'crew_one']);
+  assert.deepEqual([sent.quote.total, sent.quote.deposit, sent.quote.catalog_version, sent.quote.composite_pricing, sent.quote.line_items, sent.logistics.crew_id], [priced.totalCents / 100, Math.round(priced.totalCents / 4) / 100, priced.menuVersion, priced.compositePricing, builder.lineItems, 'crew_one']);
   assert.match(lineOf('function chooseSlot('), /S\.requestedCrewId=slot\.crewId\|\|''/);
   assert.match(lineOf('function updateField('), /if\(\['jobDate','startTime','endTime'\]\.includes\(key\)&&S\.requestedCrewId\)S\.requestedCrewId=''/, 'a time typed by hand drops the offered crew');
-  assert.match(html, /\/crew\/gameplan-handoff\.js\?v=20261017crewbuild/);
+  assert.match(html, /\/crew\/gameplan-handoff\.js\?v=20261018deposit25/);
 });
 
 test('the employee-leak check names employees, never the tail of a random request or job id', () => {

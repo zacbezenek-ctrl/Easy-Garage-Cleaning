@@ -15,7 +15,7 @@ const read = path => fs.readFileSync(new URL(`../${path}`, import.meta.url), 'ut
 const sourceLine = (source, prefix) => { const found = source.split(/\r?\n/).find(row => row.startsWith(prefix)); assert.ok(found, prefix); return found; };
 
 // Synthetic signed plan; the signature fixture is a placeholder PNG header only.
-const plan = () => ({ client: { name: 'Synthetic Customer', phone: '9705550100', email: 'test@example.invalid', address: '100 Fixture Lane', highlevel_contact_id: 'provider1' }, quote: { title: 'Garage reset', total: 1400, deposit: 700, job_date: '2026-09-24', start_time: '09:00', end_time: '12:00', estimated_duration_min: 180 }, acceptance: { accepted_at: '2026-09-22T17:45:00.000Z', accepted_by: 'Synthetic Customer', signature_captured: true, method: 'in_person_signature', terms_version: '2026-09-deposit50' }, signature: 'data:image/png;base64,iVBORw0KGgo=', terms_version: '2026-09-deposit50', terms_accepted: true, photos: { before: 3 }, scope: { keep_items: 'Blue bicycle', remove_items: 'Empty cartons', exclusions: 'Locked cabinet', finish: ['cleanout', 'shelving'], finish_details: { shelf_type: 'metal', shelf_qty: 1 }, hazard_details: { pest_waste: { amount: 200 } } }, discovery: { success: 'Park a vehicle' }, logistics: { crew_size: 2, assigned_to: 'Crew of 2', notes: 'Use side gate' }, internal_notes: 'SYNTHETIC-INTERNAL-BRIEF gate code 4321. Keep blue bicycle.', notes: 'SYNTHETIC-CUSTOMER-NOTE call before arrival', client_checklists: { preJob: [{ id: 'keep-bike', label: 'Protect blue bicycle', detail: 'Move to safe area', critical: true }], postJob: [{ id: 'scope-review', label: 'Review with customer', detail: 'Confirm agreed scope' }] } });
+const plan = () => ({ client: { name: 'Synthetic Customer', phone: '9705550100', email: 'test@example.invalid', address: '100 Fixture Lane', highlevel_contact_id: 'provider1' }, quote: { title: 'Garage reset', total: 1400, deposit: 350, job_date: '2026-09-24', start_time: '09:00', end_time: '12:00', estimated_duration_min: 180 }, acceptance: { accepted_at: '2026-09-22T17:45:00.000Z', accepted_by: 'Synthetic Customer', signature_captured: true, method: 'in_person_signature', terms_version: '2026-10-deposit25' }, signature: 'data:image/png;base64,iVBORw0KGgo=', terms_version: '2026-10-deposit25', terms_accepted: true, photos: { before: 3 }, scope: { keep_items: 'Blue bicycle', remove_items: 'Empty cartons', exclusions: 'Locked cabinet', finish: ['cleanout', 'shelving'], finish_details: { shelf_type: 'metal', shelf_qty: 1 }, hazard_details: { pest_waste: { amount: 200 } } }, discovery: { success: 'Park a vehicle' }, logistics: { crew_size: 2, assigned_to: 'Crew of 2', notes: 'Use side gate' }, internal_notes: 'SYNTHETIC-INTERNAL-BRIEF gate code 4321. Keep blue bicycle.', notes: 'SYNTHETIC-CUSTOMER-NOTE call before arrival', client_checklists: { preJob: [{ id: 'keep-bike', label: 'Protect blue bicycle', detail: 'Move to safe area', critical: true }], postJob: [{ id: 'scope-review', label: 'Review with customer', detail: 'Confirm agreed scope' }] } });
 // Canonical lines: $700 + $499 + $200 + $1 adjustment = $1,400; the totes are
 // an optional line the homeowner declined, so they are stored but not charged.
 const lines = () => [
@@ -61,7 +61,7 @@ test('an itemized signed plan writes canonical estimate lines, catalog version, 
   assert.deepEqual(job.estimate.lineItems[1].split, { productCents: 30000, laborCents: 9900, markupCents: 10000, disposalCents: 0, laborMinutes: 0 });
   assert.deepEqual(job.estimate.lineItems[1].catalog, { itemId: 'shelf-metal', version: 3 });
   assert.equal(job.estimate.catalogVersion, '2026-09-pest200-traps250');
-  assert.equal(estimateTotals(job.estimate.lineItems).totalCents, 140000); assert.equal(job.estimate.amount, 1400); assert.equal(job.estimate.depositRequired, 700);
+  assert.equal(estimateTotals(job.estimate.lineItems).totalCents, 140000); assert.equal(job.estimate.amount, 1400); assert.equal(job.estimate.depositRequired, 350);
   assert.deepEqual(job.materials, [{ id: 'quote-shelving', name: 'Metal shelving unit', quantity: 1 }], 'the declined totes are not loaded');
   assert.deepEqual(job.jobInstructions.materials, job.materials);
   assert.equal(job.durationOverride, null);
@@ -86,7 +86,7 @@ test('a manual price change must be an explicit adjustment line that states its 
   assert.throws(() => normalizeHandoffPlan(itemized(p => { Object.assign(p.quote.line_items[4], { kind: 'service' }); }), NOW), e => e.code === 'handoff_invalid_adjustment');
   // Without the adjustment the lines no longer reach the manually locked total.
   assert.throws(() => normalizeHandoffPlan(itemized(p => { p.quote.line_items.pop(); }), NOW), e => e.code === 'handoff_invalid_amount');
-  const discounted = normalizeHandoffPlan(itemized(p => { p.quote.total = 1350; p.quote.deposit = 675; p.quote.line_items[4] = { id: 'adjustment', kind: 'discount', name: 'Price adjustment', description: 'Repeat customer courtesy', quantity: 1, unitCents: -4900, totalCents: -4900 }; }), NOW);
+  const discounted = normalizeHandoffPlan(itemized(p => { p.quote.total = 1350; p.quote.deposit = 337.5; p.quote.line_items[4] = { id: 'adjustment', kind: 'discount', name: 'Price adjustment', description: 'Repeat customer courtesy', quantity: 1, unitCents: -4900, totalCents: -4900 }; }), NOW);
   assert.deepEqual(discounted.quote.line_items.at(-1), { name: 'Price adjustment', qty: 1, total: -49 });
 });
 
@@ -104,7 +104,7 @@ test('line items are validated strictly through the canonical quote model', () =
   // A required option group needs one of its options chosen.
   const group = { id: 'floor', label: 'Floor finish', selection: 'single', required: true };
   assert.throws(() => normalizeHandoffPlan(itemized(p => { p.quote.line_items[3] = { id: 'epoxy', kind: 'service', name: 'Epoxy floor', quantity: 1, unitCents: 90000, totalCents: 90000, group, selected: false }; }), NOW), e => e.code === 'handoff_invalid_line_items' && /Floor finish/.test(e.message));
-  const chosen = normalizeHandoffPlan(itemized(p => { p.quote.total = 2300; p.quote.deposit = 1150; p.quote.line_items[3] = { id: 'epoxy', kind: 'service', name: 'Epoxy floor', quantity: 1, unitCents: 90000, totalCents: 90000, group, selected: true }; }), NOW);
+  const chosen = normalizeHandoffPlan(itemized(p => { p.quote.total = 2300; p.quote.deposit = 575; p.quote.line_items[3] = { id: 'epoxy', kind: 'service', name: 'Epoxy floor', quantity: 1, unitCents: 90000, totalCents: 90000, group, selected: true }; }), NOW);
   assert.equal(chosen.quote.line_items_count, 5);
 });
 
@@ -247,7 +247,7 @@ function gameplan(overrides = {}) {
   vm.runInContext(sourceLine(walkthrough, 'const freshState='), context);
   context.S = vm.runInContext('freshState()', context);
   Object.assign(context.S, { garageSize: '1', fill: 'medium', loads: '1', jobDate: '2026-10-01', startTime: '08:00', endTime: '13:00' }, overrides);
-  for (const prefix of ['function recommend(', 'function estimatedJobMinutes(', 'function readyToSend(', 'function buildJobInstructions(', 'function signedLines(', 'function payload(']) vm.runInContext(sourceLine(walkthrough, prefix), context);
+  for (const prefix of ['function recommend(', 'function estimatedJobMinutes(', 'function quoteBuilderOn(', 'function readyToSend(', 'function buildJobInstructions(', 'function signedLines(', 'function payload(']) vm.runInContext(sourceLine(walkthrough, prefix), context);
   return context;
 }
 const PRICING_FIXTURES = [
@@ -289,7 +289,7 @@ test('a manually changed walkthrough rate sends an explicit adjustment line with
   assert.deepEqual(JSON.parse(JSON.stringify(adjustment)), { id: 'adjustment', kind: 'fee', name: 'Price adjustment', description: 'Second haul trailer agreed on site', quantity: 1, unitCents: 10000, totalCents: 10000 });
   assert.equal(normalizeHandoffPlan({ ...plan(), quote: { ...plan().quote, ...JSON.parse(JSON.stringify(quote)) } }, NOW).quote.line_items.at(-1).total, 100);
   const lower = gameplan({ lockedPrice: '925.50', priceManuallySet: true, priceAdjustmentReason: 'Repeat customer courtesy' }).payload().quote;
-  assert.deepEqual([lower.line_items.at(-1).kind, lower.line_items.at(-1).totalCents, lower.deposit], ['discount', -2450, 462.75]);
+  assert.deepEqual([lower.line_items.at(-1).kind, lower.line_items.at(-1).totalCents, lower.deposit], ['discount', -2450, 231.38]);
 });
 
 async function clientSave(planInput) {
@@ -327,7 +327,7 @@ test('the HighLevel job brief lists itemized lines and leaves a legacy single-li
 
 test('the review screen shows the homeowner the itemized lines, including a price adjustment and its reason, above the signature', () => {
   const h = gameplan({ finish: ['cleanout', 'pressure_wash', 'totes'], toteQty: 4, lockedPrice: '1775', priceManuallySet: true, priceAdjustmentReason: 'Second haul <trailer> agreed on site' });
-  vm.runInContext([sourceLine(walkthrough, 'const $=id=>'), sourceLine(walkthrough, 'const money='), sourceLine(walkthrough, 'const addOn='), sourceLine(walkthrough, 'const hazardLabel='), sourceLine(walkthrough, 'const pricingNote='), sourceLine(walkthrough, 'function quoteLinesMarkup('), sourceLine(walkthrough, 'function depositSummary('), sourceLine(walkthrough, 'function durationText('), sourceLine(walkthrough, 'function reviewScreen(')].join('\n'), h);
+  vm.runInContext([sourceLine(walkthrough, 'const $=id=>'), sourceLine(walkthrough, 'const money='), sourceLine(walkthrough, 'const addOn='), sourceLine(walkthrough, 'const hazardLabel='), sourceLine(walkthrough, 'const pricingNote='), sourceLine(walkthrough, 'function quoteLinesMarkup('), sourceLine(walkthrough, 'function depositSummary('), sourceLine(walkthrough, 'function quoteBuilderOn('), sourceLine(walkthrough, 'function durationText('), sourceLine(walkthrough, 'function reviewScreen(')].join('\n'), h);
   Object.assign(h, { buildJobInstructions: () => ({}), buildClientChecklists: () => ({ preJob: [], postJob: [] }) });
   const html = h.reviewScreen(), lines = html.slice(html.indexOf('id="quote-lines"'), html.indexOf('<div class="approve">'));
   assert.ok(html.indexOf('id="quote-lines"') > 0 && html.indexOf('id="quote-lines"') < html.indexOf('id="signature"'), 'the lines are shown before the homeowner signs');
@@ -355,15 +355,15 @@ test('typing a new rate or reason refreshes the itemized lines shown for signatu
   assert.doesNotMatch(nodes['quote-lines'].innerHTML, /Price adjustment/);
 });
 
-test('the signed deposit is half the total in cents, so odd-cent manual rates pass the server check', () => {
-  for (const lockedPrice of ['263.03', '1000.01', '1425', '999.99', '2475.05']) {
+test('the signed deposit is a quarter of the total in cents (terms 2026-10-deposit25), so odd-cent manual rates pass the server check', () => {
+  for (const lockedPrice of ['263.03', '1000.01', '1000.02', '1425', '999.99', '2475.05']) {
     const h = gameplan({ lockedPrice, priceManuallySet: true, priceAdjustmentReason: 'Agreed on site' }), quote = JSON.parse(JSON.stringify(h.payload().quote));
-    assert.equal(Math.round(quote.deposit * 100), Math.round(Math.round(Number(lockedPrice) * 100) / 2), lockedPrice);
+    assert.equal(Math.round(quote.deposit * 100), Math.round(Math.round(Number(lockedPrice) * 100) / 4), lockedPrice);
     assert.equal(normalizeHandoffPlan({ ...plan(), quote: { ...plan().quote, ...quote } }, NOW).quote.deposit, quote.deposit, lockedPrice);
   }
   const w = vm.createContext({});
   vm.runInContext(sourceLine(walkthrough, 'function walkthroughDeposit('), w);
-  assert.equal(w.walkthroughDeposit(263.03).amount, 131.52);
+  assert.equal(w.walkthroughDeposit(263.03).amount, 65.76);
 });
 
 // WP14c (EGC_JOB_MATERIALS): the signed handoff saves what to buy, what the crew grabs and the job breakdown. The quote

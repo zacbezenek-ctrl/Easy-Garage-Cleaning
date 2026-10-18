@@ -5,7 +5,7 @@ import { assignmentKey, jobCrewNames } from './job-assignment.js';
 import { localInstant } from './operations-portal-records.js';
 import { customerIdentityPatch } from './customer-identity.js';
 import { suggestedDurationMinutes } from './quote-duration.js';
-import { estimateTotals, included, normalizeLineItems, toWalkthroughLineItem, validateSelection, withoutPurchaseFields } from './quote-model.js';
+import { depositCents as depositOf, estimateTotals, included, normalizeLineItems, toWalkthroughLineItem, validateSelection, withoutPurchaseFields } from './quote-model.js';
 import { funnelEventWrite } from './funnel-events.js';
 import { saleWrites } from './job-funnel-events.js';
 import { funnelHubId } from './funnel-definitions.js';
@@ -21,6 +21,7 @@ import { crewAutoAssignEnabled, projectCrewOpenings } from './dispatch-crew-assi
 import { dispatchOpenings } from './dispatch-openings.js';
 import { catalogStorage, quoteBuilderEnabled, readCompositeState, requireCatalogOwner } from './catalog-store.js';
 import { approvalRefusal, compositeApproval, fullnessOf, priceCompositeQuote } from './composite-quote.js';
+import { PAYMENT_TIME_ZONE, SIGNED_25_75, businessPaymentDate, quotePaymentDates, quotePaymentSchedule } from './quote-payment-policy.js';
 
 // FIX-CREW-PRICE-LEAK: every crew-visible copy of the brief is written without currency amounts.
 export { stripCrewMoney };
@@ -241,16 +242,23 @@ function builderBreakdown(summary, builder) {
   return { ...summary, sections, summary: breakdownLines({ sections }).join('\n').slice(0, 2000) };
 }
 const listNames = names => names.slice(0, 8).join(', ') + (names.length > 8 ? ` and ${names.length - 8} more` : '');
+// The in-person terms a signed walkthrough names (terms_version) and the deposit percent each one takes (D-DEPOSIT). New
+// signatures are on the current terms (SIGNED_25_75: 25% when the homeowner signs, 75% on the job day). The earlier 50%
+// terms (2026-09-deposit50: 50% upfront, the rest on completion) are read only to replay a save made on them
+// (saveWalkthroughHandoff refuses a new one: handoff_terms_outdated); jobs signed on them keep them.
+export const CURRENT_SIGNED_TERMS = SIGNED_25_75.version, LEGACY_SIGNED_TERMS = '2026-09-deposit50';
+const SIGNED_TERMS = Object.freeze({ [CURRENT_SIGNED_TERMS]: SIGNED_25_75.depositPct, [LEGACY_SIGNED_TERMS]: 50 });
 export function normalizeHandoffPlan(input, now = new Date().toISOString(), { builder = null, purchase = false } = {}) {
   if (!plain(input) || !plain(input.client) || !plain(input.quote) || !plain(input.acceptance)) throw fail('invalid_plan', 'Review the complete walkthrough before saving.', 400);
   const quote = input.quote, acceptance = input.acceptance;
-  const totalCents = cents(quote.total, 'Locked total'), depositCents = cents(quote.deposit, 'Deposit');
-  if (totalCents <= 0 || depositCents !== Math.round(totalCents / 2)) throw fail('invalid_amount', 'The signed walkthrough must include the locked total and its 50% deposit.', 400);
+  const terms = text(input.terms_version, 'Terms version', 100, true);
+  if (!Object.hasOwn(SIGNED_TERMS, terms)) throw fail('acceptance_required', 'The accepted terms are not the current walkthrough terms. Reload the walkthrough and have the homeowner review and sign it again.', 400);
+  const totalCents = cents(quote.total, 'Locked total'), depositCents = cents(quote.deposit, 'Deposit'), pct = SIGNED_TERMS[terms];
+  if (totalCents <= 0 || depositCents !== depositOf(totalCents, pct)) throw fail('invalid_amount', `The signed walkthrough must include the locked total and its ${pct}% deposit.`, 400);
   const signature = text(input.signature, 'Homeowner signature', 250000, true);
   if (input.terms_accepted !== true || acceptance.signature_captured !== true || acceptance.method !== 'in_person_signature' || !/^data:image\/png;base64,[A-Za-z0-9+/]+={0,2}$/.test(signature)) throw fail('acceptance_required', 'The homeowner must approve the scope and sign before an accepted job can be saved.', 400);
   const acceptedAt = text(acceptance.accepted_at, 'Original acceptance time', 40, true);
   if (!/(?:Z|[+-]\d{2}:\d{2})$/.test(acceptedAt) || !Number.isFinite(Date.parse(acceptedAt)) || Date.parse(acceptedAt) > Date.parse(now) + 300000) throw fail('acceptance_required', 'The original signature time could not be verified. Review and sign the scope again.', 400);
-  const terms = text(input.terms_version, 'Terms version', 100, true);
   if (acceptance.terms_version !== terms) throw fail('acceptance_required', 'The accepted terms do not match this walkthrough.', 400);
   const date = text(quote.job_date, 'Job date', 10, true), start = text(quote.start_time, 'Start time', 5, true), end = text(quote.end_time, 'End time', 5, true);
   const startAt = localInstant(date, start), endAt = localInstant(date, end);
@@ -283,6 +291,19 @@ export function handoffInstructions(plan, sourceId = '', builder = null) {
   return { customerGoal: String(plan.discovery.success || ''), whyNow: String(plan.discovery.why_now || ''), sortMethod: String(s.sort_method || ''), keepItems: String(s.keep_items || ''), removeItems: String(s.remove_items || ''), exclusions: String(s.exclusions || ''), hazards: Array.isArray(s.hazards) ? s.hazards : [], access: Array.isArray(s.access) ? s.access : [], accessNotes: String(l.notes || ''), truckPlacement: String(l.truck_placement || s.truck_placement || ''), specialItems: Array.isArray(s.special_items) ? s.special_items : [], finish: Array.isArray(s.finish) ? s.finish : [], shelving: { type: String(f.shelf_type || ''), qty: Number(f.shelf_qty || 0) }, totes: { qty: Number(f.tote_qty || 0) }, customerNotes: plan.notes, crewSize: l.crew_size, arrivalWindow: `${plan.quote.start_time}–${plan.quote.end_time}`, estimatedJobMinutes: plan.quote.estimated_duration_min, estimatedJobHours: plan.quote.estimated_duration_min / 60, expectedShiftHours: plan.quote.expected_shift_hours, photoCount: plan.photos.before, sourceWalkthroughId: sourceId, ...(plan.quote.itemized ? { materials: handoffMaterials(plan, builder) } : {}),
     ...(typeof builder?.labor?.manHours === 'number' ? { laborManHours: builder.labor.manHours } : {}) };
 }
+// D-DEPOSIT: a signature on the current terms saves its payment terms on the estimate as a sent quote's are saved
+// (commercialPolicy SIGNED_25_75 and paymentSchedule): the 25% deposit due the day the homeowner signed (Denver) and the
+// 75% remainder on the signed job day, in cents. The customer portal, the estimate document and the deposit checkout
+// (estimate.depositRequired) read them, and the Hub's legacy estimate editor leaves them alone (money-service.js), as it
+// does a sent quote's. A save replayed on the earlier 50% terms writes none of this, exactly as it did.
+export function signedPaymentTerms(plan) {
+  if (plan.terms_version !== CURRENT_SIGNED_TERMS) return {};
+  const totalCents = Math.round(plan.quote.total * 100), amounts = quotePaymentSchedule(totalCents, SIGNED_25_75), jobDay = plan.quote.job_date, signedDay = businessPaymentDate(plan.acceptance.accepted_at);
+  // A job dated before the signature (a dispatcher's back-dated save) has its deposit due on the job day too.
+  const dates = quotePaymentDates(SIGNED_25_75, { walkthroughDate: signedDay > jobDay ? jobDay : signedDay, jobDate: jobDay });
+  return { amountCents: totalCents, depositRequiredCents: amounts.depositCents, depositPct: SIGNED_25_75.depositPct, commercialPolicy: amounts.policy,
+    paymentSchedule: { depositCents: amounts.depositCents, remainderCents: amounts.remainderCents, depositDueDate: dates.depositDueDate, remainderDueDate: dates.remainderDueDate, timeZone: PAYMENT_TIME_ZONE, policyVersion: SIGNED_25_75.version } };
+}
 function financePatch(plan, previous, jobId, actor, now, builder = null) {
   const total = plan.quote.total, amount = plan.quote.deposit, prior = plain(previous?.deposit) ? previous.deposit : {};
   const paid = typeof prior.paidAmount === 'number' && Number.isFinite(prior.paidAmount) ? Math.max(0, prior.paidAmount) : 0;
@@ -292,7 +313,7 @@ function financePatch(plan, previous, jobId, actor, now, builder = null) {
     estimate: { number: previous?.estimate?.number || `EST-${jobId.slice(-6).toUpperCase()}`, revision: Number.isInteger(previous?.estimate?.revision) ? previous.estimate.revision + 1 : 1, status: 'accepted', amount: total, depositRequired: amount, acceptedAt: plan.acceptance.accepted_at, acceptedBy: plan.acceptance.accepted_by, acceptanceMethod: 'in_person_signature', termsVersion: plan.terms_version, createdAt: previous?.estimate?.createdAt || now, source: 'walkthrough', scope: customerScopeSummary(plan.scope),
       // A builder quote stores the builder's lines with their internal goods split (manager-only, never fingerprinted or
       // shown to a customer or the crew), as a saved builder draft does; the signed snapshot keeps the lines without it.
-      ...(plan.quote.itemized ? { lineItems: structuredClone(builder ? builder.storedLineItems : plan.quote.estimate_line_items), catalogVersion: plan.quote.catalog_version } : {}), ...(builder ? { pricingSettingsVersion: builder.settingsVersion } : {}) },
+      ...(plan.quote.itemized ? { lineItems: structuredClone(builder ? builder.storedLineItems : plan.quote.estimate_line_items), catalogVersion: plan.quote.catalog_version } : {}), ...(builder ? { pricingSettingsVersion: builder.settingsVersion } : {}), ...signedPaymentTerms(plan) },
     deposit: { ...prior, amount, paidAmount: paid, status: paid >= amount ? 'paid' : paid > 0 ? 'partial' : 'due' },
     ...(plan.quote.itemized || previous?.durationOverride ? { durationOverride: plan.quote.duration_override_reason ? { suggestedMinutes: plan.quote.duration_suggestion.minutes, minutes: plan.quote.estimated_duration_min, reason: plan.quote.duration_override_reason, recordedBy: actor.user, recordedAt: now } : null } : {}) };
   // Any change to what the customer signed (price, deposit, scope or, when
@@ -531,6 +552,9 @@ export async function saveWalkthroughHandoff(store, actor, input, now = new Date
       ...(plain(crew) ? { crew: { ...crew, date: saved.date || '', time: saved.time || '', endTime: saved.endTime || '' } } : {}), ...(plain(saved.compositeQuote) || plain(saved.pricesPendingApproval) ? { pricing: pricingView(saved) } : {}) };
   }
   const prior = await replay(); if (prior) return prior;
+  // D-DEPOSIT: a new signature is on the current terms. A page still showing the earlier 50% terms (opened before they
+  // changed) is refused, and nothing is saved; a save it made before is replayed above, on the terms it was signed on.
+  if (plan.terms_version !== CURRENT_SIGNED_TERMS) throw fail('terms_outdated', 'This signature is on the earlier deposit terms (50% upfront). Nothing was saved. Reload the walkthrough so the homeowner reviews and signs the current terms: a 25% deposit now and the remaining 75% on the job day.');
   const customer = await store.read('customers', input.customerId); requireRevision(customer);
   if (!identityMatches(plan.client, customer)) throw fail('customer_mismatch', 'The signed customer details do not match the selected customer. Review the phone, email and CRM link.');
   let source = null;

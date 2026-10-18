@@ -118,8 +118,10 @@
         // Dispatch refused this save for a schedule conflict or an owner rule, after the
         // server found no saved copy of it: nothing was saved, so the frozen request is
         // released and the corrected plan goes out as a new request. Every tab learns
-        // of the release, so none of them resends this request later.
-        if (error.status === 409 && error.code === 'dispatch_conflict') { markReleased(actor, String(pending.requestId).toLowerCase()); if (read(k)?.requestId === pending.requestId) d.storage.removeItem(k); error.refused = true; }
+        // of the release, so none of them resends this request later. So is a signature
+        // on the earlier 50% deposit terms (handoff_terms_outdated): the homeowner signs
+        // the current terms again and that goes out as a new request.
+        if (error.status === 409 && ['dispatch_conflict', 'handoff_terms_outdated'].includes(error.code)) { markReleased(actor, String(pending.requestId).toLowerCase()); if (read(k)?.requestId === pending.requestId) d.storage.removeItem(k); error.refused = true; }
         throw error;
       }
       if (result.requestId !== pending.requestId || !result.job?.id || result.job.customerId !== pending.body.customerId) throw new Error('The saved job identity did not match the request. Review Dispatch before retrying.');

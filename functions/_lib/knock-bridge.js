@@ -421,7 +421,7 @@ async function bookSaleJob(store, kstore, sale, { env, now, confirmed = false })
   const attribution = () => ({ source: 'door_to_door', knockSaleId: sale.id, ghlTags: [D2D_GHL_TAGS.sale],
     // The price signed at the door (d2d.ticket) is the value of the HighLevel deal the schedule mirror creates
     // (ghl-schedule-mirror.js doorTicket) and nothing else: never the Hub's quoted price (priceQuoted or total), so the
-    // Hub's money (its 50% deposit, the balance, the closeout card and field pay) never charges a door sale whose
+    // Hub's money (its deposit, the balance, the closeout card and field pay) never charges a door sale whose
     // deposit and payments Knock collects (handoff.deposit, collectedAmount). Crew projections never include d2d.
     d2d: { kind: 'sale', repKey: sale.repKey, saleId: sale.id, houseId: sale.houseId || '', contactSource: D2D_CONTACT_SOURCE, at: nowIso,
       ...(Number.isFinite(ticket) && ticket > 0 ? { ticket } : {}) },

@@ -21,7 +21,7 @@ function harness(overrides = {}) {
   vm.runInContext(line('const freshState='), context);
   context.S = vm.runInContext('freshState()', context);
   Object.assign(context.S, { garageSize: '1', fill: 'medium', loads: '1', jobDate: '2026-10-01', startTime: '08:00', endTime: '13:00' }, overrides);
-  for (const prefix of ['function recommend(', 'function depositSummary(', 'function estimatedJobMinutes(', 'function pick(', 'function readyToSend(', 'function buildJobInstructions(', 'function signedLines(', 'function payload(']) {
+  for (const prefix of ['function recommend(', 'function depositSummary(', 'function quoteBuilderOn(', 'function estimatedJobMinutes(', 'function pick(', 'function readyToSend(', 'function buildJobInstructions(', 'function signedLines(', 'function payload(']) {
     vm.runInContext(line(prefix), context);
   }
   return context;
@@ -35,13 +35,15 @@ test('truckload rates keep smaller jobs and charge $950 for a full load (Option 
   assert.equal(harness({ garageSize: '2', fill: 'packed' }).recommend(), 1650, 'documented work can exceed the hauling baseline');
 });
 
-test('a selected one-car pressure wash adds $600 and produces a $775 upfront deposit on one load', () => {
+test('a selected one-car pressure wash adds $600 and produces a $387.50 deposit due today and $1,162.50 on the job day on one load', () => {
   const h = harness({ finish: ['cleanout', 'pressure_wash'] });
   assert.equal(h.recommend(), 1550);
-  assert.equal(h.depositSummary(), '50% deposit due upfront: $775.00. Remaining $775.00 due on completion.');
+  assert.equal(h.depositSummary(), '25% deposit due today: $387.50. Remaining 75% due on the job day (Thu, Oct 1): $1162.50.');
   const plan = h.payload();
   assert.equal(plan.quote.total, 1550);
-  assert.equal(plan.quote.deposit, 775);
+  assert.equal(plan.quote.deposit, 387.5);
+  assert.equal(plan.terms_version, '2026-10-deposit25');
+  assert.equal(plan.acceptance.terms_version, '2026-10-deposit25');
   assert.equal(plan.scope.finish_details.pressure_wash.garage_size, '1');
   assert.equal(plan.scope.finish_details.pressure_wash.amount, 600);
   assert.equal(h.buildJobInstructions({}).pressureWash.included, true);
@@ -56,10 +58,10 @@ test('pressure washing is distinct from deep clean and unselected work is not ch
 test('documented extras can support the average-ticket target without a forced minimum', () => {
   const twoCar = harness({ garageSize: '2', loads: '1.5', finish: ['cleanout', 'deep_clean', 'shelving', 'totes'], shelfQty: 1, toteQty: 4 });
   assert.equal(twoCar.recommend(), 2625);
-  assert.equal(twoCar.payload().quote.deposit, 1312.5);
+  assert.equal(twoCar.payload().quote.deposit, 656.25);
   const oneCar = harness({ finish: ['cleanout', 'pressure_wash', 'shelving'], shelfQty: 2 });
   assert.equal(oneCar.recommend(), 3050);
-  assert.equal(oneCar.payload().quote.deposit, 1525);
+  assert.equal(oneCar.payload().quote.deposit, 762.5);
 });
 
 test('the one-car pressure wash cannot be silently sold at that rate for a larger garage', () => {
@@ -103,11 +105,11 @@ test('non-toxic mouse trapping is a separate $375 selection for every garage siz
   }
 });
 
-test('pest waste and non-toxic trapping combine with pressure washing and retain a 50% deposit', () => {
+test('pest waste and non-toxic trapping combine with pressure washing and retain the 25% deposit', () => {
   const h = harness({ hazards: ['Pest waste'], finish: ['cleanout', 'pressure_wash', 'mouse_trapping'] });
   const plan = h.payload();
   assert.equal(plan.quote.total, 2225);
-  assert.equal(plan.quote.deposit, 1112.5);
+  assert.equal(plan.quote.deposit, 556.25);
   assert.equal(plan.scope.hazard_details.pest_waste.amount, 300);
   assert.equal(plan.scope.finish_details.mouse_trapping.amount, 375);
   assert.equal(plan.scope.finish_details.mouse_trapping.non_toxic, true);

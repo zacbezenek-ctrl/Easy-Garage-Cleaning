@@ -84,7 +84,7 @@ test('the signed handoff prices the labor again from the man-hours and the serve
   // The honest signature books the job with the server's labor, its total and deposit.
   const f = fixture(), signed = await saveWalkthroughHandoff(f.store, owner, handoff(1, { composite_pricing: priced.compositePricing, line_items: lines, catalog_version: priced.menuVersion, total: priced.totalCents / 100 }), NOW, { env: ON_ENV, compositeState: async () => state });
   const job = f.job(signed.job.id);
-  assert.deepEqual([job.total, job.estimate.depositRequired, job.estimate.lineItems.at(-1).id, job.compositeQuote.breakdown.labor.manHours], [priced.totalCents / 100, Math.round(priced.totalCents / 2) / 100, LABOR_ID, 6]);
+  assert.deepEqual([job.total, job.estimate.depositRequired, job.estimate.lineItems.at(-1).id, job.compositeQuote.breakdown.labor.manHours], [priced.totalCents / 100, Math.round(priced.totalCents / 4) / 100, LABOR_ID, 6]); // the 25% deposit (D-DEPOSIT)
   // The owner's own rate prices it the next time: a signature at the old amount is then refused.
   const raised = { ...state, approvals: { ...state.approvals, laborRatePerManHourCents: 5000 } };
   await assert.rejects(saveWalkthroughHandoff(fixture().store, owner, handoff(1, { composite_pricing: priced.compositePricing, line_items: lines, catalog_version: priced.menuVersion, total: priced.totalCents / 100 }), NOW, { env: ON_ENV, compositeState: async () => raised }),

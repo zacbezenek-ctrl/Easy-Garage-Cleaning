@@ -118,7 +118,7 @@ test('both sign-out paths remove the walkthrough price tables from this device',
 // crew/gameplan.html with and without loaded tables.
 const gameplan = read('crew/gameplan.html');
 const line = prefix => gameplan.split(/\r?\n/).find(row => row.startsWith(prefix)) || assert.fail(prefix);
-const PAGE_LINES = ['const $=id=>', 'const money=', 'const addOn=', 'const hazardLabel=', 'const pricingNote=', 'function input(', 'function area(', 'function quoteLinesMarkup(', 'function depositSummary(', 'function durationText(',
+const PAGE_LINES = ['const $=id=>', 'const money=', 'const addOn=', 'const hazardLabel=', 'const pricingNote=', 'function input(', 'function area(', 'function quoteLinesMarkup(', 'function depositSummary(', 'function quoteBuilderOn(', 'function durationText(',
   'function reviewScreen(', 'function scheduleScreen(', 'function slotResults(', 'function recommend(', 'function estimatedJobMinutes(', 'function signedLines(', 'function readyToSend(', 'function slotSignature(', 'async function findNearestSlots(',
   'function applyPricingVersion(', 'async function loadPricing('];
 function walkthroughPage({ pricing = null, error = OFFLINE, state = {}, load } = {}) {
@@ -189,6 +189,44 @@ test('prices that arrive after a draft opens re-price only unsigned automatic to
   assert.deepEqual([failing.context.PRICING, failing.context.PRICING_ERROR], [null, OFFLINE]);
 });
 
+// D-SIGN (EGC_QUOTE_BUILDER_ENABLED, the Hub's quoteBuilder answer): Review shows no recommended or final flat rate, and
+// the homeowner signs, and the job is saved, only once the quote is built in the builder; then the builder total is
+// signed with its 25% due today and 75% on the job day (D-DEPOSIT). With the builder off, Review is unchanged.
+test('with the quote builder on, Review hides the flat rates and waits for a builder total before the signature and the save', () => {
+  const BUILT = { compositePricing: { steps: ['removal'], labor: { manHours: 6 } }, totalCents: 123456, menuVersion: 'menu-v1', jobId: 'draft-1',
+    lineItems: [{ id: 'removal', kind: 'service', name: 'Removal', description: '', quantity: 1, unitCents: 99456, totalCents: 99456 }, { id: 'labor', kind: 'service', name: 'Labor', description: '', quantity: 1, unitCents: 24000, totalCents: 24000 }] };
+  const page = (builder, state = {}) => { const { context } = walkthroughPage({ pricing: servedPricing(), state: { approved: true, acceptanceAt: '2026-10-01T15:00:00.000Z', signature: 'data:image/png;base64,c2ln', ...state } }); if (builder) context.window.EGCWalkthroughPricing.quoteBuilder = () => true; return context; };
+  const FLAT = /Recommended flat rate|Final flat rate|id="locked-price"|id="price-reason"|Truckload pricing uses/;
+  // On, not built yet: no flat rate, no approval box or signature pad, no deposit, and Save brief + schedule is disabled.
+  const waiting = page(true), review = waiting.reviewScreen();
+  assert.doesNotMatch(review, FLAT);
+  assert.doesNotMatch(review, /id="approved"|id="signature"|id="deposit-summary"|\$950/);
+  assert.match(review, /<button type="button" id="build-quote" onclick="sendOptionsForReview\(this\)">Build the quote<\/button>/);
+  assert.match(review, /<div class="eyebrow">Quote builder total<\/div><div class="price" id="builder-total-missing">Not built<\/div>/);
+  assert.match(review, /<button class="save-btn" onclick="sendHighLevel\(this\)" disabled>Save brief \+ schedule<\/button>/);
+  assert.match(review, /<span id="quote-lines">Not built yet\./);
+  assert.ok(Array.from(waiting.readyToSend()).includes('the quote built in the quote builder (Build the quote)'));
+  assert.equal(Array.from(waiting.readyToSend()).includes('locked price'), false, 'no walkthrough flat rate is asked for');
+  // On and built: the dark card shows the builder total, the homeowner signs it, and its 25% / 75% split shows.
+  const built = page(true, { builderQuote: BUILT }), signed = built.reviewScreen();
+  assert.doesNotMatch(signed, FLAT);
+  assert.match(signed, /<div class="eyebrow">Quote builder total<\/div><div class="price">\$1234\.56<\/div>/);
+  assert.match(signed, /id="approved"[^]*a 25% deposit due today with the remaining 75% due on the job day[^]*id="signature"/);
+  assert.match(signed, /<p id="deposit-summary">25% deposit due today: \$308\.64\. Remaining 75% due on the job day \(Thu, Oct 1\): \$925\.92\.<\/p>/);
+  assert.match(signed, /<button class="save-btn" onclick="sendHighLevel\(this\)">Save brief \+ schedule<\/button>/);
+  assert.deepEqual(Array.from(built.readyToSend()), []);
+  // Off: the flat-rate Review is unchanged, now with the 25% / 75% split.
+  const off = page(false), legacy = off.reviewScreen();
+  assert.match(legacy, /<div class="eyebrow">Recommended flat rate<\/div><div class="price">\$950<\/div>/);
+  for (const id of ['locked-price', 'approved', 'signature']) assert.match(legacy, new RegExp(`id="${id}"`));
+  assert.match(legacy, /<p id="deposit-summary">25% deposit due today: \$237\.50\. Remaining 75% due on the job day \(Thu, Oct 1\): \$712\.50\.<\/p>/);
+  assert.doesNotMatch(legacy, /build-quote|builder-total-missing|disabled>Save brief/);
+  assert.deepEqual(Array.from(off.readyToSend()), []);
+  // A builder answer that cannot be read is off (the page keeps working as before).
+  const broken = page(false); broken.window.EGCWalkthroughPricing.quoteBuilder = () => { throw new Error('unreadable'); };
+  assert.match(broken.reviewScreen(), /Recommended flat rate/);
+});
+
 test('the walkthrough page loads its tables after sign-in and ships none of its own', () => {
   assert.match(gameplan, /<script src="\/crew\/walkthrough-pricing\.js\?v=\d{8}price"><\/script>\n<script>/, 'the loader precedes the page script');
   assert.match(line('async function openApp()'), /const pricing=loadPricing\(\);.*await Promise\.all\(\[pricing,loadAppointments\(\)\]\)/);
@@ -234,13 +272,22 @@ test('an appointment walkthrough approved before a reload keeps its approval and
 test('a draft saved before any prices loaded adopts the loaded version, while an older or unversioned draft still re-prices', async () => {
   const cases = [[{ pricingVersion: '' }, '1650', true], [{ pricingVersion: '2026-09-older' }, '', false], [{}, '', false]];
   for (const [version, lockedPrice, approved] of cases) {
-    const device = webStorage({ 'egc_walkthrough_v3:walkthrough-9': JSON.stringify({ flow: '2026-09-simple', index: 5, S: { sourceWalkthroughId: 'walkthrough-9', termsVersion: '2026-09-deposit50', ...APPROVED, ...version } }) });
+    const device = webStorage({ 'egc_walkthrough_v3:walkthrough-9': JSON.stringify({ flow: '2026-09-simple', index: 5, S: { sourceWalkthroughId: 'walkthrough-9', termsVersion: '2026-10-deposit25', ...APPROVED, ...version } }) });
     const page = devicePage(device);
     page.restore('walkthrough-9'); page.walkthroughReady = true;
     await page.loadPricing();
     assert.deepEqual([page.S.lockedPrice, page.S.approved, page.S.pricingVersion], [lockedPrice, approved, '2026-10-optionB-truck950'], JSON.stringify(version));
     assert.equal(JSON.parse(device.getItem('egc_walkthrough_v3:walkthrough-9')).S.pricingVersion, '2026-10-optionB-truck950');
   }
+});
+
+// D-DEPOSIT: a draft the homeowner approved on the earlier 50% terms (2026-09-deposit50) is restored without its approval
+// and signature, on the current terms (25% now, 75% on the job day), so the homeowner signs those.
+test('a draft approved on the earlier 50% deposit terms is restored unsigned, on the 25%/75% terms', async () => {
+  const device = webStorage({ 'egc_walkthrough_v3:walkthrough-9': JSON.stringify({ flow: '2026-09-simple', index: 5, S: { sourceWalkthroughId: 'walkthrough-9', termsVersion: '2026-09-deposit50', signature: 'data:image/png;base64,AAAA', ...APPROVED, pricingVersion: '' } }) });
+  const page = devicePage(device);
+  page.restore('walkthrough-9'); page.walkthroughReady = true;
+  assert.deepEqual([page.S.approved, page.S.signature, page.S.acceptanceAt, page.S.acceptanceBy, page.S.termsVersion], [false, '', '', '', '2026-10-deposit25']);
 });
 
 // Employee Hub: in-memory phone and owner tables.

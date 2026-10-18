@@ -31,6 +31,9 @@ window.firebase = window.firebase || {
   firestore() { return { collection: () => ({ where: () => ({ get: async () => ({ docs: [] }) }), doc: id => ({ get: async () => ({ id, exists: false }) }) }) }; },
 };
 """
+# A quote built in the quote builder, as crew/gameplan-handoff.js keeps it on the page (builderQuoteOf).
+BUILT_QUOTE = """() => { S.builderQuote = { compositePricing: { steps: ['removal'], labor: { manHours: 6 } }, totalCents: 123456, menuVersion: 'menu-v1', jobId: 'draft-1',
+  lineItems: [{ id: 'removal', kind: 'service', name: 'Removal', description: '', quantity: 1, unitCents: 99456, totalCents: 99456 }, { id: 'labor', kind: 'service', name: 'Labor', description: '', quantity: 1, unitCents: 24000, totalCents: 24000 }] }; render(); }"""
 AUDIT = """() => ({
   scroll: document.documentElement.scrollWidth, width: innerWidth,
   retry: [...document.querySelectorAll('button')].filter(b => /Retry loading prices/.test(b.textContent)).map(b => b.getBoundingClientRect().height),
@@ -59,7 +62,7 @@ class GameplanPricingBrowserTests(unittest.TestCase):
 
     def setUp(self):
         self.errors = []; self.online = True; self.signed_in = True; self.pricing_calls = 0; self.pricing_failure = None
-        self.fixture_port = None; self.handoff_posts = []
+        self.fixture_port = None; self.handoff_posts = []; self.builder = False
         self.context = self.browser.new_context(viewport={'width': 375, 'height': 812}, timezone_id='Asia/Tokyo', is_mobile=True, has_touch=True, device_scale_factor=2)
         self.context.add_init_script(FIREBASE_STUB)
         self.context.route('**/*', self.route)
@@ -81,7 +84,7 @@ class GameplanPricingBrowserTests(unittest.TestCase):
             if not self.online: route.abort('internetdisconnected'); return
             if self.pricing_failure: send({'ok': False, 'code': self.pricing_failure, 'error': 'Synthetic pricing outage'}, 503); return
             self.assertEqual(url.query, 'parts=walkthrough')
-            send({'ok': True, 'authority': 'employee_hub', 'version': VERSION, 'parts': {'walkthrough': self.pricing}}); return
+            send({'ok': True, 'authority': 'employee_hub', 'version': VERSION, 'parts': {'walkthrough': self.pricing}, **({'quoteBuilder': True} if self.builder else {})}); return
         if self.fixture_port and url.path in ('/api/walkthrough-handoff', '/api/field-jobs'): self.forward(route, 'zacb'); return
         if self.fixture_port and url.path == '/api/highlevel': send({'ok': True, 'handoffSync': {'status': 'synced'}, 'portalInvitation': {'status': 'suppressed'}}); return
         if url.path.startswith('/api/'): send({'ok': False, 'error': 'Synthetic service unavailable'}, 503); return
@@ -158,6 +161,9 @@ class GameplanPricingBrowserTests(unittest.TestCase):
         expect(page.locator('.price-card .price')).to_have_text('$950')
         expect(page.locator('#screen')).not_to_contain_text('2,250')
         expect(page.locator('#signature')).to_be_visible()
+        # D-DEPOSIT: 25% when the homeowner signs and 75% on the job day, with both amounts.
+        expect(page.locator('#deposit-summary')).to_have_text('25% deposit due today: $237.50. Remaining 75% due on the job day: $712.50.')
+        expect(page.locator('label[for=approved]')).to_contain_text('a 25% deposit due today with the remaining 75% due on the job day')
         self.audit(page, 'review')
         # Offline later on the same device: the saved copy still prices the walkthrough.
         self.online = False; page.reload(); expect(page.locator('#app')).to_be_visible()
@@ -236,9 +242,12 @@ class GameplanPricingBrowserTests(unittest.TestCase):
             'finish': ['cleanout', 'pressure_wash', 'mouse_trapping'], 'keepNotes': 'Blue bicycle', 'jobDate': '2026-09-24', 'startTime': '08:00', 'endTime': '13:00', 'crewSize': '1', 'assignedTo': 'Crew One',
             'notes': 'Dog in the yard', 'signature': 'data:image/png;base64,iVBORw0KGgo=', 'approved': True, 'acceptanceAt': '2026-09-22T14:45:00.000Z', 'acceptanceBy': 'Synthetic Customer'})
         expect(page.locator('#screen')).to_contain_text('Pest waste (+$300)')
+        expect(page.locator('#deposit-summary')).to_have_text('25% deposit due today: $556.25. Remaining 75% due on the job day (Thu, Sep 24): $1668.75.')
         page.get_by_role('button', name='Save brief + schedule').click()
         expect(page.locator('#send-status')).to_contain_text('Job and CRM schedule verified', timeout=20000)
         plan = self.handoff_posts[-1]['plan']
+        # D-DEPOSIT: the real handoff accepted the 25% deposit on the current terms.
+        self.assertEqual([plan['terms_version'], plan['acceptance']['terms_version'], plan['quote']['total'], plan['quote']['deposit']], ['2026-10-deposit25', '2026-10-deposit25', 2225, 556.25])
         for priced in ('Pest waste (+$300)', 'Non-toxic mouse trapping (+$375)', 'One-car garage pressure wash (+$600)'): self.assertIn(priced, plan['internal_notes'])
         self.assertTrue(plan['crew_brief'].startswith('EGC CREW JOB BRIEF'))
         self.assertIsNone(MONEY.search(plan['crew_brief']))
@@ -260,6 +269,33 @@ class GameplanPricingBrowserTests(unittest.TestCase):
         # The brief wraps inside the phone (the header's long job ID is a separate, older layout issue).
         self.assertEqual(job.evaluate("() => [...document.querySelectorAll('#scope-card, #scope-card *')].filter(el => el.getBoundingClientRect().right > 391).length"), 0, 'crew brief: horizontal overflow')
         out = ROOT / 'test-results'; out.mkdir(exist_ok=True); job.screenshot(path=str(out / 'crew-job-no-prices-mobile.png'), full_page=True)
+
+    def test_with_the_quote_builder_on_review_has_no_flat_rate_and_signing_waits_for_the_builder_total(self):
+        # D-SIGN: the Hub says the quote builder is on (EGC_QUOTE_BUILDER_ENABLED: quoteBuilder in the pricing answer).
+        self.builder = True
+        page = self.open()
+        page.wait_for_function('() => PRICING !== null && quoteBuilderOn()')
+        self.screen(page, 5, {'name': 'Synthetic Customer', 'garageSize': '1', 'fill': 'medium', 'loads': '1', 'jobDate': '2026-09-24', 'startTime': '08:00', 'endTime': '11:00'})
+        screen = page.locator('#screen')
+        for hidden in ('Recommended flat rate', 'Final flat rate', 'Truckload pricing uses', '$950'): expect(screen).not_to_contain_text(hidden)
+        for missing in ('#locked-price', '#approved', '#signature', '#deposit-summary'): expect(page.locator(missing)).to_have_count(0)
+        expect(page.locator('.price-card .eyebrow')).to_have_text('Quote builder total')
+        expect(page.locator('#builder-total-missing')).to_have_text('Not built')
+        expect(page.get_by_role('button', name='Build the quote')).to_be_visible()
+        expect(page.get_by_role('button', name='Save brief + schedule')).to_be_disabled()
+        self.audit(page, 'review, builder on, not built')
+        out = ROOT / 'test-results'; out.mkdir(exist_ok=True); page.screenshot(path=str(out / 'gameplan-review-builder-not-built-mobile.png'), full_page=True)
+        # The estimator built the quote (Build the quote saves it and hands the page its total): the homeowner signs that total.
+        page.evaluate(BUILT_QUOTE)
+        expect(page.locator('.price-card .eyebrow')).to_have_text('Quote builder total')
+        expect(page.locator('.price-card .price')).to_have_text('$1234.56')
+        for hidden in ('Recommended flat rate', 'Final flat rate'): expect(screen).not_to_contain_text(hidden)
+        expect(page.locator('#locked-price')).to_have_count(0)
+        expect(page.locator('#signature')).to_be_visible()
+        expect(page.locator('#deposit-summary')).to_have_text('25% deposit due today: $308.64. Remaining 75% due on the job day (Thu, Sep 24): $925.92.')
+        expect(page.get_by_role('button', name='Save brief + schedule')).to_be_enabled()
+        self.audit(page, 'review, builder on, built')
+        page.screenshot(path=str(out / 'gameplan-review-builder-mobile.png'), full_page=True)
 
     def test_an_expired_session_removes_the_saved_tables_without_a_sign_out(self):
         page = self.open()

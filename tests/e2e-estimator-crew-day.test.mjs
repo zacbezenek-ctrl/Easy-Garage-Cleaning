@@ -261,7 +261,10 @@ test('estimator to crew, one day through the real handlers: walkthrough, builder
   assert.deepEqual(job().jobBreakdown.sections.map(section => section.id), ['removal', 'shelving', 'storage', 'cleaning', 'labor']);
   assert.deepEqual(job().jobBreakdown.sections.at(-1).items, ['6 man-hours sold (below the estimate of 9 man-hours)'], 'the crew sees the man-hours sold, never the rate or amount');
   // The total the customer signed, its deposit and the HighLevel deal value (job.total) include the Labor line.
-  assert.deepEqual([job().total, job().estimate.depositRequired, job().estimate.lineItems.at(-1).name], [priced.totalCents / 100, Math.round(priced.totalCents / 2) / 100, 'Labor: 6 man-hours × $40.00']);
+  assert.deepEqual([job().total, job().estimate.depositRequired, job().estimate.lineItems.at(-1).name], [priced.totalCents / 100, Math.round(priced.totalCents / 4) / 100, 'Labor: 6 man-hours × $40.00']);
+  // D-DEPOSIT: signed in person on the 25%/75% terms, with exact dates: the deposit the day the homeowner signed, the rest on Tuesday's job.
+  assert.deepEqual([job().estimate.commercialPolicy.version, job().estimate.paymentSchedule.depositCents, job().estimate.paymentSchedule.remainderCents, job().estimate.paymentSchedule.depositDueDate, job().estimate.paymentSchedule.remainderDueDate],
+    ['2026-10-deposit25', Math.round(priced.totalCents / 4), priced.totalCents - Math.round(priced.totalCents / 4), '2026-10-17', TUE]);
   assert.deepEqual(job().jobBreakdown.sections.find(section => section.id === 'shelving').items, [`${SHELF.name} × 2 packs`]);
   assert.deepEqual(job().jobBreakdown.sections.find(section => section.id === 'storage').items, [`${TOTES.name} × 2 packs of 4`]);
   const buy = job().materials.filter(item => item.source === 'buy');

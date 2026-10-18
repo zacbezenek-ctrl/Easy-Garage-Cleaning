@@ -649,7 +649,7 @@ function settingsPanel(){
   let sticky;
   const update=()=>{const dirty=settingsDirty();review.disabled=frozen||!dirty;sticky?.classList.toggle('cat-idle',!dirty);persist();};
   const money=MONEY_SETTINGS.map(([key,label,,,help])=>bound({name:key,label:label+' ($)',type:'text',inputmode:'decimal',autocomplete:'off',help},form,errors,update));
-  const fields=[...money,bound({name:'depositPct',label:'Deposit (% of the quote)',type:'text',inputmode:'decimal',autocomplete:'off',help:'Catalog quotes only. The walkthrough deposit in use today (50%, set by the deposit terms) does not change here.'},form,errors,update),
+  const fields=[...money,bound({name:'depositPct',label:'Deposit (% of the quote)',type:'text',inputmode:'decimal',autocomplete:'off',help:'Catalog quotes only. The walkthrough deposit in use today (25% when the homeowner signs, 75% on the job day, set by the deposit terms) does not change here.'},form,errors,update),
     bound({name:'includeDisposal',label:'Charge packaging haul-away',type:'checkbox'},form,errors,update),
     bound({name:'roundingRule',label:'Cent rounding',type:'select',options:Object.entries(ROUNDING).map(([value,label])=>({value,label}))},form,errors,update),
     // Only the quote builder prices with the goods multiplier, so it shows only when the builder is on (S.menu).

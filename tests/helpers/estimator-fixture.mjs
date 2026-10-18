@@ -78,9 +78,9 @@ export function fixture(env = ON_ENV, { crews = true } = {}) {
 export function signedPlan(n = 1, { total = 1400, date = MON, start = '09:30', end = '12:30', minutes = 180, quote = {}, logistics = {} } = {}) {
   return {
     client: client(n),
-    quote: { title: 'EGC Garage Service', total, deposit: Math.round(Math.round(total * 100) / 2) / 100, job_date: date, start_time: start, end_time: end, estimated_duration_min: minutes, ...quote },
-    acceptance: { accepted_at: '2026-10-17T14:55:00.000Z', accepted_by: client(n).name, signature_captured: true, method: 'in_person_signature', terms_version: '2026-09-deposit50' },
-    signature: 'data:image/png;base64,iVBORw0KGgo=', terms_version: '2026-09-deposit50', terms_accepted: true, photos: { before: 4 },
+    quote: { title: 'EGC Garage Service', total, deposit: Math.round(Math.round(total * 100) / 4) / 100, job_date: date, start_time: start, end_time: end, estimated_duration_min: minutes, ...quote },
+    acceptance: { accepted_at: '2026-10-17T14:55:00.000Z', accepted_by: client(n).name, signature_captured: true, method: 'in_person_signature', terms_version: '2026-10-deposit25' },
+    signature: 'data:image/png;base64,iVBORw0KGgo=', terms_version: '2026-10-deposit25', terms_accepted: true, photos: { before: 4 },
     scope: { loads: '1', garages: '2', fullness: 'Medium', keep_items: 'Blue bicycle', remove_items: 'Old cartons', finish: ['cleanout'] }, discovery: { success: 'Park two cars' },
     logistics: { crew_size: 2, assigned_to: 'Crew of 2', notes: 'Side gate', bring_list: ['Hand truck / dolly', 'Contractor bags'], ...logistics },
     internal_notes: 'Synthetic internal brief', crew_brief: 'Synthetic crew brief', client_checklists: { preJob: [{ id: 'keep-bike', label: 'Protect blue bicycle', detail: 'Move to safe area', critical: true }], postJob: [] }, notes: 'Call before arrival',
