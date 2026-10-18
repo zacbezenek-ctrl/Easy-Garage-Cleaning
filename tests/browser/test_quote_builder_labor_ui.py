@@ -2,9 +2,11 @@
 
 tests/browser/quote_builder_fixture.mjs serves crew/quote-draft.js on its own page and runs functions/api/quote-draft.js
 and functions/api/walkthrough-handoff.js with EGC_QUOTE_BUILDER_ENABLED over the estimator fixture's in-memory store. The
-walkthrough plan is one truck load and a mattress in a medium-full garage, which the server estimates at 6.5 man-hours
-($260.00), and 7.5 ($300.00) with a shelving unit's hour of installing, whatever the crew size. Nothing reaches the
-network: every host but 127.0.0.1 is aborted."""
+walkthrough plan is one truck load and a mattress in a medium-full garage: junk only, so no Labor line (owner decision
+D-JUNK: "$750 per truck covers the crew's time"). A shelving unit makes it garage work: the server estimates 3 man-hours
+($120.00), the set-up and sweep-out and the unit's hour of installing, whatever the crew size; the truck load and the
+mattress add none. The customer's line reads "Labor" (D-LABOR-TEXT). Nothing reaches the network: every host but
+127.0.0.1 is aborted."""
 import json, os, pathlib, subprocess, unittest, urllib.request
 from urllib.parse import urlparse
 from playwright.sync_api import sync_playwright, expect
@@ -49,13 +51,14 @@ class QuoteBuilderLaborTests(unittest.TestCase):
         self.page.get_by_role('button', name='Send options for review').click()
         dialog = self.dialog()
         expect(dialog).to_contain_text('Build the itemized quote')
-        expect(dialog.locator('.qb-total')).to_contain_text('Labor $260.00 (6.5 man-hours)')
+        expect(dialog.locator('.qb-total')).to_contain_text('No Labor line: junk only')
         dialog.get_by_role('button', name='Continue to shelving').click()
         expect(dialog).to_contain_text('Installing them is billed through the Labor line (man-hours × $40.00) on the review step.')
         dialog.get_by_role('button', name='Add HDX plastic shelving, 36×72×24').click()
+        expect(dialog.locator('.qb-total')).to_contain_text('Labor $120.00 (3 man-hours)')
         dialog.get_by_role('button', name='Continue to extra storage').click()
         dialog.get_by_role('button', name='Review quote').click()
-        expect(dialog.locator('.qb-labor h3')).to_have_text('Labor · $300.00')
+        expect(dialog.locator('.qb-labor h3')).to_have_text('Labor · $120.00')
         return dialog
 
     def assert_fits(self, dialog):
@@ -71,10 +74,10 @@ class QuoteBuilderLaborTests(unittest.TestCase):
     def test_labor_row_prefills_from_the_estimate_and_adjusts_by_total_or_people_times_hours(self):
         dialog = self.review()
         row = dialog.locator('.qb-labor')
-        expect(row.locator('.qb-labor-row')).to_contain_text('7.5 man-hours × $40.00 = $300.00')
-        expect(row).to_contain_text('Estimate: 7.5 man-hours of crew time (removal and cleaning 6.5 man-hours, installing shelving and storage 1 man-hour, medium garage), whatever the crew size. Pre-filled from the estimate.')
+        expect(row.locator('.qb-labor-row')).to_contain_text('3 man-hours × $40.00 = $120.00')
+        expect(row).to_contain_text('Estimate: 3 man-hours of crew time (set-up, sorting and cleaning 2 man-hours, installing shelving and storage 1 man-hour), whatever the crew size. Truck loads, special items and access charges are not counted: their own prices pay for loading, hauling and disposal. Pre-filled from the estimate.')
         expect(row).to_contain_text('Installing the shelving and storage is billed through this line.')
-        expect(dialog.locator('.qd-total')).to_have_text('Quote total $1,235.70')
+        expect(dialog.locator('.qd-total')).to_have_text('Quote total $1,055.70')
         self.assertEqual(self.posts[-1]['compositePricing']['labor'], {'manHours': None, 'adjusted': False, 'fullness': 'medium'})
         self.assertNotIn('rateCents', json.dumps(self.posts[-1]), 'the rate never leaves the browser')
         self.assertNotIn('crewSize', json.dumps(self.posts[-1]), 'nor does a time estimate: the server works it out')
@@ -84,14 +87,14 @@ class QuoteBuilderLaborTests(unittest.TestCase):
         row.get_by_role('button', name='Adjust').click()
         expect(dialog.get_by_role('button', name='Save draft')).to_be_disabled()
         field = row.get_by_label('Total man-hours', exact=True)
-        expect(field).to_have_value('7.5')
+        expect(field).to_have_value('3')
         field.fill('6.1')
         expect(row.locator('.qb-labor-result')).to_have_text('Enter 0.5 to 200 man-hours in quarter hours.')
         field.fill('10.5')
         expect(row.locator('.qb-labor-result')).to_have_text('= 10.5 man-hours × $40.00 = $420.00')
         row.get_by_role('button', name='Apply man-hours').click()
         expect(row.locator('.qb-labor-row')).to_contain_text('10.5 man-hours × $40.00 = $420.00')
-        expect(row).to_contain_text('Adjusted by hand from the estimate of 7.5 man-hours.')
+        expect(row).to_contain_text('Adjusted by hand from the estimate of 3 man-hours.')
         expect(dialog.locator('.qd-total')).to_have_text('Quote total $1,355.70')
         self.assertEqual(self.posts[-1]['compositePricing']['labor']['manHours'], 10.5)
         # People × hours: 3 people × 2.5 hours on site each.
@@ -105,10 +108,10 @@ class QuoteBuilderLaborTests(unittest.TestCase):
         row.get_by_role('button', name='Apply man-hours').click()
         expect(row.locator('.qb-labor-row')).to_contain_text('7.5 man-hours × $40.00 = $300.00')
         # Back to the estimate.
-        row.get_by_role('button', name='Reset to estimate (7.5 man-hours)').click()
+        row.get_by_role('button', name='Reset to estimate (3 man-hours)').click()
         expect(row).to_contain_text('Pre-filled from the estimate.')
-        expect(row.locator('.qb-labor-row')).to_contain_text('7.5 man-hours × $40.00 = $300.00')
-        expect(row.get_by_role('button', name='Reset to estimate (7.5 man-hours)')).to_have_count(0)
+        expect(row.locator('.qb-labor-row')).to_contain_text('3 man-hours × $40.00 = $120.00')
+        expect(row.get_by_role('button', name='Reset to estimate (3 man-hours)')).to_have_count(0)
 
     def test_the_saved_draft_keeps_the_estimators_man_hours_and_the_server_prices_them(self):
         dialog = self.review()
@@ -122,10 +125,11 @@ class QuoteBuilderLaborTests(unittest.TestCase):
         expect(dialog).to_contain_text('saved.')
         job = self.state()['jobs'][-1]
         labor = job['estimate']['lineItems'][-1]
-        self.assertEqual((labor['id'], labor['kind'], labor['name'], labor['totalCents']), ('labor', 'labor', 'Labor: 9.25 man-hours × $40.00', 37000))
+        # The customer's line is one amount (D-LABOR-TEXT); the man-hours stay in the selection and breakdown for the staff.
+        self.assertEqual((labor['id'], labor['kind'], labor['name'], labor['description'], labor['totalCents']), ('labor', 'labor', 'Labor', 'Includes installing the shelving and storage.', 37000))
         self.assertEqual(job['quoteDraft']['compositePricing']['labor'], {'manHours': 9.25, 'adjusted': True, 'fullness': 'medium'})
-        self.assertEqual((job['quoteDraft']['breakdown']['labor']['prefilledManHours'], job['quoteDraft']['breakdown']['labor']['adjusted']), (7.5, True))
-        self.assertEqual(job['estimate']['amountCents'], 123570 - 30000 + 37000)
+        self.assertEqual((job['quoteDraft']['breakdown']['labor']['prefilledManHours'], job['quoteDraft']['breakdown']['labor']['adjusted']), (3, True))
+        self.assertEqual(job['estimate']['amountCents'], 105570 - 12000 + 37000)
 
     def test_goods_the_estimate_cannot_time_are_named_and_need_the_man_hours_set_by_hand(self):
         self.page.goto(self.url + '/builder-harness')
@@ -137,7 +141,7 @@ class QuoteBuilderLaborTests(unittest.TestCase):
         add = dialog.locator('.qb-products button.qb-add').first
         name = add.get_attribute('aria-label').removeprefix('Add ')
         add.click()
-        expect(dialog.locator('.qb-total')).to_contain_text('Labor $260.00 (6.5 man-hours)')
+        expect(dialog.locator('.qb-total')).to_contain_text('Labor $80.00 (2 man-hours)')
         dialog.get_by_role('button', name='Review quote').click()
         gap = dialog.locator('.qb-labor .qb-install-gap')
         expect(gap).to_contain_text('The estimate has no install time for: ' + name)
@@ -153,8 +157,9 @@ class QuoteBuilderLaborTests(unittest.TestCase):
         self.assertEqual(self.posts[-1]['compositePricing']['labor'], {'manHours': 9, 'adjusted': True, 'fullness': 'medium'})
 
     def test_an_approved_quote_on_an_undated_job_is_saved_and_waits_for_the_job_date_with_one_button(self):
-        # The truck load and the Labor line are approved prices, so the real send preview reaches the 25/75 payment
-        # dates, which need the job's date: a new quote job has none (quote_draft_payment_dates_pending).
+        # The truck load is an approved price and a junk-only quote has no Labor line (D-JUNK), so the real send preview
+        # reaches the 25/75 payment dates, which need the job's date: a new quote job has none
+        # (quote_draft_payment_dates_pending).
         self.page.goto(self.url + '/builder-harness')
         self.page.get_by_role('button', name='Send options for review').click()
         dialog = self.dialog()
@@ -163,6 +168,11 @@ class QuoteBuilderLaborTests(unittest.TestCase):
         dialog.get_by_role('button', name='Continue to extra storage').click()
         dialog.get_by_role('button', name='Review quote').click()
         expect(dialog).to_contain_text('Every price on this quote is owner-approved')
+        expect(dialog.locator('.qb-labor h3')).to_have_text('Labor · none')
+        expect(dialog.locator('.qd-total')).to_have_text('Quote total $750.00')
+        self.assertNotIn('labor', self.posts[-1]['compositePricing'], 'a junk-only quote sends no labor')
+        self.assertLessEqual(dialog.evaluate('node => node.scrollWidth - node.clientWidth'), 0, 'no sideways scroll at phone width')
+        self.page.screenshot(path=str(RESULTS / 'quote-builder-junk-only-375.png'), full_page=True)
         dialog.get_by_role('button', name='Save draft').click()
         notice = dialog.locator('[data-held="job-date"]')
         expect(notice).to_contain_text('Sending waits for the job date: the 25% deposit and 75% balance due dates come from the walkthrough date and the job date.')

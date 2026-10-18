@@ -1396,7 +1396,7 @@ test('the manager profile form edits the onboarding emergency contact fields, st
 
 test('employee.html loads the new Hub registry and suite builds; the Team directory files ship beside them', () => {
   const page = readFileSync(new URL('../employee.html', import.meta.url), 'utf8');
-  assert.equal(page.match(/<script src="employee-hub-screens\.js\?v=20261018labor2"><\/script>/g)?.length, 1);
+  assert.equal(page.match(/<script src="employee-hub-screens\.js\?v=20261018junk1"><\/script>/g)?.length, 1);
   assert.equal(page.match(/<script src="employee-suite\.js\?v=20261017hubboardfix"><\/script>/g)?.length, 1);
   assert.equal(page.includes('employee-team-directory.js'), false, 'the screen registry loads it only when it opens');
   for (const file of ['employee-team-directory.js', 'employee-team-directory.css']) assert.ok(readFileSync(new URL('../' + file, import.meta.url), 'utf8').length > 100, file);

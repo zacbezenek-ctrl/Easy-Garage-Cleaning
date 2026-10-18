@@ -63,13 +63,17 @@ test('the builder sends only finished steps, in order, with ids and quantities; 
   assert.deepEqual([all.menuVersion, all.settingsVersion], [menu.menuVersion, menu.settingsVersion]);
   assert.deepEqual(all.labor, { manHours: null, adjusted: false, fullness: 'full' });
   assert.doesNotMatch(JSON.stringify(all), /rateCents|totalCents|unitCents|crewSize|onSiteMinutes/, 'no price and no time estimate of any kind leaves the browser');
-  // The server's estimate: 2 x (60 base + 1.5 loads x 90 + 60 full + 3 special items x 15 + 30 stairs + 90 deep clean)
-  // + 2 shelving units x 60 = 960 person-minutes = 16 man-hours.
+  // The server's estimate (D-JUNK): 2 x (60 base + 90 deep clean) + 2 shelving units x 60 = 420 person-minutes = 7
+  // man-hours. The 1.5 loads, the 3 special items and the stairs add none (their prices pay that time) and, with no
+  // cleaning base, neither does the fullness.
   const priced = priceCompositeQuote(state, all, { complete: true });
-  assert.deepEqual(priced.compositePricing, { ...all, labor: { manHours: 16, adjusted: false, fullness: 'full' } }, 'the server fills in its estimate');
-  assert.deepEqual([priced.labor.manHours, priced.labor.totalCents, priced.labor.adjusted, priced.labor.estimate.personMinutes], [16, 64000, false, 960]);
+  assert.deepEqual(priced.compositePricing, { ...all, labor: { manHours: 7, adjusted: false, fullness: 'full' } }, 'the server fills in its estimate');
+  assert.deepEqual([priced.labor.manHours, priced.labor.totalCents, priced.labor.adjusted, priced.labor.estimate.personMinutes], [7, 28000, false, 420]);
   const totals = plain(B.runningTotals(menu, sel, fullness));
-  assert.deepEqual([totals.labor, totals.laborHours, B.estimateLabor(menu, sel, fullness).manHours], [64000, 16, 16], 'the running total estimates labor the way the server does');
+  assert.deepEqual([totals.labor, totals.laborHours, totals.junkOnly, B.estimateLabor(menu, sel, fullness).manHours], [28000, 7, false, 7], 'the running total estimates labor the way the server does');
+  // With a cleaning base the fullness is the garage's sorting time: 2 x 60 more for a full garage, on both sides.
+  const based = { ...sel, removal: { ...sel.removal, [byName('Two-car garage base').id]: 1 } }, basedAll = plain(B.builderDescriptor(menu, based, 'storage', fullness));
+  assert.deepEqual([B.estimateLabor(menu, based, fullness).manHours, priceCompositeQuote(state, basedAll, { complete: true }).labor.manHours], [9, 9]);
   assert.deepEqual([totals.removal + totals.shelving + totals.storage + totals.labor, totals.total], [priced.totalCents, priced.totalCents], 'the running total matches the server price');
   assert.equal(totals.shelving, 23140);
   assert.equal(totals.drafts, Object.keys(sel.removal).length + 1 - 1, 'every selected price but the approved full truck is a draft');
@@ -98,9 +102,10 @@ test('the saved draft carries the server-priced lines and selection, the walkthr
   assert.deepEqual(draft.composite_pricing, preview.compositePricing);
   assert.equal(draft.catalog_version, menu.menuVersion);
   assert.deepEqual([draft.client.name, draft.valid_until, draft.crew_size, draft.estimated_duration_min], ['Synthetic Customer', '2026-10-31', 2, 240]);
-  // An overhead rack has no install time in the estimate (14 man-hours of removal and cleaning): the server names it.
-  assert.match(draft.scope, /^Removal \/ cleanout: Full truck load; Half load; Mattress × 2;.*\. Extra storage: .+\. Labor: 14 man-hours\.$/);
-  assert.deepEqual([draft.line_items.at(-1).id, draft.line_items.at(-1).name, draft.composite_pricing.labor.manHours], ['labor', 'Labor: 14 man-hours × $40.00', 14]);
+  // An overhead rack has no install time in the estimate (5 man-hours of set-up and cleaning): the server names it. The
+  // customer's scope and line say "Labor", never the man-hours (D-LABOR-TEXT); the selection keeps them for the staff.
+  assert.match(draft.scope, /^Removal \/ cleanout: Full truck load; Half load; Mattress × 2;.*\. Extra storage: .+\. Labor\.$/);
+  assert.deepEqual([draft.line_items.at(-1).id, draft.line_items.at(-1).name, draft.line_items.at(-1).description, draft.composite_pricing.labor.manHours], ['labor', 'Labor', 'Includes installing the shelving and storage.', 5]);
   assert.deepEqual(priced.labor.estimate.installNotEstimated.map(row => row.packs), [1]);
   assert.deepEqual(draft.walkthrough_capture.keepItems, 'Albums');
   assert.doesNotMatch(JSON.stringify(draft), /signature|"raw"|split|retailPerPackCents/);
@@ -140,6 +145,37 @@ test('a saved quote\'s selection reopens in the builder shape, checked against t
   const prefilled = priceCompositeQuote(state, { ...pricing, labor: { manHours: null, fullness: 'medium' } }, { complete: true }).compositePricing;
   assert.deepEqual(plain(B.selectionOfPricing(plain(prefilled)).labor), { manHours: prefilled.labor.manHours, adjusted: false });
   assert.deepEqual(plain(B.builderDescriptor(menu, B.selectionOfPricing(plain(prefilled)), 'storage', 'packed').labor), { manHours: prefilled.labor.manHours, adjusted: false, fullness: 'packed' });
+});
+
+// D-JUNK and D-LABOR-TEXT (owner, 2026-10-18) in the builder page: a junk-only selection sends no labor and runs no Labor
+// line; a quote saved under the morning's Labor rules reopens on the new estimate unless its man-hours were set by hand.
+test('a junk-only selection sends no labor and its running total is the trucks alone; a quote saved under the earlier Labor rules reopens on the new estimate', () => {
+  const truck = byName('Full truck load'), junk = { removal: { [truck.id]: 2, [byName('Mattress').id]: 1, [byName('Stairs').id]: 1 }, shelving: [], storage: [], labor: { manHours: 6, adjusted: true } };
+  assert.deepEqual(menu.labor.haulingGroups, ['junk', 'special', 'access']);
+  assert.equal(B.junkOnly(menu, junk), true);
+  const descriptor = plain(B.builderDescriptor(menu, junk, 'storage', 'packed'));
+  assert.equal('labor' in descriptor, false, 'a junk-only quote carries no labor, even man-hours once set by hand');
+  const priced = priceCompositeQuote(state, descriptor, { complete: true });
+  assert.deepEqual([priced.junkOnly, priced.labor, priced.totalCents], [true, null, 2 * 75000 + 7000 + 19000]);
+  const totals = plain(B.runningTotals(menu, junk, 'packed'));
+  assert.deepEqual([totals.junkOnly, totals.labor, totals.laborHours, totals.total], [true, 0, null, priced.totalCents], 'the running total matches the server: no Labor line');
+  // Garage work brings the Labor line back: a cleaning add-on, a base, shelving or storage.
+  for (const extra of [{ removal: { ...junk.removal, [byName('Mouse trapping').id]: 1 } }, { removal: { ...junk.removal, [byName('Two-car garage base').id]: 1 } }, { shelving: [{ id: shelf.id, quantity: 1 }] }]) {
+    const sel = { ...junk, ...extra };
+    assert.equal(B.junkOnly(menu, sel), false, JSON.stringify(extra));
+    assert.deepEqual(plain(B.builderDescriptor(menu, sel, 'storage', 'packed').labor), { manHours: 6, adjusted: true, fullness: 'packed' });
+  }
+  assert.equal(B.junkOnly(menu, { removal: {}, shelving: [], storage: [] }), false, 'an empty selection is not a quote');
+  // A saved quote whose Labor line has no version was priced by the morning's rules (truck-load time in its estimate):
+  // its pre-filled man-hours follow the new estimate; man-hours the estimator set by hand stay.
+  const sel = B.selectionFromWalkthrough(plan(), menu);
+  sel.shelving.push({ id: shelf.id, quantity: 2 });
+  const pricing = { ...plain(B.builderDescriptor(menu, sel, 'storage')), labor: { manHours: 16, adjusted: false, fullness: 'full' } };
+  const morning = { labor: { manHours: 16, prefilledManHours: 16, adjusted: false } }, today = { labor: { version: 2, manHours: 16, prefilledManHours: 7, adjusted: false } };
+  assert.deepEqual(plain(B.selectionOfPricing(pricing, morning, menu).labor), { manHours: null, adjusted: false }, 'the earlier estimate is dropped');
+  assert.deepEqual(plain(B.selectionOfPricing(pricing, today, menu).labor), { manHours: 16, adjusted: false }, 'today\'s kept man-hours stay (flow-7)');
+  assert.deepEqual(plain(B.selectionOfPricing({ ...pricing, labor: { ...pricing.labor, adjusted: true } }, { labor: { ...morning.labor, adjusted: true } }, menu).labor), { manHours: 16, adjusted: true }, 'set by hand: kept');
+  assert.deepEqual(plain(B.selectionOfPricing(pricing).labor), { manHours: 16, adjusted: false }, 'no saved breakdown: as saved');
 });
 
 test('the builder shows why a price blocks sending, has no way around it, and the walkthrough quote stays when the builder is off', () => {

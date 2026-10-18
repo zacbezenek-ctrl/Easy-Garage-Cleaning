@@ -4,7 +4,7 @@ import { denverToday, validDate } from './dispatch-time.js';
 import { customerMoneyTotals, invoiceLineItems, invoiceNumber, invoiceStatus, paymentLedger } from './money-core.js';
 import { LEGACY_ENTRY_ID, reconcileLedger } from './money-ledger.js';
 import { cashPayment } from './payment-events.js';
-import { customerLineItem, estimateTotals, included, legacyLineItems, singleLineItem, unsentQuoteDraft } from './quote-model.js';
+import { customerLaborLine, customerLineItem, estimateTotals, included, legacyLineItems, singleLineItem, unsentQuoteDraft } from './quote-model.js';
 import { publicQuotePaymentSchedule, quotePaymentSummary } from './quote-payment-policy.js';
 
 /**
@@ -15,7 +15,8 @@ import { publicQuotePaymentSchedule, quotePaymentSummary } from './quote-payment
  * invoiceLineItems for invoice/receipt lines (selected lines plus approved
  * change orders) and paymentLedger for payments. Lines are customerLineItem
  * projections, so cost splits, markup, catalog references and durations never
- * reach a customer. Estimates list every quoted line and mark optional lines
+ * reach a customer, and a quote builder's Labor line reads as one amount,
+ * "Labor", however it was saved (customerLaborLine, D-LABOR-TEXT). Estimates list every quoted line and mark optional lines
  * and options with their selection; lines that are not selected are shown but
  * never counted. Tips are listed on receipts as a separate, non-revenue line.
  *
@@ -111,7 +112,7 @@ function estimateLines(job, totals, issues) {
     issues.push(check.complete ? 'money_line_items_mismatch' : 'money_line_items_incomplete');
     lines = [singleLineItem(job, { surface: 'document', totalCents: totals.quoteCents })];
   }
-  return lines.map(line => ({ ...customerLineItem(line), included: included(line), choice: line.group ? 'option' : line.optional ? 'add-on' : '' }));
+  return lines.map(line => ({ ...customerLineItem(customerLaborLine(line)), included: included(line), choice: line.group ? 'option' : line.optional ? 'add-on' : '' }));
 }
 
 function lineTag(line) {
@@ -224,7 +225,7 @@ export function moneyDocumentModel(job, { kind, now, payUrl = null, contact = tr
   } else {
     const projected = invoiceLineItems(job, totals);
     issues.push(...projected.issues);
-    lines = projected.lineItems.map(line => ({ ...line, included: true, choice: '' }));
+    lines = projected.lineItems.map(line => ({ ...customerLaborLine(line), included: true, choice: '' }));
     number = invoiceNumber(job.id, 'invoice', clean(invoice.number, 80));
     if (kind === 'invoice') {
       status = invoiceStatus(job, at, { unified, invoiceState }); statusLabel = INVOICE_STATUS[status] || 'Issued';

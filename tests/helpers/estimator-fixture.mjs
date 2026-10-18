@@ -22,12 +22,13 @@ export const TOTES = menu.products.find(item => item.id === 'hd-341048322');
 export const builderState = (approvals = {}, extra = {}) => ({ menu, settings: { ...settings, ...extra }, walkthrough: walkthroughPricing(walkthroughServiceItems()),
   approvals: { items: Object.fromEntries(Object.entries(approvals).map(([id, unitCents]) => [id, { unitCents, identity: menuItemIdentity(menu.services.find(item => item.id === id) || menu.products.find(item => item.id === id)) }])), revision: Object.keys(approvals).length ? 'approvals-1' : null } });
 /** The labor a builder quote carries (D12): 6 man-hours x $40.00 = $240.00, as the estimator saved them, in a medium-full
- * garage (the signedPlan's fullness). The server's own estimate of the default selection is 9 man-hours (laborEstimate:
- * 2 x (60 + 90 + 30) for the base and the truck load, 2 shelving units x 60 and two 4-packs of totes x 32 = 544
- * person-minutes), so this labor is below the estimate and not adjusted by hand. */
+ * garage (the signedPlan's fullness). The server's own estimate of the default selection is also 6 man-hours
+ * (laborEstimate, D-JUNK: 2 x (60 + 30) for the base's set-up, sweep-out and sorting, nothing for the truck load, whose
+ * $750 pays its loading and hauling, 2 shelving units x 60 and two 4-packs of totes x 32 = 364 person-minutes), so this
+ * labor equals the estimate and is not adjusted by hand. */
 export const LABOR = Object.freeze({ manHours: 6, fullness: 'medium' });
-/** The server's estimate of the default selection (laborEstimate): 9 man-hours, $360.00. */
-export const ESTIMATE_MAN_HOURS = 9;
+/** The server's estimate of the default selection (laborEstimate): 6 man-hours, $240.00. */
+export const ESTIMATE_MAN_HOURS = 6;
 export const LABOR_CENTS = 24000;
 /** The estimator's builder selection: removal, then shelving, then extra storage, then the labor. */
 export const selection = ({ removal = [{ id: menuItem('Two-car garage base').id, quantity: 1 }, { id: menuItem('Full truck load').id, quantity: 1 }], shelving = [{ id: SHELF.id, quantity: 2 }], storage = [{ id: TOTES.id, quantity: 2 }], labor = LABOR } = {}) =>

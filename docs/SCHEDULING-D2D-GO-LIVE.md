@@ -26,11 +26,15 @@ for today or the week (first name and town only, no prices). A new role, **Team 
 Owners and managers do too.
 
 **Estimator quote builder and handoff.** At a walkthrough the estimator builds the quote in order: removal first, then
-shelving, then extra storage, priced from your pricing menu. Every builder quote then gets a **Labor** line on top:
-the estimated man-hours × $40.00 per man-hour (your decision of 2026-10-18). The app fills in the man-hours from its own
-estimate of the quote: the walkthrough time model in person-hours over the removal work, plus an hour per shelving unit
-and a few minutes per tote, the same for any crew size and never capped at one day. The estimator can adjust them
-before sending. Installing shelving and storage is billed through this line; for other storage goods (racks, cabinets,
+shelving, then extra storage, priced from your pricing menu. Every builder quote with garage work then gets a **Labor**
+line on top: the estimated man-hours × $40.00 per man-hour (your decision of 2026-10-18). A junk-only quote (truck loads,
+with their special items and access charges) has no Labor line: $750 per truck covers the crew's time (your decision
+of 2026-10-18). The app fills in the man-hours from its own estimate of the garage work: the walkthrough time model in
+person-hours for set-up and sweep-out, sorting a garage with a cleaning base and the cleaning add-ons, plus an hour per
+shelving unit and a few minutes per tote, never the truck loads, special items or access (their prices pay for
+loading, hauling and disposal), the same for any crew size and never capped at one day. The estimator can adjust them
+before sending. The customer sees one amount, "Labor $240.00", never the man-hours or the rate; the estimator, the crew
+brief and the HighLevel note keep the man-hours. Installing shelving and storage is billed through this line; for other storage goods (racks, cabinets,
 hooks, tracks) the app has no install time yet, so such a quote is sent only once the estimator sets the man-hours by
 hand, or you confirm installation is included in the goods price. Man-hours below the estimate show the estimate on
 the job for you. When the estimator signs the
@@ -213,9 +217,13 @@ Each has a recommendation. Until you decide, the Hub keeps doing what the item s
 - **Team directory privacy.** Teammates see shirt size and birthday month and day by default; each person can hide
   their birthday. *Recommended: keep.* The youngest allowed birth date is 14 years ago. *Recommended:* keep 14 unless
   you never hire under 16.
-- **Installation of shelving and storage.** *Decided 2026-10-18:* every builder quote has a Labor line, the estimated
-  man-hours × $40.00 per man-hour, and installation is billed through it. The man-hours are filled in from the app's
-  estimate of the quote and the estimator can adjust them. Change the rate in Menu prices.
+- **Installation of shelving and storage.** *Decided 2026-10-18:* every builder quote with garage work has a Labor line,
+  the estimated man-hours × $40.00 per man-hour, and installation is billed through it. The man-hours are filled in from
+  the app's estimate of the garage work and the estimator can adjust them. Change the rate in Menu prices.
+- **Junk removal.** *Decided 2026-10-18:* "$750 per truck covers the crew's time." A junk-only quote has no Labor line,
+  and no quote's labor estimate counts truck-load, hauling or disposal time. Builder quotes saved earlier that day (an
+  estimate with truck-load time, a line naming the man-hours) are saved again before they are sent; signed jobs keep
+  what was signed.
 - **Install times for storage goods.** *Open:* the app times shelving units (1 hour each) and totes, nothing else yet.
   Until install times are set for racks, cabinets, hooks and tracks, a quote with them waits for the estimator to set
   the man-hours by hand. *Recommended:* give install times per product (or per group) so the estimate covers them.

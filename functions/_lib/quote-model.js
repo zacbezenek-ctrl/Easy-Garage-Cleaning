@@ -582,6 +582,21 @@ export const toLegacyLineItem = line => ({ name: line.name, description: line.de
 /** The walkthrough/provider (snake-case game_plan) line shape. */
 export const toWalkthroughLineItem = line => ({ name: line.name, qty: line.quantity, total: line.amount });
 /**
+ * The quote builder's Labor line (composite-quote.js LABOR_ID). Owner decision D-LABOR-TEXT (2026-10-18): the customer
+ * sees it as one amount, "Labor" and its dollar amount, never the man-hours, the rate or an hourly wording; the man-hours
+ * stay in the staff views (the builder, the crew brief, the job breakdown and the HighLevel internal note). A Labor line
+ * saved earlier that day read "Labor: N man-hours × $R", "Crew time on site, billed per man-hour[, including installing
+ * the shelving and storage]."; builderLaborLine() knows both, and customerLaborLine() shows either the new way. It is a
+ * display rule for what the customer reads (the money documents, the portal, the walkthrough signing page): the stored
+ * lines, their fingerprint and the staff's money views are unchanged, so re-saving a signed estimate is never a revision
+ * for it. Only the builder's own line (its id, kind and name) is recognized: a labor line a person wrote on another quote
+ * is shown as written.
+ */
+export const LABOR_LINE_NAME = 'Labor';
+export const LABOR_INSTALL_NOTE = 'Includes installing the shelving and storage.';
+export const builderLaborLine = line => plain(line) && line.id === 'labor' && line.kind === 'labor' && (line.name === LABOR_LINE_NAME || /^Labor: \d+(?:\.\d+)? man-hours? × /.test(String(line.name || '')));
+export const customerLaborLine = line => builderLaborLine(line) ? { ...line, name: LABOR_LINE_NAME, description: /installing the shelving and storage/i.test(String(line.description || '')) ? LABOR_INSTALL_NOTE : '' } : line;
+/**
  * Customer-facing projection of a canonical line: CUSTOMER_LINE_FIELDS only.
  * Cost splits (markup), catalog references, durations, groups and packages
  * never reach an invoice or any other customer document.

@@ -15,7 +15,9 @@ import { ON_ENV, builderState, client, estimator, fixture } from '../helpers/est
 const ROOT = fileURLToPath(new URL('../../', import.meta.url));
 const TYPES = { '.js': 'application/javascript', '.mjs': 'application/javascript', '.css': 'text/css', '.html': 'text/html', '.json': 'application/json', '.svg': 'image/svg+xml', '.png': 'image/png', '.ico': 'image/x-icon' };
 // The walkthrough payload as crew/gameplan.html payload() builds it: one truck load and a mattress in a medium-full
-// garage, which the server estimates at 2 x (60 + 90 + 30 + 15) = 390 person-minutes (6.5 man-hours) whatever the crew.
+// garage, junk only (no Labor line, D-JUNK); with a shelving unit the server estimates 2 x 60 + 60 = 180 person-minutes
+// (3 man-hours) whatever the crew: the truck load and the mattress add none and, with no cleaning base, neither does the
+// fullness.
 const PLAN = { client: client(1), quote: { title: 'EGC Garage Service', estimated_duration_min: 240, line_items: [] },
   scope: { garages: '2', loads: '1', fullness: 'medium', special_items: ['Mattress'], access: [], finish: ['cleanout', 'shelving'], hazards: [], finish_details: { shelf_type: 'metal', shelf_qty: 2, tote_qty: 0 } }, raw: {}, logistics: { crew_size: 2 } };
 const HARNESS = `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>Quote builder harness</title>

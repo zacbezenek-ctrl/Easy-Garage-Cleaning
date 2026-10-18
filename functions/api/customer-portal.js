@@ -15,7 +15,7 @@ import { parseBusinessActor } from '../_lib/business-hub-core.js';
 import { businessAccountJob } from '../_lib/portal-invitation.js';
 import { moneyDocumentEnabled, moneyDocumentLinks } from '../_lib/money-document.js';
 import { customerMoneyTotals, invoiceTakesPayment, moneyInvoiceStateEnabled, moneyTotalsMode } from '../_lib/money-core.js';
-import { estimateFingerprint, included, legacyLineItems, unsentQuoteDraft } from '../_lib/quote-model.js';
+import { customerLaborLine, estimateFingerprint, included, legacyLineItems, unsentQuoteDraft } from '../_lib/quote-model.js';
 import { crewPublicProfilesEnabled, customerCrew, customerCrewProjection, readCrewPublicProfiles } from '../_lib/crew-public-profile.js';
 import { liveSale, portalApprovalWrites, portalFunnelWrite, vocabularyValue } from '../_lib/job-funnel-events.js';
 import { dispatchReviewPatch, queued } from '../_lib/dispatch-queue.js';
@@ -106,10 +106,11 @@ function estimateRevision(job) {
 }
 
 // Saved lines are read through the canonical quote model: only included lines
-// are shown, and discounts keep their sign.
+// are shown, and discounts keep their sign. A quote builder's Labor line reads
+// as one amount, "Labor", whenever it was saved (customerLaborLine).
 function estimateLines(job, finance) {
   if (!Array.isArray(job.estimate?.lineItems) || !job.estimate.lineItems.length) return [{ name: safe(job.serviceType || job.type || 'Garage service', 160), description: safe(job.estimate?.scope || job.scopeSummary || '', 600), quantity: 1, amount: Math.max(0, amount(finance.total)) }];
-  return legacyLineItems(job).lineItems.filter(included).map(line => ({ name: line.name, description: line.description, quantity: line.quantity, amount: line.amount ?? 0 }));
+  return legacyLineItems(job).lineItems.filter(included).map(customerLaborLine).map(line => ({ name: line.name, description: line.description, quantity: line.quantity, amount: line.amount ?? 0 }));
 }
 
 // A digest of exactly what the estimate card shows (total, deposit, scope and

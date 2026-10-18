@@ -1,5 +1,5 @@
 import { goodsMarkupOf, roundCents, validatePricingSettings } from './catalog.js';
-import { estimateTotals, included, normalizeLineItems } from './quote-model.js';
+import { LABOR_INSTALL_NOTE, LABOR_LINE_NAME, estimateTotals, included, normalizeLineItems } from './quote-model.js';
 import { PRICING_MENU_JSON } from '../_data/pricing-menu.js';
 
 /**
@@ -24,12 +24,12 @@ import { PRICING_MENU_JSON } from '../_data/pricing-menu.js';
  * be saved on an unsent draft, never sent: quote-draft.js re-checks compositeApproval() at send preview and send.
  *
  * Labor (owner decision D12, 2026-10-18: "We have to price man hours estimated to do the job. It's $40 an hour."):
- * every builder quote also carries one Labor line, man-hours x the labor rate, on top of the menu lines. The rate is the
- * owner's own decision, so it is an approved price: approvals.laborRatePerManHourCents (the owner's menu.approve on
- * Menu prices) else DEFAULT_LABOR_RATE_CENTS ($40.00). It is never read from the browser. The man-hours are the
- * estimator's (compositePricing.labor.manHours), pre-filled from the server's own time estimate of the selection itself
- * (laborEstimate: person-minutes of the removal work and of installing the goods, never divided by a crew, rounded or
- * capped to a working day) and adjustable; the quote records the estimate, whether the estimator adjusted the man-hours
+ * every builder quote with garage work also carries one Labor line, man-hours x the labor rate, on top of the menu lines.
+ * The rate is the owner's own decision, so it is an approved price: approvals.laborRatePerManHourCents (the owner's
+ * menu.approve on Menu prices) else DEFAULT_LABOR_RATE_CENTS ($40.00). It is never read from the browser. The man-hours
+ * are the estimator's (compositePricing.labor.manHours), pre-filled from the server's own time estimate of the selection
+ * itself (laborEstimate: person-minutes of the garage work and of installing the goods, never divided by a crew, rounded
+ * or capped to a working day) and adjustable; the quote records the estimate, whether the estimator adjusted the man-hours
  * and whether they are below the estimate (belowEstimate, for the owner). Shelving and storage installation is billed
  * through this line. Goods are priced without installation, so goods the time estimate has no install time for
  * (installNotEstimated), and every quote saved before the Labor line existed (a breakdown without labor), wait for the
@@ -37,6 +37,23 @@ import { PRICING_MENU_JSON } from '../_data/pricing-menu.js';
  * only while CATALOG_QUOTES_ENABLED is on) or with the menu approvals (approvals.goodsInstallationIncluded). A quote with
  * a Labor line also passes once the estimator set the man-hours by hand (labor.adjusted) after being told which goods
  * the estimate leaves out.
+ *
+ * Junk removal (owner decision D-JUNK, 2026-10-18: "$750 per truck covers the crew's time"): the truck-load prices (the
+ * $750 full truck and the partial loads drafted from it) already pay for loading, hauling and disposal, and so do the
+ * special-handling items ("incremental disposal/handling") and access charges ("incremental labor only") that go with
+ * them (HAULING_GROUPS). So (1) the labor estimate never counts truck-load, hauling or disposal time: of the walkthrough
+ * time model it keeps the set-up and sweep-out (base), the sorting of the garage's contents (the fullness minutes, with a
+ * garage cleaning base), the cleaning add-ons and the install time of the goods, and drops the per-load minutes, the
+ * special-item minutes and the access minutes (laborTime); (2) a junk-only quote (junkOnly: nothing but truck loads,
+ * special-handling items and access charges; no cleaning base, cleaning add-on, shelving or storage) has no Labor line at
+ * all and is complete, sendable and signable without one: it is $750 per truck. Every quote with garage work (sorting
+ * and organizing, shelving, storage, installation, cleaning) still needs its Labor line.
+ *
+ * What the customer sees (owner decision D-LABOR-TEXT, 2026-10-18): the Labor line is one amount, "Labor" (and, with
+ * goods, "Includes installing the shelving and storage."), never the man-hours, the rate or an hourly wording; the
+ * man-hours are kept for the staff (breakdown.labor). LABOR_VERSION marks a Labor line priced by these rules: an unsent
+ * quote saved earlier (its line read "Labor: N man-hours × $R" and its estimate counted the truck loads), and an unsent
+ * junk-only quote that still has a Labor line, are saved again before they are sent; a signed job keeps what was signed.
  *
  * The customer-facing estimate keeps at most 12 charged lines (the portal limit): special-handling items, access
  * charges and each goods step (shelving, extra storage) roll up into one line each, and labor is one line; the
@@ -72,6 +89,15 @@ const GARAGE_SIZES = ['1', '2', '3', 'other'];
 export const MAX_CHARGED_LINES = 12;
 // D12: the Labor line. Its id is the customer-facing line id; the rate is the owner's (laborRate), $40.00 by default.
 export const LABOR_ID = 'labor';
+// The Labor rules a priced labor records (breakdown.labor.version): 2 is D-JUNK and D-LABOR-TEXT (no hauling in the
+// estimate, no Labor line on a junk-only quote, one amount for the customer). Labor priced before (no version) is 1.
+export const LABOR_VERSION = 2;
+// D-JUNK: the removal groups whose own prices pay the crew's time (truck loads; special-handling items and access charges,
+// which go with them). A quote of nothing else is junk-only (junkOnly): no Labor line, $750 per truck.
+export const HAULING_GROUPS = Object.freeze(['junk', 'special', 'access']);
+/** A junk-only quote (D-JUNK): its builder lines (breakdown lines, or anything with section and group) are all truck loads,
+ * special-handling items or access charges. A quote with a cleaning base, a cleaning add-on, shelving or storage is not. */
+export const junkOnly = lines => Array.isArray(lines) && lines.length > 0 && lines.every(line => plain(line) && line.section === 'removal' && HAULING_GROUPS.includes(line.group));
 export const DEFAULT_LABOR_RATE_CENTS = 4000;
 export const LABOR_RATE_LIMITS = Object.freeze({ min: 100, max: 100000 });
 export const LABOR_MAN_HOURS = Object.freeze({ min: 0.5, max: 200, step: 0.25 });
@@ -295,7 +321,6 @@ const installTimeBlock = missing => {
 const quarterHours = value => typeof value === 'number' && Number.isFinite(value) && Math.abs(value * 4 - Math.round(value * 4)) < 1e-9;
 /** Man-hours a Labor line may charge: 0.5 to 200, in quarter hours. */
 export const validManHours = value => quarterHours(value) && value >= LABOR_MAN_HOURS.min && value <= LABOR_MAN_HOURS.max;
-const hoursText = hours => `${Number(hours.toFixed(2))} man-hour${hours === 1 ? '' : 's'}`;
 /** The labor rate in force: {rateCents, source:'owner'|'default', reason}. The owner's own rate (menu approvals
  * laborRatePerManHourCents, set on Menu prices) else D12's $40.00. Either is approved: it is the owner's decision. */
 export function laborRate(state) {
@@ -313,27 +338,31 @@ export const manHoursOf = personMinutes => Math.min(LABOR_MAN_HOURS.max, Math.ma
  * are elapsed minutes for its calibrated crew (calibratedCrew, 2), each multiplied by that crew. Unlike the schedule's
  * wall-clock estimate, nothing is divided by the crew chosen on the Schedule tab, rounded to 30 minutes or kept within
  * one working day, so the same work has the same man-hours for any crew and any length of job.
- *   base       once per quote (arrival, set-up and sweep-out)
- *   loads      when the removal step has anything: max(minLoads, the selection's truck loads) x perLoad
- *   fill       with the loads: the fullness minutes of the walkthrough's "How full is it?" (unknown: defaultFill)
- *   items      per unit: special-handling items (perSpecial), access charges, the deep clean by size, the pressure wash,
- *              mouse trapping and pest-waste cleanup at their walkthrough minutes; a cleaning base and a truck load add
- *              nothing of their own (base and loads cover them)
- *   install    per goods pack: a shelving unit at the walkthrough's shelving-unit minutes, a tote at its labeled-tote
- *              minutes, each x units per pack (the times the walkthrough's Finish step charged for the same goods). Every
- *              other product has no install time yet: null, and laborEstimate names it (installNotEstimated).
+ * D-JUNK ("$750 per truck covers the crew's time"): the model's minutes are kept or dropped by what they time, per the
+ * walkthrough's own model and the menu's scope notes.
+ *   base       kept: once per quote (arrival, set-up and sweep-out)
+ *   fill       kept, with a garage cleaning base: the fullness minutes of the walkthrough's "How full is it?" (unknown:
+ *              defaultFill), the time to sort through the garage's contents. The walkthrough prices the fullness on the
+ *              garage base (recommend(): size base x fill), never on the truck loads, which it prices per load.
+ *   cleaning   kept, per unit: the deep clean by size, the pressure wash, mouse trapping and pest-waste cleanup at their
+ *              walkthrough minutes; a cleaning base adds nothing of its own (base and fill cover it)
+ *   install    kept, per goods pack: a shelving unit at the walkthrough's shelving-unit minutes, a tote at its
+ *              labeled-tote minutes, each x units per pack (the times the walkthrough's Finish step charged for the same
+ *              goods). Every other product has no install time yet: null, and laborEstimate names it (installNotEstimated).
+ *   dropped    the hauling (HAULING_GROUPS, 0 here): truck loads (perLoad, minLoads: loading, hauling and disposal, paid by
+ *              the truck price), special-handling items (perSpecial: their price is the item's "incremental disposal/
+ *              handling") and access charges (access: "incremental labor only", priced on their own line).
  * null when the walkthrough time model is unavailable: the estimator then enters the man-hours by hand.
  */
 function laborTime(state) {
   const w = state?.walkthrough, M = w?.minutes, svc = w?.services, crew = M?.calibratedCrew, menu = state?.menu;
   const n = value => typeof value === 'number' && Number.isFinite(value) && value >= 0 ? value : null;
-  if (!plain(M) || !plain(svc) || !Number.isSafeInteger(crew) || crew < 1 || !plain(M.fill) || !plain(M.access) || !menu
-    || [M.base, M.perLoad, M.minLoads, M.perSpecial, M.defaultFill].some(value => n(value) === null)) return null;
+  if (!plain(M) || !plain(svc) || !Number.isSafeInteger(crew) || crew < 1 || !plain(M.fill) || !menu
+    || [M.base, M.defaultFill].some(value => n(value) === null)) return null;
   const pm = minutes => (n(minutes) ?? 0) * crew;
   const service = item => {
     const { table, key } = item.basis;
-    if (item.group === 'special') return pm(M.perSpecial);
-    if (item.group === 'access') return pm(M.access[key]);
+    if (HAULING_GROUPS.includes(item.group)) return 0;
     if (table === 'deep_clean') return pm(svc.deep_clean?.bySize?.[key]?.minutes);
     if (table === 'services') return pm(svc[key]?.minutes);
     if (table === 'hazards') return pm(w.hazards?.[key]?.minutes);
@@ -342,26 +371,28 @@ function laborTime(state) {
   const shelf = n(svc.shelving?.byType?.[svc.shelving?.defaultType]?.minutes), tote = n(svc.totes?.minutes);
   const install = product => { const unit = product.group === 'shelving' ? shelf : product.group === 'bins-totes' ? tote : null; return unit === null ? null : unit * crew * product.unitsPerPack; };
   const items = new Map([...menu.services.map(item => [item.id, { item, minutes: item.basis.kind === 'junk' ? 0 : service(item) }]), ...menu.products.map(item => [item.id, { item, minutes: install(item) }])]);
-  return { base: pm(M.base), perLoad: pm(M.perLoad), minLoads: M.minLoads, defaultFill: pm(M.defaultFill), fill: Object.fromEntries(FULLNESS.map(key => [key, n(M.fill[key]) === null ? pm(M.defaultFill) : pm(M.fill[key])])), items };
+  return { base: pm(M.base), defaultFill: pm(M.defaultFill), fill: Object.fromEntries(FULLNESS.map(key => [key, n(M.fill[key]) === null ? pm(M.defaultFill) : pm(M.fill[key])])), items };
 }
 /**
- * The time estimate of one normalized builder selection (laborTime): {personMinutes, removalPersonMinutes (base and
- * removal), installPersonMinutes, fullness, installNotEstimated:[{id, name, packs}], manHours (manHoursOf)}, or null
- * without the time model. Example: a two-car base, one full truck load in a medium-full garage and two shelving units
- * = 2 x (60 + 90 + 30) + 2 x 60 = 480 person-minutes = 8 man-hours ($320.00 at $40.00), for a crew of 2 or of 4.
+ * The time estimate of one normalized builder selection (laborTime): {personMinutes, removalPersonMinutes (the removal /
+ * cleanout step's garage work: set-up and sweep-out, sorting and cleaning; never hauling), installPersonMinutes, fullness,
+ * installNotEstimated:[{id, name, packs}], manHours (manHoursOf)}, or null without the time model. Example: a two-car
+ * base, one full truck load in a medium-full garage and two shelving units = 2 x (60 + 30) + 2 x 60 = 300 person-minutes
+ * = 5 man-hours ($200.00 at $40.00), for a crew of 2 or of 4; the truck load's own $750 pays its loading and hauling.
  */
 export function laborEstimate(selection, state) {
   const time = laborTime(state);
   if (!time) return null;
   const fullness = fullnessOf(selection?.labor?.fullness);
-  let removal = time.base, loads = 0, install = 0;
-  const removalEntries = Array.isArray(selection?.removal) ? selection.removal : [], missing = [];
-  for (const entry of removalEntries) {
+  let removal = time.base, sorted = false, install = 0;
+  const missing = [];
+  for (const entry of Array.isArray(selection?.removal) ? selection.removal : []) {
     const row = time.items.get(entry.id);
     if (!row) continue;
-    if (row.item.basis.kind === 'junk') loads += row.item.basis.fraction * entry.quantity; else removal += row.minutes * entry.quantity;
+    if (row.item.group === 'cleaning-base') sorted = true;
+    removal += row.minutes * entry.quantity;
   }
-  if (removalEntries.length) removal += Math.max(time.minLoads, loads) * time.perLoad + (fullness ? time.fill[fullness] : time.defaultFill);
+  if (sorted) removal += fullness ? time.fill[fullness] : time.defaultFill;
   for (const step of ['shelving', 'storage']) for (const entry of Array.isArray(selection?.[step]) ? selection[step] : []) {
     const row = time.items.get(entry.id);
     if (!row) continue;
@@ -380,25 +411,28 @@ function normalizeLabor(value) {
   if (fullness !== null && !FULLNESS.includes(fullness)) throw fail('invalid_labor', 'The garage fullness behind the labor estimate is invalid: light, medium, full or packed.');
   return { manHours: value.manHours, adjusted: value.adjusted === true, fullness };
 }
-/** The priced Labor of one selection: {manHours, rateCents, rateSource, totalCents, prefilledManHours, adjusted,
- * belowEstimate, estimate}. prefilledManHours is the server's estimate now (laborEstimate), never the browser's;
- * adjusted is the estimator's own action; belowEstimate (the man-hours are under the estimate) is for the owner.
- * manHours (and totalCents) stay null while the estimator has neither an estimate nor a number. */
+/** The priced Labor of one selection: {version, manHours, rateCents, rateSource, totalCents, prefilledManHours, adjusted,
+ * belowEstimate, estimate}. version is LABOR_VERSION; prefilledManHours is the server's estimate now (laborEstimate),
+ * never the browser's; adjusted is the estimator's own action; belowEstimate (the man-hours are under the estimate) is for
+ * the owner. manHours (and totalCents) stay null while the estimator has neither an estimate nor a number. */
 function pricedLabor(labor, estimate, state) {
   const prefilled = estimate ? estimate.manHours : null, manHours = labor.manHours ?? prefilled, rate = laborRate(state);
-  return { manHours, rateCents: rate.rateCents, rateSource: rate.source, totalCents: manHours === null ? null : laborTotalCents(manHours, rate.rateCents),
+  return { version: LABOR_VERSION, manHours, rateCents: rate.rateCents, rateSource: rate.source, totalCents: manHours === null ? null : laborTotalCents(manHours, rate.rateCents),
     prefilledManHours: prefilled, adjusted: labor.manHours !== null && labor.adjusted === true, belowEstimate: manHours !== null && prefilled !== null && manHours < prefilled,
     estimate: estimate && { personMinutes: estimate.personMinutes, removalPersonMinutes: estimate.removalPersonMinutes, installPersonMinutes: estimate.installPersonMinutes, fullness: estimate.fullness, installNotEstimated: estimate.installNotEstimated } };
 }
 // Why a breakdown's labor cannot be sent as it is, or null when it can (approvalOf). An unsent quote must carry today's
-// rate; a signed one (signed) keeps the rate the customer signed, which was approved then, as long as its amount is
-// its man-hours x that rate.
-function laborBlock(labor, state, { required, signed }) {
+// rate and Labor rules (LABOR_VERSION; junk: a junk-only quote has none); a signed one (signed) keeps the rate and the
+// line the customer signed, which were approved then, as long as its amount is its man-hours x that rate.
+function laborBlock(labor, state, { required, signed, junk = false }) {
   const rate = laborRate(state).rateCents, row = reason => ({ id: LABOR_ID, name: 'Labor', unitCents: plain(labor) && Number.isSafeInteger(labor.rateCents) ? labor.rateCents : null, reason });
-  if (labor === undefined || labor === null) return required ? row(`This quote has no Labor line. Every builder quote charges labor: the estimated man-hours × ${money(rate)} per man-hour. Edit the quote, check the man-hours and save it again.`) : null;
+  if (junk && !signed) return labor === undefined || labor === null ? null
+    : row('This junk-only quote still has a Labor line from before the owner\'s decision of 2026-10-18: the truck-load price covers the crew\'s time, so a junk-only quote has no Labor line. Edit the quote and save it again to drop it.');
+  if (labor === undefined || labor === null) return required ? row(`This quote has no Labor line. Every builder quote with garage work charges labor: the estimated man-hours × ${money(rate)} per man-hour. Edit the quote, check the man-hours and save it again.`) : null;
   if (!plain(labor) || !validManHours(labor.manHours)) return row('Enter the estimated man-hours for the Labor line, then save the quote again.');
   if (signed) return validLaborRate(labor.rateCents) && labor.totalCents === laborTotalCents(labor.manHours, labor.rateCents) ? null
     : row('The labor amount on this signed quote does not equal its man-hours × the labor rate it was signed at. Review the job\'s quote with the office before it is sent.');
+  if (labor.version !== LABOR_VERSION) return row('This quote was saved before the owner\'s Labor decisions of 2026-10-18: its man-hours estimate counted truck-load time the truck price already covers, and its Labor line showed the customer the man-hours. Edit the quote, check the man-hours on the review step and save it again.');
   if (labor.rateCents !== rate) return row(`The labor rate is now ${money(rate)} per man-hour, but this quote has ${Number.isSafeInteger(labor.rateCents) ? money(labor.rateCents) : 'another rate'}. Save the quote again to use the current rate.`);
   if (labor.totalCents !== laborTotalCents(labor.manHours, rate)) return row('The labor amount on this quote does not equal its man-hours × the labor rate. Save the quote again.');
   return null;
@@ -406,9 +440,10 @@ function laborBlock(labor, state, { required, signed }) {
 
 /** The builder's menu for one viewer. internal (owner/manager) adds the goods cost basis, the multiplier and the
  * approvals revision the owner's bulk approval needs; nobody else sees a cost. labor is the rate in force (approved),
- * the man-hour limits the builder's Labor row accepts and the time model the server estimates the man-hours with
- * (labor.time, laborTime: person-minutes, no money), so the running total shows the same estimate: each service's
- * laborPersonMinutes per unit and each product's installPersonMinutes per pack (null: no install time yet). */
+ * the man-hour limits the builder's Labor row accepts, the removal groups a junk-only quote is made of (haulingGroups:
+ * no Labor line) and the time model the server estimates the man-hours with (labor.time, laborTime: person-minutes, no
+ * money; no truck-load minutes), so the running total shows the same estimate: each service's laborPersonMinutes per
+ * unit (0 for hauling) and each product's installPersonMinutes per pack (null: no install time yet). */
 export function builderMenu(state, { internal = false, canApprove = false } = {}) {
   const prices = menuPrices(state), { menu, settings } = state, approvals = validateMenuApprovals(state.approvals), rate = laborRate({ approvals }), time = laborTime(state);
   const status = id => { const price = prices.get(id); return { unitCents: price.unitCents, approved: price.approved, source: price.source, reason: price.reason }; };
@@ -427,18 +462,18 @@ export function builderMenu(state, { internal = false, canApprove = false } = {}
     ...(internal ? { internal: { goodsMarkup: goodsMarkupOf(settings).multiplier, goodsInstallationIncluded: installationIncluded(state), roundingRule: settings.roundingRule, approvalsRevision: approvals.revision,
       ...(typeof approvals.goodsInstallationIncluded === 'boolean' ? { installationConfirmed: approvals.goodsInstallationIncluded } : {}) } } : {}),
     // The labor rate is the owner's decision: every viewer sees it, approved. Installation is billed through it.
-    labor: { rateCents: rate.rateCents, approved: true, source: rate.source, reason: rate.reason, minManHours: LABOR_MAN_HOURS.min, maxManHours: LABOR_MAN_HOURS.max, stepManHours: LABOR_MAN_HOURS.step,
-      time: time ? { basePersonMinutes: time.base, loadPersonMinutes: time.perLoad, minLoads: time.minLoads, fillPersonMinutes: time.fill, defaultFillPersonMinutes: time.defaultFill } : null },
+    labor: { rateCents: rate.rateCents, approved: true, source: rate.source, reason: rate.reason, minManHours: LABOR_MAN_HOURS.min, maxManHours: LABOR_MAN_HOURS.max, stepManHours: LABOR_MAN_HOURS.step, version: LABOR_VERSION, haulingGroups: HAULING_GROUPS,
+      time: time ? { basePersonMinutes: time.base, fillPersonMinutes: time.fill, defaultFillPersonMinutes: time.defaultFill } : null },
     installation: { included: installationIncluded(state), billedAs: 'labor' },
     viewer: { internal, canApprove: internal && canApprove },
   };
 }
 
 // The selection a browser sends: {menuVersion, settingsVersion, steps, removal, shelving, storage, labor?}. labor is
-// {manHours: number|null, adjusted?: boolean, fullness?: string|null} (normalizeLabor); a save needs it, except the
-// re-pricing of a job signed before builder quotes had a Labor line (requireLabor false).
+// {manHours: number|null, adjusted?: boolean, fullness?: string|null} (normalizeLabor); a save of a quote with garage
+// work needs it (priceCompositeQuote), except the re-pricing of a job signed before builder quotes had a Labor line.
 const DESCRIPTOR_KEYS = ['menuVersion', 'settingsVersion', 'steps', 'removal', 'shelving', 'storage', 'labor'];
-function normalizeDescriptor(descriptor, { complete, requireLabor = true }) {
+function normalizeDescriptor(descriptor, { complete }) {
   if (!keysOnly(descriptor, DESCRIPTOR_KEYS) || typeof descriptor.menuVersion !== 'string' || typeof descriptor.settingsVersion !== 'string' || !Array.isArray(descriptor.steps)) {
     throw fail('invalid_selection', 'The quote builder selection is incomplete. Reload the builder and try again.');
   }
@@ -465,7 +500,6 @@ function normalizeDescriptor(descriptor, { complete, requireLabor = true }) {
   }
   if (total > MAX_SELECTIONS) throw fail('invalid_selection', `A quote can hold at most ${MAX_SELECTIONS} builder selections.`);
   if (descriptor.labor !== undefined) out.labor = normalizeLabor(descriptor.labor);
-  else if (complete && requireLabor) throw fail('labor_required', 'Every builder quote has a Labor line. Reopen the quote builder, check the man-hours on the review step and save the quote again.', 400);
   return out;
 }
 
@@ -487,21 +521,24 @@ function checkRemoval(entries, prices) {
 }
 
 /**
- * Prices one builder selection. complete:true (a save) requires all three steps and the labor; requireLabor:false (only
- * for re-pricing the selection of a job the customer signed before builder quotes had a Labor line) prices a complete
- * selection without labor by the earlier rules. Returns:
+ * Prices one builder selection. complete:true (a save) requires all three steps and, for a quote with garage work, the
+ * labor; a junk-only quote (junkOnly, D-JUNK) has no Labor line, and any labor its selection sends is dropped.
+ * requireLabor:false (only for re-pricing the selection of a job the customer signed before builder quotes had a Labor
+ * line) prices a complete selection without labor by the earlier rules. Returns:
  *   compositePricing  the normalized selection (what a save stores and a revision re-sends); its labor.manHours is
- *                     the man-hours priced (the pre-fill when the browser asked for it with null)
+ *                     the man-hours priced (the pre-fill when the browser asked for it with null); no labor when junk-only
  *   lineItems         the customer-facing quote-model lines (no cost split), in step order, then the Labor line
+ *                     ("Labor": one amount, D-LABOR-TEXT)
  *   storedLineItems   the same lines with the internal goods cost split, for the Hub job only
  *   breakdown         the itemized, cost-free job breakdown by section (see quoteBreakdown), with breakdown.labor
  *   steps             [{id,label,subtotalCents,runningTotalCents}] for the completed steps, then labor once priced
- *   labor             {manHours, rateCents, rateSource, totalCents, prefilledManHours, adjusted, belowEstimate,
- *                     estimate} (pricedLabor) or null when the selection sent none (a step preview)
+ *   labor             {version, manHours, rateCents, rateSource, totalCents, prefilledManHours, adjusted, belowEstimate,
+ *                     estimate} (pricedLabor) or null when the selection sent none (a step preview) or is junk-only
+ *   junkOnly          true for a junk-only selection: $750 per truck, no Labor line
  *   approval          {ready, blocked:[{id,name,unitCents,reason}]}: ready false blocks sending
  */
 export function priceCompositeQuote(state, descriptor, { complete = false, requireLabor = true } = {}) {
-  const selection = normalizeDescriptor(descriptor, { complete, requireLabor });
+  const selection = normalizeDescriptor(descriptor, { complete });
   const { menu, settings } = state || {};
   if (!menu || !settings) throw fail('unavailable', 'The pricing menu could not be verified. Keep the quote and retry.', 503);
   if (selection.menuVersion !== menu.menuVersion || selection.settingsVersion !== settings.settingsVersion) {
@@ -568,15 +605,21 @@ export function priceCompositeQuote(state, descriptor, { complete = false, requi
     splits.set(line.id, { productCents, laborCents: 0, laborMinutes: 0, markupCents: totalCents - productCents, disposalCents: 0 });
   }
   if (!model.length) throw fail('empty', 'Add at least one removal, shelving or storage item to price the quote.');
+  // D-JUNK: a junk-only quote is $750 per truck. It has no Labor line, so labor the browser sent for it is dropped and
+  // the saved selection carries none; every other complete quote needs its labor.
+  const junk = junkOnly(detail);
+  if (junk) delete selection.labor;
+  else if (complete && requireLabor && !selection.labor) throw fail('labor_required', 'Every builder quote with garage work has a Labor line. Reopen the quote builder, check the man-hours on the review step and save the quote again.', 400);
   // D12: the Labor line, man-hours x the server's rate, after the menu lines. It is labor by its kind (estimateTotals
   // attributes it to laborCents) and carries no minutes, so the dispatch duration still comes from the time estimate.
   // The estimate is the server's, from this selection (laborEstimate); the saved selection keeps the man-hours priced.
+  // D-LABOR-TEXT: the customer sees one amount, "Labor" (quote-model.js LABOR_LINE_NAME), never the man-hours or rate.
   const labor = selection.labor ? pricedLabor(selection.labor, laborEstimate(selection, state), state) : null;
   if (labor) selection.labor = { manHours: labor.manHours, adjusted: labor.adjusted, fullness: selection.labor.fullness };
   if (complete && labor?.manHours === null) throw fail('labor_required', 'Enter the estimated man-hours for the Labor line before saving the quote: there is no time estimate to pre-fill them from.', 400);
   if (labor?.manHours != null) {
     const goodsSold = model.some(line => line.kind === 'product');
-    model.push({ id: LABOR_ID, kind: 'labor', name: `Labor: ${hoursText(labor.manHours)} × ${money(labor.rateCents)}`, description: `Crew time on site, billed per man-hour${goodsSold ? ', including installing the shelving and storage' : ''}.`,
+    model.push({ id: LABOR_ID, kind: 'labor', name: LABOR_LINE_NAME, description: goodsSold ? LABOR_INSTALL_NOTE : '',
       quantity: 1, unitCents: lineCents(labor.totalCents, 1), totalCents: labor.totalCents, optional: false, selected: true, taxable: false });
   }
   if (model.filter(line => line.totalCents > 0).length > MAX_CHARGED_LINES) throw fail('too_many_lines', `A quote can charge at most ${MAX_CHARGED_LINES} lines so the customer portal shows every charge. Remove a removal item or split the work into two quotes.`, 400, { maxChargedLines: MAX_CHARGED_LINES });
@@ -594,7 +637,7 @@ export function priceCompositeQuote(state, descriptor, { complete = false, requi
   if (laborCents) steps.push({ id: LABOR_ID, label: 'Labor', subtotalCents: laborCents, runningTotalCents: running += laborCents });
   const breakdown = { version: COMPOSITE_SCHEMA_VERSION, source: 'composite', menuVersion: version, settingsVersion: settings.settingsVersion,
     sections: sections.map(({ completed, ...section }) => section), lines: detail, purchaseList: purchaseList(detail), ...(labor ? { labor } : {}), totalCents };
-  return { compositePricing: selection, menuVersion: version, settingsVersion: settings.settingsVersion, lineItems, storedLineItems, breakdown, steps, labor, totalCents, approval: approvalOf(detail, prices, state, labor, { requireLabor }) };
+  return { compositePricing: selection, menuVersion: version, settingsVersion: settings.settingsVersion, lineItems, storedLineItems, breakdown, steps, labor, junkOnly: junk, totalCents, approval: approvalOf(detail, prices, state, labor, { requireLabor }) };
 }
 
 // What the crew buys or grabs: one row per product, with packs, units and the public product page. No cost.
@@ -604,9 +647,11 @@ function purchaseList(lines) {
 }
 
 // labor: the quote's priced labor (breakdown.labor), undefined for a quote saved before the Labor line existed, which
-// is refused unless requireLabor is false (a job the customer already signed that way: it keeps the earlier rules).
-// signed: the breakdown is a signed job's, whose labor keeps the rate it was signed at (laborBlock).
+// is refused unless requireLabor is false (a job the customer already signed that way: it keeps the earlier rules) or the
+// quote is junk-only (D-JUNK: it has no Labor line; an unsent one that still has one is saved again first).
+// signed: the breakdown is a signed job's, whose labor keeps the rate and line it was signed at (laborBlock).
 function approvalOf(lines, prices, state, labor, { requireLabor = true, signed = false } = {}) {
+  const junk = junkOnly(lines);
   const blocked = lines.filter(line => {
     const price = prices.get(line.id);
     return !price || !price.approved || price.unitCents !== line.unitCents;
@@ -617,7 +662,7 @@ function approvalOf(lines, prices, state, labor, { requireLabor = true, signed =
         : price.approved ? `The owner approved ${money(price.unitCents)} for ${line.name}, but this quote has ${money(line.unitCents)}. Save the quote again to use the approved price.`
           : `${line.name}: ${price.reason.charAt(0).toLowerCase()}${price.reason.slice(1)}` };
   });
-  const laborRow = laborBlock(labor === null ? undefined : labor, state, { required: requireLabor, signed });
+  const laborRow = laborBlock(labor === null ? undefined : labor, state, { required: requireLabor && !junk, signed, junk });
   if (laborRow) blocked.push(laborRow);
   // Installation is billed through the Labor line. A quote without one (saved before it existed) waits for the owner's
   // answer; a quote with one waits only for goods its estimate has no install time for (installNotEstimated, every good

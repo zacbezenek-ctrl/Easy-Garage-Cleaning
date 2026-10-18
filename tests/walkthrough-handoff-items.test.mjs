@@ -323,6 +323,12 @@ test('the HighLevel job brief lists itemized lines and leaves a legacy single-li
   assert.doesNotMatch(context.noteBody({ ...legacy, sent_at: NOW }), /Itemized quote/);
   const discounted = context.noteBody({ ...normalized, sent_at: NOW, quote: { ...normalized.quote, line_items: [{ name: 'Price adjustment', qty: 1, total: -49 }, { name: 'Storage tote', qty: 4, total: 86 }] } });
   assert.match(discounted, /- Price adjustment: -\$49\.00\n- Storage tote × 4: \$86\.00/);
+  // D-LABOR-TEXT: a builder quote's Labor line reads "Labor" for the customer; this staff brief names the man-hours sold.
+  const labor = context.noteBody({ ...normalized, sent_at: NOW, quote: { ...normalized.quote, labor_man_hours: 6.25, line_items: [{ name: 'Junk removal: full truck load', qty: 1, total: 750 }, { name: 'Labor', qty: 1, total: 250 }] } });
+  assert.match(labor, /- Junk removal: full truck load: \$750\.00\n- Labor \(6\.25 man-hours sold\): \$250\.00/);
+  // A brief written before (its line named the man-hours, no labor_man_hours) replays with exactly the same body.
+  const earlier = { ...normalized.quote, line_items: [{ name: 'Labor: 6 man-hours × $40.00', qty: 1, total: 240 }] };
+  assert.match(context.noteBody({ ...normalized, sent_at: NOW, quote: earlier }), /- Labor: 6 man-hours × \$40\.00: \$240\.00/);
 });
 
 test('the review screen shows the homeowner the itemized lines, including a price adjustment and its reason, above the signature', () => {

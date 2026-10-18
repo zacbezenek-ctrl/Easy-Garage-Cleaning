@@ -207,7 +207,7 @@ function builderMismatch(quote, priced, signedCents) {
 const savedSelection = job => plain(job?.compositeQuote?.compositePricing) ? job.compositeQuote.compositePricing : plain(job?.quoteDraft?.compositePricing) ? job.quoteDraft.compositePricing : null;
 // A job the customer signed before builder quotes had a Labor line, revised with that same selection (re-sent unchanged
 // or not sent at all): it is priced by the earlier rules, without labor, so its signed total stands. Any other selection
-// (a new or changed one, or an unsigned draft's) needs its Labor line.
+// (a new or changed one, or an unsigned draft's) with garage work needs its Labor line; a junk-only one has none (D-JUNK).
 function signedWithoutLabor(previous, selection) {
   const signed = plain(previous?.compositeQuote?.compositePricing) ? previous.compositeQuote.compositePricing : null;
   return Boolean(signed && signed.labor === undefined && plain(selection) && selection.labor === undefined && canonical(selection) === canonical(signed));
@@ -569,7 +569,10 @@ export async function saveWalkthroughHandoff(store, actor, input, now = new Date
   // amounts: the signed total, and any lines and menu version the page sends, must be exactly the server's (409
   // handoff_builder_price_mismatch). Prices the owner has not approved still book the job (pricesPendingApproval).
   // The labor estimate reads the signed plan's fullness. A job signed before the Labor line, revised with its own
-  // selection, keeps its signed price by the earlier rules (signedWithoutLabor); any other selection needs labor.
+  // selection, keeps its signed price by the earlier rules (signedWithoutLabor); any other selection with garage work
+  // needs labor, and a junk-only one is $750 per truck with no Labor line (D-JUNK). The Labor line the customer signs is
+  // the server's own, "Labor" and its amount (D-LABOR-TEXT): a page still showing the man-hours is refused like any
+  // other line that differs (builderMismatch), so the quote is built again before the homeowner signs.
   const chosen = !builderOn ? null : builderSent ? signedInput.quote.composite_pricing : savedSelection(previous);
   const legacy = signedWithoutLabor(previous, chosen), selection = withSignedFullness(chosen, plan);
   let builder = null;
@@ -648,7 +651,9 @@ export async function saveWalkthroughHandoff(store, actor, input, now = new Date
     commit: async writes => {
       const target = writes.find(write => write.collection === 'jobs' && write.patch?.dispatchRequestId === input.requestId);
       if (!target) throw fail('commit_incomplete', 'The complete dispatch handoff could not be prepared.', 503);
-      const providerPayload = { ...plan, signature: undefined, tool: 'game_plan', job_id: target.id, walkthrough_id: source?.id || '', idempotency_key: `walkthrough-handoff:${input.requestId}`, sent_at: now };
+      // D-LABOR-TEXT: the customer's Labor line reads "Labor"; the HighLevel internal brief (api/highlevel.js quoteLines)
+      // names the man-hours sold from labor_man_hours, for the staff only.
+      const providerPayload = { ...plan, ...(typeof builder?.labor?.manHours === 'number' ? { quote: { ...plan.quote, labor_man_hours: builder.labor.manHours } } : {}), signature: undefined, tool: 'game_plan', job_id: target.id, walkthrough_id: source?.id || '', idempotency_key: `walkthrough-handoff:${input.requestId}`, sent_at: now };
       delete providerPayload.signature;
       // Prices the owner has not approved yet: no portal invitation (the estimate and deposit request) is asked for, and
       // one asked for earlier is withdrawn, until the builder's send gate releases the job (releaseHandoffPrices); every

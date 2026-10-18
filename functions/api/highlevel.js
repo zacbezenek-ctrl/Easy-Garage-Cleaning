@@ -355,11 +355,14 @@ function finishSummary(value) {
 }
 
 // Itemized signed quotes list their sold lines; a legacy single-line quote
-// keeps today's note unchanged.
+// keeps today's note unchanged. This internal brief is staff-only: a quote
+// builder's Labor line, which the customer reads as one amount ("Labor",
+// D-LABOR-TEXT), names the man-hours sold here (quote.labor_man_hours).
 function quoteLines(quote) {
   const lines = quote?.itemized === true && Array.isArray(quote.line_items) ? quote.line_items : [];
   const amount = value => `${Number(value) < 0 ? '-' : ''}$${Math.abs(Number(value) || 0).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
-  return lines.length ? ['Itemized quote:', ...lines.slice(0, 40).map(line => `- ${String(line?.name || 'Line item').slice(0, 160)}${Number(line?.qty) !== 1 ? ` × ${Number(line?.qty)}` : ''}: ${amount(line?.total)}`)] : [];
+  const hours = Number(quote?.labor_man_hours), sold = Number.isFinite(hours) && hours > 0 ? ` (${Number(hours.toFixed(2))} man-hour${hours === 1 ? '' : 's'} sold)` : '';
+  return lines.length ? ['Itemized quote:', ...lines.slice(0, 40).map(line => `- ${String(line?.name || 'Line item').slice(0, 160)}${line?.name === 'Labor' ? sold : ''}${Number(line?.qty) !== 1 ? ` × ${Number(line?.qty)}` : ''}: ${amount(line?.total)}`)] : [];
 }
 
 // A signed handoff's Job Brief is written once from the signed quote and replayed unchanged after Dispatch moves the
