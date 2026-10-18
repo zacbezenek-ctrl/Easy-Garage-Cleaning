@@ -65,6 +65,10 @@ After each person's first clock-in, clocking in reads far fewer database records
 
 Do these in order. Each step says where the switch lives, what it does, what must be true first and how to undo it.
 
+**Launch defaults (2026-10-18).** At the owner's request, steps 5 to 8 are on without any Cloudflare setting
+(`functions/_lib/launch-defaults.js`). A value set in Cloudflare always wins: `false` turns that one off after a retried
+deployment. Steps 1 to 4, 9 and 10 still need the owner.
+
 **Before step 1 (developer):** deploy the merged commit everywhere, then publish the database rules and indexes with
 `firebase deploy --only firestore:rules,firestore:indexes --project egcw-1ec83` (see
 [GO-LIVE.md B4](GO-LIVE.md#b4-publish-firestore-rules-and-indexes)). This adds the index the door-to-door panel needs,
@@ -92,17 +96,17 @@ read cost, until the indexes are built).
      ([GO-LIVE.md 3.5](GO-LIVE.md#35-staff-roles-grant-access-owner-decision-on)).
    - Roll back: delete it. Access goes back to the configured business users.
 4. **Set up crews and people in the Hub** (no switch): see **Owner setup in the Hub** below, items 1 to 5.
-5. **Automatic crew pick.** `EGC_DISPATCH_CREW_AUTO_ASSIGN=true` on Cloudflare Pages.
+5. **Automatic crew pick.** `EGC_DISPATCH_CREW_AUTO_ASSIGN`: **on by default** since 2026-10-18 (launch default; set it to `false` on Cloudflare Pages to turn it off).
    - Does: every new job booked by a booker, an estimator's signed handoff, the door-to-door bridge, the AI booking
      tool or a HighLevel adoption gets the first free crew. A manager's own new booking with nobody chosen gets one too,
      unless they untick **Assign the first free crew automatically**.
    - First: Crew 1, 2 and 3 exist and have members and a lead. Crews with no members are never picked.
    - Roll back: delete it. Jobs keep the crews they have; new jobs wait for a manager.
-6. **Purchase list and grab list.** `EGC_JOB_MATERIALS=true` on Cloudflare Pages.
+6. **Purchase list and grab list.** `EGC_JOB_MATERIALS`: **on by default** since 2026-10-18 (launch default; set it to `false` on Cloudflare Pages to turn it off).
    - Does: turns on Hub → Purchase list, the job breakdown and the crew's **Grab before you go** list.
    - First: nothing beyond the deploy.
    - Roll back: delete it. The purchase list says it is off; saved materials stay on the jobs.
-7. **Quote builder.** `EGC_QUOTE_BUILDER_ENABLED=true` on Cloudflare Pages.
+7. **Quote builder.** `EGC_QUOTE_BUILDER_ENABLED`: **on by default** since 2026-10-18 (launch default; set it to `false` on Cloudflare Pages to turn it off). Approve the menu prices on the live Hub: a quote with a draft price is saved but not sent.
    - Does: walkthroughs open the guided builder. Quotes with unapproved prices are saved but not sent, and signed jobs
      with unapproved prices are held (no estimate or deposit request) until you approve them.
    - First: set it under **Preview** only ([GO-LIVE.md](GO-LIVE.md#preview-first-then-production)). The Menu prices
@@ -111,7 +115,7 @@ read cost, until the indexes are built).
      **Production**. Quotes priced the old way that were not sent yet will need to be rebuilt in the builder before
      they can be sent.
    - Roll back: delete it. Walkthroughs use their old quote again. Jobs already held stay held until re-signed.
-8. **Door-to-door bridge.** `EGC_KNOCK_JOB_BRIDGE=true` on Cloudflare Pages.
+8. **Door-to-door bridge.** `EGC_KNOCK_JOB_BRIDGE`: **on by default** since 2026-10-18 (launch default; set it to `false` on Cloudflare Pages to turn it off).
    - Does: a sale at the door books the customer and a crew job in the Hub; **Walkthrough set** books an estimator.
      Cancelling, reinstating or re-dating a sale in Knock admin follows through to the Hub job. Check Knock → Admin →
      Sales once a day: it lists anything that did not reach the Hub. Fix a duplicate customer in the Hub before you

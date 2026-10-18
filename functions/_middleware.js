@@ -1,6 +1,7 @@
 import { enforceBusinessProjectWrite } from './_lib/business-hub-write-guard.js';
 import { gateStaffPage, privateStaffResponse } from './_lib/staff-page-gate.js';
 import { BOOKING_SLOTS_MARKER, bookingSlotsPageRequest } from './_lib/booking-slots-flag.js';
+import { applyLaunchDefaults } from './_lib/launch-defaults.js';
 
 // Source trees, tooling and deploy configs sit beside the static site; never serve them.
 const PRIVATE_PATH = /^(?:\/(?:auth-verifier|contracts|docs|scripts|tests|test-results|field-qa|lighthouse-reports|egc-platform|functions|tools|node_modules)(?:\/|$)|\/(?!\.well-known(?:\/|$))\.[A-Za-z0-9_.-]+(?:\/|$)|\/(?:sop|tyler-contract)(?:\.html)?\/?$|\/EGC-Lead-System-SOP\.pdf$|\/(?:package(?:-lock)?\.json|README\.md|firebase(?:\.emulator|\.field-day)?\.json|firestore\.(?:rules|indexes\.json)|pnpm-(?:lock|workspace)\.yaml|e2e-report\.json|firestore-debug\.log|_[^/]+)(?:$|\/)|\/.*\.py\/?$)/i;
@@ -58,6 +59,7 @@ function unconditional(request) {
 }
 
 export async function onRequest(context) {
+  applyLaunchDefaults(context.env);
   const { pathname } = new URL(context.request.url);
   if (privatePath(pathname)) return blockedResponse();
   const bookingSlotsPage = bookingSlotsPageRequest(context.env, context.request, pathname);
