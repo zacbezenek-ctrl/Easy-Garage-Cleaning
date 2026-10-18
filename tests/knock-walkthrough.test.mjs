@@ -237,8 +237,9 @@ test('a dated walkthrough the Hub refuses still reaches Dispatch: an undated wal
 });
 
 test('a customer the Hub cannot match safely: kept for review, listed for the office, never retried by the phone, booked once fixed', async () => {
-  const twin = { name: 'Lee Twin', phone: '+19705551902', email: '' };
-  const w = await bridgeWorld({ seed: { 'customers/customer_twin_a': { ...twin }, 'customers/customer_twin_b': { ...twin, name: 'Lee Twin B' } } });
+  // Two Hub records for the same household (one surname, so the names agree): the Hub cannot tell which one.
+  const twin = { name: 'Lee Synthetic', phone: '+19705551902', email: '' };
+  const w = await bridgeWorld({ seed: { 'customers/customer_twin_a': { ...twin }, 'customers/customer_twin_b': { ...twin, name: 'Lee Synthetic B' } } });
   const { walkId, events } = walkBatch();
   await w.send(events);
   const review = await w.book('walkthrough', walkId);
@@ -251,7 +252,7 @@ test('a customer the Hub cannot match safely: kept for review, listed for the of
   assert.equal((await w.book('walkthrough', walkId)).body.booking.status, 'review');
   assert.equal(w.fake.calls.slice(before).filter(row => !row.path.includes('knock_')).length, 0, 'the phone does not retry it');
   // The office merges the duplicate, then books it from Admin > Sales.
-  w.fake.put('customers/customer_twin_b', { name: 'Lee Twin B', phone: '+19705550000', email: '' });
+  w.fake.put('customers/customer_twin_b', { name: 'Lee Synthetic B', phone: '+19705550000', email: '' });
   const office = await w.admin({ action: 'walkthrough.book', walkthroughId: walkId });
   assert.deepEqual([office.status, office.body.booking.status], [200, 'booked']);
   assert.equal(visits(w)[0].customerId, 'customer_twin_a');

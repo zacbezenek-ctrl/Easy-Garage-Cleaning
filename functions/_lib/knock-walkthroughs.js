@@ -5,7 +5,7 @@
 // The estimator booking itself runs after the event syncs (knock-bridge.js bookWalkthrough), idempotent on the id.
 import { write } from './knock-store.js';
 import { WALKTHROUGH_OUTCOME } from '../../crew/knock-settings.js';
-import { validDate } from '../../crew/knock-time.js';
+import { addDays, validDate, zonedDate } from '../../crew/knock-time.js';
 import { normalizePhone } from './knock-sales.js';
 import { nativeClaimActive } from './knock-form-claims.js';
 
@@ -30,14 +30,19 @@ export async function otherRepWalkthrough(store, houseId, repKey) {
   return (await activeWalkthroughs(store, houseId)).some(row => row.repKey !== repKey);
 }
 
-/* The customer at this house already bought at the door: a sale stands there (any rep's, not cancelled), or one is in
-   this sync. No estimator walkthrough is set over it, whoever sets it; the office settles a change of plan. One bounded
+/* The customer at this house bought at the door and that sale is still open: booked (its job not recorded done) with a
+   job date no more than SOLD_OPEN_DAYS ago (any rep's sale), or one is in this sync. No estimator walkthrough is set
+   over it, whoever sets it; the office settles a change of plan. A completed, paid or cancelled sale, or a booked one
+   whose job date is long past (an earlier season's customer), leaves the house open: a walkthrough there is new work
+   (shelving after a cleanout). The office frees a house whose job is done by marking its sale completed. One bounded
    equality query (knock_sales.houseId, as native form requests read it). */
 export const HOUSE_SOLD = 'This house already has a sale at the door. Ask the office before setting a walkthrough.';
-export async function houseSold(store, houseId, accepted = []) {
+export const SOLD_OPEN_DAYS = 30;
+export async function houseSold(store, houseId, accepted = [], nowMs = Date.now()) {
   if (!houseId) return false;
   if (accepted.some(a => a.type === 'sale' && a.houseId === houseId)) return true;
-  return (await store.query('knock_sales', { where: [['houseId', '==', houseId]], limit: 20 })).some(sale => sale.status !== 'cancelled');
+  const since = addDays(zonedDate(nowMs), -SOLD_OPEN_DAYS);
+  return (await store.query('knock_sales', { where: [['houseId', '==', houseId]], limit: 20 })).some(sale => sale.status === 'booked' && !(validDate(sale.jobDate) && sale.jobDate < since));
 }
 
 /* A native form claim on the house (knock-form-handoff.js) that a walkthrough set here would stack on: any active
@@ -45,7 +50,7 @@ export async function houseSold(store, houseId, accepted = []) {
 export const walkthroughClaimConflict = (claim, rep) => nativeClaimActive(claim) && !(claim.channel === 'walkthrough_request' && claim.repKey === rep.repKey);
 
 /* Validate a walkthrough event against the rep's "Walkthrough set" door. Returns a rejection or null. */
-export async function validateWalkthroughEvent(store, rep, event, { accepted = [], targets = new Map(), houses = new Map() } = {}) {
+export async function validateWalkthroughEvent(store, rep, event, { accepted = [], targets = new Map(), houses = new Map(), nowMs = Date.now() } = {}) {
   if (!UUID.test(String(event.knockId || ''))) return refuse('knock_walkthrough_invalid', 'The walkthrough is missing its door.');
   const knock = accepted.find(a => a.id === event.knockId) || targets.get(event.knockId) || await store.get('knock_events', event.knockId);
   if (!knock || knock.type !== 'knock' || knock.outcome !== WALKTHROUGH_OUTCOME || knock.repKey !== rep.repKey) return refuse('knock_walkthrough_invalid', 'Log the door as Walkthrough set first.');
@@ -55,7 +60,7 @@ export async function validateWalkthroughEvent(store, rep, event, { accepted = [
   // One standing walkthrough per house: a second one would send a second estimator and split the setter credit.
   if ((await activeWalkthroughs(store, knock.houseId)).length || accepted.some(a => a.type === 'walkthrough' && a.houseId === knock.houseId))
     return refuse('knock_walkthrough_exists', 'This house already has a walkthrough set. Ask the office to change it in the Hub.');
-  if (await houseSold(store, knock.houseId, accepted)) return refuse('knock_house_sold', HOUSE_SOLD);
+  if (await houseSold(store, knock.houseId, accepted, nowMs)) return refuse('knock_house_sold', HOUSE_SOLD);
   const name = String(event.customer?.name || '').trim();
   if (!name || name.length > 80) return refuse('knock_walkthrough_customer', 'Enter the customer\'s name.');
   if (!normalizePhone(event.customer?.phone)) return refuse('knock_walkthrough_customer', 'Enter a 10-digit US phone number.');

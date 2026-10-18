@@ -25,11 +25,12 @@ const bridged = run => async (store, admin, body, nowIso, env, { dispatch = disp
   return run(store, dispatch(env), body.saleId || body.walkthroughId, { env, now: new Date(nowIso), rep: null });
 };
 
-// KNOCK-BRIDGE: a cancelled or reinstated sale's Hub job follows it (the answer adds hub: what happened to the job).
+// KNOCK-BRIDGE: a cancelled or reinstated sale's Hub job follows it (the answer adds hub: what happened to the job; a
+// reinstated sale with no Hub job is booked). Running the same status again (Try again) retries what failed.
 async function saleStatus(store, admin, body, nowIso, env, { dispatch = dispatchStorage } = {}) {
   let result = await setSaleStatus(store, admin, body, nowIso);
   if (knockJobBridgeEnabled(env)) {
-    const followed = await followSaleStatus(store, dispatch(env), result.sale, { now: new Date(nowIso) });
+    const followed = await followSaleStatus(store, dispatch(env), result.sale, { now: new Date(nowIso), env });
     if (followed) result = { ...result, sale: repSaleView(followed.sale), hub: followed.hub };
   }
   return afterSaleChange(store, result, nowIso);

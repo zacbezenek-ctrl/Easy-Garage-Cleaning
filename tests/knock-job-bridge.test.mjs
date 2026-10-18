@@ -5,6 +5,8 @@ import { call, get } from './helpers/knock-fixture.mjs';
 import { customerSearchFields } from '../functions/_lib/customer-identity.js';
 import { clockLabel, dayLabel, knockJobBridgeEnabled, namesAgree, nearestStart, repCrewSlots } from '../functions/_lib/knock-bridge.js';
 import { crewJobProjection } from '../functions/_lib/crew-job-projection.js';
+import { customerMoneyTotals } from '../functions/_lib/money-core.js';
+import { customerMoneyState } from '../functions/_lib/customer-payments.js';
 import { JOB_START_MINIMUM as POLICY_MINIMUM, JOB_START_POLICY_DATE as POLICY_DATE } from '../functions/_lib/job-start-policy.js';
 import { JOB_START_MINIMUM, JOB_START_POLICY_DATE, PACKAGE_JOB_MINUTES, defaultJobStart, jobMinutes } from '../crew/knock-sale-rules.js';
 import { DEFAULT_SETTINGS, PACKAGES } from '../crew/knock-settings.js';
@@ -62,7 +64,7 @@ test('a door sale syncs, then books a Hub customer and a Crew 1 job at the picke
   assert.equal(job.customerId, w.fake.get(`knock_sales/${saleId}`).handoff.job.customerId);
   assert.deepEqual([job.type, job.date, job.time, job.endTime, job.crewId, job.assignedCrew], ['job', MON, '09:30', '16:30', 'crew_one', ['crew.a1', 'crew.a2']]);
   assert.deepEqual([job.source, job.knockSaleId, job.ghlTags], ['door_to_door', saleId, ['egc-d2d-sale']]);
-  assert.deepEqual(job.d2d, { kind: 'sale', repKey: 'rep.one', saleId, houseId: 'h-2900-blue-leaf-dr', contactSource: 'Door to door', at: iso(NOW) });
+  assert.deepEqual(job.d2d, { kind: 'sale', repKey: 'rep.one', saleId, houseId: 'h-2900-blue-leaf-dr', contactSource: 'Door to door', at: iso(NOW), ticket: 1600 });
   assert.equal(job.address, '2900 Blue Leaf Dr, Fort Collins, CO 80528');
   assert.equal(job.estimatedDurationMin, 420, 'The Works is booked for 7 hours');
   assert.match(job.operationalScope.text, /^Sold at the door: The Works\./);
@@ -495,7 +497,7 @@ test('the office moves a sale not booked yet: the Hub job is booked on the offic
   assert.doesNotMatch(sale.statusHistory.map(row => row.note || '').join('\n'), /no crew was free/);
 
   // The office moves it while the phone's booking is in flight (just before the job is saved): the office's day is never
-  // overwritten, the history says where the Hub job is, and setting the day again moves the job (it is linked now).
+  // overwritten, and the Hub job follows it at once (REVIEW integrity-merge-3: it used to stay on the old day).
   const v = await bridgeWorld();
   const other = saleBatch({ sale: { package: 'Quick Clear' } });
   await v.send(other.events);
@@ -509,10 +511,12 @@ test('the office moves a sale not booked yet: the Hub job is booked on the offic
   } }));
   const inFlight = await v.book('sale', other.saleId);
   v.wrapDispatch(null);
-  assert.deepEqual([inFlight.body.booking.status, inFlight.body.booking.date], ['booked', MON]);
+  assert.deepEqual(pick(inFlight.body.booking, 'status', 'date', 'moved'), { status: 'booked', date: TUE, moved: false });
   const kept = v.fake.get(`knock_sales/${other.saleId}`);
-  assert.deepEqual([kept.jobDate, kept.handoff.job.date], [TUE, MON]);
-  assert.equal(kept.statusHistory.at(-1).note, 'Booked in the Hub for Mon Oct 26 9:30 am before the job date changed to Tue Oct 27 9:30 am. Set the job date again to move the Hub job, or move it in Dispatch.');
+  assert.deepEqual([kept.jobDate, kept.handoff.job.date, kept.handoff.job.moved, jobsOf(v)[0].date], [TUE, TUE, false, TUE]);
+  assert.deepEqual(pick(kept.handoff.job.hubChange, 'action', 'status'), { action: 'move', status: 'done' });
+  assert.deepEqual(kept.statusHistory.slice(-2).map(row => row.note), ['Booked in the Hub for Mon Oct 26 9:30 am before the job date changed to Tue Oct 27 9:30 am.',
+    'Hub job moved to 2026-10-27 09:30, Crew 1: the job date set while it was booking.']);
   const again = await v.admin({ action: 'sale.jobDate', saleId: other.saleId, jobDate: TUE });
   assert.deepEqual([again.status, again.body.hubJob?.date, jobsOf(v)[0].date], [200, TUE, TUE]);
 });
@@ -587,16 +591,23 @@ test('a sale cancelled while its booking is in flight never keeps a live Hub job
 });
 
 // REVIEW requirements-1: the door sale's price never reached the Hub job, so every D2D deal the HighLevel mirror created
-// was worth $0.
-test('the Hub job carries the price signed at the door as its quoted price; crews never see it', async () => {
+// was worth $0. REVIEW integrity-merge-1: as the job's quoted price it made the Hub's money charge the whole ticket (its
+// 50% deposit, the closeout card, field pay) while Knock collects the deposit and the rest: it rides on d2d.ticket.
+test('the price signed at the door rides on the job for the HighLevel deal only: the Hub never prices or charges it; crews never see it', async () => {
   const w = await bridgeWorld();
   const { saleId, events } = saleBatch({ sale: { ticket: 2400.5 } });
   await w.send(events);
+  await w.admin({ action: 'sale.handoff', saleId, kind: 'deposit', op: 'mark' });
+  assert.equal(w.fake.get(`knock_sales/${saleId}`).handoff.deposit.status, 'collected', 'Knock collected the deposit at the door');
   await w.book('sale', saleId);
   const [job] = jobsOf(w);
-  assert.deepEqual([job.priceQuoted, job.total, job.estimate], [2400.5, undefined, undefined], 'the quoted price only: no estimate or total is invented');
+  assert.deepEqual([job.d2d.ticket, job.priceQuoted, job.total, job.estimate, job.deposit], [2400.5, undefined, undefined, undefined, undefined], 'no Hub price, estimate or deposit is invented');
   const { path: _path, ...stored } = job;
-  assert.doesNotMatch(JSON.stringify(crewJobProjection({ ...stored, id: job.path.split('/').pop() })), /2400|priceQuoted/, 'the crew\'s view of the job has no price');
+  const hubJob = { ...stored, id: job.path.split('/').pop() };
+  const unified = customerMoneyTotals(hubJob, { unified: true });
+  assert.deepEqual([unified.totalCents, unified.balanceCents, unified.issues.includes('money_quote_missing')], [null, null, true], 'nothing for the Hub to charge');
+  assert.deepEqual(customerMoneyState(hubJob), { total: 0, paid: 0, balance: 0 });
+  assert.doesNotMatch(JSON.stringify(crewJobProjection(hubJob)), /2400|priceQuoted|ticket/, 'the crew\'s view of the job has no price');
   assert.doesNotMatch(JSON.stringify((await w.book('sale', saleId)).body), /2400/, 'the rep\'s booking answer carries no price');
 });
 
