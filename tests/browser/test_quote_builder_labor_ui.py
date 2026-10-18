@@ -152,6 +152,29 @@ class QuoteBuilderLaborTests(unittest.TestCase):
         expect(gap).to_contain_text('You set the man-hours by hand: make sure they include installing these.')
         self.assertEqual(self.posts[-1]['compositePricing']['labor'], {'manHours': 9, 'adjusted': True, 'fullness': 'medium'})
 
+    def test_an_approved_quote_on_an_undated_job_is_saved_and_waits_for_the_job_date_with_one_button(self):
+        # The truck load and the Labor line are approved prices, so the real send preview reaches the 25/75 payment
+        # dates, which need the job's date: a new quote job has none (quote_draft_payment_dates_pending).
+        self.page.goto(self.url + '/builder-harness')
+        self.page.get_by_role('button', name='Send options for review').click()
+        dialog = self.dialog()
+        dialog.get_by_role('button', name='One fewer: Mattress').click()
+        dialog.get_by_role('button', name='Continue to shelving').click()
+        dialog.get_by_role('button', name='Continue to extra storage').click()
+        dialog.get_by_role('button', name='Review quote').click()
+        expect(dialog).to_contain_text('Every price on this quote is owner-approved')
+        dialog.get_by_role('button', name='Save draft').click()
+        notice = dialog.locator('[data-held="job-date"]')
+        expect(notice).to_contain_text('Sending waits for the job date: the 25% deposit and 75% balance due dates come from the walkthrough date and the job date.')
+        expect(notice).to_contain_text('Ask the office to book this job in Team schedule (To schedule). Then reopen this quote from the walkthrough and choose Send saved quote.')
+        self.assertEqual(self.posts[-1]['action'], 'send_preview')
+        expect(dialog.locator('.qd-foot button')).to_have_text(['Done'])
+        expect(dialog.locator('.qd-error')).to_have_count(0)
+        expect(dialog).not_to_contain_text('save it again')
+        self.assertGreaterEqual(dialog.get_by_role('button', name='Done').bounding_box()['height'], 44, 'Done is a 44px touch target')
+        self.assertLessEqual(dialog.evaluate('node => node.scrollWidth - node.clientWidth'), 0, 'no sideways scroll at phone width')
+        self.page.screenshot(path=str(RESULTS / 'quote-builder-waits-for-job-date-375.png'), full_page=True)
+
 
 if __name__ == '__main__':
     unittest.main()
