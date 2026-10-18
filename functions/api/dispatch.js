@@ -89,8 +89,9 @@ export function dispatchHandlers({ session = getHubSession, storage = dispatchSt
         // Saves read cached drive times only: no provider call or cache write
         // runs between the day locks and the schedule commit.
         // EGC_DISPATCH_CREW_AUTO_ASSIGN: a dispatcher's save picks a crew when it asks (autoCrew:true);
-        // a booker's is always staffed by the server (mutateBooking reads the flag itself).
-        const options = {travel:travel({env,store,now,googleLimit:0,cacheWrites:false}),...(crewAutoAssignEnabled(env) && !access.booker ? {autoCrew:'opt_in'} : {})};
+        // a booker's is always staffed by the server (mutateBooking reads the flag itself). READ-BUDGET: the Hub's
+        // booking and dispatch screens never show a no-free-crew answer's alternatives, so none are searched for them.
+        const options = {travel:travel({env,store,now,googleLimit:0,cacheWrites:false}),...(crewAutoAssignEnabled(env) ? {crewAlternatives:false,...(!access.booker ? {autoCrew:'opt_in'} : {})} : {})};
         // mutateBooking saves through mutateDispatch, so a booker's save queues its HighLevel tags the same way.
         const result = access.booker ? await mutateBooking(store,actor,input,at,options,env) : await mutateDispatch(store,actor,input,at,options);
         // EGC_GHL_TAG_OUTBOX: the HighLevel tags this save queued get their first attempt after the response.

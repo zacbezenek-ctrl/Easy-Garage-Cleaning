@@ -7,7 +7,7 @@
   // business access) reads every crew and picks a crew; everyone else reads their own crews. Nothing here is stored on
   // the phone except the chosen view (range and crew) and whether this person last read every crew, in this browser.
   const API = '/api/crew-schedule', TIMEOUT = 30000, TZ = 'America/Denver', PREF = 'egc.crew-schedule.v1';
-  const DATE = /^\d{4}-\d{2}-\d{2}$/, ID = /^[A-Za-z0-9_-]{1,180}$/;
+  const DATE = /^\d{4}-\d{2}-\d{2}$/, ID = /^[A-Za-z0-9_-]{1,180}$/, OFFLINE = 'You’re offline. The crew schedule loads when you reconnect.';
   const S = { range: 'today', crew: 'all', scope: '', viewsAll: '', data: null, loading: false, error: '', signedOut: false, disabled: false, seq: 0, loadedAt: '' };
   const main = document.getElementById('schedule-main');
 
@@ -64,7 +64,7 @@
     if (!main) return;
     const seq = ++S.seq;
     S.loading = true; S.error = ''; render();
-    if (offline()) { S.loading = false; S.error = 'You’re offline. The crew schedule loads when you reconnect.'; render(); return; }
+    if (offline()) { S.loading = false; S.error = OFFLINE; render(); return; }
     let scope = S.scope || (viewsAllHint() ? 'all' : 'mine'), data = null, error = null;
     try { data = await request(scope); }
     catch (failure) {
@@ -183,9 +183,19 @@
     } catch { /* Offline reloads need the worker; online use works without it. */ }
   }
 
+  // READ-BUDGET: back online, a schedule loaded less than ONLINE_REFRESH_MS ago for these same days only drops the
+  // offline notice, so a phone whose signal comes and goes in a garage does not read the schedule again each time. One
+  // that is older, for other days, still loading, failed or never loaded is read again, as before; Refresh always reads.
+  const ONLINE_REFRESH_MS = 5 * 60000;
+  function reconnected() {
+    const age = Date.now() - Date.parse(S.loadedAt || ''), { from, to } = shownDates();
+    if (S.loading || !S.data || S.error && S.error !== OFFLINE || S.data.from !== from || S.data.to !== to || !(age >= 0 && age < ONLINE_REFRESH_MS)) return load();
+    S.error = ''; render();
+  }
+
   readPrefs();
-  addEventListener('online', load);
-  addEventListener('offline', () => { if (!S.loading) { S.error = 'You’re offline. The crew schedule loads when you reconnect.'; render(); } });
+  addEventListener('online', reconnected);
+  addEventListener('offline', () => { if (!S.loading) { S.error = OFFLINE; render(); } });
   window.EGCCrewSchedule = { load, state: S };
   load();
   registerWorker();

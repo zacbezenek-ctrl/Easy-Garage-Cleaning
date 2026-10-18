@@ -1,6 +1,6 @@
 // Firestore REST fake for windowed dispatch reads: document GET, masked list
 // scans with page tokens, :runQuery (field EQUAL/GREATER_THAN_OR_EQUAL/LESS_THAN_OR_EQUAL/IN/
-// ARRAY_CONTAINS, unary IS_NULL, orderBy with the implicit __name__ tiebreak,
+// ARRAY_CONTAINS, unary IS_NULL, orderBy ASCENDING or DESCENDING with the implicit __name__ tiebreak,
 // startAt cursors, select, limit), :runAggregationQuery (count; a requested
 // readTime is recorded, not replayed), masked :batchGet, :commit with
 // exists/updateTime preconditions and a no-op transaction. Like Firestore, a range filter only matches
@@ -42,12 +42,14 @@ export function firestoreRest(seed = {}) {
   function runQuery(query) {
     const orderBy = query.orderBy || [], range = query.where?.fieldFilter?.op === 'GREATER_THAN_OR_EQUAL' ? query.where.fieldFilter.field.fieldPath : null;
     if (range && orderBy[0]?.field.fieldPath !== range) return json({ error: { status: 'INVALID_ARGUMENT', message: 'The first orderBy must be the inequality field.' } }, 400);
-    const paths = [...orderBy.map(item => item.field.fieldPath).filter(path => path !== '__name__'), '__name__'];
+    // Each orderBy field in its direction (DESCENDING reverses it), then the document name.
+    const sign = item => item?.direction === 'DESCENDING' ? -1 : 1;
+    const paths = [...orderBy.filter(item => item.field.fieldPath !== '__name__').map(item => [item.field.fieldPath, sign(item)]), ['__name__', sign(orderBy.find(item => item.field.fieldPath === '__name__'))]];
     let rows = collection(query.from[0].collectionId).filter(document => !query.where || filter(query.where, document))
-      .sort((a, b) => { for (const path of paths) { const order = compare(key(a, path), key(b, path)); if (order) return order; } return 0; });
+      .sort((a, b) => { for (const [path, direction] of paths) { const order = compare(key(a, path), key(b, path)) * direction; if (order) return order; } return 0; });
     if (query.startAt) {
       const values = query.startAt.values.map(value => value.referenceValue ?? decode(value));
-      rows = rows.filter(document => { for (const [index, path] of paths.entries()) { const order = compare(key(document, path), values[index]); if (order) return order > 0; } return query.startAt.before !== false; });
+      rows = rows.filter(document => { for (const [index, [path, direction]] of paths.entries()) { const order = compare(key(document, path), values[index]) * direction; if (order) return order > 0; } return query.startAt.before !== false; });
     }
     rows = rows.slice(0, query.limit || undefined).map(document => project(document, query.select?.fields.map(field => field.fieldPath)));
     return json(rows.length ? rows.map(document => ({ document, readTime: '2026-09-22T10:00:00Z' })) : [{ readTime: '2026-09-22T10:00:00Z' }]);

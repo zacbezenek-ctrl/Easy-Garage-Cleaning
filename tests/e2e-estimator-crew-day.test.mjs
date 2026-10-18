@@ -390,14 +390,20 @@ test('estimator to crew, one day through the real handlers: walkthrough, builder
   clock(at(TUE, '09:20'));
   const before = home.calls.length;
   await home.context.crewClock('clock_in');
-  assert.deepEqual(home.calls.slice(before), ['GET /api/hub-auth', 'POST /api/employee-hub', 'GET /api/employee-hub'], 'the outbox checks the session, writes the timecard, and the card reloads');
+  // READ-BUDGET: the write answers with the saved timecard, so the card shows it without reading every Hub record again.
+  assert.deepEqual(home.calls.slice(before), ['GET /api/hub-auth', 'POST /api/employee-hub'], 'the outbox checks the session and writes the timecard; no second full read');
   assert.match(home.card(), /<strong>Clocked in<\/strong>.*onclick="crewClock\('clock_out'\)">Clock out<\/button><small class="clock-note" role="status">Clocked in\. Your location was shared once; nothing tracks it during your shift\.<\/small>/s);
   const [shift] = await readCollection(ENV, 'timeEntries');
   assert.deepEqual([shift.employee, shift.status, shift.clockInAt, shift.clockOutAt, shift.locationStatus, shift.hourlyRate], ['Crew1.Mate', 'active', iso(TUE, '09:20'), '', 'job_page_single_fix', 19]);
   assert.deepEqual(shift.lastLocation, { lat: 40.58526, lng: -105.084423, accuracy: 10, capturedAt: iso(TUE, '09:20') });
   clock(at(TUE, '12:50'));
+  const beforeOut = home.calls.length;
   await home.context.crewClock('clock_out');
+  assert.ok(!home.calls.slice(beforeOut).includes('GET /api/employee-hub'), 'clocking out reads no full Employee Hub view either');
   assert.match(home.card(), /<strong>Clocked out<\/strong>.*Clocked out\. Your shift is submitted for approval\..*3\.50 hours · current two-week period/s);
+  const reopened = await crewHome(api, 'Crew1.Mate');
+  await reopened.context.openCrewHome();
+  assert.equal(reopened.card().replace(/<small class="clock-note[^"]*" role="status">[^<]*<\/small>/, ''), home.card().replace(/<small class="clock-note[^"]*" role="status">[^<]*<\/small>/, ''), 'the card a fresh full read shows');
   const [closed] = await readCollection(ENV, 'timeEntries');
   assert.deepEqual([closed.id, closed.status, closed.approvalStatus, closed.clockOutAt, closed.history.map(row => row.action)], [shift.id, 'submitted', 'pending', iso(TUE, '12:50'), ['clock_in', 'clock_out']]);
   // The manager reviews it on the Hub time clock (GET /api/employee-hub): the shift waits for approval.

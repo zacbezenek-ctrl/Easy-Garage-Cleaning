@@ -90,9 +90,17 @@ export function repWalkthroughView(row) {
   };
 }
 
-export async function repWalkthroughs(store, repKey) {
-  const rows = await store.query('knock_walkthroughs', { where: [['repKey', '==', repKey]] });
-  return rows.map(repWalkthroughView).sort((a, b) => String(b.setAt).localeCompare(String(a.setAt)));
+/* My sales (KNOCK-BRIDGE): the rep's REP_WALKTHROUGH_LIMIT most recent walkthroughs, newest first. READ-BUDGET: one
+   bounded query on the composite index knock_walkthroughs(repKey, setAt DESC) in firestore.indexes.json, never the rep's
+   whole season on every render. Until that index is deployed (knock_index_required) the rep's walkthroughs are read in
+   full, as before, and the same newest ones are shown. One older than these that is still booking is retried by the
+   phone's own queue and listed for the office (officeWalkthroughs). */
+export const REP_WALKTHROUGH_LIMIT = 50;
+export async function repWalkthroughs(store, repKey, limit = REP_WALKTHROUGH_LIMIT) {
+  const where = [['repKey', '==', repKey]];
+  const rows = await store.query('knock_walkthroughs', { where, orderBy: [['setAt', 'DESCENDING']], limit })
+    .catch(error => { if (error?.code !== 'knock_index_required') throw error; return store.query('knock_walkthroughs', { where }); });
+  return rows.map(repWalkthroughView).sort((a, b) => String(b.setAt).localeCompare(String(a.setAt))).slice(0, limit);
 }
 
 export const OFFICE_WALKTHROUGH_LIMIT = 100;

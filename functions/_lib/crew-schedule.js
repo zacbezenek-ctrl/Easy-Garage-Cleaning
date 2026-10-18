@@ -24,10 +24,12 @@ import { assignmentKey } from './job-assignment.js';
  * job's details, and canOpen says whether it will open for this viewer: business access, or an assignment anywhere on
  * the job (its assignedCrew, the union of its segments, exactly as /api/field-jobs checks), while `mine` is the row's
  * own segment.
- * Reads: the crew records (one equality query on dispatchResources.recordType) and the jobs whose start date is in
- * [from - 32 days, to] (one bounded range on `date`, masked to CREW_SCHEDULE_FIELDS), never a whole-collection scan;
- * that is narrower than the board's jobsNear (dispatch-window-reads.js: 35 days back with no upper bound). Lead
- * display names are resolved only for the leads this answer shows, and only when there is one.
+ * Reads: the crew records (one equality query on dispatchResources.recordType) and, masked to CREW_SCHEDULE_FIELDS,
+ * the jobs starting in [from, to] (one bounded range on `date`) plus the multi-day ones that started earlier and end on
+ * or after `from` (READ-BUDGET: ranges on endDate and date, the composite index jobs(endDate, date)); until that index
+ * is deployed, the jobs whose start date is in [from - 32 days, to] instead, as before. Never a whole-collection scan.
+ * Lead display names are resolved only for the leads this answer shows, and only when there is one: configured users
+ * for free, any other lead's own employee account with one read (functions/api/crew-schedule.js leadNames).
  * EGC_CREW_SCHEDULE exactly "false" turns the schedule off: 404 crew_schedule_disabled before any read. */
 export const CREW_SCHEDULE_MAX_DAYS = 14;
 // How far back a window may start: the crew app shows today onward; two weeks of history and no more.

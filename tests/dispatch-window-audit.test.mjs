@@ -20,7 +20,7 @@ const audit = fs => {
 
 test('the window audit is read only and clean when every conflict-evidence row is windowed', async () => {
   const fs = firestoreRest(seed()), report = await audit(fs);
-  assert.deepEqual(report, { mode: 'read_only', runId: 'synthetic-run', generatedAt: NOW.toISOString(), startDate: '2026-09-22', floor: '2026-08-18', jobs: { scanned: 5, windowed: 4 }, missing: { count: 0, byReason: {}, jobIds: [] } });
+  assert.deepEqual(report, { mode: 'read_only', runId: 'synthetic-run', generatedAt: NOW.toISOString(), startDate: '2026-09-22', floor: '2026-08-18', jobs: { scanned: 5, windowed: 4, bounded: 4 }, missing: { count: 0, byReason: {}, jobIds: [] } });
   assert.ok(fs.calls.every(call => call.method === 'GET' || call.path === ':runQuery'), 'no commit, transaction or other write');
   assert.deepEqual(new URLSearchParams(fs.scans('jobs')[0].query).getAll('mask.fieldPaths'), AUDIT_FIELDS, 'the scan never loads job bodies');
 });
@@ -33,6 +33,15 @@ test('the window audit reports rows written after the switch that the windowed r
   assert.deepEqual(report.missing.byReason, { unverifiable_date: 3, undated: 1 });
   assert.deepEqual(report.missing.jobIds, ['egc_…0100', 'no-date', 'numeric', 'us-format'], 'ids that embed a phone are masked');
   assert.ok(!JSON.stringify(report).includes('9705550100'));
+});
+
+// READ-BUDGET: openings and dated saves read a bounded window (rows starting by the day after it); the audit also
+// reports what only that read misses: a date string sorting after the bound and a row longer than the margin.
+test('the window audit also reports rows only the bounded read (openings, dated saves) cannot find', async () => {
+  const fs = firestoreRest({ ...seed(), 'jobs/later-word': job('TBD', ''), 'jobs/over-long': job('2026-06-01', '2026-09-30'), 'jobs/next-week': job('2026-09-29', '2026-09-29') });
+  const report = await audit(fs);
+  assert.deepEqual([report.missing.count, report.missing.byReason, report.missing.jobIds], [2, { unverifiable_date: 1, dated: 1 }, ['later-word', 'over-long']]);
+  assert.deepEqual(report.jobs, { scanned: 8, windowed: 7, bounded: 4 }, 'a valid later booking is not missing: no bounded caller uses it');
 });
 
 test('the audit command refuses to run without credentials or with unknown arguments', () => {

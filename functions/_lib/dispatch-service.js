@@ -431,9 +431,12 @@ export async function mutateDispatch(store, session, input, now = new Date().toI
 // projectCrewOpenings) come with the answer. Best effort: a failed search answers []. The
 // search is skipped (no extra reads) when no crew could be staffed on any day of that week,
 // e.g. the flag is on before the crews have members (context.crewWeek from executeDispatch).
-const ALTERNATIVE_DAYS = 7;
+// READ-BUDGET: alternatives are asked for, not assumed. A caller whose answer never shows them
+// passes options.crewAlternatives:false (bookers, the Hub's opt-in save, the Knock bridge) and
+// gets no alternatives key and no openings snapshot; the walkthrough handoff shows them.
+const ALTERNATIVE_DAYS = 7, SAVE_BOUND_DAYS = 2;
 async function withCrewAlternatives(store,session,result,now,options,context = {}) {
-  if (result?.autoCrew?.status !== 'unassigned' || result.replayed || !result.job?.startAt || !result.job?.endAt) return result;
+  if (options.crewAlternatives === false || result?.autoCrew?.status !== 'unassigned' || result.replayed || !result.job?.startAt || !result.job?.endAt) return result;
   const minutes = Math.round((Date.parse(result.job.endAt) - Date.parse(result.job.startAt)) / 60000);
   let alternatives = [];
   if (context.crewWeek !== false && minutes >= 15 && minutes <= 1440 && validDate(result.job.date)) {
@@ -627,7 +630,9 @@ async function executeDispatch(store, session, input, now, options = {}, context
     // The older operations scheduler shares day locks but not dispatchState.
     // Read final conflict evidence AFTER acquiring each affected day revision;
     // either we see an older sender's job or its commit invalidates our lock.
-    const finalJobs = days.length ? await jobsForWindow(store,{startDate:days[0],endDate:addDays(days.at(-1),1)},'save') : await reads.near(() => rowsWindow([current,next],new Date(now)));
+    // READ-BUDGET: windowed, only rows starting by SAVE_BOUND_DAYS after the last day (jobWarnings' potentiallyNear
+    // reaches one travel day: buffers are at most 180 minutes and drive windows 240) are conflict evidence.
+    const finalJobs = days.length ? await jobsForWindow(store,{startDate:days[0],endDate:addDays(days.at(-1),1),bound:addDays(days.at(-1),SAVE_BOUND_DAYS)},'save') : await reads.near(() => rowsWindow([current,next],new Date(now)));
     // Each eligible crew in pick order (a preferred crew first), as the job it would make.
     const crewOptions = autoPlan ? autoCrewOptions(autoPlan,next,resources,roster,interval) : [];
     const inspection=await withTravel(scheduleInspection(finalJobs,resources,roster,rules),[next,...crewOptions.map(option => option.job)],roster,options.travel);

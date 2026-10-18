@@ -272,7 +272,9 @@
  * ids), {status:'unassigned',mode,crewId:null,requestedCrewId?} or {status:'kept',mode:'choice',
  * crewId,requestedCrewId}; an unassigned answer adds alternatives: projectCrewOpenings of a week
  * of crew openings from the job's date (at most 10; [] without a search when no crew can be
- * staffed on any day of that week).
+ * staffed on any day of that week), unless the caller passes options.crewAlternatives:false
+ * (READ-BUDGET: no key and no search). POST /api/dispatch (bookers and dispatchers) and the Knock
+ * bridge pass it, as their screens never show alternatives; the walkthrough handoff shows them.
  * Crew notices (EGC_CREW_NOTIFICATIONS_ENABLED) commit once with the save that staffs the job.
  * GET /api/dispatch adds crewAutoAssign:true while the flag is on (the Hub shows the choice).
  * {action:'vehicle.save',requestId,id?:string,expectedRevision?:string,

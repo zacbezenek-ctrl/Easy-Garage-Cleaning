@@ -73,18 +73,37 @@ function withSettings(input,settings) {
 // A suggestion never reserves capacity. Detect changes across the paginated
 // reads using the global dispatch guard, legacy day locks and active roster.
 // One bounded retry tolerates ordinary dispatch activity without hiding races.
-async function snapshot(store,dates) {
+// READ-BUDGET: the jobs are the bounded window read (rows starting by the search's
+// end date; nearRange below never uses a later one). With options.cache (the
+// store's openingsCache; the Knock bridge opts in) the jobs and resources of a
+// snapshot are reused for SNAPSHOT_TTL_MS while the dispatch guard and every day
+// lock of its dates keep their revisions, which every dispatch save and the older
+// operations scheduler change. A reuse costs the guard and lock reads it checks
+// plus the roster and the rules, read again each time, so it answers as a new
+// snapshot of the same records would. At most SNAPSHOT_ENTRIES snapshots and
+// SNAPSHOT_ROWS jobs rows are kept (a complete scan outside windowed reads is large).
+const SNAPSHOT_TTL_MS=5*60000,SNAPSHOT_ENTRIES=4,SNAPSHOT_ROWS=20000;
+async function snapshot(store,dates,{cache=null,now=new Date()}={}) {
   const locks=()=>Promise.all(dates.map(date=>store.read('jobs',`_egc_schedule_lock_${date}`)));
   const same=(a,b)=>a?.revision===b?.revision;
   const rosterKey=rows=>JSON.stringify(rows.map(row=>({id:row.id,name:row.name,role:row.role,skills:row.skills??null,weeklyAvailability:row.weeklyAvailability??null})).sort((a,b)=>a.id.localeCompare(b.id)));
+  const endDate=addDays(dates.at(-1),1),key=cache?`${typeof store.jobsNear==='function'?store.windowedReads:'full'}|${dates[0]}|${endDate}`:'',held=cache?.get(key),at=now.getTime();
   for(let attempt=0;attempt<2;attempt++) {
     const guard=await store.read('dispatchState','revision');
     const before=await locks();
-    const [jobs,resources,roster,settings]=await Promise.all([jobsForWindow(store,{startDate:dates[0],endDate:addDays(dates.at(-1),1)},'openings'),store.resources(),store.roster(),dispatchRuleSettings(store)]);
+    if(!attempt&&held&&at>=held.at&&at-held.at<SNAPSHOT_TTL_MS&&guard?.revision===held.revision&&before.every((lock,index)=>same(lock,held.locks[index]))) {
+      const [roster,settings]=await Promise.all([store.roster(),dispatchRuleSettings(store)]);
+      return {jobs:held.jobs,resources:held.resources,roster,settings,locks:before,revision:held.revision};
+    }
+    const [jobs,resources,roster,settings]=await Promise.all([jobsForWindow(store,{startDate:dates[0],endDate,bound:endDate},'openings'),store.resources(),store.roster(),dispatchRuleSettings(store)]);
     const [after,rosterAfter]=await Promise.all([locks(),store.roster()]);
     const guardAfter=await store.read('dispatchState','revision');
     if (!same(guard,guardAfter)||before.some((lock,index)=>!same(lock,after[index]))||rosterKey(roster)!==rosterKey(rosterAfter))continue;
     for(const lock of after) if (lock&&(lock.recordType!=='schedule_lock'||!Array.isArray(lock.entries)||lock.entries.some(entry=>!entry||typeof entry!=='object'||Array.isArray(entry)))) throw fail('dispatch_lock_unavailable','A scheduling guard is malformed. Repair it before using capacity suggestions.',503);
+    if(cache&&guard?.revision) {
+      cache.delete(key);cache.set(key,{at,revision:guard.revision,locks:after,jobs,resources});
+      while(cache.size>SNAPSHOT_ENTRIES||cache.size>1&&[...cache.values()].reduce((sum,entry)=>sum+entry.jobs.length,0)>SNAPSHOT_ROWS)cache.delete(cache.keys().next().value);
+    }
     return {jobs,resources,roster,settings,locks:after,revision:guard?.revision || null};
   }
   throw fail('dispatch_snapshot_changed','The schedule changed while openings were checked. Refresh to get current suggestions.',409);
@@ -113,12 +132,13 @@ function mergeIntervals(intervals,start,end) {
  * crew mode the employee ids: options.booker (a schedule.book holder) and any other
  * session a custom authorize lets in never do, so a caller that forgets the flag is
  * safe (projectCrewOpenings is the rep-safe projection for Knock and the estimator
- * gameplan). */
-export async function dispatchOpenings(store,session,query={},now=new Date(),{travel=null,authorize=requireDispatcher,booker:asBooker=false}={}) {
+ * gameplan). options.cache (a Map, the store's openingsCache) opts into the
+ * snapshot cache above. */
+export async function dispatchOpenings(store,session,query={},now=new Date(),{travel=null,authorize=requireDispatcher,booker:asBooker=false,cache=null}={}) {
   authorize(session);
   // Fails closed: the roster and employee ids go to a dispatcher who was not asked to see the booker view.
   const booker=asBooker===true||!canDispatch(session);
-  const parsed=parseQuery(query,now),data=await snapshot(store,parsed.dates),legacy=await legacyBlockedDays(store,parsed.dates),settings=data.settings,input=withSettings(parsed,settings),crewMode=Array.isArray(input.crewIds);
+  const parsed=parseQuery(query,now),data=await snapshot(store,parsed.dates,{cache:cache instanceof Map?cache:null,now}),legacy=await legacyBlockedDays(store,parsed.dates),settings=data.settings,input=withSettings(parsed,settings),crewMode=Array.isArray(input.crewIds);
   if (input.employeeIds.some(id=>!data.roster.some(person=>person.id===id))) throw fail('dispatch_employee_inactive','A selected employee is no longer active. Refresh the roster.');
   if (input.vehicleId&&!data.resources.some(row=>row.recordType==='vehicle'&&row.id===input.vehicleId&&row.status==='available')) throw fail('dispatch_vehicle_unavailable','The selected vehicle is missing, inactive, or out of service.');
   const person=id=>data.roster.find(row=>row.id===id),anyQualified=!crewMode&&!input.employeeIds.length;

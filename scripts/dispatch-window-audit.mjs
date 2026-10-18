@@ -26,14 +26,17 @@ import {backfillStorage,maskId,writeReport} from './backfill-customer-identity.m
 // What windowRelevant() reads; the scan never loads job bodies.
 export const AUDIT_FIELDS=['type','recordType','date','endDate'];
 
-/** `jobs()` is the complete scan and `jobsNear(startDate,endDate)` the windowed
- * read dispatch uses; `now` is a Date. */
+/** `jobs()` is the complete scan and `jobsNear(startDate,endDate[,bound])` the
+ * windowed read dispatch uses; `now` is a Date. The bounded read (openings and
+ * dated saves, READ-BUDGET in dispatch-window-reads.js) is checked too: a row
+ * either read misses is reported once. */
 export async function runDispatchWindowAudit({jobs,jobsNear},{now=new Date(),runId=randomUUID()}={}) {
   const startDate=denverToday(now),endDate=addDays(startDate,1);
-  const [full,near]=await Promise.all([jobs(),jobsNear(startDate,endDate)]);
-  const {missing}=windowDiff(full,near,startDate),byReason={};
+  const [full,near,bounded]=await Promise.all([jobs(),jobsNear(startDate,endDate),jobsNear(startDate,endDate,endDate)]);
+  const found=new Map([...windowDiff(full,near,startDate).missing,...windowDiff(full,bounded,startDate,endDate).missing].map(row=>[row.id,row]));
+  const missing=[...found.values()],byReason={};
   for(const {reason} of missing)byReason[reason]=(byReason[reason]||0)+1;
-  return {mode:'read_only',runId,generatedAt:now.toISOString(),startDate,floor:windowFloor(startDate),jobs:{scanned:full.length,windowed:near.length},
+  return {mode:'read_only',runId,generatedAt:now.toISOString(),startDate,floor:windowFloor(startDate),jobs:{scanned:full.length,windowed:near.length,bounded:bounded.length},
     missing:{count:missing.length,byReason,jobIds:missing.map(row=>maskId(row.id)).sort()}};
 }
 
