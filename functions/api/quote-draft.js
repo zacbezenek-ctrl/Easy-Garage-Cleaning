@@ -20,16 +20,20 @@ import { FINAL_25_75 } from '../_lib/quote-payment-policy.js';
  * POST {action:'catalog_preview',catalogPricing:{catalogVersion,settingsVersion,items:[{id,itemId,quantity,customerSupplied}]}}
  * With EGC_QUOTE_BUILDER_ENABLED=true (otherwise these answer exactly as before the builder existed):
  * GET  /api/quote-draft?view=builder => {ok, enabled:true, menuVersion, settingsVersion, steps, sections, services,
- *        products, installation:{included, reason?}, viewer:{internal,canApprove},
+ *        products, labor:{rateCents,approved,source,reason,minManHours,maxManHours,stepManHours,time},
+ *        installation:{included,billedAs:'labor'}, viewer:{internal,canApprove},
  *        internal?:{goodsMarkup,goodsInstallationIncluded,roundingRule,approvalsRevision}}: the pricing menu with each
- *        item's current price and approval; only owners and managers (internal) see a cost basis.
+ *        item's current price and approval, and the labor rate (the owner's decision, D12); only owners and managers
+ *        (internal) see a cost basis.
  *        Pages ask for it only when /api/pricing-config or /api/catalog said quoteBuilder:true.
  * While the flag is on, send_preview and send of a walkthrough-priced draft (no builder or catalog pricing) answer
  *        409 quote_draft_builder_required; the draft stays saved.
- * POST {action:'composite_preview', compositePricing:{menuVersion,settingsVersion,steps,removal,shelving,storage}}
- *        => {ok, compositePricing, menuVersion, settingsVersion, lineItems, steps, breakdown, approval, totalCents};
- *        steps may be a prefix of removal, shelving, storage (running totals); a save needs all three and sends
- *        draft.composite_pricing with the previewed lines. Never a cost split.
+ * POST {action:'composite_preview', compositePricing:{menuVersion,settingsVersion,steps,removal,shelving,storage,labor?}}
+ *        => {ok, compositePricing, menuVersion, settingsVersion, lineItems, steps, breakdown, labor, approval, totalCents};
+ *        steps may be a prefix of removal, shelving, storage (running totals); a save needs all three and the labor
+ *        {manHours, adjusted?, fullness?} (manHours null asks for the server's estimate of the selection; adjusted: the
+ *        estimator set them by hand; fullness: the walkthrough's garage fullness) and sends draft.composite_pricing with
+ *        the previewed lines. The labor rate and estimate are always the server's. Never a cost split.
  * Retry a lost response with the SAME requestId and body. */
 const LIMIT = 64000;
 const reply = (status, body) => Response.json(body, { status, headers: { 'Cache-Control': 'no-store', 'X-Content-Type-Options': 'nosniff' } });

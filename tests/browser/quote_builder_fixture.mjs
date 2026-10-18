@@ -1,0 +1,61 @@
+// Fixture server for tests/browser/test_quote_builder_labor_ui.py: the repo's static files, a page that opens the
+// walkthrough's guided quote builder (crew/quote-draft.js) for a synthetic walkthrough, and the REAL /api/quote-draft and
+// /api/walkthrough-handoff handlers with EGC_QUOTE_BUILDER_ENABLED over the estimator fixture's in-memory store
+// (tests/helpers/estimator-fixture.mjs) and the builder's pricing state (the shipped pricing menu and settings, no owner
+// approvals: the $40.00 labor rate of D12). The signed-in viewer is the synthetic estimator. GET /__state returns the
+// saved quote jobs. Prints {"port":N} first. Nothing reaches the network.
+import http from 'node:http';
+import { readFile } from 'node:fs/promises';
+import { extname, join, normalize, relative, sep } from 'node:path';
+import { fileURLToPath } from 'node:url';
+import { quoteDraftHandlers } from '../../functions/api/quote-draft.js';
+import { handoffHandlers } from '../../functions/api/walkthrough-handoff.js';
+import { ON_ENV, builderState, client, estimator, fixture } from '../helpers/estimator-fixture.mjs';
+
+const ROOT = fileURLToPath(new URL('../../', import.meta.url));
+const TYPES = { '.js': 'application/javascript', '.mjs': 'application/javascript', '.css': 'text/css', '.html': 'text/html', '.json': 'application/json', '.svg': 'image/svg+xml', '.png': 'image/png', '.ico': 'image/x-icon' };
+// The walkthrough payload as crew/gameplan.html payload() builds it: one truck load and a mattress in a medium-full
+// garage, which the server estimates at 2 x (60 + 90 + 30 + 15) = 390 person-minutes (6.5 man-hours) whatever the crew.
+const PLAN = { client: client(1), quote: { title: 'EGC Garage Service', estimated_duration_min: 240, line_items: [] },
+  scope: { garages: '2', loads: '1', fullness: 'medium', special_items: ['Mattress'], access: [], finish: ['cleanout', 'shelving'], hazards: [], finish_details: { shelf_type: 'metal', shelf_qty: 2, tote_qty: 0 } }, raw: {}, logistics: { crew_size: 2 } };
+const HARNESS = `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>Quote builder harness</title>
+<link rel="stylesheet" href="/crew/crew-brand.css"><link rel="stylesheet" href="/crew/quote-draft.css"><style>body{margin:0;background:#f1f0ec;font-family:system-ui,sans-serif}main{padding:16px}</style></head>
+<body><main><button id="open" type="button" style="min-height:48px">Send options for review</button></main>
+<script>window.EGCWalkthroughPricing={quoteBuilder:()=>true};</script><script src="/crew/quote-draft.js"></script>
+<script>const PLAN=${JSON.stringify(PLAN)};document.getElementById('open').addEventListener('click',()=>EGCQuoteDraft.open({storage:sessionStorage,fetch:(...a)=>fetch(...a),actor:async()=>'sales.person',uuid:()=>crypto.randomUUID(),
+plan:()=>structuredClone(PLAN),source:()=>'w1',savedJobId:()=>window.savedJobId||'',draftId:()=>'draft-1',accept:r=>{window.savedJobId=r.job.id}}));</script></body></html>`;
+
+const f = fixture(ON_ENV), state = builderState();
+const session = async () => estimator, now = () => new Date('2026-10-17T15:00:00.000Z');
+const quotes = quoteDraftHandlers({ session, storage: () => f.store, now, compositeState: async () => state, stripe: () => null, delivery: () => ({ deliver: async () => ({ status: 'not_requested' }) }) });
+const handoff = handoffHandlers({ session, storage: () => f.store, now, compositeState: async () => state });
+
+async function body(request) { const chunks = []; for await (const chunk of request) chunks.push(chunk); return Buffer.concat(chunks); }
+const server = http.createServer(async (request, response) => {
+  try {
+    const url = new URL(request.url, `http://${request.headers.host}`);
+    if (url.pathname === '/__state') {
+      const jobs = [...f.rows.entries()].filter(([key, row]) => key.startsWith('jobs/') && row.quoteDraft).map(([, row]) => ({ id: row.id, estimate: row.estimate, quoteDraft: { compositePricing: row.quoteDraft.compositePricing, breakdown: row.quoteDraft.breakdown } }));
+      response.writeHead(200, { 'Content-Type': 'application/json' }); response.end(JSON.stringify({ jobs })); return;
+    }
+    const handler = url.pathname === '/api/quote-draft' ? quotes : url.pathname === '/api/walkthrough-handoff' ? handoff : null;
+    if (handler) {
+      const raw = request.method === 'POST' ? await body(request) : null;
+      const headers = new Headers(); for (const name of ['content-type', 'content-length', 'origin', 'referer', 'sec-fetch-site']) if (request.headers[name]) headers.set(name, request.headers[name]);
+      const req = new Request(url.href, { method: request.method, headers, body: raw ?? undefined });
+      const answer = request.method === 'POST' ? await handler.post({ request: req, env: ON_ENV }) : await handler.get({ request: req, env: ON_ENV });
+      response.writeHead(answer.status, Object.fromEntries(answer.headers)); response.end(Buffer.from(await answer.arrayBuffer())); return;
+    }
+    if (url.pathname === '/builder-harness') { response.writeHead(200, { 'Content-Type': 'text/html' }); response.end(HARNESS); return; }
+    const file = normalize(join(ROOT, decodeURIComponent(url.pathname)));
+    if (request.method !== 'GET' || !file.startsWith(ROOT) || relative(ROOT, file).split(sep).some(part => part.startsWith('.')) || !TYPES[extname(file)]) { response.writeHead(404); response.end(); return; }
+    const data = await readFile(file);
+    response.writeHead(200, { 'Content-Type': TYPES[extname(file)], 'Cache-Control': 'no-store' }); response.end(data);
+  } catch (failure) {
+    if (!response.headersSent) response.writeHead(failure?.code === 'ENOENT' ? 404 : 500);
+    response.end(String(failure?.message || ''));
+  }
+});
+server.listen(0, '127.0.0.1', () => { process.stdout.write(JSON.stringify({ port: server.address().port }) + '\n'); });
+process.stdin.on('end', () => server.close(() => process.exit(0)));
+process.stdin.resume();

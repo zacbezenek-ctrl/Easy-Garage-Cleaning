@@ -22,12 +22,14 @@
  * POST {action:'catalog.publish',requestId,basedOnVersion,catalog} (owner)
  *   basedOnVersion is publication.version (null only to replace an unreadable pointer); catalog is a complete
  *   validateCatalog() document with a later catalogVersion, stored immutably. => {ok,requestId,replayed,publication}
- * POST {action:'menu.approve',requestId,expectedRevision,menuVersion,settingsVersion,approve:[{id,unitCents}],revoke:[id],goodsInstallationIncluded?}
+ * POST {action:'menu.approve',requestId,expectedRevision,menuVersion,settingsVersion,approve:[{id,unitCents}],revoke:[id],goodsInstallationIncluded?,laborRatePerManHourCents?}
  *   (owner; only with EGC_QUOTE_BUILDER_ENABLED=true, which also allows it while CATALOG_QUOTES_ENABLED is off)
  *   bulk-approves draft pricing-menu prices for the quote builder; expectedRevision is the approvals revision from
  *   GET /api/quote-draft?view=builder (internal.approvalsRevision). goodsInstallationIncluded (boolean) answers the
- *   builder's installation question, the only way to answer it while catalog pricing is off; it counts as one change.
- *   => {ok,requestId,replayed,approvals:{revision,current,count,items,goodsInstallationIncluded?}}
+ *   builder's installation question for quotes saved before the Labor line existed, the only way to answer it while
+ *   catalog pricing is off. laborRatePerManHourCents (whole cents, 100 to 100000) sets the labor rate per man-hour of
+ *   every builder quote's Labor line ($40.00 until the owner changes it, owner decision D12). Each counts as one change.
+ *   => {ok,requestId,replayed,approvals:{revision,current,count,items,goodsInstallationIncluded?,laborRatePerManHourCents?}}
  * With EGC_QUOTE_BUILDER_ENABLED a fresh menu.approve or settings.update also releases the signed jobs held for the
  *   owner's price approval that it now covers (walkthrough-handoff.js releaseHeldHandoffs: their estimate and deposit
  *   request go to the customer) and adds heldJobs {released:[jobId], waiting, more} or {status:'deferred'} when they

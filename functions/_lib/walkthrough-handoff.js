@@ -20,7 +20,7 @@ import { breakdownLines, jobBreakdown } from './job-breakdown.js';
 import { crewAutoAssignEnabled, projectCrewOpenings } from './dispatch-crew-assign.js';
 import { dispatchOpenings } from './dispatch-openings.js';
 import { catalogStorage, quoteBuilderEnabled, readCompositeState, requireCatalogOwner } from './catalog-store.js';
-import { approvalRefusal, compositeApproval, priceCompositeQuote } from './composite-quote.js';
+import { approvalRefusal, compositeApproval, fullnessOf, priceCompositeQuote } from './composite-quote.js';
 
 // FIX-CREW-PRICE-LEAK: every crew-visible copy of the brief is written without currency amounts.
 export { stripCrewMoney };
@@ -205,6 +205,16 @@ function builderMismatch(quote, priced, signedCents) {
 }
 // The builder selection a revision is priced from when its plan sends none: the signed job's, else its saved draft's.
 const savedSelection = job => plain(job?.compositeQuote?.compositePricing) ? job.compositeQuote.compositePricing : plain(job?.quoteDraft?.compositePricing) ? job.quoteDraft.compositePricing : null;
+// A job the customer signed before builder quotes had a Labor line, revised with that same selection (re-sent unchanged
+// or not sent at all): it is priced by the earlier rules, without labor, so its signed total stands. Any other selection
+// (a new or changed one, or an unsigned draft's) needs its Labor line.
+function signedWithoutLabor(previous, selection) {
+  const signed = plain(previous?.compositeQuote?.compositePricing) ? previous.compositeQuote.compositePricing : null;
+  return Boolean(signed && signed.labor === undefined && plain(selection) && selection.labor === undefined && canonical(selection) === canonical(signed));
+}
+// The labor time estimate reads the walkthrough's garage fullness; a signed quote's is the signed plan's own
+// (scope.fullness), whatever the selection carried, so its recorded estimate is the server's for the signed scope.
+const withSignedFullness = (selection, plan) => plain(selection) && plain(selection.labor) ? { ...selection, labor: { ...selection.labor, fullness: fullnessOf(plan.scope?.fullness) } } : selection;
 // A Hub catalog quote draft (quoteDraft.catalogPricing, priced on the server by catalog-quote.js) signed with exactly the
 // lines the server saved for it: it keeps the catalog's own approval, as its send does.
 function catalogSigned(previous, plan) {
@@ -212,11 +222,22 @@ function catalogSigned(previous, plan) {
   const { lineItems: saved } = normalizeLineItems(previous.estimate.lineItems);
   return saved.length > 0 && canonical(signedLines(saved)) === canonical(signedLines(plan.quote.estimate_line_items));
 }
-// The human job breakdown with a builder quote's shelving and storage as the packs sold, product by product.
+// The human job breakdown with a builder quote's shelving and storage as the packs sold, product by product, and its
+// Labor line as the man-hours sold (D12), never the rate or the amount: the crew and the HighLevel note read it. The
+// man-hours are the time sold, not a time on site (the job's on-site time is its estimated minutes, which book the crew):
+// man-hours that differ from the server's estimate say so, for the owner and Dispatch.
+const manHoursText = hours => `${Number(hours.toFixed(2))} man-hour${hours === 1 ? '' : 's'}`;
+export function laborBreakdownItem(labor) {
+  if (!plain(labor) || typeof labor.manHours !== 'number' || !(labor.manHours > 0)) return '';
+  const estimate = typeof labor.prefilledManHours === 'number' && labor.prefilledManHours > 0 && labor.prefilledManHours !== labor.manHours ? labor.prefilledManHours : null;
+  return `${manHoursText(labor.manHours)} sold${estimate === null ? '' : ` (${labor.manHours < estimate ? 'below' : 'above'} the estimate of ${manHoursText(estimate)})`}`;
+}
 function builderBreakdown(summary, builder) {
   const lines = Array.isArray(builder?.breakdown?.lines) ? builder.breakdown.lines.filter(plain) : [];
   const goods = id => lines.filter(line => line.section === id && line.sku).map(line => stripCrewMoney(`${line.name} × ${line.qty} pack${line.qty === 1 ? '' : 's'}${line.unitsPerPack > 1 ? ` of ${line.unitsPerPack}` : ''}`).slice(0, 300)).slice(0, 20);
-  const sections = summary.sections.map(section => ['shelving', 'storage'].includes(section.id) && goods(section.id).length ? { ...section, items: goods(section.id) } : section);
+  const labor = laborBreakdownItem(builder?.labor);
+  const sections = [...summary.sections.map(section => ['shelving', 'storage'].includes(section.id) && goods(section.id).length ? { ...section, items: goods(section.id) } : section),
+    ...(labor ? [{ id: 'labor', title: 'Labor', items: [stripCrewMoney(labor)] }] : [])];
   return { ...summary, sections, summary: breakdownLines({ sections }).join('\n').slice(0, 2000) };
 }
 const listNames = names => names.slice(0, 8).join(', ') + (names.length > 8 ? ` and ${names.length - 8} more` : '');
@@ -256,9 +277,11 @@ export function identityMatches(left, right) {
 function requireRevision(row) {
   if (!safeId(row?.id) || typeof row.revision !== 'string' || !row.revision) throw fail('source_unavailable', 'A required customer or source record has no verifiable revision. Keep the form and retry.', 503);
 }
+// A builder quote's crew instructions also name the man-hours sold (laborManHours, D12), never the labor rate or amount.
 export function handoffInstructions(plan, sourceId = '', builder = null) {
   const s = plan.scope, l = plan.logistics, f = s.finish_details || {};
-  return { customerGoal: String(plan.discovery.success || ''), whyNow: String(plan.discovery.why_now || ''), sortMethod: String(s.sort_method || ''), keepItems: String(s.keep_items || ''), removeItems: String(s.remove_items || ''), exclusions: String(s.exclusions || ''), hazards: Array.isArray(s.hazards) ? s.hazards : [], access: Array.isArray(s.access) ? s.access : [], accessNotes: String(l.notes || ''), truckPlacement: String(l.truck_placement || s.truck_placement || ''), specialItems: Array.isArray(s.special_items) ? s.special_items : [], finish: Array.isArray(s.finish) ? s.finish : [], shelving: { type: String(f.shelf_type || ''), qty: Number(f.shelf_qty || 0) }, totes: { qty: Number(f.tote_qty || 0) }, customerNotes: plan.notes, crewSize: l.crew_size, arrivalWindow: `${plan.quote.start_time}–${plan.quote.end_time}`, estimatedJobMinutes: plan.quote.estimated_duration_min, estimatedJobHours: plan.quote.estimated_duration_min / 60, expectedShiftHours: plan.quote.expected_shift_hours, photoCount: plan.photos.before, sourceWalkthroughId: sourceId, ...(plan.quote.itemized ? { materials: handoffMaterials(plan, builder) } : {}) };
+  return { customerGoal: String(plan.discovery.success || ''), whyNow: String(plan.discovery.why_now || ''), sortMethod: String(s.sort_method || ''), keepItems: String(s.keep_items || ''), removeItems: String(s.remove_items || ''), exclusions: String(s.exclusions || ''), hazards: Array.isArray(s.hazards) ? s.hazards : [], access: Array.isArray(s.access) ? s.access : [], accessNotes: String(l.notes || ''), truckPlacement: String(l.truck_placement || s.truck_placement || ''), specialItems: Array.isArray(s.special_items) ? s.special_items : [], finish: Array.isArray(s.finish) ? s.finish : [], shelving: { type: String(f.shelf_type || ''), qty: Number(f.shelf_qty || 0) }, totes: { qty: Number(f.tote_qty || 0) }, customerNotes: plan.notes, crewSize: l.crew_size, arrivalWindow: `${plan.quote.start_time}–${plan.quote.end_time}`, estimatedJobMinutes: plan.quote.estimated_duration_min, estimatedJobHours: plan.quote.estimated_duration_min / 60, expectedShiftHours: plan.quote.expected_shift_hours, photoCount: plan.photos.before, sourceWalkthroughId: sourceId, ...(plan.quote.itemized ? { materials: handoffMaterials(plan, builder) } : {}),
+    ...(typeof builder?.labor?.manHours === 'number' ? { laborManHours: builder.labor.manHours } : {}) };
 }
 function financePatch(plan, previous, jobId, actor, now, builder = null) {
   const total = plan.quote.total, amount = plan.quote.deposit, prior = plain(previous?.deposit) ? previous.deposit : {};
@@ -388,9 +411,12 @@ const builderRequired = () => Object.assign(new Error('With the quote builder on
 // owner-approved now, at exactly the signed amount (compositeApproval, else approvalRefusal: 409
 // quote_draft_composite_prices_unapproved); a walkthrough-priced one never passes it (409 quote_draft_builder_required)
 // unless the owner, who approves prices, releases it (owner).
+// The labor on a signed breakdown keeps the rate the customer signed (approved then: the owner's own rate), so a rate
+// change never strands a held job (signed). A job the customer signed before builder quotes had a Labor line keeps the
+// earlier rules: its signed total has no labor, and goods in it still wait for the owner's installation answer.
 function releaseGate(job, pricing, { owner = false } = {}) {
   if (plain(job.compositeQuote)) {
-    const approval = compositeApproval(job.compositeQuote.breakdown, pricing);
+    const approval = compositeApproval(job.compositeQuote.breakdown, pricing, { signed: true });
     if (!approval.ready) throw approvalRefusal(approval);
     return 'approved_prices';
   }
@@ -542,10 +568,13 @@ export async function saveWalkthroughHandoff(store, actor, input, now = new Date
   // being signed was saved with (a builder draft or an earlier signed builder quote), and never from the browser's
   // amounts: the signed total, and any lines and menu version the page sends, must be exactly the server's (409
   // handoff_builder_price_mismatch). Prices the owner has not approved still book the job (pricesPendingApproval).
-  const selection = !builderOn ? null : builderSent ? signedInput.quote.composite_pricing : savedSelection(previous);
+  // The labor estimate reads the signed plan's fullness. A job signed before the Labor line, revised with its own
+  // selection, keeps its signed price by the earlier rules (signedWithoutLabor); any other selection needs labor.
+  const chosen = !builderOn ? null : builderSent ? signedInput.quote.composite_pricing : savedSelection(previous);
+  const legacy = signedWithoutLabor(previous, chosen), selection = withSignedFullness(chosen, plan);
   let builder = null;
   if (selection) {
-    builder = priceCompositeQuote(await compositeState(env), selection, { complete: true });
+    builder = priceCompositeQuote(await compositeState(env), selection, { complete: true, requireLabor: !legacy });
     const mismatch = builderMismatch(signedInput.quote, builder, Math.round(plan.quote.total * 100));
     if (mismatch) throw mismatch;
     plan = normalizeHandoffPlan(withoutQuoteLines(signedInput), now, { builder, purchase });

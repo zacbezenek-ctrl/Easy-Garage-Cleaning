@@ -26,8 +26,15 @@ for today or the week (first name and town only, no prices). A new role, **Team 
 Owners and managers do too.
 
 **Estimator quote builder and handoff.** At a walkthrough the estimator builds the quote in order: removal first, then
-shelving, then extra storage, priced from your pricing menu. When the estimator signs the handoff, the server prices
-it again and refuses it if anything differs. The estimator can pick one of the open crew times, and the Hub staffs
+shelving, then extra storage, priced from your pricing menu. Every builder quote then gets a **Labor** line on top:
+the estimated man-hours × $40.00 per man-hour (your decision of 2026-10-18). The app fills in the man-hours from its own
+estimate of the quote: the walkthrough time model in person-hours over the removal work, plus an hour per shelving unit
+and a few minutes per tote, the same for any crew size and never capped at one day. The estimator can adjust them
+before sending. Installing shelving and storage is billed through this line; for other storage goods (racks, cabinets,
+hooks, tracks) the app has no install time yet, so such a quote is sent only once the estimator sets the man-hours by
+hand, or you confirm installation is included in the goods price. Man-hours below the estimate show the estimate on
+the job for you. When the estimator signs the
+handoff, the server prices it again, labor included, and refuses it if anything differs. The estimator can pick one of the open crew times, and the Hub staffs
 the job the same way as any other booking. Prices you have not approved yet do not stop the booking, but the job is
 **held**: the customer gets no estimate, portal invitation or deposit request until you approve those prices.
 
@@ -109,12 +116,10 @@ read cost, until the indexes are built).
 7. **Quote builder.** `EGC_QUOTE_BUILDER_ENABLED`: **on by default** since 2026-10-18 (launch default; set it to `false` on Cloudflare Pages to turn it off). Approve the menu prices on the live Hub: a quote with a draft price is saved but not sent.
    - Does: walkthroughs open the guided builder. Quotes with unapproved prices are saved but not sent, and signed jobs
      with unapproved prices are held (no estimate or deposit request) until you approve them.
-   - First: set it under **Preview** only ([GO-LIVE.md](GO-LIVE.md#preview-first-then-production)). The Menu prices
-     tab, its approvals and the installation answer appear only while this switch is on, and Preview uses the same live
-     data. On the preview link, approve the menu prices and answer installation (setup items 6 to 8), then set it under
-     **Production**. Quotes priced the old way that were not sent yet will need to be rebuilt in the builder before
-     they can be sent.
-   - Roll back: delete it. Walkthroughs use their old quote again. Jobs already held stay held until re-signed.
+   - First: nothing to set; it is on. Approve the menu prices and check the labor rate on the live Hub (setup items 6
+     to 8) before estimators send quotes. Quotes priced the old way that were not sent yet will need to be rebuilt in
+     the builder before they can be sent.
+   - Roll back: set it to `false`. Walkthroughs use their old quote again. Jobs already held stay held until re-signed.
 8. **Door-to-door bridge.** `EGC_KNOCK_JOB_BRIDGE`: **on by default** since 2026-10-18 (launch default; set it to `false` on Cloudflare Pages to turn it off).
    - Does: a sale at the door books the customer and a crew job in the Hub; **Walkthrough set** books an estimator.
      Cancelling, reinstating or re-dating a sale in Knock admin follows through to the Hub job. Check Knock → Admin →
@@ -156,15 +161,19 @@ read cost, until the indexes are built).
    Admin as before.
 5. **HighLevel user IDs.** Hub → Team directory → each estimator → HighLevel user ID (copied from HighLevel's staff
    settings). Their walkthrough deals are then assigned to them in HighLevel.
-Items 6 to 8 need the quote builder switch (turn-on step 7), so do them on the Preview link first.
+Items 6 to 8 are on the live Hub: the quote builder is on by default (turn-on step 7).
 
 6. **Approve menu prices.** Hub → Catalog & pricing → Menu prices. Approve up to 100 per save (**Tick all in this
    step** helps). Check the Home Depot prices before you approve them. Held jobs that your approval covers are
    released automatically.
-7. **Installation and goods markup.** In Menu prices, tick **Shelving and storage installation is included in the
-   goods price** only if that is true. Until it is ticked, quotes with shelving or storage are saved but cannot be
-   sent. The goods markup (default × 1.30) is changed on the Pricing tab, which shows only while catalog pricing is
-   on; otherwise the default applies.
+7. **Labor rate and goods markup.** In Menu prices, the **Labor** card shows the rate every builder quote charges per
+   man-hour: $40.00, your decision. It is already approved, so nothing needs ticking. To change it, type the new rate,
+   review and save; quotes saved at the old rate are saved again before they are sent, and a job the customer already
+   signed keeps the rate it was signed at (a held one is released by your price approvals as usual). Installation is
+   billed through the Labor line; tick the installation box only if installation is included in the goods price. It
+   lets quotes with storage goods the app cannot time go out without the estimator's own man-hours, and releases
+   builder quotes saved before the Labor line existed. The goods markup (default × 1.30) is
+   changed on the Pricing tab, which shows only while catalog pricing is on; otherwise the default applies.
 8. **Cleaning base prices.** In Menu prices, enter the cleaning-only amount for each of the four garage sizes before
    approving them. Their draft amounts came from the old walkthrough prices, which already included hauling, so
    approving them unchanged would charge hauling twice. **Tick all** leaves them out on purpose.
@@ -204,9 +213,14 @@ Each has a recommendation. Until you decide, the Hub keeps doing what the item s
 - **Team directory privacy.** Teammates see shirt size and birthday month and day by default; each person can hide
   their birthday. *Recommended: keep.* The youngest allowed birth date is 14 years ago. *Recommended:* keep 14 unless
   you never hire under 16.
-- **Installation of shelving and storage.** Either the goods price includes it (tick the box) or it becomes its own
-  priced line, which needs a decision on how to charge it (per unit, per hour or per job) and a code change.
-  *Recommended:* tick the box only if your goods prices already cover installation.
+- **Installation of shelving and storage.** *Decided 2026-10-18:* every builder quote has a Labor line, the estimated
+  man-hours × $40.00 per man-hour, and installation is billed through it. The man-hours are filled in from the app's
+  estimate of the quote and the estimator can adjust them. Change the rate in Menu prices.
+- **Install times for storage goods.** *Open:* the app times shelving units (1 hour each) and totes, nothing else yet.
+  Until install times are set for racks, cabinets, hooks and tracks, a quote with them waits for the estimator to set
+  the man-hours by hand. *Recommended:* give install times per product (or per group) so the estimate covers them.
+- **Labor on the commission base.** The Labor line is part of the job total, so the setter's 13% and the
+  estimator's 7% (both on the whole price) include it. *Recommended: keep*, since it is the price the customer pays.
 - **Goods markup.** *Recommended:* keep the default until your pricing workbook is approved.
 - **Minimum charge and deposit for builder quotes.** No minimum is applied today, and builder quotes use the standard
   new-quote deposit rule. *Recommended:* choose the minimum before turning on the builder.
@@ -230,6 +244,10 @@ Each has a recommendation. Until you decide, the Hub keeps doing what the item s
   way, outside the builder, is released only when it is rebuilt in the builder and signed again, or by an owner
   release, which has no button yet (ask your developer).
 - **Purchase list:** a crew's **Loaded** tick shows after Refresh, and **Mark all** saves job by job.
+- **Labor man-hours** are filled in from the app's estimate when the quote is built. The crew size does not change
+  them. If the walkthrough's fullness changes afterwards, a saved quote keeps its man-hours and shows the new estimate
+  next to them; the estimator presses **Reset to estimate** (or adjusts them). The signed job records the estimate for
+  the signed walkthrough. Adjusted man-hours change the price, not the booked time: Dispatch books the time estimate.
 - **HighLevel mirror:** a returning customer whose earlier deals are all won or lost waits for a person. Open a deal
   for the new job in HighLevel, then press **Retry** on Integrations. A burst of edits makes one note per edit, the
   older ones marked "(since changed)".
