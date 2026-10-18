@@ -45,8 +45,9 @@ import { prepareWalkthroughCaptureSync, walkthroughCaptureSyncView } from './wal
  * shelving, then extra storage, then the Labor line of man-hours x the owner's labor rate; composite-quote.js): the
  * server re-prices it, labor included, from the selection and its own rate, saves its lines and the cost-free section
  * breakdown (quoteDraft.breakdown), and refuses a send preview or send while any of its prices is a draft the owner
- * has not approved, its labor rate is no longer the owner's, or it has no Labor line (quote_draft_composite_prices_
- * unapproved, with every reason in details.unapproved).
+ * has not approved, its labor rate is no longer the owner's, it has no Labor line, or its man-hours were pre-filled
+ * from an estimate with no install time for some of its goods (quote_draft_composite_prices_unapproved, with every
+ * reason in details.unapproved).
  * While that flag is on, a walkthrough quote priced outside the builder (no composite or catalog pricing) is saved
  * as before but its send preview and send are refused (quote_draft_builder_required, 409).
  * With FUNNEL_PAYMENT_EVENTS_ENABLED (and MONEY_API_ENABLED) a material revision
@@ -146,8 +147,11 @@ function quotePatch(job, inputDraft, actor, now, jobId, newQuotePaymentPolicy) {
   // an author switches between catalog and legacy quote sources.
   const priorCatalog = plain(job?.quoteDraft?.catalogPricing) ? job.quoteDraft.catalogPricing : null;
   const nextCatalog = draft.catalogPricing || null;
-  // A builder quote's selection and menu/settings versions are provenance in the same way.
-  const priorComposite = plain(job?.quoteDraft?.compositePricing) ? job.quoteDraft.compositePricing : null, nextComposite = draft.compositePricing || null;
+  // A builder quote's selection and menu/settings versions are provenance in the same way. Of its labor only the
+  // man-hours are terms the customer reviewed (the rate is in the lines): the estimate's inputs (the garage fullness)
+  // and whether the estimator adjusted them are internal, so a re-save that changes only those is not material.
+  const termsOf = pricing => plain(pricing) && plain(pricing.labor) ? { ...pricing, labor: { manHours: pricing.labor.manHours } } : pricing;
+  const priorComposite = termsOf(plain(job?.quoteDraft?.compositePricing) ? job.quoteDraft.compositePricing : null), nextComposite = termsOf(draft.compositePricing || null);
   const provenanceChanged = canonical(priorComposite) !== canonical(nextComposite) || canonical(priorCatalog) !== canonical(nextCatalog) || Boolean(priorCatalog || nextCatalog) && (
     current.catalogVersion !== draft.catalogVersion || (current.pricingSettingsVersion ?? null) !== (draft.pricingSettingsVersion ?? null) ||
     (current.depositPct ?? null) !== (draft.depositPct ?? null));

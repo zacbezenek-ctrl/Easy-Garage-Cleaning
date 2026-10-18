@@ -548,8 +548,8 @@ async function send(body){
     S.retry=null;
     if(body.action==='menu.approve'){
       S.menuPick=null;S.menuErrors={};
-      const answered=typeof body.goodsInstallationIncluded!=='boolean'?'':body.goodsInstallationIncluded?' Shelving and storage installation is now confirmed as included in the goods price for builder quotes saved before the Labor line.':' Installation is no longer confirmed: older builder quotes with goods and no Labor line wait again.';
-      const rate=Number.isSafeInteger(body.laborRatePerManHourCents)?` The labor rate is now ${money(body.laborRatePerManHourCents)} per man-hour: new builder quotes charge it, and saved quotes at the old rate are saved again before they are sent.`:'';
+      const answered=typeof body.goodsInstallationIncluded!=='boolean'?'':body.goodsInstallationIncluded?' Shelving and storage installation is now confirmed as included in the goods price: builder quotes no longer wait for install time the labor estimate leaves out, nor do older quotes saved before the Labor line.':' Installation is no longer confirmed: builder quotes whose man-hours leave out installing some goods, and older builder quotes with goods and no Labor line, wait again.';
+      const rate=Number.isSafeInteger(body.laborRatePerManHourCents)?` The labor rate is now ${money(body.laborRatePerManHourCents)} per man-hour: new builder quotes charge it, saved quotes at the old rate are saved again before they are sent, and jobs the customer already signed keep the rate they signed.`:'';
       const changed=body.approve.length+body.revoke.length;
       S.notice={kind:'success',text:`${changed?`Approved ${body.approve.length} and revoked ${body.revoke.length} pricing-menu price${changed===1?'':'s'}.`:''}${answered}${rate}${data.approvals.current===false?' A newer approval replaced this one since; the latest is shown.':''}${changed?' Builder quotes that use them can be sent now.':''}${heldText(data.heldJobs)}`.trim()};
     }else if(body.action==='settings.update'){
@@ -654,7 +654,7 @@ function settingsPanel(){
     bound({name:'roundingRule',label:'Cent rounding',type:'select',options:Object.entries(ROUNDING).map(([value,label])=>({value,label}))},form,errors,update),
     // Only the quote builder prices with the goods multiplier, so it shows only when the builder is on (S.menu).
     S.menu&&bound({name:'goodsMarkup',label:'Goods markup (pricing-menu multiplier)',type:'text',inputmode:'decimal',autocomplete:'off',help:'Quote-builder goods sell at their public retail cost × this number, like 1.30. Each menu price still needs your approval under Menu prices.'},form,errors,update),
-    S.menu&&bound({name:'goodsInstallationIncluded',label:'Shelving and storage installation is included in the goods price',type:'checkbox',help:'The quote builder has no installation line: goods sell at cost × the goods markup. Until you tick this, builder quotes with shelving or storage are saved but cannot be sent.'},form,errors,update)].filter(Boolean);
+    S.menu&&bound({name:'goodsInstallationIncluded',label:'Shelving and storage installation is included in the goods price',type:'checkbox',help:'The quote builder bills installation through its Labor line, but its time estimate has install times only for shelving units and totes. Until you tick this, a builder quote with other storage goods is sent only once the estimator sets its man-hours by hand, and an older quote saved without a Labor line is not sent.'},form,errors,update)].filter(Boolean);
   const markups=[bound({name:'markup.default',label:'Default markup (%)',type:'text',inputmode:'decimal',autocomplete:'off',help:'Used by any category left blank.'},form,errors,update),
     ...PRODUCT_CATEGORIES.map(category=>bound({name:'markup.'+category,label:(S.base.categories.find(entry=>entry.id===category)?.label||category)+' (%)',type:'text',inputmode:'decimal',autocomplete:'off',placeholder:'Default'},form,errors,update))];
   const saved=S.data.settings;
@@ -786,8 +786,9 @@ const menuDrafts=()=>menuItems().filter(item=>!item.approved&&Number.isSafeInteg
 function menuPick(){return S.menuPick||(S.menuPick={approve:{},revoke:{}});}
 // The owner's answer to the builder's installation question (menu.approve goodsInstallationIncluded): the stored answer,
 // and the pending change (pick.installation, a boolean) when the owner ticked or unticked it. With catalog pricing off
-// this is the only place to give it: the Pricing tab and its settings are not available then. Builder quotes now bill
-// installation through their Labor line, so the answer only matters for a quote saved before the Labor line existed.
+// this is the only place to give it: the Pricing tab and its settings are not available then. Builder quotes bill
+// installation through their Labor line; the answer matters for goods the labor estimate has no install time for (until
+// the estimator sets the man-hours by hand) and for a quote saved before the Labor line existed.
 const installationConfirmed=()=>S.menu?.internal?.installationConfirmed===true;
 const installationChange=()=>typeof menuPick().installation==='boolean'?1:0;
 // The labor rate (D12): every builder quote's Labor line is man-hours × this rate. pick.laborRate is the owner's edit
@@ -817,21 +818,21 @@ function laborCard(m,frozen){
   const input=h('input',{id:'cat-menu-labor-rate',class:'cat-menu-amount',type:'text',inputmode:'decimal',autocomplete:'off',value:laborRateEdit()??dollars(now),disabled:frozen,'aria-describedby':'cat-menu-labor-help',oninput:event=>{pick.laborRate=event.target.value;if(S.menuErrors)delete S.menuErrors.laborRate;},onchange:()=>render()});
   return h('section',{class:'hub-card cat-card cat-labor','data-labor-rate':String(now)},
     h('h2',{},`Labor: ${money(now)} per man-hour`),
-    h('p',{id:'cat-menu-labor-help',class:'cat-muted'},`Every builder quote has a Labor line: the estimated man-hours × this rate, on top of the menu prices. The estimator's app pre-fills the man-hours from the job's time estimate (crew size × hours on site) and the estimator can adjust them. Shelving and storage installation is billed through this line. ${source} The rate is approved: quotes can be sent with it.`),
+    h('p',{id:'cat-menu-labor-help',class:'cat-muted'},`Every builder quote has a Labor line: the estimated man-hours × this rate, on top of the menu prices. The estimator's app pre-fills the man-hours from its own time estimate of the quote (the walkthrough time model over the removal work, plus the install time of shelving units and totes), the same for any crew size, and the estimator can adjust them; man-hours below the estimate show the estimate on the job. Shelving and storage installation is billed through this line. ${source} The rate is approved: quotes can be sent with it.`),
     h('label',{class:'hub-field cat-labor-field',for:'cat-menu-labor-rate'},h('span',{},'Labor rate per man-hour ($)'),input),
     error?h('small',{class:'cat-error'},error):null,
-    laborChange()?h('p',{class:'cat-muted'},'Review the change below to save it. Saved quotes at the old rate are saved again before they are sent.'):null);
+    laborChange()?h('p',{class:'cat-muted'},'Review the change below to save it. Saved quotes at the old rate are saved again before they are sent; jobs the customer already signed keep the rate they signed.'):null);
 }
-// The installation question on Menu prices: asked while older goods quotes may wait for it, and kept (to take it back)
-// once the owner answered it here. An answer saved under Pricing (catalog pricing on) needs nothing here.
+// The installation question on Menu prices: asked while goods quotes may wait for it, and kept (to take it back) once
+// the owner answered it here. An answer saved under Pricing (catalog pricing on) needs nothing here.
 function installationCard(m,frozen){
   const pick=menuPick(),included=m.internal?.goodsInstallationIncluded===true,confirmed=installationConfirmed();
   if(!m.internal||included&&!confirmed)return null;
   const checked=typeof pick.installation==='boolean'?pick.installation:confirmed;
   const box=h('input',{type:'checkbox',id:'cat-menu-installation',checked,disabled:frozen,onchange:event=>{const value=event.target.checked===true;if(value===confirmed)delete pick.installation;else pick.installation=value;render();}});
   return h('div',{class:'hub-notice'+(included?'':' warning')},
-    included?'You confirmed that shelving and storage installation is included in the goods price. This only matters for builder quotes saved before the Labor line: new quotes bill installation through labor.':'Only for builder quotes saved or signed before the Labor line existed: their shelving or storage waits for your installation decision. New builder quotes bill installation through the Labor line and never wait for this. Tick it if installation is included in the goods price of those older quotes.',
-    h('label',{class:'cat-check',for:'cat-menu-installation'},box,' Shelving and storage installation is included in the goods price (older quotes)'));
+    included?'You confirmed that shelving and storage installation is included in the goods price. Builder quotes then never wait for install time their labor estimate leaves out, and older quotes saved before the Labor line do not wait either.':'Builder quotes bill installation through the Labor line, but the labor estimate has install times only for shelving units and totes. A quote with other storage goods (overhead racks, cabinets, hooks, track systems and the like) is sent once the estimator sets its man-hours by hand to include installing them, or once you tick this. Builder quotes saved or signed before the Labor line existed wait for this answer too. Tick it only if installation is included in the goods price.',
+    h('label',{class:'cat-check',for:'cat-menu-installation'},box,' Shelving and storage installation is included in the goods price'));
 }
 function menuRow(item,frozen){
   const pick=menuPick(),ticked=Boolean(pick.approve[item.id]),canAmount=item.kind==='service';

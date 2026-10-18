@@ -920,8 +920,8 @@ const builderState = (approvals = {}, settings = {}) => ({ menu: builderMenu, se
 const menuItem = name => builderMenu.services.find(item => item.name === name) || builderMenu.products.find(item => item.name === name);
 const approvedAt = (item, unitCents) => ({ unitCents, identity: menuItemIdentity(item) });
 const SHELF = builderMenu.products.find(item => item.id === 'hd-100006678');
-// D12: a whole builder quote carries labor, here the pre-fill of a crew of 2 for 3 hours on site (6 man-hours, $240.00).
-const BUILDER_LABOR = { manHours: 6, estimate: { crewSize: 2, onSiteMinutes: 180 } }, BUILDER_LABOR_CENTS = 24000;
+// D12: a whole builder quote carries labor, here 6 man-hours as saved ($240.00) in a medium-full garage.
+const BUILDER_LABOR = { manHours: 6, fullness: 'medium' }, BUILDER_LABOR_CENTS = 24000;
 const builderSelection = ({ steps = ['removal', 'shelving', 'storage'], removal = [{ id: menuItem('Two-car garage base').id, quantity: 1 }, { id: menuItem('Full truck load').id, quantity: 1 }, { id: menuItem('Mattress').id, quantity: 2 }], shelving = [{ id: SHELF.id, quantity: 2 }], storage = [], labor = steps.length === 3 ? BUILDER_LABOR : undefined } = {}) =>
   ({ menuVersion: builderMenu.menuVersion, settingsVersion: builderSettings.settingsVersion, steps, removal, shelving, storage, ...(labor ? { labor: structuredClone(labor) } : {}) });
 function builderInput(f, selection = builderSelection(), state = builderState()) {
@@ -941,7 +941,8 @@ test('builder quote: the server re-prices and saves its lines, breakdown and sel
   assert.deepEqual([labor.kind, labor.name, labor.quantity, labor.unitCents, labor.totalCents, labor.split], ['labor', 'Labor: 6 man-hours × $40.00', 1, BUILDER_LABOR_CENTS, BUILDER_LABOR_CENTS, null]);
   assert.equal(job.estimate.amountCents, 97500 + 75000 + 14000 + 23140 + BUILDER_LABOR_CENTS);
   assert.equal(job.estimate.depositRequiredCents, Math.round(job.estimate.amountCents / 2), 'the deposit (50% for this policy-free draft) is on the total with labor');
-  assert.deepEqual(job.quoteDraft.breakdown.labor, { manHours: 6, rateCents: 4000, rateSource: 'default', totalCents: BUILDER_LABOR_CENTS, prefilledManHours: 6, adjusted: false, estimate: { crewSize: 2, onSiteMinutes: 180 } });
+  assert.deepEqual(job.quoteDraft.breakdown.labor, { manHours: 6, rateCents: 4000, rateSource: 'default', totalCents: BUILDER_LABOR_CENTS, prefilledManHours: 9, adjusted: false, belowEstimate: true,
+    estimate: { personMinutes: 540, removalPersonMinutes: 420, installPersonMinutes: 120, fullness: 'medium', installNotEstimated: [] } }, 'the server\'s own estimate (9 man-hours) is recorded next to the 6 sold');
   assert.deepEqual(job.quoteDraft.compositePricing, priced.compositePricing);
   assert.deepEqual(job.quoteDraft.breakdown, priced.breakdown);
   assert.deepEqual(result.job.breakdown.sections.map(section => [section.id, section.subtotalCents]), [['removal', 97500 + 75000 + 14000], ['shelving', 23140], ['storage', 0]]);
@@ -1075,15 +1076,18 @@ test('builder labor: a tampered labor amount is refused, the rate is the server\
   const dropped = structuredClone(input); dropped.draft.line_items.pop();
   await assert.rejects(saveQuoteDraft(f.store, owner, dropped, NOW, options), error => error.code === 'quote_draft_composite_price_changed', 'the Labor line cannot be left off');
   // The selection carries man-hours only: a rate or amount in it is refused, never trusted.
-  for (const labor of [{ ...BUILDER_LABOR, rateCents: 1 }, { ...BUILDER_LABOR, totalCents: 1 }, { manHours: 6.1, estimate: null }, { manHours: 0.25, estimate: null }, { manHours: 201, estimate: null }, { manHours: '6', estimate: null }, { estimate: null }, { manHours: 6, estimate: { crewSize: 21, onSiteMinutes: 180 } }]) {
+  // The time estimate is the server's: a browser estimate (crew size and minutes on site) is refused too.
+  for (const labor of [{ ...BUILDER_LABOR, rateCents: 1 }, { ...BUILDER_LABOR, totalCents: 1 }, { manHours: 6.1 }, { manHours: 0.25 }, { manHours: 201 }, { manHours: '6' }, { fullness: 'medium' }, { manHours: 6, estimate: { crewSize: 2, onSiteMinutes: 180 } },
+    { manHours: null, adjusted: true }, { manHours: 6, adjusted: 'yes' }, { manHours: 6, fullness: 'stuffed' }, { manHours: 6, prefilledManHours: 6 }]) {
     const bad = structuredClone(input); bad.draft.composite_pricing.labor = labor;
     await assert.rejects(saveQuoteDraft(f.store, owner, bad, NOW, options), error => error.code === 'quote_draft_composite_invalid_labor' && error.status === 400, JSON.stringify(labor));
   }
-  // No labor at all, or no man-hours and no estimate to pre-fill them from: the save is refused.
+  // No labor at all, or no man-hours and no time model to estimate them from: the save is refused.
   const none = structuredClone(input); delete none.draft.composite_pricing.labor;
   await assert.rejects(saveQuoteDraft(f.store, owner, none, NOW, options), error => error.code === 'quote_draft_composite_labor_required' && error.status === 400);
-  const blank = structuredClone(input); blank.draft.composite_pricing.labor = { manHours: null, estimate: null };
-  await assert.rejects(saveQuoteDraft(f.store, owner, blank, NOW, options), error => error.code === 'quote_draft_composite_labor_required');
+  const blank = structuredClone(input); blank.draft.composite_pricing.labor = { manHours: null };
+  const untimed = { ...state, walkthrough: { ...state.walkthrough, minutes: undefined } };
+  await assert.rejects(saveQuoteDraft(f.store, owner, blank, NOW, { ...options, compositeState: async () => untimed }), error => error.code === 'quote_draft_composite_labor_required');
   assert.equal(f.calls.length, 0, 'nothing was written');
   // The honest save: the server prices labor at its own rate; then the owner moves the rate and the send waits for a re-save.
   const result = await saveQuoteDraft(f.store, owner, input, NOW, options), job = f.job(result.job.id);
@@ -1103,18 +1107,24 @@ test('builder labor: a tampered labor amount is refused, the rate is the server\
     error => error.code === 'quote_draft_composite_prices_unapproved' && error.details.unapproved.some(row => row.id === 'labor' && /no Labor line/.test(row.reason)));
 });
 
-test('builder labor: the estimator\'s adjustment is recorded with the pre-fill it replaced, and man-hours round to the cent', () => {
+test('builder labor: the estimator\'s adjustment is recorded with the server\'s estimate it replaced, and man-hours round to the cent', () => {
   const state = builderState();
   const at = labor => priceCompositeQuote(state, builderSelection({ labor }), { complete: true });
-  const adjusted = at({ manHours: 7.25, estimate: { crewSize: 2, onSiteMinutes: 180 } });
-  assert.deepEqual(adjusted.labor, { manHours: 7.25, rateCents: 4000, rateSource: 'default', totalCents: 29000, prefilledManHours: 6, adjusted: true, estimate: { crewSize: 2, onSiteMinutes: 180 } });
-  assert.deepEqual(adjusted.compositePricing.labor, { manHours: 7.25, estimate: { crewSize: 2, onSiteMinutes: 180 } });
-  // null asks for the pre-fill: crew size × hours on site, to the nearest quarter hour, within 0.5 to 200.
-  assert.deepEqual([at({ manHours: null, estimate: { crewSize: 3, onSiteMinutes: 255 } }).labor.manHours, at({ manHours: null, estimate: { crewSize: 1, onSiteMinutes: 20 } }).labor.manHours, at({ manHours: null, estimate: { crewSize: 20, onSiteMinutes: 1440 } }).labor.manHours], [12.75, 0.5, 200]);
-  // Entered by hand (no estimate): adjusted, with no pre-fill.
-  assert.deepEqual([at({ manHours: 3, estimate: null }).labor.prefilledManHours, at({ manHours: 3, estimate: null }).labor.adjusted], [null, true]);
+  // The selection: a two-car base, one full truck load and two mattresses in a medium-full garage, plus two shelving units:
+  // 2 x (60 + 90 + 30 + 2 x 15) + 2 x 60 = 540 person-minutes = 9 man-hours.
+  const estimate = { personMinutes: 540, removalPersonMinutes: 420, installPersonMinutes: 120, fullness: 'medium', installNotEstimated: [] };
+  const adjusted = at({ manHours: 7.25, adjusted: true, fullness: 'medium' });
+  assert.deepEqual(adjusted.labor, { manHours: 7.25, rateCents: 4000, rateSource: 'default', totalCents: 29000, prefilledManHours: 9, adjusted: true, belowEstimate: true, estimate });
+  assert.deepEqual(adjusted.compositePricing.labor, { manHours: 7.25, adjusted: true, fullness: 'medium' });
+  // null asks for the server's estimate, which reads the garage fullness (unknown: the model's default, medium).
+  assert.deepEqual(['light', 'medium', 'full', 'packed', null].map(fullness => at({ manHours: null, fullness }).labor.manHours), [8, 9, 10, 12, 9]);
+  assert.deepEqual(at({ manHours: null, fullness: 'packed' }).compositePricing.labor, { manHours: 12, adjusted: false, fullness: 'packed' }, 'the saved selection keeps the man-hours priced');
+  // Entered by hand without a time model: adjusted, with no estimate.
+  const untimed = { ...state, walkthrough: { ...state.walkthrough, minutes: undefined } };
+  const byHand = priceCompositeQuote(untimed, builderSelection({ labor: { manHours: 3, adjusted: true } }), { complete: true }).labor;
+  assert.deepEqual([byHand.prefilledManHours, byHand.adjusted, byHand.belowEstimate, byHand.estimate], [null, true, false, null]);
   // An odd-cent rate: a quarter hour at $40.50 is $10.125, rounded half up to $10.13.
   const odd = { ...state, approvals: { ...state.approvals, laborRatePerManHourCents: 4050 } };
-  assert.equal(priceCompositeQuote(odd, builderSelection({ labor: { manHours: 0.75, estimate: null } }), { complete: true }).labor.totalCents, 3038);
-  assert.equal(priceCompositeQuote(odd, builderSelection({ labor: { manHours: 200, estimate: null } }), { complete: true }).labor.totalCents, 810000);
+  assert.equal(priceCompositeQuote(odd, builderSelection({ labor: { manHours: 0.75, adjusted: true } }), { complete: true }).labor.totalCents, 3038);
+  assert.equal(priceCompositeQuote(odd, builderSelection({ labor: { manHours: 200, adjusted: true } }), { complete: true }).labor.totalCents, 810000);
 });

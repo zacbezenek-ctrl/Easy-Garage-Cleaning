@@ -78,7 +78,7 @@ test('estimator end to end: builder quote, crew opening, signed job on Crew 1 wi
   assert.doesNotMatch(JSON.stringify(menuView), /retailPerPackCents|goodsMarkup|"internal":\{/, 'an estimator sees sell prices only');
   assert.equal(menuView.viewer.internal, false);
   // The labor rate on the estimator's menu: the owner's $40.00 per man-hour, approved (D12).
-  assert.deepEqual([menuView.labor.rateCents, menuView.labor.approved, menuView.installation], [4000, true, { included: true, billedAs: 'labor' }]);
+  assert.deepEqual([menuView.labor.rateCents, menuView.labor.approved, menuView.installation], [4000, true, { included: false, billedAs: 'labor' }]);
   // As the builder sends them: a step preview carries no labor; the whole quote carries the estimator's man-hours.
   const chosen = selection(), { labor: _labor, ...items } = chosen, through = steps => ({ ...items, steps, ...Object.fromEntries(['removal', 'shelving', 'storage'].filter(step => !steps.includes(step)).map(step => [step, []])) });
   const removal = await post({ action: 'composite_preview', compositePricing: through(['removal']) });
@@ -86,7 +86,8 @@ test('estimator end to end: builder quote, crew opening, signed job on Crew 1 wi
   const preview = await post({ action: 'composite_preview', compositePricing: chosen });
   assert.deepEqual([removal.status, shelving.status, preview.status], [200, 200, 200]);
   assert.deepEqual(preview.body.steps.map(step => [step.id, step.runningTotalCents]), [['removal', removal.body.totalCents], ['shelving', shelving.body.totalCents], ['storage', preview.body.totalCents - LABOR_CENTS], ['labor', preview.body.totalCents]], 'a running total per step, then the labor');
-  assert.deepEqual(preview.body.labor, { manHours: 6, rateCents: 4000, rateSource: 'default', totalCents: LABOR_CENTS, prefilledManHours: 6, adjusted: false, estimate: { crewSize: 2, onSiteMinutes: 180 } });
+  assert.deepEqual(preview.body.labor, { manHours: 6, rateCents: 4000, rateSource: 'default', totalCents: LABOR_CENTS, prefilledManHours: 9, adjusted: false, belowEstimate: true,
+    estimate: { personMinutes: 544, removalPersonMinutes: 360, installPersonMinutes: 184, fullness: 'medium', installNotEstimated: [] } });
   assert.deepEqual(preview.body.lineItems.at(-1), { id: 'labor', kind: 'labor', name: 'Labor: 6 man-hours × $40.00', description: 'Crew time on site, billed per man-hour, including installing the shelving and storage.', quantity: 1, unitCents: LABOR_CENTS, totalCents: LABOR_CENTS, amount: 240, optional: false, selected: true, group: null, tier: null, package: null, catalog: null, customerSupplied: false, taxable: false });
   const outOfOrder = await post({ action: 'composite_preview', compositePricing: { ...chosen, steps: ['shelving', 'removal', 'storage'] } });
   assert.deepEqual([outOfOrder.status, outOfOrder.body.code], [400, 'quote_draft_composite_order']);
@@ -128,13 +129,14 @@ test('estimator end to end: builder quote, crew opening, signed job on Crew 1 wi
   assert.deepEqual([job.total, job.priceQuoted, job.estimate.depositRequired], [priced.totalCents / 100, priced.totalCents / 100, Math.round(priced.totalCents / 2) / 100]);
   assert.ok(priced.totalCents - LABOR_CENTS === priced.breakdown.sections.reduce((sum, section) => sum + section.subtotalCents, 0), 'the menu steps plus the labor are the total');
   assert.deepEqual(job.compositeQuote.breakdown.labor, priced.labor);
-  assert.deepEqual(job.jobBreakdown.sections.at(-1), { id: 'labor', title: 'Labor', items: ['6 man-hours (about 3 hours on site for a crew of 2)'] });
+  // The man-hours are the time sold, never an on-site time; below the server's estimate, the estimate shows (flow-8).
+  assert.deepEqual(job.jobBreakdown.sections.at(-1), { id: 'labor', title: 'Labor', items: ['6 man-hours sold (below the estimate of 9 man-hours)'] });
   assert.equal(job.jobInstructions.laborManHours, 6);
-  assert.deepEqual(walkthroughCrewBrief(job.jobInstructions).filter(row => ['Man-hours sold', 'Job breakdown'].includes(row.label)).map(row => [row.label, row.text.split('\n').at(-1)]), [['Man-hours sold', '6 man-hours'], ['Job breakdown', 'Labor: 6 man-hours (about 3 hours on site for a crew of 2)']]);
+  assert.deepEqual(walkthroughCrewBrief(job.jobInstructions).filter(row => ['Man-hours sold', 'Job breakdown'].includes(row.label)).map(row => [row.label, row.text.split('\n').at(-1)]), [['Man-hours sold', '6 man-hours'], ['Job breakdown', 'Labor: 6 man-hours sold (below the estimate of 9 man-hours)']]);
   const crewView = fieldJobProjection(job, [], { purchaseDetails: true });
   assert.match(JSON.stringify(crewView), /6 man-hours/);
   assert.doesNotMatch(JSON.stringify([crewView, job.jobBreakdown, job.jobInstructions]), /\$\s?\d|rateCents|"totalCents"|Labor: 6 man-hours ×/, 'the crew never sees the labor rate or amount');
-  assert.match(scheduleMirrorNote({ kind: 'scheduled', job }).body, /\nLabor: 6 man-hours \(about 3 hours on site for a crew of 2\)\n/);
+  assert.match(scheduleMirrorNote({ kind: 'scheduled', job }).body, /\nLabor: 6 man-hours sold \(below the estimate of 9 man-hours\)\n/);
   assert.deepEqual(job.acceptedHandoffPayload.quote.estimate_line_items, normalizeLineItems(priced.lineItems, { strict: true }).lineItems);
   assert.doesNotMatch(JSON.stringify([signed, job.acceptedHandoffPayload, job.jobInstructions]), /markupCents|productCents|"split":\{/);
   assert.deepEqual([job.estimate.amount, job.estimate.depositRequired, job.estimate.status, job.estimate.catalogVersion, job.estimate.pricingSettingsVersion], [priced.totalCents / 100, Math.round(priced.totalCents / 2) / 100, 'accepted', priced.menuVersion, priced.settingsVersion]);

@@ -22,9 +22,9 @@ const service = name => menu.services.find(item => item.name === name);
 const TRUCK = service('Full truck load'), HALF = service('Half load'), TWO_CAR = service('Two-car garage base'), ONE_CAR = service('One-car garage base'), MATTRESS = service('Mattress'), STAIRS = service('Stairs');
 const DEEP_TWO = service('Deep cleaning, two-car'), DEEP_THREE = service('Deep cleaning, three-car'), WASH = service('Pressure washing, one-car'), QUARTER = service('Quarter load');
 const pick = (item, quantity = 1) => ({ id: item.id, quantity });
-// D12: every builder quote carries labor; a complete quote here keeps the pre-fill of a crew of 2 for 3 hours on site
-// (6 man-hours x $40.00 = $240.00). A step preview sends none.
-const LABOR = { manHours: 6, estimate: { crewSize: 2, onSiteMinutes: 180 } }, LABOR_CENTS = 24000;
+// D12: every builder quote carries labor; a complete quote here carries 6 man-hours as saved (6 x $40.00 = $240.00) in a
+// medium-full garage. A step preview sends none.
+const LABOR = { manHours: 6, fullness: 'medium' }, LABOR_CENTS = 24000;
 const descriptor = ({ steps = BUILDER_STEPS, removal = [], shelving = [], storage = [], s = state(), labor = steps.length === BUILDER_STEPS.length ? LABOR : undefined } = {}) => ({ menuVersion: menu.menuVersion, settingsVersion: s.settings.settingsVersion, steps: [...steps], removal, shelving, storage, ...(labor ? { labor: structuredClone(labor) } : {}) });
 const costFree = value => assert.doesNotMatch(JSON.stringify(value), /retailPerPackCents|"split"|productCents|markupCents|laborCents|goodsMarkup|basis/, 'no cost, multiplier or cost split');
 // An owner approval as menu.approve stores it: the amount and the identity of the item it was given for.
@@ -179,7 +179,8 @@ test('installation is billed through the Labor line (D12); only a quote saved be
   assert.deepEqual(ready.approval, { ready: true, blocked: [] });
   assert.match(ready.lineItems.at(-1).description, /including installing the shelving and storage/);
   assert.equal(priceCompositeQuote(state(), descriptor({ removal: [pick(TRUCK)] }), { complete: true }).lineItems.at(-1).description, 'Crew time on site, billed per man-hour.', 'removal alone has no installation to mention');
-  assert.deepEqual(builderMenu(state()).installation, { included: true, billedAs: 'labor' });
+  // installation.included: the owner's answer (installation included in the goods price); the Labor line bills it otherwise.
+  assert.deepEqual(builderMenu(state()).installation, { included: false, billedAs: 'labor' });
   assert.deepEqual(builderMenu(state({ settings: INSTALLED })).installation, { included: true, billedAs: 'labor' });
   assert.equal(builderMenu(state({ settings: INSTALLED }), { internal: true }).internal.goodsInstallationIncluded, true);
   // A breakdown saved before the Labor line existed: an unsent draft must be saved again (with labor); a job the

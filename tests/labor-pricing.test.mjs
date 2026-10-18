@@ -1,12 +1,12 @@
 // D12 (owner, 2026-10-18): "We have to price man hours estimated to do the job. It's $40 an hour." Every builder quote
 // carries a Labor line = the estimated man-hours x the owner's labor rate ($40.00 per man-hour until the owner changes it
-// on Menu prices), on top of the menu lines; the man-hours are pre-filled from the job's own time estimate (crew size x
-// hours on site) and the estimator may adjust them. The rate is never read from the browser, and the signed handoff
+// on Menu prices), on top of the menu lines; the man-hours are pre-filled from the server's own time estimate of the
+// selection (laborEstimate, person-minutes) and the estimator may adjust them. The rate is never read from the browser, and the signed handoff
 // prices the labor again exactly like every other builder line. Synthetic data only (tests/helpers/estimator-fixture.mjs).
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
-import { DEFAULT_LABOR_RATE_CENTS, LABOR_ID, LABOR_MAN_HOURS, laborRate, laborTotalCents, prefilledManHours, priceCompositeQuote, validManHours } from '../functions/_lib/composite-quote.js';
+import { DEFAULT_LABOR_RATE_CENTS, LABOR_ID, LABOR_MAN_HOURS, laborRate, laborTotalCents, manHoursOf, priceCompositeQuote, validManHours } from '../functions/_lib/composite-quote.js';
 import { saveQuoteDraft } from '../functions/_lib/quote-draft.js';
 import { saveWalkthroughHandoff } from '../functions/_lib/walkthrough-handoff.js';
 import { quoteDraftHandlers } from '../functions/api/quote-draft.js';
@@ -17,19 +17,19 @@ import { BASE_ENV, LABOR, LABOR_CENTS, NOW, ON_ENV, builderState, client, estima
 const signedLines = priced => priced.lineItems.map(line => ({ id: line.id, kind: line.kind, name: line.name, description: line.description, quantity: line.quantity, unitCents: line.unitCents, totalCents: line.totalCents }));
 const handoff = (n, quote, extra = {}) => ({ actorId: owner.user, requestId: randomUUID(), customerId: `c${n}`, sourceWalkthroughId: `w${n}`, sourceRevision: `w${n}r`, ...extra, plan: signedPlan(n, { quote, ...(quote.total ? { total: quote.total } : {}) }) });
 
-test('the labor math: $40.00 by default, man-hours 0.5 to 200 in quarter hours, the pre-fill is crew size × hours on site, totals round half up to the cent', () => {
+test('the labor math: $40.00 by default, man-hours 0.5 to 200 in quarter hours, person-minutes to the nearest quarter hour, totals round half up to the cent', () => {
   assert.equal(DEFAULT_LABOR_RATE_CENTS, 4000);
   assert.deepEqual(LABOR_MAN_HOURS, { min: 0.5, max: 200, step: 0.25 });
   assert.deepEqual(laborRate({ approvals: { items: {}, revision: null } }), { rateCents: 4000, source: 'default', reason: 'Owner decision (2026-10-18): $40.00 per man-hour.' });
   assert.deepEqual(laborRate({ approvals: { items: {}, revision: 'r', laborRatePerManHourCents: 4500 } }).rateCents, 4500);
   for (const [value, ok] of [[0.5, true], [0.75, true], [6, true], [6.25, true], [199.75, true], [200, true], [0.25, false], [0, false], [-1, false], [6.1, false], [200.25, false], ['6', false], [null, false], [NaN, false], [Infinity, false]]) assert.equal(validManHours(value), ok, String(value));
-  // Pre-fill: crew size × minutes on site / 60, to the nearest quarter hour, kept within the bounds.
-  assert.equal(prefilledManHours({ crewSize: 2, onSiteMinutes: 180 }), 6);
-  assert.equal(prefilledManHours({ crewSize: 3, onSiteMinutes: 270 }), 13.5);
-  assert.equal(prefilledManHours({ crewSize: 3, onSiteMinutes: 245 }), 12.25, '12.25 exactly (735 person-minutes)');
-  assert.equal(prefilledManHours({ crewSize: 1, onSiteMinutes: 20 }), 0.5, 'never below half an hour');
-  assert.equal(prefilledManHours({ crewSize: 20, onSiteMinutes: 1440 }), 200, 'never above 200');
-  assert.equal(prefilledManHours(null), null);
+  // The estimate's person-minutes as man-hours: to the nearest quarter hour, kept within the bounds.
+  assert.equal(manHoursOf(360), 6);
+  assert.equal(manHoursOf(810), 13.5);
+  assert.equal(manHoursOf(735), 12.25, '12.25 exactly (735 person-minutes)');
+  assert.equal(manHoursOf(544), 9, '544 person-minutes is 9.07 hours: 9 to the nearest quarter');
+  assert.equal(manHoursOf(20), 0.5, 'never below half an hour');
+  assert.equal(manHoursOf(28800), 200, 'never above 200');
   // Total = man-hours × rate to the cent.
   assert.equal(laborTotalCents(6, 4000), 24000);
   assert.equal(laborTotalCents(6.25, 4000), 25000);
@@ -46,11 +46,13 @@ test('every builder quote carries the Labor line; a quote without labor is never
   assert.deepEqual(priced.storedLineItems.at(-1).split, null, 'labor is attributed by its kind; it carries no cost split or minutes');
   // A save (complete) without labor, or without man-hours and an estimate to pre-fill them, is refused.
   assert.throws(() => priceCompositeQuote(state, selection({ labor: null }), { complete: true }), { code: 'quote_draft_composite_labor_required', status: 400 });
-  assert.throws(() => priceCompositeQuote(state, selection({ labor: { manHours: null, estimate: null } }), { complete: true }), { code: 'quote_draft_composite_labor_required' });
+  // Without the walkthrough time model there is no estimate to pre-fill from: the estimator must enter the man-hours.
+  const untimed = { ...state, walkthrough: { ...state.walkthrough, minutes: undefined } };
+  assert.throws(() => priceCompositeQuote(untimed, selection({ labor: { manHours: null } }), { complete: true }), { code: 'quote_draft_composite_labor_required' });
   // A step preview may leave the labor out; a full preview without man-hours says what is missing.
   const step = priceCompositeQuote(state, { ...selection({ labor: null }), steps: ['removal'], shelving: [], storage: [] });
   assert.deepEqual([step.labor, step.lineItems.some(line => line.kind === 'labor')], [null, false]);
-  const missing = priceCompositeQuote(state, selection({ labor: { manHours: null, estimate: null } }));
+  const missing = priceCompositeQuote(untimed, selection({ labor: { manHours: null } }));
   assert.deepEqual([missing.labor.manHours, missing.labor.totalCents, missing.lineItems.some(line => line.kind === 'labor')], [null, null, false]);
   assert.match(missing.approval.blocked.find(row => row.id === LABOR_ID).reason, /Enter the estimated man-hours for the Labor line/);
   assert.equal(missing.approval.blocked.some(row => row.id === 'goods-installation'), false, 'goods wait for the man-hours, never for the installation question');
@@ -90,11 +92,11 @@ test('the signed handoff prices the labor again from the man-hours and the serve
 });
 
 test('the dispatch duration of a sold builder job still comes from the time estimate: the Labor line carries no minutes', async () => {
-  const state = builderState(), priced = priceCompositeQuote(state, selection({ labor: { manHours: 12, estimate: { crewSize: 2, onSiteMinutes: 180 } } }), { complete: true });
+  const state = builderState(), priced = priceCompositeQuote(state, selection({ labor: { manHours: 12, adjusted: true, fullness: 'medium' } }), { complete: true });
   const f = fixture(), signed = await saveWalkthroughHandoff(f.store, owner, handoff(1, { composite_pricing: priced.compositePricing, line_items: signedLines(priced), catalog_version: priced.menuVersion, total: priced.totalCents / 100 }), NOW, { env: ON_ENV, compositeState: async () => state });
   const job = f.job(signed.job.id), duration = suggestedDuration(job);
   assert.deepEqual([duration.source, duration.minutes, job.estimatedDurationMin], ['estimated_duration', 180, 180], 'adjusting the man-hours changes the price, not the booked time');
-  assert.deepEqual([priced.labor.adjusted, priced.labor.prefilledManHours], [true, 6]);
+  assert.deepEqual([priced.labor.adjusted, priced.labor.prefilledManHours], [true, 9]);
 });
 
 test('commission classification: the Labor line is no evidence of garage work, so a junk-only builder sale still waits for the office', () => {

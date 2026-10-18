@@ -205,7 +205,7 @@ test('estimator to crew, one day through the real handlers: walkthrough, builder
   assert.deepEqual([menu.enabled, menu.steps, menu.viewer.internal, 'internal' in menu], [true, ['removal', 'shelving', 'storage'], false, false]);
   assert.doesNotMatch(JSON.stringify(menu), /retailPerPackCents|goodsMarkup/, 'sell prices only');
   // D12: the owner's labor rate, approved, on the estimator's menu; installation is billed through the Labor line.
-  assert.deepEqual([menu.labor.rateCents, menu.labor.approved, menu.installation], [4000, true, { included: true, billedAs: 'labor' }]);
+  assert.deepEqual([menu.labor.rateCents, menu.labor.approved, menu.installation], [4000, true, { included: false, billedAs: 'labor' }]);
   // The step previews carry no labor (as crew/quote-draft.js sends them); the review prices the estimator's man-hours.
   const chosen = selection(), { labor: _labor, ...items } = chosen, upTo = steps => ({ ...items, steps, ...Object.fromEntries(['removal', 'shelving', 'storage'].filter(step => !steps.includes(step)).map(step => [step, []])) });
   const removal = await api.ok('Sales.Person', '/api/quote-draft', { action: 'composite_preview', compositePricing: upTo(['removal']) });
@@ -213,7 +213,7 @@ test('estimator to crew, one day through the real handlers: walkthrough, builder
   const priced = await api.ok('Sales.Person', '/api/quote-draft', { action: 'composite_preview', compositePricing: chosen });
   assert.deepEqual(priced.steps.map(step => [step.id, step.runningTotalCents]), [['removal', removal.totalCents], ['shelving', shelving.totalCents], ['storage', priced.totalCents - LABOR_CENTS], ['labor', priced.totalCents]]);
   assert.ok(removal.totalCents < shelving.totalCents && shelving.totalCents < priced.totalCents);
-  assert.deepEqual([priced.lineItems.at(-1).id, priced.lineItems.at(-1).name, priced.lineItems.at(-1).totalCents, priced.labor.prefilledManHours, priced.labor.adjusted], ['labor', 'Labor: 6 man-hours × $40.00', LABOR_CENTS, 6, false]);
+  assert.deepEqual([priced.lineItems.at(-1).id, priced.lineItems.at(-1).name, priced.lineItems.at(-1).totalCents, priced.labor.prefilledManHours, priced.labor.adjusted], ['labor', 'Labor: 6 man-hours × $40.00', LABOR_CENTS, 9, false]);
   assert.deepEqual(priced.breakdown.sections.map(section => section.id), ['removal', 'shelving', 'storage']);
   // The server prices the selection again on save: a browser-made line is refused, the server's lines are kept.
   const prepared = await api.ok('Sales.Person', `/api/walkthrough-handoff?sourceWalkthroughId=${walkthrough.id}`);
@@ -259,7 +259,7 @@ test('estimator to crew, one day through the real handlers: walkthrough, builder
   assert.deepEqual(job().estimate.amountCents ?? Math.round(job().estimate.amount * 100), priced.totalCents);
   // The job breakdown, by step, and what to buy (packs, store, product page) and what the crew brings from stock.
   assert.deepEqual(job().jobBreakdown.sections.map(section => section.id), ['removal', 'shelving', 'storage', 'cleaning', 'labor']);
-  assert.deepEqual(job().jobBreakdown.sections.at(-1).items, ['6 man-hours (about 3 hours on site for a crew of 2)'], 'the crew sees the man-hours sold, never the rate or amount');
+  assert.deepEqual(job().jobBreakdown.sections.at(-1).items, ['6 man-hours sold (below the estimate of 9 man-hours)'], 'the crew sees the man-hours sold, never the rate or amount');
   // The total the customer signed, its deposit and the HighLevel deal value (job.total) include the Labor line.
   assert.deepEqual([job().total, job().estimate.depositRequired, job().estimate.lineItems.at(-1).name], [priced.totalCents / 100, Math.round(priced.totalCents / 2) / 100, 'Labor: 6 man-hours × $40.00']);
   assert.deepEqual(job().jobBreakdown.sections.find(section => section.id === 'shelving').items, [`${SHELF.name} × 2 packs`]);
@@ -278,7 +278,7 @@ test('estimator to crew, one day through the real handlers: walkthrough, builder
   assert.equal(mirror.length, 1);
   assert.deepEqual([mirror[0].kind, mirror[0].stage, mirror[0].status], ['scheduled', 'job_scheduled', 'pending']);
   assert.match(mirror[0].note.body, /Crew: Crew 1/);
-  assert.match(mirror[0].note.body, /\nLabor: 6 man-hours \(about 3 hours on site for a crew of 2\)\n/, 'the HighLevel note names the man-hours, never the labor amount');
+  assert.match(mirror[0].note.body, /\nLabor: 6 man-hours sold \(below the estimate of 9 man-hours\)\n/, 'the HighLevel note names the man-hours, never the labor amount');
 
   // 3) The owner approves the draft menu prices on the quote (Hub > Catalog & pricing > Menu prices, POST /api/catalog
   // menu.approve): every held job those prices now cover is released in the same request. Catalog pricing is off (not
@@ -286,7 +286,7 @@ test('estimator to crew, one day through the real handlers: walkthrough, builder
   // so the approval of the menu prices alone releases the job.
   clock(at(MON, '12:00'));
   const ownerMenu = await api.ok('ZacB', '/api/quote-draft?view=builder');
-  assert.deepEqual([ownerMenu.viewer.canApprove, ownerMenu.internal.approvalsRevision, ownerMenu.labor.rateCents, ownerMenu.labor.source, ownerMenu.installation], [true, null, 4000, 'default', { included: true, billedAs: 'labor' }]);
+  assert.deepEqual([ownerMenu.viewer.canApprove, ownerMenu.internal.approvalsRevision, ownerMenu.labor.rateCents, ownerMenu.labor.source, ownerMenu.installation], [true, null, 4000, 'default', { included: false, billedAs: 'labor' }]);
   assert.deepEqual((await api.ok('ZacB', '/api/catalog')).enabled, false, 'no Pricing tab: catalog pricing is off');
   // As the Menu prices screen does: the approvals revision the owner reviewed comes from the reloaded builder menu.
   const menuApproval = async extra => ({ action: 'menu.approve', requestId: randomUUID(), expectedRevision: (await api.ok('ZacB', '/api/quote-draft?view=builder')).internal.approvalsRevision, menuVersion: ownerMenu.menuVersion, settingsVersion: ownerMenu.settingsVersion, approve: [], revoke: [], ...extra });
@@ -305,10 +305,11 @@ test('estimator to crew, one day through the real handlers: walkthrough, builder
   // the afternoon walkthrough is ready at once and goes to the customer (no draft price, no installation question).
   const second = (await api.ok('TylerG', '/api/dispatch', { action: 'schedule.create', requestId: randomUUID(), customerId: 'c2', kind: 'walkthrough', changes: { date: MON, time: '13:00', endTime: '14:00', title: 'Junk walkthrough', assignedCrew: ['sales.person'] } })).job;
   clock(at(MON, '13:40'));
-  // The estimator keeps the labor pre-fill: the gameplan's estimate is a crew of 2 for 2 hours on site, so 4 man-hours.
-  const truck = selection({ removal: [{ id: menuItem('Full truck load').id, quantity: 1 }], shelving: [], storage: [], labor: { manHours: null, estimate: { crewSize: 2, onSiteMinutes: 120 } } });
+  // The estimator keeps the labor pre-fill: the server's estimate of one truck load in a light garage is 2 x (60 + 90 + 0)
+  // = 300 person-minutes, 5 man-hours, whatever crew the Schedule tab picks.
+  const truck = selection({ removal: [{ id: menuItem('Full truck load').id, quantity: 1 }], shelving: [], storage: [], labor: { manHours: null, fullness: 'light' } });
   const truckPriced = await api.ok('Sales.Person', '/api/quote-draft', { action: 'composite_preview', compositePricing: truck });
-  assert.deepEqual([truckPriced.totalCents, truckPriced.approval, truckPriced.labor.manHours, truckPriced.compositePricing.labor], [75000 + 16000, { ready: true, blocked: [] }, 4, { manHours: 4, estimate: { crewSize: 2, onSiteMinutes: 120 } }]);
+  assert.deepEqual([truckPriced.totalCents, truckPriced.approval, truckPriced.labor.manHours, truckPriced.compositePricing.labor], [75000 + 20000, { ready: true, blocked: [] }, 5, { manHours: 5, adjusted: false, fullness: 'light' }]);
   const truckSource = await api.ok('Sales.Person', `/api/walkthrough-handoff?sourceWalkthroughId=${second.id}`);
   const truckDraft = (await api.ok('Sales.Person', '/api/quote-draft', { action: 'save', requestId: randomUUID(), customerId: 'c2', sourceWalkthroughId: second.id, sourceRevision: truckSource.sourceRevision, draft: { client: client(2), title: 'Junk removal', scope: 'One full truck load.', line_items: truckPriced.lineItems, valid_until: '2026-11-02', catalog_version: truckPriced.menuVersion, crew_size: 2, estimated_duration_min: 120, composite_pricing: truckPriced.compositePricing } })).job;
   // A new quote's 25/75 payment dates need the job's date, so the send waits for it (an unchanged rule since 2026-10-14).
@@ -321,9 +322,9 @@ test('estimator to crew, one day through the real handlers: walkthrough, builder
   assert.deepEqual(fire.list(GHL_SCHEDULE_MIRROR).filter(row => row.jobId === truckDraft.id).map(row => [row.kind, row.stage, row.status]), [['scheduled', 'job_scheduled', 'pending']]);
   assert.ok(api.sent.mirror.some(row => row.jobId === truckDraft.id));
   const truckPreview = await api.ok('Sales.Person', '/api/quote-draft', { action: 'send_preview', jobId: truckDraft.id, expectedRevision: fire.get(`jobs/${truckDraft.id}`).updateTime });
-  assert.match(truckPreview.summary, /\$910\.00/, 'the $750 truck and 4 man-hours of labor');
+  assert.match(truckPreview.summary, /\$950\.00/, 'the $750 truck and 5 man-hours of labor');
   const truckSent = await api.ok('Sales.Person', '/api/quote-draft', { action: 'send', requestId: randomUUID(), jobId: truckDraft.id, expectedRevision: fire.get(`jobs/${truckDraft.id}`).updateTime, confirmToken: truckPreview.confirmToken });
-  assert.deepEqual([fire.get(`jobs/${truckDraft.id}`).estimate.status, fire.get(`jobs/${truckDraft.id}`).estimate.amount, fire.get(`jobs/${truckDraft.id}`).estimate.sentBy], ['sent', 910, 'Sales.Person']);
+  assert.deepEqual([fire.get(`jobs/${truckDraft.id}`).estimate.status, fire.get(`jobs/${truckDraft.id}`).estimate.amount, fire.get(`jobs/${truckDraft.id}`).estimate.sentBy], ['sent', 950, 'Sales.Person']);
   // Customer messaging is not switched on here: the send is recorded and says so; HighLevel was not asked to text anyone.
   assert.deepEqual([truckSent.delivery.status, truckSent.warnings.map(row => row.code), api.sent.estimates], ['messaging_disabled', ['messaging_disabled'], []]);
 
@@ -386,7 +387,7 @@ test('estimator to crew, one day through the real handlers: walkthrough, builder
   assert.deepEqual(grab.filter(item => item.source === 'buy').map(item => [item.name, item.quantity, item.packs, item.unitsPerPack, item.store, item.sku, item.productUrl, item.purchaseState]), [
     [SHELF.name, 2, 2, 1, 'The Home Depot', SHELF.sku, SHELF.productUrl, 'purchased'], [TOTES.name, 8, 2, 4, 'The Home Depot', TOTES.sku, TOTES.productUrl, 'purchased']]);
   assert.deepEqual(grab.filter(item => item.source === 'stock').map(item => item.name), ['Hand truck / dolly', 'Contractor bags']);
-  assert.match(workday.jobs[0].walkthroughBrief.find(row => row.label === 'Job breakdown').text, /^Removal: .*\nShelving: .*× 2 packs\nStorage: .*× 2 packs of 4\nLabor: 6 man-hours \(about 3 hours on site for a crew of 2\)$/s);
+  assert.match(workday.jobs[0].walkthroughBrief.find(row => row.label === 'Job breakdown').text, /^Removal: .*\nShelving: .*× 2 packs\nStorage: .*× 2 packs of 4\nLabor: 6 man-hours sold \(below the estimate of 9 man-hours\)$/s);
   assert.deepEqual(workday.jobs[0].walkthroughBrief.find(row => row.label === 'Man-hours sold'), { label: 'Man-hours sold', text: '6 man-hours' });
   assert.doesNotMatch(JSON.stringify(workday), MONEY, 'the crew sees no price, cost or margin');
   const detail = await api.ok('Crew1.Mate', `/api/field-jobs?jobId=${draft.id}`);

@@ -37,7 +37,8 @@ test('the owner sets the labor rate on Menu prices: approved at once, recorded w
   // Before any change: the owner's D12 decision, $40.00 per man-hour, approved.
   assert.equal(DEFAULT_LABOR_RATE_CENTS, 4000);
   assert.deepEqual(laborRate(await state()), { rateCents: 4000, source: 'default', reason: 'Owner decision (2026-10-18): $40.00 per man-hour.' });
-  assert.deepEqual(builderMenu(await state()).labor, { rateCents: 4000, approved: true, source: 'default', reason: 'Owner decision (2026-10-18): $40.00 per man-hour.', minManHours: 0.5, maxManHours: 200, stepManHours: 0.25 });
+  assert.deepEqual(builderMenu(await state()).labor, { rateCents: 4000, approved: true, source: 'default', reason: 'Owner decision (2026-10-18): $40.00 per man-hour.', minManHours: 0.5, maxManHours: 200, stepManHours: 0.25,
+    time: { basePersonMinutes: 120, loadPersonMinutes: 180, minLoads: 0.5, fillPersonMinutes: { light: 0, medium: 60, full: 120, packed: 240 }, defaultFillPersonMinutes: 60 } });
   const before = priceCompositeQuote(await state(), selection(), { complete: true });
   assert.deepEqual([before.labor.rateCents, before.labor.totalCents], [4000, LABOR_CENTS]);
   // The rate alone is a valid request; it counts as one change, and the receipt and the audit entry record both amounts.
@@ -64,13 +65,13 @@ test('the owner sets the labor rate on Menu prices: approved at once, recorded w
   assert.equal(store.rows.get(`${MENU_APPROVALS}/current`).laborRatePerManHourCents, 4500);
 });
 
-test('with labor on the quote, goods no longer wait for the installation answer; the answer still counts for quotes saved before labor and can be taken back', async () => {
+test('with labor on the quote, goods the estimate times no longer wait for the installation answer; the answer still counts for quotes saved before labor and can be taken back', async () => {
   const store = catalogStore(), handlers = catalogHandlers({ session: async () => owner, storage: () => store, now: () => new Date(LATER), held: () => ({ heldJobIds: async () => [] }) });
   const state = () => readCompositeState(store);
   const goods = priceCompositeQuote(builderState(), selection(), { complete: true }), approvals = goods.breakdown.lines.filter(line => !line.approved).map(line => ({ id: line.id, unitCents: line.unitCents }));
   assert.equal((await post(handlers, approve(await state(), { approve: approvals }))).status, 200);
   assert.deepEqual(compositeApproval(goods.breakdown, await state()), { ready: true, blocked: [] }, 'every goods price approved: the quote sends, installation is billed through labor');
-  assert.deepEqual(builderMenu(await state()).installation, { included: true, billedAs: 'labor' });
+  assert.deepEqual(builderMenu(await state()).installation, { included: false, billedAs: 'labor' }, 'not included in the goods price: the Labor line bills it');
   // The same quote saved before the Labor line existed: unsent, it must be saved again; signed, it keeps the earlier rule.
   const { labor, ...older } = goods.breakdown;
   assert.deepEqual(compositeApproval(older, await state()).blocked.map(row => row.id), [LABOR_ID, INSTALLATION_ID]);
@@ -156,13 +157,14 @@ test('held signed jobs: a job signed with labor is released by the owner\'s pric
   assert.deepEqual([f.job(withLabor.job.id).pricesPendingApproval, f.job(withLabor.job.id).customerPortalInvitationRequestedAt, f.job(withLabor.job.id).pricesRelease.gate], [null, LATER, 'approved_prices']);
   const answered = await (await post(handlers, approve(await state(), { goodsInstallationIncluded: true }))).json();
   assert.deepEqual(answered.heldJobs, { released: [olderJob.job.id], waiting: 0, more: false });
-  // The estimator's builder never warns about installation.
+  // The owner's answer reaches the estimator's builder: installation is included in the goods price.
   const quotes = quoteDraftHandlers({ session: async () => estimator, storage: () => f.store, now: () => new Date(NOW), compositeState: state, stripe: () => null });
   const builder = await (await quotes.get({ request: new Request(`${ORIGIN}/api/quote-draft?view=builder`), env: ON_ENV })).json();
   assert.deepEqual([builder.installation, builder.labor.rateCents], [{ included: true, billedAs: 'labor' }, 4000]);
 });
 
-test('a held job signed at the old labor rate stays held when the owner changes the rate, until it is signed again at the new one', async () => {
+// money-4 / flow-5: the customer signed the then-approved rate, so a rate change never strands a held job.
+test('a held job signed at the old labor rate is released at the rate the customer signed when the owner changes the rate; an unsent quote must be saved again', async () => {
   const f = fixture(), store = catalogStore(), state = () => readCompositeState(store);
   const priced = priceCompositeQuote(await state(), selection({ shelving: [], storage: [] }), { complete: true });
   const lines = priced.lineItems.map(line => ({ id: line.id, kind: line.kind, name: line.name, description: line.description, quantity: line.quantity, unitCents: line.unitCents, totalCents: line.totalCents }));
@@ -173,8 +175,14 @@ test('a held job signed at the old labor rate stays held when the owner changes 
   const handlers = catalogHandlers({ session: async () => owner, storage: () => store, now: () => new Date(LATER), held });
   const base = priced.breakdown.lines.find(line => !line.approved);
   const both = await (await post(handlers, approve(await state(), { approve: [{ id: base.id, unitCents: base.unitCents }], laborRatePerManHourCents: 4500 }))).json();
-  assert.deepEqual(both.heldJobs, { released: [], waiting: 1, more: false }, 'the customer signed $40.00 labor; the owner\'s rate is now $45.00');
-  assert.equal(f.job(signed.job.id).pricesPendingApproval.status, 'pending');
-  const back = await (await post(handlers, approve(await state(), { laborRatePerManHourCents: 4000 }))).json();
-  assert.deepEqual(back.heldJobs, { released: [signed.job.id], waiting: 0, more: false }, 'back at the signed rate the job is released');
+  assert.deepEqual(both.heldJobs, { released: [signed.job.id], waiting: 0, more: false }, 'the customer signed $40.00 labor, approved then; the new $45.00 rate is for new quotes');
+  const job = f.job(signed.job.id);
+  assert.deepEqual([job.pricesPendingApproval, job.compositeQuote.breakdown.labor.rateCents, job.total, job.customerPortalInvitationRequestedAt], [null, 4000, priced.totalCents / 100, LATER]);
+  // The signed job's labor is still checked: an amount that is not its man-hours x its own rate never releases.
+  const now = await state(), tampered = structuredClone(job.compositeQuote.breakdown);
+  tampered.labor.totalCents += 100;
+  assert.deepEqual(compositeApproval(tampered, now, { signed: true }).blocked.map(row => row.id), [LABOR_ID]);
+  assert.deepEqual(compositeApproval(job.compositeQuote.breakdown, now, { signed: true }), { ready: true, blocked: [] });
+  // An unsent quote at the old rate is still saved again before it is sent.
+  assert.match(compositeApproval(priced.breakdown, now).blocked.find(row => row.id === LABOR_ID).reason, /The labor rate is now \$45\.00 per man-hour, but this quote has \$40\.00\. Save the quote again/);
 });

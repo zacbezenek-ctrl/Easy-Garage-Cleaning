@@ -122,7 +122,7 @@ test('cleaning bases are priced by the owner, Tick all leaves them out, and one 
   const ui = screen();
   await ui.settle(() => ui.root()?.textContent.includes('pricing-menu prices are drafts'), 'the menu prices');
   assert.match(ui.root().textContent, /historical full-service base, which already included hauling/);
-  assert.match(ui.root().textContent, /New builder quotes bill installation through the Labor line and never wait for this\./);
+  assert.match(ui.root().textContent, /A quote with other storage goods \(overhead racks, cabinets, hooks, track systems and the like\) is sent once the estimator sets its man-hours by hand to include installing them, or once you tick this\./);
   const base = menu.services.find(item => item.name === 'Two-car garage base');
   const tick = id => { const box = ui.row(id).querySelector('input[type="checkbox"]'); box.checked = !box.checked; box.dispatchEvent({ type: 'change', target: box }); };
   tick(base.id);
@@ -183,7 +183,8 @@ test('catalog pricing off: the owner answers the installation question on Menu p
   const ui = screen();
   await ui.settle(() => ui.root()?.textContent.includes('pricing-menu prices are drafts'), 'the menu prices');
   assert.match(ui.root().textContent, /Catalog pricing is turned off/);
-  assert.match(ui.root().textContent, /Only for builder quotes saved or signed before the Labor line existed: their shelving or storage waits for your installation decision\. New builder quotes bill installation through the Labor line and never wait for this\./);
+  assert.match(ui.root().textContent, /Builder quotes bill installation through the Labor line, but the labor estimate has install times only for shelving units and totes\./);
+  assert.match(ui.root().textContent, /Builder quotes saved or signed before the Labor line existed wait for this answer too\. Tick it only if installation is included in the goods price\./);
   const box = () => ui.root().querySelector('#cat-menu-installation');
   assert.equal(box().checked, false);
   box().checked = true; box().dispatchEvent({ type: 'change', target: box() });
@@ -192,12 +193,12 @@ test('catalog pricing off: the owner answers the installation question on Menu p
   assert.match(dialog.textContent, /Answer the installation question/);
   assert.match(dialog.textContent, /Shelving and storage installationNot confirmedIncluded in the goods price/);
   ui.button('Save approvals').click();
-  await ui.settle(() => ui.root().textContent.includes('Shelving and storage installation is now confirmed as included in the goods price for builder quotes saved before the Labor line.'), 'the saved answer');
+  await ui.settle(() => ui.root().textContent.includes('Shelving and storage installation is now confirmed as included in the goods price: builder quotes no longer wait for install time the labor estimate leaves out, nor do older quotes saved before the Labor line.'), 'the saved answer');
   const post = ui.fs.posts.at(-1);
   assert.deepEqual([post.action, post.approve, post.revoke, post.goodsInstallationIncluded], ['menu.approve', [], [], true]);
   assert.equal(ui.fs.get('pricingMenuApprovals/current').goodsInstallationIncluded, true);
   await ui.settle(() => ui.root().textContent.includes('You confirmed that shelving and storage installation is included in the goods price'), 'the reloaded answer');
-  assert.doesNotMatch(ui.root().textContent, /their shelving or storage waits for your installation decision/);
+  assert.doesNotMatch(ui.root().textContent, /is sent once the estimator sets its man-hours by hand/);
   assert.equal(box().checked, true);
   // Unticked and saved, goods quotes wait again.
   box().checked = false; box().dispatchEvent({ type: 'change', target: box() });
@@ -217,6 +218,7 @@ test('the owner sees the $40.00 labor rate on Menu prices, changes it, reviews i
   const ui = screen();
   await ui.settle(() => ui.root()?.textContent.includes('Labor: $40.00 per man-hour'), 'the labor rate');
   assert.match(ui.root().textContent, /Every builder quote has a Labor line: the estimated man-hours × this rate, on top of the menu prices\./);
+  assert.match(ui.root().textContent, /pre-fills the man-hours from its own time estimate of the quote .*the same for any crew size/);
   assert.match(ui.root().textContent, /Shelving and storage installation is billed through this line\. Your decision of 2026-10-18 \(\$40\.00 per man-hour\)\. The rate is approved/);
   const field = () => ui.root().querySelector('#cat-menu-labor-rate');
   assert.equal(field().value, '40.00');
@@ -234,6 +236,7 @@ test('the owner sees the $40.00 labor rate on Menu prices, changes it, reviews i
   assert.match(dialog.textContent, /Labor rate per man-hour\$40\.00\$45\.00/);
   ui.button('Save approvals').click();
   await ui.settle(() => ui.root().textContent.includes('The labor rate is now $45.00 per man-hour'), 'the saved rate');
+  assert.match(ui.root().textContent, /saved quotes at the old rate are saved again before they are sent, and jobs the customer already signed keep the rate they signed\./, 'a held signed job is never stranded by the new rate');
   const post = ui.fs.posts.at(-1);
   assert.deepEqual([post.action, post.approve, post.revoke, post.laborRatePerManHourCents, 'goodsInstallationIncluded' in post], ['menu.approve', [], [], 4500, false]);
   assert.equal(ui.fs.get('pricingMenuApprovals/current').laborRatePerManHourCents, 4500);
