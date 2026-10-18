@@ -597,7 +597,7 @@ test('checkout expiry only touches an open session for other terms and reports w
 
 test('a draft becomes the signed job: the in-person handoff revises the same job instead of creating another', async () => {
   const f = fixture(), created = await save(f, f.input()), id = created.job.id, walkthrough = f.rows.get('jobs/w1');
-  const plan = { client: client(), quote: { title: 'Garage reset', total: 1400, deposit: 700, job_date: '2026-09-24', start_time: '09:00', end_time: '12:00', estimated_duration_min: 180 }, acceptance: { accepted_at: '2026-09-22T17:45:00.000Z', accepted_by: 'Synthetic Customer', signature_captured: true, method: 'in_person_signature', terms_version: '2026-09-deposit50' }, signature: 'data:image/png;base64,iVBORw0KGgo=', terms_version: '2026-09-deposit50', terms_accepted: true, photos: { before: 3 }, scope: { keep_items: 'Blue bicycle' }, discovery: {}, logistics: { crew_size: 2 }, internal_notes: 'Synthetic brief', client_checklists: { preJob: [], postJob: [] }, notes: '' };
+  const plan = { client: client(), quote: { title: 'Garage reset', total: 1400, deposit: 350, job_date: '2026-09-24', start_time: '09:00', end_time: '12:00', estimated_duration_min: 180 }, acceptance: { accepted_at: '2026-09-22T17:45:00.000Z', accepted_by: 'Synthetic Customer', signature_captured: true, method: 'in_person_signature', terms_version: '2026-10-deposit25' }, signature: 'data:image/png;base64,iVBORw0KGgo=', terms_version: '2026-10-deposit25', terms_accepted: true, photos: { before: 3 }, scope: { keep_items: 'Blue bicycle' }, discovery: {}, logistics: { crew_size: 2 }, internal_notes: 'Synthetic brief', client_checklists: { preJob: [], postJob: [] }, notes: '' };
   const signed = await saveWalkthroughHandoff(f.store, owner, { requestId: randomUUID(), customerId: 'c1', sourceWalkthroughId: 'w1', sourceRevision: walkthrough.revision, jobId: id, expectedRevision: f.job(id).revision, plan }, NOW);
   assert.equal(signed.job.id, id);
   assert.deepEqual([f.job(id).estimate.status, f.job(id).estimate.revision, f.job(id).estimate.number, f.job(id).status], ['accepted', 2, created.job.estimate.number, 'scheduled']);
@@ -665,7 +665,7 @@ test('a sales author signs their unplaced quote draft into a scheduled job but c
   // Without a walkthrough the draft is still the author's to open.
   const prepared = await prepareHandoff(f.store, sales, { jobId: id }, { env: ROLES });
   assert.deepEqual([prepared.jobId, prepared.customerId, prepared.customer.id], [id, 'c1', 'c1']);
-  const plan = (date, start, end) => ({ client: client(), quote: { title: 'Garage reset', total: 1400, deposit: 700, job_date: date, start_time: start, end_time: end, estimated_duration_min: 180 }, acceptance: { accepted_at: '2026-09-22T17:45:00.000Z', accepted_by: 'Synthetic Customer', signature_captured: true, method: 'in_person_signature', terms_version: '2026-09-deposit50' }, signature: 'data:image/png;base64,iVBORw0KGgo=', terms_version: '2026-09-deposit50', terms_accepted: true, photos: { before: 3 }, scope: { keep_items: 'Blue bicycle' }, discovery: {}, logistics: { crew_size: 2 }, internal_notes: 'Synthetic brief', client_checklists: { preJob: [], postJob: [] }, notes: '' });
+  const plan = (date, start, end) => ({ client: client(), quote: { title: 'Garage reset', total: 1400, deposit: 350, job_date: date, start_time: start, end_time: end, estimated_duration_min: 180 }, acceptance: { accepted_at: '2026-09-22T17:45:00.000Z', accepted_by: 'Synthetic Customer', signature_captured: true, method: 'in_person_signature', terms_version: '2026-10-deposit25' }, signature: 'data:image/png;base64,iVBORw0KGgo=', terms_version: '2026-10-deposit25', terms_accepted: true, photos: { before: 3 }, scope: { keep_items: 'Blue bicycle' }, discovery: {}, logistics: { crew_size: 2 }, internal_notes: 'Synthetic brief', client_checklists: { preJob: [], postJob: [] }, notes: '' });
   const sign = (date, start, end) => saveWalkthroughHandoff(f.store, sales, { requestId: randomUUID(), customerId: 'c1', jobId: id, expectedRevision: f.job(id).revision, plan: plan(date, start, end) }, NOW, { env: ROLES });
   const signed = await sign('2026-09-24', '09:00', '12:00');
   assert.deepEqual([signed.job.id, f.job(id).status, f.job(id).date, f.job(id).estimate.status], [id, 'scheduled', '2026-09-24', 'accepted']);
@@ -847,7 +847,7 @@ test('the approved-send messenger adds only well-formed tags to a well-formed co
 });
 
 // The in-person signed plan for this fixture's customer (P2-05 handoff).
-const signedPlan = (total = 1400) => ({ client: client(), quote: { title: 'Garage reset', total, deposit: total / 2, job_date: '2026-09-24', start_time: '09:00', end_time: '12:00', estimated_duration_min: 180 }, acceptance: { accepted_at: '2026-09-22T17:45:00.000Z', accepted_by: 'Synthetic Customer', signature_captured: true, method: 'in_person_signature', terms_version: '2026-09-deposit50' }, signature: 'data:image/png;base64,iVBORw0KGgo=', terms_version: '2026-09-deposit50', terms_accepted: true, photos: { before: 3 }, scope: { keep_items: 'Blue bicycle' }, discovery: {}, logistics: { crew_size: 2 }, internal_notes: 'Synthetic brief', client_checklists: { preJob: [], postJob: [] }, notes: '' });
+const signedPlan = (total = 1400) => ({ client: client(), quote: { title: 'Garage reset', total, deposit: Math.round(total * 100 / 4) / 100, job_date: '2026-09-24', start_time: '09:00', end_time: '12:00', estimated_duration_min: 180 }, acceptance: { accepted_at: '2026-09-22T17:45:00.000Z', accepted_by: 'Synthetic Customer', signature_captured: true, method: 'in_person_signature', terms_version: '2026-10-deposit25' }, signature: 'data:image/png;base64,iVBORw0KGgo=', terms_version: '2026-10-deposit25', terms_accepted: true, photos: { before: 3 }, scope: { keep_items: 'Blue bicycle' }, discovery: {}, logistics: { crew_size: 2 }, internal_notes: 'Synthetic brief', client_checklists: { preJob: [], postJob: [] }, notes: '' });
 
 test('a signed handoff that revises a portal-approved quote expires its open card checkout, and reports one it cannot close', async () => {
   const f = fixture(), created = await save(f, f.input()), id = created.job.id;
@@ -862,7 +862,9 @@ test('a signed handoff that revises a portal-approved quote expires its open car
   const post = async () => { const response = await handlers.post({ request: new Request('https://easygaragecleaning.com/api/walkthrough-handoff', { method: 'POST', headers: { Origin: 'https://easygaragecleaning.com', 'Content-Type': 'application/json' }, body: JSON.stringify(body) }), env: ENV }); return { status: response.status, body: await response.json() }; };
   const signed = await post();
   assert.equal(signed.status, 200);
-  assert.deepEqual([f.job(id).estimate.revision, f.job(id).estimate.amount, f.job(id).estimate.depositRequired, f.job(id).estimate.status], [2, 1400, 700, 'accepted']);
+  assert.deepEqual([f.job(id).estimate.revision, f.job(id).estimate.amount, f.job(id).estimate.depositRequired, f.job(id).estimate.status], [2, 1400, 350, 'accepted']);
+  // D-DEPOSIT: signed in person, the earlier quote's 50% deposit gives way to the in-person terms: 25% the day it was signed, 75% on the job day.
+  assert.deepEqual([approvedJob.estimate.depositRequired, approvedJob.estimate.commercialPolicy, f.job(id).estimate.commercialPolicy.version, f.job(id).estimate.paymentSchedule.depositDueDate, f.job(id).estimate.paymentSchedule.remainderDueDate, f.job(id).estimate.paymentSchedule.depositCents], [899, undefined, '2026-10-deposit25', '2026-09-22', '2026-09-24', 35000]);
   assert.notEqual(checkoutFingerprint(f.job(id)), checkoutFingerprint(approvedJob));
   assert.deepEqual(stripeCalls, [['checkout/sessions/cs_test_open/expire', 'POST']]);
   assert.deepEqual([f.rows.get(`customer_payment_checkouts/${id}`).status, f.rows.get(`customer_payment_checkouts/${id}`).expiredReason, signed.body.checkout.status], ['expired', 'quote_revised', 'expired']);
@@ -938,11 +940,12 @@ test('builder quote: the server re-prices and saves its lines, breakdown and sel
   assert.deepEqual(job.estimate.lineItems.find(line => line.id === 'shelving-goods').split, { productCents: 17800, laborCents: 0, laborMinutes: 0, markupCents: 5340, disposalCents: 0 }, 'the Hub job keeps the goods cost split');
   // D12: the Labor line is on the saved estimate, in the total and the deposit; the breakdown records where it came from.
   const labor = job.estimate.lineItems.at(-1);
-  assert.deepEqual([labor.kind, labor.name, labor.quantity, labor.unitCents, labor.totalCents, labor.split], ['labor', 'Labor: 6 man-hours × $40.00', 1, BUILDER_LABOR_CENTS, BUILDER_LABOR_CENTS, null]);
+  // D-LABOR-TEXT: the customer's line is one amount, "Labor"; the man-hours stay in the breakdown.
+  assert.deepEqual([labor.kind, labor.name, labor.description, labor.quantity, labor.unitCents, labor.totalCents, labor.split], ['labor', 'Labor', 'Includes installing the shelving and storage.', 1, BUILDER_LABOR_CENTS, BUILDER_LABOR_CENTS, null]);
   assert.equal(job.estimate.amountCents, 97500 + 75000 + 14000 + 23140 + BUILDER_LABOR_CENTS);
   assert.equal(job.estimate.depositRequiredCents, Math.round(job.estimate.amountCents / 2), 'the deposit (50% for this policy-free draft) is on the total with labor');
-  assert.deepEqual(job.quoteDraft.breakdown.labor, { manHours: 6, rateCents: 4000, rateSource: 'default', totalCents: BUILDER_LABOR_CENTS, prefilledManHours: 9, adjusted: false, belowEstimate: true,
-    estimate: { personMinutes: 540, removalPersonMinutes: 420, installPersonMinutes: 120, fullness: 'medium', installNotEstimated: [] } }, 'the server\'s own estimate (9 man-hours) is recorded next to the 6 sold');
+  assert.deepEqual(job.quoteDraft.breakdown.labor, { version: 2, manHours: 6, rateCents: 4000, rateSource: 'default', totalCents: BUILDER_LABOR_CENTS, prefilledManHours: 5, adjusted: false, belowEstimate: false,
+    estimate: { personMinutes: 300, removalPersonMinutes: 180, installPersonMinutes: 120, fullness: 'medium', installNotEstimated: [] } }, 'the server\'s own estimate (5 man-hours: no truck-load or mattress time) is recorded next to the 6 sold');
   assert.deepEqual(job.quoteDraft.compositePricing, priced.compositePricing);
   assert.deepEqual(job.quoteDraft.breakdown, priced.breakdown);
   assert.deepEqual(result.job.breakdown.sections.map(section => [section.id, section.subtotalCents]), [['removal', 97500 + 75000 + 14000], ['shelving', 23140], ['storage', 0]]);
@@ -999,13 +1002,14 @@ test('builder on: a walkthrough-priced quote saves as before but is not sent unt
   assert.ok((await previewQuoteSend(g.store, owner, { jobId: catalogJob.id, expectedRevision: catalogJob.revision }, CATALOG_NOW, { env, compositeState: unused })).confirmToken);
 });
 
-test('builder quote: the owner-approved $750 full truck sends without any further approval', async () => {
+test('builder quote: a junk-only quote is the owner-approved $750 per truck, with no Labor line, and sends without any further approval', async () => {
   const f = fixture(), state = builderState(), selection = builderSelection({ removal: [{ id: menuItem('Full truck load').id, quantity: 2 }], shelving: [] });
   const { priced, input } = builderInput(f, selection, state);
-  assert.deepEqual([priced.totalCents, priced.approval.ready], [150000 + BUILDER_LABOR_CENTS, true], 'the trucks and the owner\'s labor rate are approved');
+  assert.deepEqual([priced.totalCents, priced.approval.ready, priced.junkOnly, priced.labor], [150000, true, true, null], 'D-JUNK: $750 per truck covers the crew\'s time');
   const result = await saveQuoteDraft(f.store, owner, input, NOW, { env: BUILDER_ENV, compositeState: async () => state });
   const job = f.job(result.job.id), preview = await previewQuoteSend(f.store, owner, { jobId: job.id, expectedRevision: job.revision }, NOW, { env: BUILDER_ENV, compositeState: async () => state });
-  assert.match(preview.summary, /\$1,740\.00/);
+  assert.deepEqual([job.estimate.amountCents, job.estimate.lineItems.map(line => line.id), job.quoteDraft.compositePricing.labor, job.quoteDraft.breakdown.labor], [150000, ['removal-junk-full'], undefined, undefined], 'the labor the page sent is dropped');
+  assert.match(preview.summary, /\$1,500\.00/);
   // A saved builder quote is kept but cannot be sent once the builder flag is turned off.
   await assert.rejects(previewQuoteSend(f.store, owner, { jobId: job.id, expectedRevision: job.revision }, NOW, { env: ENV, compositeState: async () => state }), error => error.code === 'quote_draft_builder_disabled' && error.status === 404);
 });
@@ -1099,7 +1103,7 @@ test('builder labor: a tampered labor amount is refused, the rate is the server\
     error => error.code === 'quote_draft_composite_prices_unapproved' && error.details.unapproved.length === 1 && error.details.unapproved[0].id === 'labor' && /The labor rate is now \$45\.00 per man-hour, but this quote has \$40\.00\. Save the quote again/.test(error.details.unapproved[0].reason));
   // Saved again at the new rate: 6 man-hours × $45.00 = $270.00, and it sends.
   const repriced = priceCompositeQuote(moved, builderSelection(), { complete: true });
-  assert.deepEqual([repriced.labor.rateCents, repriced.labor.totalCents, repriced.labor.rateSource, repriced.lineItems.at(-1).name], [4500, 27000, 'owner', 'Labor: 6 man-hours × $45.00']);
+  assert.deepEqual([repriced.labor.rateCents, repriced.labor.totalCents, repriced.labor.rateSource, repriced.lineItems.at(-1).name], [4500, 27000, 'owner', 'Labor']);
   // A quote saved before the Labor line existed (no breakdown.labor) is not sent until it is saved again with labor.
   const legacy = structuredClone(f.job(job.id)); delete legacy.quoteDraft.breakdown.labor;
   f.rows.set(`jobs/${job.id}`, legacy);
@@ -1107,18 +1111,38 @@ test('builder labor: a tampered labor amount is refused, the rate is the server\
     error => error.code === 'quote_draft_composite_prices_unapproved' && error.details.unapproved.some(row => row.id === 'labor' && /no Labor line/.test(row.reason)));
 });
 
+// D-JUNK / D-LABOR-TEXT (owner, 2026-10-18): an unsent quote whose Labor line was priced by the morning's rules (its
+// estimate counted the truck loads; its line named the man-hours) is saved again before it is sent.
+test('builder labor: an unsent quote with a Labor line priced before the owner\'s Labor decisions is saved again before it is sent', async () => {
+  const f = fixture(), approvedPrices = { [menuItem('Two-car garage base').id]: approvedAt(menuItem('Two-car garage base'), 97500), [menuItem('Mattress').id]: approvedAt(menuItem('Mattress'), 7000), [SHELF.id]: approvedAt(SHELF, 11570) };
+  const ready = builderState(approvedPrices), options = { env: BUILDER_ENV, compositeState: async () => ready }, { input } = builderInput(f, builderSelection(), ready);
+  const result = await saveQuoteDraft(f.store, owner, input, NOW, options), job = f.job(result.job.id);
+  assert.ok((await previewQuoteSend(f.store, owner, { jobId: job.id, expectedRevision: job.revision }, NOW, options)).confirmToken, 'saved under today\'s rules: it sends');
+  // The same job as the morning's code saved it: no labor version, the line naming the man-hours and the rate.
+  const earlier = structuredClone(job); delete earlier.quoteDraft.breakdown.labor.version;
+  Object.assign(earlier.estimate.lineItems.at(-1), { name: 'Labor: 6 man-hours × $40.00', description: 'Crew time on site, billed per man-hour, including installing the shelving and storage.' });
+  f.rows.set(`jobs/${job.id}`, earlier);
+  await assert.rejects(previewQuoteSend(f.store, owner, { jobId: job.id, expectedRevision: earlier.revision }, NOW, options),
+    error => error.code === 'quote_draft_composite_prices_unapproved' && error.details.unapproved.length === 1 && error.details.unapproved[0].id === 'labor' && /saved before the owner's Labor decisions of 2026-10-18/.test(error.details.unapproved[0].reason));
+  assert.equal(f.delivered.length, 0);
+  // Saved again from the builder: today's Labor line, and it sends.
+  const again = await saveQuoteDraft(f.store, owner, { ...builderInput(f, builderSelection(), ready).input, jobId: job.id, expectedRevision: earlier.revision }, NOW, options), resaved = f.job(again.job.id);
+  assert.deepEqual([resaved.quoteDraft.breakdown.labor.version, resaved.estimate.lineItems.at(-1).name], [2, 'Labor']);
+  assert.ok((await previewQuoteSend(f.store, owner, { jobId: resaved.id, expectedRevision: resaved.revision }, NOW, options)).confirmToken);
+});
+
 test('builder labor: the estimator\'s adjustment is recorded with the server\'s estimate it replaced, and man-hours round to the cent', () => {
   const state = builderState();
   const at = labor => priceCompositeQuote(state, builderSelection({ labor }), { complete: true });
   // The selection: a two-car base, one full truck load and two mattresses in a medium-full garage, plus two shelving units:
-  // 2 x (60 + 90 + 30 + 2 x 15) + 2 x 60 = 540 person-minutes = 9 man-hours.
-  const estimate = { personMinutes: 540, removalPersonMinutes: 420, installPersonMinutes: 120, fullness: 'medium', installNotEstimated: [] };
-  const adjusted = at({ manHours: 7.25, adjusted: true, fullness: 'medium' });
-  assert.deepEqual(adjusted.labor, { manHours: 7.25, rateCents: 4000, rateSource: 'default', totalCents: 29000, prefilledManHours: 9, adjusted: true, belowEstimate: true, estimate });
-  assert.deepEqual(adjusted.compositePricing.labor, { manHours: 7.25, adjusted: true, fullness: 'medium' });
+  // 2 x (60 + 30) + 2 x 60 = 300 person-minutes = 5 man-hours. The truck load and the mattresses add none (D-JUNK).
+  const estimate = { personMinutes: 300, removalPersonMinutes: 180, installPersonMinutes: 120, fullness: 'medium', installNotEstimated: [] };
+  const adjusted = at({ manHours: 4.25, adjusted: true, fullness: 'medium' });
+  assert.deepEqual(adjusted.labor, { version: 2, manHours: 4.25, rateCents: 4000, rateSource: 'default', totalCents: 17000, prefilledManHours: 5, adjusted: true, belowEstimate: true, estimate });
+  assert.deepEqual(adjusted.compositePricing.labor, { manHours: 4.25, adjusted: true, fullness: 'medium' });
   // null asks for the server's estimate, which reads the garage fullness (unknown: the model's default, medium).
-  assert.deepEqual(['light', 'medium', 'full', 'packed', null].map(fullness => at({ manHours: null, fullness }).labor.manHours), [8, 9, 10, 12, 9]);
-  assert.deepEqual(at({ manHours: null, fullness: 'packed' }).compositePricing.labor, { manHours: 12, adjusted: false, fullness: 'packed' }, 'the saved selection keeps the man-hours priced');
+  assert.deepEqual(['light', 'medium', 'full', 'packed', null].map(fullness => at({ manHours: null, fullness }).labor.manHours), [4, 5, 6, 8, 5]);
+  assert.deepEqual(at({ manHours: null, fullness: 'packed' }).compositePricing.labor, { manHours: 8, adjusted: false, fullness: 'packed' }, 'the saved selection keeps the man-hours priced');
   // Entered by hand without a time model: adjusted, with no estimate.
   const untimed = { ...state, walkthrough: { ...state.walkthrough, minutes: undefined } };
   const byHand = priceCompositeQuote(untimed, builderSelection({ labor: { manHours: 3, adjusted: true } }), { complete: true }).labor;

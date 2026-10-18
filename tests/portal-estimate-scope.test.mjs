@@ -7,6 +7,8 @@ import { saveWalkthroughHandoff } from '../functions/_lib/walkthrough-handoff.js
 import { invoiceLineItems } from '../functions/_lib/money-core.js';
 import { CUSTOMER_LINE_FIELDS, normalizeLineItems } from '../functions/_lib/quote-model.js';
 import { portalStore, portalCookie, portalHandlers, portalView, portalPost } from './helpers/portal-fixture.mjs';
+import { moneyDocumentModel } from '../functions/_lib/money-document.js';
+import { FINAL_25_75, SIGNED_25_75 } from '../functions/_lib/quote-payment-policy.js';
 
 class FixedDate extends Date { constructor(...args) { super(...(args.length ? args : ['2026-09-22T18:00:00.000Z'])); } static now() { return Date.parse('2026-09-22T18:00:00.000Z'); } }
 
@@ -14,7 +16,7 @@ const owner = { user: 'zacb', role: 'owner', businessAccess: true, displayName: 
 const NOW = '2026-09-22T18:00:00.000Z';
 const SECRETS = ['SYNTHETIC-INTERNAL-BRIEF', 'gate code 4321', 'SYNTHETIC-CUSTOMER-NOTE', 'Blue bicycle', 'Park a vehicle', 'Use side gate', 'Locked cabinet'];
 // Synthetic signed plan; the signature fixture is a placeholder PNG header only.
-const plan = () => ({ client: { name: 'Synthetic Customer', phone: '9705550100', email: 'test@example.invalid', address: '100 Fixture Lane', highlevel_contact_id: 'provider1' }, quote: { title: 'Garage reset', total: 1400, deposit: 700, job_date: '2026-09-24', start_time: '09:00', end_time: '12:00', estimated_duration_min: 180 }, acceptance: { accepted_at: '2026-09-22T17:45:00.000Z', accepted_by: 'Synthetic Customer', signature_captured: true, method: 'in_person_signature', terms_version: '2026-09-deposit50' }, signature: 'data:image/png;base64,iVBORw0KGgo=', terms_version: '2026-09-deposit50', terms_accepted: true, photos: { before: 3 }, scope: { keep_items: 'Blue bicycle', remove_items: 'Empty cartons', exclusions: 'Locked cabinet', finish: ['cleanout', 'shelving'], finish_details: { shelf_type: 'metal', shelf_qty: 1 } }, discovery: { success: 'Park a vehicle' }, logistics: { crew_size: 2, assigned_to: 'Crew of 2', notes: 'Use side gate' }, internal_notes: 'SYNTHETIC-INTERNAL-BRIEF gate code 4321. Keep blue bicycle.', notes: 'SYNTHETIC-CUSTOMER-NOTE call before arrival', client_checklists: { preJob: [], postJob: [] } });
+const plan = () => ({ client: { name: 'Synthetic Customer', phone: '9705550100', email: 'test@example.invalid', address: '100 Fixture Lane', highlevel_contact_id: 'provider1' }, quote: { title: 'Garage reset', total: 1400, deposit: 350, job_date: '2026-09-24', start_time: '09:00', end_time: '12:00', estimated_duration_min: 180 }, acceptance: { accepted_at: '2026-09-22T17:45:00.000Z', accepted_by: 'Synthetic Customer', signature_captured: true, method: 'in_person_signature', terms_version: '2026-10-deposit25' }, signature: 'data:image/png;base64,iVBORw0KGgo=', terms_version: '2026-10-deposit25', terms_accepted: true, photos: { before: 3 }, scope: { keep_items: 'Blue bicycle', remove_items: 'Empty cartons', exclusions: 'Locked cabinet', finish: ['cleanout', 'shelving'], finish_details: { shelf_type: 'metal', shelf_qty: 1 } }, discovery: { success: 'Park a vehicle' }, logistics: { crew_size: 2, assigned_to: 'Crew of 2', notes: 'Use side gate' }, internal_notes: 'SYNTHETIC-INTERNAL-BRIEF gate code 4321. Keep blue bicycle.', notes: 'SYNTHETIC-CUSTOMER-NOTE call before arrival', client_checklists: { preJob: [], postJob: [] } });
 const itemized = () => { const p = plan(); p.quote.line_items = [{ id: 'cleanout', kind: 'service', name: 'Garage cleanout and reset', description: 'Sorting, hauling and disposal', quantity: 1, unitCents: 90100, totalCents: 90100 }, { id: 'shelving', kind: 'product', name: 'Metal shelving unit', description: '', quantity: 1, unitCents: 49900, totalCents: 49900 }]; p.quote.catalog_version = '2026-09-pest200-traps250'; return p; };
 
 async function signedJob(planInput) {
@@ -47,6 +49,31 @@ test('a signed walkthrough job shows the customer a sold-scope summary and none 
   }
 });
 
+// D-DEPOSIT: what the homeowner sees after signing on the walkthrough, and what an earlier 50% job keeps showing.
+test('a job signed on the 25%/75% terms shows its deposit due the signing day and the 75% due on the job day; a job signed on the earlier 50% terms keeps its 50% deposit', async t => {
+  const { id, job } = await signedJob(plan());
+  // The earlier terms, as the handoff saved them before 2026-10-18 (no saved payment terms on the estimate).
+  const { commercialPolicy, paymentSchedule, depositPct, amountCents, depositRequiredCents, ...earlier } = job.estimate;
+  const legacy = { ...job, termsVersion: '2026-09-deposit50', acceptance: { ...job.acceptance, termsVersion: '2026-09-deposit50' }, deposit: { ...job.deposit, amount: 700 }, estimate: { ...earlier, depositRequired: 700, termsVersion: '2026-09-deposit50' } };
+  assert.deepEqual([commercialPolicy, depositPct, amountCents, depositRequiredCents], [SIGNED_25_75, 25, 140000, 35000]);
+  for (const [label, saved, expected] of [
+    ['current terms', job, { deposit: 350, schedule: { depositDueDate: '2026-09-22', remainderDueDate: '2026-09-24', timeZone: 'America/Denver', depositCents: 35000, remainderCents: 105000, policyVersion: '2026-10-deposit25' }, terms: /^This flat-rate estimate covers the scope shown\. 25% deposit \$350\.00 due 2026-09-22; 75% remainder \$1,050\.00 due 2026-09-24 \(America\/Denver\)\./, rows: [['Total', 140000], ['25% deposit due 2026-09-22', 35000], ['Scheduled 75% remainder due 2026-09-24', 105000]] }],
+    ['earlier 50% terms', legacy, { deposit: 700, schedule: undefined, terms: /^This flat-rate estimate covers the scope shown\. The displayed deposit is due upfront/, rows: [['Total', 140000], ['Deposit due upfront', 70000]] }]]) {
+    await t.test(label, async st => {
+      portalStore(st, { [id]: saved });
+      const view = await portalView(portalHandlers(NOW), await portalCookie(id));
+      assert.equal(view.status, 200);
+      // The portal's estimate card and the deposit it asks for (the deposit request) agree with the terms signed.
+      assert.deepEqual([view.body.estimate.depositRequired, view.body.estimate.paymentSchedule, view.body.payment.dueNow, view.body.payment.purpose], [expected.deposit, expected.schedule, expected.deposit, 'deposit']);
+      assert.match(view.body.estimate.terms, expected.terms);
+      // The estimate document says the same.
+      const doc = moneyDocumentModel({ id, ...saved }, { kind: 'estimate', now: NOW });
+      assert.deepEqual(doc.rows.filter(row => !/^(Payments received|Total unpaid|Balance due)$/.test(row.label)).map(row => [row.label, row.cents]), expected.rows);
+      assert.equal(doc.termsVersion, label === 'current terms' ? '2026-10-deposit25' : '2026-09-deposit50');
+    });
+  }
+});
+
 test('an estimate valid through a Denver day can still be approved at 11:30 PM that night', async t => {
   const f = portalStore(t, { 'job-1': { type: 'job', customer: 'Synthetic Customer', customerId: 'customer-1', serviceType: 'Garage Turnaround', total: 800, status: 'scheduled', estimate: { number: 'EST-1', status: 'sent', amount: 800, revision: 1, validUntil: '2026-09-22' } } });
   const lateEvening = '2026-09-23T05:30:00.000Z', handlers = portalHandlers(lateEvening), cookie = await portalCookie('job-1', {}, Date.parse(lateEvening));
@@ -62,9 +89,9 @@ test('an estimate valid through a Denver day can still be approved at 11:30 PM t
 
 // The Hub estimate dialog lives in employee-suite.js; only this finance slice is loaded.
 const suite = fs.readFileSync(new URL('../employee-suite.js', import.meta.url), 'utf8');
-function financeHarness(job, input = null) {
+function financeHarness(job, input = null, extra = {}) {
   const captured = {};
-  const context = vm.createContext({ Date: FixedDate, jobStage: row => row.pipelineStatus || row.status || 'scheduled', window: {}, jobs: () => [job], financeDatePlus: () => '2026-10-06', money: String, askAction: async options => { captured.form = options; return input; }, patchJob: async (id, update) => { captured.update = JSON.parse(JSON.stringify(update)); }, syncCustomerCommunication: async () => true, render: () => {}, employeeIdentity: () => 'ZacB' });
+  const context = vm.createContext({ ...extra, Date: FixedDate, jobStage: row => row.pipelineStatus || row.status || 'scheduled', window: {}, jobs: () => [job], financeDatePlus: () => '2026-10-06', money: String, askAction: async options => { captured.form = options; return input; }, patchJob: async (id, update) => { captured.update = JSON.parse(JSON.stringify(update)); }, syncCustomerCommunication: async () => true, render: () => {}, employeeIdentity: () => 'ZacB' });
   vm.runInContext(suite.slice(suite.indexOf('window.opsFinanceAction='), suite.indexOf('function addCalendarMonths')), context);
   return { context, captured };
 }
@@ -117,6 +144,26 @@ test('a Hub scope edit of an older estimate with no stored revision moves it pas
   const unchanged = financeHarness({ ...legacy, estimate: { ...legacy.estimate, revision: 3 } }, { amount: '800', scope: 'Cleanout and sweep', deposit: '400', validUntil: '2026-10-01' });
   await unchanged.context.window.opsFinanceAction('job-1', 'estimate');
   assert.equal(unchanged.captured.update.estimate.revision, 3);
+});
+
+// Review (D-DEPOSIT): the Hub's browser estimate editor (MONEY_API_ENABLED off, the default) neither revises nor records
+// an approval of a quote on the 25/75 terms, as the server's money editor refuses: it would write a second deposit next
+// to the saved schedule. Its invoice for such a job is due on the job day the terms name.
+test('the Hub browser estimate editor leaves a 25/75 quote to its own workflow and invoices it for the job day', async () => {
+  const schedule = { depositCents: 35000, remainderCents: 105000, depositDueDate: '2026-09-22', remainderDueDate: '2026-10-20', timeZone: 'America/Denver', policyVersion: SIGNED_25_75.version };
+  const job = { id: 'job-1', customer: 'Synthetic Customer', serviceType: 'Garage transformation', total: 1400, status: 'scheduled', estimate: { number: 'EST-1', status: 'accepted', amount: 1400, amountCents: 140000, depositRequired: 350, depositRequiredCents: 35000, commercialPolicy: SIGNED_25_75, paymentSchedule: schedule, scope: 'Junk removal only: Full truck load × 2.' } };
+  for (const [estimate, action, said] of [[job.estimate, 'estimate', /signed revision on the walkthrough/], [job.estimate, 'accept', /signed revision on the walkthrough/], [{ ...job.estimate, status: 'sent', commercialPolicy: FINAL_25_75 }, 'accept', /quote builder \(Edit quote\)/]]) {
+    const toasts = [], hub = financeHarness({ ...job, estimate }, { amount: '1800', scope: 'x', deposit: '450', validUntil: '2026-10-06', acceptedBy: 'Synthetic' }, { showToast: message => toasts.push(message) });
+    await hub.context.window.opsFinanceAction('job-1', action);
+    assert.equal(hub.captured.form, undefined, action); assert.equal(hub.captured.update, undefined, action);
+    assert.match(toasts[0], /25% deposit \/ 75% job-day terms/); assert.match(toasts[0], said);
+  }
+  const invoice = financeHarness(job, null);
+  await invoice.context.window.opsFinanceAction('job-1', 'invoice');
+  assert.equal(invoice.captured.form.fields.find(field => field.name === 'dueDate').value, '2026-10-20');
+  const legacy = financeHarness({ ...job, estimate: { number: 'EST-1', status: 'accepted', amount: 1400, depositRequired: 700 } }, null);
+  await legacy.context.window.opsFinanceAction('job-1', 'invoice');
+  assert.equal(legacy.captured.form.fields.find(field => field.name === 'dueDate').value, '2026-10-06', 'any other job keeps its default');
 });
 
 test('the Hub Issue invoice action copies only sold lines in their customer-facing shape', async () => {

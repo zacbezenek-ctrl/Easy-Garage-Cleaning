@@ -22,12 +22,13 @@ export const TOTES = menu.products.find(item => item.id === 'hd-341048322');
 export const builderState = (approvals = {}, extra = {}) => ({ menu, settings: { ...settings, ...extra }, walkthrough: walkthroughPricing(walkthroughServiceItems()),
   approvals: { items: Object.fromEntries(Object.entries(approvals).map(([id, unitCents]) => [id, { unitCents, identity: menuItemIdentity(menu.services.find(item => item.id === id) || menu.products.find(item => item.id === id)) }])), revision: Object.keys(approvals).length ? 'approvals-1' : null } });
 /** The labor a builder quote carries (D12): 6 man-hours x $40.00 = $240.00, as the estimator saved them, in a medium-full
- * garage (the signedPlan's fullness). The server's own estimate of the default selection is 9 man-hours (laborEstimate:
- * 2 x (60 + 90 + 30) for the base and the truck load, 2 shelving units x 60 and two 4-packs of totes x 32 = 544
- * person-minutes), so this labor is below the estimate and not adjusted by hand. */
+ * garage (the signedPlan's fullness). The server's own estimate of the default selection is also 6 man-hours
+ * (laborEstimate, D-JUNK: 2 x (60 + 30) for the base's set-up, sweep-out and sorting, nothing for the truck load, whose
+ * $750 pays its loading and hauling, 2 shelving units x 60 and two 4-packs of totes x 32 = 364 person-minutes), so this
+ * labor equals the estimate and is not adjusted by hand. */
 export const LABOR = Object.freeze({ manHours: 6, fullness: 'medium' });
-/** The server's estimate of the default selection (laborEstimate): 9 man-hours, $360.00. */
-export const ESTIMATE_MAN_HOURS = 9;
+/** The server's estimate of the default selection (laborEstimate): 6 man-hours, $240.00. */
+export const ESTIMATE_MAN_HOURS = 6;
 export const LABOR_CENTS = 24000;
 /** The estimator's builder selection: removal, then shelving, then extra storage, then the labor. */
 export const selection = ({ removal = [{ id: menuItem('Two-car garage base').id, quantity: 1 }, { id: menuItem('Full truck load').id, quantity: 1 }], shelving = [{ id: SHELF.id, quantity: 2 }], storage = [{ id: TOTES.id, quantity: 2 }], labor = LABOR } = {}) =>
@@ -78,9 +79,9 @@ export function fixture(env = ON_ENV, { crews = true } = {}) {
 export function signedPlan(n = 1, { total = 1400, date = MON, start = '09:30', end = '12:30', minutes = 180, quote = {}, logistics = {} } = {}) {
   return {
     client: client(n),
-    quote: { title: 'EGC Garage Service', total, deposit: Math.round(Math.round(total * 100) / 2) / 100, job_date: date, start_time: start, end_time: end, estimated_duration_min: minutes, ...quote },
-    acceptance: { accepted_at: '2026-10-17T14:55:00.000Z', accepted_by: client(n).name, signature_captured: true, method: 'in_person_signature', terms_version: '2026-09-deposit50' },
-    signature: 'data:image/png;base64,iVBORw0KGgo=', terms_version: '2026-09-deposit50', terms_accepted: true, photos: { before: 4 },
+    quote: { title: 'EGC Garage Service', total, deposit: Math.round(Math.round(total * 100) / 4) / 100, job_date: date, start_time: start, end_time: end, estimated_duration_min: minutes, ...quote },
+    acceptance: { accepted_at: '2026-10-17T14:55:00.000Z', accepted_by: client(n).name, signature_captured: true, method: 'in_person_signature', terms_version: '2026-10-deposit25' },
+    signature: 'data:image/png;base64,iVBORw0KGgo=', terms_version: '2026-10-deposit25', terms_accepted: true, photos: { before: 4 },
     scope: { loads: '1', garages: '2', fullness: 'Medium', keep_items: 'Blue bicycle', remove_items: 'Old cartons', finish: ['cleanout'] }, discovery: { success: 'Park two cars' },
     logistics: { crew_size: 2, assigned_to: 'Crew of 2', notes: 'Side gate', bring_list: ['Hand truck / dolly', 'Contractor bags'], ...logistics },
     internal_notes: 'Synthetic internal brief', crew_brief: 'Synthetic crew brief', client_checklists: { preJob: [{ id: 'keep-bike', label: 'Protect blue bicycle', detail: 'Move to safe area', critical: true }], postJob: [] }, notes: 'Call before arrival',

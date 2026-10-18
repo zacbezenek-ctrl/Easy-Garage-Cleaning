@@ -14,7 +14,7 @@ import { heldJobIds, heldJobsQuery } from '../functions/_lib/handoff-price-holds
 import { catalogHandlers } from '../functions/api/catalog.js';
 import { handoffHandlers } from '../functions/api/walkthrough-handoff.js';
 import { purchaseListHandlers } from '../functions/api/purchase-list.js';
-import { priceCompositeQuote } from '../functions/_lib/composite-quote.js';
+import { compositeScope, priceCompositeQuote } from '../functions/_lib/composite-quote.js';
 import { fieldJobProjection, fieldMaterials } from '../functions/_lib/field-execution.js';
 import { GHL_SCHEDULE_MIRROR } from '../functions/_lib/ghl-schedule-mirror.js';
 import { normalizeLineItems, unsentQuoteDraft } from '../functions/_lib/quote-model.js';
@@ -23,6 +23,7 @@ import { quoteApproved } from '../functions/_lib/portal-invitation.js';
 import { projectReleased } from '../functions/_lib/business-hub-core.js';
 import { payable } from '../functions/_lib/customer-payments.js';
 import { moneyDocumentKinds } from '../functions/_lib/money-document.js';
+import { SIGNED_25_75 } from '../functions/_lib/quote-payment-policy.js';
 import { BASE_ENV, LABOR_CENTS, MON, NOW, LATER, ON_ENV, SAT, SHELF, TOTES, TUE, builderState, client, estimator, fixture, menuItem, owner, selection, signedPlan } from './helpers/estimator-fixture.mjs';
 import { walkthroughCrewBrief } from '../functions/_lib/walkthrough-crew-brief.js';
 import { scheduleMirrorNote } from '../functions/_lib/ghl-schedule-mirror.js';
@@ -86,9 +87,12 @@ test('estimator end to end: builder quote, crew opening, signed job on Crew 1 wi
   const preview = await post({ action: 'composite_preview', compositePricing: chosen });
   assert.deepEqual([removal.status, shelving.status, preview.status], [200, 200, 200]);
   assert.deepEqual(preview.body.steps.map(step => [step.id, step.runningTotalCents]), [['removal', removal.body.totalCents], ['shelving', shelving.body.totalCents], ['storage', preview.body.totalCents - LABOR_CENTS], ['labor', preview.body.totalCents]], 'a running total per step, then the labor');
-  assert.deepEqual(preview.body.labor, { manHours: 6, rateCents: 4000, rateSource: 'default', totalCents: LABOR_CENTS, prefilledManHours: 9, adjusted: false, belowEstimate: true,
-    estimate: { personMinutes: 544, removalPersonMinutes: 360, installPersonMinutes: 184, fullness: 'medium', installNotEstimated: [] } });
-  assert.deepEqual(preview.body.lineItems.at(-1), { id: 'labor', kind: 'labor', name: 'Labor: 6 man-hours × $40.00', description: 'Crew time on site, billed per man-hour, including installing the shelving and storage.', quantity: 1, unitCents: LABOR_CENTS, totalCents: LABOR_CENTS, amount: 240, optional: false, selected: true, group: null, tier: null, package: null, catalog: null, customerSupplied: false, taxable: false });
+  // D-JUNK: the estimate is the base's set-up, sweep-out and sorting plus the install time; the truck load's $750 pays its own.
+  assert.deepEqual(preview.body.labor, { version: 2, manHours: 6, rateCents: 4000, rateSource: 'default', totalCents: LABOR_CENTS, prefilledManHours: 6, adjusted: false, belowEstimate: false,
+    estimate: { personMinutes: 364, removalPersonMinutes: 180, installPersonMinutes: 184, fullness: 'medium', installNotEstimated: [] } });
+  assert.equal(preview.body.junkOnly, false);
+  // D-LABOR-TEXT: the customer's Labor line is one amount.
+  assert.deepEqual(preview.body.lineItems.at(-1), { id: 'labor', kind: 'labor', name: 'Labor', description: 'Includes installing the shelving and storage.', quantity: 1, unitCents: LABOR_CENTS, totalCents: LABOR_CENTS, amount: 240, optional: false, selected: true, group: null, tier: null, package: null, catalog: null, customerSupplied: false, taxable: false });
   const outOfOrder = await post({ action: 'composite_preview', compositePricing: { ...chosen, steps: ['shelving', 'removal', 'storage'] } });
   assert.deepEqual([outOfOrder.status, outOfOrder.body.code], [400, 'quote_draft_composite_order']);
   const saved = await post({ action: 'save', requestId: fixedRequestId(), customerId: 'c1', sourceWalkthroughId: 'w1', sourceRevision: 'w1r', draft: { client: client(1), title: 'Garage reset', scope: 'Removal, then shelving, then extra storage.', line_items: preview.body.lineItems, valid_until: '2026-10-30', catalog_version: preview.body.menuVersion, crew_size: 2, estimated_duration_min: 180, composite_pricing: chosen } });
@@ -124,22 +128,27 @@ test('estimator end to end: builder quote, crew opening, signed job on Crew 1 wi
   assert.deepEqual(job.estimate.lineItems.filter(line => line.split).map(line => line.id), ['shelving-goods', 'storage-goods']);
   // D12 end to end: the customer's estimate carries the Labor line, the total, the deposit and the deal value (job.total,
   // the HighLevel opportunity's monetaryValue) include it, and the crew sees the man-hours, never the rate or the amount.
-  assert.deepEqual(job.estimate.lineItems.at(-1).name, 'Labor: 6 man-hours × $40.00');
-  assert.deepEqual(job.acceptedHandoffPayload.quote.line_items.at(-1), { name: 'Labor: 6 man-hours × $40.00', qty: 1, total: 240 });
-  assert.deepEqual([job.total, job.priceQuoted, job.estimate.depositRequired], [priced.totalCents / 100, priced.totalCents / 100, Math.round(priced.totalCents / 2) / 100]);
+  // The customer's line reads "Labor" and its amount (D-LABOR-TEXT).
+  assert.deepEqual(job.estimate.lineItems.at(-1).name, 'Labor');
+  assert.deepEqual(job.acceptedHandoffPayload.quote.line_items.at(-1), { name: 'Labor', qty: 1, total: 240 });
+  assert.deepEqual([job.total, job.priceQuoted, job.estimate.depositRequired], [priced.totalCents / 100, priced.totalCents / 100, Math.round(priced.totalCents / 4) / 100]);
   assert.ok(priced.totalCents - LABOR_CENTS === priced.breakdown.sections.reduce((sum, section) => sum + section.subtotalCents, 0), 'the menu steps plus the labor are the total');
   assert.deepEqual(job.compositeQuote.breakdown.labor, priced.labor);
-  // The man-hours are the time sold, never an on-site time; below the server's estimate, the estimate shows (flow-8).
-  assert.deepEqual(job.jobBreakdown.sections.at(-1), { id: 'labor', title: 'Labor', items: ['6 man-hours sold (below the estimate of 9 man-hours)'] });
+  // The man-hours are the time sold, never an on-site time; here they are the server's estimate (flow-8).
+  assert.deepEqual(job.jobBreakdown.sections.at(-1), { id: 'labor', title: 'Labor', items: ['6 man-hours sold'] });
   assert.equal(job.jobInstructions.laborManHours, 6);
-  assert.deepEqual(walkthroughCrewBrief(job.jobInstructions).filter(row => ['Man-hours sold', 'Job breakdown'].includes(row.label)).map(row => [row.label, row.text.split('\n').at(-1)]), [['Man-hours sold', '6 man-hours'], ['Job breakdown', 'Labor: 6 man-hours sold (below the estimate of 9 man-hours)']]);
+  assert.deepEqual(walkthroughCrewBrief(job.jobInstructions).filter(row => ['Man-hours sold', 'Job breakdown'].includes(row.label)).map(row => [row.label, row.text.split('\n').at(-1)]), [['Man-hours sold', '6 man-hours'], ['Job breakdown', 'Labor: 6 man-hours sold']]);
   const crewView = fieldJobProjection(job, [], { purchaseDetails: true });
   assert.match(JSON.stringify(crewView), /6 man-hours/);
   assert.doesNotMatch(JSON.stringify([crewView, job.jobBreakdown, job.jobInstructions]), /\$\s?\d|rateCents|"totalCents"|Labor: 6 man-hours ×/, 'the crew never sees the labor rate or amount');
-  assert.match(scheduleMirrorNote({ kind: 'scheduled', job }).body, /\nLabor: 6 man-hours sold \(below the estimate of 9 man-hours\)\n/);
+  assert.match(scheduleMirrorNote({ kind: 'scheduled', job }).body, /\nLabor: 6 man-hours sold\n/, 'the HighLevel internal note keeps the man-hours');
   assert.deepEqual(job.acceptedHandoffPayload.quote.estimate_line_items, normalizeLineItems(priced.lineItems, { strict: true }).lineItems);
   assert.doesNotMatch(JSON.stringify([signed, job.acceptedHandoffPayload, job.jobInstructions]), /markupCents|productCents|"split":\{/);
-  assert.deepEqual([job.estimate.amount, job.estimate.depositRequired, job.estimate.status, job.estimate.catalogVersion, job.estimate.pricingSettingsVersion], [priced.totalCents / 100, Math.round(priced.totalCents / 2) / 100, 'accepted', priced.menuVersion, priced.settingsVersion]);
+  assert.deepEqual([job.estimate.amount, job.estimate.depositRequired, job.estimate.status, job.estimate.catalogVersion, job.estimate.pricingSettingsVersion], [priced.totalCents / 100, Math.round(priced.totalCents / 4) / 100, 'accepted', priced.menuVersion, priced.settingsVersion]);
+  // D-DEPOSIT: the in-person terms (2026-10-deposit25) with their exact dates: 25% due the day the homeowner signed
+  // (Saturday 2026-10-17 in Denver), the remaining 75% on the job day (Monday), saved as a sent quote's terms are.
+  assert.deepEqual([job.termsVersion, job.estimate.termsVersion, job.estimate.commercialPolicy, job.estimate.depositPct], ['2026-10-deposit25', '2026-10-deposit25', SIGNED_25_75, 25]);
+  assert.deepEqual(job.estimate.paymentSchedule, { depositCents: Math.round(priced.totalCents / 4), remainderCents: priced.totalCents - Math.round(priced.totalCents / 4), depositDueDate: '2026-10-17', remainderDueDate: MON, timeZone: 'America/Denver', policyVersion: '2026-10-deposit25' });
   assert.deepEqual(job.compositeQuote.compositePricing, priced.compositePricing);
   assert.deepEqual(job.compositeQuote.breakdown, priced.breakdown);
   assert.deepEqual(job.quoteDraft.breakdown, priced.breakdown, 'the saved draft takes the signed selection');
@@ -498,9 +507,10 @@ test('the gameplan page: crew-mode slot choices, the builder quote it signs and 
   }
   // The builder quote a saved draft returned is what payload() signs: its total, lines, menu version and selection, plus the chosen crew.
   const state = builderState(), priced = priceCompositeQuote(state, selection(), { complete: true });
-  const draftView = { id: 'job-1', compositePricing: priced.compositePricing, estimate: { amountCents: priced.totalCents, catalogVersion: priced.menuVersion, lineItems: priced.lineItems.map(line => ({ ...line, included: true })) } };
+  const draftView = { id: 'job-1', compositePricing: priced.compositePricing, estimate: { amountCents: priced.totalCents, catalogVersion: priced.menuVersion, scope: compositeScope(priced), lineItems: priced.lineItems.map(line => ({ ...line, included: true })) } };
   const builder = JSON.parse(JSON.stringify(builderQuoteOf(draftView)));
-  assert.deepEqual(builder, { compositePricing: priced.compositePricing, totalCents: priced.totalCents, menuVersion: priced.menuVersion, lineItems: priced.lineItems.map(line => ({ id: line.id, kind: line.kind, name: line.name, description: line.description, quantity: line.quantity, unitCents: line.unitCents, totalCents: line.totalCents })), jobId: 'job-1' });
+  // scope: the priced scope Review shows the homeowner (the one the signed estimate saves).
+  assert.deepEqual(builder, { compositePricing: priced.compositePricing, totalCents: priced.totalCents, menuVersion: priced.menuVersion, lineItems: priced.lineItems.map(line => ({ id: line.id, kind: line.kind, name: line.name, description: line.description, quantity: line.quantity, unitCents: line.unitCents, totalCents: line.totalCents })), scope: compositeScope(priced), jobId: 'job-1' });
   assert.equal(builderQuoteOf({ id: 'job-2', estimate: { amountCents: 140000, lineItems: [] } }), null, 'a walkthrough-priced draft is not a builder quote');
   const page = vm.createContext({ PRICING: null, save() {}, render() {}, invalidateAcceptance() {}, PHOTO_COUNT: 2, uid: () => 'local', normPhone: value => value, recommend: () => 1400, signedLines: () => [{ id: 'cleanout', kind: 'service', name: 'Garage cleanout and reset', quantity: 1, unitCents: 140000, totalCents: 140000 }], estimatedJobMinutes: () => 180,
     buildJobInstructions: () => ({ bringList: ['Hand truck / dolly'] }), buildInternalNotes: () => 'brief', buildCrewBrief: () => 'crew brief', buildClientChecklists: () => ({ preJob: [], postJob: [] }) });
@@ -511,10 +521,10 @@ test('the gameplan page: crew-mode slot choices, the builder quote it signs and 
   assert.deepEqual([plain.quote.total, plain.quote.line_items.length, 'composite_pricing' in plain.quote, 'crew_id' in plain.logistics], [1400, 1, false, false], 'without a builder quote or a chosen crew the payload is as before');
   Object.assign(page.S, { builderQuote: builder, requestedCrewId: 'crew_one' });
   const sent = JSON.parse(JSON.stringify(page.payload()));
-  assert.deepEqual([sent.quote.total, sent.quote.deposit, sent.quote.catalog_version, sent.quote.composite_pricing, sent.quote.line_items, sent.logistics.crew_id], [priced.totalCents / 100, Math.round(priced.totalCents / 2) / 100, priced.menuVersion, priced.compositePricing, builder.lineItems, 'crew_one']);
+  assert.deepEqual([sent.quote.total, sent.quote.deposit, sent.quote.catalog_version, sent.quote.composite_pricing, sent.quote.line_items, sent.logistics.crew_id], [priced.totalCents / 100, Math.round(priced.totalCents / 4) / 100, priced.menuVersion, priced.compositePricing, builder.lineItems, 'crew_one']);
   assert.match(lineOf('function chooseSlot('), /S\.requestedCrewId=slot\.crewId\|\|''/);
   assert.match(lineOf('function updateField('), /if\(\['jobDate','startTime','endTime'\]\.includes\(key\)&&S\.requestedCrewId\)S\.requestedCrewId=''/, 'a time typed by hand drops the offered crew');
-  assert.match(html, /\/crew\/gameplan-handoff\.js\?v=20261017crewbuild/);
+  assert.match(html, /\/crew\/gameplan-handoff\.js\?v=20261018rebuild1/);
 });
 
 test('the employee-leak check names employees, never the tail of a random request or job id', () => {

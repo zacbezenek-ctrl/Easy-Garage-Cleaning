@@ -82,9 +82,12 @@
   // a number that is not adjusted: they stay until the estimator changes the scope or resets to the estimate.
   const emptySelection = () => ({ removal: {}, shelving: [], storage: [], labor: { manHours: null, adjusted: false } });
   const clampQty = (value, max) => { const n = Math.floor(Number(value)); return Number.isFinite(n) && n >= 1 ? Math.min(max, n) : 0; };
-  // ---- Labor (D12): man-hours x the owner's labor rate, on every builder quote ----
+  // ---- Labor (D12): man-hours x the owner's labor rate, on every builder quote with garage work ----
   // The rate and the man-hour limits come from the builder menu (menu.labor); the server prices the line itself.
-  const LABOR_LIMITS = { min: 0.5, max: 200, step: 0.25 };
+  // D-JUNK ("$750 per truck covers the crew's time"): a junk-only quote (truck loads, special-handling items and access
+  // charges only: menu.labor.haulingGroups) has no Labor line, and the estimate never counts loading, hauling or disposal.
+  // D-LABOR-TEXT: the customer sees the line as one amount, "Labor"; the man-hours here are the estimator's, never theirs.
+  const LABOR_LIMITS = { min: 0.5, max: 200, step: 0.25 }, LABOR_VERSION = 2, HAULING_GROUPS = ['junk', 'special', 'access'];
   // Send refusals the estimator fixes by editing and saving the quote again (composite-quote.js LABOR_ID and
   // INSTALLATION_ID): never a wait for the owner's approval alone.
   const ESTIMATOR_FIXES = new Set(['labor', 'goods-installation']);
@@ -93,6 +96,29 @@
   const hoursText = hours => `${Number(Number(hours).toFixed(2))} man-hour${hours === 1 ? '' : 's'}`;
   const clockHours = minutes => `${Number((minutes / 60).toFixed(2))} hour${minutes === 60 ? '' : 's'}`;
   const laborCents = (hours, rate) => Math.round(Math.round(hours * 4) * rate / 4);
+  const haulingGroups = menu => Array.isArray(menu?.labor?.haulingGroups) ? menu.labor.haulingGroups : HAULING_GROUPS;
+  // A junk-only selection (composite-quote.js junkOnly): at least one truck load, and the rest special items or access
+  // (priced on top of a truck on the job: alone, they keep the Labor line).
+  function junkOnly(menu, sel) {
+    const services = new Map((menu?.services || []).map(item => [item.id, item])), picked = Object.entries(sel?.removal || {}).filter(([, qty]) => qty > 0);
+    return picked.some(([id]) => services.get(id)?.group === 'junk') && !(sel.shelving || []).length && !(sel.storage || []).length && picked.every(([id]) => haulingGroups(menu).includes(services.get(id)?.group));
+  }
+  // The same test on saved breakdown lines (a saved quote's), by their step and group.
+  const junkOnlyLines = (menu, lines) => Array.isArray(lines) && lines.some(line => line && line.group === 'junk') && lines.every(line => line && line.section === 'removal' && haulingGroups(menu).includes(line.group));
+  // A saved Labor line priced before the owner's Labor decisions of 2026-10-18 (no version: its estimate counted the
+  // truck loads) whose man-hours the estimator did not set by hand: reopened, it follows the new estimate.
+  const staleLabor = (menu, breakdown) => Boolean(breakdown?.labor && typeof breakdown.labor === 'object' && breakdown.labor.version !== (Number(menu?.labor?.version) || LABOR_VERSION) && breakdown.labor.adjusted !== true);
+  // D-JUNK: the garage work a walkthrough records beyond junk removal (walkthrough-handoff.js walkthroughGarageWork): crew
+  // sorting and the reset of what stays ("Customer sorts with crew", "Crew stages keep / donate / haul zones"), the
+  // cleaning add-ons, shelving, totes and pest-waste cleanup. A junk-only quote prices none of it, so the homeowner signs
+  // one only on a walkthrough that records none; the builder says so while the estimator builds it.
+  function walkthroughGarageWork(p) {
+    const scope = p?.scope || {}, finish = Array.isArray(scope.finish) ? scope.finish : [], details = scope.finish_details || {};
+    const count = (qty, label) => Number.isInteger(qty) && qty > 0 ? `${qty} ${label}${qty === 1 ? '' : 's'}` : '';
+    return [{ customer: 'sorting with the customer and resetting what stays', zones: 'sorting into keep / donate / haul zones and resetting what stays' }[scope.sort_method] || '', finish.includes('deep_clean') ? 'a deep clean' : '', finish.includes('pressure_wash') ? 'a pressure wash' : '',
+      finish.includes('mouse_trapping') ? 'mouse trapping' : '', finish.includes('shelving') ? count(details.shelf_qty, 'shelving unit') : '', finish.includes('totes') ? count(details.tote_qty, 'storage tote') : '', Array.isArray(scope.hazards) && scope.hazards.includes('Pest waste') ? 'pest-waste cleanup' : ''].filter(Boolean);
+  }
+  const garageWorkNote = work => work.length ? h('p', { class: 'qd-notice qb-garage-work', role: 'status' }, `The walkthrough records garage work this junk-only quote does not price: ${work.join(', ')}. The homeowner cannot sign it on that walkthrough. Add the work here (a garage cleaning base for sorting and reset, cleaning, shelving or storage), or, if they want junk removal only, change the walkthrough (Everything goes or Customer labels before arrival; no finish options).`) : null;
   // The walkthrough's garage fullness ("How full is it?"): the one input of the server's labor time estimate that the
   // builder selection does not hold. The crew size and the scheduled minutes are not inputs: the man-hours of the work
   // are the same for any crew.
@@ -100,20 +126,22 @@
   const fullnessOf = p => { const value = String(p?.scope?.fullness || '').trim().toLowerCase(); return FULLNESS.includes(value) ? value : null; };
   // The server's estimate (composite-quote.js laborEstimate) from the menu's time model (menu.labor.time, person-minutes),
   // for the running total shown while choosing; the server's preview is authoritative. {manHours, personMinutes,
-  // installNotEstimated: [names]} or null without a time model.
+  // installNotEstimated: [names]} or null without a time model. Set-up and sweep-out, the sorting of a garage with a
+  // cleaning base (its fullness), the cleaning add-ons and the install time count; truck loads, special-handling items
+  // and access charges never do (their own prices pay for loading, hauling and disposal).
   function estimateLabor(menu, sel, fullness = null) {
     const t = menu?.labor?.time;
     if (!t || typeof t !== 'object' || !sel) return null;
     const num = value => Number.isFinite(Number(value)) ? Number(value) : 0;
     const services = new Map((menu.services || []).map(item => [item.id, item])), products = new Map((menu.products || []).map(item => [item.id, item]));
-    let minutes = num(t.basePersonMinutes), loads = 0, removal = false, install = 0;
+    let minutes = num(t.basePersonMinutes), sorted = false, install = 0;
     for (const [id, qty] of Object.entries(sel.removal || {})) {
       const item = services.get(id);
-      if (!item || !(qty > 0)) continue;
-      removal = true;
-      if (item.junkFraction) loads += item.junkFraction * qty; else minutes += num(item.laborPersonMinutes) * qty;
+      if (!item || !(qty > 0) || haulingGroups(menu).includes(item.group)) continue;
+      if (item.group === 'cleaning-base') sorted = true;
+      minutes += num(item.laborPersonMinutes) * qty;
     }
-    if (removal) minutes += Math.max(num(t.minLoads), loads) * num(t.loadPersonMinutes) + (fullness && Number.isFinite(t.fillPersonMinutes?.[fullness]) ? t.fillPersonMinutes[fullness] : num(t.defaultFillPersonMinutes));
+    if (sorted) minutes += fullness && Number.isFinite(t.fillPersonMinutes?.[fullness]) ? t.fillPersonMinutes[fullness] : num(t.defaultFillPersonMinutes);
     const missing = [];
     for (const step of ['shelving', 'storage']) for (const row of sel[step] || []) {
       const item = products.get(row.id);
@@ -163,45 +191,51 @@
     return sel;
   }
   // A saved quote's selection (job.compositePricing, the shape the server prices) in the builder's own shape: the saved
-  // man-hours stay as they were saved (and adjusted only when the estimator had set them by hand), on any device.
-  function selectionOfPricing(pricing) {
+  // man-hours stay as they were saved (and adjusted only when the estimator had set them by hand), on any device, except
+  // man-hours pre-filled before the owner's Labor decisions of 2026-10-18 (staleLabor, from the saved job.breakdown),
+  // which follow the new estimate.
+  function selectionOfPricing(pricing, breakdown = null, menu = null) {
     const sel = emptySelection(), rows = value => Array.isArray(value) ? value.filter(entry => entry && typeof entry.id === 'string') : [];
     for (const entry of rows(pricing?.removal)) sel.removal[entry.id] = entry.quantity;
     for (const step of ['shelving', 'storage']) sel[step] = rows(pricing?.[step]).map(entry => ({ id: entry.id, quantity: entry.quantity }));
-    if (validManHours(pricing?.labor?.manHours)) sel.labor = { manHours: pricing.labor.manHours, adjusted: pricing.labor.adjusted === true };
+    if (validManHours(pricing?.labor?.manHours) && !staleLabor(menu, breakdown)) sel.labor = { manHours: pricing.labor.manHours, adjusted: pricing.labor.adjusted === true };
     return sel;
   }
   // The selection the server prices: the finished steps (a prefix of removal, shelving, storage) and their items. The
-  // whole quote (through storage) also carries the labor: the man-hours (null: the server's estimate), whether the
-  // estimator set them by hand, and the walkthrough's garage fullness the estimate reads. The labor rate and the estimate
-  // are never sent: the server uses the owner's rate and works the estimate out from the selection itself.
+  // whole quote (through storage) with garage work also carries the labor: the man-hours (null: the server's estimate),
+  // whether the estimator set them by hand, and the walkthrough's garage fullness the estimate reads; a junk-only one has
+  // none. The labor rate and the estimate are never sent: the server uses the owner's rate and works the estimate out
+  // from the selection itself.
   function builderDescriptor(menu, sel, through, fullness = null) {
     const steps = BUILDER_STEPS.slice(0, Math.max(1, BUILDER_STEPS.indexOf(through) + 1));
     return { menuVersion: menu.menuVersion, settingsVersion: menu.settingsVersion, steps,
       removal: (menu.services || []).filter(item => sel.removal[item.id] > 0).map(item => ({ id: item.id, quantity: sel.removal[item.id] })),
       shelving: steps.includes('shelving') ? sel.shelving.map(({ id, quantity }) => ({ id, quantity })) : [],
       storage: steps.includes('storage') ? sel.storage.map(({ id, quantity }) => ({ id, quantity })) : [],
-      ...(steps.length === BUILDER_STEPS.length ? { labor: (hours => ({ manHours: hours, adjusted: hours !== null && sel.labor?.adjusted === true, fullness: FULLNESS.includes(fullness) ? fullness : null }))(validManHours(sel.labor?.manHours, menu) ? sel.labor.manHours : null) } : {}) };
+      ...(steps.length === BUILDER_STEPS.length && !junkOnly(menu, sel) ? { labor: (hours => ({ manHours: hours, adjusted: hours !== null && sel.labor?.adjusted === true, fullness: FULLNESS.includes(fullness) ? fullness : null }))(validManHours(sel.labor?.manHours, menu) ? sel.labor.manHours : null) } : {}) };
   }
   // Running totals from the menu's per-unit prices, labor rate and time model, shown while choosing; the server's preview
-  // is authoritative. laborHours is null while there is neither a time estimate nor a number of man-hours.
+  // is authoritative. laborHours is null while there is neither a time estimate nor a number of man-hours, and for a
+  // junk-only selection (junkOnly), which has no Labor line.
   function runningTotals(menu, sel, fullness = null) {
     const price = new Map([...(menu?.services || []), ...(menu?.products || [])].map(item => [item.id, item]));
     const sum = rows => rows.reduce((total, [id, qty]) => total + (Number(price.get(id)?.unitCents) || 0) * qty, 0);
     const removal = sum(Object.entries(sel.removal)), shelving = sum(sel.shelving.map(row => [row.id, row.quantity])), storage = sum(sel.storage.map(row => [row.id, row.quantity]));
     const drafts = [...Object.keys(sel.removal), ...sel.shelving.map(row => row.id), ...sel.storage.map(row => row.id)].filter(id => price.get(id) && price.get(id).approved !== true).length;
-    const rate = Number.isSafeInteger(menu?.labor?.rateCents) ? menu.labor.rateCents : null, laborHours = validManHours(sel.labor?.manHours, menu) ? sel.labor.manHours : estimateLabor(menu, sel, fullness)?.manHours ?? null;
+    const junk = junkOnly(menu, sel), rate = Number.isSafeInteger(menu?.labor?.rateCents) ? menu.labor.rateCents : null;
+    const laborHours = junk ? null : validManHours(sel.labor?.manHours, menu) ? sel.labor.manHours : estimateLabor(menu, sel, fullness)?.manHours ?? null;
     const labor = rate !== null && laborHours !== null ? laborCents(laborHours, rate) : 0;
-    return { removal, shelving, storage, labor, laborHours, total: removal + shelving + storage + labor, drafts };
+    return { removal, shelving, storage, labor, laborHours, junkOnly: junk, total: removal + shelving + storage + labor, drafts };
   }
-  // The customer-facing scope of a priced builder quote, step by step, then the labor.
+  // The customer-facing scope of a priced builder quote, step by step, then the labor: one word, never the man-hours
+  // (D-LABOR-TEXT). A junk-only quote says it is junk removal only (D-JUNK). The same text as the server's
+  // (composite-quote.js compositeScope), which a signed walkthrough builder quote saves.
   function builderScope(priced) {
-    const lines = Array.isArray(priced?.breakdown?.lines) ? priced.breakdown.lines : [];
-    const parts = (priced?.breakdown?.sections || []).map(section => {
-      const names = lines.filter(line => line.section === section.id).map(line => line.qty !== 1 ? `${line.name} × ${line.qty}` : line.name);
-      return names.length ? `${section.label}: ${names.join('; ')}` : '';
-    }).filter(Boolean);
-    if (typeof priced?.labor?.manHours === 'number') parts.push(`Labor: ${hoursText(priced.labor.manHours)}`);
+    const lines = Array.isArray(priced?.breakdown?.lines) ? priced.breakdown.lines.filter(line => line && typeof line === 'object') : [];
+    const names = section => lines.filter(line => line.section === section).map(line => line.qty !== 1 ? `${line.name} × ${line.qty}` : line.name);
+    if (junkOnlyLines(null, lines)) return `Junk removal only: ${names('removal').join('; ')}. Loading, hauling and disposal; no sorting, organizing or reset.`.slice(0, 1600);
+    const parts = (priced?.breakdown?.sections || []).map(section => names(section.id).length ? `${section.label}: ${names(section.id).join('; ')}` : '').filter(Boolean);
+    if (typeof (priced?.labor ?? priced?.breakdown?.labor)?.manHours === 'number') parts.push('Labor');
     return `${parts.join('. ')}.`.slice(0, 1600);
   }
   // The draft a builder quote saves: the previewed server lines and the selection they were priced from.
@@ -559,11 +593,17 @@
     // can be saved but not sent.
     const installGap = labor => S.menu?.installation?.included === true ? [] : (Array.isArray(labor?.estimate?.installNotEstimated) ? labor.estimate.installNotEstimated : []).filter(row => row && typeof row.name === 'string');
     function laborSection(priced) {
+      // D-JUNK: a junk-only quote is the truck-load price alone; the review says why it has no Labor line.
+      if (priced.junkOnly === true) return h('section', { class: 'qb-section qb-labor', 'data-labor': 'none' }, h('h3', {}, 'Labor · none'),
+        h('p', { class: 'qb-help' }, 'Junk-only quote: the truck-load price covers the crew\u2019s time to load, haul and dispose, so this quote has no Labor line. Add a cleaning base, a cleaning add-on, shelving or storage and the Labor line comes back.'),
+        garageWorkNote(walkthroughGarageWork(plan())));
       const labor = priced.labor || { manHours: null, rateCents: S.menu.labor?.rateCents, totalCents: null, prefilledManHours: null, adjusted: false, belowEstimate: false, estimate: null }, estimate = labor.estimate;
       const estimated = labor.prefilledManHours !== null && estimate, gap = installGap(labor);
-      const parts = estimated ? [`removal and cleaning ${hoursText(Math.round(estimate.removalPersonMinutes / 15) / 4)}`, estimate.installPersonMinutes ? `installing shelving and storage ${hoursText(Math.round(estimate.installPersonMinutes / 15) / 4)}` : '', estimate.fullness ? `${estimate.fullness} garage` : ''].filter(Boolean) : [];
+      // The fullness is the sorting time of a garage with a cleaning base (D-JUNK): named only when it counted.
+      const sorted = priced.breakdown.lines.some(line => line.group === 'cleaning-base');
+      const parts = estimated ? [`set-up, sorting and cleaning ${hoursText(Math.round(estimate.removalPersonMinutes / 15) / 4)}`, estimate.installPersonMinutes ? `installing shelving and storage ${hoursText(Math.round(estimate.installPersonMinutes / 15) / 4)}` : '', estimate.fullness && sorted ? `${estimate.fullness} garage` : ''].filter(Boolean) : [];
       const basis = !estimated ? 'No time estimate is available, so the man-hours are entered by hand.'
-        : `Estimate: ${hoursText(labor.prefilledManHours)} of crew time (${parts.join(', ')}), whatever the crew size.`;
+        : `Estimate: ${hoursText(labor.prefilledManHours)} of crew time (${parts.join(', ')}), whatever the crew size. Truck loads, special items and access charges are not counted: their own prices pay for loading, hauling and disposal.`;
       const kept = labor.manHours !== null && !labor.adjusted && labor.prefilledManHours !== null && labor.manHours !== labor.prefilledManHours;
       const note = labor.manHours === null ? 'Enter the estimated man-hours before saving: the quote cannot be saved or sent without them.'
         : labor.adjusted && labor.prefilledManHours !== null ? `Adjusted by hand from the estimate of ${hoursText(labor.prefilledManHours)}.`
@@ -609,12 +649,14 @@
       ];
     }
     // The saved Labor line: its man-hours and rate, how they relate to the estimate, and what the estimator must fix before
-    // sending (a labor rate the owner changed since, or goods the estimate has no install time for).
+    // sending (a Labor line priced before the owner's Labor decisions of 2026-10-18, a labor rate the owner changed since,
+    // or goods the estimate has no install time for).
     function savedLabor(labor) {
       const rateNow = S.menu?.labor?.rateCents, prefilled = typeof labor.prefilledManHours === 'number' ? labor.prefilledManHours : null, gap = labor.adjusted ? [] : installGap(labor);
       const note = prefilled === null || prefilled === labor.manHours ? '' : labor.adjusted ? `Adjusted by hand from the estimate of ${hoursText(prefilled)}.` : `The estimate was ${hoursText(prefilled)} when it was saved.`;
       return h('section', { class: 'qb-section qb-labor' }, h('h3', {}, `Labor · ${money(labor.totalCents)}`), h('p', { class: 'qb-labor-row' }, h('b', {}, `${hoursText(labor.manHours)} × ${money(labor.rateCents)} = ${money(labor.totalCents)}`)),
         note ? h('p', { class: 'qb-help' }, note) : null,
+        labor.version !== (Number(S.menu?.labor?.version) || LABOR_VERSION) ? h('p', { class: 'qd-notice qb-labor-rules', role: 'status' }, 'This Labor line was priced before the owner\u2019s Labor decisions of 2026-10-18 (its estimate counted truck-load time, and the customer would see the man-hours). Edit the quote and save it again before sending it.') : null,
         Number.isSafeInteger(rateNow) && Number.isSafeInteger(labor.rateCents) && rateNow !== labor.rateCents ? h('p', { class: 'qd-notice qb-rate-changed', role: 'status' }, `The labor rate is now ${money(rateNow)} per man-hour, but this quote has ${money(labor.rateCents)}. Edit the quote and save it again before sending it.`) : null,
         gap.length ? h('p', { class: 'qd-notice qb-install-gap', role: 'status' }, `The man-hours leave out installing ${gap.map(row => row.name).join('; ')}. Edit the quote and adjust the man-hours before sending it.`) : null);
     }
@@ -625,8 +667,9 @@
       body.replaceChildren(...[
         h('p', {}, `Quote ${job.estimate.number} revision ${job.estimate.revision} is saved as a draft and has not been sent.`),
         ...(breakdown ? breakdown.sections.filter(entry => lines.some(line => line.section === entry.id)).map(entry => section(`${entry.label} · ${money(entry.subtotalCents)}`, '', h('ul', { class: 'qd-lines' }, lines.filter(line => line.section === entry.id).map(line => h('li', { class: 'qd-line' }, h('span', {}, line.name, line.qty !== 1 ? ` × ${line.qty}${line.unit === 'pack' ? ' packs' : ''}` : ''), h('b', {}, money(line.totalCents))))))) : []),
-        typeof breakdown?.labor?.manHours === 'number' ? savedLabor(breakdown.labor)
-          : breakdown ? h('p', { class: 'qd-notice', role: 'status' }, 'This quote has no Labor line yet. Edit the quote to add the man-hours before sending it.') : null,
+        junkOnlyLines(S.menu, lines) ? h('div', { class: 'qb-junk' }, h('p', { class: breakdown.labor ? 'qd-notice' : 'qd-mode', role: 'status', 'data-labor': 'none' }, breakdown.labor ? 'This junk-only quote still has a Labor line from before the owner\u2019s decision of 2026-10-18: the truck-load price covers the crew\u2019s time. Edit the quote and save it again to drop it before sending it.' : 'Junk-only quote: the truck-load price covers the crew\u2019s time, so it has no Labor line.'), garageWorkNote(walkthroughGarageWork(plan())))
+          : typeof breakdown?.labor?.manHours === 'number' ? savedLabor(breakdown.labor)
+            : breakdown ? h('p', { class: 'qd-notice', role: 'status' }, 'This quote has no Labor line yet. Edit the quote to add the man-hours before sending it.') : null,
         h('p', { class: 'qd-total' }, 'Quote total ', h('b', {}, money(job.estimate.amountCents)), job.estimate.validUntil ? ` · valid through ${dayText(job.estimate.validUntil)}` : ''),
         h('p', { class: 'qd-mode' }, 'Sending checks every price against the owner\u2019s approvals now. To change the quote, edit it: it opens on the saved selection.'),
         S.busy ? h('div', { class: 'qd-skeleton', 'aria-hidden': 'true' }, h('span')) : null,
@@ -639,7 +682,7 @@
       if (S.step === 'saved') return renderSaved();
       const order = BUILDER_VIEWS, at = order.indexOf(S.step), totals = runningTotals(S.menu, S.sel, fullnessOf(plan()));
       const nav = h('ol', { class: 'qb-steps' }, order.map((step, index) => h('li', {}, h('button', { type: 'button', class: step === S.step ? 'on' : index < at ? 'done' : '', disabled: S.busy || index > at, 'aria-current': step === S.step ? 'step' : null, onclick: () => { S.step = step; S.error = ''; S.laborEdit = null; render(); } }, `${index + 1} ${STEP_LABELS[step]}`))));
-      const laborText = totals.laborHours === null ? 'Labor: man-hours on the review step' : `Labor ${money(totals.labor)} (${hoursText(totals.laborHours)})`;
+      const laborText = totals.junkOnly ? 'No Labor line: junk only' : totals.laborHours === null ? 'Labor: man-hours on the review step' : `Labor ${money(totals.labor)} (${hoursText(totals.laborHours)})`;
       const running = S.step === 'quote' ? null : h('div', { class: 'qb-total', role: 'status' }, h('span', {}, 'Running total'), h('b', {}, money(totals.total)),
         h('small', {}, `Removal ${money(totals.removal)} · Shelving ${money(totals.shelving)} · Storage ${money(totals.storage)} · ${laborText}${totals.drafts ? ` · ${totals.drafts} draft price${totals.drafts === 1 ? '' : 's'} need owner approval before sending` : ''}`));
       const content = S.step === 'removal' ? removalStep() : S.step === 'quote' ? quoteStep() : productStep(S.step);
@@ -649,8 +692,8 @@
         S.error ? h('p', { class: 'qd-error', role: 'alert' }, S.error) : null,
         S.error && S.stale ? h('button', { type: 'button', class: 'qd-secondary qb-more', disabled: S.busy, onclick: reloadBuilder }, 'Reload current prices') : null].filter(Boolean));
       const back = at === 0 ? (S.savedBuild ? h('button', { type: 'button', class: 'qd-secondary', disabled: S.busy, onclick: () => { S.step = 'saved'; S.error = ''; render(); } }, 'Saved quote') : h('button', { type: 'button', class: 'qd-secondary', disabled: S.busy, onclick: close }, 'Close')) : h('button', { type: 'button', class: 'qd-secondary', disabled: S.busy, onclick: () => { S.step = order[at - 1]; S.error = ''; render(); } }, 'Back');
-      // The labor must be priced (and any open Adjust applied or cancelled) before the quote is saved.
-      const laborPending = S.step === 'quote' && S.priced && (S.laborEdit || typeof S.priced.labor?.manHours !== 'number');
+      // The labor must be priced (and any open Adjust applied or cancelled) before the quote is saved; a junk-only quote has none.
+      const laborPending = S.step === 'quote' && S.priced && S.priced.junkOnly !== true && (S.laborEdit || typeof S.priced.labor?.manHours !== 'number');
       const next = S.step === 'quote' ? h('button', { type: 'button', class: 'qd-primary', disabled: S.busy || Boolean(laborPending), title: laborPending ? 'Apply the man-hours for the Labor line first.' : null, onclick: S.priced ? saveDraft : () => advance('storage') }, S.busy ? 'Working…' : !S.priced ? 'Price the quote' : S.retry ? 'Retry original save' : 'Save draft')
         : h('button', { type: 'button', class: 'qd-primary', disabled: S.busy, onclick: () => advance(S.step) }, S.busy ? 'Checking prices…' : S.step === 'storage' ? 'Review quote' : `Continue to ${STEP_LABELS[order[at + 1]].toLowerCase()}`);
       foot.replaceChildren(back, next);
@@ -703,7 +746,11 @@
       if (generation !== S.generation) return;
       const job = opened?.saved?.job && opened.saved.job.compositePricing && typeof opened.saved.job.compositePricing === 'object' ? opened.saved.job : null;
       const unsent = job && job.estimate?.status === 'draft' && Number.isSafeInteger(job.estimate.amountCents) && job.estimate.number ? job : null;
-      Object.assign(S, { mode: 'builder', menu, sel: kept?.selection ? validSelection(kept.selection, menu) : job ? validSelection(selectionOfPricing(job.compositePricing), menu) : selectionFromWalkthrough(plan(), menu), priced: null, group: '', search: '', limit: 12, savedBuild: unsent });
+      const sel = kept?.selection ? validSelection(kept.selection, menu) : job ? validSelection(selectionOfPricing(job.compositePricing, job.breakdown, menu), menu) : selectionFromWalkthrough(plan(), menu);
+      // Man-hours this device kept from a quote saved before the owner's Labor decisions of 2026-10-18 follow the new
+      // estimate too, unless the estimator set them by hand.
+      if (staleLabor(menu, job?.breakdown) && sel.labor?.adjusted !== true) sel.labor = { manHours: null, adjusted: false };
+      Object.assign(S, { mode: 'builder', menu, sel, priced: null, group: '', search: '', limit: 12, savedBuild: unsent });
       // An unconfirmed earlier save (detectFrozen) keeps the review step until it is retried.
       if (!S.frozen && !S.busy && S.step === 'review') S.step = unsent ? 'saved' : 'removal';
       kicker.textContent = 'Removal, then shelving, then extra storage'; heading.textContent = 'Build the itemized quote'; dialog.classList.add('qb-dialog');
@@ -768,7 +815,7 @@
         if (retrying && !sameDraft(saved, current)) { S.status = `The original save is confirmed: ${S.status} Your later changes to the walkthrough are not saved yet. Review them and save again before sending.`; if (S.mode === 'builder') { S.step = 'removal'; S.priced = null; } return; }
         // The builder keeps the saved selection, man-hours included, on this device as on any other: reopening or editing
         // the quote starts from exactly what was saved, not from a fresh estimate.
-        if (S.mode === 'builder' && result.job?.compositePricing && typeof result.job.compositePricing === 'object') { S.sel = validSelection(selectionOfPricing(result.job.compositePricing), S.menu); keep(); }
+        if (S.mode === 'builder' && result.job?.compositePricing && typeof result.job.compositePricing === 'object') { S.sel = validSelection(selectionOfPricing(result.job.compositePricing, result.job.breakdown, S.menu), S.menu); keep(); }
         S.preview = await client.preview(result.job);
         if (generation !== S.generation) return;
         const pending = await client.pendingSend(result.job);
@@ -831,5 +878,5 @@
     if (S.mode === 'probe') probeBuilder();
     return dialog;
   }
-  root.EGCQuoteDraft = { open, createClient, draftFromWalkthrough, scopeText, missing, builder: Object.freeze({ steps: BUILDER_STEPS, selectionFromWalkthrough, selectionOfPricing, validSelection, builderDescriptor, runningTotals, builderScope, compositeDraft, fullnessOf, estimateLabor }) };
+  root.EGCQuoteDraft = { open, createClient, draftFromWalkthrough, scopeText, missing, builder: Object.freeze({ steps: BUILDER_STEPS, selectionFromWalkthrough, selectionOfPricing, validSelection, builderDescriptor, runningTotals, builderScope, compositeDraft, fullnessOf, estimateLabor, junkOnly, walkthroughGarageWork }) };
 })(window);

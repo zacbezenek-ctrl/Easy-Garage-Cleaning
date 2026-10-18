@@ -8,7 +8,7 @@
 (function(){
 'use strict';
 // Drafts live under the Hub's draft prefix, which the always-loaded screen registry clears on sign-out.
-const API='/api/catalog',SCREEN='catalog',DRAFT_KEY='egc.hub.draft.v1.catalog.',TZ='America/Denver',PAGE=40,MAX_ITEM_CENTS=10000000,QUOTE_ASSET_VERSION='20260930catalogquote1';
+const API='/api/catalog',SCREEN='catalog',DRAFT_KEY='egc.hub.draft.v1.catalog.',TZ='America/Denver',PAGE=40,MAX_ITEM_CENTS=10000000,QUOTE_ASSET_VERSION='20261018junkscope1';
 const PRODUCT_CATEGORIES=['bikes','cabinets-workbenches','floors-lighting-extras','lawn-garden','overhead','shelving','small-items','sports-outdoor','wall-systems'];
 const TIERS=['good','better','best'],VERIFIED_EVIDENCE=['product_page','search_snippet'];
 const AVAILABILITY={active:'Active',referral_only:'Referral only',hidden:'Hidden'};
@@ -649,7 +649,7 @@ function settingsPanel(){
   let sticky;
   const update=()=>{const dirty=settingsDirty();review.disabled=frozen||!dirty;sticky?.classList.toggle('cat-idle',!dirty);persist();};
   const money=MONEY_SETTINGS.map(([key,label,,,help])=>bound({name:key,label:label+' ($)',type:'text',inputmode:'decimal',autocomplete:'off',help},form,errors,update));
-  const fields=[...money,bound({name:'depositPct',label:'Deposit (% of the quote)',type:'text',inputmode:'decimal',autocomplete:'off',help:'Catalog quotes only. The walkthrough deposit in use today (50%, set by the deposit terms) does not change here.'},form,errors,update),
+  const fields=[...money,bound({name:'depositPct',label:'Deposit (% of the quote)',type:'text',inputmode:'decimal',autocomplete:'off',help:'Catalog quotes only. The walkthrough deposit in use today (25% when the homeowner signs, 75% on the job day, set by the deposit terms) does not change here.'},form,errors,update),
     bound({name:'includeDisposal',label:'Charge packaging haul-away',type:'checkbox'},form,errors,update),
     bound({name:'roundingRule',label:'Cent rounding',type:'select',options:Object.entries(ROUNDING).map(([value,label])=>({value,label}))},form,errors,update),
     // Only the quote builder prices with the goods multiplier, so it shows only when the builder is on (S.menu).
@@ -791,7 +791,7 @@ function menuPick(){return S.menuPick||(S.menuPick={approve:{},revoke:{}});}
 // the estimator sets the man-hours by hand) and for a quote saved before the Labor line existed.
 const installationConfirmed=()=>S.menu?.internal?.installationConfirmed===true;
 const installationChange=()=>typeof menuPick().installation==='boolean'?1:0;
-// The labor rate (D12): every builder quote's Labor line is man-hours × this rate. pick.laborRate is the owner's edit
+// The labor rate (D12): every builder quote's Labor line (one on each quote with garage work, D-JUNK) is man-hours × this rate. pick.laborRate is the owner's edit
 // (dollars as typed) until it is saved with menu.approve laborRatePerManHourCents; it counts as one change.
 const LABOR_RATE_MIN=100,LABOR_RATE_MAX=100000;
 const laborRateNow=()=>Number.isSafeInteger(S.menu?.labor?.rateCents)?S.menu.labor.rateCents:null;
@@ -818,7 +818,7 @@ function laborCard(m,frozen){
   const input=h('input',{id:'cat-menu-labor-rate',class:'cat-menu-amount',type:'text',inputmode:'decimal',autocomplete:'off',value:laborRateEdit()??dollars(now),disabled:frozen,'aria-describedby':'cat-menu-labor-help',oninput:event=>{pick.laborRate=event.target.value;if(S.menuErrors)delete S.menuErrors.laborRate;},onchange:()=>render()});
   return h('section',{class:'hub-card cat-card cat-labor','data-labor-rate':String(now)},
     h('h2',{},`Labor: ${money(now)} per man-hour`),
-    h('p',{id:'cat-menu-labor-help',class:'cat-muted'},`Every builder quote has a Labor line: the estimated man-hours × this rate, on top of the menu prices. The estimator's app pre-fills the man-hours from its own time estimate of the quote (the walkthrough time model over the removal work, plus the install time of shelving units and totes), the same for any crew size, and the estimator can adjust them; man-hours below the estimate show the estimate on the job. Shelving and storage installation is billed through this line. ${source} The rate is approved: quotes can be sent with it.`),
+    h('p',{id:'cat-menu-labor-help',class:'cat-muted'},`Every builder quote with garage work has a Labor line: the estimated man-hours × this rate, on top of the menu prices. A junk-only quote (truck loads, with their special items and access charges) has none: the truck-load price covers the crew's time. The estimator's app pre-fills the man-hours from its own time estimate of the garage work (set-up and sweep-out, sorting a garage with a cleaning base, the cleaning add-ons and the install time of shelving units and totes; never loading, hauling or disposal), the same for any crew size, and the estimator can adjust them; man-hours below the estimate show the estimate on the job. Customers see one amount, "Labor", never the man-hours or the rate. Shelving and storage installation is billed through this line. ${source} The rate is approved: quotes can be sent with it.`),
     h('label',{class:'hub-field cat-labor-field',for:'cat-menu-labor-rate'},h('span',{},'Labor rate per man-hour ($)'),input),
     error?h('small',{class:'cat-error'},error):null,
     laborChange()?h('p',{class:'cat-muted'},'Review the change below to save it. Saved quotes at the old rate are saved again before they are sent; jobs the customer already signed keep the rate they signed.'):null);

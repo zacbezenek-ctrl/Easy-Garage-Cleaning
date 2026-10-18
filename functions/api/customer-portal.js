@@ -15,7 +15,7 @@ import { parseBusinessActor } from '../_lib/business-hub-core.js';
 import { businessAccountJob } from '../_lib/portal-invitation.js';
 import { moneyDocumentEnabled, moneyDocumentLinks } from '../_lib/money-document.js';
 import { customerMoneyTotals, invoiceTakesPayment, moneyInvoiceStateEnabled, moneyTotalsMode } from '../_lib/money-core.js';
-import { estimateFingerprint, included, legacyLineItems, unsentQuoteDraft } from '../_lib/quote-model.js';
+import { customerLaborLine, customerScopeText, estimateFingerprint, included, legacyLineItems, unsentQuoteDraft } from '../_lib/quote-model.js';
 import { crewPublicProfilesEnabled, customerCrew, customerCrewProjection, readCrewPublicProfiles } from '../_lib/crew-public-profile.js';
 import { liveSale, portalApprovalWrites, portalFunnelWrite, vocabularyValue } from '../_lib/job-funnel-events.js';
 import { dispatchReviewPatch, queued } from '../_lib/dispatch-queue.js';
@@ -93,7 +93,9 @@ export function customerReviewUrl(env = {}) {
 // with CUSTOMER_PORTAL_REJECT_DRAFT_ESTIMATES=true: Hub estimate saves still
 // release customer-facing estimates as 'draft' today. A quote drafted in the Hub
 // (P2-07) that has not been sent in its current revision is never approvable,
-// whatever the flag says (unsentQuoteDraft).
+// whatever the flag says (unsentQuoteDraft), nor is a builder quote sent before
+// the quote builder's Labor rules of 2026-10-18 (quote-model.js staleBuilderQuote):
+// it is withheld until the office saves and sends it again.
 const rejectDrafts = env => env?.CUSTOMER_PORTAL_REJECT_DRAFT_ESTIMATES === 'true';
 function approvalBlocked(job, draftsRejected) {
   const status = String(job.estimate?.status || '').toLowerCase();
@@ -106,10 +108,12 @@ function estimateRevision(job) {
 }
 
 // Saved lines are read through the canonical quote model: only included lines
-// are shown, and discounts keep their sign.
+// are shown, and discounts keep their sign. A quote builder's Labor line reads
+// as one amount, "Labor", whenever it was saved (customerLaborLine), and so
+// does its scope (customerScopeText).
 function estimateLines(job, finance) {
-  if (!Array.isArray(job.estimate?.lineItems) || !job.estimate.lineItems.length) return [{ name: safe(job.serviceType || job.type || 'Garage service', 160), description: safe(job.estimate?.scope || job.scopeSummary || '', 600), quantity: 1, amount: Math.max(0, amount(finance.total)) }];
-  return legacyLineItems(job).lineItems.filter(included).map(line => ({ name: line.name, description: line.description, quantity: line.quantity, amount: line.amount ?? 0 }));
+  if (!Array.isArray(job.estimate?.lineItems) || !job.estimate.lineItems.length) return [{ name: safe(job.serviceType || job.type || 'Garage service', 160), description: safe(customerScopeText(job.estimate?.scope) || job.scopeSummary || '', 600), quantity: 1, amount: Math.max(0, amount(finance.total)) }];
+  return legacyLineItems(job).lineItems.filter(included).map(customerLaborLine).map(line => ({ name: line.name, description: line.description, quantity: line.quantity, amount: line.amount ?? 0 }));
 }
 
 // A digest of exactly what the estimate card shows (total, deposit, scope and
@@ -130,7 +134,7 @@ function estimateState(job, finance, today, draftsRejected = false) {
     status: ['accepted', 'approved'].includes(status) ? 'approved' : status,
     amount: quote.total,
     service: safe(job.serviceType || job.type || 'Garage service', 120),
-    scope: safe(job.estimate?.scope || job.scopeSummary || 'Your flat-rate garage service based on the agreed walkthrough scope.', 1600),
+    scope: safe(customerScopeText(job.estimate?.scope) || job.scopeSummary || 'Your flat-rate garage service based on the agreed walkthrough scope.', 1600),
     approvedAt: safe(job.customerApproval?.approvedAt || job.estimate?.acceptedAt || '', 50),
     approvedBy: safe(job.customerApproval?.approvedBy || '', 120),
     validUntil,

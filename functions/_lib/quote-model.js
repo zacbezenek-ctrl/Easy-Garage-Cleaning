@@ -582,6 +582,50 @@ export const toLegacyLineItem = line => ({ name: line.name, description: line.de
 /** The walkthrough/provider (snake-case game_plan) line shape. */
 export const toWalkthroughLineItem = line => ({ name: line.name, qty: line.quantity, total: line.amount });
 /**
+ * The quote builder's Labor line (composite-quote.js LABOR_ID). Owner decision D-LABOR-TEXT (2026-10-18): the customer
+ * sees it as one amount, "Labor" and its dollar amount, never the man-hours, the rate or an hourly wording; the man-hours
+ * stay in the staff views (the builder, the crew brief, the job breakdown and the HighLevel internal note). A Labor line
+ * saved earlier that day read "Labor: N man-hours × $R", "Crew time on site, billed per man-hour[, including installing
+ * the shelving and storage]."; builderLaborLine() knows both, and customerLaborLine() shows either the new way. It is a
+ * display rule for what the customer reads (the money documents, the portal, the walkthrough signing page): the stored
+ * lines, their fingerprint and the staff's money views are unchanged, so re-saving a signed estimate is never a revision
+ * for it. Only the builder's own line (its id, kind and name) is recognized: a labor line a person wrote on another quote
+ * is shown as written.
+ */
+export const LABOR_LINE_NAME = 'Labor';
+export const LABOR_INSTALL_NOTE = 'Includes installing the shelving and storage.';
+export const builderLaborLine = line => plain(line) && line.id === 'labor' && line.kind === 'labor' && (line.name === LABOR_LINE_NAME || /^Labor: \d+(?:\.\d+)? man-hours? × /.test(String(line.name || '')));
+export const customerLaborLine = line => builderLaborLine(line) ? { ...line, name: LABOR_LINE_NAME, description: /installing the shelving and storage/i.test(String(line.description || '')) ? LABOR_INSTALL_NOTE : '' } : line;
+/** The same rule for a builder quote's customer-facing scope (estimate.scope): the scope a builder quote saved before
+ * D-LABOR-TEXT ended with "Labor: N man-hours."; the customer reads "Labor." (the portal estimate card and the estimate
+ * document). Display only: the stored scope and the estimate fingerprint keep what was saved. */
+export const customerScopeText = scope => typeof scope === 'string' ? scope.replace(/(^|\. )Labor: \d+(?:\.\d+)? man-hours?(?=\.|$)/g, '$1Labor') : scope;
+/**
+ * The quote builder's Labor rules (composite-quote.js). BUILDER_LABOR_VERSION is the rules a priced labor records
+ * (breakdown.labor.version): 2 is the owner's decisions of 2026-10-18, D-JUNK (no hauling time in the estimate, no
+ * Labor line on a junk-only quote) and D-LABOR-TEXT (one amount for the customer). HAULING_GROUPS are the removal groups
+ * whose own prices pay the crew's time: truck loads, and the special-handling items and access charges priced on top of
+ * a truck on the job. builderJunkOnly(lines): builder lines (breakdown lines, anything with section and group) of at least
+ * one truck load and otherwise only special items and access charges: $750 per truck, no Labor line.
+ */
+export const BUILDER_LABOR_VERSION = 2;
+export const HAULING_GROUPS = Object.freeze(['junk', 'special', 'access']);
+export const builderJunkOnly = lines => Array.isArray(lines) && lines.some(line => plain(line) && line.group === 'junk') && lines.every(line => plain(line) && line.section === 'removal' && HAULING_GROUPS.includes(line.group));
+/**
+ * A builder quote sent to the customer before those Labor rules (its Labor line priced without a version: the estimate
+ * counted truck-load time and the line named the man-hours; or a junk-only quote that still has a Labor line) and not
+ * approved yet. Its price is not one the owner's rules give, so it is treated as unsent (unsentQuoteDraft): every customer
+ * surface withholds it ("being updated") and nothing can approve or pay it until the office saves it again in the
+ * builder and sends it. A quote the customer approved, or signed in person, keeps what was agreed.
+ * scripts/stale-builder-quotes.mjs lists them for the office.
+ */
+export function staleBuilderQuote(job) {
+  const breakdown = plain(job?.quoteDraft?.breakdown) && job.quoteDraft.breakdown.source === 'composite' ? job.quoteDraft.breakdown : null;
+  if (!breakdown || !plain(breakdown.labor) || plain(job?.compositeQuote)) return false;
+  if ([job?.estimate?.status, job?.customerApproval?.status].some(status => ['accepted', 'approved'].includes(String(status || '').toLowerCase()))) return false;
+  return breakdown.labor.version !== BUILDER_LABOR_VERSION || builderJunkOnly(breakdown.lines);
+}
+/**
  * Customer-facing projection of a canonical line: CUSTOMER_LINE_FIELDS only.
  * Cost splits (markup), catalog references, durations, groups and packages
  * never reach an invoice or any other customer document.
@@ -628,10 +672,11 @@ export const estimateChanged = (previous, next) => estimateFingerprint(previous)
  * customer surface withholds it and nothing can approve or pay it, whatever
  * CUSTOMER_PORTAL_REJECT_DRAFT_ESTIMATES says. Jobs not drafted here are never
  * affected (false), except a held signed job (pricesPendingApproval below),
- * which every customer surface withholds the same way.
+ * which every customer surface withholds the same way, and a builder quote sent
+ * before the Labor rules of 2026-10-18 (staleBuilderQuote above).
  */
 export function unsentQuoteDraft(job) {
-  if (pricesPendingApproval(job)) return true;
+  if (pricesPendingApproval(job) || staleBuilderQuote(job)) return true;
   const estimate = plain(job?.estimate) ? job.estimate : null;
   if (!plain(job?.quoteDraft) && estimate?.source !== 'quote_draft') return false;
   const status = String(estimate?.status || '').toLowerCase();

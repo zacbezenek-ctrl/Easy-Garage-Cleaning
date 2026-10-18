@@ -48,6 +48,35 @@ test('only a dispatch conflict releases the frozen request; its message names ea
  assert.equal(f.records.size,1,'a refusal that may follow a save keeps the original request');
  f.p.quote.total=2000;await assert.rejects(factory(f.deps).save(),e=>e.code==='handoff_original_request_required');
 });
+// D-DEPOSIT: a request frozen on the earlier 50% deposit terms that the server never saved is refused
+// (handoff_terms_outdated, nothing saved) and released like a dispatch conflict, so the homeowner's signature on the
+// current terms goes out as a new request instead of the page offering to recover the old one forever.
+test('a request signed on the earlier 50% deposit terms is released when the server refuses it, and the re-signed plan saves as a new request',async()=>{
+ const f=fixture(),fetch=f.deps.fetch;let outdated=false;
+ f.lose();await assert.rejects(f.client.save(),/Response lost/);const frozen=JSON.parse([...f.records.values()][0]).requestId;
+ f.deps.fetch=async(url,options={})=>url==='/api/walkthrough-handoff'&&outdated?(f.calls.push({url,body:JSON.parse(options.body)}),reply({ok:false,code:'handoff_terms_outdated',error:'This signature is on the earlier deposit terms (50% upfront). Nothing was saved.'},409)):fetch(url,options);
+ outdated=true;f.p.terms_version='2026-10-deposit25';f.p.quote.deposit=250;
+ await assert.rejects(factory(f.deps).save(),e=>e.code==='handoff_original_request_required');
+ await assert.rejects(factory(f.deps).save(true),e=>e.refused===true&&e.code==='handoff_terms_outdated'&&/Nothing was saved/.test(e.message));
+ assert.equal(f.records.size,0,'the refused request is released');
+ outdated=false;const saved=await factory(f.deps).save();
+ assert.notEqual(saved.pending.requestId,frozen);assert.deepEqual([f.calls.at(-1).body.plan.terms_version,f.calls.at(-1).body.plan.quote.deposit],['2026-10-deposit25',250]);
+});
+// Review (F7): a builder quote the server prices differently (saved before the pricing changes of 2026-10-18, or the menu
+// changed since), one with garage work and no man-hours, and a junk-only quote on a walkthrough that records garage work
+// are refused after the server finds no saved copy: nothing was saved, so the frozen request is released and the quote,
+// built again and signed again, goes out as a new request instead of a dead end.
+test('a signed builder quote the server refuses before saving is released, and the rebuilt quote saves as a new request',async()=>{
+ for(const [status,code] of [[409,'handoff_builder_price_mismatch'],[409,'handoff_builder_junk_only_garage_work'],[400,'quote_draft_composite_labor_required'],[409,'quote_draft_composite_version_changed']]){
+  const f=fixture(),fetch=f.deps.fetch;let refuse=true;
+  f.deps.fetch=async(url,options={})=>url==='/api/walkthrough-handoff'&&refuse?(f.calls.push({url,body:JSON.parse(options.body)}),reply({ok:false,code,error:'The signed quote does not match the quote builder\'s prices on the server: this selection comes to $750.00.'},status)):fetch(url,options);
+  await assert.rejects(factory(f.deps).save(),e=>e.refused===true&&e.code===code,code);
+  assert.equal(f.records.size,0,code+': the refused request is released');
+  const frozen=f.calls.at(-1).body.requestId;refuse=false;f.p.quote.total=750;f.p.quote.deposit=187.5;
+  const saved=await factory(f.deps).save();
+  assert.notEqual(saved.pending.requestId,frozen,code);assert.equal(f.calls.at(-1).body.plan.quote.total,750);
+ }
+});
 test('simultaneous clicks share one in-flight save and cannot race duplicate preparation',async()=>{
  const f=fixture(),a=f.client.save(),b=f.client.save();assert.equal(a,b);await a;assert.equal(f.calls.filter(x=>x.url==='/api/walkthrough-handoff').length,1);
 });

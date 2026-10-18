@@ -4,8 +4,8 @@ import { denverToday, validDate } from './dispatch-time.js';
 import { customerMoneyTotals, invoiceLineItems, invoiceNumber, invoiceStatus, paymentLedger } from './money-core.js';
 import { LEGACY_ENTRY_ID, reconcileLedger } from './money-ledger.js';
 import { cashPayment } from './payment-events.js';
-import { customerLineItem, estimateTotals, included, legacyLineItems, singleLineItem, unsentQuoteDraft } from './quote-model.js';
-import { publicQuotePaymentSchedule, quotePaymentSummary } from './quote-payment-policy.js';
+import { customerLaborLine, customerLineItem, customerScopeText, estimateTotals, included, legacyLineItems, singleLineItem, unsentQuoteDraft } from './quote-model.js';
+import { publicQuotePaymentSchedule, quotePaymentSummary, scheduleSplit } from './quote-payment-policy.js';
 
 /**
  * Server-rendered, branded customer money documents (estimate, invoice,
@@ -15,7 +15,8 @@ import { publicQuotePaymentSchedule, quotePaymentSummary } from './quote-payment
  * invoiceLineItems for invoice/receipt lines (selected lines plus approved
  * change orders) and paymentLedger for payments. Lines are customerLineItem
  * projections, so cost splits, markup, catalog references and durations never
- * reach a customer. Estimates list every quoted line and mark optional lines
+ * reach a customer, and a quote builder's Labor line reads as one amount,
+ * "Labor", however it was saved (customerLaborLine, D-LABOR-TEXT). Estimates list every quoted line and mark optional lines
  * and options with their selection; lines that are not selected are shown but
  * never counted. Tips are listed on receipts as a separate, non-revenue line.
  *
@@ -111,7 +112,7 @@ function estimateLines(job, totals, issues) {
     issues.push(check.complete ? 'money_line_items_mismatch' : 'money_line_items_incomplete');
     lines = [singleLineItem(job, { surface: 'document', totalCents: totals.quoteCents })];
   }
-  return lines.map(line => ({ ...customerLineItem(line), included: included(line), choice: line.group ? 'option' : line.optional ? 'add-on' : '' }));
+  return lines.map(line => ({ ...customerLineItem(customerLaborLine(line)), included: included(line), choice: line.group ? 'option' : line.optional ? 'add-on' : '' }));
 }
 
 function lineTag(line) {
@@ -211,7 +212,7 @@ export function moneyDocumentModel(job, { kind, now, payUrl = null, contact = tr
   if (withheld && kind !== 'receipt') throw fail('unavailable', `Your ${kind} is being updated. Easy Garage Cleaning will send it to you for review.`, 409);
   if (withheld) return withheldReceipt(job, totals, at, contact, invoiceState ? { status: invoiceStatus(job, at, { unified, invoiceState }) } : null);
   const estimate = plain(job.estimate) ? job.estimate : {}, invoice = plain(job.invoice) ? job.invoice : {};
-  const paymentSchedule = publicQuotePaymentSchedule(estimate);
+  const paymentSchedule = publicQuotePaymentSchedule(estimate), split = paymentSchedule ? scheduleSplit(paymentSchedule) : null;
   const today = denverToday(new Date(at)), approval = approvalOf(job);
   let lines, status, statusLabel, number, dates;
   if (kind === 'estimate') {
@@ -220,11 +221,11 @@ export function moneyDocumentModel(job, { kind, now, payUrl = null, contact = tr
     number = invoiceNumber(job.id, 'estimate', clean(estimate.number, 80));
     dates = [['Prepared', instantDay(estimate.createdAt || estimate.updatedAt) || instantDay(at)], ['Valid through', dayLabel(estimate.validUntil) || 'Not specified']];
     if (Number.isSafeInteger(estimate.revision) && estimate.revision > 0) dates.push(['Revision', String(estimate.revision)]);
-    if (paymentSchedule) dates.push(['25% deposit due', dayLabel(paymentSchedule.depositDueDate)], ['75% remainder due', dayLabel(paymentSchedule.remainderDueDate)], ['Business timezone', paymentSchedule.timeZone]);
+    if (paymentSchedule) dates.push([`${split.depositPct}% deposit due`, dayLabel(paymentSchedule.depositDueDate)], [`${split.remainderPct}% remainder due`, dayLabel(paymentSchedule.remainderDueDate)], ['Business timezone', paymentSchedule.timeZone]);
   } else {
     const projected = invoiceLineItems(job, totals);
     issues.push(...projected.issues);
-    lines = projected.lineItems.map(line => ({ ...line, included: true, choice: '' }));
+    lines = projected.lineItems.map(line => ({ ...customerLaborLine(line), included: true, choice: '' }));
     number = invoiceNumber(job.id, 'invoice', clean(invoice.number, 80));
     if (kind === 'invoice') {
       status = invoiceStatus(job, at, { unified, invoiceState }); statusLabel = INVOICE_STATUS[status] || 'Issued';
@@ -253,8 +254,8 @@ export function moneyDocumentModel(job, { kind, now, payUrl = null, contact = tr
   } else {
     if (kind === 'estimate' && totals.approvedChangeCents > 0) rows.push({ label: 'Estimate', cents: totals.quoteCents }, { label: 'Approved changes', cents: totals.approvedChangeCents });
     rows.push({ label: 'Total', cents: totals.totalCents });
-    if (kind === 'estimate') rows.push({ label: totals.depositRequiredCents === 0 ? 'No deposit required' : paymentSchedule ? '25% deposit due '+paymentSchedule.depositDueDate : 'Deposit due upfront', cents: totals.depositRequiredCents });
-    if (kind === 'estimate' && paymentSchedule) rows.push({label:'Scheduled 75% remainder due '+paymentSchedule.remainderDueDate,cents:paymentSchedule.remainderCents});
+    if (kind === 'estimate') rows.push({ label: totals.depositRequiredCents === 0 ? 'No deposit required' : paymentSchedule ? `${split.depositPct}% deposit due ${paymentSchedule.depositDueDate}` : 'Deposit due upfront', cents: totals.depositRequiredCents });
+    if (kind === 'estimate' && paymentSchedule) rows.push({label:`Scheduled ${split.remainderPct}% remainder due ${paymentSchedule.remainderDueDate}`,cents:paymentSchedule.remainderCents});
     rows.push({ label: 'Payments received', cents: totals.appliedCents });
   }
   if (totals.overpaidCents > 0) rows.push({ label: 'Overpayment on file', cents: totals.overpaidCents });
@@ -280,7 +281,8 @@ export function moneyDocumentModel(job, { kind, now, payUrl = null, contact = tr
   const notice = kind === 'invoice' && status === 'void' ? 'This invoice is void. Contact Easy Garage Cleaning for your current invoice.'
     : status === 'superseded' ? `This ${kind} was replaced by an updated version. Contact Easy Garage Cleaning for the current one.`
     : kind === 'invoice' && ['not_issued', 'draft'].includes(status) ? 'Draft: this invoice has not been issued yet.' : '';
-  const scope = kind === 'estimate' ? clean(estimate.scope, 1600) : '';
+  // A builder quote's scope reads "Labor" however it was saved (customerScopeText, D-LABOR-TEXT).
+  const scope = kind === 'estimate' ? clean(customerScopeText(estimate.scope), 1600) : '';
   const service = clean(job.serviceType, 120) || SERVICE_TYPES[job.type] || 'Garage service';
   return {
     kind, title: TITLES[kind], number, status, statusLabel, notice, generatedAt: at, generatedLabel: instantStamp(at), dates,

@@ -74,7 +74,7 @@ test('with role permissions off, quote access is byte-identical to the legacy di
   for (const session of [null, undefined, 'zacb', [], {}]) for (const env of [{}, ON]) assert.deepEqual(quoteAuthorAccess(session, env), { dispatcher: false, author: false });
 });
 
-const plan = (logistics = {}) => ({ client: { name: 'Synthetic Customer', phone: '9705550100', email: 'test@example.invalid', address: '100 Fixture Lane', highlevel_contact_id: 'provider1' }, quote: { title: 'Garage reset', total: 1400, deposit: 700, job_date: '2026-09-24', start_time: '09:00', end_time: '12:00', estimated_duration_min: 180 }, acceptance: { accepted_at: '2026-09-22T17:45:00.000Z', accepted_by: 'Synthetic Customer', signature_captured: true, method: 'in_person_signature', terms_version: '2026-09-deposit50' }, signature: 'data:image/png;base64,iVBORw0KGgo=', terms_version: '2026-09-deposit50', terms_accepted: true, photos: { before: 2 }, scope: { keep_items: 'Blue bicycle' }, discovery: { success: 'Park the car' }, logistics: { crew_size: 2, ...logistics }, internal_notes: 'Synthetic brief', client_checklists: { preJob: [], postJob: [] }, notes: '' });
+const plan = (logistics = {}) => ({ client: { name: 'Synthetic Customer', phone: '9705550100', email: 'test@example.invalid', address: '100 Fixture Lane', highlevel_contact_id: 'provider1' }, quote: { title: 'Garage reset', total: 1400, deposit: 350, job_date: '2026-09-24', start_time: '09:00', end_time: '12:00', estimated_duration_min: 180 }, acceptance: { accepted_at: '2026-09-22T17:45:00.000Z', accepted_by: 'Synthetic Customer', signature_captured: true, method: 'in_person_signature', terms_version: '2026-10-deposit25' }, signature: 'data:image/png;base64,iVBORw0KGgo=', terms_version: '2026-10-deposit25', terms_accepted: true, photos: { before: 2 }, scope: { keep_items: 'Blue bicycle' }, discovery: { success: 'Park the car' }, logistics: { crew_size: 2, ...logistics }, internal_notes: 'Synthetic brief', client_checklists: { preJob: [], postJob: [] }, notes: '' });
 function fixture({ people = null, rules = null } = {}) {
   const rows = new Map([
     ['customers/c1', { id: 'c1', revision: 'c1r', name: 'Synthetic Customer', phone: '9705550100', email: 'test@example.invalid', address: '100 Fixture Lane', highlevelContactId: 'provider1' }],
@@ -438,7 +438,7 @@ test('the crew client opens the walkthrough for business staff and for accounts 
 
 test('a sales author cannot use the signed handoff to take over, move or re-notify a job Dispatch placed; the owner still can', async () => {
   const f = fixture();
-  const at = (date, start, end, total, logistics = {}) => { const value = plan(logistics); Object.assign(value.quote, { job_date: date, start_time: start, end_time: end, total, deposit: total / 2 }); return value; };
+  const at = (date, start, end, total, logistics = {}) => { const value = plan(logistics); Object.assign(value.quote, { job_date: date, start_time: start, end_time: end, total, deposit: total / 4 }); return value; };
   // A dispatcher's job with no walkthrough or quote draft: scheduled, staffed, notifications off and a manager-recorded estimate.
   f.rows.set('jobs/j1', { id: 'j1', revision: 'j1r', type: 'job', status: 'scheduled', pipelineStatus: 'scheduled', customerId: 'c1', customer: 'Synthetic Customer', phone: '9705550100', email: 'test@example.invalid', address: '100 Fixture Lane', title: 'Garage reset', date: '2026-09-25', endDate: '2026-09-25', time: '09:00', endTime: '12:00', assignedCrew: ['crew1'], assignedTo: 'Crew One', crewNeeded: 1, notify: false, createdBy: 'tylerg', scheduleSource: 'egc_hub', estimate: { number: 'EST-J1', revision: 1, status: 'accepted', amount: 3000, depositRequired: 1500 }, customerApproval: { status: 'approved', source: 'manager_recorded' }, quoteStatus: 'approved', syncStatus: 'synced' });
   const dispatched = structuredClone(f.rows.get('jobs/j1'));
@@ -476,11 +476,11 @@ test('a sales author cannot re-sign a placed job to another service address or c
   const placed = structuredClone(f.rows.get(`jobs/${id}`)), commits = f.calls.length;
   assert.deepEqual([placed.address, placed.crewNeeded, placed.assignedCrew, placed.date], ['100 Fixture Lane', 2, ['crew1', 'crew2'], '2026-09-24']);
   const revise = (actor, change, env = ON) => { const value = plan(); change(value); return saveWalkthroughHandoff(f.store, actor, f.input(undefined, { jobId: id, expectedRevision: f.rows.get(`jobs/${id}`).revision, sourceRevision: f.rows.get('jobs/w1').revision, plan: value }), NOW, { env }); };
-  await assert.rejects(revise(sales, value => { value.client.address = '999 Different Road, Other Town'; Object.assign(value.quote, { total: 400, deposit: 200 }); }), error => error.code === 'handoff_schedule_change_forbidden' && error.status === 403 && /service address/.test(error.message) && error.message.includes('(100 Fixture Lane)'));
+  await assert.rejects(revise(sales, value => { value.client.address = '999 Different Road, Other Town'; Object.assign(value.quote, { total: 400, deposit: 100 }); }), error => error.code === 'handoff_schedule_change_forbidden' && error.status === 403 && /service address/.test(error.message) && error.message.includes('(100 Fixture Lane)'));
   for (const crewSize of [5, 1]) await assert.rejects(revise(sales, value => { value.logistics.crew_size = crewSize; }), error => error.code === 'handoff_schedule_change_forbidden' && error.status === 403 && /crew size/.test(error.message) && error.message.includes('(2)'));
   assert.deepEqual(f.rows.get(`jobs/${id}`), placed); assert.equal(f.calls.length, commits);
   // The same place written differently, and the price the author sold, may be re-signed; Dispatch's address is kept verbatim.
-  await revise(sales, value => { value.client.address = ' 100 FIXTURE  lane. '; Object.assign(value.quote, { total: 1600, deposit: 800 }); });
+  await revise(sales, value => { value.client.address = ' 100 FIXTURE  lane. '; Object.assign(value.quote, { total: 1600, deposit: 400 }); });
   const resigned = f.rows.get(`jobs/${id}`);
   assert.deepEqual([resigned.address, resigned.crewNeeded, resigned.assignedCrew, resigned.date, resigned.estimate.amount, resigned.acceptance.recordedBy], ['100 Fixture Lane', 2, ['crew1', 'crew2'], '2026-09-24', 1600, 'sales.person']);
   // A dispatcher may still move the work to another address and crew size.
@@ -556,7 +556,7 @@ test('after Dispatch moves a signed job silently, the Hub retry syncs only its s
   assert.deepEqual(Object.values((({ tool, notify }) => ({ tool, notify }))(suite().syncPayload(f.rows.get(`jobs/${id}`)))), ['schedule', true]);
   // A re-signed quote is a new handoff: its own sync names the new snapshot, although the earlier handoff was confirmed.
   f.rows.set(`jobs/${id}`, { ...f.rows.get(`jobs/${id}`), syncStatus: 'synced' });
-  const value = plan(); Object.assign(value.quote, { total: 1600, deposit: 800, job_date: '2026-09-25', start_time: '14:00', end_time: '17:00' });
+  const value = plan(); Object.assign(value.quote, { total: 1600, deposit: 400, job_date: '2026-09-25', start_time: '14:00', end_time: '17:00' });
   const resigned = await saveWalkthroughHandoff(f.store, owner, f.input(undefined, { jobId: id, expectedRevision: f.rows.get(`jobs/${id}`).revision, sourceRevision: f.rows.get('jobs/w1').revision, plan: value }), NOW, { env: ON });
   const current = f.rows.get(`jobs/${id}`);
   assert.deepEqual([current.syncStatus, current.handoffSyncStatus, current.estimate.amount], ['pending', 'synced', 1600]);

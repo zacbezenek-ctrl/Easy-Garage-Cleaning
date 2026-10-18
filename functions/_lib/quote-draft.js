@@ -42,12 +42,14 @@ import { prepareWalkthroughCaptureSync, walkthroughCaptureSyncView } from './wal
  * the quote to draft, supersedes any approval and issued invoice (payments are
  * kept) and asks `checkouts` to expire an open portal checkout for the old terms.
  * With EGC_QUOTE_BUILDER_ENABLED a draft may instead carry composite_pricing (the guided builder: removal, then
- * shelving, then extra storage, then the Labor line of man-hours x the owner's labor rate; composite-quote.js): the
- * server re-prices it, labor included, from the selection and its own rate, saves its lines and the cost-free section
- * breakdown (quoteDraft.breakdown), and refuses a send preview or send while any of its prices is a draft the owner
- * has not approved, its labor rate is no longer the owner's, it has no Labor line, or its man-hours were pre-filled
- * from an estimate with no install time for some of its goods (quote_draft_composite_prices_unapproved, with every
- * reason in details.unapproved).
+ * shelving, then extra storage, then, for a quote with garage work, the Labor line of man-hours x the owner's labor
+ * rate; a junk-only quote has none: $750 per truck; composite-quote.js): the server re-prices it, labor included, from
+ * the selection and its own rate, saves its lines (the Labor line reads "Labor" and its amount for the customer) and
+ * the cost-free section breakdown (quoteDraft.breakdown), and refuses a send preview or send while any of its prices is
+ * a draft the owner has not approved, its labor rate is no longer the owner's, it has garage work and no Labor line, its
+ * Labor line was priced before the owner's Labor decisions of 2026-10-18 (or a junk-only quote still has one), or its
+ * man-hours were pre-filled from an estimate with no install time for some of its goods
+ * (quote_draft_composite_prices_unapproved, with every reason in details.unapproved).
  * While that flag is on, a walkthrough quote priced outside the builder (no composite or catalog pricing) is saved
  * as before but its send preview and send are refused (quote_draft_builder_required, 409).
  * With FUNNEL_PAYMENT_EVENTS_ENABLED (and MONEY_API_ENABLED) a material revision

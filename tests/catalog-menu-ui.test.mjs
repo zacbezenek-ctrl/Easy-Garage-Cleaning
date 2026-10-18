@@ -217,8 +217,9 @@ test('catalog pricing off: the owner answers the installation question on Menu p
 test('the owner sees the $40.00 labor rate on Menu prices, changes it, reviews it and saves it in one audited request', async () => {
   const ui = screen();
   await ui.settle(() => ui.root()?.textContent.includes('Labor: $40.00 per man-hour'), 'the labor rate');
-  assert.match(ui.root().textContent, /Every builder quote has a Labor line: the estimated man-hours × this rate, on top of the menu prices\./);
-  assert.match(ui.root().textContent, /pre-fills the man-hours from its own time estimate of the quote .*the same for any crew size/);
+  assert.match(ui.root().textContent, /Every builder quote with garage work has a Labor line: the estimated man-hours × this rate, on top of the menu prices\. A junk-only quote \(truck loads, with their special items and access charges\) has none: the truck-load price covers the crew's time\./);
+  assert.match(ui.root().textContent, /pre-fills the man-hours from its own time estimate of the garage work .*never loading, hauling or disposal\), the same for any crew size/);
+  assert.match(ui.root().textContent, /Customers see one amount, "Labor", never the man-hours or the rate\./);
   assert.match(ui.root().textContent, /Shelving and storage installation is billed through this line\. Your decision of 2026-10-18 \(\$40\.00 per man-hour\)\. The rate is approved/);
   const field = () => ui.root().querySelector('#cat-menu-labor-rate');
   assert.equal(field().value, '40.00');

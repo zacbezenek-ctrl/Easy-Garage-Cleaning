@@ -5,7 +5,7 @@ import { assignmentKey, jobCrewNames } from './job-assignment.js';
 import { localInstant } from './operations-portal-records.js';
 import { customerIdentityPatch } from './customer-identity.js';
 import { suggestedDurationMinutes } from './quote-duration.js';
-import { estimateTotals, included, normalizeLineItems, toWalkthroughLineItem, validateSelection, withoutPurchaseFields } from './quote-model.js';
+import { depositCents as depositOf, estimateTotals, included, normalizeLineItems, toWalkthroughLineItem, validateSelection, withoutPurchaseFields } from './quote-model.js';
 import { funnelEventWrite } from './funnel-events.js';
 import { saleWrites } from './job-funnel-events.js';
 import { funnelHubId } from './funnel-definitions.js';
@@ -20,7 +20,9 @@ import { breakdownLines, jobBreakdown } from './job-breakdown.js';
 import { crewAutoAssignEnabled, projectCrewOpenings } from './dispatch-crew-assign.js';
 import { dispatchOpenings } from './dispatch-openings.js';
 import { catalogStorage, quoteBuilderEnabled, readCompositeState, requireCatalogOwner } from './catalog-store.js';
-import { approvalRefusal, compositeApproval, fullnessOf, priceCompositeQuote } from './composite-quote.js';
+import { approvalRefusal, compositeApproval, compositeScope, fullnessOf, priceCompositeQuote } from './composite-quote.js';
+import { customerMoneyTotals } from './money-core.js';
+import { PAYMENT_TIME_ZONE, SIGNED_25_75, businessPaymentDate, quotePaymentDates, quotePaymentSchedule } from './quote-payment-policy.js';
 
 // FIX-CREW-PRICE-LEAK: every crew-visible copy of the brief is written without currency amounts.
 export { stripCrewMoney };
@@ -141,6 +143,22 @@ export function customerScopeSummary(scope) {
   if (plain(scope?.hazard_details?.pest_waste)) items.push('Pest-waste cleanup');
   return `Included: ${(items.length ? items : [LABELS.cleanout]).join('; ')}.`;
 }
+/**
+ * D-JUNK: the garage work a signed walkthrough records beyond junk removal, as the homeowner reads it: crew sorting (the
+ * sorting plan "Customer sorts with crew" or "Crew stages keep / donate / haul zones", with the reset of what stays: the
+ * fullness minutes the labor estimate counts with a garage cleaning base), the cleaning add-ons, shelving and totes the
+ * Finish step sold, and pest-waste cleanup. "Everything goes" and "Customer labels before arrival" are junk removal: the
+ * customer decided, the crew loads. A junk-only builder quote ($750 per truck, no Labor line) prices none of this, so it
+ * is signed only on a walkthrough that records none of it (saveWalkthroughHandoff, handoff_builder_junk_only_garage_work).
+ * The walkthrough page (crew/gameplan.html walkthroughGarageWork) applies the same rule before the homeowner signs.
+ */
+const CREW_SORTING = { customer: 'sorting with the customer and resetting what stays', zones: 'sorting into keep / donate / haul zones and resetting what stays' };
+export function walkthroughGarageWork(scope) {
+  const s = plain(scope) ? scope : {}, finish = Array.isArray(s.finish) ? s.finish : [], details = plain(s.finish_details) ? s.finish_details : {};
+  const count = (qty, label) => Number.isInteger(qty) && qty > 0 ? `${qty} ${label}${qty === 1 ? '' : 's'}` : '';
+  return [CREW_SORTING[s.sort_method] || '', finish.includes('deep_clean') ? 'a deep clean' : '', finish.includes('pressure_wash') ? 'a pressure wash' : '', finish.includes('mouse_trapping') ? 'mouse trapping' : '',
+    finish.includes('shelving') ? count(details.shelf_qty, 'shelving unit') : '', finish.includes('totes') ? count(details.tote_qty, 'storage tote') : '', Array.isArray(s.hazards) && s.hazards.includes('Pest waste') ? 'pest-waste cleanup' : ''].filter(Boolean);
+}
 /** Dispatch materials the crew loads for the sold product lines. A builder quote's products are its breakdown's packs
  * (job-materials.js breakdownMaterials), by product and in units, rather than one rolled-up goods line per step. */
 export function handoffMaterials(plan, builder = null) {
@@ -207,7 +225,7 @@ function builderMismatch(quote, priced, signedCents) {
 const savedSelection = job => plain(job?.compositeQuote?.compositePricing) ? job.compositeQuote.compositePricing : plain(job?.quoteDraft?.compositePricing) ? job.quoteDraft.compositePricing : null;
 // A job the customer signed before builder quotes had a Labor line, revised with that same selection (re-sent unchanged
 // or not sent at all): it is priced by the earlier rules, without labor, so its signed total stands. Any other selection
-// (a new or changed one, or an unsigned draft's) needs its Labor line.
+// (a new or changed one, or an unsigned draft's) with garage work needs its Labor line; a junk-only one has none (D-JUNK).
 function signedWithoutLabor(previous, selection) {
   const signed = plain(previous?.compositeQuote?.compositePricing) ? previous.compositeQuote.compositePricing : null;
   return Boolean(signed && signed.labor === undefined && plain(selection) && selection.labor === undefined && canonical(selection) === canonical(signed));
@@ -241,16 +259,23 @@ function builderBreakdown(summary, builder) {
   return { ...summary, sections, summary: breakdownLines({ sections }).join('\n').slice(0, 2000) };
 }
 const listNames = names => names.slice(0, 8).join(', ') + (names.length > 8 ? ` and ${names.length - 8} more` : '');
+// The in-person terms a signed walkthrough names (terms_version) and the deposit percent each one takes (D-DEPOSIT). New
+// signatures are on the current terms (SIGNED_25_75: 25% when the homeowner signs, 75% on the job day). The earlier 50%
+// terms (2026-09-deposit50: 50% upfront, the rest on completion) are read only to replay a save made on them
+// (saveWalkthroughHandoff refuses a new one: handoff_terms_outdated); jobs signed on them keep them.
+export const CURRENT_SIGNED_TERMS = SIGNED_25_75.version, LEGACY_SIGNED_TERMS = '2026-09-deposit50';
+const SIGNED_TERMS = Object.freeze({ [CURRENT_SIGNED_TERMS]: SIGNED_25_75.depositPct, [LEGACY_SIGNED_TERMS]: 50 });
 export function normalizeHandoffPlan(input, now = new Date().toISOString(), { builder = null, purchase = false } = {}) {
   if (!plain(input) || !plain(input.client) || !plain(input.quote) || !plain(input.acceptance)) throw fail('invalid_plan', 'Review the complete walkthrough before saving.', 400);
   const quote = input.quote, acceptance = input.acceptance;
-  const totalCents = cents(quote.total, 'Locked total'), depositCents = cents(quote.deposit, 'Deposit');
-  if (totalCents <= 0 || depositCents !== Math.round(totalCents / 2)) throw fail('invalid_amount', 'The signed walkthrough must include the locked total and its 50% deposit.', 400);
+  const terms = text(input.terms_version, 'Terms version', 100, true);
+  if (!Object.hasOwn(SIGNED_TERMS, terms)) throw fail('acceptance_required', 'The accepted terms are not the current walkthrough terms. Reload the walkthrough and have the homeowner review and sign it again.', 400);
+  const totalCents = cents(quote.total, 'Locked total'), depositCents = cents(quote.deposit, 'Deposit'), pct = SIGNED_TERMS[terms];
+  if (totalCents <= 0 || depositCents !== depositOf(totalCents, pct)) throw fail('invalid_amount', `The signed walkthrough must include the locked total and its ${pct}% deposit.`, 400);
   const signature = text(input.signature, 'Homeowner signature', 250000, true);
   if (input.terms_accepted !== true || acceptance.signature_captured !== true || acceptance.method !== 'in_person_signature' || !/^data:image\/png;base64,[A-Za-z0-9+/]+={0,2}$/.test(signature)) throw fail('acceptance_required', 'The homeowner must approve the scope and sign before an accepted job can be saved.', 400);
   const acceptedAt = text(acceptance.accepted_at, 'Original acceptance time', 40, true);
   if (!/(?:Z|[+-]\d{2}:\d{2})$/.test(acceptedAt) || !Number.isFinite(Date.parse(acceptedAt)) || Date.parse(acceptedAt) > Date.parse(now) + 300000) throw fail('acceptance_required', 'The original signature time could not be verified. Review and sign the scope again.', 400);
-  const terms = text(input.terms_version, 'Terms version', 100, true);
   if (acceptance.terms_version !== terms) throw fail('acceptance_required', 'The accepted terms do not match this walkthrough.', 400);
   const date = text(quote.job_date, 'Job date', 10, true), start = text(quote.start_time, 'Start time', 5, true), end = text(quote.end_time, 'End time', 5, true);
   const startAt = localInstant(date, start), endAt = localInstant(date, end);
@@ -283,16 +308,44 @@ export function handoffInstructions(plan, sourceId = '', builder = null) {
   return { customerGoal: String(plan.discovery.success || ''), whyNow: String(plan.discovery.why_now || ''), sortMethod: String(s.sort_method || ''), keepItems: String(s.keep_items || ''), removeItems: String(s.remove_items || ''), exclusions: String(s.exclusions || ''), hazards: Array.isArray(s.hazards) ? s.hazards : [], access: Array.isArray(s.access) ? s.access : [], accessNotes: String(l.notes || ''), truckPlacement: String(l.truck_placement || s.truck_placement || ''), specialItems: Array.isArray(s.special_items) ? s.special_items : [], finish: Array.isArray(s.finish) ? s.finish : [], shelving: { type: String(f.shelf_type || ''), qty: Number(f.shelf_qty || 0) }, totes: { qty: Number(f.tote_qty || 0) }, customerNotes: plan.notes, crewSize: l.crew_size, arrivalWindow: `${plan.quote.start_time}–${plan.quote.end_time}`, estimatedJobMinutes: plan.quote.estimated_duration_min, estimatedJobHours: plan.quote.estimated_duration_min / 60, expectedShiftHours: plan.quote.expected_shift_hours, photoCount: plan.photos.before, sourceWalkthroughId: sourceId, ...(plan.quote.itemized ? { materials: handoffMaterials(plan, builder) } : {}),
     ...(typeof builder?.labor?.manHours === 'number' ? { laborManHours: builder.labor.manHours } : {}) };
 }
+// D-DEPOSIT: a signature on the current terms saves its payment terms on the estimate as a sent quote's are saved
+// (commercialPolicy SIGNED_25_75 and paymentSchedule): the 25% deposit due the day the homeowner signed (Denver) and the
+// 75% remainder on the signed job day, in cents. The customer portal, the estimate document and the deposit checkout
+// (estimate.depositRequired) read them, and the Hub's legacy estimate editor leaves them alone (money-service.js), as it
+// does a sent quote's. A save replayed on the earlier 50% terms writes none of this, exactly as it did.
+// paidCents: what the customer already paid toward the job being signed again (a revision). Money paid is never asked for
+// twice: when it is more than the new 25% deposit (a job first signed on the 50% terms with its deposit paid), the
+// deposit is what was paid (up to the total) and the remainder the rest, so the schedule, the estimate's deposit and the
+// balance agree (the documents name the split: quote-payment-policy.js scheduleSplit).
+export function signedPaymentTerms(plan, paidCents = 0) {
+  if (plan.terms_version !== CURRENT_SIGNED_TERMS) return {};
+  const totalCents = Math.round(plan.quote.total * 100), amounts = quotePaymentSchedule(totalCents, SIGNED_25_75), jobDay = plan.quote.job_date, signedDay = businessPaymentDate(plan.acceptance.accepted_at);
+  const depositCents = Math.min(totalCents, Math.max(amounts.depositCents, Number.isSafeInteger(paidCents) && paidCents > 0 ? paidCents : 0));
+  // A job dated before the signature (a dispatcher's back-dated save) has its deposit due on the job day too.
+  const dates = quotePaymentDates(SIGNED_25_75, { walkthroughDate: signedDay > jobDay ? jobDay : signedDay, jobDate: jobDay });
+  return { amountCents: totalCents, depositRequiredCents: depositCents, depositPct: SIGNED_25_75.depositPct, commercialPolicy: amounts.policy,
+    paymentSchedule: { depositCents, remainderCents: totalCents - depositCents, depositDueDate: dates.depositDueDate, remainderDueDate: dates.remainderDueDate, timeZone: PAYMENT_TIME_ZONE, policyVersion: SIGNED_25_75.version } };
+}
+// What the customer paid toward a job before it is signed again (payments less tips), in cents; 0 for a new job.
+function appliedCents(previous) {
+  if (!previous) return 0;
+  const applied = customerMoneyTotals(previous).appliedCents, deposit = Number(previous.deposit?.paidAmount);
+  return Number.isSafeInteger(applied) ? applied : Number.isFinite(deposit) && deposit > 0 ? Math.round(deposit * 100) : 0;
+}
 function financePatch(plan, previous, jobId, actor, now, builder = null) {
-  const total = plan.quote.total, amount = plan.quote.deposit, prior = plain(previous?.deposit) ? previous.deposit : {};
+  const terms = signedPaymentTerms(plan, appliedCents(previous));
+  const total = plan.quote.total, amount = terms.depositRequiredCents === undefined ? plan.quote.deposit : terms.depositRequiredCents / 100, prior = plain(previous?.deposit) ? previous.deposit : {};
   const paid = typeof prior.paidAmount === 'number' && Number.isFinite(prior.paidAmount) ? Math.max(0, prior.paidAmount) : 0;
   const patch = { total, priceQuoted: total, quoteStatus: 'approved', termsVersion: plan.terms_version,
     acceptance: { acceptedAt: plan.acceptance.accepted_at, acceptedBy: plan.acceptance.accepted_by, method: 'in_person_signature', termsVersion: plan.terms_version, signatureCaptured: true, signatureData: plan.signature, recordedBy: actor.user, recordedAt: now },
     customerApproval: { status: 'approved', approvedAt: plan.acceptance.accepted_at, approvedBy: plan.acceptance.accepted_by, amount: total, source: 'in_person_signature' },
-    estimate: { number: previous?.estimate?.number || `EST-${jobId.slice(-6).toUpperCase()}`, revision: Number.isInteger(previous?.estimate?.revision) ? previous.estimate.revision + 1 : 1, status: 'accepted', amount: total, depositRequired: amount, acceptedAt: plan.acceptance.accepted_at, acceptedBy: plan.acceptance.accepted_by, acceptanceMethod: 'in_person_signature', termsVersion: plan.terms_version, createdAt: previous?.estimate?.createdAt || now, source: 'walkthrough', scope: customerScopeSummary(plan.scope),
+    estimate: { number: previous?.estimate?.number || `EST-${jobId.slice(-6).toUpperCase()}`, revision: Number.isInteger(previous?.estimate?.revision) ? previous.estimate.revision + 1 : 1, status: 'accepted', amount: total, depositRequired: amount, acceptedAt: plan.acceptance.accepted_at, acceptedBy: plan.acceptance.accepted_by, acceptanceMethod: 'in_person_signature', termsVersion: plan.terms_version, createdAt: previous?.estimate?.createdAt || now, source: 'walkthrough',
+      // A builder quote's scope is its priced lines (compositeScope, as a sent builder quote's): the homeowner never
+      // signs work its price leaves out (a junk-only quote reads "Junk removal only"). Any other quote: the Finish step.
+      scope: builder ? compositeScope(builder) : customerScopeSummary(plan.scope),
       // A builder quote stores the builder's lines with their internal goods split (manager-only, never fingerprinted or
       // shown to a customer or the crew), as a saved builder draft does; the signed snapshot keeps the lines without it.
-      ...(plan.quote.itemized ? { lineItems: structuredClone(builder ? builder.storedLineItems : plan.quote.estimate_line_items), catalogVersion: plan.quote.catalog_version } : {}), ...(builder ? { pricingSettingsVersion: builder.settingsVersion } : {}) },
+      ...(plan.quote.itemized ? { lineItems: structuredClone(builder ? builder.storedLineItems : plan.quote.estimate_line_items), catalogVersion: plan.quote.catalog_version } : {}), ...(builder ? { pricingSettingsVersion: builder.settingsVersion } : {}), ...terms },
     deposit: { ...prior, amount, paidAmount: paid, status: paid >= amount ? 'paid' : paid > 0 ? 'partial' : 'due' },
     ...(plan.quote.itemized || previous?.durationOverride ? { durationOverride: plan.quote.duration_override_reason ? { suggestedMinutes: plan.quote.duration_suggestion.minutes, minutes: plan.quote.estimated_duration_min, reason: plan.quote.duration_override_reason, recordedBy: actor.user, recordedAt: now } : null } : {}) };
   // Any change to what the customer signed (price, deposit, scope or, when
@@ -531,6 +584,9 @@ export async function saveWalkthroughHandoff(store, actor, input, now = new Date
       ...(plain(crew) ? { crew: { ...crew, date: saved.date || '', time: saved.time || '', endTime: saved.endTime || '' } } : {}), ...(plain(saved.compositeQuote) || plain(saved.pricesPendingApproval) ? { pricing: pricingView(saved) } : {}) };
   }
   const prior = await replay(); if (prior) return prior;
+  // D-DEPOSIT: a new signature is on the current terms. A page still showing the earlier 50% terms (opened before they
+  // changed) is refused, and nothing is saved; a save it made before is replayed above, on the terms it was signed on.
+  if (plan.terms_version !== CURRENT_SIGNED_TERMS) throw fail('terms_outdated', 'This signature is on the earlier deposit terms (50% upfront). Nothing was saved. Reload the walkthrough so the homeowner reviews and signs the current terms: a 25% deposit now and the remaining 75% on the job day.');
   const customer = await store.read('customers', input.customerId); requireRevision(customer);
   if (!identityMatches(plan.client, customer)) throw fail('customer_mismatch', 'The signed customer details do not match the selected customer. Review the phone, email and CRM link.');
   let source = null;
@@ -569,7 +625,10 @@ export async function saveWalkthroughHandoff(store, actor, input, now = new Date
   // amounts: the signed total, and any lines and menu version the page sends, must be exactly the server's (409
   // handoff_builder_price_mismatch). Prices the owner has not approved still book the job (pricesPendingApproval).
   // The labor estimate reads the signed plan's fullness. A job signed before the Labor line, revised with its own
-  // selection, keeps its signed price by the earlier rules (signedWithoutLabor); any other selection needs labor.
+  // selection, keeps its signed price by the earlier rules (signedWithoutLabor); any other selection with garage work
+  // needs labor, and a junk-only one is $750 per truck with no Labor line (D-JUNK). The Labor line the customer signs is
+  // the server's own, "Labor" and its amount (D-LABOR-TEXT): a page still showing the man-hours is refused like any
+  // other line that differs (builderMismatch), so the quote is built again before the homeowner signs.
   const chosen = !builderOn ? null : builderSent ? signedInput.quote.composite_pricing : savedSelection(previous);
   const legacy = signedWithoutLabor(previous, chosen), selection = withSignedFullness(chosen, plan);
   let builder = null;
@@ -577,6 +636,11 @@ export async function saveWalkthroughHandoff(store, actor, input, now = new Date
     builder = priceCompositeQuote(await compositeState(env), selection, { complete: true, requireLabor: !legacy });
     const mismatch = builderMismatch(signedInput.quote, builder, Math.round(plan.quote.total * 100));
     if (mismatch) throw mismatch;
+    // D-JUNK: a junk-only quote is $750 per truck with no Labor line, so it prices no garage work; the walkthrough the
+    // homeowner signs must record none (walkthroughGarageWork). Nothing is saved: the quote is built again or the
+    // walkthrough corrected, and the homeowner signs that.
+    const work = builder.junkOnly ? walkthroughGarageWork(plan.scope) : [];
+    if (work.length) throw fail('builder_junk_only_garage_work', `This junk-only quote prices the hauling only ($750 per truck covers the crew's time; it has no Labor line), but the walkthrough records garage work: ${listNames(work)}. Nothing was saved. Add that work in the quote builder (a garage cleaning base for sorting and reset, cleaning, shelving or storage), or, if the homeowner wants junk removal only, choose Everything goes or Customer labels before arrival as the sorting plan and remove those finish options. Then have the homeowner sign again.`);
     plan = normalizeHandoffPlan(withoutQuoteLines(signedInput), now, { builder, purchase });
   }
   // EGC_QUOTE_BUILDER_ENABLED: a quote the builder did not price (no builder selection sent or saved) is held as well
@@ -648,13 +712,17 @@ export async function saveWalkthroughHandoff(store, actor, input, now = new Date
     commit: async writes => {
       const target = writes.find(write => write.collection === 'jobs' && write.patch?.dispatchRequestId === input.requestId);
       if (!target) throw fail('commit_incomplete', 'The complete dispatch handoff could not be prepared.', 503);
-      const providerPayload = { ...plan, signature: undefined, tool: 'game_plan', job_id: target.id, walkthrough_id: source?.id || '', idempotency_key: `walkthrough-handoff:${input.requestId}`, sent_at: now };
+      // D-LABOR-TEXT: the customer's Labor line reads "Labor"; the HighLevel internal brief (api/highlevel.js quoteLines)
+      // names the man-hours sold from labor_man_hours, for the staff only. The snapshot's deposit is the estimate's (a
+      // revision already paid more than the new 25% keeps what was paid as its deposit: signedPaymentTerms).
+      const finance = financePatch(plan, previous, target.id, actor, now, builder);
+      const providerPayload = { ...plan, quote: { ...plan.quote, deposit: finance.estimate.depositRequired, ...(typeof builder?.labor?.manHours === 'number' ? { labor_man_hours: builder.labor.manHours } : {}) }, signature: undefined, tool: 'game_plan', job_id: target.id, walkthrough_id: source?.id || '', idempotency_key: `walkthrough-handoff:${input.requestId}`, sent_at: now };
       delete providerPayload.signature;
       // Prices the owner has not approved yet: no portal invitation (the estimate and deposit request) is asked for, and
       // one asked for earlier is withdrawn, until the builder's send gate releases the job (releaseHandoffPrices); every
       // customer surface withholds a held job (quote-model.js pricesPendingApproval).
       const invitation = !held ? { customerPortalInvitationRequestedAt: previous?.customerPortalInvitationRequestedAt || now } : previous?.customerPortalInvitationRequestedAt ? { customerPortalInvitationRequestedAt: null } : {};
-      Object.assign(target.patch, financePatch(plan, previous, target.id, actor, now, builder), { handoffVersion: 1, handoffRequestId: input.requestId, handoffFingerprint: fingerprint, acceptedHandoffPayload: providerPayload, sourceWalkthroughId: source?.id || '', customer: plan.client.name, phone: plan.client.phone, email: plan.client.email, scope: plan.scope, discovery: plan.discovery, logistics: plan.logistics, jobInstructions: instructions, internalNotes: plan.internal_notes, clientChecklists: plan.client_checklists, notes: plan.notes, customerNotesSummary: crewNotes || instructions.customerGoal, durationMin: (Date.parse(plan.quote.end_at) - Date.parse(plan.quote.start_at)) / 60000, estimatedDurationMin: plan.quote.estimated_duration_min, estimatedDurationHours: plan.quote.estimated_duration_min / 60, expectedShiftHours: plan.quote.expected_shift_hours, crewSize: plan.logistics.crew_size, photoCount: plan.photos.before, photoSyncStatus: previous?.photoSyncStatus || 'device_only', walkthroughSyncedAt: now, syncIdempotencyKey: providerPayload.idempotency_key, walkthroughAppointmentId: source?.highlevelAppointmentId || previous?.walkthroughAppointmentId || '', providerSyncOwner: 'operations', syncStatus: 'pending', ...invitation });
+      Object.assign(target.patch, finance, { handoffVersion: 1, handoffRequestId: input.requestId, handoffFingerprint: fingerprint, acceptedHandoffPayload: providerPayload, sourceWalkthroughId: source?.id || '', customer: plan.client.name, phone: plan.client.phone, email: plan.client.email, scope: plan.scope, discovery: plan.discovery, logistics: plan.logistics, jobInstructions: instructions, internalNotes: plan.internal_notes, clientChecklists: plan.client_checklists, notes: plan.notes, customerNotesSummary: crewNotes || instructions.customerGoal, durationMin: (Date.parse(plan.quote.end_at) - Date.parse(plan.quote.start_at)) / 60000, estimatedDurationMin: plan.quote.estimated_duration_min, estimatedDurationHours: plan.quote.estimated_duration_min / 60, expectedShiftHours: plan.quote.expected_shift_hours, crewSize: plan.logistics.crew_size, photoCount: plan.photos.before, photoSyncStatus: previous?.photoSyncStatus || 'device_only', walkthroughSyncedAt: now, syncIdempotencyKey: providerPayload.idempotency_key, walkthroughAppointmentId: source?.highlevelAppointmentId || previous?.walkthroughAppointmentId || '', providerSyncOwner: 'operations', syncStatus: 'pending', ...invitation });
       if (typeof target.patch.operationalScope?.text === 'string') target.patch.operationalScope.text = stripCrewMoney(target.patch.operationalScope.text);
       if (soldNeedsCrew) target.patch.soldNeedsCrew = { at: now, by: actor.user, requestId: input.requestId };
       if (breakdown) target.patch.jobBreakdown = breakdown;

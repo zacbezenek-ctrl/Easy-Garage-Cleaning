@@ -5,7 +5,7 @@ import { dispatchStorage } from './dispatch-storage.js';
 import { customerMoneyTotals, paymentLedger, refundsRecorded } from './money-core.js';
 import { walkthroughStatus } from './walkthrough-state.js';
 import { commissionAllocations } from './knock-allocations.js';
-import { included } from './quote-model.js';
+import { builderLaborLine, included } from './quote-model.js';
 import { isOwner, repKeyFor } from './knock-access.js';
 import { CHANNEL_PERCENTS } from '../../crew/knock-money.js';
 
@@ -93,13 +93,12 @@ export async function recordSetterAttribution(store, admin, body, nowIso, env, {
    line that is not junk removal (the builder's removal-junk lines, a disposal line or a line named junk); a single signed
    total needs a finishing option in its signed scope (cleanout and reset, shelving, totes...). Anything else, a junk-only
    quote included, stays unverified until the office classifies it (setter.classify, estimator.classify). A builder
-   quote's Labor line (D12, on every builder quote, junk-only ones included) is evidence of neither. */
+   quote's Labor line (D12; since D-JUNK only on quotes with garage work, though a junk-only quote signed earlier may carry
+   one) is evidence of neither. */
 const junkLine = line => line.kind === 'disposal' || /^removal-junk/.test(String(line.id || '')) || /\bjunk\b/i.test(`${line.name || ''} ${line.description || ''}`);
-// The builder's Labor line as composite-quote.js writes it: id 'labor' (LABOR_ID), kind labor, "Labor: N man-hours × $R".
-const builderLabor = line => line.id === 'labor' && line.kind === 'labor' && /^Labor: \d+(?:\.\d+)? man-hours? × /.test(String(line.name || ''));
 export function signedGarageWork(job) {
   const lines = job?.estimate?.lineItems;
-  if (Array.isArray(lines) && lines.length) return lines.some(line => line && typeof line === 'object' && included(line) && ['service', 'product', 'labor'].includes(line.kind) && Number(line.totalCents) > 0 && !junkLine(line) && !builderLabor(line));
+  if (Array.isArray(lines) && lines.length) return lines.some(line => line && typeof line === 'object' && included(line) && ['service', 'product', 'labor'].includes(line.kind) && Number(line.totalCents) > 0 && !junkLine(line) && !builderLaborLine(line));
   const finish = job?.scope?.finish;
   return Array.isArray(finish) && finish.some(id => typeof id === 'string' && id.trim() !== '');
 }

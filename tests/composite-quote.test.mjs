@@ -124,8 +124,9 @@ test('draft prices are priced and saved but block sending with a reason per line
   assert.equal(refusal.status, 409);
   assert.match(refusal.message, /4 prices the owner has not approved: Two-car garage base, Quarter load, Mattress, HDX plastic shelving[^.]*\. It stays saved/);
   assert.equal(refusal.details.unapproved.length, 4);
+  // D-JUNK: three trucks of junk are $750 each and nothing else: no Labor line, approved and sendable as they are.
   const truck = priceCompositeQuote(state(), descriptor({ removal: [pick(TRUCK, 3)] }), { complete: true });
-  assert.deepEqual([truck.totalCents, truck.approval.ready, truck.breakdown.lines[0].approved], [225000 + LABOR_CENTS, true, true], 'the $750 truck and the owner\'s $40.00 labor rate are both approved');
+  assert.deepEqual([truck.totalCents, truck.approval.ready, truck.breakdown.lines[0].approved, truck.junkOnly, truck.labor, truck.lineItems.some(line => line.kind === 'labor')], [225000, true, true, true, null, false], 'the $750 truck covers the crew\'s time');
   assert.deepEqual(compositeApproval(truck.breakdown, state()), { ready: true, blocked: [] });
   assert.equal(compositeApproval(null, state()).ready, false, 'a missing breakdown never sends');
 });
@@ -177,8 +178,9 @@ test('installation is billed through the Labor line (D12); only a quote saved be
   // With labor the goods quote is ready as soon as its prices are approved: no installation answer is asked for.
   const ready = priceCompositeQuote(state({ approvals }), goods, { complete: true });
   assert.deepEqual(ready.approval, { ready: true, blocked: [] });
-  assert.match(ready.lineItems.at(-1).description, /including installing the shelving and storage/);
-  assert.equal(priceCompositeQuote(state(), descriptor({ removal: [pick(TRUCK)] }), { complete: true }).lineItems.at(-1).description, 'Crew time on site, billed per man-hour.', 'removal alone has no installation to mention');
+  // D-LABOR-TEXT: the customer's Labor line is one amount; with goods it says installation is included.
+  assert.deepEqual([ready.lineItems.at(-1).name, ready.lineItems.at(-1).description], ['Labor', 'Includes installing the shelving and storage.']);
+  assert.deepEqual(['name', 'description'].map(key => priceCompositeQuote(state(), descriptor({ removal: [pick(TWO_CAR)] }), { complete: true }).lineItems.at(-1)[key]), ['Labor', ''], 'a cleanout alone has no installation to mention');
   // installation.included: the owner's answer (installation included in the goods price); the Labor line bills it otherwise.
   assert.deepEqual(builderMenu(state()).installation, { included: false, billedAs: 'labor' });
   assert.deepEqual(builderMenu(state({ settings: INSTALLED })).installation, { included: true, billedAs: 'labor' });
@@ -187,7 +189,7 @@ test('installation is billed through the Labor line (D12); only a quote saved be
   // customer already signed that way (requireLabor:false) keeps the earlier rule and waits for the installation answer.
   const { labor, ...older } = ready.breakdown;
   assert.deepEqual(compositeApproval(older, state({ approvals })).blocked.map(row => row.id), ['labor', INSTALLATION_ID]);
-  assert.match(compositeApproval(older, state({ approvals })).blocked[0].reason, /no Labor line\. Every builder quote charges labor: the estimated man-hours × \$40\.00 per man-hour/);
+  assert.match(compositeApproval(older, state({ approvals })).blocked[0].reason, /no Labor line\. Every builder quote with garage work charges labor: the estimated man-hours × \$40\.00 per man-hour/);
   const signed = compositeApproval(older, state({ approvals }), { requireLabor: false });
   assert.deepEqual(signed.blocked.map(row => [row.id, row.unitCents]), [[INSTALLATION_ID, null]]);
   assert.match(signed.blocked[0].reason, /saved before builder quotes had a Labor line/);
