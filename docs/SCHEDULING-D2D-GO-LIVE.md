@@ -105,8 +105,11 @@ read cost, until the indexes are built).
 7. **Quote builder.** `EGC_QUOTE_BUILDER_ENABLED=true` on Cloudflare Pages.
    - Does: walkthroughs open the guided builder. Quotes with unapproved prices are saved but not sent, and signed jobs
      with unapproved prices are held (no estimate or deposit request) until you approve them.
-   - First: decide installation (setup item 7) and review the menu prices (items 6 and 8). Quotes priced the old way
-     that were not sent yet will need to be rebuilt in the builder before they can be sent.
+   - First: set it under **Preview** only ([GO-LIVE.md](GO-LIVE.md#preview-first-then-production)). The Menu prices
+     tab, its approvals and the installation answer appear only while this switch is on, and Preview uses the same live
+     data. On the preview link, approve the menu prices and answer installation (setup items 6 to 8), then set it under
+     **Production**. Quotes priced the old way that were not sent yet will need to be rebuilt in the builder before
+     they can be sent.
    - Roll back: delete it. Walkthroughs use their old quote again. Jobs already held stay held until re-signed.
 8. **Door-to-door bridge.** `EGC_KNOCK_JOB_BRIDGE=true` on Cloudflare Pages.
    - Does: a sale at the door books the customer and a crew job in the Hub; **Walkthrough set** books an estimator.
@@ -149,12 +152,15 @@ read cost, until the indexes are built).
    Admin as before.
 5. **HighLevel user IDs.** Hub → Team directory → each estimator → HighLevel user ID (copied from HighLevel's staff
    settings). Their walkthrough deals are then assigned to them in HighLevel.
+Items 6 to 8 need the quote builder switch (turn-on step 7), so do them on the Preview link first.
+
 6. **Approve menu prices.** Hub → Catalog & pricing → Menu prices. Approve up to 100 per save (**Tick all in this
    step** helps). Check the Home Depot prices before you approve them. Held jobs that your approval covers are
    released automatically.
-7. **Goods markup and installation.** Hub → Catalog & pricing → Pricing: confirm **Goods markup (pricing menu)**, and
-   tick **Shelving and storage installation is included in the goods price** only if that is true. Until it is
-   ticked, quotes with shelving or storage are saved but cannot be sent.
+7. **Installation and goods markup.** In Menu prices, tick **Shelving and storage installation is included in the
+   goods price** only if that is true. Until it is ticked, quotes with shelving or storage are saved but cannot be
+   sent. The goods markup (default × 1.30) is changed on the Pricing tab, which shows only while catalog pricing is
+   on; otherwise the default applies.
 8. **Cleaning base prices.** In Menu prices, enter the cleaning-only amount for each of the four garage sizes before
    approving them. Their draft amounts came from the old walkthrough prices, which already included hauling, so
    approving them unchanged would charge hauling twice. **Tick all** leaves them out on purpose.
