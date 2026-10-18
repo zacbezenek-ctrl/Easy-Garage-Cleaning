@@ -5,7 +5,7 @@ import { knockFailure, write } from './knock-store.js';
 import { shiftEligibility } from './knock-access.js';
 import { endedAssignmentFor, houseInScope, neighborhoodLock, phoneHouse, publicShift, repTerritory } from './knock-territory.js';
 import { applySaleEvent, saleClaimConflict, validateSaleEvent } from './knock-sales.js';
-import { applyWalkthroughEvent, otherRepWalkthrough, validateWalkthroughEvent } from './knock-walkthroughs.js';
+import { HOUSE_SOLD, applyWalkthroughEvent, houseSold, otherRepWalkthrough, validateWalkthroughEvent, walkthroughClaimConflict } from './knock-walkthroughs.js';
 import { OUTCOMES, WALKTHROUGH_OUTCOME } from '../../crew/knock-settings.js';
 import { knockWindow, zonedDate } from '../../crew/knock-time.js';
 import { effectiveKnocks, summarizeHouse } from '../../crew/knock-doors.js';
@@ -136,6 +136,23 @@ export async function applyBatch(store, rep, settings, events, nowMs, { jobBridg
   const accepted = [];
   const saleClaimGuards = new Map();
   const touchedHouses = new Set(), touchedShifts = new Set(), touchedDays = new Set();
+  /* KNOCK-BRIDGE: one sale or walkthrough per house. A house's form fence (knock_form_revisions, which every sync
+     touching the house rewrites) is read before its sales, walkthroughs and form claim are checked, and verified
+     unchanged in the commit below, so two syncs deciding about one house at the same moment never both commit: the
+     later one is answered busy (503, the phone syncs again) and then sees the first. */
+  const fences = new Map();
+  const readFence = houseId => {
+    if (!fences.has(houseId)) fences.set(houseId, store.get('knock_form_revisions', houseId));
+    return fences.get(houseId);
+  };
+  const doorOf = async event => accepted.find(a => a.id === event.knockId) || targets.get(event.knockId) || (UUID.test(String(event.knockId || '')) ? await store.get('knock_events', event.knockId) : null);
+  // A walkthrough set at a house with another channel's native form claim is refused; else the claim is guarded.
+  const walkthroughClaim = async houseId => {
+    const claimId = await nativeHouseClaimId(houseId), claim = await store.get('knock_receipts', claimId);
+    if (walkthroughClaimConflict(claim, rep)) return refuse('knock_form_channel_conflict', 'This house has a different form channel or rep. Review attribution before setting a walkthrough.');
+    if (!saleClaimGuards.has(claimId)) saleClaimGuards.set(claimId, claim ? write.verify('knock_receipts', claimId, claim.__updateTime) : write.verifyMissing('knock_receipts', claimId));
+    return null;
+  };
 
   for (const { event, fp } of fresh) {
     const at = Date.parse(event.at);
@@ -169,8 +186,15 @@ export async function applyBatch(store, rep, settings, events, nowMs, { jobBridg
       const house = houses.get(event.houseId);
       if (!house) { results.set(event.id, refuse('knock_house_missing', 'That house is not in canvassing.')); continue; }
       // KNOCK-BRIDGE: another rep's walkthrough stands at this house: no Sold or second Walkthrough set over it.
+      if (jobBridge && (event.outcome === 'sold' || event.outcome === WALKTHROUGH_OUTCOME)) await readFence(house.id);
       if (jobBridge && (event.outcome === 'sold' || event.outcome === WALKTHROUGH_OUTCOME) && await otherRepWalkthrough(store, house.id, rep.repKey)) {
         results.set(event.id, refuse('knock_walkthrough_other_rep', 'Another rep set a walkthrough at this house. Ask the office to review it before logging this door.')); continue;
+      }
+      // KNOCK-BRIDGE: no walkthrough over a sale (any rep's, this one's too) or another channel's native form claim.
+      if (jobBridge && event.outcome === WALKTHROUGH_OUTCOME) {
+        if (await houseSold(store, house.id, accepted)) { results.set(event.id, refuse('knock_house_sold', HOUSE_SOLD)); continue; }
+        const claimProblem = await walkthroughClaim(house.id);
+        if (claimProblem) { results.set(event.id, claimProblem); continue; }
       }
       if (event.outcome === 'sold') {
         const claimId = await nativeHouseClaimId(house.id), claim = await store.get('knock_receipts', claimId);
@@ -207,9 +231,11 @@ export async function applyBatch(store, rep, settings, events, nowMs, { jobBridg
       // The change joins the door's shift so the shift's door count is rebuilt with it.
       extra = { shiftId: target.shiftId, neighborhoodId: target.neighborhoodId, street: target.street, day: zonedDate(at, 'America/Denver'), targetDay: target.day };
     } else if (event.type === 'sale') {
+      const bridgeDoor = jobBridge ? await doorOf(event) : null;
+      if (bridgeDoor?.houseId) await readFence(bridgeDoor.houseId);
       const problem = await validateSaleEvent(store, rep, settings, event, { accepted, targets, houses, nowMs, jobBridge });
       if (problem) { results.set(event.id, problem); continue; }
-      const saleDoor = accepted.find(a => a.id === event.knockId) || targets.get(event.knockId) || await store.get('knock_events', event.knockId);
+      const saleDoor = bridgeDoor || accepted.find(a => a.id === event.knockId) || targets.get(event.knockId) || await store.get('knock_events', event.knockId);
       if (jobBridge && await otherRepWalkthrough(store, saleDoor.houseId, rep.repKey)) {
         results.set(event.id, refuse('knock_walkthrough_other_rep', 'Another rep set a walkthrough at this house. Ask the office to review it before saving a sale.')); continue;
       }
@@ -222,9 +248,10 @@ export async function applyBatch(store, rep, settings, events, nowMs, { jobBridg
       // KNOCK-BRIDGE: a bridged sale always names its house (its town and Hub address come from it).
       extra = { day: zonedDate(at, 'America/Denver'), ...(jobBridge ? { houseId: saleDoor.houseId } : {}) };
     } else if (event.type === 'walkthrough') {
-      const problem = await validateWalkthroughEvent(store, rep, event, { accepted, targets, houses });
+      const door = await doorOf(event);
+      if (door?.houseId) await readFence(door.houseId);
+      const problem = await validateWalkthroughEvent(store, rep, event, { accepted, targets, houses }) || await walkthroughClaim(door.houseId);
       if (problem) { results.set(event.id, problem); continue; }
-      const door = accepted.find(a => a.id === event.knockId) || targets.get(event.knockId) || await store.get('knock_events', event.knockId);
       extra = { day: zonedDate(at, 'America/Denver'), houseId: door.houseId };
     }
 
@@ -246,6 +273,11 @@ export async function applyBatch(store, rep, settings, events, nowMs, { jobBridg
     // Receipt verification therefore cannot miss a concurrent new edit/void/sale event.
     for (const houseId of new Set(accepted.map(event => event.houseId).filter(Boolean)))
       writes.push(write.set('knock_form_revisions', houseId, { revision: crypto.randomUUID() }));
+    // KNOCK-BRIDGE: each house a sale or walkthrough was decided on still has the fence its checks read.
+    for (const houseId of new Set(accepted.map(event => event.houseId).filter(houseId => fences.has(houseId)))) {
+      const fence = await fences.get(houseId);
+      writes.push(fence ? write.verify('knock_form_revisions', houseId, fence.__updateTime) : write.verifyMissing('knock_form_revisions', houseId));
+    }
     writes.push(...saleClaimGuards.values());
     const originals = new Map(fresh.map(({ event }) => [event.id, event]));
     // The town a sale or walkthrough is in: its neighborhood's city rule (the rep may have corrected it on the form).
@@ -263,6 +295,7 @@ export async function applyBatch(store, rep, settings, events, nowMs, { jobBridg
     try {
       await store.commit(writes);
     } catch (error) {
+      if (jobBridge && error.code === 'knock_conflict') throw knockFailure('Another phone changed one of these houses at the same moment. Syncing again.', 503, 'knock_house_busy');
       if (error.code !== 'knock_exists') throw error;
       // A concurrent replay stored some of these first; ask the phone to send the batch again.
       throw knockFailure('Some changes were saved by another sync at the same moment. Syncing again.', 409, 'knock_retry');

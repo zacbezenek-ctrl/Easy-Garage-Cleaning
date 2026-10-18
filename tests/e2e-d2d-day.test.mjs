@@ -476,6 +476,11 @@ describe('a door-to-door rep\'s day, end to end, with every launch flag on', () 
     const deals = [...hl.opportunities.values()];
     assert.deepEqual(deals.map(deal => [deal.pipelineId, deal.pipelineStageId, deal.status]).sort(), [...Array(4).fill([EGC_PIPELINE, EGC_JOB_SCHEDULED_STAGE, 'open']), [EGC_PIPELINE, EGC_WALKTHROUGH_APPOINTMENT_STAGE, 'open']].sort());
     assert.equal(deals.find(deal => deal.pipelineStageId === EGC_WALKTHROUGH_APPOINTMENT_STAGE).assignedTo, 'SyntheticAlexGhl01', 'the walkthrough deal is Alex\'s in HighLevel');
+    // Each door sale's deal is worth the price signed at the door (the Hub job's quoted price); a walkthrough's is open.
+    assert.deepEqual(deals.filter(deal => deal.pipelineStageId === EGC_JOB_SCHEDULED_STAGE).map(deal => deal.monetaryValue).sort((a, b) => a - b),
+      sales.map(saleId => W.db.get(`knock_sales/${saleId}`).ticket).sort((a, b) => a - b));
+    assert.deepEqual(sales.map(saleId => W.db.get(`knock_sales/${saleId}`).ticket).sort((a, b) => a - b), [900, 1650, 1750, 1800]);
+    assert.equal(deals.find(deal => deal.pipelineStageId === EGC_WALKTHROUGH_APPOINTMENT_STAGE).monetaryValue, 0);
     const contactFor = name => [...hl.contacts.values()].find(contact => contact.name === name);
     assert.deepEqual(['Morgan Synthetic', 'Jordan Fixture', 'Casey Sample', 'Riley Placeholder', 'Taylor Example'].map(name => Boolean(contactFor(name)?.phone)), [true, true, true, true, true]);
     for (const entry of W.db.docs('ghlScheduleMirror/')) assert.deepEqual([entry.status, Boolean(entry.steps.contactId), Boolean(entry.steps.note)], ['done', true, true]);
