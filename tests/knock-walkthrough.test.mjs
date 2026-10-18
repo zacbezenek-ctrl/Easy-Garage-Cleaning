@@ -2,7 +2,8 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { MON, NOW, TUE, MIN, SECRET_ENV, USERS, busy, bridgeWorld, id, iso, saleBatch } from './helpers/knock-bridge-fixture.mjs';
 import { estimatorIds, estimatorRef } from '../functions/_lib/knock-bridge.js';
-import { call, get } from './helpers/knock-fixture.mjs';
+import { call, get, post } from './helpers/knock-fixture.mjs';
+import { knockSyncHandlers } from '../functions/api/knock-sync.js';
 import { nativeHouseClaimId } from '../functions/_lib/knock-form-claims.js';
 import { setterPolicy } from '../functions/_lib/knock-setters.js';
 import { countKnocks, metrics, scoreboard } from '../crew/knock-stats.js';
@@ -331,4 +332,105 @@ test('My money\'s setter records name only the rep: never the estimator, the clo
     allocations: [{ id: 'j1:appointment_setter:setter:rep.one', role: 'setter', repKey: 'rep.one', rate: 0.13, amountCents: 26000 }, { id: 'j1:appointment_setter:estimator:est.bea', role: 'estimator', repKey: 'est.bea', rate: 0.07, amountCents: 14000 }] };
   const shown = repSetterRows({ rows: [converted, { ...converted, id: 'w2', walkthroughId: 'w2', setterKey: 'rep.two' }], truncated: false, policy: { rate: 0.13 } }, 'rep.one');
   assert.deepEqual(shown, { rows: [{ id: 'w1', walkthroughId: 'w1', setterKey: 'rep.one', state: 'review_required', rate: 0.13, allocations: [converted.allocations[0]] }], truncated: false, policy: { rate: 0.13 } });
+});
+
+/* ---------- review fixes: one sale or walkthrough per house, and which customer it books ---------- */
+
+// Rep Two's walkthrough on h-<n>, synced from Rep Two's phone (a shift, the Walkthrough set door, the walkthrough).
+const twoWalk = n => walkBatch({ n, walk: { customer: { name: `Lee Synthetic ${n}`, phone: `970-555-1${String(n).slice(-3)}`, email: '' } } });
+
+// REVIEW integrity-races-2: a Walkthrough set door on a house that already bought (another rep's sale, or the rep's own)
+// was accepted and booked an estimator, with a 13% / 7% setter record nobody reviewed.
+test('no walkthrough over a door sale: another rep\'s, the rep\'s own, or a native direct sale; a cancelled sale leaves the house open', async () => {
+  const w = await bridgeWorld();
+  const sale = saleBatch({ n: 2902 });
+  await w.send(sale.events);
+  assert.equal((await w.book('sale', sale.saleId)).body.booking.status, 'booked');
+  const other = twoWalk(2902);
+  const refused = await w.send(other.events, w.cookies.two);
+  assert.deepEqual(refused.body.results.map(row => row.code || row.status), ['applied', 'knock_house_sold', 'knock_walkthrough_invalid']);
+  assert.equal(refused.body.results[1].error, 'This house already has a sale at the door. Ask the office before setting a walkthrough.');
+  assert.deepEqual([w.docs('knock_walkthroughs/').length, visits(w).length, w.docs('knock_setters/').length], [0, 0, 0], 'no estimator and no setter record');
+  // The walkthrough event alone, on a door logged earlier (before the sale synced), is refused too.
+  const early = await bridgeWorld();
+  const door = twoWalk(2902);
+  await early.send(door.events.slice(0, 2), early.cookies.two);
+  const sold = saleBatch({ n: 2902 });
+  await early.send(sold.events);
+  assert.deepEqual((await early.send(door.events.slice(2), early.cookies.two)).body.results.map(row => row.code || row.status), ['knock_house_sold']);
+  // The rep's own sale: the customer already bought, so no estimator either.
+  const own = walkBatch({ n: 2902, shiftId: sale.shiftId });
+  assert.deepEqual((await w.send(own.events.slice(1))).body.results.map(row => row.code || row.status), ['knock_house_sold', 'knock_walkthrough_invalid']);
+  // A direct sale filed through the native form claims the house.
+  const claimId = await nativeHouseClaimId('h-2904-blue-leaf-dr');
+  const native = await bridgeWorld({ seed: { [`knock_receipts/${claimId}`]: { houseId: 'h-2904-blue-leaf-dr', channel: 'direct_sale', repKey: 'rep.two', generation: 0, state: 'active' } } });
+  assert.equal((await native.send(walkBatch({ n: 2904 }).events)).body.results[1].code, 'knock_form_channel_conflict');
+  // A cancelled sale (the customer used the right to cancel) leaves the house open to a walkthrough.
+  await w.admin({ action: 'sale.status', saleId: sale.saleId, status: 'cancelled' });
+  const later = twoWalk(2902);
+  assert.deepEqual((await w.send(later.events, w.cookies.two)).body.results.map(row => row.status), ['applied', 'applied', 'applied']);
+});
+
+// Holds each sync's event commit until both syncs reach it, so both decide against the same state (two Workers).
+function racingSync(w) {
+  const waiting = [];
+  let armed = 2;
+  const storage = env => {
+    const store = w.world.storage(env);
+    return { ...store, commit: async writes => {
+      if (armed > 0 && writes.some(item => String(item.update?.name || '').includes('/knock_events/'))) {
+        armed -= 1;
+        await new Promise(resolve => { waiting.push(resolve); if (waiting.length === 2) waiting.forEach(release => release()); });
+      }
+      return store.commit(writes);
+    } };
+  };
+  const sync = knockSyncHandlers({ storage, now: () => new Date(NOW) });
+  return (events, who) => call(sync.post, post('/api/knock-sync', { events }, who), w.env);
+}
+
+// REVIEW integrity-races-2: the one-walkthrough-per-house rule was check-then-act, so two reps' walkthroughs (or a sale and
+// a walkthrough) syncing at the same moment both committed.
+test('two syncs deciding about one house at the same moment: one commits, the other is busy and then refused', async () => {
+  const w = await bridgeWorld();
+  const send = racingSync(w);
+  const one = walkBatch({ n: 2902 }), two = twoWalk(2902);
+  const answers = await Promise.all([send(one.events, w.cookies.rep), send(two.events, w.cookies.two)]);
+  assert.deepEqual(answers.map(row => row.status).sort(), [200, 503], JSON.stringify(answers.map(row => row.body)));
+  const busy = answers.find(row => row.status === 503);
+  assert.deepEqual([busy.body.code, busy.body.error], ['knock_house_busy', 'Another phone changed one of these houses at the same moment. Syncing again.']);
+  assert.equal(w.docs('knock_walkthroughs/').length, 1, 'one walkthrough stands');
+  // The busy phone syncs again (a 503 keeps its changes queued) and is refused for the walkthrough that won.
+  const [winner, loser] = answers[0].status === 200 ? [one, two] : [two, one];
+  const retry = await w.send(loser.events, loser === one ? w.cookies.rep : w.cookies.two);
+  assert.deepEqual(retry.body.results.map(row => row.code || row.status), ['applied', 'knock_walkthrough_other_rep', 'knock_walkthrough_invalid']);
+  assert.deepEqual(w.docs('knock_walkthroughs/').map(row => row.path.split('/').pop()), [winner.walkId]);
+
+  // A sale and another rep's walkthrough at the same moment: never both, so no estimator for a customer who bought.
+  const v = await bridgeWorld();
+  const race = racingSync(v);
+  const sale = saleBatch({ n: 2904 }), walk = twoWalk(2904);
+  const both = await Promise.all([race(sale.events, v.cookies.rep), race(walk.events, v.cookies.two)]);
+  assert.deepEqual(both.map(row => row.status).sort(), [200, 503]);
+  assert.equal(v.docs('knock_sales/').length + v.docs('knock_walkthroughs/').length, 1, 'a sale or a walkthrough, never both');
+  // Without the bridge every sync commits as before (no fence is read or verified).
+  const off = await bridgeWorld({ bridge: false });
+  const plain = racingSync(off);
+  const first = saleBatch({ n: 2900 }), second = saleBatch({ n: 2906 });
+  assert.deepEqual((await Promise.all([plain(first.events, off.cookies.rep), plain(second.events, off.cookies.two)])).map(row => row.status), [200, 200]);
+  assert.equal(off.fake.calls.some(row => row.method === 'GET' && row.path.startsWith('knock_form_revisions/')), false, 'no fence read with the bridge off');
+});
+
+// REVIEW security-privacy-1, the walkthrough side: a phone that is another Hub customer's, under another name.
+test('a door walkthrough whose phone is another Hub customer\'s, under another name, waits for the office; its Book in Hub links them', async () => {
+  const w = await bridgeWorld({ seed: { 'customers/customer_other': { name: 'Morgan Unrelated', phone: '+19705551902', email: '' } } });
+  const { walkId, events } = walkBatch();
+  await w.send(events);
+  const review = await w.book('walkthrough', walkId);
+  assert.deepEqual([review.body.booking.status, visits(w).length, w.docs('knock_setters/').length], ['review', 0, 0]);
+  const [listed] = await officeList(w);
+  assert.deepEqual([listed.id, listed.booking.code], [walkId, 'customer_identity_review']);
+  assert.doesNotMatch(JSON.stringify(review.body), /Morgan|customer_other/);
+  const office = await w.admin({ action: 'walkthrough.book', walkthroughId: walkId });
+  assert.deepEqual([office.status, office.body.booking.status, visits(w)[0].customerId], [200, 'booked', 'customer_other']);
 });

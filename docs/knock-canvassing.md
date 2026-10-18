@@ -233,11 +233,17 @@ and every sync answer and record is as before. Code: `functions/_lib/knock-bridg
   end, crew label and priority), or, with no signal or nothing open, a day and morning/afternoon. After the sale syncs
   (the sync answers `bridge:{kind:'sale',status:'pending'}`) the phone calls `POST /api/knock-job-bridge`, which:
   1. resolves or creates the Hub customer (`resolveCustomer`, the canonical upsert; a new customer records
-     `acquisition {channel:'door_to_door', ...}`);
+     `acquisition {channel:'door_to_door', ...}`). An existing customer matched by phone or email whose name shares no
+     word with the door's (a typo, a shared phone) is not linked unseen: the booking waits for the office (`review`,
+     `customer_identity_review`), and the office's **Book in Hub** after that review links them (or it books the job by
+     hand in Dispatch). A household (same surname) or a fuller name links at once;
   2. books the crew job through `mutateDispatch` as the server actor `knock-bridge`, request id = the sale id (a repeat
-     replays, never a second job); with `EGC_DISPATCH_CREW_AUTO_ASSIGN` on the server picks the crew: the time asked for
-     with any free crew (Crew 1 first), else the nearest other start that day, else the nearest day within a week, else
-     the asked-for time with no crew (Sold: needs crew). With auto-assign off the job waits as Sold: needs crew;
+     replays, never a second job), for the sale's job date and start as they stand (the rep's pick, or a date the
+     office set before the job was in the Hub; the rep's ask stays in `schedule`), with the ticket as the job's
+     `priceQuoted` (the HighLevel deal's value; crew views never include it); with `EGC_DISPATCH_CREW_AUTO_ASSIGN` on
+     the server picks the crew: the time asked for with any free crew (Crew 1 first), else the nearest other start that
+     day, else the nearest day within a week, else the asked-for time with no crew (Sold: needs crew). With auto-assign
+     off the job waits as Sold: needs crew;
   3. stores the outcome on the sale (`handoff.job` mode `hub`, the Hub job id, day, time, crew label). The rep sees
      "Booked: Crew 2, Mon Oct 26, 9:30 am" or "Booked: office will confirm the crew" (My sales; My money adds the Hub
      job's live day, crew and status).
@@ -245,6 +251,8 @@ and every sync answer and record is as before. Code: `functions/_lib/knock-bridg
   crew was free then), the sale's `jobDate` and `jobStartTime` move with it, so the customer text, the refund cutoff and
   every list name the booked time; what the rep asked for stays in `schedule` and `handoff.job.requested`, the sale's
   history and the job's notes say why, and the admin card says to confirm the day with the customer before texting.
+  A date the office set while (or since) the booking ran is never overwritten: the history says where the Hub job is,
+  and setting the date again moves it.
 * **Retries and the office:** only a fault that clears by itself (dispatch storage, a schedule that changed during the
   search, a save that raced another, a lost answer: `TRANSIENT` in `knock-bridge.js`) is retried, after a wait of 1
   minute doubling to an hour (`retryAfter`, enforced by the server whatever the phone does; the phone keeps the same
@@ -255,7 +263,10 @@ and every sync answer and record is as before. Code: `functions/_lib/knock-bridg
   `bridge:{status:'pending'}` again, and My sales re-queues any the server still lists as booking.
 * **Admin changes follow the Hub job:** cancelling a booked sale in Knock admin cancels its Hub job (reason
   `customer_changed_plans`; the cancellation itself never waits on the Hub, and a Hub failure is saved on
-  `handoff.job.hubChange` and shown with **Try again**); reinstating restores the job; a new job date moves the Hub job
+  `handoff.job.hubChange` and shown with **Try again**). A sale cancelled while its booking is in flight never keeps a
+  job: the booking stops before the save when it sees the cancellation, a job saved meanwhile is cancelled at once,
+  and one saved without the sale learning it (a lost answer) is found by its dispatch receipt when the office cancels
+  (or the phone asks again) and cancelled too. Reinstating restores the job; a new job date moves the Hub job
   first, keeping its length (the crew is picked again with auto-assign on; a day with no crew free leaves it as Sold:
   needs crew), and a time the Hub refuses (a hand-staffed crew that cannot make it) is refused with
   `knock_hub_move_refused`, so the sale and its job never disagree.
@@ -280,6 +291,11 @@ and every sync answer and record is as before. Code: `functions/_lib/knock-bridg
 * **One walkthrough per house:** a second walkthrough at a house where one stands is refused
   (`knock_walkthrough_exists`), and another rep's Sold or Walkthrough set there is refused
   (`knock_walkthrough_other_rep`): one attribution per house, and no estimator sent to a customer who already bought.
+  Walkthrough set is also refused where the house has a door sale (any rep's, the rep's own too; not a cancelled one:
+  `knock_house_sold`) or another channel's native form claim (`knock_form_channel_conflict`). These checks read the
+  house's form fence (`knock_form_revisions`) first and the sync commit verifies it unchanged, so two syncs deciding
+  about one house at the same moment never both commit: the later one is answered 503 `knock_house_busy` (the phone
+  keeps its changes and syncs again, then gets the refusal).
 * **Switching to a sale:** the rep who set a walkthrough (or asked for a native GHL walkthrough request) may still log
   Sold at that house. A booked walkthrough is named in the sale's Hub job notes for the office to cancel and keeps
   `supersededBySaleId`; one not booked yet is withdrawn (`status: 'superseded'`) and never books.

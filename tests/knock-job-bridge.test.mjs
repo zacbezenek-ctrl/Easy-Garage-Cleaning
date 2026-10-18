@@ -3,7 +3,8 @@ import assert from 'node:assert/strict';
 import { MON, NOW, SAT, TUE, MIN, busy, bridgeWorld, id, iso, saleBatch } from './helpers/knock-bridge-fixture.mjs';
 import { call, get } from './helpers/knock-fixture.mjs';
 import { customerSearchFields } from '../functions/_lib/customer-identity.js';
-import { clockLabel, dayLabel, knockJobBridgeEnabled, nearestStart, repCrewSlots } from '../functions/_lib/knock-bridge.js';
+import { clockLabel, dayLabel, knockJobBridgeEnabled, namesAgree, nearestStart, repCrewSlots } from '../functions/_lib/knock-bridge.js';
+import { crewJobProjection } from '../functions/_lib/crew-job-projection.js';
 import { JOB_START_MINIMUM as POLICY_MINIMUM, JOB_START_POLICY_DATE as POLICY_DATE } from '../functions/_lib/job-start-policy.js';
 import { JOB_START_MINIMUM, JOB_START_POLICY_DATE, PACKAGE_JOB_MINUTES, defaultJobStart, jobMinutes } from '../crew/knock-sale-rules.js';
 import { DEFAULT_SETTINGS, PACKAGES } from '../crew/knock-settings.js';
@@ -170,9 +171,9 @@ test('dates never before the earliest job date; a start before 9:30 is refused; 
   assert.equal((await w.send(before.events)).body.results[2].code, 'knock_sale_job_date', 'before the right to cancel ends');
   const ok = saleBatch({ n: 2904, sale: { jobStartTime: '09:30' } });
   assert.equal((await w.send(ok.events)).body.results[2].status, 'applied');
-  // A stored sale the bridge books is never put before its earliest job date, whatever its schedule says.
+  // A stored sale the bridge books is never put before its earliest job date, whatever its job date or schedule says.
   const sale = w.fake.get(`knock_sales/${ok.saleId}`);
-  w.fake.put(`knock_sales/${ok.saleId}`, { ...sale, schedule: { ...sale.schedule, date: '2026-10-21' } });
+  w.fake.put(`knock_sales/${ok.saleId}`, { ...sale, jobDate: '2026-10-21', schedule: { ...sale.schedule, date: '2026-10-21' } });
   const booked = await w.book('sale', ok.saleId);
   assert.ok(booked.body.booking.date >= SAT, booked.body.booking.date);
 });
@@ -423,6 +424,180 @@ test('with windowed dispatch reads the door customer is matched through the sear
   await v.book('sale', other.saleId);
   assert.ok(v.fake.scans('customers').length >= 1);
   assert.equal(jobsOf(v)[0].customerId, 'customer_existing');
+});
+
+/* ---------- review fixes: which customer, which day, a cancelled sale, the price ---------- */
+
+test('names agree when they share a word (titles aside); an empty name never contradicts', () => {
+  assert.equal(namesAgree('Pat Synthetic 2900', 'Pat Synthetic 2900'), true);
+  assert.equal(namesAgree('Jo Synthetic', 'Pat Synthetic'), true, 'a household');
+  assert.equal(namesAgree('Patricia Smith', 'pat SMITH'), true);
+  assert.equal(namesAgree('José Núñez', 'Jose Nunez'), true, 'accents aside');
+  assert.equal(namesAgree('Victim Existing', 'Pat Different Person'), false);
+  assert.equal(namesAgree('Mr. Lee Smith', 'Mr Ray Jones'), false, 'a title is not a shared name');
+  assert.equal(namesAgree('', 'Pat Different Person'), true);
+});
+
+// REVIEW security-privacy-1: the bridge linked a door customer to an existing Hub customer by phone alone, so a typo or a
+// shared phone put a crew job (and its HighLevel tags and note) on another person's record with nobody looking.
+test('a door sale whose phone is another Hub customer\'s, under another name, waits for the office; its Book in Hub then links them', async () => {
+  const victim = { 'customers/customer_victim': { name: 'Victim Existing', phone: '+19705550900', email: '', highlevelContactId: 'ghlVictim1' } };
+  const w = await bridgeWorld({ seed: victim });
+  const { saleId, events } = saleBatch({ sale: { customer: { name: 'Pat Different Person', phone: '(970) 555-0900', email: 'pat.diff@example.com' } } });
+  await w.send(events);
+  const review = await w.book('sale', saleId);
+  assert.deepEqual([review.status, review.body.booking.status, review.body.booking.message], [200, 'review', 'Saved. The office will book the job.']);
+  assert.doesNotMatch(JSON.stringify(review.body), /Victim|customer_victim|ghlVictim/, 'the rep learns nothing of the other customer');
+  assert.equal(jobsOf(w).length, 0, 'no crew job on the other customer\'s record');
+  assert.equal(w.docs('ghlScheduleMirror/').length, 0, 'nothing for HighLevel either');
+  const job = w.fake.get(`knock_sales/${saleId}`).handoff.job;
+  assert.deepEqual(pick(job, 'status', 'code', 'retryAfter'), { status: 'review', code: 'customer_identity_review', retryAfter: null });
+  assert.match(job.error, /^This phone or email already belongs to a Hub customer with a different name\. .*Book in Hub again links them/);
+  assert.doesNotMatch(job.error, /Victim/);
+  // The phone asking again is answered from the sale; only the office decides.
+  const before = w.fake.calls.length;
+  assert.equal((await w.book('sale', saleId)).body.booking.status, 'review');
+  assert.equal(w.fake.calls.slice(before).filter(row => !row.path.includes('knock_')).length, 0);
+  // The office checked the customer and books it: now it links.
+  const office = await w.admin({ action: 'sale.book', saleId });
+  assert.deepEqual([office.status, office.body.booking.status], [200, 'booked']);
+  assert.deepEqual([jobsOf(w).length, jobsOf(w)[0].customerId, w.docs('customers/').length], [1, 'customer_victim', 1]);
+
+  // A household sharing the phone (same surname) links at once, as before.
+  const v = await bridgeWorld({ seed: { 'customers/customer_family': { name: 'Jo Synthetic', phone: '+19705550900', email: '' } } });
+  const family = saleBatch();
+  await v.send(family.events);
+  assert.equal((await v.book('sale', family.saleId)).body.booking.status, 'booked');
+  assert.equal(jobsOf(v)[0].customerId, 'customer_family');
+  // An admin's first Book in Hub is checked too: the review is what tells the office.
+  const u = await bridgeWorld({ seed: victim });
+  const first = saleBatch({ sale: { customer: { name: 'Pat Different Person', phone: '(970) 555-0900', email: 'pat.diff@example.com' } } });
+  await u.send(first.events);
+  assert.equal((await u.admin({ action: 'sale.book', saleId: first.saleId })).body.booking.status, 'review');
+  assert.equal(jobsOf(u).length, 0);
+});
+
+// REVIEW integrity-races-1: the bridge booked from the rep's original pick (schedule), so a date the office set on a sale
+// not in the Hub yet was ignored, then overwritten with the old one and a history note claiming no crew was free.
+test('the office moves a sale not booked yet: the Hub job is booked on the office\'s day, and nothing claims no crew was free', async () => {
+  const w = await bridgeWorld();
+  const { saleId, events } = saleBatch({ sale: { package: 'Quick Clear', slot: { date: MON, time: '09:30', crewLabel: 'Crew 1' } } });
+  await w.send(events);
+  const moved = await w.admin({ action: 'sale.jobDate', saleId, jobDate: TUE, jobStartTime: '13:00' });
+  assert.deepEqual([moved.status, 'hubJob' in moved.body, moved.body.sale.jobDate], [200, false, TUE], 'no Hub job to move yet');
+  const booked = await w.admin({ action: 'sale.book', saleId });
+  assert.deepEqual(pick(booked.body.booking, 'status', 'date', 'time', 'crewLabel', 'moved'), { status: 'booked', date: TUE, time: '13:00', crewLabel: 'Crew 1', moved: false });
+  const [job] = jobsOf(w);
+  assert.deepEqual([job.date, job.time, job.endTime], [TUE, '13:00', '16:00']);
+  assert.match(job.opsNotes, /The rep asked for Mon Oct 26 9:30 am; the office set Tue Oct 27 1:00 pm\./);
+  const sale = w.fake.get(`knock_sales/${saleId}`);
+  assert.deepEqual([sale.jobDate, sale.jobStartTime, sale.schedule.date, sale.schedule.time], [TUE, '13:00', MON, '09:30'], 'the office\'s day stands; the rep\'s ask is kept');
+  assert.doesNotMatch(sale.statusHistory.map(row => row.note || '').join('\n'), /no crew was free/);
+
+  // The office moves it while the phone's booking is in flight (just before the job is saved): the office's day is never
+  // overwritten, the history says where the Hub job is, and setting the day again moves the job (it is linked now).
+  const v = await bridgeWorld();
+  const other = saleBatch({ sale: { package: 'Quick Clear' } });
+  await v.send(other.events);
+  let raced = false;
+  v.wrapDispatch(store => ({ ...store, commit: async writes => {
+    if (!raced && writes.some(item => item.collection === 'jobs' && item.patch?.dispatchRequestId === other.saleId)) {
+      raced = true;
+      assert.equal((await v.admin({ action: 'sale.jobDate', saleId: other.saleId, jobDate: TUE })).status, 200);
+    }
+    return store.commit(writes);
+  } }));
+  const inFlight = await v.book('sale', other.saleId);
+  v.wrapDispatch(null);
+  assert.deepEqual([inFlight.body.booking.status, inFlight.body.booking.date], ['booked', MON]);
+  const kept = v.fake.get(`knock_sales/${other.saleId}`);
+  assert.deepEqual([kept.jobDate, kept.handoff.job.date], [TUE, MON]);
+  assert.equal(kept.statusHistory.at(-1).note, 'Booked in the Hub for Mon Oct 26 9:30 am before the job date changed to Tue Oct 27 9:30 am. Set the job date again to move the Hub job, or move it in Dispatch.');
+  const again = await v.admin({ action: 'sale.jobDate', saleId: other.saleId, jobDate: TUE });
+  assert.deepEqual([again.status, again.body.hubJob?.date, jobsOf(v)[0].date], [200, TUE, TUE]);
+});
+
+// REVIEW integrity-races-3: a sale cancelled while its booking was in flight kept a scheduled Hub job (a crew sent to a
+// customer who used the right to cancel), and nothing showed it.
+test('a sale cancelled while its booking is in flight never keeps a live Hub job', async () => {
+  const cancel = w => saleId => w.admin({ action: 'sale.status', saleId, status: 'cancelled' });
+  // Cancelled during the search: no job is made at all.
+  const a = await bridgeWorld();
+  const early = saleBatch();
+  await a.send(early.events);
+  let once = false;
+  a.wrapDispatch(store => ({ ...store, read: async (collection, docId) => {
+    if (!once && collection === 'dispatchOperations') { once = true; assert.equal((await cancel(a)(early.saleId)).status, 200); }
+    return store.read(collection, docId);
+  } }));
+  const refused = await a.book('sale', early.saleId);
+  assert.deepEqual([refused.status, refused.body.code], [409, 'knock_sale_cancelled']);
+  assert.equal(jobsOf(a).length, 0);
+
+  // Cancelled just before the job is saved: the job just saved is cancelled with the sale.
+  const b = await bridgeWorld();
+  const late = saleBatch();
+  await b.send(late.events);
+  let raced = false;
+  b.wrapDispatch(store => ({ ...store, commit: async writes => {
+    if (!raced && writes.some(item => item.collection === 'jobs' && item.patch?.dispatchRequestId === late.saleId)) {
+      raced = true;
+      const answer = await cancel(b)(late.saleId);
+      assert.deepEqual([answer.status, 'hub' in answer.body], [200, false], 'the Hub has no job for it yet');
+    }
+    return store.commit(writes);
+  } }));
+  const answer = await b.book('sale', late.saleId);
+  b.wrapDispatch(null);
+  assert.deepEqual([answer.status, answer.body.booking.status, answer.body.booking.message], [200, 'cancelled', 'The Hub job is cancelled.']);
+  const [job] = jobsOf(b);
+  assert.deepEqual([job.status, job.cancelledBy, job.cancellationReasonCode], ['cancelled', 'knock-bridge', 'customer_changed_plans']);
+  assert.deepEqual(pick(b.fake.get(`knock_sales/${late.saleId}`).handoff.job, 'status', 'hubCancelled'), { status: 'created', hubCancelled: true });
+  assert.equal(b.fake.get(`knock_sales/${late.saleId}`).status, 'cancelled');
+
+  // The job was saved but the sale never learned it (a lost answer), and the office cancels during the retry wait:
+  // the cancellation finds the job by its dispatch receipt and cancels it.
+  const c = await bridgeWorld();
+  const lost = saleBatch();
+  await c.send(lost.events);
+  await c.book('sale', lost.saleId);
+  const unlinked = sale => ({ ...sale, handoff: { ...sale.handoff, job: { mode: 'hub', status: 'retry', code: 'dispatch_outcome_unknown', attempts: 1, retryAfter: iso(NOW + MIN), ref: '' } } });
+  c.fake.put(`knock_sales/${lost.saleId}`, unlinked(c.fake.get(`knock_sales/${lost.saleId}`)));
+  const office = await cancel(c)(lost.saleId);
+  assert.deepEqual([office.status, office.body.hub?.action, office.body.hub?.status, office.body.hub?.message], [200, 'cancel', 'done', 'Its Hub job was cancelled too.']);
+  assert.equal(jobsOf(c)[0].status, 'cancelled');
+  assert.deepEqual(pick(c.fake.get(`knock_sales/${lost.saleId}`).handoff.job, 'status', 'ref', 'hubCancelled'), { status: 'created', ref: jobsOf(c)[0].id, hubCancelled: true });
+
+  // Cancelled before that lost save (nothing to find then): the phone's next try records the job and cancels it.
+  const d = await bridgeWorld();
+  const orphan = saleBatch();
+  await d.send(orphan.events);
+  await d.book('sale', orphan.saleId);
+  d.fake.put(`knock_sales/${orphan.saleId}`, { ...unlinked(d.fake.get(`knock_sales/${orphan.saleId}`)), status: 'cancelled', cancelledAt: iso(NOW) });
+  d.setClock(NOW + 2 * MIN);
+  const retried = await d.book('sale', orphan.saleId);
+  assert.deepEqual([retried.status, retried.body.booking.status], [200, 'cancelled']);
+  assert.equal(jobsOf(d)[0].status, 'cancelled');
+  // A cancelled sale that never had a job is still refused, as before.
+  const e = await bridgeWorld();
+  const plain = saleBatch();
+  await e.send(plain.events);
+  await cancel(e)(plain.saleId);
+  assert.deepEqual([(await e.book('sale', plain.saleId)).body.code, jobsOf(e).length], ['knock_sale_cancelled', 0]);
+});
+
+// REVIEW requirements-1: the door sale's price never reached the Hub job, so every D2D deal the HighLevel mirror created
+// was worth $0.
+test('the Hub job carries the price signed at the door as its quoted price; crews never see it', async () => {
+  const w = await bridgeWorld();
+  const { saleId, events } = saleBatch({ sale: { ticket: 2400.5 } });
+  await w.send(events);
+  await w.book('sale', saleId);
+  const [job] = jobsOf(w);
+  assert.deepEqual([job.priceQuoted, job.total, job.estimate], [2400.5, undefined, undefined], 'the quoted price only: no estimate or total is invented');
+  const { path: _path, ...stored } = job;
+  assert.doesNotMatch(JSON.stringify(crewJobProjection({ ...stored, id: job.path.split('/').pop() })), /2400|priceQuoted/, 'the crew\'s view of the job has no price');
+  assert.doesNotMatch(JSON.stringify((await w.book('sale', saleId)).body), /2400/, 'the rep\'s booking answer carries no price');
 });
 
 function pick(row, ...keys) {

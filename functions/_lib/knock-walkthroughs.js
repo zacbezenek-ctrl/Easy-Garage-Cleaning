@@ -7,6 +7,7 @@ import { write } from './knock-store.js';
 import { WALKTHROUGH_OUTCOME } from '../../crew/knock-settings.js';
 import { validDate } from '../../crew/knock-time.js';
 import { normalizePhone } from './knock-sales.js';
+import { nativeClaimActive } from './knock-form-claims.js';
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const EMAIL = /^[^\s@<>()",;:]{1,64}@[A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)+$/;
@@ -29,6 +30,20 @@ export async function otherRepWalkthrough(store, houseId, repKey) {
   return (await activeWalkthroughs(store, houseId)).some(row => row.repKey !== repKey);
 }
 
+/* The customer at this house already bought at the door: a sale stands there (any rep's, not cancelled), or one is in
+   this sync. No estimator walkthrough is set over it, whoever sets it; the office settles a change of plan. One bounded
+   equality query (knock_sales.houseId, as native form requests read it). */
+export const HOUSE_SOLD = 'This house already has a sale at the door. Ask the office before setting a walkthrough.';
+export async function houseSold(store, houseId, accepted = []) {
+  if (!houseId) return false;
+  if (accepted.some(a => a.type === 'sale' && a.houseId === houseId)) return true;
+  return (await store.query('knock_sales', { where: [['houseId', '==', houseId]], limit: 20 })).some(sale => sale.status !== 'cancelled');
+}
+
+/* A native form claim on the house (knock-form-handoff.js) that a walkthrough set here would stack on: any active
+   claim except this rep's own native walkthrough request. */
+export const walkthroughClaimConflict = (claim, rep) => nativeClaimActive(claim) && !(claim.channel === 'walkthrough_request' && claim.repKey === rep.repKey);
+
 /* Validate a walkthrough event against the rep's "Walkthrough set" door. Returns a rejection or null. */
 export async function validateWalkthroughEvent(store, rep, event, { accepted = [], targets = new Map(), houses = new Map() } = {}) {
   if (!UUID.test(String(event.knockId || ''))) return refuse('knock_walkthrough_invalid', 'The walkthrough is missing its door.');
@@ -40,6 +55,7 @@ export async function validateWalkthroughEvent(store, rep, event, { accepted = [
   // One standing walkthrough per house: a second one would send a second estimator and split the setter credit.
   if ((await activeWalkthroughs(store, knock.houseId)).length || accepted.some(a => a.type === 'walkthrough' && a.houseId === knock.houseId))
     return refuse('knock_walkthrough_exists', 'This house already has a walkthrough set. Ask the office to change it in the Hub.');
+  if (await houseSold(store, knock.houseId, accepted)) return refuse('knock_house_sold', HOUSE_SOLD);
   const name = String(event.customer?.name || '').trim();
   if (!name || name.length > 80) return refuse('knock_walkthrough_customer', 'Enter the customer\'s name.');
   if (!normalizePhone(event.customer?.phone)) return refuse('knock_walkthrough_customer', 'Enter a 10-digit US phone number.');
