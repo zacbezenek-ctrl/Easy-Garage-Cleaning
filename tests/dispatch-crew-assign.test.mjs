@@ -16,7 +16,7 @@ const sales = { user: 'Sales.Account', displayName: 'Synthetic Sales', role: 'cr
 const ACCESS = { EGC_STAFF_ROLE_ACCESS: 'true' }, AUTO = { ...ACCESS, EGC_DISPATCH_CREW_AUTO_ASSIGN: 'true' };
 const crew = (id, name, memberIds, extra = {}) => ({ id, recordType: 'crew', name, memberIds, leadId: memberIds[0] || null, status: 'active', revision: `${id}r`, ...extra });
 const WEEKDAYS = ['mon', 'tue', 'wed', 'thu', 'fri'];
-function fixture({ crews = null, notices = false } = {}) {
+function fixture({ crews = null, notices = false, race = false } = {}) {
   const rows = new Map([
     ...['c1', 'c2', 'c3', 'c4'].map(id => [`customers/${id}`, { id, name: `Synthetic Customer ${id}`, phone: '9705550100', address: `${id} Fixture Lane`, revision: `${id}r` }]),
     ...(crews || [
@@ -26,13 +26,21 @@ function fixture({ crews = null, notices = false } = {}) {
     ]).map(row => [`dispatchResources/${row.id}`, row]),
   ]);
   let revision = 0, conflicts = 0;
+  // race: the first two dispatchState guard reads wait for each other (each keeps the snapshot it read), so both racers
+  // read the guard before either commits and the second always loses the guard race. Without it, whether they overlapped
+  // depended on when each one's SHA-256 fingerprint came back from the threadpool.
+  let guardReads = 0, bothRead; const guardBarrier = new Promise(resolve => { bothRead = resolve; });
   const clone = value => structuredClone(value);
   const all = collection => [...rows.entries()].filter(([key]) => key.startsWith(collection + '/')).map(([, value]) => clone(value));
   const roster = ['zacb', 'c1a', 'c1b', 'c2a', 'c2b', 'c3a', 'c9z'].map(id => ({ id, name: `Synthetic ${id}`, role: id === 'zacb' ? 'owner' : 'crew' }));
   const store = {
     crewNotificationsEnabled: notices,
     jobs: async () => all('jobs'), resources: async () => all('dispatchResources'), customers: async () => all('customers'), roster: async () => clone(roster),
-    read: async (collection, id) => clone(rows.get(`${collection}/${id}`) || null),
+    read: async (collection, id) => {
+      const row = clone(rows.get(`${collection}/${id}`) || null);
+      if (race && collection === 'dispatchState' && id === 'revision' && ++guardReads <= 2) { if (guardReads === 2) bothRead(); await guardBarrier; }
+      return row;
+    },
     commit: async writes => {
       for (const write of writes) {
         const old = rows.get(`${write.collection}/${write.id}`);
@@ -46,7 +54,7 @@ function fixture({ crews = null, notices = false } = {}) {
   const auto = input => mutateDispatch(store, owner, input, NOW, { autoCrew: true });
   const book = (input, env = AUTO) => mutateBooking(store, sales, input, NOW, {}, env);
   const job = id => rows.get(`jobs/${id}`);
-  return { rows, store, roster, create, edit, auto, book, job, conflicts: () => conflicts };
+  return { rows, store, roster, create, edit, auto, book, job, conflicts: () => conflicts, guardReads: () => guardReads };
 }
 
 test('pure helpers: priority, service days, weekend crews and eligibility order', () => {
@@ -73,9 +81,10 @@ test('pure helpers: priority, service days, weekend crews and eligibility order'
 });
 
 test('two bookers racing for the same Monday slot get Crew 1 and Crew 2, never both Crew 1', async () => {
-  const f = fixture();
+  const f = fixture({ race: true });
   const [first, second] = await Promise.all([f.auto(f.create({}, { customerId: 'c1' })), f.auto(f.create({}, { customerId: 'c2' }))]);
-  assert.ok(f.conflicts() >= 1, 'the second save lost the guard race and picked again');
+  assert.equal(f.conflicts(), 1, 'the second save lost the guard race and picked again');
+  assert.equal(f.guardReads(), 3, 'both read the guard before either saved; the loser read it again');
   assert.deepEqual([first.job.crewId, second.job.crewId].sort(), ['crew_one', 'crew_two']);
   for (const result of [first, second]) {
     assert.equal(result.autoCrew.status, 'assigned');
@@ -127,9 +136,9 @@ test('a replayed request answers the same crew without picking again', async () 
 });
 
 test('crew notices go out exactly once for an auto-assigned crew, even after a lost guard race', async () => {
-  const f = fixture({ notices: true });
+  const f = fixture({ notices: true, race: true });
   const results = await Promise.all([f.auto(f.create({}, { customerId: 'c1' })), f.auto(f.create({}, { customerId: 'c2' }))]);
-  assert.ok(f.conflicts() >= 1);
+  assert.equal(f.conflicts(), 1, 'the second save lost the guard race and picked again');
   const notices = [...f.rows.entries()].filter(([key]) => key.startsWith(`${CREW_NOTIFICATIONS}/`)).map(([, row]) => row);
   for (const result of results) {
     const mine = notices.filter(row => row.jobId === result.job.id);

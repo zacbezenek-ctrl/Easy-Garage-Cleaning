@@ -245,12 +245,17 @@ test('job labor association is checked on the server and unknown, unassigned job
 });
 
 test('approved crew edits fail without a storage write and manager correction atomically revokes approval', async t => {
-  const store = storage(t), base = new Date(Date.now() - 7200000).toISOString(), end = new Date(Date.now() - 3600000).toISOString();
+  // One frozen instant: the shift is 1 h, the manager corrects it to exactly 2 h. The corrected clock-out is that instant,
+  // not a second wall-clock read, so the hours never depend on how long the posts take (a stall of 1.8 s or more once
+  // made it 2.001 h). The tick below stands in for such a slow runner.
+  t.mock.timers.enable({ apis: ['Date'], now: Date.now() });
+  const store = storage(t), base = new Date(Date.now() - 7200000).toISOString(), end = new Date(Date.now() - 3600000).toISOString(), out = new Date().toISOString();
   assert.equal((await post('approved', { employee: crew.user, employeeName: crew.displayName, hourlyRate: 25, clockInAt: base, clockOutAt: end, status: 'submitted', approvalStatus: 'approved', breaks: [] }, 'ZacB')).status, 200);
   const before = store.writes.length;
   assert.equal((await post('approved', { clockInAt: new Date(Date.now() - 14400000).toISOString() })).status, 403);
   assert.equal(store.writes.length, before);
-  const corrected = await post('approved', { clockOutAt: new Date().toISOString() }, 'ZacB'); assert.equal(corrected.status, 200);
+  t.mock.timers.tick(5000);
+  const corrected = await post('approved', { clockOutAt: out }, 'ZacB'); assert.equal(corrected.status, 200);
   const card = (await corrected.json()).record; assert.equal(card.approvalStatus, 'pending'); assert.equal(card.hours, 2); assert.equal(card.history.at(-1).actor, 'ZacB');
 });
 
