@@ -21,9 +21,13 @@ export const TOTES = menu.products.find(item => item.id === 'hd-341048322');
 /** The builder's pricing state; approvals {id: unitCents} are recorded for the current menu item (menuItemIdentity). */
 export const builderState = (approvals = {}, extra = {}) => ({ menu, settings: { ...settings, ...extra }, walkthrough: walkthroughPricing(walkthroughServiceItems()),
   approvals: { items: Object.fromEntries(Object.entries(approvals).map(([id, unitCents]) => [id, { unitCents, identity: menuItemIdentity(menu.services.find(item => item.id === id) || menu.products.find(item => item.id === id)) }])), revision: Object.keys(approvals).length ? 'approvals-1' : null } });
-/** The estimator's builder selection: removal, then shelving, then extra storage. */
-export const selection = ({ removal = [{ id: menuItem('Two-car garage base').id, quantity: 1 }, { id: menuItem('Full truck load').id, quantity: 1 }], shelving = [{ id: SHELF.id, quantity: 2 }], storage = [{ id: TOTES.id, quantity: 2 }] } = {}) =>
-  ({ menuVersion: menu.menuVersion, settingsVersion: settings.settingsVersion, steps: ['removal', 'shelving', 'storage'], removal, shelving, storage });
+/** The labor a builder quote carries (D12): the estimator kept the pre-fill, a crew of 2 for 3 hours on site (the
+ * signedPlan default) = 6 man-hours x $40.00 = $240.00. */
+export const LABOR = Object.freeze({ manHours: 6, estimate: Object.freeze({ crewSize: 2, onSiteMinutes: 180 }) });
+export const LABOR_CENTS = 24000;
+/** The estimator's builder selection: removal, then shelving, then extra storage, then the labor. */
+export const selection = ({ removal = [{ id: menuItem('Two-car garage base').id, quantity: 1 }, { id: menuItem('Full truck load').id, quantity: 1 }], shelving = [{ id: SHELF.id, quantity: 2 }], storage = [{ id: TOTES.id, quantity: 2 }], labor = LABOR } = {}) =>
+  ({ menuVersion: menu.menuVersion, settingsVersion: settings.settingsVersion, steps: ['removal', 'shelving', 'storage'], removal, shelving, storage, ...(labor ? { labor: structuredClone(labor) } : {}) });
 
 const crew = (id, name, memberIds, extra = {}) => ({ id, recordType: 'crew', name, memberIds, leadId: memberIds[0] || null, status: 'active', revision: `${id}r`, ...extra });
 const WEEKDAYS = ['mon', 'tue', 'wed', 'thu', 'fri'];

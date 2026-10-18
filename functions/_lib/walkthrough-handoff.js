@@ -212,11 +212,19 @@ function catalogSigned(previous, plan) {
   const { lineItems: saved } = normalizeLineItems(previous.estimate.lineItems);
   return saved.length > 0 && canonical(signedLines(saved)) === canonical(signedLines(plan.quote.estimate_line_items));
 }
-// The human job breakdown with a builder quote's shelving and storage as the packs sold, product by product.
-function builderBreakdown(summary, builder) {
+// The human job breakdown with a builder quote's shelving and storage as the packs sold, product by product, and its
+// Labor line as the man-hours sold (D12), never the rate or the amount: the crew and the HighLevel note read it.
+export function laborBreakdownItem(labor, crewSize) {
+  if (!plain(labor) || typeof labor.manHours !== 'number' || !(labor.manHours > 0)) return '';
+  const hours = `${Number(labor.manHours.toFixed(2))} man-hour${labor.manHours === 1 ? '' : 's'}`, crew = Number.isInteger(crewSize) && crewSize > 0 ? crewSize : null;
+  return crew ? `${hours} (about ${Number((labor.manHours / crew).toFixed(1))} hours on site for a crew of ${crew})` : hours;
+}
+function builderBreakdown(summary, builder, crewSize = null) {
   const lines = Array.isArray(builder?.breakdown?.lines) ? builder.breakdown.lines.filter(plain) : [];
   const goods = id => lines.filter(line => line.section === id && line.sku).map(line => stripCrewMoney(`${line.name} × ${line.qty} pack${line.qty === 1 ? '' : 's'}${line.unitsPerPack > 1 ? ` of ${line.unitsPerPack}` : ''}`).slice(0, 300)).slice(0, 20);
-  const sections = summary.sections.map(section => ['shelving', 'storage'].includes(section.id) && goods(section.id).length ? { ...section, items: goods(section.id) } : section);
+  const labor = laborBreakdownItem(builder?.labor, crewSize);
+  const sections = [...summary.sections.map(section => ['shelving', 'storage'].includes(section.id) && goods(section.id).length ? { ...section, items: goods(section.id) } : section),
+    ...(labor ? [{ id: 'labor', title: 'Labor', items: [stripCrewMoney(labor)] }] : [])];
   return { ...summary, sections, summary: breakdownLines({ sections }).join('\n').slice(0, 2000) };
 }
 const listNames = names => names.slice(0, 8).join(', ') + (names.length > 8 ? ` and ${names.length - 8} more` : '');
@@ -256,9 +264,11 @@ export function identityMatches(left, right) {
 function requireRevision(row) {
   if (!safeId(row?.id) || typeof row.revision !== 'string' || !row.revision) throw fail('source_unavailable', 'A required customer or source record has no verifiable revision. Keep the form and retry.', 503);
 }
+// A builder quote's crew instructions also name the man-hours sold (laborManHours, D12), never the labor rate or amount.
 export function handoffInstructions(plan, sourceId = '', builder = null) {
   const s = plan.scope, l = plan.logistics, f = s.finish_details || {};
-  return { customerGoal: String(plan.discovery.success || ''), whyNow: String(plan.discovery.why_now || ''), sortMethod: String(s.sort_method || ''), keepItems: String(s.keep_items || ''), removeItems: String(s.remove_items || ''), exclusions: String(s.exclusions || ''), hazards: Array.isArray(s.hazards) ? s.hazards : [], access: Array.isArray(s.access) ? s.access : [], accessNotes: String(l.notes || ''), truckPlacement: String(l.truck_placement || s.truck_placement || ''), specialItems: Array.isArray(s.special_items) ? s.special_items : [], finish: Array.isArray(s.finish) ? s.finish : [], shelving: { type: String(f.shelf_type || ''), qty: Number(f.shelf_qty || 0) }, totes: { qty: Number(f.tote_qty || 0) }, customerNotes: plan.notes, crewSize: l.crew_size, arrivalWindow: `${plan.quote.start_time}–${plan.quote.end_time}`, estimatedJobMinutes: plan.quote.estimated_duration_min, estimatedJobHours: plan.quote.estimated_duration_min / 60, expectedShiftHours: plan.quote.expected_shift_hours, photoCount: plan.photos.before, sourceWalkthroughId: sourceId, ...(plan.quote.itemized ? { materials: handoffMaterials(plan, builder) } : {}) };
+  return { customerGoal: String(plan.discovery.success || ''), whyNow: String(plan.discovery.why_now || ''), sortMethod: String(s.sort_method || ''), keepItems: String(s.keep_items || ''), removeItems: String(s.remove_items || ''), exclusions: String(s.exclusions || ''), hazards: Array.isArray(s.hazards) ? s.hazards : [], access: Array.isArray(s.access) ? s.access : [], accessNotes: String(l.notes || ''), truckPlacement: String(l.truck_placement || s.truck_placement || ''), specialItems: Array.isArray(s.special_items) ? s.special_items : [], finish: Array.isArray(s.finish) ? s.finish : [], shelving: { type: String(f.shelf_type || ''), qty: Number(f.shelf_qty || 0) }, totes: { qty: Number(f.tote_qty || 0) }, customerNotes: plan.notes, crewSize: l.crew_size, arrivalWindow: `${plan.quote.start_time}–${plan.quote.end_time}`, estimatedJobMinutes: plan.quote.estimated_duration_min, estimatedJobHours: plan.quote.estimated_duration_min / 60, expectedShiftHours: plan.quote.expected_shift_hours, photoCount: plan.photos.before, sourceWalkthroughId: sourceId, ...(plan.quote.itemized ? { materials: handoffMaterials(plan, builder) } : {}),
+    ...(typeof builder?.labor?.manHours === 'number' ? { laborManHours: builder.labor.manHours } : {}) };
 }
 function financePatch(plan, previous, jobId, actor, now, builder = null) {
   const total = plan.quote.total, amount = plan.quote.deposit, prior = plain(previous?.deposit) ? previous.deposit : {};
@@ -388,9 +398,11 @@ const builderRequired = () => Object.assign(new Error('With the quote builder on
 // owner-approved now, at exactly the signed amount (compositeApproval, else approvalRefusal: 409
 // quote_draft_composite_prices_unapproved); a walkthrough-priced one never passes it (409 quote_draft_builder_required)
 // unless the owner, who approves prices, releases it (owner).
+// A job the customer signed before builder quotes had a Labor line keeps the earlier rules (requireLabor false): its
+// signed total has no labor, and goods in it still wait for the owner's installation answer.
 function releaseGate(job, pricing, { owner = false } = {}) {
   if (plain(job.compositeQuote)) {
-    const approval = compositeApproval(job.compositeQuote.breakdown, pricing);
+    const approval = compositeApproval(job.compositeQuote.breakdown, pricing, { requireLabor: false });
     if (!approval.ready) throw approvalRefusal(approval);
     return 'approved_prices';
   }
@@ -596,7 +608,7 @@ export async function saveWalkthroughHandoff(store, actor, input, now = new Date
   const equipment = sent ? bringList(plan.logistics.bring_list) : null;
   if (sent && equipment === null) throw fail('invalid_plan', 'The equipment list could not be verified. Review the walkthrough and save it again.', 400);
   const base = previous || source, earlierBring = structured ? savedBringList(base?.jobInstructions) : [], bring = equipment ?? earlierBring;
-  const breakdown = structured ? builder ? builderBreakdown(jobBreakdown(plan), builder) : jobBreakdown(soldPlan) : null, materialsSource = previous ? previous.materials : source?.materials;
+  const breakdown = structured ? builder ? builderBreakdown(jobBreakdown(plan), builder, plan.logistics.crew_size) : jobBreakdown(soldPlan) : null, materialsSource = previous ? previous.materials : source?.materials;
   const requiredEquipment = sent ? handoffEquipment({ current: base?.requiredEquipment, earlier: earlierBring, bring: equipment }) : null;
   const instructions = stripCrewMoneyDeep({ ...handoffInstructions(plan, source?.id || '', builder), ...(structured ? { ...(bring.length ? { bringList: bring } : {}), jobBreakdown: breakdownLines(breakdown) } : {}) }), crewNotes = stripCrewMoney(plan.notes);
   const changes = { date: plan.quote.job_date, endDate: plan.quote.job_date, time: plan.quote.start_time, endTime: plan.quote.end_time, title: plan.quote.title, address: placedAddress ?? plan.client.address, serviceType: 'Garage transformation', crewNeeded: plan.logistics.crew_size, assignedCrew, jobInstructions: stripCrewMoney(plan.crew_brief), accessInstructions: instructions.accessNotes, customerInstructions: crewNotes, notify: access.dispatcher || previous?.notify !== false,

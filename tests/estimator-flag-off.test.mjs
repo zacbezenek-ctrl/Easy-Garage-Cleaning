@@ -28,7 +28,8 @@ async function scenario(env) {
     return { status: response.status, body: await response.json() };
   };
   // A manager signs walkthrough w1; the page also sends a builder selection and a chosen crew, which the flags-off server ignores.
-  const plan = signedPlan(1, { quote: { composite_pricing: selection() }, logistics: { crew_id: 'crew_one' } });
+  // The selection is the one recorded (before builder quotes had labor), so the bytes compare like for like.
+  const plan = signedPlan(1, { quote: { composite_pricing: selection({ labor: null }) }, logistics: { crew_id: 'crew_one' } });
   out.push(line('manager signs w1', await call(owner, 'post', '/api/walkthrough-handoff', { requestId: ids[0], customerId: 'c1', sourceWalkthroughId: 'w1', sourceRevision: 'w1r', plan })));
   // An estimator saves a walkthrough-priced quote draft for w2 and signs it into a scheduled job.
   const draftLines = [{ id: 'cleanout', kind: 'service', name: 'Garage cleanout and reset', quantity: 1, unitCents: 140000, totalCents: 140000 }];

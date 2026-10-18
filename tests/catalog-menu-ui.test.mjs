@@ -122,7 +122,7 @@ test('cleaning bases are priced by the owner, Tick all leaves them out, and one 
   const ui = screen();
   await ui.settle(() => ui.root()?.textContent.includes('pricing-menu prices are drafts'), 'the menu prices');
   assert.match(ui.root().textContent, /historical full-service base, which already included hauling/);
-  assert.match(ui.root().textContent, /also wait for your installation decision/);
+  assert.match(ui.root().textContent, /New builder quotes bill installation through the Labor line and never wait for this\./);
   const base = menu.services.find(item => item.name === 'Two-car garage base');
   const tick = id => { const box = ui.row(id).querySelector('input[type="checkbox"]'); box.checked = !box.checked; box.dispatchEvent({ type: 'change', target: box }); };
   tick(base.id);
@@ -183,7 +183,7 @@ test('catalog pricing off: the owner answers the installation question on Menu p
   const ui = screen();
   await ui.settle(() => ui.root()?.textContent.includes('pricing-menu prices are drafts'), 'the menu prices');
   assert.match(ui.root().textContent, /Catalog pricing is turned off/);
-  assert.match(ui.root().textContent, /also wait for your installation decision: the builder has no installation line\. Tick this if shelving and storage installation is included in the goods price\./);
+  assert.match(ui.root().textContent, /Only for builder quotes saved or signed before the Labor line existed: their shelving or storage waits for your installation decision\. New builder quotes bill installation through the Labor line and never wait for this\./);
   const box = () => ui.root().querySelector('#cat-menu-installation');
   assert.equal(box().checked, false);
   box().checked = true; box().dispatchEvent({ type: 'change', target: box() });
@@ -192,12 +192,12 @@ test('catalog pricing off: the owner answers the installation question on Menu p
   assert.match(dialog.textContent, /Answer the installation question/);
   assert.match(dialog.textContent, /Shelving and storage installationNot confirmedIncluded in the goods price/);
   ui.button('Save approvals').click();
-  await ui.settle(() => ui.root().textContent.includes('Shelving and storage installation is now confirmed as included in the goods price.'), 'the saved answer');
+  await ui.settle(() => ui.root().textContent.includes('Shelving and storage installation is now confirmed as included in the goods price for builder quotes saved before the Labor line.'), 'the saved answer');
   const post = ui.fs.posts.at(-1);
   assert.deepEqual([post.action, post.approve, post.revoke, post.goodsInstallationIncluded], ['menu.approve', [], [], true]);
   assert.equal(ui.fs.get('pricingMenuApprovals/current').goodsInstallationIncluded, true);
   await ui.settle(() => ui.root().textContent.includes('You confirmed that shelving and storage installation is included in the goods price'), 'the reloaded answer');
-  assert.doesNotMatch(ui.root().textContent, /also wait for your installation decision/);
+  assert.doesNotMatch(ui.root().textContent, /their shelving or storage waits for your installation decision/);
   assert.equal(box().checked, true);
   // Unticked and saved, goods quotes wait again.
   box().checked = false; box().dispatchEvent({ type: 'change', target: box() });
@@ -210,4 +210,38 @@ test('catalog pricing off: the owner answers the installation question on Menu p
   const manager = screen({ who: MANAGER });
   await manager.settle(() => manager.root()?.querySelector('#cat-menu-installation'), 'the question');
   assert.ok(off(manager.root().querySelector('#cat-menu-installation')));
+});
+
+// D12: the labor rate every builder quote's Labor line charges per man-hour, set by the owner on Menu prices.
+test('the owner sees the $40.00 labor rate on Menu prices, changes it, reviews it and saves it in one audited request', async () => {
+  const ui = screen();
+  await ui.settle(() => ui.root()?.textContent.includes('Labor: $40.00 per man-hour'), 'the labor rate');
+  assert.match(ui.root().textContent, /Every builder quote has a Labor line: the estimated man-hours × this rate, on top of the menu prices\./);
+  assert.match(ui.root().textContent, /Shelving and storage installation is billed through this line\. Your decision of 2026-10-18 \(\$40\.00 per man-hour\)\. The rate is approved/);
+  const field = () => ui.root().querySelector('#cat-menu-labor-rate');
+  assert.equal(field().value, '40.00');
+  // A rate that is not dollars and cents is refused in the screen; nothing is sent.
+  field().value = '40.555'; field().dispatchEvent({ type: 'input', target: field() }); field().dispatchEvent({ type: 'change', target: field() });
+  const posts = ui.fs.posts.length;
+  ui.button('Review 1 change').click();
+  assert.match(ui.root().textContent, /Enter the labor rate per man-hour as dollars, from \$1\.00 to \$1,000\.00, like 40\.00\./);
+  assert.equal(ui.fs.posts.length, posts);
+  field().value = '45.00'; field().dispatchEvent({ type: 'input', target: field() }); field().dispatchEvent({ type: 'change', target: field() });
+  assert.match(ui.root().textContent, /Review the change below to save it/);
+  ui.button('Review 1 change').click();
+  const dialog = ui.document.body.querySelector('dialog');
+  assert.match(dialog.textContent, /Change the labor rate/);
+  assert.match(dialog.textContent, /Labor rate per man-hour\$40\.00\$45\.00/);
+  ui.button('Save approvals').click();
+  await ui.settle(() => ui.root().textContent.includes('The labor rate is now $45.00 per man-hour'), 'the saved rate');
+  const post = ui.fs.posts.at(-1);
+  assert.deepEqual([post.action, post.approve, post.revoke, post.laborRatePerManHourCents, 'goodsInstallationIncluded' in post], ['menu.approve', [], [], 4500, false]);
+  assert.equal(ui.fs.get('pricingMenuApprovals/current').laborRatePerManHourCents, 4500);
+  assert.ok([...ui.fs.docs.keys()].some(key => key.startsWith('hub_audit/')), 'audited like every approval');
+  await ui.settle(() => ui.root().textContent.includes('Labor: $45.00 per man-hour'), 'the reloaded rate');
+  assert.match(ui.root().textContent, /You set this rate\./);
+  // A manager sees the rate but cannot change it.
+  const manager = screen({ who: MANAGER, fs: ui.fs });
+  await manager.settle(() => manager.root()?.querySelector('#cat-menu-labor-rate'), 'the rate');
+  assert.ok(off(manager.root().querySelector('#cat-menu-labor-rate')));
 });

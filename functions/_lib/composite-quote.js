@@ -20,15 +20,23 @@ import { PRICING_MENU_JSON } from '../_data/pricing-menu.js';
  * A price is approved when the menu itself records an owner-approved amount (the $750 full truck) or the owner
  * approved that item at exactly that amount. An owner-approved service amount is the price; a product approval
  * holds only while cost x goodsMarkup still gives the approved amount. An approval also names the item it was
- * given for (menuItemIdentity): a re-import that renames or re-maps an item id puts it back into draft. Goods are
- * priced without installation, so a quote with goods also waits for the owner to confirm that installation is
- * included in the goods price: in the pricing settings (goodsInstallationIncluded, Hub > Catalog & pricing > Pricing,
- * only while CATALOG_QUOTES_ENABLED is on) or with the menu approvals (approvals.goodsInstallationIncluded, the owner's
- * menu.approve on Menu prices, which the builder flag alone allows). Either confirmation counts. Draft prices may be
- * saved on an unsent draft, never sent: quote-draft.js re-checks compositeApproval() at send preview and send.
+ * given for (menuItemIdentity): a re-import that renames or re-maps an item id puts it back into draft. Draft prices may
+ * be saved on an unsent draft, never sent: quote-draft.js re-checks compositeApproval() at send preview and send.
+ *
+ * Labor (owner decision D12, 2026-10-18: "We have to price man hours estimated to do the job. It's $40 an hour."):
+ * every builder quote also carries one Labor line, man-hours x the labor rate, on top of the menu lines. The rate is the
+ * owner's own decision, so it is an approved price: approvals.laborRatePerManHourCents (the owner's menu.approve on
+ * Menu prices) else DEFAULT_LABOR_RATE_CENTS ($40.00). It is never read from the browser. The man-hours are the
+ * estimator's (compositePricing.labor.manHours), pre-filled from the job's own time estimate (prefilledManHours) and
+ * adjustable; the quote records the pre-fill and whether it was adjusted. Shelving and storage installation is billed
+ * through this line. Goods are priced without installation, so a quote saved before the Labor line existed (a breakdown
+ * without labor) still waits for the owner to confirm that installation is included in the goods price: in the pricing
+ * settings (goodsInstallationIncluded, only while CATALOG_QUOTES_ENABLED is on) or with the menu approvals
+ * (approvals.goodsInstallationIncluded). Either confirmation counts; a quote with a Labor line never waits for it.
  *
  * The customer-facing estimate keeps at most 12 charged lines (the portal limit): special-handling items, access
- * charges and each goods step (shelving, extra storage) roll up into one line each; the breakdown keeps every item.
+ * charges and each goods step (shelving, extra storage) roll up into one line each, and labor is one line; the
+ * breakdown keeps every item.
  *
  * Money is integer cents. Error codes are quote_draft_composite_* (the quote-draft API passes them through).
  */
@@ -56,8 +64,17 @@ const WALKTHROUGH_TABLES = ['sizeBase', 'services', 'deep_clean', 'hazards', 'sp
 const GARAGE_SIZES = ['1', '2', '3', 'other'];
 // The customer portal and quote drafts charge at most 12 lines (money-service MAX_ESTIMATE_LINES, quote-draft
 // MAX_INCLUDED_LINES); special-handling items, access charges and each goods step roll up into one line each, so
-// the largest removal step (9 lines) plus both goods lines always fits.
+// the largest removal step (9 lines) plus both goods lines and the Labor line always fits.
 export const MAX_CHARGED_LINES = 12;
+// D12: the Labor line. Its id is the customer-facing line id; the rate is the owner's (laborRate), $40.00 by default.
+export const LABOR_ID = 'labor';
+export const DEFAULT_LABOR_RATE_CENTS = 4000;
+export const LABOR_RATE_LIMITS = Object.freeze({ min: 100, max: 100000 });
+export const LABOR_MAN_HOURS = Object.freeze({ min: 0.5, max: 200, step: 0.25 });
+// The time estimate a pre-fill is computed from: the crew size and the minutes on site, in the ranges the signed
+// walkthrough handoff accepts (logistics.crew_size, quote.estimated_duration_min).
+const LABOR_KEYS = ['manHours', 'estimate'], ESTIMATE_KEYS = ['crewSize', 'onSiteMinutes'];
+const LABOR_DEFAULT_REASON = 'Owner decision (2026-10-18): $40.00 per man-hour.';
 // The rolled-up goods line of each goods step. Its catalog reference names the step (compositeCatalogCategory).
 export const GOODS_LINES = Object.freeze({
   shelving: Object.freeze({ id: 'shelving-goods', catalogId: 'menu-shelving', name: 'Shelving' }),
@@ -170,10 +187,15 @@ export function validatePricingMenu(menu) {
   return menu;
 }
 
-/** Approvals as stored in pricingMenuApprovals/current: {items: {[id]: {unitCents, identity, ...}}, revision}. */
+/** A labor rate the owner may set: whole cents per man-hour from $1.00 to $1,000.00. */
+export const validLaborRate = value => Number.isSafeInteger(value) && value >= LABOR_RATE_LIMITS.min && value <= LABOR_RATE_LIMITS.max;
+
+/** Approvals as stored in pricingMenuApprovals/current: {items: {[id]: {unitCents, identity, ...}}, revision,
+ * goodsInstallationIncluded?, laborRatePerManHourCents?}. */
 export function validateMenuApprovals(value) {
   if (value === null || value === undefined) return { items: {}, revision: null };
-  if (!plain(value) || !plain(value.items) || !(value.revision === null || typeof value.revision === 'string') || !(value.goodsInstallationIncluded === undefined || typeof value.goodsInstallationIncluded === 'boolean')) throw fail('approvals_invalid', 'The saved price approvals failed verification. Nothing was priced; the owner must re-save them.', 503);
+  if (!plain(value) || !plain(value.items) || !(value.revision === null || typeof value.revision === 'string') || !(value.goodsInstallationIncluded === undefined || typeof value.goodsInstallationIncluded === 'boolean')
+    || !(value.laborRatePerManHourCents === undefined || validLaborRate(value.laborRatePerManHourCents))) throw fail('approvals_invalid', 'The saved price approvals failed verification. Nothing was priced; the owner must re-save them.', 503);
   for (const [id, entry] of Object.entries(value.items)) {
     if (!(PRODUCT_ID.test(id) || SERVICE_ID.test(id)) || !plain(entry) || !Number.isSafeInteger(entry.unitCents) || entry.unitCents < 1 || entry.unitCents > MAX_ITEM_CENTS
       || !(entry.identity === undefined || typeof entry.identity === 'string' && entry.identity.length <= 600)) throw fail('approvals_invalid', 'The saved price approvals failed verification. Nothing was priced; the owner must re-save them.', 503);
@@ -245,18 +267,75 @@ export function menuPrices(state) {
   return out;
 }
 
-// Goods are priced at cost x goodsMarkup with no installation line. Until the owner confirms that installation is
-// included in that price, a quote with goods is saved but never sent. The confirmation is the pricing settings'
+// Goods are priced at cost x goodsMarkup with no installation of their own: a builder quote bills installation through
+// its Labor line (D12). A quote saved before the Labor line existed (no breakdown.labor) is still saved but never sent
+// until the owner confirms that installation is included in the goods price: the pricing settings'
 // goodsInstallationIncluded (the Pricing tab, which needs CATALOG_QUOTES_ENABLED) or the menu approvals' (Menu prices,
 // which the quote builder flag alone opens): with only the builder on, the settings cannot be saved at all.
 const installationIncluded = state => state?.settings?.goodsInstallationIncluded === true || state?.approvals?.goodsInstallationIncluded === true;
 const INSTALLATION_BLOCK = Object.freeze({ id: INSTALLATION_ID, name: 'Shelving and storage installation', unitCents: null,
-  reason: 'Shelving and storage installation is not priced: goods sell at public retail × the goods markup only, and the owner has not confirmed in Hub > Catalog & pricing (Menu prices) that installation is included in that price.' });
+  reason: 'Shelving and storage installation is not priced: this quote was saved before builder quotes had a Labor line, its goods sell at public retail × the goods markup only, and the owner has not confirmed in Hub > Catalog & pricing (Menu prices) that installation is included in that price. Edit the quote and save it again to add the Labor line.' });
+
+// ---- Labor (D12) ----
+const quarterHours = value => typeof value === 'number' && Number.isFinite(value) && Math.abs(value * 4 - Math.round(value * 4)) < 1e-9;
+/** Man-hours a Labor line may charge: 0.5 to 200, in quarter hours. */
+export const validManHours = value => quarterHours(value) && value >= LABOR_MAN_HOURS.min && value <= LABOR_MAN_HOURS.max;
+const hoursText = hours => `${Number(hours.toFixed(2))} man-hour${hours === 1 ? '' : 's'}`;
+/** The labor rate in force: {rateCents, source:'owner'|'default', reason}. The owner's own rate (menu approvals
+ * laborRatePerManHourCents, set on Menu prices) else D12's $40.00. Either is approved: it is the owner's decision. */
+export function laborRate(state) {
+  const owner = state?.approvals?.laborRatePerManHourCents;
+  return validLaborRate(owner) ? { rateCents: owner, source: 'owner', reason: 'Owner-set labor rate.' } : { rateCents: DEFAULT_LABOR_RATE_CENTS, source: 'default', reason: LABOR_DEFAULT_REASON };
+}
+/** The Labor line's amount: man-hours x rate, rounded half up to the cent (quarter hours times whole cents). */
+export const laborTotalCents = (manHours, rateCents) => Math.round(Math.round(manHours * 4) * rateCents / 4);
+/**
+ * The pre-filled man-hours from the job's own time estimate, {crewSize, onSiteMinutes}: the crew size the estimator
+ * planned (the gameplan's Schedule tab, logistics.crew_size) times the estimated time on site in hours (the gameplan's
+ * estimatedJobMinutes(), quote.estimated_duration_min: the walkthrough time model over truckloads, fullness, special
+ * items, access and add-ons, already worked out for that crew size and rounded to 30 minutes). The same two numbers
+ * book the crew's time and show on the crew brief, so the Labor line charges the time the job is planned to take:
+ *   man-hours = crewSize x onSiteMinutes / 60, rounded to the nearest quarter hour and kept within 0.5 to 200.
+ * Example: a crew of 2 for an estimated 3 hours on site is 6 man-hours ($240.00 at $40.00). null without an estimate:
+ * the estimator then enters the man-hours, and the quote cannot be saved or sent without them.
+ */
+export function prefilledManHours(estimate) {
+  if (!plain(estimate)) return null;
+  const rounded = Math.round(estimate.crewSize * estimate.onSiteMinutes / 15) / 4;
+  return Math.min(LABOR_MAN_HOURS.max, Math.max(LABOR_MAN_HOURS.min, rounded));
+}
+// The browser's labor selection {manHours, estimate}: manHours null asks for the pre-fill. Anything else is refused.
+function normalizeLabor(value) {
+  if (!keysOnly(value, LABOR_KEYS) || !Object.hasOwn(value, 'manHours')) throw fail('invalid_labor', 'The labor selection is incomplete. Reload the builder and try again.');
+  if (value.manHours !== null && !validManHours(value.manHours)) throw fail('invalid_labor', `Enter the labor as ${LABOR_MAN_HOURS.min} to ${LABOR_MAN_HOURS.max} man-hours in quarter hours (like 6 or 6.25).`, 400, { min: LABOR_MAN_HOURS.min, max: LABOR_MAN_HOURS.max, step: LABOR_MAN_HOURS.step });
+  const estimate = value.estimate ?? null;
+  if (estimate !== null && (!keysOnly(estimate, ESTIMATE_KEYS) || !Number.isSafeInteger(estimate.crewSize) || estimate.crewSize < 1 || estimate.crewSize > 20 || !Number.isSafeInteger(estimate.onSiteMinutes) || estimate.onSiteMinutes < 15 || estimate.onSiteMinutes > 1440)) {
+    throw fail('invalid_labor', 'The time estimate behind the labor is invalid: a crew of 1 to 20 for 15 minutes to 24 hours on site.');
+  }
+  return { manHours: value.manHours, estimate: estimate && { crewSize: estimate.crewSize, onSiteMinutes: estimate.onSiteMinutes } };
+}
+/** The priced Labor of one selection: {manHours, rateCents, rateSource, totalCents, prefilledManHours, adjusted,
+ * estimate}. manHours (and totalCents) stay null while the estimator has neither an estimate nor a number. */
+function pricedLabor(labor, state) {
+  const prefilled = prefilledManHours(labor.estimate), manHours = labor.manHours ?? prefilled, rate = laborRate(state);
+  return { manHours, rateCents: rate.rateCents, rateSource: rate.source, totalCents: manHours === null ? null : laborTotalCents(manHours, rate.rateCents),
+    prefilledManHours: prefilled, adjusted: manHours !== null && manHours !== prefilled, estimate: labor.estimate };
+}
+// Why a breakdown's labor cannot be sent as it is, or null when it can (approvalOf).
+function laborBlock(labor, state, required) {
+  const rate = laborRate(state).rateCents, row = reason => ({ id: LABOR_ID, name: 'Labor', unitCents: plain(labor) && Number.isSafeInteger(labor.rateCents) ? labor.rateCents : null, reason });
+  if (labor === undefined || labor === null) return required ? row(`This quote has no Labor line. Every builder quote charges labor: the estimated man-hours × ${money(rate)} per man-hour. Edit the quote, check the man-hours and save it again.`) : null;
+  if (!plain(labor) || !validManHours(labor.manHours)) return row('Enter the estimated man-hours for the Labor line, then save the quote again.');
+  if (labor.rateCents !== rate) return row(`The labor rate is now ${money(rate)} per man-hour, but this quote has ${Number.isSafeInteger(labor.rateCents) ? money(labor.rateCents) : 'another rate'}. Save the quote again to use the current rate.`);
+  if (labor.totalCents !== laborTotalCents(labor.manHours, rate)) return row('The labor amount on this quote does not equal its man-hours × the labor rate. Save the quote again.');
+  return null;
+}
 
 /** The builder's menu for one viewer. internal (owner/manager) adds the goods cost basis, the multiplier and the
- * approvals revision the owner's bulk approval needs; nobody else sees a cost. */
+ * approvals revision the owner's bulk approval needs; nobody else sees a cost. labor is the rate in force (approved)
+ * and the man-hour limits the builder's Labor row accepts. */
 export function builderMenu(state, { internal = false, canApprove = false } = {}) {
-  const prices = menuPrices(state), { menu, settings } = state, approvals = validateMenuApprovals(state.approvals);
+  const prices = menuPrices(state), { menu, settings } = state, approvals = validateMenuApprovals(state.approvals), rate = laborRate({ approvals });
   const status = id => { const price = prices.get(id); return { unitCents: price.unitCents, approved: price.approved, source: price.source, reason: price.reason }; };
   return {
     menuVersion: menu.menuVersion, settingsVersion: settings.settingsVersion, evidenceDate: menu.generatedOn,
@@ -267,17 +346,20 @@ export function builderMenu(state, { internal = false, canApprove = false } = {}
     products: menu.products.map(product => ({ id: product.id, sku: product.sku, retailer: product.retailer, name: product.name, section: product.section, group: product.group,
       unitsPerPack: product.unitsPerPack, perOrderPackLimit: product.perOrderPackLimit, productUrl: product.productUrl, photoUrl: product.photoUrl, fitWarnings: product.fitWarnings,
       ...status(product.id), ...(internal ? { retailPerPackCents: product.retailPerPackCents, evidence: product.evidence } : {}) })),
-    // installationConfirmed: the owner's own answer on Menu prices (menu.approve), present once it was given.
+    // installationConfirmed: the owner's own answer on Menu prices (menu.approve), present once it was given. It now
+    // matters only for a quote saved before the Labor line existed.
     ...(internal ? { internal: { goodsMarkup: goodsMarkupOf(settings).multiplier, goodsInstallationIncluded: installationIncluded(state), roundingRule: settings.roundingRule, approvalsRevision: approvals.revision,
       ...(typeof approvals.goodsInstallationIncluded === 'boolean' ? { installationConfirmed: approvals.goodsInstallationIncluded } : {}) } } : {}),
-    // Every viewer learns whether goods can be sent at all (no amount is involved): the builder shows it per step.
-    installation: installationIncluded(state) ? { included: true } : { included: false, reason: INSTALLATION_BLOCK.reason },
+    // The labor rate is the owner's decision: every viewer sees it, approved. Installation is billed through it.
+    labor: { rateCents: rate.rateCents, approved: true, source: rate.source, reason: rate.reason, minManHours: LABOR_MAN_HOURS.min, maxManHours: LABOR_MAN_HOURS.max, stepManHours: LABOR_MAN_HOURS.step },
+    installation: { included: true, billedAs: 'labor' },
     viewer: { internal, canApprove: internal && canApprove },
   };
 }
 
-// The selection a browser sends: {menuVersion, settingsVersion, steps, removal, shelving, storage}.
-const DESCRIPTOR_KEYS = ['menuVersion', 'settingsVersion', 'steps', 'removal', 'shelving', 'storage'];
+// The selection a browser sends: {menuVersion, settingsVersion, steps, removal, shelving, storage, labor?}. labor is
+// {manHours: number|null, estimate: {crewSize, onSiteMinutes}|null} (normalizeLabor); a save needs it.
+const DESCRIPTOR_KEYS = ['menuVersion', 'settingsVersion', 'steps', 'removal', 'shelving', 'storage', 'labor'];
 function normalizeDescriptor(descriptor, { complete }) {
   if (!keysOnly(descriptor, DESCRIPTOR_KEYS) || typeof descriptor.menuVersion !== 'string' || typeof descriptor.settingsVersion !== 'string' || !Array.isArray(descriptor.steps)) {
     throw fail('invalid_selection', 'The quote builder selection is incomplete. Reload the builder and try again.');
@@ -304,6 +386,8 @@ function normalizeDescriptor(descriptor, { complete }) {
     total += out[step].length;
   }
   if (total > MAX_SELECTIONS) throw fail('invalid_selection', `A quote can hold at most ${MAX_SELECTIONS} builder selections.`);
+  if (descriptor.labor !== undefined) out.labor = normalizeLabor(descriptor.labor);
+  else if (complete) throw fail('labor_required', 'Every builder quote has a Labor line. Reopen the quote builder, check the man-hours on the review step and save the quote again.', 400);
   return out;
 }
 
@@ -325,12 +409,15 @@ function checkRemoval(entries, prices) {
 }
 
 /**
- * Prices one builder selection. complete:true (a save) requires all three steps. Returns:
- *   compositePricing  the normalized selection (what a save stores and a revision re-sends)
- *   lineItems         the customer-facing quote-model lines (no cost split), in step order
+ * Prices one builder selection. complete:true (a save) requires all three steps and the labor. Returns:
+ *   compositePricing  the normalized selection (what a save stores and a revision re-sends); its labor.manHours is
+ *                     the man-hours priced (the pre-fill when the browser asked for it with null)
+ *   lineItems         the customer-facing quote-model lines (no cost split), in step order, then the Labor line
  *   storedLineItems   the same lines with the internal goods cost split, for the Hub job only
- *   breakdown         the itemized, cost-free job breakdown by section (see quoteBreakdown)
- *   steps             [{id,label,subtotalCents,runningTotalCents}] for the completed steps
+ *   breakdown         the itemized, cost-free job breakdown by section (see quoteBreakdown), with breakdown.labor
+ *   steps             [{id,label,subtotalCents,runningTotalCents}] for the completed steps, then labor once priced
+ *   labor             {manHours, rateCents, rateSource, totalCents, prefilledManHours, adjusted, estimate} or null
+ *                     when the selection sent none (a step preview)
  *   approval          {ready, blocked:[{id,name,unitCents,reason}]}: ready false blocks sending
  */
 export function priceCompositeQuote(state, descriptor, { complete = false } = {}) {
@@ -401,20 +488,32 @@ export function priceCompositeQuote(state, descriptor, { complete = false } = {}
     splits.set(line.id, { productCents, laborCents: 0, laborMinutes: 0, markupCents: totalCents - productCents, disposalCents: 0 });
   }
   if (!model.length) throw fail('empty', 'Add at least one removal, shelving or storage item to price the quote.');
+  // D12: the Labor line, man-hours x the server's rate, after the menu lines. It is labor by its kind (estimateTotals
+  // attributes it to laborCents) and carries no minutes, so the dispatch duration still comes from the time estimate.
+  const labor = selection.labor ? pricedLabor(selection.labor, state) : null;
+  if (labor) selection.labor = { manHours: labor.manHours, estimate: labor.estimate };
+  if (complete && labor?.manHours === null) throw fail('labor_required', 'Enter the estimated man-hours for the Labor line before saving the quote: this walkthrough has no time estimate to pre-fill them from.', 400);
+  if (labor?.manHours != null) {
+    const goodsSold = model.some(line => line.kind === 'product');
+    model.push({ id: LABOR_ID, kind: 'labor', name: `Labor: ${hoursText(labor.manHours)} × ${money(labor.rateCents)}`, description: `Crew time on site, billed per man-hour${goodsSold ? ', including installing the shelving and storage' : ''}.`,
+      quantity: 1, unitCents: lineCents(labor.totalCents, 1), totalCents: labor.totalCents, optional: false, selected: true, taxable: false });
+  }
   if (model.filter(line => line.totalCents > 0).length > MAX_CHARGED_LINES) throw fail('too_many_lines', `A quote can charge at most ${MAX_CHARGED_LINES} lines so the customer portal shows every charge. Remove a removal item or split the work into two quotes.`, 400, { maxChargedLines: MAX_CHARGED_LINES });
   const stored = model.map(line => splits.has(line.id) ? { ...line, split: splits.get(line.id) } : line);
   let storedLineItems;
   try { storedLineItems = normalizeLineItems(stored, { strict: true }).lineItems; }
   catch (error) { throw fail('unavailable', `The builder quote could not be verified: ${error.message}`, 503); }
-  const totals = estimateTotals(storedLineItems), totalCents = detail.reduce((sum, line) => sum + line.totalCents, 0);
+  const laborCents = labor?.totalCents ?? 0;
+  const totals = estimateTotals(storedLineItems), totalCents = detail.reduce((sum, line) => sum + line.totalCents, 0) + laborCents;
   if (!totals.complete || totals.totalCents !== totalCents || totalCents <= 0 || storedLineItems.some(line => !included(line))) throw fail('unavailable', 'The builder quote total could not be verified. Keep the selections and retry.', 503);
   const lineItems = storedLineItems.map(({ split, durationMinutes, ...line }) => line);
   const sections = BUILDER_STEPS.map(id => ({ id, label: SECTION_LABEL.get(id), completed: selection.steps.includes(id), subtotalCents: detail.filter(line => line.section === id).reduce((sum, line) => sum + line.totalCents, 0), lineIds: detail.filter(line => line.section === id).map(line => line.id) }));
   let running = 0;
   const steps = sections.filter(section => section.completed).map(section => ({ id: section.id, label: section.label, subtotalCents: section.subtotalCents, runningTotalCents: running += section.subtotalCents }));
+  if (laborCents) steps.push({ id: LABOR_ID, label: 'Labor', subtotalCents: laborCents, runningTotalCents: running += laborCents });
   const breakdown = { version: COMPOSITE_SCHEMA_VERSION, source: 'composite', menuVersion: version, settingsVersion: settings.settingsVersion,
-    sections: sections.map(({ completed, ...section }) => section), lines: detail, purchaseList: purchaseList(detail), totalCents };
-  return { compositePricing: selection, menuVersion: version, settingsVersion: settings.settingsVersion, lineItems, storedLineItems, breakdown, steps, totalCents, approval: approvalOf(detail, prices, state) };
+    sections: sections.map(({ completed, ...section }) => section), lines: detail, purchaseList: purchaseList(detail), ...(labor ? { labor } : {}), totalCents };
+  return { compositePricing: selection, menuVersion: version, settingsVersion: settings.settingsVersion, lineItems, storedLineItems, breakdown, steps, labor, totalCents, approval: approvalOf(detail, prices, state, labor) };
 }
 
 // What the crew buys or grabs: one row per product, with packs, units and the public product page. No cost.
@@ -423,7 +522,9 @@ function purchaseList(lines) {
     units: line.qty * line.unitsPerPack, productUrl: line.productUrl, perOrderPackLimit: line.perOrderPackLimit, overOrderLimit: line.perOrderPackLimit !== null && line.qty > line.perOrderPackLimit, fitWarnings: line.fitWarnings }));
 }
 
-function approvalOf(lines, prices, state) {
+// labor: the quote's priced labor (breakdown.labor), undefined for a quote saved before the Labor line existed, which
+// is refused unless requireLabor is false (a job the customer already signed that way: it keeps the earlier rules).
+function approvalOf(lines, prices, state, labor, { requireLabor = true } = {}) {
   const blocked = lines.filter(line => {
     const price = prices.get(line.id);
     return !price || !price.approved || price.unitCents !== line.unitCents;
@@ -434,14 +535,19 @@ function approvalOf(lines, prices, state) {
         : price.approved ? `The owner approved ${money(price.unitCents)} for ${line.name}, but this quote has ${money(line.unitCents)}. Save the quote again to use the approved price.`
           : `${line.name}: ${price.reason.charAt(0).toLowerCase()}${price.reason.slice(1)}` };
   });
-  if (lines.some(line => line.sku) && !installationIncluded(state)) blocked.push({ ...INSTALLATION_BLOCK });
+  const laborRow = laborBlock(labor === null ? undefined : labor, state, requireLabor);
+  if (laborRow) blocked.push(laborRow);
+  // Installation is billed through the Labor line; only a quote without one (saved before it existed) waits for the
+  // owner's answer. A Labor line still waiting for its man-hours is blocked by its own reason above.
+  if (lines.some(line => line.sku) && !installationIncluded(state) && (labor === undefined || labor === null)) blocked.push({ ...INSTALLATION_BLOCK });
   return { ready: blocked.length === 0, blocked };
 }
 
-/** Send-time check of a saved breakdown against today's menu, settings and approvals: {ready, blocked}. */
-export function compositeApproval(breakdown, state) {
+/** Send-time check of a saved breakdown against today's menu, settings, approvals and labor rate: {ready, blocked}.
+ * requireLabor false (a job the customer already signed) judges a breakdown without labor by the earlier rules. */
+export function compositeApproval(breakdown, state, { requireLabor = true } = {}) {
   if (!plain(breakdown) || breakdown.source !== 'composite' || !Array.isArray(breakdown.lines)) return { ready: false, blocked: [{ id: null, name: 'This quote', unitCents: null, reason: 'The saved builder breakdown is missing. Rebuild the quote before sending.' }] };
-  return approvalOf(breakdown.lines, menuPrices(state), state);
+  return approvalOf(breakdown.lines, menuPrices(state), state, breakdown.labor, { requireLabor });
 }
 
 /** The message and details a refused send carries: the reasons, in quote order, at most 8 named. */

@@ -22,7 +22,10 @@ const service = name => menu.services.find(item => item.name === name);
 const TRUCK = service('Full truck load'), HALF = service('Half load'), TWO_CAR = service('Two-car garage base'), ONE_CAR = service('One-car garage base'), MATTRESS = service('Mattress'), STAIRS = service('Stairs');
 const DEEP_TWO = service('Deep cleaning, two-car'), DEEP_THREE = service('Deep cleaning, three-car'), WASH = service('Pressure washing, one-car'), QUARTER = service('Quarter load');
 const pick = (item, quantity = 1) => ({ id: item.id, quantity });
-const descriptor = ({ steps = BUILDER_STEPS, removal = [], shelving = [], storage = [], s = state() } = {}) => ({ menuVersion: menu.menuVersion, settingsVersion: s.settings.settingsVersion, steps: [...steps], removal, shelving, storage });
+// D12: every builder quote carries labor; a complete quote here keeps the pre-fill of a crew of 2 for 3 hours on site
+// (6 man-hours x $40.00 = $240.00). A step preview sends none.
+const LABOR = { manHours: 6, estimate: { crewSize: 2, onSiteMinutes: 180 } }, LABOR_CENTS = 24000;
+const descriptor = ({ steps = BUILDER_STEPS, removal = [], shelving = [], storage = [], s = state(), labor = steps.length === BUILDER_STEPS.length ? LABOR : undefined } = {}) => ({ menuVersion: menu.menuVersion, settingsVersion: s.settings.settingsVersion, steps: [...steps], removal, shelving, storage, ...(labor ? { labor: structuredClone(labor) } : {}) });
 const costFree = value => assert.doesNotMatch(JSON.stringify(value), /retailPerPackCents|"split"|productCents|markupCents|laborCents|goodsMarkup|basis/, 'no cost, multiplier or cost split');
 // An owner approval as menu.approve stores it: the amount and the identity of the item it was given for.
 const approve = (item, unitCents) => ({ unitCents, identity: menuItemIdentity(item) });
@@ -54,10 +57,10 @@ test('the shipped pricing menu validates, matches its generated module and holds
 test('the builder always prices removal first, then shelving, then extra storage, and refuses a step out of order', () => {
   const s = state(), storage = product('storage', 'overhead');
   const priced = priceCompositeQuote(s, descriptor({ storage: [pick(storage)], shelving: [pick(shelf, 2)], removal: [pick(STAIRS), pick(TRUCK), pick(TWO_CAR)] }), { complete: true });
-  assert.deepEqual(priced.lineItems.map(line => line.id), ['removal-base', 'removal-junk-full', 'removal-access', 'shelving-goods', 'storage-goods']);
+  assert.deepEqual(priced.lineItems.map(line => line.id), ['removal-base', 'removal-junk-full', 'removal-access', 'shelving-goods', 'storage-goods', 'labor'], 'the Labor line comes last');
   assert.deepEqual(priced.breakdown.sections.map(section => section.id), ['removal', 'shelving', 'storage']);
   assert.deepEqual(priced.steps.map(step => [step.id, step.subtotalCents, step.runningTotalCents]), [
-    ['removal', 97500 + 75000 + 19000, 191500], ['shelving', 23140, 214640], ['storage', priced.breakdown.sections[2].subtotalCents, priced.totalCents]]);
+    ['removal', 97500 + 75000 + 19000, 191500], ['shelving', 23140, 214640], ['storage', priced.breakdown.sections[2].subtotalCents, priced.totalCents - LABOR_CENTS], ['labor', LABOR_CENTS, priced.totalCents]]);
   for (const steps of [['shelving'], ['removal', 'storage'], ['storage', 'shelving', 'removal'], [], ['removal', 'shelving', 'storage', 'removal']]) {
     assert.throws(() => priceCompositeQuote(s, descriptor({ steps, removal: [pick(TRUCK)] })), { code: 'quote_draft_composite_order' }, JSON.stringify(steps));
   }
@@ -80,7 +83,7 @@ test('the server prices every line from its own menu, settings and approvals; th
   assert.deepEqual([line('shelving-goods').quantity, line('shelving-goods').unitCents, line('shelving-goods').totalCents], [1, 34710, 34710], 'goods sell at the public retail pack price × 1.30, rolled into one shelving line');
   assert.equal(line('shelving-goods').description, `${shelf.name} × 3 packs`);
   assert.deepEqual(priced.breakdown.lines.find(entry => entry.id === shelf.id).unitCents, 11570, 'the breakdown keeps the per-pack price');
-  assert.equal(priced.totalCents, 150000 + 37500 + 14000 + 34710);
+  assert.equal(priced.totalCents, 150000 + 37500 + 14000 + 34710 + LABOR_CENTS);
   assert.deepEqual(line('shelving-goods').catalog, { itemId: 'menu-shelving', version: menu.menuVersion });
   // The saved Hub job keeps the goods cost split of the step; previews and the breakdown never carry it.
   assert.deepEqual(priced.storedLineItems.find(entry => entry.id === 'shelving-goods').split, { productCents: 26700, laborCents: 0, laborMinutes: 0, markupCents: 8010, disposalCents: 0 });
@@ -112,18 +115,17 @@ test('the goodsMarkup pricing setting prices goods (default 1.30) and is validat
 test('draft prices are priced and saved but block sending with a reason per line; the approved $750 full truck sends', () => {
   const draft = priceCompositeQuote(state(), descriptor({ removal: [pick(TWO_CAR), pick(TRUCK), pick(QUARTER), pick(MATTRESS)], shelving: [pick(shelf)] }), { complete: true });
   assert.equal(draft.approval.ready, false);
-  assert.deepEqual(draft.approval.blocked.map(row => row.id), [TWO_CAR.id, QUARTER.id, MATTRESS.id, shelf.id, INSTALLATION_ID], 'everything but the full truck waits for the owner, and goods wait for the installation decision');
+  assert.deepEqual(draft.approval.blocked.map(row => row.id), [TWO_CAR.id, QUARTER.id, MATTRESS.id, shelf.id], 'everything but the full truck and the labor waits for the owner; installation is billed through labor');
   assert.match(draft.approval.blocked[0].reason, /^Two-car garage base: draft price \$975\.00 is the walkthrough's historical full-service base, which already included hauling; the owner sets the cleaning-only amount\.$/);
   assert.match(draft.approval.blocked[1].reason, /^Quarter load: draft price \$187\.50, not yet approved by the owner\.$/);
   assert.match(draft.approval.blocked[3].reason, /per pack, not yet approved by the owner/);
-  assert.match(draft.approval.blocked[4].reason, /installation is not priced: goods sell at public retail × the goods markup only/);
   const refusal = approvalRefusal(draft.approval);
   assert.equal(refusal.code, 'quote_draft_composite_prices_unapproved');
   assert.equal(refusal.status, 409);
-  assert.match(refusal.message, /5 prices the owner has not approved: Two-car garage base, Quarter load, Mattress, HDX plastic shelving.*, Shelving and storage installation\./);
-  assert.equal(refusal.details.unapproved.length, 5);
+  assert.match(refusal.message, /4 prices the owner has not approved: Two-car garage base, Quarter load, Mattress, HDX plastic shelving[^.]*\. It stays saved/);
+  assert.equal(refusal.details.unapproved.length, 4);
   const truck = priceCompositeQuote(state(), descriptor({ removal: [pick(TRUCK, 3)] }), { complete: true });
-  assert.deepEqual([truck.totalCents, truck.approval.ready, truck.breakdown.lines[0].approved], [225000, true, true]);
+  assert.deepEqual([truck.totalCents, truck.approval.ready, truck.breakdown.lines[0].approved], [225000 + LABOR_CENTS, true, true], 'the $750 truck and the owner\'s $40.00 labor rate are both approved');
   assert.deepEqual(compositeApproval(truck.breakdown, state()), { ready: true, blocked: [] });
   assert.equal(compositeApproval(null, state()).ready, false, 'a missing breakdown never sends');
 });
@@ -137,7 +139,7 @@ test('owner approvals: a service is approved at the owner amount, a product only
   // when an approval is revoked or the goods multiplier moves the product price.
   const draft = priceCompositeQuote(state(), descriptor({ removal: [pick(TWO_CAR)], shelving: [pick(shelf)] }), { complete: true });
   assert.equal(compositeApproval(draft.breakdown, state()).ready, false);
-  assert.deepEqual(compositeApproval(draft.breakdown, state({ approvals })).blocked.map(row => row.id), [INSTALLATION_ID], 'approved prices still wait for the installation decision');
+  assert.deepEqual(compositeApproval(draft.breakdown, state({ approvals })), { ready: true, blocked: [] }, 'approved prices send: installation is billed through the Labor line');
   assert.equal(compositeApproval(draft.breakdown, state({ approvals, settings: INSTALLED })).ready, true);
   const moved = compositeApproval(draft.breakdown, state({ approvals, settings: { ...INSTALLED, goodsMarkup: 1.5 } }));
   assert.deepEqual(moved.blocked.map(row => row.id), [shelf.id]);
@@ -168,18 +170,28 @@ test('an approval names the item it was given for: a re-import that repurposes a
   assert.deepEqual(compositeApproval(saved.breakdown, { ...state({ approvals, settings: INSTALLED }), menu: repurposed }).blocked.map(row => row.id), [MATTRESS.id]);
 });
 
-test('installation: goods are priced without it, so a quote with goods sends only once the owner confirms it is included', () => {
+test('installation is billed through the Labor line (D12); only a quote saved before labor existed waits for the owner\'s installation answer', () => {
   for (const bad of ['yes', 1, null]) assert.throws(() => validatePricingSettings({ ...structuredClone(defaults), goodsInstallationIncluded: bad }), { code: 'catalog_settings_invalid' }, String(bad));
   assert.doesNotThrow(() => validatePricingSettings({ ...structuredClone(defaults), goodsInstallationIncluded: false }));
   const approvals = { [shelf.id]: approve(shelf, 11570) }, goods = descriptor({ removal: [pick(TRUCK)], shelving: [pick(shelf)] });
-  const waiting = priceCompositeQuote(state({ approvals }), goods, { complete: true });
-  assert.deepEqual(waiting.approval.blocked.map(row => [row.id, row.unitCents]), [[INSTALLATION_ID, null]]);
-  assert.equal(priceCompositeQuote(state({ approvals, settings: INSTALLED }), goods, { complete: true }).approval.ready, true);
-  assert.equal(priceCompositeQuote(state(), descriptor({ removal: [pick(TRUCK)] }), { complete: true }).approval.ready, true, 'removal alone needs no installation decision');
-  assert.deepEqual(builderMenu(state()).installation.included, false);
-  assert.match(builderMenu(state()).installation.reason, /installation is not priced/);
-  assert.deepEqual(builderMenu(state({ settings: INSTALLED })).installation, { included: true });
+  // With labor the goods quote is ready as soon as its prices are approved: no installation answer is asked for.
+  const ready = priceCompositeQuote(state({ approvals }), goods, { complete: true });
+  assert.deepEqual(ready.approval, { ready: true, blocked: [] });
+  assert.match(ready.lineItems.at(-1).description, /including installing the shelving and storage/);
+  assert.equal(priceCompositeQuote(state(), descriptor({ removal: [pick(TRUCK)] }), { complete: true }).lineItems.at(-1).description, 'Crew time on site, billed per man-hour.', 'removal alone has no installation to mention');
+  assert.deepEqual(builderMenu(state()).installation, { included: true, billedAs: 'labor' });
+  assert.deepEqual(builderMenu(state({ settings: INSTALLED })).installation, { included: true, billedAs: 'labor' });
   assert.equal(builderMenu(state({ settings: INSTALLED }), { internal: true }).internal.goodsInstallationIncluded, true);
+  // A breakdown saved before the Labor line existed: an unsent draft must be saved again (with labor); a job the
+  // customer already signed that way (requireLabor:false) keeps the earlier rule and waits for the installation answer.
+  const { labor, ...older } = ready.breakdown;
+  assert.deepEqual(compositeApproval(older, state({ approvals })).blocked.map(row => row.id), ['labor', INSTALLATION_ID]);
+  assert.match(compositeApproval(older, state({ approvals })).blocked[0].reason, /no Labor line\. Every builder quote charges labor: the estimated man-hours × \$40\.00 per man-hour/);
+  const signed = compositeApproval(older, state({ approvals }), { requireLabor: false });
+  assert.deepEqual(signed.blocked.map(row => [row.id, row.unitCents]), [[INSTALLATION_ID, null]]);
+  assert.match(signed.blocked[0].reason, /saved before builder quotes had a Labor line/);
+  assert.deepEqual(compositeApproval(older, state({ approvals, settings: INSTALLED }), { requireLabor: false }), { ready: true, blocked: [] });
+  assert.deepEqual(compositeApproval(older, state({ approvals: { ...approvals }, settings: {} }), { requireLabor: false }).ready, false);
 });
 
 test('removal rules: one base, one partial load, sized deep clean, one-car pressure wash, and the 12 charged-line limit', () => {
@@ -196,15 +208,15 @@ test('removal rules: one base, one partial load, sized deep clean, one-car press
   // Special-handling and access items roll into one line each, so a full removal fits on the quote.
   const specials = menu.services.filter(item => item.group === 'special');
   const full = price([pick(TWO_CAR), pick(TRUCK), pick(HALF), ...specials.map(item => pick(item)), pick(STAIRS), pick(service('Long carry')), pick(DEEP_TWO)]);
-  assert.equal(full.lineItems.length, 6);
+  assert.equal(full.lineItems.length, 7, 'six removal lines and the Labor line');
   assert.equal(full.breakdown.lines.length, 3 + specials.length + 2 + 1, 'the breakdown keeps every item: base, two loads, each special item, both access items, the deep clean');
   // Each goods step is one line too: the largest removal step with shelving and a product from every storage group fits.
   const shelves = menu.products.filter(item => item.section === 'shelving').slice(0, 3).map(item => pick(item, 2));
   const storage = BUILDER_SECTIONS[2].groups.flatMap(group => menu.products.filter(item => item.group === group.id).slice(0, 2).map(item => pick(item)));
   const biggest = priceCompositeQuote(s, descriptor({ removal: [pick(ONE_CAR), pick(TRUCK, 2), pick(HALF), pick(MATTRESS), ...specials.slice(1, 4).map(item => pick(item)), pick(STAIRS), pick(service('Long carry')),
     pick(WASH), pick(service('Deep cleaning, one-car')), pick(service('Pest-waste cleanup')), pick(service('Mouse trapping'))], shelving: shelves, storage }), { complete: true });
-  assert.deepEqual(biggest.lineItems.map(line => line.id), ['removal-base', 'removal-junk-full', 'removal-junk-partial', 'removal-special', 'removal-access', 'service-egc-006', 'service-egc-007', 'service-egc-011', 'service-egc-012', 'shelving-goods', 'storage-goods']);
-  assert.ok(biggest.lineItems.length <= MAX_CHARGED_LINES);
+  assert.deepEqual(biggest.lineItems.map(line => line.id), ['removal-base', 'removal-junk-full', 'removal-junk-partial', 'removal-special', 'removal-access', 'service-egc-006', 'service-egc-007', 'service-egc-011', 'service-egc-012', 'shelving-goods', 'storage-goods', 'labor']);
+  assert.equal(biggest.lineItems.length, MAX_CHARGED_LINES, 'the largest quote, labor included, still fits the portal');
   assert.equal(biggest.breakdown.lines.filter(line => line.section === 'storage').length, 16, 'every storage pick stays itemized');
   assert.ok(biggest.breakdown.lines.filter(line => line.section === 'storage').every(line => line.lineItemId === 'storage-goods'));
   const storageLine = biggest.lineItems.find(line => line.id === 'storage-goods');
@@ -317,7 +329,7 @@ test('menu.approve: the owner bulk-approves draft prices with a receipt and an o
   assert.equal(fs.commits.length, 1);
   const composite = await readCompositeState(catalogStorage({}, fs.fetcher));
   const priced = priceCompositeQuote(composite, descriptor({ removal: [pick(MATTRESS)], shelving: [pick(shelf)] }), { complete: true });
-  assert.deepEqual([priced.approval.blocked.map(row => row.id), priced.lineItems[0].totalCents], [[INSTALLATION_ID], 7500], 'both prices are approved; only the installation decision is left');
+  assert.deepEqual([priced.approval.blocked.map(row => row.id), priced.lineItems[0].totalCents], [[], 7500], 'both prices are approved and the labor rate is the owner\'s: the quote can be sent');
   // Revoking needs the revision now in force; a stale one is a conflict.
   const stale = await post(h, approval({ approve: [], revoke: [MATTRESS.id] }), BUILDER);
   assert.deepEqual([stale.status, (await stale.json()).code], [409, 'catalog_revision_conflict']);

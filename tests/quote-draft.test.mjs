@@ -920,8 +920,10 @@ const builderState = (approvals = {}, settings = {}) => ({ menu: builderMenu, se
 const menuItem = name => builderMenu.services.find(item => item.name === name) || builderMenu.products.find(item => item.name === name);
 const approvedAt = (item, unitCents) => ({ unitCents, identity: menuItemIdentity(item) });
 const SHELF = builderMenu.products.find(item => item.id === 'hd-100006678');
-const builderSelection = ({ steps = ['removal', 'shelving', 'storage'], removal = [{ id: menuItem('Two-car garage base').id, quantity: 1 }, { id: menuItem('Full truck load').id, quantity: 1 }, { id: menuItem('Mattress').id, quantity: 2 }], shelving = [{ id: SHELF.id, quantity: 2 }], storage = [] } = {}) =>
-  ({ menuVersion: builderMenu.menuVersion, settingsVersion: builderSettings.settingsVersion, steps, removal, shelving, storage });
+// D12: a whole builder quote carries labor, here the pre-fill of a crew of 2 for 3 hours on site (6 man-hours, $240.00).
+const BUILDER_LABOR = { manHours: 6, estimate: { crewSize: 2, onSiteMinutes: 180 } }, BUILDER_LABOR_CENTS = 24000;
+const builderSelection = ({ steps = ['removal', 'shelving', 'storage'], removal = [{ id: menuItem('Two-car garage base').id, quantity: 1 }, { id: menuItem('Full truck load').id, quantity: 1 }, { id: menuItem('Mattress').id, quantity: 2 }], shelving = [{ id: SHELF.id, quantity: 2 }], storage = [], labor = steps.length === 3 ? BUILDER_LABOR : undefined } = {}) =>
+  ({ menuVersion: builderMenu.menuVersion, settingsVersion: builderSettings.settingsVersion, steps, removal, shelving, storage, ...(labor ? { labor: structuredClone(labor) } : {}) });
 function builderInput(f, selection = builderSelection(), state = builderState()) {
   const priced = priceCompositeQuote(state, selection, { complete: true });
   return { priced, input: f.input({ draft: { ...draft(), line_items: priced.lineItems, catalog_version: priced.menuVersion, composite_pricing: selection } }) };
@@ -932,20 +934,26 @@ test('builder quote: the server re-prices and saves its lines, breakdown and sel
   const result = await saveQuoteDraft(f.store, owner, input, NOW, { env: BUILDER_ENV, compositeState: async () => state });
   const job = f.job(result.job.id);
   assert.deepEqual([job.estimate.amountCents, job.estimate.catalogVersion, job.estimate.pricingSettingsVersion, job.estimate.status], [priced.totalCents, builderMenu.menuVersion, builderSettings.settingsVersion, 'draft']);
-  assert.deepEqual(job.estimate.lineItems.map(line => line.id), ['removal-base', 'removal-junk-full', 'removal-special', 'shelving-goods']);
-  assert.deepEqual(job.estimate.lineItems.at(-1).split, { productCents: 17800, laborCents: 0, laborMinutes: 0, markupCents: 5340, disposalCents: 0 }, 'the Hub job keeps the goods cost split');
+  assert.deepEqual(job.estimate.lineItems.map(line => line.id), ['removal-base', 'removal-junk-full', 'removal-special', 'shelving-goods', 'labor']);
+  assert.deepEqual(job.estimate.lineItems.find(line => line.id === 'shelving-goods').split, { productCents: 17800, laborCents: 0, laborMinutes: 0, markupCents: 5340, disposalCents: 0 }, 'the Hub job keeps the goods cost split');
+  // D12: the Labor line is on the saved estimate, in the total and the deposit; the breakdown records where it came from.
+  const labor = job.estimate.lineItems.at(-1);
+  assert.deepEqual([labor.kind, labor.name, labor.quantity, labor.unitCents, labor.totalCents, labor.split], ['labor', 'Labor: 6 man-hours × $40.00', 1, BUILDER_LABOR_CENTS, BUILDER_LABOR_CENTS, null]);
+  assert.equal(job.estimate.amountCents, 97500 + 75000 + 14000 + 23140 + BUILDER_LABOR_CENTS);
+  assert.equal(job.estimate.depositRequiredCents, Math.round(job.estimate.amountCents / 2), 'the deposit (50% for this policy-free draft) is on the total with labor');
+  assert.deepEqual(job.quoteDraft.breakdown.labor, { manHours: 6, rateCents: 4000, rateSource: 'default', totalCents: BUILDER_LABOR_CENTS, prefilledManHours: 6, adjusted: false, estimate: { crewSize: 2, onSiteMinutes: 180 } });
   assert.deepEqual(job.quoteDraft.compositePricing, priced.compositePricing);
   assert.deepEqual(job.quoteDraft.breakdown, priced.breakdown);
   assert.deepEqual(result.job.breakdown.sections.map(section => [section.id, section.subtotalCents]), [['removal', 97500 + 75000 + 14000], ['shelving', 23140], ['storage', 0]]);
   assert.deepEqual(result.job.breakdown.purchaseList.map(row => [row.sku, row.packs, row.productUrl]), [[SHELF.sku, 2, SHELF.productUrl]]);
   assert.doesNotMatch(JSON.stringify(result), /"split"|productCents|markupCents|retailPerPackCents/, 'the quote author DTO carries no cost');
   // Draft prices: the save stands, the send preview and the send are refused with every reason, nothing is sent.
-  const blocked = error => error.code === 'quote_draft_composite_prices_unapproved' && error.status === 409 && error.details.unapproved.map(row => row.name).join('|') === `Two-car garage base|Mattress|${SHELF.name}|Shelving and storage installation` && /owner has not approved/.test(error.message);
+  const blocked = error => error.code === 'quote_draft_composite_prices_unapproved' && error.status === 409 && error.details.unapproved.map(row => row.name).join('|') === `Two-car garage base|Mattress|${SHELF.name}` && /owner has not approved/.test(error.message);
   await assert.rejects(previewQuoteSend(f.store, owner, { jobId: job.id, expectedRevision: job.revision }, NOW, { env: BUILDER_ENV, compositeState: async () => state }), blocked);
   await assert.rejects(sendQuoteDraft(f.store, owner, { requestId: randomUUID(), jobId: job.id, expectedRevision: job.revision, confirmToken: 'unused' }, NOW, { env: BUILDER_ENV, deliver: f.deliver, compositeState: async () => state }), blocked);
   assert.equal(f.delivered.length, 0);
-  // The owner approves exactly those prices and confirms installation is in the goods price (no re-save needed): the quote sends.
-  const approved = builderState({ [menuItem('Two-car garage base').id]: approvedAt(menuItem('Two-car garage base'), 97500), [menuItem('Mattress').id]: approvedAt(menuItem('Mattress'), 7000), [SHELF.id]: approvedAt(SHELF, 11570) }, { goodsInstallationIncluded: true });
+  // The owner approves exactly those prices (no re-save needed; installation is billed through labor): the quote sends.
+  const approved = builderState({ [menuItem('Two-car garage base').id]: approvedAt(menuItem('Two-car garage base'), 97500), [menuItem('Mattress').id]: approvedAt(menuItem('Mattress'), 7000), [SHELF.id]: approvedAt(SHELF, 11570) });
   const preview = await previewQuoteSend(f.store, owner, { jobId: job.id, expectedRevision: job.revision }, NOW, { env: BUILDER_ENV, compositeState: async () => approved });
   const sent = await sendQuoteDraft(f.store, owner, { requestId: randomUUID(), jobId: job.id, expectedRevision: job.revision, confirmToken: preview.confirmToken }, LATER, { env: BUILDER_ENV, deliver: f.deliver, compositeState: async () => approved });
   assert.equal(sent.job.estimate.status, 'sent');
@@ -964,7 +972,7 @@ test('builder quote: a full removal step with shelving and every storage group s
   const { priced, input } = builderInput(f, selection, state);
   const result = await saveQuoteDraft(f.store, owner, input, NOW, { env: BUILDER_ENV, compositeState: async () => state });
   const job = f.job(result.job.id);
-  assert.deepEqual(job.estimate.lineItems.map(line => line.id), ['removal-base', 'removal-junk-full', 'removal-junk-partial', 'removal-special', 'removal-access', 'service-egc-008', 'service-egc-011', 'service-egc-012', 'shelving-goods', 'storage-goods']);
+  assert.deepEqual(job.estimate.lineItems.map(line => line.id), ['removal-base', 'removal-junk-full', 'removal-junk-partial', 'removal-special', 'removal-access', 'service-egc-008', 'service-egc-011', 'service-egc-012', 'shelving-goods', 'storage-goods', 'labor']);
   assert.equal(job.estimate.amountCents, priced.totalCents);
   assert.equal(job.quoteDraft.breakdown.purchaseList.length, 10, 'every pack is still on the purchase / grab list');
   assert.ok(job.quoteDraft.breakdown.lines.filter(line => line.section === 'storage').every(line => line.lineItemId === 'storage-goods'));
@@ -993,10 +1001,10 @@ test('builder on: a walkthrough-priced quote saves as before but is not sent unt
 test('builder quote: the owner-approved $750 full truck sends without any further approval', async () => {
   const f = fixture(), state = builderState(), selection = builderSelection({ removal: [{ id: menuItem('Full truck load').id, quantity: 2 }], shelving: [] });
   const { priced, input } = builderInput(f, selection, state);
-  assert.deepEqual([priced.totalCents, priced.approval.ready], [150000, true]);
+  assert.deepEqual([priced.totalCents, priced.approval.ready], [150000 + BUILDER_LABOR_CENTS, true], 'the trucks and the owner\'s labor rate are approved');
   const result = await saveQuoteDraft(f.store, owner, input, NOW, { env: BUILDER_ENV, compositeState: async () => state });
   const job = f.job(result.job.id), preview = await previewQuoteSend(f.store, owner, { jobId: job.id, expectedRevision: job.revision }, NOW, { env: BUILDER_ENV, compositeState: async () => state });
-  assert.match(preview.summary, /\$1,500\.00/);
+  assert.match(preview.summary, /\$1,740\.00/);
   // A saved builder quote is kept but cannot be sent once the builder flag is turned off.
   await assert.rejects(previewQuoteSend(f.store, owner, { jobId: job.id, expectedRevision: job.revision }, NOW, { env: ENV, compositeState: async () => state }), error => error.code === 'quote_draft_builder_disabled' && error.status === 404);
 });
@@ -1053,4 +1061,60 @@ test('builder API: the menu and the step preview are flag-gated, read-only, auth
   actor = crew;
   assert.equal((await get(env)).status, 403);
   assert.equal((await post(env, { action: 'composite_preview', compositePricing: builderSelection() })).status, 403);
+});
+
+// ---- D12: the Labor line (man-hours x the owner's labor rate) on every builder quote ----
+test('builder labor: a tampered labor amount is refused, the rate is the server\'s, a save needs the man-hours, and the send re-checks the rate', async () => {
+  const f = fixture(), state = builderState(), options = { env: BUILDER_ENV, compositeState: async () => state };
+  const { input, priced } = builderInput(f);
+  // A browser that lowers the Labor line, or prices it at another rate, is refused like any edited builder line.
+  for (const change of [line => { line.unitCents = 2000; line.totalCents = 2000; }, line => { line.name = 'Labor: 6 man-hours × $20.00'; }, line => { line.quantity = 6; line.unitCents = 2000; line.totalCents = 12000; }]) {
+    const tampered = structuredClone(input); change(tampered.draft.line_items.at(-1));
+    await assert.rejects(saveQuoteDraft(f.store, owner, tampered, NOW, options), error => error.code === 'quote_draft_composite_price_changed' && error.status === 409);
+  }
+  const dropped = structuredClone(input); dropped.draft.line_items.pop();
+  await assert.rejects(saveQuoteDraft(f.store, owner, dropped, NOW, options), error => error.code === 'quote_draft_composite_price_changed', 'the Labor line cannot be left off');
+  // The selection carries man-hours only: a rate or amount in it is refused, never trusted.
+  for (const labor of [{ ...BUILDER_LABOR, rateCents: 1 }, { ...BUILDER_LABOR, totalCents: 1 }, { manHours: 6.1, estimate: null }, { manHours: 0.25, estimate: null }, { manHours: 201, estimate: null }, { manHours: '6', estimate: null }, { estimate: null }, { manHours: 6, estimate: { crewSize: 21, onSiteMinutes: 180 } }]) {
+    const bad = structuredClone(input); bad.draft.composite_pricing.labor = labor;
+    await assert.rejects(saveQuoteDraft(f.store, owner, bad, NOW, options), error => error.code === 'quote_draft_composite_invalid_labor' && error.status === 400, JSON.stringify(labor));
+  }
+  // No labor at all, or no man-hours and no estimate to pre-fill them from: the save is refused.
+  const none = structuredClone(input); delete none.draft.composite_pricing.labor;
+  await assert.rejects(saveQuoteDraft(f.store, owner, none, NOW, options), error => error.code === 'quote_draft_composite_labor_required' && error.status === 400);
+  const blank = structuredClone(input); blank.draft.composite_pricing.labor = { manHours: null, estimate: null };
+  await assert.rejects(saveQuoteDraft(f.store, owner, blank, NOW, options), error => error.code === 'quote_draft_composite_labor_required');
+  assert.equal(f.calls.length, 0, 'nothing was written');
+  // The honest save: the server prices labor at its own rate; then the owner moves the rate and the send waits for a re-save.
+  const result = await saveQuoteDraft(f.store, owner, input, NOW, options), job = f.job(result.job.id);
+  assert.equal(job.estimate.amountCents, priced.totalCents);
+  const approvedPrices = { [menuItem('Two-car garage base').id]: approvedAt(menuItem('Two-car garage base'), 97500), [menuItem('Mattress').id]: approvedAt(menuItem('Mattress'), 7000), [SHELF.id]: approvedAt(SHELF, 11570) };
+  const ready = builderState(approvedPrices), moved = { ...builderState(approvedPrices), approvals: { ...builderState(approvedPrices).approvals, laborRatePerManHourCents: 4500 } };
+  assert.ok((await previewQuoteSend(f.store, owner, { jobId: job.id, expectedRevision: job.revision }, NOW, { env: BUILDER_ENV, compositeState: async () => ready })).confirmToken, 'every price approved and the $40.00 rate in force: it sends');
+  await assert.rejects(previewQuoteSend(f.store, owner, { jobId: job.id, expectedRevision: job.revision }, NOW, { env: BUILDER_ENV, compositeState: async () => moved }),
+    error => error.code === 'quote_draft_composite_prices_unapproved' && error.details.unapproved.length === 1 && error.details.unapproved[0].id === 'labor' && /The labor rate is now \$45\.00 per man-hour, but this quote has \$40\.00\. Save the quote again/.test(error.details.unapproved[0].reason));
+  // Saved again at the new rate: 6 man-hours × $45.00 = $270.00, and it sends.
+  const repriced = priceCompositeQuote(moved, builderSelection(), { complete: true });
+  assert.deepEqual([repriced.labor.rateCents, repriced.labor.totalCents, repriced.labor.rateSource, repriced.lineItems.at(-1).name], [4500, 27000, 'owner', 'Labor: 6 man-hours × $45.00']);
+  // A quote saved before the Labor line existed (no breakdown.labor) is not sent until it is saved again with labor.
+  const legacy = structuredClone(f.job(job.id)); delete legacy.quoteDraft.breakdown.labor;
+  f.rows.set(`jobs/${job.id}`, legacy);
+  await assert.rejects(previewQuoteSend(f.store, owner, { jobId: job.id, expectedRevision: legacy.revision }, NOW, { env: BUILDER_ENV, compositeState: async () => ready }),
+    error => error.code === 'quote_draft_composite_prices_unapproved' && error.details.unapproved.some(row => row.id === 'labor' && /no Labor line/.test(row.reason)));
+});
+
+test('builder labor: the estimator\'s adjustment is recorded with the pre-fill it replaced, and man-hours round to the cent', () => {
+  const state = builderState();
+  const at = labor => priceCompositeQuote(state, builderSelection({ labor }), { complete: true });
+  const adjusted = at({ manHours: 7.25, estimate: { crewSize: 2, onSiteMinutes: 180 } });
+  assert.deepEqual(adjusted.labor, { manHours: 7.25, rateCents: 4000, rateSource: 'default', totalCents: 29000, prefilledManHours: 6, adjusted: true, estimate: { crewSize: 2, onSiteMinutes: 180 } });
+  assert.deepEqual(adjusted.compositePricing.labor, { manHours: 7.25, estimate: { crewSize: 2, onSiteMinutes: 180 } });
+  // null asks for the pre-fill: crew size × hours on site, to the nearest quarter hour, within 0.5 to 200.
+  assert.deepEqual([at({ manHours: null, estimate: { crewSize: 3, onSiteMinutes: 255 } }).labor.manHours, at({ manHours: null, estimate: { crewSize: 1, onSiteMinutes: 20 } }).labor.manHours, at({ manHours: null, estimate: { crewSize: 20, onSiteMinutes: 1440 } }).labor.manHours], [12.75, 0.5, 200]);
+  // Entered by hand (no estimate): adjusted, with no pre-fill.
+  assert.deepEqual([at({ manHours: 3, estimate: null }).labor.prefilledManHours, at({ manHours: 3, estimate: null }).labor.adjusted], [null, true]);
+  // An odd-cent rate: a quarter hour at $40.50 is $10.125, rounded half up to $10.13.
+  const odd = { ...state, approvals: { ...state.approvals, laborRatePerManHourCents: 4050 } };
+  assert.equal(priceCompositeQuote(odd, builderSelection({ labor: { manHours: 0.75, estimate: null } }), { complete: true }).labor.totalCents, 3038);
+  assert.equal(priceCompositeQuote(odd, builderSelection({ labor: { manHours: 200, estimate: null } }), { complete: true }).labor.totalCents, 810000);
 });

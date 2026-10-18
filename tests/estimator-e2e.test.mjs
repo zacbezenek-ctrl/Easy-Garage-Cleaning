@@ -23,7 +23,9 @@ import { quoteApproved } from '../functions/_lib/portal-invitation.js';
 import { projectReleased } from '../functions/_lib/business-hub-core.js';
 import { payable } from '../functions/_lib/customer-payments.js';
 import { moneyDocumentKinds } from '../functions/_lib/money-document.js';
-import { BASE_ENV, MON, NOW, LATER, ON_ENV, SAT, SHELF, TOTES, TUE, builderState, client, estimator, fixture, menuItem, owner, selection, signedPlan } from './helpers/estimator-fixture.mjs';
+import { BASE_ENV, LABOR_CENTS, MON, NOW, LATER, ON_ENV, SAT, SHELF, TOTES, TUE, builderState, client, estimator, fixture, menuItem, owner, selection, signedPlan } from './helpers/estimator-fixture.mjs';
+import { walkthroughCrewBrief } from '../functions/_lib/walkthrough-crew-brief.js';
+import { scheduleMirrorNote } from '../functions/_lib/ghl-schedule-mirror.js';
 
 const MONEY = /\$\s?\d|Cents|retailPerPack|markup|split/;
 // An employee id (c1a ... c3b), the sales login or a roster name. A real leak is a quoted value or a word in a sentence;
@@ -75,12 +77,17 @@ test('estimator end to end: builder quote, crew opening, signed job on Crew 1 wi
   assert.deepEqual([menuView.enabled, menuView.steps], [true, ['removal', 'shelving', 'storage']]);
   assert.doesNotMatch(JSON.stringify(menuView), /retailPerPackCents|goodsMarkup|"internal":\{/, 'an estimator sees sell prices only');
   assert.equal(menuView.viewer.internal, false);
-  const chosen = selection(), through = steps => ({ ...chosen, steps, ...Object.fromEntries(['removal', 'shelving', 'storage'].filter(step => !steps.includes(step)).map(step => [step, []])) });
+  // The labor rate on the estimator's menu: the owner's $40.00 per man-hour, approved (D12).
+  assert.deepEqual([menuView.labor.rateCents, menuView.labor.approved, menuView.installation], [4000, true, { included: true, billedAs: 'labor' }]);
+  // As the builder sends them: a step preview carries no labor; the whole quote carries the estimator's man-hours.
+  const chosen = selection(), { labor: _labor, ...items } = chosen, through = steps => ({ ...items, steps, ...Object.fromEntries(['removal', 'shelving', 'storage'].filter(step => !steps.includes(step)).map(step => [step, []])) });
   const removal = await post({ action: 'composite_preview', compositePricing: through(['removal']) });
   const shelving = await post({ action: 'composite_preview', compositePricing: through(['removal', 'shelving']) });
   const preview = await post({ action: 'composite_preview', compositePricing: chosen });
   assert.deepEqual([removal.status, shelving.status, preview.status], [200, 200, 200]);
-  assert.deepEqual(preview.body.steps.map(step => [step.id, step.runningTotalCents]), [['removal', removal.body.totalCents], ['shelving', shelving.body.totalCents], ['storage', preview.body.totalCents]], 'a running total per step');
+  assert.deepEqual(preview.body.steps.map(step => [step.id, step.runningTotalCents]), [['removal', removal.body.totalCents], ['shelving', shelving.body.totalCents], ['storage', preview.body.totalCents - LABOR_CENTS], ['labor', preview.body.totalCents]], 'a running total per step, then the labor');
+  assert.deepEqual(preview.body.labor, { manHours: 6, rateCents: 4000, rateSource: 'default', totalCents: LABOR_CENTS, prefilledManHours: 6, adjusted: false, estimate: { crewSize: 2, onSiteMinutes: 180 } });
+  assert.deepEqual(preview.body.lineItems.at(-1), { id: 'labor', kind: 'labor', name: 'Labor: 6 man-hours × $40.00', description: 'Crew time on site, billed per man-hour, including installing the shelving and storage.', quantity: 1, unitCents: LABOR_CENTS, totalCents: LABOR_CENTS, amount: 240, optional: false, selected: true, group: null, tier: null, package: null, catalog: null, customerSupplied: false, taxable: false });
   const outOfOrder = await post({ action: 'composite_preview', compositePricing: { ...chosen, steps: ['shelving', 'removal', 'storage'] } });
   assert.deepEqual([outOfOrder.status, outOfOrder.body.code], [400, 'quote_draft_composite_order']);
   const saved = await post({ action: 'save', requestId: fixedRequestId(), customerId: 'c1', sourceWalkthroughId: 'w1', sourceRevision: 'w1r', draft: { client: client(1), title: 'Garage reset', scope: 'Removal, then shelving, then extra storage.', line_items: preview.body.lineItems, valid_until: '2026-10-30', catalog_version: preview.body.menuVersion, crew_size: 2, estimated_duration_min: 180, composite_pricing: chosen } });
@@ -114,6 +121,20 @@ test('estimator end to end: builder quote, crew opening, signed job on Crew 1 wi
   // snapshot the CRM sync reads, the estimator's answer and the crew never carry it.
   assert.deepEqual(job.estimate.lineItems, priced.storedLineItems);
   assert.deepEqual(job.estimate.lineItems.filter(line => line.split).map(line => line.id), ['shelving-goods', 'storage-goods']);
+  // D12 end to end: the customer's estimate carries the Labor line, the total, the deposit and the deal value (job.total,
+  // the HighLevel opportunity's monetaryValue) include it, and the crew sees the man-hours, never the rate or the amount.
+  assert.deepEqual(job.estimate.lineItems.at(-1).name, 'Labor: 6 man-hours × $40.00');
+  assert.deepEqual(job.acceptedHandoffPayload.quote.line_items.at(-1), { name: 'Labor: 6 man-hours × $40.00', qty: 1, total: 240 });
+  assert.deepEqual([job.total, job.priceQuoted, job.estimate.depositRequired], [priced.totalCents / 100, priced.totalCents / 100, Math.round(priced.totalCents / 2) / 100]);
+  assert.ok(priced.totalCents - LABOR_CENTS === priced.breakdown.sections.reduce((sum, section) => sum + section.subtotalCents, 0), 'the menu steps plus the labor are the total');
+  assert.deepEqual(job.compositeQuote.breakdown.labor, priced.labor);
+  assert.deepEqual(job.jobBreakdown.sections.at(-1), { id: 'labor', title: 'Labor', items: ['6 man-hours (about 3 hours on site for a crew of 2)'] });
+  assert.equal(job.jobInstructions.laborManHours, 6);
+  assert.deepEqual(walkthroughCrewBrief(job.jobInstructions).filter(row => ['Man-hours sold', 'Job breakdown'].includes(row.label)).map(row => [row.label, row.text.split('\n').at(-1)]), [['Man-hours sold', '6 man-hours'], ['Job breakdown', 'Labor: 6 man-hours (about 3 hours on site for a crew of 2)']]);
+  const crewView = fieldJobProjection(job, [], { purchaseDetails: true });
+  assert.match(JSON.stringify(crewView), /6 man-hours/);
+  assert.doesNotMatch(JSON.stringify([crewView, job.jobBreakdown, job.jobInstructions]), /\$\s?\d|rateCents|"totalCents"|Labor: 6 man-hours ×/, 'the crew never sees the labor rate or amount');
+  assert.match(scheduleMirrorNote({ kind: 'scheduled', job }).body, /\nLabor: 6 man-hours \(about 3 hours on site for a crew of 2\)\n/);
   assert.deepEqual(job.acceptedHandoffPayload.quote.estimate_line_items, normalizeLineItems(priced.lineItems, { strict: true }).lineItems);
   assert.doesNotMatch(JSON.stringify([signed, job.acceptedHandoffPayload, job.jobInstructions]), /markupCents|productCents|"split":\{/);
   assert.deepEqual([job.estimate.amount, job.estimate.depositRequired, job.estimate.status, job.estimate.catalogVersion, job.estimate.pricingSettingsVersion], [priced.totalCents / 100, Math.round(priced.totalCents / 2) / 100, 'accepted', priced.menuVersion, priced.settingsVersion]);
@@ -122,13 +143,13 @@ test('estimator end to end: builder quote, crew opening, signed job on Crew 1 wi
   assert.deepEqual(job.quoteDraft.breakdown, priced.breakdown, 'the saved draft takes the signed selection');
   assert.equal(savedHandoffPayload(job, signed.requestId).quote.total, priced.totalCents / 100, 'the CRM sync reads the signed builder snapshot');
   // Draft prices book the job but hold the estimate and deposit request (no portal invitation) until the owner approves them.
-  assert.deepEqual(job.pricesPendingApproval.items.map(item => item.name), ['Two-car garage base', SHELF.name, TOTES.name, 'Shelving and storage installation']);
+  assert.deepEqual(job.pricesPendingApproval.items.map(item => item.name), ['Two-car garage base', SHELF.name, TOTES.name], 'installation is billed through labor, so it is not held for');
   assert.deepEqual([job.pricesPendingApproval.status, job.pricesPendingApproval.reason], ['pending', 'draft_prices']);
   assert.equal(job.customerPortalInvitationRequestedAt, undefined);
   // Every customer surface holds it too: the portal withholds the estimate and payment, no deposit reminder, no
   // portal invitation from any sender, and no business-hub or account quote view.
   assert.deepEqual(heldEverywhere(job), HELD);
-  assert.deepEqual(signed.pricing, { source: 'builder', ready: false, pending: ['Two-car garage base', SHELF.name, TOTES.name, 'Shelving and storage installation'] });
+  assert.deepEqual(signed.pricing, { source: 'builder', ready: false, pending: ['Two-car garage base', SHELF.name, TOTES.name] });
   assert.ok(signed.warnings.some(row => row.code === 'prices_pending_approval' && /not sent to the customer until the owner approves/.test(row.message)));
 
   // The job breakdown and the buy list come from the builder's products: packs, units, SKU, store and product page.
@@ -182,9 +203,9 @@ test('estimator end to end: builder quote, crew opening, signed job on Crew 1 wi
   const held = await release(state);
   const refused = await held.json();
   assert.deepEqual([held.status, refused.code], [409, 'quote_draft_composite_prices_unapproved']);
-  assert.deepEqual(refused.details.unapproved.map(row => row.name), ['Two-car garage base', SHELF.name, TOTES.name, 'Shelving and storage installation']);
+  assert.deepEqual(refused.details.unapproved.map(row => row.name), ['Two-car garage base', SHELF.name, TOTES.name]);
   assert.equal(f.job(job.id).customerPortalInvitationRequestedAt, undefined);
-  const approved = builderState(Object.fromEntries(priced.breakdown.lines.filter(line => !line.approved).map(line => [line.id, line.unitCents])), { goodsInstallationIncluded: true });
+  const approved = builderState(Object.fromEntries(priced.breakdown.lines.filter(line => !line.approved).map(line => [line.id, line.unitCents])));
   const requestId = randomUUID(), released = await (await release(approved, requestId)).json();
   assert.deepEqual([released.ok, released.released, released.pricing], [true, true, { source: 'builder', ready: true, pending: [] }]);
   assert.deepEqual([f.job(job.id).pricesPendingApproval, f.job(job.id).customerPortalInvitationRequestedAt, f.job(job.id).compositeQuote.approval], [null, LATER, { ready: true, pending: [] }]);
@@ -361,13 +382,14 @@ test('the owner\'s menu approval releases the held builder jobs it now covers (b
   assert.deepEqual([replayed.replayed, 'heldJobs' in replayed, reads.length], [true, false, 1]);
   assert.deepEqual(heldEverywhere(releasedA), RELEASED);
   assert.deepEqual([f.job(signedB.job.id).pricesPendingApproval.reason, f.job(signedB.job.id).customerPortalInvitationRequestedAt], ['walkthrough_priced', undefined]);
-  // A builder job still waiting for some prices (goods and the installation decision) is not released by a partial approval.
+  // A builder job still waiting for some prices (the totes) is not released by a partial approval; the rest releases it
+  // (installation is billed through its Labor line, so no installation answer is needed).
   const g = fixture(), goods = await builderDraft(g, state), signedG = await signDraft(g, goods.priced, goods.draft, state, { crewId: null });
-  const partial = builderState({ [base.id]: goods.priced.breakdown.lines.find(line => line.id === base.id).unitCents, [SHELF.id]: goods.priced.breakdown.lines.find(line => line.id === SHELF.id).unitCents, [TOTES.id]: goods.priced.breakdown.lines.find(line => line.id === TOTES.id).unitCents });
+  const partial = builderState({ [base.id]: goods.priced.breakdown.lines.find(line => line.id === base.id).unitCents, [SHELF.id]: goods.priced.breakdown.lines.find(line => line.id === SHELF.id).unitCents });
   const gHeld = { ...g.store, heldJobIds: async () => [signedG.job.id] };
   assert.deepEqual(await releaseHeldHandoffs(gHeld, owner, LATER, { env: ON_ENV, compositeState: async () => partial }), { released: [], waiting: 1, more: false });
   assert.equal(g.job(signedG.job.id).pricesPendingApproval.status, 'pending');
-  const all = builderState({ ...Object.fromEntries(goods.priced.breakdown.lines.filter(line => !line.approved).map(line => [line.id, line.unitCents])) }, { goodsInstallationIncluded: true });
+  const all = builderState({ ...Object.fromEntries(goods.priced.breakdown.lines.filter(line => !line.approved).map(line => [line.id, line.unitCents])) });
   assert.deepEqual(await releaseHeldHandoffs(gHeld, owner, LATER, { env: ON_ENV, compositeState: async () => all, limit: 1 }), { released: [signedG.job.id], waiting: 0, more: false });
   // Bounded: limit + 1 ids are read and the rest wait for the next save (more).
   const many = { ...g.store, heldJobIds: async limit => ['missing-1', 'missing-2', 'missing-3'].slice(0, limit) };
@@ -381,12 +403,18 @@ test('the owner\'s menu approval releases the held builder jobs it now covers (b
   assert.equal(await releaseHeldHandoffs(gHeld, owner, LATER, { env: BASE_ENV }), null);
 });
 
-test('the owner\'s installation decision (settings.update) releases a builder job that waited only for it', async () => {
+test('the owner\'s installation decision (settings.update) releases a builder job signed before the Labor line that waited only for it', async () => {
   const f = fixture(), defaults = JSON.parse(readFileSync(new URL('../functions/_data/pricing-settings.defaults.json', import.meta.url), 'utf8'));
   const draftPrices = priceCompositeQuote(builderState(), selection(), { complete: true }), approvals = Object.fromEntries(draftPrices.breakdown.lines.filter(line => !line.approved).map(line => [line.id, line.unitCents]));
-  // Every menu price on the quote is approved; only the installation decision is left.
+  // Every menu price on the quote is approved: a quote with labor is not held at all.
   const state = builderState(approvals), { priced, draft } = await builderDraft(f, state), signed = await signDraft(f, priced, draft, state, { crewId: null });
-  assert.deepEqual(signed.pricing.pending, ['Shelving and storage installation']);
+  assert.deepEqual(signed.pricing, { source: 'builder', ready: true, pending: [] });
+  // The same job as one signed before builder quotes had a Labor line: held only for the installation decision.
+  const legacy = structuredClone(f.job(signed.job.id));
+  delete legacy.compositeQuote.breakdown.labor;
+  Object.assign(legacy, { pricesPendingApproval: { status: 'pending', reason: 'draft_prices', at: NOW, by: estimator.user, requestId: signed.requestId, items: [{ id: 'goods-installation', name: 'Shelving and storage installation' }] }, compositeQuote: { ...legacy.compositeQuote, approval: { ready: false, pending: [{ id: 'goods-installation', name: 'Shelving and storage installation' }] } } });
+  delete legacy.customerPortalInvitationRequestedAt;
+  f.rows.set(`jobs/${signed.job.id}`, legacy);
   const catalogRows = new Map();
   let tick = 0;
   const catalogStore = { read: async (collection, id) => structuredClone(catalogRows.get(`${collection}/${id}`) || null), commit: async writes => { const at = `rev-${++tick}`; for (const write of writes) catalogRows.set(`${write.collection}/${write.id}`, { ...structuredClone(write.patch), id: write.id, revision: at }); return { writeResults: writes.map(() => ({ updateTime: at })) }; } };

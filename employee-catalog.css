@@ -76,6 +76,7 @@
 .cat-diff-table :is(th,td){padding:8px 10px;border-bottom:1px solid var(--hub-line);text-align:left;vertical-align:top;overflow-wrap:anywhere}
 .cat-diff-table thead th{font:700 11px var(--hub-mono);text-transform:uppercase;letter-spacing:.06em;color:var(--hub-muted);background:var(--hub-soft)}
 .cat-dialog .hub-dialog-body>.hub-field,.cat-dialog .hub-dialog-body>.cat-checks{min-width:0}
+.cat-labor h2{margin:0 0 6px}.cat-labor-field{max-width:240px;margin:10px 0 0}
 @media (max-width:680px){
   .egc-catalog .hub-head .hub-actions .hub-btn{flex:1 1 auto}
   .cat-table,.cat-table tbody,.cat-table tr{display:block;width:100%}

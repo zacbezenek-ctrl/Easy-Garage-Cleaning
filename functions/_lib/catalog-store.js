@@ -10,9 +10,11 @@
  *   catalogOperations/<requestId>  receipts {action, fingerprint, actorId, requestId, at, result}
  *   pricingMenuApprovals/current   the owner's approved pricing-menu prices for the quote builder (EGC_QUOTE_BUILDER_ENABLED)
  *                                  {approvals:{[menuItemId]:{unitCents,kind,identity,approvedAt,approvedBy,requestId,basis}},
- *                                  goodsInstallationIncluded?, menuVersion, settingsVersion, updatedAt, updatedBy, requestId};
- *                                  written only by menu.approve. goodsInstallationIncluded is the owner's answer to the
- *                                  builder's installation question, stored once it is given (composite-quote.js)
+ *                                  goodsInstallationIncluded?, laborRatePerManHourCents?, menuVersion, settingsVersion,
+ *                                  updatedAt, updatedBy, requestId}; written only by menu.approve. goodsInstallationIncluded
+ *                                  is the owner's answer to the builder's installation question, stored once it is given;
+ *                                  laborRatePerManHourCents is the owner's labor rate for the builder's Labor line, stored
+ *                                  once the owner changes it ($40.00, DEFAULT_LABOR_RATE_CENTS, until then; composite-quote.js)
  * With no pointer the seed catalog (functions/_data/garage-catalog.json) is the published catalog, and with
  * no settings document the placeholder defaults apply (mustSetBeforeCustomerUse: true, internal use only).
  * A stored record that is malformed or fails verification fails closed (503) and never falls back to a seed.
@@ -28,7 +30,7 @@ import { auditWrite } from './hub-audit.js';
 import { CATALOG_SCHEMA_VERSION, catalogLinePricer, goodsMarkupOf, settingsReadyForCustomers, staleItems, validateCatalog, validatePricingSettings } from './catalog.js';
 import { denverToday } from './dispatch-time.js';
 import { SEED_CATALOG_JSON, SEED_SETTINGS_JSON } from '../_data/catalog-seed.js';
-import { INSTALLATION_ID, bundledPricingMenu, menuItemIdentity, menuPrices, validateMenuApprovals } from './composite-quote.js';
+import { INSTALLATION_ID, LABOR_RATE_LIMITS, bundledPricingMenu, laborRate, menuItemIdentity, menuPrices, validLaborRate, validateMenuApprovals } from './composite-quote.js';
 import { walkthroughPricing, walkthroughServiceItems } from './pricing-config.js';
 
 export const CATALOG_VERSIONS = 'catalogVersions', PRICING_SETTINGS = 'pricingSettings', PRICING_SETTINGS_VERSIONS = 'pricingSettingsVersions', CATALOG_OPERATIONS = 'catalogOperations', CURRENT = 'current';
@@ -183,11 +185,12 @@ export { bundledPricingMenu };
 
 function approvalsState(row) {
   if (!row) return { items: {}, revision: null };
-  try { return validateMenuApprovals({ items: plain(row.approvals) ? row.approvals : {}, revision: row.revision, ...(row.goodsInstallationIncluded !== undefined ? { goodsInstallationIncluded: row.goodsInstallationIncluded } : {}) }); }
+  try { return validateMenuApprovals({ items: plain(row.approvals) ? row.approvals : {}, revision: row.revision, ...(row.goodsInstallationIncluded !== undefined ? { goodsInstallationIncluded: row.goodsInstallationIncluded } : {}),
+    ...(row.laborRatePerManHourCents !== undefined ? { laborRatePerManHourCents: row.laborRatePerManHourCents } : {}) }); }
   catch { throw storageInvalid('pricing-menu approvals', { currentRevision: row.revision }); }
 }
 
-/** The quote builder's pricing state: {menu, settings, walkthrough, approvals:{items, revision, goodsInstallationIncluded?}}. Two reads: the
+/** The quote builder's pricing state: {menu, settings, walkthrough, approvals:{items, revision, goodsInstallationIncluded?, laborRatePerManHourCents?}}. Two reads: the
  * pricing settings and the owner's menu approvals; the menu and the walkthrough tables are bundled. */
 export async function readCompositeState(store, { pricingMenu = bundledPricingMenu, walkthrough = () => walkthroughPricing(walkthroughServiceItems()) } = {}) {
   const [settingsRow, approvalsRow] = await Promise.all([store.read(PRICING_SETTINGS, CURRENT), store.read(MENU_APPROVALS, CURRENT)]);
@@ -373,29 +376,37 @@ async function publish(store, session, input, now, actor) {
 // One request changes at most 100 prices, so its owner-only audit entry (hub-audit.js keeps 100 keys per snapshot)
 // records every amount before and after; the Hub screen ticks at most 100 at a time.
 export const MAX_MENU_CHANGES = 100;
+// The audit and receipt key of a labor-rate change (D12).
+export const LABOR_RATE_ID = 'labor-rate';
+const usd = cents => `$${(cents / 100).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 const MENU_ID = /^(?:hd-\d{6,12}|egc-\d{3})$/;
 function approvalsResult(row, requestId, replayed, current = true) {
   const state = approvalsState(row);
   return { ok: true, authority: 'employee_hub', action: 'menu.approve', requestId, replayed, approvals: { revision: current ? state.revision : null, current, count: Object.keys(state.items).length, items: state.items,
-    ...(state.goodsInstallationIncluded !== undefined ? { goodsInstallationIncluded: state.goodsInstallationIncluded } : {}) } };
+    ...(state.goodsInstallationIncluded !== undefined ? { goodsInstallationIncluded: state.goodsInstallationIncluded } : {}),
+    ...(state.laborRatePerManHourCents !== undefined ? { laborRatePerManHourCents: state.laborRatePerManHourCents } : {}) } };
 }
 
 /** menu.approve {requestId, expectedRevision, menuVersion, settingsVersion, approve:[{id, unitCents}], revoke:[id],
- * goodsInstallationIncluded?}: the owner's bulk approval of draft pricing-menu prices. A product is approved only at its
- * current price (cost x goodsMarkup), so the owner approves exactly what estimators see; a service is approved at the
- * amount the owner enters (the draft amount by default). goodsInstallationIncluded (a boolean) answers the builder's
- * installation question: true confirms that shelving and storage installation is included in the goods price, false
- * takes that back. It is the only way to answer it while CATALOG_QUOTES_ENABLED is off (the pricing settings cannot be
- * saved then), and a request may carry it with no price change. The approvals, a catalogOperations receipt and a
- * hub_audit entry commit together; expectedRevision is the approvals revision the owner reviewed (null before the
- * first approval). */
+ * goodsInstallationIncluded?, laborRatePerManHourCents?}: the owner's bulk approval of draft pricing-menu prices. A
+ * product is approved only at its current price (cost x goodsMarkup), so the owner approves exactly what estimators see;
+ * a service is approved at the amount the owner enters (the draft amount by default). goodsInstallationIncluded (a
+ * boolean) answers the builder's installation question for quotes saved before the Labor line existed: true confirms
+ * that shelving and storage installation is included in the goods price, false takes that back. It is the only way to
+ * answer it while CATALOG_QUOTES_ENABLED is off (the pricing settings cannot be saved then). laborRatePerManHourCents
+ * (whole cents, $1.00 to $1,000.00) sets the labor rate every builder quote's Labor line charges per man-hour (D12:
+ * $40.00 until the owner changes it). A request may carry either with no price change; each counts as one change. The
+ * approvals, a catalogOperations receipt and a hub_audit entry commit together; expectedRevision is the approvals
+ * revision the owner reviewed (null before the first approval). */
 async function approveMenuPrices(store, session, input, now, actor, { compositeState }) {
-  keys(input, ['action', 'requestId', 'expectedRevision', 'menuVersion', 'settingsVersion', 'approve', 'revoke', 'goodsInstallationIncluded']);
+  keys(input, ['action', 'requestId', 'expectedRevision', 'menuVersion', 'settingsVersion', 'approve', 'revoke', 'goodsInstallationIncluded', 'laborRatePerManHourCents']);
   if (!Object.hasOwn(input, 'expectedRevision') || input.expectedRevision !== null && (typeof input.expectedRevision !== 'string' || !input.expectedRevision || input.expectedRevision.length > 64)) throw fail('request_invalid', 'Reload the draft prices before approving: the approval needs the revision you reviewed (null before the first approval).');
-  const approve = input.approve ?? [], revoke = input.revoke ?? [], installation = input.goodsInstallationIncluded;
+  const approve = input.approve ?? [], revoke = input.revoke ?? [], installation = input.goodsInstallationIncluded, laborRateCents = input.laborRatePerManHourCents;
   if (installation !== undefined && typeof installation !== 'boolean') throw fail('request_invalid', 'Answer the installation question with yes or no.');
-  // The installation answer counts as one of the request's changes, so its audit entry still records every change.
-  const count = (Array.isArray(approve) ? approve.length : 0) + (Array.isArray(revoke) ? revoke.length : 0) + (installation === undefined ? 0 : 1);
+  if (laborRateCents !== undefined && !validLaborRate(laborRateCents)) throw fail('request_invalid', `Enter the labor rate per man-hour in dollars and cents, from ${usd(LABOR_RATE_LIMITS.min)} to ${usd(LABOR_RATE_LIMITS.max)}.`);
+  // The installation answer and the labor rate count as one of the request's changes each, so its audit entry still
+  // records every change.
+  const count = (Array.isArray(approve) ? approve.length : 0) + (Array.isArray(revoke) ? revoke.length : 0) + (installation === undefined ? 0 : 1) + (laborRateCents === undefined ? 0 : 1);
   if (!Array.isArray(approve) || !Array.isArray(revoke) || count < 1 || count > MAX_MENU_CHANGES) throw fail('request_invalid', `Choose 1 to ${MAX_MENU_CHANGES} prices to approve or revoke.`);
   const seen = new Set();
   for (const entry of approve) {
@@ -431,18 +442,21 @@ async function approveMenuPrices(store, session, input, now, actor, { compositeS
     changed.push({ id, unitCents: null, previous: items[id].unitCents });
     delete items[id];
   }
-  // The installation answer is written only when this request gives one; otherwise the stored answer stays as it was.
-  const previousInstallation = state.approvals.goodsInstallationIncluded ?? null;
-  const patch = { approvals: items, ...(installation !== undefined ? { goodsInstallationIncluded: installation } : {}), menuVersion: state.menu.menuVersion, settingsVersion: state.settings.settingsVersion, updatedAt: now, updatedBy: actor, requestId: input.requestId };
+  // The installation answer and the labor rate are written only when this request gives them; otherwise the stored
+  // values stay as they were.
+  const previousInstallation = state.approvals.goodsInstallationIncluded ?? null, previousRate = laborRate(state).rateCents;
+  const patch = { approvals: items, ...(installation !== undefined ? { goodsInstallationIncluded: installation } : {}), ...(laborRateCents !== undefined ? { laborRatePerManHourCents: laborRateCents } : {}),
+    menuVersion: state.menu.menuVersion, settingsVersion: state.settings.settingsVersion, updatedAt: now, updatedBy: actor, requestId: input.requestId };
   const summary = list => Object.fromEntries(list.map(entry => [entry.id, entry]));
-  const installed = installation !== undefined ? { installation: { included: installation, previous: previousInstallation } } : {};
-  const audited = (rows, value) => ({ ...summary(rows), ...(installation !== undefined ? { [INSTALLATION_ID]: { id: INSTALLATION_ID, included: value } } : {}) });
+  const installed = { ...(installation !== undefined ? { installation: { included: installation, previous: previousInstallation } } : {}), ...(laborRateCents !== undefined ? { laborRate: { rateCents: laborRateCents, previous: previousRate } } : {}) };
+  const audited = (rows, value, rate) => ({ ...summary(rows), ...(installation !== undefined ? { [INSTALLATION_ID]: { id: INSTALLATION_ID, included: value } } : {}),
+    ...(laborRateCents !== undefined ? { [LABOR_RATE_ID]: { id: LABOR_RATE_ID, rateCents: rate } } : {}) });
   const writes = [
     { collection: MENU_APPROVALS, id: CURRENT, revision, patch },
     // The receipt keeps every change with its amount and the amount it replaced, like the audit entry.
     { collection: CATALOG_OPERATIONS, id: receiptId, patch: { action: input.action, fingerprint, actorId: actor, requestId: input.requestId, at: now, result: { approved: approve.map(entry => entry.id), revoked: revoke, menuVersion: state.menu.menuVersion, settingsVersion: state.settings.settingsVersion, changes: changed, ...installed } } },
     auditWrite({ actor: { id: actor, kind: 'human', role: session.role }, via: 'hub', action: 'pricing_menu.approve', entity: { collection: MENU_APPROVALS, id: CURRENT },
-      before: audited(changed.map(({ id, previous }) => ({ id, unitCents: previous })), previousInstallation), after: audited(changed.map(({ id, unitCents }) => ({ id, unitCents })), installation), requestId: input.requestId, visibility: 'owner', now }),
+      before: audited(changed.map(({ id, previous }) => ({ id, unitCents: previous })), previousInstallation, previousRate), after: audited(changed.map(({ id, unitCents }) => ({ id, unitCents })), installation, laborRateCents), requestId: input.requestId, visibility: 'owner', now }),
   ];
   const { recovered, committed } = await commitOrRecover(store, writes, replay);
   if (recovered) return recovered;
