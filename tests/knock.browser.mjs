@@ -231,6 +231,18 @@ try {
   await admin.getByText('Approval reference updated', { exact: false }).waitFor();
   const updatedLine = await admin.locator('.banner', { hasText: 'reference synthetic-browser-approval-b' }).textContent();
   assert.equal(updatedLine.replace('synthetic-browser-approval-b', 'synthetic-browser-approval'), approvedLine, 'same approver and approval time');
+  // D6b: with the door-to-door terms approved, the owner approves the walkthrough-setting and estimator terms in their
+  // own card (fixed 13% + 7%, never edited); Admin > Estimators then lists the estimator's 7% as approved.
+  await admin.getByLabel('Setter terms reference', { exact: true }).fill('synthetic-browser-d6b');
+  await admin.getByRole('button', { name: 'Approve walkthrough-setting and estimator terms', exact: true }).click();
+  const setterConfirm = admin.locator('dialog.sheet[aria-label="Approve these terms?"]');
+  assert.match(await setterConfirm.textContent(), /13% to the rep and 7% to the estimator of a walkthrough set at the door, 7% to the estimator of a walkthrough sold directly/);
+  await setterConfirm.getByRole('button', { name: 'Approve terms', exact: true }).click();
+  await admin.locator('.banner', { hasText: 'Walkthrough-setting and estimator terms approved' }).waitFor();
+  assert.match(await admin.locator('#knock-main').textContent(), /reference synthetic-browser-d6b/);
+  assert.equal(await admin.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth), true, 'no sideways scroll at 320px');
+  await admin.goto(`${server.base}/crew/knock.html#admin?s=estimators`);
+  await admin.locator('.banner', { hasText: 'Estimator terms approved' }).waitFor();
 
   // 7. Territory map and GPS: a newly approved rep with nothing yet sees why the map is empty, picks
   //    the nearest open neighborhood (sorted by the phone's GPS), its houses download and drive the

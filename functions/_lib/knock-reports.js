@@ -7,7 +7,9 @@ import { loadNeighborhoods } from './knock-territory.js';
 import { addDays, validDate, zonedDate } from '../../crew/knock-time.js';
 import { commissionCsv, commissionEligibility, commissionIssues, customerCollection, csvCell, earnedAt, isEarned, leadOverrides, payPeriodFor, periodStatement, previousPayPeriod, projectedCommission, saleCommissions, toCsv, trainingCsv } from '../../crew/knock-money.js';
 import { saleSyncSummaries } from './knock-handoff.js';
-import { setterAttributions } from './knock-setters.js';
+import { setterAttributions, setterBatchReaderFor } from './knock-setters.js';
+import { loadSettings, loadSetterTerms } from './knock-access.js';
+import { dispatchStorage } from './dispatch-storage.js';
 import { hubJobsForSales, knockJobBridgeEnabled, saleJobView } from './knock-bridge.js';
 import { emptyTotals, addTotals, gateStatus, metrics, planComparison, scoreboard, teamTotals } from '../../crew/knock-stats.js';
 
@@ -51,16 +53,29 @@ export function repSetterRows(setters, repKey) {
   return { ...setters, rows };
 }
 
-/* A rep's pay: this period and the five before, plus each sale's commission state. */
+/* The rep's own earned setter shares (13%), for their statement, once the owner approved the setter terms; null before. */
+export function repSetterChannels(setters, repKey, terms) {
+  if (terms?.verified !== true) return null;
+  return (setters?.rows || []).filter(row => row?.state === 'earned' && row.setterKey === repKey).flatMap(row => (row.allocations || [])
+    .filter(item => item.role === 'setter' && item.repKey === repKey).map(item => ({ id: item.id, repKey, role: 'setter', amount: item.amountCents / 100, earnedAt: Date.parse(row.earnedAt) })));
+}
+
+/* A rep's pay: this period and the five before, plus each sale's commission state. Once the owner approved the setter
+   terms, the rep's earned setter shares count in their periods too (repSetterChannels). */
 async function myMoney({ store, rep, settings, nowMs, params, env, dispatch = null }) {
   const own = await loadMoney(store, { repKey: rep.repKey });
   // A lead's override comes from their team's sales, so those are read too (amounts only, no customers).
   const team = rep.role === 'lead' ? (await store.query('knock_sales', { where: [['leadKey', '==', rep.repKey]] })).map(clean) : [];
   const sales = [...own.sales, ...team.filter(s => s.repKey !== rep.repKey)];
+  const terms = await loadSetterTerms(store, settings);
+  const setters = await setterAttributions(store, env, { repKey: rep.repKey, nowMs, terms, ...(dispatch ? { readJobs: setterBatchReaderFor(dispatch(env)) } : {}) });
+  // A setter record that could not all be read leaves the rep's shares unknown: it holds their statement (approved terms only).
+  const channels = repSetterChannels(setters, rep.repKey, terms), channelReview = [...(setters.truncated ? ['setter_records_truncated'] : []),
+    ...(setters.rows.some(row => (row.reviewReasons || []).includes('source_unavailable')) ? ['setter_source_unavailable'] : [])];
   const periods = [];
   let period = periodFromParams(params, settings, nowMs);
   for (let i = 0; i < 6; i += 1) {
-    const [row] = periodStatement({ sales, payouts: own.payouts, training: own.training, reps: [{ ...rep, status: 'active' }], settings, period, now: nowMs }).filter(r => r.repKey === rep.repKey);
+    const [row] = periodStatement({ sales, payouts: own.payouts, training: own.training, reps: [{ ...rep, status: 'active' }], settings, period, now: nowMs, channels, channelReview }).filter(r => r.repKey === rep.repKey);
     periods.push({ period, ...(row || { booked: 0, pending: 0, earned: 0, accelerator: 0, override: 0, paid: 0, balance: 0, salesBooked: 0, trainingMinutes: 0, trainingPay: 0 }) });
     period = previousPayPeriod(period, settings.payroll);
   }
@@ -83,7 +98,7 @@ async function myMoney({ store, rep, settings, nowMs, params, env, dispatch = nu
       : { state: 'pending', amount: projectedCommission(sale, settings.commission) },
   }));
   const overrides = rep.role === 'lead' ? leadOverrides(team, settings.commission, { now: nowMs }).filter(o => o.leadKey === rep.repKey) : [];
-  return { periods, sales: bySale, setters: repSetterRows(await setterAttributions(store, env, { repKey: rep.repKey, nowMs }), rep.repKey),
+  return { periods, sales: bySale, setters: repSetterRows(setters, rep.repKey),
     overrides: overrides.map(o => ({ amount: o.amount, earnedAt: new Date(o.earnedAt).toISOString() })), rates: settings.commission, trainingHourlyRate: settings.payroll.trainingHourlyRate };
 }
 
@@ -121,10 +136,12 @@ export const reportViews = {
 
 /* ---------- admin money ---------- */
 
-export async function moneyView(store, params, nowMs, settings) {
+/* Admin > Money. `channels` are the approved setter and estimator shares (estimator-commission.js channelEarnings:
+   {items, review}, null before the owner's approval): they join the statement as earned commission. */
+export async function moneyView(store, params, nowMs, settings, { channels = null } = {}) {
   const period = periodFromParams(params, settings, nowMs);
   const [{ sales, payouts, training }, reps] = await Promise.all([loadMoney(store), listReps(store)]);
-  const statement = periodStatement({ sales, payouts, training, reps, settings, period, now: nowMs });
+  const statement = periodStatement({ sales, payouts, training, reps, settings, period, now: nowMs, channels: channels?.items ?? null, channelReview: channels?.review || [] });
   return {
     period, previous: previousPayPeriod(period, settings.payroll), next: payPeriodFor(addDays(period.end, 1), settings.payroll),
     statement, payouts: payouts.filter(p => p.periodKey === period.key).sort((a, b) => String(b.paidAt).localeCompare(String(a.paidAt))),
@@ -132,13 +149,13 @@ export async function moneyView(store, params, nowMs, settings) {
   };
 }
 
-export async function exportCsv(store, params, nowMs, settings) {
+export async function exportCsv(store, params, nowMs, settings, { channels = null } = {}) {
   const kind = params.get('kind') || 'commission';
   const period = periodFromParams(params, settings, nowMs);
   if (period.configured === false) throw knockFailure('The two-week payroll anchor is unconfigured. Preview dates cannot be exported as a payroll cycle.', 409, 'knock_payroll_unconfigured');
   const [{ sales, payouts, training }, reps] = await Promise.all([loadMoney(store), listReps(store)]);
   if (kind === 'commission') {
-    const statement = periodStatement({ sales, payouts, training, reps, settings, period, now: nowMs });
+    const statement = periodStatement({ sales, payouts, training, reps, settings, period, now: nowMs, channels: channels?.items ?? null, channelReview: channels?.review || [] });
     return { csv: commissionCsv(statement, period), filename: `egc-knock-commission-${period.start}-${period.end}.csv` };
   }
   if (kind === 'training') {
@@ -156,12 +173,19 @@ export async function exportCsv(store, params, nowMs, settings) {
   throw knockFailure('Unknown export.', 400, 'knock_unknown_export');
 }
 
-export async function addPayout(store, admin, { requestId, repKey, periodKey, amount, note }, nowIso) {
+/* An estimator paid their 7% (estimator-commission.js) may be Hub staff with no canvassing profile: once the owner
+   approved the setter terms, a payout may name a staff key on the dispatch roster. */
+async function estimatorRecipient(store, env, dispatch, key) {
+  if (!/^[a-z0-9._-]{1,64}$/.test(key) || !(await loadSetterTerms(store, await loadSettings(store))).verified) return null;
+  return (await dispatch(env).roster()).some(person => person?.id === key) ? { id: key } : null;
+}
+
+export async function addPayout(store, admin, { requestId, repKey, periodKey, amount, note }, nowIso, env = {}, { dispatch = dispatchStorage } = {}) {
   if (!UUID.test(String(requestId || ''))) throw knockFailure('Missing request id. Reload and retry.', 400, 'knock_invalid_request');
   if (!/^\d{4}-\d{2}-\d{2}_\d{4}-\d{2}-\d{2}$/.test(String(periodKey || ''))) throw knockFailure('Pick the pay period.', 400, 'knock_invalid_period');
   const value = Number(amount);
   if (!Number.isFinite(value) || value <= 0 || value > 100000) throw knockFailure('Enter the amount paid.', 400, 'knock_invalid_amount');
-  const rep = await store.get('knock_reps', String(repKey || ''));
+  const rep = await store.get('knock_reps', String(repKey || '')) || await estimatorRecipient(store, env, dispatch, String(repKey || ''));
   if (!rep) throw knockFailure('That rep was not found.', 404, 'knock_rep_missing');
   const existing = await store.get('knock_payouts', requestId);
   const payout = { repKey: rep.id, periodKey, amount: Math.round(value * 100) / 100, note: String(note || '').slice(0, 200), paidAt: nowIso, by: admin.user };

@@ -34,6 +34,8 @@ const PASSWORD_SHIPPED = ['password'];
 // D10's Team directory (My EGC) follows Password and needs the 'team_directory' capability, which the suite adds only while
 // /api/integration-status reports flags.teamDirectory (EGC_STAFF_DIRECTORY_ENABLED on).
 const TEAM_SHIPPED = ['team_directory'];
+// D6b's My commission (My EGC) follows Team directory: every signed-in viewer's own estimator 7%, read only.
+const COMMISSION_SHIPPED = ['my_commission'];
 
 test('a registered screen joins the nav under its group only when the capability matches', () => {
   for (const [who, expected] of [[{}, true], [MANAGER, true], [CREW, false]]) {
@@ -295,7 +297,10 @@ test('the shipped screens register cleanly for business viewers only and lazy-lo
   vm.runInNewContext(readFileSync(new URL('../employee-hub-screens.js', import.meta.url), 'utf8'), context, { filename: 'employee-hub-screens.js' });
   assert.deepEqual(warnings, []);
   const registry = context.EGCHubScreens;
-  assert.deepEqual([...registry.list().map(entry => entry.id)], [...CREW_SHIPPED, ...PASSWORD_SHIPPED, ...TEAM_SHIPPED, ...OWNER_SHIPPED, ...SHIPPED]);
+  assert.deepEqual([...registry.list().map(entry => entry.id)], [...CREW_SHIPPED, ...PASSWORD_SHIPPED, ...TEAM_SHIPPED, ...COMMISSION_SHIPPED, ...OWNER_SHIPPED, ...SHIPPED]);
+  const commission = registry.get('my_commission');
+  assert.deepEqual([commission.group, commission.label, commission.crewVisible, commission.module, commission.load.js, commission.load.css], ['MY EGC', 'My commission', true, 'EGCEstimatorCommission', 'employee-estimator-commission.js', 'employee-estimator-commission.css']);
+  assert.ok(registry.allowed(commission, ['crew']), 'every signed-in viewer sees their own commission');
   const password = registry.get('password');
   assert.deepEqual([password.group, password.label, password.capability, password.crewVisible, password.module, password.load.js, password.load.css], ['MY EGC', 'Password', 'password', false, 'EGCStaffAccess', 'employee-staff-access.js', 'employee-staff-access.css']);
   assert.ok(!registry.allowed(password, ['crew', 'business', 'owner']) && registry.allowed(password, ['crew', 'password']));
@@ -315,7 +320,7 @@ test('the shipped screens register cleanly for business viewers only and lazy-lo
   for (const [who, visible] of [[CREW, false], [MANAGER, true], [{}, true]]) {
     const page = hubPage(who), nav = page.api.visibleNav().map(item => item[1]);
     for (const id of SHIPPED) assert.equal(nav.includes(id), visible, `${id} for ${JSON.stringify(who)}`);
-    for (const id of CREW_SHIPPED) assert.ok(nav.includes(id), `${id} for ${JSON.stringify(who)}`);
+    for (const id of [...CREW_SHIPPED, ...COMMISSION_SHIPPED]) assert.ok(nav.includes(id), `${id} for ${JSON.stringify(who)}`);
     if (visible) assert.ok(nav.indexOf('reviews') > nav.indexOf('delivery') && nav.indexOf('message_templates') > nav.indexOf('settings'), 'each joins the end of its nav group');
   }
 });

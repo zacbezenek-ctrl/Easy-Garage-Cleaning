@@ -32,6 +32,31 @@ export function commissionRuleText(commission) {
 
 export const SETTER_RULE_TEXT = `${CHANNEL_PERCENTS.setter}% to you when a walkthrough you set closes and the customer pays in full; the estimator gets ${CHANNEL_PERCENTS.estimator}% (${CHANNEL_PERCENTS.setter + CHANNEL_PERCENTS.estimator}% total). Booking or a no-show earns nothing, and amounts stay on hold until finance confirms the recipients, base and pay cycle. It is never added to the ${CHANNEL_PERCENTS.directSale}% direct-sale rate.`;
 
+/* The appointment-setter and estimator terms (owner decision D6b, 2026-10-17) the owner approves as one contract
+   (knock-admin.js approveSetterTerms): fixed values, never settings. A walkthrough a door-to-door rep set pays 13% to
+   the rep and 7% to its estimator, a walkthrough an estimator sells directly 7%, of the job's whole collected price
+   including goods, rounded to the nearest cent, earned once the job is closed and paid in full (or at the approval,
+   when that is later) and paid every two weeks with the door-to-door commission, whose approval it needs. Under them
+   a signed walkthrough handoff for a garage transformation is garage work and its signer is the estimator, unless
+   the office recorded otherwise. Junk removal earns nothing; a short or excess payment, a refund or a cancellation
+   is held for review; channels never stack. */
+export const SETTER_CONTRACT = 'knock-setter-v1';
+export const SETTER_TERMS = Object.freeze({ setterPercent: CHANNEL_PERCENTS.setter, estimatorPercent: CHANNEL_PERCENTS.estimator, directEstimatorPercent: CHANNEL_PERCENTS.estimator,
+  calculationBase: 'collected_job_total_including_goods', earnedOn: 'closed_and_paid_in_full', rounding: 'nearest_cent', payoutCadence: 'biweekly',
+  serviceScope: 'garage_only_signed_handoff_or_office', estimatorAttribution: 'office_recorded_else_handoff_signer',
+  partialCollections: 'review_required', refunds: 'review_required', stacking: false });
+
+export function validSetterTerms(terms) {
+  return Boolean(terms) && typeof terms === 'object' && !Array.isArray(terms) && Object.keys(terms).length === Object.keys(SETTER_TERMS).length &&
+    Object.entries(SETTER_TERMS).every(([key, value]) => Object.hasOwn(terms, key) && terms[key] === value);
+}
+
+// The setter rule a rep reads on My money, once the owner approved the setter terms (setter: {verified}).
+export function setterRuleText(setter) {
+  if (setter?.verified !== true) return SETTER_RULE_TEXT;
+  return `${CHANNEL_PERCENTS.setter}% to you when a walkthrough you set closes and the customer pays the whole price, goods included; the estimator gets ${CHANNEL_PERCENTS.estimator}% (${CHANNEL_PERCENTS.setter + CHANNEL_PERCENTS.estimator}% total). It is earned once the job is paid in full, rounded to the cent and paid every two weeks. Booking, a no-show or junk removal earns nothing, and a short payment, refund or cancellation is held for review. It is never added to the ${CHANNEL_PERCENTS.directSale}% direct-sale rate.`;
+}
+
 // The only collection policy and scope the knock-collected-v3 contract accepts. The owner's
 // approval screen shows these exact values; they are not adjustable settings.
 export const COLLECTED_V3_POLICY = Object.freeze({ earnedOn: 'customer_collection', payoutCadence: 'biweekly',
@@ -335,8 +360,13 @@ function reviewScope(sale, issues, period, timeZone, tiered) {
    earned   - commission (incl. accelerator) that became earned in the period
    override - lead override that became earned in the period
    paid     - payouts recorded against the period
-   Review reasons come only from sales that touch the period (see reviewScope). */
-export function periodStatement({ sales = [], payouts = [], training = [], reps = [], settings, period, now = Date.now(), timeZone = 'America/Denver' }) {
+   Review reasons come only from sales that touch the period (see reviewScope).
+   channels - only once the owner approved the setter terms (SETTER_TERMS): the appointment-setter and estimator shares
+              earned so far, [{repKey, role:'setter'|'estimator', amount, earnedAt (ms), name?}]. Each adds to its
+              recipient's earned commission in the period it was earned, and every row then also has setterCommission
+              and estimatorCommission. channelReview: reasons that hold every row (the shares could not all be read).
+              Without channels the statement is exactly what it was. */
+export function periodStatement({ sales = [], payouts = [], training = [], reps = [], settings, period, now = Date.now(), timeZone = 'America/Denver', channels = null, channelReview = [] }) {
   sales = unique(sales);
   payouts = unique(payouts);
   const commission = settings?.commission || {};
@@ -345,15 +375,15 @@ export function periodStatement({ sales = [], payouts = [], training = [], reps 
   const overrides = leadOverrides(sales, commission, { now });
   // Reps with any receipt counted under an enabled monthly accelerator.
   const tieredReps = new Set(sales.filter(sale => saleTerms(sale, commission) && saleTerms(sale, commission).acceleratorEnabled !== false).map(sale => sale.repKey));
-  const byRep = new Map();
-  const row = repKey => {
+  const byRep = new Map(), withChannels = Array.isArray(channels);
+  const row = (repKey, name = '') => {
     if (!byRep.has(repKey)) {
       const rep = reps.find(r => r.repKey === repKey);
       byRep.set(repKey, {
-        repKey, name: rep?.displayName || repKey, salesBooked: 0, booked: 0, pending: 0,
+        repKey, name: rep?.displayName || name || repKey, salesBooked: 0, booked: 0, pending: 0,
         earned: 0, accelerator: 0, override: 0, paid: 0, trainingMinutes: 0, trainingPay: 0,
         projectedCommission: 0, customerCollectedRevenue: 0, customerRefundedRevenue: 0,
-        collectionUnknownCount: 0, reviewReasons: [],
+        collectionUnknownCount: 0, reviewReasons: [], ...(withChannels ? { setterCommission: 0, estimatorCommission: 0 } : {}),
       });
     }
     return byRep.get(repKey);
@@ -394,6 +424,12 @@ export function periodStatement({ sales = [], payouts = [], training = [], reps 
     const r = row(item.leadKey);
     r.override = money(r.override + item.amount);
   }
+  for (const item of withChannels ? channels : []) {
+    if (!Number.isFinite(item?.earnedAt) || !Number.isFinite(item.amount) || !inPeriod(zonedDate(item.earnedAt, timeZone), period)) continue;
+    const r = row(item.repKey, item.name), key = item.role === 'setter' ? 'setterCommission' : 'estimatorCommission';
+    r[key] = money(r[key] + item.amount);
+    r.earned = money(r.earned + item.amount);
+  }
   for (const payout of payouts) {
     if (payout.periodKey !== period.key) continue;
     const r = row(payout.repKey);
@@ -410,7 +446,7 @@ export function periodStatement({ sales = [], payouts = [], training = [], reps 
     r.commissionPaid = r.paid;
     r.commissionPaymentEvidence = 'admin_recorded_unreconciled';
     r.commissionSettled = null;
-    r.reviewReasons = [...new Set(r.reviewReasons)];
+    r.reviewReasons = [...new Set([...r.reviewReasons, ...(withChannels ? channelReview : [])])];
     r.compensationState = commission.verified === false ? 'unconfigured' : r.reviewReasons.length ? 'review_required' : 'configured';
     if (commission.verified === false) {
       r.pending = r.projectedCommission = r.earned = r.accelerator = r.override = r.balance = null;
@@ -421,6 +457,7 @@ export function periodStatement({ sales = [], payouts = [], training = [], reps 
       r.earned = r.accelerator = r.override = r.balance = null;
       if (r.reviewReasons.includes('commission_terms_missing_or_invalid')) r.projectedCommission = r.pending = null;
     }
+    if (withChannels && r.earned === null) r.setterCommission = r.estimatorCommission = null;
     r.earnedCommission = r.earned === null ? null : money(r.earned + r.override);
     r.payableCommission = r.compensationState === 'configured' ? Math.max(0, r.balance) : null;
   }
@@ -441,9 +478,13 @@ export function toCsv(header, rows) {
 }
 
 export function commissionCsv(statement, period) {
+  // A statement with the approved setter and estimator shares (periodStatement channels) adds their two columns.
+  const channels = statement.some(r => Object.hasOwn(r, 'setterCommission'));
   return toCsv(
-    ['period_start', 'period_end', 'rep', 'username', 'sales_booked', 'booked_revenue', 'pending_commission', 'earned_commission', 'accelerator_included', 'lead_override', 'rep_payments_recorded', 'calculated_balance', 'projected_commission', 'customer_collected_revenue', 'customer_refunded_revenue', 'payable_commission', 'compensation_state', 'review_reasons', 'collection_unknown_count', 'rep_payment_evidence', 'settled_commission'],
-    statement.map(r => [period.start, period.end, r.name, r.repKey, r.salesBooked, ...[r.booked, r.pending, r.earned, r.accelerator, r.override, r.commissionPaid, r.balance, r.projectedCommission, r.customerCollectedRevenue, r.customerRefundedRevenue, r.payableCommission].map(v => v == null ? '' : v.toFixed(2)), r.compensationState, r.reviewReasons.join(';'), r.collectionUnknownCount, r.commissionPaymentEvidence, r.commissionSettled == null ? '' : r.commissionSettled.toFixed(2)]),
+    ['period_start', 'period_end', 'rep', 'username', 'sales_booked', 'booked_revenue', 'pending_commission', 'earned_commission', 'accelerator_included', 'lead_override', 'rep_payments_recorded', 'calculated_balance', 'projected_commission', 'customer_collected_revenue', 'customer_refunded_revenue', 'payable_commission', 'compensation_state', 'review_reasons', 'collection_unknown_count', 'rep_payment_evidence', 'settled_commission',
+      ...(channels ? ['setter_commission_included', 'estimator_commission_included'] : [])],
+    statement.map(r => [period.start, period.end, r.name, r.repKey, r.salesBooked, ...[r.booked, r.pending, r.earned, r.accelerator, r.override, r.commissionPaid, r.balance, r.projectedCommission, r.customerCollectedRevenue, r.customerRefundedRevenue, r.payableCommission].map(v => v == null ? '' : v.toFixed(2)), r.compensationState, r.reviewReasons.join(';'), r.collectionUnknownCount, r.commissionPaymentEvidence, r.commissionSettled == null ? '' : r.commissionSettled.toFixed(2),
+      ...(channels ? [r.setterCommission, r.estimatorCommission].map(v => v == null ? '' : v.toFixed(2)) : [])]),
   );
 }
 

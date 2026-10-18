@@ -537,8 +537,35 @@ async function settersSection() {
   const reference = h('input', { class: 'input', id: 'setter-reference', placeholder: 'Classification review reference (no customer details)' });
   const estimator = h('input', { class: 'input', id: 'setter-estimator', placeholder: 'Staff key, or leave unverified' });
   const estimatorReference = h('input', { class: 'input', id: 'setter-estimator-reference', placeholder: 'Estimator attribution review reference' });
+  const approved = data.policy?.approval === 'approved';
+  // A share's amount: earned, else the projection at the closed price (approved terms only), else held.
+  const share = (row, role) => {
+    const cents = (row.allocations || []).find(item => item.role === role)?.amountCents;
+    if (row.state === 'excluded') return money(0, true);
+    if (!Number.isSafeInteger(cents)) return '–';
+    return row.state === 'earned' ? money(cents / 100, true) : `${money(cents / 100, true)} projected`;
+  };
+  // The office settles a record's classification (and, if needed, its estimator) with a review reference.
+  const classify = row => () => sheet(`Classify walkthrough ${row.walkthroughId}`, close => {
+    const scope = h('select', { class: 'input', id: 'classify-scope' }, [['garage', 'Verified garage work'], ['junk_removal', 'Junk removal — no commission']].map(([value, label]) => h('option', { value }, label)));
+    const ref = h('input', { class: 'input', id: 'classify-reference', placeholder: 'Review reference (no customer details)' });
+    const estimatorKey = h('input', { class: 'input', id: 'classify-estimator', placeholder: row.estimatorKey || 'Staff key (leave blank to keep)' });
+    const estimatorRef = h('input', { class: 'input', id: 'classify-estimator-reference', placeholder: 'Estimator review reference' });
+    const classifyId = uuid();
+    return [field('Service', scope, null, 'classify-scope'), field('Review reference', ref, null, 'classify-reference'),
+      field('Estimator', estimatorKey, null, 'classify-estimator'), field('Estimator review reference', estimatorRef, null, 'classify-estimator-reference'),
+      h('p', { class: 'caption muted' }, 'A classification is recorded once; finance reviews any later change.'),
+      h('button', { type: 'button', class: 'btn btn--primary btn--block', onclick: async () => {
+        try {
+          await action({ action: 'setter.classify', requestId: classifyId, walkthroughId: row.walkthroughId, serviceClassification: scope.value, classificationReference: ref.value.trim(),
+            estimatorKey: estimatorKey.value.trim(), estimatorReference: estimatorRef.value.trim() });
+          close(true); invalidate('setters'); app.render();
+        } catch (error) { toast(error.message, { tone: 'bad' }); }
+      } }, 'Save classification')];
+  });
   return { subtitle: `${CHANNEL_PERCENTS.setter}% setting channel; separate from direct-close and estimator attribution.`, body: [
-    banner('warning', 'info', 'Setter pay needs policy review', `A booking or no-show earns nothing. A closed and collected job allocates ${CHANNEL_PERCENTS.setter}% to its setter and ${CHANNEL_PERCENTS.estimator}% to its estimator (${CHANNEL_PERCENTS.setter + CHANNEL_PERCENTS.estimator}% total). Verify both recipients, the calculation base and payroll anchor before any payable amount is shown.`),
+    approved ? banner('success', 'check', 'Setter terms approved', `A booking or no-show earns nothing. A job paid in full pays ${CHANNEL_PERCENTS.setter}% to its setter and ${CHANNEL_PERCENTS.estimator}% to its estimator (${CHANNEL_PERCENTS.setter + CHANNEL_PERCENTS.estimator}% total), in Money's statement for the period it was earned. Short payments, refunds and unclassified work stay held.`)
+      : banner('warning', 'info', 'Setter pay needs policy review', `A booking or no-show earns nothing. A closed and collected job allocates ${CHANNEL_PERCENTS.setter}% to its setter and ${CHANNEL_PERCENTS.estimator}% to its estimator (${CHANNEL_PERCENTS.setter + CHANNEL_PERCENTS.estimator}% total). Nothing is payable until the owner approves the walkthrough-setting and estimator terms in Settings.`),
     h('section', { class: 'card stack' }, h('h2', {}, 'Record walkthrough setter'),
       field('Walkthrough ID', visit, null, 'setter-visit'), field('Setter', setter, null, 'setter-rep'),
       field('Service classification', scope, null, 'setter-scope'), field('Review reference', reference, null, 'setter-reference'),
@@ -549,11 +576,45 @@ async function settersSection() {
         catch (error) { toast(error.message, { tone: 'bad' }); }
       } }, 'Record setter attribution')),
     h('div', { class: 'card table-wrap' }, h('table', { class: 'table' },
-      h('thead', {}, h('tr', {}, ['Walkthrough', 'Setter', 'Estimator evidence', 'State', 'Review'].map(label => h('th', {}, label)))),
+      h('thead', {}, h('tr', {}, ['Walkthrough', 'Setter', 'Estimator evidence', 'State', `Setter ${CHANNEL_PERCENTS.setter}%`, `Estimator ${CHANNEL_PERCENTS.estimator}%`, 'Review', ''].map(label => h('th', {}, label)))),
       h('tbody', {}, data.rows.map(row => h('tr', {}, h('td', {}, row.walkthroughId), h('td', {}, row.setterKey),
         h('td', {}, row.estimatorKey || 'Unverified'), h('td', {}, row.state.replaceAll('_', ' ')),
-        h('td', {}, (row.reviewReasons || []).join(', ').replaceAll('_', ' '))))))),
+        h('td', { class: 'num' }, share(row, 'setter')), h('td', { class: 'num' }, share(row, 'estimator')),
+        h('td', {}, (row.reviewReasons || []).join(', ').replaceAll('_', ' ')),
+        h('td', {}, (row.reviewReasons || []).includes('service_scope_unverified') || (row.reviewReasons || []).includes('recipient_unverified')
+          ? h('button', { type: 'button', class: 'btn btn--secondary btn--sm', onclick: classify(row) }, 'Classify…') : null)))))),
     data.truncated ? banner('warning', 'info', 'More records need review', 'Only the first 100 setter records are shown.') : null,
+  ] };
+}
+
+/* ---------- Estimators (D6b: the estimator's 7%) ---------- */
+
+async function estimatorsSection() {
+  const data = await load('estimators', {}, { force: true });
+  const amount = row => row.state === 'earned' ? money(row.earnedCommission, true) : Number.isFinite(row.projectedCommission) ? `${money(row.projectedCommission, true)} projected`
+    : row.earnedCommission === 0 ? money(0, true) : '–';
+  const totals = new Map();
+  for (const row of data.rows) {
+    const key = row.estimatorKey || 'Unverified', sum = totals.get(key) || { earned: 0, projected: 0, jobs: 0 };
+    sum.jobs += 1;
+    if (row.state === 'earned') sum.earned += row.earnedCommission;
+    else if (Number.isFinite(row.projectedCommission)) sum.projected += row.projectedCommission;
+    totals.set(key, sum);
+  }
+  return { subtitle: `${CHANNEL_PERCENTS.estimator}% to the estimator of each signed walkthrough sale, set at the door or sold directly; walkthroughs signed in the last ${data.lookbackDays} days.`, body: [
+    data.terms.verified ? banner('success', 'check', 'Estimator terms approved', 'A job paid in full makes its estimator\'s share earned; it is paid in Money\'s statement for the period it was earned, with recorded payouts.')
+      : banner('warning', 'info', 'Estimator pay needs the owner\'s approval', `Nothing is earned or payable, and no amount is shown, until the owner approves the walkthrough-setting and estimator terms in Settings.`),
+    totals.size ? h('div', { class: 'card card--line table-wrap' }, h('table', { class: 'table' },
+      h('thead', {}, h('tr', {}, ['Estimator', 'Jobs', 'Earned', 'Projected'].map((label, i) => h('th', { class: i ? 'num' : '' }, label)))),
+      h('tbody', {}, [...totals].sort(([a], [b]) => a.localeCompare(b)).map(([key, sum]) => h('tr', {}, h('td', {}, h('b', {}, key)), h('td', { class: 'num' }, String(sum.jobs)),
+        h('td', { class: 'num' }, data.terms.verified ? money(sum.earned, true) : '–'), h('td', { class: 'num' }, data.terms.verified ? money(sum.projected, true) : '–')))))) : null,
+    h('div', { class: 'card table-wrap' }, h('table', { class: 'table' },
+      h('thead', {}, h('tr', {}, ['Job', 'Job date', 'Estimator', 'How it was set', 'State', `Estimator ${CHANNEL_PERCENTS.estimator}%`, 'Review'].map(label => h('th', {}, label)))),
+      h('tbody', {}, data.rows.length ? data.rows.map(row => h('tr', {}, h('td', {}, row.jobId || row.walkthroughId), h('td', {}, row.jobDate ? dateLabel(row.jobDate) : '–'),
+        h('td', {}, row.estimatorKey || 'Unverified'), h('td', {}, row.channel === 'direct_estimator' ? 'Estimator\'s own sale' : `Set at the door${row.setterKey ? ` by ${row.setterKey}` : ''}`),
+        h('td', {}, row.state.replaceAll('_', ' ')), h('td', { class: 'num' }, amount(row)), h('td', {}, (row.reviewReasons || []).join(', ').replaceAll('_', ' '))))
+        : h('tr', {}, h('td', { colspan: '7', class: 'muted' }, 'No signed walkthrough sales yet.'))))),
+    data.truncated ? banner('warning', 'info', 'More records need review', 'Not every setter record was read; Money holds its statement until finance reviews them.') : null,
   ] };
 }
 
@@ -591,7 +652,9 @@ async function moneySection(params) {
       h('div', { class: 'card card--line table-wrap' }, h('table', { class: 'table' },
         h('thead', {}, h('tr', {}, ['Rep', 'Booked', 'Earned', 'Recorded payments', 'Payable', 'Training', ''].map((label, i) => h('th', { class: i && i < 6 ? 'num' : '' }, label)))),
         h('tbody', {}, data.statement.length ? data.statement.map(row => h('tr', {},
-          h('td', {}, h('b', {}, row.name), row.override ? h('div', { class: 'caption muted' }, `includes ${money(row.override, true)} lead bonus`) : null),
+          h('td', {}, h('b', {}, row.name), row.override ? h('div', { class: 'caption muted' }, `includes ${money(row.override, true)} lead bonus`) : null,
+            row.setterCommission ? h('div', { class: 'caption muted' }, `includes ${money(row.setterCommission, true)} walkthrough setting (${CHANNEL_PERCENTS.setter}%)`) : null,
+            row.estimatorCommission ? h('div', { class: 'caption muted' }, `includes ${money(row.estimatorCommission, true)} estimator (${CHANNEL_PERCENTS.estimator}%)`) : null),
           h('td', { class: 'num' }, money(row.booked)), h('td', { class: 'num' }, amount(row.earnedCommission)), h('td', { class: 'num' }, amount(row.commissionPaid)),
           h('td', { class: 'num' }, h('b', {}, amount(row.payableCommission)), row.compensationState !== 'configured' ? h('div', { class: 'caption muted' }, row.compensationState.replaceAll('_', ' ')) : null),
           h('td', { class: 'num' }, row.trainingMinutes ? `${hoursLabel(row.trainingMinutes * 60000)} h` : '–'),
@@ -760,6 +823,52 @@ function approvalCard(data, card) {
     h('button', { type: 'button', class: 'btn btn--primary', onclick: approve }, c.verified ? 'Update approval' : title));
 }
 
+/* The owner's "Approve walkthrough-setting and estimator terms" card (D6b): the fixed SETTER_TERMS the server records
+   (setter.approve), never adjustable. Until it is approved every setter and estimator share stays held for review.
+   It needs the door-to-door commission terms (their pay cycle) approved first. Everyone else sees the status only. */
+function setterApprovalCard(data, card) {
+  const s = data.setter;
+  if (!s) return null;
+  const t = s.terms;
+  const status = s.verified
+    ? banner('success', 'check', 'Walkthrough-setting and estimator terms approved', `Approved by ${s.approval.reviewedBy} ${timeLabel(s.approval.reviewedAt)} · reference ${s.approval.reference}. Setter and estimator shares of jobs paid in full are earned and payable from then on.`)
+    : s.approval && s.approval.termsMatch && !s.compensationVerified
+      ? banner('warn', 'alert', 'Waiting for the door-to-door approval', 'These terms are approved, but they are paid with the door-to-door commission, whose approval no longer verifies. Shares stay held until it is approved again.')
+      : banner('warn', 'alert', 'Walkthrough-setting and estimator terms are not approved', 'Every setter and estimator share stays held for review, with no amount, until the owner approves these terms.');
+  const terms = h('div', { class: 'stack', style: { gap: '0' } },
+    kv('Contract', t.contract),
+    kv('Walkthrough a rep set at the door', `${t.setterPercent}% to the rep who set it, ${t.estimatorPercent}% to its estimator (${t.setterPercent + t.estimatorPercent}% total)`),
+    kv('Walkthrough an estimator sold directly', `${t.directEstimatorPercent}% to the estimator`),
+    kv('Calculated on', 'the job\'s whole price, goods included, rounded to the cent'),
+    kv('Earned when', 'the job is closed and the customer has paid the full price (never before this approval)'),
+    kv('Paid out', 'every two weeks, with the door-to-door commission'),
+    kv('Garage work', 'a signed walkthrough for a garage transformation, unless the office classified it; junk removal earns nothing'),
+    kv('Estimator', 'the one the office or the door booking recorded, else whoever recorded the customer\'s signature'),
+    kv('Short payment or refund', 'held for finance review'),
+    kv('Stacking', `never added to the ${CHANNEL_PERCENTS.directSale}% direct door-to-door rate`));
+  const title = 'Approve walkthrough-setting and estimator terms';
+  if (!s.canApprove) return card(title, status, terms, h('p', { class: 'caption muted' }, 'Only the owner can approve these terms.'));
+  if (!s.compensationVerified) return card(title, status, terms, banner('info', 'info', 'Approve the door-to-door terms first', 'These shares are paid in the door-to-door commission\'s two-week pay cycle, which that approval confirms.'));
+  const requestId = uuid();
+  const reference = h('input', { class: 'input', id: 'setter-approve-reference', maxlength: '120', placeholder: 'Decision record (no customer details)', value: s.approval?.reference || '' });
+  const approve = async () => {
+    if (reference.value.trim().length < 3) return toast('Add the approval reference.', { tone: 'bad' });
+    const summary = `${t.setterPercent}% to the rep and ${t.estimatorPercent}% to the estimator of a walkthrough set at the door, ${t.directEstimatorPercent}% to the estimator of a walkthrough sold directly, of the whole price of jobs paid in full, every two weeks.${s.verified ? ' Only the reference changes; the approval time stays.' : ' Jobs already paid in full count from now on.'}`;
+    if (!await confirmSheet(s.verified ? 'Update the approval reference?' : 'Approve these terms?', summary, s.verified ? 'Update reference' : 'Approve terms')) return;
+    try {
+      const result = await action({ action: 'setter.approve', requestId, contract: t.contract, reference: reference.value.trim(),
+        terms: Object.fromEntries(Object.entries(t).filter(([key]) => key !== 'contract')) }, { quiet: true });
+      toast(result.duplicate ? 'These terms were already approved' : result.referenceOnly ? 'Approval reference updated' : 'Walkthrough-setting and estimator terms approved',
+        { sub: 'Setter and estimator shares of jobs paid in full are earned and payable.' });
+      invalidate('settings');
+      app.render();
+    } catch (error) { toast(error.message, { tone: 'bad' }); }
+  };
+  return card(title, status, terms,
+    field('Setter terms reference', reference, null, 'setter-approve-reference'),
+    h('button', { type: 'button', class: 'btn btn--primary', onclick: approve }, s.verified ? 'Update reference' : title));
+}
+
 async function settingsSection() {
   const data = await load('settings', {}, { force: true });
   const draft = structuredClone(data.settings);
@@ -845,6 +954,7 @@ async function settingsSection() {
           segFor('payroll.period', [['biweekly', 'Every 2 weeks']], 'Pay period'),
           row(data.compensation?.verified ? 'Confirmed cycle anchor' : 'Unconfirmed cycle anchor', text('payroll.anchorDate', { type: 'date' }), data.compensation?.verified ? 'Confirmed by the owner\'s approval. Changing it ends that approval.' : 'A draft date until the owner confirms it in the approval below.')),
         approvalCard(data, card),
+        setterApprovalCard(data, card),
         card('Plan targets',
           h('p', { class: 'caption muted' }, 'Draft targets only until separately approved for D2D. Direct-estimator average ticket and margin do not establish D2D performance.'),
           h('div', { class: 'fields-2' },
@@ -890,6 +1000,7 @@ export function install(appApi) {
   registerAdminSection('coverage', 'Coverage', 'chart', coverageSection);
   registerAdminSection('sales', 'Sales', 'dollar', salesSection);
   registerAdminSection('setters', 'Setters', 'user', settersSection);
+  registerAdminSection('estimators', 'Estimators', 'user', estimatorsSection);
   registerAdminSection('native-forms', 'GHL requests', 'refresh', () => nativeRecoveryAdmin(app));
   registerAdminSection('money', 'Money', 'cash', moneySection);
   registerAdminSection('scoreboard', 'Scoreboard', 'trophy', scoreboardSection);

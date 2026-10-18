@@ -7,7 +7,7 @@ import { DEFAULT_SETTINGS, mergeSettings } from './knock-settings.js';
 import { formatClock, knockWindow } from './knock-time.js';
 import { applyLocalKnock, doorStatus, milesLabel, neighborhoodsByDistance, territoryState } from './knock-doors.js';
 import { shiftTiming } from './knock-stats.js';
-import { SETTER_RULE_TEXT, commissionRuleText } from './knock-money.js';
+import { commissionRuleText, setterRuleText } from './knock-money.js';
 
 const VIEWER_KEY = 'egc-knock:viewer';
 const SIGNED_OUT_KEY = 'egc-knock:signed-out-at';
@@ -744,7 +744,7 @@ function rulesSheet() {
     rule('Commission', commissionRuleText(s.commission)),
     s.commission.verified === true && s.commission.acceleratorEnabled ? kv('Higher rate', `${Math.round(s.commission.acceleratorRate * 100)}% above $${Number(s.commission.acceleratorThreshold).toLocaleString('en-US')} a month`) : null,
     s.commission.verified === true && s.commission.leadOverrideEnabled ? kv('Lead bonus', `${Math.round(s.commission.leadOverrideRate * 1000) / 10}% of the team's collected revenue`) : null,
-    rule('Walkthrough you set', SETTER_RULE_TEXT),
+    rule('Walkthrough you set', setterRuleText(s.commission.setter)),
     kv('Deposit', `${Math.round(s.sale.depositRate * 100)}%, fully refundable for ${s.sale.cancelBusinessDays} business days`)));
 }
 

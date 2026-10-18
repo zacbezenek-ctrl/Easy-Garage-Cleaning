@@ -2,7 +2,7 @@
    Leads: their team's scoreboard. Admins get the same scoreboard for everyone plus the gate,
    and the payroll screens live in knock-admin.js. */
 import { h, mount, money, percent, number, hoursLabel, dateLabel, icon, dot, badge, banner, kv, stat, meter, seg, chips, emptyState, loadingState, errorState } from './knock-ui.js';
-import { CHANNEL_PERCENTS, SETTER_RULE_TEXT, collectedAmount, commissionRuleText } from './knock-money.js';
+import { CHANNEL_PERCENTS, collectedAmount, commissionRuleText, setterRuleText } from './knock-money.js';
 import { zonedDate } from './knock-time.js';
 
 let app;
@@ -199,10 +199,12 @@ function moneyScreen(_app, params) {
             : `${money(rates.acceleratorThreshold - collectedThisMonth)} more collected this month and every dollar after that pays ${percent(rates.acceleratorRate)}.`,
         }) : null),
       h('section', { class: 'card stack' }, h('h2', {}, `Walkthrough setting — ${CHANNEL_PERCENTS.setter}%`),
-        h('p', {}, SETTER_RULE_TEXT),
+        h('p', {}, setterRuleText(rates.setter)),
         h('p', { class: 'caption muted' }, `Direct-estimator work stays at ${CHANNEL_PERCENTS.estimator}% and junk at zero.`),
+        // Once the owner approved the setter terms, each walkthrough shows your 13%: earned, or projected at the closed price.
         (data.setters?.rows || []).map(row => h('div', { class: 'list-row list-row--static' },
-          h('span', {}, `${row.walkthroughId}: ${row.state.replaceAll('_', ' ')}`),
+          h('span', {}, `${row.walkthroughId}: ${row.state.replaceAll('_', ' ')}${row.state === 'earned' && Number.isFinite(row.earnedCommission) ? ` · ${money(row.earnedCommission, true)} earned`
+            : Number.isFinite(row.projectedCommission) ? ` · ${money(row.projectedCommission, true)} once paid in full` : ''}`),
           h('span', { class: 'caption muted' }, (row.reviewReasons || []).join(', ').replaceAll('_', ' ')))),
         data.setters?.truncated ? h('p', { class: 'caption muted' }, 'More setter records need review.') : null),
       lead && rates.verified && current.compensationState === 'configured' && rates.leadOverrideEnabled ? h('section', { class: 'card', style: { gap: '8px' } },

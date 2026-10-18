@@ -4,7 +4,7 @@
 import { hasBusinessAccess, isHubOwner } from './hub-session.js';
 import { knockFailure, write } from './knock-store.js';
 import { mergeSettings, ROLES, validateSettings } from '../../crew/knock-settings.js';
-import { validCollectionPolicy, validCommissionScope } from '../../crew/knock-money.js';
+import { SETTER_CONTRACT, validCollectionPolicy, validCommissionScope, validSetterTerms } from '../../crew/knock-money.js';
 
 const SAFE_KEY = /^[a-z0-9._-]{1,64}$/;
 // Every stored commission field an approval binds to.
@@ -62,7 +62,25 @@ export async function loadSettings(store) {
   const planApproval = doc?.planApproval;
   settings.plan.verified = Boolean(planApproval?.channel === 'door_to_door' && planApproval.reference && planApproval.reviewedBy &&
     Number.isFinite(Date.parse(planApproval.reviewedAt)) && sameSettings(planApproval.plan, doc?.settings?.plan) && sameSettings(planApproval.gate, doc?.settings?.gate));
+  // Only once the owner approved the setter terms (setterTermsState), so a rep's rule text says they pay; absent before.
+  const setter = setterTermsState(doc, settings);
+  if (setter.verified) settings.commission.setter = { verified: true, approvedAt: setter.approvedAt };
   return settings;
+}
+
+/* The owner's approval of the appointment-setter and estimator terms (crew/knock-money.js SETTER_TERMS, D6b), written
+   only by knock-admin.js approveSetterTerms beside compensationApproval. Its shares are paid every two weeks with the
+   door-to-door commission, so it verifies only while that approval (and its pay cycle) does. Kept out of loadSettings,
+   whose settings go to every rep: callers that pay or show these shares read it with loadSetterTerms. */
+export function setterTermsState(doc, settings) {
+  const approval = doc?.setterApproval;
+  const verified = Boolean(settings?.commission?.verified === true && approval && approval.contract === SETTER_CONTRACT && validSetterTerms(approval.terms) &&
+    typeof approval.reference === 'string' && approval.reference.trim() && typeof approval.reviewedBy === 'string' && approval.reviewedBy && Number.isFinite(Date.parse(approval.reviewedAt)));
+  return { verified, approvedAt: verified ? approval.reviewedAt : null, reference: verified ? approval.reference : null };
+}
+
+export async function loadSetterTerms(store, settings) {
+  return setterTermsState(await store.get('knock_settings', 'current'), settings);
 }
 
 const publicRep = rep => rep && ({

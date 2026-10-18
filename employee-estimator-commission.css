@@ -1,0 +1,20 @@
+/* My commission screen (D6b, the estimator's 7%). Scoped to .egc-commission; colours come from the Hub kit tokens. */
+.egc-commission{padding-bottom:var(--hub-space-4)}
+.egc-commission h2{font-size:24px}
+.egc-commission .ec-totals{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:var(--hub-space-3)}
+.egc-commission .ec-totals>div{border:1px solid var(--hub-line);border-radius:var(--hub-radius);background:#fff;padding:12px 14px;display:grid;gap:4px}
+.egc-commission .ec-totals span{color:var(--hub-muted);font-size:13px;font-weight:600}
+.egc-commission .ec-totals strong{font-size:22px}
+.egc-commission .ec-rows{list-style:none;margin:0;padding:0;border:1px solid var(--hub-line);border-radius:var(--hub-radius);background:#fff}
+.egc-commission .ec-row{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:var(--hub-space-3);padding:12px 14px;border-top:1px solid var(--hub-line);align-items:start}
+.egc-commission .ec-row:first-child{border-top:0}
+.egc-commission .ec-row-text{min-width:0;overflow-wrap:anywhere;display:grid;gap:2px}
+.egc-commission .ec-row-text strong{font-size:15px;line-height:1.35}
+.egc-commission .ec-row-text small{color:var(--hub-muted);font-size:13px}
+.egc-commission .ec-reasons{color:inherit}
+.egc-commission .ec-amount{display:grid;gap:4px;text-align:right}
+.egc-commission .ec-state{font-size:12px;font-weight:700;color:var(--hub-muted)}
+.egc-commission .ec-state.earned{color:var(--hub-green)}
+.egc-commission .ec-share{font-weight:700;white-space:nowrap}
+.egc-commission .ec-refresh{margin:0;color:var(--hub-muted);font-weight:600}
+@media (max-width:520px){.egc-commission .ec-row{grid-template-columns:minmax(0,1fr)}.egc-commission .ec-amount{text-align:left}}

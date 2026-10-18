@@ -295,9 +295,9 @@ test('flag on: web-lead relays tomorrow\'s /book window as "Tomorrow morning" in
 const SALES_CAPS = ['customer.send', 'followups.own', 'quotes.author', 'schedule.book', 'walkthrough.perform'];
 const PHONE_CAPS = ['customer.send', 'followups.own', 'schedule.book'];
 const MANAGER_CAPS = ['dispatch.write', 'time.approve', 'accounts.approve', 'customer.send', 'followups.own', 'quotes.author', 'schedule.book', 'walkthrough.perform'];
-const EMPLOYEE_VIEWS = ['my_day', 'my_shifts', 'open_shifts', 'earnings', 'crew_chat', 'availability', 'requests', 'training', 'safety', 'onboarding', 'crew_alerts'];
+const EMPLOYEE_VIEWS = ['my_day', 'my_shifts', 'open_shifts', 'earnings', 'crew_chat', 'availability', 'requests', 'training', 'safety', 'onboarding', 'crew_alerts', 'my_commission'];
 // Recorded from the suite before SALES-BOOKING (merge base b04a617) with tests/helpers/hub-dom.mjs.
-// WP14c added the business Purchase list screen (RUN THE BUSINESS) after it.
+// WP14c added the business Purchase list screen (RUN THE BUSINESS) after it; D6b added every viewer's My commission (MY EGC).
 const BASE_NAV = {
   owner: [...EMPLOYEE_VIEWS, 'today', 'action_center', 'schedule', 'timesheets', 'people', 'walkthroughs', 'delivery', 'dispatch_rules', 'reviews', 'staff', 'customers', 'finance', 'communications', 'invoicing', 'pipeline', 'scorecard', 'proof', 'playbook', 'ad_spend', 'settings', 'followup_settings', 'catalog', 'message_templates', 'stocked_costs', 'purchase_list'],
   manager: [...EMPLOYEE_VIEWS, 'today', 'action_center', 'schedule', 'timesheets', 'people', 'walkthroughs', 'delivery', 'reviews', 'staff', 'customers', 'finance', 'communications', 'invoicing', 'pipeline', 'scorecard', 'proof', 'playbook', 'settings', 'message_templates', 'stocked_costs', 'purchase_list'],

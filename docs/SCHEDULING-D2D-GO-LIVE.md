@@ -175,10 +175,12 @@ Each has a recommendation. Until you decide, the Hub keeps doing what the item s
   Sunday. *Recommended:* untick Sunday unless Crew 3 really works Sundays.
 - **Which packages are garage-only for commission.** Package names alone do not settle it. *Recommended:* mark only
   packages that are entirely garage work as Garage only, and anything mixed as Needs review.
-- **Setter commission (13% + 7%).** It is tracked but cannot be paid in the app yet; that needs your approval and a
-  small code change. *Recommended:* approve the direct-sale terms first, then ask for the setter change. Until then
-  the Knock reports show which rep set each walkthrough, so nothing is lost. Also update your pricing workbook's
-  door-to-door split row to 13% and 7% so it matches the app.
+- **Setter commission (13% + 7%) and the estimator's 7%.** Tracked and held until you approve them: approve the
+  direct-sale terms first, then "Approve walkthrough-setting and estimator terms" in Knock → Admin → Settings.
+  After that, jobs paid in full pay the setter's 13% and the estimator's 7% (7% on an estimator's own walkthrough
+  sales) in the Money statement. *Recommended:* approve once the direct-sale terms are approved. Until then the Knock
+  reports show which rep set each walkthrough, so nothing is lost. Also update your pricing workbook's door-to-door
+  split row to 13% and 7% so it matches the app.
 - **Short payments, overpayments, refunds and rounding.** No rule exists, so these hold commission for review.
   *Recommended:* keep holding them until you write the rule.
 - **Team directory privacy.** Teammates see shirt size and birthday month and day by default; each person can hide

@@ -607,6 +607,9 @@ export async function saveWalkthroughHandoff(store, actor, input, now = new Date
   const adapter = { ...store,
     // FUN-29: a job sold on a signed walkthrough plan came through the walkthrough path, and its signed lines are sold evidence.
     dimensionFacts: { walkthroughSale: true, lineItems: plan.quote.itemized ? plan.quote.estimate_line_items : null },
+    // EGC_GHL_SCHEDULE_MIRROR (D9b): the HighLevel note Dispatch queues with this save reads what the commit below adds
+    // after Dispatch's patch: the job breakdown (EGC_JOB_MATERIALS) and the estimated time on site (ghl-schedule-mirror.js).
+    scheduleMirrorFacts: { estimatedDurationMin: plan.quote.estimated_duration_min, ...(breakdown ? { jobBreakdown: breakdown } : {}) },
     read: async (collection, id) => {
       const row = await store.read(collection, id);
       // An orphan legacy walkthrough can acquire only the exact verified
