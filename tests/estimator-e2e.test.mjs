@@ -26,7 +26,13 @@ import { moneyDocumentKinds } from '../functions/_lib/money-document.js';
 import { BASE_ENV, MON, NOW, LATER, ON_ENV, SAT, SHELF, TOTES, TUE, builderState, client, estimator, fixture, menuItem, owner, selection, signedPlan } from './helpers/estimator-fixture.mjs';
 
 const MONEY = /\$\s?\d|Cents|retailPerPack|markup|split/;
-const EMPLOYEES = /c[123][ab]\b|sales\.person|Synthetic c/;
+// An employee id (c1a ... c3b), the sales login or a roster name. A real leak is a quoted value or a word in a sentence;
+// the lookbehind keeps it from matching the tail of a hex id (a request UUID group or a dispatch_ job id ending in
+// c3a, about 1 run in 40 before, 2026-10-17 CI). See 'the employee-leak check' test below.
+const EMPLOYEES = /(?<![0-9a-f])c[123][ab]\b|sales\.person|Synthetic c/;
+// Fixed, unique, valid v4 request ids for the answers that check is applied to, so they are the same bytes every run.
+let requestSeq = 0;
+const fixedRequestId = () => `00000000-0000-4000-8000-${String(++requestSeq).padStart(12, '0')}`;
 // What each customer surface does with a signed job: the portal withholds its estimate and payment (unsentQuoteDraft,
 // also the checkout and customer documents), the deposit reminder, the portal invitation's approval check (every
 // sender) and the business-hub / customer-account release rule.
@@ -37,7 +43,7 @@ const RELEASED = { portalWithheld: false, checkout: 'open', documents: ['estimat
 // The estimator's builder quote, saved as a quote draft for walkthrough w1 (crew/quote-draft.js compositeDraft).
 async function builderDraft(f, state, chosen = selection()) {
   const priced = priceCompositeQuote(state, chosen, { complete: true });
-  const input = { requestId: randomUUID(), customerId: 'c1', sourceWalkthroughId: 'w1', sourceRevision: 'w1r', draft: { client: client(1), title: 'Garage reset', scope: 'Removal, then shelving, then extra storage.', line_items: priced.lineItems, valid_until: '2026-10-30', catalog_version: priced.menuVersion, crew_size: 2, estimated_duration_min: 180, composite_pricing: chosen } };
+  const input = { requestId: fixedRequestId(), customerId: 'c1', sourceWalkthroughId: 'w1', sourceRevision: 'w1r', draft: { client: client(1), title: 'Garage reset', scope: 'Removal, then shelving, then extra storage.', line_items: priced.lineItems, valid_until: '2026-10-30', catalog_version: priced.menuVersion, crew_size: 2, estimated_duration_min: 180, composite_pricing: chosen } };
   const saved = await saveQuoteDraft(f.store, estimator, input, NOW, { env: ON_ENV, compositeState: async () => state });
   return { priced, draft: saved.job };
 }
@@ -45,12 +51,12 @@ async function builderDraft(f, state, chosen = selection()) {
 function signInput(f, priced, draftJob, { crewId = 'crew_one', date = MON, start = '09:30', end = '12:30', total = priced.totalCents / 100, quote = {}, actor = estimator } = {}) {
   const job = f.job(draftJob.id);
   const plan = signedPlan(1, { total, date, start, end, quote: { composite_pricing: priced.compositePricing, line_items: priced.lineItems.map(line => ({ id: line.id, kind: line.kind, name: line.name, description: line.description, quantity: line.quantity, unitCents: line.unitCents, totalCents: line.totalCents })), catalog_version: priced.menuVersion, ...quote }, logistics: crewId ? { crew_id: crewId } : {} });
-  return { actorId: actor.user, requestId: randomUUID(), customerId: 'c1', sourceWalkthroughId: 'w1', sourceRevision: f.rows.get('jobs/w1').revision, jobId: job.id, expectedRevision: job.revision, plan };
+  return { actorId: actor.user, requestId: fixedRequestId(), customerId: 'c1', sourceWalkthroughId: 'w1', sourceRevision: f.rows.get('jobs/w1').revision, jobId: job.id, expectedRevision: job.revision, plan };
 }
 const sign = (f, input, state, actor = estimator, env = ON_ENV) => saveWalkthroughHandoff(f.store, actor, input, NOW, { env, compositeState: async () => state });
 const signDraft = (f, priced, draftJob, state, options = {}) => sign(f, signInput(f, priced, draftJob, options), state, options.actor, options.env);
 // A plain (walkthrough-priced) signed handoff for walkthrough wN, creating a new job.
-const signNew = (f, n, options = {}, crewId = null, actor = estimator, env = ON_ENV) => saveWalkthroughHandoff(f.store, actor, { requestId: randomUUID(), customerId: `c${n}`, sourceWalkthroughId: `w${n}`, sourceRevision: f.rows.get(`jobs/w${n}`).revision, plan: signedPlan(n, { ...options, logistics: crewId ? { crew_id: crewId } : {} }) }, NOW, { env, compositeState: async () => { throw new Error('a walkthrough-priced handoff reads no builder state'); } });
+const signNew = (f, n, options = {}, crewId = null, actor = estimator, env = ON_ENV) => saveWalkthroughHandoff(f.store, actor, { requestId: fixedRequestId(), customerId: `c${n}`, sourceWalkthroughId: `w${n}`, sourceRevision: f.rows.get(`jobs/w${n}`).revision, plan: signedPlan(n, { ...options, logistics: crewId ? { crew_id: crewId } : {} }) }, NOW, { env, compositeState: async () => { throw new Error('a walkthrough-priced handoff reads no builder state'); } });
 // The crew job page's Materials card (crew/job.js), run as the page runs it.
 function crewPage() {
   const source = readFileSync(new URL('../crew/job.js', import.meta.url), 'utf8'), lineOf = prefix => source.split(/\r?\n/).find(row => row.startsWith(prefix));
@@ -77,7 +83,7 @@ test('estimator end to end: builder quote, crew opening, signed job on Crew 1 wi
   assert.deepEqual(preview.body.steps.map(step => [step.id, step.runningTotalCents]), [['removal', removal.body.totalCents], ['shelving', shelving.body.totalCents], ['storage', preview.body.totalCents]], 'a running total per step');
   const outOfOrder = await post({ action: 'composite_preview', compositePricing: { ...chosen, steps: ['shelving', 'removal', 'storage'] } });
   assert.deepEqual([outOfOrder.status, outOfOrder.body.code], [400, 'quote_draft_composite_order']);
-  const saved = await post({ action: 'save', requestId: randomUUID(), customerId: 'c1', sourceWalkthroughId: 'w1', sourceRevision: 'w1r', draft: { client: client(1), title: 'Garage reset', scope: 'Removal, then shelving, then extra storage.', line_items: preview.body.lineItems, valid_until: '2026-10-30', catalog_version: preview.body.menuVersion, crew_size: 2, estimated_duration_min: 180, composite_pricing: chosen } });
+  const saved = await post({ action: 'save', requestId: fixedRequestId(), customerId: 'c1', sourceWalkthroughId: 'w1', sourceRevision: 'w1r', draft: { client: client(1), title: 'Garage reset', scope: 'Removal, then shelving, then extra storage.', line_items: preview.body.lineItems, valid_until: '2026-10-30', catalog_version: preview.body.menuVersion, crew_size: 2, estimated_duration_min: 180, composite_pricing: chosen } });
   assert.equal(saved.status, 200);
   const draft = saved.body.job, priced = priceCompositeQuote(state, chosen, { complete: true });
   assert.deepEqual([draft.estimate.amountCents, draft.breakdown], [priced.totalCents, priced.breakdown]);
@@ -479,4 +485,22 @@ test('the gameplan page: crew-mode slot choices, the builder quote it signs and 
   assert.match(lineOf('function chooseSlot('), /S\.requestedCrewId=slot\.crewId\|\|''/);
   assert.match(lineOf('function updateField('), /if\(\['jobDate','startTime','endTime'\]\.includes\(key\)&&S\.requestedCrewId\)S\.requestedCrewId=''/, 'a time typed by hand drops the offered crew');
   assert.match(html, /\/crew\/gameplan-handoff\.js\?v=20261017crewbuild/);
+});
+
+test('the employee-leak check names employees, never the tail of a random request or job id', () => {
+  // A random UUID group, or the dispatch_ job id made from a request UUID, can end in c1a ... c3b (6 in 4096 per group
+  // end); the old check then failed a clean answer (requestId "a51db088-ac3a-…", 2026-10-17 CI). Every such id passes.
+  const base = 'a51db088-4d2e-45c8-9d2e-6f0b1c7e4d29'.split('-');
+  for (const suffix of ['c1a', 'c1b', 'c2a', 'c2b', 'c3a', 'c3b']) {
+    for (let group = 0; group < base.length; group++) {
+      const uuid = base.map((part, i) => i === group ? part.slice(0, -3) + suffix : part).join('-'), dispatchId = `dispatch_${uuid.replaceAll('-', '')}`;
+      for (const answer of [{ requestId: uuid }, { job: { id: dispatchId, fieldJobUrl: `/crew/job.html?id=${dispatchId}` } }]) assert.doesNotMatch(JSON.stringify(answer), EMPLOYEES, uuid);
+    }
+  }
+  assert.doesNotMatch(JSON.stringify({ requestId: 'a51db088-ac3a-45c8-9d2e-6f0b1c7e4d29' }), EMPLOYEES);
+  // Every real leak is still caught: an id as a value, in a list, in a sentence or a roster name, and the sales login.
+  for (const leak of [{ crewLead: 'c1a' }, { assignedCrew: ['c2a', 'c2b'] }, { assignedTo: 'c1b, c3a' }, { message: 'Assigned to c3b.' }, { name: 'Synthetic c2a' }, { crewId: 'crew_c1a' }, { by: 'sales.person' }]) {
+    assert.match(JSON.stringify(leak), EMPLOYEES, JSON.stringify(leak));
+  }
+  assert.match('c1a', EMPLOYEES);
 });

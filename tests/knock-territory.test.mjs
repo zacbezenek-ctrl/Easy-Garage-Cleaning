@@ -265,36 +265,64 @@ test('claims respect holds, Premium clearance, town rules, imported houses, the 
   assert.equal((await one.claim(one.cookies.rep, 'rigden-farm')).body.code, 'knock_claim_limit');
 });
 
-// Holds every claim commit until `parties` claims reach it, so their reads all happen before any write.
+// Holds every claim commit until `parties` claims reach it, so their reads all happen before any write. It has no time
+// limit: a 2 s fallback timer once let the first claim commit alone when the other lagged (a stalled runner), and the
+// expected knock_claim_conflict became knock_neighborhood_taken. It opens once; later commits pass straight through.
+// `events` records each claim's arrival at the barrier and its write; `arrived(n)` resolves once n claims are waiting.
 function racing(parties) {
   let waiting = [];
-  return world => env => {
+  const events = [], watchers = [];
+  const storage = world => env => {
     const store = world.storage(env);
     return { ...store, async commit(writes) {
-      if (writes.some(w => w.update?.name?.includes('/knock_assignments/'))) {
+      if (waiting && writes.some(w => w.update?.name?.includes('/knock_assignments/'))) {
+        events.push('wait');
         await new Promise(resolve => {
           waiting.push(resolve);
-          if (waiting.length === parties) { waiting.forEach(go => go()); waiting = []; }
-          setTimeout(resolve, 2000);
+          watchers.filter(w => w.n <= waiting.length).forEach(w => w.resolve());
+          if (waiting.length === parties) { const go = waiting; waiting = null; go.forEach(release => release()); }
         });
+        events.push('write');
       }
       return store.commit(writes);
     } };
   };
+  const arrived = n => new Promise(resolve => { if (!waiting || waiting.length >= n) resolve(); else watchers.push({ n, resolve }); });
+  return Object.assign(storage, { events, arrived });
 }
 
 test('two reps claiming the same neighborhood at the same moment: exactly one gets it', async () => {
-  const { claim, cookies, world } = await claimSetup({ storage: racing(2) });
+  const race = racing(2);
+  const { claim, cookies, world } = await claimSetup({ storage: race });
   const results = await Promise.all([claim(cookies.rep, 'english-ranch'), claim(cookies.two, 'english-ranch')]);
+  assert.deepEqual(race.events, ['wait', 'wait', 'write', 'write'], 'both claims read before either wrote');
   assert.deepEqual(results.map(r => r.status).sort(), [200, 409], JSON.stringify(results.map(r => r.body)));
   assert.equal(results.find(r => r.status === 409).body.code, 'knock_claim_conflict');
   const holders = [...world.fake.documents.keys()].filter(path => path.startsWith('knock_assignments/') && path.includes('english-ranch') && world.fake.get(path).active);
   assert.equal(holders.length, 1, holders.join());
 });
 
+test('a claim that reached its commit first waits for the other however late it arrives, so the race result never depends on timing', async t => {
+  const race = racing(2);
+  const { claim, cookies, world } = await claimSetup({ storage: race });
+  t.mock.timers.enable({ apis: ['setTimeout'] });
+  const first = claim(cookies.rep, 'english-ranch');
+  await race.arrived(1);
+  // Rep Two's request is a minute late (a stalled runner); no timer lets Rep One's claim write alone meanwhile.
+  t.mock.timers.tick(60000);
+  assert.deepEqual(race.events, ['wait']);
+  const results = await Promise.all([first, claim(cookies.two, 'english-ranch')]);
+  assert.deepEqual(race.events, ['wait', 'wait', 'write', 'write']);
+  assert.deepEqual(results.map(r => [r.status, r.body.code]), [[200, undefined], [409, 'knock_claim_conflict']], JSON.stringify(results.map(r => r.body)));
+  const holders = [...world.fake.documents.keys()].filter(path => path.startsWith('knock_assignments/') && path.includes('english-ranch') && world.fake.get(path).active);
+  assert.deepEqual(holders, ['knock_assignments/rep.one__english-ranch__all']);
+});
+
 test('one rep claiming two neighborhoods at once cannot pass the limit', async () => {
-  const { claim, cookies, world } = await claimSetup({ storage: racing(2), extra: settingsDoc({ selfClaim: true, maxSelfClaims: 1 }) });
+  const race = racing(2);
+  const { claim, cookies, world } = await claimSetup({ storage: race, extra: settingsDoc({ selfClaim: true, maxSelfClaims: 1 }) });
   const results = await Promise.all([claim(cookies.rep, 'english-ranch'), claim(cookies.rep, 'rigden-farm')]);
+  assert.deepEqual(race.events, ['wait', 'wait', 'write', 'write'], 'both claims read before either wrote');
   assert.deepEqual(results.map(r => r.status).sort(), [200, 409], JSON.stringify(results.map(r => r.body)));
   const active = [...world.fake.documents.keys()].filter(path => path.startsWith('knock_assignments/rep.one__') && world.fake.get(path).active);
   assert.equal(active.length, 1);
