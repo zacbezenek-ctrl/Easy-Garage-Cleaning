@@ -590,7 +590,7 @@ function handoffStore(f, seed) {
   return store;
 }
 // The signed plan of tests/funnel-booking-events.test.mjs (FUN-02) at a given total.
-const handoffPlan = total => ({ client: { name: 'Synthetic Customer', phone: '9705550100', email: 'test@example.invalid', address: '100 Fixture Lane', highlevel_contact_id: 'provider1' }, quote: { title: 'Garage reset', total, deposit: total / 2, job_date: '2026-09-24', start_time: '09:00', end_time: '12:00', estimated_duration_min: 180 }, acceptance: { accepted_at: '2026-09-22T17:45:00.000Z', accepted_by: 'Synthetic Customer', signature_captured: true, method: 'in_person_signature', terms_version: '2026-09-deposit50' }, signature: 'data:image/png;base64,iVBORw0KGgo=', terms_version: '2026-09-deposit50', terms_accepted: true, photos: { before: 3 }, scope: { keep_items: 'Blue bicycle', finish: ['shelving'], finish_details: { shelf_type: 'metal', shelf_qty: 2 } }, discovery: { success: 'Park a vehicle' }, logistics: { crew_size: 2, assigned_to: 'Crew of 2', notes: 'Use side gate' }, internal_notes: 'Keep blue bicycle.', notes: 'Call before arrival', client_checklists: { preJob: [{ id: 'keep-bike', label: 'Protect blue bicycle', detail: 'Move to safe area', critical: true }], postJob: [] } });
+const handoffPlan = total => ({ client: { name: 'Synthetic Customer', phone: '9705550100', email: 'test@example.invalid', address: '100 Fixture Lane', highlevel_contact_id: 'provider1' }, quote: { title: 'Garage reset', total, deposit: Math.round(total * 100 / 4) / 100, job_date: '2026-09-24', start_time: '09:00', end_time: '12:00', estimated_duration_min: 180 }, acceptance: { accepted_at: '2026-09-22T17:45:00.000Z', accepted_by: 'Synthetic Customer', signature_captured: true, method: 'in_person_signature', terms_version: '2026-10-deposit25' }, signature: 'data:image/png;base64,iVBORw0KGgo=', terms_version: '2026-10-deposit25', terms_accepted: true, photos: { before: 3 }, scope: { keep_items: 'Blue bicycle', finish: ['shelving'], finish_details: { shelf_type: 'metal', shelf_qty: 2 } }, discovery: { success: 'Park a vehicle' }, logistics: { crew_size: 2, assigned_to: 'Crew of 2', notes: 'Use side gate' }, internal_notes: 'Keep blue bicycle.', notes: 'Call before arrival', client_checklists: { preJob: [{ id: 'keep-bike', label: 'Protect blue bicycle', detail: 'Move to safe area', critical: true }], postJob: [] } });
 
 test('handoff and portal: a legacy revision between them never double-counts, and a re-signature after a handoff adds nothing', async t => {
   const f = portalStore(t, { w1: { type: 'walkthrough', status: 'scheduled', pipelineStatus: 'scheduled', customerId: 'c1', customer: 'Synthetic Customer', highlevelContactId: 'provider1', date: '2026-09-22', time: '11:00', endTime: '12:00', projectId: 'p1' } });
@@ -600,12 +600,15 @@ test('handoff and portal: a legacy revision between them never double-counts, an
   const first = await handoff(800), id = first.job.id;
   assert.deepEqual([sale(f, id).cents, sale(f, id).eventId], [80000, store.events().find(item => item.type === 'deal.sold').id], 'the handoff saves the sale it records');
   const handlers = portalHandlers(), cookie = await portalCookie(id), view = async () => (await portalView(handlers, cookie)).body.estimate;
+  // The page approves on the terms it shows: a signed walkthrough's are its payment terms (2026-10-deposit25, D-DEPOSIT).
+  const shownTerms = async read => { const shown = await read(); return [shown, { terms_version: shown.termsVersion }]; };
+  assert.equal((await view()).termsVersion, '2026-10-deposit25');
   // A tab re-signing the handoff's $800 is not a second sale.
-  assert.equal((await portalPost(handlers, cookie, approve(await view()))).status, 200);
+  assert.equal((await portalPost(handlers, cookie, approve(...await shownTerms(view)))).status, 200);
   assert.equal(net(), 80000);
   // Legacy revise to $900, the portal signs $900: the handoff sale is retired once.
   legacyReviseEstimate(f, id, 900);
-  assert.equal((await portalPost(handlers, cookie, approve(await view()))).status, 200);
+  assert.equal((await portalPost(handlers, cookie, approve(...await shownTerms(view)))).status, 200);
   assert.equal(net(), 90000);
   // Legacy revise to $1,000, then a revised handoff signs $1,400: the portal's live sale is retired (FUN-02 alone retired only an 'approved' approval).
   legacyReviseEstimate(f, id, 1000);
@@ -615,7 +618,7 @@ test('handoff and portal: a legacy revision between them never double-counts, an
   assert.equal(net(), 140000, 'net is the $1,400 signed contract, not $2,300');
   // The portal re-signs the handoff's $1,400: nothing is written.
   const count = ledger().length;
-  assert.equal((await portalPost(handlers, cookie, approve(await view()))).status, 200);
+  assert.equal((await portalPost(handlers, cookie, approve(...await shownTerms(view)))).status, 200);
   assert.deepEqual([ledger().length, net(), sale(f, id).cents], [count, 140000, 140000]);
 });
 

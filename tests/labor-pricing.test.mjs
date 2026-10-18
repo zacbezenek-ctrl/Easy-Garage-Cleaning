@@ -13,7 +13,7 @@ import { DEFAULT_LABOR_RATE_CENTS, HAULING_GROUPS, LABOR_ID, LABOR_MAN_HOURS, co
 import { builderLaborLine, customerLaborLine, estimateChanged } from '../functions/_lib/quote-model.js';
 import { invoiceLineItems } from '../functions/_lib/money-core.js';
 import { moneyProjection } from '../functions/_lib/money-service.js';
-import { renderMoneyDocument } from '../functions/_lib/money-document.js';
+import { moneyDocumentModel, renderMoneyDocument } from '../functions/_lib/money-document.js';
 import { walkthroughCrewBrief } from '../functions/_lib/walkthrough-crew-brief.js';
 import { scheduleMirrorNote } from '../functions/_lib/ghl-schedule-mirror.js';
 import { portalCookie, portalHandlers, portalStore, portalView } from './helpers/portal-fixture.mjs';
@@ -22,7 +22,7 @@ import { saveWalkthroughHandoff } from '../functions/_lib/walkthrough-handoff.js
 import { quoteDraftHandlers } from '../functions/api/quote-draft.js';
 import { signedGarageWork } from '../functions/_lib/knock-setters.js';
 import { suggestedDuration } from '../functions/_lib/dispatch-duration.js';
-import { BASE_ENV, ESTIMATE_MAN_HOURS, LABOR, LABOR_CENTS, NOW, ON_ENV, SHELF, builderState, client, estimator, fixture, menuItem, owner, selection, signedPlan } from './helpers/estimator-fixture.mjs';
+import { BASE_ENV, ESTIMATE_MAN_HOURS, LABOR, LABOR_CENTS, MON, NOW, ON_ENV, SHELF, builderState, client, estimator, fixture, menuItem, owner, selection, signedPlan } from './helpers/estimator-fixture.mjs';
 
 const signedLines = priced => priced.lineItems.map(line => ({ id: line.id, kind: line.kind, name: line.name, description: line.description, quantity: line.quantity, unitCents: line.unitCents, totalCents: line.totalCents }));
 const handoff = (n, quote, extra = {}) => ({ actorId: owner.user, requestId: randomUUID(), customerId: `c${n}`, sourceWalkthroughId: `w${n}`, sourceRevision: `w${n}r`, ...extra, plan: signedPlan(n, { quote, ...(quote.total ? { total: quote.total } : {}) }) });
@@ -94,7 +94,7 @@ test('the signed handoff prices the labor again from the man-hours and the serve
   // The honest signature books the job with the server's labor, its total and deposit.
   const f = fixture(), signed = await saveWalkthroughHandoff(f.store, owner, handoff(1, { composite_pricing: priced.compositePricing, line_items: lines, catalog_version: priced.menuVersion, total: priced.totalCents / 100 }), NOW, { env: ON_ENV, compositeState: async () => state });
   const job = f.job(signed.job.id);
-  assert.deepEqual([job.total, job.estimate.depositRequired, job.estimate.lineItems.at(-1).id, job.compositeQuote.breakdown.labor.manHours], [priced.totalCents / 100, Math.round(priced.totalCents / 2) / 100, LABOR_ID, 6]);
+  assert.deepEqual([job.total, job.estimate.depositRequired, job.estimate.lineItems.at(-1).id, job.compositeQuote.breakdown.labor.manHours], [priced.totalCents / 100, Math.round(priced.totalCents / 4) / 100, LABOR_ID, 6]); // the 25% deposit (D-DEPOSIT)
   // The owner's own rate prices it the next time: a signature at the old amount is then refused.
   const raised = { ...state, approvals: { ...state.approvals, laborRatePerManHourCents: 5000 } };
   await assert.rejects(saveWalkthroughHandoff(fixture().store, owner, handoff(1, { composite_pricing: priced.compositePricing, line_items: lines, catalog_version: priced.menuVersion, total: priced.totalCents / 100 }), NOW, { env: ON_ENV, compositeState: async () => raised }),
@@ -265,4 +265,42 @@ test('D-LABOR-TEXT: the customer sees the Labor line as one amount; the staff ke
   // A signed job whose breakdown predates the version keeps what was signed at send-time checks (the office's release).
   const { version, ...morningLabor } = job.compositeQuote.breakdown.labor;
   assert.deepEqual(compositeApproval({ ...job.compositeQuote.breakdown, labor: morningLabor }, state, { signed: true }), { ready: true, blocked: [] });
+});
+
+// The three decisions together, signed in person on the walkthrough (D-DEPOSIT terms 2026-10-deposit25): a junk-only quote
+// is $750 per truck with no Labor line and its 25% deposit (D-JUNK), and a garage quote's Labor line reaches the homeowner
+// as one amount (D-LABOR-TEXT) inside the same 25% now / 75% on the job day split.
+test('D-JUNK, D-LABOR-TEXT and D-DEPOSIT together: a junk-only quote signs at $750 per truck with 25% down; a garage quote signs "Labor" as one amount with 25% now and 75% on the job day', async t => {
+  const state = allApproved(), hourly = /man-hour|per hour|hourly|billed per|\$40\.00/i;
+  const terms = row => [row.estimate.commercialPolicy?.version, row.estimate.paymentSchedule?.depositCents, row.estimate.paymentSchedule?.remainderCents, row.estimate.paymentSchedule?.depositDueDate, row.estimate.paymentSchedule?.remainderDueDate];
+  const rows = (row, id) => moneyDocumentModel({ ...row, id }, { kind: 'estimate', now: NOW }).rows.filter(entry => !/^(Payments received|Total unpaid|Balance due)$/.test(entry.label)).map(entry => [entry.label, entry.cents]);
+  const portal = async (row, id) => { portalStore(t, { [id]: { ...row, id } }); const view = await portalView(portalHandlers(), await portalCookie(id)); assert.equal(view.status, 200); return view.body; };
+  // Junk only, two trucks: $1,500, no Labor line, $375 now and $1,125 on Monday's job.
+  const trucks = priceCompositeQuote(state, selection({ removal: [pick('Full truck load', 2)], shelving: [], storage: [], labor: { manHours: null, fullness: 'medium' } }), { complete: true });
+  const f = fixture(), junk = f.job((await saveWalkthroughHandoff(f.store, owner, handoff(1, signedQuote(trucks)), NOW, { env: ON_ENV, compositeState: async () => state })).job.id);
+  assert.deepEqual([junk.total, junk.deposit.amount, junk.estimate.depositRequired, junk.estimate.lineItems.map(line => line.id), junk.acceptedHandoffPayload.terms_version], [1500, 375, 375, ['removal-junk-full'], '2026-10-deposit25']);
+  assert.deepEqual(terms(junk), ['2026-10-deposit25', 37500, 112500, '2026-10-17', MON]);
+  assert.deepEqual(rows(junk, 'job-junk'), [['Total', 150000], ['25% deposit due 2026-10-17', 37500], [`Scheduled 75% remainder due ${MON}`, 112500]]);
+  const junkPortal = await portal(junk, 'job-junk');
+  assert.deepEqual([junkPortal.estimate.depositRequired, junkPortal.payment.dueNow, junkPortal.estimate.lineItems.map(line => line.name)], [375, 375, [junk.estimate.lineItems[0].name]]);
+  assert.doesNotMatch(JSON.stringify(junkPortal.estimate), /Labor|man-hour/i, 'no Labor line anywhere the homeowner looks');
+  // The old page's 50% of a $750 truck is not the deposit the current terms take.
+  const half = handoff(2, signedQuote(priceCompositeQuote(state, selection({ removal: [pick('Full truck load')], shelving: [], storage: [] }), { complete: true })));
+  half.plan.quote.deposit = 375;
+  await assert.rejects(saveWalkthroughHandoff(fixture().store, owner, half, NOW, { env: ON_ENV, compositeState: async () => state }), error => error.code === 'handoff_invalid_amount' && error.status === 400 && /its 25% deposit/.test(error.message));
+  // Garage work: the Labor line is "Labor" and its amount, and the whole total, labor included, splits 25% / 75%.
+  const priced = priceCompositeQuote(state, selection(), { complete: true }), deposit = Math.round(priced.totalCents / 4);
+  const g = fixture(), garage = g.job((await saveWalkthroughHandoff(g.store, owner, handoff(3, signedQuote(priced)), NOW, { env: ON_ENV, compositeState: async () => state })).job.id);
+  assert.deepEqual([garage.total, garage.estimate.depositRequired, garage.estimate.lineItems.at(-1).name, garage.estimate.lineItems.at(-1).totalCents], [priced.totalCents / 100, deposit / 100, 'Labor', LABOR_CENTS]);
+  assert.deepEqual(terms(garage), ['2026-10-deposit25', deposit, priced.totalCents - deposit, '2026-10-17', MON]);
+  assert.deepEqual(rows(garage, 'job-garage'), [['Total', priced.totalCents], ['25% deposit due 2026-10-17', deposit], [`Scheduled 75% remainder due ${MON}`, priced.totalCents - deposit]]);
+  const html = renderMoneyDocument({ ...garage, id: 'job-garage' }, { kind: 'estimate', now: NOW });
+  assert.match(html, /<td><strong>Labor<\/strong><small>Includes installing the shelving and storage\.<\/small><\/td><td class="amount">\$240\.00<\/td>/);
+  assert.doesNotMatch(html, hourly);
+  const garagePortal = await portal(garage, 'job-garage');
+  assert.deepEqual([garagePortal.estimate.lineItems.at(-1), garagePortal.estimate.depositRequired, garagePortal.payment.dueNow], [{ name: 'Labor', description: 'Includes installing the shelving and storage.', quantity: 1, amount: 240 }, deposit / 100, deposit / 100]);
+  assert.match(garagePortal.estimate.terms, /25% deposit .* due 2026-10-17; 75% remainder .* due 2026-10-19/);
+  assert.doesNotMatch(JSON.stringify(garagePortal.estimate), hourly);
+  // The staff still see the man-hours sold.
+  assert.deepEqual(walkthroughCrewBrief(garage.jobInstructions).find(row => row.label === 'Man-hours sold'), { label: 'Man-hours sold', text: '6 man-hours' });
 });

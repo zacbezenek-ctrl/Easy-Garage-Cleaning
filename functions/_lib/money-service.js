@@ -497,7 +497,8 @@ async function execute(store, actor, input, now, fingerprint, receiptId, via, re
   if (!moneyJob(job)) throw fail('job_not_found', 'This job is not available for money changes.', 404);
   if (typeof job.revision !== 'string' || !job.revision) throw fail('storage_incomplete', 'The job has no verifiable revision. Retry.', 503);
   if (job.revision !== input.expectedRevision) throw fail('revision_conflict', 'This job changed after you opened it. Refresh and review the latest money details.', 409);
-  // The staged versioned 25/75 policy is authored through quote drafts. The
+  // The staged versioned 25/75 policy is authored through quote drafts and
+  // in-person walkthrough signatures (SIGNED_25_75, walkthrough-handoff.js). The
   // legacy editor would otherwise apply its separate 50% fallback or issue an
   // invoice with unrelated due dates. Keep these paths closed until their
   // policy-aware customer terms and billing rollout are explicitly completed.

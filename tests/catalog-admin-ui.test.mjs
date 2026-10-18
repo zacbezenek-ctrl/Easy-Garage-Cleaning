@@ -729,7 +729,7 @@ test('operations defaults link to their own screens, and sign-out clears the dra
   assert.equal(templates.getAttribute('href'), '/message-templates.html', 'reminder wording is approved where the templates live');
   // The deposit and minimum price catalog quotes only; the owner is told the walkthrough values do not change here.
   const help = label => ui.control(label, ui.root()).parentNode.querySelector('small').textContent;
-  assert.match(help('Deposit (% of the quote)'), /^Catalog quotes only\. The walkthrough deposit in use today \(50%, set by the deposit terms\) does not change here\.$/);
+  assert.match(help('Deposit (% of the quote)'), /^Catalog quotes only\. The walkthrough deposit in use today \(25% when the homeowner signs, 75% on the job day, set by the deposit terms\) does not change here\.$/);
   assert.match(help('Minimum job ($)'), /^Catalog quotes only.*The \$450 walkthrough game plan minimum does not change here\.$/);
   await verifyFirstUnverified(ui);
   assert.ok(ui.session.getItem('egc.hub.draft.v1.catalog.zacb'));
@@ -755,7 +755,7 @@ test('the catalog screen is registered once, owner-only, and loads its own versi
   const owner = hubPage(), entry = owner.context.EGCHubScreens.get('catalog');
   assert.deepEqual(copy({ ...entry, mount: undefined, unmount: undefined, canLeave: undefined, refresh: undefined, homeWidget: undefined }), {
     id: 'catalog', group: 'SYSTEM', label: 'Catalog & pricing', iconPath: entry.iconPath, capability: 'owner', crewVisible: false,
-    load: { js: 'employee-catalog.js', css: 'employee-catalog.css', v: '20261018junk1' }, module: 'EGCCatalog' });
+    load: { js: 'employee-catalog.js', css: 'employee-catalog.css', v: '20261018junkdeposit1' }, module: 'EGCCatalog' });
   assert.ok(owner.api.visibleNav().some(item => item[0] === 'SYSTEM' && item[1] === 'catalog' && item[2] === 'Catalog & pricing'));
   for (const who of [{ user: 'AlexK', business: true, role: 'manager' }, { user: 'Synthetic.Crew', business: false, role: 'crew' }]) {
     const page = hubPage(who);

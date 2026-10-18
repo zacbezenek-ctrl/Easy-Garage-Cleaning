@@ -8,6 +8,12 @@ export const PROPOSED_25_75 = Object.freeze({
   depositDueRule: null, remainderDueRule: 'job_day',
 });
 export const FINAL_25_75 = Object.freeze({ version: '2026-10-14-deposit25-v1', depositPct: 25, remainderPct: 75, depositDueRule: 'later_of_walkthrough_or_seven_days_before_job', remainderDueRule: 'job_day' });
+// D-DEPOSIT (owner, 2026-10-18): a quote the homeowner signs in person on the walkthrough Review step takes the same
+// 25/75 split, with the 25% deposit due the day they sign (the walkthrough day: now) and the 75% remainder on the job
+// day. Both dates are exact: the estimator books the job time when the homeowner signs. Its version is the terms id the
+// walkthrough page shows and sends (terms_version); a job keeps the terms it was signed on (2026-09-deposit50: 50%
+// upfront, the rest on completion, is never offered again).
+export const SIGNED_25_75 = Object.freeze({ version: '2026-10-deposit25', depositPct: 25, remainderPct: 75, depositDueRule: 'walkthrough_day', remainderDueRule: 'job_day' });
 export const PAYMENT_TIME_ZONE = 'America/Denver';
 const plain = value => value !== null && typeof value === 'object' && !Array.isArray(value);
 const fail = (message, code = 'invalid_payment_policy') => Object.assign(new Error(message), { code: `quote_draft_${code}`, status: 409 });

@@ -7,28 +7,33 @@ const walkthrough=fs.readFileSync(new URL('../crew/gameplan.html',import.meta.ur
 const suite=fs.readFileSync(new URL('../employee-suite.js',import.meta.url),'utf8');
 const sourceLine=(source,prefix)=>source.split(/\r?\n/).find(line=>line.startsWith(prefix));
 
-test('walkthrough deposit uses half the total to cents and preserves verified receipts on revisions',()=>{
+// D-DEPOSIT (terms 2026-10-deposit25): 25% when the homeowner signs, 75% on the job day.
+test('walkthrough deposit uses a quarter of the total to cents and preserves verified receipts on revisions',()=>{
   const context=vm.createContext({});
   vm.runInContext(sourceLine(walkthrough,'function walkthroughDeposit('),context);
-  assert.equal(context.walkthroughDeposit(1425).amount,712.5);
-  assert.equal(context.walkthroughDeposit(1000.01).amount,500.01);
+  assert.equal(context.walkthroughDeposit(1425).amount,356.25);
+  assert.equal(context.walkthroughDeposit(1000.01).amount,250);
+  assert.equal(context.walkthroughDeposit(1000.02).amount,250.01,'half cents round up, as the server does');
   const previous={amount:200,paidAmount:200,status:'paid',verified:true,reference:'stripe-200',receivedAt:'2026-09-08T12:00:00Z'};
   const revised=context.walkthroughDeposit(1000,previous);
-  assert.equal(revised.amount,500);
+  assert.equal(revised.amount,250);
   assert.equal(revised.paidAmount,200);
   assert.equal(revised.status,'partial');
   assert.equal(revised.reference,previous.reference);
   assert.equal(revised.verified,true);
   assert.equal(revised.receivedAt,previous.receivedAt);
-  assert.equal(context.walkthroughDeposit(400,previous).status,'paid');
+  assert.equal(context.walkthroughDeposit(800,previous).status,'paid');
 });
 
-test('manual walkthrough total changes refresh the upfront and completion amounts before approval',()=>{
+test('manual walkthrough total changes refresh the 25% due today and the 75% due on the job day before approval',()=>{
   const nodes={'deposit-summary':{textContent:''}},context=vm.createContext({S:{lockedPrice:'1000'},$:id=>nodes[id],recommend:()=>1000,invalidateAcceptance:()=>{},save:()=>{}});
   vm.runInContext([sourceLine(walkthrough,'function depositSummary('),sourceLine(walkthrough,'function updateField(')].join('\n'),context);
   context.updateField('lockedPrice','1425');
   assert.equal(context.S.priceManuallySet,true);
-  assert.equal(nodes['deposit-summary'].textContent,'50% deposit due upfront: $712.50. Remaining $712.50 due on completion.');
+  assert.equal(nodes['deposit-summary'].textContent,'25% deposit due today: $356.25. Remaining 75% due on the job day: $1068.75.');
+  // With the job booked (Schedule), the remainder names its day.
+  context.S.jobDate='2026-10-20';context.updateField('lockedPrice','1000.02');
+  assert.equal(nodes['deposit-summary'].textContent,'25% deposit due today: $250.01. Remaining 75% due on the job day (Tue, Oct 20): $750.01.');
 });
 
 function financeHarness(job,input=null){
@@ -79,7 +84,7 @@ test('a newly signed walkthrough revision refreshes approval and removes stale i
   const previous={total:1000,scope:{finish:['cleanout']},deposit:{amount:500,paidAmount:500,reference:'receipt-500'},invoice:{amount:1000,status:'partial',paid:500,balance:500},customerApproval:{status:'superseded',amount:1000}};
   const job={total:1500,scope:{finish:['cleanout','shelving']},acceptance:{acceptedAt:'2026-09-08T18:00:00Z',acceptedBy:'Test Customer'},updatedAt:'2026-09-08T18:00:00Z'};
   context.applyWalkthroughFinance(job,previous);
-  assert.equal(job.deposit.amount,750);
+  assert.equal(job.deposit.amount,375);
   assert.equal(job.deposit.paidAmount,500);
   assert.equal(job.deposit.reference,'receipt-500');
   assert.equal(job.invoice.status,'superseded');

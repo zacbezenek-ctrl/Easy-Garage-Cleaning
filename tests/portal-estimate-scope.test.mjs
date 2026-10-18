@@ -7,6 +7,8 @@ import { saveWalkthroughHandoff } from '../functions/_lib/walkthrough-handoff.js
 import { invoiceLineItems } from '../functions/_lib/money-core.js';
 import { CUSTOMER_LINE_FIELDS, normalizeLineItems } from '../functions/_lib/quote-model.js';
 import { portalStore, portalCookie, portalHandlers, portalView, portalPost } from './helpers/portal-fixture.mjs';
+import { moneyDocumentModel } from '../functions/_lib/money-document.js';
+import { SIGNED_25_75 } from '../functions/_lib/quote-payment-policy.js';
 
 class FixedDate extends Date { constructor(...args) { super(...(args.length ? args : ['2026-09-22T18:00:00.000Z'])); } static now() { return Date.parse('2026-09-22T18:00:00.000Z'); } }
 
@@ -14,7 +16,7 @@ const owner = { user: 'zacb', role: 'owner', businessAccess: true, displayName: 
 const NOW = '2026-09-22T18:00:00.000Z';
 const SECRETS = ['SYNTHETIC-INTERNAL-BRIEF', 'gate code 4321', 'SYNTHETIC-CUSTOMER-NOTE', 'Blue bicycle', 'Park a vehicle', 'Use side gate', 'Locked cabinet'];
 // Synthetic signed plan; the signature fixture is a placeholder PNG header only.
-const plan = () => ({ client: { name: 'Synthetic Customer', phone: '9705550100', email: 'test@example.invalid', address: '100 Fixture Lane', highlevel_contact_id: 'provider1' }, quote: { title: 'Garage reset', total: 1400, deposit: 700, job_date: '2026-09-24', start_time: '09:00', end_time: '12:00', estimated_duration_min: 180 }, acceptance: { accepted_at: '2026-09-22T17:45:00.000Z', accepted_by: 'Synthetic Customer', signature_captured: true, method: 'in_person_signature', terms_version: '2026-09-deposit50' }, signature: 'data:image/png;base64,iVBORw0KGgo=', terms_version: '2026-09-deposit50', terms_accepted: true, photos: { before: 3 }, scope: { keep_items: 'Blue bicycle', remove_items: 'Empty cartons', exclusions: 'Locked cabinet', finish: ['cleanout', 'shelving'], finish_details: { shelf_type: 'metal', shelf_qty: 1 } }, discovery: { success: 'Park a vehicle' }, logistics: { crew_size: 2, assigned_to: 'Crew of 2', notes: 'Use side gate' }, internal_notes: 'SYNTHETIC-INTERNAL-BRIEF gate code 4321. Keep blue bicycle.', notes: 'SYNTHETIC-CUSTOMER-NOTE call before arrival', client_checklists: { preJob: [], postJob: [] } });
+const plan = () => ({ client: { name: 'Synthetic Customer', phone: '9705550100', email: 'test@example.invalid', address: '100 Fixture Lane', highlevel_contact_id: 'provider1' }, quote: { title: 'Garage reset', total: 1400, deposit: 350, job_date: '2026-09-24', start_time: '09:00', end_time: '12:00', estimated_duration_min: 180 }, acceptance: { accepted_at: '2026-09-22T17:45:00.000Z', accepted_by: 'Synthetic Customer', signature_captured: true, method: 'in_person_signature', terms_version: '2026-10-deposit25' }, signature: 'data:image/png;base64,iVBORw0KGgo=', terms_version: '2026-10-deposit25', terms_accepted: true, photos: { before: 3 }, scope: { keep_items: 'Blue bicycle', remove_items: 'Empty cartons', exclusions: 'Locked cabinet', finish: ['cleanout', 'shelving'], finish_details: { shelf_type: 'metal', shelf_qty: 1 } }, discovery: { success: 'Park a vehicle' }, logistics: { crew_size: 2, assigned_to: 'Crew of 2', notes: 'Use side gate' }, internal_notes: 'SYNTHETIC-INTERNAL-BRIEF gate code 4321. Keep blue bicycle.', notes: 'SYNTHETIC-CUSTOMER-NOTE call before arrival', client_checklists: { preJob: [], postJob: [] } });
 const itemized = () => { const p = plan(); p.quote.line_items = [{ id: 'cleanout', kind: 'service', name: 'Garage cleanout and reset', description: 'Sorting, hauling and disposal', quantity: 1, unitCents: 90100, totalCents: 90100 }, { id: 'shelving', kind: 'product', name: 'Metal shelving unit', description: '', quantity: 1, unitCents: 49900, totalCents: 49900 }]; p.quote.catalog_version = '2026-09-pest200-traps250'; return p; };
 
 async function signedJob(planInput) {
@@ -43,6 +45,31 @@ test('a signed walkthrough job shows the customer a sold-scope summary and none 
       assert.deepEqual([view.body.estimate.status, view.body.estimate.amount, view.body.estimate.revision], ['approved', 1400, 1]);
       const dto = JSON.stringify(view.body);
       for (const secret of SECRETS) assert.equal(dto.includes(secret), false, `${label}: ${secret}`);
+    });
+  }
+});
+
+// D-DEPOSIT: what the homeowner sees after signing on the walkthrough, and what an earlier 50% job keeps showing.
+test('a job signed on the 25%/75% terms shows its deposit due the signing day and the 75% due on the job day; a job signed on the earlier 50% terms keeps its 50% deposit', async t => {
+  const { id, job } = await signedJob(plan());
+  // The earlier terms, as the handoff saved them before 2026-10-18 (no saved payment terms on the estimate).
+  const { commercialPolicy, paymentSchedule, depositPct, amountCents, depositRequiredCents, ...earlier } = job.estimate;
+  const legacy = { ...job, termsVersion: '2026-09-deposit50', acceptance: { ...job.acceptance, termsVersion: '2026-09-deposit50' }, deposit: { ...job.deposit, amount: 700 }, estimate: { ...earlier, depositRequired: 700, termsVersion: '2026-09-deposit50' } };
+  assert.deepEqual([commercialPolicy, depositPct, amountCents, depositRequiredCents], [SIGNED_25_75, 25, 140000, 35000]);
+  for (const [label, saved, expected] of [
+    ['current terms', job, { deposit: 350, schedule: { depositDueDate: '2026-09-22', remainderDueDate: '2026-09-24', timeZone: 'America/Denver', depositCents: 35000, remainderCents: 105000, policyVersion: '2026-10-deposit25' }, terms: /^This flat-rate estimate covers the scope shown\. 25% deposit \$350\.00 due 2026-09-22; 75% remainder \$1,050\.00 due 2026-09-24 \(America\/Denver\)\./, rows: [['Total', 140000], ['25% deposit due 2026-09-22', 35000], ['Scheduled 75% remainder due 2026-09-24', 105000]] }],
+    ['earlier 50% terms', legacy, { deposit: 700, schedule: undefined, terms: /^This flat-rate estimate covers the scope shown\. The displayed deposit is due upfront/, rows: [['Total', 140000], ['Deposit due upfront', 70000]] }]]) {
+    await t.test(label, async st => {
+      portalStore(st, { [id]: saved });
+      const view = await portalView(portalHandlers(NOW), await portalCookie(id));
+      assert.equal(view.status, 200);
+      // The portal's estimate card and the deposit it asks for (the deposit request) agree with the terms signed.
+      assert.deepEqual([view.body.estimate.depositRequired, view.body.estimate.paymentSchedule, view.body.payment.dueNow, view.body.payment.purpose], [expected.deposit, expected.schedule, expected.deposit, 'deposit']);
+      assert.match(view.body.estimate.terms, expected.terms);
+      // The estimate document says the same.
+      const doc = moneyDocumentModel({ id, ...saved }, { kind: 'estimate', now: NOW });
+      assert.deepEqual(doc.rows.filter(row => !/^(Payments received|Total unpaid|Balance due)$/.test(row.label)).map(row => [row.label, row.cents]), expected.rows);
+      assert.equal(doc.termsVersion, label === 'current terms' ? '2026-10-deposit25' : '2026-09-deposit50');
     });
   }
 });
