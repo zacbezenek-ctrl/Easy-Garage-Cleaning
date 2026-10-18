@@ -15,11 +15,11 @@ export async function verifyWalkthroughHandoff({environment,managerPage,crewPage
     const canvas=document.createElement('canvas');canvas.width=100;canvas.height=40;
     const pen=canvas.getContext('2d');pen.fillText('Synthetic fixture',1,25);
     const plan={client:{name:'Synthetic Signed Handoff',phone:'9705550144',email:'',address:'144 Fixture Way',highlevel_contact_id:''},
-      quote:{title:'Signed handoff fixture',total:1400,deposit:700,job_date:date,start_time:'18:00',end_time:'19:00',estimated_duration_min:60},
+      quote:{title:'Signed handoff fixture',total:1400,deposit:350,job_date:date,start_time:'18:00',end_time:'19:00',estimated_duration_min:60},
       discovery:{success:'Park safely'},scope:{keep_items:'Blue bicycle',remove_items:'Empty cartons',exclusions:'Locked cabinet'},
       logistics:{crew_size:1,assigned_to:'Crew One',notes:'Use side gate'},internal_notes:'Keep blue bicycle. Remove empty cartons. Protect locked cabinet.',
       client_checklists:{preJob:[{id:'keep-bike',label:'Protect blue bicycle',detail:'Keep safe',critical:true}],postJob:[{id:'scope-review',label:'Review agreed scope',detail:'Check with customer'}]},
-      signature:canvas.toDataURL(),acceptance:{accepted_at:new Date().toISOString(),accepted_by:'Synthetic fixture only',signature_captured:true,method:'in_person_signature',terms_version:'fixture-terms-v1'},terms_version:'fixture-terms-v1',terms_accepted:true,photos:{before:1},notes:'Call before arrival'};
+      signature:canvas.toDataURL(),acceptance:{accepted_at:new Date().toISOString(),accepted_by:'Synthetic fixture only',signature_captured:true,method:'in_person_signature',terms_version:'2026-10-deposit25'},terms_version:'2026-10-deposit25',terms_accepted:true,photos:{before:1},notes:'Call before arrival'};
     sessionStorage.setItem('handoff-browser-fixture-plan',JSON.stringify(plan));
     const client=EGCWalkthroughHandoffClient({storage:sessionStorage,fetch:(...a)=>fetch(...a),actor:async()=>{const r=await fetch('/api/hub-auth');return (await r.json()).user;},uuid:()=>crypto.randomUUID(),plan:()=>plan,source:()=> 'handoff-source',savedJobId:()=>'',photoDraftId:()=> 'fixture-draft',accept:()=>{}});
     const [a,b]=await Promise.all([client.save(),client.save()]);
