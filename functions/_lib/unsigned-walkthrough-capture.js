@@ -2,7 +2,9 @@ import { stripCrewMoneyDeep } from './crew-money.js';
 
 // An operational subset, never an accepted-sale payload. No prices, signatures,
 // payment, employee IDs, schedule confirmation or arbitrary internal notes.
-const TEXT = new Set(['customerGoal', 'whyNow', 'sortMethod', 'keepItems', 'removeItems', 'exclusions', 'accessNotes', 'truckPlacement', 'crewBrief']);
+// parkingPlan: the walkthrough's "Parking after the job" (scope.parking_plan, at most 1,000 characters), sent only with vehicles.
+const TEXT = new Set(['customerGoal', 'whyNow', 'sortMethod', 'keepItems', 'removeItems', 'exclusions', 'accessNotes', 'truckPlacement', 'crewBrief', 'parkingPlan']);
+const TEXT_MAX = { crewBrief: 4900, parkingPlan: 1000 };
 const LIST = new Set(['hazards', 'access', 'specialItems', 'finish']);
 // The Finish step's shelving and tote counts (D-JUNK: quote-model.js junkOnlyGarageWork reads them with finish).
 const COUNT = new Set(['shelfQty', 'toteQty']);
@@ -15,7 +17,7 @@ export function normalizeUnsignedCapture(value) {
   const output = {};
   for (const [key, item] of Object.entries(value)) {
     if (TEXT.has(key)) {
-      if (typeof item !== 'string' || item.length > (key === 'crewBrief' ? 4900 : 4000)) throw invalid();
+      if (typeof item !== 'string' || item.length > (TEXT_MAX[key] || 4000)) throw invalid();
       output[key] = item.trim();
     } else if (LIST.has(key)) {
       if (!Array.isArray(item) || item.length > 50 || item.some(row => typeof row !== 'string' || !row.trim() || row.length > 300)) throw invalid();

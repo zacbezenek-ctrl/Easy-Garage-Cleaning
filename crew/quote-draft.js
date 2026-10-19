@@ -56,6 +56,8 @@
       accessNotes: p?.logistics?.notes,
       truckPlacement: p?.logistics?.truck_placement ?? p?.scope?.truck_placement,
       crewBrief: p?.crew_brief,
+      // Only a walkthrough with vehicles to park has one (crew/gameplan-vehicles.js).
+      parkingPlan: p?.scope?.parking_plan,
     })) if (value !== undefined) capture[key] = Array.isArray(value) ? [...value] : value;
     // The Finish step's shelving and tote counts, whole numbers only: with finish, the server reads them to tell whether
     // the walkthrough records garage work a junk-only quote does not price (D-JUNK). An unreadable count is left out,
