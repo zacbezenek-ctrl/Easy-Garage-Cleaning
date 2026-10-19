@@ -1,5 +1,5 @@
 // Review fixes for the D12 Labor line (owner, 2026-10-18: "We have to price man hours estimated to do the job. It's $40
-// an hour."). One focused regression test per confirmed finding (money-1..5, flow-1..8). Synthetic data only
+// an hour."; the owner set the rate to $53.00 per man-hour on 2026-10-19). One focused regression test per confirmed finding (money-1..5, flow-1..8). Synthetic data only
 // (tests/helpers/estimator-fixture.mjs); nothing here reaches HighLevel, Firebase or production.
 import test from 'node:test';
 import assert from 'node:assert/strict';
@@ -196,7 +196,7 @@ test('flow-4: the gameplan warns on the review screen when the builder quote it 
   const html = readFileSync(new URL('../crew/gameplan.html', import.meta.url), 'utf8');
   const card = html.slice(html.indexOf('Quote builder total'), html.indexOf('Recommended flat rate'));
   assert.match(card, /\$\{gate\?`<p class="required" role="status" id="builder-gate-note">\$\{esc\(builderGateText\(gate\)\)\}<\/p>`:S\.builderQuote\.compositePricing\.labor\|\|builderJunkOnly\(\)\?'':'<p class="required" role="status" id="builder-no-labor">This builder quote has no Labor line: it was saved before builder quotes charged labor\. Open Send options for review, check the man-hours on the review step and save it again before the customer signs\./);
-  assert.match(html, /<script src="\/crew\/quote-draft\.js\?v=20261019deposit1" defer><\/script>/, 'the changed builder script has a new version');
+  assert.match(html, /<script src="\/crew\/quote-draft\.js\?v=20261019labor53" defer><\/script>/, 'the changed builder script has a new version');
   // D-JUNK: a junk-only builder quote has no Labor line by design, so the warning is not shown for it. D-LABOR-TEXT: the
   // homeowner signing on this page sees the builder's Labor line as one amount, even on a quote saved when it named the
   // man-hours (Review stops before the signature until the quote is built again: builderSignGate 'stale', as the server

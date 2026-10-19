@@ -168,6 +168,19 @@ test('concurrent submissions cannot release duplicate tasks and a lost claim res
   assert.equal((await lost.read(W19_HANDOFFS, reference(lost))).taskStatus, 'not_enabled');
 });
 
+test('a claim that commits between the handoff and binding reads is reported as already claimed, not as a stale claim', async () => {
+  const store = memory(); await prepare(store);
+  const read = store.read.bind(store); let bindingReads = 0;
+  // The second binding read is the re-check after the provider reads: the other submission claims the completion first.
+  store.read = async (collection, id) => {
+    if (collection === W19_COMPLETIONS && ++bindingReads === 2) assert.equal((await consume({ ...store, read }, { id: 'submission-b' })).completion.proceed, true);
+    return read(collection, id);
+  };
+  const result = await consume(store);
+  assert.equal(result.reason, 'already_claimed'); assert.equal(result.completion.proceed, false); assert.equal(result.proceed, false);
+  assert.equal((await read(W19_HANDOFFS, reference(store))).submissionId, 'submission-b');
+});
+
 test('opportunity routing verifies only the exact saved job opportunity and never chooses the contact\'s newest deal', async () => {
   const store = memory(job({ highlevelOpportunityId: 'opportunity-a' })); await prepare(store); let lookups = 0;
   const result = await consume(store, { opportunity: async (_, bound) => { lookups++; assert.deepEqual(bound, { opportunityId: 'opportunity-a', contactId: 'contact-a', locationId: 'location-1' }); return { id: bound.opportunityId, contactId: bound.contactId, locationId: bound.locationId }; } });

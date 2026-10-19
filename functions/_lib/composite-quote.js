@@ -23,10 +23,11 @@ import { PRICING_MENU_JSON } from '../_data/pricing-menu.js';
  * given for (menuItemIdentity): a re-import that renames or re-maps an item id puts it back into draft. Draft prices may
  * be saved on an unsent draft, never sent: quote-draft.js re-checks compositeApproval() at send preview and send.
  *
- * Labor (owner decision D12, 2026-10-18: "We have to price man hours estimated to do the job. It's $40 an hour."):
+ * Labor (owner decision D12, 2026-10-18: "We have to price man hours estimated to do the job. It's $40 an hour."; the
+ * owner's decision of 2026-10-19 set the rate to $53.00 per man-hour):
  * every builder quote with garage work also carries one Labor line, man-hours x the labor rate, on top of the menu lines.
  * The rate is the owner's own decision, so it is an approved price: approvals.laborRatePerManHourCents (the owner's
- * menu.approve on Menu prices) else DEFAULT_LABOR_RATE_CENTS ($40.00). It is never read from the browser. The man-hours
+ * menu.approve on Menu prices) else DEFAULT_LABOR_RATE_CENTS ($53.00). It is never read from the browser. The man-hours
  * are the estimator's (compositePricing.labor.manHours), pre-filled from the server's own time estimate of the selection
  * itself (laborEstimate: person-minutes of the garage work and of installing the goods, never divided by a crew, rounded
  * or capped to a working day) and adjustable; the quote records the estimate, whether the estimator adjusted the man-hours
@@ -89,7 +90,7 @@ const GARAGE_SIZES = ['1', '2', '3', 'other'];
 // MAX_INCLUDED_LINES); special-handling items, access charges and each goods step roll up into one line each, so
 // the largest removal step (9 lines) plus both goods lines and the Labor line always fits.
 export const MAX_CHARGED_LINES = 12;
-// D12: the Labor line. Its id is the customer-facing line id; the rate is the owner's (laborRate), $40.00 by default.
+// D12: the Labor line. Its id is the customer-facing line id; the rate is the owner's (laborRate), $53.00 by default.
 export const LABOR_ID = 'labor';
 // The Labor rules a priced labor records (breakdown.labor.version): 2 is D-JUNK and D-LABOR-TEXT (no hauling in the
 // estimate, no Labor line on a junk-only quote, one amount for the customer). Labor priced before (no version) is 1.
@@ -105,7 +106,7 @@ export { HAULING_GROUPS };
  * truck on the job. A quote with a cleaning base, a cleaning add-on, shelving or storage is not, and neither is one of
  * special items or access alone (it keeps its Labor line). */
 export const junkOnly = builderJunkOnly;
-export const DEFAULT_LABOR_RATE_CENTS = 4000;
+export const DEFAULT_LABOR_RATE_CENTS = 5300;
 export const LABOR_RATE_LIMITS = Object.freeze({ min: 100, max: 100000 });
 export const LABOR_MAN_HOURS = Object.freeze({ min: 0.5, max: 200, step: 0.25 });
 // The browser's labor selection: the man-hours (null: the estimate), whether the estimator set them by hand, and the
@@ -115,7 +116,7 @@ const LABOR_KEYS = ['manHours', 'adjusted', 'fullness'];
 export const FULLNESS = Object.freeze(['light', 'medium', 'full', 'packed']);
 /** A walkthrough fullness ('Medium', 'packed', ...) as the time model's key, else null (unknown: the model's default). */
 export const fullnessOf = value => typeof value === 'string' && FULLNESS.includes(value.trim().toLowerCase()) ? value.trim().toLowerCase() : null;
-const LABOR_DEFAULT_REASON = 'Owner decision (2026-10-18): $40.00 per man-hour.';
+const LABOR_DEFAULT_REASON = 'Owner decision (2026-10-19): $53.00 per man-hour.';
 // The rolled-up goods line of each goods step. Its catalog reference names the step (compositeCatalogCategory).
 export const GOODS_LINES = Object.freeze({
   shelving: Object.freeze({ id: 'shelving-goods', catalogId: 'menu-shelving', name: 'Shelving' }),
@@ -329,7 +330,8 @@ const quarterHours = value => typeof value === 'number' && Number.isFinite(value
 /** Man-hours a Labor line may charge: 0.5 to 200, in quarter hours. */
 export const validManHours = value => quarterHours(value) && value >= LABOR_MAN_HOURS.min && value <= LABOR_MAN_HOURS.max;
 /** The labor rate in force: {rateCents, source:'owner'|'default', reason}. The owner's own rate (menu approvals
- * laborRatePerManHourCents, set on Menu prices) else D12's $40.00. Either is approved: it is the owner's decision. */
+ * laborRatePerManHourCents, set on Menu prices) else the owner's $53.00 of 2026-10-19 (DEFAULT_LABOR_RATE_CENTS). Either is
+ * approved: it is the owner's decision. */
 export function laborRate(state) {
   const owner = state?.approvals?.laborRatePerManHourCents;
   return validLaborRate(owner) ? { rateCents: owner, source: 'owner', reason: 'Owner-set labor rate.' } : { rateCents: DEFAULT_LABOR_RATE_CENTS, source: 'default', reason: LABOR_DEFAULT_REASON };
@@ -385,7 +387,7 @@ function laborTime(state) {
  * cleanout step's garage work: set-up and sweep-out, sorting and cleaning; never hauling), installPersonMinutes, fullness,
  * installNotEstimated:[{id, name, packs}], manHours (manHoursOf)}, or null without the time model. Example: a two-car
  * base, one full truck load in a medium-full garage and two shelving units = 2 x (60 + 30) + 2 x 60 = 300 person-minutes
- * = 5 man-hours ($200.00 at $40.00), for a crew of 2 or of 4; the truck load's own $750 pays its loading and hauling.
+ * = 5 man-hours ($265.00 at $53.00), for a crew of 2 or of 4; the truck load's own $750 pays its loading and hauling.
  */
 export function laborEstimate(selection, state) {
   const time = laborTime(state);

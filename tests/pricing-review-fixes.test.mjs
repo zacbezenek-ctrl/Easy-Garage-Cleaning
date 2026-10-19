@@ -30,7 +30,8 @@ test('a quote of special items or access charges alone is not junk-only: it need
     const priced = priceCompositeQuote(state, descriptor(removal, { labor: { manHours: null, fullness: 'medium' } }), { complete: true });
     assert.equal(priced.junkOnly, false);
     // The estimate is the set-up and sweep-out (2 x 60 person-minutes): never the items' or the access' own minutes.
-    assert.deepEqual([priced.labor.manHours, priced.labor.totalCents, priced.lineItems.at(-1).name], [2, 8000, 'Labor']);
+    // 2 man-hours x $53.00 = $106.00.
+    assert.deepEqual([priced.labor.manHours, priced.labor.totalCents, priced.lineItems.at(-1).name], [2, 10600, 'Labor']);
   }
   // With a truck load, the same items are junk removal: $750 per truck plus their own prices, no Labor line.
   const truck = priceCompositeQuote(state, descriptor([{ id: id('Full truck load'), quantity: 1 }, { id: id('Mattress'), quantity: 1 }, { id: id('Stairs'), quantity: 1 }], { labor: { manHours: 6, fullness: 'medium' } }), { complete: true });

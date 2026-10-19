@@ -22,9 +22,9 @@ const service = name => menu.services.find(item => item.name === name);
 const TRUCK = service('Full truck load'), HALF = service('Half load'), TWO_CAR = service('Two-car garage base'), ONE_CAR = service('One-car garage base'), MATTRESS = service('Mattress'), STAIRS = service('Stairs');
 const DEEP_TWO = service('Deep cleaning, two-car'), DEEP_THREE = service('Deep cleaning, three-car'), WASH = service('Pressure washing, one-car'), QUARTER = service('Quarter load');
 const pick = (item, quantity = 1) => ({ id: item.id, quantity });
-// D12: every builder quote carries labor; a complete quote here carries 6 man-hours as saved (6 x $40.00 = $240.00) in a
-// medium-full garage. A step preview sends none.
-const LABOR = { manHours: 6, fullness: 'medium' }, LABOR_CENTS = 24000;
+// D12: every builder quote carries labor; a complete quote here carries 6 man-hours as saved (6 x $53.00 = $318.00, the
+// owner's rate of 2026-10-19) in a medium-full garage. A step preview sends none.
+const LABOR = { manHours: 6, fullness: 'medium' }, LABOR_CENTS = 31800;
 const descriptor = ({ steps = BUILDER_STEPS, removal = [], shelving = [], storage = [], s = state(), labor = steps.length === BUILDER_STEPS.length ? LABOR : undefined } = {}) => ({ menuVersion: menu.menuVersion, settingsVersion: s.settings.settingsVersion, steps: [...steps], removal, shelving, storage, ...(labor ? { labor: structuredClone(labor) } : {}) });
 const costFree = value => assert.doesNotMatch(JSON.stringify(value), /retailPerPackCents|"split"|productCents|markupCents|laborCents|goodsMarkup|basis/, 'no cost, multiplier or cost split');
 // An owner approval as menu.approve stores it: the amount and the identity of the item it was given for.
@@ -189,7 +189,7 @@ test('installation is billed through the Labor line (D12); only a quote saved be
   // customer already signed that way (requireLabor:false) keeps the earlier rule and waits for the installation answer.
   const { labor, ...older } = ready.breakdown;
   assert.deepEqual(compositeApproval(older, state({ approvals })).blocked.map(row => row.id), ['labor', INSTALLATION_ID]);
-  assert.match(compositeApproval(older, state({ approvals })).blocked[0].reason, /no Labor line\. Every builder quote with garage work charges labor: the estimated man-hours × \$40\.00 per man-hour/);
+  assert.match(compositeApproval(older, state({ approvals })).blocked[0].reason, /no Labor line\. Every builder quote with garage work charges labor: the estimated man-hours × \$53\.00 per man-hour/);
   const signed = compositeApproval(older, state({ approvals }), { requireLabor: false });
   assert.deepEqual(signed.blocked.map(row => [row.id, row.unitCents]), [[INSTALLATION_ID, null]]);
   assert.match(signed.blocked[0].reason, /saved before builder quotes had a Labor line/);

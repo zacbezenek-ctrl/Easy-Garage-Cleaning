@@ -193,8 +193,9 @@ test('prices that arrive after a draft opens re-price only unsigned automatic to
 // the homeowner signs, and the job is saved, only once the quote is built in the builder; then the builder total is
 // signed with its 25% due today and 75% on the job day (D-DEPOSIT). With the builder off, Review is unchanged.
 test('with the quote builder on, Review hides the flat rates and waits for a builder total before the signature and the save', () => {
-  const BUILT = { compositePricing: { steps: ['removal'], labor: { manHours: 6 } }, totalCents: 123456, menuVersion: 'menu-v1', jobId: 'draft-1',
-    lineItems: [{ id: 'removal', kind: 'service', name: 'Removal', description: '', quantity: 1, unitCents: 99456, totalCents: 99456 }, { id: 'labor', kind: 'labor', name: 'Labor', description: '', quantity: 1, unitCents: 24000, totalCents: 24000 }] };
+  // 6 man-hours × $53.00 = $318.00 of labor (the owner's rate of 2026-10-19): $994.56 + $318.00 = $1,312.56.
+  const BUILT = { compositePricing: { steps: ['removal'], labor: { manHours: 6 } }, totalCents: 131256, menuVersion: 'menu-v1', jobId: 'draft-1',
+    lineItems: [{ id: 'removal', kind: 'service', name: 'Removal', description: '', quantity: 1, unitCents: 99456, totalCents: 99456 }, { id: 'labor', kind: 'labor', name: 'Labor', description: '', quantity: 1, unitCents: 31800, totalCents: 31800 }] };
   const page = (builder, state = {}) => { const { context } = walkthroughPage({ pricing: servedPricing(), state: { approved: true, acceptanceAt: '2026-10-01T15:00:00.000Z', signature: 'data:image/png;base64,c2ln', ...state } }); if (builder) context.window.EGCWalkthroughPricing.quoteBuilder = () => true; return context; };
   const FLAT = /Recommended flat rate|Final flat rate|id="locked-price"|id="price-reason"|Truckload pricing uses/;
   // On, not built yet: no flat rate, no approval box or signature pad, no deposit, and Save brief + schedule is disabled.
@@ -210,9 +211,9 @@ test('with the quote builder on, Review hides the flat rates and waits for a bui
   // On and built: the dark card shows the builder total, the homeowner signs it, and its 25% / 75% split shows.
   const built = page(true, { builderQuote: BUILT }), signed = built.reviewScreen();
   assert.doesNotMatch(signed, FLAT);
-  assert.match(signed, /<div class="eyebrow">Quote builder total<\/div><div class="price">\$1234\.56<\/div>/);
+  assert.match(signed, /<div class="eyebrow">Quote builder total<\/div><div class="price">\$1312\.56<\/div>/);
   assert.match(signed, /id="approved"[^]*a 25% deposit due today with the remaining 75% due on the job day[^]*id="signature"/);
-  assert.match(signed, /<p id="deposit-summary">25% deposit due today: \$308\.64\. Remaining 75% due on the job day \(Thu, Oct 1\): \$925\.92\.<\/p>/);
+  assert.match(signed, /<p id="deposit-summary">25% deposit due today: \$328\.14\. Remaining 75% due on the job day \(Thu, Oct 1\): \$984\.42\.<\/p>/);
   assert.match(signed, /<button class="save-btn" onclick="sendHighLevel\(this\)">Save brief \+ schedule<\/button>/);
   assert.deepEqual(Array.from(built.readyToSend()), []);
   // Off: the flat-rate Review is unchanged, now with the 25% / 75% split.
@@ -242,18 +243,20 @@ test('with the quote builder on, the homeowner signs a junk-only quote at $750 p
   assert.doesNotMatch(review, /builder-no-labor|Labor|man-hour/i, 'the truck price covers the crew\'s time: no Labor line and no warning about one');
   assert.match(review, /<p id="deposit-summary">25% deposit due today: \$375\.00\. Remaining 75% due on the job day \(Thu, Oct 1\): \$1125\.00\.<\/p>/);
   assert.deepEqual(Array.from(junk.readyToSend()), []);
-  const GARAGE = { compositePricing: { steps: ['removal', 'shelving'], labor: { manHours: 6, fullness: 'medium' } }, totalCents: 123456, menuVersion: 'menu-v1', jobId: 'draft-3', scope: 'Removal / cleanout: Two-car garage base. Labor.',
-    lineItems: [{ id: 'removal-base', kind: 'service', name: 'Two-car garage base', description: '', quantity: 1, unitCents: 99456, totalCents: 99456 }, { id: 'labor', kind: 'labor', name: 'Labor', description: '', quantity: 1, unitCents: 24000, totalCents: 24000 }] };
+  // 6 man-hours × $53.00 = $318.00 of labor (the owner's rate of 2026-10-19): $994.56 + $318.00 = $1,312.56.
+  const GARAGE = { compositePricing: { steps: ['removal', 'shelving'], labor: { manHours: 6, fullness: 'medium' } }, totalCents: 131256, menuVersion: 'menu-v1', jobId: 'draft-3', scope: 'Removal / cleanout: Two-car garage base. Labor.',
+    lineItems: [{ id: 'removal-base', kind: 'service', name: 'Two-car garage base', description: '', quantity: 1, unitCents: 99456, totalCents: 99456 }, { id: 'labor', kind: 'labor', name: 'Labor', description: '', quantity: 1, unitCents: 31800, totalCents: 31800 }] };
   const garage = page(GARAGE, { sortMethod: 'zones' }), signed = garage.reviewScreen();
   assert.equal(garage.builderJunkOnly(), false);
   assert.equal(garage.builderSignGate(), '');
-  assert.match(signed, /<span class="quote-line"><span>Labor<\/span><b>\$240\.00<\/b><\/span>/);
+  assert.match(signed, /<span class="quote-line"><span>Labor<\/span><b>\$318\.00<\/b><\/span>/);
   assert.match(signed, /<b>Quote scope<\/b><span id="review-finish">Removal \/ cleanout: Two-car garage base\. Labor\.<\/span>/, 'the homeowner reads the priced scope, not the walkthrough\'s Cleanout + reset');
-  assert.doesNotMatch(signed, /man-hour|per hour|hourly|billed per|\$40\.00|builder-no-labor|Cleanout \+ reset/i);
-  assert.match(signed, /<p id="deposit-summary">25% deposit due today: \$308\.64\. Remaining 75% due on the job day \(Thu, Oct 1\): \$925\.92\.<\/p>/);
-  // Built before 2026-10-18 (the Labor line named the man-hours): the server prices it differently, so Review stops
-  // before the signature with Edit the quote, shows its lines as the customer reads them and disables the save.
-  const stale = page({ ...GARAGE, lineItems: [GARAGE.lineItems[0], { ...GARAGE.lineItems[1], name: 'Labor: 6 man-hours × $40.00', description: 'Crew time on site, billed per man-hour.' }] }), old = stale.reviewScreen();
+  assert.doesNotMatch(signed, /man-hour|per hour|hourly|billed per|\$40\.00|\$53\.00|builder-no-labor|Cleanout \+ reset/i);
+  assert.match(signed, /<p id="deposit-summary">25% deposit due today: \$328\.14\. Remaining 75% due on the job day \(Thu, Oct 1\): \$984\.42\.<\/p>/);
+  // Built before 2026-10-18 (the Labor line named the man-hours, at that day's $40.00): the server prices it differently,
+  // so Review stops before the signature with Edit the quote, shows its lines as the customer reads them and disables the
+  // save.
+  const stale = page({ ...GARAGE, totalCents: 123456, lineItems: [GARAGE.lineItems[0], { ...GARAGE.lineItems[1], name: 'Labor: 6 man-hours × $40.00', description: 'Crew time on site, billed per man-hour.', unitCents: 24000, totalCents: 24000 }] }), old = stale.reviewScreen();
   assert.equal(stale.builderSignGate(), 'stale');
   assert.match(old, /<div class="send-options" id="builder-sign-gate" data-gate="stale"><button type="button" id="build-quote" onclick="sendOptionsForReview\(this\)">Edit the quote<\/button><p role="status">This quote was built before the pricing changes of 2026-10-18/);
   assert.match(old, /<div class="price" id="builder-total-blocked">Not ready<\/div>/);

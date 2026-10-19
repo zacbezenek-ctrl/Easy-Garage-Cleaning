@@ -78,8 +78,8 @@ test('estimator end to end: builder quote, crew opening, signed job on Crew 1 wi
   assert.deepEqual([menuView.enabled, menuView.steps], [true, ['removal', 'shelving', 'storage']]);
   assert.doesNotMatch(JSON.stringify(menuView), /retailPerPackCents|goodsMarkup|"internal":\{/, 'an estimator sees sell prices only');
   assert.equal(menuView.viewer.internal, false);
-  // The labor rate on the estimator's menu: the owner's $40.00 per man-hour, approved (D12).
-  assert.deepEqual([menuView.labor.rateCents, menuView.labor.approved, menuView.installation], [4000, true, { included: false, billedAs: 'labor' }]);
+  // The labor rate on the estimator's menu: the owner's $53.00 per man-hour (2026-10-19), approved (D12).
+  assert.deepEqual([menuView.labor.rateCents, menuView.labor.approved, menuView.installation], [5300, true, { included: false, billedAs: 'labor' }]);
   // As the builder sends them: a step preview carries no labor; the whole quote carries the estimator's man-hours.
   const chosen = selection(), { labor: _labor, ...items } = chosen, through = steps => ({ ...items, steps, ...Object.fromEntries(['removal', 'shelving', 'storage'].filter(step => !steps.includes(step)).map(step => [step, []])) });
   const removal = await post({ action: 'composite_preview', compositePricing: through(['removal']) });
@@ -88,11 +88,11 @@ test('estimator end to end: builder quote, crew opening, signed job on Crew 1 wi
   assert.deepEqual([removal.status, shelving.status, preview.status], [200, 200, 200]);
   assert.deepEqual(preview.body.steps.map(step => [step.id, step.runningTotalCents]), [['removal', removal.body.totalCents], ['shelving', shelving.body.totalCents], ['storage', preview.body.totalCents - LABOR_CENTS], ['labor', preview.body.totalCents]], 'a running total per step, then the labor');
   // D-JUNK: the estimate is the base's set-up, sweep-out and sorting plus the install time; the truck load's $750 pays its own.
-  assert.deepEqual(preview.body.labor, { version: 2, manHours: 6, rateCents: 4000, rateSource: 'default', totalCents: LABOR_CENTS, prefilledManHours: 6, adjusted: false, belowEstimate: false,
+  assert.deepEqual(preview.body.labor, { version: 2, manHours: 6, rateCents: 5300, rateSource: 'default', totalCents: LABOR_CENTS, prefilledManHours: 6, adjusted: false, belowEstimate: false,
     estimate: { personMinutes: 364, removalPersonMinutes: 180, installPersonMinutes: 184, fullness: 'medium', installNotEstimated: [] } });
   assert.equal(preview.body.junkOnly, false);
   // D-LABOR-TEXT: the customer's Labor line is one amount.
-  assert.deepEqual(preview.body.lineItems.at(-1), { id: 'labor', kind: 'labor', name: 'Labor', description: 'Includes installing the shelving and storage.', quantity: 1, unitCents: LABOR_CENTS, totalCents: LABOR_CENTS, amount: 240, optional: false, selected: true, group: null, tier: null, package: null, catalog: null, customerSupplied: false, taxable: false });
+  assert.deepEqual(preview.body.lineItems.at(-1), { id: 'labor', kind: 'labor', name: 'Labor', description: 'Includes installing the shelving and storage.', quantity: 1, unitCents: LABOR_CENTS, totalCents: LABOR_CENTS, amount: 318, optional: false, selected: true, group: null, tier: null, package: null, catalog: null, customerSupplied: false, taxable: false });
   const outOfOrder = await post({ action: 'composite_preview', compositePricing: { ...chosen, steps: ['shelving', 'removal', 'storage'] } });
   assert.deepEqual([outOfOrder.status, outOfOrder.body.code], [400, 'quote_draft_composite_order']);
   const saved = await post({ action: 'save', requestId: fixedRequestId(), customerId: 'c1', sourceWalkthroughId: 'w1', sourceRevision: 'w1r', draft: { client: client(1), title: 'Garage reset', scope: 'Removal, then shelving, then extra storage.', line_items: preview.body.lineItems, valid_until: '2026-10-30', catalog_version: preview.body.menuVersion, crew_size: 2, estimated_duration_min: 180, composite_pricing: chosen } });
@@ -130,7 +130,7 @@ test('estimator end to end: builder quote, crew opening, signed job on Crew 1 wi
   // the HighLevel opportunity's monetaryValue) include it, and the crew sees the man-hours, never the rate or the amount.
   // The customer's line reads "Labor" and its amount (D-LABOR-TEXT).
   assert.deepEqual(job.estimate.lineItems.at(-1).name, 'Labor');
-  assert.deepEqual(job.acceptedHandoffPayload.quote.line_items.at(-1), { name: 'Labor', qty: 1, total: 240 });
+  assert.deepEqual(job.acceptedHandoffPayload.quote.line_items.at(-1), { name: 'Labor', qty: 1, total: 318 });
   assert.deepEqual([job.total, job.priceQuoted, job.estimate.depositRequired], [priced.totalCents / 100, priced.totalCents / 100, Math.round(priced.totalCents / 4) / 100]);
   assert.ok(priced.totalCents - LABOR_CENTS === priced.breakdown.sections.reduce((sum, section) => sum + section.subtotalCents, 0), 'the menu steps plus the labor are the total');
   assert.deepEqual(job.compositeQuote.breakdown.labor, priced.labor);

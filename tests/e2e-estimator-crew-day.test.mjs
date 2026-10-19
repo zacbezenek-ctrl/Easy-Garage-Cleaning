@@ -205,7 +205,7 @@ test('estimator to crew, one day through the real handlers: walkthrough, builder
   assert.deepEqual([menu.enabled, menu.steps, menu.viewer.internal, 'internal' in menu], [true, ['removal', 'shelving', 'storage'], false, false]);
   assert.doesNotMatch(JSON.stringify(menu), /retailPerPackCents|goodsMarkup/, 'sell prices only');
   // D12: the owner's labor rate, approved, on the estimator's menu; installation is billed through the Labor line.
-  assert.deepEqual([menu.labor.rateCents, menu.labor.approved, menu.installation], [4000, true, { included: false, billedAs: 'labor' }]);
+  assert.deepEqual([menu.labor.rateCents, menu.labor.approved, menu.installation], [5300, true, { included: false, billedAs: 'labor' }]);
   // The step previews carry no labor (as crew/quote-draft.js sends them); the review prices the estimator's man-hours.
   const chosen = selection(), { labor: _labor, ...items } = chosen, upTo = steps => ({ ...items, steps, ...Object.fromEntries(['removal', 'shelving', 'storage'].filter(step => !steps.includes(step)).map(step => [step, []])) });
   const removal = await api.ok('Sales.Person', '/api/quote-draft', { action: 'composite_preview', compositePricing: upTo(['removal']) });
@@ -285,11 +285,11 @@ test('estimator to crew, one day through the real handlers: walkthrough, builder
 
   // 3) The owner approves the draft menu prices on the quote (Hub > Catalog & pricing > Menu prices, POST /api/catalog
   // menu.approve): every held job those prices now cover is released in the same request. Catalog pricing is off (not
-  // one of the owner's flags); the labor rate ($40.00, D12) is already approved and installation is billed through it,
+  // one of the owner's flags); the labor rate ($53.00, the owner's decision of 2026-10-19) is already approved and installation is billed through it,
   // so the approval of the menu prices alone releases the job.
   clock(at(MON, '12:00'));
   const ownerMenu = await api.ok('ZacB', '/api/quote-draft?view=builder');
-  assert.deepEqual([ownerMenu.viewer.canApprove, ownerMenu.internal.approvalsRevision, ownerMenu.labor.rateCents, ownerMenu.labor.source, ownerMenu.installation], [true, null, 4000, 'default', { included: false, billedAs: 'labor' }]);
+  assert.deepEqual([ownerMenu.viewer.canApprove, ownerMenu.internal.approvalsRevision, ownerMenu.labor.rateCents, ownerMenu.labor.source, ownerMenu.installation], [true, null, 5300, 'default', { included: false, billedAs: 'labor' }]);
   assert.deepEqual((await api.ok('ZacB', '/api/catalog')).enabled, false, 'no Pricing tab: catalog pricing is off');
   // As the Menu prices screen does: the approvals revision the owner reviewed comes from the reloaded builder menu.
   const menuApproval = async extra => ({ action: 'menu.approve', requestId: randomUUID(), expectedRevision: (await api.ok('ZacB', '/api/quote-draft?view=builder')).internal.approvalsRevision, menuVersion: ownerMenu.menuVersion, settingsVersion: ownerMenu.settingsVersion, approve: [], revoke: [], ...extra });
@@ -298,10 +298,10 @@ test('estimator to crew, one day through the real handlers: walkthrough, builder
   const prices = await api.ok('ZacB', '/api/catalog', await menuApproval({ approve: drafts }));
   assert.deepEqual(prices.heldJobs, { released: [draft.id], waiting: 0, more: false }, 'every price approved: the job is released, labor included');
   assert.deepEqual([job().pricesPendingApproval, job().customerPortalInvitationRequestedAt, job().pricesRelease.source, job().pricesRelease.gate, job().compositeQuote.approval.ready], [null, iso(MON, '12:00'), 'menu.approve', 'approved_prices', true]);
-  // A replayed approval (a lost response) changes nothing and releases nothing again. The owner keeps the $40.00 rate:
+  // A replayed approval (a lost response) changes nothing and releases nothing again. The owner keeps the $53.00 rate:
   // re-entering it is one change, recorded, and prices stay as they are.
-  const again = await menuApproval({ laborRatePerManHourCents: 4000 }), once = await api.ok('ZacB', '/api/catalog', again), twice = await api.ok('ZacB', '/api/catalog', again);
-  assert.deepEqual([once.replayed, twice.replayed, 'heldJobs' in twice, once.approvals.laborRatePerManHourCents], [false, true, false, 4000]);
+  const again = await menuApproval({ laborRatePerManHourCents: 5300 }), once = await api.ok('ZacB', '/api/catalog', again), twice = await api.ok('ZacB', '/api/catalog', again);
+  assert.deepEqual([once.replayed, twice.replayed, 'heldJobs' in twice, once.approvals.laborRatePerManHourCents], [false, true, false, 5300]);
   assert.deepEqual((await api.ok('Sales.Person', '/api/quote-draft?view=builder')).labor.source, 'owner');
 
   // 2, continued) The $750 full truck is the one price the menu itself approves: the estimator's junk-only quote for the

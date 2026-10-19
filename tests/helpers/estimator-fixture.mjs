@@ -21,15 +21,16 @@ export const TOTES = menu.products.find(item => item.id === 'hd-341048322');
 /** The builder's pricing state; approvals {id: unitCents} are recorded for the current menu item (menuItemIdentity). */
 export const builderState = (approvals = {}, extra = {}) => ({ menu, settings: { ...settings, ...extra }, walkthrough: walkthroughPricing(walkthroughServiceItems()),
   approvals: { items: Object.fromEntries(Object.entries(approvals).map(([id, unitCents]) => [id, { unitCents, identity: menuItemIdentity(menu.services.find(item => item.id === id) || menu.products.find(item => item.id === id)) }])), revision: Object.keys(approvals).length ? 'approvals-1' : null } });
-/** The labor a builder quote carries (D12): 6 man-hours x $40.00 = $240.00, as the estimator saved them, in a medium-full
- * garage (the signedPlan's fullness). The server's own estimate of the default selection is also 6 man-hours
+/** The labor a builder quote carries (D12): 6 man-hours x $53.00 = $318.00 (the owner's rate of 2026-10-19), as the
+ * estimator saved them, in a medium-full garage (the signedPlan's fullness). The server's own estimate of the default
+ * selection is also 6 man-hours
  * (laborEstimate, D-JUNK: 2 x (60 + 30) for the base's set-up, sweep-out and sorting, nothing for the truck load, whose
  * $750 pays its loading and hauling, 2 shelving units x 60 and two 4-packs of totes x 32 = 364 person-minutes), so this
  * labor equals the estimate and is not adjusted by hand. */
 export const LABOR = Object.freeze({ manHours: 6, fullness: 'medium' });
-/** The server's estimate of the default selection (laborEstimate): 6 man-hours, $240.00. */
+/** The server's estimate of the default selection (laborEstimate): 6 man-hours, $318.00. */
 export const ESTIMATE_MAN_HOURS = 6;
-export const LABOR_CENTS = 24000;
+export const LABOR_CENTS = 31800;
 /** The estimator's builder selection: removal, then shelving, then extra storage, then the labor. */
 export const selection = ({ removal = [{ id: menuItem('Two-car garage base').id, quantity: 1 }, { id: menuItem('Full truck load').id, quantity: 1 }], shelving = [{ id: SHELF.id, quantity: 2 }], storage = [{ id: TOTES.id, quantity: 2 }], labor = LABOR } = {}) =>
   ({ menuVersion: menu.menuVersion, settingsVersion: settings.settingsVersion, steps: ['removal', 'shelving', 'storage'], removal, shelving, storage, ...(labor ? { labor: structuredClone(labor) } : {}) });

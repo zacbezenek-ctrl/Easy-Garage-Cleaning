@@ -8,7 +8,7 @@
 (function(){
 'use strict';
 // Drafts live under the Hub's draft prefix, which the always-loaded screen registry clears on sign-out.
-const API='/api/catalog',SCREEN='catalog',DRAFT_KEY='egc.hub.draft.v1.catalog.',TZ='America/Denver',PAGE=40,MAX_ITEM_CENTS=10000000,QUOTE_ASSET_VERSION='20261019deposit1';
+const API='/api/catalog',SCREEN='catalog',DRAFT_KEY='egc.hub.draft.v1.catalog.',TZ='America/Denver',PAGE=40,MAX_ITEM_CENTS=10000000,QUOTE_ASSET_VERSION='20261019labor53';
 const PRODUCT_CATEGORIES=['bikes','cabinets-workbenches','floors-lighting-extras','lawn-garden','overhead','shelving','small-items','sports-outdoor','wall-systems'];
 const TIERS=['good','better','best'],VERIFIED_EVIDENCE=['product_page','search_snippet'];
 const AVAILABILITY={active:'Active',referral_only:'Referral only',hidden:'Hidden'};
@@ -806,14 +806,15 @@ function menuRequest(){
     else approve.push({id,unitCents:cents});
   }
   let laborRateCents;
-  if(laborChange()){const cents=centsOf(laborRateEdit());if(cents==null||cents<LABOR_RATE_MIN||cents>LABOR_RATE_MAX)errors.laborRate=`Enter the labor rate per man-hour as dollars, from ${money(LABOR_RATE_MIN)} to ${money(LABOR_RATE_MAX)}, like 40.00.`;else laborRateCents=cents;}
+  if(laborChange()){const cents=centsOf(laborRateEdit());if(cents==null||cents<LABOR_RATE_MIN||cents>LABOR_RATE_MAX)errors.laborRate=`Enter the labor rate per man-hour as dollars, from ${money(LABOR_RATE_MIN)} to ${money(LABOR_RATE_MAX)}${laborRateNow()===null?'':`, like ${dollars(laborRateNow())}`}.`;else laborRateCents=cents;}
   return{approve,revoke:Object.keys(pick.revoke),errors,...(typeof pick.installation==='boolean'?{installation:pick.installation}:{}),...(laborRateCents!==undefined?{laborRateCents}:{})};
 }
 // The labor rate on Menu prices: what every builder quote's Labor line charges per man-hour, and the owner's edit.
 function laborCard(m,frozen){
   const now=laborRateNow();
   if(now===null)return null;
-  const pick=menuPick(),error=S.menuErrors?.laborRate,source=m.labor?.source==='owner'?'You set this rate.':'Your decision of 2026-10-18 ($40.00 per man-hour).';
+  // The default rate's own decision date and amount come from the server (menu.labor.reason, menu.labor.rateCents).
+  const pick=menuPick(),error=S.menuErrors?.laborRate,decided=/\d{4}-\d{2}-\d{2}/.exec(m.labor?.reason||'')?.[0],source=m.labor?.source==='owner'?'You set this rate.':`Your decision${decided?` of ${decided}`:''} (${money(now)} per man-hour).`;
   // Typing keeps the focus (no redraw); leaving the field redraws so the review button counts the change.
   const input=h('input',{id:'cat-menu-labor-rate',class:'cat-menu-amount',type:'text',inputmode:'decimal',autocomplete:'off',value:laborRateEdit()??dollars(now),disabled:frozen,'aria-describedby':'cat-menu-labor-help',oninput:event=>{pick.laborRate=event.target.value;if(S.menuErrors)delete S.menuErrors.laborRate;},onchange:()=>render()});
   return h('section',{class:'hub-card cat-card cat-labor','data-labor-rate':String(now)},

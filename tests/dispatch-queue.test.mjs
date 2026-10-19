@@ -331,7 +331,7 @@ test('withQueueFacts keeps every other job in place and orders only the queued o
 
 // customer-portal.js approve_estimate: an online approval of undated work is flagged for the office.
 const portalJob = extra => ({ type: 'job', customer: 'Synthetic Customer', customerId: 'customer-1', address: '100 Synthetic Street', serviceType: 'Garage Turnaround', total: 800, status: 'unscheduled', pipelineStatus: 'unscheduled', date: '', estimate: { number: 'EST-1', status: 'sent', amount: 800, revision: 2, validUntil: '2026-10-01' }, ...extra });
-const approve = shown => ({ action: 'approve_estimate', signed_name: 'Synthetic Customer', confirmed: true, estimate_revision: shown.revision, amount_cents: Math.round(shown.amount * 100), estimate_fingerprint: shown.fingerprint, request_id: randomUUID() });
+const approve = shown => ({ action: 'approve_estimate', signed_name: 'Synthetic Customer', confirmed: true, terms_version: shown.termsVersion, estimate_revision: shown.revision, amount_cents: Math.round(shown.amount * 100), estimate_fingerprint: shown.fingerprint, request_id: randomUUID() });
 
 test('approve_estimate flags the job for dispatch review only when it has no date', async t => {
   const f = portalStore(t, { 'job-1': portalJob() }), handlers = portalHandlers(), cookie = await portalCookie();

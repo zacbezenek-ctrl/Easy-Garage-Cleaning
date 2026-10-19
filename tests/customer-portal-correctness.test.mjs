@@ -269,7 +269,7 @@ test('approval inside the validity window records the injected time', async t =>
   const at = '2026-09-23T05:30:00.000Z', handlers = portalHandlers(at), cookie = await portalCookie('job-1', {}, Date.parse(at));
   // Approvals name the revision and total the page displayed (portal approval binding, M14).
   const shown = (await portalView(handlers, cookie)).body.estimate;
-  const approved = await portalPost(handlers, cookie, { action: 'approve_estimate', signed_name: 'Synthetic Customer', confirmed: true, estimate_revision: shown.revision, amount_cents: Math.round(shown.amount * 100), estimate_fingerprint: shown.fingerprint });
+  const approved = await portalPost(handlers, cookie, { action: 'approve_estimate', signed_name: 'Synthetic Customer', confirmed: true, terms_version: shown.termsVersion, estimate_revision: shown.revision, amount_cents: Math.round(shown.amount * 100), estimate_fingerprint: shown.fingerprint });
   assert.equal(approved.status, 200);
   assert.equal(f.job('job-1').customerApproval.approvedAt, at);
   assert.equal(f.job('job-1').estimate.acceptedAt, at);

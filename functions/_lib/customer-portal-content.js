@@ -1,13 +1,14 @@
 // Customer-facing guarantee and terms shown in the private portal. Every
 // sentence is copied verbatim from what the business already publishes (the
 // source is named per block) and nothing here is new legal or guarantee copy.
-// Changing any text MUST bump CUSTOMER_PORTAL_TERMS_VERSION: estimate
+// Changing any text MUST bump CUSTOMER_PORTAL_TERMS_VERSION (2026-10-portal: the Payment section states the
+// 25% deposit and the job-day 75%, as the owner decided on 2026-10-18): estimate
 // approvals record the version the customer was shown (P4-09), and
 // tests/customer-documents.test.mjs pins the copy to this version. It is the
 // portal's own version: in-person walkthrough acceptance keeps the Game Plan's
 // terms_version ('2026-10-deposit25', earlier '2026-09-deposit50'; walkthrough-handoff.js) and the Hub
 // estimate keeps estimate.termsVersion; approvals add acceptedTermsVersion.
-export const CUSTOMER_PORTAL_TERMS_VERSION = '2026-09-portal';
+export const CUSTOMER_PORTAL_TERMS_VERSION = '2026-10-portal';
 // Portal pages served before versioning send no terms_version. They showed only
 // the estimate terms line (identical to 2026-09-portal's estimateTerms), never
 // the guarantee or the service terms, so their approvals are recorded under
@@ -38,12 +39,12 @@ export const CUSTOMER_PORTAL_CONTENT = freeze({
   terms: {
     title: 'Service terms',
     url: '/terms-of-service',
-    updated: '2026-09-04',
+    updated: '2026-10-19',
     source: '/terms-of-service',
     sections: [
       { heading: 'Quotes & Pricing', body: 'Quotes are provided as flat-rate estimates after an on-site walkthrough of the property. A final price is confirmed on site before work begins, and you only pay after approving that quote. If the actual volume, weight, access, or contents differ materially from what was described, we may adjust the quote and will review any change with you before continuing.' },
       { heading: 'Scheduling & Cancellation', body: 'We schedule service by appointment. Please give us as much notice as possible if you need to reschedule or cancel. We reserve the right to reschedule due to weather, safety conditions, crew availability, or other circumstances outside our control. You agree to provide safe and lawful access to the service location at the scheduled time.' },
-      { heading: 'Payment', body: 'Payment is due upon completion of the job unless otherwise agreed in writing. We accept the payment methods communicated to you at the time of booking. You are responsible for any fees or charges associated with returned or failed payments.' },
+      { heading: 'Payment', body: 'A 25% deposit is due when you sign or approve your estimate, and the remaining 75% is due on the job day, unless otherwise agreed in writing. We accept the payment methods communicated to you at the time of booking. You are responsible for any fees or charges associated with returned or failed payments.' },
       { heading: 'Customer Responsibilities', body: 'You represent that you own the items to be removed, or that you are authorized to have them removed and disposed of. You agree to identify anything you wish to keep before we begin — please double-check for personal documents, valuables, and keepsakes beforehand. We are not responsible for items you fail to identify as items to keep.' },
       { heading: 'Items We Do Not Accept', body: 'For safety and legal reasons, we do not haul hazardous materials, including but not limited to paint, solvents, chemicals, fuel, oil, asbestos, ammunition, or biohazardous waste. If such items are present, we may decline to remove them and will let you know how they can be disposed of properly. See our What We Take page for details.' },
       { heading: 'Donation & Disposal', body: 'Where practical, we donate or recycle usable items — including through partners such as the Habitat for Humanity ReStore — and dispose of the remainder at appropriate facilities. Once items are removed with your authorization, they become our property to donate, recycle, or dispose of at our discretion, and cannot be returned.' },

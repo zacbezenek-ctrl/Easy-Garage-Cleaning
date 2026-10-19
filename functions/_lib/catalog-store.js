@@ -14,7 +14,7 @@
  *                                  updatedAt, updatedBy, requestId}; written only by menu.approve. goodsInstallationIncluded
  *                                  is the owner's answer to the builder's installation question, stored once it is given;
  *                                  laborRatePerManHourCents is the owner's labor rate for the builder's Labor line, stored
- *                                  once the owner changes it ($40.00, DEFAULT_LABOR_RATE_CENTS, until then; composite-quote.js)
+ *                                  once the owner changes it ($53.00, DEFAULT_LABOR_RATE_CENTS, until then; composite-quote.js)
  * With no pointer the seed catalog (functions/_data/garage-catalog.json) is the published catalog, and with
  * no settings document the placeholder defaults apply (mustSetBeforeCustomerUse: true, internal use only).
  * A stored record that is malformed or fails verification fails closed (503) and never falls back to a seed.
@@ -395,9 +395,9 @@ function approvalsResult(row, requestId, replayed, current = true) {
  * that shelving and storage installation is included in the goods price, false takes that back. It is the only way to
  * answer it while CATALOG_QUOTES_ENABLED is off (the pricing settings cannot be saved then). laborRatePerManHourCents
  * (whole cents, $1.00 to $1,000.00) sets the labor rate every builder quote's Labor line charges per man-hour (D12:
- * $40.00 until the owner changes it). A request may carry either with no price change; each counts as one change. The
- * approvals, a catalogOperations receipt and a hub_audit entry commit together; expectedRevision is the approvals
- * revision the owner reviewed (null before the first approval). */
+ * $53.00, the owner's decision of 2026-10-19, until the owner changes it). A request may carry either with no price
+ * change; each counts as one change. The approvals, a catalogOperations receipt and a hub_audit entry commit together;
+ * expectedRevision is the approvals revision the owner reviewed (null before the first approval). */
 async function approveMenuPrices(store, session, input, now, actor, { compositeState }) {
   keys(input, ['action', 'requestId', 'expectedRevision', 'menuVersion', 'settingsVersion', 'approve', 'revoke', 'goodsInstallationIncluded', 'laborRatePerManHourCents']);
   if (!Object.hasOwn(input, 'expectedRevision') || input.expectedRevision !== null && (typeof input.expectedRevision !== 'string' || !input.expectedRevision || input.expectedRevision.length > 64)) throw fail('request_invalid', 'Reload the draft prices before approving: the approval needs the revision you reviewed (null before the first approval).');
