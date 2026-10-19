@@ -140,11 +140,18 @@ const signed2575 = { ...job, id: 'job-2575', serviceType: 'Garage transformation
   deposit: { amount: 623.98, paidAmount: 0, status: 'due' } };
 store.put('job-2575', signed2575);
 store.put('job-held', { ...signed2575, id: 'job-held', pricesPendingApproval: { status: 'pending', reason: 'draft_prices', at: '2026-09-22T16:00:00.000Z', by: 'sales.person', requestId: 'r1', items: [{ id: 'egc-003', name: 'Two-car garage base' }] } });
-const scheduled = await portalView(handlers, await portalCookie('job-2575')), held = await portalView(handlers, await portalCookie('job-held'));
+// Owner decision of 2026-10-18 evening: the same quote sent from the Hub on SENT_25_75 and not approved yet: its 25% deposit
+// is due when the customer approves it (no deposit date is saved), the 75% on the job day.
+const sentPolicy = { version: '2026-10-19-deposit25-on-approval', depositPct: 25, remainderPct: 75, depositDueRule: 'approval_day', remainderDueRule: 'job_day' };
+store.put('job-sent-approval', { ...signed2575, id: 'job-sent-approval', quoteStatus: 'sent', customerApproval: undefined, quoteDraft: { version: 1, requestId: 'r1' },
+  estimate: { ...signed2575.estimate, status: 'sent', sentRevision: 1, sentAt: '2026-09-21T18:00:00.000Z', acceptedAt: undefined, acceptedBy: undefined, acceptanceMethod: undefined, source: 'quote_draft', termsVersion: sentPolicy.version, commercialPolicy: sentPolicy,
+    paymentSchedule: { ...signed2575.estimate.paymentSchedule, depositDueDate: null, policyVersion: sentPolicy.version } } });
+const scheduled = await portalView(handlers, await portalCookie('job-2575')), held = await portalView(handlers, await portalCookie('job-held')), sentApproval = await portalView(handlers, await portalCookie('job-sent-approval'));
 assert.deepEqual([held.body.estimate.withheld, held.body.estimate.termsVersion, scheduled.body.payment.dueNow], [true, '2026-10-deposit25', 623.98]);
+assert.deepEqual([sentApproval.body.estimate.approvable, sentApproval.body.estimate.termsVersion, sentApproval.body.estimate.paymentSchedule.depositDueOn], [true, sentPolicy.version, 'approval']);
 
 // The portal read while Firestore cannot answer: what a failed 20-second refresh receives.
 globalThis.fetch = async () => Response.json({}, { status: 500 });
 const down = await portalView(handlers, cookie);
 
-process.stdout.write(JSON.stringify({ pending, approve, approved, partner, created, unsettled, outage, verified, paid, again, tipDue, credit, credited, revised, signedOut, scheduled, held, down, session }));
+process.stdout.write(JSON.stringify({ pending, approve, approved, partner, created, unsettled, outage, verified, paid, again, tipDue, credit, credited, revised, signedOut, scheduled, held, sentApproval, down, session }));

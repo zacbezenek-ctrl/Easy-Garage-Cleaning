@@ -17,7 +17,7 @@ import { crewJobProjection } from '../functions/_lib/crew-job-projection.js';
 import { priceCatalogQuote } from '../functions/_lib/catalog-quote.js';
 import { normalizeUnsignedCapture } from '../functions/_lib/unsigned-walkthrough-capture.js';
 import { fieldJobProjection } from '../functions/_lib/field-execution.js';
-import { PROPOSED_25_75, FINAL_25_75 } from '../functions/_lib/quote-payment-policy.js';
+import { PROPOSED_25_75, FINAL_25_75, SENT_25_75 } from '../functions/_lib/quote-payment-policy.js';
 import { syncWalkthroughCapture } from '../functions/_lib/walkthrough-capture-sync.js';
 import { BUILDER_SECTIONS, menuItemIdentity, priceCompositeQuote } from '../functions/_lib/composite-quote.js';
 import { walkthroughPricing, walkthroughServiceItems } from '../functions/_lib/pricing-config.js';
@@ -36,7 +36,9 @@ test('saved authenticated capture reaches the canonical contact through a retrya
   assert.equal(f.delivered.length, 0, 'customer messaging remains separate');
 });
 
-test('server-only proposed payment policy applies to new drafts and blocks issue while timing is unresolved', async () => {
+// Owner decision of 2026-10-18 evening: an unsent draft saved on the pending variant is sent on SENT_25_75 (deposit due on
+// approval), never on its own unresolved timing; until its job is booked the send waits for the job date.
+test('server-only proposed payment policy applies to new drafts, and an unsent one is sent on the sent-quote terms once its job is dated', async () => {
   const f = fixture(), input = f.input();
   const result = await saveQuoteDraft(f.store, owner, input, NOW, { env: ENV, newQuotePaymentPolicy: PROPOSED_25_75 });
   const job = f.job(result.job.id);
@@ -48,9 +50,10 @@ test('server-only proposed payment policy applies to new drafts and blocks issue
   assert.equal(replay.replayed, true);
   assert.deepEqual(f.job(job.id).estimate.commercialPolicy, PROPOSED_25_75, 'a changed server proposal cannot rewrite an already saved request');
   const preview = { jobId: job.id, expectedRevision: job.revision };
-  await assert.rejects(previewQuoteSend(f.store, owner, preview, NOW, { env: ENV }), error => error.code === 'quote_draft_payment_timing_pending');
-  await assert.rejects(sendQuoteDraft(f.store, owner, { ...preview, requestId: randomUUID(), confirmToken: 'unusable' }, NOW, { env: ENV, deliver: f.deliver }), error => error.code === 'quote_draft_payment_timing_pending');
+  await assert.rejects(previewQuoteSend(f.store, owner, preview, NOW, { env: ENV }), error => error.code === 'quote_draft_payment_dates_pending');
+  await assert.rejects(sendQuoteDraft(f.store, owner, { ...preview, requestId: randomUUID(), confirmToken: 'unusable' }, NOW, { env: ENV, deliver: f.deliver }), error => error.code === 'quote_draft_payment_dates_pending');
   assert.equal(f.delivered.length, 0);
+  assert.deepEqual(f.job(job.id).estimate.commercialPolicy, PROPOSED_25_75, 'a refused send changes nothing');
   const edited = { ...input, requestId: randomUUID(), jobId: job.id, expectedRevision: job.revision, draft: draft(d => { d.line_items[0].unitCents += 100; d.line_items[0].totalCents += 100; }) };
   await saveQuoteDraft(f.store, owner, edited, LATER, { env: ENV });
   assert.deepEqual(f.job(job.id).estimate.commercialPolicy, PROPOSED_25_75);
@@ -71,18 +74,57 @@ test('new policy never rewrites legacy quote terms and cannot be selected by an 
   await assert.rejects(saveQuoteDraft(f.store, owner, { ...f.input(), newQuotePaymentPolicy: PROPOSED_25_75 }, NOW, { env: ENV }), error => error.code === 'quote_draft_invalid_request');
   assert.equal(f.calls.length, attempts);
 });
-test('issued due dates remain frozen and changed walkthrough dates invalidate a pending send',async()=>{
+// Owner decision of 2026-10-18 evening: a quote is sent on SENT_25_75, its 25% deposit due when the customer approves it
+// (no deposit date is saved) and its 75% remainder on the booked job day. An unsent draft saved on FINAL_25_75 is sent on
+// it too. The saved remainder date stays frozen after the send: a revision sent after a reschedule needs an amendment.
+test('a draft saved on FINAL_25_75 is sent on SENT_25_75: deposit due on approval, remainder on the job day, frozen once issued',async()=>{
  const f=fixture(),input=f.input();const saved=await saveQuoteDraft(f.store,owner,input,NOW,{env:ENV,newQuotePaymentPolicy:FINAL_25_75});const job=f.job(saved.job.id);job.date='2026-10-02';
+ assert.deepEqual(job.estimate.commercialPolicy,FINAL_25_75,'saved, not yet sent');
  const preview=await previewQuoteSend(f.store,owner,{jobId:job.id,expectedRevision:job.revision},NOW,{env:ENV});
- f.job('w1').completedAt='2026-09-29T17:00:00Z';
- await assert.rejects(sendQuoteDraft(f.store,owner,{jobId:job.id,expectedRevision:job.revision,requestId:randomUUID(),confirmToken:preview.confirmToken},NOW,{env:ENV}),e=>/^confirm_token_/.test(e.code));
- const current=await previewQuoteSend(f.store,owner,{jobId:job.id,expectedRevision:job.revision},NOW,{env:ENV});
- await sendQuoteDraft(f.store,owner,{jobId:job.id,expectedRevision:job.revision,requestId:randomUUID(),confirmToken:current.confirmToken},NOW,{env:ENV});
- assert.equal(f.job(job.id).estimate.paymentSchedule.depositDueDate,'2026-09-29');f.job(job.id).date='2026-11-01';assert.equal(f.job(job.id).estimate.paymentSchedule.remainderDueDate,'2026-10-02');
+ assert.deepEqual(preview.job.estimate.commercialPolicy,SENT_25_75);assert.equal(preview.job.estimate.paymentSchedule.depositDueDate,null);assert.equal(preview.job.estimate.paymentSchedule.remainderDueDate,'2026-10-02');
+ assert.match(preview.summary,/25% deposit \$\d[\d,]*\.\d\d due on approval; 75% remainder \$[\d,]+\.\d\d due 2026-10-02 \(America\/Denver\)\.$/);
+ assert.doesNotMatch(preview.summary,/2026-09-2\d/,'never the seven-day or walkthrough date');
+ const verified=()=>f.writesTo('jobs').filter(write=>write.id==='w1'&&write.verify).length,verifiedBefore=verified();
+ await sendQuoteDraft(f.store,owner,{jobId:job.id,expectedRevision:job.revision,requestId:randomUUID(),confirmToken:preview.confirmToken},NOW,{env:ENV});
+ const sent=f.job(job.id).estimate;
+ assert.deepEqual([sent.status,sent.commercialPolicy,sent.termsVersion,sent.depositPct,sent.depositRequiredCents],['sent',SENT_25_75,SENT_25_75.version,25,Math.round(sent.amountCents/4)]);
+ assert.deepEqual(sent.paymentSchedule,{depositDueDate:null,remainderDueDate:'2026-10-02',timeZone:'America/Denver',policyVersion:SENT_25_75.version,depositCents:sent.depositRequiredCents,remainderCents:sent.amountCents-sent.depositRequiredCents,sourceWalkthroughId:'w1',sourceRevision:'w1r'});
+ assert.equal(verified(),verifiedBefore+1,'the walkthrough is verified at the send');
+ f.job(job.id).date='2026-11-01';assert.equal(f.job(job.id).estimate.paymentSchedule.remainderDueDate,'2026-10-02');
  await save(f,revise(f,job.id,d=>{d.scope='Explicitly revised scope';}));
  await assert.rejects(previewQuoteSend(f.store,owner,{jobId:job.id,expectedRevision:f.job(job.id).revision},NOW,{env:ENV}),e=>e.code==='quote_draft_payment_schedule_amendment_required');
 });
 
+// A quote already sent on FINAL_25_75 keeps its saved terms and dates (a save that changes nothing keeps it sent); a new
+// revision of it is sent on SENT_25_75, dated by today's job day, and replaces them only when that revision is sent.
+test('a quote already sent on FINAL_25_75 keeps its terms and dates; its next revision is sent on SENT_25_75',async()=>{
+ const f=fixture(),input=f.input();const saved=await saveQuoteDraft(f.store,owner,input,NOW,{env:ENV,newQuotePaymentPolicy:FINAL_25_75});const job=f.job(saved.job.id);job.date='2026-10-02';
+ const finalSchedule={depositDueDate:'2026-09-25',remainderDueDate:'2026-10-02',timeZone:'America/Denver',policyVersion:FINAL_25_75.version,depositCents:job.estimate.depositRequiredCents,remainderCents:job.estimate.amountCents-job.estimate.depositRequiredCents,sourceWalkthroughId:'w1',sourceRevision:'w1r'};
+ Object.assign(job.estimate,{status:'sent',sentRevision:job.estimate.revision,sentAt:NOW,paymentSchedule:finalSchedule});
+ const before=structuredClone(job.estimate);
+ await save(f,revise(f,job.id));
+ assert.deepEqual(f.job(job.id).estimate.paymentSchedule,finalSchedule);assert.deepEqual(f.job(job.id).estimate.commercialPolicy,FINAL_25_75);assert.equal(f.job(job.id).estimate.status,'sent','nothing changed: still the sent quote');
+ assert.deepEqual(Object.fromEntries(['commercialPolicy','termsVersion','paymentSchedule','revision'].map(key=>[key,f.job(job.id).estimate[key]])),Object.fromEntries(['commercialPolicy','termsVersion','paymentSchedule','revision'].map(key=>[key,before[key]])));
+ await assert.rejects(previewQuoteSend(f.store,owner,{jobId:job.id,expectedRevision:f.job(job.id).revision},NOW,{env:ENV}),e=>e.code==='quote_draft_already_sent');
+ f.job(job.id).date='2026-10-09';
+ await save(f,revise(f,job.id,d=>{d.scope='Revised after the reschedule';}));
+ assert.deepEqual(f.job(job.id).estimate.paymentSchedule,finalSchedule,'the unsent revision keeps the saved FINAL schedule');
+ const preview=await previewQuoteSend(f.store,owner,{jobId:job.id,expectedRevision:f.job(job.id).revision},NOW,{env:ENV});
+ assert.deepEqual([preview.job.estimate.commercialPolicy.version,preview.job.estimate.paymentSchedule.depositDueDate,preview.job.estimate.paymentSchedule.remainderDueDate],[SENT_25_75.version,null,'2026-10-09']);
+ await sendQuoteDraft(f.store,owner,{jobId:job.id,expectedRevision:f.job(job.id).revision,requestId:randomUUID(),confirmToken:preview.confirmToken},NOW,{env:ENV});
+ assert.deepEqual([f.job(job.id).estimate.termsVersion,f.job(job.id).estimate.paymentSchedule.policyVersion,f.job(job.id).estimate.paymentSchedule.depositDueDate],[SENT_25_75.version,SENT_25_75.version,null]);
+});
+
+// An unsent draft saved on the pending variant is sent on SENT_25_75 once dated; a quote from no Hub walkthrough is not.
+test('an unsent pending-variant draft is sent on SENT_25_75; a quote with no Hub walkthrough still waits',async()=>{
+ const f=fixture();const saved=await saveQuoteDraft(f.store,owner,f.input(),NOW,{env:ENV,newQuotePaymentPolicy:PROPOSED_25_75});const job=f.job(saved.job.id);job.date='2026-10-02';
+ const preview=await previewQuoteSend(f.store,owner,{jobId:job.id,expectedRevision:job.revision},NOW,{env:ENV});
+ assert.deepEqual(preview.job.estimate.commercialPolicy,SENT_25_75);
+ await sendQuoteDraft(f.store,owner,{jobId:job.id,expectedRevision:job.revision,requestId:randomUUID(),confirmToken:preview.confirmToken},NOW,{env:ENV});
+ assert.deepEqual([f.job(job.id).estimate.commercialPolicy,f.job(job.id).estimate.termsVersion,f.job(job.id).estimate.paymentSchedule.depositDueDate],[SENT_25_75,SENT_25_75.version,null]);
+ const manual=await saveQuoteDraft(f.store,owner,f.input({sourceWalkthroughId:undefined,sourceRevision:undefined}),NOW,{env:ENV,newQuotePaymentPolicy:SENT_25_75});f.job(manual.job.id).date='2026-10-02';
+ await assert.rejects(previewQuoteSend(f.store,owner,{jobId:manual.job.id,expectedRevision:f.job(manual.job.id).revision},NOW,{env:ENV}),e=>e.code==='quote_draft_payment_dates_pending'&&/walkthrough booked in the Hub/.test(e.message));
+});
 test('new commercial policy preserves server catalog prices and its snapshot across revisions', async () => {
   const f = fixture(), state = catalogState(), descriptor = catalogSelection(state), priced = priceCatalogQuote(state, descriptor, CATALOG_NOW);
   const input = f.input({ sourceWalkthroughId: undefined, sourceRevision: undefined, draft: {
@@ -795,14 +837,15 @@ test('quote draft API: quote authors only, same origin, bounded JSON and a proje
   assert.equal((await post({ action: 'save', ...f.input() }, { 'Content-Type': 'text/plain' })).status, 415);
   assert.equal((await post({ action: 'save', ...f.input() }, { 'Content-Length': '70000' })).status, 413);
   assert.equal((await post({ action: 'publish' })).status, 400);
-  assert.equal(f.job(id).estimate.commercialPolicy.version,'2026-10-14-deposit25-v1');
+  // A new quote is on the sent-quote terms of 2026-10-19: 25% due when the customer approves it, 75% on the job day.
+  assert.deepEqual(f.job(id).estimate.commercialPolicy,SENT_25_75); assert.equal(f.job(id).estimate.termsVersion,'2026-10-19-deposit25-on-approval');
   const needsDate=await post({ action:'send_preview',jobId:id,expectedRevision:f.job(id).revision });
-  assert.equal(needsDate.status,409,'new policy needs verified job and walkthrough dates before issue');
+  assert.equal(needsDate.status,409,'the remainder is due on the job day: the send waits for a booked job date');
   f.job(id).date='2026-10-02';
   const preview = await (await post({ action: 'send_preview', jobId: id, expectedRevision: f.job(id).revision })).json();
   assert.equal(typeof preview.confirmToken, 'string'); assert.equal(preview.delivery.mode, 'off');
-  assert.equal(preview.job.estimate.paymentSchedule.depositDueDate,'2026-09-25');
-  assert.match(preview.summary,/25% deposit.*2026-09-25.*75% remainder.*2026-10-02.*America\/Denver/);
+  assert.equal(preview.job.estimate.paymentSchedule.depositDueDate,null,'due on approval, not seven days before the job (2026-09-25)');
+  assert.match(preview.summary,/25% deposit .* due on approval; 75% remainder .* due 2026-10-02 \(America\/Denver\)/);
   const sent = await post({ action: 'send', requestId: randomUUID(), jobId: id, expectedRevision: f.job(id).revision, confirmToken: preview.confirmToken });
   assert.equal(sent.status, 200); assert.equal(f.job(id).estimate.status, 'sent');
   assert.equal(f.job(id).estimate.paymentSchedule.remainderDueDate,'2026-10-02');

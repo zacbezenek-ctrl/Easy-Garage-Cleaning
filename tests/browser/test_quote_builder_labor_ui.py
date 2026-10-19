@@ -175,7 +175,7 @@ class QuoteBuilderLaborTests(unittest.TestCase):
         self.page.screenshot(path=str(RESULTS / 'quote-builder-junk-only-375.png'), full_page=True)
         dialog.get_by_role('button', name='Save draft').click()
         notice = dialog.locator('[data-held="job-date"]')
-        expect(notice).to_contain_text('Sending waits for the job date: the 25% deposit and 75% balance due dates come from the walkthrough date and the job date.')
+        expect(notice).to_contain_text('Sending waits for the job date: the 25% deposit is due when the customer approves the quote, and the 75% balance on the job day.')
         expect(notice).to_contain_text('Ask the office to book this job in Team schedule (To schedule). Then reopen this quote from the walkthrough and choose Send saved quote.')
         self.assertEqual(self.posts[-1]['action'], 'send_preview')
         expect(dialog.locator('.qd-foot button')).to_have_text(['Done'])

@@ -87,7 +87,7 @@ A proposal may be formatted for internal review once canonical identity, custome
 
 ## Confirmed 25% / 75% mapping for both estimator paths
 
-For new standard quotes, **D2D and Facebook-direct estimator paths use the same canonical `FINAL_25_75` policy** from `functions/_lib/quote-payment-policy.js`; the lead channel does not select the percentage. The existing `/api/quote-draft` save route already supplies this policy for new Hub quote jobs. The native form must not accept editable percentage or due-rule values as authority.
+For new standard quotes, **D2D and Facebook-direct estimator paths use the same canonical sent-quote policy** (`SENT_25_75` from 2026-10-19: deposit due on approval; this mapping was written for `FINAL_25_75`, which quotes sent earlier keep, and the export blocks `SENT_25_75` until its undated deposit has a binding) from `functions/_lib/quote-payment-policy.js`; the lead channel does not select the percentage. The existing `/api/quote-draft` save route already supplies this policy for new Hub quote jobs. The native form must not accept editable percentage or due-rule values as authority.
 
 The total used is the final estimator-approved **saved canonical quote total**, validated against the selected service lines. A newly submitted total is an intake proposal until the authorized estimator saves/reviews it; it is neither customer contract acceptance nor money collected.
 

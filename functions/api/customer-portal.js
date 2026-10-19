@@ -15,11 +15,11 @@ import { parseBusinessActor } from '../_lib/business-hub-core.js';
 import { businessAccountJob } from '../_lib/portal-invitation.js';
 import { moneyDocumentEnabled, moneyDocumentLinks } from '../_lib/money-document.js';
 import { customerMoneyTotals, invoiceTakesPayment, moneyInvoiceStateEnabled, moneyTotalsMode } from '../_lib/money-core.js';
-import { customerLaborLine, customerScopeText, estimateFingerprint, included, legacyLineItems, unsentQuoteDraft } from '../_lib/quote-model.js';
+import { customerLaborLine, customerScopeText, estimateFingerprint, included, legacyLineItems, pricesPendingApproval, unsentQuoteDraft } from '../_lib/quote-model.js';
 import { crewPublicProfilesEnabled, customerCrew, customerCrewProjection, readCrewPublicProfiles } from '../_lib/crew-public-profile.js';
 import { liveSale, portalApprovalWrites, portalFunnelWrite, vocabularyValue } from '../_lib/job-funnel-events.js';
 import { dispatchReviewPatch, queued } from '../_lib/dispatch-queue.js';
-import { publicQuotePaymentSchedule, quotePaymentSummary, withheldQuotePaymentSummary } from '../_lib/quote-payment-policy.js';
+import { publicQuotePaymentSchedule, quotePaymentSummary, sentQuotePaymentPolicy, withheldQuotePaymentSummary } from '../_lib/quote-payment-policy.js';
 
 const HOST = /^(?:easygaragecleaning\.com|www\.easygaragecleaning\.com|easy-garage-cleaning\.pages\.dev|localhost(?::\d+)?|127\.0\.0\.1(?::\d+)?)$/;
 const DEFAULT_REVIEW_URL = 'https://search.google.com/local/writereview?placeid=ChIJ17AGfBiyRIsRyJ3k4mDtX8Q';
@@ -152,9 +152,15 @@ function estimateState(job, finance, today, draftsRejected = false) {
 // An unsent quote draft is withheld: the customer sees that it is being updated,
 // never its unsent price, deposit, scope or lines, and nothing to approve. A quote
 // on the 25/75 terms (a held signed walkthrough, a sent quote's unsent revision)
-// still names those terms, without amounts; any other keeps the portal's terms.
+// still names those terms, without amounts; any other keeps the portal's terms. A quote not approved is withheld until it
+// is sent again, and it is sent on today's sent-quote terms (quote-payment-policy.js sentQuotePaymentPolicy: SENT_25_75,
+// the 25% deposit due when the customer approves it), so it names those. A job the homeowner signed in person and held
+// for the owner's prices (heldSigned) is booked, not revised: the team is confirming its prices and nothing is due until
+// it sends the updated total (walkthrough-handoff.js releasePatch asks for no new approval), so the portal says so.
 function withheldEstimate(job) {
-  const terms = withheldQuotePaymentSummary(job.estimate);
+  const approvedQuote = [job.estimate?.status, job.customerApproval?.status].some(status => ['accepted', 'approved'].includes(String(status || '').toLowerCase()));
+  const heldSigned = pricesPendingApproval(job) && approvedQuote;
+  const terms = withheldQuotePaymentSummary(approvedQuote ? job.estimate : { ...job.estimate, commercialPolicy: sentQuotePaymentPolicy(job.estimate?.commercialPolicy) }, { signed: heldSigned });
   const estimate = {
     number: safe(job.estimate?.number || job.quoteId || `EST-${String(job.id || '').slice(-6).toUpperCase()}`, 80),
     status: 'being_updated', withheld: true, amount: 0,
@@ -163,6 +169,7 @@ function withheldEstimate(job) {
     depositRequired: 0, lineItems: [],
     terms: terms ? 'This flat-rate estimate covers the scope shown. '+terms.text+' Any material scope change requires your approval before additional work or charges.' : CUSTOMER_PORTAL_CONTENT.estimateTerms,
     termsVersion: terms ? terms.version : CUSTOMER_PORTAL_TERMS_VERSION,
+    ...(heldSigned ? { heldSigned: true } : {}),
   };
   return { ...estimate, fingerprint: shownFingerprint(estimate) };
 }

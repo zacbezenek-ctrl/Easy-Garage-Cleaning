@@ -214,6 +214,9 @@ export function moneyDocumentModel(job, { kind, now, payUrl = null, contact = tr
   const estimate = plain(job.estimate) ? job.estimate : {}, invoice = plain(job.invoice) ? job.invoice : {};
   const paymentSchedule = publicQuotePaymentSchedule(estimate), split = paymentSchedule ? scheduleSplit(paymentSchedule) : null;
   const today = denverToday(new Date(at)), approval = approvalOf(job);
+  // The 25/75 dates: a deposit due on approval (a quote sent on SENT_25_75) says so, with the approval's day once it is
+  // approved. An invoice that has no due date of its own (a payment wrote it; nothing was issued) lists them too.
+  const scheduleDates = paymentSchedule ? [[`${split.depositPct}% deposit due`, paymentSchedule.depositDueOn === 'approval' ? paymentSchedule.depositDueDate ? `On approval, ${dayLabel(paymentSchedule.depositDueDate)}` : 'When you approve this estimate' : dayLabel(paymentSchedule.depositDueDate)], [`${split.remainderPct}% remainder due`, dayLabel(paymentSchedule.remainderDueDate)], ['Business timezone', paymentSchedule.timeZone]] : [];
   let lines, status, statusLabel, number, dates;
   if (kind === 'estimate') {
     lines = estimateLines(job, totals, issues);
@@ -221,7 +224,7 @@ export function moneyDocumentModel(job, { kind, now, payUrl = null, contact = tr
     number = invoiceNumber(job.id, 'estimate', clean(estimate.number, 80));
     dates = [['Prepared', instantDay(estimate.createdAt || estimate.updatedAt) || instantDay(at)], ['Valid through', dayLabel(estimate.validUntil) || 'Not specified']];
     if (Number.isSafeInteger(estimate.revision) && estimate.revision > 0) dates.push(['Revision', String(estimate.revision)]);
-    if (paymentSchedule) dates.push([`${split.depositPct}% deposit due`, dayLabel(paymentSchedule.depositDueDate)], [`${split.remainderPct}% remainder due`, dayLabel(paymentSchedule.remainderDueDate)], ['Business timezone', paymentSchedule.timeZone]);
+    if (paymentSchedule) dates.push(...scheduleDates);
   } else {
     const projected = invoiceLineItems(job, totals);
     issues.push(...projected.issues);
@@ -232,6 +235,7 @@ export function moneyDocumentModel(job, { kind, now, payUrl = null, contact = tr
       if (invoiceState && status === 'not_issued') number = '';
       dates = [['Issued', instantDay(invoice.issuedAt) || 'Not issued yet'], ['Payment due', dayLabel(invoice.dueDate) || 'Not specified']];
       if (clean(invoice.customerReference, 120)) dates.push(['Your reference', clean(invoice.customerReference, 120)]);
+      if (!validDate(invoice.dueDate)) dates.push(...scheduleDates);
     }
   }
   const ledger = kind === 'estimate' ? { rows: [], reconciled: true, latest: null } : payments(job, { tips: kind === 'receipt' });
@@ -254,7 +258,7 @@ export function moneyDocumentModel(job, { kind, now, payUrl = null, contact = tr
   } else {
     if (kind === 'estimate' && totals.approvedChangeCents > 0) rows.push({ label: 'Estimate', cents: totals.quoteCents }, { label: 'Approved changes', cents: totals.approvedChangeCents });
     rows.push({ label: 'Total', cents: totals.totalCents });
-    if (kind === 'estimate') rows.push({ label: totals.depositRequiredCents === 0 ? 'No deposit required' : paymentSchedule ? `${split.depositPct}% deposit due ${paymentSchedule.depositDueDate}` : 'Deposit due upfront', cents: totals.depositRequiredCents });
+    if (kind === 'estimate') rows.push({ label: totals.depositRequiredCents === 0 ? 'No deposit required' : paymentSchedule ? `${split.depositPct}% deposit due ${paymentSchedule.depositDueOn === 'approval' ? `on approval${paymentSchedule.depositDueDate ? ` (${paymentSchedule.depositDueDate})` : ''}` : paymentSchedule.depositDueDate}` : 'Deposit due upfront', cents: totals.depositRequiredCents });
     if (kind === 'estimate' && paymentSchedule) rows.push({label:`Scheduled ${split.remainderPct}% remainder due ${paymentSchedule.remainderDueDate}`,cents:paymentSchedule.remainderCents});
     rows.push({ label: 'Payments received', cents: totals.appliedCents });
   }

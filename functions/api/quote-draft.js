@@ -9,7 +9,7 @@ import { catalogQuotesEnabled, catalogStorage, quoteBuilderEnabled, readCatalogS
 import { priceCatalogQuote } from '../_lib/catalog-quote.js';
 import { builderMenu, priceCompositeQuote } from '../_lib/composite-quote.js';
 import { syncWalkthroughCapture, walkthroughCaptureSyncEnabled } from '../_lib/walkthrough-capture-sync.js';
-import { FINAL_25_75 } from '../_lib/quote-payment-policy.js';
+import { SENT_25_75 } from '../_lib/quote-payment-policy.js';
 
 /** Quote drafts (P2-07). Same-origin JSON, quote authors only (P2-12).
  * GET  /api/quote-draft?jobId=ID  => {ok, job: quote author DTO}
@@ -85,7 +85,7 @@ export function quoteDraftHandlers({ session = getHubSession, storage = dispatch
           const { storedLineItems, ...priced } = priceCompositeQuote(await compositeState(env), input.compositePricing);
           return reply(200, { ok: true, authority: 'employee_hub', ...priced });
         }
-        if (action === 'save') return reply(200, { ...await saveQuoteDraft(store, actor, input, at, { env, catalogState, compositeState, newQuotePaymentPolicy: FINAL_25_75, checkouts: job => expireStaleCheckout({ store, job, stripe: stripe(env), now: at, mode: moneyTotalsMode(env) }) }), captureSyncEnabled: walkthroughCaptureSyncEnabled(env) });
+        if (action === 'save') return reply(200, { ...await saveQuoteDraft(store, actor, input, at, { env, catalogState, compositeState, newQuotePaymentPolicy: SENT_25_75, checkouts: job => expireStaleCheckout({ store, job, stripe: stripe(env), now: at, mode: moneyTotalsMode(env) }) }), captureSyncEnabled: walkthroughCaptureSyncEnabled(env) });
         if (action === 'sync_capture') {
           const sync = await syncWalkthroughCapture(store, actor, input, at, { env, ...(captureNote ? { note: captureNote } : {}) });
           return reply(200, { ...await readQuoteDraft(store, actor, { jobId: input.jobId }, { env }), captureSyncEnabled: sync.enabled });

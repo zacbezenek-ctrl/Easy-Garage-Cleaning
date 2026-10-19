@@ -404,17 +404,18 @@
       else if (saved?.job?.captureSync) { S.saved = saved.job; S.syncEnabled = saved.captureSyncEnabled === true; }
       render();
     }
-    // A new quote's 25% deposit and 75% balance are due on dates the server works out from its walkthrough date and its
-    // job date (quote-payment-policy.js FINAL_25_75), so a saved quote job with no date yet cannot be previewed or sent
+    // A sent quote's 25% deposit is due when the customer approves it and its 75% balance on the job day
+    // (quote-payment-policy.js SENT_25_75), so a saved quote job with no date yet cannot be previewed or sent
     // (quote_draft_payment_dates_pending). Saving it again never adds a date: a quote from a Hub walkthrough waits for the
-    // office to book the job; a manual walkthrough (or a catalog quote) has no walkthrough date, so it is never sent.
+    // office to book the job; a quote from a manual walkthrough (or a catalog quote) is sent only from a walkthrough
+    // booked in the Hub, so it is never sent.
     function datesNotice() {
       let walk = S.saved?.sourceWalkthroughId;
       if (typeof walk !== 'string') { try { walk = String(options.source?.() || ''); } catch { walk = ''; } }
-      const lines = walk ? ['Sending waits for the job date: the 25% deposit and 75% balance due dates come from the walkthrough date and the job date.',
+      const lines = walk ? ['Sending waits for the job date: the 25% deposit is due when the customer approves the quote, and the 75% balance on the job day.',
         `Ask the office to book this job in Team schedule (To schedule). Then ${S.mode === 'builder' ? 'reopen this quote from the walkthrough and choose Send saved quote' : 'open Send options for review on the walkthrough again to send it'}.`]
-        : options.variant === 'catalog' ? ['A catalog quote can\u2019t be sent for review: its 25% deposit and 75% balance due dates need a walkthrough booked in the Hub and a job date.', 'Quote this customer from a walkthrough booked in the Hub instead.']
-          : ['A quote from a manual walkthrough can\u2019t be sent for review: its 25% deposit and 75% balance due dates need a walkthrough booked in the Hub.',
+        : options.variant === 'catalog' ? ['A catalog quote can\u2019t be sent for review: a quote is sent only from a walkthrough booked in the Hub, once the job date is booked.', 'Quote this customer from a walkthrough booked in the Hub instead.']
+          : ['A quote from a manual walkthrough can\u2019t be sent for review: a quote is sent only from a walkthrough booked in the Hub.',
             'Get the homeowner\u2019s signature on the walkthrough\u2019s Review step and choose Save brief + schedule, or ask the office to book a walkthrough for this customer in the Hub and quote from that walkthrough.'];
       return h('div', { class: 'qd-notice', role: 'status', 'data-held': walk ? 'job-date' : 'no-walkthrough' }, lines.map(text => h('p', {}, text)));
     }

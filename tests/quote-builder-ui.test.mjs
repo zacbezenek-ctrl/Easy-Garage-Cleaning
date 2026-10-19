@@ -628,8 +628,8 @@ test('a quote saved under the earlier Labor rules says so, is held for a re-save
   }
 });
 
-// A new quote's 25% deposit and 75% balance are due on dates worked out from its walkthrough date and its job date
-// (quote-payment-policy.js FINAL_25_75), and a new quote job has no date, so its send preview is refused
+// A sent quote's 25% deposit is due when the customer approves it and its 75% balance on the job day
+// (quote-payment-policy.js SENT_25_75), and a new quote job has no date, so its send preview is refused
 // (quote_draft_payment_dates_pending). The quote stays saved and the dialog says what happens next; saving it again never
 // adds a date, so Save draft is never the next step.
 // A junk-removal-only walkthrough (a truck load, no special items, no finish options): a junk-only quote is sent on it (D-JUNK).
@@ -652,7 +652,7 @@ test('a quote from a Hub walkthrough is saved and waits for its job date; Send s
   const h = harness({ walkthrough: truckOnly, datesPending: true });
   await toSavedTruck(h);
   assert.equal(h.calls.at(-1).body.action, 'send_preview');
-  assert.match(h.text(), /Draft EST-JOB1 revision 1 saved\.Sending waits for the job date: the 25% deposit and 75% balance due dates come from the walkthrough date and the job date\.Ask the office to book this job in Team schedule \(To schedule\)\. Then reopen this quote from the walkthrough and choose Send saved quote\./);
+  assert.match(h.text(), /Draft EST-JOB1 revision 1 saved\.Sending waits for the job date: the 25% deposit is due when the customer approves the quote, and the 75% balance on the job day\.Ask the office to book this job in Team schedule \(To schedule\)\. Then reopen this quote from the walkthrough and choose Send saved quote\./);
   waitsWithoutDeadEnd(h);
   h.button('Done').click();
   // Reopened before the job is booked: Send saved quote shows the same wait, never the edit-and-save advice.
@@ -675,11 +675,11 @@ test('a quote from a manual walkthrough is saved but cannot be sent for review: 
   const h = harness({ walkthrough: truckOnly, datesPending: true, walkthroughId: '' });
   await toSavedTruck(h);
   assert.equal(h.calls.find(call => call.body?.action === 'save').body.sourceWalkthroughId, '', 'a manual walkthrough has no Hub walkthrough');
-  assert.match(h.text(), /Draft EST-JOB1 revision 1 saved\.A quote from a manual walkthrough can’t be sent for review: its 25% deposit and 75% balance due dates need a walkthrough booked in the Hub\.Get the homeowner’s signature on the walkthrough’s Review step and choose Save brief \+ schedule, or ask the office to book a walkthrough for this customer in the Hub and quote from that walkthrough\./);
-  assert.doesNotMatch(h.text(), /Team schedule|Send saved quote/, 'booking this job gives it no walkthrough date');
+  assert.match(h.text(), /Draft EST-JOB1 revision 1 saved\.A quote from a manual walkthrough can’t be sent for review: a quote is sent only from a walkthrough booked in the Hub\.Get the homeowner’s signature on the walkthrough’s Review step and choose Save brief \+ schedule, or ask the office to book a walkthrough for this customer in the Hub and quote from that walkthrough\./);
+  assert.doesNotMatch(h.text(), /Team schedule|Send saved quote/, 'booking this job does not make it a Hub walkthrough quote');
   waitsWithoutDeadEnd(h);
   h.button('Done').click();
-  // Even with a job date there is no walkthrough date: Send saved quote says the same.
+  // Even with a job date it has no Hub walkthrough: Send saved quote says the same.
   h.server.jobs.get('job-1').date = '2026-10-21';
   h.open(memoryStorage()); await flush();
   h.button('Send saved quote').click(); await flush();
@@ -692,7 +692,7 @@ test('with the builder off, a walkthrough quote waiting for its job date says to
   const h = harness({ builder: false, datesPending: true });
   h.open(); await flush();
   h.button('Save draft').click(); await flush();
-  assert.match(h.text(), /Draft EST-JOB1 revision 1 saved\.Sending waits for the job date: the 25% deposit and 75% balance due dates come from the walkthrough date and the job date\.Ask the office to book this job in Team schedule \(To schedule\)\. Then open Send options for review on the walkthrough again to send it\./);
+  assert.match(h.text(), /Draft EST-JOB1 revision 1 saved\.Sending waits for the job date: the 25% deposit is due when the customer approves the quote, and the 75% balance on the job day\.Ask the office to book this job in Team schedule \(To schedule\)\. Then open Send options for review on the walkthrough again to send it\./);
   waitsWithoutDeadEnd(h);
 });
 
@@ -705,7 +705,7 @@ test('a catalog quote held for its payment dates says it needs a Hub-booked walk
     draft: validUntil => ({ client: { name: 'Synthetic Customer', phone: '+19705550100', email: '', address: '100 Fixture Lane', highlevel_contact_id: '' }, title: 'Catalog quote', scope: 'Included: shelving.', line_items: [{ id: 'catalog-1', kind: 'product', name: 'Shelving unit', quantity: 1, unitCents: 50000, totalCents: 50000 }], valid_until: validUntil }) });
   await flush();
   h.button('Save draft').click(); await flush();
-  assert.match(h.text(), /Draft EST-JOB9 revision 1 saved\.A catalog quote can’t be sent for review: its 25% deposit and 75% balance due dates need a walkthrough booked in the Hub and a job date\.Quote this customer from a walkthrough booked in the Hub instead\./);
+  assert.match(h.text(), /Draft EST-JOB9 revision 1 saved\.A catalog quote can’t be sent for review: a quote is sent only from a walkthrough booked in the Hub, once the job date is booked\.Quote this customer from a walkthrough booked in the Hub instead\./);
   assert.doesNotMatch(h.text(), /Save brief \+ schedule|Team schedule/);
   waitsWithoutDeadEnd(h);
 });

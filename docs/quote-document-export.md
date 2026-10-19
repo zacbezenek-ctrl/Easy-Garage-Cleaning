@@ -75,7 +75,7 @@ Neither review evidence nor the missing review workflow is created here.
 
 ## Payment policy, historical terms and collection
 
-With `policyException:null`, the saved policy must exactly match `FINAL_25_75`:
+With `policyException:null`, the saved policy must exactly match `FINAL_25_75` (or `SIGNED_25_75`; a quote sent on `SENT_25_75`, whose deposit has no date until it is approved, is blocked with `payment_policy_requires_exception`):
 25% deposit; remaining cents **by subtraction**; deposit due later of walkthrough
 day and job day minus seven calendar days; remainder due job day; Denver time.
 The adapter uses the existing canonical helpers, validates the saved dollar and
