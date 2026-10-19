@@ -45,13 +45,21 @@ The screens follow the EGC Knock redesign (Claude Design, October 2026).
   it goes **7 days without use**: once a sign-in is an hour old, the next request from the phone renews it for another
   7 days (`functions/_lib/hub-session.js`, renewed in `functions/_middleware.js`). There is no fixed maximum. Rejecting
   an employee account in the Hub's staff account review, a sign-in reset or a password change still ends its sessions
-  on their next request, and a renewal checks the account first. Knock's offline copy of who is signed in lasts the
-  same 7 days.
+  on their next request, and a renewal checks the account first. An owner or manager set in `HUB_AUTH_USERS_JSON` is
+  signed out the same way when their password hash there changes or the account is removed (their sign-ins from before
+  this release are never renewed and end at their 12-hour expiry). Knock's offline copy of who is signed in lasts the
+  same 7 days, and signing out of Crew home or the Hub removes it, as Knock's own sign-out does.
 * **From the crew hub.** Crew home (`/crew/`) shows a **Door-to-door** tile, and the crew menu a **Door-to-door** link,
   to business users (Knock's admins) and to anyone who has already signed in to Knock on that phone. Showing them
   never creates a canvassing profile; only opening Knock does. Knock's **More** screen links back to **Crew home**.
   The installed app opens `/crew/knock` directly (its manifest `id` is still `/crew/knock.html`, so installed apps
-  keep their identity), and the **EGC Knock** wordmark goes Home without reloading the app.
+  keep their identity), and the **EGC Knock** wordmark goes Home without reloading the app. With no signal, Crew home
+  shows the crew offline page, whose **Open EGC Knock** button leads back (Knock is cached whole on the phone).
+* **Owners' Start in-home walkthrough** saves the look and sends it before the walkthrough opens in the same tab, with
+  the door's address. If Knock refuses the look (on a break, outside knocking hours) it says **Look not saved** and
+  offers **Open walkthrough**. A walkthrough already open on that device for another customer is kept: it shows
+  **Knock sent <address>** with **Start new for this door** or **Keep the open one**; one holding nothing but an earlier
+  Knock door's address moves to the new door.
 
 ## Run it locally
 

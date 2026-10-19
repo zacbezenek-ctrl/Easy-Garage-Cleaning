@@ -223,7 +223,10 @@ class StaffGateBrowserTests(unittest.TestCase):
         page.goto(self.url + '/crew/offline')
         expect(page.get_by_role('heading', name='You are offline')).to_be_visible()
         self.assertEqual(page.locator('.field-header').evaluate('el => getComputedStyle(el).backgroundColor'), 'rgb(17, 29, 48)', 'the navy offline page is styled without the gated job.css')
-        self.assertGreaterEqual(page.locator('.button').bounding_box()['height'], 44)
+        # Open Today's work, and (D2D) Open EGC Knock, which leads a rep back to Knock with no signal: both full-size taps.
+        self.assertEqual([button.get_attribute('href') for button in page.locator('.button').all()], ['/crew/job.html', '/crew/knock'])
+        for button in page.locator('.button').all():
+            self.assertGreaterEqual(button.bounding_box()['height'], 44)
         self.assertLessEqual(page.evaluate('document.documentElement.scrollWidth'), 375)
         page.screenshot(path=str(OUT / 'crew-offline.png'), full_page=True)
         shell = page.evaluate(WORKER_SHELL)

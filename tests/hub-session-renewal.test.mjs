@@ -1,8 +1,11 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
+import { createHash, createHmac } from 'node:crypto';
 import { ORIGIN, cookieFor, jsonRequest, login, seedAccount, staffEnv, vaultFirestore } from './helpers/vault-fixture.mjs';
-import { createHubSessionCookie, createHubSessionToken, getHubSession, hashHubCredential, renewHubSessionCookie, verifyHubSessionToken } from '../functions/_lib/hub-session.js';
+import { createHubSessionCookie, createHubSessionToken, getHubSession, hashHubCredential, hubSessionIdentity, renewHubSessionCookie, verifyHubSessionToken } from '../functions/_lib/hub-session.js';
+import { writeGustoRecord } from '../functions/_lib/gusto-store.js';
+import * as gustoAuth from '../functions/api/gusto-auth.js';
 import { employeeAccountsHandlers } from '../functions/api/employee-accounts.js';
 import * as hubAuth from '../functions/api/hub-auth.js';
 import { onRequest as middleware } from '../functions/_middleware.js';
@@ -43,10 +46,106 @@ test('a staff session lasts 7 days from issue and comes back with a fresh 7 days
   assert.equal(await session(env, cookie, at), null, '7 days without use ends the session');
   assert.equal(await renew(env, cookie, at), '', 'an ended session is never renewed');
 
-  // A session issued before this change (12 hours) is renewed to 7 days on its next request.
-  const legacy = `egc_hub_session=${await createHubSessionToken(env, 'TylerG', NOW - WEEK + 12 * HOUR)}`;
-  assert.equal(claims(legacy).exp, NOW + 12 * HOUR);
-  assert.equal(claims(await renew(env, legacy, NOW)).exp, NOW + WEEK);
+  // A session with 12 hours left is renewed to 7 days on its next request, and keeps its sign-in's id.
+  const late = `egc_hub_session=${await createHubSessionToken(env, 'TylerG', NOW - WEEK + 12 * HOUR)}`;
+  assert.equal(claims(late).exp, NOW + 12 * HOUR);
+  assert.equal(claims(await renew(env, late, NOW)).exp, NOW + WEEK);
+  assert.equal(claims(await renew(env, late, NOW)).s, claims(late).s);
+});
+
+// A token signed as the code before STAFF-SESSION signed it: a configured account's payload had no credential version.
+const signed = (env, body) => `egc_hub_session=${Buffer.from(JSON.stringify(body)).toString('base64url')}.${createHmac('sha256', env.HUB_SESSION_SECRET).update(Buffer.from(JSON.stringify(body)).toString('base64url')).digest('base64url')}`;
+
+test('changing a configured owner or manager password in HUB_AUTH_USERS_JSON ends that account\'s sessions, renewed or not', async () => {
+  const usersWith = async password => JSON.stringify({ ZacB: { passwordHash: await hashHubCredential('ZacB', password), role: 'owner', displayName: 'Synthetic Owner' } });
+  const env = { HUB_SESSION_SECRET: 'synthetic-password-change-secret', HUB_AUTH_USERS_JSON: await usersWith('old synthetic password') };
+  const changed = { ...env, HUB_AUTH_USERS_JSON: await usersWith('new synthetic password') };
+  const first = pair(await createHubSessionCookie(env, 'ZacB', null, NOW - 2 * HOUR));
+  // The credential version is keyed with the session secret: the cookie never holds the hash or anything a guess can test.
+  const { pv } = claims(first), record = JSON.parse(env.HUB_AUTH_USERS_JSON).ZacB.passwordHash;
+  assert.match(pv, /^[A-Za-z0-9_-]{16}$/);
+  assert.equal(pair(first).includes(record) || pv === createHash('sha256').update(record).digest('hex').slice(0, 16), false);
+  const renewed = pair(await renew(env, first, NOW));
+  assert.equal((await session(env, renewed, NOW + DAY)).user, 'ZacB', 'unchanged, the owner stays signed in');
+  for (const [label, value] of [['the first sign-in', first], ['a renewed one', renewed]]) {
+    assert.equal(await session(changed, value, NOW + MINUTE), null, `${label} ends with the password change`);
+    assert.equal(await renew(changed, value, NOW + 2 * HOUR), '', `${label} is never renewed after it`);
+  }
+  // Used every five days for a month after the change, the old cookie never works again; a new sign-in does.
+  for (let day = 5; day <= 30; day += 5) assert.equal(await session(changed, renewed, NOW + day * DAY), null, `day ${day}`);
+  assert.equal((await session(changed, pair(await createHubSessionCookie(changed, 'ZacB', null, NOW)), NOW + MINUTE)).user, 'ZacB');
+
+  // A session issued before the credential version is accepted until its own 12-hour expiry but never renewed.
+  const legacy = signed(env, { v: 1, u: 'ZacB', exp: NOW + 10 * HOUR });
+  assert.equal((await session(env, legacy, NOW)).user, 'ZacB');
+  assert.equal(await renew(env, legacy, NOW), '', 'never renewed');
+  assert.equal(await session(env, legacy, NOW + 10 * HOUR), null, 'ends at its own expiry');
+  // A forged credential version is refused like any other edit.
+  assert.equal(await session(env, signed({ HUB_SESSION_SECRET: 'synthetic-other' }, { v: 1, u: 'ZacB', pv, exp: NOW + DAY }), NOW), null);
+});
+
+test('each sign-in has its own id that every renewal keeps', async () => {
+  const env = staffEnv();
+  const one = pair(await createHubSessionCookie(env, 'ZacB', null, NOW - 2 * HOUR)), two = pair(await createHubSessionCookie(env, 'ZacB', null, NOW - 2 * HOUR));
+  assert.match(claims(one).s, /^[A-Za-z0-9_-]{16}$/);
+  assert.notEqual(claims(one).s, claims(two).s, 'another sign-in, another id');
+  let cookie = one;
+  for (let use = 1; use <= 3; use++) cookie = pair(await renew(env, cookie, NOW + use * DAY));
+  assert.deepEqual([claims(cookie).s, claims(cookie).exp], [claims(one).s, NOW + 3 * DAY + WEEK]);
+  assert.equal(hubSessionIdentity(withCookie(cookie)), hubSessionIdentity(withCookie(one)), 'the identity a flow binds to survives renewals');
+  assert.notEqual(hubSessionIdentity(withCookie(two)), hubSessionIdentity(withCookie(one)));
+  assert.equal(hubSessionIdentity(withCookie('')), '');
+});
+
+test('Gusto connects through the edge while the session renews: on the start, from another tab, and never for another sign-in', async t => {
+  const COMPANY = '11111111-1111-4111-8111-111111111111', endpoint = 'https://easygaragecleaning.com/api/gusto-auth';
+  const env = {
+    GUSTO_ENVIRONMENT: 'demo', GUSTO_COMPANY_UUID: COMPANY, GUSTO_CLIENT_ID: 'synthetic-client-id', GUSTO_CLIENT_SECRET: 'synthetic-client-secret', GUSTO_REDIRECT_URI: endpoint,
+    FIREBASE_API_KEY: 'firebase-test-gusto-auth', EMPLOYEE_HUB_DATA_SECRET: 'synthetic-gusto-vault-secret', HUB_SESSION_SECRET: 'synthetic-gusto-session-secret',
+    HUB_AUTH_USERS_JSON: JSON.stringify({ ZacB: { passwordHash: 'synthetic-owner-hash', role: 'owner' } }),
+  };
+  const docs = new Map();
+  let revision = 0;
+  t.mock.method(globalThis, 'fetch', async (input, options = {}) => {
+    const url = new URL(input);
+    if (url.hostname === 'firestore.googleapis.com') {
+      const id = url.pathname.split('/').pop();
+      if ((options.method || 'GET') === 'PATCH') docs.set(id, { ...JSON.parse(options.body), updateTime: `2026-10-19T12:00:00.${String(++revision).padStart(9, '0')}Z` });
+      return docs.has(id) ? Response.json(docs.get(id)) : Response.json({}, { status: 404 });
+    }
+    if (url.pathname === '/oauth/token') return Response.json({ access_token: 'synthetic-access', refresh_token: 'synthetic-refresh', token_type: 'bearer', expires_in: 7200 });
+    if (url.pathname === '/v1/token_info') return Response.json({ resource: { type: 'Company', uuid: COMPANY }, resource_owner: { type: 'CompanyAdmin', uuid: '22222222-2222-4222-8222-222222222222' } });
+    return Response.json([]);
+  });
+  await writeGustoRecord(env, 'oauth-tokens', { state: 'connected', accessToken: 'x', refreshToken: 'y', expiresAt: Date.now() + 2 * HOUR, connectedAt: '2026-10-01T00:00:00Z' }, null);
+  const edge = (request, handler) => middleware({ env, request, next: () => handler({ env, request }) });
+  // The browser keeps whatever session cookie the last response gave it.
+  const browser = cookie => ({ cookie, take(response) { const renewed = response.headers.getSetCookie().find(line => line.startsWith('egc_hub_session=')); if (renewed) this.cookie = pair(renewed); return response; } });
+  const begin = async tab => {
+    const started = tab.take(await edge(new Request(endpoint, { headers: { Cookie: tab.cookie, 'Sec-Fetch-Site': 'same-origin' } }), gustoAuth.onRequestGet));
+    assert.equal(started.status, 302);
+    return { state: new URL(started.headers.get('Location')).searchParams.get('state'), oauth: pair(started.headers.getSetCookie().find(line => line.startsWith('egc_gusto_oauth='))) };
+  };
+  const complete = async (cookie, { state, oauth }) => (await edge(new Request(endpoint, { method: 'POST', headers: { Cookie: `${cookie}; ${oauth}`, Origin: 'https://easygaragecleaning.com', 'Content-Type': 'application/x-www-form-urlencoded' }, body: new URLSearchParams({ code: 'synthetic-code', state }) }), gustoAuth.onRequestPost)).headers.get('Location');
+
+  // A session issued two hours ago is renewed on the Connect Gusto response itself.
+  const owner = browser(pair(await createHubSessionCookie(env, 'ZacB', null, Date.now() - 2 * HOUR))), before = owner.cookie;
+  const flow = await begin(owner);
+  assert.notEqual(owner.cookie, before, 'the start response renewed the session');
+  assert.equal(await complete(owner.cookie, flow), '/employee?view=timesheets&gusto=connected');
+
+  // A session 55 minutes old starts the flow; another Hub tab's request renews it while the owner is at Gusto.
+  const tab = browser(pair(await createHubSessionCookie(env, 'ZacB', null, Date.now() - 55 * MINUTE)));
+  const second = await begin(tab);
+  t.mock.timers.enable({ apis: ['Date'], now: Date.now() + 8 * MINUTE });
+  const other = tab.cookie;
+  tab.take(await edge(withCookie(tab.cookie), hubAuth.onRequestGet));
+  assert.notEqual(tab.cookie, other, 'the other tab renewed the session');
+  // Another sign-in of the same owner (another device) cannot finish it; the renewed session can.
+  const elsewhere = pair(await createHubSessionCookie(env, 'ZacB'));
+  assert.equal(await complete(elsewhere, second), '/employee?view=timesheets&gusto=invalid-state');
+  assert.equal(await complete(tab.cookie, second), '/employee?view=timesheets&gusto=connected');
+  assert.equal(await complete(tab.cookie, second), '/employee?view=timesheets&gusto=invalid-state', 'and the state is used once');
 });
 
 test('a renewal is checked like any request: forged, expired, removed or unsigned sessions get nothing', async () => {

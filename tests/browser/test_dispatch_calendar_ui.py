@@ -231,7 +231,7 @@ class DispatchCalendarTests(unittest.TestCase):
         busy = sheet.get_by_role('button', name=re.compile('^Crew One')); expect(busy).to_contain_text('Busy 12:00 PM – 2:00 PM · Synthetic Overlap Garage'); expect(busy).to_have_class(re.compile('dc-option-warn'))
         expect(sheet.get_by_role('button', name=re.compile('^Lead One'))).to_contain_text('Unavailable all day · Synthetic appointment')
         free = sheet.get_by_role('button', name=re.compile('^Crew Two')); expect(free).to_contain_text('Free on the loaded schedule')
-        expect(sheet.get_by_role('link', name='Open job', exact=True)).to_have_attribute('href', '/crew/job.html?jobId=job-2')
+        expect(sheet.get_by_role('link', name='Open job', exact=True)).to_have_attribute('href', '/crew/job?jobId=job-2')
         for control in [busy, free, sheet.get_by_role('button', name=re.compile('^South Crew'))]: self.assertGreaterEqual(control.bounding_box()['height'], 44)
         self.no_overflow(375); self.assertLessEqual(sheet.evaluate('(el)=>el.scrollWidth'), sheet.evaluate('(el)=>el.clientWidth') + 1); self.no_null(sheet)
         out = ROOT/'test-results'; out.mkdir(exist_ok=True); self.page.screenshot(path=str(out/'dispatch-calendar-sheet-phone.png'))

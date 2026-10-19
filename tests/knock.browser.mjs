@@ -98,6 +98,18 @@ try {
   await page.waitForFunction(() => /5 waiting/.test(document.getElementById('knock-sync')?.textContent || ''));
   assert.equal(await server.knocks(), 0, 'nothing reached the server while offline');
   assert.equal(new Set(logged).size, 5, 'five different houses');
+  // D2D: with no signal, More → Crew home reaches the crew offline page, which leads straight back to Knock (cached whole).
+  // (setOffline does not reach the service worker's own requests here, so the crew home's request is failed by hand.)
+  const crewHome = /\/crew\/$/, noSignal = route => route.abort('internetdisconnected');
+  await repContext.route(crewHome, noSignal);
+  await page.evaluate(() => { location.hash = '#more'; });
+  await page.getByRole('link', { name: /^Crew home/ }).click();
+  await page.getByRole('heading', { name: 'You are offline', exact: true }).waitFor();
+  assert.equal(new URL(page.url()).pathname, '/crew/');
+  await page.getByRole('link', { name: 'Open EGC Knock', exact: true }).click();
+  await page.waitForURL(/\/crew\/knock(?:#|$)/);
+  await page.waitForFunction(() => /5 waiting/.test(document.getElementById('knock-sync')?.textContent || ''));
+  await repContext.unroute(crewHome, noSignal);
 
   // 3. Signal returns: the phone syncs on its own.
   await repContext.setOffline(false);
@@ -349,9 +361,21 @@ try {
   await start.click();
   await admin.waitForURL(/\/crew\/gameplan\?address=[^&]+&source=knock&houseId=/);
   assert.equal(adminContext.pages().length, 1, 'the walkthrough opened in the same tab');
+  // The look reached the server before Knock was left (not the next time Knock opens on this phone).
+  assert.equal(await server.knocks(), knocksBefore + 1, 'the look was sent before the walkthrough opened');
+  // A look Knock refuses (here: the sun set while the sheet was open) is never left silently: the owner is told, stays in
+  // Knock, and can still open the walkthrough.
   await admin.goto(`${server.base}/crew/knock#knock`);
-  await admin.waitForFunction(() => document.getElementById('knock-sync')?.textContent === 'Synced', null, { timeout: 30000 });
-  assert.equal(await server.knocks(), knocksBefore + 1, 'the look was saved before the walkthrough opened');
+  await admin.getByRole('button', { name: 'Look', exact: true }).click();
+  await admin.getByLabel('Quoted price').fill('700');
+  await admin.clock.setSystemTime(T0 + (Date.now() - startedAt) + 9 * 60 * 60 * 1000);
+  await admin.getByRole('link', { name: 'Start in-home walkthrough', exact: true }).click();
+  const refused = admin.locator('#knock-toast');
+  await refused.filter({ hasText: /^Look not saved/ }).waitFor();
+  assert.equal(new URL(admin.url()).pathname, '/crew/knock', 'Knock stays open');
+  assert.equal(await server.knocks(), knocksBefore + 1, 'nothing more was logged');
+  await refused.getByRole('button', { name: 'Open walkthrough', exact: true }).click();
+  await admin.waitForURL(/\/crew\/gameplan\?address=[^&]+&source=knock&houseId=/);
 
   // 8. KNOCK-BRIDGE (EGC_KNOCK_JOB_BRIDGE on, its own preview): a door sale picks a crew slot and is booked into the
   //    Hub with that crew; "Walkthrough set" books the estimator; both show on My sales. Rep-safe slots only.
@@ -440,6 +464,27 @@ try {
   assert.equal(bridge.fake.get(`jobs/${saleJob.id}`).status, 'cancelled', 'no crew is sent to a customer who cancelled');
   assert.equal(await office.locator('[data-office-walkthroughs]').count(), 0, 'every door walkthrough is in the Hub');
   assert.deepEqual(bridge.serverErrors, [], 'no bridge server errors');
+
+  // 9. D2D: signing out in Crew home signs Knock out on that phone too. With no signal afterwards, Knock never opens as the
+  //    rep who left (their area, houses and shift); it asks for signal, as on a phone that never signed in.
+  const leaverContext = await browser.newContext({ ...phone, serviceWorkers: 'block' });
+  await leaverContext.clock.install({ time: T0 + (Date.now() - startedAt) });
+  const leaver = await leaverContext.newPage();
+  leaver.on('pageerror', error => errors.push(String(error)));
+  await signIn(leaver, server.base, 'Rep.One');
+  await leaver.locator('#knock-tabs').waitFor({ state: 'visible' });
+  await leaver.waitForFunction(() => JSON.parse(localStorage.getItem('egc-knock:viewer') || 'null')?.user === 'Rep.One');
+  await leaver.goto(`${server.base}/crew/`);
+  await leaver.waitForFunction(() => window.EGCHubAuth);
+  await leaver.evaluate(() => window.EGCHubAuth.signOut({ explicit: true }));
+  assert.equal(await leaver.evaluate(async () => (await fetch('/api/hub-auth', { cache: 'no-store' })).status), 401, 'the session ended');
+  await leaverContext.route(/\/api\//, route => route.abort('internetdisconnected'));
+  await leaver.goto(`${server.base}/crew/knock`);
+  await leaver.getByText('No signal yet', { exact: true }).waitFor();
+  const leftText = await leaver.locator('#knock-main').textContent();
+  assert.equal(await leaver.getByRole('button', { name: 'Start shift', exact: true }).count(), 0, 'no shift controls for the rep who left');
+  assert.doesNotMatch(leftText, /English Ranch|Rep One/, 'none of their territory');
+  await leaverContext.close();
 
   assert.deepEqual(errors, [], 'no page errors');
   assert.deepEqual(server.serverErrors, [], 'no server errors');

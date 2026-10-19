@@ -1376,6 +1376,9 @@ async function doLogout({ explicit = false } = {}) {
   // Crew job pages keep offline copies per tab; a sign-out retires them on this device.
   try { localStorage.setItem('egc-field:signed-out-at', String(Date.now())); } catch {}
   try { for (let i = sessionStorage.length - 1; i >= 0; i--) { const name = sessionStorage.key(i) || ''; if (name === 'egc-field:viewer' || /^egc-field:.*:(snapshot|shift-snapshot)$/.test(name)) sessionStorage.removeItem(name); } } catch {}
+  // EGC Knock (crew/knock-app.js) shares this sign-in and opens offline with its own copy of who is signed in: sign it out too.
+  try { localStorage.setItem('egc-knock:signed-out-at', JSON.stringify(Date.now())); } catch {}
+  try { localStorage.removeItem('egc-knock:viewer'); } catch {}
   // Photos from Today's work are private job evidence: choosing Sign out deletes those not yet uploaded.
   if (explicit === true) { try { localStorage.setItem('egc-field:photos-cleared-at', String(Date.now())); } catch {} fieldPhotosOnDevice(true); }
   // crew/job.html keeps unconfirmed manager photo-sharing retries in this tab; it never loads here.

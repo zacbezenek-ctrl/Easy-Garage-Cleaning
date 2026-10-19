@@ -8,6 +8,8 @@ const COOKIE_NAME = 'egc_hub_session';
 // lasts 7 days from when it was last issued, and an API request on a session issued over an hour ago gets it back with a
 // fresh 7 days (renewHubSessionCookie, called by functions/_middleware.js), so it ends only after 7 days without use. There
 // is no fixed maximum. A renewal re-checks the account first, so a deactivated, reset or deleted account is never renewed.
+// A configured account's session (HUB_AUTH_USERS_JSON) carries its credential version (pv), so changing its password hash
+// there ends it as an employee account's session version does; one issued before pv is never renewed.
 const SESSION_SECONDS = 7 * 24 * 60 * 60;
 const SESSION_RENEW_AFTER_SECONDS = 60 * 60;
 const ACTION_STATE_SECONDS = 10 * 60;
@@ -315,14 +317,26 @@ export async function authenticateHubCredential(env, username, password) {
   return staffRoleAccess(env, await authenticateEmployeeAccount(env, username, password));
 }
 
-export async function createHubSessionToken(env, username, now = Date.now(), suppliedProfile = null) {
+// STAFF-SESSION: a configured account's credential version, keyed with the session secret so the cookie never carries
+// anything a guessed password could be checked against offline.
+async function credentialVersion(secret, record) {
+  return (await signature(secret, `egc:hub-credential:v1\n${record.passwordHash}`)).slice(0, 16);
+}
+
+// STAFF-SESSION: each sign-in's own id (s), new at sign-in and kept by every renewal of it ('' for one issued without it).
+const newSessionId = () => bytesToBase64Url(crypto.getRandomValues(new Uint8Array(12)));
+
+export async function createHubSessionToken(env, username, now = Date.now(), suppliedProfile = null, sessionId = newSessionId()) {
   const secret = sessionSecret(env);
   if (!secret) throw new Error('Hub session secret is not configured');
   const profile = suppliedProfile || getHubUserProfile(env, username);
   if (!profile) throw new Error('Hub user is not configured');
-  const session = suppliedProfile?.source === 'employee-account'
-    ? { v: 2, u: username, av: profile.sessionVersion || '', d: profile.displayName, r: 'crew', p: profile.payType || 'hourly', h: Math.max(0, Number(profile.hourlyRate || 0)), exp: now + SESSION_SECONDS * 1000 }
-    : { v: 1, u: profile.user || configuredUsername(env, username), exp: now + SESSION_SECONDS * 1000 };
+  const employee = suppliedProfile?.source === 'employee-account';
+  const configured = employee ? '' : profile.user || configuredUsername(env, username);
+  const record = configured ? userRecord(env, configured) : null;
+  const session = employee
+    ? { v: 2, u: username, av: profile.sessionVersion || '', d: profile.displayName, r: 'crew', p: profile.payType || 'hourly', h: Math.max(0, Number(profile.hourlyRate || 0)), ...(sessionId ? { s: sessionId } : {}), exp: now + SESSION_SECONDS * 1000 }
+    : { v: 1, u: configured, ...(record ? { pv: await credentialVersion(secret, record) } : {}), ...(sessionId ? { s: sessionId } : {}), exp: now + SESSION_SECONDS * 1000 };
   const payload = bytesToBase64Url(encoder.encode(JSON.stringify(session)));
   return `${payload}.${await signature(secret, payload)}`;
 }
@@ -340,6 +354,8 @@ export async function verifyHubSessionToken(env, token, now = Date.now()) {
       return profile ? staffRoleAccess(env, { ...profile, expiresAt: session.exp }) : null;
     }
     if (session.v !== 1 || !Object.hasOwn(users(env), session.u)) return null;
+    // STAFF-SESSION: a changed password hash ends the session; one issued before pv lasts only until its own expiry.
+    if (session.pv !== undefined && !safeEqual(session.pv, await credentialVersion(secret, userRecord(env, session.u)))) return null;
     const profile = getHubUserProfile(env, session.u);
     return profile ? { ...profile, expiresAt: session.exp } : null;
   } catch {
@@ -404,27 +420,38 @@ export async function getHubSession(request, env) {
   return verifyHubSessionToken(env, readCookie(request));
 }
 
-export async function createHubSessionCookie(env, username, profile = null, now = Date.now()) {
-  const token = await createHubSessionToken(env, username, now, profile);
+export async function createHubSessionCookie(env, username, profile = null, now = Date.now(), sessionId = undefined) {
+  const token = await createHubSessionToken(env, username, now, profile, sessionId);
   return `${COOKIE_NAME}=${token}; Path=/; HttpOnly; Secure; SameSite=Strict; Max-Age=${SESSION_SECONDS}`;
 }
 
-// The expiry a session cookie claims, read without checking its signature (only to decide whether to check it), or NaN.
-function claimedExpiry(token) {
-  try { return Number(JSON.parse(new TextDecoder().decode(base64UrlToBytes(String(token).split('.')[0]))).exp); } catch { return NaN; }
+// What a session cookie claims, read without checking its signature (only to decide whether to check it), or null.
+function claimedSession(token) {
+  try { const claims = JSON.parse(new TextDecoder().decode(base64UrlToBytes(String(token).split('.')[0]))); return claims && typeof claims === 'object' ? claims : null; } catch { return null; }
 }
 
 // STAFF-SESSION: the same session with a fresh 7-day expiry when the request's session is valid and was issued more than
 // an hour ago, else ''. A newer session costs nothing (no signature check, no account read). The renewal is verified like
-// any request (verifyHubSessionToken: signature, expiry, the configured user or the employee account's status and session
-// version), so a deactivated, reset or deleted account gets nothing and is refused on that same request.
+// any request (verifyHubSessionToken: signature, expiry, the configured user's credential version or the employee
+// account's status and session version), so a deactivated, reset, re-passworded or deleted account gets nothing and is
+// refused on that same request. A configured account's session from before pv is left to end at its own (12-hour) expiry.
 export async function renewHubSessionCookie(request, env, now = Date.now()) {
   const token = readCookie(request);
   if (!token || !sessionSecret(env)) return '';
-  const expiry = claimedExpiry(token);
+  const claims = claimedSession(token), expiry = Number(claims?.exp);
   if (!Number.isFinite(expiry) || expiry <= now || expiry - now > (SESSION_SECONDS - SESSION_RENEW_AFTER_SECONDS) * 1000) return '';
+  if (claims.v === 1 && claims.pv === undefined) return '';
   const profile = await verifyHubSessionToken(env, token, now);
-  return profile ? createHubSessionCookie(env, profile.user, profile, now) : '';
+  return profile ? createHubSessionCookie(env, profile.user, profile, now, typeof claims.s === 'string' ? claims.s : '') : '';
+}
+
+// The part of the request's session cookie every renewal keeps: the account, its credential or session version and the
+// sign-in's id. A short flow bound to the signed-in session, such as the Gusto connection (api/gusto-auth.js), binds to
+// this, so a renewal from any tab during the flow does not break it and another sign-in still cannot finish it. Callers
+// verify the session first.
+export function hubSessionIdentity(request) {
+  const { v, u, pv, av, s } = claimedSession(readCookie(request)) || {};
+  return u ? JSON.stringify({ v, u, pv, av, s }) : '';
 }
 
 // Whether a response already sets or clears the Hub session cookie itself (sign-in, sign-out, a password change).

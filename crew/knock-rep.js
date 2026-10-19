@@ -388,9 +388,16 @@ async function tapOutcome(house, outcome, button) {
   }
   if (outcome === 'look') {
     const details = await lookSheet(house);
-    if (details) await logDoor(house, outcome, details);
-    // Owners only: after logging the look, the walkthrough opens in this tab, where an installed app keeps its sign-in.
-    if (details?.openWalkthrough) location.assign(details.openWalkthrough);
+    const logged = details ? await logDoor(house, outcome, details) : null;
+    if (!details?.openWalkthrough) return;
+    // Owners only: the walkthrough opens in this tab (an installed app keeps its sign-in there) once the look is logged and
+    // sent. A look Knock refused (a break, knocking hours) never leaves silently: the owner is told and can still open it.
+    if (!logged?.id) {
+      return toast('Look not saved', { tone: 'bad', sub: 'Doors log only on a shift, off break, in knocking hours.',
+        action: { label: 'Open walkthrough', run: () => location.assign(details.openWalkthrough) } });
+    }
+    await app.syncBeforeLeaving();
+    location.assign(details.openWalkthrough);
     return;
   }
   if (outcome === 'sold') {

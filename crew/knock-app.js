@@ -175,6 +175,18 @@ export function scheduleSync(delay = 0) {
   syncTimer = setTimeout(() => { sync().catch(() => {}); }, delay);
 }
 
+// Sends what is queued now, waiting at most `wait` ms, for a tap that leaves Knock right after logging a door (an owner's
+// Start in-home walkthrough): the door reaches the server now, not the next time Knock opens on this phone.
+export async function syncBeforeLeaving(wait = 3000) {
+  const deadline = Date.now() + wait;
+  const sent = (async () => {
+    while (S.syncState === 'syncing' && Date.now() < deadline) await new Promise(resolve => setTimeout(resolve, 100));
+    clearTimeout(syncTimer);
+    await sync();
+  })();
+  await Promise.race([sent.catch(() => {}), new Promise(resolve => setTimeout(resolve, wait))]);
+}
+
 async function onSynced(response) {
   // KNOCK-BRIDGE: a new sale or walkthrough (or a replay of one still not booked) comes back bridge:{status:'pending'};
   // it is booked into the Hub next.
@@ -791,7 +803,7 @@ function cycleTheme() {
 
 /* ---------- the app object handed to screen modules ---------- */
 
-export const app = { S, api, go, render, registerScreen, enqueue, sync, scheduleSync, houseView, neighborhoodOf, cityRuleFor, currentShift, knockingWindow, saveUi, signOut, outboxApi: () => outbox, refreshPending, syncSummary, moreLinks: [],
+export const app = { S, api, go, render, registerScreen, enqueue, sync, scheduleSync, syncBeforeLeaving, houseView, neighborhoodOf, cityRuleFor, currentShift, knockingWindow, saveUi, signOut, outboxApi: () => outbox, refreshPending, syncSummary, moreLinks: [],
   startLocation, onPosition, locationBanner, territoryEmpty, myNeighborhoods, awayLabel, runBridges, queueBridges, bookingFor, fixers: {} };
 
 registerScreen('home', homeScreen, { tab: { label: 'Home', icon: 'home', order: 0 } });

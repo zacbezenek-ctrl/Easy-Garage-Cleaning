@@ -131,7 +131,8 @@ async function renderCrewHome(business, { online = true } = {}) {
 
 test('crew home sends employees to the verified job workflow and keeps legacy tools for business users', async () => {
   const crew = await renderCrewHome(false);
-  for (const id of ['prejob-tool', 'closeout-tool']) assert.equal(crew(id).getAttribute('href'), '/crew/job.html', id);
+  // D2D: the tiles use clean URLs (/crew/job, not /crew/job.html, which answers with a redirect).
+  for (const id of ['prejob-tool', 'closeout-tool']) assert.equal(crew(id).getAttribute('href'), '/crew/job', id);
   assert.match(crew('assigned-jobs').innerHTML, /href="\/crew\/job\.html\?jobId=job-1"/);
   assert.match(crew('assigned-jobs').innerHTML, /href="\/crew\/job\.html\?jobId=job-2"/);
   assert.match(crew('next-work').innerHTML, /<a class="primary" href="\/crew\/job\.html\?jobId=job-2">Continue closeout<\/a>/);
@@ -140,8 +141,8 @@ test('crew home sends employees to the verified job workflow and keeps legacy to
   assert.equal(crew('knock-tool').hidden, true, 'no Door-to-door tile for a crew member Knock does not know');
 
   const manager = await renderCrewHome(true);
-  assert.equal(manager('prejob-tool').getAttribute('href'), 'prejob.html');
-  assert.equal(manager('closeout-tool').getAttribute('href'), 'postjob.html');
+  assert.equal(manager('prejob-tool').getAttribute('href'), '/crew/prejob');
+  assert.equal(manager('closeout-tool').getAttribute('href'), '/crew/postjob');
   assert.match(manager('assigned-jobs').innerHTML, /href="\/crew\/prejob\?jobId=job-1"/);
   assert.match(manager('next-work').innerHTML, /href="\/crew\/postjob\?jobId=job-2">Continue closeout/);
   assert.equal(manager('walkthrough-tool').hidden, false);

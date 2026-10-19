@@ -100,7 +100,8 @@ test('both sign-out paths remove the walkthrough price tables from this device',
   crew.window = crew;
   vm.runInNewContext(read('crew/hub-auth.js'), crew);
   await crew.EGCHubAuth.signOut();
-  assert.deepEqual([...crewLocal.values.keys()], ['egc-field:signed-out-at']);
+  // D2D: a sign-out also signs EGC Knock out on this phone (egc-knock:signed-out-at), as Knock's own sign-out does.
+  assert.deepEqual([...crewLocal.values.keys()].sort(), ['egc-field:signed-out-at', 'egc-knock:signed-out-at']);
   const hubLocal = saved(), hub = {
     console, URLSearchParams, Date: FixedDate, Intl, Promise, Set, Map, Error, Event, sessionStorage: webStorage(), localStorage: hubLocal, navigator: {},
     location: { pathname: '/employee', search: '' }, setInterval: () => 1, clearInterval() {}, setTimeout: () => 1, clearTimeout() {}, addEventListener() {}, dispatchEvent() {},
@@ -112,7 +113,7 @@ test('both sign-out paths remove the walkthrough price tables from this device',
   const page = read('employee.html');
   vm.runInNewContext(page.slice(page.indexOf('// Business access comes from the signed server profile'), page.indexOf('async function sendBookingConfirmation')) + '\nglobalThis.logout=doLogout;', hub);
   await hub.logout();
-  assert.deepEqual([...hubLocal.values.keys()], ['egc-field:signed-out-at']);
+  assert.deepEqual([...hubLocal.values.keys()].sort(), ['egc-field:signed-out-at', 'egc-knock:signed-out-at']);
 });
 
 // crew/gameplan.html with and without loaded tables.

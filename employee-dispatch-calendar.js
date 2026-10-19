@@ -612,7 +612,7 @@ function openSheet(item) {
   }
   const edit=inactive(job)?null:k.btn('Edit / assign',()=>{ if (S.pending || model.request) return; model.close(); k.openJob(job); });
   const rebook=k.rebookAction?.(job), again=rebook?k.btn('Rebook',()=>{ if (S.pending || model.request) return; model.close(); rebook.open(); },'primary',{'aria-label':rebook.label}):null;
-  const open=h('a',{class:'dp-btn',href:job.type==='walkthrough'?'/crew/gameplan.html?walkthroughId='+encodeURIComponent(job.id):'/crew/job.html?jobId='+encodeURIComponent(job.id)},job.type==='walkthrough'?'Open walkthrough':'Open job');
+  const open=h('a',{class:'dp-btn',href:job.type==='walkthrough'?'/crew/gameplan?walkthroughId='+encodeURIComponent(job.id):'/crew/job?jobId='+encodeURIComponent(job.id)},job.type==='walkthrough'?'Open walkthrough':'Open job');
   model.footer.append(...[k.btn('Back',model.close),open,edit,again].filter(Boolean));
 }
 

@@ -135,7 +135,7 @@ async function gameplanPage(api, user, walkthroughId) {
   });
   vm.runInContext(line('const freshState='), context);
   context.S = vm.runInContext('freshState()', context);
-  for (const prefix of ['const draftKey=', 'function save(){', 'function restore(', 'function applyPricingVersion(', 'function resetForWalkthrough(', 'function render(){', 'function useAppointment(', 'function knockAddress(', 'async function openApp()']) vm.runInContext(line(prefix), context);
+  for (const prefix of ['const draftKey=', 'function save(){', 'function restore(', 'function applyPricingVersion(', 'function resetForWalkthrough(', 'function render(){', 'function useAppointment(', 'let KNOCK_DOOR=', 'async function knockAddress(', 'function startKnockDoor(', 'function knockNotice(', 'async function openApp()']) vm.runInContext(line(prefix), context);
   vm.runInContext(GAMEPLAN.slice(GAMEPLAN.indexOf('function walkthroughLoadPanel(){'), GAMEPLAN.indexOf('function useAppointment(')), context);
   await context.openApp();
   return { context, calls, screen: () => element('screen').innerHTML };
