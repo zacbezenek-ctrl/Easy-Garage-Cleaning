@@ -18,7 +18,9 @@ const TYPES = { '.js': 'application/javascript', '.mjs': 'application/javascript
 // garage, junk only (no Labor line, D-JUNK); with a shelving unit the server estimates 2 x 60 + 60 = 180 person-minutes
 // (3 man-hours) whatever the crew: the truck load and the mattress add none and, with no cleaning base, neither does the
 // fullness. /builder-harness?plan=junk is a junk-removal-only walkthrough (Everything goes, no finish options), on which a
-// junk-only quote is sent; ?plan=zones records crew sorting on two truck loads, on which it never is (D-JUNK).
+// junk-only quote is sent; ?plan=zones records crew sorting on two truck loads, on which it never is (D-JUNK). The page
+// hands the builder the walkthrough's Finish picks from window.GOODS (crew/gameplan-catalog.js selection()) and keeps
+// what the builder writes back in window.MIRRORED.
 const PLAN = { client: client(1), quote: { title: 'EGC Garage Service', estimated_duration_min: 240, line_items: [] },
   scope: { garages: '2', loads: '1', fullness: 'medium', sort_method: '', special_items: ['Mattress'], access: [], finish: ['cleanout', 'shelving'], hazards: [], finish_details: { shelf_type: 'metal', shelf_qty: 2, tote_qty: 0 } }, raw: {}, logistics: { crew_size: 2 } };
 const PLANS = { default: PLAN, junk: { ...PLAN, scope: { ...PLAN.scope, sort_method: 'remove_all', finish: ['cleanout'], finish_details: { ...PLAN.scope.finish_details, shelf_qty: 0 } } },
@@ -28,7 +30,8 @@ const HARNESS = PLAN => `<!doctype html><html lang="en"><head><meta charset="utf
 <body><main><button id="open" type="button" style="min-height:48px">Send options for review</button></main>
 <script>window.EGCWalkthroughPricing={quoteBuilder:()=>true};</script><script src="/crew/quote-draft.js"></script>
 <script>const PLAN=${JSON.stringify(PLAN)};document.getElementById('open').addEventListener('click',()=>EGCQuoteDraft.open({storage:sessionStorage,fetch:(...a)=>fetch(...a),actor:async()=>'sales.person',uuid:()=>crypto.randomUUID(),
-plan:()=>structuredClone(PLAN),source:()=>'w1',savedJobId:()=>window.savedJobId||'',draftId:()=>'draft-1',accept:r=>{window.savedJobId=r.job.id}}));</script></body></html>`;
+plan:()=>structuredClone(PLAN),source:()=>'w1',savedJobId:()=>window.savedJobId||'',draftId:()=>'draft-1',accept:r=>{window.savedJobId=r.job.id},
+goods:()=>window.GOODS||null,onGoods:g=>{window.MIRRORED=g}}));</script></body></html>`;
 
 const f = fixture(ON_ENV), state = builderState();
 const session = async () => estimator, now = () => new Date('2026-10-17T15:00:00.000Z');

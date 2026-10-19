@@ -53,6 +53,8 @@ class GameplanPricingBrowserTests(unittest.TestCase):
     def setUpClass(cls):
         # The tables exactly as functions/_lib/pricing-config.js builds them from the catalog.
         cls.pricing = json.loads(subprocess.run(['node', '--input-type=module', '-e', "import {servedPricing} from './tests/helpers/walkthrough-pricing.mjs';console.log(JSON.stringify(servedPricing()))"], cwd=ROOT, check=True, capture_output=True, text=True).stdout)
+        # LANE catalog: the builder menu exactly as GET /api/quote-draft?view=builder answers an estimator (no owner approvals).
+        cls.menu = json.loads(subprocess.run(['node', '--input-type=module', '-e', "import {builderState} from './tests/helpers/estimator-fixture.mjs';import {builderMenu} from './functions/_lib/composite-quote.js';console.log(JSON.stringify({ok:true,authority:'employee_hub',enabled:true,...builderMenu(builderState())}))"], cwd=ROOT, check=True, capture_output=True, text=True).stdout)
         cls.server = ThreadingHTTPServer(('127.0.0.1', 0), partial(Handler, directory=str(ROOT)))
         threading.Thread(target=cls.server.serve_forever, daemon=True).start()
         cls.url = f'http://127.0.0.1:{cls.server.server_port}'
@@ -66,7 +68,7 @@ class GameplanPricingBrowserTests(unittest.TestCase):
 
     def setUp(self):
         self.errors = []; self.online = True; self.signed_in = True; self.pricing_calls = 0; self.pricing_failure = None
-        self.fixture_port = None; self.handoff_posts = []; self.builder = False
+        self.fixture_port = None; self.handoff_posts = []; self.builder = False; self.menu_calls = 0; self.menu_down = False
         self.context = self.browser.new_context(viewport={'width': 375, 'height': 812}, timezone_id='Asia/Tokyo', is_mobile=True, has_touch=True, device_scale_factor=2)
         self.context.add_init_script(FIREBASE_STUB)
         self.context.route('**/*', self.route)
@@ -89,6 +91,10 @@ class GameplanPricingBrowserTests(unittest.TestCase):
             if self.pricing_failure: send({'ok': False, 'code': self.pricing_failure, 'error': 'Synthetic pricing outage'}, 503); return
             self.assertEqual(url.query, 'parts=walkthrough')
             send({'ok': True, 'authority': 'employee_hub', 'version': VERSION, 'parts': {'walkthrough': self.pricing}, **({'quoteBuilder': True} if self.builder else {})}); return
+        if url.path == '/api/quote-draft' and url.query == 'view=builder' and self.builder:
+            self.menu_calls += 1
+            if not self.online or self.menu_down: route.abort('internetdisconnected'); return
+            send(self.menu); return
         if self.fixture_port and url.path in ('/api/walkthrough-handoff', '/api/field-jobs'): self.forward(route, 'zacb'); return
         if self.fixture_port and url.path == '/api/highlevel': send({'ok': True, 'handoffSync': {'status': 'synced'}, 'portalInvitation': {'status': 'suppressed'}}); return
         if url.path.startswith('/api/'): send({'ok': False, 'error': 'Synthetic service unavailable'}, 503); return
@@ -309,6 +315,86 @@ class GameplanPricingBrowserTests(unittest.TestCase):
         expect(page.get_by_role('button', name='Save brief + schedule')).to_be_disabled()
         expect(screen).not_to_contain_text('man-hour')
         self.audit(page, 'review, builder on, stale quote')
+
+    def test_with_the_quote_builder_on_scope_and_finish_show_the_builder_menu_and_finish_picks_its_products(self):
+        # LANE catalog: the walkthrough shows the prices the quote is built and signed from, each with its chip.
+        self.builder = True
+        page = self.open()
+        page.wait_for_function('() => PRICING !== null && quoteBuilderOn() && EGCGameplanCatalog.menu() !== null')
+        self.assertEqual(self.menu_calls, 1, 'the builder menu is read once')
+        self.screen(page, 2, {'name': 'Synthetic Customer', 'garageSize': '1', 'fill': 'medium', 'loads': '1.25', 'hazards': ['Pest waste'], 'special': ['Mattress'], 'access': ['Stairs']})
+        screen = page.locator('#screen')
+        for shown in ('Full truck load $750.00 Approved', 'Three-quarter load $562.50 Draft price', 'Half load $375.00 Draft price', 'Quarter load $187.50 Draft price',
+                      'Mattress +$70.00 Draft price', 'Pest waste +$300.00 Draft price', 'Stairs +$190.00 Draft price', 'Long carry +$115.00 Draft price'):
+            expect(screen).to_contain_text(shown)
+        for legacy in ('$950', 'per full truckload', '(+$'): expect(screen).not_to_contain_text(legacy)
+        loads = page.locator('#f-loads')
+        self.assertEqual([loads.get_attribute('min'), loads.get_attribute('step')], ['0.25', '0.25'], 'quarter loads')
+        loads.fill('0.75')
+        self.assertEqual(page.evaluate('S.loads'), '0.75')
+        self.assertTrue(page.evaluate("document.getElementById('f-loads').checkValidity()"), 'a quarter step is a valid entry')
+        self.audit(page, 'scope, builder prices')
+        out = ROOT / 'test-results'; out.mkdir(exist_ok=True); page.screenshot(path=str(out / 'gameplan-scope-builder-prices-mobile.png'), full_page=True)
+        # Finish: the cleaning add-ons at the builder's prices, and the builder's own shelving, totes and storage.
+        self.screen(page, 3, {'garageSize': '1', 'finish': ['cleanout', 'deep_clean', 'pressure_wash', 'mouse_trapping']})
+        for shown in ('$190.00 Draft price', '+$600.00 Draft price', '+$375.00 Draft price'): expect(screen).to_contain_text(shown)
+        for legacy in ('+$600 for a one-car', '+$375 ·', 'Add shelving', 'Add labeled totes'): expect(screen).not_to_contain_text(legacy)
+        expect(page.locator('#mounting-options')).to_have_count(0)
+        goods = page.locator('#finish-goods')
+        expect(goods).to_contain_text('Shelving, totes and storage')
+        expect(goods).to_contain_text('No shelving, totes or storage yet.')
+        goods.get_by_label('Search shelving and storage products').fill('HDX plastic shelving')
+        expect(goods.get_by_role('button', name='Add HDX plastic shelving, 36×72×24')).to_be_visible()
+        expect(goods).to_contain_text('36 W × 72 H × 24 D in')
+        goods.get_by_role('button', name='Add HDX plastic shelving, 36×72×24').click()
+        expect(goods).to_contain_text('In this quote (1)')
+        goods.get_by_role('button', name='One more: HDX plastic shelving, 36×72×24').click()
+        goods.get_by_label('Search shelving and storage products').fill('')
+        goods.get_by_label('Product group').select_option('bins-totes')
+        first_tote = page.evaluate("EGCGameplanCatalog.menu().products.find(item => item.group === 'bins-totes').name")
+        goods.get_by_role('button', name=f'Add {first_tote}').click()
+        expect(goods).to_contain_text('In this quote (2)')
+        expect(goods.locator('a')).to_have_count(0)
+        picks = page.evaluate('S.builderGoods')
+        self.assertEqual(picks['by'], 'finish')
+        self.assertEqual([(row['id'], row['quantity'], row['group']) for row in picks['shelving']], [('hd-100006678', 2, 'shelving')])
+        self.assertEqual([(row['quantity'], row['group']) for row in picks['storage']], [(1, 'bins-totes')])
+        self.assertEqual(page.evaluate('EGCGameplanCatalog.selection()'), {'shelving': [{'id': 'hd-100006678', 'quantity': 2}], 'storage': [{'id': picks['storage'][0]['id'], 'quantity': 1}]})
+        bring = page.evaluate('buildJobInstructions({}).bringList')
+        for kit in ('Drill / driver', 'Stud finder', 'Level', 'Lag screws and anchors', 'Label maker'): self.assertIn(kit, bring)
+        self.audit(page, 'finish, builder products')
+        page.screenshot(path=str(out / 'gameplan-finish-builder-products-mobile.png'), full_page=True)
+        # Review: a quote built without the Finish picks is not signed until it is edited and saved with them.
+        self.screen(page, 5, {'jobDate': '2026-09-24', 'startTime': '08:00', 'endTime': '11:00'})
+        page.evaluate(BUILT_QUOTE)
+        expect(page.locator('#builder-sign-gate')).to_contain_text('The shelving, totes and storage chosen on Finish changed since this quote was built.')
+        expect(page.get_by_role('button', name='Edit the quote')).to_be_visible()
+        for missing in ('#approved', '#signature', '#deposit-summary'): expect(page.locator(missing)).to_have_count(0)
+        expect(page.get_by_role('button', name='Save brief + schedule')).to_be_disabled()
+        expect(screen).not_to_contain_text('(+$')
+        # The same picks in the built quote: the homeowner signs it.
+        page.evaluate("() => { S.builderQuote.compositePricing = { ...S.builderQuote.compositePricing, shelving: S.builderGoods.shelving.map(({id, quantity}) => ({id, quantity})), storage: S.builderGoods.storage.map(({id, quantity}) => ({id, quantity})) }; render(); }")
+        expect(page.locator('#signature')).to_be_visible()
+        self.audit(page, 'review, builder on, Finish picks in the quote')
+
+    def test_with_the_quote_builder_on_and_its_menu_unavailable_scope_shows_no_legacy_price(self):
+        # The builder menu does not load (no connection to it): Scope and Finish say so and show no legacy amount.
+        self.builder = True; self.menu_down = True
+        page = self.open()
+        page.wait_for_function('() => PRICING !== null && quoteBuilderOn()')
+        self.screen(page, 2, {'name': 'Synthetic Customer', 'garageSize': '1', 'fill': 'medium', 'loads': '1', 'hazards': ['Pest waste']})
+        screen = page.locator('#screen')
+        expect(screen.locator('.gp-status')).to_contain_text('The quote builder prices could not load.')
+        for legacy in ('$950', '(+$', 'per full truckload'): expect(screen).not_to_contain_text(legacy)
+        self.screen(page, 3, {'finish': ['cleanout', 'mouse_trapping']})
+        expect(page.locator('#finish-goods .gp-status')).to_contain_text('The quote builder prices could not load.')
+        expect(screen).not_to_contain_text('+$375')
+        self.audit(page, 'finish, builder prices unavailable')
+        self.screen(page, 2)
+        self.menu_down = False
+        screen.get_by_role('button', name='Retry builder prices').click()
+        expect(screen).to_contain_text('Full truck load $750.00 Approved')
+        self.audit(page, 'scope, builder prices after retry')
 
     def test_an_expired_session_removes_the_saved_tables_without_a_sign_out(self):
         page = self.open()

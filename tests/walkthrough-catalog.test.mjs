@@ -6,10 +6,14 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
-import { priceCompositeQuote } from '../functions/_lib/composite-quote.js';
+import { readFileSync } from 'node:fs';
+import vm from 'node:vm';
+import { createDocument } from './helpers/hub-dom.mjs';
+import { servedPricing } from './helpers/walkthrough-pricing.mjs';
+import { builderMenu, priceCompositeQuote } from '../functions/_lib/composite-quote.js';
 import { saveWalkthroughHandoff } from '../functions/_lib/walkthrough-handoff.js';
 import { saveQuoteDraft } from '../functions/_lib/quote-draft.js';
-import { NOW, ON_ENV, builderState, client, estimator, fixture, menuItem, owner, selection, signedPlan } from './helpers/estimator-fixture.mjs';
+import { NOW, ON_ENV, builderState, client, estimator, fixture, menu, menuItem, owner, selection, signedPlan } from './helpers/estimator-fixture.mjs';
 
 const pick = (name, quantity = 1) => ({ id: menuItem(name).id, quantity });
 const signedLines = priced => priced.lineItems.map(line => ({ id: line.id, kind: line.kind, name: line.name, description: line.description, quantity: line.quantity, unitCents: line.unitCents, totalCents: line.totalCents }));
@@ -55,4 +59,159 @@ test('a re-saved builder quote that only adds or changes the walkthrough garage 
   const after = f.job(saved.job.id);
   assert.deepEqual([after.estimate.revision, after.estimate.status, after.customerApproval.status], [1, 'sent', 'approved']);
   assert.equal(after.quoteDraft.compositePricing.garageSize, '2', 'the garage size is still saved');
+});
+
+// ---- The walkthrough's Scope and Finish with the builder menu (crew/gameplan-catalog.js) ----
+const catalogSource = readFileSync(new URL('../crew/gameplan-catalog.js', import.meta.url), 'utf8');
+const quoteSource = readFileSync(new URL('../crew/quote-draft.js', import.meta.url), 'utf8');
+const gameplanHtml = readFileSync(new URL('../crew/gameplan.html', import.meta.url), 'utf8');
+const pageLine = prefix => gameplanHtml.split(/\r?\n/).find(row => row.startsWith(prefix)) || assert.fail(prefix);
+const servedMenu = (approvals = {}) => ({ ok: true, authority: 'employee_hub', enabled: true, ...builderMenu(builderState(approvals)) });
+const plainOf = value => JSON.parse(JSON.stringify(value));
+
+function catalogPage({ builder = true, reply = () => ({ status: 200, body: servedMenu() }), S = {} } = {}) {
+  const document = createDocument(), calls = { render: 0, save: 0, invalidate: 0, fetch: [] };
+  const host = document.createElement('section'); host.setAttribute('id', 'finish-goods'); document.body.append(host);
+  const context = { document, Node: document.Node, Intl, AbortController, setTimeout, clearTimeout, URLSearchParams, Date, console, navigator: { onLine: true }, addEventListener() {}, removeEventListener() {},
+    S: { finish: ['cleanout'], shelfType: 'metal', shelfQty: 0, toteQty: 0, ...S }, walkthroughReady: true,
+    render: () => { calls.render++; }, save: () => { calls.save++; }, invalidateAcceptance: () => { calls.invalidate++; },
+    EGCWalkthroughPricing: { quoteBuilder: () => builder },
+    EGCHubAuth: { fetch: async url => { calls.fetch.push(url); const answer = reply(url); if (answer instanceof Error) throw answer; return { ok: answer.status < 300, status: answer.status, json: async () => structuredClone(answer.body) }; } } };
+  context.window = context;
+  vm.createContext(context);
+  vm.runInContext(quoteSource, context);
+  vm.runInContext(catalogSource, context);
+  const button = name => host.querySelectorAll('button').find(node => node.getAttribute('aria-label') === name || node.textContent === name);
+  return { context, calls, host, button, C: context.EGCGameplanCatalog, text: () => host.textContent };
+}
+
+test('with the builder on, Scope and Finish price items from the builder menu with their chips, never the walkthrough tables', async () => {
+  const { C, calls } = catalogPage();
+  assert.equal(C.active(), true);
+  assert.match(C.loadsNote(), /Loading the quote builder prices/, 'before the menu answers');
+  await C.load(); await C.load();
+  assert.deepEqual(calls.fetch, ['/api/quote-draft?view=builder'], 'read once');
+  const loads = C.loadsNote();
+  for (const [name, price, chip] of [['Full truck load', '$750.00', 'Approved'], ['Three-quarter load', '$562.50', 'Draft price'], ['Half load', '$375.00', 'Draft price'], ['Quarter load', '$187.50', 'Draft price']]) {
+    assert.match(loads, new RegExp(`<li><span>${name}</span> <span class="gp-price">\\${price} <span class="qb-chip[^"]*"[^>]*>${chip}</span></span></li>`), name);
+  }
+  assert.doesNotMatch(loads, /\$950/);
+  assert.match(C.label('special', 'Mattress'), /^Mattress <span class="gp-price">\+\$70\.00 <span class="qb-chip" title="Draft price \$70\.00, not yet approved by the owner\.">Draft price<\/span><\/span>$/);
+  assert.match(C.label('special', 'Hot tub / spa'), /\+\$600\.00/);
+  assert.match(C.label('access', 'Stairs'), /\+\$190\.00/);
+  assert.equal(C.label('access', 'Narrow gate / alley'), 'Narrow gate / alley', 'a note-only access choice has no price');
+  assert.match(C.label('hazard', 'Pest waste'), /\+\$300\.00/);
+  assert.equal(C.label('hazard', 'Mold / moisture'), 'Mold / moisture');
+  assert.equal(C.label('special', '<b>x</b>'), '&lt;b&gt;x&lt;/b&gt;');
+  assert.match(C.finishTag('deep_clean', '1'), /\+\$190\.00/);
+  assert.match(C.finishTag('deep_clean', '2'), /\+\$330\.00/);
+  assert.match(C.finishTag('pressure_wash'), /\+\$600\.00/);
+  assert.match(C.finishTag('mouse_trapping'), /\+\$375\.00 <span class="qb-chip"/);
+  // An owner approval shows as Approved.
+  const approved = catalogPage({ reply: () => ({ status: 200, body: servedMenu({ 'egc-012': 37500 }) }) });
+  await approved.C.load();
+  assert.match(approved.C.finishTag('mouse_trapping'), /qb-chip qb-ok"[^>]*>Approved</);
+});
+
+test('builder prices that cannot load say why with a retry; a Hub with the builder off keeps the walkthrough labels', async () => {
+  const outage = catalogPage({ reply: () => ({ status: 503, body: { ok: false, code: 'quote_draft_unavailable', error: 'Synthetic outage.' } }) });
+  await outage.C.load();
+  assert.match(outage.C.loadsNote(), /Synthetic outage\. <button type="button" class="small-btn gp-retry" onclick="EGCGameplanCatalog\.load\(true\)">Retry builder prices<\/button>/);
+  assert.equal(outage.C.label('special', 'Mattress'), 'Mattress', 'no price, never a legacy one');
+  outage.C.mountGoods();
+  assert.match(outage.text(), /Synthetic outage\.Retry builder prices/);
+  const offline = catalogPage({ reply: () => new TypeError('Failed to fetch') });
+  offline.context.navigator.onLine = false;
+  await offline.C.load();
+  assert.match(offline.C.loadsNote(), /The quote builder prices load when you are connected\./);
+  const dropped = catalogPage({ reply: () => new TypeError('Failed to fetch') });
+  await dropped.C.load();
+  assert.match(dropped.C.loadsNote(), /could not load\. Check the connection and retry\./);
+  const off = catalogPage({ reply: () => ({ status: 400, body: { ok: false, code: 'quote_draft_invalid_request', error: 'The quote lookup is invalid.' } }) });
+  await off.C.load();
+  assert.equal(off.C.active(), false, 'the Hub answered the builder is off');
+  const flagOff = catalogPage({ builder: false });
+  await flagOff.C.load();
+  assert.deepEqual([flagOff.C.active(), flagOff.calls.fetch], [false, []]);
+});
+
+test('Finish picks shelving, totes and storage from the builder products into the walkthrough, with search, group and quantity', async () => {
+  const page = catalogPage(), { C, context, host, button, calls } = page;
+  await C.load();
+  C.mountGoods();
+  assert.match(page.text(), /No shelving, totes or storage yet\./);
+  assert.equal(host.querySelectorAll('a').length, 0, 'no retailer link');
+  const shelf = menuItem('HDX plastic shelving, 36×72×24');
+  button(`Add ${shelf.name}`).click();
+  assert.deepEqual(JSON.parse(JSON.stringify(context.S.builderGoods)), { shelving: [{ id: shelf.id, quantity: 1, group: 'shelving', name: shelf.name, installPersonMinutes: 60 }], storage: [], by: 'finish' });
+  assert.deepEqual([calls.invalidate, calls.save], [1, 1], 'a pick clears an earlier signature and saves the walkthrough');
+  assert.match(page.text(), /In this quote \(1\)/);
+  button(`One more: ${shelf.name}`).click();
+  assert.equal(context.S.builderGoods.shelving[0].quantity, 2);
+  // The group filter and the search narrow the products offered.
+  host.querySelector('select').dispatchEvent({ type: 'change', target: { value: 'bins-totes' } });
+  const offered = () => host.querySelectorAll('button').filter(node => /^Add /.test(node.getAttribute('aria-label') || '')).map(node => node.getAttribute('aria-label').slice(4));
+  const totes = menu.products.filter(item => item.group === 'bins-totes').map(item => item.name);
+  assert.ok(offered().length > 0 && offered().every(name => totes.includes(name)), 'bins and totes only');
+  host.querySelector('input').dispatchEvent({ type: 'input', target: { value: 'four-pack' } });
+  assert.ok(offered().length > 0 && offered().every(name => /four-pack/i.test(name)));
+  const tote = menu.products.find(item => item.name === offered()[0]);
+  button(`Add ${tote.name}`).click();
+  assert.deepEqual(JSON.parse(JSON.stringify(C.selection())), { shelving: [{ id: shelf.id, quantity: 2 }], storage: [{ id: tote.id, quantity: 1 }] }, 'what the builder opens with');
+  button(`One fewer: ${tote.name}`).click();
+  assert.deepEqual(plainOf(context.S.builderGoods.storage), []);
+  // The builder wrote the same picks back: the walkthrough holds them and the builder keeps its own from then on.
+  const before = calls.invalidate;
+  C.fromBuilder({ shelving: [{ id: shelf.id, quantity: 2, group: 'shelving' }], storage: [] });
+  assert.deepEqual(plainOf([context.S.builderGoods.by, C.selection(), calls.invalidate]), ['builder', null, before]);
+  C.fromBuilder({ shelving: [{ id: shelf.id, quantity: 4, group: 'shelving' }], storage: [] });
+  assert.equal(calls.invalidate, before + 1, 'a change in the builder clears an earlier signature');
+});
+
+test('Finish shows the built quote\'s goods when the walkthrough has no picks, and clears counts recorded before', async () => {
+  const shelf = menuItem('HDX plastic shelving, 36×72×24');
+  const page = catalogPage({ S: { finish: ['cleanout', 'shelving', 'totes'], shelfQty: 3, toteQty: 4, builderQuote: { compositePricing: { shelving: [{ id: shelf.id, quantity: 2 }], storage: [] } } } });
+  await page.C.load();
+  page.C.mountGoods();
+  assert.match(page.text(), /In this quote \(1\)/);
+  assert.equal(page.host.querySelectorAll('output').find(node => node.parentNode.getAttribute('aria-label') === `${shelf.name} quantity`).textContent, '2');
+  assert.equal(page.C.selection(), null, 'nothing to push into the builder until Finish changes it');
+  assert.match(page.text(), /Recorded earlier on this walkthrough: 3 metal shelving units; 4 labeled totes\./);
+  page.button('Clear note').click();
+  assert.deepEqual(plainOf([page.context.S.finish, page.context.S.shelfQty, page.context.S.toteQty]), [['cleanout'], 0, 0]);
+});
+
+// The gameplan's own lines: the signature gate, the bring list and the job time read the Finish picks.
+function gameplanLines(state = {}) {
+  const context = vm.createContext({ PRICING: servedPricing(), window: { EGCWalkthroughPricing: { quoteBuilder: () => true } }, validateStep: () => [], PHOTO_COUNT: 3 });
+  vm.runInContext(pageLine('const freshState='), context);
+  context.S = Object.assign(vm.runInContext('freshState()', context), { name: 'Synthetic Customer', garageSize: '2', fill: 'medium', loads: '1', crewSize: '2', approved: true, acceptanceAt: '2026-10-19T15:00:00.000Z', signature: 'data:image/png;base64,AA==' }, state);
+  for (const prefix of ['function quoteBuilderOn(', 'function builderJunkOnly(', 'function recommend(', 'function estimatedJobMinutes(', 'function buildJobInstructions(', 'function readyToSend(']) vm.runInContext(pageLine(prefix), context);
+  return context;
+}
+const builtQuote = (goods = {}) => ({ compositePricing: { steps: ['removal', 'shelving', 'storage'], removal: [{ id: 'egc-003', quantity: 1 }], shelving: [], storage: [], labor: { manHours: 6 }, ...goods }, totalCents: 129300,
+  lineItems: [{ id: 'removal-base', kind: 'service', name: 'Two-car garage base', description: '', quantity: 1, unitCents: 97500, totalCents: 97500 }, { id: 'labor', kind: 'labor', name: 'Labor', description: '', quantity: 1, unitCents: 31800, totalCents: 31800 }] });
+
+test('the walkthrough is not signed while its Finish picks differ from the built quote; the bring list and job time follow the picks', () => {
+  const shelf = menuItem('HDX plastic shelving, 36×72×24'), tote = menuItem('HDX 27-gal totes, four-pack');
+  const page = gameplanLines({ builderQuote: builtQuote() });
+  assert.equal(page.builderSignGate(), '', 'no picks: the built quote is signed as before');
+  const plain = page.buildJobInstructions({}), minutes = page.estimatedJobMinutes();
+  page.S.builderGoods = { shelving: [{ id: shelf.id, quantity: 2, group: 'shelving', installPersonMinutes: 60 }], storage: [{ id: tote.id, quantity: 1, group: 'bins-totes', installPersonMinutes: 32 }, { id: 'hd-x', quantity: 1, group: 'overhead' }], by: 'finish' };
+  assert.equal(page.builderSignGate(), 'goods');
+  assert.match(page.builderGateText('goods'), /changed since this quote was built\. Tap Edit the quote: the builder opens with the Finish picks/);
+  assert.ok(page.readyToSend().includes('the quote saved again with the shelving and storage chosen on Finish (Edit the quote)'));
+  // The same picks in the quote, in any order: signed.
+  page.S.builderQuote = builtQuote({ shelving: [{ id: shelf.id, quantity: 2 }], storage: [{ id: 'hd-x', quantity: 1 }, { id: tote.id, quantity: 1 }] });
+  assert.equal(page.builderSignGate(), '');
+  const bring = page.buildJobInstructions({}).bringList;
+  assert.deepEqual(plainOf(bring.filter(item => !plain.bringList.includes(item))), ['Drill / driver', 'Stud finder', 'Level', 'Lag screws and anchors', 'Step ladder', 'Label maker']);
+  // Two shelving units (2 x 60) and the totes (32) person-minutes over the calibrated crew of 2: 76 more minutes, rounded up.
+  assert.equal(page.estimatedJobMinutes(), Math.ceil((minutes + 76) / 30) * 30);
+  page.S.builderGoods = { shelving: [], storage: [{ id: tote.id, quantity: 1, group: 'bins-totes' }], by: 'builder' };
+  assert.equal(page.estimatedJobMinutes(), minutes, 'a pick with no install time adds none');
+  assert.deepEqual(plainOf(page.buildJobInstructions({}).bringList.filter(item => !plain.bringList.includes(item))), ['Label maker']);
+  // With the builder off nothing changes.
+  page.window.EGCWalkthroughPricing.quoteBuilder = () => false;
+  assert.equal(page.builderSignGate(), '');
 });

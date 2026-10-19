@@ -486,9 +486,20 @@
     }
     // ---- Guided builder views: removal / cleanout, shelving, extra storage, then the server-priced review ----
     const STEP_LABELS = { removal: 'Removal / cleanout', shelving: 'Shelving', storage: 'Extra storage', quote: 'Review' };
+    // The walkthrough's Finish picks for the builder to open with (options.goods, crew/gameplan-catalog.js selection()), checked
+    // against the menu like any saved selection, or null.
+    const walkthroughGoods = menu => { let goods = null; try { goods = typeof options.goods === 'function' ? options.goods() : null; } catch { goods = null; } if (!goods || typeof goods !== 'object') return null; const checked = validSelection({ shelving: goods.shelving, storage: goods.storage }, menu); return { shelving: checked.shelving, storage: checked.storage }; };
+    const goodsKey = sel => ['shelving', 'storage'].map(step => (sel?.[step] || []).map(row => `${row.id}:${row.quantity}`).sort().join(',')).join('|');
+    const sameGoods = (a, b) => goodsKey(a) === goodsKey(b);
+    const goodsOf = (menu, sel) => { const products = new Map((menu?.products || []).map(item => [item.id, item])); const row = ({ id, quantity }) => { const item = products.get(id); return { id, quantity, ...(item ? { group: item.group, name: item.name, ...(Number.isFinite(item.installPersonMinutes) ? { installPersonMinutes: item.installPersonMinutes } : {}) } : {}) }; }; return { shelving: (sel?.shelving || []).map(row), storage: (sel?.storage || []).map(row) }; };
     // The crew size on the Schedule tab: only the default of the Adjust control's people × hours.
     const crewOf = () => { const crew = Number(plan().logistics?.crew_size); return String(Number.isInteger(crew) && crew >= 1 && crew <= 20 ? crew : 2); };
-    const keep = () => { Promise.resolve().then(() => client.builderState?.({ selection: S.sel, savedAt: Date.now() })).catch(() => {}); };
+    // Every selection change is kept on this device and, from a walkthrough, written back to its Finish step (options.onGoods:
+    // the shelving and storage picks with the group and install time the walkthrough's bring list and job time read).
+    const keep = () => {
+      Promise.resolve().then(() => client.builderState?.({ selection: S.sel, savedAt: Date.now() })).catch(() => {});
+      if (typeof options.onGoods === 'function' && S.menu) { try { options.onGoods(goodsOf(S.menu, S.sel)); } catch { /* the walkthrough keeps its earlier picks */ } }
+    };
     const chip = item => h('span', { class: 'qb-chip' + (item?.approved ? ' qb-ok' : ''), title: item?.reason || '' }, item?.approved ? 'Approved' : 'Draft price');
     const services = group => S.menu.services.filter(item => item.group === group);
     // A scope change re-estimates the labor unless the estimator set the man-hours by hand: man-hours kept from an earlier
@@ -692,8 +703,11 @@
     // approved its draft prices), or edit it from its saved selection.
     function renderSaved() {
       const job = S.savedBuild, breakdown = job.breakdown && Array.isArray(job.breakdown.sections) ? job.breakdown : null, lines = Array.isArray(breakdown?.lines) ? breakdown.lines : [];
+      // The walkthrough's Finish picks differ from this saved quote's goods: editing the quote opens with the picks.
+      const finishChanged = typeof options.goods === 'function' && !sameGoods(goodsOf(S.menu, S.sel), validSelection(selectionOfPricing(job.compositePricing), S.menu));
       body.replaceChildren(...[
         h('p', {}, `Quote ${job.estimate.number} revision ${job.estimate.revision} is saved as a draft and has not been sent.`),
+        finishChanged ? h('p', { class: 'qd-notice qb-goods-changed', role: 'status' }, 'The shelving, totes and storage chosen on the walkthrough\u2019s Finish step are not the ones in this saved quote. Choose Edit quote: it opens with the Finish picks. Review it and save it again before sending.') : null,
         ...(breakdown ? breakdown.sections.filter(entry => lines.some(line => line.section === entry.id)).map(entry => section(`${entry.label} · ${money(entry.subtotalCents)}`, '', h('ul', { class: 'qd-lines' }, lines.filter(line => line.section === entry.id).map(line => h('li', { class: 'qd-line' }, h('span', {}, line.name, line.qty !== 1 ? ` × ${line.qty}${line.unit === 'pack' ? ' packs' : ''}` : ''), h('b', {}, money(line.totalCents))))))) : []),
         junkOnlyLines(S.menu, lines) ? h('div', { class: 'qb-junk' }, h('p', { class: breakdown.labor ? 'qd-notice' : 'qd-mode', role: 'status', 'data-labor': 'none' }, breakdown.labor ? 'This junk-only quote still has a Labor line from before the owner\u2019s decision of 2026-10-18: the truck-load price covers the crew\u2019s time. Edit the quote and save it again to drop it before sending it.' : 'Junk-only quote: the truck-load price covers the crew\u2019s time, so it has no Labor line.'), garageWorkNote(walkthroughGarageWork(plan())))
           : typeof breakdown?.labor?.manHours === 'number' ? savedLabor(breakdown.labor)
@@ -775,6 +789,10 @@
       const job = opened?.saved?.job && opened.saved.job.compositePricing && typeof opened.saved.job.compositePricing === 'object' ? opened.saved.job : null;
       const unsent = job && job.estimate?.status === 'draft' && Number.isSafeInteger(job.estimate.amountCents) && job.estimate.number ? job : null;
       const sel = kept?.selection ? validSelection(kept.selection, menu) : job ? validSelection(selectionOfPricing(job.compositePricing, job.breakdown, menu), menu) : selectionFromWalkthrough(plan(), menu);
+      // Shelving, totes and storage picked on the walkthrough's Finish step since the builder last wrote them back: the quote
+      // opens with exactly those, and the labor follows the new estimate unless the estimator set it by hand.
+      const picked = walkthroughGoods(menu);
+      if (picked && !sameGoods(picked, sel)) { Object.assign(sel, { shelving: picked.shelving, storage: picked.storage }); if (sel.labor?.adjusted !== true) sel.labor = { manHours: null, adjusted: false }; }
       // Man-hours this device kept from a quote saved before the owner's Labor decisions of 2026-10-18 follow the new
       // estimate too, unless the estimator set them by hand.
       if (staleLabor(menu, job?.breakdown) && sel.labor?.adjusted !== true) sel.labor = { manHours: null, adjusted: false };

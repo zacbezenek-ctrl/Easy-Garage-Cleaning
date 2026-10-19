@@ -285,7 +285,9 @@
   function sendOptions(button){
     if(!root.EGCQuoteDraft){$('send-status').textContent='Quote drafts are still loading. Try again in a moment.';return null;}
     return root.EGCQuoteDraft.open({storage:sessionStorage,fetch:(...args)=>EGCHubAuth.fetch(...args),actor,uuid:()=>crypto.randomUUID(),plan:()=>payload(),source:()=>S.sourceWalkthroughId || '',savedJobId:()=>S.quoteDraftJobId || S.handoffJobId || '',draftId:()=>S.photoDraftJobId || S.jobId || '',
-      accept:result=>{S.quoteDraftJobId=result.job.id;S.customerId=result.job.customerId;keepBuilderQuote(result.job);save();},onSent:()=>{if(button)button.textContent='Options sent — send again after changes';}});
+      accept:result=>{S.quoteDraftJobId=result.job.id;S.customerId=result.job.customerId;keepBuilderQuote(result.job);save();},onSent:()=>{if(button)button.textContent='Options sent — send again after changes';},
+      // LANE catalog: the builder opens with the shelving and storage picked on Finish and writes its own changes back.
+      goods:()=>root.EGCGameplanCatalog?root.EGCGameplanCatalog.selection():null,onGoods:goods=>root.EGCGameplanCatalog?.fromBuilder(goods)});
   }
   root.EGCWalkthroughHandoff={save:()=>client.save(),send,openings,photos,sendOptions};
 })(window);

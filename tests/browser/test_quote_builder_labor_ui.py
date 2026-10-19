@@ -71,6 +71,31 @@ class QuoteBuilderLaborTests(unittest.TestCase):
             box = field.bounding_box()
             self.assertLessEqual(box['x'] + box['width'], 375, 'every labor field fits the phone')
 
+    def test_the_builder_opens_with_the_walkthrough_finish_picks_and_product_rows_stay_in_the_app(self):
+        # LANE catalog: shelving and totes picked on the walkthrough's Finish step open in the builder already chosen.
+        self.page.goto(self.url + '/builder-harness')
+        tote = self.page.evaluate("fetch('/api/quote-draft?view=builder').then(r => r.json()).then(menu => menu.products.find(item => item.group === 'bins-totes'))")
+        self.page.evaluate("tote => { window.GOODS = { shelving: [{ id: 'hd-100006678', quantity: 2 }], storage: [{ id: tote.id, quantity: 1 }] }; }", tote)
+        self.page.get_by_role('button', name='Send options for review').click()
+        dialog = self.dialog()
+        expect(dialog.locator('.qb-total')).to_contain_text('Shelving $231.40')
+        expect(dialog.locator('.qb-total')).to_contain_text('Storage $%s' % format(tote['unitCents'] / 100, ',.2f'))
+        dialog.get_by_role('button', name='Continue to shelving').click()
+        expect(dialog).to_contain_text('In this quote (1)')
+        expect(dialog.get_by_role('group', name='HDX plastic shelving, 36×72×24 quantity').locator('output')).to_have_text('2')
+        # Size and fit inline; no product page, no new tab.
+        expect(dialog).to_contain_text('36 W × 72 H × 24 D in')
+        expect(dialog.locator('a')).to_have_count(0)
+        dialog.get_by_role('button', name='One more: HDX plastic shelving, 36×72×24').click()
+        mirrored = self.page.evaluate('window.MIRRORED')
+        self.assertEqual([(row['id'], row['quantity'], row['group']) for row in mirrored['shelving']], [('hd-100006678', 3, 'shelving')])
+        self.assertEqual([(row['id'], row['quantity'], row['group']) for row in mirrored['storage']], [(tote['id'], 1, 'bins-totes')])
+        dialog.get_by_role('button', name='Continue to extra storage').click()
+        expect(dialog).to_contain_text('In this quote (1)')
+        self.assertEqual(self.posts[-1]['compositePricing']['shelving'], [{'id': 'hd-100006678', 'quantity': 3}], 'the server priced the picks')
+        self.assert_fits(dialog)
+        self.page.screenshot(path=str(RESULTS / 'quote-builder-finish-picks-mobile.png'), full_page=True)
+
     def test_labor_row_prefills_from_the_estimate_and_adjusts_by_total_or_people_times_hours(self):
         dialog = self.review()
         row = dialog.locator('.qb-labor')

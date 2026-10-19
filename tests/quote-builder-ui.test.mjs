@@ -22,7 +22,7 @@ const flush = async () => { for (let i = 0; i < 12; i++) await new Promise(resol
 // hub: {builder} is the Hub's EGC_QUOTE_BUILDER_ENABLED; hint is what the walkthrough's /api/pricing-config answer said.
 // walkthroughId is the walkthrough's Hub walkthrough id ('' for a manual walkthrough). datesPending: the send preview is refused
 // until the job has a date and a source walkthrough, as the server's 25/75 payment dates are (quote_draft_payment_dates_pending).
-function harness({ builder = true, hint = builder, stale = false, stall = false, hub = null, walkthrough = plan, walkthroughId = 'walk-1', datesPending = false } = {}) {
+function harness({ builder = true, hint = builder, stale = false, stall = false, hub = null, walkthrough = plan, walkthroughId = 'walk-1', datesPending = false, goods = undefined, onGoods = undefined } = {}) {
   const document = createDocument(), calls = [], timers = [];
   const server = hub || { state: baseState(), jobs: new Map(), sent: [] };
   // The 15-second builder timer is held so a test can let it run out.
@@ -86,7 +86,7 @@ function harness({ builder = true, hint = builder, stale = false, stall = false,
   const text = () => dialog()?.textContent || '';
   const button = label => dialog().querySelectorAll('button').find(node => node.textContent === label || node.getAttribute('aria-label') === label);
   let savedJobId = '';
-  const open = (store = memoryStorage()) => context.EGCQuoteDraft.open({ storage: store, fetch, actor: async () => 'sales.person', uuid: () => crypto.randomUUID(), plan: walkthrough, source: () => walkthroughId, savedJobId: () => savedJobId, draftId: () => 'draft-1', accept: result => { savedJobId = result.job.id; }, now: () => Date.parse('2026-10-17T18:00:00Z') });
+  const open = (store = memoryStorage()) => context.EGCQuoteDraft.open({ storage: store, fetch, actor: async () => 'sales.person', uuid: () => crypto.randomUUID(), plan: walkthrough, source: () => walkthroughId, savedJobId: () => savedJobId, draftId: () => 'draft-1', accept: result => { savedJobId = result.job.id; }, now: () => Date.parse('2026-10-17T18:00:00Z'), ...(goods ? { goods } : {}), ...(onGoods ? { onGoods } : {}) });
   const footer = () => dialog().querySelector('.qd-foot').querySelectorAll('button').map(node => node.textContent);
   return { context, document, calls, timers, server, dialog, text, button, footer, open };
 }
@@ -304,6 +304,54 @@ test('product rows show their size and fit notes inline and never link out to th
   assert.equal(fitText(''), '');
   h.button('Continue to extra storage').click(); await flush();
   assert.equal(h.dialog().querySelectorAll('a').length, 0);
+});
+
+// LANE catalog: the walkthrough's Finish step picks the builder's own shelving and storage (crew/gameplan-catalog.js); the
+// builder opens with them already chosen and writes every change back, so nothing is picked twice.
+test('the builder opens with the shelving and storage picked on the walkthrough and writes its own changes back', async () => {
+  const tote = menuDoc.products.find(item => item.group === 'bins-totes'), mirrored = [];
+  let picks = { shelving: [{ id: shelf.id, quantity: 2 }], storage: [{ id: tote.id, quantity: 1 }, { id: 'hd-unknown', quantity: 3 }] };
+  const h = harness({ goods: () => picks, onGoods: goods => mirrored.push(structuredClone(goods)) });
+  h.open(); await flush();
+  // Two shelving units (2 hours to install) and a tote pack on top of the truck and mattress, priced from the open.
+  assert.match(h.text(), /Shelving \$231\.40 · Storage \$51\.90/);
+  assert.deepEqual(mirrored.at(-1), { shelving: [{ id: shelf.id, quantity: 2, group: 'shelving', name: shelf.name, installPersonMinutes: 60 }], storage: [{ id: tote.id, quantity: 1, group: 'bins-totes', name: tote.name, installPersonMinutes: 32 }] }, 'the walkthrough holds the checked picks, an unknown product dropped');
+  h.button('Continue to shelving').click(); await flush();
+  assert.match(h.text(), /In this quote \(1\)/);
+  assert.equal(h.dialog().querySelectorAll('output').find(node => node.parentNode.getAttribute('aria-label') === `${shelf.name} quantity`).textContent, '2');
+  h.button(`One more: ${shelf.name}`).click();
+  assert.equal(mirrored.at(-1).shelving[0].quantity, 3, 'a change in the builder goes back to the walkthrough');
+  h.button('Continue to extra storage').click(); await flush();
+  assert.match(h.text(), /In this quote \(1\)/);
+  h.button('Review quote').click(); await flush();
+  h.button('Save draft').click(); await flush();
+  const saved = h.calls.find(call => call.body?.action === 'save').body.draft.composite_pricing;
+  assert.deepEqual([saved.shelving, saved.storage], [[{ id: shelf.id, quantity: 3 }], [{ id: tote.id, quantity: 1 }]]);
+  h.button('Done').click();
+  // Finish changed again after the save: the saved quote says so, and Edit quote opens with the new picks.
+  picks = { shelving: [{ id: shelf.id, quantity: 1 }], storage: [] };
+  h.open(memoryStorage()); await flush();
+  assert.match(h.text(), /The shelving, totes and storage chosen on the walkthrough’s Finish step are not the ones in this saved quote\./);
+  h.button('Edit quote').click();
+  assert.match(h.text(), /Shelving \$115\.70 · Storage \$0\.00/);
+  h.button('Continue to shelving').click(); await flush();
+  assert.equal(h.dialog().querySelectorAll('output').find(node => node.parentNode.getAttribute('aria-label') === `${shelf.name} quantity`).textContent, '1');
+});
+
+test('without Finish picks the builder keeps its own selection and still tells the walkthrough what it holds', async () => {
+  const mirrored = [];
+  const h = harness({ goods: () => null, onGoods: goods => mirrored.push(structuredClone(goods)) });
+  h.open(); await flush();
+  assert.deepEqual(mirrored.at(-1), { shelving: [], storage: [] });
+  assert.match(h.text(), /Shelving \$0\.00 · Storage \$0\.00/);
+  h.button('Continue to shelving').click(); await flush();
+  assert.match(h.text(), /Walkthrough note: 3 metal shelving units\./);
+  h.button(`Add ${shelf.name}`).click();
+  assert.deepEqual(mirrored.at(-1).shelving.map(row => [row.id, row.quantity, row.group]), [[shelf.id, 1, 'shelving']]);
+  // A walkthrough whose goods hook throws keeps the builder working.
+  const broken = harness({ goods: () => { throw new Error('unreadable'); } });
+  broken.open(); await flush();
+  assert.match(broken.text(), /Running total\$820\.00/);
 });
 
 test('with the builder off the walkthrough quote is reviewed exactly as before, with no builder request', async () => {
