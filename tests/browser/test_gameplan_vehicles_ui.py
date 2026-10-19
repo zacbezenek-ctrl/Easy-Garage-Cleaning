@@ -6,7 +6,9 @@ midsize SUV, sees the fit check say the truck won't fit, reloads and keeps both,
 them (scope.customer_vehicles, scope.parking_plan and a PARKING line). The vehicle catalog loads only once Finish opens.
 Removing the vehicles and the measurement leaves the payload exactly as it was. A signed walkthrough with a vehicle goes
 through the real /api/walkthrough-handoff, and the crew job page shows "Parking after the job" (crew_scope_fixture.mjs).
-No production service is contacted. Screenshots: test-results/gameplan-vehicles-*.png (VEHICLES_SHOTS overrides the folder).
+With no signal, a captive portal's empty answer or a stalled download, the vehicle types still work and Retry asks again;
+typing while the catalog downloads keeps the search box's focus; tapping the shelving wall already picked keeps the
+customer's signature; and the next walkthrough starts the search over. No production service is contacted. Screenshots: test-results/gameplan-vehicles-*.png (VEHICLES_SHOTS overrides the folder).
 """
 import json, os, pathlib, re, subprocess, threading, unittest, urllib.error, urllib.request
 from functools import partial
@@ -60,8 +62,12 @@ class GameplanVehiclesBrowserTests(unittest.TestCase):
 
     def setUp(self):
         self.errors = []; self.requests = []; self.fixture_port = None; self.handoff_posts = []; self.context = None
+        self.data_mode = None; self.held = []
 
     def tearDown(self):
+        for route in self.held:
+            try: route.abort()
+            except Exception: pass
         if self.context: self.context.close()
         self.assertEqual(self.errors, [], f'Browser errors: {self.errors}')
 
@@ -87,6 +93,10 @@ class GameplanVehiclesBrowserTests(unittest.TestCase):
         if self.fixture_port and url.path in ('/api/walkthrough-handoff', '/api/field-jobs'): self.forward(route, 'zacb'); return
         if self.fixture_port and url.path == '/api/highlevel': send({'ok': True, 'handoffSync': {'status': 'synced'}, 'portalInvitation': {'status': 'suppressed'}}); return
         if url.path.startswith('/api/'): send({'ok': False, 'error': 'Synthetic service unavailable'}, 503); return
+        # The catalog download as the test sets it: no signal, a captive portal's empty 200, or stalled until let through.
+        if url.path == '/crew/gameplan-vehicles-data.js' and self.data_mode == 'offline': route.abort('internetdisconnected'); return
+        if url.path == '/crew/gameplan-vehicles-data.js' and self.data_mode == 'empty': route.fulfill(status=200, content_type='application/javascript', body='/* a captive portal page */'); return
+        if url.path == '/crew/gameplan-vehicles-data.js' and self.data_mode == 'hold': self.held.append(route); return
         route.continue_()
 
     def forward(self, route, user):
@@ -183,7 +193,7 @@ class GameplanVehiclesBrowserTests(unittest.TestCase):
         self.assertEqual(sorted(vehicles[0]), ['confidence', 'height_in', 'label', 'length_in', 'source', 'width_in', 'width_mirrors_in'])
         self.assertEqual(sent['scope']['garage_measurements'], {'depth_in': 240})
         plan = sent['scope']['parking_plan']
-        self.assertRegex(plan, r'^Ford F-150 SuperCrew, 5\.5 ft bed \(\d{4}–\d{4}\) \(232×80×76 in\) \+ Midsize SUV, typical size \(197×78×70 in\)\. ')
+        self.assertRegex(plan, r'^Ford F-150 SuperCrew, 5\.5 ft bed, \d{4}–\d{4} \(232×80×76 in\) \+ Midsize SUV, typical size \(197×78×70 in\)\. ')
         self.assertIn('Depth won’t fit (needs 268 in, has 240 in)', plan)
         self.assertIn('Keep overhead racks ≥ 80 in off the floor.', plan)
         self.assertLessEqual(len(plan), 1000)
@@ -284,6 +294,117 @@ class GameplanVehiclesBrowserTests(unittest.TestCase):
         expect(job.locator('#scope-card')).to_contain_text('PARKING: 2019 Ford F-150')
         self.assertEqual(job.evaluate("() => [...document.querySelectorAll('#scope-card, #scope-card *')].filter(el => el.getBoundingClientRect().right > 391).length"), 0, 'crew brief: horizontal overflow')
         job.screenshot(path=str(SHOTS / 'gameplan-vehicles-crew-job-phone.png'), full_page=True)
+
+    def offline(self, device):
+        self.data_mode = 'offline'
+        page = self.start(device)
+        self.screen(page, 3, STATE)
+        section = page.locator('#customer-vehicles')
+        expect(section.locator('.veh-retry')).to_be_visible()
+        expect(section).to_contain_text('The vehicle list has not loaded')
+        # The types load with the page, so a typical size works with no signal; Retry is a 44 px tap target too.
+        section.locator('summary', has_text='Not in the list?').click()
+        expect(section.locator('.veh-type')).to_have_count(14)
+        self.audit(page, f'{device} offline')
+        self.shot(page, f'{device}-offline')
+        section.locator('.veh-type', has_text='Midsize SUV').click()
+        expect(section.locator('.veh-card')).to_have_count(1)
+        expect(section.locator('#veh-fit')).to_be_visible()
+        # Back in signal, Retry asks again and the search works.
+        self.data_mode = None
+        section.locator('.veh-retry').click()
+        page.wait_for_function('() => Boolean(window.EGCGameplanVehicleData)')
+        page.locator('#veh-search').fill('camry')
+        expect(section.locator('.veh-group-head').first).to_contain_text('Toyota Camry')
+
+    def test_ipad_offline_types_and_retry(self):
+        self.offline('ipad')
+
+    def test_phone_offline_types_and_retry(self):
+        self.offline('phone')
+
+    def test_retry_after_a_response_that_defines_nothing(self):
+        self.data_mode = 'empty'
+        page = self.start('phone')
+        self.screen(page, 3, STATE)
+        retry = page.locator('#customer-vehicles .veh-retry')
+        expect(retry).to_be_visible()
+        self.assertEqual(self.requests.count('/crew/gameplan-vehicles-data.js'), 1)
+        self.data_mode = None
+        retry.click()
+        page.wait_for_function('() => Boolean(window.EGCGameplanVehicleData)')
+        self.assertEqual(self.requests.count('/crew/gameplan-vehicles-data.js'), 2, 'Retry asked again')
+        page.locator('#veh-search').fill('f150')
+        expect(page.locator('#customer-vehicles .veh-group-head').first).to_contain_text('Ford F-150')
+
+    def test_typing_while_the_catalog_downloads_keeps_the_search_box(self):
+        self.data_mode = 'hold'
+        page = self.start('ipad')
+        self.screen(page, 3, STATE)
+        section, box = page.locator('#customer-vehicles'), page.locator('#veh-search')
+        expect(section).to_contain_text('Loading the vehicle list')
+        box.click(); page.keyboard.type('f15')
+        # The download arrives mid-word: the results show, and the box keeps its focus, caret and keyboard.
+        self.data_mode = None
+        for route in self.held: route.continue_()
+        self.held = []
+        page.wait_for_function('() => Boolean(window.EGCGameplanVehicleData)')
+        expect(section.locator('.veh-results')).to_contain_text('Ford F-150')
+        self.assertEqual(page.evaluate('document.activeElement.id'), 'veh-search')
+        page.keyboard.type('0')
+        self.assertEqual(box.input_value(), 'f150')
+        # Ticking "Overhead racks planned" from the keyboard re-renders the section; the checkbox keeps the focus.
+        page.evaluate("() => { S.customerVehicles = [{source: 'measured', label: 'Boat', length_in: 200, width_in: 80, height_in: 70, width_mirrors_in: 80}]; render(); }")
+        page.locator('#veh-racks').focus()
+        page.keyboard.press('Space')
+        expect(page.locator('#veh-fit [data-check=racks]')).to_be_visible()
+        self.assertEqual(page.evaluate('[document.activeElement.id, S.parkingRacks]'), ['veh-racks', True])
+
+    def test_a_stalled_download_offers_retry(self):
+        self.data_mode = 'hold'
+        page = self.start('phone')
+        self.screen(page, 3, STATE)
+        section = page.locator('#customer-vehicles')
+        expect(section).to_contain_text('Loading the vehicle list')
+        page.clock.fast_forward(16000)
+        retry = section.locator('.veh-retry')
+        expect(retry).to_be_visible()
+        # The first request is still hanging; Retry asks again rather than waiting on it.
+        self.data_mode = None
+        retry.click()
+        page.wait_for_function('() => Boolean(window.EGCGameplanVehicleData)')
+        self.assertEqual(self.requests.count('/crew/gameplan-vehicles-data.js'), 2)
+        page.locator('#veh-search').fill('tacoma')
+        expect(section.locator('.veh-group-head').first).to_contain_text('Toyota Tacoma')
+
+    def test_tapping_the_shelving_wall_already_picked_keeps_the_signature(self):
+        page = self.start('phone')
+        signed = {'signature': 'data:image/png;base64,iVBORw0KGgo=', 'approved': True, 'acceptanceAt': '2026-09-22T14:45:00.000Z', 'acceptanceBy': 'Synthetic Customer'}
+        self.screen(page, 3, {**STATE, 'finish': ['cleanout', 'shelving'], 'shelfQty': 2, **signed,
+            'customerVehicles': [{'source': 'measured', 'label': 'Boat', 'length_in': 200, 'width_in': 80, 'height_in': 70, 'width_mirrors_in': 80}]})
+        side = page.get_by_role('button', name='A side wall')
+        expect(side).to_have_attribute('aria-pressed', 'true')
+        side.click()
+        self.assertEqual(page.evaluate('[S.approved, Boolean(S.signature)]'), [True, True], 'nothing changed')
+        page.get_by_role('button', name='The back wall').click()
+        self.assertEqual(page.evaluate('[S.approved, Boolean(S.signature), S.parkingShelfWall]'), [False, False, 'back'], 'a real change')
+
+    def test_the_next_walkthrough_starts_the_vehicle_search_over(self):
+        page = self.start('phone')
+        self.screen(page, 3, STATE)
+        section = page.locator('#customer-vehicles')
+        page.wait_for_function('() => Boolean(window.EGCGameplanVehicleData)')
+        page.locator('#veh-search').fill('tacoma')
+        section.locator('summary', has_text='Not in the list?').click()
+        page.locator('#veh-m-name').fill('Smith boat')
+        page.locator('#veh-m-length').fill('20 ft')
+        page.evaluate("() => { save(); resetForWalkthrough('w2'); Object.assign(S, {name: 'Next Customer', garageSize: '2', fill: 'medium', loads: '1'}); index = 3; render(); }")
+        expect(page.locator('#veh-search')).to_have_value('')
+        self.assertFalse(page.evaluate("document.querySelector('#customer-vehicles .veh-other').open"))
+        section.locator('summary', has_text='Not in the list?').click()
+        expect(page.locator('#veh-m-name')).to_have_value('')
+        expect(page.locator('#veh-m-length')).to_have_value('')
+        expect(section.locator('.veh-card')).to_have_count(0)
 
     def crew_route(self, route):
         url = urlparse(route.request.url)

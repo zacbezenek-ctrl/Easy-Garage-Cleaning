@@ -4,29 +4,32 @@ import fs from 'node:fs';
 import { randomUUID } from 'node:crypto';
 import vm from './helpers/vm-realm.mjs';
 import { servedPricing } from './helpers/walkthrough-pricing.mjs';
-import { BOUNDS, BODIES, SHORT_CARS, readSources, renderVehicleCatalog, vehicleCatalogData, vehicleId } from '../tools/build-vehicle-catalog.mjs';
+import { BOUNDS, BODIES, SHORT_CARS, readSources, renderVehicleCatalog, renderVehicleTypes, vehicleCatalogData, vehicleTypesData, catalogRowId } from '../tools/build-vehicle-catalog.mjs';
 import { handoffInstructions, normalizeHandoffPlan, saveWalkthroughHandoff } from '../functions/_lib/walkthrough-handoff.js';
 import { walkthroughCrewBrief } from '../functions/_lib/walkthrough-crew-brief.js';
-import { normalizeUnsignedCapture } from '../functions/_lib/unsigned-walkthrough-capture.js';
+import { normalizeUnsignedCapture, unsignedCapturePatch } from '../functions/_lib/unsigned-walkthrough-capture.js';
 import { crewJobProjection } from '../functions/_lib/crew-job-projection.js';
 import { staffGatedPath } from '../staff-paths.js';
 
-// Vehicles to park after the job (crew/gameplan-vehicles.js and its generated catalog crew/gameplan-vehicles-data.js):
-// the catalog, the length parser, the search, the fit check, the walkthrough's payload and briefs, and the server.
+// Vehicles to park after the job (crew/gameplan-vehicles.js and its generated crew/gameplan-vehicles-data.js and
+// crew/gameplan-vehicles-types.js): the catalog, the length parser, the search, the fit check, the walkthrough's payload
+// and briefs, and the server.
 const read = path => fs.readFileSync(new URL(`../${path}`, import.meta.url), 'utf8');
 const plain = value => JSON.parse(JSON.stringify(value));
 const NOW = '2026-09-22T18:00:00.000Z';
 const owner = { user: 'zacb', role: 'owner', businessAccess: true, displayName: 'Owner' };
 
-// The browser modules in a realm of their own, as the page loads them (window is the realm).
-function browser({ data = true } = {}) {
+// The browser modules in a realm of their own, as the page loads them (window is the realm): the types with the page,
+// the catalog when Finish opens.
+function browser({ data = true, types = true } = {}) {
   const context = vm.createContext({});
   context.window = context;
+  if (types) vm.runInContext(read('crew/gameplan-vehicles-types.js'), context);
   if (data) vm.runInContext(read('crew/gameplan-vehicles-data.js'), context);
   vm.runInContext(read('crew/gameplan-vehicles.js'), context);
   return context;
 }
-const page = browser(), V = page.EGCGameplanVehicles, D = page.EGCGameplanVehicleData;
+const page = browser(), V = page.EGCGameplanVehicles, D = page.EGCGameplanVehicleData, T = page.EGCGameplanVehicleTypes;
 const pick = (query, config = '') => {
   const found = V.search(D, query, { limit: 200 }), rows = found.groups.flatMap(group => group.rows), row = rows.find(item => item.config.includes(config));
   assert.ok(row, `${query} ${config}`);
@@ -34,20 +37,28 @@ const pick = (query, config = '') => {
 };
 
 test('the browser catalog is generated from the committed sources and is current, small and staff-only', () => {
-  const sources = readSources(), text = read('crew/gameplan-vehicles-data.js');
+  const sources = readSources(), text = read('crew/gameplan-vehicles-data.js'), types = read('crew/gameplan-vehicles-types.js');
   assert.equal(text, renderVehicleCatalog(sources), 'run node tools/build-vehicle-catalog.mjs --write');
+  assert.equal(types, renderVehicleTypes(sources), 'run node tools/build-vehicle-catalog.mjs --write');
   assert.ok(Buffer.byteLength(text) < 250 * 1024, `${Math.round(Buffer.byteLength(text) / 1024)} KB`);
+  assert.ok(Buffer.byteLength(types) < 5 * 1024, `${Math.round(Buffer.byteLength(types) / 1024)} KB: the types load with the page`);
   assert.equal(D.rows.length, sources.catalog.rows.length);
-  assert.doesNotMatch(text, /https?:|backbone|vehicles-v1/i, 'source URLs and research names stay in tools/');
-  // The loader asks for this exact version, so a regenerated catalog is a new URL.
+  assert.equal('classes' in D, false, 'the types are in their own module');
+  for (const file of [text, types]) assert.doesNotMatch(file, /https?:|backbone|vehicles-v1/i, 'source URLs and research names stay in tools/');
+  // The research lanes and "from knowledge" stay in tools/ too: the estimator reads these notes on the vehicle cards.
+  for (const note of D.notes) assert.doesNotMatch(note, /\blane\b|from knowledge/i, note);
+  assert.equal(D.notes.find(note => note.startsWith('Autopadre lists')), 'Autopadre lists 16.97 ft (5.17 m); width and height taken from the H2 SUV. (Sources disagree: 203.5 in (2005 GM press figures) vs 189.8 in (KBB, autopadre). The longer value is kept.)');
+  // The loader asks for this exact version, so a regenerated catalog is a new URL; the page asks for the types' own.
   assert.equal(V.DATA_URL, `/crew/gameplan-vehicles-data.js?v=${D.VERSION}`);
   assert.match(D.VERSION, /^2026-10-19\.[0-9a-f]{8}$/);
+  assert.match(T.VERSION, /^2026-10-19\.[0-9a-f]{8}$/);
   // Static, gated with the walkthrough (/crew/gameplan*), never part of the Pages Functions bundle.
-  for (const path of ['/crew/gameplan-vehicles-data.js', '/crew/gameplan-vehicles.js', '/crew/gameplan-vehicles.css']) assert.equal(staffGatedPath(path), true, path);
+  for (const path of ['/crew/gameplan-vehicles-data.js', '/crew/gameplan-vehicles-types.js', '/crew/gameplan-vehicles.js', '/crew/gameplan-vehicles.css']) assert.equal(staffGatedPath(path), true, path);
   for (const name of fs.readdirSync(new URL('../functions', import.meta.url), { recursive: true }).filter(name => /\.m?js$/.test(name))) assert.doesNotMatch(read(`functions/${name}`), /(?:from|import)\s*\(?\s*['"][^'"]*(?:gameplan-vehicles|vehicle-catalog)/, `functions/${name}`);
   // The page loads the module, its stylesheet and the cache keys of everything changed with it.
   const html = read('crew/gameplan.html');
-  for (const asset of ['/crew/gameplan-vehicles.js?v=20261019vehicles', '/crew/gameplan-vehicles.css?v=20261019vehicles', '/crew/quote-draft.js?v=20261019vehicles']) assert.ok(html.includes(asset), asset);
+  for (const asset of ['/crew/gameplan-vehicles.js?v=20261019vehicles2', '/crew/gameplan-vehicles.css?v=20261019vehicles2', '/crew/quote-draft.js?v=20261019vehicles', `/crew/gameplan-vehicles-types.js?v=${T.VERSION}`]) assert.ok(html.includes(asset), asset);
+  assert.ok(html.indexOf('/crew/gameplan-vehicles-types.js') < html.indexOf('/crew/gameplan-vehicles.js'), 'the types load before the module');
   assert.equal(html.includes('gameplan-vehicles-data.js'), false, 'the catalog loads only when Finish opens');
 });
 
@@ -55,7 +66,7 @@ test('every catalog row is within the sanity bounds, ids are unique and every si
   const { catalog } = readSources(), ids = new Set();
   catalog.rows.forEach((row, i) => {
     assert.equal(V.rowId(D, i), row.id, 'the browser derives the same id');
-    assert.equal(D.ids[i] ?? vehicleId(row.make, row.model, row.year_from, row.year_to, row.config), row.id, 'the generator\'s id');
+    assert.equal(D.ids[i] ?? catalogRowId(row.make, row.model, row.year_from, row.year_to, row.config), row.id, 'the generator\'s id');
     assert.ok(!ids.has(row.id), `duplicate ${row.id}`); ids.add(row.id);
     const [, , from, to, , body, , length, width, height, mirrors] = D.rows[i];
     assert.ok(from >= 1950 && to <= 2030 && from <= to, row.id);
@@ -65,13 +76,14 @@ test('every catalog row is within the sanity bounds, ids are unique and every si
     assert.ok(height >= BOUNDS.height[0] && height <= BOUNDS.height[1], `${row.id} height ${height}`);
     assert.ok(mirrors === 0 || mirrors > width && mirrors <= 110, `${row.id} mirrors ${mirrors}`);
     // Every row has a size class, so its mirror allowance comes from the catalog.
-    assert.ok(D.classes.some(cls => cls.key === V.classOf(BODIES[body], length, width)), row.id);
+    assert.ok(T.classes.some(cls => cls.key === V.classOf(BODIES[body], length, width)), row.id);
   });
   assert.equal(ids.size, 2371);
-  assert.deepEqual(plain(D.classes.map(cls => cls.key)), ['compact_car', 'midsize_car', 'fullsize_car', 'small_suv', 'midsize_suv', 'fullsize_suv', 'extended_fullsize_suv', 'minivan', 'compact_pickup', 'midsize_pickup_crew',
+  assert.deepEqual(plain(T.classes.map(cls => cls.key)), ['compact_car', 'midsize_car', 'fullsize_car', 'small_suv', 'midsize_suv', 'fullsize_suv', 'extended_fullsize_suv', 'minivan', 'compact_pickup', 'midsize_pickup_crew',
     'fullsize_pickup_crew_short', 'fullsize_pickup_crew_long_hd', 'fullsize_van', 'motorcycle']);
-  for (const cls of D.classes) assert.ok(Math.abs(cls.width + cls.mirrorAllowance - cls.widthMirrors) < 0.2 && cls.length > 0 && cls.height > 0, cls.key);
-  assert.deepEqual([...D.classes.find(cls => cls.key === 'midsize_car').examples], ['Toyota Camry', 'Honda Accord', 'Nissan Altima']);
+  for (const cls of T.classes) assert.ok(Math.abs(cls.width + cls.mirrorAllowance - cls.widthMirrors) < 0.2 && cls.length > 0 && cls.height > 0, cls.key);
+  assert.deepEqual([...T.classes.find(cls => cls.key === 'midsize_car').examples], ['Toyota Camry', 'Honda Accord', 'Nissan Altima']);
+  assert.equal(V.vehicleTypes(), T.classes);
   // The generator refuses a row outside the bounds or a duplicate id.
   const bad = structuredClone(readSources());
   bad.catalog.rows[0].width_in = 120;
@@ -79,6 +91,9 @@ test('every catalog row is within the sanity bounds, ids are unique and every si
   const twice = structuredClone(readSources());
   twice.catalog.rows.push(twice.catalog.rows[0]);
   assert.throws(() => vehicleCatalogData(twice), /duplicate id/);
+  const noTypes = structuredClone(readSources());
+  noTypes.classes.classes = [];
+  assert.throws(() => vehicleTypesData(noTypes), /no classes/);
 });
 
 test('lengths are read in feet and inches or inches, and say what was understood', () => {
@@ -89,7 +104,11 @@ test('lengths are read in feet and inches or inches, and say what was understood
   assert.equal(V.parseLength('  '), null);
   assert.deepEqual(plain(V.parseLength('20\' 4"')), { inches: 244, assumedFeet: false, text: '= 244 in (20 ft 4 in)' });
   assert.deepEqual(plain(V.parseLength('20')), { inches: 240, assumedFeet: true, text: 'Read as 20 ft = 240 in' });
-  for (const text of ['twenty', '20 m', '-5', '5\' 4\' 3', 'abc 20']) assert.match(V.parseLength(text).error, /^Not understood/, text);
+  for (const text of ['twenty', '20 m', '-5', '5\' 4\' 3', 'abc 20', '20 12', '20 1/0', '20\' 4 1/0"', '96 1/0"']) assert.match(V.parseLength(text).error, /^Not understood/, text);
+  // After the feet, inches go up to 11, as in the two-number form ("20 12" is not understood either).
+  assert.equal(V.parseLength('20\' 13"').error, 'Not understood: inches after the feet go up to 11 (that is 21 ft 1 in).');
+  assert.match(V.parseLength('20\' 30"').error, /^Not understood/);
+  assert.equal(V.parseLength('6\' 11 1/2"').inches, 83.5);
   assert.match(V.parseLength('2440', V.LIMITS.depth).error, /looks wrong here/);
   assert.match(V.parseLength('40', V.LIMITS.doorHeight).error, /looks wrong here/);
   // A bare number is feet only where that size makes sense: a 30 in wide motorcycle is not 30 ft.
@@ -138,12 +157,54 @@ test('search: make, model and year in any order, tolerant of case, hyphens and s
   assert.ok(titles('dodge ram 2015').includes('Ram 1500'));
   assert.deepEqual([...new Set(titles('rav 4'))], ['Toyota RAV4']);
   assert.deepEqual([...new Set(titles('cx-5'))], ['Mazda CX-5', 'Mazda CX-50'], 'the CX-5 first');
-  assert.deepEqual(plain(V.search(D, 'zzzz')), { year: null, groups: [], total: 0, more: 0 });
-  assert.deepEqual(plain(V.search(D, '   ')), { year: null, groups: [], total: 0, more: 0 });
+  assert.deepEqual(plain(V.search(D, 'zzzz')), { year: null, groups: [], total: 0, more: 0, ignored: [] });
+  assert.deepEqual(plain(V.search(D, '   ')), { year: null, groups: [], total: 0, more: 0, ignored: [] });
   assert.ok(V.search(D, 'ford', { limit: 30 }).more > 0);
-  // Low confidence and "measure" notes say "measure to be sure".
+  // Low confidence and "measure" notes say "measure to be sure"; a note that the figure was measured does not.
   const wagon = V.search(D, 'camry wagon 1994').groups[0].rows[0];
   assert.equal(wagon.measure, true);
+  const civic = V.search(D, '1977 civic').groups[0].rows[0];
+  assert.deepEqual([civic.years, civic.measure, V.fromRow(D, civic.index, 1977).measure], ['1973–1979', false, false]);
+});
+
+test('search: a trim or a word the catalog does not have never hides the vehicle, and is named as ignored', () => {
+  const rows = query => V.search(D, query, { limit: 200 }).groups.flatMap(group => group.rows.map(row => `${group.title} ${row.years} ${row.config}`));
+  const titles = query => [...new Set(V.search(D, query, { limit: 200 }).groups.map(group => group.title))];
+  // The catalog's own words for a cab or a dually: SuperCrew / CrewMax are a crew cab, DRW is a dually.
+  assert.ok(rows('f150 crew cab').length >= 8 && rows('f150 crew cab').every(row => row.startsWith('Ford F-150') && /SuperCrew|Crew Cab/.test(row)), rows('f150 crew cab').join(' | '));
+  assert.ok(rows('tundra crew cab').length && rows('tundra crew cab').every(row => /CrewMax|Crew/.test(row)));
+  assert.deepEqual(titles('f350 dually'), ['Ford F-350 Super Duty DRW', 'Ford F-350 / F-450 Super Duty DRW']);
+  assert.ok(rows('dually').length >= 10 && rows('dually').every(row => /DRW/.test(row)));
+  assert.deepEqual(titles('silverado 3500 dually'), ['Chevrolet Silverado 3500HD DRW']);
+  assert.deepEqual(plain(V.search(D, 'f350 dually').ignored), []);
+  // A trim is ignored, and the result says so.
+  const xlt = V.search(D, '2019 ford f150 xlt', { limit: 200 });
+  assert.deepEqual([xlt.year, plain(xlt.ignored), xlt.total], [2019, ['xlt'], 5]);
+  assert.deepEqual(plain(rows('2019 ford f150 xlt').map(row => row.split(',')[0])), ['Ford F-150 2015–2020 Regular cab', 'Ford F-150 2015–2020 SuperCab', 'Ford F-150 2015–2020 SuperCrew', 'Ford F-150 2015–2020 SuperCrew', 'Ford F-150 Raptor 2017–2020 SuperCrew']);
+  for (const [query, title, ignored] of [['camry le', 'Toyota Camry', 'le'], ['le camry', 'Toyota Camry', 'le'], ['mustang gt', 'Ford Mustang', 'gt'], ['tahoe ltz', 'Chevrolet Tahoe', 'ltz'],
+    ['honda accord ex', 'Honda Accord', 'ex'], ['2020 f150 4x4', 'Ford F-150', '4x4'], ['rx350', 'Lexus RX', '350'], ['lexus rx 350', 'Lexus RX', '350']]) {
+    const found = V.search(D, query);
+    assert.equal(found.groups[0].title, title, query);
+    assert.deepEqual(plain(found.ignored), [ignored], query);
+  }
+  // A van's weight class: the size is the same, so the van is found without ignoring anything.
+  for (const [query, title] of [['sprinter 2500', 'Mercedes-Benz Sprinter'], ['transit 250', 'Ford Transit'], ['ram promaster 2500', 'Ram ProMaster'], ['e-350', 'Ford E-Series'], ['ford e150', 'Ford E-Series'], ['econoline 350', 'Ford Econoline']]) {
+    const found = V.search(D, query);
+    assert.equal(found.groups[0].title, title, query);
+    assert.deepEqual(plain(found.ignored), [], query);
+  }
+  // "e350" is never read across the make into a Ram 3500 ("Ram Dodge 3500").
+  for (const query of ['e-350', 'e350', 'e 350', 'e-150', 'e-250']) assert.ok(titles(query).every(title => /E-Series|Econoline/.test(title)), `${query}: ${titles(query)}`);
+  // A four-digit model name is the model, not only a year: the BMW 2002 first, then the BMWs of 2002.
+  const bmw = V.search(D, 'bmw 2002');
+  assert.equal(`${bmw.groups[0].title} ${bmw.groups[0].rows[0].years}`, 'BMW 2002 1968–1976');
+  assert.equal(bmw.year, null);
+  assert.ok(bmw.groups.some(group => group.title === 'BMW 7 Series' && group.rows[0].year === 2002));
+  // Dropping words needs the make or the model, and a year is never dropped.
+  for (const query of ['xlt truck', 'bel air 57', '1950 camry', 'zzzz qqqq']) assert.equal(V.search(D, query).total, 0, query);
+  // A make alone: the pickups and cars before the vans.
+  assert.equal(V.search(D, '2015 ram').groups[0].title.startsWith('Ram ProMaster'), false);
+  assert.ok(titles('2015 ram').indexOf('Ram 1500') < titles('2015 ram').indexOf('Ram ProMaster'));
 });
 
 test('a picked vehicle carries its size, mirrors, source and confidence', () => {
@@ -155,7 +216,7 @@ test('a picked vehicle carries its size, mirrors, source and confidence', () => 
   assert.deepEqual([transit.width_mirrors_in, transit.mirrors], [97.4, 'listed']);
   const dually = pick('ram 3500 drw 2015');
   assert.deepEqual([dually.width_in, dually.width_mirrors_in, dually.confidence, dually.measure], [96, 105.5, 'low', true]);
-  const suv = V.fromClass(D.classes.find(cls => cls.key === 'midsize_suv'));
+  const suv = V.fromClass(T.classes.find(cls => cls.key === 'midsize_suv'));
   assert.deepEqual(plain(suv), { label: 'Midsize SUV, typical size', short: 'midsize suv', source: 'typical', id: 'midsize_suv', length_in: 196.9, width_in: 77.9, height_in: 70.2, width_mirrors_in: 86.9, mirrors: 'estimated', confidence: 'typical', measure: false, note: '' });
   const boat = V.fromMeasure({ name: 'Boat', length: '19\' 6"', width: '8 ft', height: '72', basis: 'mirrors' });
   assert.deepEqual([boat.source, boat.length_in, boat.width_in, boat.width_mirrors_in, boat.mirrors, boat.confidence], ['measured', 234, 96, 96, 'measured', 'measured']);
@@ -246,7 +307,7 @@ test('parking: nothing without vehicles; the PARKING text names the vehicles, wh
   const f150 = pick('2019 f150 supercrew', 'SuperCrew, 5.5 ft bed'), crv = pick('2020 cr-v');
   const info = V.parking({ vehicles: [f150, crv], size: '2', measure: { width: '20 ft', depth: '22 ft' }, racks: false, quote: { overhead: true } });
   assert.equal(info.text, '2019 Ford F-150 SuperCrew, 5.5 ft bed (232×80×76 in) + 2020 Honda CR-V (181×73×67 in). Garage 240×264 in, door 192×84 in, ceiling 96 in (measured: width, depth; the rest typical). '
-    + 'Depth tight (needs 268 in, has 264 in); Width tight (needs 261 in, has 240 in); Overhead racks tight (16 in under the ceiling). Keep overhead racks ≥ 80 in off the floor. Typical garage sizes there: measure before promising the fit.');
+    + 'Depth tight (needs 268 in, has 264 in); width tight (needs 261 in, has 240 in); overhead racks tight (16 in under the ceiling). Keep overhead racks ≥ 80 in off the floor. Typical garage sizes there: measure before promising the fit.');
   assert.equal(info.summary, '2 vehicles · Tight — width needs 261 in, has 240 in');
   assert.deepEqual(Object.keys(info.scope), ['customer_vehicles', 'garage_measurements', 'parking_plan']);
   assert.deepEqual(plain(info.scope.customer_vehicles[0]), { label: '2019 Ford F-150 SuperCrew, 5.5 ft bed', source: 'catalog', length_in: 231.9, width_in: 79.9, height_in: 75.6, width_mirrors_in: 89.4, confidence: 'high' });
@@ -266,6 +327,29 @@ test('parking: nothing without vehicles; the PARKING text names the vehicles, wh
   const huge = capped.vehicles.map(v => ({ ...v, label: 'L'.repeat(400) })), cut = V.planText(V.garageFrom('other'), huge, V.fitCheck(V.garageFrom('other'), huge), {});
   assert.ok(cut.length === 1000 && cut.endsWith('…'), String(cut.length));
   assert.match(V.parking({ vehicles: [pick('ram 3500 drw 2015')], size: '1' }).text, /Measure to be sure: 3500 DRW\./);
+  // A pick made without a year keeps its model years inside the label, not in a second parenthesis.
+  assert.match(V.parking({ vehicles: [pick('f150', 'SuperCrew, 5.5 ft bed')], size: '2' }).text, /^Ford F-150 SuperCrew, 5\.5 ft bed, 2021–2026 \(232×80×76 in\)\. /);
+});
+
+test('a vehicle taller than the door: the brief and Review say how much too tall, and the door comes first', () => {
+  const van = pick('2020 sprinter high roof', '144 in wb, high roof');
+  const info = V.parking({ vehicles: [van], size: '2', racks: true });
+  const height = info.fit.checks.find(check => check.key === 'door_height'), racks = info.fit.checks.find(check => check.key === 'racks');
+  assert.deepEqual([height.status, racks.status], ['wont_fit', 'wont_fit']);
+  assert.equal(height.text, 'Door height: Sprinter is 108 in tall; the door opening is 84 in (typical) — won’t fit (24 in too tall), measure it.');
+  assert.equal(racks.text, 'Overhead racks: Sprinter is 108 in tall, so racks hang no lower than 112 in; the ceiling is 96 in (typical), which leaves no room — won’t fit above the vehicles (keep racks out of the parking space), measure it.');
+  // The same rounding as the check (23.5 in is 24 in, never "-23 in headroom"), and no negative room under the ceiling.
+  assert.match(info.text, /Depth tight \(needs 270 in, has 264 in\); door height won’t fit \(24 in too tall\); overhead racks won’t fit \(no room above the vehicles\)\./);
+  assert.doesNotMatch(info.text, /-\d/);
+  // Review names what stops the van first: the door, not the racks.
+  assert.equal(info.summary, '1 vehicle · Won’t fit — door height 24 in too tall (typical garage size: measure it)');
+  // Through a measured 10 ft door the racks are what is left.
+  const tall = V.parking({ vehicles: [van], size: '2', measure: { ceiling: '9 ft', doorHeight: '10 ft' }, racks: true });
+  assert.equal(tall.summary, '1 vehicle · Won’t fit — no room for overhead racks above the vehicles');
+  // Won't-fit checks in the order they stop the vehicle: door width before depth, whatever the margins.
+  const wide = V.parking({ vehicles: [vehicle(250, 90, 70, 100)], size: '1', measure: { depth: '20 ft', doorWidth: '90' } });
+  assert.deepEqual(plain(wide.fit.checks.filter(check => check.status === 'wont_fit').map(check => check.key)), ['depth', 'door_width']);
+  assert.match(wide.summary, /^1 vehicle · Won’t fit — door width needs 112 in, has 90 in/);
 });
 
 // crew/gameplan.html's own functions, as tests/crew-scope-prices.test.mjs runs them, with or without the vehicles module.
@@ -300,7 +384,7 @@ test('a walkthrough without vehicles sends exactly what it sent before', () => {
 });
 
 test('with vehicles the payload, the instructions, both briefs and the post-job check carry the parking plan', () => {
-  const f150 = plain(pick('2019 f150 supercrew', 'SuperCrew, 5.5 ft bed')), suv = plain(V.fromClass(D.classes.find(cls => cls.key === 'midsize_suv')));
+  const f150 = plain(pick('2019 f150 supercrew', 'SuperCrew, 5.5 ft bed')), suv = plain(V.fromClass(T.classes.find(cls => cls.key === 'midsize_suv')));
   const h = gameplan({ customerVehicles: [f150, suv], garageMeasure: { depth: '20 ft' }, parkingShelfWall: 'back' }), sent = h.payload(), plan = sent.scope.parking_plan;
   assert.deepEqual(plain(sent.scope.customer_vehicles).map(v => [v.label, v.source]), [['2019 Ford F-150 SuperCrew, 5.5 ft bed', 'catalog'], ['Midsize SUV, typical size', 'typical']]);
   assert.deepEqual(plain(sent.scope.garage_measurements), { depth_in: 240 });
@@ -357,6 +441,19 @@ test('the server keeps the parking plan for the crew: handoff instructions, the 
   const { draftFromWalkthrough } = drafts.window.EGCQuoteDraft;
   assert.equal(draftFromWalkthrough(sent, '2026-10-06').walkthrough_capture.parkingPlan, plan);
   assert.equal('parkingPlan' in draftFromWalkthrough(plain(gameplan().payload()), '2026-10-06').walkthrough_capture, false);
+  // Sent again after the vehicles were removed: the earlier plan leaves the job with the old brief's PARKING line.
+  const capture = sent => normalizeUnsignedCapture(draftFromWalkthrough(sent, '2026-10-06').walkthrough_capture);
+  let quoted = { id: 'j1', jobInstructions: { customerGoal: 'Old goal' } };
+  quoted = { ...quoted, ...unsignedCapturePatch(quoted, capture(sent), owner, NOW) };
+  assert.equal(quoted.jobInstructions.parkingPlan, plan);
+  assert.equal(walkthroughCrewBrief(quoted.jobInstructions).filter(row => row.label === 'Parking after the job').length, 1);
+  quoted = { ...quoted, ...unsignedCapturePatch(quoted, capture(plain(gameplan().payload())), owner, NOW) };
+  assert.equal('parkingPlan' in quoted.jobInstructions, false);
+  assert.doesNotMatch(quoted.jobInstructions.operationalScope, /PARKING/);
+  assert.equal(walkthroughCrewBrief(quoted.jobInstructions).some(row => row.label === 'Parking after the job'), false);
+  // A capture without a crew brief (an older page, or only some fields) leaves the saved plan alone.
+  const kept = unsignedCapturePatch({ jobInstructions: { parkingPlan: plan } }, { customerGoal: 'Park' }, owner, NOW);
+  assert.equal(kept.jobInstructions.parkingPlan, plan);
 });
 
 // In-memory dispatch store (the tests/crew-scope-prices.test.mjs fixture shape).
@@ -380,6 +477,28 @@ function hubStore() {
     } };
 }
 
+test('the page saves a parking choice only when it changes, so tapping the choice already picked keeps the signature', () => {
+  let cleared = 0, saved = 0;
+  const context = vm.createContext({ invalidateAcceptance() { cleared++; }, save() { saved++; } });
+  vm.runInContext(line('function parkingSet('), context);
+  context.S = { approved: true, customerVehicles: [{ source: 'measured', label: 'Boat' }] };
+  const set = (key, value) => vm.runInContext(`parkingSet(${JSON.stringify(key)}, ${JSON.stringify(value)})`, context);
+  set('parkingShelfWall', '');
+  set('customerVehicles', [{ source: 'measured', label: 'Boat' }]);
+  set('parkingRacks', false);
+  set('garageMeasure', {});
+  assert.deepEqual([cleared, saved], [0, 0], 'nothing changed');
+  set('parkingShelfWall', 'back');
+  assert.deepEqual([cleared, saved, context.S.parkingShelfWall], [1, 1, 'back']);
+  set('parkingShelfWall', 'back');
+  assert.deepEqual([cleared, saved], [1, 1], 'the back wall again');
+  set('parkingShelfWall', '');
+  assert.deepEqual([cleared, saved, 'parkingShelfWall' in context.S], [2, 2, false]);
+  set('garageMeasure', { depth: '20 ft' });
+  set('garageMeasure', { depth: '20 ft' });
+  assert.deepEqual([cleared, saved], [3, 3]);
+});
+
 test('the page keeps the vehicles in its saved draft and labels every source', () => {
   // The draft is the walkthrough's own localStorage copy of S; the module reads it back and drops what it cannot use.
   const saved = JSON.parse(JSON.stringify({ S: { customerVehicles: [plain(pick('camry 2019')), { source: 'measured', label: 'Trailer', length_in: 200, width_in: 80, height_in: 70, width_mirrors_in: 80 }, { junk: true }] } }));
@@ -387,4 +506,7 @@ test('the page keeps the vehicles in its saved draft and labels every source', (
   assert.deepEqual(info.vehicles.map(v => [v.source, V.SOURCES[v.source]]), [['catalog', 'Catalog'], ['measured', 'Measured']]);
   const withoutData = browser({ data: false }).EGCGameplanVehicles;
   assert.equal(withoutData.parking({ vehicles: saved.S.customerVehicles, size: '2' }).text, info.text, 'the fit check needs no catalog');
+  // The types come with the page: "Not in the list?" works before (or without) the catalog.
+  assert.equal(withoutData.vehicleTypes().length, 14);
+  assert.equal(browser({ data: false, types: false }).EGCGameplanVehicles.vehicleTypes().length, 0);
 });

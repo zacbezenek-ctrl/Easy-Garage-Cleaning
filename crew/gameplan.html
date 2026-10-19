@@ -31,7 +31,7 @@ main{max-width:1060px;margin:auto;padding:28px 22px 118px}.screen-head{display:f
 @media(max-width:420px){.panel{padding:17px}.screen-head h1{font-size:27px}.choices.cols2,.check-grid{grid-template-columns:1fr}.inline-search{flex-direction:column}.small-btn{min-height:46px}.send-grid{grid-template-columns:1fr}.next{min-width:135px}.photos{grid-template-columns:repeat(2,1fr)}}
 </style>
 <link rel="stylesheet" href="/crew/mounting-options.css?v=20261002">
-<link rel="stylesheet" href="/crew/gameplan-vehicles.css?v=20261019vehicles">
+<link rel="stylesheet" href="/crew/gameplan-vehicles.css?v=20261019vehicles2">
 <link rel="stylesheet" href="/employee-catalog-quote.css?v=20261002">
 <link rel="stylesheet" href="/crew/crew-brand.css?v=20260930launchpolish">
 <link rel="stylesheet" href="/crew/gameplan-recorder.css?v=20260929fun06g">
@@ -85,7 +85,7 @@ function applyPricingVersion(){if(!PRICING||S.pricingVersion===PRICING.version)r
 const draftKey=id=>`${SAVE}:${id||'manual'}`;
 function save(){if(!walkthroughReady)return;try{localStorage.setItem(draftKey(S.sourceWalkthroughId||REQUESTED_WALKTHROUGH_ID),JSON.stringify({flow:FLOW,index,S}));$('save-label').textContent='Saved on this device'}catch(e){$('save-label').textContent='Device storage blocked'}}
 function restore(id=''){try{const d=JSON.parse(localStorage.getItem(draftKey(id))||(!id?localStorage.getItem(SAVE):'null')||'null');if(d&&d.flow===FLOW){Object.assign(S,d.S||{});S.pricingVersion=typeof d.S?.pricingVersion==='string'?d.S.pricingVersion:'unversioned';applyPricingVersion();if(d.S?.termsVersion!=='2026-10-deposit25'){S.approved=false;S.signature='';S.acceptanceAt='';S.acceptanceBy='';S.termsVersion='2026-10-deposit25'}index=Math.min(sections.length-1,Number(d.index||0))}}catch(e){}}
-function resetForWalkthrough(id){const next=freshState();next.sourceWalkthroughId=id||'';next.pricingVersion=PRICING?.version||'';Object.keys(S).forEach(k=>delete S[k]);Object.assign(S,next);index=0;error='';SLOT_OPTIONS=[];SLOT_ERROR='';SLOT_SIGNATURE=''}
+function resetForWalkthrough(id){if(typeof EGCGameplanVehicles==='object')EGCGameplanVehicles?.resetUi();const next=freshState();next.sourceWalkthroughId=id||'';next.pricingVersion=PRICING?.version||'';Object.keys(S).forEach(k=>delete S[k]);Object.assign(S,next);index=0;error='';SLOT_OPTIONS=[];SLOT_ERROR='';SLOT_SIGNATURE=''}
 function pick(key,value,multi=false){if(key==='finish'&&value==='pressure_wash'&&S.garageSize!=='1')return;invalidateAcceptance();if(!S.priceManuallySet)S.lockedPrice='';if(multi&&key==='hazards'){if(value==='No visible hazards')S.hazards=S.hazards.includes(value)?[]:[value];else S.hazards=S.hazards.filter(x=>x!=='No visible hazards'),S.hazards=S.hazards.includes(value)?S.hazards.filter(x=>x!==value):[...S.hazards,value]}else if(multi)S[key]=S[key].includes(value)?S[key].filter(x=>x!==value):[...S[key],value];else S[key]=value;if(key==='garageSize'&&value!=='1')S.finish=S.finish.filter(x=>x!=='pressure_wash');if(key==='garageSize'&&!S.loads)S.loads={1:'1',2:'1.5',3:'2',other:'2.5'}[value];save();render()}
 const choice=(key,value,label,sub='',multi=false)=>{const selected=multi?S[key].includes(value):S[key]===value;return`<button type="button" class="choice ${selected?'on':''}" onclick="pick('${key}','${value}',${multi})">${label}${sub?`<span>${sub}</span>`:''}</button>`};
 function title(k,h,p){return`<div class="screen-head"><div><div class="eyebrow">${k}</div><h1>${h}</h1><p>${p}</p></div><div class="autosave">Changes save automatically</div></div>`}
@@ -232,13 +232,15 @@ let mountingView=null;
 function mountStorageOptions(){mountingView?.dispose();mountingView=null;const host=$('mounting-options');if(!host||!window.EGCMountingOptions)return;mountingView=window.EGCMountingOptions.mount(host,{fetch:EGCHubAuth.fetch,identity:EGCHubAuth.profile().user,selections:S.mountingOptions||[],onChange:selections=>{S.mountingOptions=selections;save()},quoteContext:()=>{if(!S.mountingDraftId){S.mountingDraftId=uid();save()}return{draftScope:'walkthrough-'+(S.sourceWalkthroughId||S.mountingDraftId),client:{name:S.name,phone:S.phone,email:S.email,address:S.address,highlevel_contact_id:S.highlevelContactId}}}})}
 window.addEventListener('DOMContentLoaded',mountStorageOptions,{once:true});
 </script>
-<script src="/crew/gameplan-vehicles.js?v=20261019vehicles" defer></script>
+<script src="/crew/gameplan-vehicles-types.js?v=2026-10-19.8de3cb31" defer></script>
+<script src="/crew/gameplan-vehicles.js?v=20261019vehicles2" defer></script>
 <script>
 // Vehicles to park after the job (Finish) and the optional garage measurements (Photos): crew/gameplan-vehicles.js. Each
 // change saves the draft; an empty list or measurement removes its key (the last vehicle takes the rack and shelving
 // choices with it), so a walkthrough without them is unchanged.
 let vehiclesView=null;
-function parkingSet(key,value){invalidateAcceptance();if(value==null||value===''||value===false||Array.isArray(value)&&!value.length||typeof value==='object'&&!Array.isArray(value)&&!Object.keys(value).length)delete S[key];else S[key]=value;save()}
+// As updateField: only a change clears the customer's acceptance (tapping the choice already picked keeps the signature).
+function parkingSet(key,value){const empty=value==null||value===''||value===false||Array.isArray(value)&&!value.length||typeof value==='object'&&!Array.isArray(value)&&!Object.keys(value).length;if(JSON.stringify(empty?undefined:value)===JSON.stringify(S[key]))return;invalidateAcceptance();if(empty)delete S[key];else S[key]=value;save()}
 function mountCustomerVehicles(){vehiclesView?.dispose();vehiclesView=null;const V=window.EGCGameplanVehicles;if(!V)return;const measure=$('garage-measurements');if(measure)V.mountMeasurements(measure,{size:()=>S.garageSize,measure:()=>S.garageMeasure||{},setMeasure:(key,raw)=>{const next={...(S.garageMeasure||{})};if(String(raw).trim())next[key]=String(raw).slice(0,40);else delete next[key];parkingSet('garageMeasure',next)}});const host=$('customer-vehicles');if(host)vehiclesView=V.mountVehicles(host,{vehicles:()=>S.customerVehicles||[],setVehicles:list=>{if(!list.length){delete S.parkingRacks;delete S.parkingShelfWall}parkingSet('customerVehicles',list)},size:()=>S.garageSize,measure:()=>S.garageMeasure||{},quote:parkingQuote,racks:()=>S.parkingRacks===true,setRacks:on=>parkingSet('parkingRacks',on===true),shelfWall:()=>S.parkingShelfWall==='back'?'back':'side',setShelfWall:wall=>parkingSet('parkingShelfWall',wall==='back'?'back':'')})}
 window.addEventListener('DOMContentLoaded',mountCustomerVehicles,{once:true});
 </script>

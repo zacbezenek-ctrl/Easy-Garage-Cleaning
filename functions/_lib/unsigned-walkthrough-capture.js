@@ -2,7 +2,8 @@ import { stripCrewMoneyDeep } from './crew-money.js';
 
 // An operational subset, never an accepted-sale payload. No prices, signatures,
 // payment, employee IDs, schedule confirmation or arbitrary internal notes.
-// parkingPlan: the walkthrough's "Parking after the job" (scope.parking_plan, at most 1,000 characters), sent only with vehicles.
+// parkingPlan: the walkthrough's "Parking after the job" (scope.parking_plan, at most 1,000 characters), sent only with
+// vehicles; a capture with a crew brief and no parkingPlan clears the one an earlier send saved (unsignedCapturePatch).
 const TEXT = new Set(['customerGoal', 'whyNow', 'sortMethod', 'keepItems', 'removeItems', 'exclusions', 'accessNotes', 'truckPlacement', 'crewBrief', 'parkingPlan']);
 const TEXT_MAX = { crewBrief: 4900, parkingPlan: 1000 };
 const LIST = new Set(['hazards', 'access', 'specialItems', 'finish']);
@@ -38,6 +39,9 @@ export function unsignedCapturePatch(job, capture, actor, now) {
   const patch = { jobInstructions: { ...instructions, ...fields } };
   if (crewBrief !== undefined) {
     patch.jobInstructions.operationalScope = crewBrief;
+    // A walkthrough page that sends its crew brief sends parkingPlan whenever it has vehicles: without one, the vehicles
+    // were removed (or never there), so an earlier send's "Parking after the job" goes with the old brief's PARKING line.
+    if (fields.parkingPlan === undefined) delete patch.jobInstructions.parkingPlan;
     patch.operationalScope = { text: crewBrief, updatedBy: actor.user, updatedAt: now, reason: 'Unsigned walkthrough capture', approvalKind: 'staff_operational_instructions' };
   }
   // These fields take precedence over structured instructions in crew views.
