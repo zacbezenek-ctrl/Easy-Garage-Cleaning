@@ -28,7 +28,8 @@
  *   GET /api/quote-draft?view=builder (internal.approvalsRevision). goodsInstallationIncluded (boolean) answers the
  *   builder's installation question for quotes saved before the Labor line existed, the only way to answer it while
  *   catalog pricing is off. laborRatePerManHourCents (whole cents, 100 to 100000) sets the labor rate per man-hour of
- *   every builder quote's Labor line ($40.00 until the owner changes it, owner decision D12). Each counts as one change.
+ *   every builder quote's Labor line ($53.00 until the owner changes it, owner decision of 2026-10-19). Each counts as one
+ *   change.
  *   => {ok,requestId,replayed,approvals:{revision,current,count,items,goodsInstallationIncluded?,laborRatePerManHourCents?}}
  * With EGC_QUOTE_BUILDER_ENABLED a fresh menu.approve or settings.update also releases the signed jobs held for the
  *   owner's price approval that it now covers (walkthrough-handoff.js releaseHeldHandoffs: their estimate and deposit

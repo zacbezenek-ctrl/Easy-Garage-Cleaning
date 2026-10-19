@@ -214,27 +214,27 @@ test('catalog pricing off: the owner answers the installation question on Menu p
 });
 
 // D12: the labor rate every builder quote's Labor line charges per man-hour, set by the owner on Menu prices.
-test('the owner sees the $40.00 labor rate on Menu prices, changes it, reviews it and saves it in one audited request', async () => {
+test('the owner sees the $53.00 labor rate on Menu prices, changes it, reviews it and saves it in one audited request', async () => {
   const ui = screen();
-  await ui.settle(() => ui.root()?.textContent.includes('Labor: $40.00 per man-hour'), 'the labor rate');
+  await ui.settle(() => ui.root()?.textContent.includes('Labor: $53.00 per man-hour'), 'the labor rate');
   assert.match(ui.root().textContent, /Every builder quote with garage work has a Labor line: the estimated man-hours × this rate, on top of the menu prices\. A junk-only quote \(truck loads, with their special items and access charges\) has none: the truck-load price covers the crew's time\./);
   assert.match(ui.root().textContent, /pre-fills the man-hours from its own time estimate of the garage work .*never loading, hauling or disposal\), the same for any crew size/);
   assert.match(ui.root().textContent, /Customers see one amount, "Labor", never the man-hours or the rate\./);
-  assert.match(ui.root().textContent, /Shelving and storage installation is billed through this line\. Your decision of 2026-10-18 \(\$40\.00 per man-hour\)\. The rate is approved/);
+  assert.match(ui.root().textContent, /Shelving and storage installation is billed through this line\. Your decision of 2026-10-19 \(\$53\.00 per man-hour\)\. The rate is approved/);
   const field = () => ui.root().querySelector('#cat-menu-labor-rate');
-  assert.equal(field().value, '40.00');
+  assert.equal(field().value, '53.00');
   // A rate that is not dollars and cents is refused in the screen; nothing is sent.
   field().value = '40.555'; field().dispatchEvent({ type: 'input', target: field() }); field().dispatchEvent({ type: 'change', target: field() });
   const posts = ui.fs.posts.length;
   ui.button('Review 1 change').click();
-  assert.match(ui.root().textContent, /Enter the labor rate per man-hour as dollars, from \$1\.00 to \$1,000\.00, like 40\.00\./);
+  assert.match(ui.root().textContent, /Enter the labor rate per man-hour as dollars, from \$1\.00 to \$1,000\.00, like 53\.00\./);
   assert.equal(ui.fs.posts.length, posts);
   field().value = '45.00'; field().dispatchEvent({ type: 'input', target: field() }); field().dispatchEvent({ type: 'change', target: field() });
   assert.match(ui.root().textContent, /Review the change below to save it/);
   ui.button('Review 1 change').click();
   const dialog = ui.document.body.querySelector('dialog');
   assert.match(dialog.textContent, /Change the labor rate/);
-  assert.match(dialog.textContent, /Labor rate per man-hour\$40\.00\$45\.00/);
+  assert.match(dialog.textContent, /Labor rate per man-hour\$53\.00\$45\.00/);
   ui.button('Save approvals').click();
   await ui.settle(() => ui.root().textContent.includes('The labor rate is now $45.00 per man-hour'), 'the saved rate');
   assert.match(ui.root().textContent, /saved quotes at the old rate are saved again before they are sent, and jobs the customer already signed keep the rate they signed\./, 'a held signed job is never stranded by the new rate');

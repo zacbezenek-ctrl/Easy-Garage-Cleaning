@@ -68,9 +68,9 @@ test('the builder sends only finished steps, in order, with ids and quantities; 
   // cleaning base, neither does the fullness.
   const priced = priceCompositeQuote(state, all, { complete: true });
   assert.deepEqual(priced.compositePricing, { ...all, labor: { manHours: 7, adjusted: false, fullness: 'full' } }, 'the server fills in its estimate');
-  assert.deepEqual([priced.labor.manHours, priced.labor.totalCents, priced.labor.adjusted, priced.labor.estimate.personMinutes], [7, 28000, false, 420]);
+  assert.deepEqual([priced.labor.manHours, priced.labor.totalCents, priced.labor.adjusted, priced.labor.estimate.personMinutes], [7, 37100, false, 420], '7 man-hours × $53.00 = $371.00');
   const totals = plain(B.runningTotals(menu, sel, fullness));
-  assert.deepEqual([totals.labor, totals.laborHours, totals.junkOnly, B.estimateLabor(menu, sel, fullness).manHours], [28000, 7, false, 7], 'the running total estimates labor the way the server does');
+  assert.deepEqual([totals.labor, totals.laborHours, totals.junkOnly, B.estimateLabor(menu, sel, fullness).manHours], [37100, 7, false, 7], 'the running total estimates labor the way the server does');
   // With a cleaning base the fullness is the garage's sorting time: 2 x 60 more for a full garage, on both sides.
   const based = { ...sel, removal: { ...sel.removal, [byName('Two-car garage base').id]: 1 } }, basedAll = plain(B.builderDescriptor(menu, based, 'storage', fullness));
   assert.deepEqual([B.estimateLabor(menu, based, fullness).manHours, priceCompositeQuote(state, basedAll, { complete: true }).labor.manHours], [9, 9]);

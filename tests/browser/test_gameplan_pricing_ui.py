@@ -31,11 +31,13 @@ window.firebase = window.firebase || {
   firestore() { return { collection: () => ({ where: () => ({ get: async () => ({ docs: [] }) }), doc: id => ({ get: async () => ({ id, exists: false }) }) }) }; },
 };
 """
-# A quote built in the quote builder, as crew/gameplan-handoff.js keeps it on the page (builderQuoteOf).
-BUILT_QUOTE = """() => { S.builderQuote = { compositePricing: { steps: ['removal'], labor: { manHours: 6 } }, totalCents: 123456, menuVersion: 'menu-v1', jobId: 'draft-1',
-  lineItems: [{ id: 'removal', kind: 'service', name: 'Removal', description: '', quantity: 1, unitCents: 99456, totalCents: 99456 }, { id: 'labor', kind: 'labor', name: 'Labor', description: '', quantity: 1, unitCents: 24000, totalCents: 24000 }] }; render(); }"""
-# The same quote as a builder draft saved before the pricing changes of 2026-10-18 (its Labor line named the man-hours).
-STALE_QUOTE = """() => { S.builderQuote.lineItems[1] = { ...S.builderQuote.lineItems[1], name: 'Labor: 6 man-hours × $40.00', description: 'Crew time on site, billed per man-hour.' }; render(); }"""
+# A quote built in the quote builder, as crew/gameplan-handoff.js keeps it on the page (builderQuoteOf): $994.56 of
+# removal and 6 man-hours x $53.00 = $318.00 of labor (the owner's rate of 2026-10-19), $1,312.56.
+BUILT_QUOTE = """() => { S.builderQuote = { compositePricing: { steps: ['removal'], labor: { manHours: 6 } }, totalCents: 131256, menuVersion: 'menu-v1', jobId: 'draft-1',
+  lineItems: [{ id: 'removal', kind: 'service', name: 'Removal', description: '', quantity: 1, unitCents: 99456, totalCents: 99456 }, { id: 'labor', kind: 'labor', name: 'Labor', description: '', quantity: 1, unitCents: 31800, totalCents: 31800 }] }; render(); }"""
+# The same quote as a builder draft saved before the pricing changes of 2026-10-18 (its Labor line named the man-hours, at
+# that day's $40.00).
+STALE_QUOTE = """() => { S.builderQuote.totalCents = 123456; S.builderQuote.lineItems[1] = { ...S.builderQuote.lineItems[1], name: 'Labor: 6 man-hours × $40.00', description: 'Crew time on site, billed per man-hour.', unitCents: 24000, totalCents: 24000 }; render(); }"""
 AUDIT = """() => ({
   scroll: document.documentElement.scrollWidth, width: innerWidth,
   retry: [...document.querySelectorAll('button')].filter(b => /Retry loading prices/.test(b.textContent)).map(b => b.getBoundingClientRect().height),
@@ -290,11 +292,11 @@ class GameplanPricingBrowserTests(unittest.TestCase):
         # The estimator built the quote (Build the quote saves it and hands the page its total): the homeowner signs that total.
         page.evaluate(BUILT_QUOTE)
         expect(page.locator('.price-card .eyebrow')).to_have_text('Quote builder total')
-        expect(page.locator('.price-card .price')).to_have_text('$1234.56')
+        expect(page.locator('.price-card .price')).to_have_text('$1312.56')
         for hidden in ('Recommended flat rate', 'Final flat rate'): expect(screen).not_to_contain_text(hidden)
         expect(page.locator('#locked-price')).to_have_count(0)
         expect(page.locator('#signature')).to_be_visible()
-        expect(page.locator('#deposit-summary')).to_have_text('25% deposit due today: $308.64. Remaining 75% due on the job day (Thu, Sep 24): $925.92.')
+        expect(page.locator('#deposit-summary')).to_have_text('25% deposit due today: $328.14. Remaining 75% due on the job day (Thu, Sep 24): $984.42.')
         expect(page.get_by_role('button', name='Save brief + schedule')).to_be_enabled()
         self.audit(page, 'review, builder on, built')
         page.screenshot(path=str(out / 'gameplan-review-builder-mobile.png'), full_page=True)

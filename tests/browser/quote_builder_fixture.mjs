@@ -2,7 +2,7 @@
 // walkthrough's guided quote builder (crew/quote-draft.js) for a synthetic walkthrough, and the REAL /api/quote-draft and
 // /api/walkthrough-handoff handlers with EGC_QUOTE_BUILDER_ENABLED over the estimator fixture's in-memory store
 // (tests/helpers/estimator-fixture.mjs) and the builder's pricing state (the shipped pricing menu and settings, no owner
-// approvals: the $40.00 labor rate of D12). The signed-in viewer is the synthetic estimator. GET /__state returns the
+// approvals: the $53.00 default labor rate, the owner's decision of 2026-10-19). The signed-in viewer is the synthetic estimator. GET /__state returns the
 // saved quote jobs. Prints {"port":N} first. Nothing reaches the network.
 import http from 'node:http';
 import { readFile } from 'node:fs/promises';

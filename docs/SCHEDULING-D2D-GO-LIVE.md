@@ -27,13 +27,13 @@ Owners and managers do too.
 
 **Estimator quote builder and handoff.** At a walkthrough the estimator builds the quote in order: removal first, then
 shelving, then extra storage, priced from your pricing menu. Every builder quote with garage work then gets a **Labor**
-line on top: the estimated man-hours × $40.00 per man-hour (your decision of 2026-10-18). A junk-only quote (truck loads,
-with their special items and access charges) has no Labor line: $750 per truck covers the crew's time (your decision
-of 2026-10-18). The app fills in the man-hours from its own estimate of the garage work: the walkthrough time model in
+line on top: the estimated man-hours × $53.00 per man-hour (your decision of 2026-10-19; it was $40.00 on 2026-10-18).
+A junk-only quote (truck loads, with their special items and access charges) has no Labor line: $750 per truck covers
+the crew's time (your decision of 2026-10-18). The app fills in the man-hours from its own estimate of the garage work: the walkthrough time model in
 person-hours for set-up and sweep-out, sorting a garage with a cleaning base and the cleaning add-ons, plus an hour per
 shelving unit and a few minutes per tote, never the truck loads, special items or access (their prices pay for
 loading, hauling and disposal), the same for any crew size and never capped at one day. The estimator can adjust them
-before sending. The customer sees one amount, "Labor $240.00", never the man-hours or the rate; the estimator, the crew
+before sending. The customer sees one amount, "Labor $318.00", never the man-hours or the rate; the estimator, the crew
 brief and the HighLevel note keep the man-hours. Installing shelving and storage is billed through this line; for other storage goods (racks, cabinets,
 hooks, tracks) the app has no install time yet, so such a quote is sent only once the estimator sets the man-hours by
 hand, or you confirm installation is included in the goods price. Man-hours below the estimate show the estimate on
@@ -171,8 +171,8 @@ Items 6 to 8 are on the live Hub: the quote builder is on by default (turn-on st
    step** helps). Check the Home Depot prices before you approve them. Held jobs that your approval covers are
    released automatically.
 7. **Labor rate and goods markup.** In Menu prices, the **Labor** card shows the rate every builder quote charges per
-   man-hour: $40.00, your decision. It is already approved, so nothing needs ticking. To change it, type the new rate,
-   review and save; quotes saved at the old rate are saved again before they are sent, and a job the customer already
+   man-hour: $53.00, your decision of 2026-10-19. It is already approved, so nothing needs ticking. To change it, type
+   the new rate, review and save; quotes saved at the old rate are saved again before they are sent, and a job the customer already
    signed keeps the rate it was signed at (a held one is released by your price approvals as usual). Installation is
    billed through the Labor line; tick the installation box only if installation is included in the goods price. It
    lets quotes with storage goods the app cannot time go out without the estimator's own man-hours, and releases
@@ -218,8 +218,8 @@ Each has a recommendation. Until you decide, the Hub keeps doing what the item s
   their birthday. *Recommended: keep.* The youngest allowed birth date is 14 years ago. *Recommended:* keep 14 unless
   you never hire under 16.
 - **Installation of shelving and storage.** *Decided 2026-10-18:* every builder quote with garage work has a Labor line,
-  the estimated man-hours × $40.00 per man-hour, and installation is billed through it. The man-hours are filled in from
-  the app's estimate of the garage work and the estimator can adjust them. Change the rate in Menu prices.
+  the estimated man-hours × $53.00 per man-hour (*decided 2026-10-19*; $40.00 before), and installation is billed
+  through it. The man-hours are filled in from the app's estimate of the garage work and the estimator can adjust them. Change the rate in Menu prices.
 - **Junk removal.** *Decided 2026-10-18:* "$750 per truck covers the crew's time." A junk-only quote has no Labor line,
   and no quote's labor estimate counts truck-load, hauling or disposal time. Builder quotes saved earlier that day (an
   estimate with truck-load time, a line naming the man-hours) are saved again before they are sent; signed jobs keep

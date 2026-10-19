@@ -572,8 +572,9 @@
         section(step === 'shelving' ? 'Shelving units' : 'Storage products', S.menu.installation?.billedAs === 'labor' ? `Goods are priced per purchase pack. Installing them is billed through the Labor line (man-hours × ${money(S.menu.labor?.rateCents)}) on the review step.` : S.menu.installation?.included === true ? 'Goods are priced per purchase pack; installation is included in that price.' : 'Goods are priced per purchase pack, without installation. A quote with goods can be saved, and is sent once the owner confirms installation is included in the goods price.', filters, results, more),
       ];
     }
-    // The Labor row of the review step: "N man-hours × $40.00 = $X", where the man-hours came from, and an Adjust control
-    // (total man-hours, or people × hours each) with a reset to the estimate. Every change is priced on the server.
+    // The Labor row of the review step: "N man-hours × $53.00 = $X" (the rate is the server's menu.labor.rateCents), where
+    // the man-hours came from, and an Adjust control (total man-hours, or people × hours each) with a reset to the
+    // estimate. Every change is priced on the server.
     function laborEditor(labor) {
       const edit = S.laborEdit, crewMode = edit.mode === 'crew', limits = laborLimits(S.menu);
       // The man-hours the fields say now (read when Apply is pressed, not when the row was drawn).
