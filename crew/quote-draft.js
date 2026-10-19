@@ -57,6 +57,10 @@
       truckPlacement: p?.logistics?.truck_placement ?? p?.scope?.truck_placement,
       crewBrief: p?.crew_brief,
     })) if (value !== undefined) capture[key] = Array.isArray(value) ? [...value] : value;
+    // The Finish step's shelving and tote counts, whole numbers only: with finish, the server reads them to tell whether
+    // the walkthrough records garage work a junk-only quote does not price (D-JUNK). An unreadable count is left out,
+    // which the server counts as work.
+    for (const [key, value] of Object.entries({ shelfQty: p?.scope?.finish_details?.shelf_qty, toteQty: p?.scope?.finish_details?.tote_qty })) if (Number.isInteger(value) && value >= 0 && value <= 999) capture[key] = value;
     return capture;
   }
   function missing(draft) {
@@ -89,8 +93,9 @@
   // D-LABOR-TEXT: the customer sees the line as one amount, "Labor"; the man-hours here are the estimator's, never theirs.
   const LABOR_LIMITS = { min: 0.5, max: 200, step: 0.25 }, LABOR_VERSION = 2, HAULING_GROUPS = ['junk', 'special', 'access'];
   // Send refusals the estimator fixes by editing and saving the quote again (composite-quote.js LABOR_ID and
-  // INSTALLATION_ID): never a wait for the owner's approval alone.
-  const ESTIMATOR_FIXES = new Set(['labor', 'goods-installation']);
+  // INSTALLATION_ID, and a junk-only quote on a walkthrough that records garage work): never a wait for the owner's
+  // approval alone.
+  const JUNK_GARAGE_WORK = 'junk-garage-work', ESTIMATOR_FIXES = new Set(['labor', 'goods-installation', JUNK_GARAGE_WORK]);
   const laborLimits = menu => ({ min: Number(menu?.labor?.minManHours) || LABOR_LIMITS.min, max: Number(menu?.labor?.maxManHours) || LABOR_LIMITS.max });
   const validManHours = (value, menu) => typeof value === 'number' && Number.isFinite(value) && Math.abs(value * 4 - Math.round(value * 4)) < 1e-9 && value >= laborLimits(menu).min && value <= laborLimits(menu).max;
   const hoursText = hours => `${Number(Number(hours).toFixed(2))} man-hour${hours === 1 ? '' : 's'}`;
@@ -118,7 +123,7 @@
     return [{ customer: 'sorting with the customer and resetting what stays', zones: 'sorting into keep / donate / haul zones and resetting what stays' }[scope.sort_method] || '', finish.includes('deep_clean') ? 'a deep clean' : '', finish.includes('pressure_wash') ? 'a pressure wash' : '',
       finish.includes('mouse_trapping') ? 'mouse trapping' : '', finish.includes('shelving') ? count(details.shelf_qty, 'shelving unit') : '', finish.includes('totes') ? count(details.tote_qty, 'storage tote') : '', Array.isArray(scope.hazards) && scope.hazards.includes('Pest waste') ? 'pest-waste cleanup' : ''].filter(Boolean);
   }
-  const garageWorkNote = work => work.length ? h('p', { class: 'qd-notice qb-garage-work', role: 'status' }, `The walkthrough records garage work this junk-only quote does not price: ${work.join(', ')}. The homeowner cannot sign it on that walkthrough. Add the work here (a garage cleaning base for sorting and reset, cleaning, shelving or storage), or, if they want junk removal only, change the walkthrough (Everything goes or Customer labels before arrival; no finish options).`) : null;
+  const garageWorkNote = work => work.length ? h('p', { class: 'qd-notice qb-garage-work', role: 'status' }, `The walkthrough records garage work this junk-only quote does not price: ${work.join(', ')}. The homeowner cannot sign it, and it cannot be sent, on that walkthrough. Add the work here (a garage cleaning base for sorting and reset, cleaning, shelving or storage), or, if they want junk removal only, change the walkthrough (Everything goes or Customer labels before arrival; no finish options).`) : null;
   // The walkthrough's garage fullness ("How full is it?"): the one input of the server's labor time estimate that the
   // builder selection does not hold. The crew size and the scheduled minutes are not inputs: the man-hours of the work
   // are the same for any crew.
@@ -435,7 +440,7 @@
         const editable = S.mode === 'builder' && S.savedBuild && (S.held || []).some(row => ESTIMATOR_FIXES.has(row?.id));
         children.push(h('p', { class: 'qd-done' }, S.status), S.heldKind === 'date' ? datesNotice() : rebuild
           ? h('div', { class: 'qd-notice', role: 'status' }, h('p', {}, 'Sending is blocked: with the quote builder on, this quote must be built in the builder before it is sent.'), reasons, h('p', {}, 'The saved draft is kept. Build the quote in the builder (removal, then shelving, then extra storage) and send that one.'))
-          : resave ? h('div', { class: 'qd-notice', role: 'status' }, h('p', {}, 'Sending is blocked until you edit this quote and save it again:'), reasons, h('p', {}, 'The saved draft is kept. Choose Edit quote, check the Labor line on the review step and save the quote again; no owner approval is needed for this.'))
+          : resave ? h('div', { class: 'qd-notice', role: 'status' }, h('p', {}, 'Sending is blocked until you edit this quote and save it again:'), reasons, h('p', {}, (S.held || []).some(row => row?.id === JUNK_GARAGE_WORK) ? 'The saved draft is kept; no owner approval is needed for this.' : 'The saved draft is kept. Choose Edit quote, check the Labor line on the review step and save the quote again; no owner approval is needed for this.'))
             : h('div', { class: 'qd-notice', role: 'status' }, h('p', {}, editable ? 'Sending is blocked until the owner approves the draft prices below and you save the quote again:' : `Sending is blocked until the owner approves ${S.held.length === 1 ? 'this price' : `these ${S.held.length} prices`}:`), reasons, h('p', {}, `The owner approves draft prices in the Hub under Catalog & pricing.${editable ? ' The Labor or installation reason is yours to fix: choose Edit quote, check the man-hours and save the quote again.' : ''} The saved draft is kept: reopen this quote from the walkthrough and choose Send saved quote once they are approved.`)));
         body.replaceChildren(...children);
         const edit = () => { Object.assign(S, { step: 'removal', held: null, heldKind: '', status: '', error: '' }); render(); };
@@ -599,9 +604,16 @@
         garageWorkNote(walkthroughGarageWork(plan())));
       const labor = priced.labor || { manHours: null, rateCents: S.menu.labor?.rateCents, totalCents: null, prefilledManHours: null, adjusted: false, belowEstimate: false, estimate: null }, estimate = labor.estimate;
       const estimated = labor.prefilledManHours !== null && estimate, gap = installGap(labor);
-      // The fullness is the sorting time of a garage with a cleaning base (D-JUNK): named only when it counted.
-      const sorted = priced.breakdown.lines.some(line => line.group === 'cleaning-base');
-      const parts = estimated ? [`set-up, sorting and cleaning ${hoursText(Math.round(estimate.removalPersonMinutes / 15) / 4)}`, estimate.installPersonMinutes ? `installing shelving and storage ${hoursText(Math.round(estimate.installPersonMinutes / 15) / 4)}` : '', estimate.fullness && sorted ? `${estimate.fullness} garage` : ''].filter(Boolean) : [];
+      // The parts of the server's estimate (composite-quote.js laborEstimate), each named only when it counted (D-JUNK):
+      // set-up and sweep-out always; sorting (and the fullness behind it) with a garage cleaning base; cleaning with a
+      // timed cleaning add-on; installing the shelving or storage goods that have an install time.
+      const lines = priced.breakdown.lines, sorted = lines.some(line => line.group === 'cleaning-base');
+      const timedService = new Set((S.menu.services || []).filter(item => Number(item.laborPersonMinutes) > 0).map(item => item.id));
+      const timedProduct = new Set((S.menu.products || []).filter(item => Number.isFinite(item.installPersonMinutes)).map(item => item.id));
+      const cleaned = lines.some(line => line.group === 'cleaning' && timedService.has(line.id));
+      const installed = ['shelving', 'storage'].filter(step => lines.some(line => line.section === step && line.sku && timedProduct.has(line.id)));
+      const both = words => words.length > 1 ? `${words.slice(0, -1).join(', ')} and ${words[words.length - 1]}` : words[0];
+      const parts = estimated ? [`${both(['set-up', sorted ? 'sorting' : '', cleaned ? 'cleaning' : ''].filter(Boolean))} ${hoursText(Math.round(estimate.removalPersonMinutes / 15) / 4)}`, estimate.installPersonMinutes ? `installing ${both(installed.length ? installed : ['shelving', 'storage'])} ${hoursText(Math.round(estimate.installPersonMinutes / 15) / 4)}` : '', estimate.fullness && sorted ? `${estimate.fullness} garage` : ''].filter(Boolean) : [];
       const basis = !estimated ? 'No time estimate is available, so the man-hours are entered by hand.'
         : `Estimate: ${hoursText(labor.prefilledManHours)} of crew time (${parts.join(', ')}), whatever the crew size. Truck loads, special items and access charges are not counted: their own prices pay for loading, hauling and disposal.`;
       const kept = labor.manHours !== null && !labor.adjusted && labor.prefilledManHours !== null && labor.manHours !== labor.prefilledManHours;
@@ -641,7 +653,8 @@
           : h('p', { class: 'qb-help' }, 'Nothing in this step.'))),
         laborSection(priced),
         h('p', { class: 'qd-total' }, 'Quote total ', h('b', {}, money(priced.totalCents))),
-        priced.approval.ready ? h('p', { class: 'qd-mode' }, 'Every price on this quote is owner-approved, so it can be sent after you save it.') : !blocked.length ? null
+        // D-JUNK: a junk-only quote on a walkthrough that records garage work is saved but never sent (the server refuses it).
+        priced.approval.ready ? h('p', { class: 'qd-mode' }, priced.junkOnly === true && walkthroughGarageWork(plan()).length ? 'Every price on this quote is owner-approved, but it cannot be sent while the walkthrough records garage work it does not price (see above). You can save it as a draft.' : 'Every price on this quote is owner-approved, so it can be sent after you save it.') : !blocked.length ? null
           : h('div', { class: 'qd-notice', role: 'status' }, h('p', {}, `You can save this quote as a draft, but it cannot be sent until the owner approves ${blocked.length === 1 ? 'this draft price' : `these ${blocked.length} draft prices`}:`), h('ul', { class: 'qb-reasons' }, blocked.map(row => h('li', {}, row.reason)))),
         priced.breakdown.purchaseList.length ? h('details', { class: 'qb-buy' }, h('summary', {}, `What to buy or grab (${priced.breakdown.purchaseList.length} products)`), h('ul', {}, priced.breakdown.purchaseList.map(row => h('li', {}, `${row.packs} pack${row.packs === 1 ? '' : 's'}${row.unitsPerPack > 1 ? ` (${row.units} units)` : ''} · ${row.name}`, row.overOrderLimit ? h('small', { class: 'qb-warn' }, ` More than the ${row.perOrderPackLimit}-pack order limit: split the purchase.`) : null)))) : null,
         h('label', { class: 'qd-label', for: 'qd-valid' }, 'Quote valid through'),
@@ -784,6 +797,9 @@
     // a re-save, not a wait for the owner. Payment dates that wait for a job date (datesNotice) are neither.
     function held(error) {
       if (error?.code === 'quote_draft_payment_dates_pending') { S.step = 'held'; S.held = []; S.heldKind = 'date'; S.error = ''; return true; }
+      // D-JUNK: a junk-only quote on a walkthrough that records garage work: the estimator adds the work or corrects the
+      // walkthrough, then saves the quote again (the server names the work).
+      if (error?.code === 'quote_draft_junk_only_garage_work') { S.step = 'held'; S.held = [{ id: JUNK_GARAGE_WORK, reason: error.message }]; S.heldKind = 'resave'; S.error = ''; return true; }
       if (!['quote_draft_composite_prices_unapproved', 'quote_draft_builder_required'].includes(error?.code)) return false;
       const rows = Array.isArray(error.details?.unapproved) ? error.details.unapproved : [];
       S.step = 'held'; S.held = rows; S.error = '';

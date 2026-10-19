@@ -1014,6 +1014,60 @@ test('builder quote: a junk-only quote is the owner-approved $750 per truck, wit
   await assert.rejects(previewQuoteSend(f.store, owner, { jobId: job.id, expectedRevision: job.revision }, NOW, { env: ENV, compositeState: async () => state }), error => error.code === 'quote_draft_builder_disabled' && error.status === 404);
 });
 
+// D-JUNK: a junk-only builder quote is never sent on a walkthrough whose saved capture records garage work (the homeowner
+// never signs one there either): it stays saved; corrected and saved again, it is sent. It is labelled 'Junk removal'.
+test('builder quote: a junk-only quote on a walkthrough that records garage work is saved but never previewed or sent', async () => {
+  const state = builderState(), selection = builderSelection({ removal: [{ id: menuItem('Full truck load').id, quantity: 2 }], shelving: [] });
+  const options = { env: BUILDER_ENV, compositeState: async () => state, newQuotePaymentPolicy: FINAL_25_75 };
+  const savedJunk = async capture => {
+    const f = fixture(), { input } = builderInput(f, selection, state);
+    if (capture) input.draft.walkthrough_capture = capture;
+    const job = f.job((await saveQuoteDraft(f.store, owner, input, NOW, options)).job.id);
+    job.date = '2026-10-02'; // booked: the payment dates are not what holds it
+    return { f, job };
+  };
+  for (const [capture, work] of [[{ sortMethod: 'zones' }, 'sorting into keep / donate / haul zones and resetting what stays'], [{ sortMethod: 'customer' }, 'sorting with the customer and resetting what stays'],
+    [{ sortMethod: 'remove_all', finish: ['cleanout', 'deep_clean'] }, 'a deep clean'], [{ sortMethod: 'labels', finish: ['cleanout', 'shelving'], shelfQty: 3 }, '3 shelving units'],
+    [{ sortMethod: 'remove_all', hazards: ['Pest waste'] }, 'pest-waste cleanup'], [{ sortMethod: 'remove_all', finish: ['cleanout', 'totes'] }, 'storage totes']]) {
+    const { f, job } = await savedJunk(capture);
+    assert.deepEqual([job.estimate.status, job.serviceType, job.jobInstructions.sortMethod], ['draft', 'Junk removal', capture.sortMethod], 'saved as a draft');
+    const refused = error => error.code === 'quote_draft_junk_only_garage_work' && error.status === 409 && error.message.includes(`records garage work: ${work}.`) && /It stays saved as a draft and was not sent\./.test(error.message) && error.details.garageWork.includes(work);
+    await assert.rejects(previewQuoteSend(f.store, owner, { jobId: job.id, expectedRevision: job.revision }, NOW, options), refused, JSON.stringify(capture));
+    await assert.rejects(sendQuoteDraft(f.store, owner, { requestId: randomUUID(), jobId: job.id, expectedRevision: job.revision, confirmToken: 'unusable' }, NOW, { ...options, deliver: f.deliver }), refused);
+    assert.deepEqual([f.job(job.id).estimate.status, f.job(job.id).estimateReady, f.delivered.length], ['draft', undefined, 0], 'nothing was sent');
+  }
+  // Junk removal only (Everything goes or Customer labels, no finish options): it sends. A capture-only re-save that
+  // records crew sorting holds it again.
+  for (const capture of [{ sortMethod: 'remove_all', finish: ['cleanout'], hazards: [] }, { sortMethod: 'labels', finish: ['cleanout', 'shelving'], shelfQty: 0 }, null]) {
+    const { f, job } = await savedJunk(capture);
+    const preview = await previewQuoteSend(f.store, owner, { jobId: job.id, expectedRevision: job.revision }, NOW, options);
+    assert.match(preview.summary, /\$1,500\.00/, JSON.stringify(capture));
+    if (capture?.sortMethod !== 'remove_all') continue;
+    const { input } = builderInput(f, selection, state);
+    await saveQuoteDraft(f.store, owner, { ...input, jobId: job.id, expectedRevision: job.revision, draft: { ...input.draft, walkthrough_capture: { ...capture, sortMethod: 'zones' } } }, NOW, options);
+    const resaved = f.job(job.id);
+    assert.equal(resaved.estimate.revision, job.estimate.revision, 'the capture is not a new quote revision');
+    await assert.rejects(previewQuoteSend(f.store, owner, { jobId: job.id, expectedRevision: resaved.revision }, NOW, options), error => error.code === 'quote_draft_junk_only_garage_work');
+    // Revised into a garage quote, the label follows it; a label Dispatch set is never changed.
+    const garage = builderInput(f, builderSelection(), state).input;
+    await saveQuoteDraft(f.store, owner, { ...garage, jobId: job.id, expectedRevision: resaved.revision }, NOW, options);
+    assert.equal(f.job(job.id).serviceType, 'Garage transformation');
+    f.job(job.id).serviceType = 'Hot tub removal';
+    await saveQuoteDraft(f.store, owner, { ...builderInput(f, selection, state).input, jobId: job.id, expectedRevision: f.job(job.id).revision }, NOW, options);
+    assert.equal(f.job(job.id).serviceType, 'Hot tub removal');
+  }
+  // A garage builder quote is labelled as before.
+  const g = fixture(), garage = await saveQuoteDraft(g.store, owner, builderInput(g, builderSelection(), state).input, NOW, options);
+  assert.equal(g.job(garage.job.id).serviceType, 'Garage transformation');
+});
+
+test('unsigned capture takes the Finish step\'s shelving and tote counts as whole numbers only', () => {
+  assert.deepEqual(normalizeUnsignedCapture({ finish: ['cleanout', 'shelving', 'totes'], shelfQty: 3, toteQty: 0 }), { finish: ['cleanout', 'shelving', 'totes'], shelfQty: 3, toteQty: 0 });
+  for (const value of [{ shelfQty: 1.5 }, { shelfQty: -1 }, { toteQty: 1000 }, { toteQty: '2' }, { shelfQty: null }]) {
+    assert.throws(() => normalizeUnsignedCapture(value), error => error.code === 'quote_draft_invalid_capture' && error.status === 400, JSON.stringify(value));
+  }
+});
+
 test('builder quote save refuses edited lines and an unfinished build; with the flag off a builder draft is refused exactly as before', async () => {
   const f = fixture(), state = builderState(), options = { env: BUILDER_ENV, compositeState: async () => state };
   const { input } = builderInput(f);

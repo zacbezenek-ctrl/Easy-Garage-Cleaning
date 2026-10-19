@@ -4,7 +4,7 @@ import { requireQuoteAuthor } from './quote-permissions.js';
 import { identityMatches } from './walkthrough-handoff.js';
 import { auditWrite } from './hub-audit.js';
 import { addDays, denverToday, validDate } from './dispatch-time.js';
-import { depositCents, estimateFingerprint, estimateChanged, estimateTotals, included, normalizeLineItems, packageTotals, validateSelection } from './quote-model.js';
+import { depositCents, estimateFingerprint, estimateChanged, estimateTotals, included, junkOnlyGarageWork, normalizeLineItems, packageTotals, validateSelection } from './quote-model.js';
 import { customerMoneyTotals, invoiceNumber } from './money-core.js';
 import { moneySnapshot } from './money-service.js';
 import { moneySupersedeWrite } from './job-funnel-events.js';
@@ -180,6 +180,12 @@ function quotePatch(job, inputDraft, actor, now, jobId, newQuotePaymentPolicy) {
   return { patch, warnings, material, revisedRelease: material && !fresh && (wasSent || wasApproved) };
 }
 
+// The service a quote draft is for, as every customer surface names it (the portal, the money documents, Stripe): a
+// junk-only builder quote is 'Junk removal' (D-JUNK: its scope is junk removal only), any other 'Garage transformation'.
+// A revision relabels only a job this file labelled; a service Dispatch or another booking path set is kept.
+const QUOTE_SERVICE_TYPES = ['Garage transformation', 'Junk removal'];
+const quoteServiceType = junkOnly => junkOnly ? 'Junk removal' : 'Garage transformation';
+const serviceTypeRevision = (job, junkOnly) => QUOTE_SERVICE_TYPES.includes(job.serviceType) ? { serviceType: quoteServiceType(junkOnly) } : {};
 function capturePatch(job, draft, actor, now) {
   const patch = unsignedCapturePatch(job, draft.walkthroughCapture, actor, now);
   if (Object.keys(patch).length) patch.walkthroughCaptureSync = prepareWalkthroughCaptureSync({ ...job, ...patch }, now);
@@ -275,7 +281,7 @@ export async function saveQuoteDraft(store, actor, input, now = new Date().toISO
   const catalogMode = input.draft?.catalog_pricing !== undefined;
   // With the builder flag off a composite_pricing field stays an unsupported draft field, as before.
   const compositeMode = quoteBuilderEnabled(env) && plain(input.draft) && input.draft.composite_pricing !== undefined;
-  let draft;
+  let draft, junkOnlyQuote = false;
   if (compositeMode) {
     if (catalogMode) throw fail('invalid_draft', 'A quote is priced by the builder or by the catalog, not both.', 400);
     const priced = priceCompositeQuote(await compositeState(env), input.draft.composite_pricing, { complete: true });
@@ -286,6 +292,7 @@ export async function saveQuoteDraft(store, actor, input, now = new Date().toISO
     delete material.composite_pricing;
     draft = normalizeQuoteDraft(material, now);
     if (draft.totalCents !== priced.totalCents) throw fail('composite_price_changed', 'The builder quote total changed. Review the quote in the builder again before saving.', 409);
+    junkOnlyQuote = priced.junkOnly === true;
     Object.assign(draft, { pricingSettingsVersion: priced.settingsVersion, compositePricing: structuredClone(priced.compositePricing), breakdown: structuredClone(priced.breakdown) });
   } else if (catalogMode) {
     if (!catalogQuotesEnabled(env)) throw fail('catalog_disabled', 'Catalog quotes are turned off. Keep this draft for review.', 404);
@@ -317,7 +324,7 @@ export async function saveQuoteDraft(store, actor, input, now = new Date().toISO
       editable(job);
       // An in-person signature is revised only through a new signed walkthrough handoff.
       if (approved(job.estimate?.status) && job.estimate?.acceptanceMethod === 'in_person_signature') throw fail('signed', 'The customer signed this quote in person. Start a signed revision in the walkthrough instead.');
-      const plan = quotePatch(job, draft, actor, now, job.id), saved = record(job, plan, job.id), patch = { ...plan.patch, ...capturePatch(job, draft, actor, now), quoteDraft: saved.quoteDraft, updatedAt: now };
+      const plan = quotePatch(job, draft, actor, now, job.id), saved = record(job, plan, job.id), patch = { ...plan.patch, ...capturePatch(job, draft, actor, now), ...serviceTypeRevision(job, junkOnlyQuote), quoteDraft: saved.quoteDraft, updatedAt: now };
       // FUN-03: a material revision ends the job's live sale (a portal approval of
       // an earlier revision), as the Hub estimate editor does: deal.approval_superseded
       // and the cleared funnelSale are in this revision's commit.
@@ -335,7 +342,7 @@ export async function saveQuoteDraft(store, actor, input, now = new Date().toISO
         ...(retired ? [retired] : []),
         ...crossing.writes,
       ]);
-    } else await createDraft(store, actor, input, draft, customer, now, env, { record, audit, receiptId, newQuotePaymentPolicy });
+    } else await createDraft(store, actor, input, draft, customer, now, env, { record, audit, receiptId, newQuotePaymentPolicy, junkOnlyQuote });
   } catch (error) {
     if (FINAL.has(error.code)) throw error;
     const recovered = await replay(false).catch(problem => { if (FINAL.has(problem.code)) throw problem; return null; });
@@ -348,7 +355,7 @@ export async function saveQuoteDraft(store, actor, input, now = new Date().toISO
   return saved;
 }
 
-async function createDraft(store, actor, input, draft, customer, now, env, { record, audit, receiptId, newQuotePaymentPolicy }) {
+async function createDraft(store, actor, input, draft, customer, now, env, { record, audit, receiptId, newQuotePaymentPolicy, junkOnlyQuote = false }) {
   let source = null, sourceProject = null;
   if (input.sourceWalkthroughId) {
     source = await store.read('jobs', input.sourceWalkthroughId); requireRevision(source);
@@ -364,7 +371,7 @@ async function createDraft(store, actor, input, draft, customer, now, env, { rec
       if (sourceProject.customerId !== customer.id) throw fail('source_mismatch', 'The source project belongs to a different customer.');
     }
   }
-  const changes = { title: draft.title, address: draft.client.address, serviceType: 'Garage transformation', ...(draft.crewSize ? { crewNeeded: draft.crewSize } : {}) };
+  const changes = { title: draft.title, address: draft.client.address, serviceType: quoteServiceType(junkOnlyQuote), ...(draft.crewSize ? { crewNeeded: draft.crewSize } : {}) };
   const dispatchInput = { action: 'schedule.create', requestId: input.requestId, customerId: customer.id, kind: 'job', ...(source ? { sourceWalkthroughId: source.id } : {}), changes };
   const adapter = { ...store,
     // An orphan legacy walkthrough gains only the verified customer link; its
@@ -446,13 +453,18 @@ function sendable(job, now, env) {
 // A builder quote is sent only when every price on it is owner-approved now (approved after the save counts).
 // While the builder is on, a walkthrough quote priced outside it (the walkthrough's own itemized lines, priced from
 // the same tables the builder holds as owner-unapproved drafts) is kept but never sent: it is rebuilt in the
-// builder first. Catalog quotes keep their own catalog approval.
+// builder first. Catalog quotes keep their own catalog approval. D-JUNK: a junk-only builder quote ($750 per truck,
+// no Labor line) is never sent on a walkthrough whose saved capture records garage work (junkOnlyGarageWork), as the
+// homeowner never signs one on it (walkthrough-handoff.js): it stays saved until the work is added or the walkthrough
+// corrected and the quote saved again.
 async function compositeSendable(job, env, compositeState) {
   if (!plain(job.quoteDraft?.compositePricing)) {
     if (quoteBuilderEnabled(env) && !plain(job.quoteDraft?.catalogPricing)) throw fail('builder_required', 'With the quote builder on, a walkthrough quote is sent only after it is built in the quote builder from the owner\'s pricing menu. This draft stays saved: reopen "Send options for review" on the walkthrough and build it there.', 409,
       { unapproved: [{ id: null, name: 'Walkthrough-priced quote', unitCents: null, reason: 'Its lines were priced from the walkthrough tables, which the owner has not approved for the quote builder. Rebuild it in the quote builder (removal, then shelving, then extra storage) and send that quote.' }] });
     return;
   }
+  const work = junkOnlyGarageWork(job);
+  if (work.length) throw fail('junk_only_garage_work', `This junk-only quote prices the hauling only ($750 per truck covers the crew's time; it has no Labor line), but the walkthrough records garage work: ${work.join(', ')}. It stays saved as a draft and was not sent. Edit the quote and add that work (a garage cleaning base for the sorting and reset, cleaning, shelving or storage), then save and send it; or, if the homeowner wants junk removal only, change the walkthrough to Everything goes or Customer labels before arrival, remove those finish options and save the quote again.`, 409, { garageWork: work });
   const approval = compositeApproval(job.quoteDraft.breakdown, await compositeState(env));
   if (!approval.ready) throw approvalRefusal(approval);
 }

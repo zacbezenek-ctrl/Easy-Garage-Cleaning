@@ -367,6 +367,24 @@ class PortalRerender:
         self.assertEqual(self.posts, []); self.no_raw_errors()
 
 
+    def test_a_25_75_estimate_names_its_terms_held_or_released_and_pays_a_deposit_not_an_upfront_one(self):
+        # Held for the owner's prices: no amount, nothing to approve or pay, and the 25/75 terms the customer signed.
+        self.view = FIXTURES['held']['body']; self.open_portal()
+        terms = self.page.locator('#estimate-terms')
+        expect(terms).to_contain_text('25% deposit; 75% remainder due on the job day 2026-10-20 (America/Denver). The amounts are shown when your estimate is sent to you, and nothing is due before then.')
+        for legacy in ['upfront', 'on completion']: expect(terms).not_to_contain_text(legacy)
+        expect(self.page.locator('#estimate-terms-version')).to_contain_text('Terms version 2026-10-deposit25.')
+        expect(self.page.locator('#pay-button')).to_be_hidden()
+        expect(self.page.locator('#approval-form')).to_be_hidden()
+        self.assertNotIn('2,495.90', self.page.locator('body').inner_text())
+        self.phone_checks('held-2575')
+        # Released: the Pay button names the deposit as the payment line does, with the remainder on the job day.
+        self.view = FIXTURES['scheduled']['body']; self.quiet_refresh()
+        expect(self.page.locator('#pay-button')).to_have_text('Pay $623.98 deposit')
+        expect(self.page.locator('#payment-due-now')).to_contain_text('due on the job day, Tuesday, October 20, 2026.')
+        expect(self.page.locator('#estimate-terms-version')).to_contain_text('Terms version 2026-10-deposit25.')
+        self.no_raw_errors(); self.phone_checks('scheduled-2575')
+
 class PortalRerenderSmallPhone(PortalRerender, unittest.TestCase):
     VIEWPORT = (320, 568)
 

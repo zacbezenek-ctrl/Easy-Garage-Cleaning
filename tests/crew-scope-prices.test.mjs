@@ -139,6 +139,23 @@ test('the gameplan sends a crew brief with labels only and keeps the priced brie
   assert.ok(sent.internal_notes.includes('(+$300)'));
 });
 
+// The builder never reads or writes the Finish step's shelf and tote counts: a builder quote's goods (its shelving and
+// storage product lines, in packs) are the materials sold in both briefs and the checklists, and shelving brings its tools.
+test('a builder quote\'s shelving and storage packs are the brief\'s materials and the checklists\' sold items, with the install tools', () => {
+  const goods = [{ id: 'shelving-goods', kind: 'product', name: 'Shelving', description: 'HDX plastic shelving, 36×72×24 × 3 packs' }, { id: 'storage-goods', kind: 'product', name: 'Extra storage', description: 'HDX 27-gal totes, four-pack × 2 packs of 4' }];
+  const quote = lines => ({ compositePricing: { steps: ['removal', 'shelving', 'storage'] }, totalCents: 150000, lineItems: [{ id: 'removal-junk-full', kind: 'service', name: 'Junk removal: full truck load', description: 'Hauling and disposal by full truck load.' }, ...lines] });
+  const h = gameplan({ finish: ['cleanout'], shelfQty: 0, toteQty: 0, builderQuote: quote(goods) }), i = h.buildJobInstructions({}), checks = h.buildClientChecklists(i);
+  for (const brief of [h.buildInternalNotes(i), h.buildCrewBrief(i)]) assert.match(brief, /^MATERIALS: HDX plastic shelving, 36×72×24 × 3 packs · HDX 27-gal totes, four-pack × 2 packs of 4$/m);
+  for (const tool of ['Drill / driver', 'Stud finder', 'Level', 'Lag screws and anchors']) assert.ok(i.bringList.includes(tool), tool);
+  assert.equal(checks.preJob.find(row => row.id === 'materials').detail, 'cleanout · HDX plastic shelving, 36×72×24 × 3 packs · HDX 27-gal totes, four-pack × 2 packs of 4');
+  assert.match(checks.postJob.find(row => row.id === 'finish').detail, /HDX 27-gal totes, four-pack × 2 packs of 4/);
+  // Storage alone needs no install tools; without a builder quote the Finish step's counts are the materials, as before.
+  assert.equal(gameplan({ finish: ['cleanout'], shelfQty: 0, toteQty: 0, builderQuote: quote(goods.slice(1)) }).buildJobInstructions({}).bringList.includes('Drill / driver'), false);
+  const plain = gameplan(), instructions = plain.buildJobInstructions({});
+  assert.deepEqual(Array.from(instructions.soldGoods), []);
+  assert.match(plain.buildCrewBrief(instructions), /^MATERIALS: 2 metal shelf unit\(s\) · 3 tote\(s\)$/m);
+});
+
 // In-memory dispatch store (tests/walkthrough-handoff.test.mjs fixture shape) with a mask-aware jobRecords scan.
 function hubStore() {
   const rows = new Map([

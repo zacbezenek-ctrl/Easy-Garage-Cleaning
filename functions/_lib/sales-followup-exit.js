@@ -24,9 +24,13 @@ export function salesExitMilestone(job = {}) {
   return '';
 }
 
+// A junk-only builder quote is labelled 'Junk removal' (D-JUNK) on a signed walkthrough (handoffVersion 1) or a Hub quote
+// draft (quoteDraft), but its lead came through the garage walkthrough and sits in the garage nurture and quote
+// follow-up, which only the garage exit stops: it keeps that exit.
 export function salesExitService(job = {}) {
   if (!job) return '';
   const name = String(job.serviceType || '').toLowerCase();
+  if (name === 'junk removal' && (job.handoffVersion === 1 || job.quoteDraft !== null && typeof job.quoteDraft === 'object' && !Array.isArray(job.quoteDraft))) return 'garage';
   const garage = /garage/.test(name), junk = /junk|curb.?side/.test(name);
   return garage !== junk ? (garage ? 'garage' : 'junk') : '';
 }

@@ -127,8 +127,24 @@ store.put('job-1', { ...job, total: 1200, priceQuoted: 1200, estimate: { ...job.
   lineItems: [{ ...job.estimate.lineItems[0], unitCents: 120000, totalCents: 120000 }] } });
 const revised = await portalView(handlers, cookie), signedOut = await portalView(handlers, '');
 
+// D-DEPOSIT: a walkthrough signed on the 25/75 terms ($2,495.90: 25% the signing day, 75% on the job day). Released, its
+// deposit is paid from the Pay button; held for draft prices the owner has not approved, the portal withholds every
+// amount and still names the terms the customer signed.
+const signed2575 = { ...job, id: 'job-2575', serviceType: 'Garage transformation', total: 2495.9, priceQuoted: 2495.9, date: '2026-10-20', customerDecisions: [], giftWallet: undefined, quoteStatus: 'approved',
+  customerApproval: { status: 'approved', approvedAt: '2026-09-22T16:00:00.000Z', approvedBy: 'Synthetic Customer', amount: 2495.9, source: 'in_person_signature' },
+  estimate: { number: 'EST-2575', revision: 1, status: 'accepted', amount: 2495.9, depositRequired: 623.98, amountCents: 249590, depositRequiredCents: 62398, depositPct: 25, acceptedAt: '2026-09-22T16:00:00.000Z', acceptedBy: 'Synthetic Customer',
+    acceptanceMethod: 'in_person_signature', source: 'walkthrough', termsVersion: '2026-10-deposit25', scope: 'Removal / cleanout: Two-car garage base. Labor.', validUntil: '2026-10-30',
+    commercialPolicy: { version: '2026-10-deposit25', depositPct: 25, remainderPct: 75, depositDueRule: 'walkthrough_day', remainderDueRule: 'job_day' },
+    paymentSchedule: { depositCents: 62398, remainderCents: 187192, depositDueDate: '2026-10-19', remainderDueDate: '2026-10-20', timeZone: 'America/Denver', policyVersion: '2026-10-deposit25' },
+    lineItems: [{ id: 'removal-base', kind: 'service', name: 'Two-car garage base', quantity: 1, unitCents: 249590, totalCents: 249590 }] },
+  deposit: { amount: 623.98, paidAmount: 0, status: 'due' } };
+store.put('job-2575', signed2575);
+store.put('job-held', { ...signed2575, id: 'job-held', pricesPendingApproval: { status: 'pending', reason: 'draft_prices', at: '2026-09-22T16:00:00.000Z', by: 'sales.person', requestId: 'r1', items: [{ id: 'egc-003', name: 'Two-car garage base' }] } });
+const scheduled = await portalView(handlers, await portalCookie('job-2575')), held = await portalView(handlers, await portalCookie('job-held'));
+assert.deepEqual([held.body.estimate.withheld, held.body.estimate.termsVersion, scheduled.body.payment.dueNow], [true, '2026-10-deposit25', 623.98]);
+
 // The portal read while Firestore cannot answer: what a failed 20-second refresh receives.
 globalThis.fetch = async () => Response.json({}, { status: 500 });
 const down = await portalView(handlers, cookie);
 
-process.stdout.write(JSON.stringify({ pending, approve, approved, partner, created, unsettled, outage, verified, paid, again, tipDue, credit, credited, revised, signedOut, down, session }));
+process.stdout.write(JSON.stringify({ pending, approve, approved, partner, created, unsettled, outage, verified, paid, again, tipDue, credit, credited, revised, signedOut, scheduled, held, down, session }));

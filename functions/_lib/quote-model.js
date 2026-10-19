@@ -612,6 +612,38 @@ export const BUILDER_LABOR_VERSION = 2;
 export const HAULING_GROUPS = Object.freeze(['junk', 'special', 'access']);
 export const builderJunkOnly = lines => Array.isArray(lines) && lines.some(line => plain(line) && line.group === 'junk') && lines.every(line => plain(line) && line.section === 'removal' && HAULING_GROUPS.includes(line.group));
 /**
+ * D-JUNK: the garage work a walkthrough records beyond junk removal, as the homeowner reads it: crew sorting (the sorting
+ * plan "Customer sorts with crew" or "Crew stages keep / donate / haul zones", with the reset of what stays: the fullness
+ * minutes the labor estimate counts with a garage cleaning base), the cleaning add-ons, shelving and totes the Finish step
+ * sold, and pest-waste cleanup. "Everything goes" and "Customer labels before arrival" are junk removal: the customer
+ * decided, the crew loads. A junk-only builder quote ($750 per truck, no Labor line) prices none of this, so it is signed
+ * only on a walkthrough that records none of it (walkthrough-handoff.js saveWalkthroughHandoff, which reads the signed
+ * plan's scope) and sent only on one whose saved capture records none (junkOnlyGarageWork). The walkthrough page
+ * (crew/gameplan.html) and the builder (crew/quote-draft.js) apply the same rule. unknownQty: shelving or totes with no
+ * recorded count (a capture saved without one) count as work, so an unknown count never lets the quote through.
+ */
+const CREW_SORTING = { customer: 'sorting with the customer and resetting what stays', zones: 'sorting into keep / donate / haul zones and resetting what stays' };
+export function walkthroughGarageWork(scope, { unknownQty = false } = {}) {
+  const s = plain(scope) ? scope : {}, finish = Array.isArray(s.finish) ? s.finish : [], details = plain(s.finish_details) ? s.finish_details : {};
+  const count = (qty, label, unknown) => Number.isInteger(qty) && qty > 0 ? `${qty} ${label}${qty === 1 ? '' : 's'}` : unknownQty && (qty === undefined || qty === null) ? unknown : '';
+  return [CREW_SORTING[s.sort_method] || '', finish.includes('deep_clean') ? 'a deep clean' : '', finish.includes('pressure_wash') ? 'a pressure wash' : '', finish.includes('mouse_trapping') ? 'mouse trapping' : '',
+    finish.includes('shelving') ? count(details.shelf_qty, 'shelving unit', 'shelving') : '', finish.includes('totes') ? count(details.tote_qty, 'storage tote', 'storage totes') : '', Array.isArray(s.hazards) && s.hazards.includes('Pest waste') ? 'pest-waste cleanup' : ''].filter(Boolean);
+}
+/**
+ * An unsent builder quote (Hub quote draft) that is junk-only on a walkthrough recording garage work: the work its saved
+ * walkthrough capture (job.jobInstructions, unsigned-walkthrough-capture.js) records, else []. Its send is refused
+ * (quote-draft.js quote_draft_junk_only_garage_work) and, if it was sent before that rule, it is treated as unsent
+ * (unsentQuoteDraft) until the office adds the work or corrects the walkthrough and saves and sends it again. Never a
+ * quote the customer signed in person (compositeQuote) or approved.
+ */
+export function junkOnlyGarageWork(job) {
+  const breakdown = plain(job?.quoteDraft?.breakdown) && job.quoteDraft.breakdown.source === 'composite' ? job.quoteDraft.breakdown : null;
+  if (!breakdown || plain(job?.compositeQuote) || !builderJunkOnly(breakdown.lines)) return [];
+  if ([job?.estimate?.status, job?.customerApproval?.status].some(status => ['accepted', 'approved'].includes(String(status || '').toLowerCase()))) return [];
+  const i = plain(job?.jobInstructions) ? job.jobInstructions : {};
+  return walkthroughGarageWork({ sort_method: i.sortMethod, finish: i.finish, hazards: i.hazards, finish_details: { shelf_qty: i.shelfQty, tote_qty: i.toteQty } }, { unknownQty: true });
+}
+/**
  * A builder quote sent to the customer before those Labor rules (its Labor line priced without a version: the estimate
  * counted truck-load time and the line named the man-hours; or a junk-only quote that still has a Labor line) and not
  * approved yet. Its price is not one the owner's rules give, so it is treated as unsent (unsentQuoteDraft): every customer
@@ -672,11 +704,12 @@ export const estimateChanged = (previous, next) => estimateFingerprint(previous)
  * customer surface withholds it and nothing can approve or pay it, whatever
  * CUSTOMER_PORTAL_REJECT_DRAFT_ESTIMATES says. Jobs not drafted here are never
  * affected (false), except a held signed job (pricesPendingApproval below),
- * which every customer surface withholds the same way, and a builder quote sent
- * before the Labor rules of 2026-10-18 (staleBuilderQuote above).
+ * which every customer surface withholds the same way, a builder quote sent
+ * before the Labor rules of 2026-10-18 (staleBuilderQuote above), and a junk-only
+ * one on a walkthrough recording garage work (junkOnlyGarageWork above).
  */
 export function unsentQuoteDraft(job) {
-  if (pricesPendingApproval(job) || staleBuilderQuote(job)) return true;
+  if (pricesPendingApproval(job) || staleBuilderQuote(job) || junkOnlyGarageWork(job).length) return true;
   const estimate = plain(job?.estimate) ? job.estimate : null;
   if (!plain(job?.quoteDraft) && estimate?.source !== 'quote_draft') return false;
   const status = String(estimate?.status || '').toLowerCase();

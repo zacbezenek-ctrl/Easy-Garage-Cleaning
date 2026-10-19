@@ -429,4 +429,13 @@ test('the payment card words a 25/75 quote\'s deposit and job-day remainder from
   assert.equal(node('payment-due-now').textContent, 'Deposit received. $845.70 remaining, due on the job day, Tuesday, October 20, 2026.');
   context.renderPayment(view(null));
   assert.equal(node('payment-due-now').textContent, '$281.90 deposit due upfront. $845.70 remaining after your deposit, due on completion.');
+  // The Pay button and the balance line follow the same terms.
+  context.renderPayment(view(schedule));
+  assert.equal(node('pay-button').textContent, 'Pay $281.90 deposit');
+  context.renderPayment(view(null));
+  assert.equal(node('pay-button').textContent, 'Pay $281.90 upfront deposit');
+  context.renderPayment(view(schedule, { paid: 281.9, balance: 845.7, dueNow: 845.7, purpose: 'balance' }));
+  assert.deepEqual([node('pay-button').textContent, node('payment-due-now').textContent], ['Pay $845.70 remaining balance', '$845.70 remaining balance due on the job day. Your earlier payments are already applied.']);
+  context.renderPayment(view(null, { paid: 281.9, balance: 845.7, dueNow: 845.7, purpose: 'balance' }));
+  assert.equal(node('payment-due-now').textContent, '$845.70 remaining balance due on completion. Your earlier payments are already applied.');
 });

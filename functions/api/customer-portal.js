@@ -19,7 +19,7 @@ import { customerLaborLine, customerScopeText, estimateFingerprint, included, le
 import { crewPublicProfilesEnabled, customerCrew, customerCrewProjection, readCrewPublicProfiles } from '../_lib/crew-public-profile.js';
 import { liveSale, portalApprovalWrites, portalFunnelWrite, vocabularyValue } from '../_lib/job-funnel-events.js';
 import { dispatchReviewPatch, queued } from '../_lib/dispatch-queue.js';
-import { publicQuotePaymentSchedule, quotePaymentSummary } from '../_lib/quote-payment-policy.js';
+import { publicQuotePaymentSchedule, quotePaymentSummary, withheldQuotePaymentSummary } from '../_lib/quote-payment-policy.js';
 
 const HOST = /^(?:easygaragecleaning\.com|www\.easygaragecleaning\.com|easy-garage-cleaning\.pages\.dev|localhost(?::\d+)?|127\.0\.0\.1(?::\d+)?)$/;
 const DEFAULT_REVIEW_URL = 'https://search.google.com/local/writereview?placeid=ChIJ17AGfBiyRIsRyJ3k4mDtX8Q';
@@ -150,14 +150,19 @@ function estimateState(job, finance, today, draftsRejected = false) {
 }
 
 // An unsent quote draft is withheld: the customer sees that it is being updated,
-// never its unsent price, deposit, scope or lines, and nothing to approve.
+// never its unsent price, deposit, scope or lines, and nothing to approve. A quote
+// on the 25/75 terms (a held signed walkthrough, a sent quote's unsent revision)
+// still names those terms, without amounts; any other keeps the portal's terms.
 function withheldEstimate(job) {
+  const terms = withheldQuotePaymentSummary(job.estimate);
   const estimate = {
     number: safe(job.estimate?.number || job.quoteId || `EST-${String(job.id || '').slice(-6).toUpperCase()}`, 80),
     status: 'being_updated', withheld: true, amount: 0,
     service: safe(job.serviceType || job.type || 'Garage service', 120), scope: '',
     approvedAt: '', approvedBy: '', validUntil: '', revision: estimateRevision(job), approvable: false,
-    depositRequired: 0, lineItems: [], terms: CUSTOMER_PORTAL_CONTENT.estimateTerms, termsVersion: CUSTOMER_PORTAL_TERMS_VERSION,
+    depositRequired: 0, lineItems: [],
+    terms: terms ? 'This flat-rate estimate covers the scope shown. '+terms.text+' Any material scope change requires your approval before additional work or charges.' : CUSTOMER_PORTAL_CONTENT.estimateTerms,
+    termsVersion: terms ? terms.version : CUSTOMER_PORTAL_TERMS_VERSION,
   };
   return { ...estimate, fingerprint: shownFingerprint(estimate) };
 }

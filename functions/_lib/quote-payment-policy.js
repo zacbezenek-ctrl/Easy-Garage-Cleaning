@@ -88,3 +88,16 @@ export function publicQuotePaymentSchedule(estimate) {
   if(!totals.length||!deposits.length||totals.some(value=>value!==s.depositCents+s.remainderCents)||deposits.some(value=>value!==s.depositCents))return null;
   return {depositDueDate:s.depositDueDate,remainderDueDate:s.remainderDueDate,timeZone:PAYMENT_TIME_ZONE,depositCents:s.depositCents,remainderCents:s.remainderCents,policyVersion:s.policyVersion};
 }
+// The 25/75 terms a quote was sent or signed on (estimate.commercialPolicy), without any amount, for a customer surface
+// that withholds the quote (quote-model.js unsentQuoteDraft: a signed job held for the owner's prices, or a sent quote's
+// unsent revision): the split (its saved schedule's, else the policy's) and, when the schedule names it, the job day the
+// remainder is due. null for a quote on any other terms: legacy jobs keep their own wording.
+export function withheldQuotePaymentSummary(estimate) {
+  let policy;
+  try { policy = snapshotQuotePaymentPolicy(estimate?.commercialPolicy); } catch { return null; }
+  const s = plain(estimate?.paymentSchedule) ? estimate.paymentSchedule : null, day = s && s.timeZone === PAYMENT_TIME_ZONE && validDate(s.remainderDueDate) ? s.remainderDueDate : '';
+  const split = s && Number.isSafeInteger(s.depositCents) && Number.isSafeInteger(s.remainderCents) && s.depositCents >= 0 && s.remainderCents >= 0 && s.depositCents + s.remainderCents > 0 ? scheduleSplit(s) : policy;
+  return { version: policy.version, text: `${split.depositPct}% deposit; ${split.remainderPct}% remainder due on the job day${day ? ` ${day} (${PAYMENT_TIME_ZONE})` : ''}. The amounts are shown when your estimate is sent to you, and nothing is due before then.` };
+}
+// A payment due date (YYYY-MM-DD, a Denver business day) as the customer reads it: "Tuesday, October 20, 2026".
+export const paymentDateLabel = date => new Intl.DateTimeFormat('en-US', { timeZone: PAYMENT_TIME_ZONE, weekday: 'long', month: 'long', day: 'numeric', year: 'numeric' }).format(new Date(`${date}T12:00:00Z`));
