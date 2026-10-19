@@ -123,12 +123,19 @@
     return [{ customer: 'sorting with the customer and resetting what stays', zones: 'sorting into keep / donate / haul zones and resetting what stays' }[scope.sort_method] || '', finish.includes('deep_clean') ? 'a deep clean' : '', finish.includes('pressure_wash') ? 'a pressure wash' : '',
       finish.includes('mouse_trapping') ? 'mouse trapping' : '', finish.includes('shelving') ? count(details.shelf_qty, 'shelving unit') : '', finish.includes('totes') ? count(details.tote_qty, 'storage tote') : '', Array.isArray(scope.hazards) && scope.hazards.includes('Pest waste') ? 'pest-waste cleanup' : ''].filter(Boolean);
   }
+  // A product's size and fit notes (the menu's fitWarnings) without its sourcing remarks about the retailer's price.
+  const fitText = text => String(text || '').split(/(?<=\.)\s+(?=[A-Z0-9])/).filter(part => part.trim() && !/pric|\$/i.test(part)).join(' ').trim().slice(0, 600);
   const garageWorkNote = work => work.length ? h('p', { class: 'qd-notice qb-garage-work', role: 'status' }, `The walkthrough records garage work this junk-only quote does not price: ${work.join(', ')}. The homeowner cannot sign it, and it cannot be sent, on that walkthrough. Add the work here (a garage cleaning base for sorting and reset, cleaning, shelving or storage), or, if they want junk removal only, change the walkthrough (Everything goes or Customer labels before arrival; no finish options).`) : null;
   // The walkthrough's garage fullness ("How full is it?"): the one input of the server's labor time estimate that the
   // builder selection does not hold. The crew size and the scheduled minutes are not inputs: the man-hours of the work
   // are the same for any crew.
   const FULLNESS = ['light', 'medium', 'full', 'packed'];
   const fullnessOf = p => { const value = String(p?.scope?.fullness || '').trim().toLowerCase(); return FULLNESS.includes(value) ? value : null; };
+  // The walkthrough's garage size (Photos: 1-car, 2-car, 3-car or larger) as the menu's garageSize, or null. Without a
+  // garage cleaning base (a quote with truck loads) it sizes the deep clean and allows the one-car pressure wash; the
+  // server checks the same (composite-quote.js checkRemoval) from the size the selection names.
+  const GARAGE_SIZES = ['1', '2', '3', 'other'];
+  const garageOf = p => { const value = String(p?.scope?.garages ?? '').trim().toLowerCase(); return GARAGE_SIZES.includes(value) ? value : null; };
   // The server's estimate (composite-quote.js laborEstimate) from the menu's time model (menu.labor.time, person-minutes),
   // for the running total shown while choosing; the server's preview is authoritative. {manHours, personMinutes,
   // installNotEstimated: [names]} or null without a time model. Set-up and sweep-out, the sorting of a garage with a
@@ -170,7 +177,8 @@
   // The walkthrough's own capture pre-fills the removal step: garage size, truckloads, special items, access and
   // cleaning add-ons. Shelving and storage are always chosen in the builder. The walkthrough's size base was its
   // full-service price, which already covered hauling, so a base is pre-selected only for a walkthrough without
-  // truckloads; with loads the estimator chooses whether a cleaning base applies.
+  // truckloads; with loads the estimator chooses whether a cleaning base applies. The deep clean and the one-car
+  // pressure wash follow the walkthrough's garage size, with or without a base.
   function selectionFromWalkthrough(p, menu) {
     const sel = emptySelection(), services = Array.isArray(menu?.services) ? menu.services : [], scope = p?.scope || {};
     const find = test => services.find(test), list = value => Array.isArray(value) ? value : [];
@@ -190,7 +198,7 @@
     for (const key of list(scope.access)) { const item = find(row => row.group === 'access' && row.walkthroughKey === key); if (item) sel.removal[item.id] = 1; }
     const finish = list(scope.finish), cleaning = key => find(row => row.group === 'cleaning' && row.walkthroughKey === key);
     if (finish.includes('deep_clean')) { const item = find(row => row.group === 'cleaning' && row.garageSize && row.garageSize === size); if (item) sel.removal[item.id] = 1; }
-    if (finish.includes('pressure_wash') && base?.garageSize === '1' && cleaning('pressure_wash')) sel.removal[cleaning('pressure_wash').id] = 1;
+    if (finish.includes('pressure_wash') && size === '1' && cleaning('pressure_wash')) sel.removal[cleaning('pressure_wash').id] = 1;
     if (finish.includes('mouse_trapping') && cleaning('mouse_trapping')) sel.removal[cleaning('mouse_trapping').id] = 1;
     if (list(scope.hazards).includes('Pest waste') && cleaning('Pest waste')) sel.removal[cleaning('Pest waste').id] = 1;
     return sel;
@@ -210,10 +218,10 @@
   // whole quote (through storage) with garage work also carries the labor: the man-hours (null: the server's estimate),
   // whether the estimator set them by hand, and the walkthrough's garage fullness the estimate reads; a junk-only one has
   // none. The labor rate and the estimate are never sent: the server uses the owner's rate and works the estimate out
-  // from the selection itself.
-  function builderDescriptor(menu, sel, through, fullness = null) {
+  // from the selection itself. Every step names the walkthrough's garage size when it is known (garageOf).
+  function builderDescriptor(menu, sel, through, fullness = null, garageSize = null) {
     const steps = BUILDER_STEPS.slice(0, Math.max(1, BUILDER_STEPS.indexOf(through) + 1));
-    return { menuVersion: menu.menuVersion, settingsVersion: menu.settingsVersion, steps,
+    return { menuVersion: menu.menuVersion, settingsVersion: menu.settingsVersion, steps, ...(GARAGE_SIZES.includes(garageSize) ? { garageSize } : {}),
       removal: (menu.services || []).filter(item => sel.removal[item.id] > 0).map(item => ({ id: item.id, quantity: sel.removal[item.id] })),
       shelving: steps.includes('shelving') ? sel.shelving.map(({ id, quantity }) => ({ id, quantity })) : [],
       storage: steps.includes('storage') ? sel.storage.map(({ id, quantity }) => ({ id, quantity })) : [],
@@ -492,9 +500,10 @@
       if (quantity > 0) { if (at >= 0) list[at].quantity = quantity; else list.push({ id, quantity }); } else if (at >= 0) list.splice(at, 1);
       changed();
     }
-    // One garage base; a chosen deep clean follows its size and a pressure wash stays with a one-car garage only.
+    // One garage base; a chosen deep clean follows the garage's size (the base's, else the walkthrough's) and a pressure
+    // wash stays with a one-car garage only.
     function chooseBase(id) {
-      const size = id ? S.menu.services.find(item => item.id === id)?.garageSize : null, deep = services('cleaning').filter(item => item.garageSize);
+      const size = id ? S.menu.services.find(item => item.id === id)?.garageSize : garageOf(plan()), deep = services('cleaning').filter(item => item.garageSize);
       const hadDeep = deep.some(item => S.sel.removal[item.id]), wash = services('cleaning').find(item => item.walkthroughKey === 'pressure_wash');
       for (const item of [...services('cleaning-base'), ...deep]) delete S.sel.removal[item.id];
       if (id) S.sel.removal[id] = 1;
@@ -520,7 +529,9 @@
       const bases = services('cleaning-base'), base = bases.find(item => S.sel.removal[item.id]), junk = services('junk');
       const full = junk.find(item => item.junkFraction === 1), partials = junk.filter(item => item.junkFraction < 1), partial = partials.find(item => S.sel.removal[item.id]);
       const pickPartial = id => { for (const item of partials) delete S.sel.removal[item.id]; if (id) S.sel.removal[id] = 1; changed(); };
-      const deep = services('cleaning').filter(item => item.garageSize), deepNow = deep.find(item => S.sel.removal[item.id]), deepFor = deep.find(item => item.garageSize === base?.garageSize);
+      // The garage the cleaning add-ons are sized to: the base's, else the walkthrough's (a quote with truck loads).
+      const walkSize = garageOf(plan()), size = base?.garageSize ?? walkSize, sizedBy = base ? 'Sized to the garage cleaning base.' : `Sized to the walkthrough\u2019s ${size === 'other' ? 'larger' : `${size}-car`} garage.`;
+      const deep = services('cleaning').filter(item => item.garageSize), deepNow = deep.find(item => S.sel.removal[item.id]), deepFor = deep.find(item => item.garageSize === size);
       const toggle = item => event => setRemoval(item.id, event.target.checked ? 1 : 0);
       // A draft base is the walkthrough's old full-service price, which already covered hauling: say so next to the loads.
       const baseHelp = bases.some(item => !item.approved) ? 'Flat cleaning price by garage size. Draft amounts are the walkthrough\u2019s historical full-service base, which already included hauling: choose a base for the cleaning work, not to cover the truck loads below.' : 'Flat cleaning price by garage size.';
@@ -532,21 +543,23 @@
         section('Special-handling items', 'Items that need extra handling or disposal fees.', h('div', { class: 'qb-list' }, services('special').map(item => h('div', { class: 'qb-row' + (S.sel.removal[item.id] ? ' on' : '') }, h('span', { class: 'qb-name' }, item.name, item.scopeNote ? h('small', {}, item.scopeNote) : null), h('span', { class: 'qb-price' }, money(item.unitCents), chip(item)), qtyControl(item.name, S.sel.removal[item.id] || 0, 99, n => setRemoval(item.id, n)))))),
         section('Access', '', ...services('access').map(item => option('checkbox', '', Boolean(S.sel.removal[item.id]), toggle(item), item.name, item, { note: item.scopeNote || '' }))),
         section('Cleaning add-ons', '',
-          deep.length ? option('checkbox', '', Boolean(deepNow), event => { for (const item of deep) delete S.sel.removal[item.id]; if (event.target.checked && deepFor) S.sel.removal[deepFor.id] = 1; changed(); }, 'Deep clean', deepNow || deepFor, { disabled: !deepFor, note: deepFor ? 'Sized to the garage cleaning base.' : 'Choose a garage cleaning base first.' }) : null,
+          // A checked add-on can always be unchecked, even when the garage no longer allows it.
+          deep.length ? option('checkbox', '', Boolean(deepNow), event => { for (const item of deep) delete S.sel.removal[item.id]; if (event.target.checked && deepFor) S.sel.removal[deepFor.id] = 1; changed(); }, 'Deep clean', deepNow || deepFor, { disabled: !deepFor && !deepNow, note: deepFor ? sizedBy : 'Choose a garage cleaning base first.' }) : null,
           ...services('cleaning').filter(item => !item.garageSize).map(item => {
-            const wash = item.walkthroughKey === 'pressure_wash';
-            return option('checkbox', '', Boolean(S.sel.removal[item.id]), toggle(item), item.name, item, { disabled: wash && base?.garageSize !== '1', note: wash && base?.garageSize !== '1' ? 'One-car garage base only.' : '' });
+            const wash = item.walkthroughKey === 'pressure_wash', on = Boolean(S.sel.removal[item.id]);
+            return option('checkbox', '', on, toggle(item), item.name, item, { disabled: wash && size !== '1' && !on, note: wash && size !== '1' ? 'One-car garage only.' : '' });
           })),
       ];
     }
+    // A product's size and fit notes are shown in the row; the retailer's product page (and its retail price beside
+    // EGC's) is never linked, so the estimator never leaves the quote.
     function productRow(item, step) {
-      const quantity = S.sel[step].find(row => row.id === item.id)?.quantity || 0;
+      const quantity = S.sel[step].find(row => row.id === item.id)?.quantity || 0, fit = fitText(item.fitWarnings);
       return h('li', { class: 'qb-product' + (quantity ? ' on' : '') },
         item.photoUrl ? h('img', { src: item.photoUrl, alt: '', loading: 'lazy', width: 56, height: 56, referrerpolicy: 'no-referrer' }) : h('span', { class: 'qb-thumb', 'aria-hidden': 'true' }),
         h('div', { class: 'qb-info' }, h('strong', {}, item.name),
           h('small', {}, `${item.unitsPerPack > 1 ? `Pack of ${item.unitsPerPack} · ` : ''}${money(item.unitCents)} per pack${item.perOrderPackLimit ? ` · limit ${item.perOrderPackLimit} packs per order` : ''} `, chip(item)),
-          item.fitWarnings ? h('details', {}, h('summary', {}, 'Fit and sourcing notes'), h('p', {}, item.fitWarnings)) : null,
-          item.productUrl ? h('a', { href: item.productUrl, target: '_blank', rel: 'noopener noreferrer' }, 'Product page') : null),
+          fit ? h('p', { class: 'qb-fit' }, fit) : null),
         quantity ? qtyControl(item.name, quantity, 999, n => setProduct(step, item.id, n)) : h('button', { type: 'button', class: 'qd-secondary qb-add', disabled: S.busy, 'aria-label': `Add ${item.name}`, onclick: () => setProduct(step, item.id, 1) }, 'Add'));
     }
     function productStep(step) {
@@ -719,7 +732,7 @@
       const generation = S.generation;
       S.busy = true; S.error = ''; S.stale = false; render();
       try {
-        const priced = await client.compositePreview(builderDescriptor(S.menu, S.sel, through, fullnessOf(plan())));
+        const priced = await client.compositePreview(builderDescriptor(S.menu, S.sel, through, fullnessOf(plan()), garageOf(plan())));
         if (generation !== S.generation) return;
         if (through === 'storage') S.priced = priced;
         S.step = BUILDER_VIEWS[BUILDER_VIEWS.indexOf(through) + 1];
@@ -896,5 +909,5 @@
     if (S.mode === 'probe') probeBuilder();
     return dialog;
   }
-  root.EGCQuoteDraft = { open, createClient, draftFromWalkthrough, scopeText, missing, builder: Object.freeze({ steps: BUILDER_STEPS, selectionFromWalkthrough, selectionOfPricing, validSelection, builderDescriptor, runningTotals, builderScope, compositeDraft, fullnessOf, estimateLabor, junkOnly, walkthroughGarageWork }) };
+  root.EGCQuoteDraft = { open, createClient, draftFromWalkthrough, scopeText, missing, builder: Object.freeze({ steps: BUILDER_STEPS, selectionFromWalkthrough, selectionOfPricing, validSelection, builderDescriptor, runningTotals, builderScope, compositeDraft, fullnessOf, garageOf, estimateLabor, junkOnly, walkthroughGarageWork, fitText }) };
 })(window);

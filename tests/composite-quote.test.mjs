@@ -227,6 +227,28 @@ test('removal rules: one base, one partial load, sized deep clean, one-car press
   assert.ok(storageLine.description.length <= 600 && storageLine.description.startsWith(`${menu.products.find(item => item.id === storage[0].id).name} × 1 pack`));
 });
 
+test('a quote with truck loads and no cleaning base sizes its cleaning add-ons by the walkthrough garage it names', () => {
+  const s = state(), price = (removal, garageSize) => priceCompositeQuote(s, { ...descriptor({ removal }), ...(garageSize === undefined ? {} : { garageSize }) });
+  // A one-car walkthrough with a truck load: the pressure wash is accepted without a base.
+  const washed = price([pick(TRUCK), pick(WASH)], '1');
+  assert.deepEqual(washed.lineItems.map(line => line.id), ['removal-junk-full', 'service-egc-006', 'labor'], 'garage work, so the Labor line stays');
+  assert.equal(washed.compositePricing.garageSize, '1', 'the saved selection keeps the size it was checked against');
+  assert.throws(() => price([pick(TRUCK), pick(WASH)], '2'), /Pressure washing is quoted for a one-car garage only\./);
+  assert.throws(() => price([pick(TRUCK), pick(WASH)]), /one-car garage only/, 'no size named: no pressure wash, as before');
+  assert.throws(() => price([pick(TRUCK), pick(WASH)], null), /one-car garage only/);
+  // The deep clean follows the walkthrough garage without a base; a base still decides when there is one.
+  assert.doesNotThrow(() => price([pick(TRUCK), pick(DEEP_TWO)], '2'));
+  assert.throws(() => price([pick(TRUCK), pick(DEEP_THREE)], '2'), /must match the walkthrough's garage size/);
+  assert.doesNotThrow(() => price([pick(TRUCK), pick(DEEP_THREE)]), 'no size named: any one deep clean, as before');
+  assert.throws(() => price([pick(TWO_CAR), pick(WASH)], '1'), /one-car garage cleaning base only/, 'the base, not the walkthrough, sizes a quote with a base');
+  assert.doesNotThrow(() => price([pick(ONE_CAR), pick(WASH)], '2'));
+  // A selection that names no size keeps its exact shape; a bad size is refused.
+  assert.equal(Object.hasOwn(price([pick(TRUCK)]).compositePricing, 'garageSize'), false);
+  for (const bad of ['4', 1, 'two', '']) assert.throws(() => price([pick(TRUCK)], bad), { code: 'quote_draft_composite_invalid_selection' }, String(bad));
+  // A step preview carries the size too.
+  assert.doesNotThrow(() => priceCompositeQuote(s, { ...descriptor({ steps: ['removal'], removal: [pick(TRUCK), pick(WASH)] }), garageSize: '1' }));
+});
+
 test('the breakdown carries category, sku, qty, unit, unitsPerPack and the purchase / grab list, never a cost', () => {
   const pack = menu.products.find(item => item.unitsPerPack > 1);
   const priced = priceCompositeQuote(state(), descriptor({ removal: [pick(TRUCK), pick(STAIRS)], shelving: [pick(shelf, 6)], storage: [pick(pack, 3)] }), { complete: true });

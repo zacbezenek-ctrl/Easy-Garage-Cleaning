@@ -157,8 +157,9 @@ function quotePatch(job, inputDraft, actor, now, jobId, newQuotePaymentPolicy) {
   const nextCatalog = draft.catalogPricing || null;
   // A builder quote's selection and menu/settings versions are provenance in the same way. Of its labor only the
   // man-hours are terms the customer reviewed (the rate is in the lines): the estimate's inputs (the garage fullness)
-  // and whether the estimator adjusted them are internal, so a re-save that changes only those is not material.
-  const termsOf = pricing => plain(pricing) && plain(pricing.labor) ? { ...pricing, labor: { manHours: pricing.labor.manHours } } : pricing;
+  // and whether the estimator adjusted them are internal, so a re-save that changes only those is not material. So is the
+  // walkthrough's garage size (garageSize), which only checks the deep clean and the pressure wash the lines already name.
+  const termsOf = pricing => { if (!plain(pricing)) return pricing; const { garageSize, ...terms } = pricing; return plain(terms.labor) ? { ...terms, labor: { manHours: terms.labor.manHours } } : terms; };
   const priorComposite = termsOf(plain(job?.quoteDraft?.compositePricing) ? job.quoteDraft.compositePricing : null), nextComposite = termsOf(draft.compositePricing || null);
   const provenanceChanged = canonical(priorComposite) !== canonical(nextComposite) || canonical(priorCatalog) !== canonical(nextCatalog) || Boolean(priorCatalog || nextCatalog) && (
     current.catalogVersion !== draft.catalogVersion || (current.pricingSettingsVersion ?? null) !== (draft.pricingSettingsVersion ?? null) ||

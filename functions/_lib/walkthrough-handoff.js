@@ -20,7 +20,7 @@ import { breakdownLines, jobBreakdown } from './job-breakdown.js';
 import { crewAutoAssignEnabled, projectCrewOpenings } from './dispatch-crew-assign.js';
 import { dispatchOpenings } from './dispatch-openings.js';
 import { catalogStorage, quoteBuilderEnabled, readCompositeState, requireCatalogOwner } from './catalog-store.js';
-import { approvalRefusal, compositeApproval, compositeScope, fullnessOf, priceCompositeQuote } from './composite-quote.js';
+import { GARAGE_SIZES, approvalRefusal, compositeApproval, compositeScope, fullnessOf, priceCompositeQuote } from './composite-quote.js';
 import { customerMoneyTotals } from './money-core.js';
 import { PAYMENT_TIME_ZONE, SIGNED_25_75, businessPaymentDate, quotePaymentDates, quotePaymentSchedule } from './quote-payment-policy.js';
 
@@ -225,6 +225,14 @@ function signedWithoutLabor(previous, selection) {
 // The labor time estimate reads the walkthrough's garage fullness; a signed quote's is the signed plan's own
 // (scope.fullness), whatever the selection carried, so its recorded estimate is the server's for the signed scope.
 const withSignedFullness = (selection, plan) => plain(selection) && plain(selection.labor) ? { ...selection, labor: { ...selection.labor, fullness: fullnessOf(plan.scope?.fullness) } } : selection;
+// A selection that names the walkthrough's garage size (composite-quote.js garageSize: without a cleaning base it sizes the
+// deep clean and allows the one-car pressure wash) is priced with the signed plan's own (scope.garages), whatever it
+// carried; a plan without a known size drops it. A selection that names none is priced as it is.
+function withSignedGarage(selection, plan) {
+  if (!plain(selection) || selection.garageSize === undefined) return selection;
+  const { garageSize, ...rest } = selection, size = String(plan.scope?.garages ?? '');
+  return GARAGE_SIZES.includes(size) ? { ...rest, garageSize: size } : rest;
+}
 // A Hub catalog quote draft (quoteDraft.catalogPricing, priced on the server by catalog-quote.js) signed with exactly the
 // lines the server saved for it: it keeps the catalog's own approval, as its send does.
 function catalogSigned(previous, plan) {
@@ -628,7 +636,7 @@ export async function saveWalkthroughHandoff(store, actor, input, now = new Date
   // the server's own, "Labor" and its amount (D-LABOR-TEXT): a page still showing the man-hours is refused like any
   // other line that differs (builderMismatch), so the quote is built again before the homeowner signs.
   const chosen = !builderOn ? null : builderSent ? signedInput.quote.composite_pricing : savedSelection(previous);
-  const legacy = signedWithoutLabor(previous, chosen), selection = withSignedFullness(chosen, plan);
+  const legacy = signedWithoutLabor(previous, chosen), selection = withSignedGarage(withSignedFullness(chosen, plan), plan);
   let builder = null;
   if (selection) {
     builder = priceCompositeQuote(await compositeState(env), selection, { complete: true, requireLabor: !legacy });

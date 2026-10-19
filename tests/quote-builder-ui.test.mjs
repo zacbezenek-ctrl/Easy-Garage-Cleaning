@@ -221,10 +221,10 @@ test('the labor estimate names only the work it counted: set-up always, sorting 
 test('a refused step stays put with the server reason; rules the server enforces are also shown on the step', async () => {
   const h = harness({ stale: true });
   h.open(); await flush();
-  // A pressure wash needs a one-car base: the checkbox is disabled while no one-car base is chosen.
+  // A pressure wash needs a one-car garage: on this two-car walkthrough with no base the checkbox is disabled.
   const wash = h.dialog().querySelectorAll('label').find(node => node.textContent.startsWith('Pressure washing, one-car'));
   assert.ok(wash.querySelector('input').hasAttribute('disabled'));
-  assert.match(wash.textContent, /One-car garage base only\./);
+  assert.match(wash.textContent, /One-car garage only\./);
   // Choosing a base keeps one base selected and re-totals.
   h.dialog().querySelectorAll('label').find(node => node.textContent.startsWith('Three-car garage base')).querySelector('input').dispatchEvent({ type: 'change', target: { checked: true } });
   assert.match(h.text(), /Running total\$2,254\.00/, 'a cleaning base is garage work: its set-up, sweep-out and sorting are 3 man-hours');
@@ -238,6 +238,72 @@ test('a refused step stays put with the server reason; rules the server enforces
   assert.match(h.text(), /Running total\$2,254\.00/, 'the selection survives the reload');
   h.button('Continue to shelving').click(); await flush();
   assert.match(h.text(), /Shelving units/);
+});
+
+test('a one-car walkthrough with truck loads keeps its pressure wash and deep clean, sized by the walkthrough garage', async () => {
+  const oneCar = () => { const p = plan(); p.scope = { ...p.scope, garages: '1', special_items: [], finish: ['cleanout', 'pressure_wash', 'deep_clean'], finish_details: {} }; return p; };
+  const h = harness({ walkthrough: oneCar });
+  h.open(); await flush();
+  const label = name => h.dialog().querySelectorAll('label').find(node => node.textContent.startsWith(name));
+  const wash = () => label('Pressure washing, one-car'), deep = () => label('Deep clean');
+  assert.ok(wash().querySelector('input').checked, 'the Finish step\'s pressure wash is carried over with the truck load');
+  assert.equal(wash().querySelector('input').hasAttribute('disabled'), false);
+  assert.ok(deep().querySelector('input').checked);
+  assert.equal(deep().querySelector('input').hasAttribute('disabled'), false, 'the deep clean can be unchecked without a base');
+  assert.match(deep().textContent, /Sized to the walkthrough’s 1-car garage\./);
+  assert.match(deep().textContent, /\$190\.00/, 'the one-car deep clean');
+  h.button('Continue to shelving').click(); await flush();
+  const step = h.calls.at(-1).body.compositePricing;
+  assert.equal(step.garageSize, '1', 'the step names the walkthrough garage');
+  assert.deepEqual(step.removal.map(row => row.id).sort(), ['egc-006', 'egc-007', 'egc-026']);
+  assert.match(h.text(), /Shelving units/, 'the server accepted the one-car pressure wash with a truck load');
+  h.button('Back').click();
+  // A two-car base sizes the add-ons instead: the wash is dropped and the deep clean follows the base.
+  label('Two-car garage base').querySelector('input').dispatchEvent({ type: 'change', target: { checked: true } });
+  assert.equal(wash().querySelector('input').checked, false);
+  assert.ok(wash().querySelector('input').hasAttribute('disabled'));
+  assert.match(deep().textContent, /Sized to the garage cleaning base\.[\s\S]*\$330\.00/);
+  // No base again: the deep clean goes back to the walkthrough's garage size.
+  label('No cleaning base').querySelector('input').dispatchEvent({ type: 'change', target: { checked: true } });
+  assert.match(deep().textContent, /Sized to the walkthrough’s 1-car garage\.[\s\S]*\$190\.00/);
+  wash().querySelector('input').dispatchEvent({ type: 'change', target: { checked: true } });
+  assert.ok(wash().querySelector('input').checked);
+});
+
+test('an add-on the walkthrough garage no longer allows stays checked until it is unchecked, never stuck', async () => {
+  // A two-car walkthrough whose device still holds a selection with the one-car pressure wash (the size changed after).
+  const store = memoryStorage(), h = harness();
+  store.setItem('egc-quote-builder-v1:sales.person:walk-1', JSON.stringify({ selection: { removal: { 'egc-026': 1, 'egc-006': 1 }, shelving: [], storage: [] } }));
+  h.open(store); await flush();
+  const wash = () => h.dialog().querySelectorAll('label').find(node => node.textContent.startsWith('Pressure washing, one-car'));
+  assert.ok(wash().querySelector('input').checked);
+  assert.equal(wash().querySelector('input').hasAttribute('disabled'), false, 'a checked add-on can be unchecked');
+  h.button('Continue to shelving').click(); await flush();
+  assert.match(h.text(), /Pressure washing is quoted for a one-car garage only\./, 'the server refuses it on a two-car walkthrough');
+  wash().querySelector('input').dispatchEvent({ type: 'change', target: { checked: false } });
+  assert.ok(wash().querySelector('input').hasAttribute('disabled'), 'unchecked, it cannot be added back on a two-car garage');
+  h.button('Continue to shelving').click(); await flush();
+  assert.match(h.text(), /Shelving units/);
+});
+
+test('product rows show their size and fit notes inline and never link out to the retailer', async () => {
+  const h = harness();
+  h.open(); await flush();
+  h.button('Continue to shelving').click(); await flush();
+  const rows = () => h.dialog().querySelectorAll('li').filter(node => node.className.startsWith('qb-product'));
+  assert.ok(rows().length >= 10);
+  assert.equal(h.dialog().querySelectorAll('a').length, 0, 'no product page link, no new tab');
+  assert.doesNotMatch(h.text(), /Product page|homedepot\.com|Fit and sourcing notes/);
+  const row = rows().find(node => node.textContent.includes(shelf.name));
+  assert.match(row.querySelector('p').textContent, /36 W × 72 H × 24 D in; 14\.86 in fixed shelf spacing/, 'the size and fit are in the row');
+  assert.match(row.textContent, /\$115\.70 per pack/, 'EGC\'s price only');
+  // Sourcing remarks about the retailer's price stay out of the row.
+  const { fitText } = h.context.EGCQuoteDraft.builder;
+  assert.equal(fitText('Price from Home Depot listing checked 2026-10-16. Hardware included. 6.3 W × 8.66 H in'), 'Hardware included. 6.3 W × 8.66 H in');
+  assert.equal(fitText('One kit services ONE 48-in rail. Do not divide kit price by 15 to price rail installations.'), 'One kit services ONE 48-in rail.');
+  assert.equal(fitText(''), '');
+  h.button('Continue to extra storage').click(); await flush();
+  assert.equal(h.dialog().querySelectorAll('a').length, 0);
 });
 
 test('with the builder off the walkthrough quote is reviewed exactly as before, with no builder request', async () => {
