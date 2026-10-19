@@ -95,7 +95,9 @@ function validatePolicy(snapshot, total, issue) {
   } else {
     try {
       policy = snapshotQuotePaymentPolicy(estimate.commercialPolicy);
-      // The owner's two 25/75 policies: a sent quote's and an in-person signature's (deposit due the day it was signed).
+      // The owner's two dated 25/75 policies: a sent quote's of 2026-10-14 and an in-person signature's (deposit due the day
+      // it was signed). A quote sent on SENT_25_75 has no deposit date until it is approved, which this document's dated
+      // bindings cannot state, so it is blocked here (payment_policy_requires_exception) rather than given a date.
       if (!same(policy, FINAL_25_75) && !same(policy, SIGNED_25_75)) issue('payment_policy_requires_exception');
     } catch { issue('canonical_payment_policy_missing'); return {}; }
   }

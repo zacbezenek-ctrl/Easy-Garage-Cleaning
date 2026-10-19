@@ -702,6 +702,39 @@ test('the Hub printed estimate shows the Labor line as one amount and the 25/75 
   assert.match(await print({ ...job, estimate: { ...job.estimate, lineItems: [] } }), /Removal \/ cleanout: Full truck load\. Labor\. /);
 });
 
+// Owner decision of 2026-10-18 evening: a quote sent on SENT_25_75 saved no deposit date. The Hub's own printed estimate
+// says the 25% deposit is due on approval (with the Denver day it was approved once it is) and the 75% on the job day.
+test('the Hub printed estimate of a quote sent on SENT_25_75 says the deposit is due on approval', async () => {
+  const suite = read('employee-suite.js'), line = prefix => suite.split(/\r?\n/).find(item => item.startsWith(prefix));
+  const source = ['const esc=', 'const payMoney=', 'function financeState(', 'function customerDocumentTerms(', 'window.opsPrintDocument='].map(line).join('\n');
+  const print = async job => {
+    let html = '';
+    class FixedDate extends Date { constructor(...args) { super(...(args.length ? args : [FIXED])); } static now() { return FIXED; } }
+    const win = { document: { write: value => { html += value; }, close() {} } };
+    const context = vm.createContext({ Date: FixedDate, window: { open: () => win }, jobs: () => [job], location: { origin: ORIGIN }, day: () => '2026-09-22', dateLabel: String, Intl });
+    vm.runInContext(source, context);
+    await context.window.opsPrintDocument(job.id, 'estimate');
+    return html.replace(/<style>[^]*<\/style>/, '').replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ');
+  };
+  const policy = { version: '2026-10-19-deposit25-on-approval', depositPct: 25, remainderPct: 75, depositDueRule: 'approval_day', remainderDueRule: 'job_day' };
+  const schedule = { depositCents: 37500, remainderCents: 112500, depositDueDate: null, remainderDueDate: '2026-11-10', timeZone: 'America/Denver', policyVersion: policy.version };
+  const job = { id: 'job-sent', customer: 'Synthetic', total: 1500, status: 'scheduled', estimate: { number: 'EST-S', status: 'sent', amount: 1500, amountCents: 150000, depositRequired: 375, depositRequiredCents: 37500, termsVersion: policy.version, commercialPolicy: policy, paymentSchedule: schedule, scope: 'Garage reset.', lineItems: [] }, deposit: { amount: 375, paidAmount: 0 } };
+  const sent = await print(job);
+  assert.match(sent, /25% deposit due on approval \$375\.00 75% remainder due 2026-11-10 \$1,125\.00 /);
+  assert.match(sent, /25% deposit \$375\.00 due on approval; 75% remainder \$1,125\.00 due 2026-11-10 \(America\/Denver\)\./);
+  assert.doesNotMatch(sent, /Deposit due upfront|on completion|null/);
+  // Approved in the portal at 9:30 pm in Denver (03:30 UTC the next day): the deposit is dated that Denver day.
+  const approved = await print({ ...job, estimate: { ...job.estimate, status: 'approved', acceptedAt: '2026-10-21T03:30:00.000Z' } });
+  assert.match(approved, /25% deposit due on approval \(2026-10-20\) \$375\.00 /);
+  assert.match(approved, /25% deposit \$375\.00 due on approval \(2026-10-20\); 75% remainder \$1,125\.00 due 2026-11-10 \(America\/Denver\)\./);
+  // Approved after the saved job day: dated by the approval, never by the job day.
+  const late = await print({ ...job, estimate: { ...job.estimate, status: 'approved', acceptedAt: '2026-12-01T18:00:00.000Z' } });
+  assert.match(late, /25% deposit due on approval \(2026-12-01\) \$375\.00 /);
+  assert.match(late, /25% deposit \$375\.00 due on approval \(2026-12-01\); 75% remainder \$1,125\.00 due 2026-11-10 \(America\/Denver\)\./);
+  // A saved schedule that names a deposit date is not the sent-quote terms' own: the earlier wording, not a made-up date.
+  assert.match(await print({ ...job, estimate: { ...job.estimate, paymentSchedule: { ...schedule, depositDueDate: '2026-10-20' } } }), /Deposit due upfront \$375\.00 /);
+});
+
 test('Print receipt opens only the server document and says so when it is off', async () => {
   const win = popup(), on = hubModule(() => Response.json({ ok: true, enabled: true }), { popups: [win] });
   assert.equal(await on.module.print(multi().id, 'receipt'), true);

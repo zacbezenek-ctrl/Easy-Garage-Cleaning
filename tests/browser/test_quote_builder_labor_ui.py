@@ -75,7 +75,7 @@ class QuoteBuilderLaborTests(unittest.TestCase):
         dialog = self.review()
         row = dialog.locator('.qb-labor')
         expect(row.locator('.qb-labor-row')).to_contain_text('3 man-hours × $40.00 = $120.00')
-        expect(row).to_contain_text('Estimate: 3 man-hours of crew time (set-up, sorting and cleaning 2 man-hours, installing shelving and storage 1 man-hour), whatever the crew size. Truck loads, special items and access charges are not counted: their own prices pay for loading, hauling and disposal. Pre-filled from the estimate.')
+        expect(row).to_contain_text('Estimate: 3 man-hours of crew time (set-up 2 man-hours, installing shelving 1 man-hour), whatever the crew size. Truck loads, special items and access charges are not counted: their own prices pay for loading, hauling and disposal. Pre-filled from the estimate.')
         expect(row).to_contain_text('Installing the shelving and storage is billed through this line.')
         expect(dialog.locator('.qd-total')).to_have_text('Quote total $1,055.70')
         self.assertEqual(self.posts[-1]['compositePricing']['labor'], {'manHours': None, 'adjusted': False, 'fullness': 'medium'})
@@ -159,8 +159,8 @@ class QuoteBuilderLaborTests(unittest.TestCase):
     def test_an_approved_quote_on_an_undated_job_is_saved_and_waits_for_the_job_date_with_one_button(self):
         # The truck load is an approved price and a junk-only quote has no Labor line (D-JUNK), so the real send preview
         # reaches the 25/75 payment dates, which need the job's date: a new quote job has none
-        # (quote_draft_payment_dates_pending).
-        self.page.goto(self.url + '/builder-harness')
+        # (quote_draft_payment_dates_pending). Its walkthrough is junk removal only (D-JUNK).
+        self.page.goto(self.url + '/builder-harness?plan=junk')
         self.page.get_by_role('button', name='Send options for review').click()
         dialog = self.dialog()
         dialog.get_by_role('button', name='One fewer: Mattress').click()
@@ -175,7 +175,7 @@ class QuoteBuilderLaborTests(unittest.TestCase):
         self.page.screenshot(path=str(RESULTS / 'quote-builder-junk-only-375.png'), full_page=True)
         dialog.get_by_role('button', name='Save draft').click()
         notice = dialog.locator('[data-held="job-date"]')
-        expect(notice).to_contain_text('Sending waits for the job date: the 25% deposit and 75% balance due dates come from the walkthrough date and the job date.')
+        expect(notice).to_contain_text('Sending waits for the job date: the 25% deposit is due when the customer approves the quote, and the 75% balance on the job day.')
         expect(notice).to_contain_text('Ask the office to book this job in Team schedule (To schedule). Then reopen this quote from the walkthrough and choose Send saved quote.')
         self.assertEqual(self.posts[-1]['action'], 'send_preview')
         expect(dialog.locator('.qd-foot button')).to_have_text(['Done'])
@@ -184,6 +184,33 @@ class QuoteBuilderLaborTests(unittest.TestCase):
         self.assertGreaterEqual(dialog.get_by_role('button', name='Done').bounding_box()['height'], 44, 'Done is a 44px touch target')
         self.assertLessEqual(dialog.evaluate('node => node.scrollWidth - node.clientWidth'), 0, 'no sideways scroll at phone width')
         self.page.screenshot(path=str(RESULTS / 'quote-builder-waits-for-job-date-375.png'), full_page=True)
+
+    def test_a_junk_only_quote_on_a_walkthrough_that_records_crew_sorting_is_saved_and_held_for_the_estimator(self):
+        # D-JUNK: two truck loads ($1,500, approved, no Labor line) on a walkthrough where the crew stages keep / donate /
+        # haul zones. The real send preview refuses it (quote_draft_junk_only_garage_work) before the payment dates.
+        self.page.goto(self.url + '/builder-harness?plan=zones')
+        self.page.get_by_role('button', name='Send options for review').click()
+        dialog = self.dialog()
+        expect(dialog.locator('.qb-total')).to_contain_text('No Labor line: junk only')
+        dialog.get_by_role('button', name='Continue to shelving').click()
+        dialog.get_by_role('button', name='Continue to extra storage').click()
+        dialog.get_by_role('button', name='Review quote').click()
+        expect(dialog.locator('.qd-total')).to_have_text('Quote total $1,500.00')
+        expect(dialog.locator('.qb-garage-work')).to_contain_text('sorting into keep / donate / haul zones and resetting what stays. The homeowner cannot sign it, and it cannot be sent, on that walkthrough.')
+        expect(dialog).to_contain_text('Every price on this quote is owner-approved, but it cannot be sent while the walkthrough records garage work it does not price (see above). You can save it as a draft.')
+        dialog.get_by_role('button', name='Save draft').click()
+        expect(dialog).to_contain_text('Sending is blocked until you edit this quote and save it again:')
+        expect(dialog.locator('.qb-reasons')).to_contain_text('the walkthrough records garage work: sorting into keep / donate / haul zones and resetting what stays. It stays saved as a draft and was not sent.')
+        expect(dialog).to_contain_text('The saved draft is kept; no owner approval is needed for this.')
+        expect(dialog.locator('.qd-foot button')).to_have_text(['Done', 'Edit quote'])
+        expect(dialog.locator('.qd-error')).to_have_count(0)
+        self.assertEqual(self.posts[-1]['action'], 'send_preview')
+        job = self.state()['jobs'][-1]
+        self.assertEqual(job['estimate']['status'], 'draft', 'saved, never sent')
+        self.assertLessEqual(dialog.evaluate('node => node.scrollWidth - node.clientWidth'), 0, 'no sideways scroll at phone width')
+        self.page.screenshot(path=str(RESULTS / 'quote-builder-junk-garage-work-375.png'), full_page=True)
+        dialog.get_by_role('button', name='Edit quote').click()
+        expect(dialog.get_by_role('button', name='Continue to shelving')).to_be_visible()
 
 
 if __name__ == '__main__':

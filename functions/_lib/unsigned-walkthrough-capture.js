@@ -4,6 +4,8 @@ import { stripCrewMoneyDeep } from './crew-money.js';
 // payment, employee IDs, schedule confirmation or arbitrary internal notes.
 const TEXT = new Set(['customerGoal', 'whyNow', 'sortMethod', 'keepItems', 'removeItems', 'exclusions', 'accessNotes', 'truckPlacement', 'crewBrief']);
 const LIST = new Set(['hazards', 'access', 'specialItems', 'finish']);
+// The Finish step's shelving and tote counts (D-JUNK: quote-model.js junkOnlyGarageWork reads them with finish).
+const COUNT = new Set(['shelfQty', 'toteQty']);
 const plain = value => value !== null && typeof value === 'object' && !Array.isArray(value);
 const invalid = () => Object.assign(new Error('Walkthrough instructions contain unsupported or invalid fields.'), { code: 'quote_draft_invalid_capture', status: 400 });
 
@@ -18,6 +20,9 @@ export function normalizeUnsignedCapture(value) {
     } else if (LIST.has(key)) {
       if (!Array.isArray(item) || item.length > 50 || item.some(row => typeof row !== 'string' || !row.trim() || row.length > 300)) throw invalid();
       output[key] = [...new Set(item.map(row => row.trim()))];
+    } else if (COUNT.has(key)) {
+      if (!Number.isInteger(item) || item < 0 || item > 999) throw invalid();
+      output[key] = item;
     } else throw invalid();
   }
   return stripCrewMoneyDeep(output);

@@ -429,4 +429,85 @@ test('the payment card words a 25/75 quote\'s deposit and job-day remainder from
   assert.equal(node('payment-due-now').textContent, 'Deposit received. $845.70 remaining, due on the job day, Tuesday, October 20, 2026.');
   context.renderPayment(view(null));
   assert.equal(node('payment-due-now').textContent, '$281.90 deposit due upfront. $845.70 remaining after your deposit, due on completion.');
+  // The Pay button and the balance line follow the same terms.
+  context.renderPayment(view(schedule));
+  assert.equal(node('pay-button').textContent, 'Pay $281.90 deposit');
+  context.renderPayment(view(null));
+  assert.equal(node('pay-button').textContent, 'Pay $281.90 upfront deposit');
+  // The balance line names the job day (or "now" once it has passed); an issued invoice's own due date wins, so the line
+  // never contradicts the "Due …" printed above it (invoice-meta).
+  const balance = { paid: 281.9, balance: 845.7, dueNow: 845.7, purpose: 'balance' }, invoice = { invoiceNumber: 'INV-SYN1', dueDate: '2099-01-13' };
+  context.renderPayment(view({ ...schedule, remainderDueDate: '2099-01-06' }, balance));
+  assert.deepEqual([node('pay-button').textContent, node('payment-due-now').textContent], ['Pay $845.70 remaining balance', '$845.70 remaining balance due on the job day, Tuesday, January 6, 2099. Your earlier payments are already applied.']);
+  context.renderPayment(view({ ...schedule, remainderDueDate: today }, balance));
+  assert.match(node('payment-due-now').textContent, /^\$845\.70 remaining balance due on the job day, \w+day, /);
+  context.renderPayment(view({ ...schedule, remainderDueDate: '2026-01-06' }, balance));
+  assert.equal(node('payment-due-now').textContent, '$845.70 remaining balance due now. Your earlier payments are already applied.');
+  context.renderPayment(view({ ...schedule, remainderDueDate: '2026-01-06' }, { ...balance, ...invoice }));
+  assert.equal(node('payment-due-now').textContent, '$845.70 remaining balance due Tuesday, January 13, 2099. Your earlier payments are already applied.');
+  context.renderPayment(view(null, balance));
+  assert.equal(node('payment-due-now').textContent, '$845.70 remaining balance due on completion. Your earlier payments are already applied.');
+  context.renderPayment(view(null, { ...balance, ...invoice }));
+  assert.equal(node('payment-due-now').textContent, '$845.70 remaining balance due Tuesday, January 13, 2099. Your earlier payments are already applied.');
+  // A voided or superseded invoice's date is not the balance's: the job day (or completion) again.
+  for (const invoiceStatus of ['void', 'superseded']) {
+    context.renderPayment(view({ ...schedule, remainderDueDate: '2099-01-06' }, { ...balance, ...invoice, invoiceStatus }));
+    assert.equal(node('payment-due-now').textContent, '$845.70 remaining balance due on the job day, Tuesday, January 6, 2099. Your earlier payments are already applied.');
+  }
+  context.renderPayment(view({ ...schedule, remainderDueDate: '2099-01-06' }, { ...balance, ...invoice, invoiceStatus: 'issued' }));
+  assert.equal(node('payment-due-now').textContent, '$845.70 remaining balance due Tuesday, January 13, 2099. Your earlier payments are already applied.');
+});
+
+// Owner decision of 2026-10-18 evening: a quote sent on SENT_25_75 (depositDueOn 'approval', no saved deposit date) says its
+// 25% deposit is due when the customer approves it, on the payment card, the Pay button and the estimate card, and is dated
+// by the approval once approved. A quote sent earlier on dated terms keeps its date.
+test('a quote sent on the approval-day terms says the deposit is due when the customer approves it, then dates it', () => {
+  const nodes = new Map(), node = id => nodes.get(id) || nodes.set(id, { ...element(id, false), dataset: {}, disabled: false, classList: { toggle() {}, add() {}, remove() {} }, replaceChildren() {} }).get(id);
+  const noop = () => {}, context = vm.createContext({ $: node, setText: (id, value) => { node(id).textContent = value; }, money: value => `$${Number(value).toFixed(2)}`, Intl, Date,
+    renderPortalBase: noop, estimateLine: noop, renderReview: noop, renderMessages: noop, renderGallery: noop, renderStorage: noop, renderTip: noop, renderExperience: noop, renderMoneyDocuments: noop, focusPayFromLink: noop });
+  vm.runInContext(portalScript(html, ['function dateLabel(', 'function renderPayment(', 'render=data=>{renderPortalBase(data);']), context);
+  const today = new Intl.DateTimeFormat('en-CA', { timeZone: 'America/Denver', year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date());
+  const schedule = { depositDueDate: null, depositDueOn: 'approval', depositCents: 28190, remainderCents: 84570, remainderDueDate: '2099-01-06', timeZone: 'America/Denver', policyVersion: '2026-10-19-deposit25-on-approval' };
+  const view = (status, s) => ({ estimate: { status, revision: 1, amount: 1127.6, depositRequired: 281.9, lineItems: [], paymentSchedule: s, terms: 'terms' }, appointment: { status: 'scheduled' },
+    payment: { total: 1127.6, paid: 0, balance: 1127.6, dueNow: 281.9, purpose: 'deposit' } });
+  context.renderPayment(view('sent', schedule));
+  assert.equal(node('payment-due-now').textContent, '$281.90 deposit due when you approve your estimate (25%). $845.70 (75%) due on the job day, Tuesday, January 6, 2099.');
+  assert.deepEqual([node('pay-button').textContent, node('pay-button').disabled, node('pay-button').title], ['Pay $281.90 deposit', true, 'Approve the estimate before paying']);
+  context.render(view('sent', schedule));
+  assert.equal(node('estimate-deposit').textContent, '25% deposit due when you approve');
+  // Approved today: the deposit is due today, payable at once; the estimate card names the approval's day.
+  const approved = { ...schedule, depositDueDate: today };
+  context.renderPayment(view('approved', approved));
+  assert.equal(node('payment-due-now').textContent, '$281.90 deposit due today (25%). $845.70 (75%) due on the job day, Tuesday, January 6, 2099.');
+  assert.deepEqual([node('pay-button').textContent, node('pay-button').disabled], ['Pay $281.90 deposit', false]);
+  context.render(view('approved', approved));
+  assert.match(node('estimate-deposit').textContent, /^25% deposit due on approval, \w+day, \w+ \d+, \d{4}$/);
+  context.renderPayment(view('approved', { ...schedule, depositDueDate: '2026-01-05' }));
+  assert.match(node('payment-due-now').textContent, /^\$281\.90 deposit due now \(25%\)\./, 'approved on an earlier day: due now');
+  // A quote sent earlier on dated terms (FINAL_25_75) keeps its own date on the estimate card.
+  context.render(view('sent', { ...schedule, depositDueOn: undefined, depositDueDate: '2099-01-02' }));
+  assert.equal(node('estimate-deposit').textContent, '25% deposit due Friday, January 2, 2099');
+});
+
+// Review: a job the homeowner signed in person and held for the owner's prices is withheld like an unsent quote, but it is
+// booked: the team is confirming its prices and nothing is due until it sends the updated total (releasing it asks for no
+// new approval), so the portal never promises a version "for your approval". An unsent quote keeps that wording, and a
+// later render resets it.
+test('a withheld estimate the homeowner already signed says the job is booked and prices are being confirmed, not sent for approval', () => {
+  const nodes = new Map(), node = id => nodes.get(id) || nodes.set(id, element(id, true)).get(id);
+  const rule = { className: 'payment-rule closeout-rule due', textContent: 'Payment is required before the crew closes this job.' };
+  const context = vm.createContext({ $: id => { const n = node(id); if (id === 'pay-button') n.closest = () => ({ querySelector: () => rule }); return n; }, renderPortalReleased: () => {} });
+  vm.runInContext(portalScript(html, ['render=data=>{let rendered=false;']), context);
+  const withheld = extra => ({ estimate: { status: 'being_updated', withheld: true, amount: 0, approvable: false, ...extra }, payment: {} });
+  context.render(withheld({ heldSigned: true }));
+  assert.deepEqual([node('approval-unavailable').hidden, node('approval-unavailable').textContent, node('payment-due-now').textContent, rule.textContent], [false,
+    'Your job is booked. Our team is confirming the prices on your signed estimate and will send you the updated total.',
+    'Nothing is due until our team sends you the updated total.', 'Your job is booked. The team is confirming prices and will send you the updated total.']);
+  assert.doesNotMatch([node('approval-unavailable').textContent, node('payment-due-now').textContent, rule.textContent].join(' '), /for your approval|to review/);
+  context.render(withheld({}));
+  assert.deepEqual([node('approval-unavailable').textContent, node('payment-due-now').textContent, rule.textContent], ['This estimate is being updated. The team will share the current version for your approval.',
+    'Nothing is due until we send you the updated estimate to review.', 'Your estimate is being updated. The team will send it to you for review.']);
+  context.render(withheld({ heldSigned: true }));
+  context.render({ estimate: { status: 'sent', amount: 1500, approvable: false }, payment: {} });
+  assert.equal(node('approval-unavailable').textContent, 'This estimate is being updated. The team will share the current version for your approval.', 'the default wording returns once nothing is withheld');
 });

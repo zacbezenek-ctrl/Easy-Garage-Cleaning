@@ -17,10 +17,13 @@ const TYPES = { '.js': 'application/javascript', '.mjs': 'application/javascript
 // The walkthrough payload as crew/gameplan.html payload() builds it: one truck load and a mattress in a medium-full
 // garage, junk only (no Labor line, D-JUNK); with a shelving unit the server estimates 2 x 60 + 60 = 180 person-minutes
 // (3 man-hours) whatever the crew: the truck load and the mattress add none and, with no cleaning base, neither does the
-// fullness.
+// fullness. /builder-harness?plan=junk is a junk-removal-only walkthrough (Everything goes, no finish options), on which a
+// junk-only quote is sent; ?plan=zones records crew sorting on two truck loads, on which it never is (D-JUNK).
 const PLAN = { client: client(1), quote: { title: 'EGC Garage Service', estimated_duration_min: 240, line_items: [] },
-  scope: { garages: '2', loads: '1', fullness: 'medium', special_items: ['Mattress'], access: [], finish: ['cleanout', 'shelving'], hazards: [], finish_details: { shelf_type: 'metal', shelf_qty: 2, tote_qty: 0 } }, raw: {}, logistics: { crew_size: 2 } };
-const HARNESS = `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>Quote builder harness</title>
+  scope: { garages: '2', loads: '1', fullness: 'medium', sort_method: '', special_items: ['Mattress'], access: [], finish: ['cleanout', 'shelving'], hazards: [], finish_details: { shelf_type: 'metal', shelf_qty: 2, tote_qty: 0 } }, raw: {}, logistics: { crew_size: 2 } };
+const PLANS = { default: PLAN, junk: { ...PLAN, scope: { ...PLAN.scope, sort_method: 'remove_all', finish: ['cleanout'], finish_details: { ...PLAN.scope.finish_details, shelf_qty: 0 } } },
+  zones: { ...PLAN, scope: { ...PLAN.scope, loads: '2', sort_method: 'zones', special_items: [], finish: ['cleanout'], finish_details: { ...PLAN.scope.finish_details, shelf_qty: 0 } } } };
+const HARNESS = PLAN => `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>Quote builder harness</title>
 <link rel="stylesheet" href="/crew/crew-brand.css"><link rel="stylesheet" href="/crew/quote-draft.css"><style>body{margin:0;background:#f1f0ec;font-family:system-ui,sans-serif}main{padding:16px}</style></head>
 <body><main><button id="open" type="button" style="min-height:48px">Send options for review</button></main>
 <script>window.EGCWalkthroughPricing={quoteBuilder:()=>true};</script><script src="/crew/quote-draft.js"></script>
@@ -48,7 +51,7 @@ const server = http.createServer(async (request, response) => {
       const answer = request.method === 'POST' ? await handler.post({ request: req, env: ON_ENV }) : await handler.get({ request: req, env: ON_ENV });
       response.writeHead(answer.status, Object.fromEntries(answer.headers)); response.end(Buffer.from(await answer.arrayBuffer())); return;
     }
-    if (url.pathname === '/builder-harness') { response.writeHead(200, { 'Content-Type': 'text/html' }); response.end(HARNESS); return; }
+    if (url.pathname === '/builder-harness') { response.writeHead(200, { 'Content-Type': 'text/html' }); response.end(HARNESS(PLANS[url.searchParams.get('plan') || 'default'])); return; }
     const file = normalize(join(ROOT, decodeURIComponent(url.pathname)));
     if (request.method !== 'GET' || !file.startsWith(ROOT) || relative(ROOT, file).split(sep).some(part => part.startsWith('.')) || !TYPES[extname(file)]) { response.writeHead(404); response.end(); return; }
     const data = await readFile(file);

@@ -87,7 +87,7 @@ A proposal may be formatted for internal review once canonical identity, custome
 
 ## Confirmed 25% / 75% mapping for both estimator paths
 
-For new standard quotes, **D2D and Facebook-direct estimator paths use the same canonical `FINAL_25_75` policy** from `functions/_lib/quote-payment-policy.js`; the lead channel does not select the percentage. The existing `/api/quote-draft` save route already supplies this policy for new Hub quote jobs. The native form must not accept editable percentage or due-rule values as authority.
+For new standard quotes, **D2D and Facebook-direct estimator paths use the same canonical sent-quote policy** (`SENT_25_75` from 2026-10-19: deposit due on approval; this mapping was written for `FINAL_25_75`, which quotes sent earlier keep, and the export blocks `SENT_25_75` until its undated deposit has a binding) from `functions/_lib/quote-payment-policy.js`; the lead channel does not select the percentage. The existing `/api/quote-draft` save route already supplies this policy for new Hub quote jobs. The native form must not accept editable percentage or due-rule values as authority.
 
 The total used is the final estimator-approved **saved canonical quote total**, validated against the selected service lines. A newly submitted total is an intake proposal until the authorized estimator saves/reviews it; it is neither customer contract acceptance nor money collected.
 
@@ -102,7 +102,7 @@ The total used is the final estimator-approved **saved canonical quote total**, 
 | Due-date time zone | `America/Denver`, preserved in the document payload and labels |
 | Policy identity | `FINAL_25_75.version` (`2026-10-14-deposit25-v1`) for a new standard quote; persist the actual saved policy/version |
 
-Use `quotePaymentSchedule()` and `quotePaymentDates()` to prepare a new standard schedule from canonical dates. If the estimate already has an issued `paymentSchedule`, preserve it; a later schedule change requires explicit amendment review through the existing quote flow. Do not recalculate old agreements from current dates. A missing verified walkthrough date, job date, approved exception or inconsistent amount blocks complete agreement rendering.
+Use `quotePaymentSchedule()` and `quotePaymentDates()` to prepare a new standard schedule from canonical dates. If the estimate already has an issued `paymentSchedule`, preserve it; a later schedule change requires explicit amendment review through the existing quote flow. The exception is a quote sent on `SENT_25_75` and not yet approved: it has no deposit date to protect, so a revision sent after the job is rescheduled takes the new job day (the stored schedule is replaced only by that send). Do not recalculate old agreements from current dates. A missing verified walkthrough date, job date, approved exception or inconsistent amount blocks complete agreement rendering.
 
 Exact rounding examples under the standard policy:
 

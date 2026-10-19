@@ -5,6 +5,7 @@ import { readFileSync } from 'node:fs';
 import { createDocument, storage as memoryStorage } from './helpers/hub-dom.mjs';
 import { builderMenu, compositeApproval, menuItemIdentity, priceCompositeQuote } from '../functions/_lib/composite-quote.js';
 import { walkthroughPricing, walkthroughServiceItems } from '../functions/_lib/pricing-config.js';
+import { junkOnlyGarageWork } from '../functions/_lib/quote-model.js';
 
 // The estimator's walkthrough quote dialog (crew/quote-draft.js) driven through its real DOM code against a fake Hub
 // that prices with the server's composite-quote module.
@@ -56,7 +57,7 @@ function harness({ builder = true, hint = builder, stale = false, stall = false,
     if (url === '/api/quote-draft' && body.action === 'save') {
       const { storedLineItems, ...priced } = priceCompositeQuote(server.state, body.draft.composite_pricing, { complete: true });
       assert.deepEqual(body.draft.line_items, structuredClone(priced.lineItems), 'the saved lines are the server preview');
-      const job = { id: 'job-1', revision: 'r1', estimateRevision: 1, status: 'draft', sourceWalkthroughId: body.sourceWalkthroughId, priced };
+      const job = { id: 'job-1', revision: 'r1', estimateRevision: 1, status: 'draft', sourceWalkthroughId: body.sourceWalkthroughId, priced, capture: body.draft.walkthrough_capture };
       server.jobs.set(job.id, job);
       return reply({ ok: true, requestId: body.requestId, job: view(job), warnings: [] });
     }
@@ -65,6 +66,9 @@ function harness({ builder = true, hint = builder, stale = false, stall = false,
       if (body.expectedRevision !== job.revision) return reply({ ok: false, code: 'quote_draft_revision_conflict', error: 'This quote changed.' }, 409);
       if (!job.priced.compositePricing && builder) return reply({ ok: false, code: 'quote_draft_builder_required', error: 'With the quote builder on, a walkthrough quote is sent only after it is built in the quote builder.',
         details: { unapproved: [{ id: null, name: 'Walkthrough-priced quote', unitCents: null, reason: 'Its lines were priced from the walkthrough tables, which the owner has not approved for the quote builder.' }] } }, 409);
+      // D-JUNK: the server's rule on the saved walkthrough capture (quote-draft.js compositeSendable), before the approvals.
+      const work = job.priced.compositePricing ? junkOnlyGarageWork({ quoteDraft: { breakdown: job.priced.breakdown }, jobInstructions: job.capture }) : [];
+      if (work.length) return reply({ ok: false, code: 'quote_draft_junk_only_garage_work', error: `This junk-only quote prices the hauling only, but the walkthrough records garage work: ${work.join(', ')}. It stays saved as a draft and was not sent.`, details: { garageWork: work } }, 409);
       const approval = job.priced.compositePricing ? compositeApproval(job.priced.breakdown, server.state) : { ready: true };
       if (!approval.ready) return reply({ ok: false, code: 'quote_draft_composite_prices_unapproved', error: 'This quote has prices the owner has not approved.', details: { unapproved: approval.blocked } }, 409);
       if (datesPending && !(job.date && job.sourceWalkthroughId)) return reply({ ok: false, code: 'quote_draft_payment_dates_pending', error: 'Verified walkthrough/job dates are needed to resolve payment dates.' }, 409);
@@ -122,7 +126,7 @@ test('the walkthrough quote opens the guided builder: removal, shelving, extra s
   // The estimator sees the man-hours and the rate (staff); the customer's line will read "Labor" and its amount.
   assert.match(h.text(), /Labor · \$120\.00/);
   assert.match(h.text(), /3 man-hours × \$40\.00 = \$120\.00 Approved rate/);
-  assert.match(h.text(), /Estimate: 3 man-hours of crew time \(set-up, sorting and cleaning 2 man-hours, installing shelving and storage 1 man-hour\), whatever the crew size\. Truck loads, special items and access charges are not counted: their own prices pay for loading, hauling and disposal\. Pre-filled from the estimate\. Installing the shelving and storage is billed through this line\./);
+  assert.match(h.text(), /Estimate: 3 man-hours of crew time \(set-up 2 man-hours, installing shelving 1 man-hour\), whatever the crew size\. Truck loads, special items and access charges are not counted: their own prices pay for loading, hauling and disposal\. Pre-filled from the estimate\. Installing the shelving and storage is billed through this line\./);
   assert.ok(h.button('Adjust'));
   assert.equal(h.button('Reset to estimate (3 man-hours)'), undefined, 'nothing to reset while the pre-fill is kept');
   assert.match(h.text(), /Quote total \$1,055\.70/);
@@ -190,6 +194,28 @@ test('editing a saved builder quote starts from its saved selection, not the wal
   h.button('Edit quote').click();
   assert.match(h.text(), /Running total\$1,055\.70/, 'the saved shelving and labor are part of the selection again');
   assert.ok(h.button('Saved quote'), 'the saved quote stays one step back');
+});
+
+// D-JUNK: the labor estimate's help text names only the parts the server's estimate counted (composite-quote.js laborEstimate).
+test('the labor estimate names only the work it counted: set-up always, sorting with a cleaning base, cleaning with an add-on, the goods it installs', async () => {
+  const tote = menuDoc.products.find(item => item.group === 'bins-totes' && item.section === 'storage');
+  const review = async ({ pick = [], shelving = [], storage = [] } = {}) => {
+    const h = harness();
+    h.open(); await flush();
+    for (const name of pick) h.dialog().querySelectorAll('label').find(node => node.textContent.startsWith(name)).querySelector('input').dispatchEvent({ type: 'change', target: { checked: true } });
+    h.button('Continue to shelving').click(); await flush();
+    for (const item of shelving) h.button(`Add ${item.name}`).click();
+    h.button('Continue to extra storage').click(); await flush();
+    for (const item of storage) h.button(`Add ${item.name}`).click();
+    h.button('Review quote').click(); await flush();
+    return h.dialog().querySelector('.qb-labor').textContent.match(/of crew time \(([^)]*)\)/)?.[1];
+  };
+  // A truck load and shelving (Jordan's quote): only the set-up counted, not sorting or cleaning.
+  assert.equal(await review({ shelving: [shelf] }), 'set-up 2 man-hours, installing shelving 1 man-hour');
+  assert.equal(await review({ pick: ['Two-car garage base'] }), 'set-up and sorting 3 man-hours');
+  assert.equal(await review({ pick: ['Two-car garage base', 'Deep clean'], shelving: [shelf], storage: [tote] }), 'set-up, sorting and cleaning 6 man-hours, installing shelving and storage 1.5 man-hours');
+  // Mouse trapping has no minutes in the walkthrough time model: with it, the cleaning is not named.
+  assert.equal(await review({ pick: ['Mouse trapping'], storage: [tote] }), 'set-up 2 man-hours, installing storage 0.5 man-hours');
 });
 
 test('a refused step stays put with the server reason; rules the server enforces are also shown on the step', async () => {
@@ -506,14 +532,17 @@ test('a junk-only quote is reviewed, saved and reopened with no Labor line: the 
   assert.match(h.text(), /Quote total \$820\.00/);
   assert.doesNotMatch(h.text(), /man-hour/);
   // The walkthrough sold three shelving units: a junk-only quote prices none of them, and the homeowner cannot sign it there.
-  assert.match(h.text(), /The walkthrough records garage work this junk-only quote does not price: 3 shelving units\. The homeowner cannot sign it on that walkthrough\./);
+  assert.match(h.text(), /The walkthrough records garage work this junk-only quote does not price: 3 shelving units\. The homeowner cannot sign it, and it cannot be sent, on that walkthrough\./);
   assert.equal(h.button('Save draft').hasAttribute('disabled'), false, 'no man-hours to apply: it can be saved');
   h.button('Save draft').click(); await flush();
   const save = h.calls.find(call => call.body?.action === 'save');
   assert.deepEqual([save.body.draft.line_items.map(line => line.id), 'labor' in save.body.draft.composite_pricing], [['removal-junk-full', 'removal-special'], false]);
   assert.doesNotMatch(save.body.draft.scope, /Labor/);
   assert.equal(save.body.draft.scope, 'Junk removal only: Full truck load; Mattress. Loading, hauling and disposal; no sorting, organizing or reset.');
-  assert.match(h.text(), /Sending is blocked until the owner approves this price/, 'only the mattress\'s draft price waits');
+  // The walkthrough's shelving holds it before the mattress's draft price does: that is the estimator's to fix now.
+  assert.match(h.text(), /Sending is blocked until you edit this quote and save it again:.*the walkthrough records garage work: 3 shelving units\./);
+  assert.match(h.text(), /The saved draft is kept; no owner approval is needed for this\./);
+  assert.deepEqual(h.footer(), ['Done', 'Edit quote']);
   h.button('Done').click();
   h.open(memoryStorage()); await flush();
   assert.match(h.text(), /Junk-only quote: the truck-load price covers the crew’s time, so it has no Labor line\.The walkthrough records garage work this junk-only quote does not price: 3 shelving units\./);
@@ -523,6 +552,48 @@ test('a junk-only quote is reviewed, saved and reopened with no Labor line: the 
   h.button('Continue to shelving').click(); await flush();
   h.button(`Add ${shelf.name}`).click();
   assert.match(h.text(), /Labor \$120\.00 \(3 man-hours\)/);
+});
+
+// D-JUNK: a junk-only quote is never sent on a walkthrough that records garage work (the server refuses the send preview,
+// quote_draft_junk_only_garage_work): the review says so, the saved draft is held for the estimator to fix, and once the
+// walkthrough says junk removal only and the quote is saved again, it is sent.
+test('a junk-only quote on a walkthrough that records crew sorting is saved but held; corrected and saved again, it is sent', async () => {
+  let walkthrough = { ...plan(), scope: { ...plan().scope, loads: '2', special_items: [], sort_method: 'zones', finish: ['cleanout'], finish_details: { ...plan().scope.finish_details, shelf_qty: 0 } } };
+  const h = harness({ walkthrough: () => walkthrough });
+  h.open(); await flush();
+  assert.match(h.text(), /Running total\$1,500\.00/);
+  h.button('Continue to shelving').click(); await flush();
+  h.button('Continue to extra storage').click(); await flush();
+  h.button('Review quote').click(); await flush();
+  assert.match(h.text(), /records garage work this junk-only quote does not price: sorting into keep \/ donate \/ haul zones and resetting what stays\. The homeowner cannot sign it, and it cannot be sent, on that walkthrough\./);
+  assert.match(h.text(), /Every price on this quote is owner-approved, but it cannot be sent while the walkthrough records garage work it does not price \(see above\)\. You can save it as a draft\./);
+  assert.doesNotMatch(h.text(), /so it can be sent after you save it/);
+  h.button('Save draft').click(); await flush();
+  const first = h.calls.find(call => call.body?.action === 'save');
+  assert.deepEqual([first.body.draft.walkthrough_capture.sortMethod, first.body.draft.walkthrough_capture.shelfQty, first.body.draft.walkthrough_capture.toteQty], ['zones', 0, 0], 'the capture carries the sorting plan and the Finish counts');
+  assert.match(h.text(), /Sending is blocked until you edit this quote and save it again:.*sorting into keep \/ donate \/ haul zones and resetting what stays/);
+  assert.match(h.text(), /It stays saved as a draft and was not sent\.The saved draft is kept; no owner approval is needed for this\./);
+  assert.doesNotMatch(h.text(), /check the Labor line/);
+  assert.deepEqual(h.footer(), ['Done', 'Edit quote']);
+  assert.equal(h.server.sent.length, 0);
+  h.button('Done').click();
+  // The homeowner wants junk removal only: the walkthrough says Everything goes. The saved draft still carries the old
+  // capture, so Send saved quote is held the same way until the quote is saved again.
+  walkthrough = { ...walkthrough, scope: { ...walkthrough.scope, sort_method: 'remove_all' } };
+  h.open(memoryStorage()); await flush();
+  assert.doesNotMatch(h.text(), /records garage work/);
+  h.button('Send saved quote').click(); await flush();
+  assert.match(h.text(), /Sending is blocked until you edit this quote and save it again:/);
+  h.button('Edit quote').click();
+  h.button('Continue to shelving').click(); await flush();
+  h.button('Continue to extra storage').click(); await flush();
+  h.button('Review quote').click(); await flush();
+  assert.match(h.text(), /Every price on this quote is owner-approved, so it can be sent after you save it\./);
+  h.button('Save draft').click(); await flush();
+  assert.equal(h.calls.filter(call => call.body?.action === 'save').at(-1).body.draft.walkthrough_capture.sortMethod, 'remove_all');
+  assert.match(h.text(), /Send EST-JOB1 revision 1 to Synthetic Customer/);
+  h.button('Mark as sent').click(); await flush();
+  assert.equal(h.server.sent.length, 1);
 });
 
 // D-JUNK / D-LABOR-TEXT: a quote saved under the morning's Labor rules (its estimate counted truck-load time, its line
@@ -557,11 +628,12 @@ test('a quote saved under the earlier Labor rules says so, is held for a re-save
   }
 });
 
-// A new quote's 25% deposit and 75% balance are due on dates worked out from its walkthrough date and its job date
-// (quote-payment-policy.js FINAL_25_75), and a new quote job has no date, so its send preview is refused
+// A sent quote's 25% deposit is due when the customer approves it and its 75% balance on the job day
+// (quote-payment-policy.js SENT_25_75), and a new quote job has no date, so its send preview is refused
 // (quote_draft_payment_dates_pending). The quote stays saved and the dialog says what happens next; saving it again never
 // adds a date, so Save draft is never the next step.
-const truckOnly = () => ({ ...plan(), scope: { ...plan().scope, special_items: [] } });
+// A junk-removal-only walkthrough (a truck load, no special items, no finish options): a junk-only quote is sent on it (D-JUNK).
+const truckOnly = () => ({ ...plan(), scope: { ...plan().scope, special_items: [], finish: ['cleanout'], finish_details: { ...plan().scope.finish_details, shelf_qty: 0 } } });
 const toSavedTruck = async h => {
   h.open(); await flush();
   h.button('Continue to shelving').click(); await flush();
@@ -580,7 +652,7 @@ test('a quote from a Hub walkthrough is saved and waits for its job date; Send s
   const h = harness({ walkthrough: truckOnly, datesPending: true });
   await toSavedTruck(h);
   assert.equal(h.calls.at(-1).body.action, 'send_preview');
-  assert.match(h.text(), /Draft EST-JOB1 revision 1 saved\.Sending waits for the job date: the 25% deposit and 75% balance due dates come from the walkthrough date and the job date\.Ask the office to book this job in Team schedule \(To schedule\)\. Then reopen this quote from the walkthrough and choose Send saved quote\./);
+  assert.match(h.text(), /Draft EST-JOB1 revision 1 saved\.Sending waits for the job date: the 25% deposit is due when the customer approves the quote, and the 75% balance on the job day\.Ask the office to book this job in Team schedule \(To schedule\)\. Then reopen this quote from the walkthrough and choose Send saved quote\./);
   waitsWithoutDeadEnd(h);
   h.button('Done').click();
   // Reopened before the job is booked: Send saved quote shows the same wait, never the edit-and-save advice.
@@ -603,11 +675,11 @@ test('a quote from a manual walkthrough is saved but cannot be sent for review: 
   const h = harness({ walkthrough: truckOnly, datesPending: true, walkthroughId: '' });
   await toSavedTruck(h);
   assert.equal(h.calls.find(call => call.body?.action === 'save').body.sourceWalkthroughId, '', 'a manual walkthrough has no Hub walkthrough');
-  assert.match(h.text(), /Draft EST-JOB1 revision 1 saved\.A quote from a manual walkthrough can’t be sent for review: its 25% deposit and 75% balance due dates need a walkthrough booked in the Hub\.Get the homeowner’s signature on the walkthrough’s Review step and choose Save brief \+ schedule, or ask the office to book a walkthrough for this customer in the Hub and quote from that walkthrough\./);
-  assert.doesNotMatch(h.text(), /Team schedule|Send saved quote/, 'booking this job gives it no walkthrough date');
+  assert.match(h.text(), /Draft EST-JOB1 revision 1 saved\.A quote from a manual walkthrough can’t be sent for review: a quote is sent only from a walkthrough booked in the Hub\.Get the homeowner’s signature on the walkthrough’s Review step and choose Save brief \+ schedule, or ask the office to book a walkthrough for this customer in the Hub and quote from that walkthrough\./);
+  assert.doesNotMatch(h.text(), /Team schedule|Send saved quote/, 'booking this job does not make it a Hub walkthrough quote');
   waitsWithoutDeadEnd(h);
   h.button('Done').click();
-  // Even with a job date there is no walkthrough date: Send saved quote says the same.
+  // Even with a job date it has no Hub walkthrough: Send saved quote says the same.
   h.server.jobs.get('job-1').date = '2026-10-21';
   h.open(memoryStorage()); await flush();
   h.button('Send saved quote').click(); await flush();
@@ -620,7 +692,7 @@ test('with the builder off, a walkthrough quote waiting for its job date says to
   const h = harness({ builder: false, datesPending: true });
   h.open(); await flush();
   h.button('Save draft').click(); await flush();
-  assert.match(h.text(), /Draft EST-JOB1 revision 1 saved\.Sending waits for the job date: the 25% deposit and 75% balance due dates come from the walkthrough date and the job date\.Ask the office to book this job in Team schedule \(To schedule\)\. Then open Send options for review on the walkthrough again to send it\./);
+  assert.match(h.text(), /Draft EST-JOB1 revision 1 saved\.Sending waits for the job date: the 25% deposit is due when the customer approves the quote, and the 75% balance on the job day\.Ask the office to book this job in Team schedule \(To schedule\)\. Then open Send options for review on the walkthrough again to send it\./);
   waitsWithoutDeadEnd(h);
 });
 
@@ -633,7 +705,7 @@ test('a catalog quote held for its payment dates says it needs a Hub-booked walk
     draft: validUntil => ({ client: { name: 'Synthetic Customer', phone: '+19705550100', email: '', address: '100 Fixture Lane', highlevel_contact_id: '' }, title: 'Catalog quote', scope: 'Included: shelving.', line_items: [{ id: 'catalog-1', kind: 'product', name: 'Shelving unit', quantity: 1, unitCents: 50000, totalCents: 50000 }], valid_until: validUntil }) });
   await flush();
   h.button('Save draft').click(); await flush();
-  assert.match(h.text(), /Draft EST-JOB9 revision 1 saved\.A catalog quote can’t be sent for review: its 25% deposit and 75% balance due dates need a walkthrough booked in the Hub and a job date\.Quote this customer from a walkthrough booked in the Hub instead\./);
+  assert.match(h.text(), /Draft EST-JOB9 revision 1 saved\.A catalog quote can’t be sent for review: a quote is sent only from a walkthrough booked in the Hub, once the job date is booked\.Quote this customer from a walkthrough booked in the Hub instead\./);
   assert.doesNotMatch(h.text(), /Save brief \+ schedule|Team schedule/);
   waitsWithoutDeadEnd(h);
 });

@@ -37,7 +37,10 @@ const draft = (change = () => {}) => { const value = { client: { name: 'Syntheti
 
 // The Hub side: an in-memory dispatch store that the quote-draft library writes.
 function hub() {
-  const rows = new Map([['customers/c1', { id: 'c1', revision: 'c1r', name: 'Synthetic Customer', phone: '9705550100', email: 'test@example.invalid', address: '100 Fixture Lane', highlevelContactId: 'provider1' }]]);
+  // The walkthrough the quote is drafted from: every quote is sent on SENT_25_75 (a draft saved with no terms before
+  // 2026-10-14 included), which is sent only from a walkthrough booked in the Hub, once the job date is booked.
+  const rows = new Map([['customers/c1', { id: 'c1', revision: 'c1r', name: 'Synthetic Customer', phone: '9705550100', email: 'test@example.invalid', address: '100 Fixture Lane', highlevelContactId: 'provider1' }],
+    ['jobs/w1', { id: 'w1', revision: 'w1r', type: 'walkthrough', status: 'completed', pipelineStatus: 'completed', completedAt: '2026-09-22T17:00:00.000Z', customerId: 'c1', customer: 'Synthetic Customer', highlevelContactId: 'provider1', date: '2026-09-22', time: '11:00', endTime: '12:00' }]]);
   let n = 0;
   const list = prefix => [...rows].filter(([key]) => key.startsWith(prefix)).map(([, value]) => structuredClone(value));
   const store = {
@@ -49,8 +52,9 @@ function hub() {
     },
   };
   const job = id => structuredClone(rows.get(`jobs/${id}`));
-  const save = async (change, jobId) => (await saveQuoteDraft(store, owner, { requestId: randomUUID(), customerId: 'c1', ...(jobId ? { jobId, expectedRevision: job(jobId).revision } : {}), draft: draft(change) }, NOW, { env: HUB })).job.id;
+  const save = async (change, jobId) => (await saveQuoteDraft(store, owner, { requestId: randomUUID(), customerId: 'c1', sourceWalkthroughId: 'w1', ...(jobId ? { jobId, expectedRevision: job(jobId).revision } : { sourceRevision: rows.get('jobs/w1').revision }), draft: draft(change) }, NOW, { env: HUB })).job.id;
   const send = async id => {
+    if (!rows.get(`jobs/${id}`).date) rows.get(`jobs/${id}`).date = '2026-10-02';
     const preview = await previewQuoteSend(store, owner, { jobId: id, expectedRevision: job(id).revision }, NOW, { env: HUB });
     return sendQuoteDraft(store, owner, { requestId: randomUUID(), jobId: id, expectedRevision: job(id).revision, confirmToken: preview.confirmToken }, LATER, { env: HUB });
   };
@@ -110,7 +114,7 @@ test('a sent quote is approvable; an unsent revision of it is withheld until tha
     const view = await portalView(handlers, cookie, testEnv), text = JSON.stringify(view.body);
     assert.deepEqual(withheldShape(view.body.estimate), ['being_updated', true, false, 0, 0, 0, '', ''], JSON.stringify(testEnv));
     assert.equal(view.body.estimate.revision, 2);
-    for (const unsent of ['938', '469', 'Garage cleanout and reset']) assert.equal(leaks(text, unsent), false, unsent);
+    for (const unsent of ['938', '234.5', 'Garage cleanout and reset']) assert.equal(leaks(text, unsent), false, unsent);
     assert.deepEqual(view.body.moneyDocuments, []);
     // The page from before the revision, and one naming the unsent revision and total, are both refused.
     for (const body of [approve(sent), approve(sent, { estimate_revision: 2, amount_cents: 93800 })]) {
@@ -234,7 +238,7 @@ test('while a revision is withheld, a customer who paid keeps a printable receip
   assert.match(html, /<span>Total paid<\/span><strong>\$1,798\.00<\/strong>/);
   assert.match(html, /href="https:\/\/pay\.stripe\.com\/receipts\/synthetic-paid"/);
   assert.match(html, /Your estimate is being updated/);
-  for (const unsent of ['$938', '$469', 'Service total', 'Balance', 'Overpayment', 'Paid in full', 'Garage cleanout and reset', 'Wood shelving unit', 'class="pay"']) assert.equal(html.includes(unsent), false, unsent);
+  for (const unsent of ['$938', '$234.50', 'Service total', 'Balance', 'Overpayment', 'Paid in full', 'Garage cleanout and reset', 'Wood shelving unit', 'class="pay"']) assert.equal(html.includes(unsent), false, unsent);
   for (const kind of ['estimate', 'invoice']) {
     assert.equal((await open(kind)).status, 404, kind);
     assert.throws(() => moneyDocumentModel(job, { kind, now: VIEWED }), error => error.code === 'money_document_unavailable', kind);
@@ -248,11 +252,11 @@ test('while a revision is withheld, a customer who paid keeps a printable receip
 test('a payment verified while a revision is withheld is recorded, and its reply never states the unsent balance', async t => {
   const h = hub(), id = await h.save(); await h.send(id);
   const world = checkoutWorld(t, { [id]: h.job(id) }), handlers = portalHandlers(VIEWED), cookie = await portalCookie(id);
-  // The customer approves the sent $1,798 and opens its $899 deposit checkout, then pays it on Stripe.
+  // The customer approves the sent $1,798 and opens its $449.50 deposit checkout (25%, due on approval), then pays it on Stripe.
   const shown = (await portalView(handlers, cookie, PAY)).body.estimate;
   assert.equal((await portalPost(handlers, cookie, approve(shown), PAY)).status, 200);
   const opened = await portalPost(handlers, cookie, { action: 'create_payment', request_id: 'pay-1' }, PAY);
-  assert.deepEqual([opened.status, opened.body.amount, opened.body.purpose], [200, 899, 'deposit']);
+  assert.deepEqual([opened.status, opened.body.amount, opened.body.purpose], [200, 449.5, 'deposit']);
   // (merge) Money is recorded only from a session read with its charge expanded (payment_intent.latest_charge).
   Object.assign(world.sessions.get('cs_test_1'), { status: 'complete', payment_status: 'paid', payment_intent: { id: 'pi_synthetic_deposit', latest_charge: { id: 'ch_synthetic_deposit', receipt_url: 'https://pay.stripe.com/receipts/synthetic-deposit' } } });
   // Before the payment is verified, the author saves a $938 revision and does not send it.
@@ -262,17 +266,17 @@ test('a payment verified while a revision is withheld is recorded, and its reply
   // create_payment finds the paid checkout and records it: confirmed, with no balance against the unsent $938.
   const again = await portalPost(handlers, cookie, { action: 'create_payment', request_id: 'pay-2' }, PAY);
   assert.equal(again.status, 200, JSON.stringify(again.body));
-  assert.deepEqual([again.body.alreadyPaid, again.body.amountPaid, again.body.balanceWithheld, 'balance' in again.body], [true, 899, true, false]);
-  assert.deepEqual([world.job(id).payment.amount, world.job(id).payment.verified, world.ledger(id).status], [899, true, 'settled'], 'the payment is recorded in full');
+  assert.deepEqual([again.body.alreadyPaid, again.body.amountPaid, again.body.balanceWithheld, 'balance' in again.body], [true, 449.5, true, false]);
+  assert.deepEqual([world.job(id).payment.amount, world.job(id).payment.verified, world.ledger(id).status], [449.5, true, 'settled'], 'the payment is recorded in full');
   // The browser return verifies the same session: still confirmed without a balance.
   const verified = await portalPost(handlers, cookie, { action: 'verify_payment', session_id: 'cs_test_1' }, PAY);
-  assert.deepEqual([verified.status, verified.body.paid, verified.body.duplicate, verified.body.amountPaid, 'balance' in verified.body], [200, true, true, 899, false]);
-  assert.equal(JSON.stringify([again.body, verified.body]).includes('39'), false, 'the $39 left against the unsent revision is never named');
+  assert.deepEqual([verified.status, verified.body.paid, verified.body.duplicate, verified.body.amountPaid, 'balance' in verified.body], [200, true, true, 449.5, false]);
+  assert.equal(JSON.stringify([again.body, verified.body]).includes('488.5'), false, 'the $488.50 left against the unsent revision is never named');
   // Once the author sends the revision, the same verification states the balance again.
   await h.send(id);
   world.edit(id, { ...world.job(id), estimate: h.job(id).estimate });
   const sent = await portalPost(handlers, cookie, { action: 'verify_payment', session_id: 'cs_test_1' }, PAY);
-  assert.deepEqual([sent.status, sent.body.duplicate, sent.body.balance, 'balanceWithheld' in sent.body], [200, true, 39, false]);
+  assert.deepEqual([sent.status, sent.body.duplicate, sent.body.balance, 'balanceWithheld' in sent.body], [200, true, 488.5, false]);
   // The portal page says only "Payment verified." when no balance comes back.
   const page = readFileSync(new URL('../customer-portal.html', import.meta.url), 'utf8');
   // (merge) TIPS thanks the customer for a tip between the two; with no balance the notice stays exactly 'Payment verified.'.

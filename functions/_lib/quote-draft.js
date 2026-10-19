@@ -4,7 +4,7 @@ import { requireQuoteAuthor } from './quote-permissions.js';
 import { identityMatches } from './walkthrough-handoff.js';
 import { auditWrite } from './hub-audit.js';
 import { addDays, denverToday, validDate } from './dispatch-time.js';
-import { depositCents, estimateFingerprint, estimateChanged, estimateTotals, included, normalizeLineItems, packageTotals, validateSelection } from './quote-model.js';
+import { depositCents, estimateFingerprint, estimateChanged, estimateTotals, included, junkOnlyGarageWork, normalizeLineItems, packageTotals, validateSelection } from './quote-model.js';
 import { customerMoneyTotals, invoiceNumber } from './money-core.js';
 import { moneySnapshot } from './money-service.js';
 import { moneySupersedeWrite } from './job-funnel-events.js';
@@ -17,7 +17,7 @@ import { catalogQuotesEnabled, catalogStorage, quoteBuilderEnabled, readCatalogS
 import { priceCatalogQuote } from './catalog-quote.js';
 import { approvalRefusal, compositeApproval, priceCompositeQuote } from './composite-quote.js';
 import { normalizeUnsignedCapture, unsignedCapturePatch } from './unsigned-walkthrough-capture.js';
-import { quotePaymentSchedule, requireQuotePaymentTiming, quotePaymentDates, quotePaymentSummary, businessPaymentDate, PAYMENT_TIME_ZONE } from './quote-payment-policy.js';
+import { quotePaymentSchedule, requireQuotePaymentTiming, quotePaymentDates, quotePaymentSummary, businessPaymentDate, sentQuotePaymentPolicy, snapshotQuotePaymentPolicy, PAYMENT_TIME_ZONE } from './quote-payment-policy.js';
 import { prepareWalkthroughCaptureSync, walkthroughCaptureSyncView } from './walkthrough-capture-sync.js';
 
 /**
@@ -129,6 +129,12 @@ export function normalizeQuoteDraft(value, now = new Date().toISOString()) {
   return { client, title: text(value.title, 'Quote title', 200) || 'EGC Garage Service', scope: text(value.scope, 'The customer-facing scope', 1600, true), lineItems, totalCents: totals.totalCents, depositCents: depositCents(totals.totalCents, 50), validUntil, catalogVersion: version === '' ? null : version, crewSize: crew, estimatedDurationMin: minutes, walkthroughCapture: normalizeUnsignedCapture(value.walkthrough_capture) };
 }
 
+// The job's deposit for a required deposit in cents: recorded payments are kept, only its amount and status follow.
+function depositDue(deposits, requiredCents) {
+  const paid = typeof deposits.paidAmount === 'number' && Number.isFinite(deposits.paidAmount) ? Math.max(0, deposits.paidAmount) : 0, required = requiredCents / 100;
+  return { ...deposits, amount: required, status: paid >= required ? 'paid' : paid > 0 ? 'partial' : 'required' };
+}
+
 // The quote fields of a draft save. A material change (lines, choice, total,
 // deposit or scope) bumps the revision and returns the quote to draft, retiring
 // an approval and an issued invoice; recorded payments are never touched.
@@ -160,8 +166,7 @@ function quotePatch(job, inputDraft, actor, now, jobId, newQuotePaymentPolicy) {
   const fresh = !current.number, material = fresh || estimateChanged(current, next) || provenanceChanged, wasApproved = approved(current.status) || approved(approval?.status), wasSent = current.status === 'sent' || Boolean(current.sentAt);
   next.revision = (Number.isSafeInteger(current.revision) && current.revision > 0 ? current.revision : 0) + (material ? 1 : 0);
   next.status = material ? 'draft' : current.status || 'draft';
-  const paid = typeof deposits.paidAmount === 'number' && Number.isFinite(deposits.paidAmount) ? Math.max(0, deposits.paidAmount) : 0, required = draft.depositCents / 100;
-  const patch = { estimate: next, total: draft.totalCents / 100, priceQuoted: draft.totalCents / 100, quoteStatus: material ? 'draft' : job?.quoteStatus || 'draft', deposit: { ...deposits, amount: required, status: paid >= required ? 'paid' : paid > 0 ? 'partial' : 'required' } };
+  const patch = { estimate: next, total: draft.totalCents / 100, priceQuoted: draft.totalCents / 100, quoteStatus: material ? 'draft' : job?.quoteStatus || 'draft', deposit: depositDue(deposits, draft.depositCents) };
   const warnings = [];
   if (material && (wasApproved || approval?.status && approval.status !== 'superseded')) {
     patch.customerApproval = { ...(approval || {}), status: 'superseded', supersededAt: now, supersededBy: actor.user, reason: 'estimate_revised' };
@@ -180,6 +185,12 @@ function quotePatch(job, inputDraft, actor, now, jobId, newQuotePaymentPolicy) {
   return { patch, warnings, material, revisedRelease: material && !fresh && (wasSent || wasApproved) };
 }
 
+// The service a quote draft is for, as every customer surface names it (the portal, the money documents, Stripe): a
+// junk-only builder quote is 'Junk removal' (D-JUNK: its scope is junk removal only), any other 'Garage transformation'.
+// A revision relabels only a job this file labelled; a service Dispatch or another booking path set is kept.
+const QUOTE_SERVICE_TYPES = ['Garage transformation', 'Junk removal'];
+const quoteServiceType = junkOnly => junkOnly ? 'Junk removal' : 'Garage transformation';
+const serviceTypeRevision = (job, junkOnly) => QUOTE_SERVICE_TYPES.includes(job.serviceType) ? { serviceType: quoteServiceType(junkOnly) } : {};
 function capturePatch(job, draft, actor, now) {
   const patch = unsignedCapturePatch(job, draft.walkthroughCapture, actor, now);
   if (Object.keys(patch).length) patch.walkthroughCaptureSync = prepareWalkthroughCaptureSync({ ...job, ...patch }, now);
@@ -275,7 +286,7 @@ export async function saveQuoteDraft(store, actor, input, now = new Date().toISO
   const catalogMode = input.draft?.catalog_pricing !== undefined;
   // With the builder flag off a composite_pricing field stays an unsupported draft field, as before.
   const compositeMode = quoteBuilderEnabled(env) && plain(input.draft) && input.draft.composite_pricing !== undefined;
-  let draft;
+  let draft, junkOnlyQuote = false;
   if (compositeMode) {
     if (catalogMode) throw fail('invalid_draft', 'A quote is priced by the builder or by the catalog, not both.', 400);
     const priced = priceCompositeQuote(await compositeState(env), input.draft.composite_pricing, { complete: true });
@@ -286,6 +297,7 @@ export async function saveQuoteDraft(store, actor, input, now = new Date().toISO
     delete material.composite_pricing;
     draft = normalizeQuoteDraft(material, now);
     if (draft.totalCents !== priced.totalCents) throw fail('composite_price_changed', 'The builder quote total changed. Review the quote in the builder again before saving.', 409);
+    junkOnlyQuote = priced.junkOnly === true;
     Object.assign(draft, { pricingSettingsVersion: priced.settingsVersion, compositePricing: structuredClone(priced.compositePricing), breakdown: structuredClone(priced.breakdown) });
   } else if (catalogMode) {
     if (!catalogQuotesEnabled(env)) throw fail('catalog_disabled', 'Catalog quotes are turned off. Keep this draft for review.', 404);
@@ -317,7 +329,7 @@ export async function saveQuoteDraft(store, actor, input, now = new Date().toISO
       editable(job);
       // An in-person signature is revised only through a new signed walkthrough handoff.
       if (approved(job.estimate?.status) && job.estimate?.acceptanceMethod === 'in_person_signature') throw fail('signed', 'The customer signed this quote in person. Start a signed revision in the walkthrough instead.');
-      const plan = quotePatch(job, draft, actor, now, job.id), saved = record(job, plan, job.id), patch = { ...plan.patch, ...capturePatch(job, draft, actor, now), quoteDraft: saved.quoteDraft, updatedAt: now };
+      const plan = quotePatch(job, draft, actor, now, job.id), saved = record(job, plan, job.id), patch = { ...plan.patch, ...capturePatch(job, draft, actor, now), ...serviceTypeRevision(job, junkOnlyQuote), quoteDraft: saved.quoteDraft, updatedAt: now };
       // FUN-03: a material revision ends the job's live sale (a portal approval of
       // an earlier revision), as the Hub estimate editor does: deal.approval_superseded
       // and the cleared funnelSale are in this revision's commit.
@@ -335,7 +347,7 @@ export async function saveQuoteDraft(store, actor, input, now = new Date().toISO
         ...(retired ? [retired] : []),
         ...crossing.writes,
       ]);
-    } else await createDraft(store, actor, input, draft, customer, now, env, { record, audit, receiptId, newQuotePaymentPolicy });
+    } else await createDraft(store, actor, input, draft, customer, now, env, { record, audit, receiptId, newQuotePaymentPolicy, junkOnlyQuote });
   } catch (error) {
     if (FINAL.has(error.code)) throw error;
     const recovered = await replay(false).catch(problem => { if (FINAL.has(problem.code)) throw problem; return null; });
@@ -348,7 +360,7 @@ export async function saveQuoteDraft(store, actor, input, now = new Date().toISO
   return saved;
 }
 
-async function createDraft(store, actor, input, draft, customer, now, env, { record, audit, receiptId, newQuotePaymentPolicy }) {
+async function createDraft(store, actor, input, draft, customer, now, env, { record, audit, receiptId, newQuotePaymentPolicy, junkOnlyQuote = false }) {
   let source = null, sourceProject = null;
   if (input.sourceWalkthroughId) {
     source = await store.read('jobs', input.sourceWalkthroughId); requireRevision(source);
@@ -364,7 +376,7 @@ async function createDraft(store, actor, input, draft, customer, now, env, { rec
       if (sourceProject.customerId !== customer.id) throw fail('source_mismatch', 'The source project belongs to a different customer.');
     }
   }
-  const changes = { title: draft.title, address: draft.client.address, serviceType: 'Garage transformation', ...(draft.crewSize ? { crewNeeded: draft.crewSize } : {}) };
+  const changes = { title: draft.title, address: draft.client.address, serviceType: quoteServiceType(junkOnlyQuote), ...(draft.crewSize ? { crewNeeded: draft.crewSize } : {}) };
   const dispatchInput = { action: 'schedule.create', requestId: input.requestId, customerId: customer.id, kind: 'job', ...(source ? { sourceWalkthroughId: source.id } : {}), changes };
   const adapter = { ...store,
     // An orphan legacy walkthrough gains only the verified customer link; its
@@ -414,27 +426,52 @@ function deliveryPlan(job, env) {
 function sendBinding(job, delivery, paymentSchedule) {
   return { jobId: job.id, jobRevision: job.revision, customerId: job.customerId || '', estimateNumber: job.estimate.number, estimateRevision: job.estimate.revision, estimateFingerprint: estimateFingerprint(paymentSchedule ? {...job.estimate,paymentSchedule} : job.estimate), delivery: delivery.mode };
 }
-async function paymentScheduleFor(store, job) {
-  if (!job.estimate?.commercialPolicy) return null;
-  // Issued agreements retain their exact schedule. Rescheduling cannot silently
-  // rewrite those dates; a future explicit terms amendment is required.
-  const source = job.sourceWalkthroughId ? await store.read('jobs', job.sourceWalkthroughId) : null;
-  if (job.estimate.paymentSchedule) {
-    const saved=job.estimate.paymentSchedule,walk=businessPaymentDate(source?.walkthroughCompletedAt||source?.completedAt||source?.date),day=businessPaymentDate(job.date);
-    if(day&&saved.remainderDueDate!==day||walk&&saved.depositDueDate<walk)throw fail('payment_schedule_amendment_required','The schedule changed after these payment dates were issued. Review an explicit payment-terms amendment; the saved agreement was not changed.');
-    const amounts=quotePaymentSchedule(job.estimate.amountCents,job.estimate.commercialPolicy);return {...saved,depositCents:amounts.depositCents,remainderCents:amounts.remainderCents};
-  }
-  const dates = quotePaymentDates(job.estimate.commercialPolicy,{walkthroughDate:source?.walkthroughCompletedAt || source?.completedAt || source?.date,jobDate:job.date});
-  const amounts = quotePaymentSchedule(job.estimate.amountCents,job.estimate.commercialPolicy);
-  return {...dates,timeZone:PAYMENT_TIME_ZONE,policyVersion:job.estimate.commercialPolicy.version,depositCents:amounts.depositCents,remainderCents:amounts.remainderCents,sourceWalkthroughId:source.id,sourceRevision:source.revision};
+// The estimate as it is sent (owner decision of 2026-10-18 evening, quote-payment-policy.js SENT_25_75): a quote saved on
+// the earlier sent-quote terms (FINAL_25_75 or the pending variant), or saved with none (a draft from before 2026-10-14,
+// 50% upfront), and not sent in this revision, a new revision of a quote sent on them included, is sent on SENT_25_75
+// (its 25% deposit due when the customer approves it), with its terms id and its 25% deposit (the same cents for the
+// earlier 25/75 terms; the job's deposit follows it in the send). Any other estimate is sent on its own terms. A quote
+// already sent keeps its saved estimate, terms and dates: this is read only when a revision is sent.
+function sendingEstimate(estimate) {
+  const saved = estimate.commercialPolicy, policy = sentQuotePaymentPolicy(saved, { quoteDraft: true });
+  if (policy === saved) return estimate;
+  const deposit = depositCents(estimate.amountCents, policy.depositPct);
+  return { ...estimate, commercialPolicy: snapshotQuotePaymentPolicy(policy), depositPct: policy.depositPct, depositRequired: deposit / 100, depositRequiredCents: deposit,
+    termsVersion: saved === undefined || saved === null || !estimate.termsVersion || estimate.termsVersion === saved.version ? policy.version : estimate.termsVersion };
 }
+// The saved schedule is sent again only for a revision sent on the same terms. A quote sent on SENT_25_75 has no deposit
+// date to protect and every revision of it asks for a fresh approval, so its saved schedule is reused only while its
+// remainder is still due on the booked job day: after a reschedule the revision is sent with the new job day.
+const reusesSchedule = (job, sending) => Boolean(job.estimate.paymentSchedule) && sending === job.estimate &&
+  !(sending.commercialPolicy?.depositDueRule === 'approval_day' && job.estimate.paymentSchedule.remainderDueDate !== businessPaymentDate(job.date));
+async function paymentScheduleFor(store, job, sending = job.estimate) {
+  if (!sending?.commercialPolicy) return null;
+  // Issued agreements retain their exact schedule. Rescheduling cannot silently
+  // rewrite those dates; a future explicit terms amendment is required. A quote
+  // sent now on new terms (sendingEstimate), or a SENT_25_75 revision sent after
+  // a reschedule (reusesSchedule), gets a new schedule of its terms.
+  const source = job.sourceWalkthroughId ? await store.read('jobs', job.sourceWalkthroughId) : null, policy = sending.commercialPolicy, onApproval = policy.depositDueRule === 'approval_day';
+  if (reusesSchedule(job, sending)) {
+    const saved=sending.paymentSchedule,walk=businessPaymentDate(source?.walkthroughCompletedAt||source?.completedAt||source?.date),day=businessPaymentDate(job.date);
+    if(day&&saved.remainderDueDate!==day||!onApproval&&walk&&saved.depositDueDate<walk)throw fail('payment_schedule_amendment_required','The schedule changed after these payment dates were issued. Review an explicit payment-terms amendment; the saved agreement was not changed.');
+    const amounts=quotePaymentSchedule(sending.amountCents,policy);return {...saved,depositCents:amounts.depositCents,remainderCents:amounts.remainderCents};
+  }
+  // SENT_25_75 dates its deposit by the approval (none yet: depositDueDate null) and its remainder by the booked job day;
+  // like every 25/75 quote it is sent for review only from a walkthrough booked in the Hub.
+  if (onApproval && !source) throw fail('payment_dates_pending', 'A quote is sent for review only from a walkthrough booked in the Hub, once its job date is booked: the 75% balance is due on the job day.');
+  const dates = quotePaymentDates(policy,{walkthroughDate:source?.walkthroughCompletedAt || source?.completedAt || source?.date,jobDate:job.date});
+  const amounts = quotePaymentSchedule(sending.amountCents,policy);
+  return {...dates,timeZone:PAYMENT_TIME_ZONE,policyVersion:policy.version,depositCents:amounts.depositCents,remainderCents:amounts.remainderCents,sourceWalkthroughId:source.id,sourceRevision:source.revision};
+}
+// The send preview's words for a schedule: a deposit due on approval says so (quote-payment-policy.js quotePaymentSummary).
+const scheduleSummary = (schedule, policy) => quotePaymentSummary(policy?.depositDueRule === 'approval_day' ? { ...schedule, depositDueOn: 'approval' } : schedule);
 function sendable(job, now, env) {
   editable(job);
   if (plain(job.quoteDraft?.catalogPricing) && !catalogQuotesEnabled(env)) throw fail('catalog_disabled', 'Catalog quotes are turned off. Keep this saved quote for review.', 404);
   if (plain(job.quoteDraft?.compositePricing) && !quoteBuilderEnabled(env)) throw fail('builder_disabled', 'The quote builder is turned off. Keep this saved quote for review.', 404);
   const estimate = plain(job.estimate) ? job.estimate : null;
   if (!estimate?.number || !Number.isSafeInteger(estimate.revision)) throw fail('estimate_missing', 'Save the quote before sending it.');
-  requireQuotePaymentTiming(estimate.commercialPolicy);
+  requireQuotePaymentTiming(sentQuotePaymentPolicy(estimate.commercialPolicy, { quoteDraft: true }));
   if (approved(estimate.status) || approved(job.customerApproval?.status)) throw fail('already_approved', 'The customer already approved this quote. Revise it first if they are reviewing a change.');
   if (estimate.status === 'sent' && estimate.sentRevision === estimate.revision) throw fail('already_sent', `Revision ${estimate.revision} was already sent. Revise the quote to send an updated version.`);
   let lines;
@@ -446,13 +483,18 @@ function sendable(job, now, env) {
 // A builder quote is sent only when every price on it is owner-approved now (approved after the save counts).
 // While the builder is on, a walkthrough quote priced outside it (the walkthrough's own itemized lines, priced from
 // the same tables the builder holds as owner-unapproved drafts) is kept but never sent: it is rebuilt in the
-// builder first. Catalog quotes keep their own catalog approval.
+// builder first. Catalog quotes keep their own catalog approval. D-JUNK: a junk-only builder quote ($750 per truck,
+// no Labor line) is never sent on a walkthrough whose saved capture records garage work (junkOnlyGarageWork), as the
+// homeowner never signs one on it (walkthrough-handoff.js): it stays saved until the work is added or the walkthrough
+// corrected and the quote saved again.
 async function compositeSendable(job, env, compositeState) {
   if (!plain(job.quoteDraft?.compositePricing)) {
     if (quoteBuilderEnabled(env) && !plain(job.quoteDraft?.catalogPricing)) throw fail('builder_required', 'With the quote builder on, a walkthrough quote is sent only after it is built in the quote builder from the owner\'s pricing menu. This draft stays saved: reopen "Send options for review" on the walkthrough and build it there.', 409,
       { unapproved: [{ id: null, name: 'Walkthrough-priced quote', unitCents: null, reason: 'Its lines were priced from the walkthrough tables, which the owner has not approved for the quote builder. Rebuild it in the quote builder (removal, then shelving, then extra storage) and send that quote.' }] });
     return;
   }
+  const work = junkOnlyGarageWork(job);
+  if (work.length) throw fail('junk_only_garage_work', `This junk-only quote prices the hauling only ($750 per truck covers the crew's time; it has no Labor line), but the walkthrough records garage work: ${work.join(', ')}. It stays saved as a draft and was not sent. Edit the quote and add that work (a garage cleaning base for the sorting and reset, cleaning, shelving or storage), then save and send it; or, if the homeowner wants junk removal only, change the walkthrough to Everything goes or Customer labels before arrival, remove those finish options and save the quote again.`, 409, { garageWork: work });
   const approval = compositeApproval(job.quoteDraft.breakdown, await compositeState(env));
   if (!approval.ready) throw approvalRefusal(approval);
 }
@@ -466,10 +508,10 @@ export async function previewQuoteSend(store, actor, input, now = new Date().toI
   if (job.revision !== input.expectedRevision) throw fail('revision_conflict', 'This quote changed after you opened it. Reload it and review the latest version.');
   sendable(job, now, env);
   await compositeSendable(job, env, compositeState);
-  const delivery = deliveryPlan(job, env), estimate = job.estimate, paymentSchedule = await paymentScheduleFor(store,job);
-  const summary = `Send ${estimate.number} revision ${estimate.revision} (${usd(estimate.amountCents)}) to ${String(job.customer || 'the customer').slice(0, 80)}`+(paymentSchedule?'. '+quotePaymentSummary(paymentSchedule):'');
-  const confirmation = await issueConfirmation(env, { actorId: actor.user, action: SEND_ACTION, entityId: `jobs/${job.id}`, payload: sendBinding(job, delivery, paymentSchedule), summary, now });
-  return { ok: true, authority: 'employee_hub', job: quoteDraftView(paymentSchedule?{...job,estimate:{...estimate,paymentSchedule}}:job), delivery, summary: confirmation.summary, confirmToken: confirmation.token, expiresAt: confirmation.expiresAt };
+  const delivery = deliveryPlan(job, env), estimate = sendingEstimate(job.estimate), paymentSchedule = await paymentScheduleFor(store,job,estimate), sending = { ...job, estimate };
+  const summary = `Send ${estimate.number} revision ${estimate.revision} (${usd(estimate.amountCents)}) to ${String(job.customer || 'the customer').slice(0, 80)}`+(paymentSchedule?'. '+scheduleSummary(paymentSchedule,estimate.commercialPolicy):'');
+  const confirmation = await issueConfirmation(env, { actorId: actor.user, action: SEND_ACTION, entityId: `jobs/${job.id}`, payload: sendBinding(sending, delivery, paymentSchedule), summary, now });
+  return { ok: true, authority: 'employee_hub', job: quoteDraftView(paymentSchedule?{...job,estimate:{...estimate,paymentSchedule}}:sending), delivery, summary: confirmation.summary, confirmToken: confirmation.token, expiresAt: confirmation.expiresAt };
 }
 
 /**
@@ -504,10 +546,12 @@ export async function sendQuoteDraft(store, actor, input, now = new Date().toISO
   if (job.revision !== input.expectedRevision) throw fail('revision_conflict', 'This quote changed after the preview. Preview it again before sending.');
   sendable(job, now, env);
   await compositeSendable(job, env, compositeState);
-  const delivery = deliveryPlan(job, env), estimate = job.estimate, paymentSchedule = await paymentScheduleFor(store,job);
+  const delivery = deliveryPlan(job, env), estimate = sendingEstimate(job.estimate), paymentSchedule = await paymentScheduleFor(store,job,estimate);
   const patch = {
     estimate: { ...estimate, ...(paymentSchedule?{paymentSchedule}:{}), status: 'sent', sentAt: now, sentBy: actor.user, sentChannel: 'estimate_ready', sentRevision: estimate.revision, sentFingerprint: estimateFingerprint(paymentSchedule?{...estimate,paymentSchedule}:estimate), sentRequestId: input.requestId, updatedAt: now },
     quoteStatus: 'sent',
+    // A quote sent on new terms with a new deposit (sendingEstimate: a draft saved before 2026-10-14 at 50%) moves the job's deposit with it.
+    ...(estimate.depositRequiredCents !== job.estimate.depositRequiredCents ? { deposit: depositDue(plain(job.deposit) ? job.deposit : {}, estimate.depositRequiredCents) } : {}),
     // The confirmed delivery mode: the deliverer never goes further than the person agreed to.
     estimateReady: { requestId: input.requestId, revision: estimate.revision, mode: delivery.mode, status: ['automation', 'dry_run'].includes(delivery.mode) ? 'pending' : delivery.mode === 'suppressed' ? 'suppressed' : 'messaging_disabled', attempts: 0, recipient: delivery.recipient.masked, requestedAt: now, requestedBy: actor.user },
     quoteDraft: { ...job.quoteDraft, sentAt: now, sentBy: actor.user },
@@ -519,8 +563,8 @@ export async function sendQuoteDraft(store, actor, input, now = new Date().toISO
     { collection: QUOTE_DRAFT_RECEIPTS, id: receiptId, patch: { fingerprint, actorId: actor.user, action: 'send', customerId: job.customerId || '', jobId: job.id, estimateRevision: estimate.revision, delivery: delivery.mode, warnings, createdAt: now } },
     auditWrite({ actor: { id: actor.user, kind: 'human', role: actor.role }, via: 'hub', action: SEND_ACTION, entity: { collection: 'jobs', id: job.id }, before: moneySnapshot(job), after: moneySnapshot({ ...job, ...patch }), requestId: input.requestId, reason: `delivery:${delivery.mode}`, now }),
   ];
-  if (paymentSchedule && !estimate.paymentSchedule) writes.push({collection:'jobs',id:paymentSchedule.sourceWalkthroughId,revision:paymentSchedule.sourceRevision,verify:true});
-  try { await consumeConfirmation(env, store, input.confirmToken, { actorId: actor.user, action: SEND_ACTION, entityId: `jobs/${job.id}`, payload: sendBinding(job, delivery, paymentSchedule), now, requestId: input.requestId }, writes); }
+  if (paymentSchedule && !reusesSchedule(job, estimate)) writes.push({collection:'jobs',id:paymentSchedule.sourceWalkthroughId,revision:paymentSchedule.sourceRevision,verify:true});
+  try { await consumeConfirmation(env, store, input.confirmToken, { actorId: actor.user, action: SEND_ACTION, entityId: `jobs/${job.id}`, payload: sendBinding({ ...job, estimate }, delivery, paymentSchedule), now, requestId: input.requestId }, writes); }
   catch (error) {
     const recovered = await replay(false).catch(problem => { if (FINAL.has(problem.code)) throw problem; return null; });
     if (recovered) return recovered;

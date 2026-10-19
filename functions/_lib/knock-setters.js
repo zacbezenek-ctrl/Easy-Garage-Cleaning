@@ -89,10 +89,11 @@ export async function recordSetterAttribution(store, admin, body, nowIso, env, {
 /* Under the owner's approved setter terms (SETTER_TERMS) a signed walkthrough handoff that sold a garage transformation
    (walkthrough-handoff.js) is the evidence the office would otherwise record: that the job is garage work, and who the
    estimator is (its signer) when the walkthrough has none recorded. Every signed handoff is saved as a 'Garage
-   transformation', so what was sold decides it: an itemized quote needs a selected, charged service, product or labor
-   line that is not junk removal (the builder's removal-junk lines, a disposal line or a line named junk); a single signed
-   total needs a finishing option in its signed scope (cleanout and reset, shelving, totes...). Anything else, a junk-only
-   quote included, stays unverified until the office classifies it (setter.classify, estimator.classify). A builder
+   transformation' except a junk-only builder quote ('Junk removal', D-JUNK), so what was sold decides it: an itemized
+   quote needs a selected, charged service, product or labor line that is not junk removal (the builder's removal-junk
+   lines, a disposal line or a line named junk); a single signed total needs a finishing option in its signed scope
+   (cleanout and reset, shelving, totes...). Anything else, a junk-only quote included, stays unverified until the office
+   classifies it (setter.classify, estimator.classify). A builder
    quote's Labor line (D12; since D-JUNK only on quotes with garage work, though a junk-only quote signed earlier may carry
    one) is evidence of neither. */
 const junkLine = line => line.kind === 'disposal' || /^removal-junk/.test(String(line.id || '')) || /\bjunk\b/i.test(`${line.name || ''} ${line.description || ''}`);

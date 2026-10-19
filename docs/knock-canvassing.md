@@ -190,8 +190,9 @@ per neighborhood and per street.
 * **Deposit:** defaults to 25% of the ticket ($400 on $1,600), fully refundable until the deadline, then
   refundable until 24 hours before the job. Each sale saves its own rate and amount; later settings changes
   do not change that agreement or its Stripe description.
-* **Payment dates:** Hub quotes use `FINAL_25_75`: deposit due seven calendar days before the job, or on
-  walkthrough day when the walkthrough falls within that week; remainder due on job day, in America/Denver.
+* **Payment dates:** Hub quotes sent from 2026-10-19 use `SENT_25_75`: deposit due when the customer approves the
+  quote; remainder due on job day, in America/Denver. Quotes sent earlier keep `FINAL_25_75`: deposit due seven
+  calendar days before the job, or on walkthrough day when the walkthrough falls within that week.
   Knock direct sales do not store a verified walkthrough date, so their form does not assert that the deposit
   is due today or invent a walkthrough-based due date.
 * **Customer contact details exist only on the sale** (`knock_sales`). Houses and door records never hold them.

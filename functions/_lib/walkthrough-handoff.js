@@ -5,7 +5,7 @@ import { assignmentKey, jobCrewNames } from './job-assignment.js';
 import { localInstant } from './operations-portal-records.js';
 import { customerIdentityPatch } from './customer-identity.js';
 import { suggestedDurationMinutes } from './quote-duration.js';
-import { depositCents as depositOf, estimateTotals, included, normalizeLineItems, toWalkthroughLineItem, validateSelection, withoutPurchaseFields } from './quote-model.js';
+import { depositCents as depositOf, estimateTotals, included, normalizeLineItems, toWalkthroughLineItem, validateSelection, walkthroughGarageWork, withoutPurchaseFields } from './quote-model.js';
 import { funnelEventWrite } from './funnel-events.js';
 import { saleWrites } from './job-funnel-events.js';
 import { funnelHubId } from './funnel-definitions.js';
@@ -144,21 +144,13 @@ export function customerScopeSummary(scope) {
   return `Included: ${(items.length ? items : [LABELS.cleanout]).join('; ')}.`;
 }
 /**
- * D-JUNK: the garage work a signed walkthrough records beyond junk removal, as the homeowner reads it: crew sorting (the
- * sorting plan "Customer sorts with crew" or "Crew stages keep / donate / haul zones", with the reset of what stays: the
- * fullness minutes the labor estimate counts with a garage cleaning base), the cleaning add-ons, shelving and totes the
- * Finish step sold, and pest-waste cleanup. "Everything goes" and "Customer labels before arrival" are junk removal: the
- * customer decided, the crew loads. A junk-only builder quote ($750 per truck, no Labor line) prices none of this, so it
- * is signed only on a walkthrough that records none of it (saveWalkthroughHandoff, handoff_builder_junk_only_garage_work).
- * The walkthrough page (crew/gameplan.html walkthroughGarageWork) applies the same rule before the homeowner signs.
+ * D-JUNK: the garage work a signed walkthrough records beyond junk removal (quote-model.js walkthroughGarageWork, with
+ * its rule). A junk-only builder quote ($750 per truck, no Labor line) prices none of it, so it is signed only on a
+ * walkthrough that records none of it (saveWalkthroughHandoff, handoff_builder_junk_only_garage_work), and sent only on
+ * one whose saved capture records none (quote-draft.js). The walkthrough page (crew/gameplan.html walkthroughGarageWork)
+ * applies the same rule before the homeowner signs.
  */
-const CREW_SORTING = { customer: 'sorting with the customer and resetting what stays', zones: 'sorting into keep / donate / haul zones and resetting what stays' };
-export function walkthroughGarageWork(scope) {
-  const s = plain(scope) ? scope : {}, finish = Array.isArray(s.finish) ? s.finish : [], details = plain(s.finish_details) ? s.finish_details : {};
-  const count = (qty, label) => Number.isInteger(qty) && qty > 0 ? `${qty} ${label}${qty === 1 ? '' : 's'}` : '';
-  return [CREW_SORTING[s.sort_method] || '', finish.includes('deep_clean') ? 'a deep clean' : '', finish.includes('pressure_wash') ? 'a pressure wash' : '', finish.includes('mouse_trapping') ? 'mouse trapping' : '',
-    finish.includes('shelving') ? count(details.shelf_qty, 'shelving unit') : '', finish.includes('totes') ? count(details.tote_qty, 'storage tote') : '', Array.isArray(s.hazards) && s.hazards.includes('Pest waste') ? 'pest-waste cleanup' : ''].filter(Boolean);
-}
+export { walkthroughGarageWork };
 /** Dispatch materials the crew loads for the sold product lines. A builder quote's products are its breakdown's packs
  * (job-materials.js breakdownMaterials), by product and in units, rather than one rolled-up goods line per step. */
 export function handoffMaterials(plan, builder = null) {
@@ -250,9 +242,15 @@ export function laborBreakdownItem(labor) {
   const estimate = typeof labor.prefilledManHours === 'number' && labor.prefilledManHours > 0 && labor.prefilledManHours !== labor.manHours ? labor.prefilledManHours : null;
   return `${manHoursText(labor.manHours)} sold${estimate === null ? '' : ` (${labor.manHours < estimate ? 'below' : 'above'} the estimate of ${manHoursText(estimate)})`}`;
 }
+// A builder quote's goods for one step (shelving, storage), product by product in packs: names and counts, never a price.
+const builderGoods = (builder, id) => (Array.isArray(builder?.breakdown?.lines) ? builder.breakdown.lines.filter(plain) : []).filter(line => line.section === id && line.sku)
+  .map(line => stripCrewMoney(`${line.name} × ${line.qty} pack${line.qty === 1 ? '' : 's'}${line.unitsPerPack > 1 ? ` of ${line.unitsPerPack}` : ''}`).slice(0, 300)).slice(0, 20);
+// A builder quote's brief (the crew's and the staff HighLevel note's) names the goods it sold, its shelving and storage
+// packs, on the MATERIALS line: the page writes that line from the walkthrough Finish step's shelf and tote counts, which
+// the builder never reads or writes (crew/gameplan.html buildInternalNotes).
+const soldGoodsBrief = (brief, builder) => brief.replace(/^MATERIALS: .*$/m, () => `MATERIALS: ${[...builderGoods(builder, 'shelving'), ...builderGoods(builder, 'storage')].join(' · ').slice(0, 1500) || 'None sold'}`).slice(0, 4900);
 function builderBreakdown(summary, builder) {
-  const lines = Array.isArray(builder?.breakdown?.lines) ? builder.breakdown.lines.filter(plain) : [];
-  const goods = id => lines.filter(line => line.section === id && line.sku).map(line => stripCrewMoney(`${line.name} × ${line.qty} pack${line.qty === 1 ? '' : 's'}${line.unitsPerPack > 1 ? ` of ${line.unitsPerPack}` : ''}`).slice(0, 300)).slice(0, 20);
+  const goods = id => builderGoods(builder, id);
   const labor = laborBreakdownItem(builder?.labor);
   const sections = [...summary.sections.map(section => ['shelving', 'storage'].includes(section.id) && goods(section.id).length ? { ...section, items: goods(section.id) } : section),
     ...(labor ? [{ id: 'labor', title: 'Labor', items: [stripCrewMoney(labor)] }] : [])];
@@ -291,7 +289,7 @@ export function normalizeHandoffPlan(input, now = new Date().toISOString(), { bu
   const lines = itemizedQuote(quote, totalCents, logistics.crew_size, minutes, builder, purchase) || { line_items: [{ name: 'Garage cleanout and reset', qty: 1, total: totalCents / 100 }], line_items_count: 1 };
   // The priced internal_notes stay manager-only; crew get crew_brief (older pages send none: it is the internal brief without amounts).
   const internalNotes = text(input.internal_notes, 'Job brief', 4900, true), crewBrief = input.crew_brief === undefined || input.crew_brief === null || input.crew_brief === '' ? internalNotes : text(input.crew_brief, 'Crew brief', 4900, true);
-  return { client, quote: { title: text(quote.title || 'EGC Garage Service', 'Job title', 500, true), total: totalCents / 100, deposit: depositCents / 100, job_date: date, start_time: start, end_time: end, start_at: startAt, end_at: endAt, estimated_duration_min: minutes, expected_shift_hours: (minutes + 90) / 60, ...lines }, discovery, scope, logistics, internal_notes: internalNotes, crew_brief: stripCrewMoney(crewBrief), client_checklists: checks(input.client_checklists), signature, acceptance: { accepted_at: new Date(acceptedAt).toISOString(), accepted_by: text(acceptance.accepted_by, 'Signer name', 200, true), method: 'in_person_signature', terms_version: terms, signature_captured: true }, terms_version: terms, terms_accepted: true, photos: { before }, notes: text(input.notes || '', 'Customer notes', 8000) };
+  return { client, quote: { title: text(quote.title || 'EGC Garage Service', 'Job title', 500, true), total: totalCents / 100, deposit: depositCents / 100, job_date: date, start_time: start, end_time: end, start_at: startAt, end_at: endAt, estimated_duration_min: minutes, expected_shift_hours: (minutes + 90) / 60, ...lines }, discovery, scope, logistics, internal_notes: builder ? soldGoodsBrief(internalNotes, builder) : internalNotes, crew_brief: stripCrewMoney(builder ? soldGoodsBrief(crewBrief, builder) : crewBrief), client_checklists: checks(input.client_checklists), signature, acceptance: { accepted_at: new Date(acceptedAt).toISOString(), accepted_by: text(acceptance.accepted_by, 'Signer name', 200, true), method: 'in_person_signature', terms_version: terms, signature_captured: true }, terms_version: terms, terms_accepted: true, photos: { before }, notes: text(input.notes || '', 'Customer notes', 8000) };
 }
 export function identityMatches(left, right) {
   const a = phone(left.phone), b = phone(right.phone), c = email(left.email), d = email(right.email);
@@ -692,7 +690,9 @@ export async function saveWalkthroughHandoff(store, actor, input, now = new Date
   const breakdown = structured ? builder ? builderBreakdown(jobBreakdown(plan), builder) : jobBreakdown(soldPlan) : null, materialsSource = previous ? previous.materials : source?.materials;
   const requiredEquipment = sent ? handoffEquipment({ current: base?.requiredEquipment, earlier: earlierBring, bring: equipment }) : null;
   const instructions = stripCrewMoneyDeep({ ...handoffInstructions(plan, source?.id || '', builder), ...(structured ? { ...(bring.length ? { bringList: bring } : {}), jobBreakdown: breakdownLines(breakdown) } : {}) }), crewNotes = stripCrewMoney(plan.notes);
-  const changes = { date: plan.quote.job_date, endDate: plan.quote.job_date, time: plan.quote.start_time, endTime: plan.quote.end_time, title: plan.quote.title, address: placedAddress ?? plan.client.address, serviceType: 'Garage transformation', crewNeeded: plan.logistics.crew_size, assignedCrew, jobInstructions: stripCrewMoney(plan.crew_brief), accessInstructions: instructions.accessNotes, customerInstructions: crewNotes, notify: access.dispatcher || previous?.notify !== false,
+  // The service every customer surface names (the portal, the money documents, Stripe): a junk-only builder quote is
+  // 'Junk removal' (D-JUNK: its signed scope is junk removal only), any other signed walkthrough 'Garage transformation'.
+  const changes = { date: plan.quote.job_date, endDate: plan.quote.job_date, time: plan.quote.start_time, endTime: plan.quote.end_time, title: plan.quote.title, address: placedAddress ?? plan.client.address, serviceType: builder?.junkOnly ? 'Junk removal' : 'Garage transformation', crewNeeded: plan.logistics.crew_size, assignedCrew, jobInstructions: stripCrewMoney(plan.crew_brief), accessInstructions: instructions.accessNotes, customerInstructions: crewNotes, notify: access.dispatcher || previous?.notify !== false,
     ...(structured ? { ...(requiredEquipment ? { requiredEquipment } : {}), ...structuredMaterialChanges(soldPlan, materialsSource, equipment, builder) } : materialChanges(plan, materialsSource, builder)) };
   const dispatchInput = previous ? { action: 'schedule.update', requestId: input.requestId, jobId: previous.id, expectedRevision: previous.revision, changes } : { action: 'schedule.create', requestId: input.requestId, customerId: customer.id, kind: 'job', ...(source ? { sourceWalkthroughId: source.id } : {}), booking: { channel: 'hub_in_person' }, changes };
   // The chosen crew replaces the (empty) people list: Dispatch copies the crew's members and lead, then picks.
