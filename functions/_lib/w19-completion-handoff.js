@@ -304,7 +304,19 @@ export async function consumeW19Handoff(env, store, input, now, { submission = r
     if (record.state === 'prepared' && Date.parse(record.expiresAt) <= Date.parse(clock())) throw fail('W19_REFERENCE_EXPIRED', 'This confirmation expired. Operations must reconcile it before any retry.');
     return { job, proof, event, binding };
   };
-  const initial = await check();
+  // The handoff record and its completion binding are separate reads, so a concurrent claim can commit between them and
+  // leave the binding ahead of the record read here. Only when the record itself has changed since is it read again and
+  // checked once more; an unchanged record, or one still inconsistent after the re-read, stays a stale claim.
+  const settled = async () => {
+    try { return await check(); } catch (error) {
+      if (error.code !== 'W19_HANDOFF_STALE') throw error;
+      const fresh = await store.read(W19_HANDOFFS, input.reference);
+      if (!fresh?.revision || fresh.revision === record.revision) throw error;
+      record = fresh;
+      return check();
+    }
+  };
+  const initial = await settled();
   if (record.state !== 'prepared') return completionResult(record, initial, false, 'already_claimed');
   let receipt;
   try {
@@ -336,7 +348,7 @@ export async function consumeW19Handoff(env, store, input, now, { submission = r
   // Provider reads can take time: canonical state/assignment must still match
   // at the atomic claim, and both the completion and receipt are fenced.
   record = await store.read(W19_HANDOFFS, input.reference);
-  const { job, proof, event, binding: completionBinding } = await check();
+  const { job, proof, event, binding: completionBinding } = await settled();
   if (record.state !== 'prepared') return completionResult(record, { job, proof }, false, 'already_claimed');
   if (!plain(receipt) || receipt.reference !== record.reference || receipt.jobId !== job.id || receipt.contactId !== record.contactId || receipt.locationId !== record.locationId || receipt.formId !== W19_FORM_ID ||
       !ID.test(receipt.submissionId || '') || !instant(receipt.createdAt) || Date.parse(receipt.createdAt) < Date.parse(record.issuedAt) || Date.parse(receipt.createdAt) >= Date.parse(record.expiresAt) ||
@@ -363,8 +375,8 @@ export async function consumeW19Handoff(env, store, input, now, { submission = r
     const saved = await store.read(W19_HANDOFFS, record.id).catch(() => null);
     if (['completion_verified', 'released_unconfirmed'].includes(saved?.state)) {
       record = saved;
-      const current = await check();
-      return completionResult(saved, current, false, 'claim_response_unconfirmed');
+      const current = await settled();
+      return completionResult(record, current, false, 'claim_response_unconfirmed');
     }
     throw error;
   }
