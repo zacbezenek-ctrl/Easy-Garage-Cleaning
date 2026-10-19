@@ -452,7 +452,8 @@ function laborBlock(labor, state, { required, signed, junk = false }) {
  * the man-hour limits the builder's Labor row accepts, the removal groups a junk-only quote is made of (haulingGroups:
  * no Labor line) and the time model the server estimates the man-hours with (labor.time, laborTime: person-minutes, no
  * money; no truck-load minutes), so the running total shows the same estimate: each service's laborPersonMinutes per
- * unit (0 for hauling) and each product's installPersonMinutes per pack (null: no install time yet). */
+ * unit (0 for hauling) and each product's installPersonMinutes per pack (null: no install time yet). A product's size
+ * (productSize: its listed width, height and depth) is shown in its row, with its fit notes behind a disclosure. */
 export function builderMenu(state, { internal = false, canApprove = false } = {}) {
   const prices = menuPrices(state), { menu, settings } = state, approvals = validateMenuApprovals(state.approvals), rate = laborRate({ approvals }), time = laborTime(state);
   const status = id => { const price = prices.get(id); return { unitCents: price.unitCents, approved: price.approved, source: price.source, reason: price.reason }; };
@@ -465,7 +466,7 @@ export function builderMenu(state, { internal = false, canApprove = false } = {}
       ...(service.scopeNote ? { scopeNote: service.scopeNote } : {}), laborPersonMinutes: minutes(service.id), ...status(service.id) })),
     products: menu.products.map(product => ({ id: product.id, sku: product.sku, retailer: product.retailer, name: product.name, section: product.section, group: product.group,
       unitsPerPack: product.unitsPerPack, perOrderPackLimit: product.perOrderPackLimit, productUrl: product.productUrl, photoUrl: product.photoUrl, fitWarnings: product.fitWarnings,
-      installPersonMinutes: minutes(product.id), ...status(product.id), ...(internal ? { retailPerPackCents: product.retailPerPackCents, evidence: product.evidence } : {}) })),
+      ...(productSize(product.fitWarnings) ? { size: productSize(product.fitWarnings) } : {}), installPersonMinutes: minutes(product.id), ...status(product.id), ...(internal ? { retailPerPackCents: product.retailPerPackCents, evidence: product.evidence } : {}) })),
     // installationConfirmed: the owner's own answer on Menu prices (menu.approve), present once it was given. It matters
     // for goods the labor estimate cannot time and for a quote saved before the Labor line existed.
     ...(internal ? { internal: { goodsMarkup: goodsMarkupOf(settings).multiplier, goodsInstallationIncluded: installationIncluded(state), roundingRule: settings.roundingRule, approvalsRevision: approvals.revision,

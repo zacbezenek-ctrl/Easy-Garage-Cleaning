@@ -215,3 +215,114 @@ test('the walkthrough is not signed while its Finish picks differ from the built
   page.window.EGCWalkthroughPricing.quoteBuilder = () => false;
   assert.equal(page.builderSignGate(), '');
 });
+
+// ---- Review findings (LANE catalog review, 2026-10-19) ----
+test('a truck-load quote with a deep clean signed for another garage size is refused before anything is saved', async () => {
+  // The quote was built and saved on a two-car walkthrough; the plan the homeowner signs now records three cars.
+  const state = builderState(), sel = selection({ removal: [pick('Full truck load', 2), pick('Deep cleaning, two-car')], shelving: [], storage: [], labor: { manHours: null, fullness: 'medium' } });
+  const priced = priceCompositeQuote(state, { ...sel, garageSize: '2' }, { complete: true });
+  const f = fixture(), before = new Map([...f.rows].map(([key, row]) => [key, JSON.stringify(row)]));
+  await assert.rejects(saveWalkthroughHandoff(f.store, owner, handoff(1, signedQuote(priced), { garages: '3', finish: ['cleanout', 'deep_clean'] }), NOW, { env: ON_ENV, compositeState: async () => state }),
+    error => error.code === 'quote_draft_composite_invalid_selection' && error.status === 400 && /deep clean must match the walkthrough's garage size/.test(error.message));
+  assert.deepEqual([...f.rows.keys()].sort(), [...before.keys()].sort(), 'no job or receipt was written, so the page may release the request');
+  for (const [key, row] of f.rows) assert.equal(JSON.stringify(row), before.get(key), key);
+  // Signed on the garage it was built for, it saves.
+  const g = fixture(), saved = await saveWalkthroughHandoff(g.store, owner, handoff(1, signedQuote(priced), { garages: '2', finish: ['cleanout', 'deep_clean'] }), NOW, { env: ON_ENV, compositeState: async () => state });
+  assert.equal(g.job(saved.job.id).total, priced.totalCents / 100);
+});
+
+test('Review is not signed while the quote was built for another garage size, and names the Finish picks before the quote is built', () => {
+  const shelf = menuItem('HDX plastic shelving, 36×72×24');
+  const page = gameplanLines({ builderQuote: builtQuote({ garageSize: '2' }) });
+  assert.equal(page.builderSignGate(), '', 'built for the walkthrough garage: signed');
+  page.S.garageSize = '3';
+  assert.equal(page.builderSignGate(), 'size');
+  assert.equal(page.builderGateText('size'), 'The garage size changed since this quote was built: it was priced for a 2-car garage, and the walkthrough now records a 3-car garage. Tap Edit the quote: the builder sizes the deep clean and pressure wash to this garage. Check the cleaning base, review the quote and save it again; the homeowner then signs that quote.');
+  assert.ok(page.readyToSend().includes('the quote saved again for this garage size (Edit the quote)'));
+  page.S.garageSize = 'other';
+  assert.match(page.builderGateText('size'), /now records a larger garage\./);
+  page.S.garageSize = '2';
+  assert.equal(page.builderSignGate(), '');
+  // A quote saved before the builder named the garage (no garageSize) is signed as before.
+  page.S.builderQuote = builtQuote();
+  page.S.garageSize = '3';
+  assert.equal(page.builderSignGate(), '');
+  // The Review summary names the products picked on Finish (the quote is not built yet).
+  page.S.builderGoods = { shelving: [{ id: shelf.id, quantity: 2, group: 'shelving', name: shelf.name }], storage: [{ id: 'hd-x', quantity: 1 }], by: 'finish' };
+  assert.deepEqual(plainOf(page.builderGoodsText()), [`${shelf.name} × 2`, 'hd-x × 1']);
+  page.S.builderGoods = { shelving: [{ id: shelf.id, quantity: 0, name: shelf.name }], storage: [], by: 'finish' };
+  assert.deepEqual(plainOf(page.builderGoodsText()), []);
+});
+
+test('only a saved builder quote writes its goods back, so a signature survives looking around in the builder', async () => {
+  const shelf = menuItem('HDX plastic shelving, 36×72×24');
+  const page = catalogPage({ S: { builderGoods: { shelving: [{ id: shelf.id, quantity: 1, group: 'shelving' }], storage: [], by: 'builder' } } });
+  await page.C.load();
+  const renders = page.calls.render;
+  // The saved quote holds the same goods: nothing changes, no signature is cleared and nothing re-renders.
+  page.C.fromBuilder({ shelving: [{ id: shelf.id, quantity: 1, group: 'shelving' }], storage: [] });
+  assert.deepEqual([page.calls.invalidate, page.calls.render], [0, renders]);
+  // Different goods saved: the walkthrough follows them and re-renders whichever step is showing (Review, behind the builder).
+  page.context.index = 5;
+  page.C.fromBuilder({ shelving: [{ id: shelf.id, quantity: 2, group: 'shelving' }], storage: [] });
+  assert.deepEqual([page.calls.invalidate, page.calls.render, page.context.S.builderGoods.shelving[0].quantity], [1, renders + 1, 2]);
+  // The handoff passes only the Finish picks to the builder (by: 'finish'), and the builder writes back only on a save.
+  const handoffSource = readFileSync(new URL('../crew/gameplan-handoff.js', import.meta.url), 'utf8');
+  assert.match(handoffSource, /goods:\(\)=>root\.EGCGameplanCatalog\?root\.EGCGameplanCatalog\.selection\(\):null,onGoods:goods=>root\.EGCGameplanCatalog\?\.fromBuilder\(goods\)/);
+  assert.equal((quoteSource.match(/writeGoods\(\)/g) || []).length, 1, 'one call: after the save');
+  assert.match(quoteSource, /S\.sel = validSelection\(selectionOfPricing\(result\.job\.compositePricing, result\.job\.breakdown, S\.menu\), S\.menu\); keep\(\); writeGoods\(\);/);
+});
+
+test('with the menu unavailable Finish keeps the walkthrough shelving and tote cards; once loaded it offers the products', async () => {
+  let down = true;
+  const page = catalogPage({ reply: () => down ? new TypeError('Failed to fetch') : { status: 200, body: servedMenu() } });
+  assert.equal(page.C.unavailable(), false, 'not before a load failed');
+  await page.C.load();
+  assert.equal(page.C.unavailable(), true);
+  page.C.mountGoods();
+  assert.match(page.text(), /Until the prices load, record shelving and totes with Add shelving and Add labeled totes above\./);
+  // A retry in flight keeps the cards until the menu arrives.
+  down = false;
+  const retry = page.C.load(true);
+  assert.equal(page.C.unavailable(), true);
+  await retry;
+  assert.equal(page.C.unavailable(), false);
+  page.C.mountGoods();
+  assert.doesNotMatch(page.text(), /Until the prices load/);
+  // The Finish template shows the cards (and their counts) exactly while the builder prices are unavailable, never the
+  // dead mounting panel with the builder on.
+  const finish = pageLine("()=>{const gc=builderPrices()?EGCGameplanCatalog:null,legacy=!gc||gc.unavailable?.()===true;return title('Finish'");
+  assert.match(finish, /\$\{legacy\?`<button type="button" class="service \$\{S\.finish\.includes\('shelving'\)/);
+  assert.match(finish, /\$\{legacy&&S\.finish\.includes\('shelving'\)\?/);
+  assert.match(finish, /\$\{legacy&&S\.finish\.includes\('totes'\)\?/);
+  assert.match(finish, /\$\{gc\?'<section class="panel" id="finish-goods"[^']*><\/section>':'<section class="panel" id="mounting-options"><\/section>'\}/);
+});
+
+test('the menu arriving re-renders only Scope and Finish, keeping the field in focus', async () => {
+  let release;
+  const held = new Promise(resolve => { release = resolve; });
+  const page = catalogPage({ reply: () => ({ status: 200, body: servedMenu() }) });
+  const fetch = page.context.EGCHubAuth.fetch;
+  page.context.EGCHubAuth.fetch = async url => { await held; return fetch(url); };
+  page.context.index = 0;
+  const loading = page.C.load();
+  release(); await loading;
+  assert.equal(page.calls.render, 0, 'Customer is not re-rendered: the contact search keeps its text and focus');
+  // On Scope the page re-renders, and the field that had focus gets it back with its caret.
+  const field = page.context.document.createElement('input'); field.setAttribute('id', 'f-loads'); page.context.document.body.append(field);
+  const focused = [];
+  page.context.document.activeElement = field;
+  // Each render replaces the field (as the page's innerHTML does), and the new one starts without focus.
+  page.context.render = () => {
+    page.calls.render++;
+    const doc = page.context.document, fresh = doc.createElement('input');
+    fresh.setAttribute('id', 'f-loads'); fresh.selectionStart = 1; fresh.selectionEnd = 2;
+    fresh.focus = () => { focused.push('f-loads'); doc.activeElement = fresh; }; fresh.setSelectionRange = (...range) => focused.push(range.join('-'));
+    doc.getElementById('f-loads')?.remove(); doc.body.append(fresh); doc.activeElement = doc.body;
+  };
+  field.selectionStart = 1; field.selectionEnd = 2;
+  page.context.index = 2;
+  await page.C.load(true);
+  assert.equal(page.calls.render, 2, 'loading, then loaded');
+  assert.deepEqual(focused, ['f-loads', '1-2', 'f-loads', '1-2']);
+});

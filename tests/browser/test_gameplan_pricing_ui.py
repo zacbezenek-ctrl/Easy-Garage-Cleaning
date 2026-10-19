@@ -68,7 +68,7 @@ class GameplanPricingBrowserTests(unittest.TestCase):
 
     def setUp(self):
         self.errors = []; self.online = True; self.signed_in = True; self.pricing_calls = 0; self.pricing_failure = None
-        self.fixture_port = None; self.handoff_posts = []; self.builder = False; self.menu_calls = 0; self.menu_down = False
+        self.fixture_port = None; self.handoff_posts = []; self.builder = False; self.menu_calls = 0; self.menu_down = False; self.menu_held = None
         self.context = self.browser.new_context(viewport={'width': 375, 'height': 812}, timezone_id='Asia/Tokyo', is_mobile=True, has_touch=True, device_scale_factor=2)
         self.context.add_init_script(FIREBASE_STUB)
         self.context.route('**/*', self.route)
@@ -94,6 +94,8 @@ class GameplanPricingBrowserTests(unittest.TestCase):
         if url.path == '/api/quote-draft' and url.query == 'view=builder' and self.builder:
             self.menu_calls += 1
             if not self.online or self.menu_down: route.abort('internetdisconnected'); return
+            # A slow connection: the test answers the held request later.
+            if self.menu_held is not None: self.menu_held.append(lambda: send(self.menu)); return
             send(self.menu); return
         if self.fixture_port and url.path in ('/api/walkthrough-handoff', '/api/field-jobs'): self.forward(route, 'zacb'); return
         if self.fixture_port and url.path == '/api/highlevel': send({'ok': True, 'handoffSync': {'status': 'synced'}, 'portalInvitation': {'status': 'suppressed'}}); return
@@ -364,8 +366,10 @@ class GameplanPricingBrowserTests(unittest.TestCase):
         for kit in ('Drill / driver', 'Stud finder', 'Level', 'Lag screws and anchors', 'Label maker'): self.assertIn(kit, bring)
         self.audit(page, 'finish, builder products')
         page.screenshot(path=str(out / 'gameplan-finish-builder-products-mobile.png'), full_page=True)
-        # Review: a quote built without the Finish picks is not signed until it is edited and saved with them.
+        # Review: before the quote is built, the summary names the Finish picks (LANE catalog review).
         self.screen(page, 5, {'jobDate': '2026-09-24', 'startTime': '08:00', 'endTime': '11:00'})
+        expect(page.locator('#review-finish')).to_contain_text(f'HDX plastic shelving, 36×72×24 × 2, {first_tote} × 1')
+        # A quote built without the Finish picks is not signed until it is edited and saved with them.
         page.evaluate(BUILT_QUOTE)
         expect(page.locator('#builder-sign-gate')).to_contain_text('The shelving, totes and storage chosen on Finish changed since this quote was built.')
         expect(page.get_by_role('button', name='Edit the quote')).to_be_visible()
@@ -389,12 +393,45 @@ class GameplanPricingBrowserTests(unittest.TestCase):
         self.screen(page, 3, {'finish': ['cleanout', 'mouse_trapping']})
         expect(page.locator('#finish-goods .gp-status')).to_contain_text('The quote builder prices could not load.')
         expect(screen).not_to_contain_text('+$375')
+        # LANE catalog review: with no builder menu (a garage with poor signal) Finish still records shelving and totes with
+        # the walkthrough's own unpriced cards; the dead mounting panel stays hidden while the builder is on.
+        expect(page.locator('#finish-goods')).to_contain_text('Until the prices load, record shelving and totes with Add shelving and Add labeled totes above.')
+        expect(page.locator('#mounting-options')).to_have_count(0)
+        screen.get_by_role('button', name='Add shelving').click()
+        screen.get_by_role('button', name='Add labeled totes').click()
+        for _ in range(2): page.locator('.conditional').nth(0).get_by_role('button', name='+', exact=True).click()
+        page.locator('.conditional').nth(1).get_by_role('button', name='+', exact=True).click()
+        self.assertEqual(page.evaluate('[S.finish, S.shelfQty, S.toteQty]'), [['cleanout', 'mouse_trapping', 'shelving', 'totes'], 2, 1])
+        expect(screen).not_to_contain_text('$')
         self.audit(page, 'finish, builder prices unavailable')
+        out = ROOT / 'test-results'; out.mkdir(exist_ok=True); page.screenshot(path=str(out / 'gameplan-finish-builder-offline-mobile.png'), full_page=True)
         self.screen(page, 2)
         self.menu_down = False
         screen.get_by_role('button', name='Retry builder prices').click()
         expect(screen).to_contain_text('Full truck load $750.00 Approved')
         self.audit(page, 'scope, builder prices after retry')
+        # Once the menu loads, Finish offers the products and shows the counts recorded meanwhile, to clear after choosing.
+        self.screen(page, 3, {})
+        expect(screen.get_by_role('button', name='Add shelving')).to_have_count(0)
+        expect(page.locator('#finish-goods .gp-legacy')).to_contain_text('Recorded earlier on this walkthrough: 2 metal shelving units; 1 labeled tote.')
+        expect(page.locator('#finish-goods').get_by_label('Search shelving and storage products')).to_be_visible()
+
+    def test_the_builder_menu_arriving_does_not_take_the_field_being_typed_in(self):
+        # LANE catalog review: on a slow connection the menu arrives while the estimator types the customer's name.
+        self.builder = True; self.menu_held = []
+        page = self.open()
+        page.wait_for_function('() => PRICING !== null && quoteBuilderOn()')
+        page.wait_for_function('() => document.querySelector("#f-name") !== null')
+        self.assertEqual(page.evaluate('index'), 0)
+        field = page.locator('#f-name')
+        field.click(); page.keyboard.type('Synth')
+        self.assertEqual(len(self.menu_held), 1, 'the menu request is held')
+        self.menu_held.pop()()
+        page.wait_for_function('() => EGCGameplanCatalog.menu() !== null')
+        page.keyboard.type('etic Customer')
+        self.assertEqual(page.evaluate('document.activeElement.id'), 'f-name')
+        self.assertEqual(page.evaluate('S.name'), 'Synthetic Customer')
+        expect(field).to_have_value('Synthetic Customer')
 
     def test_an_expired_session_removes_the_saved_tables_without_a_sign_out(self):
         page = self.open()

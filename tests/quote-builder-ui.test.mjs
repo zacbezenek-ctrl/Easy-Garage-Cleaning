@@ -270,23 +270,35 @@ test('a one-car walkthrough with truck loads keeps its pressure wash and deep cl
   assert.ok(wash().querySelector('input').checked);
 });
 
-test('an add-on the walkthrough garage no longer allows stays checked until it is unchecked, never stuck', async () => {
-  // A two-car walkthrough whose device still holds a selection with the one-car pressure wash (the size changed after).
+test('a quote built before the walkthrough garage size changed opens with its add-ons sized to the walkthrough garage', async () => {
+  // LANE catalog review: a two-car walkthrough whose device still holds a quote built for a one-car garage with a truck load
+  // (one-car pressure wash and deep clean): the server would refuse both for the signed two-car garage, so the builder
+  // opens with the two-car deep clean and without the wash, and the labor follows the estimate.
   const store = memoryStorage(), h = harness();
-  store.setItem('egc-quote-builder-v1:sales.person:walk-1', JSON.stringify({ selection: { removal: { 'egc-026': 1, 'egc-006': 1 }, shelving: [], storage: [] } }));
+  store.setItem('egc-quote-builder-v1:sales.person:walk-1', JSON.stringify({ selection: { removal: { 'egc-026': 1, 'egc-006': 1, 'egc-007': 1 }, shelving: [], storage: [], labor: { manHours: 4, adjusted: false } } }));
   h.open(store); await flush();
-  const wash = () => h.dialog().querySelectorAll('label').find(node => node.textContent.startsWith('Pressure washing, one-car'));
-  assert.ok(wash().querySelector('input').checked);
-  assert.equal(wash().querySelector('input').hasAttribute('disabled'), false, 'a checked add-on can be unchecked');
+  const label = name => h.dialog().querySelectorAll('label').find(node => node.textContent.startsWith(name));
+  assert.equal(label('Pressure washing, one-car').querySelector('input').checked, false);
+  assert.ok(label('Pressure washing, one-car').querySelector('input').hasAttribute('disabled'), 'not on a two-car garage');
+  assert.ok(label('Deep clean').querySelector('input').checked);
+  assert.match(label('Deep clean').textContent, /Sized to the walkthrough’s 2-car garage\.[\s\S]*\$330\.00/);
   h.button('Continue to shelving').click(); await flush();
-  assert.match(h.text(), /Pressure washing is quoted for a one-car garage only\./, 'the server refuses it on a two-car walkthrough');
-  wash().querySelector('input').dispatchEvent({ type: 'change', target: { checked: false } });
-  assert.ok(wash().querySelector('input').hasAttribute('disabled'), 'unchecked, it cannot be added back on a two-car garage');
-  h.button('Continue to shelving').click(); await flush();
-  assert.match(h.text(), /Shelving units/);
+  const step = h.calls.at(-1).body.compositePricing;
+  assert.deepEqual([step.garageSize, step.removal.map(row => row.id).sort(), step.labor], ['2', ['egc-008', 'egc-026'], undefined]);
+  assert.match(h.text(), /Shelving units/, 'the server accepts it');
+  // A selection with a cleaning base is sized by the base, as the server checks it; no known size changes nothing.
+  const { fitGarage } = h.context.EGCQuoteDraft.builder, menu = builderMenu(baseState());
+  const based = { removal: { 'egc-002': 1, 'egc-006': 1, 'egc-007': 1 } };
+  assert.equal(fitGarage(menu, based, '3'), false);
+  assert.deepEqual(Object.keys(based.removal), ['egc-002', 'egc-006', 'egc-007']);
+  const loads = { removal: { 'egc-026': 1, 'egc-008': 1 } };
+  assert.equal(fitGarage(menu, loads, null), false);
+  assert.equal(fitGarage(menu, loads, 'other'), true);
+  assert.deepEqual(Object.keys(loads.removal), ['egc-026', 'egc-010']);
+  assert.equal(fitGarage(menu, loads, 'other'), false, 'already sized');
 });
 
-test('product rows show their size and fit notes inline and never link out to the retailer', async () => {
+test('product rows show their size inline, their fit notes one tap away, and never link out to the retailer', async () => {
   const h = harness();
   h.open(); await flush();
   h.button('Continue to shelving').click(); await flush();
@@ -295,7 +307,12 @@ test('product rows show their size and fit notes inline and never link out to th
   assert.equal(h.dialog().querySelectorAll('a').length, 0, 'no product page link, no new tab');
   assert.doesNotMatch(h.text(), /Product page|homedepot\.com|Fit and sourcing notes/);
   const row = rows().find(node => node.textContent.includes(shelf.name));
-  assert.match(row.querySelector('p').textContent, /36 W × 72 H × 24 D in; 14\.86 in fixed shelf spacing/, 'the size and fit are in the row');
+  // LANE catalog review: the size is in the row; the fit notes are in a closed disclosure, not read out on every row.
+  assert.equal(row.querySelector('.qb-size').textContent, '36 W × 72 H × 24 D in', 'the size is in the row');
+  const notes = row.querySelector('details.qb-fit');
+  assert.equal(notes.hasAttribute('open'), false);
+  assert.equal(notes.querySelector('summary').textContent, 'Fit notes');
+  assert.match(notes.querySelector('p').textContent, /36 W × 72 H × 24 D in; 14\.86 in fixed shelf spacing/);
   assert.match(row.textContent, /\$115\.70 per pack/, 'EGC\'s price only');
   // Sourcing remarks about the retailer's price stay out of the row.
   const { fitText } = h.context.EGCQuoteDraft.builder;
@@ -303,31 +320,40 @@ test('product rows show their size and fit notes inline and never link out to th
   assert.equal(fitText('One kit services ONE 48-in rail. Do not divide kit price by 15 to price rail installations.'), 'One kit services ONE 48-in rail.');
   assert.equal(fitText('Public retail estimate only, not EGC invoice cost or verified local price/stock. No bulk discount assumed. Site/mounting review required.'), 'Site/mounting review required.');
   assert.equal(fitText(''), '');
+  // Long notes end at a sentence within 600 characters, never mid-sentence.
+  const long = Array.from({ length: 30 }, (_, i) => `Fit note number ${i} is about the bracket spacing.`).join(' ');
+  assert.ok(fitText(long).length <= 600 && fitText(long).endsWith('spacing.'), fitText(long).slice(-40));
+  assert.equal(fitText('x'.repeat(700)), `${'x'.repeat(599)}\u2026`, 'one sentence longer than that is cut with an ellipsis');
   h.button('Continue to extra storage').click(); await flush();
   assert.equal(h.dialog().querySelectorAll('a').length, 0);
 });
 
 // LANE catalog: the walkthrough's Finish step picks the builder's own shelving and storage (crew/gameplan-catalog.js); the
-// builder opens with them already chosen and writes every change back, so nothing is picked twice.
-test('the builder opens with the shelving and storage picked on the walkthrough and writes its own changes back', async () => {
+// builder opens with them already chosen and writes back what it saves, so nothing is picked twice. Changes not saved stay
+// in the builder: the walkthrough (and the homeowner's signature) keeps the quote it has (review finding).
+test('the builder opens with the shelving and storage picked on the walkthrough and writes back only what it saves', async () => {
   const tote = menuDoc.products.find(item => item.group === 'bins-totes'), mirrored = [];
   let picks = { shelving: [{ id: shelf.id, quantity: 2 }], storage: [{ id: tote.id, quantity: 1 }, { id: 'hd-unknown', quantity: 3 }] };
   const h = harness({ goods: () => picks, onGoods: goods => mirrored.push(structuredClone(goods)) });
   h.open(); await flush();
   // Two shelving units (2 hours to install) and a tote pack on top of the truck and mattress, priced from the open.
   assert.match(h.text(), /Shelving \$231\.40 · Storage \$51\.90/);
-  assert.deepEqual(mirrored.at(-1), { shelving: [{ id: shelf.id, quantity: 2, group: 'shelving', name: shelf.name, installPersonMinutes: 60 }], storage: [{ id: tote.id, quantity: 1, group: 'bins-totes', name: tote.name, installPersonMinutes: 32 }] }, 'the walkthrough holds the checked picks, an unknown product dropped');
+  assert.deepEqual(mirrored, [], 'opening writes nothing back');
   h.button('Continue to shelving').click(); await flush();
   assert.match(h.text(), /In this quote \(1\)/);
   assert.equal(h.dialog().querySelectorAll('output').find(node => node.parentNode.getAttribute('aria-label') === `${shelf.name} quantity`).textContent, '2');
   h.button(`One more: ${shelf.name}`).click();
-  assert.equal(mirrored.at(-1).shelving[0].quantity, 3, 'a change in the builder goes back to the walkthrough');
+  h.button(`One fewer: ${shelf.name}`).click();
+  h.button(`One more: ${shelf.name}`).click();
+  assert.deepEqual(mirrored, [], 'a change not saved is not written back');
   h.button('Continue to extra storage').click(); await flush();
   assert.match(h.text(), /In this quote \(1\)/);
   h.button('Review quote').click(); await flush();
+  assert.deepEqual(mirrored, []);
   h.button('Save draft').click(); await flush();
   const saved = h.calls.find(call => call.body?.action === 'save').body.draft.composite_pricing;
   assert.deepEqual([saved.shelving, saved.storage], [[{ id: shelf.id, quantity: 3 }], [{ id: tote.id, quantity: 1 }]]);
+  assert.deepEqual(mirrored, [{ shelving: [{ id: shelf.id, quantity: 3, group: 'shelving', name: shelf.name, installPersonMinutes: 60 }], storage: [{ id: tote.id, quantity: 1, group: 'bins-totes', name: tote.name, installPersonMinutes: 32 }] }], 'the saved goods go back once, an unknown product dropped');
   h.button('Done').click();
   // Finish changed again after the save: the saved quote says so, and Edit quote opens with the new picks.
   picks = { shelving: [{ id: shelf.id, quantity: 1 }], storage: [] };
@@ -337,17 +363,28 @@ test('the builder opens with the shelving and storage picked on the walkthrough 
   assert.match(h.text(), /Shelving \$115\.70 · Storage \$0\.00/);
   h.button('Continue to shelving').click(); await flush();
   assert.equal(h.dialog().querySelectorAll('output').find(node => node.parentNode.getAttribute('aria-label') === `${shelf.name} quantity`).textContent, '1');
+  // Changes made in the builder and not saved are the builder's, not Finish's: reopened, the saved quote blames no Finish pick.
+  for (const label of ['Back', 'Saved quote', 'Close']) h.button(label).click();
+  picks = null;
+  const kept = memoryStorage();
+  kept.setItem('egc-quote-builder-v1:sales.person:walk-1', JSON.stringify({ selection: { removal: Object.fromEntries(saved.removal.map(row => [row.id, row.quantity])), shelving: [{ id: shelf.id, quantity: 5 }], storage: [], labor: { manHours: null, adjusted: false } } }));
+  h.open(kept); await flush();
+  assert.match(h.text(), /is saved as a draft and has not been sent\./);
+  assert.doesNotMatch(h.text(), /Finish step/);
+  assert.equal(mirrored.length, 1, 'still only the one save written back');
 });
 
-test('without Finish picks the builder keeps its own selection and still tells the walkthrough what it holds', async () => {
+test('without Finish picks the builder keeps its own selection and tells the walkthrough what it saves', async () => {
   const mirrored = [];
   const h = harness({ goods: () => null, onGoods: goods => mirrored.push(structuredClone(goods)) });
   h.open(); await flush();
-  assert.deepEqual(mirrored.at(-1), { shelving: [], storage: [] });
+  assert.deepEqual(mirrored, []);
   assert.match(h.text(), /Shelving \$0\.00 · Storage \$0\.00/);
   h.button('Continue to shelving').click(); await flush();
   assert.match(h.text(), /Walkthrough note: 3 metal shelving units\./);
   h.button(`Add ${shelf.name}`).click();
+  assert.deepEqual(mirrored, []);
+  for (const label of ['Continue to extra storage', 'Review quote', 'Save draft']) { h.button(label).click(); await flush(); }
   assert.deepEqual(mirrored.at(-1).shelving.map(row => [row.id, row.quantity, row.group]), [[shelf.id, 1, 'shelving']]);
   // A walkthrough whose goods hook throws keeps the builder working.
   const broken = harness({ goods: () => { throw new Error('unreadable'); } });

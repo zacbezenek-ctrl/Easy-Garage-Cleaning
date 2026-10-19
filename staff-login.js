@@ -1,6 +1,6 @@
 // Staff sign-in (/staff-login) and the safe return used by the crew sign-in (/crew/). Signing in goes through
 // EGCHubAuth.signIn (crew/hub-auth.js); the page then returns only to a `next` that is in the staff-paths.js list.
-import { safeStaffNext } from './staff-paths.js?v=20260928gate';
+import { safeStaffNext } from './staff-paths.js?v=20261019catalog';
 
 const FIREBASE = { apiKey: 'AIzaSyA8g4UAW4P4bsCrQNZhUe81CbC7BvjJbNc', authDomain: 'egcw-1ec83.firebaseapp.com', projectId: 'egcw-1ec83', storageBucket: 'egcw-1ec83.firebasestorage.app', messagingSenderId: '763340109795', appId: '1:763340109795:web:ac203b3eb71831fa4ed2d6' };
 const GUARD = 'egc.staffNext.v1', GUARD_MS = 10000;

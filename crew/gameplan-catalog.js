@@ -4,19 +4,22 @@
    builder menu's own prices (GET /api/quote-draft?view=builder, the menu the quote is built, sent and signed from), each
    with its Draft or Approved chip, never the legacy walkthrough tables (their per-load rate). Finish picks shelving, totes and
    extra storage from the builder's own products into S.builderGoods: the quote builder opens with them already chosen
-   (crew/quote-draft.js options.goods) and writes its own changes back (options.onGoods), so nothing is picked twice. The
-   menu is read once per page load and kept in memory only (sign-out drops it); without it the steps say why. */
+   (crew/quote-draft.js options.goods) and writes back what it saves (options.onGoods), so nothing is picked twice. The
+   menu is read once per page load and kept in memory only (sign-out drops it); without it the steps say why, and Finish
+   keeps the walkthrough's own shelving and tote counts so the need is still recorded. */
 (function (root) {
   'use strict';
   if (typeof S === 'undefined') return;
   const TIMEOUT = 15000, PAGE = 12, STEPS = ['shelving', 'storage'];
-  const M = { menu: null, error: '', loading: false, off: false, group: '', search: '', limit: PAGE, seq: 0 };
+  const M = { menu: null, error: '', loading: false, off: false, failed: false, group: '', search: '', limit: PAGE, seq: 0 };
   const esc = value => String(value == null ? '' : value).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
   const money = cents => Number.isSafeInteger(cents) ? new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD' }).format(cents / 100) : 'Needs review';
   function h(tag, props, ...children) { const node = document.createElement(tag); for (const [name, value] of Object.entries(props || {})) { if (value == null || value === false) continue; if (name === 'class') node.className = value; else if (name.startsWith('on') && typeof value === 'function') node.addEventListener(name.slice(2), value); else if (name in node && !name.startsWith('aria-')) node[name] = value; else node.setAttribute(name, String(value)); } for (const child of children.flat(Infinity)) if (child != null && child !== false) node.append(child instanceof Node ? child : document.createTextNode(String(child))); return node; }
   function builderOn() { try { return root.EGCWalkthroughPricing?.quoteBuilder?.() === true; } catch { return false; } }
   // Scope and Finish show builder prices while the Hub says the builder is on and has not answered that it is off.
   const active = () => builderOn() && !M.off;
+  // The menu failed to load (offline, or the Hub did not answer) and has not loaded since: a retry keeps this until it does.
+  const unavailable = () => active() && !M.menu && M.failed;
   const services = () => Array.isArray(M.menu?.services) ? M.menu.services : [];
   const products = () => Array.isArray(M.menu?.products) ? M.menu.products : [];
   const sections = () => Array.isArray(M.menu?.sections) ? M.menu.sections : [];
@@ -46,12 +49,23 @@
       if (seq !== M.seq) return;
       if ([400, 404].includes(response.status)) { M.off = true; return; }
       if (!response.ok || data?.ok !== true || data.enabled !== true || !Array.isArray(data.services) || !Array.isArray(data.products)) throw new Error(data?.error || 'The quote builder prices could not load.');
-      Object.assign(M, { menu: data, off: false });
+      Object.assign(M, { menu: data, off: false, failed: false });
     } catch (error) {
-      if (seq === M.seq) M.error = error?.message || 'The quote builder prices could not load.';
+      if (seq === M.seq) Object.assign(M, { error: error?.message || 'The quote builder prices could not load.', failed: true });
     } finally { clearTimeout(timer); if (seq === M.seq) { M.loading = false; refresh(); } }
   }
-  const refresh = () => { if (typeof render === 'function' && typeof walkthroughReady !== 'undefined' && walkthroughReady) render(); };
+  const ready = () => typeof render === 'function' && typeof walkthroughReady !== 'undefined' && walkthroughReady;
+  // The menu arriving (or failing) re-renders only Scope and Finish, the steps that show it: another step is left alone (a
+  // field being typed in on Customer, a signature on Review), and the field in focus keeps its focus and caret.
+  const refresh = () => {
+    if (!ready() || typeof index !== 'undefined' && ![2, 3].includes(index)) return;
+    const focused = document.activeElement, id = focused && focused !== document.body && focused.id ? focused.id : '';
+    let caret = null; try { caret = id && typeof focused.selectionStart === 'number' ? [focused.selectionStart, focused.selectionEnd] : null; } catch { caret = null; }
+    render();
+    const again = id ? document.getElementById(id) : null;
+    if (!again || again === document.activeElement) return;
+    try { again.focus({ preventScroll: true }); if (caret) again.setSelectionRange(...caret); } catch { /* a field without a caret keeps the focus */ }
+  };
   const status = () => M.loading || !M.error ? 'Loading the quote builder prices…' : M.error;
   const statusHtml = () => `<p class="note gp-status" role="status">${esc(status())}${M.error && !M.loading ? ' <button type="button" class="small-btn gp-retry" onclick="EGCGameplanCatalog.load(true)">Retry builder prices</button>' : ''}</p>`;
 
@@ -104,13 +118,14 @@
     const own = S.builderGoods;
     return own && typeof own === 'object' && own.by === 'finish' ? { shelving: rows(own.shelving).map(({ id, quantity }) => ({ id, quantity })), storage: rows(own.storage).map(({ id, quantity }) => ({ id, quantity })) } : null;
   }
-  // The builder's own shelving and storage after any change there: the walkthrough holds the same picks.
+  // The shelving and storage of a quote the builder saved: the walkthrough holds the same picks. Only a save writes them
+  // back, so looking around in the builder without saving leaves the walkthrough, and the homeowner's signature, as they were.
   function fromBuilder(goods) {
     const next = { shelving: rows(goods?.shelving), storage: rows(goods?.storage) }, changed = goodsKey(next) !== goodsKey(picks());
     S.builderGoods = { ...next, by: 'builder' };
     if (changed && typeof invalidateAcceptance === 'function') invalidateAcceptance();
     if (typeof save === 'function') save();
-    if (changed) refresh();
+    if (changed && ready()) render();
   }
   function qtyControl(name, value, set) {
     return h('div', { class: 'qb-qty', role: 'group', 'aria-label': `${name} quantity` },
@@ -119,17 +134,20 @@
       h('button', { type: 'button', 'aria-label': `One more: ${name}`, disabled: value >= 999, onclick: () => set(value + 1) }, '+'));
   }
   function productRow(item, quantity) {
-    const fit = root.EGCQuoteDraft?.builder?.fitText ? root.EGCQuoteDraft.builder.fitText(item.fitWarnings) : '';
+    const details = root.EGCQuoteDraft?.builder?.productDetails ? root.EGCQuoteDraft.builder.productDetails(item) : [];
     return h('li', { class: 'qb-product' + (quantity ? ' on' : '') },
       item.photoUrl ? h('img', { src: item.photoUrl, alt: '', loading: 'lazy', width: 56, height: 56, referrerpolicy: 'no-referrer' }) : h('span', { class: 'qb-thumb', 'aria-hidden': 'true' }),
       h('div', { class: 'qb-info' }, h('strong', {}, item.name),
         h('small', {}, `${item.unitsPerPack > 1 ? `Pack of ${item.unitsPerPack} · ` : ''}${money(item.unitCents)} per pack `, chip(item)),
-        fit ? h('p', { class: 'qb-fit' }, fit) : null),
+        ...details),
       quantity ? qtyControl(item.name, quantity, n => setPick(item, n)) : h('button', { type: 'button', class: 'qd-secondary qb-add', 'aria-label': `Add ${item.name}`, onclick: () => setPick(item, 1) }, 'Add'));
   }
   function goodsPanel() {
     const head = [h('h2', {}, 'Shelving, totes and storage'), h('p', {}, 'Chosen here, they open in the quote builder already in the quote: nothing is picked twice. Prices are per purchase pack; installing them is billed through the quote’s Labor line.')];
-    if (!M.menu) return [...head, h('p', { class: 'note gp-status', role: 'status' }, status(), M.error && !M.loading ? h('button', { type: 'button', class: 'small-btn gp-retry', onclick: () => load(true) }, 'Retry builder prices') : null)];
+    // Without the menu the walkthrough's own shelving and tote cards (above) record the need; the builder shows those
+    // counts as a walkthrough note, and once the menu loads this panel offers the products and clears the note.
+    if (!M.menu) return [...head, h('p', { class: 'note gp-status', role: 'status' }, status(), M.error && !M.loading ? h('button', { type: 'button', class: 'small-btn gp-retry', onclick: () => load(true) }, 'Retry builder prices') : null),
+      M.failed ? h('p', { class: 'qb-help gp-legacy-help' }, 'Until the prices load, record shelving and totes with Add shelving and Add labeled totes above. Choose the products here once they load.') : null].filter(Boolean);
     const finish = Array.isArray(S.finish) ? S.finish : [], legacy = [finish.includes('shelving') && Number(S.shelfQty) > 0 ? `${Number(S.shelfQty)} ${String(S.shelfType || 'metal').replace(/[^a-z]/gi, '')} shelving unit${Number(S.shelfQty) === 1 ? '' : 's'}` : '', finish.includes('totes') && Number(S.toteQty) > 0 ? `${Number(S.toteQty)} labeled tote${Number(S.toteQty) === 1 ? '' : 's'}` : ''].filter(Boolean);
     // A walkthrough begun before Finish had the builder's products keeps its earlier counts until the estimator clears them.
     const clear = () => { if (typeof invalidateAcceptance === 'function') invalidateAcceptance(); S.finish = finish.filter(key => !['shelving', 'totes'].includes(key)); S.shelfQty = 0; S.toteQty = 0; if (!S.priceManuallySet) S.lockedPrice = ''; if (typeof save === 'function') save(); refresh(); };
@@ -158,6 +176,6 @@
     if (host) host.replaceChildren(...goodsPanel());
   }
 
-  root.addEventListener('egc:signout', () => { M.seq++; Object.assign(M, { menu: null, error: '', loading: false, off: false, group: '', search: '', limit: PAGE }); });
-  root.EGCGameplanCatalog = Object.freeze({ load, active, label, loadsNote, finishTag, statusHtml, mountGoods, picks, selection, fromBuilder, menu: () => M.menu });
+  root.addEventListener('egc:signout', () => { M.seq++; Object.assign(M, { menu: null, error: '', loading: false, off: false, failed: false, group: '', search: '', limit: PAGE }); });
+  root.EGCGameplanCatalog = Object.freeze({ load, active, unavailable, label, loadsNote, finishTag, statusHtml, mountGoods, picks, selection, fromBuilder, menu: () => M.menu });
 })(window);

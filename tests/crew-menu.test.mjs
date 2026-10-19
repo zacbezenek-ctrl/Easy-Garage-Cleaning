@@ -7,7 +7,7 @@ import assert from 'node:assert/strict';
 import vm from 'node:vm';
 import { readFileSync } from 'node:fs';
 import { createDocument } from './helpers/hub-dom.mjs';
-import { offeringsMenu, productSize } from '../functions/_lib/composite-quote.js';
+import { builderMenu, offeringsMenu, productSize } from '../functions/_lib/composite-quote.js';
 import { quoteDraftHandlers } from '../functions/api/quote-draft.js';
 import { STAFF_GATED_PATHS, staffGatedPath } from '../staff-paths.js';
 import { BASE_ENV, ON_ENV, builderState, estimator, menu, owner } from './helpers/estimator-fixture.mjs';
@@ -63,6 +63,10 @@ test('a product size comes from the listed width, height and depth, else a W × 
   assert.equal(productSize('Four of single tote 327528802. No quantity discount.'), '');
   assert.equal(productSize(undefined), '');
   assert.ok(offeringsMenu(builderState()).products.filter(item => item.size).length >= 40);
+  // The builder menu carries the same size, so its product rows show it inline (crew/quote-draft.js productDetails).
+  const builder = builderMenu(builderState()), offered = new Map(offeringsMenu(builderState()).products.map(item => [item.id, item.size]));
+  assert.equal(builder.products.find(item => item.id === 'hd-100006678').size, '36 W × 72 H × 24 D in');
+  for (const item of builder.products) assert.equal(item.size, offered.get(item.id), item.id);
 });
 
 // ---- The page ----
@@ -123,6 +127,11 @@ test('the page says when to sign in, when the menu is off, offline, or failing, 
   assert.match(signedOut.text(), /Sign in firstSign in to the crew app, then come back to what we sell\.Sign in/);
   assert.equal(signedOut.main.querySelector('a').getAttribute('href'), '/crew/?next=%2Fcrew%2Fmenu');
   assert.ok(staffGatedPath('/crew/menu') && STAFF_GATED_PATHS.includes('/crew/menu*'), 'the sign-in returns to a gated page');
+  // A browser holding the staff-paths.js from before /crew/menu was listed would treat next=/crew/menu as unsafe: the
+  // sign-in script imports the new list under a new cache query, and both sign-in pages load that script anew.
+  const read = path => readFileSync(new URL(`../${path}`, import.meta.url), 'utf8');
+  assert.match(read('staff-login.js'), /from '\.\/staff-paths\.js\?v=20261019catalog'/);
+  for (const loader of ['crew/index.html', 'staff-login.html']) assert.match(read(loader), /<script type="module" src="\/staff-login\.js\?v=20261019catalog"><\/script>/, loader);
   const off = page({ reply: () => ({ status: 404, body: { ok: false, code: 'quote_draft_menu_disabled', error: 'The menu of what we sell is not available yet. Ask the office.' } }) });
   await flush();
   assert.match(off.text(), /Not available yetThe menu of what we sell is not available yet\. Ask the office\.Back to crew home/);

@@ -123,9 +123,20 @@
     return [{ customer: 'sorting with the customer and resetting what stays', zones: 'sorting into keep / donate / haul zones and resetting what stays' }[scope.sort_method] || '', finish.includes('deep_clean') ? 'a deep clean' : '', finish.includes('pressure_wash') ? 'a pressure wash' : '',
       finish.includes('mouse_trapping') ? 'mouse trapping' : '', finish.includes('shelving') ? count(details.shelf_qty, 'shelving unit') : '', finish.includes('totes') ? count(details.tote_qty, 'storage tote') : '', Array.isArray(scope.hazards) && scope.hazards.includes('Pest waste') ? 'pest-waste cleanup' : ''].filter(Boolean);
   }
-  // A product's size and fit notes (the menu's fitWarnings) without its sourcing remarks about the retailer's price, cost,
-  // discounts or markup.
-  const fitText = text => String(text || '').split(/(?<=\.)\s+(?=[A-Z0-9])/).filter(part => part.trim() && !/pric|\$|cost|retail|discount|invoice|markup/i.test(part)).join(' ').trim().slice(0, 600);
+  // A product's fit notes (the menu's fitWarnings) without its sourcing remarks about the retailer's price, cost, discounts
+  // or markup, cut at a sentence end within 600 characters.
+  const fitText = text => {
+    let out = '';
+    for (const part of String(text || '').split(/(?<=\.)\s+(?=[A-Z0-9])/).map(part => part.trim()).filter(part => part && !/pric|\$|cost|retail|discount|invoice|markup/i.test(part))) {
+      const next = out ? `${out} ${part}` : part;
+      if (next.length > 600) return out || `${part.slice(0, 599)}\u2026`;
+      out = next;
+    }
+    return out;
+  };
+  // A product row's details: its size (the menu's size, composite-quote.js productSize) in the row, then its fit notes in
+  // a closed disclosure. Never the retailer's product page or its retail price beside EGC's.
+  const productDetails = item => { const fit = fitText(item?.fitWarnings); return [item?.size ? h('p', { class: 'qb-size' }, item.size) : null, fit ? h('details', { class: 'qb-fit' }, h('summary', {}, 'Fit notes'), h('p', {}, fit)) : null].filter(Boolean); };
   const garageWorkNote = work => work.length ? h('p', { class: 'qd-notice qb-garage-work', role: 'status' }, `The walkthrough records garage work this junk-only quote does not price: ${work.join(', ')}. The homeowner cannot sign it, and it cannot be sent, on that walkthrough. Add the work here (a garage cleaning base for sorting and reset, cleaning, shelving or storage), or, if they want junk removal only, change the walkthrough (Everything goes or Customer labels before arrival; no finish options).`) : null;
   // The walkthrough's garage fullness ("How full is it?"): the one input of the server's labor time estimate that the
   // builder selection does not hold. The crew size and the scheduled minutes are not inputs: the man-hours of the work
@@ -137,6 +148,20 @@
   // server checks the same (composite-quote.js checkRemoval) from the size the selection names.
   const GARAGE_SIZES = ['1', '2', '3', 'other'];
   const garageOf = p => { const value = String(p?.scope?.garages ?? '').trim().toLowerCase(); return GARAGE_SIZES.includes(value) ? value : null; };
+  // A selection without a garage cleaning base (a quote with truck loads) sizes its cleaning add-ons by the walkthrough's
+  // garage, as the server checks them: a deep clean sized for another garage becomes this one's, and a pressure wash stays
+  // with a one-car garage only. A selection with a base, or a walkthrough without a known size, is left as it is. True
+  // when it changed the selection (the walkthrough's garage size changed after the quote was built).
+  function fitGarage(menu, sel, size) {
+    const services = Array.isArray(menu?.services) ? menu.services : [], on = item => sel.removal[item.id] > 0;
+    if (!GARAGE_SIZES.includes(size) || services.some(item => item.group === 'cleaning-base' && on(item))) return false;
+    const deep = services.filter(item => item.group === 'cleaning' && item.garageSize), sized = deep.find(item => item.garageSize === size);
+    const wash = services.find(item => item.group === 'cleaning' && !item.garageSize && item.walkthroughKey === 'pressure_wash');
+    let changed = false;
+    if (deep.some(item => on(item) && item.garageSize !== size)) { for (const item of deep) delete sel.removal[item.id]; if (sized) sel.removal[sized.id] = 1; changed = true; }
+    if (wash && on(wash) && size !== '1') { delete sel.removal[wash.id]; changed = true; }
+    return changed;
+  }
   // The server's estimate (composite-quote.js laborEstimate) from the menu's time model (menu.labor.time, person-minutes),
   // for the running total shown while choosing; the server's preview is authoritative. {manHours, personMinutes,
   // installNotEstimated: [names]} or null without a time model. Set-up and sweep-out, the sorting of a garage with a
@@ -495,12 +520,11 @@
     const goodsOf = (menu, sel) => { const products = new Map((menu?.products || []).map(item => [item.id, item])); const row = ({ id, quantity }) => { const item = products.get(id); return { id, quantity, ...(item ? { group: item.group, name: item.name, ...(Number.isFinite(item.installPersonMinutes) ? { installPersonMinutes: item.installPersonMinutes } : {}) } : {}) }; }; return { shelving: (sel?.shelving || []).map(row), storage: (sel?.storage || []).map(row) }; };
     // The crew size on the Schedule tab: only the default of the Adjust control's people × hours.
     const crewOf = () => { const crew = Number(plan().logistics?.crew_size); return String(Number.isInteger(crew) && crew >= 1 && crew <= 20 ? crew : 2); };
-    // Every selection change is kept on this device and, from a walkthrough, written back to its Finish step (options.onGoods:
-    // the shelving and storage picks with the group and install time the walkthrough's bring list and job time read).
-    const keep = () => {
-      Promise.resolve().then(() => client.builderState?.({ selection: S.sel, savedAt: Date.now() })).catch(() => {});
-      if (typeof options.onGoods === 'function' && S.menu) { try { options.onGoods(goodsOf(S.menu, S.sel)); } catch { /* the walkthrough keeps its earlier picks */ } }
-    };
+    const keep = () => { Promise.resolve().then(() => client.builderState?.({ selection: S.sel, savedAt: Date.now() })).catch(() => {}); };
+    // A saved quote's shelving and storage, from a walkthrough, go back to its Finish step (options.onGoods: the picks with
+    // the group and install time the walkthrough's bring list and job time read). Only a save writes them back: changes
+    // not saved stay in the builder, and the walkthrough (and the homeowner's signature) keeps the quote it has.
+    const writeGoods = () => { if (typeof options.onGoods === 'function' && S.menu) { try { options.onGoods(goodsOf(S.menu, S.sel)); } catch { /* the walkthrough keeps its earlier picks */ } } };
     const chip = item => h('span', { class: 'qb-chip' + (item?.approved ? ' qb-ok' : ''), title: item?.reason || '' }, item?.approved ? 'Approved' : 'Draft price');
     const services = group => S.menu.services.filter(item => item.group === group);
     // A scope change re-estimates the labor unless the estimator set the man-hours by hand: man-hours kept from an earlier
@@ -563,15 +587,15 @@
           })),
       ];
     }
-    // A product's size and fit notes are shown in the row; the retailer's product page (and its retail price beside
-    // EGC's) is never linked, so the estimator never leaves the quote.
+    // A product's size is shown in the row and its fit notes one tap away (productDetails); the retailer's product page
+    // (and its retail price beside EGC's) is never linked, so the estimator never leaves the quote.
     function productRow(item, step) {
-      const quantity = S.sel[step].find(row => row.id === item.id)?.quantity || 0, fit = fitText(item.fitWarnings);
+      const quantity = S.sel[step].find(row => row.id === item.id)?.quantity || 0;
       return h('li', { class: 'qb-product' + (quantity ? ' on' : '') },
         item.photoUrl ? h('img', { src: item.photoUrl, alt: '', loading: 'lazy', width: 56, height: 56, referrerpolicy: 'no-referrer' }) : h('span', { class: 'qb-thumb', 'aria-hidden': 'true' }),
         h('div', { class: 'qb-info' }, h('strong', {}, item.name),
           h('small', {}, `${item.unitsPerPack > 1 ? `Pack of ${item.unitsPerPack} · ` : ''}${money(item.unitCents)} per pack${item.perOrderPackLimit ? ` · limit ${item.perOrderPackLimit} packs per order` : ''} `, chip(item)),
-          fit ? h('p', { class: 'qb-fit' }, fit) : null),
+          ...productDetails(item)),
         quantity ? qtyControl(item.name, quantity, 999, n => setProduct(step, item.id, n)) : h('button', { type: 'button', class: 'qd-secondary qb-add', disabled: S.busy, 'aria-label': `Add ${item.name}`, onclick: () => setProduct(step, item.id, 1) }, 'Add'));
     }
     function productStep(step) {
@@ -704,8 +728,9 @@
     // approved its draft prices), or edit it from its saved selection.
     function renderSaved() {
       const job = S.savedBuild, breakdown = job.breakdown && Array.isArray(job.breakdown.sections) ? job.breakdown : null, lines = Array.isArray(breakdown?.lines) ? breakdown.lines : [];
-      // The walkthrough's Finish picks differ from this saved quote's goods: editing the quote opens with the picks.
-      const finishChanged = typeof options.goods === 'function' && !sameGoods(goodsOf(S.menu, S.sel), validSelection(selectionOfPricing(job.compositePricing), S.menu));
+      // The walkthrough's Finish picks changed since the builder last saved and differ from this saved quote's goods: editing
+      // the quote opens with the picks. Changes made here and not saved are not Finish's.
+      const finish = walkthroughGoods(S.menu), finishChanged = Boolean(finish) && !sameGoods(finish, validSelection(selectionOfPricing(job.compositePricing), S.menu));
       body.replaceChildren(...[
         h('p', {}, `Quote ${job.estimate.number} revision ${job.estimate.revision} is saved as a draft and has not been sent.`),
         finishChanged ? h('p', { class: 'qd-notice qb-goods-changed', role: 'status' }, 'The shelving, totes and storage chosen on the walkthrough\u2019s Finish step are not the ones in this saved quote. Choose Edit quote: it opens with the Finish picks. Review it and save it again before sending.') : null,
@@ -794,6 +819,9 @@
       // opens with exactly those, and the labor follows the new estimate unless the estimator set it by hand.
       const picked = walkthroughGoods(menu);
       if (picked && !sameGoods(picked, sel)) { Object.assign(sel, { shelving: picked.shelving, storage: picked.storage }); if (sel.labor?.adjusted !== true) sel.labor = { manHours: null, adjusted: false }; }
+      // A quote built before the walkthrough's garage size changed: its deep clean and pressure wash follow the new size when
+      // it has no cleaning base, as the signed save checks them, and the labor follows the estimate unless set by hand.
+      if (fitGarage(menu, sel, garageOf(plan())) && sel.labor?.adjusted !== true) sel.labor = { manHours: null, adjusted: false };
       // Man-hours this device kept from a quote saved before the owner's Labor decisions of 2026-10-18 follow the new
       // estimate too, unless the estimator set them by hand.
       if (staleLabor(menu, job?.breakdown) && sel.labor?.adjusted !== true) sel.labor = { manHours: null, adjusted: false };
@@ -865,7 +893,7 @@
         if (retrying && !sameDraft(saved, current)) { S.status = `The original save is confirmed: ${S.status} Your later changes to the walkthrough are not saved yet. Review them and save again before sending.`; if (S.mode === 'builder') { S.step = 'removal'; S.priced = null; } return; }
         // The builder keeps the saved selection, man-hours included, on this device as on any other: reopening or editing
         // the quote starts from exactly what was saved, not from a fresh estimate.
-        if (S.mode === 'builder' && result.job?.compositePricing && typeof result.job.compositePricing === 'object') { S.sel = validSelection(selectionOfPricing(result.job.compositePricing, result.job.breakdown, S.menu), S.menu); keep(); }
+        if (S.mode === 'builder' && result.job?.compositePricing && typeof result.job.compositePricing === 'object') { S.sel = validSelection(selectionOfPricing(result.job.compositePricing, result.job.breakdown, S.menu), S.menu); keep(); writeGoods(); }
         S.preview = await client.preview(result.job);
         if (generation !== S.generation) return;
         const pending = await client.pendingSend(result.job);
@@ -928,5 +956,5 @@
     if (S.mode === 'probe') probeBuilder();
     return dialog;
   }
-  root.EGCQuoteDraft = { open, createClient, draftFromWalkthrough, scopeText, missing, builder: Object.freeze({ steps: BUILDER_STEPS, selectionFromWalkthrough, selectionOfPricing, validSelection, builderDescriptor, runningTotals, builderScope, compositeDraft, fullnessOf, garageOf, estimateLabor, junkOnly, walkthroughGarageWork, fitText }) };
+  root.EGCQuoteDraft = { open, createClient, draftFromWalkthrough, scopeText, missing, builder: Object.freeze({ steps: BUILDER_STEPS, selectionFromWalkthrough, selectionOfPricing, validSelection, builderDescriptor, runningTotals, builderScope, compositeDraft, fullnessOf, garageOf, fitGarage, estimateLabor, junkOnly, walkthroughGarageWork, fitText, productDetails }) };
 })(window);
