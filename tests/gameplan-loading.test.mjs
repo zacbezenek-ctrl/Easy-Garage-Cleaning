@@ -16,7 +16,7 @@ const flush = async () => { for (let n = 0; n < 15; n++) await Promise.resolve()
 
 // WP5: the gameplan loads its walkthroughs from GET /api/walkthrough-handoff?view=walkthroughs (the server answers for a
 // Sales estimator, who has no Firestore schedule access). This fake server stands in for it; the page has no hubDb.
-function harness({ requestedId = 'walkthrough-1', draft = null, manualDraft = null } = {}) {
+function harness({ requestedId = 'walkthrough-1', draft = null, manualDraft = null, search = null } = {}) {
   const nodes = new Map(), storage = new Map(), writes = [];
   const element = id => {
     if (!nodes.has(id)) nodes.set(id, { style: {}, innerHTML: '', textContent: '' });
@@ -51,7 +51,7 @@ function harness({ requestedId = 'walkthrough-1', draft = null, manualDraft = nu
     sections: ['Customer', 'Photos', 'Scope', 'Finish', 'Schedule', 'Review'],
     screens: Array.from({ length: 6 }, () => () => `<div>Editable walkthrough: ${context.S.name}</div>`),
     localStorage: { getItem: key => storage.get(key) || null, setItem: (key, value) => { writes.push(key); storage.set(key, value); } },
-    location: { pathname: '/crew/gameplan', search: requestedId ? `?walkthroughId=${requestedId}` : '' },
+    location: { pathname: '/crew/gameplan', search: search ?? (requestedId ? `?walkthroughId=${requestedId}` : '') },
     history: { replaceState: (...args) => state.replaced.push(args[2]) },
     refreshPhotoCount: () => { state.photos++; }, mountPhotos: () => {},
     slotSignature: () => '', findNearestSlots: () => {}, initSignature: () => {}, setTimeout: () => {},
@@ -59,7 +59,7 @@ function harness({ requestedId = 'walkthrough-1', draft = null, manualDraft = nu
   });
   vm.runInContext(line('const freshState='), context);
   context.S = vm.runInContext('freshState()', context);
-  for (const prefix of ['const draftKey=', 'function save(){', 'function restore(', 'function applyPricingVersion(', 'function resetForWalkthrough(', 'function render(){', 'function useAppointment(', 'async function openApp()']) {
+  for (const prefix of ['const draftKey=', 'function save(){', 'function restore(', 'function applyPricingVersion(', 'function resetForWalkthrough(', 'function render(){', 'function useAppointment(', 'function knockAddress(', 'async function openApp()']) {
     vm.runInContext(line(prefix), context);
   }
   vm.runInContext(html.slice(html.indexOf('function walkthroughLoadPanel(){'), html.indexOf('function useAppointment(')), context);
@@ -183,6 +183,30 @@ test('a route without a requested appointment preserves manual work and reports 
   await h.context.loadAppointments();
   assert.equal(h.context.S.notes, 'New unsaved work', 'retry must not restore over current work');
   assert.equal(h.context.APPTS_ERROR, '');
+});
+
+test('Knock\'s Start in-home walkthrough opens a new walkthrough with the door\'s address; a draft naming a customer keeps its own', async () => {
+  const search = `?address=${encodeURIComponent('412 Synthetic Ave, Fort Collins')}&source=knock&houseId=house-7`;
+  const fresh = harness({ requestedId: '', search });
+  await fresh.context.openApp();
+  assert.equal(fresh.context.S.address, '412 Synthetic Ave, Fort Collins');
+  assert.equal(fresh.context.S.name, '', 'only the address comes from Knock');
+  assert.equal(JSON.parse(fresh.storage.get('egc_walkthrough_v3:manual')).S.address, '412 Synthetic Ave, Fort Collins', 'saved on this device like typed input');
+  assert.deepEqual(fresh.state.replaced, ['/crew/gameplan'], 'the query leaves the address bar, so a reload does not apply it again');
+  const busy = harness({ requestedId: '', search, manualDraft: saved('', 'Manual customer') });
+  await busy.context.openApp();
+  assert.deepEqual([busy.context.S.name, busy.context.S.address || '', busy.context.S.notes], ['Manual customer', '', 'Keep these field notes'], 'work in progress is never overwritten');
+  assert.deepEqual(busy.state.replaced, ['/crew/gameplan']);
+  for (const other of [`?address=${encodeURIComponent('9 Other St')}`, '?source=knock&address=%20%20']) {
+    const page = harness({ requestedId: '', search: other });
+    await page.context.openApp();
+    assert.equal(page.context.S.address, '', other);
+    assert.deepEqual(page.state.replaced, [], `${other}: only Knock's link (source=knock with an address) fills anything`);
+  }
+  // A requested walkthrough (walkthroughId) never reads the Knock query.
+  const requested = harness({ search: `?walkthroughId=walkthrough-1&address=${encodeURIComponent('9 Other St')}&source=knock` });
+  await requested.context.openApp();
+  assert.equal(requested.context.S.address, requested.requested.address);
 });
 
 test('explicit manual entry after a missing direct link uses the manual draft and never overwrites the requested draft', async () => {

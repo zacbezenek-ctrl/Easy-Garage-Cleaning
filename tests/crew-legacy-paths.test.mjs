@@ -114,7 +114,8 @@ async function renderCrewHome(business, { online = true } = {}) {
     EGCHubAuth: {
       profile: () => ({ user: 'Crew.One', displayName: 'Synthetic Crew', businessAccess: business }),
       // Flag off, the gameplan opens for business access (crew/hub-auth.js canRunWalkthrough); crew home follows it (WT-OUTCOME).
-      canRunBusiness: () => business, canRunWalkthrough: () => business, mountCrewNav() {},
+      // Door-to-door (crew/hub-auth.js canUseKnock) is shown to business users and to phones Knock already knows.
+      canRunBusiness: () => business, canRunWalkthrough: () => business, canUseKnock: () => business, mountCrewNav() {},
       async fetch(path) {
         if (path === '/api/crew-jobs') return Response.json({ ok: true, jobs });
         if (path === '/api/employee-hub') return Response.json({ ok: true, collections: { timeEntries: [] } });
@@ -136,6 +137,7 @@ test('crew home sends employees to the verified job workflow and keeps legacy to
   assert.match(crew('next-work').innerHTML, /<a class="primary" href="\/crew\/job\.html\?jobId=job-2">Continue closeout<\/a>/);
   assert.doesNotMatch(crew('assigned-jobs').innerHTML + crew('next-work').innerHTML, /prejob|postjob/);
   assert.equal(crew('walkthrough-tool').hidden, true);
+  assert.equal(crew('knock-tool').hidden, true, 'no Door-to-door tile for a crew member Knock does not know');
 
   const manager = await renderCrewHome(true);
   assert.equal(manager('prejob-tool').getAttribute('href'), 'prejob.html');
@@ -143,6 +145,7 @@ test('crew home sends employees to the verified job workflow and keeps legacy to
   assert.match(manager('assigned-jobs').innerHTML, /href="\/crew\/prejob\?jobId=job-1"/);
   assert.match(manager('next-work').innerHTML, /href="\/crew\/postjob\?jobId=job-2">Continue closeout/);
   assert.equal(manager('walkthrough-tool').hidden, false);
+  assert.equal(manager('knock-tool').hidden, false, 'Knock\'s admins get the Door-to-door tile');
 });
 
 test('crew home offline banner describes what actually happens offline', async () => {

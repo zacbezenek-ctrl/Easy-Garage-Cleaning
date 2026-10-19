@@ -52,7 +52,7 @@ class CrewHomeWalkthroughBrowserTests(unittest.TestCase):
     def setUp(self):
         self.context = self.browser.new_context(viewport={'width': 375, 'height': 812}, is_mobile=True, has_touch=True, timezone_id='Asia/Tokyo')
         self.page = self.context.new_page(); self.page.set_default_timeout(7000); self.page.clock.install(time=NOW)
-        self.errors = []; self.writes = []; self.viewer = REP; self.jobs = rows(); self.jobs_status = 200
+        self.errors = []; self.writes = []; self.viewer = REP; self.jobs = rows(); self.jobs_status = 200; self.held = None
         self.page.on('pageerror', lambda error: self.errors.append(str(error)))
         self.context.route('**/*', self.route)
     def tearDown(self):
@@ -65,7 +65,9 @@ class CrewHomeWalkthroughBrowserTests(unittest.TestCase):
             route.fulfill(status=200, content_type='text/javascript', body=FIREBASE if url.path.endswith('/firebase-app-compat.js') else ''); return
         if url.hostname != '127.0.0.1': route.abort(); return
         if req.method != 'GET' and url.path.startswith('/api/'): self.writes.append((req.method, url.path)); send({'ok': False}, 405); return
-        if url.path == '/api/hub-auth': send(self.viewer); return
+        if url.path == '/api/hub-auth':
+            if self.held is not None: self.held.append(route); return
+            send(self.viewer, 200 if self.viewer.get('ok') else 401); return
         if url.path == '/api/firebase-session': send({'ok': True, 'token': 'synthetic-firebase-token'}); return
         if url.path == '/api/crew-jobs':
             send({'ok': self.jobs_status == 200, 'jobs': self.jobs}, self.jobs_status); return
@@ -156,5 +158,55 @@ class CrewHomeWalkthroughBrowserTests(unittest.TestCase):
         brand = page.locator('#brand').bounding_box(); chip = page.locator('#chip').bounding_box()
         self.assertLessEqual(brand['x'] + brand['width'], chip['x'] + 0.5, 'the logo and crew-tools chip do not overlap on a narrow phone')
         page.screenshot(path=str(out / 'crew-home-no-walkthrough-320.png'), full_page=True)
+
+    def test_door_to_door_tile_and_link_for_an_account_knock_knows_on_this_phone(self):
+        # D2D (owner, 2026-10-19): Knock is part of the crew hub. Knock's own copy of its viewer marks the rep; nothing is created.
+        self.page.add_init_script("localStorage.setItem('egc-knock:viewer', JSON.stringify({user: 'Synthetic.Rep', displayName: 'Synthetic Rep', savedAt: Date.now()}))")
+        self.open(); page = self.page
+        tile = page.locator('#knock-tool')
+        expect(tile).to_be_visible(); expect(tile).to_have_attribute('href', '/crew/knock'); expect(tile.locator('h2')).to_have_text('Door-to-door')
+        self.assertGreaterEqual(tile.bounding_box()['height'], 44)
+        nav = page.get_by_role('navigation', name='Crew workflow')
+        expect(nav.get_by_role('link', name='Door-to-door', exact=True)).to_have_attribute('href', '/crew/knock')
+        self.fits()
+        for width in (320, 375, 390):
+            page.set_viewport_size({'width': width, 'height': 812})
+            links = nav.locator('a'); expect(links).to_have_count(6)
+            self.assertEqual([link.text_content() for link in links.all()], ['Crew home', 'Walkthrough', 'Door-to-door', 'Pre-job', 'Closeout', 'My Hub'])
+            boxes = [link.bounding_box() for link in links.all()]
+            self.assertTrue(all(box['height'] >= 44 for box in boxes), f'44px targets at {width}px')
+            self.assertTrue(all(abs(box['y'] - boxes[0]['y']) <= 1 for box in boxes[:3]) and all(abs(box['y'] - boxes[3]['y']) <= 1 for box in boxes[3:]), f'two rows of three at {width}px')
+            self.assertGreater(boxes[3]['y'], boxes[0]['y'])
+            self.assertLessEqual(page.evaluate('document.documentElement.scrollWidth'), width)
+        page.set_viewport_size({'width': 375, 'height': 812})
+        out = ROOT / 'test-results'; out.mkdir(exist_ok=True); page.screenshot(path=str(out / 'crew-home-door-to-door-375.png'), full_page=True)
+
+    def test_no_door_to_door_tile_for_crew_knock_does_not_know(self):
+        self.viewer = CREW; self.jobs = [{**row, 'assignedCrew': ['synthetic.crew']} for row in rows()]
+        # Another account's Knock on this phone does not count.
+        self.page.add_init_script("localStorage.setItem('egc-knock:viewer', JSON.stringify({user: 'synthetic.rep', savedAt: Date.now()}))")
+        self.open(); page = self.page
+        expect(page.locator('#knock-tool')).to_be_hidden()
+        expect(page.get_by_role('navigation', name='Crew workflow').get_by_role('link', name='Door-to-door', exact=True)).to_have_count(0)
+
+    def test_gate_checks_the_session_before_showing_a_sign_in_form(self):
+        # STAFF-SESSION: a signed-in phone never sees the sign-in form flash while its session is checked.
+        page = self.page; self.held = []
+        page.goto(self.url + '/crew/', wait_until='domcontentloaded')
+        page.wait_for_function('document.querySelector("#egc-gate.checking")')
+        expect(page.locator('#egc-gate .gcheck')).to_have_text('Checking your sign-in…')
+        expect(page.locator('#egc-gate .gcheck')).to_be_visible()
+        expect(page.get_by_role('heading', name='Crew Sign-In')).to_be_hidden(); expect(page.locator('#gate-u')).to_be_hidden(); expect(page.locator('#egc-gate .gbtn')).to_be_hidden()
+        while not self.held: page.wait_for_timeout(50)
+        held = self.held; self.held = None
+        held[0].fulfill(status=200, content_type='application/json', body=json.dumps(self.viewer))
+        expect(page.locator('#hello')).to_have_text('Hi, ' + self.viewer['displayName'])
+        expect(page.locator('#egc-gate')).to_be_hidden()
+        # Signed out, the check answers 401 and only then the form shows.
+        self.viewer = {'ok': False, 'error': 'Sign in required'}
+        page.goto(self.url + '/crew/')
+        expect(page.get_by_role('heading', name='Crew Sign-In')).to_be_visible()
+        expect(page.locator('#gate-u')).to_be_visible()
+        expect(page.locator('#egc-gate .gcheck')).to_be_hidden()
 
 if __name__ == '__main__': unittest.main(verbosity=2)

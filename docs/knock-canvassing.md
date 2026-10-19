@@ -1,7 +1,7 @@
 # Door-to-door canvassing ("Knock")
 
 EGC Knock is the phone app commission knockers use all day to log doors, and the screens the owner uses to
-assign territory, watch results and pay commission. It lives inside this site at **`/crew/knock.html`**,
+assign territory, watch results and pay commission. It lives inside this site at **`/crew/knock`**,
 signs in with the existing **Hub accounts**, and stores everything in the existing Firestore project
 (`egcw-1ec83`) through server APIs. It works with no signal: every tap is queued on the phone and synced later.
 
@@ -33,7 +33,7 @@ The screens follow the EGC Knock redesign (Claude Design, October 2026).
 * **Sign-in is the Hub's.** A knocker needs a Hub account (employee signup, then the owner approves it in the
   Hub, or a staff invitation). Google and email-link sign-in were not added: this repo already has one sign-in
   system with approval and session revocation, and a second one would split accounts.
-* **Canvassing approval is separate.** The first time someone opens `/crew/knock.html` they get a
+* **Canvassing approval is separate.** The first time someone opens `/crew/knock` they get a
   *pending* canvassing profile and can do nothing. An admin approves them under **Admin > Reps**.
   **Deactivate** is one tap and takes effect on their next request (their queued doors stay on the phone).
 * **Per rep:** on the City permit list (yes/no), cleared for Premium (yes/no), knocker or lead, their lead,
@@ -47,6 +47,11 @@ The screens follow the EGC Knock redesign (Claude Design, October 2026).
   an employee account in the Hub's staff account review, a sign-in reset or a password change still ends its sessions
   on their next request, and a renewal checks the account first. Knock's offline copy of who is signed in lasts the
   same 7 days.
+* **From the crew hub.** Crew home (`/crew/`) shows a **Door-to-door** tile, and the crew menu a **Door-to-door** link,
+  to business users (Knock's admins) and to anyone who has already signed in to Knock on that phone. Showing them
+  never creates a canvassing profile; only opening Knock does. Knock's **More** screen links back to **Crew home**.
+  The installed app opens `/crew/knock` directly (its manifest `id` is still `/crew/knock.html`, so installed apps
+  keep their identity), and the **EGC Knock** wordmark goes Home without reloading the app.
 
 ## Run it locally
 
@@ -404,7 +409,7 @@ npx firebase deploy --only firestore:rules,firestore:indexes --project egcw-1ec8
 2. No new environment variables are required. The server already has `HUB_SESSION_SECRET`,
    `FIREBASE_SERVICE_ACCOUNT_JSON` and, for the optional hand-offs, `STRIPE_SECRET_KEY`, `HIGHLEVEL_API_KEY`
    and `HIGHLEVEL_LOCATION_ID`.
-3. Sign in at `/crew/knock.html` as the owner, seed the neighborhoods, run the import with `--production`,
+3. Sign in at `/crew/knock` as the owner, seed the neighborhoods, run the import with `--production`,
    approve reps, mark the permit list, assign territory.
 4. Before switching the deposit or text integration from `manual`, test with Stripe test keys and your own
    phone as the HighLevel contact.

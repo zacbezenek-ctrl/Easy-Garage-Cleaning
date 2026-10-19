@@ -241,6 +241,20 @@
     return canRunBusiness(user) || current.capabilities.includes('quotes.author');
   }
 
+  // Door-to-door (EGC Knock, /crew/knock) for the people who use it: business users, who are Knock's admins
+  // (functions/_lib/knock-access.js isAdmin), and an account this phone already signed in to Knock with (Knock's own
+  // copy of its viewer, crew/knock-app.js, kept until Knock signs out). Only Knock itself creates a canvassing profile,
+  // so showing this never does; Knock and its APIs decide what the account may do there.
+  function canUseKnock(user = profile().user) {
+    const signedIn = account(profile().user);
+    if (!signedIn || account(user) !== signedIn) return false;
+    if (canRunBusiness(user)) return true;
+    try {
+      const viewer = JSON.parse(localStorage.getItem('egc-knock:viewer') || 'null'), signedOutAt = Number(JSON.parse(localStorage.getItem('egc-knock:signed-out-at') || '0')) || 0;
+      return account(viewer?.user) === signedIn && Number(viewer.savedAt) > signedOutAt;
+    } catch { return false; }
+  }
+
   function mountCrewNav() {
     if (document.querySelector('.crew-utility')) return;
     const host = document.getElementById('topbar') || document.querySelector('#app .top');
@@ -249,10 +263,11 @@
     const links = [
       ['/crew', 'Crew home'],
       ['/crew/gameplan', 'Walkthrough'],
+      ['/crew/knock', 'Door-to-door'],
       ['/crew/prejob', 'Pre-job'],
       ['/crew/postjob', 'Closeout'],
       ['/employee', 'My Hub'],
-    ].filter(([href]) => href !== '/crew/gameplan' || canRunWalkthrough());
+    ].filter(([href]) => (href !== '/crew/gameplan' || canRunWalkthrough()) && (href !== '/crew/knock' || canUseKnock()));
     const nav = document.createElement('nav');
     nav.className = 'crew-utility';
     nav.setAttribute('aria-label', 'Crew workflow');
@@ -263,5 +278,5 @@
 
   window.addEventListener('DOMContentLoaded', mountCrewNav);
 
-  window.EGCHubAuth = { session, signIn, signOut, confirmSignOut, fetch: securedFetch, clearLocal, profile, can, canRunBusiness, canRunWalkthrough, mountCrewNav, ensureFirebaseSession };
+  window.EGCHubAuth = { session, signIn, signOut, confirmSignOut, fetch: securedFetch, clearLocal, profile, can, canRunBusiness, canRunWalkthrough, canUseKnock, mountCrewNav, ensureFirebaseSession };
 })();

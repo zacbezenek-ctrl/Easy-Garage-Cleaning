@@ -568,7 +568,8 @@ function renderChrome() {
       h('span', { class: 'serif grow', style: { fontSize: '22px' } }, typeof screen.title === 'function' ? screen.title(S.route.params) : screen.title),
       syncPill);
   } else if (!top.querySelector('.wordmark')) {
-    mount(top, h('a', { class: 'wordmark', href: '/crew/knock.html#home' }, 'EGC ', h('em', {}, 'Knock')), syncPill);
+    // A hash link, so the wordmark goes Home in this page instead of loading Knock again.
+    mount(top, h('a', { class: 'wordmark', href: '#home' }, 'EGC ', h('em', {}, 'Knock')), syncPill);
   }
 
   const window = knockingWindow(S.ui.houseId ? S.houses.get(S.ui.houseId) : null);
@@ -772,6 +773,10 @@ function moreScreen() {
         h('span', { class: 'caption muted' }, { auto: 'Auto', light: 'Off', dark: 'On' }[theme]), icon('chevronRight')),
       h('button', { type: 'button', class: 'list-row', onclick: rulesSheet },
         h('span', { class: 'list-row__main' }, h('span', { class: 'list-row__title' }, 'Help & the rules'), h('span', { class: 'list-row__sub' }, 'Knocking hours, go-backs, commission')),
+        icon('chevronRight')),
+      // The crew hub (crew/index.html) links back here as Door-to-door; both use the same Hub sign-in.
+      h('a', { class: 'list-row', href: '/crew/' },
+        h('span', { class: 'list-row__main' }, h('span', { class: 'list-row__title' }, 'Crew home'), h('span', { class: 'list-row__sub' }, 'Time clock, schedule, pay and field tools')),
         icon('chevronRight'))),
     h('p', { class: 'caption muted center' }, 'EGC Knock 2.0 · Easy Garage Cleaning · Fort Collins, CO'));
 }

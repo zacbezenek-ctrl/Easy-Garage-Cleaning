@@ -135,7 +135,7 @@ async function gameplanPage(api, user, walkthroughId) {
   });
   vm.runInContext(line('const freshState='), context);
   context.S = vm.runInContext('freshState()', context);
-  for (const prefix of ['const draftKey=', 'function save(){', 'function restore(', 'function applyPricingVersion(', 'function resetForWalkthrough(', 'function render(){', 'function useAppointment(', 'async function openApp()']) vm.runInContext(line(prefix), context);
+  for (const prefix of ['const draftKey=', 'function save(){', 'function restore(', 'function applyPricingVersion(', 'function resetForWalkthrough(', 'function render(){', 'function useAppointment(', 'function knockAddress(', 'async function openApp()']) vm.runInContext(line(prefix), context);
   vm.runInContext(GAMEPLAN.slice(GAMEPLAN.indexOf('function walkthroughLoadPanel(){'), GAMEPLAN.indexOf('function useAppointment(')), context);
   await context.openApp();
   return { context, calls, screen: () => element('screen').innerHTML };
@@ -161,7 +161,7 @@ async function crewHome(api, user) {
     Date, Intl, URLSearchParams, Promise, Set, Map, Number, String, Array, Math, JSON, Object, Error, TypeError, Boolean, encodeURIComponent, console, AbortSignal, Response,
     location: { search: '' }, navigator: { onLine: true, geolocation: { getCurrentPosition(resolve) { resolve({ coords: { latitude: 40.5852601, longitude: -105.0844233, accuracy: 9.6 } }); } } },
     addEventListener(type, listener) { listeners[type] = listener; }, confirm: () => true, crypto: { randomUUID }, document: { getElementById: element }, fetch: route,
-    EGCHubAuth: { profile: () => profile, canRunBusiness: () => profile.businessAccess === true, canRunWalkthrough: () => false, mountCrewNav() {}, fetch: route },
+    EGCHubAuth: { profile: () => profile, canRunBusiness: () => profile.businessAccess === true, canRunWalkthrough: () => false, canUseKnock: () => false, mountCrewNav() {}, fetch: route },
   });
   context.window = context;
   vm.runInContext(OUTBOX, context);

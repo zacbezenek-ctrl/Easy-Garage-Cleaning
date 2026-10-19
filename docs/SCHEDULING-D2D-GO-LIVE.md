@@ -55,7 +55,12 @@ with the reason and a **Book in Hub** button.
 
 **Hub schedule board.** Dispatch → **Board** shows crews, estimators and a **Door-to-door** panel for the day: reps on
 shift, their areas, doors knocked, sales and walkthroughs set, with links to the jobs they made. Owners, managers and
-team leads can see it.
+team leads can see it. A job or walkthrough already on the loaded board opens in the Hub's own editor; any other opens
+its crew page.
+
+**Door-to-door inside the crew hub.** Crew home has a **Door-to-door** tile (and the crew menu a link) for owners,
+managers and anyone who already uses Knock on that phone, and Knock's **More** screen links back to **Crew home**. My
+money in Knock no longer sends reps to the Hub; with the bridge on it offers **Set a walkthrough at the door** instead.
 
 **Staying signed in.** Staff now stay signed in: a sign-in lasts until it goes 7 days without use (it used to end 12
 hours after signing in). Rejecting an account in the Hub, a sign-in reset or a password change still signs that person

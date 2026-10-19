@@ -553,14 +553,17 @@ test('the crew sign-in follows a safe next after signing in or on a restored ses
     ['next keeps refusing', { go: () => true, resume: () => false, target: () => '/crew/gameplan' }, { 'sign-in': 'next', restored: 'notice' }],
     ['module missing', undefined, { 'sign-in': 'home', restored: 'home' }],
   ];
-  for (const [label, staffNext, expected] of cases) {
-    for (const path of ['sign-in', 'restored']) {
+  // STAFF-SESSION: the gate starts checking (no form) until the session check answers.
+  assert.match(html, /<div id="egc-gate" class="checking">\s*<div class="gcard">\s*<div class="gpill">EGC Crew Tools<\/div>\s*<p class="gcheck" role="status">Checking your sign-in…<\/p>/);
+  assert.match(html, /#egc-gate\.checking \.gcard>:not\(\.gpill\):not\(\.gcheck\)\{display:none\}/);
+  for (const [label, staffNext, expected] of [...cases, ['no session', undefined, { restored: 'form' }]]) {
+    for (const path of ['sign-in', 'restored'].filter(name => expected[name])) {
       const calls = [], listeners = {}, elements = {};
-      const element = id => elements[id] ||= { value: ' synthetic.crew ', style: {}, textContent: '', disabled: false, hidden: true, classes: new Set(), listeners: {},
-        classList: { add(name) { elements[id].classes.add(name); } }, addEventListener(type, listener) { this.listeners[type] = listener; } };
+      const element = id => elements[id] ||= { value: ' synthetic.crew ', style: {}, textContent: '', disabled: false, hidden: true, classes: new Set(id === 'egc-gate' && path === 'restored' ? ['checking'] : []), listeners: {},
+        classList: { add(name) { elements[id].classes.add(name); }, remove(name) { elements[id].classes.delete(name); } }, addEventListener(type, listener) { this.listeners[type] = listener; } };
       const context = vm.createContext({
         document: { getElementById: element, querySelector: () => element('gate-button'), addEventListener: (type, listener) => { listeners[type] = listener; } },
-        EGCHubAuth: { signIn: async (...args) => { calls.push(['signIn', ...args]); return 'synthetic.crew'; }, session: async () => 'synthetic.crew', signOut: async () => { calls.push(['signOut']); } },
+        EGCHubAuth: { signIn: async (...args) => { calls.push(['signIn', ...args]); return 'synthetic.crew'; }, session: async () => expected.restored === 'form' ? null : 'synthetic.crew', signOut: async () => { calls.push(['signOut']); } },
         location: { reload: () => calls.push(['reload']) },
         openCrewHome: async () => { calls.push(['home']); },
       });
@@ -575,9 +578,12 @@ test('the crew sign-in follows a safe next after signing in or on a restored ses
         listeners.DOMContentLoaded();
         await settle();
       }
-      const outcome = expected[path], home = outcome !== 'next';
+      const outcome = expected[path], home = outcome === 'home' || outcome === 'notice';
       assert.equal(calls.some(([name]) => name === 'home'), home, `${label} ${path}`);
       assert.equal(element('egc-gate').classes.has('off'), home, `${label} ${path}`);
+      // A page load starts checking (the form is only on screen to sign in, after a check found no session).
+      assert.equal(element('egc-gate').classes.has('checking'), path === 'restored' && outcome === 'next', `${label} ${path}: only a hand-over to next keeps checking; a signed-in viewer never sees the form`);
+      if (outcome === 'form') assert.equal(typeof element('gate-p').listeners.keydown, 'function', 'with no session the form shows and takes Enter');
       assert.equal(element('next-note').hidden, outcome !== 'notice', `${label} ${path}: the refused page is explained, not silently dropped`);
       if (outcome === 'notice') {
         await element('next-signin').listeners.click();

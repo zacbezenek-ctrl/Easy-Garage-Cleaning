@@ -355,21 +355,23 @@ function lookSheet(house) {
     const interest = choiceGroup(PACKAGES.map(pkg => [pkg, pkg]), '');
     const note = h('textarea', { class: 'input input--area', id: 'lk-note', maxlength: '440', placeholder: 'What\'s in the garage, what they want gone…' });
     const walkthrough = S().viewer?.walkthrough && S().settings.integrations.walkthroughUrl;
-    const save = event => {
+    const walkthroughHref = walkthrough ? `${S().settings.integrations.walkthroughUrl}?address=${encodeURIComponent(houseLabel(house))}&source=knock&houseId=${encodeURIComponent(house.id)}` : '';
+    // openWalkthrough: Start in-home walkthrough saves this look first, then opens the walkthrough in this tab (tapOutcome).
+    const save = (event, openWalkthrough = '') => {
       event.preventDefault();
       const raw = amount.value.replace(/[$,\s]/g, '');
       const value = raw === '' ? null : Math.round(Number(raw));
       if (raw !== '' && !(Number.isFinite(value) && value >= 0 && value <= 100000)) { amount.classList.add('input--error'); amount.focus(); return; }
       const text = [interest.value() ? `Interested in ${interest.value()}.` : '', note.value.trim()].filter(Boolean).join(' ');
-      close({ quotedAmount: value, note: text || undefined });
+      close({ quotedAmount: value, note: text || undefined, ...(openWalkthrough ? { openWalkthrough } : {}) });
     };
     return h('form', { class: 'stack', style: { gap: '14px' }, onsubmit: save },
       h('div', { class: 'field' }, h('label', { class: 'label', for: 'lk-price' }, 'Quoted price'), h('div', { class: 'money-field' }, h('span', {}, '$'), amount),
         h('span', { class: 'hint' }, 'Leave blank if you didn\'t quote yet.')),
       h('div', { class: 'field' }, h('span', { class: 'label' }, 'What are they thinking about?'), interest.el),
       h('div', { class: 'field' }, h('label', { class: 'label', for: 'lk-note' }, 'Note ', h('span', { class: 'muted', style: { fontWeight: '400' } }, '(optional)')), note),
-      walkthrough ? h('a', { class: 'btn btn--secondary btn--block', style: { minHeight: '60px' }, target: '_blank', rel: 'noopener',
-        href: `${S().settings.integrations.walkthroughUrl}?address=${encodeURIComponent(houseLabel(house))}&source=knock&houseId=${encodeURIComponent(house.id)}` }, icon('home'), 'Start in-home walkthrough') : null,
+      walkthrough ? h('a', { class: 'btn btn--secondary btn--block', style: { minHeight: '60px' }, href: walkthroughHref, onclick: event => save(event, walkthroughHref) },
+        icon('home'), 'Start in-home walkthrough') : null,
       walkthrough ? h('span', { class: 'hint center', style: { marginTop: '-6px' } }, 'Owners only') : null,
       h('button', { type: 'submit', class: 'btn btn--primary btn--xl btn--block' }, 'Save look'),
       h('button', { type: 'button', class: 'btn btn--quiet btn--block', onclick: () => close(null) }, 'Cancel'));
@@ -387,6 +389,8 @@ async function tapOutcome(house, outcome, button) {
   if (outcome === 'look') {
     const details = await lookSheet(house);
     if (details) await logDoor(house, outcome, details);
+    // Owners only: after logging the look, the walkthrough opens in this tab, where an installed app keeps its sign-in.
+    if (details?.openWalkthrough) location.assign(details.openWalkthrough);
     return;
   }
   if (outcome === 'sold') {

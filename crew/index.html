@@ -72,7 +72,7 @@
   .access-note button{display:block;min-height:44px;margin-top:8px;padding:0 16px;border:0;border-radius:10px;background:var(--orange);color:#fff;font:inherit;font-size:14px;cursor:pointer}
   @media(max-width:560px){main{padding:22px 14px 34px}.crew-overview{grid-template-columns:1fr 1fr}.status-card strong{font-size:21px}.job-meta{grid-template-columns:1fr}.job-row{grid-template-columns:65px 1fr auto}.quick-grid{grid-template-columns:1fr 1fr}.next-card{padding:18px}a.tool{gap:12px;padding:18px 14px}}
 </style>
-<link rel="stylesheet" href="/crew/crew-brand.css?v=20260930launchpolish">
+<link rel="stylesheet" href="/crew/crew-brand.css?v=20261019d2d">
 <script src="/crew/field-outbox.js?v=20260929crewtime2"></script>
 <link rel="stylesheet" href="/app-touch.css?v=20260930mobiletouch">
 </head>
@@ -92,10 +92,15 @@
   #egc-gate .gbtn{width:100%;margin-top:18px;background:#e8581c;border:none;color:#fff;font-family:'Oswald',sans-serif;font-weight:600;font-size:15px;letter-spacing:.06em;text-transform:uppercase;padding:13px;border-radius:10px;cursor:pointer;min-height:48px}
   #egc-gate .gerr{display:none;background:rgba(239,68,68,.12);border:1px solid rgba(239,68,68,.35);color:#fca5a5;border-radius:8px;padding:9px 12px;font-size:13px;margin-top:14px}
   #egc-gate .gcreate{display:block;margin-top:15px;color:#d9e2f1;font-size:12px;font-weight:700;text-align:center;text-underline-offset:3px}
+  /* Until the session check answers, the gate says so instead of showing a sign-in form to someone already signed in. */
+  #egc-gate .gcheck{display:none;color:#aeb8cc;font-size:14px;margin:4px 0 0}
+  #egc-gate.checking .gcheck{display:block}
+  #egc-gate.checking .gcard>:not(.gpill):not(.gcheck){display:none}
 </style>
-<div id="egc-gate">
+<div id="egc-gate" class="checking">
   <div class="gcard">
     <div class="gpill">EGC Crew Tools</div>
+    <p class="gcheck" role="status">Checking your sign-in…</p>
     <h2>Crew Sign-In</h2>
     <p class="gsub">Use your employee portal username &amp; password.</p>
     <label for="gate-u">Username</label>
@@ -107,7 +112,7 @@
     <a class="gcreate" href="/employee-signup">New employee? Create your account</a>
   </div>
 </div>
-<script src="/crew/hub-auth.js?v=20260904c"></script>
+<script src="/crew/hub-auth.js?v=20261019d2d"></script>
 <script type="module" src="/staff-login.js?v=20260928gate"></script>
 <script>
 async function gateLogin(){
@@ -122,7 +127,8 @@ async function gateLock(){if(!await EGCHubAuth.confirmSignOut())return;await EGC
 // "Sign in again" renews the same person's session, so it keeps photos still waiting to upload (not an explicit sign-out).
 async function gateRenew(){await EGCHubAuth.signOut();location.reload()}
 function nextRefused(){document.getElementById("next-note").hidden=false;document.getElementById("next-signin").addEventListener("click",gateRenew)}
-document.addEventListener('DOMContentLoaded',()=>EGCHubAuth.session().then(user=>{if(user){if(window.EGCStaffNext&&EGCStaffNext.resume())return;document.getElementById("egc-gate").classList.add("off");if(window.EGCStaffNext&&EGCStaffNext.target())nextRefused();openCrewHome();return}document.getElementById("gate-p").addEventListener("keydown",e=>{if(e.key==="Enter")gateLogin()});document.getElementById("gate-u").addEventListener("keydown",e=>{if(e.key==="Enter")document.getElementById("gate-p").focus()})}));
+// The gate starts checking (no form): a restored session opens home or its next page, and only no session shows the form.
+document.addEventListener('DOMContentLoaded',()=>EGCHubAuth.session().then(user=>{const gate=document.getElementById("egc-gate");if(user){if(window.EGCStaffNext&&EGCStaffNext.resume())return;gate.classList.add("off");gate.classList.remove("checking");if(window.EGCStaffNext&&EGCStaffNext.target())nextRefused();openCrewHome();return}gate.classList.remove("checking");document.getElementById("gate-p").addEventListener("keydown",e=>{if(e.key==="Enter")gateLogin()});document.getElementById("gate-u").addEventListener("keydown",e=>{if(e.key==="Enter")document.getElementById("gate-p").focus()})}));
 </script>
 
 <div id="topbar">
@@ -164,6 +170,7 @@ document.addEventListener('DOMContentLoaded',()=>EGCHubAuth.session().then(user=
     <a class="tool hot" id="walkthrough-tool" href="gameplan.html" hidden><span class="num">1</span><span class="tx"><h2>Walkthrough</h2><p>Build the customer plan, price, approval, and crew handoff.</p></span><span class="arrow">&rarr;</span></a>
     <a class="tool" id="prejob-tool" href="/crew/job.html" data-business-href="prejob.html"><span class="num">1</span><span class="tx"><h2>Pre-job</h2><p>Review the exact promise, protect important items, load out, and start.</p></span><span class="arrow">&rarr;</span></a>
     <a class="tool" id="closeout-tool" href="/crew/job.html" data-business-href="postjob.html"><span class="num">2</span><span class="tx"><h2>Closeout</h2><p>Verify important items, capture proof, log costs, payment, and review.</p></span><span class="arrow">&rarr;</span></a>
+    <a class="tool" id="knock-tool" href="/crew/knock" hidden><span class="num">&#8962;</span><span class="tx"><h2>Door-to-door</h2><p>EGC Knock: your area, doors, sales and the walkthroughs you set.</p></span><span class="arrow">&rarr;</span></a>
   </div>
 </main>
 
@@ -266,7 +273,7 @@ function showScheduleUnavailable(profile){
   host.querySelector('button').addEventListener('click',async event=>{const button=event.currentTarget;button.disabled=true;button.textContent='Checking schedule…';await loadAssignedJobs(profile)});
 }
 function showJobs(rows){const next=rows.find(job=>(job.pipelineStatus||job.status)==='in_progress')||rows.find(job=>job.type!=='walkthrough'||!job.walkthroughState||job.walkthroughState==='open')||rows[0],host=document.getElementById('next-work');if(!next){host.className='next-card empty';host.innerHTML='<div class="next-top"><span>Next assigned work</span></div><h2>No upcoming assignment</h2><p>Your manager has not assigned another job yet. Check Open shifts in My Hub.</p><div class="next-actions"><a class="primary" href="/employee?view=open_shifts">See open shifts</a></div>';document.getElementById('assigned-jobs').innerHTML='<div class="load-note">No upcoming assigned jobs. Claimed and newly assigned shifts will appear here automatically.</div>';return}const stage=next.walkthroughBadge||(next.pipelineStatus||next.status||'scheduled').replaceAll('_',' '),route=next.address?`https://www.google.com/maps/dir/?api=1&destination=${encodeURIComponent(next.address)}`:'',phone=String(next.phone||'').replace(/[^+0-9]/g,'');host.className='next-card';host.innerHTML=`<div class="next-top"><span>${(next.pipelineStatus||next.status)==='in_progress'?'Active job':'Next assigned work'}</span><span class="job-stage">${esc(stage)}</span></div><h2>${esc(next.customer||next.serviceType||'Customer job')}</h2><p>${esc(next.address||'Address pending')}</p><div class="job-meta"><div><span>Date</span><strong>${esc(displayDate(next.date))}</strong></div><div><span>Time</span><strong>${esc(next.time||'TBD')}–${esc(next.endTime||'TBD')}</strong></div><div><span>Service</span><strong>${esc(next.serviceType||next.type||'Garage service')}</strong></div></div><div class="next-actions"><a class="primary" href="${workLink(next)}">${workLabel(next)}</a>${route?`<a href="${route}" target="_blank" rel="noopener">Route</a>`:''}${phone?`<a href="tel:${esc(phone)}">Call customer</a>`:''}<a class="subtle" href="tel:9709991818">Call office</a></div>`;document.getElementById('assigned-jobs').innerHTML=rows.slice(0,6).map(job=>`<a class="job-row" href="${workLink(job)}"><time>${esc(displayDate(job.date))}<small>${esc(job.time||'')}</small></time><span><strong>${esc(job.customer||job.serviceType||'Customer job')}</strong><small>${esc(job.address||'Address pending')}</small>${job.walkthroughBadge?`<em class="row-badge">${esc(job.walkthroughBadge)}</em>`:''}</span><b>→</b></a>`).join('')}
-async function openCrewHome(){const profile=EGCHubAuth.profile(),name=profile.displayName||profile.user||'Crew',business=EGCHubAuth.canRunBusiness(profile.user);document.getElementById('hello').textContent=`Hi, ${name}`;document.getElementById('dayline').textContent=`${new Date().toLocaleDateString('en-US',{weekday:'long',month:'long',day:'numeric'})} · Here’s what you need for work.`;document.getElementById('walkthrough-tool').hidden=!EGCHubAuth.canRunWalkthrough(profile.user);for(const id of ['prejob-tool','closeout-tool']){const tool=document.getElementById(id);tool.setAttribute('href',business?tool.dataset.businessHref:'/crew/job.html')}document.getElementById('field-flow').textContent=business?'Walkthrough → pre-job → closeout':'Pre-job → closeout';document.getElementById('access-note').hidden=new URLSearchParams(location.search).get('notice')!=='walkthrough-restricted';if(profile.roleAccess===true)document.getElementById('access-note').textContent='Walkthroughs need the Sales role. Ask the owner.';EGCHubAuth.mountCrewNav();await Promise.all([loadEmployeeData(profile),loadAssignedJobs(profile)])}
+async function openCrewHome(){const profile=EGCHubAuth.profile(),name=profile.displayName||profile.user||'Crew',business=EGCHubAuth.canRunBusiness(profile.user);document.getElementById('hello').textContent=`Hi, ${name}`;document.getElementById('dayline').textContent=`${new Date().toLocaleDateString('en-US',{weekday:'long',month:'long',day:'numeric'})} · Here’s what you need for work.`;document.getElementById('walkthrough-tool').hidden=!EGCHubAuth.canRunWalkthrough(profile.user);document.getElementById('knock-tool').hidden=!EGCHubAuth.canUseKnock(profile.user);for(const id of ['prejob-tool','closeout-tool']){const tool=document.getElementById(id);tool.setAttribute('href',business?tool.dataset.businessHref:'/crew/job.html')}document.getElementById('field-flow').textContent=business?'Walkthrough → pre-job → closeout':'Pre-job → closeout';document.getElementById('access-note').hidden=new URLSearchParams(location.search).get('notice')!=='walkthrough-restricted';if(profile.roleAccess===true)document.getElementById('access-note').textContent='Walkthroughs need the Sales role. Ask the owner.';EGCHubAuth.mountCrewNav();await Promise.all([loadEmployeeData(profile),loadAssignedJobs(profile)])}
 function updateOnline(){document.getElementById('offline').classList.toggle('on',!navigator.onLine)}
 // Offline, the clock buttons disable at once (crewClock also refuses); online, the home reloads and sends what waits.
 addEventListener('online',()=>{updateOnline();openCrewHome()});addEventListener('offline',()=>{updateOnline();if(clock.loaded)renderOverview(EGCHubAuth.profile())});updateOnline();
