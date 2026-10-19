@@ -14,8 +14,10 @@ Settings > General > Software Update, or record in Voice Memos and add the file 
 
 ## Setup
 
-1. `EGC_WALKTHROUGH_VISIT_ENABLED=true` and `EGC_OPERATIONS_ENABLED=true` are set for the environment under test. Note whether
-   `EGC_OFFLINE_CLOCK_ENABLED` is set: step 11 differs (it is unset by default).
+1. `EGC_WALKTHROUGH_VISIT_ENABLED` is on (a launch default since 2026-10-19). With walkthrough notes on (`EGC_WALKTHROUGH_NOTES`, also a
+   launch default, with the `openaiapi` key set) the audio goes to `/api/walkthrough-notes` and is transcribed on the website
+   (docs/GO-LIVE.md 3.7: its 60-second canary comes first); with notes off it needs `EGC_OPERATIONS_ENABLED=true` and the bridge.
+   Note whether `EGC_OFFLINE_CLOCK_ENABLED` is set: step 11 differs (it is unset by default).
 2. A synthetic walkthrough visit ("Synthetic Customer", your own phone number) is booked for today and assigned to
    the test rep, with an exact customer link (otherwise uploads return `recording_customer_link_missing`).
 3. Sign in on the iPad as the test rep. Open the walkthrough from Crew home.

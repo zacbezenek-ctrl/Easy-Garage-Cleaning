@@ -349,10 +349,11 @@ Every website lead already goes to HighLevel. Stage 2 makes that durable (nothin
 | --- | --- | --- |
 | 3.1 | `EGC_STAFF_DIRECTORY_ENABLED=true` | Cloudflare, plain |
 | 3.2 | Booking in Dispatch | No switch |
-| 3.3 | Recording in the Hub | Railway bridge (B5) |
-| 3.4 | `EGC_WALKTHROUGH_VISIT_ENABLED=true` (after FUN-06) | Cloudflare, plain |
+| 3.3 | Recording in the Hub | Website transcription ([3.7](#37-walkthrough-transcripts-and-job-notes-owner-decision-on)); the Railway bridge (B5) only with notes off |
+| 3.4 | `EGC_WALKTHROUGH_VISIT_ENABLED` (on by launch default, 2026-10-19) | Nothing to set; `false` turns it off |
 | 3.5 | `EGC_STAFF_ROLE_ACCESS=true` (owner decision: on) | Cloudflare, plain |
 | 3.6 | `EGC_STAFF_PASSWORD_RESET=true`, `EGC_STAFF_MANAGER_GRANTS=accounts.reset,accounts.approve` | Cloudflare, plain |
+| 3.7 | `EGC_WALKTHROUGH_NOTES` (on by launch default, 2026-10-19): OpenAI credits on the website key, Workers Paid, a 60-second iPad canary | Nothing to set; `false` turns it off |
 
 ### 3.1 Team roles (staff directory)
 
@@ -378,6 +379,8 @@ Every website lead already goes to HighLevel. Stage 2 makes that durable (nothin
 
 ### 3.3 Recording the walkthrough
 
+With walkthrough notes on (the launch default, [3.7](#37-walkthrough-transcripts-and-job-notes-owner-decision-on)) the iPad recorder sends its audio to the website, which transcribes it with the website's own OpenAI key: this section then applies only to the Hub's older **Audio & transcript** screen, which stays as it is.
+
 - **Set:** nothing new. Needs the bridge ([B5](#b5-railway-platform-and-the-signed-bridge)) and `OPENAI_API_KEY` on egc-api.
 - **Turns on:** the rep records in the Hub on the iPad; the platform transcribes it and drafts the job notes.
 - **Check it worked:**
@@ -388,14 +391,14 @@ Every website lead already goes to HighLevel. Stage 2 makes that durable (nothin
 
 ### 3.4 Start and Finish (after FUN-06)
 
-- **Set:** `EGC_WALKTHROUGH_VISIT_ENABLED=true`, **once the FUN-06 iPad recorder is deployed**. On this build nothing in the Hub calls it yet, so there is no button to press.
-- **Where:** Cloudflare Pages, plain.
+- **Set:** nothing. `EGC_WALKTHROUGH_VISIT_ENABLED` is on by the owner's launch default of 2026-10-19 (`functions/_lib/launch-defaults.js`): the FUN-06 iPad recorder shows on every walkthrough in the gameplan. Set it to `false` in Cloudflare to turn it off.
+- **Where:** Cloudflare Pages, plain (only to turn it off).
 - **Turns on:** the rep taps **Start** at the door and **Finish** (with an outcome) or **No-show**. Each tap is recorded with its tracking event and moves the rep's timecard (below).
 - **Needs first:** the rep signs in with the sales account from their named staff invitation (managers and the owner can also record walkthroughs), and is assigned to the walkthrough in Dispatch. Otherwise Start answers "not assigned to you".
-- **Check it worked (phone), after FUN-06:**
+- **Check it worked (phone):**
   1. The rep clocks in, opens an assigned test walkthrough and taps Start, then Finish with an outcome.
   2. As the owner, open the rep's timecard: it shows a segment for that walkthrough.
-- **Roll back:** delete the variable. Start and Finish are refused (`walkthrough_visit_disabled`); nothing else changes.
+- **Roll back:** set `EGC_WALKTHROUGH_VISIT_ENABLED=false` (Production and Preview) and retry the deployment. Start and Finish are refused (`walkthrough_visit_disabled`) and the recorder card is hidden; nothing else changes.
 
 **How the rep's time lands on the timecard:**
 
@@ -458,6 +461,31 @@ Every website lead already goes to HighLevel. Stage 2 makes that durable (nothin
   2. Sign in as that employee and use **Change password** under My EGC.
   3. Approve a test account request with a role and a starting rate. Its first timecards show pay after **Apply rate to open weeks**.
 - **Roll back:** delete the variables. Approval, sign-in, the setup page, the staff directory and timesheets behave exactly as before. Reset links not yet used stop working, and those people's old passwords work again.
+
+### 3.7 Walkthrough transcripts and job notes (owner decision: on)
+
+- **Set:** nothing. `EGC_WALKTHROUGH_NOTES` is on by the owner's launch default of 2026-10-19. It works only while the website's OpenAI key (the `openaiapi` Cloudflare secret, the one Co-Pilot uses) is set; without the key the recorder keeps sending audio to the recording service ([3.3](#33-recording-the-walkthrough)).
+- **Turns on:**
+  - After **Finish**, each part of the iPad recording is sent to the website and transcribed. The website keeps the **text only**: no audio is stored, and the transcript is deleted after 90 days. The audio leaves the iPad once its transcript is saved.
+  - Under the recorder card, a **Walkthrough notes** panel shows "Transcribing: 1 of 2 parts done", then writes the transcript up into **job notes, items needed (with quantities), keep, remove / donate, access and hazards** (no prices: they are taken out even if said out loud), plus questions to check. The estimator edits them and taps **Confirm notes for the crew**. A walkthrough without a recording (declined, or the iPad failed) gets **Type notes for the crew** instead.
+  - **Only confirmed notes reach the crew.** The crew lead and the assigned crew see "Walkthrough notes (confirmed by the estimator)" and "Items needed" on the job in the crew app, and managers on the pre-job and closeout pages. A job Dispatch creates from the walkthrough later gets them too; a re-signed quote never wipes them. Only the estimator who did the walkthrough confirms (no manager step).
+  - **Customer withdrew consent: delete the transcript** in the panel deletes every transcript part of that walkthrough at once and refuses later uploads. Notes already confirmed for the crew stay.
+  - The crew brief also lists the **goods sold** and the walkthrough's **bring list**, and storage goods (racks, hooks, cabinets) add a ladder, drill / driver, stud finder and lag screws and anchors, as shelving already does.
+  - `.aac` files can no longer be added (they cannot be transcribed): use the `.m4a` from Voice Memos.
+- **Cost and limits:** about $0.006 per minute of audio plus about a cent per write-up. Each walkthrough takes up to 12 audio parts and 6 write-ups; each rep up to 40 transcriptions and 20 write-ups a day (a refused one tells the rep to ask the office).
+- **Needs first (owner):**
+  1. **OpenAI credits on the website key.** Sign in at platform.openai.com with the account that owns the `openaiapi` key → Settings → Billing: add credits (start with $20) and turn on auto-recharge or set a monthly budget you are comfortable with (for example $50). The handoff notes record `credit_balance_exhausted` on the existing OpenAI account, so check the balance is above zero. If the key belongs to a project with model limits, allow `gpt-4o-transcribe`, `whisper-1` and `gpt-4o-mini`.
+  2. **Workers Paid** ([B2](#b2-move-cloudflare-to-workers-paid-5-a-month)). Reading a 20-minute part takes about half a second of computer time; the free plan allows 10 ms, so every upload would fail.
+  3. Publish the rules from this build ([B4](#b4-publish-firestore-rules-and-indexes)): the transcript collections are server-only (they already are under the catch-all rule; this makes it explicit).
+- **Check it worked: a 60-second canary on a real iPad (Production, before reps rely on it):**
+  1. On the iPad the reps use, sign in as yourself (or a test rep) and open a test walkthrough assigned to you in the gameplan.
+  2. Tap **Start walkthrough** → **Recording OK** and talk for about 60 seconds, naming a few things: "two metal shelving units on the back wall, keep the blue bike, donate the couch, mouse droppings by the freezer, bring a ladder for the overhead rack".
+  3. Tap **Finish** → **Quote to follow** → **Save outcome**. Within a minute the Walkthrough notes panel shows the transcript and the written-up notes. Check that the shelving units and the ladder are under Items needed and nothing shows a price.
+  4. Edit one line and tap **Confirm notes for the crew**. It says "Sent to the crew lead and crew".
+  5. If that walkthrough has a job, open it in the crew app as a crew member: the notes are under Scope & instructions.
+  6. If the panel says the audio could not be read for a transcript, Safari's recording format was refused: set `EGC_WALKTHROUGH_NOTES=false`, retry the deployment and tell your developer. If it says transcription is unavailable for more than a few minutes, check the OpenAI credits (step 1).
+- **Optional settings:** `EGC_WALKTHROUGH_TRANSCRIBE_MODEL` (default `gpt-4o-transcribe`; a length or model refusal is retried once with `whisper-1`) and `EGC_WALKTHROUGH_NOTES_MODEL` (default `gpt-4o-mini`).
+- **Roll back:** set `EGC_WALKTHROUGH_NOTES=false` (Production and Preview) and retry the deployment. The panel hides and the recorder sends audio to the recording service again ([3.3](#33-recording-the-walkthrough): it needs the bridge, otherwise the audio waits on the iPad). Notes already confirmed stay on the jobs and the crew still see them.
 
 ## Stage 4: Crew scheduling and the field day
 

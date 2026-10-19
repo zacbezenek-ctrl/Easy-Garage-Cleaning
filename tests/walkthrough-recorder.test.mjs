@@ -570,6 +570,75 @@ test('the upload transport posts multipart with the part request ID and reports 
     [fail('', 0), fail('', 401, 'HUB_AUTH_REQUIRED'), fail('', 401, 'business_session_required'), fail('', 401, 'walkthrough_visit_sign_in_required'), fail('', 401, 'recording_signature_expired'), fail('', 401), fail('', 503), fail('', 429), fail('', 409), fail('', 503, 'walkthrough_visit_time_unavailable')].map(R.classify));
 });
 
+// EGC_WALKTHROUGH_NOTES: parts go to /api/walkthrough-notes while it says notes are on (transcribed on the website's key),
+// with where each sits in the walkthrough; otherwise to the recording service exactly as before.
+test('walkthrough notes: the upload names the part, its count and source; the route follows the server and falls back when switched off', async () => {
+  const sent = [];
+  class FakeXHR {
+    constructor() { this.upload = {}; sent.push(this); }
+    open(method, url) { Object.assign(this, { method, url }); }
+    send(form) { this.form = form; }
+    reply(status, body) { this.status = status; this.responseText = body; this.onload(); }
+  }
+  const blob = new Blob([new Uint8Array(4)], { type: 'audio/mp4' }), requestId = id();
+  const pending = R.xhrUpload(FakeXHR, { url: '/api/walkthrough-notes' })({ requestId, visitId: 'w1', blob, filename: 'walkthrough-w1-part-2.m4a', partIndex: 2, partCount: 3, source: 'recorder' });
+  const [xhr] = sent;
+  assert.equal(xhr.url, '/api/walkthrough-notes');
+  assert.deepEqual(['requestId', 'portalJobId', 'partIndex', 'partCount', 'source'].map(name => xhr.form.get(name)), [requestId, 'w1', '2', '3', 'recorder']);
+  xhr.reply(200, JSON.stringify({ ok: true, alreadySaved: false, recording: { id: requestId, status: 'transcribed' }, part: { partIndex: 2, chars: 40 } }));
+  assert.deepEqual(plain(await pending), { recordingId: requestId, alreadySaved: false });
+  // A part still being transcribed is retried (503); a refused one says why.
+  const busy = R.xhrUpload(FakeXHR, { url: '/api/walkthrough-notes' })({ requestId, visitId: 'w1', blob, filename: 'a.m4a' }).then(() => null, error => error);
+  sent.at(-1).reply(503, JSON.stringify({ ok: false, error: 'recording_in_progress', retryable: true }));
+  const retry = await busy;
+  assert.deepEqual([retry.status, retry.code, R.classify(retry)], [503, 'recording_in_progress', 'transient']);
+  assert.equal(sent.at(-1).form.get('partIndex'), null, 'a caller that names no part sends no part fields');
+  const long = R.xhrUpload(FakeXHR)({ requestId, visitId: 'w1', blob, filename: 'a.m4a' }).then(() => null, error => error);
+  sent.at(-1).reply(422, JSON.stringify({ ok: false, error: 'recording_too_long' }));
+  assert.match((await long).message, /Split it in Voice Memos/);
+
+  const kept = new Map(), storage = { getItem: key => kept.get(key) ?? null, setItem: (key, value) => kept.set(key, value), removeItem: key => kept.delete(key) };
+  const calls = [], legacy = async request => { calls.push(['legacy', request.partIndex]); return { recordingId: 'recording-1' }; }, notes = async request => { calls.push(['notes', request.partIndex]); return { recordingId: request.requestId }; };
+  let answer = { ok: true, enabled: true }, asked = 0;
+  const fetchImpl = async url => { asked += 1; assert.equal(url, '/api/walkthrough-notes'); return { ok: true, json: async () => answer }; };
+  const routed = R.routedUpload({ fetchImpl, storage, legacy, notes });
+  await routed({ partIndex: 1 }); await routed({ partIndex: 2 });
+  assert.deepEqual(calls, [['notes', 1], ['notes', 2]]); assert.equal(asked, 1, 'asked once per page'); assert.equal(kept.get('egc-wt-recorder:notes'), '1');
+  // A new page offline uses the remembered answer.
+  await R.routedUpload({ fetchImpl: async () => { throw new TypeError('Failed to fetch'); }, storage, legacy, notes })({ partIndex: 3 });
+  assert.deepEqual(calls.at(-1), ['notes', 3]);
+  // Notes switched off meanwhile: the same try goes to the recording service, and the iPad remembers.
+  const off = async () => { throw fail('Walkthrough notes are switched off.', 503, 'walkthrough_notes_disabled'); };
+  await R.routedUpload({ fetchImpl, storage, legacy, notes: off })({ partIndex: 4 });
+  assert.deepEqual(calls.at(-1), ['legacy', 4]); assert.equal(kept.has('egc-wt-recorder:notes'), false);
+  // The server says off, or does not know the endpoint (an older build): the recording service, as before.
+  answer = { ok: true, enabled: false };
+  await R.routedUpload({ fetchImpl, storage, legacy, notes })({ partIndex: 5 });
+  await R.routedUpload({ fetchImpl: async () => ({ ok: false, status: 404, json: async () => ({ ok: false }) }), storage, legacy, notes })({ partIndex: 6 });
+  assert.deepEqual(calls.slice(-2), [['legacy', 5], ['legacy', 6]]);
+  // Any other refusal of a notes upload is the rep's to see, never silently sent elsewhere.
+  answer = { ok: true, enabled: true };
+  const refused = R.routedUpload({ fetchImpl, storage, legacy, notes: async () => { throw fail('Declined.', 409, 'recording_consent_declined'); } });
+  await assert.rejects(refused({ partIndex: 7 }), error => error.code === 'recording_consent_declined');
+  assert.deepEqual(calls.at(-1), ['legacy', 6]);
+});
+
+test('walkthrough notes: the sync sends each part with its index, the finished walkthrough\'s part count and its source; .aac is never offered', async () => {
+  const store = R.memoryStore(), server = visitServer(), clock = fakeClock(), requests = [];
+  const parts = [1, 2].map(index => ({ id: id(), index, requestId: id(), mimeType: 'audio/mp4', extension: 'm4a', source: index === 2 ? 'import' : 'recorder', state: 'closed', bytes: 4 }));
+  const walk = session({ status: 'active', capture: 'stopped', parts });
+  await store.putSession(walk);
+  for (const row of parts) await store.putChunk({ id: `${row.id}|0000001`, partId: row.id, sessionId: walk.id, seq: 1, bytes: 4, data: new ArrayBuffer(4) });
+  await finishWith(store, walk.id, { outcome: 'quote_to_follow', recordingStatus: 'recorded', deviceAt: new Date(T0 + 3600000).toISOString() });
+  const sync = R.createSync({ store, visit: server, upload: async request => { requests.push([request.partIndex, request.partCount, request.source]); return { recordingId: request.requestId }; }, now: clock.now, uuid: id, user: () => 'sales.rep' });
+  assert.equal((await sync.run()).stopped, null);
+  assert.deepEqual(requests, [[1, 2, 'recorder'], [2, 2, 'import']]);
+  assert.equal(R.importType({ name: 'memo.aac', type: 'audio/aac' }), null);
+  assert.equal(R.importType({ name: 'memo.aac', type: '' }), null);
+  assert.equal(R.importType({ name: 'memo.aac', type: 'audio/mp4' }), null, 'an .aac file is refused whatever type the browser gives it');
+  assert.ok(!R.ACCEPT.includes('aac'));
+});
+
 test('the visit transport maps an expired Hub session to sign-in, a cut-off reply to a retry and a refusal to its code', async () => {
   const reply = (status, body, broken = false) => async () => ({ ok: status < 400, status, json: async () => { if (broken) throw new SyntaxError('cut'); return body; } });
   const call = fetch => R.httpVisit(fetch).post({ action: 'start' }).then(() => null, error => ({ status: error.status, code: error.code, details: error.details ?? null }));

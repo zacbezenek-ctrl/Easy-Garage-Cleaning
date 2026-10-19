@@ -277,6 +277,15 @@ test('walkthrough handoff preserves authoritative project and scope while refusi
   await assert.rejects(f.mutate(f.edit(created.job,{time:'12:00',endTime:'14:00'})),error=>error.code==='dispatch_contact_link_conflict');
 });
 
+test('EGC_WALKTHROUGH_NOTES: a job created from a walkthrough inherits the notes the estimator confirmed; a recurring copy never repeats them',async()=>{
+  const f=fixture(),notes={version:1,jobNotes:['Clear the left bay first.'],itemsNeeded:[{name:'Ladder',quantity:null,reason:'Overhead rack'}],keepItems:[],removeItems:[],access:[],hazards:[],confirmedAt:NOW,confirmedBy:'rep.one',sourceVisitId:'source'};
+  f.rows.set('jobs/source',{id:'source',type:'walkthrough',customerId:'c1',jobInstructions:'Approved scope',visitNotes:notes,revision:'source-r1'});
+  const created=await f.mutate(f.create({recurrence:'monthly'}, {sourceWalkthroughId:'source'})),saved=f.rows.get('jobs/'+created.job.id);
+  assert.deepEqual(saved.visitNotes,notes);
+  const cloned=await f.mutate(f.create({date:'2026-10-23',time:'09:30',assignedCrew:[]},{sourceTemplateJobId:created.job.id}));
+  assert.equal(f.rows.get('jobs/'+cloned.job.id).visitNotes,undefined,'one walkthrough\'s notes are not copied to the next visit');
+});
+
 test('legacy schedule sender committing after the first scan cannot slip past shared day locks',async()=>{
   const f=fixture(),read=f.store.read;let injected=false;
   f.store.day=async date=>(await f.store.jobs()).filter(job=>job.date===date);
