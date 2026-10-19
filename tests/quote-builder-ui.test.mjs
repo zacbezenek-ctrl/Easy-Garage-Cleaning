@@ -301,6 +301,7 @@ test('product rows show their size and fit notes inline and never link out to th
   const { fitText } = h.context.EGCQuoteDraft.builder;
   assert.equal(fitText('Price from Home Depot listing checked 2026-10-16. Hardware included. 6.3 W × 8.66 H in'), 'Hardware included. 6.3 W × 8.66 H in');
   assert.equal(fitText('One kit services ONE 48-in rail. Do not divide kit price by 15 to price rail installations.'), 'One kit services ONE 48-in rail.');
+  assert.equal(fitText('Public retail estimate only, not EGC invoice cost or verified local price/stock. No bulk discount assumed. Site/mounting review required.'), 'Site/mounting review required.');
   assert.equal(fitText(''), '');
   h.button('Continue to extra storage').click(); await flush();
   assert.equal(h.dialog().querySelectorAll('a').length, 0);

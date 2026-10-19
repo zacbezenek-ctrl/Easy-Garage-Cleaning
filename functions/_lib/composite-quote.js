@@ -478,6 +478,35 @@ export function builderMenu(state, { internal = false, canApprove = false } = {}
   };
 }
 
+// A product's size from its fit notes: the width, height, depth and length the retailer lists, else a "W × H × D in"
+// phrase, else '' (most product names carry their size).
+export function productSize(text) {
+  const value = String(text || ''), dims = {};
+  for (const match of value.matchAll(/\b(Width|Height|Depth|Length) \(in\.\):\s*(\d+(?:\.\d+)?)\s*in\b/g)) dims[match[1][0]] ??= Number(match[2]);
+  const parts = ['W', 'H', 'D', 'L'].filter(key => Number.isFinite(dims[key])).map(key => `${dims[key]} ${key}`);
+  if (parts.length) return `${parts.join(' × ')} in`;
+  return value.match(/\d+(?:\.\d+)?\s*[WHDL](?:\s*×\s*\d+(?:\.\d+)?\s*[WHDL])+\s*in\b/)?.[0] || '';
+}
+/**
+ * Everything EGC sells, for the crew hub's read-only "What we sell" page (crew/menu.html; LANE catalog, 2026-10-19): every
+ * builder service and product by step and group, with its name and size (garage size, truck fraction, units per pack,
+ * product size). prices (a quote author: an owner, a manager or a sales/walkthrough employee, who reads the builder menu
+ * itself) adds EGC's customer price per unit or pack, its Draft or Approved status and the labor rate. Never a cost, a
+ * retail price, a retailer link, a markup or an internal note; a crew member gets names and sizes only.
+ */
+export function offeringsMenu(state, { prices = false } = {}) {
+  const menu = builderMenu(state), price = item => prices ? { unitCents: item.unitCents, approved: item.approved === true } : {};
+  return {
+    menuVersion: menu.menuVersion, prices: prices === true,
+    sections: menu.sections.map(section => ({ id: section.id, label: section.label, groups: section.groups.map(group => ({ id: group.id, label: group.label })) })),
+    services: menu.services.map(item => ({ id: item.id, section: item.section, group: item.group, name: item.name, unit: item.unit,
+      ...(item.garageSize ? { garageSize: item.garageSize } : {}), ...(Number.isFinite(item.junkFraction) ? { junkFraction: item.junkFraction } : {}), ...price(item) })),
+    products: menu.products.map(item => ({ id: item.id, section: item.section, group: item.group, name: item.name, unitsPerPack: item.unitsPerPack,
+      ...(productSize(item.fitWarnings) ? { size: productSize(item.fitWarnings) } : {}), ...price(item) })),
+    ...(prices ? { labor: { rateCents: menu.labor.rateCents, approved: true } } : {}),
+  };
+}
+
 // The selection a browser sends: {menuVersion, settingsVersion, steps, removal, shelving, storage, labor?, garageSize?}.
 // labor is {manHours: number|null, adjusted?: boolean, fullness?: string|null} (normalizeLabor); a save of a quote with
 // garage work needs it (priceCompositeQuote), except the re-pricing of a job signed before builder quotes had a Labor line.

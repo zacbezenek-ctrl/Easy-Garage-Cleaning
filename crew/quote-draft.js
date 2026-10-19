@@ -123,8 +123,9 @@
     return [{ customer: 'sorting with the customer and resetting what stays', zones: 'sorting into keep / donate / haul zones and resetting what stays' }[scope.sort_method] || '', finish.includes('deep_clean') ? 'a deep clean' : '', finish.includes('pressure_wash') ? 'a pressure wash' : '',
       finish.includes('mouse_trapping') ? 'mouse trapping' : '', finish.includes('shelving') ? count(details.shelf_qty, 'shelving unit') : '', finish.includes('totes') ? count(details.tote_qty, 'storage tote') : '', Array.isArray(scope.hazards) && scope.hazards.includes('Pest waste') ? 'pest-waste cleanup' : ''].filter(Boolean);
   }
-  // A product's size and fit notes (the menu's fitWarnings) without its sourcing remarks about the retailer's price.
-  const fitText = text => String(text || '').split(/(?<=\.)\s+(?=[A-Z0-9])/).filter(part => part.trim() && !/pric|\$/i.test(part)).join(' ').trim().slice(0, 600);
+  // A product's size and fit notes (the menu's fitWarnings) without its sourcing remarks about the retailer's price, cost,
+  // discounts or markup.
+  const fitText = text => String(text || '').split(/(?<=\.)\s+(?=[A-Z0-9])/).filter(part => part.trim() && !/pric|\$|cost|retail|discount|invoice|markup/i.test(part)).join(' ').trim().slice(0, 600);
   const garageWorkNote = work => work.length ? h('p', { class: 'qd-notice qb-garage-work', role: 'status' }, `The walkthrough records garage work this junk-only quote does not price: ${work.join(', ')}. The homeowner cannot sign it, and it cannot be sent, on that walkthrough. Add the work here (a garage cleaning base for sorting and reset, cleaning, shelving or storage), or, if they want junk removal only, change the walkthrough (Everything goes or Customer labels before arrival; no finish options).`) : null;
   // The walkthrough's garage fullness ("How full is it?"): the one input of the server's labor time estimate that the
   // builder selection does not hold. The crew size and the scheduled minutes are not inputs: the man-hours of the work
