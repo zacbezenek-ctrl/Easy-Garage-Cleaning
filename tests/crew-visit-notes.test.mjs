@@ -69,6 +69,11 @@ test('the internal pre-job and closeout briefs show the confirmed notes, the ite
   // A job with only confirmed notes has a brief.
   assert.match(brief(prejob, { visitNotes: NOTES }).first, /Walkthrough notes \(confirmed by the estimator\)/);
   assert.match(brief(postjob, { visitNotes: NOTES }).first, /Walkthrough notes \(confirmed by the estimator\)/);
+  // The signed brief's own keep, remove, access and hazards rows are not repeated inside the notes row (as crew/job.js).
+  const signed = { visitNotes: NOTES, jobInstructions: { customerGoal: 'Park two cars', keepItems: 'Workbench', removeItems: 'Boxes', access: ['Front door'], hazards: ['Nails'] } };
+  for (const html of [brief(prejob, signed).first, brief(postjob, signed).first]) assert.equal(cell(html, 'Walkthrough notes (confirmed by the estimator)'), 'Clear the left bay first. · Stage donations on the driveway.');
+  const partly = { visitNotes: NOTES, jobInstructions: { customerGoal: 'Park two cars', keepItems: 'Workbench', accessNotes: 'Code at the side gate' } };
+  assert.equal(cell(brief(prejob, partly).first, 'Walkthrough notes (confirmed by the estimator)'), 'Clear the left bay first. · Stage donations on the driveway. · Remove: Old couch · Hazards: Mouse droppings by the freezer');
 });
 
 test('the gameplan notes panel: the form round-trips the notes, and each server answer picks what the panel shows', () => {
@@ -95,5 +100,26 @@ test('the gameplan notes panel: the form round-trips the notes, and each server 
   assert.equal(panelMode(view({ draft: NOTES, draftedAt: '2026-10-19T16:10:00.000Z', confirmed: { ...NOTES, confirmedAt: '2026-10-19T16:05:00.000Z' } })), 'editor', 'notes written from newer audio wait for a confirm');
   assert.equal(panelMode(view({ status: 'withdrawn' })), 'withdrawn');
   assert.equal(panelMode(view(), { manual: true }), 'editor');
+  // Every part refused for good (unreadable, too long): the estimator types the notes.
+  assert.equal(panelMode(view({ parts: [{ status: 'failed', errorCode: 'recording_audio_unreadable' }], complete: true })), 'failed');
+  assert.equal(panelMode(view({ parts: [{ status: 'failed', errorCode: 'recording_unavailable' }], expectedParts: 1 })), 'transcribing');
+});
+
+test('the gameplan notes panel: one status line says where the notes stand while it is closed', () => {
+  const context = vm.createContext({ Date });
+  vm.runInContext(read('crew/gameplan-notes.js'), context);
+  const { statusLine, failedLines } = context.EGCWalkthroughNotes;
+  const view = extra => ({ enabled: true, canConfirm: true, parts: [], expectedParts: null, confirmed: null, ...extra });
+  assert.equal(statusLine(view({ parts: [{ status: 'done' }, { status: 'failed', errorCode: 'recording_unavailable' }], expectedParts: 2 }), 'transcribing'), 'Transcribing: 1 of 2 parts done');
+  assert.equal(statusLine(view(), 'ready'), 'The transcript is ready');
+  assert.equal(statusLine(view(), 'ready', { busy: true }), 'Writing up the notes from the transcript…');
+  assert.equal(statusLine(view(), 'editor'), 'Notes ready to check and confirm');
+  assert.equal(statusLine(view({ canConfirm: false }), 'editor'), 'Draft notes: the estimator confirms them');
+  assert.equal(statusLine(view({ confirmed: NOTES, confirmedJobs: 1 }), 'confirmed'), 'Sent to the crew lead and crew');
+  assert.equal(statusLine(view({ confirmed: NOTES, confirmedJobs: 0 }), 'confirmed'), 'Confirmed: they go to the crew with the job');
+  assert.equal(statusLine(view({ confirmed: NOTES, confirmedJobs: 1, confirmedStale: true }), 'confirmed'), 'New audio arrived after these notes were confirmed');
+  assert.equal(statusLine(view(), 'failed'), 'The audio could not be transcribed: type the notes');
+  assert.deepEqual([...failedLines(view({ parts: [{ status: 'done', partIndex: 1 }, { status: 'failed', partIndex: 2, errorCode: 'recording_too_long' }, { status: 'failed', source: 'import', errorCode: 'recording_unavailable' }] }))],
+    ['Part 2 could not be transcribed: it is too long to transcribe (split it in Voice Memos and add each part).', 'Voice Memos file: transcription is unavailable right now. The audio stays on the iPad and is sent again.']);
 });
 

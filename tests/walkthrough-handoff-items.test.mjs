@@ -416,9 +416,14 @@ test('EGC_WALKTHROUGH_NOTES: the signed job inherits the visit\'s confirmed note
   assert.equal(job.jobInstructions.visitNotes, undefined);
   const crew = fieldJobProjection(job);
   assert.deepEqual(crew.visitNotes.jobNotes, later.jobNotes);
+  // The crew page's materials card already lists the quote's goods and the stock kit (Grab before you go), so the brief does
+  // not name them a second time; a job without materials on it carries them in the brief.
+  assert.deepEqual([crew.materials.some(item => item.id === 'quote-shelving'), crew.materials.some(item => item.source === 'stock')], [true, true]);
   const brief = Object.fromEntries(crew.walkthroughBrief.map(row => [row.label, row.text]));
-  assert.equal(brief['Sold goods'], 'Metal shelving unit');
-  assert.equal(brief.Bring, BRING.join('\n'));
+  assert.deepEqual([brief['Sold goods'], brief.Bring], [undefined, undefined]);
+  const bare = Object.fromEntries(fieldJobProjection({ ...job, materials: [] }).walkthroughBrief.map(row => [row.label, row.text]));
+  assert.equal(bare['Sold goods'], 'Metal shelving unit');
+  assert.equal(bare.Bring, BRING.join('\n'));
 });
 
 test('EGC_JOB_MATERIALS: a signed revision keeps Dispatch entries and the purchase the office recorded for the same product', async () => {

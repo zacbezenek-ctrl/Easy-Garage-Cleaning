@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
+import vm from './helpers/vm-realm.mjs';
 import { walkthroughNotesHandlers } from '../functions/api/walkthrough-notes.js';
 import { NOTES_LIMITS, NOTES_RULES, WALKTHROUGH_NOTES, WALKTHROUGH_NOTE_PARTS, WALKTHROUGH_NOTE_RECEIPTS, audioExtension, walkthroughNotesStorage } from '../functions/_lib/walkthrough-notes.js';
 import { cleanVisitNotes, crewVisitNotes } from '../functions/_lib/visit-notes.js';
@@ -8,6 +9,8 @@ import { consumeRateLimit } from '../functions/_lib/rate-limit.js';
 import { fieldJobProjection } from '../functions/_lib/field-execution.js';
 import { crewJobProjection, CREW_PROJECTION_FIELDS } from '../functions/_lib/crew-job-projection.js';
 import { walkthroughCrewBrief } from '../functions/_lib/walkthrough-crew-brief.js';
+import { saveQuoteDraft } from '../functions/_lib/quote-draft.js';
+import { saveJobReads } from '../functions/_lib/dispatch-window-reads.js';
 
 // EGC_WALKTHROUGH_NOTES: walkthrough transcripts and job notes on the website's OpenAI key. OpenAI is a fake (no request
 // leaves the test), Firestore an in-memory store with revision preconditions; synthetic data only.
@@ -32,6 +35,7 @@ function memoryStore(rows) {
     env, rows, calls, hooks,
     async read(collection, key) { calls.reads += 1; const row = rows.get(`${collection}/${key}`); return row ? clone(row) : null; },
     async readMany(collection, keys) { return keys.map(key => rows.get(`${collection}/${key}`)).filter(Boolean).map(clone); },
+    async linkedJobs(visitId) { calls.linked = (calls.linked || 0) + 1; return [...rows].filter(([key, row]) => key.startsWith('jobs/') && row.sourceWalkthroughId === visitId).map(([, row]) => clone(row)); },
     async assigned(session, job) { return (job.assignedCrew || []).some(name => String(name).toLowerCase() === session.user.toLowerCase()); },
     async commit(writes) {
       if (hooks.beforeCommit) { const hook = hooks.beforeCommit; hooks.beforeCommit = null; await hook(writes); }
@@ -412,3 +416,176 @@ test('the rules keep the transcript collections server-only, and the old recordi
 });
 
 async function sha(file) { return [...new Uint8Array(await crypto.subtle.digest('SHA-256', await file.arrayBuffer()))].map(value => value.toString(16).padStart(2, '0')).join(''); }
+
+// ---- Review findings (wip/notes) ----
+
+test('confirm after a quote draft made the job from the walkthrough (no convertedJobId): every job made from the visit gets the notes', async () => {
+  // The real quote draft (crew/quote-draft.js "Send options for review") creates the job through Dispatch with
+  // sourceWalkthroughId and never sets the visit's convertedJobId; the notes are confirmed afterwards, the usual order.
+  const owner = { user: 'zacb', role: 'owner', businessAccess: true, displayName: 'Synthetic Owner' };
+  const rows = new Map([
+    ['customers/c1', { id: 'c1', revision: 'c1r', name: 'Synthetic Customer', phone: '9705550100', email: 'test@example.invalid', address: '100 Fixture Lane', highlevelContactId: 'provider1' }],
+    ['jobs/w1', { id: 'w1', revision: 'w1r', type: 'walkthrough', status: 'completed', pipelineStatus: 'completed', customerId: 'c1', customer: 'Synthetic Customer', highlevelContactId: 'provider1', date: '2026-10-19', time: '09:00', endTime: '10:00', projectId: 'p1', assignedCrew: ['zacb'],
+      walkthroughVisit: { startedAt: '2026-10-19T15:00:00.000Z', startedBy: 'zacb', startRequestId: START, recordingStatus: 'recorded' }, walkthroughOutcome: { outcome: 'quote_to_follow', recordingStatus: 'recorded', finishedAt: '2026-10-19T15:40:00.000Z' } }],
+    ['projects/p1', { id: 'p1', revision: 'p1r', customerId: 'c1', sourceRecordId: 'w1', sourceWalkthroughId: 'w1' }],
+  ]);
+  let n = 0;
+  const list = prefix => [...rows].filter(([key]) => key.startsWith(prefix)).map(([, value]) => structuredClone(value));
+  const store = { env, read: async (collection, key) => structuredClone(rows.get(`${collection}/${key}`) || null), readMany: async (collection, keys) => keys.map(key => rows.get(`${collection}/${key}`)).filter(Boolean).map(row => structuredClone(row)),
+    assigned: async (session, job) => (job.assignedCrew || []).includes(session.user), jobs: async () => list('jobs/'), resources: async () => [], customers: async () => list('customers/'), roster: async () => [{ id: 'zacb', name: 'Synthetic Owner', role: 'owner' }],
+    // As walkthroughNotesStorage reads them: the saveJobReads lookup Dispatch and the quote draft use.
+    linkedJobs: visitId => saveJobReads(store).where('sourceWalkthroughId', visitId),
+    async commit(writes) {
+      for (const write of writes) { const old = rows.get(`${write.collection}/${write.id}`); if (write.revision ? old?.revision !== write.revision : Boolean(old)) throw Object.assign(new Error('Conflict'), { code: 'conflict', status: 409 }); }
+      for (const write of writes) if (!write.verify) { const key = `${write.collection}/${write.id}`; if (write.remove) rows.delete(key); else rows.set(key, { ...rows.get(key), ...structuredClone(write.patch), id: write.id, revision: `r${++n}` }); }
+      return {};
+    } };
+  const draft = { client: { name: 'Synthetic Customer', phone: '9705550100', email: 'test@example.invalid', address: '100 Fixture Lane', highlevel_contact_id: 'provider1' }, title: 'Garage reset', scope: 'Cleanout',
+    line_items: [{ id: 'cleanout', kind: 'service', name: 'Garage cleanout and reset', description: 'Sorting, hauling and disposal', quantity: 1, unitCents: 90000, totalCents: 90000 }], valid_until: '2026-10-30', catalog_version: '2026-09-22.1', crew_size: 2, estimated_duration_min: 240 };
+  const saved = await saveQuoteDraft(store, owner, { requestId: id(), customerId: 'c1', sourceWalkthroughId: 'w1', sourceRevision: 'w1r', draft }, NOW, { env });
+  const jobId = saved.job.id;
+  assert.equal(rows.get('jobs/w1').convertedJobId, undefined, 'the quote draft links the job by sourceWalkthroughId only');
+  const handlers = walkthroughNotesHandlers({ session: async () => owner, storage: () => store, openai: async () => assert.fail('no OpenAI call'), now: () => new Date('2026-10-19T17:00:00.000Z') });
+  const confirm = async (notes, expectedRevision) => { const response = await handlers.post({ request: new Request(`${ORIGIN}/api/walkthrough-notes`, { method: 'POST', headers: { Origin: ORIGIN, 'Content-Type': 'application/json' }, body: JSON.stringify({ action: 'confirm', visitId: 'w1', requestId: id(), expectedRevision, notes }) }), env }); return { status: response.status, body: await response.json() }; };
+  const first = await confirm({ jobNotes: ['Clear the left bay first.'], itemsNeeded: [{ name: 'Ladder', quantity: 1, reason: 'Overhead rack' }] }, '');
+  assert.equal(first.status, 200, JSON.stringify(first.body));
+  assert.equal(first.body.confirmedJobs, 1, 'the panel knows the notes are on a job');
+  assert.deepEqual(rows.get(`jobs/${jobId}`).visitNotes.jobNotes, ['Clear the left bay first.']);
+  assert.deepEqual(fieldJobProjection(rows.get(`jobs/${jobId}`)).visitNotes.itemsNeeded, [{ name: 'Ladder', quantity: 1, reason: 'Overhead rack' }], 'the crew projection of the quote-draft job shows them');
+  // A later edit reaches the same job again (each job fenced by its own revision).
+  const again = await confirm({ jobNotes: ['Clear the left bay first.', 'Customer added the attic boxes.'] }, first.body.revision);
+  assert.equal(again.status, 200, JSON.stringify(again.body));
+  assert.deepEqual(crewJobProjection(rows.get(`jobs/${jobId}`), { viewer: 'zacb' }).visitNotes.jobNotes, ['Clear the left bay first.', 'Customer added the attic boxes.']);
+});
+
+test('confirm writes the converted job and each Dispatch job from the visit, never a job of another visit; with none the panel says they go with the job', async () => {
+  const f = fixture({ visit: { convertedJobId: null } });
+  f.rows.set('jobs/j2', { id: 'j2', revision: 'j2r', type: 'cleanout', customerId: 'c1', sourceWalkthroughId: 'w1', assignedCrew: ['Crew.Two'] });
+  f.rows.set('jobs/j3', { id: 'j3', revision: 'j3r', type: 'job', customerId: 'c1', sourceWalkthroughId: 'other-visit' });
+  f.rows.set('jobs/j4', { id: 'j4', revision: 'j4r', type: 'job', recordType: 'blocked', sourceWalkthroughId: 'w1' });
+  const done = await f.act(rep, { action: 'confirm', visitId: 'w1', requestId: id(), expectedRevision: '', notes: { jobNotes: ['Clear the left bay first.'] } });
+  assert.equal(done.status, 200, JSON.stringify(done.body));
+  assert.deepEqual(f.store.calls.commits.at(-1).filter(write => write.collection === 'jobs').map(write => [write.id, write.revision]), [['w1', 'w1r'], ['j1', 'j1r'], ['j2', 'j2r']]);
+  for (const key of ['jobs/j3', 'jobs/j4']) assert.equal(f.rows.get(key).visitNotes, undefined, key);
+  assert.equal(done.body.confirmedJobs, 2);
+  const none = fixture({ visit: { convertedJobId: null }, job: { sourceWalkthroughId: 'other-visit' } });
+  const typed = await none.act(rep, { action: 'confirm', visitId: 'w1', requestId: id(), expectedRevision: '', notes: { jobNotes: ['Typed by the estimator.'] } });
+  assert.deepEqual([typed.status, typed.body.confirmedJobs], [200, 0]);
+  // A job changed meanwhile fails the whole confirm cleanly (nothing half-written).
+  const raced = fixture();
+  raced.store.hooks.beforeCommit = async () => { raced.rows.set('jobs/j1', { ...raced.rows.get('jobs/j1'), revision: 'j1r-moved' }); };
+  const conflict = await raced.act(rep, { action: 'confirm', visitId: 'w1', requestId: id(), expectedRevision: '', notes: { jobNotes: ['Clear the left bay first.'] } });
+  assert.deepEqual([conflict.status, conflict.body.code], [409, 'walkthrough_notes_changed']);
+  assert.equal(raced.rows.get('jobs/w1').visitNotes, undefined);
+});
+
+test('a Finish sent as declined after a part was transcribed: no transcript is shown or drafted, the parts are deleted, the panel never auto-drafts', async () => {
+  const f = fixture(), first = part({ partIndex: 1, partCount: null });
+  assert.equal((await f.send(rep, first.form)).status, 200);
+  await f.act(rep, { action: 'draft', visitId: 'w1', requestId: id() });
+  const calls = f.openai.calls.length;
+  // The rep withdrew consent on the iPad: the recorder sends the Finish as declined.
+  f.rows.set('jobs/w1', { ...f.rows.get('jobs/w1'), walkthroughOutcome: { outcome: 'quote_to_follow', recordingStatus: 'declined' } });
+  const state = (await f.get(rep)).body;
+  assert.deepEqual([state.status, state.transcript, state.parts, state.draft, state.canDraft, state.complete], ['withdrawn', '', [], null, false, false]);
+  assert.equal(f.rows.has(`${WALKTHROUGH_NOTE_PARTS}/${first.requestId}`), false, 'the transcribed part is deleted the first time the declined visit is read');
+  assert.equal(f.rows.get(`${WALKTHROUGH_NOTES}/w1`).draft, null);
+  const drafted = await f.act(rep, { action: 'draft', visitId: 'w1', requestId: id() });
+  assert.deepEqual([drafted.status, drafted.body.code], [409, 'walkthrough_notes_withdrawn']);
+  assert.equal(f.openai.calls.length, calls, 'nothing is sent to OpenAI again');
+  const context = vm.createContext({ Date }); vm.runInContext(readFileSync(new URL('../crew/gameplan-notes.js', import.meta.url), 'utf8'), context);
+  assert.equal(context.EGCWalkthroughNotes.panelMode(state), 'withdrawn', 'the panel shows the deletion, never "ready" (which auto-drafts)');
+  // Typed notes can still be confirmed for the crew.
+  assert.equal((await f.act(rep, { action: 'confirm', visitId: 'w1', requestId: id(), expectedRevision: state.revision, notes: { jobNotes: ['Typed: clear the left bay only.'] } })).status, 200);
+  // Declined at Start (nothing recorded): no notes document is made, the panel offers typing.
+  const g = fixture({ visit: { walkthroughOutcome: { outcome: 'quote_to_follow', recordingStatus: 'declined' } } });
+  const plainState = (await g.get(rep)).body;
+  assert.deepEqual([plainState.status, plainState.parts], ['empty', []]);
+  assert.equal(context.EGCWalkthroughNotes.panelMode(plainState), 'none');
+  // Declined while a part was being transcribed: its text is never kept.
+  const h = fixture(), racing = part();
+  h.openai.replies.push(async () => { h.rows.set('jobs/w1', { ...h.rows.get('jobs/w1'), walkthroughOutcome: { outcome: 'quote_to_follow', recordingStatus: 'declined' } }); return Response.json({ text: 'Said before the withdrawal.' }); });
+  const result = await h.send(rep, racing.form);
+  assert.deepEqual([result.status, result.body.error], [409, 'recording_consent_declined']);
+  assert.equal(h.rows.has(`${WALKTHROUGH_NOTE_PARTS}/${racing.requestId}`), false);
+});
+
+test('a two-part walkthrough is not complete after part 1 (sent before Finish, with no count); audio after the confirm marks the notes stale', async () => {
+  const f = fixture();
+  // Part 1 went up before Finish (an iPad short of storage): it does not know the count.
+  await f.send(rep, part({ partIndex: 1, partCount: null }).form);
+  let state = (await f.get(rep)).body;
+  assert.deepEqual([state.complete, state.expectedParts, state.status], [false, null, 'transcribing']);
+  const context = vm.createContext({ Date }); vm.runInContext(readFileSync(new URL('../crew/gameplan-notes.js', import.meta.url), 'utf8'), context);
+  const { panelMode } = context.EGCWalkthroughNotes;
+  assert.equal(panelMode(state), 'transcribing', 'no auto-draft from part 1 alone');
+  // The last part, sent after Finish, names the count.
+  await f.send(rep, part({ partIndex: 2, partCount: 2 }).form);
+  state = (await f.get(rep)).body;
+  assert.deepEqual([state.complete, state.expectedParts, state.status, panelMode(state)], [true, 2, 'ready', 'ready']);
+  const drafted = (await f.act(rep, { action: 'draft', visitId: 'w1', requestId: id() })).body;
+  const confirmed = (await f.act(rep, { action: 'confirm', visitId: 'w1', requestId: id(), expectedRevision: drafted.revision, notes: drafted.draft })).body;
+  assert.deepEqual([confirmed.confirmedStale, panelMode(confirmed)], [false, 'confirmed']);
+  // A Voice Memos file lands after the confirm: the panel names it on the confirmed notes.
+  await f.send(rep, part({ partIndex: 3, partCount: 3, source: 'import', file: audio(12, 'audio/mp4', 'memo.m4a', 7) }).form);
+  state = (await f.get(rep)).body;
+  assert.deepEqual([state.confirmedStale, state.draftStale, panelMode(state)], [true, true, 'confirmed']);
+  // Notes typed with no transcript and audio after them: stale too.
+  const g = fixture();
+  await g.act(rep, { action: 'confirm', visitId: 'w1', requestId: id(), expectedRevision: '', notes: { jobNotes: ['Typed first.'] } });
+  assert.equal((await g.get(rep)).body.confirmedStale, false);
+  await g.send(rep, part({ partIndex: 1, partCount: 1 }).form);
+  assert.equal((await g.get(rep)).body.confirmedStale, true);
+});
+
+test('failed tries do not use up the day: a part retried while OpenAI has no credits goes through once it is back, and a new walkthrough too', async () => {
+  const f = fixture(), noCredits = () => Response.json({ error: { message: 'You exceeded your current quota.', code: 'insufficient_quota' } }, { status: 429 });
+  const parts = Array.from({ length: 8 }, (_, index) => part({ partIndex: index + 1, partCount: null }));
+  f.openai.replies.push(...Array.from({ length: 40 }, noCredits));
+  // Eight parts, each tried five times by the recorder (its serverRetries), all refused.
+  for (const row of parts) for (let attempt = 0; attempt < 5; attempt += 1) assert.equal((await f.send(rep, part({ requestId: row.requestId, partIndex: 1, partCount: null }).form)).body.error, 'recording_unavailable');
+  assert.equal(f.openai.calls.length, 40);
+  // Credits added: the retry of part 1 and a new part are transcribed.
+  assert.equal((await f.send(rep, part({ requestId: parts[0].requestId, partIndex: 1, partCount: null }).form)).status, 200);
+  assert.equal((await f.send(rep, part({ partIndex: 9, partCount: null }).form)).status, 200);
+  // Every try still counts against the wider cap: a loop of retries stops at 200 a day.
+  const g = fixture();
+  for (let n = 0; n < NOTES_LIMITS.attemptsPerDay; n += 1) await consumeRateLimit(g.store, env, { bucket: 'wt_transcribe_try', key: 'staff:rep.one', limit: NOTES_LIMITS.attemptsPerDay, windowMs: 86400000 }, NOW);
+  const capped = await g.send(rep, part().form);
+  assert.deepEqual([capped.status, capped.body.error, g.openai.calls.length], [429, 'recording_rate_limited', 0]);
+});
+
+test('a part the transcription refuses is listed with its reason, so the panel says why instead of waiting for the upload', async () => {
+  const f = fixture(), refused = part({ partIndex: 1, partCount: 1 });
+  f.openai.replies.push(Response.json({ error: { message: 'Audio file might be corrupted or unsupported', code: 'invalid_value' } }, { status: 400 }));
+  assert.equal((await f.send(rep, refused.form)).body.error, 'recording_audio_unreadable');
+  let state = (await f.get(rep)).body;
+  assert.deepEqual(state.parts, [{ partIndex: 1, source: 'recorder', status: 'failed', chars: 0, errorCode: 'recording_audio_unreadable' }]);
+  assert.deepEqual([state.complete, state.status, state.transcript], [true, 'failed', '']);
+  const context = vm.createContext({ Date }); vm.runInContext(readFileSync(new URL('../crew/gameplan-notes.js', import.meta.url), 'utf8'), context);
+  const { panelMode, failedLines } = context.EGCWalkthroughNotes;
+  assert.equal(panelMode(state), 'failed');
+  assert.deepEqual([...failedLines(state)], ['Part 1 could not be transcribed: its audio could not be read for a transcript.']);
+  // Out of credits: retryable, so the transcript is not complete and the panel says it is sent again.
+  const g = fixture(), busy = part({ partIndex: 1, partCount: 1 });
+  g.openai.replies.push(Response.json({ error: { message: 'quota', code: 'insufficient_quota' } }, { status: 429 }));
+  await g.send(rep, busy.form);
+  state = (await g.get(rep)).body;
+  assert.deepEqual([state.complete, panelMode(state), state.parts[0].errorCode], [false, 'transcribing', 'recording_unavailable']);
+  assert.match(failedLines(state)[0], /sent again/);
+  // The retry transcribes it: the failed entry is replaced.
+  assert.equal((await g.send(rep, part({ requestId: busy.requestId, partIndex: 1, partCount: 1 }).form)).status, 200);
+  state = (await g.get(rep)).body;
+  assert.deepEqual([state.parts.map(row => row.status), state.complete, panelMode(state)], [['done'], true, 'ready']);
+});
+
+test('the crew brief names each item once: Sold goods and Bring stay out when the job\'s materials card lists them', () => {
+  const instructions = { bringList: ['Hand truck / dolly', 'Ladder'], materials: [{ id: 'quote-shelving', name: 'Metal shelving unit', quantity: 4 }] };
+  const labels = materials => walkthroughCrewBrief(instructions, { materials }).map(row => row.label);
+  assert.deepEqual(labels([]), ['Sold goods', 'Bring']);
+  assert.deepEqual(labels([{ id: 'quote-shelving', name: 'Metal shelving unit', source: 'buy' }]), ['Bring']);
+  assert.deepEqual(labels([{ id: 'material-0-dolly', name: 'Hand truck / dolly', source: 'stock' }]), ['Sold goods']);
+  assert.deepEqual(labels([{ id: 'quote-shelving', source: 'buy' }, { id: 'material-0-dolly', source: 'stock' }]), []);
+  const job = { id: 'j1', type: 'job', status: 'scheduled', assignedCrew: ['Crew.One'], jobInstructions: instructions, materials: [{ id: 'quote-shelving', name: 'Metal shelving unit', quantity: 4, source: 'buy' }] };
+  assert.deepEqual(fieldJobProjection(job).walkthroughBrief.map(row => row.label), ['Bring']);
+});

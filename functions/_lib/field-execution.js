@@ -154,7 +154,7 @@ export function fieldJobProjection(job, events = [], options = {}) {
     exclusions: crew(description(instructions.exclusions || scope.exclusions)), hazards: crew(textList(instructions.hazards || scope.hazards)),
     accessInstructions: crew(fieldText(job.accessInstructions || instructions.accessNotes || logistics.notes)), access: crew(textList(instructions.access || scope.access || logistics.access)),
     truckPlacement: crew(fieldText(instructions.truckPlacement || logistics.truck_placement)),
-    walkthroughBrief: walkthroughCrewBrief(instructions),
+    walkthroughBrief: walkthroughCrewBrief(instructions, { materials: list(job.materials || job.requiredMaterials) }),
     // EGC_WALKTHROUGH_NOTES: the walkthrough notes the estimator confirmed for the crew (never the transcript), cleaned again.
     visitNotes: crewVisitNotes(job.visitNotes),
     customerInstructions: crew(fieldText(job.customerInstructions || instructions.customerNotes || job.customerNotesSummary)),

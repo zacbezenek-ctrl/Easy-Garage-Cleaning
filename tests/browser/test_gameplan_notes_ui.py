@@ -1,5 +1,5 @@
-"""EGC_WALKTHROUGH_NOTES: the walkthrough notes panel (crew/gameplan-notes.js) on the real crew/gameplan.html at 375x812 and
-iPad 820x1180.
+"""EGC_WALKTHROUGH_NOTES: the walkthrough notes panel (crew/gameplan-notes.js) on the real crew/gameplan.html at 375x812,
+iPad 820x1180 and iPad 1024x1366. The panel is one line until it is opened (summary .wtn-summary).
 
 Isolated fixtures only: a fake Firebase SDK, a FUN-05 walkthrough-visit stand-in with the outcome saved, and a
 /api/walkthrough-notes stand-in that holds the parts, the draft and the confirmed notes the way the server answers them.
@@ -14,6 +14,8 @@ ROOT = pathlib.Path(__file__).resolve().parents[2]
 NOW = datetime.datetime(2026, 10, 19, 16, tzinfo=datetime.timezone.utc)  # 10:00 in Denver
 PHONE = {'viewport': {'width': 375, 'height': 812}, 'is_mobile': True, 'has_touch': True}
 IPAD = {'viewport': {'width': 820, 'height': 1180}, 'is_mobile': True, 'has_touch': True}
+IPAD_PRO = {'viewport': {'width': 1024, 'height': 1366}, 'is_mobile': True, 'has_touch': True}
+PHONE_390 = {'viewport': {'width': 390, 'height': 844}, 'is_mobile': True, 'has_touch': True}
 UUID = re.compile(r'^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$')
 
 FAKE_FIREBASE = """
@@ -58,7 +60,7 @@ class GameplanNotesTests(unittest.TestCase):
         self.errors = []; self.posts = []; self.gets = 0
         self.enabled = True; self.can_confirm = True; self.recording = 'recorded'; self.outcome = 'quote_to_follow'
         self.parts = []; self.expected = None; self.status = 'empty'; self.draft = None; self.drafted_at = None; self.confirmed = None; self.rev = 0
-        self.conflict_next_confirm = False; self.dialogs = []
+        self.conflict_next_confirm = False; self.dialogs = []; self.jobs = 1; self.confirmed_hash = None; self.tick = 0
         self.page.on('pageerror', lambda error: self.errors.append(str(error)))
         self.page.on('dialog', lambda dialog: (self.dialogs.append(dialog.message), dialog.accept()))
         self.page.clock.install(time=NOW)
@@ -72,11 +74,16 @@ class GameplanNotesTests(unittest.TestCase):
         route.fulfill(status=status, content_type='application/json', headers={'Cache-Control': 'no-store'}, body=json.dumps(body))
 
     def view(self):
+        # As functions/_lib/walkthrough-notes.js answers: complete once a part named the count (sent after Finish) and that many
+        # are transcribed or finally refused; confirmedStale when the transcript changed after the confirm.
         done = [part for part in self.parts if part['status'] == 'done']
+        settled = [part for part in self.parts if part['status'] == 'done' or part.get('errorCode') in ('recording_audio_unreadable', 'recording_too_long')]
+        transcript = TRANSCRIPT if len(done) >= 2 else ('[Part 1]\nSynthetic first half of the walkthrough.' if done else '')
         return {'ok': True, 'enabled': True, 'visitId': 'wt-1', 'status': self.status, 'revision': f'n{self.rev}' if self.rev else '', 'canConfirm': self.can_confirm, 'canDraft': True,
                 'outcome': {'outcome': self.outcome, 'recordingStatus': self.recording} if self.outcome else None, 'parts': copy.deepcopy(self.parts), 'expectedParts': self.expected,
-                'complete': bool(done) and (not self.expected or len(done) >= self.expected), 'transcript': TRANSCRIPT if len(done) >= 2 else ('[Part 1]\nSynthetic first half of the walkthrough.' if done else ''),
-                'transcriptMissing': 0, 'draft': copy.deepcopy(self.draft), 'draftedAt': self.drafted_at, 'draftStale': False, 'draftsLeft': 5, 'confirmed': copy.deepcopy(self.confirmed)}
+                'complete': bool(self.expected) and len(settled) >= self.expected, 'transcript': transcript,
+                'transcriptMissing': 0, 'draft': copy.deepcopy(self.draft), 'draftedAt': self.drafted_at, 'draftStale': False, 'draftsLeft': 5, 'confirmed': copy.deepcopy(self.confirmed),
+                'confirmedJobs': self.jobs if self.confirmed else 0, 'confirmedStale': bool(self.confirmed) and bool(done) and transcript != self.confirmed_hash}
 
     def route(self, route):
         request = route.request; url = urlparse(request.url)
@@ -115,15 +122,18 @@ class GameplanNotesTests(unittest.TestCase):
         self.assertEqual(request.headers.get('content-type'), 'application/json')
         body = request.post_data_json; self.posts.append(body)
         self.assertRegex(body['requestId'], UUID); self.assertEqual(body['visitId'], 'wt-1')
+        # Each draft and confirm is stamped later than the one before, as the server's clock stamps them.
+        self.tick += 1; stamp = f'2026-10-19T16:{10 + self.tick:02d}:00.000Z'
         if body['action'] == 'draft':
-            self.draft = copy.deepcopy(DRAFT); self.drafted_at = '2026-10-19T16:00:20.000Z'; self.status = 'drafted'; self.rev += 1
+            self.draft = copy.deepcopy(DRAFT); self.drafted_at = stamp; self.status = 'drafted'; self.rev += 1
         elif body['action'] == 'confirm':
             if self.conflict_next_confirm:
                 self.conflict_next_confirm = False; self.rev += 1
                 return self.json(route, 409, {'ok': False, 'code': 'walkthrough_notes_changed', 'error': 'These notes changed since you opened them. Review them again before confirming.'})
             if body['expectedRevision'] != (f'n{self.rev}' if self.rev else ''):
                 return self.json(route, 409, {'ok': False, 'code': 'walkthrough_notes_changed', 'error': 'These notes changed since you opened them. Review them again before confirming.'})
-            self.confirmed = {**body['notes'], 'confirmedAt': '2026-10-19T16:05:00.000Z', 'confirmedBy': 'sales.rep'}; self.status = 'confirmed'; self.rev += 1
+            self.confirmed = {**body['notes'], 'confirmedAt': stamp, 'confirmedBy': 'sales.rep'}; self.status = 'confirmed'; self.rev += 1
+            self.confirmed_hash = self.view()['transcript']
         elif body['action'] == 'withdraw':
             self.parts = []; self.expected = None; self.draft = None; self.status = 'withdrawn'; self.rev += 1
         return self.json(route, 200, self.view())
@@ -134,6 +144,18 @@ class GameplanNotesTests(unittest.TestCase):
 
     def panel(self):
         return self.page.locator('#wt-notes')
+
+    def open_panel(self):
+        # Closed, the panel is its title and one status line; a tap on that line opens it.
+        details = self.panel().locator('details.wtn-disclosure')
+        expect(details).to_have_count(1)
+        if details.get_attribute('open') is None:
+            self.panel().locator('summary.wtn-summary').click()
+        expect(details).to_have_attribute('open', '')
+        return self.panel()
+
+    def status_line(self):
+        return self.panel().locator('summary.wtn-summary .wtn-status')
 
     def assert_layout(self, width, shot=None):
         self.assertLessEqual(self.page.evaluate('document.documentElement.scrollWidth'), width)
@@ -156,6 +178,9 @@ class GameplanNotesTests(unittest.TestCase):
         self.parts = [{'partIndex': 1, 'source': 'recorder', 'status': 'done', 'chars': 41}]; self.expected = 2; self.status = 'transcribing'; self.rev = 1
         self.open()
         panel = self.panel()
+        expect(self.status_line()).to_have_text('Transcribing: 1 of 2 parts done')
+        expect(panel.locator('progress')).to_be_hidden()
+        self.open_panel()
         expect(panel).to_contain_text('Transcribing: 1 of 2 parts done.')
         expect(panel.locator('progress')).to_be_visible()
         expect(panel.get_by_role('button', name='Write up notes now')).to_be_visible()
@@ -164,6 +189,7 @@ class GameplanNotesTests(unittest.TestCase):
         self.page.clock.run_for(10500)
         # Every part is in: the notes are written up on their own, once.
         self.until(lambda: [body['action'] for body in self.posts] == ['draft'], 'the draft is asked for once')
+        expect(self.status_line()).to_have_text('Notes ready to check and confirm')
         expect(panel.get_by_role('heading', name='Transcript and job notes')).to_be_visible()
         expect(panel.get_by_text('Check before confirming')).to_be_visible()
         expect(panel.get_by_text('Does the treadmill go or stay?')).to_be_visible()
@@ -190,7 +216,9 @@ class GameplanNotesTests(unittest.TestCase):
         self.page.clock.run_for(10500)
         expect(notes).to_have_value(re.compile('Bring the long ladder for the rack.$'))
         panel.get_by_role('button', name='Confirm notes for the crew').click()
-        expect(panel).to_contain_text('Sent to the crew lead and crew')
+        expect(panel.get_by_role('status').filter(has_text='the crew lead and crew see these notes on the job.')).to_be_visible()
+        expect(self.status_line()).to_have_text('Sent to the crew lead and crew')
+        self.assertEqual(panel.inner_text().count('Sent to the crew lead and crew'), 1, 'said once, in the one-line status')
         confirm = self.posts[-1]
         self.assertEqual(confirm['action'], 'confirm'); self.assertEqual(confirm['expectedRevision'], 'n3')
         self.assertEqual(confirm['notes'], {'itemsNeeded': [{'name': 'Metal shelving unit', 'quantity': 2, 'reason': 'Back wall'}, {'name': 'Ladder', 'quantity': 1, 'reason': 'Overhead rack'}, {'name': 'Lag screws and anchors', 'quantity': None, 'reason': 'Overhead rack'}],
@@ -222,7 +250,7 @@ class GameplanNotesTests(unittest.TestCase):
         saved = json.loads(self.page.evaluate("localStorage.getItem('egc-wt-notes:confirm:wt-1')"))
         self.assertEqual(saved['requestId'], self.posts[-1]['requestId'], 'an unanswered confirm keeps its request ID on the iPad')
         panel.get_by_role('button', name='Confirm notes for the crew').click()
-        expect(panel).to_contain_text('Sent to the crew lead and crew')
+        expect(self.status_line()).to_have_text('Sent to the crew lead and crew')
         self.assertEqual(self.posts[-1]['expectedRevision'], 'n4', 'the second try confirms against the notes as they are now')
         self.assertEqual(self.posts[-1]['notes']['jobNotes'], ['Only the left bay today.'])
         self.assert_layout(375)
@@ -232,14 +260,18 @@ class GameplanNotesTests(unittest.TestCase):
         self.assertEqual(self.posts[-1]['action'], 'withdraw')
 
     def test_without_a_recording_the_estimator_types_the_notes(self):
-        self.start_page(PHONE); self.recording = 'declined'
+        self.start_page(PHONE); self.recording = 'declined'; self.jobs = 0
         self.open()
-        panel = self.panel()
+        expect(self.status_line()).to_have_text('No recording: type the notes for the crew')
+        panel = self.open_panel()
         expect(panel).to_contain_text('This walkthrough has no recording.')
         panel.get_by_role('button', name='Type notes for the crew').click()
         panel.get_by_label(re.compile('^Job notes for the crew')).fill('Customer declined recording: clear the left bay only.')
         panel.get_by_role('button', name='Confirm notes for the crew').click()
-        expect(panel).to_contain_text('Sent to the crew lead and crew')
+        # Not booked yet (no job carries them): the panel says they go with the job, not that the crew sees them now.
+        expect(panel.get_by_role('status').filter(has_text='They go to the crew lead and crew on the job when it is booked.')).to_be_visible()
+        expect(self.status_line()).to_have_text('Confirmed: they go to the crew with the job')
+        self.assertNotIn('Sent to the crew lead and crew', panel.inner_text())
         self.assertEqual([(body['action'], body['expectedRevision']) for body in self.posts], [('confirm', '')])
         self.assert_layout(375)
 
@@ -248,10 +280,79 @@ class GameplanNotesTests(unittest.TestCase):
         self.parts = [{'partIndex': 1, 'source': 'recorder', 'status': 'done', 'chars': 41}, {'partIndex': 2, 'source': 'recorder', 'status': 'done', 'chars': 42}]
         self.expected = 2; self.status = 'drafted'; self.draft = copy.deepcopy(DRAFT); self.drafted_at = '2026-10-19T16:00:20.000Z'; self.rev = 3
         self.open()
-        panel = self.panel()
+        expect(self.status_line()).to_have_text('Draft notes: the estimator confirms them')
+        panel = self.open_panel()
         expect(panel.get_by_text('Only the estimator who did this walkthrough confirms its notes for the crew.')).to_be_visible()
         expect(panel.get_by_role('button', name=re.compile('^Confirm'))).to_have_count(0)
+        # Read-only: nothing to type into that could not be saved, and no rewrite that spends the estimator's write-ups.
+        expect(panel.locator('textarea, input')).to_have_count(0)
+        expect(panel.get_by_role('button', name=re.compile('Add item|Remove|Rewrite'))).to_have_count(0)
+        expect(panel.get_by_text('2 × Metal shelving unit – Back wall')).to_be_visible()
+        expect(panel.get_by_text('Clear the left bay first; the customer parks there tonight.')).to_be_visible()
+        expect(panel.get_by_text('Does the treadmill go or stay?')).to_be_visible()
+        self.assert_layout(820)
         self.assertEqual(self.posts, [], 'a ready draft is never written again')
+
+    def test_the_panel_stays_one_line_so_the_next_step_starts_in_view_at_ipad_and_phone_sizes(self):
+        for device, width in ((IPAD_PRO, 1024), (PHONE_390, 390)):
+            self.start_page(device)
+            self.parts = [{'partIndex': 1, 'source': 'recorder', 'status': 'done', 'chars': 41}, {'partIndex': 2, 'source': 'recorder', 'status': 'done', 'chars': 42}]
+            self.expected = 2; self.status = 'drafted'; self.draft = copy.deepcopy(DRAFT); self.drafted_at = '2026-10-19T16:00:20.000Z'; self.rev = 3
+            self.open()
+            expect(self.status_line()).to_have_text('Notes ready to check and confirm')
+            self.assertLess(self.panel().bounding_box()['height'], 100, f'{width}: closed, the panel is one line')
+            # Opened, it shows the draft; moving to the next step closes it again so that step starts in view.
+            self.open_panel()
+            expect(self.panel().get_by_text('Check before confirming')).to_be_visible()
+            self.page.evaluate("S.outcome = S.outcome || 'Park two cars'; S.whyNow = S.whyNow || 'Moving soon'; S.source = S.source || 'Referral'; S.name = S.name || 'Synthetic Customer'; S.phone = S.phone || '9705550100'; S.address = S.address || '100 Synthetic Lane'; render()")
+            self.page.get_by_role('button', name='Continue').last.click()
+            expect(self.page.locator('#screen h1')).to_have_text('Photograph the garage')
+            self.page.clock.run_for(2000)
+            self.until(lambda: self.page.evaluate('scrollY') == 0, f'{width}: the page is back at the top')
+            expect(self.panel().locator('details.wtn-disclosure')).not_to_have_attribute('open', '')
+            top = self.page.evaluate("Math.round(document.querySelector('#screen h1').getBoundingClientRect().bottom)")
+            self.assertLess(top, self.page.evaluate('innerHeight') - 80, f'{width}: the step heading is in view after Continue')
+            self.assert_layout(width, f'gameplan-notes-{width}-after-continue.png')
+            self.context.close()
+        self.start_page(IPAD)
+
+    def test_audio_the_transcription_refused_says_why_instead_of_waiting_for_the_upload(self):
+        self.start_page(IPAD)
+        # OpenAI out of credits: the part is sent again from the iPad; the panel says so instead of "waiting for the upload".
+        self.parts = [{'partIndex': 1, 'source': 'recorder', 'status': 'failed', 'chars': 0, 'errorCode': 'recording_unavailable'}]; self.expected = 1; self.status = 'transcribing'; self.rev = 1
+        self.open()
+        expect(self.status_line()).to_have_text('Transcribing: 0 of 1 part done')
+        panel = self.open_panel()
+        expect(panel).to_contain_text('Part 1: transcription is unavailable right now. The audio stays on the iPad and is sent again.')
+        self.assertNotIn('Waiting for the walkthrough audio', panel.inner_text())
+        # The audio could not be read: there is nothing to write up, so the estimator types the notes.
+        self.parts = [{'partIndex': 1, 'source': 'recorder', 'status': 'failed', 'chars': 0, 'errorCode': 'recording_audio_unreadable'}]; self.status = 'failed'; self.rev = 2
+        self.page.clock.run_for(10500)
+        expect(self.status_line()).to_have_text('The audio could not be transcribed: type the notes')
+        expect(panel).to_contain_text('Part 1 could not be transcribed: its audio could not be read for a transcript.')
+        panel.get_by_role('button', name='Type notes for the crew').click()
+        expect(panel.get_by_label(re.compile('^Job notes for the crew'))).to_be_visible()
+        self.assertEqual(self.posts, [], 'nothing is written up from audio that was not transcribed')
+        self.assert_layout(820)
+
+    def test_new_audio_after_the_confirm_is_named_with_a_rewrite(self):
+        self.start_page(IPAD)
+        self.parts = [{'partIndex': 1, 'source': 'recorder', 'status': 'done', 'chars': 41}]; self.expected = 1; self.status = 'confirmed'; self.rev = 4
+        self.draft = copy.deepcopy(DRAFT); self.drafted_at = '2026-10-19T16:00:20.000Z'
+        self.confirmed = {**{key: value for key, value in DRAFT.items() if key != 'openQuestions'}, 'confirmedAt': '2026-10-19T16:05:00.000Z', 'confirmedBy': 'sales.rep'}
+        self.confirmed_hash = '[Part 1]\nSynthetic first half of the walkthrough.'
+        # A Voice Memos file lands after the confirm: the next read (the recorder's sync) shows it on the confirmed notes.
+        self.parts.append({'partIndex': 2, 'source': 'import', 'status': 'done', 'chars': 42}); self.expected = 2
+        self.open()
+        expect(self.status_line()).to_have_text('New audio arrived after these notes were confirmed')
+        panel = self.open_panel()
+        expect(panel.get_by_text('New audio arrived after these notes were confirmed.', exact=False)).to_be_visible()
+        panel.get_by_role('button', name='Rewrite from the transcript').click()
+        self.until(lambda: [body['action'] for body in self.posts] == ['draft'], 'the rewrite is asked for')
+        expect(panel.get_by_text('New notes were written from the latest audio. Confirm them to update what the crew sees.')).to_be_visible()
+        panel.get_by_role('button', name='Confirm changes for the crew').click()
+        expect(self.status_line()).to_have_text('Sent to the crew lead and crew')
+        self.assert_layout(820)
 
     def test_switched_off_or_before_the_outcome_the_panel_stays_hidden(self):
         self.start_page(IPAD); self.enabled = False

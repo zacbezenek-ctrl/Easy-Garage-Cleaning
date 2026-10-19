@@ -1,5 +1,6 @@
 import { firestoreFetch } from './firebase-service-account.js';
 import { dispatchStorage } from './dispatch-storage.js';
+import { saveJobReads } from './dispatch-window-reads.js';
 import { encodeFirestoreFields } from './firestore-job.js';
 import { commitConflict, commitFailure } from './firestore-errors.js';
 import { can } from './staff-roles.js';
@@ -14,10 +15,11 @@ import { VISIT_NOTES_VERSION, cleanVisitNotes, visitNotesEmpty } from './visit-n
    here; it is transcribed and only its text is kept (walkthroughNoteParts, server-only, deleted after 90 days): no audio
    is stored. The estimator then has the transcript drafted into job notes, items needed, keep / remove, access and hazards
    (one strict-JSON chat call, no prices), edits them in the gameplan (crew/gameplan-notes.js) and confirms them. Only a
-   confirmed copy reaches the crew: jobs/{visit}.visitNotes and the converted job's, a top-level field the signed handoff
-   never rewrites, which a job Dispatch creates from the visit inherits (dispatch-service.js) and the crew projections
-   read (field-execution.js). Every upload replays by its request ID (one OpenAI call per part), each visit and each
-   rep has caps, and a customer's declined or withdrawn consent stops everything. */
+   confirmed copy reaches the crew: jobs/{visit}.visitNotes and every job made from the visit (the signed handoff's, a quote
+   draft's or Dispatch's), a top-level field the signed handoff never rewrites, which a job Dispatch creates from the visit
+   later inherits (dispatch-service.js) and the crew projections read (field-execution.js). Every upload replays by its
+   request ID (one OpenAI call per part), each visit and each rep has caps, and a customer's declined or withdrawn consent
+   stops everything: no transcript is shown or written up, and the parts already transcribed are deleted. */
 
 export const WALKTHROUGH_NOTE_PARTS = 'walkthroughNoteParts';
 export const WALKTHROUGH_NOTES = 'walkthroughNotes';
@@ -25,8 +27,9 @@ export const WALKTHROUGH_NOTE_RECEIPTS = 'walkthroughNoteReceipts';
 // Exactly "true" turns the notes on (a launch default, functions/_lib/launch-defaults.js).
 export const walkthroughNotesEnabled = env => env?.EGC_WALKTHROUGH_NOTES === 'true';
 // claimMs: how long a part being transcribed holds its request ID against a parallel retry.
-export const NOTES_LIMITS = Object.freeze({ requestBytes: 25 * 1024 * 1024, partBytes: 24 * 1024 * 1024, parts: 12, drafts: 6, transcribePerDay: 40, draftsPerDay: 20,
-  partChars: 60000, transcriptChars: 200000, retentionDays: 90, claimMs: 5 * 60 * 1000, transcribeMs: 240000, draftMs: 90000 });
+// transcribePerDay counts each new part once (a retry of its upload ID does not); attemptsPerDay counts every OpenAI try.
+export const NOTES_LIMITS = Object.freeze({ requestBytes: 25 * 1024 * 1024, partBytes: 24 * 1024 * 1024, parts: 12, drafts: 6, transcribePerDay: 40, attemptsPerDay: 200, draftsPerDay: 20,
+  partChars: 60000, transcriptChars: 200000, retentionDays: 90, claimMs: 5 * 60 * 1000, transcribeMs: 240000, draftMs: 90000, linkedJobs: 20 });
 const DAY = 86400000, FALLBACK_MODEL = 'whisper-1';
 const OPENAI = 'https://api.openai.com/v1';
 
@@ -116,6 +119,19 @@ const freshNotes = (visit, actor, occurrence, now) => ({ visitId: visit.id, esti
 const partOrder = (a, b) => (a.source === 'import') - (b.source === 'import') || (a.partIndex ?? 999) - (b.partIndex ?? 999) || String(a.at || '').localeCompare(String(b.at || ''));
 const doneParts = notes => notes.parts.filter(part => part.status === 'done').sort(partOrder);
 const transcriptHash = parts => sha256Hex(canonicalJson(parts.map(part => [part.requestId, part.chars])));
+// Refusals a retry of the same audio never turns into a transcript: the notes go ahead without that part.
+const FINAL_FAILURES = new Set(['recording_too_long', 'recording_audio_unreadable']);
+/** Every part is in once a part sent after Finish said how many the walkthrough has (partCount) and that many are
+ * transcribed or finally refused. A part sent before Finish (an iPad short of storage sends parts early) does not know
+ * the count, so it never completes the transcript on its own. */
+const completeOf = (parts, expectedParts) => Number.isInteger(expectedParts) && expectedParts > 0 && parts.filter(part => part.status === 'done' || part.status === 'failed' && FINAL_FAILURES.has(part.errorCode)).length >= expectedParts;
+/** The notes document's parts after one part's outcome (done, or failed with its refusal), with the expected count and status. */
+function withPart(live, entry, partCount) {
+  const parts = [...live.parts.filter(row => row.requestId !== entry.requestId), entry].sort(partOrder);
+  const expectedParts = Math.max(Number(live.expectedParts) || 0, partCount || 0) || null, complete = completeOf(parts, expectedParts);
+  const status = live.status === 'confirmed' ? 'confirmed' : live.draft ? 'drafted' : complete ? (parts.some(row => row.status === 'done') ? 'ready' : 'failed') : 'transcribing';
+  return { parts, expectedParts, transcriptHash: transcriptHash(parts.filter(row => row.status === 'done')), status };
+}
 
 /** The joined transcript of an occurrence: "[Part n]" before each part's text. Parts deleted after 90 days are counted
  * as missing. */
@@ -128,17 +144,24 @@ async function transcriptOf(store, notes) {
   return { text: found.map(part => `${label(part)}\n${rows.get(part.requestId).text.trim()}`).join('\n\n').slice(0, NOTES_LIMITS.transcriptChars), missing: parts.length - found.length };
 }
 
+/** The panel's view. With consent declined or withdrawn there is no transcript, part list or draft to show (and nothing to
+ * write up); confirmed notes stay. confirmedJobs: how many jobs the confirm wrote them to (0: they go with the job Dispatch
+ * books from the visit later). confirmedStale: audio arrived after the notes were confirmed. */
 async function stateView(store, visit, notes, revision, who) {
-  const done = doneParts(notes), transcript = await transcriptOf(store, notes);
+  const off = Boolean(notes.withdrawnAt) || declined(visit), done = off ? [] : doneParts(notes), transcript = off ? { text: '', missing: 0 } : await transcriptOf(store, notes);
   const outcome = plain(visit.walkthroughOutcome) ? { outcome: text(visit.walkthroughOutcome.outcome, 40), recordingStatus: visit.walkthroughOutcome.recordingStatus ?? null } : null;
-  return { ok: true, enabled: true, visitId: visit.id, status: notes.withdrawnAt ? 'withdrawn' : notes.status, revision: revision || '',
-    canConfirm: who.estimator, canDraft: who.estimator || who.manager, outcome,
-    parts: notes.parts.slice().sort(partOrder).map(part => ({ partIndex: Number.isInteger(part.partIndex) ? part.partIndex : null, source: part.source === 'import' ? 'import' : 'recorder', status: text(part.status, 20), chars: Number(part.chars) || 0 })),
-    expectedParts: Number.isInteger(notes.expectedParts) ? notes.expectedParts : null, complete: done.length > 0 && (!notes.expectedParts || done.length >= notes.expectedParts),
+  const expectedParts = !off && Number.isInteger(notes.expectedParts) ? notes.expectedParts : null, confirmed = plain(notes.confirmed);
+  return { ok: true, enabled: true, visitId: visit.id, status: notes.withdrawnAt ? 'withdrawn' : off ? (confirmed ? 'confirmed' : 'empty') : notes.status, revision: revision || '',
+    canConfirm: who.estimator, canDraft: !off && (who.estimator || who.manager), outcome,
+    parts: off ? [] : notes.parts.slice().sort(partOrder).map(part => ({ partIndex: Number.isInteger(part.partIndex) ? part.partIndex : null, source: part.source === 'import' ? 'import' : 'recorder', status: text(part.status, 20), chars: Number(part.chars) || 0,
+      ...(part.status === 'failed' ? { errorCode: /^recording_[a-z_]{1,60}$/.test(part.errorCode || '') ? part.errorCode : 'recording_unavailable' } : {}) })),
+    expectedParts, complete: !off && completeOf(notes.parts, expectedParts),
     transcript: transcript.text, transcriptMissing: transcript.missing,
-    draft: plain(notes.draft) ? cleanVisitNotes(notes.draft, { questions: true }) : null, draftedAt: notes.draftedAt || null, draftStale: plain(notes.draft) && notes.draftTranscriptHash !== notes.transcriptHash,
+    draft: !off && plain(notes.draft) ? cleanVisitNotes(notes.draft, { questions: true }) : null, draftedAt: off ? null : notes.draftedAt || null, draftStale: !off && plain(notes.draft) && notes.draftTranscriptHash !== notes.transcriptHash,
     draftsLeft: Math.max(0, NOTES_LIMITS.drafts - notes.drafts),
-    confirmed: plain(notes.confirmed) ? { ...cleanVisitNotes(notes.confirmed), confirmedAt: notes.confirmed.confirmedAt || null, confirmedBy: text(notes.confirmed.confirmedBy, 120) || null } : null };
+    confirmed: confirmed ? { ...cleanVisitNotes(notes.confirmed), confirmedAt: notes.confirmed.confirmedAt || null, confirmedBy: text(notes.confirmed.confirmedBy, 120) || null } : null,
+    confirmedJobs: confirmed && Array.isArray(notes.confirmedJobIds) ? notes.confirmedJobIds.length : 0,
+    confirmedStale: !off && confirmed && Boolean(done.length) && notes.transcriptHash !== (notes.confirmedTranscriptHash || '') };
 }
 
 // ---- Part uploads ----
@@ -186,8 +209,10 @@ async function transcribeAudio({ openai, apiKey, file, name, model }) {
  * Transcribes one recorder part (or Voice Memos file) of a walkthrough: {requestId, visitId, partIndex?, partCount?,
  * source?, file}. A request ID already transcribed with the same audio answers alreadySaved without calling OpenAI;
  * one still being transcribed answers 503 recording_in_progress (retryable); the same ID with other audio is 409. Each
- * new part counts against the visit (12 parts) and the rep's day (40), then is claimed, transcribed and saved with the
- * occurrence's notes in one commit. Only text is kept, until expiresAt (90 days).
+ * new part counts against the visit (12 parts) and the rep's day (40 parts; a retry of the same upload ID is not counted
+ * again, every try against 200), then is claimed, transcribed and saved with the occurrence's notes in one commit. Only
+ * text is kept, until expiresAt (90 days). A part OpenAI refuses is listed on the notes as failed with its refusal, so the
+ * panel says why instead of waiting for it.
  */
 export async function transcribeWalkthroughPart(store, session, input, { openai, apiKey, now = new Date().toISOString() } = {}) {
   const env = store.env || {};
@@ -208,7 +233,10 @@ export async function transcribeWalkthroughPart(store, session, input, { openai,
   const notes = await store.read(WALKTHROUGH_NOTES, visit.id), current = notesOf(notes, occurrence);
   if (current.withdrawnAt) throw fail('recording_consent_declined', 'The customer withdrew recording consent, so no audio is transcribed for this walkthrough.');
   if (!current.parts.some(part => part.requestId === request.requestId) && current.parts.length >= NOTES_LIMITS.parts) throw fail('recording_part_limit', `A walkthrough takes at most ${NOTES_LIMITS.parts} audio parts. Save a copy and ask the office.`);
-  const limit = await consumeRateLimit(store, env, { bucket: 'wt_transcribe', key: `staff:${actor}`, limit: NOTES_LIMITS.transcribePerDay, windowMs: DAY }, now);
+  // A retry of an upload ID already claimed (one that failed while OpenAI was out of credits, say) is not a new part: it
+  // counts only against the wider cap on tries, so the parts go through once OpenAI is back.
+  const tries = await consumeRateLimit(store, env, { bucket: 'wt_transcribe_try', key: `staff:${actor}`, limit: NOTES_LIMITS.attemptsPerDay, windowMs: DAY }, now);
+  const limit = tries.allowed && !saved ? await consumeRateLimit(store, env, { bucket: 'wt_transcribe', key: `staff:${actor}`, limit: NOTES_LIMITS.transcribePerDay, windowMs: DAY }, now) : tries;
   if (!limit.allowed) throw fail('recording_rate_limited', 'Today\'s transcription limit for your account is reached. The audio stays on this iPad; ask the office.', 429, { resetAt: limit.resetAt });
   const claim = { requestId: request.requestId, visitId: visit.id, actorId: actor, startRequestId: occurrence, partIndex: request.partIndex, partCount: request.partCount, source: request.source,
     mimeType: text(String(request.file.type || ''), 80), bytes: request.file.size, audioSha256: sha, status: 'transcribing', claimedAt: now, model: null, text: '', chars: 0, seconds: null, errorCode: null,
@@ -222,22 +250,27 @@ export async function transcribeWalkthroughPart(store, session, input, { openai,
   try { result = await transcribeAudio({ openai, apiKey, file: request.file, name: `part-${request.partIndex ?? 1}.${extension}`, model: transcribeModel(env) }); }
   catch (error) {
     // The claim is let go at once, so the recorder's retry transcribes again instead of waiting it out.
-    await store.commit([{ collection: WALKTHROUGH_NOTE_PARTS, id: part.id, revision: part.revision, patch: { status: 'failed', errorCode: text(error?.code, 80) || 'recording_unavailable', updatedAt: now } }]).catch(() => {});
+    const errorCode = text(error?.code, 80) || 'recording_unavailable';
+    await store.commit([{ collection: WALKTHROUGH_NOTE_PARTS, id: part.id, revision: part.revision, patch: { status: 'failed', errorCode, updatedAt: now } }]).catch(() => {});
+    // The notes list it as failed with its refusal (best effort): the panel says why instead of waiting for the upload.
+    const doc = await store.read(WALKTHROUGH_NOTES, visit.id).catch(() => undefined), live = notesOf(doc, occurrence);
+    if (doc !== undefined && !live.withdrawnAt && !live.parts.some(row => row.requestId === request.requestId && row.status === 'done')) {
+      const patch = { ...(live.current ? {} : freshNotes(visit, actor, occurrence, now)), ...withPart(live, { requestId: request.requestId, partIndex: request.partIndex, source: request.source, chars: 0, status: 'failed', errorCode, at: now }, request.partCount), updatedAt: now };
+      await store.commit([{ collection: WALKTHROUGH_NOTES, id: visit.id, ...(doc ? { revision: doc.revision } : {}), patch }]).catch(() => {});
+    }
     throw error;
   }
   const body = result.text.trim().slice(0, NOTES_LIMITS.partChars), entry = { requestId: request.requestId, partIndex: request.partIndex, source: request.source, chars: body.length, status: 'done', at: now };
   let doc = notes;
   for (let attempt = 0; attempt < 3; attempt += 1) {
     const live = notesOf(doc, occurrence);
-    if (live.withdrawnAt) {
-      // Consent was withdrawn while this part was being transcribed: its text is never kept.
+    // Consent was withdrawn (the panel's withdraw, or a Finish sent as declined) while this part was being transcribed: its
+    // text is never kept.
+    if (live.withdrawnAt || declined(await store.read('jobs', visit.id))) {
       await store.commit([{ collection: WALKTHROUGH_NOTE_PARTS, id: part.id, revision: part.revision, remove: true }]).catch(() => {});
       throw fail('recording_consent_declined', 'The customer withdrew recording consent, so no audio is transcribed for this walkthrough.');
     }
-    const parts = [...live.parts.filter(row => row.requestId !== request.requestId), entry].sort(partOrder);
-    const expectedParts = Math.max(Number(live.expectedParts) || 0, request.partCount || 0) || null, complete = !expectedParts || parts.filter(row => row.status === 'done').length >= expectedParts;
-    const status = live.status === 'confirmed' ? 'confirmed' : live.draft ? 'drafted' : complete ? 'ready' : 'transcribing';
-    const patch = { ...(live.current ? {} : freshNotes(visit, actor, occurrence, now)), parts, expectedParts, transcriptHash: transcriptHash(parts.filter(row => row.status === 'done')), status, updatedAt: now };
+    const patch = { ...(live.current ? {} : freshNotes(visit, actor, occurrence, now)), ...withPart(live, entry, request.partCount), updatedAt: now };
     try {
       await store.commit([{ collection: WALKTHROUGH_NOTES, id: visit.id, ...(doc ? { revision: doc.revision } : {}), patch },
         { collection: WALKTHROUGH_NOTE_PARTS, id: part.id, revision: part.revision, patch: { status: 'done', text: body, chars: body.length, model: result.model, seconds: result.seconds, updatedAt: now } }]);
@@ -266,9 +299,14 @@ async function receiptReplay(store, requestId, fingerprint) {
   if (receipt && receipt.fingerprint !== fingerprint) throw fail('walkthrough_notes_idempotency_conflict', 'This request ID was already used for a different notes action. Refresh and try again.');
   return Boolean(receipt);
 }
-async function currentState(store, session, visitId) {
-  const visit = await visitFor(store, visitId), who = await access(store, session, visit), doc = await store.read(WALKTHROUGH_NOTES, visit.id);
-  return stateView(store, visit, notesOf(doc, occurrenceOf(visit)), doc?.revision, who);
+async function currentState(store, session, visitId, now) {
+  const visit = await visitFor(store, visitId), who = await access(store, session, visit), occurrence = occurrenceOf(visit);
+  let doc = await store.read(WALKTHROUGH_NOTES, visit.id);
+  // A Finish sent as declined (the customer withdrew consent on the iPad after a part was sent): the parts and the draft are
+  // deleted the first time the visit is read, as the withdraw action deletes them. The view shows none of it either way.
+  const live = notesOf(doc, occurrence);
+  if (now && declined(visit) && live.current && !live.withdrawnAt && (live.parts.length || plain(live.draft))) doc = await deleteTranscript(store, visit, occurrence, 'consent_declined', now).catch(() => doc);
+  return stateView(store, visit, notesOf(doc, occurrence), doc?.revision, who);
 }
 
 const NOTE_LIST = { type: 'array', items: { type: 'string' } };
@@ -314,11 +352,11 @@ export async function draftWalkthroughNotes(store, session, input, { openai, api
   const visit = await visitFor(store, request.visitId);
   await access(store, session, visit);
   const fingerprint = sha256Hex(canonicalJson({ actor, action: 'draft', visitId: visit.id }));
-  if (await receiptReplay(store, request.requestId, fingerprint)) return currentState(store, session, visit.id);
+  if (await receiptReplay(store, request.requestId, fingerprint)) return currentState(store, session, visit.id, now);
   const doc = await store.read(WALKTHROUGH_NOTES, visit.id), notes = notesOf(doc, occurrenceOf(visit));
-  if (notes.withdrawnAt) throw fail('walkthrough_notes_withdrawn', 'The customer withdrew recording consent: there is no transcript to write notes from. Type the notes instead.');
+  if (notes.withdrawnAt || declined(visit)) throw fail('walkthrough_notes_withdrawn', 'The customer declined or withdrew recording consent: there is no transcript to write notes from. Type the notes instead.');
   if (!doneParts(notes).length) throw fail('walkthrough_notes_no_transcript', 'There is no transcript yet. The notes can be written once the audio is transcribed.');
-  if (plain(notes.draft) && notes.draftTranscriptHash === notes.transcriptHash) return currentState(store, session, visit.id);
+  if (plain(notes.draft) && notes.draftTranscriptHash === notes.transcriptHash) return currentState(store, session, visit.id, now);
   if (notes.drafts >= NOTES_LIMITS.drafts) throw fail('walkthrough_notes_draft_limit', `This walkthrough's notes were already written ${NOTES_LIMITS.drafts} times. Edit them by hand.`, 429);
   const transcript = await transcriptOf(store, notes);
   if (!transcript.text.replace(/\[[^\]]*\]/g, '').trim()) throw fail('walkthrough_notes_no_transcript', 'The transcript is empty (no speech was heard). Type the notes instead.');
@@ -332,14 +370,15 @@ export async function draftWalkthroughNotes(store, session, input, { openai, api
     if (error?.status !== 409) throw error;
     if (!await receiptReplay(store, request.requestId, fingerprint)) throw fail('walkthrough_notes_changed', 'These notes changed while they were being written. Refresh and try again.');
   }
-  return currentState(store, session, visit.id);
+  return currentState(store, session, visit.id, now);
 }
 
 /**
  * The estimator confirms the notes for the crew ({action:'confirm', visitId, requestId, expectedRevision, notes}):
- * cleaned again, they are saved as visitNotes on the walkthrough visit and on its converted job (when that job came from
- * this visit), with the notes document and a receipt, in one commit with revision preconditions. expectedRevision ''
- * means notes typed with no transcript. A conflict is 409 walkthrough_notes_changed; the panel reads them again.
+ * cleaned again, they are saved as visitNotes on the walkthrough visit and on every operational job made from it (its
+ * convertedJobId, and each job whose sourceWalkthroughId is the visit: a quote draft's, Dispatch's), with the notes
+ * document and a receipt, in one commit with a revision precondition on each. expectedRevision '' means notes typed
+ * with no transcript. A conflict is 409 walkthrough_notes_changed; the panel reads them again.
  */
 export async function confirmWalkthroughNotes(store, session, input, { now = new Date().toISOString() } = {}) {
   const env = store.env || {}, actor = actorOf(session, env), request = actionRequest(input, 'confirm', ['expectedRevision', 'notes']);
@@ -350,23 +389,28 @@ export async function confirmWalkthroughNotes(store, session, input, { now = new
   const notes = cleanVisitNotes(request.notes);
   if (visitNotesEmpty(notes)) throw fail('walkthrough_notes_empty', 'Add at least one note or item before confirming.', 400);
   const fingerprint = sha256Hex(canonicalJson({ actor, action: 'confirm', visitId: visit.id, expectedRevision: request.expectedRevision, notes }));
-  if (await receiptReplay(store, request.requestId, fingerprint)) return currentState(store, session, visit.id);
+  if (await receiptReplay(store, request.requestId, fingerprint)) return currentState(store, session, visit.id, now);
   const doc = await store.read(WALKTHROUGH_NOTES, visit.id), occurrence = occurrenceOf(visit), live = notesOf(doc, occurrence);
   if ((doc?.revision || '') !== request.expectedRevision) throw fail('walkthrough_notes_changed', 'These notes changed since you opened them. Review them again before confirming.');
   const visitNotes = { version: VISIT_NOTES_VERSION, ...notes, confirmedAt: now, confirmedBy: actor, confirmRequestId: request.requestId, sourceVisitId: visit.id };
   const writes = [{ collection: 'jobs', id: visit.id, revision: visit.revision, patch: { visitNotes, updatedAt: now } }];
-  // The job this walkthrough became gets the same copy; a job Dispatch creates from the visit later inherits it.
-  const job = safeId(visit.convertedJobId) ? await store.read('jobs', visit.convertedJobId) : null;
-  if (job && job.type === 'job' && !job.recordType && job.sourceWalkthroughId === visit.id && job.revision) writes.push({ collection: 'jobs', id: job.id, revision: job.revision, patch: { visitNotes, updatedAt: now } });
+  // Every job this walkthrough became gets the same copy: the signed handoff's (convertedJobId) and any a quote draft or
+  // Dispatch made from it (sourceWalkthroughId, found as they find it). A job Dispatch creates from the visit later
+  // inherits it (dispatch-service.js sourceFields).
+  const linked = (await store.linkedJobs(visit.id)).filter(row => row?.sourceWalkthroughId === visit.id).map(row => row.id);
+  const ids = [...new Set([visit.convertedJobId, ...linked].filter(safeId))].filter(id => id !== visit.id).slice(0, NOTES_LIMITS.linkedJobs);
+  const jobs = (await Promise.all(ids.map(id => store.read('jobs', id)))).filter(job => job && ['job', 'cleanout', 'reorg'].includes(job.type) && !job.recordType && job.sourceWalkthroughId === visit.id && job.revision);
+  for (const job of jobs) writes.push({ collection: 'jobs', id: job.id, revision: job.revision, patch: { visitNotes, updatedAt: now } });
   writes.push({ collection: WALKTHROUGH_NOTES, id: visit.id, ...(doc ? { revision: doc.revision } : {}),
-    patch: { ...(live.current ? {} : freshNotes(visit, actor, occurrence, now)), status: 'confirmed', confirmed: visitNotes, confirmedAt: now, confirmedBy: actor, confirmRequestId: request.requestId, updatedAt: now } });
+    patch: { ...(live.current ? {} : freshNotes(visit, actor, occurrence, now)), status: 'confirmed', confirmed: visitNotes, confirmedAt: now, confirmedBy: actor, confirmRequestId: request.requestId,
+      confirmedJobIds: jobs.map(job => job.id), confirmedTranscriptHash: live.transcriptHash || '', updatedAt: now } });
   writes.push({ collection: WALKTHROUGH_NOTE_RECEIPTS, id: request.requestId, patch: { action: 'confirm', visitId: visit.id, actorId: actor, fingerprint, createdAt: now } });
   try { await store.commit(writes); }
   catch (error) {
     if (error?.status !== 409) throw error;
     if (!await receiptReplay(store, request.requestId, fingerprint)) throw fail('walkthrough_notes_changed', 'This walkthrough or its job changed while saving. Review the notes again before confirming.');
   }
-  return currentState(store, session, visit.id);
+  return currentState(store, session, visit.id, now);
 }
 
 /** The customer withdrew recording consent ({action:'withdraw', visitId, requestId}): every transcript part of the
@@ -376,26 +420,31 @@ export async function withdrawWalkthroughNotes(store, session, input, { now = ne
   const env = store.env || {}, actor = actorOf(session, env), request = actionRequest(input, 'withdraw', []);
   const visit = await visitFor(store, request.visitId);
   await access(store, session, visit);
-  const occurrence = occurrenceOf(visit);
+  await deleteTranscript(store, visit, occurrenceOf(visit), actor, now);
+  return currentState(store, session, visit.id, now);
+}
+/** Deletes every transcript part of the occurrence and clears its draft (withdrawnAt; later uploads are refused). Returns
+ * the notes document as it is afterwards. */
+async function deleteTranscript(store, visit, occurrence, actor, now) {
   for (let attempt = 0; attempt < 3; attempt += 1) {
     const doc = await store.read(WALKTHROUGH_NOTES, visit.id), live = notesOf(doc, occurrence);
-    if (live.withdrawnAt && !live.parts.length) return currentState(store, session, visit.id);
+    if (live.withdrawnAt && !live.parts.length) return doc;
     const rows = live.parts.length ? await store.readMany(WALKTHROUGH_NOTE_PARTS, live.parts.map(part => part.requestId)) : [];
     const patch = { ...(live.current ? {} : freshNotes(visit, actor, occurrence, now)), parts: [], expectedParts: null, transcriptHash: '', draft: null, draftTranscriptHash: '', status: 'withdrawn', withdrawnAt: now, withdrawnBy: actor, updatedAt: now };
     try {
       await store.commit([{ collection: WALKTHROUGH_NOTES, id: visit.id, ...(doc ? { revision: doc.revision } : {}), patch },
         ...rows.filter(row => row.revision).map(row => ({ collection: WALKTHROUGH_NOTE_PARTS, id: row.id, revision: row.revision, remove: true }))]);
-      return currentState(store, session, visit.id);
+      return store.read(WALKTHROUGH_NOTES, visit.id);
     } catch (error) { if (error?.status !== 409) throw error; }
   }
   throw fail('walkthrough_notes_changed', 'The notes changed while the transcript was being deleted. Try again.');
 }
 
 /** What the gameplan's notes panel shows for one visit: the parts, the transcript, the draft and the confirmed notes. */
-export async function walkthroughNotesState(store, session, query = {}) {
+export async function walkthroughNotesState(store, session, query = {}, { now = new Date().toISOString() } = {}) {
   actorOf(session, store.env || {});
   if (!plain(query) || Object.keys(query).some(key => key !== 'visitId')) throw invalid('Choose one walkthrough visit.');
-  return currentState(store, session, query.visitId);
+  return currentState(store, session, query.visitId, now);
 }
 
 /** Firestore through the service account: reads as Dispatch reads, and one atomic commit where {collection, id,
@@ -409,6 +458,8 @@ export function walkthroughNotesStorage(env, fetcher = firestoreFetch) {
     env,
     async read(collection, id) { try { return await dispatch.read(collection, id); } catch { throw down(); } },
     async readMany(collection, ids) { try { return await dispatch.readMany(collection, ids); } catch { throw down(); } },
+    // Every job whose sourceWalkthroughId is the visit, read as Dispatch and the quote draft read it (saveJobReads).
+    async linkedJobs(visitId) { try { return await saveJobReads(dispatch).where('sourceWalkthroughId', visitId); } catch { throw down(); } },
     assigned: (session, job) => createJobAssignmentAccess(env, session).assigned(job),
     async commit(writes) {
       let response;

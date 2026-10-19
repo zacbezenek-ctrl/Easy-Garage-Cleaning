@@ -42,7 +42,7 @@ export function walkthroughNotesHandlers({ session = getHubSession, storage = wa
         if (!walkthroughNotesReady(env)) return reply(200, { ok: true, enabled: false });
         if (!walkthroughNotesActor(actor, env)) return reply(403, { ok: false, code: 'walkthrough_notes_forbidden', error: 'This account cannot see walkthrough notes.' });
         if (!params.has('visitId')) return reply(200, { ok: true, enabled: true });
-        return reply(200, await walkthroughNotesState(storage(env), actor, { visitId: params.get('visitId') }));
+        return reply(200, await walkthroughNotesState(storage(env), actor, { visitId: params.get('visitId') }, { now: now().toISOString() }));
       } catch (error) { return failure(error); }
     },
     async post(context) {

@@ -24,9 +24,14 @@ function soldGoods(instructions) {
   return materials.length ? materials : Array.isArray(instructions.soldGoods) ? instructions.soldGoods.filter(item => typeof item === 'string') : [];
 }
 
-export function walkthroughCrewBrief(instructions) {
+/** options.materials: the job's materials (EGC_JOB_MATERIALS). The crew page lists them in its materials card, so a job
+ * that has the quote's goods there (quote-… ids) skips Sold goods, and one with a stock grab list skips Bring: each item
+ * is named once. */
+export function walkthroughCrewBrief(instructions, { materials = [] } = {}) {
   if (!instructions || typeof instructions !== 'object' || Array.isArray(instructions)) return [];
-  return FIELDS.flatMap(([key, label]) => {
+  const listed = Array.isArray(materials) ? materials.filter(item => item && typeof item === 'object') : [];
+  const skip = new Set([...(listed.some(item => String(item.id || '').startsWith('quote-')) ? ['soldGoods'] : []), ...(listed.some(item => item.source === 'stock') ? ['bringList'] : [])]);
+  return FIELDS.filter(([key]) => !skip.has(key)).flatMap(([key, label]) => {
     const value = key === 'soldGoods' ? soldGoods(instructions) : instructions[key];
     const text = key === 'laborManHours' ? (typeof value === 'number' && Number.isFinite(value) && value > 0 ? `${Number(value.toFixed(2))} man-hour${value === 1 ? '' : 's'}` : '')
       : typeof value === 'string' ? value : Array.isArray(value) ? value.filter(item => typeof item === 'string').join('\n') : Number.isInteger(value) && value > 0 ? String(value) : '';

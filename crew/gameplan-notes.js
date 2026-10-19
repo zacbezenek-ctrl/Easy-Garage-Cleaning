@@ -3,7 +3,9 @@
    written up into job notes, items needed, keep / remove, access and hazards (on its own once every part is in, or with a tap),
    and lets the estimator edit them and Confirm them for the crew. Only confirmed notes reach the crew lead and the crew
    (crew/job.js). Everything is read from the server (the audio leaves the iPad once it is uploaded), so the estimator can come
-   back to it later or on another device. Without the notes switched on the panel stays hidden. */
+   back to it later or on another device. Without the notes switched on the panel stays hidden. The panel is one line (where
+   the notes stand) until it is opened, and closes again when the gameplan moves to another step, so it never pushes the
+   step's own form down the page. */
 (function (root) {
   'use strict';
   const URL_PATH = '/api/walkthrough-notes', POLL_MS = 10000, POLLS = 180, CONFIRM_KEY = 'egc-wt-notes:confirm:';
@@ -28,8 +30,8 @@
   }
   const hasNotes = notes => Boolean(notes) && (notes.itemsNeeded?.length || LISTS.some(([key]) => list(notes[key]).length));
   const itemText = item => `${item.quantity ? `${item.quantity} × ` : ''}${item.name}${item.reason ? ` – ${item.reason}` : ''}`;
-  /** What the panel shows for one server answer: hidden, waiting for audio, transcribing, writing up, the editor or the
-      confirmed notes. Pure, so tests read it directly. */
+  /** What the panel shows for one server answer: hidden, waiting for audio, transcribing, writing up, audio that could not be
+      transcribed, the editor or the confirmed notes. Pure, so tests read it directly. */
   function panelMode(view, { editing = false, manual = false } = {}) {
     if (!view || view.enabled !== true) return 'hidden';
     const outcome = view.outcome?.outcome || '', newer = view.draft && view.confirmed && view.draftedAt && Date.parse(view.draftedAt) > Date.parse(view.confirmed.confirmedAt || 0);
@@ -40,10 +42,32 @@
     const done = (view.parts || []).filter(part => part.status === 'done').length;
     if ((view.parts || []).length && !view.complete) return 'transcribing';
     if (done && view.complete) return 'ready';
+    // Every part was refused by the transcription (unreadable or too long): the estimator types the notes.
+    if ((view.parts || []).length && view.complete) return 'failed';
     if (!outcome || outcome === 'customer_no_show') return 'hidden';
     return view.outcome.recordingStatus === 'recorded' ? 'waiting' : 'none';
   }
-  const core = { notesToForm, formToNotes, panelMode, hasNotes, itemText, LISTS };
+  // Why a part could not be transcribed (its upload's refusal, functions/_lib/walkthrough-notes.js), for the panel.
+  const PART_ERRORS = { recording_audio_unreadable: 'its audio could not be read for a transcript', recording_too_long: 'it is too long to transcribe (split it in Voice Memos and add each part)' };
+  const partName = part => `${part.source === 'import' ? 'Voice Memos file' : 'Part'}${part.partIndex ? ` ${part.partIndex}` : ''}`;
+  /** One line per part the transcription refused: a final refusal says why; any other (OpenAI out of credits or busy) is sent
+      again from the iPad. */
+  const failedLines = view => (view?.parts || []).filter(part => part.status === 'failed').map(part => PART_ERRORS[part.errorCode] ? `${partName(part)} could not be transcribed: ${PART_ERRORS[part.errorCode]}.` : `${partName(part)}: transcription is unavailable right now. The audio stays on the iPad and is sent again.`);
+  /** The panel's one line while it is closed: where the notes stand. */
+  function statusLine(view, mode, { busy = false, editing = false, manual = false } = {}) {
+    const done = (view?.parts || []).filter(part => part.status === 'done').length, total = Math.max(view?.expectedParts || 0, (view?.parts || []).length);
+    if (mode === 'waiting') return 'Waiting for the walkthrough audio to upload';
+    if (mode === 'transcribing') return `Transcribing: ${done} of ${total} part${total === 1 ? '' : 's'} done`;
+    if (mode === 'ready') return busy ? 'Writing up the notes from the transcript…' : 'The transcript is ready';
+    if (mode === 'failed') return 'The audio could not be transcribed: type the notes';
+    if (mode === 'none') return 'No recording: type the notes for the crew';
+    if (mode === 'withdrawn') return 'Consent withdrawn: the transcript was deleted';
+    if (mode === 'confirmed') return view.confirmedStale ? 'New audio arrived after these notes were confirmed' : view.confirmedJobs ? 'Sent to the crew lead and crew' : 'Confirmed: they go to the crew with the job';
+    if (editing || manual) return 'Editing the notes for the crew';
+    if (!view.canConfirm) return 'Draft notes: the estimator confirms them';
+    return view.confirmed ? 'New notes to check and confirm' : 'Notes ready to check and confirm';
+  }
+  const core = { notesToForm, formToNotes, panelMode, statusLine, failedLines, hasNotes, itemText, LISTS };
   root.EGCWalkthroughNotes = core;
   if (typeof document === 'undefined') return;
 
@@ -63,11 +87,13 @@
   const button = (label, onclick, className = 'wt-btn', extra = {}) => h('button', { type: 'button', className, onclick, ...extra }, label);
   const denver = value => { try { return new Intl.DateTimeFormat('en-US', { timeZone: 'America/Denver', month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' }).format(new Date(value)); } catch { return ''; } };
 
-  /** Mounts the panel: options.visit() gives the open Hub walkthrough's id (or null), options.fetch the Hub's signed fetch. */
+  /** Mounts the panel: options.visit() gives the open Hub walkthrough's id (or null), options.fetch the Hub's signed fetch and
+      options.step() the gameplan step shown (the panel closes when it changes). */
   function mount(host, options = {}) {
     const timers = options.timers || root, uuid = options.uuid || (() => root.crypto.randomUUID()), call = options.fetch || root.fetch?.bind(root);
     const storage = (() => { try { return options.storage || root.localStorage || null; } catch { return null; } })();
-    const ui = { visitId: null, view: null, generation: 0, busy: false, message: '', error: '', edit: null, editing: false, manual: false, dirty: false, polls: 0, timer: null, autoDrafted: new Set(), transcriptOpen: false };
+    const stepOf = () => { try { return options.step?.() ?? null; } catch { return null; } };
+    const ui = { visitId: null, view: null, generation: 0, busy: false, message: '', error: '', edit: null, editing: false, manual: false, dirty: false, polls: 0, timer: null, autoDrafted: new Set(), transcriptOpen: false, open: false, step: stepOf() };
     host.classList.add('egc-wt', 'wt-notes-panel');
     const currentVisit = () => { try { return options.visit?.() || null; } catch { return null; } };
 
@@ -90,7 +116,7 @@
     async function load(force = false) {
       const visitId = currentVisit();
       if (visitId !== ui.visitId) {
-        Object.assign(ui, { visitId, view: null, message: '', error: '', edit: null, editing: false, manual: false, dirty: false, polls: 0, transcriptOpen: false });
+        Object.assign(ui, { visitId, view: null, message: '', error: '', edit: null, editing: false, manual: false, dirty: false, polls: 0, transcriptOpen: false, open: false });
         timers.clearTimeout(ui.timer); ui.timer = null;
       } else if (!force) return;
       const generation = ++ui.generation;
@@ -145,7 +171,8 @@
       try { saved = JSON.parse(storage?.getItem(key) || 'null'); } catch { saved = null; }
       const requestId = saved && JSON.stringify(saved.body) === JSON.stringify(body) ? saved.requestId : uuid();
       try { storage?.setItem(key, JSON.stringify({ requestId, body })); } catch { /* storage blocked: the server's receipt still guards it */ }
-      const done = await act({ ...body, requestId }, () => { ui.dirty = false; ui.editing = false; ui.manual = false; ui.message = 'Confirmed. The crew lead and crew see these notes on the job.'; });
+      // The confirmed block says where the notes went (on the job, or with the job once it is booked).
+      const done = await act({ ...body, requestId }, () => { ui.dirty = false; ui.editing = false; ui.manual = false; ui.message = ''; });
       if (done) try { storage?.removeItem(key); } catch { /* storage blocked */ }
     }
     async function withdraw() {
@@ -179,24 +206,38 @@
         rows.length ? rows.map(row) : h('p', { className: 'wt-muted' }, 'No items yet.'),
         rows.length < ITEM_ROWS ? button('Add item', () => { rows.push({ name: '', quantity: '', reason: '' }); changed(); draw(true); }, 'wt-btn wt-secondary') : null);
     }
+    const sections = notes => {
+      const section = (title, items) => items.length ? h('div', { className: 'wtn-section' }, h('h3', {}, title), h('ul', {}, items.map(item => h('li', {}, item)))) : null;
+      return [section('Job notes', list(notes.jobNotes)), section('Items needed', (notes.itemsNeeded || []).map(itemText)), section('Keep', list(notes.keepItems)), section('Remove / donate', list(notes.removeItems)), section('Access and staging', list(notes.access)), section('Hazards', list(notes.hazards))];
+    };
+    const failedNote = view => { const rows = failedLines(view); return rows.length ? h('div', { className: 'wt-note', role: 'note' }, h('ul', { className: 'wtn-failed' }, rows.map(row => h('li', {}, row)))) : null; };
     function editor(view) {
       const questions = list(view.draft?.openQuestions), confirmedNewer = view.confirmed && view.draft && Date.parse(view.draftedAt || 0) > Date.parse(view.confirmed.confirmedAt || 0);
+      // Only the estimator confirms, so only the estimator edits: anyone else reads the draft (an edit could not be saved).
+      if (!view.canConfirm) return [
+        questions.length ? h('div', { className: 'wtn-questions', role: 'note' }, h('h3', {}, 'Check before confirming'), h('ul', {}, questions.map(item => h('li', {}, item)))) : null,
+        ...sections(view.draft || view.confirmed || {}), failedNote(view),
+        h('p', { className: 'wt-muted' }, 'Only the estimator who did this walkthrough confirms its notes for the crew.')];
       return [
         confirmedNewer && !ui.editing ? h('p', { className: 'wt-note', role: 'status' }, 'New notes were written from the latest audio. Confirm them to update what the crew sees.') : null,
         view.draftStale ? h('div', { className: 'wt-note wt-row' }, h('span', {}, 'New audio was added after these notes were written.'), view.canDraft && view.draftsLeft > 0 ? button('Rewrite notes', draft, 'wt-btn wt-secondary', { disabled: ui.busy }) : null) : null,
+        failedNote(view),
         questions.length ? h('div', { className: 'wtn-questions', role: 'note' }, h('h3', {}, 'Check before confirming'), h('ul', {}, questions.map(item => h('li', {}, item)))) : null,
         listField(LISTS[0]), itemRows(), ...LISTS.slice(1).map(listField),
-        view.canConfirm ? null : h('p', { className: 'wt-muted' }, 'Only the estimator who did this walkthrough confirms its notes for the crew.'),
         h('div', { className: 'wt-row wt-actions' },
-          view.canConfirm ? button(ui.busy ? 'Saving…' : view.confirmed ? 'Confirm changes for the crew' : 'Confirm notes for the crew', confirm, 'wt-btn wt-primary', { disabled: ui.busy }) : null,
+          button(ui.busy ? 'Saving…' : view.confirmed ? 'Confirm changes for the crew' : 'Confirm notes for the crew', confirm, 'wt-btn wt-primary', { disabled: ui.busy }),
           ui.editing || ui.manual ? button('Cancel', cancel, 'wt-btn wt-secondary', { disabled: ui.busy }) : null,
           !view.draftStale && view.draft && view.canDraft && view.draftsLeft > 0 && !ui.manual ? button('Rewrite from the transcript', draft, 'wt-btn wt-quiet', { disabled: ui.busy }) : null)];
     }
     function confirmedBlock(view) {
-      const notes = view.confirmed;
-      const section = (title, items) => items.length ? h('div', { className: 'wtn-section' }, h('h3', {}, title), h('ul', {}, items.map(item => h('li', {}, item)))) : null;
-      return [h('p', { className: 'wt-ok', role: 'status' }, `Sent to the crew lead and crew${notes.confirmedAt ? ` · confirmed ${denver(notes.confirmedAt)}` : ''}.`),
-        section('Job notes', list(notes.jobNotes)), section('Items needed', (notes.itemsNeeded || []).map(itemText)), section('Keep', list(notes.keepItems)), section('Remove / donate', list(notes.removeItems)), section('Access and staging', list(notes.access)), section('Hazards', list(notes.hazards)),
+      const notes = view.confirmed, at = notes.confirmedAt ? `Confirmed ${denver(notes.confirmedAt)}` : 'Confirmed';
+      // On the job when the confirm found one; else Dispatch copies them to the job it books from this walkthrough. (The
+      // panel's one line above says "Sent to the crew lead and crew"; this line says when, and where they are.)
+      return [h('p', { className: 'wt-ok', role: 'status' }, view.confirmedJobs ? `${at}: the crew lead and crew see these notes on the job.` : `${at}. They go to the crew lead and crew on the job when it is booked.`),
+        // Audio that arrived after the confirm (the last part, a Voice Memos file) is not in these notes until they are rewritten or edited.
+        view.confirmedStale ? h('div', { className: 'wt-note', role: 'status' }, h('p', {}, 'New audio arrived after these notes were confirmed. The crew still sees the notes below until you confirm a new version.'),
+          view.canConfirm ? h('div', { className: 'wt-row' }, view.canDraft && view.draftsLeft > 0 ? button('Rewrite from the transcript', draft, 'wt-btn wt-secondary', { disabled: ui.busy }) : null) : null) : null,
+        ...sections(notes),
         view.canConfirm ? h('div', { className: 'wt-row wt-actions' }, button('Edit notes', edit, 'wt-btn wt-secondary', { disabled: ui.busy })) : null];
     }
     function body(view, mode) {
@@ -206,10 +247,11 @@
       if (mode === 'withdrawn') return [h('p', { role: 'status' }, 'The customer withdrew recording consent: the transcript was deleted.'), view.canConfirm ? button('Type notes for the crew', typeNotes, 'wt-btn wt-secondary') : null];
       // A part that never arrives (removed from the iPad after a copy was saved) does not hold the notes back: the estimator can
       // write them up from the parts that are in, or type them.
-      if (mode === 'transcribing') return [h('p', { role: 'status', className: 'wtn-progress' }, `Transcribing: ${done} of ${total} part${total === 1 ? '' : 's'} done.`), h('progress', { max: total || 1, value: done }),
+      if (mode === 'transcribing') return [h('p', { role: 'status', className: 'wtn-progress' }, `Transcribing: ${done} of ${total} part${total === 1 ? '' : 's'} done.`), h('progress', { max: total || 1, value: done }), failedNote(view),
         done && view.canDraft && view.draftsLeft > 0 ? button(ui.busy ? 'Writing…' : 'Write up notes now', draft, 'wt-btn wt-quiet', { disabled: ui.busy }) : null, view.canConfirm ? button('Type the notes instead', typeNotes, 'wt-btn wt-quiet', { disabled: ui.busy }) : null];
-      if (mode === 'ready') return [h('p', { role: 'status' }, ui.busy ? 'Writing up the notes from the transcript…' : 'The transcript is ready.'), view.canDraft && view.draftsLeft > 0 ? h('div', { className: 'wt-row wt-actions' }, button(ui.busy ? 'Writing…' : 'Write up notes', draft, 'wt-btn wt-primary', { disabled: ui.busy })) : null,
+      if (mode === 'ready') return [h('p', { role: 'status' }, ui.busy ? 'Writing up the notes from the transcript…' : 'The transcript is ready.'), failedNote(view), view.canDraft && view.draftsLeft > 0 ? h('div', { className: 'wt-row wt-actions' }, button(ui.busy ? 'Writing…' : 'Write up notes', draft, 'wt-btn wt-primary', { disabled: ui.busy })) : null,
         view.canConfirm ? button('Type the notes instead', typeNotes, 'wt-btn wt-quiet', { disabled: ui.busy }) : null];
+      if (mode === 'failed') return [failedNote(view), h('p', {}, 'There is no transcript to write notes from. Type the notes the crew needs, then confirm them.'), view.canConfirm ? h('div', { className: 'wt-row wt-actions' }, button('Type notes for the crew', typeNotes, 'wt-btn wt-primary')) : null];
       if (mode === 'confirmed') return confirmedBlock(view);
       return editor(view);
     }
@@ -219,21 +261,30 @@
       const view = ui.view, mode = panelMode(view, ui);
       if (mode === 'hidden') { host.replaceChildren(); host.hidden = true; return; }
       const withdrawable = view.canDraft && view.status !== 'withdrawn' && (view.parts || []).length;
-      host.replaceChildren(h('div', { className: 'wt-panel', role: 'region', 'aria-labelledby': 'wtn-title' },
-        h('div', { className: 'wt-head' }, h('div', {}, h('span', { className: 'wt-eyebrow' }, 'Walkthrough notes'), h('h2', { id: 'wtn-title' }, mode === 'confirmed' ? 'Notes for the crew' : 'Transcript and job notes'))),
-        ui.message ? h('p', { className: 'wt-note', role: 'status' }, ui.message) : null,
-        ui.error ? h('p', { className: 'wt-error', role: 'alert' }, ui.error) : null,
-        ...[body(view, mode)].flat(), transcriptBlock(view),
-        withdrawable ? button('Customer withdrew consent: delete the transcript', withdraw, 'wt-btn wt-quiet', { disabled: ui.busy }) : null));
+      // Closed, the panel is one line saying where the notes stand (about 80px on a phone); an error opens it.
+      const disclosure = h('details', { className: 'wtn-disclosure', open: ui.open || Boolean(ui.error), ontoggle: event => { ui.open = event.target.open; } },
+        h('summary', { className: 'wtn-summary' }, h('span', { className: 'wtn-summary-text' }, h('span', { className: 'wt-eyebrow' }, 'Walkthrough notes'), h('span', { className: 'wtn-status' }, statusLine(view, mode, ui))), h('span', { className: 'wtn-toggle', 'aria-hidden': 'true' })),
+        h('div', { className: 'wtn-body' },
+          h('h2', { id: 'wtn-title' }, mode === 'confirmed' ? 'Notes for the crew' : 'Transcript and job notes'),
+          ui.message ? h('p', { className: 'wt-note', role: 'status' }, ui.message) : null,
+          ui.error ? h('p', { className: 'wt-error', role: 'alert' }, ui.error) : null,
+          ...[body(view, mode)].flat(), transcriptBlock(view),
+          withdrawable ? button('Customer withdrew consent: delete the transcript', withdraw, 'wt-btn wt-quiet', { disabled: ui.busy }) : null));
+      host.replaceChildren(h('div', { className: 'wt-panel', role: 'region', 'aria-label': 'Walkthrough notes' }, disclosure));
       host.hidden = false;
     }
-    const check = () => { if ((currentVisit() || null) !== ui.visitId) void load(); };
-    // The recorder's sync ran: a Finish or a part may have landed. Read again (at most every 5 seconds) only while the panel
-    // waits for one, never with the notes switched off.
+    // Another walkthrough opened: read it. Another gameplan step: the panel closes, so the step starts at the top of the page.
+    const check = () => {
+      const step = stepOf();
+      if (step !== ui.step) { ui.step = step; if (ui.open) { ui.open = false; draw(true); } }
+      if ((currentVisit() || null) !== ui.visitId) void load();
+    };
+    // The recorder's sync ran: a Finish or a part may have landed (also after the notes were confirmed: a later part or a
+    // Voice Memos file). Read again, at most every 5 seconds, never with the notes switched off.
     let nudged = 0;
     function nudge() {
       const at = (options.now || Date.now)();
-      if (!ui.visitId || ui.view?.enabled === false || !['hidden', 'waiting', 'transcribing'].includes(panelMode(ui.view, ui)) || at - nudged < 5000) return;
+      if (!ui.visitId || ui.view?.enabled === false || at - nudged < 5000) return;
       nudged = at; void load(true);
     }
     const ready = load(true);
@@ -248,10 +299,13 @@
   const host = h('section', { id: 'wt-notes', hidden: true, 'aria-label': 'Walkthrough notes' });
   const recorder = document.getElementById('wt-recorder');
   if (recorder) recorder.after(host); else screen.before(host);
-  const controller = mount(host, { visit: () => S.sourceWalkthroughId || null, fetch: (...args) => root.EGCHubAuth.fetch(...args), confirm: message => root.confirm(message) });
+  // The step shown is the gameplan's own `index` (a top-level let of crew/gameplan.html).
+  const controller = mount(host, { visit: () => S.sourceWalkthroughId || null, step: () => (typeof index === 'number' ? index : null), fetch: (...args) => root.EGCHubAuth.fetch(...args), confirm: message => root.confirm(message) });
   if (root.MutationObserver) new MutationObserver(() => controller.check()).observe(screen, { childList: true });
   // The recorder's sync just ran (a part may have landed), or the page came back: read the open visit again.
   root.addEventListener?.('egc:walkthrough-sync', () => controller.nudge());
   root.addEventListener?.('online', () => controller.nudge());
+  // The recorder deleted this walkthrough's transcript (the customer withdrew consent there): read it again at once.
+  root.addEventListener?.('egc:walkthrough-notes-changed', event => { if (event?.detail?.visitId === controller.state.visitId) void controller.refresh(); });
   root.EGCWalkthroughNotes.page = controller;
 })(typeof self !== 'undefined' ? self : globalThis);
