@@ -12,7 +12,9 @@ import { commissionRuleText, setterRuleText } from './knock-money.js';
 const VIEWER_KEY = 'egc-knock:viewer';
 const SIGNED_OUT_KEY = 'egc-knock:signed-out-at';
 const THEME_KEY = 'egc-knock:theme';
-const SESSION_HOURS = 12;
+// The phone's copy of who is signed in lasts as long as an unused Hub session (hub-session.js, STAFF-SESSION): 7 days
+// since this phone last reached the server signed in.
+const SESSION_HOURS = 7 * 24;
 
 const main = document.getElementById('knock-main');
 const tabs = document.getElementById('knock-tabs');

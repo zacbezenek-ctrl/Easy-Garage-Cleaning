@@ -4,7 +4,12 @@ import { pbkdf2 } from '@noble/hashes/pbkdf2.js';
 import { sha256 } from '@noble/hashes/sha2.js';
 
 const COOKIE_NAME = 'egc_hub_session';
-const SESSION_SECONDS = 12 * 60 * 60;
+// STAFF-SESSION (owner decision, 2026-10-19): staff stay signed in while they use the Hub, Crew Tools or Knock. A session
+// lasts 7 days from when it was last issued, and an API request on a session issued over an hour ago gets it back with a
+// fresh 7 days (renewHubSessionCookie, called by functions/_middleware.js), so it ends only after 7 days without use. There
+// is no fixed maximum. A renewal re-checks the account first, so a deactivated, reset or deleted account is never renewed.
+const SESSION_SECONDS = 7 * 24 * 60 * 60;
+const SESSION_RENEW_AFTER_SECONDS = 60 * 60;
 const ACTION_STATE_SECONDS = 10 * 60;
 const PASSWORD_HASH_PREFIX = 'pbkdf2-sha256';
 const PASSWORD_HASH_ITERATIONS = 210000;
@@ -399,9 +404,32 @@ export async function getHubSession(request, env) {
   return verifyHubSessionToken(env, readCookie(request));
 }
 
-export async function createHubSessionCookie(env, username, profile = null) {
-  const token = await createHubSessionToken(env, username, Date.now(), profile);
+export async function createHubSessionCookie(env, username, profile = null, now = Date.now()) {
+  const token = await createHubSessionToken(env, username, now, profile);
   return `${COOKIE_NAME}=${token}; Path=/; HttpOnly; Secure; SameSite=Strict; Max-Age=${SESSION_SECONDS}`;
+}
+
+// The expiry a session cookie claims, read without checking its signature (only to decide whether to check it), or NaN.
+function claimedExpiry(token) {
+  try { return Number(JSON.parse(new TextDecoder().decode(base64UrlToBytes(String(token).split('.')[0]))).exp); } catch { return NaN; }
+}
+
+// STAFF-SESSION: the same session with a fresh 7-day expiry when the request's session is valid and was issued more than
+// an hour ago, else ''. A newer session costs nothing (no signature check, no account read). The renewal is verified like
+// any request (verifyHubSessionToken: signature, expiry, the configured user or the employee account's status and session
+// version), so a deactivated, reset or deleted account gets nothing and is refused on that same request.
+export async function renewHubSessionCookie(request, env, now = Date.now()) {
+  const token = readCookie(request);
+  if (!token || !sessionSecret(env)) return '';
+  const expiry = claimedExpiry(token);
+  if (!Number.isFinite(expiry) || expiry <= now || expiry - now > (SESSION_SECONDS - SESSION_RENEW_AFTER_SECONDS) * 1000) return '';
+  const profile = await verifyHubSessionToken(env, token, now);
+  return profile ? createHubSessionCookie(env, profile.user, profile, now) : '';
+}
+
+// Whether a response already sets or clears the Hub session cookie itself (sign-in, sign-out, a password change).
+export function setsHubSessionCookie(response) {
+  return new RegExp(`(?:^|,\\s*)${COOKIE_NAME}=`).test(response.headers.get('Set-Cookie') || '');
 }
 
 export function clearHubSessionCookie() {

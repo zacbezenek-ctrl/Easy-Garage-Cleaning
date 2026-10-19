@@ -14,7 +14,8 @@ import { sourceFiles } from './source-files.mjs';
 const root = fileURLToPath(new URL('..', import.meta.url));
 const read = path => readFileSync(join(root, path), 'utf8').replace(/\r\n/g, '\n');
 const NOW = Date.parse('2026-09-28T16:00:00.000Z');
-const HOURS_12 = 12 * 60 * 60 * 1000;
+// STAFF-SESSION (owner decision, 2026-10-19): a Hub session lasts 7 days from when it was issued (renewed while used).
+const SESSION_MS = 7 * 24 * 60 * 60 * 1000;
 const ORIGIN = 'https://easygaragecleaning.com';
 const USERS = {
   'synthetic.crew': { passwordHash: 'a'.repeat(64), displayName: 'Synthetic Crew', role: 'crew' },
@@ -175,7 +176,7 @@ test('flag on: a valid Hub session reaches the file, and the response stays priv
   const varied = await edge('/employee', { headers: { ...HTML, Cookie: crew }, upstream: () => new Response('page', { headers: { 'Content-Type': 'text/html', Vary: 'cookie', 'Cache-Control': 'public, max-age=600' } }) });
   assert.equal(varied.response.headers.get('vary'), 'cookie');
   assert.equal(varied.response.headers.get('cache-control'), 'private, no-store');
-  t.mock.timers.tick(HOURS_12 - 1);
+  t.mock.timers.tick(SESSION_MS - 1);
   assert.equal((await edge('/employee-suite.js', { headers: { ...ASSET, Cookie: crew } })).continued, 1, 'still valid one millisecond before expiry');
 });
 
@@ -186,7 +187,7 @@ test('flag on: expired, tampered, wrong-secret, unknown-user and malformed sessi
   const [payload, signature] = token.split('.');
   const claims = JSON.parse(Buffer.from(payload, 'base64url').toString('utf8'));
   const forged = Buffer.from(JSON.stringify({ ...claims, u: 'tylerg' })).toString('base64url');
-  const longer = Buffer.from(JSON.stringify({ ...claims, exp: claims.exp + HOURS_12 * 30 })).toString('base64url');
+  const longer = Buffer.from(JSON.stringify({ ...claims, exp: claims.exp + SESSION_MS * 30 })).toString('base64url');
   const flipped = signature.slice(0, -1) + (signature.at(-1) === 'A' ? 'B' : 'A');
   const otherSecret = (await createHubSessionCookie({ ...ON, HUB_SESSION_SECRET: 'synthetic-other-secret-0123456789abcdef' }, 'synthetic.crew')).split(';')[0];
   const refused = [
@@ -204,7 +205,7 @@ test('flag on: expired, tampered, wrong-secret, unknown-user and malformed sessi
   const removed = { ...ON, HUB_AUTH_USERS_JSON: JSON.stringify({ tylerg: USERS.tylerg }) };
   assert.equal((await edge('/employee-suite.js', { env: removed, headers: { ...ASSET, Cookie: cookie } })).response.status, 401, 'a removed account loses access at once');
   assert.equal((await edge('/employee-suite.js', { env: { EGC_STAFF_PAGE_GATE: 'on' }, headers: { ...ASSET, Cookie: cookie } })).response.status, 401, 'no session secret fails closed');
-  t.mock.timers.tick(HOURS_12);
+  t.mock.timers.tick(SESSION_MS);
   const expired = await edge('/employee', { headers: { ...HTML, Cookie: cookie } });
   assert.equal(expired.continued, 0);
   assert.equal(expired.response.headers.get('location'), '/staff-login?next=%2Femployee');
@@ -231,7 +232,7 @@ test('flag on: an employee-account session is re-checked against storage and ref
 });
 
 test('flag on: a page load always runs the full check, and its scripts reuse an employee-account check for 45 s', async () => {
-  let clock = NOW, calls = 0, answer = { user: 'synthetic.worker', source: 'employee-account', expiresAt: NOW + HOURS_12 };
+  let clock = NOW, calls = 0, answer = { user: 'synthetic.worker', source: 'employee-account', expiresAt: NOW + SESSION_MS };
   const memo = new Map(), gate = staffPageGate({ memo, now: () => clock, session: async () => { calls += 1; if (answer instanceof Error) throw answer; return answer; } });
   const allowed = async (path, headers, cookie = 'egc_hub_session=synthetic-v2-token') => (await gate(new Request(ORIGIN + path, { headers: { ...headers, Cookie: cookie } }), ON)).refusal === null;
   assert.equal(await allowed('/employee', HTML), true);
@@ -245,7 +246,7 @@ test('flag on: a page load always runs the full check, and its scripts reuse an 
   assert.equal(calls, 2);
   assert.equal(memo.size, 0, 'a failed full check drops the entry');
   assert.equal(await allowed('/employee-suite.js', ASSET), false);
-  answer = { user: 'synthetic.worker', source: 'employee-account', expiresAt: NOW + HOURS_12 };
+  answer = { user: 'synthetic.worker', source: 'employee-account', expiresAt: NOW + SESSION_MS };
   assert.equal(await allowed('/employee', HTML), true);
   clock += 44999;
   assert.equal(await allowed('/employee-suite.js', ASSET), true);
@@ -259,19 +260,19 @@ test('flag on: a page load always runs the full check, and its scripts reuse an 
   assert.equal(await allowed('/employee', HTML), true);
   clock += 1000; answer = null;
   assert.equal(await allowed('/employee-suite.js', ASSET), false, 'never past the session expiry');
-  answer = { user: 'synthetic.worker', source: 'employee-account', expiresAt: clock + HOURS_12 };
+  answer = { user: 'synthetic.worker', source: 'employee-account', expiresAt: clock + SESSION_MS };
   assert.equal(await allowed('/employee', HTML), true);
   answer = null;
   assert.equal(await allowed('/employee-suite.js', ASSET, 'egc_hub_session=synthetic-other-token'), false, 'another cookie never matches the entry');
   assert.equal(await allowed('/employee-suite.js', ASSET, 'theme=dark'), false, 'no cookie, no memo');
   assert.equal(await gate(new Request(ORIGIN + '/about', { headers: { ...ASSET, Cookie: 'egc_hub_session=synthetic-v2-token' } }), ON), null, 'public paths are untouched');
   const before = calls;
-  answer = { user: 'tylerg', businessAccess: true, expiresAt: clock + HOURS_12 };
+  answer = { user: 'tylerg', businessAccess: true, expiresAt: clock + SESSION_MS };
   assert.equal(await allowed('/employee', HTML, 'egc_hub_session=synthetic-v1-token'), true);
   answer = null;
   assert.equal(await allowed('/employee-suite.js', ASSET, 'egc_hub_session=synthetic-v1-token'), false, 'built-in accounts need no storage, so they are always checked in full');
   assert.equal(calls, before + 2);
-  answer = { user: 'synthetic.worker', source: 'employee-account', expiresAt: clock + HOURS_12 };
+  answer = { user: 'synthetic.worker', source: 'employee-account', expiresAt: clock + SESSION_MS };
   for (let index = 0; index < 520; index++) await allowed('/employee', HTML, `egc_hub_session=synthetic-${index}`);
   assert.ok(memo.size <= 500, `the memo stays bounded (${memo.size})`);
 });

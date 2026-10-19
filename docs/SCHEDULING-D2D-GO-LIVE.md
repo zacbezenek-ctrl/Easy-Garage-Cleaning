@@ -57,6 +57,10 @@ with the reason and a **Book in Hub** button.
 shift, their areas, doors knocked, sales and walkthroughs set, with links to the jobs they made. Owners, managers and
 team leads can see it.
 
+**Staying signed in.** Staff now stay signed in: a sign-in lasts until it goes 7 days without use (it used to end 12
+hours after signing in). Rejecting an account in the Hub, a sign-in reset or a password change still signs that person
+out on their next request.
+
 **HighLevel mirror.** The Hub stays the schedule. HighLevel gets a second record of every booking that matters
 (walkthrough booked, job scheduled, moved, cancelled or no-show, crew or estimator assigned): the customer's contact,
 one deal per customer job in the EGC Pipeline moved forward to **Walkthrough Appointment** or **Job Scheduled**, and an

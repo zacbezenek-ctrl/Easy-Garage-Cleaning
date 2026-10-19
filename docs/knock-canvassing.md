@@ -41,6 +41,12 @@ The screens follow the EGC Knock redesign (Claude Design, October 2026).
 * **Admins** are the Hub's business users (`zacb`, `tylerg`, `alexk`, or managers with staff-role access).
   Only admins read customer details, change settings, assign territory or export payroll.
 * **Leads** knock like reps and see their team's scoreboard. No team lead commission is enabled by default.
+* **Staying signed in** (owner decision, 2026-10-19). Knock, Crew Tools and the Hub share one sign-in. It lasts until
+  it goes **7 days without use**: once a sign-in is an hour old, the next request from the phone renews it for another
+  7 days (`functions/_lib/hub-session.js`, renewed in `functions/_middleware.js`). There is no fixed maximum. Rejecting
+  an employee account in the Hub's staff account review, a sign-in reset or a password change still ends its sessions
+  on their next request, and a renewal checks the account first. Knock's offline copy of who is signed in lasts the
+  same 7 days.
 
 ## Run it locally
 

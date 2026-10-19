@@ -47,7 +47,10 @@ test('Hub authentication issues, validates, expires, and clears an HttpOnly sess
   assert.equal(check.status,200);
   assert.equal((await check.json()).user,'Tester');
   const token=cookieValue.split('=')[1];
-  assert.equal(await verifyHubSessionToken(env,token,Date.now()+13*60*60*1000),null);
+  // STAFF-SESSION (2026-10-19): a session lasts 7 days from issue (renewed while used), no longer 12 hours.
+  assert.equal((await verifyHubSessionToken(env,token,Date.now()+13*60*60*1000)).user,'Tester');
+  assert.equal(await verifyHubSessionToken(env,token,Date.now()+7*24*60*60*1000+1000),null);
+  assert.match(cookie,/Max-Age=604800/);
   const tampered=await auth.onRequestGet({request:new Request('https://easygaragecleaning.com/api/hub-auth',{headers:{Cookie:cookieValue+'x'}}),env});
   assert.equal(tampered.status,401);
   const logout=await auth.onRequestDelete({request:new Request('https://easygaragecleaning.com/api/hub-auth',{method:'DELETE',headers:{Origin:'https://easygaragecleaning.com'}})});
