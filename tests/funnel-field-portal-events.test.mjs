@@ -183,7 +183,8 @@ test('commitDocuments sends one atomic commit with update and create-only precon
 // ---- Customer portal ----
 
 const portalJob = (extra = {}) => ({ type: 'job', customer: 'Synthetic Customer', customerId: 'customer-1', projectId: 'project_w1', address: '100 Synthetic Street', serviceType: 'Garage Turnaround', total: 800, status: 'scheduled', estimate: { number: 'EST-1', status: 'sent', amount: 800, revision: 2, validUntil: '2026-10-01' }, ...extra });
-const approve = (shown, extra = {}) => ({ action: 'approve_estimate', signed_name: 'Synthetic Customer', confirmed: true, estimate_revision: shown.revision, amount_cents: Math.round(shown.amount * 100), estimate_fingerprint: shown.fingerprint, ...extra });
+// The portal page sends the terms version it showed (customer-portal.html), as tests/portal-approval-binding.test.mjs does.
+const approve = (shown, extra = {}) => ({ action: 'approve_estimate', signed_name: 'Synthetic Customer', confirmed: true, terms_version: shown.termsVersion, estimate_revision: shown.revision, amount_cents: Math.round(shown.amount * 100), estimate_fingerprint: shown.fingerprint, ...extra });
 const event = (f, type) => f.events().filter(item => item.type === type);
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
 const netSold = events => events.reduce((sum, item) => sum + (item.type === 'deal.sold' ? item.data.amountCents : item.type === 'deal.approval_superseded' ? -item.data.amountCents : 0), 0);

@@ -79,7 +79,7 @@ test('an estimate valid through a Denver day can still be approved at 11:30 PM t
   const lateEvening = '2026-09-23T05:30:00.000Z', handlers = portalHandlers(lateEvening), cookie = await portalCookie('job-1', {}, Date.parse(lateEvening));
   const shown = (await portalView(handlers, cookie)).body.estimate;
   assert.equal(shown.status, 'sent', 'UTC has rolled over but Denver is still on the valid-through day');
-  const approved = await portalPost(handlers, cookie, { action: 'approve_estimate', signed_name: 'Synthetic Customer', confirmed: true, estimate_revision: shown.revision, amount_cents: Math.round(shown.amount * 100), estimate_fingerprint: shown.fingerprint });
+  const approved = await portalPost(handlers, cookie, { action: 'approve_estimate', signed_name: 'Synthetic Customer', confirmed: true, terms_version: shown.termsVersion, estimate_revision: shown.revision, amount_cents: Math.round(shown.amount * 100), estimate_fingerprint: shown.fingerprint });
   assert.equal(approved.status, 200);
   assert.equal(f.job('job-1').customerApproval.approvedAt, lateEvening);
   const nextDay = '2026-09-23T06:30:00.000Z';
@@ -133,7 +133,7 @@ test('a Hub scope edit of an older estimate with no stored revision moves it pas
   await hub.context.window.opsFinanceAction('job-1', 'estimate');
   assert.equal(hub.captured.update.estimate.revision, 2);
   f.edit('job-1', hub.captured.update);
-  const stale = await portalPost(handlers, cookie, { action: 'approve_estimate', signed_name: 'Synthetic Customer', confirmed: true, estimate_revision: shown.revision, amount_cents: Math.round(shown.amount * 100), estimate_fingerprint: shown.fingerprint });
+  const stale = await portalPost(handlers, cookie, { action: 'approve_estimate', signed_name: 'Synthetic Customer', confirmed: true, terms_version: shown.termsVersion, estimate_revision: shown.revision, amount_cents: Math.round(shown.amount * 100), estimate_fingerprint: shown.fingerprint });
   assert.deepEqual([stale.status, stale.body.code], [409, 'CUSTOMER_PORTAL_ESTIMATE_CHANGED']);
   assert.equal(f.writes.length, 0);
   assert.equal((await portalView(handlers, cookie)).body.estimate.revision, 2);

@@ -109,7 +109,7 @@ test('changing any portal copy requires a new terms version', () => {
   // Approvals record CUSTOMER_PORTAL_TERMS_VERSION as the copy the customer saw.
   // If this fails, bump the version in customer-portal-content.js, then re-pin.
   const digest = createHash('sha256').update(JSON.stringify(CUSTOMER_PORTAL_CONTENT)).digest('hex');
-  assert.deepEqual({ version: CUSTOMER_PORTAL_TERMS_VERSION, digest }, { version: '2026-09-portal', digest: '9e4cc7513cd038178a5ad22cb5e05f08dab6a737fc49c6d7f48a1de0566ae2c3' });
+  assert.deepEqual({ version: CUSTOMER_PORTAL_TERMS_VERSION, digest }, { version: '2026-10-portal', digest: '6fb0bb490f212da145b4098ba07829b908309c818adedc2a602272c5a939897e' });
   const dto = customerPortalDocuments();
   assert.equal(dto.termsVersion, CUSTOMER_PORTAL_TERMS_VERSION);
   assert.doesNotMatch(JSON.stringify(dto), /"source"/, 'source notes stay server-side');
@@ -484,19 +484,20 @@ test('approval with terms the page no longer shows is refused without a write', 
   }
   assert.equal(f.writes.length, writes);
   assert.equal(f.job('job-1').customerApproval, undefined);
-  // A page from before versioning showed the same estimate terms line, but not
-  // the guarantee or service terms, so it is recorded as exactly that.
+  // A page from before versioning showed only the 2026-09-portal estimate terms line. Since the service terms changed
+  // (2026-10-portal) it must reload, like any stale page.
   const legacy = await portalPost(portalHandlers(), cookie, await bound(cookie, { action: 'approve_estimate', signed_name: 'Synthetic Customer', confirmed: true }));
-  assert.equal(legacy.status, 200);
-  assert.equal(legacy.body.approval.termsVersion, UNVERSIONED_PAGE_TERMS_VERSION);
-  assert.equal(f.job('job-1').customerApproval.termsVersion, '2026-09-estimate-terms-unversioned');
-  assert.equal(f.job('job-1').estimate.acceptedTermsVersion, '2026-09-estimate-terms-unversioned');
+  assert.deepEqual([legacy.status, legacy.body.code], [409, 'CUSTOMER_PORTAL_TERMS_CHANGED']);
+  assert.equal(f.writes.length, writes);
   assert.notEqual(UNVERSIONED_PAGE_TERMS_VERSION, CUSTOMER_PORTAL_TERMS_VERSION, 'never recorded as the full guarantee and terms bundle');
 });
 
 test('pages from before versioning are accepted only while their estimate terms are still current', () => {
   assert.equal(approvalTermsVersion(CUSTOMER_PORTAL_TERMS_VERSION), CUSTOMER_PORTAL_TERMS_VERSION);
-  assert.equal(approvalTermsVersion(undefined), UNVERSIONED_PAGE_TERMS_VERSION, 'the pre-versioning page showed only this version\'s estimate terms');
+  // The pre-versioning page showed only 2026-09-portal's estimate terms: recorded as the marker while that was current,
+  // refused (reload) once the copy moved on to 2026-10-portal.
+  assert.equal(approvalTermsVersion(undefined, '2026-09-portal'), UNVERSIONED_PAGE_TERMS_VERSION);
+  assert.equal(approvalTermsVersion(undefined), '');
   assert.equal(approvalTermsVersion(UNVERSIONED_PAGE_TERMS_VERSION), '', 'the marker is recorded, never accepted from a page');
   for (const sent of ['', null, 0, ['2026-09-portal'], '2026-09-deposit50', ' 2026-09-portal']) assert.equal(approvalTermsVersion(sent), '', JSON.stringify(sent));
   // After the copy changes, a stale unversioned page must reload instead of approving unseen terms.

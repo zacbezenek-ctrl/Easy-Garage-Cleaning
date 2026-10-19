@@ -9,7 +9,7 @@ import { createHubSessionCookie } from '../functions/_lib/hub-session.js';
 import { sendAcceptedQuotePortal } from '../functions/_lib/portal-invitation.js';
 import { createCustomerPortalHandlers } from '../functions/api/customer-portal.js';
 import { customerPortalLinkHandler } from '../functions/api/customer-portal-link.js';
-import { UNVERSIONED_PAGE_TERMS_VERSION } from '../functions/_lib/customer-portal-content.js';
+import { CUSTOMER_PORTAL_TERMS_VERSION } from '../functions/_lib/customer-portal-content.js';
 import { applyFirestoreCommit } from './helpers/firestore-commit.mjs';
 
 // B2B-SAFE: company projects shared through the business hub never receive a
@@ -74,18 +74,18 @@ const handlers = createCustomerPortalHandlers({ now: () => new Date(NOW) });
 const cookie = async (claims = { linkVersion: 0 }) => `egc_customer_portal=${await createCustomerPortalSessionToken(env, 'job-1', Date.parse(NOW), claims)}`;
 const company = (who = ADMIN) => cookie({ actorId: businessActor(ACCOUNT, who), permissions: { view: true, decide: true, pay: true, rebook: true } });
 const call = async (viewer, payload) => {
-  // P2-05: a portal approval names the revision, amount and fingerprint of the
-  // estimate the page displayed, so read it as the same viewer first.
+  // P2-05: a portal approval names the revision, amount, fingerprint and terms version
+  // of the estimate the page displayed, so read it as the same viewer first.
   if (payload?.action === 'approve_estimate' && payload.estimate_fingerprint === undefined) {
     const shown = (await call(viewer)).body.estimate;
-    if (shown) payload = { ...payload, estimate_revision: shown.revision, amount_cents: Math.round(Number(shown.amount) * 100), estimate_fingerprint: shown.fingerprint };
+    if (shown) payload = { ...payload, estimate_revision: shown.revision, amount_cents: Math.round(Number(shown.amount) * 100), estimate_fingerprint: shown.fingerprint, terms_version: shown.termsVersion };
   }
   const request = new Request(`${origin}/api/customer-portal`, { method: payload ? 'POST' : 'GET', headers: { Origin: origin, Cookie: viewer, 'Content-Type': 'application/json' }, ...(payload ? { body: JSON.stringify(payload) } : {}) });
   const response = await (payload ? handlers.onRequestPost : handlers.onRequestGet)({ env, request });
   return { status: response.status, body: await response.json() };
 };
-// P4-09: approvals record the terms version the page showed; these requests send none, so the unversioned marker is stored.
-const publicApproval = { status: 'approved', approvedAt: NOW, approvedBy: 'Synthetic Signer', amount: 800, source: 'customer_portal', termsVersion: UNVERSIONED_PAGE_TERMS_VERSION };
+// P4-09: approvals record the terms version the page showed; `call` sends the portal's (this estimate has no 25/75 schedule).
+const publicApproval = { status: 'approved', approvedAt: NOW, approvedBy: 'Synthetic Signer', amount: 800, source: 'customer_portal', termsVersion: CUSTOMER_PORTAL_TERMS_VERSION };
 // FUN-03: the saved approval also names the request that saved it (a server id when the page sends none) and the revision it binds.
 const savedApproval = saved => {
   const { requestId, estimateRevision, ...approval } = saved.customerApproval;
@@ -102,7 +102,7 @@ test('a company member approval is attributed to that member for accounts payabl
   assert.deepEqual(result.body.approval, publicApproval, 'the response never returns member ids');
   const saved = f.job('job-1');
   assert.deepEqual(savedApproval(saved), { ...publicApproval, ...attribution });
-  assert.deepEqual(saved.estimate, { number: 'EST-1', status: 'approved', amount: 800, sentAt: '2026-09-20T12:00:00.000Z', revision: 1, acceptedAt: NOW, acceptedBy: 'Synthetic Signer', depositRequired: 400, acceptedTermsVersion: UNVERSIONED_PAGE_TERMS_VERSION, ...attribution }, 'the current signer replaces an earlier approver');
+  assert.deepEqual(saved.estimate, { number: 'EST-1', status: 'approved', amount: 800, sentAt: '2026-09-20T12:00:00.000Z', revision: 1, acceptedAt: NOW, acceptedBy: 'Synthetic Signer', depositRequired: 400, acceptedTermsVersion: CUSTOMER_PORTAL_TERMS_VERSION, ...attribution }, 'the current signer replaces an earlier approver');
   assert.equal(saved.quoteStatus, 'approved');
   // FUN-03: the sale is recorded in the same commit and names the company member, not a person's name.
   assert.deepEqual(f.events.map(event => [event.type, event.actor, event.businessAccountId, event.data.amountCents, event.idempotencyKey]), [['deal.sold', { id: actor, kind: 'customer', role: 'business' }, ACCOUNT, 80000, `portalRequest:${saved.customerApproval.requestId}`]]);

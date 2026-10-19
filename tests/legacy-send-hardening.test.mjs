@@ -330,7 +330,7 @@ test('a portal approval records the sales exit with the portal handler clock', a
   });
   const testEnv = { ...portalEnv, ...ghlEnv }, handlers = portalHandlers(), cookie = await portalCookie();
   const shown = (await portalView(handlers, cookie, testEnv)).body.estimate;
-  const approved = await portalPost(handlers, cookie, { action: 'approve_estimate', signed_name: 'Synthetic Customer', confirmed: true, estimate_revision: shown.revision, amount_cents: 80000, estimate_fingerprint: shown.fingerprint }, testEnv);
+  const approved = await portalPost(handlers, cookie, { action: 'approve_estimate', signed_name: 'Synthetic Customer', confirmed: true, terms_version: shown.termsVersion, estimate_revision: shown.revision, amount_cents: 80000, estimate_fingerprint: shown.fingerprint }, testEnv);
   assert.equal(approved.status, 200);
   assert.deepEqual(approved.body.salesFollowupExit, { status: 'needs_review', reason: 'contact_not_linked', checkedAt: PORTAL_NOW });
   assert.equal(f.job('job-1').salesFollowupExit.checkedAt, PORTAL_NOW, 'the mirrored exit uses the injected clock, not the real one');

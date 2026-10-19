@@ -8,7 +8,8 @@ import { CUSTOMER_PORTAL_TERMS_VERSION } from '../functions/_lib/customer-portal
 
 const html = readFileSync(new URL('../customer-portal.html', import.meta.url), 'utf8');
 const job = (estimate = {}) => ({ type: 'job', customer: 'Synthetic Customer', customerId: 'customer-1', address: '100 Synthetic Street', serviceType: 'Garage Turnaround', total: 800, status: 'scheduled', estimate: { number: 'EST-1', status: 'sent', amount: 800, revision: 2, validUntil: '2026-10-01', ...estimate } });
-const approve = (shown, extra = {}) => ({ action: 'approve_estimate', signed_name: 'Synthetic Customer', confirmed: true, estimate_revision: shown.revision, amount_cents: Math.round(shown.amount * 100), estimate_fingerprint: shown.fingerprint, ...extra });
+// The portal page sends the terms version it showed (see 'the portal sends the displayed revision' below).
+const approve = (shown, extra = {}) => ({ action: 'approve_estimate', signed_name: 'Synthetic Customer', confirmed: true, terms_version: shown.termsVersion, estimate_revision: shown.revision, amount_cents: Math.round(shown.amount * 100), estimate_fingerprint: shown.fingerprint, ...extra });
 // Staff revise the estimate right after this request reads the job.
 const racingRead = (f, patch) => async (testEnv, id) => { const row = await readJob(testEnv, id); f.edit('job-1', patch); return row; };
 
