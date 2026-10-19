@@ -15,7 +15,7 @@ export const FINAL_25_75 = Object.freeze({ version: '2026-10-14-deposit25-v1', d
 // upfront, the rest on completion, is never offered again).
 export const SIGNED_25_75 = Object.freeze({ version: '2026-10-deposit25', depositPct: 25, remainderPct: 75, depositDueRule: 'walkthrough_day', remainderDueRule: 'job_day' });
 // D-DEPOSIT for a quote an estimator sends instead of having it signed on the spot (owner, 2026-10-18 evening): the 25%
-// deposit is due when the customer approves it (approval_day: the Denver day of the approval, never after the job day) and
+// deposit is due when the customer approves it (approval_day: the Denver day of the approval, whatever day that is) and
 // the 75% remainder on the job day, an exact date (the send still waits for a booked job). Every quote sent from now on
 // is sent on it (sentQuotePaymentPolicy below, quote-draft.js sendingEstimate): a new quote, an unsent saved draft and a
 // new revision of a quote sent earlier. A quote already sent on FINAL_25_75 (or the pending variant) keeps its saved terms
@@ -57,7 +57,8 @@ export function requireQuotePaymentTiming(policy) {
 // Preview only: callers must provide dates from verified internal scheduling.
 // This does not create invoices, charge a card, or schedule reminders.
 // approval_day (SENT_25_75) needs only the job date: the deposit is due the Denver day of approvalDate (an ISO instant
-// or a Denver date), never after the job day, and has no date (null: due when the customer approves) before then.
+// or a Denver date), even one after the job day (no surface names a day the customer did not approve on), and has no
+// date (null: due when the customer approves) before then.
 export function quotePaymentDates(policy, { walkthroughDate, jobDate, approvalDate } = {}) {
   requireQuotePaymentTiming(policy);
   const snapshot = snapshotQuotePaymentPolicy(policy);
@@ -65,7 +66,7 @@ export function quotePaymentDates(policy, { walkthroughDate, jobDate, approvalDa
   if (snapshot.depositDueRule === 'approval_day') {
     if (!validDate(jobDate)) throw fail('A booked job date is needed: the 75% remainder is due on the job day.', 'payment_dates_pending');
     const approved = businessPaymentDate(approvalDate);
-    return { depositDueDate: approved ? approved > jobDate ? jobDate : approved : null, remainderDueDate: jobDate };
+    return { depositDueDate: approved || null, remainderDueDate: jobDate };
   }
   const needsWalkthrough = snapshot.depositDueRule !== 'seven_days_before_job';
   if (!validDate(jobDate) || needsWalkthrough && !validDate(walkthroughDate)) {
@@ -99,12 +100,12 @@ export function quotePaymentSummary(schedule) {
 // depositRequiredCents, whichever are saved, must all agree). An estimate changed after the schedule was saved (the Hub's
 // legacy estimate editor writes a new amount and deposit and keeps the rest) shows no schedule, so no surface states two
 // different deposits or remainders. A quote sent on SENT_25_75 saved no deposit date (null): its deposit is due on approval
-// (depositDueOn 'approval'), dated the Denver day the estimate was approved (acceptedAt, never after the job day) once it
-// is, and null (due when the customer approves) before then. The saved schedule itself is never rewritten.
-export const approvalDueDate = (estimate, jobDay) => {
+// (depositDueOn 'approval'), dated the Denver day the estimate was approved (acceptedAt, even after the job day: it is the
+// approval date, and by then the deposit is due now) once it is, and null (due when the customer approves) before then.
+// The saved schedule itself is never rewritten.
+export const approvalDueDate = estimate => {
   if (!['accepted', 'approved'].includes(String(estimate?.status || '').toLowerCase())) return null;
-  const day = businessPaymentDate(estimate.acceptedAt);
-  return day ? day > jobDay ? jobDay : day : null;
+  return businessPaymentDate(estimate.acceptedAt);
 };
 export function publicQuotePaymentSchedule(estimate) {
   const s=estimate?.paymentSchedule,onApproval=estimate?.commercialPolicy?.depositDueRule==='approval_day';
@@ -112,11 +113,13 @@ export function publicQuotePaymentSchedule(estimate) {
   const saved=(dollars,cents)=>[dollars===undefined||dollars===null?undefined:exactCents(dollars,MAX_TOTAL_CENTS),cents===undefined||cents===null?undefined:cents].filter(value=>value!==undefined);
   const totals=saved(estimate.amount,estimate.amountCents),deposits=saved(estimate.depositRequired,estimate.depositRequiredCents);
   if(!totals.length||!deposits.length||totals.some(value=>value!==s.depositCents+s.remainderCents)||deposits.some(value=>value!==s.depositCents))return null;
-  return {depositDueDate:onApproval?approvalDueDate(estimate,s.remainderDueDate):s.depositDueDate,...(onApproval?{depositDueOn:'approval'}:{}),remainderDueDate:s.remainderDueDate,timeZone:PAYMENT_TIME_ZONE,depositCents:s.depositCents,remainderCents:s.remainderCents,policyVersion:s.policyVersion};
+  return {depositDueDate:onApproval?approvalDueDate(estimate):s.depositDueDate,...(onApproval?{depositDueOn:'approval'}:{}),remainderDueDate:s.remainderDueDate,timeZone:PAYMENT_TIME_ZONE,depositCents:s.depositCents,remainderCents:s.remainderCents,policyVersion:s.policyVersion};
 }
 // The terms a quote is sent on from 2026-10-19: a quote saved on the earlier sent-quote terms (FINAL_25_75, or the pending
-// variant) is sent on SENT_25_75; any other policy (SENT_25_75 itself, an in-person signature's, none) is its own.
-export const sentQuotePaymentPolicy = policy => [FINAL_25_75.version, PROPOSED_25_75.version].includes(policy?.version) ? SENT_25_75 : policy;
+// variant) is sent on SENT_25_75, and so is a quote draft saved with none (quoteDraft: drafts took a policy only from
+// 2026-10-14; before that they were 50% upfront, the rest on completion); any other policy (SENT_25_75 itself, an
+// in-person signature's) is its own, and an estimate drafted elsewhere keeps none.
+export const sentQuotePaymentPolicy = (policy, { quoteDraft = false } = {}) => [FINAL_25_75.version, PROPOSED_25_75.version].includes(policy?.version) || quoteDraft && (policy === undefined || policy === null) ? SENT_25_75 : policy;
 // The 25/75 terms a quote was sent or signed on (estimate.commercialPolicy), without any amount, for a customer surface
 // that withholds the quote (quote-model.js unsentQuoteDraft: a signed job held for the owner's prices, or a sent quote's
 // unsent revision): the split (its saved schedule's, else the policy's) and, when the schedule names it, the job day the

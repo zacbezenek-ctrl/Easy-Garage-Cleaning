@@ -102,7 +102,7 @@ The total used is the final estimator-approved **saved canonical quote total**, 
 | Due-date time zone | `America/Denver`, preserved in the document payload and labels |
 | Policy identity | `FINAL_25_75.version` (`2026-10-14-deposit25-v1`) for a new standard quote; persist the actual saved policy/version |
 
-Use `quotePaymentSchedule()` and `quotePaymentDates()` to prepare a new standard schedule from canonical dates. If the estimate already has an issued `paymentSchedule`, preserve it; a later schedule change requires explicit amendment review through the existing quote flow. Do not recalculate old agreements from current dates. A missing verified walkthrough date, job date, approved exception or inconsistent amount blocks complete agreement rendering.
+Use `quotePaymentSchedule()` and `quotePaymentDates()` to prepare a new standard schedule from canonical dates. If the estimate already has an issued `paymentSchedule`, preserve it; a later schedule change requires explicit amendment review through the existing quote flow. The exception is a quote sent on `SENT_25_75` and not yet approved: it has no deposit date to protect, so a revision sent after the job is rescheduled takes the new job day (the stored schedule is replaced only by that send). Do not recalculate old agreements from current dates. A missing verified walkthrough date, job date, approved exception or inconsistent amount blocks complete agreement rendering.
 
 Exact rounding examples under the standard policy:
 

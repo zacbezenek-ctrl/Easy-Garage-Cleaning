@@ -52,15 +52,18 @@ test('SENT_25_75 is accepted only with its explicit approval-day rule; the earli
     assert.throws(() => snapshotQuotePaymentPolicy({ ...SENT_25_75, depositDueRule: rule }), error => error.code === 'quote_draft_invalid_payment_policy', String(rule));
   for (const invalid of [{ ...SENT_25_75, depositPct: 50 }, { ...SENT_25_75, remainderDueRule: 'on_completion' }, { ...SENT_25_75, approvedAt: 'now' }]) assert.throws(() => snapshotQuotePaymentPolicy(invalid), /verified version/);
   assert.doesNotThrow(() => requireQuotePaymentTiming(SENT_25_75));
-  // The terms a quote is sent on: the earlier sent-quote terms move to SENT_25_75; nothing else does.
+  // The terms a quote is sent on: the earlier sent-quote terms move to SENT_25_75, and so does a quote draft saved with
+  // none (before 2026-10-14: 50% upfront, the rest on completion); nothing else does.
   assert.equal(sentQuotePaymentPolicy(FINAL_25_75), SENT_25_75); assert.equal(sentQuotePaymentPolicy({ ...PROPOSED_25_75 }), SENT_25_75);
   for (const policy of [SENT_25_75, SIGNED_25_75, undefined, null, { ...FINAL_25_75, version: 'fixture-other' }]) assert.equal(sentQuotePaymentPolicy(policy), policy);
+  for (const policy of [undefined, null]) assert.equal(sentQuotePaymentPolicy(policy, { quoteDraft: true }), SENT_25_75, String(policy));
+  for (const policy of [SENT_25_75, SIGNED_25_75, FINAL_25_75]) assert.equal(sentQuotePaymentPolicy(policy, { quoteDraft: true }), policy === FINAL_25_75 ? SENT_25_75 : policy, policy.version);
 });
 
-test('a SENT_25_75 deposit is due the Denver day of the approval (never after the job day) and has no date before it', () => {
+test('a SENT_25_75 deposit is due the Denver day of the approval, even after the job day, and has no date before it', () => {
   assert.deepEqual(quotePaymentDates(SENT_25_75, { jobDate: '2026-11-10' }), { depositDueDate: null, remainderDueDate: '2026-11-10' }, 'no walkthrough date is needed');
   assert.deepEqual(quotePaymentDates(SENT_25_75, { walkthroughDate: '2026-10-19', jobDate: '2026-11-10', approvalDate: '2026-10-21T03:30:00Z' }), { depositDueDate: '2026-10-20', remainderDueDate: '2026-11-10' }, 'the approval instant read in Denver');
-  assert.equal(quotePaymentDates(SENT_25_75, { jobDate: '2026-11-10', approvalDate: '2026-11-12' }).depositDueDate, '2026-11-10', 'approved after the job day: due with it');
+  assert.equal(quotePaymentDates(SENT_25_75, { jobDate: '2026-11-10', approvalDate: '2026-11-12' }).depositDueDate, '2026-11-12', 'approved after the job day: the approval day, never a day the customer did not approve on');
   assert.throws(() => quotePaymentDates(SENT_25_75, { walkthroughDate: '2026-10-19' }), error => error.code === 'quote_draft_payment_dates_pending', 'the send waits for a booked job date');
   // The reviewer's case: walkthrough 2026-10-19, job 2026-11-10. A quote sent earlier on FINAL_25_75 keeps 2026-11-03.
   assert.deepEqual(quotePaymentDates(FINAL_25_75, { walkthroughDate: '2026-10-19', jobDate: '2026-11-10' }), { depositDueDate: '2026-11-03', remainderDueDate: '2026-11-10' });
@@ -75,7 +78,10 @@ test('the public schedule of a SENT_25_75 quote dates the deposit by the approva
   const approved = publicQuotePaymentSchedule({ ...estimate, status: 'approved', acceptedAt: '2026-10-21T03:30:00.000Z' });
   assert.equal(approved.depositDueDate, '2026-10-20');
   assert.equal(quotePaymentSummary(approved), '25% deposit $375.00 due on approval (2026-10-20); 75% remainder $1,125.00 due 2026-11-10 (America/Denver).');
-  assert.equal(publicQuotePaymentSchedule({ ...estimate, status: 'accepted', acceptedAt: '2026-12-01T18:00:00.000Z' }).depositDueDate, '2026-11-10', 'never after the job day');
+  // Approved after the saved job day (a job rescheduled before the quote was sent again): due on the day it was approved.
+  const late = publicQuotePaymentSchedule({ ...estimate, status: 'accepted', acceptedAt: '2026-12-01T18:00:00.000Z' });
+  assert.equal(late.depositDueDate, '2026-12-01', 'the approval date, not the job day');
+  assert.equal(quotePaymentSummary(late), '25% deposit $375.00 due on approval (2026-12-01); 75% remainder $1,125.00 due 2026-11-10 (America/Denver).');
   assert.deepEqual(estimate, saved, 'the saved schedule is never rewritten');
   // Fail closed: a saved deposit date on these terms, or no deposit date on dated terms, is not a schedule any surface shows.
   assert.equal(publicQuotePaymentSchedule({ ...estimate, paymentSchedule: { ...schedule, depositDueDate: '2026-10-20' } }), null);

@@ -154,13 +154,15 @@ function estimateState(job, finance, today, draftsRejected = false) {
 // on the 25/75 terms (a held signed walkthrough, a sent quote's unsent revision)
 // still names those terms, without amounts; any other keeps the portal's terms. A quote not approved is withheld until it
 // is sent again, and it is sent on today's sent-quote terms (quote-payment-policy.js sentQuotePaymentPolicy: SENT_25_75,
-// the 25% deposit due when the customer approves it), so it names those. A job the homeowner signed in person and held
+// the 25% deposit due when the customer approves it, a quote draft saved with no terms before 2026-10-14 included), so it
+// names those. A job the homeowner signed in person and held
 // for the owner's prices (heldSigned) is booked, not revised: the team is confirming its prices and nothing is due until
 // it sends the updated total (walkthrough-handoff.js releasePatch asks for no new approval), so the portal says so.
 function withheldEstimate(job) {
   const approvedQuote = [job.estimate?.status, job.customerApproval?.status].some(status => ['accepted', 'approved'].includes(String(status || '').toLowerCase()));
   const heldSigned = pricesPendingApproval(job) && approvedQuote;
-  const terms = withheldQuotePaymentSummary(approvedQuote ? job.estimate : { ...job.estimate, commercialPolicy: sentQuotePaymentPolicy(job.estimate?.commercialPolicy) }, { signed: heldSigned });
+  const quoteDraft = Boolean(job.quoteDraft && typeof job.quoteDraft === 'object') || job.estimate?.source === 'quote_draft';
+  const terms = withheldQuotePaymentSummary(approvedQuote ? job.estimate : { ...job.estimate, commercialPolicy: sentQuotePaymentPolicy(job.estimate?.commercialPolicy, { quoteDraft }) }, { signed: heldSigned });
   const estimate = {
     number: safe(job.estimate?.number || job.quoteId || `EST-${String(job.id || '').slice(-6).toUpperCase()}`, 80),
     status: 'being_updated', withheld: true, amount: 0,

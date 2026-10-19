@@ -129,6 +129,12 @@ export function normalizeQuoteDraft(value, now = new Date().toISOString()) {
   return { client, title: text(value.title, 'Quote title', 200) || 'EGC Garage Service', scope: text(value.scope, 'The customer-facing scope', 1600, true), lineItems, totalCents: totals.totalCents, depositCents: depositCents(totals.totalCents, 50), validUntil, catalogVersion: version === '' ? null : version, crewSize: crew, estimatedDurationMin: minutes, walkthroughCapture: normalizeUnsignedCapture(value.walkthrough_capture) };
 }
 
+// The job's deposit for a required deposit in cents: recorded payments are kept, only its amount and status follow.
+function depositDue(deposits, requiredCents) {
+  const paid = typeof deposits.paidAmount === 'number' && Number.isFinite(deposits.paidAmount) ? Math.max(0, deposits.paidAmount) : 0, required = requiredCents / 100;
+  return { ...deposits, amount: required, status: paid >= required ? 'paid' : paid > 0 ? 'partial' : 'required' };
+}
+
 // The quote fields of a draft save. A material change (lines, choice, total,
 // deposit or scope) bumps the revision and returns the quote to draft, retiring
 // an approval and an issued invoice; recorded payments are never touched.
@@ -160,8 +166,7 @@ function quotePatch(job, inputDraft, actor, now, jobId, newQuotePaymentPolicy) {
   const fresh = !current.number, material = fresh || estimateChanged(current, next) || provenanceChanged, wasApproved = approved(current.status) || approved(approval?.status), wasSent = current.status === 'sent' || Boolean(current.sentAt);
   next.revision = (Number.isSafeInteger(current.revision) && current.revision > 0 ? current.revision : 0) + (material ? 1 : 0);
   next.status = material ? 'draft' : current.status || 'draft';
-  const paid = typeof deposits.paidAmount === 'number' && Number.isFinite(deposits.paidAmount) ? Math.max(0, deposits.paidAmount) : 0, required = draft.depositCents / 100;
-  const patch = { estimate: next, total: draft.totalCents / 100, priceQuoted: draft.totalCents / 100, quoteStatus: material ? 'draft' : job?.quoteStatus || 'draft', deposit: { ...deposits, amount: required, status: paid >= required ? 'paid' : paid > 0 ? 'partial' : 'required' } };
+  const patch = { estimate: next, total: draft.totalCents / 100, priceQuoted: draft.totalCents / 100, quoteStatus: material ? 'draft' : job?.quoteStatus || 'draft', deposit: depositDue(deposits, draft.depositCents) };
   const warnings = [];
   if (material && (wasApproved || approval?.status && approval.status !== 'superseded')) {
     patch.customerApproval = { ...(approval || {}), status: 'superseded', supersededAt: now, supersededBy: actor.user, reason: 'estimate_revised' };
@@ -422,23 +427,31 @@ function sendBinding(job, delivery, paymentSchedule) {
   return { jobId: job.id, jobRevision: job.revision, customerId: job.customerId || '', estimateNumber: job.estimate.number, estimateRevision: job.estimate.revision, estimateFingerprint: estimateFingerprint(paymentSchedule ? {...job.estimate,paymentSchedule} : job.estimate), delivery: delivery.mode };
 }
 // The estimate as it is sent (owner decision of 2026-10-18 evening, quote-payment-policy.js SENT_25_75): a quote saved on
-// the earlier sent-quote terms (FINAL_25_75 or the pending variant) and not sent in this revision, a new revision of a
-// quote sent on them included, is sent on SENT_25_75 (its 25% deposit due when the customer approves it), with its terms
-// id; the deposit cents are the same 25%. Any other estimate is sent on its own terms. A quote already sent keeps its
-// saved estimate, terms and dates: this is read only when a revision is sent.
+// the earlier sent-quote terms (FINAL_25_75 or the pending variant), or saved with none (a draft from before 2026-10-14,
+// 50% upfront), and not sent in this revision, a new revision of a quote sent on them included, is sent on SENT_25_75
+// (its 25% deposit due when the customer approves it), with its terms id and its 25% deposit (the same cents for the
+// earlier 25/75 terms; the job's deposit follows it in the send). Any other estimate is sent on its own terms. A quote
+// already sent keeps its saved estimate, terms and dates: this is read only when a revision is sent.
 function sendingEstimate(estimate) {
-  const policy = sentQuotePaymentPolicy(estimate.commercialPolicy);
-  if (policy === estimate.commercialPolicy) return estimate;
-  return { ...estimate, commercialPolicy: snapshotQuotePaymentPolicy(policy), depositPct: policy.depositPct, termsVersion: !estimate.termsVersion || estimate.termsVersion === estimate.commercialPolicy.version ? policy.version : estimate.termsVersion };
+  const saved = estimate.commercialPolicy, policy = sentQuotePaymentPolicy(saved, { quoteDraft: true });
+  if (policy === saved) return estimate;
+  const deposit = depositCents(estimate.amountCents, policy.depositPct);
+  return { ...estimate, commercialPolicy: snapshotQuotePaymentPolicy(policy), depositPct: policy.depositPct, depositRequired: deposit / 100, depositRequiredCents: deposit,
+    termsVersion: saved === undefined || saved === null || !estimate.termsVersion || estimate.termsVersion === saved.version ? policy.version : estimate.termsVersion };
 }
-const reusesSchedule = (saved, sending) => Boolean(saved.paymentSchedule) && sending === saved;
+// The saved schedule is sent again only for a revision sent on the same terms. A quote sent on SENT_25_75 has no deposit
+// date to protect and every revision of it asks for a fresh approval, so its saved schedule is reused only while its
+// remainder is still due on the booked job day: after a reschedule the revision is sent with the new job day.
+const reusesSchedule = (job, sending) => Boolean(job.estimate.paymentSchedule) && sending === job.estimate &&
+  !(sending.commercialPolicy?.depositDueRule === 'approval_day' && job.estimate.paymentSchedule.remainderDueDate !== businessPaymentDate(job.date));
 async function paymentScheduleFor(store, job, sending = job.estimate) {
   if (!sending?.commercialPolicy) return null;
   // Issued agreements retain their exact schedule. Rescheduling cannot silently
   // rewrite those dates; a future explicit terms amendment is required. A quote
-  // sent now on new terms (sendingEstimate) gets the schedule of those terms.
+  // sent now on new terms (sendingEstimate), or a SENT_25_75 revision sent after
+  // a reschedule (reusesSchedule), gets a new schedule of its terms.
   const source = job.sourceWalkthroughId ? await store.read('jobs', job.sourceWalkthroughId) : null, policy = sending.commercialPolicy, onApproval = policy.depositDueRule === 'approval_day';
-  if (reusesSchedule(job.estimate, sending)) {
+  if (reusesSchedule(job, sending)) {
     const saved=sending.paymentSchedule,walk=businessPaymentDate(source?.walkthroughCompletedAt||source?.completedAt||source?.date),day=businessPaymentDate(job.date);
     if(day&&saved.remainderDueDate!==day||!onApproval&&walk&&saved.depositDueDate<walk)throw fail('payment_schedule_amendment_required','The schedule changed after these payment dates were issued. Review an explicit payment-terms amendment; the saved agreement was not changed.');
     const amounts=quotePaymentSchedule(sending.amountCents,policy);return {...saved,depositCents:amounts.depositCents,remainderCents:amounts.remainderCents};
@@ -458,7 +471,7 @@ function sendable(job, now, env) {
   if (plain(job.quoteDraft?.compositePricing) && !quoteBuilderEnabled(env)) throw fail('builder_disabled', 'The quote builder is turned off. Keep this saved quote for review.', 404);
   const estimate = plain(job.estimate) ? job.estimate : null;
   if (!estimate?.number || !Number.isSafeInteger(estimate.revision)) throw fail('estimate_missing', 'Save the quote before sending it.');
-  requireQuotePaymentTiming(sentQuotePaymentPolicy(estimate.commercialPolicy));
+  requireQuotePaymentTiming(sentQuotePaymentPolicy(estimate.commercialPolicy, { quoteDraft: true }));
   if (approved(estimate.status) || approved(job.customerApproval?.status)) throw fail('already_approved', 'The customer already approved this quote. Revise it first if they are reviewing a change.');
   if (estimate.status === 'sent' && estimate.sentRevision === estimate.revision) throw fail('already_sent', `Revision ${estimate.revision} was already sent. Revise the quote to send an updated version.`);
   let lines;
@@ -537,6 +550,8 @@ export async function sendQuoteDraft(store, actor, input, now = new Date().toISO
   const patch = {
     estimate: { ...estimate, ...(paymentSchedule?{paymentSchedule}:{}), status: 'sent', sentAt: now, sentBy: actor.user, sentChannel: 'estimate_ready', sentRevision: estimate.revision, sentFingerprint: estimateFingerprint(paymentSchedule?{...estimate,paymentSchedule}:estimate), sentRequestId: input.requestId, updatedAt: now },
     quoteStatus: 'sent',
+    // A quote sent on new terms with a new deposit (sendingEstimate: a draft saved before 2026-10-14 at 50%) moves the job's deposit with it.
+    ...(estimate.depositRequiredCents !== job.estimate.depositRequiredCents ? { deposit: depositDue(plain(job.deposit) ? job.deposit : {}, estimate.depositRequiredCents) } : {}),
     // The confirmed delivery mode: the deliverer never goes further than the person agreed to.
     estimateReady: { requestId: input.requestId, revision: estimate.revision, mode: delivery.mode, status: ['automation', 'dry_run'].includes(delivery.mode) ? 'pending' : delivery.mode === 'suppressed' ? 'suppressed' : 'messaging_disabled', attempts: 0, recipient: delivery.recipient.masked, requestedAt: now, requestedBy: actor.user },
     quoteDraft: { ...job.quoteDraft, sentAt: now, sentBy: actor.user },
@@ -548,7 +563,7 @@ export async function sendQuoteDraft(store, actor, input, now = new Date().toISO
     { collection: QUOTE_DRAFT_RECEIPTS, id: receiptId, patch: { fingerprint, actorId: actor.user, action: 'send', customerId: job.customerId || '', jobId: job.id, estimateRevision: estimate.revision, delivery: delivery.mode, warnings, createdAt: now } },
     auditWrite({ actor: { id: actor.user, kind: 'human', role: actor.role }, via: 'hub', action: SEND_ACTION, entity: { collection: 'jobs', id: job.id }, before: moneySnapshot(job), after: moneySnapshot({ ...job, ...patch }), requestId: input.requestId, reason: `delivery:${delivery.mode}`, now }),
   ];
-  if (paymentSchedule && !reusesSchedule(job.estimate, estimate)) writes.push({collection:'jobs',id:paymentSchedule.sourceWalkthroughId,revision:paymentSchedule.sourceRevision,verify:true});
+  if (paymentSchedule && !reusesSchedule(job, estimate)) writes.push({collection:'jobs',id:paymentSchedule.sourceWalkthroughId,revision:paymentSchedule.sourceRevision,verify:true});
   try { await consumeConfirmation(env, store, input.confirmToken, { actorId: actor.user, action: SEND_ACTION, entityId: `jobs/${job.id}`, payload: sendBinding({ ...job, estimate }, delivery, paymentSchedule), now, requestId: input.requestId }, writes); }
   catch (error) {
     const recovered = await replay(false).catch(problem => { if (FINAL.has(problem.code)) throw problem; return null; });

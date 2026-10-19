@@ -168,6 +168,24 @@ test('a quote sent on SENT_25_75 says the deposit is due on approval in the port
   assert.deepEqual(moneyDocumentModel({ ...final, id: 'job-final' }, { kind: 'estimate', now: '2026-09-22T18:00:00.000Z' }).dates.find(([label]) => label === '25% deposit due'), ['25% deposit due', 'October 13, 2026']);
 });
 
+// Review: a quote approved after its saved job day (the job was rescheduled and the quote not yet sent again) is due on the
+// day the customer approved it, never dated by the job day: no surface names an approval date the customer did not approve on.
+test('a SENT_25_75 quote approved after its saved job day dates the deposit by the approval day on every surface', async t => {
+  const at = '2026-10-29T18:00:00.000Z', store = portalStore(t, { 'job-late': sentOnApproval({}, { validUntil: '2026-11-30' }) }), handlers = portalHandlers(at), cookie = await portalCookie('job-late', {}, Date.parse(at));
+  const before = (await portalView(handlers, cookie)).body;
+  const approved = await portalPost(handlers, cookie, { action: 'approve_estimate', signed_name: 'Synthetic Customer', confirmed: true, estimate_revision: 1, amount_cents: 249590, estimate_fingerprint: before.estimate.fingerprint, terms_version: before.estimate.termsVersion, request_id: randomUUID() });
+  assert.equal(approved.status, 200, JSON.stringify(approved.body));
+  const after = (await portalView(handlers, cookie)).body, saved = { ...store.job('job-late'), id: 'job-late' };
+  assert.equal(saved.estimate.acceptedAt, at);
+  assert.equal(after.estimate.terms, 'This flat-rate estimate covers the scope shown. 25% deposit $623.98 due on approval (2026-10-29); 75% remainder $1,871.92 due 2026-10-20 (America/Denver). Any material scope change requires your approval before additional work or charges.');
+  assert.deepEqual([after.estimate.paymentSchedule.depositDueDate, after.estimate.paymentSchedule.remainderDueDate], ['2026-10-29', '2026-10-20']);
+  assert.equal(saved.estimate.paymentSchedule.depositDueDate, null, 'the saved schedule is not rewritten');
+  const doc = moneyDocumentModel(saved, { kind: 'estimate', now: at });
+  assert.deepEqual(doc.dates.find(([label]) => label === '25% deposit due'), ['25% deposit due', 'On approval, October 29, 2026']);
+  assert.ok(doc.rows.some(row => row.label === '25% deposit due on approval (2026-10-29)'), JSON.stringify(doc.rows));
+  assert.doesNotMatch(JSON.stringify([doc.dates.find(([label]) => label === '25% deposit due'), doc.rows.filter(row => /deposit/.test(row.label)).map(row => row.label)]), /2026-10-20|October 20/, 'the deposit is never dated by the job day');
+});
+
 test('Stripe Checkout and the receipt for a quote sent on SENT_25_75 say the deposit was due on approval and the 75% on the job day', async t => {
   const stripeEnv = { ...env, STRIPE_SECRET_KEY: 'sk_test_synthetic_gap_fixes' };
   const approved = sentOnApproval({ customerApproval: { status: 'approved', approvedAt: '2026-09-22T17:00:00.000Z', approvedBy: 'Synthetic Customer', source: 'customer_portal', termsVersion: SENT_25_75.version }, quoteStatus: 'approved' }, { status: 'approved', acceptedAt: '2026-09-22T17:00:00.000Z', acceptedBy: 'Synthetic Customer' });

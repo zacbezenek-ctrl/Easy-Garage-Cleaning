@@ -727,6 +727,10 @@ test('the Hub printed estimate of a quote sent on SENT_25_75 says the deposit is
   const approved = await print({ ...job, estimate: { ...job.estimate, status: 'approved', acceptedAt: '2026-10-21T03:30:00.000Z' } });
   assert.match(approved, /25% deposit due on approval \(2026-10-20\) \$375\.00 /);
   assert.match(approved, /25% deposit \$375\.00 due on approval \(2026-10-20\); 75% remainder \$1,125\.00 due 2026-11-10 \(America\/Denver\)\./);
+  // Approved after the saved job day: dated by the approval, never by the job day.
+  const late = await print({ ...job, estimate: { ...job.estimate, status: 'approved', acceptedAt: '2026-12-01T18:00:00.000Z' } });
+  assert.match(late, /25% deposit due on approval \(2026-12-01\) \$375\.00 /);
+  assert.match(late, /25% deposit \$375\.00 due on approval \(2026-12-01\); 75% remainder \$1,125\.00 due 2026-11-10 \(America\/Denver\)\./);
   // A saved schedule that names a deposit date is not the sent-quote terms' own: the earlier wording, not a made-up date.
   assert.match(await print({ ...job, estimate: { ...job.estimate, paymentSchedule: { ...schedule, depositDueDate: '2026-10-20' } } }), /Deposit due upfront \$375\.00 /);
 });
