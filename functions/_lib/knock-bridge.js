@@ -13,7 +13,7 @@
    that cannot be made now is kept on the sale as pending (retried) or review (the office books it by hand).
 
    A walkthrough set at the door (knock_walkthroughs) becomes an estimator walkthrough assigned to one estimator: staff
-   with the walkthrough_estimating skill (EGC_STAFF_DIRECTORY_ENABLED), else staff whose role is sales, never the rep who
+   with the walkthrough_estimating skill (EGC_STAFF_DIRECTORY_ENABLED, once anyone holds it), else staff whose role is sales, never the rep who
    set it. The server re-checks the picked slot: that estimator, else another estimator free then, else the nearest free
    slot, else an undated walkthrough in Dispatch's To schedule list. The same request records the setter attribution
    (knock_setters: 13% setter plus 7% estimator, D6b), keyed by the Hub walkthrough id.
@@ -147,12 +147,15 @@ export function repCrewSlots(candidates, { minutes, limit = SLOT_LIMIT } = {}) {
 /* ---------- estimators ---------- */
 
 /** Who estimates walkthroughs: staff with the walkthrough_estimating skill at a qualified level when the staff
- * directory is on (it holds skills), else staff whose role is sales; office-only owners and managers and the rep who
- * set the walkthrough never. Roster ids, in roster order. */
+ * directory is on (it holds skills) and some field staff member holds it, else staff whose role is sales, so a
+ * directory turned on before anyone is given the skill keeps door walkthroughs bookable; office-only owners and
+ * managers and the rep who set the walkthrough never. Roster ids, in roster order. */
 export function estimatorIds(roster, env, excludeKey = '') {
-  const directory = staffDirectoryEnabled(env), exclude = String(excludeKey || '').toLowerCase();
-  return (Array.isArray(roster) ? roster : []).filter(person => typeof person?.id === 'string' && person.id !== exclude && takesFieldWork(person)
-    && (directory ? qualified(person, ESTIMATOR_SKILL) : person.role === 'sales' || (Array.isArray(person.staffRoles) && person.staffRoles.includes('sales')))).map(person => person.id);
+  const exclude = String(excludeKey || '').toLowerCase();
+  const field = (Array.isArray(roster) ? roster : []).filter(person => typeof person?.id === 'string' && takesFieldWork(person));
+  const bySkill = staffDirectoryEnabled(env) && field.some(person => qualified(person, ESTIMATOR_SKILL));
+  const sales = person => person.role === 'sales' || (Array.isArray(person.staffRoles) && person.staffRoles.includes('sales'));
+  return field.filter(person => person.id !== exclude && (bySkill ? qualified(person, ESTIMATOR_SKILL) : sales(person))).map(person => person.id);
 }
 
 /* An opaque, stable handle for an estimator, so a picked slot can name them without sending their staff key: the
