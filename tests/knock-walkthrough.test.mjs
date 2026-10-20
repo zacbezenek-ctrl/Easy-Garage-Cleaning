@@ -38,6 +38,11 @@ test('who estimates: the walkthrough skill with the staff directory, else the sa
     { id: 'new', name: 'New', role: 'crew', skills: [{ id: 'walkthrough_estimating', level: 'learning' }] }];
   assert.deepEqual(estimatorIds(roster, {}, 'rep.one'), ['alex']);
   assert.deepEqual(estimatorIds(roster, { EGC_STAFF_DIRECTORY_ENABLED: 'true' }, 'rep.one'), ['dee'], 'proficient or lead skill, field staff only');
+  // A directory turned on before any field staff member holds the skill (only learners, or office-only staff) keeps
+  // the sales role, so door walkthroughs stay bookable until the owner gives someone the skill.
+  const noSkillYet = roster.filter(person => person.id !== 'dee');
+  assert.deepEqual(estimatorIds(noSkillYet, { EGC_STAFF_DIRECTORY_ENABLED: 'true' }, 'rep.one'), ['alex']);
+  assert.deepEqual(estimatorIds([...noSkillYet, { id: 'nick', name: 'Nick', role: 'crew', staffRoles: ['crew', 'sales'] }], { EGC_STAFF_DIRECTORY_ENABLED: 'true' }, 'rep.one'), ['alex', 'nick'], 'a stored Sales role counts');
 });
 
 test('slots: the next 10 days, 9:00 to 5:00, each with the estimator\'s first name and an opaque handle only', async () => {

@@ -8,7 +8,7 @@ import { bridgeUnavailable, errorResponse, reply, signInRequired } from '../_lib
 // GET /api/knock-walkthrough-slots (KNOCK-BRIDGE, EGC_KNOCK_JOB_BRIDGE): the estimator hours an active rep can offer
 // at the door over the next 10 days, 9:00 to 5:00. Each slot is {date, time, endTime, estimator, ref}: the estimator's
 // first name and an opaque handle the walkthrough event sends back, never a staff key, roster or customer. Estimators
-// are staff with the walkthrough_estimating skill (EGC_STAFF_DIRECTORY_ENABLED), else staff whose role is sales.
+// are staff with the walkthrough_estimating skill (EGC_STAFF_DIRECTORY_ENABLED, once anyone holds it), else staff whose role is sales.
 export function knockWalkthroughSlotsHandlers({ session = getHubSession, storage = createKnockStore, dispatch = dispatchStorage, now = () => new Date() } = {}) {
   return {
     async get({ request, env }) {

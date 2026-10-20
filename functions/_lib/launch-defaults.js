@@ -1,11 +1,18 @@
 /* Launch defaults (owner decision, 2026-10-18): the switches the owner asked to have on without setting them in
    Cloudflare. functions/_middleware.js fills them into the Pages env before any handler reads it, so every reader
-   (crewAutoAssignEnabled, jobMaterialsEnabled, quoteBuilderEnabled, knockJobBridgeEnabled) sees exactly "true".
+   (crewAutoAssignEnabled, jobMaterialsEnabled, quoteBuilderEnabled, knockJobBridgeEnabled, staffDirectoryEnabled,
+   staffRolePermissionsEnabled) sees exactly "true".
    A variable set in Cloudflare always wins: setting one to "false" (or anything but "true") turns that feature off
    again, with a retried deployment. Handlers called directly (tests, scripts) see their env unchanged.
 
+   Staff roles (owner decision, 2026-10-20): EGC_STAFF_DIRECTORY_ENABLED and EGC_STAFF_ROLE_PERMISSIONS are on so
+   the owner can give a crew member the Sales role in the Staff directory, which opens the Walkthrough for them. The
+   directory reads un-migrated records (pay falls back to the legacy hourly rate, roles to the account's role) and
+   EGC_STAFF_ROLE_PERMISSIONS only acts on roles that are actually stored, so without the account backfill only the
+   people whose roles the owner saves change; everyone else keeps the hard-coded checks.
+
    Left out on purpose, each needing the owner first:
-   - EGC_STAFF_DIRECTORY_ENABLED and EGC_STAFF_ROLE_ACCESS: the two staff vault migrations, then roles.
+   - EGC_STAFF_ROLE_ACCESS: Sales/Phone booking and full customer contact in Dispatch, stored managers' business access.
    - EGC_GHL_SCHEDULE_MIRROR and EGC_GHL_D2D_TAGS: the HighLevel workflow audit and the egc-worker drain switch.
    - EGC_DISPATCH_WINDOWED_READS: the customer search-key backfill. */
 export const LAUNCH_DEFAULTS = Object.freeze({
@@ -13,6 +20,8 @@ export const LAUNCH_DEFAULTS = Object.freeze({
   EGC_DISPATCH_CREW_AUTO_ASSIGN: 'true',
   EGC_QUOTE_BUILDER_ENABLED: 'true',
   EGC_KNOCK_JOB_BRIDGE: 'true',
+  EGC_STAFF_DIRECTORY_ENABLED: 'true',
+  EGC_STAFF_ROLE_PERMISSIONS: 'true',
 });
 
 /** Fills each unset launch default into env, in place; a value already present (any value) is kept. An env that
