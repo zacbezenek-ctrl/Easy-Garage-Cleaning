@@ -59,6 +59,28 @@ function remember(key, value) { try { localStorage.setItem(key, JSON.stringify(v
 function recall(key) { try { return JSON.parse(localStorage.getItem(key) || 'null'); } catch { return null; } }
 function forget(key) { try { localStorage.removeItem(key); } catch {} }
 
+// LIVE-ROLES: every API answer carries the access stamp of the session it checked (X-EGC-Access). Knock keeps the first
+// one it sees; when an answer's stamp differs, the owner changed this person's roles, so a moment later Knock reloads
+// its profile (knock-me) and redraws. Nobody is signed out; the server already decides with the new roles.
+const ACCESS_SETTLE_MS = 3000, ACCESS_RECHECK_MS = 30000;
+let accessStamp = '', accessRefresh = null, accessCheckedAt = 0;
+function noteAccess(response, path) {
+  const stamp = response?.headers?.get?.('X-EGC-Access') || '';
+  if (!stamp || !S.viewer) return;
+  // Signing in or reading the session itself starts over from its stamp.
+  if (!accessStamp || path === '/api/hub-auth') { accessStamp = stamp; return; }
+  if (stamp === accessStamp || accessRefresh || Date.now() - accessCheckedAt < ACCESS_RECHECK_MS) return;
+  accessCheckedAt = Date.now();
+  const user = S.viewer.user;
+  accessRefresh = new Promise(resolve => setTimeout(resolve, ACCESS_SETTLE_MS)).then(async () => {
+    if (S.viewer?.user !== user) return;
+    const session = await api('/api/hub-auth');
+    if (String(session.user || '').toLowerCase() !== String(user || '').toLowerCase()) return;
+    await loadServer();
+    render();
+  }).catch(() => {}).finally(() => { accessRefresh = null; });
+}
+
 async function api(path, { method = 'GET', body } = {}) {
   let response;
   try {
@@ -70,6 +92,7 @@ async function api(path, { method = 'GET', body } = {}) {
   } catch {
     throw Object.assign(new Error('No connection. Try again when you have signal.'), { status: 0 });
   }
+  if (response.status !== 401) noteAccess(response, path.split('?')[0]);
   const type = response.headers.get('Content-Type') || '';
   if (type.includes('text/csv')) {
     if (!response.ok) throw Object.assign(new Error(`Export failed (${response.status})`), { status: response.status });
@@ -437,7 +460,7 @@ export async function signOut() {
   try { await api('/api/hub-auth', { method: 'DELETE' }); } catch {}
   remember(SIGNED_OUT_KEY, Date.now());
   forget(VIEWER_KEY);
-  S.viewer = null; S.rep = null; S.houses = new Map(); S.pending = []; S.shift = null; S.loaded = false;
+  S.viewer = null; S.rep = null; accessStamp = ''; S.houses = new Map(); S.pending = []; S.shift = null; S.loaded = false;
   stopLocation(); refused = false; S.position = null; S.positionError = null;
   renderSignIn();
 }

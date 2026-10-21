@@ -220,17 +220,18 @@ async function save(kind,person){
   await send(S.pending);
 }
 const accountChanged=()=>S.error?.code==='staff_directory_account_changed';
-// With EGC_STAFF_ROLE_ACCESS a role change also ends the person's Firebase data sessions (firebaseRevocation). One the
-// server could not finish is saved but still owed, so the screen never says they were signed out while it is.
+// LIVE-ROLES: a role change keeps the person signed in (sessionsKept); the server applies it to their next request and
+// their open Hub, crew app and Knock pages pick it up within about a minute. With EGC_STAFF_ROLE_ACCESS it also ends
+// their old Firebase data sessions (firebaseRevocation); one the server could not finish is saved but still owed.
 function signOutOwed(data){
   const status=String(data?.firebaseRevocation?.status||'');
-  return status==='revocation_pending'?'Their Firebase data sign-out is pending; see Integrations.':status==='revocation_failed'?'Their Firebase data sign-out could not be confirmed; check Integrations.':'';
+  return status==='revocation_pending'?'Ending their old Firebase data access is pending; see Integrations.':status==='revocation_failed'?'Ending their old Firebase data access could not be confirmed; check Integrations.':'';
 }
 function savedText(data,label){
   if(data.unchanged)return'Nothing changed: '+label+' already matched.';
   const owed=signOutOwed(data),lead=(data.replayed?'Confirmed: ':'Saved: ')+label;
-  if(owed)return lead+'. The new roles apply at their next Hub sign-in. '+owed;
-  return lead+(data.sessionsRevoked?'. They were signed out so the new roles apply at their next sign-in.':'.');
+  const live=data.sessionsKept?'. They stay signed in; the new roles apply within about a minute.':'.';
+  return lead+live+(owed?' '+owed:'');
 }
 async function send(row){
   if(S.busy||!row||!manager()||accountChanged())return;
@@ -366,7 +367,7 @@ function editorFor(person){
     body.push(h('fieldset',{class:'st-choices'},h('legend',{},'Roles for '+name),EDITABLE_ROLES.map(role=>h('label',{class:'st-check'},
       h('input',{type:'checkbox',name:'staffRoles',value:role,checked:d.staffRoles.includes(role),onchange:event=>{touch();d.staffRoles=event.target.checked?[...new Set([...d.staffRoles,role])]:d.staffRoles.filter(item=>item!==role);}}),h('span',{},ROLE_LABEL[role])))),
       person.staffRoles.includes('owner')?h('p',{class:'st-muted'},'The owner role stays with the configured owner account.'):null,
-      h('p',{class:'st-muted'},'Saving signs '+name+' out of the Hub so the new roles apply at their next sign-in.'));
+      h('p',{class:'st-muted'},name+' stays signed in. The new roles apply in the Hub, the crew app and Knock within about a minute, and a removed role stops working on their next action.'));
   }else if(kind==='skills'){
     const retired=person.skills.filter(skill=>skill.retired);
     body.push(h('div',{class:'st-skill-grid'},S.data.catalog.skills.map(skill=>field(skill.label,h('select',{name:'skill_'+skill.id,onchange:event=>{touch();if(LEVELS.includes(event.target.value))d.levels[skill.id]=event.target.value;else delete d.levels[skill.id];}},

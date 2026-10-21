@@ -98,7 +98,7 @@ class StaffDirectoryBrowserTests(unittest.TestCase):
         if body['action'] == 'set_availability': updated['weeklyAvailability'] = body['weeklyAvailability']
         if body['action'] == 'set_gusto_id': updated['gustoEmployeeId'] = body['gustoEmployeeId'] or None; updated['gustoExcluded'] = body.get('gustoExcluded', updated.get('gustoExcluded', False))
         rows[index] = updated
-        send({'ok': True, 'authority': 'employee_hub', 'person': updated, **({'sessionsRevoked': True} if body['action'] == 'set_roles' else {})})
+        send({'ok': True, 'authority': 'employee_hub', 'person': updated, **({'sessionsKept': True} if body['action'] == 'set_roles' else {})})
 
     def open(self):
         self.page.goto(self.url + '/hub-staff')
@@ -168,7 +168,7 @@ class StaffDirectoryBrowserTests(unittest.TestCase):
         zoe.get_by_role('button', name='Edit roles for Synthetic Zoe Phone-Followup-With-A-Long-Name').click()
         zoe.locator('label.st-check', has_text='Crew lead').click()
         zoe.get_by_role('button', name='Save roles').click()
-        expect(page.locator('.st-notice.success')).to_contain_text('signed out so the new roles apply')
+        expect(page.locator('.st-notice.success')).to_contain_text('They stay signed in; the new roles apply within about a minute')
         self.assertEqual(self.posts[-1]['staffRoles'], ['crew_lead', 'crew', 'phone'])
         self.assertEqual(self.posts[-1]['expectedRevision'], 'rev-2', 'the second save uses the revision the first returned')
         expect(zoe.locator('.st-chip').first).to_have_text('Crew lead')
@@ -301,7 +301,7 @@ class StaffDirectoryShellTests(HubShell, unittest.TestCase):
         # Bumped deliberately (GUSTO-EXPORT): the directory gained the owner's Gusto employee ID editor; (AUTH-ROLES on
         # GUSTO-EXPORT) one new tag for the sign-out outcome and the Gusto editor together; (STAFF-ACCESS) the first-rate
         # date and the owner's Apply rate to open weeks.
-        self.assertEqual(assets, ['employee-staff.css?v=20261017profile', 'employee-staff.js?v=20261017profile'])
+        self.assertEqual(assets, ['employee-staff.css?v=20261021roles', 'employee-staff.js?v=20261021roles'])
         self.assertEqual(page.evaluate('document.querySelectorAll(".egc-staff").length'), 1)
         scroll = self.no_horizontal_scroll()
         self.assertLessEqual(scroll['width'], 375, scroll)

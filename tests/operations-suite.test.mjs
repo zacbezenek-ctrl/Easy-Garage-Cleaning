@@ -412,7 +412,7 @@ test('crew tools provide a job-aware employee home and one connected workflow',(
     // WT-OUTCOME: the crew nav wraps instead of scrolling 'My Hub' off a 375 px screen, so the stylesheet tag moved;
     // D2D (2026-10-19) moved both tags again for the Door-to-door link.
     assert.match(page,/crew-brand\.css\?v=20261019d2d/);
-    assert.match(page,/hub-auth\.js\?v=20261019d2d/);
+    assert.match(page,/hub-auth\.js\?v=20261021roles/);
   }
   const auth=read('crew/hub-auth.js');
   for(const marker of ['mountCrewNav','crew-utility','Crew home','Walkthrough','Door-to-door','canUseKnock','Pre-job','Closeout','My Hub'])assert.match(auth,new RegExp(marker));
@@ -884,7 +884,7 @@ test('open-shift scheduling fields persist on the canonical job record',()=>{
   // Today's jobs; (MOBILE-HUB after WT-OUTCOME) one combined tag; (TEAM-DIRECTORY, D10) the Team directory nav entry, the
   // profile form's two emergency contact fields and the onboarding form's shirt size and birthday; (D9b GHL schedule mirror)
   // calendar-mirror-skipped badges and the schedule mirror and optional jobs calendar rows on Integrations.
-  assert.match(employee,/employee-suite\.js\?v=20261019deposit2"/);
+  assert.match(employee,/employee-suite\.js\?v=20261021roles"/);
 });
 
 test('recurring visits request a server-side handoff clone instead of copying prior execution or payments',()=>{
