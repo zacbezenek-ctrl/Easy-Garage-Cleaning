@@ -11,6 +11,7 @@ import { billedChangeOrders, voidChangeOrder } from './change-orders.js';
 import { hubRecordEligibility } from './funnel-definitions.js';
 import { JOB_LABOR_COSTS, laborCostVisible, laborOnJob, laborRecordPatch, legacyJobLabor, legacyLaborMove, validLaborCents } from './job-labor-private.js';
 import { cashPayment, funnelTimeAccepted, moneyEventWrites, paidInFullState } from './payment-events.js';
+import { winterSaleDateProblem } from './winter-sale.js';
 
 /**
  * M3 server-authoritative money mutations for one job:
@@ -213,6 +214,9 @@ function priced(job, label) {
 function recordApproval({ job, input, actor, now, today }) {
   const { estimate, totals } = priced(job, 'record an approval');
   if (validDate(estimate.validUntil) && estimate.validUntil < today) throw fail('estimate_expired', 'This estimate has expired. Save it with a new expiry date before recording approval.', 409);
+  // EGC_WINTER_SALE: a sale price covers work done inside the sale's window (winter-sale.js), as at portal approval.
+  const saleDate = winterSaleDateProblem(job);
+  if (saleDate) throw fail('winter_sale_date', `${saleDate} Move the job into the sale window or revise the estimate without the sale before recording approval.`, 409);
   const approvedBy = text(input.approvedBy, 'The name of the person who approved', 120, { required: true, min: 2 });
   const next = { ...estimate, number: invoiceNumber(job.id, 'estimate', estimate.number), status: 'accepted', amount: totals.quoteCents / 100, acceptedAt: now, acceptedBy: approvedBy, acceptanceMethod: 'employee_recorded', termsVersion: estimate.termsVersion || job.termsVersion || '2026-09', updatedAt: now };
   return { patch: {

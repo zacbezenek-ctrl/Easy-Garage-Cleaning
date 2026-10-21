@@ -524,7 +524,7 @@ test('the gameplan page: crew-mode slot choices, the builder quote it signs and 
   assert.deepEqual([sent.quote.total, sent.quote.deposit, sent.quote.catalog_version, sent.quote.composite_pricing, sent.quote.line_items, sent.logistics.crew_id], [priced.totalCents / 100, Math.round(priced.totalCents / 4) / 100, priced.menuVersion, priced.compositePricing, builder.lineItems, 'crew_one']);
   assert.match(lineOf('function chooseSlot('), /S\.requestedCrewId=slot\.crewId\|\|''/);
   assert.match(lineOf('function updateField('), /if\(\['jobDate','startTime','endTime'\]\.includes\(key\)&&S\.requestedCrewId\)S\.requestedCrewId=''/, 'a time typed by hand drops the offered crew');
-  assert.match(html, /\/crew\/gameplan-handoff\.js\?v=20261019catalog/);
+  assert.match(html, /\/crew\/gameplan-handoff\.js\?v=20261021sale1/);
 });
 
 test('the employee-leak check names employees, never the tail of a random request or job id', () => {
