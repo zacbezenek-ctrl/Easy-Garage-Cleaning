@@ -16,8 +16,10 @@ export const ROOT = 'projects/egcw-1ec83/databases/(default)/documents';
 export const ORIGIN = 'https://easygaragecleaning.com';
 export const PASSWORD = 'Synthetic-Staff-Password-904';
 
+const isRevision = write => write.update?.name === `${ROOT}/employee_vault_revisions/current`;
+
 export function vaultFirestore(t) {
-  const documents = new Map(), requests = [], commits = [], hooks = { beforeCommit: null, commitStatus: 0, loseCommitReply: false };
+  const documents = new Map(), requests = [], commits = [], revisions = [], hooks = { beforeCommit: null, commitStatus: 0, loseCommitReply: false };
   let revision = 0;
   const version = () => `2026-09-22T12:00:00.${String(++revision).padStart(6, '0')}Z`;
   const matches = (current, condition) => !condition ? true : condition.exists === false ? !current : condition.exists === true ? Boolean(current) : !condition.updateTime || current?.updateTime === condition.updateTime;
@@ -53,7 +55,11 @@ export function vaultFirestore(t) {
         const existing = documents.get(keys[index]), fields = write.updateMask ? { ...(existing?.fields || {}), ...write.update.fields } : write.update.fields;
         documents.set(keys[index], { name: write.update.name, fields, updateTime });
       });
-      commits.push(body.writes);
+      // READ-BUDGET: the Hub's vault revision marker (employee-vault.js vaultSnapshot) rides along with vault writes; it is
+      // applied like any write but kept out of `commits` (and `writes()`) so record assertions see only the records.
+      const records = body.writes.filter(write => !isRevision(write));
+      revisions.push(...body.writes.filter(isRevision));
+      if (records.length) commits.push(records);
       if (hooks.loseCommitReply) { hooks.loseCommitReply = false; throw new TypeError('Synthetic lost commit reply'); }
       return Response.json({ writeResults: body.writes.map(() => ({ updateTime })), commitTime: updateTime });
     }
@@ -67,8 +73,8 @@ export function vaultFirestore(t) {
     if (method === 'GET' && key.split('/').length % 2 === 1) return Response.json({ documents: [...documents].filter(([name]) => name.startsWith(`${key}/`) && !name.slice(key.length + 1).includes('/')).map(([, doc]) => structuredClone(doc)) });
     return documents.has(key) ? Response.json(structuredClone(documents.get(key))) : Response.json({ error: { status: 'NOT_FOUND' } }, { status: 404 });
   });
-  const writes = () => requests.filter(request => request.method === 'PATCH' || request.url.pathname.endsWith(':commit'));
-  return { documents, requests, commits, hooks, writes, snapshot: () => JSON.stringify([...documents].sort(([a], [b]) => a.localeCompare(b))) };
+  const writes = () => requests.filter(request => request.method === 'PATCH' || request.url.pathname.endsWith(':commit') && !request.body.writes.every(isRevision));
+  return { documents, requests, commits, revisions, hooks, writes, snapshot: () => JSON.stringify([...documents].sort(([a], [b]) => a.localeCompare(b))) };
 }
 
 // Configured Hub users as HUB_AUTH_USERS_JSON declares them. Only ZacB, TylerG and

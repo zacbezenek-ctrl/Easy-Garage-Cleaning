@@ -327,15 +327,18 @@ test('writeOne keeps the sealed document shape, create-only and revision precond
 
   const target = await readOne(env, 'profiles', 'crew.one');
   assert.deepEqual(expectedDocument(target), { updateTime: target.updateTime });
+  // Each write is followed by its family's revision mark (vaultSnapshot); the record's own PATCH carries the precondition.
+  const lastPatch = () => store.requests.findLast(request => request.method === 'PATCH');
   await writeOne(env, 'profiles', 'crew.one', { ...target.data, phone: '9705550100' }, target, NOW);
-  assert.equal(store.requests.at(-1).url.searchParams.get('currentDocument.updateTime'), target.updateTime);
+  assert.equal(lastPatch().url.searchParams.get('currentDocument.updateTime'), target.updateTime);
+  assert.deepEqual(store.requests.at(-1).body.writes.map(write => write.updateMask.fieldPaths), [['profiles']]);
   await assert.rejects(writeOne(env, 'profiles', 'crew.one', { ...target.data, phone: 'stale' }, target, NOW), error => error.code === 'EMPLOYEE_HUB_WRITE_CONFLICT');
   assert.equal((await readOne(env, 'profiles', 'crew.one')).data.phone, '9705550100');
 
   const missing = await readOne(env, 'profiles', 'new.crew');
   assert.deepEqual(expectedDocument(missing), { exists: false });
   await writeOne(env, 'profiles', 'new.crew', { username: 'New.Crew' }, missing, NOW);
-  assert.equal(store.requests.at(-1).url.searchParams.get('currentDocument.exists'), 'false');
+  assert.equal(lastPatch().url.searchParams.get('currentDocument.exists'), 'false');
   await assert.rejects(writeOne(env, 'profiles', 'new.crew', { username: 'Replacement' }, missing, NOW), error => error.code === 'EMPLOYEE_HUB_WRITE_CONFLICT');
 
   const before = store.requests.length;

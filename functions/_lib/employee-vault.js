@@ -138,9 +138,17 @@ function runQuery(env, where, collectionId = 'jobs', limit) {
 
 // A malformed or partial query response is never treated as an empty vault.
 async function decodeRows(env, response, accepts, withRevision = false) {
+  return decodeRowList(env, await queryRows(response), accepts, withRevision);
+}
+
+async function queryRows(response) {
   if (!response.ok) throw new Error(`Employee Hub storage query failed (${response.status})`);
   const rows = await response.json().catch(() => { throw unreadableStorage(); });
   if (!Array.isArray(rows)) throw unreadableStorage();
+  return rows;
+}
+
+async function decodeRowList(env, rows, accepts, withRevision = false) {
   const decoded = [];
   for (const row of rows) {
     if (!isRecord(row) || row.error) throw unreadableStorage();
@@ -187,8 +195,15 @@ const legacyFamilyQuery = env => String(env?.EGC_EMPLOYEE_VAULT_QUERY ?? '').tri
 // means the filter was not honored, so the read fails closed. If Firestore
 // reports that the query needs an index, the read falls back to the whole-vault
 // query; every other failed or malformed response still fails closed.
-export async function readCollection(env, collection, { fallback } = {}) {
+// With `snapshot` (a vaultSnapshot()), a family whose revision is unchanged since this isolate last read it, within
+// VAULT_SNAPSHOT_MAX_AGE_MS, is answered from the sealed documents that read returned (see READ-BUDGET below).
+export async function readCollection(env, collection, { fallback, snapshot } = {}) {
   if (!EMPLOYEE_HUB_COLLECTIONS.has(collection)) throw unsupportedCollection();
+  if (snapshot && !legacyFamilyQuery(env)) {
+    const rows = await snapshot.family(collection);
+    if (rows === INDEX_REFUSED) return (await (fallback || (() => readAll(env)))()).filter(row => row.collection === collection).map(row => row.data);
+    if (rows) return (await decodeRowList(env, rows, type => type === collection)).map(row => row.data);
+  }
   return (await familyRows(env, collection, false, fallback)).map(row => row.data);
 }
 
@@ -201,8 +216,110 @@ export async function readCollectionRecords(env, collection) {
   return rows.map(({ documentId, updateTime, data }) => ({ documentId, updateTime, data }));
 }
 
+const familyWhere = collection => ({ compositeFilter: { op: 'AND', filters: [equalTo('recordType', EMPLOYEE_HUB_RECORD_TYPE), equalTo('employeeHubType', collection)] } });
+
+/* READ-BUDGET: the Hub polls /api/employee-hub every minute (chat every 15 seconds) and each poll read every sealed
+   record of the families it shows: every timecard, message and read marker ever saved, so the bill grew with history.
+   Every vault write now also sets its family's field in one revision document (employee_vault_revisions/current) to a
+   fresh random value: in the same atomic commit for commitVaultDocuments and timecard commits, right after the PATCH
+   for writeOne. A poll reads that one document first; a family whose value is unchanged since this isolate (or this
+   data center's cache) last read it, within fifteen minutes, is answered from the sealed documents that read returned and
+   decrypted again, so a reused answer is exactly the stored one and fails closed the same way. Only ciphertext is kept,
+   never decrypted records. Until the revision document exists (or when it cannot be read) the Hub reads as before; a
+   family never marked since this shipped, or a missing index, always reads Firestore. A write made outside these paths (the console, an older deployment) shows within those
+   fifteen minutes; that bound, not the poll, is what refreshes an idle vault, so it is kept well above the 60-second
+   poll (docs/READ-BUDGET.md). */
+export const VAULT_SNAPSHOT_MAX_AGE_MS = 15 * 60000;
+export const VAULT_REVISIONS = 'employee_vault_revisions';
+const REVISION_DOCUMENT = `${VAULT_REVISIONS}/current`;
+const REVISION_NAME = `projects/${PROJECT_ID}/databases/(default)/documents/${REVISION_DOCUMENT}`;
+const SNAPSHOT_CACHE = 'egc-employee-vault-snapshots-v1';
+const snapshots = new Map(), INDEX_REFUSED = Symbol('index refused');
+
+/** Drops this isolate's copies, as a new isolate starts (tests; the data center cache is untouched). */
+export function forgetVaultSnapshots() { snapshots.clear(); }
+
+/** The commit write that marks these families changed (no precondition: it never conflicts with the records). */
+export function vaultRevisionWrite(families) {
+  const names = [...new Set(families)].filter(name => EMPLOYEE_HUB_COLLECTIONS.has(name));
+  if (!names.length) return null;
+  return { update: { name: REVISION_NAME, fields: Object.fromEntries(names.map(name => [name, stringField(crypto.randomUUID())])) }, updateMask: { fieldPaths: names } };
+}
+
+/** Marks families changed after a write that could not carry the revision in its own commit. Never throws: a failed
+ * mark forgets this isolate's copy, and other copies expire within VAULT_SNAPSHOT_MAX_AGE_MS. */
+export async function markVaultFamiliesChanged(env, families, fetcher = firestoreFetch) {
+  const write = vaultRevisionWrite(families);
+  if (!write) return;
+  try {
+    const response = await fetcher(env, `${DOCUMENTS}:commit`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ writes: [write] }) });
+    if (response?.ok) return;
+  } catch { /* forgotten below */ }
+  for (const name of write.updateMask.fieldPaths) snapshots.delete(name);
+}
+
+// An unknown outcome may have written: forget this isolate's copies (others expire within the snapshot age).
+const forget = revision => { for (const name of revision?.updateMask.fieldPaths || []) snapshots.delete(name); };
+const families = writes => writes.filter(write => write.collection === 'jobs' && write.patch.recordType === EMPLOYEE_HUB_RECORD_TYPE).map(write => write.patch.employeeHubType);
+
+async function sharedCache() {
+  try { return typeof caches === 'undefined' || typeof caches.open !== 'function' ? null : await caches.open(SNAPSHOT_CACHE); } catch { return null; }
+}
+const cacheKey = (collection, revision) => `https://employee-vault.egc.invalid/${collection}/${encodeURIComponent(revision)}`;
+
+/** One read of the revision document (null when it is missing or unreadable), then family(name) answers the cached
+ * sealed rows for an unchanged family, or reads, keeps and answers them; null when that family must use the ordinary
+ * read (never marked since this shipped, missing index). */
+export async function vaultSnapshot(env, { now = () => Date.now() } = {}) {
+  let revisions = null;
+  try {
+    const response = await firestoreFetch(env, `${DOCUMENTS}/${REVISION_DOCUMENT}`);
+    if (response.ok) {
+      const document = await response.json();
+      if (isRecord(document?.fields)) revisions = { created: String(document.createTime || ''), fields: document.fields };
+    } else await response.body?.cancel?.().catch(() => {});
+  } catch { revisions = null; }
+  // No revision document yet (nothing written since this shipped) or an unreadable one: the caller reads as before.
+  if (!revisions) return null;
+  const revisionOf = collection => {
+    const value = revisions?.fields[collection]?.stringValue;
+    return typeof value === 'string' && value ? `${revisions.created}|${value}` : '';
+  };
+  return {
+    async family(collection) {
+      const revision = revisionOf(collection);
+      if (!revision) return null;
+      const at = now(), fresh = entry => entry && entry.revision === revision && at >= entry.at && at - entry.at < VAULT_SNAPSHOT_MAX_AGE_MS;
+      const local = snapshots.get(collection);
+      if (fresh(local)) return local.rows;
+      const cache = await sharedCache();
+      if (cache) {
+        try {
+          const hit = await cache.match(cacheKey(collection, revision));
+          const entry = hit ? await hit.json() : null;
+          if (fresh(entry) && Array.isArray(entry.rows)) { snapshots.set(collection, entry); return entry.rows; }
+        } catch { /* read Firestore */ }
+      }
+      const response = await runQuery(env, familyWhere(collection));
+      if (await indexRequired(response)) {
+        console.warn(`Employee vault: the ${collection} family query needs a Firestore index (FAILED_PRECONDITION); using the whole-vault read.`);
+        return INDEX_REFUSED;
+      }
+      const rows = await queryRows(response);
+      // Only rows that decode are kept: a malformed answer fails here exactly as the ordinary read does.
+      await decodeRowList(env, rows, type => type === collection);
+      const entry = { revision, at, rows };
+      snapshots.set(collection, entry);
+      if (cache) {
+        try { await cache.put(cacheKey(collection, revision), new Response(JSON.stringify(entry), { headers: { 'Content-Type': 'application/json', 'Cache-Control': `max-age=${VAULT_SNAPSHOT_MAX_AGE_MS / 1000}` } })); } catch { /* local copy only */ }
+      }
+      return rows;
+    },
+  };
+}
+
 async function familyRows(env, collection, withRevision = false, fallback = () => readAll(env, withRevision)) {
-  const where = { compositeFilter: { op: 'AND', filters: [equalTo('recordType', EMPLOYEE_HUB_RECORD_TYPE), equalTo('employeeHubType', collection)] } };
+  const where = familyWhere(collection);
   if (collection === 'timeLocks') return decodeRows(env, await runQuery(env, where, 'employee_time_locks'), type => type === collection, withRevision);
   if (!EMPLOYEE_HUB_COLLECTIONS.has(collection)) throw unsupportedCollection();
   if (legacyFamilyQuery(env)) return (await fallback()).filter(row => row.collection === collection);
@@ -237,8 +354,10 @@ export async function writeOne(env, collection, id, data, expected = null, updat
       conflict.code = 'EMPLOYEE_HUB_WRITE_CONFLICT';
       throw conflict;
     }
+    await markVaultFamiliesChanged(env, [collection]);
     throw new Error(`Employee Hub storage write failed (${response.status})`);
   }
+  await markVaultFamiliesChanged(env, [collection]);
   return { ...data, id, updatedAt: data.updatedAt || updatedAt };
 }
 
@@ -263,15 +382,17 @@ export async function sealedFields(env, collection, documentId, data, updatedAt)
 // create with 409 ALREADY_EXISTS; both are conflicts and nothing was written. A lost
 // or unrecognized reply is an unknown outcome: callers re-read their receipt.
 export async function commitVaultDocuments(env, writes, fetcher = firestoreFetch) {
-  const unknown = () => Object.assign(new Error('The employee record save could not be verified. Retry the same request.'), { code: 'EMPLOYEE_HUB_OUTCOME_UNKNOWN', status: 503 });
+  const unknown = () => forget(revision) || Object.assign(new Error('The employee record save could not be verified. Retry the same request.'), { code: 'EMPLOYEE_HUB_OUTCOME_UNKNOWN', status: 503 });
   if (!Array.isArray(writes) || !writes.length || writes.some(write => !isRecord(write?.patch) || typeof write.collection !== 'string' || typeof write.id !== 'string' || !write.id)) throw new TypeError('Invalid employee vault commit');
   let response;
+  // READ-BUDGET: the families written are marked changed in the same commit (vaultSnapshot).
+  const revision = vaultRevisionWrite(families(writes));
   try {
-    response = await fetcher(env, `${DOCUMENTS}:commit`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ writes: writes.map(write => ({
+    response = await fetcher(env, `${DOCUMENTS}:commit`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ writes: [...writes.map(write => ({
       update: { name: `projects/${PROJECT_ID}/databases/(default)/documents/${write.collection}/${write.id}`, fields: encodeFirestoreFields(write.patch) },
       updateMask: { fieldPaths: Object.keys(write.patch) },
       currentDocument: write.revision ? { updateTime: write.revision } : { exists: false },
-    })) }) });
+    })), ...(revision ? [revision] : [])] }) });
   } catch { throw unknown(); }
   if (!response.ok) {
     const failure = await response.json().catch(() => ({}));
@@ -281,8 +402,8 @@ export async function commitVaultDocuments(env, writes, fetcher = firestoreFetch
     throw unknown();
   }
   const result = await response.json().catch(() => null);
-  if (!Array.isArray(result?.writeResults) || result.writeResults.length !== writes.length || result.writeResults.some(item => typeof item?.updateTime !== 'string' || !item.updateTime)) throw unknown();
-  return result;
+  if (!Array.isArray(result?.writeResults) || result.writeResults.length !== writes.length + (revision ? 1 : 0) || result.writeResults.some(item => typeof item?.updateTime !== 'string' || !item.updateTime)) throw unknown();
+  return revision ? { ...result, writeResults: result.writeResults.slice(0, writes.length) } : result;
 }
 
 // Keyed digest for server-only receipts: a plain SHA-256 of a small payload (for

@@ -44,12 +44,27 @@ export function projectCrewAvailability(row, sourceCollection = 'jobs') {
     sourceCollection,canCancel:sourceCollection === 'jobs' && active(row) && !requestLinked(row),timeNeedsReview:!interval};
 }
 
+/* READ-BUDGET: the Time off screen refreshes every minute and each refresh scanned the whole jobs collection (every job,
+   sealed Hub record and lock ever saved) for a few availability rows. nativeAvailability is exactly "type is
+   'availability' or recordType is 'crew_availability'", so two single-field equality queries (automatic indexes)
+   return the same rows; one row in both answers is kept once (its newer revision), in document-id order like the scan.
+   A store without jobsWhere (older fakes) scans as before. */
+async function availabilityJobs(store) {
+  if (typeof store.jobsWhere !== 'function') return store.jobs();
+  const found = new Map();
+  for (const row of (await Promise.all([store.jobsWhere('type','availability'),store.jobsWhere('recordType','crew_availability')])).flat()) {
+    const seen = found.get(row.id);
+    if (!seen || String(row.revision || '') > String(seen.revision || '')) found.set(row.id,row);
+  }
+  return [...found.values()].sort((a,b)=>a.id < b.id ? -1 : a.id > b.id ? 1 : 0);
+}
+
 export async function crewAvailabilityOverview(store, session, query = {}, now = new Date()) {
   requireSession(session);
   const startDate = query.startDate || denverToday(now), endDate = query.endDate || addDays(startDate,93);
   if (!validDate(startDate) || !validDate(endDate) || startDate >= endDate || Date.parse(endDate)-Date.parse(startDate)>93*86400000) throw fail('invalid_range','Choose a valid availability range of up to 93 days. The end date is exclusive.');
   const roster = await store.roster(), employee = identity(session,roster);
-  const [jobs,resources] = await Promise.all([store.jobs(),store.resources()]);
+  const [jobs,resources] = await Promise.all([availabilityJobs(store),store.resources()]);
   const all = [...jobs.filter(nativeAvailability).map(row=>({row,source:'jobs'})),...resources.filter(resourceAvailability).map(row=>({row,source:'dispatchResources'}))].filter(({row})=>owner(row,roster) === employee);
   const exceptions = all.filter(({row})=>!validDate(row.date) || !validDate(row.endDate || row.date)).map(({row,source})=>({id:row.id,sourceCollection:source,code:'invalid_availability_date',message:'This saved availability has invalid dates and needs manager review.'}));
   const rows = all.filter(({row})=>validDate(row.date) && validDate(row.endDate || row.date) && row.date < endDate && (row.endDate || row.date) >= startDate)
