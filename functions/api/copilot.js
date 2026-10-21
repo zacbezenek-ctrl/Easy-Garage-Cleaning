@@ -175,18 +175,19 @@ STEP 3 — Take payment:
 
 STEP 4 — Verbal handoff:
 "Thanks so much, [Name]. You'll get a text and an email from us in the next hour with your
-receipt, a quick care guide for the cleared space, and a link to leave a Google review if we
-earned it. If anything comes up — text me directly at this number."
+receipt, a quick care guide for the cleared space, and a link to leave an honest Google review.
+If anything comes up — text me directly at this number."
 
 STEP 5 — Within 2 hours:
 - Text 1: Thank-you + receipt confirmation
-- Text 2 (2 hrs later): Google review request
+- Text 2 (2 hrs later): Google review request. Every customer gets it, whatever they said at the
+  final walkthrough: never ask only the happy ones, and never offer anything for a review.
 - Email: receipt + before/after photos + review link
 - CRM: job marked complete, photos uploaded, payment logged
 
 Review request text:
 "Hey [Name] — Alex with Easy Garage Cleaning. Hope the cleared space is treating you well.
-If we did right by you today, would you mind dropping a quick Google review? It takes 60 seconds
+Would you mind leaving a quick, honest Google review? It takes 60 seconds
 and helps a small business more than you'd believe. Link: [GOOGLE_REVIEW_LINK].
 Either way — thanks for letting us help today."
 
