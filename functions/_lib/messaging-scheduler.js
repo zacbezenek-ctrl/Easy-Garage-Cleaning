@@ -172,12 +172,16 @@ export function dueMessages(jobs, { now, settings, kinds = new Set(SCHEDULED_KIN
   return { today, due: due.sort(order), skipped };
 }
 
-/** The legacy browser rule for retrying the automatic portal invitation. */
+/** The legacy browser rule for retrying the automatic portal invitation. A
+ * closed job (cancelled, no-show, finished) is never retried, and one held for
+ * quiet hours waits for its notBefore time. */
 export function portalRetries(jobs, { now }) {
   const nowMs = new Date(now).getTime();
   return (Array.isArray(jobs) ? jobs : []).filter(job => {
     if (!safeId(job?.id) || job.recordType || job.type !== 'job' || !job.customerPortalInvitationRequestedAt || !accepted(job.estimate?.status) || job.notify === false) return false;
+    if ([job.status, job.pipelineStatus].some(value => TERMINAL.has(String(value || '').toLowerCase()))) return false;
     const state = job.customerPortalInvitation?.jobId === job.id ? job.customerPortalInvitation : null;
+    if (state?.status === 'deferred' && state.notBefore) return nowMs >= (Date.parse(state.notBefore) || Infinity) && Number(state.attempts || 0) < PORTAL_MAX_ATTEMPTS;
     return !PORTAL_HELD.has(state?.status) && Number(state?.attempts || 0) < PORTAL_MAX_ATTEMPTS && nowMs - (Date.parse(state?.attemptedAt || '') || 0) > PORTAL_RETRY_AFTER_MS;
   }).map(job => ({ kind: 'portal_invitation', jobId: job.id, anchor: '', step: 0 })).sort(order);
 }
@@ -326,7 +330,7 @@ export async function runDueMessages(deps, { now, dryRun = false, requestId } = 
         else { const preview = await service.preview(CRON_ACTOR, input); outcome = { status: preview.status === 'ready' ? 'would_send' : safeCode(preview.status) || 'unknown', reason: safeCode(preview.reason) }; }
       } else if (!approved) {
         charge(PORTAL_COST);
-        const state = await portalInvite(item.jobId, at);
+        const state = await portalInvite(item.jobId, at, settings);
         outcome = { status: safeCode(state?.status) || 'unknown', reason: safeCode(state?.reason), sent: SENT.has(state?.status) };
       } else {
         const result = await service.send(CRON_ACTOR, { ...input, ...(requestId ? { requestId } : {}) });

@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
-import { Script } from 'node:vm';
+import vm, { Script } from 'node:vm';
 import { sendAcceptedQuotePortal } from '../functions/_lib/portal-invitation.js';
 import { verifyCustomerPortalAccessToken } from '../functions/_lib/customer-portal.js';
 import { createHubSessionCookie } from '../functions/_lib/hub-session.js';
@@ -10,7 +10,8 @@ import { decodeFirestoreFields, encodeFirestoreFields } from '../functions/_lib/
 const env = { HUB_SESSION_SECRET: 'test-portal-invitation', FIREBASE_API_KEY: 'firebase-test-invitation', HIGHLEVEL_API_KEY: 'ghl-test', HIGHLEVEL_LOCATION_ID: 'location-1', HUB_AUTH_USERS_JSON: JSON.stringify({ ZacB: { passwordHash: 'test', displayName: 'Zac', role: 'owner' }, Crew: { passwordHash: 'test', displayName: 'Crew', role: 'crew' } }) };
 const approved = { type: 'job', customer: 'Test Customer', phone: '(970) 555-0123', email: 'test@example.com', estimate: { status: 'accepted', amount: 1000 }, highlevelContactId: 'contact-1', customerPortalInvitationRequestedAt: '2026-09-06T12:00:00Z' };
 
-async function fixture(run, { job = {}, contact = {}, sendStatus = 200, sendThrows = false, sendBody, failMetadata = false, failTags = false, onContact, onClaim } = {}) {
+// settings: the owner's messaging_settings/automation record (absent: the defaults); settingsDown: that read fails.
+async function fixture(run, { job = {}, contact = {}, sendStatus = 200, sendThrows = false, sendBody, failMetadata = false, failTags = false, onContact, onClaim, settings, settingsDown = false } = {}) {
   let stored = { ...structuredClone(approved), ...job }, version = 0, ledger = null, ledgerVersion = 0, jobReadsDown = false;
   const messages = [], upserts = [], allCalls = [];
   const originalFetch = globalThis.fetch;
@@ -31,6 +32,10 @@ async function fixture(run, { job = {}, contact = {}, sendStatus = 200, sendThro
         if (next.status === 'sending') onClaim?.({ editJob, jobReads });
       }
       return ledger ? new Response(JSON.stringify({ fields: encodeFirestoreFields(ledger), updateTime: time() })) : new Response('{}', { status: 404 });
+    }
+    if (url.pathname.endsWith('/documents/messaging_settings/automation')) {
+      if (settingsDown) return new Response('{}', { status: 503 });
+      return settings ? new Response(JSON.stringify({ fields: encodeFirestoreFields(settings), updateTime: '2026-09-01T00:00:00.000000Z' })) : new Response('{}', { status: 404 });
     }
     if (url.hostname === 'firestore.googleapis.com') {
       if (jobReadsDown && options.method !== 'PATCH') return new Response('{}', { status: 503 });
@@ -193,6 +198,8 @@ test('a manual recheck respects current notifications after a prior suppression'
 // B2B-SAFE: a company project is shared through the business hub's member
 // roles, so an owner-level homeowner link is never sent for one.
 const NOW = '2026-09-22T12:00:00.000Z', clock = () => new Date(NOW);
+// NOW is 06:00 in Denver, inside quiet hours; route tests that expect an automatic send run at noon.
+const DAY = '2026-09-22T18:00:00.000Z';
 const BUSINESS = { businessAccountId: 'a1'.repeat(16), businessPropertyId: 'b2'.repeat(16) };
 const highLevelCalls = calls => calls.filter(call => new URL(call.url).hostname === 'services.leadconnectorhq.com');
 
@@ -320,7 +327,7 @@ test('Hub retries and lifecycle hooks report the business suppression without me
 });
 
 test('retry endpoint requires business access and ignores submitted recipient and URL overrides', async t => {
-  t.mock.timers.enable({ apis: ['Date'], now: Date.parse(NOW) });
+  t.mock.timers.enable({ apis: ['Date'], now: Date.parse(DAY) });
   const route = await import('../functions/api/customer-portal-invitation.js');
   const staff = (await createHubSessionCookie(env, 'ZacB')).split(';')[0], crew = (await createHubSessionCookie(env, 'Crew')).split(';')[0];
   await fixture(async ({ messages }) => {
@@ -333,7 +340,7 @@ test('retry endpoint requires business access and ignores submitted recipient an
 });
 
 test('both staff approval and signed walkthrough handoffs automatically request an invitation', async t => {
-  t.mock.timers.enable({ apis: ['Date'], now: Date.parse(NOW) });
+  t.mock.timers.enable({ apis: ['Date'], now: Date.parse(DAY) });
   const route = await import('../functions/api/highlevel.js');
   const cookie = (await createHubSessionCookie(env, 'ZacB')).split(';')[0];
   for (const payload of [{ tool: 'lifecycle', event: 'estimate-approved' }, { tool: 'game_plan' }]) await fixture(async ({ messages }) => {
@@ -355,7 +362,7 @@ test('crew cannot trigger quote approval delivery through the lifecycle endpoint
 });
 
 test('downstream HighLevel workflow failure preserves the invitation and retries do not resend', async t => {
-  t.mock.timers.enable({ apis: ['Date'], now: Date.parse(NOW) });
+  t.mock.timers.enable({ apis: ['Date'], now: Date.parse(DAY) });
   const route = await import('../functions/api/highlevel.js');
   const cookie = (await createHubSessionCookie(env, 'ZacB')).split(';')[0];
   await fixture(async ({ messages }) => {
@@ -366,6 +373,187 @@ test('downstream HighLevel workflow failure preserves the invitation and retries
     }
     assert.equal(messages.length, 1);
   }, { failTags: true });
+});
+
+// Automatic sends follow the project's existing quiet-hours rule (message-policies.js QUIET_HOURS, 08:00-20:00 Denver)
+// and the owner's messaging pause, like the scheduler. A held invitation is recorded as 'deferred' (not final, no
+// attempt spent) and the next automatic retry after notBefore sends it. Only a manager's own Retry click sends anyway.
+const LATE = '2026-10-21T05:30:00.000Z'; // 11:30 PM Monday Oct 20 in Denver (MDT)
+const MORNING = '2026-10-21T14:01:00.000Z'; // 8:01 AM Tuesday Oct 21 in Denver
+const EIGHT_AM = '2026-10-21T14:00:00.000Z';
+const hubRequest = (cookie, body, path = 'customer-portal-invitation') => new Request(`https://easygaragecleaning.com/api/${path}`, { method: 'POST', headers: { Cookie: cookie, Origin: 'https://easygaragecleaning.com' }, body: JSON.stringify(body) });
+const ledgerWrites = calls => calls.filter(call => call.options.method === 'PATCH' && call.url.includes('/portal_invitations/')).length;
+const automaticCallers = {
+  'the Hub page-load retry': (retry, highlevel, cookie) => retry.onRequestPost({ request: hubRequest(cookie, { job_id: 'job-1' }), env }),
+  'a recorded approval (estimate-approved)': (retry, highlevel, cookie) => highlevel.onRequestPost({ request: hubRequest(cookie, { tool: 'lifecycle', event: 'estimate-approved', job_id: 'job-1', client: { highlevel_contact_id: 'contact-1' } }, 'highlevel'), env }),
+  'a walkthrough handoff sync (game_plan)': (retry, highlevel, cookie) => highlevel.onRequestPost({ request: hubRequest(cookie, { tool: 'game_plan', job_id: 'job-1', client: { highlevel_contact_id: 'contact-1' } }, 'highlevel'), env }),
+};
+
+for (const [name, call] of Object.entries(automaticCallers)) {
+  test(`${name} at 11:30 PM Denver records a deferred invitation and texts nobody until 8 AM`, async t => {
+    t.mock.timers.enable({ apis: ['Date'], now: Date.parse(LATE) });
+    const retry = await import('../functions/api/customer-portal-invitation.js'), highlevel = await import('../functions/api/highlevel.js');
+    const cookie = (await createHubSessionCookie(env, 'ZacB')).split(';')[0];
+    await fixture(async ({ messages, upserts, ledger, stored, allCalls }) => {
+      const response = await call(retry, highlevel, cookie);
+      assert.equal(response.status, 200);
+      const { portalInvitation } = await response.json();
+      const deferred = { jobId: 'job-1', requestedAt: LATE, attempts: 0, status: 'deferred', reason: 'quiet_hours', notBefore: EIGHT_AM, deferredAt: LATE };
+      assert.deepEqual(portalInvitation, deferred);
+      assert.deepEqual(ledger(), deferred, 'the server-only ledger holds a non-final deferral');
+      assert.deepEqual(stored().customerPortalInvitation, deferred, 'the Hub display copy says it waits');
+      assert.deepEqual([messages.length, upserts.length], [0, 0], 'no text, email or contact write overnight');
+      // A second automatic check overnight (another page load) changes nothing and spends no attempt.
+      const writes = ledgerWrites(allCalls);
+      t.mock.timers.setTime(Date.parse('2026-10-21T07:45:00.000Z'));
+      assert.deepEqual((await (await retry.onRequestPost({ request: hubRequest(cookie, { job_id: 'job-1' }), env })).json()).portalInvitation, deferred);
+      assert.equal(ledgerWrites(allCalls), writes);
+      assert.equal(messages.length, 0);
+      // 8:01 AM: the next automatic retry sends exactly once.
+      t.mock.timers.setTime(Date.parse(MORNING));
+      const sent = (await (await retry.onRequestPost({ request: hubRequest(cookie, { job_id: 'job-1' }), env })).json()).portalInvitation;
+      assert.deepEqual([sent.status, sent.attempts, sent.requestedAt, sent.attemptedAt, sent.reason, sent.notBefore], ['submitted', 1, LATE, MORNING, undefined, undefined]);
+      assert.equal(messages.length, 1);
+      assert.equal((await (await retry.onRequestPost({ request: hubRequest(cookie, { job_id: 'job-1' }), env })).json()).portalInvitation.status, 'submitted');
+      assert.equal(messages.length, 1);
+    });
+  });
+}
+
+test('quiet hours end at 8:00 AM and begin at 8:00 PM Denver time', async t => {
+  const retry = await import('../functions/api/customer-portal-invitation.js');
+  t.mock.timers.enable({ apis: ['Date'], now: Date.parse('2026-10-21T13:59:00.000Z') });
+  for (const [at, expected] of [['2026-10-21T13:59:00.000Z', 'deferred'], ['2026-10-21T14:00:00.000Z', 'submitted'], ['2026-10-22T01:59:00.000Z', 'submitted'], ['2026-10-22T02:00:00.000Z', 'deferred']]) {
+    t.mock.timers.setTime(Date.parse(at));
+    const cookie = (await createHubSessionCookie(env, 'ZacB')).split(';')[0];
+    await fixture(async ({ messages }) => {
+      const { portalInvitation } = await (await retry.onRequestPost({ request: hubRequest(cookie, { job_id: 'job-1' }), env })).json();
+      assert.equal(portalInvitation.status, expected, at);
+      assert.equal(messages.length, expected === 'submitted' ? 1 : 0, at);
+      if (expected === 'deferred') assert.equal(portalInvitation.notBefore, at < '2026-10-21T14:00' ? EIGHT_AM : '2026-10-22T14:00:00.000Z', at);
+    });
+  }
+});
+
+test('a manager\'s own Retry click (manual) sends during quiet hours; the page-load retry waits', async t => {
+  t.mock.timers.enable({ apis: ['Date'], now: Date.parse(LATE) });
+  const retry = await import('../functions/api/customer-portal-invitation.js');
+  const cookie = (await createHubSessionCookie(env, 'ZacB')).split(';')[0];
+  await fixture(async ({ messages, ledger }) => {
+    assert.equal((await (await retry.onRequestPost({ request: hubRequest(cookie, { job_id: 'job-1', manual: 'true' }), env })).json()).portalInvitation.status, 'deferred', 'only a JSON true counts as a click');
+    const sent = (await (await retry.onRequestPost({ request: hubRequest(cookie, { job_id: 'job-1', manual: true }), env })).json()).portalInvitation;
+    assert.deepEqual([sent.status, sent.attempts, ledger().status], ['submitted', 1, 'submitted']);
+    assert.equal(messages.length, 1);
+  });
+});
+
+test('the owner\'s messaging pause holds every automatic invitation; a manual retry still sends; unpausing releases it', async t => {
+  t.mock.timers.enable({ apis: ['Date'], now: Date.parse(DAY) });
+  const retry = await import('../functions/api/customer-portal-invitation.js'), highlevel = await import('../functions/api/highlevel.js');
+  const cookie = (await createHubSessionCookie(env, 'ZacB')).split(';')[0];
+  for (const [name, call] of Object.entries(automaticCallers)) await fixture(async ({ messages, ledger }) => {
+    const { portalInvitation } = await (await call(retry, highlevel, cookie)).json();
+    assert.deepEqual(portalInvitation, { jobId: 'job-1', requestedAt: DAY, attempts: 0, status: 'deferred', reason: 'messaging_paused', deferredAt: DAY }, name);
+    assert.deepEqual([ledger().status, messages.length], ['deferred', 0], name);
+  }, { settings: { paused: true } });
+  await fixture(async ({ messages }) => {
+    const sent = (await (await retry.onRequestPost({ request: hubRequest(cookie, { job_id: 'job-1', manual: true }), env })).json()).portalInvitation;
+    assert.deepEqual([sent.status, messages.length], ['submitted', 1], 'a manager\'s click is not an automatic message');
+  }, { settings: { paused: true } });
+  // The scheduler passes the settings it already read: a paused record stops the send without another read.
+  await fixture(async ({ messages, allCalls }) => {
+    const state = await sendAcceptedQuotePortal(env, 'job-1', { requireRequested: true, automatic: true, settings: { paused: true }, now: () => new Date(DAY) });
+    assert.deepEqual([state.status, state.reason, messages.length], ['deferred', 'messaging_paused', 0]);
+    assert.equal(allCalls.some(call => call.url.includes('/messaging_settings/')), false);
+    assert.equal((await sendAcceptedQuotePortal(env, 'job-1', { requireRequested: true, automatic: true, settings: { paused: false }, now: () => new Date(DAY) })).status, 'submitted', 'unpaused: the next run sends');
+    assert.equal(messages.length, 1);
+  });
+});
+
+test('the scheduler\'s portal retry is automatic: it waits for quiet hours and honours the settings the tick read', async () => {
+  const { cronPortalInvite } = await import('../functions/api/messaging-cron.js');
+  await fixture(async ({ messages, allCalls }) => {
+    const late = await cronPortalInvite(env, () => new Date(LATE))('job-1', new Date(LATE), { paused: false });
+    assert.deepEqual([late.status, late.reason, late.notBefore, messages.length], ['deferred', 'quiet_hours', EIGHT_AM, 0]);
+    const paused = await cronPortalInvite(env, () => new Date(MORNING))('job-1', new Date(MORNING), { paused: true });
+    assert.deepEqual([paused.status, paused.reason, messages.length], ['deferred', 'messaging_paused', 0]);
+    assert.equal(allCalls.some(call => call.url.includes('/messaging_settings/')), false, 'the tick\'s settings are reused');
+    const sent = await cronPortalInvite(env, () => new Date(MORNING))('job-1', new Date(MORNING), { paused: false });
+    assert.deepEqual([sent.status, sent.attempts, sent.attemptedAt, messages.length], ['submitted', 1, MORNING, 1]);
+  });
+  await fixture(async ({ messages }) => {
+    assert.equal((await cronPortalInvite(env, () => new Date(DAY))('job-1', new Date(DAY))).status, 'not_requested', 'only a requested invitation is retried');
+    assert.equal(messages.length, 0);
+  }, { job: { customerPortalInvitationRequestedAt: '' } });
+});
+
+test('unreadable messaging settings hold automatic invitations (fail closed)', async t => {
+  t.mock.timers.enable({ apis: ['Date'], now: Date.parse(DAY) });
+  const retry = await import('../functions/api/customer-portal-invitation.js');
+  const cookie = (await createHubSessionCookie(env, 'ZacB')).split(';')[0];
+  await fixture(async ({ messages, ledger }) => {
+    const { portalInvitation } = await (await retry.onRequestPost({ request: hubRequest(cookie, { job_id: 'job-1' }), env })).json();
+    assert.deepEqual([portalInvitation.status, portalInvitation.reason, ledger().status, messages.length], ['deferred', 'messaging_settings_invalid', 'deferred', 0]);
+  }, { settings: { paused: 'yes' } });
+  await fixture(async ({ messages, ledger }) => {
+    const { portalInvitation } = await (await retry.onRequestPost({ request: hubRequest(cookie, { job_id: 'job-1' }), env })).json();
+    assert.deepEqual([portalInvitation, ledger(), messages.length], [{ status: 'storage_unavailable' }, null, 0], 'an unreachable settings record sends nothing and records nothing');
+  }, { settingsDown: true });
+});
+
+// message-policies.js closedJob: the stages the project treats as closed. Before, only 'cancelled' and 'superseded' stopped it.
+test('a closed job (no-show, canceled, completed, invoiced, paid, closed) is never told its quote is approved', async () => {
+  for (const stage of ['no_show', 'noshow', 'no-show', 'canceled', 'cancelled', 'completed', 'invoiced', 'paid', 'review_requested', 'closed', 'superseded', 'COMPLETED']) {
+    for (const job of [{ status: stage }, { status: 'scheduled', pipelineStatus: stage }]) {
+      for (const options of [{ requireRequested: true, automatic: true, now: () => new Date(DAY) }, { now: () => new Date(DAY) }]) await fixture(async ({ messages, upserts, ledger }) => {
+        assert.deepEqual(await sendAcceptedQuotePortal(env, 'job-1', options), { status: 'not_approved', reason: 'job_closed' }, JSON.stringify(job));
+        assert.deepEqual([messages.length, upserts.length, ledger()], [0, 0, null]);
+      }, { job });
+    }
+  }
+  // A job closed while HighLevel was being checked is not sent either.
+  await fixture(async ({ messages }) => {
+    assert.notEqual((await sendAcceptedQuotePortal(env, 'job-1', { now: () => new Date(DAY) })).status, 'submitted');
+    assert.equal(messages.length, 0);
+  }, { onContact: editJob => editJob({ status: 'no_show', pipelineStatus: 'no_show' }) });
+  // An open job still sends.
+  await fixture(async ({ messages }) => {
+    assert.equal((await sendAcceptedQuotePortal(env, 'job-1', { requireRequested: true, automatic: true, now: () => new Date(DAY) })).status, 'submitted');
+    assert.equal(messages.length, 1);
+  }, { job: { status: 'scheduled', pipelineStatus: 'scheduled' } });
+});
+
+test('the Hub waits out a quiet-hours hold, skips closed jobs and marks only a Retry click as manual', async () => {
+  const suite = readFileSync(new URL('../employee-suite.js', import.meta.url), 'utf8'), line = prefix => suite.split(/\r?\n/).find(value => value.startsWith(prefix));
+  const now = Date.parse(MORNING), bodies = [];
+  const job = (id, extra = {}, state) => ({ id, type: 'job', customerPortalInvitationRequestedAt: LATE, estimate: { status: 'accepted', amount: 900 }, ...extra, ...(state ? { customerPortalInvitation: { jobId: id, ...state } } : {}) });
+  const rows = [
+    job('open-failed', {}, { status: 'failed', attempts: 1, attemptedAt: LATE }),
+    job('held-over', {}, { status: 'deferred', reason: 'quiet_hours', notBefore: EIGHT_AM, attempts: 0, deferredAt: LATE }),
+    job('held-later', {}, { status: 'deferred', reason: 'quiet_hours', notBefore: '2026-10-22T14:00:00.000Z', attempts: 0, deferredAt: LATE }),
+    job('no-show', { status: 'no_show', pipelineStatus: 'no_show' }, { status: 'failed', attempts: 1, attemptedAt: LATE }),
+    job('done', { pipelineStatus: 'completed' }),
+  ];
+  const context = vm.createContext({
+    Date: class extends Date { constructor(...args) { super(...(args.length ? args : [now])); } static now() { return now; } },
+    Map, JSON, Number, String, Response, jobsCache: rows, isManager: () => true, render: () => {}, showToast: () => {},
+    hubFetch: async (url, options) => { bodies.push(JSON.parse(options.body)); return new Response(JSON.stringify({ ok: true, portalInvitation: { status: 'submitted' } })); },
+  });
+  context.window = context;
+  vm.runInContext(['function jobs(){return jobsCache}', ...['const esc=', 'const portalInvitationChecks=', 'function cachePortalInvitation(', 'function portalInvitationState(', 'function portalInvitationLabel(', 'function portalInvitationControl(', 'window.opsRetryPortalInvitation=', 'async function runPortalInvitationRetries('].map(line)].join('\n'), context);
+  const [, heldOver, heldLater, noShow, done] = rows;
+  assert.equal(context.portalInvitationLabel(heldLater), 'Portal invitation waits for 8 AM (quiet hours)');
+  assert.match(context.portalInvitationControl(heldLater), /waits for 8 AM \(quiet hours\)<\/span><button[^>]*>Send portal now</);
+  assert.equal(context.portalInvitationLabel(job('paused', {}, { status: 'deferred', reason: 'messaging_paused' })), 'Portal invitation waits · automatic messages paused');
+  for (const closed of [noShow, done, job('refused', {}, { status: 'not_approved', reason: 'job_closed' })]) assert.equal(context.portalInvitationLabel(closed), 'Portal not sent · job is closed');
+  assert.doesNotMatch(context.portalInvitationControl(noShow), /<button/, 'no Retry for a closed job');
+  assert.doesNotMatch(context.portalInvitationControl(done), /<button/);
+  assert.doesNotMatch(context.portalInvitationControl(job('refused', {}, { status: 'not_approved', reason: 'job_closed' })), /<button/, 'nor when the server says it closed before this page knew');
+  assert.match(context.portalInvitationControl(job('failed', {}, { status: 'failed', attempts: 1 })), /Portal delivery failed<\/span><button[^>]*>Retry portal delivery</);
+  await context.runPortalInvitationRetries();
+  assert.deepEqual(bodies, [{ job_id: 'open-failed' }, { job_id: 'held-over' }], 'automatic retries carry no manual flag, wait for notBefore and skip closed jobs');
+  await context.opsRetryPortalInvitation(heldLater.id);
+  assert.deepEqual(bodies.at(-1), { job_id: 'held-later', manual: true });
 });
 
 test('modified employee and walkthrough scripts parse', () => {

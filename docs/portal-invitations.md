@@ -9,7 +9,11 @@ New staff-recorded approvals and signed walkthrough saves request a private clie
 - A conditional storage claim in the server-only `portal_invitations` collection limits sending to one invitation per job. The job contains a display copy only; stale scheduling edits, repeated saves, and concurrent requests do not resend a submitted message.
 - `submitted` means HighLevel accepted the message; it does not prove carrier or inbox delivery. Check the HighLevel conversation for final delivery.
 - Definite rejection can be retried. A timeout, server error, or lost delivery-status write is marked uncertain and never automatically resent. Check HighLevel before manually sharing a fresh link.
-- The Hub retries newly requested, definitely unsent invitations when a manager loads or refreshes the Hub, with a ten-minute interval and a five-attempt limit. The initial send happens on the acceptance request itself; retry processing is not a background scheduler.
+- The Hub retries newly requested, definitely unsent invitations when a manager loads or refreshes the Hub, with a ten-minute interval and a five-attempt limit, while server messaging (`EGC_SERVER_MESSAGING_ENABLED`) is off; once it is on, the signed messaging cron runs the same retry instead. The initial send happens on the acceptance request itself. For a quote author's signed walkthrough (not a manager), that request is the walkthrough's pending HighLevel sync, which a manager's Hub page runs on load (up to three jobs per load, with backoff) whether or not server messaging is on.
+- **Quiet hours.** Every automatic send (the approval and walkthrough HighLevel sync, the Hub's page-load retry and the cron) follows the project's existing rule for automatic customer messages: only between 08:00 and 20:00 Denver time (`QUIET_HOURS` in `functions/_lib/message-policies.js`). Outside it the ledger records `deferred` with reason `quiet_hours` and `notBefore` (the next 8:00 AM), spends no attempt, and the next automatic retry after that time sends it. The Hub shows **Portal invitation waits for 8 AM (quiet hours)**.
+- **Messaging pause.** While the owner's `messaging_settings/automation` record has `paused: true` (or cannot be interpreted), automatic sends record `deferred` with reason `messaging_paused` (or `messaging_settings_invalid`) and wait. If the record cannot be read at all, nothing is sent or recorded.
+- Only a manager's own **Retry portal delivery** / **Send portal now** click (`manual: true`) sends during quiet hours or the pause. `EGC_MESSAGING_ENABLED` and `EGC_MESSAGING_DRY_RUN` (the quote builder's "Customer messaging is turned off") do not govern this invitation; removing `HIGHLEVEL_API_KEY`, setting the pause, or turning job notifications off are what stop it.
+- A closed job (status or pipeline stage cancelled, canceled, no-show, completed, invoiced, paid, review requested, closed or superseded) is never told its quote is approved, by any sender. The Hub shows **Portal not sent · job is closed** and offers no retry.
 
 ## Required production configuration
 
@@ -24,11 +28,11 @@ The full owner checklist for customer messaging (HighLevel scopes, A2P 10DLC, se
 
 Publish the reviewed Firestore rules from this repository as part of the secure portal setup. Configure secrets in Cloudflare and redeploy before using the feature. The invitation code does not fall back to anonymous Firestore access.
 
-As of September 6, 2026, the Cloudflare production settings showed the HighLevel connection, but did not contain `HUB_SESSION_SECRET`, `HUB_AUTH_USERS_JSON`, or `FIREBASE_SERVICE_ACCOUNT_JSON`. Automatic invitations therefore remain unavailable until the secure Hub/portal setup is completed.
+This page does not record whether production has these secrets today. (On September 6, 2026 the Cloudflare production settings had the HighLevel connection but not `HUB_SESSION_SECRET`, `HUB_AUTH_USERS_JSON` or `FIREBASE_SERVICE_ACCOUNT_JSON`.) Before relying on automatic invitations, confirm that staff can sign in to the Hub (which needs the first two) and that **Hub → Integrations** shows `FIREBASE_SERVICE_ACCOUNT_JSON`, `HIGHLEVEL_API_KEY` and `HIGHLEVEL_LOCATION_ID` as ready.
 
 ## Validation
 
-Run `node --test tests/*.test.mjs` and `node --check employee-suite.js`. The invitation tests simulate external delivery and cover valid signed links, both approval hooks, concurrency, duplicate saves, recipient mismatch, DND, missing configuration, email fallback, rejection, ambiguous outcomes, authentication, and recurring-job state. No live customer messages are sent by the tests.
+Run `node --test tests/*.test.mjs` and `node --check employee-suite.js`. The invitation tests simulate external delivery and cover valid signed links, both approval hooks, concurrency, duplicate saves, recipient mismatch, DND, missing configuration, email fallback, rejection, ambiguous outcomes, authentication, recurring-job state, quiet hours (11:30 PM holds, 8:01 AM sends once), the messaging pause and closed jobs. No live customer messages are sent by the tests.
 
 After configuration, use a deliberately created test job and an owner-controlled destination to verify approval, final HighLevel delivery, and private-link access. Do not replay historical customer approvals as a delivery test.
 

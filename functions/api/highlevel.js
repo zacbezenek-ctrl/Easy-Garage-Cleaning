@@ -625,7 +625,9 @@ export async function onRequestPost({ request, env, waitUntil }) {
   if(operationsEnabled(env)&&['schedule','game_plan'].includes(payload.tool)&&!payload.job_id)return reply(409,{ok:false,code:'SCHEDULE_STABLE_IDENTITY_REQUIRED',error:'Save the exact Hub visit before synchronizing its provider appointment.'});
   // This runs independently of notes/calendar writes, and validates approval and
   // recipient from storage. Repeating the handoff cannot send another invitation.
-  const portalInvitation = inviteRequested ? await sendAcceptedQuotePortal(env, payload.job_id, { requireRequested: true }) : undefined;
+  // An automatic send: outside 08:00-20:00 Denver time or while automatic messages
+  // are paused it is recorded as deferred, and a Hub retry or the scheduler sends it.
+  const portalInvitation = inviteRequested ? await sendAcceptedQuotePortal(env, payload.job_id, { requireRequested: true, automatic: true }) : undefined;
   const client = payload.client || payload.job || {};
   const exitForJob = async () => {
     if (!hasBusinessAccess(session)) {

@@ -3,6 +3,10 @@ import { customerPortalLinkAccount } from './customer-portal-revocation.js';
 import { firebaseServiceAccountConfigured, firestoreFetch } from './firebase-service-account.js';
 import { readJob, patchJob, decodeFirestoreFields, encodeFirestoreFields } from './firestore-job.js';
 import { pricesPendingApproval } from './quote-model.js';
+// message-policies.js imports businessAccountJob from this module. The cycle is
+// safe because neither module uses the other's bindings while it loads.
+import { closedJob, quietHoursDecision } from './message-policies.js';
+import { MESSAGING_SETTINGS, MESSAGING_SETTINGS_ID, normalizeMessagingSettings } from './messaging-settings.js';
 
 const API = 'https://services.leadconnectorhq.com';
 const PORTAL = 'https://easygaragecleaning.com/api/customer-portal-session';
@@ -14,6 +18,7 @@ const phone = value => {
 const email = value => String(value || '').trim().toLowerCase();
 
 const stateUrl = jobId => `https://firestore.googleapis.com/v1/projects/egcw-1ec83/databases/(default)/documents/portal_invitations/${encodeURIComponent(jobId)}`;
+const settingsUrl = `https://firestore.googleapis.com/v1/projects/egcw-1ec83/databases/(default)/documents/${MESSAGING_SETTINGS}/${MESSAGING_SETTINGS_ID}`;
 
 async function readState(env, jobId) {
   const response = await firestoreFetch(env, stateUrl(jobId));
@@ -48,11 +53,38 @@ export function businessAccountJob(job) {
   return typeof value === 'string' ? value.trim() !== '' : value != null && value !== false;
 }
 
-// A signed job held for the owner's price approval (pricesPendingApproval) is not an approved quote to share yet.
+// A signed job held for the owner's price approval (pricesPendingApproval) is not an approved quote to share yet,
+// and a closed job (cancelled, no-show, completed, invoiced, paid, closed or superseded: message-policies.js
+// closedJob) is never told its quote is approved.
 export function quoteApproved(job = {}) {
-  return job.type === 'job' && !pricesPendingApproval(job) && ![job.status, job.pipelineStatus].some(value => ['cancelled', 'superseded'].includes(String(value || '').toLowerCase())) &&
+  return job.type === 'job' && !pricesPendingApproval(job) && !closedJob(job) &&
     ['accepted', 'approved'].includes(String(job.estimate?.status || '').toLowerCase()) &&
     Number(job.estimate?.amount || job.total || job.priceQuoted || 0) > 0;
+}
+
+// The owner's messaging_settings record, read the way the scheduler reads it. An
+// invalid record throws messaging_settings_invalid (fail closed).
+async function readMessagingSettingsRecord(env) {
+  const response = await firestoreFetch(env, settingsUrl);
+  if (response.status === 404) return normalizeMessagingSettings(null);
+  if (!response.ok) throw new Error('Messaging settings unavailable');
+  const document = await response.json();
+  return normalizeMessagingSettings(document?.fields ? decodeFirestoreFields(document.fields) : {});
+}
+
+// Automatic sends (the HighLevel approval and handoff sync, the Hub's page-load
+// retry and the scheduler) follow the same rules as every other automatic
+// customer message: Denver quiet hours (message-policies.js QUIET_HOURS, 08:00-20:00)
+// and the owner's messaging pause. A held invitation waits; it is not dropped.
+async function automaticHold(env, at, settings) {
+  const quiet = quietHoursDecision(at);
+  if (!quiet.allowed) return { reason: 'quiet_hours', notBefore: quiet.notBefore };
+  let current = settings;
+  if (!current) {
+    try { current = await readMessagingSettingsRecord(env); }
+    catch (error) { if (error?.code === 'messaging_settings_invalid') return { reason: 'messaging_settings_invalid' }; throw error; }
+  }
+  return current.paused === true ? { reason: 'messaging_paused' } : null;
 }
 
 function config(env) {
@@ -95,7 +127,12 @@ async function recipient(c, job) {
 // One invitation per job, not per browser timestamp or save. A compare-and-set
 // claim prevents concurrent sends. Ambiguous provider responses never auto-retry.
 // Store delivery metadata only: staff-readable job records must not hold tokens.
-export async function sendAcceptedQuotePortal(env, jobId, { requireRequested = false, now: clock = () => new Date() } = {}) {
+// automatic: every caller except a manager's own Retry click passes true. Outside
+// 08:00-20:00 Denver time, or while the owner has paused automatic messages, it
+// records 'deferred' (reason quiet_hours with notBefore, messaging_paused or
+// messaging_settings_invalid) without spending an attempt, and the next Hub retry
+// or scheduler run sends it. settings: the scheduler's already-read messaging settings.
+export async function sendAcceptedQuotePortal(env, jobId, { requireRequested = false, automatic = false, settings = null, now: clock = () => new Date() } = {}) {
   if (!/^[A-Za-z0-9_-]{1,120}$/.test(String(jobId || ''))) return { status: 'needs_job' };
   if (!firebaseServiceAccountConfigured(env)) return { status: 'not_configured', reason: 'secure_storage' };
   let job;
@@ -104,6 +141,7 @@ export async function sendAcceptedQuotePortal(env, jobId, { requireRequested = f
   // EGC_QUOTE_BUILDER_ENABLED: every sender (the handoff's request, the Hub's retry, the cron) waits for the owner's
   // price approval; nothing is recorded, so the release's own request sends it later.
   if (pricesPendingApproval(job)) return { status: 'not_approved', reason: 'prices_pending_approval' };
+  if (job.type === 'job' && closedJob(job)) return { status: 'not_approved', reason: 'job_closed' };
   if (!quoteApproved(job)) return { status: 'not_approved' };
   if (requireRequested && !job.customerPortalInvitationRequestedAt) return { status: 'not_requested' };
   let ledger;
@@ -112,8 +150,8 @@ export async function sendAcceptedQuotePortal(env, jobId, { requireRequested = f
   if (terminal.has(previous.status)) { await mirrorState(env, jobId, previous); return previous; }
   const now = clock().toISOString();
   const base = { jobId, requestedAt: previous.requestedAt || now, attemptedAt: now, attempts: Number(previous.attempts || 0) + 1 };
-  const save = async value => {
-    const state = { ...base, ...value };
+  const save = async (value, from = base) => {
+    const state = { ...from, ...value };
     try {
       await writeState(env, jobId, state, ledger.updateTime);
       await mirrorState(env, jobId, state);
@@ -126,6 +164,16 @@ export async function sendAcceptedQuotePortal(env, jobId, { requireRequested = f
   const c = config(env);
   if (!customerPortalConfigured(env) || !c.token || !c.locationId) return save({ status: 'not_configured', reason: 'portal_or_highlevel' });
   if (!phone(job.phone) && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email(job.email))) return save({ status: 'needs_contact', reason: 'no_phone_or_email' });
+  if (automatic) {
+    let hold;
+    try { hold = await automaticHold(env, clock(), settings); } catch { return { status: 'storage_unavailable' }; }
+    if (hold) {
+      // Unchanged since the last check: nothing to write.
+      if (previous.status === 'deferred' && previous.reason === hold.reason && (previous.notBefore || '') === (hold.notBefore || '')) return previous;
+      const waiting = { jobId, requestedAt: base.requestedAt, attempts: Number(previous.attempts || 0), ...(previous.attemptedAt ? { attemptedAt: previous.attemptedAt } : {}) };
+      return save({ status: 'deferred', ...hold, deferredAt: now }, waiting);
+    }
+  }
   let to;
   try { to = await recipient(c, job); } catch { return save({ status: 'needs_contact' }); }
   if (!to.id) return save(to);

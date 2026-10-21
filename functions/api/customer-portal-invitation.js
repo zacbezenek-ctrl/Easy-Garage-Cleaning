@@ -15,6 +15,9 @@ export async function onRequestPost({ request, env }) {
   if (raw.length > 4096) return reply(413, { ok: false, error: 'Request is too large' });
   let body;
   try { body = JSON.parse(raw); } catch { return reply(400, { ok: false, error: 'Invalid JSON' }); }
-  const invitation = await sendAcceptedQuotePortal(env, body?.job_id);
+  // Only a manager's Retry click (manual: true) sends outside quiet hours or while
+  // automatic messages are paused; the Hub's page-load retry, and any older page
+  // that does not say, waits like every other automatic message.
+  const invitation = await sendAcceptedQuotePortal(env, body?.job_id, { automatic: body?.manual !== true });
   return reply(200, { ok: true, portalInvitation: invitation });
 }
