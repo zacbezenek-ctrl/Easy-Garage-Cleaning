@@ -32,7 +32,7 @@ const MANIFEST=[
 {id:'invoicing',group:'CLIENT WORK',label:'Invoicing',iconPath:'M6 3h9l3 3v15H6z M9 9h6 M9 13h6 M9 17h4',capability:'business',load:{js:'employee-money.js',css:'employee-money.css',v:'20260929invoicingr3'},module:'EGCMoney'},
 {id:'walkthroughs',group:'RUN THE BUSINESS',label:'Walkthroughs',iconPath:'M9 4h6l1 2h3v14H5V6h3zM9 13l2 2 4-4',capability:'business',load:{js:'employee-walkthroughs.js',css:'employee-walkthroughs.css',v:'20260929hubready1'},module:'EGCWalkthroughs'},
 {id:'purchase_list',group:'RUN THE BUSINESS',label:'Purchase list',iconPath:'M3 4h2l2.4 11h11.2L21 7H6.2M9 20a1 1 0 1 0 0-2 1 1 0 0 0 0 2zM18 20a1 1 0 1 0 0-2 1 1 0 0 0 0 2z',capability:'business',load:{js:'employee-purchase-list.js',css:'employee-purchase-list.css',v:'20261017purchase'},module:'EGCPurchaseList'},
-{id:'customer_messages',group:'CLIENT WORK',label:'Customer messages',iconPath:'M4 5h16v11H9l-5 4zM8 9h8M8 12h5',capability:'customer_contact',load:{js:'employee-customer-messages.js',css:'employee-customer-messages.css',v:'20261021inbox3'},module:'EGCCustomerMessages'},
+{id:'customer_messages',group:'CLIENT WORK',label:'Customer messages',iconPath:'M4 5h16v11H9l-5 4zM8 9h8M8 12h5',capability:'customer_contact',load:{js:'employee-customer-messages.js',css:'employee-customer-messages.css',v:'20261021inbox4'},module:'EGCCustomerMessages'},
 ];
 // Home widgets, one line each: {id, label, homes:['today'|'my_day',...], capability:'business'|'owner' or crewVisible:true, module:'EGCName', load?:{js, css, v}}.
 // employee-suite.js renders one #ops-home-widgets node on the Command center (today) and on My day. mountHome() gives each
@@ -40,7 +40,7 @@ const MANIFEST=[
 // leaves that home. Without load the module is already on the page (a script tag in employee.html). The widget file defines
 // window.EGCName={mount(host,ctx), unmount(), refresh()}; ctx is the screen ctx plus {home, widget}.
 const HOME_WIDGETS=[
-  {id:'customer_messages',label:'Customer messages',homes:['today','my_day'],capability:'customer_contact',module:'EGCCustomerMessagesHome',load:{js:'employee-customer-messages.js',css:'employee-customer-messages.css',v:'20261021inbox3'}},
+  {id:'customer_messages',label:'Customer messages',homes:['today','my_day'],capability:'customer_contact',module:'EGCCustomerMessagesHome',load:{js:'employee-customer-messages.js',css:'employee-customer-messages.css',v:'20261021inbox4'}},
   {id:'overdue_followups',label:'Overdue follow-ups',homes:['today','my_day'],capability:'business',module:'EGCFollowupsHome'},
 ];
 const HOMES=new Set(['today','my_day']);

@@ -58,18 +58,22 @@ function badge(){
 function paint(){badge();for(const view of S.views)try{view.render();}catch(error){console.error('Customer messages failed to render',error);}}
 function when(value){const date=new Date(value);if(!Number.isFinite(date.valueOf()))return '';const minutes=Math.floor((Date.now()-date.valueOf())/60000);const clock=new Intl.DateTimeFormat('en-US',{timeZone:TZ,month:'short',day:'numeric',hour:'numeric',minute:'2-digit'}).format(date);return minutes<1?'Just now · '+clock:minutes<60?minutes+' min ago · '+clock:clock;}
 function jobHref(row){const id=encodeURIComponent(row.jobId||'');return row.jobType==='walkthrough'?'/crew/gameplan.html?walkthroughId='+id:'/crew/job.html?jobId='+id;}
+// A list read still in flight when Mark handled settles may have read before it: its answer would bring a handled row
+// back, or redraw a refused row with its old count. It is dropped (the generation check discards it) before repainting.
+function discardInFlight(){S.generation++;S.request=null;}
 async function markHandled(row,ctx,button){
   if(S.busy.has(row.id))return;
   S.busy.add(row.id);button.disabled=true;button.textContent='Saving…';
   try{
     // The count shown is sent, so a message that arrived since this row was drawn is never marked handled unseen.
     await call('POST',{action:'mark_handled',id:row.id,seenCount:Number(row.messageCount)||1});
+    discardInFlight();
     if(S.data)S.data={...S.data,messages:S.data.messages.filter(item=>item.id!==row.id)};
     try{ctx?.toast?.('Marked handled');}catch{}
   }catch(error){
     try{ctx?.toast?.(error.message||'That message could not be marked handled. Retry.',true);}catch{}
     // A new message joined the entry: the row stays and the list reloads so it can be read first.
-    if(error?.code==='customer_messages_changed'){S.busy.delete(row.id);S.at=0;void load();}
+    if(error?.code==='customer_messages_changed'){discardInFlight();S.busy.delete(row.id);S.at=0;void load();}
   }finally{S.busy.delete(row.id);paint();}
 }
 function item(row,ctx){

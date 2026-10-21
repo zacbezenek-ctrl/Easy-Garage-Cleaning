@@ -38,6 +38,8 @@ const store = {
 };
 const api = customerMessageHandlers({ session: async () => ({ user: 'tylerg', displayName: 'Tyler G', role: 'manager', businessAccess: true }), storage: () => store, now: () => new Date(NOW), fetcher: async () => { throw new Error('no HighLevel in this test'); } });
 const posts = [];
+// A list GET can be held after it has read the list: its (now stale) answer goes out only when the test releases it.
+let holdNextGet = false, heldReady = null, releaseHeld = null;
 
 const FIXTURE = `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <title>Customer messages fixture</title>
@@ -60,8 +62,13 @@ const server = createServer(async (incoming, outgoing) => {
     if (incoming.method === 'POST') posts.push(JSON.parse(body));
     const request = new Request(`http://${incoming.headers.host}${incoming.url}`, { method: incoming.method, headers: incoming.headers, ...(incoming.method === 'POST' ? { body } : {}) });
     const response = await (incoming.method === 'POST' ? api.post : api.get)({ request, env: {} });
+    const text = await response.text();
+    if (incoming.method === 'GET' && holdNextGet) {
+      holdNextGet = false;
+      await new Promise(resolve => { releaseHeld = resolve; heldReady?.(); });
+    }
     outgoing.writeHead(response.status, { 'Content-Type': 'application/json' });
-    return outgoing.end(await response.text());
+    return outgoing.end(text);
   }
   if (url.pathname === '/fixture.html') { outgoing.writeHead(200, { 'Content-Type': 'text/html' }); return outgoing.end(FIXTURE); }
   const file = { '/employee-ui-kit.css': 'text/css', '/employee-customer-messages.css': 'text/css', '/employee-customer-messages.js': 'text/javascript' }[url.pathname];
@@ -137,7 +144,44 @@ try {
     if (shots) await page.screenshot({ path: join(shots, `customer-messages-${width}-empty.png`), fullPage: true });
     assert.deepEqual(errors, []);
     await page.close();
-    console.log(`ok ${width}px: badge, list, links, Mark handled and empty state`);
+
+    // A list GET that read before Mark handled lands after it: its stale answer is dropped, in both outcomes.
+    for (const [id, row] of seeded) docs.set(id, structuredClone(row));
+    posts.length = 0;
+    const racer = await browser.newPage({ viewport: { width, height: 900 } });
+    await racer.clock.setFixedTime(new Date(NOW));
+    await racer.goto(`${origin}/fixture.html`);
+    const rows = racer.locator('#screen .cm-item');
+    await rows.first().waitFor();
+    const holdPoll = async () => {
+      const ready = new Promise(resolve => { heldReady = resolve; });
+      holdNextGet = true;
+      await racer.evaluate(() => { void window.EGCCustomerMessages.refresh(); });
+      await ready; // the poll has read the list and waits to answer
+    };
+    // Success: Robin's row is handled while a poll that still lists it is in flight; the row never comes back.
+    await holdPoll();
+    await rows.nth(1).locator('[data-cm-handled]').click();
+    await racer.waitForFunction(() => document.querySelectorAll('#screen .cm-item').length === 2);
+    releaseHeld();
+    await racer.waitForTimeout(300);
+    assert.deepEqual(await rows.locator('.cm-who').evaluateAll(nodes => nodes.map(node => node.firstChild.textContent)), ['Dana Customer', 'Sam Park for Lee Park'], `${width}: the stale poll does not bring the handled row back`);
+    assert.equal(await racer.locator('.cm-nav-badge').textContent(), '2');
+    assert.equal(await racer.locator('#home .cm-item').count(), 2);
+    // Refused: Dana writes again while a stale poll is in flight; one reload shows the new count and the next click works.
+    await holdPoll();
+    const danaAgain = docs.get([...seeded.keys()][0]);
+    Object.assign(danaAgain, { messageCount: 4, body: 'Actually please cancel', lastMessageAt: NOW, messages: [...danaAgain.messages, { id: 'customer-a3', authorName: 'Dana Customer', body: 'Actually please cancel', createdAt: NOW }], revision: 'r-appended' });
+    await rows.nth(0).locator('[data-cm-handled]').click();
+    await racer.waitForFunction(() => document.querySelector('#screen .cm-item .cm-many')?.textContent === '4 messages');
+    releaseHeld();
+    await racer.waitForTimeout(300);
+    assert.equal(await rows.nth(0).locator('.cm-many').textContent(), '4 messages', `${width}: the stale poll does not redraw the old count`);
+    await rows.nth(0).locator('[data-cm-handled]').click();
+    await racer.waitForFunction(() => document.querySelectorAll('#screen .cm-item').length === 1);
+    assert.deepEqual(posts.map(body => body.seenCount), [1, 3, 4], `${width}: one refused click, then one that works`);
+    await racer.close();
+    console.log(`ok ${width}px: badge, list, links, Mark handled, empty state and stale list reads`);
   }
 } finally {
   await browser.close();
