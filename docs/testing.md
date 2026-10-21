@@ -27,6 +27,15 @@ worktrees (`.claude/`, `worktrees/`), dependencies, build output and local QA ca
 directory walker. The public-copy scan in `tests/seo-walkthrough.test.mjs` and the legacy-quote
 scan in `tests/legacy-quote-removal.test.mjs` are built on it.
 
+Two sources of rare, load-dependent failures:
+
+- A leak check that searches a reply's JSON for a canary number (`'4200'`, `'23.17'`) runs the text through
+  `withoutRandomValues()` from `tests/helpers/leak-text.mjs` first. Random UUIDs, long hex ids and real-clock
+  times can hold any short run of digits by chance (`'4200'` is in about one UUID in 2,100).
+- `setImmediate` rounds (a `settle()` helper, a fake clock's `advance()`) do not pace Web Crypto: SHA-256, HMAC
+  and HKDF finish on the libuv thread pool, after any number of rounds on a loaded runner. A test that needs a
+  handler doing that work to reach a point first waits for a signal from that point, not for a count of rounds.
+
 ### Clock rule for acceptance tests
 
 Acceptance tests run on an injected clock, never the real one:

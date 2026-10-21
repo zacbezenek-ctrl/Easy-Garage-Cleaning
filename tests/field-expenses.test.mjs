@@ -10,6 +10,7 @@ import { crewJobProjection } from '../functions/_lib/crew-job-projection.js';
 import { FIELD_EXPENSE_STORED_LIMIT, createFieldExpenseStore, fieldExpenseCapacity, fieldExpenseChange, fieldExpenseRange, summarizeFieldExpenses, sumFieldExpenses } from '../functions/_lib/field-expenses.js';
 import { fieldExpenseHandlers } from '../functions/api/field-expenses.js';
 import * as fieldJobs from '../functions/api/field-jobs.js';
+import { withoutRandomValues } from './helpers/leak-text.mjs';
 
 const NOW = '2026-09-22T18:00:00.000Z';
 const users = { ZacB: { passwordHash: 'test', role: 'owner', displayName: 'Owner' }, 'Crew.One': { passwordHash: 'test', role: 'crew', displayName: 'Crew One' }, 'Crew.Two': { passwordHash: 'test', role: 'crew', displayName: 'Crew Two' }, 'Crew-One': { passwordHash: 'test', role: 'crew', displayName: 'Crew Other' } };
@@ -156,7 +157,7 @@ test('crew see only their own amounts; unassigned employees and customers-facing
   await client.post('Crew.Two', entry({ amountCents: 1500, vendor: 'Synthetic Transfer Station' }));
   const two = await (await client.get('Crew.Two', '?jobId=job-1')).json();
   assert.equal(two.scope, 'own'); assert.deepEqual(two.entries.map(item => item.amountCents), [1500]); assert.equal(two.totals.totalCents, 1500);
-  const text = JSON.stringify(two);
+  const text = withoutRandomValues(JSON.stringify(two));
   for (const secret of ['77123', 'Synthetic Canary Hardware', 'Crew.One', 'Crew One', '78623', 'fingerprint', 'file-']) assert.equal(text.includes(secret), false, secret);
   assert.equal(two.entries[0].recordedBy, undefined); assert.equal(two.entries[0].audit, undefined); assert.equal(two.entries[0].receiptUrl, undefined);
   const outsider = await client.get('Crew-One', '?jobId=job-1'); assert.equal(outsider.status, 403);
