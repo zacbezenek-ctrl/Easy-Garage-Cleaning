@@ -1,0 +1,959 @@
+{
+ "generated": "2026-10-19",
+ "units": "in",
+ "note": "Typical sizes for the fallback when a vehicle is not in catalog-final.json. Each class is the median of the named representative catalog rows; width_mirrors_in = width_in + mirror_allowance_in.",
+ "classes": [
+  {
+   "key": "compact_car",
+   "name": "Compact car",
+   "length_in": 183.1,
+   "width_in": 70.9,
+   "height_in": 56.7,
+   "mirror_allowance_in": 9.4,
+   "width_mirrors_in": 80.3,
+   "mirror_basis": "median mirror allowance of all 3 catalog car rows with a mirror width",
+   "method": "median of the representative catalog rows",
+   "representatives": [
+    {
+     "id": "honda-civic-2022-2026-sedan",
+     "length_in": 184.0,
+     "width_in": 70.9,
+     "height_in": 55.7
+    },
+    {
+     "id": "toyota-corolla-2020-2026-sedan",
+     "length_in": 182.3,
+     "width_in": 70.1,
+     "height_in": 56.5
+    },
+    {
+     "id": "hyundai-elantra-2021-2026-sedan-incl-hybrid-n",
+     "length_in": 184.1,
+     "width_in": 71.9,
+     "height_in": 55.7
+    },
+    {
+     "id": "nissan-sentra-2020-2026-sedan",
+     "length_in": 182.7,
+     "width_in": 71.5,
+     "height_in": 56.9
+    },
+    {
+     "id": "mazda-mazda3-2019-2026-sedan",
+     "length_in": 183.5,
+     "width_in": 70.7,
+     "height_in": 56.9
+    },
+    {
+     "id": "kia-forte-2019-2024-sedan",
+     "length_in": 182.7,
+     "width_in": 70.9,
+     "height_in": 56.5
+    },
+    {
+     "id": "volkswagen-jetta-2019-2026-sedan-incl-gli",
+     "length_in": 185.6,
+     "width_in": 70.8,
+     "height_in": 57.4
+    },
+    {
+     "id": "subaru-impreza-2024-2026-5-door-hatchback",
+     "length_in": 176.2,
+     "width_in": 70.1,
+     "height_in": 58.1
+    }
+   ],
+   "range": {
+    "length_in": [
+     176.2,
+     185.6
+    ],
+    "width_in": [
+     70.1,
+     71.9
+    ],
+    "height_in": [
+     55.7,
+     58.1
+    ]
+   }
+  },
+  {
+   "key": "midsize_car",
+   "name": "Midsize car",
+   "length_in": 193.0,
+   "width_in": 73.0,
+   "height_in": 56.9,
+   "mirror_allowance_in": 9.4,
+   "width_mirrors_in": 82.4,
+   "mirror_basis": "median mirror allowance of all 3 catalog car rows with a mirror width",
+   "method": "median of the representative catalog rows",
+   "representatives": [
+    {
+     "id": "toyota-camry-2025-2026-sedan-hybrid-only",
+     "length_in": 193.5,
+     "width_in": 72.4,
+     "height_in": 56.9
+    },
+    {
+     "id": "honda-accord-2023-2026-sedan-incl-hybrid",
+     "length_in": 195.7,
+     "width_in": 73.3,
+     "height_in": 57.1
+    },
+    {
+     "id": "nissan-altima-2019-2026-sedan",
+     "length_in": 192.9,
+     "width_in": 72.9,
+     "height_in": 56.8
+    },
+    {
+     "id": "hyundai-sonata-2020-2026-sedan-incl-hybrid",
+     "length_in": 192.9,
+     "width_in": 73.2,
+     "height_in": 56.9
+    },
+    {
+     "id": "kia-k5-2021-2026-sedan",
+     "length_in": 193.1,
+     "width_in": 73.2,
+     "height_in": 56.9
+    },
+    {
+     "id": "chevrolet-malibu-2016-2025-sedan",
+     "length_in": 193.8,
+     "width_in": 73.0,
+     "height_in": 57.6
+    },
+    {
+     "id": "tesla-model-3-2017-2026-sedan",
+     "length_in": 184.8,
+     "width_in": 72.8,
+     "height_in": 56.8
+    },
+    {
+     "id": "subaru-legacy-2020-2025-sedan",
+     "length_in": 190.6,
+     "width_in": 72.4,
+     "height_in": 59.1
+    }
+   ],
+   "range": {
+    "length_in": [
+     184.8,
+     195.7
+    ],
+    "width_in": [
+     72.4,
+     73.3
+    ],
+    "height_in": [
+     56.8,
+     59.1
+    ]
+   }
+  },
+  {
+   "key": "fullsize_car",
+   "name": "Full-size car",
+   "length_in": 198.6,
+   "width_in": 73.5,
+   "height_in": 58.2,
+   "mirror_allowance_in": 9.4,
+   "width_mirrors_in": 82.9,
+   "mirror_basis": "median mirror allowance of all 3 catalog car rows with a mirror width",
+   "method": "median of the representative catalog rows",
+   "representatives": [
+    {
+     "id": "dodge-charger-2011-2023-sedan",
+     "length_in": 199.1,
+     "width_in": 75.0,
+     "height_in": 58.2
+    },
+    {
+     "id": "chrysler-300-2011-2023-sedan",
+     "length_in": 198.6,
+     "width_in": 75.0,
+     "height_in": 58.5
+    },
+    {
+     "id": "toyota-avalon-2019-2022-sedan-incl-hybrid",
+     "length_in": 195.9,
+     "width_in": 72.8,
+     "height_in": 56.5
+    },
+    {
+     "id": "chevrolet-impala-2014-2020-sedan",
+     "length_in": 201.3,
+     "width_in": 73.0,
+     "height_in": 58.9
+    },
+    {
+     "id": "nissan-maxima-2016-2023-sedan",
+     "length_in": 192.8,
+     "width_in": 73.2,
+     "height_in": 56.5
+    },
+    {
+     "id": "ford-taurus-2010-2019-sedan-incl-police-interceptor",
+     "length_in": 202.9,
+     "width_in": 76.2,
+     "height_in": 60.7
+    },
+    {
+     "id": "buick-lacrosse-2017-2019-sedan",
+     "length_in": 197.5,
+     "width_in": 73.5,
+     "height_in": 57.6
+    }
+   ],
+   "range": {
+    "length_in": [
+     192.8,
+     202.9
+    ],
+    "width_in": [
+     72.8,
+     76.2
+    ],
+    "height_in": [
+     56.5,
+     60.7
+    ]
+   }
+  },
+  {
+   "key": "small_suv",
+   "name": "Small SUV / crossover",
+   "length_in": 183.1,
+   "width_in": 73.4,
+   "height_in": 66.2,
+   "mirror_allowance_in": 8.9,
+   "width_mirrors_in": 82.3,
+   "mirror_basis": "median mirror allowance of all 34 catalog suv rows with a mirror width",
+   "method": "median of the representative catalog rows",
+   "representatives": [
+    {
+     "id": "honda-cr-v-2023-2026-incl-hybrid",
+     "length_in": 184.8,
+     "width_in": 73.5,
+     "height_in": 66.2
+    },
+    {
+     "id": "toyota-rav4-2019-2025-incl-hybrid-prime",
+     "length_in": 180.9,
+     "width_in": 73.0,
+     "height_in": 67.0
+    },
+    {
+     "id": "nissan-rogue-2021-2026",
+     "length_in": 183.0,
+     "width_in": 72.4,
+     "height_in": 66.5
+    },
+    {
+     "id": "ford-escape-2020-2026-incl-hybrid-phev",
+     "length_in": 180.5,
+     "width_in": 74.1,
+     "height_in": 66.1
+    },
+    {
+     "id": "chevrolet-equinox-2025-2026",
+     "length_in": 183.2,
+     "width_in": 74.9,
+     "height_in": 65.6
+    },
+    {
+     "id": "mazda-cx-5-2017-2025",
+     "length_in": 179.1,
+     "width_in": 72.5,
+     "height_in": 66.2
+    },
+    {
+     "id": "hyundai-tucson-2022-2026-incl-hybrid-phev",
+     "length_in": 182.3,
+     "width_in": 73.4,
+     "height_in": 65.6
+    },
+    {
+     "id": "kia-sportage-2023-2026-incl-hybrid-phev",
+     "length_in": 183.5,
+     "width_in": 73.4,
+     "height_in": 65.4
+    },
+    {
+     "id": "subaru-forester-2025-2026",
+     "length_in": 183.3,
+     "width_in": 72.0,
+     "height_in": 68.1
+    },
+    {
+     "id": "tesla-model-y-2025-2026",
+     "length_in": 188.6,
+     "width_in": 75.6,
+     "height_in": 63.9
+    }
+   ],
+   "range": {
+    "length_in": [
+     179.1,
+     188.6
+    ],
+    "width_in": [
+     72.0,
+     75.6
+    ],
+    "height_in": [
+     63.9,
+     68.1
+    ]
+   }
+  },
+  {
+   "key": "midsize_suv",
+   "name": "Midsize SUV",
+   "length_in": 196.9,
+   "width_in": 77.9,
+   "height_in": 70.2,
+   "mirror_allowance_in": 9.0,
+   "width_mirrors_in": 86.9,
+   "mirror_basis": "median of 2 mirror widths in this class",
+   "method": "median of the representative catalog rows",
+   "representatives": [
+    {
+     "id": "ford-explorer-2020-2026-incl-police-interceptor-utility",
+     "length_in": 198.8,
+     "width_in": 78.9,
+     "height_in": 70.2
+    },
+    {
+     "id": "toyota-highlander-2020-2026",
+     "length_in": 194.9,
+     "width_in": 76.0,
+     "height_in": 68.1
+    },
+    {
+     "id": "honda-pilot-2023-2026",
+     "length_in": 199.9,
+     "width_in": 78.5,
+     "height_in": 71.0
+    },
+    {
+     "id": "kia-telluride-2020-2026",
+     "length_in": 196.9,
+     "width_in": 78.3,
+     "height_in": 68.9
+    },
+    {
+     "id": "hyundai-palisade-2020-2025",
+     "length_in": 196.1,
+     "width_in": 77.8,
+     "height_in": 68.9
+    },
+    {
+     "id": "jeep-grand-cherokee-2022-2026",
+     "length_in": 193.5,
+     "width_in": 77.5,
+     "height_in": 70.8
+    },
+    {
+     "id": "toyota-4runner-2025-2026",
+     "length_in": 194.9,
+     "width_in": 77.9,
+     "height_in": 73.2
+    },
+    {
+     "id": "chevrolet-traverse-2024-2026",
+     "length_in": 204.5,
+     "width_in": 79.6,
+     "height_in": 69.9
+    },
+    {
+     "id": "volkswagen-atlas-2018-2026",
+     "length_in": 199.5,
+     "width_in": 78.3,
+     "height_in": 70.0
+    },
+    {
+     "id": "subaru-ascent-2019-2026",
+     "length_in": 196.8,
+     "width_in": 76.0,
+     "height_in": 71.6
+    },
+    {
+     "id": "dodge-durango-2011-2026",
+     "length_in": 201.2,
+     "width_in": 75.8,
+     "height_in": 71.9
+    }
+   ],
+   "range": {
+    "length_in": [
+     193.5,
+     204.5
+    ],
+    "width_in": [
+     75.8,
+     79.6
+    ],
+    "height_in": [
+     68.1,
+     73.2
+    ]
+   }
+  },
+  {
+   "key": "fullsize_suv",
+   "name": "Full-size SUV",
+   "length_in": 210.0,
+   "width_in": 81.1,
+   "height_in": 76.6,
+   "mirror_allowance_in": 11.8,
+   "width_mirrors_in": 92.8,
+   "mirror_basis": "median of 4 mirror widths in this class",
+   "method": "median of the representative catalog rows",
+   "representatives": [
+    {
+     "id": "chevrolet-tahoe-2021-2026",
+     "length_in": 210.7,
+     "width_in": 81.0,
+     "height_in": 75.8
+    },
+    {
+     "id": "gmc-yukon-2021-2026",
+     "length_in": 210.0,
+     "width_in": 81.0,
+     "height_in": 76.5
+    },
+    {
+     "id": "ford-expedition-2025-2026-standard",
+     "length_in": 209.9,
+     "width_in": 80.0,
+     "height_in": 78.1
+    },
+    {
+     "id": "toyota-sequoia-2023-2026",
+     "length_in": 208.1,
+     "width_in": 79.6,
+     "height_in": 74.4
+    },
+    {
+     "id": "nissan-armada-2025-2026",
+     "length_in": 209.6,
+     "width_in": 83.3,
+     "height_in": 76.9
+    },
+    {
+     "id": "cadillac-escalade-2021-2026",
+     "length_in": 211.9,
+     "width_in": 81.1,
+     "height_in": 76.7
+    },
+    {
+     "id": "lincoln-navigator-2025-2026-standard",
+     "length_in": 210.0,
+     "width_in": 81.5,
+     "height_in": 78.0
+    },
+    {
+     "id": "jeep-wagoneer-2022-2026",
+     "length_in": 214.7,
+     "width_in": 83.6,
+     "height_in": 75.6
+    }
+   ],
+   "range": {
+    "length_in": [
+     208.1,
+     214.7
+    ],
+    "width_in": [
+     79.6,
+     83.6
+    ],
+    "height_in": [
+     74.4,
+     78.1
+    ]
+   }
+  },
+  {
+   "key": "extended_fullsize_suv",
+   "name": "Extended full-size SUV (Suburban / Expedition MAX class)",
+   "length_in": 225.7,
+   "width_in": 81.1,
+   "height_in": 76.5,
+   "mirror_allowance_in": 11.8,
+   "width_mirrors_in": 92.9,
+   "mirror_basis": "median of 4 mirror widths in this class",
+   "method": "median of the representative catalog rows",
+   "representatives": [
+    {
+     "id": "chevrolet-suburban-2021-2026",
+     "length_in": 225.7,
+     "width_in": 81.1,
+     "height_in": 75.7
+    },
+    {
+     "id": "gmc-yukon-xl-2021-2026",
+     "length_in": 225.2,
+     "width_in": 81.0,
+     "height_in": 76.5
+    },
+    {
+     "id": "ford-expedition-max-2025-2026-extended-max",
+     "length_in": 221.7,
+     "width_in": 80.0,
+     "height_in": 77.9
+    },
+    {
+     "id": "cadillac-escalade-esv-2021-2026",
+     "length_in": 227.0,
+     "width_in": 81.1,
+     "height_in": 76.5
+    },
+    {
+     "id": "lincoln-navigator-l-2025-2026-extended-l",
+     "length_in": 221.9,
+     "width_in": 81.5,
+     "height_in": 78.0
+    },
+    {
+     "id": "jeep-wagoneer-l-2023-2026",
+     "length_in": 226.7,
+     "width_in": 83.6,
+     "height_in": 75.6
+    },
+    {
+     "id": "jeep-grand-wagoneer-l-2023-2026",
+     "length_in": 226.7,
+     "width_in": 83.6,
+     "height_in": 75.6
+    }
+   ],
+   "range": {
+    "length_in": [
+     221.7,
+     227.0
+    ],
+    "width_in": [
+     80.0,
+     83.6
+    ],
+    "height_in": [
+     75.6,
+     78.0
+    ]
+   }
+  },
+  {
+   "key": "minivan",
+   "name": "Minivan",
+   "length_in": 203.8,
+   "width_in": 78.5,
+   "height_in": 69.6,
+   "mirror_allowance_in": 9.0,
+   "width_mirrors_in": 87.5,
+   "mirror_basis": "default allowance (too few catalog rows with mirror widths)",
+   "method": "median of the representative catalog rows",
+   "representatives": [
+    {
+     "id": "honda-odyssey-2018-2026",
+     "length_in": 205.2,
+     "width_in": 78.5,
+     "height_in": 69.6
+    },
+    {
+     "id": "toyota-sienna-2021-2026",
+     "length_in": 203.5,
+     "width_in": 78.3,
+     "height_in": 68.5
+    },
+    {
+     "id": "chrysler-pacifica-2017-2026",
+     "length_in": 203.8,
+     "width_in": 79.6,
+     "height_in": 69.9
+    },
+    {
+     "id": "kia-carnival-2022-2026",
+     "length_in": 203.0,
+     "width_in": 78.5,
+     "height_in": 68.5
+    },
+    {
+     "id": "chrysler-voyager-2020-2025",
+     "length_in": 203.8,
+     "width_in": 79.6,
+     "height_in": 69.9
+    }
+   ],
+   "range": {
+    "length_in": [
+     203.0,
+     205.2
+    ],
+    "width_in": [
+     78.3,
+     79.6
+    ],
+    "height_in": [
+     68.5,
+     69.9
+    ]
+   }
+  },
+  {
+   "key": "compact_pickup",
+   "name": "Compact pickup",
+   "length_in": 201.3,
+   "width_in": 68.7,
+   "height_in": 66.2,
+   "mirror_allowance_in": 9.5,
+   "width_mirrors_in": 78.2,
+   "mirror_basis": "median mirror allowance of all 6 catalog pickup rows with a mirror width",
+   "method": "median of the representative catalog rows",
+   "representatives": [
+    {
+     "id": "ford-maverick-2022-2026-supercrew-4-5-ft-bed",
+     "length_in": 199.7,
+     "width_in": 72.6,
+     "height_in": 68.7
+    },
+    {
+     "id": "hyundai-santa-cruz-2022-2026-crew-cab-4-3-ft-bed",
+     "length_in": 195.7,
+     "width_in": 75.0,
+     "height_in": 66.7
+    },
+    {
+     "id": "ford-ranger-1998-2011-supercab-6-ft-bed",
+     "length_in": 203.6,
+     "width_in": 69.4,
+     "height_in": 66.3
+    },
+    {
+     "id": "chevrolet-s-10-1994-2004-extended-cab-6-ft-bed",
+     "length_in": 204.8,
+     "width_in": 67.9,
+     "height_in": 62.7
+    },
+    {
+     "id": "toyota-tacoma-1995-2004-xtracab-6-ft-bed",
+     "length_in": 202.9,
+     "width_in": 66.5,
+     "height_in": 66.0
+    },
+    {
+     "id": "nissan-frontier-1998-2004-king-cab-6-ft-bed",
+     "length_in": 196.1,
+     "width_in": 66.5,
+     "height_in": 63.0
+    }
+   ],
+   "range": {
+    "length_in": [
+     195.7,
+     204.8
+    ],
+    "width_in": [
+     66.5,
+     75.0
+    ],
+    "height_in": [
+     62.7,
+     68.7
+    ]
+   }
+  },
+  {
+   "key": "midsize_pickup_crew",
+   "name": "Midsize pickup (crew cab)",
+   "length_in": 213.0,
+   "width_in": 74.9,
+   "height_in": 74.0,
+   "mirror_allowance_in": 9.5,
+   "width_mirrors_in": 84.4,
+   "mirror_basis": "median of 3 mirror widths in this class",
+   "method": "median of the representative catalog rows",
+   "representatives": [
+    {
+     "id": "toyota-tacoma-2024-2026-double-cab-5-ft-bed",
+     "length_in": 213.0,
+     "width_in": 76.9,
+     "height_in": 73.8
+    },
+    {
+     "id": "chevrolet-colorado-2023-2026-crew-cab-5-ft-bed",
+     "length_in": 213.0,
+     "width_in": 74.9,
+     "height_in": 78.8
+    },
+    {
+     "id": "gmc-canyon-2023-2026-crew-cab-5-ft-bed",
+     "length_in": 213.2,
+     "width_in": 74.9,
+     "height_in": 79.8
+    },
+    {
+     "id": "ford-ranger-2024-2026-supercrew-5-ft-bed",
+     "length_in": 210.6,
+     "width_in": 75.5,
+     "height_in": 74.0
+    },
+    {
+     "id": "nissan-frontier-2022-2026-crew-cab-5-ft-bed",
+     "length_in": 210.2,
+     "width_in": 73.0,
+     "height_in": 71.3
+    },
+    {
+     "id": "jeep-gladiator-2020-2026-crew-cab-5-ft-bed",
+     "length_in": 218.0,
+     "width_in": 73.8,
+     "height_in": 75.0
+    },
+    {
+     "id": "honda-ridgeline-2017-2026-crew-cab-5-3-ft-bed",
+     "length_in": 210.2,
+     "width_in": 78.6,
+     "height_in": 70.8
+    }
+   ],
+   "range": {
+    "length_in": [
+     210.2,
+     218.0
+    ],
+    "width_in": [
+     73.0,
+     78.6
+    ],
+    "height_in": [
+     70.8,
+     79.8
+    ]
+   }
+  },
+  {
+   "key": "fullsize_pickup_crew_short",
+   "name": "Full-size pickup (crew cab, short bed)",
+   "length_in": 231.9,
+   "width_in": 80.7,
+   "height_in": 75.6,
+   "mirror_allowance_in": 9.5,
+   "width_mirrors_in": 90.2,
+   "mirror_basis": "median mirror allowance of all 6 catalog pickup rows with a mirror width",
+   "method": "median of the representative catalog rows",
+   "representatives": [
+    {
+     "id": "ford-f-150-2021-2026-supercrew-5-5-ft-bed",
+     "length_in": 231.7,
+     "width_in": 79.9,
+     "height_in": 75.6
+    },
+    {
+     "id": "chevrolet-silverado-1500-2019-2026-crew-cab-5-8-ft-short-box",
+     "length_in": 231.7,
+     "width_in": 81.2,
+     "height_in": 75.5
+    },
+    {
+     "id": "gmc-sierra-1500-2019-2026-crew-cab-5-8-ft-short-box",
+     "length_in": 232.1,
+     "width_in": 81.2,
+     "height_in": 75.6
+    },
+    {
+     "id": "ram-1500-2019-2026-crew-cab-5-6-ft-bed",
+     "length_in": 232.9,
+     "width_in": 82.1,
+     "height_in": 77.5
+    },
+    {
+     "id": "toyota-tundra-2022-2026-crewmax-5-5-ft-bed",
+     "length_in": 233.6,
+     "width_in": 80.2,
+     "height_in": 78.0
+    },
+    {
+     "id": "nissan-titan-2016-2024-crew-cab-5-5-ft-bed",
+     "length_in": 228.1,
+     "width_in": 79.5,
+     "height_in": 75.4
+    }
+   ],
+   "range": {
+    "length_in": [
+     228.1,
+     233.6
+    ],
+    "width_in": [
+     79.5,
+     82.1
+    ],
+    "height_in": [
+     75.4,
+     78.0
+    ]
+   }
+  },
+  {
+   "key": "fullsize_pickup_crew_long_hd",
+   "name": "Full-size pickup (crew cab long bed / HD)",
+   "length_in": 263.4,
+   "width_in": 80.6,
+   "height_in": 79.4,
+   "mirror_allowance_in": 9.5,
+   "width_mirrors_in": 90.1,
+   "mirror_basis": "median mirror allowance of all 6 catalog pickup rows with a mirror width",
+   "method": "median of the representative catalog rows",
+   "representatives": [
+    {
+     "id": "ford-f-250-f-350-super-duty-2023-2026-crew-cab-8-ft-bed",
+     "length_in": 266.2,
+     "width_in": 80.0,
+     "height_in": 81.3
+    },
+    {
+     "id": "ford-f-250-f-350-super-duty-2017-2022-crew-cab-8-ft-bed",
+     "length_in": 266.2,
+     "width_in": 80.0,
+     "height_in": 81.3
+    },
+    {
+     "id": "chevrolet-silverado-2500hd-3500hd-2020-2026-crew-cab-8-ft-long-box",
+     "length_in": 266.0,
+     "width_in": 81.9,
+     "height_in": 79.6
+    },
+    {
+     "id": "gmc-sierra-2500hd-3500hd-2020-2026-crew-cab-8-ft-long-box",
+     "length_in": 266.0,
+     "width_in": 81.9,
+     "height_in": 79.6
+    },
+    {
+     "id": "ram-2500-3500-2019-2026-crew-cab-8-ft-bed",
+     "length_in": 260.8,
+     "width_in": 79.4,
+     "height_in": 79.1
+    },
+    {
+     "id": "ford-f-150-2021-2026-supercrew-6-5-ft-bed",
+     "length_in": 243.5,
+     "width_in": 79.9,
+     "height_in": 77.6
+    },
+    {
+     "id": "chevrolet-silverado-1500-2019-2026-crew-cab-6-5-ft-standard-box",
+     "length_in": 241.2,
+     "width_in": 81.2,
+     "height_in": 75.5
+    },
+    {
+     "id": "ram-1500-2019-2026-crew-cab-6-3-ft-bed",
+     "length_in": 241.8,
+     "width_in": 82.1,
+     "height_in": 77.6
+    }
+   ],
+   "range": {
+    "length_in": [
+     241.2,
+     266.2
+    ],
+    "width_in": [
+     79.4,
+     82.1
+    ],
+    "height_in": [
+     75.5,
+     81.3
+    ]
+   }
+  },
+  {
+   "key": "fullsize_van",
+   "name": "Full-size van (standard / low roof)",
+   "length_in": 224.1,
+   "width_in": 79.5,
+   "height_in": 83.6,
+   "mirror_allowance_in": 16.7,
+   "width_mirrors_in": 96.2,
+   "mirror_basis": "median of 4 mirror widths in this class",
+   "method": "median of the representative catalog rows",
+   "representatives": [
+    {
+     "id": "chevrolet-express-2003-2026-regular-135-in-wb",
+     "length_in": 224.1,
+     "width_in": 79.4,
+     "height_in": 81.6
+    },
+    {
+     "id": "gmc-savana-2003-2026-regular-135-in-wb",
+     "length_in": 224.1,
+     "width_in": 79.4,
+     "height_in": 81.6
+    },
+    {
+     "id": "ford-transit-2015-2026-regular-wb-130-in-low-roof",
+     "length_in": 219.9,
+     "width_in": 81.3,
+     "height_in": 83.2
+    },
+    {
+     "id": "ram-promaster-2014-2026-136-in-wb-low-roof",
+     "length_in": 213.0,
+     "width_in": 80.7,
+     "height_in": 91.7
+    },
+    {
+     "id": "mercedes-benz-sprinter-2019-2026-144-in-wb-standard-roof",
+     "length_in": 233.5,
+     "width_in": 79.5,
+     "height_in": 96.3
+    },
+    {
+     "id": "ford-e-series-2008-2014-regular",
+     "length_in": 216.7,
+     "width_in": 79.4,
+     "height_in": 83.6
+    },
+    {
+     "id": "nissan-nv-1500-2500-3500-2012-2021-standard-roof",
+     "length_in": 240.6,
+     "width_in": 79.9,
+     "height_in": 83.9
+    }
+   ],
+   "range": {
+    "length_in": [
+     213.0,
+     240.6
+    ],
+    "width_in": [
+     79.4,
+     81.3
+    ],
+    "height_in": [
+     81.6,
+     96.3
+    ]
+   }
+  },
+  {
+   "key": "motorcycle",
+   "name": "Motorcycle",
+   "length_in": 96.0,
+   "width_in": 39.0,
+   "height_in": 58.0,
+   "mirror_allowance_in": 0.0,
+   "width_mirrors_in": 39.0,
+   "mirror_basis": "width already measured across handlebars and mirrors",
+   "method": "knowledge, not catalog-derived (the catalog has no motorcycle rows); sized for a large touring bike with windscreen and bags, e.g. Harley-Davidson Street Glide / Honda Gold Wing class, so most bikes are smaller. Add about 24 in of walk-around room when parking one beside a car.",
+   "representatives": [],
+   "range": null
+  }
+ ]
+}

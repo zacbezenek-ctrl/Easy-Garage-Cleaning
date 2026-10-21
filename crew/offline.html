@@ -15,6 +15,7 @@
     .eyebrow{text-transform:uppercase;letter-spacing:.11em;font-size:11px;font-weight:800;color:#a63c13}h1{color:#111d30;font-size:clamp(26px,5vw,38px);font-weight:800;letter-spacing:-.035em;line-height:1.18;margin:8px 0 12px}p{margin:8px 0 14px}
     .actions{display:flex;margin:14px 0}.button{flex:1 1 auto;min-height:48px;display:inline-flex;align-items:center;justify-content:center;padding:10px 16px;border-radius:6px;font-weight:650;text-decoration:none;text-align:center;background:#bd4310;color:#fff;border:1px solid #bd4310}
     .button:hover{background:#9f370f;border-color:#9f370f}
+    .button.secondary{background:#fff;color:#a63c13}.button.secondary:hover{background:#f6f5f1;color:#9f370f}
     @media(max-width:760px), (orientation:landscape) and (max-height:430px){.field-header{padding-left:max(16px,env(safe-area-inset-left));padding-right:max(16px,env(safe-area-inset-right))}#field-main{padding-left:max(14px,env(safe-area-inset-left));padding-right:max(14px,env(safe-area-inset-right));padding-bottom:calc(100px + env(safe-area-inset-bottom))}.card{padding:18px;margin:14px 0}}
   </style>
 <!-- This offline fallback stays self-contained. Keep the shared gesture policy here too. -->
@@ -29,6 +30,9 @@
       <p>This page needs a connection. Nothing on it has been saved.</p>
       <p>Open Today’s work to see a job you already opened in this tab. Checklist, material, note, status, photo and time-clock actions you save there stay on this phone and sync in order when you reconnect.</p>
       <div class="actions"><a class="button primary" href="/crew/job.html">Open Today’s work</a></div>
+      <!-- Knock (door-to-door) is cached whole on the phone, so a rep who reached this page from it can always go back. -->
+      <p>Knocking doors? EGC Knock keeps working with no signal on a phone that has opened it before.</p>
+      <div class="actions"><a class="button secondary" href="/crew/knock">Open EGC Knock</a></div>
     </section>
   </main>
 </body>

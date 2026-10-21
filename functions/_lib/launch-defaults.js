@@ -1,7 +1,7 @@
 /* Launch defaults (owner decision, 2026-10-18): the switches the owner asked to have on without setting them in
    Cloudflare. functions/_middleware.js fills them into the Pages env before any handler reads it, so every reader
    (crewAutoAssignEnabled, jobMaterialsEnabled, quoteBuilderEnabled, knockJobBridgeEnabled, staffDirectoryEnabled,
-   staffRolePermissionsEnabled) sees exactly "true".
+   staffRolePermissionsEnabled, walkthroughVisitEnabled, walkthroughNotesEnabled) sees exactly "true".
    A variable set in Cloudflare always wins: setting one to "false" (or anything but "true") turns that feature off
    again, with a retried deployment. Handlers called directly (tests, scripts) see their env unchanged.
 
@@ -22,6 +22,10 @@ export const LAUNCH_DEFAULTS = Object.freeze({
   EGC_KNOCK_JOB_BRIDGE: 'true',
   EGC_STAFF_DIRECTORY_ENABLED: 'true',
   EGC_STAFF_ROLE_PERMISSIONS: 'true',
+  // Owner decision 2026-10-19: the iPad walkthrough recorder (Start / Finish / No-show) and its transcript, edited into
+  // job notes the estimator confirms for the crew, on the website's own OpenAI key (the openaiapi secret).
+  EGC_WALKTHROUGH_VISIT_ENABLED: 'true',
+  EGC_WALKTHROUGH_NOTES: 'true',
 });
 
 /** Fills each unset launch default into env, in place; a value already present (any value) is kept. An env that

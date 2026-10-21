@@ -658,6 +658,18 @@ service cloud.firestore {
     match /walkthroughVisitLocks/{documentId} {
       allow read, write: if false;
     }
+    // Walkthrough transcripts and job notes (EGC_WALKTHROUGH_NOTES): transcript parts, each
+    // visit's notes and the notes request receipts are written and read only by
+    // /api/walkthrough-notes; the crew read confirmed notes through the crew projections.
+    match /walkthroughNoteParts/{documentId} {
+      allow read, write: if false;
+    }
+    match /walkthroughNotes/{documentId} {
+      allow read, write: if false;
+    }
+    match /walkthroughNoteReceipts/{documentId} {
+      allow read, write: if false;
+    }
 
     // Operations settings (P3-04 follow-up owner and due-time policy) are written
     // only by the owner through /api/operations-followup-settings with a hub_audit entry.

@@ -17,8 +17,9 @@ const BASE = `https://firestore.googleapis.com/v1/${ROOT}`;
 const BUCKET = /^[a-z][a-z0-9_]{0,39}$/;
 const MAX_WINDOW_MS = 7 * 86400000;
 const ROLLING_MAX = 50;
-// Server-only collections whose records carry an ISO `expiresAt` and may be deleted once it passes.
-const EXPIRING = new Set([RATE_LIMITS, 'customer_login_links', 'customer_sessions']);
+// Server-only collections whose records carry an ISO `expiresAt` and may be deleted once it passes
+// (walkthroughNoteParts: walkthrough transcript text, kept 90 days, walkthrough-notes.js).
+const EXPIRING = new Set([RATE_LIMITS, 'customer_login_links', 'customer_sessions', 'walkthroughNoteParts']);
 const fail = (code, message, status = 503) => Object.assign(new Error(message), { code, status });
 // Firestore reports a stale precondition as 409/412 or 400 FAILED_PRECONDITION;
 // the dispatch adapter maps a lost commit response to outcome_unknown. A retry

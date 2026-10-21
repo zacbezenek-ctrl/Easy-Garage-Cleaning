@@ -25,6 +25,8 @@ export const CREW_PROJECTION_FIELDS = Object.freeze([
   'customerConversation','customerConversationUpdatedAt','assignmentSegments',
   // WT-OUTCOME: where an assigned walkthrough stands (walkthrough-state.js), never the rep's notes.
   'walkthroughOutcome.outcome','walkthroughOutcome.reasonCode','walkthroughOutcome.finishedAt','walkthroughOutcome.occurrence','walkthroughCompletedAt','convertedJobId','scheduleOccurrence',
+  // EGC_WALKTHROUGH_NOTES: the notes the estimator confirmed for the crew (field-execution.js visitNotes).
+  'visitNotes',
 ]);
 /** Compatibility DTO for the existing Hub shift and communication cards.
  * Raw Firestore records may contain signatures, costs, payment receipts and

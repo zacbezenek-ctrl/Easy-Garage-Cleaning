@@ -35,8 +35,17 @@ test('the walkthrough capture pre-fills the removal step: loads, special items, 
   assert.equal(named['Pressure washing, one-car'], undefined, 'a pressure wash is offered for a one-car garage only');
   const cleaningOnly = names(B.selectionFromWalkthrough({ scope: { garages: '1', loads: '0', finish: ['deep_clean', 'pressure_wash'] } }, menu).removal);
   assert.deepEqual(plain(cleaningOnly), { 'One-car garage base': 1, 'Pressure washing, one-car': 1, 'Deep cleaning, one-car': 1 }, 'a cleaning-only walkthrough gets its garage base');
-  const hauled = names(B.selectionFromWalkthrough({ scope: { garages: '1', loads: '1', finish: ['pressure_wash'] } }, menu).removal);
-  assert.deepEqual(plain(hauled), { 'Full truck load': 1 }, 'no base, so no pressure wash (it needs a one-car base)');
+  // The pressure wash and the deep clean follow the walkthrough's garage size, with truck loads (no base) too.
+  const hauledPlan = { scope: { garages: '1', loads: '1', finish: ['pressure_wash', 'deep_clean'] } }, hauledSel = B.selectionFromWalkthrough(hauledPlan, menu);
+  assert.deepEqual(plain(names(hauledSel.removal)), { 'Full truck load': 1, 'Deep cleaning, one-car': 1, 'Pressure washing, one-car': 1 }, 'a one-car walkthrough with a truck load keeps its pressure wash');
+  assert.equal(B.garageOf(hauledPlan), '1');
+  const hauledStep = plain(B.builderDescriptor(menu, hauledSel, 'removal', null, B.garageOf(hauledPlan)));
+  assert.equal(hauledStep.garageSize, '1', 'every step names the walkthrough garage');
+  assert.ok(priceCompositeQuote(state, hauledStep), 'the server accepts the one-car wash with a truck load');
+  assert.throws(() => priceCompositeQuote(state, { ...hauledStep, garageSize: undefined }), /one-car garage only/, 'without the walkthrough size the server refuses it, as before');
+  assert.deepEqual(plain(names(B.selectionFromWalkthrough({ scope: { garages: '2', loads: '1', finish: ['pressure_wash'] } }, menu).removal)), { 'Full truck load': 1 }, 'never for a two-car garage');
+  assert.equal(Object.hasOwn(plain(B.builderDescriptor(menu, hauledSel, 'removal')), 'garageSize'), false, 'no size known, none sent');
+  for (const [garages, size] of [['other', 'other'], [' 3 ', '3'], [2, '2'], ['4', null], ['', null], [undefined, null]]) assert.equal(B.garageOf({ scope: { garages } }), size, String(garages));
   assert.ok(priceCompositeQuote(state, plain(B.builderDescriptor(menu, B.selectionFromWalkthrough(plan(), menu), 'removal'))), 'the server accepts the pre-filled step');
   assert.deepEqual([sel.shelving, sel.storage], [[], []], 'shelving and storage are always chosen in the builder');
   const loads = value => Object.keys(B.selectionFromWalkthrough({ scope: { loads: value } }, menu).removal).map(id => [menu.services.find(item => item.id === id).name, B.selectionFromWalkthrough({ scope: { loads: value } }, menu).removal[id]]);
