@@ -108,6 +108,8 @@ test('cleanup deletes a bounded batch of expired records with revision precondit
   assert.equal(query.limit, 25);
   assert.deepEqual(calls[1].body.writes, [{ delete: `${root}/rate_limits/rl_old`, currentDocument: { updateTime: '2026-09-22T10:00:00.000000Z' } }]);
   assert.equal(await cleanupExpiredRecords(env, 'jobs', NOW, { fetcher }), 0, 'only expiring server-only collections');
+  const parts = []; await cleanupExpiredRecords(env, 'walkthroughNoteParts', NOW, { fetcher: async (s, url, options) => { parts.push(JSON.parse(options.body)); return Response.json([]); } });
+  assert.deepEqual(parts[0].structuredQuery.from, [{ collectionId: 'walkthroughNoteParts' }], 'walkthrough transcript parts expire too');
   assert.equal(calls.length, 2);
   assert.equal(await cleanupExpiredRecords(env, 'customer_sessions', NOW, { fetcher: async () => { throw new Error('offline'); } }), 0, 'best effort never throws');
   assert.equal(await cleanupExpiredRecords(env, 'customer_login_links', NOW, { fetcher: async () => Response.json({}, { status: 500 }) }), 0);

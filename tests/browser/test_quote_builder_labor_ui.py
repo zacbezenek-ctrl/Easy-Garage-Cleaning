@@ -7,12 +7,27 @@ D-JUNK: "$750 per truck covers the crew's time"). A shelving unit makes it garag
 ($159.00), the set-up and sweep-out and the unit's hour of installing, whatever the crew size; the truck load and the
 mattress add none. The customer's line reads "Labor" (D-LABOR-TEXT). Nothing reaches the network: every host but
 127.0.0.1 is aborted."""
-import json, os, pathlib, subprocess, unittest, urllib.request
+import json, os, pathlib, re, subprocess, unittest, urllib.request
 from urllib.parse import urlparse
 from playwright.sync_api import sync_playwright, expect
 
 ROOT = pathlib.Path(__file__).resolve().parents[2]
 RESULTS = ROOT / 'test-results'
+# Stands in for the gstatic Firebase compat scripts on the walkthrough page (every external host is aborted): sign-in
+# succeeds and today's walkthrough list is empty.
+FIREBASE_STUB = """
+window.firebase = window.firebase || {
+  apps: [], initializeApp() { this.apps.push({}); },
+  auth() { return { signInWithCustomToken: async () => ({}), signOut: async () => {} }; },
+  firestore() { return { collection: () => ({ where: () => ({ get: async () => ({ docs: [] }) }), doc: id => ({ get: async () => ({ id, exists: false }) }) }) }; },
+};
+"""
+# Walkthrough 2 of the estimator fixture (its customer, CRM contact and source walkthrough), on the 2-car garage it was
+# first recorded as: 1.25 truck loads, a deep clean, sorted with the customer.
+WALKTHROUGH = {'sourceWalkthroughId': 'w2', 'highlevelContactId': 'provider2', 'name': 'Synthetic Customer 2', 'phone': '9705550102', 'email': 'customer2@example.invalid',
+    'address': '200 Fixture Lane', 'whyNow': 'Moving soon', 'outcome': 'Park two cars', 'truckPlacement': 'Driveway', 'garageSize': '2', 'fill': 'medium', 'loads': '1.25',
+    'special': [], 'access': [], 'hazards': [], 'sortMethod': 'customer', 'finish': ['cleanout', 'deep_clean'], 'jobDate': '2026-10-19', 'startTime': '09:30', 'endTime': '12:30', 'crewSize': 2}
+SHELF = 'HDX plastic shelving, 36×72×24'
 
 
 class QuoteBuilderLaborTests(unittest.TestCase):
@@ -70,6 +85,45 @@ class QuoteBuilderLaborTests(unittest.TestCase):
         for field in dialog.locator('.qb-labor-edit input, .qb-labor-edit select').all():
             box = field.bounding_box()
             self.assertLessEqual(box['x'] + box['width'], 375, 'every labor field fits the phone')
+
+    def test_the_builder_opens_with_the_walkthrough_finish_picks_and_product_rows_stay_in_the_app(self):
+        # LANE catalog: shelving and totes picked on the walkthrough's Finish step open in the builder already chosen.
+        self.page.goto(self.url + '/builder-harness')
+        tote = self.page.evaluate("fetch('/api/quote-draft?view=builder').then(r => r.json()).then(menu => menu.products.find(item => item.group === 'bins-totes'))")
+        self.page.evaluate("tote => { window.GOODS = { shelving: [{ id: 'hd-100006678', quantity: 2 }], storage: [{ id: tote.id, quantity: 1 }] }; }", tote)
+        self.page.get_by_role('button', name='Send options for review').click()
+        dialog = self.dialog()
+        expect(dialog.locator('.qb-total')).to_contain_text('Shelving $231.40')
+        expect(dialog.locator('.qb-total')).to_contain_text('Storage $%s' % format(tote['unitCents'] / 100, ',.2f'))
+        dialog.get_by_role('button', name='Continue to shelving').click()
+        expect(dialog).to_contain_text('In this quote (1)')
+        expect(dialog.get_by_role('group', name='HDX plastic shelving, 36×72×24 quantity').locator('output')).to_have_text('2')
+        # The size in the row, the fit notes one tap away; no product page, no new tab.
+        row = dialog.locator('li.qb-product.on')
+        expect(row.locator('.qb-size')).to_have_text('36 W × 72 H × 24 D in')
+        notes = row.locator('details.qb-fit')
+        expect(notes.locator('summary')).to_have_text('Fit notes')
+        expect(notes.locator('p')).not_to_be_visible()
+        self.assertGreaterEqual(notes.locator('summary').bounding_box()['height'], 44, 'Fit notes is a 44px touch target')
+        notes.locator('summary').click()
+        expect(notes.locator('p')).to_contain_text('14.86 in fixed shelf spacing')
+        expect(dialog.locator('a')).to_have_count(0)
+        dialog.get_by_role('button', name='One more: HDX plastic shelving, 36×72×24').click()
+        # LANE catalog review: a change not saved stays in the builder; the walkthrough hears only what is saved.
+        self.assertIsNone(self.page.evaluate('window.MIRRORED || null'))
+        dialog.get_by_role('button', name='Continue to extra storage').click()
+        expect(dialog).to_contain_text('In this quote (1)')
+        self.assertEqual(self.posts[-1]['compositePricing']['shelving'], [{'id': 'hd-100006678', 'quantity': 3}], 'the server priced the picks')
+        self.assert_fits(dialog)
+        self.page.screenshot(path=str(RESULTS / 'quote-builder-finish-picks-mobile.png'), full_page=True)
+        dialog.get_by_role('button', name='Review quote').click()
+        expect(dialog.locator('.qb-labor h3')).to_contain_text('Labor')
+        self.assertIsNone(self.page.evaluate('window.MIRRORED || null'))
+        dialog.get_by_role('button', name='Save draft').click()
+        expect(dialog).to_contain_text('saved.')
+        mirrored = self.page.evaluate('window.MIRRORED')
+        self.assertEqual([(row['id'], row['quantity'], row['group']) for row in mirrored['shelving']], [('hd-100006678', 3, 'shelving')])
+        self.assertEqual([(row['id'], row['quantity'], row['group']) for row in mirrored['storage']], [(tote['id'], 1, 'bins-totes')])
 
     def test_labor_row_prefills_from_the_estimate_and_adjusts_by_total_or_people_times_hours(self):
         dialog = self.review()
@@ -211,6 +265,100 @@ class QuoteBuilderLaborTests(unittest.TestCase):
         self.page.screenshot(path=str(RESULTS / 'quote-builder-junk-garage-work-375.png'), full_page=True)
         dialog.get_by_role('button', name='Edit quote').click()
         expect(dialog.get_by_role('button', name='Continue to shelving')).to_be_visible()
+
+    # ---- LANE catalog review: the real walkthrough page with the real builder, quote drafts and signed handoff ----
+    def walkthrough(self):
+        page = self.page
+        page.add_init_script(FIREBASE_STUB)
+        page.clock.install(time='2026-10-17T15:00:00Z')
+        page.goto(self.url + '/crew/gameplan.html'); expect(page.locator('#app')).to_be_visible()
+        page.wait_for_function('() => PRICING !== null && quoteBuilderOn() && EGCGameplanCatalog.menu() !== null')
+        # Three walkthrough photos stored on this device exactly as the Photos step keeps them.
+        page.evaluate("""async () => { S.jobId = S.jobId || 'synthetic-draft'; const db = await dbOpen();
+          await new Promise(done => { const tx = db.transaction('p', 'readwrite'); for (let i = 0; i < 3; i++) tx.objectStore('p').put({ id: 'synthetic-photo-' + i, job: S.photoDraftJobId || S.jobId, tag: 'before', dataUrl: 'data:image/jpeg;base64,/9j/', at: i }); tx.oncomplete = done; });
+          await refreshPhotoCount(); }""")
+        page.evaluate('s => { Object.assign(S, s); save(); index = 3; render(); }', WALKTHROUGH)
+        return page
+
+    def step(self, index): self.page.evaluate('i => { index = i; render(); }', index)
+
+    def sign(self):
+        page = self.page
+        page.locator('#approved').check()
+        canvas = page.locator('#signature'); canvas.scroll_into_view_if_needed(); box = canvas.bounding_box()
+        page.mouse.move(box['x'] + 20, box['y'] + 20); page.mouse.down(); page.mouse.move(box['x'] + 120, box['y'] + 60, steps=8); page.mouse.move(box['x'] + 200, box['y'] + 30, steps=8); page.mouse.up()
+        self.assertEqual(page.evaluate('[S.approved, Boolean(S.signature), Boolean(S.acceptanceAt)]'), [True, True, True])
+
+    def save_quote(self, dialog):
+        for _ in range(3): dialog.get_by_role('button', name=re.compile(r'^(Continue to|Review quote)')).first.click(); expect(dialog.locator('.qd-skeleton')).to_have_count(0)
+        expect(dialog.locator('.qb-labor h3')).to_contain_text('Labor')
+        dialog.get_by_role('button', name='Save draft').click()
+        expect(dialog).to_contain_text('saved.')
+        dialog.get_by_role('button', name='Done').click()
+        expect(dialog).to_have_count(0)
+
+    def test_walkthrough_signature_survives_looking_in_the_builder_and_a_changed_garage_is_rebuilt_before_signing(self):
+        page, handoffs = self.walkthrough(), []
+        page.on('response', lambda response: handoffs.append((response.status, response.json())) if response.request.method == 'POST' and urlparse(response.url).path == '/api/walkthrough-handoff' else None)
+        # Finish: one shelving unit from the builder's products; Review names it before the quote is built.
+        goods = page.locator('#finish-goods')
+        goods.get_by_label('Search shelving and storage products').fill('HDX plastic shelving')
+        goods.get_by_role('button', name=f'Add {SHELF}').click()
+        self.step(5)
+        expect(page.locator('#review-finish')).to_contain_text(f'Cleanout + reset, Deep clean, {SHELF} × 1')
+        # Build the quote: it opens with the two-car deep clean and the Finish pick, and is saved.
+        page.locator('#build-quote').click()
+        dialog = self.dialog()
+        expect(dialog.locator('.qb-total')).to_contain_text('Shelving $115.70')
+        self.save_quote(dialog)
+        self.assertEqual(page.evaluate('[S.builderQuote.compositePricing.garageSize, builderSignGate()]'), ['2', ''])
+        self.sign()
+        # The estimator shows the homeowner a second shelf in the builder and closes it without saving: nothing the
+        # homeowner signed changed, so the signature stays and the saved quote is still the one signed.
+        page.locator('#send-options').click()
+        expect(dialog.get_by_role('button', name='Edit quote')).to_be_visible()
+        expect(dialog).not_to_contain_text('Finish step')
+        dialog.get_by_role('button', name='Edit quote').click()
+        dialog.get_by_role('button', name='Continue to shelving').click()
+        dialog.get_by_role('button', name=f'One more: {SHELF}').click()
+        expect(dialog.get_by_role('group', name=f'{SHELF} quantity').locator('output')).to_have_text('2')
+        page.keyboard.press('Escape')
+        expect(dialog).to_have_count(0)
+        self.assertEqual(page.evaluate('[S.approved, Boolean(S.signature), builderSignGate(), S.builderGoods.shelving.map(row => row.quantity)]'), [True, True, '', [1]])
+        expect(page.locator('#signature')).to_be_visible()
+        # Photos: the garage is a 3-car. The plan changed (approval collected again), and the two-car quote is not signed.
+        self.step(1)
+        page.get_by_role('button', name='3-car', exact=True).click()
+        self.step(5)
+        gate = page.locator('#builder-sign-gate')
+        expect(gate).to_have_attribute('data-gate', 'size')
+        expect(gate).to_contain_text('The garage size changed since this quote was built: it was priced for a 2-car garage, and the walkthrough now records a 3-car garage.')
+        for missing in ('#approved', '#signature', '#deposit-summary'): expect(page.locator(missing)).to_have_count(0)
+        expect(page.get_by_role('button', name='Save brief + schedule')).to_be_disabled()
+        self.assertLessEqual(page.evaluate('document.documentElement.scrollWidth - innerWidth'), 0)
+        page.screenshot(path=str(RESULTS / 'gameplan-garage-size-gate-mobile.png'), full_page=True)
+        # Edit the quote: the deep clean follows the 3-car garage. The unsaved second shelf is still in the builder; put it back.
+        gate.get_by_role('button', name='Edit the quote').click()
+        dialog.get_by_role('button', name='Edit quote').click()
+        deep = dialog.locator('label', has_text='Deep clean')
+        expect(deep.locator('input')).to_be_checked()
+        expect(deep).to_contain_text('Sized to the walkthrough’s 3-car garage.')
+        expect(deep).to_contain_text('$480.00')
+        dialog.get_by_role('button', name='Continue to shelving').click()
+        dialog.get_by_role('button', name=f'One fewer: {SHELF}').click()
+        dialog.get_by_role('button', name='Back').click()
+        self.save_quote(dialog)
+        self.assertEqual(page.evaluate('[S.builderQuote.compositePricing.garageSize, builderSignGate()]'), ['3', ''])
+        # The homeowner signs the 3-car quote and the signed job is saved.
+        self.sign()
+        page.get_by_role('button', name='Save brief + schedule').click()
+        expect(page.locator('#send-status')).to_contain_text('Job saved', timeout=20000)
+        self.assertEqual([status for status, _ in handoffs], [200], 'one signed save, accepted')
+        self.assertEqual(handoffs[0][1]['job']['status'], 'scheduled')
+        signed = [post for post in self.posts if post.get('action') == 'save'][-1]['draft']['composite_pricing']
+        self.assertEqual(signed['garageSize'], '3')
+        self.assertIn({'id': 'egc-009', 'quantity': 1}, signed['removal'], 'the three-car deep clean')
+        self.assertEqual(signed['shelving'], [{'id': 'hd-100006678', 'quantity': 1}])
 
 
 if __name__ == '__main__':

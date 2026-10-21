@@ -242,7 +242,7 @@ async function crewHome({ walkthroughs, business = false, jobs }) {
   class FixedDate extends Date { constructor(...args) { super(...(args.length ? args : ['2026-09-22T15:00:00.000Z'])); } static now() { return Date.parse('2026-09-22T15:00:00.000Z'); } }
   const context = vm.createContext({ Date: FixedDate, Intl, URLSearchParams, Promise, Set, Number, String, Array, Math, JSON, encodeURIComponent, window: {}, location: { search: '' }, navigator: { onLine: true }, addEventListener() {},
     document: { getElementById: element },
-    EGCHubAuth: { profile: () => ({ user: 'Sales.Rep', displayName: 'Synthetic Sales Rep' }), canRunBusiness: () => business, canRunWalkthrough: () => walkthroughs, mountCrewNav() {},
+    EGCHubAuth: { profile: () => ({ user: 'Sales.Rep', displayName: 'Synthetic Sales Rep' }), canRunBusiness: () => business, canRunWalkthrough: () => walkthroughs, canUseKnock: () => business, mountCrewNav() {},
       async fetch(path) { if (path === '/api/crew-jobs') return Response.json({ ok: true, jobs }); if (path === '/api/employee-hub') return Response.json({ ok: true, collections: { timeEntries: [] } }); throw new Error(`Unexpected ${path}`); } } });
   vm.runInContext(page.slice(page.lastIndexOf('<script>') + '<script>'.length, page.lastIndexOf('</script>')), context);
   await context.openCrewHome();

@@ -2,6 +2,7 @@ import { enforceBusinessProjectWrite } from './_lib/business-hub-write-guard.js'
 import { gateStaffPage, privateStaffResponse } from './_lib/staff-page-gate.js';
 import { BOOKING_SLOTS_MARKER, bookingSlotsPageRequest } from './_lib/booking-slots-flag.js';
 import { applyLaunchDefaults } from './_lib/launch-defaults.js';
+import { renewHubSessionCookie, setsHubSessionCookie } from './_lib/hub-session.js';
 
 // Source trees, tooling and deploy configs sit beside the static site; never serve them.
 const PRIVATE_PATH = /^(?:\/(?:auth-verifier|contracts|docs|scripts|tests|test-results|field-qa|lighthouse-reports|egc-platform|functions|tools|node_modules)(?:\/|$)|\/(?!\.well-known(?:\/|$))\.[A-Za-z0-9_.-]+(?:\/|$)|\/(?:sop|tyler-contract)(?:\.html)?\/?$|\/EGC-Lead-System-SOP\.pdf$|\/(?:package(?:-lock)?\.json|README\.md|firebase(?:\.emulator|\.field-day)?\.json|firestore\.(?:rules|indexes\.json)|pnpm-(?:lock|workspace)\.yaml|e2e-report\.json|firestore-debug\.log|_[^/]+)(?:$|\/)|\/.*\.py\/?$)/i;
@@ -98,6 +99,12 @@ export async function onRequest(context) {
   if (pathname.startsWith('/api/')) {
     response.headers.set('Cache-Control', 'no-store');
     response.headers.set('X-Robots-Tag', 'noindex, nofollow');
+    // STAFF-SESSION: an API request on a staff session issued over an hour ago gets it back with a fresh 7-day expiry
+    // (hub-session.js), unless the API set or cleared that cookie itself. A failed renewal leaves the response as it was.
+    if (!setsHubSessionCookie(response)) {
+      const renewed = await renewHubSessionCookie(context.request, context.env).catch(() => '');
+      if (renewed) response.headers.append('Set-Cookie', renewed);
+    }
   }
   if (ownPolicy) {
     // The MCP approval page may keep same-origin, so its own form POST carries a real Origin; the rest send none.

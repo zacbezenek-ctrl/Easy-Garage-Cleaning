@@ -24,7 +24,7 @@ import { VAULT_MIGRATIONS } from '../functions/_lib/employee-vault-migrate.js';
 
 // Every business decision here runs on an injected clock (the Denver date, the reset link's 24 hours, audit times).
 // Hub session cookies are minted and checked by the real session code, which reads the process clock for their
-// 12-hour lifetime only; the suite also passes with that clock shifted (tests/helpers/shift-clock.mjs).
+// 7-day lifetime only; the suite also passes with that clock shifted (tests/helpers/shift-clock.mjs).
 const START = Date.parse('2026-09-24T15:00:00.000Z');
 const ON = { EGC_STAFF_PASSWORD_RESET: 'true' };
 const people = Object.fromEntries(listHubUserProfiles(staffEnv()).map(profile => [profile.user, profile]));
@@ -219,7 +219,7 @@ test('change password: checks the current one, keeps this browser signed in and 
   assert.equal(changed.status, 200, JSON.stringify(changed.body));
   assert.deepEqual([changed.body.passwordChanged, changed.body.otherSessionsEnded, changed.body.firebaseRevocation.status, changed.body.profile], [true, true, 'revoked', undefined]);
   const cookie = changed.headers.get('set-cookie');
-  assert.match(cookie, /^egc_hub_session=.+; Path=\/; HttpOnly; Secure; SameSite=Strict; Max-Age=43200$/);
+  assert.match(cookie, /^egc_hub_session=.+; Path=\/; HttpOnly; Secure; SameSite=Strict; Max-Age=604800$/, 'a 7-day session (STAFF-SESSION, 2026-10-19)');
   assert.equal((await sessionOf(h.env, cookie.split(';')[0])).user, 'Crew.Change', 'this browser stays signed in');
   assert.equal(await sessionOf(h.env, here.cookie), null); assert.equal(await sessionOf(h.env, phone.cookie), null);
   assert.deepEqual(h.fb.calls.map(call => call.uid), ['hub:crew.change']);

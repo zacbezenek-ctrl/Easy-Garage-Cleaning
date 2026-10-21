@@ -633,6 +633,6 @@ test('real signed Hub sessions: the owner reads and writes, a manager reads only
   assert.equal((await request('crew1', publishRequest())).status, 403);
   assert.equal((await request('zacb', settingsUpdate())).status, 200);
   assert.equal((await json(await h.get({ env, request: new Request(ENDPOINT, { headers: { Cookie: 'egc_hub_session=forged.token' } }) }))).status, 401);
-  const expired = await json(await h.get({ env, request: new Request(ENDPOINT, { headers: { Cookie: await cookie('zacb', at - 12 * 60 * 60 * 1000) } }) }));
-  assert.deepEqual([expired.status, expired.body.code], [401, 'catalog_sign_in_required'], 'a session issued 12 hours before NOW has expired');
+  const expired = await json(await h.get({ env, request: new Request(ENDPOINT, { headers: { Cookie: await cookie('zacb', at - 7 * 24 * 60 * 60 * 1000) } }) }));
+  assert.deepEqual([expired.status, expired.body.code], [401, 'catalog_sign_in_required'], 'a session issued 7 days before NOW has expired (STAFF-SESSION: 7 days, renewed while used)');
 });

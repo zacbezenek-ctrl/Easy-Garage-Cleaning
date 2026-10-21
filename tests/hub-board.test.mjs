@@ -134,7 +134,11 @@ test('door-to-door work is marked from the job itself or from the D2D day answer
 function mounted({ viewer = { id: 'manager.one' }, d2d = null, jobs = [], date = MONDAY, endDate = '2026-10-20' } = {}) {
   const document = createDocument(), calls = [], create = document.createElement.bind(document);
   // The small test DOM keeps style as a plain object; the lanes set custom properties on it.
-  document.createElement = tag => { const node = create(tag); node.style.setProperty = (name, value) => { node.style[name] = String(value); }; return node; };
+  document.createElement = tag => { const node = create(tag); node.style.setProperty = (name, value) => { node.style[name] = String(value); };
+    // The Hub's job editor is a <dialog>; this DOM records that it opened.
+    if (tag === 'dialog') Object.assign(node, { showModal() { node.open = true; }, close() { node.open = false; } });
+    Object.defineProperty(node, 'parentElement', { get: () => node.parentNode?.nodeType === 1 ? node.parentNode : null });
+    return node; };
   const overview = { ok: true, viewer, jobs, roster, crews, vehicles: [], availability: [], warnings: [], coverage: { complete: true, asOf: NOW }, startDate: date, endDate, dispatchRules: { workdayStart: '09:00', workdayEnd: '17:00' } };
   const fetch = async (path) => {
     calls.push(String(path));
@@ -178,8 +182,19 @@ test('the Board view is registered once and draws crews, then estimators, then t
   const text = body.textContent;
   for (const expected of ['Door-to-door', 'Synthetic Rep', 'On shift', 'Synthetic Park · claimed · worked today', '41', 'Walkthroughs set', 'Sale · Synthetic Package', 'Walkthrough set', 'Door-to-door work on this day'])
     assert.ok(text.includes(expected), expected);
-  assert.ok(body.querySelectorAll('a.dc-d2d-link').some(link => link.getAttribute('href') === '/crew/gameplan.html?walkthroughId=walk_set'));
-  assert.ok(body.querySelectorAll('a.dc-d2d-link').some(link => link.getAttribute('href') === '/crew/job.html?jobId=job_sale'));
+  // Work outside the loaded days opens its crew page at the clean URL (Pages answers /crew/*.html with a redirect).
+  assert.ok(body.querySelectorAll('a.dc-d2d-link').some(link => link.getAttribute('href') === '/crew/gameplan?walkthroughId=walk_set'));
+  assert.ok(body.querySelectorAll('a.dc-d2d-link').some(link => link.getAttribute('href') === '/crew/job?jobId=job_sale'));
+  assert.equal(body.querySelectorAll('a.dc-d2d-link').some(link => /\.html/.test(link.getAttribute('href'))), false);
+  // A door-to-door job the board has loaded opens in the Hub's own editor, never leaving the Hub.
+  assert.equal(body.querySelectorAll('a.dc-d2d-link').some(link => link.getAttribute('href').includes('d2d_today')), false);
+  const open = body.querySelectorAll('button[data-d2d-open="d2d_today"]');
+  assert.deepEqual(open.map(button => button.textContent), ['Open job']);
+  open[0].click();
+  const editor = api.state().modal?.dialog;
+  assert.equal(editor?.open, true, 'the Hub job editor opened');
+  assert.equal(editor.getAttribute('aria-label'), 'Edit / assign job');
+  assert.equal(editor.querySelector('input[name="customerSearch"]').value, 'Synthetic d2d_today', 'on that job');
   // The day's D2D job on Crew 1 is marked on the board once the answer names it.
   const marked = body.querySelectorAll('.dc-item.dc-item-d2d').map(node => node.getAttribute('data-dc-item'));
   assert.deepEqual(marked, ['d2d_today']);
@@ -188,6 +203,14 @@ test('the Board view is registered once and draws crews, then estimators, then t
   assert.equal(calls.filter(path => path.startsWith('/api/d2d-day')).length, 1);
   // Estimator open time is a button that books a walkthrough with that estimator.
   assert.ok(body.querySelectorAll('button.dc-open').length >= 3);
+});
+
+test('door-to-door work the board has loaded but that is finished opens its crew page at the clean URL, not the editor', async () => {
+  const jobs = [job('d2d_today', { status: 'completed', crewId: 'one', assignedCrew: ['ana.crew', 'fay.multi'], crewLead: 'fay.multi' })];
+  const { api, body } = mounted({ jobs, d2d: { status: 200, body: D2D_ANSWER } });
+  api.redraw(); await settle(); await settle();
+  assert.equal(body.querySelectorAll('button[data-d2d-open]').length, 0);
+  assert.ok(body.querySelectorAll('a.dc-d2d-link').some(link => link.getAttribute('href') === '/crew/job?jobId=d2d_today'));
 });
 
 test('a booker never asks for the door-to-door day, and a 403 or 404 hides the panel without retrying', async () => {

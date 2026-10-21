@@ -33,7 +33,8 @@ test('owner and manager may render; crew and unsigned role headers may not',asyn
 });
 test('tampered and expired signed cookies are denied',async()=>{
  const token=await createHubSessionToken(env,'testowner');
- for(const value of [token.slice(0,-3)+'XXX',await createHubSessionToken(env,'testowner',Date.now()-13*60*60*1000)]){
+ // Expired: issued over 7 days ago (STAFF-SESSION, 2026-10-19; sessions lasted 12 hours before).
+ for(const value of [token.slice(0,-3)+'XXX',await createHubSessionToken(env,'testowner',Date.now()-7*24*60*60*1000-60*60*1000)]){
   const r=await page({env,request:new Request('https://easygaragecleaning.com/internal/before-after',{headers:{Cookie:'egc_hub_session='+value}})});assert.equal(r.status,401);
  }
 });

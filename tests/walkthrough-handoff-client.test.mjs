@@ -65,9 +65,10 @@ test('a request signed on the earlier 50% deposit terms is released when the ser
 // Review (F7): a builder quote the server prices differently (saved before the pricing changes of 2026-10-18, or the menu
 // changed since), one with garage work and no man-hours, and a junk-only quote on a walkthrough that records garage work
 // are refused after the server finds no saved copy: nothing was saved, so the frozen request is released and the quote,
-// built again and signed again, goes out as a new request instead of a dead end.
+// built again and signed again, goes out as a new request instead of a dead end. So is a selection the signed walkthrough
+// no longer allows (LANE catalog review: a deep clean or one-car pressure wash built for another garage size).
 test('a signed builder quote the server refuses before saving is released, and the rebuilt quote saves as a new request',async()=>{
- for(const [status,code] of [[409,'handoff_builder_price_mismatch'],[409,'handoff_builder_junk_only_garage_work'],[400,'quote_draft_composite_labor_required'],[409,'quote_draft_composite_version_changed']]){
+ for(const [status,code] of [[409,'handoff_builder_price_mismatch'],[409,'handoff_builder_junk_only_garage_work'],[400,'quote_draft_composite_labor_required'],[409,'quote_draft_composite_version_changed'],[400,'quote_draft_composite_invalid_selection']]){
   const f=fixture(),fetch=f.deps.fetch;let refuse=true;
   f.deps.fetch=async(url,options={})=>url==='/api/walkthrough-handoff'&&refuse?(f.calls.push({url,body:JSON.parse(options.body)}),reply({ok:false,code,error:'The signed quote does not match the quote builder\'s prices on the server: this selection comes to $750.00.'},status)):fetch(url,options);
   await assert.rejects(factory(f.deps).save(),e=>e.refused===true&&e.code===code,code);
