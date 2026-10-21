@@ -894,10 +894,21 @@ export async function followSaleStatus(kstore, store, sale, { now = new Date(), 
   if (cancel === Boolean(job.hubCancelled)) {
     if (pendingMove(sale)) return followSaleDate(kstore, store, sale, { env: env || {}, now });
     if (!['cancel', 'restore'].includes(job.hubChange?.action) || job.hubChange.status !== 'failed') return null;
-    // A cancel or restore that failed before is moot: the Hub job already is what the sale says (cancelled, or open).
+    // A cancel or restore that failed before is moot when the Hub job already is what the sale says (cancelled, or
+    // open). The failure told the office to finish it in Dispatch, so the job is read: one the office cancelled (or
+    // rebooked) by hand since is restored (or cancelled) below, never reported as following the sale.
+    // A job that cannot be read (or is gone) is left to followHubJob, which saves that as the failure.
+    const current = await store.read('jobs', job.ref).catch(() => null);
+    if (!current || cancel !== CANCELLED.has(jobState(current))) return followHubJob(kstore, store, sale, cancel, now);
     const hub = { action: job.hubChange.action, status: 'done', code: '', at: now.toISOString(), message: cancel ? 'Its Hub job is cancelled.' : 'Its Hub job is open.' };
     return { sale: await patchSaleJob(kstore, sale.id, { hubChange: hub }, now.toISOString()), hub };
   }
+  return followHubJob(kstore, store, sale, cancel, now);
+}
+
+// Cancels (cancel) or restores the sale's linked Hub job so it follows the sale, saving the outcome on handoff.job.
+async function followHubJob(kstore, store, sale, cancel, now) {
+  const job = sale.handoff.job;
   const nowIso = now.toISOString(), action = cancel ? 'cancel' : 'restore';
   let failed = null;
   try {

@@ -24,7 +24,7 @@ export const KNOWN_INTERNAL = [
   '{1:450,2:650,3:850,other:1100}', '{light:.75,medium:1,full:1.35,packed:1.7}', 'Number(S.loads||0)*1000', "'Mattress':45", "'Piano / safe':150", "'Very heavy items':100",
   '{1:125,2:220,3:320,other:420}', '{metal:499,wood:449,plastic:349}', "'Storage tote',21.5", 'Math.max(450,Math.round(n/25)*25)', '{light:0,medium:30,full:60,packed:120}', '{1:60,2:90,3:120,other:150}',
   '2026-09-pest200-traps250', '$1,000 per full', 'Pest waste (+$200)', 'mouse trapping (+$250)', '+$400 for a one-car',
-  '$20/hr crew', '$23/hr lead', '$20/crew-hour', 'crewHours*20', '2,250+', 'rental cost/job. Track',
+  'rental cost/job. Track',
   'paid.length * 30', 'fastLeads.length * 3', "Tyler's Payout", '<span class="bdg paid">$30</span>',
   'total = 150', 'cy * 35', 'fl * 20', 'low * 1.18', 'FREE_MILES', 'PRICE_PER_MILE',
   'Partner service savings', 'Coordinated properties<small>', 'Discounts do not stack', '<strong>10%</strong>', '<strong>15%</strong>',
@@ -37,6 +37,9 @@ const NUMERIC_OBJECT = /\{\s*(?:(?:'[^'\n]{1,40}'|"[^"\n]{1,40}"|[A-Za-z0-9_]+)\
 const PRICE_ENTRY = /\bprice\s*:\s*\d/g;
 const UNIT_RATE = /\$\d[\d,]*(?:\.\d+)?\s*(?:\/\s*|per\s+)(?:hr|hour|crew[- ]hour|cubic yard|yd|floor|mi|mile|truckload|full load|load)\b/gi;
 const TARGET = /\$\d[\d,]*\+?\s*target|target:\s*\$\d/gi;
+// The owner's labor baseline, wages and targets are owner-entered settings now (functions/_lib/owner-economics.js), so
+// no literal of theirs is listed above: the shapes catch any of them whatever the number (UNIT_RATE, TARGET and this).
+const CREW_HOUR_RATE = /crewHours\s*\*\s*\d/g;
 
 export function findings(text) {
   const out = [];
@@ -45,7 +48,7 @@ export function findings(text) {
     const keys = [...match[0].matchAll(/(?:'([^']*)'|"([^"]*)"|([A-Za-z0-9_]+))\s*:/g)].map(key => (key[1] ?? key[2] ?? key[3]).toLowerCase());
     if (keys.filter(key => TABLE_KEYS.has(key)).length >= 2) out.push(`price-table shape ${match[0].slice(0, 80)}`);
   }
-  for (const pattern of [PRICE_ENTRY, UNIT_RATE, TARGET]) for (const match of text.matchAll(pattern)) out.push(`price shape ${JSON.stringify(match[0])}`);
+  for (const pattern of [PRICE_ENTRY, UNIT_RATE, TARGET, CREW_HOUR_RATE]) for (const match of text.matchAll(pattern)) out.push(`price shape ${JSON.stringify(match[0])}`);
   return out;
 }
 
@@ -59,8 +62,8 @@ test('the scan covers what the site serves: pages, scripts and crew tools, never
 test('the detectors catch every moved constant and table shape, and ignore public prices and ordinary numbers', () => {
   const internal = [
     "const size={1:450,2:650,3:850,other:1100}[S.garageSize]||650", "{'Mattress':45,'Refrigerator / freezer':60,'Tires':50}", "{ id:'fridge', name:'Refrigerator', price:60 }",
-    "['Crew standard','$20/hr crew; $23/hr lead baseline.']", 'labor=Number(costs.labor??(crewHours?crewHours*20:0))', 'const jobPay  = paid.length * 30;',
-    'if (cy > 0) { total += cy * 35; }', '($35 per cubic yard)', '+$20 per floor', "['Average ticket',c.aov,'Target: $2,250+']",
+    "['Crew standard','$10/hr crew; $12/hr lead baseline.']", 'labor=Number(costs.labor??(crewHours?crewHours*10:0))', 'const jobPay  = paid.length * 30;',
+    'if (cy > 0) { total += cy * 35; }', '($35 per cubic yard)', '+$20 per floor', "['Average ticket',c.aov,'Target: $1,000+']", '$1,000+ target average ticket',
     '<strong>10%</strong><p>Partner service savings', "there's a $50 EGC gift card in it", '{light:0,medium:30,full:60,packed:120}', '$1/mi beyond 25 mi',
   ];
   for (const snippet of internal) assert.ok(findings(snippet).length > 0, snippet);

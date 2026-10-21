@@ -9,6 +9,7 @@ import { jobCostingHandlers } from '../functions/api/job-costing.js';
 import { moneyHandlers } from '../functions/api/money.js';
 import { integrationStatusHandlers } from '../functions/api/integration-status.js';
 import { payOwnerOnly, seesLaborCost, seesOthersPay, staffPayOwnerOnly } from '../functions/_lib/pay-visibility.js';
+import { withoutRandomValues } from './helpers/leak-text.mjs';
 
 // JOB-COST-PRIVACY: labor dollars are owner-only while EGC_STAFF_PAY_OWNER_ONLY is on. The rates below are
 // canaries: no non-owner response may contain one, a labor dollar figure, or a pair of figures whose ratio is one.
@@ -150,8 +151,9 @@ const dollarsOf = (value, out = new Set()) => { if (value && typeof value === 'o
 const RATE_FIGURES = Object.values(RATES).flatMap(rate => [rate, rate * 1.5, rate / 2]);
 const derivesRate = values => values.flatMap(a => values.filter(b => b > 0).map(b => a / b)).filter(ratio => RATE_FIGURES.some(rate => Math.abs(ratio - rate) < 0.01));
 function assertNoLaborDollars(text, owner = null, label = '') {
-  for (const rate of Object.values(RATES)) assert.equal(text.includes(String(rate)), false, `${label}: rate ${rate} appears`);
-  for (const canary of [String(LABOR_CENTS), String(LABOR_CENTS / 100), String(LEGACY_LABOR)]) assert.equal(text.includes(canary), false, `${label}: labor canary ${canary} appears`);
+  const visible = withoutRandomValues(text);
+  for (const rate of Object.values(RATES)) assert.equal(visible.includes(String(rate)), false, `${label}: rate ${rate} appears`);
+  for (const canary of [String(LABOR_CENTS), String(LABOR_CENTS / 100), String(LEGACY_LABOR)]) assert.equal(visible.includes(canary), false, `${label}: labor canary ${canary} appears`);
   let body = null; try { body = JSON.parse(text.slice(text.indexOf('\n') + 1)); } catch { return; }
   const values = numbers(body);
   assert.deepEqual(derivesRate(values), [], `${label}: two figures divide into a rate`);

@@ -5,7 +5,8 @@ import { join, relative, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import vm from './helpers/vm-realm.mjs';
 import { sourceFiles } from './source-files.mjs';
-import { PRICING_PARTS, WALKTHROUGH_PRICING_VERSION, businessRateCard, ownerEconomics, phoneQuotePricing, pricingConfig, pricingFingerprint, walkthroughPricing, walkthroughServiceItems } from '../functions/_lib/pricing-config.js';
+import { ownerEconomics } from '../functions/_lib/owner-economics.js';
+import { PRICING_PARTS, WALKTHROUGH_PRICING_VERSION, businessRateCard, phoneQuotePricing, pricingConfig, pricingFingerprint, walkthroughPricing, walkthroughServiceItems } from '../functions/_lib/pricing-config.js';
 import { WALKTHROUGH_SERVICE_ITEMS } from '../functions/_data/walkthrough-services.js';
 import { pricingConfigHandlers } from '../functions/api/pricing-config.js';
 import { accountView } from '../functions/_lib/business-hub-core.js';
@@ -133,8 +134,10 @@ const OWNER = { user: 'zacb', displayName: 'Synthetic Owner', role: 'owner', bus
 const MANAGER = { user: 'tylerg', displayName: 'Synthetic Manager', role: 'manager', businessAccess: true };
 const CREW = { user: 'crew.one', displayName: 'Synthetic Crew', role: 'crew', businessAccess: false };
 const request = (query = '') => new Request(`https://easygaragecleaning.com/api/pricing-config${query}`, { headers: { Origin: 'https://easygaragecleaning.com' } });
-async function get(actor, query, { env = {}, catalog } = {}) {
-  const response = await pricingConfigHandlers({ session: async () => actor, ...(catalog ? { catalog } : {}) }).get({ request: request(query), env });
+// The owner part is the owner's stored settings (functions/_lib/owner-economics.js); synthetic ones here.
+const SYNTHETIC_OWNER = ownerEconomics({ laborCostCentsPerCrewHour: 1000, leadWageCentsPerHour: 1200, averageTicketTargetCents: 100000 }, 1000);
+async function get(actor, query, { env = {}, catalog, owner = async () => SYNTHETIC_OWNER } = {}) {
+  const response = await pricingConfigHandlers({ session: async () => actor, ownerEconomics: owner, ...(catalog ? { catalog } : {}) }).get({ request: request(query), env });
   assert.equal(response.headers.get('Cache-Control'), 'no-store');
   assert.equal(response.headers.get('X-Content-Type-Options'), 'nosniff');
   return { status: response.status, body: await response.json() };
@@ -146,7 +149,7 @@ test('/api/pricing-config: quoting staff get the price tables, only the owner ge
   assert.deepEqual(Object.keys(owner.body.parts).sort(), ['owner', 'phone', 'walkthrough']);
   assert.deepEqual(Object.keys(manager.body.parts).sort(), ['phone', 'walkthrough']);
   assert.deepEqual(owner.body.parts.walkthrough, servedPricing(), 'the served tables are the ones the page tests price with');
-  assert.deepEqual(owner.body.parts.owner, plain(ownerEconomics()));
+  assert.deepEqual(owner.body.parts.owner, plain(SYNTHETIC_OWNER));
   assert.deepEqual(manager.body.parts.phone, plain(phoneQuotePricing()));
   assert.doesNotMatch(JSON.stringify(manager.body), /laborCostPerCrewHour|wages|targets|averageTicket/);
   for (const query of ['', '?parts=walkthrough', '?parts=phone', '?parts=owner']) {
@@ -159,6 +162,21 @@ test('/api/pricing-config: quoting staff get the price tables, only the owner ge
   assert.equal((await get(MANAGER, '?parts=walkthrough,owner')).status, 403);
   assert.deepEqual(Object.keys((await get(OWNER, '?parts=owner')).body.parts), ['owner']);
   assert.equal((await get(null)).status, 401);
+});
+
+test('/api/pricing-config serves the owner part from the owner\'s settings: blanks stay null, and a failed read is a 503, never a built-in number', async () => {
+  const reads = [];
+  const blank = await get(OWNER, '?parts=owner', { env: { synthetic: true }, owner: async env => { reads.push(env); return ownerEconomics({}, null); } });
+  assert.equal(blank.status, 200); assert.deepEqual(reads, [{ synthetic: true }], 'the owner part reads the settings with the request env');
+  assert.deepEqual(blank.body.parts.owner, { laborCostPerCrewHour: null, wages: { crew: null, lead: null }, truckRentalPerJob: { low: null, high: null }, targets: { averageTicket: null, walkthroughSetRatePct: null, qualifiedCloseRatePct: null } });
+  const failed = await get(OWNER, '?parts=owner', { owner: async () => { throw Object.assign(new Error('Synthetic storage detail'), { code: 'owner_economics_unavailable', status: 503 }); } });
+  assert.deepEqual([failed.status, failed.body.code], [503, 'pricing_config_unavailable']);
+  assert.doesNotMatch(JSON.stringify(failed.body), /Synthetic storage detail/);
+  let asked = false;
+  assert.equal((await get(MANAGER, '', { owner: async () => { asked = true; return SYNTHETIC_OWNER; } })).status, 200);
+  assert.equal(asked, false, 'a manager\'s request never reads the owner\'s settings');
+  assert.equal((await get(OWNER, '?parts=walkthrough', { owner: async () => { throw new Error('unused'); } })).status, 200, 'the walkthrough tables never wait on the owner part');
+  await assert.rejects(pricingConfig(['owner']), { code: 'pricing_config_owner_unavailable' }, 'without a settings reader there is no owner part');
 });
 
 test('/api/pricing-config follows the staff-role capabilities when they are on', async () => {

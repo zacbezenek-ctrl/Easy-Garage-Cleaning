@@ -531,7 +531,7 @@ directCostCents = laborCents + burdenCents + materialsCents + disposalCents + su
 
 | Component | Primary | Allowed fallback (flagged) | Never used as cost |
 |---|---|---|---|
-| Labor | P1-03 segments × rate | `costs.labor` only as a manager override with a reason when P1-03 finds zero segments (`manual_override`, provisional) | the $20/crew-hour constant, `hoursOnSite`, CAT-DATA `laborCents` |
+| Labor | P1-03 segments × rate | `costs.labor` only as a manager override with a reason when P1-03 finds zero segments (`manual_override`, provisional) | the old built-in crew-hour constant (now the owner's setting, `functions/_lib/owner-economics.js`), `hoursOnSite`, CAT-DATA `laborCents` |
 | Materials / disposal / other | F-EXP + closeout attestation | `costs.*` only for projects closed before the cutover date (`manual_legacy`, provisional); `standardUnitCostCents` for stocked items (provisional) | CAT-DATA retail or `productCents` |
 | Fees | Stripe balance transaction | `costs.processing` for non-Stripe processors | a 3% estimate |
 | Revenue | approved estimate revision (money-core) | none | `invoice.amount`, `j.total‖priceQuoted`, GHL `monetaryValue`, platform `customer_events.value_cents` |
