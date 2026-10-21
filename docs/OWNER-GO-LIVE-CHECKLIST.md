@@ -66,7 +66,8 @@ The rule behind all of it: **HighLevel sends every customer message and owns eve
 44. [ ] **Record the Phone role for the phone person and the Sales role for the walkthrough rep.** Roles, not names, describe who does what. [3.1](GO-LIVE.md#31-team-roles-staff-directory)
 45. [ ] **Book a test walkthrough in Dispatch and check the HighLevel calendar and tag.** HighLevel sends the confirmation, not the Hub. [3.2](GO-LIVE.md#32-booking-a-walkthrough-no-switch)
 46. [ ] **Upload a short test recording and retry any stuck ones.** Confirms walkthrough AI notes work after the crash fix. [3.3](GO-LIVE.md#33-recording-the-walkthrough)
-47. [ ] **When FUN-06 lands: assign reps in Dispatch, tell them to clock in first, then set `EGC_WALKTHROUGH_VISIT_ENABLED=true`.** Start and Finish then track the visit and the rep's time. [3.4](GO-LIVE.md#34-start-and-finish-after-fun-06)
+47. [ ] **Assign reps in Dispatch and tell them to clock in first.** `EGC_WALKTHROUGH_VISIT_ENABLED` is on by launch default (2026-10-19): Start and Finish track the visit and the rep's time. [3.4](GO-LIVE.md#34-start-and-finish-after-fun-06)
+    - [ ] **Walkthrough notes (on by launch default): add OpenAI credits to the account behind the website's `openaiapi` key, confirm Workers Paid, then run the 60-second real-iPad canary.** Transcripts become job notes the estimator confirms for the crew. [3.7](GO-LIVE.md#37-walkthrough-transcripts-and-job-notes-owner-decision-on)
     - [ ] **Update every walkthrough iPad to iPadOS 15.4 or later (Settings > General > Software Update).** Recording in the Hub needs it; an older iPad records in Voice Memos instead. [3.4](GO-LIVE.md#34-start-and-finish-after-fun-06)
 48. [ ] **Rebook a no-show walkthrough by moving the same visit, never by creating a new one.** Keeps one history per walkthrough. [3.4](GO-LIVE.md#34-start-and-finish-after-fun-06)
 

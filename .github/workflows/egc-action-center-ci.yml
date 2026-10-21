@@ -274,6 +274,12 @@ jobs:
         run: python tests/browser/test_gameplan_pricing_ui.py
       - name: Walkthrough recorder consent, offline sync, one tab per walkthrough and phone/iPad layout
         run: python tests/browser/test_gameplan_recorder_ui.py
+      - name: Walkthrough notes panel (transcript, estimator confirm, withdrawn consent) on a phone and iPad
+        run: python tests/browser/test_gameplan_notes_ui.py
+      - name: Crew job page shows confirmed walkthrough notes and items needed, never prices
+        run: python tests/browser/test_crew_job_visit_notes_ui.py
+      - name: Walkthrough vehicles to park, garage measurements and the parking fit check on a phone and iPad
+        run: python tests/browser/test_gameplan_vehicles_ui.py
       - name: Staff directory Team screen on a phone
         run: python tests/browser/test_staff_ui.py
       - name: Staff sign-in reset, password change and approval with role and starting rate on a phone

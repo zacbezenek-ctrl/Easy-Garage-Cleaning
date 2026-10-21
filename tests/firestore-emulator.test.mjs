@@ -928,3 +928,40 @@ test('every business_* collection, including receipts and invitation email caps,
     assert.equal((await runOperationsTtlBackfill({},{fetcher:emulator,apply:true,now:new Date(clock).toISOString()})).writes.planned,0,'a rerun is a no-op');
   } finally {await environment.cleanup();}
 });
+
+// EGC_WALKTHROUGH_NOTES: transcript parts, each visit's notes and their request receipts are server-only (/api/walkthrough-notes);
+// the notes the estimator confirmed sit on the job, which only business users read through the SDK (crew read the projections).
+test('walkthrough transcript parts, notes and notes receipts are server-only', {skip:!enabled,timeout:60000},async()=>{
+  const host = process.env.FIRESTORE_EMULATOR_HOST || '';
+  assert.match(host,/^(?:127\.0\.0\.1|localhost):\d{2,5}$/,'This test may only connect to a loopback Firestore emulator.');
+  const require = process.env.EGC_FIREBASE_TEST_MODULES ? createRequire(resolve(process.env.EGC_FIREBASE_TEST_MODULES,'package.json')) : createRequire(new URL('../package.json',import.meta.url));
+  const {initializeTestEnvironment,assertFails,assertSucceeds}=require('@firebase/rules-unit-testing');
+  require('firebase/firestore').setLogLevel('silent');
+  const [hostname,port]=host.split(':');
+  const rules=await readFile(new URL('../firestore.rules',import.meta.url),'utf8');
+  const environment=await initializeTestEnvironment({projectId:'demo-egc-field-rules',firestore:{host:hostname,port:Number(port),rules}});
+  const claims=(username,role='crew',business=false)=>({username,role,business_access:business,assignment_version:1,assignment_identities:[username],assignment_keys:[username.toLowerCase()]});
+  const crew=environment.authenticatedContext('crew-one',claims('crew1')).firestore();
+  const lead=environment.authenticatedContext('lead-one',claims('lead1','crew_lead')).firestore();
+  const manager=environment.authenticatedContext('manager',claims('zacb','owner',true)).firestore();
+  const publicDb=environment.unauthenticatedContext().firestore();
+  const paths=['walkthroughNoteParts/p1','walkthroughNotes/w1','walkthroughNoteReceipts/r1'];
+  try {
+    await environment.withSecurityRulesDisabled(async context=>{
+      const db=context.firestore();
+      await db.doc(paths[0]).set({visitId:'w1',text:'Synthetic transcript',status:'done',expiresAt:'2099-01-01T00:00:00.000Z'});
+      await db.doc(paths[1]).set({visitId:'w1',status:'drafted',draft:{jobNotes:['Synthetic note']}});
+      await db.doc(paths[2]).set({action:'confirm',visitId:'w1'});
+      await db.doc('jobs/w1').set({id:'w1',type:'walkthrough',assignedCrew:['lead1'],visitNotes:{jobNotes:['Clear the left bay first.']}});
+    });
+    for (const db of [crew,lead,manager,publicDb]) for (const path of paths) {
+      await assertFails(db.doc(path).get());
+      await assertFails(db.doc(path).set({status:'confirmed'}));
+      await assertFails(db.doc(path).delete());
+    }
+    for (const db of [crew,lead,manager]) for (const collection of ['walkthroughNoteParts','walkthroughNotes','walkthroughNoteReceipts']) await assertFails(db.collection(collection).get());
+    await assertFails(lead.doc('jobs/w1').get());
+    await assertSucceeds(manager.doc('jobs/w1').get());
+  } finally {await environment.cleanup();}
+});
+

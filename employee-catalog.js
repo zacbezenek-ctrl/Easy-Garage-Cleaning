@@ -8,7 +8,7 @@
 (function(){
 'use strict';
 // Drafts live under the Hub's draft prefix, which the always-loaded screen registry clears on sign-out.
-const API='/api/catalog',SCREEN='catalog',DRAFT_KEY='egc.hub.draft.v1.catalog.',TZ='America/Denver',PAGE=40,MAX_ITEM_CENTS=10000000,QUOTE_ASSET_VERSION='20261021portallinks';
+const API='/api/catalog',SCREEN='catalog',DRAFT_KEY='egc.hub.draft.v1.catalog.',TZ='America/Denver',PAGE=40,MAX_ITEM_CENTS=10000000,QUOTE_ASSET_VERSION='20261021portalmerge';
 const PRODUCT_CATEGORIES=['bikes','cabinets-workbenches','floors-lighting-extras','lawn-garden','overhead','shelving','small-items','sports-outdoor','wall-systems'];
 const TIERS=['good','better','best'],VERIFIED_EVIDENCE=['product_page','search_snippet'];
 const AVAILABILITY={active:'Active',referral_only:'Referral only',hidden:'Hidden'};

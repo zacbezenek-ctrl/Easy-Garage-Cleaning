@@ -191,7 +191,8 @@ function moneyScreen(_app, params) {
         h('p', {}, commissionRuleText(rates)),
         h('p', { class: 'caption muted' }, 'Customer receipts are separate from recorded rep payments; settlement is unverified.'),
         h('p', { class: 'caption muted' }, 'Current policy: eligible garage work only; no junk-removal commission. The estimator rate is separate and is not added to D2D pay. Mixed or unclassified work needs review; historical signed terms are preserved.'),
-        h('a', { class: 'btn btn--secondary', href: '/employee.html?view=walkthroughs' }, 'Book a walkthrough in the Hub'),
+        // KNOCK-BRIDGE: a walkthrough is set at the door (Walkthrough set on the Knock screen), so the rep stays in Knock.
+        app.S.viewer?.jobBridge === true ? h('button', { type: 'button', class: 'btn btn--secondary', onclick: () => app.go('knock') }, 'Set a walkthrough at the door') : null,
         rates.verified && rates.acceleratorEnabled ? meter({
           label: `${percent(rates.acceleratorRate)} rate above ${money(rates.acceleratorThreshold)} this month`, value: `${money(collectedThisMonth)} / ${money(rates.acceleratorThreshold)}`,
           ratio: collectedThisMonth / rates.acceleratorThreshold, tone: 'orange', goal: 1,

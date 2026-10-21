@@ -401,6 +401,31 @@ test('EGC_JOB_MATERIALS: a signed walkthrough saves buy and stock materials, the
   assert.deepEqual(crew.requiredEquipment, KIT);
 });
 
+// EGC_WALKTHROUGH_NOTES: confirmed notes are a top-level field the signed handoff never rewrites (it rebuilds jobInstructions).
+test('EGC_WALKTHROUGH_NOTES: the signed job inherits the visit\'s confirmed notes, and a signed revision keeps them; the brief lists the items needed', async () => {
+  const f = fixture(withKit()), notes = { version: 1, jobNotes: ['Clear the left bay first.'], itemsNeeded: [{ name: 'Ladder', quantity: null, reason: 'Overhead rack' }], keepItems: [], removeItems: [], access: [], hazards: [], confirmedAt: NOW, confirmedBy: 'rep.one', sourceVisitId: 'w1' };
+  f.rows.set('jobs/w1', { ...f.rows.get('jobs/w1'), visitNotes: notes });
+  f.input.sourceRevision = f.rows.get('jobs/w1').revision;
+  const saved = await runWith(f, MATERIALS_ON), id = saved.job.id;
+  assert.deepEqual(f.rows.get(`jobs/${id}`).visitNotes, notes);
+  const later = { ...notes, jobNotes: ['Clear the left bay first.', 'Customer added the attic boxes.'], confirmedAt: '2026-09-22T18:30:00.000Z' };
+  f.rows.set(`jobs/${id}`, { ...f.rows.get(`jobs/${id}`), visitNotes: later });
+  await runWith(f, MATERIALS_ON, f.revise(withKit(p => { p.notes = 'Changed customer note'; }), id));
+  const job = f.rows.get(`jobs/${id}`);
+  assert.deepEqual(job.visitNotes, later, 'a re-sign never wipes the confirmed notes');
+  assert.equal(job.jobInstructions.visitNotes, undefined);
+  const crew = fieldJobProjection(job);
+  assert.deepEqual(crew.visitNotes.jobNotes, later.jobNotes);
+  // The crew page's materials card already lists the quote's goods and the stock kit (Grab before you go), so the brief does
+  // not name them a second time; a job without materials on it carries them in the brief.
+  assert.deepEqual([crew.materials.some(item => item.id === 'quote-shelving'), crew.materials.some(item => item.source === 'stock')], [true, true]);
+  const brief = Object.fromEntries(crew.walkthroughBrief.map(row => [row.label, row.text]));
+  assert.deepEqual([brief['Sold goods'], brief.Bring], [undefined, undefined]);
+  const bare = Object.fromEntries(fieldJobProjection({ ...job, materials: [] }).walkthroughBrief.map(row => [row.label, row.text]));
+  assert.equal(bare['Sold goods'], 'Metal shelving unit');
+  assert.equal(bare.Bring, BRING.join('\n'));
+});
+
 test('EGC_JOB_MATERIALS: a signed revision keeps Dispatch entries and the purchase the office recorded for the same product', async () => {
   const f = fixture(withKit()), saved = await runWith(f, MATERIALS_ON), id = saved.job.id;
   const job = f.rows.get(`jobs/${id}`);

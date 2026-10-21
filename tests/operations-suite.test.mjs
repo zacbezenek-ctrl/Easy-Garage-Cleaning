@@ -47,7 +47,10 @@ test('Hub authentication issues, validates, expires, and clears an HttpOnly sess
   assert.equal(check.status,200);
   assert.equal((await check.json()).user,'Tester');
   const token=cookieValue.split('=')[1];
-  assert.equal(await verifyHubSessionToken(env,token,Date.now()+13*60*60*1000),null);
+  // STAFF-SESSION (2026-10-19): a session lasts 7 days from issue (renewed while used), no longer 12 hours.
+  assert.equal((await verifyHubSessionToken(env,token,Date.now()+13*60*60*1000)).user,'Tester');
+  assert.equal(await verifyHubSessionToken(env,token,Date.now()+7*24*60*60*1000+1000),null);
+  assert.match(cookie,/Max-Age=604800/);
   const tampered=await auth.onRequestGet({request:new Request('https://easygaragecleaning.com/api/hub-auth',{headers:{Cookie:cookieValue+'x'}}),env});
   assert.equal(tampered.status,401);
   const logout=await auth.onRequestDelete({request:new Request('https://easygaragecleaning.com/api/hub-auth',{method:'DELETE',headers:{Origin:'https://easygaragecleaning.com'}})});
@@ -406,12 +409,13 @@ test('canonical start time continues to prefill manager reference hours',()=>{
 test('crew tools provide a job-aware employee home and one connected workflow',()=>{
   for(const marker of ['Your workday','next-work','My upcoming work','Estimated pay','loadEmployeeData','loadAssignedJobs','workLink','Open job brief','Continue closeout','Time clock','Report issue','offline'])assert.match(crewHome,new RegExp(marker));
   for(const page of [crewHome,crew,prejob,postjob]){
-    // WT-OUTCOME: the crew nav wraps instead of scrolling 'My Hub' off a 375 px screen, so the stylesheet tag moved.
-    assert.match(page,/crew-brand\.css\?v=20260930launchpolish/);
-    assert.match(page,/hub-auth\.js\?v=20260904c/);
+    // WT-OUTCOME: the crew nav wraps instead of scrolling 'My Hub' off a 375 px screen, so the stylesheet tag moved;
+    // D2D (2026-10-19) moved both tags again for the Door-to-door link.
+    assert.match(page,/crew-brand\.css\?v=20261019d2d/);
+    assert.match(page,/hub-auth\.js\?v=20261019d2d/);
   }
   const auth=read('crew/hub-auth.js');
-  for(const marker of ['mountCrewNav','crew-utility','Crew home','Walkthrough','Pre-job','Closeout','My Hub'])assert.match(auth,new RegExp(marker));
+  for(const marker of ['mountCrewNav','crew-utility','Crew home','Walkthrough','Door-to-door','canUseKnock','Pre-job','Closeout','My Hub'])assert.match(auth,new RegExp(marker));
   for(const page of [prejob,postjob]){
     assert.match(page,/aria-checked=/);
     assert.match(page,/copyScript\(\$\{si\},this\)/);

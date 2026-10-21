@@ -755,7 +755,7 @@ test('the catalog screen is registered once, owner-only, and loads its own versi
   const owner = hubPage(), entry = owner.context.EGCHubScreens.get('catalog');
   assert.deepEqual(copy({ ...entry, mount: undefined, unmount: undefined, canLeave: undefined, refresh: undefined, homeWidget: undefined }), {
     id: 'catalog', group: 'SYSTEM', label: 'Catalog & pricing', iconPath: entry.iconPath, capability: 'owner', crewVisible: false,
-    load: { js: 'employee-catalog.js', css: 'employee-catalog.css', v: '20261021portallinks' }, module: 'EGCCatalog' });
+    load: { js: 'employee-catalog.js', css: 'employee-catalog.css', v: '20261021portalmerge' }, module: 'EGCCatalog' });
   assert.ok(owner.api.visibleNav().some(item => item[0] === 'SYSTEM' && item[1] === 'catalog' && item[2] === 'Catalog & pricing'));
   for (const who of [{ user: 'AlexK', business: true, role: 'manager' }, { user: 'Synthetic.Crew', business: false, role: 'crew' }]) {
     const page = hubPage(who);

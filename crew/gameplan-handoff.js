@@ -38,7 +38,7 @@
     return {compositePricing:pricing,totalCents:estimate.amountCents,menuVersion:String(estimate.catalogVersion || ''),lineItems,scope:String(estimate.scope || '').slice(0,1600),jobId:String(job.id || '')};
   }
   // The refusals that mean nothing was saved and the signed request can never succeed unchanged (perform releases them).
-  const RELEASED = new Set(['dispatch_conflict', 'handoff_terms_outdated', 'handoff_builder_price_mismatch', 'handoff_builder_junk_only_garage_work', 'quote_draft_composite_labor_required', 'quote_draft_composite_version_changed']);
+  const RELEASED = new Set(['dispatch_conflict', 'handoff_terms_outdated', 'handoff_builder_price_mismatch', 'handoff_builder_junk_only_garage_work', 'quote_draft_composite_labor_required', 'quote_draft_composite_version_changed', 'quote_draft_composite_invalid_selection']);
   // This controller owns one frozen, actor-scoped request through lost responses.
   // Neither a reload nor a CRM outage creates a second dispatch request.
   function createClient(d) {
@@ -128,7 +128,9 @@
         // 2026-10-18 or the menu changed since: builder_price_mismatch, the composite
         // labor_required and version_changed) or a junk-only quote on a walkthrough that
         // records garage work: the server refuses them after finding no saved copy, the
-        // quote is built again and the homeowner signs that.
+        // quote is built again and the homeowner signs that. So is a selection the signed
+        // walkthrough no longer allows (composite invalid_selection: a deep clean or one-car
+        // pressure wash quoted for another garage size than the one signed).
         if (RELEASED.has(error.code) && [400, 409].includes(error.status)) { markReleased(actor, String(pending.requestId).toLowerCase()); if (read(k)?.requestId === pending.requestId) d.storage.removeItem(k); error.refused = true; }
         throw error;
       }
@@ -312,7 +314,9 @@
   function sendOptions(button){
     if(!root.EGCQuoteDraft){$('send-status').textContent='Quote drafts are still loading. Try again in a moment.';return null;}
     return root.EGCQuoteDraft.open({storage:sessionStorage,fetch:(...args)=>EGCHubAuth.fetch(...args),actor,uuid:()=>crypto.randomUUID(),plan:()=>payload(),source:()=>S.sourceWalkthroughId || '',savedJobId:()=>S.quoteDraftJobId || S.handoffJobId || '',draftId:()=>S.photoDraftJobId || S.jobId || '',
-      accept:result=>{S.quoteDraftJobId=result.job.id;S.customerId=result.job.customerId;keepBuilderQuote(result.job);save();},onSent:()=>{if(button)button.textContent='Options sent — send again after changes';}});
+      accept:result=>{S.quoteDraftJobId=result.job.id;S.customerId=result.job.customerId;keepBuilderQuote(result.job);save();},onSent:()=>{if(button)button.textContent='Options sent — send again after changes';},
+      // LANE catalog: the builder opens with the shelving and storage picked on Finish and writes its own changes back.
+      goods:()=>root.EGCGameplanCatalog?root.EGCGameplanCatalog.selection():null,onGoods:goods=>root.EGCGameplanCatalog?.fromBuilder(goods)});
   }
   root.EGCWalkthroughHandoff={save:()=>client.save(),send,openings,photos,sendOptions};
 })(window);

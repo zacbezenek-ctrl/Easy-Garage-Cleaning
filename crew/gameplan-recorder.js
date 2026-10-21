@@ -1,8 +1,9 @@
 /* FUN-06: the iPad walkthrough recorder in the gameplan. Start asks for recording consent, records the
    walkthrough in parts (about 20 MB or 20 minutes each) into IndexedDB every second, and Finish records
-   the outcome through /api/walkthrough-visit (FUN-05). The audio uploads to /api/operations-recordings
-   part by part, in order, keeping each part's request ID across retries; a part leaves the iPad only
-   after the server confirms it. Nothing is recorded or uploaded for a customer who declined. One gameplan tab
+   the outcome through /api/walkthrough-visit (FUN-05). The audio uploads part by part, in order, keeping each
+   part's request ID across retries, to /api/walkthrough-notes while the server says walkthrough notes are on
+   (EGC_WALKTHROUGH_NOTES: transcribed on the website's own key, routedUpload), else to /api/operations-recordings;
+   a part leaves the iPad only after the server confirms it. Nothing is recorded or uploaded for a customer who declined. One gameplan tab
    holds a walkthrough (session.owner) from Start until it leaves the iPad; another tab only says so. Recording in the
    Hub needs Web Locks (Safari on iPadOS 15.4 or later): without them the page records nothing and holds or takes no
    walkthrough; one it saves (a walkthrough without Hub audio, a no-show, a Voice Memos file) belongs to no tab. The core
@@ -19,11 +20,12 @@
   const PASSING_PROBLEMS = new Set(['resumed', 'track_ended', 'recorder_error', 'stalled', 'unmuted']);
   // Safari records AAC in MP4; Chrome and Firefox fall back to Opus.
   const MIME_TYPES = ['audio/mp4;codecs=mp4a.40.2', 'audio/mp4', 'audio/webm;codecs=opus', 'audio/webm', 'audio/ogg;codecs=opus'];
-  // The types the recording service accepts today. An .m4a from Voice Memos (audio/x-m4a) is an MP4 container, sent as audio/mp4.
-  const UPLOAD_TYPES = { 'audio/mp4': 'audio/mp4', 'audio/x-m4a': 'audio/mp4', 'audio/m4a': 'audio/mp4', 'audio/aac': 'audio/aac', 'audio/x-aac': 'audio/aac', 'audio/webm': 'audio/webm', 'audio/ogg': 'audio/ogg', 'audio/mpeg': 'audio/mpeg', 'audio/mp3': 'audio/mpeg', 'audio/wav': 'audio/wav', 'audio/x-wav': 'audio/x-wav', 'audio/wave': 'audio/wav', 'audio/flac': 'audio/flac' };
-  const BY_EXTENSION = { m4a: 'audio/mp4', mp4: 'audio/mp4', aac: 'audio/aac', webm: 'audio/webm', ogg: 'audio/ogg', oga: 'audio/ogg', mp3: 'audio/mpeg', wav: 'audio/wav', flac: 'audio/flac' };
-  const EXTENSIONS = { 'audio/mp4': 'm4a', 'audio/aac': 'aac', 'audio/webm': 'webm', 'audio/ogg': 'ogg', 'audio/mpeg': 'mp3', 'audio/wav': 'wav', 'audio/x-wav': 'wav', 'audio/flac': 'flac' };
-  const ACCEPT = 'audio/*,.m4a,audio/x-m4a,audio/m4a,audio/mp4,.mp3,.wav,.aac,.webm';
+  // The types the transcription accepts. An .m4a from Voice Memos (audio/x-m4a) is an MP4 container, sent as audio/mp4. Raw AAC
+  // (.aac) cannot be transcribed, so it is not offered or accepted.
+  const UPLOAD_TYPES = { 'audio/mp4': 'audio/mp4', 'audio/x-m4a': 'audio/mp4', 'audio/m4a': 'audio/mp4', 'audio/webm': 'audio/webm', 'audio/ogg': 'audio/ogg', 'audio/mpeg': 'audio/mpeg', 'audio/mp3': 'audio/mpeg', 'audio/wav': 'audio/wav', 'audio/x-wav': 'audio/x-wav', 'audio/wave': 'audio/wav', 'audio/flac': 'audio/flac' };
+  const BY_EXTENSION = { m4a: 'audio/mp4', mp4: 'audio/mp4', webm: 'audio/webm', ogg: 'audio/ogg', oga: 'audio/ogg', mp3: 'audio/mpeg', wav: 'audio/wav', flac: 'audio/flac' };
+  const EXTENSIONS = { 'audio/mp4': 'm4a', 'audio/webm': 'webm', 'audio/ogg': 'ogg', 'audio/mpeg': 'mp3', 'audio/wav': 'wav', 'audio/x-wav': 'wav', 'audio/flac': 'flac' };
+  const ACCEPT = 'audio/*,.m4a,audio/x-m4a,audio/m4a,audio/mp4,.mp3,.wav,.webm';
   // Timecard refusals need the rep's decision (clock in, or record without the timecard), never a silent retry.
   const TIMECARD_CODES = new Set(['walkthrough_visit_clock_in_required', 'walkthrough_visit_time_unavailable', 'walkthrough_visit_time_invalid']);
   const RECHECK_CODES = new Set(['walkthrough_visit_already_started', 'walkthrough_visit_closed', 'walkthrough_visit_not_started']);
@@ -58,9 +60,11 @@
     for (const type of MIME_TYPES) { try { if (Recorder.isTypeSupported(type)) return type; } catch { /* try the next type */ } }
     return '';
   }
-  /** The upload type of a chosen file, from its type or else its extension; null when it is not audio we can send. */
+  /** The upload type of a chosen file, from its type or else its extension; null when it is not audio we can send (an .aac
+      file is refused whatever type the browser gives it). */
   function importType(file) {
     const extension = /\.([a-z0-9]{2,4})$/i.exec(String(file?.name || ''))?.[1]?.toLowerCase();
+    if (extension === 'aac') return null;
     return UPLOAD_TYPES[baseType(file?.type)] || BY_EXTENSION[extension] || null;
   }
   async function bytesOf(blob) {
@@ -786,7 +790,9 @@
         try {
           started = true;
           // Progress 1 means every byte of the part was sent: from then on the service may have stored it, reply or not.
-          result = await upload({ requestId: part.requestId, visitId: session.visitId, blob, filename: `walkthrough-${session.visitId}-part-${part.index}.${part.extension}`, signal }, fraction => { if (fraction >= 1) entry.sent = true; progress.set(part.id, fraction); emit(); });
+          // partCount: how many parts the walkthrough has once it is finished (the transcript waits for all of them), else null.
+          const partCount = session.status === 'finished' ? (session.parts || []).filter(row => row.state !== 'removed').length : null;
+          result = await upload({ requestId: part.requestId, visitId: session.visitId, blob, filename: `walkthrough-${session.visitId}-part-${part.index}.${part.extension}`, partIndex: part.index, partCount, source: part.source === 'import' ? 'import' : 'recorder', signal }, fraction => { if (fraction >= 1) entry.sent = true; progress.set(part.id, fraction); emit(); });
         } catch (error) {
           // A transport cannot know whether a completion it has not handled yet already reached the server: an upload that a
           // withdrawal stopped after it started sending may be on the service (whatever its progress said), as may one whose
@@ -797,7 +803,9 @@
           if (!stopped) {
             part.attempts = (part.attempts || 0) + 1; part.lastError = detail(error);
             if (mayHave) part.unconfirmed = true;
-            if (kind === 'transient') part.serverFailures = (part.serverFailures || 0) + 1;
+            // A part the website is still transcribing (its claim outlives a cut-off upload by up to 5 minutes) is not a server
+            // failure: it is asked again with the page's backoff until the claim ends, never parked as an error.
+            if (kind === 'transient' && error?.code !== 'recording_in_progress') part.serverFailures = (part.serverFailures || 0) + 1;
             if (kind === 'rejected' || kind === 'transient' && part.serverFailures >= limits.serverRetries) Object.assign(part, { state: 'error', error: detail(error) });
           }
           const outcome = await ended(session, part, mayHave);
@@ -806,7 +814,8 @@
           return;
         }
         marked = false;
-        const stored = await landed(session, part, { recordingId: result.recordingId, uploadedAt: iso(now()) });
+        // transcribed: the part went to /api/walkthrough-notes (routedUpload), so a withdrawal deletes its transcript there.
+        const stored = await landed(session, part, { recordingId: result.recordingId, uploadedAt: iso(now()), ...(result.transcribed ? { transcribed: true } : {}) });
         Object.assign(part, (stored?.parts || []).find(item => item.id === part.id) || {});
         // The audio leaves the iPad only after the server confirmed this part.
         await store.removeChunks(part.id).catch(() => {});
@@ -917,11 +926,13 @@
     return { state: visitId => call(`/api/walkthrough-visit?visitId=${encodeURIComponent(visitId)}`), post: body => call('/api/walkthrough-visit', body) };
   }
   const UPLOAD_ERRORS = { recording_customer_link_missing: 'This visit needs an exact customer link before its audio can be saved. Ask the office to repair the Hub record, then retry.', recording_visit_link_missing: 'This visit is not linked to its walkthrough. Ask the office to repair it, then retry.', recording_source_not_found: 'The recording service could not find this walkthrough visit.', recording_size_invalid: 'This part is over 24 MB, which the recording service does not accept yet.', recording_audio_type_invalid: 'The recording service does not accept this audio type yet.', recording_upload_request_conflict: 'This upload ID was already used for different audio. Save a copy and ask the office.', business_session_required: 'Sign in with a business account to send recordings.', operations_not_enabled: 'The recording service is switched off. The audio stays on this iPad.', recording_role_forbidden: 'This account cannot send recordings.',
-    invalid_recording_signature: 'The recording service could not verify this upload. This is a service setup problem, not your sign-in: retry later, or save a copy and ask the office.', recording_signature_expired: 'The recording service could not verify this upload in time. Retry; if it keeps failing, save a copy and ask the office.', recording_identity_unverified: 'The recording service could not confirm who sent this audio. Save a copy and ask the office.' };
+    invalid_recording_signature: 'The recording service could not verify this upload. This is a service setup problem, not your sign-in: retry later, or save a copy and ask the office.', recording_signature_expired: 'The recording service could not verify this upload in time. Retry; if it keeps failing, save a copy and ask the office.', recording_identity_unverified: 'The recording service could not confirm who sent this audio. Save a copy and ask the office.',
+    // /api/walkthrough-notes (EGC_WALKTHROUGH_NOTES): the transcription's own refusals.
+    recording_audio_unreadable: 'This audio could not be read for a transcript. Save a copy and ask the office.', recording_too_long: 'This part is too long to transcribe. Split it in Voice Memos and add each part.', recording_consent_declined: 'The customer declined or withdrew recording consent, so this audio is not transcribed. Save a copy only if the office asks.', recording_in_progress: 'This part is still being transcribed. It is checked again shortly.', walkthrough_notes_disabled: 'Walkthrough notes are switched off. The audio goes to the recording service instead.', recording_rate_limited: 'Today\'s transcription limit for your account is reached. The audio stays on this iPad; ask the office.', recording_part_limit: 'This walkthrough already has the most audio parts the transcription takes. Save a copy and ask the office.', recording_source_forbidden: 'This walkthrough is not yours. Ask a manager to assign it to you, then retry.', recording_request_invalid: 'This upload could not be read. Save a copy and ask the office.' };
   function xhrUpload(XHR = root.XMLHttpRequest, { url = '/api/operations-recordings', timeout = LIMITS.uploadMs } = {}) {
     // signal ({aborted, onabort}, like an AbortSignal): a withdrawal of consent aborts the request. onProgress(1) once every
     // byte is sent (the upload's load event), before the reply.
-    return ({ requestId, visitId, blob, filename, signal = null }, onProgress = () => {}) => new Promise((resolve, reject) => {
+    return ({ requestId, visitId, blob, filename, partIndex = null, partCount = null, source = null, signal = null }, onProgress = () => {}) => new Promise((resolve, reject) => {
       const stopped = () => reject(failure('The upload was stopped: the customer withdrew consent.', 0, 'RECORDER_UPLOAD_STOPPED'));
       if (signal?.aborted) { stopped(); return; }
       const xhr = new XHR(), lost = () => (signal?.aborted ? stopped() : reject(failure('The upload did not finish. The audio stays on this iPad and is sent again with the same upload ID.', 0, 'RECORDER_NETWORK')));
@@ -939,9 +950,43 @@
       };
       xhr.onerror = lost; xhr.ontimeout = lost; xhr.onabort = lost;
       const form = new FormData();
-      form.set('requestId', requestId); form.set('portalJobId', visitId); form.set('audio', blob, filename);
+      form.set('requestId', requestId); form.set('portalJobId', visitId);
+      // Where the audio sits in the walkthrough, for the transcript (the recording service ignores these).
+      if (partIndex !== null) form.set('partIndex', String(partIndex));
+      if (partCount !== null) form.set('partCount', String(partCount));
+      if (source) form.set('source', source);
+      form.set('audio', blob, filename);
       xhr.send(form);
     });
+  }
+  /** EGC_WALKTHROUGH_NOTES: a part uploads to /api/walkthrough-notes (transcribed on the website's own key) when that endpoint
+      says notes are on, else to the recording service as before. The answer is asked once per page and remembered on the iPad
+      for an offline start; an unknown answer (offline, never asked) keeps the remembered one. A part refused because notes were
+      switched off meanwhile goes to the recording service in the same try. */
+  const NOTES_URL = '/api/walkthrough-notes', NOTES_KEY = 'egc-wt-recorder:notes';
+  function routedUpload({ fetchImpl = root.fetch?.bind(root), storage = null, legacy = xhrUpload(), notes = xhrUpload(undefined, { url: NOTES_URL }) } = {}) {
+    let known = null, asking = null;
+    const remembered = () => { try { return storage?.getItem(NOTES_KEY) === '1'; } catch { return false; } };
+    const remember = on => { known = on; try { if (on) storage?.setItem(NOTES_KEY, '1'); else storage?.removeItem(NOTES_KEY); } catch { /* storage blocked */ } };
+    async function notesOn() {
+      if (known !== null) return known;
+      if (!asking) asking = (async () => {
+        try {
+          const response = await fetchImpl(NOTES_URL, { credentials: 'same-origin', cache: 'no-store' });
+          const data = await response.json().catch(() => null);
+          if (response.ok && data?.ok === true && typeof data.enabled === 'boolean') remember(data.enabled);
+        } catch { /* offline or signed out: the remembered answer */ }
+      })().finally(() => { asking = null; });
+      await asking;
+      return known ?? remembered();
+    }
+    const upload = async (request, onProgress) => {
+      if (!await notesOn()) return legacy(request, onProgress);
+      try { return { ...await notes(request, onProgress), transcribed: true }; }
+      catch (error) { if (error?.code !== 'walkthrough_notes_disabled') throw error; remember(false); return legacy(request, onProgress); }
+    };
+    upload.notesOn = notesOn;
+    return upload;
   }
 
   // ---- Tabs: which gameplan tab holds a walkthrough. ----
@@ -982,7 +1027,7 @@
     rescheduled: [['customer_request', 'Customer asked to move it'], ['weather', 'Weather'], ['crew_unavailable', 'Rep or crew unavailable'], ['previous_job_overran', 'Previous visit ran over'], ['access_issue', 'Access problem'], ['vehicle_or_equipment', 'Vehicle or equipment'], ['other', 'Other']],
   };
 
-  const core = { LIMITS, ACCEPT, MIME_TYPES, OUTCOMES, REASONS, pickMime, importType, extensionFor, classify, applicable, memoryStore, idbStore, deviceStore, saveAs, saveRow, saveChange, withdrawSession, claim, localLedger, tabPresence, createRecorder, createSync, httpVisit, xhrUpload };
+  const core = { LIMITS, ACCEPT, MIME_TYPES, OUTCOMES, REASONS, pickMime, importType, extensionFor, classify, applicable, memoryStore, idbStore, deviceStore, saveAs, saveRow, saveChange, withdrawSession, claim, localLedger, tabPresence, createRecorder, createSync, httpVisit, xhrUpload, routedUpload };
   root.EGCWalkthroughRecorder = core;
   if (typeof document === 'undefined') return;
 
@@ -1004,7 +1049,9 @@
   // What the rep tells the office about a part on the recording service although consent was withdrawn.
   // With several walkthroughs of one visit in one message, a part is named by its file or by its walkthrough's start.
   const partLabel = (session, part, several = false) => `Part ${part.index}${part.source === 'import' ? ` (${part.name || 'Voice Memos file'})` : several && session ? ` of the walkthrough started ${denver(session.startedAt)}` : ''}`;
-  const noticeText = (part, label = partLabel(null, part)) => part.uploadedBefore ? `${label} was uploaded before the withdrawal: tell the office (recording ID ${part.recordingId}).`
+  // A part transcribed on the website (walkthrough notes) keeps no audio there: the withdrawal deletes its transcript.
+  const noticeText = (part, label = partLabel(null, part)) => part.transcribed ? `${label} was transcribed before the withdrawal: its transcript is deleted with the walkthrough notes. Tell the office the customer withdrew consent.`
+    : part.uploadedBefore ? `${label} was uploaded before the withdrawal: tell the office (recording ID ${part.recordingId}).`
     : part.recordingId ? `${label} reached the recording service before the withdrawal took effect: tell the office (recording ID ${part.recordingId}).`
     : `${label} may have reached the recording service before the withdrawal took effect: tell the office (upload ID ${part.requestId}).`;
   const outcomeLabel = code => OUTCOMES.find(([id]) => id === code)?.[1] || String(code || '').replaceAll('_', ' ');
@@ -1044,7 +1091,9 @@
     const recorder = createRecorder({ store, now, uuid, timers, media: options.media, Recorder: options.Recorder, wakeLock: options.wakeLock, ledger: options.ledger, onPartClosed: () => schedule(0),
       onChange: () => { drawBar(); if (signature() === ui.signature) return; if (recorder.status().problem?.code === 'moved') { ui.signature = signature(); tickLoop(false); void reload(); } else draw(); } });
     // No tab's sync uploads anything of a visit whose customer withdrew consent on this iPad (withdrawnFor, below).
-    const sync = createSync({ store, visit: visits, upload: options.upload || xhrUpload(), now, uuid, user, ledger: options.ledger, tab: recorder.tab, onChange: () => drawProgress(), withdrawnVisit: row => withdrawnFor(row) });
+    const tabStorage = (() => { try { return root.localStorage || null; } catch { return null; } })();
+    const upload = options.upload || routedUpload({ fetchImpl: options.fetch || root.fetch?.bind(root), storage: tabStorage });
+    const sync = createSync({ store, visit: visits, upload, now, uuid, user, ledger: options.ledger, tab: recorder.tab, onChange: () => drawProgress(), withdrawnVisit: row => withdrawnFor(row) });
     const barHost = options.barHost || host;
     barHost.prepend(bar);
     host.classList.add('egc-wt');
@@ -1200,6 +1249,8 @@
         ui.stopped = result.stopped;
         await reload();
         if (result.sent.some(item => item.visitId === ui.visitId)) void loadState(true);
+        // The walkthrough notes panel (crew/gameplan-notes.js) reads its visit again after each pass: a part may have landed.
+        try { if (typeof root.CustomEvent === 'function') root.dispatchEvent?.(new root.CustomEvent('egc:walkthrough-sync', { detail: { visitId: ui.visitId } })); } catch { /* no listener */ }
         if (result.stopped && ['network', 'transient'].includes(result.stopped.reason)) { ui.backoff = Math.min(ui.backoff ? ui.backoff * 2 : 5000, 120000); schedule(ui.backoff); }
         else ui.backoff = 0;
       }, delay);
@@ -1376,11 +1427,12 @@
       return `${plain ? `Part${one ? '' : 's'} ${labels.map(label => label.slice(5)).join(', ')}` : labels.join(', ')} ${one ? 'was' : 'were'} already uploaded: tell the office to delete ${one ? 'it' : 'them'}.`;
     }
     const stopping = part => part.state === 'removed' && part.reason === 'withdrawn' && Boolean(part.sendingAt);
-    /** What a withdrawal found on the recording service or still on its way there, over every walkthrough it withdrew. */
+    /** What a withdrawal found on the recording service or still on its way there, over every walkthrough it withdrew. Parts
+        transcribed on the website are covered by the transcript's deletion (transcriptText), not the office. */
     function withdrawalLines(results) {
       const several = results.length > 1, named = new Set(results.flatMap(result => result.uploaded.map(part => part.id)));
       const rows = results.map(result => result.saved).filter(Boolean);
-      return [uploadedText(results.flatMap(result => result.uploaded.map(part => partLabel(result.session, part, several)))),
+      return [uploadedText(results.flatMap(result => result.uploaded.filter(part => !part.transcribed).map(part => partLabel(result.session, part, several)))),
         ...rows.flatMap(session => (session.parts || []).filter(part => noticePending(part) && !named.has(part.id)).map(part => noticeText(part, partLabel(session, part, several)))),
         ...rows.flatMap(session => (session.parts || []).filter(stopping).map(part => `${partLabel(session, part, several)} was still uploading and has not stopped yet: if it reached the recording service, it is named here with its ID so you can tell the office.`))];
     }
@@ -1394,6 +1446,21 @@
       return [`${one ? `The walkthrough of this visit started ${denver(others[0].startedAt)} is` : `${others.length} walkthroughs of this visit are`} open in another tab on this iPad: no upload of ${one ? 'it' : 'them'} starts from now on.`,
         audio.length ? `If a part of ${one ? 'it' : 'them'} was already uploaded, that tab names it with its recording ID until you tap “I told the office” there. To delete ${audio.length === 1 ? 'its' : 'their'} audio still on this iPad, tap “Customer withdrew consent” in that tab${open ? ' (on the Finish screen of a walkthrough still open)' : ''}.` : ''].filter(Boolean).join(' ');
     };
+    /** EGC_WALKTHROUGH_NOTES: with the parts going to the website (routedUpload), a withdrawal also deletes the visit's
+        transcript there (the notes panel's withdraw action), and the panel reads the visit again. null: notes are off, nothing
+        to delete; true: deleted; false: not reached (offline), so the rep is told to delete it in the panel. */
+    async function deleteTranscript(visitId) {
+      if (typeof upload.notesOn !== 'function' || !await upload.notesOn().catch(() => false)) return null;
+      let deleted = false;
+      try {
+        const response = await (options.fetch || root.fetch?.bind(root))('/api/walkthrough-notes', { method: 'POST', credentials: 'same-origin', cache: 'no-store', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ action: 'withdraw', visitId, requestId: uuid() }) });
+        const data = await response.json().catch(() => null);
+        deleted = response.ok && data?.ok === true;
+      } catch { deleted = false; }
+      try { if (typeof root.CustomEvent === 'function') root.dispatchEvent?.(new root.CustomEvent('egc:walkthrough-notes-changed', { detail: { visitId } })); } catch { /* no listener */ }
+      return deleted;
+    }
+    const transcriptText = deleted => deleted === true ? 'Its walkthrough transcript was deleted too.' : deleted === false ? 'The walkthrough transcript could not be deleted yet: when the iPad is online, tap “Customer withdrew consent: delete the transcript” under Walkthrough notes.' : '';
     // The customer withdrew consent before the outcome: the audio is deleted and nothing more is uploaded. Parts already sent
     // (out of storage, parts upload before Finish) are named so the office deletes them. drawn: the walkthrough whose Finish
     // screen the button is on (re-read here), never another walkthrough that happens to be open.
@@ -1402,8 +1469,9 @@
       if (!local || elsewhere(local)) { ui.message = local ? ELSEWHERE_TEXT : 'This walkthrough is no longer open on this iPad.'; draw(true); return; }
       if (!root.confirm?.('Delete the audio recorded for this walkthrough? Nothing will be uploaded.')) return;
       const { results, others } = await withdrawVisit(local.visitId);
+      const deleted = results.length ? await deleteTranscript(local.visitId) : null;
       // Another tab took the walkthrough meanwhile: the rep withdraws it there (no tab uploads anything of the visit from now on).
-      ui.message = [results.length ? 'The audio was deleted from this iPad.' : ELSEWHERE_TEXT, ...withdrawalLines(results), othersText(others), results.length ? 'Type the notes at Finish instead.' : ''].filter(Boolean).join(' ');
+      ui.message = [results.length ? 'The audio was deleted from this iPad.' : ELSEWHERE_TEXT, transcriptText(deleted), ...withdrawalLines(results), othersText(others), results.length ? 'Type the notes at Finish instead.' : ''].filter(Boolean).join(' ');
       draw(true);
     }
     // The visit's outcome on the server says recorded (it may have left this iPad with the walkthrough that sent it).
@@ -1415,12 +1483,12 @@
       if (elsewhere(session)) { ui.message = ELSEWHERE_TEXT; draw(true); return; }
       if (!root.confirm?.(`The customer withdrew consent: delete the audio of ${several ? 'this visit’s walkthroughs' : 'this walkthrough'} that is still on this iPad? It will not be uploaded.`)) return;
       const { results, others } = await withdrawVisit(session.visitId);
-      const removed = results.reduce((sum, result) => sum + result.removed.length, 0);
+      const removed = results.reduce((sum, result) => sum + result.removed.length, 0), deleted = results.length ? await deleteTranscript(session.visitId) : null;
       // An outcome frozen as recorded may be on the server, unless the server refused it (a refusal saved nothing, and its Retry
       // builds a new request, which then says declined).
       const sentAs = sentRecorded(session.visitId) || results.some(result => (result.session.actions || []).some(row => row.kind === 'finish' && row.body && row.intent?.recordingStatus === 'recorded' && !(row.state === 'error' && row.error?.kind === 'rejected')));
       ui.message = [!results.length ? ELSEWHERE_TEXT : removed ? `The audio still on this iPad was deleted (${removed} part${removed === 1 ? '' : 's'}).` : 'No audio of this walkthrough was left on this iPad.',
-        ...withdrawalLines(results), othersText(others),
+        transcriptText(deleted), ...withdrawalLines(results), othersText(others),
         sentAs ? 'The outcome was already sent as recorded: tell the office the customer withdrew consent.' : ''].filter(Boolean).join(' ');
       draw(true); schedule(0);
     }
@@ -1431,7 +1499,7 @@
       // On the Finish screen the refusal shows once, under the form (which also shows ui.message).
       const fail = message => { if (ui.step === 'finish' && ui.draft) ui.draft.error = message; else ui.message = message; draw(true); };
       const type = importType(file), outcome = ui.state?.visit?.walkthroughOutcome, local = localFor(visit.id);
-      if (!type) return fail('Choose an audio file: an .m4a from Voice Memos, or .mp3, .wav, .aac or .webm.');
+      if (!type) return fail('Choose an audio file: an .m4a from Voice Memos, or .mp3, .wav or .webm (.aac files cannot be transcribed).');
       if (!file.size) return fail('That audio file is empty.');
       if (file.size > LIMITS.uploadBytes) return fail(`That file is ${mb(file.size)}. Files over 24 MB are not accepted yet: trim or split it in Voice Memos and add each part, or record in the Hub.`);
       if (local && elsewhere(local)) return fail(ELSEWHERE_TEXT);

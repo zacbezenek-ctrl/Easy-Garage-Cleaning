@@ -19,6 +19,7 @@ import { purposeKeyRoot } from '../_lib/purpose-keys.js';
 import { LOGIN_LINKS, customerLoginEnabled, loginIdentifier, loginLinkOrigin, loginLinkProvider, requestCustomerLoginLink } from '../_lib/customer-magic-link.js';
 import { CUSTOMER_SESSIONS } from '../_lib/customer-account-session.js';
 import { RATE_LIMITS, cleanupExpiredRecords } from '../_lib/rate-limit.js';
+import { WALKTHROUGH_NOTE_PARTS } from '../_lib/walkthrough-notes.js';
 
 export const CUSTOMER_LOGIN_MESSAGE = "If we find a project for that phone or email, we'll send a sign-in link. It expires in 15 minutes.";
 export const MIN_RESPONSE_MS = 700;
@@ -107,8 +108,8 @@ export function customerLoginHandlers({
         const store = storage(env), clock = () => now().toISOString();
         const service = createApprovedSendService({ store: messaging(env), messenger: messenger(env), clock: now, env, links: { loginLink: loginLinkProvider(store, env, { now: clock, random, origin: loginLinkOrigin(request.url) }) } });
         const result = await requestCustomerLoginLink({ store, identity: identity(env), env, service, now: clock, random }, { identifier: input.identifier, ip: request.headers.get('CF-Connecting-IP') || '' });
-        // Bounded, occasional cleanup of expired counters, links and sessions.
-        if (random(new Uint8Array(1))[0] < 16) for (const collection of [RATE_LIMITS, LOGIN_LINKS, CUSTOMER_SESSIONS]) await cleanup(env, collection, clock());
+        // Bounded, occasional cleanup of expired counters, links, sessions and walkthrough transcript parts (90 days).
+        if (random(new Uint8Array(1))[0] < 16) for (const collection of [RATE_LIMITS, LOGIN_LINKS, CUSTOMER_SESSIONS, WALKTHROUGH_NOTE_PARTS]) await cleanup(env, collection, clock());
         return result;
       })().catch(error => ({ outcome: 'error', code: String(error?.code || 'unknown').slice(0, 80) }))).then(note);
       // Called on the context so the runtime keeps its binding.
