@@ -4,6 +4,7 @@ import * as accounts from '../functions/api/employee-accounts.js';
 import * as auth from '../functions/api/hub-auth.js';
 import * as hub from '../functions/api/employee-hub.js';
 import { createHubSessionCookie } from '../functions/_lib/hub-session.js';
+import { commitAsPatch } from './helpers/commit-as-patch.mjs';
 
 const origin = 'https://easygaragecleaning.com';
 const accountType = 'employee_account_v1';
@@ -20,7 +21,7 @@ async function setup(t) {
   const documents = new Map(), queries = [], writes = [];
   const queryFailures = new Map();
   let revision = 0;
-  t.mock.method(globalThis, 'fetch', async (input, init = {}) => {
+  t.mock.method(globalThis, 'fetch', commitAsPatch(async (input, init = {}) => {
     const url = new URL(input);
     assert.equal(url.hostname, 'firestore.googleapis.com', 'the test must never contact another service');
     if (url.pathname.endsWith('/documents:runQuery')) {
@@ -43,7 +44,7 @@ async function setup(t) {
     return documents.has(id)
       ? Response.json({ name: `projects/egcw-1ec83/databases/(default)/documents/jobs/${id}`, ...documents.get(id) })
       : Response.json({}, { status: 404 });
-  });
+  }));
   const env = {
     HUB_SESSION_SECRET: 'synthetic-roster-session-secret',
     EMPLOYEE_HUB_DATA_SECRET: 'synthetic-roster-vault-secret',

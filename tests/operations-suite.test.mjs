@@ -6,6 +6,7 @@ import vm from 'node:vm';
 import { authenticateHubCredential, createHubActionState, createHubCredentialHash, createHubSessionCookie, getHubUserProfile, hasBusinessAccess, hashHubCredential, verifyHubActionState, verifyHubSessionToken } from '../functions/_lib/hub-session.js';
 import { createCustomerPortalAccessToken, createCustomerPortalCollaboratorAccessToken, createCustomerPortalSessionCookie, verifyCustomerPortalAccessToken, verifyCustomerPortalSessionToken } from '../functions/_lib/customer-portal.js';
 import { encodeFirestoreFields } from '../functions/_lib/firestore-job.js';
+import { commitAsPatch } from './helpers/commit-as-patch.mjs';
 
 const TEST_HUB_USERS={
   ZacB:{passwordHash:'test-zac',displayName:'Zac',role:'owner',payType:'owner',hourlyRate:0},
@@ -1070,14 +1071,14 @@ test('employee pay and location records are sealed behind the Hub session',async
   const managerCookie=(await createHubSessionCookie(env,'ZacB')).split(';')[0];
   const stored=new Map(),originalFetch=globalThis.fetch;
   let revision=0;
-  globalThis.fetch=async(url,options={})=>{
+  globalThis.fetch=commitAsPatch(async(url,options={})=>{
     const value=String(url),method=options.method||'GET';
     if(value.includes('documents:runQuery'))return new Response(JSON.stringify([...stored.entries()].filter(([,document])=>document.fields.recordType.stringValue===JSON.parse(options.body).structuredQuery.where.fieldFilter.value.stringValue).map(([id,document])=>({document:{name:`projects/egcw-1ec83/databases/(default)/documents/jobs/${id}`,...document}}))),{status:200});
     const id=decodeURIComponent(value.match(/\/jobs\/([^?]+)/)?.[1]||'');
     if(method==='PATCH'){const parsed=new URL(value),expected=parsed.searchParams.get('currentDocument.updateTime');if((parsed.searchParams.get('currentDocument.exists')==='false'&&stored.has(id))||(expected&&stored.get(id)?.updateTime!==expected))return Response.json({}, {status:412});const document={...JSON.parse(options.body),updateTime:`2026-09-07T00:00:00.${String(++revision).padStart(9,'0')}Z`};stored.set(id,document);return new Response(JSON.stringify({name:`projects/egcw-1ec83/databases/(default)/documents/jobs/${id}`,...document}),{status:200})}
     if(!stored.has(id))return new Response('{}',{status:404});
     return new Response(JSON.stringify({name:`projects/egcw-1ec83/databases/(default)/documents/jobs/${id}`,...stored.get(id)}),{status:200});
-  };
+  });
   try{
     const managerRequest=data=>new Request('https://easygaragecleaning.com/api/employee-hub',{method:'POST',headers:{Origin:'https://easygaragecleaning.com',Cookie:managerCookie,'Content-Type':'application/json'},body:JSON.stringify(data)});
     for(const [id,employee,lat] of [['time-frank','FrankJara',40.5853],['time-tyler','TylerG',40.61]]){
@@ -1135,7 +1136,7 @@ test('crew chat is encrypted and job rooms are limited to assigned crew',async()
   const crewCookie=(await createHubSessionCookie(env,'Crewtest')).split(';')[0];
   const stored=new Map(),originalFetch=globalThis.fetch;
   const jobDocument={fields:{assignedCrew:{arrayValue:{values:[{stringValue:'FrankJara'}]}},assignedTo:{stringValue:'Frank Jara'},customer:{stringValue:'Private Customer'}}};
-  globalThis.fetch=async(url,options={})=>{
+  globalThis.fetch=commitAsPatch(async(url,options={})=>{
     const value=String(url),method=options.method||'GET';
     if(value.includes('documents:runQuery'))return new Response(JSON.stringify([...stored.entries()].filter(([,document])=>document.fields.recordType.stringValue===JSON.parse(options.body).structuredQuery.where.fieldFilter.value.stringValue).map(([id,document])=>({document:{name:`projects/egcw-1ec83/databases/(default)/documents/jobs/${id}`,...document}}))),{status:200});
     const id=decodeURIComponent(value.match(/\/jobs\/([^?]+)/)?.[1]||'');
@@ -1143,7 +1144,7 @@ test('crew chat is encrypted and job rooms are limited to assigned crew',async()
     if(method==='PATCH'){const document=JSON.parse(options.body);stored.set(id,document);return new Response(JSON.stringify({name:`projects/egcw-1ec83/databases/(default)/documents/jobs/${id}`,...document}),{status:200})}
     if(!stored.has(id))return new Response('{}',{status:404});
     return new Response(JSON.stringify({name:`projects/egcw-1ec83/databases/(default)/documents/jobs/${id}`,...stored.get(id)}),{status:200});
-  };
+  });
   const post=(cookie,collection,id,data)=>api.onRequestPost({request:new Request('https://easygaragecleaning.com/api/employee-hub',{method:'POST',headers:{Origin:'https://easygaragecleaning.com',Cookie:cookie,'Content-Type':'application/json'},body:JSON.stringify({collection,id,data})}),env});
   try{
     assert.equal((await post(frankCookie,'teamMessages','team-frank',{body:'Morning crew'})).status,200);

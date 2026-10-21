@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createHubCredentialHash, createHubSessionCookie } from '../functions/_lib/hub-session.js';
 import { onRequestGet, onRequestPost } from '../functions/api/employee-hub.js';
+import { commitAsPatch } from './helpers/commit-as-patch.mjs';
 
 const endpoint = 'https://easygaragecleaning.com/api/employee-hub';
 const env = {
@@ -27,7 +28,7 @@ const post = (body, environment = env) => onRequestPost({
 function storage(t) {
   const documents = new Map();
   const requests = [];
-  t.mock.method(globalThis, 'fetch', async (input, options = {}) => {
+  t.mock.method(globalThis, 'fetch', commitAsPatch(async (input, options = {}) => {
     const url = new URL(input);
     const method = options.method || 'GET';
     requests.push({ url, method, body: options.body });
@@ -44,7 +45,7 @@ function storage(t) {
     if (method === 'PATCH') documents.set(id, JSON.parse(options.body));
     if (!documents.has(id)) return Response.json({}, { status: 404 });
     return Response.json({ name: `projects/egcw-1ec83/databases/(default)/documents/jobs/${id}`, ...documents.get(id) });
-  });
+  }));
   return { documents, requests };
 }
 

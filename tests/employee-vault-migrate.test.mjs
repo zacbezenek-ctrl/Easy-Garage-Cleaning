@@ -42,7 +42,7 @@ test('a dry run (the default) decrypts and reports every record but writes nothi
 });
 
 test('an applied migration re-seals each record under the same id with history, and a second run is a no-op', async t => {
-  const fire = vaultFirestore(t); await seed();
+  const fire = vaultFirestore(t); await seed(); fire.commits.length = 0; // count only the migration's commits, not the seeding saves
   const before = await profiles(), ivBefore = fire.documents.get(`jobs/${before['crew.account'].documentId}`).fields.sealedIv.stringValue;
   const report = await run({ dryRun: false });
   assert.deepEqual({ eligible: report.eligible, migrated: report.migrated, conflicts: report.conflicts, failed: report.failed }, { eligible: 2, migrated: 2, conflicts: 0, failed: 0 });
@@ -261,7 +261,7 @@ test('vault commits map Firestore precondition answers to conflicts and anything
 });
 
 test('an unverifiable migration write stops the run early and a rerun picks up where it stopped', async t => {
-  const fire = vaultFirestore(t); await seed();
+  const fire = vaultFirestore(t); await seed(); fire.commits.length = 0; // count only the migration's commits, not the seeding saves
   fire.hooks.commitStatus = 503;
   const report = await run({ dryRun: false });
   assert.deepEqual({ migrated: report.migrated, failed: report.failed, conflicts: report.conflicts, stoppedEarly: report.stoppedEarly }, { migrated: 0, failed: 1, conflicts: 0, stoppedEarly: true });
