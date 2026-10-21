@@ -289,7 +289,7 @@ function render(force=false){
     host.innerHTML=(unavailable&&S.active==='my_day'?'<div id="ops-field-today"></div>':'')+(unavailable?(S.active==='people'?accountApprovalBoard():'')+employeeUnavailable():views[S.active]())+actionModal();
     S.renderedView=S.active;fieldTodayNode(host);restoreFilter(kept);
   }
-  if(S.active==='crew_chat')chatAutoRead();
+  if(S.active==='crew_chat'){chatScroll();chatAutoRead();}
   if(S.active==='my_day')window.EGCFieldToday?.mount(host?.querySelector('#ops-field-today'));else window.EGCFieldToday?.unmount();
   if(homeViews.has(S.active))window.EGCHubScreens?.mountHome?.(S.active,host?.querySelector('#ops-home-widgets'),hubContext());
   if(S.active==='finance'&&canView('finance'))window.EGCLaborCosts?.ensure(()=>{if(S.active==='finance')render()});
@@ -825,7 +825,7 @@ document.addEventListener('visibilitychange',()=>{
 // (settleQueued, which needs no connection), then the server is read; a load already under way may have read the server
 // before that, so it reads again instead of being reused.
 window.addEventListener('egc:hub-offline-synced',()=>{if(!S.people.listeners||!employeeIdentity())return;const generation=S.peopleGeneration;void settleQueued().catch(()=>{}).then(()=>{if(generation!==S.peopleGeneration||!S.people.listeners)return;if(S.peopleRequest)S.peopleReload=true;else refreshPeople()})});
-window.addEventListener('egc:signout',()=>{managerScheduleState={loaded:false,loading:true,error:'',fromCache:false,pending:false};S.queuedShown=new Map();S.pauseSeen=new Set();S.heldTold=new Set();S.locationPaused=null;S.clockSaving=0;S.pauseIfOpen=new Map();S.locating=false;S.clockInWithoutFix=false;S.timecardCorrections=false;try{sessionStorage.removeItem(PAUSED_KEY)}catch{}});
+window.addEventListener('egc:signout',()=>{managerScheduleState={loaded:false,loading:true,error:'',fromCache:false,pending:false};S.queuedShown=new Map();S.chatReadThrough={};S.chatView=null;S.pauseSeen=new Set();S.heldTold=new Set();S.locationPaused=null;S.clockSaving=0;S.pauseIfOpen=new Map();S.locating=false;S.clockInWithoutFix=false;S.timecardCorrections=false;try{sessionStorage.removeItem(PAUSED_KEY)}catch{}});
 function startPeopleListeners(){if(!employeeIdentity())return Promise.resolve(false);const first=!S.people.listeners;S.people.listeners=true;if(!S.peopleTimer)S.peopleTimer=setInterval(pollPeople,15000);return refreshPeople().then(loaded=>{if(first&&loaded)return ensureOwnProfile();return loaded})}
 async function ensureOwnProfile(){const p=sessionProfile();if(!p.id)return;await peopleSet(peopleCollections.profiles,employeeKey(p.id),{username:p.id,displayName:p.displayName,role:p.role,payType:p.payType,hourlyRate:p.hourlyRate,lastSeenAt:new Date().toISOString(),status:'active'},'own-profile-mirror').catch(()=>{})}
 const activeTimeEntry=()=>S.people.timeEntries.find(x=>owned(x)&&x.status==='active'&&!x.clockOutAt)||null;
@@ -893,11 +893,21 @@ const chatMessages=channel=>{const rows=channel==='team'?S.people.teamMessages:S
 const chatUnread=channel=>{const last=String(chatReadRecord(channel).lastReadAt||'');return chatMessages(channel).filter(x=>String(x.createdAt||'')>last&&!sameEmployee(x.sender,employeeIdentity())).length};
 // Read markers say how far the person has actually seen: the newest message on screen (its data-at), never the clock,
 // so "Seen by" cannot cover a message that arrived after the screen was drawn. One write per channel at a time.
-const chatSeenThrough=channel=>{const host=$('#ops-main');if(S.active!=='crew_chat'||(S.chatChannel||'team')!==channel||!host)return'';const shown=[...host.querySelectorAll('.ops-chat-messages article[data-at]')].at(-1);return String(shown?.dataset.at||'')};
-window.opsMarkChatRead=async channel=>{if(!channel)return;const seenThrough=chatSeenThrough(channel);S.chatReadBusy=S.chatReadBusy||{};if(!seenThrough||S.chatReadBusy[channel]||String(chatReadRecord(channel).lastReadAt||'')>=seenThrough)return;S.chatReadBusy[channel]=seenThrough;const id=`read-${personKey(employeeIdentity())}-${personKey(channel)}`,now=new Date().toISOString();try{await peopleSet(peopleCollections.messageReads,id,{employee:employeeIdentity(),channel,seenThrough,updatedAt:now},false)}catch{}finally{delete S.chatReadBusy[channel]}};
+// "On screen" means inside the scrolling message box and the window: a room opened at its top has not shown its newest
+// message yet. A page without layout (no clientHeight) counts every drawn message.
+const chatSeenThrough=channel=>{const host=$('#ops-main');if(S.active!=='crew_chat'||(S.chatChannel||'team')!==channel||!host)return'';const box=host.querySelector('.ops-chat-messages');if(!box)return'';const items=[...box.querySelectorAll('article[data-at]')];if(typeof box.clientHeight!=='number'||typeof box.getBoundingClientRect!=='function')return String(items.at(-1)?.dataset.at||'');const view=box.getBoundingClientRect(),bottom=Math.min(view.bottom,window.innerHeight||view.bottom);const shown=items.filter(item=>{const rect=item.getBoundingClientRect();return rect.height>0&&rect.bottom>view.top&&rect.bottom<=bottom+2}).at(-1);return String(shown?.dataset.at||'')};
+// A room opens at its newest message and stays where the reader left it across background renders; scrolling marks
+// what comes into view.
+function chatScroll(){const box=$('#ops-main .ops-chat-messages');if(!box)return;const channel=S.chatChannel||'team',view=S.chatView;if(!view||view.channel!==channel||view.atBottom)box.scrollTop=box.scrollHeight;else box.scrollTop=view.top;if(box.dataset.watch!=='1'){box.dataset.watch='1';box.addEventListener('scroll',()=>{S.chatView={channel:S.chatChannel||'team',top:box.scrollTop,atBottom:box.scrollTop+box.clientHeight>=box.scrollHeight-24};chatAutoRead()},{passive:true})}
+  // The page itself scrolling (a phone where the box runs below the fold) brings messages into view too: one listener.
+  if(!S.chatWindowWatch){S.chatWindowWatch=true;window.addEventListener?.('scroll',()=>{if(S.active==='crew_chat')chatAutoRead()},{passive:true})}}
+// chatReadThrough: the newest marker this device saved per channel, so a save that lands during a refresh (whose answer
+// may not carry it yet) is not repeated, and a marker never goes back.
+const chatReadMark=channel=>{const saved=String(chatReadRecord(channel).lastReadAt||''),sent=String(S.chatReadThrough?.[channel]||'');return saved>sent?saved:sent};
+window.opsMarkChatRead=async channel=>{if(!channel)return;const seenThrough=chatSeenThrough(channel);S.chatReadBusy=S.chatReadBusy||{};S.chatReadThrough=S.chatReadThrough||{};if(!seenThrough||S.chatReadBusy[channel]||chatReadMark(channel)>=seenThrough)return;S.chatReadBusy[channel]=seenThrough;const id=`read-${personKey(employeeIdentity())}-${personKey(channel)}`,now=new Date().toISOString();try{await peopleSet(peopleCollections.messageReads,id,{employee:employeeIdentity(),channel,seenThrough,updatedAt:now},false);S.chatReadThrough[channel]=seenThrough}catch{}finally{delete S.chatReadBusy[channel]}};
 // Messages that arrive by poll or while the phone sleeps are read once they are drawn on a visible screen (render calls
 // this; a phone waking refreshes and so renders).
-function chatAutoRead(){if(S.active!=='crew_chat'||document.visibilityState!=='visible')return;const channel=S.chatChannel||'team',seen=chatSeenThrough(channel),last=String(chatReadRecord(channel).lastReadAt||'');if(seen>last&&chatMessages(channel).some(x=>String(x.createdAt||'')>last&&String(x.createdAt||'')<=seen&&!sameEmployee(x.sender,employeeIdentity())))opsMarkChatRead(channel)}
+function chatAutoRead(){if(S.active!=='crew_chat'||document.visibilityState!=='visible')return;const channel=S.chatChannel||'team',seen=chatSeenThrough(channel),last=chatReadMark(channel);if(seen>last&&chatMessages(channel).some(x=>String(x.createdAt||'')>last&&String(x.createdAt||'')<=seen&&!sameEmployee(x.sender,employeeIdentity())))opsMarkChatRead(channel)}
 window.opsSelectChat=channel=>{S.chatChannel=channel;render(true);opsMarkChatRead(channel)};
 // Unsent chat and customer-thread text is kept per channel and job, so background renders can show new messages.
 const chatDraft=channel=>String(S.chatDrafts?.[channel]||'');

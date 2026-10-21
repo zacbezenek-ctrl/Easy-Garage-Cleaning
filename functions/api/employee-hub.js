@@ -158,6 +158,9 @@ const manager = session => hasBusinessAccess(session);
 const withJobTime = (entry, now) => isRecord(entry) ? { ...entry, jobTime: jobTimeView(entry, now) } : entry;
 const same = (left, right) => String(left || '').trim().toLowerCase() === String(right || '').trim().toLowerCase();
 const personKey = value => String(value || '').trim().toLowerCase();
+// The Hub's read-marker ID (employee-suite.js opsMarkChatRead): letters and digits of the person and the channel.
+const markerKey = value => String(value || '').toLowerCase().replace(/[^a-z0-9]/g, '');
+const readMarkerId = (user, channel) => `read-${markerKey(user)}-${markerKey(String(channel || '').trim().slice(0, 180))}`;
 const legacyPersonKeys = value => [...new Set([
   personKey(value).replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '') || 'employee',
   personKey(value).replace(/[^a-z0-9]/g, ''),
@@ -304,7 +307,10 @@ async function authorizeMutation(env, session, collection, id, incoming, existin
   if (collection === 'timeEntries') return authorizeTimecard({ session, manager: manager(session), id, incoming, existing,
     hourlyRate: existing?.hourlyRate ?? await employeeRate(env, session, now), now, env, queued, jobLabel: await correctionJobLabel(env, session, incoming, existing) });
   // A read marker is always the caller's own, managers included: the messageReads branch below sets employee = session.user.
-  if (manager(session) && collection !== 'messageReads' && !(collection === 'training' && incoming.moduleId)) return collection === 'profiles' ? legacyManagerProfile({ env, session, existing, incoming, id, now }) : { ...(existing || {}), ...incoming, id };
+  // A manager's new team or job message takes the server's time and their own name, as crew messages do, so read markers
+  // (clamped to server time) compare against the same clock.
+  if (manager(session) && collection !== 'messageReads' && !(collection === 'training' && incoming.moduleId)) return collection === 'profiles' ? legacyManagerProfile({ env, session, existing, incoming, id, now })
+    : { ...(existing || {}), ...incoming, id, ...(!existing && ['teamMessages', 'jobMessages'].includes(collection) ? { sender: session.user, senderName: session.displayName, createdAt: now, updatedAt: now } : {}) };
 
   if (collection === 'profiles') {
     if (id !== personKey(session.user)) throw new Error('You can only update your own employee profile');
@@ -399,6 +405,11 @@ async function authorizeMutation(env, session, collection, id, incoming, existin
   if (collection === 'messageReads') {
     const channel = String(incoming.channel || '').trim().slice(0, 180);
     if (!channel) throw new Error('Message channel is required');
+    // A job room's marker only for someone in that room, so nobody else shows under its "Seen by".
+    if (channel.startsWith('job:') && !manager(session)) {
+      const job = await readJob(env, channel.slice(4));
+      if (!job || !await jobMember(session, job, createJobAssignmentAccess(env, session))) throw new Error('This job room is limited to assigned crew');
+    }
     if (existing && !same(existing.employee, session.user)) throw new Error('This read marker belongs to another employee');
     // How far the person has seen: the newest message their screen showed (seenThrough), never later than now and never
     // moving back. A client that sends no seenThrough (an older cached Hub) marks now, as before.
@@ -546,7 +557,9 @@ export async function onRequestPost({ request, env }) {
   if (body.expectedUser !== undefined && !same(body.expectedUser, session.user)) return reply(409, { ok: false, code: 'EMPLOYEE_HUB_ACCOUNT_CHANGED', error: 'This action was saved on this device by another account. Sign in as that employee to send it.' });
   if (typeof body.collection !== 'string' || typeof body.id !== 'string') return reply(400, { ok: false, error: 'Invalid employee record' });
   const collection = String(body.collection || '');
-  const id = String(body.id || '').trim();
+  // A read marker's ID is the caller's own, built from who is signed in and the channel (as the Hub names it), never
+  // the ID a request sends: nobody can claim another person's marker document.
+  const id = collection === 'messageReads' && isRecord(body.data) ? readMarkerId(session.user, body.data.channel) : String(body.id || '').trim();
   if (!COLLECTIONS.has(collection) || !id || id.length > 180) return reply(400, { ok: false, error: 'Invalid employee record' });
   // Requests change only through /api/employee-pto: field whitelist, decision history and availability locks.
   if (collection === 'requests') return reply(403, { ok: false, code: 'EMPLOYEE_HUB_REQUEST_WORKFLOW_REQUIRED', error: 'Requests are sent and reviewed through the request workflow. Refresh the Hub and try again.' });
@@ -562,7 +575,8 @@ export async function onRequestPost({ request, env }) {
       try { return reply(200, await moveCrewJobTime(env, session, incoming.crewJobAction)); }
       catch (error) { if (error.crewMove) return reply(error.status, { ok: false, code: error.code, error: error.message, details: error.crewMove }); throw error; }
     }
-    const attempts = collection === 'profiles' ? 4 : 1;
+    // A read marker is saved against the revision read, so two of one person's devices racing never move it back.
+    const attempts = collection === 'profiles' ? 4 : collection === 'messageReads' ? 3 : 1;
     for (let attempt = 0; attempt < attempts; attempt += 1) {
       // Keep the target version separate from any legacy data used to seed it.
       const target = await readOne(env, collection, id);
@@ -588,7 +602,7 @@ export async function onRequestPost({ request, env }) {
         // it repeats may have landed without its mark (an older deployment) and polls must show it.
         const replay = data === current.data && ['teamMessages', 'jobMessages'].includes(collection);
         if (replay) await markVaultFamiliesChanged(env, [collection]);
-        const saved = replay ? data : await writeOne(env, collection, id, data, collection === 'profiles' ? target : null);
+        const saved = replay ? data : await writeOne(env, collection, id, data, ['profiles', 'messageReads'].includes(collection) ? target : null);
         return reply(200, { ok: true, record: visiblePay(session, env, collection, collection === 'profiles' ? legacyProfileView(saved, new Date().toISOString()) : saved) });
       } catch (error) {
         if (error.code !== 'EMPLOYEE_HUB_WRITE_CONFLICT' || attempt + 1 === attempts) throw error;
