@@ -175,9 +175,9 @@ test('crew pages: a stamp for another account signed in elsewhere is not adopted
 function hubPage(fetcher) {
   const values = () => { const map = new Map(); return { getItem: key => map.has(key) ? map.get(key) : null, setItem: (key, value) => map.set(key, String(value)), removeItem: key => map.delete(key) }; };
   const element = () => ({ value: '', textContent: '', style: {}, classList: { add() {}, remove() {}, toggle() {}, contains() { return false; } }, addEventListener() {}, setAttribute() {}, focus() {} });
-  const nodes = new Map(), events = [], toasts = [], minted = [];
+  const nodes = new Map(), events = [], toasts = [], minted = [], reloads = [];
   const context = { console, URLSearchParams, Date, Intl, Promise, Set, Map, Error, Event: class { constructor(type) { this.type = type; } }, CustomEvent: class { constructor(type, init) { this.type = type; this.detail = init?.detail; } },
-    sessionStorage: values(), localStorage: values(), navigator: {}, location: { pathname: '/employee', search: '' },
+    sessionStorage: values(), localStorage: values(), navigator: {}, location: { pathname: '/employee', search: '', reload() { reloads.push(1); } },
     setInterval: () => 1, clearInterval() {}, setTimeout: callback => { queueMicrotask(callback); return 1; }, clearTimeout() {},
     addEventListener() {}, dispatchEvent: event => events.push(event), showToast: message => toasts.push(message),
     document: { readyState: 'loading', body: element(), addEventListener() {}, querySelectorAll: () => [], querySelector: () => element(), getElementById: id => { if (!nodes.has(id)) nodes.set(id, element()); return nodes.get(id); } },
@@ -187,7 +187,7 @@ function hubPage(fetcher) {
   context.window = context;
   const page = read('employee.html');
   vm.runInNewContext(page.slice(page.indexOf('let me = null;'), page.indexOf('async function sendBookingConfirmation')) + '\nglobalThis.ui={restoreHubSession,hubFetch};', context);
-  return { context, api: context.ui, events, toasts, minted };
+  return { context, api: context.ui, events, toasts, minted, reloads };
 }
 
 test('the Hub: a changed stamp keeps the session, stores the new capabilities, mints a new Firebase session and redraws', async () => {
@@ -209,9 +209,109 @@ test('the Hub: a changed stamp keeps the session, stores the new capabilities, m
   assert.equal(authCalls, 2);
   assert.deepEqual(JSON.parse(hub.context.sessionStorage.getItem('egc_capabilities')), ['schedule.book', 'walkthrough.perform']);
   assert.deepEqual([hub.minted.length, hub.context.sessionStorage.getItem('egc_access_stamp'), hub.context.sessionStorage.getItem('egc_u')], [2, stamp, 'Rep.Live']);
-  assert.deepEqual(JSON.parse(JSON.stringify(hub.events.filter(event => event.type === 'egc:access-changed').map(event => event.detail))), [{ businessAccessChanged: false }]);
+  assert.deepEqual(JSON.parse(JSON.stringify(hub.events.filter(event => event.type === 'egc:access-changed').map(event => event.detail))), [{ firebaseRestarted: true }]);
   assert.deepEqual(hub.toasts, ['Your Hub access was updated.']);
   assert.equal(hub.events.some(event => event.type === 'egc:signout'), false, 'nobody is signed out');
+});
+
+// A Hub page signed in as Rep.Live whose /api/hub-auth answers come from `auth` (stamp first, then the body).
+async function hubWith(auth, { firebase = () => true } = {}) {
+  const hub = hubPage(async url => {
+    const path = String(url);
+    if (path.includes('firebase-session')) return answer({ ok: true, token: 't' });
+    if (path.includes('/api/hub-auth')) { const [stamp, body] = auth(); return answer(body, stamp); }
+    return answer({ ok: true }, auth()[0]);
+  });
+  hub.context.firebase = { auth: () => ({ signInWithCustomToken: async token => { if (!firebase()) throw Object.assign(new Error('synthetic'), { code: 'auth/network-request-failed' }); hub.minted.push(token); }, signOut: async () => {} }) };
+  await hub.api.restoreHubSession();
+  return hub;
+}
+const later = (hub, ms) => { const now = Date.now(); hub.context.Date = class extends Date { static now() { return now + ms; } }; };
+const crewProfile = { ok: true, user: 'Rep.Live', displayName: 'Rep', role: 'crew', roleAccess: true, businessAccess: false, capabilities: [] };
+
+test('the Hub: business access turning on reloads the page when nothing is unsaved, and never shows business screens on crew data', async () => {
+  let stamp = 'aaaaaaaaaaaaaaaa', body = crewProfile, safe = true;
+  const hub = await hubWith(() => [stamp, body]);
+  hub.context.EGCHubSafeToReload = () => safe;
+  stamp = 'bbbbbbbbbbbbbbbb'; body = { ...crewProfile, role: 'manager', businessAccess: true, capabilities: ['dispatch.write'] };
+  await hub.api.hubFetch('/api/employee-hub');
+  await flush();
+  assert.deepEqual([hub.reloads.length, hub.context.sessionStorage.getItem('egc_business_access'), hub.events.filter(event => event.type === 'egc:access-changed').length], [1, 'false', 0], 'reloaded; the old page never switched to business screens');
+});
+
+test('the Hub: with unsaved work it keeps the old screens, says so once and reloads on a later answer once it is safe', async () => {
+  let stamp = 'aaaaaaaaaaaaaaaa', body = { ...crewProfile, role: 'manager', businessAccess: true, capabilities: ['dispatch.write'] }, safe = false;
+  const hub = await hubWith(() => [stamp, body]);
+  hub.context.EGCHubSafeToReload = () => safe;
+  // Removal: a manager loses business access while a draft is open.
+  stamp = 'cccccccccccccccc'; body = crewProfile;
+  await hub.api.hubFetch('/api/employee-hub');
+  await flush();
+  assert.deepEqual([hub.reloads.length, hub.context.sessionStorage.getItem('egc_business_access'), hub.context.sessionStorage.getItem('egc_access_stamp')], [0, 'true', 'aaaaaaaaaaaaaaaa'], 'nothing reloaded and the stamp is not taken, so it is checked again');
+  assert.deepEqual(hub.toasts, ['Your Hub access changed. Save or finish what is open, and the Hub reloads to apply it.']);
+  later(hub, 31000);
+  await hub.api.hubFetch('/api/employee-hub');
+  await flush();
+  assert.equal(hub.toasts.length, 1, 'the notice is shown once');
+  safe = true; later(hub, 62000);
+  await hub.api.hubFetch('/api/employee-hub');
+  await flush();
+  assert.equal(hub.reloads.length, 1, 'reloaded once nothing is unsaved');
+});
+
+test('the Hub and crew pages keep the old stamp when the new Firebase session fails, so a later answer tries again', async () => {
+  let stamp = 'aaaaaaaaaaaaaaaa', body = crewProfile, firebaseUp = true;
+  const hub = await hubWith(() => [stamp, body], { firebase: () => firebaseUp });
+  stamp = 'bbbbbbbbbbbbbbbb'; body = { ...crewProfile, capabilities: ['walkthrough.perform'] }; firebaseUp = false;
+  await hub.api.hubFetch('/api/employee-hub');
+  await flush();
+  assert.deepEqual([hub.context.sessionStorage.getItem('egc_access_stamp'), hub.toasts.length], ['aaaaaaaaaaaaaaaa', 0], 'no stamp and no "updated" notice after a failed restart');
+  firebaseUp = true; later(hub, 31000);
+  await hub.api.hubFetch('/api/employee-hub');
+  await flush();
+  assert.deepEqual([hub.context.sessionStorage.getItem('egc_access_stamp'), hub.toasts], [stamp, ['Your Hub access was updated.']]);
+  // crew/hub-auth.js does the same.
+  let crewStamp = 'aaaaaaaaaaaaaaaa', crewBody = crewProfile, crewUp = true;
+  const crew = crewBrowser(async url => String(url).includes('firebase-session') ? answer({ ok: true, token: 't' }) : answer(crewBody, crewStamp));
+  crew.context.firebase = { auth: () => ({ signInWithCustomToken: async () => { if (!crewUp) throw new Error('synthetic'); }, signOut: async () => {} }) };
+  await crew.context.EGCHubAuth.session();
+  crewStamp = 'bbbbbbbbbbbbbbbb'; crewBody = { ...crewProfile, capabilities: ['walkthrough.perform'] }; crewUp = false;
+  await crew.context.EGCHubAuth.fetch('/api/crew-jobs');
+  await flush();
+  assert.equal(crew.context.sessionStorage.getItem('egc_access_stamp'), 'aaaaaaaaaaaaaaaa');
+});
+
+test('Knock: a stamp change keeps an admin screen and its unsaved form; only a changed admin flag or rep status redraws it', () => {
+  const source = read('crew/knock-app.js'), start = source.indexOf('export function accessRedraw');
+  const context = {};
+  vm.runInNewContext(source.slice(start, source.indexOf('\n}\n', start) + 3).replace('export function', 'function') + 'globalThis.accessRedraw = accessRedraw;', context);
+  const { accessRedraw } = context;
+  const admin = { admin: true, status: 'active' };
+  assert.equal(accessRedraw({ onAdmin: true, before: admin, after: { ...admin } }), 'chrome', 'an admin editing settings keeps the form');
+  assert.equal(accessRedraw({ onAdmin: true, before: admin, after: { admin: false, status: 'active' } }), 'screen', 'an admin who lost admin sees the lock');
+  assert.equal(accessRedraw({ onAdmin: true, before: admin, after: { admin: true, status: 'inactive' } }), 'screen');
+  assert.equal(accessRedraw({ onAdmin: false, before: admin, after: admin }), 'screen', 'other screens redraw');
+  assert.match(source, /const redraw = accessRedraw\(\{ onAdmin: Boolean\(screens\.get\(S\.route\.name\)\?\.admin\), before, after: \{ admin: S\.viewer\?\.admin, status: S\.rep\?\.status \} \}\);\n\s+if \(redraw === 'screen'\) render\(\); else \{ renderChrome\(\); renderTabs\(\); \}/);
+});
+
+test('crew pages redraw on egc:access-changed: crew home re-runs its tools and jobs, the walkthrough says when access was removed', async () => {
+  assert.match(read('crew/index.html'), /addEventListener\('egc:access-changed',\(\)=>\{if\(EGCHubAuth\.profile\(\)\.user\)openCrewHome\(\)\}\);/);
+  const page = read('crew/gameplan.html'), line = page.split('\n').find(text => text.startsWith("window.addEventListener('egc:access-changed'"));
+  const prepended = [], nodes = new Map(), listeners = {};
+  let allowed = false;
+  const node = () => ({ style: {}, children: [], setAttribute(name, value) { this[name] = value; }, append(...items) { this.children.push(...items); }, remove() { nodes.delete(this.id); } });
+  const context = { EGCHubAuth: { canRunWalkthrough: () => allowed },
+    window: { addEventListener: (name, callback) => { listeners[name] = callback; } },
+    document: { body: { prepend: item => { prepended.push(item); nodes.set(item.id, item); } }, createElement: () => node(), getElementById: id => nodes.get(id) || null } };
+  context.$ = id => context.document.getElementById(id);
+  vm.runInNewContext(line, context);
+  listeners['egc:access-changed']();
+  const note = prepended[0];
+  assert.deepEqual([note.id, note.role, note.children[0]], ['walkthrough-access-removed', 'alert', 'Walkthrough access was removed. Your draft is saved on this device. ']);
+  listeners['egc:access-changed']();
+  assert.equal(prepended.length, 1, 'shown once');
+  allowed = true; listeners['egc:access-changed']();
+  assert.equal(nodes.has('walkthrough-access-removed'), false, 'taken down when access comes back');
 });
 
 test('the Hub suite redraws its menu on egc:access-changed and Knock reloads its profile on a changed stamp', () => {
@@ -219,7 +319,7 @@ test('the Hub suite redraws its menu on egc:access-changed and Knock reloads its
   assert.match(suite, /window\.addEventListener\('egc:access-changed',\(\)=>\{if\(!S\.installed\)return;const rail=\$\('#ops-rail \.ops-nav'\);if\(rail\)\{rail\.replaceChildren\(\);navList\(rail,visibleNav\(\)\)\}if\(!canView\(S\.active\)\)go\('my_day'\)/);
   const knock = read('crew/knock-app.js');
   assert.match(knock, /if \(response\.status !== 401\) noteAccess\(response, path\.split\('\?'\)\[0\]\);/);
-  assert.match(knock, /const session = await api\('\/api\/hub-auth'\);\n\s+if \(String\(session\.user \|\| ''\)\.toLowerCase\(\) !== String\(user \|\| ''\)\.toLowerCase\(\)\) return;\n\s+await loadServer\(\);\n\s+render\(\);/);
+  assert.match(knock, /const session = await api\('\/api\/hub-auth'\);\n\s+if \(String\(session\.user \|\| ''\)\.toLowerCase\(\) !== String\(user \|\| ''\)\.toLowerCase\(\)\) return;\n\s+const before = \{ admin: S\.viewer\?\.admin, status: S\.rep\?\.status \};\n\s+await loadServer\(\);/);
   assert.match(read('employee-staff.js'), /stays signed in\. The new roles apply in the Hub, the crew app and Knock within about a minute/);
   assert.doesNotMatch(read('employee-staff.js'), /Saving signs/);
 });

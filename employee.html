@@ -1275,6 +1275,7 @@ async function enterEmployeeApp(data, version = hubAuthVersion, accessStamp = ''
 
 function clearHubProfile() {
   me = null;
+  hubAccessReloadTold = false;
   for (const storage of [sessionStorage, localStorage]) {
     ['egc_u','egc_name','egc_role','egc_pay_type','egc_hourly_rate','egc_business_access','egc_owner','egc_capabilities','egc_capability_mode','egc_role_access','egc_access_stamp','egc_tok','egc_exp'].forEach(key => storage.removeItem(key));
   }
@@ -1403,8 +1404,14 @@ async function doLogout({ explicit = false } = {}) {
 // the one this page signed in with, the owner changed this person's roles: after a short wait (so the new Firebase
 // session starts after the server ended the old one) the page asks /api/hub-auth again, keeps the new capabilities,
 // mints a new Firebase session and redraws. Nobody is signed out; the server already decides with the new roles.
+// The new stamp is kept only once all of that worked, so a failed Firebase restart is tried again on a later answer
+// (at most every 30 s).
+// Business access turning on or off changes the page's whole data layer (Firestore listeners or the crew schedule),
+// so the page reloads instead of redrawing: at once when nothing is unsaved (window.EGCHubSafeToReload, the suite),
+// otherwise after a notice, checking again on later answers. Until then the old screens stay; the server already
+// refuses what the person may no longer do.
 const HUB_ACCESS_SETTLE_MS = 3000, HUB_ACCESS_RECHECK_MS = 30000;
-let hubAccessRefresh = null, hubAccessCheckedAt = 0;
+let hubAccessRefresh = null, hubAccessCheckedAt = 0, hubAccessReloadTold = false;
 function hubAccessStampOf(response) { return response?.headers?.get?.('X-EGC-Access') || ''; }
 function noteHubAccess(response) {
   const stamp = hubAccessStampOf(response);
@@ -1422,13 +1429,20 @@ async function refreshHubAccess(version) {
   const data = await response.json().catch(() => ({}));
   // A 401 or an outage is left to the next hubFetch; another account signed in elsewhere is not adopted here.
   if (version !== hubAuthVersion || !response.ok || !data.ok || !data.user || String(data.user).toLowerCase() !== String(me).toLowerCase()) return;
-  const business = sessionStorage.getItem('egc_business_access');
+  if ((data.businessAccess === true) !== (sessionStorage.getItem('egc_business_access') === 'true')) {
+    if (typeof window.EGCHubSafeToReload === 'function' && window.EGCHubSafeToReload()) { location.reload(); return; }
+    if (!hubAccessReloadTold && typeof showToast === 'function') showToast('Your Hub access changed. Save or finish what is open, and the Hub reloads to apply it.');
+    hubAccessReloadTold = true;
+    return;
+  }
   rememberHubProfile(data);
-  sessionStorage.setItem('egc_access_stamp', hubAccessStampOf(response));
-  try { await ensureFirebaseSession(version); } catch {}
+  let restarted = true;
+  try { await ensureFirebaseSession(version); } catch { restarted = false; }
   if (version !== hubAuthVersion) return;
-  window.dispatchEvent(new CustomEvent('egc:access-changed', { detail: { businessAccessChanged: business !== sessionStorage.getItem('egc_business_access') } }));
-  if (typeof showToast === 'function') showToast(business !== sessionStorage.getItem('egc_business_access') ? 'Your Hub access changed. Reload the Hub to see every screen it now opens.' : 'Your Hub access was updated.');
+  window.dispatchEvent(new CustomEvent('egc:access-changed', { detail: { firebaseRestarted: restarted } }));
+  if (!restarted) return;
+  sessionStorage.setItem('egc_access_stamp', hubAccessStampOf(response));
+  if (typeof showToast === 'function') showToast('Your Hub access was updated.');
 }
 
 async function hubFetch(input, init = {}) {

@@ -62,6 +62,13 @@ function forget(key) { try { localStorage.removeItem(key); } catch {} }
 // LIVE-ROLES: every API answer carries the access stamp of the session it checked (X-EGC-Access). Knock keeps the first
 // one it sees; when an answer's stamp differs, the owner changed this person's roles, so a moment later Knock reloads
 // its profile (knock-me) and redraws. Nobody is signed out; the server already decides with the new roles.
+// What to redraw after that reload: an admin screen holds unsaved forms (settings, the commission approval), so, as a
+// background sync does, it keeps its screen and only the chrome and tabs follow, unless the admin flag or the rep's
+// status changed and the screen itself must change (an admin who lost admin sees the lock, never a stale form).
+export function accessRedraw({ onAdmin, before, after }) {
+  if (!onAdmin) return 'screen';
+  return Boolean(before?.admin) !== Boolean(after?.admin) || (before?.status || '') !== (after?.status || '') ? 'screen' : 'chrome';
+}
 const ACCESS_SETTLE_MS = 3000, ACCESS_RECHECK_MS = 30000;
 let accessStamp = '', accessRefresh = null, accessCheckedAt = 0;
 function noteAccess(response, path) {
@@ -76,8 +83,10 @@ function noteAccess(response, path) {
     if (S.viewer?.user !== user) return;
     const session = await api('/api/hub-auth');
     if (String(session.user || '').toLowerCase() !== String(user || '').toLowerCase()) return;
+    const before = { admin: S.viewer?.admin, status: S.rep?.status };
     await loadServer();
-    render();
+    const redraw = accessRedraw({ onAdmin: Boolean(screens.get(S.route.name)?.admin), before, after: { admin: S.viewer?.admin, status: S.rep?.status } });
+    if (redraw === 'screen') render(); else { renderChrome(); renderTabs(); }
   }).catch(() => {}).finally(() => { accessRefresh = null; });
 }
 

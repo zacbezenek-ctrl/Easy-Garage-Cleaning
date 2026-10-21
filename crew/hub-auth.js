@@ -96,9 +96,13 @@
     // A 401 or an outage is left to the next request; another account signed in elsewhere is not adopted here.
     if (version !== authVersion || !response.ok || !data.ok || !data.user || account(data.user) !== account(user)) return;
     remember(data.user, data);
-    rememberAccess(response);
-    try { await ensureFirebaseSession(version); } catch {}
-    if (version === authVersion) window.dispatchEvent(new CustomEvent('egc:access-changed', { detail: { user: data.user } }));
+    // The new stamp is kept only once the Firebase session restarted, so a failed restart is tried again on a later
+    // answer (at most every 30 s).
+    let restarted = true;
+    try { await ensureFirebaseSession(version); } catch { restarted = false; }
+    if (version !== authVersion) return;
+    if (restarted) rememberAccess(response);
+    window.dispatchEvent(new CustomEvent('egc:access-changed', { detail: { user: data.user, firebaseRestarted: restarted } }));
   }
 
   function clearLocal() {
