@@ -26,6 +26,9 @@ export const LAUNCH_DEFAULTS = Object.freeze({
   // job notes the estimator confirms for the crew, on the website's own OpenAI key (the openaiapi secret).
   EGC_WALKTHROUGH_VISIT_ENABLED: 'true',
   EGC_WALKTHROUGH_NOTES: 'true',
+  // Owner decisions 2026-10-21: the Early-bird winter sale (up to $400 off any job, accepted by Jan 31, work Dec 1 to
+  // Feb 28, the amount capped by a 30% margin floor on the Job actuals cost settings; functions/_lib/winter-sale.js).
+  EGC_WINTER_SALE: 'true',
 });
 
 /** Fills each unset launch default into env, in place; a value already present (any value) is kept. An env that

@@ -20,6 +20,7 @@ import { crewPublicProfilesEnabled, customerCrew, customerCrewProjection, readCr
 import { liveSale, portalApprovalWrites, portalFunnelWrite, vocabularyValue } from '../_lib/job-funnel-events.js';
 import { dispatchReviewPatch, queued } from '../_lib/dispatch-queue.js';
 import { publicQuotePaymentSchedule, quotePaymentSummary, sentQuotePaymentPolicy, withheldQuotePaymentSummary } from '../_lib/quote-payment-policy.js';
+import { WINTER_SALE_DEFAULTS, hasWinterSaleLine, winterSaleEnabled } from '../_lib/winter-sale.js';
 
 const HOST = /^(?:easygaragecleaning\.com|www\.easygaragecleaning\.com|easy-garage-cleaning\.pages\.dev|localhost(?::\d+)?|127\.0\.0\.1(?::\d+)?)$/;
 const DEFAULT_REVIEW_URL = 'https://search.google.com/local/writereview?placeid=ChIJ17AGfBiyRIsRyJ3k4mDtX8Q';
@@ -500,6 +501,12 @@ async function handlePost({ request, env }, { clock, read }) {
     const finance = moneyState(result.job), quote = customerQuoteTotal(result.job);
     if (quote < .01) return reply(409, { ok: false, error: 'The estimate is not ready yet' });
     if (result.job.estimate?.validUntil && String(result.job.estimate.validUntil) < today) return reply(409, { ok: false, error: 'This estimate has expired. Ask the team for an updated estimate.' });
+    // EGC_WINTER_SALE: a sale price covers work done inside the sale's window (its expiry already holds it to the sign-by
+    // day). A job moved outside the window after the quote was sent is not approved at the sale price.
+    if (winterSaleEnabled(env) && hasWinterSaleLine(result.job.estimate?.lineItems)) {
+      const terms = { ...WINTER_SALE_DEFAULTS, ...(result.job.quoteDraft?.winterSale?.terms || {}) }, day = String(result.job.date || '');
+      if (!day || day < terms.jobFrom || day > terms.jobTo) return reply(409, { ok: false, code: 'CUSTOMER_PORTAL_SALE_DATE', error: 'This estimate\'s winter sale price covers work scheduled in the sale window. Ask the team to update your estimate or your job date.' });
+    }
     if (approvalBlocked(result.job, rejectDrafts(env))) return reply(409, { ok: false, code: 'CUSTOMER_PORTAL_ESTIMATE_NOT_APPROVABLE', error: 'This estimate is being updated and cannot be approved yet. Refresh the page or ask the team for the current estimate.' });
     // The approval binds to the exact revision, total and shown content the
     // customer saw. An older page that does not send them must refresh; it

@@ -57,7 +57,7 @@ test('the browser catalog is generated from the committed sources and is current
   for (const name of fs.readdirSync(new URL('../functions', import.meta.url), { recursive: true }).filter(name => /\.m?js$/.test(name))) assert.doesNotMatch(read(`functions/${name}`), /(?:from|import)\s*\(?\s*['"][^'"]*(?:gameplan-vehicles|vehicle-catalog)/, `functions/${name}`);
   // The page loads the module, its stylesheet and the cache keys of everything changed with it.
   const html = read('crew/gameplan.html');
-  for (const asset of ['/crew/gameplan-vehicles.js?v=20261019vehicles2', '/crew/gameplan-vehicles.css?v=20261019vehicles2', '/crew/quote-draft.js?v=20261021field3', `/crew/gameplan-vehicles-types.js?v=${T.VERSION}`]) assert.ok(html.includes(asset), asset);
+  for (const asset of ['/crew/gameplan-vehicles.js?v=20261019vehicles2', '/crew/gameplan-vehicles.css?v=20261019vehicles2', '/crew/quote-draft.js?v=20261021sale1', `/crew/gameplan-vehicles-types.js?v=${T.VERSION}`]) assert.ok(html.includes(asset), asset);
   assert.ok(html.indexOf('/crew/gameplan-vehicles-types.js') < html.indexOf('/crew/gameplan-vehicles.js'), 'the types load before the module');
   assert.equal(html.includes('gameplan-vehicles-data.js'), false, 'the catalog loads only when Finish opens');
 });

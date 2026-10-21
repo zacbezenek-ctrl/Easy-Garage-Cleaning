@@ -4,7 +4,9 @@
    integer cents; this screen only formats them. No margin shows until the owner enters the crew wage, and margins read
    "upper bound" until all seven cost settings are entered (wage, workers' comp, payroll tax, burden, dump fee, truck
    cost, goods tax) on the Cost settings card (POST /api/job-actuals, owner only; managers see them read-only). Registered in
-   employee-hub-screens.js and runs standalone with the UI kit (window.EGCHubKit). */
+   employee-hub-screens.js and runs standalone with the UI kit (window.EGCHubKit).
+   EGC_WINTER_SALE: the Early-bird winter sale card (amount, minimum, accept-by day, work window, margin floor) shows when
+   the server answers winterSale; the owner saves it (POST action winter_sale.settings.set), managers see it read-only. */
 (function(){
 'use strict';
 const SCREEN='job_actuals',PATH='/api/job-actuals',PREFIX='job_actuals';
@@ -22,7 +24,14 @@ const CHANNEL={direct_estimator:'Estimator 7%',appointment_setter:'Setter 13% + 
 // warning above the totals and 'actual_hours_missing' by the Actual cell, so neither repeats here.
 const REASON={loads_quoted:'Dump cost from quoted loads',loads_unknown:'Truck loads not recorded',revenue_unreconciled:'Revenue not final: refund or unbilled change',timecards_unavailable:'Timecards could not be read',timecards_incomplete:'Timecards incomplete (open shift or review)',crew_lead_exceeds_timecards:'Crew lead count used: above timecards',wage_unset:'No crew wage set',goods_unknown:'Goods unknown: no estimate lines',revenue_unknown:'Revenue unknown'};
 const SOURCE={timecards:'Timecards',crew_lead:'Crew lead',not_recorded:'Not recorded'};
-const S={host:null,ctx:null,data:null,error:null,loading:false,busy:false,pending:null,drafts:{},feedback:'',feedbackError:false,generation:0,showAll:false};
+const S={host:null,ctx:null,data:null,error:null,loading:false,busy:false,pending:null,drafts:{},feedback:'',feedbackError:false,generation:0,showAll:false,sale:{drafts:{},busy:false,feedback:'',error:false,requestId:''}};
+const SALE=[
+  {key:'amountCents',label:'Discount, up to',kind:'money',help:'Shown to the customer as its own line, "Early-bird winter sale", with the amount given: less where the margin floor caps it.'},
+  {key:'signBy',label:'Accepted by',kind:'date',help:'Last Denver day the customer can accept a sale quote; a sale quote expires on it at the latest.'},
+  {key:'jobFrom',label:'Work from',kind:'date',help:'First day the job can be booked.'},
+  {key:'jobTo',label:'Work through',kind:'date',help:'Last day the job can be booked.'},
+  {key:'marginFloorBp',label:'Margin floor',kind:'percent',help:'The discount on a quote is cut to keep its estimated margin at this floor (none if the job is already below it). Only you see this; estimators see "ask Zac".'},
+  {key:'junkManHoursPerLoad',label:'Junk-only man-hours per truck load',kind:'hours',help:'Junk-only quotes have no Labor line, so this costs their crew time for the margin floor. Blank: junk-only quotes get no sale.'}];
 const kit=()=>window.EGCHubKit;
 const h=(...args)=>kit().h(...args);
 const fetcher=()=>S.ctx&&typeof S.ctx.hubFetch==='function'?S.ctx.hubFetch:undefined;
@@ -125,6 +134,47 @@ function totalsCard(title,t){
       stat('Contribution'+bound,money(t.marginJobs?t.contributionCents:null),t.marginJobs?`after ${money(t.marginCommissionCents)} commission on those jobs (${money(t.commissionCents)} on all)`:`${money(t.commissionCents)} commission on all jobs`),
       stat('Truck loads',String(t.truckLoads),`Goods at retail ${money(t.goodsRetailCents)}`)));
 }
+// The winter sale settings (EGC_WINTER_SALE). A failed save keeps its requestId, so a retry is never applied twice.
+const saleShown=(s,value)=>value===null||value===undefined?'':s.kind==='hours'?String(value):s.kind==='money'?(value/100).toFixed(2):s.kind==='percent'?String(value/100):String(value);
+function saleParsed(s,text){
+  const t=String(text??'').trim();
+  if(s.kind==='date')return /^\d{4}-\d{2}-\d{2}$/.test(t)?{value:t}:{bad:true};
+  if(s.kind==='hours')return t===''?{value:null}:/^\d+(\.\d{1,2})?$/.test(t)&&Number.isInteger(Number(t)*4)&&Number(t)>0?{value:Number(t)}:{bad:true};
+  if(!/^\d+(\.\d{1,2})?$/.test(t))return{bad:true};
+  return{value:Math.round(Number(t)*100)};
+}
+async function saveSale(){
+  const d=S.data?.winterSale,sale=S.sale;if(!d||sale.busy||!S.data.canEdit)return;
+  const settings={},bad=[];
+  for(const s of SALE){const r=saleParsed(s,Object.hasOwn(sale.drafts,s.key)?sale.drafts[s.key]:saleShown(s,d.settings[s.key]));if(r.bad)bad.push(s.label);else settings[s.key]=r.value;}
+  if(bad.length){sale.feedback=`Fix: ${bad.join(', ')} (dollars like 400.00, dates like 2027-01-31, hours in quarters like 1.5).`;sale.error=true;render();return;}
+  sale.requestId=sale.requestId||crypto.randomUUID();sale.busy=true;sale.feedback='';render();
+  try{
+    await kit().requestJSON(PATH,{method:'POST',prefix:PREFIX,fetcher:fetcher(),body:{action:'winter_sale.settings.set',requestId:sale.requestId,expectedRevision:d.settings.revision??null,settings},validate:data=>Boolean(data?.ok===true&&data.winterSale?.settings)});
+    Object.assign(sale,{drafts:{},requestId:'',feedback:'Winter sale settings saved. Quotes saved from now on use them.',error:false});
+  }catch(error){
+    // A definite refusal can never succeed unchanged: the next save is a new request. A lost answer retries this one.
+    if(error.status>=400&&error.status<500&&![401,403,408,429].includes(error.status))sale.requestId='';
+    Object.assign(sale,{feedback:kit().errorText(error),error:true});
+  }
+  sale.busy=false;await load();
+}
+function saleCard(){
+  const d=S.data?.winterSale;if(!d||d.enabled!==true||!d.settings)return null;
+  const editable=S.data.canEdit,sale=S.sale;
+  const rows=SALE.map(s=>{
+    const saved=d.settings[s.key];
+    if(!editable)return h('div',{class:'ja-setting'},h('span',{},s.label),h('strong',{},s.kind==='hours'?(saved===null?'Not set':saved+' h'):s.kind==='money'?money(saved):s.kind==='percent'?(saved/100)+'%':day(saved)));
+    const input=h('input',{type:s.kind==='date'?'date':'text',inputmode:s.kind==='date'?null:'decimal',autocomplete:'off',maxlength:12,placeholder:s.kind==='hours'?'Not set':null,value:Object.hasOwn(sale.drafts,s.key)?sale.drafts[s.key]:saleShown(s,saved),disabled:sale.busy,'aria-label':s.label,'data-sale':s.key,oninput:event=>{sale.drafts[s.key]=event.target.value;}});
+    return h('label',{class:'ja-setting ja-setting-edit'},h('span',{},s.label,h('small',{},s.help)),h('span',{class:'ja-input'},s.kind==='money'?h('span',{'aria-hidden':'true'},'$'):null,input,s.kind==='percent'?h('span',{'aria-hidden':'true'},'%'):null));
+  });
+  return h('section',{class:'hub-card ja-settings ja-sale','aria-label':'Early-bird winter sale'},
+    h('h2',{},'Early-bird winter sale'),
+    h('p',{class:'ja-muted'},'Estimators ask for the sale on the quote; the server applies it inside these dates and cuts the amount where the margin floor needs it, using the cost settings above. Until every cost setting is entered the sale is never applied. Advertise it as "up to" the discount.'+(editable?' You can apply it anyway on a quote, with a reason (audited).':' Only the owner can change these.')),
+    h('div',{class:'ja-setting-list'},rows),
+    editable?h('div',{class:'ja-save'},kit().button(sale.busy?'Saving…':sale.requestId?'Retry save':'Save winter sale',saveSale,'primary',{disabled:sale.busy,'data-sale-save':''})):null,
+    sale.feedback?h('p',{role:sale.error?'alert':'status',class:'ja-feedback'+(sale.error?' error':'')},sale.feedback):null);
+}
 function settingsCard(){
   const d=S.data,editable=d.canEdit,{bad,changed}=changes();
   const rows=SETTINGS.map(s=>{
@@ -193,7 +243,7 @@ function render(){
     if(!d.settingsComplete)notices.push(h('div',{class:'hub-notice warning'},d.missingSettings.includes('wageCentsPerManHour')?'No margins yet: enter the crew wage in Cost settings below.':`Margins are an upper bound: ${d.missingSettings.length} of ${SETTINGS.length} cost settings ${d.missingSettings.length===1?'is':'are'} blank.`));
     if(d.sources?.timecards==='unavailable')notices.push(h('div',{class:'hub-notice warning'},'Timecards could not be read, so actual hours show only where the crew lead confirmed them. Refresh to try again.'));
     if(S.error)notices.push(h('div',{class:'hub-notice error',role:'alert'},kit().errorText(S.error)));
-    body=[...notices,h('div',{class:'ja-totals-grid'},totalsCard('Last 30 days',d.totals.last30),totalsCard('Last 90 days',d.totals.last90)),table(),settingsCard()];
+    body=[...notices,h('div',{class:'ja-totals-grid'},totalsCard('Last 30 days',d.totals.last30),totalsCard('Last 90 days',d.totals.last90)),table(),settingsCard(),saleCard()].filter(Boolean);
   }
   const root=h('section',{class:'hub-screen egc-job-actuals'},head,...body);
   S.host.querySelector('.egc-job-actuals')?.remove();
