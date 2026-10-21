@@ -55,7 +55,10 @@ invited `sales` account gains `customer.send`, `followups.own` and `quotes.autho
 ## Running a migration (owner only)
 
 `/api/employee-vault-migrate` accepts only the owner's signed-in Hub session from the Hub
-origin. From the browser console on the Employee Hub, signed in as the owner:
+origin. The two staff migrations have a button: Hub → Staff directory shows the owner **Finish staff
+setup** while either still has records to fill (the directory answer's `setup.needed`), and one tap
+applies both, keeping each request id in sessionStorage until its answer arrives. Any migration also
+runs from the browser console on the Employee Hub, signed in as the owner:
 
 ```js
 // 1. List registered migrations.

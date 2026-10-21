@@ -17,10 +17,13 @@ const SAVE_LABEL={roles:'Save roles',skills:'Save skills',pay:'Save pay change',
 const GUSTO_ID=/^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/;
 // The editor's label mid-sentence: lower case, except the Gusto employee ID keeps its name.
 const editText=kind=>kind==='gusto'?EDIT_LABEL.gusto:EDIT_LABEL[kind].toLowerCase();
+// One-tap staff setup (below): the migrations it runs and where each run keeps its request id until its answer arrives.
+const MIGRATE='/api/employee-vault-migrate',SETUP=['staff-profile-pay-roles-v1','employee-account-staff-roles-v1'],SETUP_KEY='egc.hub.staffSetup.v1.';
+const SETUP_AGAIN='Some records may not have been updated. Tap Finish staff setup again; records already set up are skipped.';
 const UUID=/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i,TIME=/^(?:[01]\d|2[0-3]):[0-5]\d$/,CODE=/^[a-z][a-z0-9_]{1,80}$/;
 // 403s this API documents as permanent (no access, the reserved owner role, a cross-site request): retrying cannot succeed.
 const PERMANENT_403=/^staff_directory_(?:forbidden|owner_role_reserved|origin_forbidden)$/;
-const S={host:null,root:null,ctx:null,viewer:'',embedded:true,formerOpen:false,data:null,loadedAt:NaN,loading:false,error:null,generation:0,loadSeq:0,controller:null,busy:false,pending:null,notice:null,edit:null,draft:null,dirty:false,focus:''};
+const S={host:null,root:null,ctx:null,viewer:'',embedded:true,formerOpen:false,data:null,loadedAt:NaN,loading:false,error:null,generation:0,loadSeq:0,controller:null,busy:false,pending:null,notice:null,edit:null,draft:null,dirty:false,focus:'',setup:null};
 
 // The Team page mounts this module before the Hub kit (employee-ui-kit.js) exists: the registry loads the kit only when a
 // registered screen opens. So h(), request() and the pending store are local versions of EGCHubKit's h, requestJSON and
@@ -115,7 +118,7 @@ function readPending(){
 }
 function writePending(row){S.pending=row;try{sessionStorage.setItem(pendingKey(),JSON.stringify(row));}catch{}}
 function clearPending(){S.pending=null;try{sessionStorage.removeItem(pendingKey());}catch{}}
-function clearAllPending(){try{for(let i=sessionStorage.length-1;i>=0;i--){const name=sessionStorage.key(i);if(String(name||'').startsWith(PENDING))sessionStorage.removeItem(name);}}catch{}}
+function clearAllPending(){try{for(let i=sessionStorage.length-1;i>=0;i--){const name=String(sessionStorage.key(i)||'');if(name.startsWith(PENDING)||name.startsWith(SETUP_KEY))sessionStorage.removeItem(name);}}catch{}}
 
 const manager=()=>Array.isArray(S.ctx?.capabilities)&&S.ctx.capabilities.includes('business');
 const has=capability=>Boolean(S.data?.viewer?.capabilities?.includes(capability));
@@ -145,6 +148,11 @@ async function load({rebase=false}={}){
     if(!validDirectory(data))throw failure('staff_directory_unverified','The staff directory response was incomplete, so nothing is shown as current. Retry before making changes.',503);
     if(!same(data.viewer.user,S.viewer))throw failure('staff_directory_account_changed','The Hub is now signed in as a different account than this tab. Sign in again here; nothing is shown or saved until the accounts match.',401);
     S.data=data;S.loadedAt=monotonic();
+    // The server's answer decides the banner; a finished run is reported as done only when this reload confirms it.
+    if(S.setup?.state!=='running'){
+      const verifying=S.setup?.state==='verifying';S.setup=null;
+      if(verifying)S.notice=data.setup?.needed===false?{kind:'success',text:'Staff setup is finished. Roles and pay history are ready.'}:{kind:'warning',text:SETUP_AGAIN};
+    }
     const open=S.edit&&personFor(S.edit.username);
     if(S.edit&&!open){S.edit=null;S.draft=null;S.dirty=false;}
     else if(open&&open.revision!==S.edit.revision){
@@ -269,6 +277,59 @@ function errorText(error,draft=false){
   if(status===401)return'Your sign-in expired. Sign in again, then retry the saved change.';
   if(status===403)return error.message||'Your account cannot make this change.';
   return error?.message||'The staff directory is unavailable. Retry the original save.';
+}
+
+// ── one-tap staff setup (owner) ──
+// The two staff migrations (docs/employee-vault-migrations.md) behind one button. The directory answer says whether they
+// still have records to fill (setup.needed, owner only); Finish staff setup applies both. Each apply keeps its requestId in sessionStorage
+// until it completes, so a lost answer is retried with the same id and the server returns the saved report.
+const owner=()=>Array.isArray(S.data?.viewer?.capabilities)&&S.data.viewer.capabilities.includes('settings.manage');
+async function migrate(body){
+  const fetcher=typeof S.ctx?.hubFetch==='function'?S.ctx.hubFetch:(url,init)=>fetch(url,{...init,credentials:'same-origin'});
+  let response,data=null;
+  try{response=await fetcher(MIGRATE,{method:'POST',cache:'no-store',credentials:'same-origin',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});data=await response.json().catch(()=>null);}
+  catch{throw failure('staff_setup_network','The Hub could not be reached. Tap Finish staff setup again; nothing is done twice.',503);}
+  if(!response.ok||!record(data)||data.ok!==true||!record(data.report))throw failure(String(data?.code||'staff_setup_unavailable'),typeof data?.error==='string'&&data.error.trim()?data.error.slice(0,300):'Staff setup could not finish. Tap it again; records already set up are skipped.',Number(response?.status)||503);
+  return data.report;
+}
+// Keyed by the signed-in viewer, and cleared on sign-out with the saved directory changes.
+const setupKey=id=>SETUP_KEY+encodeURIComponent(S.viewer||'anonymous')+'.'+id;
+const pendingSetupId=id=>{try{const value=sessionStorage.getItem(setupKey(id));return UUID.test(String(value||''))?value:'';}catch{return'';}};
+const keepSetupId=(id,value)=>{try{value?sessionStorage.setItem(setupKey(id),value):sessionStorage.removeItem(setupKey(id));}catch{}};
+// A request id the server still holds as running (its answer, or its failed receipt, was lost), or one it refuses as
+// used, can never finish: a fresh one is safe, since migrated records carry their marker and every write checks revisions.
+const STUCK=/_(?:in_progress|idempotency_conflict|receipt_conflict)$/;
+async function finishSetup(){
+  if(S.setup?.state==='running')return;
+  const generation=S.generation;S.setup={state:'running'};render();
+  let current='';
+  try{
+    let failed=0;
+    for(const migrationId of SETUP){
+      current=migrationId;
+      const requestId=pendingSetupId(migrationId)||uuid();keepSetupId(migrationId,requestId);
+      const report=await migrate({requestId,migrationId,dryRun:false});
+      // A conflict (someone saved that record meanwhile) needs a new request; migrated records are skipped then.
+      keepSetupId(migrationId,'');failed+=Number(report.failed||0)+Number(report.conflicts||0);
+    }
+    if(generation!==S.generation)return;
+    if(failed)S.setup={state:'error',error:SETUP_AGAIN};
+    else{S.setup={state:'verifying'};void load();}
+  }catch(error){
+    if(generation!==S.generation)return;
+    if(STUCK.test(String(error?.code||''))){keepSetupId(current,'');S.setup={state:'error',error:'Setup is still finishing. Wait a minute, then tap Finish staff setup again.'};}
+    else S.setup={state:'error',error:error.message};
+  }
+  render();
+}
+function setupBanner(){
+  // Shown while the directory says setup has work (or a run is unconfirmed), and while a run is going or failed.
+  const setup=S.setup||{},needed=S.data?.setup?.needed===true||SETUP.some(pendingSetupId);
+  if(!owner()||!(['running','verifying','error'].includes(setup.state)||needed))return null;
+  const running=setup.state==='running'||setup.state==='verifying';
+  return h('div',{class:'st-notice warning',role:'status','aria-live':'polite'},h('strong',{},'Finish staff setup'),
+    h('p',{},setup.error||'One-time setup saves the current role and pay rate of each employee account in the staff directory, so roles and pay history work there. The configured Hub accounts keep theirs in the Hub configuration. No one’s pay changes, and people you invited as Sales are saved with the Sales role. Only you can run it.'),
+    h('div',{class:'st-actions'},button(running?'Setting up…':'Finish staff setup',()=>void finishSetup(),'primary',{disabled:running,'aria-busy':running?'true':null})));
 }
 
 // ── rendering ──
@@ -447,13 +508,13 @@ function render(){
     body.push(formerSection(S.data.formerStaff));
   }else if(S.error&&!S.loading)body.push(unavailable());
   else body.push(skeleton());
-  S.root.replaceChildren(...[head(),pendingBanner(),noticeBlock(),...body].filter(Boolean));
+  S.root.replaceChildren(...[head(),pendingBanner(),noticeBlock(),setupBanner(),...body].filter(Boolean));
   if(label)[...S.root.querySelectorAll('button')].find(node=>node.getAttribute('aria-label')===label&&!node.hasAttribute('disabled'))?.focus?.();
 }
 
 function reset(){
   S.generation++;S.loadSeq++;S.controller?.abort();S.root?.remove();
-  Object.assign(S,{host:null,root:null,ctx:null,viewer:'',formerOpen:false,data:null,loadedAt:NaN,loading:false,error:null,controller:null,busy:false,pending:null,notice:null,edit:null,draft:null,dirty:false,focus:''});
+  Object.assign(S,{host:null,root:null,ctx:null,viewer:'',formerOpen:false,data:null,loadedAt:NaN,loading:false,error:null,controller:null,busy:false,pending:null,notice:null,edit:null,draft:null,dirty:false,focus:'',setup:null});
 }
 function mount(host,ctx={}){
   if(!host)return;
@@ -471,7 +532,7 @@ function mount(host,ctx={}){
   if(manager())void load();
 }
 // Leaving keeps an open draft (and the revision it was opened at) in memory for this viewer; sign-out clears it. A GET in flight is dropped.
-function unmount(){S.loadSeq++;S.controller?.abort();S.controller=null;S.loading=false;S.root?.remove();S.root=null;S.host=null;S.data=null;S.loadedAt=NaN;S.error=null;S.notice=null;S.focus='';}
+function unmount(){if(S.setup?.state!=='running')S.setup=null;S.loadSeq++;S.controller?.abort();S.controller=null;S.loading=false;S.root?.remove();S.root=null;S.host=null;S.data=null;S.loadedAt=NaN;S.error=null;S.notice=null;S.focus='';}
 window.addEventListener('egc:signout',()=>{reset();clearAllPending();});
 window.addEventListener('beforeunload',event=>{if(S.busy||S.dirty&&S.root){event.preventDefault();event.returnValue='';}});
 window.EGCStaff={mount,unmount,refresh:()=>load(),canLeave:()=>!S.busy&&!S.dirty};
