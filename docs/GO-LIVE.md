@@ -373,7 +373,7 @@ Every website lead already goes to HighLevel. Stage 2 makes that durable (nothin
 - In **Dispatch**, create the visit as a walkthrough, answer "How was this booked?", and assign the walkthrough rep.
 - With **Notify customer** on, the Hub books the HighLevel appointment with HighLevel's own notifications on, and adds the tags `egc-hub-scheduled`, `egc-walkthrough-scheduled` and `egc-reminder-2d`. **HighLevel** sends the confirmation and reminders, from your calendar settings and workflows.
 - With it off, the appointment is booked with HighLevel's notifications off and no reminder tag, but `egc-hub-scheduled` and `egc-walkthrough-scheduled` are still added. Keep customer messages off those two tags, or accept that they fire either way.
-- A visit saved in Dispatch shows "calendar sync pending" until the Hub finishes the HighLevel sync, which happens while a manager has the Hub open (a background sync worker is in the next batch).
+- A visit saved in Dispatch shows "calendar sync pending" until the Hub finishes the HighLevel sync, which happens while a manager has the Hub open (a background sync worker is in the next batch). A **signed walkthrough** is the exception: the server runs its first HighLevel sync (contact, pinned job brief, appointment, tags) and the accepted-quote portal text right after the save, whoever signed it ([6.4](#64-portal-links-by-text)).
 - **Check it worked:** book a test walkthrough for a test contact. It appears on the HighLevel walkthrough calendar and the contact gets `egc-walkthrough-scheduled`.
 
 ### 3.3 Recording the walkthrough
@@ -745,6 +745,7 @@ Each is a dry run first; review, then run again with `--apply`. All need `FIREBA
 | 6.1 | Portal documents and review link | No switch; `GOOGLE_REVIEW_URL` optional |
 | 6.2 | `FIELD_CUSTOMER_PHOTOS_SINCE`, then `FIELD_CUSTOMER_PHOTOS_ENABLED=true` | Cloudflare, plain |
 | 6.3 | Business client hub | No switch |
+| 6.4 | Portal links by text (accepted quote; quote ready; job done) | No switch for the accepted-quote text; Hub → Message templates → **Portal link texts** for the other two (off) |
 
 ### 6.1 Portal basics (no switch)
 
@@ -771,6 +772,19 @@ Each is a dry run first; review, then run again with `--apply`. All need `FIREBA
 - **Invitations by email** use the Hub's own sender, so they are under [Optional O5](#o5-business-hub-invitation-emails). Private links work without it.
 - **Check it worked:** sign in as a test company admin, limit a test manager to one property, and in another browser confirm that manager sees only that property.
 - **Before any code rollback past this build:** export business members limited to properties; older code would give them every property.
+
+### 6.4 Portal links by text
+
+The Hub texts the customer's private project portal link itself, through HighLevel's API (SMS, or email when no mobile number is saved). Details: [portal-invitations.md](portal-invitations.md).
+
+- **Accepted quote (no switch, sends today):** "Hi {first}, your quote is approved. Here is your private Easy Garage Cleaning project portal for job details, messages, and payments: {link}". From this build the server sends it **right after** the signed walkthrough is saved, for every estimator (a Sales rep included), after the owner releases held prices, and after the office records an approval. It no longer waits for a manager to open the Hub.
+- **Quote ready (switch, off):** "Text the portal link when a quote is sent". When an estimator sends a quote for review, the customer gets "Hi {first}, your Easy Garage Cleaning quote is ready. You can review it, approve it and pay the deposit in your private project portal: {link}". While that link still works, the accepted-quote text is not sent again.
+- **Job done (switch, off):** "Text a fresh portal link when a job is done". When the crew completes the job: "Hi {first}, your Easy Garage Cleaning job is done — thank you! Your remaining balance, receipts and photos are in your private project portal: {link}", or, with nothing due, "… Your receipts and job details are in your private project portal: {link}".
+- **Rules for all three:** once per job each; only between 8 AM and 8 PM Denver time; never while automatic messages are paused (`messaging_settings/automation` `paused`), to a contact on Do Not Disturb, to a job with notifications off, to a Business Hub project, to a closed job or to a job whose prices wait for your approval. A text held for quiet hours goes out on the next automatic retry: a manager's next Hub load, or the messaging worker when server messaging (O2) is on. The Hub's **Estimates & payments** row says which.
+- **Turn a switch on:** Hub → **Message templates** → **Portal link texts**. Read the exact text shown next to the switch, then **Turn on**. Only Zac, Tyler or Alex can change them.
+- **Estimators copy the link:** on their own quote's send screen (or saved quote), **Copy portal link** gives the same 30-day link as the office's **Copy customer portal**. Each copy is recorded on the job and shown on its Estimates & payments row.
+- **Check it worked:** on a test job with your own phone, send a quote with the quote-ready switch on: the send screen says "Portal link texted to (•••) •••-1234" and the Estimates & payments row says "Portal link texted … (quote ready)".
+- **Roll back:** turn the switch off. The accepted-quote text stops only by removing `HIGHLEVEL_API_KEY`, pausing automatic messages, or turning the job's notifications off (as before).
 
 ## Stage 7: Claude and ChatGPT (MCP)
 
