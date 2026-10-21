@@ -286,9 +286,9 @@ const SECTIONS = [
       {t:"Garage Guard pitched — top-down", s:"Open at Guard Black. Step down one tier on hesitation. Lite is the save. Two options, never yes/no."},
       {t:"6-month check-in scheduled", s:"Confirm the HighLevel follow-up is active. ‘We'll text you in 6 months to see how the system's holding up’ — said out loud, then actually scheduled."},
     ],
-    script:{h:"Review + referral — exact words", p:[
-      "“One favor — reviews are how a local crew like us survives against the big franchises. I'm texting you the link right now, it's 30 seconds. Mention the garage if you can — photos are gold.”",
-      "“And hey — anyone else on the street with a garage like yours used to be? We're already here with the truck. If a neighbor books off your word, there's an EGC thank-you gift card in it for you.”"
+    script:{h:"Review, then referral — exact words", p:[
+      "“One favor — reviews are how a local crew like us survives against the big franchises. I'm texting you the link right now, it's 30 seconds. An honest review, whatever you think.”",
+      "<i>Only after the review ask is done, as its own conversation (never tie the gift card to a review) →</i> “Anyone else on the street with a garage like yours used to be? We're already here with the truck. If a neighbor books off your word, there's an EGC thank-you gift card in it for you.”"
     ]},
     script2:{h:"Garage Guard — open at the top, step down only", p:[
       "“Guard Black — $2,500/yr: monthly whole-property visits, free monthly single-item pickup, annual deep clean, front-of-line scheduling. Only 5 memberships in Fort Collins.”",
@@ -605,7 +605,7 @@ async function sendReview(btn){
   btn.disabled=true;btn.textContent="Sending…";
   const ok=await postHook({tool:"review_request",request_id:_reviewId,job_id:ACTIVE.jobId||"",sent_at:new Date().toISOString(),
     customer:name,phone:phone,review_link:REVIEW_LINK,
-    message:`Hi ${name?name.split(" ")[0]:"there"}, it was great working with you! If you have a moment, we'd really appreciate it if you left us a review — it goes a long way in helping us grow. As a thank-you for choosing us, we'd love to offer you 10% off your next service. We look forward to working with you again! ${REVIEW_LINK||"[REVIEW LINK]"}`}).catch(()=>false);
+    message:`Hi ${name?name.split(" ")[0]:"there"}, it was great working with you! If you have a minute, an honest Google review helps a local crew like ours a lot. ${REVIEW_LINK||"[REVIEW LINK]"}`}).catch(()=>false);
   if(ok){btn.textContent="Review text sent ✓";if(HUBDB&&ACTIVE.jobId)await HUBDB.collection('jobs').doc(ACTIVE.jobId).set({reviewStatus:'requested',reviewRequestedAt:new Date().toISOString(),reviewRequestId:_reviewId,updatedAt:new Date().toISOString()},{merge:true}).catch(()=>{});}
   else{btn.disabled=false;btn.textContent="Retry → Send review link";alert("Review text did NOT send (HQ unreachable). Check signal and tap again.");}
 }
