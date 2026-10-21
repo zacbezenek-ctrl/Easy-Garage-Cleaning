@@ -1,8 +1,9 @@
 /* Job actuals (owner): every completed job in the last 90 days with billed versus actual man-hours, truck loads, goods
    at retail, commission by channel and an estimated gross margin and contribution, with totals for the last 30 and 90
    days and a CSV export. The server computes every figure (functions/_lib/job-actuals.js, GET /api/job-actuals) in
-   integer cents; this screen only formats them. Margins read "upper bound" until the owner enters all five cost
-   settings on the Cost settings card (POST /api/job-actuals, owner only; managers see them read-only). Registered in
+   integer cents; this screen only formats them. No margin shows until the owner enters the crew wage, and margins read
+   "upper bound" until all seven cost settings are entered (wage, workers' comp, payroll tax, burden, dump fee, truck
+   cost, goods tax) on the Cost settings card (POST /api/job-actuals, owner only; managers see them read-only). Registered in
    employee-hub-screens.js and runs standalone with the UI kit (window.EGCHubKit). */
 (function(){
 'use strict';
@@ -18,7 +19,7 @@ const SETTINGS=[
 const LIMITS={wageCentsPerManHour:20000,workersCompBp:5000,payrollTaxBp:5000,burdenCentsPerManHour:10000,dumpFeeCentsPerLoad:500000,truckCentsPerJob:500000,goodsTaxBp:2500};
 const CHANNEL={direct_estimator:'Estimator 7%',appointment_setter:'Setter 13% + estimator 7%',door_sale:'Door sale 25%',junk_only:'Junk-only 0%',none:'None'};
 // Row reasons worth a word on the row; 'cost_settings_incomplete' is the ≤ mark and 'actual_hours_missing' the Actual cell.
-const REASON={timecards_incomplete:'Timecards incomplete (open shift or review)',crew_lead_exceeds_timecards:'Crew lead count used: above timecards',wage_unset:'No crew wage set',goods_unknown:'Goods unknown: no estimate lines',revenue_unknown:'Revenue unknown'};
+const REASON={revenue_unreconciled:'Revenue not final: refund or unbilled change',timecards_unavailable:'Timecards could not be read',timecards_incomplete:'Timecards incomplete (open shift or review)',crew_lead_exceeds_timecards:'Crew lead count used: above timecards',wage_unset:'No crew wage set',goods_unknown:'Goods unknown: no estimate lines',revenue_unknown:'Revenue unknown'};
 const SOURCE={timecards:'Timecards',crew_lead:'Crew lead',not_recorded:'Not recorded'};
 const S={host:null,ctx:null,data:null,error:null,loading:false,busy:false,pending:null,drafts:{},feedback:'',feedbackError:false,generation:0,showAll:false};
 const kit=()=>window.EGCHubKit;
@@ -60,32 +61,46 @@ async function load(){
   const generation=++S.generation;S.loading=true;S.error=null;render();
   try{const data=await kit().requestJSON(PATH,{prefix:PREFIX,validate:valid,fetcher:fetcher()});if(generation===S.generation)S.data=data;}
   catch(error){if(generation===S.generation)S.error=error;}
-  finally{if(generation===S.generation){S.loading=false;S.pending=kit().pending(SCREEN).get();render();}}
+  finally{if(generation===S.generation){S.loading=false;S.pending=kit().pending(SCREEN).get();if(S.pending)keepEdits(S.pending.body?.settings);render();}}
 }
 const queue=()=>kit().pending(SCREEN);
+// The settings a save changed, kept beside the kit's pending request (sessionStorage, this viewer) so that after a reload
+// the locked inputs show what the unconfirmed save would apply, and a revision conflict hands those edits back as drafts.
+// Only the keys the owner changed: the request also repeats every untouched setting, which must not undo another save.
+const EDITED='egc.jobactuals.edited.v1.';
+const editedKey=()=>{try{return EDITED+String(sessionStorage.getItem('egc_u')||'').trim().toLowerCase();}catch{return EDITED;}};
+function rememberEdited(keys){try{sessionStorage.setItem(editedKey(),JSON.stringify(keys));}catch{}}
+function editedKeys(){try{const keys=JSON.parse(sessionStorage.getItem(editedKey())||'[]');return Array.isArray(keys)?keys:[];}catch{return[];}}
+function forgetEdited(){try{sessionStorage.removeItem(editedKey());}catch{}}
+function keepEdits(settings){
+  if(!settings||typeof settings!=='object')return;
+  const keys=new Set(editedKeys());
+  for(const setting of SETTINGS)if(keys.has(setting.key)&&Object.hasOwn(settings,setting.key)&&!Object.hasOwn(S.drafts,setting.key))S.drafts[setting.key]=shown(setting,settings[setting.key]);
+}
 const SAVE_ERRORS={job_actuals_owner_required:'Only the owner can change cost settings.',job_actuals_no_change:'These settings are already saved.'};
 // A save whose outcome is unknown stays pending (the kit keeps the exact request): the owner retries that same request
 // or discards it before any new edit is saved, as on Stocked item costs, so a newer edit is never replaced by the old one.
-async function settle(send){
+async function settle(send,settings){
   S.busy=true;S.feedback='';render();
   try{
     const data=await send();
-    S.drafts={};S.feedback=data.replayed?'These settings were already saved.':'Cost settings saved. Margins are recalculated.';S.feedbackError=false;S.busy=false;
+    S.drafts={};forgetEdited();S.feedback=data.replayed?'These settings were already saved.':'Cost settings saved. Margins are recalculated.';S.feedbackError=false;S.busy=false;
     await load();return;
   }catch(error){
-    if(error.code==='job_actuals_revision_conflict'){queue().discard();S.feedback='Cost settings changed elsewhere. The latest are loaded and your edits are kept; check them and save again.';S.feedbackError=true;S.busy=false;await load();return;}
+    if(error.code==='job_actuals_revision_conflict'){keepEdits(settings);forgetEdited();queue().discard();S.feedback='Cost settings changed elsewhere. The latest are loaded and your edits are kept; check them and save again.';S.feedbackError=true;S.busy=false;await load();return;}
     S.feedback=kit().errorText(error,SAVE_ERRORS);S.feedbackError=true;
   }
   S.busy=false;S.pending=queue().get();render();
 }
-function retryPending(){if(!S.busy&&S.pending)settle(()=>queue().replay({prefix:PREFIX,validate:validSave,fetcher:fetcher()}));}
-function discardPending(){queue().discard();S.pending=null;S.feedback='The unconfirmed save was discarded. Check the settings below before saving again.';S.feedbackError=false;load();}
+function retryPending(){if(!S.busy&&S.pending){const settings=S.pending.body?.settings;settle(()=>queue().replay({prefix:PREFIX,validate:validSave,fetcher:fetcher()}),settings);}}
+function discardPending(){queue().discard();forgetEdited();S.drafts={};S.pending=null;S.feedback='The unconfirmed save was discarded. Check the settings below before saving again.';S.feedbackError=false;load();}
 async function save(){
   if(S.busy||S.pending||!S.data?.canEdit)return;
   const {settings,bad,changed}=changes();
   if(bad.length){S.feedback='Fix the highlighted settings: percents like 7.65, dollars like 42.50.';S.feedbackError=true;render();return;}
   if(!changed||S.pending)return;
-  return settle(()=>queue().submit(PATH,{action:'job_actuals.settings.set',expectedRevision:S.data.settings.revision??null,settings},{prefix:PREFIX,validate:validSave,fetcher:fetcher()}));
+  rememberEdited(SETTINGS.map(setting=>setting.key).filter(key=>settings[key]!==(S.data.settings[key]??null)));
+  return settle(()=>queue().submit(PATH,{action:'job_actuals.settings.set',expectedRevision:S.data.settings.revision??null,settings},{prefix:PREFIX,validate:validSave,fetcher:fetcher()}),settings);
 }
 function exportCsv(){
   const rows=S.data?.rows||[];
@@ -148,7 +163,7 @@ function jobRow(r){
     cell('Billed h','num',r.billed.manHours===null?(r.billed.source==='junk_only'?'Junk only':'No labor line'):hours(r.billed.manHours)),
     cell('Actual h','num',hours(r.actual.manHours),h('small',{},SOURCE[r.actual.source]||'')),
     cell('Variance','num ja-variance',variance),
-    cell('Loads','num',String(r.truckLoads.count),h('small',{},r.truckLoads.source==='crew_lead'?'Crew lead':r.truckLoads.source==='quote'?'Quoted':'')),
+    cell('Loads','num',String(r.truckLoads.count),h('small',{},r.truckLoads.source==='crew_lead'?'Crew lead':r.truckLoads.source==='quote'?'Quoted':'Not recorded')),
     cell('Goods (retail)','num',money(r.goodsRetailCents)),
     cell('Commission','num',money(r.commission.totalCents),r.commission.lines.length>1?h('small',{},commission):null),
     cell('Gross margin','num',margin,...r.reasons.filter(code=>REASON[code]).map(code=>h('small',{class:'ja-reason','data-reason':code},REASON[code]))),
@@ -185,5 +200,6 @@ function render(){
 }
 function mount(host,ctx){S.host=host;S.ctx=ctx||{};S.data=null;S.error=null;S.drafts={};S.feedback='';S.showAll=false;return load();}
 function unmount(){S.generation++;S.host?.querySelector('.egc-job-actuals')?.remove();S.host=null;S.ctx=null;}
+window.addEventListener('egc:signout',()=>{try{for(let i=sessionStorage.length-1;i>=0;i--){const name=sessionStorage.key(i);if(String(name||'').startsWith(EDITED))sessionStorage.removeItem(name);}}catch{}});
 window.EGCJobActuals={mount,unmount,canLeave:()=>!changes().changed||window.confirm('Discard unsaved cost settings?'),refresh:load};
 })();

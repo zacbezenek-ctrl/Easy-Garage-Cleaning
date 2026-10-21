@@ -58,6 +58,8 @@ async function serve(request, response) {
   if (url.pathname === '/__control') {
     const input = JSON.parse(body || '{}');
     if (input.who) state.who = input.who;
+    // "Another session" saves settings: the stored record changes under a new revision.
+    if (input.otherSave) { const key = 'jobActualsSettings/current'; state.docs.set(key, { ...(state.docs.get(key) || { schemaVersion: 1 }), ...input.otherSave, revision: `rev-${++state.tick}` }); }
     if (input.reset) { state.docs.clear(); if (!input.blank) state.docs.set('jobActualsSettings/current', { schemaVersion: 1, wageCentsPerManHour: 1000, workersCompBp: 100, revision: 'rev-pay' }); }
     response.writeHead(200, { 'Content-Type': 'application/json' }); response.end('{"ok":true}'); return;
   }

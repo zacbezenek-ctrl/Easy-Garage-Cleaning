@@ -79,8 +79,10 @@ test('a completed two-car job: billed 8 versus 18 timecard man-hours, quoted loa
   assert.equal(row.upperBound, true); assert.deepEqual(row.reasons, ['cost_settings_incomplete']);
 });
 
-test('with every cost setting entered the margin is no longer an upper bound and every cost is applied', () => {
-  const row = jobActualsRow(garageJob(), { labor: { workHours: 18, travelHours: 1 }, settings: ALL_SET, channel: 'direct_estimator' });
+test('with every cost setting entered and the loads recorded the margin is no longer an upper bound', () => {
+  // The crew lead recorded the 3 loads at Complete; quoted loads alone would keep it an upper bound (below).
+  const recorded = { fieldExecution: { completion: { truckLoads: 3 } } };
+  const row = jobActualsRow(garageJob(recorded), { labor: { workHours: 18, travelHours: 1 }, settings: ALL_SET, channel: 'direct_estimator' });
   // 19 h × ($10.00 × 1.0865 + $1.50) = 19 × $12.365 = $234.935 → $234.94
   assert.equal(row.laborCents, 23494);
   assert.equal(row.goodsCostCents, 30000 + 2265, '7.55% tax on $300.00 retail');
@@ -89,6 +91,27 @@ test('with every cost setting entered the margin is no longer an upper bound and
   assert.equal(row.grossMarginCents, 421400 - 79259);
   assert.equal(row.grossMarginPercent, 81.2, '342141 / 421400 = 81.19% → 81.2');
   assert.equal(row.upperBound, false); assert.deepEqual(row.reasons, []);
+  const quoted = jobActualsRow(garageJob(), { labor: { workHours: 18, travelHours: 1 }, settings: ALL_SET, channel: 'direct_estimator' });
+  assert.equal(quoted.grossMarginCents, row.grossMarginCents); assert.equal(quoted.upperBound, true); assert.deepEqual(quoted.reasons, ['loads_quoted']);
+  const unknown = jobActualsRow(garageJob({ estimate: { status: 'accepted', amount: 4214, lineItems: [LINES[0], LINES[3], LINES[4]] } }), { labor: { workHours: 18, travelHours: 1 }, settings: ALL_SET });
+  assert.deepEqual(unknown.truckLoads, { count: 0, source: 'none' }); assert.equal(unknown.dumpCents, 0);
+  assert.deepEqual(unknown.reasons, ['loads_unknown']); assert.equal(unknown.upperBound, true, 'no recorded loads never reads as a firm $0 dump cost');
+  assert.deepEqual(jobActualsRow(garageJob(), { labor: { workHours: 18, travelHours: 1 }, settings: { ...ALL_SET, dumpFeeCentsPerLoad: 0 } }).reasons, [], 'a $0 dump fee makes loads irrelevant');
+});
+
+test('refunds, unbilled approved changes and unreadable timecards never give a firm margin', () => {
+  const firm = { labor: { workHours: 18, travelHours: 1 }, settings: { ...ALL_SET, dumpFeeCentsPerLoad: 0 }, channel: 'direct_estimator' };
+  const refunded = jobActualsRow(garageJob({ refunds: [{ amount: 1000 }], payment: { refundedAmount: 1000 } }), firm);
+  assert.equal(refunded.revenueCents, 421400); assert.ok(refunded.reasons.includes('revenue_unreconciled'));
+  assert.equal(refunded.grossMarginCents, null); assert.equal(refunded.contributionCents, null);
+  const change = jobActualsRow(garageJob({ customerDecisions: [{ id: 'd1', status: 'approved', priceDelta: 500, title: 'Extra shelf' }] }), firm);
+  assert.ok(change.reasons.includes('revenue_unreconciled'), JSON.stringify(change.reasons)); assert.equal(change.grossMarginCents, null);
+  // 2 cards × (8 h work + 1 h travel) would have won; with the cards unreadable the lead's 2 × 7 h is only a floor.
+  const lead = garageJob({ fieldExecution: { completion: { crewOnSite: { people: 2, hours: 7 }, truckLoads: 3 } } });
+  const unread = jobActualsRow(lead, { ...firm, labor: null, timecardsAvailable: false });
+  assert.equal(unread.actual.source, 'crew_lead'); assert.ok(unread.reasons.includes('timecards_unavailable')); assert.equal(unread.upperBound, true);
+  const report = buildJobActuals({ jobs: [lead], labor: { jobs: [] }, settings: firm.settings, timecardsAvailable: false, today: '2026-10-21' });
+  assert.ok(report.rows[0].reasons.includes('timecards_unavailable')); assert.equal(report.totals.last30.upperBound, true);
 });
 
 test('the crew lead count stands in when no timecard hours were tagged, and timecards win when they cover the lead count', () => {
@@ -116,7 +139,8 @@ test('incomplete timecards: an open card marks the margin an upper bound, and a 
   assert.equal(cards.upperBound, true, 'every other setting is entered, but missing hours can only overstate the margin');
   const lead = jobActualsRow(garageJob({ fieldExecution: { completion: { crewOnSite: { people: 3, hours: 8 } } } }), { labor, settings: ALL_SET, channel: 'direct_estimator' });
   assert.deepEqual(lead.actual, { manHours: 24, paidManHours: 24, source: 'crew_lead' });
-  assert.ok(lead.reasons.includes('crew_lead_exceeds_timecards')); assert.equal(lead.upperBound, false);
+  assert.ok(lead.reasons.includes('crew_lead_exceeds_timecards'));
+  assert.ok(lead.reasons.includes('timecards_incomplete'), 'the incomplete cards still supply travel'); assert.equal(lead.upperBound, true);
   assert.equal(lead.laborCents, 29676, '24 h × $12.365 = $296.76');
   assert.ok(lead.grossMarginPercent < cards.grossMarginPercent);
   assert.equal(timecardLabor({ projected: { workHours: 8, travelHours: 1 }, openShifts: 0, needsReviewCount: 0, legacyAssociationOnlyCount: 0 }).incomplete, false);

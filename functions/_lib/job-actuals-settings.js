@@ -1,9 +1,10 @@
 /** The owner's job-actuals cost settings (functions/_lib/job-actuals.js). Server-only collections:
- *   jobActualsSettings/current               {schemaVersion:1, payrollTaxBp, burdenCentsPerManHour, dumpFeeCentsPerLoad,
- *                                             truckCentsPerJob, goodsTaxBp, updatedAt, updatedBy, requestId}
+ *   jobActualsSettings/current               {schemaVersion:1, wageCentsPerManHour, workersCompBp, payrollTaxBp,
+ *                                             burdenCentsPerManHour, dumpFeeCentsPerLoad, truckCentsPerJob, goodsTaxBp,
+ *                                             updatedAt, updatedBy, requestId}
  *   jobActualsSettingsOperations/<requestId> receipts {action, requestId, fingerprint, actorId, at, changed}
  * Each setting is a whole number (basis points or cents) or null while the owner has not entered it: blank is unknown,
- * never $0 entered. Business users read; only the owner writes, and a write commits its receipt and an owner-visibility
+ * never $0 entered. No job has a margin until the wage is entered; any other blank leaves margins an upper bound. Business users read; only the owner writes, and a write commits its receipt and an owner-visibility
  * hub_audit entry in the same Firestore commit, under the stored revision (Firestore updateTime), as standard costs do. */
 import { hasBusinessAccess, isHubOwner } from './hub-session.js';
 import { auditWrite } from './hub-audit.js';

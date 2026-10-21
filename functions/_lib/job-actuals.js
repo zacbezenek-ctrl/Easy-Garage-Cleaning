@@ -20,10 +20,12 @@
  *   the 1.30 markup) plus the owner's goods purchase tax %; dump fee per truck load (the crew lead's count at Complete,
  *   else the quoted loads); truck cost per job. Commission on revenue by channel: estimator 7%, setter 13% + estimator
  *   7%, door sale 25%, junk-only 0%.
+ * Revenue with a refund, an unbilled approved change or an incomplete money record has no margin ('revenue_unreconciled').
+ * Unreadable timecards, incomplete timecards and truck loads nobody recorded (quoted, or none) leave it an upper bound.
  * The wage has no stand-in: until the owner enters it, no job has a margin ('wage_unset'). Any other blank owner cost
  * counts as $0, so the margin is an upper bound until all of them are entered. */
 import { estimateTotals, builderJunkOnly, included } from './quote-model.js';
-import { customerMoneyTotals } from './money-core.js';
+import { CHANGE_ORDER_UNBILLED, customerMoneyTotals, refundsRecorded } from './money-core.js';
 import { hubRecordEligibility } from './funnel-definitions.js';
 import { addDays } from './dispatch-time.js';
 
@@ -142,20 +144,33 @@ export function timecardLabor(row) {
 }
 
 /** One completed job's actuals. labor is timecardLabor(row) for the job, or null. */
-export function jobActualsRow(job, { labor = null, settings: raw = {}, channel = 'none' } = {}) {
+// Reasons that leave a margin only an upper bound (costs may be missing); the others withhold it (known is false).
+const UPPER_BOUND = new Set(['cost_settings_incomplete', 'timecards_incomplete', 'timecards_unavailable', 'loads_quoted', 'loads_unknown']);
+/** One completed job's actuals. labor is timecardLabor(row) for the job, or null; timecardsAvailable false says the
+ * timecards could not be read, so a crew-lead or missing figure may be short of the hours they hold. */
+export function jobActualsRow(job, { labor = null, settings: raw = {}, channel = 'none', timecardsAvailable = true } = {}) {
   const settings = normalizeCostSettings(raw), reasons = [];
   const money = customerMoneyTotals(job, { unified: true });
   const revenueCents = Number.isSafeInteger(money.totalCents) ? money.totalCents : null;
   if (revenueCents === null) reasons.push('revenue_unknown');
+  // A refund, an approved change not yet billed or an incomplete money record: the revenue is not final, so no margin.
+  const revenueUnreconciled = revenueCents !== null && (refundsRecorded(job) || money.issues.includes(CHANGE_ORDER_UNBILLED) || money.complete !== true);
+  if (revenueUnreconciled) reasons.push('revenue_unreconciled');
+  if (!timecardsAvailable) reasons.push('timecards_unavailable');
   const billed = billedManHours(job), lead = crewLeadManHours(job);
   const workMilli = labor ? milliHours(labor.workHours) : null, travelMilli = labor ? milliHours(labor.travelHours) : null;
   let actual = null;
   const timecardHours = workMilli !== null && workMilli + travelMilli > 0, incomplete = timecardHours && labor?.incomplete === true;
   if (timecardHours && lead && lead.milli > workMilli) { actual = { source: 'crew_lead', milli: lead.milli, paidMilli: lead.milli + travelMilli }; reasons.push('crew_lead_exceeds_timecards'); }
-  else if (timecardHours) { actual = { source: 'timecards', milli: workMilli, paidMilli: workMilli + travelMilli }; if (incomplete) reasons.push('timecards_incomplete'); }
+  else if (timecardHours) actual = { source: 'timecards', milli: workMilli, paidMilli: workMilli + travelMilli };
   else if (lead) actual = { source: 'crew_lead', milli: lead.milli, paidMilli: lead.milli };
+  // Incomplete cards stay flagged even when the lead's count wins: their travel hours are still short.
+  if (incomplete) reasons.push('timecards_incomplete');
   if (!actual) reasons.push('actual_hours_missing');
   const loads = truckLoads(job), goodsRetail = goodsRetailCents(job);
+  // Loads nobody recorded are never a firm count: quoted loads or none at all leave the dump cost an estimate, which
+  // matters once the owner has a dump fee (a blank fee is already cost_settings_incomplete).
+  if (loads.source !== 'crew_lead' && settings.dumpFeeCentsPerLoad > 0) reasons.push(loads.source === 'quote' ? 'loads_quoted' : 'loads_unknown');
   if (goodsRetail === null) reasons.push('goods_unknown');
   const commission = commissionFor(revenueCents ?? 0, channel);
   if (settings.wageCentsPerManHour === null) reasons.push('wage_unset');
@@ -163,7 +178,7 @@ export function jobActualsRow(job, { labor = null, settings: raw = {}, channel =
   const goodsCostCents = goodsRetail === null ? null : goodsRetail + percentOf(goodsRetail, settings.goodsTaxBp ?? 0);
   const laborCents = actual ? laborCostCents(actual.paidMilli, settings) : null;
   const dumpCents = loads.count * (settings.dumpFeeCentsPerLoad ?? 0), truckCents = settings.truckCentsPerJob ?? 0;
-  const known = revenueCents !== null && laborCents !== null && goodsCostCents !== null;
+  const known = revenueCents !== null && !revenueUnreconciled && laborCents !== null && goodsCostCents !== null;
   const directCostCents = known ? laborCents + goodsCostCents + dumpCents + truckCents : null;
   const grossMarginCents = known ? revenueCents - directCostCents : null;
   return {
@@ -176,7 +191,7 @@ export function jobActualsRow(job, { labor = null, settings: raw = {}, channel =
     truckLoads: loads, goodsRetailCents: goodsRetail, goodsCostCents, laborCents, dumpCents, truckCents,
     commission, directCostCents, grossMarginCents, grossMarginPercent: known && revenueCents > 0 ? divRoundHalfUp(big(grossMarginCents) * 1000n, revenueCents) / 10 : null,
     contributionCents: known ? grossMarginCents - commission.totalCents : null,
-    upperBound: known && (!settings.complete || reasons.includes('timecards_incomplete')), reasons,
+    upperBound: known && reasons.some(reason => UPPER_BOUND.has(reason)), reasons,
   };
 }
 
@@ -204,10 +219,10 @@ export function jobActualsWindow(today) {
 }
 
 /** The report: completed work jobs dated in the window, newest first, with totals for the last 30 and 90 days. */
-export function buildJobActuals({ jobs = [], labor = { jobs: [] }, settings = {}, setterWalkthroughs = new Set(), doorSaleJobs = new Set(), today, asOf = new Date().toISOString() }) {
+export function buildJobActuals({ jobs = [], labor = { jobs: [] }, settings = {}, setterWalkthroughs = new Set(), doorSaleJobs = new Set(), timecardsAvailable = true, today, asOf = new Date().toISOString() }) {
   const window = jobActualsWindow(today), byJob = new Map((labor?.jobs || []).map(row => [row.jobId, timecardLabor(row)]));
   const rows = jobs.filter(job => workJob(job) && completedJob(job) && typeof job.date === 'string' && job.date >= window.start && job.date < window.end)
-    .map(job => jobActualsRow(job, { labor: byJob.get(job.id) || null, settings, channel: channelOf(job, { setterWalkthroughs, doorSaleJobs }) }))
+    .map(job => jobActualsRow(job, { labor: byJob.get(job.id) || null, settings, timecardsAvailable, channel: channelOf(job, { setterWalkthroughs, doorSaleJobs }) }))
     .sort((a, b) => String(b.date).localeCompare(String(a.date)) || a.jobId.localeCompare(b.jobId));
   const normalized = normalizeCostSettings(settings);
   return {

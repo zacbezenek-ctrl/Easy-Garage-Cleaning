@@ -173,6 +173,36 @@ class JobActualsScreenTests(unittest.TestCase):
         expect(settings.get_by_label('Dump fee per truck load (dollars)')).to_be_enabled()
         self.assert_layout(page, phone=True)
 
+    def test_edits_survive_a_reload_and_a_conflict_without_undoing_the_other_save(self):
+        page = self.open(390, 844, mobile=True)
+        drops = {'left': 1}
+        def drop_post(route):
+            if route.request.method == 'POST' and drops['left']:
+                drops['left'] -= 1; route.abort('connectionreset'); return
+            route.continue_()
+        page.route('**/api/job-actuals', drop_post)
+        settings = page.get_by_role('region', name='Cost settings')
+        settings.get_by_label('Truck cost per job (dollars)').fill('40')
+        settings.get_by_role('button', name='Save cost settings').click()
+        expect(settings.get_by_text('A save was not confirmed')).to_be_visible()
+        page.reload(); expect(page.get_by_role('heading', name='Job actuals')).to_be_visible()
+        settings = page.get_by_role('region', name='Cost settings')
+        # The locked inputs show what the unconfirmed save would apply.
+        expect(settings.get_by_label('Truck cost per job (dollars)')).to_have_value('40.00')
+        expect(settings.get_by_label('Truck cost per job (dollars)')).to_be_disabled()
+        self.control(otherSave={'dumpFeeCentsPerLoad': 7000})
+        settings.get_by_role('button', name='Retry original save').click()
+        expect(settings.get_by_role('alert').filter(has_text='changed elsewhere')).to_be_visible()
+        expect(settings.get_by_text('A save was not confirmed')).to_have_count(0)
+        expect(settings.get_by_label('Truck cost per job (dollars)')).to_have_value('40.00')
+        expect(settings.get_by_label('Dump fee per truck load (dollars)')).to_have_value('70.00')
+        with page.expect_request(lambda request: request.method == 'POST') as sent:
+            settings.get_by_role('button', name='Save cost settings').click()
+        body = sent.value.post_data_json
+        self.assertEqual((body['settings']['truckCentsPerJob'], body['settings']['dumpFeeCentsPerLoad']), (4000, 7000), 'the edit is kept and the other save is not undone')
+        expect(page.get_by_role('status').filter(has_text='Cost settings saved')).to_be_visible()
+        self.assert_layout(page, phone=True)
+
     def test_csv_export_has_a_row_per_job_with_plain_numbers(self):
         page = self.open(1280)
         with page.expect_download() as download:
