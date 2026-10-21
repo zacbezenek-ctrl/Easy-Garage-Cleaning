@@ -547,3 +547,36 @@ test('reps read one earning rule, matching the approval state and the collected-
   for (const source of [help, money]) assert.match(source, /commissionRuleText\((s\.commission|rates)\)/);
   assert.doesNotMatch(help, /once the job is completed, paid and past its cancellation deadline/);
 });
+
+// Owner decision 2026-10-21 (FUNNEL-METRICS §8.3): door-to-door payroll is pay. A manager's Admin > Money keeps the counts
+// and what needs review, never an amount, a payout or the revenue a commission comes from; only the owner records a
+// payout, refused before any read or write. The rep's own statement (view=my-money) is unchanged.
+test('Admin > Money: a manager sees counts without pay and cannot record a payout; the owner can; the rep keeps their own statement', async () => {
+  const env = knockEnv({ HUB_AUTH_USERS_JSON: JSON.stringify({ ...JSON.parse(knockEnv().HUB_AUTH_USERS_JSON), AlexK: { passwordHash: 'test', role: 'manager', displayName: 'Synthetic Manager' } }) });
+  const world = knockWorld({ 'knock_settings/current': approvedKnockSettings(), 'knock_reps/rep.one': { repKey: 'rep.one', displayName: 'Rep One', status: 'active', role: 'knocker' }, 'knock_sales/sale-1': paid() });
+  const handlers = knockAdminHandlers({ storage: world.storage, now: () => new Date(now) });
+  const read = async user => (await call(handlers.get, get('/api/knock-admin?view=money&date=2026-10-20', await cookieFor(env, user)), env)).body;
+  const owner = await read('ZacB'), manager = await read('AlexK');
+  const ownerRow = owner.statement.find(row => row.repKey === 'rep.one'), managerRow = manager.statement.find(row => row.repKey === 'rep.one');
+  assert.deepEqual([owner.payShown, owner.payoutAllowed, owner.exportAllowed], [true, true, true]);
+  assert.ok(ownerRow.earned > 0 && ownerRow.booked === 1600, 'the owner sees the rep\'s pay and revenue');
+  assert.deepEqual([manager.payShown, manager.payoutAllowed, manager.exportAllowed, manager.trainingHourlyRate, manager.payouts], [false, false, false, null, []]);
+  assert.deepEqual(Object.keys(managerRow).sort(), ['collectionUnknownCount', 'compensationState', 'name', 'repKey', 'reviewReasons', 'salesBooked', 'trainingMinutes'].filter(key => key in ownerRow).sort());
+  assert.equal(managerRow.salesBooked, ownerRow.salesBooked);
+  assert.doesNotMatch(JSON.stringify(manager.statement), /1600|"(earned|booked|pending|paid|accelerator|override|trainingPay|balance)"|Commission"|Revenue"/, 'no pay or revenue key or value');
+  // payout.add: the manager is refused before anything is read or written; the owner records it.
+  const body = { action: 'payout.add', requestId: uuid(), repKey: 'rep.one', periodKey: owner.period.key, amount: 50, note: 'Synthetic payout' };
+  const reads = world.fake.queries ? world.fake.queries('knock_payouts').length : 0;
+  const refused = await call(handlers.post, post('/api/knock-admin', body, await cookieFor(env, 'AlexK')), env);
+  assert.deepEqual([refused.status, refused.body.code], [403, 'knock_pay_owner_only']);
+  assert.equal((await read('ZacB')).payouts.length, 0, 'nothing was written');
+  if (world.fake.queries) assert.equal(world.fake.queries('knock_payouts').length, reads + 1, 'only the owner\'s check above read payouts');
+  const recorded = await call(handlers.post, post('/api/knock-admin', body, await cookieFor(env, 'ZacB')), env);
+  assert.equal(recorded.status, 200);
+  assert.equal((await read('ZacB')).payouts.length, 1);
+  // The rep still sees their own statement.
+  const reports = knockReportsHandlers({ storage: world.storage, now: () => new Date(now) });
+  const mine = await call(reports.get, get('/api/knock-reports?view=my-money', await cookieFor(env, 'Rep.One')), env);
+  assert.equal(mine.status, 200);
+  assert.match(JSON.stringify(mine.body), /sale-1/);
+});

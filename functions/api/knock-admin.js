@@ -26,7 +26,14 @@ import { canSetPay, seesOthersPay } from '../_lib/pay-visibility.js';
    commission in the rep app (knock.js), which this does not touch. */
 const ESTIMATOR_ROW_FIELDS = Object.freeze(['id', 'jobId', 'walkthroughId', 'jobDate', 'channel', 'estimatorKey', 'estimatorEvidence', 'setterKey', 'state', 'rate',
   'qualifyingAt', 'earnedAt', 'reviewReasons', 'settlement', 'serviceClassification', 'signedAt', 'recordedAt']);
-const withoutPay = row => Object.fromEntries(ESTIMATOR_ROW_FIELDS.filter(key => Object.hasOwn(row, key)).map(key => [key, row[key]]));
+const only = fields => row => Object.fromEntries(fields.filter(key => Object.hasOwn(row, key)).map(key => [key, row[key]]));
+const withoutPay = only(ESTIMATOR_ROW_FIELDS);
+// Door-to-door payroll (owner decision 2026-10-21): each rep's period statement and the payouts recorded are pay, seen
+// only by seesOthersPay; a manager keeps the counts (sales, training minutes) and what needs review, never an amount or
+// the revenue a commission comes from, and only the owner records a payout (canSetPay). A rep's own statement is
+// /api/knock-reports?view=my-money, unchanged.
+const STATEMENT_ROW_FIELDS = Object.freeze(['repKey', 'name', 'salesBooked', 'trainingMinutes', 'collectionUnknownCount', 'reviewReasons', 'compensationState']);
+const statementWithoutPay = only(STATEMENT_ROW_FIELDS);
 import { officeWalkthroughs } from '../_lib/knock-walkthroughs.js';
 
 // KNOCK-BRIDGE (EGC_KNOCK_JOB_BRIDGE): book (or retry booking) a door sale's Hub job or a door walkthrough from Admin.
@@ -92,7 +99,9 @@ const VIEWS = {
   async money(store, params, now, env, viewer, { dispatch = dispatchStorage } = {}) {
     const { settings, channels } = await statementChannels(store, params, now, env, dispatch);
     // exportAllowed: whether this viewer may download the pay files (view=export), so the screen offers them only then.
-    return { ...(await moneyView(store, params, now.getTime(), settings, { channels })), exportAllowed: canSetPay(viewer, env) };
+    const view = await moneyView(store, params, now.getTime(), settings, { channels }), payShown = seesOthersPay(viewer, env);
+    const shown = payShown ? view : { ...view, statement: view.statement.map(statementWithoutPay), payouts: [], trainingHourlyRate: null };
+    return { ...shown, payShown, exportAllowed: canSetPay(viewer, env), payoutAllowed: canSetPay(viewer, env) };
   },
   async setters(store, _params, now, env, _viewer, { dispatch = dispatchStorage } = {}) {
     const terms = await loadSetterTerms(store, await loadSettings(store));
@@ -138,7 +147,11 @@ const ACTIONS = {
   'estimator.classify': classifyEstimatorJob,
   'sale.book': bridged(async (...args) => { const { sale, view } = await bookSale(...args); return { sale, booking: view }; }),
   'walkthrough.book': bridged(async (...args) => { const { walkthrough, view } = await bookWalkthrough(...args); return { walkthrough, booking: view }; }),
-  'payout.add': addPayout,
+  // Recording a rep's payout is the owner's (canSetPay), refused before anything is read or written.
+  'payout.add': (store, admin, body, nowIso, env, options) => {
+    if (!canSetPay(admin, env)) throw knockFailure('Only the owner records door-to-door payouts.', 403, 'knock_pay_owner_only');
+    return addPayout(store, admin, body, nowIso, env, options);
+  },
 };
 
 // Admin views (GET ?view=...) and changes (POST {action, ...}). Admins are Hub business users.

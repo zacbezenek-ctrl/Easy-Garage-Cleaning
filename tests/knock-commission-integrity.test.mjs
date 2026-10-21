@@ -61,7 +61,7 @@ const statement = async (w, date, clock = NOW) => {
   const body = (await call(admin(w, clock).get, await as('ZacB', cookie => get(`/api/knock-admin?view=money&date=${date}`, cookie)), env)).body;
   return Object.fromEntries(body.statement.map(row => [row.repKey, row]));
 };
-const pay = async (w, repKey, periodKey, amount, clock = NOW) => call(admin(w, clock).post, await as('TylerG', cookie => post('/api/knock-admin', { action: 'payout.add', requestId: uuid(), repKey, periodKey, amount, note: 'Synthetic payroll' }, cookie)), env);
+const pay = async (w, repKey, periodKey, amount, clock = NOW) => call(admin(w, clock).post, await as('ZacB', cookie => post('/api/knock-admin', { action: 'payout.add', requestId: uuid(), repKey, periodKey, amount, note: 'Synthetic payroll' }, cookie)), env);
 const view = async (w, name, clock = NOW) => (await call(admin(w, clock).get, await as('ZacB', cookie => get(`/api/knock-admin?view=${name}`, cookie)), env)).body;
 const mine = async (w, user, clock = NOW) => (await call(hub(w, clock).get, get('/api/estimator-commission', await cookieFor(env, user)), env)).body;
 const myMoney = async (w, date, clock = NOW) => (await call(reports(w, clock).get, await as('Rep.One', cookie => get(`/api/knock-reports?view=my-money&date=${date}`, cookie)), env)).body;
