@@ -217,6 +217,47 @@ class JobActualsScreenTests(unittest.TestCase):
         two_car = dict(zip(rows[0], rows[1]))
         self.assertEqual([two_car['Revenue'], two_car['Billed man-hours'], two_car['Actual man-hours'], two_car['Commission']], ['4214.00', '8', '18', '842.80'])
 
+    def open_accuracy(self, width, height=900, mobile=False):
+        self.control(accuracy=True)
+        self.context = self.browser.new_context(viewport={'width': width, 'height': height}, is_mobile=mobile, has_touch=mobile, timezone_id='Asia/Tokyo')
+        page = self.context.new_page(); page.set_default_timeout(5000)
+        page.on('pageerror', lambda error: self.errors.append(str(error)))
+        page.route('**/*', lambda route: route.continue_() if route.request.url.startswith(self.url) else route.abort())
+        page.goto(self.url + '/')
+        card = page.locator('section.ja-accuracy')
+        expect(card.get_by_role('heading', name='Estimator accuracy')).to_be_visible()
+        return page, card
+
+    def test_estimator_accuracy_ranks_the_steady_estimator_and_shows_hours_only(self):
+        page, card = self.open_accuracy(1280)
+        # Est.Alex: 8 -> 8, 8 -> 9, 10 -> 12 and 7.25 -> 7 man-hours: 0%, +12.5%, +20%, -3.4%; average miss 9.0%, under by 7.3%.
+        expect(card.get_by_role('status')).to_have_text('Most accurate this month: est.alex — off by 9.0% on average across 4 jobs.')
+        alex = card.locator('tr[data-estimator="est.alex"]')
+        expect(alex.locator('td[data-label="Jobs"]')).to_have_text('4')
+        expect(alex.locator('td[data-label="Average miss"]')).to_have_text('9.0%')
+        expect(alex.locator('td[data-label="Tends to"]')).to_have_text('Under by 7.3%')
+        expect(alex.locator('td[data-label="Within 10%"]')).to_have_text('50.0%')
+        expect(alex.locator('td[data-label="Within 20%"]')).to_have_text('100.0%')
+        # One quote is not enough to be ranked, however close or far it was.
+        expect(card.locator('tr[data-estimator="sales.sam"]')).to_contain_text('Not ranked: 1 of 3 jobs')
+        expect(card).to_contain_text('Timecards incomplete: 1')
+        expect(card).to_contain_text('No estimator on record: 1')
+        self.assertNotIn('$', card.inner_text(), 'the estimator card shows hours only')
+        card.get_by_text('Estimate vs actual, job by job').click()
+        expect(card.locator('tr[data-accuracy-job="job-acc-3"] td[data-label="Difference"]')).to_have_text('+2.00 h (+20.0%)')
+        expect(card.locator('tr[data-accuracy-job="job-acc-4"] td[data-label="Estimator"]')).to_have_text('sales.samSent the quote')
+        card.get_by_role('button', name='Last 90 days').click()
+        expect(card.get_by_role('table', name='Estimator scorecard, Last 90 days')).to_be_visible()
+        page.screenshot(path=str(RESULTS / 'job-actuals-estimator-accuracy-1280.png'), full_page=True)
+        self.assert_layout(page, phone=False)
+
+    def test_estimator_accuracy_on_a_phone(self):
+        page, card = self.open_accuracy(390, 844, mobile=True)
+        expect(card.get_by_role('status')).to_contain_text('Most accurate this month: est.alex')
+        card.get_by_text('Estimate vs actual, job by job').click()
+        page.screenshot(path=str(RESULTS / 'job-actuals-estimator-accuracy-390.png'), full_page=True)
+        self.assert_layout(page, phone=True)
+
 
 if __name__ == '__main__':
     unittest.main(verbosity=2)
