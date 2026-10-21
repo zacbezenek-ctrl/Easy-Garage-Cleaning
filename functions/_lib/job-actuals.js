@@ -216,6 +216,20 @@ export function summarizeJobActuals(rows) {
   };
 }
 
+/** Pay privacy (docs/FUNNEL-METRICS.md §8.3, C29: a manager sees no per-employee pay). Estimator accuracy names the
+ * estimator on each job, so a job's commission lines are that person's pay: only the owner gets them, with the commission
+ * totals, the rates and the contribution after commission (gross margin minus contribution would give the commission
+ * back). A manager keeps revenue, hours, loads, goods and the gross margin at the flat loaded crew wage (§8.3).
+ * commissionShown tells the screen which view it got. */
+const ROW_PAY_KEYS = new Set(['commission', 'contributionCents']), TOTAL_PAY_KEYS = new Set(['commissionCents', 'marginCommissionCents', 'contributionCents']);
+const without = (record, keys) => Object.fromEntries(Object.entries(record || {}).filter(([key]) => !keys.has(key)));
+export function jobActualsForViewer(report, { owner = false } = {}) {
+  if (owner === true) return { ...report, commissionShown: true };
+  return { ...report, commissionShown: false, rates: without(report.rates, new Set(['commissionBp'])),
+    totals: Object.fromEntries(Object.entries(report.totals || {}).map(([key, totals]) => [key, without(totals, TOTAL_PAY_KEYS)])),
+    rows: (report.rows || []).map(row => without(row, ROW_PAY_KEYS)) };
+}
+
 /** The report window: the last JOB_ACTUALS_DAYS Denver days through today (end exclusive), and the short window start. */
 export function jobActualsWindow(today) {
   return { start: addDays(today, -(JOB_ACTUALS_DAYS - 1)), end: addDays(today, 1), shortStart: addDays(today, -(JOB_ACTUALS_SHORT_DAYS - 1)), today };

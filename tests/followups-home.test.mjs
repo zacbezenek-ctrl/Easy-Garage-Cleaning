@@ -283,8 +283,7 @@ test('the Command center mounts the overdue widget once into #ops-home-widgets a
   page.context.refresh();
   await page.flush();
   assert.equal(slot(page), mounted, 'renders move the same slot into the new home node');
-  // Crew staffing (crew-ops) also has a Command center slot; the overdue widget is still mounted exactly once.
-  assert.equal(page.main().querySelectorAll('[data-hub-widget="overdue_followups"]').length, 1);
+  assert.equal(page.main().querySelectorAll('[data-hub-widget]').length, 3, 'the overdue widget, the tomorrow readiness widget (READINESS) and crew staffing (crew-ops)');
   assert.equal(operations(), 2, 'background renders do not refetch');
   await page.context.opsRefresh();
   await page.flush();
@@ -337,8 +336,7 @@ test('a widget whose script is missing shows unavailable with Retry instead of a
 
 test('widget registration refuses ambiguous access, unknown homes, markup and bad modules, and ships the overdue widget', () => {
   const page = hubPage(), registry = page.context.EGCHubScreens;
-  // Crew staffing (crew-ops) is the Command center's second shipped widget, business access, today only.
-  assert.deepEqual([...registry.homeWidgets('today', ['crew', 'business']).map(entry => entry.id)], ['overdue_followups', 'crew_staffing']);
+  assert.deepEqual([...registry.homeWidgets('today', ['crew', 'business']).map(entry => entry.id)], ['overdue_followups', 'crew_readiness', 'crew_staffing']);
   assert.deepEqual([...registry.homeWidgets('today', ['crew'])], []);
   const shipped = registry.homeWidgets('my_day', ['crew', 'business'])[0];
   assert.deepEqual({ ...shipped, homes: [...shipped.homes] }, { id: 'overdue_followups', label: 'Overdue follow-ups', homes: ['today', 'my_day'], capability: 'business', crewVisible: false, module: 'EGCFollowupsHome', load: null });
@@ -350,9 +348,9 @@ test('widget registration refuses ambiguous access, unknown homes, markup and ba
     { ...base, load: { js: 'https://example.invalid/x.js', v: '1' } }, null,
   ]) assert.throws(() => registry.registerWidget(spec), /Hub screen registry/, JSON.stringify(spec));
   registry.registerWidget(base);
-  assert.deepEqual([...registry.homeWidgets('today', ['crew', 'business']).map(entry => entry.id)], ['overdue_followups', 'crew_staffing']);
-  assert.deepEqual([...registry.homeWidgets('today', ['crew', 'business', 'owner']).map(entry => entry.id)], ['overdue_followups', 'crew_staffing', 'fixture_widget']);
-  assert.deepEqual([...registry.homeWidgets('my_day', ['crew', 'business', 'owner']).map(entry => entry.id)], ['overdue_followups']);
+  assert.deepEqual([...registry.homeWidgets('today', ['crew', 'business']).map(entry => entry.id)], ['overdue_followups', 'crew_readiness', 'crew_staffing']);
+  assert.deepEqual([...registry.homeWidgets('today', ['crew', 'business', 'owner']).map(entry => entry.id)], ['overdue_followups', 'crew_readiness', 'crew_staffing', 'fixture_widget']);
+  assert.deepEqual([...registry.homeWidgets('my_day', ['crew', 'business', 'owner']).map(entry => entry.id)], ['overdue_followups', 'crew_readiness']);
 });
 
 test('mountHome only mounts on a home, keeps order, and remounts when the viewer changes', async () => {
@@ -366,13 +364,13 @@ test('mountHome only mounts on a home, keeps order, and remounts when the viewer
   page.document.body.append(host);
   assert.deepEqual([...registry.mountHome('customers', host, ctx('alexk'))], []);
   assert.deepEqual([...registry.mountHome('today', null, ctx('alexk'))], []);
-  assert.deepEqual([...registry.mountHome('today', host, ctx('alexk'))], ['overdue_followups', 'crew_staffing', 'fixture_b', 'fixture_a']);
+  assert.deepEqual([...registry.mountHome('today', host, ctx('alexk'))], ['overdue_followups', 'crew_readiness', 'crew_staffing', 'fixture_b', 'fixture_a']);
   await page.flush();
-  assert.deepEqual(host.children.map(node => node.getAttribute('data-hub-widget')), ['overdue_followups', 'crew_staffing', 'fixture_b', 'fixture_a']);
+  assert.deepEqual(host.children.map(node => node.getAttribute('data-hub-widget')), ['overdue_followups', 'crew_readiness', 'crew_staffing', 'fixture_b', 'fixture_a']);
   assert.deepEqual(log, [['mount', 'b', 'today', 'fixture_b', 'alexk'], ['mount', 'a', 'today', 'fixture_a', 'alexk']]);
   const next = page.document.createElement('div');
   registry.mountHome('today', next, ctx('alexk'));
-  assert.deepEqual(next.children.map(node => node.getAttribute('data-hub-widget')), ['overdue_followups', 'crew_staffing', 'fixture_b', 'fixture_a']);
+  assert.deepEqual(next.children.map(node => node.getAttribute('data-hub-widget')), ['overdue_followups', 'crew_readiness', 'crew_staffing', 'fixture_b', 'fixture_a']);
   assert.equal(host.children.length, 0);
   assert.equal(log.length, 2, 'moving to a new node does not remount');
   registry.mountHome('today', next, ctx('tylerg'));
