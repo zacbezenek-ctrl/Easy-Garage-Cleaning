@@ -528,7 +528,7 @@ test('HTTP: once a scheduled raise takes effect, legacy readers show it, a crew 
   // PRICE-SCRUB: the owner and the employee read another employee's pay; a manager reads hours only.
   assert.deepEqual([await hubRate(owner), await hubRate(crew), await hubRate(manager)], [21, 21, undefined], 'before the effective date');
   t.mock.timers.setTime(Date.parse('2026-10-05T18:00:00.000Z'));
-  // Hub sessions last 12 hours, so everyone signs in again on Oct 5.
+  // Everyone signs in again on Oct 5 (a Hub session ends after 7 days without use).
   owner = await cookieFor(env, 'ZacB'); manager = await cookieFor(env, 'TylerG'); ({ cookie: crew } = await login(env, 'Crew.Account'));
   assert.equal((await decrypt(fire, 'profiles', 'crew.account')).data.hourlyRate, 21, 'the stored mirror is still the old rate');
   assert.deepEqual([await hubRate(owner), await hubRate(crew)], [26, 26], 'legacy readers see the rate in effect today');

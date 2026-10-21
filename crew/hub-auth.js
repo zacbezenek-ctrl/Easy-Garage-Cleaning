@@ -24,11 +24,23 @@
   }
   const account = value => String(value || '').trim().toLowerCase();
 
+  // EGC Knock (crew/knock-app.js) keeps its own copy of who is signed in on this phone and opens with it offline for as
+  // long as a Hub session lasts. Signing out here signs Knock out too (as Knock's own sign-out does), and a different
+  // account signing in drops the previous account's copy, so Knock never opens offline as someone who left.
+  function forgetKnock(user = '') {
+    try {
+      if (!user) localStorage.setItem('egc-knock:signed-out-at', JSON.stringify(Date.now()));
+      else if (account(JSON.parse(localStorage.getItem('egc-knock:viewer') || 'null')?.user || user) === account(user)) return;
+    } catch {}
+    try { localStorage.removeItem('egc-knock:viewer'); } catch {}
+  }
+
   function remember(user, profile = {}) {
     try {
       let previous = '';
       try { previous = localStorage.getItem('egc_u') || ''; } catch {}
       if (account(previous) !== account(user)) clearPricing();
+      if (user) forgetKnock(user);
       for (const storage of [sessionStorage, localStorage]) {
         storage.setItem('egc_u', user);
         storage.setItem('egc_name', profile.displayName || user);
@@ -169,6 +181,7 @@
   async function signOut({ explicit = false } = {}) {
     ++authVersion;
     clearLocal();
+    forgetKnock();
     // Today's work keeps offline copies per tab; a sign-out retires them on this device.
     try { localStorage.setItem('egc-field:signed-out-at', String(Date.now())); } catch {}
     try { for (let i = sessionStorage.length - 1; i >= 0; i--) { const name = sessionStorage.key(i) || ''; if (name === 'egc-field:viewer' || /^egc-field:.*:(snapshot|shift-snapshot)$/.test(name)) sessionStorage.removeItem(name); } } catch {}
@@ -241,27 +254,43 @@
     return canRunBusiness(user) || current.capabilities.includes('quotes.author');
   }
 
+  // Door-to-door (EGC Knock, /crew/knock) for the people who use it: business users, who are Knock's admins
+  // (functions/_lib/knock-access.js isAdmin), and an account this phone already signed in to Knock with (Knock's own
+  // copy of its viewer, crew/knock-app.js, kept until Knock signs out). Only Knock itself creates a canvassing profile,
+  // so showing this never does; Knock and its APIs decide what the account may do there.
+  function canUseKnock(user = profile().user) {
+    const signedIn = account(profile().user);
+    if (!signedIn || account(user) !== signedIn) return false;
+    if (canRunBusiness(user)) return true;
+    try {
+      const viewer = JSON.parse(localStorage.getItem('egc-knock:viewer') || 'null'), signedOutAt = Number(JSON.parse(localStorage.getItem('egc-knock:signed-out-at') || '0')) || 0;
+      return account(viewer?.user) === signedIn && Number(viewer.savedAt) > signedOutAt;
+    } catch { return false; }
+  }
+
   function mountCrewNav() {
     if (document.querySelector('.crew-utility')) return;
     const host = document.getElementById('topbar') || document.querySelector('#app .top');
     if (!host) return;
     const path = location.pathname.replace(/\.html$/, '').replace(/\/$/, '') || '/crew';
+    // Clean URLs only: /crew/ is the crew home's own address (/crew answers with a redirect to it).
     const links = [
-      ['/crew', 'Crew home'],
+      ['/crew/', 'Crew home'],
       ['/crew/gameplan', 'Walkthrough'],
+      ['/crew/knock', 'Door-to-door'],
       ['/crew/prejob', 'Pre-job'],
       ['/crew/postjob', 'Closeout'],
       ['/employee', 'My Hub'],
-    ].filter(([href]) => href !== '/crew/gameplan' || canRunWalkthrough());
+    ].filter(([href]) => (href !== '/crew/gameplan' || canRunWalkthrough()) && (href !== '/crew/knock' || canUseKnock()));
     const nav = document.createElement('nav');
     nav.className = 'crew-utility';
     nav.setAttribute('aria-label', 'Crew workflow');
-    nav.innerHTML = `<div>${links.map(([href, label]) => `<a href="${href}${href === '/employee' ? '?view=my_day' : ''}" ${path === href ? 'aria-current="page"' : ''}>${label}</a>`).join('')}<span class="crew-utility-person"></span></div>`;
+    nav.innerHTML = `<div>${links.map(([href, label]) => `<a href="${href}${href === '/employee' ? '?view=my_day' : ''}" ${path === href.replace(/\/$/, '') ? 'aria-current="page"' : ''}>${label}</a>`).join('')}<span class="crew-utility-person"></span></div>`;
     nav.querySelector('.crew-utility-person').textContent = profile().displayName || 'Crew';
     host.insertAdjacentElement('afterend', nav);
   }
 
   window.addEventListener('DOMContentLoaded', mountCrewNav);
 
-  window.EGCHubAuth = { session, signIn, signOut, confirmSignOut, fetch: securedFetch, clearLocal, profile, can, canRunBusiness, canRunWalkthrough, mountCrewNav, ensureFirebaseSession };
+  window.EGCHubAuth = { session, signIn, signOut, confirmSignOut, fetch: securedFetch, clearLocal, profile, can, canRunBusiness, canRunWalkthrough, canUseKnock, mountCrewNav, ensureFirebaseSession };
 })();

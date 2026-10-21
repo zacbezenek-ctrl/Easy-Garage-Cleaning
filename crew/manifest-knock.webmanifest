@@ -3,7 +3,7 @@
   "name": "EGC Knock",
   "short_name": "EGC Knock",
   "description": "Easy Garage Cleaning door-to-door canvassing: doors, shifts, sales and territory.",
-  "start_url": "/crew/knock.html",
+  "start_url": "/crew/knock",
   "scope": "/crew/",
   "display": "standalone",
   "orientation": "portrait",

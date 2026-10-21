@@ -32,7 +32,7 @@ main{max-width:1060px;margin:auto;padding:28px 22px 118px}.screen-head{display:f
 </style>
 <link rel="stylesheet" href="/crew/mounting-options.css?v=20261002">
 <link rel="stylesheet" href="/employee-catalog-quote.css?v=20261002">
-<link rel="stylesheet" href="/crew/crew-brand.css?v=20260930launchpolish">
+<link rel="stylesheet" href="/crew/crew-brand.css?v=20261019d2d">
 <link rel="stylesheet" href="/crew/gameplan-recorder.css?v=20260929fun06g">
 <script src="/crew/gameplan-recorder.js?v=20260929fun06k" defer></script>
 <link rel="stylesheet" href="/crew/quote-draft.css?v=20261018labor">
@@ -47,7 +47,7 @@ main{max-width:1060px;margin:auto;padding:28px 22px 118px}.screen-head{display:f
   <footer class="bottom"><div class="bottom-in"><button class="back" id="back" onclick="move(-1)">Back</button><button class="next" id="next" onclick="move(1)">Continue</button></div></footer>
 </div>
 <div id="viewer" onclick="this.classList.remove('on')"><button type="button" aria-label="Close">×</button><img id="viewer-img" alt="Walkthrough photo" width="1200" height="900"></div>
-<script src="/crew/hub-auth.js?v=20260904c"></script>
+<script src="/crew/hub-auth.js?v=20261019d2d"></script>
 <script src="/employee-walkthrough-state.js?v=20260929wtoutcome2"></script>
 <script src="/crew/walkthrough-pricing.js?v=20260928price"></script>
 <script>
@@ -78,7 +78,15 @@ async function login(e){e.preventDefault();const button=e.submitter||e.currentTa
 async function logout(){if(!await EGCHubAuth.confirmSignOut())return;await EGCHubAuth.signOut({explicit:true});location.reload()}
 // WP5: the walkthrough schedule comes from /api/walkthrough-handoff (a Sales estimator has no Firestore schedule access); Firebase stays for the Hub sign-in only.
 try{if(window.firebase&&!firebase.apps.length)firebase.initializeApp({apiKey:'AIzaSyA8g4UAW4P4bsCrQNZhUe81CbC7BvjJbNc',authDomain:'egcw-1ec83.firebaseapp.com',projectId:'egcw-1ec83',storageBucket:'egcw-1ec83.firebasestorage.app',messagingSenderId:'763340109795',appId:'1:763340109795:web:ac203b3eb71831fa4ed2d6'})}catch(e){}
-async function openApp(){$('gate').style.display='none';$('app').style.display='block';const pricing=loadPricing();if(!REQUESTED_WALKTHROUGH_ID&&!walkthroughReady){restore();walkthroughReady=true;refreshPhotoCount()}render();await Promise.all([pricing,loadAppointments()])}
+// Knock's Start in-home walkthrough (owners) opens ?address=…&source=knock&houseId=…: a new walkthrough on this device starts
+// with that door's address, and so does one holding nothing but an earlier Knock door's address (no photos, nothing typed).
+// Any other open walkthrough stays, with a notice naming the new door and a one-tap Start new, so a door's address is never
+// dropped or swapped silently. The query leaves the address bar either way.
+let KNOCK_DOOR=null;
+async function knockAddress(){const query=new URLSearchParams(location.search),address=(query.get('address')||'').trim().slice(0,200),houseId=(query.get('houseId')||'').slice(0,120);if(query.get('source')!=='knock'||!address)return;if(history.replaceState)history.replaceState(null,'',location.pathname);const open=String(S.address||'').trim();if(houseId&&S.knockHouseId===houseId||open.toLowerCase()===address.toLowerCase())return;const fresh=freshState(),photos=await photoList().then(list=>list.length,()=>0),onlyKnock=!photos&&(!open||open===S.knockAddress)&&Object.keys({...fresh,...S}).every(key=>['address','knockAddress','knockHouseId','jobId','photoDraftJobId','pricingVersion','termsVersion'].includes(key)||JSON.stringify(S[key])===JSON.stringify(fresh[key]));KNOCK_DOOR={address,houseId};if(onlyKnock)startKnockDoor()}
+function startKnockDoor(){const door=KNOCK_DOOR;if(!door)return;KNOCK_DOOR=null;resetForWalkthrough('');Object.assign(S,{address:door.address,knockAddress:door.address,knockHouseId:door.houseId});save()}
+function knockNotice(){return KNOCK_DOOR?`<section class="panel" role="status" id="knock-door"><h2>Knock sent ${esc(KNOCK_DOOR.address)}</h2><p>The walkthrough for ${esc(S.name||S.address||'another customer')} is still open on this device. Start a new one for this door (it replaces the open one here), or keep working on the open one.</p><div style="display:flex;flex-wrap:wrap;gap:8px"><button type="button" class="small-btn" onclick="startKnockDoor();render();refreshPhotoCount()">Start new for this door</button><button type="button" class="small-btn" onclick="KNOCK_DOOR=null;render()">Keep the open one</button></div></section>`:''}
+async function openApp(){$('gate').style.display='none';$('app').style.display='block';const pricing=loadPricing();if(!REQUESTED_WALKTHROUGH_ID&&!walkthroughReady){restore();walkthroughReady=true;await knockAddress();refreshPhotoCount()}render();await Promise.all([pricing,loadAppointments()])}
 async function loadPricing(){let result;try{result=await window.EGCWalkthroughPricing.load(EGCHubAuth.profile().user)}catch(e){result={pricing:null,error:window.EGCWalkthroughPricing?.OFFLINE||'Pricing unavailable offline — connect once to load prices'}}PRICING=result.pricing||null;PRICING_ERROR=PRICING?'':result.error;if(walkthroughReady){applyPricingVersion();save()}render()}
 function applyPricingVersion(){if(!PRICING||S.pricingVersion===PRICING.version)return;if(S.pricingVersion&&!S.priceManuallySet&&!(S.approved&&S.signature)){S.lockedPrice='';S.approved=false;S.signature='';S.acceptanceAt='';S.acceptanceBy=''}S.pricingVersion=PRICING.version}
 const draftKey=id=>`${SAVE}:${id||'manual'}`;
@@ -133,7 +141,7 @@ function validateStep(step=index){const miss=[];if(step===0){if(!S.name)miss.pus
 function validate(){return validateStep(index)}
 function move(d){if(d>0){const m=validate();if(m.length){error='Add '+m.join(', ')+' before continuing.';render();return}}error='';index=Math.max(0,Math.min(sections.length-1,index+d));save();render();scrollTo({top:0,behavior:'smooth'})}
 function jump(i){if(i<=index){index=i;error='';save();render()}}
-function render(){if(!walkthroughReady){$('steps').innerHTML='';$('screen').innerHTML=walkthroughLoadPanel();$('back').style.display='none';$('next').style.display='none';$('customer-label').textContent='Opening walkthrough';$('save-label').textContent='Saved draft preserved';return}$('back').style.display='';$('steps').innerHTML=sections.map((x,i)=>`<button class="${i===index?'on':i<index?'done':''}" onclick="jump(${i})">${i<index?'✓ ':''}${x}</button>`).join('');$('screen').innerHTML=(APPTS_ERROR?walkthroughLoadPanel():'')+screens[index]()+ (error?`<div class="required">${esc(error)}</div>`:'');$('back').style.visibility=index?'visible':'hidden';$('next').style.display=index===sections.length-1?'none':'block';$('customer-label').textContent=S.name||'New customer';if(index===1)mountPhotos();if(index===4&&!SLOT_LOADING&&SLOT_SIGNATURE!==slotSignature())setTimeout(()=>findNearestSlots(),0);if(index===5)setTimeout(initSignature);if(typeof mountStorageOptions==='function')mountStorageOptions()}
+function render(){if(!walkthroughReady){$('steps').innerHTML='';$('screen').innerHTML=walkthroughLoadPanel();$('back').style.display='none';$('next').style.display='none';$('customer-label').textContent='Opening walkthrough';$('save-label').textContent='Saved draft preserved';return}$('back').style.display='';$('steps').innerHTML=sections.map((x,i)=>`<button class="${i===index?'on':i<index?'done':''}" onclick="jump(${i})">${i<index?'✓ ':''}${x}</button>`).join('');$('screen').innerHTML=(APPTS_ERROR?walkthroughLoadPanel():'')+knockNotice()+screens[index]()+ (error?`<div class="required">${esc(error)}</div>`:'');$('back').style.visibility=index?'visible':'hidden';$('next').style.display=index===sections.length-1?'none':'block';$('customer-label').textContent=S.name||'New customer';if(index===1)mountPhotos();if(index===4&&!SLOT_LOADING&&SLOT_SIGNATURE!==slotSignature())setTimeout(()=>findNearestSlots(),0);if(index===5)setTimeout(initSignature);if(typeof mountStorageOptions==='function')mountStorageOptions()}
 
 function dbOpen(){return new Promise((res,rej)=>{const r=indexedDB.open('egc_photos',1);r.onupgradeneeded=e=>{const db=e.target.result;if(!db.objectStoreNames.contains('p')){const st=db.createObjectStore('p',{keyPath:'id'});st.createIndex('job','job',{unique:false})}};r.onsuccess=()=>res(r.result);r.onerror=()=>rej(r.error)})}
 async function photoList(){if(!S.jobId)S.jobId=uid();const db=await dbOpen();return new Promise(res=>{const out=[],tx=db.transaction('p','readonly');tx.objectStore('p').index('job').openCursor(IDBKeyRange.only(S.photoDraftJobId||S.jobId)).onsuccess=e=>{const c=e.target.result;if(c){if(c.value.tag==='before')out.push(c.value);c.continue()}else res(out.sort((a,b)=>a.at-b.at))}})}
