@@ -12,7 +12,7 @@ import { channelOf, commissionFor } from '../functions/_lib/job-actuals.js';
 import { createJobAssignmentAccess } from '../functions/_lib/job-assignment.js';
 import { assignedDuring } from '../functions/_lib/field-execution-visits.js';
 
-const TODAY = '2026-10-20';
+const TODAY = '2026-10-20', MON_SET = '2026-10-26';
 const visits = w => w.docs('jobs/').filter(row => row.type === 'walkthrough');
 
 // A shift, a "Walkthrough set" door and the rep's own walkthrough, tapped at 11:00 Denver time (NOW).
@@ -26,12 +26,27 @@ function selfRunBatch({ n = 2904, walk = {} } = {}) {
   ] };
 }
 
-test('Knock offers "Do the walkthrough now" only to a rep who may run walkthroughs, and only with the bridge on', async () => {
+// Knock Admin > Walkthroughs: an admin turns it on for one rep (no Hub role changes).
+const turnOn = (w, repKey = 'rep.two', on = true) => w.admin({ action: 'rep.update', repKey, changes: { walkthroughSelf: on } });
+
+test('Knock offers "Do the walkthrough now" to a rep an admin turned Walkthroughs on for (no Sales role needed), and only with the bridge on', async () => {
   const w = await bridgeWorld();
-  assert.equal((await w.me()).body.viewer.walkthroughNow, true, 'Rep One holds the Sales role');
-  assert.equal((await w.me(w.cookies.two)).body.viewer.walkthroughNow, undefined, 'Rep Two is crew');
+  assert.equal((await w.me()).body.viewer.walkthroughNow, true, 'Rep One holds the Sales role: an estimator already runs walkthroughs');
+  assert.equal((await w.me(w.cookies.two)).body.viewer.walkthroughNow, undefined, 'Rep Two is crew, with Walkthroughs off: no button');
+  const on = await turnOn(w);
+  assert.equal(on.status, 200, JSON.stringify(on.body));
+  const stored = w.fake.get('knock_reps/rep.two');
+  assert.deepEqual([stored.walkthroughSelf, stored.walkthroughSelfBy, typeof stored.walkthroughSelfAt], [true, 'ZacB', 'string'], 'who turned it on, and when');
+  const me = (await w.me(w.cookies.two)).body;
+  assert.deepEqual([me.viewer.walkthroughNow, me.rep.walkthroughSelf], [true, true]);
+  // Only an admin turns it on, and only with yes or no.
+  assert.equal((await w.admin({ action: 'rep.update', repKey: 'rep.two', changes: { walkthroughSelf: true } }, w.cookies.rep)).status, 403);
+  assert.equal((await w.admin({ action: 'rep.update', repKey: 'rep.two', changes: { walkthroughSelf: 'yes' } })).status, 400);
+  await turnOn(w, 'rep.two', false);
+  assert.equal((await w.me(w.cookies.two)).body.viewer.walkthroughNow, undefined, 'turned off again: no button');
   const off = await bridgeWorld({ bridge: false });
-  assert.equal((await off.me()).body.viewer.walkthroughNow, undefined);
+  await turnOn(off);
+  assert.equal((await off.me(off.cookies.two)).body.viewer.walkthroughNow, undefined);
 });
 
 test('the rep\'s own walkthrough is booked to them today at the tapped time and opens by its Hub id; the setter record says they ran it', async () => {
@@ -55,10 +70,55 @@ test('the rep\'s own walkthrough is booked to them today at the tapped time and 
   const me = createJobAssignmentAccess(w.env, { user: 'Rep.One', displayName: 'Rep One' }), bea = createJobAssignmentAccess(w.env, { user: 'Est.Bea', displayName: 'Bea Estimator' });
   assert.deepEqual([await assignedDuring(visit, TODAY, TODAY, me), await assignedDuring(visit, TODAY, TODAY, bea)], [true, false]);
   const setter = w.fake.get(`knock_setters/${visit.id}`);
-  assert.deepEqual([setter.setterKey, setter.estimatorKey, setter.selfRun, setter.repStaffKey], ['rep.one', 'rep.one', true, 'rep.one']);
+  // No estimator recorded: the rep is never their own estimator (an estimator who takes it over is, by signing it).
+  assert.deepEqual([setter.setterKey, setter.estimatorKey, setter.estimatorReference, setter.selfRun, setter.repStaffKey], ['rep.one', '', '', true, 'rep.one']);
+  assert.equal(visit.d2d.selfRun, true, 'the mark that lets the rep open it in the walkthrough app');
   // A repeat (a lost answer) answers the same booking.
   const again = await w.book('walkthrough', walkId);
   assert.deepEqual([again.body.booking.selfRun, again.body.booking.walkthroughId, visits(w).length], [true, visit.id, 1]);
+});
+
+test('a crew rep with Walkthroughs on is booked to their own walkthrough, and is never put in the estimator pool for anyone else\'s', async () => {
+  const w = await bridgeWorld();
+  await turnOn(w);
+  const own = selfRunBatch({ n: 2906 });
+  own.events.forEach(event => { if (event.houseId) event.houseId = 'h-2906-blue-leaf-dr'; });
+  assert.deepEqual((await w.send(own.events, w.cookies.two)).body.results.map(row => row.status), ['applied', 'applied', 'applied']);
+  const booked = await w.book('walkthrough', own.walkId, w.cookies.two);
+  assert.equal(booked.status, 200, JSON.stringify(booked.body));
+  const [visit] = visits(w);
+  assert.deepEqual([booked.body.booking.selfRun, booked.body.booking.walkthroughId, visit.assignedCrew, visit.d2d.selfRun], [true, visit.id, ['rep.two'], true]);
+  // Rep One sets an ordinary walkthrough for an estimator at 11:00 the same day: never Rep Two, who is free then too.
+  const set = selfRunBatch({ n: 2900, walk: { selfRun: undefined, date: MON_SET, time: undefined, dayPart: 'am' } });
+  set.events.forEach(event => { if (event.houseId) event.houseId = 'h-2900-blue-leaf-dr'; });
+  assert.deepEqual((await w.send(set.events)).body.results.map(row => row.status), ['applied', 'applied', 'applied']);
+  const other = await w.book('walkthrough', set.walkId);
+  assert.equal(other.status, 200, JSON.stringify(other.body));
+  const estimatorVisit = visits(w).find(row => row.id !== visit.id);
+  assert.ok(['est.alex', 'est.bea'].includes(estimatorVisit.assignedCrew[0]), JSON.stringify(estimatorVisit.assignedCrew));
+  assert.equal(estimatorVisit.d2d.selfRun, undefined);
+});
+
+test('an owner or manager who taps "Do the walkthrough now" on their own door is booked to it; an admin booking another rep\'s door books an estimator', async () => {
+  const w = await bridgeWorld({ seed: {
+    'knock_reps/zacb': { repKey: 'zacb', username: 'ZacB', displayName: 'Zac', role: 'admin', status: 'active', permitListed: true, premiumCleared: true, leadKey: '' },
+    'knock_assignments/zacb__english-ranch__all': { repKey: 'zacb', neighborhoodId: 'english-ranch', street: '', active: true } } });
+  assert.equal((await w.me(w.cookies.zac)).body.viewer.walkthroughNow, true);
+  const mine = selfRunBatch({ n: 2902 });
+  mine.events.forEach(event => { if (event.houseId) event.houseId = 'h-2902-blue-leaf-dr'; });
+  assert.deepEqual((await w.send(mine.events, w.cookies.zac)).body.results.map(row => row.status), ['applied', 'applied', 'applied']);
+  const booked = await w.book('walkthrough', mine.walkId, w.cookies.zac);
+  assert.equal(booked.status, 200, JSON.stringify(booked.body));
+  assert.deepEqual([booked.body.booking.selfRun, visits(w)[0].assignedCrew], [true, ['zacb']]);
+  // Rep Two (Walkthroughs off) taps it; the phone's booking waits, and the admin books it from Admin > Sales: an estimator.
+  const theirs = selfRunBatch({ n: 2906, walk: { customer: { name: 'Lee Synthetic 2906', phone: '970-555-1906', email: 'lee@example.invalid' } } });
+  theirs.events.forEach(event => { if (event.houseId) event.houseId = 'h-2906-blue-leaf-dr'; });
+  assert.deepEqual((await w.send(theirs.events, w.cookies.two)).body.results.map(row => row.status), ['applied', 'applied', 'applied']);
+  const byAdmin = await w.book('walkthrough', theirs.walkId, w.cookies.zac);
+  assert.equal(byAdmin.status, 200, JSON.stringify(byAdmin.body));
+  const visit = visits(w).find(row => row.id !== visits(w)[0].id);
+  assert.ok(['est.alex', 'est.bea'].includes(visit.assignedCrew[0]), JSON.stringify(visit.assignedCrew));
+  assert.equal(byAdmin.body.booking.selfRun, undefined);
 });
 
 test('a rep who may not run walkthroughs, or a visit the Hub will not book to them, gets an estimator instead (13% + 7% as before)', async () => {

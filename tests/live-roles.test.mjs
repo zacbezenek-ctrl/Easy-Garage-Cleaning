@@ -300,7 +300,8 @@ test('crew pages redraw on egc:access-changed: crew home re-runs its tools and j
   const prepended = [], nodes = new Map(), listeners = {};
   let allowed = false;
   const node = () => ({ style: {}, children: [], setAttribute(name, value) { this[name] = value; }, append(...items) { this.children.push(...items); }, remove() { nodes.delete(this.id); } });
-  const context = { EGCHubAuth: { canRunWalkthrough: () => allowed },
+  // SELF_RUN: the page's own record that the server opened it for a Knock rep's self-run walkthrough (REP-WALKTHROUGH).
+  const context = { SELF_RUN: false, EGCHubAuth: { canRunWalkthrough: () => allowed },
     window: { addEventListener: (name, callback) => { listeners[name] = callback; } },
     document: { body: { prepend: item => { prepended.push(item); nodes.set(item.id, item); } }, createElement: () => node(), getElementById: id => nodes.get(id) || null } };
   context.$ = id => context.document.getElementById(id);
@@ -312,6 +313,9 @@ test('crew pages redraw on egc:access-changed: crew home re-runs its tools and j
   assert.equal(prepended.length, 1, 'shown once');
   allowed = true; listeners['egc:access-changed']();
   assert.equal(nodes.has('walkthrough-access-removed'), false, 'taken down when access comes back');
+  // A Knock rep's own walkthrough has no walkthrough role to lose: a role refresh does not say access was removed.
+  allowed = false; context.SELF_RUN = true; listeners['egc:access-changed']();
+  assert.equal(nodes.has('walkthrough-access-removed'), false, 'a self-run walkthrough keeps going');
 });
 
 test('the Hub suite redraws its menu on egc:access-changed and Knock reloads its profile on a changed stamp', () => {

@@ -313,16 +313,24 @@ and every sync answer and record is as before. Code: `functions/_lib/knock-bridg
   `knock_walkthroughs.status == 'set'`) with its reason and **Book in Hub**. The same request writes
   `knock_setters/<Hub walkthrough id>` (13% setter + 7% estimator, D6b; nothing is earned until the walkthrough
   converts and is collected).
-* **Do the walkthrough now** (REP-WALKTHROUGH, owner decision 2026-10-21): on the same form, a rep who may run
-  walkthroughs (`walkthrough.perform`, or the Sales role without role access; `knock-me` answers `walkthroughNow`)
-  does the walkthrough themselves. The door and a `walkthrough` event with `selfRun: true`, today and the tapped time,
+* **Do the walkthrough now** (REP-WALKTHROUGH, owner decision 2026-10-21): on the same form, a rep an admin turned
+  **Walkthroughs** on for in Knock Admin → Reps (`knock_reps.walkthroughSelf`, recorded with `walkthroughSelfBy` and
+  `walkthroughSelfAt`), or anyone who already runs walkthroughs (an owner, a manager, an estimator; `knock-me` answers
+  `walkthroughNow`) does the walkthrough themselves. It is Knock's own right, not the Sales role
+  (`functions/_lib/knock-self-walkthrough.js`): the walkthrough APIs (`/api/walkthrough-handoff`, `/api/walkthrough-visit`,
+  `/api/quote-draft`, `/api/pricing-config?parts=walkthrough`) accept such a rep only for a request naming their own
+  self-run visit (`d2d.selfRun`, assigned to them alone) or the job its handoff saved, and never give Dispatch,
+  customer lookups, crew openings, other visits or a place in the estimator pool. The door and a `walkthrough` event with `selfRun: true`, today and the tapped time,
   are sent at once; the bridge books the Hub visit to the rep (no openings search; `bookSelfRun`) and answers
   `selfRun` with the Hub walkthrough id, and the phone opens `/crew/gameplan?walkthroughId=…` on it (the full builder
   menu, vehicles, pricing and signing; customer details come from the Hub visit, never the address bar). Offline the
   button says so and offers Set walkthrough. A rep who may not run walkthroughs, or a visit the Hub refuses to book to
-  them, gets an estimator as above. The setter record carries `selfRun` and the rep's staff key: when the rep signs the
-  handoff the job pays the rep's direct-sale 25% alone (`repRanWalkthrough`), never 13% + 7%; if anyone else signs it,
-  it is an ordinary door walkthrough (13% + 7%). Admin > Money shows it as "walkthrough the rep ran (25%)" (CSV
+  them, gets an estimator as above; an admin's own tap books the admin, and an admin booking another rep's door from
+  Admin > Sales books an estimator. A refused one is fixed and sent again like any walkthrough (Edit and resend), as
+  "do it now" or for an estimator. The setter record carries `selfRun` and the rep's staff key, and no estimator: when
+  the rep signs the handoff the job pays the rep's direct-sale 25% alone (`repRanWalkthrough`), never 13% + 7%; if
+  anyone else signs it (an estimator took it over), it is an ordinary door walkthrough: 13% to the rep and 7% to the
+  signer. Admin > Money shows it as "walkthrough the rep ran (25%)" (CSV
   `door_walkthrough_commission_included`).
 * The walkthrough is on the estimator's own day (crew home's walkthrough cards,
   `/api/field-jobs`), on their crew schedule page (`/crew/schedule`: a walkthrough shows only to the person it is

@@ -56,9 +56,15 @@ with the reason and a **Book in Hub** button.
 **Reps doing the walkthrough themselves** (owner decision 2026-10-21). On the walkthrough form a rep can tap **Do the
 walkthrough now** instead of booking an estimator: the visit is booked to them for right now and the full walkthrough
 (every item, vehicles, pricing, signing) opens with the customer filled in. When the rep gets the customer's signature,
-the job pays the rep 25% and nothing else: no setter 13% and no estimator 7%. To turn it on for a rep, give them the
-**Sales** role in Hub → Staff directory (it applies on their next action, no sign-out needed). Reps without it see only
-**Set walkthrough**.
+the job pays the rep 25% and nothing else: no setter 13% and no estimator 7%. If an estimator takes it over and
+signs it instead, it pays like any walkthrough set at the door: 13% to the rep and 7% to that estimator. To turn it on
+for a rep, turn on **Walkthroughs** for that rep in Knock Admin → Reps (it applies on their next action, no sign-out
+needed). It does not give them the Sales role: they open only the walkthroughs they start this way, never Dispatch,
+other customers or anyone else's visits, and they are never booked as an estimator for other reps' walkthroughs.
+Owners and managers always have it. Reps without it see only **Set walkthrough**. It needs the bridge
+(`EGC_KNOCK_JOB_BRIDGE`) on. On these walkthroughs the rep types their notes (the audio recorder stays with
+estimators), the office staffs the crew in Dispatch, and a manager's Hub sends the signed job to HighLevel, as it does
+for an estimator's.
 
 **Hub schedule board.** Dispatch → **Board** shows crews, estimators and a **Door-to-door** panel for the day: reps on
 shift, their areas, doors knocked, sales and walkthroughs set, with links to the jobs they made. Owners, managers and

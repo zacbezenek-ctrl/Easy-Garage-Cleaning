@@ -35,6 +35,7 @@
    held up by the Hub; a failure is saved and shown), a reinstated one restores it, and a new job date moves it (or is
    refused when the Hub cannot take that time). */
 import { knockFailure, write } from './knock-store.js';
+import { knockJobBridgeEnabled } from './knock-self-walkthrough.js';
 import { mutateDispatch } from './dispatch-service.js';
 import { dispatchOpenings } from './dispatch-openings.js';
 import { resolveCustomer } from './customer-resolution.js';
@@ -49,7 +50,8 @@ import { PACKAGES } from '../../crew/knock-settings.js';
 import { JOB_DAY_END, JOB_START_MINIMUM, cancellationWindow, jobMinutes } from '../../crew/knock-sale-rules.js';
 import { titleStreet } from '../../crew/knock-doors.js';
 
-export const knockJobBridgeEnabled = env => env?.EGC_KNOCK_JOB_BRIDGE === 'true';
+// One switch for the bridge and the rep's own walkthrough (knock-self-walkthrough.js).
+export { knockJobBridgeEnabled };
 
 // The dispatch and customer writes this bridge makes are recorded as this server actor (createdBy, receipts, events).
 export const BRIDGE_ACTOR = Object.freeze({ user: 'knock-bridge', displayName: 'EGC Knock (door to door)', role: 'system', businessAccess: false });
@@ -572,8 +574,8 @@ async function savedVisit(store, record) {
   return bookedWalkthrough(saved, roster, saved.customerId, record.requested || {});
 }
 
-/* REP-WALKTHROUGH (owner decision 2026-10-21): "Do the walkthrough now". A rep who may run walkthroughs (selfKey, their
-   Hub staff key, given only for their own record) is booked as the estimator of the visit, today at the time they
+/* REP-WALKTHROUGH (owner decision 2026-10-21): "Do the walkthrough now". A rep with Walkthroughs on in Knock Admin, or
+   anyone who already runs walkthroughs (selfKey, their Hub staff key, given only for their own record) is booked as the estimator of the visit, today at the time they
    tapped, with no openings search: they are standing at the door. A refused booking (they are on the schedule then, or
    the Hub refuses the time) falls back to booking an estimator, as a walkthrough set at the door. */
 // The visit is the rep's own when it is booked to their staff key (also after a lost answer, found by its receipt).
@@ -589,7 +591,7 @@ async function bookSelfRun(save, common, roster, customerId, record, selfKey, to
   const end = Math.min(minutesOf(requested.time) + WALKTHROUGH_MINUTES, 23 * 60 + 59);
   try {
     const result = await save({ ...common, jobInstructions: [`Walkthrough done at the door by the Knock rep (${record.repKey}).`, record.note ? `Rep note: ${record.note}` : ''].filter(Boolean).join('\n'),
-      date: today, time: requested.time, endTime: hhmm(end), assignedCrew: [selfKey] });
+      date: today, time: requested.time, endTime: hhmm(end), assignedCrew: [selfKey] }, { selfRun: true });
     return selfOutcome(bookedWalkthrough(result.job, roster, customerId, requested), selfKey);
   } catch (error) {
     if (TRANSIENT.has(error?.code)) throw error;
@@ -611,7 +613,8 @@ async function bookWalkthroughVisit(store, record, { env, now, confirmed = false
     jobInstructions: [`Walkthrough set at the door (Knock rep ${record.repKey}).`, record.note ? `Rep note: ${record.note}` : ''].filter(Boolean).join('\n') };
   const attribution = () => ({ source: 'door_to_door', knockWalkthroughId: record.id, ghlTags: [D2D_GHL_TAGS.walkthrough],
     d2d: { kind: 'walkthrough', repKey: record.repKey, setterEventId: record.id, houseId: record.houseId || '', contactSource: D2D_CONTACT_SOURCE, at: nowIso } });
-  const save = changes => mutateDispatch(attributedStore(store, requestId, attribution), BRIDGE_ACTOR,
+  // REP-WALKTHROUGH: a self-run visit carries d2d.selfRun, the mark that lets its rep open it (knock-self-walkthrough.js).
+  const save = (changes, mark = {}) => mutateDispatch(attributedStore(store, requestId, () => { const made = attribution(); return { ...made, d2d: { ...made.d2d, ...mark } }; }), BRIDGE_ACTOR,
     { action: 'schedule.create', requestId, customerId, kind: 'walkthrough', booking: { channel: 'hub_in_person', crmLinkReason: 'crm_sync_pending' }, changes }, nowIso, { authorize: bridgeAuthorize });
   const self = await bookSelfRun(save, common, roster, customerId, record, String(selfKey || '').trim().toLowerCase(), today);
   if (self) return self;
@@ -651,12 +654,13 @@ export async function recordD2dSetter(kstore, record, booking, nowIso) {
   const receiptId = `setter_${record.id}`;
   const [receipt, existing] = await Promise.all([kstore.get('knock_receipts', receiptId), kstore.get('knock_setters', booking.jobId)]);
   if (receipt || existing) return existing;
-  const estimatorKey = booking.estimatorKey || '';
+  // REP-WALKTHROUGH: the rep was booked to run it themselves (bookSelfRun): their door-sale 25%, never 13% + 7%, once
+  // the handoff shows they signed it (knock-setters.js repRanWalkthrough). No estimator is recorded: the rep is never
+  // their own estimator, and one who takes it over and signs it is the estimator by that signature (13% + 7%).
+  const self = booking.selfRun === true && booking.estimatorKey ? { selfRun: true, repStaffKey: booking.estimatorKey } : {};
+  const estimatorKey = self.selfRun ? '' : booking.estimatorKey || '';
   const payload = { walkthroughId: booking.jobId, setterKey: record.repKey, serviceClassification: 'unverified', classificationReference: '',
     estimatorKey, estimatorReference: estimatorKey ? `knock-walkthrough:${record.id}` : '' };
-  // REP-WALKTHROUGH: the rep was booked to run it themselves (bookSelfRun): their door-sale 25%, never 13% + 7%, once
-  // the handoff shows they signed it (knock-setters.js repRanWalkthrough).
-  const self = booking.selfRun === true && estimatorKey ? { selfRun: true, repStaffKey: estimatorKey } : {};
   const row = { ...payload, ...self, channel: 'appointment_setter', requestId: record.id, recordedBy: BRIDGE_ACTOR.user, recordedAt: nowIso, sourceRevision: booking.revision || '',
     source: 'knock_walkthrough', knockWalkthroughId: record.id, rates: { setter: setterPolicy.rate, estimator: setterPolicy.estimatorRate, total: setterPolicy.totalRate } };
   try { await kstore.commit([write.create('knock_receipts', receiptId, payload), write.create('knock_setters', booking.jobId, row)]); }
@@ -698,7 +702,7 @@ async function saveWalkthroughBooking(kstore, id, outcome, nowIso) {
 
 /** Book (or answer the booking of) a walkthrough set at the door, and record its setter attribution in the same
  * request. `rep` limits it to that rep's own walkthrough (null: an admin). Answers {walkthrough, view}. */
-export async function bookWalkthrough(kstore, store, id, { env = {}, now = new Date(), rep = null, selfKey = '' } = {}) {
+export async function bookWalkthrough(kstore, store, id, { env = {}, now = new Date(), rep = null, selfKey = '', ownRepKey = '' } = {}) {
   const record = await kstore.get('knock_walkthroughs', String(id || ''));
   if (!record || rep && record.repKey !== rep.repKey) throw knockFailure('That walkthrough was not found.', 404, 'knock_walkthrough_missing');
   const nowIso = now.toISOString();
@@ -712,7 +716,10 @@ export async function bookWalkthrough(kstore, store, id, { env = {}, now = new D
   if (!['booked', 'requested'].includes(record.booking?.status) || !record.booking?.jobId) {
     if (waiting(record.booking, rep, now.getTime())) return { walkthrough: record, view: walkthroughView(record) };
     let outcome;
-    try { outcome = await bookWalkthroughVisit(store, record, { env, now, confirmed: identityConfirmed(record.booking, rep), selfKey: rep ? selfKey : '' }); }
+    // Self-booked only for the viewer's own walkthrough: a rep's, or an admin's own (ownRepKey); an admin booking another
+    // rep's walkthrough books an estimator.
+    const own = Boolean(rep) || Boolean(ownRepKey) && record.repKey === ownRepKey;
+    try { outcome = await bookWalkthroughVisit(store, record, { env, now, confirmed: identityConfirmed(record.booking, rep), selfKey: own ? selfKey : '' }); }
     catch (error) { if (typeof error?.code === 'string' && error.code.startsWith('knock_')) throw error; outcome = failure(error, Number(record.booking?.attempts || 0) + 1, now.getTime()); }
     saved = await saveWalkthroughBooking(kstore, record.id, outcome, nowIso);
   }

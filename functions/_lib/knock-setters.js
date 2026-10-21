@@ -112,7 +112,9 @@ export const handoffSigner = job => {
 /* REP-WALKTHROUGH (owner decision 2026-10-21): a walkthrough the Knock bridge booked a rep to run themselves ("Do the
    walkthrough now", knock-bridge.js bookSelfRun: selfRun with their Hub staff key) and whose customer signature that rep
    recorded on the handoff pays the door-sale 25% to the rep alone, never the setter 13% plus an estimator's 7%. If
-   anyone else signed it (an estimator took it over) it is an ordinary door-set walkthrough: 13% + 7%. */
+   anyone else signed it (an estimator took it over) it is an ordinary door-set walkthrough: 13% to the rep and 7% to
+   the signer, the estimator by that signature (the bridge records no estimator on a self-run walkthrough, and the rep
+   is never read as their own estimator). */
 export const repRanWalkthrough = (record, job) => record?.selfRun === true && STAFF_KEY.test(String(record.repStaffKey || '')) && handoffSigner(job) === record.repStaffKey;
 
 /* Closed (an accepted estimate and its time) and how it was collected (the unified totals and payment ledger): the
@@ -179,7 +181,9 @@ export function adjustmentHold(job, evidence, reasons, floorMs, nowMs = Date.now
 // The estimator the Knock bridge booked (knock-bridge.js recordD2dSetter), not one the office recorded.
 const bridgeEstimator = record => record.source === 'knock_walkthrough' || record.recordedBy === 'knock-bridge' || String(record.estimatorReference || '').startsWith('knock-walkthrough:');
 export function projectSetterAttribution(record, visit, job, directSales = [], nowMs = Date.now(), terms = null) {
-  const approved = terms?.verified === true, recordedEstimator = String(record.estimatorKey || '').trim().toLowerCase();
+  // REP-WALKTHROUGH: on a self-run record the rep is never the estimator (repRanWalkthrough), so any signer but them is.
+  const recorded = String(record.estimatorKey || '').trim().toLowerCase();
+  const approved = terms?.verified === true, recordedEstimator = record.selfRun === true && recorded === record.repStaffKey ? '' : recorded;
   const result = { id: record.id || record.walkthroughId, walkthroughId: record.walkthroughId, channel: 'appointment_setter',
     setterKey: record.setterKey, estimatorKey: recordedEstimator || null, estimatorEvidence: recordedEstimator ? 'admin_recorded_unreconciled' : 'unverified',
     closingActorKey: null, directSaleRepKey: null, serviceClassification: record.serviceClassification,

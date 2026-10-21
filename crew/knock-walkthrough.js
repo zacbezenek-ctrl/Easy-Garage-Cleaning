@@ -30,9 +30,10 @@ function walkthroughForm(house, onSave, { initial = null } = {}) {
     const note = h('textarea', { class: 'input input--area', id: 'walk-note', maxlength: '480', placeholder: 'What\'s in the garage, what they want done…' });
     note.value = initial?.note || '';
     const save = h('button', { type: 'submit', class: 'btn btn--primary btn--xl btn--block', disabled: true }, 'Set walkthrough');
-    // REP-WALKTHROUGH: a rep who may run walkthroughs does it now, themselves (knock-bridge.js bookSelfRun books the visit
-    // to them and the walkthrough app opens on it). Not when fixing a refused walkthrough: that one keeps its estimator.
-    const canRunNow = !initial && app.S.viewer?.walkthroughNow === true && Boolean(app.S.settings?.integrations?.walkthroughUrl);
+    // REP-WALKTHROUGH: a rep with Walkthroughs on (or anyone who runs walkthroughs) does it now, themselves
+    // (knock-bridge.js bookSelfRun books the visit to them and the walkthrough app opens on it). Fixing a refused one
+    // offers it again only when the rep had chosen to do it themselves; one set for an estimator keeps its estimator.
+    const canRunNow = (!initial || initial.selfRun === true) && app.S.viewer?.walkthroughNow === true && Boolean(app.S.settings?.integrations?.walkthroughUrl);
     const now = canRunNow ? h('button', { type: 'button', class: 'btn btn--secondary btn--xl btn--block', disabled: true, onclick: () => runNow() }, 'Do the walkthrough now') : null;
     const missing = h('p', { class: 'caption muted center' });
     const picker = slotPicker({ min: today, offline: !app.S.online, idPrefix: 'walk-slot', noun: 'walkthrough time', onChange: () => validate(),
@@ -145,15 +146,18 @@ export async function openOwnWalkthrough(id, { wait = OWN_WALKTHROUGH_WAIT_MS, o
   return null;
 }
 
-/* A walkthrough the server refused: the same form with everything the rep typed; saving sends it again. */
+/* A walkthrough the server refused: the same form with everything the rep typed; saving sends it again. A refused
+   "Do the walkthrough now" is sent again the same way (now, at the time tapped) or set for an estimator instead. */
 async function fixWalkthrough(event) {
   const house = app.S.houses.get(event.houseId) || { id: event.houseId, number: '', street: 'the house' };
   const details = await walkthroughForm(house, value => value, { initial: event });
   if (!details) return;
-  // Clear the earlier pick so a morning/afternoon choice is not sent with a stale estimator slot.
-  await app.outboxApi().resend(event.id, { time: undefined, dayPart: undefined, estimatorRef: undefined, ...details, knockId: event.knockId, houseId: event.houseId });
+  // Clear the earlier pick so a morning/afternoon choice is not sent with a stale estimator slot, nor an estimator's
+  // walkthrough with a stale "do it myself".
+  await app.outboxApi().resend(event.id, { time: undefined, dayPart: undefined, estimatorRef: undefined, selfRun: undefined, ...details, knockId: event.knockId, houseId: event.houseId });
   await app.refreshPending();
   app.scheduleSync(0);
+  if (details.selfRun === true) { await openOwnWalkthrough(event.id); return; }
   toast('Walkthrough sent again', { sub: app.S.online ? 'Syncing now.' : 'It syncs when you have signal.', iconName: 'calendar' });
 }
 

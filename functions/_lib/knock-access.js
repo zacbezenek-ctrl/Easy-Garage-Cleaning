@@ -86,7 +86,7 @@ export async function loadSetterTerms(store, settings) {
 const publicRep = rep => rep && ({
   repKey: rep.repKey || rep.id, username: rep.username || '', displayName: rep.displayName || rep.username || rep.id,
   role: rep.role || 'knocker', status: rep.status || 'pending', permitListed: rep.permitListed === true,
-  premiumCleared: rep.premiumCleared === true, leadKey: rep.leadKey || '', trainingMinutes: Number(rep.trainingMinutes || 0),
+  premiumCleared: rep.premiumCleared === true, walkthroughSelf: rep.walkthroughSelf === true, leadKey: rep.leadKey || '', trainingMinutes: Number(rep.trainingMinutes || 0),
   approvedAt: rep.approvedAt || null, deactivatedAt: rep.deactivatedAt || null, createdAt: rep.createdAt || null,
 });
 
@@ -146,7 +146,9 @@ export function shiftEligibility(rep) {
 }
 
 /* Admin edits to a rep. patch keys: status ('active'|'inactive'|'pending'), role ('knocker'|'lead'),
-   permitListed, premiumCleared, leadKey, displayName. Returns the stored patch. */
+   permitListed, premiumCleared, walkthroughSelf, leadKey, displayName. Returns the stored patch.
+   REP-WALKTHROUGH: walkthroughSelf (Knock Admin > Walkthroughs) lets the rep run their own walkthrough at the door
+   (knock-self-walkthrough.js); each change records who made it and when (walkthroughSelfBy, walkthroughSelfAt). */
 export function repPatch(current, changes, adminSession, nowIso) {
   const patch = {};
   if ('status' in changes) {
@@ -159,12 +161,13 @@ export function repPatch(current, changes, adminSession, nowIso) {
     if (!ROLES.includes(changes.role) || changes.role === 'admin') throw knockFailure('Choose knocker or lead. Admins are the Hub\'s business users.', 400, 'knock_invalid_role');
     patch.role = changes.role;
   }
-  for (const flag of ['permitListed', 'premiumCleared']) {
+  for (const flag of ['permitListed', 'premiumCleared', 'walkthroughSelf']) {
     if (flag in changes) {
       if (typeof changes[flag] !== 'boolean') throw knockFailure(`${flag} must be yes or no.`, 400, 'knock_invalid_flag');
       patch[flag] = changes[flag];
     }
   }
+  if ('walkthroughSelf' in patch) Object.assign(patch, { walkthroughSelfBy: adminSession.user, walkthroughSelfAt: nowIso });
   if ('leadKey' in changes) {
     const leadKey = String(changes.leadKey || '');
     if (leadKey && !SAFE_KEY.test(leadKey) && !/^u_[0-9a-f]+$/.test(leadKey)) throw knockFailure('Unknown lead.', 400, 'knock_invalid_lead');
