@@ -312,7 +312,19 @@ and every sync answer and record is as before. Code: `functions/_lib/knock-bridg
   cannot match safely) is listed in Admin > Sales under **Door walkthroughs not in the Hub yet** (one bounded query on
   `knock_walkthroughs.status == 'set'`) with its reason and **Book in Hub**. The same request writes
   `knock_setters/<Hub walkthrough id>` (13% setter + 7% estimator, D6b; nothing is earned until the walkthrough
-  converts and is collected). The walkthrough is on the estimator's own day (crew home's walkthrough cards,
+  converts and is collected).
+* **Do the walkthrough now** (REP-WALKTHROUGH, owner decision 2026-10-21): on the same form, a rep who may run
+  walkthroughs (`walkthrough.perform`, or the Sales role without role access; `knock-me` answers `walkthroughNow`)
+  does the walkthrough themselves. The door and a `walkthrough` event with `selfRun: true`, today and the tapped time,
+  are sent at once; the bridge books the Hub visit to the rep (no openings search; `bookSelfRun`) and answers
+  `selfRun` with the Hub walkthrough id, and the phone opens `/crew/gameplan?walkthroughId=…` on it (the full builder
+  menu, vehicles, pricing and signing; customer details come from the Hub visit, never the address bar). Offline the
+  button says so and offers Set walkthrough. A rep who may not run walkthroughs, or a visit the Hub refuses to book to
+  them, gets an estimator as above. The setter record carries `selfRun` and the rep's staff key: when the rep signs the
+  handoff the job pays the rep's direct-sale 25% alone (`repRanWalkthrough`), never 13% + 7%; if anyone else signs it,
+  it is an ordinary door walkthrough (13% + 7%). Admin > Money shows it as "walkthrough the rep ran (25%)" (CSV
+  `door_walkthrough_commission_included`).
+* The walkthrough is on the estimator's own day (crew home's walkthrough cards,
   `/api/field-jobs`), on their crew schedule page (`/crew/schedule`: a walkthrough shows only to the person it is
   assigned to, on no crew, as "Walkthrough", opening the walkthrough page) and in Hub dispatch. Customer details live
   only on `knock_walkthroughs` (server-only, like `knock_sales`). The estimator handle (`ref`) is an HMAC of the staff
@@ -355,7 +367,8 @@ and every sync answer and record is as before. Code: `functions/_lib/knock-bridg
 ## Money
 
 * **Commission:** D2D direct close is 25%; appointment setter is 13% plus estimator 7% (20% total, owner decision 2026-10-17);
-  direct estimator is 7%. Junk removal is excluded, and there is no team lead commission or accelerator
+  direct estimator is 7%. A walkthrough a rep runs and signs themselves is their direct close: 25% only (owner decision
+  2026-10-21). Junk removal is excluded, and there is no team lead commission or accelerator
   enabled by default. These channel rates must not stack. Service classification, calculation base,
   attribution and contract approval remain required before monetary results are payable.
 * **Earning:** current `knock-collected-v3` terms earn on recorded full customer collection, independently of

@@ -10,7 +10,7 @@
 import { getHubSession, isHubOwner } from '../_lib/hub-session.js';
 import { dispatchStorage } from '../_lib/dispatch-storage.js';
 import { createKnockStore } from '../_lib/knock-store.js';
-import { directSalesFor } from '../_lib/knock-setters.js';
+import { directSalesFor, repRanWalkthrough } from '../_lib/knock-setters.js';
 import { MONEY_JOB_FIELDS } from '../_lib/money-storage.js';
 import { hubEligibilityFields } from '../_lib/funnel-definitions.js';
 import { denverWorkDate, overtimePolicy } from '../_lib/timesheet-week.js';
@@ -22,7 +22,7 @@ import { readJobCostingTimecards } from './job-costing.js';
 
 const LIMIT = 8000;
 const ID = /^[A-Za-z0-9_-]{1,180}$/;
-export const JOB_ACTUALS_FIELDS = Object.freeze([...new Set([...MONEY_JOB_FIELDS, ...hubEligibilityFields(), 'sourceWalkthroughId', 'jobInstructions.laborManHours',
+export const JOB_ACTUALS_FIELDS = Object.freeze([...new Set([...MONEY_JOB_FIELDS, ...hubEligibilityFields(), 'sourceWalkthroughId', 'acceptance.recordedBy', 'jobInstructions.laborManHours',
   'compositeQuote.breakdown.labor.manHours', 'compositeQuote.breakdown.lines', 'fieldExecution.completion.crewOnSite', 'fieldExecution.completion.truckLoads'])]);
 const reply = (status, body) => Response.json(body, { status, headers: { 'Cache-Control': 'private, no-store', 'X-Content-Type-Options': 'nosniff' } });
 function sameOrigin(request) {
@@ -51,7 +51,8 @@ export function jobActualsHandlers({ session = getHubSession, dispatch = dispatc
         catch { timecardSource = 'unavailable'; }
         const kstore = knock(env), walkthroughs = [...new Set(jobs.map(job => job.sourceWalkthroughId).filter(id => ID.test(String(id || ''))))];
         const [setters, sales] = await Promise.all([walkthroughs.length ? kstore.getMany('knock_setters', walkthroughs) : new Map(), directSalesFor(kstore, jobs.map(job => job.id))]);
-        const report = buildJobActuals({ jobs, labor, settings, setterWalkthroughs: new Set([...setters.keys()].filter(id => setters.get(id))), doorSaleJobs: new Set(sales.map(sale => sale?.handoff?.job?.ref).filter(Boolean)), timecardsAvailable: timecardSource === 'ok', today: window.today, asOf });
+        const report = buildJobActuals({ jobs, labor, settings, setterWalkthroughs: new Set([...setters.keys()].filter(id => setters.get(id))), doorSaleJobs: new Set(sales.map(sale => sale?.handoff?.job?.ref).filter(Boolean)),
+          repWalkthroughJobs: new Set(jobs.filter(job => repRanWalkthrough(setters.get(job.sourceWalkthroughId), job)).map(job => job.id)), timecardsAvailable: timecardSource === 'ok', today: window.today, asOf });
         return reply(200, { ...report, ...settingsView(settings, actor), sources: { timecards: timecardSource } });
       } catch (error) { return errorResponse(error); }
     },

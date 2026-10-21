@@ -53,6 +53,13 @@ schedule. Commission follows the rules already in the app: 25% for a direct door
 the door 13% to the rep who set it plus 7% to the estimator. Admin → Sales lists anything that did not reach the Hub,
 with the reason and a **Book in Hub** button.
 
+**Reps doing the walkthrough themselves** (owner decision 2026-10-21). On the walkthrough form a rep can tap **Do the
+walkthrough now** instead of booking an estimator: the visit is booked to them for right now and the full walkthrough
+(every item, vehicles, pricing, signing) opens with the customer filled in. When the rep gets the customer's signature,
+the job pays the rep 25% and nothing else: no setter 13% and no estimator 7%. To turn it on for a rep, give them the
+**Sales** role in Hub → Staff directory (it applies on their next action, no sign-out needed). Reps without it see only
+**Set walkthrough**.
+
 **Hub schedule board.** Dispatch → **Board** shows crews, estimators and a **Door-to-door** panel for the day: reps on
 shift, their areas, doors knocked, sales and walkthroughs set, with links to the jobs they made. Owners, managers and
 team leads can see it. A job or walkthrough already on the loaded board opens in the Hub's own editor; any other opens

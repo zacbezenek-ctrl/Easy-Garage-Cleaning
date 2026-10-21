@@ -224,3 +224,24 @@ test('an estimator on the roster can be paid their recorded 7% once the terms ar
   const row = statement.find(item => item.repKey === 'estimator.one');
   assert.deepEqual([row.paid, row.payableCommission], [296.42, 0]);
 });
+
+// REP-WALKTHROUGH (owner decision 2026-10-21): a walkthrough the rep ran and signed themselves (the bridge's selfRun
+// record) pays the rep's door-sale 25% through the same statement, and no estimator 7% anywhere.
+test('a walkthrough the rep ran and signed pays the rep 25% in Admin > Money and My money, with no estimator share anywhere', async () => {
+  const selfJob = paidJob('job-3', 'walk-3', 2000, { acceptance: { recordedBy: 'Rep.One', acceptedAt: '2026-10-17T14:55:00Z' } });
+  const w = world({ seed: {
+    'knock_setters/walk-3': bridgeRow('walk-3', { estimatorKey: 'rep.one', requestId: 'kw-3', selfRun: true, repStaffKey: 'rep.one' }),
+    'jobs/walk-3': { ...visit('walk-3', 'job-3'), assignedCrew: ['rep.one'] }, 'jobs/job-3': selfJob,
+    'walkthroughHandoffs/r3': { actorId: 'Rep.One', jobId: 'job-3', sourceWalkthroughId: 'walk-3', createdAt: '2026-10-17T15:00:00.000Z', signature: 'data:image/png;base64,AAAA', amountCents: 200000 },
+  } });
+  const statement = (await call(admin(w).get, await as('ZacB', cookie => get('/api/knock-admin?view=money&date=2026-10-21', cookie)), env)).body.statement;
+  const byKey = Object.fromEntries(statement.map(row => [row.repKey, row]));
+  // The rep: 13% of the estimator-signed $3,000 job ($390) plus 25% of their own $2,000 walkthrough ($500).
+  assert.deepEqual([byKey['rep.one'].setterCommission, byKey['rep.one'].doorWalkthroughCommission, byKey['rep.one'].estimatorCommission, byKey['rep.one'].earnedCommission], [390, 500, 0, 890]);
+  // The estimator is paid exactly as before: nothing from the rep's own walkthrough.
+  assert.deepEqual([byKey['estimator.one'].estimatorCommission, byKey['estimator.one'].earnedCommission], [296.42, 296.42]);
+  const own = (await call(reports(w).get, await as('Rep.One', cookie => get('/api/knock-reports?view=my-money&date=2026-10-21', cookie)), env)).body;
+  assert.deepEqual([own.periods[0].doorWalkthroughCommission, own.periods[0].estimatorCommission, own.periods[0].earnedCommission], [500, 0, 890], 'the rep signed it, but earns no 7% on top');
+  const card = own.setters.rows.find(row => row.walkthroughId === 'walk-3');
+  assert.deepEqual([card.channel, card.earnedCommission, card.allocations.map(item => item.role)], ['direct_sale', 500, ['direct_rep']]);
+});

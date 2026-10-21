@@ -4,6 +4,7 @@ import { ensureRep, isAdmin, requireActive } from '../_lib/knock-access.js';
 import { dispatchStorage } from '../_lib/dispatch-storage.js';
 import { bookSale, bookWalkthrough, knockJobBridgeEnabled } from '../_lib/knock-bridge.js';
 import { errorResponse, forbiddenOrigin, readJson, reply, sameOrigin, signInRequired } from '../_lib/knock-http.js';
+import { walkthroughPerformer } from '../_lib/walkthrough-visit.js';
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
@@ -25,7 +26,9 @@ export function knockJobBridgeHandlers({ session = getHubSession, storage = crea
         if (!['sale', 'walkthrough'].includes(body.kind) || !UUID.test(String(body.id || ''))) throw knockFailure('Choose a sale or walkthrough to book.', 400, 'knock_bridge_invalid');
         const store = storage(env), at = now();
         const rep = requireActive(await ensureRep(store, viewer, at.toISOString()));
-        const options = { env, now: at, rep: isAdmin(viewer) ? null : rep };
+        // REP-WALKTHROUGH: a rep who may run walkthroughs (walkthrough.perform with role access) is booked to do their own
+        // "Do the walkthrough now" (knock-bridge.js bookSelfRun); anyone else's is booked to an estimator.
+        const options = { env, now: at, rep: isAdmin(viewer) ? null : rep, selfKey: walkthroughPerformer(viewer, env) ? String(viewer.user).trim().toLowerCase() : '' };
         const result = body.kind === 'sale' ? await bookSale(store, dispatch(env), body.id, options) : await bookWalkthrough(store, dispatch(env), body.id, options);
         return reply(200, { ok: true, serverTime: at.toISOString(), booking: result.view });
       } catch (error) {
