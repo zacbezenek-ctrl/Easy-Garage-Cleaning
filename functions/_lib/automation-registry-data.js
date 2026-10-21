@@ -7,6 +7,7 @@
 const HL = 'functions/api/highlevel.js', WEB_LEAD = 'functions/api/web-lead.js', WEB_LEAD_INTAKE = 'functions/_lib/web-lead-intake.js', MESSAGING_CRON = 'functions/api/messaging-cron.js', SUITE = 'employee-suite.js', HANDOFF = 'crew/gameplan-handoff.js';
 const MCP = 'egc-platform/apps/mcp/src/server.ts', GHL_CLIENT = 'egc-platform/packages/ghl/src/index.ts';
 const CHECKIN = 'functions/_lib/highlevel-checkin.js';
+const PORTAL_INBOX = 'functions/_lib/customer-message-alerts.js';
 const FIELD_PAY_SYNC = 'functions/_lib/field-payment-sync.js';
 // GHL-TRACK-1: the durable tag outbox (off unless EGC_GHL_TAG_OUTBOX=true) and the shared HighLevel writer it and highlevel.js call.
 const TAG_OUTBOX = 'functions/_lib/ghl-tag-outbox.js', HL_TAGS = 'functions/_lib/highlevel-tags.js';
@@ -161,7 +162,8 @@ export const AUTOMATION_REGISTRY = deepFreeze({
       write(HL_TAGS, [SCHEDULE_MIRROR], `${MIRROR_WHEN}: one internal note per schedule change (date, Denver time window, crew or estimator, address, job breakdown, and for a door-to-door job "Door to door: sale|walkthrough set by <rep first name>"; no prices)`, true)]),
     trigger('contact:task_added', 'task_added', 'Task added to a contact', [
       write(HL, [SUITE], 'tool=post_job: the 6-month garage check-in task after a legacy closeout retry with Hub operations off', true),
-      write(CHECKIN, [HL, 'functions/_lib/field-execution-sync.js', 'functions/api/field-jobs.js'], 'GHL-ALIGN: the same 6-month garage check-in task, read back first so it is created once, after a closeout with Hub operations on and the egc-api note verified, or after each verified field completion while the bridge is on (Hub operations and egc-api EGC_OPERATIONS_ENABLED=true); none when egc-api reports its own platform task (EGC_OPERATIONS_CHECKIN_TASKS_ENABLED=true, off)', true)]),
+      write(CHECKIN, [HL, 'functions/_lib/field-execution-sync.js', 'functions/api/field-jobs.js'], 'GHL-ALIGN: the same 6-month garage check-in task, read back first so it is created once, after a closeout with Hub operations on and the egc-api note verified, or after each verified field completion while the bridge is on (Hub operations and egc-api EGC_OPERATIONS_ENABLED=true); none when egc-api reports its own platform task (EGC_OPERATIONS_CHECKIN_TASKS_ENABLED=true, off)', true),
+      write(PORTAL_INBOX, ['functions/api/customer-portal.js', 'functions/api/customer-messages.js'], 'PORTAL-INBOX: one "Reply to client portal message" task per client portal message, due at the send and assigned to EGC_CUSTOMER_MESSAGE_TASK_USER_ID (unset: unassigned); read back first by its Ref line so a retry from the Hub list never adds a second one', true)]),
     trigger('fb_form:free_walkthrough_offer', 'fb_lead_form', 'Facebook lead forms: Easy Garage Cleaning - Free Walkthrough offer and the three untitled 5/21/26 forms', [], 'Started by Facebook, not the Hub.'),
     trigger('fb_form:curb_side_pickup', 'fb_lead_form', 'Facebook lead form: Curb Side Pickup', [], 'Started by Facebook, not the Hub.'),
     trigger('inbound:message', 'inbound_message', 'Customer message or reply', [], 'Started by the customer, not the Hub.'),
@@ -254,8 +256,8 @@ export const AUTOMATION_REGISTRY = deepFreeze({
       ['appointment:created', 'appointment_status:changed'], { code: [...code(HL, 'ghl_appointment_write'), ...code(HL_TAGS, 'ghl_appointment_write')],
         ownerCheck: 'List workflows triggered by Customer Booked Appointment or Appointment Status with their texts; toNotify false is not relied on to stop them. The FUN-11 booking dialog shows these texts even when the visit notify flag is off.' }),
     unverifiedGhl('ghl.note_task_workflows', 'HighLevel Note Added / Task Added workflows (unverified)', 'Notes the Hub adds (Game Plan brief, closeout, lifecycle and website lead notes) and the 6-month check-in task',
-      ['contact:note_added', 'contact:task_added'], { speedToLead: 'automation_touch', code: [...code(HL, 'ghl_note_task_write'), ...code(WEB_LEAD_INTAKE, 'ghl_note_task_write'), ...code(CHECKIN, 'ghl_note_task_write'), ...code(HL_TAGS, 'ghl_note_task_write')],
-        ownerCheck: 'List workflows triggered by Note Added or Task Added with their texts; a website lead note is written on every lead, so one could be the first touch. Once the bridge is on, each verified field completion creates the HighLevel task "6-month garage check-in"; check that no Task Added workflow reacts to it in a way you do not want.' }),
+      ['contact:note_added', 'contact:task_added'], { speedToLead: 'automation_touch', code: [...code(HL, 'ghl_note_task_write'), ...code(WEB_LEAD_INTAKE, 'ghl_note_task_write'), ...code(CHECKIN, 'ghl_note_task_write'), ...code(HL_TAGS, 'ghl_note_task_write'), ...code(PORTAL_INBOX, 'ghl_note_task_write')],
+        ownerCheck: 'List workflows triggered by Note Added or Task Added with their texts; a website lead note is written on every lead, so one could be the first touch. Once the bridge is on, each verified field completion creates the HighLevel task "6-month garage check-in"; check that no Task Added workflow reacts to it in a way you do not want. Each client portal message also creates a "Reply to client portal message" task; check the same for it.' }),
     entry({ id: 'ghl.conversation_ai', name: 'HighLevel Conversation AI auto-reply (LC GPT Connector)', system: 'ghl_conversation_ai', trigger: 'Inbound customer message, if a Conversation AI bot is in auto-reply mode',
       listensTo: ['inbound:message'], audience: 'customer', channel: 'SMS', contentSource: 'ai_generated', classification: 'disabled', disposition: 'retire', sendsToday: 'unknown', speedToLead: 'automation_touch',
       evidence: [ROUTING_DOC], notes: 'AI-written replies with no human review are not allowed under the approval rule; the design default is off. This registry does not change the setting.',
@@ -491,6 +493,8 @@ export const AUTOMATION_REGISTRY = deepFreeze({
     'functions/_lib/highlevel-tags.js': { ghl_tag_write: 1, ghl_contact_write: 1, ghl_note_task_write: 1, ghl_appointment_write: 1 },
     // GHL-ALIGN: GET then POST contacts/{id}/tasks for the 6-month check-in (one path string, read first).
     'functions/_lib/highlevel-checkin.js': { ghl_note_task_write: 1 },
+    // PORTAL-INBOX: GET then POST contacts/{id}/tasks for the office's portal-message task (one path string, read first).
+    'functions/_lib/customer-message-alerts.js': { ghl_note_task_write: 1 },
     // KNOCK: the door-to-door sale receipt text (one per sale, admin-tapped).
     'functions/_lib/knock-handoff.js': { hub_send_helper_call: 1 },
     // KNOCK-NATIVE: GET-only contact identity verification; scanner conservatively counts the URL as a write.

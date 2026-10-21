@@ -36,6 +36,8 @@ const PASSWORD_SHIPPED = ['password'];
 const TEAM_SHIPPED = ['team_directory'];
 // D6b's My commission (My EGC) follows Team directory: every signed-in viewer's own estimator 7%, read only.
 const COMMISSION_SHIPPED = ['my_commission'];
+// PORTAL-INBOX: Customer messages needs customer_contact (employee-suite.js adds it for a server customer.send).
+const CONTACT_SHIPPED = ['customer_messages'];
 
 test('a registered screen joins the nav under its group only when the capability matches', () => {
   for (const [who, expected] of [[{}, true], [MANAGER, true], [CREW, false]]) {
@@ -297,7 +299,10 @@ test('the shipped screens register cleanly for business viewers only and lazy-lo
   vm.runInNewContext(readFileSync(new URL('../employee-hub-screens.js', import.meta.url), 'utf8'), context, { filename: 'employee-hub-screens.js' });
   assert.deepEqual(warnings, []);
   const registry = context.EGCHubScreens;
-  assert.deepEqual([...registry.list().map(entry => entry.id)], [...CREW_SHIPPED, ...PASSWORD_SHIPPED, ...TEAM_SHIPPED, ...COMMISSION_SHIPPED, ...OWNER_SHIPPED, ...SHIPPED]);
+  assert.deepEqual([...registry.list().map(entry => entry.id)], [...CREW_SHIPPED, ...PASSWORD_SHIPPED, ...TEAM_SHIPPED, ...COMMISSION_SHIPPED, ...OWNER_SHIPPED, ...SHIPPED, ...CONTACT_SHIPPED]);
+  const inbox = registry.get('customer_messages');
+  assert.deepEqual([inbox.group, inbox.label, inbox.capability, inbox.module, inbox.load.js, inbox.load.css], ['CLIENT WORK', 'Customer messages', 'customer_contact', 'EGCCustomerMessages', 'employee-customer-messages.js', 'employee-customer-messages.css']);
+  assert.ok(!registry.allowed(inbox, ['crew', 'business']) && registry.allowed(inbox, ['crew', 'customer_contact']));
   const commission = registry.get('my_commission');
   assert.deepEqual([commission.group, commission.label, commission.crewVisible, commission.module, commission.load.js, commission.load.css], ['MY EGC', 'My commission', true, 'EGCEstimatorCommission', 'employee-estimator-commission.js', 'employee-estimator-commission.css']);
   assert.ok(registry.allowed(commission, ['crew']), 'every signed-in viewer sees their own commission');

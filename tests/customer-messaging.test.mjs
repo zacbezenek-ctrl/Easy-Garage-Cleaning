@@ -63,18 +63,33 @@ test('assigned crew can message only the job contact and HighLevel receives an S
   } finally { globalThis.fetch = originalFetch; }
 });
 
-test('client portal replies derive identity from the signed job and notify HighLevel', async () => {
+test('client portal replies derive identity from the signed job, alert the office and notify HighLevel', async () => {
   const route = await import('../functions/api/customer-portal.js');
   const env = { HUB_SESSION_SECRET: 'customer-thread-client', FIREBASE_API_KEY: 'firebase-test-thread-client', HIGHLEVEL_API_KEY: 'ghl-test', HIGHLEVEL_LOCATION_ID: 'location-1' };
   const cookie = (await createCustomerPortalSessionCookie(env, 'job-2', { linkVersion: 0 })).split(';')[0];
   let stored = { customer: 'Dana Customer', highlevelContactId: 'real-client-contact', customerConversation: [] };
-  let update = 0, highLevelPayload = null;
+  let update = 0, highLevelPayload = null, taskPayload = null;
+  const alerts = new Map();
   const originalFetch = globalThis.fetch;
   globalThis.fetch = async (url, options = {}) => {
-    if (String(url).includes('services.leadconnectorhq.com')) {
+    if (String(url).includes('services.leadconnectorhq.com/conversations/messages')) {
       highLevelPayload = JSON.parse(options.body);
       return new Response(JSON.stringify({ messageId: 'internal-comment', conversationId: 'conversation-2' }), { status: 200 });
     }
+    if (String(url).includes('services.leadconnectorhq.com/contacts/real-client-contact/tasks')) {
+      if (options.method === 'POST') { taskPayload = JSON.parse(options.body); return Response.json({ task: { id: 'task-2' } }); }
+      return Response.json({ tasks: [] });
+    }
+    if (String(url).includes(':commit')) {
+      for (const write of JSON.parse(options.body).writes) {
+        const name = write.update.name, data = decodeFirestoreFields(write.update.fields);
+        if (name.includes('/customerMessageAlerts/')) alerts.set(name, { ...(alerts.get(name) || {}), ...data });
+        else { stored = { ...stored, ...data }; update += 1; }
+      }
+      return Response.json({ writeResults: [{ updateTime: `2026-09-05T18:00:0${update}.000000Z` }] });
+    }
+    const alert = [...alerts].find(([name]) => String(url).includes(name.split('/documents/')[1]));
+    if (alert) return Response.json({ name: alert[0], updateTime: '2026-09-05T18:00:09.000000Z', fields: encodeFirestoreFields(alert[1]) });
     if ((options.method || 'GET') === 'PATCH') {
       stored = { ...stored, ...decodeFirestoreFields(JSON.parse(options.body).fields) };
       update += 1;
@@ -83,13 +98,21 @@ test('client portal replies derive identity from the signed job and notify HighL
     return new Response(firestoreDocument('job-2', stored, `2026-09-05T18:00:0${update}.000000Z`), { status: 200 });
   };
   try {
-    const response = await route.onRequestPost({ request: new Request('https://easygaragecleaning.com/api/customer-portal', { method: 'POST', headers: { Origin: 'https://easygaragecleaning.com', Cookie: cookie, 'Content-Type': 'application/json' }, body: JSON.stringify({ action: 'send_message', body: 'The side door is unlocked.', request_id: 'portal-request-12345', authorName: 'Imposter', contactId: 'attacker-contact' }) }), env });
+    const later = [];
+    const response = await route.onRequestPost({ request: new Request('https://easygaragecleaning.com/api/customer-portal', { method: 'POST', headers: { Origin: 'https://easygaragecleaning.com', Cookie: cookie, 'Content-Type': 'application/json' }, body: JSON.stringify({ action: 'send_message', body: 'The side door is unlocked.', request_id: 'portal-request-12345', authorName: 'Imposter', contactId: 'attacker-contact' }) }), env, waitUntil: promise => later.push(promise) });
     assert.equal(response.status, 200);
+    assert.equal((await response.json()).message.officeAlert, 'queued');
+    assert.equal(stored.customerConversation[0].authorName, 'Dana Customer');
+    assert.equal(stored.customerConversation[0].direction, 'from_customer');
+    const [alert] = alerts.values();
+    assert.equal(alert.status, 'open', 'the office alert is saved with the message');
+    assert.equal(alert.highlevelContactId, 'real-client-contact');
+    await Promise.all(later);
     assert.equal(highLevelPayload.type, 'InternalComment');
     assert.equal(highLevelPayload.contactId, 'real-client-contact');
     assert.match(highLevelPayload.message, /The side door is unlocked/);
-    assert.equal(stored.customerConversation[0].authorName, 'Dana Customer');
-    assert.equal(stored.customerConversation[0].direction, 'from_customer');
+    assert.match(taskPayload.body, /The side door is unlocked/);
+    assert.equal([...alerts.values()][0].task.status, 'created');
   } finally { globalThis.fetch = originalFetch; }
 });
 
