@@ -2,7 +2,8 @@
  * truck loads, goods at retail, commission by channel and an estimated margin. Rules: functions/_lib/job-actuals.js;
  * cost settings: functions/_lib/job-actuals-settings.js. Session cookie: business accounts read; only the owner saves
  * the cost settings. Hub > Job actuals (employee-job-actuals.js) shows it.
- * GET /api/job-actuals => {ok, window, rates, totals:{last30,last90}, rows, settings:{...,revision,complete,missing},
+ * GET /api/job-actuals => {ok, window, rates, totals:{last30,last90}, rows, estimatorAccuracy (estimator-accuracy.js: estimated vs
+ *   actual man-hours per job and a 30/90-day scorecard per estimator, hours only), settings:{...,revision,complete,missing},
  *   canEdit, sources:{timecards:'ok'|'unavailable'}, laborCoverage}. Labor is costed at the flat loaded wage, never an
  *   employee's own rate, so the report shows hours and dollars without revealing anyone's pay.
  * POST {action:'job_actuals.settings.set', requestId, expectedRevision, settings} (owner) => {ok, settings, requestId, replayed}.
@@ -17,13 +18,14 @@ import { denverWorkDate, overtimePolicy } from '../_lib/timesheet-week.js';
 import { addDays } from '../_lib/dispatch-time.js';
 import { computeJobLaborCost } from '../_lib/job-labor-cost.js';
 import { buildJobActuals, jobActualsWindow } from '../_lib/job-actuals.js';
+import { ESTIMATOR_FIELDS, buildEstimatorAccuracy } from '../_lib/estimator-accuracy.js';
 import { jobActualsSettingsStorage, mutateJobActualsSettings, readJobActualsSettings, requireJobActualsOwner, requireJobActualsViewer } from '../_lib/job-actuals-settings.js';
 import { readJobCostingTimecards } from './job-costing.js';
 
 const LIMIT = 8000;
 const ID = /^[A-Za-z0-9_-]{1,180}$/;
 export const JOB_ACTUALS_FIELDS = Object.freeze([...new Set([...MONEY_JOB_FIELDS, ...hubEligibilityFields(), 'sourceWalkthroughId', 'jobInstructions.laborManHours',
-  'compositeQuote.breakdown.labor.manHours', 'compositeQuote.breakdown.lines', 'fieldExecution.completion.crewOnSite', 'fieldExecution.completion.truckLoads'])]);
+  'compositeQuote.breakdown.labor.manHours', 'compositeQuote.breakdown.lines', 'quoteDraft.breakdown.source', 'quoteDraft.breakdown.labor.manHours', 'quoteDraft.breakdown.lines', 'fieldExecution.completion.crewOnSite', 'fieldExecution.completion.truckLoads', ...ESTIMATOR_FIELDS])]);
 const reply = (status, body) => Response.json(body, { status, headers: { 'Cache-Control': 'private, no-store', 'X-Content-Type-Options': 'nosniff' } });
 function sameOrigin(request) {
   if (request.headers.get('Sec-Fetch-Site') === 'cross-site') return false;
@@ -52,7 +54,9 @@ export function jobActualsHandlers({ session = getHubSession, dispatch = dispatc
         const kstore = knock(env), walkthroughs = [...new Set(jobs.map(job => job.sourceWalkthroughId).filter(id => ID.test(String(id || ''))))];
         const [setters, sales] = await Promise.all([walkthroughs.length ? kstore.getMany('knock_setters', walkthroughs) : new Map(), directSalesFor(kstore, jobs.map(job => job.id))]);
         const report = buildJobActuals({ jobs, labor, settings, setterWalkthroughs: new Set([...setters.keys()].filter(id => setters.get(id))), doorSaleJobs: new Set(sales.map(sale => sale?.handoff?.job?.ref).filter(Boolean)), timecardsAvailable: timecardSource === 'ok', today: window.today, asOf });
-        return reply(200, { ...report, ...settingsView(settings, actor), sources: { timecards: timecardSource } });
+        // Estimator accuracy (estimator-accuracy.js): the same jobs and hours, scored per estimator; nothing more is read.
+        const estimatorAccuracy = buildEstimatorAccuracy({ rows: report.rows, jobs, setters, shortStart: report.window.shortStart });
+        return reply(200, { ...report, estimatorAccuracy, ...settingsView(settings, actor), sources: { timecards: timecardSource } });
       } catch (error) { return errorResponse(error); }
     },
     async post({ request, env }) {

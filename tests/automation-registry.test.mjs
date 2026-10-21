@@ -215,7 +215,7 @@ test('speed to lead: registered automations are automation touches, approved and
   assert.deepEqual([arrival.actor, arrival.entryId, arrival.reason, arrival.speedToLead], ['human', 'quo.prejob_arrival', 'human_template', null], 'an on-my-way text is never the first human response');
   const confirmation = touch({ direction: 'outbound', body: 'Hi Pat, it\'s Easy Garage Cleaning — confirming your garage comeback tomorrow at 9 AM. Crew of 2, we\'ll knock when we arrive. Flat rate locked at $450 like we agreed — nothing changes. Reply C to confirm. — Alex' });
   assert.deepEqual([confirmation.entryId, confirmation.speedToLead], ['quo.prejob_confirmation', null]);
-  const review = touch({ direction: 'outbound', body: 'Hi Pat, it was great working with you! If you have a moment, we\'d really appreciate it if you left us a review — it goes a long way in helping us grow. As a thank-you for choosing us, we\'d love to offer you 10% off your next service. We look forward to working with you again! https://g.page/r/synthetic' });
+  const review = touch({ direction: 'outbound', body: 'Hi Pat, it was great working with you! If you have a minute, an honest Google review helps a local crew like ours a lot. https://g.page/r/synthetic' });
   assert.deepEqual([review.actor, review.entryId, review.speedToLead], ['human', 'zapier.crew_review_request', null]);
   assert.equal(touch({ direction: 'outbound', messageSendId: 'ms_synthetic', kind: 'day_before_reminder', approval: 'preview_confirm' }).speedToLead, null, 'a reminder is registered as no lead response even when a person confirmed it');
   assert.deepEqual(touch({ direction: 'outbound', source: 'api', messageSendId: 'ms_synthetic', kind: 'portal_magic_link', approval: 'customer_initiated' }),
@@ -243,7 +243,7 @@ test('template matching is exact, needs every placeholder filled and stays linea
   const hostile = `Hi ${'a, see you '.repeat(40000)}`;
   assert.equal(templateMatches(text, hostile), false);
   assert.equal(matchTemplate(AUTOMATION_REGISTRY, '   '), null);
-  const review = matchTemplate(AUTOMATION_REGISTRY, 'Hi there, it was great working with you! If you have a moment, we\'d really appreciate it if you left us a review — it goes a long way in helping us grow. As a thank-you for choosing us, we\'d love to offer you 10% off your next service. We look forward to working with you again! https://search.google.com/local/writereview?placeid=synthetic');
+  const review = matchTemplate(AUTOMATION_REGISTRY, 'Hi there, it was great working with you! If you have a minute, an honest Google review helps a local crew like ours a lot. https://search.google.com/local/writereview?placeid=synthetic');
   assert.equal(review.id, 'zapier.crew_review_request');
 });
 

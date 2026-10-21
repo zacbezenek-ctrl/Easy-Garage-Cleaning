@@ -502,6 +502,17 @@ service cloud.firestore {
       allow read, write: if false;
     }
 
+    // Owner targets: the owner's labor baseline, lead wage, truck rental and
+    // sales targets (the crew wage is the job-actuals wage above) and their
+    // save receipts. Owner only; only the server reads or writes them, via
+    // /api/owner-economics and /api/pricing-config.
+    match /ownerEconomicsSettings/{documentId} {
+      allow read, write: if false;
+    }
+    match /ownerEconomicsSettingsOperations/{documentId} {
+      allow read, write: if false;
+    }
+
     // JOB-COST-PRIVACY: owner-entered job labor dollars and their save
     // receipts. Only the server reads or writes them, for a viewer who sees
     // labor dollars, via /api/job-labor-costs and /api/money.

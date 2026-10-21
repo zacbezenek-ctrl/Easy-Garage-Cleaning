@@ -182,7 +182,7 @@ class GameplanPricingBrowserTests(unittest.TestCase):
         expect(page.locator('#screen')).to_contain_text('+$375 · Add trap placement')
         self.screen(page, 5)
         expect(page.locator('.price-card .price')).to_have_text('$950')
-        expect(page.locator('#screen')).not_to_contain_text('2,250')
+        expect(page.locator('#screen')).not_to_contain_text(re.compile('target', re.I))
         expect(page.locator('#signature')).to_be_visible()
         # D-DEPOSIT: 25% when the homeowner signs and 75% on the job day, with both amounts.
         expect(page.locator('#deposit-summary')).to_have_text('25% deposit due today: $237.50. Remaining 75% due on the job day: $712.50.')

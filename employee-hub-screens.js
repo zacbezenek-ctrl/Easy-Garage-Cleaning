@@ -6,6 +6,8 @@ const KIT={js:'employee-ui-kit.js',css:'employee-ui-kit.css',v:'20260929mobilehu
 // One line per screen: {id, group, label, iconPath, capability:'business'|'owner' or crewVisible:true, load:{js, css, v}, module:'EGCName'}.
 // team_directory (Team directory, D10) is every signed-in viewer's, but employee-suite.js adds that capability only while the
 // server reports the staff directory on (/api/integration-status flags.teamDirectory, EGC_STAFF_DIRECTORY_ENABLED).
+// open_quotes (Open quotes) is the office's read-only board of sent, unapproved estimator quotes and close rates; its
+// API (/api/open-quotes) refuses anyone without business access, so the capability here only hides the nav.
 // my_commission (My commission, D6b) is the signed-in employee's own estimator 7%, read only; empty for anyone who sells no walkthroughs.
 // Capabilities come from the signed-in server profile (businessAccess and the owner flag), never a client staff list.
 // Group and label are plain text (the shell escapes them, so 'Estimates & payments' is fine); angle brackets,
@@ -23,7 +25,8 @@ const MANIFEST=[
 {id:'ad_spend',group:'GROW THE ENGINE',label:'Ad spend',iconPath:'M3 10v4h4l5 4V6l-5 4zM16 9a4 4 0 0 1 0 6M19 6a8 8 0 0 1 0 12',capability:'owner',load:{js:'employee-ad-spend.js',css:'employee-ad-spend.css',v:'20260928adspend'},module:'EGCAdSpend'},
 {id:'catalog',group:'SYSTEM',label:'Catalog & pricing',iconPath:'M4 4h7l9 9-7 7-9-9zM8 8h.01',capability:'owner',load:{js:'employee-catalog.js',css:'employee-catalog.css',v:'20261021portalmerge'},module:'EGCCatalog'},
 {id:'dispatch_rules',group:'RUN THE BUSINESS',label:'Dispatch rules',iconPath:'M4 6h11M4 12h7M4 18h5M14 15l2.5 2.5L21 13',capability:'owner',load:{js:'employee-dispatch-settings.js',css:'employee-dispatch-settings.css',v:'20260929rules4'},module:'EGCDispatchSettings'},
-{id:'job_actuals',group:'RUN THE BUSINESS',label:'Job actuals',iconPath:'M4 20V10M10 20V4M16 20v-7M22 20H2',capability:'business',load:{js:'employee-job-actuals.js',css:'employee-job-actuals.css',v:'20261021actuals5'},module:'EGCJobActuals'},
+{id:'job_actuals',group:'RUN THE BUSINESS',label:'Job actuals',iconPath:'M4 20V10M10 20V4M16 20v-7M22 20H2',capability:'business',load:{js:'employee-job-actuals.js',css:'employee-job-actuals.css',v:'20261021ownerecon2'},module:'EGCJobActuals'},
+{id:'open_quotes',group:'RUN THE BUSINESS',label:'Open quotes',iconPath:'M6 3h9l3 3v15H6zM9 10h6M9 14h4M16 17l2 2 3-4',capability:'business',load:{js:'employee-open-quotes.js',css:'employee-open-quotes.css',v:'20261021openquotes2'},module:'EGCOpenQuotes'},
 {id:'reviews',group:'RUN THE BUSINESS',label:'Review queues',iconPath:'M9 3h6v3H9zM6 5h3v1h6V5h3v16H6zM9 13l2 2 4-4',capability:'business',load:{js:'employee-reviews.js',css:'employee-reviews.css',v:'20260930launchpolish'},module:'EGCReviews'},
 {id:'message_templates',group:'SYSTEM',label:'Message templates',iconPath:'M4 5h16v11H9l-5 4z',capability:'business',load:{js:'message-templates.js',css:'message-templates.css',v:'20261021links'},module:'EGCMessageTemplates'},
 {id:'stocked_costs',group:'SYSTEM',label:'Stocked item costs',capability:'business',iconPath:'M4 7l8-4 8 4v10l-8 4-8-4zM4 7l8 4 8-4M12 11v10',load:{js:'employee-standard-costs.js',css:'employee-standard-costs.css',v:'20260928fun19'},module:'EGCStandardCosts'},
