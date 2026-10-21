@@ -86,3 +86,26 @@ test('a manager cannot undo a rejection of their own card, by status or by a tim
   const open = { ...card('TylerG'), clockOutAt: '', status: 'active', approvalStatus: 'open' };
   assert.equal(save(MANAGER, open, { clockOutAt: '2026-09-22T18:00:00.000Z', status: 'submitted', approvalStatus: 'pending' }).approvalStatus, 'pending');
 });
+
+// Follow-up review findings on #175: the clock-in location flag and the decider fields of one's own card, and cards
+// typed as a near-variant of one's own username.
+test('a manager cannot clear the missing clock-in location flag on their own card; the change is in the audit', () => {
+  const flagged = { ...card('TylerG'), locationReview: 'location_unavailable_at_clock_in' };
+  for (const incoming of [{ locationReview: '' }, { locationReview: null }, { locationReview: 'reviewed' }]) assert.throws(() => save(MANAGER, flagged, incoming), refused, JSON.stringify(incoming));
+  assert.equal(save(MANAGER, flagged, { locationReview: 'location_unavailable_at_clock_in', notes: 'Synthetic note' }).locationReview, 'location_unavailable_at_clock_in', 'repeating it is not a change');
+  const cleared = save(OWNER, flagged, { locationReview: '' });
+  assert.equal(cleared.locationReview, '');
+  assert.ok(cleared.history.at(-1).changes.locationReview, 'someone else clearing it is recorded');
+});
+
+test('a manager cannot rewrite who decided their own card or when; decisions are in the audit', () => {
+  const approved = { ...card('TylerG'), approvalStatus: 'approved', approvedAt: '2026-09-22T19:00:00.000Z', approvedBy: 'zacb' };
+  for (const incoming of [{ approvedBy: 'Other.Manager' }, { approvedAt: '2026-09-21T00:00:00.000Z' }, { approvalStatus: 'approved', approvedBy: 'TylerG' }]) assert.throws(() => save(MANAGER, approved, incoming), refused, JSON.stringify(incoming));
+  const decided = save(MANAGER, card('Crew.One'), { approvalStatus: 'approved' });
+  assert.deepEqual(Object.keys(decided.history.at(-1).changes).filter(key => ['approvalStatus', 'approvedBy', 'approvedAt'].includes(key)).sort(), ['approvalStatus', 'approvedAt', 'approvedBy']);
+});
+
+test('a card typed as a near-variant of one\'s own username is still one\'s own', () => {
+  for (const employee of ['TylerG​', ' tylerg ', 'Tyler G', 'TYLERG﻿']) assert.throws(() => save(MANAGER, card(employee), { approvalStatus: 'approved' }), refused, JSON.stringify(employee));
+  assert.equal(save(MANAGER, card('TylerG2'), { approvalStatus: 'approved' }).approvedBy, 'TylerG', 'a different username is someone else (the remaining alias case is noted in the PR)');
+});

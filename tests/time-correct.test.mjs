@@ -120,7 +120,8 @@ test('a correction sets clock-in, clock-out and breaks inside a real shift, reco
   // Hours on the card count every break out (as before); payroll pays the rest break (timesheet-week.js).
   assert.equal(corrected.hours, 9);
   const entry = corrected.history.at(-1);
-  assert.deepEqual([entry.action, entry.reason, Object.keys(entry.changes).sort()], ['manager_time_correction', 'Started early; lunch ran long', ['approvalStatus', 'breaks', 'clockInAt', 'clockOutAt']]);
+  assert.deepEqual([entry.action, entry.reason, Object.keys(entry.changes).sort()], ['manager_time_correction', 'Started early; lunch ran long', ['approvalStatus', 'approvedAt', 'approvedBy', 'breaks', 'clockInAt', 'clockOutAt']]);
+  // NO-SELF-APPROVAL follow-up: the audit also records the approver being cleared as the card returns to pending.
   // Segments are only ever trimmed, never stretched: the half hours before the first segment and after the work segment
   // (which ended at the old 16:00 clock-out) are time with no job segment, and the card needs no review.
   const time = employeeJobTime(corrected, NOW);
