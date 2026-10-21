@@ -545,39 +545,54 @@ export async function releaseHeldHandoffs(store, actor, now = new Date().toISOSt
   const { released, waiting, more } = await releaseHeldPage(store, actor, now, await compositeState(env), { source, requestId: approvalRequest, limit });
   return { released, waiting, more };
 }
-// One bounded page of held jobs after the id `after` (store.heldJobIds(limit + 1, after), in id order): next is the last
-// id this page read, where the following page starts.
-async function releaseHeldPage(store, actor, now, pricing, { source, requestId: approvalRequest = '', limit = HELD_RELEASE_LIMIT, after = '' }) {
-  const ids = [...new Set(await store.heldJobIds(limit + 1, after))], page = ids.slice(0, limit), released = [];
-  let waiting = 0;
+// One bounded page of held jobs after the id `after` (store.heldJobIds(limit + 1, after), in id order). A job whose read
+// fails waits, like one still unapproved; failed: the ids of jobs that passed the gate but whose release did not commit.
+// budget (optional, {left}): the storage calls this page may still make (Cloudflare caps an invocation's subrequests):
+// the query costs one, each job a read and, when it passes, a commit; the page stops before a job that might not fit
+// (stopped). next: the last id this page finished, where the following page starts.
+async function releaseHeldPage(store, actor, now, pricing, { source, requestId: approvalRequest = '', limit = HELD_RELEASE_LIMIT, after = '', budget = null }) {
+  const spend = cost => { if (budget) budget.left -= cost; };
+  const released = [], failed = [];
+  let waiting = 0, next = after;
+  if (budget && budget.left < 3) return { released, failed, waiting, more: true, next, stopped: true };
+  spend(1);
+  const ids = [...new Set(await store.heldJobIds(limit + 1, after))], page = ids.slice(0, limit);
   for (const id of page) {
-    const job = safeId(id) ? await store.read('jobs', id) : null;
+    if (budget && budget.left < 2) return { released, failed, waiting, more: true, next, stopped: true };
+    spend(1);
+    let job = null;
+    try { job = safeId(id) ? await store.read('jobs', id) : null; } catch { job = undefined; }
+    next = id;
+    if (job === undefined) { waiting++; continue; }
     if (!job || !plain(job.pricesPendingApproval)) continue;
     if (!operational(job) || CLOSED_STATES.includes(state(job)) || !plain(job.compositeQuote) || typeof job.revision !== 'string' || !job.revision) { waiting++; continue; }
     try { releaseGate(job, pricing); } catch { waiting++; continue; }
+    spend(1);
     try { await store.commit([{ collection: 'jobs', id: job.id, revision: job.revision, patch: releasePatch(job, actor, now, { source, requestId: approvalRequest, gate: 'approved_prices' }) }]); released.push(job.id); }
-    catch { waiting++; }
+    catch { waiting++; failed.push(job.id); }
   }
-  return { released, waiting, more: ids.length > limit, next: page.at(-1) || '' };
+  return { released, failed, waiting, more: ids.length > limit, next, stopped: false };
 }
 
-/** EGC_QUOTE_BUILDER_ENABLED: every held job, page by page (HELD_RELEASE_LIMIT each, in id order), so jobs that keep
- * waiting never starve the ones after them; at most maxPages pages per run. Used after a pricing-menu change, when no
- * owner approval is saved (POST /api/held-jobs: the menu file's own approvals, e.g. the truck loads of 2026-10-21) and
- * by the owner's Release held jobs button. complete: every held job was checked (false: the page limit stopped the run).
- * => {released:[jobId], waiting:int, complete:boolean} or null with the builder off. */
-export const HELD_RELEASE_MAX_PAGES = 40;
-export async function releaseAllHeldHandoffs(store, actor, now = new Date().toISOString(), { env = {}, compositeState = compositeStateDefault, source = 'menu.version', requestId = '', limit = HELD_RELEASE_LIMIT, maxPages = HELD_RELEASE_MAX_PAGES } = {}) {
+/** EGC_QUOTE_BUILDER_ENABLED: the held jobs after the id `after`, page by page (HELD_RELEASE_LIMIT each, in id order), so
+ * jobs that keep waiting never starve the ones after them. Used after a pricing-menu change, when no owner approval is
+ * saved (POST /api/held-jobs: the menu file's own approvals, e.g. the truck loads of 2026-10-21) and by the owner's
+ * Release held jobs button. budget: the storage calls the run may make (HELD_SUBREQUEST_BUDGET, under Cloudflare's 50
+ * per invocation with the route's own reads); a run that reaches it stops cleanly and answers where to continue (next).
+ * complete: every held job after `after` was checked; failed: jobs that passed the gate but did not commit (they stay
+ * held). => {released:[jobId], failed:[jobId], waiting:int, complete:boolean, next} or null with the builder off. */
+export const HELD_SUBREQUEST_BUDGET = 40;
+export async function releaseAllHeldHandoffs(store, actor, now = new Date().toISOString(), { env = {}, compositeState = compositeStateDefault, source = 'menu.version', requestId = '', limit = HELD_RELEASE_LIMIT, after = '', budget = HELD_SUBREQUEST_BUDGET } = {}) {
   if (!quoteBuilderEnabled(env)) return null;
-  const pricing = await compositeState(env), released = [];
-  let waiting = 0, after = '';
-  for (let pages = 0; pages < maxPages; pages++) {
-    const page = await releaseHeldPage(store, actor, now, pricing, { source, requestId, limit, after });
-    released.push(...page.released); waiting += page.waiting;
-    if (!page.more || !page.next) return { released, waiting, complete: true };
-    after = page.next;
+  const pricing = await compositeState(env), left = { left: budget }, released = [], failed = [];
+  let waiting = 0, cursor = after;
+  for (;;) {
+    const page = await releaseHeldPage(store, actor, now, pricing, { source, requestId, limit, after: cursor, budget: left });
+    released.push(...page.released); failed.push(...page.failed); waiting += page.waiting;
+    if (page.stopped) return { released, failed, waiting, complete: false, next: page.next };
+    if (!page.more || !page.next || page.next === cursor) return { released, failed, waiting, complete: true, next: '' };
+    cursor = page.next;
   }
-  return { released, waiting, complete: false };
 }
 
 /** options.checkouts(job) (the API passes quote-draft expireStaleCheckout): a

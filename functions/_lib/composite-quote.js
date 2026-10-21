@@ -713,22 +713,25 @@ function purchaseList(lines) {
 // is refused unless requireLabor is false (a job the customer already signed that way: it keeps the earlier rules) or the
 // quote is junk-only (D-JUNK: it has no Labor line; an unsent one that still has one is saved again first).
 // signed: the breakdown is a signed job's, whose labor keeps the rate and line it was signed at (laborBlock).
-// The customer keeps the price signed (owner decision 2026-10-21, with the $1,000 truck): on a signed job (signed) a line
-// passes once its item is owner-approved, at the amount signed, whatever amount the owner approved, as the signed labor
-// rate does. A draft price is never released by this: its item must be approved first.
+// The customer keeps the price signed (owner decision 2026-10-21, with the $1,000 truck), but never pays more than the
+// owner approved: on a signed job (signed) a line passes once its item is owner-approved at the signed amount or more
+// ($750 signed, $1,000 approved), as the signed labor rate does. A line signed above the approved amount (a draft
+// placeholder the owner approved lower, e.g. a cleaning base priced with hauling) stays held until the customer signs
+// the rebuilt quote. A draft price is never released by this: its item must be approved first.
 function approvalOf(lines, prices, state, labor, { requireLabor = true, signed = false } = {}) {
   const junk = junkOnly(lines);
   const blocked = lines.filter(line => {
     const price = prices.get(line.id);
-    if (signed && price?.approved) return false;
+    if (signed && price?.approved && line.unitCents <= price.unitCents) return false;
     return !price || !price.approved || price.unitCents !== line.unitCents;
   }).map(line => {
     const price = prices.get(line.id);
-    // resave (an unsent quote only; a signed line with an approved item passed above): the item is owner-approved at another
+    // resave (an unsent quote only; a signed job is never saved again): the item is owner-approved at another
     // amount (the owner changed the price, e.g. the $1,000 truck), so the estimator saves the quote again; nothing waits
     // for the owner (crew/quote-draft.js held()).
-    return { id: line.id, name: line.name, unitCents: line.unitCents, ...(price?.approved ? { resave: true } : {}),
+    return { id: line.id, name: line.name, unitCents: line.unitCents, ...(price?.approved && !signed ? { resave: true } : {}),
       reason: !price ? `${line.name} is no longer on the pricing menu. Rebuild the quote before sending.`
+        : price.approved && signed ? `The owner approved ${money(price.unitCents)} for ${line.name}, less than the ${money(line.unitCents)} the customer signed. The customer is never charged more than the approved price: rebuild the quote and have the customer sign it again.`
         : price.approved ? `The owner approved ${money(price.unitCents)} for ${line.name}, but this quote has ${money(line.unitCents)}. Save the quote again to use the approved price.`
           : `${line.name}: ${price.reason.charAt(0).toLowerCase()}${price.reason.slice(1)}` };
   });

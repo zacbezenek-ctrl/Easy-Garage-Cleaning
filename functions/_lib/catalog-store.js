@@ -15,8 +15,9 @@
  *                                  is the owner's answer to the builder's installation question, stored once it is given;
  *                                  laborRatePerManHourCents is the owner's labor rate for the builder's Labor line, stored
  *                                  once the owner changes it ($53.00, DEFAULT_LABOR_RATE_CENTS, until then; composite-quote.js)
- *   pricingMenuApprovals/heldRelease  {menuVersion, releasedAt, releasedBy, released}: the pricing-menu version whose held
- *                                  jobs were last released (functions/api/held-jobs.js)
+ *   pricingMenuApprovals/heldRelease  {menuVersion, releasedAt, releasedBy, released, sweepVersion, sweepAfter, sweepRetry}:
+ *                                  the pricing-menu version whose held jobs were all checked, and where an unfinished
+ *                                  sweep continues (functions/api/held-jobs.js)
  * With no pointer the seed catalog (functions/_data/garage-catalog.json) is the published catalog, and with
  * no settings document the placeholder defaults apply (mustSetBeforeCustomerUse: true, internal use only).
  * A stored record that is malformed or fails verification fails closed (503) and never falls back to a seed.

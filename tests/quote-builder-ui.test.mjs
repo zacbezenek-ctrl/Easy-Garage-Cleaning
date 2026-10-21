@@ -668,6 +668,25 @@ test('a draft saved under the $750 truck and sent under the $1,000 truck says to
   assert.match(h.text(), /Send EST-JOB1 revision 1 to Synthetic Customer/, 'saved at $1,000, it goes to the send confirmation');
 });
 
+// A held quote with both kinds: the owner's draft price waits for the owner, the changed truck price is the estimator's.
+test('a $750 draft that also has a draft price says the owner approves the draft price and the estimator re-saves the changed truck price', async () => {
+  const h = harness(), menuAt750 = structuredClone(menuDoc);
+  menuAt750.services.find(item => item.basis?.kind === 'junk' && item.basis.fraction === 1).approvedPriceCents = 75000;
+  h.server.state.menu = menuAt750;
+  approveAll(h.server.state, [[shelf, 11570]]);
+  await toReview(h);
+  h.button('Save draft').click(); await flush();
+  assert.match(h.text(), /Sending is blocked until the owner approves this price/, 'only the mattress waits at $750');
+  h.button('Done').click();
+  h.server.state.menu = menuDoc;
+  h.open(memoryStorage()); await flush();
+  h.button('Send saved quote').click(); await flush();
+  assert.match(h.text(), /Sending is blocked until the owner approves the draft prices below and you save the quote again:/);
+  assert.match(h.text(), /The owner approved \$1,000\.00 for Full truck load, but this quote has \$750\.00\./);
+  assert.match(h.text(), /A price the owner changed since this quote was saved \(and any Labor or installation reason\) is yours to fix, with no owner approval needed: choose Edit quote/);
+  assert.deepEqual(h.footer(), ['Done', 'Edit quote']);
+});
+
 // money-1 / flow-2: the estimate has no install time for most storage goods; the review says which, and the quote is
 // sent only once the estimator set the man-hours by hand (or the owner says installation is in the goods price).
 test('goods the estimate cannot time are named on the review step, and the quote is sent only after the man-hours are set by hand', async () => {

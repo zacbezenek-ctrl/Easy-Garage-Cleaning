@@ -5,7 +5,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
-import { priceCompositeQuote } from '../functions/_lib/composite-quote.js';
+import { compositeApproval, priceCompositeQuote } from '../functions/_lib/composite-quote.js';
 import { releaseAllHeldHandoffs, saveWalkthroughHandoff } from '../functions/_lib/walkthrough-handoff.js';
 import { HELD_QUERY_MAX, countHeldJobs, heldJobIds, heldJobsQuery } from '../functions/_lib/handoff-price-holds.js';
 import { HELD_RELEASE_MARKER, heldJobsHandlers } from '../functions/api/held-jobs.js';
@@ -57,26 +57,73 @@ test('a job held only on a half load is released after the deploy, with no owner
   assert.deepEqual([again.ran, again.held, again.released, f.calls.length], [false, 0, [], commits]);
 });
 
-test('the sweep pages past the 25-job read limit, so jobs that keep waiting never starve the rest, and records the version only after a complete run', async () => {
+// Cloudflare caps an invocation's subrequests (50 on the Free plan): a run stops cleanly at its budget, records where,
+// and the next open continues from there; the menu version is recorded only after the pass that checked every job.
+test('the sweep pages past the 25-job read limit and stops at its subrequest budget, so the next open continues and jobs that keep waiting never starve the rest', async () => {
   const f = fixture(), half = await signHalfLoad(f);
   // 30 held jobs ahead of it in id order that never pass (walkthrough-priced quotes the owner releases from the job).
   const waiting = { ...structuredClone(half), compositeQuote: undefined, pricesPendingApproval: { ...half.pricesPendingApproval, reason: 'walkthrough_priced' } };
   for (let i = 0; i < 30; i++) f.rows.set(`jobs/a-held-${String(i).padStart(2, '0')}`, { ...structuredClone(waiting), id: `a-held-${String(i).padStart(2, '0')}`, revision: `ar${i}` });
   f.rows.set('jobs/z-half', { ...structuredClone(half), id: 'z-half', revision: 'zr' });
   f.rows.delete(`jobs/${half.id}`);
-  const reads = [], store = heldStore(f, reads);
-  // Cut short (one page), nothing after the first 25 is checked and the run is not complete.
-  const short = await releaseAllHeldHandoffs(store, owner, LATER, { env: ON_ENV, compositeState: async () => builderState(), maxPages: 1 });
-  assert.deepEqual(short, { released: [], waiting: 25, complete: false });
-  // The sweep through the API reads every page: the half-load job, 31st in id order, is released.
-  const catalog = catalogStore(), handlers = heldJobsHandlers({ session: async () => owner, storage: () => catalog, held: () => store, compositeState: async () => builderState(), now: () => new Date(LATER) });
+  const reads = [], store = heldStore(f, reads), version = builderState().menu.menuVersion;
+  // The library on its own: the default budget reads both pages (26 + 7 storage calls) and releases the 31st job.
+  const all = await releaseAllHeldHandoffs(store, owner, LATER, { env: ON_ENV, compositeState: async () => builderState(), source: 'menu.version' });
+  assert.deepEqual([all.released, all.waiting, all.complete, reads], [['z-half'], 30, true, [[26, ''], [26, 'a-held-24']]]);
+  f.rows.set('jobs/z-half', { ...structuredClone(half), id: 'z-half', revision: 'zr2' });
+  // Through the API with a budget of 20: the first open checks 18 jobs (the query and 18 reads), stops and records where.
+  const catalog = catalogStore(), handlers = heldJobsHandlers({ session: async () => owner, storage: () => catalog, held: () => store, compositeState: async () => builderState(), budget: 20, now: () => new Date(LATER) });
   reads.length = 0;
-  const swept = await (await post(handlers, { action: 'sweep' })).json();
-  assert.deepEqual([swept.ran, swept.released, swept.held, swept.more], [true, ['z-half'], 30, false]);
-  assert.deepEqual(reads, [[26, ''], [26, 'a-held-24']], 'a second page after the 25th id');
+  const first = await (await post(handlers, { action: 'sweep' })).json();
+  const marker = () => catalog.rows.get(`pricingMenuApprovals/${HELD_RELEASE_MARKER}`);
+  assert.deepEqual([first.ran, first.released, first.held, first.more, marker().menuVersion, marker().sweepVersion, marker().sweepAfter], [true, [], 18, true, undefined, version, 'a-held-17']);
+  // The next open continues after the 18th job, releases the half-load job and records the version.
+  const second = await (await post(handlers, { action: 'sweep' })).json();
+  assert.deepEqual([second.ran, second.released, second.held, second.more, marker().menuVersion, marker().sweepAfter], [true, ['z-half'], 30, false, version, '']);
+  assert.deepEqual(reads.slice(0, 2), [[26, ''], [26, 'a-held-17']], 'the second open starts after the 18th id');
   assert.equal(f.job('z-half').pricesPendingApproval, null);
-  // The count after: 30 still held.
+  // After that, opens only count.
+  const third = await (await post(handlers, { action: 'sweep' })).json();
+  assert.deepEqual([third.ran, third.held], [false, 30]);
   assert.deepEqual(await countHeldJobs(store), { count: 30, more: false });
+});
+
+test('a job read that fails waits and the run goes on; a release that does not commit is tried again before the version is recorded', async () => {
+  const f = fixture(), half = await signHalfLoad(f), version = builderState().menu.menuVersion;
+  f.rows.set('jobs/a-broken', { ...structuredClone(half), id: 'a-broken', revision: 'br' });
+  let commitFails = true;
+  const base = heldStore(f), store = { ...base,
+    read: async (collection, id) => { if (id === 'a-broken') throw Object.assign(new Error('incomplete'), { code: 'dispatch_storage_incomplete' }); return base.read(collection, id); },
+    commit: async writes => { if (commitFails && writes.some(write => write.id === half.id)) throw new Error('unavailable'); return base.commit(writes); } };
+  const catalog = catalogStore(), handlers = heldJobsHandlers({ session: async () => owner, storage: () => catalog, held: () => store, compositeState: async () => builderState(), now: () => new Date(LATER) });
+  const marker = () => catalog.rows.get(`pricingMenuApprovals/${HELD_RELEASE_MARKER}`);
+  const first = await (await post(handlers, { action: 'sweep' })).json();
+  assert.deepEqual([first.ran, first.released, first.held, marker().menuVersion, marker().sweepVersion, marker().sweepAfter], [true, [], 2, undefined, version, ''], 'the unreadable job waits; the failed release keeps the version open');
+  commitFails = false;
+  const second = await (await post(handlers, { action: 'sweep' })).json();
+  assert.deepEqual([second.released, second.held, marker().menuVersion], [[half.id], 1, version]);
+});
+
+// The customer keeps the price signed but is never charged more than the owner approved (owner decision 2026-10-21).
+test('a signed draft price above the amount the owner approves stays held, and the sweep does not release it', async () => {
+  const f = fixture(), mattress = menuItem('Mattress');
+  const state = builderState(), priced = priceCompositeQuote(state, selection({ removal: [pick('Full truck load'), pick('Mattress')], shelving: [], storage: [], labor: { manHours: null, fullness: 'medium' } }), { complete: true });
+  const quote = { composite_pricing: priced.compositePricing, line_items: signedLines(priced), catalog_version: priced.menuVersion, total: priced.totalCents / 100 };
+  const saved = await saveWalkthroughHandoff(f.store, owner, { actorId: owner.user, requestId: randomUUID(), customerId: 'c1', sourceWalkthroughId: 'w1', sourceRevision: 'w1r', plan: signedPlan(1, { quote, total: quote.total }) }, NOW, { env: ON_ENV, compositeState: async () => state });
+  const job = f.job(saved.job.id);
+  assert.equal(job.compositeQuote.breakdown.lines.find(line => line.id === mattress.id).unitCents, 7000, 'signed at the $70 draft price');
+  // The owner approves the mattress at $60: the job stays held, with the reason, and is never told to save again.
+  const lower = builderState({ [mattress.id]: 6000 });
+  const approval = compositeApproval(job.compositeQuote.breakdown, lower, { signed: true });
+  assert.deepEqual(approval.blocked.map(row => [row.id, row.resave ?? null]), [[mattress.id, null]]);
+  assert.match(approval.blocked[0].reason, /^The owner approved \$60\.00 for Mattress, less than the \$70\.00 the customer signed\. The customer is never charged more than the approved price: rebuild the quote and have the customer sign it again\.$/);
+  assert.doesNotMatch(approval.blocked[0].reason, /no owner approval is needed|Save the quote again/);
+  const catalog = catalogStore(), handlers = heldJobsHandlers({ session: async () => owner, storage: () => catalog, held: () => heldStore(f), compositeState: async () => lower, now: () => new Date(LATER) });
+  const swept = await (await post(handlers, { action: 'sweep' })).json();
+  assert.deepEqual([swept.released, swept.held, f.job(job.id).pricesPendingApproval.status, f.job(job.id).customerPortalInvitationRequestedAt], [[], 1, 'pending', undefined]);
+  // Approved at $70 or more, it releases at the $70 signed.
+  const button = await (await heldJobsHandlers({ session: async () => owner, storage: () => catalog, held: () => heldStore(f), compositeState: async () => builderState({ [mattress.id]: 8000 }), now: () => new Date(LATER) }).post({ request: new Request('https://easygaragecleaning.com/api/held-jobs', { method: 'POST', headers: { Origin: 'https://easygaragecleaning.com', 'Content-Type': 'application/json' }, body: JSON.stringify({ action: 'release' }) }), env: ON_ENV })).json();
+  assert.deepEqual([button.released, f.job(job.id).total], [[job.id], 1070]);
 });
 
 test('a failed run records nothing, so the next open tries again; the owner\'s button runs it on demand; managers cannot press it; builder off answers nothing', async () => {
