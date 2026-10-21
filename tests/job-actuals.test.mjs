@@ -304,3 +304,11 @@ test('Complete records the crew lead\'s optional people × hours on site and tru
   assert.throws(() => complete({ truckLoads: 1.5 }), /truck loads/);
   assert.equal(jobActualsRow({ ...job, ...patch, estimate: { amount: 900 } }).actual.source, 'crew_lead');
 });
+
+test('the Hub sign-out clears the job-actuals edited keys even when the screen never loaded', async () => {
+  const { readFileSync } = await import('node:fs');
+  const suite = readFileSync(new URL('../employee-suite.js', import.meta.url), 'utf8'), screen = readFileSync(new URL('../employee-job-actuals.js', import.meta.url), 'utf8');
+  const prefix = /const EDITED='([^']+)'/.exec(screen)?.[1];
+  assert.equal(prefix, 'egc.jobactuals.edited.v1.');
+  assert.match(suite, /\['egc\.hub\.pending\.v1\.','egc\.jobactuals\.edited\.v1\.'\]\.some\(prefix=>String\(key\|\|''\)\.startsWith\(prefix\)\)\)sessionStorage\.removeItem\(key\)/);
+});

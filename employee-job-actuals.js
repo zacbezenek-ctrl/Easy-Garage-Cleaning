@@ -18,8 +18,9 @@ const SETTINGS=[
   {key:'goodsTaxBp',label:'Tax on goods purchases',unit:'%',help:'Sales tax EGC pays buying goods, e.g. 7.55.',kind:'percent'}];
 const LIMITS={wageCentsPerManHour:20000,workersCompBp:5000,payrollTaxBp:5000,burdenCentsPerManHour:10000,dumpFeeCentsPerLoad:500000,truckCentsPerJob:500000,goodsTaxBp:2500};
 const CHANNEL={direct_estimator:'Estimator 7%',appointment_setter:'Setter 13% + estimator 7%',door_sale:'Door sale 25%',junk_only:'Junk-only 0%',none:'None'};
-// Row reasons worth a word on the row; 'cost_settings_incomplete' is the ≤ mark and 'actual_hours_missing' the Actual cell.
-const REASON={revenue_unreconciled:'Revenue not final: refund or unbilled change',timecards_unavailable:'Timecards could not be read',timecards_incomplete:'Timecards incomplete (open shift or review)',crew_lead_exceeds_timecards:'Crew lead count used: above timecards',wage_unset:'No crew wage set',goods_unknown:'Goods unknown: no estimate lines',revenue_unknown:'Revenue unknown'};
+// Row reasons worth a word on the row. ≤ marks any upper bound; a blank setting (cost_settings_incomplete) is told by the
+// warning above the totals and 'actual_hours_missing' by the Actual cell, so neither repeats here.
+const REASON={loads_quoted:'Dump cost from quoted loads',loads_unknown:'Truck loads not recorded',revenue_unreconciled:'Revenue not final: refund or unbilled change',timecards_unavailable:'Timecards could not be read',timecards_incomplete:'Timecards incomplete (open shift or review)',crew_lead_exceeds_timecards:'Crew lead count used: above timecards',wage_unset:'No crew wage set',goods_unknown:'Goods unknown: no estimate lines',revenue_unknown:'Revenue unknown'};
 const SOURCE={timecards:'Timecards',crew_lead:'Crew lead',not_recorded:'Not recorded'};
 const S={host:null,ctx:null,data:null,error:null,loading:false,busy:false,pending:null,drafts:{},feedback:'',feedbackError:false,generation:0,showAll:false};
 const kit=()=>window.EGCHubKit;

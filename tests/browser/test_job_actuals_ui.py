@@ -120,7 +120,7 @@ class JobActualsScreenTests(unittest.TestCase):
         two_car = self.row(page, 'job-two-car')
         # 18 h × $12.365 = $222.57; goods $300 + 7.55% = $322.65; 3 loads × $65 = $195; truck $40: $4,214.00 − $780.22 = $3,433.78.
         # Every setting is entered, but the open shift keeps it an upper bound.
-        expect(two_car.locator('td[data-label="Gross margin"]')).to_have_text('$3,433.78 · 81.5% ≤Timecards incomplete (open shift or review)')
+        expect(two_car.locator('td[data-label="Gross margin"]')).to_have_text('$3,433.78 · 81.5% ≤Timecards incomplete (open shift or review)Dump cost from quoted loads')
         expect(self.row(page, 'job-one-car').locator('td[data-label="Gross margin"]')).not_to_contain_text('≤')
         self.assert_layout(page, phone=True)
         page.screenshot(path=str(RESULTS / 'job-actuals-390-settings.png'), full_page=True)
