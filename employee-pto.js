@@ -192,11 +192,13 @@ async function discardPending(deps){
   forget();deps.saved?.(null);
 }
 /** What this viewer may do with one request; the server enforces the same rules.
- * options: {manager, today (Denver YYYY-MM-DD), owned(row)} */
+ * options: {manager, today (Denver YYYY-MM-DD), owned(row), ownerAccount}. A manager's own request is approved, denied
+ * and repriced by someone else (NO-SELF-APPROVAL); only the owner's account decides its own. */
 function actionsFor(row,options){
   const status=state(row),manager=options?.manager===true,today=String(options?.today||''),own=manager||options?.owned?.(row)===true,start=String(row?.startDate||''),list=[];
   if(!validDate(today)||!own)return list;
-  if(status==='pending'){if(manager)list.push('approve','deny');list.push('cancel');}
+  const decides=manager&&!(options?.owned?.(row)===true&&options?.ownerAccount!==true);
+  if(status==='pending'){if(decides)list.push('approve','deny');list.push('cancel');}
   else if(status==='approved'&&row.type!=='time_off'){if(manager)list.push('cancel');}
   else if(status==='approved'&&validDate(start)){
     // Time off has started on its first day: from then on a manager ends it early instead of cancelling it.
@@ -204,7 +206,7 @@ function actionsFor(row,options){
     if(manager&&start<=today&&lastDay(row)>=today)list.push('end');
   }
   // What approved time off pays can be corrected at any time, as payroll allowed before the workflow.
-  if(manager&&status==='approved'&&row.type==='time_off')list.push('pay');
+  if(decides&&status==='approved'&&row.type==='time_off')list.push('pay');
   return list;
 }
 function deps(){const o=S.options||{};return{askAction:o.askAction,manager:o.manager===true,today:o.today,toast:o.toast,saved:o.saved};}

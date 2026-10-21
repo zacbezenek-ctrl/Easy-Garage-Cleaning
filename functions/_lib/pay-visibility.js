@@ -1,4 +1,5 @@
-import { can } from './staff-roles.js';
+import { can, capabilityRoleSet } from './staff-roles.js';
+import { hasBusinessAccess, isHubOwner } from './hub-session.js';
 
 // Pay and job labor dollars are owner-only by default (EGC_STAFF_PAY_OWNER_ONLY, on unless exactly "false"): only the
 // owner (the owner-only pay.manage capability, as /api/staff-directory already applies) sees other employees' pay and
@@ -28,9 +29,26 @@ export const PAY_WRITE_FIELDS = Object.freeze(['payType', 'hourlyRate', 'regular
 const READ_HIDDEN = Object.freeze([...new Set([...PAY_FIELDS, ...PAY_WRITE_FIELDS])]);
 
 export const staffPayOwnerOnly = env => env?.EGC_STAFF_PAY_OWNER_ONLY !== 'false';
-export const seesOthersPay = (session, env) => !staffPayOwnerOnly(env) || can(session, 'pay.manage', env);
-// Job labor dollars follow the same rule as other employees' pay.
-export const seesLaborCost = (session, env) => seesOthersPay(session, env);
+// Who sets pay: the owner (pay.manage), or every business user with the flag off. It also decides who downloads the
+// payroll CSV and who sees and enters job labor dollars, since those are entered where they are seen.
+const setsPay = (session, env) => !staffPayOwnerOnly(env) || can(session, 'pay.manage', env);
+// PAY-VIEW-GRANT (owner decision 2026-10-21): EGC_STAFF_PAY_VIEWERS, a comma-separated list of Hub usernames, lets the
+// owner show other employees' pay to named managers without turning the flag off for every business user. Viewing
+// only: the accounts listed see pay on profiles, timecards, time-off requests, the accounts list and /api/timesheets,
+// and never set pay, move a timecard, download the payroll CSV or Gusto file, or see job labor dollars. A listed account
+// needs business access and the Manager role (or is the owner); anyone else listed gets nothing. Unset: only the owner
+// sees pay.
+const payViewers = env => new Set(String(env?.EGC_STAFF_PAY_VIEWERS || '').split(',').map(name => name.trim().toLowerCase()).filter(Boolean));
+// The Manager role as can() reads it: stored roles when staff-role permissions decide, else the configured role.
+const managerRole = (session, env) => {
+  if (isHubOwner(session)) return true;
+  const roles = capabilityRoleSet(session, env);
+  return roles ? roles.includes('manager') || roles.includes('owner') : ['owner', 'manager'].includes(String(session?.role || ''));
+};
+export const payViewGranted = (session, env) => staffPayOwnerOnly(env) && hasBusinessAccess(session) && payViewers(env).has(String(session?.user || '').trim().toLowerCase()) && managerRole(session, env);
+export const seesOthersPay = (session, env) => setsPay(session, env) || payViewGranted(session, env);
+// Job labor dollars follow the rule for setting pay, not the view grant.
+export const seesLaborCost = (session, env) => setsPay(session, env);
 
 const same = (left, right) => String(left || '').trim().toLowerCase() === String(right || '').trim().toLowerCase();
 const record = value => value !== null && typeof value === 'object' && !Array.isArray(value);
@@ -61,7 +79,7 @@ export function visiblePay(session, env, collection, data) {
 // The PAY-TIMESHEETS names: payOwnerOnly is staffPayOwnerOnly, and canSeePay asks about one employee.
 export const payOwnerOnly = staffPayOwnerOnly;
 export const canSeePay = (session, env, subjectId) => seesOthersPay(session, env) || Boolean(String(subjectId || '').trim()) && same(subjectId, session?.user);
-export const canSetPay = (session, env) => seesOthersPay(session, env);
+export const canSetPay = (session, env) => setsPay(session, env);
 // A refused pay change, timecard move or payroll export (403 pay_owner_only).
 export const payChangeRefused = (message = 'Only the owner can change pay. Managers keep hours, approvals and paid time-off hours.') => Object.assign(new Error(message), { code: 'pay_owner_only', status: 403 });
 
@@ -72,10 +90,13 @@ const TOTAL_PAY = ['straightPay', 'overtimePremium', 'ptoPay', 'bonus', 'tips', 
 const without = (value, keys) => Object.fromEntries(Object.entries(value).filter(([key]) => !keys.includes(key)));
 
 /** The week as this viewer may see it. The owner, and everyone while the flag is off, get the same object back
- * (so those responses stay byte-identical). Anyone else loses the pay of every other employee: the row keeps its
- * hours, approvals and flags and says payHidden, and pay totals become null, not 0, when any row is hidden. */
+ * (so those responses stay byte-identical). An account granted pay viewing (EGC_STAFF_PAY_VIEWERS) gets the same pay
+ * with payVisibility 'view': it sees pay but downloads no payroll export. Anyone else loses the pay of every other
+ * employee: the row keeps its hours, approvals and flags and says payHidden, and pay totals become null, not 0, when
+ * any row is hidden. */
 export function timesheetPayView(session, env, week) {
-  if (seesOthersPay(session, env)) return week;
+  if (setsPay(session, env)) return week;
+  if (seesOthersPay(session, env)) return { ...week, payVisibility: 'view' };
   let hidden = false;
   const employees = week.employees.map(row => {
     if (canSeePay(session, env, row.employee)) return row;
