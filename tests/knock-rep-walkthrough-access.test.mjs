@@ -14,7 +14,7 @@ import { pricingConfigHandlers } from '../functions/api/pricing-config.js';
 import { dispatchHandlers } from '../functions/api/dispatch.js';
 import { customerResolveHandler } from '../functions/api/customer-resolve.js';
 import { createJobAssignmentAccess } from '../functions/_lib/job-assignment.js';
-import { SELF_WALKTHROUGH, selfRunVisit, selfWalkthroughSession } from '../functions/_lib/knock-self-walkthrough.js';
+import { SELF_RUN_DAYS, SELF_WALKTHROUGH, selfRunVisit, selfWalkthroughSession } from '../functions/_lib/knock-self-walkthrough.js';
 
 const ORIGIN = 'https://easygaragecleaning.com';
 const NOW = new Date('2026-10-17T15:00:00.000Z');
@@ -25,16 +25,16 @@ const selfRun = (repKey, extra = {}) => ({ source: 'door_to_door', d2d: { kind: 
 
 // w1: Rep Two's own self-run visit. w2: an estimator's ordinary visit. w3: another rep's self-run visit. w4: Rep Two's
 // self-run visit an estimator took over (reassigned).
-function world({ walkthroughSelf = true, status = 'active' } = {}) {
+function world({ walkthroughSelf = true, status = 'active', now = NOW, visit = {} } = {}) {
   const f = fixture(BRIDGE);
-  for (const [id, extra] of [['w1', selfRun('rep.two')], ['w3', selfRun('rep.three')], ['w4', selfRun('rep.two', { assignedCrew: ['sales.person'] })]]) f.rows.set(`jobs/${id}`, { ...f.rows.get(`jobs/${id}`), ...extra });
+  for (const [id, extra] of [['w1', selfRun('rep.two', visit)], ['w3', selfRun('rep.three')], ['w4', selfRun('rep.two', { assignedCrew: ['sales.person'] })]]) f.rows.set(`jobs/${id}`, { ...f.rows.get(`jobs/${id}`), ...extra });
   const roster = f.store.roster;
   const store = { ...f.store, roster: async () => [...await roster(), { id: 'rep.two', name: 'Rep Two', role: 'crew' }, { id: 'rep.three', name: 'Rep Three', role: 'crew' }] };
   const reps = { 'rep.two': { repKey: 'rep.two', status, walkthroughSelf }, 'rep.three': { repKey: 'rep.three', status: 'active', walkthroughSelf: true } };
   const knock = () => ({ get: async (collection, id) => collection === 'knock_reps' ? reps[id] || null : null });
   const walkthroughs = () => ({ read: id => store.read('jobs', id), walkthroughsOn: async date => (await store.jobs()).filter(job => job.date === date) });
   const visitStore = env => ({ ...store, env, assigned: (session, job) => createJobAssignmentAccess(env, session).assigned(job), activeShift: async () => null });
-  const deps = { session: async () => rep, knock, now: () => NOW };
+  const deps = { session: async () => rep, knock, now: () => now };
   return {
     f, store,
     handoff: handoffHandlers({ ...deps, storage: () => store, walkthroughs, compositeState: async () => { throw new Error('a walkthrough-priced handoff reads no builder state'); } }),
@@ -80,7 +80,11 @@ for (const [label, env] of ENVS) {
     assert.equal(signed.status, 200, JSON.stringify(signed.body));
     const job = [...w.f.rows.values()].find(row => row.type === 'job' && row.sourceWalkthroughId === 'w1');
     assert.ok(job, 'the signed job is saved from the rep\'s walkthrough');
-    assert.equal((await call(w.handoff.get, get(`/api/walkthrough-handoff?jobId=${job.id}`), env)).status, 200, 'and the job saved from it reopens');
+    // Signed: the right ends. No live record of the customer through the job, the visit or the quote reads.
+    assert.equal((await call(w.handoff.get, get(`/api/walkthrough-handoff?jobId=${job.id}`), env)).status, 403, 'the signed job is not the rep\'s to reopen');
+    assert.equal((await call(w.handoff.get, get('/api/walkthrough-handoff?sourceWalkthroughId=w1'), env)).status, 403);
+    assert.equal((await call(w.quotes.get, get(`/api/quote-draft?jobId=${job.id}`), env)).status, 403);
+    assert.equal((await lookup(w, env, 'w1')).status, 403);
     for (const n of [2, 3, 4]) assert.equal((await sign(w, env, n)).status, 403, `w${n} cannot be signed by the rep`);
     assert.equal((await sign(w, env, 1, { jobId: 'cq1' })).status, 403, 'a job of another walkthrough rides with no self-run request');
     assert.equal((await call(w.handoff.get, get('/api/walkthrough-handoff?view=crew_openings'), env)).status, 403, 'crew openings stay the estimator\'s');
@@ -91,32 +95,66 @@ for (const [label, env] of ENVS) {
     assert.equal(resolved.status, 403, JSON.stringify(resolved.body));
   });
 
-  test(`${label}: without Walkthroughs on (or inactive, or the bridge off) the rep\'s own visit stays closed`, async () => {
+  test(`${label}: without Walkthroughs on (or inactive, the bridge off, past the window, cancelled or lost) the rep\'s own visit stays closed`, async () => {
     for (const [why, w, e] of [['Walkthroughs off', world({ walkthroughSelf: false }), env], ['inactive', world({ status: 'inactive' }), env],
+      // The visit's date (2026-10-17) plus SELF_RUN_DAYS (3) is the last day: the 21st is past it.
+      ['past the cap', world({ now: new Date('2026-10-21T15:00:00.000Z') }), env], ['cancelled', world({ visit: { status: 'cancelled', pipelineStatus: 'cancelled' } }), env],
+      ['lost', world({ visit: { walkthroughOutcome: { outcome: 'not_interested' } } }), env],
       ['bridge off', world(), { ...env, EGC_KNOCK_JOB_BRIDGE: 'false' }]]) {
       assert.equal((await lookup(w, e, 'w1')).status, 403, why);
       assert.equal((await call(w.visit.get, get('/api/walkthrough-visit?visitId=w1'), e)).status, 403, why);
-      assert.equal((await call(w.quotes.get, get('/api/quote-draft?view=builder'), e)).status, 403, why);
-      assert.equal((await call(w.pricing.get, get('/api/pricing-config?parts=walkthrough'), e)).status, 403, why);
+      // The price menu (no customer in it) follows the switch, not the visit.
+      if (!['past the cap', 'cancelled', 'lost'].includes(why)) {
+        assert.equal((await call(w.quotes.get, get('/api/quote-draft?view=builder'), e)).status, 403, why);
+        assert.equal((await call(w.pricing.get, get('/api/pricing-config?parts=walkthrough'), e)).status, 403, why);
+      }
+      assert.equal((await call(w.handoff.get, get('/api/walkthrough-handoff?sourceWalkthroughId=w1'), e)).status, 403, why);
       assert.equal((await sign(w, e, 1)).status, 403, why);
     }
   });
 }
 
 test('the grant is the server\'s own: one visit, never a session field a browser can send', async () => {
-  const visit = { id: 'w1', type: 'walkthrough', ...selfRun('rep.two') };
+  const visit = { id: 'w1', type: 'walkthrough', date: '2026-10-17', status: 'scheduled', ...selfRun('rep.two') };
   assert.equal(selfRunVisit(visit, rep), true);
   assert.equal(selfRunVisit({ ...visit, d2d: { ...visit.d2d, selfRun: false } }, rep), false);
   assert.equal(selfRunVisit({ ...visit, source: 'website' }, rep), false);
   assert.equal(selfRunVisit({ ...visit, assignedCrew: ['rep.two', 'sales.person'] }, rep), false);
   const knock = { get: async () => ({ status: 'active', walkthroughSelf: true }) }, jobs = { w1: visit, w2: { id: 'w2', type: 'walkthrough', assignedCrew: ['rep.two'] } };
   const readJob = id => jobs[id] || null;
-  const granted = await selfWalkthroughSession(rep, BRIDGE, ['w1'], { readJob, knock });
+  const granted = await selfWalkthroughSession(rep, BRIDGE, ['w1'], { readJob, knock, now: NOW });
   assert.equal(granted[SELF_WALKTHROUGH], 'w1');
   assert.equal(JSON.stringify(granted), JSON.stringify(rep), 'nothing of the grant serializes');
-  for (const ids of [['w1', 'w2'], ['w2'], [], ['../w1']]) assert.equal(await selfWalkthroughSession(rep, BRIDGE, ids, { readJob, knock }), rep, JSON.stringify(ids));
+  for (const ids of [['w1', 'w2'], ['w2'], [], ['../w1']]) assert.equal(await selfWalkthroughSession(rep, BRIDGE, ids, { readJob, knock, now: NOW }), rep, JSON.stringify(ids));
   // A session that already runs walkthroughs is left as it is.
-  assert.equal(await selfWalkthroughSession(rep, BRIDGE, ['w1'], { readJob, knock, performer: () => true }), rep);
+  assert.equal(await selfWalkthroughSession(rep, BRIDGE, ['w1'], { readJob, knock, now: NOW, performer: () => true }), rep);
+  // Nothing is read for a session without the right.
+  const reads = [];
+  await selfWalkthroughSession(rep, BRIDGE, ['w1'], { readJob: id => { reads.push(id); return jobs[id]; }, knock: { get: async () => ({ status: 'active', walkthroughSelf: false }) }, now: NOW });
+  assert.deepEqual(reads, []);
+});
+
+test('the right is time-limited: the open visit and its unsigned draft, never past SELF_RUN_DAYS after the visit, never once signed or sent', async () => {
+  const knock = { get: async () => ({ status: 'active', walkthroughSelf: true }) };
+  const visit = { id: 'w1', type: 'walkthrough', date: '2026-10-17', status: 'scheduled', ...selfRun('rep.two') };
+  const draft = { id: 'd1', type: 'job', status: 'draft', sourceWalkthroughId: 'w1', quoteDraft: { status: 'draft' } };
+  const grant = async (rows, id, now = NOW) => (await selfWalkthroughSession(rep, BRIDGE, [id], { readJob: key => rows[key] || null, knock, now }))[SELF_WALKTHROUGH] || '';
+  assert.equal(await grant({ w1: visit }, 'w1'), 'w1', 'before signing: the visit');
+  assert.equal(await grant({ w1: visit, d1: draft }, 'd1'), 'w1', 'before signing: the draft saved from it');
+  assert.equal(await grant({ w1: visit }, 'w1', new Date('2026-10-20T23:00:00.000Z')), 'w1', 'the last day of the window (Denver)');
+  for (const [why, rows, id, now] of [
+    ['past the cap', { w1: visit }, 'w1', new Date('2026-10-21T07:00:00.000Z')],
+    ['draft past the cap', { w1: visit, d1: draft }, 'd1', new Date('2026-10-21T07:00:00.000Z')],
+    ['visit converted by the signed handoff', { w1: { ...visit, convertedJobId: 'j1' } }, 'w1'],
+    ['job signed', { w1: visit, d1: { ...draft, acceptance: { recordedBy: 'rep.two' }, handoffRequestId: 'r1' } }, 'd1'],
+    ['quote sent', { w1: visit, d1: { ...draft, quoteDraft: { sentAt: '2026-10-17T16:00:00Z' } } }, 'd1'],
+    ['cancelled visit', { w1: { ...visit, status: 'cancelled' } }, 'w1'],
+    ['draft of a cancelled visit', { w1: { ...visit, pipelineStatus: 'cancelled' }, d1: draft }, 'd1'],
+    ['no-show', { w1: { ...visit, walkthroughOutcome: { outcome: 'customer_no_show' } } }, 'w1'],
+    ['no date', { w1: { ...visit, date: '' } }, 'w1'],
+  ]) assert.equal(await grant(rows, id, now), '', why);
+  // A Finish recording the sale keeps it open for the signature.
+  assert.equal(await grant({ w1: { ...visit, walkthroughOutcome: { outcome: 'sold_on_site' } } }, 'w1'), 'w1');
 });
 
 test('the walkthrough page opens for a rep without a walkthrough role only when the server answers selfRun for the visit in its address', async () => {

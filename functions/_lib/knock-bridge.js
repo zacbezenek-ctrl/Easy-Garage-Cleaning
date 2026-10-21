@@ -551,7 +551,8 @@ async function adoptSavedJob(kstore, store, sale, now) {
 
 function walkthroughMessage(booking) {
   if (booking.status === 'booked' && booking.selfRun === true) return 'Your walkthrough is ready: open it and walk the garage with the customer.';
-  if (booking.selfRunDeclined === EXISTING_CUSTOMER) return 'This customer is already in the Hub, so the office sends an estimator.' +
+  // One wording for every reason, so it never tells the rep whether the customer was already known.
+  if (booking.selfRunDeclined) return 'An estimator will do this one.' +
     (booking.status === 'booked' ? ` Booked: ${dayLabel(booking.date)}, ${clockLabel(booking.time)} with ${booking.estimator || 'the estimator'}` : ' The office will set the time.');
   if (booking.status === 'booked') return `Walkthrough booked: ${dayLabel(booking.date)}, ${clockLabel(booking.time)} with ${booking.estimator || 'the estimator'}`;
   if (booking.status === 'requested') return 'Walkthrough request sent: the office will set the time';
@@ -615,7 +616,9 @@ async function bookWalkthroughVisit(store, record, { env, now, confirmed = false
   // (knownCustomers: an owner, a manager, an estimator). A Knock-only rep's match on an existing customer gets an
   // estimator, and their phone learns nothing about that customer.
   const declined = record.selfRun === true && selfKey && !created && !knownCustomers;
-  const outcome = booked => declined ? { ...booked, selfRunDeclined: EXISTING_CUSTOMER, message: walkthroughMessage({ ...booked, selfRunDeclined: EXISTING_CUSTOMER }) } : booked;
+  // Any "do it now" that ends with an estimator (declined here, or the Hub refused the rep's own booking) reads the same.
+  const declinedWhy = declined ? EXISTING_CUSTOMER : record.selfRun === true && selfKey ? 'not_booked' : '';
+  const outcome = booked => declinedWhy ? { ...booked, selfRunDeclined: declinedWhy, message: walkthroughMessage({ ...booked, selfRunDeclined: declinedWhy }) } : booked;
   const roster = await store.roster(), ids = estimatorIds(roster, env, record.repKey);
   const today = denverToday(now), date = validDate(requested.date) && requested.date >= today ? requested.date : today;
   const time = TIME.test(String(requested.time || '')) ? requested.time : requested.part === 'pm' ? '13:00' : WALKTHROUGH_DAY.start;

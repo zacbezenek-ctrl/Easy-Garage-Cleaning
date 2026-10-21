@@ -322,9 +322,12 @@ and every sync answer and record is as before. Code: `functions/_lib/knock-bridg
   self-run visit (`d2d.selfRun`, assigned to them alone) or the job its handoff saved, and never give Dispatch,
   customer lookups, crew openings, other visits or a place in the estimator pool. A self-run visit is booked only for a
   customer that booking created: when the door's phone or email links a customer the Hub already had, a Knock-only
-  rep's walkthrough goes to an estimator ("This customer is already in the Hub, so the office sends an estimator") and
+  rep's walkthrough goes to an estimator ("An estimator will do this one.", the same words as any other "do it now" that ends with an estimator, so it never says whether the customer was known) and
   the answer carries nothing stored about that customer (`EXISTING_CUSTOMER`); owners, managers and estimators, who
   see customers anyway, still self-run. Every switch change is kept in `walkthroughSelfLog` (newest last, capped).
+  The right lasts only while the walkthrough is under way (`selfRunOpen`, `selfRunDraft`): the visit until it is
+  converted by the signed handoff, cancelled or lost, the job saved from it until it is signed or sent, and never past
+  `SELF_RUN_DAYS` (3) after the visit's date; after that the rep gets a refusal, never the live customer record.
   Not covered: the audio recorder and walkthrough notes, so on these walkthroughs the rep types notes at Finish. The door and a `walkthrough` event with `selfRun: true`, today and the tapped time,
   are sent at once; the bridge books the Hub visit to the rep (no openings search; `bookSelfRun`) and answers
   `selfRun` with the Hub walkthrough id, and the phone opens `/crew/gameplan?walkthroughId=…` on it (the full builder

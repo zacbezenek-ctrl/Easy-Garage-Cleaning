@@ -59,7 +59,7 @@ const stripeFor = env => { const secret = stripeSecretKey(env); return secret ? 
 // REP-WALKTHROUGH: a Knock rep with Walkthroughs on quotes their own self-run walkthrough: the price menu and previews
 // (no job), and a request naming only that visit (sourceWalkthroughId) or the job saved from it (jobId) as its quote
 // author (knock-self-walkthrough.js). Anything else is refused as before.
-const ownWalkthrough = (actor, env, store, knock, ids) => selfWalkthroughSession(actor, env, ids, { readJob: id => store().read('jobs', id), knock: knock(env), performer: person => quoteAuthorAccess(person, env).author });
+const ownWalkthrough = (actor, env, store, knock, ids, at) => selfWalkthroughSession(actor, env, ids, { readJob: id => store().read('jobs', id), knock: knock(env), performer: person => quoteAuthorAccess(person, env).author, now: at });
 const MENU_ACTIONS = new Set(['catalog_preview', 'composite_preview']);
 
 export function quoteDraftHandlers({ session = getHubSession, storage = dispatchStorage, now = () => new Date(), delivery = (env, store) => createEstimateReadyDelivery({ store, env, clock: now }), stripe = stripeFor,
@@ -76,7 +76,7 @@ export function quoteDraftHandlers({ session = getHubSession, storage = dispatch
         }
         const builder = quoteBuilderEnabled(env) && params.get('view') === 'builder' && [...params.keys()].length === 1;
         const access = builder && !quoteAuthorAccess(actor, env).author && await walkthroughRep(actor, env, knock(env)) ? { dispatcher: false, author: true } : null;
-        const viewer = access || builder ? actor : await ownWalkthrough(actor, env, () => storage(env), knock, params.getAll('jobId'));
+        const viewer = access || builder ? actor : await ownWalkthrough(actor, env, () => storage(env), knock, params.getAll('jobId'), now());
         const rights = access || requireQuoteAuthor(viewer, env);
         if ([...params.keys()].length !== new Set(params.keys()).size) return reply(400, { ok: false, code: 'quote_draft_invalid_request', error: 'The quote lookup is invalid.' });
         if (builder) {
@@ -97,7 +97,7 @@ export function quoteDraftHandlers({ session = getHubSession, storage = dispatch
         let body; try { body = JSON.parse(raw); } catch { return reply(400, { ok: false, code: 'quote_draft_json_invalid', error: 'The quote request is incomplete.' }); }
         if (!body || typeof body !== 'object' || Array.isArray(body)) return reply(400, { ok: false, code: 'quote_draft_invalid_request', error: 'The quote request is incomplete.' });
         const { action, ...input } = body, store = storage(env), at = now().toISOString();
-        const actor = rep && MENU_ACTIONS.has(action) ? signedIn : await ownWalkthrough(signedIn, env, () => store, knock, [input.jobId, input.sourceWalkthroughId]);
+        const actor = rep && MENU_ACTIONS.has(action) ? signedIn : await ownWalkthrough(signedIn, env, () => store, knock, [input.jobId, input.sourceWalkthroughId], now());
         if (!(rep && MENU_ACTIONS.has(action))) requireQuoteAuthor(actor, env);
         if (action === 'catalog_preview') {
           if (Object.keys(input).some(key => key !== 'catalogPricing')) return reply(400, { ok: false, code: 'quote_draft_invalid_request', error: 'Preview one catalog selection at a time.' });

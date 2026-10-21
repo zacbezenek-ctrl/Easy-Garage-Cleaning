@@ -118,7 +118,8 @@ test('privacy: a Knock-only rep\'s "do it now" on a customer the Hub already has
   assert.equal(booked.status, 200, JSON.stringify(booked.body));
   assert.equal(booked.body.booking.selfRun, undefined);
   assert.equal(booked.body.booking.walkthroughId, undefined, 'no visit id to open');
-  assert.match(booked.body.booking.message, /already in the Hub, so the office sends an estimator/);
+  assert.match(booked.body.booking.message, /^An estimator will do this one\. /);
+  assert.doesNotMatch(booked.body.booking.message, /already|customer|Hub/i, 'never says the customer was known');
   const answer = JSON.stringify(booked.body);
   for (const stored of ['Synthetic 2904', 'kim@example.invalid', '2904', known[0].id, 'customer_']) assert.ok(!answer.includes(stored), `the answer never carries ${stored}`);
   // The visit is an estimator's, carries no self-run mark, and the rep's walkthrough right never opens it.
