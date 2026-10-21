@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createHubSessionCookie } from '../functions/_lib/hub-session.js';
 import { onRequestGet, onRequestPost } from '../functions/api/employee-hub.js';
+import { commitAsPatch } from './helpers/commit-as-patch.mjs';
 
 const endpoint = 'https://easygaragecleaning.com/api/employee-hub';
 const env = {
@@ -18,7 +19,7 @@ const completed = {
 function fixture(t, conflictStatus = 412) {
   const documents = new Map(), patches = [], queries = [];
   let revision = 0, hold = null, rejectWrites = false, omitVersion = false, conflicts = 0;
-  t.mock.method(globalThis, 'fetch', async (input, options = {}) => {
+  t.mock.method(globalThis, 'fetch', commitAsPatch(async (input, options = {}) => {
     const url = new URL(input), method = options.method || 'GET';
     assert.equal(url.hostname, 'firestore.googleapis.com', 'all storage transport is mocked');
     const envelope = (id, doc) => { const result = { name: `projects/egcw-1ec83/databases/(default)/documents/jobs/${id}`, ...doc }; if (omitVersion) delete result.updateTime; return result; };
@@ -35,7 +36,7 @@ function fixture(t, conflictStatus = 412) {
       documents.set(id, { ...JSON.parse(options.body), updateTime: `2026-09-07T00:00:00.${String(++revision).padStart(9, '0')}Z` });
     }
     return documents.has(id) ? Response.json(envelope(id, documents.get(id))) : Response.json({}, { status: 404 });
-  });
+  }));
   return {
     documents, patches, queries, conflicts: () => conflicts,
     rejectWrites: () => { rejectWrites = true; }, omitVersion: () => { omitVersion = true; },

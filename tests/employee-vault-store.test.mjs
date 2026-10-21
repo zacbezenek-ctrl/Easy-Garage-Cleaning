@@ -13,6 +13,7 @@ import * as employeeAccounts from '../functions/api/employee-accounts.js';
 import { onRequestGet as gustoAuthGet } from '../functions/api/gusto-auth.js';
 import { createGustoSyncHandlers } from '../functions/api/gusto-sync.js';
 import { matchesWhere } from './helpers/firestore-query.mjs';
+import { commitAsPatch } from './helpers/commit-as-patch.mjs';
 
 const NOW = '2026-09-22T12:00:00.000Z';
 const SECRET = 'vault-store-test-data-key';
@@ -67,7 +68,7 @@ async function legacyOpen(secret, documentId, iv, payload) {
 function firestore(t, seed = {}) {
   const docs = new Map(Object.entries(seed)), requests = [], store = { docs, requests, familyQuery: null };
   let revision = 0;
-  t.mock.method(globalThis, 'fetch', async (input, options = {}) => {
+  t.mock.method(globalThis, 'fetch', commitAsPatch(async (input, options = {}) => {
     const url = new URL(input), method = options.method || 'GET';
     requests.push({ url, method, body: options.body ? JSON.parse(options.body) : null });
     assert.equal(url.hostname, 'firestore.googleapis.com');
@@ -86,7 +87,7 @@ function firestore(t, seed = {}) {
       docs.set(path, { ...JSON.parse(options.body), updateTime: `2026-09-22T12:00:01.${String(++revision).padStart(6, '0')}Z` });
     }
     return docs.has(path) ? Response.json({ name: `${ROOT}/${path}`, ...docs.get(path) }) : Response.json({}, { status: 404 });
-  });
+  }));
   return store;
 }
 
@@ -327,11 +328,11 @@ test('writeOne keeps the sealed document shape, create-only and revision precond
 
   const target = await readOne(env, 'profiles', 'crew.one');
   assert.deepEqual(expectedDocument(target), { updateTime: target.updateTime });
-  // Each write is followed by its family's revision mark (vaultSnapshot); the record's own PATCH carries the precondition.
+  // writeOne sends the record and its family's revision mark as one commit (vaultSnapshot); commitAsPatch replays the
+  // record here as the PATCH, with the commit's precondition, that this fake models.
   const lastPatch = () => store.requests.findLast(request => request.method === 'PATCH');
   await writeOne(env, 'profiles', 'crew.one', { ...target.data, phone: '9705550100' }, target, NOW);
   assert.equal(lastPatch().url.searchParams.get('currentDocument.updateTime'), target.updateTime);
-  assert.deepEqual(store.requests.at(-1).body.writes.map(write => write.updateMask.fieldPaths), [['profiles']]);
   await assert.rejects(writeOne(env, 'profiles', 'crew.one', { ...target.data, phone: 'stale' }, target, NOW), error => error.code === 'EMPLOYEE_HUB_WRITE_CONFLICT');
   assert.equal((await readOne(env, 'profiles', 'crew.one')).data.phone, '9705550100');
 

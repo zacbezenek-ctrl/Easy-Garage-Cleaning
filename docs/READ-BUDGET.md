@@ -90,17 +90,19 @@ Arithmetic for each row:
 1. **Employee Hub vault snapshot** (`functions/_lib/employee-vault.js` `vaultSnapshot`, used by
    `functions/api/employee-hub.js` GET). The Hub poll used to read every sealed record ever saved. Now:
    - Every vault write sets its family's field in `employee_vault_revisions/current` to a fresh random value.
-     `commitVaultDocuments` and timecard commits do it inside the record's own atomic commit. `writeOne` does it right
-     after its PATCH, after a lost reply too, and tries a failed mark once more. A replayed chat message that writes
-     nothing still marks its family, so a save that landed unmarked shows on the next poll.
+     `writeOne`, `commitVaultDocuments` and timecard commits all write the record and the mark in **one atomic
+     commit**. A saved record is never left unmarked: not after a lost reply, not when the client disconnects, and not
+     when the commit is refused, which saves and marks nothing. A replayed chat message that writes nothing still
+     marks its family, so a save an older deployment left unmarked during the rollout shows on the next poll.
    - A poll reads that one document first. A family unchanged since this isolate (or this data center's Cache API
      copy) last read it, within 15 minutes, is answered from the sealed documents that read returned, decrypted again.
    - Answers are byte-for-byte the whole-vault read's answers (tested), and fail closed the same way.
    - Only ciphertext is cached, never decrypted payroll or personal data.
-   - A mark that fails twice forgets this isolate's copy, refuses older data-center copies and deletes the
-     data-center copy of the revision it knew. An isolate that never read that family can still serve the unchanged
-     revision for up to 15 minutes; this is the one remaining window.
-   - Writes made outside the code (console edits, an older deployment still serving) show within 15 minutes.
+   - Every isolate, and every data center, sees the new revision on its next poll, because the mark is in Firestore.
+     Tests cover two separate isolates sharing one data-center cache.
+   - If the replay mark itself fails, this isolate forgets its copy.
+   - Writes made outside these paths (console edits, or an older deployment still serving during the rollout) show
+     within 15 minutes.
    - Until the first write creates the revision document, and with `EGC_EMPLOYEE_VAULT_QUERY=legacy`, the Hub reads
      exactly as before.
    - No new index is needed. Firestore rules deny the new collection to browsers (catch-all deny).

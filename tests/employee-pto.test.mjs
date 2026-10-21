@@ -10,6 +10,7 @@ import { employeePtoHandlers } from '../functions/api/employee-pto.js';
 import { onRequestPost as employeeHubPost } from '../functions/api/employee-hub.js';
 import { computeTimesheetWeek, ptoFromRequests } from '../functions/_lib/timesheet-week.js';
 import { matchesWhere } from './helpers/firestore-query.mjs';
+import { commitAsPatch } from './helpers/commit-as-patch.mjs';
 
 const NOW = '2026-09-22T12:00:00.000Z';
 const crew = {user:'Crew.One',displayName:'Crew One',role:'crew'};
@@ -618,7 +619,7 @@ const ROOT = 'projects/egcw-1ec83/databases/(default)/documents';
 function firestore(t, seed = {}) {
   const docs = new Map(Object.entries(seed)), calls = [];
   let revision = 0;
-  t.mock.method(globalThis,'fetch',async (input, options = {}) => {
+  t.mock.method(globalThis,'fetch',commitAsPatch(async (input, options = {}) => {
     const url = new URL(input), method = options.method || 'GET';
     calls.push({url,method});assert.equal(url.hostname,'firestore.googleapis.com');
     if (url.pathname.endsWith('/documents:runQuery')) {
@@ -633,7 +634,7 @@ function firestore(t, seed = {}) {
       docs.set(path,{...JSON.parse(options.body),updateTime:`2026-09-22T12:00:01.${String(++revision).padStart(6,'0')}Z`});
     }
     return docs.has(path) ? Response.json({name:`${ROOT}/${path}`,...docs.get(path)}) : Response.json({},{status:404});
-  });
+  }));
   return {docs,calls};
 }
 

@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { vaultFirestore, staffEnv, cookieFor, jsonRequest, ROOT } from './helpers/vault-fixture.mjs';
-import { commitVaultDocuments, forgetVaultSnapshots, opaqueId, sealedFields, VAULT_SNAPSHOT_MAX_AGE_MS, writeOne } from '../functions/_lib/employee-vault.js';
+import { commitVaultDocuments, firestoreDoc, forgetVaultSnapshots, opaqueId, seal, sealedFields, VAULT_SNAPSHOT_MAX_AGE_MS, writeOne } from '../functions/_lib/employee-vault.js';
 import { encodeFirestoreFields } from '../functions/_lib/firestore-job.js';
 import { onRequestGet, onRequestPost } from '../functions/api/employee-hub.js';
 
@@ -109,20 +109,6 @@ test('after the snapshot age (fifteen minutes) every family is read again, even 
   assert.equal((await meter.measure(async () => answer(await get(env, owner)))).reads, 1 + VAULT_DOCS + EMPTY_FAMILIES + ACCOUNTS);
 });
 
-// Revision commits refused (or swallowed) while `on()` is true; record writes still apply.
-function marks(t, { swallow = false } = {}) {
-  const inner = globalThis.fetch;
-  let on = false, refused = 0;
-  t.mock.method(globalThis, 'fetch', async (input, options = {}) => {
-    const body = new URL(String(input)).pathname.endsWith(':commit') ? JSON.parse(options.body) : null;
-    if (on && body?.writes.every(write => write.update.name.endsWith('/employee_vault_revisions/current'))) {
-      refused++;
-      return swallow ? Response.json({ writeResults: [{ updateTime: NOW }] }) : Response.json({ error: { status: 'UNAVAILABLE' } }, { status: 503 });
-    }
-    return inner(input, options);
-  });
-  return { set: value => { on = value; }, refused: () => refused };
-}
 function dataCenterCache(t) {
   const entries = new Map();
   const cache = { match: async key => entries.has(key) ? new Response(entries.get(key)) : undefined, put: async (key, response) => { entries.set(key, await response.text()); }, delete: async key => entries.delete(key) };
@@ -132,71 +118,70 @@ function dataCenterCache(t) {
 }
 const announcements = async (env, cookie) => (await answer(await get(env, cookie))).collections.announcements.length;
 
-test('a revision mark that fails once is tried again, so the write is marked like any other', async t => {
-  const { store, env, owner } = await world(t);
-  dataCenterCache(t);
-  await answer(await get(env, owner));
-  store.hooks.commitStatus = 503; // the record's PATCH saves; its first revision commit is refused, the retry lands
-  const before = store.revisions.length;
-  await writeOne(env, 'announcements', 'announcement-new', { body: 'Synthetic late notice', status: 'active' }, null, NOW);
-  assert.equal(store.hooks.commitStatus, 0);
-  assert.deepEqual(store.revisions.slice(before).map(write => write.updateMask.fieldPaths), [['announcements']]);
-  t.mock.timers.tick(60000);
-  assert.equal(await announcements(env, owner), HISTORY.announcements + 1);
-});
-
-test('a revision mark that keeps failing forgets this isolate\'s copy and the data center\'s, so the next poll shows the write', async t => {
-  const { env, owner } = await world(t);
-  const entries = dataCenterCache(t), failing = marks(t);
-  assert.equal(await announcements(env, owner), HISTORY.announcements);
-  const cached = [...entries.keys()].filter(key => key.includes('/announcements/'));
-  assert.equal(cached.length, 1);
-  failing.set(true);
-  await writeOne(env, 'announcements', 'announcement-new', { body: 'Synthetic late notice', status: 'active' }, null, NOW);
-  failing.set(false);
-  assert.equal(failing.refused(), 2, 'tried twice');
-  assert.equal(entries.has(cached[0]), false, 'the data center copy of the revision it knew is deleted');
-  for (const tick of [60000, 14 * 60000]) {
-    t.mock.timers.tick(tick);
-    assert.equal(await announcements(env, owner), HISTORY.announcements + 1);
-  }
-  // A copy another isolate cached before the failed mark (the same, unchanged revision) is refused here too.
-  forgetVaultSnapshots();
-  assert.equal(await announcements(env, owner), HISTORY.announcements + 1);
-});
-
-test('a save whose reply is lost still marks its family, so the next poll shows it', async t => {
+test('writeOne saves the record and its family\'s mark in one commit, so a lost reply leaves nothing unmarked', async t => {
   const { store, env, owner } = await world(t);
   await answer(await get(env, owner));
-  const inner = globalThis.fetch;
+  const inner = globalThis.fetch, sent = [];
   let lose = true;
   t.mock.method(globalThis, 'fetch', async (input, options = {}) => {
     const response = await inner(input, options);
-    if (lose && options.method === 'PATCH') { lose = false; throw new TypeError('Synthetic lost reply after the PATCH applied'); }
+    if (new URL(String(input)).pathname.endsWith(':commit')) sent.push(JSON.parse(options.body).writes);
+    if (lose && sent.length) { lose = false; throw new TypeError('Synthetic lost reply after the commit applied'); }
     return response;
   });
-  const before = store.revisions.length;
   await assert.rejects(writeOne(env, 'announcements', 'announcement-lost', { body: 'Synthetic saved, reply lost', status: 'active' }, null, NOW), /lost reply/);
-  assert.deepEqual(store.revisions.slice(before).map(write => write.updateMask.fieldPaths), [['announcements']]);
+  assert.equal(sent.length, 1, 'one request');
+  assert.deepEqual(sent[0].map(write => write.update.name.split('/documents/')[1].split('/')[0]), ['jobs', 'employee_vault_revisions']);
+  assert.deepEqual(sent[0][1].updateMask.fieldPaths, ['announcements']);
+  assert.equal(sent[0][0].currentDocument, undefined, 'an unguarded save stays unguarded');
   assert.equal(await announcements(env, owner), HISTORY.announcements + 1);
+  // A guarded save carries its precondition in the same commit; a refused one saves and marks nothing.
+  const before = store.revisions.length;
+  await assert.rejects(writeOne(env, 'announcements', 'announcement-lost', { body: 'Synthetic second create' }, { data: null }, NOW), error => error.code === 'EMPLOYEE_HUB_WRITE_CONFLICT');
+  assert.deepEqual(sent.at(-1)[0].currentDocument, { exists: false });
+  assert.equal(store.revisions.length, before);
 });
 
-test('a replayed chat message that is already saved marks its family, so a save that landed unmarked shows on the next poll', async t => {
+test('a manager\'s approval on one isolate shows on another warm isolate\'s next poll', async t => {
+  const { env, owner, crew } = await world(t);
+  const { isolate } = await import('./helpers/isolates.mjs');
+  const [A, B] = await Promise.all([isolate('a', 'functions/api/employee-hub.js'), isolate('b', 'functions/api/employee-hub.js')]);
+  assert.notEqual(A.onRequestGet, B.onRequestGet, 'separate module copies');
+  dataCenterCache(t);
+  const shift = { employee: 'Crew.Static', employeeName: 'Synthetic Static Crew', clockInAt: '2026-09-22T14:00:00.000Z', clockOutAt: '2026-09-22T17:00:00.000Z', status: 'submitted', approvalStatus: 'pending', hours: 3 };
+  await writeOne(env, 'timeEntries', 'time-crew-static-review', shift, null, NOW);
+  const status = async () => {
+    const response = await B.onRequestGet({ env, request: new Request('https://easygaragecleaning.com/api/employee-hub', { headers: { Cookie: crew } }) });
+    return (await answer(response)).collections.timeEntries.find(row => row.id === 'time-crew-static-review')?.approvalStatus;
+  };
+  assert.equal(await status(), 'pending');
+  // Firestore refuses any mark sent on its own: a save must carry its mark in its own commit to show on B.
+  const inner = globalThis.fetch;
+  t.mock.method(globalThis, 'fetch', async (input, options = {}) => {
+    const writes = new URL(String(input)).pathname.endsWith(':commit') ? JSON.parse(options.body).writes : null;
+    if (writes?.every(write => write.update.name.endsWith('/employee_vault_revisions/current'))) return Response.json({ error: { status: 'UNAVAILABLE' } }, { status: 503 });
+    return inner(input, options);
+  });
+  const approved = await A.onRequestPost({ env, request: jsonRequest('/api/employee-hub', { collection: 'timeEntries', id: 'time-crew-static-review', data: { ...shift, approvalStatus: 'approved' } }, owner) });
+  assert.equal(approved.status, 200, await approved.clone().text());
+  t.mock.timers.tick(60000);
+  assert.equal(await status(), 'approved');
+});
+
+test('a replayed chat message that is already saved marks its family, so a save an older deployment left unmarked shows on the next poll', async t => {
   const { store, env, owner, crew } = await world(t);
   await answer(await get(env, owner));
   await answer(await get(env, crew, '?view=messages'));
-  const requestId = '6f1c2d3e-4b5a-4c6d-8e7f-9a0b1c2d3e4f';
-  const message = { collection: 'teamMessages', id: 'message-crew-replayed', requestId, data: { id: 'message-crew-replayed', body: 'Synthetic replayed note', sender: 'Crew.Static', createdAt: NOW, updatedAt: NOW, status: 'active' } };
-  // An older deployment (or a cancelled request) saved the message without its mark.
-  const swallowed = marks(t, { swallow: true });
-  swallowed.set(true);
-  assert.equal((await post(env, crew, message)).status, 200);
-  swallowed.set(false);
-  const shows = async (cookie, query) => (await answer(await get(env, cookie, query))).collections.teamMessages.some(row => row.id === 'message-crew-replayed');
+  const id = 'message-crew-replayed', requestId = '6f1c2d3e-4b5a-4c6d-8e7f-9a0b1c2d3e4f';
+  const data = { id, body: 'Synthetic replayed note', sender: 'Crew.Static', createdAt: NOW, updatedAt: NOW, status: 'active', jobId: '' };
+  // An older deployment saved it with a bare PATCH: no revision mark.
+  const documentId = await opaqueId(env, 'teamMessages', id);
+  store.documents.set(`jobs/${documentId}`, { name: `${ROOT}/jobs/${documentId}`, fields: firestoreDoc('teamMessages', documentId, await seal(env, documentId, data), NOW).fields, updateTime: NOW });
+  const shows = async (cookie, query) => (await answer(await get(env, cookie, query))).collections.teamMessages.some(row => row.id === id);
   assert.equal(await shows(owner), false, 'unmarked: the snapshot still answers');
   // The device queue resends it: nothing new is written, but the family is marked.
   const commits = store.commits.length;
-  assert.equal((await post(env, crew, message)).status, 200);
+  assert.equal((await post(env, crew, { collection: 'teamMessages', id, requestId, data })).status, 200);
   assert.equal(store.commits.length, commits, 'no record write');
   assert.deepEqual(store.revisions.at(-1).updateMask.fieldPaths, ['teamMessages']);
   assert.equal(await shows(owner), true);

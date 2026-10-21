@@ -221,8 +221,8 @@ const familyWhere = collection => ({ compositeFilter: { op: 'AND', filters: [equ
 /* READ-BUDGET: the Hub polls /api/employee-hub every minute (chat every 15 seconds) and each poll read every sealed
    record of the families it shows: every timecard, message and read marker ever saved, so the bill grew with history.
    Every vault write now also sets its family's field in one revision document (employee_vault_revisions/current) to a
-   fresh random value: in the same atomic commit for commitVaultDocuments and timecard commits, right after writeOne's
-   PATCH (a lost reply included, a failed mark tried again; markVaultFamiliesChanged). A poll reads that one document first; a family whose value is unchanged since this isolate (or this
+   fresh random value, in the same atomic commit as the record (writeOne, commitVaultDocuments, timecard commits); a
+   replayed message that writes nothing marks its family on its own (markVaultFamiliesChanged). A poll reads that one document first; a family whose value is unchanged since this isolate (or this
    data center's cache) last read it, within fifteen minutes, is answered from the sealed documents that read returned and
    decrypted again, so a reused answer is exactly the stored one and fails closed the same way. Only ciphertext is kept,
    never decrypted records. Until the revision document exists (or when it cannot be read) the Hub reads as before; a
@@ -234,10 +234,10 @@ export const VAULT_REVISIONS = 'employee_vault_revisions';
 const REVISION_DOCUMENT = `${VAULT_REVISIONS}/current`;
 const REVISION_NAME = `projects/${PROJECT_ID}/databases/(default)/documents/${REVISION_DOCUMENT}`;
 const SNAPSHOT_CACHE = 'egc-employee-vault-snapshots-v1';
-const snapshots = new Map(), forgotten = new Map(), INDEX_REFUSED = Symbol('index refused');
+const snapshots = new Map(), INDEX_REFUSED = Symbol('index refused');
 
 /** Drops this isolate's copies, as a new isolate starts (tests; the data center cache is untouched). */
-export function forgetVaultSnapshots() { snapshots.clear(); forgotten.clear(); }
+export function forgetVaultSnapshots() { snapshots.clear(); }
 
 /** The commit write that marks these families changed (no precondition: it never conflicts with the records). */
 export function vaultRevisionWrite(families) {
@@ -246,34 +246,20 @@ export function vaultRevisionWrite(families) {
   return { update: { name: REVISION_NAME, fields: Object.fromEntries(names.map(name => [name, stringField(crypto.randomUUID())])) }, updateMask: { fieldPaths: names } };
 }
 
-/** Marks families changed after a write that could not carry the mark in its own commit (writeOne's PATCH, a replayed
- * save that writes nothing new). Never throws. A failed mark is tried once more; if that fails too, this isolate forgets
- * its copies and refuses any older data-center copy, and the data-center copy of the revision it knew is deleted; an
- * isolate that never read the family can still serve the unchanged revision within the snapshot age. */
+/** Marks families changed without a record write: a replayed message already saved, possibly by an older deployment
+ * that did not mark it. Never throws; a failed mark forgets this isolate's copies (others expire within the age). */
 export async function markVaultFamiliesChanged(env, families, fetcher = firestoreFetch) {
-  const names = [...new Set(families)].filter(name => EMPLOYEE_HUB_COLLECTIONS.has(name));
-  if (!names.length) return;
-  for (let attempt = 0; attempt < 2; attempt++) {
-    try {
-      const response = await fetcher(env, `${DOCUMENTS}:commit`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ writes: [vaultRevisionWrite(names)] }) });
-      if (response?.ok) return;
-    } catch { /* tried again, then forgotten */ }
-  }
-  const known = names.map(name => [name, snapshots.get(name)?.revision]).filter(([, revision]) => revision);
-  forgetFamilies(names);
-  const cache = await sharedCache();
-  for (const [name, revision] of cache ? known : []) {
-    try { await cache.delete(cacheKey(name, revision)); } catch { /* refused locally all the same */ }
-  }
+  const write = vaultRevisionWrite(families);
+  if (!write) return;
+  try {
+    const response = await fetcher(env, `${DOCUMENTS}:commit`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ writes: [write] }) });
+    if (response?.ok) return;
+  } catch { /* forgotten below */ }
+  forget(write);
 }
 
 // An unknown outcome may have written: forget this isolate's copies (others expire within the snapshot age).
-// A forgotten family also refuses the data center's copy read before then: that copy carries the same, unchanged revision.
-const forget = revision => forgetFamilies(revision?.updateMask.fieldPaths || []);
-function forgetFamilies(names) {
-  const at = Date.now();
-  for (const name of names) { snapshots.delete(name); forgotten.set(name, at); }
-}
+const forget = revision => { for (const name of revision?.updateMask.fieldPaths || []) snapshots.delete(name); };
 const families = writes => writes.filter(write => write.collection === 'jobs' && write.patch.recordType === EMPLOYEE_HUB_RECORD_TYPE).map(write => write.patch.employeeHubType);
 
 async function sharedCache() {
@@ -303,7 +289,7 @@ export async function vaultSnapshot(env, { now = () => Date.now() } = {}) {
     async family(collection) {
       const revision = revisionOf(collection);
       if (!revision) return null;
-      const at = now(), fresh = entry => entry && entry.revision === revision && at >= entry.at && at - entry.at < VAULT_SNAPSHOT_MAX_AGE_MS && entry.at > (forgotten.get(collection) ?? -Infinity);
+      const at = now(), fresh = entry => entry && entry.revision === revision && at >= entry.at && at - entry.at < VAULT_SNAPSHOT_MAX_AGE_MS;
       const local = snapshots.get(collection);
       if (fresh(local)) return local.rows;
       const cache = await sharedCache();
@@ -349,22 +335,22 @@ export async function writeOne(env, collection, id, data, expected = null, updat
   if (!EMPLOYEE_HUB_COLLECTIONS.has(collection)) throw unsupportedCollection();
   const documentId = await opaqueId(env, collection, id);
   const encrypted = await seal(env, documentId, { ...data, id, updatedAt: data.updatedAt || updatedAt });
-  const guardedUrl = new URL(`${DOCUMENTS}/jobs/${encodeURIComponent(documentId)}`);
+  let currentDocument = null;
   if (expected) {
-    if (!expected.data) guardedUrl.searchParams.set('currentDocument.exists', 'false');
-    else if (expected.updateTime) guardedUrl.searchParams.set('currentDocument.updateTime', expected.updateTime);
+    if (!expected.data) currentDocument = { exists: false };
+    else if (expected.updateTime) currentDocument = { updateTime: expected.updateTime };
     else throw unreadableStorage();
   }
-  // READ-BUDGET: the family is marked changed (vaultSnapshot) after every attempt that may have saved, a lost reply
-  // included; only a refused precondition, which saved nothing, is not marked.
-  let response;
-  try {
-    response = await firestoreFetch(env, guardedUrl, {
-      method: 'PATCH',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(firestoreDoc(collection, documentId, encrypted, updatedAt)),
-    });
-  } catch (error) { await markVaultFamiliesChanged(env, [collection]); throw error; }
+  // READ-BUDGET: the record (replacing the whole document) and its family's revision mark (vaultSnapshot) are one
+  // atomic commit: a saved record is never left unmarked, whatever happens to the reply or the request after it.
+  const response = await firestoreFetch(env, `${DOCUMENTS}:commit`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ writes: [
+      { update: { name: `projects/${PROJECT_ID}/databases/(default)/documents/jobs/${documentId}`, ...firestoreDoc(collection, documentId, encrypted, updatedAt) }, ...(currentDocument ? { currentDocument } : {}) },
+      vaultRevisionWrite([collection]),
+    ] }),
+  });
   if (!response.ok) {
     const failure = await response.json().catch(() => ({}));
     if (expected && ([409, 412].includes(response.status) ||
@@ -373,10 +359,8 @@ export async function writeOne(env, collection, id, data, expected = null, updat
       conflict.code = 'EMPLOYEE_HUB_WRITE_CONFLICT';
       throw conflict;
     }
-    await markVaultFamiliesChanged(env, [collection]);
     throw new Error(`Employee Hub storage write failed (${response.status})`);
   }
-  await markVaultFamiliesChanged(env, [collection]);
   return { ...data, id, updatedAt: data.updatedAt || updatedAt };
 }
 
