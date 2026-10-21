@@ -448,7 +448,11 @@ class DispatchCalendarTests(unittest.TestCase):
         for control in [self.page.get_by_role('button', name='Refresh door-to-door', exact=True), self.lane('Est One').locator('button.dc-open').first, self.page.get_by_role('button', name='Board', exact=True)]:
             self.assertGreaterEqual(control.bounding_box()['height'], 44)
         self.assertGreater(d2d.bounding_box()['y'], est_two['y']); self.page.screenshot(path=str(out/'dispatch-board-phone.png'), full_page=True)
-        self.page.get_by_role('button', name='Refresh door-to-door', exact=True).click(); expect(d2d).to_contain_text('Synthetic Rep'); self.assertEqual(len(self.d2d_gets), 2)
+        # The panel already names Synthetic Rep before the refresh, so the count waits for the refresh's own answer (the
+        # route records the GET before it answers), not for text that was on the page all along.
+        with self.page.expect_response(lambda response: urlparse(response.url).path == '/api/d2d-day'):
+            self.page.get_by_role('button', name='Refresh door-to-door', exact=True).click()
+        expect(d2d).to_contain_text('Synthetic Rep'); self.assertEqual(len(self.d2d_gets), 2)
 
     def test_board_door_to_door_is_hidden_when_off_and_never_asked_by_a_booker(self):
         self.board_fixture(); self.d2d = (404, {'ok': False, 'code': 'd2d_day_disabled', 'error': 'The door-to-door board is turned off.'})
