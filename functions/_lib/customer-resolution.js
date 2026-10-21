@@ -1,5 +1,7 @@
 import { requireDispatcher } from './dispatch-service.js';
 import { customerIdentityFields, customerSearchFields } from './customer-identity.js';
+import { customerRef, maskedCustomer } from './estimator-customer-access.js';
+import { namesAgree } from './knock-bridge.js';
 
 const plain=value=>value!==null&&typeof value==='object'&&!Array.isArray(value);
 const safeId=value=>typeof value==='string'&&/^[A-Za-z0-9_-]{1,180}$/.test(value)&&!/^(_egc_|secure_)/.test(value);
@@ -54,10 +56,14 @@ export async function verifiedHighLevelContact(env,id,fetcher=fetch){
 
 // authorize lets a verified quote author (P2-12) resolve the customer for a quote.
 // It may return {dispatcher:false} (requireQuoteAuthor): that caller gets masked().
-export async function resolveCustomer(store,session,input,{verifyContact,now=new Date().toISOString(),authorize=requireDispatcher}={}){
-  const access=authorize(session),view=access?.dispatcher===false?masked:project;
+// restricted (an estimator: estimator-customer-access.js restrictedAuthor) also gets no record id, only the
+// reference cref_<this request>, and an existing customer under a name that does not agree with the typed one is
+// refused for office review instead of being selected.
+export async function resolveCustomer(store,session,input,{verifyContact,now=new Date().toISOString(),authorize=requireDispatcher,restricted=false}={}){
+  const access=authorize(session);
   if(!plain(input)||Object.keys(input).some(key=>!['requestId','customer'].includes(key))||!/^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/i.test(input.requestId||''))throw fail('invalid_request','Customer resolution needs a unique request ID and customer details.');
   const requested=clean(input.customer),fingerprint=await hash({actor:session.user,input}),receiptId=input.requestId.toLowerCase();
+  const view=restricted?row=>maskedCustomer(row,customerRef(receiptId)):access?.dispatcher===false?masked:project;
   async function replay(){const receipt=await store.read('customerOperations',receiptId);if(!receipt)return null;if(receipt.fingerprint!==fingerprint)throw fail('idempotency_conflict','This request ID was already used for another customer. Keep the original request or refresh.',409);const customer=await store.read('customers',receipt.customerId);if(!customer||receipt.highlevelContactId&&customer.highlevelContactId!==receipt.highlevelContactId)throw fail('changed_since_operation','The customer link changed after it was saved. Ask a manager to review it.',409);return{ok:true,customer:view(customer),requestId:input.requestId,replayed:true,created:receipt.created,linked:receipt.linked};}
   const previous=await replay();if(previous)return previous;
   let wanted=requested;
@@ -76,6 +82,7 @@ export async function resolveCustomer(store,session,input,{verifyContact,now=new
     current=await store.read('customers',current.id);
     if(!current)throw fail('customer_changed','The customer changed during lookup. Retry the original request.',409);
     if(provider&&current.highlevelContactId&&current.highlevelContactId!==provider)throw fail('provider_link_conflict','These contact details belong to a different CRM-linked customer. Review the identity before booking.',409);
+    if(restricted&&current.createdBy!==session.user&&!namesAgree(current.name,wanted.name))throw fail('identity_review','This phone or email belongs to an existing customer under a different name. Ask the office to attach this quote to the right customer.',409);
     if(!exact.length&&((phone(wanted.phone)&&phone(current.phone)&&phone(wanted.phone)!==phone(current.phone))||(email(wanted.email)&&email(current.email)&&email(wanted.email)!==email(current.email))))throw fail('contact_conflict','The phone and email point to conflicting customer details. Review the customer before booking.',409);
   }
   const id=current?.id||(provider?'ghl_'+provider:'customer_'+(await hash({phone:phone(wanted.phone),email:email(wanted.email)})).slice(0,40));

@@ -284,8 +284,9 @@ const plan = (logistics = {}) => ({ client: { name: 'Synthetic Customer', phone:
 
 test('a sales handoff saves unassigned and flagged "Sold: needs crew"; its crew names are ignored with the flag on and refused with it off', async t => {
   const { env: base, cookies } = await staffSessions(t);
-  const handoff = async (user, env, logistics) => {
+  const handoff = async (user, env, logistics, { assigned = false } = {}) => {
     const store = memoryStore(env);
+    if (assigned) store.rows.get('jobs/walk-1').assignedCrew = [user];
     store.rows.set('projects/project_walk-1', { id: 'project_walk-1', revision: 'pr1', customerId: 'c1', sourceRecordId: 'walk-1', sourceWalkthroughId: 'walk-1', authority: 'employee_hub' });
     store.rows.delete('jobs/job-costed'); // one account root, so the sold job's lineage is unambiguous
     const session = await getHubSession(get(cookies[user], '/api/walkthrough-handoff'), env);
@@ -313,7 +314,8 @@ test('a sales handoff saves unassigned and flagged "Sold: needs crew"; its crew 
   const managed = await handoff('Mgr.Account', { ...base, ...ACCESS }, { assigned_to: 'Synthetic Crew One' });
   assert.deepEqual([managed.result.job.assignedCrew, managed.store.rows.get(`jobs/${managed.result.job.id}`).soldNeedsCrew], [['crew.one'], undefined]);
   // Flag off: sales with stored-role permissions keep QUOTE-DRAFT's refusal of crew names; phone cannot hand off.
-  const refused = await handoff('Sales.Account', { ...base, EGC_STAFF_ROLE_PERMISSIONS: 'true' }, { assigned_to: 'Synthetic Crew One' });
+  // (Without EGC_STAFF_ROLE_ACCESS sales are not bookers, so the walkthrough is their assigned one: estimator-customer-access.js.)
+  const refused = await handoff('Sales.Account', { ...base, EGC_STAFF_ROLE_PERMISSIONS: 'true' }, { assigned_to: 'Synthetic Crew One' }, { assigned: true });
   assert.equal(refused.error.code, 'handoff_crew_assignment_forbidden');
   const phone = await handoff('Phone.Account', { ...base, ...ACCESS }, {});
   assert.deepEqual([phone.error.code, phone.error.message], ['quote_forbidden', WALKTHROUGH_DENIAL]);
