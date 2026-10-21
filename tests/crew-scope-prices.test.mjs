@@ -149,11 +149,32 @@ test('a builder quote\'s shelving and storage packs are the brief\'s materials a
   for (const tool of ['Drill / driver', 'Stud finder', 'Level', 'Lag screws and anchors']) assert.ok(i.bringList.includes(tool), tool);
   assert.equal(checks.preJob.find(row => row.id === 'materials').detail, 'cleanout · HDX plastic shelving, 36×72×24 × 3 packs · HDX 27-gal totes, four-pack × 2 packs of 4');
   assert.match(checks.postJob.find(row => row.id === 'finish').detail, /HDX 27-gal totes, four-pack × 2 packs of 4/);
-  // Storage alone needs no install tools; without a builder quote the Finish step's counts are the materials, as before.
-  assert.equal(gameplan({ finish: ['cleanout'], shelfQty: 0, toteQty: 0, builderQuote: quote(goods.slice(1)) }).buildJobInstructions({}).bringList.includes('Drill / driver'), false);
+  // Updated deliberately (owner, 2026-10-19): storage goods (racks, hooks, cabinets) bring their install tools too, as
+  // shelving does; without a builder quote the Finish step's counts are the materials, as before. A quote whose goods
+  // carry no Finish group goes by its lines; the ladder is the one the bring list names everywhere, "Step ladder" (the
+  // integration of the catalog lane, whose overhead racks bring a step ladder: the crew sees one ladder, not two).
+  const storageKit = gameplan({ finish: ['cleanout'], shelfQty: 0, toteQty: 0, builderQuote: quote(goods.slice(1)) }).buildJobInstructions({}).bringList;
+  for (const tool of ['Step ladder', 'Drill / driver', 'Stud finder', 'Lag screws and anchors']) assert.ok(storageKit.includes(tool), `storage: ${tool}`);
+  assert.equal(storageKit.includes('Level'), false, 'only the tools the owner listed for storage');
+  assert.equal(storageKit.includes('Ladder'), false, 'one ladder name');
+  assert.equal(i.bringList.filter(tool => tool === 'Drill / driver').length, 1, 'shelving and storage together list each tool once');
+  assert.equal(gameplan({ finish: ['cleanout'], shelfQty: 0, toteQty: 0 }).buildJobInstructions({}).bringList.includes('Step ladder'), false, 'no builder goods, no install kit');
   const plain = gameplan(), instructions = plain.buildJobInstructions({});
   assert.deepEqual(Array.from(instructions.soldGoods), []);
   assert.match(plain.buildCrewBrief(instructions), /^MATERIALS: 2 metal shelf unit\(s\) · 3 tote\(s\)$/m);
+});
+
+// Items needed: the crew brief lists the goods the signed walkthrough sold (names and counts, never a price) and its bring list.
+test('the crew brief lists the goods sold and the walkthrough bring list, with every amount removed', () => {
+  const job = { id: 'job-items', type: 'job', status: 'scheduled', handoffVersion: 1, jobInstructions: { customerGoal: 'Park two cars', bringList: ['Hand truck / dolly', 'Ladder', 'Drill / driver'],
+    materials: [{ id: 'quote-shelving', name: 'Metal shelving unit', quantity: 4 }, { id: 'quote-hooks', name: 'Bike hooks (+$12)', quantity: 1 }, { id: 'bad', quantity: 2 }] } };
+  const brief = Object.fromEntries(fieldJobProjection(job).walkthroughBrief.map(row => [row.label, row.text]));
+  assert.equal(brief['Sold goods'], '4 × Metal shelving unit\nBike hooks');
+  assert.equal(brief.Bring, 'Hand truck / dolly\nLadder\nDrill / driver');
+  // A gameplan's soldGoods lines stand in when the brief has no materials; nothing listed, no block.
+  const listed = Object.fromEntries(crewJobProjection({ ...job, jobInstructions: { soldGoods: ['HDX shelving × 2 packs'] } }).walkthroughBrief.map(row => [row.label, row.text]));
+  assert.equal(listed['Sold goods'], 'HDX shelving × 2 packs'); assert.equal(listed.Bring, undefined);
+  assert.doesNotMatch(JSON.stringify(fieldJobProjection(job).walkthroughBrief), MONEY);
 });
 
 // In-memory dispatch store (tests/walkthrough-handoff.test.mjs fixture shape) with a mask-aware jobRecords scan.

@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
-import { ACCOUNTS, responses, seedDirectoryTarget, staffSessions } from './helpers/auth-roles-harness.mjs';
+import { ACCOUNTS, NOW, responses, seedDirectoryTarget, staffSessions } from './helpers/auth-roles-harness.mjs';
 
 // AUTH-ROLES: with EGC_STAFF_ROLE_ACCESS anything but exactly "true", every staff kind gets
 // byte-identical responses from every endpoint the role model governs (the staff directory's
@@ -27,7 +27,10 @@ const sha = text => createHash('sha256').update(text).digest('hex').slice(0, 16)
 // taken back out of each answer here, so every other byte still compares with the pre-AUTH-ROLES snapshot, which stays
 // as recorded. Anything else that changes still fails this test.
 const CATALOG_ADDITIONS = [['"team_lead",', ''], ['"team_lead":[],', ''], [',{"id":"door_to_door","label":"Door-to-door sales"}', ''], ['"2026-10-staff-skills-v2"', '"2026-09-staff-skills-v1"']];
-const withoutAdditions = body => CATALOG_ADDITIONS.reduce((text, [added, before]) => text.replaceAll(added, before), body);
+// STAFF-SESSION (owner decision, 2026-10-19): a Hub session lasts 7 days, renewed while used, instead of 12 hours, so the
+// session expiry /api/hub-auth reports (expiresAt) is 7 days after sign-in. Exactly that value is mapped back here.
+const SESSION_EXPIRY = [`"expiresAt":${Date.parse(NOW) + 7 * 24 * 60 * 60 * 1000}`, `"expiresAt":${Date.parse(NOW) + 12 * 60 * 60 * 1000}`];
+const withoutAdditions = body => [...CATALOG_ADDITIONS, SESSION_EXPIRY].reduce((text, [added, before]) => text.replaceAll(added, before), body);
 function render(matrix) {
   const bodies = new Map(), index = [];
   for (const [key, rows] of matrix) for (const [label, body] of rows) { bodies.set(sha(body), body); index.push(`${key} | ${label} | ${sha(body)}`); }

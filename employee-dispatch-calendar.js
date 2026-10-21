@@ -473,14 +473,18 @@ function shiftText(rep) {
   if (!shifts.length) return 'No shift recorded';
   return shifts.map(shift => (shift.endedAt ? denverClock(shift.startedAt)+' – '+denverClock(shift.endedAt)+(shift.autoEnded?' (ended when idle)':'') : 'Since '+denverClock(shift.startedAt))).join(', ');
 }
-function jobLink(k, job, label) {
-  const href=job.type==='walkthrough' ? '/crew/gameplan.html?walkthroughId='+encodeURIComponent(job.id) : '/crew/job.html?jobId='+encodeURIComponent(job.id);
+// A door-to-door job or walkthrough the board has loaded and that is still open opens in the Hub's own editor, as a card's
+// Edit / assign does, so the Hub is never left; any other opens its crew page at the clean URL (no .html redirect).
+function jobLink(k, S, job, label) {
+  const loaded=(S.data?.jobs||[]).find(row => row?.id===job.id);
+  if (loaded && k.active?.(loaded) && typeof k.openJob==='function') return k.btn(label,() => { if (S.pending || S.modal) return; k.openJob(loaded); },'subtle',{'data-d2d-open':job.id});
+  const href=job.type==='walkthrough' ? '/crew/gameplan?walkthroughId='+encodeURIComponent(job.id) : '/crew/job?jobId='+encodeURIComponent(job.id);
   return k.h('a',{class:'dc-d2d-link', href},label);
 }
 function d2dJobLine(k, S, job, label) {
   const {h, btn}=k, when=DATE.test(job.date||'') ? k.dateText(job.date,true)+(TIME.test(job.time||'')?', '+clock(job.time):'') : 'Not booked yet';
   return h('li',{},h('span',{},label+' · '+when+(job.status&&job.status!=='scheduled'?' · '+k.words(job.status):'')),
-    jobLink(k,job,job.type==='walkthrough'?'Open walkthrough':'Open job'),
+    jobLink(k,S,job,job.type==='walkthrough'?'Open walkthrough':'Open job'),
     DATE.test(job.date||'') && job.date!==S.date ? btn('Show '+k.dateText(job.date,true),() => k.show('board',job.date),'subtle',{'aria-label':'Show the board for '+k.dateText(job.date)}) : null);
 }
 function d2dPanel(k, S) {
@@ -608,7 +612,7 @@ function openSheet(item) {
   }
   const edit=inactive(job)?null:k.btn('Edit / assign',()=>{ if (S.pending || model.request) return; model.close(); k.openJob(job); });
   const rebook=k.rebookAction?.(job), again=rebook?k.btn('Rebook',()=>{ if (S.pending || model.request) return; model.close(); rebook.open(); },'primary',{'aria-label':rebook.label}):null;
-  const open=h('a',{class:'dp-btn',href:job.type==='walkthrough'?'/crew/gameplan.html?walkthroughId='+encodeURIComponent(job.id):'/crew/job.html?jobId='+encodeURIComponent(job.id)},job.type==='walkthrough'?'Open walkthrough':'Open job');
+  const open=h('a',{class:'dp-btn',href:job.type==='walkthrough'?'/crew/gameplan?walkthroughId='+encodeURIComponent(job.id):'/crew/job?jobId='+encodeURIComponent(job.id)},job.type==='walkthrough'?'Open walkthrough':'Open job');
   model.footer.append(...[k.btn('Back',model.close),open,edit,again].filter(Boolean));
 }
 

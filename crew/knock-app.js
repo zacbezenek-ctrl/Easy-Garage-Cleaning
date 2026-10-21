@@ -12,7 +12,9 @@ import { commissionRuleText, setterRuleText } from './knock-money.js';
 const VIEWER_KEY = 'egc-knock:viewer';
 const SIGNED_OUT_KEY = 'egc-knock:signed-out-at';
 const THEME_KEY = 'egc-knock:theme';
-const SESSION_HOURS = 12;
+// The phone's copy of who is signed in lasts as long as an unused Hub session (hub-session.js, STAFF-SESSION): 7 days
+// since this phone last reached the server signed in.
+const SESSION_HOURS = 7 * 24;
 
 const main = document.getElementById('knock-main');
 const tabs = document.getElementById('knock-tabs');
@@ -171,6 +173,18 @@ let syncTimer = 0;
 export function scheduleSync(delay = 0) {
   clearTimeout(syncTimer);
   syncTimer = setTimeout(() => { sync().catch(() => {}); }, delay);
+}
+
+// Sends what is queued now, waiting at most `wait` ms, for a tap that leaves Knock right after logging a door (an owner's
+// Start in-home walkthrough): the door reaches the server now, not the next time Knock opens on this phone.
+export async function syncBeforeLeaving(wait = 3000) {
+  const deadline = Date.now() + wait;
+  const sent = (async () => {
+    while (S.syncState === 'syncing' && Date.now() < deadline) await new Promise(resolve => setTimeout(resolve, 100));
+    clearTimeout(syncTimer);
+    await sync();
+  })();
+  await Promise.race([sent.catch(() => {}), new Promise(resolve => setTimeout(resolve, wait))]);
 }
 
 async function onSynced(response) {
@@ -566,7 +580,8 @@ function renderChrome() {
       h('span', { class: 'serif grow', style: { fontSize: '22px' } }, typeof screen.title === 'function' ? screen.title(S.route.params) : screen.title),
       syncPill);
   } else if (!top.querySelector('.wordmark')) {
-    mount(top, h('a', { class: 'wordmark', href: '/crew/knock.html#home' }, 'EGC ', h('em', {}, 'Knock')), syncPill);
+    // A hash link, so the wordmark goes Home in this page instead of loading Knock again.
+    mount(top, h('a', { class: 'wordmark', href: '#home' }, 'EGC ', h('em', {}, 'Knock')), syncPill);
   }
 
   const window = knockingWindow(S.ui.houseId ? S.houses.get(S.ui.houseId) : null);
@@ -770,6 +785,10 @@ function moreScreen() {
         h('span', { class: 'caption muted' }, { auto: 'Auto', light: 'Off', dark: 'On' }[theme]), icon('chevronRight')),
       h('button', { type: 'button', class: 'list-row', onclick: rulesSheet },
         h('span', { class: 'list-row__main' }, h('span', { class: 'list-row__title' }, 'Help & the rules'), h('span', { class: 'list-row__sub' }, 'Knocking hours, go-backs, commission')),
+        icon('chevronRight')),
+      // The crew hub (crew/index.html) links back here as Door-to-door; both use the same Hub sign-in.
+      h('a', { class: 'list-row', href: '/crew/' },
+        h('span', { class: 'list-row__main' }, h('span', { class: 'list-row__title' }, 'Crew home'), h('span', { class: 'list-row__sub' }, 'Time clock, schedule, pay and field tools')),
         icon('chevronRight'))),
     h('p', { class: 'caption muted center' }, 'EGC Knock 2.0 · Easy Garage Cleaning · Fort Collins, CO'));
 }
@@ -784,7 +803,7 @@ function cycleTheme() {
 
 /* ---------- the app object handed to screen modules ---------- */
 
-export const app = { S, api, go, render, registerScreen, enqueue, sync, scheduleSync, houseView, neighborhoodOf, cityRuleFor, currentShift, knockingWindow, saveUi, signOut, outboxApi: () => outbox, refreshPending, syncSummary, moreLinks: [],
+export const app = { S, api, go, render, registerScreen, enqueue, sync, scheduleSync, syncBeforeLeaving, houseView, neighborhoodOf, cityRuleFor, currentShift, knockingWindow, saveUi, signOut, outboxApi: () => outbox, refreshPending, syncSummary, moreLinks: [],
   startLocation, onPosition, locationBanner, territoryEmpty, myNeighborhoods, awayLabel, runBridges, queueBridges, bookingFor, fixers: {} };
 
 registerScreen('home', homeScreen, { tab: { label: 'Home', icon: 'home', order: 0 } });

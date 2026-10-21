@@ -42,7 +42,7 @@ function crewHome({ business = false, online = true, position = 'ok', withoutFix
       throw new Error(`Unexpected ${init.method || 'GET'} ${path}`);
     },
     EGCHubAuth: {
-      profile: () => ({ user: 'Crew.One', displayName: 'Synthetic Crew', businessAccess: business }), canRunBusiness: () => business, canRunWalkthrough: () => false, mountCrewNav() {},
+      profile: () => ({ user: 'Crew.One', displayName: 'Synthetic Crew', businessAccess: business }), canRunBusiness: () => business, canRunWalkthrough: () => false, canUseKnock: () => business, mountCrewNav() {},
       async fetch(path) {
         reads.push(path);
         if (path === '/api/crew-jobs') return Response.json({ ok: true, jobs: [] });

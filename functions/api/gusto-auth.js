@@ -1,4 +1,4 @@
-import { getHubSession, hasBusinessAccess, readCookie } from '../_lib/hub-session.js';
+import { getHubSession, hasBusinessAccess, hubSessionIdentity, readCookie } from '../_lib/hub-session.js';
 import { OWNER_USERNAME } from '../_lib/business-users.js';
 import { gustoConfiguration, gustoAuthorizationUrl, connectGustoAuthorization } from '../_lib/gusto-client.js';
 import { readGustoRecord, writeGustoRecord } from '../_lib/gusto-store.js';
@@ -14,8 +14,10 @@ function sameOrigin(request) {
 }
 function isOwner(session) { return session?.user?.toLowerCase() === OWNER_USERNAME && session.role === 'owner' && hasBusinessAccess(session); }
 function random() { return Array.from(crypto.getRandomValues(new Uint8Array(32)), byte => byte.toString(16).padStart(2, '0')).join(''); }
+// Binds the OAuth state to the signed-in owner session that started it. STAFF-SESSION: the edge may renew that session's
+// cookie mid-flow (functions/_middleware.js), so this hashes what a renewal keeps (hubSessionIdentity), not the cookie.
 async function sessionHash(request) {
-  const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(`egc:gusto:session:v1\n${readCookie(request)}`));
+  const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(`egc:gusto:session:v2\n${hubSessionIdentity(request)}`));
   return Array.from(new Uint8Array(digest), byte => byte.toString(16).padStart(2, '0')).join('');
 }
 function redirect(status) {

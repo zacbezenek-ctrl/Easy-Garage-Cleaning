@@ -1376,6 +1376,9 @@ async function doLogout({ explicit = false } = {}) {
   // Crew job pages keep offline copies per tab; a sign-out retires them on this device.
   try { localStorage.setItem('egc-field:signed-out-at', String(Date.now())); } catch {}
   try { for (let i = sessionStorage.length - 1; i >= 0; i--) { const name = sessionStorage.key(i) || ''; if (name === 'egc-field:viewer' || /^egc-field:.*:(snapshot|shift-snapshot)$/.test(name)) sessionStorage.removeItem(name); } } catch {}
+  // EGC Knock (crew/knock-app.js) shares this sign-in and opens offline with its own copy of who is signed in: sign it out too.
+  try { localStorage.setItem('egc-knock:signed-out-at', JSON.stringify(Date.now())); } catch {}
+  try { localStorage.removeItem('egc-knock:viewer'); } catch {}
   // Photos from Today's work are private job evidence: choosing Sign out deletes those not yet uploaded.
   if (explicit === true) { try { localStorage.setItem('egc-field:photos-cleared-at', String(Date.now())); } catch {} fieldPhotosOnDevice(true); }
   // crew/job.html keeps unconfirmed manager photo-sharing retries in this tab; it never loads here.
@@ -2986,7 +2989,7 @@ window.addEventListener('egc:booking-recovered',event=>{const key=event.detail?.
 <link rel="stylesheet" href="employee-field-today.css?v=20260929wtoutcome">
 <link rel="stylesheet" href="employee-availability.css?v=20260922ops">
 <script src="employee-dispatch.js?v=20261017hubboard"></script>
-<script src="employee-dispatch-calendar.js?v=20261017hubboardfix"></script>
+<script src="employee-dispatch-calendar.js?v=20261019d2d"></script>
 <script src="employee-dispatch-rules.js?v=20260929rules"></script>
 <link rel="stylesheet" href="employee-recurring.css?v=20260929ready">
 <script src="employee-recurring.js?v=20260929ready"></script>
@@ -2999,7 +3002,7 @@ window.addEventListener('egc:booking-recovered',event=>{const key=event.detail?.
 <script src="employee-offline-queue.js?v=20260929crewtime"></script>
 <link rel="stylesheet" href="employee-pto.css?v=20260928pto">
 <script src="employee-pto.js?v=20260928ptoamend"></script>
-<script src="employee-hub-screens.js?v=20261019labor53"></script>
+<script src="employee-hub-screens.js?v=20261021field3"></script>
 <link rel="stylesheet" href="employee-followups-home.css?v=20260928overdue">
 <script src="employee-followups-home.js?v=20260928overdue"></script>
 <script src="employee-ghl-tags.js?v=20260929ghltags3"></script>

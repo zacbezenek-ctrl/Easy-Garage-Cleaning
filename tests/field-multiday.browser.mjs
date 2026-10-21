@@ -125,13 +125,15 @@ try {
   await lateCard.locator('.visit-days li.today').getByText('Saved on this phone · waiting to sync', { exact: true }).waitFor();
   await travel(third.page, `${tomorrow}T13:30:00.000Z`);
   await third.context.setOffline(false);
-  await third.page.getByLabel('Username', { exact: true }).waitFor(); await login(third.page, 'Crew.One');
+  // STAFF-SESSION (owner 2026-10-19): last night's sign-in is still valid (7 days, renewed while used; it ended after 12
+  // hours before), so the phone sends what it saved as soon as it is back online, with no new sign-in.
   await lateCard.locator('.visit-days li').first().getByText('(saved offline, synced after midnight)', { exact: false }).waitFor();
   const synced = store.get('jobs/late').fieldExecution;
   assert.deepEqual(Object.keys(synced.visits), [today], 'day two is untouched');
   assert.deepEqual([synced.visits[today].status, synced.visits[today].endedLate, synced.visits[today].notes, synced.jobTime.current, synced.jobTime.needsReview], ['ended', true, 'Synthetic day one saved offline: shelving remains.', null, true]);
   assert.match(await lateCard.locator('.visit-days li.today').innerText(), /Not started/);
   assert.equal(await third.page.locator('#outbox-card li').count(), 0, 'nothing is left on the phone');
+  assert.equal(await third.page.getByLabel('Username', { exact: true }).isVisible(), false, 'no sign-in was asked for');
   assert.equal(await fits(third.page), true);
   await third.page.screenshot({ path: resolve(artifacts, 'multiday-late-sync-mobile.png'), fullPage: true });
   await third.context.close();
