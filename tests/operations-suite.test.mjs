@@ -855,7 +855,7 @@ test('open-shift scheduling fields persist on the canonical job record',()=>{
   // combined tag.
   // HUB-COMPLETION and FIELD-PAY refresh the integrated phone screens and finance collection display together.
   // (TEAM-DIRECTORY, D10) the onboarding form's shirt size select and birthday checkbox.
-  assert.match(employee,/employee-suite\.css\?v=20261017team1/);
+  assert.match(employee,/employee-suite\.css\?v=20261021seen1/);
   // Bumped deliberately (LEGACY-SEND): the customer thread delivery labels changed; (TEAM-UI) then (PAY-TIMESHEETS merged
   // with PRICE-SCRUB): the timesheet screen mounts the payroll week card and shows pay only where the server sent it;
   // (PAY-TIMESHEETS fourth check): the profile form's rate field only for a viewer who sets pay; (SYNC-QUEUE) page-load
@@ -885,7 +885,7 @@ test('open-shift scheduling fields persist on the canonical job record',()=>{
   // Today's jobs; (MOBILE-HUB after WT-OUTCOME) one combined tag; (TEAM-DIRECTORY, D10) the Team directory nav entry, the
   // profile form's two emergency contact fields and the onboarding form's shirt size and birthday; (D9b GHL schedule mirror)
   // calendar-mirror-skipped badges and the schedule mirror and optional jobs calendar rows on Integrations.
-  assert.match(employee,/employee-suite\.js\?v=20261021roles2"/);
+  assert.match(employee,/employee-suite\.js\?v=20261021seen1"/);
 });
 
 test('recurring visits request a server-side handoff clone instead of copying prior execution or payments',()=>{

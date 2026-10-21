@@ -482,3 +482,31 @@ test('the phone drawer returns focus to the menu button whenever it closes, and 
   }
   assert.equal(observers.length, 3);
 });
+
+// CHAT-SEEN: under the latest message a manager sees who has read it and which assigned crew have not; crew never do.
+test('a manager sees who read the latest message in a job room and which assigned crew have not; crew see no receipts', async () => {
+  const room = { id: 'job-room', type: 'job', customer: 'Synthetic Room', date: '2026-09-22', time: '09:00', status: 'scheduled', assignedCrew: ['crew.one', 'crew.two', 'crew.three'] };
+  const seed = page => {
+    const S = page.api.S;
+    S.people.profiles = [{ username: 'crew.one', displayName: 'Synthetic Crew One' }, { username: 'crew.two', displayName: 'Synthetic Crew Two' }, { username: 'crew.three', displayName: 'Synthetic Crew Three' }];
+    S.people.jobMessages = [{ id: 'm1', jobId: 'job-room', body: 'Bring the tall ladder', sender: 'ZacB', senderName: 'Synthetic Owner', createdAt: '2026-09-22T15:00:00.000Z', status: 'active' }];
+    S.people.messageReads = [
+      { id: 'r1', employee: 'crew.one', channel: 'job:job-room', lastReadAt: '2026-09-22T15:05:00.000Z' },
+      { id: 'r2', employee: 'crew.two', channel: 'job:job-room', lastReadAt: '2026-09-22T14:00:00.000Z' },
+      { id: 'r3', employee: 'crew.three', channel: 'team', lastReadAt: '2026-09-22T16:00:00.000Z' }];
+    S.chatChannel = 'job:job-room';
+  };
+  const manager = loaded();
+  manager.context.jobsCache = [structuredClone(room)];
+  manager.api.install(); await manager.flush(); seed(manager);
+  manager.api.go('crew_chat');
+  const seen = manager.main().querySelector('[data-chat-seen]');
+  assert.ok(seen, 'the receipt line shows under the latest message');
+  assert.equal(seen.textContent, 'Seen by Synthetic Crew One · Not seen yet: Synthetic Crew Two, Synthetic Crew Three', 'a read before the message, or of another room, is not a read of it');
+
+  const crew = loaded({ user: 'crew.one', business: false, role: 'crew' });
+  crew.context.jobsCache = [structuredClone(room)];
+  crew.api.install(); await crew.flush(); seed(crew);
+  crew.api.go('crew_chat');
+  assert.equal(crew.main().querySelector('[data-chat-seen]'), null, 'crew never see who read what');
+});
