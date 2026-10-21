@@ -48,7 +48,7 @@ const SALE=[
   {key:'signBy',label:'Accepted by',kind:'date',help:'Last Denver day the customer can accept a sale quote; a sale quote expires on it at the latest. It must fall inside the work days.'},
   {key:'jobFrom',label:'Work from',kind:'date',help:'First day the job can be booked. The work days stay between Nov 1 and Mar 31, at most 92 days in all.'},
   {key:'jobTo',label:'Work through',kind:'date',help:'Last day the job can be booked.'},
-  {key:'marginFloorBp',label:'Margin floor',kind:'percent',help:'The discount on a quote is cut to keep its estimated margin at this floor (none if the job is already below it). Only you see this; estimators see "ask Zac".'},
+  {key:'marginFloorBp',label:'Margin floor',kind:'percent',help:'The discount on a quote is cut to keep its estimated margin at this floor (none if the job is already below it). Blank: no quote gets the sale until you enter it. Only you see this; estimators see "ask Zac".'},
   {key:'junkManHoursPerLoad',label:'Man-hours per truck load',kind:'hours',help:'Crew time a truck load takes that the Labor line does not price (junk-only quotes have no Labor line). The margin floor adds it for every load on a quote. Blank: quotes with truck loads get no sale.'}];
 const O={data:null,error:null,busy:false,pending:null,drafts:{},feedback:'',feedbackError:false,generation:0};
 const kit=()=>window.EGCHubKit;
@@ -166,6 +166,7 @@ function saleParsed(s,text){
   const t=String(text??'').trim();
   if(s.kind==='date')return /^\d{4}-\d{2}-\d{2}$/.test(t)?{value:t}:{bad:true};
   if(s.kind==='hours')return t===''?{value:null}:/^\d+(\.\d{1,2})?$/.test(t)&&Number.isInteger(Number(t)*4)&&Number(t)>0?{value:Number(t)}:{bad:true};
+  if(s.kind==='percent'&&t==='')return{value:null};
   if(!/^\d+(\.\d{1,2})?$/.test(t))return{bad:true};
   return{value:Math.round(Number(t)*100)};
 }
@@ -193,13 +194,13 @@ function saleCard(){
     const saved=d.settings[s.key];
     // The margin floor is the owner's alone: the server leaves it out for anyone else.
     if(!editable&&!Object.hasOwn(d.settings,s.key))return null;
-    if(!editable)return h('div',{class:'ja-setting'},h('span',{},s.label),h('strong',{},s.kind==='hours'?(saved===null?'Not set':saved+' h'):s.kind==='money'?money(saved):s.kind==='percent'?(saved/100)+'%':day(saved)));
-    const input=h('input',{type:s.kind==='date'?'date':'text',inputmode:s.kind==='date'?null:'decimal',autocomplete:'off',maxlength:12,placeholder:s.kind==='hours'?'Not set':null,value:Object.hasOwn(sale.drafts,s.key)?sale.drafts[s.key]:saleShown(s,saved),disabled:sale.busy,'aria-label':s.label,'data-sale':s.key,oninput:event=>{sale.drafts[s.key]=event.target.value;}});
+    if(!editable)return h('div',{class:'ja-setting'},h('span',{},s.label),h('strong',{},s.kind==='hours'?(saved===null?'Not set':saved+' h'):s.kind==='money'?money(saved):s.kind==='percent'?(saved===null?'Not set':(saved/100)+'%'):day(saved)));
+    const input=h('input',{type:s.kind==='date'?'date':'text',inputmode:s.kind==='date'?null:'decimal',autocomplete:'off',maxlength:12,placeholder:s.kind==='hours'||s.kind==='percent'?'Not set':null,value:Object.hasOwn(sale.drafts,s.key)?sale.drafts[s.key]:saleShown(s,saved),disabled:sale.busy,'aria-label':s.label,'data-sale':s.key,oninput:event=>{sale.drafts[s.key]=event.target.value;}});
     return h('label',{class:'ja-setting ja-setting-edit'},h('span',{},s.label,h('small',{},s.help)),h('span',{class:'ja-input'},s.kind==='money'?h('span',{'aria-hidden':'true'},'$'):null,input,s.kind==='percent'?h('span',{'aria-hidden':'true'},'%'):null));
   });
   return h('section',{class:'hub-card ja-settings ja-sale','aria-label':'Early-bird winter sale'},
     h('h2',{},'Early-bird winter sale'),
-    h('p',{class:'ja-muted'},'Estimators ask for the sale on the quote; the server applies it inside these dates and cuts the amount where the margin floor needs it, using the cost settings above. Until every cost setting is entered the sale is never applied. Advertise it as "up to" the discount.'+(editable?' You can apply it anyway on a quote, with a reason (audited).':' Only the owner can change these.')),
+    h('p',{class:'ja-muted'},'Estimators ask for the sale on the quote; the server applies it inside these dates and cuts the amount where the margin floor needs it, using the cost settings above. Until every cost setting and your margin floor are entered the sale is never applied. Advertise it as "up to" the discount.'+(editable?' You can apply it anyway on a quote, with a reason (audited).':' Only the owner can change these.')),
     h('div',{class:'ja-setting-list'},rows),
     editable?h('div',{class:'ja-save'},kit().button(sale.busy?'Saving…':sale.requestId?'Retry save':'Save winter sale',saveSale,'primary',{disabled:sale.busy,'data-sale-save':''})):null,
     sale.feedback?h('p',{role:sale.error?'alert':'status',class:'ja-feedback'+(sale.error?' error':'')},sale.feedback):null);

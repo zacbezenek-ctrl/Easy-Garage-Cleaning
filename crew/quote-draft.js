@@ -423,9 +423,11 @@
     const draft = () => typeof options.draft === 'function' ? options.draft(S.validUntil) : S.mode === 'builder' ? { ...compositeDraft(plan(), S.priced, S.validUntil), ...saleField() } : draftFromWalkthrough(options.plan(), S.validUntil);
     // EGC_WINTER_SALE: the builder only asks for the sale; the server decides, adds the line and says why when it does not.
     // The owner may ask to apply it anyway with a reason (audited). Nothing is sent when the sale is off.
-    // After the sign-by day the choice is gone and nothing is asked: the server keeps a sale the customer already accepted.
-    // Unticking a saved sale says so (apply:false), so a revision drops it.
-    const saleOpen = () => S.menu?.winterSale?.enabled === true && denverDate(options.now ? options.now() : Date.now()) <= S.menu.winterSale.signBy;
+    // After the sign-by day the choice is gone, except on a quote whose sale the customer accepted by then: it stays ticked
+    // and can only be unticked (the server keeps it on its saved terms). Unticking a saved sale says so (apply:false), so a
+    // revision drops it.
+    const saleEnded = () => denverDate(options.now ? options.now() : Date.now()) > S.menu.winterSale.signBy;
+    const saleOpen = () => S.menu?.winterSale?.enabled === true && (!saleEnded() || S.sale?.accepted === true);
     const saleField = () => !saleOpen() ? {} : S.sale?.apply ? { winter_sale: { apply: true, ...(S.menu.viewer?.canApprove === true && S.sale.reason.trim() ? { override: { reason: S.sale.reason.trim() } } : {}) } } : S.sale?.saved ? { winter_sale: { apply: false } } : {};
     // An earlier save whose answer was lost, and the quote job this walkthrough already saved (its walkthrough sync
     // status and, for a builder quote, its selection), read once when the dialog opens.
@@ -726,10 +728,12 @@
     function saleChoice(priced) {
       const terms = S.menu?.winterSale;
       if (terms?.enabled !== true || !saleOpen()) return null;
-      S.sale = S.sale || { apply: false, reason: '', saved: false };
+      S.sale = S.sale || { apply: false, reason: '', saved: false, accepted: false };
+      const untickOnly = saleEnded();
       return h('div', { class: 'qb-section qb-sale' },
-        h('label', { class: 'qd-check' }, h('input', { type: 'checkbox', checked: S.sale.apply, disabled: S.busy, onchange: event => { S.sale.apply = event.target.checked; render(); } }), ` Early-bird winter sale (up to \u2212${money(terms.amountCents)})`),
+        h('label', { class: 'qd-check' }, h('input', { type: 'checkbox', checked: S.sale.apply, disabled: S.busy || untickOnly && !S.sale.apply, onchange: event => { S.sale.apply = event.target.checked; render(); } }), ` Early-bird winter sale (up to \u2212${money(terms.amountCents)})`),
         h('p', { class: 'qb-help' }, `For jobs dated ${dayText(terms.jobFrom)} \u2013 ${dayText(terms.jobTo)} (the job's booked day), accepted by ${dayText(terms.signBy)}. The customer sees it as its own line. Saving works out the amount for this job (it can be less on a small job) and sending checks it again with the booked day.`),
+        untickOnly ? h('p', { class: 'qb-help' }, 'The customer accepted this sale before it ended, so the revision keeps it. Untick it only to remove it.') : null,
         S.sale.apply && S.menu.viewer?.canApprove === true ? [h('label', { class: 'qd-label', for: 'qd-sale-reason' }, 'Owner: give the full amount anyway (reason, only if the margin check cuts or refuses it)'),
           h('input', { id: 'qd-sale-reason', class: 'qd-input', type: 'text', maxLength: 500, value: S.sale.reason, oninput: event => { S.sale.reason = event.target.value; } })] : null);
     }
@@ -849,7 +853,7 @@
       // Man-hours this device kept from a quote saved before the owner's Labor decisions of 2026-10-18 follow the new
       // estimate too, unless the estimator set them by hand.
       if (staleLabor(menu, job?.breakdown) && sel.labor?.adjusted !== true) sel.labor = { manHours: null, adjusted: false };
-      Object.assign(S, { mode: 'builder', menu, sel, priced: null, group: '', search: '', limit: 12, savedBuild: unsent, sale: { apply: job?.winterSale?.requested === true, reason: '', saved: job?.winterSale?.applied === true } });
+      Object.assign(S, { mode: 'builder', menu, sel, priced: null, group: '', search: '', limit: 12, savedBuild: unsent, sale: { apply: job?.winterSale?.requested === true, reason: '', saved: job?.winterSale?.applied === true, accepted: job?.winterSale?.accepted === true } });
       // An unconfirmed earlier save (detectFrozen) keeps the review step until it is retried.
       if (!S.frozen && !S.busy && S.step === 'review') S.step = unsent ? 'saved' : 'removal';
       kicker.textContent = 'Removal, then shelving, then extra storage'; heading.textContent = 'Build the itemized quote'; dialog.classList.add('qb-dialog');

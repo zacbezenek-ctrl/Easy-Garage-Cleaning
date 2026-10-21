@@ -4,7 +4,7 @@ import { requireQuoteAuthor } from './quote-permissions.js';
 import { identityMatches } from './walkthrough-handoff.js';
 import { auditWrite } from './hub-audit.js';
 import { addDays, denverToday, validDate } from './dispatch-time.js';
-import { depositCents, estimateFingerprint, estimateChanged, estimateTotals, included, junkOnlyGarageWork, normalizeLineItems, packageTotals, validateSelection } from './quote-model.js';
+import { builderJunkOnly, depositCents, estimateFingerprint, estimateChanged, estimateTotals, included, junkOnlyGarageWork, normalizeLineItems, packageTotals, validateSelection } from './quote-model.js';
 import { customerMoneyTotals, invoiceNumber } from './money-core.js';
 import { moneySnapshot } from './money-service.js';
 import { moneySupersedeWrite } from './job-funnel-events.js';
@@ -19,7 +19,7 @@ import { approvalRefusal, compositeApproval, priceCompositeQuote } from './compo
 import { normalizeUnsignedCapture, unsignedCapturePatch } from './unsigned-walkthrough-capture.js';
 import { quotePaymentSchedule, requireQuotePaymentTiming, quotePaymentDates, quotePaymentSummary, businessPaymentDate, sentQuotePaymentPolicy, snapshotQuotePaymentPolicy, PAYMENT_TIME_ZONE } from './quote-payment-policy.js';
 import { prepareWalkthroughCaptureSync, walkthroughCaptureSyncView } from './walkthrough-capture-sync.js';
-import { WINTER_SALE_LINE_ID, acceptedSaleOn, saleChannel, saleManHours, saleTerms, winterSaleReaders, hasWinterSaleLine, isWinterSaleLine, overrideFrom, readWinterSaleSettings, saleRequest, winterSaleCap, winterSaleDecision, winterSaleEnabled, winterSaleLine, winterSalePublic, winterSaleSettingsStorage } from './winter-sale.js';
+import { WINTER_SALE_LINE_ID, acceptedSaleOn, winterSaleLastDay, saleChannel, saleManHours, saleTerms, winterSaleReaders, hasWinterSaleLine, isWinterSaleLine, overrideFrom, readWinterSaleSettings, saleRequest, winterSaleCap, winterSaleDecision, winterSaleEnabled, winterSaleLine, winterSalePublic, winterSaleSettingsStorage } from './winter-sale.js';
 import { isHubOwner } from './hub-session.js';
 
 /**
@@ -218,7 +218,7 @@ async function applyWinterSale(draft, request, { job = null, actor, now, env, re
   // The owner's earlier override stays with the sale the customer accepted.
   const kept = saved?.overridden && plain(saved.override) && !override ? saved.override : null;
   const cap = winterSaleCap({ lineItems: draft.lineItems, manHours: saleManHours(draft), junkOnly, costs: await readers.costs(env), channel: await saleChannel(env, readers, { junkOnly, sourceWalkthroughId }), settings });
-  let decision = winterSaleDecision({ settings, beforeCents: draft.totalCents, today: denverToday(new Date(now)), jobDate: job?.date || null, cap, override: override || kept, ownerOverride: isHubOwner(actor) || Boolean(kept), accepted: Boolean(accepted) });
+  let decision = winterSaleDecision({ settings, beforeCents: draft.totalCents, today: denverToday(new Date(now)), jobDate: job?.date || null, jobEnd: job ? winterSaleLastDay(job) : null, cap, override: override || kept, ownerOverride: isHubOwner(actor) || Boolean(kept), accepted: Boolean(accepted) });
   if (decision.eligible && draft.lineItems.filter(included).length + 1 > MAX_INCLUDED_LINES) decision = { eligible: false, code: 'too_many_lines', reason: `Not eligible: the quote already charges ${MAX_INCLUDED_LINES} lines, the most the customer portal shows.`, overridden: false, amountCents: 0 };
   const record = { requested: true, applied: decision.eligible, code: decision.code, reason: decision.reason, overridden: decision.overridden, amountCents: decision.amountCents, terms: saleTerms(settings), settingsRevision: saved ? saved.settingsRevision ?? null : current.revision,
     override: decision.overridden ? override ? { reason: override.reason, by: actor.user, at: now } : kept : null, checkedAt: now, checkedBy: actor.user, ...(accepted ? { acceptedOn: accepted } : {}) };
@@ -249,9 +249,10 @@ async function winterSaleSendable(job, now, env, readers) {
   const settings = accepted ? { ...current, ...saleTerms(saved.terms) } : current;
   const own = lines.filter(line => !isWinterSaleLine(line)), before = estimateTotals(own);
   const draft = { compositePricing: job.quoteDraft?.compositePricing, breakdown: job.quoteDraft?.breakdown };
-  const junkOnly = job.serviceType === 'Junk removal';
+  // Junk-only as the save decided it: the builder breakdown's own lines (quote-model.js builderJunkOnly).
+  const junkOnly = builderJunkOnly(job.quoteDraft?.breakdown?.lines);
   const cap = winterSaleCap({ lineItems: own, manHours: saleManHours(draft), junkOnly, costs: await readers.costs(env), channel: await saleChannel(env, readers, { junkOnly, sourceWalkthroughId: job.sourceWalkthroughId || '' }), settings });
-  const decision = winterSaleDecision({ settings, beforeCents: before.totalCents, today: denverToday(new Date(now)), jobDate: job.date || null, requireJobDate: true, cap, override: saved?.override || null, ownerOverride: Boolean(saved?.overridden && saved?.override), accepted: Boolean(accepted) });
+  const decision = winterSaleDecision({ settings, beforeCents: before.totalCents, today: denverToday(new Date(now)), jobDate: job.date || null, jobEnd: winterSaleLastDay(job), requireJobDate: true, cap, override: saved?.override || null, ownerOverride: Boolean(saved?.overridden && saved?.override), accepted: Boolean(accepted) });
   if (!decision.eligible) throw fail('winter_sale_ineligible', `${decision.reason} The quote was not sent: save it again without the winter sale, or fix this first.`, 409, { code: decision.code });
   if (Math.abs(Number(sale.totalCents)) !== decision.amountCents) throw fail('winter_sale_ineligible', 'The winter sale amount for this quote changed since it was saved (the sale settings or the cost settings changed). Save the quote again before sending.', 409, { code: 'amount_changed' });
 }
@@ -271,7 +272,8 @@ export function quoteDraftView(job) {
     // The builder selection and its cost-free breakdown (sections, itemized lines, purchase list).
     ...(plain(job.quoteDraft?.compositePricing) ? { compositePricing: job.quoteDraft.compositePricing, breakdown: plain(job.quoteDraft.breakdown) ? job.quoteDraft.breakdown : null } : {}),
     approval: pick(job.customerApproval, ['status', 'approvedAt', 'supersededAt']),
-    ...(plain(job.quoteDraft?.winterSale) ? { winterSale: winterSalePublic(job.quoteDraft.winterSale) } : {}),
+    // accepted: the customer accepted this sale by its sign-by day, so a revision keeps it (the builder shows it untick-only).
+    ...(plain(job.quoteDraft?.winterSale) ? { winterSale: { ...winterSalePublic(job.quoteDraft.winterSale), accepted: Boolean(acceptedSaleOn(job)) } } : {}),
     ...(walkthroughCaptureSyncView(job) ? { captureSync: walkthroughCaptureSyncView(job) } : {}),
     delivery: pick(job.estimateReady, ['requestId', 'revision', 'mode', 'status', 'reason', 'attempts', 'recipient', 'tagReset', 'at']),
   };

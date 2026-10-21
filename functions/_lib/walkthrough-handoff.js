@@ -645,8 +645,10 @@ export async function saveWalkthroughHandoff(store, actor, input, now = new Date
   if (selection) {
     builder = priceCompositeQuote(await compositeState(env), selection, { complete: true, requireLabor: !legacy });
     // EGC_WINTER_SALE: a saved sale quote signed in person gets the server's sale line for the signing day and the booked
-    // day (winter-sale.js signedWinterSale), or is refused when it no longer qualifies.
-    ({ builder, record: signedSale } = await signedWinterSale(previous, builder, { quote: signedInput.quote, jobDate: plan.quote.job_date, now, env, readers: winterSale, sourceWalkthroughId: source?.id || '', actor: actor.user }));
+    // day (winter-sale.js signedWinterSale), or is refused when it no longer qualifies (409 handoff_winter_sale_*: nothing
+    // was saved, and the page releases the request so the quote is built again).
+    try { ({ builder, record: signedSale } = await signedWinterSale(previous, builder, { quote: signedInput.quote, jobDate: plan.quote.job_date, now, env, readers: winterSale, sourceWalkthroughId: source?.id || '', actor: actor.user })); }
+    catch (error) { if (/^winter_sale_/.test(error?.code || '')) throw Object.assign(error, { code: `handoff_${error.code}`, status: 409 }); throw error; }
     const mismatch = builderMismatch(signedInput.quote, builder, Math.round(plan.quote.total * 100));
     if (mismatch) throw mismatch;
     // D-JUNK: a junk-only quote is $750 per truck with no Labor line, so it prices no garage work; the walkthrough the

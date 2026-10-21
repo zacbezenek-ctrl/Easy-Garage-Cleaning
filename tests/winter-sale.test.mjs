@@ -9,6 +9,7 @@ import { customerMoneyTotals } from '../functions/_lib/money-core.js';
 import { previewQuoteSend, saveQuoteDraft, sendQuoteDraft } from '../functions/_lib/quote-draft.js';
 import { WINTER_SALE_DEFAULTS, WINTER_SALE_LINE_ID, estimatedSaleMargin, mutateWinterSaleSettings, normalizeWinterSaleSettings, readWinterSaleSettings, winterSaleCap, winterSaleDateProblem, winterSaleDecision, winterSaleLine } from '../functions/_lib/winter-sale.js';
 import { saveWalkthroughHandoff } from '../functions/_lib/walkthrough-handoff.js';
+import { handoffHandlers } from '../functions/api/walkthrough-handoff.js';
 import { mutateMoney } from '../functions/_lib/money-service.js';
 import { mutateDispatch } from '../functions/_lib/dispatch-service.js';
 import { jobActualsHandlers } from '../functions/api/job-actuals.js';
@@ -17,7 +18,8 @@ import { LABOR, builderState, client, estimator, fixture, menuItem, owner, selec
 import { env as portalEnv, portalCookie, portalHandlers, portalPost, portalStore, portalView } from './helpers/portal-fixture.mjs';
 
 // Early-bird winter sale (owner decisions 2026-10-21): up to $400 off any job, accepted by 2027-01-31 (Denver), work
-// 2026-12-01..2027-02-28, the amount capped by a 30% margin floor on the Job actuals cost settings, owner override audited.
+// 2026-12-01..2027-02-28, the amount capped by the owner's margin floor on the Job actuals cost settings, owner override
+// audited. The floor in these tests is synthetic (FLOOR); the real one is only in the owner's settings record.
 const ON = { HUB_SESSION_SECRET: 'synthetic-winter-sale-secret-0123456789', EGC_STAFF_ROLE_PERMISSIONS: 'true', EGC_QUOTE_BUILDER_ENABLED: 'true', EGC_WINTER_SALE: 'true' };
 const OFF = { ...ON, EGC_WINTER_SALE: 'false' };
 const NOW = '2026-10-17T15:00:00.000Z';
@@ -25,7 +27,8 @@ const NOW = '2026-10-17T15:00:00.000Z';
 const LOW_COSTS = { wageCentsPerManHour: 2000, workersCompBp: 0, payrollTaxBp: 0, burdenCentsPerManHour: 0, dumpFeeCentsPerLoad: 5000, truckCentsPerJob: 1000, goodsTaxBp: 0 };
 const HIGH_COSTS = { ...LOW_COSTS, wageCentsPerManHour: 20000, dumpFeeCentsPerLoad: 400000 };
 // The owner's man-hours per truck load (synthetic): the test quotes haul truck loads, so their margin needs it.
-const SALE = { ...WINTER_SALE_DEFAULTS, junkManHoursPerLoad: 1 };
+const FLOOR = 1234, FLOORED = { ...WINTER_SALE_DEFAULTS, marginFloorBp: FLOOR };
+const SALE = { ...FLOORED, junkManHoursPerLoad: 1 };
 const readers = (costs = LOW_COSTS, settings = SALE, setter = false) => ({ settings: async () => ({ revision: null, ...settings }), costs: async () => costs, setter: async () => setter });
 const allApproved = () => { const prices = {}; for (const [id, price] of menuPrices(builderState())) if (price.unitCents !== null) prices[id] = price.unitCents; return builderState(prices); };
 const id = name => menuItem(name).id;
@@ -74,24 +77,24 @@ test('the decision: any job, the Denver sign-by day, the job window and the marg
 test('the cap: a normal job takes the full $400, a small one less, a junk-only one by the owner\'s hours per load, never the whole total', () => {
   const service = cents => [{ id: 'svc', kind: 'service', name: 'Work', quantity: 1, unitCents: cents, totalCents: cents }];
   const costs = { ...LOW_COSTS, dumpFeeCentsPerLoad: 0 };
-  const at = (lines, manHours, c, cents, channel = 'direct_estimator') => estimatedSaleMargin({ lineItems: [...lines, winterSaleLine(WINTER_SALE_DEFAULTS, cents)], manHours, costs: c, channel });
-  assert.deepEqual(winterSaleCap({ lineItems: service(300000), manHours: 10, costs, channel: 'direct_estimator' }), { known: true, capCents: 40000 });
+  const at = (lines, manHours, c, cents, channel = 'direct_estimator') => estimatedSaleMargin({ lineItems: [...lines, winterSaleLine(FLOORED, cents)], manHours, costs: c, channel });
+  assert.deepEqual(winterSaleCap({ lineItems: service(300000), manHours: 10, costs, channel: 'direct_estimator' , settings: FLOORED}), { known: true, capCents: 40000 });
   // A $600 job with 3 man-hours at a high synthetic wage: the largest whole-dollar discount that keeps the floor.
-  const small = { ...costs, wageCentsPerManHour: 10000 }, cap = winterSaleCap({ lineItems: service(60000), manHours: 3, costs: small, channel: 'direct_estimator' });
+  const small = { ...costs, wageCentsPerManHour: 10000 }, cap = winterSaleCap({ lineItems: service(60000), manHours: 3, costs: small, channel: 'direct_estimator' , settings: FLOORED});
   assert.ok(cap.capCents > 0 && cap.capCents < 40000 && cap.capCents % 100 === 0, JSON.stringify(cap));
-  assert.ok(at(service(60000), 3, small, cap.capCents).marginBp >= 3000 && at(service(60000), 3, small, cap.capCents + 100).marginBp < 3000);
+  assert.ok(at(service(60000), 3, small, cap.capCents).marginBp >= FLOOR && at(service(60000), 3, small, cap.capCents + 100).marginBp < FLOOR);
   // Junk-only: one full truck load, no Labor line; its crew time is the owner's man-hours per load.
   const truck = [{ id: 'removal-junk-full', kind: 'service', name: 'Full truck load', quantity: 1, unitCents: 75000, totalCents: 75000 }];
-  const junkCosts = { ...LOW_COSTS, wageCentsPerManHour: 10000, dumpFeeCentsPerLoad: 15000, truckCentsPerJob: 5000 }, perLoad = { ...WINTER_SALE_DEFAULTS, junkManHoursPerLoad: 2 };
-  assert.deepEqual(winterSaleCap({ lineItems: truck, junkOnly: true, costs: junkCosts, channel: 'junk_only' }), { known: false, reason: 'junk_hours_missing' });
+  const junkCosts = { ...LOW_COSTS, wageCentsPerManHour: 10000, dumpFeeCentsPerLoad: 15000, truckCentsPerJob: 5000 }, perLoad = { ...FLOORED, junkManHoursPerLoad: 2 };
+  assert.deepEqual(winterSaleCap({ lineItems: truck, junkOnly: true, costs: junkCosts, channel: 'junk_only' , settings: FLOORED}), { known: false, reason: 'junk_hours_missing' });
   const junk = winterSaleCap({ lineItems: truck, junkOnly: true, costs: junkCosts, channel: 'junk_only', settings: perLoad });
   assert.ok(junk.capCents > 0 && junk.capCents < 40000, JSON.stringify(junk));
-  assert.ok(at(truck, 2, junkCosts, junk.capCents, 'junk_only').marginBp >= 3000 && at(truck, 2, junkCosts, junk.capCents + 100, 'junk_only').marginBp < 3000);
+  assert.ok(at(truck, 2, junkCosts, junk.capCents, 'junk_only').marginBp >= FLOOR && at(truck, 2, junkCosts, junk.capCents + 100, 'junk_only').marginBp < FLOOR);
   // Never the whole total, whatever the costs allow: a $250 job keeps at least a dollar.
-  assert.deepEqual(winterSaleCap({ lineItems: service(25000), manHours: 0.25, costs: { ...costs, wageCentsPerManHour: 100, truckCentsPerJob: 0 }, channel: 'none' }), { known: true, capCents: 24900 });
+  assert.deepEqual(winterSaleCap({ lineItems: service(25000), manHours: 0.25, costs: { ...costs, wageCentsPerManHour: 100, truckCentsPerJob: 0 }, channel: 'none' , settings: FLOORED}), { known: true, capCents: 24900 });
   // Already below the floor before the sale: none at all. Costs not entered: unknown.
-  assert.deepEqual(winterSaleCap({ lineItems: service(60000), manHours: 10, costs: small, channel: 'direct_estimator' }), { known: true, capCents: 0 });
-  assert.deepEqual(winterSaleCap({ lineItems: service(60000), manHours: 3, costs: { ...costs, wageCentsPerManHour: null }, channel: 'none' }), { known: false, reason: 'costs_missing' });
+  assert.deepEqual(winterSaleCap({ lineItems: service(60000), manHours: 10, costs: small, channel: 'direct_estimator' , settings: FLOORED}), { known: true, capCents: 0 });
+  assert.deepEqual(winterSaleCap({ lineItems: service(60000), manHours: 3, costs: { ...costs, wageCentsPerManHour: null }, channel: 'none' , settings: FLOORED}), { known: false, reason: 'costs_missing' });
 });
 
 test('the margin estimate costs the quote with the Job actuals cost model: labor, goods, dump, truck and commission', () => {
@@ -114,7 +117,7 @@ test('an eligible quote gets its own sale line, a lower total and deposit; Labor
   assert.equal(estimateTotals(lines).totalCents, before - 40000);
   assert.equal(lines.filter(line => line.kind === 'labor').length, 1, 'D-LABOR-TEXT: Labor is untouched, one line');
   assert.equal(lines.find(line => line.kind === 'labor').totalCents, q.priced.lineItems.find(line => line.kind === 'labor').totalCents);
-  assert.deepEqual(saved.job.winterSale, { requested: true, applied: true, amountCents: 40000, code: 'eligible', reason: 'Eligible.', overridden: false });
+  assert.deepEqual(saved.job.winterSale, { requested: true, applied: true, amountCents: 40000, code: 'eligible', reason: 'Eligible.', overridden: false, accepted: false });
   assert.ok(saved.warnings.some(warning => warning.code === 'winter_sale_applied'));
   assert.equal(JSON.stringify(saved).includes('marginBp'), false, 'the estimator never sees a margin');
   // Invoices, the money ledger and Job actuals revenue all read the discounted quote total.
@@ -135,7 +138,7 @@ test('not applied: saved without the sale (no line at all) and the estimator is 
 test('a small job gets the capped amount as its own line: the customer sees the amount actually given', async () => {
   // SMALL at a synthetic wage that leaves room for less than the full sale.
   const q = quote(SMALL), costs = { ...LOW_COSTS, wageCentsPerManHour: 15000, dumpFeeCentsPerLoad: 0, truckCentsPerJob: 30000 };
-  const expected = winterSaleCap({ lineItems: q.priced.lineItems, manHours: 2, costs, channel: 'direct_estimator' });
+  const expected = winterSaleCap({ lineItems: q.priced.lineItems, manHours: 2, costs, channel: 'direct_estimator' , settings: FLOORED});
   assert.ok(expected.capCents > 0 && expected.capCents < 40000, `the synthetic small job is capped (${JSON.stringify(expected)}, total ${q.priced.totalCents})`);
   const f = fixture(ON), saved = await save(f, estimator, q, { sale: { apply: true }, sale_readers: readers(costs) }), job = f.job(saved.job.id);
   const sale = job.estimate.lineItems.find(line => line.id === WINTER_SALE_LINE_ID);
@@ -253,7 +256,7 @@ test('the owner edits the sale settings through Job actuals: validated, audited,
   const rows = new Map(), writes = [];
   const store = { read: async (collection, docId) => structuredClone(rows.get(`${collection}/${docId}`) || null), commit: async list => { for (const write of list) { writes.push(write); rows.set(`${write.collection}/${write.id}`, { ...structuredClone(write.patch), revision: `r${writes.length}` }); } } };
   assert.deepEqual(await readWinterSaleSettings(store), { revision: null, updatedAt: null, updatedBy: null, ...WINTER_SALE_DEFAULTS });
-  const body = { action: 'winter_sale.settings.set', requestId: randomUUID(), expectedRevision: null, settings: { ...WINTER_SALE_DEFAULTS, amountCents: 30000, junkManHoursPerLoad: 1.5 } };
+  const body = { action: 'winter_sale.settings.set', requestId: randomUUID(), expectedRevision: null, settings: { ...FLOORED, amountCents: 30000, junkManHoursPerLoad: 1.5 } };
   await assert.rejects(mutateWinterSaleSettings(store, estimator, body), { status: 403 });
   await assert.rejects(mutateWinterSaleSettings(store, owner, { ...body, settings: { ...body.settings, jobFrom: '2027-03-01' } }), { code: 'winter_sale_settings_invalid' });
   const result = await mutateWinterSaleSettings(store, owner, body, NOW);
@@ -268,12 +271,12 @@ test('the owner edits the sale settings through Job actuals: validated, audited,
 });
 
 test('truck loads cost crew time on every quote: a mixed cleanout with loads is capped like the same loads on a junk-only quote', () => {
-  const costs = { ...LOW_COSTS, wageCentsPerManHour: 15000, dumpFeeCentsPerLoad: 15000, truckCentsPerJob: 5000 }, perLoad = { ...WINTER_SALE_DEFAULTS, junkManHoursPerLoad: 2 };
+  const costs = { ...LOW_COSTS, wageCentsPerManHour: 20000, dumpFeeCentsPerLoad: 15000, truckCentsPerJob: 5000 }, perLoad = { ...FLOORED, junkManHoursPerLoad: 2 };
   const truck = { id: 'removal-junk-full', kind: 'service', name: 'Full truck load', quantity: 2, unitCents: 75000, totalCents: 150000 };
   const work = { id: 'removal-base', kind: 'service', name: 'Two-car garage base', quantity: 1, unitCents: 60000, totalCents: 60000 };
   const labor = { id: 'labor', kind: 'labor', name: 'Labor', quantity: 1, unitCents: 31800, totalCents: 31800 };
   // The largest whole-dollar amount whose margin, at manHours, stays at the floor (the cap's own rule, worked out here).
-  const capAt = (lines, manHours, channel) => { let best = 0; for (let cents = 100; cents <= 40000; cents += 100) if (estimatedSaleMargin({ lineItems: [...lines, winterSaleLine(perLoad, cents)], manHours, costs, channel }).marginBp >= 3000) best = cents; return best; };
+  const capAt = (lines, manHours, channel) => { let best = 0; for (let cents = 100; cents <= 40000; cents += 100) if (estimatedSaleMargin({ lineItems: [...lines, winterSaleLine(perLoad, cents)], manHours, costs, channel }).marginBp >= FLOOR) best = cents; return best; };
   // Junk-only: the loads' crew time only. Mixed: the quoted Labor man-hours plus the same loads' crew time.
   const junk = winterSaleCap({ lineItems: [truck], junkOnly: true, costs, channel: 'junk_only', settings: perLoad });
   assert.deepEqual(junk, { known: true, capCents: capAt([truck], 2 * 2, 'junk_only') });
@@ -281,15 +284,15 @@ test('truck loads cost crew time on every quote: a mixed cleanout with loads is 
   assert.deepEqual(mixed, { known: true, capCents: capAt([work, truck, labor], 3 + 2 * 2, 'direct_estimator') });
   assert.ok(mixed.capCents < capAt([work, truck, labor], 3, 'direct_estimator'), 'the loads cost more than the Labor man-hours alone');
   // Without the owner's man-hours per load, a mixed quote with loads is unknown too (no sale), and the decision says why.
-  const unknown = winterSaleCap({ lineItems: [work, truck, labor], manHours: 3, costs, channel: 'direct_estimator' });
+  const unknown = winterSaleCap({ lineItems: [work, truck, labor], manHours: 3, costs, channel: 'direct_estimator' , settings: FLOORED});
   assert.deepEqual(unknown, { known: false, reason: 'junk_hours_missing' });
   assert.match(winterSaleDecision({ beforeCents: 241800, today: '2026-10-17', cap: unknown }).reason, /quotes with truck loads need the owner's man-hours per truck load/);
   // A quote with no loads needs no such setting.
-  assert.equal(winterSaleCap({ lineItems: [work, labor], manHours: 3, costs, channel: 'direct_estimator' }).known, true);
+  assert.equal(winterSaleCap({ lineItems: [work, labor], manHours: 3, costs, channel: 'direct_estimator' , settings: FLOORED}).known, true);
 });
 
 test('the settings stay a winter sale: Nov 1 – Mar 31, at most 92 days, accepted inside them, at most $400', () => {
-  const ok = { ...WINTER_SALE_DEFAULTS, junkManHoursPerLoad: 1 };
+  const ok = { ...FLOORED, junkManHoursPerLoad: 1 };
   assert.deepEqual(normalizeWinterSaleSettings(ok), ok);
   assert.equal(normalizeWinterSaleSettings({ ...ok, jobFrom: '2026-11-01', jobTo: '2027-01-31', signBy: '2026-12-15' }).jobTo, '2027-01-31', '91 days from Nov 1');
   for (const [settings, key] of [[{ ...ok, jobFrom: '2026-01-01', jobTo: '2026-12-31' }, 'jobTo'], [{ ...ok, jobFrom: '2026-11-01', jobTo: '2027-03-31' }, 'jobTo'], [{ ...ok, jobFrom: '2027-03-01', jobTo: '2027-04-30', signBy: '2027-03-15' }, 'jobTo'],
@@ -374,8 +377,8 @@ test('signed in person: a saved sale quote is signed with the server\'s sale lin
     { env: ON, compositeState: async () => q.state, winterSale: r });
   const f = fixture(ON), q = quote(BIG), saved = await save(f, estimator, q, { sale: { apply: true } }), draft = f.job(saved.job.id);
   // A booked day outside the window, or a sale that no longer qualifies, is refused before anything is saved.
-  await assert.rejects(sign(f, q, draft, { date: '2027-03-08' }), { code: 'winter_sale_ineligible', status: 409, details: { code: 'job_date_outside' } });
-  await assert.rejects(sign(f, q, draft, { r: readers(HIGH_COSTS) }), { code: 'winter_sale_ineligible', details: { code: 'below_floor' } });
+  await assert.rejects(sign(f, q, draft, { date: '2027-03-08' }), { code: 'handoff_winter_sale_ineligible', status: 409, details: { code: 'job_date_outside' } });
+  await assert.rejects(sign(f, q, draft, { r: readers(HIGH_COSTS) }), { code: 'handoff_winter_sale_ineligible', details: { code: 'below_floor' } });
   assert.equal(f.job(draft.id).revision, draft.revision);
   const signed = await sign(f, q, draft);
   const job = f.job(signed.job.id), line = job.estimate.lineItems.find(row => row.id === WINTER_SALE_LINE_ID);
@@ -402,9 +405,81 @@ test('the margin floor is the owner\'s alone in Job actuals', async () => {
   const store = { read: async () => null, commit: async () => {} };
   const handlers = actor => jobActualsHandlers({ session: async () => actor, saleStore: () => store, settingsStore: () => store, dispatch: () => ({ datedJobs: async () => [] }), knock: () => ({ getMany: async () => new Map() }), timecards: async () => [], now: () => new Date(NOW) });
   const get = async actor => (await (await handlers(actor).get({ env: ON, request: new Request('https://easygaragecleaning.com/api/job-actuals') })).json());
-  assert.equal((await get(owner)).winterSale.settings.marginFloorBp, 3000);
+  assert.equal((await get(owner)).winterSale.settings.marginFloorBp, null, 'blank until the owner enters it');
   const shown = await get(manager);
   assert.equal(shown.ok, true, JSON.stringify(shown));
   assert.equal(Object.hasOwn(shown.winterSale.settings, 'marginFloorBp'), false);
   assert.equal(shown.winterSale.settings.amountCents, 40000);
+});
+
+// The signed handoff of a saved sale draft, as crew/gameplan-handoff.js sends it: the saved lines, total and selection.
+const signedInput = (f, q, job, { date = '2026-12-14', lines = job.estimate.lineItems, total = job.estimate.amountCents } = {}) => ({
+  actorId: estimator.user, requestId: randomUUID(), customerId: 'c1', sourceWalkthroughId: 'w1', sourceRevision: f.rows.get('jobs/w1').revision, jobId: job.id, expectedRevision: job.revision,
+  plan: signedPlan(1, { total: total / 100, date, quote: { composite_pricing: q.priced.compositePricing, catalog_version: q.priced.menuVersion, line_items: lines.map(({ id, kind, name, description, quantity, unitCents, totalCents }) => ({ id, kind, name, description, quantity, unitCents, totalCents })) } }) });
+
+test('signed in person, a sale quote with goods near the floor gets exactly the credit it was saved with', async () => {
+  // Synthetic costs that cap this job (shelving and totes, whose goods cost split only the stored lines carry) below $400.
+  const near = readers({ ...LOW_COSTS, wageCentsPerManHour: 20000, truckCentsPerJob: 35000 });
+  const f = fixture(ON), q = quote(BIG), saved = await save(f, estimator, q, { sale: { apply: true }, sale_readers: near }), draft = f.job(saved.job.id);
+  assert.equal(saved.job.winterSale.code, 'capped');
+  const credit = saved.job.winterSale.amountCents;
+  assert.ok(credit > 0 && credit < 40000, String(credit));
+  const signed = await saveWalkthroughHandoff(f.store, estimator, signedInput(f, q, draft), NOW, { env: ON, compositeState: async () => q.state, winterSale: near });
+  const job = f.job(signed.job.id);
+  assert.equal(job.estimate.lineItems.find(line => line.id === WINTER_SALE_LINE_ID).totalCents, -credit);
+  assert.deepEqual([job.estimate.amountCents, job.quoteDraft.winterSale.amountCents], [q.priced.totalCents - credit, credit]);
+});
+
+test('a sale refused at signing reaches the estimator as a plain 409 the page releases, never a retry', async () => {
+  // A sale draft saved with no job date yet; the homeowner signs for a day after the sale's window.
+  const f = fixture(ON), q = quote(BIG), saved = await save(f, estimator, q, { sale: { apply: true } }), draft = f.job(saved.job.id), commits = f.calls.length;
+  const api = handoffHandlers({ session: async () => estimator, storage: () => f.store, now: () => new Date(NOW), compositeState: async () => q.state, stripe: () => null, winterSale: readers() });
+  const response = await api.post({ request: new Request('https://easygaragecleaning.com/api/walkthrough-handoff', { method: 'POST', headers: { Origin: 'https://easygaragecleaning.com', 'Content-Type': 'application/json' }, body: JSON.stringify(signedInput(f, q, draft, { date: '2027-03-08' })) }), env: ON });
+  const body = await response.json();
+  assert.deepEqual([response.status, body.ok, body.code], [409, false, 'handoff_winter_sale_ineligible']);
+  assert.equal(body.error, 'Not eligible: the job date is outside Dec 1, 2026 – Feb 28, 2027. Nothing was saved: build the quote again without the winter sale, then have the customer sign it.');
+  assert.equal(f.calls.length, commits, 'nothing was saved');
+  // The signing page releases the frozen request for these codes (nothing was saved, so it can never succeed unchanged).
+  const client = readFileSync(new URL('../crew/gameplan-handoff.js', import.meta.url), 'utf8'), released = client.slice(client.indexOf('const RELEASED'), client.indexOf(']);', client.indexOf('const RELEASED')));
+  for (const code of ['handoff_winter_sale_ineligible', 'handoff_winter_sale_disabled']) assert.ok(released.includes(`'${code}'`), code);
+});
+
+test('no sale applies until the owner enters a margin floor, and the override does not pass that', () => {
+  assert.equal(WINTER_SALE_DEFAULTS.marginFloorBp, null);
+  const service = [{ id: 'svc', kind: 'service', name: 'Work', quantity: 1, unitCents: 300000, totalCents: 300000 }];
+  const cap = winterSaleCap({ lineItems: service, manHours: 10, costs: LOW_COSTS, channel: 'direct_estimator' });
+  assert.deepEqual(cap, { known: false, reason: 'floor_missing' });
+  const base = { beforeCents: 300000, today: '2026-10-17', cap };
+  assert.deepEqual(winterSaleDecision(base), { eligible: false, code: 'floor_missing', reason: 'Not eligible yet: the owner has not entered the winter sale\'s margin floor. Ask Zac.', overridden: false, amountCents: 0 });
+  assert.equal(winterSaleDecision({ ...base, override: { reason: 'Owner call' }, ownerOverride: true }).code, 'floor_missing');
+  assert.deepEqual(normalizeWinterSaleSettings({ ...WINTER_SALE_DEFAULTS }).marginFloorBp, null, 'the owner may leave it blank');
+});
+
+test('the job days cover every day of the job, and a sale line without saved terms gets no credit', () => {
+  const job = { date: '2027-02-27', estimate: { lineItems: [winterSaleLine(FLOORED, 40000)] }, quoteDraft: { winterSale: { terms: { amountCents: 40000, signBy: '2027-01-31', jobFrom: '2026-12-01', jobTo: '2027-02-28' } } } };
+  assert.equal(winterSaleDateProblem(job), null);
+  assert.match(winterSaleDateProblem({ ...job, endDate: '2027-03-01' }), /covers work done Dec 1, 2026 – Feb 28, 2027/, 'a Feb 27 start running into March');
+  assert.equal(winterSaleDecision({ beforeCents: 300000, today: '2026-10-17', jobDate: '2027-02-27', jobEnd: '2027-03-01', cap: { known: true, capCents: 40000 } }).code, 'job_date_outside');
+  assert.match(winterSaleDateProblem({ ...job, quoteDraft: {} }), /no saved terms/);
+});
+
+test('the bridge reschedule refuses to move an accepted sale job outside the sale window', () => {
+  const source = readFileSync(new URL('../functions/_lib/operations-scheduling.js', import.meta.url), 'utf8');
+  assert.match(source, /winterSaleDateProblem\(\{\.\.\.current,date:changes\.date\}\)\)throw failure\('schedule_winter_sale_date'\)/);
+});
+
+test('Job actuals still loads when the sale settings record fails verification', async () => {
+  const bad = { read: async collection => collection === 'winterSaleSettings' ? { schemaVersion: 1, amountCents: 99999999, signBy: 'x', jobFrom: 'y', jobTo: 'z', marginFloorBp: 1, junkManHoursPerLoad: null, revision: 'r1' } : null, commit: async () => {} };
+  const plainStore = { read: async () => null, commit: async () => {} };
+  const handlers = jobActualsHandlers({ session: async () => owner, saleStore: () => bad, settingsStore: () => plainStore, dispatch: () => ({ datedJobs: async () => [] }), knock: () => ({ getMany: async () => new Map() }), timecards: async () => [], now: () => new Date(NOW) });
+  const response = await handlers.get({ env: ON, request: new Request('https://easygaragecleaning.com/api/job-actuals') }), body = await response.json();
+  assert.equal(response.status, 200, JSON.stringify(body));
+  assert.deepEqual([body.ok, body.winterSale.settings], [true, null]);
+  assert.match(body.winterSale.error, /failed verification/);
+});
+
+test('send decides junk-only from the saved builder breakdown, as the save does', () => {
+  const source = readFileSync(new URL('../functions/_lib/quote-draft.js', import.meta.url), 'utf8'), sendable = source.slice(source.indexOf('async function winterSaleSendable'), source.indexOf('/** Quote author DTO'));
+  assert.match(sendable, /const junkOnly = builderJunkOnly\(job\.quoteDraft\?\.breakdown\?\.lines\);/);
+  assert.doesNotMatch(sendable, /serviceType/);
 });

@@ -27,7 +27,8 @@ export const LAUNCH_DEFAULTS = Object.freeze({
   EGC_WALKTHROUGH_VISIT_ENABLED: 'true',
   EGC_WALKTHROUGH_NOTES: 'true',
   // Owner decisions 2026-10-21: the Early-bird winter sale (up to $400 off any job, accepted by Jan 31, work Dec 1 to
-  // Feb 28, the amount capped by a 30% margin floor on the Job actuals cost settings; functions/_lib/winter-sale.js).
+  // Feb 28, the amount capped by the owner's margin floor on the Job actuals cost settings; no sale applies until the
+  // owner enters that floor and the cost settings; functions/_lib/winter-sale.js).
   EGC_WINTER_SALE: 'true',
 });
 

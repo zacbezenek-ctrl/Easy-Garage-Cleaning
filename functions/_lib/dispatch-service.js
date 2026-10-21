@@ -22,7 +22,7 @@ import { notifyPatch, withDispatchReadiness } from './dispatch-readiness.js';
 import { walkthroughStatusFields } from './walkthrough-state.js';
 import { dispatchReviewCleared, withQueueFacts } from './dispatch-queue.js';
 import { jobStartProblem } from './job-start-policy.js';
-import { winterSaleDateProblem } from './winter-sale.js';
+import { winterSaleDateProblem, winterSaleLastDay } from './winter-sale.js';
 import { DEFAULT_CREWS, NO_CREW, autoAssignedCrew, autoCrewJob, crewAssignment, crewAutoRecord, crewCode, crewCodeInput, crewJobDates, crewPickOrder, crewServes, eligibleCrews, handStaffed, projectCrewOpenings, serviceDaysInput } from './dispatch-crew-assign.js';
 import { dispatchOpenings } from './dispatch-openings.js';
 import { normalizeJobMaterials } from './job-materials.js';
@@ -578,7 +578,7 @@ async function executeDispatch(store, session, input, now, options = {}, context
     if (startProblem) throw fail('dispatch_job_start_too_early', startProblem);
     // EGC_WINTER_SALE: an accepted sale price covers work done inside the sale's window (winter-sale.js), so moving that
     // job outside it waits for a revised estimate. A signed handoff checks its own sale (saleChecked).
-    const saleDate = !cancel && current && options.saleChecked !== true && next.date && next.date !== current.date && [current.estimate?.status,current.customerApproval?.status].some(status => ['accepted','approved'].includes(String(status || '').toLowerCase())) && winterSaleDateProblem(next);
+    const saleDate = !cancel && current && options.saleChecked !== true && next.date && (next.date !== current.date || winterSaleLastDay(next) !== winterSaleLastDay(current)) && [current.estimate?.status,current.customerApproval?.status].some(status => ['accepted','approved'].includes(String(status || '').toLowerCase())) && winterSaleDateProblem(next);
     if (saleDate) throw fail('dispatch_winter_sale_date',`${saleDate} Revise the estimate without the sale (and get it approved) before moving the job outside those days.`,409);
     if (!cancel && next.type === 'blocked' && !interval) throw fail('dispatch_block_invalid','A company-wide scheduling block needs valid start and end times.');
     // FIX-DISPATCH-READY: when Notify customer was last set; an imported Jobber job's first booking turns it on (EGC_DISPATCH_NOTIFY_IMPORTED_ON).

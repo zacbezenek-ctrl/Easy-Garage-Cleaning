@@ -8,7 +8,8 @@
  *   - the job is done jobFrom..jobTo inclusive (2026-12-01..2027-02-28). A draft with no job date yet may carry the line;
  *     its send needs the booked date inside the window, and the customer portal refuses an approval once the job moved
  *     outside it;
- *   - the amount is capped (winterSaleCap) so the job's estimated margin after it stays at least marginFloorBp (30%):
+ *   - the amount is capped (winterSaleCap) so the job's estimated margin after it stays at least marginFloorBp, the
+ *     owner's own floor (blank by default: no sale applies until the owner enters it, the same as the cost settings):
  *     min(amountCents, the most that keeps the margin at the floor, in whole dollars, below the quote total). The
  *     margin costs the quote's own man-hours, goods, truck loads and commission channel with the owner's Job actuals
  *     cost settings (job-actuals.js, the same functions the completed-job report uses). A cap of $0 adds no line. Until
@@ -21,7 +22,8 @@
  *     sign-by day inside them (normalizeWinterSaleSettings refuses anything else).
  *   - a quote the customer accepted on or before signBy keeps the sale on its saved terms through later revisions
  *     (quote-draft.js acceptedSaleOn), still inside the job window and the margin cap.
- * Estimators and crew only ever see "eligible" or a plain reason (winterSalePublic); never a margin, a cost or pay.
+ * Estimators and crew only ever see "eligible" or a plain reason (winterSalePublic); never a margin, a cost or pay. The
+ * floor itself is owner economics: it lives only in the owner's settings record, never in this file or a manager's view.
  *
  * Settings: server-only winterSaleSettings/current {schemaVersion:1, amountCents, signBy, jobFrom, jobTo,
  * marginFloorBp, junkManHoursPerLoad, updatedAt, updatedBy, requestId}; absent means WINTER_SALE_DEFAULTS. Only the owner writes them
@@ -34,13 +36,14 @@ import { estimateTotals, included } from './quote-model.js';
 import { commissionFor, divRoundHalfUp, laborCostCents, milliHours, normalizeCostSettings, percentOf, truckLoads } from './job-actuals.js';
 import { jobActualsSettingsStorage, readJobActualsSettings, requireJobActualsOwner } from './job-actuals-settings.js';
 import { denverToday } from './dispatch-time.js';
+import { segmentDays } from './dispatch-segments.js';
 
 export const winterSaleEnabled = env => env?.EGC_WINTER_SALE === 'true';
 export const WINTER_SALE_LINE_ID = 'winter-sale';
 export const WINTER_SALE_LINE_NAME = 'Early-bird winter sale';
 export const WINTER_SALE_SETTINGS = 'winterSaleSettings', WINTER_SALE_SETTINGS_OPERATIONS = 'winterSaleSettingsOperations', CURRENT = 'current';
 export const WINTER_SALE_SETTINGS_ACTION = 'winter_sale.settings.set';
-export const WINTER_SALE_DEFAULTS = Object.freeze({ amountCents: 40000, signBy: '2027-01-31', jobFrom: '2026-12-01', jobTo: '2027-02-28', marginFloorBp: 3000, junkManHoursPerLoad: null });
+export const WINTER_SALE_DEFAULTS = Object.freeze({ amountCents: 40000, signBy: '2027-01-31', jobFrom: '2026-12-01', jobTo: '2027-02-28', marginFloorBp: null, junkManHoursPerLoad: null });
 const SETTING_KEYS = Object.freeze(Object.keys(WINTER_SALE_DEFAULTS));
 // The sale's own limits (owner decision 2026-10-21): at most $400 off, a winter window (Nov 1 – Mar 31) of at most 92
 // days, accepted by a day inside it. Settings outside them are refused, so the sale can never become a standing discount.
@@ -60,7 +63,8 @@ const dayText = date => new Date(`${date}T12:00:00Z`).toLocaleDateString('en-US'
 /** Whether one setting value is valid on its own. */
 export function validWinterSaleSetting(key, value) {
   if (key === 'amountCents') return Number.isSafeInteger(value) && value >= 1 && value <= WINTER_SALE_MAX_CENTS;
-  if (key === 'marginFloorBp') return Number.isSafeInteger(value) && value >= 0 && value <= 9000;
+  // The owner's margin floor in basis points (null: not entered, and no sale applies).
+  if (key === 'marginFloorBp') return value === null || Number.isSafeInteger(value) && value >= 0 && value <= 9000;
   // Junk-only quotes have no Labor line: the owner's man-hours per truck load cost their crew time (null: not entered).
   if (key === 'junkManHoursPerLoad') return value === null || typeof value === 'number' && value >= 0.25 && value <= 24 && Number.isInteger(value * 4);
   return ['signBy', 'jobFrom', 'jobTo'].includes(key) && realDate(value);
@@ -132,8 +136,19 @@ export const hasWinterSaleLine = lines => Array.isArray(lines) && lines.some(lin
  * inside the window it was saved on. Checked at portal approval, Hub Record approval and a reschedule. */
 export function winterSaleDateProblem(job) {
   if (!hasWinterSaleLine(job?.estimate?.lineItems)) return null;
-  const terms = { ...WINTER_SALE_DEFAULTS, ...(plain(job.quoteDraft?.winterSale?.terms) ? job.quoteDraft.winterSale.terms : {}) }, day = String(job.date || '');
-  return !day || day < terms.jobFrom || day > terms.jobTo ? `This quote's winter sale price covers work done ${dayText(terms.jobFrom)} – ${dayText(terms.jobTo)}.` : null;
+  // A sale line without the terms it was saved on fails closed: no credit on terms nobody can read.
+  const terms = plain(job.quoteDraft?.winterSale?.terms) ? job.quoteDraft.winterSale.terms : null;
+  if (!terms || !realDate(terms.jobFrom) || !realDate(terms.jobTo)) return 'This quote\'s winter sale has no saved terms. Save the quote again.';
+  const first = String(job.date || ''), last = winterSaleLastDay(job);
+  return !realDate(first) || first < terms.jobFrom || last > terms.jobTo ? `This quote's winter sale price covers work done ${dayText(terms.jobFrom)} – ${dayText(terms.jobTo)}.` : null;
+}
+/** The last day a job's work runs: its end day, or the last of its day segments, else its start day. A multi-day job is
+ * inside the sale's window only when every day is. */
+export function winterSaleLastDay(job) {
+  let segments = [];
+  try { segments = segmentDays(job); } catch { segments = []; }
+  const days = [job?.date, job?.endDate, ...segments].filter(realDate);
+  return days.length ? days.sort().at(-1) : '';
 }
 
 /** The margin the owner's cost settings give a quote's lines (sale line included): revenue less labor at the quote's
@@ -165,6 +180,7 @@ export function winterSaleCap({ lineItems, manHours: quoted, junkOnly = false, c
   // Truck loads take crew time the Labor line does not price (junk-only quotes have no Labor line at all): every quote
   // with loads costs junkManHoursPerLoad x its loads on top of its own man-hours, and without that setting its margin is
   // unknown.
+  if (settings.marginFloorBp === null) return { known: false, reason: normalizeCostSettings(costs).complete ? 'floor_missing' : 'costs_missing' };
   if (loads > 0 && settings.junkManHoursPerLoad === null) return { known: false, reason: normalizeCostSettings(costs).complete ? 'junk_hours_missing' : 'costs_missing' };
   const hauling = loads > 0 ? loads * settings.junkManHoursPerLoad : 0, quotedOk = typeof quoted === 'number' && Number.isFinite(quoted) && quoted > 0;
   const manHours = junkOnly ? hauling : quotedOk ? quoted + hauling : quoted;
@@ -182,26 +198,30 @@ export function winterSaleCap({ lineItems, manHours: quoted, junkOnly = false, c
 
 /**
  * The decision for one quote. beforeCents: its total without the sale; today: the Denver day the quote is saved, sent
- * or signed; jobDate: its booked day or null; requireJobDate: true at send and sign; cap: winterSaleCap for the quote;
+ * or signed; jobDate: its booked day or null; jobEnd: its last work day (multi-day jobs); requireJobDate: true at send and sign; cap: winterSaleCap for the quote;
  * override: the owner's {reason} to give the full amount past the margin rule, honored only when ownerOverride is true.
  * {eligible, code, reason, overridden, amountCents}: reason is the plain words an estimator sees, amountCents the
  * amount the sale line takes off.
  */
-export function winterSaleDecision({ settings = WINTER_SALE_DEFAULTS, beforeCents, today, jobDate = null, requireJobDate = false, cap = null, override = null, ownerOverride = false, accepted = false }) {
+export function winterSaleDecision({ settings = WINTER_SALE_DEFAULTS, beforeCents, today, jobDate = null, requireJobDate = false, jobEnd = null, cap = null, override = null, ownerOverride = false, accepted = false }) {
   const no = (code, reason) => ({ eligible: false, code, reason, overridden: false, amountCents: 0 });
   // accepted: the customer accepted this sale on or before its sign-by day; a later revision keeps it on those terms.
   if (!realDate(today) || today > settings.signBy && !accepted) return no('sale_ended', `Not eligible: the sale ended ${dayText(settings.signBy)}.`);
   const window = `${dayText(settings.jobFrom)} – ${dayText(settings.jobTo)}`;
   if (jobDate !== null && jobDate !== undefined && jobDate !== '' && (!realDate(jobDate) || jobDate < settings.jobFrom || jobDate > settings.jobTo)) return no('job_date_outside', `Not eligible: the job date is outside ${window}.`);
+  // A job that runs over several days is inside the window only when its last day is (jobEnd: winterSaleLastDay).
+  if (jobDate && realDate(jobEnd) && jobEnd > settings.jobTo) return no('job_date_outside', `Not eligible: the job runs past ${dayText(settings.jobTo)}, outside ${window}.`);
   if (requireJobDate && !jobDate) return no('job_date_needed', `Book the job date (${window}) before sending a winter sale quote.`);
   const full = Number.isSafeInteger(beforeCents) ? Math.min(settings.amountCents, wholeDollarsBelow(beforeCents)) : 0;
   if (full <= 0) return no('nothing_to_discount', 'Not eligible: the quote has no total to take the sale off.');
   const overridden = ownerOverride && plain(override) && typeof override.reason === 'string' && override.reason.trim().length >= 3;
   const forced = { eligible: true, code: 'owner_override', reason: 'Eligible (owner override).', overridden: true, amountCents: full };
   if (!cap?.known) {
-    // The override passes the margin floor only: with no cost settings at all nothing was checked, so it is not honored.
-    if (overridden && cap?.reason !== 'costs_missing') return forced;
+    // The override passes the margin floor only: before the owner enters the cost settings and the floor nothing was
+    // checked, so it is not honored.
+    if (overridden && !['costs_missing', 'floor_missing'].includes(cap?.reason)) return forced;
     return cap?.reason === 'costs_missing' ? no('costs_missing', 'Enter labor costs in Job actuals settings to use the winter sale.')
+      : cap?.reason === 'floor_missing' ? no('floor_missing', 'Not eligible yet: the owner has not entered the winter sale\'s margin floor. Ask Zac.')
       : cap?.reason === 'junk_hours_missing' ? no('margin_unknown', 'Not eligible yet: quotes with truck loads need the owner\'s man-hours per truck load in the winter sale settings. Ask Zac.')
       : cap?.reason === 'labor_unknown' ? no('margin_unknown', 'Not eligible: this quote has no Labor estimate to check the sale against. Ask Zac.')
         : no('margin_unknown', 'Not eligible: the sale could not be checked against this quote. Ask Zac.');
@@ -278,7 +298,9 @@ export async function signedWinterSale(previous, builder, { quote, jobDate, now,
   const current = await readers.settings(env), settings = acceptedOn ? { ...current, ...saleTerms(saved.terms) } : current;
   if (!acceptedOn && canonical(saleTerms(saved.terms)) !== canonical(saleTerms(current))) throw fail('ineligible', 'The sale terms changed since this quote was saved. Nothing was saved: save the quote again, then have the customer sign it.', 409, { code: 'terms_changed' });
   const junkOnly = builder.junkOnly === true, today = denverToday(new Date(now));
-  const cap = winterSaleCap({ lineItems: builder.lineItems, manHours: saleManHours(builder), junkOnly, costs: await readers.costs(env), channel: await saleChannel(env, readers, { junkOnly, sourceWalkthroughId }), settings });
+  // The cap reads the stored lines (they carry the goods cost split), as the save and the send did; the customer's line
+  // is appended to both.
+  const cap = winterSaleCap({ lineItems: builder.storedLineItems, manHours: saleManHours(builder), junkOnly, costs: await readers.costs(env), channel: await saleChannel(env, readers, { junkOnly, sourceWalkthroughId }), settings });
   const decision = winterSaleDecision({ settings, beforeCents: builder.totalCents, today, jobDate: jobDate || null, requireJobDate: true, cap, override: saved.override || null, ownerOverride: Boolean(saved.overridden && saved.override), accepted: Boolean(acceptedOn) });
   if (!decision.eligible) throw fail('ineligible', `${decision.reason} ${redo}`, 409, { code: decision.code });
   const savedLine = (Array.isArray(previous.estimate?.lineItems) ? previous.estimate.lineItems : []).find(isWinterSaleLine);
