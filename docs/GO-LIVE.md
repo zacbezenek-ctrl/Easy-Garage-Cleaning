@@ -255,7 +255,8 @@ These harden the Hub without changing anyone's workflow. Do each in **Preview fi
 
 ### 1.2 Keep pay owner-only
 
-- **Set:** nothing. `EGC_STAFF_PAY_OWNER_ONLY` unset already means only you see and change other employees' pay in the Hub roster and timecards.
+- **Set:** nothing. `EGC_STAFF_PAY_OWNER_ONLY` unset already means only you see and change other employees' pay in the Hub roster and timecards. Managers see no one else's pay.
+- **Optional, view only:** to let a named manager see everyone's pay (yours too, if you have a row) without changing or exporting it, list their Hub username in `EGC_STAFF_PAY_VIEWERS` (Cloudflare, plain, comma-separated). It works only for accounts with business access and the Manager role. Leave it unset unless you decide to.
 - **Where:** Cloudflare Pages, plain variable (only if you ever need the exception below).
 - **Turns on:** already on at deploy. Managers keep hours and approvals; everyone sees their own pay.
 - **Exception:** `EGC_STAFF_PAY_OWNER_ONLY=false` gives every business user pay access again. Use it only if managers must set pay.
@@ -263,6 +264,7 @@ These harden the Hub without changing anyone's workflow. Do each in **Preview fi
 - **Check it worked (phone):**
   1. Sign in as a manager and open the Team roster. Other people show hours, not pay rates.
   2. Sign in as yourself. You see everyone's pay.
+  3. Only if you listed someone in `EGC_STAFF_PAY_VIEWERS`: sign in as them. They see pay rates but get no rate field and no payroll CSV button.
 - **Roll back:** set `EGC_STAFF_PAY_OWNER_ONLY=false` and retry the deployment.
 
 ### 1.3 Security steps with no switch
