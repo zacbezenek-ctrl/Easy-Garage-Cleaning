@@ -1,9 +1,11 @@
 /* Shift swaps (SHIFT-SWAP, functions/_lib/shift-swaps.js) on the Hub homes, from GET/POST /api/shift-swaps.
-   EGCShiftSwapsHome (My day, every employee): ask a coworker to take one of your upcoming jobs, answer the requests sent
-   to you, and follow or cancel your own. EGCShiftSwapsReview (Command center, managers and the owner): the accepted swaps
+   EGCShiftSwapsHome (the Shift swaps screen under MY EGC, every employee): ask a coworker to take one of your upcoming
+   jobs, answer the requests sent to you, and follow or cancel your own. It is a screen, not a My day card, so the clock
+   card stays on the phone's first screen. EGCShiftSwapsReview (Command center, managers and the owner): the accepted swaps
    waiting for approval; Approve runs the Dispatch change (its rules and crew notices apply), Deny closes the request.
    Nobody approves a swap they are part of, except the owner, and a request expires once the job starts. The review card
-   shows nothing while no swap is waiting. Names, dates and times only. Registered in employee-hub-screens.js HOME_WIDGETS. */
+   shows nothing while no swap is waiting. Names, dates and times only. Registered in employee-hub-screens.js (MANIFEST and
+   HOME_WIDGETS). */
 (function(){
 'use strict';
 const PATH='/api/shift-swaps',TIMEOUT=20000;

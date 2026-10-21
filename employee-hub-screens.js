@@ -20,6 +20,7 @@ const KIT={js:'employee-ui-kit.js',css:'employee-ui-kit.css',v:'20260929mobilehu
 // this file is always loaded and a lazily loaded screen may never have run on the page.
 const MANIFEST=[
 {id:'crew_alerts',group:'MY EGC',label:'Schedule alerts',iconPath:'M12 3a6 6 0 0 0-6 6v4l-2 3h16l-2-3V9a6 6 0 0 0-6-6zM10 19a2 2 0 0 0 4 0',crewVisible:true,load:{js:'employee-crew-notifications.js',css:'employee-crew-notifications.css',v:'20260929editwipe'},module:'EGCCrewNotifications'},
+{id:'shift_swaps',group:'MY EGC',label:'Shift swaps',iconPath:'M7 7h11l-3-3M17 17H6l3 3',crewVisible:true,load:{js:'employee-shift-swaps.js',css:'employee-shift-swaps.css',v:'20261021swaps1'},module:'EGCShiftSwapsHome'},
 {id:'password',group:'MY EGC',label:'Password',iconPath:'M7 11V8a5 5 0 0 1 10 0v3M5 11h14v10H5zM12 15v2',capability:'password',load:{js:'employee-staff-access.js',css:'employee-staff-access.css',v:'20261017access3'},module:'EGCStaffAccess'},
 {id:'team_directory',group:'MY EGC',label:'Team directory',iconPath:'M8 11a3 3 0 1 0 0-6 3 3 0 0 0 0 6zM16 11a3 3 0 1 0 0-6 3 3 0 0 0 0 6zM2 20c0-3 3-5 6-5s6 2 6 5M12 20c0-3 3-5 6-5s4 2 4 5',capability:'team_directory',load:{js:'employee-team-directory.js',css:'employee-team-directory.css',v:'20261017team1'},module:'EGCTeamDirectory'},
 {id:'my_commission',group:'MY EGC',label:'My commission',iconPath:'M12 3v18M17 7.5c0-1.9-2.2-3-5-3s-5 1.1-5 3 2.2 2.8 5 3.5 5 1.6 5 3.5-2.2 3-5 3-5-1.1-5-3',crewVisible:true,load:{js:'employee-estimator-commission.js',css:'employee-estimator-commission.css',v:'20261018commfix'},module:'EGCEstimatorCommission'},
@@ -47,7 +48,6 @@ const HOME_WIDGETS=[
   {id:'customer_messages',label:'Customer messages',homes:['today','my_day'],capability:'customer_contact',module:'EGCCustomerMessagesHome',load:{js:'employee-customer-messages.js',css:'employee-customer-messages.css',v:'20261021inbox4'}},
   {id:'overdue_followups',label:'Overdue follow-ups',homes:['today','my_day'],capability:'business',module:'EGCFollowupsHome'},
   {id:'shift_swap_review',label:'Shift swaps to approve',homes:['today'],capability:'business',module:'EGCShiftSwapsReview',load:{js:'employee-shift-swaps.js',css:'employee-shift-swaps.css',v:'20261021swaps1'}},
-  {id:'shift_swaps',label:'Swap a shift',homes:['my_day'],crewVisible:true,module:'EGCShiftSwapsHome',load:{js:'employee-shift-swaps.js',css:'employee-shift-swaps.css',v:'20261021swaps1'}},
 ];
 const HOMES=new Set(['today','my_day']);
 const ID=/^[a-z][a-z0-9_]{1,47}$/,CAPABILITY=/^[a-z][a-z0-9_]{1,40}$/,MODULE=/^EGC[A-Za-z0-9]{1,40}$/,VERSION=/^[A-Za-z0-9._-]{1,40}$/,ICON=/^[MmLlHhVvCcSsQqTtAaZz0-9 .,-]{1,800}$/;

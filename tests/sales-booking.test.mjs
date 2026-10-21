@@ -295,7 +295,7 @@ test('flag on: web-lead relays tomorrow\'s /book window as "Tomorrow morning" in
 const SALES_CAPS = ['customer.send', 'followups.own', 'quotes.author', 'schedule.book', 'walkthrough.perform'];
 const PHONE_CAPS = ['customer.send', 'followups.own', 'schedule.book'];
 const MANAGER_CAPS = ['dispatch.write', 'time.approve', 'accounts.approve', 'customer.send', 'followups.own', 'quotes.author', 'schedule.book', 'walkthrough.perform'];
-const EMPLOYEE_VIEWS = ['my_day', 'my_shifts', 'open_shifts', 'earnings', 'crew_chat', 'availability', 'requests', 'training', 'safety', 'onboarding', 'crew_alerts', 'my_commission'];
+const EMPLOYEE_VIEWS = ['my_day', 'my_shifts', 'open_shifts', 'earnings', 'crew_chat', 'availability', 'requests', 'training', 'safety', 'onboarding', 'crew_alerts', 'shift_swaps', 'my_commission'];
 // Recorded from the suite before SALES-BOOKING (merge base b04a617) with tests/helpers/hub-dom.mjs.
 // WP14c added the business Purchase list screen (RUN THE BUSINESS) after it; D6b added every viewer's My commission (MY EGC).
 // Job actuals (business, RUN THE BUSINESS) joins before Review queues, and Open quotes (business) after it.

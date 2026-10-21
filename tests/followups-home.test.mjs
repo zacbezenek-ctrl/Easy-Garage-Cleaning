@@ -316,10 +316,9 @@ test('My day mounts the widget for business users only, filtered to the signed-i
   await crew.page.flush();
   assert.equal(crew.page.api.S.active, 'my_day');
   assert.ok(crew.page.main().querySelector('#ops-home-widgets'), 'the extension point renders for everyone');
-  // Crew get only crew-visible widgets (SHIFT-SWAP: Swap a shift), never a business one.
-  assert.deepEqual(crew.page.main().querySelectorAll('[data-hub-widget]').map(node => node.getAttribute('data-hub-widget')), ['shift_swaps'], 'crew never gets a business widget');
+  assert.equal(crew.page.main().querySelector('[data-hub-widget]'), null, 'crew never gets a business widget');
   assert.equal(crew.operations(), 0);
-  assert.deepEqual([...crew.page.context.EGCHubScreens.homeWidgets('my_day', crew.page.api.hubCapabilities()).map(entry => entry.id)], ['shift_swaps']);
+  assert.deepEqual([...crew.page.context.EGCHubScreens.homeWidgets('my_day', crew.page.api.hubCapabilities()).map(entry => entry.id)], []);
 });
 
 test('a widget whose script is missing shows unavailable with Retry instead of an empty home', async () => {
@@ -351,7 +350,7 @@ test('widget registration refuses ambiguous access, unknown homes, markup and ba
   registry.registerWidget(base);
   assert.deepEqual([...registry.homeWidgets('today', ['crew', 'business']).map(entry => entry.id)], ['overdue_followups', 'shift_swap_review']);
   assert.deepEqual([...registry.homeWidgets('today', ['crew', 'business', 'owner']).map(entry => entry.id)], ['overdue_followups', 'shift_swap_review', 'fixture_widget']);
-  assert.deepEqual([...registry.homeWidgets('my_day', ['crew', 'business', 'owner']).map(entry => entry.id)], ['overdue_followups', 'shift_swaps']);
+  assert.deepEqual([...registry.homeWidgets('my_day', ['crew', 'business', 'owner']).map(entry => entry.id)], ['overdue_followups']);
 });
 
 test('mountHome only mounts on a home, keeps order, and remounts when the viewer changes', async () => {

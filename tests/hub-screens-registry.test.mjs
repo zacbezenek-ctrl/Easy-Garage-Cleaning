@@ -31,7 +31,7 @@ const tabs = page => page.document.querySelectorAll('[data-ops-tab]').map(button
 // (business access, read only) follows it.
 const SHIPPED = ['job_actuals', 'open_quotes', 'reviews', 'message_templates', 'stocked_costs', 'staff', 'invoicing', 'walkthroughs', 'purchase_list'];
 const OWNER_SHIPPED = ['followup_settings', 'ad_spend', 'catalog', 'dispatch_rules'];
-const CREW_SHIPPED = ['crew_alerts'];
+const CREW_SHIPPED = ['crew_alerts', 'shift_swaps'];
 const PASSWORD_SHIPPED = ['password'];
 // D10's Team directory (My EGC) follows Password and needs the 'team_directory' capability, which the suite adds only while
 // /api/integration-status reports flags.teamDirectory (EGC_STAFF_DIRECTORY_ENABLED on).
