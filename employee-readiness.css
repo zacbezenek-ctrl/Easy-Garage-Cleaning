@@ -1,0 +1,20 @@
+/* Tomorrow's crew readiness widget (employee-readiness.js). Scoped to .egc-readiness; colours from the Hub kit tokens. */
+.egc-readiness{display:grid;gap:var(--hub-space-3,12px);padding:var(--hub-space-4,16px);border:1px solid var(--hub-line,#ddd);border-radius:var(--hub-radius,12px);background:var(--hub-card,#fff)}
+.egc-readiness .rd-head{display:grid;gap:2px}
+.egc-readiness .rd-eyebrow{font:700 12px/1.3 var(--hub-font,inherit);letter-spacing:.06em;color:var(--hub-muted,#666)}
+.egc-readiness h2{margin:0;font-size:20px}
+.egc-readiness .rd-scope,.egc-readiness .rd-count,.egc-readiness .rd-empty,.egc-readiness .rd-meta{margin:0;color:var(--hub-muted,#666);font-size:14px;line-height:1.45}
+.egc-readiness .rd-count{color:var(--hub-ink,#222);font-weight:700}
+.egc-readiness .rd-list{list-style:none;margin:0;padding:0;display:grid;gap:var(--hub-space-3,12px)}
+.egc-readiness .rd-job{display:grid;gap:4px;padding:10px 12px;border-left:4px solid var(--hub-green,#2f7d4f);border-radius:8px;background:var(--hub-surface,#f7f6f2);overflow-wrap:anywhere}
+.egc-readiness .rd-job.rd-check{border-left-color:var(--hub-amber,#b7791f)}
+.egc-readiness .rd-job.rd-blocked{border-left-color:var(--hub-red,#b42318)}
+.egc-readiness .rd-job-head{display:flex;flex-wrap:wrap;justify-content:space-between;gap:8px;align-items:baseline}
+.egc-readiness .rd-badge{font:700 12px/1.3 var(--hub-font,inherit);text-transform:uppercase;letter-spacing:.04em}
+.egc-readiness .rd-blocked .rd-badge{color:var(--hub-red,#b42318)}
+.egc-readiness .rd-check .rd-badge{color:var(--hub-amber,#b7791f)}
+.egc-readiness .rd-ready .rd-badge{color:var(--hub-green,#2f7d4f)}
+.egc-readiness .rd-issues{margin:0;padding-left:18px;font-size:14px;line-height:1.45}
+.egc-readiness .rd-issues .rd-block{color:var(--hub-red,#b42318);font-weight:600}
+.egc-readiness .rd-actions{display:flex;flex-wrap:wrap;gap:var(--hub-space-2,8px)}
+.egc-readiness .rd-actions .hub-btn{min-height:44px}

@@ -103,8 +103,9 @@ test('render lazily loads the kit then the screen once, mounts with the Hub cont
   page.api.go('fixture_lazy');
   assert.ok(page.main().querySelector('.hub-screen-loading'), 'a skeleton shows while assets load');
   await page.flush();
-  // The Command center's needs-sign-off widget (SIGNOFF) loads its own files on the home before the screen is opened.
-  assert.deepEqual(requested.sort(), ['employee-job-signoff.css?v=20261021signoff1', 'employee-job-signoff.js?v=20261021signoff1', 'employee-ui-kit.css?v=20260929mobilehub', 'employee-ui-kit.js?v=20260929mobilehub', 'fixture-lazy.css?v=t1', 'fixture-lazy.js?v=t1']);
+  // The Command center's home widgets load their own files before the screen is opened: tomorrow readiness (READINESS)
+  // and needs sign-off (SIGNOFF).
+  assert.deepEqual(requested.sort(), ['employee-job-signoff.css?v=20261021signoff1', 'employee-job-signoff.js?v=20261021signoff1', 'employee-readiness.css?v=20261021ready1', 'employee-readiness.js?v=20261021ready1', 'employee-ui-kit.css?v=20260929mobilehub', 'employee-ui-kit.js?v=20260929mobilehub', 'fixture-lazy.css?v=t1', 'fixture-lazy.js?v=t1']);
   assert.equal(mounts.length, 1);
   const { host, ctx } = mounts[0];
   assert.equal(host, page.main());
@@ -128,7 +129,7 @@ test('render lazily loads the kit then the screen once, mounts with the Hub cont
   page.api.go('fixture_lazy');
   await page.flush();
   assert.equal(mounts.length, 2);
-  assert.equal(requested.length, 6, 'assets load once per page (the four above and the sign-off widget pair)');
+  assert.equal(requested.length, 8, 'assets load once per page (the four above and the readiness and sign-off widget pairs)');
 });
 
 test('a registered screen that cannot leave blocks go() until its changes are finished', async () => {
