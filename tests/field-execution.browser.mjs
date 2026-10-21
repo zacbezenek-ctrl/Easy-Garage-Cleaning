@@ -157,6 +157,9 @@ try {
   await lastCheck().click(); await page.locator(`input[data-check="${lastCheckId}"]:not(:checked)`).waitFor();
   await lastCheck().click(); await page.locator(`input[data-check="${lastCheckId}"]:checked`).waitFor();
   for (let wait = 0; wait < 100 && (await page.evaluate(async () => (await window.EGCFieldOutbox.create().items('Crew.One')).filter(item => item.payload.action === 'checklist').length)) < 2; wait++) await page.waitForTimeout(50);
+  // A check tap is busy only while it saves to the phone's outbox; wait for that render to finish (the photo is still
+  // stalled, so a page locked by the upload would never settle and the assertion below fails).
+  await page.waitForFunction(() => !document.querySelector('input[data-check]:disabled') && !document.querySelector('#note-form button[type=submit]:disabled'), null, { timeout: 5000 }).catch(() => {});
   assert.deepEqual(await controls(), { checks: 0, status: [false, false, false], note: false, discard: [true, false] }, 'the page stays usable while the photo is still stalled');
   assert.deepEqual(posted.slice(postedBefore), ['photo'], 'only the stalled photo has been sent');
   photoStall = null; releasePhotos();
