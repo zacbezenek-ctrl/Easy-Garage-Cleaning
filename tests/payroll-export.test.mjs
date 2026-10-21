@@ -10,6 +10,7 @@ import { onRequestGet as hubGet, onRequestPost as hubPost } from '../functions/a
 import { onRequestGet as ptoGet, onRequestPost as ptoPost } from '../functions/api/employee-pto.js';
 import { createHubCredentialHash, createHubSessionCookie } from '../functions/_lib/hub-session.js';
 import { matchesWhere } from './helpers/firestore-query.mjs';
+import { commitAsPatch } from './helpers/commit-as-patch.mjs';
 
 const NOW = new Date('2026-10-05T18:00:00.000Z');
 const at = (date, time) => `${date}T${time}:00-06:00`;
@@ -163,7 +164,7 @@ test('the payroll CSV and the timesheet week view pay the same PTO hours for eit
 function firestore(t) {
   const documents = new Map(); let revision = 0;
   const stamp = () => `2026-10-05T18:00:00.${String(++revision).padStart(9, '0')}Z`;
-  t.mock.method(globalThis, 'fetch', async (input, options = {}) => {
+  t.mock.method(globalThis, 'fetch', commitAsPatch(async (input, options = {}) => {
     const url = new URL(input), body = options.body ? JSON.parse(options.body) : null;
     assert.equal(url.hostname, 'firestore.googleapis.com');
     if (url.pathname.endsWith('/documents:runQuery')) return Response.json([...documents.values()].filter(doc => doc.name.includes('/documents/jobs/') && matchesWhere(doc, body.structuredQuery.where)).map(document => ({ document })));
@@ -185,7 +186,7 @@ function firestore(t) {
     // A collection path lists the documents directly under it.
     if (name.split('/').length % 2 === 0) return Response.json({ documents: [...documents.values()].filter(doc => doc.name.startsWith(name + '/') && !doc.name.slice(name.length + 1).includes('/')) });
     return Response.json({}, { status: 404 });
-  });
+  }));
   return documents;
 }
 

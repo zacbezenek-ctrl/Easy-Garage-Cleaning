@@ -5,6 +5,7 @@ import { createGustoSyncHandlers, onRequestGet as syncGet, onRequestPost as sync
 import { onRequestPost as hubPost } from '../functions/api/employee-hub.js';
 import { createHubSessionCookie } from '../functions/_lib/hub-session.js';
 import { writeGustoRecord } from '../functions/_lib/gusto-store.js';
+import { commitAsPatch } from './helpers/commit-as-patch.mjs';
 
 const company = '11111111-1111-4111-8111-111111111111', employee = '22222222-2222-4222-8222-222222222222', job = '33333333-3333-4333-8333-333333333333';
 const otherEmployee = '44444444-4444-4444-8444-444444444444', otherJob = '55555555-5555-4555-8555-555555555555';
@@ -316,7 +317,7 @@ test('owner API enforces same-origin JSON body bounds and returns explicit parti
 test('real API adapters read encrypted authoritative Hub timecards and persist encrypted CAS sync ledgers', async t => {
   const env = { GUSTO_ENVIRONMENT: 'demo', GUSTO_COMPANY_UUID: company, GUSTO_CLIENT_ID: 'synthetic-client', GUSTO_CLIENT_SECRET: 'synthetic-secret', GUSTO_REDIRECT_URI: 'https://easygaragecleaning.com/api/gusto-auth', FIREBASE_API_KEY: 'firebase-test-gusto-sync', EMPLOYEE_HUB_DATA_SECRET: 'synthetic-vault', HUB_SESSION_SECRET: 'synthetic-session', HUB_AUTH_USERS_JSON: JSON.stringify({ ZacB: { role: 'owner', passwordHash: 'test' } }) };
   const docs = new Map(), sheets = new Map(), outbound = []; let revision = 0;
-  t.mock.method(globalThis, 'fetch', async (input, options = {}) => {
+  t.mock.method(globalThis, 'fetch', commitAsPatch(async (input, options = {}) => {
     const url = new URL(input), method = options.method || 'GET';
     if (url.hostname === 'firestore.googleapis.com') {
       if (url.pathname.endsWith('/documents:runQuery')) return Response.json([...docs.values()].filter(doc => doc.fields.recordType?.stringValue === 'employee_hub_v2').map(document => ({ document })));
@@ -340,7 +341,7 @@ test('real API adapters read encrypted authoritative Hub timecards and persist e
     assert.equal(method, 'POST'); outbound.push(JSON.parse(options.body));
     const sheet = { ...JSON.parse(options.body), uuid: crypto.randomUUID(), company_uuid: company, version: 'v1' }; sheets.set(sheet.uuid, sheet);
     return Response.json(sheet, { status: 201 });
-  });
+  }));
   const cookie = (await createHubSessionCookie(env, 'ZacB')).split(';')[0];
   const postRequest = (path, body) => new Request(`https://easygaragecleaning.com/api/${path}`, { method: 'POST', headers: { Cookie: cookie, Origin: 'https://easygaragecleaning.com', 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
   const stored = await hubPost({ env, request: postRequest('employee-hub', { collection: 'timeEntries', id: 'shift-1', data: card({ hours: 999 }) }) }); assert.equal(stored.status, 200);

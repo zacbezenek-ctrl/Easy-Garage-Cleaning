@@ -77,6 +77,11 @@ The bounded next improvement is a scoped/incremental employee feed:
 
 This is a follow-on design, not an implemented or enabled feed.
 
+Update (STAFF-DATA-READ): the Hub's employee poll now reads one revision document and only the vault families
+changed since its last read, and the Time off screen no longer scans `jobs`. The arithmetic, the remaining large
+readers (`/api/crew-jobs`, `/api/dispatch`) and the console checks and budget alert for the owner are in
+[READ-BUDGET.md](READ-BUDGET.md).
+
 ## Snapshot evidence
 
 - Source baseline: `c3dc926263b8bc011838b9e756376c3d98821de9` (PR #98)
