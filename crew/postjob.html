@@ -286,9 +286,13 @@ const SECTIONS = [
       {t:"Garage Guard pitched — top-down", s:"Open at Guard Black. Step down one tier on hesitation. Lite is the save. Two options, never yes/no."},
       {t:"6-month check-in scheduled", s:"Confirm the HighLevel follow-up is active. ‘We'll text you in 6 months to see how the system's holding up’ — said out loud, then actually scheduled."},
     ],
-    script:{h:"Review, then referral — exact words", p:[
-      "“One favor — reviews are how a local crew like us survives against the big franchises. I'm texting you the link right now, it's 30 seconds. An honest review, whatever you think.”",
-      "<i>Only after the review ask is done, as its own conversation (never tie the gift card to a review) →</i> “Anyone else on the street with a garage like yours used to be? We're already here with the truck. If a neighbor books off your word, there's an EGC thank-you gift card in it for you.”"
+    script:{h:"Review ask — exact words", p:[
+      "“One favor — reviews are how a local crew like us survives against the big franchises. I'm texting you the link right now, it's 30 seconds. An honest review, whatever you think.”"
+    ]},
+    // Its own script and Copy button, after the review ask is done: the gift card rides on a neighbor booking, never
+    // on a review (Google review policy, FTC 16 CFR 465), so the two are never copied or sent as one message.
+    referral:{h:"Referral ask — a separate conversation, after the review ask", p:[
+      "“Anyone else on the street with a garage like yours used to be? We're already here with the truck. If a neighbor books off your word, there's an EGC thank-you gift card in it for you.”"
     ]},
     script2:{h:"Garage Guard — open at the top, step down only", p:[
       "“Guard Black — $2,500/yr: monthly whole-property visits, free monthly single-item pickup, annual deep clean, front-of-line scheduling. Only 5 memberships in Fort Collins.”",
@@ -531,6 +535,9 @@ function render(){
         ${si===1?`<button class="copybtn" id="revbtn" style="margin-left:8px;background:#2e7d4f" onclick="event.stopPropagation();sendReview(this)">Send review link from EGC number</button>`:""}
         ${si===1?`<div class="reviewqr">${REVIEW_QR}<div class="cap"><b>Or have them scan</b><small>Point their phone camera here — it opens our Google review page.</small></div></div>`:""}
       </div>`:""}
+      ${sec.referral?`<div class="script"><h4>${sec.referral.h}</h4>${sec.referral.p.map(p=>`<p>${p}</p>`).join("")}
+        <button class="copybtn" onclick="event.stopPropagation();copyScript(${si},this,'referral')">Copy text</button>
+      </div>`:""}
       ${sec.script2?`<div class="script"><h4>${sec.script2.h}</h4>${guardYearOneFree()?`<p style="background:#e8581c;color:#fff;border-radius:8px;padding:8px 11px;font-size:13.5px;margin-bottom:8px"><b>This package already includes Garage Guard year one free.</b> Don't cold-sell — frame it as “here's what kicks in after your free year,” or pitch the Guard Black upgrade.</p>`:""}${sec.script2.p.map(p=>`<p>${p}</p>`).join("")}</div>`:""}
       ${sec.guard?`<div class="guardrow"><div class="guardlbl">Garage Guard result</div>
         <div class="gchips" role="group" aria-label="Garage Guard result">${GUARD_OPTS.map(g=>`<button type="button" class="gchip ${GUARD===g?'on':''} ${g==='Not today'?'no':''}" aria-pressed="${GUARD===g}" onclick="setGuard('${g}')">${g}</button>`).join("")}</div></div>`:""}
@@ -549,10 +556,11 @@ function render(){
   renderJobBrief();
 }
 function tog(si,ii){state[key(si,ii)]=!state[key(si,ii)];render();saveAll();queueProgressSave();}
-function copyScript(si,btn){
+// The words a crew lead copies to send: one script only, without the <i> stage directions meant for the crew.
+function scriptText(paragraphs,name,pain){let txt=paragraphs.join("\n\n").replace(/<i>[\s\S]*?<\/i>/g,"").replace(/<[^>]+>/g,"").replace(/[ \t]+/g," ").replace(/^ | $/gm,"").replaceAll("[NAME]",name);return pain?txt.replace(/\[THEIR PAIN[^\]]*\]/g,pain):txt;}
+function copyScript(si,btn,which){
   const name=document.getElementById("j_name").value||"[NAME]";
-  let txt=SECTIONS[si].script.p.join("\n\n").replace(/<[^>]+>/g,"").replaceAll("[NAME]",name);
-  if(ACTIVE.pain) txt=txt.replace(/\[THEIR PAIN[^\]]*\]/g,ACTIVE.pain);
+  const txt=scriptText(SECTIONS[si][which||"script"].p,name,ACTIVE.pain);
   navigator.clipboard&&navigator.clipboard.writeText(txt);
   btn.textContent="Copied ✓";setTimeout(()=>{btn.textContent="Copy text";},1500);
 }
