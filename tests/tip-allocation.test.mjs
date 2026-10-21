@@ -446,3 +446,24 @@ test('a manager sees no amount when a job\'s only assigned crew member has no jo
   assert.equal(manager.totals.hiddenJobs, 1);
   assert.doesNotMatch(JSON.stringify(manager), /2500|"25\.00"|pi_h/);
 });
+
+// PAY-VIEW-GRANT (#192): a view-only pay viewer (EGC_STAFF_PAY_VIEWERS) sees each person's tip share, but the tip file
+// is a payroll export and follows the payroll CSV's rule (canSetPay): the owner's alone.
+test('a view-only pay viewer sees the tip shares but cannot download the tip file; the owner can', async t => {
+  const VIEWER = { user: 'AlexK', role: 'manager', businessAccess: true, owner: false }, env = { EGC_STAFF_PAY_VIEWERS: 'alexk' };
+  const jobs = [job('job-a', [tip('a', 3000, '2026-09-23T22:00:00.000Z')])];
+  const timecards = [tracked('one', 'crew.one', '2026-09-23', '08:00', '10:00', [['work', 'job-a', '08:00']]), tracked('two', 'crew.two', '2026-09-23', '08:00', '09:00', [['work', 'job-a', '08:00']])];
+  const query = 'start=2026-09-21&end=2026-09-28';
+  const viewer = api(t, { jobs, timecards, actor: VIEWER, env }), seen = await (await viewer.get(query)).json();
+  assert.deepEqual([seen.payShown, seen.exportAllowed], [true, false]);
+  assert.deepEqual(seen.jobs[0].employees.map(share => share.tipCents), [2000, 1000], 'the viewer sees each share');
+  const reads = viewer.calls.jobs, csv = await viewer.get(`${query}&format=csv`);
+  assert.deepEqual([csv.status, (await csv.json()).code], [403, 'tip_allocation_pay_owner_only']);
+  assert.equal(viewer.calls.jobs, reads, 'refused before any read');
+  const owner = api(t, { jobs, timecards, env });
+  assert.equal((await (await owner.get(query)).json()).exportAllowed, true);
+  assert.equal((await owner.get(`${query}&format=csv`)).status, 200);
+  // Not on the list: a manager sees no shares and no file, as before.
+  const plain = await (await api(t, { jobs, timecards, actor: { ...VIEWER, user: 'AlexK2' }, env }).get(query)).json();
+  assert.ok(plain.ok === false || plain.payShown === false);
+});
