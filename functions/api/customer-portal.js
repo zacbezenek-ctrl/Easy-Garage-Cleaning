@@ -9,6 +9,9 @@ import { customerPhotoPolicy, customerPhotoProjection, customerPhotosEnabled } f
 import { commitDocuments, patchJob, readJob } from '../_lib/firestore-job.js';
 import { CUSTOMER_PORTAL_CONTENT, CUSTOMER_PORTAL_TERMS_VERSION, approvalTermsVersion, customerPortalDocuments } from '../_lib/customer-portal-content.js';
 import { appendConversationMessage, cleanMessage, cleanRequestId, conversationMessages, deliverHighLevelMessage, findConversationMessage, replaceConversationMessage } from '../_lib/customer-messaging.js';
+import { CUSTOMER_MESSAGE_ALERTS, appendCustomerMessageAlert, customerMessageAlertId, customerMessageAlertStorage, newCustomerMessageAlert, validAlertId } from '../_lib/customer-message-alerts.js';
+import { consumeRollingLimit } from '../_lib/rate-limit.js';
+import { dispatchStorage } from '../_lib/dispatch-storage.js';
 import { TIP_PRESETS, customerMoneyState as moneyState, customerDepositState, customerPaymentNeedsReview, customerQuoteTotal, customerTipsEnabled, customerTotalsShadow, createCustomerStripeCheckout, portalPaymentHeld, recordCustomerStripePayment, recordedTipCents, requestTip, stripeRequest as stripe, stripeSecretKey as stripeKey, tipLimitCents, tipRefusal, unknownMoneyRefusal } from '../_lib/customer-payments.js';
 import { approvalClosed, billedChangeCents, billedChangeOrders, changeOrderBillingEnabled, changeOrderSaved, decisionDeltaCents, respondToDecision } from '../_lib/change-orders.js';
 import { parseBusinessActor } from '../_lib/business-hub-core.js';
@@ -25,6 +28,8 @@ const HOST = /^(?:easygaragecleaning\.com|www\.easygaragecleaning\.com|easy-gara
 const DEFAULT_REVIEW_URL = 'https://search.google.com/local/writereview?placeid=ChIJ17AGfBiyRIsRyJ3k4mDtX8Q';
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const REVIEW_CLICK_WINDOW_MS = 60 * 1000;
+// PORTAL-INBOX: client portal messages per job in a rolling window (functions/_lib/rate-limit.js).
+const MESSAGE_LIMIT = 10, MESSAGE_WINDOW_MS = 10 * 60 * 1000;
 const PORTAL_REQUEST = /^[A-Za-z0-9_-]{8,120}$/;
 const CLOSED_VISIT = ['cancelled', 'canceled', 'no_show', 'noshow', 'no-show'];
 const APPROVAL_ACTOR_FIELDS = ['approvedByActorId', 'approvedByBusinessAccountId', 'approvedByBusinessMemberId'];
@@ -398,7 +403,7 @@ function sanitize(job, session = {}, { today, reviewUrl, draftsRejected = false,
     photos: { customerUploadCount: Math.max(0, Number(job.customerPhotoCount || 0)), lastUploadedAt: safe(job.customerPhotoUpdatedAt || '', 50) },
     conversation: conversationMessages(job).map(message => ({
       id: message.id, direction: message.direction, authorRole: message.authorRole, authorName: message.authorName,
-      body: message.body, createdAt: message.createdAt,
+      body: message.body, createdAt: message.createdAt, ...(message.officeAlert ? { officeAlert: message.officeAlert } : {}),
       delivery: { channel: message.delivery.channel, status: message.delivery.status, attemptedAt: message.delivery.attemptedAt },
     })),
     messaging: { highLevelLinked: Boolean(job.highlevelContactId), refreshSeconds: 20 },
@@ -433,7 +438,7 @@ async function handleGet({ request, env }, deps) {
   return reply(200, body);
 }
 
-async function handlePost({ request, env }, { clock, read }) {
+async function handlePost({ request, env, waitUntil }, { clock, read, alerts, limits }) {
   if (!allowed(request)) return reply(403, { ok: false, error: 'Forbidden origin' });
   const result = await requirePortal(request, env, { clock, read });
   if (result.error) return result.error;
@@ -462,23 +467,62 @@ async function handlePost({ request, env }, { clock, read }) {
       : result.job.customer, 120) || 'Customer';
     const message = {
       id: `customer-${requestId}`.slice(0, 140), requestId, direction: 'from_customer', authorRole: 'customer',
-      authorName, body: messageBody, createdAt: now,
+      authorName, body: messageBody, createdAt: now, officeAlert: 'queued',
       delivery: { channel: 'portal', status: 'received', attemptedAt: now },
     };
-    let queued;
-    try {
-      queued = await patchJob(env, result.session.jobId, { customerConversation: appendConversationMessage(result.job, message), customerConversationUpdatedAt: now, updatedAt: now }, result.jobUpdateTime);
-    } catch {
-      return reply(409, { ok: false, error: 'The conversation changed. Refresh and send again.' });
+    // PORTAL-INBOX: at most MESSAGE_LIMIT sends per job in MESSAGE_WINDOW_MS (a replay was answered above and is not
+    // counted). The office alert absorbs normal back-and-forth; this stops a leaked link from flooding the office.
+    // The limiter fails closed on a malformed or contended counter; an outage of the limiter alone never stops a send.
+    const limit = await consumeRollingLimit(limits(env), env, { bucket: 'portal_message', key: `job:${result.session.jobId}`, limit: MESSAGE_LIMIT, windowMs: MESSAGE_WINDOW_MS }, now).catch(() => ({ allowed: true }));
+    if (!limit.allowed) return reply(429, { ok: false, code: 'CUSTOMER_PORTAL_MESSAGE_RATE_LIMITED', error: 'You have sent several messages in a few minutes, and the team has them. Please wait a few minutes before sending more, or call (970) 999-1818 if it is urgent.' });
+    // PORTAL-INBOX: the message and its office alert are one commit, so a stored message always reaches the Hub's
+    // Customer messages list. A job has one open alert: while the job's customerMessageAlertId names an open one,
+    // the message is added to it (guarded by its revision, so a Mark handled in between opens a new one instead).
+    let job = result.job, jobUpdateTime = result.jobUpdateTime, conversation = null, alertId = '';
+    for (let round = 0; round < 3 && !conversation; round += 1) {
+      if (round) {
+        try { job = await read(env, result.session.jobId); } catch { break; }
+        if (!job) break;
+        jobUpdateTime = job.__updateTime || '';
+        const replayed = findConversationMessage(job, { requestId });
+        if (replayed) return reply(200, { ok: true, duplicate: true, message: replayed, conversation: conversationMessages(job) });
+      }
+      const pointer = validAlertId(job.customerMessageAlertId) ? job.customerMessageAlertId : '';
+      const open = pointer ? await alerts(env).read(pointer).catch(() => undefined) : null;
+      if (open === undefined) break;
+      const append = open?.status === 'open';
+      alertId = append ? pointer : await customerMessageAlertId(result.session.jobId, message.id);
+      const rows = appendConversationMessage(job, message);
+      try {
+        await commitDocuments(env, [
+          { id: result.session.jobId, updateTime: jobUpdateTime, patch: { customerConversation: rows, customerConversationUpdatedAt: now, customerMessageAlertId: alertId, updatedAt: now } },
+          append
+            ? { collection: CUSTOMER_MESSAGE_ALERTS, id: alertId, updateTime: open.revision, patch: appendCustomerMessageAlert(open, job, message, now) }
+            : { collection: CUSTOMER_MESSAGE_ALERTS, id: alertId, create: true, patch: newCustomerMessageAlert(job, result.session.jobId, message, now) },
+        ]);
+        conversation = rows;
+      } catch (error) {
+        // Only a lost race (the job or its alert changed) is read again; anything else is reported.
+        if (![400, 409, 412].includes(error?.storageStatus)) break;
+      }
     }
-    const highLevelDelivery = await deliverHighLevelMessage(env, queued, { body: messageBody, direction: 'from_customer', requestId }, { clock });
-    const delivery = highLevelDelivery.status === 'sent' ? highLevelDelivery : message.delivery;
-    let updated = queued;
-    try {
-      const latest = await read(env, result.session.jobId), deliveredAt = clock().toISOString();
-      updated = await patchJob(env, result.session.jobId, { customerConversation: replaceConversationMessage(latest, message.id, { delivery }), customerConversationUpdatedAt: deliveredAt, updatedAt: deliveredAt }, latest.__updateTime);
-    } catch { /* The customer reply is already safely stored in the project thread. */ }
-    return reply(200, { ok: true, message: { ...message, delivery }, conversation: conversationMessages(updated) });
+    if (!conversation) return reply(409, { ok: false, error: 'The conversation changed. Refresh and send again.' });
+    const queued = { ...job, id: result.session.jobId, customerConversation: conversation };
+    // HighLevel gets its internal note after the customer has the answer, so it can never fail or delay the send.
+    const notify = (async () => {
+      const highLevelDelivery = await deliverHighLevelMessage(env, queued, { body: messageBody, direction: 'from_customer', requestId }, { clock });
+      if (highLevelDelivery.status === 'sent') {
+        try {
+          const latest = await read(env, result.session.jobId), deliveredAt = clock().toISOString();
+          await patchJob(env, result.session.jobId, { customerConversation: replaceConversationMessage(latest, message.id, { delivery: highLevelDelivery }), customerConversationUpdatedAt: deliveredAt, updatedAt: deliveredAt }, latest.__updateTime);
+        } catch { /* The customer reply is already safely stored in the project thread. */ }
+      }
+    })().catch(() => {});
+    // Pages always provides waitUntil; a bare call (no Workers context) finishes the work before answering, as before.
+    let deferred = false;
+    if (typeof waitUntil === 'function') { try { waitUntil(notify); deferred = true; } catch { /* finished below instead */ } }
+    if (!deferred) await notify;
+    return reply(200, { ok: true, message, conversation: conversationMessages({ customerConversation: conversation }) });
   }
 
   if (body.action === 'approve_estimate') {
@@ -835,8 +879,8 @@ export async function onRequestDelete() {
   return reply(200, { ok: true }, { 'Set-Cookie': clearCustomerPortalSessionCookie() });
 }
 
-export function createCustomerPortalHandlers({ now = () => new Date(), read = readJob, crewProfiles = readCrewPublicProfiles } = {}) {
-  const deps = { clock: now, read, crewProfiles };
+export function createCustomerPortalHandlers({ now = () => new Date(), read = readJob, crewProfiles = readCrewPublicProfiles, alerts = customerMessageAlertStorage, limits = dispatchStorage } = {}) {
+  const deps = { clock: now, read, crewProfiles, alerts, limits };
   return { onRequestGet: context => handleGet(context, deps), onRequestPost: context => handlePost(context, deps), onRequestDelete };
 }
 

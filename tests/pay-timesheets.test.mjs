@@ -289,11 +289,14 @@ test('HTTP writes: without pay.manage a timecard pay change is refused, includin
     const ownCard = await read('timeEntries', id('own'));
     assert.deepEqual([ownCard.hourlyRate, ownCard.payType], flag === 'on' ? [user === 'TylerG' ? 30 : 0, 'hourly'] : [99, 'salary'], label('own snapshot'));
     refusedOn(flag, await post(hubEnv, user, 'timeEntries', id('own-bonus'), shift(user, { bonus: 50 })), label('own bonus'));
-    // Self-approval: the hours can be approved, a rate change alongside it cannot.
-    refusedOn(flag, await post(hubEnv, user, 'timeEntries', id('own'), { approvalStatus: 'approved', hourlyRate: 120 }), label('self-approve with a raise'));
-    const selfApproved = await post(hubEnv, user, 'timeEntries', id('own'), { approvalStatus: 'approved' });
-    assert.equal(selfApproved.status, 200);
-    assert.deepEqual([(await read('timeEntries', id('own'))).approvedBy, (await read('timeEntries', id('own'))).hourlyRate], [user, flag === 'on' ? (user === 'TylerG' ? 30 : 0) : 120]);
+    // NO-SELF-APPROVAL: a manager never approves their own timecard, with a rate change or without; someone else does.
+    for (const body of [{ approvalStatus: 'approved', hourlyRate: 120 }, { approvalStatus: 'approved' }, { approvalStatus: 'rejected' }]) {
+      const self = await post(hubEnv, user, 'timeEntries', id('own'), body);
+      assert.equal(self.status, 403, label(`self ${JSON.stringify(body)}`));
+    }
+    assert.equal((await read('timeEntries', id('own'))).approvalStatus === 'approved', false, label('own card stays unapproved'));
+    assert.equal((await post(env, 'ZacB', 'timeEntries', id('own'), { approvalStatus: 'approved' })).status, 200, label('the owner approves it'));
+    assert.deepEqual([(await read('timeEntries', id('own'))).approvedBy, (await read('timeEntries', id('own'))).hourlyRate], ['ZacB', flag === 'on' ? (user === 'TylerG' ? 30 : 0) : 99]);
   }
   // The owner sets pay on anyone's timecard with the flag on.
   assert.equal((await post(env, 'ZacB', 'timeEntries', 'owner-card', shift('Crew.Static', { hourlyRate: 22, bonus: 15 }))).status, 200);
