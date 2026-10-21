@@ -48,9 +48,9 @@ function notes(){
   return h('section',{class:'hub-card cp-notes','aria-label':'How these are counted'},h('h2',{},'How these are counted'),
     h('ul',{},
       h('li',{},'Hours and jobs come from job time on timecards. Pending hours are not approved yet.'),
-      h('li',{},'On time means the first work clock-in on the job was by the end of its arrival window, or within 15 minutes of the start time when there is no window.'),
+      h('li',{},'On time means the person\'s first work clock-in on the job was by the end of the customer\'s arrival window, or within 15 minutes of the start time when there is no window. On a split job, each person is judged by their own segment that day; a later day of a multi-day job without its own segment is not counted.'),
       h('li',{},'Crew hours vs billed compares everyone\'s actual hours on completed jobs this person worked against the Labor line sold. It is a crew figure, not one person\'s speed.'),
-      h('li',{},'Issues count completed jobs this person led that closed with issues, and open crew follow-ups.'),
+      h('li',{},'Issues count completed jobs this person led that closed with issues, and their other jobs with an open crew follow-up. A job counts once.'),
       h('li',{},'Not tracked yet, so not shown: callbacks or redo visits, and customer reviews that name a crew member.')));
 }
 function render(){
@@ -62,6 +62,7 @@ function render(){
   else if(!S.data)body=[h('p',{class:'hub-screen-loading'},'Loading crew performance…')];
   else{
     const d=S.data,notices=[];
+    if(S.error)notices.push(h('div',{class:'hub-notice error',role:'alert'},'Refresh failed, so this is the last loaded data. '+kit().errorText(S.error)));
     if(d.sources?.timecards==='unavailable')notices.push(h('div',{class:'hub-notice warning'},'Timecards could not be read, so hours and arrivals are missing. Jobs led still show. Refresh to try again.'));
     else if(Array.isArray(d.laborCoverage?.reasons)&&d.laborCoverage.reasons.some(reason=>['open_shifts','pending_timecards','needs_review'].includes(reason)))notices.push(h('div',{class:'hub-notice warning'},'Some timecards are still open, pending or need review, so recent hours may change.'));
     const tabs=h('div',{class:'cp-tabs',role:'group','aria-label':'Period'},[['last30','Last 30 days'],['last90','Last 90 days']].map(([id,label])=>kit().button(label,()=>{S.range=id;render();},S.range===id?'primary':'',{'aria-pressed':S.range===id?'true':'false'})));

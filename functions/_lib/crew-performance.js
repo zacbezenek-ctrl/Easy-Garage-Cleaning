@@ -2,15 +2,22 @@
  * already keeps. Hours and counts only; no pay, cost, price or customer contact reaches it.
  * - Hours on jobs: approved and pending job time from timecard job segments (computeJobLaborCost, hours only).
  * - Jobs worked: customer jobs the person logged job time on. Jobs led: completed jobs where they were the crew lead.
- * - On-time arrivals: of the jobs they logged work on, how many their first work segment started by the arrival
- *   window's end (or within 15 minutes of the scheduled start when the job has no window). Jobs without a scheduled
- *   time, or with no work segment, are not counted either way.
+ * - On-time arrivals: of the jobs they logged work on, how many their first work segment started by their own arrival
+ *   deadline. On a job split into assignment segments, that is the segment they are assigned to on the Denver day of
+ *   their first work start; otherwise the job itself, and only on its start day (a later day of a multi-day job has
+ *   no scheduled start). The deadline is the end of the customer's arrival window (arrivalWindowEnd, else the end of
+ *   the saved `arrivalWindow` label) on the job's first day, else 15 minutes after the scheduled start. Jobs without a
+ *   scheduled time, rejected timecards and jobs with no work segment are not counted either way.
  * - Billed vs actual: over the completed jobs they worked that have both billed man-hours (the Labor line) and actual
  *   man-hours (job actuals: timecards first, else the crew lead's count), the crew's actual hours against the billed
  *   ones. It is a crew figure shared by everyone on those jobs, not a measure of one person.
- * - Issues flagged: completed jobs they led that closed with "has issues", and jobs with an open crew follow-up.
+ * - Jobs led and issues: a job (or, on a split job, each segment) credits its crew lead, matched to the roster by id or
+ *   by name. Issues are completed jobs they led that closed with "has issues"; follow-ups are their other jobs with an
+ *   open crew follow-up, so one job never counts twice.
  * Not tracked anywhere yet, so not shown as zero: callbacks or redo visits, and customer reviews naming a crew member. */
 import { scheduleInterval } from './dispatch-time.js';
+import { jobSegments, segmented } from './dispatch-segments.js';
+import { denverWorkDate } from './timesheet-week.js';
 import { completedJob, workJob } from './job-actuals.js';
 
 export const CREW_PERFORMANCE_GRACE_MINUTES = 15;
@@ -19,19 +26,47 @@ const key = value => String(value || '').trim().toLowerCase();
 const round = (value, places = 2) => Math.round(value * 10 ** places) / 10 ** places;
 const HHMM = /^([01]\d|2[0-3]):[0-5]\d$/;
 
-/** The instant a crew member is late after, for a job with a scheduled date and time, or null. */
-export function arrivalDeadline(job) {
-  if (!plain(job) || !job.date || !HHMM.test(String(job.time || ''))) return null;
-  const window = HHMM.test(String(job.arrivalWindowEnd || '')) && String(job.arrivalWindowEnd) >= String(job.time) ? String(job.arrivalWindowEnd) : null;
-  const at = scheduleInterval({ date: job.date, time: window || job.time, endDate: job.date, endTime: '23:59' });
+// '9:00 AM – 10:00 AM' (formatArrivalWindow in dispatch-arrival.js) -> '10:00', or null.
+function labelEnd(label) {
+  const match = /(\d{1,2}):([0-5]\d)\s*([AP])M\s*$/i.exec(String(label || '').trim());
+  if (!match || Number(match[1]) < 1 || Number(match[1]) > 12) return null;
+  const hour = Number(match[1]) % 12 + (match[3].toUpperCase() === 'P' ? 12 : 0);
+  return `${String(hour).padStart(2, '0')}:${match[2]}`;
+}
+/** The end of the job's customer arrival window as HH:MM, or null. */
+export function arrivalWindowEnd(job) {
+  const end = HHMM.test(String(job?.arrivalWindowEnd || '')) ? String(job.arrivalWindowEnd) : job?.arrivalWindowEnd ? null : labelEnd(job?.arrivalWindow);
+  return end && end >= String(job?.time || '') ? end : null;
+}
+
+/** The instant a crew member is late after, for a job with a scheduled date and time, or null. The window applies on
+ * the job's own start day and time; a segment starting at another time is late 15 minutes after its start. */
+export function arrivalDeadline(job, slot = job) {
+  if (!plain(job) || !plain(slot) || !slot.date || !HHMM.test(String(slot.time || ''))) return null;
+  const window = slot.date === job.date && slot.time === job.time ? arrivalWindowEnd(job) : null;
+  const at = scheduleInterval({ date: slot.date, time: window || slot.time, endDate: slot.date, endTime: '23:59' });
   if (!at) return null;
   return at.start + (window ? 0 : CREW_PERFORMANCE_GRACE_MINUTES * 60000);
+}
+
+/** What one person was scheduled for on a job, on the Denver day they first clocked in: {date, time, lead} or null.
+ * On a split job it is their segment that day; otherwise the job, on its start day only. */
+export function personSlot(job, person, firstStart) {
+  if (!plain(job) || !Number.isFinite(firstStart)) return null;
+  const day = denverWorkDate(new Date(firstStart).toISOString());
+  if (segmented(job)) {
+    const rows = jobSegments(job).filter(row => row.segmentId && row.date === day && row.assignedCrew.some(id => key(id) === person));
+    const row = rows.sort((a, b) => String(a.time).localeCompare(String(b.time)))[0];
+    return row ? { date: row.date, time: row.time, lead: row.crewLead } : null;
+  }
+  return job.date === day ? { date: job.date, time: job.time, lead: job.crewLead } : null;
 }
 
 /** Each person's first work segment start on each job: Map(person -> Map(jobId -> ms)). */
 export function firstWorkStarts(timecards = []) {
   const out = new Map();
   for (const card of Array.isArray(timecards) ? timecards : []) {
+    if (card?.approvalStatus === 'rejected') continue;
     const person = key(card?.employee), segments = card?.jobTracking?.segments;
     if (!person || !Array.isArray(segments)) continue;
     for (const segment of segments) {
@@ -52,7 +87,10 @@ function blank(person, name) {
 /** rows for one window. jobs: dispatch job records; labor: computeJobLaborCost (laborCostHidden); actuals: job-actuals
  * rows by jobId; starts: firstWorkStarts(); roster: [{id,name}]; start/end: Denver dates, end exclusive. */
 export function crewPerformanceWindow({ jobs = [], labor = { jobs: [] }, actuals = new Map(), starts = new Map(), roster = [], start, end }) {
-  const names = new Map(roster.filter(plain).map(person => [key(person.id), String(person.name || person.id)]));
+  const listed = roster.filter(plain), names = new Map(listed.map(person => [key(person.id), String(person.name || person.id)]));
+  // A crew lead saved as a display name is the same person as their roster id.
+  const byName = new Map(listed.filter(person => person.name).map(person => [key(person.name), key(person.id)]));
+  const who = value => { const id = key(value); return names.has(id) ? id : byName.get(id) || id; };
   const people = new Map(), row = (person, name) => { if (!people.has(person)) people.set(person, blank(person, names.get(person) || name || person)); return people.get(person); };
   const inWindow = job => workJob(job) && typeof job.date === 'string' && job.date >= start && job.date < end;
   const byId = new Map(jobs.filter(inWindow).map(job => [job.id, job]));
@@ -60,25 +98,24 @@ export function crewPerformanceWindow({ jobs = [], labor = { jobs: [] }, actuals
     const job = byId.get(jobRow.jobId);
     if (!job) continue;
     const actual = actuals.get(job.id), compared = actual && completedJob(job) && typeof actual.billed?.manHours === 'number' && typeof actual.actual?.manHours === 'number';
-    const deadline = arrivalDeadline(job);
     for (const person of jobRow.employees || []) {
       const id = key(person.employee), hours = Number(person.approvedHours) || 0, pending = Number(person.pendingHours) || 0;
       if (!id || hours + pending <= 0) continue;
       const entry = row(id, person.name);
       entry.hours += hours; entry.pendingHours += pending; entry.jobsWorked++;
-      const arrived = starts.get(id)?.get(job.id);
-      if (deadline !== null && Number.isFinite(arrived)) { entry.arrivalsCounted++; if (arrived <= deadline) entry.onTime++; }
+      const arrived = starts.get(id)?.get(job.id), slot = personSlot(job, id, arrived), deadline = slot ? arrivalDeadline(job, slot) : null;
+      if (deadline !== null) { entry.arrivalsCounted++; if (arrived <= deadline) entry.onTime++; }
       if (compared) { entry.comparedJobs++; entry.billedManHours += actual.billed.manHours; entry.actualManHours += actual.actual.manHours; }
     }
   }
   for (const job of byId.values()) {
-    const lead = key(job.crewLead);
-    if (lead && completedJob(job)) {
-      const entry = row(lead);
-      entry.jobsLed++;
-      if (job.fieldExecution?.completion?.hasIssues === true) entry.issueJobs++;
+    const leads = [...new Set((segmented(job) ? jobSegments(job).map(segment => segment.crewLead) : [job.crewLead]).map(who).filter(Boolean))];
+    const issues = completedJob(job) && job.fieldExecution?.completion?.hasIssues === true;
+    for (const lead of leads) {
+      if (completedJob(job)) row(lead).jobsLed++;
+      if (issues) row(lead).issueJobs++;
+      else if (job.fieldExecution?.attention?.status === 'open') row(lead).followUps++;
     }
-    if (lead && job.fieldExecution?.attention?.status === 'open') row(lead).followUps++;
   }
   return [...people.values()].map(entry => ({
     ...entry, hours: round(entry.hours), pendingHours: round(entry.pendingHours), billedManHours: round(entry.billedManHours), actualManHours: round(entry.actualManHours),

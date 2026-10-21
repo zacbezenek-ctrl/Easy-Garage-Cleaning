@@ -1,7 +1,7 @@
 """Crew performance (CREW-PERF) in a real browser at 1280 px and 390 px. tests/browser/crew_performance_fixture.mjs runs
 the REAL GET /api/crew-performance over synthetic jobs and timecards, so every figure on screen is the server's: hours on
 jobs, jobs worked and led, on-time arrivals against the arrival window, crew hours against the billed Labor line and
-issues. Also: the 30/90-day switch, no pay anywhere, the timecards-unavailable notice, a refused crew login and the
+issues. Also: the 30/90-day switch, no pay anywhere, the timecards-unavailable notice, a failed Refresh that keeps the last data, a refused crew login and the
 phone layout (no sideways scroll, 44 px buttons). Screenshots land in test-results/."""
 import json, os, pathlib, re, subprocess, unittest, urllib.request
 from playwright.sync_api import sync_playwright, expect
@@ -26,7 +26,7 @@ class CrewPerformanceScreenTests(unittest.TestCase):
 
     def setUp(self):
         self.errors = []; self.context = None
-        self.control(who='owner', timecards='ok')
+        self.control(who='owner', timecards='ok', api='ok')
 
     def tearDown(self):
         if self.context: self.context.close()
@@ -80,7 +80,11 @@ class CrewPerformanceScreenTests(unittest.TestCase):
         page.get_by_role('button', name='Refresh').click()
         expect(page.get_by_text('Timecards could not be read')).to_be_visible()
         expect(self.row(page, 'crew.one').locator('td[data-label="Jobs led"]')).to_have_text('2')
-        self.control(who='crew', timecards='ok')
+        self.control(api='down')
+        page.get_by_role('button', name='Refresh').click()
+        expect(page.get_by_role('alert')).to_contain_text('Refresh failed')
+        expect(self.row(page, 'crew.one')).to_be_visible()
+        self.control(who='crew', timecards='ok', api='ok')
         page.reload()
         expect(page.get_by_role('alert')).to_contain_text('Crew performance is unavailable')
 

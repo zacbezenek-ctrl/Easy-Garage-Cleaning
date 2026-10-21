@@ -59,7 +59,7 @@ test('no arrival data is "not counted", never late or on time', () => {
   assert.deepEqual([rows[0].arrivalsCounted, rows[0].onTimePercent, rows[0].hoursVsBilledPercent], [0, null, null]);
 });
 
-function api({ actor = OWNER, timecards = async () => [card('a', 'Crew.One', 'job-a', '08:30', '12:30')], jobs = [job('job-a', { date: '2026-10-18' })] } = {}) {
+function api({ actor = OWNER, timecards = async () => [card('a', 'Crew.One', 'job-a', '08:30', '12:30')], jobs = [job('job-a')] } = {}) {
   const calls = [];
   const handlers = crewPerformanceHandlers({ session: async () => actor, now: () => new Date('2026-10-21T18:00:00.000Z'), timecards,
     dispatch: () => ({ datedJobs: async (start, end, fields) => { calls.push({ start, end, fields }); return jobs; }, roster: async () => ROSTER }) });
@@ -89,4 +89,45 @@ test('GET keeps jobs led when timecards cannot be read, and says so', async () =
   const body = await (await get(api({ timecards: async () => { throw new Error('vault down'); } }).handlers)).json();
   assert.deepEqual(body.sources, { timecards: 'unavailable' });
   assert.deepEqual(body.last30.map(row => [row.employee, row.jobsLed, row.hours]), [['crew.one', 1, 0]]);
+});
+
+test('the saved arrival window label stands in for a missing window end; no window at all falls back to start + 15 minutes', () => {
+  assert.equal(new Date(arrivalDeadline(job('l', { arrivalWindowEnd: null, arrivalWindow: '8:00 AM – 10:30 AM' }))).toISOString(), '2026-10-10T16:30:00.000Z', '10:30 MDT from the label');
+  assert.equal(new Date(arrivalDeadline(job('p', { time: '13:00', arrivalWindowEnd: null, arrivalWindow: '1:00 PM – 2:00 PM' }))).toISOString(), '2026-10-10T20:00:00.000Z', 'PM label');
+  assert.equal(new Date(arrivalDeadline(job('g', { arrivalWindowEnd: null, arrivalWindow: 'Morning' }))).toISOString(), '2026-10-10T14:15:00.000Z', 'an unreadable label is no window');
+  assert.ok(CREW_PERFORMANCE_FIELDS.includes('arrivalWindow'));
+});
+
+test('split jobs judge each person by their own segment, and credit each segment lead', () => {
+  // Crew One leads the 08:00 segment (window 08:00–09:00); Crew Two leads a 12:00 segment the same day and a day-2 segment.
+  const split = job('split', { endDate: '2026-10-11', endTime: '16:00', crewLead: 'crew.one', assignmentSegments: [
+    { id: 'a', date: '2026-10-10', time: '08:00', endDate: '2026-10-10', endTime: '12:00', assignedCrew: ['crew.one'], crewLead: 'crew.one' },
+    { id: 'b', date: '2026-10-10', time: '12:00', endDate: '2026-10-10', endTime: '16:00', assignedCrew: ['crew.two'], crewLead: 'crew.two' },
+    { id: 'c', date: '2026-10-11', time: '09:00', endDate: '2026-10-11', endTime: '16:00', assignedCrew: ['crew.three'], crewLead: 'crew.three' }] });
+  const labor = { jobs: [{ jobId: 'split', employees: ['crew.one', 'crew.two', 'crew.three'].map(employee => ({ employee, name: employee, approvedHours: 4, pendingHours: 0 })) }] };
+  const day2 = card('d2', 'Crew.Three', 'split', '09:05', '15:00');
+  for (const segment of day2.jobTracking.segments) segment.startedAt = '2026-10-11T09:05:00-06:00';
+  const starts = firstWorkStarts([card('one', 'Crew.One', 'split', '08:50', '12:00'), card('two', 'Crew.Two', 'split', '11:55', '16:00'), day2]);
+  const by = Object.fromEntries(crewPerformanceWindow({ jobs: [split], labor, starts, roster: [...ROSTER, { id: 'crew.three', name: 'Synthetic Crew Three' }], start: '2026-10-01', end: '2026-10-22' }).map(row => [row.employee, row]));
+  assert.deepEqual([by['crew.one'].onTime, by['crew.one'].arrivalsCounted], [1, 1], 'inside the job window');
+  assert.deepEqual([by['crew.two'].onTime, by['crew.two'].arrivalsCounted], [1, 1], 'five minutes early for their own 12:00 segment, not late against the 09:00 window');
+  assert.deepEqual([by['crew.three'].onTime, by['crew.three'].arrivalsCounted], [1, 1], 'day-2 helper within 15 minutes of their segment start');
+  assert.deepEqual(['crew.one', 'crew.two', 'crew.three'].map(id => by[id].jobsLed), [1, 1, 1]);
+});
+
+test('a later day of an unsplit multi-day job is not counted; rejected timecards never count toward arrival', () => {
+  const multi = job('multi', { endDate: '2026-10-11', endTime: '16:00' });
+  const later = card('later', 'Crew.Two', 'multi', '10:00', '14:00');
+  for (const segment of later.jobTracking.segments) segment.startedAt = '2026-10-11T10:00:00-06:00';
+  const labor = { jobs: [{ jobId: 'multi', employees: [{ employee: 'crew.one', name: 'One', approvedHours: 4, pendingHours: 0 }, { employee: 'crew.two', name: 'Two', approvedHours: 4, pendingHours: 0 }] }] };
+  const starts = firstWorkStarts([card('rej', 'Crew.One', 'multi', '07:55', '12:00', { approvalStatus: 'rejected' }), card('real', 'Crew.One', 'multi', '09:30', '12:00'), later]);
+  const by = Object.fromEntries(crewPerformanceWindow({ jobs: [multi], labor, starts, roster: ROSTER, start: '2026-10-01', end: '2026-10-22' }).map(row => [row.employee, row]));
+  assert.deepEqual([by['crew.one'].onTime, by['crew.one'].arrivalsCounted], [0, 1], 'the rejected 07:55 clock-in is ignored; 09:30 is late');
+  assert.deepEqual([by['crew.two'].arrivalsCounted, by['crew.two'].onTimePercent], [0, null]);
+});
+
+test('a job that closed with issues counts once, and a lead saved as a display name is one person', () => {
+  const jobs = [job('both', { crewLead: 'Synthetic Crew One', fieldExecution: { completion: { hasIssues: true }, attention: { status: 'open' } } }), job('led', { crewLead: 'crew.one' })];
+  const rows = crewPerformanceWindow({ jobs, roster: ROSTER, start: '2026-10-01', end: '2026-10-22' });
+  assert.deepEqual(rows.map(row => [row.employee, row.jobsLed, row.issueJobs, row.followUps]), [['crew.one', 2, 1, 0]]);
 });

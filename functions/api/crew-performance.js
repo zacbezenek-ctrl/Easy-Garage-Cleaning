@@ -15,7 +15,7 @@ import { crewPerformanceWindow, firstWorkStarts } from '../_lib/crew-performance
 import { JOB_ACTUALS_FIELDS } from './job-actuals.js';
 import { readJobCostingTimecards } from './job-costing.js';
 
-export const CREW_PERFORMANCE_FIELDS = Object.freeze([...new Set([...JOB_ACTUALS_FIELDS, 'time', 'crewLead', 'arrivalWindowEnd', 'fieldExecution.completion.hasIssues', 'fieldExecution.attention.status'])]);
+export const CREW_PERFORMANCE_FIELDS = Object.freeze([...new Set([...JOB_ACTUALS_FIELDS, 'time', 'endDate', 'crewLead', 'arrivalWindowEnd', 'arrivalWindow', 'assignmentSegments', 'fieldExecution.completion.hasIssues', 'fieldExecution.attention.status'])]);
 const reply = (status, body) => Response.json(body, { status, headers: { 'Cache-Control': 'private, no-store', 'X-Content-Type-Options': 'nosniff' } });
 function errorResponse(error) {
   const code = /^job_actuals_(sign_in_required|forbidden)$/.test(error?.code || '') ? error.code.replace(/^job_actuals_/, 'crew_performance_') : null;
