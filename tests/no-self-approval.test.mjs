@@ -31,3 +31,28 @@ test('a manager cannot correct or close their own timecard; corrections of other
   assert.throws(() => correct(MANAGER, card('TylerG')), refused);
   assert.throws(() => correct(MANAGER, card('Crew.One')), error => !refused(error), 'another employee\'s card goes on to the usual correction checks');
 });
+
+// Review findings on #175: an approved card of one's own could be edited and re-approved in the same save, or moved to
+// someone else and back with an approval each way.
+test('a manager cannot inflate their own approved card by resending the approval with an edit', () => {
+  const approved = { ...card('TylerG'), breaks: [{ startAt: '2026-09-22T16:00:00.000Z', endAt: '2026-09-22T17:00:00.000Z' }], approvalStatus: 'approved', approvedAt: '2026-09-22T19:00:00.000Z', approvedBy: 'zacb' };
+  for (const incoming of [{ clockOutAt: '2026-09-23T02:00:00.000Z', approvalStatus: 'approved' }, { breaks: [], approvalStatus: 'approved' } /* drops the hour-long break */, { clockOutAt: '2026-09-23T02:00:00.000Z', approvalStatus: 'rejected' }])
+    assert.throws(() => save(MANAGER, approved, incoming), refused, JSON.stringify(incoming));
+  // An edit without a status returns their own card to pending for someone else to decide.
+  const edited = save(MANAGER, approved, { clockOutAt: '2026-09-23T02:00:00.000Z' });
+  assert.deepEqual([edited.approvalStatus, edited.approvedAt, edited.approvedBy], ['pending', '', '']);
+  // Repeating the stored status with nothing else changed is a no-op: it is not re-stamped as theirs.
+  const repeated = save(MANAGER, approved, { approvalStatus: 'approved' });
+  assert.deepEqual([repeated.approvalStatus, repeated.approvedBy, repeated.approvedAt], ['approved', 'zacb', '2026-09-22T19:00:00.000Z']);
+  // The owner editing and approving a manager's card in one save is unchanged.
+  assert.equal(save(OWNER, approved, { clockOutAt: '2026-09-23T02:00:00.000Z', approvalStatus: 'approved' }).approvedBy, 'zacb');
+});
+
+test('a manager cannot approve their own card by moving it to someone else and back', () => {
+  const own = card('TylerG');
+  assert.throws(() => save(MANAGER, own, { employee: 'Crew.One', approvalStatus: 'approved' }), refused, 'moving away with an approval');
+  const moved = save(MANAGER, own, { employee: 'Crew.One' });
+  assert.throws(() => save(MANAGER, moved, { employee: 'TylerG', approvalStatus: 'approved' }), refused, 'moving back with an approval');
+  const approvedOwn = { ...own, approvalStatus: 'approved', approvedBy: 'zacb', approvedAt: '2026-09-22T19:00:00.000Z' };
+  assert.equal(save(MANAGER, approvedOwn, { employee: 'Crew.One' }).approvalStatus, 'pending', 'moving an approved card of one\'s own away undoes the approval');
+});

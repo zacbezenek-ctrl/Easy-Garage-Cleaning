@@ -374,16 +374,23 @@ export function authorizeTimecard({ session, manager, id, incoming, existing, ho
     const changedTime = existing && timeFields.some(key => own(incoming, key) && !equal(existing[key], next[key]));
     if (activeTimecard(existing) && next.employee !== existing.employee) throw timecardError('Close the active shift before changing its employee.', 409);
     if (activeTimecard(next)) timecardHours(next, Date.parse(now));
-    if (changedTime && existing.approvalStatus === 'approved' && incoming.approvalStatus !== 'approved') {
+    // NO-SELF-APPROVAL: the card is the caller's own when it is theirs before or after this save (a move to someone else
+    // and back is still their own). An approval or rejection sent with any change to it, or a change of status, is
+    // refused; repeating the stored status with nothing else changed is a no-op. Any time, pay or employee change to
+    // their own decided card always returns it to pending, so another manager or the owner decides it again.
+    const ownCard = (existing && selfApproval(existing, session)) || selfApproval(next, session);
+    if (ownCard && ['approved', 'rejected'].includes(incoming.approvalStatus) && (incoming.approvalStatus !== existing?.approvalStatus || changedTime)) throw selfApprovalRefused();
+    if (ownCard && incoming.deviceTimeReviewed === true && next.deviceTime && next.needsReview) throw selfApprovalRefused();
+    if (changedTime && (existing.approvalStatus === 'approved' && incoming.approvalStatus !== 'approved' || ownCard && ['approved', 'rejected'].includes(existing.approvalStatus))) {
       next.approvalStatus = 'pending'; next.approvedAt = ''; next.approvedBy = '';
     }
-    if (['approved', 'rejected'].includes(incoming.approvalStatus) && incoming.approvalStatus !== existing?.approvalStatus && selfApproval(next, session)) throw selfApprovalRefused();
-    if (incoming.deviceTimeReviewed === true && next.deviceTime && next.needsReview && selfApproval(next, session)) throw selfApprovalRefused();
-    if (incoming.approvalStatus === 'approved') {
+    // What was decided by this save: never the caller's own card, so a repeated status never re-stamps it as theirs.
+    const decision = ownCard ? '' : incoming.approvalStatus;
+    if (decision === 'approved') {
       if (!next.clockOutAt || activeTimecard(next)) throw timecardError('Only completed timecards can be approved.');
       if (timecardHours(next) <= 0) throw timecardError('Positive work hours are required before approval.');
       next.approvedAt = now; next.approvedBy = session.user;
-    } else if (incoming.approvalStatus === 'rejected') { next.approvedAt = now; next.approvedBy = session.user; }
+    } else if (decision === 'rejected') { next.approvedAt = now; next.approvedBy = session.user; }
     // Device-captured times stay flagged until a manager explicitly reviews
     // them; an approval alone never records that review.
     if (incoming.deviceTimeReviewed === true && next.deviceTime && next.needsReview) { next.needsReview = false; next.deviceTimeReviewedAt = now; next.deviceTimeReviewedBy = session.user; }
