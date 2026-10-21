@@ -2,12 +2,14 @@
 // screen on its own, and the REAL /api/job-actuals handler (functions/api/job-actuals.js) over synthetic completed jobs,
 // timecards and an in-memory settings store. The clock is fixed; POST /__control {who:'owner'|'manager'} switches the
 // signed-in viewer; {reset:true} saves only synthetic pay settings ($10.00 per man-hour, 1% workers' comp, never a real
-// wage), and {reset:true, blank:true} clears every setting. Prints {"port":N} first.
+// wage), and {reset:true, blank:true} clears every setting. The REAL /api/owner-economics runs over the same store, so
+// the Owner targets card shows the Cost settings crew wage. Prints {"port":N} first.
 import http from 'node:http';
 import { readFile } from 'node:fs/promises';
 import { extname, join, normalize, relative, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { jobActualsHandlers } from '../../functions/api/job-actuals.js';
+import { ownerEconomicsHandlers } from '../../functions/api/owner-economics.js';
 
 const ROOT = fileURLToPath(new URL('../../', import.meta.url));
 const OWNER = { user: 'zacb', role: 'owner', businessAccess: true, owner: true, displayName: 'Synthetic Owner' };
@@ -43,7 +45,7 @@ const TIMECARDS = [card('c1', 'job-two-car', '2026-10-18', '06:00', '15:00'), { 
 const state = { who: 'owner', docs: new Map(), tick: 0 };
 const store = { async read(collection, id) { const row = state.docs.get(`${collection}/${id}`); return row ? structuredClone(row) : null; },
   async commit(writes) {
-    for (const write of writes) { const current = state.docs.get(`${write.collection}/${write.id}`); if (write.revision ? current?.revision !== write.revision : current) throw Object.assign(new Error('stale'), { code: 'job_actuals_revision_conflict', status: 409 }); }
+    for (const write of writes) { const current = state.docs.get(`${write.collection}/${write.id}`); if (write.revision ? current?.revision !== write.revision : current) throw Object.assign(new Error('stale'), { code: write.collection === 'ownerEconomicsSettings' ? 'owner_economics_revision_conflict' : 'job_actuals_revision_conflict', status: 409 }); }
     for (const write of writes) state.docs.set(`${write.collection}/${write.id}`, { ...(state.docs.get(`${write.collection}/${write.id}`) || {}), ...structuredClone(write.patch), revision: `rev-${++state.tick}` });
   } };
 const handlers = jobActualsHandlers({
@@ -51,6 +53,8 @@ const handlers = jobActualsHandlers({
   dispatch: () => ({ datedJobs: async (start, end) => JOBS.filter(row => row.date >= start && row.date <= end) }),
   knock: () => ({ getMany: async (_collection, ids) => new Map(ids.filter(id => id === 'walk-setter').map(id => [id, { walkthroughId: id }])), query: async () => [] }),
 });
+
+const ownerHandlers = ownerEconomicsHandlers({ session: async () => state.who === 'owner' ? OWNER : MANAGER, store: () => store, jobActuals: () => store, now: () => new Date('2026-10-21T18:00:00.000Z') });
 
 async function serve(request, response) {
   const url = new URL(request.url, 'http://127.0.0.1');
@@ -60,13 +64,15 @@ async function serve(request, response) {
     if (input.who) state.who = input.who;
     // "Another session" saves settings: the stored record changes under a new revision.
     if (input.otherSave) { const key = 'jobActualsSettings/current'; state.docs.set(key, { ...(state.docs.get(key) || { schemaVersion: 1 }), ...input.otherSave, revision: `rev-${++state.tick}` }); }
+    if (input.otherOwnerSave) { const key = 'ownerEconomicsSettings/current'; state.docs.set(key, { ...(state.docs.get(key) || { schemaVersion: 1 }), ...input.otherOwnerSave, revision: `rev-${++state.tick}` }); }
     if (input.reset) { state.docs.clear(); if (!input.blank) state.docs.set('jobActualsSettings/current', { schemaVersion: 1, wageCentsPerManHour: 1000, workersCompBp: 100, revision: 'rev-pay' }); }
     response.writeHead(200, { 'Content-Type': 'application/json' }); response.end('{"ok":true}'); return;
   }
-  if (url.pathname === '/api/job-actuals') {
+  if (url.pathname === '/api/job-actuals' || url.pathname === '/api/owner-economics') {
+    const route = url.pathname === '/api/job-actuals' ? handlers : ownerHandlers;
     const headers = new Headers(); for (const [key, value] of Object.entries(request.headers)) if (typeof value === 'string') headers.set(key, value);
     const req = new Request(`http://${request.headers.host}${url.pathname}${url.search}`, { method: request.method, headers, body });
-    const answer = await (request.method === 'POST' ? handlers.post : handlers.get)({ request: req, env: {} });
+    const answer = await (request.method === 'POST' ? route.post : route.get)({ request: req, env: {} });
     response.writeHead(answer.status, Object.fromEntries(answer.headers)); response.end(await answer.text()); return;
   }
   if (url.pathname === '/') { response.writeHead(200, { 'Content-Type': 'text/html' }); response.end(HARNESS); return; }

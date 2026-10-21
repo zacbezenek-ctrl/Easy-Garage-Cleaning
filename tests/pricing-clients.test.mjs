@@ -4,7 +4,13 @@ import { readFileSync } from 'node:fs';
 import vm from './helpers/vm-realm.mjs';
 import { hubPage } from './helpers/hub-dom.mjs';
 import { servedPricing } from './helpers/walkthrough-pricing.mjs';
-import { ownerEconomics, phoneQuotePricing } from '../functions/_lib/pricing-config.js';
+import { phoneQuotePricing } from '../functions/_lib/pricing-config.js';
+import { ownerEconomics as servedOwnerEconomics } from '../functions/_lib/owner-economics.js';
+
+// The owner's numbers are owner-entered settings, never code. Synthetic ones only: a $10.00 labor baseline and crew wage,
+// a $12.00 lead wage, $50–$75 truck rental, a $1,000 ticket target, 40% set rate and 60% close rate.
+const SYNTHETIC_OWNER = { laborCostCentsPerCrewHour: 1000, leadWageCentsPerHour: 1200, truckRentalLowCentsPerJob: 5000, truckRentalHighCentsPerJob: 7500, averageTicketTargetCents: 100000, walkthroughSetRateTargetBp: 4000, qualifiedCloseRateTargetBp: 6000 };
+const ownerEconomics = () => servedOwnerEconomics(SYNTHETIC_OWNER, 1000);
 
 // PRICE-SCRUB browser side: the walkthrough caches its fetched tables per signed-in user and
 // config version (and drops them on sign-out), prices nothing it has not loaded, and the Hub
@@ -163,7 +169,7 @@ test('with the fetched tables the review screen shows the rates from the config,
   assert.match(review, /Pest waste \(\+\$300\)/);
   assert.match(review, /One-car pressure wash \(\+\$600\)/);
   assert.match(review, /id="signature"/);
-  assert.doesNotMatch(review, /target|2,250/i);
+  assert.doesNotMatch(review, /target/i);
   assert.equal(context.S.lockedPrice, '2225');
   assert.match(context.scheduleScreen(), /<h2>4 hours<\/h2>/, '60 + 90 per load + 30 medium fill + 60 one-car wash');
   const priced = walkthroughPage({ pricing: { ...servedPricing(), perLoad: 1200 } }).context;
@@ -374,7 +380,7 @@ test('the Hub keeps phone and owner pricing in memory for the session only, vali
   assert.equal(Object.isFrozen(first.wages), true);
   assert.deepEqual(hub.calls, ['/api/pricing-config?parts=owner'], 'one request per part');
   assert.equal((await hub.api.load('phone')).baseFee, 150);
-  assert.equal(hub.api.owner().laborCostPerCrewHour, 20);
+  assert.equal(hub.api.owner().laborCostPerCrewHour, 10);
   assert.equal(await hub.api.load('walkthrough'), null, 'the Hub never asks for the walkthrough tables');
   hub.fire('egc:signout');
   assert.deepEqual([hub.api.owner(), hub.api.phone()], [null, null]);
@@ -384,10 +390,18 @@ test('the Hub keeps phone and owner pricing in memory for the session only, vali
   slow.api.clear(); release();
   assert.equal(await pending, null, 'a reply that lands after sign-out is dropped');
   assert.equal(slow.api.owner(), null);
-  for (const body of [{ ...plain(ownerEconomics()), laborCostPerCrewHour: '20' }, { ...plain(ownerEconomics()), targets: null }]) {
+  for (const body of [{ ...plain(ownerEconomics()), laborCostPerCrewHour: '10' }, { ...plain(ownerEconomics()), targets: null }, { ...plain(ownerEconomics()), wages: { crew: -1, lead: null } }]) {
     const bad = hubPricing(async () => partResponse('owner', body));
     assert.equal(await bad.api.load('owner'), null);
   }
+  // Blank settings are null, never a number: the part still loads and each blank stays null.
+  const blank = hubPricing(async () => partResponse('owner', servedOwnerEconomics({}, null)));
+  assert.deepEqual(plain(await blank.api.load('owner')), { laborCostPerCrewHour: null, wages: { crew: null, lead: null }, truckRentalPerJob: { low: null, high: null }, targets: { averageTicket: null, walkthroughSetRatePct: null, qualifiedCloseRatePct: null } });
+  // A save on the Job actuals screen drops the cached part, and the next load fetches it again.
+  hub.api.forget('owner');
+  assert.equal(hub.api.owner(), null);
+  await hub.api.load('owner');
+  assert.equal(hub.calls.filter(url => url.endsWith('owner')).length, 2);
   const denied = hubPricing(async () => ({ ok: false, status: 403, json: async () => ({ ok: false, code: 'pricing_config_forbidden' }) }));
   assert.equal(await denied.api.load('phone'), null);
 });
@@ -407,9 +421,9 @@ function laborServer(owner, records = {}) {
   };
   return { handle, saves, records };
 }
-async function suite({ owner, before, jobRow = job, pricing = true, records = {} }) {
+async function suite({ owner, before, jobRow = job, pricing = true, records = {}, economics = ownerEconomics }) {
   const labor = laborServer(owner, records);
-  const page = hubPage({ user: owner ? 'ZacB' : 'TylerG', role: owner ? 'owner' : 'manager', before, fetcher: async (url, init) => url === '/api/pricing-config?parts=owner' && pricing ? partResponse('owner', plain(ownerEconomics())) : url === '/api/job-labor-costs' ? labor.handle(url, init) : { ok: false, status: 503, json: async () => ({ ok: false, error: 'Synthetic service unavailable' }) } });
+  const page = hubPage({ user: owner ? 'ZacB' : 'TylerG', role: owner ? 'owner' : 'manager', before, fetcher: async (url, init) => url === '/api/pricing-config?parts=owner' && pricing ? partResponse('owner', plain(economics())) : url === '/api/job-labor-costs' ? labor.handle(url, init) : { ok: false, status: 503, json: async () => ({ ok: false, error: 'Synthetic service unavailable' }) } });
   vm.runInContext(read('employee-pricing.js'), page.context);
   vm.runInContext(read('employee-labor-costs.js'), page.context);
   page.context.jobsCache = [structuredClone(jobRow)];
@@ -421,19 +435,36 @@ async function suite({ owner, before, jobRow = job, pricing = true, records = {}
   return { page, view, labor };
 }
 
+test('an owner who has not entered the targets yet sees the generic text and no labor estimate, never a guessed number', async () => {
+  const { view } = await suite({ owner: true, economics: () => servedOwnerEconomics({}, null) });
+  const playbook = view('playbook');
+  assert.match(playbook, /Smaller jobs remain available/); assert.match(playbook, /An owned truck removes the rental cost per job\./);
+  assert.match(playbook, /Crew standard\s*Lead owns communication/);
+  const score = view('scorecard');
+  assert.match(score, /Leads that book a walkthrough/); assert.match(score, /Quotes that become jobs/); assert.match(score, /Sold work per job/);
+  assert.doesNotMatch(score, /Target:/);
+  const finance = view('finance');
+  assert.match(finance, /Labor stays unknown until actual costs are entered/);
+  assert.doesNotMatch(finance, /crew-hour baseline|direct cost ·/);
+  // Only the crew wage entered (on Job actuals): the Playbook shows that one number and nothing else.
+  const partial = await suite({ owner: true, economics: () => servedOwnerEconomics({ truckRentalHighCentsPerJob: 7500 }, 1000) });
+  assert.match(partial.view('playbook'), /\$10\/hr crew baseline\. Lead owns/);
+  assert.match(partial.view('playbook'), /roughly \$75 rental cost\/job/);
+});
+
 test('the owner sees the labor baseline, wages and targets from the config; a manager sees the same screens without numbers', async () => {
   const owner = await suite({ owner: true });
   assert.ok(owner.page.calls.some(call => call.url === '/api/pricing-config?parts=owner'));
   const playbook = owner.view('playbook');
-  assert.match(playbook, /\$20\/hr crew; \$23\/hr lead baseline\. Lead owns communication/);
-  assert.match(playbook, /\$2,250\+ target average ticket; smaller jobs remain available/);
-  assert.match(playbook, /roughly \$150–\$200 rental cost\/job/);
+  assert.match(playbook, /\$10\/hr crew; \$12\/hr lead baseline\. Lead owns communication/);
+  assert.match(playbook, /\$1,000\+ target average ticket; smaller jobs remain available/);
+  assert.match(playbook, /roughly \$50–\$75 rental cost\/job/);
   const score = owner.view('scorecard');
-  assert.match(score, /Target: 50%/); assert.match(score, /Target: \$2,250\+/); assert.match(score, /Target: ~70% at a better price/);
+  assert.match(score, /Target: 40%/); assert.match(score, /Target: \$1,000\+/); assert.match(score, /Target: ~60% at a better price/);
   const finance = owner.view('finance');
-  assert.match(finance, /Estimated labor uses the \$20\/crew-hour baseline/);
-  assert.match(finance, /6\.0 crew-hrs · \$120 direct cost/);
-  assert.match(finance, /\$880 contribution/);
+  assert.match(finance, /Estimated labor uses the \$10\/crew-hour baseline/);
+  assert.match(finance, /6\.0 crew-hrs · \$60 direct cost/);
+  assert.match(finance, /\$940 contribution/);
   // An older labor copy on the job is the owner's figure until it moves to the private record.
   owner.page.context.jobsCache = [{ ...structuredClone(job), costs: { labor: 150, disposal: 40, recordedAt: '2026-09-22T20:00:00.000Z' } }];
   assert.match(owner.view('finance'), /\$190 direct cost/);
@@ -445,7 +476,7 @@ test('the owner sees the labor baseline, wages and targets from the config; a ma
   manager.page.context.EGCPricingConfig = { load: async () => ownerEconomics(), owner: () => ownerEconomics(), phone: () => null, clear() {} };
   for (const name of ['playbook', 'scorecard', 'finance']) {
     const text = manager.view(name);
-    assert.doesNotMatch(text, /\$20|\$23|2,250|\$150–|Target: \d|Target: ~/, name);
+    assert.doesNotMatch(text, /\$10\/|\$12\/|1,000\+|\$50–|Target: \d|Target: ~/, name);
   }
   assert.match(manager.view('playbook'), /Lead owns communication, scope, payment, and closeout/);
   const finance2 = manager.view('finance');
@@ -460,7 +491,7 @@ test('the owner sees the labor baseline, wages and targets from the config; a ma
   assert.doesNotMatch(finance3, /\$190|\$810|\$150|direct cost|contribution ·/);
 });
 
-// Job costing: a blank labor field means unknown, never a recorded $0 (the form used to pre-fill crew-hours x $20), and
+// Job costing: a blank labor field means unknown, never a recorded $0 (the form used to pre-fill crew-hours x a built-in rate), and
 // only the owner enters or blanks labor (JOB-COST-PRIVACY): the figure goes to the private record, never onto the job.
 async function costForm({ owner, jobRow = job, pricing = true, records = {} }) {
   const writes = [];
@@ -522,9 +553,9 @@ test('blanking a recorded labor cost clears it, and the owner\'s baseline estima
   assert.deepEqual(owner.labor.saves.map(body => [body.laborCents, body.expectedRevision]), [[null, 'l0']], 'the record is blanked (unknown), not deleted or zeroed');
   assert.equal('labor' in owner.writes[0].update.costs, false, 'the job carries no labor key');
   const reopened = await costForm({ owner: true, jobRow: { ...recorded, costs: plain(owner.writes[0].update.costs) }, records: owner.labor.records });
-  assert.equal(reopened.field('labor').value, '120', 'the owner sees the 6 crew-hour x $20 baseline estimate');
+  assert.equal(reopened.field('labor').value, '60', 'the owner sees the 6 crew-hour x $10 baseline estimate');
   reopened.page.context.opsActionClose();
-  assert.match(reopened.view('finance'), /6\.0 crew-hrs · \$130 direct cost/);
+  assert.match(reopened.view('finance'), /6\.0 crew-hrs · \$70 direct cost/);
   assert.equal(reopened.writes.length, 0);
   // An older copy left on the job, with no record yet: the owner's blank goes through the record too, which moves it off.
   const legacy = await costForm({ owner: true, jobRow: { ...recorded, costs: { ...recorded.costs, labor: 300 } } });
