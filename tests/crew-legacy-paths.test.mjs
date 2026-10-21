@@ -129,7 +129,7 @@ async function renderCrewHome(business, { online = true } = {}) {
   return element;
 }
 
-test('crew home sends employees to the verified job workflow and keeps legacy tools for business users', async () => {
+test('crew home sends everyone\'s job tap to the live job page and keeps the playbooks for business users', async () => {
   const crew = await renderCrewHome(false);
   // D2D: the tiles use clean URLs (/crew/job, not /crew/job.html, which answers with a redirect).
   for (const id of ['prejob-tool', 'closeout-tool']) assert.equal(crew(id).getAttribute('href'), '/crew/job', id);
@@ -143,8 +143,13 @@ test('crew home sends employees to the verified job workflow and keeps legacy to
   const manager = await renderCrewHome(true);
   assert.equal(manager('prejob-tool').getAttribute('href'), '/crew/prejob');
   assert.equal(manager('closeout-tool').getAttribute('href'), '/crew/postjob');
-  assert.match(manager('assigned-jobs').innerHTML, /href="\/crew\/prejob\?jobId=job-1"/);
-  assert.match(manager('next-work').innerHTML, /href="\/crew\/postjob\?jobId=job-2">Continue closeout/);
+  // A manager's work on the live page (/api/field-jobs) counts on the Hub job; the old pages stay one tap away as a
+  // secondary link, since pre-job sends the arrival text and post-job takes payment, the review link and Garage Guard.
+  assert.match(manager('assigned-jobs').innerHTML, /href="\/crew\/job\.html\?jobId=job-1"/);
+  assert.match(manager('assigned-jobs').innerHTML, /href="\/crew\/job\.html\?jobId=job-2"/);
+  assert.doesNotMatch(manager('assigned-jobs').innerHTML, /prejob|postjob/);
+  assert.match(manager('next-work').innerHTML, /<a class="primary" href="\/crew\/job\.html\?jobId=job-2">Continue closeout<\/a><a class="subtle" href="\/crew\/postjob\?jobId=job-2">Playbook \(reference\)<\/a>/);
+  assert.doesNotMatch(crew('next-work').innerHTML, /Playbook/, 'crew get no playbook link');
   assert.equal(manager('walkthrough-tool').hidden, false);
   assert.equal(manager('knock-tool').hidden, false, 'Knock\'s admins get the Door-to-door tile');
 });

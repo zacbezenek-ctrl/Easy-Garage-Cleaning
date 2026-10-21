@@ -128,3 +128,4 @@ input,select,textarea{font-size:16px!important}
     max-inline-size:calc(100vw - var(--egc-safe-left) - var(--egc-safe-right) - 24px);
   }
 }
+.ops-job-actions a.ops-playbook-link{color:var(--ops-muted);font-weight:650}
