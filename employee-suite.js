@@ -123,7 +123,7 @@ const businessFirst=items=>isManager()?[...items.filter(n=>n[0]==='RUN THE BUSIN
 const visibleNav=()=>businessFirst(withHubScreens(nav.filter(n=>canView(n[1]))));
 // Registered Hub screens (employee-hub-screens.js) join the nav under their group and mount into #ops-main.
 const hubScreen=name=>window.EGCHubScreens?.get(name)||null;
-const hubCapabilities=()=>['crew',...(isManager()?['business']:[]),...(isManager()&&isOwnerAccount()?['owner']:[]),...(window.EGCStaffAccess?.enabled?.()&&staffAccessCan('password.change')?['password']:[]),...(S.teamDirectory===true?['team_directory']:[])];
+const hubCapabilities=()=>['crew',...(isManager()?['business']:[]),...(isManager()&&isOwnerAccount()?['owner']:[]),...(window.EGCStaffAccess?.enabled?.()&&staffAccessCan('password.change')?['password']:[]),...(S.teamDirectory===true?['team_directory']:[]),...(staffAccessCan('customer.send')?['customer_contact']:[])];
 // D10 Team directory: every signed-in viewer's screen, listed only once /api/integration-status reports the staff directory on
 // (flags.teamDirectory, EGC_STAFF_DIRECTORY_ENABLED=true). The nav is drawn at install, so it is redrawn when that answer changes.
 function setTeamDirectory(on){if(S.teamDirectory===on)return;S.teamDirectory=on;const rail=$('.ops-nav');if(!rail)return;rail.replaceChildren();navList(rail,visibleNav());all('[data-ops-tab]').forEach(b=>b.classList.toggle('active',b.dataset.opsTab===S.active));if(!on&&S.active==='team_directory')go('my_day')}
