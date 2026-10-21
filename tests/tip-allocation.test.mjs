@@ -398,7 +398,7 @@ test('a manager sees each job\'s tips and who shares them, never a person\'s tip
 
   const f = api(t, { jobs, timecards, actor: MANAGER }), manager = await (await f.get(query)).json();
   assert.equal(manager.payShown, false);
-  assert.deepEqual([manager.jobs[0].tipCents, manager.jobs[0].allocatedCents, manager.jobs[0].unallocatedCents, manager.totals], [3000, 3000, 0, owner.totals], 'job-level tip totals stay');
+  assert.deepEqual([manager.jobs[0].tipCents, manager.jobs[0].allocatedCents, manager.jobs[0].unallocatedCents, manager.totals], [3000, 3000, 0, { ...owner.totals, hiddenJobs: 0 }], 'job-level tip totals stay');
   assert.deepEqual(manager.jobs[0].employees, [{ employee: 'crew.one', name: owner.jobs[0].employees[0].name }, { employee: 'crew.two', name: owner.jobs[0].employees[1].name }], 'who is in the split, nothing more');
   assert.deepEqual(manager.employees.map(row => Object.keys(row).sort()), [['employee', 'jobs', 'name'], ['employee', 'jobs', 'name']]);
   assert.doesNotMatch(JSON.stringify([manager.jobs.map(row => row.employees), manager.employees]), /tipCents|minutes/);
@@ -409,4 +409,24 @@ test('a manager sees each job\'s tips and who shares them, never a person\'s tip
   // EGC_STAFF_PAY_OWNER_ONLY=false restores the older rule (every business user sees pay), as for timesheets.
   const open = await (await api(t, { jobs, timecards, actor: MANAGER, env: { EGC_STAFF_PAY_OWNER_ONLY: 'false' } }).get(query)).json();
   assert.equal(open.payShown, true); assert.equal(open.jobs[0].employees[0].tipCents, 2000);
+});
+
+// A job with one person in its split is that person's tip: a manager sees "Tip recorded" with no amount, and the week's
+// totals leave it out (subtracting the other jobs from a total that included it would give it back).
+test('a manager sees no amount for a job whose tip goes to one person, and the week totals leave that job out', async t => {
+  const MANAGER = { user: 'AlexK', role: 'manager', businessAccess: true, owner: false };
+  const jobs = [job('job-a', [tip('a', 3000, '2026-09-23T22:00:00.000Z')]), job('job-b', [tip('b', 1700, '2026-09-24T22:00:00.000Z')])];
+  const timecards = [tracked('one', 'crew.one', '2026-09-23', '08:00', '10:00', [['work', 'job-a', '08:00']]), tracked('two', 'crew.two', '2026-09-23', '08:00', '09:00', [['work', 'job-a', '08:00']]),
+    tracked('solo', 'crew.one', '2026-09-24', '08:00', '09:00', [['work', 'job-b', '08:00']])];
+  const query = 'start=2026-09-21&end=2026-09-28';
+  const owner = await (await api(t, { jobs, timecards }).get(query)).json();
+  const ownerSolo = owner.jobs.find(row => row.jobId === 'job-b');
+  assert.deepEqual([ownerSolo.tipCents, ownerSolo.employees[0].tipCents, owner.totals.tipCents, owner.totals.hiddenJobs], [1700, 1700, 4700, undefined], 'the owner sees every amount');
+  const manager = await (await api(t, { jobs, timecards, actor: MANAGER }).get(query)).json();
+  const solo = manager.jobs.find(row => row.jobId === 'job-b'), shared = manager.jobs.find(row => row.jobId === 'job-a');
+  assert.deepEqual([solo.amountHidden, solo.tipCents, solo.allocatedCents, solo.unallocatedCents, solo.employees], [true, null, null, null, [{ employee: 'crew.one', name: ownerSolo.employees[0].name }]]);
+  assert.ok(solo.tips.length === 1 && !('amountCents' in solo.tips[0]), 'the tip entries carry no amount either');
+  assert.deepEqual([shared.amountHidden, shared.tipCents], [undefined, 3000], 'a job shared by two keeps its total');
+  assert.deepEqual(manager.totals, { jobs: 2, tipCents: 3000, allocatedCents: 3000, unallocatedCents: 0, hiddenJobs: 1 });
+  assert.doesNotMatch(JSON.stringify(manager), /1700|"17\.00"/, 'the solo tip appears nowhere in the manager\'s answer');
 });

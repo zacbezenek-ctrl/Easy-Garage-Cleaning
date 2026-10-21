@@ -211,3 +211,15 @@ test('a manager sees who shares each job\'s tips and the job totals, with no per
   assert.match(owner.host.innerHTML, /240 job minutes · 1 job<\/small><\/div><strong>\$90\.00/);
   assert.match(owner.host.innerHTML, /Download tips CSV/); assert.doesNotMatch(owner.host.innerHTML, /Shared by|only the owner sees/);
 });
+
+test('a manager sees "Tip recorded · 1 person" for a one-person job, and the note says the totals leave it out', async () => {
+  const ui = fixture();
+  ui.state.json = allocation({ payShown: false,
+    jobs: [{ ...allocation().jobs[0], tipCents: null, allocatedCents: null, unallocatedCents: null, amountHidden: true, employees: [{ employee: 'crew.alice', name: 'Synthetic Alice' }] }],
+    employees: [{ employee: 'crew.alice', name: 'Synthetic Alice', jobs: 1 }], totals: { jobs: 1, tipCents: 0, allocatedCents: 0, unallocatedCents: 0, hiddenJobs: 1 } });
+  ui.mount(); await settle();
+  const html = ui.host.innerHTML;
+  assert.match(html, /<strong>Tip recorded · 1 person<\/strong>/);
+  assert.doesNotMatch(html, /\$90\.00|\$NaN|null|undefined/);
+  assert.match(html, /the totals leave out 1 such job\./);
+});
