@@ -34,7 +34,10 @@ const SESSION_EXPIRY = [`"expiresAt":${Date.parse(NOW) + 7 * 24 * 60 * 60 * 1000
 // sessionsKept instead of sessionsRevoked. Exactly that field is mapped back; every other byte still compares with the
 // recorded snapshot.
 const ROLE_CHANGE_SESSIONS = ['"sessionsKept":true', '"sessionsRevoked":true'];
-const withoutAdditions = body => [...CATALOG_ADDITIONS, SESSION_EXPIRY, ROLE_CHANGE_SESSIONS].reduce((text, [added, before]) => text.replaceAll(added, before), body);
+// STAFF-SETUP (owner request, 2026-10-21): the owner's staff directory answer says whether the one-tap Finish staff setup
+// has records to fill (setup.needed). Exactly that field is taken back out; every other byte still compares.
+const STAFF_SETUP = [['"setup":{"needed":true},', ''], ['"setup":{"needed":false},', '']];
+const withoutAdditions = body => [...CATALOG_ADDITIONS, SESSION_EXPIRY, ROLE_CHANGE_SESSIONS, ...STAFF_SETUP].reduce((text, [added, before]) => text.replaceAll(added, before), body);
 function render(matrix) {
   const bodies = new Map(), index = [];
   for (const [key, rows] of matrix) for (const [label, body] of rows) { bodies.set(sha(body), body); index.push(`${key} | ${label} | ${sha(body)}`); }
