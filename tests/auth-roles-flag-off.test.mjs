@@ -30,7 +30,11 @@ const CATALOG_ADDITIONS = [['"team_lead",', ''], ['"team_lead":[],', ''], [',{"i
 // STAFF-SESSION (owner decision, 2026-10-19): a Hub session lasts 7 days, renewed while used, instead of 12 hours, so the
 // session expiry /api/hub-auth reports (expiresAt) is 7 days after sign-in. Exactly that value is mapped back here.
 const SESSION_EXPIRY = [`"expiresAt":${Date.parse(NOW) + 7 * 24 * 60 * 60 * 1000}`, `"expiresAt":${Date.parse(NOW) + 12 * 60 * 60 * 1000}`];
-const withoutAdditions = body => [...CATALOG_ADDITIONS, SESSION_EXPIRY].reduce((text, [added, before]) => text.replaceAll(added, before), body);
+// LIVE-ROLES (owner decision, 2026-10-21): a Staff directory role change keeps the person signed in, so its answer says
+// sessionsKept instead of sessionsRevoked. Exactly that field is mapped back; every other byte still compares with the
+// recorded snapshot.
+const ROLE_CHANGE_SESSIONS = ['"sessionsKept":true', '"sessionsRevoked":true'];
+const withoutAdditions = body => [...CATALOG_ADDITIONS, SESSION_EXPIRY, ROLE_CHANGE_SESSIONS].reduce((text, [added, before]) => text.replaceAll(added, before), body);
 function render(matrix) {
   const bodies = new Map(), index = [];
   for (const [key, rows] of matrix) for (const [label, body] of rows) { bodies.set(sha(body), body); index.push(`${key} | ${label} | ${sha(body)}`); }

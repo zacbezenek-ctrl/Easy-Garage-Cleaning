@@ -243,7 +243,7 @@ describe('a door-to-door rep\'s day, end to end, with every launch flag on', () 
     const eli = person('Eli');
     assert.deepEqual([eli.source, eli.staffRoles], ['employee_account', ['crew']]);
     const promoted = ok(await call('/api/staff-directory', { cookie: W.zac, body: { action: 'set_roles', requestId: uuid(), username: 'Eli', expectedRevision: eli.revision, staffRoles: ['team_lead'], reason: 'Eli leads every crew' } }), 'Eli team lead');
-    assert.deepEqual([promoted.person.staffRoles, promoted.person.primaryRole, promoted.sessionsRevoked], [['team_lead'], 'team_lead', true]);
+    assert.deepEqual([promoted.person.staffRoles, promoted.person.primaryRole, promoted.sessionsKept], [['team_lead'], 'team_lead', true]);
     const team = ok(await call('/api/staff-directory?view=team', { cookie: W.zac }), 'team directory');
     const card = name => team.people.find(row => row.username.toLowerCase() === name);
     assert.deepEqual(card('eli').primaryRole, 'team_lead');

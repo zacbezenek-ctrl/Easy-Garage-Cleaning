@@ -366,7 +366,7 @@ Every website lead already goes to HighLevel. Stage 2 makes that durable (nothin
   2. Tell managers: once this is on, pay changes go through you in the directory, not the old profile form.
 - **Check it worked (phone):**
   1. Open Hub → Staff directory as the owner. Everyone is listed; no card says "unrecognized id" or "pay needs review".
-  2. Give the phone person the "Phone · calls and follow-ups" role and save. Saving a role change signs that person out once.
+  2. Give the phone person the "Phone · calls and follow-ups" role and save. They stay signed in: the new role applies to their next action, and their open Hub, crew app or Knock screen updates within about a minute.
 - **Roll back:** delete the variable. The screen says "turned off"; saved roles stay.
 
 ### 3.2 Booking a walkthrough (no switch)
@@ -427,12 +427,12 @@ With walkthrough notes on (the launch default, [3.7](#37-walkthrough-transcripts
   3. Only Sales and Phone people should have those roles, since they will see all customer contacts.
   4. The Firebase service account has the **Firebase Authentication Admin** role ([1.3](#13-security-steps-with-no-switch), step 3). Otherwise the Firebase sign-outs below stay pending.
   5. No Hub sign-in username (`HUB_AUTH_USERS_JSON`, `HUB_AUTH_ADDITIONAL_USERS_JSON`) contains `'` `"` `\` `` ` `` `<` `>` `&`, a tab or a line break. Such accounts can no longer clock in from the crew app ([4.12](#412-correct-timecards-and-close-forgotten-shifts-optional)).
-- **Role changes while it is on:** the person is signed out of the Hub and of Firebase data straight away. If the staff directory says "Their Firebase data sign-out is pending" or "could not be confirmed", open Hub → Integrations until the pending sign-out clears.
+- **Role changes while it is on:** the person stays signed in. The server uses the new roles from their next action, so a removed role stops working at once, and their open screens update within about a minute. Their existing Firebase data session is ended and the page starts a new one with the new roles. If the staff directory says "Ending their old Firebase data access is pending" or "could not be confirmed", open Hub → Integrations until the pending sign-out clears. Until it clears, a data session issued before the change keeps its old access; once it clears, an already-issued ID token can last up to one more hour.
 - **Check it worked (Preview, phone):**
   1. Give a test account the Sales role and sign in as it. Dispatch opens: book a test walkthrough and move it. There is no crew assignment and no money, pay or cost anywhere.
   2. Hand off a test sale as that account. The job shows "Sold: needs crew" in Dispatch.
   3. Give another test account the Manager role and sign in as it. The business Hub screens open.
-  4. Take the Manager role away again. The staff directory confirms the sign-out, and Hub → Integrations shows no pending Firebase sign-out.
+  4. Take the Manager role away again while that account has the Hub open. Within about a minute its business screens close without a sign-in, and Hub → Integrations shows no pending Firebase sign-out.
   5. Sign in as yourself. You still have owner access.
   6. As the Sales test account, open New HighLevel leads and tap **Open in HighLevel** on a lead. In Production it must open that contact in HighLevel. **Book walkthrough** opens Create job with the lead's name and phone.
 - **Roll back:** delete the variable and retry the deployment. Business access goes back to the configured business users, and Sales and Phone can no longer book. Saved roles stay. A stored manager's Firebase data session ends the next time a business user loads the Hub on easygaragecleaning.com. A session issued in the half minute before that load ends on a later load. Hub → Integrations shows any sign-out still pending.

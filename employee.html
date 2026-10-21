@@ -1262,11 +1262,12 @@ async function ensureFirebaseSession(version = hubAuthVersion) {
   await pending;
 }
 
-async function enterEmployeeApp(data, version = hubAuthVersion) {
+async function enterEmployeeApp(data, version = hubAuthVersion, accessStamp = '') {
   await ensureFirebaseSession(version);
   if (version !== hubAuthVersion) throw hubAuthInterrupted();
   me = data.user;
   rememberHubProfile(data);
+  if (accessStamp) sessionStorage.setItem('egc_access_stamp', accessStamp);
   document.getElementById('l-pass').value = '';
   if (canRunBusiness()) showModeSelect();
   else bootDashboard();
@@ -1274,8 +1275,9 @@ async function enterEmployeeApp(data, version = hubAuthVersion) {
 
 function clearHubProfile() {
   me = null;
+  hubAccessReloadTold = false;
   for (const storage of [sessionStorage, localStorage]) {
-    ['egc_u','egc_name','egc_role','egc_pay_type','egc_hourly_rate','egc_business_access','egc_owner','egc_capabilities','egc_capability_mode','egc_role_access','egc_tok','egc_exp'].forEach(key => storage.removeItem(key));
+    ['egc_u','egc_name','egc_role','egc_pay_type','egc_hourly_rate','egc_business_access','egc_owner','egc_capabilities','egc_capability_mode','egc_role_access','egc_access_stamp','egc_tok','egc_exp'].forEach(key => storage.removeItem(key));
   }
   // crew/gameplan.html keeps walkthrough price tables for offline walkthroughs; they leave with the account
   // (sign-out, an expired or failed session check, a failed sign-in).
@@ -1322,7 +1324,7 @@ async function doLogin() {
     if (version !== hubAuthVersion) throw hubAuthInterrupted();
     if (!response.ok || !data.ok || !data.user) throw new Error(data.error || (response.status === 401 ? 'Incorrect username or password' : 'The sign-in service is unavailable. Try again shortly.'));
     err.style.display = 'none';
-    await enterEmployeeApp(data, version);
+    await enterEmployeeApp(data, version, hubAccessStampOf(response));
     });
   } catch (error) {
     if (version !== hubAuthVersion) return;
@@ -1398,10 +1400,55 @@ async function doLogout({ explicit = false } = {}) {
   });
 }
 
+// LIVE-ROLES: every API answer carries the access stamp of the session it checked (X-EGC-Access). When it differs from
+// the one this page signed in with, the owner changed this person's roles: after a short wait (so the new Firebase
+// session starts after the server ended the old one) the page asks /api/hub-auth again, keeps the new capabilities,
+// mints a new Firebase session and redraws. Nobody is signed out; the server already decides with the new roles.
+// The new stamp is kept only once all of that worked, so a failed Firebase restart is tried again on a later answer
+// (at most every 30 s).
+// Business access turning on or off changes the page's whole data layer (Firestore listeners or the crew schedule),
+// so the page reloads instead of redrawing: at once when nothing is unsaved (window.EGCHubSafeToReload, the suite),
+// otherwise after a notice, checking again on later answers. Until then the old screens stay; the server already
+// refuses what the person may no longer do.
+const HUB_ACCESS_SETTLE_MS = 3000, HUB_ACCESS_RECHECK_MS = 30000;
+let hubAccessRefresh = null, hubAccessCheckedAt = 0, hubAccessReloadTold = false;
+function hubAccessStampOf(response) { return response?.headers?.get?.('X-EGC-Access') || ''; }
+function noteHubAccess(response) {
+  const stamp = hubAccessStampOf(response);
+  if (!stamp || !me) return;
+  const known = sessionStorage.getItem('egc_access_stamp') || '';
+  if (!known) { sessionStorage.setItem('egc_access_stamp', stamp); return; }
+  if (stamp === known || hubAccessRefresh || Date.now() - hubAccessCheckedAt < HUB_ACCESS_RECHECK_MS) return;
+  hubAccessCheckedAt = Date.now();
+  const version = hubAuthVersion;
+  hubAccessRefresh = new Promise(resolve => setTimeout(resolve, HUB_ACCESS_SETTLE_MS)).then(() => refreshHubAccess(version)).catch(() => {}).finally(() => { hubAccessRefresh = null; });
+}
+async function refreshHubAccess(version) {
+  if (version !== hubAuthVersion || !me) return;
+  const response = await fetch('/api/hub-auth', { cache: 'no-store', credentials: 'same-origin' });
+  const data = await response.json().catch(() => ({}));
+  // A 401 or an outage is left to the next hubFetch; another account signed in elsewhere is not adopted here.
+  if (version !== hubAuthVersion || !response.ok || !data.ok || !data.user || String(data.user).toLowerCase() !== String(me).toLowerCase()) return;
+  if ((data.businessAccess === true) !== (sessionStorage.getItem('egc_business_access') === 'true')) {
+    if (typeof window.EGCHubSafeToReload === 'function' && window.EGCHubSafeToReload()) { location.reload(); return; }
+    if (!hubAccessReloadTold && typeof showToast === 'function') showToast('Your Hub access changed. Save or finish what is open, and the Hub reloads to apply it.');
+    hubAccessReloadTold = true;
+    return;
+  }
+  rememberHubProfile(data);
+  let restarted = true;
+  try { await ensureFirebaseSession(version); } catch { restarted = false; }
+  if (version !== hubAuthVersion) return;
+  window.dispatchEvent(new CustomEvent('egc:access-changed', { detail: { firebaseRestarted: restarted } }));
+  if (!restarted) return;
+  sessionStorage.setItem('egc_access_stamp', hubAccessStampOf(response));
+  if (typeof showToast === 'function') showToast('Your Hub access was updated.');
+}
+
 async function hubFetch(input, init = {}) {
   const version = hubAuthVersion;
   const response = await fetch(input, { ...init, credentials: 'same-origin' });
-  if (response.status !== 401) return response;
+  if (response.status !== 401) { noteHubAccess(response); return response; }
   if (version !== hubAuthVersion) throw hubAuthInterrupted();
   const logout = doLogout(), logoutVersion = hubAuthVersion;
   await logout;
@@ -1424,7 +1471,7 @@ async function restoreHubSession() {
     const data = await response.json().catch(() => ({}));
     if (version !== hubAuthVersion) return;
     if (response.ok && data.ok && data.user) {
-      await enterEmployeeApp(data, version);
+      await enterEmployeeApp(data, version, hubAccessStampOf(response));
     } else {
       clearHubProfile();
       document.body.classList.remove('has-session');
@@ -2126,7 +2173,7 @@ function renderCustomersTab() {
           <div class="cust-av" style="width:40px;height:40px;background:${avatarBg(c.name)};border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:.8rem;font-weight:700;flex-shrink:0">${initials(c.name)}</div>
           <div>
             <div style="font-weight:600;font-size:.95rem">${esc(c.name)}</div>
-            <div class="meta">${[c.phone,c.email,c.address].filter(Boolean).join(' · ')}</div>
+            <div class="meta">${[c.phone,c.email,c.address].filter(Boolean).map(esc).join(' · ')}</div>
           </div>
         </div>
         <div style="display:flex;gap:.4rem">
@@ -2363,7 +2410,7 @@ function renderCustList(q) {
       <div class="cust-av" style="background:${avatarBg(displayName||c.phone)};color:#fff">${initials(displayName||c.phone)}</div>
       <div class="cust-info">
         <div class="cname" style="color:#fff;font-size:.9rem;font-weight:600">${esc(displayName)}${c._isLead?` <span style="background:var(--accent);color:#fff;font-size:.6rem;font-weight:700;padding:1px 5px;border-radius:4px;vertical-align:middle;margin-left:4px">LEAD</span>`:''}</div>
-        <div class="csub" style="color:rgba(255,255,255,.6);font-size:.75rem">${[c.phone,c.email].filter(Boolean).join(' · ')||c.address||'No contact info'}</div>
+        <div class="csub" style="color:rgba(255,255,255,.6);font-size:.75rem">${[c.phone,c.email].filter(Boolean).map(esc).join(' · ')||esc(c.address)||'No contact info'}</div>
       </div>
       <div class="cust-check"></div>`;
     card.onclick=()=>{ bk.customer=c; bk.isNew=false; document.getElementById('new-cust-card').classList.remove('selected'); document.getElementById('new-cust-form').classList.remove('open'); renderCustList(document.getElementById('cust-search').value); };
@@ -2499,7 +2546,7 @@ function fmtDate(d) { return d.getFullYear()+'-'+String(d.getMonth()+1).padStart
 function fmtTime(t) { if(!t)return''; const[h,m]=t.split(':').map(Number); return(h%12||12)+':'+String(m).padStart(2,'0')+(h>=12?' PM':' AM'); }
 function cap(s) { return s?s[0].toUpperCase()+s.slice(1):''; }
 function esc(s) { return s?String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&#39;'):''; }
-function initials(n) { return n?n.trim().split(/\s+/).map(w=>w[0]).join('').slice(0,2).toUpperCase():'?'; }
+function initials(n) { return n?esc(n.trim().split(/\s+/).map(w=>w[0]).join('').slice(0,2).toUpperCase()):'?'; }
 function avatarBg(n) {
   const palettes=['linear-gradient(135deg,#ff5b1f,#f59e0b)','linear-gradient(135deg,#3b82f6,#8b5cf6)','linear-gradient(135deg,#22c55e,#0ea5e9)','linear-gradient(135deg,#ec4899,#f43f5e)','linear-gradient(135deg,#14b8a6,#6366f1)'];
   let h=0; for(let i=0;i<(n||'').length;i++)h=(h*31+n.charCodeAt(i))&0xffff;
@@ -2655,7 +2702,7 @@ function ocFilter(q) {
     card.innerHTML = `<div class="cust-av" style="background:${avatarBg(c.name)}">${initials(c.name)}</div>
       <div class="cust-info">
         <div class="cname">${esc(c.name)}${c._isLead ? ' <span style="font-size:.65rem;background:rgba(255,91,31,.2);color:var(--accent);border-radius:4px;padding:1px 5px;vertical-align:middle">LEAD</span>' : ''}</div>
-        <div class="csub">${[c.phone,c.email].filter(Boolean).join(' · ')||'No contact info'}${c.items ? ' · '+esc(c.items) : ''}</div>
+        <div class="csub">${[c.phone,c.email].filter(Boolean).map(esc).join(' · ')||'No contact info'}${c.items ? ' · '+esc(c.items) : ''}</div>
       </div>
       <div class="cust-check"></div>`;
     card.onclick = () => {
@@ -3002,7 +3049,7 @@ window.addEventListener('egc:booking-recovered',event=>{const key=event.detail?.
 <script src="employee-offline-queue.js?v=20260929crewtime"></script>
 <link rel="stylesheet" href="employee-pto.css?v=20260928pto">
 <script src="employee-pto.js?v=20260928ptoamend"></script>
-<script src="employee-hub-screens.js?v=20261021field3"></script>
+<script src="employee-hub-screens.js?v=20261021roles2"></script>
 <link rel="stylesheet" href="employee-followups-home.css?v=20260928overdue">
 <script src="employee-followups-home.js?v=20260928overdue"></script>
 <script src="employee-ghl-tags.js?v=20260929ghltags3"></script>
@@ -3013,10 +3060,10 @@ window.addEventListener('egc:booking-recovered',event=>{const key=event.detail?.
 <script src="employee-labor-costs.js?v=20260929laborforbidden"></script>
 <link rel="stylesheet" href="employee-staff-access.css?v=20261017access3">
 <script src="employee-staff-access.js?v=20261017access3"></script>
-<link rel="stylesheet" href="employee-staff.css?v=20261017profile">
-<script src="employee-staff.js?v=20261017profile"></script>
+<link rel="stylesheet" href="employee-staff.css?v=20261021roles">
+<script src="employee-staff.js?v=20261021roles"></script>
 <script src="employee-money-totals.js?v=20260929hubready3"></script>
-<script src="employee-suite.js?v=20261019deposit2"></script>
+<script src="employee-suite.js?v=20261021roles2"></script>
 <link rel="stylesheet" href="employee-money-actions.css?v=20260929money">
 <script src="employee-money-actions.js?v=20261018signed2575"></script>
 <link rel="stylesheet" href="employee-customer-lifecycle.css?v=20260929fun36">

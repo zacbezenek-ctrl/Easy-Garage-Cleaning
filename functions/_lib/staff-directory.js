@@ -548,11 +548,15 @@ export function createStaffDirectoryService({ store, env = {}, now = () => new D
         const savedRoles = accountRoles(saved.account).staffRoles;
         if (canonicalJson(savedRoles) !== canonicalJson(person.staffRoles)) throw fail('revision_conflict', 'This employee account changed since you opened it. Refresh and review the latest before saving.', 409);
         if (!isHubOwner(session) && (fields.staffRoles.includes('manager') || savedRoles.includes('manager'))) throw fail('owner_role_reserved', 'Only the owner can give or remove the manager role, or change a manager\'s roles.', 403);
-        // A role change revokes existing Hub sessions (sessionVersion).
-        account = { account: { ...saved.account, staffRoles: fields.staffRoles, sessionVersion: crypto.randomUUID(), rolesUpdatedAt: nowIso, rolesUpdatedBy: actor, updatedAt: nowIso }, version: saved.version };
+        // LIVE-ROLES (owner 2026-10-21): the person stays signed in. Their Hub session re-reads these stored roles on every
+        // request (hub-session.js), so the new roles decide their next request, a removed role included; their open pages
+        // follow the access stamp. sessionVersion is kept: only an account status change, a sign-in reset or a password
+        // change ends sessions.
+        account = { account: { ...saved.account, staffRoles: fields.staffRoles, rolesUpdatedAt: nowIso, rolesUpdatedBy: actor, updatedAt: nowIso }, version: saved.version };
       }
       // With EGC_STAFF_ROLE_ACCESS it can also add or remove business access (a stored manager), which a
-      // minted Firebase session keeps until its refresh tokens are revoked. Intent first, as for an
+      // minted Firebase session keeps until its refresh tokens are revoked (the person's page mints a new one when its
+      // access stamp changes, so this ends only the old claims, not their Hub sign-in). Intent first, as for an
       // account review (employee-accounts.js): a change that lands after this request stops is still revoked.
       // Flag off, stored roles never reach a claim firestore.rules reads (business_access, role), so a role
       // change records and calls nothing and answers exactly as before AUTH-ROLES.
@@ -579,7 +583,7 @@ export function createStaffDirectoryService({ store, env = {}, now = () => new D
       }
       const updated = { ...person, profile: data, record: { documentId: person.record?.documentId || '', updateTime: saved.profileRevision, data }, revision: saved.profileRevision,
         ...(fields.staffRoles ? { staffRoles: fields.staffRoles, staffRolesSource: 'account' } : {}) };
-      return { ok: true, authority: 'employee_hub', person: view(updated, session, today), ...(account ? { sessionsRevoked: true, ...await revoke() } : {}) };
+      return { ok: true, authority: 'employee_hub', person: view(updated, session, today), ...(account ? { sessionsKept: true, ...await revoke() } : {}) };
     },
   };
 }

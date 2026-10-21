@@ -4,11 +4,12 @@ import * as accounts from '../functions/api/employee-accounts.js';
 import * as auth from '../functions/api/hub-auth.js';
 import * as hub from '../functions/api/employee-hub.js';
 import { createHubCredentialHash, createHubSessionCookie } from '../functions/_lib/hub-session.js';
+import { commitAsPatch } from './helpers/commit-as-patch.mjs';
 
 test('new punctuated username completes signup, owner approval, login, onboarding, and returning login', async t => {
   const saved=new Map();
   let revision=0;
-  t.mock.method(globalThis,'fetch',async(input,init={})=>{
+  t.mock.method(globalThis,'fetch',commitAsPatch(async(input,init={})=>{
     const url=new URL(input);
     assert.equal(url.hostname,'firestore.googleapis.com','all external transport is isolated to fake storage');
     if(url.pathname.endsWith('documents:runQuery')){
@@ -24,7 +25,7 @@ test('new punctuated username completes signup, owner approval, login, onboardin
       saved.set(id,{...JSON.parse(init.body),updateTime:`2026-09-07T00:00:00.${String(++revision).padStart(9,'0')}Z`});
     }
     return saved.has(id)?Response.json({name:'projects/egcw-1ec83/databases/(default)/documents/jobs/'+id,...saved.get(id)}):Response.json({}, {status:404});
-  });
+  }));
   const env={HUB_SESSION_SECRET:'synthetic-lifecycle-session',EMPLOYEE_HUB_DATA_SECRET:'synthetic-lifecycle-vault',FIREBASE_API_KEY:'firebase-test-lifecycle',HUB_AUTH_USERS_JSON:JSON.stringify({ZacB:{passwordHash:await createHubCredentialHash('SyntheticOwner904!'),role:'owner'},AlexK:{passwordHash:'unused',role:'manager'}})};
   const origin='https://easygaragecleaning.com';
   const post=(path,body,cookie)=>new Request(origin+path,{method:'POST',headers:{Origin:origin,'Content-Type':'application/json',...(cookie?{Cookie:cookie}:{})},body:JSON.stringify(body)});
