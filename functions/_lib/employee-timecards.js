@@ -1,5 +1,6 @@
 import { NO_CLOCK_IN_FIX, applyEmployeeJobAction, finishEmployeeJobTime, initializeJobTracking, jobActionSatisfied } from './employee-job-time.js';
 import { can, capabilityMode } from './staff-roles.js';
+import { isHubOwner } from './hub-session.js';
 import { canSetPay, payChangeRefused } from './pay-visibility.js';
 
 const equal = (left, right) => JSON.stringify(left) === JSON.stringify(right);
@@ -200,6 +201,7 @@ export function correctTimecard({ session, manager, existing, incoming, now, env
   if (!manager || !can(session, 'time.approve', env)) throw correctionError('Only a manager or the owner can correct a timecard.', 403);
   if (!timecardCorrectionsEnabled(env)) throw correctionError('Timecard corrections are switched off.', 403, 'EMPLOYEE_TIMECARD_CORRECTIONS_OFF');
   if (!existing) throw correctionError('This timecard could not be found. Refresh Time approvals.', 404);
+  if (selfApproval(existing, session)) throw selfApprovalRefused();
   const meta = incoming.correction;
   if (!meta || typeof meta !== 'object' || Array.isArray(meta) || Object.keys(meta).some(key => !['requestId', 'kind', 'reason', 'expectedUpdatedAt'].includes(key)) || !uuid(meta.requestId) || !Object.hasOwn(CORRECTION_KEYS, meta.kind) || typeof meta.expectedUpdatedAt !== 'string') throw correctionError('Send a correction with its kind, a unique request ID and the timecard version you corrected.');
   const kind = meta.kind, requestId = meta.requestId.toLowerCase(), reason = text(meta.reason, 500);
@@ -288,6 +290,13 @@ const clockInSave = incoming => incoming.status === 'active' && !incoming.clockO
 const clockOutSave = incoming => Boolean(incoming.clockOutAt) && incoming.status === 'submitted' && Object.keys(incoming).every(key => CLOCK_OUT_KEYS.includes(key));
 const breakSave = incoming => Array.isArray(incoming.breaks) && Object.keys(incoming).every(key => ['breaks', 'updatedAt', 'deviceCapturedAt'].includes(key));
 const sameEmployee = (entry, session) => text(entry?.employee).toLowerCase() === text(session?.user).toLowerCase();
+// NO-SELF-APPROVAL: whoever approves time never approves, rejects, reviews or corrects their own timecard (a manager or
+// team lead who is paid by the hour would otherwise set their own pay). Someone else does it: another manager or the
+// owner. The configured owner is the one exception, as nobody above them approves their time.
+// Device-time review flags: set by the server when a phone records offline time, cleared only by a reviewer.
+const REVIEW_FIELDS = Object.freeze(['needsReview', 'deviceTime', 'deviceTimeEvents', 'deviceTimeReviewedAt', 'deviceTimeReviewedBy']);
+const selfApproval = (entry, session) => sameEmployee(entry, session) && !isHubOwner(session);
+const selfApprovalRefused = () => Object.assign(timecardError('Someone else approves and corrects your own timecard: another manager or the owner.', 403), { code: 'EMPLOYEE_TIMECARD_SELF_APPROVAL' });
 
 // A manager's own queued break (queuedClock): the time the Hub showed for it is kept, as for every manager save, and it
 // is recorded as an employee's is, once (a replay is a no-op by its request ID) and only on an open shift. On a closed
@@ -367,14 +376,32 @@ export function authorizeTimecard({ session, manager, id, incoming, existing, ho
     const changedTime = existing && timeFields.some(key => own(incoming, key) && !equal(existing[key], next[key]));
     if (activeTimecard(existing) && next.employee !== existing.employee) throw timecardError('Close the active shift before changing its employee.', 409);
     if (activeTimecard(next)) timecardHours(next, Date.parse(now));
-    if (changedTime && existing.approvalStatus === 'approved' && incoming.approvalStatus !== 'approved') {
+    // NO-SELF-APPROVAL: the card is the caller's own when it is theirs before or after this save (a move to someone else
+    // and back is still their own). An approval or rejection sent with any change to it, or a change of status, is
+    // refused; repeating the stored status with nothing else changed is a no-op. Any time, pay or employee change to
+    // their own decided card always returns it to pending, so another manager or the owner decides it again.
+    // Their own card's status never moves by their hand, pending included: the only change is the automatic return to
+    // pending when they edit the time of a card that is not rejected. A rejected card of their own stays as the other
+    // manager or owner left it (a time edit or a move to pending would put its hours back into a pending payroll week).
+    // Nor do they touch its device-time review flags, so an offline-time flag is cleared only by someone else's review.
+    const ownCard = (existing && selfApproval(existing, session)) || selfApproval(next, session);
+    if (ownCard && ['approved', 'rejected'].includes(incoming.approvalStatus) && (incoming.approvalStatus !== existing?.approvalStatus || changedTime)) throw selfApprovalRefused();
+    if (ownCard && existing && own(incoming, 'approvalStatus') && incoming.approvalStatus !== existing.approvalStatus && !(changedTime && incoming.approvalStatus === 'pending' && existing.approvalStatus !== 'rejected')) throw selfApprovalRefused();
+    if (ownCard && existing?.approvalStatus === 'rejected' && changedTime) throw selfApprovalRefused();
+    if (ownCard && incoming.deviceTimeReviewed === true && next.deviceTime && next.needsReview) throw selfApprovalRefused();
+    if (ownCard && REVIEW_FIELDS.some(key => own(incoming, key) && !equal(existing?.[key], incoming[key]))) throw selfApprovalRefused();
+    if (changedTime && (existing.approvalStatus === 'approved' && incoming.approvalStatus !== 'approved' || ownCard && ['approved', 'rejected'].includes(existing.approvalStatus))) {
       next.approvalStatus = 'pending'; next.approvedAt = ''; next.approvedBy = '';
     }
-    if (incoming.approvalStatus === 'approved') {
+    // What was decided by this save: never the caller's own card, so a repeated status never re-stamps it as theirs.
+    const decision = ownCard ? '' : incoming.approvalStatus;
+    if (decision === 'approved') {
       if (!next.clockOutAt || activeTimecard(next)) throw timecardError('Only completed timecards can be approved.');
       if (timecardHours(next) <= 0) throw timecardError('Positive work hours are required before approval.');
       next.approvedAt = now; next.approvedBy = session.user;
-    } else if (incoming.approvalStatus === 'rejected') { next.approvedAt = now; next.approvedBy = session.user; }
+    } else if (decision === 'rejected') { next.approvedAt = now; next.approvedBy = session.user; }
+    // A card that is not approved or rejected carries no decider.
+    if (!['approved', 'rejected'].includes(next.approvalStatus) && (next.approvedAt || next.approvedBy)) { next.approvedAt = ''; next.approvedBy = ''; }
     // Device-captured times stay flagged until a manager explicitly reviews
     // them; an approval alone never records that review.
     if (incoming.deviceTimeReviewed === true && next.deviceTime && next.needsReview) { next.needsReview = false; next.deviceTimeReviewedAt = now; next.deviceTimeReviewedBy = session.user; }

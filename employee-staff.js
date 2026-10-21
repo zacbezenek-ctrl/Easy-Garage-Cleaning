@@ -306,9 +306,12 @@ async function finishSetup(){
   try{
     let failed=0;
     for(const migrationId of SETUP){
+      // A sign-out (or another account) mid-run stops before the next migration is sent.
+      if(generation!==S.generation)return;
       current=migrationId;
       const requestId=pendingSetupId(migrationId)||uuid();keepSetupId(migrationId,requestId);
       const report=await migrate({requestId,migrationId,dryRun:false});
+      if(generation!==S.generation)return;
       // A conflict (someone saved that record meanwhile) needs a new request; migrated records are skipped then.
       keepSetupId(migrationId,'');failed+=Number(report.failed||0)+Number(report.conflicts||0);
     }
@@ -327,8 +330,8 @@ function setupBanner(){
   const setup=S.setup||{},needed=S.data?.setup?.needed===true||SETUP.some(pendingSetupId);
   if(!owner()||!(['running','verifying','error'].includes(setup.state)||needed))return null;
   const running=setup.state==='running'||setup.state==='verifying';
-  return h('div',{class:'st-notice warning',role:'status','aria-live':'polite'},h('strong',{},'Finish staff setup'),
-    h('p',{},setup.error||'One-time setup saves the current role and pay rate of each employee account in the staff directory, so roles and pay history work there. The configured Hub accounts keep theirs in the Hub configuration. No one’s pay changes, and people you invited as Sales are saved with the Sales role. Only you can run it.'),
+  return h('div',{class:'st-notice warning',role:'status','aria-live':'polite'},h('strong',{},'Finish new staff setup'),
+    h('p',{},setup.error||'Setup saves the current role and pay rate of each employee account not yet set up in the staff directory, so roles and pay history work there. The configured Hub accounts keep theirs in the Hub configuration. No one’s pay changes, and people you invited as Sales are saved with the Sales role. Only you can run it.'),
     h('div',{class:'st-actions'},button(running?'Setting up…':'Finish staff setup',()=>void finishSetup(),'primary',{disabled:running,'aria-busy':running?'true':null})));
 }
 
