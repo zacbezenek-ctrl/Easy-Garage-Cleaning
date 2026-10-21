@@ -341,6 +341,41 @@ export async function createHubSessionToken(env, username, now = Date.now(), sup
   return `${payload}.${await signature(secret, payload)}`;
 }
 
+// LIVE-ROLES (owner 2026-10-21): a role change in the Staff directory no longer signs the person out. Every request
+// already re-reads an employee account's stored roles (verifyHubSessionToken -> getEmployeeSessionProfile), so a granted
+// or removed role decides that person's very next request on the server, at no extra read. What a browser keeps (the
+// capabilities /api/hub-auth reported, the Firebase claims it minted) follows through the access stamp: a short digest
+// of what decides access, computed from the profile this request verified. functions/_middleware.js sends it on every
+// API response as X-EGC-Access; a page that sees it change asks /api/hub-auth again and mints a new Firebase session.
+export const HUB_ACCESS_HEADER = 'X-EGC-Access';
+export async function hubAccessStamp(profile) {
+  if (!profile || typeof profile !== 'object') return '';
+  const roles = Array.isArray(profile.staffRoles) ? [...new Set(profile.staffRoles.filter(role => typeof role === 'string'))].sort() : null;
+  const access = JSON.stringify([String(profile.user || '').trim().toLowerCase(), String(profile.role || ''), hasBusinessAccess(profile), isHubOwner(profile), roles]);
+  return (await digestHex(`egc:hub-access:v1\n${access}`)).slice(0, 16);
+}
+
+// The stamp of the session each cookie last verified in this isolate (bounded; oldest dropped first).
+const VERIFIED_LIMIT = 500;
+const verifiedAccess = new Map();
+async function verified(token, profile) {
+  const stamp = await hubAccessStamp(profile);
+  verifiedAccess.delete(token);
+  verifiedAccess.set(token, stamp);
+  if (verifiedAccess.size > VERIFIED_LIMIT) verifiedAccess.delete(verifiedAccess.keys().next().value);
+  return profile;
+}
+
+// The middleware forgets this request's cookie before the request runs and reads its stamp after: a stamp is then the
+// session this request (or one running beside it with the same cookie) verified, never an earlier one. Nothing is read:
+// a request that never checked its session gets no stamp.
+export function forgetVerifiedHubAccess(request) {
+  verifiedAccess.delete(readCookie(request));
+}
+export function verifiedHubAccessStamp(request) {
+  return verifiedAccess.get(readCookie(request)) || '';
+}
+
 export async function verifyHubSessionToken(env, token, now = Date.now()) {
   const secret = sessionSecret(env);
   if (!secret || !token) return null;
@@ -351,13 +386,13 @@ export async function verifyHubSessionToken(env, token, now = Date.now()) {
     if (!Number.isFinite(session.exp) || session.exp <= now) return null;
     if (session.v === 2 && session.u && session.d) {
       const profile = await getEmployeeSessionProfile(env, String(session.u), session.av);
-      return profile ? staffRoleAccess(env, { ...profile, expiresAt: session.exp }) : null;
+      return profile ? verified(token, staffRoleAccess(env, { ...profile, expiresAt: session.exp })) : null;
     }
     if (session.v !== 1 || !Object.hasOwn(users(env), session.u)) return null;
     // STAFF-SESSION: a changed password hash ends the session; one issued before pv lasts only until its own expiry.
     if (session.pv !== undefined && !safeEqual(session.pv, await credentialVersion(secret, userRecord(env, session.u)))) return null;
     const profile = getHubUserProfile(env, session.u);
-    return profile ? { ...profile, expiresAt: session.exp } : null;
+    return profile ? verified(token, { ...profile, expiresAt: session.exp }) : null;
   } catch {
     return null;
   }

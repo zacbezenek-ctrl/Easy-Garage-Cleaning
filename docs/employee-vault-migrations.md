@@ -122,8 +122,10 @@ Configured Hub users keep their pay in the Hub configuration, so the directory n
 their pay for review. Skill and availability changes write an audit entry with skill ids and
 levels, and per-day window counts plus the changed days; verifications and exact windows stay
 in the sealed `history`.
-Employee-account roles are authoritative on the sealed account (`staffRoles`); a role change
-there also rotates `sessionVersion`, which signs the employee out.
+Employee-account roles are authoritative on the sealed account (`staffRoles`). A role change
+keeps `sessionVersion` (LIVE-ROLES): every Hub request re-reads the account, so the new roles
+decide the employee's next request, and open pages refresh when the `X-EGC-Access` stamp on an
+API answer changes. Only a status change, a sign-in reset or a password change signs them out.
 
 ## Hub screen (TEAM-UI)
 

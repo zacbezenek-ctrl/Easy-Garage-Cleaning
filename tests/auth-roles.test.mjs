@@ -583,10 +583,14 @@ test('demoting a stored manager in the staff directory ends their Firebase data 
   // The demotion itself.
   const desk = revocationDesk(), demoted = await setRoles(desk, ['crew']);
   assert.equal(demoted.status, 200, JSON.stringify(demoted.body));
-  assert.deepEqual([demoted.body.sessionsRevoked, demoted.body.firebaseRevocation], [true, { status: 'revoked' }]);
+  assert.deepEqual([demoted.body.sessionsKept, demoted.body.firebaseRevocation], [true, { status: 'revoked' }]);
   assert.deepEqual(desk.staff(), [{ uid: 'hub:mgr.account', validSince: second(NOW) + 1 }], 'sessions minted before the saved change end with it');
   assert.deepEqual([desk.state().intents, desk.state().pending, desk.state().revoked.map(entry => entry.uid)], [[], [], ['hub:mgr.account']]);
-  assert.equal(await getHubSession(get(cookies['Mgr.Account'], '/'), env), null, 'the Hub session ended too');
+  // LIVE-ROLES: the Hub session is kept, but its very next request has no business access, and the Firebase session
+  // it mints now carries none either.
+  const kept = await getHubSession(get(cookies['Mgr.Account'], '/'), env);
+  assert.deepEqual([kept?.user, hasBusinessAccess(kept), kept?.role], ['Mgr.Account', false, 'crew'], 'the Hub session stays, without business access');
+  assert.equal((await claims(cookies['Mgr.Account'])).business_access, false, 'a Firebase session minted from the kept Hub session has no business access');
   const { login } = await import('./helpers/vault-fixture.mjs');
   const fresh = await login(env, 'Mgr.Account');
   assert.deepEqual([fresh.profile.businessAccess, (await claims(fresh.cookie)).business_access], [false, false]);
@@ -635,7 +639,7 @@ test('a demotion the server account is not allowed to sign out is saved, answere
   const service = createFirebaseRevocationService({ store, revoke: async (uid, validSince) => { calls.push({ uid, validSince }); throw Object.assign(new Error('denied'), { code: 'firebase_revocation_permission_denied' }); } });
   const demoted = await setStaffRoles(cookies, env, ['crew'], { revocations: () => service });
   assert.equal(demoted.status, 200, JSON.stringify(demoted.body));
-  assert.equal(demoted.body.sessionsRevoked, true, 'the Hub sessions still ended');
+  assert.equal(demoted.body.sessionsKept, true, 'the Hub sessions are kept; the roles apply to their next request');
   assert.deepEqual([demoted.body.firebaseRevocation.status, demoted.body.firebaseRevocation.error], ['revocation_pending', 'permission_denied']);
   assert.match(demoted.body.firebaseRevocation.message, /Firebase Authentication Admin role/);
   assert.deepEqual(calls, [{ uid: 'hub:mgr.account', validSince: second(NOW) + 1 }]);
@@ -656,7 +660,7 @@ test('with role access off a staff role change records and revokes nothing and a
     let asked = 0;
     const changed = await setStaffRoles(cookies, { ...base, ...flags }, turn++ % 2 ? ['manager'] : ['crew'], { revocations: () => { asked += 1; return desk.service; } });
     assert.equal(changed.status, 200, `${JSON.stringify(flags)} ${JSON.stringify(changed.body)}`);
-    assert.equal(changed.body.sessionsRevoked, true, 'the Hub sessions end on a role change, as before');
+    assert.equal(changed.body.sessionsKept, true, 'LIVE-ROLES: the Hub sessions are kept on a role change');
     assert.equal(Object.hasOwn(changed.body, 'firebaseRevocation'), false, JSON.stringify(flags));
     assert.deepEqual([asked, desk.calls, desk.state()], [0, [], null], `${JSON.stringify(flags)}: no intent, no Identity Toolkit call, no state`);
   }

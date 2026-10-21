@@ -223,6 +223,17 @@ draft PR. The owner merges in phase order. See **Decisions** D-001.
   failures queue in server-only `firebaseSessionRevocations/state` (CAS, per-uid `revokedThrough`) and retry on business
   Hub loads; Integrations shows "Firebase sign-out". Needs the Firebase Authentication Admin role. Gaps: issued ID tokens
   live up to 1 h; roster reconcile only on production hosts; no cron (retries on Hub load).
+- **LIVE-ROLES** (owner 2026-10-21) A Staff directory role change no longer signs the person out: `sessionVersion` is
+  kept (only a status change, sign-in reset or password change rotates it). Hub sessions already re-read the account
+  each request, so grants and removals decide the next request with no extra read. `functions/_middleware.js` sends
+  `X-EGC-Access` (a digest of user, role, business access, owner and stored roles from the session that request
+  verified); the Hub, crew pages (`crew/hub-auth.js`) and Knock re-read `/api/hub-auth` (Knock: `knock-me`) and mint a
+  new Firebase session when it changes (business access turning on or off reloads the Hub instead, at once when
+  nothing is unsaved). SEC-13's refresh-token revocation still runs: once it succeeds, old Firebase claims last at most
+  the 1 h ID-token life; while it is pending or failed (Integrations), a data session minted before the change keeps
+  its old claims. Known limit (pre-existing): MCP OAuth tokens and grant assertions carry the role signed at approval,
+  so data egc-platform serves outside the Hub's runHubCommand does not follow a Hub role change. Tests:
+  `tests/live-roles.test.mjs`.
 - **JOB-CUT** `scripts/jobber-import.mjs`: Jobber-to-Hub import from CSV exports or GraphQL, dry run by default with a
   PII-masked report; apply only creates records in receipt-tracked, fingerprint-checked batches with deterministic ids.
   Upcoming work becomes unscheduled dispatch-review jobs on one account root per customer; completed visits become

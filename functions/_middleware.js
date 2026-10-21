@@ -2,7 +2,7 @@ import { enforceBusinessProjectWrite } from './_lib/business-hub-write-guard.js'
 import { gateStaffPage, privateStaffResponse } from './_lib/staff-page-gate.js';
 import { BOOKING_SLOTS_MARKER, bookingSlotsPageRequest } from './_lib/booking-slots-flag.js';
 import { applyLaunchDefaults } from './_lib/launch-defaults.js';
-import { renewHubSessionCookie, setsHubSessionCookie } from './_lib/hub-session.js';
+import { HUB_ACCESS_HEADER, forgetVerifiedHubAccess, renewHubSessionCookie, setsHubSessionCookie, verifiedHubAccessStamp } from './_lib/hub-session.js';
 
 // Source trees, tooling and deploy configs sit beside the static site; never serve them.
 const PRIVATE_PATH = /^(?:\/(?:auth-verifier|contracts|docs|scripts|tests|test-results|field-qa|lighthouse-reports|egc-platform|functions|tools|node_modules)(?:\/|$)|\/(?!\.well-known(?:\/|$))\.[A-Za-z0-9_.-]+(?:\/|$)|\/(?:sop|tyler-contract)(?:\.html)?\/?$|\/EGC-Lead-System-SOP\.pdf$|\/(?:package(?:-lock)?\.json|README\.md|firebase(?:\.emulator|\.field-day)?\.json|firestore\.(?:rules|indexes\.json)|pnpm-(?:lock|workspace)\.yaml|e2e-report\.json|firestore-debug\.log|_[^/]+)(?:$|\/)|\/.*\.py\/?$)/i;
@@ -63,6 +63,8 @@ export async function onRequest(context) {
   applyLaunchDefaults(context.env);
   const { pathname } = new URL(context.request.url);
   if (privatePath(pathname)) return blockedResponse();
+  // LIVE-ROLES: this request's access stamp is the one its own session check leaves (hub-session.js).
+  if (pathname.startsWith('/api/')) forgetVerifiedHubAccess(context.request);
   const bookingSlotsPage = bookingSlotsPageRequest(context.env, context.request, pathname);
 
   // EGC_STAFF_PAGE_GATE=on: staff pages and scripts need a Hub session (staff-paths.js); off leaves every response as before.
@@ -105,6 +107,10 @@ export async function onRequest(context) {
       const renewed = await renewHubSessionCookie(context.request, context.env).catch(() => '');
       if (renewed) response.headers.append('Set-Cookie', renewed);
     }
+    // LIVE-ROLES: the access stamp of the session this request verified (hub-session.js), so an open page notices a role
+    // change on its next API call. A request that did not check a session sends none; nothing extra is read.
+    const access = verifiedHubAccessStamp(context.request);
+    if (access) response.headers.set(HUB_ACCESS_HEADER, access);
   }
   if (ownPolicy) {
     // The MCP approval page may keep same-origin, so its own form POST carries a real Origin; the rest send none.

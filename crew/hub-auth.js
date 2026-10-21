@@ -1,5 +1,5 @@
 (function () {
-  const KEYS = ['egc_u', 'egc_tok', 'egc_exp', 'egc_name', 'egc_role', 'egc_pay_type', 'egc_hourly_rate', 'egc_business_access', 'egc_owner', 'egc_capabilities', 'egc_capability_mode', 'egc_role_access'];
+  const KEYS = ['egc_u', 'egc_tok', 'egc_exp', 'egc_name', 'egc_role', 'egc_pay_type', 'egc_hourly_rate', 'egc_business_access', 'egc_owner', 'egc_capabilities', 'egc_capability_mode', 'egc_role_access', 'egc_access_stamp'];
   let authVersion = 0;
   let authQueue = Promise.resolve();
   let firebaseQueue = Promise.resolve();
@@ -64,6 +64,47 @@
     } catch {}
   }
 
+  // LIVE-ROLES: the access stamp of the session an API answer checked (X-EGC-Access, functions/_middleware.js).
+  const ACCESS_SETTLE_MS = 3000, ACCESS_RECHECK_MS = 30000;
+  let accessRefresh = null, accessCheckedAt = 0;
+  function rememberAccess(response) {
+    const stamp = response?.headers?.get?.('X-EGC-Access') || '';
+    if (!stamp) return;
+    try { for (const storage of [sessionStorage, localStorage]) storage.setItem('egc_access_stamp', stamp); } catch {}
+  }
+
+  // When an answer's stamp differs from the one this page signed in with, the owner changed this person's roles: after
+  // a short wait (so the new Firebase session starts after the server ended the old one) ask /api/hub-auth again, keep
+  // the new capabilities, mint a new Firebase session and tell the page (egc:access-changed). Nobody is signed out; the
+  // server already decides with the new roles.
+  function noteAccess(response) {
+    const stamp = response?.headers?.get?.('X-EGC-Access') || '';
+    let known = '', user = '';
+    try { known = sessionStorage.getItem('egc_access_stamp') || localStorage.getItem('egc_access_stamp') || ''; user = profile().user; } catch {}
+    if (!stamp || !user) return;
+    if (!known) { rememberAccess(response); return; }
+    if (stamp === known || accessRefresh || Date.now() - accessCheckedAt < ACCESS_RECHECK_MS) return;
+    accessCheckedAt = Date.now();
+    const version = authVersion;
+    accessRefresh = new Promise(resolve => setTimeout(resolve, ACCESS_SETTLE_MS)).then(() => refreshAccess(version, user)).catch(() => {}).finally(() => { accessRefresh = null; });
+  }
+
+  async function refreshAccess(version, user) {
+    if (version !== authVersion) return;
+    const response = await fetch('/api/hub-auth', { cache: 'no-store', credentials: 'same-origin' });
+    const data = await response.json().catch(() => ({}));
+    // A 401 or an outage is left to the next request; another account signed in elsewhere is not adopted here.
+    if (version !== authVersion || !response.ok || !data.ok || !data.user || account(data.user) !== account(user)) return;
+    remember(data.user, data);
+    // The new stamp is kept only once the Firebase session restarted, so a failed restart is tried again on a later
+    // answer (at most every 30 s).
+    let restarted = true;
+    try { await ensureFirebaseSession(version); } catch { restarted = false; }
+    if (version !== authVersion) return;
+    if (restarted) rememberAccess(response);
+    window.dispatchEvent(new CustomEvent('egc:access-changed', { detail: { user: data.user, firebaseRestarted: restarted } }));
+  }
+
   function clearLocal() {
     try {
       for (const storage of [sessionStorage, localStorage]) KEYS.forEach(key => storage.removeItem(key));
@@ -117,6 +158,7 @@
       await ensureFirebaseSession(version);
       if (version !== authVersion) return null;
       remember(data.user, data);
+      rememberAccess(response);
       return data.user;
     } catch (error) {
       if (version !== authVersion) return null;
@@ -144,6 +186,7 @@
     catch (error) { if (version === authVersion) clearLocal(); throw error; }
     if (version !== authVersion) throw interrupted();
     remember(data.user, data);
+    rememberAccess(response);
     for (const id of ['gate-p', 'pass']) { const input = document.getElementById(id); if (input) input.value = ''; }
     return data.user;
     });
@@ -197,7 +240,7 @@
   async function securedFetch(input, init = {}) {
     const version = authVersion;
     const response = await fetch(input, { ...init, credentials: 'same-origin' });
-    if (response.status !== 401) return response;
+    if (response.status !== 401) { noteAccess(response); return response; }
     if (version !== authVersion) throw interrupted();
     ++authVersion;
     clearLocal();
