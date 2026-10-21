@@ -46,8 +46,9 @@ function suite(fetcher = async () => { throw new Error('Unexpected request'); })
 test('the team lists approved members before sign-in and separates onboarding from readiness', () => {
   const env = suite();
   env.api.S.people.profiles = [member({ awaitingFirstSignIn: true })];
-  // PRICE-SCRUB: /api/employee-hub reports payVisibility 'all' only to the owner.
-  env.api.S.people.payVisibility = 'all';
+  // PRICE-SCRUB: /api/employee-hub reports payVisibility 'all' only to the owner (or a listed pay viewer), and paySet
+  // (PAY-VIEW-GRANT) only to whoever sets pay.
+  env.api.S.people.payVisibility = 'all'; env.api.S.people.paySet = true;
   const awaiting = env.api.teamBoard();
   assert.match(awaiting, /Active employees<\/span><strong>1<\/strong>/);
   assert.match(awaiting, /Approved members appear before their first sign-in/);
@@ -57,10 +58,15 @@ test('the team lists approved members before sign-in and separates onboarding fr
   assert.match(awaiting, /Edit profile & pay/);
   assert.match(awaiting, /Current profile rate/);
   assert.doesNotMatch(awaiting, /Sign off shadow shift|Clear for solo jobs/);
-  env.api.S.people.payVisibility = 'own';
+  env.api.S.people.payVisibility = 'own'; env.api.S.people.paySet = false;
   const manager = env.api.teamBoard();
   assert.match(manager, /Edit profile<\/button>/);
   assert.doesNotMatch(manager, /Edit profile & pay|Current profile rate|\/hr/, 'a manager is not shown another employee\'s pay, not even a $0 stand-in');
+  // PAY-VIEW-GRANT: a listed pay viewer sees pay (payVisibility 'all') but sets none (paySet false): the button stays plain.
+  env.api.S.people.payVisibility = 'all'; env.api.S.people.paySet = false;
+  const viewer = env.api.teamBoard();
+  assert.match(viewer, /Edit profile<\/button>/);
+  assert.doesNotMatch(viewer, /Edit profile &(amp;)? pay/);
 
   env.api.S.people.profiles = [member({ awaitingFirstSignIn: false, lastSeenAt: '2026-09-09T10:00:00Z', onboardingCompletedAt: '2026-09-09T10:10:00Z', onboardingVersion: '2026-09-location-v2' })];
   const onboarded = env.api.teamBoard();

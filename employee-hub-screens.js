@@ -46,6 +46,8 @@ const MANIFEST=[
 const HOME_WIDGETS=[
   {id:'customer_messages',label:'Customer messages',homes:['today','my_day'],capability:'customer_contact',module:'EGCCustomerMessagesHome',load:{js:'employee-customer-messages.js',css:'employee-customer-messages.css',v:'20261021inbox4'}},
   {id:'overdue_followups',label:'Overdue follow-ups',homes:['today','my_day'],capability:'business',module:'EGCFollowupsHome'},
+  // READINESS: tomorrow's jobs and what still stops each from rolling out ready (crew, lead, truck, time off, access notes).
+  {id:'crew_readiness',label:'Tomorrow readiness',homes:['today','my_day'],capability:'business',module:'EGCReadiness',load:{js:'employee-readiness.js',css:'employee-readiness.css',v:'20261021ready1'}},
 ];
 const HOMES=new Set(['today','my_day']);
 const ID=/^[a-z][a-z0-9_]{1,47}$/,CAPABILITY=/^[a-z][a-z0-9_]{1,40}$/,MODULE=/^EGC[A-Za-z0-9]{1,40}$/,VERSION=/^[A-Za-z0-9._-]{1,40}$/,ICON=/^[MmLlHhVvCcSsQqTtAaZz0-9 .,-]{1,800}$/;

@@ -4,8 +4,10 @@
  * the cost settings. Hub > Job actuals (employee-job-actuals.js) shows it.
  * GET /api/job-actuals => {ok, window, rates, totals:{last30,last90}, rows, estimatorAccuracy (estimator-accuracy.js: estimated vs
  *   actual man-hours per job and a 30/90-day scorecard per estimator, hours only), settings:{...,revision,complete,missing},
- *   canEdit, sources:{timecards:'ok'|'unavailable'}, laborCoverage}. Labor is costed at the flat loaded wage, never an
- *   employee's own rate, so the report shows hours and dollars without revealing anyone's pay.
+ *   canEdit, commissionShown, sources:{timecards:'ok'|'unavailable'}, laborCoverage}. Labor is costed at the flat loaded
+ *   wage, never an employee's own rate. Commission lines, the commission totals and rates, and the contribution after
+ *   commission go to the owner only (jobActualsForViewer, FUNNEL-METRICS §8.3): with estimator accuracy naming the
+ *   estimator, a job's commission is that person's pay.
  * POST {action:'job_actuals.settings.set', requestId, expectedRevision, settings} (owner) => {ok, settings, requestId, replayed}.
  * Errors: {ok:false, code, error}; 400, 401, 403, 409 revision/idempotency, 413, 415, 503 retry the same request. */
 import { getHubSession, isHubOwner } from '../_lib/hub-session.js';
@@ -17,7 +19,7 @@ import { hubEligibilityFields } from '../_lib/funnel-definitions.js';
 import { denverWorkDate, overtimePolicy } from '../_lib/timesheet-week.js';
 import { addDays } from '../_lib/dispatch-time.js';
 import { computeJobLaborCost } from '../_lib/job-labor-cost.js';
-import { buildJobActuals, jobActualsWindow } from '../_lib/job-actuals.js';
+import { buildJobActuals, jobActualsForViewer, jobActualsWindow } from '../_lib/job-actuals.js';
 import { ESTIMATOR_FIELDS, buildEstimatorAccuracy } from '../_lib/estimator-accuracy.js';
 import { jobActualsSettingsStorage, mutateJobActualsSettings, readJobActualsSettings, requireJobActualsOwner, requireJobActualsViewer } from '../_lib/job-actuals-settings.js';
 import { readJobCostingTimecards } from './job-costing.js';
@@ -56,7 +58,8 @@ export function jobActualsHandlers({ session = getHubSession, dispatch = dispatc
         const report = buildJobActuals({ jobs, labor, settings, setterWalkthroughs: new Set([...setters.keys()].filter(id => setters.get(id))), doorSaleJobs: new Set(sales.map(sale => sale?.handoff?.job?.ref).filter(Boolean)), timecardsAvailable: timecardSource === 'ok', today: window.today, asOf });
         // Estimator accuracy (estimator-accuracy.js): the same jobs and hours, scored per estimator; nothing more is read.
         const estimatorAccuracy = buildEstimatorAccuracy({ rows: report.rows, jobs, setters, shortStart: report.window.shortStart });
-        return reply(200, { ...report, estimatorAccuracy, ...settingsView(settings, actor), sources: { timecards: timecardSource } });
+        // Commission lines and totals are the owner's only (jobActualsForViewer); accuracy above is hours only.
+        return reply(200, { ...jobActualsForViewer(report, { owner: isHubOwner(actor) }), estimatorAccuracy, ...settingsView(settings, actor), sources: { timecards: timecardSource } });
       } catch (error) { return errorResponse(error); }
     },
     async post({ request, env }) {

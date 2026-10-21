@@ -7,7 +7,7 @@ const equal = (left, right) => JSON.stringify(left) === JSON.stringify(right);
 const text = (value, limit = 180) => String(value || '').trim().slice(0, limit);
 const own = (value, key) => Object.prototype.hasOwnProperty.call(value, key);
 const timeFields = ['employee', 'clockInAt', 'clockOutAt', 'breaks', 'jobId', 'hourlyRate', 'bonus', 'tips'];
-const auditFields = [...timeFields, 'status', 'approvalStatus', 'notes'];
+const auditFields = [...timeFields, 'status', 'approvalStatus', 'approvedBy', 'approvedAt', 'locationReview', 'notes'];
 
 export function timecardError(message, status = 400) {
   return Object.assign(new Error(message), { code: 'EMPLOYEE_TIMECARD_INVALID', status });
@@ -289,12 +289,17 @@ const CLOCK_OUT_KEYS = ['clockOutAt', 'status', 'approvalStatus', 'hours', 'gros
 const clockInSave = incoming => incoming.status === 'active' && !incoming.clockOutAt && typeof incoming.clockInAt === 'string' && incoming.locationTracking === true;
 const clockOutSave = incoming => Boolean(incoming.clockOutAt) && incoming.status === 'submitted' && Object.keys(incoming).every(key => CLOCK_OUT_KEYS.includes(key));
 const breakSave = incoming => Array.isArray(incoming.breaks) && Object.keys(incoming).every(key => ['breaks', 'updatedAt', 'deviceCapturedAt'].includes(key));
-const sameEmployee = (entry, session) => text(entry?.employee).toLowerCase() === text(session?.user).toLowerCase();
+// Names compare without case, spacing or invisible characters, so a card typed as a near-variant of one's own username
+// (a zero-width space, a trailing space) is still one's own.
+const personName = value => text(value).normalize('NFKC').replace(/[\s\u200B-\u200D\u2060\uFEFF]/g, '').toLowerCase();
+const sameEmployee = (entry, session) => personName(entry?.employee) === personName(session?.user);
 // NO-SELF-APPROVAL: whoever approves time never approves, rejects, reviews or corrects their own timecard (a manager or
 // team lead who is paid by the hour would otherwise set their own pay). Someone else does it: another manager or the
 // owner. The configured owner is the one exception, as nobody above them approves their time.
-// Device-time review flags: set by the server when a phone records offline time, cleared only by a reviewer.
-const REVIEW_FIELDS = Object.freeze(['needsReview', 'deviceTime', 'deviceTimeEvents', 'deviceTimeReviewedAt', 'deviceTimeReviewedBy']);
+// Fields nobody changes on their own card: the device-time review flags (set by the server when a phone records offline
+// time, cleared only by a reviewer), the clock-in location review (a missing clock-in position flags payroll), and who
+// decided the card and when.
+const REVIEW_FIELDS = Object.freeze(['needsReview', 'deviceTime', 'deviceTimeEvents', 'deviceTimeReviewedAt', 'deviceTimeReviewedBy', 'locationReview', 'approvedBy', 'approvedAt']);
 const selfApproval = (entry, session) => sameEmployee(entry, session) && !isHubOwner(session);
 const selfApprovalRefused = () => Object.assign(timecardError('Someone else approves and corrects your own timecard: another manager or the owner.', 403), { code: 'EMPLOYEE_TIMECARD_SELF_APPROVAL' });
 
