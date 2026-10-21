@@ -28,7 +28,7 @@ const tabs = page => page.document.querySelectorAll('[data-ops-tab]').map(button
 // WT-OUTCOME: the Walkthroughs screen (employee-walkthroughs.js) replaces the suite's built-in Walkthroughs view in place.
 // WP14c's Purchase list (employee-purchase-list.js) follows Walkthroughs in RUN THE BUSINESS.
 // Job actuals (owner report, business access) registers just before Review queues in RUN THE BUSINESS.
-const SHIPPED = ['job_actuals', 'reviews', 'message_templates', 'stocked_costs', 'staff', 'invoicing', 'walkthroughs', 'purchase_list'];
+const SHIPPED = ['job_actuals', 'crew_performance', 'reviews', 'message_templates', 'stocked_costs', 'staff', 'invoicing', 'walkthroughs', 'purchase_list'];
 const OWNER_SHIPPED = ['followup_settings', 'ad_spend', 'catalog', 'dispatch_rules'];
 const CREW_SHIPPED = ['crew_alerts'];
 const PASSWORD_SHIPPED = ['password'];

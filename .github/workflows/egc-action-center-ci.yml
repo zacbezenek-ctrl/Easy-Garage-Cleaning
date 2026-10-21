@@ -302,6 +302,8 @@ jobs:
         run: python tests/browser/test_standard_costs_ui.py
       - name: Owner job actuals at 1280 and 390 px, cost settings and CSV export
         run: python tests/browser/test_job_actuals_ui.py
+      - name: Crew performance per person (hours, arrivals, crew hours vs billed) on desktop and a phone
+        run: python tests/browser/test_crew_performance_ui.py
       - name: Crew pre-job customer texts are idempotent and never re-sent
         run: python tests/browser/test_prejob_sms_ui.py
       - name: Server-rendered estimate, invoice and receipt documents on a phone
