@@ -2797,13 +2797,8 @@ def render_reviews():
 <p class="reveal more-link" style="margin-top:16px;text-align:center"><a href="/service-areas.html" class="content-link">Service areas →</a></p>
 </div></section>
 </main>"""
-    notes = [
-        "Flat price, no surprises — cleared a decade of clutter in one afternoon.",
-        "Texted photos, got a quote in minutes. Donations handled, garage usable again.",
-        "Local crew, showed up when promised — not a franchise call center.",
-    ]
     faqs = [
-        ("Do you have Google reviews?", "We're building our Fort Collins reputation. Do not cite star counts until verified on Google Business Profile."),
+        ("Do you have Google reviews?", "Yes. Our reviews are on our Google Business Profile, where you can read them in their original context."),
         ("Can I leave a review after my job?", "Yes — we invite happy customers to share feedback on Google when ready."),
     ]
     schema = json.dumps([
@@ -2815,10 +2810,6 @@ def render_reviews():
             "name": title,
             "description": desc,
             "about": {"@id": f"{SITE}/#business"},
-            "positiveNotes": {
-                "@type": "ItemList",
-                "itemListElement": [{"@type": "ListItem", "position": i + 1, "name": n} for i, n in enumerate(notes)],
-            },
         },
         {"@context": "https://schema.org", "@type": "FAQPage", "mainEntity": [
             {"@type": "Question", "name": q, "acceptedAnswer": {"@type": "Answer", "text": a}} for q, a in faqs
@@ -3861,35 +3852,6 @@ LOCAL_TRUST_BAR_HTML = """
 </section>
 """
 
-TESTIMONIAL_CAROUSEL_HTML = """
-<section class="testimonial-carousel" id="reviews" aria-labelledby="reviews-heading">
-  <div class="wrap">
-    <div class="section-head reveal">
-      <span class="mono section-num">Reviews</span>
-      <h2 class="section-title" id="reviews-heading">Founding customers &amp; <em>early feedback</em></h2>
-      <p class="section-sub">Example quotes for layout — replace with verified reviews when available. We do not publish star ratings until confirmed on Google.</p>
-    </div>
-    <div class="carousel-track reveal" role="list">
-      <article class="carousel-slide" role="listitem">
-        <span class="example-label">Example review</span>
-        <blockquote><p>"Exactly what I needed — cleared a decade of clutter in one afternoon. Flat price, no surprises."</p></blockquote>
-        <cite>— Fort Collins homeowner</cite>
-      </article>
-      <article class="carousel-slide" role="listitem">
-        <span class="example-label">Example review</span>
-        <blockquote><p>"Texted photos, got a quote in minutes. They handled donations and I got my garage back."</p></blockquote>
-        <cite>— Loveland customer</cite>
-      </article>
-      <article class="carousel-slide" role="listitem">
-        <span class="example-label">Example review</span>
-        <blockquote><p>"Local, responsive, and actually showed up when they said they would. Not a franchise call center."</p></blockquote>
-        <cite>— Windsor resident</cite>
-      </article>
-    </div>
-  </div>
-</section>
-"""
-
 BOOK_TRUST_BADGES = """
 <div class="book-trust-badges" aria-label="Trust signals">
   <span>✓ Insured LLC</span>
@@ -4060,13 +4022,6 @@ def patch_iteration5_home(text):
 def patch_iteration4_home(text):
     if 'class="local-trust-bar"' not in text and "<main" in text and 'id="recent-jobs"' not in text:
         text = re.sub(r"(<main[^>]*>)", r"\1\n" + LOCAL_TRUST_BAR_HTML.strip() + "\n", text, count=1)
-    if 'class="testimonial-carousel"' not in text and "social-proof" in text:
-        text = re.sub(
-            r'<section class="[^"]*social-proof"[^>]*>[\s\S]*?</section>',
-            TESTIMONIAL_CAROUSEL_HTML.strip(),
-            text,
-            count=1,
-        )
     if 'class="final-cta-split"' not in text and 'id="quote"' in text:
         text = re.sub(
             r'(<section class="[^"]*?\bfinal-cta\b)(?! final-cta-split)([^"]*" id="quote")',
