@@ -36,6 +36,8 @@ const at = (date, time) => `${date}T${time}:00-06:00`;
 const card = (id, jobId, date, from, to) => ({ id, employee: 'Crew.One', employeeName: 'Crew One', payType: 'hourly', hourlyRate: 31, clockInAt: at(date, from), clockOutAt: at(date, to), status: 'submitted', approvalStatus: 'approved', breaks: [],
   jobTracking: { version: 1, coverageStartedAt: at(date, from), partialHistory: false, segments: [{ id: `${id}-w`, kind: 'work', jobId, startedAt: at(date, from), endedAt: at(date, to), actorId: 'Crew.One' }] } });
 const TIMECARDS = [card('c1', 'job-two-car', '2026-10-18', '06:00', '15:00'), { ...card('c2', 'job-two-car', '2026-10-18', '06:00', '15:00'), employee: 'Crew.Two', employeeName: 'Crew Two' },
+  // A third crew member on the two-car job never clocked out: an open shift, so its timecards are incomplete.
+  { ...card('c5', 'job-two-car', '2026-10-18', '06:00', '15:00'), employee: 'Crew.Three', employeeName: 'Crew Three', clockOutAt: null, status: 'open', approvalStatus: 'pending' },
   card('c3', 'job-overrun', '2026-08-01', '05:00', '20:00'), { ...card('c4', 'job-overrun', '2026-08-01', '05:00', '20:00'), employee: 'Crew.Two', employeeName: 'Crew Two' }];
 
 const state = { who: 'owner', docs: new Map(), tick: 0 };

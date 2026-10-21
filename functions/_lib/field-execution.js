@@ -247,9 +247,9 @@ export function fieldCommand(job, actor, input, now = new Date().toISOString()) 
       if (actor.capabilities && actor.capabilities.complete !== true) throw fieldFailure('Only the crew lead or a manager can complete this job. Your checklist, photos and notes stay saved for them.', 403, 'FIELD_LEAD_REQUIRED');
       if (typeof input.hasIssues !== 'boolean') throw fieldFailure('Indicate whether this job has an issue requiring follow-up.');
       if (typeof input.notes !== 'string' || input.notes.length > 4000 || input.issueNotes !== undefined && (typeof input.issueNotes !== 'string' || input.issueNotes.length > 4000)) throw fieldFailure('Completion notes and issue details must each be no longer than 4,000 characters.');
-      // Job actuals (functions/_lib/job-actuals.js): the lead may confirm people × hours on site and the truck loads
+      // Job actuals (functions/_lib/job-actuals.js): the lead may confirm people × hours per person on site (whole job) and the truck loads
       // hauled. Both are optional; a value sent must be valid, and the hours are whole quarter hours.
-      if (input.crewOnSite !== undefined && input.crewOnSite !== null && !validCrewOnSite(input.crewOnSite)) throw fieldFailure('Enter the people on site (1 to 20) and the hours on site in quarter hours (up to 24), or leave both blank.');
+      if (input.crewOnSite !== undefined && input.crewOnSite !== null && !validCrewOnSite(input.crewOnSite)) throw fieldFailure('Enter the people on site (1 to 20) and the hours each worked on site for the whole job in quarter hours (up to 200), or leave both blank.');
       if (input.truckLoads !== undefined && input.truckLoads !== null && !validTruckLoads(input.truckLoads)) throw fieldFailure('Enter the truck loads hauled as a whole number from 0 to 20, or leave it blank.');
       const missing = fieldCompletionMissing(job, input);
       if (missing.length) throw fieldFailure('Finish the required closeout items.', 409, 'FIELD_COMPLETION_INCOMPLETE', { missing });

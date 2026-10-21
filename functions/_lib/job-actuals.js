@@ -3,14 +3,17 @@
  * Every money figure is integer cents and every division rounds half up (toward +infinity at exactly half a cent),
  * in BigInt so no product of hours, rates and basis points is ever a float. Hours are carried as milli-hours.
  *
- * Billed man-hours: the Labor line the job was sold with (owner decision D12, $53.00 per man-hour), stored on the job
+ * Billed man-hours: the Labor line the job was sold with (owner decision D12), stored on the job
  *   as jobInstructions.laborManHours (walkthrough-handoff.js), else the signed builder quote's priced labor
  *   (compositeQuote.breakdown.labor.manHours). A junk-only quote ($750 per truck) has no Labor line: billed is null.
  * Actual man-hours, best signal first:
  *   1. 'timecards': hours employees clocked onto this job (timecard jobTracking.segments, computeJobLaborCost in
  *      job-labor-cost.js, approved plus pending timecards). On-site work hours are compared with billed; work plus
- *      travel is the paid time the labor cost uses.
- *   2. 'crew_lead': the crew lead's "people × hours on site" confirmed at Complete (fieldExecution.completion.crewOnSite).
+ *      travel is the paid time the labor cost uses. Open shifts, timecards needing review and legacy job links leave
+ *      hours out, so then the row says 'timecards_incomplete' and its margin is only an upper bound.
+ *   2. 'crew_lead': the crew lead's "people × hours per person on site", whole job, confirmed at Complete
+ *      (fieldExecution.completion.crewOnSite). Used when no timecard hours were tagged, and also when it is more than
+ *      the timecard work hours (a crew member who never clocked onto the job): 'crew_lead_exceeds_timecards'.
  *   Neither: null ('not_recorded'), and the job has no margin rather than a guessed one.
  * Costs: labor at the owner's wage per man-hour × (1 + workers' comp % + payroll tax %) plus other burden per man-hour,
  *   all owner-entered (pay figures never live in the code); goods at their retail basis (the estimate's product split, Home Depot retail before
@@ -24,7 +27,6 @@ import { customerMoneyTotals } from './money-core.js';
 import { hubRecordEligibility } from './funnel-definitions.js';
 import { addDays } from './dispatch-time.js';
 
-export const LABOR_PRICE_CENTS_PER_HOUR = 5300;
 export const JOB_ACTUALS_DAYS = 90;
 export const JOB_ACTUALS_SHORT_DAYS = 30;
 export const COST_SETTING_KEYS = Object.freeze(['wageCentsPerManHour', 'workersCompBp', 'payrollTaxBp', 'burdenCentsPerManHour', 'dumpFeeCentsPerLoad', 'truckCentsPerJob', 'goodsTaxBp']);
@@ -34,7 +36,8 @@ export const COMMISSION_BP = Object.freeze({ estimator: 700, setter: 1300, door:
 export const CHANNELS = Object.freeze(['direct_estimator', 'appointment_setter', 'door_sale', 'junk_only', 'none']);
 const COMPLETED = new Set(['completed', 'paid', 'closed', 'review_requested', 'invoiced']);
 const WORK_TYPES = new Set(['job', 'cleanout', 'reorg']);
-const MAX_PEOPLE = 20, MAX_SITE_HOURS = 24, MAX_LOADS = 20;
+// Hours on site are per person for the whole job (every day of a multi-day job), in quarter hours.
+export const MAX_PEOPLE = 20, MAX_SITE_HOURS = 200, MAX_LOADS = 20;
 const plain = value => value !== null && typeof value === 'object' && !Array.isArray(value);
 const big = value => BigInt(value);
 
@@ -109,10 +112,11 @@ export function truckLoads(job) {
   return quoted > 0 ? { count: quoted, source: 'quote' } : { count: 0, source: 'none' };
 }
 
-/** Goods at their retail basis (the product split before markup), in cents; null when the estimate cannot say. */
+/** Goods at their retail basis (the product split before markup), in cents: 0 only when the estimate has line items and
+ * none is a good; null when there are no line items or they cannot say. */
 export function goodsRetailCents(job) {
   const lines = job?.estimate?.lineItems;
-  if (!Array.isArray(lines) || !lines.length) return 0;
+  if (!Array.isArray(lines) || !lines.length) return null;
   const totals = estimateTotals(lines);
   return Number.isSafeInteger(totals.productCents) ? totals.productCents : null;
 }
@@ -129,7 +133,15 @@ export function channelOf(job, { setterWalkthroughs = new Set(), doorSaleJobs = 
 
 const hours = milli => milli === null ? null : milli / 1000;
 
-/** One completed job's actuals. labor is the job's computeJobLaborCost row (projected hours) or null. */
+const count = value => Number.isSafeInteger(value) && value > 0 ? value : 0;
+/** The job's computeJobLaborCost row as {workHours, travelHours, incomplete}: projected hours, and whether open shifts,
+ * timecards needing review or legacy-only job links leave hours out. */
+export function timecardLabor(row) {
+  if (!plain(row) || !plain(row.projected)) return null;
+  return { workHours: row.projected.workHours, travelHours: row.projected.travelHours, incomplete: count(row.openShifts) + count(row.needsReviewCount) + count(row.legacyAssociationOnlyCount) > 0 };
+}
+
+/** One completed job's actuals. labor is timecardLabor(row) for the job, or null. */
 export function jobActualsRow(job, { labor = null, settings: raw = {}, channel = 'none' } = {}) {
   const settings = normalizeCostSettings(raw), reasons = [];
   const money = customerMoneyTotals(job, { unified: true });
@@ -138,7 +150,9 @@ export function jobActualsRow(job, { labor = null, settings: raw = {}, channel =
   const billed = billedManHours(job), lead = crewLeadManHours(job);
   const workMilli = labor ? milliHours(labor.workHours) : null, travelMilli = labor ? milliHours(labor.travelHours) : null;
   let actual = null;
-  if (workMilli !== null && workMilli + travelMilli > 0) actual = { source: 'timecards', milli: workMilli, paidMilli: workMilli + travelMilli };
+  const timecardHours = workMilli !== null && workMilli + travelMilli > 0, incomplete = timecardHours && labor?.incomplete === true;
+  if (timecardHours && lead && lead.milli > workMilli) { actual = { source: 'crew_lead', milli: lead.milli, paidMilli: lead.milli + travelMilli }; reasons.push('crew_lead_exceeds_timecards'); }
+  else if (timecardHours) { actual = { source: 'timecards', milli: workMilli, paidMilli: workMilli + travelMilli }; if (incomplete) reasons.push('timecards_incomplete'); }
   else if (lead) actual = { source: 'crew_lead', milli: lead.milli, paidMilli: lead.milli };
   if (!actual) reasons.push('actual_hours_missing');
   const loads = truckLoads(job), goodsRetail = goodsRetailCents(job);
@@ -162,7 +176,7 @@ export function jobActualsRow(job, { labor = null, settings: raw = {}, channel =
     truckLoads: loads, goodsRetailCents: goodsRetail, goodsCostCents, laborCents, dumpCents, truckCents,
     commission, directCostCents, grossMarginCents, grossMarginPercent: known && revenueCents > 0 ? divRoundHalfUp(big(grossMarginCents) * 1000n, revenueCents) / 10 : null,
     contributionCents: known ? grossMarginCents - commission.totalCents : null,
-    upperBound: known && (!settings.complete || goodsRetail === null), reasons,
+    upperBound: known && (!settings.complete || reasons.includes('timecards_incomplete')), reasons,
   };
 }
 
@@ -177,7 +191,7 @@ export function summarizeJobActuals(rows) {
     comparedJobs: compared.length, billedManHours: billedMilli / 1000, actualManHours: actualMilli / 1000, varianceManHours: (actualMilli - billedMilli) / 1000,
     variancePercent: billedMilli ? divRoundHalfUp(big(actualMilli - billedMilli) * 1000n, billedMilli) / 10 : null,
     truckLoads: sum(rows, row => row.truckLoads.count), goodsRetailCents: sum(rows.filter(row => row.goodsRetailCents !== null), row => row.goodsRetailCents),
-    commissionCents: sum(rows, row => row.commission.totalCents),
+    commissionCents: sum(rows, row => row.commission.totalCents), marginCommissionCents: sum(margined, row => row.commission.totalCents),
     marginJobs: margined.length, marginRevenueCents: marginRevenue, laborCents: sum(margined, row => row.laborCents), directCostCents: sum(margined, row => row.directCostCents),
     grossMarginCents: gross, grossMarginPercent: marginRevenue > 0 ? divRoundHalfUp(big(gross) * 1000n, marginRevenue) / 10 : null,
     contributionCents: sum(margined, row => row.contributionCents), upperBound: margined.some(row => row.upperBound),
@@ -191,13 +205,13 @@ export function jobActualsWindow(today) {
 
 /** The report: completed work jobs dated in the window, newest first, with totals for the last 30 and 90 days. */
 export function buildJobActuals({ jobs = [], labor = { jobs: [] }, settings = {}, setterWalkthroughs = new Set(), doorSaleJobs = new Set(), today, asOf = new Date().toISOString() }) {
-  const window = jobActualsWindow(today), byJob = new Map((labor?.jobs || []).map(row => [row.jobId, row.projected]));
+  const window = jobActualsWindow(today), byJob = new Map((labor?.jobs || []).map(row => [row.jobId, timecardLabor(row)]));
   const rows = jobs.filter(job => workJob(job) && completedJob(job) && typeof job.date === 'string' && job.date >= window.start && job.date < window.end)
     .map(job => jobActualsRow(job, { labor: byJob.get(job.id) || null, settings, channel: channelOf(job, { setterWalkthroughs, doorSaleJobs }) }))
     .sort((a, b) => String(b.date).localeCompare(String(a.date)) || a.jobId.localeCompare(b.jobId));
   const normalized = normalizeCostSettings(settings);
   return {
-    ok: true, authority: 'employee_hub', asOf, window, rates: { laborPriceCentsPerHour: LABOR_PRICE_CENTS_PER_HOUR, commissionBp: COMMISSION_BP },
+    ok: true, authority: 'employee_hub', asOf, window, rates: { commissionBp: COMMISSION_BP },
     settingsComplete: normalized.complete, missingSettings: normalized.missing,
     totals: { last30: summarizeJobActuals(rows.filter(row => row.date >= window.shortStart)), last90: summarizeJobActuals(rows) },
     rows, laborCoverage: labor?.coverage || null,

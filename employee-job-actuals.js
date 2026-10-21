@@ -17,8 +17,10 @@ const SETTINGS=[
   {key:'goodsTaxBp',label:'Tax on goods purchases',unit:'%',help:'Sales tax EGC pays buying goods, e.g. 7.55.',kind:'percent'}];
 const LIMITS={wageCentsPerManHour:20000,workersCompBp:5000,payrollTaxBp:5000,burdenCentsPerManHour:10000,dumpFeeCentsPerLoad:500000,truckCentsPerJob:500000,goodsTaxBp:2500};
 const CHANNEL={direct_estimator:'Estimator 7%',appointment_setter:'Setter 13% + estimator 7%',door_sale:'Door sale 25%',junk_only:'Junk-only 0%',none:'None'};
+// Row reasons worth a word on the row; 'cost_settings_incomplete' is the ≤ mark and 'actual_hours_missing' the Actual cell.
+const REASON={timecards_incomplete:'Timecards incomplete (open shift or review)',crew_lead_exceeds_timecards:'Crew lead count used: above timecards',wage_unset:'No crew wage set',goods_unknown:'Goods unknown: no estimate lines',revenue_unknown:'Revenue unknown'};
 const SOURCE={timecards:'Timecards',crew_lead:'Crew lead',not_recorded:'Not recorded'};
-const S={host:null,ctx:null,data:null,error:null,loading:false,busy:false,drafts:{},feedback:'',feedbackError:false,generation:0,showAll:false};
+const S={host:null,ctx:null,data:null,error:null,loading:false,busy:false,pending:null,drafts:{},feedback:'',feedbackError:false,generation:0,showAll:false};
 const kit=()=>window.EGCHubKit;
 const h=(...args)=>kit().h(...args);
 const fetcher=()=>S.ctx&&typeof S.ctx.hubFetch==='function'?S.ctx.hubFetch:undefined;
@@ -28,7 +30,7 @@ const hours=value=>typeof value==='number'&&Number.isFinite(value)?value.toFixed
 const signed=(value,format)=>typeof value==='number'&&Number.isFinite(value)?(value>0?'+':'')+format(value):'—';
 const pct=value=>typeof value==='number'&&Number.isFinite(value)?value.toFixed(1)+'%':'—';
 const day=value=>{try{return value?new Intl.DateTimeFormat('en-US',{timeZone:'UTC',month:'short',day:'numeric',year:'numeric'}).format(new Date(value+'T12:00:00Z')):'—';}catch{return'—';}};
-function validTotals(t){return Boolean(t&&int(t.jobs)&&int(t.revenueCents)&&int(t.commissionCents)&&int(t.grossMarginCents)&&typeof t.upperBound==='boolean');}
+function validTotals(t){return Boolean(t&&int(t.jobs)&&int(t.revenueCents)&&int(t.commissionCents)&&int(t.marginCommissionCents)&&int(t.grossMarginCents)&&typeof t.upperBound==='boolean');}
 function validRow(r){return Boolean(r&&typeof r.jobId==='string'&&r.billed&&r.actual&&r.truckLoads&&int(r.truckLoads.count)&&r.commission&&Array.isArray(r.commission.lines)&&int(r.commission.totalCents)&&(r.revenueCents===null||int(r.revenueCents))&&(r.grossMarginCents===null||int(r.grossMarginCents))&&Array.isArray(r.reasons));}
 function valid(data){
   return Boolean(data&&data.ok===true&&data.window&&data.totals&&validTotals(data.totals.last30)&&validTotals(data.totals.last90)&&Array.isArray(data.rows)&&data.rows.every(validRow)
@@ -58,24 +60,32 @@ async function load(){
   const generation=++S.generation;S.loading=true;S.error=null;render();
   try{const data=await kit().requestJSON(PATH,{prefix:PREFIX,validate:valid,fetcher:fetcher()});if(generation===S.generation)S.data=data;}
   catch(error){if(generation===S.generation)S.error=error;}
-  finally{if(generation===S.generation){S.loading=false;render();}}
+  finally{if(generation===S.generation){S.loading=false;S.pending=kit().pending(SCREEN).get();render();}}
 }
-async function save(){
-  if(S.busy||!S.data?.canEdit)return;
-  const {settings,bad,changed}=changes();
-  if(bad.length){S.feedback='Fix the highlighted settings: percents like 7.65, dollars like 42.50.';S.feedbackError=true;render();return;}
-  if(!changed)return;
+const queue=()=>kit().pending(SCREEN);
+const SAVE_ERRORS={job_actuals_owner_required:'Only the owner can change cost settings.',job_actuals_no_change:'These settings are already saved.'};
+// A save whose outcome is unknown stays pending (the kit keeps the exact request): the owner retries that same request
+// or discards it before any new edit is saved, as on Stocked item costs, so a newer edit is never replaced by the old one.
+async function settle(send){
   S.busy=true;S.feedback='';render();
   try{
-    const queue=kit().pending(SCREEN),saved=queue.get();
-    const data=saved?await queue.replay({prefix:PREFIX,validate:validSave,fetcher:fetcher()}):await queue.submit(PATH,{action:'job_actuals.settings.set',expectedRevision:S.data.settings.revision??null,settings},{prefix:PREFIX,validate:validSave,fetcher:fetcher()});
+    const data=await send();
     S.drafts={};S.feedback=data.replayed?'These settings were already saved.':'Cost settings saved. Margins are recalculated.';S.feedbackError=false;S.busy=false;
     await load();return;
   }catch(error){
-    if(error.code==='job_actuals_revision_conflict'){kit().pending(SCREEN).discard();S.feedback='Cost settings changed elsewhere. The latest are loaded and your edits are kept; check them and save again.';S.feedbackError=true;S.busy=false;await load();return;}
-    S.feedback=kit().errorText(error,{job_actuals_owner_required:'Only the owner can change cost settings.',job_actuals_no_change:'These settings are already saved.'});S.feedbackError=true;
+    if(error.code==='job_actuals_revision_conflict'){queue().discard();S.feedback='Cost settings changed elsewhere. The latest are loaded and your edits are kept; check them and save again.';S.feedbackError=true;S.busy=false;await load();return;}
+    S.feedback=kit().errorText(error,SAVE_ERRORS);S.feedbackError=true;
   }
-  S.busy=false;render();
+  S.busy=false;S.pending=queue().get();render();
+}
+function retryPending(){if(!S.busy&&S.pending)settle(()=>queue().replay({prefix:PREFIX,validate:validSave,fetcher:fetcher()}));}
+function discardPending(){queue().discard();S.pending=null;S.feedback='The unconfirmed save was discarded. Check the settings below before saving again.';S.feedbackError=false;load();}
+async function save(){
+  if(S.busy||S.pending||!S.data?.canEdit)return;
+  const {settings,bad,changed}=changes();
+  if(bad.length){S.feedback='Fix the highlighted settings: percents like 7.65, dollars like 42.50.';S.feedbackError=true;render();return;}
+  if(!changed||S.pending)return;
+  return settle(()=>queue().submit(PATH,{action:'job_actuals.settings.set',expectedRevision:S.data.settings.revision??null,settings},{prefix:PREFIX,validate:validSave,fetcher:fetcher()}));
 }
 function exportCsv(){
   const rows=S.data?.rows||[];
@@ -96,7 +106,7 @@ function totalsCard(title,t){
       stat('Revenue',money(t.revenueCents),`${t.jobs} completed job${t.jobs===1?'':'s'}`),
       stat('Billed vs actual',`${hours(t.billedManHours)} → ${hours(t.actualManHours)} h`,t.comparedJobs?`${signed(t.varianceManHours,hours)} h (${signed(t.variancePercent,pct)}) on ${t.comparedJobs} job${t.comparedJobs===1?'':'s'}`:'No job has both yet'),
       stat('Gross margin'+bound,money(t.marginJobs?t.grossMarginCents:null),t.marginJobs?`${pct(t.grossMarginPercent)} on ${money(t.marginRevenueCents)} (${t.marginJobs} job${t.marginJobs===1?'':'s'} with hours)`:'Needs actual hours'),
-      stat('Contribution'+bound,money(t.marginJobs?t.contributionCents:null),`after ${money(t.commissionCents)} commission`),
+      stat('Contribution'+bound,money(t.marginJobs?t.contributionCents:null),t.marginJobs?`after ${money(t.marginCommissionCents)} commission on those jobs (${money(t.commissionCents)} on all)`:`${money(t.commissionCents)} commission on all jobs`),
       stat('Truck loads',String(t.truckLoads),`Goods at retail ${money(t.goodsRetailCents)}`)));
 }
 function settingsCard(){
@@ -104,7 +114,7 @@ function settingsCard(){
   const rows=SETTINGS.map(s=>{
     const saved=d.settings[s.key]??null,text=Object.hasOwn(S.drafts,s.key)?S.drafts[s.key]:shown(s,saved),isBad=bad.includes(s.key);
     if(!editable)return h('div',{class:'ja-setting'},h('span',{},s.label),h('strong',{},saved===null?'Not set':s.kind==='percent'?(saved/100)+'%':money(saved)));
-    const input=h('input',{type:'text',inputmode:'decimal',autocomplete:'off',placeholder:'Not set',maxlength:12,value:text,disabled:S.busy,'aria-label':`${s.label} (${s.unit==='%'?'percent':'dollars'})`,'aria-invalid':isBad?'true':'false','data-setting':s.key,
+    const input=h('input',{type:'text',inputmode:'decimal',autocomplete:'off',placeholder:'Not set',maxlength:12,value:text,disabled:S.busy||Boolean(S.pending),'aria-label':`${s.label} (${s.unit==='%'?'percent':'dollars'})`,'aria-invalid':isBad?'true':'false','data-setting':s.key,
       oninput:event=>{S.drafts[s.key]=event.target.value;refreshBar();}});
     return h('label',{class:'ja-setting ja-setting-edit'+(isBad?' bad':'')},h('span',{},s.label,h('small',{},s.help)),h('span',{class:'ja-input'},s.unit==='$'?h('span',{'aria-hidden':'true'},'$'):null,input,s.unit==='%'?h('span',{'aria-hidden':'true'},'%'):null));
   });
@@ -112,7 +122,9 @@ function settingsCard(){
     h('h2',{},'Cost settings'),
     h('p',{class:'ja-muted'},'Labor costs use the crew wage below, never anyone\'s own pay rate. Without a wage no margin is shown; any other blank cost counts as $0, so margins stay an upper bound until all of them are set.'+(editable?'':' Only the owner can change them.')),
     h('div',{class:'ja-setting-list'},rows),
-    editable?h('div',{class:'ja-save'},kit().button(S.busy?'Saving…':'Save cost settings',save,'primary',{disabled:S.busy||!changed||bad.length>0,'data-save':''}),h('span',{class:'ja-muted','data-bar':''},barText(bad,changed))):null,
+    editable&&S.pending?h('div',{class:'hub-notice warning ja-pending',role:'alert'},h('p',{},'A save was not confirmed. Retry it to check whether it was applied (it is never applied twice), or discard it before making new changes.'),
+      h('div',{class:'hub-actions'},kit().button(S.busy?'Retrying…':'Retry original save',retryPending,'primary',{disabled:S.busy}),kit().button('Discard unconfirmed save',discardPending,'',{disabled:S.busy}))):null,
+    editable?h('div',{class:'ja-save'},kit().button(S.busy?'Saving…':'Save cost settings',save,'primary',{disabled:S.busy||Boolean(S.pending)||!changed||bad.length>0,'data-save':''}),h('span',{class:'ja-muted','data-bar':''},barText(bad,changed))):null,
     S.feedback?h('p',{role:S.feedbackError?'alert':'status',class:'ja-feedback'+(S.feedbackError?' error':'')},S.feedback):null);
 }
 const barText=(bad,changed)=>bad.length?`${bad.length} to fix`:changed?'Unsaved changes':'';
@@ -120,7 +132,7 @@ const barText=(bad,changed)=>bad.length?`${bad.length} to fix`:changed?'Unsaved 
 function refreshBar(){
   const root=S.host?.querySelector('.ja-settings');if(!root)return;
   const {bad,changed}=changes(),save=root.querySelector('[data-save]'),note=root.querySelector('[data-bar]');
-  if(save)save.disabled=S.busy||!changed||bad.length>0;if(note)note.textContent=barText(bad,changed);
+  if(save)save.disabled=S.busy||Boolean(S.pending)||!changed||bad.length>0;if(note)note.textContent=barText(bad,changed);
   for(const input of root.querySelectorAll('[data-setting]')){const isBad=bad.includes(input.getAttribute('data-setting'));input.setAttribute('aria-invalid',isBad?'true':'false');input.closest('.ja-setting')?.classList.toggle('bad',isBad);}
 }
 function jobRow(r){
@@ -139,7 +151,7 @@ function jobRow(r){
     cell('Loads','num',String(r.truckLoads.count),h('small',{},r.truckLoads.source==='crew_lead'?'Crew lead':r.truckLoads.source==='quote'?'Quoted':'')),
     cell('Goods (retail)','num',money(r.goodsRetailCents)),
     cell('Commission','num',money(r.commission.totalCents),r.commission.lines.length>1?h('small',{},commission):null),
-    cell('Gross margin','num',margin),
+    cell('Gross margin','num',margin,...r.reasons.filter(code=>REASON[code]).map(code=>h('small',{class:'ja-reason','data-reason':code},REASON[code]))),
     cell('Contribution','num',money(r.contributionCents)));
 }
 function table(){

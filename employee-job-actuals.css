@@ -16,6 +16,9 @@
 .egc-job-actuals .ja-table tbody th{position:static;font:700 14px/1.4 var(--hub-font);letter-spacing:0;text-transform:none;color:var(--hub-ink);background:none;min-width:140px}
 .egc-job-actuals .ja-table tbody th a{color:var(--hub-ink)}
 .egc-job-actuals .ja-table tr.over .ja-variance{color:var(--hub-red);font-weight:700}
+.egc-job-actuals .ja-table small.ja-reason{color:var(--hub-amber);font-weight:600;white-space:normal}
+.egc-job-actuals .ja-pending p{margin:0 0 var(--hub-space-3)}
+.egc-job-actuals .ja-pending .hub-btn{white-space:normal}
 .egc-job-actuals .ja-setting-list{display:grid;gap:var(--hub-space-3);margin:var(--hub-space-3) 0}
 .egc-job-actuals .ja-setting{display:grid;grid-template-columns:minmax(0,1fr) 170px;gap:var(--hub-space-3);align-items:center}
 .egc-job-actuals .ja-setting > span:first-child{font-weight:700;min-width:0}

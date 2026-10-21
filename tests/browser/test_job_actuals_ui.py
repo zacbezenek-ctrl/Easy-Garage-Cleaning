@@ -74,7 +74,8 @@ class JobActualsScreenTests(unittest.TestCase):
         expect(two_car.locator('td[data-label="Commission"]')).to_contain_text('$842.80')
         expect(two_car).to_contain_text('Setter 13% + estimator 7%')
         # Revenue $4,214.00 − 18 h × $10.10 ($181.80) − $300.00 goods = $3,732.20, 88.6%, an upper bound.
-        expect(two_car.locator('td[data-label="Gross margin"]')).to_have_text('$3,732.20 · 88.6% ≤')
+        # A third crew member never clocked out (an open shift), so the margin also says its timecards are incomplete.
+        expect(two_car.locator('td[data-label="Gross margin"]')).to_have_text('$3,732.20 · 88.6% ≤Timecards incomplete (open shift or review)')
         expect(two_car.locator('td[data-label="Contribution"]')).to_have_text('$2,889.40')
         one_car = self.row(page, 'job-one-car')
         expect(one_car.locator('td[data-label="Actual h"]')).to_have_text('7.00Crew lead')
@@ -118,7 +119,9 @@ class JobActualsScreenTests(unittest.TestCase):
         expect(page.get_by_text('Margins are an upper bound')).to_have_count(0)
         two_car = self.row(page, 'job-two-car')
         # 18 h × $12.365 = $222.57; goods $300 + 7.55% = $322.65; 3 loads × $65 = $195; truck $40: $4,214.00 − $780.22 = $3,433.78.
-        expect(two_car.locator('td[data-label="Gross margin"]')).to_have_text('$3,433.78 · 81.5%')
+        # Every setting is entered, but the open shift keeps it an upper bound.
+        expect(two_car.locator('td[data-label="Gross margin"]')).to_have_text('$3,433.78 · 81.5% ≤Timecards incomplete (open shift or review)')
+        expect(self.row(page, 'job-one-car').locator('td[data-label="Gross margin"]')).not_to_contain_text('≤')
         self.assert_layout(page, phone=True)
         page.screenshot(path=str(RESULTS / 'job-actuals-390-settings.png'), full_page=True)
 
@@ -130,8 +133,44 @@ class JobActualsScreenTests(unittest.TestCase):
         expect(settings.locator('input')).to_have_count(0)
         expect(settings).to_contain_text('Not set')
         expect(page.get_by_text('No margins yet: enter the crew wage in Cost settings below.')).to_be_visible()
-        expect(self.row(page, 'job-two-car').locator('td[data-label="Gross margin"]')).to_have_text('—')
+        expect(self.row(page, 'job-two-car').locator('td[data-label="Gross margin"]')).to_contain_text('No crew wage set')
+        expect(self.row(page, 'job-two-car').locator('td[data-label="Gross margin"]')).to_contain_text('—')
         expect(self.row(page, 'job-two-car').locator('td[data-label="Actual h"]')).to_have_text('18.00Timecards')
+        self.assert_layout(page, phone=True)
+
+    def test_an_unconfirmed_save_is_retried_unchanged_or_discarded_never_replaced_by_newer_edits(self):
+        page = self.open(390, 844, mobile=True)
+        drops = {'left': 1}
+        def drop_post(route):
+            if route.request.method == 'POST' and drops['left']:
+                drops['left'] -= 1; route.abort('connectionreset'); return
+            route.continue_()
+        page.route('**/api/job-actuals', drop_post)
+        settings = page.get_by_role('region', name='Cost settings')
+        posts = []
+        page.on('request', lambda request: posts.append(request.post_data_json) if request.method == 'POST' else None)
+        settings.get_by_label('Truck cost per job (dollars)').fill('40')
+        settings.get_by_role('button', name='Save cost settings').click()
+        expect(settings.get_by_text('A save was not confirmed')).to_be_visible()
+        # New edits cannot be saved while the old request is unconfirmed: the inputs and Save are locked.
+        expect(settings.get_by_label('Truck cost per job (dollars)')).to_be_disabled()
+        expect(settings.get_by_role('button', name='Save cost settings')).to_be_disabled()
+        page.reload(); expect(page.get_by_role('heading', name='Job actuals')).to_be_visible()
+        settings = page.get_by_role('region', name='Cost settings')
+        expect(settings.get_by_text('A save was not confirmed')).to_be_visible()
+        settings.get_by_role('button', name='Retry original save').click()
+        expect(page.get_by_role('status').filter(has_text='Cost settings saved')).to_be_visible()
+        expect(settings.get_by_text('A save was not confirmed')).to_have_count(0)
+        self.assertEqual(len(posts), 2); self.assertEqual(posts[0], posts[1], 'the retry repeats the original request exactly')
+        expect(settings.get_by_label('Truck cost per job (dollars)')).to_have_value('40.00')
+        # Discard: a second lost save is dropped and the owner can edit again.
+        drops['left'] = 1
+        settings.get_by_label('Dump fee per truck load (dollars)').fill('65')
+        settings.get_by_role('button', name='Save cost settings').click()
+        expect(settings.get_by_text('A save was not confirmed')).to_be_visible()
+        settings.get_by_role('button', name='Discard unconfirmed save').click()
+        expect(settings.get_by_text('A save was not confirmed')).to_have_count(0)
+        expect(settings.get_by_label('Dump fee per truck load (dollars)')).to_be_enabled()
         self.assert_layout(page, phone=True)
 
     def test_csv_export_has_a_row_per_job_with_plain_numbers(self):

@@ -29,7 +29,17 @@ export function requireJobActualsOwner(session) {
 
 /** The standard-cost Firestore storage, with its errors renamed job_actuals_* (revision_conflict, outcome_unknown, ...). */
 export function jobActualsSettingsStorage(env, base = standardCostStorage(env)) {
-  const rename = error => { if (/^standard_cost_/.test(error?.code || '')) error.code = error.code.replace(/^standard_cost_/, 'job_actuals_'); return error; };
+  // Same codes as standard costs under job_actuals_*, with this screen's own wording.
+  const MESSAGES = {
+    unavailable: 'Job cost settings could not be loaded. Retry.',
+    storage_incomplete: 'Job cost settings storage returned a record that could not be verified. Retry.',
+    revision_conflict: 'Cost settings changed while you were editing. Load the latest settings and save again.',
+    outcome_unknown: 'The cost-settings save could not be confirmed. Retry the same save to check whether it was applied; it will not be applied twice.',
+    storage_rejected: 'Cost-settings storage refused this change. Nothing was saved.' };
+  const rename = error => {
+    if (/^standard_cost_/.test(error?.code || '')) { const key = error.code.replace(/^standard_cost_/, ''); error.code = `job_actuals_${key}`; if (MESSAGES[key]) error.message = MESSAGES[key]; }
+    return error;
+  };
   return {
     async read(collection, id) { try { return await base.read(collection, id); } catch (error) { throw rename(error); } },
     async commit(writes) { try { return await base.commit(writes); } catch (error) { throw rename(error); } },

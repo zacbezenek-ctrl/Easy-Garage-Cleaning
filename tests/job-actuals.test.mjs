@@ -4,8 +4,8 @@
 process.env.TZ = 'Asia/Tokyo';
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { buildJobActuals, channelOf, commissionFor, divRoundHalfUp, jobActualsRow, jobActualsWindow, laborCostCents, milliHours, percentOf, summarizeJobActuals, truckLoads } from '../functions/_lib/job-actuals.js';
-import { mutateJobActualsSettings, readJobActualsSettings, JOB_ACTUALS_SETTINGS, JOB_ACTUALS_SETTINGS_OPERATIONS } from '../functions/_lib/job-actuals-settings.js';
+import { buildJobActuals, timecardLabor, channelOf, commissionFor, divRoundHalfUp, jobActualsRow, jobActualsWindow, laborCostCents, milliHours, percentOf, summarizeJobActuals, truckLoads } from '../functions/_lib/job-actuals.js';
+import { jobActualsSettingsStorage, mutateJobActualsSettings, readJobActualsSettings, JOB_ACTUALS_SETTINGS, JOB_ACTUALS_SETTINGS_OPERATIONS } from '../functions/_lib/job-actuals-settings.js';
 import { jobActualsHandlers, JOB_ACTUALS_FIELDS } from '../functions/api/job-actuals.js';
 import { fieldChecklist, fieldCommand } from '../functions/_lib/field-execution.js';
 
@@ -91,20 +91,47 @@ test('with every cost setting entered the margin is no longer an upper bound and
   assert.equal(row.upperBound, false); assert.deepEqual(row.reasons, []);
 });
 
-test('the crew lead count stands in when no timecard hours were tagged to the job, and timecards win when both exist', () => {
+test('the crew lead count stands in when no timecard hours were tagged, and timecards win when they cover the lead count', () => {
   const completion = { crewOnSite: { people: 3, hours: 5.5 }, truckLoads: 2 };
   const lead = jobActualsRow(garageJob({ fieldExecution: { completion } }), { settings: PAY, channel: 'none' });
   assert.deepEqual(lead.actual, { manHours: 16.5, paidManHours: 16.5, source: 'crew_lead' });
   assert.deepEqual(lead.crewLead, { people: 3, hours: 5.5, manHours: 16.5 });
   assert.deepEqual(lead.truckLoads, { count: 2, source: 'crew_lead' });
   assert.equal(lead.laborCents, divRoundHalfUp(16500 * 1010, 1000));
-  assert.equal(jobActualsRow(garageJob({ fieldExecution: { completion } }), { labor: { workHours: 12, travelHours: 0 } }).actual.source, 'timecards');
+  assert.equal(jobActualsRow(garageJob({ fieldExecution: { completion } }), { labor: { workHours: 20, travelHours: 0 } }).actual.source, 'timecards');
   const none = jobActualsRow(garageJob(), { labor: { workHours: 0, travelHours: 0 }, settings: PAY });
   assert.deepEqual(none.actual, { manHours: null, paidManHours: null, source: 'not_recorded' });
   assert.equal(none.grossMarginCents, null, 'no actual hours: no margin, never a guess'); assert.equal(none.contributionCents, null);
   assert.ok(none.reasons.includes('actual_hours_missing'));
-  for (const bad of [{ people: 0, hours: 2 }, { people: 2, hours: 2.1 }, { people: 2.5, hours: 2 }, { people: 2, hours: 30 }, { people: 2, hours: 2, extra: 1 }])
+  for (const bad of [{ people: 0, hours: 2 }, { people: 2, hours: 2.1 }, { people: 2.5, hours: 2 }, { people: 2, hours: 250 }, { people: 2, hours: 2, extra: 1 }])
     assert.equal(jobActualsRow(garageJob({ fieldExecution: { completion: { crewOnSite: bad } } })).actual.source, 'not_recorded', JSON.stringify(bad));
+});
+
+test('incomplete timecards: an open card marks the margin an upper bound, and a larger crew-lead count replaces them', () => {
+  // 3 people work 8 h each; two never clock out, so the timecards hold one closed 8 h card and two open shifts.
+  const labor = timecardLabor({ jobId: 'job-two-car', projected: { workHours: 8, travelHours: 0 }, openShifts: 2, needsReviewCount: 0, legacyAssociationOnlyCount: 0 });
+  assert.deepEqual(labor, { workHours: 8, travelHours: 0, incomplete: true });
+  const cards = jobActualsRow(garageJob(), { labor, settings: ALL_SET, channel: 'direct_estimator' });
+  assert.equal(cards.actual.source, 'timecards'); assert.ok(cards.reasons.includes('timecards_incomplete'));
+  assert.equal(cards.upperBound, true, 'every other setting is entered, but missing hours can only overstate the margin');
+  const lead = jobActualsRow(garageJob({ fieldExecution: { completion: { crewOnSite: { people: 3, hours: 8 } } } }), { labor, settings: ALL_SET, channel: 'direct_estimator' });
+  assert.deepEqual(lead.actual, { manHours: 24, paidManHours: 24, source: 'crew_lead' });
+  assert.ok(lead.reasons.includes('crew_lead_exceeds_timecards')); assert.equal(lead.upperBound, false);
+  assert.equal(lead.laborCents, 29676, '24 h × $12.365 = $296.76');
+  assert.ok(lead.grossMarginPercent < cards.grossMarginPercent);
+  assert.equal(timecardLabor({ projected: { workHours: 8, travelHours: 1 }, openShifts: 0, needsReviewCount: 0, legacyAssociationOnlyCount: 0 }).incomplete, false);
+  assert.equal(timecardLabor({ projected: { workHours: 8, travelHours: 1 }, legacyAssociationOnlyCount: 1 }).incomplete, true);
+  // The report carries the counts from computeJobLaborCost rows.
+  const report = buildJobActuals({ jobs: [garageJob()], labor: { jobs: [{ jobId: 'job-two-car', projected: { workHours: 8, travelHours: 0 }, openShifts: 1, needsReviewCount: 0, legacyAssociationOnlyCount: 0 }] }, settings: ALL_SET, today: '2026-10-21' });
+  assert.ok(report.rows[0].reasons.includes('timecards_incomplete')); assert.equal(report.totals.last30.upperBound, true);
+});
+
+test('goods with no estimate line items are unknown, never $0; line items without goods are $0', () => {
+  const bare = jobActualsRow(garageJob({ estimate: { status: 'accepted', amount: 1500 } }), { labor: { workHours: 4, travelHours: 0 }, settings: ALL_SET });
+  assert.equal(bare.revenueCents, 150000); assert.equal(bare.goodsRetailCents, null);
+  assert.ok(bare.reasons.includes('goods_unknown')); assert.equal(bare.grossMarginCents, null);
+  const service = jobActualsRow(garageJob({ estimate: { status: 'accepted', amount: 1500, lineItems: [LINES[0]] } }), { labor: { workHours: 4, travelHours: 0 }, settings: ALL_SET });
+  assert.equal(service.goodsRetailCents, 0); assert.notEqual(service.grossMarginCents, null);
 });
 
 test('a junk-only job has no billed labor and earns no commission; an unknown revenue holds the margin', () => {
@@ -132,6 +159,10 @@ test('the report lists completed work jobs in the last 90 days, newest first, wi
   assert.equal(report.totals.last90.grossMarginCents, report.rows[0].grossMarginCents + report.rows[1].grossMarginCents);
   assert.equal(report.totals.last90.upperBound, true);
   assert.equal(report.totals.last90.commissionCents, 2 * 29498, 'both are signed walkthroughs without a setter: the estimator 7%');
+  assert.equal(report.totals.last90.marginCommissionCents, 2 * 29498, 'commission on the jobs the contribution covers');
+  const unmargined = buildJobActuals({ jobs: [garageJob(), garageJob({ id: 'no-hours' })], labor, settings: PAY, today, asOf: '2026-10-21T18:00:00.000Z' }).totals.last90;
+  assert.equal(unmargined.commissionCents, 2 * 29498); assert.equal(unmargined.marginCommissionCents, 29498);
+  assert.equal(unmargined.contributionCents, unmargined.grossMarginCents - unmargined.marginCommissionCents);
   const empty = summarizeJobActuals([]);
   assert.equal(empty.variancePercent, null); assert.equal(empty.grossMarginPercent, null); assert.equal(empty.revenueCents, 0);
 });
@@ -169,6 +200,13 @@ test('only the owner saves cost settings; blanks stay null, a replay is idempote
   await assert.rejects(mutateJobActualsSettings(store, OWNER, settingsBody({ ...PAY, payrollTaxBp: 765, dumpFeeCentsPerLoad: 0 }, { expectedRevision: revision })), { code: 'job_actuals_no_change' });
   store.docs.set(`${JOB_ACTUALS_SETTINGS}/current`, { ...store.docs.get(`${JOB_ACTUALS_SETTINGS}/current`), payrollTaxBp: 'lots' });
   await assert.rejects(readJobActualsSettings(store), { code: 'job_actuals_settings_invalid', status: 503 }, 'a damaged record fails closed');
+});
+
+test('settings storage errors are renamed job_actuals_* with this screen\'s own wording', async () => {
+  const failing = jobActualsSettingsStorage({}, { read: async () => { throw Object.assign(new Error('Standard costs could not be loaded. Retry.'), { code: 'standard_cost_unavailable', status: 503 }); },
+    commit: async () => { throw Object.assign(new Error('Standard-cost storage refused this change. Nothing was saved.'), { code: 'standard_cost_storage_rejected', status: 503 }); } });
+  await assert.rejects(failing.read('jobActualsSettings', 'current'), { code: 'job_actuals_unavailable', message: 'Job cost settings could not be loaded. Retry.' });
+  await assert.rejects(failing.commit([]), error => error.code === 'job_actuals_storage_rejected' && !/standard/i.test(error.message));
 });
 
 function payStore() { const store = memoryStore(); store.docs.set(`${JOB_ACTUALS_SETTINGS}/current`, { schemaVersion: 1, ...PAY, id: 'current', revision: 'rev-pay' }); return store; }
