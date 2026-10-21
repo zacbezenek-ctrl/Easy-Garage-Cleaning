@@ -385,18 +385,21 @@ export function createStaffDirectoryService({ store, env = {}, now = () => new D
         approvedAt: typeof account.approvedAt === 'string' && account.approvedAt ? account.approvedAt : typeof account.reviewedAt === 'string' ? account.reviewedAt : '' });
     }
     for (const person of people.values()) withProfile(person, records);
-    return { people, records, accounts, configured };
+    return { people, records, accounts };
   }
 
   /* Whether the two staff migrations (employee-vault-migrate.js) still have records to fill: an employee account with no
      staffRoles, or a non-configured profile with no staffRoles or with an hourlyRate and no payRates. The same conditions
      as their transforms, read from the roster this request already loaded, so the owner's one-tap Finish staff setup
-     (employee-staff.js) shows only while it has work to do. */
-  function setupNeeded({ records, accounts }, configured) {
-    const skip = new Set(configured.map(profile => personKey(profile.user)));
+     (employee-staff.js) shows only while it has work to do. Only the people the directory lists count (approved employee
+     accounts, not applicants), and a record the migration already marked is done, as runVaultMigration counts it. */
+  function setupNeeded({ people, records, accounts }) {
+    const listed = new Set([...people.values()].filter(person => person.source === 'employee_account').map(person => person.key));
+    const marked = (data, id) => Array.isArray(data?.migrations) && data.migrations.includes(id);
     const rate = value => value !== undefined && value !== null && Number.isFinite(Number(value)) && Number(value) >= 0;
-    return accounts.some(account => record(account) && account.staffRoles === undefined)
-      || records.some(row => record(row?.data) && !skip.has(personKey(row.data.username)) && (row.data.staffRoles === undefined || row.data.payRates === undefined && rate(row.data.hourlyRate)));
+    return accounts.some(account => record(account) && account.status === 'approved' && account.staffRoles === undefined && !marked(account, 'employee-account-staff-roles-v1'))
+      || records.some(row => record(row?.data) && listed.has(personKey(row.data.username)) && !marked(row.data, 'staff-profile-pay-roles-v1')
+        && (row.data.staffRoles === undefined || row.data.payRates === undefined && rate(row.data.hourlyRate)));
   }
 
   // Former staff (GUSTO-EXPORT): people outside the active directory with a stored profile or a rejected employee account
@@ -512,7 +515,7 @@ export function createStaffDirectoryService({ store, env = {}, now = () => new D
       if (query.username && !selected.length) throw managesStaff(session) || same(query.username, session.user) ? fail('not_found', 'That staff member is not in the active directory.', 404) : fail('forbidden', 'You can view only your own staff record.', 403);
       // The owner's whole directory also lists former staff, for their Gusto fields only.
       const former = !query.username && can(session, 'pay.manage', env) ? { formerStaff: [...formerStaff(staff).values()].sort(byName).map(formerView) } : {};
-      const setup = !query.username && can(session, 'settings.manage', env) ? { setup: { needed: setupNeeded(staff, staff.configured) } } : {};
+      const setup = !query.username && can(session, 'settings.manage', env) ? { setup: { needed: setupNeeded(staff) } } : {};
       return { ok: true, authority: 'employee_hub', timeZone: 'America/Denver', today,
         viewer: { user: session.user, capabilities: staffCapabilities(session, env) },
         catalog: { version: SKILL_CATALOG_VERSION, skills: SKILL_CATALOG, levels: SKILL_LEVELS, roles: STAFF_ROLES, days: WEEK_DAYS },

@@ -20,8 +20,9 @@ const directory = (needed, capabilities = [...STAFF_CAPABILITIES]) => ({ ok: tru
 
 function ui(pages, { migrate = body => ({ ok: true, report: { migrationId: body.migrationId, dryRun: false, migrated: 1, conflicts: 0, failed: 0 } }), session = storage() } = {}) {
   const document = createDocument(), migrations = [], reads = [];
+  const listeners = {};
   const context = vm.createContext({ console, Intl, Promise, Set, Map, Error, JSON, Object, Array, Math, Number, String, Symbol, AbortController, crypto, Date: FixedDate, document,
-    sessionStorage: session, setTimeout: () => 1, clearTimeout() {}, addEventListener() {}, fetch: async () => { throw new Error('the injected Hub fetch is always used'); } });
+    sessionStorage: session, setTimeout: () => 1, clearTimeout() {}, addEventListener(name, listener) { (listeners[name] ||= []).push(listener); }, fetch: async () => { throw new Error('the injected Hub fetch is always used'); } });
   context.window = context;
   vm.runInContext(source, context, { filename: 'employee-staff.js' });
   const host = document.createElement('div');
@@ -38,13 +39,14 @@ function ui(pages, { migrate = body => ({ ok: true, report: { migrationId: body.
   };
   context.EGCStaff.mount(host, { identity: 'ZacB', capabilities: ['crew', 'business', 'owner'], hubFetch, toast() {} });
   const finish = () => host.querySelectorAll('button').find(node => node.textContent === 'Finish staff setup');
-  return { host, migrations, reads, finish, session };
+  return { host, migrations, reads, finish, session, signout: () => (listeners['egc:signout'] || []).forEach(listener => listener({ type: 'egc:signout' })) };
 }
 
 test('the owner sees Finish staff setup only while setup has work, and one tap applies both migrations in order', async () => {
   const page = ui([directory(true), directory(false)]);
   await settle();
-  assert.match(page.host.textContent, /One-time setup saves each person’s current role and pay rate/);
+  assert.match(page.host.textContent, /One-time setup saves the current role and pay rate of each employee account/);
+  assert.match(page.host.textContent, /The configured Hub accounts keep theirs in the Hub configuration\./);
   assert.equal(page.migrations.length, 0, 'opening the directory runs nothing');
   page.finish().click();
   await settle();
@@ -67,7 +69,7 @@ test('no banner when setup is done, for a manager, or for an older answer withou
 test('a lost answer keeps the same request id for the retry, and a conflict asks for one more tap', async () => {
   let lose = true;
   const session = storage();
-  const page = ui([directory(true)], { session, migrate: body => { if (lose && body.migrationId === SETUP[1]) { lose = false; return new TypeError('Failed to fetch'); } return { ok: true, report: { migrated: 1, conflicts: 0, failed: 0 } }; } });
+  const page = ui([directory(true), directory(false)], { session, migrate: body => { if (lose && body.migrationId === SETUP[1]) { lose = false; return new TypeError('Failed to fetch'); } return { ok: true, report: { migrated: 1, conflicts: 0, failed: 0 } }; } });
   await settle();
   page.finish().click();
   await settle();
@@ -82,6 +84,43 @@ test('a lost answer keeps the same request id for the retry, and a conflict asks
   await settle();
   busy.finish().click();
   await settle();
-  assert.match(busy.host.textContent, /A few records changed while setup ran\. Tap Finish staff setup again to finish them\./);
+  assert.match(busy.host.textContent, /Some records may not have been updated\. Tap Finish staff setup again; records already set up are skipped\./);
   assert.ok(busy.finish(), 'the button stays for the next tap');
+});
+
+test('a run the server still holds as in progress gets a fresh request id on the next tap, never the stuck one', async () => {
+  let stuck = true;
+  const page = ui([directory(true), directory(true), directory(false)], { migrate: body => {
+    if (stuck && body.migrationId === SETUP[0]) { stuck = false; return { ok: false, code: 'employee_vault_migration_in_progress', error: 'This migration request has not finished.' }; }
+    return { ok: true, report: { migrated: 1, conflicts: 0, failed: 0 } };
+  } });
+  await settle();
+  page.finish().click();
+  await settle();
+  assert.match(page.host.textContent, /Setup is still finishing\. Wait a minute, then tap Finish staff setup again\./);
+  const stuckId = page.migrations[0].requestId;
+  page.finish().click();
+  await settle();
+  assert.notEqual(page.migrations[1].requestId, stuckId, 'the id the server holds as running is not reused');
+  assert.equal(page.migrations[1].migrationId, SETUP[0]);
+});
+
+test('setup is reported finished only when the reload confirms it, and sign-out clears the kept request ids', async () => {
+  const page = ui([directory(true), directory(true)]);
+  await settle();
+  page.finish().click();
+  await settle();
+  assert.doesNotMatch(page.host.textContent, /Staff setup is finished/);
+  assert.match(page.host.textContent, /Some records may not have been updated\. Tap Finish staff setup again/);
+  assert.ok(page.finish(), 'the banner stays while the directory still says setup has work');
+
+  const session = storage(), lost = ui([directory(true)], { session, migrate: () => new TypeError('Failed to fetch') });
+  await settle();
+  lost.finish().click();
+  await settle();
+  const kept = () => [...session.values.keys()].filter(name => name.startsWith('egc.hub.staffSetup.v1.'));
+  assert.ok(kept().length > 0, 'the unconfirmed run keeps its request id');
+  assert.ok(kept().every(name => name.startsWith('egc.hub.staffSetup.v1.zacb.')), 'kept under the signed-in viewer');
+  lost.signout();
+  assert.deepEqual(kept(), [], 'sign-out clears them');
 });
