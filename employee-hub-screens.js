@@ -38,7 +38,7 @@ const MANIFEST=[
 {id:'purchase_list',group:'RUN THE BUSINESS',label:'Purchase list',iconPath:'M3 4h2l2.4 11h11.2L21 7H6.2M9 20a1 1 0 1 0 0-2 1 1 0 0 0 0 2zM18 20a1 1 0 1 0 0-2 1 1 0 0 0 0 2z',capability:'business',load:{js:'employee-purchase-list.js',css:'employee-purchase-list.css',v:'20261017purchase'},module:'EGCPurchaseList'},
 {id:'customer_messages',group:'CLIENT WORK',label:'Customer messages',iconPath:'M4 5h16v11H9l-5 4zM8 9h8M8 12h5',capability:'customer_contact',load:{js:'employee-customer-messages.js',css:'employee-customer-messages.css',v:'20261021inbox4'},module:'EGCCustomerMessages'},
 ];
-// Home widgets, one line each: {id, label, homes:['today'|'my_day',...], capability:'business'|'owner' or crewVisible:true, module:'EGCName', load?:{js, css, v}}.
+// Home widgets, one line each: {id, label, homes:['today'|'my_day',...], capability:'business'|'owner' or crewVisible:true, quiet?:true, module:'EGCName', load?:{js, css, v}}.
 // employee-suite.js renders one #ops-home-widgets node on the Command center (today) and on My day. mountHome() gives each
 // allowed widget its own slot there in this order, keeps the slot across background renders and unmounts it when the viewer
 // leaves that home. Without load the module is already on the page (a script tag in employee.html). The widget file defines
@@ -49,6 +49,7 @@ const HOME_WIDGETS=[
   // READINESS: tomorrow's jobs and what still stops each from rolling out ready (crew, lead, truck, time off, access notes).
   {id:'crew_readiness',label:'Tomorrow readiness',homes:['today','my_day'],capability:'business',module:'EGCReadiness',load:{js:'employee-readiness.js',css:'employee-readiness.css',v:'20261021ready1'}},
   {id:'job_signoff',label:'Completed: needs sign-off',homes:['today'],capability:'business',module:'EGCJobSignoff',load:{js:'employee-job-signoff.js',css:'employee-job-signoff.css',v:'20261021signoff1'}},
+  {id:'supervisor_followups',label:'Supervisor follow-ups',homes:['my_day'],crewVisible:true,quiet:true,module:'EGCSupervisorFollowUps',load:{js:'employee-job-signoff.js',css:'employee-job-signoff.css',v:'20261021signoff1'}},
 ];
 const HOMES=new Set(['today','my_day']);
 const ID=/^[a-z][a-z0-9_]{1,47}$/,CAPABILITY=/^[a-z][a-z0-9_]{1,40}$/,MODULE=/^EGC[A-Za-z0-9]{1,40}$/,VERSION=/^[A-Za-z0-9._-]{1,40}$/,ICON=/^[MmLlHhVvCcSsQqTtAaZz0-9 .,-]{1,800}$/;
@@ -94,7 +95,9 @@ function registerWidget(spec){
   const crewVisible=spec.crewVisible===true,capability=spec.capability==null?'':String(spec.capability);
   if(crewVisible===Boolean(capability)||capability&&!CAPABILITY.test(capability))fail(id+' must declare exactly one of capability or crewVisible');
   if(!MODULE.test(String(spec.module||'')))fail(id+' needs a module name');
-  const entry=Object.freeze({id,label,homes:Object.freeze(homes),capability,crewVisible,module:String(spec.module),load:loadSpec(id,spec.load)});
+  // quiet:true: the slot stays hidden, with no loading bars or failure notice, until the module shows it (sets
+  // slot.hidden=false); for a card that is usually empty, so it never moves what is below it on a phone.
+  const entry=Object.freeze({id,label,homes:Object.freeze(homes),capability,crewVisible,module:String(spec.module),load:loadSpec(id,spec.load),...(spec.quiet===true?{quiet:true}:{})});
   homeDefs.set(id,entry);
   return entry;
 }
@@ -188,14 +191,14 @@ function widgetItem(entry,view,ctx){
   slot.className='hub-home-widget';slot.setAttribute('data-hub-widget',entry.id);
   const live=()=>home?.items.get(entry.id)===item,retry=()=>{if(live())void item.run();};
   item.run=async()=>{
-    skeleton(slot,entry);
-    try{await (entry.load?ensure(entry):asset(KIT.css,KIT.v));}catch{if(live())notice(slot,entry,retry,'section');return;}
+    if(entry.quiet){slot.hidden=true;slot.replaceChildren();}else skeleton(slot,entry);
+    try{await (entry.load?ensure(entry):asset(KIT.css,KIT.v));}catch{if(live()&&!entry.quiet)notice(slot,entry,retry,'section');return;}
     if(!live())return;
     const module=window[entry.module];
-    if(!module||typeof module.mount!=='function'){notice(slot,entry,retry,'section');return;}
+    if(!module||typeof module.mount!=='function'){if(!entry.quiet)notice(slot,entry,retry,'section');return;}
     slot.replaceChildren();item.module=module;item.mounted=true;
     try{await module.mount(slot,Object.freeze({...ctx,home:view,widget:entry.id}));}
-    catch(error){console.error('Hub home widget failed to mount',entry.id,error);if(live()){item.mounted=false;try{module.unmount?.();}catch{}notice(slot,entry,retry,'section');}}
+    catch(error){console.error('Hub home widget failed to mount',entry.id,error);if(live()){item.mounted=false;try{module.unmount?.();}catch{}if(entry.quiet)slot.hidden=true;else notice(slot,entry,retry,'section');}}
   };
   return item;
 }

@@ -157,6 +157,22 @@ test('actual Firestore rules isolate canonical operations from crew SDK access',
       }
       await environment.withSecurityRulesDisabled(async context=>assert.deepEqual((await context.firestore().doc('jobs/sold-job').get()).data().funnelSale,sale));
     });
+    await t.test('a job\'s supervisor sign-off and its history are written only by /api/job-signoff (SIGNOFF)',async()=>{
+      const signed={supervisorSignoff:{status:'signed',by:'zacb',byName:'Synthetic Owner',at:'2099-09-10T12:00:00.000Z',reason:'',requestId:'00000000-0000-4000-8000-000000000001'},supervisorSignoffHistory:[{status:'signed',by:'zacb',at:'2099-09-10T12:00:00.000Z'}]};
+      const seededJob={type:'job',customerId:'signoff-customer',status:'completed',...signed};
+      await environment.withSecurityRulesDisabled(context=>context.firestore().doc('jobs/signed-job').set(seededJob));
+      for(const db of [manager,partner]){
+        await assertSucceeds(db.doc('jobs/signed-job').set({opsNotes:'Synthetic note'},{merge:true}),'other named fields still save');
+        for(const [field,value] of Object.entries(signed)){
+          await assertFails(db.doc('jobs/signed-job').set({[field]:null},{merge:true}),`clearing ${field}`);
+          await assertFails(db.doc('jobs/signed-job').update({[field]:field==='supervisorSignoff'?{...value,by:'forged'}:[]}),`rewriting ${field}`);
+          await assertFails(db.doc('jobs/signed-job').update({[field]:FieldValue.delete()}),`deleting ${field}`);
+          await assertFails(db.doc('jobs/assigned').update({[field]:value}),`adding ${field}`);
+          await assertFails(db.doc(`jobs/forged-${field.toLowerCase()}`).set({type:'job',customerId:'signoff-customer',[field]:value}),`creating with ${field}`);
+        }
+      }
+      await environment.withSecurityRulesDisabled(async context=>assert.deepEqual((await context.firestore().doc('jobs/signed-job').get()).data().supervisorSignoff,signed.supervisorSignoff));
+    });
     await t.test('a job\'s paid-in-full crossing fields are written only by the server money writers (FUN-33)',async()=>{
       const crossing={paidInFullAt:'2099-09-10T12:00:00.000Z',paidInFullRevision:2,balanceReopenedAt:'2099-09-09T12:00:00.000Z',balanceReopenedReason:'estimate_revised',paymentEventIssue:{code:'funnel_event_invalid',sessionId:'cs_test_synthetic',at:'2099-09-10T12:00:00.000Z'}};
       const seededJob={type:'job',customerId:'paid-in-full-customer',status:'scheduled',payment:{amount:800,verified:true},...crossing};

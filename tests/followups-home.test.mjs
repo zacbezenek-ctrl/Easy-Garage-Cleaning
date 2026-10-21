@@ -316,9 +316,11 @@ test('My day mounts the widget for business users only, filtered to the signed-i
   await crew.page.flush();
   assert.equal(crew.page.api.S.active, 'my_day');
   assert.ok(crew.page.main().querySelector('#ops-home-widgets'), 'the extension point renders for everyone');
-  assert.equal(crew.page.main().querySelector('[data-hub-widget]'), null, 'crew never gets a business widget');
+  // Crew get only crew-visible widgets (SIGNOFF: a crew lead's supervisor follow-ups, empty when there are none), never a
+  // business one.
+  assert.deepEqual(crew.page.main().querySelectorAll('[data-hub-widget]').map(node => node.getAttribute('data-hub-widget')), ['supervisor_followups'], 'crew never gets a business widget');
   assert.equal(crew.operations(), 0);
-  assert.deepEqual([...crew.page.context.EGCHubScreens.homeWidgets('my_day', crew.page.api.hubCapabilities()).map(entry => entry.id)], []);
+  assert.deepEqual([...crew.page.context.EGCHubScreens.homeWidgets('my_day', crew.page.api.hubCapabilities()).map(entry => entry.id)], ['supervisor_followups']);
 });
 
 test('a widget whose script is missing shows unavailable with Retry instead of an empty home', async () => {
@@ -350,7 +352,7 @@ test('widget registration refuses ambiguous access, unknown homes, markup and ba
   registry.registerWidget(base);
   assert.deepEqual([...registry.homeWidgets('today', ['crew', 'business']).map(entry => entry.id)], ['overdue_followups', 'crew_readiness', 'job_signoff']);
   assert.deepEqual([...registry.homeWidgets('today', ['crew', 'business', 'owner']).map(entry => entry.id)], ['overdue_followups', 'crew_readiness', 'job_signoff', 'fixture_widget']);
-  assert.deepEqual([...registry.homeWidgets('my_day', ['crew', 'business', 'owner']).map(entry => entry.id)], ['overdue_followups', 'crew_readiness']);
+  assert.deepEqual([...registry.homeWidgets('my_day', ['crew', 'business', 'owner']).map(entry => entry.id)], ['overdue_followups', 'crew_readiness', 'supervisor_followups']);
 });
 
 test('mountHome only mounts on a home, keeps order, and remounts when the viewer changes', async () => {
@@ -409,4 +411,23 @@ test('Open follow-ups lands on the real Action Center overdue view, and unknown 
   await flush();
   assert.equal(host.querySelector('[data-ac-view="approvals"]').getAttribute('aria-selected'), 'true');
   center.unmount();
+});
+
+// SIGNOFF: a quiet widget (usually empty) stays hidden with no loading bars or failure notice until its module shows it,
+// so it never moves the clock card below it on a phone.
+test('a quiet widget stays hidden until its module shows it, and fails silently', async () => {
+  const page = hubPage({ loadRegistry: true }), registry = page.context.EGCHubScreens;
+  page.context.EGCFixtureQuiet = { mount(host) { host.append(page.document.createElement('p')); host.hidden = false; }, unmount() {} };
+  registry.registerWidget({ id: 'fixture_quiet', label: 'Fixture quiet', homes: ['my_day'], crewVisible: true, quiet: true, module: 'EGCFixtureQuiet' });
+  registry.registerWidget({ id: 'fixture_missing', label: 'Fixture missing', homes: ['my_day'], crewVisible: true, quiet: true, module: 'EGCFixtureMissing' });
+  const host = page.document.createElement('div');
+  page.document.body.append(host);
+  registry.mountHome('my_day', host, { identity: 'crew.one', role: 'crew', capabilities: ['crew'] });
+  const slot = id => host.querySelector(`[data-hub-widget="${id}"]`);
+  assert.equal(slot('fixture_missing').hidden, true, 'hidden before anything loads');
+  await page.flush();
+  assert.equal(slot('fixture_quiet').hidden, false, 'shown once the module has something');
+  assert.deepEqual([slot('fixture_missing').hidden, slot('fixture_missing').children.length], [true, 0], 'a missing module leaves no notice and no gap');
+  assert.equal(registry.homeWidgets('my_day', ['crew']).find(entry => entry.id === 'fixture_quiet').quiet, true);
+  assert.equal(registry.homeWidgets('today', ['crew', 'business']).find(entry => entry.id === 'overdue_followups').quiet, undefined, 'other widgets are unchanged');
 });

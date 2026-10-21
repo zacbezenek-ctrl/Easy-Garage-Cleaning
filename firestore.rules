@@ -308,6 +308,12 @@ service cloud.firestore {
       return ['paidInFullAt', 'paidInFullRevision', 'balanceReopenedAt', 'balanceReopenedReason', 'paymentEventIssue'];
     }
 
+    // SIGNOFF (#201): who signed a completed job off or marked it needing follow-up, and that history, are written only
+    // by /api/job-signoff, so a browser edit cannot forge a signer or erase the record.
+    function signoffFields() {
+      return ['supervisorSignoff', 'supervisorSignoffHistory'];
+    }
+
     // Canonical jobs include financial evidence, signatures and private notes.
     // Crew reads and execution writes go through assigned-only server DTOs;
     // otherwise direct SDK reads would bypass projection and completion gates.
@@ -329,6 +335,7 @@ service cloud.firestore {
         !('funnelSale' in request.resource.data) &&
         !request.resource.data.keys().hasAny(['fieldPaymentPendingId', 'fieldPaymentLastId', 'fieldPaymentCardRequestId', 'fieldPaymentSyncPendingIds']) &&
         !request.resource.data.keys().hasAny(paymentEventFields()) &&
+        !request.resource.data.keys().hasAny(signoffFields()) &&
         !('ghlTagEntry' in request.resource.data) &&
         jobLaborUnchanged(request.resource.data, {}, documentId);
       allow update: if businessUser() && !serverOwnedJobRecord(documentId) &&
@@ -339,6 +346,7 @@ service cloud.firestore {
         (!('fieldPaymentCardRequestId' in resource.data) || resource.data.fieldPaymentCardRequestId == null) &&
         !request.resource.data.diff(resource.data).affectedKeys().hasAny(['funnelSale', 'ghlTagEntry', 'fieldPaymentPendingId', 'fieldPaymentLastId', 'fieldPaymentCardRequestId', 'fieldPaymentSyncPendingIds']) &&
         !request.resource.data.diff(resource.data).affectedKeys().hasAny(paymentEventFields()) &&
+        !request.resource.data.diff(resource.data).affectedKeys().hasAny(signoffFields()) &&
         jobLaborUnchanged(request.resource.data, resource.data, documentId);
       allow delete: if businessUser() && !serverOwnedJobRecord(documentId) &&
         !serverOwnedJobData(resource.data, documentId) &&

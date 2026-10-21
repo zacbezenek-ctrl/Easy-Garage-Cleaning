@@ -1,25 +1,27 @@
-// SIGNOFF (#201): managers sign off or flag completed jobs; it never gates invoicing or payments, nobody signs off a job
-// they worked on (except the owner), a flag opens the crew lead's follow-up, and the list is one bounded read with no
-// money. Synthetic jobs and people only; the clock is fixed.
+// SIGNOFF (#201): managers sign off completed jobs or mark them Needs follow-up; it never gates invoicing or payments,
+// nobody signs off a job they worked on in any form (except the owner), a follow-up reaches the crew lead without money,
+// paid-on-the-spot jobs stay on the list, and nothing ages out silently. Synthetic jobs and people only; fixed clock.
 process.env.TZ = 'Asia/Tokyo';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { firestoreRest } from './helpers/firestore-rest-queries.mjs';
 import { dispatchStorage } from '../functions/_lib/dispatch-storage.js';
-import { SIGNOFF_FIELDS, jobWorkers, requireSignoffManager, signoffCommand, signoffList } from '../functions/_lib/job-signoff.js';
+import { SIGNOFF_FIELDS, completedJob, leadFollowUps, requireSignoffManager, signoffCommand, signoffList, workedJob, workerMatcher } from '../functions/_lib/job-signoff.js';
 import { jobSignoffHandlers } from '../functions/api/job-signoff.js';
 
 const OWNER = { user: 'ZacB', displayName: 'Synthetic Owner', role: 'owner', businessAccess: true };
 const MANAGER = { user: 'TylerG', displayName: 'Synthetic Manager', role: 'manager', businessAccess: true };
 const LEAD = { user: 'AlexK', displayName: 'Synthetic Lead', role: 'crew_lead', businessAccess: true };
-const CREW = { user: 'Crew.One', displayName: 'Synthetic Crew', role: 'crew' };
+const CREW = { user: 'crew.one', displayName: 'Crew One', role: 'crew' };
 const NOW = '2026-10-21T18:00:00.000Z';
+const ROSTER = [{ id: 'crew.one', name: 'Crew One' }, { id: 'crew.two', name: 'Crew Two' }, { id: 'tylerg', name: 'Synthetic Manager' }];
 const id = n => `00000000-0000-4000-8000-${String(n).padStart(12, '0')}`;
+const done = at => ({ completedAt: at, fieldExecution: { activity: 'completed', completion: { completedAt: at, actorId: 'crew.one', hasIssues: false, notes: 'Synthetic notes' } } });
 const job = (jobId, extra = {}) => ({ id: jobId, type: 'job', status: 'completed', pipelineStatus: 'completed', date: '2026-10-19', time: '09:00', customer: 'Synthetic Johnson Family', serviceType: 'Garage cleanout',
-  assignedCrew: ['crew.one', 'crew.two'], crewLead: 'crew.one', completedAt: '2026-10-19T22:00:00.000Z', completedBy: 'crew.one',
-  fieldExecution: { activity: 'completed', completion: { completedAt: '2026-10-19T22:00:00.000Z', actorId: 'crew.one', hasIssues: false, notes: 'Synthetic notes' } },
+  assignedCrew: ['crew.one', 'crew.two'], crewLead: 'crew.one', completedBy: 'crew.one', ...done('2026-10-19T22:00:00.000Z'),
   estimate: { amount: 1500, depositPaidCents: 37500 }, phone: '9705550142', ...extra });
+const as = (session, identities) => workerMatcher(session, identities || [session.user]);
 
 test('only the owner and managers sign off; crew, crew leads and signed-out visitors cannot', () => {
   assert.doesNotThrow(() => requireSignoffManager(OWNER, {}));
@@ -27,88 +29,139 @@ test('only the owner and managers sign off; crew, crew leads and signed-out visi
   for (const [session, code] of [[null, 'job_signoff_sign_in_required'], [CREW, 'job_signoff_forbidden'], [LEAD, 'job_signoff_forbidden']]) assert.throws(() => requireSignoffManager(session, {}), { code });
 });
 
-test('signing off records who and when; a manager who worked the job cannot sign it off, the owner can', () => {
-  const signed = signoffCommand(job('a'), MANAGER, { action: 'sign_off', requestId: id(1), reason: '' }, NOW);
-  assert.deepEqual(signed.patch.supervisorSignoff, { status: 'signed', by: 'TylerG', byName: 'Synthetic Manager', at: NOW, reason: '', requestId: id(1) });
-  assert.deepEqual(signed.patch.supervisorSignoffHistory, [signed.patch.supervisorSignoff]);
-  assert.equal(signed.patch.fieldExecution, undefined, 'a sign-off leaves the field record alone');
+test('done means completed, paid, invoiced, closed or review requested, with a completion time', () => {
+  for (const status of ['completed', 'paid', 'invoiced', 'closed', 'review_requested']) assert.equal(completedJob(job('x', { status, pipelineStatus: status })), true, status);
+  for (const extra of [{ status: 'scheduled', pipelineStatus: 'scheduled' }, { status: 'paid', pipelineStatus: 'paid', completedAt: null, fieldExecution: {} }, { type: 'walkthrough' }]) assert.equal(completedJob(job('x', extra)), false, JSON.stringify(extra));
+});
+
+test('a manager who worked the job in any recorded way cannot sign it off; the owner can', () => {
+  const me = as(MANAGER, ['TylerG', 'Synthetic Manager']);
+  const worked = {
+    assignedTo: job('a', { assignedCrew: undefined, assignedTo: 'Crew One, TylerG' }),
+    displayName: job('b', { assignedCrew: ['crew.one', 'Synthetic Manager'] }),
+    object: job('c', { assignedCrew: ['crew.one', { username: 'tylerg', name: 'Someone' }] }),
+    leadName: job('d', { crewLead: 'Synthetic Manager' }),
+    segment: job('e', { assignmentSegments: [{ id: 's', assignedCrew: ['tylerg'] }] }),
+    completedBy: job('f', { completedBy: 'TylerG' }),
+    activityBy: job('g', { fieldExecution: { ...job('g').fieldExecution, activityBy: 'tylerg' } }),
+    visit: job('h', { fieldExecution: { ...job('h').fieldExecution, visits: { '2026-10-19': { status: 'ended', startedBy: 'tylerg' } } } }),
+    check: job('i', { fieldExecution: { ...job('i').fieldExecution, checks: { 'task-1': { actorId: 'tylerg', completed: true } } } }),
+    evidence: job('j', { completionEvidence: { actorId: 'tylerg' } }),
+    early: job('k', { fieldExecution: { ...job('k').fieldExecution, completion: { ...job('k').fieldExecution.completion, earlyCompletion: { approvedBy: 'tylerg' } } } }),
+    alsoAssignedTo: job('l', { assignedTo: 'TylerG' }),
+  };
+  for (const [form, row] of Object.entries(worked)) {
+    assert.equal(workedJob(row, me), true, form);
+    assert.throws(() => signoffCommand(row, MANAGER, { action: 'sign_off', requestId: id(1) }, NOW, me), { code: 'job_signoff_self', status: 403 }, form);
+    assert.equal(signoffList([row], MANAGER, NOW, { matcher: me }).rows[0].ownJob, true, form);
+  }
+  assert.equal(workedJob(job('m', { assignedCrew: ['crew.one', { username: 'crew.two', name: 'Synthetic Manager' }] }), me), false, 'an explicit other account under my name is not me');
+  assert.equal(workedJob(job('n', { assignmentSegments: [{ id: 's', assignedCrew: ['Synthetic Manager'] }] }), me), false, 'segments are matched by username only');
+  assert.equal(signoffCommand(job('o', { assignedCrew: ['zacb'] }), OWNER, { action: 'sign_off', requestId: id(2) }, NOW).signoff.by, 'ZacB', 'the owner may sign off their own job');
+});
+
+test('signing off records who and when and writes only the sign-off fields', () => {
+  const signed = signoffCommand(job('a'), MANAGER, { action: 'sign_off', requestId: id(1), reason: '', expected: 'none' }, NOW);
+  assert.deepEqual(signed.patch.supervisorSignoff, { status: 'signed', action: 'sign_off', by: 'TylerG', byName: 'Synthetic Manager', at: NOW, reason: '', requestId: id(1) });
   assert.deepEqual(Object.keys(signed.patch).sort(), ['supervisorSignoff', 'supervisorSignoffHistory'], 'nothing about money, status or invoicing changes');
-  for (const worked of [job('b', { assignedCrew: ['tylerg'] }), job('c', { crewLead: 'TylerG' }), job('d', { completedBy: 'tylerg' }), job('e', { assignedCrew: [], assignmentSegments: [{ id: 's1', date: '2026-10-19', assignedCrew: ['TylerG'] }] })])
-    assert.throws(() => signoffCommand(worked, MANAGER, { action: 'sign_off', requestId: id(2) }, NOW), { code: 'job_signoff_self', status: 403 }, worked.id);
-  assert.equal(signoffCommand(job('f', { assignedCrew: ['zacb'] }), OWNER, { action: 'sign_off', requestId: id(3) }, NOW).patch.supervisorSignoff.by, 'ZacB');
-  assert.deepEqual([...jobWorkers(job('g', { assignmentSegments: [{ id: 's', assignedCrew: ['crew.three'], crewLead: 'crew.three' }] }))].sort(), ['crew.one', 'crew.three', 'crew.two']);
+  assert.equal(signed.followUp, null);
+  assert.equal(signoffCommand(job('p', { status: 'paid', pipelineStatus: 'paid' }), MANAGER, { action: 'sign_off', requestId: id(2) }, NOW).signoff.status, 'signed', 'a job paid on the spot is signed off too');
 });
 
-test('a flag needs a reason and opens the crew follow-up for the lead; a flagged job is signed off later, a signed one is final', () => {
+test('Needs follow-up reaches the crew lead without money, adds to an open follow-up, keeps a resolved one, and sign-off closes it', () => {
   assert.throws(() => signoffCommand(job('a'), MANAGER, { action: 'flag', requestId: id(1), reason: ' ' }, NOW), { code: 'job_signoff_reason_required' });
-  const base = job('a'), flagged = signoffCommand(base, MANAGER, { action: 'flag', requestId: id(1), reason: 'Shelving left unanchored' }, NOW).patch;
-  assert.deepEqual(flagged.fieldExecution.attention, { at: NOW, actorId: 'TylerG', actorName: 'Synthetic Manager', requestId: id(1), visibility: 'crew', reason: 'Supervisor flag: Shelving left unanchored', status: 'open' });
-  assert.deepEqual(flagged.fieldExecution.completion, base.fieldExecution.completion, 'the rest of the field record is kept');
-  const open = job('b', { fieldExecution: { ...base.fieldExecution, attention: { status: 'open', reason: 'Crew reported a dent', requestId: 'crew-1' } } });
-  assert.equal(signoffCommand(open, MANAGER, { action: 'flag', requestId: id(2), reason: 'Also the shelving' }, NOW).patch.fieldExecution, undefined, 'an open follow-up is not replaced');
-  const after = { ...base, ...flagged };
-  assert.throws(() => signoffCommand(after, MANAGER, { action: 'flag', requestId: id(3), reason: 'Again' }, NOW), { code: 'job_signoff_already_flagged' });
-  const signed = signoffCommand(after, OWNER, { action: 'sign_off', requestId: id(4) }, NOW).patch;
-  assert.deepEqual(signed.supervisorSignoffHistory.map(entry => entry.status), ['flagged', 'signed'], 'the history keeps both');
-  assert.throws(() => signoffCommand({ ...after, ...signed }, MANAGER, { action: 'flag', requestId: id(5), reason: 'Late' }, NOW), { code: 'job_signoff_already_signed', status: 409 });
-  assert.deepEqual(signoffCommand({ ...after, ...signed }, MANAGER, { action: 'sign_off', requestId: id(4) }, NOW), { replayed: true }, 'the same request again is a replay');
-  assert.throws(() => signoffCommand(job('c', { status: 'scheduled', pipelineStatus: 'scheduled' }), MANAGER, { action: 'sign_off', requestId: id(6) }, NOW), { code: 'job_signoff_not_completed' });
+  const base = job('a'), flagged = signoffCommand(base, MANAGER, { action: 'flag', requestId: id(1), reason: 'Refund the $450 overcharge and re-sweep the floor' }, NOW);
+  assert.equal(flagged.followUp, 'opened');
+  assert.deepEqual(flagged.patch.fieldExecution.attention, { at: NOW, actorId: 'TylerG', actorName: 'Synthetic Manager', requestId: id(1), visibility: 'crew', reason: 'Supervisor follow-up: Refund the overcharge and re-sweep the floor', status: 'open', supervisorFlag: true });
+  assert.deepEqual(flagged.patch.fieldExecution.completion, base.fieldExecution.completion, 'the rest of the field record is kept');
+  // An open crew follow-up gets the reason added, and the answer says so.
+  const open = job('b', { fieldExecution: { ...base.fieldExecution, attention: { status: 'open', reason: 'Crew reported a dent', requestId: 'crew-1', visibility: 'crew' } } });
+  const added = signoffCommand(open, MANAGER, { action: 'flag', requestId: id(2), reason: 'Also the shelving' }, NOW);
+  assert.deepEqual([added.followUp, added.patch.fieldExecution.attention.reason, added.patch.fieldExecution.attention.requestId], ['added', 'Crew reported a dent\nSupervisor follow-up: Also the shelving', 'crew-1']);
+  // A resolved crew issue is kept in the history, not overwritten.
+  const resolved = { status: 'resolved', reason: 'Gate code wrong', resolution: 'Called the office', requestId: 'crew-2' };
+  const kept = signoffCommand(job('c', { fieldExecution: { ...base.fieldExecution, attention: resolved } }), MANAGER, { action: 'flag', requestId: id(3), reason: 'Photos missing' }, NOW).patch.fieldExecution;
+  assert.deepEqual([kept.attentionHistory, kept.attention.status], [[resolved], 'open']);
+  // Signing off later closes the follow-up the flag opened; a crew-reported one stays open for the lead.
+  const after = { ...base, ...flagged.patch };
+  assert.throws(() => signoffCommand(after, MANAGER, { action: 'flag', requestId: id(4), reason: 'Again' }, NOW), { code: 'job_signoff_already_flagged' });
+  assert.throws(() => signoffCommand(after, OWNER, { action: 'sign_off', requestId: id(5), expected: 'none' }, NOW), { code: 'job_signoff_changed', status: 409 }, 'a stale card cannot override the follow-up');
+  const signed = signoffCommand(after, OWNER, { action: 'sign_off', requestId: id(5), expected: 'flagged' }, NOW);
+  assert.deepEqual([signed.followUp, signed.patch.fieldExecution.attention.status, signed.patch.fieldExecution.attention.resolution], ['closed', 'resolved', 'Signed off by Synthetic Owner.']);
+  assert.deepEqual(signed.patch.supervisorSignoffHistory.map(entry => entry.status), ['flagged', 'signed'], 'the history keeps both');
+  const crewOpen = { ...open, supervisorSignoff: { status: 'flagged', action: 'flag', requestId: id(2) } };
+  assert.equal(signoffCommand(crewOpen, OWNER, { action: 'sign_off', requestId: id(6) }, NOW).patch.fieldExecution, undefined, 'a crew-reported follow-up stays open');
+  // A signed job is final; the same request again is a replay, a different action under it is refused.
+  const final = { ...after, ...signed.patch };
+  assert.throws(() => signoffCommand(final, MANAGER, { action: 'flag', requestId: id(7), reason: 'Late' }, NOW), { code: 'job_signoff_already_signed', status: 409 });
+  assert.deepEqual(signoffCommand(final, MANAGER, { action: 'sign_off', requestId: id(5) }, NOW), { replayed: true });
+  assert.throws(() => signoffCommand(final, MANAGER, { action: 'flag', requestId: id(5), reason: 'Different' }, NOW), { code: 'job_signoff_request_invalid', status: 409 });
 });
 
-test('the list: unsigned and flagged completed jobs, oldest first, over 48 hours flagged, own jobs marked, no money or contact', () => {
-  const jobs = [job('recent', { completedAt: '2026-10-21T10:00:00.000Z', fieldExecution: { completion: { completedAt: '2026-10-21T10:00:00.000Z' } } }), job('old', { completedAt: '2026-10-19T12:00:00.000Z', fieldExecution: { completion: { completedAt: '2026-10-19T12:00:00.000Z' } } }), job('fresh'),
-    job('signed', { supervisorSignoff: { status: 'signed', by: 'ZacB' } }), job('flagged', { supervisorSignoff: { status: 'flagged', by: 'ZacB', byName: 'Synthetic Owner', reason: 'Recheck the floor' }, completedAt: '2026-10-18T22:00:00.000Z', fieldExecution: { completion: { completedAt: '2026-10-18T22:00:00.000Z' } } }),
-    job('mine', { assignedCrew: ['tylerg'], completedAt: '2026-10-20T22:00:00.000Z', fieldExecution: { completion: { completedAt: '2026-10-20T22:00:00.000Z' } } }), job('open', { status: 'scheduled', pipelineStatus: 'scheduled' }), job('walk', { type: 'walkthrough' })];
-  const list = signoffList(jobs, MANAGER, NOW), by = Object.fromEntries(list.rows.map(row => [row.jobId, row]));
-  assert.deepEqual(list.rows.map(row => row.jobId), ['flagged', 'old', 'fresh', 'mine', 'recent']);
-  assert.deepEqual([list.needed, list.overdue, list.flagged], [4, 1, 1]);
-  assert.deepEqual([by.old.hoursSinceCompleted, by.old.overdue], [54, true], '12:00 on the 19th to 18:00 on the 21st is over 48 hours');
-  assert.deepEqual([by.fresh.hoursSinceCompleted, by.fresh.overdue], [44, false], '44 hours is not yet 48');
-  assert.equal(by.flagged.overdue, false, 'a flagged job is waiting on the crew, not on a manager');
-  assert.deepEqual([by.flagged.signoff.status, by.flagged.signoff.reason], ['flagged', 'Recheck the floor']);
-  assert.deepEqual([by.mine.ownJob, by.old.ownJob, by.old.customer], [true, false, 'Synthetic']);
+test('the list: by completion time, follow-ups kept whatever their age, older unsigned counted, names and no money', () => {
+  const at = value => done(value);
+  const jobs = [job('recent', { ...at('2026-10-21T10:00:00.000Z') }), job('old', { ...at('2026-10-19T12:00:00.000Z') }), job('fresh'),
+    job('lateDone', { date: '2026-09-01', ...at('2026-10-20T15:00:00.000Z') }), job('signed', { supervisorSignoff: { status: 'signed', by: 'ZacB' } }),
+    job('flaggedOld', { ...at('2026-09-01T15:00:00.000Z'), supervisorSignoff: { status: 'flagged', by: 'ZacB', byName: 'Synthetic Owner', reason: 'Recheck the floor' } }),
+    job('stale', { ...at('2026-09-20T15:00:00.000Z') }), job('paid', { status: 'paid', pipelineStatus: 'paid', ...at('2026-10-20T16:00:00.000Z') }), job('open', { status: 'scheduled', pipelineStatus: 'scheduled' })];
+  const names = new Map(ROSTER.map(person => [person.id, person.name]));
+  const list = signoffList(jobs, MANAGER, NOW, { names }), by = Object.fromEntries(list.rows.map(row => [row.jobId, row]));
+  assert.deepEqual(list.rows.map(row => row.jobId), ['flaggedOld', 'old', 'fresh', 'lateDone', 'paid', 'recent'], 'a job dated long ago but completed this week is listed; paid ones stay');
+  assert.deepEqual([list.needed, list.overdue, list.flagged, list.olderUnsigned], [5, 1, 1, 1]);
+  assert.deepEqual([by.old.hoursSinceCompleted, by.old.overdue, by.fresh.hoursSinceCompleted, by.fresh.overdue], [54, true, 44, false]);
+  assert.deepEqual([by.fresh.customer, by.fresh.lead], ['Synthetic J.', 'Crew One'], 'first name and last initial; the lead by name');
   assert.doesNotMatch(JSON.stringify(list), /1500|37500|9705550142|Johnson|amount|Cents/, 'no money or contact');
-  assert.deepEqual(signoffList([job('x', { assignedCrew: ['zacb'] })], OWNER, NOW).rows[0].ownJob, false, 'the owner may sign off their own job');
 });
 
-// The real handlers over the Firestore REST fake: one masked, dated read for the list; a revision-guarded commit.
+test('a crew lead sees the open supervisor follow-ups on jobs they lead, without money', () => {
+  const flagged = job('f', { supervisorSignoff: { status: 'flagged', by: 'TylerG', byName: 'Synthetic Manager', reason: 'Refund the $45 and re-sweep', at: NOW }, fieldExecution: { ...job('f').fieldExecution, attention: { status: 'open' } } });
+  const other = job('g', { crewLead: 'crew.two', supervisorSignoff: flagged.supervisorSignoff, fieldExecution: flagged.fieldExecution });
+  const closed = job('h', { supervisorSignoff: flagged.supervisorSignoff, fieldExecution: { ...flagged.fieldExecution, attention: { status: 'resolved' } } });
+  assert.deepEqual(leadFollowUps([flagged, other, closed], as(CREW)), [{ jobId: 'f', date: '2026-10-19', service: 'Garage cleanout', reason: 'Refund the and re-sweep', by: 'Synthetic Manager', at: NOW }]);
+});
+
+// The real handlers over the Firestore REST fake: two masked queries for the list; a revision-guarded commit.
 function api(seed, actor = MANAGER) {
   const fs = firestoreRest(Object.fromEntries(seed.map(row => [`jobs/${row.id}`, row])));
-  const handlers = jobSignoffHandlers({ session: async () => actor, dispatch: env => dispatchStorage(env, fs.fetcher), now: () => new Date(NOW) });
-  const get = async () => { const response = await handlers.get({ request: new Request('https://easygaragecleaning.com/api/job-signoff'), env: {} }); return { status: response.status, body: await response.json() }; };
+  const handlers = jobSignoffHandlers({ session: async () => actor, dispatch: env => ({ ...dispatchStorage(env, fs.fetcher), roster: async () => ROSTER }), now: () => new Date(NOW) });
+  const get = async (query = '') => { const response = await handlers.get({ request: new Request(`https://easygaragecleaning.com/api/job-signoff${query}`), env: {} }); return { status: response.status, body: await response.json() }; };
   const post = async (body, headers = {}) => { const response = await handlers.post({ request: new Request('https://easygaragecleaning.com/api/job-signoff', { method: 'POST', headers: { 'Content-Type': 'application/json', Origin: 'https://easygaragecleaning.com', ...headers }, body: JSON.stringify(body) }), env: {} }); return { status: response.status, body: await response.json() }; };
   return { fs, get, post };
 }
 
-test('GET /api/job-signoff: one masked read of the last 14 Denver days, rows without money; crew get 403', async () => {
-  const { fs, get } = api([job('a'), job('old', { date: '2026-09-01' })]);
+test('GET /api/job-signoff: two masked queries (completed since, needing follow-up), rows without money; crew get 403', async () => {
+  const { fs, get } = api([job('a'), job('gone', { ...done('2026-07-01T15:00:00.000Z') })]);
   const { status, body } = await get();
   assert.equal(status, 200);
-  assert.deepEqual(body.window, { start: '2026-10-07', end: '2026-10-21' });
-  assert.deepEqual(body.rows.map(row => row.jobId), ['a'], 'a job dated outside the window is not read');
+  assert.deepEqual(body.rows.map(row => row.jobId), ['a'], 'a job completed before the lookback is not read');
   const reads = fs.calls.filter(call => call.path === ':runQuery');
-  assert.equal(reads.length, 1, 'one query');
-  assert.deepEqual(reads[0].body.structuredQuery.select.fields.map(field => field.fieldPath).sort(), [...SIGNOFF_FIELDS].sort(), 'masked to the sign-off fields');
+  assert.deepEqual(reads.map(call => call.body.structuredQuery.where.fieldFilter.field.fieldPath).sort(), ['completedAt', 'supervisorSignoff.status']);
+  for (const call of reads) assert.deepEqual(call.body.structuredQuery.select.fields.map(field => field.fieldPath).sort(), [...SIGNOFF_FIELDS].sort(), 'masked to the sign-off fields');
   assert.doesNotMatch(JSON.stringify(body), /1500|37500|9705550142|Johnson/);
   assert.equal((await api([job('a')], CREW).get()).status, 403);
+  assert.equal((await api([job('a')]).get('?days=7')).status, 400);
 });
 
-test('POST /api/job-signoff signs off and flags through a revision-guarded commit, refuses self sign-off and replays safely', async () => {
+test('POST /api/job-signoff signs off and opens a follow-up through a revision-guarded commit; a crew lead reads theirs', async () => {
   const { post, get, fs } = api([job('a'), job('b'), job('mine', { crewLead: 'TylerG' })]);
-  const signed = await post({ action: 'sign_off', jobId: 'a', requestId: id(1) });
+  const signed = await post({ action: 'sign_off', jobId: 'a', requestId: id(1), expected: 'none' });
   assert.deepEqual([signed.status, signed.body.signoff.status, signed.body.replayed], [200, 'signed', false]);
-  assert.deepEqual([(await post({ action: 'sign_off', jobId: 'a', requestId: id(1) })).body.replayed], [true]);
-  const flag = await post({ action: 'flag', jobId: 'b', requestId: id(2), reason: 'Floor not swept' });
-  assert.equal(flag.status, 200);
-  const list = (await get()).body, rows = Object.fromEntries(list.rows.map(row => [row.jobId, row]));
-  assert.deepEqual(Object.keys(rows).sort(), ['b', 'mine'], 'the signed job leaves the list; the flagged one stays');
-  assert.deepEqual([rows.b.signoff.status, rows.b.openFollowUp], ['flagged', true], 'the flag opened the crew follow-up');
-  assert.deepEqual([(await post({ action: 'sign_off', jobId: 'mine', requestId: id(3) })).status], [403]);
+  assert.equal((await post({ action: 'sign_off', jobId: 'a', requestId: id(1) })).body.replayed, true);
+  const flag = await post({ action: 'flag', jobId: 'b', requestId: id(2), reason: 'Floor not swept', expected: 'none' });
+  assert.deepEqual([flag.status, flag.body.followUp], [200, 'opened']);
+  const rows = Object.fromEntries((await get()).body.rows.map(row => [row.jobId, row]));
+  assert.deepEqual(Object.keys(rows).sort(), ['b', 'mine'], 'the signed job leaves the list; the one needing follow-up stays');
+  assert.deepEqual([rows.b.signoff.status, rows.b.openFollowUp], ['flagged', true]);
+  assert.equal((await post({ action: 'sign_off', jobId: 'mine', requestId: id(3) })).status, 403);
   assert.equal((await post({ action: 'sign_off', jobId: 'missing', requestId: id(4) })).status, 404);
   assert.equal((await post({ action: 'sign_off', jobId: 'b', requestId: id(5) }, { Origin: 'https://example.invalid' })).status, 403, 'cross-site posts are refused');
   const commits = fs.calls.filter(call => call.path === ':commit');
   assert.ok(commits.length >= 2 && commits.every(call => call.body.writes.every(write => write.currentDocument?.updateTime)), 'every write is guarded by the revision read');
-  assert.ok(commits.every(call => call.body.writes.every(write => write.updateMask.fieldPaths.every(path => ['supervisorSignoff', 'supervisorSignoffHistory', 'fieldExecution'].includes(path)))), 'only the sign-off fields (and a flag\'s follow-up) are written');
+  assert.ok(commits.every(call => call.body.writes.every(write => write.updateMask.fieldPaths.every(path => ['supervisorSignoff', 'supervisorSignoffHistory', 'fieldExecution'].includes(path)))));
+  // The crew lead of job b (crew.one) sees the follow-up on My day.
+  const handlers = jobSignoffHandlers({ session: async () => CREW, dispatch: env => ({ ...dispatchStorage(env, fs.fetcher), roster: async () => ROSTER }), now: () => new Date(NOW) });
+  const mine = await (await handlers.get({ request: new Request('https://easygaragecleaning.com/api/job-signoff?view=mine'), env: {} })).json();
+  assert.deepEqual(mine.followUps.map(row => [row.jobId, row.reason]), [['b', 'Floor not swept']]);
 });
 
 test('a job changed since it was read is refused, not overwritten', async () => {
@@ -119,9 +172,10 @@ test('a job changed since it was read is refused, not overwritten', async () => 
   assert.deepEqual([response.status, (await response.json()).code], [409, 'job_signoff_changed']);
 });
 
-test('the widget is registered for the Command center and its file shows no money', () => {
+test('the widgets are registered (Command center for managers, My day for crew leads) and the file shows no money', () => {
   const registry = readFileSync(new URL('../employee-hub-screens.js', import.meta.url), 'utf8'), source = readFileSync(new URL('../employee-job-signoff.js', import.meta.url), 'utf8');
   assert.match(registry, /\{id:'job_signoff',label:'Completed: needs sign-off',homes:\['today'\],capability:'business',module:'EGCJobSignoff',load:\{js:'employee-job-signoff\.js',css:'employee-job-signoff\.css',v:'20261021signoff1'\}\}/);
+  assert.match(registry, /\{id:'supervisor_followups',label:'Supervisor follow-ups',homes:\['my_day'\],crewVisible:true,quiet:true,module:'EGCSupervisorFollowUps',/);
   assert.doesNotMatch(source, /price|amount|deposit|Cents|phone|invoice/i);
   assert.match(source, /crew\/job\.html\?jobId=/, 'Open job goes to the live job page');
 });
