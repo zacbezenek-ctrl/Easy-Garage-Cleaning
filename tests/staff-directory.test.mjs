@@ -782,3 +782,30 @@ test('integration status reports flags.teamDirectory only with EGC_STAFF_DIRECTO
   assert.deepEqual((await read({ EGC_STAFF_DIRECTORY_ENABLED: 'yes' })).flags, { moneyApi: false, lifecycleApi: false });
   assert.deepEqual((await read({ EGC_STAFF_DIRECTORY_ENABLED: 'true' })).flags, { moneyApi: false, lifecycleApi: false, teamDirectory: true }, 'every signed-in viewer, crew included');
 });
+
+test('the owner\'s directory says whether the staff setup migrations still have records to fill; no one else sees it', async () => {
+  const owner = Object.values(people).find(profile => profile.role === 'owner'), manager = Object.values(people).find(profile => profile.role === 'manager');
+  // An account with no stored roles, and a profile with a legacy rate and no pay schedule: both migrations have work.
+  const store = memory({ accounts: [account('Crew.One')], profiles: [{ id: 'crew.one', username: 'Crew.One', hourlyRate: 21 }] });
+  assert.deepEqual((await service(store).list(owner)).setup, { needed: true });
+  assert.equal('setup' in await service(store).list(manager), false, 'a manager never sees it');
+  assert.equal('setup' in await service(store).list(owner, { username: 'Crew.One' }), false, 'one person\'s record carries no setup flag');
+  // What the two migrations write: staffRoles on the account and the profile, and the pay schedule.
+  store.accountRows.get('crew.one').account.staffRoles = ['crew'];
+  assert.deepEqual((await service(store).list(owner)).setup, { needed: true }, 'the profile still lacks its roles and pay schedule');
+  Object.assign(store.rows.get('crew.one').data, { staffRoles: ['crew'], payRates: [{ effectiveFrom: '2000-01-01', hourlyRate: 21, payType: 'hourly', overtimeMultiplier: 1.5 }] });
+  assert.deepEqual((await service(store).list(owner)).setup, { needed: false });
+  // Configured Hub users are skipped by the migration, so their profiles never hold the banner up.
+  store.rows.set(owner.user.toLowerCase(), { documentId: 'doc_owner', updateTime: 'rev-x', data: { id: owner.user.toLowerCase(), username: owner.user, hourlyRate: 30 } });
+  assert.deepEqual((await service(store).list(owner)).setup, { needed: false });
+  // An applicant the directory does not list (pending, or rejected) never holds it up either, account or profile.
+  store.accountRows.set('applicant.one', { account: account('Applicant.One', { status: 'pending' }), version: 'rev-a' });
+  store.rows.set('applicant.one', { documentId: 'doc_applicant', updateTime: 'rev-b', data: { id: 'applicant.one', username: 'Applicant.One', hourlyRate: 19 } });
+  assert.deepEqual((await service(store).list(owner)).setup, { needed: false }, 'only the people the directory lists count');
+  // A record the migration already marked is done, as the migration itself counts it, whatever its shape.
+  store.accountRows.set('crew.two', { account: account('Crew.Two', { migrations: ['employee-account-staff-roles-v1'] }), version: 'rev-c' });
+  store.rows.set('crew.two', { documentId: 'doc_crew_two', updateTime: 'rev-d', data: { id: 'crew.two', username: 'Crew.Two', hourlyRate: 22, staffRoles: ['crew'], migrations: ['staff-profile-pay-roles-v1'] } });
+  assert.deepEqual((await service(store).list(owner)).setup, { needed: false }, 'a marked profile without payRates is not counted again');
+  delete store.rows.get('crew.two').data.migrations;
+  assert.deepEqual((await service(store).list(owner)).setup, { needed: true }, 'the same profile unmarked still has work');
+});
