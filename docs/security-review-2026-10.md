@@ -32,7 +32,15 @@ Each finding below was reproduced by a script run against the real modules, with
 **Should the repository be private? Yes, make it private now.** Here is what the switch affects:
 
 - **Cloudflare Pages and Vercel:** both deploy from private repositories through their GitHub apps; no change is needed.
-- **GitHub Actions:** private repositories on the free plan get 2,000 minutes a month. This CI uses about 4 to 5 runner-minutes per push (two jobs of about 2 minutes each). Watch usage, or cut the shifted-clock job down to pushes to `main`.
+- **GitHub Actions:** this is the real cost of going private.
+  - Private repositories on the free plan get 2,000 Linux minutes a month. Every workflow here runs on `ubuntu-latest`, so there is no macOS multiplier.
+  - PR #151 ran 12 jobs on each push: the root suite, the shifted clock, browser, devices, lighthouse, WebKit, database-and-platform, the emulator and the bundle. With GitHub rounding each job up to the minute, that is about **46 billed minutes per push**, and a merge to `main` runs most of it again.
+  - At this repository's pace (526 commits reached `main` in the last 30 days), 2,000 minutes lasts roughly 40 pushes. Expect to go past it.
+  - Options:
+    1. Upgrade to GitHub Pro (3,000 minutes) or pay for overage at GitHub's per-minute Linux rate. Turn on a spending limit either way.
+    2. Run the heavy jobs (browser, devices, lighthouse) only on pushes to `main` or with a PR label.
+    3. Cancel superseded PR runs, which the root workflow already does.
+  - Weigh that cost against keeping the code and its history public; the security case favours private.
 - **Claude and Codex GitHub apps:** they keep working on a private repository as long as the app is installed on it.
 
 Going private stops new exposure. It does **not** take back what was already cloned or indexed, so C-01 and H-01 still need the rotation steps below.
