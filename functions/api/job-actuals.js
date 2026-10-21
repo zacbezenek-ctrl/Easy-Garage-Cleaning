@@ -1,0 +1,76 @@
+/** Job actuals (owner report): every completed job in the last 90 Denver days with billed versus actual man-hours,
+ * truck loads, goods at retail, commission by channel and an estimated margin. Rules: functions/_lib/job-actuals.js;
+ * cost settings: functions/_lib/job-actuals-settings.js. Session cookie: business accounts read; only the owner saves
+ * the cost settings. Hub > Job actuals (employee-job-actuals.js) shows it.
+ * GET /api/job-actuals => {ok, window, rates, totals:{last30,last90}, rows, settings:{...,revision,complete,missing},
+ *   canEdit, sources:{timecards:'ok'|'unavailable'}, laborCoverage}. Labor is costed at the flat loaded wage, never an
+ *   employee's own rate, so the report shows hours and dollars without revealing anyone's pay.
+ * POST {action:'job_actuals.settings.set', requestId, expectedRevision, settings} (owner) => {ok, settings, requestId, replayed}.
+ * Errors: {ok:false, code, error}; 400, 401, 403, 409 revision/idempotency, 413, 415, 503 retry the same request. */
+import { getHubSession, isHubOwner } from '../_lib/hub-session.js';
+import { dispatchStorage } from '../_lib/dispatch-storage.js';
+import { createKnockStore } from '../_lib/knock-store.js';
+import { directSalesFor } from '../_lib/knock-setters.js';
+import { MONEY_JOB_FIELDS } from '../_lib/money-storage.js';
+import { hubEligibilityFields } from '../_lib/funnel-definitions.js';
+import { denverWorkDate, overtimePolicy } from '../_lib/timesheet-week.js';
+import { addDays } from '../_lib/dispatch-time.js';
+import { computeJobLaborCost } from '../_lib/job-labor-cost.js';
+import { buildJobActuals, jobActualsWindow } from '../_lib/job-actuals.js';
+import { jobActualsSettingsStorage, mutateJobActualsSettings, readJobActualsSettings, requireJobActualsOwner, requireJobActualsViewer } from '../_lib/job-actuals-settings.js';
+import { readJobCostingTimecards } from './job-costing.js';
+
+const LIMIT = 8000;
+const ID = /^[A-Za-z0-9_-]{1,180}$/;
+export const JOB_ACTUALS_FIELDS = Object.freeze([...new Set([...MONEY_JOB_FIELDS, ...hubEligibilityFields(), 'sourceWalkthroughId', 'jobInstructions.laborManHours',
+  'compositeQuote.breakdown.labor.manHours', 'compositeQuote.breakdown.lines', 'fieldExecution.completion.crewOnSite', 'fieldExecution.completion.truckLoads'])]);
+const reply = (status, body) => Response.json(body, { status, headers: { 'Cache-Control': 'private, no-store', 'X-Content-Type-Options': 'nosniff' } });
+function sameOrigin(request) {
+  if (request.headers.get('Sec-Fetch-Site') === 'cross-site') return false;
+  const source = request.headers.get('Origin') || request.headers.get('Referer');
+  if (!source) return true; // SameSite=Strict signed cookie remains required.
+  try { return new URL(source).origin === new URL(request.url).origin; } catch { return false; }
+}
+function errorResponse(error) {
+  if (/^job_actuals_/.test(error?.code || '')) return reply(error.status || 503, { ok: false, code: error.code, error: error.message, ...(error.details ? { details: error.details } : {}) });
+  return reply(503, { ok: false, code: 'job_actuals_unavailable', error: 'Job actuals could not be loaded. Retry in a moment.' });
+}
+const settingsView = (settings, session) => ({ settings, canEdit: isHubOwner(session) });
+
+export function jobActualsHandlers({ session = getHubSession, dispatch = dispatchStorage, knock = createKnockStore, timecards = readJobCostingTimecards, settingsStore = jobActualsSettingsStorage, now = () => new Date() } = {}) {
+  return {
+    async get({ request, env }) {
+      try {
+        const actor = await session(request, env); requireJobActualsViewer(actor);
+        if ([...new URL(request.url).searchParams.keys()].length) return reply(400, { ok: false, code: 'job_actuals_request_invalid', error: 'Job actuals take no query options.' });
+        const at = now(), asOf = at.toISOString(), window = jobActualsWindow(denverWorkDate(asOf));
+        const [jobs, settings] = await Promise.all([dispatch(env).datedJobs(window.start, addDays(window.end, -1), [...JOB_ACTUALS_FIELDS]), readJobActualsSettings(settingsStore(env))]);
+        // Timecards are the best actual-hours signal; when they cannot be read the crew lead's count still shows, flagged.
+        let labor = { jobs: [] }, timecardSource = 'ok';
+        try { labor = computeJobLaborCost({ timecards: await timecards(env), policy: overtimePolicy(env), start: window.start, end: window.end, laborCostHidden: true, now: asOf }); }
+        catch { timecardSource = 'unavailable'; }
+        const kstore = knock(env), walkthroughs = [...new Set(jobs.map(job => job.sourceWalkthroughId).filter(id => ID.test(String(id || ''))))];
+        const [setters, sales] = await Promise.all([walkthroughs.length ? kstore.getMany('knock_setters', walkthroughs) : new Map(), directSalesFor(kstore, jobs.map(job => job.id))]);
+        const report = buildJobActuals({ jobs, labor, settings, setterWalkthroughs: new Set([...setters.keys()].filter(id => setters.get(id))), doorSaleJobs: new Set(sales.map(sale => sale?.handoff?.job?.ref).filter(Boolean)), today: window.today, asOf });
+        return reply(200, { ...report, ...settingsView(settings, actor), sources: { timecards: timecardSource } });
+      } catch (error) { return errorResponse(error); }
+    },
+    async post({ request, env }) {
+      if (!sameOrigin(request)) return reply(403, { ok: false, code: 'job_actuals_origin_forbidden', error: 'Open Job actuals in the Employee Hub to save cost settings.' });
+      try {
+        const actor = await session(request, env); requireJobActualsOwner(actor);
+        if (request.headers.get('Content-Type')?.split(';')[0].trim().toLowerCase() !== 'application/json') return reply(415, { ok: false, code: 'job_actuals_json_required', error: 'Cost settings must be submitted as JSON.' });
+        if (Number(request.headers.get('Content-Length')) > LIMIT) return reply(413, { ok: false, code: 'job_actuals_request_too_large', error: 'The cost-settings request is too large.' });
+        const raw = await request.text();
+        if (new TextEncoder().encode(raw).byteLength > LIMIT) return reply(413, { ok: false, code: 'job_actuals_request_too_large', error: 'The cost-settings request is too large.' });
+        let input; try { input = JSON.parse(raw); } catch { return reply(400, { ok: false, code: 'job_actuals_json_invalid', error: 'The cost-settings request was incomplete. Reload and try again.' }); }
+        const result = await mutateJobActualsSettings(settingsStore(env), actor, input, now().toISOString());
+        return reply(200, { ok: true, ...settingsView(result.settings, actor), requestId: result.requestId, replayed: result.replayed });
+      } catch (error) { return errorResponse(error); }
+    },
+  };
+}
+
+const handlers = jobActualsHandlers();
+export const onRequestGet = handlers.get;
+export const onRequestPost = handlers.post;

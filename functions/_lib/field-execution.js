@@ -5,6 +5,7 @@ import { occupiedDays } from './dispatch-time.js';
 import { signedBriefJob, stripCrewMoney } from './crew-money.js';
 import { walkthroughCrewBrief } from './walkthrough-crew-brief.js';
 import { crewMaterialFields } from './job-materials.js';
+import { validCrewOnSite, validTruckLoads } from './job-actuals.js';
 
 export const fieldFailure = (message, status = 400, code = 'FIELD_REQUEST_INVALID', details = {}) => Object.assign(new Error(message), { status, code, ...details });
 export const fieldId = value => typeof value === 'string' && /^[A-Za-z0-9_-]{1,180}$/.test(value) && !/^(_egc_|secure_)/.test(value);
@@ -240,9 +241,13 @@ export function fieldCommand(job, actor, input, now = new Date().toISOString()) 
       if (actor.capabilities && actor.capabilities.complete !== true) throw fieldFailure('Only the crew lead or a manager can complete this job. Your checklist, photos and notes stay saved for them.', 403, 'FIELD_LEAD_REQUIRED');
       if (typeof input.hasIssues !== 'boolean') throw fieldFailure('Indicate whether this job has an issue requiring follow-up.');
       if (typeof input.notes !== 'string' || input.notes.length > 4000 || input.issueNotes !== undefined && (typeof input.issueNotes !== 'string' || input.issueNotes.length > 4000)) throw fieldFailure('Completion notes and issue details must each be no longer than 4,000 characters.');
+      // Job actuals (functions/_lib/job-actuals.js): the lead may confirm people × hours on site and the truck loads
+      // hauled. Both are optional; a value sent must be valid, and the hours are whole quarter hours.
+      if (input.crewOnSite !== undefined && input.crewOnSite !== null && !validCrewOnSite(input.crewOnSite)) throw fieldFailure('Enter the people on site (1 to 20) and the hours on site in quarter hours (up to 24), or leave both blank.');
+      if (input.truckLoads !== undefined && input.truckLoads !== null && !validTruckLoads(input.truckLoads)) throw fieldFailure('Enter the truck loads hauled as a whole number from 0 to 20, or leave it blank.');
       const missing = fieldCompletionMissing(job, input);
       if (missing.length) throw fieldFailure('Finish the required closeout items.', 409, 'FIELD_COMPLETION_INCOMPLETE', { missing });
-      const completion = { completedAt: now, actorId, actorName, notes: fieldText(input.notes), hasIssues: input.hasIssues, issueNotes: fieldText(input.issueNotes), evidencePhotoIds: fieldPhotos(job).map(photo => photo.id) };
+      const completion = { completedAt: now, actorId, actorName, notes: fieldText(input.notes), hasIssues: input.hasIssues, issueNotes: fieldText(input.issueNotes), evidencePhotoIds: fieldPhotos(job).map(photo => photo.id), ...(input.crewOnSite ? { crewOnSite: { people: input.crewOnSite.people, hours: input.crewOnSite.hours } } : {}), ...(Number.isSafeInteger(input.truckLoads) ? { truckLoads: input.truckLoads } : {}) };
       const checklist = fieldChecklist(job);
       const progress = stage => { const items = checklist.filter(item => stage === 'pre' ? ['departure', 'arrival'].includes(item.stage) : ['work', 'finish'].includes(item.stage)); return { completedAt: now, completedBy: actorId, completedCount: items.filter(item => item.completed).length, totalCount: items.length, standardItems: items }; };
       patch = { status: 'completed', pipelineStatus: 'completed', completedAt: now, completedBy: actorId, closeoutNotes: completion.notes, fieldExecution: { ...state, activity: 'completed', completion, ...(input.hasIssues ? { attention: { ...stamp, requestId: input.requestId, visibility: 'crew', reason: completion.issueNotes, status: 'open' } } : {}) }, postJobProgress: progress('post'), postJobChecklist: progress('post'), preJobProgress: job.preJobProgress || progress('pre'), preJobChecklist: { ...(job.preJobChecklist || progress('pre')) }, afterPhotoCount: fieldPhotos(job).filter(photo => photo.category === 'after').length, completionEvidence: { kind: 'verified_field_execution', actorId, recordedAt: now, requestId: input.requestId, photoIds: completion.evidencePhotoIds } };

@@ -1,0 +1,149 @@
+"""Job actuals (owner) in a real browser at 1280 px and 390 px. tests/browser/job_actuals_fixture.mjs serves the screen
+on its own page and runs the REAL functions/api/job-actuals.js over synthetic completed jobs and timecards, so every
+figure on screen is the server's arithmetic: billed versus actual man-hours, loads, goods at retail, commission by
+channel and the margin, which reads "upper bound" until the owner fills the five cost settings. Also: the owner saves
+settings in whole cents and basis points, a manager sees them read-only, the CSV export, and the phone layout (no
+sideways scroll, 44 px targets, 16 px inputs). Screenshots land in test-results/."""
+import csv, io, json, os, pathlib, re, subprocess, unittest, urllib.request
+from playwright.sync_api import sync_playwright, expect
+
+ROOT = pathlib.Path(__file__).resolve().parents[2]
+RESULTS = ROOT / 'test-results'
+
+
+class JobActualsScreenTests(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        RESULTS.mkdir(exist_ok=True)
+        cls.fixture = subprocess.Popen(['node', str(ROOT / 'tests' / 'browser' / 'job_actuals_fixture.mjs')], cwd=ROOT, stdin=subprocess.PIPE, stdout=subprocess.PIPE, text=True)
+        cls.url = 'http://127.0.0.1:%d' % json.loads(cls.fixture.stdout.readline())['port']
+        cls.pw = sync_playwright().start()
+        options = {'executable_path': os.environ['PLAYWRIGHT_CHROMIUM_EXECUTABLE']} if os.environ.get('PLAYWRIGHT_CHROMIUM_EXECUTABLE') else {}
+        cls.browser = cls.pw.chromium.launch(headless=True, args=['--no-sandbox'], **options)
+
+    @classmethod
+    def tearDownClass(cls):
+        cls.browser.close(); cls.pw.stop(); cls.fixture.stdin.close(); cls.fixture.wait(10); cls.fixture.stdout.close()
+
+    def setUp(self):
+        self.errors = []; self.context = None
+        self.control(reset=True, who='owner')
+
+    def tearDown(self):
+        if self.context: self.context.close()
+        self.assertEqual(self.errors, [])
+
+    def control(self, **body):
+        request = urllib.request.Request(self.url + '/__control', data=json.dumps(body).encode(), headers={'Content-Type': 'application/json'}, method='POST')
+        urllib.request.urlopen(request).read()
+
+    def open(self, width, height=900, mobile=False):
+        self.context = self.browser.new_context(viewport={'width': width, 'height': height}, is_mobile=mobile, has_touch=mobile, accept_downloads=True, timezone_id='Asia/Tokyo')
+        page = self.context.new_page(); page.set_default_timeout(5000)
+        page.on('pageerror', lambda error: self.errors.append(str(error)))
+        page.route('**/*', lambda route: route.continue_() if route.request.url.startswith(self.url) else route.abort())
+        page.goto(self.url + '/')
+        expect(page.get_by_role('heading', name='Job actuals')).to_be_visible()
+        expect(page.locator('tr[data-job]')).to_have_count(4)
+        return page
+
+    def row(self, page, job):
+        return page.locator(f'tr[data-job="{job}"]')
+
+    def assert_layout(self, page, phone):
+        self.assertFalse(page.evaluate('document.documentElement.scrollWidth > innerWidth'), 'the page never scrolls sideways')
+        self.assertIsNone(re.search(r'\bnull\b|\bundefined\b|NaN', page.locator('#host').inner_text()))
+        if phone:
+            small = page.evaluate("""[...document.querySelectorAll('#host button, #host input')].filter(el => el.offsetParent).filter(el => el.getBoundingClientRect().height < 44).map(el => el.outerHTML.slice(0, 80))""")
+            self.assertEqual(small, [])
+            fonts = page.evaluate("""[...document.querySelectorAll('#host input')].map(el => parseFloat(getComputedStyle(el).fontSize))""")
+            self.assertTrue(all(size >= 16 for size in fonts), fonts)
+
+    def test_desktop_1280_shows_billed_versus_actual_and_an_upper_bound_margin(self):
+        page = self.open(1280)
+        expect(page.get_by_text('Margins are an upper bound: 5 of 5 cost settings are blank.')).to_be_visible()
+        two_car = self.row(page, 'job-two-car')
+        # 2 crew × 9 h on timecards = 18 man-hours against 8 billed; 3 quoted loads; $300.00 of goods at retail.
+        expect(two_car.locator('td[data-label="Billed h"]')).to_have_text('8.00')
+        expect(two_car.locator('td[data-label="Actual h"]')).to_have_text('18.00Timecards')
+        expect(two_car.locator('td[data-label="Variance"]')).to_have_text('+10.00 (+125.0%)')
+        expect(two_car.locator('td[data-label="Loads"]')).to_have_text('3Quoted')
+        expect(two_car.locator('td[data-label="Goods (retail)"]')).to_have_text('$300.00')
+        # Setter 13% + estimator 7% of $4,214.00: $547.82 + $294.98.
+        expect(two_car.locator('td[data-label="Commission"]')).to_contain_text('$842.80')
+        expect(two_car).to_contain_text('Setter 13% + estimator 7%')
+        # Revenue $4,214.00 − 18 h × $27.81 ($500.58) − $300.00 goods = $3,413.42, 81.0%, an upper bound.
+        expect(two_car.locator('td[data-label="Gross margin"]')).to_have_text('$3,413.42 · 81.0% ≤')
+        expect(two_car.locator('td[data-label="Contribution"]')).to_have_text('$2,570.62')
+        one_car = self.row(page, 'job-one-car')
+        expect(one_car.locator('td[data-label="Actual h"]')).to_have_text('7.00Crew lead')
+        expect(one_car.locator('td[data-label="Loads"]')).to_have_text('1Crew lead')
+        junk = self.row(page, 'job-junk')
+        expect(junk.locator('td[data-label="Billed h"]')).to_have_text('Junk only')
+        expect(junk.locator('td[data-label="Actual h"]')).to_have_text('—Not recorded')
+        expect(junk.locator('td[data-label="Gross margin"]')).to_have_text('—')
+        expect(junk.locator('td[data-label="Commission"]')).to_have_text('$0.00')
+        overrun = self.row(page, 'job-overrun')
+        expect(overrun).to_have_class('over')
+        expect(overrun.locator('td[data-label="Gross margin"]')).to_contain_text('-$234.30')
+        last30 = page.get_by_role('region', name='Last 30 days')
+        expect(last30).to_contain_text('$5,598.00'); expect(last30).to_contain_text('2 completed jobs')
+        expect(last30).to_contain_text('Gross margin (upper bound)')
+        expect(page.get_by_role('region', name='Last 90 days')).to_contain_text('4 completed jobs')
+        self.assert_layout(page, phone=False)
+        page.screenshot(path=str(RESULTS / 'job-actuals-1280.png'), full_page=True)
+
+    def test_phone_390_cards_fit_and_the_owner_fills_the_cost_settings(self):
+        page = self.open(390, 844, mobile=True)
+        self.assert_layout(page, phone=True)
+        page.screenshot(path=str(RESULTS / 'job-actuals-390.png'), full_page=True)
+        settings = page.get_by_role('region', name='Cost settings')
+        save = settings.get_by_role('button', name='Save cost settings')
+        expect(save).to_be_disabled()
+        settings.get_by_label('Payroll tax (percent)').fill('7.655')
+        expect(settings.get_by_label('Payroll tax (percent)')).to_have_attribute('aria-invalid', 'true'); expect(save).to_be_disabled()
+        settings.get_by_label('Payroll tax (percent)').fill('7.65')
+        settings.get_by_label('Other burden per man-hour (dollars)').fill('1.50')
+        settings.get_by_label('Dump fee per truck load (dollars)').fill('65')
+        settings.get_by_label('Truck cost per job (dollars)').fill('$40.00')
+        settings.get_by_label('Tax on goods purchases (percent)').fill('7.55')
+        expect(save).to_be_enabled()
+        with page.expect_request(lambda request: request.method == 'POST') as sent:
+            save.click()
+        body = sent.value.post_data_json
+        self.assertEqual(body['action'], 'job_actuals.settings.set'); self.assertIsNone(body['expectedRevision'])
+        self.assertEqual(body['settings'], {'payrollTaxBp': 765, 'burdenCentsPerManHour': 150, 'dumpFeeCentsPerLoad': 6500, 'truckCentsPerJob': 4000, 'goodsTaxBp': 755})
+        expect(page.get_by_role('status').filter(has_text='Cost settings saved')).to_be_visible()
+        expect(page.get_by_text('Margins are an upper bound')).to_have_count(0)
+        two_car = self.row(page, 'job-two-car')
+        # 18 h × $31.3755 = $564.759 → $564.76; goods $300 + 7.55% = $322.65; 3 loads × $65 = $195; truck $40: $4,214.00 − $1,122.41 = $3,091.59.
+        expect(two_car.locator('td[data-label="Gross margin"]')).to_have_text('$3,091.59 · 73.4%')
+        self.assert_layout(page, phone=True)
+        page.screenshot(path=str(RESULTS / 'job-actuals-390-settings.png'), full_page=True)
+
+    def test_a_manager_sees_the_settings_read_only(self):
+        self.control(who='manager')
+        page = self.open(390, 844, mobile=True)
+        settings = page.get_by_role('region', name='Cost settings')
+        expect(settings).to_contain_text('Only the owner can change them.')
+        expect(settings.locator('input')).to_have_count(0)
+        expect(settings).to_contain_text('Not set')
+        self.assert_layout(page, phone=True)
+
+    def test_csv_export_has_a_row_per_job_with_plain_numbers(self):
+        page = self.open(1280)
+        with page.expect_download() as download:
+            page.get_by_role('button', name='Export CSV').click()
+        self.assertEqual(download.value.suggested_filename, 'egc-job-actuals-2026-10-21.csv')
+        rows = list(csv.reader(io.StringIO(pathlib.Path(download.value.path()).read_text())))
+        self.assertEqual(rows[0][:6], ['Job ID', 'Date', 'Customer', 'Revenue', 'Billed man-hours', 'Actual man-hours'])
+        self.assertEqual([row[0] for row in rows[1:]], ['job-two-car', 'job-one-car', 'job-junk', 'job-overrun'])
+        overrun = dict(zip(rows[0], rows[4]))
+        self.assertEqual(overrun['Gross margin'], '-234.30', 'a negative margin is a number, not a guarded text cell')
+        self.assertEqual(overrun['Upper bound'], 'yes')
+        two_car = dict(zip(rows[0], rows[1]))
+        self.assertEqual([two_car['Revenue'], two_car['Billed man-hours'], two_car['Actual man-hours'], two_car['Commission']], ['4214.00', '8', '18', '842.80'])
+
+
+if __name__ == '__main__':
+    unittest.main(verbosity=2)

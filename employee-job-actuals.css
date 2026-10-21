@@ -1,0 +1,46 @@
+/* Job actuals screen (owner). Scoped to .egc-job-actuals; colours come from the Hub kit tokens. */
+.egc-job-actuals{padding-bottom:var(--hub-space-4)}
+.egc-job-actuals h2{font-size:22px;margin:0 0 var(--hub-space-3)}
+.egc-job-actuals .ja-muted{margin:0;color:var(--hub-muted);font-size:14px;line-height:1.45}
+.egc-job-actuals .ja-totals-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:var(--hub-space-3)}
+.egc-job-actuals .ja-stats{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:var(--hub-space-3)}
+.egc-job-actuals .ja-stat{display:grid;gap:2px;min-width:0;overflow-wrap:anywhere}
+.egc-job-actuals .ja-stat-label{font:700 12px/1.3 var(--hub-font);color:var(--hub-muted);text-transform:uppercase;letter-spacing:.04em}
+.egc-job-actuals .ja-stat strong{font-size:20px;line-height:1.25}
+.egc-job-actuals .ja-stat small{color:var(--hub-muted);font-size:13px;line-height:1.4}
+.egc-job-actuals .ja-table{width:100%;border-collapse:collapse;font-size:14px}
+.egc-job-actuals .ja-table :is(th,td){padding:10px 8px;border-top:1px solid var(--hub-line);text-align:left;vertical-align:top}
+.egc-job-actuals .ja-table thead th{border-top:0;font:700 12px/1.3 var(--hub-font);color:var(--hub-muted);white-space:nowrap}
+.egc-job-actuals .ja-table .num{text-align:right;white-space:nowrap}
+.egc-job-actuals .ja-table small{display:block;color:var(--hub-muted);font-size:12px;font-weight:500}
+.egc-job-actuals .ja-table tbody th{position:static;font:700 14px/1.4 var(--hub-font);letter-spacing:0;text-transform:none;color:var(--hub-ink);background:none;min-width:140px}
+.egc-job-actuals .ja-table tbody th a{color:var(--hub-ink)}
+.egc-job-actuals .ja-table tr.over .ja-variance{color:var(--hub-red);font-weight:700}
+.egc-job-actuals .ja-setting-list{display:grid;gap:var(--hub-space-3);margin:var(--hub-space-3) 0}
+.egc-job-actuals .ja-setting{display:grid;grid-template-columns:minmax(0,1fr) 170px;gap:var(--hub-space-3);align-items:center}
+.egc-job-actuals .ja-setting > span:first-child{font-weight:700;min-width:0}
+.egc-job-actuals .ja-setting small{display:block;color:var(--hub-muted);font-size:13px;font-weight:500}
+.egc-job-actuals .ja-setting > strong{justify-self:end}
+.egc-job-actuals .ja-input{display:flex;align-items:center;gap:6px;min-width:0}
+.egc-job-actuals .ja-input span{font-weight:700;color:var(--hub-muted)}
+.egc-job-actuals .ja-input input{width:100%;min-width:0;min-height:var(--hub-tap);padding:10px;font-size:16px;border:1px solid var(--hub-line);border-radius:var(--hub-radius);background:#fff;color:var(--hub-ink);text-align:right}
+.egc-job-actuals .ja-setting.bad input{border-color:var(--hub-red);background:#fff7f7}
+.egc-job-actuals .ja-save{display:flex;flex-wrap:wrap;align-items:center;gap:var(--hub-space-3)}
+.egc-job-actuals .ja-feedback{margin:var(--hub-space-3) 0 0;font-weight:600}
+.egc-job-actuals .ja-feedback.error{color:var(--hub-red)}
+@media (max-width:760px){
+  .egc-job-actuals .ja-totals-grid{grid-template-columns:minmax(0,1fr)}
+  .egc-job-actuals .ja-setting{grid-template-columns:minmax(0,1fr) 128px}
+  /* Phones: each job is a card of labelled figures instead of an 11-column table. */
+  .egc-job-actuals .ja-table-scroll{overflow:visible;border:0;background:none}
+  .egc-job-actuals .ja-table{min-width:0}
+  .egc-job-actuals .ja-table thead{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0)}
+  .egc-job-actuals .ja-table,.egc-job-actuals .ja-table tbody,.egc-job-actuals .ja-table tr{display:block;width:100%}
+  .egc-job-actuals .ja-table tr{border-top:1px solid var(--hub-line);padding:10px 0}
+  .egc-job-actuals .ja-table tbody tr:first-child{border-top:0}
+  .egc-job-actuals .ja-table tbody :is(th,td){display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1.3fr);gap:8px;border-top:0;padding:4px 0;border-bottom:0;text-align:right;white-space:normal;overflow-wrap:anywhere}
+  .egc-job-actuals .ja-table tbody :is(th,td)::before{content:attr(data-label);text-align:left;font:700 12px/1.6 var(--hub-font);color:var(--hub-muted)}
+  .egc-job-actuals .ja-table tbody th{min-width:0;font-size:16px}
+  .egc-job-actuals .ja-table tbody th small{font-size:13px}
+  .egc-job-actuals .ja-save .hub-btn{flex:1 1 auto;width:100%}
+}

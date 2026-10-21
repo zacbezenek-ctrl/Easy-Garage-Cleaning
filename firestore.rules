@@ -487,6 +487,16 @@ service cloud.firestore {
       allow read, write: if false;
     }
 
+    // Job actuals: the owner's cost settings (payroll tax, burden, dump fee,
+    // truck cost, goods tax) and their save receipts. Only the server reads or
+    // writes them, via /api/job-actuals.
+    match /jobActualsSettings/{documentId} {
+      allow read, write: if false;
+    }
+    match /jobActualsSettingsOperations/{documentId} {
+      allow read, write: if false;
+    }
+
     // JOB-COST-PRIVACY: owner-entered job labor dollars and their save
     // receipts. Only the server reads or writes them, for a viewer who sees
     // labor dollars, via /api/job-labor-costs and /api/money.
