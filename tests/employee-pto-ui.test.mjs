@@ -294,6 +294,12 @@ test('the actions offered for each request mirror the server rules', () => {
   assert.deepEqual(offered(manager), { pending: ['approve', 'deny', 'cancel'], approvedFuture: ['cancel', 'pay'], approvedToday: ['end', 'pay'], started: ['end', 'pay'], endedEarly: ['pay'], over: ['pay'], shift: ['cancel'], denied: [], cancelled: [], legacy: ['approve', 'deny', 'cancel'], badApproved: ['pay'], other: ['approve', 'deny', 'cancel'] });
   assert.deepEqual(offered(crew), { pending: ['cancel'], approvedFuture: ['cancel'], approvedToday: [], started: [], endedEarly: [], over: [], shift: [], denied: [], cancelled: [], legacy: ['cancel'], badApproved: [], other: [] });
   assert.deepEqual(plain(pto.actionsFor(rows.pending, { manager: true, today: 'soon' })), []);
+  // NO-SELF-APPROVAL: a manager's own request offers no approve, deny or pay; the owner's account still decides its own.
+  const selfManager = { manager: true, today: '2026-09-24', owned: mine };
+  assert.deepEqual(plain(pto.actionsFor(rows.pending, selfManager)), ['cancel']);
+  assert.deepEqual(plain(pto.actionsFor(rows.started, selfManager)), ['end']);
+  assert.deepEqual(plain(pto.actionsFor(rows.other, selfManager)), ['approve', 'deny', 'cancel']);
+  assert.deepEqual(plain(pto.actionsFor(rows.pending, { ...selfManager, ownerAccount: true })), ['approve', 'deny', 'cancel']);
 });
 
 test('the board renders requests with DOM nodes, disables actions while a change is in flight, and offers the unconfirmed retry', async () => {

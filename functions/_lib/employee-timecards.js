@@ -1,5 +1,6 @@
 import { NO_CLOCK_IN_FIX, applyEmployeeJobAction, finishEmployeeJobTime, initializeJobTracking, jobActionSatisfied } from './employee-job-time.js';
 import { can, capabilityMode } from './staff-roles.js';
+import { isHubOwner } from './hub-session.js';
 import { canSetPay, payChangeRefused } from './pay-visibility.js';
 
 const equal = (left, right) => JSON.stringify(left) === JSON.stringify(right);
@@ -200,6 +201,7 @@ export function correctTimecard({ session, manager, existing, incoming, now, env
   if (!manager || !can(session, 'time.approve', env)) throw correctionError('Only a manager or the owner can correct a timecard.', 403);
   if (!timecardCorrectionsEnabled(env)) throw correctionError('Timecard corrections are switched off.', 403, 'EMPLOYEE_TIMECARD_CORRECTIONS_OFF');
   if (!existing) throw correctionError('This timecard could not be found. Refresh Time approvals.', 404);
+  if (selfApproval(existing, session)) throw selfApprovalRefused();
   const meta = incoming.correction;
   if (!meta || typeof meta !== 'object' || Array.isArray(meta) || Object.keys(meta).some(key => !['requestId', 'kind', 'reason', 'expectedUpdatedAt'].includes(key)) || !uuid(meta.requestId) || !Object.hasOwn(CORRECTION_KEYS, meta.kind) || typeof meta.expectedUpdatedAt !== 'string') throw correctionError('Send a correction with its kind, a unique request ID and the timecard version you corrected.');
   const kind = meta.kind, requestId = meta.requestId.toLowerCase(), reason = text(meta.reason, 500);
@@ -288,6 +290,11 @@ const clockInSave = incoming => incoming.status === 'active' && !incoming.clockO
 const clockOutSave = incoming => Boolean(incoming.clockOutAt) && incoming.status === 'submitted' && Object.keys(incoming).every(key => CLOCK_OUT_KEYS.includes(key));
 const breakSave = incoming => Array.isArray(incoming.breaks) && Object.keys(incoming).every(key => ['breaks', 'updatedAt', 'deviceCapturedAt'].includes(key));
 const sameEmployee = (entry, session) => text(entry?.employee).toLowerCase() === text(session?.user).toLowerCase();
+// NO-SELF-APPROVAL: whoever approves time never approves, rejects, reviews or corrects their own timecard (a manager or
+// team lead who is paid by the hour would otherwise set their own pay). Someone else does it: another manager or the
+// owner. The configured owner is the one exception, as nobody above them approves their time.
+const selfApproval = (entry, session) => sameEmployee(entry, session) && !isHubOwner(session);
+const selfApprovalRefused = () => Object.assign(timecardError('Someone else approves and corrects your own timecard: another manager or the owner.', 403), { code: 'EMPLOYEE_TIMECARD_SELF_APPROVAL' });
 
 // A manager's own queued break (queuedClock): the time the Hub showed for it is kept, as for every manager save, and it
 // is recorded as an employee's is, once (a replay is a no-op by its request ID) and only on an open shift. On a closed
@@ -370,6 +377,8 @@ export function authorizeTimecard({ session, manager, id, incoming, existing, ho
     if (changedTime && existing.approvalStatus === 'approved' && incoming.approvalStatus !== 'approved') {
       next.approvalStatus = 'pending'; next.approvedAt = ''; next.approvedBy = '';
     }
+    if (['approved', 'rejected'].includes(incoming.approvalStatus) && incoming.approvalStatus !== existing?.approvalStatus && selfApproval(next, session)) throw selfApprovalRefused();
+    if (incoming.deviceTimeReviewed === true && next.deviceTime && next.needsReview && selfApproval(next, session)) throw selfApprovalRefused();
     if (incoming.approvalStatus === 'approved') {
       if (!next.clockOutAt || activeTimecard(next)) throw timecardError('Only completed timecards can be approved.');
       if (timecardHours(next) <= 0) throw timecardError('Positive work hours are required before approval.');
