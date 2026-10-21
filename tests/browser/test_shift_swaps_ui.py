@@ -61,6 +61,7 @@ class ShiftSwapWidgetTests(unittest.TestCase):
         self.control(who='manager'); page = self.open(1280); review = page.locator('.ss-review')
         expect(review).to_contain_text('Shift swaps to approve (1)')
         expect(review).to_contain_text('Crew One → Crew Three')
+        expect(review).to_contain_text('Crew lead after the swap: Crew Three')
         review.get_by_role('button', name='Approve').click()
         expect(page.locator('.ss-review')).to_have_count(0)
         self.assertEqual(self.job(), {'assignedCrew': ['crew3', 'crew2'], 'crewLead': 'crew3'})
