@@ -470,7 +470,9 @@ function walkthroughHold(previous, actor, requestId, now) {
 const builderRequired = () => Object.assign(new Error('With the quote builder on, a walkthrough-priced quote is sent only after it is built in the quote builder from the owner\'s pricing menu. The job stays booked: build the quote in the builder and have the customer sign it, or ask the owner to release these prices.'),
   { code: 'quote_draft_builder_required', status: 409, details: { unapproved: [{ ...WALKTHROUGH_PRICED, unitCents: null, reason: 'Its lines were priced from the walkthrough tables, which the owner has not approved for the quote builder. Rebuild it in the quote builder (removal, then shelving, then extra storage) and sign that quote, or the owner releases this signed price.' }] } });
 // The builder's send gate for a held job: a builder quote passes when every price on its signed breakdown is
-// owner-approved now, at exactly the signed amount (compositeApproval, else approvalRefusal: 409
+// owner-approved now: a line approved at signing keeps its signed amount while its item is still approved, a junk load
+// still a draft then is accepted at its signed amount once approved, and any other line needs exactly its signed
+// amount approved (compositeApproval signedPending, else approvalRefusal: 409
 // quote_draft_composite_prices_unapproved); a walkthrough-priced one never passes it (409 quote_draft_builder_required)
 // unless the owner, who approves prices, releases it (owner).
 // The labor on a signed breakdown keeps the rate the customer signed (approved then: the owner's own rate), so a rate
@@ -478,7 +480,7 @@ const builderRequired = () => Object.assign(new Error('With the quote builder on
 // earlier rules: its signed total has no labor, and goods in it still wait for the owner's installation answer.
 function releaseGate(job, pricing, { owner = false } = {}) {
   if (plain(job.compositeQuote)) {
-    const approval = compositeApproval(job.compositeQuote.breakdown, pricing, { signed: true });
+    const approval = compositeApproval(job.compositeQuote.breakdown, pricing, { signed: true, signedPending: Array.isArray(job.compositeQuote.approval?.pending) ? job.compositeQuote.approval.pending : null });
     if (!approval.ready) throw approvalRefusal(approval);
     return 'approved_prices';
   }

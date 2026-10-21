@@ -98,6 +98,9 @@
   // INSTALLATION_ID, and a junk-only quote on a walkthrough that records garage work): never a wait for the owner's
   // approval alone.
   const JUNK_GARAGE_WORK = 'junk-garage-work', ESTIMATOR_FIXES = new Set(['labor', 'goods-installation', JUNK_GARAGE_WORK]);
+  // A held row the estimator fixes by saving again: the Labor line, installation time, junk-only garage work, or a price
+  // the owner has approved at another amount since the quote was saved (resave, e.g. the $1,000 truck).
+  const estimatorFix = row => ESTIMATOR_FIXES.has(row?.id) || row?.resave === true;
   const laborLimits = menu => ({ min: Number(menu?.labor?.minManHours) || LABOR_LIMITS.min, max: Number(menu?.labor?.maxManHours) || LABOR_LIMITS.max });
   const validManHours = (value, menu) => typeof value === 'number' && Number.isFinite(value) && Math.abs(value * 4 - Math.round(value * 4)) < 1e-9 && value >= laborLimits(menu).min && value <= laborLimits(menu).max;
   const hoursText = hours => `${Number(Number(hours).toFixed(2))} man-hour${hours === 1 ? '' : 's'}`;
@@ -474,10 +477,10 @@
         // (its labor rate changed, it has no Labor line, or its man-hours leave out installing some goods), (builder
         // on) a walkthrough-priced quote must be rebuilt in the builder first, or its payment dates wait for a job date.
         const rebuild = S.heldKind === 'builder', resave = S.heldKind === 'resave', reasons = h('ul', { class: 'qb-reasons' }, (S.held || []).map(row => h('li', {}, String(row?.reason || row?.name || ''))));
-        const editable = S.mode === 'builder' && S.savedBuild && (S.held || []).some(row => ESTIMATOR_FIXES.has(row?.id));
+        const editable = S.mode === 'builder' && S.savedBuild && (S.held || []).some(estimatorFix);
         children.push(h('p', { class: 'qd-done' }, S.status), S.heldKind === 'date' ? datesNotice() : rebuild
           ? h('div', { class: 'qd-notice', role: 'status' }, h('p', {}, 'Sending is blocked: with the quote builder on, this quote must be built in the builder before it is sent.'), reasons, h('p', {}, 'The saved draft is kept. Build the quote in the builder (removal, then shelving, then extra storage) and send that one.'))
-          : resave ? h('div', { class: 'qd-notice', role: 'status' }, h('p', {}, 'Sending is blocked until you edit this quote and save it again:'), reasons, h('p', {}, (S.held || []).some(row => row?.id === JUNK_GARAGE_WORK) ? 'The saved draft is kept; no owner approval is needed for this.' : 'The saved draft is kept. Choose Edit quote, check the Labor line on the review step and save the quote again; no owner approval is needed for this.'))
+          : resave ? h('div', { class: 'qd-notice', role: 'status' }, h('p', {}, 'Sending is blocked until you edit this quote and save it again:'), reasons, h('p', {}, (S.held || []).some(row => row?.id === JUNK_GARAGE_WORK) ? 'The saved draft is kept; no owner approval is needed for this.' : (S.held || []).every(row => row?.resave === true) ? 'The saved draft is kept. Choose Edit quote and save the quote again to use the approved prices; no owner approval is needed for this.' : 'The saved draft is kept. Choose Edit quote, check the Labor line on the review step and save the quote again; no owner approval is needed for this.'))
             : h('div', { class: 'qd-notice', role: 'status' }, h('p', {}, editable ? 'Sending is blocked until the owner approves the draft prices below and you save the quote again:' : `Sending is blocked until the owner approves ${S.held.length === 1 ? 'this price' : `these ${S.held.length} prices`}:`), reasons, h('p', {}, `The owner approves draft prices in the Hub under Catalog & pricing.${editable ? ' The Labor or installation reason is yours to fix: choose Edit quote, check the man-hours and save the quote again.' : ''} The saved draft is kept: reopen this quote from the walkthrough and choose Send saved quote once they are approved.`)));
         body.replaceChildren(...children);
         const edit = () => { Object.assign(S, { step: 'removal', held: null, heldKind: '', status: '', error: '' }); render(); };
@@ -857,8 +860,8 @@
       } finally { if (generation === S.generation) { S.busy = false; render(); } }
     }
     // A send preview or send the server refused because the quote may not be sent yet: show why and keep the draft.
-    // A refusal whose every reason is the estimator's to fix (the Labor line, or installation the man-hours leave out) is
-    // a re-save, not a wait for the owner. Payment dates that wait for a job date (datesNotice) are neither.
+    // A refusal whose every reason is the estimator's to fix (the Labor line, installation the man-hours leave out, or a
+    // price the owner approved at another amount since the quote was saved) is a re-save, not a wait for the owner. Payment dates that wait for a job date (datesNotice) are neither.
     function held(error) {
       if (error?.code === 'quote_draft_payment_dates_pending') { S.step = 'held'; S.held = []; S.heldKind = 'date'; S.error = ''; return true; }
       // D-JUNK: a junk-only quote on a walkthrough that records garage work: the estimator adds the work or corrects the
@@ -867,7 +870,7 @@
       if (!['quote_draft_composite_prices_unapproved', 'quote_draft_builder_required'].includes(error?.code)) return false;
       const rows = Array.isArray(error.details?.unapproved) ? error.details.unapproved : [];
       S.step = 'held'; S.held = rows; S.error = '';
-      S.heldKind = error.code === 'quote_draft_builder_required' ? 'builder' : S.mode === 'builder' && rows.length && rows.every(row => ESTIMATOR_FIXES.has(row?.id)) ? 'resave' : 'prices';
+      S.heldKind = error.code === 'quote_draft_builder_required' ? 'builder' : S.mode === 'builder' && rows.length && rows.every(estimatorFix) ? 'resave' : 'prices';
       return true;
     }
     async function refreshPrices() {

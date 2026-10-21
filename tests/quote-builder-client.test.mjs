@@ -85,7 +85,7 @@ test('the builder sends only finished steps, in order, with ids and quantities; 
   assert.deepEqual([B.estimateLabor(menu, based, fullness).manHours, priceCompositeQuote(state, basedAll, { complete: true }).labor.manHours], [9, 9]);
   assert.deepEqual([totals.removal + totals.shelving + totals.storage + totals.labor, totals.total], [priced.totalCents, priced.totalCents], 'the running total matches the server price');
   assert.equal(totals.shelving, 23140);
-  assert.equal(totals.drafts, Object.keys(sel.removal).length + 1 - 1, 'every selected price but the approved full truck is a draft');
+  assert.equal(totals.drafts, Object.keys(sel.removal).length + 1 - 2, 'every selected price but the approved full truck and half load (2026-10-21) is a draft');
 });
 
 test('a saved selection is checked against the current menu: unknown items, wrong steps and bad quantities are dropped', () => {

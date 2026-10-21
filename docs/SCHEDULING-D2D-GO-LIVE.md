@@ -232,7 +232,8 @@ Each has a recommendation. Until you decide, the Hub keeps doing what the item s
 - **Installation of shelving and storage.** *Decided 2026-10-18:* every builder quote with garage work has a Labor line,
   the estimated man-hours × $53.00 per man-hour (*decided 2026-10-19*; $40.00 before), and installation is billed
   through it. The man-hours are filled in from the app's estimate of the garage work and the estimator can adjust them. Change the rate in Menu prices.
-- **Junk removal.** *Decided 2026-10-18:* "$750 per truck covers the crew's time." A junk-only quote has no Labor line,
+- **Junk removal.** *Decided 2026-10-18:* "the truck price covers the crew's time": $1,000 per truck since 2026-10-21;
+  $750 before (quarter, half and three-quarter loads $250, $500 and $750). A junk-only quote has no Labor line,
   and no quote's labor estimate counts truck-load, hauling or disposal time. Builder quotes saved earlier that day (an
   estimate with truck-load time, a line naming the man-hours) are saved again before they are sent; signed jobs keep
   what was signed.

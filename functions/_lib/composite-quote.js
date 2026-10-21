@@ -713,14 +713,26 @@ function purchaseList(lines) {
 // is refused unless requireLabor is false (a job the customer already signed that way: it keeps the earlier rules) or the
 // quote is junk-only (D-JUNK: it has no Labor line; an unsent one that still has one is saved again first).
 // signed: the breakdown is a signed job's, whose labor keeps the rate and line it was signed at (laborBlock).
-function approvalOf(lines, prices, state, labor, { requireLabor = true, signed = false } = {}) {
+// signedPending: on a signed job (signed), the menu item ids that were still waiting for the owner when the customer
+// signed (compositeQuote.approval.pending). The customer keeps the price signed (owner decision 2026-10-21, with the
+// $1,000 truck): a line approved at signing stays approved at its signed amount while its item is still approved, as
+// the signed labor rate does; a junk load still a draft at signing is accepted once the owner approves the load, at
+// the signed amount. Any other line still waits for the owner to approve exactly its signed amount.
+function signedKeeps(line, price, signedPending) {
+  if (!signedPending || !price?.approved) return false;
+  return !signedPending.has(line.id) || price.item?.basis?.kind === 'junk';
+}
+function approvalOf(lines, prices, state, labor, { requireLabor = true, signed = false, signedPending = null } = {}) {
   const junk = junkOnly(lines);
   const blocked = lines.filter(line => {
     const price = prices.get(line.id);
+    if (signed && signedKeeps(line, price, signedPending)) return false;
     return !price || !price.approved || price.unitCents !== line.unitCents;
   }).map(line => {
     const price = prices.get(line.id);
-    return { id: line.id, name: line.name, unitCents: line.unitCents,
+    // resave: the item is owner-approved at another amount (the owner changed the price, e.g. the $1,000 truck), so the
+    // estimator saves the quote again; nothing waits for the owner (crew/quote-draft.js held()).
+    return { id: line.id, name: line.name, unitCents: line.unitCents, ...(price?.approved ? { resave: true } : {}),
       reason: !price ? `${line.name} is no longer on the pricing menu. Rebuild the quote before sending.`
         : price.approved ? `The owner approved ${money(price.unitCents)} for ${line.name}, but this quote has ${money(line.unitCents)}. Save the quote again to use the approved price.`
           : `${line.name}: ${price.reason.charAt(0).toLowerCase()}${price.reason.slice(1)}` };
@@ -744,18 +756,24 @@ function approvalOf(lines, prices, state, labor, { requireLabor = true, signed =
 
 /** Send-time check of a saved breakdown against today's menu, settings, approvals and labor rate: {ready, blocked}.
  * signed (a job the customer already signed, releaseGate): a breakdown without labor is judged by the earlier rules,
- * and its labor keeps the (then approved) rate it was signed at. */
-export function compositeApproval(breakdown, state, { signed = false, requireLabor = !signed } = {}) {
+ * and its labor keeps the (then approved) rate it was signed at. signedPending (the job's compositeQuote.approval.pending)
+ * names what still waited for the owner at signing; every other line keeps its signed amount (signedKeeps). Without it
+ * (an older record) every line needs the owner-approved amount, as before. */
+export function compositeApproval(breakdown, state, { signed = false, requireLabor = !signed, signedPending = null } = {}) {
   if (!plain(breakdown) || breakdown.source !== 'composite' || !Array.isArray(breakdown.lines)) return { ready: false, blocked: [{ id: null, name: 'This quote', unitCents: null, reason: 'The saved builder breakdown is missing. Rebuild the quote before sending.' }] };
-  return approvalOf(breakdown.lines, menuPrices(state), state, breakdown.labor, { requireLabor, signed });
+  const pending = signed && Array.isArray(signedPending) ? new Set(signedPending.map(row => row?.id).filter(id => typeof id === 'string')) : null;
+  return approvalOf(breakdown.lines, menuPrices(state), state, breakdown.labor, { requireLabor, signed, signedPending: pending });
 }
 
 /** The message and details a refused send carries: the reasons, in quote order, at most 8 named. */
 export function approvalRefusal(approval) {
   const names = approval.blocked.map(line => line.name);
   const listed = names.slice(0, 8).join(', ') + (names.length > 8 ? ` and ${names.length - 8} more` : '');
-  return fail('prices_unapproved', `This quote has ${names.length} price${names.length === 1 ? '' : 's'} the owner has not approved: ${listed}. It stays saved as a draft and can be sent once the owner approves ${names.length === 1 ? 'it' : 'them'} in Hub > Catalog & pricing.`, 409,
-    { unapproved: approval.blocked.map(({ id, name, unitCents, reason }) => ({ id, name, unitCents, reason })) });
+  const message = approval.blocked.every(line => line.resave === true)
+    ? `The owner changed ${names.length === 1 ? 'the price' : 'the prices'} of ${listed} since this quote was saved. It stays saved as a draft: save the quote again to use the approved ${names.length === 1 ? 'price' : 'prices'}; no owner approval is needed.`
+    : `This quote has ${names.length} price${names.length === 1 ? '' : 's'} the owner has not approved: ${listed}. It stays saved as a draft and can be sent once the owner approves ${names.length === 1 ? 'it' : 'them'} in Hub > Catalog & pricing.`;
+  return fail('prices_unapproved', message, 409,
+    { unapproved: approval.blocked.map(({ id, name, unitCents, reason, resave }) => ({ id, name, unitCents, reason, ...(resave === true ? { resave: true } : {}) })) });
 }
 
 /** The builder step a garage-catalog product belongs to (the Hub catalog quote): shelving or extra storage. */

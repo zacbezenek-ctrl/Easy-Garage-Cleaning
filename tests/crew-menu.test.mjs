@@ -115,7 +115,7 @@ test('an estimator reads EGC\'s customer prices with their Draft or Approved chi
   assert.match(p.text(), /Labor · \$53\.00 per man-hourEvery quote with garage work has one Labor line/);
   const row = id => p.main.querySelectorAll('li').find(node => node.getAttribute('data-item') === id).textContent;
   assert.equal(row('egc-026'), 'Full truck load$1,000.00per loadApproved');
-  assert.equal(row('egc-023'), 'Quarter load25% of a truck$250.00per loadDraft price');
+  assert.equal(row('egc-023'), 'Quarter load25% of a truck$250.00per loadApproved', 'the truck loads are owner-approved (2026-10-21)');
   assert.equal(row('egc-027'), 'Mattress$70.00eachDraft price');
   assert.equal(row('hd-100006678'), 'HDX plastic shelving, 36×72×2436 W × 72 H × 24 D in$115.70per packDraft price');
   assert.doesNotMatch(p.text(), /retail|cost|homedepot/i);

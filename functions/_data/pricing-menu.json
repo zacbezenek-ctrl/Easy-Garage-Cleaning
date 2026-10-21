@@ -1,6 +1,6 @@
 {
  "schemaVersion": 1,
- "menuVersion": "2026-10-16.1",
+ "menuVersion": "2026-10-16.2",
  "generatedOn": "2026-10-16",
  "currency": "USD",
  "status": "draft",
@@ -2765,7 +2765,9 @@
     "kind": "junk",
     "fraction": 0.25
    },
-   "status": "draft",
+   "status": "approved",
+   "approvedPriceCents": 25000,
+   "approval": "Owner-approved amount: $250 per quarter load (owner decision 2026-10-21, with the $1,000 full truck; was a draft scaled from the truck).",
    "scopeNote": "Minimum, rounding, weight and special-item policy pending."
   },
   {
@@ -2780,7 +2782,9 @@
     "kind": "junk",
     "fraction": 0.5
    },
-   "status": "draft",
+   "status": "approved",
+   "approvedPriceCents": 50000,
+   "approval": "Owner-approved amount: $500 per half load (owner decision 2026-10-21, with the $1,000 full truck; was a draft scaled from the truck).",
    "scopeNote": "Minimum, rounding, weight and special-item policy pending."
   },
   {
@@ -2795,7 +2799,9 @@
     "kind": "junk",
     "fraction": 0.75
    },
-   "status": "draft",
+   "status": "approved",
+   "approvedPriceCents": 75000,
+   "approval": "Owner-approved amount: $750 per three-quarter load (owner decision 2026-10-21, with the $1,000 full truck; was a draft scaled from the truck).",
    "scopeNote": "Minimum, rounding, weight and special-item policy pending."
   },
   {

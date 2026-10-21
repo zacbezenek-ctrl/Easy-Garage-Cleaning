@@ -326,7 +326,8 @@ class GameplanPricingBrowserTests(unittest.TestCase):
         self.assertEqual(self.menu_calls, 1, 'the builder menu is read once')
         self.screen(page, 2, {'name': 'Synthetic Customer', 'garageSize': '1', 'fill': 'medium', 'loads': '1.25', 'hazards': ['Pest waste'], 'special': ['Mattress'], 'access': ['Stairs']})
         screen = page.locator('#screen')
-        for shown in ('Full truck load $1,000.00 Approved', 'Three-quarter load $750.00 Draft price', 'Half load $500.00 Draft price', 'Quarter load $250.00 Draft price',
+        # The truck loads are approved in the menu itself (owner decision 2026-10-21); the special items still wait for the owner.
+        for shown in ('Full truck load $1,000.00 Approved', 'Three-quarter load $750.00 Approved', 'Half load $500.00 Approved', 'Quarter load $250.00 Approved',
                       'Mattress +$70.00 Draft price', 'Pest waste +$300.00 Draft price', 'Stairs +$190.00 Draft price', 'Long carry +$115.00 Draft price'):
             expect(screen).to_contain_text(shown)
         for legacy in ('$950', 'per full truckload', '(+$'): expect(screen).not_to_contain_text(legacy)

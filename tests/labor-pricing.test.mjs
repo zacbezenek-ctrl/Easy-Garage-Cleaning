@@ -18,11 +18,11 @@ import { walkthroughCrewBrief } from '../functions/_lib/walkthrough-crew-brief.j
 import { scheduleMirrorNote } from '../functions/_lib/ghl-schedule-mirror.js';
 import { portalCookie, portalHandlers, portalStore, portalView } from './helpers/portal-fixture.mjs';
 import { saveQuoteDraft } from '../functions/_lib/quote-draft.js';
-import { saveWalkthroughHandoff } from '../functions/_lib/walkthrough-handoff.js';
+import { releaseHandoffPrices, saveWalkthroughHandoff } from '../functions/_lib/walkthrough-handoff.js';
 import { quoteDraftHandlers } from '../functions/api/quote-draft.js';
 import { signedGarageWork } from '../functions/_lib/knock-setters.js';
 import { suggestedDuration } from '../functions/_lib/dispatch-duration.js';
-import { BASE_ENV, ESTIMATE_MAN_HOURS, LABOR, LABOR_CENTS, MON, NOW, ON_ENV, SHELF, builderState, client, estimator, fixture, menuItem, owner, selection, signedPlan } from './helpers/estimator-fixture.mjs';
+import { BASE_ENV, ESTIMATE_MAN_HOURS, LABOR, LABOR_CENTS, LATER, MON, NOW, ON_ENV, SHELF, builderState, client, estimator, fixture, menuItem, owner, selection, signedPlan } from './helpers/estimator-fixture.mjs';
 
 const signedLines = priced => priced.lineItems.map(line => ({ id: line.id, kind: line.kind, name: line.name, description: line.description, quantity: line.quantity, unitCents: line.unitCents, totalCents: line.totalCents }));
 const handoff = (n, quote, extra = {}) => ({ actorId: owner.user, requestId: randomUUID(), customerId: `c${n}`, sourceWalkthroughId: `w${n}`, sourceRevision: `w${n}r`, ...extra, plan: signedPlan(n, { quote, ...(quote.total ? { total: quote.total } : {}) }) });
@@ -147,7 +147,7 @@ test('flag off: a page that sends a labor selection gets exactly the answers and
   assert.deepEqual([withLabor.job.compositeQuote, withLabor.job.jobInstructions.laborManHours], [undefined, undefined]);
 });
 
-// ---- D-JUNK (owner, 2026-10-18): "$750 per truck covers the crew's time." ----
+// ---- D-JUNK (owner, 2026-10-18): "the truck price covers the crew's time" ($1,000 per truck since 2026-10-21). ----
 const pick = (name, quantity = 1) => ({ id: menuItem(name).id, quantity });
 // Every menu price approved at its current amount, so nothing holds a signed job or its customer documents.
 const allApproved = () => { const prices = {}; for (const [id, price] of menuPrices(builderState())) if (price.unitCents !== null) prices[id] = price.unitCents; return builderState(prices); };
@@ -166,7 +166,7 @@ test('D-JUNK: a junk-only quote is $1,000 per truck with no Labor line: complete
   // Partial loads, special-handling items and access charges go with junk removal: still no Labor line.
   const mixed = priceCompositeQuote(state, selection({ removal: [pick('Full truck load'), pick('Half load'), pick('Mattress', 2), pick('Stairs')], shelving: [], storage: [] }), { complete: true });
   assert.deepEqual([mixed.junkOnly, mixed.labor, mixed.totalCents, junkOnly(mixed.breakdown.lines)], [true, null, 100000 + 50000 + 14000 + 19000, true]);
-  assert.deepEqual(mixed.approval.blocked.map(row => row.id), [menuItem('Half load').id, menuItem('Mattress').id, menuItem('Stairs').id], 'only the draft prices wait for the owner, never labor');
+  assert.deepEqual(mixed.approval.blocked.map(row => row.id), [menuItem('Mattress').id, menuItem('Stairs').id], 'only the draft prices wait for the owner (the truck loads are approved), never labor');
   // Signed on the walkthrough: booked at $1,000 with no Labor line, labor section or man-hours anywhere on the job.
   const truck = priceCompositeQuote(state, selection({ removal: [pick('Full truck load')], shelving: [], storage: [], labor: { manHours: null, fullness: 'medium' } }), { complete: true });
   const f = fixture(), signed = await saveWalkthroughHandoff(f.store, owner, handoff(1, signedQuote(truck)), NOW, { env: ON_ENV, compositeState: async () => state });
@@ -328,4 +328,42 @@ test('the $1,000 truck: a job signed at $750 keeps its price and deposit; an uns
   const unsent = compositeApproval(truck(before).breakdown, now);
   assert.deepEqual(unsent.blocked.map(row => [row.id, row.unitCents]), [[menuItem('Full truck load').id, 75000]]);
   assert.match(unsent.blocked[0].reason, /^The owner approved \$1,000\.00 for .*, but this quote has \$750\.00\. Save the quote again to use the approved price\.$/);
+  assert.equal(unsent.blocked[0].resave, true, 'flagged as a re-save: no owner approval is needed');
+});
+
+// A job held at signing for one draft price is released by the owner's approval of that price, at the amounts it was
+// signed at: a truck load approved at signing ($750 then) stays at $750 under the $1,000 menu, and a partial load that
+// was a draft at signing is accepted at its signed amount once the owner approves the load.
+test('the $1,000 truck: jobs signed under the $750 menu and held for a draft price release at their signed amounts', async () => {
+  const menuAt750 = structuredClone(builderState().menu);
+  menuAt750.menuVersion = '2026-10-16.1';
+  for (const item of menuAt750.services.filter(row => row.basis?.kind === 'junk')) {
+    if (item.basis.fraction === 1) { item.approvedPriceCents = 75000; continue; }
+    item.status = 'draft'; delete item.approvedPriceCents; delete item.approval;
+  }
+  const before = { ...builderState(), menu: menuAt750 };
+  const quote = removal => priceCompositeQuote(before, { ...selection({ removal, shelving: [], storage: [], labor: { manHours: null, fullness: 'medium' } }), menuVersion: menuAt750.menuVersion }, { complete: true });
+  const mattress = quote([pick('Full truck load'), pick('Mattress')]), half = quote([pick('Full truck load'), pick('Half load')]);
+  assert.deepEqual([mattress.totalCents, half.totalCents], [82000, 112500]);
+  assert.deepEqual([mattress.approval.blocked.map(row => row.id), half.approval.blocked.map(row => row.id)], [[menuItem('Mattress').id], [menuItem('Half load').id]]);
+  const f = fixture();
+  const sign = async (n, priced) => f.job((await saveWalkthroughHandoff(f.store, owner, handoff(n, signedQuote(priced)), NOW, { env: ON_ENV, compositeState: async () => before })).job.id);
+  const release = (job, state) => releaseHandoffPrices(f.store, owner, { action: 'prices.release', requestId: randomUUID(), jobId: job.id, expectedRevision: f.job(job.id).revision }, LATER, { env: ON_ENV, compositeState: async () => state });
+  const withMattress = await sign(1, mattress), withHalf = await sign(2, half);
+  assert.deepEqual([withMattress.compositeQuote.approval.pending, withHalf.compositeQuote.approval.pending].map(rows => rows.map(row => row.id)), [[menuItem('Mattress').id], [menuItem('Half load').id]]);
+  // Today's menu: the truck is $1,000 and the half load approved at $500; the mattress still waits for the owner.
+  await assert.rejects(release(withMattress, builderState()), error => error.code === 'quote_draft_composite_prices_unapproved' && error.details.unapproved.map(row => row.id).join() === menuItem('Mattress').id, 'only the mattress holds it, not the $750 truck');
+  // Without the signing record (an older job), the exact amounts are still required: the $750 truck would hold it.
+  const approved = builderState({ [menuItem('Mattress').id]: 7000 });
+  assert.deepEqual(compositeApproval(withMattress.compositeQuote.breakdown, approved, { signed: true }).blocked.map(row => row.id), [menuItem('Full truck load').id]);
+  // The owner approves the mattress at the $70 it was signed at: both jobs release at their signed totals.
+  for (const [job, total] of [[withMattress, 820], [withHalf, 1125]]) {
+    const result = await release(job, approved);
+    assert.deepEqual([result.released, f.job(job.id).total, f.job(job.id).estimate.amountCents, f.job(job.id).pricesPendingApproval, f.job(job.id).pricesRelease.gate], [true, total, total * 100, null, 'approved_prices'], `job ${job.id}`);
+  }
+});
+
+test('a draft price is never flagged as a re-save: it needs the owner', () => {
+  const priced = priceCompositeQuote(builderState(), selection({ removal: [pick('Full truck load'), pick('Mattress')], shelving: [], storage: [], labor: { manHours: null, fullness: 'medium' } }), { complete: true });
+  assert.deepEqual(priced.approval.blocked.map(row => [row.id, row.resave ?? null]), [[menuItem('Mattress').id, null]]);
 });
