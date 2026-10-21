@@ -537,7 +537,7 @@ async function settersSection() {
   const reference = h('input', { class: 'input', id: 'setter-reference', placeholder: 'Classification review reference (no customer details)' });
   const estimator = h('input', { class: 'input', id: 'setter-estimator', placeholder: 'Staff key, or leave unverified' });
   const estimatorReference = h('input', { class: 'input', id: 'setter-estimator-reference', placeholder: 'Estimator attribution review reference' });
-  const approved = data.policy?.approval === 'approved';
+  const approved = data.policy?.approval === 'approved', pay = data.payShown !== false;
   // A share's amount: earned, else the projection at the closed price (approved terms only), else held.
   const share = (row, role) => {
     const cents = (row.allocations || []).find(item => item.role === role)?.amountCents;
@@ -566,6 +566,7 @@ async function settersSection() {
   return { subtitle: `${CHANNEL_PERCENTS.setter}% setting channel; separate from direct-close and estimator attribution.`, body: [
     approved ? banner('success', 'check', 'Setter terms approved', `A booking or no-show earns nothing. A job paid in full pays ${CHANNEL_PERCENTS.setter}% to its setter and ${CHANNEL_PERCENTS.estimator}% to its estimator (${CHANNEL_PERCENTS.setter + CHANNEL_PERCENTS.estimator}% total), in Money's statement for the period it was earned. Short payments, refunds and unclassified work stay held.`)
       : banner('warning', 'info', 'Setter pay needs policy review', `A booking or no-show earns nothing. A closed and collected job allocates ${CHANNEL_PERCENTS.setter}% to its setter and ${CHANNEL_PERCENTS.estimator}% to its estimator (${CHANNEL_PERCENTS.setter + CHANNEL_PERCENTS.estimator}% total). Nothing is payable until the owner approves the walkthrough-setting and estimator terms in Settings.`),
+    pay ? null : banner('info', 'info', 'Amounts are the owner\'s', 'Each setter\'s and estimator\'s share is their pay, so only the owner sees the amounts. You can still record and classify every walkthrough here.'),
     h('section', { class: 'card stack' }, h('h2', {}, 'Record walkthrough setter'),
       field('Walkthrough ID', visit, null, 'setter-visit'), field('Setter', setter, null, 'setter-rep'),
       field('Service classification', scope, null, 'setter-scope'), field('Review reference', reference, null, 'setter-reference'),
@@ -576,10 +577,10 @@ async function settersSection() {
         catch (error) { toast(error.message, { tone: 'bad' }); }
       } }, 'Record setter attribution')),
     h('div', { class: 'card table-wrap' }, h('table', { class: 'table' },
-      h('thead', {}, h('tr', {}, ['Walkthrough', 'Setter', 'Estimator evidence', 'State', `Setter ${CHANNEL_PERCENTS.setter}%`, `Estimator ${CHANNEL_PERCENTS.estimator}%`, 'Review', ''].map(label => h('th', {}, label)))),
+      h('thead', {}, h('tr', {}, ['Walkthrough', 'Setter', 'Estimator evidence', 'State', ...(pay ? [`Setter ${CHANNEL_PERCENTS.setter}%`, `Estimator ${CHANNEL_PERCENTS.estimator}%`] : []), 'Review', ''].map(label => h('th', {}, label)))),
       h('tbody', {}, data.rows.map(row => h('tr', {}, h('td', {}, row.walkthroughId), h('td', {}, row.setterKey),
         h('td', {}, row.estimatorKey || 'Unverified'), h('td', {}, row.state.replaceAll('_', ' ')),
-        h('td', { class: 'num' }, share(row, 'setter')), h('td', { class: 'num' }, share(row, 'estimator')),
+        pay ? h('td', { class: 'num' }, share(row, 'setter')) : null, pay ? h('td', { class: 'num' }, share(row, 'estimator')) : null,
         h('td', {}, (row.reviewReasons || []).join(', ').replaceAll('_', ' ')),
         h('td', {}, ['service_scope_unverified', 'recipient_unverified', 'estimator_attribution_conflict'].some(reason => (row.reviewReasons || []).includes(reason))
           ? h('button', { type: 'button', class: 'btn btn--secondary btn--sm', onclick: classify(row) }, 'Classify…') : null)))))),
@@ -801,7 +802,7 @@ function approvalCard(data, card) {
     kv('Higher rate', com.acceleratorEnabled ? `${pct(com.acceleratorRate)} above ${money(com.acceleratorThreshold)} collected a month` : 'Off'),
     kv('Lead bonus', com.leadOverrideEnabled ? `${pct(com.leadOverrideRate)} of the team's collected revenue` : 'Off'),
     kv('Pay period', `Every two weeks, first cycle starting ${longDateLabel(pay.anchorDate)} (${pay.anchorDate})`),
-    kv('Training pay', `${money(pay.trainingHourlyRate, true)} per hour`),
+    kv('Training pay', Number.isFinite(pay.trainingHourlyRate) ? `${money(pay.trainingHourlyRate, true)} per hour` : 'The owner sees it'),
     Object.entries(POLICY_LABELS).map(([key, [label, words]]) => kv(label, words[c.terms.collectionPolicy[key]] || c.terms.collectionPolicy[key])),
     kv('Scope', 'Garage work sold door to door; the estimator rate is never added'));
   const title = 'Approve commission terms';
@@ -982,8 +983,9 @@ async function settingsSection() {
           h('div', { class: 'fields-2' }, row('Higher rate', num('commission.acceleratorRate', { scale: 100, unit: '%', step: '0.5' })), row('once monthly revenue passes', num('commission.acceleratorThreshold', { prefix: '$', step: '100', width: '120px' }))),
           toggle('commission.acceleratorEnabled', 'Use the higher rate'),
           h('p', { class: 'caption muted' }, 'Earning on collection and a two-week payout cadence are confirmed. Changing a commission or pay-period number ends the owner\'s approval until it is approved again.'),
-          row('Training pay', num('payroll.trainingHourlyRate', { prefix: '$', unit: 'per hour, paid separately', step: '0.01' }))),
-        card('Pay period',
+          // Training pay and the pay period are the owner's (payrollEditable from view=settings; the server keeps them on anyone else's save).
+          data.payrollEditable === false ? null : row('Training pay', num('payroll.trainingHourlyRate', { prefix: '$', unit: 'per hour, paid separately', step: '0.01' }))),
+        data.payrollEditable === false ? card('Pay period', h('p', { class: 'caption muted' }, `Every 2 weeks from ${longDateLabel(get(draft, 'payroll.anchorDate'))}. Only the owner changes the pay period and training pay.`)) : card('Pay period',
           segFor('payroll.period', [['biweekly', 'Every 2 weeks']], 'Pay period'),
           row(data.compensation?.verified ? 'Confirmed cycle anchor' : 'Unconfirmed cycle anchor', text('payroll.anchorDate', { type: 'date' }), data.compensation?.verified ? 'Confirmed by the owner\'s approval. Changing it ends that approval.' : 'A draft date until the owner confirms it in the approval below.')),
         approvalCard(data, card),

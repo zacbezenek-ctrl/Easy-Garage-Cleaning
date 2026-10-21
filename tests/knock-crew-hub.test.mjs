@@ -41,7 +41,7 @@ test('the crew hub offers Door-to-door to Knock\'s admins and to accounts Knock 
 
   const rep = crewPage(signedIn('Rep.One'), knockViewer('rep.one', T));
   assert.equal(rep.auth.canUseKnock(), true, 'the account Knock signed in on this phone (any case)');
-  assert.deepEqual(rep.nav(), [['/crew/', 'Crew home'], ['/crew/knock', 'Door-to-door'], ['/crew/prejob', 'Pre-job (reference)'], ['/crew/postjob', 'Closeout (reference)'], ['/employee?view=my_day', 'My Hub']]);
+  assert.deepEqual(rep.nav(), [['/crew/', 'Crew home'], ['/crew/knock', 'Door-to-door'], ['/crew/prejob', 'Pre-job'], ['/crew/postjob', 'Closeout'], ['/employee?view=my_day', 'My Hub']]);
   assert.equal(rep.auth.canUseKnock('someone.else'), false, 'only for the signed-in account');
 
   for (const [label, page] of [
@@ -111,6 +111,6 @@ test('six crew links (Walkthrough and Door-to-door) form two full rows on a phon
   assert.match(css, /\.crew-utility a:first-of-type:nth-last-of-type\(6\),\.crew-utility a:first-of-type:nth-last-of-type\(6\)~a\{grid-column:span 2\}/);
   for (const page of ['crew/index.html', 'crew/gameplan.html', 'crew/prejob.html', 'crew/postjob.html', 'crew/schedule.html', 'crew/menu.html']) {
     assert.match(read(page), /\/crew\/crew-brand\.css\?v=20261019d2d/, page);
-    assert.match(read(page), /\/crew\/hub-auth\.js\?v=20261021reflabels/, page);
+    assert.match(read(page), /\/crew\/hub-auth\.js\?v=20261021refbiz/, page);
   }
 });

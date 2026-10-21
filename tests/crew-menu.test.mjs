@@ -151,6 +151,6 @@ test('the page says when to sign in, when the menu is off, offline, or failing, 
 test('the crew home links What we sell at its clean URL, and the page loads only its own script and the Hub sign-in', () => {
   assert.match(homeHtml, /<a class="tool" id="menu-tool" href="\/crew\/menu"><span class="num">&#9636;<\/span><span class="tx"><h2>What we sell<\/h2>/);
   assert.doesNotMatch(homeHtml.slice(homeHtml.indexOf('id="menu-tool"'), homeHtml.indexOf('</a>', homeHtml.indexOf('id="menu-tool"'))), /\$/);
-  assert.deepEqual([...pageHtml.matchAll(/<script src="([^"]+)"/g)].map(match => match[1]), ['/crew/hub-auth.js?v=20261021reflabels', '/crew/menu.js?v=20261019catalog']);
+  assert.deepEqual([...pageHtml.matchAll(/<script src="([^"]+)"/g)].map(match => match[1]), ['/crew/hub-auth.js?v=20261021refbiz', '/crew/menu.js?v=20261019catalog']);
   assert.deepEqual(plain(Object.keys(answer(false))).sort(), ['authority', 'enabled', 'menuVersion', 'ok', 'prices', 'products', 'sections', 'services']);
 });

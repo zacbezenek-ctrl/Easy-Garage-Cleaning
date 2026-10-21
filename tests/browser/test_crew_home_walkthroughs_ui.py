@@ -125,7 +125,7 @@ class CrewHomeWalkthroughBrowserTests(unittest.TestCase):
         expect(page.locator('#assigned-jobs')).not_to_contain_text('Synthetic Crew Job')
         expect(page.locator('#walkthrough-tool')).to_be_visible()
         nav = page.get_by_role('navigation', name='Crew workflow')
-        for label in ['Crew home', 'Walkthrough', 'Pre-job (reference)', 'Closeout (reference)', 'My Hub']:
+        for label in ['Crew home', 'Walkthrough', 'Pre-job', 'Closeout', 'My Hub']:
             link = nav.get_by_role('link', name=label, exact=True); expect(link).to_be_visible()
             self.assertGreaterEqual(link.bounding_box()['height'], 44, label)
         for target in card.locator('.next-actions a').all(): self.assertGreaterEqual(target.bounding_box()['height'], 44)
@@ -179,7 +179,7 @@ class CrewHomeWalkthroughBrowserTests(unittest.TestCase):
         for width in (320, 375, 390):
             page.set_viewport_size({'width': width, 'height': 812})
             links = nav.locator('a'); expect(links).to_have_count(6)
-            self.assertEqual([link.text_content() for link in links.all()], ['Crew home', 'Walkthrough', 'Door-to-door', 'Pre-job (reference)', 'Closeout (reference)', 'My Hub'])
+            self.assertEqual([link.text_content() for link in links.all()], ['Crew home', 'Walkthrough', 'Door-to-door', 'Pre-job', 'Closeout', 'My Hub'])
             boxes = [link.bounding_box() for link in links.all()]
             self.assertTrue(all(box['height'] >= 44 for box in boxes), f'44px targets at {width}px')
             self.assertTrue(all(abs(box['y'] - boxes[0]['y']) <= 1 for box in boxes[:3]) and all(abs(box['y'] - boxes[3]['y']) <= 1 for box in boxes[3:]), f'two rows of three at {width}px')

@@ -194,7 +194,13 @@ export function computeTipAllocation({ jobs, timecards, start, end, now, refundR
 export function tipAllocationForViewer(allocation, { payShown = false } = {}) {
   if (payShown === true) return { ...allocation, payShown: true };
   const person = ({ employee, name }) => ({ employee, name }), who = value => String(value || '').trim().toLowerCase();
-  const solo = job => new Set([...job.employees.map(row => who(row.employee)), ...(job.crewWithoutJobTime || []).map(who)].filter(Boolean)).size === 1;
+  // A name listed without job time may be someone who did track time under their username (a legacy job saved with
+  // display names): it is the same person when it matches an employee row's username or name.
+  const solo = job => {
+    const tracked = job.employees.map(row => [who(row.employee), who(row.name)]);
+    const others = new Set((job.crewWithoutJobTime || []).map(who).filter(name => name && !tracked.some(keys => keys.includes(name))));
+    return tracked.length + others.size === 1;
+  };
   const jobs = allocation.jobs.map(job => solo(job)
     ? { ...job, employees: job.employees.map(person), tipCents: null, allocatedCents: null, unallocatedCents: null, amountHidden: true, tips: job.tips.map(({ amountCents, processorRef, ...tip }) => tip) }
     : { ...job, employees: job.employees.map(person) });

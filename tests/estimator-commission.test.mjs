@@ -151,3 +151,20 @@ test('a manager sees the estimator rows without amounts and no pay files; the ow
   assert.equal(own.status, 200);
   assert.match(JSON.stringify(own.body), /210/);
 });
+
+test('Admin > Setters: a manager sees who set and who closed but no amount; the owner and a named pay viewer see the amounts', async () => {
+  const users = { ...JSON.parse(env.HUB_AUTH_USERS_JSON), AlexK: { passwordHash: 'test', role: 'manager', displayName: 'Synthetic Manager' }, TylerG: { passwordHash: 'test', role: 'manager', displayName: 'Synthetic Pay Viewer' } };
+  const withManager = knockEnv({ HUB_AUTH_USERS_JSON: JSON.stringify(users), EGC_STAFF_PAY_VIEWERS: 'TylerG' });
+  const w = world(), handlers = knockAdminHandlers({ storage: () => w.knock(), dispatch: () => w.dispatch(), now: () => new Date(NOW) });
+  const setters = async user => (await call(handlers.get, get('/api/knock-admin?view=setters', await cookieFor(withManager, user)), withManager)).body;
+  const manager = await setters('AlexK');
+  assert.equal(manager.payShown, false);
+  assert.deepEqual(manager.rows.map(row => [row.walkthroughId, row.setterKey, row.estimatorKey]), [['w1', 'rep.one', 'estimator.one']]);
+  assert.doesNotMatch(JSON.stringify(manager), /21000|39000|amountCents|revenue/i, 'no amount, revenue or allocation for a manager');
+  for (const user of ['ZacB', 'TylerG']) {
+    const shown = await setters(user);
+    assert.equal(shown.payShown, true, user);
+    assert.match(JSON.stringify(shown.rows), /39000/, `${user} sees the 13%`);
+    assert.match(JSON.stringify(shown.rows), /21000/, `${user} sees the 7%`);
+  }
+});

@@ -18,6 +18,7 @@ import { csvResponse, errorResponse, forbiddenOrigin, readJson, reply, sameOrigi
 import { dispatchStorage } from '../_lib/dispatch-storage.js';
 import { bookSale, bookWalkthrough, followSaleStatus, knockJobBridgeEnabled, moveSaleJob } from '../_lib/knock-bridge.js';
 import { canSetPay, seesOthersPay } from '../_lib/pay-visibility.js';
+import { mergeSettings } from '../../crew/knock-settings.js';
 
 /* Pay privacy (docs/FUNNEL-METRICS.md §8.3: a manager sees no per-employee pay). An estimator's 7% on a named job is
    that person's pay: a viewer who does not see others' pay (pay-visibility.js seesOthersPay, the owner by default) gets
@@ -34,6 +35,23 @@ const withoutPay = only(ESTIMATOR_ROW_FIELDS);
 // /api/knock-reports?view=my-money, unchanged.
 const STATEMENT_ROW_FIELDS = Object.freeze(['repKey', 'name', 'salesBooked', 'trainingMinutes', 'collectionUnknownCount', 'reviewReasons', 'compensationState']);
 const statementWithoutPay = only(STATEMENT_ROW_FIELDS);
+// Admin > Setters: each record's 13% and 7% shares (allocations, earned/payable/projected amounts, the job revenue and
+// any adjustment) are the setter's and estimator's pay; anyone else keeps the record and what needs review.
+const SETTER_ROW_FIELDS = Object.freeze(['id', 'walkthroughId', 'jobId', 'jobDate', 'channel', 'setterKey', 'estimatorKey', 'estimatorEvidence', 'serviceClassification', 'state', 'rate',
+  'qualifyingAt', 'earnedAt', 'reviewReasons', 'settlement', 'recordedAt']);
+const setterWithoutPay = only(SETTER_ROW_FIELDS);
+// The training pay rate times a rep's training minutes is that rep's training pay: anyone who does not see others' pay
+// gets every payroll block without it (the code's own default in `defaults` is public and stays), and only the owner
+// changes a payroll setting (canSetPay). A manager's save keeps the stored payroll block as it is.
+const withoutTrainingRate = value => Array.isArray(value) ? value.map(withoutTrainingRate)
+  : value && typeof value === 'object' ? Object.fromEntries(Object.entries(value).filter(([key]) => key !== 'trainingHourlyRate').map(([key, item]) => [key, withoutTrainingRate(item)])) : value;
+async function updateSettingsFor(store, admin, body, nowIso, env) {
+  if (canSetPay(admin, env)) return updateSettings(store, admin, body, nowIso);
+  const stored = mergeSettings((await store.get('knock_settings', 'current'))?.settings || {}).payroll, incoming = body?.settings?.payroll;
+  if (incoming !== undefined && (!incoming || typeof incoming !== 'object' || Object.entries(incoming).some(([key, value]) => JSON.stringify(value) !== JSON.stringify(stored[key]))))
+    throw knockFailure('Only the owner changes the pay period or training pay.', 403, 'knock_pay_owner_only');
+  return withoutTrainingRate(await updateSettings(store, admin, { ...body, settings: { ...body.settings, payroll: stored } }, nowIso));
+}
 import { officeWalkthroughs } from '../_lib/knock-walkthroughs.js';
 
 // KNOCK-BRIDGE (EGC_KNOCK_JOB_BRIDGE): book (or retry booking) a door sale's Hub job or a door walkthrough from Admin.
@@ -77,7 +95,11 @@ const VIEWS = {
     const [reps, training] = await Promise.all([listReps(store), listTraining(store)]);
     return { reps, training: training.slice(0, 300) };
   },
-  async settings(store, _params, _now, _env, viewer) { return readSettings(store, viewer); },
+  async settings(store, _params, _now, env, viewer) {
+    const view = await readSettings(store, viewer), payrollEditable = canSetPay(viewer, env);
+    if (seesOthersPay(viewer, env)) return { ...view, payrollEditable };
+    return withoutTrainingRate({ ...view, payrollEditable });
+  },
   async territory(store) {
     const [neighborhoods, assignments, reps] = await Promise.all([loadNeighborhoods(store), listAssignments(store), listReps(store)]);
     return { neighborhoods: neighborhoods.map(({ __updateTime, ...n }) => n), assignments, reps };
@@ -100,12 +122,14 @@ const VIEWS = {
     const { settings, channels } = await statementChannels(store, params, now, env, dispatch);
     // exportAllowed: whether this viewer may download the pay files (view=export), so the screen offers them only then.
     const view = await moneyView(store, params, now.getTime(), settings, { channels }), payShown = seesOthersPay(viewer, env);
-    const shown = payShown ? view : { ...view, statement: view.statement.map(statementWithoutPay), payouts: [], trainingHourlyRate: null };
+    const { trainingHourlyRate, ...rest } = view;
+    const shown = payShown ? view : { ...rest, statement: view.statement.map(statementWithoutPay), payouts: [], payroll: withoutTrainingRate(view.payroll), rates: withoutTrainingRate(view.rates) };
     return { ...shown, payShown, exportAllowed: canSetPay(viewer, env), payoutAllowed: canSetPay(viewer, env) };
   },
-  async setters(store, _params, now, env, _viewer, { dispatch = dispatchStorage } = {}) {
-    const terms = await loadSetterTerms(store, await loadSettings(store));
-    return { ...(await setterAttributions(store, env, { nowMs: now.getTime(), terms, readJobs: setterBatchReaderFor(dispatch(env)) })), reps: await listReps(store) };
+  async setters(store, _params, now, env, viewer, { dispatch = dispatchStorage } = {}) {
+    const terms = await loadSetterTerms(store, await loadSettings(store)), payShown = seesOthersPay(viewer, env);
+    const view = await setterAttributions(store, env, { nowMs: now.getTime(), terms, readJobs: setterBatchReaderFor(dispatch(env)) });
+    return { ...view, rows: payShown ? view.rows : view.rows.map(setterWithoutPay), payShown, reps: await listReps(store) };
   },
   // D6b: every estimator's 7% (door-to-door-set walkthroughs and direct walkthrough sales signed in the last year).
   async estimators(store, _params, now, env, viewer, { dispatch = dispatchStorage } = {}) {
@@ -125,7 +149,8 @@ const VIEWS = {
 const ACTIONS = {
   'rep.update': updateRep,
   'training.add': addTraining,
-  'settings.update': updateSettings,
+  // Payroll settings (training pay, pay period) are the owner's; everyone else's save keeps them (updateSettingsFor).
+  'settings.update': updateSettingsFor,
   // Owner only (checked inside): records compensationApproval for the saved terms.
   'compensation.approve': approveCompensation,
   // Owner only (checked inside): records setterApproval, the fixed 13% setter + 7% estimator terms (D6b).

@@ -560,7 +560,10 @@ test('Admin > Money: a manager sees counts without pay and cannot record a payou
   const ownerRow = owner.statement.find(row => row.repKey === 'rep.one'), managerRow = manager.statement.find(row => row.repKey === 'rep.one');
   assert.deepEqual([owner.payShown, owner.payoutAllowed, owner.exportAllowed], [true, true, true]);
   assert.ok(ownerRow.earned > 0 && ownerRow.booked === 1600, 'the owner sees the rep\'s pay and revenue');
-  assert.deepEqual([manager.payShown, manager.payoutAllowed, manager.exportAllowed, manager.trainingHourlyRate, manager.payouts], [false, false, false, null, []]);
+  assert.deepEqual([manager.payShown, manager.payoutAllowed, manager.exportAllowed, manager.payouts], [false, false, false, []]);
+  assert.equal('trainingHourlyRate' in manager, false, 'no training pay rate at the top level');
+  assert.equal('trainingHourlyRate' in manager.payroll, false, 'nor in the payroll block');
+  assert.equal(typeof owner.payroll.trainingHourlyRate, 'number', 'the owner keeps it');
   assert.deepEqual(Object.keys(managerRow).sort(), ['collectionUnknownCount', 'compensationState', 'name', 'repKey', 'reviewReasons', 'salesBooked', 'trainingMinutes'].filter(key => key in ownerRow).sort());
   assert.equal(managerRow.salesBooked, ownerRow.salesBooked);
   assert.doesNotMatch(JSON.stringify(manager.statement), /1600|"(earned|booked|pending|paid|accelerator|override|trainingPay|balance)"|Commission"|Revenue"/, 'no pay or revenue key or value');
@@ -579,4 +582,39 @@ test('Admin > Money: a manager sees counts without pay and cannot record a payou
   const mine = await call(reports.get, get('/api/knock-reports?view=my-money', await cookieFor(env, 'Rep.One')), env);
   assert.equal(mine.status, 200);
   assert.match(JSON.stringify(mine.body), /sale-1/);
+});
+
+test('training pay and the pay period are the owner\'s: a manager reads settings without the rate and saves only the non-pay settings', async () => {
+  const env = knockEnv({ HUB_AUTH_USERS_JSON: JSON.stringify({ ...JSON.parse(knockEnv().HUB_AUTH_USERS_JSON), AlexK: { passwordHash: 'test', role: 'manager', displayName: 'Synthetic Manager' } }) });
+  const seed = approvedKnockSettings(), world = replacingWorld({ 'knock_settings/current': seed });
+  const handlers = knockAdminHandlers({ storage: world.storage, now: () => new Date(now) });
+  const [manager, owner] = [await cookieFor(env, 'AlexK'), await cookieFor(env, 'ZacB')];
+  const view = (await call(handlers.get, get('/api/knock-admin?view=settings', manager), env)).body;
+  assert.equal(view.payrollEditable, false);
+  assert.doesNotMatch(JSON.stringify(view), /trainingHourlyRate/, 'no training rate anywhere in a manager\'s settings');
+  assert.equal(view.settings.payroll.anchorDate, seed.settings.payroll.anchorDate);
+  const ownerView = (await call(handlers.get, get('/api/knock-admin?view=settings', owner), env)).body;
+  assert.deepEqual([ownerView.payrollEditable, ownerView.settings.payroll.trainingHourlyRate], [true, seed.settings.payroll.trainingHourlyRate]);
+  // Any payroll change from a manager is refused before anything is written.
+  for (const payroll of [{ ...view.settings.payroll, trainingHourlyRate: 40 }, { ...view.settings.payroll, anchorDate: '2026-10-12' }, null]) {
+    const writes = world.fake.calls.filter(item => item.path === ':commit').length;
+    const refused = await call(handlers.post, post('/api/knock-admin', { action: 'settings.update', settings: { ...view.settings, payroll } }, manager), env);
+    assert.deepEqual([refused.status, refused.body.code], [403, 'knock_pay_owner_only'], JSON.stringify(payroll));
+    assert.equal(world.fake.calls.filter(item => item.path === ':commit').length, writes);
+  }
+  // The manager's own save (no training rate in it) keeps the stored payroll and the owner's approval, and returns no rate.
+  const settings = structuredClone(view.settings);
+  settings.map.attribution = 'Synthetic tiles';
+  const saved = await call(handlers.post, post('/api/knock-admin', { action: 'settings.update', settings }, manager), env);
+  assert.equal(saved.status, 200);
+  assert.doesNotMatch(JSON.stringify(saved.body), /trainingHourlyRate/);
+  assert.deepEqual(saved.body.compensation, { verified: true, approvalInvalidated: false });
+  const doc = world.fake.get('knock_settings/current');
+  assert.deepEqual([doc.settings.map.attribution, doc.settings.payroll], ['Synthetic tiles', seed.settings.payroll]);
+  // The owner still changes payroll.
+  const ownerSettings = structuredClone(ownerView.settings);
+  ownerSettings.payroll.trainingHourlyRate = 16;
+  const changed = await call(handlers.post, post('/api/knock-admin', { action: 'settings.update', settings: ownerSettings }, owner), env);
+  assert.equal(changed.status, 200);
+  assert.equal(world.fake.get('knock_settings/current').settings.payroll.trainingHourlyRate, 16);
 });

@@ -467,3 +467,17 @@ test('a view-only pay viewer sees the tip shares but cannot download the tip fil
   const plain = await (await api(t, { jobs, timecards, actor: { ...VIEWER, user: 'AlexK2' }, env }).get(query)).json();
   assert.ok(plain.ok === false || plain.payShown === false);
 });
+
+// Review of #210: a legacy job saved with a display name (assignedTo 'Synthetic crew.alpha', no assignedCrew) and worked
+// alone by crew.alpha lists that name as without job time, but it is the same one person: the manager sees no amount.
+test('a legacy job assigned by display name and worked by that one person hides its tip from a manager', async t => {
+  const MANAGER = { user: 'AlexK', role: 'manager', businessAccess: true, owner: false };
+  const jobs = [job('job-legacy', [tip('l', 1700, '2026-09-23T22:00:00.000Z')], { assignedCrew: [], assignedTo: 'Synthetic crew.alpha' })];
+  const timecards = [tracked('alpha', 'crew.alpha', '2026-09-23', '08:00', '10:00', [['work', 'job-legacy', '08:00']])];
+  const query = 'start=2026-09-21&end=2026-09-28';
+  const owner = byJob(await (await api(t, { jobs, timecards }).get(query)).json())['job-legacy'];
+  assert.deepEqual([owner.employees.map(row => [row.employee, row.name]), owner.crewWithoutJobTime], [[['crew.alpha', 'Synthetic crew.alpha']], ['Synthetic crew.alpha']], 'the display name shows as without job time');
+  const manager = byJob(await (await api(t, { jobs, timecards, actor: MANAGER }).get(query)).json())['job-legacy'];
+  assert.deepEqual([manager.amountHidden, manager.tipCents], [true, null]);
+  assert.ok(manager.tips.every(entry => !('amountCents' in entry) && !('processorRef' in entry)));
+});
