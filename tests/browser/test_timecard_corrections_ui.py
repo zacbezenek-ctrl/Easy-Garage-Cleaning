@@ -36,7 +36,7 @@ class TimecardCorrectionsBrowserTests(HubShell, unittest.TestCase):
         send = lambda body, status=200: route.fulfill(status=status, content_type='application/json', body=json.dumps(body))
         if request.method == 'GET':
             data = collections(self.profile); data['timeEntries'] = copy.deepcopy(self.cards)
-            send({'ok': True, 'collections': data, 'accounts': [], 'payVisibility': 'all' if self.profile['role'] == 'owner' else 'own', 'timecardCorrections': self.corrections}); return
+            send({'ok': True, 'collections': data, 'accounts': [], 'payVisibility': 'all' if self.profile['role'] == 'owner' else 'own', 'paySet': self.profile['role'] == 'owner', 'timecardCorrections': self.corrections}); return
         body = request.post_data_json or {}; self.posts.append(body)
         card = next((item for item in self.cards if item['id'] == body.get('id')), None)
         data = body.get('data') or {}

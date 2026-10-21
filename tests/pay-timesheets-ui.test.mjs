@@ -15,13 +15,12 @@ const at = (date, time) => `${date}T${time}:00-06:00`;
 const card = (id, employee, date, extra = {}) => ({ id, employee, employeeName: `Synthetic ${employee}`, payType: 'hourly', clockInAt: at(date, '08:00'), clockOutAt: at(date, '12:00'), status: 'submitted', approvalStatus: 'approved', breaks: [], hourlyRate: 37.13, updatedAt: '2026-09-19T01:00:00.000Z', ...extra });
 const settle = async () => { for (let index = 0; index < 20; index++) await new Promise(resolve => setImmediate(resolve)); };
 
-function timesheetScreen({ user = 'TylerG', role = 'manager', timecards, jobs = [] }) {
+function timesheetScreen({ user = 'TylerG', role = 'manager', timecards, jobs = [], session = { user, role, businessAccess: true, displayName: `Synthetic ${user}` }, env = {} }) {
   const server = { timecards: structuredClone(timecards), reads: 0, exports: 0, holdExport: null };
-  const session = { user, role, businessAccess: true, displayName: `Synthetic ${user}` };
   const handlers = timesheetHandlers({ session: async () => session, read: async () => ({ timecards: structuredClone(server.timecards), requests: [] }), now: () => new Date(NOW) });
   const fetcher = async (url, init = {}) => {
     if (url.startsWith('/api/timesheets')) {
-      const response = () => handlers.get({ request: new Request('https://easygaragecleaning.com' + url), env: {} });
+      const response = () => handlers.get({ request: new Request('https://easygaragecleaning.com' + url), env });
       if (!url.includes('format=csv')) { server.reads++; return response(); }
       server.exports++;
       return server.holdExport ? new Promise(resolve => { server.release = () => resolve(response()); }) : response();
@@ -135,12 +134,12 @@ test('the board shows each employee\'s timecards by state and no pay of its own;
 });
 
 test('the team board\'s profile form sends pay only when the rate was edited, never the pay it showed', async () => {
-  // Another employee's profile, as /api/employee-hub shows it to a viewer who sees pay (payVisibility 'all': the owner,
-  // or anyone with EGC_STAFF_PAY_OWNER_ONLY=false; before PRICE-SCRUB, every manager).
+  // Another employee's profile, as /api/employee-hub shows it to a viewer who sets pay (paySet, with payVisibility 'all':
+  // the owner, or anyone with EGC_STAFF_PAY_OWNER_ONLY=false; before PRICE-SCRUB, every manager).
   const profiles = [{ id: 'crew.static', username: 'Crew.Static', displayName: 'Synthetic Crew', role: 'crew', payType: 'hourly', hourlyRate: 19.37, status: 'active' }], posts = [];
   const fetcher = async (url, init = {}) => {
     if (url === '/api/employee-hub' && init.method === 'POST') { const body = JSON.parse(init.body); posts.push(body); return json({ ok: true, record: body.data }); }
-    if (url.startsWith('/api/employee-hub')) return json({ ok: true, collections: { ...Object.fromEntries(PEOPLE.map(name => [name, []])), profiles: structuredClone(profiles) }, payVisibility: 'all' });
+    if (url.startsWith('/api/employee-hub')) return json({ ok: true, collections: { ...Object.fromEntries(PEOPLE.map(name => [name, []])), profiles: structuredClone(profiles) }, payVisibility: 'all', paySet: true });
     return json({ ok: false, error: 'Synthetic service unavailable' }, 503);
   };
   const page = hubPage({ user: 'TylerG', role: 'manager', fetcher });
@@ -285,4 +284,42 @@ test('with pay owner-only (payVisibility "own") the manager\'s own profile shows
     const after = await ownProfile(cookie);
     assert.deepEqual([after.displayName, after.jobTitle, after.hourlyRate], ['Synthetic Manager Renamed', 'Synthetic operations', 30], 'the rate stays');
   }
+});
+
+// PAY-VIEW-GRANT: an account the owner lets view pay (EGC_STAFF_PAY_VIEWERS) sees every rate but is offered nothing that
+// sets or exports pay: no rate field, no "& pay" label, no rate in a time correction and no payroll CSV button.
+test('a listed pay viewer sees pay but gets no rate field, no rate correction and no payroll CSV button', async () => {
+  const env = staffEnv({ EGC_STAFF_ROLE_ACCESS: 'true', EGC_STAFF_PAY_VIEWERS: 'pay.viewer' }, { 'Pay.Viewer': { passwordHash: 'unused-synthetic-hash', role: 'crew', displayName: 'Synthetic Pay Viewer', staffRoles: ['manager'] } });
+  const { verifyHubSessionToken, createHubSessionToken } = await import('../functions/_lib/hub-session.js');
+  const session = await verifyHubSessionToken(env, await createHubSessionToken(env, 'Pay.Viewer'));
+  const settled = WEEK.slice(0, 2).map(item => ({ ...item, approvalStatus: 'approved' }));
+  const screen = timesheetScreen({ user: 'Pay.Viewer', role: 'manager', timecards: settled, session, env });
+  const week = await open(screen);
+  assert.match(week.textContent, /Synthetic Crew\.One/);
+  assert.match(week.textContent, /\$297\.04/, 'pay is shown, not hidden');
+  assert.match(week.textContent, /Only the owner can download the payroll export\./);
+  assert.equal(week.querySelectorAll('button').filter(node => /payroll CSV/i.test(node.textContent)).length, 0, 'no payroll CSV button');
+
+  const profiles = [{ id: 'crew.static', username: 'Crew.Static', displayName: 'Synthetic Crew', role: 'crew', payType: 'hourly', hourlyRate: 19.37, status: 'active' }];
+  const fetcher = async (url, init = {}) => {
+    if (url === '/api/employee-hub' && init.method === 'POST') { const body = JSON.parse(init.body); return json({ ok: true, record: body.data }); }
+    if (url.startsWith('/api/employee-hub')) return json({ ok: true, collections: { ...Object.fromEntries(PEOPLE.map(name => [name, []])), profiles: structuredClone(profiles) }, payVisibility: 'all', paySet: false });
+    return json({ ok: false, error: 'Synthetic service unavailable' }, 503);
+  };
+  const page = hubPage({ user: 'TylerG', role: 'manager', fetcher });
+  page.api.install();
+  await settle();
+  const pending = page.context.opsEditProfile('crew.static'), dialog = page.document.querySelector('.ops-action-dialog');
+  assert.equal(dialog.querySelector('[name="hourlyRate"]'), null, 'no rate field');
+  assert.match(dialog.textContent, /Hourly rate: \$19\.37\. Pay rates are set by the owner\./);
+  assert.doesNotMatch(dialog.textContent, /Your hourly rate/);
+  page.context.opsActionCancel?.(); void pending;
+  assert.equal(page.api.S.people.paySet, false);
+  // A time correction opens without the rate field.
+  let opened = null;
+  page.context.EGCTimecardCorrect = { open: options => { opened = options; } };
+  page.api.S.timecardCorrections = true;
+  page.api.S.people.timeEntries = [card('fix-me', 'Crew.Static', '2026-09-15')];
+  page.context.opsCorrectTime('fix-me');
+  assert.equal(opened?.canSetRate, false);
 });
