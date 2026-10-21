@@ -17,7 +17,7 @@ import { PRICING_MENU_JSON } from '../_data/pricing-menu.js';
  *              cleaning bases, cleaning add-ons, special items and access until the owner approves a price.
  *   approvals  pricingMenuApprovals/current: {items: {[menuItemId]: {unitCents, identity}}, revision,
  *              goodsInstallationIncluded?}, written only by the owner's bulk approval (catalog-store.js menu.approve).
- * A price is approved when the menu itself records an owner-approved amount (the $750 full truck) or the owner
+ * A price is approved when the menu itself records an owner-approved amount (the $1,000 full truck) or the owner
  * approved that item at exactly that amount. An owner-approved service amount is the price; a product approval
  * holds only while cost x goodsMarkup still gives the approved amount. An approval also names the item it was
  * given for (menuItemIdentity): a re-import that renames or re-maps an item id puts it back into draft. Draft prices may
@@ -39,15 +39,15 @@ import { PRICING_MENU_JSON } from '../_data/pricing-menu.js';
  * a Labor line also passes once the estimator set the man-hours by hand (labor.adjusted) after being told which goods
  * the estimate leaves out.
  *
- * Junk removal (owner decision D-JUNK, 2026-10-18: "$750 per truck covers the crew's time"): the truck-load prices (the
- * $750 full truck and the partial loads drafted from it) already pay for loading, hauling and disposal, and so do the
+ * Junk removal (owner decision D-JUNK, 2026-10-18: "$750 per truck covers the crew's time"; the full truck is $1,000 since the
+ * owner decision of 2026-10-21): the truck-load prices (the $1,000 full truck and the partial loads drafted from it) already pay for loading, hauling and disposal, and so do the
  * special-handling items ("incremental disposal/handling") and access charges ("incremental labor only") that go with
  * them (HAULING_GROUPS). So (1) the labor estimate never counts truck-load, hauling or disposal time: of the walkthrough
  * time model it keeps the set-up and sweep-out (base), the sorting of the garage's contents (the fullness minutes, with a
  * garage cleaning base), the cleaning add-ons and the install time of the goods, and drops the per-load minutes, the
  * special-item minutes and the access minutes (laborTime); (2) a junk-only quote (junkOnly: at least one truck load, and
  * otherwise only special-handling items and access charges; no cleaning base, cleaning add-on, shelving or storage) has
- * no Labor line at all and is complete, sendable and signable without one: it is $750 per truck. Special items and
+ * no Labor line at all and is complete, sendable and signable without one: it is $1,000 per truck. Special items and
  * access charges are priced on top of a truck already on the job, so a quote of only those (no truck load) is not
  * junk-only: nothing else would pay the crew's time, and it keeps its Labor line. Every quote with garage work (sorting
  * and organizing, shelving, storage, installation, cleaning) still needs its Labor line.
@@ -97,7 +97,7 @@ export const LABOR_ID = 'labor';
 // (quote-model.js BUILDER_LABOR_VERSION, which the customer surfaces read too.)
 export const LABOR_VERSION = BUILDER_LABOR_VERSION;
 // D-JUNK: the removal groups whose own prices pay the crew's time (truck loads; special-handling items and access charges,
-// which go with them). A quote of at least one truck load and nothing else is junk-only (junkOnly): no Labor line, $750
+// which go with them). A quote of at least one truck load and nothing else is junk-only (junkOnly): no Labor line, $1,000
 // per truck.
 export { HAULING_GROUPS };
 /** A junk-only quote (D-JUNK; quote-model.js builderJunkOnly): its builder lines (breakdown lines, or anything with section
@@ -347,7 +347,7 @@ export const manHoursOf = personMinutes => Math.min(LABOR_MAN_HOURS.max, Math.ma
  * are elapsed minutes for its calibrated crew (calibratedCrew, 2), each multiplied by that crew. Unlike the schedule's
  * wall-clock estimate, nothing is divided by the crew chosen on the Schedule tab, rounded to 30 minutes or kept within
  * one working day, so the same work has the same man-hours for any crew and any length of job.
- * D-JUNK ("$750 per truck covers the crew's time"): the model's minutes are kept or dropped by what they time, per the
+ * D-JUNK (the truck price covers the crew's time): the model's minutes are kept or dropped by what they time, per the
  * walkthrough's own model and the menu's scope notes.
  *   base       kept: once per quote (arrival, set-up and sweep-out)
  *   fill       kept, with a garage cleaning base: the fullness minutes of the walkthrough's "How full is it?" (unknown:
@@ -387,7 +387,7 @@ function laborTime(state) {
  * cleanout step's garage work: set-up and sweep-out, sorting and cleaning; never hauling), installPersonMinutes, fullness,
  * installNotEstimated:[{id, name, packs}], manHours (manHoursOf)}, or null without the time model. Example: a two-car
  * base, one full truck load in a medium-full garage and two shelving units = 2 x (60 + 30) + 2 x 60 = 300 person-minutes
- * = 5 man-hours ($265.00 at $53.00), for a crew of 2 or of 4; the truck load's own $750 pays its loading and hauling.
+ * = 5 man-hours ($265.00 at $53.00), for a crew of 2 or of 4; the truck load's own price pays its loading and hauling.
  */
 export function laborEstimate(selection, state) {
   const time = laborTime(state);
@@ -583,7 +583,7 @@ function checkRemoval(entries, prices, garageSize = null) {
  *   steps             [{id,label,subtotalCents,runningTotalCents}] for the completed steps, then labor once priced
  *   labor             {version, manHours, rateCents, rateSource, totalCents, prefilledManHours, adjusted, belowEstimate,
  *                     estimate} (pricedLabor) or null when the selection sent none (a step preview) or is junk-only
- *   junkOnly          true for a junk-only selection: $750 per truck, no Labor line
+ *   junkOnly          true for a junk-only selection: $1,000 per truck, no Labor line
  *   approval          {ready, blocked:[{id,name,unitCents,reason}]}: ready false blocks sending
  */
 export function priceCompositeQuote(state, descriptor, { complete = false, requireLabor = true } = {}) {
@@ -654,7 +654,7 @@ export function priceCompositeQuote(state, descriptor, { complete = false, requi
     splits.set(line.id, { productCents, laborCents: 0, laborMinutes: 0, markupCents: totalCents - productCents, disposalCents: 0 });
   }
   if (!model.length) throw fail('empty', 'Add at least one removal, shelving or storage item to price the quote.');
-  // D-JUNK: a junk-only quote is $750 per truck. It has no Labor line, so labor the browser sent for it is dropped and
+  // D-JUNK: a junk-only quote is $1,000 per truck. It has no Labor line, so labor the browser sent for it is dropped and
   // the saved selection carries none; every other complete quote needs its labor.
   const junk = junkOnly(detail);
   if (junk) delete selection.labor;

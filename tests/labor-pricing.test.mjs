@@ -3,7 +3,7 @@
 // owner's decision of 2026-10-19, until the owner changes it on Menu prices), on top of the menu lines; the man-hours are pre-filled from the server's own time
 // estimate of the selection (laborEstimate, person-minutes) and the estimator may adjust them. The rate is never read from
 // the browser, and the signed handoff prices the labor again exactly like every other builder line.
-// D-JUNK (owner, 2026-10-18: "$750 per truck covers the crew's time"): the estimate never counts truck-load, hauling or
+// D-JUNK (owner, 2026-10-18: "$750 per truck covers the crew's time"; $1,000 per truck since 2026-10-21): the estimate never counts truck-load, hauling or
 // disposal time, and a junk-only quote has no Labor line at all. D-LABOR-TEXT: the customer sees the Labor line as one
 // amount, "Labor"; the staff keep the man-hours. Synthetic data only (tests/helpers/estimator-fixture.mjs).
 import test from 'node:test';
@@ -153,7 +153,7 @@ const pick = (name, quantity = 1) => ({ id: menuItem(name).id, quantity });
 const allApproved = () => { const prices = {}; for (const [id, price] of menuPrices(builderState())) if (price.unitCents !== null) prices[id] = price.unitCents; return builderState(prices); };
 const signedQuote = priced => ({ composite_pricing: priced.compositePricing, line_items: signedLines(priced), catalog_version: priced.menuVersion, total: priced.totalCents / 100 });
 
-test('D-JUNK: a junk-only quote is $750 per truck with no Labor line: complete, sendable and signable without one', async () => {
+test('D-JUNK: a junk-only quote is $1,000 per truck with no Labor line: complete, sendable and signable without one', async () => {
   const state = builderState();
   assert.deepEqual(HAULING_GROUPS, ['junk', 'special', 'access']);
   // However many trucks, and whatever labor an older page still sends (none, the pre-fill, man-hours set by hand), the
@@ -161,29 +161,29 @@ test('D-JUNK: a junk-only quote is $750 per truck with no Labor line: complete, 
   for (const trucks of [1, 2, 3]) for (const labor of [null, { manHours: null, fullness: 'packed' }, { manHours: 6, adjusted: true, fullness: 'medium' }]) {
     const priced = priceCompositeQuote(state, selection({ removal: [pick('Full truck load', trucks)], shelving: [], storage: [], labor }), { complete: true });
     assert.deepEqual([priced.totalCents, priced.junkOnly, priced.labor, priced.lineItems.map(line => line.id), 'labor' in priced.compositePricing, 'labor' in priced.breakdown, priced.steps.map(step => step.id), priced.approval],
-      [75000 * trucks, true, null, ['removal-junk-full'], false, false, ['removal', 'shelving', 'storage'], { ready: true, blocked: [] }], `${trucks} truck(s), labor ${JSON.stringify(labor)}`);
+      [100000 * trucks, true, null, ['removal-junk-full'], false, false, ['removal', 'shelving', 'storage'], { ready: true, blocked: [] }], `${trucks} truck(s), labor ${JSON.stringify(labor)}`);
   }
   // Partial loads, special-handling items and access charges go with junk removal: still no Labor line.
   const mixed = priceCompositeQuote(state, selection({ removal: [pick('Full truck load'), pick('Half load'), pick('Mattress', 2), pick('Stairs')], shelving: [], storage: [] }), { complete: true });
-  assert.deepEqual([mixed.junkOnly, mixed.labor, mixed.totalCents, junkOnly(mixed.breakdown.lines)], [true, null, 75000 + 37500 + 14000 + 19000, true]);
+  assert.deepEqual([mixed.junkOnly, mixed.labor, mixed.totalCents, junkOnly(mixed.breakdown.lines)], [true, null, 100000 + 50000 + 14000 + 19000, true]);
   assert.deepEqual(mixed.approval.blocked.map(row => row.id), [menuItem('Half load').id, menuItem('Mattress').id, menuItem('Stairs').id], 'only the draft prices wait for the owner, never labor');
-  // Signed on the walkthrough: booked at $750 with no Labor line, labor section or man-hours anywhere on the job.
+  // Signed on the walkthrough: booked at $1,000 with no Labor line, labor section or man-hours anywhere on the job.
   const truck = priceCompositeQuote(state, selection({ removal: [pick('Full truck load')], shelving: [], storage: [], labor: { manHours: null, fullness: 'medium' } }), { complete: true });
   const f = fixture(), signed = await saveWalkthroughHandoff(f.store, owner, handoff(1, signedQuote(truck)), NOW, { env: ON_ENV, compositeState: async () => state });
   const job = f.job(signed.job.id);
   assert.deepEqual([job.total, job.estimate.lineItems.map(line => line.id), job.compositeQuote.compositePricing.labor, job.compositeQuote.breakdown.labor, job.pricesPendingApproval ?? null, job.jobInstructions.laborManHours],
-    [750, ['removal-junk-full'], undefined, undefined, null, undefined]);
+    [1000, ['removal-junk-full'], undefined, undefined, null, undefined]);
   assert.equal(job.jobBreakdown.sections.some(section => section.id === 'labor'), false);
   assert.equal('labor_man_hours' in job.acceptedHandoffPayload.quote, false);
   assert.equal(walkthroughCrewBrief(job.jobInstructions).some(row => row.label === 'Man-hours sold'), false);
   // A page that sends the labor pre-fill with the junk selection is priced the same: the labor is dropped.
   const g = fixture(), withLabor = { ...signedQuote(truck), composite_pricing: { ...truck.compositePricing, labor: { manHours: null, fullness: 'medium' } } };
   const again = await saveWalkthroughHandoff(g.store, owner, handoff(1, withLabor), NOW, { env: ON_ENV, compositeState: async () => state });
-  assert.deepEqual([g.job(again.job.id).total, g.job(again.job.id).compositeQuote.compositePricing.labor], [750, undefined]);
-  // The morning's $750 + labor ($990) for a truck is refused at signature: the server's price is $750.
+  assert.deepEqual([g.job(again.job.id).total, g.job(again.job.id).compositeQuote.compositePricing.labor], [1000, undefined]);
+  // The morning's $1,000 + labor ($990) for a truck is refused at signature: the server's price is $1,000.
   const morning = [...signedLines(truck), { id: LABOR_ID, kind: 'labor', name: 'Labor: 6 man-hours × $40.00', description: 'Crew time on site, billed per man-hour.', quantity: 1, unitCents: 24000, totalCents: 24000 }];
   await assert.rejects(saveWalkthroughHandoff(fixture().store, owner, handoff(1, { ...withLabor, line_items: morning, total: 990 }), NOW, { env: ON_ENV, compositeState: async () => state }),
-    error => error.code === 'handoff_builder_price_mismatch' && error.details.totalCents === 75000);
+    error => error.code === 'handoff_builder_price_mismatch' && error.details.totalCents === 100000);
   // A junk-only quote saved before D-JUNK with a Labor line: unsent, it is saved again before it is sent (the save drops
   // the line); signed, it keeps the price the customer signed.
   const earlier = { ...truck.breakdown, labor: { manHours: 6, rateCents: 4000, rateSource: 'default', totalCents: 24000, prefilledManHours: 6, adjusted: false, belowEstimate: false, estimate: null } };
@@ -216,7 +216,7 @@ test('D-JUNK: the labor estimate counts set-up, sorting, cleaning and installati
     assert.equal(priceCompositeQuote(state, { ...sel, labor: { manHours: null, fullness: 'medium' } }, { complete: true }).junkOnly, false);
   }
   const priced = priceCompositeQuote(state, selection({ removal: [base, pick('Full truck load', 3)], shelving: [], storage: [], labor: { manHours: null, fullness: 'medium' } }), { complete: true });
-  assert.deepEqual([priced.labor.manHours, priced.labor.totalCents, priced.totalCents], [3, 15900, 97500 + 3 * 75000 + 15900], 'three trucks: $750 each, and 3 man-hours of garage work at $53.00');
+  assert.deepEqual([priced.labor.manHours, priced.labor.totalCents, priced.totalCents], [3, 15900, 97500 + 3 * 100000 + 15900], 'three trucks: $1,000 each, and 3 man-hours of garage work at $53.00');
 });
 
 test('D-LABOR-TEXT: the customer sees the Labor line as one amount; the staff keep the man-hours; a job signed with the earlier Labor line still renders', async t => {
@@ -270,25 +270,25 @@ test('D-LABOR-TEXT: the customer sees the Labor line as one amount; the staff ke
 });
 
 // The three decisions together, signed in person on the walkthrough (D-DEPOSIT terms 2026-10-deposit25): a junk-only quote
-// is $750 per truck with no Labor line and its 25% deposit (D-JUNK), and a garage quote's Labor line reaches the homeowner
+// is $1,000 per truck with no Labor line and its 25% deposit (D-JUNK), and a garage quote's Labor line reaches the homeowner
 // as one amount (D-LABOR-TEXT) inside the same 25% now / 75% on the job day split.
-test('D-JUNK, D-LABOR-TEXT and D-DEPOSIT together: a junk-only quote signs at $750 per truck with 25% down; a garage quote signs "Labor" as one amount with 25% now and 75% on the job day', async t => {
+test('D-JUNK, D-LABOR-TEXT and D-DEPOSIT together: a junk-only quote signs at $1,000 per truck with 25% down; a garage quote signs "Labor" as one amount with 25% now and 75% on the job day', async t => {
   const state = allApproved(), hourly = /man-hour|per hour|hourly|billed per|\$40\.00|\$53\.00/i;
   const terms = row => [row.estimate.commercialPolicy?.version, row.estimate.paymentSchedule?.depositCents, row.estimate.paymentSchedule?.remainderCents, row.estimate.paymentSchedule?.depositDueDate, row.estimate.paymentSchedule?.remainderDueDate];
   const rows = (row, id) => moneyDocumentModel({ ...row, id }, { kind: 'estimate', now: NOW }).rows.filter(entry => !/^(Payments received|Total unpaid|Balance due)$/.test(entry.label)).map(entry => [entry.label, entry.cents]);
   const portal = async (row, id) => { portalStore(t, { [id]: { ...row, id } }); const view = await portalView(portalHandlers(), await portalCookie(id)); assert.equal(view.status, 200); return view.body; };
-  // Junk only, two trucks: $1,500, no Labor line, $375 now and $1,125 on Monday's job.
+  // Junk only, two trucks: $2,000, no Labor line, $500 now and $1,500 on Monday's job.
   const trucks = priceCompositeQuote(state, selection({ removal: [pick('Full truck load', 2)], shelving: [], storage: [], labor: { manHours: null, fullness: 'medium' } }), { complete: true });
   const f = fixture(), junk = f.job((await saveWalkthroughHandoff(f.store, owner, handoff(1, signedQuote(trucks)), NOW, { env: ON_ENV, compositeState: async () => state })).job.id);
-  assert.deepEqual([junk.total, junk.deposit.amount, junk.estimate.depositRequired, junk.estimate.lineItems.map(line => line.id), junk.acceptedHandoffPayload.terms_version], [1500, 375, 375, ['removal-junk-full'], '2026-10-deposit25']);
-  assert.deepEqual(terms(junk), ['2026-10-deposit25', 37500, 112500, '2026-10-17', MON]);
-  assert.deepEqual(rows(junk, 'job-junk'), [['Total', 150000], ['25% deposit due 2026-10-17', 37500], [`Scheduled 75% remainder due ${MON}`, 112500]]);
+  assert.deepEqual([junk.total, junk.deposit.amount, junk.estimate.depositRequired, junk.estimate.lineItems.map(line => line.id), junk.acceptedHandoffPayload.terms_version], [2000, 500, 500, ['removal-junk-full'], '2026-10-deposit25']);
+  assert.deepEqual(terms(junk), ['2026-10-deposit25', 50000, 150000, '2026-10-17', MON]);
+  assert.deepEqual(rows(junk, 'job-junk'), [['Total', 200000], ['25% deposit due 2026-10-17', 50000], [`Scheduled 75% remainder due ${MON}`, 150000]]);
   const junkPortal = await portal(junk, 'job-junk');
-  assert.deepEqual([junkPortal.estimate.depositRequired, junkPortal.payment.dueNow, junkPortal.estimate.lineItems.map(line => line.name)], [375, 375, [junk.estimate.lineItems[0].name]]);
+  assert.deepEqual([junkPortal.estimate.depositRequired, junkPortal.payment.dueNow, junkPortal.estimate.lineItems.map(line => line.name)], [500, 500, [junk.estimate.lineItems[0].name]]);
   assert.doesNotMatch(JSON.stringify(junkPortal.estimate), /Labor|man-hour/i, 'no Labor line anywhere the homeowner looks');
-  // The old page's 50% of a $750 truck is not the deposit the current terms take.
+  // The old page's 50% of a $1,000 truck is not the deposit the current terms take.
   const half = handoff(2, signedQuote(priceCompositeQuote(state, selection({ removal: [pick('Full truck load')], shelving: [], storage: [] }), { complete: true })));
-  half.plan.quote.deposit = 375;
+  half.plan.quote.deposit = 500;
   await assert.rejects(saveWalkthroughHandoff(fixture().store, owner, half, NOW, { env: ON_ENV, compositeState: async () => state }), error => error.code === 'handoff_invalid_amount' && error.status === 400 && /its 25% deposit/.test(error.message));
   // Garage work: the Labor line is "Labor" and its amount, and the whole total, labor included, splits 25% / 75%.
   const priced = priceCompositeQuote(state, selection(), { complete: true }), deposit = Math.round(priced.totalCents / 4);
@@ -305,4 +305,27 @@ test('D-JUNK, D-LABOR-TEXT and D-DEPOSIT together: a junk-only quote signs at $7
   assert.doesNotMatch(JSON.stringify(garagePortal.estimate), hourly);
   // The staff still see the man-hours sold.
   assert.deepEqual(walkthroughCrewBrief(garage.jobInstructions).find(row => row.label === 'Man-hours sold'), { label: 'Man-hours sold', text: '6 man-hours' });
+});
+
+// Owner decision 2026-10-21: the full truck went from $750 to $1,000 (partial loads draft from it). A job keeps the terms
+// it was signed on: one signed at $750 keeps $750 and its $187.50 deposit wherever the homeowner looks, while an unsent
+// draft still at $750 is refused at send until it is saved again at the new price, so no new quote goes out at $750.
+test('the $1,000 truck: a job signed at $750 keeps its price and deposit; an unsent $750 draft must be saved again before it is sent', async t => {
+  const now = allApproved(), menuAt750 = structuredClone(now.menu);
+  menuAt750.services.find(item => item.basis.kind === 'junk' && item.basis.fraction === 1).approvedPriceCents = 75000;
+  const before = { ...now, menu: menuAt750 };
+  const truck = (state, quantity = 1) => priceCompositeQuote(state, selection({ removal: [pick('Full truck load', quantity)], shelving: [], storage: [], labor: { manHours: null, fullness: 'medium' } }), { complete: true });
+  assert.deepEqual([truck(before).totalCents, truck(now).totalCents, truck(now, 2).totalCents], [75000, 100000, 200000]);
+  const half = priceCompositeQuote(now, selection({ removal: [pick('Half load')], shelving: [], storage: [], labor: { manHours: null, fullness: 'medium' } }), { complete: true });
+  assert.equal(half.totalCents, 50000, 'a partial load scales from the $1,000 truck');
+  // Signed yesterday at $750: today's $1,000 menu changes nothing on the job or the homeowner's portal.
+  const f = fixture(), signed = f.job((await saveWalkthroughHandoff(f.store, owner, handoff(1, signedQuote(truck(before))), NOW, { env: ON_ENV, compositeState: async () => before })).job.id);
+  assert.deepEqual([signed.total, signed.estimate.amountCents, signed.estimate.depositRequiredCents], [750, 75000, 18750]);
+  portalStore(t, { 'job-750': { ...signed, id: 'job-750' } });
+  const view = (await portalView(portalHandlers(), await portalCookie('job-750'))).body;
+  assert.deepEqual([view.estimate.amount, view.estimate.depositRequired], [750, 187.5], 'the signed price and deposit, not today\'s menu');
+  // The same $750 quote saved but never sent is held at send: the owner's price is now $1,000.
+  const unsent = compositeApproval(truck(before).breakdown, now);
+  assert.deepEqual(unsent.blocked.map(row => [row.id, row.unitCents]), [[menuItem('Full truck load').id, 75000]]);
+  assert.match(unsent.blocked[0].reason, /^The owner approved \$1,000\.00 for .*, but this quote has \$750\.00\. Save the quote again to use the approved price\.$/);
 });

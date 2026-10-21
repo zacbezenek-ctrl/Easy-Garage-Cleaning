@@ -128,7 +128,8 @@ Each rule is an owner decision recorded in the code. Changing one needs the owne
 - **Labor line $53.00 per man-hour.** `DEFAULT_LABOR_RATE_CENTS = 5300` in `functions/_lib/composite-quote.js`. The
   owner's rate in Firestore (`pricingMenuApprovals/current` → `laborRatePerManHourCents`, set on Hub Menu prices)
   overrides it. The rate is never read from the browser; the server re-prices.
-- **Junk-only quotes: $750 per truck, no Labor line.** At least one truck load and otherwise only special-handling
+- **Junk-only quotes: $1,000 per truck, no Labor line** (owner decision 2026-10-21, was $750; partial loads scale
+  from it). At least one truck load and otherwise only special-handling
   items and access charges (`junkOnly`, `HAULING_GROUPS` in `functions/_lib/composite-quote.js`). Special items or
   access without a truck are not junk-only and keep the Labor line. Any garage work needs the Labor line.
 - **Customers see Labor as one amount**, "Labor", never the man-hours, the rate or hourly wording (D-LABOR-TEXT,

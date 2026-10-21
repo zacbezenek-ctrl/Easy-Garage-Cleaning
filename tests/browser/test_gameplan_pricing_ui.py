@@ -326,7 +326,7 @@ class GameplanPricingBrowserTests(unittest.TestCase):
         self.assertEqual(self.menu_calls, 1, 'the builder menu is read once')
         self.screen(page, 2, {'name': 'Synthetic Customer', 'garageSize': '1', 'fill': 'medium', 'loads': '1.25', 'hazards': ['Pest waste'], 'special': ['Mattress'], 'access': ['Stairs']})
         screen = page.locator('#screen')
-        for shown in ('Full truck load $750.00 Approved', 'Three-quarter load $562.50 Draft price', 'Half load $375.00 Draft price', 'Quarter load $187.50 Draft price',
+        for shown in ('Full truck load $1,000.00 Approved', 'Three-quarter load $750.00 Draft price', 'Half load $500.00 Draft price', 'Quarter load $250.00 Draft price',
                       'Mattress +$70.00 Draft price', 'Pest waste +$300.00 Draft price', 'Stairs +$190.00 Draft price', 'Long carry +$115.00 Draft price'):
             expect(screen).to_contain_text(shown)
         for legacy in ('$950', 'per full truckload', '(+$'): expect(screen).not_to_contain_text(legacy)
@@ -446,7 +446,7 @@ class GameplanPricingBrowserTests(unittest.TestCase):
         self.screen(page, 2)
         self.menu_down = False
         screen.get_by_role('button', name='Retry builder prices').click()
-        expect(screen).to_contain_text('Full truck load $750.00 Approved')
+        expect(screen).to_contain_text('Full truck load $1,000.00 Approved')
         self.audit(page, 'scope, builder prices after retry')
         # Once the menu loads, Finish offers the products and shows the counts recorded meanwhile, to clear after choosing.
         self.screen(page, 3, {})

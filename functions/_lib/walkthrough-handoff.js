@@ -145,7 +145,7 @@ export function customerScopeSummary(scope) {
 }
 /**
  * D-JUNK: the garage work a signed walkthrough records beyond junk removal (quote-model.js walkthroughGarageWork, with
- * its rule). A junk-only builder quote ($750 per truck, no Labor line) prices none of it, so it is signed only on a
+ * its rule). A junk-only builder quote ($1,000 per truck, no Labor line) prices none of it, so it is signed only on a
  * walkthrough that records none of it (saveWalkthroughHandoff, handoff_builder_junk_only_garage_work), and sent only on
  * one whose saved capture records none (quote-draft.js). The walkthrough page (crew/gameplan.html walkthroughGarageWork)
  * applies the same rule before the homeowner signs.
@@ -635,7 +635,7 @@ export async function saveWalkthroughHandoff(store, actor, input, now = new Date
   // handoff_builder_price_mismatch). Prices the owner has not approved still book the job (pricesPendingApproval).
   // The labor estimate reads the signed plan's fullness. A job signed before the Labor line, revised with its own
   // selection, keeps its signed price by the earlier rules (signedWithoutLabor); any other selection with garage work
-  // needs labor, and a junk-only one is $750 per truck with no Labor line (D-JUNK). The Labor line the customer signs is
+  // needs labor, and a junk-only one is $1,000 per truck with no Labor line (D-JUNK). The Labor line the customer signs is
   // the server's own, "Labor" and its amount (D-LABOR-TEXT): a page still showing the man-hours is refused like any
   // other line that differs (builderMismatch), so the quote is built again before the homeowner signs.
   const chosen = !builderOn ? null : builderSent ? signedInput.quote.composite_pricing : savedSelection(previous);
@@ -645,11 +645,11 @@ export async function saveWalkthroughHandoff(store, actor, input, now = new Date
     builder = priceCompositeQuote(await compositeState(env), selection, { complete: true, requireLabor: !legacy });
     const mismatch = builderMismatch(signedInput.quote, builder, Math.round(plan.quote.total * 100));
     if (mismatch) throw mismatch;
-    // D-JUNK: a junk-only quote is $750 per truck with no Labor line, so it prices no garage work; the walkthrough the
+    // D-JUNK: a junk-only quote is $1,000 per truck with no Labor line, so it prices no garage work; the walkthrough the
     // homeowner signs must record none (walkthroughGarageWork). Nothing is saved: the quote is built again or the
     // walkthrough corrected, and the homeowner signs that.
     const work = builder.junkOnly ? walkthroughGarageWork(plan.scope) : [];
-    if (work.length) throw fail('builder_junk_only_garage_work', `This junk-only quote prices the hauling only ($750 per truck covers the crew's time; it has no Labor line), but the walkthrough records garage work: ${listNames(work)}. Nothing was saved. Add that work in the quote builder (a garage cleaning base for sorting and reset, cleaning, shelving or storage), or, if the homeowner wants junk removal only, choose Everything goes or Customer labels before arrival as the sorting plan and remove those finish options. Then have the homeowner sign again.`);
+    if (work.length) throw fail('builder_junk_only_garage_work', `This junk-only quote prices the hauling only (the truck price covers the crew's time; it has no Labor line), but the walkthrough records garage work: ${listNames(work)}. Nothing was saved. Add that work in the quote builder (a garage cleaning base for sorting and reset, cleaning, shelving or storage), or, if the homeowner wants junk removal only, choose Everything goes or Customer labels before arrival as the sorting plan and remove those finish options. Then have the homeowner sign again.`);
     plan = normalizeHandoffPlan(withoutQuoteLines(signedInput), now, { builder, purchase });
   }
   // EGC_QUOTE_BUILDER_ENABLED: a quote the builder did not price (no builder selection sent or saved) is held as well

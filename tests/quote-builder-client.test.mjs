@@ -165,7 +165,7 @@ test('a junk-only selection sends no labor and its running total is the trucks a
   const descriptor = plain(B.builderDescriptor(menu, junk, 'storage', 'packed'));
   assert.equal('labor' in descriptor, false, 'a junk-only quote carries no labor, even man-hours once set by hand');
   const priced = priceCompositeQuote(state, descriptor, { complete: true });
-  assert.deepEqual([priced.junkOnly, priced.labor, priced.totalCents], [true, null, 2 * 75000 + 7000 + 19000]);
+  assert.deepEqual([priced.junkOnly, priced.labor, priced.totalCents], [true, null, 2 * 100000 + 7000 + 19000]);
   const totals = plain(B.runningTotals(menu, junk, 'packed'));
   assert.deepEqual([totals.junkOnly, totals.labor, totals.laborHours, totals.total], [true, 0, null, priced.totalCents], 'the running total matches the server: no Labor line');
   // Garage work brings the Labor line back: a cleaning add-on, a base, shelving or storage.

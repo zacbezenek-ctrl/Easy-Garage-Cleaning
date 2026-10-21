@@ -92,7 +92,7 @@ test('with the builder on, Scope and Finish price items from the builder menu wi
   await C.load(); await C.load();
   assert.deepEqual(calls.fetch, ['/api/quote-draft?view=builder'], 'read once');
   const loads = C.loadsNote();
-  for (const [name, price, chip] of [['Full truck load', '$750.00', 'Approved'], ['Three-quarter load', '$562.50', 'Draft price'], ['Half load', '$375.00', 'Draft price'], ['Quarter load', '$187.50', 'Draft price']]) {
+  for (const [name, price, chip] of [['Full truck load', '$1,000.00', 'Approved'], ['Three-quarter load', '$750.00', 'Draft price'], ['Half load', '$500.00', 'Draft price'], ['Quarter load', '$250.00', 'Draft price']]) {
     assert.match(loads, new RegExp(`<li><span>${name}</span> <span class="gp-price">\\${price} <span class="qb-chip[^"]*"[^>]*>${chip}</span></span></li>`), name);
   }
   assert.doesNotMatch(loads, /\$950/);

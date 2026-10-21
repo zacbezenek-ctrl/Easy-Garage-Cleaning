@@ -79,7 +79,7 @@ test('the owner ticks draft menu prices, sets a service amount, reviews and appr
   const ui = screen();
   await ui.settle(() => ui.root()?.textContent.includes('pricing-menu prices are drafts'), 'the menu prices');
   assert.match(ui.root().textContent, /Catalog pricing is turned off/, 'the menu approval works while catalog quotes stay off');
-  assert.match(ui.root().textContent, /Approved in the pricing menu itself: Full truck load \$750\.00/);
+  assert.match(ui.root().textContent, /Approved in the pricing menu itself: Full truck load \$1,000\.00/);
   assert.match(ui.row(shelf.id).textContent, /Public retail \$89\.00 × 1\.3/, 'the owner sees the cost basis');
   const tick = id => { const box = ui.row(id).querySelector('input[type="checkbox"]'); box.checked = true; box.dispatchEvent({ type: 'change', target: box }); };
   tick(mattress.id); tick(shelf.id);

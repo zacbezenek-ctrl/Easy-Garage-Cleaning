@@ -28,7 +28,7 @@ Owners and managers do too.
 **Estimator quote builder and handoff.** At a walkthrough the estimator builds the quote in order: removal first, then
 shelving, then extra storage, priced from your pricing menu. Every builder quote with garage work then gets a **Labor**
 line on top: the estimated man-hours × $53.00 per man-hour (your decision of 2026-10-19; it was $40.00 on 2026-10-18).
-A junk-only quote (truck loads, with their special items and access charges) has no Labor line: $750 per truck covers
+A junk-only quote (truck loads, with their special items and access charges) has no Labor line: $1,000 per truck (owner decision 2026-10-21, was $750) covers
 the crew's time (your decision of 2026-10-18). The app fills in the man-hours from its own estimate of the garage work: the walkthrough time model in
 person-hours for set-up and sweep-out, sorting a garage with a cleaning base and the cleaning add-ons, plus an hour per
 shelving unit and a few minutes per tote, never the truck loads, special items or access (their prices pay for

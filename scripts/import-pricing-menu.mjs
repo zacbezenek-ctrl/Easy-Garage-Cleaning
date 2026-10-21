@@ -14,7 +14,8 @@
  * The repository is public: margins, proposed or historical selling prices, commission, CAC, wage and labor
  * numbers are never read, and no other sheet (Inputs, Owner review, Garage, Junk, Sensitivity, Approvals, Actual
  * jobs, ...) is opened. Every product is imported as DRAFT; a service is approved only when the sheet says
- * "Approved" (today: the $750 full truck). The draft amounts of service items come from the walkthrough price
+ * "Approved" (today: the full truck, $1,000 since the owner decision of 2026-10-21; the workbook still says $750, so update
+ * its EGC-026 row before re-importing or the import puts $750 back). The draft amounts of service items come from the walkthrough price
  * tables at request time (functions/_lib/pricing-config.js), never from the workbook.
  *   node scripts/import-pricing-menu.mjs --from <csv folder>            report what would change; exit 1 when stale
  *   node scripts/import-pricing-menu.mjs --from <csv folder> --write    write the JSON and the module

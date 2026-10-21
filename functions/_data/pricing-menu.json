@@ -2811,8 +2811,8 @@
     "fraction": 1
    },
    "status": "approved",
-   "approvedPriceCents": 75000,
-   "approval": "Owner-approved amount (pricing workbook EGC-026, Junk).",
+   "approvedPriceCents": 100000,
+   "approval": "Owner-approved amount: $1,000 per full truck (owner decision 2026-10-21; was $750 in pricing workbook EGC-026, Junk).",
    "scopeNote": "Owner approved full-truck amount only. Verify measured capacity, weight and exclusions. Not deployed."
   },
   {
