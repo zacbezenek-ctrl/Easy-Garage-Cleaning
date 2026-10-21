@@ -165,7 +165,30 @@ Each rule is an owner decision recorded in the code. Changing one needs the owne
 6. **No secrets in the repo.** Values live in Cloudflare and Railway. `.env.example` documents names only;
    `tests/env-inventory.test.mjs` fails on a live Stripe key, webhook secret or private key. Tests use `demo-*`
    Firestore projects and synthetic values.
+   **This repo is public.** Anything in a commit, issue, PR, review or comment can be read by anyone. Never paste
+   customer data (names, addresses, phone numbers, emails), secrets or env values, margins or costs, or anyone's
+   pay into them. Use synthetic data in tests and examples, and cite a file path rather than restating internal numbers.
 7. **PR descriptions are for the owner.** Plain English, no jargon first. Say what changes for which people (owner,
    office, estimators, crew, door-to-door reps, customers), what stays off and what switch turns it on, and what the
    owner must do, if anything. Then list the tests you ran. Commit messages follow the same style: one sentence on
    what changed for whom (see `git log`).
+
+## Code Review Rules
+
+Every automated reviewer (Claude Code Review, Codex code review) follows these rules. Flag only what would hurt the
+business or its customers if merged. Do not post style, naming, formatting or wording nits.
+
+Flag:
+- **Real bugs**: wrong results, crashes, lost or duplicated writes, races, a missing `await`, off-by-one dates, or
+  time read from the real clock instead of an injected one.
+- **Security and privacy**: an auth or role check skipped (staff gate, crew scope, business-account isolation,
+  `firestore.rules`), a secret or customer data in code, logs or responses, or data from one customer shown to another.
+- **Broken business rules** (section 4): money reaching a crew view; a deposit split or due rule other than the ones in
+  `quote-payment-policy.js`; a Labor line on a junk-only quote, or a missing one on garage work; man-hours or the
+  rate shown to a customer; an unapproved draft price that can be sent; commission shares that stack or change;
+  a price or labor rate taken from the browser; a new HighLevel write or customer send that is unflagged or unregistered.
+- **Broken conventions that fail later**: a changed versioned asset without a `?v=` bump, a hand-edited generated file,
+  a new env read missing from `.env.example`, or a skipped, disabled or weakened test.
+
+For each finding, name the file and line, the input or path that triggers it, and what goes wrong. If you cannot
+trace a realistic path, don't post it.
