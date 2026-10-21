@@ -1,7 +1,8 @@
 // Fixture server for tests/browser/test_job_actuals_ui.py: the repo's static files, a page that mounts the Job actuals
 // screen on its own, and the REAL /api/job-actuals handler (functions/api/job-actuals.js) over synthetic completed jobs,
 // timecards and an in-memory settings store. The clock is fixed; POST /__control {who:'owner'|'manager'} switches the
-// signed-in viewer and {reset:true} clears the saved settings. Prints {"port":N} first.
+// signed-in viewer; {reset:true} saves only synthetic pay settings ($10.00 per man-hour, 1% workers' comp, never a real
+// wage), and {reset:true, blank:true} clears every setting. Prints {"port":N} first.
 import http from 'node:http';
 import { readFile } from 'node:fs/promises';
 import { extname, join, normalize, relative, sep } from 'node:path';
@@ -29,10 +30,10 @@ const JOBS = [
   // Junk-only, $750 per truck, no Labor line; a door sale would not matter, junk earns 0.
   job('job-junk', '2026-09-05', 'Synthetic Junk Haul', 1500, [line('removal-junk-full', 'service', 2, 75000)], { serviceType: 'Junk removal', sourceWalkthroughId: 'walk-junk' }),
   // A job that lost money: billed 4, worked 30.
-  job('job-overrun', '2026-08-01', 'Synthetic Overrun', 600, [line('removal-base', 'service', 1, 38800), line('labor', 'labor', 1, 21200)], { jobInstructions: { laborManHours: 4 } }),
+  job('job-overrun', '2026-08-01', 'Synthetic Overrun', 250, [line('removal-base', 'service', 1, 3800), line('labor', 'labor', 1, 21200)], { jobInstructions: { laborManHours: 4 } }),
 ];
 const at = (date, time) => `${date}T${time}:00-06:00`;
-const card = (id, jobId, date, from, to) => ({ id, employee: 'Crew.One', employeeName: 'Crew One', payType: 'hourly', hourlyRate: 27, clockInAt: at(date, from), clockOutAt: at(date, to), status: 'submitted', approvalStatus: 'approved', breaks: [],
+const card = (id, jobId, date, from, to) => ({ id, employee: 'Crew.One', employeeName: 'Crew One', payType: 'hourly', hourlyRate: 31, clockInAt: at(date, from), clockOutAt: at(date, to), status: 'submitted', approvalStatus: 'approved', breaks: [],
   jobTracking: { version: 1, coverageStartedAt: at(date, from), partialHistory: false, segments: [{ id: `${id}-w`, kind: 'work', jobId, startedAt: at(date, from), endedAt: at(date, to), actorId: 'Crew.One' }] } });
 const TIMECARDS = [card('c1', 'job-two-car', '2026-10-18', '06:00', '15:00'), { ...card('c2', 'job-two-car', '2026-10-18', '06:00', '15:00'), employee: 'Crew.Two', employeeName: 'Crew Two' },
   card('c3', 'job-overrun', '2026-08-01', '05:00', '20:00'), { ...card('c4', 'job-overrun', '2026-08-01', '05:00', '20:00'), employee: 'Crew.Two', employeeName: 'Crew Two' }];
@@ -55,7 +56,7 @@ async function serve(request, response) {
   if (url.pathname === '/__control') {
     const input = JSON.parse(body || '{}');
     if (input.who) state.who = input.who;
-    if (input.reset) state.docs.clear();
+    if (input.reset) { state.docs.clear(); if (!input.blank) state.docs.set('jobActualsSettings/current', { schemaVersion: 1, wageCentsPerManHour: 1000, workersCompBp: 100, revision: 'rev-pay' }); }
     response.writeHead(200, { 'Content-Type': 'application/json' }); response.end('{"ok":true}'); return;
   }
   if (url.pathname === '/api/job-actuals') {

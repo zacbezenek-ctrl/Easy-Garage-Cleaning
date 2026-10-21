@@ -12,25 +12,24 @@
  *      travel is the paid time the labor cost uses.
  *   2. 'crew_lead': the crew lead's "people × hours on site" confirmed at Complete (fieldExecution.completion.crewOnSite).
  *   Neither: null ('not_recorded'), and the job has no margin rather than a guessed one.
- * Costs: labor at the known wage ($27.00 per man-hour + 3% workers' comp = $27.81) plus the owner's payroll tax % and
- *   other burden per man-hour; goods at their retail basis (the estimate's product split, Home Depot retail before
+ * Costs: labor at the owner's wage per man-hour × (1 + workers' comp % + payroll tax %) plus other burden per man-hour,
+ *   all owner-entered (pay figures never live in the code); goods at their retail basis (the estimate's product split, Home Depot retail before
  *   the 1.30 markup) plus the owner's goods purchase tax %; dump fee per truck load (the crew lead's count at Complete,
  *   else the quoted loads); truck cost per job. Commission on revenue by channel: estimator 7%, setter 13% + estimator
  *   7%, door sale 25%, junk-only 0%.
- * Any blank owner cost counts as $0, so the margin is an upper bound until all five are entered. */
+ * The wage has no stand-in: until the owner enters it, no job has a margin ('wage_unset'). Any other blank owner cost
+ * counts as $0, so the margin is an upper bound until all of them are entered. */
 import { estimateTotals, builderJunkOnly, included } from './quote-model.js';
 import { customerMoneyTotals } from './money-core.js';
 import { hubRecordEligibility } from './funnel-definitions.js';
 import { addDays } from './dispatch-time.js';
 
-export const WAGE_CENTS_PER_HOUR = 2700;
-export const WORKERS_COMP_BP = 300;
 export const LABOR_PRICE_CENTS_PER_HOUR = 5300;
 export const JOB_ACTUALS_DAYS = 90;
 export const JOB_ACTUALS_SHORT_DAYS = 30;
-export const COST_SETTING_KEYS = Object.freeze(['payrollTaxBp', 'burdenCentsPerManHour', 'dumpFeeCentsPerLoad', 'truckCentsPerJob', 'goodsTaxBp']);
+export const COST_SETTING_KEYS = Object.freeze(['wageCentsPerManHour', 'workersCompBp', 'payrollTaxBp', 'burdenCentsPerManHour', 'dumpFeeCentsPerLoad', 'truckCentsPerJob', 'goodsTaxBp']);
 // Inclusive upper bounds; every setting is a whole number from 0, or null while the owner has not entered it.
-export const COST_SETTING_LIMITS = Object.freeze({ payrollTaxBp: 5000, burdenCentsPerManHour: 10000, dumpFeeCentsPerLoad: 500000, truckCentsPerJob: 500000, goodsTaxBp: 2500 });
+export const COST_SETTING_LIMITS = Object.freeze({ wageCentsPerManHour: 20000, workersCompBp: 5000, payrollTaxBp: 5000, burdenCentsPerManHour: 10000, dumpFeeCentsPerLoad: 500000, truckCentsPerJob: 500000, goodsTaxBp: 2500 });
 export const COMMISSION_BP = Object.freeze({ estimator: 700, setter: 1300, door: 2500 });
 export const CHANNELS = Object.freeze(['direct_estimator', 'appointment_setter', 'door_sale', 'junk_only', 'none']);
 const COMPLETED = new Set(['completed', 'paid', 'closed', 'review_requested', 'invoiced']);
@@ -53,9 +52,11 @@ export const milliHours = hours => typeof hours === 'number' && Number.isFinite(
 /** cents × basis points, half up. */
 export const percentOf = (cents, bp) => divRoundHalfUp(big(cents) * big(bp), 10000);
 
-/** The loaded labor cost of paid milli-hours: wage × (1 + 3% workers' comp + payroll tax) + burden per man-hour. */
-export function laborCostCents(paidMilliHours, { payrollTaxBp = null, burdenCentsPerManHour = null } = {}) {
-  const perHourTimes10k = big(WAGE_CENTS_PER_HOUR) * big(10000 + WORKERS_COMP_BP + (payrollTaxBp ?? 0)) + big(burdenCentsPerManHour ?? 0) * 10000n;
+/** The loaded labor cost of paid milli-hours: wage × (1 + workers' comp + payroll tax) + burden per man-hour, from the
+ * owner's settings; null while the wage is blank (never a guessed wage). */
+export function laborCostCents(paidMilliHours, { wageCentsPerManHour = null, workersCompBp = null, payrollTaxBp = null, burdenCentsPerManHour = null } = {}) {
+  if (!Number.isSafeInteger(wageCentsPerManHour)) return null;
+  const perHourTimes10k = big(wageCentsPerManHour) * big(10000 + (workersCompBp ?? 0) + (payrollTaxBp ?? 0)) + big(burdenCentsPerManHour ?? 0) * 10000n;
   return divRoundHalfUp(big(paidMilliHours) * perHourTimes10k, 1000n * 10000n);
 }
 
@@ -70,7 +71,7 @@ export function commissionFor(revenueCents, channel) {
 export function validCostSetting(key, value) {
   return value === null || Number.isSafeInteger(value) && value >= 0 && value <= COST_SETTING_LIMITS[key];
 }
-/** The owner's cost settings, every key present (null when blank), and whether all five are entered. */
+/** The owner's cost settings, every key present (null when blank), and whether all of them are entered. */
 export function normalizeCostSettings(input = {}) {
   const settings = Object.fromEntries(COST_SETTING_KEYS.map(key => [key, validCostSetting(key, input?.[key] ?? null) ? input?.[key] ?? null : null]));
   return { ...settings, complete: COST_SETTING_KEYS.every(key => settings[key] !== null), missing: COST_SETTING_KEYS.filter(key => settings[key] === null) };
@@ -143,6 +144,7 @@ export function jobActualsRow(job, { labor = null, settings: raw = {}, channel =
   const loads = truckLoads(job), goodsRetail = goodsRetailCents(job);
   if (goodsRetail === null) reasons.push('goods_unknown');
   const commission = commissionFor(revenueCents ?? 0, channel);
+  if (settings.wageCentsPerManHour === null) reasons.push('wage_unset');
   if (!settings.complete) reasons.push('cost_settings_incomplete');
   const goodsCostCents = goodsRetail === null ? null : goodsRetail + percentOf(goodsRetail, settings.goodsTaxBp ?? 0);
   const laborCents = actual ? laborCostCents(actual.paidMilli, settings) : null;
@@ -195,7 +197,7 @@ export function buildJobActuals({ jobs = [], labor = { jobs: [] }, settings = {}
     .sort((a, b) => String(b.date).localeCompare(String(a.date)) || a.jobId.localeCompare(b.jobId));
   const normalized = normalizeCostSettings(settings);
   return {
-    ok: true, authority: 'employee_hub', asOf, window, rates: { wageCentsPerHour: WAGE_CENTS_PER_HOUR, workersCompBp: WORKERS_COMP_BP, laborPriceCentsPerHour: LABOR_PRICE_CENTS_PER_HOUR, commissionBp: COMMISSION_BP },
+    ok: true, authority: 'employee_hub', asOf, window, rates: { laborPriceCentsPerHour: LABOR_PRICE_CENTS_PER_HOUR, commissionBp: COMMISSION_BP },
     settingsComplete: normalized.complete, missingSettings: normalized.missing,
     totals: { last30: summarizeJobActuals(rows.filter(row => row.date >= window.shortStart)), last90: summarizeJobActuals(rows) },
     rows, laborCoverage: labor?.coverage || null,

@@ -1,7 +1,8 @@
 """Job actuals (owner) in a real browser at 1280 px and 390 px. tests/browser/job_actuals_fixture.mjs serves the screen
 on its own page and runs the REAL functions/api/job-actuals.js over synthetic completed jobs and timecards, so every
 figure on screen is the server's arithmetic: billed versus actual man-hours, loads, goods at retail, commission by
-channel and the margin, which reads "upper bound" until the owner fills the five cost settings. Also: the owner saves
+channel and the margin, which reads "upper bound" until the owner fills every cost setting and is absent without a wage.
+Pay figures are synthetic ($10.00 per man-hour, 1% workers' comp), never a real wage. Also: the owner saves
 settings in whole cents and basis points, a manager sees them read-only, the CSV export, and the phone layout (no
 sideways scroll, 44 px targets, 16 px inputs). Screenshots land in test-results/."""
 import csv, io, json, os, pathlib, re, subprocess, unittest, urllib.request
@@ -61,7 +62,7 @@ class JobActualsScreenTests(unittest.TestCase):
 
     def test_desktop_1280_shows_billed_versus_actual_and_an_upper_bound_margin(self):
         page = self.open(1280)
-        expect(page.get_by_text('Margins are an upper bound: 5 of 5 cost settings are blank.')).to_be_visible()
+        expect(page.get_by_text('Margins are an upper bound: 5 of 7 cost settings are blank.')).to_be_visible()
         two_car = self.row(page, 'job-two-car')
         # 2 crew × 9 h on timecards = 18 man-hours against 8 billed; 3 quoted loads; $300.00 of goods at retail.
         expect(two_car.locator('td[data-label="Billed h"]')).to_have_text('8.00')
@@ -72,9 +73,9 @@ class JobActualsScreenTests(unittest.TestCase):
         # Setter 13% + estimator 7% of $4,214.00: $547.82 + $294.98.
         expect(two_car.locator('td[data-label="Commission"]')).to_contain_text('$842.80')
         expect(two_car).to_contain_text('Setter 13% + estimator 7%')
-        # Revenue $4,214.00 − 18 h × $27.81 ($500.58) − $300.00 goods = $3,413.42, 81.0%, an upper bound.
-        expect(two_car.locator('td[data-label="Gross margin"]')).to_have_text('$3,413.42 · 81.0% ≤')
-        expect(two_car.locator('td[data-label="Contribution"]')).to_have_text('$2,570.62')
+        # Revenue $4,214.00 − 18 h × $10.10 ($181.80) − $300.00 goods = $3,732.20, 88.6%, an upper bound.
+        expect(two_car.locator('td[data-label="Gross margin"]')).to_have_text('$3,732.20 · 88.6% ≤')
+        expect(two_car.locator('td[data-label="Contribution"]')).to_have_text('$2,889.40')
         one_car = self.row(page, 'job-one-car')
         expect(one_car.locator('td[data-label="Actual h"]')).to_have_text('7.00Crew lead')
         expect(one_car.locator('td[data-label="Loads"]')).to_have_text('1Crew lead')
@@ -85,7 +86,7 @@ class JobActualsScreenTests(unittest.TestCase):
         expect(junk.locator('td[data-label="Commission"]')).to_have_text('$0.00')
         overrun = self.row(page, 'job-overrun')
         expect(overrun).to_have_class('over')
-        expect(overrun.locator('td[data-label="Gross margin"]')).to_contain_text('-$234.30')
+        expect(overrun.locator('td[data-label="Gross margin"]')).to_contain_text('-$53.00')
         last30 = page.get_by_role('region', name='Last 30 days')
         expect(last30).to_contain_text('$5,598.00'); expect(last30).to_contain_text('2 completed jobs')
         expect(last30).to_contain_text('Gross margin (upper bound)')
@@ -111,23 +112,26 @@ class JobActualsScreenTests(unittest.TestCase):
         with page.expect_request(lambda request: request.method == 'POST') as sent:
             save.click()
         body = sent.value.post_data_json
-        self.assertEqual(body['action'], 'job_actuals.settings.set'); self.assertIsNone(body['expectedRevision'])
-        self.assertEqual(body['settings'], {'payrollTaxBp': 765, 'burdenCentsPerManHour': 150, 'dumpFeeCentsPerLoad': 6500, 'truckCentsPerJob': 4000, 'goodsTaxBp': 755})
+        self.assertEqual(body['action'], 'job_actuals.settings.set'); self.assertEqual(body['expectedRevision'], 'rev-pay')
+        self.assertEqual(body['settings'], {'wageCentsPerManHour': 1000, 'workersCompBp': 100, 'payrollTaxBp': 765, 'burdenCentsPerManHour': 150, 'dumpFeeCentsPerLoad': 6500, 'truckCentsPerJob': 4000, 'goodsTaxBp': 755})
         expect(page.get_by_role('status').filter(has_text='Cost settings saved')).to_be_visible()
         expect(page.get_by_text('Margins are an upper bound')).to_have_count(0)
         two_car = self.row(page, 'job-two-car')
-        # 18 h × $31.3755 = $564.759 → $564.76; goods $300 + 7.55% = $322.65; 3 loads × $65 = $195; truck $40: $4,214.00 − $1,122.41 = $3,091.59.
-        expect(two_car.locator('td[data-label="Gross margin"]')).to_have_text('$3,091.59 · 73.4%')
+        # 18 h × $12.365 = $222.57; goods $300 + 7.55% = $322.65; 3 loads × $65 = $195; truck $40: $4,214.00 − $780.22 = $3,433.78.
+        expect(two_car.locator('td[data-label="Gross margin"]')).to_have_text('$3,433.78 · 81.5%')
         self.assert_layout(page, phone=True)
         page.screenshot(path=str(RESULTS / 'job-actuals-390-settings.png'), full_page=True)
 
-    def test_a_manager_sees_the_settings_read_only(self):
-        self.control(who='manager')
+    def test_without_a_wage_no_margin_is_shown_and_a_manager_sees_the_settings_read_only(self):
+        self.control(reset=True, blank=True, who='manager')
         page = self.open(390, 844, mobile=True)
         settings = page.get_by_role('region', name='Cost settings')
         expect(settings).to_contain_text('Only the owner can change them.')
         expect(settings.locator('input')).to_have_count(0)
         expect(settings).to_contain_text('Not set')
+        expect(page.get_by_text('No margins yet: enter the crew wage in Cost settings below.')).to_be_visible()
+        expect(self.row(page, 'job-two-car').locator('td[data-label="Gross margin"]')).to_have_text('—')
+        expect(self.row(page, 'job-two-car').locator('td[data-label="Actual h"]')).to_have_text('18.00Timecards')
         self.assert_layout(page, phone=True)
 
     def test_csv_export_has_a_row_per_job_with_plain_numbers(self):
@@ -139,7 +143,7 @@ class JobActualsScreenTests(unittest.TestCase):
         self.assertEqual(rows[0][:6], ['Job ID', 'Date', 'Customer', 'Revenue', 'Billed man-hours', 'Actual man-hours'])
         self.assertEqual([row[0] for row in rows[1:]], ['job-two-car', 'job-one-car', 'job-junk', 'job-overrun'])
         overrun = dict(zip(rows[0], rows[4]))
-        self.assertEqual(overrun['Gross margin'], '-234.30', 'a negative margin is a number, not a guarded text cell')
+        self.assertEqual(overrun['Gross margin'], '-53.00', 'a negative margin is a number, not a guarded text cell')
         self.assertEqual(overrun['Upper bound'], 'yes')
         two_car = dict(zip(rows[0], rows[1]))
         self.assertEqual([two_car['Revenue'], two_car['Billed man-hours'], two_car['Actual man-hours'], two_car['Commission']], ['4214.00', '8', '18', '842.80'])

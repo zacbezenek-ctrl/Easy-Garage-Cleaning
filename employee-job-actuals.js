@@ -8,12 +8,14 @@
 'use strict';
 const SCREEN='job_actuals',PATH='/api/job-actuals',PREFIX='job_actuals';
 const SETTINGS=[
+  {key:'wageCentsPerManHour',label:'Crew wage per man-hour',unit:'$',help:'Average hourly wage paid to crew. No margin is shown until this is set.',kind:'money'},
+  {key:'workersCompBp',label:"Workers' comp",unit:'%',help:'Workers\' comp as a percent of wages.',kind:'percent'},
   {key:'payrollTaxBp',label:'Payroll tax',unit:'%',help:'Employer payroll tax as a percent of wages, e.g. 7.65.',kind:'percent'},
   {key:'burdenCentsPerManHour',label:'Other burden per man-hour',unit:'$',help:'Insurance, PTO and other cost per hour worked.',kind:'money'},
   {key:'dumpFeeCentsPerLoad',label:'Dump fee per truck load',unit:'$',help:'Average landfill or transfer fee for one load.',kind:'money'},
   {key:'truckCentsPerJob',label:'Truck cost per job',unit:'$',help:'Fuel, wear and truck payment spread per job.',kind:'money'},
   {key:'goodsTaxBp',label:'Tax on goods purchases',unit:'%',help:'Sales tax EGC pays buying goods, e.g. 7.55.',kind:'percent'}];
-const LIMITS={payrollTaxBp:5000,burdenCentsPerManHour:10000,dumpFeeCentsPerLoad:500000,truckCentsPerJob:500000,goodsTaxBp:2500};
+const LIMITS={wageCentsPerManHour:20000,workersCompBp:5000,payrollTaxBp:5000,burdenCentsPerManHour:10000,dumpFeeCentsPerLoad:500000,truckCentsPerJob:500000,goodsTaxBp:2500};
 const CHANNEL={direct_estimator:'Estimator 7%',appointment_setter:'Setter 13% + estimator 7%',door_sale:'Door sale 25%',junk_only:'Junk-only 0%',none:'None'};
 const SOURCE={timecards:'Timecards',crew_lead:'Crew lead',not_recorded:'Not recorded'};
 const S={host:null,ctx:null,data:null,error:null,loading:false,busy:false,drafts:{},feedback:'',feedbackError:false,generation:0,showAll:false};
@@ -108,7 +110,7 @@ function settingsCard(){
   });
   return h('section',{class:'hub-card ja-settings','aria-label':'Cost settings'},
     h('h2',{},'Cost settings'),
-    h('p',{class:'ja-muted'},`Known: wage $${(d.rates.wageCentsPerHour/100).toFixed(2)} per man-hour + ${d.rates.workersCompBp/100}% workers' comp. Labor is sold at $${(d.rates.laborPriceCentsPerHour/100).toFixed(2)} per man-hour. Blank costs count as $0, so margins stay an upper bound until all five are set.`+(editable?'':' Only the owner can change them.')),
+    h('p',{class:'ja-muted'},'Labor costs use the crew wage below, never anyone\'s own pay rate. Without a wage no margin is shown; any other blank cost counts as $0, so margins stay an upper bound until all of them are set.'+(editable?'':' Only the owner can change them.')),
     h('div',{class:'ja-setting-list'},rows),
     editable?h('div',{class:'ja-save'},kit().button(S.busy?'Saving…':'Save cost settings',save,'primary',{disabled:S.busy||!changed||bad.length>0,'data-save':''}),h('span',{class:'ja-muted','data-bar':''},barText(bad,changed))):null,
     S.feedback?h('p',{role:S.feedbackError?'alert':'status',class:'ja-feedback'+(S.feedbackError?' error':'')},S.feedback):null);
@@ -160,7 +162,7 @@ function render(){
   else if(!S.data)body=[h('p',{class:'hub-screen-loading'},'Loading job actuals…')];
   else{
     const d=S.data,notices=[];
-    if(!d.settingsComplete)notices.push(h('div',{class:'hub-notice warning'},`Margins are an upper bound: ${d.missingSettings.length} of 5 cost settings ${d.missingSettings.length===1?'is':'are'} blank.`));
+    if(!d.settingsComplete)notices.push(h('div',{class:'hub-notice warning'},d.missingSettings.includes('wageCentsPerManHour')?'No margins yet: enter the crew wage in Cost settings below.':`Margins are an upper bound: ${d.missingSettings.length} of ${SETTINGS.length} cost settings ${d.missingSettings.length===1?'is':'are'} blank.`));
     if(d.sources?.timecards==='unavailable')notices.push(h('div',{class:'hub-notice warning'},'Timecards could not be read, so actual hours show only where the crew lead confirmed them. Refresh to try again.'));
     if(S.error)notices.push(h('div',{class:'hub-notice error',role:'alert'},kit().errorText(S.error)));
     body=[...notices,h('div',{class:'ja-totals-grid'},totalsCard('Last 30 days',d.totals.last30),totalsCard('Last 90 days',d.totals.last90)),table(),settingsCard()];
