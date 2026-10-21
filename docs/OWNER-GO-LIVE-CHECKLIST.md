@@ -60,9 +60,9 @@ The rule behind all of it: **HighLevel sends every customer message and owns eve
 
 ## Stage 3: Walkthroughs
 
-41. [ ] **Developer: run the two staff migrations (dry run, then apply).** The staff directory needs them. [3.1](GO-LIVE.md#31-team-roles-staff-directory)
+41. [ ] **Run the two staff migrations from the Hub, signed in as you (dry run, then apply).** Only the owner can run them. The staff directory needs them. [3.1](GO-LIVE.md#31-team-roles-staff-directory)
 42. [ ] **Tell managers that pay changes now go through you.** The old profile form stops changing pay. [3.1](GO-LIVE.md#31-team-roles-staff-directory)
-43. [ ] **Set `EGC_STAFF_DIRECTORY_ENABLED=true` and check nobody shows "pay needs review" or "unrecognized id".** Turns on roles, skills, pay history and availability. [3.1](GO-LIVE.md#31-team-roles-staff-directory)
+43. [ ] **Open Hub → Staff directory and check nobody shows "pay needs review" or "unrecognized id".** It is on by your launch default (nothing to set); it holds roles, skills, pay history and availability. [3.1](GO-LIVE.md#31-team-roles-staff-directory)
 44. [ ] **Record the Phone role for the phone person and the Sales role for the walkthrough rep.** Roles, not names, describe who does what. [3.1](GO-LIVE.md#31-team-roles-staff-directory)
 45. [ ] **Book a test walkthrough in Dispatch and check the HighLevel calendar and tag.** HighLevel sends the confirmation, not the Hub. [3.2](GO-LIVE.md#32-booking-a-walkthrough-no-switch)
 46. [ ] **Upload a short test recording and retry any stuck ones.** Confirms walkthrough AI notes work after the crash fix. [3.3](GO-LIVE.md#33-recording-the-walkthrough)
@@ -167,7 +167,7 @@ The rule behind all of it: **HighLevel sends every customer message and owns eve
 
 ## Staff role access (AUTH-ROLES)
 
-113. [ ] **Set every staff member's role in the staff directory first: Manager for each manager (including the configured Hub accounts), Sales and Phone only for the people who book. Then set `EGC_STAFF_ROLE_ACCESS=true` (Preview first) and run the 3.5 checks. After any role change, or after turning it off, open Hub → Integrations until no Firebase sign-out is pending.** Owner decision: Sales and Phone book, move, cancel and mark no-shows for walkthroughs and jobs, and see every customer's contact details in Dispatch; they never assign crew or see pay, cost or money, and a Sales hand-off waits as "Sold: needs crew" for a manager. Managers get business access from their role, and you always keep owner access. It also turns on `EGC_STAFF_ROLE_PERMISSIONS`, so a manager without the Manager role loses the business screens. Needs the Firebase Authentication Admin role (item 29), and no Hub sign-in username with `'` `"` `\` `` ` `` `<` `>` `&` or a tab/line break. Roll back by deleting the variable; saved roles stay. [3.5](GO-LIVE.md#35-staff-roles-grant-access-owner-decision-on)
+113. [ ] **Set every directory account's role in the staff directory first: Manager for each manager with their own employee account (the configured Hub accounts keep their configured access and take no directory role), Sales and Phone only for the people who book. Then merge the launch default that turns on `EGC_STAFF_ROLE_ACCESS` and run the 3.5 checks on its Preview. After any role change, or after turning it off, open Hub → Integrations until no Firebase sign-out is pending.** Owner decision: Sales and Phone book, move, cancel and mark no-shows for walkthroughs and jobs, and see every customer's contact details in Dispatch; they never assign crew or see pay, cost or money, and a Sales hand-off waits as "Sold: needs crew" for a manager. Managers get business access from their role, and you always keep owner access. It also turns on `EGC_STAFF_ROLE_PERMISSIONS`, so a manager without the Manager role loses the business screens. Needs the Firebase Authentication Admin role (item 29), and no Hub sign-in username with `'` `"` `\` `` ` `` `<` `>` `&` or a tab/line break. Roll back by setting `EGC_STAFF_ROLE_ACCESS=false` in Cloudflare; saved roles stay. [3.5](GO-LIVE.md#35-staff-roles-grant-access-owner-decision-on)
 
 ## HighLevel tag outbox (GHL-TRACK-1)
 
