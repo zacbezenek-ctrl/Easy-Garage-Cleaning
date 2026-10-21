@@ -20,7 +20,7 @@ const editText=kind=>kind==='gusto'?EDIT_LABEL.gusto:EDIT_LABEL[kind].toLowerCas
 const UUID=/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i,TIME=/^(?:[01]\d|2[0-3]):[0-5]\d$/,CODE=/^[a-z][a-z0-9_]{1,80}$/;
 // 403s this API documents as permanent (no access, the reserved owner role, a cross-site request): retrying cannot succeed.
 const PERMANENT_403=/^staff_directory_(?:forbidden|owner_role_reserved|origin_forbidden)$/;
-const S={host:null,root:null,ctx:null,viewer:'',embedded:true,formerOpen:false,data:null,loadedAt:NaN,loading:false,error:null,generation:0,loadSeq:0,controller:null,busy:false,pending:null,notice:null,edit:null,draft:null,dirty:false,focus:''};
+const S={host:null,root:null,ctx:null,viewer:'',embedded:true,formerOpen:false,data:null,loadedAt:NaN,loading:false,error:null,generation:0,loadSeq:0,controller:null,busy:false,pending:null,notice:null,edit:null,draft:null,dirty:false,focus:'',setup:null};
 
 // The Team page mounts this module before the Hub kit (employee-ui-kit.js) exists: the registry loads the kit only when a
 // registered screen opens. So h(), request() and the pending store are local versions of EGCHubKit's h, requestJSON and
@@ -271,6 +271,49 @@ function errorText(error,draft=false){
   return error?.message||'The staff directory is unavailable. Retry the original save.';
 }
 
+// ── one-tap staff setup (owner) ──
+// The two staff migrations (docs/employee-vault-migrations.md) behind one button. The directory answer says whether they
+// still have records to fill (setup.needed, owner only); Finish staff setup applies both. Each apply keeps its requestId in sessionStorage
+// until it completes, so a lost answer is retried with the same id and the server returns the saved report.
+const MIGRATE='/api/employee-vault-migrate',SETUP=['staff-profile-pay-roles-v1','employee-account-staff-roles-v1'],SETUP_KEY='egc.hub.staffSetup.v1.';
+const owner=()=>Array.isArray(S.data?.viewer?.capabilities)&&S.data.viewer.capabilities.includes('settings.manage');
+async function migrate(body){
+  const fetcher=typeof S.ctx?.hubFetch==='function'?S.ctx.hubFetch:(url,init)=>fetch(url,{...init,credentials:'same-origin'});
+  let response,data=null;
+  try{response=await fetcher(MIGRATE,{method:'POST',cache:'no-store',credentials:'same-origin',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});data=await response.json().catch(()=>null);}
+  catch{throw failure('staff_setup_network','The Hub could not be reached. Tap Finish staff setup again; nothing is done twice.',503);}
+  if(!response.ok||!record(data)||data.ok!==true||!record(data.report))throw failure(String(data?.code||'staff_setup_unavailable'),typeof data?.error==='string'&&data.error.trim()?data.error.slice(0,300):'Staff setup could not finish. Tap it again; records already set up are skipped.',Number(response?.status)||503);
+  return data.report;
+}
+const pendingSetupId=id=>{try{const value=sessionStorage.getItem(SETUP_KEY+id);return UUID.test(String(value||''))?value:'';}catch{return'';}};
+const keepSetupId=(id,value)=>{try{value?sessionStorage.setItem(SETUP_KEY+id,value):sessionStorage.removeItem(SETUP_KEY+id);}catch{}};
+async function finishSetup(){
+  if(S.setup?.state==='running')return;
+  const generation=S.generation;S.setup={state:'running'};render();
+  try{
+    let failed=0;
+    for(const migrationId of SETUP){
+      const requestId=pendingSetupId(migrationId)||uuid();keepSetupId(migrationId,requestId);
+      const report=await migrate({requestId,migrationId,dryRun:false});
+      // A conflict (someone saved that record meanwhile) needs a new request; migrated records are skipped then.
+      keepSetupId(migrationId,'');failed+=Number(report.failed||0)+Number(report.conflicts||0);
+    }
+    if(generation!==S.generation)return;
+    S.setup=failed?{state:'error',error:'A few records changed while setup ran. Tap Finish staff setup again to finish them.'}:{state:'done'};
+    if(!failed){S.notice={kind:'success',text:'Staff setup is finished. Roles and pay history are ready.'};void load();}
+  }catch(error){if(generation===S.generation)S.setup={state:'error',error:error.message};}
+  render();
+}
+function setupBanner(){
+  // Shown while the directory says setup has work (or a run is unconfirmed), and while a run is going or failed.
+  const setup=S.setup||{},needed=S.data?.setup?.needed===true||SETUP.some(pendingSetupId);
+  if(!owner()||!(['running','error'].includes(setup.state)||needed&&setup.state!=='done'))return null;
+  const running=setup.state==='running';
+  return h('div',{class:'st-notice warning',role:'status','aria-live':'polite'},h('strong',{},'Finish staff setup'),
+    h('p',{},setup.error||'One-time setup saves each person’s current role and pay rate in the staff directory, so roles and pay history work. No one’s pay changes, and people you invited as Sales get the Walkthrough. Only you can run it.'),
+    h('div',{class:'st-actions'},button(running?'Setting up…':'Finish staff setup',()=>void finishSetup(),'primary',{disabled:running,'aria-busy':running?'true':null})));
+}
+
 // ── rendering ──
 const button=(label,onclick,kind='',props={})=>h('button',{type:'button',class:('st-btn '+kind).trim(),onclick,...props,disabled:S.busy||Boolean(props.disabled)},label);
 function head(){
@@ -447,13 +490,13 @@ function render(){
     body.push(formerSection(S.data.formerStaff));
   }else if(S.error&&!S.loading)body.push(unavailable());
   else body.push(skeleton());
-  S.root.replaceChildren(...[head(),pendingBanner(),noticeBlock(),...body].filter(Boolean));
+  S.root.replaceChildren(...[head(),pendingBanner(),noticeBlock(),setupBanner(),...body].filter(Boolean));
   if(label)[...S.root.querySelectorAll('button')].find(node=>node.getAttribute('aria-label')===label&&!node.hasAttribute('disabled'))?.focus?.();
 }
 
 function reset(){
   S.generation++;S.loadSeq++;S.controller?.abort();S.root?.remove();
-  Object.assign(S,{host:null,root:null,ctx:null,viewer:'',formerOpen:false,data:null,loadedAt:NaN,loading:false,error:null,controller:null,busy:false,pending:null,notice:null,edit:null,draft:null,dirty:false,focus:''});
+  Object.assign(S,{host:null,root:null,ctx:null,viewer:'',formerOpen:false,data:null,loadedAt:NaN,loading:false,error:null,controller:null,busy:false,pending:null,notice:null,edit:null,draft:null,dirty:false,focus:'',setup:null});
 }
 function mount(host,ctx={}){
   if(!host)return;
