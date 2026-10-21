@@ -303,7 +303,8 @@ async function authorizeMutation(env, session, collection, id, incoming, existin
   incoming = await payGuard(env, session, collection, incoming, existing, now);
   if (collection === 'timeEntries') return authorizeTimecard({ session, manager: manager(session), id, incoming, existing,
     hourlyRate: existing?.hourlyRate ?? await employeeRate(env, session, now), now, env, queued, jobLabel: await correctionJobLabel(env, session, incoming, existing) });
-  if (manager(session) && !(collection === 'training' && incoming.moduleId)) return collection === 'profiles' ? legacyManagerProfile({ env, session, existing, incoming, id, now }) : { ...(existing || {}), ...incoming, id };
+  // A read marker is always the caller's own, managers included: the messageReads branch below sets employee = session.user.
+  if (manager(session) && collection !== 'messageReads' && !(collection === 'training' && incoming.moduleId)) return collection === 'profiles' ? legacyManagerProfile({ env, session, existing, incoming, id, now }) : { ...(existing || {}), ...incoming, id };
 
   if (collection === 'profiles') {
     if (id !== personKey(session.user)) throw new Error('You can only update your own employee profile');
@@ -398,7 +399,13 @@ async function authorizeMutation(env, session, collection, id, incoming, existin
   if (collection === 'messageReads') {
     const channel = String(incoming.channel || '').trim().slice(0, 180);
     if (!channel) throw new Error('Message channel is required');
-    return { ...(existing || {}), id, employee: session.user, channel, lastReadAt: now, updatedAt: now };
+    if (existing && !same(existing.employee, session.user)) throw new Error('This read marker belongs to another employee');
+    // How far the person has seen: the newest message their screen showed (seenThrough), never later than now and never
+    // moving back. A client that sends no seenThrough (an older cached Hub) marks now, as before.
+    const sent = Object.hasOwn(incoming, 'seenThrough') ? Date.parse(String(incoming.seenThrough || '')) : Date.parse(now);
+    if (!Number.isFinite(sent)) throw new Error('Read marker time is invalid');
+    const seen = new Date(Math.min(sent, Date.parse(now))).toISOString(), before = String(existing?.lastReadAt || '');
+    return { id, employee: session.user, channel, lastReadAt: before > seen ? before : seen, updatedAt: now };
   }
 
   if (['incidents', 'equipment'].includes(collection)) {
