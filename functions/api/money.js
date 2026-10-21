@@ -7,6 +7,7 @@ import { servedMoneyTotals } from '../_lib/money-core.js';
 import { denverToday } from '../_lib/dispatch-time.js';
 import { laborCostViewer } from '../_lib/job-labor-private.js';
 import { expireStaleCustomerCheckout, stripeSecretKey } from '../_lib/customer-payments.js';
+import { sendAcceptedQuotePortal } from '../_lib/portal-invitation.js';
 
 const LIMIT = 64000;
 const HEADERS = { 'Content-Type': 'application/json', 'Cache-Control': 'no-store', 'X-Content-Type-Options': 'nosniff' };
@@ -53,7 +54,11 @@ async function checkoutWarnings(checkouts, env, jobId) {
 // that from the signed session, and anyone else gets laborCents null (never 0).
 // jobberGuard is the FUN-32 billing hold on invoice.issue (EGC_JOBBER_GUARD_BILLING); checkouts closes a portal card
 // checkout sized before a change_order.void (CHANGE-ORDERS).
-export function moneyHandlers({ session = getHubSession, storage = moneyStorage, now = () => new Date(), jobberGuard = (store, env, input, at) => jobberGuardInvoiceHolds(store, env, input, at, { receipts: MONEY_RECEIPTS }), checkouts = closeStaleCheckout } = {}) {
+// PORTAL-LINKS (B): a recorded approval (estimate.record_approval) asks for the accepted-quote portal invitation; the
+// server sends it after the response (waitUntil) under its own rules (quiet hours, the pause, DND, closed jobs, the
+// quote-ready link it may make unnecessary, once per job), instead of waiting for the page's HighLevel lifecycle call.
+const approvalInvite = (env, jobId) => sendAcceptedQuotePortal(env, jobId, { requireRequested: true, automatic: true });
+export function moneyHandlers({ session = getHubSession, storage = moneyStorage, now = () => new Date(), jobberGuard = (store, env, input, at) => jobberGuardInvoiceHolds(store, env, input, at, { receipts: MONEY_RECEIPTS }), checkouts = closeStaleCheckout, invite = approvalInvite } = {}) {
   return {
     async get({ request, env }) {
       if (!sameOrigin(request, true)) return reply(403, { ok: false, code: 'money_origin_forbidden', error: 'Open job finances in the Employee Hub.' });
@@ -76,7 +81,7 @@ export function moneyHandlers({ session = getHubSession, storage = moneyStorage,
         return reply(200, { ok: true, authority: 'employee_hub', enabled: moneyApiEnabled(env), ...page });
       } catch (error) { return failure(error); }
     },
-    async post({ request, env }) {
+    async post({ request, env, waitUntil }) {
       if (!sameOrigin(request)) return reply(403, { ok: false, code: 'money_origin_forbidden', error: 'Open job finances in the Employee Hub to save changes.' });
       if (!moneyApiEnabled(env)) return reply(404, { ok: false, code: 'money_api_disabled', error: 'Server money actions are turned off. Use the standard finance tools.' });
       try {
@@ -90,6 +95,7 @@ export function moneyHandlers({ session = getHubSession, storage = moneyStorage,
         if (guard.holds.length) return reply(409, { ok: false, code: 'money_jobber_billing_hold', error: jobberGuardBillingError(guard.holds), details: { checkedAt: guard.state.checkedAt, findings: guard.holds.slice(0, 10).map(jobberGuardHoldView) } });
         const result = await mutateMoney(store, actor, input, at);
         if (input.action === 'change_order.void') result.warnings = [...(result.warnings || []), ...await checkoutWarnings(checkouts, env, input.jobId)];
+        if (input.action === 'estimate.record_approval' && result?.ok !== false && typeof waitUntil === 'function') waitUntil(Promise.resolve().then(() => invite(env, input.jobId)).catch(() => null));
         return reply(200, result);
       } catch (error) { return failure(error); }
     },

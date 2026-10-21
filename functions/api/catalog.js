@@ -42,6 +42,7 @@ import { getHubSession } from '../_lib/hub-session.js';
 import { catalogOverview, catalogQuotesEnabled, catalogStorage, mutateCatalog, quoteBuilderEnabled, readCompositeState, requireCatalogOwner, requireCatalogViewer } from '../_lib/catalog-store.js';
 import { releaseHeldHandoffs } from '../_lib/walkthrough-handoff.js';
 import { heldReleaseStorage } from '../_lib/handoff-price-holds.js';
+import { sendAcceptedQuotePortal } from '../_lib/portal-invitation.js';
 
 // A published catalog is about 0.55 MB of JSON; settings documents are small.
 const LIMIT = 1000000, SETTINGS_LIMIT = 32000;
@@ -65,9 +66,15 @@ async function releaseHeld(held, env, actor, at, input, pricing) {
   catch { return { status: 'deferred' }; }
 }
 
+// PORTAL-LINKS (B): the first HELD_RELEASE_INVITES released jobs get their pending accepted-quote portal invitation
+// from the server after the response (waitUntil), under its own rules (quiet hours, the pause, DND, closed jobs, once
+// per job); the rest, and any held for quiet hours, go out on the next automatic retry (a manager's Hub load, or the
+// messaging cron while server messaging is on). Bounded so one approval stays inside the request's subrequest budget.
+export const HELD_RELEASE_INVITES = 3;
+const releasedInvite = (env, jobId) => sendAcceptedQuotePortal(env, jobId, { requireRequested: true, automatic: true });
 // cache: this isolate's verified catalogs (catalog-store.js); tests pass a new Map for a cold isolate.
 // held (tests): the jobs storage releaseHeldHandoffs reads and commits through (handoff-price-holds.js heldReleaseStorage).
-export function catalogHandlers({ session = getHubSession, storage = catalogStorage, now = () => new Date(), cache, compositeState, held = heldReleaseStorage } = {}) {
+export function catalogHandlers({ session = getHubSession, storage = catalogStorage, now = () => new Date(), cache, compositeState, held = heldReleaseStorage, invite = releasedInvite } = {}) {
   return {
     async get({ request, env }) {
       try {
@@ -81,7 +88,7 @@ export function catalogHandlers({ session = getHubSession, storage = catalogStor
         return reply(200, { ...await catalogOverview(storage(env), actor, now(), { full: params.get('view') === 'full', cache }), ...builder });
       } catch (error) { return errorResponse(error); }
     },
-    async post({ request, env }) {
+    async post({ request, env, waitUntil }) {
       if (!sameOrigin(request)) return reply(403, { ok:false, code:'catalog_origin_forbidden', error:'Open the catalog in the Employee Hub to save changes.' });
       try {
         const actor = await session(request, env); requireCatalogOwner(actor);
@@ -97,6 +104,8 @@ export function catalogHandlers({ session = getHubSession, storage = catalogStor
         if ((input?.action === 'settings.update' || builder && input?.action === 'menu.approve') && bytes > SETTINGS_LIMIT) return tooLarge();
         const at = now().toISOString(), result = await mutateCatalog(storage(env), actor, input, at, builder ? { menuApprovals: true, ...(compositeState ? { compositeState } : {}) } : {});
         if (builder && result?.replayed === false && ['menu.approve', 'settings.update'].includes(input.action)) result.heldJobs = await releaseHeld(held, env, actor, at, input, () => (compositeState || readCompositeState)(storage(env)));
+        const released = Array.isArray(result?.heldJobs?.released) ? result.heldJobs.released.slice(0, HELD_RELEASE_INVITES) : [];
+        if (released.length && typeof waitUntil === 'function') waitUntil((async () => { for (const id of released) await Promise.resolve().then(() => invite(env, id)).catch(() => null); })());
         return reply(200, result);
       } catch (error) { return errorResponse(error); }
     },

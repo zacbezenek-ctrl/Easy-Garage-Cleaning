@@ -4,6 +4,7 @@ import { isMessagingOwner, listTemplates, mutateTemplate, requireTemplateEditor,
 import { TEMPLATE_VARIABLES, LINK_VARIABLES, SMS_LIMIT } from '../_lib/message-templates.js';
 import { messagingFlags } from '../_lib/approved-send.js';
 import { MESSAGE_POLICIES } from '../_lib/message-policies.js';
+import { portalLinkSwitches, setPortalLinkSwitch } from '../_lib/portal-link-settings.js';
 
 const MAX_BYTES = 64000;
 
@@ -34,7 +35,8 @@ export function messageTemplateHandlers({ session = getHubSession, storage = mes
         const viewer = await session(request, env);
         requireTemplateEditor(viewer);
         const templates = (await listTemplates(storage(env))).map(state => ({ ...templateView(state), automatable: automationKinds(state.kind).length > 0 }));
-        return reply(200, { ok: true, templates, variables: TEMPLATE_VARIABLES, linkVariables: LINK_VARIABLES, smsLimit: SMS_LIMIT, delivery: messagingFlags(env), viewer: { id: viewer.user, role: viewer.role, canApprove: isMessagingOwner(viewer) } });
+        // PORTAL-LINKS: the owner's switches for the portal link texts, with the exact text each sends (portal-link-settings.js).
+        return reply(200, { ok: true, templates, variables: TEMPLATE_VARIABLES, linkVariables: LINK_VARIABLES, smsLimit: SMS_LIMIT, delivery: messagingFlags(env), viewer: { id: viewer.user, role: viewer.role, canApprove: isMessagingOwner(viewer) }, portalLinks: await portalLinkSwitches(storage(env), viewer) });
       } catch (error) { return errorResponse(error); }
     },
     async post({ request, env }) {
@@ -47,6 +49,7 @@ export function messageTemplateHandlers({ session = getHubSession, storage = mes
         const raw = await request.text();
         if (new TextEncoder().encode(raw).byteLength > MAX_BYTES) return reply(413, { ok: false, code: 'messaging_request_too_large', error: 'The template request is too large.' });
         let input; try { input = JSON.parse(raw); } catch { return reply(400, { ok: false, code: 'messaging_json_invalid', error: 'The template request was incomplete. Refresh and try again.' }); }
+        if (input && typeof input === 'object' && input.action === 'set_portal_link') return reply(200, await setPortalLinkSwitch(storage(env), viewer, input, now().toISOString()));
         return reply(200, await mutateTemplate(storage(env), viewer, input, now().toISOString()));
       } catch (error) { return errorResponse(error); }
     },

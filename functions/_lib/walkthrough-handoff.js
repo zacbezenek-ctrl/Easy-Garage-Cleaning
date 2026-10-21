@@ -411,6 +411,26 @@ export async function prepareHandoff(store, actor, query = {}, { env = {} } = {}
   return { ok: true, authority: 'employee_hub', sourceWalkthroughId: source?.id || '', sourceRevision: source?.revision || '', jobId: job?.id || '', expectedRevision: job?.revision || '', customerId: customer?.id || '', customer: access.dispatcher || job ? customerProjection(customer) : null, roster: access.dispatcher ? await store.roster() : [], ...(crewAutoAssignEnabled(env) ? { crewAutoAssign: true } : {}) };
 }
 
+/** PORTAL-LINKS (B): where the server's first HighLevel sync of a signed handoff stands, for the walkthrough page of
+ * the quote author who signed it (GET /api/walkthrough-handoff?view=sync&jobId=<job>): {ok, authority, jobId,
+ * sync:{status:'pending'|'syncing'|'synced'|'error'}, portalInvitation:{status, reason?, channel?, notBefore?}|null}.
+ * Statuses and reasons only: no contact, link, money or crew. The same jobs prepareHandoff opens (authorsJob). */
+const HANDOFF_SYNC_CLAIM_MS = 10 * 60000;
+export async function handoffSyncView(store, actor, query = {}, { env = {}, now = new Date() } = {}) {
+  const access = requireQuoteAuthor(actor, env);
+  if (!plain(query) || Object.keys(query).some(key => !['view', 'jobId'].includes(key)) || query.view !== 'sync' || !safeId(query.jobId)) throw fail('invalid_request', 'Choose the saved job whose sync to check.', 400);
+  const job = await store.read('jobs', query.jobId);
+  if (!job || !operational(job)) throw fail('job_missing', 'The saved job no longer exists. Review its history.', 404);
+  if (!access.dispatcher && !authorsJob(job, null, actor)) throw fail('job_forbidden', 'Only an operations manager or owner can open this job. Start from its walkthrough or quote draft.', 403);
+  const synced = job.syncStatus === 'synced' || job.handoffSyncStatus === 'synced' && job.handoffSyncedRequestId === job.handoffRequestId;
+  const claimed = plain(job.handoffSyncClaim) && now.getTime() - (Date.parse(job.handoffSyncClaim.at || '') || 0) < HANDOFF_SYNC_CLAIM_MS;
+  const status = synced ? 'synced' : claimed || job.syncStatus === 'syncing' ? 'syncing' : job.syncStatus === 'error' ? 'error' : 'pending';
+  const invite = plain(job.customerPortalInvitation) && job.customerPortalInvitation.jobId === job.id ? job.customerPortalInvitation : null;
+  const portal = invite ? Object.fromEntries(['status', 'reason', 'channel', 'notBefore'].filter(key => typeof invite[key] === 'string' && invite[key]).map(key => [key, invite[key]]))
+    : plain(job.pricesPendingApproval) ? { status: 'not_approved', reason: 'prices_pending_approval' } : null;
+  return { ok: true, authority: 'employee_hub', jobId: job.id, sync: { status }, portalInvitation: portal };
+}
+
 /** EGC_DISPATCH_CREW_AUTO_ASSIGN: the crew openings a quote author may offer the customer (GET
  * /api/walkthrough-handoff?view=crew_openings[&startDate&durationMinutes&travelBufferMinutes]): crew-mode openings for
  * a job (dispatch-openings.js, crews=auto, kind=job: Crew 1 and Crew 2 on weekdays, Crew 3 on weekends, from 9:30),

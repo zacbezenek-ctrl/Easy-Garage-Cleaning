@@ -8,6 +8,7 @@ import { createFieldStore } from '../_lib/field-execution-store.js';
 import { applyMembershipVisit, garageGuardStorage, garageGuardVisitTrackingEnabled } from '../_lib/garage-guard-visits.js';
 import { createFieldPhotoClient, decodeFieldPhoto, fieldPhotosConfigured, verifyFieldPhotoMetadata } from '../_lib/field-execution-photos.js';
 import { syncFieldCompletion } from '../_lib/field-execution-sync.js';
+import { sendPortalLink } from '../_lib/portal-invitation.js';
 import { fieldFunnelType, fieldFunnelWrite } from '../_lib/job-funnel-events.js';
 import { fieldJobTime } from '../_lib/field-execution-time.js';
 import { fieldExpenseCloseoutMissing, fieldExpensesEnabled, requireFieldExpenseCloseout } from '../_lib/field-expenses.js';
@@ -235,6 +236,9 @@ export async function onRequestPost(handlerContext) {
       if (tags) firstGhlTagAttempt(handlerContext, [tags.pointer.id], result.event.createdAt);
       if (input.action === 'complete' && typeof handlerContext.waitUntil === 'function') {
         handlerContext.waitUntil(syncFieldCompletion(env, job.id, { actor: ctx.session }));
+        // PORTAL-LINKS (C): a fresh portal link for the finished job (portal-invitation.js 'job_done'), once per job, only
+        // while the owner's switch is on (off by default); quiet hours and the pause hold it for the next automatic retry.
+        handlerContext.waitUntil(Promise.resolve().then(() => sendPortalLink(env, job.id, 'job_done', { automatic: true })).catch(() => null));
       }
       // A failed or skipped count stays 'pending' on the visit for a manager (/api/garage-guard-members).
       if (input.action === 'complete' && result.patch.membershipVisit && garageGuardVisitTrackingEnabled(env) && typeof handlerContext.waitUntil === 'function') {
