@@ -141,3 +141,24 @@ test('B: a Sales estimator\'s retry after the server\'s sync finished reads wher
   assert.match(send, /portal\?\.status==='submitted'\?\(portal\.channel==='Email'\?'Portal email queued in HighLevel\. ':'Portal text queued in HighLevel\. '\)/);
   assert.match(send, /portal\.reason==='quiet_hours'\?'Portal invitation goes out after 8 AM \(quiet hours\)/);
 });
+
+// SEC-2026-10 S-02 (docs/security-review-2026-10.md) for the portal link rows: the masked email recipient keeps the
+// customer's own domain, and a copy names its staff account, so each reaches the Hub's innerHTML only through esc().
+// The Message templates switches, the send screen and the walkthrough page build text nodes and have no HTML sink.
+test('S-02: portal link rows escape customer-controlled recipients and copy names; the other portal link screens never use innerHTML', () => {
+  const PAYLOAD = '<img src=x onerror=alert(1)>', context = hubContext();
+  const recipient = `t•••@${PAYLOAD}.co`, at = '2026-10-21T20:14:00.000Z';
+  const job = { id: `job-${PAYLOAD}`, type: 'job', estimate: { status: 'sent' }, customerPortalInvitationRequestedAt: DAY,
+    customerPortalInvitation: { jobId: `job-${PAYLOAD}`, status: 'failed', channel: 'Email', recipient, completedAt: at },
+    portalLinks: { quote_ready: { kind: 'quote_ready', jobId: `job-${PAYLOAD}`, status: 'failed', channel: 'Email', recipient, completedAt: at, attempts: 1 },
+      job_done: { kind: 'job_done', jobId: `job-${PAYLOAD}`, status: 'submitted', channel: 'Email', recipient, completedAt: at } },
+    portalLinkCopies: [{ by: `${PAYLOAD}sales`, at }] };
+  for (const html of [context.portalInvitationControl(job), context.portalLinkControl(job)]) {
+    assert.ok(html.includes('&lt;img src=x onerror=alert(1)&gt;'), 'the payload is shown as text');
+    assert.doesNotMatch(html, /<img/i, 'no attacker element reaches innerHTML');
+    assert.match(html, /<button/, 'the failed send still offers its retry');
+  }
+  for (const file of ['../message-templates.js', '../crew/quote-draft.js', '../crew/gameplan-handoff.js']) {
+    assert.doesNotMatch(readFileSync(new URL(file, import.meta.url), 'utf8'), /innerHTML|insertAdjacentHTML|outerHTML|document\.write/, file);
+  }
+});
