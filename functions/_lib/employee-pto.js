@@ -1,5 +1,5 @@
 import { assignmentKey } from './job-assignment.js';
-import { hasBusinessAccess } from './hub-session.js';
+import { hasBusinessAccess, isHubOwner } from './hub-session.js';
 import { requireDispatcher } from './dispatch-service.js';
 import { canDispatch } from './dispatch-permissions.js';
 import { capabilityMode } from './staff-roles.js';
@@ -357,6 +357,9 @@ export async function mutatePto(store, vault, session, input, now = new Date().t
   if (!target?.data) throw fail('not_found','This request no longer exists. Refresh the request list.',404);
   if (!TYPES.includes(target.data.type)) throw fail('unsupported_request','This record is not a time-off or shift-change request.',409);
   if (!manager && assignmentKey(target.data.employee) !== self) throw fail('forbidden','Only your own requests can be changed here.',403);
+  // NO-SELF-APPROVAL: a manager never approves, denies or changes the pay of their own request; another manager or the
+  // owner does (the configured owner is the exception). Ending one's own approved time off early stays allowed.
+  if (['approve','deny','amend'].includes(input.action) && assignmentKey(target.data.employee) === assignmentKey(session.user) && !isHubOwner(session)) throw fail('self_approval','Your own request is approved by someone else: another manager or the owner.',403);
   const prior = decisionFor(target.data,input.requestId,context.fingerprint);
   if (prior) return finish(context,target.data,prior,true);
   return input.action === 'approve' ? approve(context,target) : input.action === 'amend' ? amend(context,target) : close(context,target);

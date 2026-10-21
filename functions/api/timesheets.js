@@ -3,7 +3,7 @@ import { firebaseServiceAccountConfigured } from '../_lib/firebase-service-accou
 import { employeeVaultSecret } from '../_lib/employee-vault-key.js';
 import { PAY_REVIEW_REASONS, computeTimesheetWeek, overtimePolicy, ptoFromRequests, timesheetWeekStart } from '../_lib/timesheet-week.js';
 import { GUSTO_NOT_INCLUDED_HEADER, gustoHoursFile, gustoHoursFilename, payrollCsv, payrollCsvFilename } from '../_lib/payroll-export.js';
-import { payChangeRefused, seesOthersPay, timesheetPayView } from '../_lib/pay-visibility.js';
+import { canSetPay, payChangeRefused, timesheetPayView } from '../_lib/pay-visibility.js';
 import { can, staffPasswordResetEnabled, staffRoleAccessEnabled } from '../_lib/staff-roles.js';
 import { gustoPayrollProfiles, staffDirectoryEnabled } from '../_lib/staff-directory.js';
 import { readEmployeeHubRecords } from './employee-hub.js';
@@ -79,7 +79,7 @@ export function timesheetHandlers({ session = getHubSession, read = readTimeshee
         const input = query(request.url);
         // EGC_STAFF_PAY_OWNER_ONLY (default on): the payroll CSV is the owner's (pay.manage), and every other viewer's
         // JSON loses the other employees' pay (timesheetPayView). Off, every business user gets both as before.
-        if (input.csv && !input.gusto && !seesOthersPay(actor, env)) throw payChangeRefused('Only the owner can download the payroll export. Managers review hours and approvals here.');
+        if (input.csv && !input.gusto && !canSetPay(actor, env)) throw payChangeRefused('Only the owner can download the payroll export. Managers review hours and approvals here.');
         // The Gusto hours file (GUSTO-EXPORT) is the owner's whatever EGC_STAFF_PAY_OWNER_ONLY says: it runs payroll.
         if (input.gusto && !can(actor, 'pay.manage', env)) throw payChangeRefused('Only the owner can download the Gusto hours file. Managers review hours and approvals here.');
         const observed = await observe(env, input), policy = overtimePolicy(env), records = await read(env);

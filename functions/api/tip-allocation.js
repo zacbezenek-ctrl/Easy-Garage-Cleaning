@@ -1,6 +1,7 @@
 import { getHubSession, hasBusinessAccess } from '../_lib/hub-session.js';
 import { moneyStorage } from '../_lib/money-storage.js';
-import { TIP_ALLOCATION_ACKNOWLEDGEABLE, TIP_ALLOCATION_JOB_FIELDS, computeTipAllocation, validateTipAllocationRange } from '../_lib/tip-allocation.js';
+import { TIP_ALLOCATION_ACKNOWLEDGEABLE, TIP_ALLOCATION_JOB_FIELDS, computeTipAllocation, tipAllocationForViewer, validateTipAllocationRange } from '../_lib/tip-allocation.js';
+import { seesOthersPay } from '../_lib/pay-visibility.js';
 import { customerTipsEnabled, paymentReviewsForJobs } from '../_lib/customer-payments.js';
 import { customerTipsCsv, customerTipsCsvFilename } from '../_lib/payroll-export.js';
 import { readJobCostingTimecards } from './job-costing.js';
@@ -54,6 +55,10 @@ export function tipAllocationHandlers({ session = getHubSession, storage = money
         if (configProbe(request.url)) return reply(200, { ok: true, authority: 'employee_hub', tips: { enabled: customerTipsEnabled(env) } });
         const input = query(request.url);
         validateTipAllocationRange(input);
+        // Per-person tip shares are pay: only a viewer who sees others' pay gets them (tipAllocationForViewer, the owner by
+        // default), and the tip file, one line per person's pay, is theirs alone; it is refused before anything is read.
+        const payShown = seesOthersPay(actor, env);
+        if (input.csv && !payShown) throw fail('Only the owner downloads the tip file: it lists each person\'s tip pay. Managers see each job\'s tips and who shares them.', 'tip_allocation_pay_owner_only', 403);
         // The money mask plus the job's assigned crew, so crew who never tracked time to the job hold its tips.
         const [jobs, timecards] = await Promise.all([storage(env).jobs([...TIP_ALLOCATION_JOB_FIELDS]), readTimecards(env)]);
         if (!Array.isArray(jobs) || !Array.isArray(timecards)) throw fail('Jobs and timecards could not be read as complete lists.', 'tip_allocation_records_invalid', 503);
@@ -63,7 +68,7 @@ export function tipAllocationHandlers({ session = getHubSession, storage = money
         const refundReviews = tippedIds.length ? await readReviews(env, tippedIds) : new Map();
         if (!(refundReviews instanceof Map)) throw fail('Refunds on tipped card payments could not be checked.', 'tip_allocation_records_invalid', 503);
         const allocation = computeTipAllocation({ ...range, refundReviews });
-        if (!input.csv) return reply(200, { ok: true, authority: 'employee_hub', ...allocation });
+        if (!input.csv) return reply(200, { ok: true, authority: 'employee_hub', ...tipAllocationForViewer(allocation, { payShown }) });
         // Like payroll, tips export only when every share is final, or its one acknowledgeable gap was named.
         const blocking = allocation.coverage.reasons.filter(reason => !input.acknowledged.has(reason));
         if (blocking.length) {

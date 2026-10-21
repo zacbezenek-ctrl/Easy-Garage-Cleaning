@@ -128,6 +128,7 @@ input,select,textarea{font-size:16px!important}
     max-inline-size:calc(100vw - var(--egc-safe-left) - var(--egc-safe-right) - 24px);
   }
 }
+.ops-job-actions a.ops-playbook-link{color:var(--ops-muted);font-weight:650}
 /* CHAT-SEEN: who has read the latest message (managers only). */
 .ops-chat-messages .ops-chat-seen{margin:6px 0 0;text-align:right;font-size:12px;color:var(--ops-muted,#6b6b6b)}
 .ops-chat-messages .ops-chat-seen b{color:var(--warn,#9a5b00);font-weight:700}
