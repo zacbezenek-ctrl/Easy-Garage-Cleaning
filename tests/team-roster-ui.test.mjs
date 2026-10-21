@@ -62,6 +62,11 @@ test('the team lists approved members before sign-in and separates onboarding fr
   const manager = env.api.teamBoard();
   assert.match(manager, /Edit profile<\/button>/);
   assert.doesNotMatch(manager, /Edit profile & pay|Current profile rate|\/hr/, 'a manager is not shown another employee\'s pay, not even a $0 stand-in');
+  // PAY-VIEW-GRANT: a listed pay viewer sees pay (payVisibility 'all') but sets none (paySet false): the button stays plain.
+  env.api.S.people.payVisibility = 'all'; env.api.S.people.paySet = false;
+  const viewer = env.api.teamBoard();
+  assert.match(viewer, /Edit profile<\/button>/);
+  assert.doesNotMatch(viewer, /Edit profile &(amp;)? pay/);
 
   env.api.S.people.profiles = [member({ awaitingFirstSignIn: false, lastSeenAt: '2026-09-09T10:00:00Z', onboardingCompletedAt: '2026-09-09T10:10:00Z', onboardingVersion: '2026-09-location-v2' })];
   const onboarded = env.api.teamBoard();
