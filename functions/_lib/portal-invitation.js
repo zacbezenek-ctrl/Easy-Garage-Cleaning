@@ -33,7 +33,9 @@ const email = value => String(value || '').trim().toLowerCase();
      Not for a completion with an open crew follow-up, nor more than JOB_DONE_FRESH_HOURS after the completion. It names
      a remaining balance only when the portal shows one and no payment waits for the office's review.
    Turning a switch off ends the texts of that kind still waiting (status 'off'); a text requested before the switch was
-   last turned on is never sent. Every customer-facing word of these messages is here. */
+   last turned on is never sent. Every customer-facing word of these messages is here. The SMS texts use only the GSM-7
+   basic character set (no em or en dash, curly quote, ellipsis or bullet): one character outside it makes the whole text
+   a UCS-2 SMS of about twice the segments (tests/portal-sms-gsm7.test.mjs). The email versions may keep typography. */
 export const APPROVED = 'approved';
 export const PORTAL_LINK_KINDS = Object.freeze(['quote_ready', 'job_done']);
 const LINK_DAYS = 30;
@@ -63,12 +65,12 @@ export const PORTAL_MESSAGES = Object.freeze({
     html: url => `<p>Your Easy Garage Cleaning quote is ready. You can review it and approve it in your private project portal.</p>${button(url)}`,
   }),
   job_done_balance: Object.freeze({
-    sms: (first, url) => `${opening(first)} Easy Garage Cleaning job is done — thank you! Your remaining balance, receipts and photos are in your private project portal: ${url}`,
+    sms: (first, url) => `${opening(first)} Easy Garage Cleaning job is done. Thank you! Your remaining balance, receipts and photos are in your private project portal: ${url}`,
     subject: 'Your Easy Garage Cleaning job is done',
     html: url => `<p>Your Easy Garage Cleaning job is done — thank you! Your remaining balance, receipts and photos are in your private project portal.</p>${button(url)}`,
   }),
   job_done_paid: Object.freeze({
-    sms: (first, url) => `${opening(first)} Easy Garage Cleaning job is done — thank you! Your receipts and job details are in your private project portal: ${url}`,
+    sms: (first, url) => `${opening(first)} Easy Garage Cleaning job is done. Thank you! Your receipts and job details are in your private project portal: ${url}`,
     subject: 'Your Easy Garage Cleaning job is done',
     html: url => `<p>Your Easy Garage Cleaning job is done — thank you! Your receipts and job details are in your private project portal.</p>${button(url)}`,
   }),

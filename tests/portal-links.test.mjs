@@ -564,7 +564,7 @@ test('C: off by default; on, the job-done link is sent once with the balance-due
     const state = await sendPortalLink(ENV, 'job-1', 'job_done', { automatic: true, now: clockAt(DAY) });
     assert.deepEqual([state.status, state.variant], ['submitted', 'balance_due']);
     const url = linkOf(due.messages[0]);
-    assert.equal(due.messages[0].message, `Hi Synthetic, your Easy Garage Cleaning job is done — thank you! Your remaining balance, receipts and photos are in your private project portal: ${url.href}`);
+    assert.equal(due.messages[0].message, `Hi Synthetic, your Easy Garage Cleaning job is done. Thank you! Your remaining balance, receipts and photos are in your private project portal: ${url.href}`);
     assert.equal(templateMatches(automationById(AUTOMATION_REGISTRY, 'hub.portal_job_done').templateText, due.messages[0].message), true);
     assert.ok((await verifyCustomerPortalAccessToken(ENV, url.searchParams.get('access'), Date.parse(DAY))).expiresAt >= Date.parse(DAY) + 29 * 86400000);
     assert.deepEqual([due.job('job-1').portalLinks.job_done.status, due.job('job-1').portalLinks.job_done.variant], ['submitted', 'balance_due']);
@@ -572,7 +572,7 @@ test('C: off by default; on, the job-done link is sent once with the balance-due
   const paid = linkWorld(doneJob({ status: 'paid', pipelineStatus: 'paid', payment: { amount: 1400, verified: true } }));
   try {
     assert.equal((await sendPortalLink(ENV, 'job-1', 'job_done', { automatic: true, now: clockAt(DAY) })).variant, 'paid');
-    assert.equal(paid.messages[0].message, `Hi Synthetic, your Easy Garage Cleaning job is done — thank you! Your receipts and job details are in your private project portal: ${linkOf(paid.messages[0]).href}`);
+    assert.equal(paid.messages[0].message, `Hi Synthetic, your Easy Garage Cleaning job is done. Thank you! Your receipts and job details are in your private project portal: ${linkOf(paid.messages[0]).href}`);
     assert.equal(templateMatches(automationById(AUTOMATION_REGISTRY, 'hub.portal_job_done_paid').templateText, paid.messages[0].message), true);
   } finally { paid.restore(); }
 });
@@ -721,7 +721,7 @@ test('switches: Hub → Message templates shows both off with their exact text; 
     assert.deepEqual([view.quoteReady, view.jobDone, view.canChange, view.paused], [false, false, true, false]);
     assert.deepEqual(view.texts, portalLinkPreviews());
     assert.deepEqual(view.texts.quote_ready, { deposit: 'Hi {first}, your Easy Garage Cleaning quote is ready. You can review it, approve it and pay the deposit in your private project portal: {portal link}', no_deposit: 'Hi {first}, your Easy Garage Cleaning quote is ready. You can review it and approve it in your private project portal: {portal link}' });
-    assert.deepEqual(view.texts.job_done, { balance: 'Hi {first}, your Easy Garage Cleaning job is done — thank you! Your remaining balance, receipts and photos are in your private project portal: {portal link}', paid: 'Hi {first}, your Easy Garage Cleaning job is done — thank you! Your receipts and job details are in your private project portal: {portal link}' });
+    assert.deepEqual(view.texts.job_done, { balance: 'Hi {first}, your Easy Garage Cleaning job is done. Thank you! Your remaining balance, receipts and photos are in your private project portal: {portal link}', paid: 'Hi {first}, your Easy Garage Cleaning job is done. Thank you! Your receipts and job details are in your private project portal: {portal link}' });
     await assert.rejects(setPortalLinkSwitch(store, sales, { action: 'set_portal_link', requestId: randomUUID(), link: 'quote_ready', enabled: true }, DAY), error => error.status === 403);
     for (const bad of [{ link: 'everything', enabled: true }, { link: 'quote_ready', enabled: 'yes' }, { link: 'quote_ready', enabled: true, extra: 1 }]) await assert.rejects(setPortalLinkSwitch(store, owner, { action: 'set_portal_link', requestId: randomUUID(), ...bad }, DAY), error => error.code === 'messaging_request_invalid', JSON.stringify(bad));
     const requestId = randomUUID(), input = { action: 'set_portal_link', requestId, link: 'quote_ready', enabled: true };

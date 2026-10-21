@@ -50,7 +50,7 @@ const deepFreeze = value => { if (value && typeof value === 'object') { Object.v
 
 export const AUTOMATION_REGISTRY = deepFreeze({
   schemaVersion: 1,
-  registryVersion: '2026-10-21.2',
+  registryVersion: '2026-10-21.3',
   timeZone: 'America/Denver',
   ghlLocationId: 'KlgLwRaQSPz5G1YXsmc6',
   sources: {
@@ -349,10 +349,10 @@ export const AUTOMATION_REGISTRY = deepFreeze({
       '<p>Your Easy Garage Cleaning quote is ready. You can review it and approve it in your private project portal.</p><p><a href="{{portalLink}}">Open your Easy Garage Cleaning project portal</a></p>', 'abdadb6fc17de6b706414c7ce4030b813af27ba2b17646577ab85b59c32134fd',
       [], '', { subject: 'Your Easy Garage Cleaning quote is ready' }),
     portalLink('hub.portal_job_done', 'Job-done portal link, balance due (SMS)', 'SMS', 'job_done', 'The crew completes the job (POST /api/field-jobs action=complete), only while the owner\'s switch "Text a fresh portal link when a job is done" is on (off by default); this wording when a balance is due',
-      '{{opening}} Easy Garage Cleaning job is done — thank you! Your remaining balance, receipts and photos are in your private project portal: {{portalLink}}', '65db917cba336cc39a233bd8c8e2fa77c6694e04eb37e9ebaa78343a09bb0e0e',
-      [...code('functions/api/field-jobs.js', 'hub_send_helper_call')], 'A fresh 30-day link. The em dash makes the text a Unicode SMS (more segments). Check the HighLevel workflows on egc-job-complete and egc-review-ready (the same completion adds them) before turning the switch on.'),
+      '{{opening}} Easy Garage Cleaning job is done. Thank you! Your remaining balance, receipts and photos are in your private project portal: {{portalLink}}', '86342f0342d4d37148ba6f4003ab6b9229446c99658a25067a7781675fad23f8',
+      [...code('functions/api/field-jobs.js', 'hub_send_helper_call')], 'A fresh 30-day link. GSM-7 characters only, so it stays a plain SMS (3 segments with a typical link; the earlier em dash made it 7 Unicode segments). Check the HighLevel workflows on egc-job-complete and egc-review-ready (the same completion adds them) before turning the switch on.'),
     portalLink('hub.portal_job_done_paid', 'Job-done portal link, nothing due (SMS)', 'SMS', 'job_done', 'Same as the balance-due job-done text when nothing is due (or a payment waits for the office\'s review, or the balance cannot be read)',
-      '{{opening}} Easy Garage Cleaning job is done — thank you! Your receipts and job details are in your private project portal: {{portalLink}}', '0ad74d28cb345da3ebb447d7be16344c2a6f69c620f5f36e0f2eedf98d4386d8', [], ''),
+      '{{opening}} Easy Garage Cleaning job is done. Thank you! Your receipts and job details are in your private project portal: {{portalLink}}', '3f369798969f8b1d757e940d2fa2207807ae85cdd0d6094879a23624c9325dee', [], ''),
     portalLink('hub.portal_job_done_email', 'Job-done portal link, balance due (email fallback)', 'Email', 'job_done', 'Same as the balance-due job-done text when the saved customer has no valid phone',
       '<p>Your Easy Garage Cleaning job is done — thank you! Your remaining balance, receipts and photos are in your private project portal.</p><p><a href="{{portalLink}}">Open your Easy Garage Cleaning project portal</a></p>', 'bd51f854405b9ecd1d0ad5ab4fed09b11e68df7489b966abdb51e255599069a9',
       [], '', { subject: 'Your Easy Garage Cleaning job is done' }),

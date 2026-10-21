@@ -23,8 +23,8 @@ def templates():
 # PORTAL-LINKS: the owner's switches as GET /api/message-templates returns them (functions/_lib/portal-link-settings.js).
 QUOTE_READY = {'deposit': 'Hi {first}, your Easy Garage Cleaning quote is ready. You can review it, approve it and pay the deposit in your private project portal: {portal link}',
                'no_deposit': 'Hi {first}, your Easy Garage Cleaning quote is ready. You can review it and approve it in your private project portal: {portal link}'}
-JOB_DONE = {'balance': 'Hi {first}, your Easy Garage Cleaning job is done — thank you! Your remaining balance, receipts and photos are in your private project portal: {portal link}',
-            'paid': 'Hi {first}, your Easy Garage Cleaning job is done — thank you! Your receipts and job details are in your private project portal: {portal link}'}
+JOB_DONE = {'balance': 'Hi {first}, your Easy Garage Cleaning job is done. Thank you! Your remaining balance, receipts and photos are in your private project portal: {portal link}',
+            'paid': 'Hi {first}, your Easy Garage Cleaning job is done. Thank you! Your receipts and job details are in your private project portal: {portal link}'}
 def portal_links(**extra):
     row = {'quoteReady': False, 'jobDone': False, 'paused': False, 'canChange': True, 'texts': {'quote_ready': QUOTE_READY, 'job_done': JOB_DONE}}
     row.update(extra); return row
