@@ -44,7 +44,7 @@ const deepFreeze = value => { if (value && typeof value === 'object') { Object.v
 
 export const AUTOMATION_REGISTRY = deepFreeze({
   schemaVersion: 1,
-  registryVersion: '2026-10-21.1',
+  registryVersion: '2026-10-17.2',
   timeZone: 'America/Denver',
   ghlLocationId: 'KlgLwRaQSPz5G1YXsmc6',
   sources: {
