@@ -75,6 +75,7 @@ function fixture() {
     datedJobs: async (start, end) => all('jobs').filter(row => row.date >= start && row.date <= end),
     shiftSwaps: async spec => all('shiftSwaps').filter(row => matches(row, spec)),
     read: async (collection, id) => clone(rows.get(`${collection}/${id}`) || null),
+    readMany: async (collection, ids) => ids.map(id => rows.get(`${collection}/${id}`)).filter(Boolean).map(clone),
     commit: async writes => {
       for (const write of writes) {
         const old = rows.get(`${write.collection}/${write.id}`);
@@ -116,6 +117,7 @@ test('end to end: request, accept, approve; only the approval moves the job, thr
   f.as(MANAGER);
   const queue = (await f.get()).body;
   assert.deepEqual(queue.approvals.map(row => [row.id, row.status, row.canDecide]), [[swapId, 'accepted', true]]);
+  assert.equal(queue.approvals[0].newLead, 'Crew Three', 'the approval card names who leads the job after the swap');
   const approved = await f.post({ action: 'approve', swapId });
   assert.deepEqual([approved.status, approved.body.swap.status, approved.body.swap.decidedBy], [200, 'approved', 'TylerG'], JSON.stringify(approved.body));
   assert.deepEqual([f.job(jobId).assignedCrew, f.job(jobId).crewLead], [['crew3', 'crew2'], 'crew3'], 'the coworker is on the job and leads it');
@@ -160,4 +162,136 @@ test('a dispatch refusal leaves the swap accepted, and a crew change since the r
   assert.equal(f.rows.get(`shiftSwaps/${swapId}`).status, 'accepted', 'the manager can still deny it');
   assert.equal((await f.post({ action: 'deny', swapId, note: 'Already changed in Dispatch' })).body.swap.status, 'denied');
   assert.doesNotMatch(JSON.stringify((await f.get()).body), /Synthetic Customer|estimate|price|amount/i, 'no customer or money');
+});
+
+// Accept and request a swap of the seeded job: crew1 hands it to crew3, who accepts.
+async function accepted(f, jobId) {
+  f.as(crew('crew1'));
+  const swapId = (await f.post({ action: 'request', requestId: randomUUID(), jobId, to: 'crew3' })).body.swap.id;
+  f.as(crew('crew3'));
+  assert.equal((await f.post({ action: 'accept', swapId })).status, 200);
+  return swapId;
+}
+const reschedule = (f, jobId, changes) => mutateDispatch(f.store, OWNER, { action: 'schedule.update', requestId: randomUUID(), jobId, expectedRevision: f.job(jobId).revision, changes }, NOW);
+
+test('approval is held to the schedule the coworker accepted: a rescheduled job expires the swap', async () => {
+  const f = fixture(), jobId = await seedJob(f);
+  const swapId = await accepted(f, jobId);
+  assert.deepEqual(f.rows.get(`shiftSwaps/${swapId}`).jobSchedule, { date: D1, time: '08:00', endDate: D1, endTime: '12:00' }, 'the accept records the schedule');
+  await reschedule(f, jobId, { time: '09:00', endTime: '13:00' });
+  f.as(MANAGER);
+  const queue = (await f.get()).body;
+  assert.deepEqual(queue.approvals, [], 'the list read closed it');
+  assert.equal(f.rows.get(`shiftSwaps/${swapId}`).status, 'expired');
+  // And the approval itself refuses a rescheduled job, even before any list read saw it.
+  const g = fixture(), other = await seedJob(g), second = await accepted(g, other);
+  await reschedule(g, other, { date: '2026-09-24', endDate: '2026-09-24' });
+  g.as(MANAGER);
+  const refused = await g.post({ action: 'approve', swapId: second });
+  assert.deepEqual([refused.status, refused.body.code], [409, 'shift_swap_rescheduled']);
+  assert.match(refused.body.error, /rescheduled; ask again/);
+  assert.equal(g.rows.get(`shiftSwaps/${second}`).status, 'expired');
+  assert.deepEqual(g.job(other).assignedCrew, ['crew1', 'crew2'], 'nothing moved');
+  // A reschedule between the request and the accept: the coworker cannot accept the old time.
+  const h = fixture(), third = await seedJob(h);
+  h.as(crew('crew1'));
+  const asked = (await h.post({ action: 'request', requestId: randomUUID(), jobId: third, to: 'crew3' })).body.swap.id;
+  await reschedule(h, third, { time: '10:00', endTime: '14:00' });
+  h.as(crew('crew3'));
+  const late = await h.post({ action: 'accept', swapId: asked });
+  assert.deepEqual([late.status, late.body.code], [409, 'shift_swap_job_unavailable']);
+  assert.equal(h.rows.get(`shiftSwaps/${asked}`).status, 'expired');
+});
+
+test('a list read saves an open swap whose job has started as expired, by the server', async () => {
+  const f = fixture(), jobId = await seedJob(f);
+  f.as(crew('crew1'));
+  const swapId = (await f.post({ action: 'request', requestId: randomUUID(), jobId, to: 'crew3' })).body.swap.id;
+  f.clock('2026-09-23T14:30:00.000Z');
+  const listed = (await f.get()).body;
+  assert.deepEqual(listed.mine.map(row => [row.id, row.status]), [[swapId, 'expired']]);
+  const stored = f.rows.get(`shiftSwaps/${swapId}`);
+  assert.deepEqual([stored.status, stored.history.at(-1).action, stored.history.at(-1).by], ['expired', 'expired', 'system']);
+  f.as(crew('crew3'));
+  assert.equal((await f.post({ action: 'accept', swapId })).status, 409, 'an expired request cannot be accepted');
+});
+
+test('approve against cancel and deny: the approval claims the swap first, and a dispatch refusal puts it back', async () => {
+  // 1. A cancel arriving while the approval runs is refused.
+  const f = fixture(), jobId = await seedJob(f), swapId = await accepted(f, jobId);
+  const commit = f.store.commit;
+  let cancel = null;
+  f.store.commit = async writes => {
+    await commit(writes);
+    if (!cancel && writes.some(write => write.patch?.status === 'approving')) { f.as(crew('crew1')); cancel = await f.post({ action: 'cancel', swapId }); }
+  };
+  f.as(MANAGER);
+  const approved = await f.post({ action: 'approve', swapId });
+  assert.deepEqual([cancel.status, cancel.body.code], [409, 'shift_swap_approving']);
+  assert.deepEqual([approved.status, approved.body.swap.status], [200, 'approved'], JSON.stringify(approved.body));
+  assert.deepEqual(f.job(jobId).assignedCrew, ['crew3', 'crew2']);
+  // 2. A denial saved before the approval's claim wins, and the job does not move.
+  const g = fixture(), other = await seedJob(g), second = await accepted(g, other);
+  const read = g.store.read;
+  let denied = null;
+  g.store.read = async (collection, id) => {
+    const row = await read(collection, id);
+    if (!denied && collection === 'jobs' && id === other) { const { as } = g; as(OWNER); denied = await g.post({ action: 'deny', swapId: second }); as(MANAGER); }
+    return row;
+  };
+  g.as(MANAGER);
+  const lost = await g.post({ action: 'approve', swapId: second });
+  assert.equal(denied.body.swap.status, 'denied');
+  assert.deepEqual([lost.status, lost.body.code], [409, 'shift_swap_changed']);
+  g.store.read = read;
+  assert.equal(g.rows.get(`shiftSwaps/${second}`).status, 'denied');
+  assert.deepEqual(g.job(other).assignedCrew, ['crew1', 'crew2'], 'nothing moved');
+  // 3. A dispatch refusal returns the swap to accepted, so a manager can retry or deny.
+  const h = fixture(), third = await seedJob(h), swap3 = await accepted(h, third);
+  const save = h.store.commit;
+  h.store.commit = async writes => { if (writes.some(write => write.collection === 'jobs')) throw Object.assign(new Error('Crew Three is booked'), { code: 'dispatch_conflict', status: 409 }); return save(writes); };
+  h.as(MANAGER);
+  const refused = await h.post({ action: 'approve', swapId: swap3 });
+  assert.deepEqual([refused.status, refused.body.code], [409, 'dispatch_conflict']);
+  assert.deepEqual([h.rows.get(`shiftSwaps/${swap3}`).status, h.rows.get(`shiftSwaps/${swap3}`).dispatchRequestId], ['accepted', '']);
+  h.store.commit = save;
+  assert.equal((await h.post({ action: 'approve', swapId: swap3 })).body.swap.status, 'approved');
+  // 4. The job moved but the final save failed: it stays approving, and the retry finishes it from the dispatch receipt
+  // without a second move.
+  const k = fixture(), fourth = await seedJob(k), swap4 = await accepted(k, fourth);
+  const keep = k.store.commit;
+  let dropped = false;
+  k.store.commit = async writes => { if (!dropped && writes.some(write => write.patch?.status === 'approved')) { dropped = true; throw Object.assign(new Error('lost'), { code: 'dispatch_storage_unavailable', status: 503 }); } return keep(writes); };
+  k.as(MANAGER);
+  const lostReply = await k.post({ action: 'approve', swapId: swap4 });
+  assert.equal(lostReply.status, 503, JSON.stringify(lostReply.body));
+  assert.equal(k.rows.get(`shiftSwaps/${swap4}`).status, 'approving');
+  k.as(crew('crew3'));
+  assert.equal((await k.post({ action: 'decline', swapId: swap4 })).body.code, 'shift_swap_approving');
+  k.as(MANAGER);
+  assert.deepEqual((await k.get()).body.approvals.map(row => row.status), ['approving'], 'the manager still sees it to finish');
+  const finished = await k.post({ action: 'approve', swapId: swap4 });
+  assert.deepEqual([finished.status, finished.body.swap.status, finished.body.replayed], [200, 'approved', true]);
+  assert.deepEqual(k.job(fourth).assignedCrew, ['crew3', 'crew2']);
+});
+
+test('one open request per job and requester, even when two are sent at once', async () => {
+  const f = fixture(), jobId = await seedJob(f);
+  f.as(crew('crew1'));
+  const both = await Promise.all([f.post({ action: 'request', requestId: randomUUID(), jobId, to: 'crew3' }), f.post({ action: 'request', requestId: randomUUID(), jobId, to: 'tylerg' })]);
+  assert.deepEqual(both.map(row => row.status).sort(), [200, 409]);
+  assert.equal(both.find(row => row.status === 409).body.code, 'shift_swap_already_open');
+  const open = [...f.rows.keys()].filter(id => id.startsWith('shiftSwaps/'));
+  assert.equal(open.length, 1, 'only one request was saved');
+  // The same request sent twice is a replay, not a second request.
+  const requestId = randomUUID(), g = fixture(), other = await seedJob(g);
+  g.as(crew('crew1'));
+  const twice = await Promise.all([g.post({ action: 'request', requestId, jobId: other, to: 'crew3' }), g.post({ action: 'request', requestId, jobId: other, to: 'crew3' })]);
+  assert.deepEqual(twice.map(row => [row.status, row.body.swap?.id]), [[200, `swap_${requestId.replace(/-/g, '')}`], [200, `swap_${requestId.replace(/-/g, '')}`]]);
+  assert.equal([...g.rows.keys()].filter(id => id.startsWith('shiftSwaps/')).length, 1);
+  // Once the request is closed, a new one for the same job takes the lock over.
+  const swapId = f.rows.get(open[0]).id;
+  assert.equal((await f.post({ action: 'cancel', swapId })).status, 200);
+  assert.equal((await f.post({ action: 'request', requestId: randomUUID(), jobId, to: 'crew3' })).status, 200);
+  assert.equal([...f.rows.keys()].filter(id => id.startsWith('shiftSwapLocks/')).length, 1);
 });

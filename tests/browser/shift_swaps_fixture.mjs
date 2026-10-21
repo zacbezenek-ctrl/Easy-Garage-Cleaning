@@ -31,6 +31,7 @@ const store = {
   datedJobs: async (start, end) => all('jobs').filter(row => row.date >= start && row.date <= end),
   shiftSwaps: async spec => all('shiftSwaps').filter(row => spec.op === 'IN' ? spec.value.includes(row[spec.field]) : row[spec.field] === spec.value),
   read: async (collection, id) => clone(rows.get(`${collection}/${id}`) || null),
+  readMany: async (collection, ids) => ids.map(id => rows.get(`${collection}/${id}`)).filter(Boolean).map(clone),
   commit: async writes => {
     for (const write of writes) { const old = rows.get(`${write.collection}/${write.id}`); if (write.revision ? old?.revision !== write.revision : Boolean(old)) throw Object.assign(new Error('Conflict'), { code: 'dispatch_revision_conflict', status: 409 }); }
     for (const write of writes) if (!write.verify) rows.set(`${write.collection}/${write.id}`, { ...rows.get(`${write.collection}/${write.id}`), ...clone(write.patch), id: write.id, revision: `r${++revision}` });

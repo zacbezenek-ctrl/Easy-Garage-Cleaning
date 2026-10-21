@@ -17,7 +17,7 @@ function when(date,time){
   let day=date;try{day=new Intl.DateTimeFormat('en-US',{timeZone:'UTC',weekday:'short',month:'short',day:'numeric'}).format(new Date(date+'T12:00:00Z'));}catch{}
   return [day,clock].filter(Boolean).join(' ');
 }
-const STATUS={requested:'Waiting for {to}',accepted:'Accepted by {to}: waiting for a manager',approved:'Approved: {to} has the job',declined:'{to} declined',denied:'A manager denied it',cancelled:'Cancelled',expired:'Expired: the job started'};
+const STATUS={requested:'Waiting for {to}',accepted:'Accepted by {to}: waiting for a manager',approving:'A manager is approving it',approved:'Approved: {to} has the job',declined:'{to} declined',denied:'A manager denied it',cancelled:'Cancelled',expired:'Expired: the job started or was rescheduled'};
 const statusText=swap=>(STATUS[swap.status]||swap.status).replace('{to}',swap.toName);
 const validSwap=row=>record(row)&&typeof row.id==='string'&&typeof row.status==='string'&&typeof row.toName==='string'&&typeof row.fromName==='string';
 const valid=data=>record(data)&&data.ok===true&&Array.isArray(data.mine)&&Array.isArray(data.incoming)&&Array.isArray(data.jobs)&&Array.isArray(data.coworkers)&&data.mine.every(validSwap)&&data.incoming.every(validSwap)&&(data.approvals===undefined||Array.isArray(data.approvals)&&data.approvals.every(validSwap));
@@ -46,7 +46,8 @@ function widget(kind){
   const disabled=id=>S.busy&&(S.busy===id||S.busy==='new')?'true':null;
   // people: show who hands the job to whom (requests to you, approvals); otherwise the request's state.
   function swapLine(swap,actions,people=false){
-    return h('li',{class:'ss-swap ss-'+swap.status,'data-ss-swap':swap.id},h('strong',{},`${when(swap.jobDate,swap.jobTime)} · ${swap.service}`),h('p',{class:'ss-meta'},people?`${swap.fromName} → ${swap.toName}`:statusText(swap)),swap.reason?h('p',{class:'ss-reason'},swap.reason):null,actions);
+    return h('li',{class:'ss-swap ss-'+swap.status,'data-ss-swap':swap.id},h('strong',{},`${when(swap.jobDate,swap.jobTime)} · ${swap.service}`),h('p',{class:'ss-meta'},people?`${swap.fromName} → ${swap.toName}`:statusText(swap)),
+      people&&swap.newLead?h('p',{class:'ss-meta ss-lead'},`Crew lead after the swap: ${swap.newLead}`):null,swap.reason?h('p',{class:'ss-reason'},swap.reason):null,actions);
   }
   function home(d){
     const incoming=d.incoming.filter(swap=>swap.status==='requested');
@@ -67,11 +68,11 @@ function widget(kind){
     return frame('SHIFT SWAPS','Swap a shift',asked,mine,form,empty);
   }
   function review(d){
-    const waiting=(d.approvals||[]).filter(swap=>swap.status==='accepted'),pending=(d.approvals||[]).filter(swap=>swap.status==='requested');
+    const waiting=(d.approvals||[]).filter(swap=>swap.status==='accepted'||swap.status==='approving'),pending=(d.approvals||[]).filter(swap=>swap.status==='requested');
     if(!waiting.length&&!pending.length)return null;
     const list=waiting.length?h('ol',{class:'ss-list'},waiting.map(swap=>swapLine(swap,swap.canDecide===false?h('p',{class:'ss-meta'},'You are part of this swap, so another manager or the owner approves it.'):h('div',{class:'ss-actions'},
-      button(S.busy===swap.id?'Saving…':'Approve',()=>void act({action:'approve',swapId:swap.id},'Approved: Dispatch updated and the crew notified.'),'primary',{disabled:disabled(swap.id)}),
-      button('Deny',()=>void act({action:'deny',swapId:swap.id},'Denied.'),'',{disabled:disabled(swap.id)})),true))):h('p',{class:'ss-empty'},'Nothing to approve yet.');
+      button(S.busy===swap.id?'Saving…':swap.status==='approving'?'Finish approval':'Approve',()=>void act({action:'approve',swapId:swap.id},'Approved: Dispatch updated and the crew notified.'),'primary',{disabled:disabled(swap.id)}),
+      swap.status==='approving'?null:button('Deny',()=>void act({action:'deny',swapId:swap.id},'Denied.'),'',{disabled:disabled(swap.id)})),true))):h('p',{class:'ss-empty'},'Nothing to approve yet.');
     return frame('NEEDS ATTENTION',waiting.length?`Shift swaps to approve (${waiting.length})`:'Shift swaps',list,pending.length?h('p',{class:'ss-meta'},`${pending.length} more waiting for the coworker to accept.`):null);
   }
   function render(){if(!S.host||!S.data)return;show(kind==='review'?review(S.data):home(S.data));}

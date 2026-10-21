@@ -3,9 +3,16 @@
  * the job, and it goes through dispatch's own schedule.update (mutateDispatch), so the conflict, capacity, working-hours
  * and skill rules and the crew notifications apply exactly as for any reassignment.
  * - Record: shiftSwaps/{id} {id, jobId, from, fromName, to, toName, status, reason, jobDate, jobTime, jobStartAt,
- *   service, createdAt, updatedAt, decidedBy, decidedAt, dispatchRequestId, history:[{action, by, at, note}]}.
- *   status: requested -> accepted -> approved; or declined (coworker), denied (manager), cancelled (requester),
- *   expired (the job started first, or it changed so the swap no longer fits).
+ *   jobSchedule:{date, time, endDate, endTime}, service, createdAt, updatedAt, decidedBy, decidedAt, dispatchRequestId,
+ *   history:[{action, by, at, note}]}.
+ *   status: requested -> accepted -> approving -> approved; or declined (coworker), denied (manager), cancelled
+ *   (requester), expired (the job started first, was rescheduled, or changed so the swap no longer fits).
+ * - The schedule is snapshotted at the request and again at the accept; the accept and the approval compare it with
+ *   the live job, so nobody is held to a time they did not agree to. A rescheduled job expires the swap.
+ * - Approval first saves 'approving' with its dispatch request ID (revision-guarded), so a cancel, decline or denial
+ *   racing it loses; a dispatch refusal puts it back to accepted, and a retry finishes from the dispatch receipt.
+ * - One open request per job and requester: shiftSwapLocks/{swapLockId(jobId, from)} {jobId, from, swapId} is written in
+ *   the same commit as the request, create-only or under its revision, and a held lock blocks a second request.
  * - Who: the requester is assigned to the job; the coworker is another active employee who is not on it. Approval
  *   needs dispatch.write (owner or manager), and nobody approves a swap they are part of, except the owner.
  * - Jobs: customer jobs with a date and time that have not started; split jobs (assignment segments) are changed by a
@@ -19,8 +26,10 @@ import { assignmentKey } from './job-assignment.js';
 import { hasBusinessAccess, isHubOwner } from './hub-session.js';
 import { canDispatch } from './dispatch-permissions.js';
 
-export const SWAP_OPEN = Object.freeze(['requested', 'accepted']);
-export const SWAP_FIELDS = Object.freeze(['id', 'jobId', 'from', 'fromName', 'to', 'toName', 'status', 'reason', 'jobDate', 'jobTime', 'jobStartAt', 'service', 'createdAt', 'updatedAt', 'decidedBy', 'decidedAt', 'dispatchRequestId', 'history']);
+export const SWAP_OPEN = Object.freeze(['requested', 'accepted', 'approving']);
+// The open states that close on their own when the job starts; 'approving' may already have moved the job.
+export const SWAP_EXPIRES = Object.freeze(['requested', 'accepted']);
+export const SWAP_FIELDS = Object.freeze(['id', 'jobId', 'from', 'fromName', 'to', 'toName', 'status', 'reason', 'jobDate', 'jobTime', 'jobStartAt', 'jobSchedule', 'service', 'createdAt', 'updatedAt', 'decidedBy', 'decidedAt', 'dispatchRequestId', 'history']);
 export const SWAP_JOB_FIELDS = Object.freeze(['date', 'time', 'endDate', 'endTime', 'type', 'recordType', 'status', 'pipelineStatus', 'serviceType', 'title', 'assignedCrew', 'crewLead', 'assignmentSegments', 'fieldExecution.activity']);
 export const SWAP_WINDOW_DAYS = 14;
 const REQUEST_ID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
@@ -41,6 +50,15 @@ export function jobStart(job) {
   const at = scheduleInterval({ date: job?.date, time: job?.time, endDate: job?.endDate || job?.date, endTime: job?.endTime || '23:59' });
   return at ? at.start : null;
 }
+/** The job's schedule as a swap records it, to tell later whether the job was rescheduled. */
+export const swapSchedule = job => ({ date: String(job?.date || ''), time: String(job?.time || ''), endDate: String(job?.endDate || job?.date || ''), endTime: String(job?.endTime || '') });
+export const RESCHEDULED = 'The job was rescheduled; ask again.';
+/** Why the live job no longer matches the schedule this swap agreed to ('' when it does). Old records without a
+ * snapshot fall back to the stored date and time. */
+export function swapRescheduled(swap, job) {
+  const live = swapSchedule(job), saved = record(swap?.jobSchedule) ? swap.jobSchedule : { date: swap?.jobDate, time: swap?.jobTime };
+  return Object.keys(saved).some(field => String(saved[field] || '') !== live[field]) ? RESCHEDULED : '';
+}
 const crewOf = job => (Array.isArray(job?.assignedCrew) ? job.assignedCrew : []).map(key).filter(Boolean);
 
 /** Why this job cannot be swapped now ('' when it can). */
@@ -54,10 +72,12 @@ export function swapBlocker(job, nowMs) {
   return '';
 }
 
-/** The swap as a viewer sees it: the stored status, or expired once the job's start has passed. */
-export function swapView(swap, nowMs) {
-  const start = Date.parse(swap?.jobStartAt || '');
-  const status = SWAP_OPEN.includes(swap?.status) && Number.isFinite(start) && start <= nowMs ? 'expired' : swap?.status;
+/** The swap as a viewer sees it: the stored status, or expired once the job's start has passed. `job`, when given, is
+ * the live job: its start counts instead of the stored one, and its date and time are shown. */
+export function swapView(swap, nowMs, job = null) {
+  const start = job ? jobStart(job) : Date.parse(swap?.jobStartAt || '');
+  const status = SWAP_EXPIRES.includes(swap?.status) && Number.isFinite(start) && start <= nowMs ? 'expired' : swap?.status;
+  if (job) swap = { ...swap, jobDate: job.date, jobTime: job.time };
   return { id: swap.id, jobId: swap.jobId, from: swap.from, fromName: swap.fromName || swap.from, to: swap.to, toName: swap.toName || swap.to, status, reason: swap.reason || '',
     jobDate: swap.jobDate || '', jobTime: swap.jobTime || '', service: swap.service || 'Job', createdAt: swap.createdAt || '', decidedBy: swap.decidedBy || '', decidedAt: swap.decidedAt || '' };
 }
@@ -77,17 +97,20 @@ export function requestSwap({ job, session, input, roster, openSwaps = [], now }
   const people = new Map((Array.isArray(roster) ? roster : []).filter(record).map(person => [key(person.id), String(person.name || person.id)]));
   if (!to || to === me || !people.has(to)) throw fail('shift_swap_coworker_invalid', 'Choose an active coworker other than yourself.');
   if (crew.includes(to)) throw fail('shift_swap_coworker_assigned', `${people.get(to)} is already on this job.`, 409);
-  if (openSwaps.some(swap => swap.jobId === job.id && key(swap.from) === me && SWAP_OPEN.includes(swapView(swap, nowMs).status))) throw fail('shift_swap_already_open', 'You already asked someone to take this job. Cancel that request first.', 409);
+  const id = `swap_${input.requestId.toLowerCase().replace(/-/g, '')}`;
+  // The same request seen again (a retry racing itself) is not a second request.
+  if (openSwaps.some(swap => swap.id !== id && swap.jobId === job.id && key(swap.from) === me && SWAP_OPEN.includes(swapView(swap, nowMs).status))) throw fail('shift_swap_already_open', 'You already asked someone to take this job. Cancel that request first.', 409);
   const reason = text(input.reason, 500);
-  return { id: `swap_${input.requestId.toLowerCase().replace(/-/g, '')}`, jobId: job.id, from: me, fromName: people.get(me) || String(session.displayName || session.user), to, toName: people.get(to),
-    status: 'requested', reason, jobDate: job.date, jobTime: job.time, jobStartAt: new Date(jobStart(job)).toISOString(), service: String(job.serviceType || job.title || 'Job'),
+  return { id, jobId: job.id, from: me, fromName: people.get(me) || String(session.displayName || session.user), to, toName: people.get(to),
+    status: 'requested', reason, jobDate: job.date, jobTime: job.time, jobStartAt: new Date(jobStart(job)).toISOString(), jobSchedule: swapSchedule(job), service: String(job.serviceType || job.title || 'Job'),
     createdAt: now, updatedAt: now, decidedBy: '', decidedAt: '', dispatchRequestId: '', history: [entry('requested', session, now, reason)] };
 }
 
 /** The coworker's answer, the requester's cancel, or a manager's denial: the swap record after it. */
 export function answerSwap({ swap, session, env, action, note, now }) {
   const me = key(session.user), view = swapView(swap, Date.parse(now)), reason = text(note, 500);
-  if (view.status === 'expired') return step(swap, 'expired', session, now, 'expired');
+  if (view.status === 'expired') return expireSwap(swap, now);
+  if (swap.status === 'approving') throw fail('shift_swap_approving', 'A manager is approving this swap right now. Refresh in a moment.', 409);
   if (action === 'accept' || action === 'decline') {
     if (me !== key(swap.to)) throw fail('shift_swap_forbidden', 'Only the coworker who was asked can answer.', 403);
     if (swap.status !== 'requested') throw fail('shift_swap_state', 'This request was already answered.', 409);
@@ -106,8 +129,8 @@ export function answerSwap({ swap, session, env, action, note, now }) {
   throw fail('shift_swap_request_invalid', 'Choose Accept, Decline, Cancel, Approve or Deny.');
 }
 
-/** The swap closed because the job started or no longer fits it. */
-export const expireSwap = (swap, session, now, note = '') => step(swap, 'expired', session, now, 'expired', {}, note);
+/** The swap closed because the job started, was rescheduled or no longer fits it. The server closes it, not a person. */
+export const expireSwap = (swap, now, note = '') => step(swap, 'expired', { user: 'system' }, now, 'expired', {}, note);
 
 export function requireApprover(swap, session, env) {
   if (!swapManager(session, env)) throw fail('shift_swap_forbidden', 'Only a manager or the owner approves shift swaps.', 403);
@@ -122,6 +145,10 @@ export function swapDispatchChanges(job, swap) {
   const assignedCrew = (Array.isArray(job.assignedCrew) ? job.assignedCrew : []).map(person => key(person) === from ? swap.to : person);
   return { assignedCrew, ...(key(job.crewLead) === from ? { crewLead: swap.to } : {}) };
 }
+
+const hex = async value => [...new Uint8Array(await crypto.subtle.digest('SHA-256', new TextEncoder().encode(value)))].map(byte => byte.toString(16).padStart(2, '0')).join('');
+/** The lock document for one job and requester: two requests for the same job race for it, and only one is written. */
+export const swapLockId = async (jobId, from) => `lock_${(await hex(`shift-swap-lock:${jobId}|${key(from)}`)).slice(0, 32)}`;
 
 /** A stable UUID for the approval's dispatch save, so a retry replays it. */
 export async function swapDispatchRequestId(swapId) {
