@@ -1,13 +1,13 @@
 import { getHubSession, isHubOwner } from '../_lib/hub-session.js';
 import { dispatchStorage } from '../_lib/dispatch-storage.js';
-import { requireQuoteAuthor } from '../_lib/quote-permissions.js';
+import { quoteAuthorAccess, requireQuoteAuthor } from '../_lib/quote-permissions.js';
 import { expireStaleCheckout, previewQuoteSend, readQuoteDraft, saveQuoteDraft, sendQuoteDraft } from '../_lib/quote-draft.js';
 import { createEstimateReadyDelivery } from '../_lib/estimate-ready.js';
 import { stripeRequest, stripeSecretKey } from '../_lib/customer-payments.js';
 import { moneyTotalsMode } from '../_lib/money-core.js';
 import { catalogQuotesEnabled, catalogStorage, quoteBuilderEnabled, readCatalogState, readCompositeState } from '../_lib/catalog-store.js';
 import { priceCatalogQuote } from '../_lib/catalog-quote.js';
-import { builderMenu, priceCompositeQuote } from '../_lib/composite-quote.js';
+import { builderMenu, offeringsMenu, priceCompositeQuote } from '../_lib/composite-quote.js';
 import { syncWalkthroughCapture, walkthroughCaptureSyncEnabled } from '../_lib/walkthrough-capture-sync.js';
 import { SENT_25_75 } from '../_lib/quote-payment-policy.js';
 
@@ -26,6 +26,11 @@ import { SENT_25_75 } from '../_lib/quote-payment-policy.js';
  *        item's current price and approval, and the labor rate (the owner's decision, D12); only owners and managers
  *        (internal) see a cost basis.
  *        Pages ask for it only when /api/pricing-config or /api/catalog said quoteBuilder:true.
+ * GET  /api/quote-draft?view=menu => {ok, enabled:true, menuVersion, prices, sections, services, products, labor?}: everything
+ *        EGC sells for the crew hub's read-only "What we sell" page (composite-quote.js offeringsMenu), for ANY signed-in Hub
+ *        employee. A quote author (who reads the builder menu) gets EGC's customer prices with their Draft/Approved status
+ *        and the labor rate; everyone else (crew) gets names and sizes only. Never a cost or retail price. With the flag
+ *        off it answers 404 quote_draft_menu_disabled.
  * While the flag is on, send_preview and send of a walkthrough-priced draft (no builder or catalog pricing) answer
  *        409 quote_draft_builder_required; the draft stays saved.
  * POST {action:'composite_preview', compositePricing:{menuVersion,settingsVersion,steps,removal,shelving,storage,labor?}}
@@ -54,8 +59,14 @@ export function quoteDraftHandlers({ session = getHubSession, storage = dispatch
   return {
     async get({ request, env }) {
       try {
-        const actor = await session(request, env), access = requireQuoteAuthor(actor, env);
-        const params = new URL(request.url).searchParams;
+        const actor = await session(request, env), params = new URL(request.url).searchParams;
+        // LANE catalog: the menu every Hub employee may read; prices only for a quote author.
+        if (params.get('view') === 'menu' && [...params.keys()].length === 1) {
+          if (!actor || typeof actor.user !== 'string' || !actor.user.trim()) return reply(401, { ok: false, code: 'quote_sign_in_required', error: 'Sign in to the Employee Hub to see what we sell.' });
+          if (!quoteBuilderEnabled(env)) return reply(404, { ok: false, code: 'quote_draft_menu_disabled', error: 'The menu of what we sell is not available yet. Ask the office.' });
+          return reply(200, { ok: true, authority: 'employee_hub', enabled: true, ...offeringsMenu(await compositeState(env), { prices: quoteAuthorAccess(actor, env).author === true }) });
+        }
+        const access = requireQuoteAuthor(actor, env);
         if ([...params.keys()].length !== new Set(params.keys()).size) return reply(400, { ok: false, code: 'quote_draft_invalid_request', error: 'The quote lookup is invalid.' });
         if (quoteBuilderEnabled(env) && params.get('view') === 'builder' && [...params.keys()].length === 1) {
           return reply(200, { ok: true, authority: 'employee_hub', enabled: true, ...builderMenu(await compositeState(env), { internal: access.dispatcher === true, canApprove: isHubOwner(actor) && actor.role === 'owner' }) });

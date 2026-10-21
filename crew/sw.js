@@ -2,7 +2,7 @@
    offline reloads. API responses, customer data and non-GET requests are never
    intercepted or cached; queued work lives in the explicit field outbox. */
 'use strict';
-const VERSION = '20261021field1';
+const VERSION = '20261021field2';
 const CACHE_PREFIX = 'egc-crew-shell-';
 const CACHE = `${CACHE_PREFIX}${VERSION}`;
 const CONFIG = '/crew/sw-config.json';
@@ -23,6 +23,10 @@ ASSETS.push('/crew/knock.css?v=20261017knockbridge', '/crew/knock-app.js?v=20261
 // worker never stores, so offline the page says it needs a connection instead of showing the generic offline page.
 Object.assign(PAGES, { '/crew/schedule.html': '/crew/schedule.html', '/crew/schedule': '/crew/schedule.html' });
 ASSETS.push('/crew/schedule.js?v=20261018readfix');
+// LANE catalog: the read-only "What we sell" page (crew/menu.html) and its script. The menu is /api data, never stored here,
+// so offline the page says it needs a connection.
+Object.assign(PAGES, { '/crew/menu.html': '/crew/menu.html', '/crew/menu': '/crew/menu.html' });
+ASSETS.push('/crew/menu.js?v=20261019catalog');
 const ASSET_PATHS = new Set(ASSETS.map(asset => asset.split('?')[0]));
 // With EGC_STAFF_PAGE_GATE=on the edge refuses the job page and its files without a Hub session (staff-paths.js). Every
 // install needs this public part; the rest is cached when the install, or a later signed-in load, receives it.

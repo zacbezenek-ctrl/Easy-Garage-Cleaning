@@ -85,7 +85,7 @@ const REMOVAL_GROUP_ORDER = BUILDER_SECTIONS[0].groups.map(group => group.id);
 export const MENU_UNITS = Object.freeze(['job', 'load', 'item', 'bundle']);
 export const JUNK_FRACTIONS = Object.freeze([0.25, 0.5, 0.75, 1]);
 const WALKTHROUGH_TABLES = ['sizeBase', 'services', 'deep_clean', 'hazards', 'special', 'access'];
-const GARAGE_SIZES = ['1', '2', '3', 'other'];
+export const GARAGE_SIZES = Object.freeze(['1', '2', '3', 'other']);
 // The customer portal and quote drafts charge at most 12 lines (money-service MAX_ESTIMATE_LINES, quote-draft
 // MAX_INCLUDED_LINES); special-handling items, access charges and each goods step roll up into one line each, so
 // the largest removal step (9 lines) plus both goods lines and the Labor line always fits.
@@ -452,7 +452,8 @@ function laborBlock(labor, state, { required, signed, junk = false }) {
  * the man-hour limits the builder's Labor row accepts, the removal groups a junk-only quote is made of (haulingGroups:
  * no Labor line) and the time model the server estimates the man-hours with (labor.time, laborTime: person-minutes, no
  * money; no truck-load minutes), so the running total shows the same estimate: each service's laborPersonMinutes per
- * unit (0 for hauling) and each product's installPersonMinutes per pack (null: no install time yet). */
+ * unit (0 for hauling) and each product's installPersonMinutes per pack (null: no install time yet). A product's size
+ * (productSize: its listed width, height and depth) is shown in its row, with its fit notes behind a disclosure. */
 export function builderMenu(state, { internal = false, canApprove = false } = {}) {
   const prices = menuPrices(state), { menu, settings } = state, approvals = validateMenuApprovals(state.approvals), rate = laborRate({ approvals }), time = laborTime(state);
   const status = id => { const price = prices.get(id); return { unitCents: price.unitCents, approved: price.approved, source: price.source, reason: price.reason }; };
@@ -465,7 +466,7 @@ export function builderMenu(state, { internal = false, canApprove = false } = {}
       ...(service.scopeNote ? { scopeNote: service.scopeNote } : {}), laborPersonMinutes: minutes(service.id), ...status(service.id) })),
     products: menu.products.map(product => ({ id: product.id, sku: product.sku, retailer: product.retailer, name: product.name, section: product.section, group: product.group,
       unitsPerPack: product.unitsPerPack, perOrderPackLimit: product.perOrderPackLimit, productUrl: product.productUrl, photoUrl: product.photoUrl, fitWarnings: product.fitWarnings,
-      installPersonMinutes: minutes(product.id), ...status(product.id), ...(internal ? { retailPerPackCents: product.retailPerPackCents, evidence: product.evidence } : {}) })),
+      ...(productSize(product.fitWarnings) ? { size: productSize(product.fitWarnings) } : {}), installPersonMinutes: minutes(product.id), ...status(product.id), ...(internal ? { retailPerPackCents: product.retailPerPackCents, evidence: product.evidence } : {}) })),
     // installationConfirmed: the owner's own answer on Menu prices (menu.approve), present once it was given. It matters
     // for goods the labor estimate cannot time and for a quote saved before the Labor line existed.
     ...(internal ? { internal: { goodsMarkup: goodsMarkupOf(settings).multiplier, goodsInstallationIncluded: installationIncluded(state), roundingRule: settings.roundingRule, approvalsRevision: approvals.revision,
@@ -478,10 +479,43 @@ export function builderMenu(state, { internal = false, canApprove = false } = {}
   };
 }
 
-// The selection a browser sends: {menuVersion, settingsVersion, steps, removal, shelving, storage, labor?}. labor is
-// {manHours: number|null, adjusted?: boolean, fullness?: string|null} (normalizeLabor); a save of a quote with garage
-// work needs it (priceCompositeQuote), except the re-pricing of a job signed before builder quotes had a Labor line.
-const DESCRIPTOR_KEYS = ['menuVersion', 'settingsVersion', 'steps', 'removal', 'shelving', 'storage', 'labor'];
+// A product's size from its fit notes: the width, height, depth and length the retailer lists, else a "W × H × D in"
+// phrase, else '' (most product names carry their size).
+export function productSize(text) {
+  const value = String(text || ''), dims = {};
+  for (const match of value.matchAll(/\b(Width|Height|Depth|Length) \(in\.\):\s*(\d+(?:\.\d+)?)\s*in\b/g)) dims[match[1][0]] ??= Number(match[2]);
+  const parts = ['W', 'H', 'D', 'L'].filter(key => Number.isFinite(dims[key])).map(key => `${dims[key]} ${key}`);
+  if (parts.length) return `${parts.join(' × ')} in`;
+  return value.match(/\d+(?:\.\d+)?\s*[WHDL](?:\s*×\s*\d+(?:\.\d+)?\s*[WHDL])+\s*in\b/)?.[0] || '';
+}
+/**
+ * Everything EGC sells, for the crew hub's read-only "What we sell" page (crew/menu.html; LANE catalog, 2026-10-19): every
+ * builder service and product by step and group, with its name and size (garage size, truck fraction, units per pack,
+ * product size). prices (a quote author: an owner, a manager or a sales/walkthrough employee, who reads the builder menu
+ * itself) adds EGC's customer price per unit or pack, its Draft or Approved status and the labor rate. Never a cost, a
+ * retail price, a retailer link, a markup or an internal note; a crew member gets names and sizes only.
+ */
+export function offeringsMenu(state, { prices = false } = {}) {
+  const menu = builderMenu(state), price = item => prices ? { unitCents: item.unitCents, approved: item.approved === true } : {};
+  return {
+    menuVersion: menu.menuVersion, prices: prices === true,
+    sections: menu.sections.map(section => ({ id: section.id, label: section.label, groups: section.groups.map(group => ({ id: group.id, label: group.label })) })),
+    services: menu.services.map(item => ({ id: item.id, section: item.section, group: item.group, name: item.name, unit: item.unit,
+      ...(item.garageSize ? { garageSize: item.garageSize } : {}), ...(Number.isFinite(item.junkFraction) ? { junkFraction: item.junkFraction } : {}), ...price(item) })),
+    products: menu.products.map(item => ({ id: item.id, section: item.section, group: item.group, name: item.name, unitsPerPack: item.unitsPerPack,
+      ...(productSize(item.fitWarnings) ? { size: productSize(item.fitWarnings) } : {}), ...price(item) })),
+    ...(prices ? { labor: { rateCents: menu.labor.rateCents, approved: true } } : {}),
+  };
+}
+
+// The selection a browser sends: {menuVersion, settingsVersion, steps, removal, shelving, storage, labor?, garageSize?}.
+// labor is {manHours: number|null, adjusted?: boolean, fullness?: string|null} (normalizeLabor); a save of a quote with
+// garage work needs it (priceCompositeQuote), except the re-pricing of a job signed before builder quotes had a Labor line.
+// garageSize is the walkthrough's garage size ('1', '2', '3' or 'other'; crew/gameplan.html Photos): without a garage
+// cleaning base (a quote with truck loads) it sizes the deep clean and allows the one-car pressure wash (checkRemoval).
+// It is kept only when sent, so a selection saved without it reads exactly as before. The signed handoff replaces it
+// with the signed plan's own (scope.garages).
+const DESCRIPTOR_KEYS = ['menuVersion', 'settingsVersion', 'steps', 'removal', 'shelving', 'storage', 'labor', 'garageSize'];
 function normalizeDescriptor(descriptor, { complete }) {
   if (!keysOnly(descriptor, DESCRIPTOR_KEYS) || typeof descriptor.menuVersion !== 'string' || typeof descriptor.settingsVersion !== 'string' || !Array.isArray(descriptor.steps)) {
     throw fail('invalid_selection', 'The quote builder selection is incomplete. Reload the builder and try again.');
@@ -509,12 +543,18 @@ function normalizeDescriptor(descriptor, { complete }) {
   }
   if (total > MAX_SELECTIONS) throw fail('invalid_selection', `A quote can hold at most ${MAX_SELECTIONS} builder selections.`);
   if (descriptor.labor !== undefined) out.labor = normalizeLabor(descriptor.labor);
+  if (descriptor.garageSize !== undefined && descriptor.garageSize !== null) {
+    if (!GARAGE_SIZES.includes(descriptor.garageSize)) throw fail('invalid_selection', 'The walkthrough garage size is invalid: 1, 2, 3 or other.');
+    out.garageSize = descriptor.garageSize;
+  }
   return out;
 }
 
-// The removal step's rules: one garage base, at most one partial load, a deep clean sized to the base, a pressure
-// wash with a one-car base only, and bounded quantities.
-function checkRemoval(entries, prices) {
+// The removal step's rules: one garage base, at most one partial load, a deep clean sized to the garage, a pressure
+// wash for a one-car garage only, and bounded quantities. The garage is the cleaning base's size, else (no base: a
+// quote with truck loads) the walkthrough's garage size the selection names (garageSize), else unknown: a deep clean
+// of any one size, and no pressure wash.
+function checkRemoval(entries, prices, garageSize = null) {
   const byGroup = group => entries.filter(entry => prices.get(entry.id).item.group === group);
   const bases = byGroup('cleaning-base'), partial = byGroup('junk').filter(entry => prices.get(entry.id).item.basis.fraction < 1), full = byGroup('junk').filter(entry => prices.get(entry.id).item.basis.fraction === 1);
   if (bases.length > 1 || bases.some(entry => entry.quantity !== 1)) throw fail('invalid_selection', 'Choose one garage cleaning base for the garage size.');
@@ -522,11 +562,11 @@ function checkRemoval(entries, prices) {
   if (full.some(entry => entry.quantity > MAX_FULL_LOADS)) throw fail('invalid_selection', `Quote at most ${MAX_FULL_LOADS} full truck loads.`);
   if (byGroup('special').some(entry => entry.quantity > MAX_SPECIAL)) throw fail('invalid_selection', `Quote at most ${MAX_SPECIAL} of one special-handling item.`);
   if ([...byGroup('access'), ...byGroup('cleaning')].some(entry => entry.quantity !== 1)) throw fail('invalid_selection', 'Access charges and cleaning add-ons are quoted once.');
-  const size = bases.length ? prices.get(bases[0].id).item.garageSize : null;
+  const size = bases.length ? prices.get(bases[0].id).item.garageSize : garageSize;
   const sized = byGroup('cleaning').map(entry => prices.get(entry.id).item).filter(item => item.basis.table === 'deep_clean');
   if (sized.length > 1) throw fail('invalid_selection', 'Choose one deep clean, sized to the garage.');
-  if (size && sized.some(item => item.garageSize !== size)) throw fail('invalid_selection', 'The deep clean must match the garage cleaning base size.');
-  if (byGroup('cleaning').some(entry => prices.get(entry.id).item.basis.key === 'pressure_wash') && size !== '1') throw fail('invalid_selection', 'Pressure washing is quoted for a one-car garage cleaning base only.');
+  if (size && sized.some(item => item.garageSize !== size)) throw fail('invalid_selection', bases.length ? 'The deep clean must match the garage cleaning base size.' : 'The deep clean must match the walkthrough\'s garage size.');
+  if (byGroup('cleaning').some(entry => prices.get(entry.id).item.basis.key === 'pressure_wash') && size !== '1') throw fail('invalid_selection', bases.length ? 'Pressure washing is quoted for a one-car garage cleaning base only.' : 'Pressure washing is quoted for a one-car garage only.');
 }
 
 /**
@@ -563,7 +603,7 @@ export function priceCompositeQuote(state, descriptor, { complete = false, requi
     return price;
   };
   const removal = selection.removal.map(entry => ({ entry, price: priceOf(entry, 'removal') }));
-  checkRemoval(selection.removal, prices);
+  checkRemoval(selection.removal, prices, selection.garageSize ?? null);
   // Removal lines follow the step's group order; full truck loads come before a partial load.
   const fraction = pair => pair.price.item.basis.kind === 'junk' ? -pair.price.item.basis.fraction : 0;
   removal.sort((a, b) => REMOVAL_GROUP_ORDER.indexOf(a.price.item.group) - REMOVAL_GROUP_ORDER.indexOf(b.price.item.group) || fraction(a) - fraction(b) || menu.services.indexOf(a.price.item) - menu.services.indexOf(b.price.item));

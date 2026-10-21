@@ -113,7 +113,7 @@
   </div>
 </div>
 <script src="/crew/hub-auth.js?v=20261019d2d"></script>
-<script type="module" src="/staff-login.js?v=20260928gate"></script>
+<script type="module" src="/staff-login.js?v=20261019catalog"></script>
 <script>
 async function gateLogin(){
   const button=document.querySelector("#egc-gate .gbtn"),error=document.getElementById("gate-err");
@@ -171,6 +171,7 @@ document.addEventListener('DOMContentLoaded',()=>EGCHubAuth.session().then(user=
     <a class="tool" id="prejob-tool" href="/crew/job" data-business-href="/crew/prejob"><span class="num">1</span><span class="tx"><h2>Pre-job</h2><p>Review the exact promise, protect important items, load out, and start.</p></span><span class="arrow">&rarr;</span></a>
     <a class="tool" id="closeout-tool" href="/crew/job" data-business-href="/crew/postjob"><span class="num">2</span><span class="tx"><h2>Closeout</h2><p>Verify important items, capture proof, log costs, payment, and review.</p></span><span class="arrow">&rarr;</span></a>
     <a class="tool" id="knock-tool" href="/crew/knock" hidden><span class="num">&#8962;</span><span class="tx"><h2>Door-to-door</h2><p>EGC Knock: your area, doors, sales and the walkthroughs you set.</p></span><span class="arrow">&rarr;</span></a>
+    <a class="tool" id="menu-tool" href="/crew/menu"><span class="num">&#9636;</span><span class="tx"><h2>What we sell</h2><p>Every service and product on EGC’s quote menu, with sizes, so you can answer a homeowner on site.</p></span><span class="arrow">&rarr;</span></a>
   </div>
 </main>
 

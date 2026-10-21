@@ -15,6 +15,8 @@ export const STAFF_GATED_PATHS = Object.freeze([
   '/crew/knock*',
   // CREW-SCHEDULE: the crew schedule page and its script.
   '/crew/schedule*',
+  // LANE catalog: the crew hub's read-only "What we sell" page and its script.
+  '/crew/menu*',
 ]);
 
 // Staff-adjacent files that stay reachable signed out: the sign-in pages and their scripts, and the crew app shell. The

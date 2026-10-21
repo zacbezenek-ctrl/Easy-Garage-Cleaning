@@ -109,7 +109,7 @@ test('the crew home tile and every Knock link use clean URLs, and Knock links ba
 test('six crew links (Walkthrough and Door-to-door) form two full rows on a phone', () => {
   const css = read('crew/crew-brand.css');
   assert.match(css, /\.crew-utility a:first-of-type:nth-last-of-type\(6\),\.crew-utility a:first-of-type:nth-last-of-type\(6\)~a\{grid-column:span 2\}/);
-  for (const page of ['crew/index.html', 'crew/gameplan.html', 'crew/prejob.html', 'crew/postjob.html', 'crew/schedule.html']) {
+  for (const page of ['crew/index.html', 'crew/gameplan.html', 'crew/prejob.html', 'crew/postjob.html', 'crew/schedule.html', 'crew/menu.html']) {
     assert.match(read(page), /\/crew\/crew-brand\.css\?v=20261019d2d/, page);
     assert.match(read(page), /\/crew\/hub-auth\.js\?v=20261019d2d/, page);
   }
