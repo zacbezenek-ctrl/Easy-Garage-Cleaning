@@ -52,7 +52,7 @@ main{max-width:1060px;margin:auto;padding:28px 22px 118px}.screen-head{display:f
   <footer class="bottom"><div class="bottom-in"><button class="back" id="back" onclick="move(-1)">Back</button><button class="next" id="next" onclick="move(1)">Continue</button></div></footer>
 </div>
 <div id="viewer" onclick="this.classList.remove('on')"><button type="button" aria-label="Close">×</button><img id="viewer-img" alt="Walkthrough photo" width="1200" height="900"></div>
-<script src="/crew/hub-auth.js?v=20261019d2d"></script>
+<script src="/crew/hub-auth.js?v=20261021roles"></script>
 <script src="/employee-walkthrough-state.js?v=20260929wtoutcome2"></script>
 <script src="/crew/walkthrough-pricing.js?v=20260928price"></script>
 <script>
@@ -244,6 +244,9 @@ async function openWalkthroughReview(){if(!walkthroughReady||!window.EGCWalkthro
 function writeActive(){const total=S.builderQuote?.compositePricing&&Number.isSafeInteger(S.builderQuote.totalCents)?S.builderQuote.totalCents/100:Number(S.lockedPrice||recommend()),jobMinutes=estimatedJobMinutes(),plan=payload(),instructions=buildJobInstructions(plan);localStorage.setItem('egc_active_job',JSON.stringify({jobId:S.jobId,customerId:customerDocId(),sourceWalkthroughId:S.sourceWalkthroughId,highlevelContactId:S.highlevelContactId,highlevelOpportunityId:S.highlevelOpportunityId,highlevelAppointmentId:S.highlevelJobAppointmentId,name:S.name,phone:S.phone,email:S.email,addr:S.address,pkg:(Array.isArray(S.finish)?S.finish:[]).join(', '),total,rate:total,deposit:Math.round(Math.round(total*100)/4)/100,jobdate:S.jobDate,startTime:S.startTime,endTime:S.endTime,estimatedDurationMin:jobMinutes,estimatedDurationHours:jobMinutes/60,expectedShiftHours:(jobMinutes+90)/60,assignedTo:S.assignedTo,crewSize:Number(S.crewSize||0),pain:S.whyNow,customerNotesSummary:S.notes||S.outcome||S.whyNow,internalNotes:buildInternalNotes(instructions),clientChecklists:buildClientChecklists(instructions),discovery:plan.discovery,scope:plan.scope,logistics:plan.logistics,instructions,photosBefore:PHOTO_COUNT,savedAt:new Date().toISOString()}))}
 document.addEventListener('input',save);
 window.addEventListener('DOMContentLoaded',async()=>{if(await validSession())openApp()},{once:true});
+// LIVE-ROLES: the owner removed this person's walkthrough access while the page was open (crew/hub-auth.js). The server
+// already refuses its saves; say so, keep the draft on this device, and take the notice down if the access comes back.
+window.addEventListener('egc:access-changed',()=>{const shown=$('walkthrough-access-removed');if(EGCHubAuth.canRunWalkthrough()){shown?.remove();return}if(shown)return;const note=document.createElement('div');note.id='walkthrough-access-removed';note.setAttribute('role','alert');note.style.cssText='position:sticky;top:0;z-index:50;background:#fff4e5;color:#13203a;border-bottom:2px solid #e8581c;padding:12px 16px;font-weight:600';note.append('Walkthrough access was removed. Your draft is saved on this device. ');const back=document.createElement('a');back.href='/crew/';back.textContent='Back to crew home';note.append(back);document.body.prepend(note)});
 </script>
 <script src="/crew/quote-draft.js?v=20261021field3" defer></script>
 <script src="/crew/gameplan-catalog.js?v=20261021field4" defer></script>

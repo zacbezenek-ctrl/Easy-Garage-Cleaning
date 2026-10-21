@@ -378,7 +378,7 @@ try {
   const phone = await shared.newPage(); phone.on('pageerror', error => errors.push(error.message)); phone.on('dialog', dialog => dialog.accept());
   const nextJob = `${base}/crew/job.html?jobId=browser-next`;
   const openNextJob = async () => { await phone.goto(nextJob); await phone.getByLabel('Username', { exact: true }).fill('Crew.One'); await phone.getByLabel('Password', { exact: true }).fill(password); await phone.getByRole('button', { name: 'Sign in', exact: true }).click(); await phone.getByRole('heading', { name: 'Synthetic Next Job', exact: true }).waitFor(); };
-  const signOutIn = async (target, options = { explicit: true }) => { await target.goto(`${base}/crew/offline.html`); await target.addScriptTag({ url: '/crew/hub-auth.js?v=20261019d2d' }); await target.evaluate(options => window.EGCHubAuth.signOut(options), options); };
+  const signOutIn = async (target, options = { explicit: true }) => { await target.goto(`${base}/crew/offline.html`); await target.addScriptTag({ url: '/crew/hub-auth.js?v=20261021roles' }); await target.evaluate(options => window.EGCHubAuth.signOut(options), options); };
   const waitingPhotos = target => target.evaluate(() => new Promise(resolve => { const open = indexedDB.open('egc-field-outbox'); open.onsuccess = () => { const db = open.result, rows = db.transaction('actions').objectStore('actions').getAll(); rows.onsuccess = () => { db.close(); resolve(rows.result.filter(row => row.payload?.action === 'photo').length); }; }; }));
   const offlineReopen = async shot => {
     serverDown = true; await shared.setOffline(true);

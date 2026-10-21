@@ -7,6 +7,7 @@ import {
   isHubOwner,
 } from '../_lib/hub-session.js';
 import { capabilityMode, staffCapabilities, staffPasswordResetEnabled, staffRoleAccessEnabled } from '../_lib/staff-roles.js';
+import { consumeStaffSignIn, staffSignInLimitStore } from '../_lib/staff-sign-in-limit.js';
 
 const HOST = /^(?:easygaragecleaning\.com|www\.easygaragecleaning\.com|easy-garage-cleaning\.pages\.dev|localhost(?::\d+)?|127\.0\.0\.1(?::\d+)?)$/;
 
@@ -44,11 +45,17 @@ export async function onRequestPost({ request, env }) {
   if (!body || typeof body !== 'object' || Array.isArray(body)) return reply(400, { ok: false, error: 'Enter your username and password' });
   const username = String(body.username || '').trim();
   if (!username || username.length > 80 || typeof body.password !== 'string' || !body.password) return reply(400, { ok: false, error: 'Enter your username and password' });
-  let profile;
+  // SEC-2026-10 S-01: count the attempt per address and per username before the password is checked.
+  const limitStore = staffSignInLimitStore(env);
+  let limit = null, profile;
   try {
+    if (limitStore) {
+      limit = await consumeStaffSignIn(limitStore, env, { ip: request.headers.get('CF-Connecting-IP') || '', username });
+      if (!limit.allowed) return reply(429, { ok: false, code: 'HUB_AUTH_RATE_LIMITED', error: 'Too many sign-in attempts. Wait a few minutes and try again.' }, { 'Retry-After': String(limit.retryAfter) });
+    }
     profile = await authenticateHubCredential(env, username, body.password);
   } catch (error) {
-    const known = /^EMPLOYEE_ACCOUNT|^HUB_AUTH_CONFIGURATION$/.test(error?.code || '');
+    const known = /^EMPLOYEE_ACCOUNT|^HUB_AUTH_CONFIGURATION$|^HUB_AUTH_LIMIT_UNAVAILABLE$/.test(error?.code || '');
     return reply(known ? (error.status || 503) : 502, {
       ok: false,
       code: known ? error.code : 'HUB_AUTH_UNAVAILABLE',
@@ -59,6 +66,8 @@ export async function onRequestPost({ request, env }) {
     // STAFF-ACCESS: with sign-in resets on, a manager can issue a reset link (the Hub never sends it).
     return reply(401, { ok: false, error: staffPasswordResetEnabled(env) ? 'Incorrect username or password. Forgot it? Ask a manager for a sign-in reset link.' : 'Incorrect username or password' });
   }
+  // Only failed attempts use the limits.
+  await limit?.release();
   const cookie = await createHubSessionCookie(env, profile.user, profile);
   return reply(200, { ok: true, ...profile, ...access(profile, env) }, { 'Set-Cookie': cookie });
 }

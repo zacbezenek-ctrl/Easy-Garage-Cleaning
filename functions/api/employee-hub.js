@@ -2,7 +2,7 @@ import { getHubSession, hasBusinessAccess, listHubUserProfiles } from '../_lib/h
 import { OWNER_USERNAME } from '../_lib/business-users.js';
 import { firebaseServiceAccountConfigured, firestoreFetch } from '../_lib/firebase-service-account.js';
 import { employeeVaultSecret, employeeVaultReadOnly } from '../_lib/employee-vault-key.js';
-import { EMPLOYEE_HUB_COLLECTIONS, expectedDocument, firestoreDoc, proveVaultKey, readAll, readCollection, readOne, seal, unreadableStorage, writeOne } from '../_lib/employee-vault.js';
+import { EMPLOYEE_HUB_COLLECTIONS, expectedDocument, firestoreDoc, proveVaultKey, readAll, readCollection, markVaultFamiliesChanged, readOne, seal, unreadableStorage, vaultRevisionWrite, vaultSnapshot, writeOne } from '../_lib/employee-vault.js';
 import { createJobAssignmentAccess } from '../_lib/job-assignment.js';
 import { listEmployeeApplications, normalizeEmployeeUsername } from '../_lib/employee-accounts.js';
 import { activeTimecard, authorizeTimecard, clockInWithoutFix, correctionJobId, timecardCorrectionsEnabled, timecardError } from '../_lib/employee-timecards.js';
@@ -139,6 +139,8 @@ async function writeTimecard(env, session, id, data, target) {
     const sealedLock = await seal(env, lock.documentId, lockData);
     writes.push({ update: { name: `projects/${PROJECT_ID}/databases/(default)/documents/employee_time_locks/${lock.documentId}`, ...firestoreDoc('timeLocks', lock.documentId, sealedLock, updatedAt) }, currentDocument: expectedDocument(lock) });
   }
+  // READ-BUDGET: the timecard family is marked changed in the same commit (employee-vault.js vaultSnapshot).
+  writes.push(vaultRevisionWrite(['timeEntries']));
   const response = await firestoreFetch(env, `https://firestore.googleapis.com/v1/projects/${PROJECT_ID}/databases/(default)/documents:commit`, {
     method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ writes }),
   });
@@ -457,8 +459,13 @@ export async function onRequestGet({ request, env }) {
     // A missing index or legacy-query setting needs only one shared fallback scan.
     let fallbackRows;
     const fallback = () => fallbackRows ??= readAll(env);
-    const rows = messagesOnly
-      ? (await Promise.all(names.map(async collection => (await readCollection(env, collection, { fallback })).map(data => ({ collection, data }))))).flat()
+    // READ-BUDGET: one revision read, then only the families changed since this isolate last read them
+    // (employee-vault.js vaultSnapshot). Without a revision document, or with the legacy-query setting, the full view
+    // keeps the single whole-vault read.
+    const legacy = String(env?.EGC_EMPLOYEE_VAULT_QUERY ?? '').trim().toLowerCase() === 'legacy';
+    const snapshot = legacy ? null : await vaultSnapshot(env);
+    const rows = messagesOnly || snapshot
+      ? (await Promise.all(names.map(async collection => (await readCollection(env, collection, { fallback, snapshot })).map(data => ({ collection, data }))))).flat()
       : await readAll(env);
     const viewedAt = new Date().toISOString();
     const collections = Object.fromEntries(names.map(name => [name, []]));
@@ -570,7 +577,11 @@ export async function onRequestPost({ request, env }) {
       const data = await authorizeMutation(env, session, collection, id, incoming, current.data, QUEUED_REQUEST.test(String(body.requestId ?? '')));
       try {
         if (collection === 'timeEntries') return reply(200, { ok: true, record: withJobTime(visiblePay(session, env, collection, await writeTimecard(env, session, id, data, target)), new Date().toISOString()) });
-        const saved = data === current.data && ['teamMessages', 'jobMessages'].includes(collection) ? data : await writeOne(env, collection, id, data, collection === 'profiles' ? target : null);
+        // A replayed message that is already saved writes nothing, but still marks its family (vaultSnapshot): the save
+        // it repeats may have landed without its mark (an older deployment) and polls must show it.
+        const replay = data === current.data && ['teamMessages', 'jobMessages'].includes(collection);
+        if (replay) await markVaultFamiliesChanged(env, [collection]);
+        const saved = replay ? data : await writeOne(env, collection, id, data, collection === 'profiles' ? target : null);
         return reply(200, { ok: true, record: visiblePay(session, env, collection, collection === 'profiles' ? legacyProfileView(saved, new Date().toISOString()) : saved) });
       } catch (error) {
         if (error.code !== 'EMPLOYEE_HUB_WRITE_CONFLICT' || attempt + 1 === attempts) throw error;

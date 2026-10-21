@@ -316,6 +316,7 @@ test('HTTP: sealed profile, receipt and SEC-02 audit entry commit atomically; ne
   const fire = vaultFirestore(t), enabled = { ...env, EGC_STAFF_DIRECTORY_ENABLED: 'true' }, handlers = staffDirectoryHandlers({ now: clock() });
   await seedAccount(env, 'Crew.Account');
   await writeOne(env, 'profiles', 'crew.account', { username: 'Crew.Account', hourlyRate: 21, onboardingCompletedAt: '2026-09-01T00:00:00.000Z' }, { data: null }, NOW);
+  fire.commits.length = 0; // the seeding save above is a commit too; count only the directory's
   const owner = await cookieFor(env, 'ZacB');
   const list = await (await handlers.get({ env: enabled, request: jsonRequest('/api/staff-directory?username=crew.account', undefined, owner) })).json();
   const person = list.people[0];
@@ -357,7 +358,9 @@ test('HTTP: sealed profile, receipt and SEC-02 audit entry commit atomically; ne
   const raced = await handlers.post({ env: enabled, request: jsonRequest('/api/staff-directory', { action: 'set_skills', requestId: crypto.randomUUID(), username: 'Crew.Account', expectedRevision: fresh.revision, skills: [{ id: 'cleanout', level: 'lead' }] }, await cookieFor(env, 'TylerG')) });
   assert.equal(raced.status, 409); assert.equal((await raced.json()).code, 'staff_directory_revision_conflict');
   assert.equal((await decrypt(fire, 'profiles', 'crew.account')).data.phone, 'Synthetic concurrent edit');
-  assert.equal(fire.commits.length, 1);
+  // The concurrent writer's own save (writeOne commits too) is the only commit after the first; the refused one wrote nothing.
+  assert.equal(fire.commits.length, 2);
+  assert.deepEqual(fire.commits[1].map(write => write.update.name.split('/documents/')[1].split('/')[0]), ['jobs']);
 });
 
 test('HTTP: read-only vault recovery returns 503 and writes nothing', async t => {

@@ -340,3 +340,31 @@ test('My sales still lists a walkthrough waiting to book that is older than the 
   const fallback = await w.report('my-sales');
   assert.deepEqual(fallback.body.walkthroughs, mine.result.body.walkthroughs);
 });
+
+// ---------- the Time off screen (STAFF-DATA-READ) ----------
+
+test('the Time off screen reads the availability rows by two indexed queries, not every jobs document, and answers the same', async () => {
+  const env = { HUB_AUTH_USERS_JSON: JSON.stringify({ 'Crew.One': { passwordHash: 'unused-synthetic', role: 'crew', displayName: 'Crew One' }, 'Crew.Two': { passwordHash: 'unused-synthetic', role: 'crew', displayName: 'Crew Two' } }) };
+  const seed = history();
+  const block = (employee, date, extra = {}) => ({ type: 'availability', recordType: 'crew_availability', employee, date, endDate: date, time: '00:00', endTime: '23:59', allDay: true, reason: 'Unavailable', status: 'active', ...extra });
+  seed['jobs/avail_one_a'] = block('crew.one', addDays(TODAY, 3));
+  seed['jobs/avail_one_b'] = block('crew.one', addDays(TODAY, 10), { allDay: false, time: '08:00', endTime: '12:00' });
+  seed['jobs/avail_one_legacy'] = { type: 'availability', employee: 'crew.one', date: addDays(TODAY, 5), endDate: addDays(TODAY, 5), time: '09:00', endTime: '10:00' };
+  seed['jobs/avail_one_bad'] = block('crew.one', 'not-a-date');
+  seed['jobs/avail_two'] = block('crew.two', addDays(TODAY, 4));
+  const fake = firestoreRest(seed), meter = readMeter(fake);
+  const store = dispatchStorage(env, fake.fetcher), scanning = { ...store, jobsWhere: undefined };
+  const session = { user: 'Crew.One', displayName: 'Crew One', role: 'crew' }, at = new Date(`${TODAY}T18:00:00Z`);
+  const { crewAvailabilityOverview } = await import('../functions/_lib/crew-availability.js');
+  const before = await meter.measure(() => crewAvailabilityOverview(scanning, session, {}, at));
+  const after = await meter.measure(() => crewAvailabilityOverview(store, session, {}, at));
+  assert.deepEqual(after.result, before.result);
+  assert.deepEqual(after.result.availability.map(row => row.id), ['avail_one_a', 'avail_one_legacy', 'avail_one_b']);
+  assert.deepEqual(after.result.exceptions.map(row => row.id), ['avail_one_bad']);
+  const jobsDocuments = Object.keys(seed).filter(path => path.startsWith('jobs/')).length;
+  assert.equal(readsOf(before.byKey, 'list:jobs'), jobsDocuments, 'before: every jobs document');
+  assert.equal(readsOf(after.byKey, 'list:jobs'), 0);
+  // type == 'availability' (5 rows) and recordType == 'crew_availability' (4 rows): the four native blocks are in both.
+  assert.equal(readsOf(after.byKey, 'query:jobs'), 9);
+  assert.ok(after.total < before.total / 20, `${after.total} reads vs ${before.total}`);
+});

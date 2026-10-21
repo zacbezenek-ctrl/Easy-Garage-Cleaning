@@ -168,7 +168,7 @@ test('the crew sign-in client keeps server capabilities for display and clears t
   assert.deepEqual([...context.EGCHubAuth.profile().capabilities], []);
 });
 
-test('only the owner changes roles; a change revokes the employee session, keeps unknown account fields and new sessions carry the roles', async t => {
+test('only the owner changes roles; a change keeps the employee signed in, applies to their next request, keeps unknown account fields and new sessions carry the roles', async t => {
   const env = staffEnv({ EGC_STAFF_DIRECTORY_ENABLED: 'true' }), fire = vaultFirestore(t);
   await seedAccount(env, 'Phone.Person', { extra: { futureAccountField: { keep: true } } });
   const before = await employeeInvitationStore(env).read('Phone.Person');
@@ -189,17 +189,19 @@ test('only the owner changes roles; a change revokes the employee session, keeps
   const saved = await change(owner, ['phone', 'crew'], { reason: 'Synthetic phone coverage' });
   const body = await saved.json();
   assert.equal(saved.status, 200, JSON.stringify(body));
-  assert.equal(body.sessionsRevoked, true); assert.deepEqual(body.person.staffRoles, ['crew', 'phone']); assert.equal(body.person.staffRolesSource, 'account');
+  assert.equal(body.sessionsKept, true); assert.equal(Object.hasOwn(body, 'sessionsRevoked'), false); assert.deepEqual(body.person.staffRoles, ['crew', 'phone']); assert.equal(body.person.staffRolesSource, 'account');
   assert.equal(fire.commits.length, 1);
   assert.deepEqual(fire.commits[0].map(write => write.update.name.split('/documents/')[1].split('/')[0]), ['jobs', 'jobs', 'staffDirectoryOperations', 'hub_audit'], 'profile, account, receipt and audit entry commit together');
   const audit = decodeFirestoreFields(fire.commits[0][3].update.fields);
   assert.deepEqual([audit.action, audit.visibility, audit.reason, audit.actor.id, audit.entity.id], ['staff_directory.set_roles', 'business', 'Synthetic phone coverage', 'zacb', 'phone.person']);
   assert.deepEqual([JSON.parse(audit.before), JSON.parse(audit.after), audit.changedKeys], [{ staffRoles: ['crew'] }, { staffRoles: ['crew', 'phone'] }, ['staffRoles']]);
-  assert.equal(await getHubSession(new Request('https://easygaragecleaning.com/', { headers: { Cookie: cookie } }), env), null, 'the old session is revoked');
+  // LIVE-ROLES: the same cookie stays valid and its next request carries the new roles.
+  const live = await getHubSession(new Request('https://easygaragecleaning.com/', { headers: { Cookie: cookie } }), env);
+  assert.deepEqual(live?.staffRoles, ['crew', 'phone'], 'the session is kept and reads the new roles');
   const after = await employeeInvitationStore(env).read('Phone.Person');
   assert.deepEqual(after.account.futureAccountField, { keep: true });
   assert.deepEqual(after.account.staffRoles, ['crew', 'phone']);
-  assert.notEqual(after.account.sessionVersion, before.account.sessionVersion);
+  assert.equal(after.account.sessionVersion, before.account.sessionVersion, 'a role change keeps the session version');
   for (const field of ['passwordHash', 'passwordSalt', 'status', 'email', 'role', 'hourlyRate', 'appliedAt']) assert.deepEqual(after.account[field], before.account[field], field);
   assert.equal(after.account.rolesUpdatedBy, 'ZacB'); assert.equal(after.account.rolesUpdatedAt, '2026-09-22T18:00:00.000Z');
   const fresh = await login(env, 'Phone.Person');
