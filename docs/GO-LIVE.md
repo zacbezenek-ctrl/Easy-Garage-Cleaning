@@ -627,10 +627,11 @@ With walkthrough notes on (the launch default, [3.7](#37-walkthrough-transcripts
 - **Turns on:** a booking, move, restore, cancel or no-show in Dispatch or through the bridge, and a walkthrough outcome, saves the HighLevel tags it needs in the same save as the change. The Hub tries them once right after the save. After that, egc-worker retries every 2 minutes (waiting 1, 5, 15, then 60 minutes between tries) until they are added, and parks a change after 8 tries.
   - **What it writes:** tags only, plus two things. A cancelled or no-show visit's appointment is set to Cancelled or No Show with no calendar notice (`toNotify: false`). A lost walkthrough gets an internal note with the reason code. It sends no message and never moves a stage or creates an opportunity.
   - **Your existing workflows:** booking and reminder workflows get the same tags as today, after the appointment is written, so they keep working unchanged.
+  - **Online portal payments:** a deposit or balance a customer pays in the portal through Stripe adds the same tag a manager's save of that money adds today (`egc-deposit-received` or `egc-payment-received`, left out when **Notify customer** is off), after an internal note, once per Stripe checkout however often Stripe resends the webhook. No new tag, stage move or message. Refunds, disputes, held charges and crew card payments queue nothing here.
   - **New tags:** `egc-visit-rescheduled`, `egc-visit-cancelled`, `egc-visit-no-show`, `egc-walkthrough-no-show`, `egc-walkthrough-lost` and `egc-quote-to-follow`. Each starts nothing until you build a workflow on it.
   - **What you see:** Dispatch cards show **HighLevel told**, **HighLevel waiting** or **HighLevel stuck** with **Retry**. The Command center shows **HighLevel tags stuck for N visits** with **Retry**, and **The HighLevel tag worker has not run** when egc-worker has not checked in for 10 minutes.
 - **Needs first:**
-  1. Decide whether you want HighLevel workflows on the new tags and on the appointment status Cancelled or No Show. None is needed; without a workflow the tags are tracking only.
+  1. Decide whether you want HighLevel workflows on the new tags and on the appointment status Cancelled or No Show. None is needed; without a workflow the tags are tracking only. Check what your `egc-deposit-received` and `egc-payment-received` workflows send: portal payments start them too once this is on.
   2. Check that no existing **Appointment Status** workflow would message a customer you did not intend to.
   3. egc-worker's `API_BEARER_TOKEN` matches the Hub's, the Hub uses v2 service auth, and `HIGHLEVEL_API_KEY` and `HIGHLEVEL_LOCATION_ID` are set on Cloudflare Pages ([B5](#b5-railway-platform-and-the-signed-bridge)).
   4. The rules from this build are published ([B4](#b4-publish-firestore-rules-and-indexes)). The outbox records are server-only.
@@ -640,7 +641,8 @@ With walkthrough notes on (the launch default, [3.7](#37-walkthrough-transcripts
   1. Book a test visit for a test contact in Dispatch. Once its calendar sync has run, the card says **HighLevel told** with a time, and the contact has `egc-hub-scheduled`.
   2. Move it to another day. The contact gets `egc-visit-rescheduled`.
   3. Cancel it. The contact gets `egc-visit-cancelled`, and the appointment shows Cancelled with no calendar notice.
-  4. Open the Command center. There is no "tag worker has not run" line.
+  4. Pay a test deposit in the customer portal with a Stripe test card. Within a few minutes the test contact has `egc-deposit-received` and an "EGC Lifecycle — deposit-received" note, once.
+  5. Open the Command center. There is no "tag worker has not run" line.
 - **Roll back:** if `EGC_SCHEDULE_SYNC_WORKER` is on, delete it first (Cloudflare Pages and egc-api). Then delete `EGC_GHL_TAG_OUTBOX` and retry the deployment, and delete `EGC_GHL_TAG_DRAIN_ENABLED` on egc-worker. The browser tag sync works as before. Tags already added stay.
 
 ### Keep off for now

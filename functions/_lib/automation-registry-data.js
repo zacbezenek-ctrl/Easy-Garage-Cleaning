@@ -11,6 +11,9 @@ const FIELD_PAY_SYNC = 'functions/_lib/field-payment-sync.js';
 // GHL-TRACK-1: the durable tag outbox (off unless EGC_GHL_TAG_OUTBOX=true) and the shared HighLevel writer it and highlevel.js call.
 const TAG_OUTBOX = 'functions/_lib/ghl-tag-outbox.js', HL_TAGS = 'functions/_lib/highlevel-tags.js';
 const OUTBOX_SCHEDULE = ['functions/_lib/dispatch-service.js', 'functions/_lib/operations-scheduling.js', 'functions/api/dispatch.js', 'functions/api/ghl-tag-drain.js'], OUTBOX_OUTCOME = ['functions/_lib/walkthrough-visit.js', 'functions/api/walkthrough-visit.js', 'functions/api/ghl-tag-drain.js'];
+// The Stripe webhook queues an online customer-portal payment's HighLevel update after the payment is recorded (keyed on the checkout session).
+const OUTBOX_PAYMENT = ['functions/api/stripe-webhook.js', 'functions/api/ghl-tag-drain.js'];
+const OUTBOX_PAYMENT_WHEN = 'GHL-TRACK-1, only with EGC_GHL_TAG_OUTBOX=true (off): the Stripe webhook queues it once per checkout session after it records (or finds recorded) a customer-portal payment, then the first attempt or the egc-worker drain (EGC_GHL_TAG_DRAIN_ENABLED) adds it after an internal note; not written when the job notify flag is off';
 const OUTBOX_WHEN = 'GHL-TRACK-1, only with EGC_GHL_TAG_OUTBOX=true (off): queued in the commit of the change, then added by the first attempt after the save or the egc-worker drain (EGC_GHL_TAG_DRAIN_ENABLED)';
 const HANDOFF_DOC = 'docs/highlevel-sales-handoff.md', ROUTING_DOC = 'docs/ghl-live-routing-2026-09-20.md';
 // D9b: the HighLevel schedule mirror (off unless EGC_GHL_SCHEDULE_MIRROR=true): contact, EGC Pipeline stage and a schedule note, no calendar needed.
@@ -41,7 +44,7 @@ const deepFreeze = value => { if (value && typeof value === 'object') { Object.v
 
 export const AUTOMATION_REGISTRY = deepFreeze({
   schemaVersion: 1,
-  registryVersion: '2026-10-17.2',
+  registryVersion: '2026-10-21.1',
   timeZone: 'America/Denver',
   ghlLocationId: 'KlgLwRaQSPz5G1YXsmc6',
   sources: {
@@ -99,11 +102,13 @@ export const AUTOMATION_REGISTRY = deepFreeze({
     trigger('tag:egc-estimate-expiring', 'tag_added', 'Tag egc-estimate-expiring', [write(HL, [SUITE], 'tool=lifecycle: automatically on a manager Hub refresh the day before validUntil, for jobs with customerAutomationEnabled', true)]),
     trigger('tag:egc-invoice-issued', 'tag_added', 'Tag egc-invoice-issued', [write(HL, [SUITE], 'tool=lifecycle: automatically when a manager issues an invoice (in the finance tools, or each invoice the Invoicing screen issues, single or in a batch, through the same suite helper), and the manual "Invoice due" button', true)]),
     trigger('tag:egc-invoice-overdue', 'tag_added', 'Tag egc-invoice-overdue', [write(HL, [SUITE], 'tool=lifecycle: automatically on a manager Hub refresh after the due date for jobs with customerAutomationEnabled, and the manual "Overdue reminder" button', true)]),
-    trigger('tag:egc-deposit-received', 'tag_added', 'Tag egc-deposit-received', [write(HL, [SUITE], 'tool=lifecycle: automatically when a manager records a deposit', true)]),
+    trigger('tag:egc-deposit-received', 'tag_added', 'Tag egc-deposit-received', [write(HL, [SUITE], 'tool=lifecycle: automatically when a manager records a deposit', true),
+      write(TAG_OUTBOX, OUTBOX_PAYMENT, `${OUTBOX_PAYMENT_WHEN}: a portal deposit paid online through Stripe`, true)]),
     trigger('tag:egc-payment-received', 'tag_added', 'Tag egc-payment-received', [
       write(HL, [SUITE], 'tool=lifecycle: automatically when a manager records a payment, and the manual "Payment receipt" button', true),
       write(HL, ['crew/postjob.html'], 'tool=lifecycle: automatically after a crew card payment is verified with Stripe, retried on page load; this path does not check the job notify flag', true),
-      write(FIELD_PAY_SYNC, ['functions/api/field-payments.js', 'functions/_lib/customer-payments.js'], 'FIELD-PAY: after verified exact-card settlement or manager approval of a private cash/check receipt, and on manager retry; verified source and matching contact required, native note outbox must confirm first. New collection defaults off; a pending handoff remains retryable after intake is disabled.', true)]),
+      write(FIELD_PAY_SYNC, ['functions/api/field-payments.js', 'functions/_lib/customer-payments.js'], 'FIELD-PAY: after verified exact-card settlement or manager approval of a private cash/check receipt, and on manager retry; verified source and matching contact required, native note outbox must confirm first. New collection defaults off; a pending handoff remains retryable after intake is disabled.', true),
+      write(TAG_OUTBOX, OUTBOX_PAYMENT, `${OUTBOX_PAYMENT_WHEN}: a portal balance (or any portal payment that is not the deposit) paid online through Stripe`, true)]),
     trigger('tag:egc-appointment-reminder', 'tag_added', 'Tag egc-appointment-reminder', [write(HL, [SUITE], 'tool=lifecycle: manual "Appointment reminder" button; the confirm dialog names the tag, not the text', false)]),
     trigger('tag:egc-review-requested', 'tag_added', 'Tag egc-review-requested', [write(HL, [SUITE], 'tool=lifecycle: manual "Review request" button; the confirm dialog names the tag, not the text', false)]),
     trigger('tag:egc-decision-needed', 'tag_added', 'Tag egc-decision-needed', [write(HL, [SUITE], 'tool=lifecycle: sent when a manager creates a remote customer decision request', false)]),
@@ -158,6 +163,7 @@ export const AUTOMATION_REGISTRY = deepFreeze({
       write(WEB_LEAD_INTAKE, [WEB_LEAD, 'fb-capture.js', 'customer-portal.html', MESSAGING_CRON], 'the website lead details note and the client hub help note (also on a cron retry)', true),
       write(NOTE_OUTBOX, ['functions/_lib/operations-note-sync.js', FIELD_PAY_SYNC], 'with the operations bridge on, Hub notes and verified FIELD-PAY payment handoffs are written by the provider note outbox', true),
       write(HL_TAGS, [TAG_OUTBOX], `${OUTBOX_WHEN}: the internal note with the reason code of a walkthrough lost as not interested`, true),
+      write(HL_TAGS, [TAG_OUTBOX, ...OUTBOX_PAYMENT], `${OUTBOX_PAYMENT_WHEN.replace('; not written when the job notify flag is off', '')}: the internal "EGC Lifecycle — deposit-received/payment-received" note for a portal payment paid online, written even when the job notify flag leaves the tag out`, true),
       write(HL_TAGS, [SCHEDULE_MIRROR], `${MIRROR_WHEN}: one internal note per schedule change (date, Denver time window, crew or estimator, address, job breakdown, and for a door-to-door job "Door to door: sale|walkthrough set by <rep first name>"; no prices)`, true)]),
     trigger('contact:task_added', 'task_added', 'Task added to a contact', [
       write(HL, [SUITE], 'tool=post_job: the 6-month garage check-in task after a legacy closeout retry with Hub operations off', true),
@@ -221,8 +227,8 @@ export const AUTOMATION_REGISTRY = deepFreeze({
     lifecycle('estimate-expiring', 'retire', 'automatic reminder on a manager refresh'),
     lifecycle('invoice-issued', 'retire', 'automatic on invoice issue'),
     lifecycle('invoice-overdue', 'retire', 'automatic reminder on a manager refresh'),
-    lifecycle('deposit-received', 'retire', 'automatic on a recorded deposit'),
-    lifecycle('payment-received', 'retire', 'automatic on a recorded payment or a verified crew card payment', { code: [...code(HL, 'ghl_tag_helper_call'), ...code(SUITE, 'hub_lifecycle_trigger'), ...code('crew/postjob.html', 'hub_lifecycle_trigger'), ...code(FIELD_PAY_SYNC, 'ghl_tag_helper_call', 'ghl_contact_write')], notes: 'FIELD-PAY reuses this existing payment-received tag only after canonical verified money and the native note outbox confirm. Its contact API request is read-only identity verification. This inventory entry does not approve or change downstream workflows.' }),
+    lifecycle('deposit-received', 'retire', 'automatic on a recorded deposit', { code: [...code(HL, 'ghl_tag_helper_call'), ...code(SUITE, 'hub_lifecycle_trigger'), ...code(TAG_OUTBOX, 'ghl_tag_helper_call')], notes: 'With EGC_GHL_TAG_OUTBOX=true (off) the tag outbox also adds this existing tag for a portal deposit paid online through Stripe, once per checkout session. This inventory entry does not approve or change downstream workflows.' }),
+    lifecycle('payment-received', 'retire', 'automatic on a recorded payment or a verified crew card payment', { code: [...code(HL, 'ghl_tag_helper_call'), ...code(SUITE, 'hub_lifecycle_trigger'), ...code('crew/postjob.html', 'hub_lifecycle_trigger'), ...code(FIELD_PAY_SYNC, 'ghl_tag_helper_call', 'ghl_contact_write'), ...code(TAG_OUTBOX, 'ghl_tag_helper_call')], notes: 'FIELD-PAY reuses this existing payment-received tag only after canonical verified money and the native note outbox confirm. Its contact API request is read-only identity verification. With EGC_GHL_TAG_OUTBOX=true (off) the tag outbox also adds it for a portal balance paid online through Stripe, once per checkout session. This inventory entry does not approve or change downstream workflows.' }),
     lifecycle('appointment-reminder', 'needs_owner_approval', 'manual button'),
     lifecycle('review-requested', 'needs_owner_approval', 'manual button'),
     lifecycle('decision-needed', 'needs_owner_approval', 'remote decision request'),
