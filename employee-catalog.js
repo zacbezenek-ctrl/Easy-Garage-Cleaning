@@ -784,14 +784,27 @@ async function loadMenu(){
 // Signed jobs held for the owner's prices (POST /api/held-jobs). Opening this screen sweeps them once per pricing-menu
 // version (a price the menu file itself approves releases them, with no approval saved here); the owner's Release held
 // jobs button runs the same release on demand. S.held: {held, released, more} from the last answer.
-const validHeld=data=>data?.enabled===false||data?.enabled===true&&Number.isSafeInteger(data.held)&&Array.isArray(data.released)&&typeof data.more==='boolean';
+const heldCount=value=>value===undefined||Number.isSafeInteger(value)&&value>=0;
+const validHeld=data=>data?.enabled===false||data?.enabled===true&&Number.isSafeInteger(data.held)&&Array.isArray(data.released)&&typeof data.more==='boolean'&&heldCount(data.signedAbove)&&heldCount(data.stuck);
+// The held jobs, told apart: signedAbove are signed above the approved price (rebuilt and signed again; no approval
+// releases them), stuck could not be released automatically (the Release held jobs button tries again), the rest wait
+// for prices. more: the count stopped at its cap, so the numbers are at least these ('+').
+function heldLines(state,releaser,approver){
+  const plus=state.more?'+':'',above=state.signedAbove||0,stuck=state.stuck||0,rest=Math.max(0,state.held-above-stuck),jobs=n=>`booked job${n===1?'':'s'}`;
+  return[
+    rest||state.more?`${rest}${plus} ${jobs(rest)} ${rest===1&&!plus?'still waits':'still wait'} for prices: an unapproved price on the quote, or a walkthrough-priced quote ${releaser} from the job.`:'',
+    above?`${above} ${jobs(above)} ${above===1?'was':'were'} signed above the price ${approver}, so ${above===1?'it is':'they are'} not released: rebuild the quote and have the customer sign it again.`:'',
+    stuck?`${stuck} ${jobs(stuck)} couldn't be released automatically after three tries: press Release held jobs to try again.`:'',
+  ].filter(Boolean);
+}
+
 async function sweepHeld(action){
   if(!S.root||!S.kit||S.heldBusy)return;
   const mount=S.mountId;S.heldBusy=action==='release';if(S.heldBusy)render();
   try{
     const data=await S.kit.requestJSON('/api/held-jobs',{method:'POST',body:{action},prefix:'held_jobs',fetcher:fetcher(),validate:validHeld});
     if(mount!==S.mountId)return;
-    S.held=data.enabled?{held:data.held,released:data.released.length,more:data.more,error:null}:null;
+    S.held=data.enabled?{held:data.held,released:data.released.length,more:data.more,signedAbove:data.signedAbove||0,stuck:data.stuck||0,error:null}:null;
   }catch(error){if(mount!==S.mountId)return;S.held={...(S.held||{held:0,released:0,more:false}),error:S.kit.errorText?.(error)||error?.message||'The held jobs could not be checked.'};}
   finally{if(mount===S.mountId){S.heldBusy=false;render();}}
 }
@@ -801,7 +814,7 @@ function heldCard(){
   if(!held.held&&!held.released&&!held.error)return null;
   return h('section',{class:'hub-card cat-card','data-held-jobs':''},h('h2',{},'Booked jobs waiting for prices'),
     held.released?h('p',{},`${held.released} booked job${held.released===1?' was':'s were'} released: the customer${held.released===1?' gets its':'s get their'} estimate and deposit request.`):null,
-    held.held?h('p',{},`${count} booked job${held.held===1&&!held.more?' still waits':'s still wait'} for prices: an unapproved price on the quote, or a walkthrough-priced quote you release from the job.`):null,
+    ...heldLines(held,'you release','you approved').map(text=>h('p',{},text)),
     held.error?h('p',{class:'cat-error'},held.error):null,
     owner&&held.held?h('div',{class:'hub-actions'},btn(`Release held jobs (${count})`,()=>void sweepHeld('release'),'',{disabled:S.heldBusy===true})):null);
 }

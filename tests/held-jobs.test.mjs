@@ -5,11 +5,11 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
-import { compositeApproval, priceCompositeQuote } from '../functions/_lib/composite-quote.js';
+import { approvalRefusal, compositeApproval, priceCompositeQuote } from '../functions/_lib/composite-quote.js';
 import { HELD_SUBREQUEST_BUDGET, releaseAllHeldHandoffs, saveWalkthroughHandoff } from '../functions/_lib/walkthrough-handoff.js';
 import { readCompositeState } from '../functions/_lib/catalog-store.js';
 import { HELD_QUERY_MAX, countHeldJobs, heldJobIds, heldJobsQuery } from '../functions/_lib/handoff-price-holds.js';
-import { HELD_RELEASE_MARKER, heldJobsHandlers } from '../functions/api/held-jobs.js';
+import { HELD_RELEASE_MARKER, HELD_RETRY_LIMIT, heldJobsHandlers } from '../functions/api/held-jobs.js';
 import { BASE_ENV, LATER, NOW, ON_ENV, builderState, fixture, menuItem, owner, selection, signedPlan } from './helpers/estimator-fixture.mjs';
 
 const manager = { user: 'AlexK', role: 'manager', businessAccess: true };
@@ -48,7 +48,7 @@ test('a job held only on a half load is released after the deploy, with no owner
   const catalog = catalogStore(), reads = [];
   const handlers = actor => heldJobsHandlers({ session: async () => actor, storage: () => catalog, held: () => heldStore(f, reads), compositeState: async () => builderState(), now: () => new Date(LATER) });
   const first = await (await post(handlers(manager), { action: 'sweep' })).json();
-  assert.deepEqual(first, { ok: true, enabled: true, ran: true, menuVersion: builderState().menu.menuVersion, released: [job.id], held: 0, more: false });
+  assert.deepEqual(first, { ok: true, enabled: true, ran: true, menuVersion: builderState().menu.menuVersion, released: [job.id], held: 0, more: false, signedAbove: 0, stuck: 0 });
   const released = f.job(job.id);
   assert.deepEqual([released.pricesPendingApproval, released.total, released.estimate.amountCents, released.customerPortalInvitationRequestedAt, released.pricesRelease],
     [null, 1125, 112500, LATER, { at: LATER, by: manager.user, source: 'menu.version', requestId: '', gate: 'approved_prices' }], 'released at the amounts signed');
@@ -86,7 +86,8 @@ test('the sweep pages past the 25-job read limit and stops at its subrequest bud
   // After that, opens only count.
   const third = await (await post(handlers, { action: 'sweep' })).json();
   assert.deepEqual([third.ran, third.held], [false, 30]);
-  assert.deepEqual(await countHeldJobs(store), { count: 30, more: false });
+  const counted = await countHeldJobs(store);
+  assert.deepEqual([counted.count, counted.more, counted.ids.length], [30, false, 30]);
 });
 
 // Every storage call one open makes, counted (Cloudflare Free allows 50 subrequests per invocation): the marker read,
@@ -149,9 +150,50 @@ test('a signed draft price above the amount the owner approves stays held, and t
   const catalog = catalogStore(), handlers = heldJobsHandlers({ session: async () => owner, storage: () => catalog, held: () => heldStore(f), compositeState: async () => lower, now: () => new Date(LATER) });
   const swept = await (await post(handlers, { action: 'sweep' })).json();
   assert.deepEqual([swept.released, swept.held, f.job(job.id).pricesPendingApproval.status, f.job(job.id).customerPortalInvitationRequestedAt], [[], 1, 'pending', undefined]);
+  assert.equal(swept.signedAbove, 1, 'told apart: the owner has it signed again; no approval releases it');
+  const refusal = approvalRefusal(approval);
+  assert.equal(refusal.message, 'The customer signed more than the approved price: rebuild the quote and have them sign again (Mattress).');
+  assert.deepEqual(refusal.details.unapproved.map(row => [row.id, row.signedAbove]), [[mattress.id, true]]);
+  // Counted again on the next open (the version is done): still told apart.
+  const later = await (await post(handlers, { action: 'sweep' })).json();
+  assert.deepEqual([later.ran, later.held, later.signedAbove, later.stuck], [false, 1, 1, 0]);
   // Approved at $70 or more, it releases at the $70 signed.
   const button = await (await heldJobsHandlers({ session: async () => owner, storage: () => catalog, held: () => heldStore(f), compositeState: async () => builderState({ [mattress.id]: 8000 }), now: () => new Date(LATER) }).post({ request: new Request('https://easygaragecleaning.com/api/held-jobs', { method: 'POST', headers: { Origin: 'https://easygaragecleaning.com', 'Content-Type': 'application/json' }, body: JSON.stringify({ action: 'release' }) }), env: ON_ENV })).json();
   assert.deepEqual([button.released, f.job(job.id).total], [[job.id], 1070]);
+});
+
+// A release that fails every time stops holding the menu version back after HELD_RETRY_LIMIT tries in a row: the version
+// is recorded, and the job stays listed as couldn't release automatically until the owner's button releases it.
+test('a release that fails every time gives up after three tries: the version is recorded and the job is listed as stuck', async () => {
+  const f = fixture(), job = await signHalfLoad(f), version = builderState().menu.menuVersion;
+  let fail = true;
+  const base = heldStore(f), store = { ...base, commit: async writes => { if (fail && writes.some(write => write.id === job.id)) throw new Error('unavailable'); return base.commit(writes); } };
+  const catalog = catalogStore(), handlers = heldJobsHandlers({ session: async () => owner, storage: () => catalog, held: () => store, compositeState: async () => builderState(), now: () => new Date(LATER) });
+  const marker = () => catalog.rows.get(`pricingMenuApprovals/${HELD_RELEASE_MARKER}`);
+  assert.equal(HELD_RETRY_LIMIT, 3);
+  const answers = [];
+  for (let i = 0; i < 3; i++) answers.push(await (await post(handlers, { action: 'sweep' })).json());
+  assert.deepEqual(answers.map(answer => [answer.ran, answer.held, answer.stuck]), [[true, 1, 0], [true, 1, 0], [true, 1, 1]]);
+  assert.deepEqual([marker().menuVersion, marker().failures[job.id]], [version, 3], 'recorded after the third failed try');
+  // Later opens only count, and still list it.
+  const counted = await (await post(handlers, { action: 'sweep' })).json();
+  assert.deepEqual([counted.ran, counted.held, counted.stuck, f.job(job.id).pricesPendingApproval.status], [false, 1, 1, 'pending']);
+  // Storage recovers: the owner's button releases it and it leaves the list.
+  fail = false;
+  const button = await (await post(handlers, { action: 'release' })).json();
+  assert.deepEqual([button.released, button.held, button.stuck, marker().failures[job.id]], [[job.id], 0, 0, undefined]);
+});
+
+// A held job that was cancelled or finished waits for nothing: it leaves the held count, on the run and on later counts.
+test('a cancelled or finished held job leaves the held count', async () => {
+  const f = fixture(), job = await signHalfLoad(f);
+  for (const [id, status] of [['a-cancelled', 'cancelled'], ['a-done', 'completed']]) f.rows.set(`jobs/${id}`, { ...structuredClone(job), id, revision: `${id}r`, status, pipelineStatus: status });
+  const catalog = catalogStore(), handlers = heldJobsHandlers({ session: async () => owner, storage: () => catalog, held: () => heldStore(f), compositeState: async () => before(), now: () => new Date(LATER) });
+  const run = await (await post(handlers, { action: 'sweep' })).json();
+  assert.deepEqual([run.ran, run.released, run.held], [true, [], 1], 'the open job still waits for the half load; the closed two are not counted');
+  const counted = await (await post(handlers, { action: 'sweep' })).json();
+  assert.deepEqual([counted.ran, counted.held, counted.more], [false, 1, false]);
+  assert.deepEqual(catalog.rows.get(`pricingMenuApprovals/${HELD_RELEASE_MARKER}`).closedIds, ['a-cancelled', 'a-done']);
 });
 
 test('a failed run records nothing, so the next open tries again; the owner\'s button runs it on demand; managers cannot press it; builder off answers nothing', async () => {
