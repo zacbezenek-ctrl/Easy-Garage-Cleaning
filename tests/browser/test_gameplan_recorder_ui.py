@@ -49,9 +49,10 @@ FAKES = """
   Object.defineProperty(document, 'visibilityState', { configurable: true, get: () => hidden ? 'hidden' : 'visible' });
   Object.defineProperty(document, 'hidden', { configurable: true, get: () => hidden });
   window.__setHidden = value => { hidden = value; document.dispatchEvent(new Event('visibilitychange')); };
-  const send = XMLHttpRequest.prototype.send;
+  const send = XMLHttpRequest.prototype.send, openRequest = XMLHttpRequest.prototype.open;
+  XMLHttpRequest.prototype.open = function (method, url, ...rest) { this.__url = url; return openRequest.call(this, method, url, ...rest); };
   XMLHttpRequest.prototype.send = function (body) {
-    if (body instanceof FormData) { const audio = body.get('audio'); rec.uploads.push({ requestId: body.get('requestId'), portalJobId: body.get('portalJobId'), name: audio && audio.name, type: audio && audio.type, size: audio && audio.size }); }
+    if (body instanceof FormData) { const audio = body.get('audio'); rec.uploads.push({ url: this.__url, requestId: body.get('requestId'), portalJobId: body.get('portalJobId'), partIndex: body.get('partIndex'), partCount: body.get('partCount'), source: body.get('source'), name: audio && audio.name, type: audio && audio.type, size: audio && audio.size }); }
     return send.call(this, body);
   };
   window.__chunkCount = () => new Promise(resolve => { const open = indexedDB.open('egc-walkthrough-recorder'); open.onsuccess = () => { const db = open.result; if (!db.objectStoreNames.contains('chunks')) { resolve(0); return; } const count = db.transaction('chunks').objectStore('chunks').count(); count.onsuccess = () => resolve(count.result); }; open.onerror = () => resolve(-1); });
@@ -118,6 +119,11 @@ class GameplanRecorderTests(unittest.TestCase):
         self.errors = []; self.posts = []; self.gets = 0; self.upload_calls = 0; self.upload_refused = False
         self.post_offline = False; self.upload_offline = False; self.get_offline = False; self.get_status = None
         self.enabled = True; self.revision = 1; self.receipts = {}; self.accepted = []; self.server_now = NOW
+        # EGC_WALKTHROUGH_NOTES: None answers 404 (a build without the endpoint: the recorder keeps the recording service).
+        self.notes = None; self.notes_uploads = 0
+        # With notes_panel the stand-in also answers the notes panel (gameplan-notes.js) the way the server does: the parts,
+        # a draft and a withdrawal. notes_fail: part numbers refused once as OpenAI being busy (retryable).
+        self.notes_panel = False; self.notes_parts = {}; self.notes_expected = None; self.notes_draft = None; self.notes_withdrawn = False; self.notes_actions = []; self.notes_fail = set()
         self.wt_rows = [dict(WT_FIRST)]
         self.shift = {'available': True, 'clockedIn': True, 'onBreak': False, 'needsReview': False, 'current': None}
         self.visit = {'id': 'wt-1', 'revision': 'r1', 'type': 'walkthrough', 'customer': 'Synthetic Customer', 'date': '2026-09-22', 'time': '09:00', 'status': 'scheduled',
@@ -152,6 +158,31 @@ class GameplanRecorderTests(unittest.TestCase):
             rows = self.wt_rows
             wanted = parse_qs(url.query).get('walkthroughId', [None])[0]
             return self.json(route, 200, {'ok': True, 'walkthroughs': rows, 'requested': next((row for row in rows if row['id'] == wanted), None)})
+        if url.path == '/api/walkthrough-notes' and self.notes is not None:
+            if request.method == 'GET':
+                # The recorder asks without a visit; the notes panel (gameplan-notes.js) asks with one and stays hidden here
+                # unless notes_panel is on.
+                if url.query and self.notes_panel:
+                    return self.json(route, 200, self.notes_view())
+                return self.json(route, 200, {'ok': True, 'enabled': self.notes if not url.query else False})
+            if self.notes_panel and request.headers.get('content-type') == 'application/json':
+                body = request.post_data_json; self.notes_actions.append(body['action'])
+                if body['action'] == 'draft':
+                    self.notes_draft = {'jobNotes': ['Clear the left bay first.'], 'itemsNeeded': [{'name': 'Ladder', 'quantity': None, 'reason': 'Overhead rack'}], 'keepItems': [], 'removeItems': [], 'access': [], 'hazards': [], 'openQuestions': []}
+                elif body['action'] == 'withdraw':
+                    self.notes_parts = {}; self.notes_expected = None; self.notes_draft = None; self.notes_withdrawn = True
+                return self.json(route, 200, self.notes_view())
+            self.notes_uploads += 1
+            body = (request.post_data_buffer or b'').decode('utf-8', 'replace')
+            field = lambda name: (re.search(r'name="' + name + r'"\r\n\r\n([^\r]*)', body) or [None, None])[1]
+            request_id, index, count = field('requestId'), int(field('partIndex') or 0), field('partCount')
+            if self.notes_panel:
+                self.notes_expected = max(self.notes_expected or 0, int(count)) if count else self.notes_expected
+                if index in self.notes_fail:
+                    self.notes_fail.discard(index); self.notes_parts[index] = 'failed'
+                    return self.json(route, 503, {'ok': False, 'error': 'recording_unavailable', 'message': 'Transcription is unavailable right now. The audio stays on this iPad and is sent again.', 'retryable': True})
+                self.notes_parts[index] = 'done'
+            return self.json(route, 200, {'ok': True, 'alreadySaved': False, 'recording': {'id': request_id or 'unknown', 'status': 'transcribed'}})
         if url.path == '/api/operations-recordings':
             self.upload_calls += 1
             if self.upload_offline:
@@ -162,6 +193,17 @@ class GameplanRecorderTests(unittest.TestCase):
         if url.path.startswith('/api/'):
             return self.json(route, 404, {'ok': False, 'error': 'Not part of this fixture.'})
         route.continue_()
+
+    def notes_view(self):
+        # As /api/walkthrough-notes answers the panel (functions/_lib/walkthrough-notes.js stateView), for visit wt-1.
+        outcome = self.visit.get('walkthroughOutcome')
+        parts = [{'partIndex': index, 'source': 'recorder', 'status': state, 'chars': 40 if state == 'done' else 0, **({'errorCode': 'recording_unavailable'} if state == 'failed' else {})} for index, state in sorted(self.notes_parts.items())]
+        done = [row for row in parts if row['status'] == 'done']
+        return {'ok': True, 'enabled': True, 'visitId': 'wt-1', 'status': 'withdrawn' if self.notes_withdrawn else 'drafted' if self.notes_draft else 'transcribing', 'revision': f'n{len(self.notes_actions) + len(parts)}',
+                'canConfirm': True, 'canDraft': not self.notes_withdrawn, 'outcome': {'outcome': outcome['outcome'], 'recordingStatus': outcome['recordingStatus']} if outcome else None,
+                'parts': parts, 'expectedParts': self.notes_expected, 'complete': bool(self.notes_expected) and len(done) >= self.notes_expected,
+                'transcript': '\n\n'.join(f"[Part {row['partIndex']}]\nSynthetic words." for row in done), 'transcriptMissing': 0, 'draft': self.notes_draft, 'draftedAt': '2026-09-22T15:30:00.000Z' if self.notes_draft else None,
+                'draftStale': False, 'draftsLeft': 5, 'confirmed': None, 'confirmedJobs': 0, 'confirmedStale': False}
 
     def run_for(self, ms):
         self.page.clock.run_for(ms); self.server_now += datetime.timedelta(milliseconds=ms)
@@ -266,12 +308,77 @@ class GameplanRecorderTests(unittest.TestCase):
         self.assertEqual(self.posts[1]['outcome'], 'quote_to_follow'); self.assertEqual(self.posts[1]['recordingStatus'], 'recorded'); self.assertNotIn('typedNotes', self.posts[1])
         first, second = self.uploads()
         self.assertEqual([first['name'], second['name']], ['walkthrough-wt-1-part-1.m4a', 'walkthrough-wt-1-part-2.m4a'])
+        self.assertEqual([first['url'], second['url']], ['/api/operations-recordings'] * 2, 'without walkthrough notes the recording service gets the audio, as before')
         self.assertTrue(all(item['type'] == 'audio/mp4' and item['portalJobId'] == 'wt-1' for item in (first, second)))
         self.assertNotEqual(first['requestId'], second['requestId'])
         self.assertGreater(first['size'], 1_000_000); self.assertLess(first['size'], 24 * 1024 * 1024)
         self.until_page(self.page, 'window.__chunkCount().then(count => count === 0)', 'the uploaded audio left the iPad')
         expect(self.page.locator('.wt-badge')).to_have_count(0)
         expect(self.page.locator('.wt-bar')).to_be_hidden()
+
+    def test_walkthrough_notes_on_the_parts_go_to_the_website_transcription_with_their_place(self):
+        self.start_page(IPAD); self.notes = True; self.open()
+        self.start_recording()
+        self.until(lambda: self.posts, 'the Start is sent')
+        self.run_for(20 * 60 * 1000 + 5000)
+        expect(self.page.locator('.wt-bar-text')).to_contain_text('Part 2')
+        panel = self.finish()
+        panel.get_by_role('button', name='Save outcome').click()
+        expect(panel.get_by_text('Outcome recorded: Quote to follow')).to_be_visible()
+        self.page.wait_for_function('window.__rec.uploads.length === 2')
+        first, second = self.uploads()
+        self.assertEqual([item['url'] for item in (first, second)], ['/api/walkthrough-notes'] * 2)
+        self.assertEqual([(item['partIndex'], item['partCount'], item['source']) for item in (first, second)], [('1', '2', 'recorder'), ('2', '2', 'recorder')])
+        self.assertEqual([item['portalJobId'] for item in (first, second)], ['wt-1', 'wt-1'])
+        self.until(lambda: self.notes_uploads == 2, 'both parts reached the transcription')
+        self.assertEqual(self.upload_calls, 0, 'nothing went to the recording service')
+        self.until_page(self.page, 'window.__chunkCount().then(count => count === 0)', 'the transcribed audio left the iPad')
+        self.assertEqual(self.page.evaluate("localStorage.getItem('egc-wt-recorder:notes')"), '1', 'remembered for an offline start')
+
+    def test_walkthrough_notes_the_recorder_and_the_notes_panel_from_finish_to_the_written_notes(self):
+        # Both on the real gameplan with notes on: the parts go to the website after Finish, the panel follows the recorder's
+        # syncs, waits for every part (part 2 is refused once while OpenAI is busy, then sent again) and writes the notes once.
+        self.start_page(IPAD); self.notes = True; self.notes_panel = True; self.notes_fail = {2}
+        self.open()
+        notes = self.page.locator('#wt-notes')
+        expect(notes).to_be_hidden()
+        self.start_recording()
+        self.until(lambda: self.posts, 'the Start is sent')
+        self.run_for(20 * 60 * 1000 + 5000)
+        expect(self.page.locator('.wt-bar-text')).to_contain_text('Part 2')
+        panel = self.finish()
+        panel.get_by_role('button', name='Save outcome').click()
+        expect(panel.get_by_text('Outcome recorded: Quote to follow')).to_be_visible()
+        self.until(lambda: self.notes_parts == {1: 'done', 2: 'failed'}, 'part 1 transcribed, part 2 refused once')
+        expect(notes.locator('.wtn-status')).to_have_text('Transcribing: 1 of 2 parts done')
+        expect(notes).to_contain_text('Part 2: transcription is unavailable right now. The audio stays on the iPad and is sent again.')
+        self.assertEqual(self.notes_actions, [], 'nothing is written up before every part is in')
+        # The recorder sends part 2 again after its backoff; the panel sees every part in and writes the notes up once.
+        self.run_for(6000)
+        self.until(lambda: self.notes_parts == {1: 'done', 2: 'done'}, 'part 2 transcribed on the retry')
+        self.until(lambda: self.notes_actions == ['draft'], 'the notes are written up once every part is in')
+        expect(notes.locator('.wtn-status')).to_have_text('Notes ready to check and confirm')
+        notes.locator('summary.wtn-summary').click()
+        expect(notes.get_by_label(re.compile('^Job notes for the crew'))).to_have_value('Clear the left bay first.')
+        expect(notes.locator('.wtn-transcript summary')).to_have_text('Transcript (2 parts)')
+        self.run_for(30000)
+        self.assertEqual(self.notes_actions, ['draft'], 'never written up twice')
+        self.until_page(self.page, 'window.__chunkCount().then(count => count === 0)', 'the transcribed audio left the iPad')
+
+    def test_walkthrough_notes_a_withdrawal_on_the_recorder_deletes_the_walkthrough_transcript_too(self):
+        self.start_page(PHONE); self.notes = True; self.notes_panel = True
+        self.page.on('dialog', lambda dialog: dialog.accept())
+        self.open()
+        self.start_recording()
+        self.until(lambda: self.posts, 'the Start is sent')
+        panel = self.finish()
+        panel.get_by_role('button', name='Customer withdrew consent: delete the audio').click()
+        self.until(lambda: self.notes_actions == ['withdraw'], 'the recorder deletes the visit\'s transcript on the website')
+        expect(self.page.locator('#wt-recorder')).to_contain_text('Its walkthrough transcript was deleted too.')
+        # The panel reads the visit again at once: the transcript is deleted, and the estimator types the notes instead.
+        notes = self.page.locator('#wt-notes')
+        expect(notes.locator('.wtn-status')).to_have_text('Consent withdrawn: the transcript was deleted')
+        self.assertEqual(self.notes_uploads, 0, 'nothing of the withdrawn walkthrough was uploaded')
 
     def test_phone_lost_connection_keeps_audio_and_sends_the_same_request_ids_when_the_signal_returns(self):
         self.start_page(PHONE); self.open()

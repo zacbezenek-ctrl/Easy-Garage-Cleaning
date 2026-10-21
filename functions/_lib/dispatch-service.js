@@ -523,7 +523,8 @@ async function executeDispatch(store, session, input, now, options = {}, context
         if (source.highlevelContactId && customer.highlevelContactId && source.highlevelContactId !== customer.highlevelContactId) throw fail('dispatch_contact_link_conflict','The source walkthrough and customer point to different CRM contacts. Correct that link before creating an operational job.',409);
         if ((await reads.where('sourceWalkthroughId',source.id)).some(job => visibleJob(job) && job.sourceWalkthroughId === source.id)) throw fail('dispatch_handoff_exists','This walkthrough already has an operational job. Open that job instead.',409);
       }
-      const sourceFields = ['jobInstructions','operationalScope','accessInstructions','customerInstructions','requiredEquipment','materials','serviceType','reviewedWalkthroughScope','salesNotes','customerNotes','estimate'];
+      // visitNotes (EGC_WALKTHROUGH_NOTES): the walkthrough notes the estimator confirmed for the crew go with the job.
+      const sourceFields = ['jobInstructions','operationalScope','accessInstructions','customerInstructions','requiredEquipment','materials','serviceType','reviewedWalkthroughScope','salesNotes','customerNotes','estimate','visitNotes'];
       current = null;
       patch = { ...(source ? Object.fromEntries(sourceFields.filter(key => source[key] !== undefined).map(key => [key,source[key]])) : {}),
         id, type: input.kind, customerId: customer.id, customer: customer.name || [customer.firstName,customer.lastName].filter(Boolean).join(' '),

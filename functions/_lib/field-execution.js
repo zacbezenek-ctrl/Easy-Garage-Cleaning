@@ -4,6 +4,7 @@ import { segmented, jobSegments } from './dispatch-segments.js';
 import { occupiedDays } from './dispatch-time.js';
 import { signedBriefJob, stripCrewMoney } from './crew-money.js';
 import { walkthroughCrewBrief } from './walkthrough-crew-brief.js';
+import { crewVisitNotes } from './visit-notes.js';
 import { crewMaterialFields } from './job-materials.js';
 
 export const fieldFailure = (message, status = 400, code = 'FIELD_REQUEST_INVALID', details = {}) => Object.assign(new Error(message), { status, code, ...details });
@@ -153,7 +154,9 @@ export function fieldJobProjection(job, events = [], options = {}) {
     exclusions: crew(description(instructions.exclusions || scope.exclusions)), hazards: crew(textList(instructions.hazards || scope.hazards)),
     accessInstructions: crew(fieldText(job.accessInstructions || instructions.accessNotes || logistics.notes)), access: crew(textList(instructions.access || scope.access || logistics.access)),
     truckPlacement: crew(fieldText(instructions.truckPlacement || logistics.truck_placement)),
-    walkthroughBrief: walkthroughCrewBrief(instructions),
+    walkthroughBrief: walkthroughCrewBrief(instructions, { materials: list(job.materials || job.requiredMaterials) }),
+    // EGC_WALKTHROUGH_NOTES: the walkthrough notes the estimator confirmed for the crew (never the transcript), cleaned again.
+    visitNotes: crewVisitNotes(job.visitNotes),
     customerInstructions: crew(fieldText(job.customerInstructions || instructions.customerNotes || job.customerNotesSummary)),
     requiredEquipment: textList(job.requiredEquipment || logistics.requiredEquipment), materials: fieldMaterials(job, { purchaseDetails: options.purchaseDetails === true }),
     checklist: fieldChecklist(job),

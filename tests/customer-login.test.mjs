@@ -485,7 +485,8 @@ test('expired records are cleaned up occasionally and within a bound', async t =
   const always = await harness(t, { random: bytes => bytes.length === 1 ? bytes.fill(0) : globalThis.crypto.getRandomValues(bytes) });
   await always.post({ identifier: '970-555-0100' });
   await always.settle();
-  assert.deepEqual(always.cleaned.map(([collection]) => collection), ['rate_limits', 'customer_login_links', 'customer_sessions']);
+  // Updated deliberately: walkthrough transcript parts (deleted after 90 days) join the existing sweep.
+  assert.deepEqual(always.cleaned.map(([collection]) => collection), ['rate_limits', 'customer_login_links', 'customer_sessions', 'walkthroughNoteParts']);
   assert.ok(always.cleaned.every(([, at]) => at === always.time.iso()), 'the injected clock dates the cleanup');
   const never = await harness(t, { random: bytes => bytes.length === 1 ? bytes.fill(255) : globalThis.crypto.getRandomValues(bytes) });
   await never.post({ identifier: '970-555-0100' });

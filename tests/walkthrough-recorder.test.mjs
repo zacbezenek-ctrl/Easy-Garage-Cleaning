@@ -4,6 +4,7 @@ import { readFileSync } from 'node:fs';
 import vm from 'node:vm';
 import { createDocument, storage } from './helpers/hub-dom.mjs';
 import { walkthroughVisitHandlers } from '../functions/api/walkthrough-visit.js';
+import { walkthroughNotesHandlers } from '../functions/api/walkthrough-notes.js';
 import { authorizeTimecard } from '../functions/_lib/employee-timecards.js';
 import { funnelReasonCodes } from '../functions/_lib/funnel-definitions.js';
 
@@ -570,6 +571,122 @@ test('the upload transport posts multipart with the part request ID and reports 
     [fail('', 0), fail('', 401, 'HUB_AUTH_REQUIRED'), fail('', 401, 'business_session_required'), fail('', 401, 'walkthrough_visit_sign_in_required'), fail('', 401, 'recording_signature_expired'), fail('', 401), fail('', 503), fail('', 429), fail('', 409), fail('', 503, 'walkthrough_visit_time_unavailable')].map(R.classify));
 });
 
+// EGC_WALKTHROUGH_NOTES: parts go to /api/walkthrough-notes while it says notes are on (transcribed on the website's key),
+// with where each sits in the walkthrough; otherwise to the recording service exactly as before.
+test('walkthrough notes: the upload names the part, its count and source; the route follows the server and falls back when switched off', async () => {
+  const sent = [];
+  class FakeXHR {
+    constructor() { this.upload = {}; sent.push(this); }
+    open(method, url) { Object.assign(this, { method, url }); }
+    send(form) { this.form = form; }
+    reply(status, body) { this.status = status; this.responseText = body; this.onload(); }
+  }
+  const blob = new Blob([new Uint8Array(4)], { type: 'audio/mp4' }), requestId = id();
+  const pending = R.xhrUpload(FakeXHR, { url: '/api/walkthrough-notes' })({ requestId, visitId: 'w1', blob, filename: 'walkthrough-w1-part-2.m4a', partIndex: 2, partCount: 3, source: 'recorder' });
+  const [xhr] = sent;
+  assert.equal(xhr.url, '/api/walkthrough-notes');
+  assert.deepEqual(['requestId', 'portalJobId', 'partIndex', 'partCount', 'source'].map(name => xhr.form.get(name)), [requestId, 'w1', '2', '3', 'recorder']);
+  xhr.reply(200, JSON.stringify({ ok: true, alreadySaved: false, recording: { id: requestId, status: 'transcribed' }, part: { partIndex: 2, chars: 40 } }));
+  assert.deepEqual(plain(await pending), { recordingId: requestId, alreadySaved: false });
+  // A part still being transcribed is retried (503); a refused one says why.
+  const busy = R.xhrUpload(FakeXHR, { url: '/api/walkthrough-notes' })({ requestId, visitId: 'w1', blob, filename: 'a.m4a' }).then(() => null, error => error);
+  sent.at(-1).reply(503, JSON.stringify({ ok: false, error: 'recording_in_progress', retryable: true }));
+  const retry = await busy;
+  assert.deepEqual([retry.status, retry.code, R.classify(retry)], [503, 'recording_in_progress', 'transient']);
+  assert.equal(sent.at(-1).form.get('partIndex'), null, 'a caller that names no part sends no part fields');
+  const long = R.xhrUpload(FakeXHR)({ requestId, visitId: 'w1', blob, filename: 'a.m4a' }).then(() => null, error => error);
+  sent.at(-1).reply(422, JSON.stringify({ ok: false, error: 'recording_too_long' }));
+  assert.match((await long).message, /Split it in Voice Memos/);
+
+  const kept = new Map(), storage = { getItem: key => kept.get(key) ?? null, setItem: (key, value) => kept.set(key, value), removeItem: key => kept.delete(key) };
+  const calls = [], legacy = async request => { calls.push(['legacy', request.partIndex]); return { recordingId: 'recording-1' }; }, notes = async request => { calls.push(['notes', request.partIndex]); return { recordingId: request.requestId }; };
+  let answer = { ok: true, enabled: true }, asked = 0;
+  const fetchImpl = async url => { asked += 1; assert.equal(url, '/api/walkthrough-notes'); return { ok: true, json: async () => answer }; };
+  const routed = R.routedUpload({ fetchImpl, storage, legacy, notes });
+  assert.equal((await routed({ partIndex: 1 })).transcribed, true, 'a part sent to the website is marked transcribed (a withdrawal deletes it there)'); await routed({ partIndex: 2 });
+  assert.deepEqual(calls, [['notes', 1], ['notes', 2]]); assert.equal(asked, 1, 'asked once per page'); assert.equal(kept.get('egc-wt-recorder:notes'), '1');
+  // A new page offline uses the remembered answer.
+  await R.routedUpload({ fetchImpl: async () => { throw new TypeError('Failed to fetch'); }, storage, legacy, notes })({ partIndex: 3 });
+  assert.deepEqual(calls.at(-1), ['notes', 3]);
+  // Notes switched off meanwhile: the same try goes to the recording service, and the iPad remembers.
+  const off = async () => { throw fail('Walkthrough notes are switched off.', 503, 'walkthrough_notes_disabled'); };
+  await R.routedUpload({ fetchImpl, storage, legacy, notes: off })({ partIndex: 4 });
+  assert.deepEqual(calls.at(-1), ['legacy', 4]); assert.equal(kept.has('egc-wt-recorder:notes'), false);
+  // The server says off, or does not know the endpoint (an older build): the recording service, as before.
+  answer = { ok: true, enabled: false };
+  await R.routedUpload({ fetchImpl, storage, legacy, notes })({ partIndex: 5 });
+  await R.routedUpload({ fetchImpl: async () => ({ ok: false, status: 404, json: async () => ({ ok: false }) }), storage, legacy, notes })({ partIndex: 6 });
+  assert.deepEqual(calls.slice(-2), [['legacy', 5], ['legacy', 6]]);
+  // Any other refusal of a notes upload is the rep's to see, never silently sent elsewhere.
+  answer = { ok: true, enabled: true };
+  const refused = R.routedUpload({ fetchImpl, storage, legacy, notes: async () => { throw fail('Declined.', 409, 'recording_consent_declined'); } });
+  await assert.rejects(refused({ partIndex: 7 }), error => error.code === 'recording_consent_declined');
+  assert.deepEqual(calls.at(-1), ['legacy', 6]);
+});
+
+test('walkthrough notes: the sync sends each part with its index, the finished walkthrough\'s part count and its source; .aac is never offered', async () => {
+  const store = R.memoryStore(), server = visitServer(), clock = fakeClock(), requests = [];
+  const parts = [1, 2].map(index => ({ id: id(), index, requestId: id(), mimeType: 'audio/mp4', extension: 'm4a', source: index === 2 ? 'import' : 'recorder', state: 'closed', bytes: 4 }));
+  const walk = session({ status: 'active', capture: 'stopped', parts });
+  await store.putSession(walk);
+  for (const row of parts) await store.putChunk({ id: `${row.id}|0000001`, partId: row.id, sessionId: walk.id, seq: 1, bytes: 4, data: new ArrayBuffer(4) });
+  await finishWith(store, walk.id, { outcome: 'quote_to_follow', recordingStatus: 'recorded', deviceAt: new Date(T0 + 3600000).toISOString() });
+  const sync = R.createSync({ store, visit: server, upload: async request => { requests.push([request.partIndex, request.partCount, request.source]); return { recordingId: request.requestId, transcribed: request.partIndex === 1 }; }, now: clock.now, uuid: id, user: () => 'sales.rep' });
+  // Read as each part lands: the transcribed flag is kept on the part the website transcribed.
+  const flags = [];
+  const removeChunks = store.removeChunks; store.removeChunks = async partId => { flags.push((await saved(store, walk.id))?.parts.find(row => row.id === partId)?.transcribed ?? null); return removeChunks(partId); };
+  assert.equal((await sync.run()).stopped, null);
+  assert.deepEqual(requests, [[1, 2, 'recorder'], [2, 2, 'import']]);
+  assert.deepEqual(flags.slice(0, 2), [true, null]);
+  assert.equal(R.importType({ name: 'memo.aac', type: 'audio/aac' }), null);
+  assert.equal(R.importType({ name: 'memo.aac', type: '' }), null);
+  assert.equal(R.importType({ name: 'memo.aac', type: 'audio/mp4' }), null, 'an .aac file is refused whatever type the browser gives it');
+  assert.ok(!R.ACCEPT.includes('aac'));
+});
+
+test('walkthrough notes: a part the website is still transcribing (a cut-off upload holds its claim for 5 minutes) is asked again until it lands, never parked as an error', async () => {
+  const { clock, store, recorder, heartbeat } = rig({ chunkBytes: 6000 }), walk = session(), server = visitServer({ now: clock.now, offlineClock: true });
+  const ENV = { EGC_WALKTHROUGH_NOTES: 'true', openaiapi: 'sk-synthetic', HUB_SESSION_SECRET: 'synthetic-walkthrough-notes-session-secret-0123456789' };
+  let n = 0;
+  const rows = new Map([['jobs/w1', { id: 'w1', revision: 'w1r', type: 'walkthrough', customerId: 'c1', assignedCrew: ['sales.rep'], walkthroughVisit: { startedBy: 'sales.rep', startRequestId: '11111111-1111-4111-8111-111111111111', recordingStatus: 'recorded' }, walkthroughOutcome: { outcome: 'quote_to_follow', recordingStatus: 'recorded' } }]]);
+  const notesStore = { env: ENV, read: async (c, k) => structuredClone(rows.get(`${c}/${k}`) || null), readMany: async (c, ks) => ks.map(k => rows.get(`${c}/${k}`)).filter(Boolean).map(r => structuredClone(r)), assigned: async (s, j) => (j.assignedCrew || []).includes(s.user), linkedJobs: async () => [],
+    commit: async writes => { for (const w of writes) { const old = rows.get(`${w.collection}/${w.id}`); if (w.revision ? old?.revision !== w.revision : Boolean(old)) throw Object.assign(new Error('conflict'), { status: 409 }); } for (const w of writes) { const k = `${w.collection}/${w.id}`; if (w.remove) rows.delete(k); else rows.set(k, { ...rows.get(k), ...structuredClone(w.patch), id: w.id, revision: `r${++n}` }); } return {}; } };
+  // The first transcription never answers (the iPad was locked and the request cut off); later ones do.
+  let openaiCalls = 0;
+  const openai = async () => { openaiCalls += 1; return openaiCalls === 1 ? new Promise(() => {}) : Response.json({ text: 'Synthetic transcript.' }); };
+  const handlers = walkthroughNotesHandlers({ session: async () => ({ user: 'sales.rep', role: 'sales' }), storage: () => notesStore, openai, now: () => new Date(clock.now()), random: bytes => bytes.fill(255) });
+  const answers = [];
+  class FakeXHR {
+    open(method, url) { this.url = url; }
+    send(form) {
+      const pending = handlers.post({ request: new Request(`https://easygaragecleaning.com${this.url}`, { method: 'POST', headers: { Origin: 'https://easygaragecleaning.com' }, body: form }), env: ENV });
+      this.upload?.onload?.();
+      if (!answers.length) { answers.push('cut off'); setImmediate(() => this.onerror()); return; }
+      pending.then(async response => { this.status = response.status; this.responseText = await response.text(); answers.push(JSON.parse(this.responseText).error || 'ok'); this.onload(); });
+    }
+  }
+  FakeXHR.prototype.upload = {};
+  const sync = R.createSync({ store, visit: server, upload: R.xhrUpload(FakeXHR, { url: '/api/walkthrough-notes' }), now: clock.now, uuid: id, user: () => 'sales.rep' });
+  await recorder.begin(walk); heartbeat();
+  await R.saveChange(store, walk.id, row => { row.status = 'active'; });
+  await clock.advance(60 * 1000); await recorder.finish();
+  await finishWith(store, walk.id, { outcome: 'quote_to_follow', recordingStatus: 'recorded', deviceAt: new Date(clock.now()).toISOString() });
+  // The page's backoff after a pass that stopped on a transient reply: 5, 10, 20, 40, 80, 120 seconds.
+  let backoff = 0, landed = false;
+  for (let pass = 0; pass < 12 && !landed; pass += 1) {
+    const result = await sync.run(); await settle();
+    const row = await saved(store, walk.id);
+    landed = !row || row.parts?.[0]?.state === 'uploaded';
+    if (!landed) assert.notEqual(row.parts[0].state, 'error', `pass ${pass}: never parked as an error while the claim holds`);
+    if (!result.stopped) break;
+    backoff = Math.min(backoff ? backoff * 2 : 5000, 120000); await clock.advance(backoff);
+  }
+  assert.ok(landed, `the part landed once the claim ended: ${JSON.stringify(answers)}`);
+  assert.ok(answers.filter(answer => answer === 'recording_in_progress').length >= 5, 'more in-progress replies than the 5 server retries');
+  assert.deepEqual([answers[0], answers.at(-1)], ['cut off', 'ok']);
+  assert.equal(openaiCalls, 2, 'transcribed once more after the stale claim, not on every retry');
+});
+
 test('the visit transport maps an expired Hub session to sign-in, a cut-off reply to a retry and a refusal to its code', async () => {
   const reply = (status, body, broken = false) => async () => ({ ok: status < 400, status, json: async () => { if (broken) throw new SyntaxError('cut'); return body; } });
   const call = fetch => R.httpVisit(fetch).post({ action: 'start' }).then(() => null, error => ({ status: error.status, code: error.code, details: error.details ?? null }));
@@ -641,7 +758,7 @@ test('parts upload strictly in order: a refused part holds back the next until t
 // second Safari tab on the same iPad: nothing in-realm is shared. locks: the Web Locks (LOCKS above by default; null for a
 // Safari without them). Channel, when given, is the realm's BroadcastChannel (the recorder uses none).
 // who: the signed-in employee (the Hub session); '' while the sign-in gate shows.
-function page({ clock = fakeClock(), timers = clock, server = visitServer({ now: clock.now }), audio = audioService(), store = R.memoryStore(), visit = { id: 'w1', customer: 'Synthetic Customer' }, openVisit, realm, locks = LOCKS, Channel, ledger, storageManager, confirm = () => true, chunkBytes, tabStorage = storage(), localStore = storage(), who = () => 'sales.rep' } = {}) {
+function page({ clock = fakeClock(), timers = clock, server = visitServer({ now: clock.now }), audio = audioService(), store = R.memoryStore(), visit = { id: 'w1', customer: 'Synthetic Customer' }, openVisit, realm, locks = LOCKS, Channel, ledger, storageManager, confirm = () => true, chunkBytes, tabStorage = storage(), localStore = storage(), who = () => 'sales.rep', fetch } = {}) {
   const document = realm?.document || createDocument(), media = fakeMedia(timers, { chunkBytes }), events = realm?.events || {}, shown = [];
   const context = realm?.context || vm.createContext({ console, Promise, JSON, Date, Math, Map, Set, WeakMap, Error, Blob, FormData, Uint8Array, ArrayBuffer, queueMicrotask, encodeURIComponent, URL, Intl, Object, document, Node: document.Node,
     localStorage: localStore, sessionStorage: tabStorage, confirm: (...args) => confirm(...args), addEventListener: (name, fn) => { (events[name] ||= []).push(fn); }, removeEventListener() {}, ...(Channel ? { BroadcastChannel: Channel } : {}) });
@@ -653,7 +770,7 @@ function page({ clock = fakeClock(), timers = clock, server = visitServer({ now:
   document.body.append(host, footer);
   let current = visit;
   const controller = context.EGCWalkthroughRecorder.mount(host, { barHost: footer, visit: () => current, user: () => who(), visitApi: server, upload: audio.upload, store, now: clock.now, timers, uuid: id,
-    media: () => media.devices, Recorder: () => media.FakeRecorder, wakeLock: () => media.wake, openVisit: openVisit && (visitId => openVisit(visitId, next => { current = next; })), locks, ledger, storageManager });
+    media: () => media.devices, Recorder: () => media.FakeRecorder, wakeLock: () => media.wake, openVisit: openVisit && (visitId => openVisit(visitId, next => { current = next; })), locks, ledger, storageManager, ...(fetch ? { fetch } : {}) });
   const find = (tag, label, root) => root.querySelectorAll(tag).filter(node => node.textContent.startsWith(label));
   const flush = async () => { for (let round = 0; round < 4; round++) await clock.advance(0); };
   return { document, context, events, host, footer, controller, media, server, audio, clock, timers, store, shown, flush,
@@ -1318,6 +1435,32 @@ test('page: audio that reached the service before a withdrawal took effect is na
   await q.tap('I told the office', q.host.querySelector('.wt-decide'));
   assert.equal((await q.store.sessions()).length, 0);
   assert.equal(other.calls.length, 1, 'never sent again');
+});
+
+test('page: walkthrough notes: a withdrawal also deletes the visit\'s transcript on the website, and a part transcribed meanwhile is named as transcribed', async () => {
+  for (const online of [true, false]) {
+    const service = audioService(), late = heldUpload(service, { honorAbort: false }), posts = [];
+    const upload = async (request, progress) => ({ ...await late.upload(request, progress), transcribed: true });
+    upload.notesOn = async () => true;
+    const fetch = async (url, init) => { posts.push([url, JSON.parse(init.body)]); if (!online) throw new TypeError('Failed to fetch'); return { ok: true, json: async () => ({ ok: true, status: 'withdrawn' }) }; };
+    const p = page({ audio: { upload }, fetch });
+    await p.ready();
+    await finishRecorded(p);
+    await p.tap('Customer withdrew consent: delete the audio');
+    late.release(); await p.flush();
+    assert.deepEqual(posts.map(([url, body]) => [url, body.action, body.visitId, /^[0-9a-f-]{36}$/.test(body.requestId)]), [['/api/walkthrough-notes', 'withdraw', 'w1', true]]);
+    const row = (await p.store.sessions())[0];
+    assert.deepEqual([row.parts[0].state, row.parts[0].transcribed], ['uploaded_after_withdrawal', true]);
+    assert.ok(p.text().includes(online ? 'Its walkthrough transcript was deleted too.' : 'The walkthrough transcript could not be deleted yet: when the iPad is online, tap “Customer withdrew consent: delete the transcript” under Walkthrough notes.'), p.text());
+    assert.ok(p.text().includes('Part 1 was transcribed before the withdrawal: its transcript is deleted with the walkthrough notes. Tell the office the customer withdrew consent.'), p.text());
+    assert.ok(!p.text().includes('tell the office (recording ID'), 'no recording ID the office cannot use');
+  }
+  // Notes off (the recording service gets the audio): nothing is posted, the messages are as before.
+  const posts = [], held = heldUpload(audioService()), p = page({ audio: { upload: held.upload }, fetch: async (...args) => { posts.push(args); return { ok: true, json: async () => ({ ok: true }) }; } });
+  await p.ready(); await finishRecorded(p);
+  await p.tap('Customer withdrew consent: delete the audio');
+  assert.deepEqual(posts, []);
+  assert.ok(!p.text().includes('walkthrough transcript'), p.text());
 });
 
 test('a withdrawal while the sync reads the visit before freezing the Finish (or the Start) sends it as declined', async () => {
