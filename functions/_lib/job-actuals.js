@@ -84,13 +84,16 @@ export function normalizeCostSettings(input = {}) {
 
 export const completedJob = job => Boolean(job?.completedAt || job?.postJobChecklist?.completedAt) || COMPLETED.has(String(job?.pipelineStatus || job?.status || '').toLowerCase());
 export const workJob = job => plain(job) && WORK_TYPES.has(job.type) && hubRecordEligibility(job).eligible && !['cancelled', 'canceled', 'no_show'].includes(String(job.status || '').toLowerCase());
-export const junkOnlyJob = job => job?.serviceType === 'Junk removal' || builderJunkOnly(job?.compositeQuote?.breakdown?.lines);
+// A builder quote sent and accepted online keeps its priced breakdown on the quote draft (quote-draft.js), not as
+// compositeQuote (a walkthrough-signed one): read either.
+const sentBreakdown = job => job?.quoteDraft?.breakdown?.source === 'composite' ? job.quoteDraft.breakdown : null;
+export const junkOnlyJob = job => job?.serviceType === 'Junk removal' || builderJunkOnly(job?.compositeQuote?.breakdown?.lines) || builderJunkOnly(sentBreakdown(job)?.lines);
 
 const positiveHours = value => typeof value === 'number' && Number.isFinite(value) && value > 0 && value <= 1000 ? value : null;
 /** Billed man-hours as {milli, source}; milli null on a junk-only or legacy quote. */
 export function billedManHours(job) {
   if (junkOnlyJob(job)) return { milli: null, source: 'junk_only' };
-  const sold = positiveHours(job?.jobInstructions?.laborManHours) ?? positiveHours(job?.compositeQuote?.breakdown?.labor?.manHours);
+  const sold = positiveHours(job?.jobInstructions?.laborManHours) ?? positiveHours(job?.compositeQuote?.breakdown?.labor?.manHours) ?? positiveHours(sentBreakdown(job)?.labor?.manHours);
   return sold === null ? { milli: null, source: 'no_labor_line' } : { milli: milliHours(sold), source: 'labor_line' };
 }
 

@@ -47,3 +47,9 @@
   .egc-job-actuals .ja-table tbody th small{font-size:13px}
   .egc-job-actuals .ja-save .hub-btn{flex:1 1 auto;width:100%}
 }
+/* Estimator accuracy card (hours only). */
+.egc-job-actuals .ja-accuracy{display:grid;gap:var(--hub-space-3)}
+.egc-job-actuals .ja-callout{margin:0}
+.egc-job-actuals .ja-window{margin:0}
+.egc-job-actuals .ja-table tr.ja-unranked,.egc-job-actuals .ja-table tr.ja-unscored{color:var(--hub-muted)}
+.egc-job-actuals .ja-accuracy-jobs summary{cursor:pointer;font-weight:700;min-height:var(--hub-tap);display:flex;align-items:center}
