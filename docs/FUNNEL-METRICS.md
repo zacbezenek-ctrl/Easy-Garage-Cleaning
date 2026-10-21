@@ -715,7 +715,7 @@ Every metric uses the envelope `{key, label, value, unit, status: complete|parti
 ### 8.3 Roles and pay privacy (C29)
 - Grants are bound to a Hub user and role (MCP-OAUTH part B). Integration actors get no pulse.
 - **owner**: everything, including labor at actual rates and per-employee cost.
-- **manager**: all sections, with labor at an owner-set **standard blended rate**, labelled "standard-rate labor". Any grouping with fewer than 3 distinct employees has its labor and contribution suppressed. No per-employee pay, no ad-spend detail by default (owner decision).
+- **manager**: all sections, with labor at an owner-set **standard blended rate**, labelled "standard-rate labor". Any grouping with fewer than 3 distinct employees has its labor and contribution suppressed. No per-employee pay, no ad-spend detail by default (owner decision). The exception is a manager the owner names in `EGC_STAFF_PAY_VIEWERS` (PAY-VIEW-GRANT): in the Hub roster, timecards, time-off requests, the accounts list and the timesheet week, that manager sees every employee's pay, including the owner's row if the owner has one. They view only: they cannot change pay, export payroll or see job labor dollars, which stay with the owner.
 - **phone / sales**: the follow-ups, demand and sales sections for their own cases only. **No cost, fee, labor, margin or contribution field** appears, which a projection test enforces.
 - The FUN-28 sheet is owner-only or aggregate-only.
 

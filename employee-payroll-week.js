@@ -20,7 +20,7 @@ const hours=value=>Number(value).toFixed(2);
 const request=(url,init)=>typeof hubFetch==='function'?hubFetch(url,init):fetch(url,{...init,credentials:'same-origin'});
 // Pay is a number or explicitly hidden. Anything else is an unverified response, never shown as $0.
 const payShape=item=>Boolean(item)&&(item.payHidden===true?item.grossPay==null:finite(item.grossPay));
-function valid(data){return Boolean(data&&data.ok===true&&validDate(data.weekStart)&&validDate(data.weekEnd)&&Array.isArray(data.employees)&&data.employees.every(row=>row&&typeof row.employee==='string'&&typeof row.name==='string'&&finite(row.totalPaidHours)&&finite(row.overtimeHours)&&finite(row.ptoHours)&&payShape(row))&&data.totals&&finite(data.totals.totalPaidHours)&&payShape(data.totals)&&data.coverage&&typeof data.coverage.complete==='boolean'&&Array.isArray(data.coverage.reasons)&&[undefined,'own'].includes(data.payVisibility));}
+function valid(data){return Boolean(data&&data.ok===true&&validDate(data.weekStart)&&validDate(data.weekEnd)&&Array.isArray(data.employees)&&data.employees.every(row=>row&&typeof row.employee==='string'&&typeof row.name==='string'&&finite(row.totalPaidHours)&&finite(row.overtimeHours)&&finite(row.ptoHours)&&payShape(row))&&data.totals&&finite(data.totals.totalPaidHours)&&payShape(data.totals)&&data.coverage&&typeof data.coverage.complete==='boolean'&&Array.isArray(data.coverage.reasons)&&[undefined,'own','view'].includes(data.payVisibility));}
 // What the week is computed from, as the suite last read it: an approval, an edit, a clock-out or a reviewed
 // request changes this and rereads the week. A shift still open (its location pings) does not.
 const records=value=>Array.isArray(value)?value.filter(Boolean):[];
@@ -41,7 +41,9 @@ async function load(){
 }
 function save(blob,name){const url=URL.createObjectURL(blob),link=h('a',{href:url,download:name,hidden:true});document.body.append(link);link.click();link.remove();setTimeout(()=>URL.revokeObjectURL(url),1000);}
 // The Gusto file is the owner's (the suite says so, and the server decides): a refusal hides its button.
-const canDownload=(kind,data)=>kind==='csv'?data.payVisibility!=='own':kind==='gusto'&&S.owner&&!S.gustoRefused;
+// The payroll CSV is for whoever sets pay: not a viewer who sees only their own pay ('own'), nor one granted pay
+// viewing ('view').
+const canDownload=(kind,data)=>kind==='csv'?!['own','view'].includes(data.payVisibility):kind==='gusto'&&S.owner&&!S.gustoRefused;
 // The Gusto file has hours only: timecard bonuses and tips the owner can see in this week are named so they are not lost.
 function extras(d){
   const parts=[finite(d.totals.bonus)&&d.totals.bonus>0?money(d.totals.bonus)+' in timecard bonuses':'',finite(d.totals.tips)&&d.totals.tips>0?money(d.totals.tips)+' in timecard tips':''].filter(Boolean);
