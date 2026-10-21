@@ -14,7 +14,7 @@ NOW = '2026-10-22T03:30:00.000Z'
 PAGE = ('<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Readiness widget</title>'
         '<link rel="stylesheet" href="/employee-ui-kit.css"><link rel="stylesheet" href="/employee-readiness.css"></head>'
         '<body style="margin:0;background:#f4f3ef"><main id="host" style="padding:16px"></main><script src="/employee-readiness.js"></script>'
-        f'<script>EGCReadiness.mount(document.querySelector("#host"),{{now:()=>new Date("{NOW}")}})</script></body></html>').encode()
+        f'<script>window.__now="{NOW}";EGCReadiness.mount(document.querySelector("#host"),{{now:()=>new Date(window.__now)}})</script></body></html>').encode()
 ROSTER = [{'id': 'crew.one', 'name': 'Synthetic Crew One'}, {'id': 'crew.two', 'name': 'Synthetic Crew Two With A Long Name'}]
 VEHICLES = [{'id': 'truck-1', 'name': 'Synthetic Truck A', 'status': 'available'}]
 def job(job_id, **extra):
@@ -87,6 +87,16 @@ class ReadinessWidgetTests(unittest.TestCase):
         expect(page.locator('[data-rd-job]')).to_have_count(3)
         self.assertEqual(len(self.asked), 2)
         page.screenshot(path=str(RESULTS / 'readiness-1280.png'), full_page=True)
+
+    def test_a_card_left_open_past_denver_midnight_moves_on_to_the_new_tomorrow(self):
+        page = self.open(1280)
+        expect(page.locator('.egc-readiness')).to_contain_text('Thursday, Oct 22')
+        page.evaluate("EGCReadiness.rollover()")
+        self.assertEqual(len(self.asked), 1, 'the same Denver day reads nothing more')
+        # 06:30 UTC on the 22nd is 00:30 in Denver: tomorrow is now Friday the 23rd.
+        page.evaluate("window.__now = '2026-10-22T06:30:00.000Z'; EGCReadiness.rollover()")
+        expect(page.locator('.egc-readiness')).to_contain_text('Friday, Oct 23')
+        self.assertEqual(self.asked[-1], {'startDate': ['2026-10-23'], 'endDate': ['2026-10-24']})
 
     def test_phone_layout_fits_and_a_failed_load_is_never_all_ready(self):
         page = self.open(390, 844)

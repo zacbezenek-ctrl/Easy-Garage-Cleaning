@@ -12,12 +12,15 @@ const BLOCKING={unassigned:'No crew assigned',sold_needs_crew:'Sold: needs crew'
   schedule_overlap:'Crew or truck double-booked',inactive_assignment:'Someone assigned is no longer on the team',vehicle_unavailable:'Assigned truck is out of service',
   missing_address:'No job address',invalid_schedule:'Date or time needs review',segments_invalid:'Crew split could not be read',unverifiable_assignment:'Another booking for this crew has bad times'};
 const CHECK={missing_crew_lead:'No crew lead chosen',missing_scope:'No work scope for the crew',travel_buffer_short:'Tight drive between jobs',needs_follow_up:'Open crew follow-up',segment_unassigned:'A crew split has nobody on it',
-  outside_working_hours:'Outside someone\'s working hours',skill_missing:'Crew is missing a needed skill',employee_daily_capacity:'Someone is over their daily jobs or hours'};
+  outside_working_hours:'Outside someone\'s working hours',skill_missing:'Crew is missing a needed skill',employee_daily_capacity:'Someone is over their daily jobs or hours',
+  // The two office-side money warnings (dispatch-readiness.js moneyWarnings) are the office's to clear; the card names
+  // them in plain words only, never a figure.
+  no_price:'Office follow-up needed before the job',deposit_unpaid:'Office follow-up needed before the job'};
 // Warnings that are only about the office or HighLevel, not whether the crew can roll out.
 const IGNORED=new Set(['provider_sync_pending','missing_customer_link','completion_sync_pending','completion_sync_error','completion_sync_blocked']);
 const CACHE_MS=5*60000,CACHE=new Map();
 const DONE=new Set(['completed','cancelled','canceled','no_show','archived']);
-const S={host:null,root:null,ctx:{},generation:0,controller:null,date:''};
+const S={host:null,root:null,ctx:{},generation:0,controller:null,date:'',clock:null};
 const record=value=>Boolean(value)&&typeof value==='object'&&!Array.isArray(value);
 const denverDate=at=>new Intl.DateTimeFormat('en-CA',{timeZone:TZ,year:'numeric',month:'2-digit',day:'2-digit'}).format(at);
 const addDays=(date,days)=>{const at=new Date(date+'T12:00:00Z');at.setUTCDate(at.getUTCDate()+days);return at.toISOString().slice(0,10);};
@@ -29,32 +32,47 @@ function readinessReport(board,date){
   const people=new Map(board.roster.filter(record).map(person=>[String(person.id),String(person.name||person.id)]));
   const trucks=new Map(board.vehicles.filter(record).map(truck=>[String(truck.id),String(truck.name||truck.id)]));
   const jobs=board.jobs.filter(job=>record(job)&&job.type!=='walkthrough'&&job.type!=='blocked'&&job.type!=='availability'&&!DONE.has(String(job.status||'').toLowerCase())&&job.date&&job.date<=date&&(job.endDate||job.date)>=date);
-  const rows=jobs.map(job=>{
-    const blocking=[],check=[],seen=new Set();
+  const rows=[];
+  for(const job of jobs){
+    // A split job is judged by its segments working tomorrow only, and is not tomorrow's at all without one.
+    const split=Array.isArray(job.assignmentSegments)&&job.assignmentSegments.length>0;
+    const segments=split?job.assignmentSegments.filter(row=>record(row)&&row.date&&row.date<=date&&(row.endDate||row.date)>=date):[];
+    if(split&&!segments.length)continue;
+    const ids=new Set(segments.map(row=>String(row.id)));
+    const crew=split?[...new Set(segments.flatMap(row=>Array.isArray(row.assignedCrew)?row.assignedCrew:[]))]:Array.isArray(job.assignedCrew)?job.assignedCrew:[];
+    const truckIds=split?segments.map(row=>row.vehicleId).filter(Boolean):job.vehicleId?[job.vehicleId]:[];
+    const lead=(split?segments.find(row=>row.crewLead)?.crewLead:null)||job.crewLead||(crew.length===1?crew[0]:null);
+    const needed=Number(job.crewNeeded)||1;
+    // Tomorrow's warnings: a segment's own only when that segment works tomorrow, a dated one only for tomorrow. On a
+    // split job Dispatch's crew count covers every day, so tomorrow's crew is counted here instead. A code blocks when
+    // any of its warnings does, whatever order they arrive in.
+    const codes=new Map();
     for(const warning of board.warnings){
-      if(!record(warning)||warning.jobId!==job.id||seen.has(warning.code))continue;
-      seen.add(warning.code);
-      // A Dispatch rule the owner set to block (blocking:true) blocks here too, whatever its code. A warning this card
-      // has no words for is still shown, never dropped.
-      const label=BLOCKING[warning.code]||CHECK[warning.code]||(IGNORED.has(warning.code)?'':'Dispatch shows a warning for this job');
-      if(!label)continue;
-      if(BLOCKING[warning.code]||warning.blocking===true)blocking.push(label);else check.push(label);
+      if(!record(warning)||warning.jobId!==job.id)continue;
+      const tomorrows=split&&warning.segmentId?ids.has(String(warning.segmentId)):!warning.date||warning.date===date;
+      if(!tomorrows)continue;
+      if(split&&warning.code==='crew_size_short')continue;
+      codes.set(warning.code,codes.get(warning.code)===true||warning.blocking===true);
     }
-    // A split job is judged by the segments working tomorrow only.
-    const segments=(Array.isArray(job.assignmentSegments)?job.assignmentSegments.filter(record):[]).filter(row=>!row.date||row.date<=date&&(row.endDate||row.date)>=date);
-    const crew=segments.length?[...new Set(segments.flatMap(row=>Array.isArray(row.assignedCrew)?row.assignedCrew:[]))]:Array.isArray(job.assignedCrew)?job.assignedCrew:[];
-    const truckIds=segments.length?segments.map(row=>row.vehicleId).filter(Boolean):job.vehicleId?[job.vehicleId]:[];
-    const lead=(segments.length?segments.find(row=>row.crewLead)?.crewLead:null)||job.crewLead||(crew.length===1?crew[0]:null);
+    if(split&&crew.length<needed)codes.set('crew_size_short',true);
+    const blocking=[],check=[],seen=new Set(codes.keys());
+    for(const [code,blocks] of codes){
+      // A warning this card has no words for is still shown, never dropped.
+      const label=BLOCKING[code]||CHECK[code]||(IGNORED.has(code)?'':'Dispatch shows a warning for this job');
+      if(!label)continue;
+      const list=BLOCKING[code]||blocks?blocking:check;
+      if(!list.includes(label))list.push(label);
+    }
     // Readiness-only checks the Dispatch board does not warn about: a job going out with no truck, a crew of two or more
     // with no lead on the job record, and no gate or access notes for the crew.
     // Only when the company has a truck to assign: with no available vehicle on the board, "no truck" is never fixable.
     if(crew.length&&!truckIds.length&&board.vehicles.some(truck=>record(truck)&&truck.status==='available'))check.push('No truck assigned');
     if(crew.length>1&&!lead&&!seen.has('missing_crew_lead'))check.push('No crew lead chosen');
     if(!String(job.accessInstructions||'').trim())check.push('No access or gate notes');
-    const needed=Number(job.crewNeeded)||1;
-    return {id:String(job.id),time:String(job.time||''),customer:firstName(job.customer),service:String(job.serviceType||job.title||'Job'),crew:crew.map(id=>people.get(String(id))||String(id)),needed,
-      lead:lead?people.get(String(lead))||String(lead):'',trucks:truckIds.map(id=>trucks.get(String(id))||'Unknown truck'),blocking,check,state:blocking.length?'blocked':check.length?'check':'ready'};
-  }).sort((a,b)=>a.time.localeCompare(b.time)||a.id.localeCompare(b.id));
+    rows.push({id:String(job.id),time:String(job.time||''),customer:firstName(job.customer),service:String(job.serviceType||job.title||'Job'),crew:crew.map(id=>people.get(String(id))||String(id)),needed,
+      lead:lead?people.get(String(lead))||String(lead):'',trucks:truckIds.map(id=>trucks.get(String(id))||'Unknown truck'),blocking,check,state:blocking.length?'blocked':check.length?'check':'ready'});
+  }
+  rows.sort((a,b)=>a.time.localeCompare(b.time)||a.id.localeCompare(b.id));
   return {date,jobs:rows,ready:rows.filter(row=>row.state==='ready').length,blocked:rows.filter(row=>row.state==='blocked').length,check:rows.filter(row=>row.state==='check').length};
 }
 
@@ -105,10 +123,13 @@ async function load(force=false){
   }catch(error){if(generation===S.generation)show(failure(error));}
   finally{clearTimeout(timer);}
 }
-function mount(host,ctx={}){if(!host)return;if(S.host===host&&S.root?.isConnected&&S.date===addDays(denverDate(now()),1))return;unmount();S.host=host;S.ctx=record(ctx)?ctx:{};return load();}
-function unmount(){S.generation++;S.controller?.abort();S.controller=null;S.root?.remove();S.root=null;S.host=null;S.ctx={};}
+// A card left open past Denver midnight moves on to the new tomorrow: the Hub can keep the card across re-renders without
+// mounting it again, so a minute check re-keys it.
+function rollover(){if(S.host&&S.date&&S.date!==addDays(denverDate(now()),1))void load();}
+function mount(host,ctx={}){if(!host)return;if(S.host===host&&S.root?.isConnected&&S.date===addDays(denverDate(now()),1))return;unmount();S.host=host;S.ctx=record(ctx)?ctx:{};S.clock=setInterval(rollover,60000);return load();}
+function unmount(){S.generation++;S.controller?.abort();S.controller=null;clearInterval(S.clock);S.clock=null;S.root?.remove();S.root=null;S.host=null;S.ctx={};S.date='';}
 // The Hub's Refresh reads the board again; a render after Denver midnight moves the card on to the new tomorrow.
 function refresh(){return S.host?load(true):undefined;}
 window.addEventListener('egc:signout',()=>{CACHE.clear();unmount();});
-window.EGCReadiness={mount,unmount,refresh,readinessReport};
+window.EGCReadiness={mount,unmount,refresh,readinessReport,rollover};
 })();

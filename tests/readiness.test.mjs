@@ -63,7 +63,7 @@ test('a malformed board is unverified, never "all ready"', () => {
 });
 
 test('every board warning the widget reads is one Dispatch really raises', () => {
-  const source = read('employee-readiness.js'), service = read('functions/_lib/dispatch-service.js') + read('functions/_lib/dispatch-rules.js');
+  const source = read('employee-readiness.js'), service = read('functions/_lib/dispatch-service.js') + read('functions/_lib/dispatch-rules.js') + read('functions/_lib/dispatch-readiness.js');
   const codes = [...source.matchAll(/(?:^|[{,])([a-z_]+):'[A-Z][^']+'/gm)].map(match => match[1]).filter(code => code.includes('_') || ['unassigned'].includes(code));
   assert.ok(codes.length >= 12, codes.join(','));
   for (const code of codes) assert.match(service, new RegExp(`'${code}'`), code);
@@ -72,5 +72,37 @@ test('every board warning the widget reads is one Dispatch really raises', () =>
 test('the widget is registered for the business homes and loads its own files', () => {
   const registry = read('employee-hub-screens.js');
   assert.match(registry, /\{id:'crew_readiness',label:'Tomorrow readiness',homes:\['today','my_day'\],capability:'business',module:'EGCReadiness',load:\{js:'employee-readiness\.js',css:'employee-readiness\.css',v:'20261021ready1'\}\}/);
-  assert.doesNotMatch(read('employee-readiness.js'), /phone|price|amount|deposit|total/i, 'no customer contact or money is read or shown');
+  // The office-side money warning codes are matched by name only (their label is "Office follow-up needed before the
+  // job"); no other contact or money word appears.
+  assert.doesNotMatch(read('employee-readiness.js').replace(/\b(no_price|deposit_unpaid):/g, ''), /phone|price|amount|deposit|total/i, 'no customer contact or money is read or shown');
+  assert.doesNotMatch(read('employee-readiness.js'), /depositDueCents|moneyReady|Cents/, 'no money field is read');
+});
+
+// Review findings on #182, second round.
+test('a code blocks when any of its warnings blocks, in whatever order they arrive', () => {
+  for (const warnings of [[{ jobId: 'x', code: 'travel_buffer_short' }, { jobId: 'x', code: 'travel_buffer_short', blocking: true }], [{ jobId: 'x', code: 'travel_buffer_short', blocking: true }, { jobId: 'x', code: 'travel_buffer_short' }]]) {
+    const row = plain(widget().readinessReport(board([job('x')], warnings), DATE)).jobs[0];
+    assert.deepEqual([row.state, row.blocking, row.check], ['blocked', ['Tight drive between jobs'], []], JSON.stringify(warnings));
+  }
+});
+
+test('a split job keeps only tomorrow\'s segment warnings, counts tomorrow\'s crew itself, and is skipped with no part tomorrow', () => {
+  const segments = [{ id: 'thu', date: DATE, assignedCrew: ['crew.one'], crewLead: 'crew.one', vehicleId: 'truck-1' }, { id: 'fri', date: '2026-10-23', assignedCrew: ['crew.two'], crewLead: 'crew.two', vehicleId: 'truck-1' }];
+  const split = job('split', { endDate: '2026-10-23', assignedCrew: ['crew.one', 'crew.two'], crewNeeded: 1, assignmentSegments: segments });
+  const warnings = [{ jobId: 'split', code: 'employee_unavailable', segmentId: 'fri', employeeId: 'crew.two' }, { jobId: 'split', code: 'employee_daily_capacity', date: '2026-10-23' }, { jobId: 'split', code: 'missing_scope' }];
+  const row = plain(widget().readinessReport(board([split], warnings), DATE)).jobs[0];
+  assert.deepEqual([row.state, row.blocking, row.check, row.crew], ['check', [], ['No work scope for the crew'], ['Crew One']], 'Friday\'s day off does not block Thursday');
+  // Two needed but one on tomorrow's part: short, whatever Dispatch counted across both days.
+  const short = plain(widget().readinessReport(board([{ ...split, crewNeeded: 2 }], [{ jobId: 'split', code: 'crew_size_short', blocking: false }]), DATE)).jobs[0];
+  assert.deepEqual([short.state, short.blocking], ['blocked', ['Fewer crew than needed']]);
+  const enough = plain(widget().readinessReport(board([{ ...split, crewNeeded: 1 }], [{ jobId: 'split', code: 'crew_size_short' }]), DATE)).jobs[0];
+  assert.deepEqual(enough.blocking, [], 'Dispatch\'s whole-job crew count is not tomorrow\'s');
+  const notTomorrow = job('gap', { date: '2026-10-21', endDate: '2026-10-23', assignmentSegments: [{ id: 'a', date: '2026-10-21', assignedCrew: ['crew.one'] }, { id: 'b', date: '2026-10-23', assignedCrew: ['crew.one'] }] });
+  assert.deepEqual(plain(widget().readinessReport(board([notTomorrow]), DATE)).jobs, [], 'nobody works it tomorrow');
+});
+
+test('price and deposit warnings say the office has a follow-up, with no figure', () => {
+  const row = plain(widget().readinessReport(board([job('x')], [{ jobId: 'x', code: 'no_price' }, { jobId: 'x', code: 'deposit_unpaid', depositDueCents: 12345 }]), DATE)).jobs[0];
+  assert.deepEqual([row.state, row.check], ['check', ['Office follow-up needed before the job']]);
+  assert.doesNotMatch(JSON.stringify(row), /123|\$/);
 });
