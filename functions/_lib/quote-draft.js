@@ -43,7 +43,7 @@ import { prepareWalkthroughCaptureSync, walkthroughCaptureSyncView } from './wal
  * kept) and asks `checkouts` to expire an open portal checkout for the old terms.
  * With EGC_QUOTE_BUILDER_ENABLED a draft may instead carry composite_pricing (the guided builder: removal, then
  * shelving, then extra storage, then, for a quote with garage work, the Labor line of man-hours x the owner's labor
- * rate; a junk-only quote has none: $750 per truck; composite-quote.js): the server re-prices it, labor included, from
+ * rate; a junk-only quote has none: $1,000 per truck; composite-quote.js): the server re-prices it, labor included, from
  * the selection and its own rate, saves its lines (the Labor line reads "Labor" and its amount for the customer) and
  * the cost-free section breakdown (quoteDraft.breakdown), and refuses a send preview or send while any of its prices is
  * a draft the owner has not approved, its labor rate is no longer the owner's, it has garage work and no Labor line, its
@@ -486,7 +486,7 @@ function sendable(job, now, env) {
 // A builder quote is sent only when every price on it is owner-approved now (approved after the save counts).
 // While the builder is on, a walkthrough quote priced outside it (the walkthrough's own itemized lines, priced from
 // the same tables the builder holds as owner-unapproved drafts) is kept but never sent: it is rebuilt in the
-// builder first. Catalog quotes keep their own catalog approval. D-JUNK: a junk-only builder quote ($750 per truck,
+// builder first. Catalog quotes keep their own catalog approval. D-JUNK: a junk-only builder quote ($1,000 per truck,
 // no Labor line) is never sent on a walkthrough whose saved capture records garage work (junkOnlyGarageWork), as the
 // homeowner never signs one on it (walkthrough-handoff.js): it stays saved until the work is added or the walkthrough
 // corrected and the quote saved again.
@@ -497,7 +497,7 @@ async function compositeSendable(job, env, compositeState) {
     return;
   }
   const work = junkOnlyGarageWork(job);
-  if (work.length) throw fail('junk_only_garage_work', `This junk-only quote prices the hauling only ($750 per truck covers the crew's time; it has no Labor line), but the walkthrough records garage work: ${work.join(', ')}. It stays saved as a draft and was not sent. Edit the quote and add that work (a garage cleaning base for the sorting and reset, cleaning, shelving or storage), then save and send it; or, if the homeowner wants junk removal only, change the walkthrough to Everything goes or Customer labels before arrival, remove those finish options and save the quote again.`, 409, { garageWork: work });
+  if (work.length) throw fail('junk_only_garage_work', `This junk-only quote prices the hauling only (the truck price covers the crew's time; it has no Labor line), but the walkthrough records garage work: ${work.join(', ')}. It stays saved as a draft and was not sent. Edit the quote and add that work (a garage cleaning base for the sorting and reset, cleaning, shelving or storage), then save and send it; or, if the homeowner wants junk removal only, change the walkthrough to Everything goes or Customer labels before arrival, remove those finish options and save the quote again.`, 409, { garageWork: work });
   const approval = compositeApproval(job.quoteDraft.breakdown, await compositeState(env));
   if (!approval.ready) throw approvalRefusal(approval);
 }

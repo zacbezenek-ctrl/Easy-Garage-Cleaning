@@ -291,7 +291,7 @@ test('with the quote builder on, a junk-only quote is not signed on a walkthroug
   const sorted = page({ sortMethod: 'zones', finish: ['cleanout', 'shelving'], shelfQty: 3, hazards: ['Pest waste'] }), blocked = sorted.reviewScreen();
   assert.deepEqual(Array.from(sorted.walkthroughGarageWork()), ['sorting into keep / donate / haul zones and resetting what stays', '3 shelving units', 'pest-waste cleanup']);
   assert.equal(sorted.builderSignGate(), 'garage');
-  assert.match(blocked, /data-gate="garage"><button type="button" id="build-quote" onclick="sendOptionsForReview\(this\)">Edit the quote<\/button><p role="status">This junk-only quote prices the hauling only: \$750 per truck covers the crew’s time and it has no Labor line\. The walkthrough records garage work it does not price: sorting into keep \/ donate \/ haul zones and resetting what stays, 3 shelving units, pest-waste cleanup\./);
+  assert.match(blocked, /data-gate="garage"><button type="button" id="build-quote" onclick="sendOptionsForReview\(this\)">Edit the quote<\/button><p role="status">This junk-only quote prices the hauling only: the truck price covers the crew’s time and it has no Labor line\. The walkthrough records garage work it does not price: sorting into keep \/ donate \/ haul zones and resetting what stays, 3 shelving units, pest-waste cleanup\./);
   assert.doesNotMatch(blocked, /id="approved"|id="signature"|id="deposit-summary"/);
   assert.match(blocked, /disabled>Save brief \+ schedule/);
   assert.ok(Array.from(sorted.readyToSend()).includes('a quote that prices the garage work the walkthrough records (Edit the quote)'));

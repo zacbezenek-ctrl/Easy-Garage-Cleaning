@@ -246,7 +246,7 @@ class CrewHomeWalkthroughBrowserTests(unittest.TestCase):
         page.goto(self.url + '/crew/menu')
         expect(main).to_contain_text('Labor · $53.00 per man-hour')
         row = main.locator('li[data-item="egc-026"]')
-        expect(row).to_contain_text('$750.00'); expect(row).to_contain_text('Approved')
+        expect(row).to_contain_text('$1,000.00'); expect(row).to_contain_text('Approved')
         expect(main.locator('li[data-item="hd-100006678"]')).to_contain_text('$115.70per packDraft price')
         self.assertNotIn('homedepot', page.content())
         self.fits()

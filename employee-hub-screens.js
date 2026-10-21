@@ -25,12 +25,12 @@ const MANIFEST=[
 {id:'my_commission',group:'MY EGC',label:'My commission',iconPath:'M12 3v18M17 7.5c0-1.9-2.2-3-5-3s-5 1.1-5 3 2.2 2.8 5 3.5 5 1.6 5 3.5-2.2 3-5 3-5-1.1-5-3',crewVisible:true,load:{js:'employee-estimator-commission.js',css:'employee-estimator-commission.css',v:'20261018commfix'},module:'EGCEstimatorCommission'},
 {id:'followup_settings',group:'SYSTEM',label:'Follow-up owner',iconPath:'M12 3a4 4 0 1 1 0 8 4 4 0 0 1 0-8zM4 21a8 8 0 0 1 16 0',capability:'owner',load:{js:'employee-followup-settings.js',css:'employee-followup-settings.css',v:'20260928followup'},module:'EGCFollowupSettings'},
 {id:'ad_spend',group:'GROW THE ENGINE',label:'Ad spend',iconPath:'M3 10v4h4l5 4V6l-5 4zM16 9a4 4 0 0 1 0 6M19 6a8 8 0 0 1 0 12',capability:'owner',load:{js:'employee-ad-spend.js',css:'employee-ad-spend.css',v:'20260928adspend'},module:'EGCAdSpend'},
-{id:'catalog',group:'SYSTEM',label:'Catalog & pricing',iconPath:'M4 4h7l9 9-7 7-9-9zM8 8h.01',capability:'owner',load:{js:'employee-catalog.js',css:'employee-catalog.css',v:'20261021portalmerge'},module:'EGCCatalog'},
+{id:'catalog',group:'SYSTEM',label:'Catalog & pricing',iconPath:'M4 4h7l9 9-7 7-9-9zM8 8h.01',capability:'owner',load:{js:'employee-catalog.js',css:'employee-catalog.css',v:'20261021field3'},module:'EGCCatalog'},
 {id:'dispatch_rules',group:'RUN THE BUSINESS',label:'Dispatch rules',iconPath:'M4 6h11M4 12h7M4 18h5M14 15l2.5 2.5L21 13',capability:'owner',load:{js:'employee-dispatch-settings.js',css:'employee-dispatch-settings.css',v:'20260929rules4'},module:'EGCDispatchSettings'},
 {id:'job_actuals',group:'RUN THE BUSINESS',label:'Job actuals',iconPath:'M4 20V10M10 20V4M16 20v-7M22 20H2',capability:'business',load:{js:'employee-job-actuals.js',css:'employee-job-actuals.css',v:'20261021ownerecon2'},module:'EGCJobActuals'},
 {id:'open_quotes',group:'RUN THE BUSINESS',label:'Open quotes',iconPath:'M6 3h9l3 3v15H6zM9 10h6M9 14h4M16 17l2 2 3-4',capability:'business',load:{js:'employee-open-quotes.js',css:'employee-open-quotes.css',v:'20261021openquotes2'},module:'EGCOpenQuotes'},
 {id:'reviews',group:'RUN THE BUSINESS',label:'Review queues',iconPath:'M9 3h6v3H9zM6 5h3v1h6V5h3v16H6zM9 13l2 2 4-4',capability:'business',load:{js:'employee-reviews.js',css:'employee-reviews.css',v:'20260930launchpolish'},module:'EGCReviews'},
-{id:'message_templates',group:'SYSTEM',label:'Message templates',iconPath:'M4 5h16v11H9l-5 4z',capability:'business',load:{js:'message-templates.js',css:'message-templates.css',v:'20261021links'},module:'EGCMessageTemplates'},
+{id:'message_templates',group:'SYSTEM',label:'Message templates',iconPath:'M4 5h16v11H9l-5 4z',capability:'business',load:{js:'message-templates.js',css:'message-templates.css',v:'20260928crew'},module:'EGCMessageTemplates'},
 {id:'stocked_costs',group:'SYSTEM',label:'Stocked item costs',capability:'business',iconPath:'M4 7l8-4 8 4v10l-8 4-8-4zM4 7l8 4 8-4M12 11v10',load:{js:'employee-standard-costs.js',css:'employee-standard-costs.css',v:'20260928fun19'},module:'EGCStandardCosts'},
 {id:'staff',group:'RUN THE BUSINESS',label:'Staff directory',iconPath:'M9 11a3.5 3.5 0 1 0 0-7 3.5 3.5 0 0 0 0 7zM2 20c0-3.5 3-6 7-6s7 2.5 7 6M16 4.5a3.5 3.5 0 0 1 0 6.5M18 14c2.5.6 4 2.8 4 6',capability:'business',load:{js:'employee-staff.js',css:'employee-staff.css',v:'20261021roles'},module:'EGCStaff'},
 {id:'invoicing',group:'CLIENT WORK',label:'Invoicing',iconPath:'M6 3h9l3 3v15H6z M9 9h6 M9 13h6 M9 17h4',capability:'business',load:{js:'employee-money.js',css:'employee-money.css',v:'20260929invoicingr3'},module:'EGCMoney'},
@@ -48,6 +48,8 @@ const HOME_WIDGETS=[
   {id:'overdue_followups',label:'Overdue follow-ups',homes:['today','my_day'],capability:'business',module:'EGCFollowupsHome'},
   // READINESS: tomorrow's jobs and what still stops each from rolling out ready (crew, lead, truck, time off, access notes).
   {id:'crew_readiness',label:'Tomorrow readiness',homes:['today','my_day'],capability:'business',module:'EGCReadiness',load:{js:'employee-readiness.js',css:'employee-readiness.css',v:'20261021ready1'}},
+  // Signed jobs held for the owner's prices: opening the Command center releases those a new pricing menu approves (POST /api/held-jobs).
+  {id:'held_jobs',label:'Booked jobs waiting for prices',homes:['today'],capability:'business',module:'EGCHeldJobsHome',load:{js:'employee-held-jobs.js',v:'20261021held1'}},
 ];
 const HOMES=new Set(['today','my_day']);
 const ID=/^[a-z][a-z0-9_]{1,47}$/,CAPABILITY=/^[a-z][a-z0-9_]{1,40}$/,MODULE=/^EGC[A-Za-z0-9]{1,40}$/,VERSION=/^[A-Za-z0-9._-]{1,40}$/,ICON=/^[MmLlHhVvCcSsQqTtAaZz0-9 .,-]{1,800}$/;
