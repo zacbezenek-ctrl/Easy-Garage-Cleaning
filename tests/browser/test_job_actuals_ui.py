@@ -4,7 +4,8 @@ figure on screen is the server's arithmetic: billed versus actual man-hours, loa
 channel and the margin, which reads "upper bound" until the owner fills every cost setting and is absent without a wage.
 Pay figures are synthetic ($10.00 per man-hour, 1% workers' comp), never a real wage. Also: the owner saves
 settings in whole cents and basis points, a manager sees them read-only, the CSV export, and the phone layout (no
-sideways scroll, 44 px targets, 16 px inputs). Screenshots land in test-results/."""
+sideways scroll, 44 px targets, 16 px inputs), and the owner-only Owner targets card (the REAL /api/owner-economics):
+synthetic targets, the Cost settings crew wage shown once, Retry/Discard and a conflict. Screenshots land in test-results/."""
 import csv, io, json, os, pathlib, re, subprocess, unittest, urllib.request
 from playwright.sync_api import sync_playwright, expect
 
@@ -201,6 +202,122 @@ class JobActualsScreenTests(unittest.TestCase):
         body = sent.value.post_data_json
         self.assertEqual((body['settings']['truckCentsPerJob'], body['settings']['dumpFeeCentsPerLoad']), (4000, 7000), 'the edit is kept and the other save is not undone')
         expect(page.get_by_role('status').filter(has_text='Cost settings saved')).to_be_visible()
+        self.assert_layout(page, phone=True)
+
+    def test_the_owner_enters_targets_beside_the_cost_settings_with_the_crew_wage_shown_once(self):
+        # Synthetic figures only ($12.00 lead wage, $50 to $75 truck rental, a $1,000 ticket, 40% and 60%), never real targets.
+        page = self.open(390, 844, mobile=True)
+        owner = page.get_by_role('region', name='Owner targets')
+        expect(owner).to_contain_text('Crew wage per hour')
+        expect(owner.locator('.ja-setting').first).to_contain_text('$10.00')
+        expect(owner.locator('input')).to_have_count(7)
+        save = owner.get_by_role('button', name='Save owner targets')
+        expect(save).to_be_disabled()
+        owner.get_by_label('Lead wage per hour (dollars)').fill('12')
+        owner.get_by_label('Truck rental per job, low (dollars)').fill('50')
+        owner.get_by_label('Truck rental per job, high (dollars)').fill('75')
+        owner.get_by_label('Average ticket target (dollars)').fill('1,000')
+        owner.get_by_label('Walkthrough set rate target (percent)').fill('140')
+        expect(owner.get_by_label('Walkthrough set rate target (percent)')).to_have_attribute('aria-invalid', 'true'); expect(save).to_be_disabled()
+        owner.get_by_label('Walkthrough set rate target (percent)').fill('40')
+        owner.get_by_label('Qualified close rate target (percent)').fill('60%')
+        with page.expect_request(lambda request: request.method == 'POST') as sent:
+            save.click()
+        body = sent.value.post_data_json
+        self.assertEqual(body['action'], 'owner_economics.settings.set'); self.assertIsNone(body['expectedRevision'])
+        self.assertEqual(body['settings'], {'laborCostCentsPerCrewHour': None, 'leadWageCentsPerHour': 1200, 'truckRentalLowCentsPerJob': 5000, 'truckRentalHighCentsPerJob': 7500,
+                                            'averageTicketTargetCents': 100000, 'walkthroughSetRateTargetBp': 4000, 'qualifiedCloseRateTargetBp': 6000}, 'a blank stays null, never $0')
+        expect(page.get_by_role('status').filter(has_text='Owner targets saved')).to_be_visible()
+        expect(owner.get_by_label('Average ticket target (dollars)')).to_have_value('1000.00')
+        expect(owner.get_by_label('Labor cost per crew-hour (dollars)')).to_have_value('')
+        # A crew wage saved on Cost settings shows on this card: one number, entered once.
+        page.get_by_role('region', name='Cost settings').get_by_label('Crew wage per man-hour (dollars)').fill('11')
+        page.get_by_role('region', name='Cost settings').get_by_role('button', name='Save cost settings').click()
+        expect(page.get_by_role('status').filter(has_text='Cost settings saved')).to_be_visible()
+        expect(page.get_by_role('region', name='Owner targets').locator('.ja-setting').first).to_contain_text('$11.00')
+        self.assert_layout(page, phone=True)
+        page.screenshot(path=str(RESULTS / 'job-actuals-390-owner-targets.png'), full_page=True)
+
+    def test_a_manager_never_sees_or_asks_for_the_owner_targets(self):
+        self.control(who='manager')
+        requests = []
+        self.context = self.browser.new_context(viewport={'width': 1280, 'height': 900})
+        page = self.context.new_page(); page.set_default_timeout(5000)
+        page.on('pageerror', lambda error: self.errors.append(str(error)))
+        page.on('request', lambda request: requests.append(request.url))
+        page.goto(self.url + '/')
+        expect(page.locator('tr[data-job]')).to_have_count(4)
+        expect(page.get_by_role('region', name='Cost settings')).to_contain_text('Only the owner can change them.')
+        expect(page.get_by_role('region', name='Owner targets')).to_have_count(0)
+        self.assertFalse(any('/api/owner-economics' in url for url in requests))
+
+    def test_an_unconfirmed_owner_targets_save_is_retried_unchanged_and_a_conflict_keeps_the_edit(self):
+        page = self.open(390, 844, mobile=True)
+        drops = {'left': 1}
+        def drop_post(route):
+            if route.request.method == 'POST' and drops['left']:
+                drops['left'] -= 1; route.abort('connectionreset'); return
+            route.continue_()
+        page.route('**/api/owner-economics', drop_post)
+        posts = []
+        page.on('request', lambda request: posts.append(request.post_data_json) if request.method == 'POST' else None)
+        owner = page.get_by_role('region', name='Owner targets')
+        owner.get_by_label('Lead wage per hour (dollars)').fill('12')
+        owner.get_by_role('button', name='Save owner targets').click()
+        expect(owner.get_by_text('A save was not confirmed')).to_be_visible()
+        expect(owner.get_by_label('Lead wage per hour (dollars)')).to_be_disabled()
+        # The Cost settings card keeps working: the two cards never share a pending save.
+        expect(page.get_by_role('region', name='Cost settings').get_by_text('A save was not confirmed')).to_have_count(0)
+        page.reload(); expect(page.get_by_role('heading', name='Job actuals')).to_be_visible()
+        owner = page.get_by_role('region', name='Owner targets')
+        expect(owner.get_by_label('Lead wage per hour (dollars)')).to_have_value('12.00')
+        owner.get_by_role('button', name='Retry original save').click()
+        expect(page.get_by_role('status').filter(has_text='Owner targets saved')).to_be_visible()
+        self.assertEqual(len(posts), 2); self.assertEqual(posts[0], posts[1], 'the retry repeats the original request exactly')
+        # Another session saves first: the edit is kept and the other save is not undone.
+        self.control(otherOwnerSave={'averageTicketTargetCents': 90000})
+        owner.get_by_label('Truck rental per job, high (dollars)').fill('75')
+        owner.get_by_role('button', name='Save owner targets').click()
+        expect(owner.get_by_role('alert').filter(has_text='changed elsewhere')).to_be_visible()
+        expect(owner.get_by_label('Truck rental per job, high (dollars)')).to_have_value('75')
+        expect(owner.get_by_label('Average ticket target (dollars)')).to_have_value('900.00')
+        with page.expect_request(lambda request: request.method == 'POST') as sent:
+            owner.get_by_role('button', name='Save owner targets').click()
+        body = sent.value.post_data_json
+        self.assertEqual((body['settings']['truckRentalHighCentsPerJob'], body['settings']['averageTicketTargetCents'], body['settings']['leadWageCentsPerHour']), (7500, 90000, 1200))
+        expect(page.get_by_role('status').filter(has_text='Owner targets saved')).to_be_visible()
+        self.assert_layout(page, phone=True)
+
+    def test_an_inverted_truck_range_is_marked_and_a_failed_reload_after_a_save_is_said_and_keeps_the_saved_values(self):
+        page = self.open(390, 844, mobile=True)
+        owner = page.get_by_role('region', name='Owner targets')
+        save = owner.get_by_role('button', name='Save owner targets')
+        low, high = owner.get_by_label('Truck rental per job, low (dollars)'), owner.get_by_label('Truck rental per job, high (dollars)')
+        low.fill('80'); high.fill('75')
+        expect(low).to_have_attribute('aria-invalid', 'true'); expect(high).to_have_attribute('aria-invalid', 'true'); expect(save).to_be_disabled()
+        low.fill('50')
+        expect(low).to_have_attribute('aria-invalid', 'false'); expect(high).to_have_attribute('aria-invalid', 'false'); expect(save).to_be_enabled()
+        # The save lands, then every reload of the card fails: the saved values stay and the card says they may be stale.
+        fail = {'on': False}
+        def reads(route):
+            if route.request.method == 'GET' and fail['on']: route.fulfill(status=503, content_type='application/json', body=json.dumps({'ok': False, 'code': 'owner_economics_unavailable', 'error': 'Synthetic outage'})); return
+            if route.request.method == 'POST': fail['on'] = True
+            route.continue_()
+        page.route('**/api/owner-economics', reads)
+        owner.get_by_label('Lead wage per hour (dollars)').fill('12')
+        save.click()
+        expect(owner.get_by_role('alert').filter(has_text='could not be reloaded')).to_be_visible()
+        expect(owner.get_by_label('Lead wage per hour (dollars)')).to_have_value('12.00')
+        expect(low).to_have_value('50.00')
+        # The next save still carries the stored revision, so it is saved rather than refused as stale.
+        fail['on'] = False
+        page.unroute('**/api/owner-economics')
+        owner.get_by_label('Average ticket target (dollars)').fill('1000')
+        with page.expect_response(lambda response: response.request.method == 'POST' and '/api/owner-economics' in response.url) as answer:
+            owner.get_by_role('button', name='Save owner targets').click()
+        self.assertEqual(answer.value.status, 200)
+        expect(page.get_by_role('status').filter(has_text='Owner targets saved')).to_be_visible()
+        expect(owner.get_by_role('alert').filter(has_text='could not be reloaded')).to_have_count(0)
         self.assert_layout(page, phone=True)
 
     def test_csv_export_has_a_row_per_job_with_plain_numbers(self):
