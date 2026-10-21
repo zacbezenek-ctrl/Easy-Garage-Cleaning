@@ -128,3 +128,5 @@ input,select,textarea{font-size:16px!important}
     max-inline-size:calc(100vw - var(--egc-safe-left) - var(--egc-safe-right) - 24px);
   }
 }
+/* FIELD-FLAGS: today's late / not en route / not clocked in chips on the Field agenda. */
+.ops-field-flags{display:flex;flex-wrap:wrap;gap:6px;list-style:none;margin:8px 0 0;padding:0}.ops-field-flags li{border-radius:99px;padding:4px 9px;font-size:12px;font-weight:800;line-height:1.3;overflow-wrap:anywhere}.ops-field-flags li.red{background:#fae7e8;color:#9f1d26;border:1px solid #efb5b8}.ops-field-flags li.amber{background:#fdf1dc;color:#7a4a00;border:1px solid #f0cf91}
