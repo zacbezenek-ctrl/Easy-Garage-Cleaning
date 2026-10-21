@@ -77,9 +77,14 @@ In a Claude Code container, Chromium is at `/opt/pw-browsers`; follow "Container
 
 **Cache keys (`?v=`).** Crew and Hub assets are cached by URL: `crew/sw.js` and `hub-sw.js` keep device copies of the
 versioned files, and `styles.css`, `site-forms.js` and `booking-slots.js` are served `immutable` (`_headers`).
-When you change a versioned file, bump its `?v=` in **every** place that references it: the HTML (`crew/*.html`,
-`employee.html`), the `ASSETS` list in `crew/sw.js` (and its `VERSION` when the shell changes), and the tests that
-pin the key (`tests/crew-service-worker.test.mjs`, `tests/hub-pwa.test.mjs`, and others; grep for the old key).
+When you change a versioned crew file (`crew/**`) or one of the `immutable` files, bump its `?v=` in **every** place
+that references it: the HTML pages, the `ASSETS` list in `crew/sw.js` (and its `VERSION` when the shell changes),
+and the tests that pin the key (`tests/crew-service-worker.test.mjs` and others; grep for the old key).
+**Hub files are the exception: never bump them.** The `?v=` keys on `/employee-*.js|css` in `employee.html` and the
+`v:` values in the `employee-hub-screens.js` registry stay as they are. `/employee*` is served `no-store` and
+`hub-sw.js` asks the network first with the saved copy's ETag, so a changed Hub file is never served stale
+(`tests/hub-pwa.test.mjs`), and bumps there only made parallel PRs conflict. The one cost is a stalled connection,
+where a device may run one older Hub file until the next load.
 A `styles.css` change follows the steps in `docs/testing.md` (`STYLES_RELEASE` in `tests/public-audit-fixes.test.mjs`).
 
 **Launch defaults (`functions/_lib/launch-defaults.js`).** Features are behind env switches compared to exactly
@@ -188,8 +193,9 @@ Flag:
   `quote-payment-policy.js`; a Labor line on a junk-only quote, or a missing one on garage work; man-hours or the
   rate shown to a customer; an unapproved draft price that can be sent; commission shares that stack or change;
   a price or labor rate taken from the browser; a new HighLevel write or customer send that is unflagged or unregistered.
-- **Broken conventions that fail later**: a changed versioned asset without a `?v=` bump, a hand-edited generated file,
-  a new env read missing from `.env.example`, or a skipped, disabled or weakened test.
+- **Broken conventions that fail later**: a changed crew or `immutable` asset without a `?v=` bump (never a Hub
+  `/employee-*` file), a hand-edited generated file, a new env read missing from `.env.example`, or a skipped,
+  disabled or weakened test.
 
 For each finding, name the file and line, the input or path that triggers it, and what goes wrong. If you cannot
 trace a realistic path, don't post it.

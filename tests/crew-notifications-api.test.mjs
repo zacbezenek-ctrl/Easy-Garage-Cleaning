@@ -5,6 +5,7 @@ import { crewNotificationHandlers } from '../functions/api/crew-notifications.js
 import { CREW_NOTIFICATIONS, CREW_NOTIFICATION_PREFS, crewNotificationWrites } from '../functions/_lib/crew-notifications.js';
 import { FEED_LIMIT } from '../functions/_lib/crew-notification-delivery.js';
 import { memoryStore } from './helpers/messaging-fixture.mjs';
+import { withoutRandomValues } from './helpers/leak-text.mjs';
 
 const NOW = '2026-09-22T18:00:00.000Z', DAY = '2026-09-24', ORIGIN = 'https://easygaragecleaning.com', URL_PATH = `${ORIGIN}/api/crew-notifications`;
 const ENV = Object.freeze({ EGC_CREW_NOTIFICATIONS_ENABLED: 'true' });
@@ -75,7 +76,7 @@ test('each employee reads only their own open notices, newest first, with schedu
     assert.deepEqual([body.notices[0].intent, body.notices[0].slot.time, body.notices[0].previousSlots[0].time, body.notices[0].delivery], ['time_changed', '13:00', '09:00', 'queued']);
     assert.deepEqual([body.viewer, body.timeZone, body.coverage], [{ id: 'crew1' }, 'America/Denver', { complete: true, asOf: '2026-09-22T18:05:00.000Z' }]);
     assert.deepEqual(body.preferences, { sms: false, revision: '', updatedAt: '', phone: '(•••) •••-0155', phoneStatus: 'on_file' });
-    for (const value of ['Canary', '555-0199', '8765', 'dedupeKey', 'attempts', 'actorId', 'dispatchRequestId']) assert.ok(!JSON.stringify(body).includes(value), `no ${value} in the feed`);
+    for (const value of ['Canary', '555-0199', '8765', 'dedupeKey', 'attempts', 'actorId', 'dispatchRequestId']) assert.ok(!withoutRandomValues(JSON.stringify(body)).includes(value), `no ${value} in the feed`);
     if (!lyingQuery) assert.deepEqual(f.queries.at(-1), { filters: [['employeeId', 'crew1'], ['acknowledged', false]], limit: FEED_LIMIT + 1, collection: CREW_NOTIFICATIONS });
   }
 });
@@ -191,7 +192,7 @@ test('dispatchers see who can be texted and the notices that were not; crew cann
   assert.deepEqual(body.team.map(row => [row.id, row.sms, row.staffContactId]), [['crew1', true, 'staff-1'], ['crew2', false, ''], ['zacb', false, '']]);
   assert.deepEqual(body.attention.map(row => [row.id, row.employeeId, row.employeeName, row.status, row.reason, row.canRetry]).sort(), [[needs, 'crew1', 'Casey Crew', 'needs_contact', 'staff_contact_not_linked', true], [unsure, 'crew2', 'Riley Other', 'uncertain', 'no_provider_response', false]].sort());
   assert.equal(body.coverage.complete, true);
-  for (const value of ['Canary', '555-0199', '555-0155', '8765']) assert.ok(!JSON.stringify(body).includes(value), `no ${value} in the dispatcher view`);
+  for (const value of ['Canary', '555-0199', '555-0155', '8765']) assert.ok(!withoutRandomValues(JSON.stringify(body)).includes(value), `no ${value} in the dispatcher view`);
   assert.equal(f.queries.at(-1).attention, '2026-09-22', 'only notices for work still ahead');
   for (const query of ['?view=all', '?view=team&view=team', '?other=1']) assert.equal((await f.call('GET', undefined, {}, query)).status, 400, query);
 });

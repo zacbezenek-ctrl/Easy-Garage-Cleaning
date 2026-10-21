@@ -5,6 +5,7 @@ import vm from 'node:vm';
 import { createDocument, storage } from './helpers/hub-dom.mjs';
 import { walkthroughVisitHandlers } from '../functions/api/walkthrough-visit.js';
 import { walkthroughNotesHandlers } from '../functions/api/walkthrough-notes.js';
+import { WALKTHROUGH_NOTE_PARTS } from '../functions/_lib/walkthrough-notes.js';
 import { authorizeTimecard } from '../functions/_lib/employee-timecards.js';
 import { funnelReasonCodes } from '../functions/_lib/funnel-definitions.js';
 
@@ -644,16 +645,29 @@ test('walkthrough notes: the sync sends each part with its index, the finished w
   assert.ok(!R.ACCEPT.includes('aac'));
 });
 
-test('walkthrough notes: a part the website is still transcribing (a cut-off upload holds its claim for 5 minutes) is asked again until it lands, never parked as an error', async () => {
+test('walkthrough notes: a part the website is still transcribing (a cut-off upload holds its claim for 5 minutes) is asked again until it lands, never parked as an error', async t => {
   const { clock, store, recorder, heartbeat } = rig({ chunkBytes: 6000 }), walk = session(), server = visitServer({ now: clock.now, offlineClock: true });
   const ENV = { EGC_WALKTHROUGH_NOTES: 'true', openaiapi: 'sk-synthetic', HUB_SESSION_SECRET: 'synthetic-walkthrough-notes-session-secret-0123456789' };
   let n = 0;
   const rows = new Map([['jobs/w1', { id: 'w1', revision: 'w1r', type: 'walkthrough', customerId: 'c1', assignedCrew: ['sales.rep'], walkthroughVisit: { startedBy: 'sales.rep', startRequestId: '11111111-1111-4111-8111-111111111111', recordingStatus: 'recorded' }, walkthroughOutcome: { outcome: 'quote_to_follow', recordingStatus: 'recorded' } }]]);
   const notesStore = { env: ENV, read: async (c, k) => structuredClone(rows.get(`${c}/${k}`) || null), readMany: async (c, ks) => ks.map(k => rows.get(`${c}/${k}`)).filter(Boolean).map(r => structuredClone(r)), assigned: async (s, j) => (j.assignedCrew || []).includes(s.user), linkedJobs: async () => [],
     commit: async writes => { for (const w of writes) { const old = rows.get(`${w.collection}/${w.id}`); if (w.revision ? old?.revision !== w.revision : Boolean(old)) throw Object.assign(new Error('conflict'), { status: 409 }); } for (const w of writes) { const k = `${w.collection}/${w.id}`; if (w.remove) rows.delete(k); else rows.set(k, { ...rows.get(k), ...structuredClone(w.patch), id: w.id, revision: `r${++n}` }); } return {}; } };
-  // The first transcription never answers (the iPad was locked and the request cut off); later ones do.
-  let openaiCalls = 0;
-  const openai = async () => { openaiCalls += 1; return openaiCalls === 1 ? new Promise(() => {}) : Response.json({ text: 'Synthetic transcript.' }); };
+  // The cut-off upload's transcription never answers while the test runs (the iPad was locked and the request cut off);
+  // the retries' do. The iPad sees the cut-off only once that request holds its claim and has reached OpenAI: its claim
+  // waits on real WebCrypto work (the audio's SHA-256, the rate-limit HMACs) that settle()'s setImmediate rounds do not
+  // pace, so a retry sent on a fixed number of rounds could overtake it, take the claim, become the call that never
+  // answers, and leave sync.run() pending with nothing else keeping the event loop alive. Only a call made before any
+  // retry is sent is held, so nothing the test awaits can wait on it.
+  let openaiCalls = 0, sends = 0, cutOff = null, reached, release = () => {};
+  const claimed = new Promise(resolve => { reached = resolve; });
+  const openai = async () => {
+    openaiCalls += 1;
+    if (sends > 1) return Response.json({ text: 'Synthetic transcript.' });
+    reached();
+    return new Promise((resolve, reject) => { release = () => reject(new TypeError('The connection to OpenAI closed.')); });
+  };
+  // Nothing outlives the test: the held transcription is let go and the cut-off request's late reply awaited.
+  t.after(async () => { release(); await cutOff; });
   const handlers = walkthroughNotesHandlers({ session: async () => ({ user: 'sales.rep', role: 'sales' }), storage: () => notesStore, openai, now: () => new Date(clock.now()), random: bytes => bytes.fill(255) });
   const answers = [];
   class FakeXHR {
@@ -661,7 +675,7 @@ test('walkthrough notes: a part the website is still transcribing (a cut-off upl
     send(form) {
       const pending = handlers.post({ request: new Request(`https://easygaragecleaning.com${this.url}`, { method: 'POST', headers: { Origin: 'https://easygaragecleaning.com' }, body: form }), env: ENV });
       this.upload?.onload?.();
-      if (!answers.length) { answers.push('cut off'); setImmediate(() => this.onerror()); return; }
+      if (++sends === 1) { answers.push('cut off'); cutOff = pending; Promise.race([claimed, pending]).then(() => this.onerror()); return; }
       pending.then(async response => { this.status = response.status; this.responseText = await response.text(); answers.push(JSON.parse(this.responseText).error || 'ok'); this.onload(); });
     }
   }
@@ -685,6 +699,10 @@ test('walkthrough notes: a part the website is still transcribing (a cut-off upl
   assert.ok(answers.filter(answer => answer === 'recording_in_progress').length >= 5, 'more in-progress replies than the 5 server retries');
   assert.deepEqual([answers[0], answers.at(-1)], ['cut off', 'ok']);
   assert.equal(openaiCalls, 2, 'transcribed once more after the stale claim, not on every retry');
+  // The cut-off transcription fails at last: the part that landed stays transcribed, never parked as failed.
+  release();
+  assert.equal((await cutOff).status, 503);
+  assert.deepEqual([...rows].filter(([key]) => key.startsWith(`${WALKTHROUGH_NOTE_PARTS}/`)).map(([, row]) => row.status), ['done']);
 });
 
 test('the visit transport maps an expired Hub session to sign-in, a cut-off reply to a retry and a refusal to its code', async () => {
