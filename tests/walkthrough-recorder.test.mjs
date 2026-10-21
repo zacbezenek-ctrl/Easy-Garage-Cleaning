@@ -652,8 +652,11 @@ test('walkthrough notes: a part the website is still transcribing (a cut-off upl
   const notesStore = { env: ENV, read: async (c, k) => structuredClone(rows.get(`${c}/${k}`) || null), readMany: async (c, ks) => ks.map(k => rows.get(`${c}/${k}`)).filter(Boolean).map(r => structuredClone(r)), assigned: async (s, j) => (j.assignedCrew || []).includes(s.user), linkedJobs: async () => [],
     commit: async writes => { for (const w of writes) { const old = rows.get(`${w.collection}/${w.id}`); if (w.revision ? old?.revision !== w.revision : Boolean(old)) throw Object.assign(new Error('conflict'), { status: 409 }); } for (const w of writes) { const k = `${w.collection}/${w.id}`; if (w.remove) rows.delete(k); else rows.set(k, { ...rows.get(k), ...structuredClone(w.patch), id: w.id, revision: `r${++n}` }); } return {}; } };
   // The first transcription never answers (the iPad was locked and the request cut off); later ones do.
-  let openaiCalls = 0;
-  const openai = async () => { openaiCalls += 1; return openaiCalls === 1 ? new Promise(() => {}) : Response.json({ text: 'Synthetic transcript.' }); };
+  // The cut-off reply is only given once the first upload has reached transcription, so a retry can never get
+  // there first and be the call that never answers.
+  let openaiCalls = 0, firstReached;
+  const reached = new Promise(resolve => { firstReached = resolve; });
+  const openai = async () => { openaiCalls += 1; if (openaiCalls > 1) return Response.json({ text: 'Synthetic transcript.' }); firstReached(); return new Promise(() => {}); };
   const handlers = walkthroughNotesHandlers({ session: async () => ({ user: 'sales.rep', role: 'sales' }), storage: () => notesStore, openai, now: () => new Date(clock.now()), random: bytes => bytes.fill(255) });
   const answers = [];
   class FakeXHR {
@@ -661,7 +664,7 @@ test('walkthrough notes: a part the website is still transcribing (a cut-off upl
     send(form) {
       const pending = handlers.post({ request: new Request(`https://easygaragecleaning.com${this.url}`, { method: 'POST', headers: { Origin: 'https://easygaragecleaning.com' }, body: form }), env: ENV });
       this.upload?.onload?.();
-      if (!answers.length) { answers.push('cut off'); setImmediate(() => this.onerror()); return; }
+      if (!answers.length) { answers.push('cut off'); reached.then(() => setImmediate(() => this.onerror())); return; }
       pending.then(async response => { this.status = response.status; this.responseText = await response.text(); answers.push(JSON.parse(this.responseText).error || 'ok'); this.onload(); });
     }
   }
