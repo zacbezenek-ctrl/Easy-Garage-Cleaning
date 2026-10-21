@@ -79,6 +79,13 @@ class ReadinessWidgetTests(unittest.TestCase):
         expect(bare).to_contain_text('No truck assigned'); expect(bare).to_contain_text('No access or gate notes')
         expect(page.locator('[data-rd-job="walk"]')).to_have_count(0)
         expect(widget).not_to_contain_text('Johnson Family')
+        # Moving between homes remounts the card from the same Denver day's answer; Refresh reads the board again.
+        page.evaluate("EGCReadiness.unmount(); EGCReadiness.mount(document.querySelector('#host'), {now: () => new Date('%s')})" % NOW)
+        expect(page.locator('[data-rd-job]')).to_have_count(3)
+        self.assertEqual(len(self.asked), 1, 'a remount within a few minutes does not re-read the board')
+        page.get_by_role('button', name='Refresh').click()
+        expect(page.locator('[data-rd-job]')).to_have_count(3)
+        self.assertEqual(len(self.asked), 2)
         page.screenshot(path=str(RESULTS / 'readiness-1280.png'), full_page=True)
 
     def test_phone_layout_fits_and_a_failed_load_is_never_all_ready(self):

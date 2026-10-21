@@ -36,6 +36,23 @@ test('board warnings block or flag a job, and the readiness-only checks catch no
   assert.deepEqual([report.ready, report.blocked, report.check], [0, 3, 1]);
 });
 
+test('review fixes: a blocking Dispatch rule blocks, any unknown warning still shows, and "no truck" needs a truck to give', () => {
+  const jobs = [job('rule', { time: '08:00' }), job('hours', { time: '09:00' }), job('odd', { time: '10:00' }), job('office', { time: '11:00' }), job('notruck', { vehicleId: '', time: '12:00' })];
+  const warnings = [{ jobId: 'rule', code: 'skill_missing', blocking: true }, { jobId: 'hours', code: 'outside_working_hours' }, { jobId: 'odd', code: 'brand_new_rule' }, { jobId: 'office', code: 'provider_sync_pending' }];
+  const by = Object.fromEntries(plain(widget().readinessReport(board(jobs, warnings), DATE)).jobs.map(row => [row.id, row]));
+  assert.deepEqual([by.rule.state, by.rule.blocking], ['blocked', ['Crew is missing a needed skill']], 'blocking:true blocks whatever the code');
+  assert.deepEqual([by.hours.state, by.hours.check], ['check', ['Outside someone\'s working hours']]);
+  assert.deepEqual([by.odd.state, by.odd.check], ['check', ['Dispatch shows a warning for this job']], 'an unknown warning is never dropped');
+  assert.equal(by.office.state, 'ready', 'an office-only HighLevel sync note does not hold the crew');
+  assert.deepEqual(by.notruck.check, ['No truck assigned']);
+  const noFleet = plain(widget().readinessReport({ ...board([job('x', { vehicleId: '' })]), vehicles: [{ id: 'truck-1', name: 'Truck A', status: 'out_of_service' }] }, DATE)).jobs[0];
+  assert.deepEqual([noFleet.state, noFleet.check], ['ready', []], 'with no available truck on the board, a job can still be ready');
+  // A split job is judged by tomorrow's segment only.
+  const split = job('split', { date: '2026-10-21', endDate: DATE, assignedCrew: [], assignmentSegments: [{ date: '2026-10-21', assignedCrew: ['crew.one'], vehicleId: '' }, { date: DATE, assignedCrew: ['crew.one', 'crew.two'], crewLead: 'crew.two', vehicleId: 'truck-1' }] });
+  const row = plain(widget().readinessReport(board([split]), DATE)).jobs[0];
+  assert.deepEqual([row.crew, row.lead, row.trucks, row.state], [['Crew One', 'Crew Two'], 'Crew Two', ['Truck A'], 'ready']);
+});
+
 test('only tomorrow\'s open customer jobs count: walkthroughs, blocks, done or cancelled work and other days are left out', () => {
   const jobs = [job('walk', { type: 'walkthrough' }), job('block', { type: 'blocked' }), job('done', { status: 'completed' }), job('cancelled', { status: 'cancelled' }), job('later', { date: '2026-10-23' }), job('multi', { date: '2026-10-21', endDate: DATE })];
   assert.deepEqual(plain(widget().readinessReport(board(jobs), DATE)).jobs.map(row => row.id), ['multi'], 'a multi-day job still on site tomorrow counts');
