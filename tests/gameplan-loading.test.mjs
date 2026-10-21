@@ -228,6 +228,13 @@ test('a second Knock door never opens with the first door\'s address: an untouch
   assert.doesNotMatch(second.element('screen').innerHTML, /knock-door/, 'nothing to ask');
   assert.deepEqual(second.state.replaced, ['/crew/gameplan']);
 
+  // A product added on Finish and taken off again (the catalog keeps an empty pick list) is nothing typed: door B starts
+  // (integration review, 2026-10-21).
+  const emptied = harness({ requestedId: '', search: door(B, 'house-9'), manualDraft: { ...left, S: { ...left.S, builderGoods: { shelving: [], storage: [], by: 'finish' } } } });
+  await emptied.context.openApp();
+  assert.deepEqual([emptied.context.S.address, emptied.context.S.knockHouseId], [B, 'house-9']);
+  assert.doesNotMatch(emptied.element('screen').innerHTML, /knock-door/, 'an emptied pick list asks nothing');
+
   // The same door again keeps its walkthrough as it is.
   const again = harness({ requestedId: '', search: door(A, 'house-7'), manualDraft: { ...left, S: { ...left.S, garageSize: '3' } } });
   await again.context.openApp();
@@ -237,6 +244,7 @@ test('a second Knock door never opens with the first door\'s address: an untouch
   // Anything else in door A's walkthrough (a choice, an edited address, a photo) stays until the owner chooses.
   for (const [label, draft, photos] of [
     ['a scope choice', { ...left, S: { ...left.S, garageSize: '3' } }, 0],
+    ['a Finish product pick', { ...left, S: { ...left.S, builderGoods: { shelving: [{ id: 'hd-shelf', quantity: 1, group: 'shelving' }], storage: [], by: 'finish' } } }, 0],
     ['an edited address', { ...left, S: { ...left.S, address: `${A} Unit 2` } }, 0],
     ['a photo', left, 1],
   ]) {

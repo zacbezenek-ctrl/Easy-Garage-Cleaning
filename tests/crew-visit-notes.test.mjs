@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import vm from './helpers/vm-realm.mjs';
+import { fieldJobProjection } from '../functions/_lib/field-execution.js';
 
 // EGC_WALKTHROUGH_NOTES: the crew job page (crew/job.js) and the internal pre-job / closeout briefs (crew/prejob.html,
 // crew/postjob.html) show the walkthrough notes the estimator confirmed, the goods sold and the bring list. Synthetic data.
@@ -74,6 +75,29 @@ test('the internal pre-job and closeout briefs show the confirmed notes, the ite
   for (const html of [brief(prejob, signed).first, brief(postjob, signed).first]) assert.equal(cell(html, 'Walkthrough notes (confirmed by the estimator)'), 'Clear the left bay first. · Stage donations on the driveway.');
   const partly = { visitNotes: NOTES, jobInstructions: { customerGoal: 'Park two cars', keepItems: 'Workbench', accessNotes: 'Code at the side gate' } };
   assert.equal(cell(brief(prejob, partly).first, 'Walkthrough notes (confirmed by the estimator)'), 'Clear the left bay first. · Stage donations on the driveway. · Remove: Old couch · Hazards: Mouse droppings by the freezer');
+});
+
+// Integration review (2026-10-21): a walkthrough-signed job always carries scope.keep_remove (the sorting method, keep
+// and remove notes run together for HighLevel). With the Remove box left empty it was shown as the job's removal list
+// ("Remove: customer") and hid the Remove / donate notes the estimator confirmed.
+test('a signed walkthrough with an empty Remove box shows the confirmed Remove notes, never its sorting method as Remove', () => {
+  const signed = { id: 'job-notes', type: 'job', status: 'scheduled', customer: 'Synthetic Customer', visitNotes: NOTES,
+    scope: { sort_method: 'customer', keep_items: '', remove_items: '', keep_remove: 'customer' },
+    jobInstructions: { customerGoal: 'Park two cars', sortMethod: 'customer', keepItems: '', removeItems: '' } };
+  const projected = fieldJobProjection(signed);
+  assert.equal(projected.removeItems, '', 'no removal list of its own');
+  const html = jobPage().visitNotesBlocks(projected);
+  assert.match(html, /<h3>Remove \(walkthrough notes\)<\/h3><div class="text-block">Old couch<\/div>/);
+  for (const source of [prejob, postjob]) assert.match(cell(brief(source, signed).first, 'Walkthrough notes (confirmed by the estimator)') || '', /Remove: Old couch/);
+  assert.equal(cell(brief(prejob, signed).first, 'Remove'), null, 'no "Remove: customer" row');
+  // Its own Remove box filled in: that is the list, and the notes' Remove is not repeated.
+  const own = { ...signed, scope: { ...signed.scope, remove_items: 'Boxes', keep_remove: 'customer · Boxes' }, jobInstructions: { ...signed.jobInstructions, removeItems: 'Boxes' } };
+  assert.equal(fieldJobProjection(own).removeItems, 'Boxes');
+  assert.equal(jobPage().visitNotesBlocks(fieldJobProjection(own)).includes('Remove (walkthrough notes)'), false);
+  // A job from before the walkthrough recorded remove lists keeps keep_remove as its list, as before.
+  const legacy = { id: 'job-legacy', type: 'job', status: 'scheduled', scope: { keep_remove: 'Old boxes' } };
+  assert.equal(fieldJobProjection(legacy).removeItems, 'Old boxes');
+  assert.equal(cell(brief(prejob, legacy).first, 'Remove'), 'Old boxes');
 });
 
 test('the gameplan notes panel: the form round-trips the notes, and each server answer picks what the panel shows', () => {

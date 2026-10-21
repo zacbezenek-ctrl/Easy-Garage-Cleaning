@@ -411,6 +411,30 @@ test('with vehicles the payload, the instructions, both briefs and the post-job 
   assert.match(builder.payload().scope.parking_plan, /Keep overhead racks ≥ 80 in off the floor\./);
 });
 
+// Integration review (2026-10-21): with the quote builder on, Finish records shelving and racks as the builder's products
+// (S.builderGoods, crew/gameplan-catalog.js), not the walkthrough's own cards; the fit check counts them once picked.
+test('the parking fit check counts the shelving and overhead racks picked on Finish before any quote is built', () => {
+  const f150 = plain(pick('2019 f150 supercrew', 'SuperCrew, 5.5 ft bed')), suv = plain(V.fromClass(T.classes.find(cls => cls.key === 'midsize_suv')));
+  const base = { customerVehicles: [f150, suv], garageMeasure: { width: '19 ft 6', depth: '21 ft' }, finish: ['cleanout'], shelfQty: 0 };
+  assert.deepEqual(plain(gameplan(base).parkingQuote()), { overhead: false, shelving: false });
+  const picked = gameplan({ ...base, builderGoods: { shelving: [{ id: 'hd-shelf', quantity: 1, group: 'shelving' }], storage: [{ id: 'hd-rack', quantity: 1, group: 'overhead' }], by: 'finish' } });
+  assert.deepEqual(plain(picked.parkingQuote()), { overhead: true, shelving: true });
+  const info = picked.parkingInfo();
+  assert.ok(info.fit.checks.some(check => check.key === 'racks'), 'the racks row');
+  assert.match(info.fit.checks.find(check => check.key === 'width').text, /less 24 in of shelving on a side wall/);
+  assert.match(info.text, /Keep overhead racks ≥ \d+ in off the floor\./);
+  assert.match(info.text, /Shelving counted 24 in deep on the side wall\./);
+  assert.equal(picked.payload().scope.parking_plan, info.text, 'the plan the walkthrough sends (and the builder saves first) has them');
+  // Totes only, or every pick removed again: nothing in the parking space, even with a saved quote naming racks.
+  const quoted = { compositePricing: { steps: ['shelving', 'storage'] }, totalCents: 150000, lineItems: [{ id: 'shelving-goods', kind: 'product', name: 'Shelving', description: 'HDX plastic shelving × 1' }, { id: 'storage-goods', kind: 'product', name: 'Extra storage', description: 'FLEXIMOUNTS Ceiling Mounted Overhead Garage Storage Rack × 1' }] };
+  assert.deepEqual(plain(gameplan({ ...base, builderGoods: { shelving: [], storage: [{ id: 'hd-tote', quantity: 2, group: 'bins-totes' }], by: 'finish' } }).parkingQuote()), { overhead: false, shelving: false });
+  assert.deepEqual(plain(gameplan({ ...base, builderQuote: quoted, builderGoods: { shelving: [], storage: [], by: 'finish' } }).parkingQuote()), { overhead: false, shelving: false }, 'the picks are newer than the saved quote');
+  // A pick without a group (a product the menu no longer lists) goes by the saved quote's line.
+  assert.deepEqual(plain(gameplan({ ...base, builderQuote: quoted, builderGoods: { shelving: [], storage: [{ id: 'hd-gone', quantity: 1 }], by: 'builder' } }).parkingQuote()), { overhead: true, shelving: false });
+  // The Finish step's own shelving units still count.
+  assert.equal(gameplan({ ...base, finish: ['cleanout', 'shelving'], shelfQty: 2, builderGoods: { shelving: [], storage: [], by: 'finish' } }).parkingQuote().shelving, true);
+});
+
 test('the server keeps the parking plan for the crew: handoff instructions, the crew brief and the unsigned capture', async () => {
   const f150 = plain(pick('2019 f150 supercrew', 'SuperCrew, 5.5 ft bed'));
   const sent = { ...plain(gameplan({ customerVehicles: [f150], garageMeasure: { depth: '22 ft 6' } }).payload()), terms_accepted: true }, plan = sent.scope.parking_plan;

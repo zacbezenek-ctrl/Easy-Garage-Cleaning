@@ -11,7 +11,11 @@
   'use strict';
   if (typeof S === 'undefined') return;
   const TIMEOUT = 15000, PAGE = 12, STEPS = ['shelving', 'storage'];
-  const M = { menu: null, error: '', loading: false, off: false, failed: false, group: '', search: '', limit: PAGE, seq: 0 };
+  // What the estimator is browsing (group, search, how many shown, Browse all) is kept while the steps re-render; a new
+  // walkthrough (resetUi, from the page's resetForWalkthrough) and a sign-out start it over.
+  const FRESH_UI = Object.freeze({ group: '', search: '', limit: PAGE, browse: false });
+  const M = { menu: null, error: '', loading: false, off: false, failed: false, ...FRESH_UI, seq: 0 };
+  const resetUi = () => { Object.assign(M, FRESH_UI); };
   const esc = value => String(value == null ? '' : value).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
   const money = cents => Number.isSafeInteger(cents) ? new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD' }).format(cents / 100) : 'Needs review';
   function h(tag, props, ...children) { const node = document.createElement(tag); for (const [name, value] of Object.entries(props || {})) { if (value == null || value === false) continue; if (name === 'class') node.className = value; else if (name.startsWith('on') && typeof value === 'function') node.addEventListener(name.slice(2), value); else if (name in node && !name.startsWith('aria-')) node[name] = value; else node.setAttribute(name, String(value)); } for (const child of children.flat(Infinity)) if (child != null && child !== false) node.append(child instanceof Node ? child : document.createTextNode(String(child))); return node; }
@@ -111,6 +115,8 @@
     S.builderGoods = { ...Object.fromEntries(STEPS.map(name => [name, name === step ? list : now[name].map(enrich)])), by: 'finish' };
     if (typeof save === 'function') save();
     mountGoods();
+    // The parking fit check below reads the picks (shelving, overhead racks): it shows them now, not after the quote is saved.
+    if (typeof mountCustomerVehicles === 'function') mountCustomerVehicles();
   }
   // The walkthrough's picks for the builder to open with, only when Finish changed them after the builder last wrote them
   // back (by: 'finish'); otherwise the builder keeps its own selection (this device's, else the saved quote's).
@@ -159,13 +165,21 @@
     const results = h('ul', { class: 'qb-products', id: 'finish-goods-results' }), more = h('div', {});
     const fill = () => {
       const words = String(M.search || '').toLowerCase().split(/\s+/).filter(Boolean);
+      // Products show once a search or a group narrows them (or Browse all): an unfiltered list of photos made Finish
+      // several phone screens long, with the vehicles to park far below it.
+      if (!words.length && !M.group && !M.browse) {
+        const offered = all.filter(item => !chosenIds.has(item.id)).length;
+        results.replaceChildren();
+        more.replaceChildren(...(offered ? [h('p', { class: 'qb-help' }, 'Search or choose a group to see the products.'), h('button', { type: 'button', class: 'qd-secondary qb-more', onclick: () => { M.browse = true; M.limit = PAGE; fill(); } }, `Browse all ${offered} products`)] : []));
+        return;
+      }
       const matches = all.filter(item => !chosenIds.has(item.id) && (!M.group || item.group === M.group) && words.every(word => item.name.toLowerCase().includes(word)));
       results.replaceChildren(...matches.slice(0, M.limit).map(item => productRow(item, 0)));
       more.replaceChildren(...(matches.length > M.limit ? [h('button', { type: 'button', class: 'qd-secondary qb-more', onclick: () => { M.limit += PAGE; fill(); } }, `Show more (${matches.length - M.limit} left)`)] : matches.length ? [] : [h('p', { class: 'qb-help' }, 'No products match. Try another search or group.')]));
     };
     fill();
     const filters = h('div', { class: 'qb-filters' },
-      h('select', { class: 'qd-input', 'aria-label': 'Product group', onchange: event => { M.group = event.target.value; M.limit = PAGE; fill(); } }, h('option', { value: '' }, 'All shelving and storage'), groups.map(group => h('option', { value: group.id, selected: M.group === group.id }, group.label))),
+      h('select', { class: 'qd-input', 'aria-label': 'Product group', onchange: event => { M.group = event.target.value; M.browse = !M.group; M.limit = PAGE; fill(); } }, h('option', { value: '' }, 'All shelving and storage'), groups.map(group => h('option', { value: group.id, selected: M.group === group.id }, group.label))),
       h('input', { class: 'qd-input', type: 'search', value: M.search || '', placeholder: 'Search shelving, totes, hooks, racks…', 'aria-label': 'Search shelving and storage products', oninput: event => { M.search = event.target.value; M.limit = PAGE; fill(); } }));
     return [...head, earlier,
       chosen.length ? h('div', { class: 'gp-chosen' }, h('h3', {}, `In this quote (${chosen.length})`), h('ul', { class: 'qb-products' }, chosen.map(item => productRow(item, qty(item.id))))) : h('p', { class: 'qb-help' }, 'No shelving, totes or storage yet. Add products below, or continue with none.'),
@@ -176,6 +190,6 @@
     if (host) host.replaceChildren(...goodsPanel());
   }
 
-  root.addEventListener('egc:signout', () => { M.seq++; Object.assign(M, { menu: null, error: '', loading: false, off: false, failed: false, group: '', search: '', limit: PAGE }); });
-  root.EGCGameplanCatalog = Object.freeze({ load, active, unavailable, label, loadsNote, finishTag, statusHtml, mountGoods, picks, selection, fromBuilder, menu: () => M.menu });
+  root.addEventListener('egc:signout', () => { M.seq++; Object.assign(M, { menu: null, error: '', loading: false, off: false, failed: false, ...FRESH_UI }); });
+  root.EGCGameplanCatalog = Object.freeze({ load, active, unavailable, label, loadsNote, finishTag, statusHtml, mountGoods, picks, selection, fromBuilder, resetUi, menu: () => M.menu });
 })(window);

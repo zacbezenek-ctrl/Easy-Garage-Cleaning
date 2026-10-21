@@ -150,12 +150,15 @@ test('a builder quote\'s shelving and storage packs are the brief\'s materials a
   assert.equal(checks.preJob.find(row => row.id === 'materials').detail, 'cleanout · HDX plastic shelving, 36×72×24 × 3 packs · HDX 27-gal totes, four-pack × 2 packs of 4');
   assert.match(checks.postJob.find(row => row.id === 'finish').detail, /HDX 27-gal totes, four-pack × 2 packs of 4/);
   // Updated deliberately (owner, 2026-10-19): storage goods (racks, hooks, cabinets) bring their install tools too, as
-  // shelving does; without a builder quote the Finish step's counts are the materials, as before.
+  // shelving does; without a builder quote the Finish step's counts are the materials, as before. A quote whose goods
+  // carry no Finish group goes by its lines; the ladder is the one the bring list names everywhere, "Step ladder" (the
+  // integration of the catalog lane, whose overhead racks bring a step ladder: the crew sees one ladder, not two).
   const storageKit = gameplan({ finish: ['cleanout'], shelfQty: 0, toteQty: 0, builderQuote: quote(goods.slice(1)) }).buildJobInstructions({}).bringList;
-  for (const tool of ['Ladder', 'Drill / driver', 'Stud finder', 'Lag screws and anchors']) assert.ok(storageKit.includes(tool), `storage: ${tool}`);
+  for (const tool of ['Step ladder', 'Drill / driver', 'Stud finder', 'Lag screws and anchors']) assert.ok(storageKit.includes(tool), `storage: ${tool}`);
   assert.equal(storageKit.includes('Level'), false, 'only the tools the owner listed for storage');
+  assert.equal(storageKit.includes('Ladder'), false, 'one ladder name');
   assert.equal(i.bringList.filter(tool => tool === 'Drill / driver').length, 1, 'shelving and storage together list each tool once');
-  assert.equal(gameplan({ finish: ['cleanout'], shelfQty: 0, toteQty: 0 }).buildJobInstructions({}).bringList.includes('Ladder'), false, 'no builder goods, no install kit');
+  assert.equal(gameplan({ finish: ['cleanout'], shelfQty: 0, toteQty: 0 }).buildJobInstructions({}).bringList.includes('Step ladder'), false, 'no builder goods, no install kit');
   const plain = gameplan(), instructions = plain.buildJobInstructions({});
   assert.deepEqual(Array.from(instructions.soldGoods), []);
   assert.match(plain.buildCrewBrief(instructions), /^MATERIALS: 2 metal shelf unit\(s\) · 3 tote\(s\)$/m);

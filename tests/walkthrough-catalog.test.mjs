@@ -70,11 +70,11 @@ const servedMenu = (approvals = {}) => ({ ok: true, authority: 'employee_hub', e
 const plainOf = value => JSON.parse(JSON.stringify(value));
 
 function catalogPage({ builder = true, reply = () => ({ status: 200, body: servedMenu() }), S = {} } = {}) {
-  const document = createDocument(), calls = { render: 0, save: 0, invalidate: 0, fetch: [] };
+  const document = createDocument(), calls = { render: 0, save: 0, invalidate: 0, vehicles: 0, fetch: [] };
   const host = document.createElement('section'); host.setAttribute('id', 'finish-goods'); document.body.append(host);
   const context = { document, Node: document.Node, Intl, AbortController, setTimeout, clearTimeout, URLSearchParams, Date, console, navigator: { onLine: true }, addEventListener() {}, removeEventListener() {},
     S: { finish: ['cleanout'], shelfType: 'metal', shelfQty: 0, toteQty: 0, ...S }, walkthroughReady: true,
-    render: () => { calls.render++; }, save: () => { calls.save++; }, invalidateAcceptance: () => { calls.invalidate++; },
+    render: () => { calls.render++; }, save: () => { calls.save++; }, invalidateAcceptance: () => { calls.invalidate++; }, mountCustomerVehicles: () => { calls.vehicles++; },
     EGCWalkthroughPricing: { quoteBuilder: () => builder },
     EGCHubAuth: { fetch: async url => { calls.fetch.push(url); const answer = reply(url); if (answer instanceof Error) throw answer; return { ok: answer.status < 300, status: answer.status, json: async () => structuredClone(answer.body) }; } } };
   context.window = context;
@@ -141,10 +141,19 @@ test('Finish picks shelving, totes and storage from the builder products into th
   C.mountGoods();
   assert.match(page.text(), /No shelving, totes or storage yet\./);
   assert.equal(host.querySelectorAll('a').length, 0, 'no retailer link');
+  // Nothing searched or grouped yet: no list of product photos (Finish stays a few phone screens long, the vehicles to
+  // park in reach), a Browse all instead (integration review, 2026-10-21).
+  const adds = () => host.querySelectorAll('button').filter(node => /^Add /.test(node.getAttribute('aria-label') || ''));
+  const total = menu.products.filter(item => ['shelving', 'storage'].includes(item.section)).length;
+  assert.equal(adds().length, 0);
+  assert.match(page.text(), /Search or choose a group to see the products\./);
+  button(`Browse all ${total} products`).click();
+  assert.equal(adds().length, 12, 'one page of products');
   const shelf = menuItem('HDX plastic shelving, 36×72×24');
   button(`Add ${shelf.name}`).click();
   assert.deepEqual(JSON.parse(JSON.stringify(context.S.builderGoods)), { shelving: [{ id: shelf.id, quantity: 1, group: 'shelving', name: shelf.name, installPersonMinutes: 60 }], storage: [], by: 'finish' });
   assert.deepEqual([calls.invalidate, calls.save], [1, 1], 'a pick clears an earlier signature and saves the walkthrough');
+  assert.equal(calls.vehicles, 1, 'the parking fit check below redraws with the pick (integration review, 2026-10-21)');
   assert.match(page.text(), /In this quote \(1\)/);
   button(`One more: ${shelf.name}`).click();
   assert.equal(context.S.builderGoods.shelving[0].quantity, 2);
@@ -166,6 +175,17 @@ test('Finish picks shelving, totes and storage from the builder products into th
   assert.deepEqual(plainOf([context.S.builderGoods.by, C.selection(), calls.invalidate]), ['builder', null, before]);
   C.fromBuilder({ shelving: [{ id: shelf.id, quantity: 4, group: 'shelving' }], storage: [] });
   assert.equal(calls.invalidate, before + 1, 'a change in the builder clears an earlier signature');
+  // A new walkthrough starts the product search and group over (resetUi, from the page's resetForWalkthrough), as the
+  // vehicle search does: one customer's totes search never shows on the next customer's Finish.
+  C.mountGoods();
+  host.querySelector('input').dispatchEvent({ type: 'input', target: { value: 'tote' } });
+  assert.ok(adds().length > 0);
+  C.resetUi(); C.mountGoods();
+  assert.equal(adds().length, 0, 'no search, no group: nothing listed');
+  assert.ok(button(`Browse all ${total - 1} products`), 'the chosen shelving is not offered again');
+  // Choosing "All shelving and storage" in the group list browses everything.
+  host.querySelector('select').dispatchEvent({ type: 'change', target: { value: '' } });
+  assert.equal(adds().length, 12);
 });
 
 test('Finish shows the built quote\'s goods when the walkthrough has no picks, and clears counts recorded before', async () => {
@@ -214,6 +234,26 @@ test('the walkthrough is not signed while its Finish picks differ from the built
   // With the builder off nothing changes.
   page.window.EGCWalkthroughPricing.quoteBuilder = () => false;
   assert.equal(page.builderSignGate(), '');
+});
+
+// Integration review (2026-10-21): the notes lane's storage-line rule and the catalog lane's group rules made one bring
+// list ask for a "Ladder" and a "Step ladder", and for the wall-mounting kit for totes. One rule now: the Finish groups.
+test('the bring list names one ladder and no install kit for totes: the Finish groups decide over the quote\'s storage line', () => {
+  const storageLine = { id: 'storage-goods', kind: 'product', name: 'Extra storage', description: 'Synthetic storage × 1' };
+  const quoteWith = goods => { const quote = builtQuote(goods); return { ...quote, lineItems: [...quote.lineItems, storageLine] }; };
+  const plain = plainOf(gameplanLines().buildJobInstructions({}).bringList);
+  const extras = state => plainOf(gameplanLines(state).buildJobInstructions({}).bringList).filter(item => !plain.includes(item));
+  const rack = menu.products.find(item => item.group === 'overhead'), hooks = menu.products.find(item => item.group === 'hooks-racks'), tote = menuItem('HDX 27-gal totes, four-pack');
+  const goods = (...rows) => ({ shelving: [], storage: rows.map(item => ({ id: item.id, quantity: 1, group: item.group })), by: 'builder' });
+  const kit = ['Drill / driver', 'Stud finder', 'Level', 'Lag screws and anchors'];
+  assert.deepEqual(extras({ builderQuote: quoteWith({ storage: [{ id: rack.id, quantity: 1 }] }), builderGoods: goods(rack) }), [...kit, 'Step ladder'], 'an overhead rack: the kit and one ladder');
+  assert.deepEqual(extras({ builderQuote: quoteWith({ storage: [{ id: tote.id, quantity: 1 }] }), builderGoods: goods(tote) }), ['Label maker'], 'totes only: a label maker');
+  assert.deepEqual(extras({ builderQuote: quoteWith({ storage: [{ id: hooks.id, quantity: 1 }] }), builderGoods: goods(hooks) }), [...kit, 'Step ladder'], 'wall hooks: the ladder the owner listed for racks, hooks and cabinets');
+  assert.deepEqual(extras({ builderGoods: { ...goods(rack), by: 'finish' } }), [...kit, 'Step ladder'], 'picked on Finish, before any quote');
+  // A quote with no Finish groups to go by (none picked): its storage line brings the storage tools, with the same ladder.
+  assert.deepEqual(extras({ builderQuote: quoteWith({}) }), ['Step ladder', 'Drill / driver', 'Stud finder', 'Lag screws and anchors']);
+  assert.deepEqual(extras({ builderQuote: quoteWith({}), builderGoods: { shelving: [], storage: [{ id: 'hd-gone', quantity: 1 }], by: 'builder' } }), ['Step ladder', 'Drill / driver', 'Stud finder', 'Lag screws and anchors'], 'a product the menu no longer lists');
+  for (const state of [{ builderQuote: quoteWith({}) }, { builderGoods: goods(rack, tote, hooks) }]) assert.equal(gameplanLines(state).buildJobInstructions({}).bringList.includes('Ladder'), false);
 });
 
 // ---- Review findings (LANE catalog review, 2026-10-19) ----
@@ -296,6 +336,7 @@ test('with the menu unavailable Finish keeps the walkthrough shelving and tote c
   assert.match(finish, /\$\{legacy&&S\.finish\.includes\('shelving'\)\?/);
   assert.match(finish, /\$\{legacy&&S\.finish\.includes\('totes'\)\?/);
   assert.match(finish, /\$\{gc\?'<section class="panel" id="finish-goods"[^']*><\/section>':'<section class="panel" id="mounting-options"><\/section>'\}/);
+  assert.match(gameplanHtml, /<script src="\/crew\/gameplan-catalog\.js\?v=20261021field4" defer><\/script>/, 'the changed picker has a new cache key (integration review)');
 });
 
 test('the menu arriving re-renders only Scope and Finish, keeping the field in focus', async () => {

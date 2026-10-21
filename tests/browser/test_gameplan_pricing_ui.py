@@ -381,6 +381,44 @@ class GameplanPricingBrowserTests(unittest.TestCase):
         expect(page.locator('#signature')).to_be_visible()
         self.audit(page, 'review, builder on, Finish picks in the quote')
 
+    def test_with_the_quote_builder_on_the_parking_fit_check_counts_the_finish_picks_before_any_quote(self):
+        # Integration review (2026-10-21): shelving and an overhead rack picked from the builder's products on Finish count
+        # in the parking fit check right below them at once, not only after the quote is built and saved; and the product
+        # list shows once searched or grouped, so the vehicles panel is not several phone screens down.
+        self.builder = True
+        page = self.open()
+        page.wait_for_function('() => PRICING !== null && quoteBuilderOn() && EGCGameplanCatalog.menu() !== null && window.EGCGameplanVehicles')
+        page.evaluate("""() => { Object.assign(S, { name: 'Synthetic Customer', garageSize: '2', fill: 'medium', loads: '1', garageMeasure: { width: '19 ft 6', depth: '21 ft' },
+          customerVehicles: [EGCGameplanVehicles.fromMeasure({ name: 'Synthetic pickup', length: '232', width: '80', height: '76', basis: 'truck' }), EGCGameplanVehicles.fromMeasure({ name: 'Synthetic SUV', length: '190', width: '75', height: '70', basis: 'car' })] });
+          index = 3; save(); render(); }""")
+        goods, fit, vehicles = page.locator('#finish-goods'), page.locator('#veh-fit'), page.locator('#customer-vehicles')
+        expect(fit).to_be_visible()
+        expect(fit.locator('[data-check="racks"]')).to_have_count(0)
+        expect(fit.locator('[data-check="width"]')).not_to_contain_text('shelving')
+        expect(goods.locator('button.qb-add')).to_have_count(0)
+        expect(goods.get_by_role('button', name=re.compile(r'^Browse all \d+ products$'))).to_be_visible()
+        top = page.evaluate("() => document.getElementById('customer-vehicles').getBoundingClientRect().top + scrollY")
+        self.assertLess(top, 844 * 3, f'the vehicles panel starts {top} px down Finish')
+        goods.get_by_label('Product group').select_option('shelving')
+        goods.get_by_role('button', name='Add HDX plastic shelving, 36×72×24').click()
+        expect(fit.locator('[data-check="width"]')).to_contain_text('less 24 in of shelving on a side wall')
+        expect(vehicles.locator('#veh-wall-side')).to_be_visible()
+        goods.get_by_label('Product group').select_option('overhead')
+        goods.locator('button.qb-add').first.click()
+        expect(fit.locator('[data-check="racks"]')).to_be_visible()
+        expect(vehicles).to_contain_text('Overhead storage is in the quote')
+        expect(vehicles.locator('#veh-racks')).to_have_count(0)
+        plan = page.evaluate('parkingInfo().text')
+        self.assertIn('Keep overhead racks', plan); self.assertIn('Shelving counted 24 in deep on the side wall.', plan)
+        self.assertEqual(page.evaluate('S.builderQuote || null'), None, 'no quote built yet')
+        self.assertEqual(page.evaluate('payload().scope.parking_plan'), plan)
+        # Taking the rack off again takes its row with it.
+        rack = page.evaluate("S.builderGoods.storage[0].name")
+        goods.get_by_role('button', name=f'One fewer: {rack}').click()
+        expect(fit.locator('[data-check="racks"]')).to_have_count(0)
+        expect(vehicles.locator('#veh-racks')).to_be_visible()
+        self.audit(page, 'finish, builder picks and vehicles')
+
     def test_with_the_quote_builder_on_and_its_menu_unavailable_scope_shows_no_legacy_price(self):
         # The builder menu does not load (no connection to it): Scope and Finish say so and show no legacy amount.
         self.builder = True; self.menu_down = True
