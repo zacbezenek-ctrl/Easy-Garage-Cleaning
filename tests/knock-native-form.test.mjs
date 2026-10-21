@@ -193,7 +193,10 @@ test('launch URLs contain only the opaque reference and strict provider origin/p
   const result = await openNativeFormHandoff(w.store, REP, DEFAULT_SETTINGS, { action: 'open', reference: w.handoff.reference }, w.config, NOW);
   assert.equal(nativeLaunchUrl(result.launch, w.handoff.reference), result.launch.url);
   assert.deepEqual([...new URL(result.launch.url).searchParams], [['handoff_ref', w.handoff.reference]]);
-  assert.doesNotMatch(result.launch.url, /123|SYNTHETIC|1600|rep.one|house-one|phone|email|price/);
+  // The reference is 32 random hex digits, which can hold '123' or '1600' by chance; check it is only that, then
+  // search the rest of the URL.
+  assert.match(w.handoff.reference, /^kf_[0-9a-f]{32}$/);
+  assert.doesNotMatch(result.launch.url.replace(w.handoff.reference, '<reference>'), /123|SYNTHETIC|1600|rep.one|house-one|phone|email|price/);
   for (const suffix of ['&email=private', '#private']) assert.equal(nativeLaunchUrl({ ...result.launch, url: result.launch.url + suffix }, w.handoff.reference), null);
   assert.equal(nativeLaunchUrl({ ...result.launch, url: result.launch.url.replace('links.easygaragecleaning.com', 'links.easygaragecleaning.com.evil.test') }, w.handoff.reference), null);
 });

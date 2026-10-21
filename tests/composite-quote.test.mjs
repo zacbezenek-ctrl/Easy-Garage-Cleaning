@@ -405,7 +405,9 @@ test('menu.approve of 100 prices records every amount in the owner-only audit en
 
 test('the Hub says the builder is on only in answers the pages already load; flag off they are unchanged', async () => {
   const { pricingConfigHandlers } = await import('../functions/api/pricing-config.js');
-  const pricing = pricingConfigHandlers({ session: async () => owner });
+  const { ownerEconomics } = await import('../functions/_lib/owner-economics.js');
+  // The owner part is the owner's stored settings; blank ones here, so no storage is reached.
+  const pricing = pricingConfigHandlers({ session: async () => owner, ownerEconomics: async () => ownerEconomics({}, null) });
   const config = async (env, parts = 'walkthrough') => (await pricing.get({ request: new Request(`${ORIGIN}/api/pricing-config?parts=${parts}`), env })).json();
   const off = await config({}), on = await config(BUILDER);
   assert.equal(off.ok, true);
