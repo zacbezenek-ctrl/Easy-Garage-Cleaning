@@ -110,3 +110,34 @@ test('B: a quote author\'s walkthrough page asks the server for the sync (after 
   assert.match(send, /the office\\'s Hub or the messaging server sends it/);
 });
 
+
+test('B: a Sales estimator\'s retry after the server\'s sync finished reads where that sync stands (view=sync): the job stays verified and the invitation keeps its status, never "a manager completes"', async () => {
+  const context = vm.createContext({ window: {}, URLSearchParams, AbortController, setTimeout, clearTimeout });
+  vm.runInContext(readFileSync(new URL('../crew/gameplan-handoff.js', import.meta.url), 'utf8'), context);
+  const urls = [];
+  let answers = [];
+  const client = context.window.EGCWalkthroughHandoffClient({ actor: async () => 'sales.person', managerSync: () => false, sleep: async () => {}, storage: { getItem: () => null, setItem() {}, removeItem() {} },
+    fetch: async (url, options) => { urls.push([url, options?.method || 'GET']); return { ok: true, status: 200, json: async () => answers.shift() }; } });
+  // The replayed save of a synced job: the server offers no sync (no serverSync), and the job says it is synced.
+  const replayed = { pending: { actor: 'sales.person', requestId: 'synthetic-request' }, result: { replayed: true, job: { id: 'job-9', syncStatus: 'synced' } } };
+  answers = [{ ok: true, sync: { status: 'synced' }, portalInvitation: { status: 'submitted', channel: 'SMS' } }];
+  const texted = await client.sync(replayed);
+  assert.deepEqual(JSON.parse(JSON.stringify(texted)), { ok: true, server: true, handoffSync: { status: 'synced' }, portalInvitation: { status: 'submitted', channel: 'SMS' } });
+  assert.deepEqual(urls, [['/api/walkthrough-handoff?view=sync&jobId=job-9', 'GET']], 'one read of the sync, no second sync request');
+  // The same at 9:30 PM in Denver: the invitation waits for 8 AM, and the retry keeps saying so.
+  urls.length = 0;
+  answers = [{ ok: true, sync: { status: 'synced' }, portalInvitation: { status: 'deferred', reason: 'quiet_hours', notBefore: '2026-10-20T14:00:00.000Z' } }];
+  const quiet = await client.sync(replayed);
+  assert.deepEqual(JSON.parse(JSON.stringify(quiet)), { ok: true, server: true, handoffSync: { status: 'synced' }, portalInvitation: { status: 'deferred', reason: 'quiet_hours', notBefore: '2026-10-20T14:00:00.000Z' } });
+  assert.equal(urls.length, 1);
+  // An unsynced job the server does not offer to sync (an older server) is still the manager's, and nothing is called.
+  urls.length = 0;
+  const old = await client.sync({ ...replayed, result: { job: { id: 'job-9', syncStatus: 'pending' } } });
+  assert.deepEqual([old.handoffSync.status, urls.length], ['manager_required', 0]);
+  // What the page says for each answer (send(): scheduleText and portalText): verified, with the invitation's status.
+  const page = readFileSync(new URL('../crew/gameplan-handoff.js', import.meta.url), 'utf8'), send = page.slice(page.indexOf('async function send(button'), page.indexOf('async function openings('));
+  assert.match(send, /managerSync=synced\.handoffSync\?\.status==='manager_required'/);
+  assert.match(send, /synced\.handoffSync\?\.status==='synced'\?'Job and CRM schedule verified\. '/);
+  assert.match(send, /portal\?\.status==='submitted'\?\(portal\.channel==='Email'\?'Portal email queued in HighLevel\. ':'Portal text queued in HighLevel\. '\)/);
+  assert.match(send, /portal\.reason==='quiet_hours'\?'Portal invitation goes out after 8 AM \(quiet hours\)/);
+});

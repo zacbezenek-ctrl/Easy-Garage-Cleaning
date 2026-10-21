@@ -22,6 +22,7 @@ import { walkthroughCard } from '../_lib/walkthrough-state.js';
 import { storageBin, storageItems } from '../_lib/customer-photo-visibility.js';
 import { jobMaterialsEnabled } from '../_lib/job-materials.js';
 import { fieldCompletionTagsEnabled, fieldCompletionTagWrites, firstGhlTagAttempt, ghlTagOutboxStorage, GHL_TAG_OUTBOX, ghlTagStatusView } from '../_lib/ghl-tag-outbox.js';
+import { quoteAuthorAccess } from '../_lib/quote-permissions.js';
 
 const reply = (status, body) => Response.json(body, { status, headers: { 'Cache-Control': 'private, no-store', 'X-Content-Type-Options': 'nosniff' } });
 const mutationOriginAllowed = request => {
@@ -38,16 +39,37 @@ async function context(request, env) {
   if (!session) throw fieldFailure('Sign in to the Employee Hub to open your jobs.', 401, 'FIELD_AUTH_REQUIRED');
   if (!firebaseServiceAccountConfigured(env)) throw fieldFailure('Secure job storage is not connected. Contact operations.', 503, 'FIELD_STORAGE_UNAVAILABLE');
   const manager = hasBusinessAccess(session), access = createJobAssignmentAccess(env, session), store = createFieldStore(env);
-  return { session, manager, access, store, visits: fieldVisitsEnabled(env) };
+  return { env, session, manager, access, store, visits: fieldVisitsEnabled(env) };
 }
 
-async function authorizedJob(ctx, id) {
+// PORTAL-LINKS (B): the quote author who signed a job's walkthrough handoff (the job's current signature,
+// acceptance.recordedBy: a Sales estimator without business access, usually not on the crew) attaches that walkthrough's
+// reference photos to the job from the walkthrough page (crew/gameplan-handoff.js photos), before its server sync. Only
+// category 'walkthrough', only while they may still author quotes and the job is open, and they read back only the job's
+// revision and its reference photos (referenceDetail), never the crew's field record. Everything else stays with the
+// assigned crew and managers.
+const OPEN_FOR_REFERENCE = job => !fieldCancelled(job) && !['completed', 'paid', 'invoiced', 'review_requested'].includes(fieldStage(job));
+function handoffSigner(ctx, job) {
+  if (ctx.manager || job?.handoffVersion !== 1 || typeof job.handoffRequestId !== 'string' || !job.handoffRequestId || !OPEN_FOR_REFERENCE(job)) return false;
+  const signer = job.acceptance?.recordedBy;
+  return typeof signer === 'string' && Boolean(signer) && signer === ctx.session.user && quoteAuthorAccess(ctx.session, ctx.env).author;
+}
+
+// signer: the request is one the handoff's signer may make (reading the job's reference photos, adding one); reference
+// is true when that is the only reason this account may open the job.
+async function jobAccess(ctx, id, { signer = false } = {}) {
   if (!fieldId(id)) throw fieldFailure('Choose a valid job.');
   const job = await ctx.store.readJob(id);
   if (!job || !['job', 'cleanout', 'reorg'].includes(job.type) || job.recordType) throw fieldFailure('This job is unavailable. Open Today for your current assignments.', 404, 'FIELD_JOB_NOT_FOUND');
-  if (!ctx.manager && !await ctx.access.assigned(job)) throw fieldFailure('This job is not currently assigned to your account. Open Today for your assignments.', 403, 'FIELD_JOB_NOT_ASSIGNED');
-  return job;
+  if (ctx.manager || await ctx.access.assigned(job)) return { job, reference: false };
+  if (signer && handoffSigner(ctx, job)) return { job, reference: true };
+  throw fieldFailure('This job is not currently assigned to your account. Open Today for your assignments.', 403, 'FIELD_JOB_NOT_ASSIGNED');
 }
+async function authorizedJob(ctx, id) { return (await jobAccess(ctx, id)).job; }
+// The signer's reading of the job: its revision and its walkthrough reference photos (no image links, crew or history).
+const referenceDetail = (env, job) => ({ job: { id: job.id, expectedRevision: job.__updateTime || job.revision || '', reference: true,
+  photos: fieldPhotos(job).filter(photo => photo.category === 'walkthrough').map(photo => ({ id: photo.id, category: photo.category, caption: fieldText(photo.caption, 500), createdAt: photo.createdAt })) },
+  photosAvailable: fieldPhotosConfigured(env), timezone: 'America/Denver' });
 
 // Multi-day visits: a crew write needs an assignment on the current Denver day.
 // An end of day counts for the visit day it names when that is today or, for
@@ -86,8 +108,9 @@ async function displayContext(ctx, env, jobs) {
 
 const capabilities = (ctx, env, job) => fieldCapabilities({ session: ctx.session, manager: ctx.manager, job, env, access: ctx.access });
 
-async function detail(ctx, env, jobId, cursor = '') {
-  const job = await authorizedJob(ctx, jobId);
+async function detail(ctx, env, jobId, cursor = '', { signer = false } = {}) {
+  const { job, reference } = await jobAccess(ctx, jobId, { signer });
+  if (reference) return referenceDetail(env, job);
   const [history, display, allowed] = await Promise.all([ctx.store.events(jobId, cursor), displayContext(ctx, env, [job]), capabilities(ctx, env, job)]);
   const view = await projection(ctx, job, history.events, { ...display(job), capabilities: allowed });
   if (job.fieldCompletionTagEntry?.id) {
@@ -123,7 +146,7 @@ export async function onRequestGet({ request, env }) {
         if (!photo) throw fieldFailure('This photo is not part of the current job record.', 404, 'FIELD_PHOTO_NOT_FOUND');
         return await (await createFieldPhotoClient(env)).image(photo.fileId);
       }
-      return reply(200, { ok: true, ...await detail(ctx, env, jobId, params.get('historyCursor') || '') });
+      return reply(200, { ok: true, ...await detail(ctx, env, jobId, params.get('historyCursor') || '', { signer: true }) });
     }
     const date = params.get('date') || fieldToday(), days = Number(params.get('days') || 1), status = params.get('status') || 'all';
     if (!validDate(date) || !Number.isInteger(days) || days < 1 || days > 7 || !['all', 'active', 'completed', 'cancelled'].includes(status)) throw fieldFailure('Choose a valid Mountain date, 1–7 days and a supported status filter.');
@@ -169,12 +192,12 @@ async function readInput(request) {
   return body;
 }
 
-async function savePhoto(ctx, env, job, input, fingerprint, receipt) {
+async function savePhoto(ctx, env, job, input, fingerprint, receipt, signed = false) {
   if (!['before', 'progress', 'after', 'damage', 'walkthrough', 'storage'].includes(input.category) || typeof input.caption !== 'string' || input.caption.length > 500) throw fieldFailure('Choose a photo category and a caption no longer than 500 characters.');
   const storage = input.category === 'storage' ? { bin: storageBin(input.bin), items: storageItems(input.items) } : null;
   if (storage && !storage.bin) throw fieldFailure('Storage photos need the bin label written on the bin, like A1 (letters, numbers, spaces or dashes, up to 24 characters).');
   if (storage && (typeof input.items !== 'string' || input.items.length > 500)) throw fieldFailure('List what is in the bin in 500 characters or fewer.');
-  if(input.category==='walkthrough'&&!ctx.manager)throw fieldFailure('Only a manager can attach the signed walkthrough reference photos.',403,'FIELD_REFERENCE_PHOTO_MANAGER_REQUIRED');
+  if(input.category==='walkthrough'&&!ctx.manager&&!signed)throw fieldFailure('Only a manager or the estimator who signed this walkthrough can attach its reference photos.',403,'FIELD_REFERENCE_PHOTO_MANAGER_REQUIRED');
   if (fieldCancelled(job)) throw fieldFailure(fieldStage(job) === 'cancelled' ? 'This job is cancelled. Ask operations before adding evidence.' : 'This job was marked a no-show. Ask operations before adding evidence.', 409, 'FIELD_JOB_CLOSED');
   if (fieldPhotos(job).length >= 100) throw fieldFailure('This job already has 100 field photos. Contact operations to archive photos before adding more.', 409, 'FIELD_PHOTO_LIMIT');
   const picture = decodeFieldPhoto(input.dataUrl), client = await createFieldPhotoClient(env);
@@ -191,9 +214,11 @@ async function savePhoto(ctx, env, job, input, fingerprint, receipt) {
   // Recheck assignment after the upload and fence every update against the
   // latest job revision. Concurrent checklists and other photos are preserved.
   for (let attempt = 0; attempt < 3; attempt++) {
-    const latest = await authorizedJob(ctx, job.id), currentReceipt = await ctx.store.readEvent(job.id, input.requestId);
+    const latest = (await jobAccess(ctx, job.id, { signer: signed })).job, currentReceipt = await ctx.store.readEvent(job.id, input.requestId);
     if (currentReceipt?.state === 'applied') return;
-    await requireWorkday(ctx, latest);
+    // The signer's reference photo: the job must still be one they signed (a revision by someone else ends it).
+    if (signed && !handoffSigner(ctx, latest)) throw fieldFailure('This walkthrough was signed again by someone else. Ask a manager to attach its reference photos.', 403, 'FIELD_REFERENCE_PHOTO_MANAGER_REQUIRED');
+    if (!signed) await requireWorkday(ctx, latest);
     if (!currentReceipt || currentReceipt.fingerprint !== fingerprint) throw fieldFailure('This upload receipt changed. Contact operations.', 409, 'FIELD_IDEMPOTENCY_CONFLICT');
     if (fieldCancelled(latest)) throw fieldFailure('The job was cancelled or marked a no-show during upload. The photo has not been added to the job.', 409, 'FIELD_JOB_CLOSED');
     const existing = fieldPhotos(latest);
@@ -212,14 +237,17 @@ export async function onRequestPost(handlerContext) {
     if (!mutationOriginAllowed(request)) throw fieldFailure('This job action must come from the Employee Hub.', 403, 'FIELD_ORIGIN_FORBIDDEN');
     ctx = await context(request, env); input = await readInput(request);
     if (input.expectedUser !== undefined && (typeof input.expectedUser !== 'string' || input.expectedUser.toLowerCase() !== ctx.session.user.toLowerCase())) throw fieldFailure('Your signed-in account changed. Sign in again before retrying this work.', 401, 'FIELD_ACCOUNT_CHANGED');
-    const job = await authorizedJob(ctx, input.jobId);
+    // A walkthrough reference photo is the one action the handoff's signer may take (handoffSigner): not crew work, so
+    // no workday is needed for it, whether or not the signer is also on the crew.
+    const reference = input.action === 'photo' && input.category === 'walkthrough';
+    const { job } = await jobAccess(ctx, input.jobId, { signer: reference }), signed = reference && handoffSigner(ctx, job);
     fingerprint = await fieldFingerprint(ctx.session.user, input);
     const receipt = await ctx.store.readEvent(job.id, input.requestId);
     if (receipt && receipt.fingerprint !== fingerprint) throw fieldFailure('This action ID was already used for different information. Refresh before retrying.', 409, 'FIELD_IDEMPOTENCY_CONFLICT');
-    if (receipt?.state === 'applied') return reply(200, { ok: true, alreadyApplied: true, ...await detail(ctx, env, job.id) });
-    await requireWorkday(ctx, job, input);
+    if (receipt?.state === 'applied') return reply(200, { ok: true, alreadyApplied: true, ...await detail(ctx, env, job.id, '', { signer: reference }) });
+    if (!signed) await requireWorkday(ctx, job, input);
     if (!receipt && job.__updateTime !== input.expectedRevision) throw fieldFailure('This job changed. Refresh to review the latest assignment and details before retrying.', 409, 'FIELD_REVISION_CONFLICT');
-    if (input.action === 'photo') await savePhoto(ctx, env, job, input, fingerprint, receipt);
+    if (input.action === 'photo') await savePhoto(ctx, env, job, input, fingerprint, receipt, signed);
     else if (input.action === 'retry_completion_sync') {
       if (!ctx.manager) throw fieldFailure('Only operations managers can retry the internal CRM integration.', 403);
       await syncFieldCompletion(env, job.id, { store: ctx.store, actor: ctx.session, eventId: input.requestId, fingerprint });
@@ -245,12 +273,12 @@ export async function onRequestPost(handlerContext) {
         handlerContext.waitUntil(applyMembershipVisit(garageGuardStorage(env), ctx.session, { jobId: job.id, via: 'field' }).catch(() => null));
       }
     }
-    return reply(200, { ok: true, alreadyApplied: false, ...await detail(ctx, env, job.id) });
+    return reply(200, { ok: true, alreadyApplied: false, ...await detail(ctx, env, job.id, '', { signer: reference }) });
   } catch (error) {
     // Recover an applied transaction after a lost response, without asserting
     // success when the committed receipt cannot be read and verified.
     if (ctx && input && fingerprint && ['FIELD_STORAGE_UNAVAILABLE', 'FIELD_REVISION_CONFLICT'].includes(error.code)) {
-      try { const receipt = await ctx.store.readEvent(input.jobId, input.requestId); if (receipt?.state === 'applied' && receipt.fingerprint === fingerprint) return reply(200, { ok: true, alreadyApplied: true, ...await detail(ctx, env, input.jobId) }); } catch { /* Original actionable error remains. */ }
+      try { const receipt = await ctx.store.readEvent(input.jobId, input.requestId); if (receipt?.state === 'applied' && receipt.fingerprint === fingerprint) return reply(200, { ok: true, alreadyApplied: true, ...await detail(ctx, env, input.jobId, '', { signer: input.action === 'photo' && input.category === 'walkthrough' }) }); } catch { /* Original actionable error remains. */ }
     }
     return errorResponse(error);
   }

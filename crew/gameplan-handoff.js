@@ -149,7 +149,9 @@
     // says serverSync 'ready' while the job is unsynced). When another sync holds the job (a manager's Hub retry) or the
     // answer is lost, it follows that sync instead (view=sync, up to SERVER_SYNC_POLLS checks). A manager's page still
     // calls /api/highlevel (business access), which replays an earlier sync's result or waits for one, so nothing is
-    // written twice. A save the server does not offer to sync (an older server) is left 'pending' for a manager's Hub.
+    // written twice. A retried save of a job already synced (no serverSync, job.syncStatus 'synced') reads view=sync, so
+    // the page keeps saying what that sync and the invitation did. A save the server does not offer to sync (an older
+    // server) is left 'pending' for a manager's Hub.
     const SERVER_SYNC_POLLS = 10, SERVER_SYNC_WAIT_MS = 3000;
     const pause = ms => typeof d.sleep === 'function' ? d.sleep(ms) : new Promise(resolve => setTimeout(resolve, ms));
     async function followServer(saved) {
@@ -175,7 +177,14 @@
     }
     async function sync(saved) {
       if (await d.actor() !== saved.pending.actor) throw new Error('The signed-in account changed. Sign in again before synchronizing.');
-      if (typeof d.managerSync === 'function' && !d.managerSync()) return ['ready', 'started'].includes(saved.result?.serverSync) ? serverSync(saved) : {ok:true,handoffSync:{status:'manager_required'},portalInvitation:{status:'manager_required'}};
+      if (typeof d.managerSync === 'function' && !d.managerSync()) {
+        if (['ready', 'started'].includes(saved.result?.serverSync)) return serverSync(saved);
+        // A save replayed after the first sync finished (Retry remaining synchronization, Saved — verify again): the
+        // server offers no sync for a synced job, so the page reads where that sync and the invitation stand (view=sync)
+        // instead of handing a finished sync to a manager.
+        if (saved.result?.job?.syncStatus === 'synced') return followServer(saved);
+        return {ok:true,handoffSync:{status:'manager_required'},portalInvitation:{status:'manager_required'}};
+      }
       return request('/api/highlevel',{tool:'game_plan',job_id:saved.result.job.id,handoff_request_id:saved.pending.requestId});
     }
     function release(saved) {
