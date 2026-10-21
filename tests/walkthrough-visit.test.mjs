@@ -5,6 +5,7 @@ import { recordWalkthroughVisit, walkthroughPerformer, walkthroughVisitProjectio
 import { authorizeTimecard } from '../functions/_lib/employee-timecards.js';
 import { activeJobSegment, employeeJobTime } from '../functions/_lib/employee-job-time.js';
 import { computeJobLaborCost } from '../functions/_lib/job-labor-cost.js';
+import { withoutRandomValues } from './helpers/leak-text.mjs';
 
 // Synthetic fixtures only. The clock is always injected.
 const CLOCK_IN = '2026-09-22T14:00:00.000Z', NOW = '2026-09-22T15:00:00.000Z', FINISH = '2026-09-22T16:00:00.000Z';
@@ -88,7 +89,7 @@ test('Start opens the rep\'s work segment on the visit id and records the visit,
   // Dispatch state and money are untouched; the response is an allowlist.
   const visit = f.visit('w1');
   assert.equal(visit.status, 'scheduled'); assert.equal(visit.completedAt, undefined); assert.equal(visit.walkthroughCompletedAt, undefined); assert.equal(visit.estimate.amount, 1437);
-  const text = JSON.stringify(result);
+  const text = withoutRandomValues(JSON.stringify(result));
   for (const secret of ['1437', 'SYNTHETIC-SIGNATURE', 'Synthetic private note', 'contact1', 'hourlyRate']) assert.equal(text.includes(secret), false, secret);
 });
 
@@ -516,7 +517,7 @@ test('the state read returns the visit, the rep\'s open walkthrough and whether 
   const busy = await walkthroughVisitState(f.store, sales, {}, FINISH);
   assert.equal(busy.visit, null); assert.equal(busy.openVisit.id, 'w1'); assert.equal(busy.openVisit.walkthroughVisit.startedAt, NOW);
   assert.deepEqual(busy.shift.current, { kind: 'work', jobId: 'w1', startedAt: NOW }); assert.equal(busy.shift.clockedIn, true);
-  for (const secret of ['1437', 'SYNTHETIC-SIGNATURE', 'Synthetic private note', 'hourlyRate', 'locationTrail']) assert.equal(JSON.stringify(busy).includes(secret), false, secret);
+  for (const secret of ['1437', 'SYNTHETIC-SIGNATURE', 'Synthetic private note', 'hourlyRate', 'locationTrail']) assert.equal(withoutRandomValues(JSON.stringify(busy)).includes(secret), false, secret);
   await rejects(walkthroughVisitState(f.store, sales, { visitId: 'w3' }, NOW), 'not_assigned', 403);
   await rejects(walkthroughVisitState(f.store, sales, { visitId: 'job-a' }, NOW), 'not_found', 404);
   await rejects(walkthroughVisitState(f.store, sales, { jobId: 'w1' }, NOW), 'invalid', 400);
