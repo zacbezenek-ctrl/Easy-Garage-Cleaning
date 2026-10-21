@@ -13,8 +13,8 @@ from hub_shell_harness import FIREBASE, HubShell, JOBS, MANAGER, RESULTS
 
 OWNER = {**MANAGER, 'owner': True}
 TYLER = {'ok': True, 'user': 'TylerG', 'displayName': 'Synthetic Manager', 'role': 'manager', 'businessAccess': True, 'owner': False, 'payType': 'hourly', 'hourlyRate': 0}
-# Labor canaries: $151.64 entered by the owner (still copied on this job, as before the backfill), and the legacy
-# $20/crew-hour baseline on a job without costs (3 h -> $60.00).
+# Labor canaries: $151.64 entered by the owner (still copied on this job, as before the backfill), and a job without
+# costs (3 crew-hours) that an owner-entered crew-hour baseline would price; this harness serves no baseline.
 COSTED = {'id': 'job-costed', 'type': 'job', 'customer': 'Synthetic Costed Garage', 'phone': '9705550103', 'address': '12 Synthetic Pl, Fort Collins, CO', 'date': '2026-09-16', 'time': '09:00',
           'endDate': '2026-09-16', 'endTime': '13:00', 'status': 'completed', 'total': 900, 'priceQuoted': 900, 'hoursOnSite': 4, 'crewSize': 1, 'notify': False, 'syncStatus': 'synced',
           'costs': {'labor': 151.64, 'laborCents': 15164, 'disposal': 85.5, 'materials': 0, 'fuel': 12, 'processing': 0, 'other': 0, 'recordedAt': '2026-09-17T18:00:00Z', 'recordedBy': 'zacb', 'source': 'egc_hub'}}
@@ -29,9 +29,10 @@ SALES = {'ok': True, 'user': 'Synthetic.Sales', 'displayName': 'Synthetic Sales'
 FORBIDDEN = {'ok': False, 'code': 'job_labor_forbidden', 'error': 'Only an operations manager or owner can open job labor cost.'}
 HIDDEN = {'ok': True, 'authority': 'employee_hub', 'laborCostHidden': True, 'jobs': None, 'asOf': '2026-09-22T18:00:00Z'}
 VISIBLE = {'ok': True, 'authority': 'employee_hub', 'laborCostHidden': False, 'jobs': [RECORD], 'complete': True, 'asOf': '2026-09-22T18:00:00Z'}
-# The Hub shows whole dollars: labor $152 and $60, and the figures that include labor: direct cost 151.64+97.50=$249,
-# contribution 900-249.14=$651 at 72.3%, and the baseline job's $540 at 90.0%.
-LEAKS = (r'\$152\b', r'\$60(?![\d,.])', r'\$249\b', r'\$651\b', r'\$540\b', r'72\.3%', r'90\.0%')
+# The Hub shows whole dollars: labor $152, and the figures that include labor: direct cost 151.64+97.50=$249 and
+# contribution 900-249.14=$651 at 72.3%. The baseline job must never be priced from a built-in crew-hour rate, whatever
+# the number: no "crew-hour baseline" wording appears.
+LEAKS = (r'\$152\b', r'\$249\b', r'\$651\b', r'72\.3%', r'crew-hour baseline')
 CAPTURE = FIREBASE.replace("doc(){return{set:async()=>{},", "doc(id){return{set:async(update)=>{(window.__sets||=[]).push([id,JSON.parse(JSON.stringify(update))])},")
 
 
