@@ -8,6 +8,8 @@ Each finding below was reproduced by a script run against the real modules, with
 
 | ID | Severity | One line | Status |
 |---|---|---|---|
+| C-01 | **Critical** | Password hashes for six staff sign-ins (the owner's included) sat in the public repo's history in a format that can be cracked fast; change those passwords now. | **Owner action now** |
+| H-01 | High | Four Zapier "catch hook" addresses are in the public history; if any of those Zaps is still on, anyone can fire it (review-request texts, Meta conversions, crew/Jobber jobs). | **Owner action now** |
 | S-01 | High | Anyone could guess staff passwords, including the owner's, with no limit on attempts. | Fixed |
 | S-02 | High | A customer address, phone or email containing code ran that code in the owner's Hub, which could take over the owner session. | Fixed |
 | M-01 | Medium | The public lead form can be scripted to text any phone, flood team alerts, and overwrite an existing customer's name and email in HighLevel. | Open: fix this week |
@@ -21,12 +23,74 @@ Each finding below was reproduced by a script run against the real modules, with
 | L-06 | Low | The Google Maps key in `employee.html` is public by design; confirm it is restricted in Google Cloud. | Owner check |
 | L-07 | Low | The egc-platform internal bearer token is compared with `!==`, not a constant-time compare. | Open (hardening) |
 
-**Secrets:** no live server secret was found anywhere in the history. That includes Stripe live/restricted keys, webhook secrets, service-account private keys, HighLevel, GitHub, Slack, AWS and Resend keys. The only real keys committed are browser keys that are public by design:
+**Secrets:** the repository is **public**, so everything in its 918-commit history is already on the internet.
 
-- the Firebase web `apiKey`, in many pages;
-- a Google Maps key (`employee.html`, committed in `deafdbd` on 2026-05-18).
+- No live server credentials were found: no Stripe live or restricted keys, webhook secrets, service-account private keys, `HUB_SESSION_SECRET` values, or HighLevel, OpenAI, GitHub, Slack, AWS or Resend keys. Every value matching those patterns is a synthetic test fixture.
+- Two kinds of material in the history do need action now: the password hashes in C-01 and the Zapier hook addresses in H-01.
+- The Firebase web `apiKey` and the Google Maps key in `employee.html` are browser keys and public by design (see L-06).
 
-Everything else that matched a secret pattern was a synthetic test fixture. **Nothing needs rotating.** For the Maps key, see L-06.
+**Should the repository be private? Yes, make it private now.** Here is what the switch affects:
+
+- **Cloudflare Pages and Vercel:** both deploy from private repositories through their GitHub apps; no change is needed.
+- **GitHub Actions:** private repositories on the free plan get 2,000 minutes a month. This CI uses about 4 to 5 runner-minutes per push (two jobs of about 2 minutes each). Watch usage, or cut the shifted-clock job down to pushes to `main`.
+- **Claude and Codex GitHub apps:** they keep working on a private repository as long as the app is installed on it.
+
+Going private stops new exposure. It does **not** take back what was already cloned or indexed, so C-01 and H-01 still need the rotation steps below.
+
+This report is also public while the repository is. It describes open findings (M-01 to M-03) in enough detail to act on, which is one more reason to go private and fix M-01 soon.
+
+**Other public information that helps an attacker** (the code needs most of it, so it was not removed):
+
+- the business sign-in usernames;
+- the production Railway hostnames for the API, MCP and portal services (`egc-platform` docs and `functions/`);
+- the admin and API paths;
+- the owner's personal mobile number, inside the Co-Pilot system prompt (`functions/api/copilot.js`, lines 235 to 256 and 547).
+
+Consider moving that phone number into an environment variable. Railway health and service-key endpoints are meant to be public; the API itself is protected by `requireInternalAuth`.
+
+**Personal data:** no real customer data was found in the history. Names, phones, emails and addresses in fixtures, tests, docs and snapshots are synthetic: "Synthetic …" names, `555` phones, `example.*` and `.invalid` emails, and "Synthetic Way" addresses. The other phone numbers are the business's public lines.
+
+## Critical
+
+### C-01: crackable staff password hashes in the public history (Owner action now)
+
+**Where:**
+- Commits `8f4e441` (2026-09-03) to `e066d13` (2026-09-05), also `1938384` and `f432302`, put a username → hash map in `functions/_lib/hub-session.js`.
+- It covered six accounts: ZacB, TylerG, AlexK, FrankJara, JobberCrew and CrewTest.
+- The map is no longer in the current code, but every clone of the repository still has it.
+
+**Why this is critical:**
+- Those hashes come from `hashHubCredential`: one SHA-256 over `username:password:` plus a fixed salt that is also in the repository. A GPU tests billions of guesses a second against that, so any ordinary password falls quickly.
+- The current sign-in code (`hub-session.js`, `verifyPasswordHash`) still accepts that legacy 64-hex format. Any of those six people still using the same password can therefore be signed in as by whoever cracks the hash, the owner included.
+- The new S-01 limit doesn't help here: the guessing happens offline.
+
+**What to do now:**
+1. Change the password for each of those six sign-ins, owner first.
+2. Store the new hashes only in the `pbkdf2-sha256$…` format, using `createHubCredentialHash` or the owner setup page.
+3. Remove any account that is no longer used, such as CrewTest and JobberCrew.
+4. Make sure `HUB_AUTH_USERS_JSON` in Cloudflare holds no 64-hex legacy hash.
+5. Rotate `HUB_SESSION_SECRET` after the password change, so every session is signed out.
+
+**Follow-up code change, after step 4 is done:** make `verifyPasswordHash` refuse 64-hex legacy hashes. This review did not make that change. `hub-session.js` is being changed on another branch, and refusing legacy hashes before the configuration is converted would lock staff out. Either way, the real fix is the new passwords.
+
+### H-01: Zapier catch-hook addresses in the public history (Owner action now)
+
+**Where:** four `hooks.zapier.com/hooks/catch/…` addresses, introduced in:
+- `aec264e` / `96fec85`: Meta CAPI signal buttons;
+- `f2d9554`: review request on job completion;
+- `ac11654`, `306cb6e` and `8e50297`: crew gameplan and post-job;
+- `4026892`: crew webhook to the Jobber Zap.
+
+All were later moved to server-side env vars (`240335b`, `8e50297`), so none is in the current code.
+
+**Why it matters:** a catch hook has no authentication; anyone holding the address can trigger the Zap. If any of those Zaps is still on, or one of these addresses is still the value of a current env var such as the crew hook, an outsider can:
+- send review-request texts to any number;
+- post fake Meta conversions;
+- create crew or Jobber events.
+
+**What to do now:** in Zapier, open each of those Zaps.
+- If a Zap is still in use, re-create its Catch Hook trigger to get a new address, and put the new address only in the Cloudflare env var.
+- If it is not in use, turn it off.
 
 ---
 
