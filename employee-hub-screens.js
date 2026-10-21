@@ -46,6 +46,7 @@ const MANIFEST=[
 const HOME_WIDGETS=[
   {id:'customer_messages',label:'Customer messages',homes:['today','my_day'],capability:'customer_contact',module:'EGCCustomerMessagesHome',load:{js:'employee-customer-messages.js',css:'employee-customer-messages.css',v:'20261021inbox4'}},
   {id:'overdue_followups',label:'Overdue follow-ups',homes:['today','my_day'],capability:'business',module:'EGCFollowupsHome'},
+  {id:'job_signoff',label:'Completed: needs sign-off',homes:['today'],capability:'business',module:'EGCJobSignoff',load:{js:'employee-job-signoff.js',css:'employee-job-signoff.css',v:'20261021signoff1'}},
 ];
 const HOMES=new Set(['today','my_day']);
 const ID=/^[a-z][a-z0-9_]{1,47}$/,CAPABILITY=/^[a-z][a-z0-9_]{1,40}$/,MODULE=/^EGC[A-Za-z0-9]{1,40}$/,VERSION=/^[A-Za-z0-9._-]{1,40}$/,ICON=/^[MmLlHhVvCcSsQqTtAaZz0-9 .,-]{1,800}$/;

@@ -264,6 +264,8 @@ jobs:
         run: python tests/browser/test_home_widgets_ui.py
       - name: Review queues for held Stripe charges, member matches and unconfirmed sends, and the Command Center alert
         run: python tests/browser/test_review_queues_ui.py
+      - name: Command center needs sign-off widget (sign off, flag, own-job rule, phone layout)
+        run: python tests/browser/test_job_signoff_ui.py
       - name: Customer tip picker on portal Pay, held tipped payments and phone layout
         run: python tests/browser/test_customer_tips_ui.py
       - name: Crew closeout tip picker, held tipped charges and the Hub tip allocation card
