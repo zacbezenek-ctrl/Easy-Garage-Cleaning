@@ -43,7 +43,9 @@ function storage(t) {
       const query = JSON.parse(options.body).structuredQuery;
       const filter = query.where?.fieldFilter;
       if (filter?.value?.stringValue === 'employee_account_v1') calls.accountQueries++;
-      const rows = [...documents.values()].filter(row=>row.name.split('/documents/')[1].split('/')[0]===query.from[0].collectionId).filter(row => !filter || row.fields?.[filter.field.fieldPath]?.stringValue === filter.value.stringValue).map(document => ({ document }));
+      // Equality filters, alone or joined with AND (the Hub's per-family vault reads), as Firestore applies them.
+      const filters = query.where?.compositeFilter?.filters.map(item => item.fieldFilter) || (filter ? [filter] : []);
+      const rows = [...documents.values()].filter(row=>row.name.split('/documents/')[1].split('/')[0]===query.from[0].collectionId).filter(row => filters.every(item => row.fields?.[item.field.fieldPath]?.stringValue === item.value.stringValue)).map(document => ({ document }));
       return Response.json(rows.length ? rows : [{ readTime: '2026-09-07T00:00:00Z' }]);
     }
     if (url.pathname.endsWith('/documents:commit')) {
@@ -63,7 +65,8 @@ function storage(t) {
     if (method==='GET' && collectionList) return Response.json({documents:[...documents.values()].filter(row=>row.name.split('/documents/')[1].split('/')[0]===collectionList[1])});
     const id = decodeURIComponent(url.pathname.split('/').pop());
     const collection=url.pathname.split('/').at(-2),key=collection==='jobs'?id:`${collection}/${id}`;
-    if (method === 'GET') calls.documentReads.push(id);
+    // The vault revision document (one read per Hub poll) is not a job or account lookup.
+    if (method === 'GET' && collection !== 'employee_vault_revisions') calls.documentReads.push(id);
     if (method === 'PATCH') {
       const existing = documents.get(id);
       if (url.searchParams.get('currentDocument.exists') === 'false' && existing) return Response.json({}, { status: 412 });
