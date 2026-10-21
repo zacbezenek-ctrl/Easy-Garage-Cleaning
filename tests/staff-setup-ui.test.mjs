@@ -45,7 +45,7 @@ function ui(pages, { migrate = body => ({ ok: true, report: { migrationId: body.
 test('the owner sees Finish staff setup only while setup has work, and one tap applies both migrations in order', async () => {
   const page = ui([directory(true), directory(false)]);
   await settle();
-  assert.match(page.host.textContent, /One-time setup saves the current role and pay rate of each employee account/);
+  assert.match(page.host.textContent, /Finish new staff setupSetup saves the current role and pay rate of each employee account not yet set up/);
   assert.match(page.host.textContent, /The configured Hub accounts keep theirs in the Hub configuration\./);
   assert.equal(page.migrations.length, 0, 'opening the directory runs nothing');
   page.finish().click();
@@ -123,4 +123,15 @@ test('setup is reported finished only when the reload confirms it, and sign-out 
   assert.ok(kept().every(name => name.startsWith('egc.hub.staffSetup.v1.zacb.')), 'kept under the signed-in viewer');
   lost.signout();
   assert.deepEqual(kept(), [], 'sign-out clears them');
+});
+
+test('signing out mid-run sends no further migration and keeps no request id', async () => {
+  let page;
+  const session = storage();
+  page = ui([directory(true)], { session, migrate: body => { if (body.migrationId === SETUP[0]) page.signout(); return { ok: true, report: { migrated: 1, conflicts: 0, failed: 0 } }; } });
+  await settle();
+  page.finish().click();
+  await settle();
+  assert.deepEqual(page.migrations.map(body => body.migrationId), [SETUP[0]], 'the second migration is never sent after sign-out');
+  assert.deepEqual([...session.values.keys()].filter(name => name.startsWith('egc.hub.staffSetup.v1.')), [], 'no key is written after the clear');
 });
