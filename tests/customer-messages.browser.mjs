@@ -29,7 +29,7 @@ const seed = async () => {
   Object.assign(dana, { messageCount: 3, messages: [{ id: 'customer-a0', authorName: 'Dana Customer', body: 'Hi!', createdAt: ago(9) }, { id: 'customer-a1', authorName: 'Dana Customer', body: 'Quick question about parking.', createdAt: ago(6) }, ...dana.messages] });
   return docs;
 };
-const docs = await seed();
+const docs = await seed(), seeded = new Map([...docs].map(([id, row]) => [id, structuredClone(row)]));
 let n = 0;
 const store = {
   async read(id) { const row = docs.get(id); return row ? structuredClone(row) : null; },
@@ -78,7 +78,7 @@ const shots = process.env.CM_SCREENSHOTS || '';
 if (shots) await mkdir(shots, { recursive: true });
 try {
   for (const width of [1280, 390]) {
-    for (const row of docs.values()) Object.assign(row, { status: 'open', handledAt: '', handledBy: '' });
+    for (const [id, row] of seeded) docs.set(id, structuredClone(row));
     posts.length = 0;
     const page = await browser.newPage({ viewport: { width, height: 900 } });
     const errors = [];
@@ -109,10 +109,22 @@ try {
     if (width === 390) assert.ok(rect.width > 300, '390: buttons are full width on a phone');
     if (shots) await page.screenshot({ path: join(shots, `customer-messages-${width}.png`), fullPage: true });
 
+    // Dana writes again after the office loaded the list: Mark handled on the row they saw (3 messages) is refused,
+    // the row stays, and the list reloads with the new message before it can be handled.
+    const danaId = [...seeded.keys()][0], dana = docs.get(danaId);
+    Object.assign(dana, { messageCount: 4, body: 'Actually please cancel, my dog is sick', lastMessageAt: NOW, messages: [...dana.messages, { id: 'customer-a3', authorName: 'Dana Customer', body: 'Actually please cancel, my dog is sick', createdAt: NOW }], revision: 'r-appended' });
     await handled.click();
+    await page.waitForFunction(() => document.querySelector('#screen .cm-item .cm-many')?.textContent === '4 messages');
+    assert.equal(await items.count(), 3, `${width}: the row was not dropped`);
+    assert.equal(docs.get(danaId).status, 'open');
+    assert.deepEqual(posts.map(body => [body.action, body.seenCount]), [['mark_handled', 3]]);
+    assert.match(await items.nth(0).locator('.cm-body').last().textContent(), /please cancel, my dog is sick/);
+    assert.deepEqual(await page.evaluate(() => window.toasts), [['A new message arrived. Read it before marking this handled.', true]]);
+    await page.evaluate(() => { window.toasts.length = 0; });
+    await items.nth(0).locator('[data-cm-handled]').click();
     await page.waitForFunction(() => document.querySelectorAll('#screen .cm-item').length === 2);
-    assert.deepEqual(posts.map(body => body.action), ['mark_handled']);
-    assert.equal(docs.get(posts[0].id).handledBy, 'Tyler G');
+    assert.deepEqual(posts.map(body => [body.action, body.seenCount]), [['mark_handled', 3], ['mark_handled', 4]]);
+    assert.equal(docs.get(danaId).handledBy, 'Tyler G');
     assert.equal(await page.locator('[data-ops-tab="customer_messages"] .cm-nav-badge').textContent(), '2', `${width}: the badge drops when one is handled`);
     assert.equal(await home.locator('.cm-item').count(), 2, `${width}: the widget follows the same list`);
     assert.deepEqual(await page.evaluate(() => window.toasts), [['Marked handled', false]]);

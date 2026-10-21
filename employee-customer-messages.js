@@ -62,11 +62,14 @@ async function markHandled(row,ctx,button){
   if(S.busy.has(row.id))return;
   S.busy.add(row.id);button.disabled=true;button.textContent='Saving…';
   try{
-    await call('POST',{action:'mark_handled',id:row.id});
+    // The count shown is sent, so a message that arrived since this row was drawn is never marked handled unseen.
+    await call('POST',{action:'mark_handled',id:row.id,seenCount:Number(row.messageCount)||1});
     if(S.data)S.data={...S.data,messages:S.data.messages.filter(item=>item.id!==row.id)};
     try{ctx?.toast?.('Marked handled');}catch{}
   }catch(error){
     try{ctx?.toast?.(error.message||'That message could not be marked handled. Retry.',true);}catch{}
+    // A new message joined the entry: the row stays and the list reloads so it can be read first.
+    if(error?.code==='customer_messages_changed'){S.busy.delete(row.id);S.at=0;void load();}
   }finally{S.busy.delete(row.id);paint();}
 }
 function item(row,ctx){

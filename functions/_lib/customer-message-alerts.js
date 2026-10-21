@@ -237,14 +237,20 @@ export async function listCustomerMessages(store, { limit = ALERT_LIST_LIMIT } =
   return { rows, messages: rows.map(customerMessageView), total: rows.length, complete };
 }
 
-/** Marks an entry handled; marking a handled entry again answers alreadyHandled. */
+const countOf = alert => Number.isSafeInteger(alert?.messageCount) && alert.messageCount > 0 ? alert.messageCount : 1;
+
+/** Marks an entry handled; marking a handled entry again answers alreadyHandled. seenCount is the messageCount the
+ *  person was shown: a message that joined the entry since then (checked on every read, so also one that lands
+ *  between the read and the guarded write) is never marked handled unseen; the answer is a 409 to refresh. The
+ *  count, not the revision, is compared, so a background HighLevel task write never refuses a click. */
 export async function markCustomerMessageHandled(store, input, actor, now) {
-  if (!object(input) || input.action !== 'mark_handled' || !validAlertId(input.id)) throw fail('customer_messages_invalid', 'Choose a customer message to mark handled.');
+  if (!object(input) || input.action !== 'mark_handled' || !validAlertId(input.id) || !Number.isSafeInteger(input.seenCount) || input.seenCount < 1) throw fail('customer_messages_invalid', 'Choose a customer message to mark handled.');
   const by = inline(actor?.displayName || actor?.name || actor?.user, 120) || 'Hub user';
   for (let round = 0; round < 3; round += 1) {
     const alert = await store.read(input.id);
     if (!alert) throw fail('customer_messages_not_found', 'That customer message was not found. Refresh the list.', 404);
     if (alert.status === 'handled') return { ok: true, alreadyHandled: true, message: customerMessageView(alert) };
+    if (countOf(alert) > input.seenCount) throw Object.assign(fail('customer_messages_changed', 'A new message arrived. Read it before marking this handled.', 409), { latest: customerMessageView(alert) });
     const patch = { status: 'handled', handledAt: now, handledBy: by, updatedAt: now };
     const revision = await store.write(input.id, patch, alert.revision);
     if (revision) return { ok: true, message: customerMessageView({ ...alert, ...patch, revision }) };

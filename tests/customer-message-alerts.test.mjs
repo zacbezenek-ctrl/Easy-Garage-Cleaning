@@ -292,7 +292,7 @@ test('the Hub list is for people who may contact customers; Mark handled is same
   const post = (profile, body, origin = 'https://easygaragecleaning.com') => handlers(profile).post({ request: new Request('https://easygaragecleaning.com/api/customer-messages', { method: 'POST', headers: { Origin: origin, 'Content-Type': 'application/json' }, body: JSON.stringify(body) }), env: ENV });
   assert.equal((await get(null)).status, 401);
   assert.equal((await get(CREW)).status, 403, 'crew never see customer messages');
-  assert.equal((await post(CREW, { action: 'mark_handled', id: row.id })).status, 403);
+  assert.equal((await post(CREW, { action: 'mark_handled', id: row.id, seenCount: 1 })).status, 403);
   // Sales holds customer.send with staff-role permissions on.
   const sales = { user: 'samsales', displayName: 'Sam', role: 'sales', staffRoles: ['sales'] };
   const salesHandlers = customerMessageHandlers({ session: async () => sales, storage: () => store, fetcher: fetchNone });
@@ -301,15 +301,16 @@ test('the Hub list is for people who may contact customers; Mark handled is same
 
   const listed = await (await get(BUSINESS)).json();
   assert.deepEqual(listed.messages.map(message => [message.id, message.jobId, message.customerName, message.status]), [[row.id, 'job-1', 'Dana', 'open']]);
-  assert.equal((await post(BUSINESS, { action: 'mark_handled', id: row.id }, 'https://evil.example')).status, 403);
+  assert.equal((await post(BUSINESS, { action: 'mark_handled', id: row.id, seenCount: 1 }, 'https://evil.example')).status, 403);
   assert.equal((await post(BUSINESS, { action: 'mark_handled', id: 'not-an-id' })).status, 400);
-  const done = await (await post(BUSINESS, { action: 'mark_handled', id: row.id })).json();
+  assert.equal((await post(BUSINESS, { action: 'mark_handled', id: row.id })).status, 400, 'the count the person saw is required');
+  const done = await (await post(BUSINESS, { action: 'mark_handled', id: row.id, seenCount: 1 })).json();
   assert.equal(done.message.status, 'handled');
   assert.equal(store.docs.get(row.id).handledBy, 'Tyler G');
   assert.equal(store.docs.get(row.id).handledAt, minutes(T0, 5));
-  assert.equal((await (await post(BUSINESS, { action: 'mark_handled', id: row.id })).json()).alreadyHandled, true);
+  assert.equal((await (await post(BUSINESS, { action: 'mark_handled', id: row.id, seenCount: 1 })).json()).alreadyHandled, true);
   assert.deepEqual((await (await get(BUSINESS)).json()).messages, [], 'handled messages leave the list and the badge');
-  assert.equal((await markCustomerMessageHandled(store, { action: 'mark_handled', id: row.id }, BUSINESS, T0)).alreadyHandled, true);
+  assert.equal((await markCustomerMessageHandled(store, { action: 'mark_handled', id: row.id, seenCount: 1 }, BUSINESS, T0)).alreadyHandled, true);
 });
 
 const taskPosts = h => h.calls.highLevel.filter(call => call.method === 'POST' && call.url.endsWith('/tasks'));
@@ -328,7 +329,7 @@ test('later messages join the job\'s open entry: one Hub row and one HighLevel t
 
   // Handled: the next message opens a fresh entry and owes a fresh task.
   const store = customerMessageAlertStorage(ENV);
-  await markCustomerMessageHandled(store, { action: 'mark_handled', id: alerts[0].id }, BUSINESS, minutes(T0, 3));
+  await markCustomerMessageHandled(store, { action: 'mark_handled', id: alerts[0].id, seenCount: 3 }, BUSINESS, minutes(T0, 3));
   await (await portalSend(ENV, { requestId: 'portal-request-0004', body: 'One more thing', now: minutes(T0, 4) })).settle();
   alerts = h.alerts();
   const open = alerts.filter(row => row.status === 'open');
@@ -339,13 +340,47 @@ test('later messages join the job\'s open entry: one Hub row and one HighLevel t
   assert.match(taskPosts(h)[0].body.body, /Dana Customer: Hi/);
 });
 
+test('Mark handled never clears a message the office has not seen: a later message refuses it with 409 until the list is re-read', async t => {
+  const h = harness(t, { highLevel: healthy() });
+  const hub = customerMessageHandlers({ session: async () => BUSINESS, now: () => new Date(minutes(T0, 5)) });
+  const list = async () => (await (await hub.get({ request: new Request('https://easygaragecleaning.com/api/customer-messages'), env: ENV, waitUntil: () => {} })).json()).messages;
+  const markHandled = async (id, seenCount) => hub.post({ request: new Request('https://easygaragecleaning.com/api/customer-messages', { method: 'POST', headers: { Origin: 'https://easygaragecleaning.com', 'Content-Type': 'application/json' }, body: JSON.stringify({ action: 'mark_handled', id, seenCount }) }), env: ENV });
+  await (await portalSend(ENV, { requestId: 'portal-request-0001', body: 'Can you come Tuesday?' })).settle();
+  const [shown] = await list();
+  assert.equal(shown.messageCount, 1, 'the office sees one message');
+  await (await portalSend(ENV, { requestId: 'portal-request-0002', body: 'Actually please cancel, my dog is sick', now: minutes(T0, 1) })).settle();
+  const refused = await markHandled(shown.id, shown.messageCount);
+  assert.equal(refused.status, 409);
+  assert.deepEqual([(await refused.json()).code], ['customer_messages_changed']);
+  let [still] = await list();
+  assert.deepEqual([still.id, still.status, still.messageCount, still.body], [shown.id, 'open', 2, 'Actually please cancel, my dog is sick'], 'the entry stays open with the new message');
+  assert.equal((await markHandled(still.id, still.messageCount)).status, 200, 'once read, it can be marked handled');
+  assert.deepEqual(await list(), []);
+});
+
+test('an append that lands between Mark handled\'s read and its write is caught on the re-read', async () => {
+  const row = await entry();
+  const store = memoryStore([row]), write = store.write;
+  let raced = false;
+  store.write = async (id, patch, revision) => {
+    // The customer's next message joins the entry just before the handled write.
+    if (!raced && patch.status === 'handled') { raced = true; await write(id, { messageCount: 2, body: 'One more thing', lastMessageAt: minutes(T0, 1) }, ''); }
+    return write(id, patch, revision);
+  };
+  await assert.rejects(markCustomerMessageHandled(store, { action: 'mark_handled', id: row.id, seenCount: 1 }, BUSINESS, minutes(T0, 2)), error => error.code === 'customer_messages_changed' && error.status === 409);
+  assert.deepEqual([store.docs.get(row.id).status, store.docs.get(row.id).messageCount], ['open', 2]);
+  // A background HighLevel task write changes the revision, not the count: the click still succeeds.
+  await write(row.id, { task: { ...store.docs.get(row.id).task, status: 'created', taskId: 'task-1' } }, '');
+  assert.equal((await markCustomerMessageHandled(store, { action: 'mark_handled', id: row.id, seenCount: 2 }, BUSINESS, minutes(T0, 3))).message.status, 'handled');
+});
+
 test('a Mark handled between the read and the commit is re-read: the message never lands on a handled entry', async t => {
   const h = harness(t, { highLevel: healthy() });
   await (await portalSend(ENV, { requestId: 'portal-request-0001', body: 'Hi' })).settle();
   const [first] = h.alerts(), real = customerMessageAlertStorage(ENV);
   let reads = 0;
   // The first read sees the entry open; it is then handled before the commit, so the guarded append fails.
-  const racing = env => ({ ...real, read: async id => { const row = await real.read(id); if (reads++ === 0) await markCustomerMessageHandled(real, { action: 'mark_handled', id }, BUSINESS, minutes(T0, 1)); return row; } });
+  const racing = env => ({ ...real, read: async id => { const row = await real.read(id); if (reads++ === 0) await markCustomerMessageHandled(real, { action: 'mark_handled', id, seenCount: 1 }, BUSINESS, minutes(T0, 1)); return row; } });
   const sent = await portalSend(ENV, { requestId: 'portal-request-0002', body: 'Still there?', now: minutes(T0, 2), deps: { alerts: racing } });
   await sent.settle();
   assert.equal(sent.response.status, 200);
