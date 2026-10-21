@@ -8,7 +8,7 @@
  *   employee's own rate, so the report shows hours and dollars without revealing anyone's pay.
  * POST {action:'job_actuals.settings.set', requestId, expectedRevision, settings} (owner) => {ok, settings, requestId, replayed}.
  * EGC_WINTER_SALE (winter-sale.js): GET also answers winterSale:{enabled:true, settings:{amountCents, signBy,
- *   jobFrom, jobTo, marginFloorBp, revision, ...}}; POST {action:'winter_sale.settings.set', requestId, expectedRevision,
+ *   jobFrom, jobTo, marginFloorBp (owner only), revision, ...}}; POST {action:'winter_sale.settings.set', requestId, expectedRevision,
  *   settings} (owner) saves them => {ok, winterSale, canEdit, requestId, replayed}. Flag off: neither exists.
  * Errors: {ok:false, code, error}; 400, 401, 403, 409 revision/idempotency, 413, 415, 503 retry the same request. */
 import { getHubSession, isHubOwner } from '../_lib/hub-session.js';
@@ -59,7 +59,9 @@ export function jobActualsHandlers({ session = getHubSession, dispatch = dispatc
         const [setters, sales] = await Promise.all([walkthroughs.length ? kstore.getMany('knock_setters', walkthroughs) : new Map(), directSalesFor(kstore, jobs.map(job => job.id))]);
         const report = buildJobActuals({ jobs, labor, settings, setterWalkthroughs: new Set([...setters.keys()].filter(id => setters.get(id))), doorSaleJobs: new Set(sales.map(sale => sale?.handoff?.job?.ref).filter(Boolean)), timecardsAvailable: timecardSource === 'ok', today: window.today, asOf });
         // EGC_WINTER_SALE: the owner's sale settings (amount, dates, margin floor) beside the cost settings.
-        const sale = winterSaleEnabled(env) ? { winterSale: { enabled: true, settings: await readWinterSaleSettings(saleStore(env)) } } : {};
+        // The margin floor is the owner's alone: a manager sees the sale's terms without it.
+        const saleView = settings => { if (isHubOwner(actor)) return settings; const { marginFloorBp, ...rest } = settings; return rest; };
+        const sale = winterSaleEnabled(env) ? { winterSale: { enabled: true, settings: saleView(await readWinterSaleSettings(saleStore(env))) } } : {};
         // Estimator accuracy (estimator-accuracy.js): the same jobs and hours, scored per estimator; nothing more is read.
         const estimatorAccuracy = buildEstimatorAccuracy({ rows: report.rows, jobs, setters, shortStart: report.window.shortStart });
         return reply(200, { ...report, estimatorAccuracy, ...settingsView(settings, actor), ...sale, sources: { timecards: timecardSource } });

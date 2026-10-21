@@ -41,12 +41,12 @@ const REASON={loads_quoted:'Dump cost from quoted loads',loads_unknown:'Truck lo
 const SOURCE={timecards:'Timecards',crew_lead:'Crew lead',not_recorded:'Not recorded'};
 const S={host:null,ctx:null,data:null,error:null,loading:false,busy:false,pending:null,drafts:{},feedback:'',feedbackError:false,generation:0,showAll:false,accuracyWindow:'last30',accuracyAll:false,accuracyJobsOpen:false,sale:{drafts:{},busy:false,feedback:'',error:false,requestId:''}};
 const SALE=[
-  {key:'amountCents',label:'Discount, up to',kind:'money',help:'Shown to the customer as its own line, "Early-bird winter sale", with the amount given: less where the margin floor caps it.'},
-  {key:'signBy',label:'Accepted by',kind:'date',help:'Last Denver day the customer can accept a sale quote; a sale quote expires on it at the latest.'},
-  {key:'jobFrom',label:'Work from',kind:'date',help:'First day the job can be booked.'},
+  {key:'amountCents',label:'Discount, up to',kind:'money',help:'Shown to the customer as its own line, "Early-bird winter sale", with the amount given: less where the margin floor caps it. At most $400.'},
+  {key:'signBy',label:'Accepted by',kind:'date',help:'Last Denver day the customer can accept a sale quote; a sale quote expires on it at the latest. It must fall inside the work days.'},
+  {key:'jobFrom',label:'Work from',kind:'date',help:'First day the job can be booked. The work days stay between Nov 1 and Mar 31, at most 92 days in all.'},
   {key:'jobTo',label:'Work through',kind:'date',help:'Last day the job can be booked.'},
   {key:'marginFloorBp',label:'Margin floor',kind:'percent',help:'The discount on a quote is cut to keep its estimated margin at this floor (none if the job is already below it). Only you see this; estimators see "ask Zac".'},
-  {key:'junkManHoursPerLoad',label:'Junk-only man-hours per truck load',kind:'hours',help:'Junk-only quotes have no Labor line, so this costs their crew time for the margin floor. Blank: junk-only quotes get no sale.'}];
+  {key:'junkManHoursPerLoad',label:'Man-hours per truck load',kind:'hours',help:'Crew time a truck load takes that the Labor line does not price (junk-only quotes have no Labor line). The margin floor adds it for every load on a quote. Blank: quotes with truck loads get no sale.'}];
 const O={data:null,error:null,busy:false,pending:null,drafts:{},feedback:'',feedbackError:false,generation:0};
 const kit=()=>window.EGCHubKit;
 const h=(...args)=>kit().h(...args);
@@ -183,6 +183,8 @@ function saleCard(){
   const editable=S.data.canEdit,sale=S.sale;
   const rows=SALE.map(s=>{
     const saved=d.settings[s.key];
+    // The margin floor is the owner's alone: the server leaves it out for anyone else.
+    if(!editable&&!Object.hasOwn(d.settings,s.key))return null;
     if(!editable)return h('div',{class:'ja-setting'},h('span',{},s.label),h('strong',{},s.kind==='hours'?(saved===null?'Not set':saved+' h'):s.kind==='money'?money(saved):s.kind==='percent'?(saved/100)+'%':day(saved)));
     const input=h('input',{type:s.kind==='date'?'date':'text',inputmode:s.kind==='date'?null:'decimal',autocomplete:'off',maxlength:12,placeholder:s.kind==='hours'?'Not set':null,value:Object.hasOwn(sale.drafts,s.key)?sale.drafts[s.key]:saleShown(s,saved),disabled:sale.busy,'aria-label':s.label,'data-sale':s.key,oninput:event=>{sale.drafts[s.key]=event.target.value;}});
     return h('label',{class:'ja-setting ja-setting-edit'},h('span',{},s.label,h('small',{},s.help)),h('span',{class:'ja-input'},s.kind==='money'?h('span',{'aria-hidden':'true'},'$'):null,input,s.kind==='percent'?h('span',{'aria-hidden':'true'},'%'):null));

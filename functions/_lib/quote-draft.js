@@ -19,8 +19,7 @@ import { approvalRefusal, compositeApproval, priceCompositeQuote } from './compo
 import { normalizeUnsignedCapture, unsignedCapturePatch } from './unsigned-walkthrough-capture.js';
 import { quotePaymentSchedule, requireQuotePaymentTiming, quotePaymentDates, quotePaymentSummary, businessPaymentDate, sentQuotePaymentPolicy, snapshotQuotePaymentPolicy, PAYMENT_TIME_ZONE } from './quote-payment-policy.js';
 import { prepareWalkthroughCaptureSync, walkthroughCaptureSyncView } from './walkthrough-capture-sync.js';
-import { WINTER_SALE_LINE_ID, hasWinterSaleLine, isWinterSaleLine, overrideFrom, readWinterSaleSettings, saleRequest, winterSaleCap, winterSaleDecision, winterSaleEnabled, winterSaleLine, winterSalePublic, winterSaleSettingsStorage } from './winter-sale.js';
-import { jobActualsSettingsStorage, readJobActualsSettings } from './job-actuals-settings.js';
+import { WINTER_SALE_LINE_ID, acceptedSaleOn, saleChannel, saleManHours, saleTerms, winterSaleReaders, hasWinterSaleLine, isWinterSaleLine, overrideFrom, readWinterSaleSettings, saleRequest, winterSaleCap, winterSaleDecision, winterSaleEnabled, winterSaleLine, winterSalePublic, winterSaleSettingsStorage } from './winter-sale.js';
 import { isHubOwner } from './hub-session.js';
 
 /**
@@ -201,62 +200,58 @@ function capturePatch(job, draft, actor, now) {
   return patch;
 }
 
-// EGC_WINTER_SALE (winter-sale.js): what the sale's checks read. settings and costs are the owner's saved settings; setter
-// says whether a door-to-door setter booked the walkthrough (its commission channel). Read only when a quote asks for the
-// sale or carries it.
-export const winterSaleReaders = {
-  settings: env => readWinterSaleSettings(winterSaleSettingsStorage(env)),
-  costs: env => readJobActualsSettings(jobActualsSettingsStorage(env)),
-  setter: async () => false,
-};
-// The commission channel the margin check costs a quote with (job-actuals.js channelOf, before the job is sold).
-async function saleChannel(env, readers, { junkOnly, sourceWalkthroughId }) {
-  if (junkOnly) return 'junk_only';
-  if (!sourceWalkthroughId) return 'none';
-  return await readers.setter(env, sourceWalkthroughId) ? 'appointment_setter' : 'direct_estimator';
-}
-const saleManHours = draft => { const hours = draft?.compositePricing?.labor?.manHours ?? draft?.breakdown?.labor?.manHours; return typeof hours === 'number' && hours > 0 ? hours : null; };
-// The terms a sale line was saved on (never the margin floor: that stays in the owner's settings).
-const saleTerms = settings => ({ amountCents: settings.amountCents, signBy: settings.signBy, jobFrom: settings.jobFrom, jobTo: settings.jobTo });
+// EGC_WINTER_SALE (winter-sale.js): what the sale's checks read (winterSaleReaders; the API adds the setter lookup).
+export { winterSaleReaders };
 const saleUsd = cents => (cents / 100).toLocaleString('en-US', { style: 'currency', currency: 'USD' });
 
 /**
  * EGC_WINTER_SALE: a save that asks for the sale gets the server's decision. Eligible: the sale line (the full amount,
  * or less where the margin floor caps it) follows the priced lines, the total drops by it and the quote expires no
- * later than the sale's sign-by day. Not eligible: the quote is saved without it and the estimator is told why.
+ * later than the sale's sign-by day; the line names that expiry as its accept-by day. Not eligible: the quote is saved
+ * without it and the estimator is told why. accepted (acceptedSaleOn): the customer accepted this sale by its sign-by
+ * day, so the revision keeps it on the saved terms, past that day too, still inside the job window and the margin cap.
  * Returns {draft, record, warnings, audits}.
  */
-async function applyWinterSale(draft, request, { job = null, actor, now, env, readers, sourceWalkthroughId = '', junkOnly = false, requestId }) {
-  const settings = await readers.settings(env), override = overrideFrom(request, actor);
+async function applyWinterSale(draft, request, { job = null, actor, now, env, readers, sourceWalkthroughId = '', junkOnly = false, requestId, accepted = null }) {
+  const current = await readers.settings(env), saved = accepted ? job.quoteDraft.winterSale : null, override = overrideFrom(request, actor);
+  const settings = saved ? { ...current, ...saleTerms(saved.terms) } : current;
+  // The owner's earlier override stays with the sale the customer accepted.
+  const kept = saved?.overridden && plain(saved.override) && !override ? saved.override : null;
   const cap = winterSaleCap({ lineItems: draft.lineItems, manHours: saleManHours(draft), junkOnly, costs: await readers.costs(env), channel: await saleChannel(env, readers, { junkOnly, sourceWalkthroughId }), settings });
-  let decision = winterSaleDecision({ settings, beforeCents: draft.totalCents, today: denverToday(new Date(now)), jobDate: job?.date || null, cap, override, ownerOverride: isHubOwner(actor) });
-  const withSale = [...draft.lineItems, winterSaleLine(settings, decision.amountCents)];
-  if (decision.eligible && withSale.filter(included).length > MAX_INCLUDED_LINES) decision = { eligible: false, code: 'too_many_lines', reason: `Not eligible: the quote already charges ${MAX_INCLUDED_LINES} lines, the most the customer portal shows.`, overridden: false, amountCents: 0 };
-  const record = { requested: true, applied: decision.eligible, code: decision.code, reason: decision.reason, overridden: decision.overridden, amountCents: decision.amountCents, terms: saleTerms(settings), settingsRevision: settings.revision,
-    override: decision.overridden ? { reason: override.reason, by: actor.user, at: now } : null, checkedAt: now, checkedBy: actor.user };
+  let decision = winterSaleDecision({ settings, beforeCents: draft.totalCents, today: denverToday(new Date(now)), jobDate: job?.date || null, cap, override: override || kept, ownerOverride: isHubOwner(actor) || Boolean(kept), accepted: Boolean(accepted) });
+  if (decision.eligible && draft.lineItems.filter(included).length + 1 > MAX_INCLUDED_LINES) decision = { eligible: false, code: 'too_many_lines', reason: `Not eligible: the quote already charges ${MAX_INCLUDED_LINES} lines, the most the customer portal shows.`, overridden: false, amountCents: 0 };
+  const record = { requested: true, applied: decision.eligible, code: decision.code, reason: decision.reason, overridden: decision.overridden, amountCents: decision.amountCents, terms: saleTerms(settings), settingsRevision: saved ? saved.settingsRevision ?? null : current.revision,
+    override: decision.overridden ? override ? { reason: override.reason, by: actor.user, at: now } : kept : null, checkedAt: now, checkedBy: actor.user, ...(accepted ? { acceptedOn: accepted } : {}) };
   if (!decision.eligible) return { draft, record, warnings: [{ code: 'winter_sale_not_applied', message: decision.reason }], audits: () => [] };
+  // The quote expires by the sign-by day (an accepted sale's revision keeps its own expiry); the line names that day.
+  const validUntil = accepted || draft.validUntil <= settings.signBy ? draft.validUntil : settings.signBy;
+  const withSale = [...draft.lineItems, winterSaleLine(settings, decision.amountCents, accepted ? settings.signBy : validUntil)];
   const totals = estimateTotals(withSale);
-  const next = { ...draft, lineItems: withSale, totalCents: totals.totalCents, depositCents: depositCents(totals.totalCents, 50), validUntil: draft.validUntil > settings.signBy ? settings.signBy : draft.validUntil };
+  const next = { ...draft, lineItems: withSale, totalCents: totals.totalCents, depositCents: depositCents(totals.totalCents, 50), validUntil };
   // SEC-02: the owner's override is audited in the save's own commit (owner visibility: it records a margin decision).
-  const audits = jobId => decision.overridden ? [auditWrite({ actor: { id: actor.user, kind: 'human', role: actor.role }, via: 'hub', action: 'quote.winter_sale.override', entity: { collection: 'jobs', id: jobId },
+  const audits = jobId => decision.overridden && override ? [auditWrite({ actor: { id: actor.user, kind: 'human', role: actor.role }, via: 'hub', action: 'quote.winter_sale.override', entity: { collection: 'jobs', id: jobId },
     before: { marginCheck: cap.known ? 'capped' : cap.reason, capCents: cap.known ? cap.capCents : null }, after: { applied: true, amountCents: decision.amountCents }, requestId, reason: override.reason, visibility: 'owner', now })] : [];
   return { draft: next, record, warnings: [{ code: 'winter_sale_applied', message: `Early-bird winter sale applied: −${saleUsd(decision.amountCents)}. The quote expires ${next.validUntil} at the latest.` }], audits };
 }
 
-/** EGC_WINTER_SALE: a quote carrying the sale is sent only while it still qualifies: the job date booked inside the
- * sale's window, sent by the sign-by day and its amount still the one the server gives today (the owner's sale amount
- * and, unless the owner applied it anyway, the margin cap with today's cost settings). With the flag off a sale quote is
- * not sent. */
+/** EGC_WINTER_SALE: a quote carrying the sale is sent only while it still qualifies: saved on today's sale terms, the
+ * job date booked inside the sale's window, sent by the sign-by day and its amount still the one the server gives today
+ * (the owner's sale amount and, unless the owner applied it anyway, the margin cap with today's cost settings). With the
+ * flag off a sale quote is not sent. A sale the customer accepted by its sign-by day (acceptedSaleOn) is checked on its
+ * saved terms instead, past that day and with the flag off too. */
 async function winterSaleSendable(job, now, env, readers) {
   const lines = Array.isArray(job.estimate?.lineItems) ? job.estimate.lineItems : [];
   if (!hasWinterSaleLine(lines)) return;
-  if (!winterSaleEnabled(env)) throw fail('winter_sale_disabled', 'The winter sale is turned off. Save the quote again without the sale before sending it.');
-  const settings = await readers.settings(env), sale = lines.find(isWinterSaleLine), saved = plain(job.quoteDraft?.winterSale) ? job.quoteDraft.winterSale : null;
+  const accepted = acceptedSaleOn(job);
+  if (!winterSaleEnabled(env) && !accepted) throw fail('winter_sale_disabled', 'The winter sale is turned off. Save the quote again without the sale before sending it.');
+  const current = await readers.settings(env), sale = lines.find(isWinterSaleLine), saved = plain(job.quoteDraft?.winterSale) ? job.quoteDraft.winterSale : null;
+  if (!accepted && canonical(plain(saved?.terms) ? saleTerms(saved.terms) : null) !== canonical(saleTerms(current))) throw fail('winter_sale_ineligible', 'The sale terms changed, save the quote again before sending it.', 409, { code: 'terms_changed' });
+  const settings = accepted ? { ...current, ...saleTerms(saved.terms) } : current;
   const own = lines.filter(line => !isWinterSaleLine(line)), before = estimateTotals(own);
   const draft = { compositePricing: job.quoteDraft?.compositePricing, breakdown: job.quoteDraft?.breakdown };
   const junkOnly = job.serviceType === 'Junk removal';
   const cap = winterSaleCap({ lineItems: own, manHours: saleManHours(draft), junkOnly, costs: await readers.costs(env), channel: await saleChannel(env, readers, { junkOnly, sourceWalkthroughId: job.sourceWalkthroughId || '' }), settings });
-  const decision = winterSaleDecision({ settings, beforeCents: before.totalCents, today: denverToday(new Date(now)), jobDate: job.date || null, requireJobDate: true, cap, override: saved?.override || null, ownerOverride: Boolean(saved?.overridden && saved?.override) });
+  const decision = winterSaleDecision({ settings, beforeCents: before.totalCents, today: denverToday(new Date(now)), jobDate: job.date || null, requireJobDate: true, cap, override: saved?.override || null, ownerOverride: Boolean(saved?.overridden && saved?.override), accepted: Boolean(accepted) });
   if (!decision.eligible) throw fail('winter_sale_ineligible', `${decision.reason} The quote was not sent: save it again without the winter sale, or fix this first.`, 409, { code: decision.code });
   if (Math.abs(Number(sale.totalCents)) !== decision.amountCents) throw fail('winter_sale_ineligible', 'The winter sale amount for this quote changed since it was saved (the sale settings or the cost settings changed). Save the quote again before sending.', 409, { code: 'amount_changed' });
 }
@@ -351,6 +346,8 @@ export async function saveQuoteDraft(store, actor, input, now = new Date().toISO
   // EGC_WINTER_SALE: the draft may ask for the sale (draft.winter_sale: {apply, override?}); the sale line itself is only
   // ever the server's. Flag off: winter_sale stays an unsupported draft field, as before.
   const saleOn = winterSaleEnabled(env), sale = saleOn && plain(input.draft) ? saleRequest(input.draft.winter_sale) : null;
+  // A sale the customer already accepted stays on a revision unless the quote explicitly drops it (apply:false).
+  const saleDropped = Boolean(sale === null && saleOn && plain(input.draft?.winter_sale) && input.draft.winter_sale.apply === false);
   if (saleOn && plain(input.draft)) {
     if (Array.isArray(input.draft.line_items) && input.draft.line_items.some(line => plain(line) && line.id === WINTER_SALE_LINE_ID)) throw fail('winter_sale_server_only', 'The winter sale line is added by the server. Ask for the sale on the quote instead of adding the line.', 400);
     input = { ...input, draft: Object.fromEntries(Object.entries(input.draft).filter(([key]) => key !== 'winter_sale')) };
@@ -402,7 +399,8 @@ export async function saveQuoteDraft(store, actor, input, now = new Date().toISO
       editable(job);
       // An in-person signature is revised only through a new signed walkthrough handoff.
       if (approved(job.estimate?.status) && job.estimate?.acceptanceMethod === 'in_person_signature') throw fail('signed', 'The customer signed this quote in person. Start a signed revision in the walkthrough instead.');
-      const saleResult = sale ? await applyWinterSale(draft, sale, { job, actor, now, env, readers, sourceWalkthroughId: input.sourceWalkthroughId || '', junkOnly: junkOnlyQuote, requestId: input.requestId }) : null;
+      const accepted = saleDropped ? null : acceptedSaleOn(job), ask = sale || (accepted ? { apply: true } : null);
+      const saleResult = ask ? await applyWinterSale(draft, ask, { job, actor, now, env, readers, sourceWalkthroughId: input.sourceWalkthroughId || '', junkOnly: junkOnlyQuote, requestId: input.requestId, accepted }) : null;
       if (saleResult) draft = { ...saleResult.draft, winterSale: saleResult.record };
       const plan = quotePatch(job, draft, actor, now, job.id);
       if (saleResult) plan.warnings.push(...saleResult.warnings);
