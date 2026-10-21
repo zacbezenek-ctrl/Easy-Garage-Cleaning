@@ -8,6 +8,8 @@ const FIELDS = [
   ['measurements', 'Measurements'], ['equipment', 'Equipment notes'],
   ['specialItems', 'Special items'], ['finish', 'Finishing work'],
   ['shelfType', 'Shelf type'], ['shelfQty', 'Shelf quantity'], ['toteQty', 'Tote quantity'],
+  // The vehicles the customer parks after the job, the tightest fit and the lowest rack height (crew/gameplan-vehicles.js).
+  ['parkingPlan', 'Parking after the job'],
   ['crewSize', 'Estimated crew size'], ['estimatedJobMinutes', 'Estimated on-site minutes'],
   // EGC_QUOTE_BUILDER_ENABLED (D12): the man-hours the builder quote's Labor line sold, never its rate or amount.
   ['laborManHours', 'Man-hours sold'],

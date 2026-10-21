@@ -309,10 +309,13 @@ function requireRevision(row) {
   if (!safeId(row?.id) || typeof row.revision !== 'string' || !row.revision) throw fail('source_unavailable', 'A required customer or source record has no verifiable revision. Keep the form and retry.', 503);
 }
 // A builder quote's crew instructions also name the man-hours sold (laborManHours, D12), never the labor rate or amount.
+// parkingPlan: the vehicles the customer parks after the job and the walkthrough's fit check (crew/gameplan-vehicles.js),
+// written on the device as scope.parking_plan; a walkthrough without vehicles sends none and gets none.
 export function handoffInstructions(plan, sourceId = '', builder = null) {
   const s = plan.scope, l = plan.logistics, f = s.finish_details || {};
   return { customerGoal: String(plan.discovery.success || ''), whyNow: String(plan.discovery.why_now || ''), sortMethod: String(s.sort_method || ''), keepItems: String(s.keep_items || ''), removeItems: String(s.remove_items || ''), exclusions: String(s.exclusions || ''), hazards: Array.isArray(s.hazards) ? s.hazards : [], access: Array.isArray(s.access) ? s.access : [], accessNotes: String(l.notes || ''), truckPlacement: String(l.truck_placement || s.truck_placement || ''), specialItems: Array.isArray(s.special_items) ? s.special_items : [], finish: Array.isArray(s.finish) ? s.finish : [], shelving: { type: String(f.shelf_type || ''), qty: Number(f.shelf_qty || 0) }, totes: { qty: Number(f.tote_qty || 0) }, customerNotes: plan.notes, crewSize: l.crew_size, arrivalWindow: `${plan.quote.start_time}–${plan.quote.end_time}`, estimatedJobMinutes: plan.quote.estimated_duration_min, estimatedJobHours: plan.quote.estimated_duration_min / 60, expectedShiftHours: plan.quote.expected_shift_hours, photoCount: plan.photos.before, sourceWalkthroughId: sourceId, ...(plan.quote.itemized ? { materials: handoffMaterials(plan, builder) } : {}),
-    ...(typeof builder?.labor?.manHours === 'number' ? { laborManHours: builder.labor.manHours } : {}) };
+    ...(typeof builder?.labor?.manHours === 'number' ? { laborManHours: builder.labor.manHours } : {}),
+    ...(typeof s.parking_plan === 'string' && s.parking_plan.trim() ? { parkingPlan: s.parking_plan.trim().slice(0, 1000) } : {}) };
 }
 // D-DEPOSIT: a signature on the current terms saves its payment terms on the estimate as a sent quote's are saved
 // (commercialPolicy SIGNED_25_75 and paymentSchedule): the 25% deposit due the day the homeowner signed (Denver) and the
