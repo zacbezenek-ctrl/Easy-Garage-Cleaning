@@ -22,8 +22,8 @@ const portalJob = (extra = {}) => ({ type: 'job', customer: 'Synthetic Portal Cu
   date: '2026-09-24', status: 'scheduled', total: 1000, estimate: { status: 'accepted', amount: 1000, revision: 2, depositRequired: 250 }, customerApproval: { status: 'approved', amount: 1000 }, ...extra });
 const metadata = purpose => ({ kind: 'egc_customer_portal_payment', job_id: 'job-portal', payment_purpose: purpose, quote_revision: '2', quoted_total_cents: '100000' });
 
-function fixture(t, { job = portalJob(), env = ON } = {}) {
-  const docs = new Map([['jobs/job-portal', { value: structuredClone(job), version: 1 }]]), sessions = new Map(), ghl = recordingHighLevel();
+function fixture(t, { job = portalJob(), env = ON, ghlFail } = {}) {
+  const docs = new Map([['jobs/job-portal', { value: structuredClone(job), version: 1 }]]), sessions = new Map(), ghl = recordingHighLevel({ fail: ghlFail });
   let outboxDown = false, outboxCommits = 0;
   const version = row => `2026-09-22T00:00:00.${String(row.version).padStart(6, '0')}Z`;
   const named = name => decodeURIComponent(name.split('/documents/')[1]);
@@ -64,7 +64,7 @@ function fixture(t, { job = portalJob(), env = ON } = {}) {
   let events = 0;
   return {
     docs, ghl,
-    job: () => docs.get('jobs/job-portal').value,
+    job: () => docs.get('jobs/job-portal').value, jobVersion: () => docs.get('jobs/job-portal').version,
     entries: () => [...docs].filter(([key]) => key.startsWith(`${GHL_TAG_OUTBOX}/`)).map(([key, row]) => ({ id: key.split('/')[1], ...row.value })),
     outboxCommits: () => outboxCommits, outboxDown: value => { outboxDown = value; },
     // A paid portal checkout as Stripe returns it with its charge expanded.
@@ -138,21 +138,36 @@ test('with the outbox off the payment is recorded exactly as before: no entry, n
   assert.deepEqual([f.entries().length, f.outboxCommits(), pending.length, f.ghl.calls.length], [0, 0, 0, 0]);
 });
 
-test('a failed queue write never fails the recorded payment; the next delivery queues it once', async t => {
+test('a failed queue write keeps the recorded payment and asks Stripe to redeliver; the redelivery queues it once and changes no money', async t => {
   const f = fixture(t), id = 'cs_test_portal_deposit_down';
   f.paid(id, 25000, 'deposit');
   const logged = t.mock.method(console, 'error', () => {});
   f.outboxDown(true);
   const failed = await f.event(id);
-  assert.deepEqual([failed.status, failed.body], [200, { ok: true, received: true, recorded: true, duplicate: false, highLevel: 'queue_failed' }], 'Stripe gets its 200: the payment is durable');
+  // Stripe never resends an event it got a 2xx for, so the queue failure is a 503; the payment is already durable.
+  assert.deepEqual([failed.status, failed.body], [503, { ok: false, error: 'HighLevel update needs retry', recorded: true }]);
   assert.equal(f.job().payment.stripeSessions[0].sessionId, id);
+  const version = f.jobVersion(), money = structuredClone(f.job().payment);
   assert.equal(f.entries().length, 0);
   assert.equal(logged.mock.callCount(), 1);
   assert.deepEqual(JSON.parse(logged.mock.calls[0].arguments[0]), { event: 'ghl_payment_tag_queue_failed', jobId: 'job-portal', sessionId: id, code: 'dispatch_outcome_unknown' });
   f.outboxDown(false);
   const redelivered = await f.event(id);
-  assert.deepEqual([redelivered.body.duplicate, redelivered.body.highLevel], [true, 'queued']);
+  assert.deepEqual([redelivered.status, redelivered.body.duplicate, redelivered.body.highLevel], [200, true, 'queued']);
+  assert.deepEqual([f.jobVersion(), f.job().payment, f.job().payment.stripeSessions.length], [version, money, 1], 'the redelivery writes nothing to the job');
   assert.equal(f.entries().length, 1);
+  const async = await f.event(id, { type: 'checkout.session.async_payment_succeeded' });
+  assert.deepEqual([async.status, async.body.highLevel, f.entries().length, f.jobVersion()], [200, 'duplicate', 1, version]);
+});
+
+test('a first HighLevel attempt that fails after a successful queue is the drain\'s to retry, never a 503', async t => {
+  const f = fixture(t, { ghlFail: () => 503 }), id = 'cs_test_portal_deposit_ghl_down', pending = [];
+  f.paid(id, 25000, 'deposit');
+  const response = await f.event(id, { waitUntil: promise => pending.push(promise) });
+  assert.deepEqual([response.status, response.body.highLevel], [200, 'queued']);
+  await Promise.all(pending);
+  const [entry] = f.entries();
+  assert.deepEqual([entry.status, entry.attempts, entry.lastError], ['pending', 1, 'highlevel_503'], 'left pending for the drain\'s backoff');
 });
 
 test('a notify-off job gets the note without the tag, as the manager save suppresses it', async t => {

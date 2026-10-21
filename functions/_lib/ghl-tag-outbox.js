@@ -180,7 +180,8 @@ export async function paymentTagWrites({ jobId, job, sessionId, now }) {
 
 /** After the Stripe webhook recorded (or found already recorded) a customer-portal payment: create its outbox entry
  * once. Flag off: nothing is read or written. An entry that already exists is a replay ('duplicate'). Throws when
- * storage fails; the caller never lets that fail the recorded payment, and the next delivery of the event tries again. */
+ * storage fails, after the payment is durable: the webhook then answers 503 so Stripe redelivers, and the redelivery
+ * (a duplicate payment) queues the entry. */
 export async function queuePaymentTag(env, { jobId, sessionId, now = new Date().toISOString(), store = null } = {}) {
   if (!ghlTagOutboxEnabled(env)) return { status: 'off' };
   const storage = store || ghlTagOutboxStorage(env), job = await storage.read('jobs', jobId);
