@@ -298,6 +298,9 @@ export async function signedWinterSale(previous, builder, { quote, jobDate, now,
   const current = await readers.settings(env), settings = acceptedOn ? { ...current, ...saleTerms(saved.terms) } : current;
   if (!acceptedOn && canonical(saleTerms(saved.terms)) !== canonical(saleTerms(current))) throw fail('ineligible', 'The sale terms changed since this quote was saved. Nothing was saved: save the quote again, then have the customer sign it.', 409, { code: 'terms_changed' });
   const junkOnly = builder.junkOnly === true, today = denverToday(new Date(now));
+  // A sale draft past its own expiry is saved again first, so the signed line never names an accept-by day already gone.
+  const validUntil = previous.estimate?.validUntil;
+  if (!acceptedOn && realDate(validUntil) && validUntil < today) throw fail('ineligible', `This sale quote expired ${dayText(validUntil)}. Nothing was saved: save the quote again, then have the customer sign it.`, 409, { code: 'quote_expired' });
   // The cap reads the stored lines (they carry the goods cost split), as the save and the send did; the customer's line
   // is appended to both.
   const cap = winterSaleCap({ lineItems: builder.storedLineItems, manHours: saleManHours(builder), junkOnly, costs: await readers.costs(env), channel: await saleChannel(env, readers, { junkOnly, sourceWalkthroughId }), settings });

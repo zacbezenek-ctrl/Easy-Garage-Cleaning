@@ -483,3 +483,22 @@ test('send decides junk-only from the saved builder breakdown, as the save does'
   assert.match(sendable, /const junkOnly = builderJunkOnly\(job\.quoteDraft\?\.breakdown\?\.lines\);/);
   assert.doesNotMatch(sendable, /serviceType/);
 });
+
+test('signing a sale draft past its own expiry is refused (save it again); a settings outage stays a retryable 503', async () => {
+  const post = async (f, input, { at = NOW, saleReaders = readers() } = {}) => {
+    const api = handoffHandlers({ session: async () => estimator, storage: () => f.store, now: () => new Date(at), compositeState: async () => quote(BIG).state, stripe: () => null, winterSale: saleReaders });
+    const response = await api.post({ request: new Request('https://easygaragecleaning.com/api/walkthrough-handoff', { method: 'POST', headers: { Origin: 'https://easygaragecleaning.com', 'Content-Type': 'application/json' }, body: JSON.stringify(input) }), env: ON });
+    return [response.status, await response.json()];
+  };
+  // Saved Oct 17, valid through Oct 30; signed Nov 5 (Denver): the line would name an accept-by day already gone.
+  const f = fixture(ON), q = quote(BIG), saved = await save(f, estimator, q, { sale: { apply: true } }), draft = f.job(saved.job.id), commits = f.calls.length;
+  const [status, body] = await post(f, signedInput(f, q, draft), { at: '2026-11-05T18:00:00.000Z' });
+  assert.deepEqual([status, body.code], [409, 'handoff_winter_sale_ineligible']);
+  assert.equal(body.error, 'This sale quote expired Oct 30, 2026. Nothing was saved: save the quote again, then have the customer sign it.');
+  assert.equal(f.calls.length, commits, 'nothing was saved');
+  // Settings that fail verification (or any other failure) are not the sale's refusal: the page keeps the request and retries.
+  const unreadable = { ...readers(), settings: async () => { throw Object.assign(new Error('The winter sale settings failed verification. The owner must save them again.'), { code: 'winter_sale_settings_unreadable', status: 503 }); } };
+  const [down, outage] = await post(f, signedInput(f, q, f.job(draft.id)), { saleReaders: unreadable });
+  assert.deepEqual([down, outage.code], [503, 'handoff_unavailable']);
+  assert.equal(f.calls.length, commits);
+});
