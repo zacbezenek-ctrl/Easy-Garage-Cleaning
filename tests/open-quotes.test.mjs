@@ -5,7 +5,7 @@ process.env.TZ = 'Asia/Tokyo';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
-import { BUCKETS, OPEN_QUOTE_FIELDS, bucketOf, buildOpenQuotes, closeEvents, closeRates, daysBetween, draftPricesWaiting, openQuote, openQuotesWindow, quoteClosed, quoteTotalCents } from '../functions/_lib/open-quotes.js';
+import { BUCKETS, OPEN_QUOTE_FIELDS, OPEN_QUOTE_RECEIPT_FIELDS, resigned, bucketOf, buildOpenQuotes, closeEvents, closeRates, daysBetween, draftPricesWaiting, openQuote, openQuotesWindow, quoteClosed, quoteTotalCents } from '../functions/_lib/open-quotes.js';
 import { openQuotesHandlers, requireOpenQuotesViewer } from '../functions/api/open-quotes.js';
 import { dispatchStorage } from '../functions/_lib/dispatch-storage.js';
 import { readCompositeState } from '../functions/_lib/catalog-store.js';
@@ -121,6 +121,26 @@ test('close events: a sent quote later signed closes on the signature day when n
   assert.deepEqual(closeRates([], '2026-09-22', TODAY).total.closePercent, null, 'no quotes, no rate');
 });
 
+test('a re-signature is never a new close, even when the first signature is older than the receipts read', () => {
+  // Signed on site Jul 20 (outside the 90-day read), re-signed Oct 22 after a revision: the Oct receipt records that the
+  // job already had an accepted estimate and an acceptance, so it adds no sent quote and no close.
+  const resign = { actorId: 'Est.One', jobId: 'sig_old_job', createdAt: '2026-10-20T20:00:00.000Z', priorEstimate: { status: 'accepted' }, priorAcceptance: { acceptedAt: '2026-07-20T18:00:00.000Z' } };
+  // A quote approved in the portal before the 120-day window, then re-signed in person.
+  const portalThenSigned = { actorId: 'Est.Two', jobId: 'q_portal_old', createdAt: '2026-10-19T20:00:00.000Z', priorEstimate: { status: 'accepted' }, priorAcceptance: null };
+  // A sent quote's first in-person signature has an unaccepted prior estimate and no acceptance: it is a close.
+  const firstSignature = { actorId: 'Est.Two', jobId: 'sig_first', createdAt: '2026-10-18T20:00:00.000Z', priorEstimate: { status: 'sent' }, priorAcceptance: null };
+  assert.deepEqual([resign, portalThenSigned, firstSignature, { priorAcceptance: {} }].map(resigned), [true, true, false, false]);
+  const base = buildOpenQuotes({ jobs: JOBS, signed: SIGNED, today: TODAY }), withResigns = buildOpenQuotes({ jobs: JOBS, signed: [...SIGNED, resign, portalThenSigned], today: TODAY });
+  assert.deepEqual(withResigns.closeRates, base.closeRates, 're-signatures change no close rate');
+  const withFirst = buildOpenQuotes({ jobs: JOBS, signed: [...SIGNED, firstSignature], today: TODAY });
+  assert.equal(withFirst.closeRates.last30.total.sent, base.closeRates.last30.total.sent + 1);
+  assert.equal(withFirst.closeRates.last30.total.closed, base.closeRates.last30.total.closed + 1);
+  // A job signed and re-signed inside the window still counts once, on the first signature.
+  const twice = closeEvents([], [{ actorId: 'Est.One', jobId: 'j', createdAt: '2026-10-05T20:00:00.000Z', priorEstimate: null, priorAcceptance: null },
+    { actorId: 'Est.One', jobId: 'j', createdAt: '2026-10-12T20:00:00.000Z', priorEstimate: { status: 'accepted' }, priorAcceptance: { acceptedAt: '2026-10-05T20:00:00.000Z' } }]);
+  assert.deepEqual(twice.map(event => [event.jobId, event.sentDay, event.source]), [['j', '2026-10-05', 'signed_on_site']]);
+});
+
 const pick = row => ({ sent: row.sent, closed: row.closed, closePercent: row.closePercent, signedOnSite: row.signedOnSite, open: row.open, lost: row.lost, averageDaysToClose: row.averageDaysToClose, averageDaysToCloseSent: row.averageDaysToCloseSent });
 const get = (handlers, path = '/api/open-quotes') => handlers.get({ request: new Request(`https://easygaragecleaning.com${path}`), env: {} });
 
@@ -177,15 +197,18 @@ test('READ-BUDGET: one masked range query on quoteDraft.sentAt and one on the si
   assert.deepEqual(jobsQuery.where, { fieldFilter: { field: { fieldPath: 'quoteDraft.sentAt' }, op: 'GREATER_THAN_OR_EQUAL', value: { stringValue: '2026-06-24T00:00:00.000Z' } } });
   assert.deepEqual(jobsQuery.select.fields.map(field => field.fieldPath), [...OPEN_QUOTE_FIELDS], 'masked: no phone, email, address, lines or signatures');
   assert.ok(!OPEN_QUOTE_FIELDS.some(field => /phone|email|address|signature|lineItems|notes/i.test(field)));
+  const [receiptQuery] = fs.queries('walkthroughHandoffs').map(call => call.body.structuredQuery);
+  assert.deepEqual(receiptQuery.select.fields.map(field => field.fieldPath), [...OPEN_QUOTE_RECEIPT_FIELDS], 'receipts masked: never the signature, plan or amount');
+  assert.ok(!OPEN_QUOTE_RECEIPT_FIELDS.some(field => /signature|plan|amount/i.test(field)));
   // A single-field range needs no composite index: nothing new in firestore.indexes.json.
   assert.equal(readFileSync(new URL('../firestore.indexes.json', import.meta.url), 'utf8').includes('quoteDraft'), false);
 });
 
 test('the screen is a business-capability manifest line that loads its own files and never builds HTML from strings', () => {
   const manifest = readFileSync(new URL('../employee-hub-screens.js', import.meta.url), 'utf8');
-  assert.match(manifest, /\{id:'open_quotes',group:'RUN THE BUSINESS',label:'Open quotes',[^\n]*capability:'business',load:\{js:'employee-open-quotes\.js',css:'employee-open-quotes\.css',v:'20261021openquotes1'\},module:'EGCOpenQuotes'\}/);
+  assert.match(manifest, /\{id:'open_quotes',group:'RUN THE BUSINESS',label:'Open quotes',[^\n]*capability:'business',load:\{js:'employee-open-quotes\.js',css:'employee-open-quotes\.css',v:'20261021openquotes2'\},module:'EGCOpenQuotes'\}/);
   const screen = readFileSync(new URL('../employee-open-quotes.js', import.meta.url), 'utf8');
   assert.doesNotMatch(screen, /innerHTML|outerHTML|insertAdjacentHTML|document\.write/, 'customer names reach the page only as text nodes');
-  assert.match(screen, /'\/api\/customer-portal-link'/, 'the one action is the existing audited portal-link endpoint');
+  assert.match(screen, /'\/api\/customer-portal-link'/, 'the one action is the existing portal-link endpoint');
   assert.doesNotMatch(screen, /\/api\/(?:quote-draft|highlevel|money|messag)/, 'no send, money or HighLevel call');
 });

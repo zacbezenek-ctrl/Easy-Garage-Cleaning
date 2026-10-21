@@ -5,14 +5,14 @@
  * the screen's one action, "Copy customer portal link", is the existing POST /api/customer-portal-link.
  * GET /api/open-quotes => {ok, asOf, window, buckets, rows, totals, closeRates:{last30,last90}, sources:{prices}}.
  * READ-BUDGET: one range query on quoteDraft.sentAt (the quotes sent in the last 120 days, masked), one on the signed
- *   walkthrough receipts of the last 90 days (masked to who signed which job when) and, only when an open quote has a
- *   builder breakdown, the owner's two pricing documents. Loaded when the screen opens or is refreshed; never polled.
+ *   walkthrough receipts of the last 90 days (masked to who signed which job when, and whether it was signed before)
+ *   and, only when an open quote has a builder breakdown, the owner's two pricing documents. Loaded when the screen opens or is refreshed; never polled.
  * Errors: {ok:false, code, error}; 400, 401, 403, 503 retry. */
 import { getHubSession, hasBusinessAccess } from '../_lib/hub-session.js';
 import { dispatchStorage } from '../_lib/dispatch-storage.js';
 import { catalogStorage, readCompositeState } from '../_lib/catalog-store.js';
 import { denverToday } from '../_lib/dispatch-time.js';
-import { OPEN_QUOTE_FIELDS, buildOpenQuotes, openQuote, openQuotesWindow } from '../_lib/open-quotes.js';
+import { OPEN_QUOTE_FIELDS, OPEN_QUOTE_RECEIPT_FIELDS, buildOpenQuotes, openQuote, openQuotesWindow } from '../_lib/open-quotes.js';
 
 const reply = (status, body) => Response.json(body, { status, headers: { 'Cache-Control': 'private, no-store', 'X-Content-Type-Options': 'nosniff' } });
 const fail = (code, message, status) => Object.assign(new Error(message), { code, status });
@@ -29,7 +29,7 @@ export function openQuotesHandlers({ session = getHubSession, dispatch = dispatc
         requireOpenQuotesViewer(await session(request, env));
         if ([...new URL(request.url).searchParams.keys()].length) return reply(400, { ok: false, code: 'open_quotes_request_invalid', error: 'Open quotes take no query options.' });
         const at = now(), today = denverToday(at), window = openQuotesWindow(today), store = dispatch(env);
-        const [jobs, signed] = await Promise.all([store.sentQuoteJobs(window.since, [...OPEN_QUOTE_FIELDS]), store.handoffLedger({ field: 'createdAt', op: 'GREATER_THAN_OR_EQUAL', value: `${window.last90}T00:00:00.000Z` })]);
+        const [jobs, signed] = await Promise.all([store.sentQuoteJobs(window.since, [...OPEN_QUOTE_FIELDS]), store.handoffLedger({ field: 'createdAt', op: 'GREATER_THAN_OR_EQUAL', value: `${window.last90}T00:00:00.000Z` }, [...OPEN_QUOTE_RECEIPT_FIELDS])]);
         // The owner's menu decides whether a builder quote's prices still wait for approval; without it that flag is unknown.
         let compositeState = null, prices = 'ok';
         if (jobs.some(job => openQuote(job) && job.quoteDraft?.breakdown?.source === 'composite')) {

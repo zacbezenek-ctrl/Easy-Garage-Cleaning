@@ -2,8 +2,8 @@
    or signed, oldest first, in age buckets (0–2, 3–7, 8–14, 15+ days and expired) with counts and dollar totals, and each
    estimator's close rate over the last 30 and 90 days. The server computes every figure (functions/_lib/open-quotes.js,
    GET /api/open-quotes, business access only); this screen only formats them. It sends nothing to customers or
-   HighLevel. Its one action, "Copy customer portal link", is the existing POST /api/customer-portal-link (business
-   access, records who created the link). Customer names are rendered as text nodes through the kit's h(), never as HTML.
+   HighLevel. Its one action, "Copy customer portal link", copies the customer's portal link from the existing
+   POST /api/customer-portal-link (business access). Customer names are rendered as text nodes through the kit's h(), never as HTML.
    Registered in employee-hub-screens.js and runs standalone with the UI kit (window.EGCHubKit). */
 (function(){
 'use strict';
@@ -35,8 +35,8 @@ async function copyText(text){
     document.body.append(field);field.select();let copied=false;try{copied=document.execCommand('copy');}catch{}field.remove();return copied;
   }
 }
-// The same request the Hub's other "Copy customer portal" buttons make: the server checks business access and records
-// who created the link. Nothing is sent to the customer.
+// The same request the Hub's other "Copy customer portal" buttons make; the server checks business access. Nothing is
+// sent to the customer.
 async function copyPortal(row){
   if(S.copying)return;
   S.copying=row.jobId;S.feedback='';render();

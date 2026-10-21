@@ -27,6 +27,8 @@ import { compositeApproval } from './composite-quote.js';
 
 export const OPEN_QUOTES_DAYS = 120;
 export const CLOSE_RATE_WINDOWS = Object.freeze({ last30: 30, last90: 90 });
+// The signed-handoff receipt fields this report reads (who signed which job when, and whether it was signed before).
+export const OPEN_QUOTE_RECEIPT_FIELDS = Object.freeze(['kind', 'actorId', 'jobId', 'sourceWalkthroughId', 'createdAt', 'priorEstimate.status', 'priorAcceptance.acceptedAt']);
 export const BUCKETS = Object.freeze([
   { id: 'fresh', label: '0–2 days', min: 0, max: 2 },
   { id: 'warm', label: '3–7 days', min: 3, max: 7 },
@@ -115,7 +117,10 @@ export function summarizeBuckets(rows) {
 }
 
 /** The close-rate events: one per job, {jobId, estimator, sentDay, closed, closeDays, source:'sent'|'signed_on_site'}.
- * signed is [{jobId, actorId, createdAt}] from the signed-handoff receipts. */
+ * signed is [{jobId, actorId, createdAt, priorEstimate:{status}, priorAcceptance:{acceptedAt}}] from the signed-handoff receipts. */
+/** Whether a signed-handoff receipt re-signed a job that was already signed or approved (its priorEstimate and
+ * priorAcceptance, walkthrough-handoff.js). */
+export const resigned = row => ['accepted', 'approved'].includes(lower(row?.priorEstimate?.status)) || plain(row?.priorAcceptance) && Object.keys(row.priorAcceptance).length > 0;
 export function closeEvents(jobs, signed = []) {
   const events = new Map();
   for (const job of jobs) {
@@ -123,10 +128,11 @@ export function closeEvents(jobs, signed = []) {
     const sentDay = dayOf(job.quoteDraft.sentAt), closeTime = closedAt(job), closeDay = closeTime ? dayOf(closeTime) : null;
     events.set(job.id, { jobId: job.id, estimator: estimatorOf(job), sentDay, closed: Boolean(closeDay), closeDays: closeDay ? Math.max(0, daysBetween(sentDay, closeDay)) : null, source: 'sent', lost: !closeDay && (LOST.has(lower(job.status)) || LOST.has(lower(job.pipelineStatus))) });
   }
-  // The earliest signature per job: a revision signed again is the same close.
+  // The earliest signature per job: a revision signed again is the same close. A receipt whose job already had an
+  // accepted estimate or a recorded acceptance is a re-signature (the first can predate the receipts read), never a close.
   const firstSigned = new Map();
   for (const row of signed) {
-    if (!plain(row) || row.kind !== undefined || !ID.test(String(row.jobId || '')) || !isoTime(row.createdAt)) continue;
+    if (!plain(row) || row.kind !== undefined || !ID.test(String(row.jobId || '')) || !isoTime(row.createdAt) || resigned(row)) continue;
     if (!firstSigned.has(row.jobId) || row.createdAt < firstSigned.get(row.jobId).createdAt) firstSigned.set(row.jobId, row);
   }
   for (const [jobId, row] of firstSigned) {
