@@ -8,7 +8,10 @@ import { assignmentKey } from './job-assignment.js';
    source door_to_door, d2d {kind: 'walkthrough', repKey, selfRun: true}, assigned to the rep alone), and the job its
    signed handoff saved from it (sourceWalkthroughId). It is not the Sales role and carries none of it: no schedule.book,
    no Dispatch, no customer lookups, and the estimator pool stays chosen by skill and role (knock-bridge.js
-   estimatorIds), so the rep is never booked to anyone else's walkthrough. Behind EGC_KNOCK_JOB_BRIDGE. */
+   estimatorIds), so the rep is never booked to anyone else's walkthrough. A self-run visit only exists for a customer
+   its booking created (knock-bridge.js EXISTING_CUSTOMER), so the right never opens a customer the Hub already had.
+   Not covered: the audio recorder and walkthrough notes (/api/operations-recordings, /api/walkthrough-notes), so the
+   rep types notes at Finish. Behind EGC_KNOCK_JOB_BRIDGE. */
 export const knockJobBridgeEnabled = env => env?.EGC_KNOCK_JOB_BRIDGE === 'true';
 
 // Set only by selfWalkthroughSession on the server's own session object: a browser cannot send a Symbol.
@@ -45,6 +48,8 @@ export async function selfWalkthroughSession(session, env, ids, { readJob, knock
   if (!knockJobBridgeEnabled(env) || typeof session?.user !== 'string' || performer(session)) return session;
   const wanted = [...new Set((Array.isArray(ids) ? ids : []).filter(id => id !== undefined && id !== null && id !== ''))];
   if (!wanted.length || wanted.some(id => !safeId(id))) return session;
+  // The rep's right first: no Hub job is read for anyone without it.
+  if (!await walkthroughRep(session, env, knock)) return session;
   let visitId = '';
   for (const id of wanted) {
     const job = await Promise.resolve().then(() => readJob(id)).catch(() => null);
@@ -53,6 +58,5 @@ export async function selfWalkthroughSession(session, env, ids, { readJob, knock
     if (!selfRunVisit(visit, session) || job !== visit && job.sourceWalkthroughId !== visit.id || visitId && visitId !== visit.id) return session;
     visitId = visit.id;
   }
-  if (!await walkthroughRep(session, env, knock)) return session;
   return { ...session, [SELF_WALKTHROUGH]: visitId };
 }

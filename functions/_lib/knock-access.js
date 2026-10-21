@@ -148,7 +148,9 @@ export function shiftEligibility(rep) {
 /* Admin edits to a rep. patch keys: status ('active'|'inactive'|'pending'), role ('knocker'|'lead'),
    permitListed, premiumCleared, walkthroughSelf, leadKey, displayName. Returns the stored patch.
    REP-WALKTHROUGH: walkthroughSelf (Knock Admin > Walkthroughs) lets the rep run their own walkthrough at the door
-   (knock-self-walkthrough.js); each change records who made it and when (walkthroughSelfBy, walkthroughSelfAt). */
+   (knock-self-walkthrough.js); each change records who made it and when (walkthroughSelfBy, walkthroughSelfAt) and
+   appends {on, by, at} to walkthroughSelfLog. */
+export const WALKTHROUGH_SELF_LOG = 50;
 export function repPatch(current, changes, adminSession, nowIso) {
   const patch = {};
   if ('status' in changes) {
@@ -167,7 +169,9 @@ export function repPatch(current, changes, adminSession, nowIso) {
       patch[flag] = changes[flag];
     }
   }
-  if ('walkthroughSelf' in patch) Object.assign(patch, { walkthroughSelfBy: adminSession.user, walkthroughSelfAt: nowIso });
+  // The history of the switch: every change, newest last, the last WALKTHROUGH_SELF_LOG kept.
+  if ('walkthroughSelf' in patch) Object.assign(patch, { walkthroughSelfBy: adminSession.user, walkthroughSelfAt: nowIso,
+    walkthroughSelfLog: [...(Array.isArray(current.walkthroughSelfLog) ? current.walkthroughSelfLog : []), { on: patch.walkthroughSelf, by: adminSession.user, at: nowIso }].slice(-WALKTHROUGH_SELF_LOG) });
   if ('leadKey' in changes) {
     const leadKey = String(changes.leadKey || '');
     if (leadKey && !SAFE_KEY.test(leadKey) && !/^u_[0-9a-f]+$/.test(leadKey)) throw knockFailure('Unknown lead.', 400, 'knock_invalid_lead');

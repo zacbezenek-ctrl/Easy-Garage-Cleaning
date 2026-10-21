@@ -61,7 +61,9 @@ signs it instead, it pays like any walkthrough set at the door: 13% to the rep a
 for a rep, turn on **Walkthroughs** for that rep in Knock Admin → Reps (it applies on their next action, no sign-out
 needed). It does not give them the Sales role: they open only the walkthroughs they start this way, never Dispatch,
 other customers or anyone else's visits, and they are never booked as an estimator for other reps' walkthroughs.
-Owners and managers always have it. Reps without it see only **Set walkthrough**. It needs the bridge
+If the phone or email the rep types already belongs to a customer in the Hub, the rep is told the office sends an
+estimator and an estimator is booked instead; the rep sees nothing about that customer. Owners and managers always
+have it. Reps without it see only **Set walkthrough**. It needs the bridge
 (`EGC_KNOCK_JOB_BRIDGE`) on. On these walkthroughs the rep types their notes (the audio recorder stays with
 estimators), the office staffs the crew in Dispatch, and a manager's Hub sends the signed job to HighLevel, as it does
 for an estimator's.

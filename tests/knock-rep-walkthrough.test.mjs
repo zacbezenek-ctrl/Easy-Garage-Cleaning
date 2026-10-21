@@ -11,6 +11,7 @@ import { commissionCsv, periodStatement } from '../crew/knock-money.js';
 import { channelOf, commissionFor } from '../functions/_lib/job-actuals.js';
 import { createJobAssignmentAccess } from '../functions/_lib/job-assignment.js';
 import { assignedDuring } from '../functions/_lib/field-execution-visits.js';
+import { selfRunVisit } from '../functions/_lib/knock-self-walkthrough.js';
 
 const TODAY = '2026-10-20', MON_SET = '2026-10-26';
 const visits = w => w.docs('jobs/').filter(row => row.type === 'walkthrough');
@@ -44,6 +45,7 @@ test('Knock offers "Do the walkthrough now" to a rep an admin turned Walkthrough
   assert.equal((await w.admin({ action: 'rep.update', repKey: 'rep.two', changes: { walkthroughSelf: 'yes' } })).status, 400);
   await turnOn(w, 'rep.two', false);
   assert.equal((await w.me(w.cookies.two)).body.viewer.walkthroughNow, undefined, 'turned off again: no button');
+  assert.deepEqual(w.fake.get('knock_reps/rep.two').walkthroughSelfLog.map(row => [row.on, row.by]), [[true, 'ZacB'], [false, 'ZacB']], 'every change is kept, not just the last');
   const off = await bridgeWorld({ bridge: false });
   await turnOn(off);
   assert.equal((await off.me(off.cookies.two)).body.viewer.walkthroughNow, undefined);
@@ -97,6 +99,40 @@ test('a crew rep with Walkthroughs on is booked to their own walkthrough, and is
   const estimatorVisit = visits(w).find(row => row.id !== visit.id);
   assert.ok(['est.alex', 'est.bea'].includes(estimatorVisit.assignedCrew[0]), JSON.stringify(estimatorVisit.assignedCrew));
   assert.equal(estimatorVisit.d2d.selfRun, undefined);
+});
+
+test('privacy: a Knock-only rep\'s "do it now" on a customer the Hub already has goes to an estimator, and the phone learns nothing about that customer', async () => {
+  const w = await bridgeWorld();
+  await turnOn(w);
+  // The Hub already has this customer (Rep One set an ordinary walkthrough for them on Monday).
+  const first = selfRunBatch({ n: 2904, walk: { selfRun: undefined, date: MON_SET, time: undefined, dayPart: 'am' } });
+  assert.deepEqual((await w.send(first.events)).body.results.map(row => row.status), ['applied', 'applied', 'applied']);
+  assert.equal((await w.book('walkthrough', first.walkId)).status, 200);
+  const known = w.docs('customers/');
+  assert.equal(known.length, 1);
+  // Rep Two types that phone and one matching name word (a surname, which links) at another house, and taps "Do the walkthrough now".
+  const probe = selfRunBatch({ n: 2906, walk: { customer: { name: 'Pat Synthetic', phone: '970-555-1904', email: '' } } });
+  probe.events.forEach(event => { if (event.houseId) event.houseId = 'h-2906-blue-leaf-dr'; });
+  assert.deepEqual((await w.send(probe.events, w.cookies.two)).body.results.map(row => row.status), ['applied', 'applied', 'applied']);
+  const booked = await w.book('walkthrough', probe.walkId, w.cookies.two);
+  assert.equal(booked.status, 200, JSON.stringify(booked.body));
+  assert.equal(booked.body.booking.selfRun, undefined);
+  assert.equal(booked.body.booking.walkthroughId, undefined, 'no visit id to open');
+  assert.match(booked.body.booking.message, /already in the Hub, so the office sends an estimator/);
+  const answer = JSON.stringify(booked.body);
+  for (const stored of ['Synthetic 2904', 'kim@example.invalid', '2904', known[0].id, 'customer_']) assert.ok(!answer.includes(stored), `the answer never carries ${stored}`);
+  // The visit is an estimator's, carries no self-run mark, and the rep's walkthrough right never opens it.
+  const visit = visits(w).find(row => row.knockWalkthroughId === probe.walkId);
+  assert.ok(['est.alex', 'est.bea'].includes(visit.assignedCrew[0]), JSON.stringify(visit.assignedCrew));
+  assert.equal(visit.d2d.selfRun, undefined);
+  assert.equal(selfRunVisit(visit, { user: 'Rep.Two' }), false);
+  assert.equal(Object.hasOwn(w.fake.get(`knock_setters/${visit.id}`), 'selfRun'), false, 'an ordinary 13% + 7% walkthrough');
+  // A new customer still self-runs for the same rep.
+  const fresh = selfRunBatch({ n: 2902, walk: { customer: { name: 'Lee Fresh 2902', phone: '970-555-1902', email: 'lee@example.invalid' } } });
+  fresh.events.forEach(event => { if (event.houseId) event.houseId = 'h-2902-blue-leaf-dr'; });
+  assert.deepEqual((await w.send(fresh.events, w.cookies.two)).body.results.map(row => row.status), ['applied', 'applied', 'applied']);
+  const own = await w.book('walkthrough', fresh.walkId, w.cookies.two);
+  assert.equal(own.body.booking.selfRun, true, JSON.stringify(own.body));
 });
 
 test('an owner or manager who taps "Do the walkthrough now" on their own door is booked to it; an admin booking another rep\'s door books an estimator', async () => {

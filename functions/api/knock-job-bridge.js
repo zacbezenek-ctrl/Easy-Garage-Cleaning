@@ -30,8 +30,10 @@ export function knockJobBridgeHandlers({ session = getHubSession, storage = crea
         // REP-WALKTHROUGH: a rep with Walkthroughs on in Knock Admin (or anyone who already runs walkthroughs: an owner, a
         // manager, an estimator) is booked to do their own "Do the walkthrough now" (knock-bridge.js bookSelfRun): only
         // their own record (ownRepKey, also for an admin), never one an admin books for another rep.
-        const self = repRunsWalkthroughs(rep) || walkthroughPerformer(viewer, env);
-        const options = { env, now: at, rep: isAdmin(viewer) ? null : rep, ownRepKey: rep.repKey, selfKey: self ? String(viewer.user).trim().toLowerCase() : '' };
+        // Only someone who already runs walkthroughs (knownCustomers) self-runs one for a customer the Hub already had; a
+        // Knock-only rep's goes to an estimator (knock-bridge.js EXISTING_CUSTOMER).
+        const performer = walkthroughPerformer(viewer, env), self = repRunsWalkthroughs(rep) || performer;
+        const options = { env, now: at, rep: isAdmin(viewer) ? null : rep, ownRepKey: rep.repKey, selfKey: self ? String(viewer.user).trim().toLowerCase() : '', knownCustomers: performer };
         const result = body.kind === 'sale' ? await bookSale(store, dispatch(env), body.id, options) : await bookWalkthrough(store, dispatch(env), body.id, options);
         return reply(200, { ok: true, serverTime: at.toISOString(), booking: result.view });
       } catch (error) {
