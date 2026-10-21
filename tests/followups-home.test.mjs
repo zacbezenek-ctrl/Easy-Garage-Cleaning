@@ -431,3 +431,20 @@ test('a quiet widget stays hidden until its module shows it, and fails silently'
   assert.equal(registry.homeWidgets('my_day', ['crew']).find(entry => entry.id === 'fixture_quiet').quiet, true);
   assert.equal(registry.homeWidgets('today', ['crew', 'business']).find(entry => entry.id === 'overdue_followups').quiet, undefined, 'other widgets are unchanged');
 });
+
+test('a sign-out while the kit loads starts no load of the widget\'s own files, so the device keeps no copy fetched after it', async () => {
+  const page = hubPage({ loadRegistry: true }), registry = page.context.EGCHubScreens, held = [];
+  page.document.onAsset = node => held.push(node);
+  registry.registerWidget({ id: 'fixture_late', label: 'Fixture late', homes: ['my_day'], crewVisible: true, quiet: true, module: 'EGCFixtureLate', load: { js: 'employee-fixture-late.js', v: 't1' } });
+  const host = page.document.createElement('div');
+  page.document.body.append(host);
+  registry.mountHome('my_day', host, { identity: 'crew.one', role: 'crew', capabilities: ['crew'] });
+  await page.flush();
+  const src = node => node.getAttribute('src') || node.getAttribute('href') || '';
+  assert.ok(held.length && held.every(node => /employee-ui-kit/.test(src(node))), 'the kit loads first');
+  page.fire('egc:signout');
+  page.context.EGCHubKit = {};
+  for (const node of held.splice(0)) node.onload?.();
+  await page.flush();
+  assert.deepEqual(held.map(src), [], 'nothing more is fetched once signed out');
+});

@@ -129,9 +129,12 @@ function asset(path,version){
   assets.set(url,promise);
   return promise;
 }
-async function ensure(entry){
+// live(): whether the caller still wants the files. A home closed by a sign-out while the kit loaded starts no further
+// file load, so the device keeps no staff file fetched after it signed out (forgetOfflineFiles).
+async function ensure(entry,live=()=>true){
   await Promise.all([asset(KIT.css,KIT.v),window.EGCHubKit?null:asset(KIT.js,KIT.v)]);
   if(!window.EGCHubKit)throw new Error('kit_unavailable');
+  if(!live())throw new Error('closed');
   if(entry.load)await Promise.all([entry.load.css?asset(entry.load.css,entry.load.v):null,entry.load.js?asset(entry.load.js,entry.load.v):null]);
 }
 function notice(host,entry,retry,what='screen'){
@@ -192,7 +195,7 @@ function widgetItem(entry,view,ctx){
   const live=()=>home?.items.get(entry.id)===item,retry=()=>{if(live())void item.run();};
   item.run=async()=>{
     if(entry.quiet){slot.hidden=true;slot.replaceChildren();}else skeleton(slot,entry);
-    try{await (entry.load?ensure(entry):asset(KIT.css,KIT.v));}catch{if(live()&&!entry.quiet)notice(slot,entry,retry,'section');return;}
+    try{await (entry.load?ensure(entry,live):asset(KIT.css,KIT.v));}catch{if(live()&&!entry.quiet)notice(slot,entry,retry,'section');return;}
     if(!live())return;
     const module=window[entry.module];
     if(!module||typeof module.mount!=='function'){if(!entry.quiet)notice(slot,entry,retry,'section');return;}
