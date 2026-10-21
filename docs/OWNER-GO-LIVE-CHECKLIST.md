@@ -60,7 +60,7 @@ The rule behind all of it: **HighLevel sends every customer message and owns eve
 
 ## Stage 3: Walkthroughs
 
-41. [ ] **Developer: run the two staff migrations (dry run, then apply).** The staff directory needs them. [3.1](GO-LIVE.md#31-team-roles-staff-directory)
+41. [ ] **Open Hub → Staff directory and tap Finish staff setup (it runs the two staff migrations; no banner means they are done).** The staff directory needs them. [3.1](GO-LIVE.md#31-team-roles-staff-directory)
 42. [ ] **Tell managers that pay changes now go through you.** The old profile form stops changing pay. [3.1](GO-LIVE.md#31-team-roles-staff-directory)
 43. [ ] **Set `EGC_STAFF_DIRECTORY_ENABLED=true` and check nobody shows "pay needs review" or "unrecognized id".** Turns on roles, skills, pay history and availability. [3.1](GO-LIVE.md#31-team-roles-staff-directory)
 44. [ ] **Record the Phone role for the phone person and the Sales role for the walkthrough rep.** Roles, not names, describe who does what. [3.1](GO-LIVE.md#31-team-roles-staff-directory)
