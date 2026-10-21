@@ -1,13 +1,12 @@
 /* PORTAL-INBOX: the Hub's Customer messages list (functions/_lib/customer-message-alerts.js).
    GET                                    open client portal messages, newest first, for anyone who may contact
                                           customers (staff-roles.js can(session, 'customer.send'): business users,
-                                          and Sales or Phone with staff-role permissions). Each read also retries up
-                                          to three due HighLevel follow-up tasks after it answers (ctx.waitUntil).
+                                          and Sales or Phone with staff-role permissions).
    POST {action:'mark_handled', id}       the same people mark one handled; it leaves the list and the badge.
-   Nothing here messages the customer. */
+   Nothing here writes to HighLevel or messages the customer. */
 import { getHubSession } from '../_lib/hub-session.js';
 import { can } from '../_lib/staff-roles.js';
-import { customerMessageAlertStorage, listCustomerMessages, markCustomerMessageHandled, retryDueCustomerMessageTasks } from '../_lib/customer-message-alerts.js';
+import { customerMessageAlertStorage, listCustomerMessages, markCustomerMessageHandled } from '../_lib/customer-message-alerts.js';
 
 const MAX_BYTES = 4096;
 const reply = (status, body) => Response.json(body, { status, headers: { 'Cache-Control': 'no-store', 'X-Content-Type-Options': 'nosniff' } });
@@ -25,7 +24,7 @@ function errorResponse(error) {
   return failure(503, 'customer_messages_unavailable', 'Customer messages could not be loaded. Retry; nothing was changed.');
 }
 
-export function customerMessageHandlers({ session = getHubSession, storage = customerMessageAlertStorage, now = () => new Date(), fetcher = (...args) => fetch(...args) } = {}) {
+export function customerMessageHandlers({ session = getHubSession, storage = customerMessageAlertStorage, now = () => new Date() } = {}) {
   async function viewer(request, env) {
     const actor = await session(request, env).catch(() => null);
     if (!actor) return { error: failure(401, 'customer_messages_sign_in_required', 'Sign in to the Employee Hub to see customer messages.') };
@@ -33,17 +32,12 @@ export function customerMessageHandlers({ session = getHubSession, storage = cus
     return { actor };
   }
   return {
-    async get({ request, env, waitUntil }) {
+    async get({ request, env }) {
       const { error } = await viewer(request, env);
       if (error) return error;
       if ([...new URL(request.url).searchParams.keys()].length) return failure(400, 'customer_messages_invalid_query', 'The customer message list takes no query parameters.');
       try {
-        const store = storage(env), asOf = now().toISOString(), list = await listCustomerMessages(store);
-        // A HighLevel task that could not be written at the send is retried while the office has the Hub open.
-        const retry = retryDueCustomerMessageTasks(store, { env, now: asOf, fetcher, origin: new URL(request.url).origin }).catch(() => []);
-        let deferred = false;
-        if (typeof waitUntil === 'function') { try { waitUntil(retry); deferred = true; } catch { /* finished below instead */ } }
-        if (!deferred) await retry;
+        const asOf = now().toISOString(), list = await listCustomerMessages(storage(env));
         return reply(200, { ok: true, messages: list.messages, total: list.total, complete: list.complete, asOf });
       } catch (caught) { return errorResponse(caught); }
     },

@@ -16,10 +16,8 @@
 .cm-when{font-size:13px;color:var(--hub-muted,#536173)}
 .cm-body{margin:0;padding:10px 12px;border-left:3px solid var(--hub-orange,#ee5c2b);background:var(--hub-paper,#f3f1ec);font-size:15px;line-height:1.5;white-space:pre-wrap;overflow-wrap:anywhere}
 .cm-meta{display:flex;flex-wrap:wrap;gap:4px 10px;margin:0;font-size:13px;color:var(--hub-muted,#536173);overflow-wrap:anywhere}
-.cm-task{font-weight:600}
 .cm-many{margin-left:8px;padding:2px 8px;border-radius:999px;background:var(--hub-soft,#f1f5f8);color:var(--hub-ink,#172033);font-size:12px;font-weight:700}
 .cm-from{font-weight:700}
-.cm-task-parked,.cm-task-failed{color:var(--hub-red,#b83b44)}
 .cm-actions{display:flex;flex-wrap:wrap;gap:8px}
 .cm-actions .hub-btn{flex:1 1 100%;min-height:48px;justify-content:center;text-align:center}
 .cm-state{display:grid;gap:6px}

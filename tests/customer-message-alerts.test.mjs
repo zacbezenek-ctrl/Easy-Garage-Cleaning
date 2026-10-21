@@ -1,13 +1,12 @@
-// PORTAL-INBOX: client portal messages reach the office as a Hub alert committed with the message and a HighLevel
-// task on the contact, created after the customer has the answer and retried (idempotently) when HighLevel is down.
+// PORTAL-INBOX: client portal messages reach the office as a Hub alert committed with the message. HighLevel still
+// gets the internal note after the customer has the answer, and nothing else: no task, no customer send.
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { createCustomerPortalSessionCookie } from '../functions/_lib/customer-portal.js';
 import { decodeFirestoreFields, encodeFirestoreFields } from '../functions/_lib/firestore-job.js';
 import {
-  ALERT_LIST_LIMIT, CUSTOMER_MESSAGE_ALERTS, TASK_PARK_ATTEMPTS, attemptCustomerMessageTask, customerMessageAlertId, customerMessageAlertStorage,
-  ensureCustomerMessageTask, markCustomerMessageHandled, newCustomerMessageAlert, retryDueCustomerMessageTasks,
+  ALERT_LIST_LIMIT, CUSTOMER_MESSAGE_ALERTS, customerMessageAlertId, customerMessageAlertStorage, markCustomerMessageHandled, newCustomerMessageAlert,
 } from '../functions/_lib/customer-message-alerts.js';
 import { createCustomerPortalHandlers } from '../functions/api/customer-portal.js';
 import { customerMessageHandlers } from '../functions/api/customer-messages.js';
@@ -72,12 +71,12 @@ function harness(t, { job = {}, highLevel } = {}) {
   return { docs, calls, data: path => docs.get(path)?.data, alerts: () => [...docs].filter(([key]) => key.startsWith(CUSTOMER_MESSAGE_ALERTS + '/')).map(([key, entry]) => ({ id: key.split('/')[1], ...entry.data })) };
 }
 
-const healthy = ({ existing = [] } = {}) => (call, all) => {
-  if (call.url.endsWith('/conversations/messages')) return Response.json({ messageId: 'note-1', conversationId: 'conversation-1' });
-  if (call.url.endsWith('/tasks') && call.method === 'GET') return Response.json({ tasks: [...existing, ...all.filter(item => item.method === 'POST' && item.url.endsWith('/tasks')).map((item, index) => ({ id: `task-${index + 1}`, ...item.body }))] });
-  if (call.url.endsWith('/tasks') && call.method === 'POST') return Response.json({ task: { id: `task-${all.filter(item => item.method === 'POST' && item.url.endsWith('/tasks')).length}` } });
-  return Response.json({}, { status: 404 });
+// HighLevel answers the internal note and nothing else: any other call is a write this feature must not make.
+const healthy = () => call => {
+  if (call.method === 'POST' && call.url.endsWith('/conversations/messages')) return Response.json({ messageId: 'note-1', conversationId: 'conversation-1' });
+  throw new Error(`unexpected HighLevel call ${call.method} ${call.url}`);
 };
+const onlyNotes = h => assert.deepEqual([...new Set(h.calls.highLevel.map(call => `${call.method} ${call.url}`))], h.calls.highLevel.length ? ['POST /conversations/messages'] : []);
 const down = () => { throw new TypeError('fetch failed'); };
 
 async function portalSend(env, { now = T0, requestId = 'portal-request-0001', body = 'The side door code is 4521.', defer = true, deps = {} } = {}) {
@@ -91,12 +90,11 @@ async function portalSend(env, { now = T0, requestId = 'portal-request-0001', bo
   return { response, data: await response.json(), settle: () => Promise.all(background) };
 }
 
-test('a portal message commits its office alert with the message and answers before HighLevel is called', async t => {
+test('a portal message commits its office alert with the message and answers before HighLevel hears of it', async t => {
   let release;
   const gate = new Promise(resolve => { release = resolve; });
   const h = harness(t, { highLevel: async (call, all) => { await gate; return healthy()(call, all); } });
-  const env = { ...ENV, EGC_CUSTOMER_MESSAGE_TASK_USER_ID: 'office-user-7' };
-  const sent = await portalSend(env);
+  const sent = await portalSend(ENV);
   assert.equal(sent.response.status, 200, 'the customer has the answer while HighLevel has not replied');
   assert.equal(sent.data.message.officeAlert, 'queued');
   const saves = h.calls.commits.filter(writes => writes.some(write => write.update.name.includes('/jobs/')));
@@ -109,25 +107,17 @@ test('a portal message commits its office alert with the message and answers bef
   assert.equal(alert.status, 'open');
   assert.equal(alert.body, 'The side door code is 4521.');
   assert.equal(alert.customerName, 'Dana Customer');
-  assert.equal(alert.task.status, 'pending');
+  assert.equal(Object.hasOwn(alert, 'task'), false, 'no HighLevel task is owed');
   assert.equal(h.data('jobs/job-1').customerConversation[0].officeAlert, 'queued');
   release();
   await sent.settle();
   const note = h.calls.highLevel.find(call => call.url.endsWith('/conversations/messages'));
   assert.equal(note.body.type, 'InternalComment', 'the internal note is kept');
-  const post = h.calls.highLevel.find(call => call.method === 'POST' && call.url.endsWith('/tasks'));
-  assert.equal(post.url, '/contacts/contact-1/tasks');
-  assert.equal(post.body.assignedTo, 'office-user-7');
-  assert.equal(post.body.dueDate, T0, 'due when the customer sent it');
-  assert.equal(post.body.completed, false);
-  assert.match(post.body.title, /Reply to client portal message: Dana Customer/);
-  assert.match(post.body.body, /The side door code is 4521\./);
-  assert.match(post.body.body, new RegExp(`Ref: ${alert.id}`));
-  assert.deepEqual([h.alerts()[0].task.status, h.alerts()[0].task.taskId], ['created', 'task-1']);
+  onlyNotes(h);
   assert.equal(h.data('jobs/job-1').customerConversation[0].delivery.status, 'sent', 'the note outcome is still recorded');
 });
 
-test('a replayed portal request adds no second alert and no second HighLevel task', async t => {
+test('a replayed portal request adds no second alert and no second note', async t => {
   const h = harness(t, { highLevel: healthy() });
   await (await portalSend(ENV)).settle();
   const replay = await portalSend(ENV);
@@ -135,87 +125,30 @@ test('a replayed portal request adds no second alert and no second HighLevel tas
   assert.equal(replay.data.duplicate, true);
   assert.equal(h.calls.commits.filter(writes => writes.some(write => write.update.name.includes('/jobs/'))).length, 1);
   assert.equal(h.alerts().length, 1);
-  assert.equal(h.calls.highLevel.filter(call => call.method === 'POST' && call.url.endsWith('/tasks')).length, 1);
+  assert.equal(h.calls.highLevel.length, 1);
 });
 
-test('without an office user the task is created unassigned', async t => {
-  const h = harness(t, { highLevel: healthy() });
-  await (await portalSend(ENV)).settle();
-  const post = h.calls.highLevel.find(call => call.method === 'POST' && call.url.endsWith('/tasks'));
-  assert.equal(Object.hasOwn(post.body, 'assignedTo'), false);
-});
-
-test('HighLevel down never fails the send; the task is queued and the Hub list retries it once due', async t => {
-  let highLevel = down;
-  const h = harness(t, { highLevel: (call, all) => highLevel(call, all) });
+test('HighLevel down never fails the send, and the Hub list shows the message without it', async t => {
+  const h = harness(t, { highLevel: down });
   const sent = await portalSend(ENV);
   await sent.settle();
-  assert.equal(sent.response.status, 200);
-  assert.equal(sent.data.ok, true);
-  let [alert] = h.alerts();
-  assert.equal(alert.status, 'open', 'the Hub alert does not depend on HighLevel');
-  assert.deepEqual([alert.task.status, alert.task.attempts, alert.task.nextAttemptAt, alert.task.claimedUntil], ['pending', 1, minutes(T0, 1), '']);
+  assert.deepEqual([sent.response.status, sent.data.ok], [200, true]);
+  assert.equal(h.alerts()[0].status, 'open', 'the Hub alert does not depend on HighLevel');
   assert.equal(h.data('jobs/job-1').customerConversation[0].delivery.status, 'received');
-
-  // Not due yet: a Hub read inside the backoff makes no HighLevel call.
-  const hub = at => customerMessageHandlers({ session: async () => BUSINESS, now: () => new Date(at) });
-  const before = h.calls.highLevel.length;
-  const background = [];
-  let response = await hub(minutes(T0, 0.5)).get({ request: new Request('https://easygaragecleaning.com/api/customer-messages'), env: ENV, waitUntil: promise => background.push(promise) });
-  await Promise.all(background);
+  const response = await customerMessageHandlers({ session: async () => BUSINESS, now: () => new Date(minutes(T0, 2)) }).get({ request: new Request('https://easygaragecleaning.com/api/customer-messages'), env: ENV });
   assert.equal(response.status, 200);
   const listed = await response.json();
-  assert.equal(listed.messages.length, 1);
-  assert.equal(listed.messages[0].highLevelTask, 'pending');
-  assert.equal(listed.messages[0].body, 'The side door code is 4521.');
+  assert.deepEqual(listed.messages.map(row => row.body), ['The side door code is 4521.']);
   assert.equal(Object.hasOwn(listed.messages[0], 'highlevelContactId'), false, 'the list carries no CRM ids');
-  assert.equal(h.calls.highLevel.length, before);
-
-  // HighLevel is back: the next due read creates the task exactly once.
-  highLevel = healthy();
-  background.length = 0;
-  response = await hub(minutes(T0, 2)).get({ request: new Request('https://easygaragecleaning.com/api/customer-messages'), env: ENV, waitUntil: promise => background.push(promise) });
-  await Promise.all(background);
-  [alert] = h.alerts();
-  assert.deepEqual([alert.task.status, alert.task.attempts, alert.task.taskId], ['created', 2, 'task-1']);
-  background.length = 0;
-  await hub(minutes(T0, 30)).get({ request: new Request('https://easygaragecleaning.com/api/customer-messages'), env: ENV, waitUntil: promise => background.push(promise) });
-  await Promise.all(background);
-  assert.equal(h.calls.highLevel.filter(call => call.method === 'POST' && call.url.endsWith('/tasks')).length, 1);
+  assert.equal(Object.hasOwn(listed.messages[0], 'highLevelTask'), false);
+  assert.equal(h.calls.highLevel.length, 1, 'the Hub list makes no HighLevel call');
 });
 
-test('uncertain then retried: the second attempt reads the landed task and writes nothing', async t => {
-  let lose = true;
-  const tasks = [];
-  const h = harness(t, { highLevel: call => {
-    if (call.url.endsWith('/conversations/messages')) return Response.json({ messageId: 'note-1' });
-    if (call.method === 'GET') return Response.json({ tasks });
-    tasks.push({ id: 'task-landed', ...call.body });
-    if (lose) { lose = false; return new Response('upstream timeout', { status: 504 }); }
-    return Response.json({ task: { id: 'task-second' } });
-  } });
-  await (await portalSend(ENV)).settle();
-  let [alert] = h.alerts();
-  assert.deepEqual([alert.task.status, alert.task.httpStatus], ['pending', 504]);
-  const result = await attemptCustomerMessageTask(customerMessageAlertStorage(ENV), alert.id, { env: ENV, now: minutes(T0, 1) });
-  assert.deepEqual(result, { id: alert.id, outcome: 'created', taskId: 'task-landed' });
-  assert.equal(tasks.length, 1, 'HighLevel holds one task');
-  [alert] = h.alerts();
-  assert.equal(alert.task.taskId, 'task-landed');
-});
-
-test('outcomes that are not retried: no contact, HighLevel not configured, a definite rejection', async t => {
+test('a job without a HighLevel contact still reaches the Hub, with no HighLevel call', async t => {
   const h = harness(t, { job: { highlevelContactId: '' }, highLevel: () => { throw new Error('HighLevel must not be called'); } });
   await (await portalSend(ENV)).settle();
-  assert.equal(h.alerts()[0].task.status, 'needs_contact');
   assert.equal(h.calls.highLevel.length, 0);
   assert.equal(h.alerts()[0].status, 'open', 'the Hub alert still shows it');
-
-  assert.deepEqual(await ensureCustomerMessageTask({}, { id: 'cma_' + '0'.repeat(40), highlevelContactId: 'contact-1' }), { status: 'not_configured' });
-  const refused = await ensureCustomerMessageTask(ENV, { id: 'cma_' + '0'.repeat(40), highlevelContactId: 'contact-1', body: 'x' }, { fetcher: async (url, init = {}) => init.method === 'POST' ? new Response('{}', { status: 422 }) : Response.json({ tasks: [] }) });
-  assert.deepEqual(refused, { status: 'failed', httpStatus: 422 });
-  const limited = await ensureCustomerMessageTask(ENV, { id: 'cma_' + '0'.repeat(40), highlevelContactId: 'contact-1', body: 'x' }, { fetcher: async () => new Response('{}', { status: 429 }) });
-  assert.equal(limited.status, 'unavailable', 'rate limited is retried, not failed');
 });
 
 // An in-memory store with the storage contract (read, open, write with a revision guard).
@@ -226,7 +159,6 @@ function memoryStore(rows = []) {
     docs,
     async read(id) { const row = docs.get(id); return row ? structuredClone(row) : null; },
     async open() { const list = [...docs.values()].filter(row => row.status === 'open').map(row => structuredClone(row)).sort((a, b) => b.lastMessageAt.localeCompare(a.lastMessageAt)); return { rows: list, complete: true }; },
-    async pending(limit) { return [...docs.values()].filter(row => row.task?.status === 'pending').sort((a, b) => a.task.nextAttemptAt.localeCompare(b.task.nextAttemptAt)).slice(0, limit).map(row => structuredClone(row)); },
     async write(id, patch, revision = '') {
       const row = docs.get(id);
       if (!row || revision && row.revision !== revision) return null;
@@ -240,54 +172,10 @@ const entry = async (overrides = {}) => {
   return { id, ...newCustomerMessageAlert({ customer: 'Dana', highlevelContactId: 'contact-1' }, 'job-1', { id: overrides.messageId || 'customer-m1', body: 'Hi', createdAt: T0, authorName: 'Dana' }, T0), ...overrides };
 };
 
-test('an entry parks after the attempt budget and is then left for a person', async () => {
-  const row = await entry();
-  const store = memoryStore([row]);
-  let at = T0;
-  for (let attempt = 1; attempt <= TASK_PARK_ATTEMPTS; attempt += 1) {
-    const result = await attemptCustomerMessageTask(store, row.id, { env: ENV, now: at, fetcher: down });
-    assert.equal(result.outcome, attempt < TASK_PARK_ATTEMPTS ? 'pending' : 'parked');
-    at = store.docs.get(row.id).task.nextAttemptAt || at;
-  }
-  assert.equal((await attemptCustomerMessageTask(store, row.id, { env: ENV, now: minutes(at, 600), fetcher: () => { throw new Error('not called'); } })).outcome, 'skipped');
-  const backoff = [];
-  const fresh = memoryStore([await entry()]);
-  let now = T0;
-  for (let attempt = 0; attempt < 5; attempt += 1) { await attemptCustomerMessageTask(fresh, row.id, { env: ENV, now, fetcher: down }); const next = fresh.docs.get(row.id).task.nextAttemptAt; backoff.push((Date.parse(next) - Date.parse(now)) / 60000); now = next; }
-  assert.deepEqual(backoff, [1, 5, 15, 60, 60]);
-});
-
-test('a claim held elsewhere or lost to a race makes no HighLevel call', async () => {
-  const claimed = await entry({ task: { status: 'pending', attempts: 1, nextAttemptAt: T0, claimedUntil: minutes(T0, 1) } });
-  const store = memoryStore([claimed]);
-  const never = () => { throw new Error('HighLevel must not be called'); };
-  assert.equal((await attemptCustomerMessageTask(store, claimed.id, { env: ENV, now: T0, fetcher: never })).outcome, 'skipped');
-  const raced = memoryStore([await entry()]), id = [...raced.docs.keys()][0], realRead = raced.read;
-  raced.read = async key => ({ ...(await realRead(key)), revision: 'stale' });
-  assert.equal((await attemptCustomerMessageTask(raced, id, { env: ENV, now: T0, fetcher: never })).outcome, 'claimed_elsewhere');
-  // An expired claim (the Worker died mid-attempt) is picked up again.
-  const fetchCreated = async (url, init = {}) => init.method === 'POST' ? Response.json({ task: { id: 'task-9' } }) : Response.json({ tasks: [] });
-  assert.equal((await attemptCustomerMessageTask(store, claimed.id, { env: ENV, now: minutes(T0, 3), fetcher: fetchCreated })).outcome, 'created');
-});
-
-test('handled before HighLevel heard of it: no task is written; retries take the soonest due first', async () => {
-  const handled = await entry({ status: 'handled' });
-  const store = memoryStore([handled]);
-  assert.equal((await attemptCustomerMessageTask(store, handled.id, { env: ENV, now: T0, fetcher: () => { throw new Error('not called'); } })).outcome, 'not_needed');
-  assert.equal(store.docs.get(handled.id).task.status, 'not_needed');
-
-  const rows = await Promise.all(['a', 'b', 'c', 'd'].map(async (key, index) => { const row = await entry({ messageId: `customer-${key}` }); return { ...row, task: { ...row.task, nextAttemptAt: minutes(T0, -index) } }; }));
-  const many = memoryStore(rows), seen = [];
-  const results = await retryDueCustomerMessageTasks(many, { env: ENV, now: T0, fetcher: async (url, init = {}) => { if (init.method === 'POST') seen.push(JSON.parse(init.body).body.match(/Ref: (cma_\w+)/)[1]); return init.method === 'POST' ? Response.json({ task: { id: `t${seen.length}` } }) : Response.json({ tasks: [] }); } });
-  assert.equal(results.length, 3, 'one Hub read retries at most three');
-  assert.deepEqual(seen, [rows[3].id, rows[2].id, rows[1].id]);
-});
-
 test('the Hub list is for people who may contact customers; Mark handled is same-origin and idempotent', async () => {
   const row = await entry();
   const store = memoryStore([row]);
-  const fetchNone = async (url, init = {}) => init.method === 'POST' ? Response.json({ task: { id: 'task-api' } }) : Response.json({ tasks: [] });
-  const handlers = profile => customerMessageHandlers({ session: async () => profile, storage: () => store, now: () => new Date(minutes(T0, 5)), fetcher: fetchNone });
+  const handlers = profile => customerMessageHandlers({ session: async () => profile, storage: () => store, now: () => new Date(minutes(T0, 5)) });
   const get = profile => handlers(profile).get({ request: new Request('https://easygaragecleaning.com/api/customer-messages'), env: ENV });
   const post = (profile, body, origin = 'https://easygaragecleaning.com') => handlers(profile).post({ request: new Request('https://easygaragecleaning.com/api/customer-messages', { method: 'POST', headers: { Origin: origin, 'Content-Type': 'application/json' }, body: JSON.stringify(body) }), env: ENV });
   assert.equal((await get(null)).status, 401);
@@ -295,7 +183,7 @@ test('the Hub list is for people who may contact customers; Mark handled is same
   assert.equal((await post(CREW, { action: 'mark_handled', id: row.id, seenCount: 1 })).status, 403);
   // Sales holds customer.send with staff-role permissions on.
   const sales = { user: 'samsales', displayName: 'Sam', role: 'sales', staffRoles: ['sales'] };
-  const salesHandlers = customerMessageHandlers({ session: async () => sales, storage: () => store, fetcher: fetchNone });
+  const salesHandlers = customerMessageHandlers({ session: async () => sales, storage: () => store });
   assert.equal((await salesHandlers.get({ request: new Request('https://easygaragecleaning.com/api/customer-messages'), env: { ...ENV, EGC_STAFF_ROLE_PERMISSIONS: 'true' } })).status, 200);
   assert.equal((await salesHandlers.get({ request: new Request('https://easygaragecleaning.com/api/customer-messages'), env: ENV })).status, 403, 'without staff-role permissions only business users');
 
@@ -313,9 +201,7 @@ test('the Hub list is for people who may contact customers; Mark handled is same
   assert.equal((await markCustomerMessageHandled(store, { action: 'mark_handled', id: row.id, seenCount: 1 }, BUSINESS, T0)).alreadyHandled, true);
 });
 
-const taskPosts = h => h.calls.highLevel.filter(call => call.method === 'POST' && call.url.endsWith('/tasks'));
-
-test('later messages join the job\'s open entry: one Hub row and one HighLevel task until it is handled', async t => {
+test('later messages join the job\'s open entry: one Hub row until it is handled', async t => {
   const h = harness(t, { highLevel: healthy() });
   await (await portalSend(ENV, { requestId: 'portal-request-0001', body: 'Hi' })).settle();
   await (await portalSend(ENV, { requestId: 'portal-request-0002', body: 'The code is 1234', now: minutes(T0, 1) })).settle();
@@ -324,10 +210,9 @@ test('later messages join the job\'s open entry: one Hub row and one HighLevel t
   assert.equal(alerts.length, 1, 'one entry for the job');
   assert.deepEqual([alerts[0].messageCount, alerts[0].messages.map(row => row.body), alerts[0].body, alerts[0].lastMessageAt, alerts[0].createdAt], [3, ['Hi', 'The code is 1234', 'Thanks!'], 'Thanks!', minutes(T0, 2), T0]);
   assert.equal(h.data('jobs/job-1').customerMessageAlertId, alerts[0].id);
-  assert.equal(taskPosts(h).length, 1, 'one HighLevel task for the conversation');
   assert.equal(h.data('jobs/job-1').customerConversation.length, 3, 'every message is still in the thread');
 
-  // Handled: the next message opens a fresh entry and owes a fresh task.
+  // Handled: the next message opens a fresh entry.
   const store = customerMessageAlertStorage(ENV);
   await markCustomerMessageHandled(store, { action: 'mark_handled', id: alerts[0].id, seenCount: 3 }, BUSINESS, minutes(T0, 3));
   await (await portalSend(ENV, { requestId: 'portal-request-0004', body: 'One more thing', now: minutes(T0, 4) })).settle();
@@ -336,8 +221,7 @@ test('later messages join the job\'s open entry: one Hub row and one HighLevel t
   assert.equal(alerts.length, 2);
   assert.deepEqual([open.length, open[0].messageCount, open[0].body], [1, 1, 'One more thing']);
   assert.equal(h.data('jobs/job-1').customerMessageAlertId, open[0].id);
-  assert.equal(taskPosts(h).length, 2);
-  assert.match(taskPosts(h)[0].body.body, /Dana Customer: Hi/);
+  onlyNotes(h);
 });
 
 test('Mark handled never clears a message the office has not seen: a later message refuses it with 409 until the list is re-read', async t => {
@@ -369,8 +253,8 @@ test('an append that lands between Mark handled\'s read and its write is caught 
   };
   await assert.rejects(markCustomerMessageHandled(store, { action: 'mark_handled', id: row.id, seenCount: 1 }, BUSINESS, minutes(T0, 2)), error => error.code === 'customer_messages_changed' && error.status === 409);
   assert.deepEqual([store.docs.get(row.id).status, store.docs.get(row.id).messageCount], ['open', 2]);
-  // A background HighLevel task write changes the revision, not the count: the click still succeeds.
-  await write(row.id, { task: { ...store.docs.get(row.id).task, status: 'created', taskId: 'task-1' } }, '');
+  // Another write changes the revision, not the count: the click still succeeds.
+  await write(row.id, { updatedAt: minutes(T0, 2) }, '');
   assert.equal((await markCustomerMessageHandled(store, { action: 'mark_handled', id: row.id, seenCount: 2 }, BUSINESS, minutes(T0, 3))).message.status, 'handled');
 });
 
@@ -411,33 +295,28 @@ test('a job may send 10 portal messages in 10 minutes; the 11th is refused kindl
   assert.equal(later.response.status, 200);
 });
 
-test('more than 100 open entries: the list is the newest 100 by latest message, and an older owed task is still retried', async t => {
+test('more than 100 open entries: the list is the newest 100 by latest message', async t => {
   const h = harness(t, { highLevel: healthy() });
-  const put = async (index, task) => {
+  const put = async index => {
     const id = await customerMessageAlertId(`job-${index}`, `customer-${index}`);
     const alert = newCustomerMessageAlert({ customer: `Customer ${index}`, highlevelContactId: `contact-${index}` }, `job-${index}`, { id: `customer-${index}`, body: `Message ${index}`, createdAt: minutes(T0, -index), authorName: `Customer ${index}` }, minutes(T0, -index));
-    h.docs.set(`${CUSTOMER_MESSAGE_ALERTS}/${id}`, { data: { ...alert, task: { ...alert.task, ...task } }, updateTime: `2026-10-21T14:00:00.${String(index).padStart(6, '0')}Z` });
+    h.docs.set(`${CUSTOMER_MESSAGE_ALERTS}/${id}`, { data: alert, updateTime: `2026-10-21T14:00:00.${String(index).padStart(6, '0')}Z` });
     return id;
   };
-  for (let index = 0; index < 120; index += 1) await put(index, { status: 'created', taskId: `task-${index}` });
-  // The oldest entry's task failed to reach HighLevel: it sits far outside the newest 100.
-  const owed = await put(150, { status: 'pending', attempts: 2, nextAttemptAt: minutes(T0, -1) });
-  const background = [];
-  const response = await customerMessageHandlers({ session: async () => BUSINESS, now: () => new Date(T0) }).get({ request: new Request('https://easygaragecleaning.com/api/customer-messages'), env: ENV, waitUntil: promise => background.push(promise) });
-  await Promise.all(background);
+  for (let index = 0; index < 120; index += 1) await put(index);
+  const response = await customerMessageHandlers({ session: async () => BUSINESS, now: () => new Date(T0) }).get({ request: new Request('https://easygaragecleaning.com/api/customer-messages'), env: ENV });
   const listed = await response.json();
   assert.equal(listed.messages.length, ALERT_LIST_LIMIT);
   assert.equal(listed.complete, false);
   assert.deepEqual(listed.messages.slice(0, 3).map(row => row.customerName), ['Customer 0', 'Customer 1', 'Customer 2'], 'newest first');
   assert.equal(listed.messages.at(-1).customerName, 'Customer 99');
-  const [list, pending] = h.calls.queries;
-  assert.deepEqual([list.orderBy[0].field.fieldPath, list.orderBy[0].direction, list.limit], ['lastMessageAt', 'DESCENDING', ALERT_LIST_LIMIT + 1]);
-  assert.deepEqual([pending.where.fieldFilter.field.fieldPath, pending.orderBy[0].field.fieldPath, pending.orderBy[0].direction], ['task.status', 'task.nextAttemptAt', 'ASCENDING']);
-  assert.equal(h.data(`${CUSTOMER_MESSAGE_ALERTS}/${owed}`).task.status, 'created', 'the owed task outside the list was retried');
-  assert.equal(taskPosts(h).length, 1);
-  // Both queries have their composite index.
+  assert.equal(h.calls.queries.length, 1);
+  const [list] = h.calls.queries;
+  assert.deepEqual([list.where.fieldFilter.field.fieldPath, list.orderBy[0].field.fieldPath, list.orderBy[0].direction, list.limit], ['status', 'lastMessageAt', 'DESCENDING', ALERT_LIST_LIMIT + 1]);
+  assert.equal(h.calls.highLevel.length, 0);
+  // The query has its composite index.
   const indexes = JSON.parse(readFileSync(new URL('../firestore.indexes.json', import.meta.url), 'utf8')).indexes.filter(index => index.collectionGroup === CUSTOMER_MESSAGE_ALERTS).map(index => index.fields.map(field => `${field.fieldPath}:${field.order}`).join(','));
-  assert.deepEqual(indexes, ['status:ASCENDING,lastMessageAt:DESCENDING', 'task.status:ASCENDING,task.nextAttemptAt:ASCENDING']);
+  assert.deepEqual(indexes, ['status:ASCENDING,lastMessageAt:DESCENDING']);
 });
 
 test('the portal shows a truthful "Sent to the team" and the Hub registers the screen and widget', () => {
@@ -450,6 +329,6 @@ test('the portal shows a truthful "Sent to the team" and the Hub registers the s
   assert.match(suite, /\.\.\.\(staffAccessCan\('customer\.send'\)\?\['customer_contact'\]:\[\]\)\]/, 'the capability follows the server list');
   const rules = readFileSync(new URL('../firestore.rules', import.meta.url), 'utf8');
   assert.match(rules, /match \/customerMessageAlerts\/\{documentId\} \{\s*allow read, write: if false;/);
-  const inventory = readFileSync(new URL('../docs/env-inventory.md', import.meta.url), 'utf8');
-  assert.match(inventory, /`EGC_CUSTOMER_MESSAGE_TASK_USER_ID`/);
+  // The Hub list is the only office alert: the feature adds no HighLevel write of its own.
+  for (const file of ['functions/_lib/customer-message-alerts.js', 'functions/api/customer-messages.js']) assert.doesNotMatch(readFileSync(new URL('../' + file, import.meta.url), 'utf8'), /leadconnectorhq|\/tasks\b/, file);
 });

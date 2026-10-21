@@ -9,7 +9,7 @@ import { customerPhotoPolicy, customerPhotoProjection, customerPhotosEnabled } f
 import { commitDocuments, patchJob, readJob } from '../_lib/firestore-job.js';
 import { CUSTOMER_PORTAL_CONTENT, CUSTOMER_PORTAL_TERMS_VERSION, approvalTermsVersion, customerPortalDocuments } from '../_lib/customer-portal-content.js';
 import { appendConversationMessage, cleanMessage, cleanRequestId, conversationMessages, deliverHighLevelMessage, findConversationMessage, replaceConversationMessage } from '../_lib/customer-messaging.js';
-import { CUSTOMER_MESSAGE_ALERTS, appendCustomerMessageAlert, attemptCustomerMessageTask, customerMessageAlertId, customerMessageAlertStorage, newCustomerMessageAlert, validAlertId } from '../_lib/customer-message-alerts.js';
+import { CUSTOMER_MESSAGE_ALERTS, appendCustomerMessageAlert, customerMessageAlertId, customerMessageAlertStorage, newCustomerMessageAlert, validAlertId } from '../_lib/customer-message-alerts.js';
 import { consumeRollingLimit } from '../_lib/rate-limit.js';
 import { dispatchStorage } from '../_lib/dispatch-storage.js';
 import { TIP_PRESETS, customerMoneyState as moneyState, customerDepositState, customerPaymentNeedsReview, customerQuoteTotal, customerTipsEnabled, customerTotalsShadow, createCustomerStripeCheckout, portalPaymentHeld, recordCustomerStripePayment, recordedTipCents, requestTip, stripeRequest as stripe, stripeSecretKey as stripeKey, tipLimitCents, tipRefusal, unknownMoneyRefusal } from '../_lib/customer-payments.js';
@@ -508,9 +508,7 @@ async function handlePost({ request, env, waitUntil }, { clock, read, alerts, li
     }
     if (!conversation) return reply(409, { ok: false, error: 'The conversation changed. Refresh and send again.' });
     const queued = { ...job, id: result.session.jobId, customerConversation: conversation };
-    // HighLevel is told after the customer has the answer: the internal note, then the office's follow-up task.
-    // Neither can fail or delay the send; a task HighLevel could not take is retried from the Hub's list.
-    const origin = new URL(request.url).origin;
+    // HighLevel gets its internal note after the customer has the answer, so it can never fail or delay the send.
     const notify = (async () => {
       const highLevelDelivery = await deliverHighLevelMessage(env, queued, { body: messageBody, direction: 'from_customer', requestId }, { clock });
       if (highLevelDelivery.status === 'sent') {
@@ -519,7 +517,6 @@ async function handlePost({ request, env, waitUntil }, { clock, read, alerts, li
           await patchJob(env, result.session.jobId, { customerConversation: replaceConversationMessage(latest, message.id, { delivery: highLevelDelivery }), customerConversationUpdatedAt: deliveredAt, updatedAt: deliveredAt }, latest.__updateTime);
         } catch { /* The customer reply is already safely stored in the project thread. */ }
       }
-      await attemptCustomerMessageTask(alerts(env), alertId, { env, now: clock().toISOString(), origin });
     })().catch(() => {});
     // Pages always provides waitUntil; a bare call (no Workers context) finishes the work before answering, as before.
     let deferred = false;

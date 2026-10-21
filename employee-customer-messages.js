@@ -3,12 +3,11 @@
    (EGCCustomerMessagesHome, on the Command center and My day, also for Sales or Phone staff who may contact
    customers). Both show only for a signed-in viewer whose server capabilities include customer.send; the server
    checks it again. While the viewer is eligible the open count also shows as a badge on the Customer messages nav
-   item. A failed load says unavailable, never zero. Nothing here messages the customer. */
+   item. A failed load says unavailable, never zero. Nothing here messages the customer or writes to HighLevel. */
 (function(){
 'use strict';
 if(window.EGCCustomerMessages)return;// The registry may load this file again for the screen; one copy runs.
 const POLL=30000,TIMEOUT=20000,TZ='America/Denver',HOME_LIMIT=5,NAV='customer_messages';
-const TASK={created:'HighLevel task created',pending:'HighLevel task queued · retrying',parked:'HighLevel task not created · check HighLevel',failed:'HighLevel refused the task · check HighLevel',needs_contact:'No HighLevel contact · reply from the Hub',not_configured:'HighLevel tasks not set up',not_needed:''};
 const S={data:null,error:null,at:0,request:null,timer:0,generation:0,busy:new Set(),views:new Set()};
 function h(tag,attrs,...children){const node=document.createElement(tag);for(const [key,value] of Object.entries(attrs||{})){if(value==null||value===false)continue;if(key==='class')node.className=value;else if(key.startsWith('on')&&typeof value==='function')node.addEventListener(key.slice(2),value);else node.setAttribute(key,String(value));}for(const child of children.flat(Infinity))if(child!=null&&child!==false)node.append(child instanceof Node?child:document.createTextNode(String(child)));return node;}
 const plural=(count,one,many)=>count+' '+(count===1?one:many);
@@ -84,12 +83,11 @@ function item(row,ctx){
   const handled=h('button',{type:'button',class:'hub-btn primary','data-cm-handled':row.id},'Mark handled');
   handled.addEventListener('click',()=>void markHandled(row,ctx,handled));
   const reply=row.jobType==='job'&&typeof window.opsOpenJobRoom==='function'?h('button',{type:'button',class:'hub-btn',onclick:()=>window.opsOpenJobRoom(row.jobId)},'Reply in job thread'):null;
-  const task=TASK[row.highLevelTask]||'';
   return h('li',{class:'cm-item','data-cm-message':row.id},
     h('div',{class:'cm-item-head'},h('strong',{class:'cm-who'},who,many?h('span',{class:'cm-many'},plural(row.messageCount,'message','messages')):null),h('time',{class:'cm-when',datetime:last||''},when(last))),
     ...(many&&recent.length>1?recent.map(message=>h('p',{class:'cm-body'},h('span',{class:'cm-from'},message.authorName+': '),message.body)):[h('p',{class:'cm-body'},row.body)]),
     many&&row.messageCount>recent.length?h('p',{class:'cm-note'},'Showing the latest '+recent.length+'. Open the job thread for the rest.'):null,
-    h('p',{class:'cm-meta'},about,task?h('span',{class:'cm-task cm-task-'+row.highLevelTask},task):null),
+    h('p',{class:'cm-meta'},about),
     h('div',{class:'cm-actions'},h('a',{class:'hub-btn',href:jobHref(row)},'Open job'),reply,handled));
 }
 function body(ctx,limit){

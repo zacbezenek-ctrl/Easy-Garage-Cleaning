@@ -22,7 +22,7 @@ const seed = async () => {
   const docs = new Map();
   for (const [job, jobId, messageId, body, authorName, minutes] of rows) {
     const id = await customerMessageAlertId(jobId, messageId), alert = newCustomerMessageAlert(job, jobId, { id: messageId, body, authorName, createdAt: ago(minutes) }, ago(minutes));
-    docs.set(id, { id, ...alert, task: { ...alert.task, status: job.highlevelContactId ? (minutes > 100 ? 'pending' : 'created') : 'needs_contact', nextAttemptAt: '2099-01-01T00:00:00.000Z' }, revision: 'r0' });
+    docs.set(id, { id, ...alert, revision: 'r0' });
   }
   // Dana's entry holds three messages (one entry per job, PORTAL-INBOX).
   const dana = [...docs.values()][0];
@@ -36,7 +36,7 @@ const store = {
   async open() { const rows = [...docs.values()].filter(row => row.status === 'open').map(row => structuredClone(row)).sort((a, b) => b.createdAt.localeCompare(a.createdAt)); return { rows, complete: true }; },
   async write(id, patch, revision = '') { const row = docs.get(id); if (!row || revision && row.revision !== revision) return null; docs.set(id, { ...row, ...structuredClone(patch), revision: `r${++n}` }); return docs.get(id).revision; },
 };
-const api = customerMessageHandlers({ session: async () => ({ user: 'tylerg', displayName: 'Tyler G', role: 'manager', businessAccess: true }), storage: () => store, now: () => new Date(NOW), fetcher: async () => { throw new Error('no HighLevel in this test'); } });
+const api = customerMessageHandlers({ session: async () => ({ user: 'tylerg', displayName: 'Tyler G', role: 'manager', businessAccess: true }), storage: () => store, now: () => new Date(NOW) });
 const posts = [];
 // A list GET can be held after it has read the list: its (now stale) answer goes out only when the test releases it.
 let holdNextGet = false, heldReady = null, releaseHeld = null;
@@ -107,7 +107,7 @@ try {
     assert.match(await items.nth(0).locator('.cm-when').textContent(), /^3 min ago · Oct 21/);
     assert.equal(await items.nth(0).locator('a', { hasText: 'Open job' }).getAttribute('href'), '/crew/job.html?jobId=job-1');
     assert.equal(await items.nth(1).locator('a', { hasText: 'Open job' }).getAttribute('href'), '/crew/gameplan.html?walkthroughId=walk-2');
-    assert.deepEqual(await items.locator('.cm-task').allTextContents(), ['HighLevel task created', 'No HighLevel contact · reply from the Hub', 'HighLevel task queued · retrying']);
+    assert.equal(await items.locator('.cm-task').count(), 0, 'the Hub list is the alert; no HighLevel task status is shown');
     // Layout: no sideways scroll, nothing wider than the viewport, and full-width 48 px touch targets on a phone.
     assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth), `${width}: no horizontal page scroll`);
     for (const box of await items.locator('.cm-body').evaluateAll(nodes => nodes.map(node => node.getBoundingClientRect().right))) assert.ok(box <= width, `${width}: message text stays inside the viewport`);
