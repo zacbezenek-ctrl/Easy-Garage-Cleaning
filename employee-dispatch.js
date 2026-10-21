@@ -154,7 +154,7 @@ async function load({quiet=false}={}) {
     if (generation!==S.generation || !S.root) return;
     S.data=data; S.error='';restoreRecovery(data.viewer.id);
   } catch (error) { if (generation!==S.generation || error.name==='AbortError') return; if([401,403].includes(error.status))S.data=null; S.error=errorText(error); S.errorStatus=error.status; }
-  finally { if (generation===S.generation && S.root) { S.loading=false; if(S.pendingBook&&S.error&&!S.data){S.pendingBook=null;S.error+=' The booking form did not open: book again once the schedule loads.';} render(); openPendingBook(); } }
+  finally { if (generation===S.generation && S.root) { S.loading=false; if(S.pendingBook&&S.error&&!S.data){S.pendingBook=null;S.error+=' The booking form did not open: book again once the schedule loads.';} render(); openPendingBook(); if(S.openCrews&&S.data&&!S.modal){S.openCrews=false;openResources();} } }
 }
 function setFilter(field,value) { if(field==='status'&&value==='unscheduled'){S.status='active';showQueue();return;} S[field]=value; renderBody(); }
 function showQueue() {
@@ -1137,6 +1137,8 @@ function openStatus(job,action) {
 }
 function openResources() {
   if(!S.data)return;const model=modal('Crews, vehicles & availability','Crew membership is copied onto each assignment. Editing a crew does not silently change scheduled jobs.');if(!model)return;
+  // CREW-STAFFING (employee-crew-staffing.js): crew problems, the next 14 days' unstaffed jobs and "Staff waiting jobs".
+  if(window.EGCCrewStaffing&&!booker())model.fields.append(window.EGCCrewStaffing.panel({save:body=>api('',body),onApplied:()=>{model.close();void load({quiet:true});}}));
   const list=h('div',{class:'dp-resource-list dp-wide'});
   for(const [kind,label,rows]of [['crew','Crews',sortedCrews(S.data.crews)],['vehicle','Vehicles',S.data.vehicles||[]],['availability','Availability',S.data.availability||[]]]) {
     list.append(h('div',{class:'dp-resource-head'},h('h3',{},label),btn('Add '+(kind==='availability'?'time off':kind),()=>{model.close();openResource(kind);})));
@@ -1235,7 +1237,9 @@ function registerView(name,view) {
 }
 // Registered views share this client, its dialogs and the save-recovery protocol (same requestId on retry).
 const internals=Object.freeze({state:()=>S,api,save,modal,openJob,show,redraw:renderBody,person,assignable,crewName,vehicle,h,btn,pill,notice,errorText,clock,dateText,addDays,today,words,key,segmentsOf,segmentsOn,active,queued,undated,warningsFor,reasonControls,outcomeBadge,rebookAction});
-window.EGCDispatch={mount,unmount,refresh:load,canLeave:()=>!S.modal&&!S.pending,registerView,book,internals,openFor};
+// CREW-STAFFING: the Command center's "Fix" opens Crews & vehicles once the board has loaded.
+const openCrews=()=>{if(S.data&&!S.modal&&!S.loading)openResources();else S.openCrews=true;};
+window.EGCDispatch={mount,unmount,refresh:load,canLeave:()=>!S.modal&&!S.pending,registerView,book,internals,openFor,openCrews};
 // A readiness chip opened outside the Hub lands on /employee.html?view=finance&job=ID; that job's row is shown once the Hub renders it.
 try{if(typeof location!=='undefined'){const params=new URLSearchParams(location.search);if(params.get('view')==='finance'&&params.get('job'))focusFinanceRow(params.get('job'),100);}}catch{}
 })();

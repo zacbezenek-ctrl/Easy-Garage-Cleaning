@@ -42,6 +42,9 @@ const MANIFEST=[
 // window.EGCName={mount(host,ctx), unmount(), refresh()}; ctx is the screen ctx plus {home, widget}.
 const HOME_WIDGETS=[
   {id:'overdue_followups',label:'Overdue follow-ups',homes:['today','my_day'],capability:'business',module:'EGCFollowupsHome'},
+  // Crew staffing (crew-ops): one line on the Command center; GET /api/crew-staffing also needs dispatch.write, and the line
+  // stays empty for anyone it refuses. employee.html loads its files (Dispatch's Crews & vehicles uses them too).
+  {id:'crew_staffing',label:'Crew staffing',homes:['today'],capability:'business',module:'EGCCrewStaffing'},
 ];
 const HOMES=new Set(['today','my_day']);
 const ID=/^[a-z][a-z0-9_]{1,47}$/,CAPABILITY=/^[a-z][a-z0-9_]{1,40}$/,MODULE=/^EGC[A-Za-z0-9]{1,40}$/,VERSION=/^[A-Za-z0-9._-]{1,40}$/,ICON=/^[MmLlHhVvCcSsQqTtAaZz0-9 .,-]{1,800}$/;

@@ -644,9 +644,11 @@ async function executeDispatch(store, session, input, now, options = {}, context
     // endDate, assignedCrew for an assignedTo name, crewNeeded 1) is no change.
     const changed=read=>create||restore||canonical(read(current))!==canonical(read(next));
     // An existing drive shortfall blocks only a change that moves this stop.
-    if(!changed(job=>[placement(job,roster,row=>row.vehicleId||null),String(job.address||'').trim(),job.propertyId||null]))inspection.blockTravelShort=false;
+    // CREW-STAFFING: a 'staff' pick puts a crew on the job, so the crew it picks is held to every blocking rule like a booking's.
+    const staffing = autoPlan?.kind === 'staff';
+    if(!staffing&&!changed(job=>[placement(job,roster,row=>row.vehicleId||null),String(job.address||'').trim(),job.propertyId||null]))inspection.blockTravelShort=false;
     // Likewise a blocking rule only stops a change to what that rule reads.
-    if(!changed(job=>[placement(job,roster),job.crewNeeded||job.requiredCrewSize||1,requiredSkillsOf(job).sort(),job.shiftPickupEnabled===true]))inspection.rules.enforce=()=>false;
+    if(!staffing&&!changed(job=>[placement(job,roster),job.crewNeeded||job.requiredCrewSize||1,requiredSkillsOf(job).sort(),job.shiftPickupEnabled===true]))inspection.rules.enforce=()=>false;
     // options.enforce (server-built saves and checked bookings only, e.g. a signed
     // handoff that leaves staffing to Dispatch) can keep a rule a warning; it never adds a block.
     else if(typeof options.enforce==='function')inspection.rules.enforce=warning=>options.enforce(warning)===true;
@@ -663,6 +665,10 @@ async function executeDispatch(store, session, input, now, options = {}, context
       } else if (kept) {
         autoResult = {status:'kept',mode:'choice',crewId:current.crewId};
         for (const key of Object.keys(NO_CREW)) { if (current[key] === undefined) delete patch[key]; else patch[key] = current[key]; }
+      } else if (autoPlan.kind === 'staff') {
+        // Staffing a waiting job that no crew can take changes nothing: the job stays as it is, Sold: needs crew.
+        const why = eligibleCrews(resources,crewJobDates(next),roster).length ? 'busy' : 'no_crew_works';
+        throw fail('dispatch_no_crew_free',why === 'busy' ? 'Every crew that works this day is busy for the whole visit. Pick another time, or assign people by hand.' : 'No active crew with members works this day. Add members to a crew that works it, or move the visit.',409,{reason:why,jobId:id});
       } else {
         autoResult = {status:'unassigned',mode:autoPlan.kind,crewId:null};
         Object.assign(patch,NO_CREW,current?.crewAutoAssigned !== undefined ? {crewAutoAssigned:null} : {});
@@ -763,6 +769,7 @@ async function executeDispatch(store, session, input, now, options = {}, context
 // moves (its crew first); in 'opt_in' mode without input.autoCrew only when its crew does not
 // work the new day. 'choice': a booker's changes.crewId (options.crewChoice), checked eligible.
 // A crew the save sets or clears by hand is never replaced; input.autoCrew:false asks no pick.
+// 'staff' (CREW-STAFFING): schedule.update with autoCrew:true on an unstaffed dated job that does not move.
 function autoCrewPlan({mode,input,options,create,current,next,patch,resources,roster}) {
   const changes = isObject(input.changes) ? input.changes : {}, wants = mode === 'on' || input.autoCrew === true;
   // A booker's crew change is only ever an eligible crew for a dated job; anything else is refused.
@@ -777,7 +784,10 @@ function autoCrewPlan({mode,input,options,create,current,next,patch,resources,ro
   const crewOf = job => canonical([legacyMembers(job,roster).sort(),job?.crewId || null]);
   const byHand = current ? crewOf(current) !== crewOf(next) : legacyMembers(next,roster).length > 0 || Boolean(next.crewId);
   const placed = create || ['date','time','endDate','endTime'].some(key => key in patch && patch[key] !== current?.[key]);
-  if (byHand || !placed) return null;
+  if (byHand) return null;
+  // CREW-STAFFING: a dispatcher's "Staff waiting jobs" (the Hub's opt-in save, never a booker's) asks (autoCrew:true) for a
+  // crew on a dated, unstaffed job without moving it; the pick is the same as a booking's, and with no crew free nothing is saved (dispatch_no_crew_free).
+  if (!placed) return mode === 'opt_in' && input.action === 'schedule.update' && input.autoCrew === true && current && !legacyMembers(next,roster).length && !next.crewId ? {kind:'staff',preferred:null} : null;
   if (!legacyMembers(next,roster).length) return wants ? {kind:'pick',preferred:null} : null;
   if (!autoAssignedCrew(current)) return null;
   const crew = resources.find(row => row.recordType === 'crew' && row.id === current.crewId);
