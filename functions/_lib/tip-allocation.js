@@ -182,3 +182,15 @@ export function computeTipAllocation({ jobs, timecards, start, end, now, refundR
     jobs: rows, employees, totals: { jobs: rows.length, tipCents: sum('tipCents'), allocatedCents: sum('allocatedCents'), unallocatedCents: sum('unallocatedCents') },
     coverage: { complete: !reasons.length, asOf, reasons } };
 }
+
+/** Pay privacy (docs/FUNNEL-METRICS.md §8.3: a manager sees no per-employee pay). A tip share is pay, so only a viewer
+ * who sees others' pay (pay-visibility.js seesOthersPay: the owner by default) gets each person's share and the job
+ * minutes it was split by (minutes with the job's tip would give the share back). Everyone else keeps each job's tip
+ * totals, who is in its split and how many tipped jobs each person worked. payShown tells the screen which view it got. */
+export function tipAllocationForViewer(allocation, { payShown = false } = {}) {
+  if (payShown === true) return { ...allocation, payShown: true };
+  const person = ({ employee, name }) => ({ employee, name });
+  return { ...allocation, payShown: false,
+    jobs: allocation.jobs.map(job => ({ ...job, employees: job.employees.map(person) })),
+    employees: allocation.employees.map(row => ({ ...person(row), jobs: row.jobs })) };
+}

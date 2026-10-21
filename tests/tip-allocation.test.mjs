@@ -383,3 +383,30 @@ test('the payment reviews behind the tip allocation are read one job per query a
     await assert.rejects(paymentReviewsForJobs({}, ['job-2'], broken), error => error.code === 'payment_review_unavailable' && error.status === 503);
   }
 });
+
+// PAY-PRIVACY (FUNNEL-METRICS §8.3): a tip share is pay. Only a viewer who sees others' pay (pay-visibility.js
+// seesOthersPay: the owner by default) gets each person's share and split minutes, and only they download the tip file.
+test('a manager sees each job\'s tips and who shares them, never a person\'s tip share; the owner still does', async t => {
+  const MANAGER = { user: 'AlexK', role: 'manager', businessAccess: true, owner: false }; // the manager fixture tests/job-actuals.test.mjs uses
+  const jobs = [job('job-a', [tip('a', 3000, '2026-09-23T22:00:00.000Z')])];
+  const timecards = [tracked('one', 'crew.one', '2026-09-23', '08:00', '10:00', [['work', 'job-a', '08:00']]), tracked('two', 'crew.two', '2026-09-23', '08:00', '09:00', [['work', 'job-a', '08:00']])];
+  const query = 'start=2026-09-21&end=2026-09-28';
+  const owner = await (await api(t, { jobs, timecards }).get(query)).json();
+  assert.equal(owner.payShown, true);
+  assert.deepEqual(owner.jobs[0].employees.map(share => [share.employee, share.minutes, share.tipCents]), [['crew.one', 120, 2000], ['crew.two', 60, 1000]]);
+  assert.deepEqual(owner.employees.map(row => [row.employee, row.tipCents, row.minutes, row.jobs]), [['crew.one', 2000, 120, 1], ['crew.two', 1000, 60, 1]]);
+
+  const f = api(t, { jobs, timecards, actor: MANAGER }), manager = await (await f.get(query)).json();
+  assert.equal(manager.payShown, false);
+  assert.deepEqual([manager.jobs[0].tipCents, manager.jobs[0].allocatedCents, manager.jobs[0].unallocatedCents, manager.totals], [3000, 3000, 0, owner.totals], 'job-level tip totals stay');
+  assert.deepEqual(manager.jobs[0].employees, [{ employee: 'crew.one', name: owner.jobs[0].employees[0].name }, { employee: 'crew.two', name: owner.jobs[0].employees[1].name }], 'who is in the split, nothing more');
+  assert.deepEqual(manager.employees.map(row => Object.keys(row).sort()), [['employee', 'jobs', 'name'], ['employee', 'jobs', 'name']]);
+  assert.doesNotMatch(JSON.stringify([manager.jobs.map(row => row.employees), manager.employees]), /tipCents|minutes/);
+  // The per-person tip file is refused before any job or timecard is read.
+  const reads = f.calls.jobs, csv = await f.get(`${query}&format=csv`);
+  assert.equal(csv.status, 403); assert.equal((await csv.json()).code, 'tip_allocation_pay_owner_only');
+  assert.equal(f.calls.jobs, reads, 'no read for a refused tip file');
+  // EGC_STAFF_PAY_OWNER_ONLY=false restores the older rule (every business user sees pay), as for timesheets.
+  const open = await (await api(t, { jobs, timecards, actor: MANAGER, env: { EGC_STAFF_PAY_OWNER_ONLY: 'false' } }).get(query)).json();
+  assert.equal(open.payShown, true); assert.equal(open.jobs[0].employees[0].tipCents, 2000);
+});
