@@ -4,8 +4,9 @@ import { WALKTHROUGH_SERVICE_ITEMS } from '../_data/walkthrough-services.js';
 
 // Server-only home of EGC's internal price tables: the walkthrough price tables and
 // labor-minute model (crew/gameplan.html), the phone-quote table (the Employee Hub's
-// on-call flow), the B2B partner rate card and the owner-only labor baseline, wages
-// and targets. Browsers receive only the parts their role may see, from
+// on-call flow) and the B2B partner rate card. The owner-only labor baseline, wages and
+// targets are owner-entered settings (functions/_lib/owner-economics.js), never code;
+// this file only serves them. Browsers receive only the parts their role may see, from
 // /api/pricing-config and /api/business-hub; nothing here is shipped as static code.
 // The legacy walkthrough services (pressure wash, deep clean, shelving, totes, pest
 // waste, mouse trapping) are the garage catalog's legacy service items, never duplicated
@@ -54,14 +55,6 @@ const PHONE_QUOTE = {
     { id: 'electronics', name: 'Electronics', price: 25 },
     { id: 'paint', name: 'Paint / Hazmat', price: 45 },
   ],
-};
-
-// Owner-only: the job-costing labor baseline, crew wages, truck economics and targets.
-const OWNER_ECONOMICS = {
-  laborCostPerCrewHour: 20,
-  wages: { crew: 20, lead: 23 },
-  truckRentalPerJob: { low: 150, high: 200 },
-  targets: { averageTicket: 2250, walkthroughSetRatePct: 50, qualifiedCloseRatePct: 70 },
 };
 
 // The standard B2B partner rate card shown to a signed-in business account. Its payment terms are the estimator quote's
@@ -147,17 +140,18 @@ export function walkthroughPricing(catalog) {
   return freeze({ version: WALKTHROUGH_PRICING_VERSION, ...clone(WALKTHROUGH_TABLES), services, hazards: { 'Pest waste': pestWaste }, minutes: clone(WALKTHROUGH_MINUTES) });
 }
 export const phoneQuotePricing = () => freeze(clone(PHONE_QUOTE));
-export const ownerEconomics = () => freeze(clone(OWNER_ECONOMICS));
 // Every business account sees the standard partner card today; the account is the hook for a negotiated one.
 export const businessRateCard = account => account && typeof account === 'object' ? clone(B2B_RATE_CARD) : null;
 
-// The served parts and a content version: the same tables always give the same version.
-export async function pricingConfig(parts, { catalog = walkthroughServiceItems } = {}) {
+// The served parts and a content version: the same tables always give the same version. The owner part comes from
+// owner() (readOwnerEconomics in the API); without one it is unavailable, never a built-in number.
+const noOwnerEconomics = async () => { throw fail('owner_unavailable', 'Owner targets could not be loaded.'); };
+export async function pricingConfig(parts, { catalog = walkthroughServiceItems, owner = noOwnerEconomics } = {}) {
   const wanted = [...new Set(parts)];
   if (!wanted.length || wanted.some(part => !PRICING_PARTS.includes(part))) throw fail('invalid_parts', 'Choose walkthrough, phone or owner pricing.', 400);
   const out = {};
   if (wanted.includes('walkthrough')) out.walkthrough = walkthroughPricing(await catalog());
   if (wanted.includes('phone')) out.phone = phoneQuotePricing();
-  if (wanted.includes('owner')) out.owner = ownerEconomics();
+  if (wanted.includes('owner')) out.owner = freeze(clone(await owner()));
   return { version: `pc_${pricingFingerprint(out).slice(0, 16)}`, parts: out };
 }
