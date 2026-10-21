@@ -68,7 +68,7 @@ test('/api/timesheets: the listed account gets the owner\'s week, but never the 
 });
 
 test('the grant needs the Manager role as well as business access: a listed crew lead or sales account sees no one else\'s pay', async () => {
-  // AlexK is a configured business user whose role is crew_lead; Sales.Viewer holds a stored sales role.
+  // AlexK is a configured business user acting as crew_lead in this fixture; Sales.Viewer holds a stored sales role.
   const listed = { ...GRANT, EGC_STAFF_PAY_VIEWERS: 'pay.viewer,alexk,sales.viewer' };
   for (const session of [OTHER, await signedIn('Sales.Viewer', ['sales'])]) {
     assert.equal(payViewGranted(session, listed), false, session.user);
@@ -109,4 +109,12 @@ test('/api/employee-hub: a listed stored-role manager reads everyone\'s pay with
 
   const owner = await read('ZacB');
   assert.deepEqual([owner.payVisibility, owner.paySet], ['all', true]);
+});
+
+test('with staff-role permissions on, stored roles decide: a business account configured as manager but stored as crew_lead gets no grant', () => {
+  const roles = { ...GRANT, EGC_STAFF_ROLE_PERMISSIONS: 'true', EGC_STAFF_PAY_VIEWERS: 'tylerg' };
+  const storedLead = { user: 'TylerG', displayName: 'Synthetic Manager', role: 'manager', businessAccess: true, staffRoles: ['crew_lead'] };
+  assert.equal(payViewGranted(storedLead, roles), false, 'stored roles, not the configured role, decide');
+  assert.equal(seesOthersPay(storedLead, roles), false);
+  assert.equal(payViewGranted({ ...storedLead, staffRoles: ['manager'] }, roles), true, 'the same account stored as a manager is granted');
 });

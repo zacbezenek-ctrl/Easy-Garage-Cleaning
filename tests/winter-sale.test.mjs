@@ -419,7 +419,7 @@ const signedInput = (f, q, job, { date = '2026-12-14', lines = job.estimate.line
 
 test('signed in person, a sale quote with goods near the floor gets exactly the credit it was saved with', async () => {
   // Synthetic costs that cap this job (shelving and totes, whose goods cost split only the stored lines carry) below $400.
-  const near = readers({ ...LOW_COSTS, wageCentsPerManHour: 20000, truckCentsPerJob: 35000 });
+  const near = readers({ ...LOW_COSTS, wageCentsPerManHour: 20000, truckCentsPerJob: 80000 });
   const f = fixture(ON), q = quote(BIG), saved = await save(f, estimator, q, { sale: { apply: true }, sale_readers: near }), draft = f.job(saved.job.id);
   assert.equal(saved.job.winterSale.code, 'capped');
   const credit = saved.job.winterSale.amountCents;
