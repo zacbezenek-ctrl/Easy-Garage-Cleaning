@@ -190,3 +190,36 @@ test('held tipped charges are not listed or resolved on Time approvals: the card
   assert.match(refunded.host.innerHTML, /recorded as refunded, and its job still lists the tip\. It is held unassigned/);
   assert.match(refunded.host.innerHTML, /\$90\.00 unassigned/);
 });
+
+// PAY-PRIVACY: a manager's /api/tip-allocation answer (payShown false) has no per-person share or minutes; the card
+// shows who worked the tipped jobs and each job's tips, says why, and offers no tip file (the server refuses it too).
+test('a manager sees who shares each job\'s tips and the job totals, with no person\'s amount and no tip file', async () => {
+  const ui = fixture();
+  ui.state.json = allocation({ payShown: false,
+    jobs: [{ ...allocation().jobs[0], employees: [{ employee: 'crew.alice', name: 'Synthetic Alice' }, { employee: 'crew.bob', name: 'Synthetic <b>Bob</b>' }] }],
+    employees: [{ employee: 'crew.alice', name: 'Synthetic Alice', jobs: 1 }, { employee: 'crew.bob', name: 'Synthetic <b>Bob</b>', jobs: 1 }] });
+  ui.mount(); await settle();
+  const html = ui.host.innerHTML;
+  assert.match(html, /Received<\/span><strong>\$90\.00/, 'the week\'s totals stay');
+  assert.match(html, /Synthetic Alice<\/strong><small>1 job<\/small><\/div><\/article>/, 'a name and a job count, no amount');
+  assert.doesNotMatch(html, /job minutes ·|undefined|NaN/);
+  assert.match(html, /Shared by Synthetic Alice, Synthetic &lt;b&gt;Bob&lt;\/b&gt;/);
+  assert.match(html, /only the owner sees the amounts and downloads the tip file/);
+  assert.doesNotMatch(html, /Download tips CSV/);
+  // The owner's answer (payShown true) keeps the amounts and the download.
+  const owner = fixture(); owner.state.json = allocation({ payShown: true }); owner.mount(); await settle();
+  assert.match(owner.host.innerHTML, /240 job minutes · 1 job<\/small><\/div><strong>\$90\.00/);
+  assert.match(owner.host.innerHTML, /Download tips CSV/); assert.doesNotMatch(owner.host.innerHTML, /Shared by|only the owner sees/);
+});
+
+test('a manager sees "Tip recorded · 1 person" for a one-person job, and the note says the totals leave it out', async () => {
+  const ui = fixture();
+  ui.state.json = allocation({ payShown: false,
+    jobs: [{ ...allocation().jobs[0], tipCents: null, allocatedCents: null, unallocatedCents: null, amountHidden: true, employees: [{ employee: 'crew.alice', name: 'Synthetic Alice' }] }],
+    employees: [{ employee: 'crew.alice', name: 'Synthetic Alice', jobs: 1 }], totals: { jobs: 1, tipCents: 0, allocatedCents: 0, unallocatedCents: 0, hiddenJobs: 1 } });
+  ui.mount(); await settle();
+  const html = ui.host.innerHTML;
+  assert.match(html, /<strong>Tip recorded · 1 person<\/strong>/);
+  assert.doesNotMatch(html, /\$90\.00|\$NaN|null|undefined/);
+  assert.match(html, /the totals leave out 1 such job\./);
+});

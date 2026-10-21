@@ -137,6 +137,13 @@ class JobActualsScreenTests(unittest.TestCase):
         expect(self.row(page, 'job-two-car').locator('td[data-label="Gross margin"]')).to_contain_text('No crew wage set')
         expect(self.row(page, 'job-two-car').locator('td[data-label="Gross margin"]')).to_contain_text('—')
         expect(self.row(page, 'job-two-car').locator('td[data-label="Actual h"]')).to_have_text('18.00Timecards')
+        # Per-job commission is per-employee pay (FUNNEL-METRICS 8.3): a manager gets no Commission or Contribution
+        # column and no Contribution total; hours, revenue and the margin stay.
+        expect(page.locator('td[data-label="Commission"], td[data-label="Contribution"]')).to_have_count(0)
+        expect(page.locator('.ja-table th', has_text='Commission')).to_have_count(0)
+        expect(page.locator('.ja-totals').first).not_to_contain_text('Contribution')
+        expect(page.locator('.ja-totals').first).not_to_contain_text('commission')
+        expect(self.row(page, 'job-two-car').locator('td[data-label="Revenue"]')).not_to_have_text('—')
         self.assert_layout(page, phone=True)
 
     def test_an_unconfirmed_save_is_retried_unchanged_or_discarded_never_replaced_by_newer_edits(self):

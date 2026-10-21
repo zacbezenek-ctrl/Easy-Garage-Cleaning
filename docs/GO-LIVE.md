@@ -255,7 +255,8 @@ These harden the Hub without changing anyone's workflow. Do each in **Preview fi
 
 ### 1.2 Keep pay owner-only
 
-- **Set:** nothing. `EGC_STAFF_PAY_OWNER_ONLY` unset already means only you see and change other employees' pay in the Hub roster and timecards.
+- **Set:** nothing. `EGC_STAFF_PAY_OWNER_ONLY` unset already means only you see and change other employees' pay in the Hub roster and timecards. Managers see no one else's pay.
+- **Optional, view only:** to let a named manager see everyone's pay (yours too, if you have a row) without changing or exporting it, list their Hub username in `EGC_STAFF_PAY_VIEWERS` (Cloudflare, plain, comma-separated). It works only for accounts with business access and the Manager role. Leave it unset unless you decide to.
 - **Where:** Cloudflare Pages, plain variable (only if you ever need the exception below).
 - **Turns on:** already on at deploy. Managers keep hours and approvals; everyone sees their own pay.
 - **Exception:** `EGC_STAFF_PAY_OWNER_ONLY=false` gives every business user pay access again. Use it only if managers must set pay.
@@ -263,6 +264,7 @@ These harden the Hub without changing anyone's workflow. Do each in **Preview fi
 - **Check it worked (phone):**
   1. Sign in as a manager and open the Team roster. Other people show hours, not pay rates.
   2. Sign in as yourself. You see everyone's pay.
+  3. Only if you listed someone in `EGC_STAFF_PAY_VIEWERS`: sign in as them. They see pay rates but get no rate field and no payroll CSV button.
 - **Roll back:** set `EGC_STAFF_PAY_OWNER_ONLY=false` and retry the deployment.
 
 ### 1.3 Security steps with no switch
@@ -362,7 +364,7 @@ Every website lead already goes to HighLevel. Stage 2 makes that durable (nothin
 - **Turns on:** Hub → Staff directory: roles (including **Sales** for the walkthrough rep and **Phone** for the phone person), skills, pay history with future-dated raises, and weekly availability. While `EGC_STAFF_ROLE_PERMISSIONS` stays off (recommended for now), saved roles are recorded but do not change what anyone can open.
 - **Also turns on (D10, 2026-10-17):** Hub → My EGC → **Team directory** for every signed-in staff member: names, approved photos, roles, crews, shirt sizes and birthdays (month and day, only for people who leave "Show my birthday" on). Birth year, age, phones, emergency contacts and the HighLevel user ID are shown only to the owner and managers, who also get the shirt-size totals and a CSV for uniform orders. Each employee sets their own shirt size and birthday there or on Getting started; managers edit anyone's. Customers and the public never see any of it.
 - **Needs first:**
-  1. Run the two staff migrations (`staff-profile-pay-roles-v1` and `employee-account-staff-roles-v1`): open Hub → Staff directory signed in as you and tap **Finish staff setup**. The banner shows only while they have records to fill, and tapping it again after a lost connection does nothing twice. The console steps in `docs/employee-vault-migrations.md` still work.
+  1. Run the two staff migrations (`staff-profile-pay-roles-v1` and `employee-account-staff-roles-v1`): open Hub → Staff directory signed in as you and tap **Finish staff setup**. The banner shows only while they have records to fill, and tapping it again after a lost connection does nothing twice. It comes back after a new hire's first sign-in; tap it again then. The console steps in `docs/employee-vault-migrations.md` still work.
   2. Tell managers: once this is on, pay changes go through you in the directory, not the old profile form.
 - **Check it worked (phone):**
   1. Open Hub → Staff directory as the owner. Everyone is listed; no card says "unrecognized id" or "pay needs review".

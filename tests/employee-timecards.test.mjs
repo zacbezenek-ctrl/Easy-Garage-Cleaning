@@ -126,7 +126,8 @@ test('a manager’s own queued clock action is applied once: a replayed clock-in
   // The first clock-out closes the open shift with the manager's time, as before; the owner approves it.
   const closed = save(back, clockOutBody);
   assert.deepEqual([closed.clockOutAt, closed.status, closed.approvalStatus, closed.hours, closed.locationTracking], [at('18:00'), 'submitted', 'pending', 3.5, false]);
-  const approved = save(closed, { approvalStatus: 'approved' }, { queued: false, now: at('19:00') });
+  // NO-SELF-APPROVAL: only the configured owner (a signed owner profile) approves their own card (tests/no-self-approval.test.mjs).
+  const approved = save(closed, { approvalStatus: 'approved' }, { queued: false, now: at('19:00'), session: { ...manager, businessAccess: true } });
   assert.deepEqual([approved.approvalStatus, approved.approvedBy, approved.approvedAt], ['approved', 'ZacB', at('19:00')]);
   // Every replay after that (a lost reply resent hours later) is a no-op: nothing reopens, un-approves or rewrites the card.
   for (const replay of [clockInBody, clockOutBody, startBreak, endBreak]) assert.strictEqual(save(approved, replay, { now: at('21:00') }), approved, JSON.stringify(replay).slice(0, 60));
