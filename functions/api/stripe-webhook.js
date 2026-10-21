@@ -31,6 +31,18 @@
  * (tips off, an untipped or non-Hub charge) is acknowledged and ignored, as before.
  * Disputes (charge.dispute.*) are not read: check Stripe for disputes before exporting tips.
  *
+ * With EGC_GHL_TAG_OUTBOX=true, a customer-portal payment the webhook records (or finds already recorded, by the
+ * browser return or an earlier delivery) queues its HighLevel update once in the tag outbox (queuePaymentTag): the
+ * tag a manager's save of the same money adds (egc-deposit-received or egc-payment-received) and an internal note,
+ * keyed on the checkout session. The queue write comes after the payment is durable. A failed write is logged and
+ * answered 503, so Stripe redelivers: Stripe never resends an event it got a 2xx for, and nothing else queues this
+ * entry. The redelivery finds the payment recorded (a duplicate that writes nothing) and queues the entry; a
+ * permanent failure means Stripe retries for up to 3 days and emails about a failing endpoint, which beats losing
+ * the update silently. A failed first HighLevel attempt after a successful queue is the drain's, never a 503. A
+ * held charge, a refund and a dispute queue nothing (no Hub path tags them), and crew card payments keep their own
+ * HighLevel paths (the crew closeout page and FIELD-PAY). With the flag off nothing is read or written and the
+ * answer is unchanged.
+ *
  * With FUNNEL_PAYMENT_EVENTS_ENABLED=true (and MONEY_API_ENABLED=true) a job
  * payment is committed together with its FUN-33 funnel events, dated at the
  * Stripe charge of the session read back above. Both checkout recorders are
@@ -73,6 +85,7 @@
 import { CHECKOUT_KINDS, customerTipsEnabled, findStripeCheckoutByPaymentIntent, readStripeCheckout, recordCrewStripePayment, recordCustomerStripePayment } from '../_lib/customer-payments.js';
 import { applyGarageGuardEvent, claimGarageGuardAlert, expireGarageGuardAlert, garageGuardEvent, garageGuardMembershipSyncEnabled, membershipStorage, settleGarageGuardAlert } from '../_lib/garage-guard-membership.js';
 import { garageGuardBilling, garageGuardLedgerStore, garageGuardVisitTrackingEnabled } from '../_lib/garage-guard-ledger.js';
+import { firstGhlTagAttempt, ghlTagOutboxEnabled, queuePaymentTag } from '../_lib/ghl-tag-outbox.js';
 
 const MAX_BODY = 256 * 1024;
 const TOLERANCE_SECONDS = 300;
@@ -186,7 +199,7 @@ export function hookDelivery(response) {
   return response && response.status >= 400 && response.status < 500 && response.status !== 408 ? 'failed' : 'uncertain';
 }
 
-export function stripeWebhookHandlers({ storage = membershipStorage, now = () => new Date(), send = (url, init) => fetch(url, init), readCheckout = readStripeCheckout, findCheckout = findStripeCheckoutByPaymentIntent } = {}) {
+export function stripeWebhookHandlers({ storage = membershipStorage, now = () => new Date(), send = (url, init) => fetch(url, init), readCheckout = readStripeCheckout, findCheckout = findStripeCheckoutByPaymentIntent, queueTag = queuePaymentTag, firstAttempt = firstGhlTagAttempt } = {}) {
   const json = (status, body) =>
     new Response(JSON.stringify(body), {
       status,
@@ -209,7 +222,23 @@ export function stripeWebhookHandlers({ storage = membershipStorage, now = () =>
     return true;
   }
 
-  async function post({ request, env }) {
+  // A recorded portal payment's HighLevel update, queued once (the outbox flag on). The payment is already durable: a
+  // storage failure is logged and returned as failed, so the caller answers 503 and Stripe redelivers the event.
+  // The answer names the outcome only with the flag on.
+  async function queuePortalTag(env, waitUntil, current, stamp) {
+    if (!ghlTagOutboxEnabled(env)) return {};
+    const jobId = String(current?.metadata?.job_id || ''), sessionId = String(current?.id || '');
+    try {
+      const queued = await queueTag(env, { jobId, sessionId, now: stamp });
+      if (queued.status === 'queued') firstAttempt({ env, waitUntil }, [queued.id], stamp);
+      return { highLevel: queued.status };
+    } catch (error) {
+      console.error(JSON.stringify({ event: 'ghl_payment_tag_queue_failed', jobId, sessionId, code: typeof error?.code === 'string' ? error.code : 'unknown' }));
+      return { highLevel: 'queue_failed' };
+    }
+  }
+
+  async function post({ request, env, waitUntil }) {
     const at = now(), stamp = at.toISOString();
     const secret = envVar(env, 'STRIPE_WEBHOOK_SECRET', ['STRIPE_WEBHOOK', 'STRIPE_WEBHOOK_KEY', 'STRIPE_SIGNING_SECRET']);
     if (!secret) return json(503, { ok: false, error: 'Webhook not configured' });
@@ -263,7 +292,11 @@ export function stripeWebhookHandlers({ storage = membershipStorage, now = () =>
           // The charge (and any refund on it) is read from Stripe, never taken from the payload.
           const current = await readCheckout(env, checkout.id);
           const payment = await recordCustomerStripePayment(env, current, '', stamp, { recordedBy: 'stripe_webhook', settleHeld: false, fromWebhook: true });
-          return json(200, { ok: true, received: true, recorded: true, duplicate: payment.duplicate });
+          const tag = await queuePortalTag(env, waitUntil, current, stamp);
+          // Stripe never resends an event it got a 2xx for, so a queue write that failed asks for a redelivery; the
+          // payment stays recorded and the redelivery is a duplicate that only queues the entry.
+          if (tag.highLevel === 'queue_failed') return json(503, { ok: false, error: 'HighLevel update needs retry', recorded: true });
+          return json(200, { ok: true, received: true, recorded: true, duplicate: payment.duplicate, ...tag });
         } catch (error) {
           // A charge held in payment_reviews (Stripe shows it refunded, or a tipped charge on a job that closed after
           // checkout opened) is durable and the job is unchanged.

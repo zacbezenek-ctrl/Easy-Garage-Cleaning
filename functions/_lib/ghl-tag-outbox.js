@@ -16,8 +16,10 @@
    no-show for a booking HighLevel never heard of, are closed untold. Each signed
    drain tick records a check-in, and the stuck view counts parked entries and
    pending ones the drain is overdue on (a stopped worker), for the visit's
-   current change only. Nothing here sends a message, and a contact is created
-   only outside a messaging dry run. */
+   current change only. A customer-portal payment the Stripe webhook recorded
+   queues its entry after the payment is durable (queuePaymentTag), keyed on the
+   checkout session and with no job pointer. Nothing here sends a message, and a
+   contact is created only outside a messaging dry run. */
 import { firestoreFetch } from './firebase-service-account.js';
 import { decodeFirestoreFields } from './firestore-job.js';
 import { dispatchStorage } from './dispatch-storage.js';
@@ -149,6 +151,47 @@ export async function fieldCompletionTagWrites({ job, patch, requestId, now }) {
   return result;
 }
 
+// A Stripe payment entry is current while the job still shows the session as verified money (it is never removed: a
+// refund opens a payment review instead), so a replay, a browser return or a drain retry all name the same payment.
+const recordedStripeSession = (job, sessionId) => job?.payment?.verified === true && Array.isArray(job.payment.stripeSessions) &&
+  job.payment.stripeSessions.find(item => object(item) && item.sessionId === sessionId) || null;
+const STRIPE_SESSION = /^cs_(?:test_|live_)?[A-Za-z0-9_]{1,200}$/;
+
+/** The outbox write for an online customer-portal payment (the 25% deposit, the balance, any portal checkout) once the
+ * Hub has recorded it, or null. It tells HighLevel what a manager's save of the same money tells it (tool=lifecycle,
+ * employee-money-actions.js): egc-deposit-received for a deposit, egc-payment-received otherwise, no stage move, and an
+ * internal note; the tag is left out when the job's notify flag is off, as the manager save suppresses it. The purpose
+ * is read from the session the job recorded, never from the webhook. Keyed on the Stripe checkout session, so the
+ * completed and async-succeeded events, their replays and the browser return all name one entry. No job pointer is
+ * written: ghlTagEntry stays the visit's schedule change. */
+export async function paymentTagWrites({ jobId, job, sessionId, now }) {
+  if (!safeId(jobId) || !STRIPE_SESSION.test(sessionId || '')) return null;
+  const item = recordedStripeSession(job, sessionId);
+  if (!item) return null;
+  const deposit = item.purpose === 'deposit', tag = deposit ? 'egc-deposit-received' : 'egc-payment-received';
+  // Stripe IDs are case-sensitive, so the key keeps the session ID as Stripe wrote it (ghlTagChangeKey lowercases).
+  const changeKey = `stripe-payment:${sessionId}`, id = await ghlTagEntryId(jobId, changeKey);
+  const amount = Number(item.amount), paid = Number.isFinite(amount) && amount > 0 ? ` ${amount.toLocaleString('en-US', { style: 'currency', currency: 'USD' })}` : '';
+  const note = `${deposit ? 'Deposit' : 'Payment'} received online${paid} (Stripe, customer portal). Recorded on the Hub job ${jobId}. PaymentIntent: ${item.paymentIntentId || 'recorded by Stripe'}.`;
+  const result = entryWrite(id, jobId, changeKey, 'payment_received', { addTags: job.notify === false ? [] : [tag], note, expect: { state: 'payment', sessionId } }, sessionId, now, 'stripe_webhook', job);
+  Object.assign(result.write.patch, { sessionId, noteTitle: `EGC Lifecycle — ${tag.slice(4)}`, paymentPurpose: deposit ? 'deposit' : 'balance' });
+  return result;
+}
+
+/** After the Stripe webhook recorded (or found already recorded) a customer-portal payment: create its outbox entry
+ * once. Flag off: nothing is read or written. An entry that already exists is a replay ('duplicate'). Throws when
+ * storage fails, after the payment is durable: the webhook then answers 503 so Stripe redelivers, and the redelivery
+ * (a duplicate payment) queues the entry. */
+export async function queuePaymentTag(env, { jobId, sessionId, now = new Date().toISOString(), store = null } = {}) {
+  if (!ghlTagOutboxEnabled(env)) return { status: 'off' };
+  const storage = store || ghlTagOutboxStorage(env), job = await storage.read('jobs', jobId);
+  const queued = await paymentTagWrites({ jobId, job, sessionId, now });
+  if (!queued) return { status: 'not_recorded' };
+  try { await storage.commit([queued.write]); }
+  catch (error) { if (error?.status === 409 || error?.code === 'dispatch_revision_conflict') return { status: 'duplicate', id: queued.write.id }; throw error; }
+  return { status: 'queued', id: queued.write.id };
+}
+
 /** The flag is on and the visit's newest entry was written at its current time: that entry speaks for the scheduled tags. */
 export function outboxOwnsScheduleTags(env, job) {
   const pointer = job?.ghlTagEntry;
@@ -202,6 +245,7 @@ function stillCurrent(entry, job, at) {
   if (expect.state === 'cancelled') return CANCELLED.has(state(job));
   if (expect.state === 'no_show') return NO_SHOW.has(state(job));
   if (expect.state === 'outcome') return object(job.walkthroughOutcome) && job.walkthroughOutcome.requestId === expect.outcomeRequestId;
+  if (expect.state === 'payment') return Boolean(recordedStripeSession(job, expect.sessionId));
   if (expect.state === 'field_completed') return FINISHED.has(state(job)) && !job.recordType &&
     job.completionEvidence?.kind === 'verified_field_execution' && job.completionEvidence.requestId === expect.completionRequestId &&
     job.completedAt === expect.completedAt && job.fieldExecution?.completion?.completedAt === expect.completedAt;
@@ -368,10 +412,10 @@ async function deliver(store, c, env, entry, now, claim, mirrored = false) {
       // GHL-ALIGN: a messaging dry run (EGC_MESSAGING_DRY_RUN unless exactly "false") never creates a HighLevel contact.
       // Each attempt reads the links again, so a contact linked later (the browser sync, customer-resolve) is used.
       if (env.EGC_MESSAGING_DRY_RUN !== 'false') throw fail('ghl_tag_contact_not_linked', 'The visit has no linked HighLevel contact yet.', 409);
-      contactId = await ensureContact(c, { name: job.customer || '', phone: job.phone || '', email: job.email || '', address: job.address || '' }, 'EGC Hub schedule');
+      contactId = await ensureContact(c, { name: job.customer || '', phone: job.phone || '', email: job.email || '', address: job.address || '' }, claimed.kind === 'payment_received' ? 'EGC Hub payment' : 'EGC Hub schedule');
       if (!contactId) throw fail('ghl_tag_contact_unresolved', 'HighLevel returned no contact.', 502);
     }
-    if (claimed.note && !steps.note) { await addContactNote(c, contactId, { title: 'EGC walkthrough outcome', body: claimed.note, idempotencyKey: claimed.id }); steps.note = now; }
+    if (claimed.note && !steps.note) { await addContactNote(c, contactId, { title: typeof claimed.noteTitle === 'string' && claimed.noteTitle ? claimed.noteTitle : 'EGC walkthrough outcome', body: claimed.note, idempotencyKey: claimed.id }); steps.note = now; }
     if (claimed.appointmentStatus && !steps.appointment) {
       if (!job.highlevelAppointmentId) steps.appointment = 'not_linked';
       else if ((await completeAppointment(c, job.highlevelAppointmentId, claimed.appointmentStatus)).updated) steps.appointment = now;
@@ -440,7 +484,7 @@ export function ghlTagDrainView(beat, at) {
 }
 
 // The job fields stillCurrent reads.
-const CURRENT_JOB_FIELDS = ['type', 'recordType', 'status', 'pipelineStatus', 'date', 'time', 'endDate', 'endTime', 'walkthroughOutcome.requestId', 'completedAt', 'completionEvidence.kind', 'completionEvidence.requestId', 'fieldExecution.completion.completedAt'];
+const CURRENT_JOB_FIELDS = ['type', 'recordType', 'status', 'pipelineStatus', 'date', 'time', 'endDate', 'endTime', 'walkthroughOutcome.requestId', 'completedAt', 'completionEvidence.kind', 'completionEvidence.requestId', 'fieldExecution.completion.completedAt', 'payment.verified', 'payment.stripeSessions'];
 async function jobsById(store, ids) {
   const found = new Map();
   if (typeof store.readMany === 'function') {

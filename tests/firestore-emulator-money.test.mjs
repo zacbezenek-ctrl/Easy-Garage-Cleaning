@@ -327,4 +327,22 @@ test('the tipped booking commit (job update plus precondition-only review delete
     assert.deepEqual([after.updateTime, decodeFirestoreFields(after.fields).payment, decodeFirestoreFields(after.fields).paidInFullAt], [before.updateTime, job.payment, undefined], 'the refunded tipped charge is never booked');
     assert.deepEqual(await funnelEvents(raced), [], 'and no event is written for it');
   });
+
+  // GHL-TRACK-1: an online portal payment's HighLevel entry is created once per checkout session on real Firestore: a
+  // replayed webhook's create meets ALREADY_EXISTS and reads as a duplicate, never a second entry or a failure.
+  await t.test('a recorded portal payment queues one HighLevel tag outbox entry; a replay is a duplicate', async st => {
+    st.mock.method(globalThis, 'fetch', emulator);
+    const { queuePaymentTag, ghlTagEntryId } = await import('../functions/_lib/ghl-tag-outbox.js');
+    const env = { FIREBASE_API_KEY: 'firebase-test-money-race', EGC_GHL_TAG_OUTBOX: 'true' };
+    const jobId = `ghl-payment-${run}`, sessionId = `cs_test_ghl_payment_${run}`;
+    assert.equal((await create(`jobs/${jobId}`, { type: 'job', customer: 'Synthetic Portal Customer', total: 1000, payment: { amount: 250, verified: true, stripeSessions: [{ sessionId, paymentIntentId: `pi_${run}`, amount: 250, purpose: 'deposit' }] } })).status, 200);
+    statuses.length = 0;
+    const first = await queuePaymentTag(env, { jobId, sessionId, now: NOW });
+    const replay = await queuePaymentTag(env, { jobId, sessionId, now: NOW });
+    const id = await ghlTagEntryId(jobId, `stripe-payment:${sessionId}`);
+    assert.deepEqual([first, replay, statuses], [{ status: 'queued', id }, { status: 'duplicate', id }, [200, 409]]);
+    const entry = decodeFirestoreFields((await read(`ghlTagOutbox/${id}`)).fields);
+    assert.deepEqual([entry.kind, entry.addTags, entry.status, entry.expect], ['payment_received', ['egc-deposit-received'], 'pending', { state: 'payment', sessionId }]);
+    assert.deepEqual(await queuePaymentTag({ ...env, EGC_GHL_TAG_OUTBOX: 'false' }, { jobId, sessionId, now: NOW }), { status: 'off' });
+  });
 });
