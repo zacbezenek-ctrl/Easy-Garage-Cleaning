@@ -72,6 +72,7 @@ test('the scorecard: average miss, bias, ±10/±20 shares, and ranking only from
     ['lucky.lee', 1, false, 0, 0, 100, 100],
   ], 'one perfect job never outranks a steady record');
   assert.deepEqual(card.top, { estimator: 'est.alex', averageErrorPercent: 8.1, jobs: 4 });
+  assert.deepEqual(card.leaders, [card.top]);
   assert.deepEqual([card.estimators[0].estimatedManHours, card.estimators[0].actualManHours], [36, 39]);
   assert.equal(estimatorScorecard(lucky).top, null, 'nobody ranked, no callout');
   assert.equal(estimatorScorecard(lucky, { minJobs: 1 }).top.estimator, 'lucky.lee');
@@ -83,7 +84,7 @@ test('the report block: 30-day and 90-day scorecards, every job listed newest fi
   const rows = jobs.map(j => jobActualsRow(j)).sort((a, b) => b.date.localeCompare(a.date));
   const block = buildEstimatorAccuracy({ rows, jobs, shortStart: '2026-09-22' });
   assert.deepEqual(block.rows.map(row => row.jobId), ['new', 'junk', 'mid', 'old']);
-  assert.deepEqual(block.excluded, { junk_only: 1 });
+  assert.deepEqual([block.excluded, block.last30.excluded, block.last30.jobIds, block.last90.jobIds], [{ junk_only: 1 }, { junk_only: 1 }, ['new', 'junk', 'mid'], ['new', 'junk', 'mid', 'old']]);
   assert.deepEqual([block.last30.estimators[0].jobs, block.last30.top, block.last90.estimators[0].jobs, block.last90.top.estimator], [2, null, 3, 'est.alex']);
 });
 
@@ -128,8 +129,46 @@ test('the Hub card shows the callout, the scorecard and why jobs were not scored
   const card = text(context.__ja.accuracyCard());
   assert.match(card, /Most accurate this month: est\.alex — off by 12\.5% on average across 3 jobs\./);
   assert.match(card, /Under by 12\.5%/);
-  assert.match(card, /Not scored: No estimator on record: 1\./);
+  assert.match(card, /Not scored in the last 30 days: No estimator on record: 1\./);
+  assert.match(card, /job by job in the last 30 days \(4\)/);
   assert.doesNotMatch(card, /\$/, 'no dollar figure on the estimator card');
+});
+
+test('a quote sent and accepted online is scored from the hours its builder breakdown sold, and junk-only by its lines', () => {
+  const sent = { quoteDraft: { sentBy: 'Sales.Sam', breakdown: { source: 'composite', labor: { manHours: 8 }, lines: [{ section: 'removal', group: 'junk' }, { section: 'organize', group: 'shelving' }] } } };
+  const online = job('online', '2026-10-10', undefined, 2, 5, sent);
+  delete online.jobInstructions;
+  const row = scored(online);
+  assert.deepEqual([row.estimatedManHours, row.actualManHours, row.differencePercent, row.scored, row.estimator, row.estimatorEvidence], [8, 10, 25, true, 'sales.sam', 'quote_sender']);
+  const junk = job('junk-online', '2026-10-10', undefined, 2, 2, { quoteDraft: { sentBy: 'Sales.Sam', breakdown: { source: 'composite', lines: [{ section: 'removal', group: 'junk' }] } } });
+  delete junk.jobInstructions;
+  assert.equal(scored(junk).excluded, 'junk_only');
+  const other = job('other-source', '2026-10-10', undefined, 2, 5, { quoteDraft: { sentBy: 'Sales.Sam', breakdown: { source: 'legacy', labor: { manHours: 8 } } } });
+  delete other.jobInstructions;
+  assert.equal(scored(other).excluded, 'no_labor_estimate', 'only a composite breakdown counts');
+  for (const field of ['quoteDraft.breakdown.source', 'quoteDraft.breakdown.labor.manHours', 'quoteDraft.breakdown.lines']) assert.ok(JOB_ACTUALS_FIELDS.includes(field), field);
+});
+
+test('travel-only timecards are not an actual, the miss is rounded on its own size, and tied leaders are all named', () => {
+  const travelOnly = scored(job('travel', '2026-10-10', 8, 0, 0, signed('Est.Alex')), { labor: { workHours: 0, travelHours: 2, incomplete: false } });
+  assert.equal(travelOnly.excluded, 'actual_not_recorded');
+  // 6 h sold, 5.997 h worked: −0.05% rounds half up to 0.0 signed, but the miss is 0.1.
+  const tiny = accuracyRow({ jobId: 't', date: '2026-10-10', billed: { manHours: 6, source: 'labor_line' }, actual: { manHours: 5.997, source: 'crew_lead' }, reasons: [] }, signed('Est.Alex'));
+  assert.deepEqual([tiny.differencePercent, tiny.absoluteErrorPercent], [0, 0.1]);
+  const even = name => [[8, 2, 4], [8, 2, 4], [8, 2, 4]].map(([sold, p, h], i) => scored(job(`${name}${i}`, '2026-10-10', sold, p, h, signed(name))));
+  const card = estimatorScorecard([...even('Est.Alex'), ...even('Est.Bea')]);
+  assert.deepEqual(card.leaders.map(l => l.estimator), ['est.alex', 'est.bea']);
+});
+
+test('a setter walkthrough uses the setter record\'s estimator, and a different signer makes it an estimator conflict', () => {
+  const setter = { estimatorKey: 'Est.Alex' };
+  assert.deepEqual(estimatorOf(signed('Est.Alex'), setter), { key: 'est.alex', evidence: 'setter_record' });
+  assert.deepEqual(estimatorOf({}, setter), { key: 'est.alex', evidence: 'setter_record' });
+  const conflict = scored(job('c', '2026-10-10', 8, 2, 4, { ...signed('Est.Bea'), sourceWalkthroughId: 'walk-1' }));
+  assert.equal(conflict.excluded, null);
+  const j = job('c', '2026-10-10', 8, 2, 4, { ...signed('Est.Bea'), sourceWalkthroughId: 'walk-1' });
+  const block = buildEstimatorAccuracy({ rows: [jobActualsRow(j)], jobs: [j], setters: new Map([['walk-1', setter]]), shortStart: '2026-09-22' });
+  assert.deepEqual([block.rows[0].estimator, block.rows[0].excluded], ['est.alex', 'estimator_conflict']);
 });
 
 function read(name) { return readFileSync(new URL(`../${name}`, import.meta.url), 'utf8'); }

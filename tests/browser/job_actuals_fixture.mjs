@@ -42,7 +42,7 @@ const ACCURACY_JOBS = [
   job('job-acc-1', '2026-10-15', 'Synthetic Accuracy One', 900, [line('labor', 'labor', 1, 42400)], { jobInstructions: { laborManHours: 8 }, ...signedBy('Est.Alex'), fieldExecution: { completion: { crewOnSite: { people: 2, hours: 4 } } } }),
   job('job-acc-2', '2026-10-12', 'Synthetic Accuracy Two', 900, [line('labor', 'labor', 1, 42400)], { jobInstructions: { laborManHours: 8 }, ...signedBy('Est.Alex'), fieldExecution: { completion: { crewOnSite: { people: 2, hours: 4.5 } } } }),
   job('job-acc-3', '2026-10-08', 'Synthetic Accuracy Three', 900, [line('labor', 'labor', 1, 53000)], { jobInstructions: { laborManHours: 10 }, ...signedBy('Est.Alex'), fieldExecution: { completion: { crewOnSite: { people: 2, hours: 6 } } } }),
-  job('job-acc-4', '2026-10-05', 'Synthetic Accuracy Four', 900, [line('labor', 'labor', 1, 21200)], { jobInstructions: { laborManHours: 4 }, quoteDraft: { sentBy: 'Sales.Sam' }, fieldExecution: { completion: { crewOnSite: { people: 2, hours: 4 } } } }),
+  job('job-acc-4', '2026-10-05', 'Synthetic Accuracy Four', 900, [line('labor', 'labor', 1, 21200)], { jobInstructions: null, quoteDraft: { sentBy: 'Sales.Sam', breakdown: { source: 'composite', labor: { manHours: 4 }, lines: [{ section: 'organize', group: 'shelving' }] } }, fieldExecution: { completion: { crewOnSite: { people: 2, hours: 4 } } } }),
 ];
 const at = (date, time) => `${date}T${time}:00-06:00`;
 const card = (id, jobId, date, from, to) => ({ id, employee: 'Crew.One', employeeName: 'Crew One', payType: 'hourly', hourlyRate: 31, clockInAt: at(date, from), clockOutAt: at(date, to), status: 'submitted', approvalStatus: 'approved', breaks: [],
@@ -52,7 +52,10 @@ const TIMECARDS = [card('c1', 'job-two-car', '2026-10-18', '06:00', '15:00'), { 
   { ...card('c5', 'job-two-car', '2026-10-18', '06:00', '15:00'), employee: 'Crew.Three', employeeName: 'Crew Three', clockOutAt: null, status: 'open', approvalStatus: 'pending' },
   card('c3', 'job-overrun', '2026-08-01', '05:00', '20:00'), { ...card('c4', 'job-overrun', '2026-08-01', '05:00', '20:00'), employee: 'Crew.Two', employeeName: 'Crew Two' }];
 
-const state = { who: 'owner', docs: new Map(), tick: 0, accuracy: false };
+// {accuracyMany:true}: 22 more of Est.Alex's walkthroughs this month, so the job-by-job list has more than 20 rows.
+const MANY_JOBS = Array.from({ length: 22 }, (_, i) => job(`job-many-${String(i).padStart(2, '0')}`, `2026-10-${String(1 + (i % 18)).padStart(2, '0')}`, `Synthetic Many ${i}`, 900, [line('labor', 'labor', 1, 42400)],
+  { jobInstructions: { laborManHours: 8 }, ...signedBy('Est.Alex'), fieldExecution: { completion: { crewOnSite: { people: 2, hours: 4 } } } }));
+const state = { who: 'owner', docs: new Map(), tick: 0, accuracy: false, many: false };
 const store = { async read(collection, id) { const row = state.docs.get(`${collection}/${id}`); return row ? structuredClone(row) : null; },
   async commit(writes) {
     for (const write of writes) { const current = state.docs.get(`${write.collection}/${write.id}`); if (write.revision ? current?.revision !== write.revision : current) throw Object.assign(new Error('stale'), { code: write.collection === 'ownerEconomicsSettings' ? 'owner_economics_revision_conflict' : 'job_actuals_revision_conflict', status: 409 }); }
@@ -60,7 +63,7 @@ const store = { async read(collection, id) { const row = state.docs.get(`${colle
   } };
 const handlers = jobActualsHandlers({
   session: async () => state.who === 'owner' ? OWNER : MANAGER, now: () => new Date('2026-10-21T18:00:00.000Z'), timecards: async () => TIMECARDS, settingsStore: () => store,
-  dispatch: () => ({ datedJobs: async (start, end) => [...JOBS, ...(state.accuracy ? ACCURACY_JOBS.concat([{ ...JOBS[1], ...signedBy('Est.Alex') }]) : [])].filter((row, index, all) => all.findLastIndex(other => other.id === row.id) === index).filter(row => row.date >= start && row.date <= end) }),
+  dispatch: () => ({ datedJobs: async (start, end) => [...JOBS, ...(state.accuracy ? ACCURACY_JOBS.concat([{ ...JOBS[1], ...signedBy('Est.Alex') }]) : []), ...(state.many ? MANY_JOBS : [])].filter((row, index, all) => all.findLastIndex(other => other.id === row.id) === index).filter(row => row.date >= start && row.date <= end) }),
   knock: () => ({ getMany: async (_collection, ids) => new Map(ids.filter(id => id === 'walk-setter').map(id => [id, { walkthroughId: id }])), query: async () => [] }),
 });
 
@@ -75,8 +78,9 @@ async function serve(request, response) {
     // "Another session" saves settings: the stored record changes under a new revision.
     if (input.otherSave) { const key = 'jobActualsSettings/current'; state.docs.set(key, { ...(state.docs.get(key) || { schemaVersion: 1 }), ...input.otherSave, revision: `rev-${++state.tick}` }); }
     if (input.otherOwnerSave) { const key = 'ownerEconomicsSettings/current'; state.docs.set(key, { ...(state.docs.get(key) || { schemaVersion: 1 }), ...input.otherOwnerSave, revision: `rev-${++state.tick}` }); }
-    if (input.reset) { state.docs.clear(); state.accuracy = false; if (!input.blank) state.docs.set('jobActualsSettings/current', { schemaVersion: 1, wageCentsPerManHour: 1000, workersCompBp: 100, revision: 'rev-pay' }); }
+    if (input.reset) { state.docs.clear(); state.accuracy = false; state.many = false; if (!input.blank) state.docs.set('jobActualsSettings/current', { schemaVersion: 1, wageCentsPerManHour: 1000, workersCompBp: 100, revision: 'rev-pay' }); }
     if (input.accuracy !== undefined) state.accuracy = input.accuracy === true;
+    if (input.accuracyMany !== undefined) state.many = input.accuracyMany === true;
     response.writeHead(200, { 'Content-Type': 'application/json' }); response.end('{"ok":true}'); return;
   }
   if (url.pathname === '/api/job-actuals' || url.pathname === '/api/owner-economics') {

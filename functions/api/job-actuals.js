@@ -25,7 +25,7 @@ import { readJobCostingTimecards } from './job-costing.js';
 const LIMIT = 8000;
 const ID = /^[A-Za-z0-9_-]{1,180}$/;
 export const JOB_ACTUALS_FIELDS = Object.freeze([...new Set([...MONEY_JOB_FIELDS, ...hubEligibilityFields(), 'sourceWalkthroughId', 'jobInstructions.laborManHours',
-  'compositeQuote.breakdown.labor.manHours', 'compositeQuote.breakdown.lines', 'fieldExecution.completion.crewOnSite', 'fieldExecution.completion.truckLoads', ...ESTIMATOR_FIELDS])]);
+  'compositeQuote.breakdown.labor.manHours', 'compositeQuote.breakdown.lines', 'quoteDraft.breakdown.source', 'quoteDraft.breakdown.labor.manHours', 'quoteDraft.breakdown.lines', 'fieldExecution.completion.crewOnSite', 'fieldExecution.completion.truckLoads', ...ESTIMATOR_FIELDS])]);
 const reply = (status, body) => Response.json(body, { status, headers: { 'Cache-Control': 'private, no-store', 'X-Content-Type-Options': 'nosniff' } });
 function sameOrigin(request) {
   if (request.headers.get('Sec-Fetch-Site') === 'cross-site') return false;
@@ -55,7 +55,7 @@ export function jobActualsHandlers({ session = getHubSession, dispatch = dispatc
         const [setters, sales] = await Promise.all([walkthroughs.length ? kstore.getMany('knock_setters', walkthroughs) : new Map(), directSalesFor(kstore, jobs.map(job => job.id))]);
         const report = buildJobActuals({ jobs, labor, settings, setterWalkthroughs: new Set([...setters.keys()].filter(id => setters.get(id))), doorSaleJobs: new Set(sales.map(sale => sale?.handoff?.job?.ref).filter(Boolean)), timecardsAvailable: timecardSource === 'ok', today: window.today, asOf });
         // Estimator accuracy (estimator-accuracy.js): the same jobs and hours, scored per estimator; nothing more is read.
-        const estimatorAccuracy = buildEstimatorAccuracy({ rows: report.rows, jobs, shortStart: report.window.shortStart });
+        const estimatorAccuracy = buildEstimatorAccuracy({ rows: report.rows, jobs, setters, shortStart: report.window.shortStart });
         return reply(200, { ...report, estimatorAccuracy, ...settingsView(settings, actor), sources: { timecards: timecardSource } });
       } catch (error) { return errorResponse(error); }
     },

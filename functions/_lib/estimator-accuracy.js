@@ -11,6 +11,9 @@
  *   2. 'quote_sender': the employee who sent the priced quote (quoteDraft.sentBy, quote-draft.js) when it was not signed
  *      on a walkthrough.
  *   Neither: the job is listed but not scored ('no_estimator').
+ * A door-to-door setter's walkthrough has its estimator on the setter record (knock_setters estimatorKey, the key its 7%
+ * commission is paid to): that key is used, and when the job's own record names someone else the job is listed as an
+ * 'estimator_conflict' and not scored.
  * A job is scored only when both hours are firm. Excluded, with the reason shown: junk-only (sold by the truck, no labor
  * estimate), no Labor line (a legacy quote), actual hours not recorded, timecards incomplete or unreadable (the actual
  * may be short), or no estimator on record.
@@ -31,12 +34,14 @@ const key = value => {
   return STAFF_KEY.test(text) ? text : '';
 };
 
-/** {key, evidence} for the employee who priced the job, or null. */
-export function estimatorOf(job) {
+/** {key, evidence} for the employee who priced the job, or null. setter: the job's knock_setters record, if any. */
+export function estimatorOf(job, setter = null) {
   const signer = job?.acceptance?.method === 'in_person_signature' ? key(job.acceptance.recordedBy) : '';
-  if (signer) return { key: signer, evidence: 'walkthrough_signer' };
-  const sender = key(job?.quoteDraft?.sentBy);
-  return sender ? { key: sender, evidence: 'quote_sender' } : null;
+  const own = signer ? { key: signer, evidence: 'walkthrough_signer' } : key(job?.quoteDraft?.sentBy) ? { key: key(job.quoteDraft.sentBy), evidence: 'quote_sender' } : null;
+  const recorded = key(setter?.estimatorKey);
+  if (!recorded) return own;
+  if (own && own.key !== recorded) return { key: recorded, evidence: 'setter_record', conflict: own.key };
+  return { key: recorded, evidence: 'setter_record' };
 }
 
 const EXCLUDING_REASONS = ['timecards_incomplete', 'timecards_unavailable'];
@@ -44,9 +49,11 @@ const EXCLUDING_REASONS = ['timecards_incomplete', 'timecards_unavailable'];
 export function exclusionOf(row, estimator) {
   if (row.billed.source === 'junk_only') return 'junk_only';
   if (row.billed.manHours === null) return 'no_labor_estimate';
-  if (row.actual.manHours === null) return 'actual_not_recorded';
+  // Travel-only timecards leave 0 hours on site: nothing to compare.
+  if (row.actual.manHours === null || !(row.actual.manHours > 0)) return 'actual_not_recorded';
   const flagged = EXCLUDING_REASONS.find(reason => row.reasons.includes(reason));
   if (flagged) return flagged;
+  if (estimator?.conflict) return 'estimator_conflict';
   return estimator ? '' : 'no_estimator';
 }
 
@@ -56,17 +63,19 @@ export function errorTenths(estimatedMilli, actualMilli) {
 }
 
 /** One job: estimated vs actual man-hours with its estimator and, when not scored, why. */
-export function accuracyRow(row, job) {
-  const estimator = estimatorOf(job), excluded = exclusionOf(row, estimator);
+export function accuracyRow(row, job, setter = null) {
+  const estimator = estimatorOf(job, setter), excluded = exclusionOf(row, estimator);
   const estimatedMilli = row.billed.manHours === null ? null : milliHours(row.billed.manHours);
   const actualMilli = row.actual.manHours === null ? null : milliHours(row.actual.manHours);
   const tenths = estimatedMilli !== null && actualMilli !== null ? errorTenths(estimatedMilli, actualMilli) : null;
+  // The miss is rounded on its own size, not taken from the rounded signed error (half up would favor under-estimates).
+  const absTenths = tenths === null ? null : errorTenths(estimatedMilli, estimatedMilli + Math.abs(actualMilli - estimatedMilli));
   return {
     jobId: row.jobId, date: row.date, customer: row.customer, serviceType: row.serviceType,
     estimator: estimator?.key || null, estimatorEvidence: estimator?.evidence || null,
     estimatedManHours: row.billed.manHours, actualManHours: row.actual.manHours, actualSource: row.actual.source,
     differenceManHours: estimatedMilli !== null && actualMilli !== null ? (actualMilli - estimatedMilli) / 1000 : null,
-    differencePercent: tenths === null ? null : tenths / 10, scored: !excluded, excluded: excluded || null,
+    differencePercent: tenths === null ? null : tenths / 10, absoluteErrorPercent: absTenths === null ? null : absTenths / 10, scored: !excluded, excluded: excluded || null,
   };
 }
 
@@ -78,7 +87,7 @@ export function estimatorScorecard(rows, { minJobs = ESTIMATOR_MIN_JOBS } = {}) 
   const groups = new Map();
   for (const row of rows) if (row.scored) (groups.get(row.estimator) || groups.set(row.estimator, []).get(row.estimator)).push(row);
   const estimators = [...groups].map(([estimator, list]) => {
-    const tenths = list.map(row => Math.round(row.differencePercent * 10)), absolute = tenths.map(Math.abs);
+    const tenths = list.map(row => Math.round(row.differencePercent * 10)), absolute = list.map(row => Math.round(row.absoluteErrorPercent * 10));
     const estimatedMilli = list.reduce((sum, row) => sum + milliHours(row.estimatedManHours), 0), actualMilli = list.reduce((sum, row) => sum + milliHours(row.actualManHours), 0);
     return {
       estimator, jobs: list.length, ranked: list.length >= minJobs,
@@ -87,19 +96,23 @@ export function estimatorScorecard(rows, { minJobs = ESTIMATOR_MIN_JOBS } = {}) 
       estimatedManHours: estimatedMilli / 1000, actualManHours: actualMilli / 1000,
     };
   }).sort((a, b) => Number(b.ranked) - Number(a.ranked) || (a.ranked ? a.averageErrorPercent - b.averageErrorPercent : 0) || b.jobs - a.jobs || a.estimator.localeCompare(b.estimator));
+  // Every ranked estimator tied at the best average miss shares the callout.
   const top = estimators.find(entry => entry.ranked) || null;
-  return { minJobs, estimators, top: top ? { estimator: top.estimator, averageErrorPercent: top.averageErrorPercent, jobs: top.jobs } : null };
+  const leaders = top ? estimators.filter(entry => entry.ranked && entry.averageErrorPercent === top.averageErrorPercent).map(entry => ({ estimator: entry.estimator, averageErrorPercent: entry.averageErrorPercent, jobs: entry.jobs })) : [];
+  return { minJobs, estimators, top: leaders[0] || null, leaders };
 }
 
 /** The estimator accuracy block of the job actuals report: rows (every completed job, scored or not, newest first as the
- * report's rows), the 30- and 90-day scorecards and how many jobs each exclusion left out. */
-export function buildEstimatorAccuracy({ rows = [], jobs = [], shortStart, minJobs = ESTIMATOR_MIN_JOBS }) {
-  const byId = new Map(jobs.map(job => [job.id, job])), list = rows.map(row => accuracyRow(row, byId.get(row.jobId)));
-  const excluded = {};
-  for (const row of list) if (row.excluded) excluded[row.excluded] = (excluded[row.excluded] || 0) + 1;
-  return {
-    minJobs, bands: [...ACCURACY_BANDS], rows: list, excluded,
-    last30: estimatorScorecard(list.filter(row => typeof row.date === 'string' && row.date >= shortStart), { minJobs }),
-    last90: estimatorScorecard(list, { minJobs }),
+ * report's rows), and per window (last 30 / last 90 days) its scorecard, its job ids and how many jobs each exclusion left
+ * out. setters: walkthrough id → knock_setters record (the reads job actuals already makes). */
+export function buildEstimatorAccuracy({ rows = [], jobs = [], setters = new Map(), shortStart, minJobs = ESTIMATOR_MIN_JOBS }) {
+  const byId = new Map(jobs.map(job => [job.id, job]));
+  const list = rows.map(row => { const job = byId.get(row.jobId); return accuracyRow(row, job, setters.get?.(job?.sourceWalkthroughId) || null); });
+  const window = selected => {
+    const excluded = {};
+    for (const row of selected) if (row.excluded) excluded[row.excluded] = (excluded[row.excluded] || 0) + 1;
+    return { ...estimatorScorecard(selected, { minJobs }), jobIds: selected.map(row => row.jobId), excluded };
   };
+  const last30 = window(list.filter(row => typeof row.date === 'string' && row.date >= shortStart)), last90 = window(list);
+  return { minJobs, bands: [...ACCURACY_BANDS], rows: list, excluded: last90.excluded, last30, last90 };
 }
