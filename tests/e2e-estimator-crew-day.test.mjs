@@ -15,6 +15,7 @@ import { readFileSync } from 'node:fs';
 import { randomUUID } from 'node:crypto';
 import vm from 'node:vm';
 import { crewDayFirestore } from './helpers/crew-day-firestore.mjs';
+import { withoutRandomValues } from './helpers/leak-text.mjs';
 import { createHubSessionCookie } from '../functions/_lib/hub-session.js';
 import { dispatchHandlers } from '../functions/api/dispatch.js';
 import { dispatchOpeningsHandlers } from '../functions/api/dispatch-openings.js';
@@ -441,7 +442,8 @@ test('estimator to crew, one day through the real handlers: walkthrough, builder
     const card = await seenBy(teammate);
     assert.deepEqual([card.shirtSize, card.birthday, card.crews.map(crew => crew.name)], ['L', { month: 5, day: 14 }, ['Crew 1']], teammate);
     assert.deepEqual(['birthDate', 'age', 'phone', 'emergencyContact', 'highlevelUserId'].filter(key => key in card), [], `${teammate} sees no birth year or age`);
-    assert.doesNotMatch(JSON.stringify(card), /1998/);
+    // Random ids (a crew id's hex can hold the digits 1998) are stripped first, so only a real birth year matches.
+    assert.doesNotMatch(withoutRandomValues(JSON.stringify(card)), /1998/);
   }
   const managed = await seenBy('TylerG');
   assert.deepEqual([managed.shirtSize, managed.birthday, managed.birthDate, managed.age], ['L', { month: 5, day: 14 }, '1998-05-14', 28]);
