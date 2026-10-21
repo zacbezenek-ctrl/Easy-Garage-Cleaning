@@ -33,7 +33,7 @@ test('a quote of special items or access charges alone is not junk-only: it need
     // 2 man-hours x $53.00 = $106.00.
     assert.deepEqual([priced.labor.manHours, priced.labor.totalCents, priced.lineItems.at(-1).name], [2, 10600, 'Labor']);
   }
-  // With a truck load, the same items are junk removal: $750 per truck plus their own prices, no Labor line.
+  // With a truck load, the same items are junk removal: $1,000 per truck plus their own prices, no Labor line.
   const truck = priceCompositeQuote(state, descriptor([{ id: id('Full truck load'), quantity: 1 }, { id: id('Mattress'), quantity: 1 }, { id: id('Stairs'), quantity: 1 }], { labor: { manHours: 6, fullness: 'medium' } }), { complete: true });
   assert.deepEqual([truck.junkOnly, truck.labor, truck.lineItems.some(line => line.id === 'labor')], [true, null, false]);
   assert.equal(junkOnly([]), false);
@@ -80,7 +80,7 @@ test('a junk-only builder quote is refused on a walkthrough that records garage 
   }
   for (const sort_method of ['remove_all', 'labels', undefined]) {
     const f = fixture(), saved = await sign(f, junk, { ...(sort_method ? { sort_method } : {}), finish: ['cleanout'] }), job = f.job(saved.job.id);
-    assert.deepEqual([job.total, job.estimate.lineItems.map(line => line.id), job.compositeQuote.breakdown.labor], [750, ['removal-junk-full'], undefined], String(sort_method));
+    assert.deepEqual([job.total, job.estimate.lineItems.map(line => line.id), job.compositeQuote.breakdown.labor], [1000, ['removal-junk-full'], undefined], String(sort_method));
   }
   assert.deepEqual(walkthroughGarageWork({ sort_method: 'zones', finish: ['cleanout', 'pressure_wash', 'mouse_trapping', 'shelving', 'totes'], finish_details: { shelf_qty: 1, tote_qty: 0 } }),
     ['sorting into keep / donate / haul zones and resetting what stays', 'a pressure wash', 'mouse trapping', '1 shelving unit']);
@@ -139,7 +139,7 @@ test('a builder quote sent before the Labor rules of 2026-10-18 is withheld unti
 test('a saved payment schedule is shown only while it is the estimate\'s own split', async t => {
   const junk = priceCompositeQuote(state, descriptor([{ id: id('Full truck load'), quantity: 2 }]), { complete: true });
   const f = fixture(), saved = await sign(f, junk), job = structuredClone(f.job(saved.job.id));
-  assert.deepEqual(publicQuotePaymentSchedule(job.estimate), { depositDueDate: '2026-10-17', remainderDueDate: '2026-10-19', timeZone: 'America/Denver', depositCents: 37500, remainderCents: 112500, policyVersion: '2026-10-deposit25' });
+  assert.deepEqual(publicQuotePaymentSchedule(job.estimate), { depositDueDate: '2026-10-17', remainderDueDate: '2026-10-19', timeZone: 'America/Denver', depositCents: 50000, remainderCents: 150000, policyVersion: '2026-10-deposit25' });
   // employee-suite.js action 'estimate': $1,800 with its 25% deposit, marked sent.
   job.total = 1800; job.priceQuoted = 1800;
   job.estimate = { ...job.estimate, status: 'sent', amount: 1800, lineItems: [{ name: 'Garage transformation', description: job.estimate.scope, quantity: 1, amount: 1800 }], depositRequired: 450, termsVersion: '2026-09', revision: 2 };
@@ -147,13 +147,13 @@ test('a saved payment schedule is shown only while it is the estimate\'s own spl
   assert.equal(publicQuotePaymentSchedule(job.estimate), null);
   const doc = moneyDocumentModel({ ...job, id: 'job-x' }, { kind: 'estimate', now: NOW });
   assert.deepEqual(doc.rows.map(row => [row.label, row.cents]), [['Total', 180000], ['Deposit due upfront', 45000], ['Payments received', 0], ['Balance due', 180000]]);
-  assert.doesNotMatch(doc.terms, /\$375|\$1,125/);
+  assert.doesNotMatch(doc.terms, /\$500\.00|\$1,500/);
   portalStore(t, { 'job-x': { ...job, id: 'job-x' } });
   const view = await portalView(portalHandlers(), await portalCookie('job-x'));
-  assert.deepEqual([view.body.estimate.amount, view.body.estimate.depositRequired, view.body.estimate.paymentSchedule, /\$375|\$1,125/.test(view.body.estimate.terms)], [1800, 450, undefined, false]);
+  assert.deepEqual([view.body.estimate.amount, view.body.estimate.depositRequired, view.body.estimate.paymentSchedule, /\$500\.00|\$1,500/.test(view.body.estimate.terms)], [1800, 450, undefined, false]);
   // Each saved figure must agree: an unreadable or different cents copy fails closed too.
   const signed = f.job(saved.job.id).estimate;
-  for (const changed of [{ amountCents: 150001 }, { depositRequiredCents: 37501 }, { depositRequired: 'x' }, { paymentSchedule: { ...signed.paymentSchedule, remainderCents: -1 } }]) assert.equal(publicQuotePaymentSchedule({ ...signed, ...changed }), null, JSON.stringify(changed));
+  for (const changed of [{ amountCents: 200001 }, { depositRequiredCents: 50001 }, { depositRequired: 'x' }, { paymentSchedule: { ...signed.paymentSchedule, remainderCents: -1 } }]) assert.equal(publicQuotePaymentSchedule({ ...signed, ...changed }), null, JSON.stringify(changed));
   assert.deepEqual(scheduleSplit({ depositCents: 26393, remainderCents: 79178 }), { depositPct: 25, remainderPct: 75 });
   assert.equal(quotePaymentSummary({ depositCents: 75000, remainderCents: 75000, depositDueDate: '2026-10-17', remainderDueDate: '2026-10-19' }), '50% deposit $750.00 due 2026-10-17; 50% remainder $750.00 due 2026-10-19 (America/Denver).');
 });

@@ -40,7 +40,7 @@ test('the shipped pricing menu validates, matches its generated module and holds
   assert.equal(new Set(menu.products.map(item => item.sku)).size, 128, 'one entry per Home Depot internet SKU');
   assert.ok(menu.products.every(item => item.status === 'draft' && item.evidence.checkedOn === '2026-10-16' && item.retailer === 'The Home Depot'), 'every product is a DRAFT with the 2026-10-16 retail evidence');
   assert.ok(menu.products.every(item => /^https:\/\/www\.homedepot\.com\//.test(item.productUrl) && Number.isSafeInteger(item.retailPerPackCents) && item.unitsPerPack >= 1));
-  assert.deepEqual(menu.services.filter(item => item.status === 'approved').map(item => [item.menuId, item.approvedPriceCents]), [['EGC-026', 75000]], 'the $750 full truck is the only approved price');
+  assert.deepEqual(menu.services.filter(item => item.status === 'approved').map(item => [item.menuId, item.approvedPriceCents]), [['EGC-023', 25000], ['EGC-024', 50000], ['EGC-025', 75000], ['EGC-026', 100000]], 'the truck loads (owner decision 2026-10-21: $250, $500, $750 and the $1,000 full truck) are the only approved prices');
   const text = readFileSync(new URL('../functions/_data/pricing-menu.json', import.meta.url), 'utf8');
   assert.doesNotMatch(text, /mail\.google|@easygaragecleaning|commission|margin|cost\s*\/\s*\.?60|Proposed|Original30|Sensitivity|Owner review|\bCAC\b|\bwages?\b/i, 'no margins, proposed prices, commission, CAC, wage or private links');
   // Every service's draft amount resolves against today's walkthrough tables (no 503 for a broken mapping).
@@ -48,7 +48,7 @@ test('the shipped pricing menu validates, matches its generated module and holds
   for (const item of menu.services) assert.ok(Number.isSafeInteger(prices.get(item.id).unitCents), item.name);
   assert.equal(prices.get(MATTRESS.id).unitCents, walkthrough.special.Mattress * 100);
   assert.equal(prices.get(TWO_CAR.id).unitCents, walkthrough.sizeBase[2] * 100);
-  assert.equal(prices.get(HALF.id).unitCents, 37500, 'a partial load is a proportional draft of the approved full truck');
+  assert.deepEqual([prices.get(HALF.id).unitCents, prices.get(HALF.id).approved, prices.get(HALF.id).source], [50000, true, 'menu'], 'the half load is the owner\'s approved $500 (2026-10-21)');
   // Every builder group is used and every product sits in the shelving or extra storage step.
   const groups = new Set(menu.products.map(item => item.group));
   for (const group of BUILDER_SECTIONS.slice(1).flatMap(section => section.groups.map(entry => entry.id))) assert.ok(groups.has(group), group);
@@ -60,7 +60,7 @@ test('the builder always prices removal first, then shelving, then extra storage
   assert.deepEqual(priced.lineItems.map(line => line.id), ['removal-base', 'removal-junk-full', 'removal-access', 'shelving-goods', 'storage-goods', 'labor'], 'the Labor line comes last');
   assert.deepEqual(priced.breakdown.sections.map(section => section.id), ['removal', 'shelving', 'storage']);
   assert.deepEqual(priced.steps.map(step => [step.id, step.subtotalCents, step.runningTotalCents]), [
-    ['removal', 97500 + 75000 + 19000, 191500], ['shelving', 23140, 214640], ['storage', priced.breakdown.sections[2].subtotalCents, priced.totalCents - LABOR_CENTS], ['labor', LABOR_CENTS, priced.totalCents]]);
+    ['removal', 97500 + 100000 + 19000, 216500], ['shelving', 23140, 239640], ['storage', priced.breakdown.sections[2].subtotalCents, priced.totalCents - LABOR_CENTS], ['labor', LABOR_CENTS, priced.totalCents]]);
   for (const steps of [['shelving'], ['removal', 'storage'], ['storage', 'shelving', 'removal'], [], ['removal', 'shelving', 'storage', 'removal']]) {
     assert.throws(() => priceCompositeQuote(s, descriptor({ steps, removal: [pick(TRUCK)] })), { code: 'quote_draft_composite_order' }, JSON.stringify(steps));
   }
@@ -78,12 +78,12 @@ test('the builder always prices removal first, then shelving, then extra storage
 test('the server prices every line from its own menu, settings and approvals; the browser sends no prices', () => {
   const s = state(), priced = priceCompositeQuote(s, descriptor({ removal: [pick(HALF), pick(TRUCK, 2), pick(MATTRESS, 2)], shelving: [pick(shelf, 3)] }), { complete: true });
   const line = id => priced.lineItems.find(entry => entry.id === id);
-  assert.deepEqual([line('removal-junk-full').quantity, line('removal-junk-full').unitCents, line('removal-junk-full').totalCents], [2, 75000, 150000]);
-  assert.deepEqual([line('removal-junk-partial').totalCents, line('removal-special').totalCents, line('removal-special').description], [37500, 14000, 'Mattress × 2']);
+  assert.deepEqual([line('removal-junk-full').quantity, line('removal-junk-full').unitCents, line('removal-junk-full').totalCents], [2, 100000, 200000]);
+  assert.deepEqual([line('removal-junk-partial').totalCents, line('removal-special').totalCents, line('removal-special').description], [50000, 14000, 'Mattress × 2']);
   assert.deepEqual([line('shelving-goods').quantity, line('shelving-goods').unitCents, line('shelving-goods').totalCents], [1, 34710, 34710], 'goods sell at the public retail pack price × 1.30, rolled into one shelving line');
   assert.equal(line('shelving-goods').description, `${shelf.name} × 3 packs`);
   assert.deepEqual(priced.breakdown.lines.find(entry => entry.id === shelf.id).unitCents, 11570, 'the breakdown keeps the per-pack price');
-  assert.equal(priced.totalCents, 150000 + 37500 + 14000 + 34710 + LABOR_CENTS);
+  assert.equal(priced.totalCents, 200000 + 50000 + 14000 + 34710 + LABOR_CENTS);
   assert.deepEqual(line('shelving-goods').catalog, { itemId: 'menu-shelving', version: menu.menuVersion });
   // The saved Hub job keeps the goods cost split of the step; previews and the breakdown never carry it.
   assert.deepEqual(priced.storedLineItems.find(entry => entry.id === 'shelving-goods').split, { productCents: 26700, laborCents: 0, laborMinutes: 0, markupCents: 8010, disposalCents: 0 });
@@ -112,21 +112,22 @@ test('the goodsMarkup pricing setting prices goods (default 1.30) and is validat
   assert.equal(builderMenu(state(), { internal: true }).internal.goodsMarkup, 1.3);
 });
 
-test('draft prices are priced and saved but block sending with a reason per line; the approved $750 full truck sends', () => {
+test('draft prices are priced and saved but block sending with a reason per line; the approved truck loads ($1,000 full, $250 quarter) send', () => {
   const draft = priceCompositeQuote(state(), descriptor({ removal: [pick(TWO_CAR), pick(TRUCK), pick(QUARTER), pick(MATTRESS)], shelving: [pick(shelf)] }), { complete: true });
   assert.equal(draft.approval.ready, false);
-  assert.deepEqual(draft.approval.blocked.map(row => row.id), [TWO_CAR.id, QUARTER.id, MATTRESS.id, shelf.id], 'everything but the full truck and the labor waits for the owner; installation is billed through labor');
+  assert.deepEqual(draft.approval.blocked.map(row => row.id), [TWO_CAR.id, MATTRESS.id, shelf.id], 'everything but the truck loads (owner-approved 2026-10-21) and the labor waits for the owner; installation is billed through labor');
   assert.match(draft.approval.blocked[0].reason, /^Two-car garage base: draft price \$975\.00 is the walkthrough's historical full-service base, which already included hauling; the owner sets the cleaning-only amount\.$/);
-  assert.match(draft.approval.blocked[1].reason, /^Quarter load: draft price \$187\.50, not yet approved by the owner\.$/);
-  assert.match(draft.approval.blocked[3].reason, /per pack, not yet approved by the owner/);
+  assert.match(draft.approval.blocked[1].reason, /^Mattress: draft price \$[\d,]+\.\d\d, not yet approved by the owner\.$/);
+  assert.match(draft.approval.blocked[2].reason, /per pack, not yet approved by the owner/);
+  assert.equal(draft.approval.blocked.some(row => row.resave), false, 'draft prices wait for the owner, not a re-save');
   const refusal = approvalRefusal(draft.approval);
   assert.equal(refusal.code, 'quote_draft_composite_prices_unapproved');
   assert.equal(refusal.status, 409);
-  assert.match(refusal.message, /4 prices the owner has not approved: Two-car garage base, Quarter load, Mattress, HDX plastic shelving[^.]*\. It stays saved/);
-  assert.equal(refusal.details.unapproved.length, 4);
-  // D-JUNK: three trucks of junk are $750 each and nothing else: no Labor line, approved and sendable as they are.
+  assert.match(refusal.message, /3 prices the owner has not approved: Two-car garage base, Mattress, HDX plastic shelving[^.]*\. It stays saved/);
+  assert.equal(refusal.details.unapproved.length, 3);
+  // D-JUNK: three trucks of junk are $1,000 each and nothing else: no Labor line, approved and sendable as they are.
   const truck = priceCompositeQuote(state(), descriptor({ removal: [pick(TRUCK, 3)] }), { complete: true });
-  assert.deepEqual([truck.totalCents, truck.approval.ready, truck.breakdown.lines[0].approved, truck.junkOnly, truck.labor, truck.lineItems.some(line => line.kind === 'labor')], [225000, true, true, true, null, false], 'the $750 truck covers the crew\'s time');
+  assert.deepEqual([truck.totalCents, truck.approval.ready, truck.breakdown.lines[0].approved, truck.junkOnly, truck.labor, truck.lineItems.some(line => line.kind === 'labor')], [300000, true, true, true, null, false], 'the $1,000 truck covers the crew\'s time');
   assert.deepEqual(compositeApproval(truck.breakdown, state()), { ready: true, blocked: [] });
   assert.equal(compositeApproval(null, state()).ready, false, 'a missing breakdown never sends');
 });
