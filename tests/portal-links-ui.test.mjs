@@ -5,6 +5,9 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import vm from './helpers/vm-realm.mjs';
+import { storage } from './helpers/field-fixture.mjs';
+import * as fieldJobs from '../functions/api/field-jobs.js';
+import { createHubSessionCookie } from '../functions/_lib/hub-session.js';
 
 const DAY = '2026-09-22T18:00:00.000Z', LATE = '2026-09-23T05:30:00.000Z', EIGHT = '2026-09-23T14:01:00.000Z';
 
@@ -140,6 +143,56 @@ test('B: a Sales estimator\'s retry after the server\'s sync finished reads wher
   assert.match(send, /synced\.handoffSync\?\.status==='synced'\?'Job and CRM schedule verified\. '/);
   assert.match(send, /portal\?\.status==='submitted'\?\(portal\.channel==='Email'\?'Portal email queued in HighLevel\. ':'Portal text queued in HighLevel\. '\)/);
   assert.match(send, /portal\.reason==='quiet_hours'\?'Portal invitation goes out after 8 AM \(quiet hours\)/);
+});
+
+// Review finding (B): the walkthrough page uploads every photo on the device, but a job keeps at most 40 reference photos
+// (the crew's own photos keep their room) and the signer adds them only before field work starts. Either is a final
+// answer: the page says how many photos stay on the device instead of asking for a retry that can never succeed. The
+// page's own upload (crew/gameplan-handoff.js photos) runs here against the real POST /api/field-jobs.
+test('B: the walkthrough page stops at the job\'s 40 reference photos, or once field work has started, and says how many stay on this device', async t => {
+  const users = { ZacB: { passwordHash: 'test', role: 'owner', displayName: 'Owner' }, 'Crew.One': { passwordHash: 'test', role: 'crew', displayName: 'Crew One' }, 'Sales.Person': { passwordHash: 'test', role: 'sales', displayName: 'Synthetic Sales', staffRoles: ['sales'] } };
+  const env = { HUB_SESSION_SECRET: 'portal-links-ui-photo-secret', FIREBASE_API_KEY: 'firebase-test-portal-links-ui', HUB_AUTH_USERS_JSON: JSON.stringify(users), GOOGLE_CLIENT_ID: 'test', GOOGLE_CLIENT_SECRET: 'test', GOOGLE_REFRESH_TOKEN: 'test', EGC_STAFF_ROLE_PERMISSIONS: 'true' };
+  const cookie = (await createHubSessionCookie(env, 'Sales.Person')).split(';')[0];
+  const store = storage(t), jpeg = `data:image/jpeg;base64,${Buffer.from([255, 216, 255, 224, 0, 16, 74, 70, 73, 70, 0, 1, 255, 217]).toString('base64')}`;
+  const reference = count => Array.from({ length: count }, (_, index) => ({ id: crypto.randomUUID(), fileId: `file-office-${index}`, verified: true, category: 'walkthrough', caption: '', createdAt: '2026-09-22T15:00:00.000Z', actorId: 'ZacB' }));
+  const signed = { id: 'job-1', type: 'job', customer: 'Synthetic Customer', date: '2026-09-24', time: '08:00', assignedCrew: ['Crew.One'], crewLead: 'Crew.One', status: 'scheduled', pipelineStatus: 'scheduled',
+    handoffVersion: 1, handoffRequestId: crypto.randomUUID(), createdBy: 'Sales.Person', acceptance: { acceptedAt: '2026-09-22T17:45:00.000Z', acceptedBy: 'Synthetic Customer', recordedBy: 'Sales.Person' }, fieldExecution: { photos: reference(38) } };
+  store.put('jobs/job-1', signed);
+  // The iPad's photo queue (IndexedDB, as the Photos step keeps it) and the signed-in Sales estimator.
+  const queue = new Map(Array.from({ length: 4 }, (_, index) => [`device-${index}`, { id: `device-${index}`, job: 'draft-1', tag: 'before', dataUrl: jpeg, at: index }]));
+  const db = { transaction() { const tx = { objectStore: () => ({ get(id) { const read = {}; setTimeout(() => { read.result = queue.get(id); read.onsuccess(); setTimeout(() => tx.oncomplete?.()); }); return read; }, put(value) { queue.set(value.id, value); } }), abort() { setTimeout(() => tx.onabort?.()); } }; return tx; } };
+  const memory = () => { const rows = new Map(); return { getItem: key => rows.get(key) ?? null, setItem: (key, value) => rows.set(key, String(value)), removeItem: key => rows.delete(key) }; };
+  const fetchHub = async (url, options = {}) => {
+    const request = new Request(`https://easygaragecleaning.com${url}`, { method: options.method || 'GET', headers: { Cookie: cookie, Origin: 'https://easygaragecleaning.com', 'Content-Type': 'application/json' }, ...(options.body ? { body: options.body } : {}) });
+    return request.method === 'POST' ? fieldJobs.onRequestPost({ env, request }) : fieldJobs.onRequestGet({ env, request });
+  };
+  const context = vm.createContext({ URLSearchParams, AbortController, setTimeout, clearTimeout, crypto, sessionStorage: memory(), localStorage: memory(),
+    S: { jobId: 'job-1', handoffJobId: 'job-1', photoDraftJobId: 'draft-1' }, EGCHubAuth: { session: async () => 'Sales.Person', fetch: fetchHub, canRunBusiness: () => false },
+    dbOpen: async () => db, photoList: async () => [...queue.values()].filter(photo => photo.tag === 'before').sort((a, b) => a.at - b.at) });
+  context.window = context;
+  vm.runInContext(readFileSync(new URL('../crew/gameplan-handoff.js', import.meta.url), 'utf8'), context);
+  const upload = async () => JSON.parse(JSON.stringify(await context.window.EGCWalkthroughHandoff.photos()));
+  const onJob = () => store.get('jobs/job-1').fieldExecution.photos.filter(photo => photo.category === 'walkthrough').length;
+  const LIMIT = 'This job already has 40 walkthrough reference photos, the most it keeps, so the crew’s own photos always have room.';
+  // 38 reference photos on the job already: two of the four go in, two stay on this iPad, and a retry does not change that.
+  assert.deepEqual(await upload(), { status: 'limit', verified: 2, kept: 2, message: LIMIT });
+  assert.deepEqual([onJob(), [...queue.values()].filter(photo => photo.uploaded).length], [40, 2]);
+  assert.deepEqual(await upload(), { status: 'limit', verified: 2, kept: 2, message: LIMIT });
+  assert.equal(onJob(), 40);
+  // The crew dispatches: the signer's window has closed, so the page says a manager takes the rest.
+  store.put('jobs/job-1', { ...store.get('jobs/job-1'), status: 'dispatched', pipelineStatus: 'dispatched', fieldLastActionAt: '2026-09-24T14:00:00.000Z' });
+  const started = await upload();
+  assert.deepEqual([started.status, started.verified, started.kept], ['work_started', 2, 2]);
+  assert.match(started.message, /^Field work on this job has started \(or the job is closed\), so a manager attaches any more walkthrough reference photos\.$/);
+  // Nothing left on the device to upload: it is simply done.
+  for (const [id, photo] of queue) queue.set(id, { ...photo, uploaded: true });
+  assert.deepEqual(await upload(), { status: 'synced', verified: 4 });
+  // What the page says (send(): photoText) and that these final answers do not ask for another retry.
+  const page = readFileSync(new URL('../crew/gameplan-handoff.js', import.meta.url), 'utf8'), send = page.slice(page.indexOf('async function send(button'), page.indexOf('async function openings('));
+  const say = photos => new Function('photos', `return ${send.match(/const photoText=(.+?);\n/)[1]}`)(photos);
+  assert.equal(say({ status: 'limit', kept: 2, message: LIMIT }), `${LIMIT} 2 more photos stay on this device. `);
+  assert.equal(say({ status: 'work_started', kept: 1, message: started.message }), `${started.message} 1 photo stays on this device. `);
+  assert.match(send, /\['synced','limit','work_started'\]\.includes\(photos\.status\)&&\['synced','manager_required','server_pending'\]\.includes\(synced\.handoffSync\?\.status\)\?'Saved — verify again'/);
 });
 
 // SEC-2026-10 S-02 (docs/security-review-2026-10.md) for the portal link rows: the masked email recipient keeps the

@@ -105,19 +105,32 @@ async function writeState(env, jobId, state, updateTime, kind = APPROVED) {
 }
 
 // The job's display copy: customerPortalInvitation for the accepted-quote invitation, portalLinks.<kind> for the
-// others (kind, status, channel, masked recipient and times; never the link).
+// others (kind, status, channel, masked recipient and times; never the link). The automatic retries (the Hub's and the
+// cron's) choose jobs from it, so a final ledger is mirrored again whenever a retry finds it (a copy lost to a concurrent
+// job write heals). A copy that already says the same is not rewritten, so the job's revision does not move.
+const canonical = value => Array.isArray(value) ? `[${value.map(canonical).join(',')}]` : plain(value) ? `{${Object.keys(value).filter(key => value[key] !== undefined).sort().map(key => `${JSON.stringify(key)}:${canonical(value[key])}`).join(',')}}` : JSON.stringify(value);
 async function mirrorState(env, jobId, state, kind = APPROVED) {
   // Display-only copy. Job edits can never change the authoritative ledger.
   try {
     const job = await readJob(env, jobId);
-    if (job?.__updateTime) await patchJob(env, jobId, kind === APPROVED ? { customerPortalInvitation: state } : { portalLinks: { ...(plain(job.portalLinks) ? job.portalLinks : {}), [kind]: state } }, job.__updateTime);
+    if (!job?.__updateTime) return;
+    const shown = kind === APPROVED ? job.customerPortalInvitation : plain(job.portalLinks) ? job.portalLinks[kind] : undefined;
+    if (shown !== undefined && canonical(shown) === canonical(state)) return;
+    await patchJob(env, jobId, kind === APPROVED ? { customerPortalInvitation: state } : { portalLinks: { ...(plain(job.portalLinks) ? job.portalLinks : {}), [kind]: state } }, job.__updateTime);
   } catch { /* Delivery remains recorded in the server-only ledger. */ }
 }
+
+// The account root whose link version governs the job's homeowner links (customer-portal-revocation.js), read from
+// Firestore: a job with no owner is its own root (no read); a visit is resolved hop by hop.
+const linkAccount = (env, job) => customerPortalLinkAccount(id => readJob(env, id), job);
 
 // A company project is shared through its business account's delegated,
 // role-checked access. A homeowner owner-level link would bypass those roles,
 // so a linked job (any non-empty marker, even a malformed one) never gets one.
 // Unlinking clears the marker to '', which restores homeowner delivery.
+// A visit Dispatch created under a shared project carries only
+// customerAccountOwnerJobId, so the send path also checks the account root its
+// link would open (deliver, message-links.js, customer-portal-link.js).
 export function businessAccountJob(job) {
   const value = job?.businessAccountId;
   return typeof value === 'string' ? value.trim() !== '' : value != null && value !== false;
@@ -240,14 +253,19 @@ async function recipient(c, job) {
 // A quote-ready link the customer was (or may have been) sent and that still works for QUOTE_READY_COVER_MIN_DAYS_LEFT
 // more days: the accepted-quote invitation is not sent again (the portal itself shows the approval). An unconfirmed
 // send ('uncertain', or 'sending' for longer than SENDING_SETTLED_MS) counts as sent, because an ambiguous send is never
-// followed by a second text automatically; one still in flight answers {wait: true}. Unread ledger: throws.
-async function quoteReadyCover(env, jobId, at) {
+// followed by a second text automatically; one still in flight answers {wait: true}. "Still works" also means the link
+// would still open: the link version and account root it was minted under (linkVersion, linkRoot, recorded at its
+// claim) are still the job's account's. A staff revocation since (customerPortalLinkVersion moved on) or a job moved
+// under another account ended it, so the invitation goes. Unread ledger or account: throws.
+async function quoteReadyCover(env, jobId, at, job) {
   const { state } = await readState(env, jobId, 'quote_ready');
   if (!['submitted', 'uncertain', 'sending'].includes(state.status)) return null;
   const attempted = Date.parse(state.attemptedAt || '');
   if (state.status === 'sending' && (!Number.isFinite(attempted) || at.getTime() - attempted < SENDING_SETTLED_MS)) return { wait: true };
   const sentAt = state.completedAt || state.attemptedAt || '', time = Date.parse(sentAt);
   if (!Number.isFinite(time) || time + (LINK_DAYS - QUOTE_READY_COVER_MIN_DAYS_LEFT) * 86400000 <= at.getTime()) return null;
+  const { account, linkVersion } = await linkAccount(env, job);
+  if (state.linkVersion !== linkVersion || state.linkRoot !== account.id) return null;
   return { kind: 'quote_ready', sentAt, channel: state.channel || '', ...(state.status === 'submitted' ? {} : { unconfirmed: true }) };
 }
 
@@ -265,13 +283,15 @@ function messageFor(kind, job, env) {
 
 // PORTAL-LINKS: a portal link text whose switch is off, or one requested before the switch was last turned on, is
 // closed on its ledger ('off', reason owner_switch_off) so automatic retries stop and the Hub says why. A link that was
-// never requested records nothing. A final state (sent, unconfirmed, not eligible, suppressed) is left as it is.
+// never requested records nothing. A final state (sent, unconfirmed, not eligible, off, suppressed) is left as it is,
+// and only mirrored again: a retry chose the job from a display copy that may still say it waits.
 const FINAL = new Set([...terminal, 'not_eligible', 'off', 'suppressed', 'contact_mismatch']);
 async function closeSwitchedOff(env, jobId, kind, clock, prior = null) {
   const off = { kind, status: 'off', reason: 'owner_switch_off' };
   let ledger = prior;
   if (!ledger) { try { ledger = await readState(env, jobId, kind); } catch { return off; } }
-  if (!ledger.state.status || FINAL.has(ledger.state.status)) return off;
+  if (!ledger.state.status) return off;
+  if (FINAL.has(ledger.state.status)) { await mirrorState(env, jobId, ledger.state, kind); return off; }
   const state = { ...ledger.state, ...off, checkedAt: clock().toISOString() };
   try { await writeState(env, jobId, state, ledger.updateTime, kind); await mirrorState(env, jobId, state, kind); return state; }
   catch { return { kind, status: 'busy', jobId }; }
@@ -295,13 +315,16 @@ export function sendAcceptedQuotePortal(env, jobId, options = {}) {
  * the accepted-quote invitation. Off unless the owner's switch for the kind is on: {status:'off', reason:
  * 'owner_switch_off'}, recorded only to end an earlier wait (closeSwitchedOff); a wait requested before the switch was
  * last turned on (messaging_settings portalLink…OnAt) ends the same way. A kind that does not apply to the job (yet)
- * answers {status:'not_eligible', reason} and is recorded only to end an earlier wait. */
+ * answers {status:'not_eligible', reason} and is recorded only to end an earlier wait.
+ * fresh: true only from the kind's own trigger (quote-draft.js when a quote is sent, field-jobs.js when the crew
+ * completes the job). Only such a new request starts a text that ended unsent (not eligible, off, suppressed, contact
+ * mismatch) again; a retry (the Hub's, the cron's, a manager's click) finds it ended and leaves it so. */
 export function sendPortalLink(env, jobId, kind, options = {}) {
   if (!PORTAL_LINK_KINDS.includes(kind)) return Promise.resolve({ status: 'needs_kind' });
   return deliver(env, jobId, kind, options);
 }
 
-async function deliver(env, jobId, kind, { requireRequested = false, automatic = false, settings = null, now: clock = () => new Date() } = {}) {
+async function deliver(env, jobId, kind, { requireRequested = false, automatic = false, fresh = false, settings = null, now: clock = () => new Date() } = {}) {
   if (!/^[A-Za-z0-9_-]{1,120}$/.test(String(jobId || ''))) return { status: 'needs_job' };
   if (!firebaseServiceAccountConfigured(env)) return { status: 'not_configured', reason: 'secure_storage' };
   const link = kind !== APPROVED, tag = link ? { kind } : {};
@@ -325,7 +348,11 @@ async function deliver(env, jobId, kind, { requireRequested = false, automatic =
       let prior;
       try { prior = await readState(env, jobId, kind); } catch { return { kind, ...gate }; }
       const record = !prior.state.status && gate.reason === 'follow_up_open';
-      if (!record && (!prior.state.status || terminal.has(prior.state.status) || prior.state.status === 'not_eligible')) return { kind, ...gate };
+      if (!record && (!prior.state.status || terminal.has(prior.state.status) || prior.state.status === 'not_eligible')) {
+        // Nothing to end; a recorded outcome is mirrored again (a retry may have chosen the job from a stale copy).
+        if (prior.state.status) await mirrorState(env, jobId, prior.state, kind);
+        return { kind, ...gate };
+      }
       const checkedAt = clock().toISOString();
       const state = { ...(record ? { jobId, requestedAt: checkedAt, attempts: 0 } : prior.state), kind, status: gate.status, reason: gate.reason, checkedAt };
       try { await writeState(env, jobId, state, prior.updateTime, kind); await mirrorState(env, jobId, state, kind); return state; }
@@ -346,8 +373,12 @@ async function deliver(env, jobId, kind, { requireRequested = false, automatic =
   if (!link && previous.status === 'covered' && automatic) return previous;
   // Waiting since before the owner last turned the switch on (it was off in between): never sent.
   if (link && previous.status && !FINAL.has(previous.status) && Date.parse(previous.requestedAt || '') < Date.parse(current[PORTAL_LINK_ON_AT[kind]] || '')) return closeSwitchedOff(env, jobId, kind, clock, ledger);
+  // A portal link text that ended unsent (not eligible, switched off, suppressed, contact mismatch) starts a new request
+  // only for its own new trigger (fresh). A retry chose this job from its display copy, which a concurrent job write can
+  // leave saying 'deferred' after the ledger ended: it mirrors the ended ledger (so the retries stop) and sends nothing,
+  // so a text that waited from before the switch was turned off never goes out when it is turned on again.
+  if (link && FINAL.has(previous.status) && !fresh) { await mirrorState(env, jobId, previous, kind); return previous; }
   const now = clock().toISOString();
-  // A portal link text that ended unsent (not eligible, switched off, suppressed) starts a new request when asked again.
   const restart = link && FINAL.has(previous.status), requestedAt = restart ? now : previous.requestedAt || now, attempts = restart ? 0 : Number(previous.attempts || 0);
   const base = { ...tag, jobId, requestedAt, attemptedAt: now, attempts: attempts + 1 };
   const waiting = { ...tag, jobId, requestedAt, attempts, ...(previous.attemptedAt ? { attemptedAt: previous.attemptedAt } : {}) };
@@ -362,12 +393,17 @@ async function deliver(env, jobId, kind, { requireRequested = false, automatic =
   if (!job.__updateTime) return { ...tag, status: 'storage_unavailable' };
   if (!link) {
     let cover;
-    try { cover = await quoteReadyCover(env, jobId, clock()); } catch { return { status: 'storage_unavailable' }; }
+    try { cover = await quoteReadyCover(env, jobId, clock(), job); } catch { return { status: 'storage_unavailable' }; }
     // A quote-ready text still in flight: decide once it settles (the next automatic retry), nothing recorded.
     if (cover?.wait) return { status: 'busy', reason: 'quote_ready_in_flight', jobId };
     if (cover) return save({ status: 'covered', reason: 'quote_ready_link_delivered', coveredBy: cover, checkedAt: now }, waiting);
   }
   if (businessAccountJob(job)) return save({ status: 'suppressed', reason: 'business_account_job' });
+  // B2B-SAFE: a visit Dispatch created under a shared business project has no businessAccountId of its own; the account
+  // root its link would open is business-linked, so it is suppressed the same way, before any HighLevel call.
+  let root;
+  try { ({ account: root } = await linkAccount(env, job)); } catch { return { ...tag, status: 'storage_unavailable' }; }
+  if (businessAccountJob(root)) return save({ status: 'suppressed', reason: 'business_account_job' });
   if (job.notify === false) return save({ status: 'suppressed', reason: 'job_notifications_off' });
   const c = config(env);
   if (!customerPortalConfigured(env) || !c.token || !c.locationId) return save({ status: 'not_configured', reason: 'portal_or_highlevel' });
@@ -394,15 +430,17 @@ async function deliver(env, jobId, kind, { requireRequested = false, automatic =
   // revocation (or re-parenting) also ends this invitation. An unverifiable
   // account never sends.
   let account, linkVersion;
-  try { ({ account, linkVersion } = await customerPortalLinkAccount(id => readJob(env, id), latestJob)); } catch { return { ...tag, status: 'storage_unavailable' }; }
+  try { ({ account, linkVersion } = await linkAccount(env, latestJob)); } catch { return { ...tag, status: 'storage_unavailable' }; }
+  if (businessAccountJob(account)) return save({ status: 'suppressed', reason: 'business_account_job' });
   const token = await createCustomerPortalAccessToken(env, jobId, clock().getTime(), linkVersion, account.id);
   const url = `${PORTAL}?access=${encodeURIComponent(token)}`;
   const firstName = String(job.customer || '').trim().split(/\s+/)[0].replace(/[<>]/g, '').slice(0, 50);
   const text = messageFor(kind, latestJob, env), message = text.sms(firstName, url);
   const attemptId = crypto.randomUUID();
   const masked = maskRecipient(to.channel, to.channel === 'SMS' ? phone(job.phone) : email(job.email));
-  // Every kind records where it went (masked) on the job's display copy; never the full number, email or link.
-  const claimed = await save({ status: 'sending', channel: to.channel, attemptId, recipient: masked, ...(link ? { variant: text.variant } : {}) });
+  // Every kind records where it went (masked) on the job's display copy; never the full number, email or link. A portal
+  // link text also records the link version and account root it was minted under (quoteReadyCover: does it still open).
+  const claimed = await save({ status: 'sending', channel: to.channel, attemptId, recipient: masked, ...(link ? { variant: text.variant, linkVersion, linkRoot: account.id } : {}) });
   if (claimed.status !== 'sending') return claimed;
   // Only this claim may settle the ledger. Re-read it each time because the
   // scheduling sync may have updated other job fields meanwhile.
@@ -425,11 +463,11 @@ async function deliver(env, jobId, kind, { requireRequested = false, automatic =
   // a quote-ready text that started meanwhile for the accepted-quote invitation (covered, or retried once it settles).
   let halt;
   try {
-    const latest = await readJob(env, jobId);
-    halt = !latest ? { status: 'needs_job' } : pricesPendingApproval(latest) ? { status: link ? 'not_eligible' : 'not_approved', reason: 'prices_pending_approval' } : businessAccountJob(latest) ? { status: 'suppressed', reason: 'business_account_job' }
+    const latest = await readJob(env, jobId), root = latest ? (await linkAccount(env, latest)).account : null;
+    halt = !latest ? { status: 'needs_job' } : pricesPendingApproval(latest) ? { status: link ? 'not_eligible' : 'not_approved', reason: 'prices_pending_approval' } : businessAccountJob(latest) || businessAccountJob(root) ? { status: 'suppressed', reason: 'business_account_job' }
       : latest.notify === false ? { status: 'suppressed', reason: 'job_notifications_off' } : link ? ineligible(kind, latest, clock()) : null;
     if (!halt && !link) {
-      const cover = await quoteReadyCover(env, jobId, clock());
+      const cover = await quoteReadyCover(env, jobId, clock(), latest);
       if (cover?.wait) { const state = { ...waiting, status: 'deferred', reason: 'quote_ready_in_flight', deferredAt: clock().toISOString() }; return await settle(state) ? state : claimed; }
       if (cover) { const state = { ...waiting, status: 'covered', reason: 'quote_ready_link_delivered', coveredBy: cover, checkedAt: clock().toISOString() }; return await settle(state) ? state : claimed; }
     }

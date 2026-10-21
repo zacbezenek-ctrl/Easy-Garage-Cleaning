@@ -240,12 +240,12 @@
       const serverWait=synced.handoffSync?.status==='server_pending';
       const portalText=managerSync||pending?'':portal?.status==='submitted'?(portal.channel==='Email'?'Portal email queued in HighLevel. ':'Portal text queued in HighLevel. '):portal?.status==='covered'?'The customer already has the portal link sent with the quote. ':portal?.status==='suppressed'?'Portal delivery is paused. ':portal?.status==='deferred'?(portal.reason==='quiet_hours'?'Portal invitation goes out after 8 AM (quiet hours); the office\'s Hub or the messaging server sends it. ':portal.reason==='quote_ready_in_flight'?'Portal invitation in progress: check Estimates & payments. ':'Portal invitation waits: automatic messages are paused. '):['busy','sending'].includes(portal?.status)?'Portal invitation in progress: check Estimates & payments. ':serverWait||portal?.status==='server_pending'?'':'Portal delivery needs attention in Estimates & payments. ';
       const scheduleText=managerSync?'Job saved. A manager completes the CRM sync and the portal invitation from the Hub. ':serverWait?'Job saved. The server is finishing the CRM sync and the portal invitation; the office sees the result in the Hub. ':synced.handoffSync?.status==='server_error'?'Job saved. The CRM sync needs another try; the office\'s Hub retries it. ':synced.handoffSync?.status==='synced'?'Job and CRM schedule verified. ':'Job saved; CRM reconciliation still needs attention. ';
-      const photoText=photos.status==='synced'?'Walkthrough photos uploaded. ':photos.status==='needs_setup'?'Drive needs setup; photos remain on this device. ':'Photos remain on this device; upload needs attention. ';
+      const photoText=photos.status==='synced'?'Walkthrough photos uploaded. ':['limit','work_started'].includes(photos.status)?`${photos.message} ${photos.kept} ${photos.status==='limit'?'more ':''}photo${photos.kept===1?' stays':'s stay'} on this device. `:photos.status==='needs_setup'?'Drive needs setup; photos remain on this device. ':'Photos remain on this device; upload needs attention. ';
       const staffing=!crewText&&saved.result.warnings.some(x=>['unassigned','crew_size_short','missing_crew_lead'].includes(x.code))?'Assign the required crew in Dispatch before work. ':'';
       const arrival=saved.arrivalNotice?saved.arrivalNotice+' ':'';
       const checkout=saved.result.warnings.filter(x=>x?.code==='checkout_needs_review').map(x=>String(x.message||'')+' ').join('');
       status.textContent=portalText+scheduleText+crewText+pricingText+photoText+staffing+arrival+checkout+(recoverOriginal?'The original signed version was recovered; review any later form edits separately.':'');
-      button.disabled=false;button.textContent=photos.status==='synced'&&['synced','manager_required','server_pending'].includes(synced.handoffSync?.status)?'Saved — verify again':'Retry remaining synchronization';
+      button.disabled=false;button.textContent=['synced','limit','work_started'].includes(photos.status)&&['synced','manager_required','server_pending'].includes(synced.handoffSync?.status)?'Saved — verify again':'Retry remaining synchronization';
       // Keep the same immutable request for photo/CRM retries. A signed revision
       // is a separate explicit action only after the original save is confirmed.
       const revise=document.createElement('button');revise.type='button';revise.textContent='Start a signed revision';
@@ -294,13 +294,28 @@
       tx.onabort=()=>reject(tx.error || new Error('Photo is no longer on this device.'));
     });
   }
+  // The job keeps at most 40 walkthrough reference photos (FIELD_WALKTHROUGH_PHOTO_LIMIT: the crew's own photos keep
+  // their room), and the estimator who signed adds them only before field work starts (FIELD_REFERENCE_PHOTO_WORK_STARTED).
+  // Either ends the upload as a final result ('limit', 'work_started'): the rest stay on this device and the page says so,
+  // instead of asking for a retry that cannot succeed.
+  const PHOTO_ENDS={FIELD_WALKTHROUGH_PHOTO_LIMIT:'limit',FIELD_REFERENCE_PHOTO_WORK_STARTED:'work_started'};
   async function photos() {
-    const originals=await photoList(),user=await actor();
+    const originals=await photoList(),user=await actor(),done=new Set();
+    try{return await uploadPhotos(originals,user,id=>done.add(id));}
+    catch(error){
+      if(!PHOTO_ENDS[error.code])throw error;
+      // kept: this device's photos not on the job (verified in this run or an earlier one); none left is a finished upload.
+      const kept=originals.filter(photo=>!photo.uploaded&&!done.has(photo.id)).length;
+      return kept?{status:PHOTO_ENDS[error.code],verified:originals.length-kept,kept,message:error.message}:{status:'synced',verified:originals.length};
+    }
+  }
+  async function uploadPhotos(originals,user,counted) {
     if(!user||!S.handoffJobId||S.handoffJobId!==S.jobId)throw new Error('Save the canonical job before uploading its reference photos.');
-    const get=async()=>{const r=await EGCHubAuth.fetch('/api/field-jobs?jobId='+encodeURIComponent(S.jobId),{cache:'no-store'}),j=await r.json();if(!r.ok||!j.ok)throw new Error(j.error || 'The job photo record could not be read.');return j;};
+    const refused=(data,fallback)=>Object.assign(new Error(data.error || fallback),{code:data.code});
+    const get=async()=>{const r=await EGCHubAuth.fetch('/api/field-jobs?jobId='+encodeURIComponent(S.jobId),{cache:'no-store'}),j=await r.json();if(!r.ok||!j.ok)throw refused(j,'The job photo record could not be read.');return j;};
     let current=await get(); if(!current.photosAvailable)return{status:'needs_setup'};
     for(let photo of originals) {
-      if(photo.fieldPhotoRequestId&&current.job.photos.some(p=>p.id===photo.fieldPhotoRequestId&&p.category==='walkthrough')){await photoState(photo.id,{uploaded:true,uploadedToJobId:S.jobId});continue;}
+      if(photo.fieldPhotoRequestId&&current.job.photos.some(p=>p.id===photo.fieldPhotoRequestId&&p.category==='walkthrough')){await photoState(photo.id,{uploaded:true,uploadedToJobId:S.jobId});counted(photo.id);continue;}
       if(photo.uploadedToJobId&&photo.uploadedToJobId!==S.jobId)throw new Error('This photo belongs to a different saved job. Review the photo queue.');
       if(!photo.fieldPhotoRequestId)photo=await photoState(photo.id,{fieldPhotoRequestId:crypto.randomUUID(),fieldPhotoRevision:current.job.expectedRevision,fieldPhotoActor:user,uploadedToJobId:S.jobId,uploaded:false});
       if(photo.fieldPhotoActor!==user)throw new Error('Reopen the original employee account to recover its photo upload.');
@@ -308,14 +323,14 @@
       let r=await EGCHubAuth.fetch('/api/field-jobs',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)}),data=await r.json().catch(()=>({}));
       if(r.status===409&&data.code==='FIELD_REVISION_CONFLICT') {
         current=await get();
-        if(current.job.photos.some(p=>p.id===body.requestId&&p.category==='walkthrough')){await photoState(photo.id,{uploaded:true});continue;}
+        if(current.job.photos.some(p=>p.id===body.requestId&&p.category==='walkthrough')){await photoState(photo.id,{uploaded:true});counted(photo.id);continue;}
         // Retain the same upload identity. If an earlier request did commit,
         // its fingerprint guard prevents a second file or overwritten evidence.
         photo=await photoState(photo.id,{fieldPhotoRevision:current.job.expectedRevision});body.expectedRevision=photo.fieldPhotoRevision;
         r=await EGCHubAuth.fetch('/api/field-jobs',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});data=await r.json().catch(()=>({}));
       }
-      if(!r.ok||!data.ok||!data.job?.photos.some(p=>p.id===body.requestId&&p.category==='walkthrough'))throw new Error(data.error || 'The photo upload has not been verified. Keep it on this device and retry.');
-      current=data;await photoState(photo.id,{uploaded:true,uploadedToJobId:S.jobId});
+      if(!r.ok||!data.ok||!data.job?.photos.some(p=>p.id===body.requestId&&p.category==='walkthrough'))throw refused(data,'The photo upload has not been verified. Keep it on this device and retry.');
+      current=data;await photoState(photo.id,{uploaded:true,uploadedToJobId:S.jobId});counted(photo.id);
     }
     return{status:originals.length?'synced':'none',verified:originals.length};
   }

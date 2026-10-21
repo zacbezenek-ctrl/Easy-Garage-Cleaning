@@ -70,8 +70,10 @@ export function customerPortalLinkHandler({ now = () => new Date(), session: ses
     const job = await readJob(env, jobId).catch(() => null);
     if (!job) return reply(404, { ok: false, error: 'Job not found' });
     if (!business && !await estimatorOwnsJob(env, session, job)) return reply(403, { ok: false, code: 'PORTAL_LINK_NOT_YOURS', error: 'Only the estimator who owns this quote, or the office, can copy this customer’s portal link.' });
-    // A homeowner owner link would bypass the company's member roles.
-    if (businessAccountJob(job)) return reply(409, { ok: false, error: 'This job is shared with a business account. Its team opens it from the Business Hub, so no homeowner portal link was created.' });
+    // A homeowner owner link would bypass the company's member roles: a business-linked job, or a visit Dispatch created
+    // under one (it carries only customerAccountOwnerJobId, so its account root is checked once resolved, below).
+    const businessShared = () => reply(409, { ok: false, error: 'This job is shared with a business account. Its team opens it from the Business Hub, so no homeowner portal link was created.' });
+    if (businessAccountJob(job)) return businessShared();
     // Embed the account's current version and root: this link works until
     // staff next revoke the account's portal links or re-parent the job.
     let account, linkVersion;
@@ -80,6 +82,7 @@ export function customerPortalLinkHandler({ now = () => new Date(), session: ses
       if (error.code === 'CUSTOMER_PORTAL_REVOKE_ACCOUNT_REVIEW' || (error.code?.startsWith('dispatch_lineage_') && error.code !== 'dispatch_lineage_missing')) return reply(409, { ok: false, error: 'This job’s customer account needs review before a portal link can be shared' });
       return reply(503, { ok: false, error: 'The customer account could not be loaded. Retry shortly.' });
     }
+    if (businessAccountJob(account)) return businessShared();
     const current = now();
     const createdAt = current.toISOString();
     const recorded = await recordCopy(env, jobId, job, { by: session.user, at: createdAt, role: business ? 'office' : 'estimator' }, !business);

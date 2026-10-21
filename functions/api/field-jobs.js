@@ -45,24 +45,42 @@ async function context(request, env) {
 // PORTAL-LINKS (B): the quote author who signed a job's walkthrough handoff (the job's current signature,
 // acceptance.recordedBy: a Sales estimator without business access, usually not on the crew) attaches that walkthrough's
 // reference photos to the job from the walkthrough page (crew/gameplan-handoff.js photos), before its server sync. Only
-// category 'walkthrough', only while they may still author quotes and the job is open, and they read back only the job's
-// revision and its reference photos (referenceDetail), never the crew's field record. Everything else stays with the
-// assigned crew and managers.
-const OPEN_FOR_REFERENCE = job => !fieldCancelled(job) && !['completed', 'paid', 'invoiced', 'review_requested'].includes(fieldStage(job));
-function handoffSigner(ctx, job) {
-  if (ctx.manager || job?.handoffVersion !== 1 || typeof job.handoffRequestId !== 'string' || !job.handoffRequestId || !OPEN_FOR_REFERENCE(job)) return false;
+// category 'walkthrough', only while they may still author quotes and field work has not started, and they read back
+// only the job's revision and its reference photos (referenceDetail), never the crew's field record. Everything else
+// stays with the assigned crew and managers.
+// Before field work: the walkthrough handoff's own 'work_started' rule (walkthrough-handoff.js: no crew action recorded,
+// fieldLastActionAt, and no field record but reference photos) at a stage before dispatch (scheduled, unscheduled, draft,
+// or Dispatch's confirmed and crew_assigned). Once the crew dispatches or records anything, a manager attaches them.
+const BEFORE_FIELD_WORK = new Set(['scheduled', 'unscheduled', 'draft', 'confirmed', 'crew_assigned']);
+const beforeFieldWork = job => BEFORE_FIELD_WORK.has(fieldStage(job)) && !job.fieldLastActionAt &&
+  Object.keys(job.fieldExecution && typeof job.fieldExecution === 'object' ? job.fieldExecution : {}).every(key => key === 'photos') && fieldPhotos(job).every(photo => photo.category === 'walkthrough');
+// Who signed: the job's current signature names this quote author.
+function signedBy(ctx, job) {
+  if (ctx.manager || job?.handoffVersion !== 1 || typeof job.handoffRequestId !== 'string' || !job.handoffRequestId) return false;
   const signer = job.acceptance?.recordedBy;
   return typeof signer === 'string' && Boolean(signer) && signer === ctx.session.user && quoteAuthorAccess(ctx.session, ctx.env).author;
 }
+const handoffSigner = (ctx, job) => signedBy(ctx, job) && beforeFieldWork(job);
+const referenceWindowClosed = () => fieldFailure('Field work on this job has started (or the job is closed), so a manager attaches any more walkthrough reference photos.', 403, 'FIELD_REFERENCE_PHOTO_WORK_STARTED');
+// The reference photos a job keeps, at most: the crew's before, after and damage photos always keep the other
+// FIELD_PHOTO_LIMIT - WALKTHROUGH_PHOTO_LIMIT places (fieldCompletionMissing needs before and after photos), whoever
+// attaches the walkthrough's (its signer or a manager) and however many the walkthrough page holds.
+export const FIELD_PHOTO_LIMIT = 100, WALKTHROUGH_PHOTO_LIMIT = 40;
+const referencePhotosFull = job => fieldPhotos(job).filter(photo => photo.category === 'walkthrough').length >= WALKTHROUGH_PHOTO_LIMIT;
+const referenceLimit = () => fieldFailure(`This job already has ${WALKTHROUGH_PHOTO_LIMIT} walkthrough reference photos, the most it keeps, so the crew’s own photos always have room.`, 409, 'FIELD_WALKTHROUGH_PHOTO_LIMIT');
 
 // signer: the request is one the handoff's signer may make (reading the job's reference photos, adding one); reference
-// is true when that is the only reason this account may open the job.
+// is true when that is the only reason this account may open the job. The signer of a job whose field work has started
+// is told so (FIELD_REFERENCE_PHOTO_WORK_STARTED), so the walkthrough page can say a manager takes the rest.
 async function jobAccess(ctx, id, { signer = false } = {}) {
   if (!fieldId(id)) throw fieldFailure('Choose a valid job.');
   const job = await ctx.store.readJob(id);
   if (!job || !['job', 'cleanout', 'reorg'].includes(job.type) || job.recordType) throw fieldFailure('This job is unavailable. Open Today for your current assignments.', 404, 'FIELD_JOB_NOT_FOUND');
   if (ctx.manager || await ctx.access.assigned(job)) return { job, reference: false };
-  if (signer && handoffSigner(ctx, job)) return { job, reference: true };
+  if (signer && signedBy(ctx, job)) {
+    if (beforeFieldWork(job)) return { job, reference: true };
+    throw referenceWindowClosed();
+  }
   throw fieldFailure('This job is not currently assigned to your account. Open Today for your assignments.', 403, 'FIELD_JOB_NOT_ASSIGNED');
 }
 async function authorizedJob(ctx, id) { return (await jobAccess(ctx, id)).job; }
@@ -199,7 +217,8 @@ async function savePhoto(ctx, env, job, input, fingerprint, receipt, signed = fa
   if (storage && (typeof input.items !== 'string' || input.items.length > 500)) throw fieldFailure('List what is in the bin in 500 characters or fewer.');
   if(input.category==='walkthrough'&&!ctx.manager&&!signed)throw fieldFailure('Only a manager or the estimator who signed this walkthrough can attach its reference photos.',403,'FIELD_REFERENCE_PHOTO_MANAGER_REQUIRED');
   if (fieldCancelled(job)) throw fieldFailure(fieldStage(job) === 'cancelled' ? 'This job is cancelled. Ask operations before adding evidence.' : 'This job was marked a no-show. Ask operations before adding evidence.', 409, 'FIELD_JOB_CLOSED');
-  if (fieldPhotos(job).length >= 100) throw fieldFailure('This job already has 100 field photos. Contact operations to archive photos before adding more.', 409, 'FIELD_PHOTO_LIMIT');
+  if (input.category === 'walkthrough' && referencePhotosFull(job)) throw referenceLimit();
+  if (fieldPhotos(job).length >= FIELD_PHOTO_LIMIT) throw fieldFailure('This job already has 100 field photos. Contact operations to archive photos before adding more.', 409, 'FIELD_PHOTO_LIMIT');
   const picture = decodeFieldPhoto(input.dataUrl), client = await createFieldPhotoClient(env);
   let pending = receipt;
   if (!pending) {
@@ -216,13 +235,16 @@ async function savePhoto(ctx, env, job, input, fingerprint, receipt, signed = fa
   for (let attempt = 0; attempt < 3; attempt++) {
     const latest = (await jobAccess(ctx, job.id, { signer: signed })).job, currentReceipt = await ctx.store.readEvent(job.id, input.requestId);
     if (currentReceipt?.state === 'applied') return;
-    // The signer's reference photo: the job must still be one they signed (a revision by someone else ends it).
-    if (signed && !handoffSigner(ctx, latest)) throw fieldFailure('This walkthrough was signed again by someone else. Ask a manager to attach its reference photos.', 403, 'FIELD_REFERENCE_PHOTO_MANAGER_REQUIRED');
+    // The signer's reference photo: the job must still be one they signed (a revision by someone else ends it), and its
+    // field work must not have started meanwhile.
+    if (signed && !signedBy(ctx, latest)) throw fieldFailure('This walkthrough was signed again by someone else. Ask a manager to attach its reference photos.', 403, 'FIELD_REFERENCE_PHOTO_MANAGER_REQUIRED');
+    if (signed && !beforeFieldWork(latest)) throw referenceWindowClosed();
     if (!signed) await requireWorkday(ctx, latest);
     if (!currentReceipt || currentReceipt.fingerprint !== fingerprint) throw fieldFailure('This upload receipt changed. Contact operations.', 409, 'FIELD_IDEMPOTENCY_CONFLICT');
     if (fieldCancelled(latest)) throw fieldFailure('The job was cancelled or marked a no-show during upload. The photo has not been added to the job.', 409, 'FIELD_JOB_CLOSED');
     const existing = fieldPhotos(latest);
-    if (existing.length >= 100) throw fieldFailure('This job already has 100 field photos. Contact operations.', 409, 'FIELD_PHOTO_LIMIT');
+    if (input.category === 'walkthrough' && referencePhotosFull(latest)) throw referenceLimit();
+    if (existing.length >= FIELD_PHOTO_LIMIT) throw fieldFailure('This job already has 100 field photos. Contact operations.', 409, 'FIELD_PHOTO_LIMIT');
     const now = new Date().toISOString(), photo = { id: input.requestId, fileId: pending.fileId, category: input.category, caption: fieldText(input.caption, 500), ...(storage || {}), actorId: ctx.session.user, actorName: pending.actorName, createdAt: now, verified: true, mime: picture.mime, bytes: picture.bytes.length };
     const event = { ...pending, state: 'applied', createdAt: now, photoId: photo.id, summary: storage ? `Storage photo uploaded for bin ${storage.bin}` : `${input.category} photo uploaded`, body: photo.caption }; delete event.__updateTime;
     try { await ctx.store.commit(latest, { fieldExecution: { ...(latest.fieldExecution || {}), photos: [...existing, photo] }, updatedAt: now, ...(input.category==='walkthrough'?{walkthroughPhotoAt:now,photoSyncStatus:'verified_in_job'}:{fieldLastActionAt:now}) }, event, currentReceipt); return; }
@@ -266,7 +288,9 @@ export async function onRequestPost(handlerContext) {
         handlerContext.waitUntil(syncFieldCompletion(env, job.id, { actor: ctx.session }));
         // PORTAL-LINKS (C): a fresh portal link for the finished job (portal-invitation.js 'job_done'), once per job, only
         // while the owner's switch is on (off by default); quiet hours and the pause hold it for the next automatic retry.
-        handlerContext.waitUntil(Promise.resolve().then(() => sendPortalLink(env, job.id, 'job_done', { automatic: true })).catch(() => null));
+        // fresh: the completion is the text's own trigger (a completion held for an open follow-up is texted when the
+        // crew completes it again); the automatic retries never start an ended text again.
+        handlerContext.waitUntil(Promise.resolve().then(() => sendPortalLink(env, job.id, 'job_done', { automatic: true, fresh: true })).catch(() => null));
       }
       // A failed or skipped count stays 'pending' on the visit for a manager (/api/garage-guard-members).
       if (input.action === 'complete' && result.patch.membershipVisit && garageGuardVisitTrackingEnabled(env) && typeof handlerContext.waitUntil === 'function') {

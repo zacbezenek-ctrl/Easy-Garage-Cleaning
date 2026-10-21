@@ -446,6 +446,61 @@ test('the estimator who signed a walkthrough attaches its reference photos to th
   assert.equal(store.calls.uploads, 1);
 });
 
+// Review finding: the signer's window is the walkthrough's own (before field work starts: the handoff's 'work_started'
+// rule), and reference photos have their own cap (WALKTHROUGH_PHOTO_LIMIT), so a walkthrough, however large and whoever
+// attaches it, never uses up the room the crew's before and after photos need to complete the job.
+test('the signer adds reference photos only before field work starts, and reference photos never use up the crew\'s photo room', async t => {
+  const users = { ZacB: { passwordHash: 'test', role: 'owner', displayName: 'Owner' }, 'Crew.One': { passwordHash: 'test', role: 'crew', displayName: 'Crew One' }, 'Sales.Person': { passwordHash: 'test', role: 'sales', displayName: 'Synthetic Sales', staffRoles: ['sales'] } };
+  const salesEnv = { ...env, EGC_STAFF_ROLE_PERMISSIONS: 'true', HUB_AUTH_USERS_JSON: JSON.stringify(users) };
+  const jar = new Map(await Promise.all(Object.keys(users).map(async user => [user, (await createHubSessionCookie(salesEnv, user)).split(';')[0]])));
+  const at = (user, data, search = '') => new Request(`https://easygaragecleaning.com/api/field-jobs${search}`, { method: data ? 'POST' : 'GET', headers: { Cookie: jar.get(user), Origin: 'https://easygaragecleaning.com', 'Content-Type': 'application/json' }, ...(data ? { body: JSON.stringify(data) } : {}) });
+  const get = async user => { const response = await route.onRequestGet({ env: salesEnv, request: at(user, undefined, '?jobId=job-1') }); return [response.status, (await response.json()).code]; };
+  const send = async (user, category) => { const response = await route.onRequestPost({ env: salesEnv, request: at(user, { action: 'photo', jobId: 'job-1', requestId: uuid(), expectedRevision: store.revision('job-1'), expectedUser: user, category, caption: '', dataUrl: picture }) }); return [response.status, (await response.json()).code]; };
+  const store = storage(t), signed = { ...baseline(), date: '2026-09-24', handoffVersion: 1, handoffRequestId: uuid(), createdBy: 'Sales.Person', acceptance: { acceptedAt: '2026-09-22T17:45:00.000Z', acceptedBy: 'Test Customer', recordedBy: 'Sales.Person' } };
+  const photos = (category, count) => Array.from({ length: count }, (_, index) => ({ id: uuid(), fileId: `file-${category}-${index}`, verified: true, category, caption: '', createdAt: '2026-09-22T15:00:00.000Z', actorId: category === 'walkthrough' ? 'ZacB' : 'Crew.One' }));
+  const put = (extra, field = {}) => store.put('jobs/job-1', { ...signed, ...extra, fieldExecution: { ...field } });
+  const count = category => store.get('jobs/job-1').fieldExecution.photos.filter(photo => category ? photo.category === category : true).length;
+  assert.deepEqual([route.FIELD_PHOTO_LIMIT, route.WALKTHROUGH_PHOTO_LIMIT, route.FIELD_PHOTO_LIMIT - route.WALKTHROUGH_PHOTO_LIMIT], [100, 40, 60], 'the crew keeps 60 places');
+
+  // The finding: a job in progress with 99 photos. The signer (not on the crew) is refused, and the crew's 'after' photo,
+  // which completion needs, still goes in.
+  put({ status: 'in_progress', pipelineStatus: 'in_progress', fieldLastActionAt: '2026-09-24T15:00:00.000Z' }, { activity: 'in_progress', photos: photos('before', 99) });
+  assert.deepEqual(await get('Sales.Person'), [403, 'FIELD_REFERENCE_PHOTO_WORK_STARTED']);
+  assert.deepEqual(await send('Sales.Person', 'walkthrough'), [403, 'FIELD_REFERENCE_PHOTO_WORK_STARTED']);
+  assert.deepEqual(await send('Crew.One', 'after'), [200, undefined]);
+  assert.deepEqual([count(), store.calls.uploads], [100, 1]);
+
+  // Field work has started once the crew dispatched or arrived, recorded any action (a checked item: fieldLastActionAt),
+  // or added a photo of its own; before that (Dispatch's confirmed and crew_assigned too) the window stays open.
+  for (const [extra, field, open] of [
+    [{ status: 'dispatched', pipelineStatus: 'dispatched' }, {}, false],
+    [{ status: 'arrived', pipelineStatus: 'arrived' }, {}, false],
+    [{ fieldLastActionAt: '2026-09-23T15:00:00.000Z' }, {}, false],
+    [{}, { photos: photos('before', 1) }, false],
+    [{}, { checks: { 'departure-address': { completed: true } } }, false],
+    [{ status: 'cancelled', pipelineStatus: 'cancelled' }, {}, false],
+    [{}, {}, true],
+    [{ status: 'confirmed', pipelineStatus: 'confirmed' }, {}, true],
+    [{ status: 'crew_assigned', pipelineStatus: 'crew_assigned' }, {}, true],
+    [{}, { photos: photos('walkthrough', 3) }, true],
+  ]) {
+    put(extra, field);
+    const [status, code] = await get('Sales.Person');
+    assert.deepEqual([status, code], open ? [200, undefined] : [403, 'FIELD_REFERENCE_PHOTO_WORK_STARTED'], JSON.stringify([extra, Object.keys(field)]));
+  }
+
+  // Before field work, a large walkthrough stops at 40 reference photos, whoever attaches them (the signer or a manager);
+  // the crew's own photos still go in.
+  put({}, { photos: photos('walkthrough', 39) });
+  assert.deepEqual(await send('Sales.Person', 'walkthrough'), [200, undefined]);
+  assert.deepEqual(await send('Sales.Person', 'walkthrough'), [409, 'FIELD_WALKTHROUGH_PHOTO_LIMIT']);
+  assert.deepEqual(await send('ZacB', 'walkthrough'), [409, 'FIELD_WALKTHROUGH_PHOTO_LIMIT']);
+  assert.deepEqual(await send('Crew.One', 'before'), [200, undefined]);
+  assert.deepEqual([count('walkthrough'), count('before')], [40, 1]);
+  // After the crew's first photo the signer's window has closed too.
+  assert.deepEqual(await send('Sales.Person', 'walkthrough'), [403, 'FIELD_REFERENCE_PHOTO_WORK_STARTED']);
+});
+
 for (const type of ['cleanout','reorg']) test(`legacy ${type} work uses the same assigned field workflow`,async t=>{
   const store=storage(t);store.put('jobs/job-1',{...baseline(),type});
   const response=await route.onRequestGet({env,request:req('Crew.One',undefined,'?jobId=job-1')});assert.equal(response.status,200);

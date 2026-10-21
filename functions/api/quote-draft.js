@@ -59,8 +59,9 @@ const stripeFor = env => { const secret = stripeSecretKey(env); return secret ? 
 // link goes out through the portal invitation path (portal-invitation.js sendPortalLink 'quote_ready': once per job,
 // only while the owner's switch is on, which it is not by default), and the answer carries what happened (portalLink)
 // so the send screen tells the estimator the truth. The job is read again for the answer, because recording the
-// message changes its revision.
-const quoteReadyLink = (env, jobId, now) => sendPortalLink(env, jobId, 'quote_ready', { automatic: true, now });
+// message changes its revision. fresh: a send is the quote-ready text's own trigger, so it may start again a text that
+// ended unsent (not eligible, switched off, suppressed); the automatic retries never do.
+const quoteReadyLink = (env, jobId, now) => sendPortalLink(env, jobId, 'quote_ready', { automatic: true, fresh: true, now });
 const PORTAL_LINK_VIEW = ['kind', 'status', 'reason', 'channel', 'recipient', 'notBefore', 'completedAt', 'deferredAt'];
 export const portalLinkView = state => state && typeof state === 'object' ? Object.fromEntries(PORTAL_LINK_VIEW.filter(key => typeof state[key] === 'string' && state[key]).map(key => [key, state[key]])) : null;
 export function quoteDraftHandlers({ session = getHubSession, storage = dispatchStorage, now = () => new Date(), delivery = (env, store) => createEstimateReadyDelivery({ store, env, clock: now }), stripe = stripeFor,
