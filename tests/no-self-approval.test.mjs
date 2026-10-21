@@ -1,0 +1,111 @@
+// NO-SELF-APPROVAL: whoever approves time never approves, rejects, reviews or corrects their own timecard; another
+// manager or the owner does. The configured owner is the one exception. Synthetic accounts only.
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import { authorizeTimecard, correctTimecard } from '../functions/_lib/employee-timecards.js';
+
+const OWNER = { user: 'zacb', displayName: 'Synthetic Owner', role: 'owner', businessAccess: true };
+const MANAGER = { user: 'TylerG', displayName: 'Synthetic Manager', role: 'manager', businessAccess: true };
+const card = employee => ({ id: `card-${employee}`, employee, employeeName: employee, clockInAt: '2026-09-22T14:00:00.000Z', clockOutAt: '2026-09-22T18:00:00.000Z', breaks: [], status: 'submitted', approvalStatus: 'pending', hourlyRate: 0 });
+const save = (session, existing, incoming) => authorizeTimecard({ session, manager: true, id: existing.id, existing, incoming, now: '2026-09-22T20:00:00.000Z' });
+const refused = error => error.status === 403 && error.code === 'EMPLOYEE_TIMECARD_SELF_APPROVAL' && /someone else/i.test(error.message);
+
+test('a manager cannot approve, reject or clear the device-time review of their own timecard', () => {
+  for (const incoming of [{ approvalStatus: 'approved' }, { approvalStatus: 'rejected' }]) assert.throws(() => save(MANAGER, card('TylerG'), incoming), refused, JSON.stringify(incoming));
+  assert.throws(() => save(MANAGER, { ...card('TylerG'), deviceTime: true, needsReview: true }, { deviceTimeReviewed: true }), refused);
+  // The name is compared without case, so a differently typed username is still the same person.
+  assert.throws(() => save(MANAGER, card('tylerg'), { approvalStatus: 'approved' }), refused);
+});
+
+test('a manager still approves other people, and the owner approves anyone including themselves', () => {
+  assert.equal(save(MANAGER, card('Crew.One'), { approvalStatus: 'approved' }).approvedBy, 'TylerG');
+  assert.equal(save(OWNER, card('zacb'), { approvalStatus: 'approved' }).approvedBy, 'zacb');
+  assert.equal(save(OWNER, card('TylerG'), { approvalStatus: 'approved' }).approvedBy, 'zacb');
+  // A manager's other saves to their own card (a note, as before) are unchanged.
+  assert.equal(save(MANAGER, card('TylerG'), { notes: 'Synthetic note' }).notes, 'Synthetic note');
+});
+
+test('a manager cannot correct or close their own timecard; corrections of others are unchanged', () => {
+  const env = { EGC_TIMECARD_CORRECTIONS: 'true' };
+  const correct = (session, existing) => correctTimecard({ session, manager: true, existing, incoming: { correction: { requestId: crypto.randomUUID(), kind: 'correct', reason: 'Synthetic reason', expectedUpdatedAt: '' } }, now: '2026-09-22T20:00:00.000Z', env });
+  assert.throws(() => correct(MANAGER, card('TylerG')), refused);
+  assert.throws(() => correct(MANAGER, card('Crew.One')), error => !refused(error), 'another employee\'s card goes on to the usual correction checks');
+});
+
+// Review findings on #175: an approved card of one's own could be edited and re-approved in the same save, or moved to
+// someone else and back with an approval each way.
+test('a manager cannot inflate their own approved card by resending the approval with an edit', () => {
+  const approved = { ...card('TylerG'), breaks: [{ startAt: '2026-09-22T16:00:00.000Z', endAt: '2026-09-22T17:00:00.000Z' }], approvalStatus: 'approved', approvedAt: '2026-09-22T19:00:00.000Z', approvedBy: 'zacb' };
+  for (const incoming of [{ clockOutAt: '2026-09-23T02:00:00.000Z', approvalStatus: 'approved' }, { breaks: [], approvalStatus: 'approved' } /* drops the hour-long break */, { clockOutAt: '2026-09-23T02:00:00.000Z', approvalStatus: 'rejected' }])
+    assert.throws(() => save(MANAGER, approved, incoming), refused, JSON.stringify(incoming));
+  // An edit without a status returns their own card to pending for someone else to decide.
+  const edited = save(MANAGER, approved, { clockOutAt: '2026-09-23T02:00:00.000Z' });
+  assert.deepEqual([edited.approvalStatus, edited.approvedAt, edited.approvedBy], ['pending', '', '']);
+  // Repeating the stored status with nothing else changed is a no-op: it is not re-stamped as theirs.
+  const repeated = save(MANAGER, approved, { approvalStatus: 'approved' });
+  assert.deepEqual([repeated.approvalStatus, repeated.approvedBy, repeated.approvedAt], ['approved', 'zacb', '2026-09-22T19:00:00.000Z']);
+  // The owner editing and approving a manager's card in one save is unchanged.
+  assert.equal(save(OWNER, approved, { clockOutAt: '2026-09-23T02:00:00.000Z', approvalStatus: 'approved' }).approvedBy, 'zacb');
+});
+
+test('a manager cannot approve their own card by moving it to someone else and back', () => {
+  const own = card('TylerG');
+  assert.throws(() => save(MANAGER, own, { employee: 'Crew.One', approvalStatus: 'approved' }), refused, 'moving away with an approval');
+  const moved = save(MANAGER, own, { employee: 'Crew.One' });
+  assert.throws(() => save(MANAGER, moved, { employee: 'TylerG', approvalStatus: 'approved' }), refused, 'moving back with an approval');
+  const approvedOwn = { ...own, approvalStatus: 'approved', approvedBy: 'zacb', approvedAt: '2026-09-22T19:00:00.000Z' };
+  assert.equal(save(MANAGER, approvedOwn, { employee: 'Crew.One' }).approvalStatus, 'pending', 'moving an approved card of one\'s own away undoes the approval');
+});
+
+// Review findings on #175, second round: the device-time flags could be cleared directly, and a rejection undone by
+// moving one's own card back to pending (a payroll week with includePending then counted it).
+test('a manager cannot clear the device-time flags on their own card by writing them directly', () => {
+  const flagged = { ...card('TylerG'), deviceTime: true, needsReview: true, deviceTimeEvents: [{ action: 'clock_out', deviceCapturedAt: '2026-09-22T18:00:00.000Z' }] };
+  for (const incoming of [{ needsReview: false }, { deviceTime: false, deviceTimeEvents: [] }, { deviceTimeEvents: [] }, { deviceTimeReviewedBy: 'zacb', deviceTimeReviewedAt: '2026-09-22T19:00:00.000Z' }])
+    assert.throws(() => save(MANAGER, flagged, incoming), refused, JSON.stringify(incoming));
+  // Repeating the stored values is not a change, and someone else still reviews it as before.
+  assert.equal(save(MANAGER, flagged, { needsReview: true, notes: 'Synthetic note' }).needsReview, true);
+  const reviewed = save(OWNER, flagged, { deviceTimeReviewed: true });
+  assert.deepEqual([reviewed.needsReview, reviewed.deviceTimeReviewedBy], [false, 'zacb']);
+});
+
+test('a manager cannot undo a rejection of their own card, by status or by a time edit', () => {
+  const rejected = { ...card('TylerG'), approvalStatus: 'rejected', approvedAt: '2026-09-22T19:00:00.000Z', approvedBy: 'zacb' };
+  for (const incoming of [{ approvalStatus: 'pending' }, { approvalStatus: 'open' }, { clockOutAt: '2026-09-22T17:00:00.000Z' }, { clockOutAt: '2026-09-22T17:00:00.000Z', approvalStatus: 'pending' }])
+    assert.throws(() => save(MANAGER, rejected, incoming), refused, JSON.stringify(incoming));
+  // Nor can they move an approved or pending card of their own to another status by hand.
+  const approved = { ...rejected, approvalStatus: 'approved' };
+  assert.throws(() => save(MANAGER, approved, { approvalStatus: 'pending' }), refused, 'no status change without a time edit');
+  assert.throws(() => save(MANAGER, card('TylerG'), { approvalStatus: 'open' }), refused);
+  // The owner, or another manager, moves a rejected card back to pending, and it then names no decider.
+  for (const session of [OWNER, { ...MANAGER, user: 'Other.Manager' }]) {
+    const reopened = save(session, rejected, { approvalStatus: 'pending' });
+    assert.deepEqual([reopened.approvalStatus, reopened.approvedAt, reopened.approvedBy], ['pending', '', ''], session.user);
+  }
+  // Clocking out of their own open shift still moves it to pending, as for everyone.
+  const open = { ...card('TylerG'), clockOutAt: '', status: 'active', approvalStatus: 'open' };
+  assert.equal(save(MANAGER, open, { clockOutAt: '2026-09-22T18:00:00.000Z', status: 'submitted', approvalStatus: 'pending' }).approvalStatus, 'pending');
+});
+
+// Follow-up review findings on #175: the clock-in location flag and the decider fields of one's own card, and cards
+// typed as a near-variant of one's own username.
+test('a manager cannot clear the missing clock-in location flag on their own card; the change is in the audit', () => {
+  const flagged = { ...card('TylerG'), locationReview: 'location_unavailable_at_clock_in' };
+  for (const incoming of [{ locationReview: '' }, { locationReview: null }, { locationReview: 'reviewed' }]) assert.throws(() => save(MANAGER, flagged, incoming), refused, JSON.stringify(incoming));
+  assert.equal(save(MANAGER, flagged, { locationReview: 'location_unavailable_at_clock_in', notes: 'Synthetic note' }).locationReview, 'location_unavailable_at_clock_in', 'repeating it is not a change');
+  const cleared = save(OWNER, flagged, { locationReview: '' });
+  assert.equal(cleared.locationReview, '');
+  assert.ok(cleared.history.at(-1).changes.locationReview, 'someone else clearing it is recorded');
+});
+
+test('a manager cannot rewrite who decided their own card or when; decisions are in the audit', () => {
+  const approved = { ...card('TylerG'), approvalStatus: 'approved', approvedAt: '2026-09-22T19:00:00.000Z', approvedBy: 'zacb' };
+  for (const incoming of [{ approvedBy: 'Other.Manager' }, { approvedAt: '2026-09-21T00:00:00.000Z' }, { approvalStatus: 'approved', approvedBy: 'TylerG' }]) assert.throws(() => save(MANAGER, approved, incoming), refused, JSON.stringify(incoming));
+  const decided = save(MANAGER, card('Crew.One'), { approvalStatus: 'approved' });
+  assert.deepEqual(Object.keys(decided.history.at(-1).changes).filter(key => ['approvalStatus', 'approvedBy', 'approvedAt'].includes(key)).sort(), ['approvalStatus', 'approvedAt', 'approvedBy']);
+});
+
+test('a card typed as a near-variant of one\'s own username is still one\'s own', () => {
+  for (const employee of ['TylerG​', ' tylerg ', 'Tyler G', 'TYLERG﻿']) assert.throws(() => save(MANAGER, card(employee), { approvalStatus: 'approved' }), refused, JSON.stringify(employee));
+  assert.equal(save(MANAGER, card('TylerG2'), { approvalStatus: 'approved' }).approvedBy, 'TylerG', 'a different username is someone else (the remaining alias case is noted in the PR)');
+});

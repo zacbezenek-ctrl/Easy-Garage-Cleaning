@@ -25,7 +25,7 @@ export const builderState = (approvals = {}, extra = {}) => ({ menu, settings: {
  * estimator saved them, in a medium-full garage (the signedPlan's fullness). The server's own estimate of the default
  * selection is also 6 man-hours
  * (laborEstimate, D-JUNK: 2 x (60 + 30) for the base's set-up, sweep-out and sorting, nothing for the truck load, whose
- * $750 pays its loading and hauling, 2 shelving units x 60 and two 4-packs of totes x 32 = 364 person-minutes), so this
+ * price pays its loading and hauling, 2 shelving units x 60 and two 4-packs of totes x 32 = 364 person-minutes), so this
  * labor equals the estimate and is not adjusted by hand. */
 export const LABOR = Object.freeze({ manHours: 6, fullness: 'medium' });
 /** The server's estimate of the default selection (laborEstimate): 6 man-hours, $318.00. */

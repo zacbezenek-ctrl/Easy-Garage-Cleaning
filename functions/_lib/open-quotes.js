@@ -12,7 +12,8 @@
  *   valid-until date has passed, whatever the age). A quote's valid-until is at most 90 days after it was saved, so every
  *   quote sent before the OPEN_QUOTES_DAYS window has expired and the board leaves it out.
  * Draft prices waiting for the owner: the job is held for the owner's price approval (pricesPendingApproval), or its
- *   builder breakdown no longer passes the owner's current menu (composite-quote.js compositeApproval); null when the
+ *   builder breakdown no longer passes the owner's current menu (composite-quote.js compositeApproval) for a reason other
+ *   than a price the owner approved at another amount since (resave: the estimator saves it again); null when the
  *   owner's menu could not be read.
  * Close rate per estimator, last 30 and 90 days, by the day a quote was sent: sent counts every estimator quote sent in the
  *   window (open, expired, revised or lost too) plus every walkthrough the estimator had signed on site (the
@@ -91,7 +92,9 @@ export function draftPricesWaiting(job, compositeState) {
   const breakdown = job?.quoteDraft?.breakdown;
   if (!plain(breakdown) || breakdown.source !== 'composite') return false;
   if (!compositeState) return null;
-  try { return !compositeApproval(breakdown, compositeState).ready; } catch { return null; }
+  // A row the owner approved at another amount since (resave, e.g. a $750 truck after the $1,000 truck) is the estimator's
+  // to save again, not a price waiting for the owner.
+  try { return compositeApproval(breakdown, compositeState).blocked.some(row => row.resave !== true); } catch { return null; }
 }
 
 export const bucketOf = (ageDays, expired) => expired ? 'expired' : BUCKETS.find(bucket => bucket.id !== 'expired' && ageDays >= bucket.min && ageDays <= bucket.max)?.id || 'cold';

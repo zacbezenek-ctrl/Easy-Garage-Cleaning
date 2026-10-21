@@ -38,6 +38,8 @@ const PASSWORD_SHIPPED = ['password'];
 const TEAM_SHIPPED = ['team_directory'];
 // D6b's My commission (My EGC) follows Team directory: every signed-in viewer's own estimator 7%, read only.
 const COMMISSION_SHIPPED = ['my_commission'];
+// PORTAL-INBOX: Customer messages needs customer_contact (employee-suite.js adds it for a server customer.send).
+const CONTACT_SHIPPED = ['customer_messages'];
 
 test('a registered screen joins the nav under its group only when the capability matches', () => {
   for (const [who, expected] of [[{}, true], [MANAGER, true], [CREW, false]]) {
@@ -101,7 +103,9 @@ test('render lazily loads the kit then the screen once, mounts with the Hub cont
   page.api.go('fixture_lazy');
   assert.ok(page.main().querySelector('.hub-screen-loading'), 'a skeleton shows while assets load');
   await page.flush();
-  assert.deepEqual(requested.sort(), ['employee-ui-kit.css?v=20260929mobilehub', 'employee-ui-kit.js?v=20260929mobilehub', 'fixture-lazy.css?v=t1', 'fixture-lazy.js?v=t1']);
+  // The Command center's tomorrow readiness widget (READINESS) and held-jobs widget (employee-held-jobs.js) load their own
+  // files on the home before the screen is opened.
+  assert.deepEqual(requested.sort(), ['employee-held-jobs.js?v=20261021held1', 'employee-readiness.css?v=20261021ready1', 'employee-readiness.js?v=20261021ready1', 'employee-ui-kit.css?v=20260929mobilehub', 'employee-ui-kit.js?v=20260929mobilehub', 'fixture-lazy.css?v=t1', 'fixture-lazy.js?v=t1']);
   assert.equal(mounts.length, 1);
   const { host, ctx } = mounts[0];
   assert.equal(host, page.main());
@@ -125,7 +129,7 @@ test('render lazily loads the kit then the screen once, mounts with the Hub cont
   page.api.go('fixture_lazy');
   await page.flush();
   assert.equal(mounts.length, 2);
-  assert.equal(requested.length, 4, 'assets load once per page');
+  assert.equal(requested.length, 7, 'assets load once per page (the four above, the readiness widget pair and the held-jobs widget)');
 });
 
 test('a registered screen that cannot leave blocks go() until its changes are finished', async () => {
@@ -299,7 +303,10 @@ test('the shipped screens register cleanly for business viewers only and lazy-lo
   vm.runInNewContext(readFileSync(new URL('../employee-hub-screens.js', import.meta.url), 'utf8'), context, { filename: 'employee-hub-screens.js' });
   assert.deepEqual(warnings, []);
   const registry = context.EGCHubScreens;
-  assert.deepEqual([...registry.list().map(entry => entry.id)], [...CREW_SHIPPED, ...PASSWORD_SHIPPED, ...TEAM_SHIPPED, ...COMMISSION_SHIPPED, ...OWNER_SHIPPED, ...SHIPPED]);
+  assert.deepEqual([...registry.list().map(entry => entry.id)], [...CREW_SHIPPED, ...PASSWORD_SHIPPED, ...TEAM_SHIPPED, ...COMMISSION_SHIPPED, ...OWNER_SHIPPED, ...SHIPPED, ...CONTACT_SHIPPED]);
+  const inbox = registry.get('customer_messages');
+  assert.deepEqual([inbox.group, inbox.label, inbox.capability, inbox.module, inbox.load.js, inbox.load.css], ['CLIENT WORK', 'Customer messages', 'customer_contact', 'EGCCustomerMessages', 'employee-customer-messages.js', 'employee-customer-messages.css']);
+  assert.ok(!registry.allowed(inbox, ['crew', 'business']) && registry.allowed(inbox, ['crew', 'customer_contact']));
   const commission = registry.get('my_commission');
   assert.deepEqual([commission.group, commission.label, commission.crewVisible, commission.module, commission.load.js, commission.load.css], ['MY EGC', 'My commission', true, 'EGCEstimatorCommission', 'employee-estimator-commission.js', 'employee-estimator-commission.css']);
   assert.ok(registry.allowed(commission, ['crew']), 'every signed-in viewer sees their own commission');

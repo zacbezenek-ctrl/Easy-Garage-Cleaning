@@ -35,7 +35,7 @@ function hub({ user = 'TylerG', role = 'manager', corrections = true, timecards,
         return json({ ok: true, record: visiblePay(session, {}, 'timeEntries', saved) });
       } catch (error) { return json({ ok: false, code: error.code, error: error.message }, error.status || 400); }
     }
-    if (url.startsWith('/api/employee-hub')) return json({ ok: true, collections: { ...Object.fromEntries(PEOPLE.map(name => [name, []])), timeEntries: server.timecards.map(row => visiblePay(session, {}, 'timeEntries', structuredClone(row))) }, payVisibility: role === 'owner' ? 'all' : 'own', timecardCorrections: corrections });
+    if (url.startsWith('/api/employee-hub')) return json({ ok: true, collections: { ...Object.fromEntries(PEOPLE.map(name => [name, []])), timeEntries: server.timecards.map(row => visiblePay(session, {}, 'timeEntries', structuredClone(row))) }, payVisibility: role === 'owner' ? 'all' : 'own', paySet: role === 'owner', timecardCorrections: corrections });
     if (url.startsWith('/api/highlevel?view=command')) return json({ ok: true, pipelines: [], opportunities: [] });
     if (url.startsWith('/api/highlevel?view=walkthroughs')) return json({ ok: true, events: [] });
     if (url.startsWith('/api/integration-status')) return json({ ok: true, status: {} });
