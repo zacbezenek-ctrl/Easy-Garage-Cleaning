@@ -234,6 +234,9 @@ export function dispatchStorage(env, fetcher = firestoreFetch) {
     // job when (never the signature, plan or amount): one signer's ({field:'actorId', op:'EQUAL'}) or those created since a
     // date ({field:'createdAt', op:'GREATER_THAN_OR_EQUAL'}). Complete and failing closed like every query here.
     handoffLedger: spec => query('walkthroughHandoffs', HANDOFF_LEDGER_FIELDS, 5000)(spec),
+    // OPEN-QUOTES (open-quotes.js): the estimator quotes sent on or after an ISO time, one range on the nested single
+    // field quoteDraft.sentAt (Firestore's automatic single-field index; no composite index), masked to `fields`.
+    sentQuoteJobs: (since, fields, limit = 5000) => query('jobs', fields, limit)({ field: 'quoteDraft.sentAt', op: 'GREATER_THAN_OR_EQUAL', value: since }),
     customersByKey: key => query('customers', [...CUSTOMER_FIELDS, 'searchKeys'], 20000)({ field: 'searchKeys', op: 'ARRAY_CONTAINS', value: key }),
     // CREW-SCHEDULE (functions/api/crew-schedule.js): the crew records alone, and the work dated in a bounded window.
     crewResources: () => query('dispatchResources', CREW_RESOURCE_FIELDS, 2000)({ field: 'recordType', op: 'EQUAL', value: 'crew' }),
