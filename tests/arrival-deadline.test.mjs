@@ -3,9 +3,9 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import vm from './helpers/vm-realm.mjs';
 import { storage, FixedDate } from './helpers/hub-dom.mjs';
-import { flags, arrivalDeadline, enRouteDeadline, startAt, denverDate } from '../functions/_lib/arrival-deadline.js';
+import { flags, visitRow, arrivalDeadline, enRouteDeadline, startAt, denverDate } from '../functions/_lib/arrival-deadline.js';
 import { projectDispatchJob } from '../functions/_lib/dispatch-service.js';
-import { JOB_FIELDS } from '../functions/_lib/dispatch-storage.js';
+import { formatArrivalWindow } from '../functions/_lib/dispatch-arrival.js';
 
 // FIELD-FLAGS: every instant here is fixed; nothing reads the real clock.
 const source = name => readFileSync(new URL('../' + name, import.meta.url), 'utf8');
@@ -20,7 +20,7 @@ test('the arrival deadline is the window end, or the start plus 15 minutes witho
   assert.equal(enRouteDeadline(job()), at('2026-09-22T14:30:00Z'));
   assert.equal(arrivalDeadline(job({ arrivalWindowStart: '09:00', arrivalWindowEnd: '10:00' })), at('2026-09-22T16:00:00Z'));
   // Half a window, a reversed window or a malformed end falls back to start + 15.
-  for (const window of [{ arrivalWindowEnd: '10:00' }, { arrivalWindowStart: '10:00', arrivalWindowEnd: '09:00' }, { arrivalWindowStart: '09:00', arrivalWindowEnd: '25:00' }, { arrivalWindow: '9:00 AM – 10:00 AM' }])
+  for (const window of [{ arrivalWindowEnd: '10:00' }, { arrivalWindowStart: '10:00', arrivalWindowEnd: '09:00' }, { arrivalWindowStart: '09:00', arrivalWindowEnd: '25:00' }])
     assert.equal(arrivalDeadline(job(window)), at('2026-09-22T15:15:00Z'), JSON.stringify(window));
   assert.equal(arrivalDeadline(job({ time: '' })), null);
   assert.equal(startAt(job({ date: '2026-02-30' })), null);
@@ -52,12 +52,12 @@ test('not en route from 30 minutes before the start, late at the deadline, and n
   const rolling = { ...row, dispatchedAt: '2026-09-22T14:40:00Z' };
   assert.deepEqual(flags(rolling, { now: at('2026-09-22T15:00:00Z') }), []);
   assert.deepEqual(kinds(flags(rolling, { now: at('2026-09-22T16:01:00Z') })), ['late']);
-  assert.deepEqual(flags({ ...row, fieldExecution: { activity: 'dispatched' } }, { now: at('2026-09-22T15:00:00Z') }), []);
+  assert.deepEqual(flags({ ...row, pipelineStatus: 'dispatched', status: 'dispatched' }, { now: at('2026-09-22T15:00:00Z') }), []);
 });
 
 test('a job already arrived or started, or cancelled or finished, is never flagged late', () => {
   const now = at('2026-09-22T17:00:00Z');
-  for (const fields of [{ arrivedAt: '2026-09-22T15:20:00Z' }, { startedAt: '2026-09-22T15:30:00Z' }, { status: 'in_progress' }, { fieldExecution: { activity: 'arrived' } },
+  for (const fields of [{ arrivedAt: '2026-09-22T15:20:00Z' }, { startedAt: '2026-09-22T15:30:00Z' }, { status: 'in_progress' }, { pipelineStatus: 'arrived' }, { fieldExecution: { visits: { '2026-09-22': { status: 'in_progress', startedAt: '2026-09-22T15:10:00Z' } } } },
     { status: 'completed' }, { completedAt: '2026-09-22T16:00:00Z' }, { status: 'cancelled' }, { cancelledAt: '2026-09-22T12:00:00Z' }, { pipelineStatus: 'no_show' }])
     assert.ok(!kinds(flags(job(fields), { now })).some(kind => kind === 'late' || kind === 'not_en_route'), JSON.stringify(fields));
   for (const fields of [{ status: 'completed' }, { status: 'cancelled' }])
@@ -105,14 +105,9 @@ test('the Hub runs the same rule file as a classic script', () => {
   assert.match(source('employee.html'), /<script src="employee-arrival-deadline\.js\?v=[^"]+"><\/script>\s*<script src="employee-suite\.js/);
 });
 
-test('the dispatch read and DTO carry dispatchedAt, arrivedAt and startedAt', () => {
-  for (const field of ['dispatchedAt', 'arrivedAt', 'startedAt']) assert.ok(JOB_FIELDS.includes(field), field);
-  const dto = projectDispatchJob(job({ dispatchedAt: '2026-09-22T14:40:00Z', arrivedAt: '2026-09-22T15:05:00Z', startedAt: '2026-09-22T15:20:00Z', dispatchedBy: 'crew-a' }), [], '2026-09-22T16:00:00Z');
-  assert.equal(dto.dispatchedAt, '2026-09-22T14:40:00Z');
-  assert.equal(dto.arrivedAt, '2026-09-22T15:05:00Z');
-  assert.equal(dto.startedAt, '2026-09-22T15:20:00Z');
-  assert.equal(dto.dispatchedBy, undefined, 'only the timestamps are added');
-  assert.equal('arrivedAt' in projectDispatchJob(job(), [], '2026-09-22T16:00:00Z'), false);
+test('the dispatch DTO does not add the field timestamps (no reader; they would reach bookers)', () => {
+  const dto = projectDispatchJob(job({ dispatchedAt: '2026-09-22T14:40:00Z', arrivedAt: '2026-09-22T15:05:00Z', startedAt: '2026-09-22T15:20:00Z' }), [], '2026-09-22T16:00:00Z');
+  for (const field of ['dispatchedAt', 'arrivedAt', 'startedAt']) assert.equal(field in dto, false, field);
 });
 
 function hub({ timeEntries = [], peopleLoaded = true, rule = true } = {}) {
@@ -170,4 +165,100 @@ test('the agenda stays usable when the time entries or the rule file are missing
   // An unverified schedule shows no flags at all.
   const pending = hub(); pending.jobsCache = [late]; pending.managerScheduleState = { loaded: false, loading: true };
   assert.doesNotMatch(pending.api.attention(), /flagged/);
+});
+
+// Review of #194 — finding 2: dispatch's default arrival window saves arrivalWindowStart/End null and only the label.
+test('the default-window label dispatch saves is the deadline, read only in formatArrivalWindow\'s exact form', () => {
+  const label = formatArrivalWindow('11:30', '12:30');
+  assert.equal(label, '11:30 AM – 12:30 PM');
+  const row = job({ time: '11:30', endTime: '14:00', arrivalWindowStart: null, arrivalWindowEnd: null, arrivalWindow: label });
+  assert.equal(arrivalDeadline(row), at('2026-09-22T18:30:00Z'), '12:30 MDT');
+  assert.deepEqual(kinds(flags(row, { now: at('2026-09-22T18:00:00Z') })), ['not_en_route'], 'inside the promised window it is not late');
+  assert.deepEqual(kinds(flags(row, { now: at('2026-09-22T18:30:00Z') })), ['late']);
+  // Any other form, a label ending before the start, or a label on a later visit falls back to start + 15.
+  for (const arrivalWindow of ['11:30 AM - 12:30 PM', '11:30AM – 12:30PM', '13:30 AM – 12:30 PM', '11:30 AM – 11:00 AM', 'Morning'])
+    assert.equal(arrivalDeadline(job({ time: '11:30', arrivalWindow })), at('2026-09-22T17:45:00Z'), arrivalWindow);
+  assert.equal(arrivalDeadline({ ...row, firstVisit: false }), at('2026-09-22T17:45:00Z'));
+  // Saved ends win over the label.
+  assert.equal(arrivalDeadline({ ...row, arrivalWindowStart: '11:30', arrivalWindowEnd: '13:00' }), at('2026-09-22T19:00:00Z'));
+});
+
+// Finding 4: a restored visit keeps its old field timestamps and activity; they never count for today.
+test('a restored or rebooked visit never inherits an earlier arrival, dispatch or stale activity', () => {
+  const now = at('2026-09-22T17:00:00Z');
+  const stale = { dispatchedAt: '2026-09-15T14:40:00Z', arrivedAt: '2026-09-15T15:05:00Z', startedAt: '2026-09-15T15:20:00Z', fieldExecution: { activity: 'in_progress' } };
+  assert.deepEqual(kinds(flags(job(stale), { now })), ['late'], 'timestamps from another day do not count');
+  const restored = { ...stale, dispatchedAt: '2026-09-22T14:00:00Z', arrivedAt: '2026-09-22T14:10:00Z', restoredAt: '2026-09-22T14:30:00Z', cancelledAt: null };
+  assert.deepEqual(kinds(flags(job(restored), { now })), ['late'], 'today\'s timestamps before the restore do not count');
+  assert.deepEqual(flags(job({ ...restored, arrivedAt: '2026-09-22T15:10:00Z' }), { now }), [], 'an arrival after the restore does');
+  assert.deepEqual(kinds(flags(job({ fieldExecution: { activity: 'arrived' } }), { now })), ['late'], 'an activity the status does not back is ignored');
+});
+
+// Finding 3: a split job is flagged per segment, with that segment's date, time and crew.
+test('split jobs are flagged per segment with its own time and crew; tomorrow\'s segment and its crew are not', () => {
+  const split = job({ time: '08:00', endTime: '17:00', endDate: '2026-09-23', assignedCrew: ['crew-a', 'crew-b', 'crew-c'], assignmentSegments: [
+    { id: 'seg-1', date: '2026-09-22', time: '08:00', endTime: '11:00', assignedCrew: ['crew-a'] },
+    { id: 'seg-2', date: '2026-09-22', time: '13:00', endTime: '17:00', assignedCrew: ['crew-b'] },
+    { id: 'seg-3', date: '2026-09-23', time: '08:00', endTime: '12:00', assignedCrew: ['crew-c'] }] });
+  const noon = at('2026-09-22T18:00:00Z'), entries = [];
+  const [one, two, three] = split.assignmentSegments.map(segment => visitRow(split, segment));
+  assert.deepEqual([one.firstVisit, two.firstVisit, three.firstVisit, two.time, two.assignedCrew], [true, false, false, '13:00', ['crew-b']]);
+  assert.deepEqual(flags(one, { now: noon, crew: one.assignedCrew, timeEntries: entries }).map(f => [f.kind, f.members]), [['late', undefined], ['not_clocked_in', ['crew-a']]]);
+  assert.deepEqual(flags(two, { now: noon, crew: two.assignedCrew, timeEntries: entries }), [], 'the 13:00 crew is not due yet');
+  assert.deepEqual(kinds(flags(two, { now: at('2026-09-22T19:15:00Z'), crew: two.assignedCrew, timeEntries: entries })), ['late', 'not_clocked_in'], '13:15, the 13:00 visit\'s deadline');
+  assert.deepEqual(flags(three, { now: noon, crew: three.assignedCrew, timeEntries: entries }), [], 'tomorrow\'s crew is not flagged today');
+  // The first visit's status does not carry to the 13:00 visit, and a first-visit arrival does not cover it either.
+  const started = { ...split, pipelineStatus: 'in_progress', status: 'in_progress', arrivedAt: '2026-09-22T14:05:00Z' };
+  assert.deepEqual(flags(visitRow(started, started.assignmentSegments[0]), { now: noon }), []);
+  assert.deepEqual(kinds(flags(visitRow(started, started.assignmentSegments[1]), { now: at('2026-09-22T19:30:00Z') })), [], 'a same-day arrival covers a later visit that day');
+  // A day-2 segment today on a job whose hull started yesterday is flagged.
+  const dayTwo = job({ date: '2026-09-21', time: '08:00', endDate: '2026-09-22', assignmentSegments: [{ id: 'd1', date: '2026-09-21', time: '08:00', endTime: '12:00', assignedCrew: ['crew-a'] }, { id: 'd2', date: '2026-09-22', time: '09:00', endTime: '12:00', assignedCrew: ['crew-a'] }] });
+  assert.deepEqual(kinds(flags(visitRow(dayTwo, dayTwo.assignmentSegments[1]), { now: noon })), ['late']);
+  // A multi-day job still "in progress" from yesterday needs today's start to count as arrived on day 2.
+  const carried = { ...dayTwo, pipelineStatus: 'in_progress', status: 'in_progress', startedAt: '2026-09-21T14:30:00Z' };
+  assert.deepEqual(kinds(flags(visitRow(carried, carried.assignmentSegments[1]), { now: noon })), ['late']);
+  assert.deepEqual(flags(visitRow({ ...carried, fieldExecution: { visits: { '2026-09-22': { status: 'in_progress', startedAt: '2026-09-22T15:05:00Z' } } } }, carried.assignmentSegments[1]), { now: noon }), []);
+});
+
+// Finding 1: the whole timecard history is indexed once per array, so a render stays fast on a phone.
+test('thousands of historical time entries cost one indexing pass, not one date format per entry per member', () => {
+  const history = [];
+  for (let i = 0; i < 5000; i++) history.push({ id: `old-${i}`, employee: `crew-${i % 40}`, clockInAt: new Date(at('2024-01-01T15:00:00Z') + i * 3 * 3600000).toISOString(), clockOutAt: null, status: 'submitted' });
+  history.push({ id: 'today', employee: 'crew-1', clockInAt: '2026-09-22T13:50:00Z', status: 'active' });
+  const rows = Array.from({ length: 12 }, (_, n) => job({ id: `job-${n}`, time: '08:00' }));
+  const crew = ['crew-1', 'crew-2', 'crew-3', 'Crew Four'], now = at('2026-09-22T18:00:00Z');
+  const started = performance.now();
+  for (let render = 0; render < 5; render++) for (const row of rows) flags(row, { now, crew, timeEntries: history });
+  const elapsed = performance.now() - started;
+  assert.deepEqual(flags(rows[0], { now, crew, timeEntries: history })[1].members, ['crew-2', 'crew-3', 'Crew Four']);
+  assert.ok(elapsed < 400, `5 renders of 12 rows × 4 crew over 5,001 entries took ${Math.round(elapsed)} ms`);
+  // A new array (the next poll) is indexed again, so a fresh clock-in shows up.
+  const next = [...history, { id: 'late-in', employee: 'crew-2', clockInAt: '2026-09-22T17:00:00Z' }];
+  assert.deepEqual(flags(rows[0], { now, crew, timeEntries: next })[1].members, ['crew-3', 'Crew Four']);
+});
+
+test('the agenda flags each segment of a split job on its own row and Needs attention counts each person once', () => {
+  // The Hub's fixed clock is 2026-09-22 12:00 in Denver; nobody has clocked in.
+  const p = hub({ timeEntries: [] });
+  p.jobsCache = [
+    job({ id: 'split-job', customer: 'Synthetic Split', time: '08:00', endTime: '17:00', endDate: '2026-09-23', assignedCrew: ['crew-a', 'crew-b'], assignmentSegments: [
+      { id: 'seg-1', date: '2026-09-22', time: '08:00', endTime: '10:00', assignedCrew: ['crew-a'] },
+      { id: 'seg-2', date: '2026-09-22', time: '10:30', endTime: '13:00', assignedCrew: ['crew-a'] },
+      { id: 'seg-3', date: '2026-09-22', time: '15:00', endTime: '17:00', assignedCrew: ['crew-b'] },
+      { id: 'seg-4', date: '2026-09-23', time: '08:00', endTime: '12:00', assignedCrew: ['crew-c'] }] }),
+    job({ id: 'day-two', customer: 'Synthetic Day Two', date: '2026-09-21', time: '08:00', endDate: '2026-09-22', status: 'in_progress', pipelineStatus: 'in_progress', startedAt: '2026-09-21T14:30:00Z', assignmentSegments: [
+      { id: 'd1', date: '2026-09-21', time: '08:00', endTime: '12:00', assignedCrew: ['crew-d'] }, { id: 'd2', date: '2026-09-22', time: '09:00', endTime: '12:00', assignedCrew: ['crew-d'] }] }),
+    job({ id: 'promised', customer: 'Synthetic Promise', time: '11:30', endTime: '14:00', arrivalWindowStart: null, arrivalWindowEnd: null, arrivalWindow: '11:30 AM – 12:30 PM', assignedCrew: ['crew-a'] }),
+  ];
+  const html = p.api.agenda(), articles = html.split('<article>').slice(1);
+  const at = time => articles.find(part => part.startsWith(`<time>${time}`)) || '';
+  assert.match(at('8:00 AM'), /<li class="red">Late · due 8:15 AM<\/li><li class="amber">Not clocked in: crew-a<\/li>/);
+  assert.match(at('10:30 AM'), /Late · due 10:45 AM/);
+  assert.doesNotMatch(at('3:00 PM'), /ops-field-flags/, 'the 15:00 crew is not due yet');
+  assert.match(at('9:00 AM'), /Synthetic Day Two/); assert.match(at('9:00 AM'), /Late · due 9:15 AM/);
+  assert.match(at('11:30 AM'), /<li class="amber">Not en route<\/li>/, 'inside the 11:30–12:30 promise it is not late');
+  assert.doesNotMatch(html, /crew-c/, 'tomorrow\'s crew is nowhere on today\'s flags');
+  const attention = p.api.attention();
+  assert.match(attention, /3 jobs flagged today/);
+  assert.match(attention, /2 late · 1 not en route · 2 crew members not clocked in\./, 'crew-a is late to three visits but counted once');
 });

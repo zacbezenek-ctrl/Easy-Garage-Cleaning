@@ -1,19 +1,28 @@
 /* FIELD-FLAGS: when today's crew is late, not en route or not clocked in, for the Hub's Today agenda (employee-suite.js).
    One pure rule with an injected clock, run as a classic script in the Hub (window.EGCArrivalDeadline) and imported on
-   the server through functions/_lib/arrival-deadline.js, so other screens can reuse it. Only a job dated today in
-   Denver gets flags; a walkthrough, a closed job or a row missing its date or time gets none.
+   the server through functions/_lib/arrival-deadline.js, so other screens can reuse it. A row is one visit: a job, or one
+   of its assignment segments (visitRow, the way dispatch-segments.js jobSegments() reads them), with that visit's date,
+   time and crew. Only a visit dated today in Denver gets flags; a walkthrough, a closed job or a visit missing its date or
+   time gets none.
    - Late: not arrived by the end of the arrival window, or by the scheduled start plus 15 minutes when there is none.
-   - Not en route: not dispatched by 30 minutes before the scheduled start (only until the job is late).
+     The window is the saved arrivalWindowStart/End, else the label dispatch saved with the default window
+     (formatArrivalWindow's 'H:MM AM – H:MM PM'); it belongs to the job's first visit only.
+   - Not en route: not dispatched by 30 minutes before the scheduled start (only until the visit is late).
    - Not clocked in: a scheduled crew member with no clock-in today once the scheduled start has passed. The caller
-     passes the time entries it already holds; null means they are unknown, and then this flag is not shown. */
+     passes the time entries it already holds (the whole history is fine: it is indexed once per array); null means they
+     are unknown, and then this flag is not shown.
+   Arrival and dispatch count only when recorded today in Denver and after the visit was last restored (restoredAt, as
+   customer-portal.js portalStatus does), or from the job's canonical status on its first visit: a restored or later-day
+   visit never inherits an earlier arrival. */
 (function(root){
 'use strict';
 const ZONE='America/Denver',LATE_GRACE_MS=15*60000,EN_ROUTE_LEAD_MS=30*60000;
-const CLOSED=new Set(['completed','complete','done','cancelled','canceled','no_show','noshow','no-show','archived','closed']);
-const ARRIVED=new Set(['arrived','in_progress','completed']),MOVING=new Set(['dispatched','en_route','on_the_way']);
+const CLOSED=new Set(['completed','complete','done','cancelled','canceled','no_show','noshow','no-show','archived','closed','invoiced','paid','review_requested']);
+const ARRIVED=new Set(['arrived','in_progress']),MOVING=new Set(['dispatched']);
+const FORMAT=new Intl.DateTimeFormat('en-US',{timeZone:ZONE,hourCycle:'h23',year:'numeric',month:'2-digit',day:'2-digit',hour:'2-digit',minute:'2-digit',second:'2-digit'});
 const validDate=value=>typeof value==='string'&&/^\d{4}-\d{2}-\d{2}$/.test(value)&&new Date(value+'T12:00:00Z').toISOString().slice(0,10)===value;
 const clock=value=>{const match=/^(\d{2}):(\d{2})$/.exec(typeof value==='string'?value.trim():'');return match&&Number(match[1])<24&&Number(match[2])<60?Number(match[1])*60+Number(match[2]):null};
-const parts=ms=>Object.fromEntries(new Intl.DateTimeFormat('en-US',{timeZone:ZONE,hourCycle:'h23',year:'numeric',month:'2-digit',day:'2-digit',hour:'2-digit',minute:'2-digit',second:'2-digit'}).formatToParts(new Date(ms)).map(p=>[p.type,p.value]));
+const parts=ms=>Object.fromEntries(FORMAT.formatToParts(new Date(ms)).map(p=>[p.type,p.value]));
 const offset=ms=>{const p=parts(ms);return Date.UTC(Number(p.year),Number(p.month)-1,Number(p.day),Number(p.hour)%24,Number(p.minute),Number(p.second))-Math.floor(ms/1000)*1000};
 function denverDate(now){const ms=typeof now==='number'?now:Date.parse(now);if(!Number.isFinite(ms))return'';const p=parts(ms);return`${p.year}-${p.month}-${p.day}`}
 // Denver wall clock (date + minutes after midnight) to an instant, across the DST change.
@@ -22,45 +31,85 @@ function denverInstant(date,minutes){
   const [y,m,d]=date.split('-').map(Number),wall=Date.UTC(y,m-1,d)+minutes*60000;
   const first=wall-offset(wall);return wall-offset(first);
 }
+const nextDate=date=>new Date(Date.parse(date+'T12:00:00Z')+86400000).toISOString().slice(0,10);
 const at=value=>{const ms=Date.parse(typeof value==='string'?value:'');return Number.isFinite(ms)?ms:null};
-const stage=job=>String(job?.fieldExecution?.activity||job?.pipelineStatus||job?.status||'').toLowerCase();
-function closed(job){const status=String(job?.status||'').toLowerCase(),pipeline=String(job?.pipelineStatus||'').toLowerCase();return CLOSED.has(status)||CLOSED.has(pipeline)||Boolean(job?.completedAt||job?.cancelledAt)}
-const arrived=job=>Boolean(at(job?.arrivedAt)||at(job?.startedAt))||ARRIVED.has(stage(job))||ARRIVED.has(String(job?.status||'').toLowerCase());
-const moving=job=>arrived(job)||Boolean(at(job?.dispatchedAt))||MOVING.has(stage(job));
+const stage=job=>String(job?.pipelineStatus||job?.status||'scheduled').toLowerCase();
+const closed=job=>CLOSED.has(String(job?.status||'').toLowerCase())||CLOSED.has(String(job?.pipelineStatus||'').toLowerCase())||Boolean(job?.completedAt||job?.cancelledAt);
+// One visit: the job itself, or one assignment segment with its own date, time and crew. firstVisit marks the visit the
+// job's own date/time (and so its arrival window and canonical status) describe.
+function visitRow(job,segment=null){
+  if(!segment||segment===job)return{...job,firstVisit:true};
+  const crew=Array.isArray(segment.assignedCrew)?segment.assignedCrew.filter(name=>typeof name==='string'):[];
+  return{...job,assignmentSegments:null,segmentId:typeof segment.id==='string'?segment.id:null,date:segment.date||'',time:segment.time||'',endDate:segment.endDate||segment.date||'',endTime:segment.endTime||'',
+    assignedCrew:crew,assignedTo:crew.join(', '),crewLead:segment.crewLead||null,firstVisit:segment.date===job.date&&segment.time===job.time};
+}
+// A field timestamp counts for this visit when it was recorded on the visit's Denver day, after any restore.
+function current(job,value,date){const ms=at(value),restored=at(job?.restoredAt);return ms!==null&&!(restored!==null&&ms<=restored)&&denverDate(ms)===date}
+function arrived(row){
+  const date=row.date,visit=row.fieldExecution?.visits?.[date];
+  return current(row,row.arrivedAt,date)||current(row,row.startedAt,date)||current(row,visit?.startedAt,date)||row.firstVisit===true&&ARRIVED.has(stage(row));
+}
+const moving=row=>arrived(row)||current(row,row.dispatchedAt,row.date)||row.firstVisit===true&&MOVING.has(stage(row));
 function startAt(job){const minutes=clock(job?.time);return minutes===null?null:denverInstant(job?.date,minutes)}
-// The window end counts only when both ends are valid and the end comes after the start (dispatch-arrival.js).
+// The label dispatch saves with the default window (dispatch-arrival.js formatArrivalWindow), read back only in that form.
+function labelMinutes(label){
+  const match=/^(\d{1,2}):(\d{2}) (AM|PM) – (\d{1,2}):(\d{2}) (AM|PM)$/.exec(typeof label==='string'?label:'');
+  if(!match)return null;
+  const read=(h,m,half)=>{const hour=Number(h),minute=Number(m);if(hour<1||hour>12||minute>59)return null;return(hour%12+(half==='PM'?12:0))*60+minute};
+  const start=read(match[1],match[2],match[3]),end=read(match[4],match[5],match[6]);
+  return start===null||end===null||end<=start?null:{start,end};
+}
+// The window belongs to the job's first visit: saved ends when both are valid and in order, else the saved label.
 function arrivalDeadline(job){
   const start=startAt(job);if(start===null)return null;
-  const windowStart=clock(job?.arrivalWindowStart),windowEnd=clock(job?.arrivalWindowEnd);
-  if(windowStart!==null&&windowEnd!==null&&windowEnd>windowStart)return denverInstant(job.date,windowEnd);
+  if(job.firstVisit!==false){
+    const windowStart=clock(job?.arrivalWindowStart),windowEnd=clock(job?.arrivalWindowEnd);
+    if(windowStart!==null&&windowEnd!==null&&windowEnd>windowStart)return denverInstant(job.date,windowEnd);
+    const label=job?.arrivalWindowStart==null&&job?.arrivalWindowEnd==null?labelMinutes(job?.arrivalWindow):null,end=label?denverInstant(job.date,label.end):null;
+    if(end!==null&&end>start)return end;
+  }
   return start+LATE_GRACE_MS;
 }
 function enRouteDeadline(job){const start=startAt(job);return start===null?null:start-EN_ROUTE_LEAD_MS}
 const key=value=>String(value||'').trim().toLowerCase(),loose=value=>key(value).replace(/[^a-z0-9]/g,'');
-function memberClockedIn(member,entries,date,now){
+// Who clocked in on a Denver day: one pass over the entries per array and day, kept until either changes, so a long
+// timecard history costs one scan per refresh and every member check is a lookup. Each name form maps to the earliest
+// clock-in that day.
+let index={entries:null,date:'',firsts:null};
+function clockIns(entries,date){
+  if(index.entries===entries&&index.date===date)return index.firsts;
+  const from=denverInstant(date,0),to=denverInstant(nextDate(date),0),firsts=new Map();
+  for(const entry of entries){
+    if(!entry||entry.approvalStatus==='rejected')continue;
+    const ms=at(entry.clockInAt);if(ms===null||ms<from||ms>=to)continue;
+    for(const name of[entry.employee,entry.employeeId,entry.username,entry.employeeName])for(const form of[key(name)&&'='+key(name),loose(name)&&'~'+loose(name)])if(form&&!(firsts.get(form)<=ms))firsts.set(form,ms);
+  }
+  index={entries,date,firsts};return firsts;
+}
+function memberClockedIn(member,firsts,now){
   const exact=key(member),fuzzy=loose(member);if(!exact)return true;
-  return entries.some(entry=>{
-    if(!entry||entry.approvalStatus==='rejected')return false;
-    const clockIn=at(entry.clockInAt);if(clockIn===null||clockIn>now||denverDate(clockIn)!==date)return false;
-    return[entry.employee,entry.employeeId,entry.username,entry.employeeName].some(name=>key(name)===exact||fuzzy&&loose(name)===fuzzy);
-  });
+  return firsts.get('='+exact)<=now||Boolean(fuzzy)&&firsts.get('~'+fuzzy)<=now;
 }
 // Rows the agenda shows: walkthroughs and blocked time are not crew arrivals.
 const crewJob=job=>Boolean(job)&&!['walkthrough','blocked','availability'].includes(String(job.type||'job'));
-/* flags(job,{now,crew,timeEntries}) → [{kind:'late'|'not_en_route'|'not_clocked_in',tone:'red'|'amber',label,members?}]
-   now: ms or ISO. crew: the scheduled crew's usernames or names. timeEntries: the clock-ins the caller holds, or null. */
+/* flags(row,{now,crew,timeEntries}) → [{kind:'late'|'not_en_route'|'not_clocked_in',tone:'red'|'amber',label,members?}]
+   row: a job or a visitRow(job, segment). now: ms or ISO. crew: that visit's crew usernames or names. timeEntries: the
+   clock-ins the caller holds, or null. */
 function flags(job,{now,crew=[],timeEntries=null}={}){
   const nowMs=typeof now==='number'?now:Date.parse(now);
-  if(!Number.isFinite(nowMs)||!crewJob(job)||closed(job)||job.date!==denverDate(nowMs))return[];
-  const start=startAt(job);if(start===null)return[];
-  const output=[],deadline=arrivalDeadline(job),late=!arrived(job)&&nowMs>=deadline;
+  if(!Number.isFinite(nowMs)||!crewJob(job)||closed(job))return[];
+  const row=job.firstVisit===undefined?{...job,firstVisit:true}:job;
+  if(row.date!==denverDate(nowMs))return[];
+  const start=startAt(row);if(start===null)return[];
+  const output=[],late=!arrived(row)&&nowMs>=arrivalDeadline(row);
   if(late)output.push({kind:'late',tone:'red',label:'Late'});
-  else if(!moving(job)&&nowMs>=enRouteDeadline(job))output.push({kind:'not_en_route',tone:'amber',label:'Not en route'});
+  else if(!moving(row)&&nowMs>=enRouteDeadline(row))output.push({kind:'not_en_route',tone:'amber',label:'Not en route'});
   if(Array.isArray(timeEntries)&&nowMs>=start){
-    const missing=[...new Set((Array.isArray(crew)?crew:[]).map(name=>String(name||'').trim()).filter(Boolean))].filter(name=>!memberClockedIn(name,timeEntries,job.date,nowMs));
+    const firsts=clockIns(timeEntries,row.date);
+    const missing=[...new Set((Array.isArray(crew)?crew:[]).map(name=>String(name||'').trim()).filter(Boolean))].filter(name=>!memberClockedIn(name,firsts,nowMs));
     if(missing.length)output.push({kind:'not_clocked_in',tone:'amber',label:missing.length===1?'1 not clocked in':`${missing.length} not clocked in`,members:missing});
   }
   return output;
 }
-root.EGCArrivalDeadline=Object.freeze({flags,arrivalDeadline,enRouteDeadline,startAt,denverDate,denverInstant,LATE_GRACE_MS,EN_ROUTE_LEAD_MS});
+root.EGCArrivalDeadline=Object.freeze({flags,visitRow,arrivalDeadline,enRouteDeadline,startAt,denverDate,denverInstant,LATE_GRACE_MS,EN_ROUTE_LEAD_MS});
 })(typeof window!=='undefined'?window:globalThis);
