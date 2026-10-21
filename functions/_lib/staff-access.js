@@ -20,7 +20,8 @@ import { payHidden, seesOthersPay } from './pay-visibility.js';
 // STAFF-ACCESS (EGC_STAFF_PASSWORD_RESET): staff sign-in resets, self-service password changes, account approval with a
 // role and (owner) a starting rate, and the owner's 'Apply rate to open weeks'. Every change is one atomic commit of the
 // sealed account, profile or timecards with a create-only receipt and a SEC-02 audit entry; every account change ends
-// the person's Hub sessions (sessionVersion) and their Firebase data sessions (firebase-revocation.js), intent first.
+// the person's Firebase data sessions (firebase-revocation.js), intent first, and every change but new roles on an account
+// that stays approved also ends their Hub sessions (sessionVersion; LIVE-ROLES).
 // Nothing is sent to anyone: a reset link is returned for the manager to copy.
 export const STAFF_ACCESS_RECEIPTS = 'staffAccessOperations';
 // /api/staff-setup accepts only this origin, so the reset link is always on it.
@@ -234,7 +235,9 @@ export function createStaffAccessService({ store, env = {}, now = () => new Date
       const rolesChanged = approved && canonicalJson(storedRoles) !== canonicalJson(roles), statusChanged = account.status !== decision;
       // The first approval day: kept once stamped; an account approved before approvedAt existed keeps its last review time.
       const approvedAt = instant(account.approvedAt) || (account.status === 'approved' && instant(account.reviewedAt)) || (approved ? at : '');
-      const next = { ...account, status: decision, sessionVersion: statusChanged || rolesChanged ? crypto.randomUUID() : String(account.sessionVersion || ''), role: namedStaffRole(account), businessAccess: false,
+      // LIVE-ROLES: only a status change (approving, rejecting) ends the person's Hub sessions. New roles on an account that
+      // stays approved reach its next request without a sign-in, as a Staff directory role change does (staff-directory.js).
+      const next = { ...account, status: decision, sessionVersion: statusChanged ? crypto.randomUUID() : String(account.sessionVersion || ''), role: namedStaffRole(account), businessAccess: false,
         reviewedAt: at, reviewedBy: text(actor, 60), updatedAt: at, reviewRequestId: requestId, ...(approvedAt ? { approvedAt } : {}),
         ...(approved ? { staffRoles: roles, rolesUpdatedAt: at, rolesUpdatedBy: actor } : {}), ...(rate !== null ? { hourlyRate: rate, payType } : {}) };
       // The profile gets the starting rate on its dated schedule (as set_pay would) and mirrors the roles. The rate takes
