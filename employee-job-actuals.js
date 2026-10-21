@@ -6,7 +6,10 @@
    cost, goods tax) on the Cost settings card (POST /api/job-actuals, owner only; managers see them read-only). The owner
    also gets an Owner targets card (GET/POST /api/owner-economics, owner only, never shown to a manager): the labor
    baseline, lead wage, truck rental and sales targets the Playbook and Scorecard read. Registered in
-   employee-hub-screens.js and runs standalone with the UI kit (window.EGCHubKit). */
+   employee-hub-screens.js and runs standalone with the UI kit (window.EGCHubKit).
+   Commission (the per-job lines, the totals and the contribution after them) is the owner's only: the server leaves it
+   out for a manager (commissionShown false, FUNNEL-METRICS §8.3) and this screen then shows no commission column,
+   Contribution figure or CSV commission column. */
 (function(){
 'use strict';
 const SCREEN='job_actuals',PATH='/api/job-actuals',PREFIX='job_actuals';
@@ -47,10 +50,13 @@ const hours=value=>typeof value==='number'&&Number.isFinite(value)?value.toFixed
 const signed=(value,format)=>typeof value==='number'&&Number.isFinite(value)?(value>0?'+':'')+format(value):'—';
 const pct=value=>typeof value==='number'&&Number.isFinite(value)?value.toFixed(1)+'%':'—';
 const day=value=>{try{return value?new Intl.DateTimeFormat('en-US',{timeZone:'UTC',month:'short',day:'numeric',year:'numeric'}).format(new Date(value+'T12:00:00Z')):'—';}catch{return'—';}};
-function validTotals(t){return Boolean(t&&int(t.jobs)&&int(t.revenueCents)&&int(t.commissionCents)&&int(t.marginCommissionCents)&&int(t.grossMarginCents)&&typeof t.upperBound==='boolean');}
-function validRow(r){return Boolean(r&&typeof r.jobId==='string'&&r.billed&&r.actual&&r.truckLoads&&int(r.truckLoads.count)&&r.commission&&Array.isArray(r.commission.lines)&&int(r.commission.totalCents)&&(r.revenueCents===null||int(r.revenueCents))&&(r.grossMarginCents===null||int(r.grossMarginCents))&&Array.isArray(r.reasons));}
+// The commission view is the owner's (the server's commissionShown); a manager's response carries none of it.
+const paid=()=>S.data?.commissionShown===true;
+function validTotals(t,pay){return Boolean(t&&int(t.jobs)&&int(t.revenueCents)&&(!pay||int(t.commissionCents)&&int(t.marginCommissionCents))&&int(t.grossMarginCents)&&typeof t.upperBound==='boolean');}
+function validRow(r,pay){return Boolean(r&&typeof r.jobId==='string'&&r.billed&&r.actual&&r.truckLoads&&int(r.truckLoads.count)&&(!pay||r.commission&&Array.isArray(r.commission.lines)&&int(r.commission.totalCents))&&(r.revenueCents===null||int(r.revenueCents))&&(r.grossMarginCents===null||int(r.grossMarginCents))&&Array.isArray(r.reasons));}
 function valid(data){
-  return Boolean(data&&data.ok===true&&data.window&&data.totals&&validTotals(data.totals.last30)&&validTotals(data.totals.last90)&&Array.isArray(data.rows)&&data.rows.every(validRow)
+  const pay=data?.commissionShown===true;
+  return Boolean(data&&data.ok===true&&data.window&&data.totals&&validTotals(data.totals.last30,pay)&&validTotals(data.totals.last90,pay)&&Array.isArray(data.rows)&&data.rows.every(r=>validRow(r,pay))
     &&data.settings&&typeof data.canEdit==='boolean'&&SETTINGS.every(s=>data.settings[s.key]===null||int(data.settings[s.key]))
     &&(data.estimatorAccuracy===undefined||validAccuracy(data.estimatorAccuracy)));
 }
@@ -124,8 +130,9 @@ async function save(){
 function exportCsv(){
   const rows=S.data?.rows||[];
   const num=value=>value===null||value===undefined?'':String(value),dollars=value=>int(value)?(value/100).toFixed(2):'';
-  const head=['Job ID','Date','Customer','Revenue','Billed man-hours','Actual man-hours','Actual source','Variance man-hours','Variance %','Truck loads','Loads source','Goods retail','Goods cost','Labor cost','Dump','Truck','Commission channel','Commission','Gross margin','Gross margin %','Contribution','Upper bound','Notes'];
-  const body=rows.map(r=>[r.jobId,r.date||'',r.customer,dollars(r.revenueCents),num(r.billed.manHours),num(r.actual.manHours),r.actual.source,num(r.varianceManHours),num(r.variancePercent),num(r.truckLoads.count),r.truckLoads.source,dollars(r.goodsRetailCents),dollars(r.goodsCostCents),dollars(r.laborCents),dollars(r.dumpCents),dollars(r.truckCents),r.commission.channel,dollars(r.commission.totalCents),dollars(r.grossMarginCents),num(r.grossMarginPercent),dollars(r.contributionCents),r.upperBound?'yes':'no',r.reasons.join(' ')]);
+  const pay=paid();
+  const head=['Job ID','Date','Customer','Revenue','Billed man-hours','Actual man-hours','Actual source','Variance man-hours','Variance %','Truck loads','Loads source','Goods retail','Goods cost','Labor cost','Dump','Truck',...(pay?['Commission channel','Commission']:[]),'Gross margin','Gross margin %',...(pay?['Contribution']:[]),'Upper bound','Notes'];
+  const body=rows.map(r=>[r.jobId,r.date||'',r.customer,dollars(r.revenueCents),num(r.billed.manHours),num(r.actual.manHours),r.actual.source,num(r.varianceManHours),num(r.variancePercent),num(r.truckLoads.count),r.truckLoads.source,dollars(r.goodsRetailCents),dollars(r.goodsCostCents),dollars(r.laborCents),dollars(r.dumpCents),dollars(r.truckCents),...(pay?[r.commission.channel,dollars(r.commission.totalCents)]:[]),dollars(r.grossMarginCents),num(r.grossMarginPercent),...(pay?[dollars(r.contributionCents)]:[]),r.upperBound?'yes':'no',r.reasons.join(' ')]);
   // Numbers stay plain (a leading minus is a number, not a formula); text cells get the kit's formula guard.
   const cell=value=>/^-?\d+(?:\.\d+)?$/.test(value)?value:kit().csvCell(value);
   const text=[head,...body].map(row=>row.map(cell).join(',')).join('\r\n');
@@ -140,7 +147,7 @@ function totalsCard(title,t){
       stat('Revenue',money(t.revenueCents),`${t.jobs} completed job${t.jobs===1?'':'s'}`),
       stat('Billed vs actual',`${hours(t.billedManHours)} → ${hours(t.actualManHours)} h`,t.comparedJobs?`${signed(t.varianceManHours,hours)} h (${signed(t.variancePercent,pct)}) on ${t.comparedJobs} job${t.comparedJobs===1?'':'s'}`:'No job has both yet'),
       stat('Gross margin'+bound,money(t.marginJobs?t.grossMarginCents:null),t.marginJobs?`${pct(t.grossMarginPercent)} on ${money(t.marginRevenueCents)} (${t.marginJobs} job${t.marginJobs===1?'':'s'} with hours)`:'Needs actual hours'),
-      stat('Contribution'+bound,money(t.marginJobs?t.contributionCents:null),t.marginJobs?`after ${money(t.marginCommissionCents)} commission on those jobs (${money(t.commissionCents)} on all)`:`${money(t.commissionCents)} commission on all jobs`),
+      paid()?stat('Contribution'+bound,money(t.marginJobs?t.contributionCents:null),t.marginJobs?`after ${money(t.marginCommissionCents)} commission on those jobs (${money(t.commissionCents)} on all)`:`${money(t.commissionCents)} commission on all jobs`):null,
       stat('Truck loads',String(t.truckLoads),`Goods at retail ${money(t.goodsRetailCents)}`)));
 }
 function settingsCard(){
@@ -256,22 +263,22 @@ function refreshOwnerBar(){
 }
 function jobRow(r){
   const variance=r.varianceManHours===null?'—':`${signed(r.varianceManHours,hours)} (${signed(r.variancePercent,pct)})`;
-  const commission=r.commission.lines.length?r.commission.lines.map(line=>`${line.role} ${money(line.cents)}`).join(' + '):'—';
+  const pay=paid(),commission=pay&&r.commission.lines.length?r.commission.lines.map(line=>`${line.role} ${money(line.cents)}`).join(' + '):'—';
   const margin=r.grossMarginCents===null?'—':`${money(r.grossMarginCents)} · ${pct(r.grossMarginPercent)}${r.upperBound?' ≤':''}`;
   // Each cell's content sits in one span, so on a phone the cell is one "label: value" row.
   const cell=(label,cls,...children)=>h('td',{'data-label':label,class:cls},h('span',{class:'ja-cell'},...children));
   return h('tr',{'data-job':r.jobId,class:r.varianceManHours>0?'over':''},
     cell('Date','',day(r.date)),
-    h('th',{scope:'row','data-label':'Customer'},h('span',{class:'ja-cell'},h('a',{href:`/crew/job.html?jobId=${encodeURIComponent(r.jobId)}`},r.customer||r.jobId),h('small',{},CHANNEL[r.commission.channel]||''))),
+    h('th',{scope:'row','data-label':'Customer'},h('span',{class:'ja-cell'},h('a',{href:`/crew/job.html?jobId=${encodeURIComponent(r.jobId)}`},r.customer||r.jobId),pay?h('small',{},CHANNEL[r.commission.channel]||''):null)),
     cell('Revenue','num',money(r.revenueCents)),
     cell('Billed h','num',r.billed.manHours===null?(r.billed.source==='junk_only'?'Junk only':'No labor line'):hours(r.billed.manHours)),
     cell('Actual h','num',hours(r.actual.manHours),h('small',{},SOURCE[r.actual.source]||'')),
     cell('Variance','num ja-variance',variance),
     cell('Loads','num',String(r.truckLoads.count),h('small',{},r.truckLoads.source==='crew_lead'?'Crew lead':r.truckLoads.source==='quote'?'Quoted':'Not recorded')),
     cell('Goods (retail)','num',money(r.goodsRetailCents)),
-    cell('Commission','num',money(r.commission.totalCents),r.commission.lines.length>1?h('small',{},commission):null),
+    pay?cell('Commission','num',money(r.commission.totalCents),r.commission.lines.length>1?h('small',{},commission):null):null,
     cell('Gross margin','num',margin,...r.reasons.filter(code=>REASON[code]).map(code=>h('small',{class:'ja-reason','data-reason':code},REASON[code]))),
-    cell('Contribution','num',money(r.contributionCents)));
+    pay?cell('Contribution','num',money(r.contributionCents)):null);
 }
 /* Estimator accuracy (functions/_lib/estimator-accuracy.js): estimated vs actual man-hours per job and a scorecard per
    estimator. Hours only: no revenue, margin, cost or pay is shown here. */
@@ -327,7 +334,7 @@ function table(){
   return h('section',{class:'hub-card ja-jobs','aria-label':'Completed jobs'},
     h('h2',{},'Completed jobs'),
     h('div',{class:'hub-table-scroll ja-table-scroll'},h('table',{class:'ja-table'},
-      h('thead',{},h('tr',{},['Date','Customer','Revenue','Billed h','Actual h','Variance','Loads','Goods (retail)','Commission','Gross margin','Contribution'].map(text=>h('th',{scope:'col'},text)))),
+      h('thead',{},h('tr',{},['Date','Customer','Revenue','Billed h','Actual h','Variance','Loads','Goods (retail)',...(paid()?['Commission']:[]),'Gross margin',...(paid()?['Contribution']:[])].map(text=>h('th',{scope:'col'},text)))),
       h('tbody',{},visible.map(jobRow)))),
     rows.length>visible.length?kit().button(`Show all ${rows.length} jobs`,()=>{S.showAll=true;render();}):null,
     h('p',{class:'ja-muted'},'Actual hours come from timecards clocked onto the job; without them, the crew lead\'s people × hours at Complete. ≤ marks a margin that is an upper bound.'));

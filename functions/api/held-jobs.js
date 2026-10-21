@@ -17,8 +17,9 @@
  *   from the job, a closed job); more: there are more held jobs than were counted or checked. enabled:false with the
  *   builder off (nothing else). Customers and HighLevel get nothing new here: a released job asks for its portal invitation
  *   exactly as an approval save does (releasePatch).
- * READ-BUDGET: a sweep with nothing to do reads the marker and the held job names (one query per 100); a run reads the
- *   owner's two pricing documents and each held job once.
+ * READ-BUDGET: a sweep with nothing to do reads the marker and the held job names (one query per 100, at most 10); a
+ *   run reads the owner's two pricing documents and each held job once, at most 30 storage calls for the run and 44 in
+ *   all per open (the measured worst case, tests/held-jobs.test.mjs), under Cloudflare's 50 subrequests.
  * Errors: {ok:false, code, error}; 400, 401, 403, 415, 503 retry. */
 import { getHubSession } from '../_lib/hub-session.js';
 import { MENU_APPROVALS, catalogStorage, quoteBuilderEnabled, readCompositeState, requireCatalogOwner, requireCatalogViewer } from '../_lib/catalog-store.js';
@@ -65,8 +66,8 @@ export function heldJobsHandlers({ session = getHubSession, storage = catalogSto
         try { await catalog.commit([{ collection: MENU_APPROVALS, id: HELD_RELEASE_MARKER, revision: marker?.revision || null, patch }]); }
         catch (error) { if (error?.code !== 'catalog_revision_conflict') throw error; }
         // A pass that began mid-way counts the jobs before it too; a stopped run says there are more.
-        const still = run.complete && after ? (await countHeldJobs(jobs)).count : run.waiting;
-        return reply(200, { ok: true, enabled: true, ran: true, menuVersion: version, released: run.released, held: still, more: !run.complete });
+        const counted = run.complete && after ? await countHeldJobs(jobs) : { count: run.waiting, more: false };
+        return reply(200, { ok: true, enabled: true, ran: true, menuVersion: version, released: run.released, held: counted.count, more: !run.complete || counted.more });
       } catch (error) {
         if (/^catalog_(sign_in_required|forbidden|owner_required)$/.test(error?.code || '')) return reply(error.status, { ok: false, code: error.code, error: error.message });
         return reply(503, { ok: false, code: 'held_jobs_unavailable', error: 'The held jobs could not be checked. They stay held; try again in a moment.' });

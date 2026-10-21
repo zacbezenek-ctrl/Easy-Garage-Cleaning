@@ -6,7 +6,8 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
 import { compositeApproval, priceCompositeQuote } from '../functions/_lib/composite-quote.js';
-import { releaseAllHeldHandoffs, saveWalkthroughHandoff } from '../functions/_lib/walkthrough-handoff.js';
+import { HELD_SUBREQUEST_BUDGET, releaseAllHeldHandoffs, saveWalkthroughHandoff } from '../functions/_lib/walkthrough-handoff.js';
+import { readCompositeState } from '../functions/_lib/catalog-store.js';
 import { HELD_QUERY_MAX, countHeldJobs, heldJobIds, heldJobsQuery } from '../functions/_lib/handoff-price-holds.js';
 import { HELD_RELEASE_MARKER, heldJobsHandlers } from '../functions/api/held-jobs.js';
 import { BASE_ENV, LATER, NOW, ON_ENV, builderState, fixture, menuItem, owner, selection, signedPlan } from './helpers/estimator-fixture.mjs';
@@ -67,8 +68,8 @@ test('the sweep pages past the 25-job read limit and stops at its subrequest bud
   f.rows.set('jobs/z-half', { ...structuredClone(half), id: 'z-half', revision: 'zr' });
   f.rows.delete(`jobs/${half.id}`);
   const reads = [], store = heldStore(f, reads), version = builderState().menu.menuVersion;
-  // The library on its own: the default budget reads both pages (26 + 7 storage calls) and releases the 31st job.
-  const all = await releaseAllHeldHandoffs(store, owner, LATER, { env: ON_ENV, compositeState: async () => builderState(), source: 'menu.version' });
+  // The library on its own, with room for both pages (26 + 7 storage calls and the release): the 31st job is released.
+  const all = await releaseAllHeldHandoffs(store, owner, LATER, { env: ON_ENV, compositeState: async () => builderState(), source: 'menu.version', budget: 40 });
   assert.deepEqual([all.released, all.waiting, all.complete, reads], [['z-half'], 30, true, [[26, ''], [26, 'a-held-24']]]);
   f.rows.set('jobs/z-half', { ...structuredClone(half), id: 'z-half', revision: 'zr2' });
   // Through the API with a budget of 20: the first open checks 18 jobs (the query and 18 reads), stops and records where.
@@ -86,6 +87,33 @@ test('the sweep pages past the 25-job read limit and stops at its subrequest bud
   const third = await (await post(handlers, { action: 'sweep' })).json();
   assert.deepEqual([third.ran, third.held], [false, 30]);
   assert.deepEqual(await countHeldJobs(store), { count: 30, more: false });
+});
+
+// Every storage call one open makes, counted (Cloudflare Free allows 50 subrequests per invocation): the marker read,
+// the owner's two pricing documents, the release run (at most HELD_SUBREQUEST_BUDGET), the marker write and, on the open
+// that finishes a pass begun mid-way, the count of the jobs still held (one query per 100, at most 10). The worst case is
+// that last open with a full run: 1,025 held jobs that never pass and one that does, last in id order, so the last open
+// checks 26 jobs and releases the 27th (30 run calls) and then counts (10 queries): 44.
+test('one open of the sweep stays within Cloudflare\'s 50 subrequests: at most 44, on the last open of a long pass', async () => {
+  const f = fixture(), half = await signHalfLoad(f);
+  const waiting = { ...structuredClone(half), compositeQuote: undefined, pricesPendingApproval: { ...half.pricesPendingApproval, reason: 'walkthrough_priced' } };
+  for (let i = 0; i < 1025; i++) f.rows.set(`jobs/a-held-${String(i).padStart(4, '0')}`, { ...structuredClone(waiting), id: `a-held-${String(i).padStart(4, '0')}`, revision: `ar${i}` });
+  f.rows.set('jobs/z-half', { ...structuredClone(half), id: 'z-half', revision: 'zr' });
+  f.rows.delete(`jobs/${half.id}`);
+  let calls = 0;
+  const count = fn => async (...args) => { calls++; return fn(...args); };
+  const base = heldStore(f), jobs = { ...base, heldJobIds: count(base.heldJobIds), read: count(base.read), commit: count(base.commit) };
+  const rows = catalogStore(), catalog = { ...rows, read: count(rows.read), commit: count(rows.commit) };
+  const handlers = heldJobsHandlers({ session: async () => owner, storage: () => catalog, held: () => jobs, compositeState: () => readCompositeState(catalog), now: () => new Date(LATER) });
+  const marker = () => rows.rows.get(`pricingMenuApprovals/${HELD_RELEASE_MARKER}`), perOpen = [];
+  let answer;
+  do { calls = 0; answer = await (await post(handlers, { action: 'sweep' })).json(); perOpen.push(calls); } while (!marker()?.menuVersion && perOpen.length < 100);
+  assert.equal(HELD_SUBREQUEST_BUDGET, 30);
+  assert.deepEqual([perOpen.length, answer.released, answer.held, answer.more, f.job('z-half').pricesPendingApproval], [38, ['z-half'], 1000, true, null], 'the count stops at 1,000 and says there are more');
+  assert.equal(Math.max(...perOpen), 44, `storage calls per open: ${perOpen.join(', ')}`);
+  assert.deepEqual([perOpen.at(-1), new Set(perOpen.slice(0, -1))], [44, new Set([33])], 'a stopped open: the marker, the pricing, 29 run calls and the marker write');
+  calls = 0; await post(handlers, { action: 'sweep' });
+  assert.equal(calls, 11, 'later opens only count: the marker and 10 name queries');
 });
 
 test('a job read that fails waits and the run goes on; a release that does not commit is tried again before the version is recorded', async () => {

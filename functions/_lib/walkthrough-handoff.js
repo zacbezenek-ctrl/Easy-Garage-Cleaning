@@ -577,11 +577,12 @@ async function releaseHeldPage(store, actor, now, pricing, { source, requestId: 
 /** EGC_QUOTE_BUILDER_ENABLED: the held jobs after the id `after`, page by page (HELD_RELEASE_LIMIT each, in id order), so
  * jobs that keep waiting never starve the ones after them. Used after a pricing-menu change, when no owner approval is
  * saved (POST /api/held-jobs: the menu file's own approvals, e.g. the truck loads of 2026-10-21) and by the owner's
- * Release held jobs button. budget: the storage calls the run may make (HELD_SUBREQUEST_BUDGET, under Cloudflare's 50
- * per invocation with the route's own reads); a run that reaches it stops cleanly and answers where to continue (next).
+ * Release held jobs button. budget: the storage calls the run may make (HELD_SUBREQUEST_BUDGET: with the route's own
+ * reads and its count, at most 44 per open, measured in tests/held-jobs.test.mjs, under Cloudflare's 50 per invocation);
+ * a run that reaches it stops cleanly and answers where to continue (next).
  * complete: every held job after `after` was checked; failed: jobs that passed the gate but did not commit (they stay
  * held). => {released:[jobId], failed:[jobId], waiting:int, complete:boolean, next} or null with the builder off. */
-export const HELD_SUBREQUEST_BUDGET = 40;
+export const HELD_SUBREQUEST_BUDGET = 30;
 export async function releaseAllHeldHandoffs(store, actor, now = new Date().toISOString(), { env = {}, compositeState = compositeStateDefault, source = 'menu.version', requestId = '', limit = HELD_RELEASE_LIMIT, after = '', budget = HELD_SUBREQUEST_BUDGET } = {}) {
   if (!quoteBuilderEnabled(env)) return null;
   const pricing = await compositeState(env), left = { left: budget }, released = [], failed = [];
