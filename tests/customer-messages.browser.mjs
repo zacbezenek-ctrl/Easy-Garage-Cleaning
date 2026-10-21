@@ -24,6 +24,9 @@ const seed = async () => {
     const id = await customerMessageAlertId(jobId, messageId), alert = newCustomerMessageAlert(job, jobId, { id: messageId, body, authorName, createdAt: ago(minutes) }, ago(minutes));
     docs.set(id, { id, ...alert, task: { ...alert.task, status: job.highlevelContactId ? (minutes > 100 ? 'pending' : 'created') : 'needs_contact', nextAttemptAt: '2099-01-01T00:00:00.000Z' }, revision: 'r0' });
   }
+  // Dana's entry holds three messages (one entry per job, PORTAL-INBOX).
+  const dana = [...docs.values()][0];
+  Object.assign(dana, { messageCount: 3, messages: [{ id: 'customer-a0', authorName: 'Dana Customer', body: 'Hi!', createdAt: ago(9) }, { id: 'customer-a1', authorName: 'Dana Customer', body: 'Quick question about parking.', createdAt: ago(6) }, ...dana.messages] });
   return docs;
 };
 const docs = await seed();
@@ -85,13 +88,15 @@ try {
     const screen = page.locator('#screen .egc-customer-messages'), home = page.locator('#home .egc-customer-messages');
     await screen.locator('.cm-item').first().waitFor();
     assert.equal(await page.locator('[data-ops-tab="customer_messages"] .cm-nav-badge').textContent(), '3', `${width}: the nav badge counts open messages`);
-    assert.equal(await page.locator('[data-ops-tab="customer_messages"] .cm-nav-badge').getAttribute('aria-label'), '3 unread customer messages');
+    assert.equal(await page.locator('[data-ops-tab="customer_messages"] .cm-nav-badge').getAttribute('aria-label'), '3 customer conversations waiting');
     assert.equal(await screen.locator('[data-cm-count]').textContent(), '3');
     assert.equal(await home.locator('.cm-item').count(), 3, `${width}: the home widget lists them too`);
     const items = screen.locator('.cm-item');
     assert.equal(await items.count(), 3);
-    assert.deepEqual(await items.locator('.cm-who').allTextContents(), ['Dana Customer', 'Robin Walker', 'Sam Park for Lee Park'], 'newest first; a collaborator is named for the customer');
-    assert.match(await items.nth(0).locator('.cm-body').textContent(), /side door code is 4521/);
+    assert.deepEqual(await items.locator('.cm-who').evaluateAll(nodes => nodes.map(node => node.firstChild.textContent)), ['Dana Customer', 'Robin Walker', 'Sam Park for Lee Park'], 'newest first; a collaborator is named for the customer');
+    assert.equal(await items.nth(0).locator('.cm-many').textContent(), '3 messages', `${width}: one entry counts the job's messages`);
+    assert.deepEqual(await items.nth(0).locator('.cm-body').allTextContents(), ['Dana Customer: Hi!', 'Dana Customer: Quick question about parking.', 'Dana Customer: The side door code is 4521. Please park on the street, the driveway is being sealed.']);
+    assert.equal(await items.nth(1).locator('.cm-many').count(), 0, 'a single message has no count');
     assert.match(await items.nth(0).locator('.cm-when').textContent(), /^3 min ago · Oct 21/);
     assert.equal(await items.nth(0).locator('a', { hasText: 'Open job' }).getAttribute('href'), '/crew/job.html?jobId=job-1');
     assert.equal(await items.nth(1).locator('a', { hasText: 'Open job' }).getAttribute('href'), '/crew/gameplan.html?walkthroughId=walk-2');

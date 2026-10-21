@@ -40,7 +40,7 @@ export function customerMessageHandlers({ session = getHubSession, storage = cus
       try {
         const store = storage(env), asOf = now().toISOString(), list = await listCustomerMessages(store);
         // A HighLevel task that could not be written at the send is retried while the office has the Hub open.
-        const retry = retryDueCustomerMessageTasks(store, list.rows, { env, now: asOf, fetcher, origin: new URL(request.url).origin }).catch(() => []);
+        const retry = retryDueCustomerMessageTasks(store, { env, now: asOf, fetcher, origin: new URL(request.url).origin }).catch(() => []);
         let deferred = false;
         if (typeof waitUntil === 'function') { try { waitUntil(retry); deferred = true; } catch { /* finished below instead */ } }
         if (!deferred) await retry;

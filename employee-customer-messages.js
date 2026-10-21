@@ -52,7 +52,7 @@ function badge(){
     let mark=button.querySelector('.cm-nav-badge');
     if(!count()){mark?.remove();continue;}
     if(!mark){mark=h('span',{class:'cm-nav-badge'});button.append(mark);}
-    mark.textContent=countText();mark.setAttribute('aria-label',plural(count(),'unread customer message','unread customer messages'));
+    mark.textContent=countText();mark.setAttribute('aria-label',plural(count(),'customer conversation','customer conversations')+' waiting');
   }
 }
 function paint(){badge();for(const view of S.views)try{view.render();}catch(error){console.error('Customer messages failed to render',error);}}
@@ -70,6 +70,8 @@ async function markHandled(row,ctx,button){
   }finally{S.busy.delete(row.id);paint();}
 }
 function item(row,ctx){
+  // One entry per job: later portal messages join it until it is marked handled (PORTAL-INBOX).
+  const many=Number(row.messageCount)>1,recent=Array.isArray(row.messages)?row.messages:[],last=row.lastMessageAt||row.createdAt;
   const who=row.authorName&&row.authorName!==row.customerName?row.authorName+' for '+row.customerName:row.customerName||row.authorName||'Customer';
   const about=[row.jobType==='walkthrough'?'Walkthrough':row.serviceType||'Job',row.jobDate].filter(Boolean).join(' · ');
   const handled=h('button',{type:'button',class:'hub-btn primary','data-cm-handled':row.id},'Mark handled');
@@ -77,8 +79,9 @@ function item(row,ctx){
   const reply=row.jobType==='job'&&typeof window.opsOpenJobRoom==='function'?h('button',{type:'button',class:'hub-btn',onclick:()=>window.opsOpenJobRoom(row.jobId)},'Reply in job thread'):null;
   const task=TASK[row.highLevelTask]||'';
   return h('li',{class:'cm-item','data-cm-message':row.id},
-    h('div',{class:'cm-item-head'},h('strong',{class:'cm-who'},who),h('time',{class:'cm-when',datetime:row.createdAt||''},when(row.createdAt))),
-    h('p',{class:'cm-body'},row.body),
+    h('div',{class:'cm-item-head'},h('strong',{class:'cm-who'},who,many?h('span',{class:'cm-many'},plural(row.messageCount,'message','messages')):null),h('time',{class:'cm-when',datetime:last||''},when(last))),
+    ...(many&&recent.length>1?recent.map(message=>h('p',{class:'cm-body'},h('span',{class:'cm-from'},message.authorName+': '),message.body)):[h('p',{class:'cm-body'},row.body)]),
+    many&&row.messageCount>recent.length?h('p',{class:'cm-note'},'Showing the latest '+recent.length+'. Open the job thread for the rest.'):null,
     h('p',{class:'cm-meta'},about,task?h('span',{class:'cm-task cm-task-'+row.highLevelTask},task):null),
     h('div',{class:'cm-actions'},h('a',{class:'hub-btn',href:jobHref(row)},'Open job'),reply,handled));
 }
@@ -96,7 +99,7 @@ function body(ctx,limit){
 function frame(id,title,ctx,limit,extra){
   const total=S.data?count():null;
   return h('section',{class:'egc-customer-messages','aria-labelledby':id},
-    h('header',{class:'cm-head'},h('div',{},h('span',{class:'cm-eyebrow'},'CLIENT PORTAL'),h('h2',{id},title,total?h('span',{class:'cm-count','data-cm-count':''},countText()):null),h('p',{class:'cm-scope'},'Messages customers sent from their portal. Each stays here until someone marks it handled.'))),
+    h('header',{class:'cm-head'},h('div',{},h('span',{class:'cm-eyebrow'},'CLIENT PORTAL'),h('h2',{id},title,total?h('span',{class:'cm-count','data-cm-count':''},countText()):null),h('p',{class:'cm-scope'},'Messages customers sent from their portal, one entry per job. Each stays here until someone marks it handled.'))),
     ...body(ctx,limit),extra?.()||null);
 }
 function view(kind){

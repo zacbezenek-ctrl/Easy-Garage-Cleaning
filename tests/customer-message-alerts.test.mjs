@@ -6,7 +6,7 @@ import { readFileSync } from 'node:fs';
 import { createCustomerPortalSessionCookie } from '../functions/_lib/customer-portal.js';
 import { decodeFirestoreFields, encodeFirestoreFields } from '../functions/_lib/firestore-job.js';
 import {
-  CUSTOMER_MESSAGE_ALERTS, TASK_PARK_ATTEMPTS, attemptCustomerMessageTask, customerMessageAlertId, customerMessageAlertStorage,
+  ALERT_LIST_LIMIT, CUSTOMER_MESSAGE_ALERTS, TASK_PARK_ATTEMPTS, attemptCustomerMessageTask, customerMessageAlertId, customerMessageAlertStorage,
   ensureCustomerMessageTask, markCustomerMessageHandled, newCustomerMessageAlert, retryDueCustomerMessageTasks,
 } from '../functions/_lib/customer-message-alerts.js';
 import { createCustomerPortalHandlers } from '../functions/api/customer-portal.js';
@@ -15,13 +15,13 @@ import { customerMessageHandlers } from '../functions/api/customer-messages.js';
 const ROOT = 'projects/egcw-1ec83/databases/(default)/documents';
 const T0 = '2026-10-21T15:00:00.000Z';
 const minutes = (at, n) => new Date(Date.parse(at) + n * 60000).toISOString();
-const ENV = { HUB_SESSION_SECRET: 'portal-inbox-secret', FIREBASE_API_KEY: 'firebase-test-portal-inbox', HIGHLEVEL_API_KEY: 'ghl-test', HIGHLEVEL_LOCATION_ID: 'location-1' };
+const ENV = { HUB_SESSION_SECRET: 'portal-inbox-synthetic-session-secret-0123456789', FIREBASE_API_KEY: 'firebase-test-portal-inbox', HIGHLEVEL_API_KEY: 'ghl-test', HIGHLEVEL_LOCATION_ID: 'location-1' };
 const BUSINESS = { user: 'tylerg', displayName: 'Tyler G', role: 'manager', businessAccess: true };
 const CREW = { user: 'crewpat', displayName: 'Pat Crew', role: 'crew', businessAccess: false };
 
 // A Firestore REST fake (documents, :commit with preconditions, :runQuery on status) plus a programmable HighLevel.
 function harness(t, { job = {}, highLevel } = {}) {
-  const docs = new Map(), calls = { commits: [], highLevel: [] };
+  const docs = new Map(), calls = { commits: [], highLevel: [], queries: [] };
   let clock = 0;
   const stamp = () => `2026-10-21T15:00:${String(++clock).padStart(2, '0')}.000000Z`;
   const put = (path, data) => { const updateTime = stamp(); docs.set(path, { data, updateTime }); return updateTime; };
@@ -50,8 +50,13 @@ function harness(t, { job = {}, highLevel } = {}) {
       return Response.json({ writeResults: results, commitTime: results.at(-1).updateTime });
     }
     if (url.pathname.endsWith(':runQuery')) {
-      const query = JSON.parse(init.body).structuredQuery, collection = query.from[0].collectionId, wanted = query.where.fieldFilter.value.stringValue;
-      const rows = [...docs].filter(([key, entry]) => key.startsWith(collection + '/') && entry.data.status === wanted).map(([key, entry]) => ({ document: doc(key, entry), readTime: T0 }));
+      // Equality filter, one orderBy (a document without the field is left out, as Firestore does) and a limit.
+      const query = JSON.parse(init.body).structuredQuery, collection = query.from[0].collectionId, filter = query.where.fieldFilter, order = query.orderBy?.[0];
+      const field = (data, path) => path.split('.').reduce((value, key) => value?.[key], data);
+      const matched = [...docs].filter(([key, entry]) => key.startsWith(collection + '/') && field(entry.data, filter.field.fieldPath) === filter.value.stringValue && (!order || field(entry.data, order.field.fieldPath) !== undefined));
+      if (order) matched.sort(([, a], [, b]) => String(field(a.data, order.field.fieldPath)).localeCompare(String(field(b.data, order.field.fieldPath))) * (order.direction === 'DESCENDING' ? -1 : 1));
+      calls.queries.push(query);
+      const rows = matched.slice(0, query.limit || Infinity).map(([key, entry]) => ({ document: doc(key, entry), readTime: T0 }));
       return Response.json(rows.length ? rows : [{ readTime: T0 }]);
     }
     if (method === 'PATCH') {
@@ -75,10 +80,10 @@ const healthy = ({ existing = [] } = {}) => (call, all) => {
 };
 const down = () => { throw new TypeError('fetch failed'); };
 
-async function portalSend(env, { now = T0, requestId = 'portal-request-0001', body = 'The side door code is 4521.', defer = true } = {}) {
+async function portalSend(env, { now = T0, requestId = 'portal-request-0001', body = 'The side door code is 4521.', defer = true, deps = {} } = {}) {
   const cookie = (await createCustomerPortalSessionCookie(env, 'job-1', { linkVersion: 0 })).split(';')[0];
   const background = [];
-  const handlers = createCustomerPortalHandlers({ now: () => new Date(now) });
+  const handlers = createCustomerPortalHandlers({ now: () => new Date(now), ...deps });
   const response = await handlers.onRequestPost({
     request: new Request('https://easygaragecleaning.com/api/customer-portal', { method: 'POST', headers: { Origin: 'https://easygaragecleaning.com', Cookie: cookie, 'Content-Type': 'application/json' }, body: JSON.stringify({ action: 'send_message', body, request_id: requestId }) }),
     env, ...(defer ? { waitUntil: promise => background.push(promise) } : {}),
@@ -94,9 +99,11 @@ test('a portal message commits its office alert with the message and answers bef
   const sent = await portalSend(env);
   assert.equal(sent.response.status, 200, 'the customer has the answer while HighLevel has not replied');
   assert.equal(sent.data.message.officeAlert, 'queued');
-  assert.equal(h.calls.commits.length, 1, 'one commit holds the message and its alert');
-  assert.deepEqual(h.calls.commits[0].map(write => write.update.name.split('/documents/')[1].split('/')[0]), ['jobs', CUSTOMER_MESSAGE_ALERTS]);
-  assert.deepEqual(h.calls.commits[0][1].currentDocument, { exists: false }, 'the alert is created once');
+  const saves = h.calls.commits.filter(writes => writes.some(write => write.update.name.includes('/jobs/')));
+  assert.equal(saves.length, 1, 'one commit holds the message and its alert');
+  assert.deepEqual(saves[0].map(write => write.update.name.split('/documents/')[1].split('/')[0]), ['jobs', CUSTOMER_MESSAGE_ALERTS]);
+  assert.deepEqual(saves[0][1].currentDocument, { exists: false }, 'the alert is created once');
+  assert.equal(h.calls.commits.filter(writes => writes.some(write => write.update.name.includes('/rate_limits/'))).length, 1, 'the send counts against the job limit');
   const [alert] = h.alerts();
   assert.equal(alert.id, await customerMessageAlertId('job-1', 'customer-portal-request-0001'));
   assert.equal(alert.status, 'open');
@@ -218,7 +225,8 @@ function memoryStore(rows = []) {
   return {
     docs,
     async read(id) { const row = docs.get(id); return row ? structuredClone(row) : null; },
-    async open() { const list = [...docs.values()].filter(row => row.status === 'open').map(row => structuredClone(row)); return { rows: list, complete: true }; },
+    async open() { const list = [...docs.values()].filter(row => row.status === 'open').map(row => structuredClone(row)).sort((a, b) => b.lastMessageAt.localeCompare(a.lastMessageAt)); return { rows: list, complete: true }; },
+    async pending(limit) { return [...docs.values()].filter(row => row.task?.status === 'pending').sort((a, b) => a.task.nextAttemptAt.localeCompare(b.task.nextAttemptAt)).slice(0, limit).map(row => structuredClone(row)); },
     async write(id, patch, revision = '') {
       const row = docs.get(id);
       if (!row || revision && row.revision !== revision) return null;
@@ -262,15 +270,15 @@ test('a claim held elsewhere or lost to a race makes no HighLevel call', async (
   assert.equal((await attemptCustomerMessageTask(store, claimed.id, { env: ENV, now: minutes(T0, 3), fetcher: fetchCreated })).outcome, 'created');
 });
 
-test('handled before HighLevel heard of it: no task is written; retries take the oldest due first', async () => {
+test('handled before HighLevel heard of it: no task is written; retries take the soonest due first', async () => {
   const handled = await entry({ status: 'handled' });
   const store = memoryStore([handled]);
   assert.equal((await attemptCustomerMessageTask(store, handled.id, { env: ENV, now: T0, fetcher: () => { throw new Error('not called'); } })).outcome, 'not_needed');
   assert.equal(store.docs.get(handled.id).task.status, 'not_needed');
 
-  const rows = await Promise.all(['a', 'b', 'c', 'd'].map(async (key, index) => entry({ messageId: `customer-${key}`, createdAt: minutes(T0, -index) })));
+  const rows = await Promise.all(['a', 'b', 'c', 'd'].map(async (key, index) => { const row = await entry({ messageId: `customer-${key}` }); return { ...row, task: { ...row.task, nextAttemptAt: minutes(T0, -index) } }; }));
   const many = memoryStore(rows), seen = [];
-  const results = await retryDueCustomerMessageTasks(many, rows, { env: ENV, now: T0, fetcher: async (url, init = {}) => { if (init.method === 'POST') seen.push(JSON.parse(init.body).body.match(/Ref: (cma_\w+)/)[1]); return init.method === 'POST' ? Response.json({ task: { id: `t${seen.length}` } }) : Response.json({ tasks: [] }); } });
+  const results = await retryDueCustomerMessageTasks(many, { env: ENV, now: T0, fetcher: async (url, init = {}) => { if (init.method === 'POST') seen.push(JSON.parse(init.body).body.match(/Ref: (cma_\w+)/)[1]); return init.method === 'POST' ? Response.json({ task: { id: `t${seen.length}` } }) : Response.json({ tasks: [] }); } });
   assert.equal(results.length, 3, 'one Hub read retries at most three');
   assert.deepEqual(seen, [rows[3].id, rows[2].id, rows[1].id]);
 });
@@ -302,6 +310,99 @@ test('the Hub list is for people who may contact customers; Mark handled is same
   assert.equal((await (await post(BUSINESS, { action: 'mark_handled', id: row.id })).json()).alreadyHandled, true);
   assert.deepEqual((await (await get(BUSINESS)).json()).messages, [], 'handled messages leave the list and the badge');
   assert.equal((await markCustomerMessageHandled(store, { action: 'mark_handled', id: row.id }, BUSINESS, T0)).alreadyHandled, true);
+});
+
+const taskPosts = h => h.calls.highLevel.filter(call => call.method === 'POST' && call.url.endsWith('/tasks'));
+
+test('later messages join the job\'s open entry: one Hub row and one HighLevel task until it is handled', async t => {
+  const h = harness(t, { highLevel: healthy() });
+  await (await portalSend(ENV, { requestId: 'portal-request-0001', body: 'Hi' })).settle();
+  await (await portalSend(ENV, { requestId: 'portal-request-0002', body: 'The code is 1234', now: minutes(T0, 1) })).settle();
+  await (await portalSend(ENV, { requestId: 'portal-request-0003', body: 'Thanks!', now: minutes(T0, 2) })).settle();
+  let alerts = h.alerts();
+  assert.equal(alerts.length, 1, 'one entry for the job');
+  assert.deepEqual([alerts[0].messageCount, alerts[0].messages.map(row => row.body), alerts[0].body, alerts[0].lastMessageAt, alerts[0].createdAt], [3, ['Hi', 'The code is 1234', 'Thanks!'], 'Thanks!', minutes(T0, 2), T0]);
+  assert.equal(h.data('jobs/job-1').customerMessageAlertId, alerts[0].id);
+  assert.equal(taskPosts(h).length, 1, 'one HighLevel task for the conversation');
+  assert.equal(h.data('jobs/job-1').customerConversation.length, 3, 'every message is still in the thread');
+
+  // Handled: the next message opens a fresh entry and owes a fresh task.
+  const store = customerMessageAlertStorage(ENV);
+  await markCustomerMessageHandled(store, { action: 'mark_handled', id: alerts[0].id }, BUSINESS, minutes(T0, 3));
+  await (await portalSend(ENV, { requestId: 'portal-request-0004', body: 'One more thing', now: minutes(T0, 4) })).settle();
+  alerts = h.alerts();
+  const open = alerts.filter(row => row.status === 'open');
+  assert.equal(alerts.length, 2);
+  assert.deepEqual([open.length, open[0].messageCount, open[0].body], [1, 1, 'One more thing']);
+  assert.equal(h.data('jobs/job-1').customerMessageAlertId, open[0].id);
+  assert.equal(taskPosts(h).length, 2);
+  assert.match(taskPosts(h)[0].body.body, /Dana Customer: Hi/);
+});
+
+test('a Mark handled between the read and the commit is re-read: the message never lands on a handled entry', async t => {
+  const h = harness(t, { highLevel: healthy() });
+  await (await portalSend(ENV, { requestId: 'portal-request-0001', body: 'Hi' })).settle();
+  const [first] = h.alerts(), real = customerMessageAlertStorage(ENV);
+  let reads = 0;
+  // The first read sees the entry open; it is then handled before the commit, so the guarded append fails.
+  const racing = env => ({ ...real, read: async id => { const row = await real.read(id); if (reads++ === 0) await markCustomerMessageHandled(real, { action: 'mark_handled', id }, BUSINESS, minutes(T0, 1)); return row; } });
+  const sent = await portalSend(ENV, { requestId: 'portal-request-0002', body: 'Still there?', now: minutes(T0, 2), deps: { alerts: racing } });
+  await sent.settle();
+  assert.equal(sent.response.status, 200);
+  const alerts = h.alerts(), handled = alerts.find(row => row.id === first.id), open = alerts.filter(row => row.status === 'open');
+  assert.deepEqual([handled.status, handled.messageCount], ['handled', 1], 'the handled entry was not changed');
+  assert.deepEqual([open.length, open[0].body], [1, 'Still there?'], 'the message opened a new entry');
+  assert.equal(h.data('jobs/job-1').customerConversation.length, 2);
+});
+
+test('a job may send 10 portal messages in 10 minutes; the 11th is refused kindly and a replay is not counted', async t => {
+  const h = harness(t, { highLevel: healthy() });
+  for (let n = 1; n <= 10; n += 1) {
+    const sent = await portalSend(ENV, { requestId: `portal-request-${String(n).padStart(4, '0')}`, body: `Message ${n}`, now: minutes(T0, n / 2) });
+    await sent.settle();
+    assert.equal(sent.response.status, 200, `message ${n}`);
+  }
+  const replay = await portalSend(ENV, { requestId: 'portal-request-0003', body: 'Message 3', now: minutes(T0, 6) });
+  assert.deepEqual([replay.response.status, replay.data.duplicate], [200, true], 'a retry of a saved message is answered, not limited');
+  const refused = await portalSend(ENV, { requestId: 'portal-request-0011', body: 'Message 11', now: minutes(T0, 6) });
+  assert.equal(refused.response.status, 429);
+  assert.equal(refused.data.code, 'CUSTOMER_PORTAL_MESSAGE_RATE_LIMITED');
+  assert.match(refused.data.error, /the team has them/);
+  assert.equal(h.data('jobs/job-1').customerConversation.length, 10, 'nothing was saved');
+  assert.equal(h.alerts()[0].messageCount, 10);
+  // The window rolls: ten minutes after the first send there is room again.
+  const later = await portalSend(ENV, { requestId: 'portal-request-0012', body: 'Message 12', now: minutes(T0, 10.75) });
+  await later.settle();
+  assert.equal(later.response.status, 200);
+});
+
+test('more than 100 open entries: the list is the newest 100 by latest message, and an older owed task is still retried', async t => {
+  const h = harness(t, { highLevel: healthy() });
+  const put = async (index, task) => {
+    const id = await customerMessageAlertId(`job-${index}`, `customer-${index}`);
+    const alert = newCustomerMessageAlert({ customer: `Customer ${index}`, highlevelContactId: `contact-${index}` }, `job-${index}`, { id: `customer-${index}`, body: `Message ${index}`, createdAt: minutes(T0, -index), authorName: `Customer ${index}` }, minutes(T0, -index));
+    h.docs.set(`${CUSTOMER_MESSAGE_ALERTS}/${id}`, { data: { ...alert, task: { ...alert.task, ...task } }, updateTime: `2026-10-21T14:00:00.${String(index).padStart(6, '0')}Z` });
+    return id;
+  };
+  for (let index = 0; index < 120; index += 1) await put(index, { status: 'created', taskId: `task-${index}` });
+  // The oldest entry's task failed to reach HighLevel: it sits far outside the newest 100.
+  const owed = await put(150, { status: 'pending', attempts: 2, nextAttemptAt: minutes(T0, -1) });
+  const background = [];
+  const response = await customerMessageHandlers({ session: async () => BUSINESS, now: () => new Date(T0) }).get({ request: new Request('https://easygaragecleaning.com/api/customer-messages'), env: ENV, waitUntil: promise => background.push(promise) });
+  await Promise.all(background);
+  const listed = await response.json();
+  assert.equal(listed.messages.length, ALERT_LIST_LIMIT);
+  assert.equal(listed.complete, false);
+  assert.deepEqual(listed.messages.slice(0, 3).map(row => row.customerName), ['Customer 0', 'Customer 1', 'Customer 2'], 'newest first');
+  assert.equal(listed.messages.at(-1).customerName, 'Customer 99');
+  const [list, pending] = h.calls.queries;
+  assert.deepEqual([list.orderBy[0].field.fieldPath, list.orderBy[0].direction, list.limit], ['lastMessageAt', 'DESCENDING', ALERT_LIST_LIMIT + 1]);
+  assert.deepEqual([pending.where.fieldFilter.field.fieldPath, pending.orderBy[0].field.fieldPath, pending.orderBy[0].direction], ['task.status', 'task.nextAttemptAt', 'ASCENDING']);
+  assert.equal(h.data(`${CUSTOMER_MESSAGE_ALERTS}/${owed}`).task.status, 'created', 'the owed task outside the list was retried');
+  assert.equal(taskPosts(h).length, 1);
+  // Both queries have their composite index.
+  const indexes = JSON.parse(readFileSync(new URL('../firestore.indexes.json', import.meta.url), 'utf8')).indexes.filter(index => index.collectionGroup === CUSTOMER_MESSAGE_ALERTS).map(index => index.fields.map(field => `${field.fieldPath}:${field.order}`).join(','));
+  assert.deepEqual(indexes, ['status:ASCENDING,lastMessageAt:DESCENDING', 'task.status:ASCENDING,task.nextAttemptAt:ASCENDING']);
 });
 
 test('the portal shows a truthful "Sent to the team" and the Hub registers the screen and widget', () => {

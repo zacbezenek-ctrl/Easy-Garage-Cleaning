@@ -1,6 +1,22 @@
 {
   "indexes": [
     {
+      "collectionGroup": "customerMessageAlerts",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "status", "order": "ASCENDING" },
+        { "fieldPath": "lastMessageAt", "order": "DESCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "customerMessageAlerts",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "task.status", "order": "ASCENDING" },
+        { "fieldPath": "task.nextAttemptAt", "order": "ASCENDING" }
+      ]
+    },
+    {
       "collectionGroup": "jobs",
       "queryScope": "COLLECTION",
       "fields": [

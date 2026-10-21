@@ -1,14 +1,18 @@
 /* PORTAL-INBOX: every client portal message reaches the office. The portal's
-   send_message writes one customerMessageAlerts entry in the SAME commit as
-   the message (id derived from the job and message, created once), so a
-   stored message always has its alert and a replayed request never adds a
-   second one. The entry stays open on the Hub's Customer messages list (and
-   its unread badge) until a person marks it handled.
+   send_message writes the job's customerMessageAlerts entry in the SAME commit
+   as the message, so a stored message always has its alert. A job has at most
+   one open entry (the job's customerMessageAlertId points at it): the first
+   message opens it (id derived from the job and that message, created once),
+   and later ones append to it and raise its count until a person marks it
+   handled, so a chatty customer is one Hub row and one HighLevel task, not
+   one per message. A replayed request is answered as a duplicate before any
+   write. The Hub lists open entries by their latest message.
    Beside it, each entry owes one HighLevel task on the customer's contact,
    due at the send and assigned to EGC_CUSTOMER_MESSAGE_TASK_USER_ID (unset:
    unassigned). The send makes the first attempt after it answers the customer
    (ctx.waitUntil), so HighLevel never delays or fails the customer's send;
-   every Hub list read retries due entries with a 1, 5, 15, 60 minute backoff
+   every Hub list read retries due entries (their own query, soonest first)
+   with a 1, 5, 15, 60 minute backoff
    and parks an entry after 8 attempts. An attempt claims the entry first
    (compare-and-set), and it reads the contact's tasks before it creates one,
    matching the entry's Ref line, so a retry after a lost response finds the
@@ -29,6 +33,8 @@ export const TASK_PARK_ATTEMPTS = 8;
 export const TASK_CLAIM_MINUTES = 2;
 // Open entries one Hub read lists, and due tasks it retries.
 export const ALERT_LIST_LIMIT = 100;
+// Messages an entry keeps (newest last); its messageCount keeps counting past them.
+export const ALERT_MESSAGE_LIMIT = 20;
 export const TASK_RETRY_LIMIT = 3;
 export const TASK_TITLE_PREFIX = 'Reply to client portal message';
 const API = 'https://services.leadconnectorhq.com';
@@ -52,14 +58,17 @@ export async function customerMessageAlertId(jobId, messageId) {
   return `cma_${hex(await crypto.subtle.digest('SHA-256', new TextEncoder().encode(`${jobId}|${messageId}`))).slice(0, 40)}`;
 }
 
-/** The entry the portal commits beside a stored customer message. */
+const entryMessage = (message, now) => ({ id: inline(message.id, 140), authorName: inline(message.authorName, 120) || 'Customer', body: cleanMessage(message.body), createdAt: inline(message.createdAt, 50) || now });
+const storedMessages = alert => (Array.isArray(alert?.messages) ? alert.messages : []).filter(object).slice(-ALERT_MESSAGE_LIMIT);
+
+/** The entry the portal commits beside the first customer message while none is open for the job. */
 export function newCustomerMessageAlert(job = {}, jobId, message = {}, now) {
-  const contactId = inline(job.highlevelContactId, 120);
+  const contactId = inline(job.highlevelContactId, 120), first = entryMessage(message, now);
   return {
-    jobId: inline(jobId, 180), messageId: inline(message.id, 140), requestId: inline(message.requestId, 120),
-    authorName: inline(message.authorName, 120) || 'Customer', customerName: inline(job.customer, 120) || inline(message.authorName, 120) || 'Customer',
+    jobId: inline(jobId, 180), messageId: first.id, requestId: inline(message.requestId, 120),
+    authorName: first.authorName, customerName: inline(job.customer, 120) || first.authorName,
     jobType: inline(job.type, 40), serviceType: inline(job.serviceType, 120), jobDate: inline(job.date, 20),
-    body: cleanMessage(message.body), createdAt: inline(message.createdAt, 50) || now,
+    body: first.body, createdAt: first.createdAt, lastMessageAt: first.createdAt, messages: [first], messageCount: 1,
     status: 'open', handledAt: '', handledBy: '',
     highlevelContactId: CONTACT.test(contactId) ? contactId : '',
     task: { status: CONTACT.test(contactId) ? 'pending' : 'needs_contact', attempts: 0, nextAttemptAt: now, claimedUntil: '', lastAttemptAt: '', taskId: '', httpStatus: 0 },
@@ -67,10 +76,24 @@ export function newCustomerMessageAlert(job = {}, jobId, message = {}, now) {
   };
 }
 
+/** The patch that adds a later message to the job's open entry: no second Hub row and no second HighLevel task.
+ *  An entry opened before the job had a HighLevel contact owes its task once the contact is there. */
+export function appendCustomerMessageAlert(alert = {}, job = {}, message = {}, now) {
+  const next = entryMessage(message, now), contactId = inline(job.highlevelContactId, 120), task = object(alert.task) ? alert.task : {};
+  const linked = task.status === 'needs_contact' && CONTACT.test(contactId);
+  return {
+    messages: [...storedMessages(alert), next].slice(-ALERT_MESSAGE_LIMIT),
+    messageCount: (Number.isSafeInteger(alert.messageCount) && alert.messageCount > 0 ? alert.messageCount : storedMessages(alert).length || 1) + 1,
+    body: next.body, authorName: next.authorName, lastMessageAt: next.createdAt, updatedAt: now,
+    ...(linked ? { highlevelContactId: contactId, task: { ...task, status: 'pending', nextAttemptAt: now, claimedUntil: '' } } : {}),
+  };
+}
+
 const taskRef = id => `Ref: ${id}`;
 export function customerMessageTaskBody(alert, origin = DEFAULT_ORIGIN) {
   const hub = `${/^https:\/\/[A-Za-z0-9.-]+(?::\d+)?$/.test(origin) ? origin : DEFAULT_ORIGIN}/employee.html?view=customer_messages`;
-  return [`${alert.authorName} wrote in the client portal:`, '', cleanMessage(alert.body), '', `Reply to the customer, then mark it handled in the Hub: ${hub}`, taskRef(alert.id)].join('\n');
+  const messages = storedMessages(alert).slice(-5), lines = messages.length ? messages.map(row => `${row.authorName}: ${cleanMessage(row.body)}`) : [`${alert.authorName}: ${cleanMessage(alert.body)}`];
+  return [`New client portal message${lines.length > 1 ? 's' : ''}:`, '', ...lines, '', `Reply to the customer, then mark it handled in the Hub: ${hub}`, taskRef(alert.id)].join('\n');
 }
 
 // The contact's tasks are read first, so a retry after a lost response finds the task it already created (by the
@@ -122,16 +145,23 @@ export function customerMessageAlertStorage(env, fetcher = firestoreFetch) {
       if (!response.ok) throw unavailable();
       return decode(await response.json().catch(() => null));
     },
-    /** Open entries, newest first; complete:false when more than `limit` are open. */
-    async open(limit = ALERT_LIST_LIMIT) {
+    async query(where, orderBy, limit) {
       const response = await call(`${BASE}:runQuery`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ structuredQuery: {
-        from: [{ collectionId: CUSTOMER_MESSAGE_ALERTS }], where: { fieldFilter: { field: { fieldPath: 'status' }, op: 'EQUAL', value: { stringValue: 'open' } } }, limit: limit + 1,
+        from: [{ collectionId: CUSTOMER_MESSAGE_ALERTS }], where: { fieldFilter: { field: { fieldPath: where[0] }, op: 'EQUAL', value: { stringValue: where[1] } } },
+        orderBy: [{ field: { fieldPath: orderBy[0] }, direction: orderBy[1] }], limit,
       } }) });
       const rows = response.ok ? await response.json().catch(() => null) : null;
       if (!Array.isArray(rows)) throw unavailable();
-      const found = rows.filter(row => row?.document).map(row => decode(row.document));
-      found.sort((a, b) => String(b.createdAt).localeCompare(String(a.createdAt)));
+      return rows.filter(row => row?.document).map(row => decode(row.document));
+    },
+    /** Open entries, latest message first (index: status, lastMessageAt desc); complete:false when more are open. */
+    async open(limit = ALERT_LIST_LIMIT) {
+      const found = await this.query(['status', 'open'], ['lastMessageAt', 'DESCENDING'], limit + 1);
       return { rows: found.slice(0, limit), complete: found.length <= limit };
+    },
+    /** Entries whose HighLevel task is owed, soonest attempt first (index: task.status, task.nextAttemptAt), whatever the list shows. */
+    async pending(limit = TASK_RETRY_LIMIT * 4) {
+      return this.query(['task.status', 'pending'], ['task.nextAttemptAt', 'ASCENDING'], limit);
     },
     /** One field-masked write. revision guards a compare-and-set; without it the entry must exist. Returns the new revision, or null on a lost race. */
     async write(id, patch, revision = '') {
@@ -178,10 +208,11 @@ export async function attemptCustomerMessageTask(store, id, { env = {}, now = ne
   }
 }
 
-/** Retries up to `limit` due tasks among the listed entries, oldest first. */
-export async function retryDueCustomerMessageTasks(store, rows, { limit = TASK_RETRY_LIMIT, ...options } = {}) {
+/** Retries up to `limit` due tasks, soonest attempt first, read by their own query so an owed task never hides
+ *  behind the Hub list's limit. */
+export async function retryDueCustomerMessageTasks(store, { limit = TASK_RETRY_LIMIT, ...options } = {}) {
   const now = options.now || new Date().toISOString();
-  const dueRows = rows.filter(row => due(row.task, now)).sort((a, b) => String(a.createdAt).localeCompare(String(b.createdAt))).slice(0, limit);
+  const dueRows = (await store.pending(limit * 4)).filter(row => due(row.task, now)).slice(0, limit);
   const results = [];
   for (const row of dueRows) results.push(await attemptCustomerMessageTask(store, row.id, { ...options, now }));
   return results;
@@ -192,7 +223,10 @@ export function customerMessageView(alert) {
   const task = object(alert.task) ? alert.task : {};
   return {
     id: alert.id, jobId: inline(alert.jobId, 180), customerName: inline(alert.customerName, 120), authorName: inline(alert.authorName, 120),
-    body: cleanMessage(alert.body), createdAt: inline(alert.createdAt, 50), jobType: inline(alert.jobType, 40), serviceType: inline(alert.serviceType, 120), jobDate: inline(alert.jobDate, 20),
+    body: cleanMessage(alert.body), createdAt: inline(alert.createdAt, 50), lastMessageAt: inline(alert.lastMessageAt || alert.createdAt, 50),
+    messageCount: Number.isSafeInteger(alert.messageCount) && alert.messageCount > 0 ? alert.messageCount : 1,
+    messages: storedMessages(alert).slice(-5).map(row => ({ authorName: inline(row.authorName, 120), body: cleanMessage(row.body), createdAt: inline(row.createdAt, 50) })),
+    jobType: inline(alert.jobType, 40), serviceType: inline(alert.serviceType, 120), jobDate: inline(alert.jobDate, 20),
     status: ALERT_STATUSES.includes(alert.status) ? alert.status : 'open', revision: inline(alert.revision, 60),
     highLevelTask: TASK_STATUSES.includes(task.status) ? task.status : 'pending',
   };
