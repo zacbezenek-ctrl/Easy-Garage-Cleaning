@@ -46,6 +46,8 @@ const MANIFEST=[
 const HOME_WIDGETS=[
   {id:'customer_messages',label:'Customer messages',homes:['today','my_day'],capability:'customer_contact',module:'EGCCustomerMessagesHome',load:{js:'employee-customer-messages.js',css:'employee-customer-messages.css',v:'20261021inbox4'}},
   {id:'overdue_followups',label:'Overdue follow-ups',homes:['today','my_day'],capability:'business',module:'EGCFollowupsHome'},
+  {id:'shift_swap_review',label:'Shift swaps to approve',homes:['today'],capability:'business',module:'EGCShiftSwapsReview',load:{js:'employee-shift-swaps.js',css:'employee-shift-swaps.css',v:'20261021swaps1'}},
+  {id:'shift_swaps',label:'Swap a shift',homes:['my_day'],crewVisible:true,module:'EGCShiftSwapsHome',load:{js:'employee-shift-swaps.js',css:'employee-shift-swaps.css',v:'20261021swaps1'}},
 ];
 const HOMES=new Set(['today','my_day']);
 const ID=/^[a-z][a-z0-9_]{1,47}$/,CAPABILITY=/^[a-z][a-z0-9_]{1,40}$/,MODULE=/^EGC[A-Za-z0-9]{1,40}$/,VERSION=/^[A-Za-z0-9._-]{1,40}$/,ICON=/^[MmLlHhVvCcSsQqTtAaZz0-9 .,-]{1,800}$/;

@@ -242,6 +242,9 @@ export function dispatchStorage(env, fetcher = firestoreFetch) {
     customersByKey: key => query('customers', [...CUSTOMER_FIELDS, 'searchKeys'], 20000)({ field: 'searchKeys', op: 'ARRAY_CONTAINS', value: key }),
     // CREW-SCHEDULE (functions/api/crew-schedule.js): the crew records alone, and the work dated in a bounded window.
     crewResources: () => query('dispatchResources', CREW_RESOURCE_FIELDS, 2000)({ field: 'recordType', op: 'EQUAL', value: 'crew' }),
+    // SHIFT-SWAP (shift-swaps.js): swap requests by one field (from, to, or status IN the open states), masked to
+    // `fields`, complete and failing closed like every query here. Equality filters only: no composite index.
+    shiftSwaps: (spec, fields) => query('shiftSwaps', fields, 500)(spec),
     datedJobs, spanningJobs,
     customerKeyCoverage: () => customerCoverage(async body => aggregateCount(await post('runAggregationQuery', body))),
     async customerRecords(fields) {
