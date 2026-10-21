@@ -486,3 +486,23 @@ test('a sign-out while a Hub file is loading: the worker answers, does not keep 
   assert.deepEqual((await sw.cached()).map(([, path]) => path), ['/employee-suite.js?v=20260922ops'], 'the next signed-in load is kept again');
   assert.equal(sw.state.unregistered, 0);
 });
+
+test('a tapped Hub alert closes, focuses an open Hub window as it is, and otherwise opens the Hub on the screen it names', async () => {
+  const sw = await installed();
+  const tap = async (data, windows) => {
+    const calls = { closed: 0, focused: [], opened: [], matched: [] };
+    sw.context.clients.matchAll = async options => { calls.matched.push(options); return windows.map(url => ({ url: new URL(url, ORIGIN).href, focus: async () => { calls.focused.push(url); } })); };
+    sw.context.clients.openWindow = async url => { calls.opened.push(url); };
+    await sw.dispatch('notificationclick', { notification: { data, close: () => { calls.closed++; } } });
+    return calls;
+  };
+  const open = await tap({ view: 'crew_chat' }, ['/crew/', '/employee?view=today']);
+  assert.equal(open.closed, 1);
+  assert.deepEqual(open.focused, ['/employee?view=today'], 'the open Hub is focused without reloading it');
+  assert.deepEqual(open.opened, []);
+  assert.deepEqual(JSON.parse(JSON.stringify(open.matched)), [{ type: 'window', includeUncontrolled: true }]);
+  assert.deepEqual((await tap({ view: 'crew_chat' }, ['/crew/'])).opened, ['/employee?view=crew_chat']);
+  assert.deepEqual((await tap({ view: 'my_day' }, [])).opened, ['/employee?view=my_day']);
+  assert.deepEqual((await tap({ view: 'javascript:alert(1)' }, [])).opened, ['/employee?view=my_day'], 'an unknown screen opens My day');
+  assert.deepEqual((await tap(undefined, [])).opened, ['/employee?view=my_day']);
+});
