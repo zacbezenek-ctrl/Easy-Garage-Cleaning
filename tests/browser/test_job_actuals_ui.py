@@ -288,6 +288,38 @@ class JobActualsScreenTests(unittest.TestCase):
         expect(page.get_by_role('status').filter(has_text='Owner targets saved')).to_be_visible()
         self.assert_layout(page, phone=True)
 
+    def test_an_inverted_truck_range_is_marked_and_a_failed_reload_after_a_save_is_said_and_keeps_the_saved_values(self):
+        page = self.open(390, 844, mobile=True)
+        owner = page.get_by_role('region', name='Owner targets')
+        save = owner.get_by_role('button', name='Save owner targets')
+        low, high = owner.get_by_label('Truck rental per job, low (dollars)'), owner.get_by_label('Truck rental per job, high (dollars)')
+        low.fill('80'); high.fill('75')
+        expect(low).to_have_attribute('aria-invalid', 'true'); expect(high).to_have_attribute('aria-invalid', 'true'); expect(save).to_be_disabled()
+        low.fill('50')
+        expect(low).to_have_attribute('aria-invalid', 'false'); expect(high).to_have_attribute('aria-invalid', 'false'); expect(save).to_be_enabled()
+        # The save lands, then every reload of the card fails: the saved values stay and the card says they may be stale.
+        fail = {'on': False}
+        def reads(route):
+            if route.request.method == 'GET' and fail['on']: route.fulfill(status=503, content_type='application/json', body=json.dumps({'ok': False, 'code': 'owner_economics_unavailable', 'error': 'Synthetic outage'})); return
+            if route.request.method == 'POST': fail['on'] = True
+            route.continue_()
+        page.route('**/api/owner-economics', reads)
+        owner.get_by_label('Lead wage per hour (dollars)').fill('12')
+        save.click()
+        expect(owner.get_by_role('alert').filter(has_text='could not be reloaded')).to_be_visible()
+        expect(owner.get_by_label('Lead wage per hour (dollars)')).to_have_value('12.00')
+        expect(low).to_have_value('50.00')
+        # The next save still carries the stored revision, so it is saved rather than refused as stale.
+        fail['on'] = False
+        page.unroute('**/api/owner-economics')
+        owner.get_by_label('Average ticket target (dollars)').fill('1000')
+        with page.expect_response(lambda response: response.request.method == 'POST' and '/api/owner-economics' in response.url) as answer:
+            owner.get_by_role('button', name='Save owner targets').click()
+        self.assertEqual(answer.value.status, 200)
+        expect(page.get_by_role('status').filter(has_text='Owner targets saved')).to_be_visible()
+        expect(owner.get_by_role('alert').filter(has_text='could not be reloaded')).to_have_count(0)
+        self.assert_layout(page, phone=True)
+
     def test_csv_export_has_a_row_per_job_with_plain_numbers(self):
         page = self.open(1280)
         with page.expect_download() as download:

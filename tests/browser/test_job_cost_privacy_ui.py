@@ -30,8 +30,9 @@ FORBIDDEN = {'ok': False, 'code': 'job_labor_forbidden', 'error': 'Only an opera
 HIDDEN = {'ok': True, 'authority': 'employee_hub', 'laborCostHidden': True, 'jobs': None, 'asOf': '2026-09-22T18:00:00Z'}
 VISIBLE = {'ok': True, 'authority': 'employee_hub', 'laborCostHidden': False, 'jobs': [RECORD], 'complete': True, 'asOf': '2026-09-22T18:00:00Z'}
 # The Hub shows whole dollars: labor $152, and the figures that include labor: direct cost 151.64+97.50=$249 and
-# contribution 900-249.14=$651 at 72.3%; plus the figures an older built-in baseline gave the baseline job.
-LEAKS = (r'\$152\b', r'\$60(?![\d,.])', r'\$249\b', r'\$651\b', r'\$540\b', r'72\.3%', r'90\.0%')
+# contribution 900-249.14=$651 at 72.3%. The baseline job must never be priced from a built-in crew-hour rate, whatever
+# the number: no "crew-hour baseline" wording appears.
+LEAKS = (r'\$152\b', r'\$249\b', r'\$651\b', r'72\.3%', r'crew-hour baseline')
 CAPTURE = FIREBASE.replace("doc(){return{set:async()=>{},", "doc(id){return{set:async(update)=>{(window.__sets||=[]).push([id,JSON.parse(JSON.stringify(update))])},")
 
 

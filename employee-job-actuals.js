@@ -182,6 +182,12 @@ function keepOwnerEdits(settings){
   const keys=new Set(ownerEditedKeys());
   for(const setting of TARGETS)if(keys.has(setting.key)&&Object.hasOwn(settings,setting.key)&&!Object.hasOwn(O.drafts,setting.key))O.drafts[setting.key]=shown(setting,settings[setting.key]);
 }
+// The owner's changes, with the truck rental range checked here too: a low above the high marks both, as the server refuses it.
+function ownerChanges(){
+  const result=changes(TARGETS,O),low=result.settings.truckRentalLowCentsPerJob,high=result.settings.truckRentalHighCentsPerJob;
+  if(!result.bad.includes('truckRentalLowCentsPerJob')&&!result.bad.includes('truckRentalHighCentsPerJob')&&low!==null&&high!==null&&low>high)result.bad.push('truckRentalLowCentsPerJob','truckRentalHighCentsPerJob');
+  return result;
+}
 const validOwner=data=>Boolean(data&&data.ok===true&&data.settings&&TARGETS.every(s=>data.settings[s.key]===null||int(data.settings[s.key])));
 const validOwnerRead=data=>validOwner(data)&&(data.crewWageCentsPerManHour===null||int(data.crewWageCentsPerManHour));
 async function loadOwner(){
@@ -190,11 +196,14 @@ async function loadOwner(){
   catch(error){if(generation===O.generation)O.error=error;}
   finally{if(generation===O.generation){O.pending=ownerQueue().get();if(O.pending)keepOwnerEdits(O.pending.body?.settings);render();}}
 }
-const OWNER_ERRORS={owner_economics_owner_required:'Only the owner can change these targets.',owner_economics_no_change:'These targets are already saved.',owner_economics_amount_invalid:'Check the highlighted targets: the low truck rental cannot be above the high one.'};
+const OWNER_ERRORS={owner_economics_owner_required:'Only the owner can change these targets.',owner_economics_no_change:'These targets are already saved.',owner_economics_amount_invalid:'A target is out of range, or the low truck rental is above the high one. Check the targets and save again.'};
 async function settleOwner(send,settings){
   O.busy=true;O.feedback='';render();
   try{
     const data=await send();
+    // The save's own answer is the stored record (with its new revision): show it now, so a failed reload below cannot
+    // put the pre-save values back or make the next save a stale-revision conflict.
+    if(O.data)O.data={...O.data,settings:data.settings};
     O.drafts={};forgetOwnerEdited();refreshOwnerPricing();O.feedback=data.replayed?'These targets were already saved.':'Owner targets saved. The Playbook and Scorecard now use them.';O.feedbackError=false;O.busy=false;
     await loadOwner();return;
   }catch(error){
@@ -207,8 +216,8 @@ function retryOwner(){if(!O.busy&&O.pending){const settings=O.pending.body?.sett
 function discardOwner(){ownerQueue().discard();forgetOwnerEdited();O.drafts={};O.pending=null;O.feedback='The unconfirmed save was discarded. Check the targets below before saving again.';O.feedbackError=false;loadOwner();}
 async function saveOwner(){
   if(O.busy||O.pending||!O.data)return;
-  const {settings,bad,changed}=changes(TARGETS,O);
-  if(bad.length){O.feedback='Fix the highlighted targets: percents like 50, dollars like 42.50.';O.feedbackError=true;render();return;}
+  const {settings,bad,changed}=ownerChanges();
+  if(bad.length){O.feedback='Fix the highlighted targets: percents like 50, dollars like 42.50, and a low truck rental no higher than the high one.';O.feedbackError=true;render();return;}
   if(!changed)return;
   rememberOwnerEdited(TARGETS.map(setting=>setting.key).filter(key=>settings[key]!==(O.data.settings[key]??null)));
   return settleOwner(()=>ownerQueue().submit(OWNER_PATH,{action:'owner_economics.settings.set',expectedRevision:O.data.settings.revision??null,settings},{prefix:OWNER_PREFIX,validate:validOwner,fetcher:fetcher()}),settings);
@@ -216,7 +225,7 @@ async function saveOwner(){
 function ownerCard(){
   if(!O.data)return h('section',{class:'hub-card ja-settings ja-owner','aria-label':'Owner targets'},h('h2',{},'Owner targets'),
     O.error?[h('div',{class:'hub-notice error',role:'alert'},'Owner targets are unavailable. '+kit().errorText(O.error)),kit().button('Retry',loadOwner,'primary')]:h('p',{class:'ja-muted'},'Loading owner targets…'));
-  const {bad,changed}=changes(TARGETS,O),wage=O.data.crewWageCentsPerManHour;
+  const {bad,changed}=ownerChanges(),wage=O.data.crewWageCentsPerManHour;
   const rows=TARGETS.map(s=>{
     const saved=O.data.settings[s.key]??null,text=Object.hasOwn(O.drafts,s.key)?O.drafts[s.key]:shown(s,saved),isBad=bad.includes(s.key);
     const input=h('input',{type:'text',inputmode:'decimal',autocomplete:'off',placeholder:'Not set',maxlength:12,value:text,disabled:O.busy||Boolean(O.pending),'aria-label':`${s.label} (${s.unit==='%'?'percent':'dollars'})`,'aria-invalid':isBad?'true':'false','data-target':s.key,
@@ -226,6 +235,8 @@ function ownerCard(){
   return h('section',{class:'hub-card ja-settings ja-owner','aria-label':'Owner targets'},
     h('h2',{},'Owner targets'),
     h('p',{class:'ja-muted'},'Only you see these. The Playbook, Scorecard and Job finances use them; a blank one shows generic text, never a guessed number.'),
+    // A reload that failed after a save (or a refresh) leaves the last values on screen: say they may be out of date.
+    O.error?h('div',{class:'hub-notice error ja-pending',role:'alert'},h('p',{},'Owner targets could not be reloaded, so the values below may be out of date. '+kit().errorText(O.error)),kit().button('Reload owner targets',loadOwner,'primary')):null,
     h('div',{class:'ja-setting-list'},
       h('div',{class:'ja-setting'},h('span',{},'Crew wage per hour',h('small',{},'The crew wage from Cost settings above, so there is one number.')),h('strong',{},wage===null?'Not set':money(wage))),
       rows),
@@ -236,7 +247,7 @@ function ownerCard(){
 }
 function refreshOwnerBar(){
   const root=S.host?.querySelector('.ja-owner');if(!root)return;
-  const {bad,changed}=changes(TARGETS,O),save=root.querySelector('[data-save]'),note=root.querySelector('[data-bar]');
+  const {bad,changed}=ownerChanges(),save=root.querySelector('[data-save]'),note=root.querySelector('[data-bar]');
   if(save)save.disabled=O.busy||Boolean(O.pending)||!changed||bad.length>0;if(note)note.textContent=barText(bad,changed);
   for(const input of root.querySelectorAll('[data-target]')){const isBad=bad.includes(input.getAttribute('data-target'));input.setAttribute('aria-invalid',isBad?'true':'false');input.closest('.ja-setting')?.classList.toggle('bad',isBad);}
 }
@@ -291,5 +302,5 @@ function render(){
 function mount(host,ctx){S.host=host;S.ctx=ctx||{};S.data=null;S.error=null;S.drafts={};S.feedback='';S.showAll=false;Object.assign(O,{data:null,error:null,busy:false,pending:null,drafts:{},feedback:'',feedbackError:false});return load();}
 function unmount(){S.generation++;O.generation++;S.host?.querySelector('.egc-job-actuals')?.remove();S.host=null;S.ctx=null;}
 window.addEventListener('egc:signout',()=>{try{for(let i=sessionStorage.length-1;i>=0;i--){const name=sessionStorage.key(i);if(String(name||'').startsWith(EDITED)||String(name||'').startsWith(OWNER_EDITED))sessionStorage.removeItem(name);}}catch{}});
-window.EGCJobActuals={mount,unmount,canLeave:()=>!changes().changed&&!(O.data&&changes(TARGETS,O).changed)||window.confirm('Discard unsaved cost settings?'),refresh:load};
+window.EGCJobActuals={mount,unmount,canLeave:()=>{const costs=changes().changed,targets=Boolean(O.data)&&ownerChanges().changed;return!costs&&!targets||window.confirm(`Discard unsaved ${costs&&targets?'cost settings and owner targets':costs?'cost settings':'owner targets'}?`);},refresh:load};
 })();
