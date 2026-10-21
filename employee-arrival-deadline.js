@@ -13,12 +13,17 @@
      are unknown, and then this flag is not shown.
    Arrival and dispatch count only when recorded today in Denver and after the visit was last restored (restoredAt, as
    customer-portal.js portalStatus does), or from the job's canonical status on its first visit: a restored or later-day
-   visit never inherits an earlier arrival. */
+   visit never inherits an earlier arrival. Today's evidence is arrivedAt/startedAt/dispatchedAt, or the last status tap
+   (fieldExecution.activity at activityAt: a later day's Working tap writes only that, field-execution.js fieldCommand).
+   A multi-day visit record (visits[today].startedAt, field-execution-visits.js) is written by the day's first tap,
+   whatever it was, so it shows the crew moving, never arrived. A job-level arrival today covers its later segments
+   that day. */
 (function(root){
 'use strict';
 const ZONE='America/Denver',LATE_GRACE_MS=15*60000,EN_ROUTE_LEAD_MS=30*60000;
 const CLOSED=new Set(['completed','complete','done','cancelled','canceled','no_show','noshow','no-show','archived','closed','invoiced','paid','review_requested']);
 const ARRIVED=new Set(['arrived','in_progress']),MOVING=new Set(['dispatched']);
+const ARRIVED_TAPS=new Set(['arrived','in_progress','waiting','paused','day_ended']),MOVING_TAPS=new Set(['dispatched','delayed']);
 const FORMAT=new Intl.DateTimeFormat('en-US',{timeZone:ZONE,hourCycle:'h23',year:'numeric',month:'2-digit',day:'2-digit',hour:'2-digit',minute:'2-digit',second:'2-digit'});
 const validDate=value=>typeof value==='string'&&/^\d{4}-\d{2}-\d{2}$/.test(value)&&new Date(value+'T12:00:00Z').toISOString().slice(0,10)===value;
 const clock=value=>{const match=/^(\d{2}):(\d{2})$/.exec(typeof value==='string'?value.trim():'');return match&&Number(match[1])<24&&Number(match[2])<60?Number(match[1])*60+Number(match[2]):null};
@@ -45,11 +50,13 @@ function visitRow(job,segment=null){
 }
 // A field timestamp counts for this visit when it was recorded on the visit's Denver day, after any restore.
 function current(job,value,date){const ms=at(value),restored=at(job?.restoredAt);return ms!==null&&!(restored!==null&&ms<=restored)&&denverDate(ms)===date}
+// The crew's last status tap, when it was made today (after any restore).
+const todayTap=row=>current(row,row.fieldExecution?.activityAt,row.date)?String(row.fieldExecution?.activity||''):'';
 function arrived(row){
-  const date=row.date,visit=row.fieldExecution?.visits?.[date];
-  return current(row,row.arrivedAt,date)||current(row,row.startedAt,date)||current(row,visit?.startedAt,date)||row.firstVisit===true&&ARRIVED.has(stage(row));
+  const date=row.date;
+  return current(row,row.arrivedAt,date)||current(row,row.startedAt,date)||ARRIVED_TAPS.has(todayTap(row))||row.firstVisit===true&&ARRIVED.has(stage(row));
 }
-const moving=row=>arrived(row)||current(row,row.dispatchedAt,row.date)||row.firstVisit===true&&MOVING.has(stage(row));
+const moving=row=>arrived(row)||current(row,row.dispatchedAt,row.date)||current(row,row.fieldExecution?.visits?.[row.date]?.startedAt,row.date)||MOVING_TAPS.has(todayTap(row))||row.firstVisit===true&&MOVING.has(stage(row));
 function startAt(job){const minutes=clock(job?.time);return minutes===null?null:denverInstant(job?.date,minutes)}
 // The label dispatch saves with the default window (dispatch-arrival.js formatArrivalWindow), read back only in that form.
 function labelMinutes(label){
@@ -103,7 +110,8 @@ function flags(job,{now,crew=[],timeEntries=null}={}){
   const start=startAt(row);if(start===null)return[];
   const output=[],late=!arrived(row)&&nowMs>=arrivalDeadline(row);
   if(late)output.push({kind:'late',tone:'red',label:'Late'});
-  else if(!moving(row)&&nowMs>=enRouteDeadline(row))output.push({kind:'not_en_route',tone:'amber',label:'Not en route'});
+  // A later visit of a job already arrived or working has no en-route tap in the crew app; it can only be late.
+  else if(!moving(row)&&!(row.firstVisit===false&&ARRIVED.has(stage(row)))&&nowMs>=enRouteDeadline(row))output.push({kind:'not_en_route',tone:'amber',label:'Not en route'});
   if(Array.isArray(timeEntries)&&nowMs>=start){
     const firsts=clockIns(timeEntries,row.date);
     const missing=[...new Set((Array.isArray(crew)?crew:[]).map(name=>String(name||'').trim()).filter(Boolean))].filter(name=>!memberClockedIn(name,firsts,nowMs));

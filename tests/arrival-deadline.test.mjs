@@ -6,6 +6,8 @@ import { storage, FixedDate } from './helpers/hub-dom.mjs';
 import { flags, visitRow, arrivalDeadline, enRouteDeadline, startAt, denverDate } from '../functions/_lib/arrival-deadline.js';
 import { projectDispatchJob } from '../functions/_lib/dispatch-service.js';
 import { formatArrivalWindow } from '../functions/_lib/dispatch-arrival.js';
+import { fieldChecklist, fieldCommand } from '../functions/_lib/field-execution.js';
+import { fieldVisitCommand } from '../functions/_lib/field-execution-visits.js';
 
 // FIELD-FLAGS: every instant here is fixed; nothing reads the real clock.
 const source = name => readFileSync(new URL('../' + name, import.meta.url), 'utf8');
@@ -57,7 +59,7 @@ test('not en route from 30 minutes before the start, late at the deadline, and n
 
 test('a job already arrived or started, or cancelled or finished, is never flagged late', () => {
   const now = at('2026-09-22T17:00:00Z');
-  for (const fields of [{ arrivedAt: '2026-09-22T15:20:00Z' }, { startedAt: '2026-09-22T15:30:00Z' }, { status: 'in_progress' }, { pipelineStatus: 'arrived' }, { fieldExecution: { visits: { '2026-09-22': { status: 'in_progress', startedAt: '2026-09-22T15:10:00Z' } } } },
+  for (const fields of [{ arrivedAt: '2026-09-22T15:20:00Z' }, { startedAt: '2026-09-22T15:30:00Z' }, { status: 'in_progress' }, { pipelineStatus: 'arrived' }, { fieldExecution: { activity: 'in_progress', activityAt: '2026-09-22T15:10:00Z' } },
     { status: 'completed' }, { completedAt: '2026-09-22T16:00:00Z' }, { status: 'cancelled' }, { cancelledAt: '2026-09-22T12:00:00Z' }, { pipelineStatus: 'no_show' }])
     assert.ok(!kinds(flags(job(fields), { now })).some(kind => kind === 'late' || kind === 'not_en_route'), JSON.stringify(fields));
   for (const fields of [{ status: 'completed' }, { status: 'cancelled' }])
@@ -217,7 +219,7 @@ test('split jobs are flagged per segment with its own time and crew; tomorrow\'s
   // A multi-day job still "in progress" from yesterday needs today's start to count as arrived on day 2.
   const carried = { ...dayTwo, pipelineStatus: 'in_progress', status: 'in_progress', startedAt: '2026-09-21T14:30:00Z' };
   assert.deepEqual(kinds(flags(visitRow(carried, carried.assignmentSegments[1]), { now: noon })), ['late']);
-  assert.deepEqual(flags(visitRow({ ...carried, fieldExecution: { visits: { '2026-09-22': { status: 'in_progress', startedAt: '2026-09-22T15:05:00Z' } } } }, carried.assignmentSegments[1]), { now: noon }), []);
+  assert.deepEqual(flags(visitRow({ ...carried, fieldExecution: { activity: 'in_progress', activityAt: '2026-09-22T15:05:00Z' } }, carried.assignmentSegments[1]), { now: noon }), [], 'today\'s Working tap counts');
 });
 
 // Finding 1: the whole timecard history is indexed once per array, so a render stays fast on a phone.
@@ -261,4 +263,47 @@ test('the agenda flags each segment of a split job on its own row and Needs atte
   const attention = p.api.attention();
   assert.match(attention, /3 jobs flagged today/);
   assert.match(attention, /2 late · 1 not en route · 2 crew members not clocked in\./, 'crew-a is late to three visits but counted once');
+});
+
+// Review of #194, round 2: the flags read what the real crew commands write. A split job over two days, crew.one on both.
+const denver = (date, time) => new Date(`${date}T${time}:00.000-06:00`).toISOString();
+const segment = (id, date) => ({ id, date, time: '08:00', endDate: date, endTime: '17:00', assignedCrew: ['crew.one'], crewLead: null, crewId: null, vehicleId: null, notes: '' });
+function twoDay() {
+  const row = { id: 'synthetic-two-day', type: 'job', customer: 'Synthetic Two Day', date: '2026-09-22', time: '08:00', endDate: '2026-09-23', endTime: '17:00', assignedCrew: ['crew.one'], crewLead: 'crew.one',
+    status: 'scheduled', pipelineStatus: 'scheduled', assignmentSegments: [segment('a', '2026-09-22'), segment('b', '2026-09-23')] };
+  row.fieldExecution = { checks: Object.fromEntries(fieldChecklist(row).map(item => [item.id, { completed: true, actorId: 'crew.one' }])), photos: ['before', 'after'].map((category, n) => ({ id: `00000000-0000-4000-8000-00000000000${n + 1}`, fileId: `file-${category}`, category, verified: true })) };
+  return row;
+}
+const tapper = { user: 'crew.one', displayName: 'Crew One', manager: false };
+let taps = 0;
+const tap = (command, row, status, now) => ({ ...row, ...command(row, tapper, { action: 'status', status, requestId: `00000000-0000-4000-8000-${String(++taps).padStart(12, '0')}`, ...(['paused', 'waiting', 'delayed'].includes(status) ? { reason: 'Synthetic traffic' } : {}) }, now).patch });
+
+test('day 2 of a split job: a Working tap from in progress (FIELD_MULTIDAY_VISITS off) clears the flags; no tap is Late', () => {
+  let row = tap(fieldCommand, twoDay(), 'dispatched', denver('2026-09-22', '07:40'));
+  row = tap(fieldCommand, row, 'arrived', denver('2026-09-22', '07:58'));
+  row = tap(fieldCommand, row, 'in_progress', denver('2026-09-22', '08:05'));
+  const dayTwo = current => visitRow(current, current.assignmentSegments[1]);
+  // Day 2 before any tap: no en-route action exists from in progress, so only Late can show, at 08:15.
+  assert.deepEqual(flags(dayTwo(row), { now: at(denver('2026-09-23', '07:45')) }), [], 'no Not en route the crew cannot clear');
+  assert.deepEqual(kinds(flags(dayTwo(row), { now: at(denver('2026-09-23', '08:15')) })), ['late']);
+  const working = tap(fieldCommand, row, 'in_progress', denver('2026-09-23', '08:02'));
+  assert.equal(working.startedAt, denver('2026-09-22', '08:05'), 'the job-level start stays on day 1');
+  assert.equal(working.fieldExecution.visits, undefined, 'no visit record with the switch off');
+  for (const time of ['08:15', '11:00', '16:30']) assert.deepEqual(flags(dayTwo(working), { now: at(denver('2026-09-23', time)) }), [], time);
+});
+
+test('FIELD_MULTIDAY_VISITS on: the day\'s first tap writes a visit record, but En route is still Late at the deadline; Working clears it', () => {
+  const dispatched = tap(fieldVisitCommand, twoDay(), 'dispatched', denver('2026-09-22', '07:40'));
+  assert.ok(dispatched.fieldExecution.visits['2026-09-22'].startedAt, 'the visit record exists after only En route');
+  const first = visitRow(dispatched, dispatched.assignmentSegments[0]);
+  assert.deepEqual(flags(first, { now: at(denver('2026-09-22', '08:10')) }), [], 'en route, inside the grace period');
+  assert.deepEqual(kinds(flags(first, { now: at(denver('2026-09-22', '08:15')) })), ['late'], 'en route but never arrived is Late');
+  // A crew whose first tap of a day is En route at 08:40 on day 2 is Late at 08:15 already and stays Late.
+  let row = tap(fieldVisitCommand, dispatched, 'arrived', denver('2026-09-22', '07:58'));
+  row = tap(fieldVisitCommand, row, 'in_progress', denver('2026-09-22', '08:05'));
+  const late = tap(fieldVisitCommand, row, 'delayed', denver('2026-09-23', '08:40'));
+  assert.ok(late.fieldExecution.visits['2026-09-23'].startedAt);
+  assert.deepEqual(kinds(flags(visitRow(late, late.assignmentSegments[1]), { now: at(denver('2026-09-23', '09:15')) })), ['late']);
+  const working = tap(fieldVisitCommand, late, 'in_progress', denver('2026-09-23', '09:20'));
+  assert.deepEqual(flags(visitRow(working, working.assignmentSegments[1]), { now: at(denver('2026-09-23', '09:30')) }), []);
 });
