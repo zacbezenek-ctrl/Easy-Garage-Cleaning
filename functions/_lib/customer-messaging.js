@@ -34,6 +34,8 @@ export function conversationMessages(job = {}) {
     authorName: cleanInline(row?.authorName || (row?.direction === 'to_customer' ? 'Easy Garage Cleaning' : 'Customer'), 120),
     body: cleanMessage(row?.body),
     createdAt: cleanInline(row?.createdAt, 50),
+    // PORTAL-INBOX: 'queued' once the office alert was committed with the message (customer-message-alerts.js).
+    ...(row?.officeAlert === 'queued' ? { officeAlert: 'queued' } : {}),
     delivery: {
       channel: ['sms', 'highlevel', 'portal'].includes(row?.delivery?.channel) ? row.delivery.channel : 'portal',
       status: DELIVERY_STATUSES.includes(row?.delivery?.status) ? row.delivery.status : 'received',
