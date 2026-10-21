@@ -2,7 +2,7 @@
 // fonts declared before the first layout, so phones download less before the hero paints and the page is laid out once.
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { existsSync, readFileSync } from 'node:fs';
+import { existsSync, readdirSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 
 const root = join(import.meta.dirname, '..');
@@ -71,6 +71,19 @@ test('the home page hosts its fonts and declares them before the first layout', 
   assert.deepEqual([...declared].sort(), ['Fraunces italic 400', 'Fraunces normal 400 700', 'Inter normal 400 900', 'JetBrains Mono normal 400']);
   assert.match(head, /<link rel="preload" href="\/fonts\/inter-latin-v20\.woff2" as="font" type="font\/woff2" crossorigin>/);
   for (const name of ['inter', 'jetbrainsmono', 'fraunces']) assert.match(read(`fonts/OFL-${name}.txt`), /SIL OPEN FONT LICENSE Version 1\.1/);
+});
+
+test('the blog index, also named index.html, keeps its own Google Fonts weights and preloads no hero photo', () => {
+  const blog = read('blog/index.html');
+  assert.doesNotMatch(blog, /id="egc-fonts"|\/fonts\/inter-latin/, 'the home-only font faces stay on the root page');
+  assert.doesNotMatch(blog, /job-before-after-1/, 'the blog index shows no hero photo, so it must not preload one');
+  assert.match(blog, /<link href="https:\/\/fonts\.googleapis\.com\/css2\?[^"]*Inter:wght@400;500;600[^"]*" rel="stylesheet" media="print"/);
+});
+
+test('every self-hosted font file name carries its version, because /fonts/* is cached immutable for a year', () => {
+  const files = readdirSync(join(root, 'fonts')).filter(name => name.endsWith('.woff2'));
+  assert.ok(files.length >= 8, files.join(' '));
+  for (const name of files) assert.match(name, /^[a-z-]+-latin(?:-ext)?-v\d+\.woff2$/);
 });
 
 test('self-hosted fonts are cached like images and allowed by the site CSP', () => {

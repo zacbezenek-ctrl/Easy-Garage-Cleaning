@@ -4165,7 +4165,7 @@ def patch_home_gallery_images(text):
     return text
 
 
-def patch_performance_and_tracking(text, is_home=False):
+def patch_performance_and_tracking(text, is_home=False, is_root_home=None):
     """Keep analytics out of the critical path and give the home LCP image priority."""
     for label in ("MERCHANT SETUP CHECKLIST", "HOSTING CSP", "CALLRAIL / DYNAMIC NUMBER INSERTION"):
         text = re.sub(rf'<!--\s*{re.escape(label)}[\s\S]*?-->\s*', '', text)
@@ -4223,6 +4223,9 @@ def patch_performance_and_tracking(text, is_home=False):
         "",
         text,
     )
+    if is_root_home is False:
+        # blog/index.html is named like the home page but shows no hero photo and keeps its Google Fonts weights.
+        return re.sub(r'<link rel="preload" as="image"[^>]+job-before-after-1-824\.webp[^>]*>\s*', "", text)
     hero_preload = '<link rel="preload" as="image" type="image/webp" href="/images/job-before-after-1-824.webp" imagesrcset="/images/job-before-after-1-824.webp 824w, /images/job-before-after-1-1080.webp 1080w, /images/job-before-after-1.webp 1646w" imagesizes="(max-width: 899px) calc(100vw - 32px), 50vw" fetchpriority="high">'
     if "job-before-after-1-824.webp" not in text.split("</head>", 1)[0]:
         text = text.replace('<link rel="stylesheet" href="/styles.css', hero_preload + '\n<link rel="stylesheet" href="/styles.css', 1)
@@ -4391,7 +4394,7 @@ def patch_static_pages():
             text = patch_nav_hamburger(text)
             text = inject_polish_css(text)
             text = patch_a11y_shell(text)
-            text = patch_performance_and_tracking(text, is_home)
+            text = patch_performance_and_tracking(text, is_home, is_root_home=path == ROOT / "index.html")
             text = patch_lazy_images(text)
             text = add_noopener_external(text)
             text = fix_blog_canonicals(text)
