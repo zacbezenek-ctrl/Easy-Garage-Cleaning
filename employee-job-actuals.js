@@ -1,6 +1,6 @@
 /* Job actuals (owner): every completed job in the last 90 days with billed versus actual man-hours, truck loads, goods
    at retail, commission by channel and an estimated gross margin and contribution, with totals for the last 30 and 90
-   days and a CSV export. The server computes every figure (functions/_lib/job-actuals.js, GET /api/job-actuals) in
+   days and a CSV export, and the estimator accuracy scorecard (estimated vs actual man-hours per estimator). The server computes every figure (functions/_lib/job-actuals.js, GET /api/job-actuals) in
    integer cents; this screen only formats them. No margin shows until the owner enters the crew wage, and margins read
    "upper bound" until all seven cost settings are entered (wage, workers' comp, payroll tax, burden, dump fee, truck
    cost, goods tax) on the Cost settings card (POST /api/job-actuals, owner only; managers see them read-only). The owner
@@ -36,7 +36,7 @@ const CHANNEL={direct_estimator:'Estimator 7%',appointment_setter:'Setter 13% + 
 // warning above the totals and 'actual_hours_missing' by the Actual cell, so neither repeats here.
 const REASON={loads_quoted:'Dump cost from quoted loads',loads_unknown:'Truck loads not recorded',revenue_unreconciled:'Revenue not final: refund or unbilled change',timecards_unavailable:'Timecards could not be read',timecards_incomplete:'Timecards incomplete (open shift or review)',crew_lead_exceeds_timecards:'Crew lead count used: above timecards',wage_unset:'No crew wage set',goods_unknown:'Goods unknown: no estimate lines',revenue_unknown:'Revenue unknown'};
 const SOURCE={timecards:'Timecards',crew_lead:'Crew lead',not_recorded:'Not recorded'};
-const S={host:null,ctx:null,data:null,error:null,loading:false,busy:false,pending:null,drafts:{},feedback:'',feedbackError:false,generation:0,showAll:false};
+const S={host:null,ctx:null,data:null,error:null,loading:false,busy:false,pending:null,drafts:{},feedback:'',feedbackError:false,generation:0,showAll:false,accuracyWindow:'last30',accuracyAll:false,accuracyJobsOpen:false};
 const O={data:null,error:null,busy:false,pending:null,drafts:{},feedback:'',feedbackError:false,generation:0};
 const kit=()=>window.EGCHubKit;
 const h=(...args)=>kit().h(...args);
@@ -51,8 +51,11 @@ function validTotals(t){return Boolean(t&&int(t.jobs)&&int(t.revenueCents)&&int(
 function validRow(r){return Boolean(r&&typeof r.jobId==='string'&&r.billed&&r.actual&&r.truckLoads&&int(r.truckLoads.count)&&r.commission&&Array.isArray(r.commission.lines)&&int(r.commission.totalCents)&&(r.revenueCents===null||int(r.revenueCents))&&(r.grossMarginCents===null||int(r.grossMarginCents))&&Array.isArray(r.reasons));}
 function valid(data){
   return Boolean(data&&data.ok===true&&data.window&&data.totals&&validTotals(data.totals.last30)&&validTotals(data.totals.last90)&&Array.isArray(data.rows)&&data.rows.every(validRow)
-    &&data.settings&&typeof data.canEdit==='boolean'&&SETTINGS.every(s=>data.settings[s.key]===null||int(data.settings[s.key])));
+    &&data.settings&&typeof data.canEdit==='boolean'&&SETTINGS.every(s=>data.settings[s.key]===null||int(data.settings[s.key]))
+    &&(data.estimatorAccuracy===undefined||validAccuracy(data.estimatorAccuracy)));
 }
+function validScorecard(c){return Boolean(c&&int(c.minJobs)&&Array.isArray(c.estimators)&&c.estimators.every(e=>e&&typeof e.estimator==='string'&&int(e.jobs)&&typeof e.ranked==='boolean'));}
+function validAccuracy(a){return Boolean(a&&int(a.minJobs)&&Array.isArray(a.rows)&&a.rows.every(r=>r&&typeof r.jobId==='string'&&typeof r.scored==='boolean')&&validScorecard(a.last30)&&validScorecard(a.last90));}
 const validSave=data=>Boolean(data&&data.ok===true&&data.settings&&SETTINGS.every(s=>data.settings[s.key]===null||int(data.settings[s.key])));
 // Settings text as the owner typed it, and what it means: {value: integer|null} or {bad:true}.
 const shown=(setting,value)=>value===null||value===undefined?'':setting.kind==='percent'?String(value/100):(value/100).toFixed(2);
@@ -270,6 +273,54 @@ function jobRow(r){
     cell('Gross margin','num',margin,...r.reasons.filter(code=>REASON[code]).map(code=>h('small',{class:'ja-reason','data-reason':code},REASON[code]))),
     cell('Contribution','num',money(r.contributionCents)));
 }
+/* Estimator accuracy (functions/_lib/estimator-accuracy.js): estimated vs actual man-hours per job and a scorecard per
+   estimator. Hours only: no revenue, margin, cost or pay is shown here. */
+const EXCLUDED={junk_only:'Junk only (sold by the truck, no labor estimate)',no_labor_estimate:'No Labor line on the quote',actual_not_recorded:'Actual hours not recorded',timecards_incomplete:'Timecards incomplete',timecards_unavailable:'Timecards could not be read',no_estimator:'No estimator on record',estimator_conflict:'The setter record names a different estimator'};
+const EVIDENCE={walkthrough_signer:'Signed the walkthrough',quote_sender:'Sent the quote',setter_record:'Setter record'};
+const bias=value=>typeof value!=='number'?'—':value===0?'Spot on':value>0?`Under by ${pct(value)}`:`Over by ${pct(-value)}`;
+function accuracyCard(){
+  const a=S.data.estimatorAccuracy;if(!a)return null;
+  const card=a[S.accuracyWindow],label=S.accuracyWindow==='last30'?'Last 30 days':'Last 90 days',span=S.accuracyWindow==='last30'?'in the last 30 days':'in the last 90 days';
+  // Every estimator tied at the best average miss is named.
+  const leaders=Array.isArray(a.last30.leaders)?a.last30.leaders:a.last30.top?[a.last30.top]:[],top=leaders[0];
+  const names=leaders.map(l=>`${l.estimator} (${l.jobs} jobs)`),joined=names.length>1?`${names.slice(0,-1).join(', ')} and ${names.at(-1)}`:`${top?.estimator||''}`;
+  const callout=top?h('div',{class:'hub-notice success ja-callout',role:'status'},h('strong',{},`Most accurate this month: ${joined}`),leaders.length>1?` — tied, off by ${pct(top.averageErrorPercent)} on average.`:` — off by ${pct(top.averageErrorPercent)} on average across ${top.jobs} jobs.`)
+    :h('p',{class:'ja-muted'},`No one is ranked this month yet: an estimator needs ${a.minJobs} scored jobs in the last 30 days.`);
+  const rows=card.estimators.map(e=>h('tr',{'data-estimator':e.estimator,class:e.ranked?'':'ja-unranked'},
+    h('th',{scope:'row','data-label':'Estimator'},h('span',{class:'ja-cell'},e.estimator,e.ranked?null:h('small',{},`Not ranked: ${e.jobs} of ${a.minJobs} jobs`))),
+    h('td',{class:'num','data-label':'Jobs'},h('span',{class:'ja-cell'},String(e.jobs))),
+    h('td',{class:'num','data-label':'Average miss'},h('span',{class:'ja-cell'},pct(e.averageErrorPercent))),
+    h('td',{class:'num','data-label':'Tends to'},h('span',{class:'ja-cell'},bias(e.biasPercent))),
+    h('td',{class:'num','data-label':'Within 10%'},h('span',{class:'ja-cell'},pct(e.within10Percent))),
+    h('td',{class:'num','data-label':'Within 20%'},h('span',{class:'ja-cell'},pct(e.within20Percent))),
+    h('td',{class:'num','data-label':'Estimated → actual h'},h('span',{class:'ja-cell'},`${hours(e.estimatedManHours)} → ${hours(e.actualManHours)}`))));
+  // The job list and the exclusions follow the selected period.
+  const ids=Array.isArray(card.jobIds)?new Set(card.jobIds):null,jobs=ids?a.rows.filter(r=>ids.has(r.jobId)):a.rows,visible=S.accuracyAll?jobs:jobs.slice(0,20);
+  const jobRows=visible.map(r=>h('tr',{'data-accuracy-job':r.jobId,class:r.scored?'':'ja-unscored'},
+    h('td',{'data-label':'Date'},h('span',{class:'ja-cell'},day(r.date))),
+    h('th',{scope:'row','data-label':'Job'},h('span',{class:'ja-cell'},r.customer||r.jobId,h('small',{},r.serviceType||''))),
+    h('td',{'data-label':'Estimator'},h('span',{class:'ja-cell'},r.estimator||'—',r.estimatorEvidence?h('small',{},EVIDENCE[r.estimatorEvidence]||''):null)),
+    h('td',{class:'num','data-label':'Estimated h'},h('span',{class:'ja-cell'},hours(r.estimatedManHours))),
+    h('td',{class:'num','data-label':'Actual h'},h('span',{class:'ja-cell'},hours(r.actualManHours),h('small',{},SOURCE[r.actualSource]||''))),
+    h('td',{class:'num','data-label':'Difference'},h('span',{class:'ja-cell'},r.differenceManHours===null?'—':`${signed(r.differenceManHours,hours)} h (${signed(r.differencePercent,pct)})`,r.excluded?h('small',{class:'ja-reason','data-excluded':r.excluded},'Not scored: '+(EXCLUDED[r.excluded]||r.excluded)):null))));
+  const excluded=Object.entries(card.excluded||a.excluded||{}).filter(([,n])=>n>0).map(([code,n])=>`${EXCLUDED[code]||code}: ${n}`).join(' · ');
+  return h('section',{class:'hub-card ja-accuracy','aria-label':'Estimator accuracy'},
+    h('h2',{},'Estimator accuracy'),
+    h('p',{class:'ja-muted'},'Man-hours each estimate sold against the man-hours the job took. "Average miss" is how far off the estimates were, either way; lower is better. "Tends to" shows whether the estimator usually estimates under or over.'),
+    callout,
+    h('div',{class:'hub-actions ja-window',role:'group','aria-label':'Scorecard period'},
+      kit().button('Last 30 days',()=>{S.accuracyWindow='last30';S.accuracyFocus='[data-accuracy-window="last30"]';render();},S.accuracyWindow==='last30'?'primary':'',{'aria-pressed':String(S.accuracyWindow==='last30'),'data-accuracy-window':'last30'}),
+      kit().button('Last 90 days',()=>{S.accuracyWindow='last90';S.accuracyFocus='[data-accuracy-window="last90"]';render();},S.accuracyWindow==='last90'?'primary':'',{'aria-pressed':String(S.accuracyWindow==='last90'),'data-accuracy-window':'last90'})),
+    card.estimators.length?h('div',{class:'hub-table-scroll ja-table-scroll'},h('table',{class:'ja-table ja-scorecard','aria-label':`Estimator scorecard, ${label}`},
+      h('thead',{},h('tr',{},['Estimator','Jobs','Average miss','Tends to','Within 10%','Within 20%','Estimated → actual h'].map(text=>h('th',{scope:'col'},text)))),
+      h('tbody',{},rows))):h('p',{},`No scored jobs in the ${label.toLowerCase()}.`),
+    jobs.length?h('details',{class:'ja-accuracy-jobs',open:S.accuracyJobsOpen||null,ontoggle:event=>{S.accuracyJobsOpen=event.target.open;}},h('summary',{'data-accuracy-jobs-summary':''},`Estimate vs actual, job by job ${span} (${jobs.length})`),
+      h('div',{class:'hub-table-scroll ja-table-scroll'},h('table',{class:'ja-table'},
+        h('thead',{},h('tr',{},['Date','Job','Estimator','Estimated h','Actual h','Difference'].map(text=>h('th',{scope:'col'},text)))),
+        h('tbody',{},jobRows))),
+      jobs.length>visible.length?kit().button(`Show all ${jobs.length} jobs`,()=>{S.accuracyAll=true;S.accuracyJobsOpen=true;S.accuracyFocus='[data-accuracy-jobs-summary]';render();}):null):null,
+    excluded?h('p',{class:'ja-muted'},`Not scored ${span}: `+excluded+'.'):null);
+}
 function table(){
   const rows=S.data.rows,visible=S.showAll?rows:rows.slice(0,50);
   if(!rows.length)return h('div',{class:'hub-card'},h('p',{},'No completed jobs in the last 90 days.'));
@@ -293,13 +344,15 @@ function render(){
     if(!d.settingsComplete)notices.push(h('div',{class:'hub-notice warning'},d.missingSettings.includes('wageCentsPerManHour')?'No margins yet: enter the crew wage in Cost settings below.':`Margins are an upper bound: ${d.missingSettings.length} of ${SETTINGS.length} cost settings ${d.missingSettings.length===1?'is':'are'} blank.`));
     if(d.sources?.timecards==='unavailable')notices.push(h('div',{class:'hub-notice warning'},'Timecards could not be read, so actual hours show only where the crew lead confirmed them. Refresh to try again.'));
     if(S.error)notices.push(h('div',{class:'hub-notice error',role:'alert'},kit().errorText(S.error)));
-    body=[...notices,h('div',{class:'ja-totals-grid'},totalsCard('Last 30 days',d.totals.last30),totalsCard('Last 90 days',d.totals.last90)),table(),settingsCard(),...(d.canEdit?[ownerCard()]:[])];
+    body=[...notices,h('div',{class:'ja-totals-grid'},totalsCard('Last 30 days',d.totals.last30),totalsCard('Last 90 days',d.totals.last90)),accuracyCard(),table(),settingsCard(),...(d.canEdit?[ownerCard()]:[])].filter(Boolean);
   }
   const root=h('section',{class:'hub-screen egc-job-actuals'},head,...body);
   S.host.querySelector('.egc-job-actuals')?.remove();
   S.host.append(root);
+  // A control that redraws the card (the period buttons, Show all) keeps keyboard focus where it was.
+  if(S.accuracyFocus){const target=root.querySelector(S.accuracyFocus);S.accuracyFocus=null;target?.focus?.();}
 }
-function mount(host,ctx){S.host=host;S.ctx=ctx||{};S.data=null;S.error=null;S.drafts={};S.feedback='';S.showAll=false;Object.assign(O,{data:null,error:null,busy:false,pending:null,drafts:{},feedback:'',feedbackError:false});return load();}
+function mount(host,ctx){S.host=host;S.ctx=ctx||{};S.data=null;S.error=null;S.drafts={};S.feedback='';S.showAll=false;S.accuracyWindow='last30';S.accuracyAll=false;S.accuracyJobsOpen=false;S.accuracyFocus=null;Object.assign(O,{data:null,error:null,busy:false,pending:null,drafts:{},feedback:'',feedbackError:false});return load();}
 function unmount(){S.generation++;O.generation++;S.host?.querySelector('.egc-job-actuals')?.remove();S.host=null;S.ctx=null;}
 window.addEventListener('egc:signout',()=>{try{for(let i=sessionStorage.length-1;i>=0;i--){const name=sessionStorage.key(i);if(String(name||'').startsWith(EDITED)||String(name||'').startsWith(OWNER_EDITED))sessionStorage.removeItem(name);}}catch{}});
 window.EGCJobActuals={mount,unmount,canLeave:()=>{const costs=changes().changed,targets=Boolean(O.data)&&ownerChanges().changed;return!costs&&!targets||window.confirm(`Discard unsaved ${costs&&targets?'cost settings and owner targets':costs?'cost settings':'owner targets'}?`);},refresh:load};
