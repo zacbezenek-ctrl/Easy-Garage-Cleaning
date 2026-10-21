@@ -498,7 +498,8 @@ export const AUTOMATION_REGISTRY = deepFreeze({
     'egc-platform/services/operations/src/communication-execution.ts': { ghl_client_write: 1 },
     'egc-platform/services/operations/src/note-outbox.ts': { ghl_client_write: 1 },
     'employee-dispatch.js': { hub_send_endpoint_call: 1 },
-    'employee-suite.js': { hub_lifecycle_trigger: 2, hub_send_endpoint_call: 11 },
+    // PORTAL-LINKS: the Hub's retry of a held or failed portal link text posts to /api/customer-portal-invitation with its kind.
+    'employee-suite.js': { hub_lifecycle_trigger: 2, hub_send_endpoint_call: 12 },
     'employee.html': { hub_send_endpoint_call: 2 },
     'fb-capture.js': { hub_send_endpoint_call: 2 },
     'functions/_lib/business-hub-invite-delivery.js': { hub_send_helper_call: 2 },

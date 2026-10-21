@@ -467,7 +467,7 @@ test('the Hub board module: off until the server says so, then the finance state
   const suite = readFileSync(new URL('../employee-suite.js', import.meta.url), 'utf8'), lines = suite.split(/\r?\n/), line = prefix => { const found = lines.find(item => item.startsWith(prefix)); assert.ok(found, prefix); return found; };
   const { api, store, listeners, context } = hubModule();
   Object.assign(context, { jobs: () => [], jobStage: j => j.pipelineStatus || j.status, crewNames: () => [], esc: String, money: value => `$${Number(value || 0).toFixed(2)}`, badge: text => `[${text}]`, empty: text => text, dateLabel: () => 'date',
-    portalInvitationControl: () => '', salesExitControl: () => '', serverCapabilities: () => null, S: { integrations: {} }, isManager: () => true, isOwnerAccount: () => false });
+    portalInvitationControl: () => '', portalLinkControl: () => '', salesExitControl: () => '', serverCapabilities: () => null, S: { integrations: {} }, isManager: () => true, isOwnerAccount: () => false });
   Object.assign(context.window, { EGCLaborCosts: { state: () => 'hidden', record: () => null }, EGCPricingConfig: { owner: () => null } });
   vm.runInContext([line('const payMoney='), line('const day='), line('function financeState('), line('const ownerEconomics='), line('const laborBaseline='), line('const laborState='), line('function jobEconomics('), line('function fieldPaymentReviewAccess('), line('function financeBoard(')].join('\n'), context);
   const jobs = moneyJobs(), billed = jobs['billed-change'], unbilled = jobs['unbilled-change'];
@@ -612,7 +612,7 @@ function hubBoard(sessionValue = 'true') {
   const suite = readFileSync(new URL('../employee-suite.js', import.meta.url), 'utf8'), lines = suite.split(/\r?\n/), line = prefix => { const found = lines.find(item => item.startsWith(prefix)); assert.ok(found, prefix); return found; };
   const { api, context } = hubModule(sessionValue);
   Object.assign(context, { jobs: () => [], jobStage: j => j.pipelineStatus || j.status, crewNames: () => [], esc: String, money: value => `$${Number(value || 0).toFixed(2)}`, badge: text => `[${text}]`, empty: text => text, dateLabel: () => 'date', timeLabel: () => 'time',
-    portalInvitationControl: () => '', salesExitControl: () => '', serverCapabilities: () => null, S: { integrations: {} }, isManager: () => true, isOwnerAccount: () => false });
+    portalInvitationControl: () => '', portalLinkControl: () => '', salesExitControl: () => '', serverCapabilities: () => null, S: { integrations: {} }, isManager: () => true, isOwnerAccount: () => false });
   Object.assign(context.window, { EGCLaborCosts: { state: () => 'hidden', record: () => null }, EGCPricingConfig: { owner: () => null } });
   vm.runInContext([line('const payMoney='), line('const day='), line('function financeState('), line('const ownerEconomics='), line('const laborBaseline='), line('const laborState='), line('function jobEconomics('), line('function fieldPaymentReviewAccess('), line('function financeBoard('),
     line('function communicationActions('), line('function reviewRequestState('), line('function communicationBoard(')].join('\n'), context);

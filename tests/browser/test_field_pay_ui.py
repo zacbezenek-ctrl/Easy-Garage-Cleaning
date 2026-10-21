@@ -388,7 +388,7 @@ class FieldPayBrowserTests(unittest.TestCase):
         render_finance = '''({job,caps}) => {
           const jobs=()=>[job], jobStage=()=> 'scheduled', financeState=()=>({total:145.5,balance:145.5,deposit:0,estimate:'draft',invoice:'open',paid:0}),
             jobEconomics=()=>({known:false,laborUnknown:false}), money=value=>'$'+Number(value).toFixed(2), dateLabel=()=> 'Sep 22',
-            badge=(label)=>`<span class="badge">${label}</span>`, esc=value=>String(value), portalInvitationControl=()=>'',salesExitControl=()=>'',
+            badge=(label)=>`<span class="badge">${label}</span>`, esc=value=>String(value), portalInvitationControl=()=>'',portalLinkControl=()=>'',salesExitControl=()=>'',
             serverCapabilities=()=>caps,empty=()=>'';
         ''' + FINANCE_ACCESS + FINANCE_BOARD + '''
           document.body.innerHTML=financeBoard();

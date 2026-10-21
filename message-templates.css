@@ -48,6 +48,9 @@
 .mt-history summary{min-height:44px;display:flex;align-items:center;cursor:pointer;font-weight:650}
 .mt-history ol{list-style:none;margin:0;padding:0 0 10px;display:grid;gap:12px}
 .mt-history-text{white-space:pre-wrap;font-size:.88rem}
+.mt-portal{display:grid;gap:10px;margin:0 0 16px;padding:14px;background:#fff;border:1px solid var(--mt-line);border-radius:14px;min-width:0}
+.mt-portal-row{display:grid;gap:8px;padding:12px 0 0;border-top:1px solid #e1e7ed;min-width:0;justify-items:start}.mt-portal-row .mt-card-head{width:100%}.mt-portal-row .mt-exact{width:100%}.mt-portal-row .mt-pill{flex:none;white-space:nowrap}.mt-portal-row .mt-muted{margin:0!important}
+.mt-portal .mt-alert{margin:0}.mt-portal .mt-delivery{margin:0!important}
 .mt-dialog{width:min(560px,calc(100vw - 12px));max-height:calc(100dvh - 12px);padding:0;border:0;border-radius:14px;color:#172b42;font:16px/1.5 system-ui,-apple-system,sans-serif;overflow:auto}
 .mt-dialog::backdrop{background:rgba(15,28,42,.55)}
 .mt-dialog-body{padding:18px;display:grid;gap:10px}.mt-dialog-body p{margin:0}

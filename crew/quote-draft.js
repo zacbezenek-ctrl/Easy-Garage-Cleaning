@@ -359,7 +359,25 @@
       try { remember(key, value); } catch { /* the selection still works for this visit */ }
       return value;
     }
-    return { save, pendingSave, preview, savedCapture, syncCapture, send, pendingSend, clear, builder, compositePreview, builderState };
+    // PORTAL-LINKS (D): this customer's private portal link (30 days) for the estimator who owns the quote; the server
+    // refuses anyone else's quote and records every copy on the job.
+    async function portalLink(job) { await actor(); return request('/api/customer-portal-link', { job_id: String(job?.id || '') }); }
+    return { save, pendingSave, preview, savedCapture, syncCapture, send, pendingSend, clear, builder, compositePreview, builderState, portalLink };
+  }
+
+  // PORTAL-LINKS (A): what happened to the quote-ready portal link text when the quote was sent (the owner's switch in
+  // Hub → Message templates, off by default), in the estimator's words.
+  const LINK_WHY = { contact_dnd: 'the customer is on Do Not Disturb', job_notifications_off: 'notifications are off for this job', business_account_job: 'this is a Business Hub project', no_phone_or_email: 'no valid phone or email is saved',
+    prices_pending_approval: 'prices wait for the owner\u2019s approval', job_closed: 'the job is closed', quote_already_approved: 'the quote is already approved', quote_not_sent: 'the quote is not marked sent' };
+  const LINK_STATUS = { needs_contact: 'the customer has no matching HighLevel contact', contact_mismatch: 'the HighLevel contact does not match this customer', not_configured: 'portal texting is not set up', failed: 'HighLevel refused the message', storage_unavailable: 'it could not be recorded (the office\u2019s Hub retries it)', busy: 'another send was in progress (the office\u2019s Hub retries it)', needs_job: 'the quote job could not be read' };
+  function portalLinkText(link) {
+    if (!link || typeof link !== 'object' || !link.status) return '';
+    const status = link.status, reason = link.reason || '';
+    if (status === 'off') return reason === 'messaging_settings_invalid' ? 'Not texted: the messaging settings need review.' : 'Off \u2014 share the quote yourself (the owner can turn on texting in Hub \u2192 Message templates).';
+    if (status === 'submitted') return link.channel === 'Email' ? `Portal link emailed${link.recipient ? ` to ${link.recipient}` : ''}.` : `Portal link texted to ${link.recipient || 'the customer'}.`;
+    if (status === 'deferred') return reason === 'quiet_hours' ? 'Waiting for 8 AM: the portal link goes out automatically after quiet hours.' : reason === 'messaging_paused' ? 'Not texted yet: automatic messages are paused.' : 'Not texted yet: the messaging settings need review.';
+    if (['sending', 'uncertain'].includes(status)) return 'Portal link delivery is unconfirmed: check HighLevel before sharing the link again.';
+    return `Not texted: ${LINK_WHY[reason] || LINK_STATUS[status] || 'it needs attention in the Hub'}.`;
   }
 
   const MODES = {
@@ -461,7 +479,8 @@
       } else if (S.step === 'confirm') {
         const job = S.preview.job;
         children.push(h('p', { class: 'qd-summary' }, S.preview.summary), lines(job.estimate.lineItems), h('p', { class: 'qd-total' }, 'Total ', h('b', {}, money(job.estimate.amountCents)), ` · valid through ${dayText(job.estimate.validUntil)}`), Number.isSafeInteger(job.estimate.depositRequiredCents) ? h('p', {}, 'Deposit due: ', money(job.estimate.depositRequiredCents)) : null, h('p', { class: 'qd-mode' }, (MODES[S.preview.delivery.mode] || MODES.off)(S.preview.delivery.recipient?.masked || '')));
-      } else children.push(h('p', { class: 'qd-done' }, S.status));
+      } else children.push(h('p', { class: 'qd-done' }, S.status), portalLinkText(S.sent?.portalLink) ? h('p', { class: 'qd-mode qd-portal-link', role: 'status', 'data-link-status': S.sent.portalLink.status }, portalLinkText(S.sent.portalLink)) : null,
+        S.step === 'done' && S.sent?.job?.id ? copyRow(S.sent.job) : null);
       const capture = S.saved?.captureSync;
       if (capture) {
         const labels = { pending: 'Walkthrough saved in Hub; HighLevel sync pending.', syncing: 'Walkthrough HighLevel sync is in progress.', synced: 'Walkthrough note verified in HighLevel.', error: 'Walkthrough HighLevel sync failed. Retry the saved capture.', needs_link: 'Link the canonical HighLevel contact before retrying.', needs_review: 'This walkthrough needs review before it can sync to HighLevel.' };
@@ -475,6 +494,33 @@
         : S.step === 'confirm' ? h('button', { type: 'button', class: 'qd-primary', disabled: S.busy, onclick: confirmSend }, S.busy ? 'Sending…' : S.retry ? 'Retry original send' : S.preview.delivery.mode === 'automation' ? 'Send to customer' : 'Mark as sent')
           : h('button', { type: 'button', class: 'qd-primary', onclick: close }, 'Done');
       foot.replaceChildren(...(S.step === 'done' ? [primary] : [h('button', { type: 'button', class: 'qd-secondary', disabled: S.busy, onclick: close }, 'Close'), primary]));
+    }
+    // PORTAL-LINKS (D): copy this customer's private portal link (the server checks the estimator owns the quote and
+    // records the copy on the job). The same 30-day link the office's Copy customer portal makes.
+    function copyRow(job) {
+      return h('div', { class: 'qd-copy' },
+        h('button', { type: 'button', class: 'qd-secondary', disabled: S.copying || typeof client.portalLink !== 'function', onclick: () => copyLink(job) }, S.copying ? 'Creating private link\u2026' : 'Copy portal link'),
+        S.copyStatus ? h('p', { class: S.copyFailed ? 'qd-error' : 'qd-mode', role: S.copyFailed ? 'alert' : 'status' }, S.copyStatus) : null);
+    }
+    async function copyLink(job) {
+      if (S.copying) return;
+      const generation = S.generation;
+      S.copying = true; S.copyStatus = ''; S.copyFailed = false; render();
+      try {
+        const result = await client.portalLink(job);
+        if (generation !== S.generation) return;
+        let copied = false;
+        try { await navigator.clipboard.writeText(result.url); copied = true; }
+        catch {
+          const field = document.createElement('textarea'); field.value = result.url; field.readOnly = true; field.setAttribute('aria-label', 'Private customer portal link'); field.style.cssText = 'position:fixed;left:-9999px;top:0';
+          dialog.appendChild(field); field.select(); try { copied = document.execCommand('copy'); } catch {} field.remove();
+        }
+        S.copyFailed = !copied;
+        S.copyStatus = copied ? `Private portal link copied for ${result.customer || 'the customer'}. It works for ${Number(result.expiresInDays) || 30} days; share it only with them.` : 'The link was created but could not be copied. Try again in a secure browser.';
+      } catch (error) {
+        if (generation !== S.generation) return;
+        S.copyFailed = true; S.copyStatus = error.message || 'The portal link could not be created. Retry.';
+      } finally { if (generation === S.generation) { S.copying = false; render(); } }
     }
     // ---- Guided builder views: removal / cleanout, shelving, extra storage, then the server-priced review ----
     const STEP_LABELS = { removal: 'Removal / cleanout', shelving: 'Shelving', storage: 'Extra storage', quote: 'Review' };
@@ -687,6 +733,7 @@
             : breakdown ? h('p', { class: 'qd-notice', role: 'status' }, 'This quote has no Labor line yet. Edit the quote to add the man-hours before sending it.') : null,
         h('p', { class: 'qd-total' }, 'Quote total ', h('b', {}, money(job.estimate.amountCents)), job.estimate.validUntil ? ` · valid through ${dayText(job.estimate.validUntil)}` : ''),
         h('p', { class: 'qd-mode' }, 'Sending checks every price against the owner\u2019s approvals now. To change the quote, edit it: it opens on the saved selection.'),
+        job.id ? copyRow(job) : null,
         S.busy ? h('div', { class: 'qd-skeleton', 'aria-hidden': 'true' }, h('span')) : null,
         S.error ? h('p', { class: 'qd-error', role: 'alert' }, S.error) : null].filter(Boolean));
       foot.replaceChildren(h('button', { type: 'button', class: 'qd-secondary', disabled: S.busy, onclick: close }, 'Close'),
@@ -873,8 +920,8 @@
         const result = await client.send(S.saved, S.preview);
         if (generation !== S.generation) return;
         const status = result.delivery?.status;
-        S.sent = result; S.step = 'done'; S.retry = false;
-        S.status = `${result.job.estimate.number} revision ${result.job.estimate.revision} is marked sent. ${status === 'submitted' ? `The estimate-ready tag was applied in HighLevel; its workflow notifies the customer if that workflow is on.${result.delivery?.tagReset === 'unconfirmed' ? ' HighLevel did not confirm the old tag was cleared first, so a customer who already had it may not be notified again. Check Customer messages.' : ''}` : status === 'dry_run' ? 'Dry run: HighLevel was not triggered.' : ['uncertain', 'sending'].includes(status) ? 'HighLevel did not confirm the notification; it will not be resent automatically. Check Customer messages.' : status && !['messaging_disabled', 'suppressed', 'not_requested'].includes(status) ? 'The customer notification needs attention in Customer messages.' : 'Share the quote with the customer yourself.'}`;
+        S.sent = result; S.step = 'done'; S.retry = false; S.copyStatus = ''; S.copyFailed = false;
+        S.status = `${result.job.estimate.number} revision ${result.job.estimate.revision} is marked sent. ${status === 'submitted' ? `The estimate-ready tag was applied in HighLevel; its workflow notifies the customer if that workflow is on.${result.delivery?.tagReset === 'unconfirmed' ? ' HighLevel did not confirm the old tag was cleared first, so a customer who already had it may not be notified again. Check Customer messages.' : ''}` : status === 'dry_run' ? 'Dry run: HighLevel was not triggered.' : ['uncertain', 'sending'].includes(status) ? 'HighLevel did not confirm the notification; it will not be resent automatically. Check Customer messages.' : status && !['messaging_disabled', 'suppressed', 'not_requested'].includes(status) ? 'The customer notification needs attention in Customer messages.' : ['submitted', 'deferred', 'sending', 'uncertain'].includes(result.portalLink?.status) ? '' : 'Share the quote with the customer yourself.'}`.trim();
         options.onSent?.(result);
       } catch (error) {
         if (generation !== S.generation) return;
@@ -896,5 +943,5 @@
     if (S.mode === 'probe') probeBuilder();
     return dialog;
   }
-  root.EGCQuoteDraft = { open, createClient, draftFromWalkthrough, scopeText, missing, builder: Object.freeze({ steps: BUILDER_STEPS, selectionFromWalkthrough, selectionOfPricing, validSelection, builderDescriptor, runningTotals, builderScope, compositeDraft, fullnessOf, estimateLabor, junkOnly, walkthroughGarageWork }) };
+  root.EGCQuoteDraft = { open, createClient, draftFromWalkthrough, scopeText, missing, portalLinkText, builder: Object.freeze({ steps: BUILDER_STEPS, selectionFromWalkthrough, selectionOfPricing, validSelection, builderDescriptor, runningTotals, builderScope, compositeDraft, fullnessOf, estimateLabor, junkOnly, walkthroughGarageWork }) };
 })(window);
