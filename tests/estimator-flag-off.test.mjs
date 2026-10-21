@@ -32,7 +32,10 @@ async function scenario(env) {
   };
   // A manager signs walkthrough w1; the page also sends a builder selection and a chosen crew, which the flags-off server ignores.
   // The selection is the one recorded (before builder quotes had labor), so the bytes compare like for like.
-  const plan = signedPlan(1, { quote: { composite_pricing: selection({ labor: null }) }, logistics: { crew_id: 'crew_one' } });
+  // Flags off, the page's builder selection is never read; it only feeds the request fingerprint. Its menu version is
+  // pinned to the one this scenario was recorded with, so a menu re-version (2026-10-16.2, the truck loads of
+  // 2026-10-21) does not change the recording.
+  const plan = signedPlan(1, { quote: { composite_pricing: { ...selection({ labor: null }), menuVersion: '2026-10-16.1' } }, logistics: { crew_id: 'crew_one' } });
   out.push(line('manager signs w1', await call(owner, 'post', '/api/walkthrough-handoff', { requestId: ids[0], customerId: 'c1', sourceWalkthroughId: 'w1', sourceRevision: 'w1r', plan })));
   // An estimator saves a walkthrough-priced quote draft for w2 and signs it into a scheduled job.
   const draftLines = [{ id: 'cleanout', kind: 'service', name: 'Garage cleanout and reset', quantity: 1, unitCents: 140000, totalCents: 140000 }];

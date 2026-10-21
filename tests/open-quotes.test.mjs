@@ -9,6 +9,8 @@ import { BUCKETS, OPEN_QUOTE_FIELDS, OPEN_QUOTE_RECEIPT_FIELDS, resigned, bucket
 import { openQuotesHandlers, requireOpenQuotesViewer } from '../functions/api/open-quotes.js';
 import { dispatchStorage } from '../functions/_lib/dispatch-storage.js';
 import { readCompositeState } from '../functions/_lib/catalog-store.js';
+import { priceCompositeQuote } from '../functions/_lib/composite-quote.js';
+import { builderState, menuItem, selection } from './helpers/estimator-fixture.mjs';
 import { firestoreRest } from './helpers/firestore-rest-queries.mjs';
 import { readMeter } from './helpers/read-meter.mjs';
 
@@ -82,6 +84,13 @@ test('draft prices: a held job, a builder breakdown the owner menu refuses, or u
   // The bundled menu with no owner decisions yet refuses this breakdown (compositeApproval), so its prices wait.
   assert.equal(draftPricesWaiting(builder, await readCompositeState({ read: async () => null })), true);
   assert.equal(draftPricesWaiting(builder, { broken: true }), null, 'a menu compositeApproval cannot read is unknown, not a guess');
+  // A quote sent with the $750 truck before the $1,000 truck: the estimator saves it again; nothing waits for the owner.
+  const before = builderState(), menu = structuredClone(before.menu);
+  menu.services.find(item => item.id === menuItem('Full truck load').id).approvedPriceCents = 75000;
+  const truck = priceCompositeQuote({ ...before, menu }, selection({ removal: [{ id: menuItem('Full truck load').id, quantity: 1 }], shelving: [], storage: [], labor: null }), { complete: true });
+  assert.equal(draftPricesWaiting({ quoteDraft: { breakdown: truck.breakdown } }, builderState()), false);
+  const mattress = priceCompositeQuote(builderState(), selection({ removal: [{ id: menuItem('Full truck load').id, quantity: 1 }, { id: menuItem('Mattress').id, quantity: 1 }], shelving: [], storage: [], labor: null }), { complete: true });
+  assert.equal(draftPricesWaiting({ quoteDraft: { breakdown: mattress.breakdown } }, builderState()), true, 'a draft price still waits for the owner');
 });
 
 test('the board: open quotes oldest first, Denver ages, buckets with counts and dollar totals', () => {
