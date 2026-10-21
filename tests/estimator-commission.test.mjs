@@ -121,3 +121,33 @@ test('one job pays one estimator share: a walkthrough with a setter record is ne
   assert.equal(ledger.rows.filter(row => row.jobId === 'j1').length, 1);
   assert.deepEqual(ledger.setters.rows.map(row => row.allocations.map(item => [item.role, item.amountCents])), [[['setter', 39000], ['estimator', 21000]]]);
 });
+
+// Review of #200 (FUNNEL-METRICS §8.3): an estimator's share on a named job is that person's pay. A manager keeps the
+// rows (to classify jobs) without the amounts or the revenue they come from, and gets no pay file; the owner keeps
+// both, and each estimator still sees their own commission.
+test('a manager sees the estimator rows without amounts and no pay files; the owner and the estimator keep theirs', async () => {
+  const withManager = knockEnv({ HUB_AUTH_USERS_JSON: JSON.stringify({ ...JSON.parse(env.HUB_AUTH_USERS_JSON), AlexK: { passwordHash: 'test', role: 'manager', displayName: 'Synthetic Manager' } }) });
+  const w = world(), handlers = knockAdminHandlers({ storage: () => w.knock(), dispatch: () => w.dispatch(), now: () => new Date(NOW) });
+  const manager = await call(handlers.get, get('/api/knock-admin?view=estimators', await cookieFor(withManager, 'AlexK')), withManager);
+  assert.equal(manager.status, 200);
+  assert.equal(manager.body.payShown, false);
+  assert.deepEqual(manager.body.rows.map(row => [row.jobId, row.estimatorKey, row.state]).sort(), [['j1', 'estimator.one', 'earned'], ['j2', 'estimator.one', 'earned'], ['j3', 'estimator.two', 'earned'], ['j4', 'estimator.one', 'awaiting_collection']]);
+  assert.doesNotMatch(JSON.stringify(manager.body.rows), /Commission|Revenue|allocations|amountCents|"210"|86\.42/, 'no amount, revenue or allocation in the rows');
+  const owner = (await call(handlers.get, get('/api/knock-admin?view=estimators', await cookieFor(withManager, 'ZacB')), withManager)).body;
+  assert.equal(owner.payShown, true);
+  assert.ok(owner.rows.some(row => row.earnedCommission === 210));
+  // Every pay file is the owner's; the refusal reads nothing.
+  for (const kind of ['commission', 'training', 'sales']) {
+    const reads = w.fake.queries('walkthroughHandoffs').length;
+    const refused = await call(handlers.get, get(`/api/knock-admin?view=export&kind=${kind}&date=2026-10-12`, await cookieFor(withManager, 'AlexK')), withManager);
+    assert.deepEqual([refused.status, refused.body.code], [403, 'knock_pay_owner_only'], kind);
+    assert.equal(w.fake.queries('walkthroughHandoffs').length, reads, `${kind}: nothing read`);
+  }
+  const money = (await call(handlers.get, get('/api/knock-admin?view=money&date=2026-10-12', await cookieFor(withManager, 'AlexK')), withManager)).body;
+  assert.equal(money.exportAllowed, false);
+  assert.equal((await call(handlers.get, get('/api/knock-admin?view=money&date=2026-10-12', await cookieFor(withManager, 'ZacB')), withManager)).body.exportAllowed, true);
+  // The estimator's own read (Hub > My commission) is unchanged.
+  const own = await call(hub(world()).get, get('/api/estimator-commission', await cookieFor(withManager, 'Estimator.One')), withManager);
+  assert.equal(own.status, 200);
+  assert.match(JSON.stringify(own.body), /210/);
+});

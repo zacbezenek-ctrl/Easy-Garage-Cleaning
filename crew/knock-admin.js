@@ -605,6 +605,8 @@ async function estimatorsSection() {
         } catch (error) { toast(error.message, { tone: 'bad' }); }
       } }, 'Save classification')];
   });
+  // Amounts are the owner's (payShown, functions/api/knock-admin.js): a manager gets the rows without them, to classify.
+  const pay = data.payShown !== false;
   const amount = row => row.state === 'earned' ? money(row.earnedCommission, true) : Number.isFinite(row.projectedCommission) ? `${money(row.projectedCommission, true)} projected`
     : row.earnedCommission === 0 ? money(0, true) : '–';
   const totals = new Map();
@@ -618,18 +620,19 @@ async function estimatorsSection() {
   return { subtitle: `${CHANNEL_PERCENTS.estimator}% to the estimator of each signed walkthrough sale, set at the door or sold directly; walkthroughs signed in the last ${data.lookbackDays} days.`, body: [
     data.terms.verified ? banner('success', 'check', 'Estimator terms approved', 'A job paid in full makes its estimator\'s share earned; it is paid in Money\'s statement for the period it was earned, with recorded payouts.')
       : banner('warning', 'info', 'Estimator pay needs the owner\'s approval', `Nothing is earned or payable, and no amount is shown, until the owner approves the walkthrough-setting and estimator terms in Settings.`),
-    totals.size ? h('div', { class: 'card card--line table-wrap' }, h('table', { class: 'table' },
+    pay ? null : banner('info', 'info', 'Amounts are the owner\'s', 'Each estimator\'s share is their pay, so only the owner sees the amounts. You can still review and classify every job here.'),
+    pay && totals.size ? h('div', { class: 'card card--line table-wrap' }, h('table', { class: 'table' },
       h('thead', {}, h('tr', {}, ['Estimator', 'Jobs', 'Earned', 'Projected'].map((label, i) => h('th', { class: i ? 'num' : '' }, label)))),
       h('tbody', {}, [...totals].sort(([a], [b]) => a.localeCompare(b)).map(([key, sum]) => h('tr', {}, h('td', {}, h('b', {}, key)), h('td', { class: 'num' }, String(sum.jobs)),
         h('td', { class: 'num' }, data.terms.verified ? money(sum.earned, true) : '–'), h('td', { class: 'num' }, data.terms.verified ? money(sum.projected, true) : '–')))))) : null,
     h('div', { class: 'card table-wrap' }, h('table', { class: 'table' },
-      h('thead', {}, h('tr', {}, ['Job', 'Job date', 'Estimator', 'How it was set', 'State', `Estimator ${CHANNEL_PERCENTS.estimator}%`, 'Review', ''].map(label => h('th', {}, label)))),
+      h('thead', {}, h('tr', {}, ['Job', 'Job date', 'Estimator', 'How it was set', 'State', ...(pay ? [`Estimator ${CHANNEL_PERCENTS.estimator}%`] : []), 'Review', ''].map(label => h('th', {}, label)))),
       h('tbody', {}, data.rows.length ? data.rows.map(row => h('tr', {}, h('td', {}, row.jobId || row.walkthroughId), h('td', {}, row.jobDate ? dateLabel(row.jobDate) : '–'),
         h('td', {}, row.estimatorKey || 'Unverified'), h('td', {}, row.channel === 'direct_estimator' ? 'Estimator\'s own sale' : `Set at the door${row.setterKey ? ` by ${row.setterKey}` : ''}`),
-        h('td', {}, row.state.replaceAll('_', ' ')), h('td', { class: 'num' }, amount(row)), h('td', {}, (row.reviewReasons || []).join(', ').replaceAll('_', ' ')),
+        h('td', {}, row.state.replaceAll('_', ' ')), pay ? h('td', { class: 'num' }, amount(row)) : null, h('td', {}, (row.reviewReasons || []).join(', ').replaceAll('_', ' ')),
         h('td', {}, row.channel === 'direct_estimator' && row.jobId && (row.reviewReasons || []).includes('service_scope_unverified')
           ? h('button', { type: 'button', class: 'btn btn--secondary btn--sm', onclick: classify(row) }, 'Classify…') : null)))
-        : h('tr', {}, h('td', { colspan: '8', class: 'muted' }, 'No signed walkthrough sales yet.'))))),
+        : h('tr', {}, h('td', { colspan: pay ? '8' : '7', class: 'muted' }, 'No signed walkthrough sales yet.'))))),
     data.truncated ? banner('warning', 'info', 'More records need review', 'Not every setter record was read; Money holds the statements of the people they name until finance reviews them.') : null,
   ] };
 }
@@ -652,7 +655,8 @@ async function moneySection(params) {
       h('a', { class: 'btn btn--secondary btn--sm', href: `#admin?s=money&date=${encodeURIComponent(data.previous.start)}`, 'aria-label': 'Previous pay period', style: { padding: '0 10px' } }, icon('chevronLeft')),
       h('div', {}, h('h1', {}, period.configured === false ? 'Two-week payroll cycle needs setup' : periodLabel(period.start, period.end)), h('p', { class: 'muted' }, 'Payout cadence: every 2 weeks')),
       h('a', { class: 'btn btn--secondary btn--sm', href: `#admin?s=money&date=${encodeURIComponent(data.next.start)}`, 'aria-label': 'Next pay period', style: { padding: '0 10px' } }, icon('chevronRight'))),
-    actions: [['commission', 'Commission CSV'], ['training', 'Training CSV'], ['sales', 'Sales CSV']].map(([kind, label]) =>
+    // The pay files are the owner's (exportAllowed from view=money; the server refuses them to anyone else too).
+    actions: data.exportAllowed === false ? [] : [['commission', 'Commission CSV'], ['training', 'Training CSV'], ['sales', 'Sales CSV']].map(([kind, label]) =>
       h('button', { type: 'button', class: 'btn btn--quiet btn--sm', disabled: period.configured === false, onclick: () => exportCsv(kind) }, icon('download', { size: 'sm' }), label)),
     body: [
       period.configured === false ? banner('warning', 'info', 'Payroll anchor unconfigured', 'These date groupings are previews, not an approved pay cycle. Confirm the two-week anchor before payroll export.') : null,

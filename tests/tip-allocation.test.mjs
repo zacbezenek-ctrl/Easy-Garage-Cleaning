@@ -430,3 +430,19 @@ test('a manager sees no amount for a job whose tip goes to one person, and the w
   assert.deepEqual(manager.totals, { jobs: 2, tipCents: 3000, allocatedCents: 3000, unallocatedCents: 0, hiddenJobs: 1 });
   assert.doesNotMatch(JSON.stringify(manager), /1700|"17\.00"/, 'the solo tip appears nowhere in the manager\'s answer');
 });
+
+// Review of #200: a held tip whose only assigned crew member has no job time is still that one person's tip.
+test('a manager sees no amount when a job\'s only assigned crew member has no job time, nor its payment references', async t => {
+  const MANAGER = { user: 'AlexK', role: 'manager', businessAccess: true, owner: false };
+  const jobs = [job('job-held', [tip('h', 2500, '2026-09-23T22:00:00.000Z')], { assignedCrew: ['crew.one'] }),
+    job('job-pair', [tip('p', 4000, '2026-09-24T22:00:00.000Z')], { assignedCrew: ['crew.one', 'crew.two'] })];
+  const query = 'start=2026-09-21&end=2026-09-28';
+  const owner = byJob(await (await api(t, { jobs, timecards: [] }).get(query)).json());
+  assert.deepEqual([owner['job-held'].employees, owner['job-held'].crewWithoutJobTime, owner['job-held'].tipCents], [[], ['crew.one'], 2500], 'the owner sees the held tip');
+  const manager = await (await api(t, { jobs, timecards: [], actor: MANAGER }).get(query)).json(), rows = byJob(manager);
+  assert.deepEqual([rows['job-held'].amountHidden, rows['job-held'].tipCents], [true, null], 'one person, held: no amount');
+  assert.ok(rows['job-held'].tips.every(entry => !('amountCents' in entry) && !('processorRef' in entry)), 'no amount or payment reference on its tips');
+  assert.deepEqual([rows['job-pair'].amountHidden, rows['job-pair'].tipCents], [undefined, 4000], 'two people without time: the total stays');
+  assert.equal(manager.totals.hiddenJobs, 1);
+  assert.doesNotMatch(JSON.stringify(manager), /2500|"25\.00"|pi_h/);
+});

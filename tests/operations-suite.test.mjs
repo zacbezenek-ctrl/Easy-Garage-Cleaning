@@ -413,7 +413,7 @@ test('crew tools provide a job-aware employee home and one connected workflow',(
     // WT-OUTCOME: the crew nav wraps instead of scrolling 'My Hub' off a 375 px screen, so the stylesheet tag moved;
     // D2D (2026-10-19) moved both tags again for the Door-to-door link.
     assert.match(page,/crew-brand\.css\?v=20261019d2d/);
-    assert.match(page,/hub-auth\.js\?v=20261021roles/);
+    assert.match(page,/hub-auth\.js\?v=20261021reflabels/);
   }
   const auth=read('crew/hub-auth.js');
   for(const marker of ['mountCrewNav','crew-utility','Crew home','Walkthrough','Door-to-door','canUseKnock','Pre-job','Closeout','My Hub'])assert.match(auth,new RegExp(marker));

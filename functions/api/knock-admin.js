@@ -17,6 +17,16 @@ import { addDays, zonedDate } from '../../crew/knock-time.js';
 import { csvResponse, errorResponse, forbiddenOrigin, readJson, reply, sameOrigin } from '../_lib/knock-http.js';
 import { dispatchStorage } from '../_lib/dispatch-storage.js';
 import { bookSale, bookWalkthrough, followSaleStatus, knockJobBridgeEnabled, moveSaleJob } from '../_lib/knock-bridge.js';
+import { canSetPay, seesOthersPay } from '../_lib/pay-visibility.js';
+
+/* Pay privacy (docs/FUNNEL-METRICS.md §8.3: a manager sees no per-employee pay). An estimator's 7% on a named job is
+   that person's pay: a viewer who does not see others' pay (pay-visibility.js seesOthersPay, the owner by default) gets
+   each ledger row without its amounts or the job revenue they come from, which keeps the office's classification work;
+   the pay files (view=export) are the owner's, like the payroll export. A rep or estimator still sees their own
+   commission in the rep app (knock.js), which this does not touch. */
+const ESTIMATOR_ROW_FIELDS = Object.freeze(['id', 'jobId', 'walkthroughId', 'jobDate', 'channel', 'estimatorKey', 'estimatorEvidence', 'setterKey', 'state', 'rate',
+  'qualifyingAt', 'earnedAt', 'reviewReasons', 'settlement', 'serviceClassification', 'signedAt', 'recordedAt']);
+const withoutPay = row => Object.fromEntries(ESTIMATOR_ROW_FIELDS.filter(key => Object.hasOwn(row, key)).map(key => [key, row[key]]));
 import { officeWalkthroughs } from '../_lib/knock-walkthroughs.js';
 
 // KNOCK-BRIDGE (EGC_KNOCK_JOB_BRIDGE): book (or retry booking) a door sale's Hub job or a door walkthrough from Admin.
@@ -79,21 +89,24 @@ const VIEWS = {
       ...(knockJobBridgeEnabled(env) ? { walkthroughs: await officeWalkthroughs(store) } : {}),
     };
   },
-  async money(store, params, now, env, _viewer, { dispatch = dispatchStorage } = {}) {
+  async money(store, params, now, env, viewer, { dispatch = dispatchStorage } = {}) {
     const { settings, channels } = await statementChannels(store, params, now, env, dispatch);
-    return moneyView(store, params, now.getTime(), settings, { channels });
+    // exportAllowed: whether this viewer may download the pay files (view=export), so the screen offers them only then.
+    return { ...(await moneyView(store, params, now.getTime(), settings, { channels })), exportAllowed: canSetPay(viewer, env) };
   },
   async setters(store, _params, now, env, _viewer, { dispatch = dispatchStorage } = {}) {
     const terms = await loadSetterTerms(store, await loadSettings(store));
     return { ...(await setterAttributions(store, env, { nowMs: now.getTime(), terms, readJobs: setterBatchReaderFor(dispatch(env)) })), reps: await listReps(store) };
   },
   // D6b: every estimator's 7% (door-to-door-set walkthroughs and direct walkthrough sales signed in the last year).
-  async estimators(store, _params, now, env, _viewer, { dispatch = dispatchStorage } = {}) {
-    const terms = await loadSetterTerms(store, await loadSettings(store));
+  async estimators(store, _params, now, env, viewer, { dispatch = dispatchStorage } = {}) {
+    const terms = await loadSetterTerms(store, await loadSettings(store)), payShown = seesOthersPay(viewer, env);
     const ledger = await estimatorLedger({ kstore: store, dispatch: dispatch(env), env, since: addDays(zonedDate(now.getTime()), -ESTIMATOR_LOOKBACK_DAYS), terms, nowMs: now.getTime() });
-    return { rows: ledger.rows, truncated: ledger.truncated, terms: { verified: terms.verified, approvedAt: terms.approvedAt }, lookbackDays: ESTIMATOR_LOOKBACK_DAYS };
+    return { rows: payShown ? ledger.rows : ledger.rows.map(withoutPay), payShown, truncated: ledger.truncated, terms: { verified: terms.verified, approvedAt: terms.approvedAt }, lookbackDays: ESTIMATOR_LOOKBACK_DAYS };
   },
-  async export(store, params, now, env, _viewer, { dispatch = dispatchStorage } = {}) {
+  // Every kind (commission, training pay, sales with their commission) is a pay file: refused before anything is read.
+  async export(store, params, now, env, viewer, { dispatch = dispatchStorage } = {}) {
+    if (!canSetPay(viewer, env)) throw knockFailure('Only the owner downloads canvassing pay files.', 403, 'knock_pay_owner_only');
     const { settings, channels } = (params.get('kind') || 'commission') === 'commission' ? await statementChannels(store, params, now, env, dispatch) : { settings: await loadSettings(store), channels: null };
     const { csv, filename } = await exportCsv(store, params, now.getTime(), settings, { channels });
     return csvResponse(filename, csv);

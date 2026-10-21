@@ -321,8 +321,9 @@
       ['/crew/', 'Crew home'],
       ['/crew/gameplan', 'Walkthrough'],
       ['/crew/knock', 'Door-to-door'],
-      ['/crew/prejob', 'Pre-job'],
-      ['/crew/postjob', 'Closeout'],
+      // The old pages stay for what the live job page does not do yet (arrival text, payment, review link, Garage Guard).
+      ['/crew/prejob', 'Pre-job (reference)'],
+      ['/crew/postjob', 'Closeout (reference)'],
       ['/employee', 'My Hub'],
     ].filter(([href]) => (href !== '/crew/gameplan' || canRunWalkthrough()) && (href !== '/crew/knock' || canUseKnock()));
     const nav = document.createElement('nav');
