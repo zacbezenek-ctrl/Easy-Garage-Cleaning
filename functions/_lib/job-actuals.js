@@ -5,7 +5,7 @@
  *
  * Billed man-hours: the Labor line the job was sold with (owner decision D12), stored on the job
  *   as jobInstructions.laborManHours (walkthrough-handoff.js), else the signed builder quote's priced labor
- *   (compositeQuote.breakdown.labor.manHours). A junk-only quote ($750 per truck) has no Labor line: billed is null.
+ *   (compositeQuote.breakdown.labor.manHours). A junk-only quote ($1,000 per truck) has no Labor line: billed is null.
  * Actual man-hours, best signal first:
  *   1. 'timecards': hours employees clocked onto this job (timecard jobTracking.segments, computeJobLaborCost in
  *      job-labor-cost.js, approved plus pending timecards). On-site work hours are compared with billed; work plus
