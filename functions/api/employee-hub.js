@@ -2,7 +2,7 @@ import { getHubSession, hasBusinessAccess, listHubUserProfiles } from '../_lib/h
 import { OWNER_USERNAME } from '../_lib/business-users.js';
 import { firebaseServiceAccountConfigured, firestoreFetch } from '../_lib/firebase-service-account.js';
 import { employeeVaultSecret, employeeVaultReadOnly } from '../_lib/employee-vault-key.js';
-import { EMPLOYEE_HUB_COLLECTIONS, expectedDocument, firestoreDoc, proveVaultKey, readAll, readCollection, readOne, seal, unreadableStorage, vaultRevisionWrite, vaultSnapshot, writeOne } from '../_lib/employee-vault.js';
+import { EMPLOYEE_HUB_COLLECTIONS, expectedDocument, firestoreDoc, proveVaultKey, readAll, readCollection, markVaultFamiliesChanged, readOne, seal, unreadableStorage, vaultRevisionWrite, vaultSnapshot, writeOne } from '../_lib/employee-vault.js';
 import { createJobAssignmentAccess } from '../_lib/job-assignment.js';
 import { listEmployeeApplications, normalizeEmployeeUsername } from '../_lib/employee-accounts.js';
 import { activeTimecard, authorizeTimecard, clockInWithoutFix, correctionJobId, timecardCorrectionsEnabled, timecardError } from '../_lib/employee-timecards.js';
@@ -577,7 +577,11 @@ export async function onRequestPost({ request, env }) {
       const data = await authorizeMutation(env, session, collection, id, incoming, current.data, QUEUED_REQUEST.test(String(body.requestId ?? '')));
       try {
         if (collection === 'timeEntries') return reply(200, { ok: true, record: withJobTime(visiblePay(session, env, collection, await writeTimecard(env, session, id, data, target)), new Date().toISOString()) });
-        const saved = data === current.data && ['teamMessages', 'jobMessages'].includes(collection) ? data : await writeOne(env, collection, id, data, collection === 'profiles' ? target : null);
+        // A replayed message that is already saved writes nothing, but still marks its family (vaultSnapshot): the save
+        // it repeats may have landed without its mark (an older deployment) and polls must show it.
+        const replay = data === current.data && ['teamMessages', 'jobMessages'].includes(collection);
+        if (replay) await markVaultFamiliesChanged(env, [collection]);
+        const saved = replay ? data : await writeOne(env, collection, id, data, collection === 'profiles' ? target : null);
         return reply(200, { ok: true, record: visiblePay(session, env, collection, collection === 'profiles' ? legacyProfileView(saved, new Date().toISOString()) : saved) });
       } catch (error) {
         if (error.code !== 'EMPLOYEE_HUB_WRITE_CONFLICT' || attempt + 1 === attempts) throw error;

@@ -90,13 +90,16 @@ Arithmetic for each row:
 1. **Employee Hub vault snapshot** (`functions/_lib/employee-vault.js` `vaultSnapshot`, used by
    `functions/api/employee-hub.js` GET). The Hub poll used to read every sealed record ever saved. Now:
    - Every vault write sets its family's field in `employee_vault_revisions/current` to a fresh random value.
-     `commitVaultDocuments` and timecard commits do it inside their own atomic commit; `writeOne` does it right after
-     its PATCH.
+     `commitVaultDocuments` and timecard commits do it inside the record's own atomic commit. `writeOne` does it right
+     after its PATCH, after a lost reply too, and tries a failed mark once more. A replayed chat message that writes
+     nothing still marks its family, so a save that landed unmarked shows on the next poll.
    - A poll reads that one document first. A family unchanged since this isolate (or this data center's Cache API
      copy) last read it, within 15 minutes, is answered from the sealed documents that read returned, decrypted again.
    - Answers are byte-for-byte the whole-vault read's answers (tested), and fail closed the same way.
    - Only ciphertext is cached, never decrypted payroll or personal data.
-   - A failed mark forgets the local copy.
+   - A mark that fails twice forgets this isolate's copy, refuses older data-center copies and deletes the
+     data-center copy of the revision it knew. An isolate that never read that family can still serve the unchanged
+     revision for up to 15 minutes; this is the one remaining window.
    - Writes made outside the code (console edits, an older deployment still serving) show within 15 minutes.
    - Until the first write creates the revision document, and with `EGC_EMPLOYEE_VAULT_QUERY=legacy`, the Hub reads
      exactly as before.
