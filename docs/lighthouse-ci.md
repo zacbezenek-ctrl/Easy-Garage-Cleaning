@@ -234,6 +234,40 @@ What moved the numbers:
 - The generated pages' 11.6 KB inline nav, reveal and multi-step form script is `/site-forms.js` (deferred, immutable, `?v=` is
   its content hash), and the footer 44px rule moved from the inline `<style id="footer-tap">` into `styles.css` (`20260928a`).
 
+## Home page pass (2026-10-21)
+
+`/` was the one page sitting at the bar on GitHub runners: CI medians of 88 (runs such as 88, 86, 95), with LCP pinned at
+3.0 s and up to 350 ms of TBT. Two causes, both read from a failing run's reports and local traces:
+
+- **Photo bytes before the hero paints.** A 3x phone needs about 1030 device pixels for the hero, and the `srcset` jumped
+  from 824w to the 96 KB 1646w file. The Results gallery below loaded its 1200-1646px originals (525 KB), and Chrome fetches
+  lazy images that close to the fold right away, so all of it shared the slow-4G simulation with the hero.
+  Now the hero has `job-before-after-1-1080.webp` (51 KB). The gallery uses `<picture>` with `sizes`: the existing
+  600w/768w garage files, plus 824w/1080w/1646w WebP for `job-before-after-2` and 600w/1000w WebP for `job-pile`.
+  The gallery images are still lazy and keep their JPEG fallbacks (`patch_home_gallery_images`).
+- **Two full relayouts from Google Fonts.** The `media="print"` stylesheet applied after first paint, so Chrome
+  re-laid out the whole page (about 65 ms observed, about 260 ms at 4x CPU), and again when the woff2 files arrived. Those
+  were the long tasks behind the TBT. The home page now declares the same families and weights inline from `/fonts/`
+  (latin and latin-ext, OFL, `home_font_head`) before `styles.css` and preloads Inter, so the first layout already
+  has them. `/fonts/*` is cached like `/images/*`. The other public pages still load Google Fonts.
+
+The same configuration run locally (Chromium 141, 3 runs per page). `main` and the branch were measured back to back:
+
+| Page | Performance `main` | Performance after | Accessibility after |
+| --- | ---: | ---: | ---: |
+| `/` | 95 | **98** (98, 98, 98) | 100 |
+| `/garage-cleanouts-fort-collins-co` | 100 | 99 | 100 |
+| `/junk-removal-loveland-co` | 99 | 99 | 100 |
+| `/couch-removal-fort-collins-co` | 100 | 100 | 100 |
+| `/book`, `/pricing`, the blog article | 100 | 100 | 100 |
+| `/garage-turnaround-fort-collins-co` | 99 | 99 | 100 |
+| `/before-after` (static fallback) | 97 | 97 | 100 |
+| `/client-login`, `/customer-portal`, `/business-hub`, `/field-today` | 100 | 100 | 100 |
+
+Five runs of `/` alone gave 98 every time (LCP 2.3 s, TBT 0 to 15 ms), against 62, 90, 94, 94, 95 on `main`. With three
+cores busy-looping they gave 98, 98, 98, 99, 99. `tests/home-performance.test.mjs` checks every referenced file and
+WebP width, the gallery markup, the font declarations and the cache rule.
+
 ## Differences from production
 
 - No `functions/_middleware.js` in the loop: no CSP, and no HTMLRewriter business-hub link in the navigation.
