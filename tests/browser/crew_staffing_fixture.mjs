@@ -23,7 +23,7 @@ const HARNESS = `<!doctype html><html lang="en"><head><meta charset="utf-8"><met
 window.__went=[];
 async function save(body){const response=await fetch('/api/dispatch',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)}),data=await response.json();if(!response.ok||!data.ok)throw Object.assign(new Error(data.error||'failed'),{status:response.status,code:data.code});return data;}
 EGCCrewStaffing.mount(document.getElementById('home'),{go:name=>window.__went.push(name)});
-document.getElementById('dispatch').append(EGCCrewStaffing.panel({save,setup:{label:'Create Crew 1/2/3',run:()=>{window.__setup=true;}},onApplied:()=>{window.__applied=true;}}));
+document.getElementById('dispatch').append(EGCCrewStaffing.panel({save,setup:{create:{label:'Create Crew 1/2/3',run:()=>{window.__setup='create';}},edit:{label:'Add crew members',run:()=>{window.__setup='edit';}}},onApplied:()=>{window.__applied=true;}}));
 </script></body></html>`;
 
 const crew = (id, name, memberIds, extra = {}) => ({ id, recordType: 'crew', name, memberIds, leadId: memberIds[0] || null, status: 'active', revision: `${id}r`, ...extra });

@@ -78,6 +78,11 @@ function personKey(value, roster) {
   return matches.length === 1 ? assignmentKey(matches[0].id) : key;
 }
 const people = (row, roster) => [...new Set(jobCrewNames(row).map(value => personKey(value, roster)).filter(Boolean))];
+// Assignees split by the active roster: someone who left (deactivated or removed) is on the job but cannot work it.
+function assignees(row, roster) {
+  const ids = people(row, roster), active = new Set((Array.isArray(roster) ? roster : []).map(person => assignmentKey(person.id)));
+  return { active: ids.filter(id => active.has(id)), inactive: ids.filter(id => !active.has(id)) };
+}
 
 /** Jobs with a day in the window that have no crew or are short of their crew size, earliest day in the window (then
  * time, then id) first. A multi-day job that started before today counts when it runs into the window; a split job is
@@ -87,16 +92,20 @@ export function unstaffedJobs(jobs = [], { today, now = null, roster = [] }) {
   const window = staffingWindow(today), out = [], seen = new Set(), at = Date.parse(now);
   for (const job of Array.isArray(jobs) ? jobs : []) {
     if (!liveJob(job) || seen.has(job.id)) continue;
-    const days = inWindow(segmentDays(job), window);
+    // A dated visit with no valid time occupies no days by its schedule; it is listed on its date as needing a time.
+    const occupied = segmentDays(job), days = inWindow(occupied.length ? occupied : validDate(job.date) ? [job.date] : [], window);
     if (!days.length) continue;
     seen.add(job.id);
     const rows = segmented(job) ? jobSegments(job).filter(row => row && inWindow(occupiedDays(row), window).length) : [job], needed = crewNeededOf(job);
-    const counts = rows.map(row => people(row, roster).length), fewest = counts.length ? Math.min(...counts) : 0;
+    // Only active employees count: a job whose people have left is unstaffed (or short), and says who.
+    const split = rows.map(row => assignees(row, roster)), counts = split.map(row => row.active.length), fewest = counts.length ? Math.min(...counts) : 0;
     if (fewest >= needed) continue;
+    const inactive = [...new Set(split.flatMap(row => row.inactive))], anyone = split.some(row => row.active.length || row.inactive.length);
     const interval = scheduleInterval(job), started = !interval || !Number.isFinite(at) || interval.start <= at;
     out.push({ jobId: job.id, date: days[0], startDate: job.date, time: days[0] === job.date ? job.time || '' : '', endTime: job.endTime || '', endDate: job.endDate || job.date, customer: String(job.customer || '').slice(0, 180), title: String(job.title || '').slice(0, 200),
-      type: job.type, crewId: job.crewId || null, assigned: fewest, needed, status: fewest === 0 ? 'no_crew' : 'short', segmented: segmented(job), started, revision: job.revision || null,
-      canAutoStaff: autoCrewJob(job) && fewest === 0 && !job.crewId && !started });
+      type: job.type, crewId: job.crewId || null, assigned: fewest, needed, status: fewest === 0 ? 'no_crew' : 'short', segmented: segmented(job), started, needsTime: !interval, inactive, revision: job.revision || null,
+      // The server staffs only a job nobody is on (dispatch-service.js 'staff'), so one with a departed assignee is fixed by hand.
+      canAutoStaff: autoCrewJob(job) && !anyone && !job.crewId && !started });
   }
   return out.sort((a, b) => a.date.localeCompare(b.date) || a.time.localeCompare(b.time) || a.jobId.localeCompare(b.jobId));
 }

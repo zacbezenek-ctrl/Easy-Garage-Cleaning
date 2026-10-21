@@ -37,13 +37,16 @@ function jobLine(row,result){
   const when=[day(row.date),clock(row.time)?clock(row.time)+(clock(row.endTime)?'–'+clock(row.endTime):''):''].filter(Boolean).join(' · ');
   const need=row.status==='short'?row.assigned+' of '+row.needed+' people':'No crew';
   return h('li',{class:'cs-job '+(row.status==='short'?'short':'none'),'data-cs-job':row.jobId},
-    h('span',{class:'cs-when'},when),h('span',{class:'cs-who'},row.customer||row.title||'Unnamed job'),result?.ok?null:h('span',{class:'cs-need'},need),
+    h('span',{class:'cs-when'},when||day(row.date)),h('span',{class:'cs-who'},row.customer||row.title||'Unnamed job'),result?.ok?null:h('span',{class:'cs-need'},need),
+    row.needsTime?h('span',{class:'cs-note','data-cs-note':'time'},'Needs a time: it cannot be staffed until it has one.'):null,
+    Array.isArray(row.inactive)&&row.inactive.length?h('span',{class:'cs-note','data-cs-note':'inactive'},'No longer active: '+row.inactive.join(', ')+'. Reassign by hand.'):null,
     result?h('span',{class:'cs-result '+(result.ok?'ok':'bad'),'data-cs-result':result.ok?'assigned':'failed'},result.text):null);
 }
 
 /* The Dispatch panel. save(body) is employee-dispatch.js api('',body): it posts to /api/dispatch and verifies the reply.
-   setup (optional) is {label, run}: the crew set-up step Dispatch offers next to crew problems (Create Crew 1/2/3 while
-   the standard crews are missing, else a jump to the crew list), so an empty roster always says what to tap next. */
+   setup (optional) is {edit:{label, run}, create:{label, run}|null}: the crew set-up step Dispatch offers above crew
+   problems. create (Create Crew 1/2/3, only while the standard crews are missing) is offered when no crew can work at
+   all; otherwise edit (Add crew members, a jump to the crew list). An empty roster always says what to tap next. */
 const CREW_CODES=new Set(['no_staffable_crew','crew_no_members','crew_no_lead','crew_member_inactive','availability_clash','uncovered_day']);
 const SHOWN=5;
 function panel({save,onApplied,fetcher,setup}={}){
@@ -55,9 +58,11 @@ function panel({save,onApplied,fetcher,setup}={}){
     if(!P.data){root.replaceChildren(head,h('p',{class:'cs-error',role:'alert'},P.error||'Crew staffing is unavailable.'),button('Retry',load));return;}
     const d=P.data,waiting=d.unstaffed,staffable=d.preview.filter(row=>row.crewId),blocked=d.preview.filter(row=>!row.crewId);
     const noCrew=d.health.some(p=>p.code==='no_staffable_crew'),crewProblems=d.health.some(p=>CREW_CODES.has(p.code));
+    // Creating the standard crews is offered only while no crew can work at all; otherwise the step is the crew list.
+    const step=setup?(noCrew&&setup.create?setup.create:setup.edit||null):null;
     // The set-up step sits right under the heading, above the problems it fixes, so it is in reach on a phone.
     const body=[head,h('h4',{},d.health.length?plural(d.health.length,'crew problem'):'Crews'),
-      crewProblems&&setup?h('div',{class:'cs-actions'},button(setup.label,()=>setup.run(),noCrew?'primary':'',{'data-cs-setup':''})):null,problemList(d.health)];
+      crewProblems&&step?h('div',{class:'cs-actions'},button(step.label,()=>step.run(),noCrew?'primary':'',{'data-cs-setup':''})):null,problemList(d.health)];
     // The one action, before the long list: what it would do, or exactly why it cannot run.
     if(!d.autoAssign)body.push(h('p',{class:'cs-muted','data-cs-auto-off':''},'Automatic crew assignment is off. Assign crews by hand.'));
     else if(waiting.length&&save&&(noCrew||!staffable.length)&&P.stage==='idle')body.push(h('p',{class:'cs-muted','data-cs-cannot':''},noCrew?'No job can be staffed automatically until a crew has active members. Set up the crews first.'
@@ -66,7 +71,7 @@ function panel({save,onApplied,fetcher,setup}={}){
       if(P.stage==='idle')body.push(h('div',{class:'cs-actions'},button('Staff waiting jobs',()=>{P.stage='preview';draw();},'primary',{'data-cs-staff':''})));
       else if(P.stage==='preview')body.push(h('div',{class:'cs-preview',role:'region','aria-label':'Staffing preview','data-cs-preview':''},
         h('p',{},h('strong',{},d.previewSummary||'No job can be staffed')),
-        h('p',{class:'cs-muted'},'Each job is saved on its own and every dispatch rule is checked again, so the result can differ from this preview. Jobs no crew can take stay as they are. Each crew assignment adds the usual HighLevel contact note, as any crew change in Dispatch does.'),
+        h('p',{class:'cs-muted'},'Each job is saved on its own and every dispatch rule is checked again, so the result can differ from this preview. Jobs no crew can take stay as they are. Each assignment is handled like any crew change in Dispatch (a HighLevel note and a crew notice only where those are turned on).'),
         h('div',{class:'cs-actions'},button(P.busy?'Staffing…':'Staff '+plural(staffable.length,'job'),apply,'primary',{disabled:P.busy||!staffable.length,'data-cs-apply':''}),button('Cancel',()=>{P.stage='idle';draw();},'',{disabled:P.busy}))));
       else{
         const done=[...P.results.values()],ok=done.filter(r=>r.ok).length,failed=done.filter(r=>!r.ok);
@@ -78,7 +83,7 @@ function panel({save,onApplied,fetcher,setup}={}){
     // Jobs with a result first after a run, then the rest; the first few unless the full list is asked for.
     const ordered=P.results.size?[...waiting.filter(row=>P.results.has(row.jobId)),...waiting.filter(row=>!P.results.has(row.jobId))]:waiting,shown=P.all?ordered:ordered.slice(0,Math.max(SHOWN,P.results.size));
     body.push(h('h4',{},waiting.length?plural(waiting.length,'unstaffed job')+', oldest first':'Unstaffed jobs'),
-      waiting.length?h('ul',{class:'cs-jobs'},shown.map(row=>jobLine(row,P.results.get(row.jobId)))):h('p',{class:'cs-ok','data-cs-staffed':''},'Every dated job in the next 14 days has its crew.'),
+      waiting.length?h('ul',{class:'cs-jobs'},shown.map(row=>jobLine(row,P.results.get(row.jobId)))):h('p',{class:'cs-ok','data-cs-staffed':''},'Every scheduled visit in the next 14 days has its crew.'),
       ordered.length>shown.length?button('Show all '+ordered.length,()=>{P.all=true;draw();},'',{'data-cs-all':''}):null);
     root.replaceChildren(...body.filter(Boolean));
   };

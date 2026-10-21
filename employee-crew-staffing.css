@@ -14,6 +14,7 @@
 .cs-panel .cs-need{font-weight:700;color:#a3262a;white-space:nowrap}
 .cs-panel .cs-job.short .cs-need{color:#8a5a00}
 .cs-panel .cs-result{grid-column:1/-1;font-weight:600}
+.cs-panel .cs-note{grid-column:1/-1;font-size:13px;color:#8a5a00;font-weight:600}
 .cs-panel .cs-result.ok{color:#24613b}
 .cs-panel .cs-result.bad{color:#a3262a}
 .cs-panel .cs-preview{display:grid;gap:8px;padding:10px;border-radius:8px;background:#f2f6f3}

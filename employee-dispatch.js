@@ -1138,9 +1138,9 @@ function openStatus(job,action) {
 function openResources() {
   if(!S.data)return;const model=modal('Crews, vehicles & availability','Crew membership is copied onto each assignment. Editing a crew does not silently change scheduled jobs.');if(!model)return;
   // CREW-STAFFING (employee-crew-staffing.js): crew problems, the next 14 days' unstaffed jobs and "Staff waiting jobs".
-  // Its set-up step: Create Crew 1/2/3 while the standard crews are missing, else a jump to the crew list below.
+  // Its set-up step: Create Crew 1/2/3 (only while the standard crews are missing and no crew can work), else the crew list below.
   const seeded=['crew-1','crew-2','crew-3'].every(code=>(S.data.crews||[]).some(row=>row.code===code));
-  const setup=seeded?{label:'Add crew members',run:()=>list.scrollIntoView({block:'start',behavior:'smooth'})}:{label:'Create Crew 1/2/3',run:()=>void save(model,{action:'crew.seed_defaults',requestId:key()},'Crew 1, Crew 2 and Crew 3 are ready. Add their members.')};
+  const setup={edit:{label:'Add crew members',run:()=>list.scrollIntoView({block:'start',behavior:'smooth'})},create:seeded?null:{label:'Create Crew 1/2/3',run:()=>void save(model,{action:'crew.seed_defaults',requestId:key()},'Crew 1, Crew 2 and Crew 3 are ready. Add their members.')}};
   if(window.EGCCrewStaffing&&!booker())model.fields.append(window.EGCCrewStaffing.panel({save:body=>api('',body),setup,onApplied:()=>{model.close();void load({quiet:true});}}));
   const list=h('div',{class:'dp-resource-list dp-wide'});
   for(const [kind,label,rows]of [['crew','Crews',sortedCrews(S.data.crews)],['vehicle','Vehicles',S.data.vehicles||[]],['availability','Availability',S.data.availability||[]]]) {

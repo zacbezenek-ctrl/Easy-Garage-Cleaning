@@ -94,6 +94,18 @@ test('a multi-day job that started before today, and a split job, are judged by 
     'the running job shows on today, never staffed after the fact; the ended one is not in the window; the split job is staffed on its window day; a legacy name counts');
 });
 
+test('people who left do not staff a job: a departed sole assignee is no crew, a departed second person leaves it short', () => {
+  const jobs = [job('gone', THU, { assignedCrew: ['left.company'] }), job('half', THU, { assignedCrew: ['c1a', 'left.company'], crewNeeded: 2 }), job('ok', FRI, { assignedCrew: ['c1a', 'c1b'], crewNeeded: 2 }),
+    job('untimed', FRI, { time: '', endTime: '' })];
+  const rows = unstaffedJobs(jobs, { today: TODAY, now: NOW.toISOString(), roster: ROSTER });
+  assert.deepEqual(rows.map(row => [row.jobId, row.status, row.assigned, row.needed, row.inactive, row.canAutoStaff]), [
+    ['gone', 'no_crew', 0, 1, ['left.company'], false], ['half', 'short', 1, 2, ['left.company'], false], ['untimed', 'no_crew', 0, 1, [], false]],
+    'listed with who left; never staffed automatically while anyone is on the job (the server staffs only an empty job)');
+  assert.equal(rows.find(row => row.jobId === 'untimed').needsTime, true, 'a dated visit with no time is listed as needing one');
+  const report = crewStaffing({ crews: CREWS, roster: ROSTER, jobs, today: TODAY, asOf: NOW.toISOString() });
+  assert.equal(report.counts.unstaffed, 3, 'the Command center line counts them, so it never says crews are set');
+});
+
 test('the preview counts people on legacy display-name assignments as busy', () => {
   const crews = [crew('crew_one', 'Crew 1', ['c1a', 'c1b'], { priority: 1, serviceDays: WEEKDAYS }), crew('crew_two', 'Crew 2', ['c2a'], { priority: 2, serviceDays: WEEKDAYS })];
   const jobs = [job('legacy', THU, { assignedCrew: undefined, assignedTo: 'Synthetic c1b', time: '10:00', endTime: '11:00' }), job('waiting', THU)];

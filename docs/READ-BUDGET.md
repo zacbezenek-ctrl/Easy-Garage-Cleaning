@@ -45,7 +45,7 @@ stop while the tab is hidden.
 | My day (`employee-field-today.js`) | `GET /api/field-jobs`, 60 s | about 30 (dated queries) |
 | Crew job page (`crew/job.js`) | `field-jobs?view=timer` + `employee-hub?view=own-job-time`, 30 s | about 3 |
 | Open quotes (`employee-open-quotes.js`, office) | `GET /api/open-quotes`, on open and Refresh only (never polled) | quotes sent in the last 120 days (one `quoteDraft.sentAt` range query) + signed walkthrough receipts of the last 90 days; the owner's 2 pricing documents only when an open quote is a builder quote |
-| Crew staffing (`employee-crew-staffing.js`: Dispatch Crews & vehicles, Command center line) | `GET /api/crew-staffing`, on open only (never polled) | the crews and roster `/api/dispatch` reads + one bounded `jobs.date` range query for 14 days (`datedJobs`, masked) |
+| Crew staffing (`employee-crew-staffing.js`: Dispatch Crews & vehicles, Command center line) | `GET /api/crew-staffing`, on open only (never polled) | the crews and roster `/api/dispatch` reads + one bounded `jobs.date` range query for 14 days (`datedJobs`) + the multi-day jobs running into them (`spanningJobs`, the `jobs(endDate, date)` index; until it is deployed, the 32 days before today, as `/api/crew-schedule` reads), all masked |
 | Customer portal (`customer-portal.html`) | `GET /api/customer-portal`, 20 s while visible | about 5 |
 | Knock app (`crew/knock-app.js`) | `knock-sync` after each door, `knock-territory` deltas | about 10–15k per rep per 100 doors |
 
