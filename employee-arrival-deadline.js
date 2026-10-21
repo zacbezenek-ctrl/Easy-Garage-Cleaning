@@ -23,7 +23,7 @@
 const ZONE='America/Denver',LATE_GRACE_MS=15*60000,EN_ROUTE_LEAD_MS=30*60000;
 const CLOSED=new Set(['completed','complete','done','cancelled','canceled','no_show','noshow','no-show','archived','closed','invoiced','paid','review_requested']);
 const ARRIVED=new Set(['arrived','in_progress']),MOVING=new Set(['dispatched']);
-const ARRIVED_TAPS=new Set(['arrived','in_progress','waiting','paused','day_ended']),MOVING_TAPS=new Set(['dispatched','delayed']);
+const ARRIVED_TAPS=new Set(['arrived','in_progress','waiting','paused']),MOVING_TAPS=new Set(['dispatched','delayed']);
 const FORMAT=new Intl.DateTimeFormat('en-US',{timeZone:ZONE,hourCycle:'h23',year:'numeric',month:'2-digit',day:'2-digit',hour:'2-digit',minute:'2-digit',second:'2-digit'});
 const validDate=value=>typeof value==='string'&&/^\d{4}-\d{2}-\d{2}$/.test(value)&&new Date(value+'T12:00:00Z').toISOString().slice(0,10)===value;
 const clock=value=>{const match=/^(\d{2}):(\d{2})$/.exec(typeof value==='string'?value.trim():'');return match&&Number(match[1])<24&&Number(match[2])<60?Number(match[1])*60+Number(match[2]):null};
@@ -50,8 +50,15 @@ function visitRow(job,segment=null){
 }
 // A field timestamp counts for this visit when it was recorded on the visit's Denver day, after any restore.
 function current(job,value,date){const ms=at(value),restored=at(job?.restoredAt);return ms!==null&&!(restored!==null&&ms<=restored)&&denverDate(ms)===date}
-// The crew's last status tap, when it was made today (after any restore).
-const todayTap=row=>current(row,row.fieldExecution?.activityAt,row.date)?String(row.fieldExecution?.activity||''):'';
+// The crew's last status tap, when it was made today (after any restore). An End day counts as today's arrival only
+// when it ended today's own visit: one saved offline and synced after midnight carries today's activityAt but ended
+// yesterday's visit (field-execution-visits.js end_day with visitDate), so it says nothing about today.
+function todayTap(row){
+  if(!current(row,row.fieldExecution?.activityAt,row.date))return'';
+  const tap=String(row.fieldExecution?.activity||''),visit=row.fieldExecution?.visits?.[row.date];
+  if(tap!=='day_ended')return tap;
+  return visit?.status==='ended'&&!visit.endedLate&&current(row,visit.endedAt,row.date)?'arrived':'';
+}
 function arrived(row){
   const date=row.date;
   return current(row,row.arrivedAt,date)||current(row,row.startedAt,date)||ARRIVED_TAPS.has(todayTap(row))||row.firstVisit===true&&ARRIVED.has(stage(row));

@@ -6,7 +6,7 @@ import { storage, FixedDate } from './helpers/hub-dom.mjs';
 import { flags, visitRow, arrivalDeadline, enRouteDeadline, startAt, denverDate } from '../functions/_lib/arrival-deadline.js';
 import { projectDispatchJob } from '../functions/_lib/dispatch-service.js';
 import { formatArrivalWindow } from '../functions/_lib/dispatch-arrival.js';
-import { fieldChecklist, fieldCommand } from '../functions/_lib/field-execution.js';
+import { fieldChecklist, fieldCommand, fieldJobProjection } from '../functions/_lib/field-execution.js';
 import { fieldVisitCommand } from '../functions/_lib/field-execution-visits.js';
 
 // FIELD-FLAGS: every instant here is fixed; nothing reads the real clock.
@@ -306,4 +306,45 @@ test('FIELD_MULTIDAY_VISITS on: the day\'s first tap writes a visit record, but 
   assert.deepEqual(kinds(flags(visitRow(late, late.assignmentSegments[1]), { now: at(denver('2026-09-23', '09:15')) })), ['late']);
   const working = tap(fieldVisitCommand, late, 'in_progress', denver('2026-09-23', '09:20'));
   assert.deepEqual(flags(visitRow(working, working.assignmentSegments[1]), { now: at(denver('2026-09-23', '09:30')) }), []);
+});
+
+// Review of #194, round 3: the crew can only tap what crew/job.js shows. statusButtons() is read from the page itself and
+// fed the server projection, so a sequence only uses buttons a crew member actually sees.
+const pageButtons = (() => {
+  const line = read => read.split(/\r?\n/).find(row => row.trim().startsWith('function statusButtons('));
+  const context = {}; vm.createContext(context);
+  vm.runInContext(`${line(source('crew/job.js')).trim()}\nglobalThis.statusButtons = statusButtons;`, context);
+  return (row, now) => { const view = fieldJobProjection(row, [], { now }); return [...context.statusButtons({ ...view, statusQueued: false })]; };
+})();
+const press = (command, row, status, now) => { assert.ok(pageButtons(row, at(now)).includes(status), `the page offers ${status} at ${now}`); return tap(command, row, status, now); };
+
+for (const [name, command] of [['FIELD_MULTIDAY_VISITS off', fieldCommand], ['FIELD_MULTIDAY_VISITS on, End day skipped', fieldVisitCommand]]) {
+  test(`day 2 of a split job left in Working overnight (${name}): the page offers Start today's work, and tapping it clears Late`, () => {
+    let row = press(command, twoDay(), 'dispatched', denver('2026-09-22', '07:40'));
+    row = press(command, row, 'arrived', denver('2026-09-22', '07:58'));
+    row = press(command, row, 'in_progress', denver('2026-09-22', '08:05'));
+    assert.ok(!pageButtons(row, at(denver('2026-09-22', '12:00'))).includes('in_progress'), 'the same day, Working is not offered again');
+    // Day 2: the job is still in Working; the page offers it as Start today's work.
+    const morning = at(denver('2026-09-23', '07:55'));
+    assert.deepEqual(pageButtons(row, morning), ['paused', 'waiting', 'delayed', 'in_progress']);
+    assert.equal(fieldJobProjection(row, [], { now: morning }).startTodayOffered, true);
+    assert.deepEqual(kinds(flags(visitRow(row, row.assignmentSegments[1]), { now: at(denver('2026-09-23', '08:15')) })), ['late'], 'no tap yet: Late');
+    const started = press(command, row, 'in_progress', denver('2026-09-23', '08:02'));
+    assert.equal(fieldJobProjection(started, [], { now: at(denver('2026-09-23', '09:00')) }).startTodayOffered, false, 'offered once a day');
+    for (const time of ['08:15', '12:00', '16:30']) assert.deepEqual(flags(visitRow(started, started.assignmentSegments[1]), { now: at(denver('2026-09-23', time)) }), [], time);
+  });
+}
+
+test('an End day saved offline and synced after midnight is not the next day\'s arrival', () => {
+  let row = tap(fieldVisitCommand, twoDay(), 'dispatched', denver('2026-09-22', '07:40'));
+  row = tap(fieldVisitCommand, row, 'arrived', denver('2026-09-22', '07:58'));
+  row = tap(fieldVisitCommand, row, 'in_progress', denver('2026-09-22', '08:05'));
+  const late = { ...row, ...fieldVisitCommand(row, tapper, { action: 'end_day', requestId: '00000000-0000-4000-8000-0000000000e1', visitDate: '2026-09-22', notes: 'Synthetic day one notes, synced late.' }, denver('2026-09-23', '00:30')).patch };
+  assert.equal(late.fieldExecution.activity, 'day_ended');
+  assert.equal(late.fieldExecution.activityAt, denver('2026-09-23', '00:30'), 'the late sync carries day 2\'s time');
+  assert.deepEqual(kinds(flags(visitRow(late, late.assignmentSegments[1]), { now: at(denver('2026-09-23', '08:15')) })), ['late'], 'an absent crew is still Late on day 2');
+  // An End day for today's own visit, after working it, keeps today quiet.
+  let today = tap(fieldVisitCommand, late, 'in_progress', denver('2026-09-23', '08:05'));
+  today = { ...today, ...fieldVisitCommand(today, tapper, { action: 'end_day', requestId: '00000000-0000-4000-8000-0000000000e2', notes: 'Synthetic day two notes, done for today.' }, denver('2026-09-23', '15:00')).patch };
+  assert.deepEqual(flags(visitRow(today, today.assignmentSegments[1]), { now: at(denver('2026-09-23', '16:00')) }), []);
 });
