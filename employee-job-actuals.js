@@ -3,7 +3,9 @@
    days and a CSV export. The server computes every figure (functions/_lib/job-actuals.js, GET /api/job-actuals) in
    integer cents; this screen only formats them. No margin shows until the owner enters the crew wage, and margins read
    "upper bound" until all seven cost settings are entered (wage, workers' comp, payroll tax, burden, dump fee, truck
-   cost, goods tax) on the Cost settings card (POST /api/job-actuals, owner only; managers see them read-only). Registered in
+   cost, goods tax) on the Cost settings card (POST /api/job-actuals, owner only; managers see them read-only). The owner
+   also gets an Owner targets card (GET/POST /api/owner-economics, owner only, never shown to a manager): the labor
+   baseline, lead wage, truck rental and sales targets the Playbook and Scorecard read. Registered in
    employee-hub-screens.js and runs standalone with the UI kit (window.EGCHubKit). */
 (function(){
 'use strict';
@@ -16,13 +18,26 @@ const SETTINGS=[
   {key:'dumpFeeCentsPerLoad',label:'Dump fee per truck load',unit:'$',help:'Average landfill or transfer fee for one load.',kind:'money'},
   {key:'truckCentsPerJob',label:'Truck cost per job',unit:'$',help:'Fuel, wear and truck payment spread per job.',kind:'money'},
   {key:'goodsTaxBp',label:'Tax on goods purchases',unit:'%',help:'Sales tax EGC pays buying goods, e.g. 7.55.',kind:'percent'}];
-const LIMITS={wageCentsPerManHour:20000,workersCompBp:5000,payrollTaxBp:5000,burdenCentsPerManHour:10000,dumpFeeCentsPerLoad:500000,truckCentsPerJob:500000,goodsTaxBp:2500};
+// The owner's targets and baselines (functions/_lib/owner-economics.js). The crew wage is the Cost settings wage, shown
+// beside these but never entered twice.
+const OWNER_PATH='/api/owner-economics',OWNER_PREFIX='owner_economics',OWNER_SCREEN='job_actuals_owner';
+const TARGETS=[
+  {key:'laborCostCentsPerCrewHour',label:'Labor cost per crew-hour',unit:'$',help:'Estimates labor on Job finances until a job\'s actual cost is entered.',kind:'money'},
+  {key:'leadWageCentsPerHour',label:'Lead wage per hour',unit:'$',help:'Shown with the crew wage on the Playbook.',kind:'money'},
+  {key:'truckRentalLowCentsPerJob',label:'Truck rental per job, low',unit:'$',help:'What an owned truck saves per job, low end.',kind:'money'},
+  {key:'truckRentalHighCentsPerJob',label:'Truck rental per job, high',unit:'$',help:'High end. Leave either blank if unknown.',kind:'money'},
+  {key:'averageTicketTargetCents',label:'Average ticket target',unit:'$',help:'Scorecard and Playbook target.',kind:'money'},
+  {key:'walkthroughSetRateTargetBp',label:'Walkthrough set rate target',unit:'%',help:'Leads that book a walkthrough.',kind:'percent'},
+  {key:'qualifiedCloseRateTargetBp',label:'Qualified close rate target',unit:'%',help:'Quotes that become jobs.',kind:'percent'}];
+const LIMITS={wageCentsPerManHour:20000,workersCompBp:5000,payrollTaxBp:5000,burdenCentsPerManHour:10000,dumpFeeCentsPerLoad:500000,truckCentsPerJob:500000,goodsTaxBp:2500,
+  laborCostCentsPerCrewHour:20000,leadWageCentsPerHour:20000,truckRentalLowCentsPerJob:500000,truckRentalHighCentsPerJob:500000,averageTicketTargetCents:10000000,walkthroughSetRateTargetBp:10000,qualifiedCloseRateTargetBp:10000};
 const CHANNEL={direct_estimator:'Estimator 7%',appointment_setter:'Setter 13% + estimator 7%',door_sale:'Door sale 25%',junk_only:'Junk-only 0%',none:'None'};
 // Row reasons worth a word on the row. ≤ marks any upper bound; a blank setting (cost_settings_incomplete) is told by the
 // warning above the totals and 'actual_hours_missing' by the Actual cell, so neither repeats here.
 const REASON={loads_quoted:'Dump cost from quoted loads',loads_unknown:'Truck loads not recorded',revenue_unreconciled:'Revenue not final: refund or unbilled change',timecards_unavailable:'Timecards could not be read',timecards_incomplete:'Timecards incomplete (open shift or review)',crew_lead_exceeds_timecards:'Crew lead count used: above timecards',wage_unset:'No crew wage set',goods_unknown:'Goods unknown: no estimate lines',revenue_unknown:'Revenue unknown'};
 const SOURCE={timecards:'Timecards',crew_lead:'Crew lead',not_recorded:'Not recorded'};
 const S={host:null,ctx:null,data:null,error:null,loading:false,busy:false,pending:null,drafts:{},feedback:'',feedbackError:false,generation:0,showAll:false};
+const O={data:null,error:null,busy:false,pending:null,drafts:{},feedback:'',feedbackError:false,generation:0};
 const kit=()=>window.EGCHubKit;
 const h=(...args)=>kit().h(...args);
 const fetcher=()=>S.ctx&&typeof S.ctx.hubFetch==='function'?S.ctx.hubFetch:undefined;
@@ -45,14 +60,14 @@ function parsed(setting,text){
   const trimmed=String(text??'').trim().replace(/%$/,'').trim();
   if(!trimmed)return{value:null};
   let value;
-  if(setting.kind==='percent'){const m=/^(\d{1,2})(?:\.(\d{1,2}))?$/.exec(trimmed);value=m?Number(m[1])*100+Number((m[2]||'').padEnd(2,'0')):null;}
+  if(setting.kind==='percent'){const m=/^(\d{1,3})(?:\.(\d{1,2}))?$/.exec(trimmed);value=m?Number(m[1])*100+Number((m[2]||'').padEnd(2,'0')):null;}
   else value=kit().cents(trimmed);
   return value===null||value<0||value>LIMITS[setting.key]?{bad:true}:{value};
 }
-function changes(){
+function changes(fields=SETTINGS,state=S){
   const settings={},bad=[];let changed=false;
-  for(const s of SETTINGS){
-    const saved=S.data?.settings?.[s.key]??null,text=Object.hasOwn(S.drafts,s.key)?S.drafts[s.key]:shown(s,saved),result=parsed(s,text);
+  for(const s of fields){
+    const saved=state.data?.settings?.[s.key]??null,text=Object.hasOwn(state.drafts,s.key)?state.drafts[s.key]:shown(s,saved),result=parsed(s,text);
     if(result.bad){bad.push(s.key);settings[s.key]=saved;continue;}
     settings[s.key]=result.value;if(result.value!==saved)changed=true;
   }
@@ -62,7 +77,7 @@ async function load(){
   const generation=++S.generation;S.loading=true;S.error=null;render();
   try{const data=await kit().requestJSON(PATH,{prefix:PREFIX,validate:valid,fetcher:fetcher()});if(generation===S.generation)S.data=data;}
   catch(error){if(generation===S.generation)S.error=error;}
-  finally{if(generation===S.generation){S.loading=false;S.pending=kit().pending(SCREEN).get();if(S.pending)keepEdits(S.pending.body?.settings);render();}}
+  finally{if(generation===S.generation){S.loading=false;S.pending=kit().pending(SCREEN).get();if(S.pending)keepEdits(S.pending.body?.settings);render();if(S.data?.canEdit)loadOwner();}}
 }
 const queue=()=>kit().pending(SCREEN);
 // The settings a save changed, kept beside the kit's pending request (sessionStorage, this viewer) so that after a reload
@@ -85,7 +100,7 @@ async function settle(send,settings){
   S.busy=true;S.feedback='';render();
   try{
     const data=await send();
-    S.drafts={};forgetEdited();S.feedback=data.replayed?'These settings were already saved.':'Cost settings saved. Margins are recalculated.';S.feedbackError=false;S.busy=false;
+    S.drafts={};forgetEdited();refreshOwnerPricing();S.feedback=data.replayed?'These settings were already saved.':'Cost settings saved. Margins are recalculated.';S.feedbackError=false;S.busy=false;
     await load();return;
   }catch(error){
     if(error.code==='job_actuals_revision_conflict'){keepEdits(settings);forgetEdited();queue().discard();S.feedback='Cost settings changed elsewhere. The latest are loaded and your edits are kept; check them and save again.';S.feedbackError=true;S.busy=false;await load();return;}
@@ -146,10 +161,84 @@ function settingsCard(){
 const barText=(bad,changed)=>bad.length?`${bad.length} to fix`:changed?'Unsaved changes':'';
 // Typing updates only the save button and its note, so focus is never lost to a re-render.
 function refreshBar(){
-  const root=S.host?.querySelector('.ja-settings');if(!root)return;
+  const root=S.host?.querySelector('.ja-settings:not(.ja-owner)');if(!root)return;
   const {bad,changed}=changes(),save=root.querySelector('[data-save]'),note=root.querySelector('[data-bar]');
   if(save)save.disabled=S.busy||Boolean(S.pending)||!changed||bad.length>0;if(note)note.textContent=barText(bad,changed);
   for(const input of root.querySelectorAll('[data-setting]')){const isBad=bad.includes(input.getAttribute('data-setting'));input.setAttribute('aria-invalid',isBad?'true':'false');input.closest('.ja-setting')?.classList.toggle('bad',isBad);}
+}
+// Owner targets: the same save pattern as Cost settings (the kit's pending request, Retry or Discard, edits kept on a
+// revision conflict), on its own pending slot and edited-keys record so the two cards never replace each other's save.
+const ownerQueue=()=>kit().pending(OWNER_SCREEN);
+// The Hub keeps the owner part of /api/pricing-config in memory (employee-pricing.js): fetch it again after a save here
+// or on Cost settings (the crew wage), so the Playbook and Scorecard show the saved numbers.
+function refreshOwnerPricing(){const pricing=window.EGCPricingConfig;if(pricing&&typeof pricing.forget==='function'){pricing.forget('owner');pricing.load('owner');}}
+const OWNER_EDITED='egc.jobactuals.owneredited.v1.';
+const ownerEditedKey=()=>{try{return OWNER_EDITED+String(sessionStorage.getItem('egc_u')||'').trim().toLowerCase();}catch{return OWNER_EDITED;}};
+function rememberOwnerEdited(keys){try{sessionStorage.setItem(ownerEditedKey(),JSON.stringify(keys));}catch{}}
+function ownerEditedKeys(){try{const keys=JSON.parse(sessionStorage.getItem(ownerEditedKey())||'[]');return Array.isArray(keys)?keys:[];}catch{return[];}}
+function forgetOwnerEdited(){try{sessionStorage.removeItem(ownerEditedKey());}catch{}}
+function keepOwnerEdits(settings){
+  if(!settings||typeof settings!=='object')return;
+  const keys=new Set(ownerEditedKeys());
+  for(const setting of TARGETS)if(keys.has(setting.key)&&Object.hasOwn(settings,setting.key)&&!Object.hasOwn(O.drafts,setting.key))O.drafts[setting.key]=shown(setting,settings[setting.key]);
+}
+const validOwner=data=>Boolean(data&&data.ok===true&&data.settings&&TARGETS.every(s=>data.settings[s.key]===null||int(data.settings[s.key])));
+const validOwnerRead=data=>validOwner(data)&&(data.crewWageCentsPerManHour===null||int(data.crewWageCentsPerManHour));
+async function loadOwner(){
+  const generation=++O.generation;O.error=null;
+  try{const data=await kit().requestJSON(OWNER_PATH,{prefix:OWNER_PREFIX,validate:validOwnerRead,fetcher:fetcher()});if(generation===O.generation)O.data=data;}
+  catch(error){if(generation===O.generation)O.error=error;}
+  finally{if(generation===O.generation){O.pending=ownerQueue().get();if(O.pending)keepOwnerEdits(O.pending.body?.settings);render();}}
+}
+const OWNER_ERRORS={owner_economics_owner_required:'Only the owner can change these targets.',owner_economics_no_change:'These targets are already saved.',owner_economics_amount_invalid:'Check the highlighted targets: the low truck rental cannot be above the high one.'};
+async function settleOwner(send,settings){
+  O.busy=true;O.feedback='';render();
+  try{
+    const data=await send();
+    O.drafts={};forgetOwnerEdited();refreshOwnerPricing();O.feedback=data.replayed?'These targets were already saved.':'Owner targets saved. The Playbook and Scorecard now use them.';O.feedbackError=false;O.busy=false;
+    await loadOwner();return;
+  }catch(error){
+    if(error.code==='owner_economics_revision_conflict'){keepOwnerEdits(settings);forgetOwnerEdited();ownerQueue().discard();O.feedback='Owner targets changed elsewhere. The latest are loaded and your edits are kept; check them and save again.';O.feedbackError=true;O.busy=false;await loadOwner();return;}
+    O.feedback=kit().errorText(error,OWNER_ERRORS);O.feedbackError=true;
+  }
+  O.busy=false;O.pending=ownerQueue().get();render();
+}
+function retryOwner(){if(!O.busy&&O.pending){const settings=O.pending.body?.settings;settleOwner(()=>ownerQueue().replay({prefix:OWNER_PREFIX,validate:validOwner,fetcher:fetcher()}),settings);}}
+function discardOwner(){ownerQueue().discard();forgetOwnerEdited();O.drafts={};O.pending=null;O.feedback='The unconfirmed save was discarded. Check the targets below before saving again.';O.feedbackError=false;loadOwner();}
+async function saveOwner(){
+  if(O.busy||O.pending||!O.data)return;
+  const {settings,bad,changed}=changes(TARGETS,O);
+  if(bad.length){O.feedback='Fix the highlighted targets: percents like 50, dollars like 42.50.';O.feedbackError=true;render();return;}
+  if(!changed)return;
+  rememberOwnerEdited(TARGETS.map(setting=>setting.key).filter(key=>settings[key]!==(O.data.settings[key]??null)));
+  return settleOwner(()=>ownerQueue().submit(OWNER_PATH,{action:'owner_economics.settings.set',expectedRevision:O.data.settings.revision??null,settings},{prefix:OWNER_PREFIX,validate:validOwner,fetcher:fetcher()}),settings);
+}
+function ownerCard(){
+  if(!O.data)return h('section',{class:'hub-card ja-settings ja-owner','aria-label':'Owner targets'},h('h2',{},'Owner targets'),
+    O.error?[h('div',{class:'hub-notice error',role:'alert'},'Owner targets are unavailable. '+kit().errorText(O.error)),kit().button('Retry',loadOwner,'primary')]:h('p',{class:'ja-muted'},'Loading owner targets…'));
+  const {bad,changed}=changes(TARGETS,O),wage=O.data.crewWageCentsPerManHour;
+  const rows=TARGETS.map(s=>{
+    const saved=O.data.settings[s.key]??null,text=Object.hasOwn(O.drafts,s.key)?O.drafts[s.key]:shown(s,saved),isBad=bad.includes(s.key);
+    const input=h('input',{type:'text',inputmode:'decimal',autocomplete:'off',placeholder:'Not set',maxlength:12,value:text,disabled:O.busy||Boolean(O.pending),'aria-label':`${s.label} (${s.unit==='%'?'percent':'dollars'})`,'aria-invalid':isBad?'true':'false','data-target':s.key,
+      oninput:event=>{O.drafts[s.key]=event.target.value;refreshOwnerBar();}});
+    return h('label',{class:'ja-setting ja-setting-edit'+(isBad?' bad':'')},h('span',{},s.label,h('small',{},s.help)),h('span',{class:'ja-input'},s.unit==='$'?h('span',{'aria-hidden':'true'},'$'):null,input,s.unit==='%'?h('span',{'aria-hidden':'true'},'%'):null));
+  });
+  return h('section',{class:'hub-card ja-settings ja-owner','aria-label':'Owner targets'},
+    h('h2',{},'Owner targets'),
+    h('p',{class:'ja-muted'},'Only you see these. The Playbook, Scorecard and Job finances use them; a blank one shows generic text, never a guessed number.'),
+    h('div',{class:'ja-setting-list'},
+      h('div',{class:'ja-setting'},h('span',{},'Crew wage per hour',h('small',{},'The crew wage from Cost settings above, so there is one number.')),h('strong',{},wage===null?'Not set':money(wage))),
+      rows),
+    O.pending?h('div',{class:'hub-notice warning ja-pending',role:'alert'},h('p',{},'A save was not confirmed. Retry it to check whether it was applied (it is never applied twice), or discard it before making new changes.'),
+      h('div',{class:'hub-actions'},kit().button(O.busy?'Retrying…':'Retry original save',retryOwner,'primary',{disabled:O.busy}),kit().button('Discard unconfirmed save',discardOwner,'',{disabled:O.busy}))):null,
+    h('div',{class:'ja-save'},kit().button(O.busy?'Saving…':'Save owner targets',saveOwner,'primary',{disabled:O.busy||Boolean(O.pending)||!changed||bad.length>0,'data-save':''}),h('span',{class:'ja-muted','data-bar':''},barText(bad,changed))),
+    O.feedback?h('p',{role:O.feedbackError?'alert':'status',class:'ja-feedback'+(O.feedbackError?' error':'')},O.feedback):null);
+}
+function refreshOwnerBar(){
+  const root=S.host?.querySelector('.ja-owner');if(!root)return;
+  const {bad,changed}=changes(TARGETS,O),save=root.querySelector('[data-save]'),note=root.querySelector('[data-bar]');
+  if(save)save.disabled=O.busy||Boolean(O.pending)||!changed||bad.length>0;if(note)note.textContent=barText(bad,changed);
+  for(const input of root.querySelectorAll('[data-target]')){const isBad=bad.includes(input.getAttribute('data-target'));input.setAttribute('aria-invalid',isBad?'true':'false');input.closest('.ja-setting')?.classList.toggle('bad',isBad);}
 }
 function jobRow(r){
   const variance=r.varianceManHours===null?'—':`${signed(r.varianceManHours,hours)} (${signed(r.variancePercent,pct)})`;
@@ -193,14 +282,14 @@ function render(){
     if(!d.settingsComplete)notices.push(h('div',{class:'hub-notice warning'},d.missingSettings.includes('wageCentsPerManHour')?'No margins yet: enter the crew wage in Cost settings below.':`Margins are an upper bound: ${d.missingSettings.length} of ${SETTINGS.length} cost settings ${d.missingSettings.length===1?'is':'are'} blank.`));
     if(d.sources?.timecards==='unavailable')notices.push(h('div',{class:'hub-notice warning'},'Timecards could not be read, so actual hours show only where the crew lead confirmed them. Refresh to try again.'));
     if(S.error)notices.push(h('div',{class:'hub-notice error',role:'alert'},kit().errorText(S.error)));
-    body=[...notices,h('div',{class:'ja-totals-grid'},totalsCard('Last 30 days',d.totals.last30),totalsCard('Last 90 days',d.totals.last90)),table(),settingsCard()];
+    body=[...notices,h('div',{class:'ja-totals-grid'},totalsCard('Last 30 days',d.totals.last30),totalsCard('Last 90 days',d.totals.last90)),table(),settingsCard(),...(d.canEdit?[ownerCard()]:[])];
   }
   const root=h('section',{class:'hub-screen egc-job-actuals'},head,...body);
   S.host.querySelector('.egc-job-actuals')?.remove();
   S.host.append(root);
 }
-function mount(host,ctx){S.host=host;S.ctx=ctx||{};S.data=null;S.error=null;S.drafts={};S.feedback='';S.showAll=false;return load();}
-function unmount(){S.generation++;S.host?.querySelector('.egc-job-actuals')?.remove();S.host=null;S.ctx=null;}
-window.addEventListener('egc:signout',()=>{try{for(let i=sessionStorage.length-1;i>=0;i--){const name=sessionStorage.key(i);if(String(name||'').startsWith(EDITED))sessionStorage.removeItem(name);}}catch{}});
-window.EGCJobActuals={mount,unmount,canLeave:()=>!changes().changed||window.confirm('Discard unsaved cost settings?'),refresh:load};
+function mount(host,ctx){S.host=host;S.ctx=ctx||{};S.data=null;S.error=null;S.drafts={};S.feedback='';S.showAll=false;Object.assign(O,{data:null,error:null,busy:false,pending:null,drafts:{},feedback:'',feedbackError:false});return load();}
+function unmount(){S.generation++;O.generation++;S.host?.querySelector('.egc-job-actuals')?.remove();S.host=null;S.ctx=null;}
+window.addEventListener('egc:signout',()=>{try{for(let i=sessionStorage.length-1;i>=0;i--){const name=sessionStorage.key(i);if(String(name||'').startsWith(EDITED)||String(name||'').startsWith(OWNER_EDITED))sessionStorage.removeItem(name);}}catch{}});
+window.EGCJobActuals={mount,unmount,canLeave:()=>!changes().changed&&!(O.data&&changes(TARGETS,O).changed)||window.confirm('Discard unsaved cost settings?'),refresh:load};
 })();
