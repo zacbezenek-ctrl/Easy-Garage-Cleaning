@@ -153,7 +153,7 @@ async function load({quiet=false}={}) {
     const data=await api('?'+params, null, S.controller.signal);
     if (generation!==S.generation || !S.root) return;
     S.data=data; S.error='';restoreRecovery(data.viewer.id);
-  } catch (error) { if (generation!==S.generation || error.name==='AbortError') return; if([401,403].includes(error.status))S.data=null; S.error=errorText(error); S.errorStatus=error.status; }
+  } catch (error) { if (generation!==S.generation || error.name==='AbortError') return; if([401,403].includes(error.status))S.data=null; S.error=errorText(error); S.errorStatus=error.status; S.openCrews=false; }
   finally { if (generation===S.generation && S.root) { S.loading=false; if(S.pendingBook&&S.error&&!S.data){S.pendingBook=null;S.error+=' The booking form did not open: book again once the schedule loads.';} render(); openPendingBook(); if(S.openCrews&&S.data&&!S.modal){S.openCrews=false;openResources();} } }
 }
 function setFilter(field,value) { if(field==='status'&&value==='unscheduled'){S.status='active';showQueue();return;} S[field]=value; renderBody(); }
@@ -1138,7 +1138,10 @@ function openStatus(job,action) {
 function openResources() {
   if(!S.data)return;const model=modal('Crews, vehicles & availability','Crew membership is copied onto each assignment. Editing a crew does not silently change scheduled jobs.');if(!model)return;
   // CREW-STAFFING (employee-crew-staffing.js): crew problems, the next 14 days' unstaffed jobs and "Staff waiting jobs".
-  if(window.EGCCrewStaffing&&!booker())model.fields.append(window.EGCCrewStaffing.panel({save:body=>api('',body),onApplied:()=>{model.close();void load({quiet:true});}}));
+  // Its set-up step: Create Crew 1/2/3 while the standard crews are missing, else a jump to the crew list below.
+  const seeded=['crew-1','crew-2','crew-3'].every(code=>(S.data.crews||[]).some(row=>row.code===code));
+  const setup=seeded?{label:'Add crew members',run:()=>list.scrollIntoView({block:'start',behavior:'smooth'})}:{label:'Create Crew 1/2/3',run:()=>void save(model,{action:'crew.seed_defaults',requestId:key()},'Crew 1, Crew 2 and Crew 3 are ready. Add their members.')};
+  if(window.EGCCrewStaffing&&!booker())model.fields.append(window.EGCCrewStaffing.panel({save:body=>api('',body),setup,onApplied:()=>{model.close();void load({quiet:true});}}));
   const list=h('div',{class:'dp-resource-list dp-wide'});
   for(const [kind,label,rows]of [['crew','Crews',sortedCrews(S.data.crews)],['vehicle','Vehicles',S.data.vehicles||[]],['availability','Availability',S.data.availability||[]]]) {
     list.append(h('div',{class:'dp-resource-head'},h('h3',{},label),btn('Add '+(kind==='availability'?'time off':kind),()=>{model.close();openResource(kind);})));
@@ -1227,7 +1230,7 @@ function mount(host,options) {
   S.refreshTimer=setInterval(()=>{if(!document.hidden&&!S.modal&&!S.pending)void load({quiet:true});},60000);
 }
 // A dialog another screen opened off the board (openFor) is not the board's: unmount leaves it until it closes or sign-out.
-function unmount({force=false}={}) {if(!force&&S.detached&&S.modal===S.detached&&!S.root)return;S.detached=null;S.controller?.abort();S.generation++;if(S.refreshTimer)clearInterval(S.refreshTimer);S.refreshTimer=null;if(S.modal){S.modal.dialog.close();S.modal.dialog.remove();S.modal=null;}S.pending=false;S.root?.remove();S.root=null;S.host=null;S.data=null;S.loading=false;S.error='';S.errorStatus=0;S.viewer=null;S.recovery=null;S.pendingBook=null;}
+function unmount({force=false}={}) {if(!force&&S.detached&&S.modal===S.detached&&!S.root)return;S.detached=null;S.openCrews=false;S.controller?.abort();S.generation++;if(S.refreshTimer)clearInterval(S.refreshTimer);S.refreshTimer=null;if(S.modal){S.modal.dialog.close();S.modal.dialog.remove();S.modal=null;}S.pending=false;S.root?.remove();S.root=null;S.host=null;S.data=null;S.loading=false;S.error='';S.errorStatus=0;S.viewer=null;S.recovery=null;S.pendingBook=null;}
 window.addEventListener('egc:signout',()=>{try{for(let i=sessionStorage.length-1;i>=0;i--){const name=sessionStorage.key(i);if(name?.startsWith(recoveryPrefix))sessionStorage.removeItem(name);}}catch{}unmount({force:true});});
 window.addEventListener('beforeunload',event=>{if(S.modal){event.preventDefault();event.returnValue='';}});
 function registerView(name,view) {

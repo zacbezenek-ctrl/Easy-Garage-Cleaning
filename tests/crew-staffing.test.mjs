@@ -17,7 +17,8 @@ import { readMeter } from './helpers/read-meter.mjs';
 import { staffSessions } from './helpers/auth-roles-harness.mjs';
 import { ORIGIN } from './helpers/vault-fixture.mjs';
 
-const NOW = new Date('2026-10-21T18:00:00.000Z'), TODAY = '2026-10-21', WED = '2026-10-21', THU = '2026-10-22', FRI = '2026-10-23', SAT = '2026-10-24', SUN = '2026-10-25';
+// NOW is noon in Denver; EARLY is 7:00 am the same Wednesday, before any of the day's visits start.
+const NOW = new Date('2026-10-21T18:00:00.000Z'), EARLY = new Date('2026-10-21T13:00:00.000Z'), TODAY = '2026-10-21', WED = '2026-10-21', THU = '2026-10-22', FRI = '2026-10-23', SAT = '2026-10-24', SUN = '2026-10-25';
 const WEEKDAYS = ['mon', 'tue', 'wed', 'thu', 'fri'];
 const owner = { user: 'zacb', displayName: 'Synthetic Owner', role: 'owner', businessAccess: true };
 const crew = (id, name, memberIds, extra = {}) => ({ id, recordType: 'crew', name, memberIds, leadId: memberIds[0] || null, status: 'active', revision: `${id}r`, ...extra });
@@ -73,10 +74,31 @@ test('unstaffed jobs: the next 14 days, no crew or short, oldest first; done, ot
     job('crewonly', SAT, { crewId: 'crew_three' }),
     job('split', THU, { assignmentSegments: [{ id: 'seg-a', date: THU, time: '09:00', endTime: '12:00', assignedCrew: ['c1a'] }, { id: 'seg-b', date: FRI, time: '09:00', endTime: '12:00', assignedCrew: [] }] }),
   ];
-  const rows = unstaffedJobs(jobs, { today: TODAY });
+  const rows = unstaffedJobs(jobs, { today: TODAY, now: NOW.toISOString(), roster: ROSTER });
   assert.deepEqual(rows.map(row => [row.jobId, row.status, row.assigned, row.needed, row.canAutoStaff]), [
-    ['earlier', 'no_crew', 0, 1, true], ['first', 'no_crew', 0, 1, true], ['split', 'no_crew', 0, 1, false], ['short', 'short', 1, 2, false], ['crewonly', 'no_crew', 0, 1, false], ['late', 'no_crew', 0, 1, true]]);
+    ['earlier', 'no_crew', 0, 1, false], ['first', 'no_crew', 0, 1, true], ['split', 'no_crew', 0, 1, false], ['short', 'short', 1, 2, false], ['crewonly', 'no_crew', 0, 1, false], ['late', 'no_crew', 0, 1, true]],
+    'at noon the 9:00 visit has started, so it is listed but never staffed automatically; the 1:00 pm one can be');
+  assert.equal(rows.find(row => row.jobId === 'earlier').started, true);
+  assert.equal(unstaffedJobs(jobs, { today: TODAY }).some(row => row.canAutoStaff), false, 'without a clock nothing counts as not started');
   assert.equal(rows.some(row => /cents|amount|price|total|phone|address/i.test(Object.keys(row).join())), false, 'no money or contact fields');
+});
+
+test('a multi-day job that started before today, and a split job, are judged by their days in the 14 days', () => {
+  const jobs = [
+    job('spans', '2026-10-19', { endDate: THU, time: '10:00', endTime: '15:00' }), job('ended', '2026-10-18', { endDate: '2026-10-20', time: '10:00', endTime: '15:00' }),
+    job('split', '2026-10-19', { endDate: FRI, assignmentSegments: [{ id: 'seg-old', date: '2026-10-19', time: '10:00', endTime: '12:00', assignedCrew: [] }, { id: 'seg-new', date: FRI, time: '10:00', endTime: '12:00', assignedCrew: ['c1a'] }] }),
+    job('legacy', THU, { assignedCrew: undefined, assignedTo: 'Synthetic c1a' }),
+  ];
+  const rows = unstaffedJobs(jobs, { today: TODAY, now: NOW.toISOString(), roster: ROSTER });
+  assert.deepEqual(rows.map(row => [row.jobId, row.date, row.startDate, row.started, row.canAutoStaff]), [['spans', TODAY, '2026-10-19', true, false]],
+    'the running job shows on today, never staffed after the fact; the ended one is not in the window; the split job is staffed on its window day; a legacy name counts');
+});
+
+test('the preview counts people on legacy display-name assignments as busy', () => {
+  const crews = [crew('crew_one', 'Crew 1', ['c1a', 'c1b'], { priority: 1, serviceDays: WEEKDAYS }), crew('crew_two', 'Crew 2', ['c2a'], { priority: 2, serviceDays: WEEKDAYS })];
+  const jobs = [job('legacy', THU, { assignedCrew: undefined, assignedTo: 'Synthetic c1b', time: '10:00', endTime: '11:00' }), job('waiting', THU)];
+  const waiting = unstaffedJobs(jobs, { today: TODAY, now: NOW.toISOString(), roster: ROSTER });
+  assert.deepEqual(staffingPreview({ waiting, jobs, crews, roster: ROSTER }).map(row => row.crewId), ['crew_two'], 'c1b is on the legacy job by name, so Crew 1 is busy');
 });
 
 test('the preview picks the first free eligible crew, counts earlier picks, and says why a job cannot be staffed', () => {
@@ -84,24 +106,28 @@ test('the preview picks the first free eligible crew, counts earlier picks, and 
     job('e', THU, { time: '08:00', endTime: '10:00' })];
   const roster = [...ROSTER, person('c2b')], crews = [crew('crew_one', 'Crew 1', ['c1a', 'c1b'], { priority: 1, serviceDays: WEEKDAYS }), crew('crew_two', 'Crew 2', ['c2a', 'c2b'], { priority: 2, serviceDays: WEEKDAYS })];
   const availability = [{ recordType: 'availability', employeeId: 'c1b', date: THU, endDate: THU, allDay: true, status: 'approved' }];
-  const waiting = unstaffedJobs(jobs, { today: TODAY }), plan = staffingPreview({ waiting, jobs, crews, roster, availability });
+  const waiting = unstaffedJobs(jobs, { today: TODAY, now: EARLY.toISOString(), roster }), plan = staffingPreview({ waiting, jobs, crews, roster, availability });
   assert.deepEqual(plan.map(row => [row.jobId, row.crewId || row.reason]), [['a', 'crew_one'], ['b', 'crew_two'], ['c', 'busy'], ['e', 'crew_two'], ['d', 'no_crew_works']],
     'a takes Crew 1, b the next free crew, c finds both busy; Thursday Crew 1 is out (c1b off); Sunday nobody works');
   assert.equal(previewSummary(plan), "Crew 1 → 1 job, Crew 2 → 2 jobs; 2 can't be staffed: every crew that works Wednesday is busy then; no staffable crew works Sundays");
   assert.equal(previewSummary([]), 'No job can be staffed');
-  const report = crewStaffing({ crews, roster, jobs, availability, today: TODAY, asOf: NOW.toISOString() });
-  assert.deepEqual(report.counts, { problems: report.health.length, unstaffed: 5, canAutoStaff: 5 });
+  const report = crewStaffing({ crews, roster, jobs, availability, today: TODAY, asOf: EARLY.toISOString() });
+  assert.deepEqual(report.counts, { problems: report.health.length, unstaffed: 5, canAutoStaff: 5, staffable: 3 });
   assert.match(report.previewSummary, /^Crew 1 → 1 job/);
+  const off = crewStaffing({ crews, roster, jobs, availability, today: TODAY, asOf: EARLY.toISOString(), autoAssign: false });
+  assert.deepEqual([off.autoAssign, off.preview, off.counts.staffable, off.unstaffed.length], [false, [], 0, 5], 'auto-assign off: the jobs are listed, nothing is offered');
 });
 
 // A store the API reads: crews and time off from dispatchResources, the roster, and the 14 dated days.
-function apiStore({ jobs = [], crews = CREWS, roster = ROSTER } = {}) {
+function apiStore({ jobs = [], crews = CREWS, roster = ROSTER, spanning = undefined } = {}) {
   const calls = [];
   return { calls, store: () => ({ resources: async () => { calls.push('resources'); return structuredClone(crews); }, roster: async () => { calls.push('roster'); return structuredClone(roster); },
+    ...(spanning ? { spanningJobs: async (start, fields) => { calls.push({ spanning: start, fields }); if (spanning === 'missing') throw Object.assign(new Error('index'), { code: 'dispatch_index_required' }); return structuredClone(jobs).filter(row => row.date < start && (row.endDate || row.date) >= start); } } : {}),
     datedJobs: async (start, end, fields) => { calls.push({ start, end, fields }); return structuredClone(jobs).filter(row => row.date >= start && row.date <= end); },
     jobs: async () => { throw new Error('a full jobs scan is never read'); } }) };
 }
-const get = (handlers, path = '/api/crew-staffing', headers = {}) => handlers.get({ request: new Request(`${ORIGIN}${path}`, { headers }), env: {} });
+const AUTO = { EGC_DISPATCH_CREW_AUTO_ASSIGN: 'true' };
+const get = (handlers, path = '/api/crew-staffing', env = AUTO) => handlers.get({ request: new Request(`${ORIGIN}${path}`), env });
 
 test('GET /api/crew-staffing: owner and managers who dispatch; crew, sales and bookers get nothing', async () => {
   for (const [actor, status] of [[owner, 200], [{ user: 'tylerg', role: 'manager', businessAccess: true }, 200], [{ user: 'Synthetic.Crew', role: 'crew', businessAccess: false }, 403],
@@ -121,13 +147,28 @@ test('GET /api/crew-staffing: owner and managers who dispatch; crew, sales and b
 
 test('GET /api/crew-staffing reads the 14 dated days masked, never money, and answers health, unstaffed and the preview', async () => {
   const { calls, store } = apiStore({ jobs: [job('a', WED), job('d', SUN), job('beyond', '2026-11-04'), { ...job('off', THU, { type: 'availability' }), employee: 'c1a', allDay: true }] });
-  const body = await (await get(crewStaffingHandlers({ session: async () => owner, storage: store, now: () => NOW }))).json();
+  const body = await (await get(crewStaffingHandlers({ session: async () => owner, storage: store, now: () => EARLY }))).json();
   assert.deepEqual(calls.find(call => call.start), { start: TODAY, end: '2026-11-03', fields: [...CREW_STAFFING_FIELDS] });
+  assert.equal(body.autoAssign, true);
   assert.ok(!CREW_STAFFING_FIELDS.some(field => /estimate|price|total|amount|deposit|invoice|payment|phone|email|address|notes/i.test(field)), 'no money or contact fields are read');
   assert.deepEqual(body.unstaffed.map(row => row.jobId), ['a', 'd']);
   assert.deepEqual(body.preview.map(row => [row.jobId, row.crewId || row.reason]), [['a', 'crew_one'], ['d', 'no_crew_works']]);
   assert.equal(body.health.some(row => row.code === 'uncovered_day' && row.day === 'sun'), true);
   assert.doesNotMatch(JSON.stringify(body), /\$|cents/i);
+});
+
+test('GET /api/crew-staffing reads the jobs running into the 14 days, with the crew schedule\'s lookback until the index exists', async () => {
+  const jobs = [job('spans', '2026-10-19', { endDate: THU, time: '10:00', endTime: '15:00' }), job('a', THU), job('old', '2026-10-10')];
+  for (const spanning of ['ok', 'missing']) {
+    const { calls, store } = apiStore({ jobs, spanning });
+    const body = await (await get(crewStaffingHandlers({ session: async () => owner, storage: store, now: () => NOW }))).json();
+    assert.deepEqual(body.unstaffed.map(row => [row.jobId, row.canAutoStaff]), [['spans', false], ['a', true]], spanning);
+    if (spanning === 'missing') assert.ok(calls.some(call => call.start === '2026-09-19' && call.end === '2026-10-20'), 'the 32 days before today, as /api/crew-schedule reads');
+    else assert.ok(!calls.some(call => call.start && call.start < TODAY), 'with the index, never a lookback');
+  }
+  const { store } = apiStore({ jobs });
+  const off = await (await get(crewStaffingHandlers({ session: async () => owner, storage: store, now: () => NOW }), '/api/crew-staffing', {})).json();
+  assert.deepEqual([off.autoAssign, off.preview, off.unstaffed.length], [false, [], 2], 'auto-assign off: listed, nothing offered');
 });
 
 test('READ-BUDGET: through the real storage, one bounded jobs.date range query and the crews; never a jobs list scan', async () => {
@@ -140,6 +181,7 @@ test('READ-BUDGET: through the real storage, one bounded jobs.date range query a
   assert.equal(measured.result.ok, true);
   assert.deepEqual(measured.result.unstaffed.map(row => row.jobId), ['a', 'b']);
   assert.equal(measured.byKey['query:jobs:date+date'], 2, 'only the two jobs dated in the 14 days');
+  assert.equal(measured.byKey['query:jobs:endDate+date'], 1, 'one indexed query for jobs running into the window (none here)');
   assert.equal(Object.keys(measured.byKey).some(key => key.startsWith('list:jobs')), false, 'no jobs list scan');
   const [query] = fs.queries('jobs').map(call => call.body.structuredQuery);
   assert.deepEqual(query.where.compositeFilter.filters.map(item => [item.fieldFilter.field.fieldPath, item.fieldFilter.op, item.fieldFilter.value.stringValue]), [['date', 'GREATER_THAN_OR_EQUAL', TODAY], ['date', 'LESS_THAN_OR_EQUAL', '2026-11-03']]);
@@ -204,7 +246,8 @@ test('a staffing pick is held to the owner\'s blocking rules like a booking: ove
   g.rows.set('dispatchSettings/current', { id: 'current', revision: 'sr1', maxJobsPerEmployeePerDay: 1, blockOverCapacity: true });
   await g.waiting(THU, { time: '14:00', endTime: '15:00', assignedCrew: ['c1a', 'c1b'], crewId: 'crew_one' });
   const only = await g.waiting(THU);
-  await assert.rejects(g.save(g.staff(only)), { code: 'dispatch_no_crew_free' }, 'with the only crew over its limit nothing is saved');
+  await assert.rejects(g.save(g.staff(only)), error => error.code === 'dispatch_no_crew_free' && error.details.reason === 'rule' && error.details.codes.includes('employee_daily_capacity') && /employee_daily_capacity/.test(error.message),
+    'with the only crew over its limit nothing is saved, and the refusal names the blocking rule');
   assert.deepEqual(g.job(only.id).assignedCrew, []);
 });
 
@@ -218,6 +261,21 @@ test('staff waiting jobs that no crew can take: nothing is written and the reaso
   await g.save(g.staff(a)); await g.save(g.staff(b));
   await assert.rejects(g.save(g.staff(c)), error => error.code === 'dispatch_no_crew_free' && error.details.reason === 'busy' && /busy/.test(error.message));
   assert.deepEqual(g.job(c.id).assignedCrew, []);
+});
+
+test('a visit that has started or ended is never staffed after the fact, and nothing is written', async () => {
+  const f = await dispatchStore(), today = await f.waiting(WED, { time: '10:00', endTime: '11:00' }), later = await f.waiting(WED, { time: '13:00', endTime: '15:00' });
+  const before = structuredClone(f.job(today.id));
+  await assert.rejects(f.save(f.staff(today)), error => error.code === 'dispatch_visit_started' && error.status === 409 && error.details.reason === 'started', 'noon: the 10:00 visit has started');
+  assert.deepEqual(f.job(today.id), before);
+  assert.equal((await f.save(f.staff(later))).autoCrew.crewId, 'crew_one', 'the 1:00 pm visit can still be staffed');
+});
+
+test('the Dispatch form\'s "assign the first free crew" on an unmoved job that also edits the visit saves as before, without a pick', async () => {
+  const f = await dispatchStore(), sunday = await f.waiting(SUN);
+  const edited = await f.save({ ...f.staff(sunday), changes: { notes: 'Synthetic gate code changed' } });
+  assert.equal(edited.autoCrew, undefined, 'no staffing pick, so no refusal');
+  assert.deepEqual([f.job(sunday.id).notes, f.job(sunday.id).assignedCrew], ['Synthetic gate code changed', []], 'the edit is saved and the job stays waiting');
 });
 
 test('staffing never replaces people, never runs for bookers or with auto-assign off, and a hand-staffed job is left alone', async () => {

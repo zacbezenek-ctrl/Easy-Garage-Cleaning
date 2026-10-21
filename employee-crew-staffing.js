@@ -41,19 +41,28 @@ function jobLine(row,result){
     result?h('span',{class:'cs-result '+(result.ok?'ok':'bad'),'data-cs-result':result.ok?'assigned':'failed'},result.text):null);
 }
 
-/* The Dispatch panel. save(body) is employee-dispatch.js api('',body): it posts to /api/dispatch and verifies the reply. */
-function panel({save,onApplied,fetcher}={}){
-  const P={data:null,error:'',loading:true,stage:'idle',results:new Map(),requests:new Map(),busy:false};
+/* The Dispatch panel. save(body) is employee-dispatch.js api('',body): it posts to /api/dispatch and verifies the reply.
+   setup (optional) is {label, run}: the crew set-up step Dispatch offers next to crew problems (Create Crew 1/2/3 while
+   the standard crews are missing, else a jump to the crew list), so an empty roster always says what to tap next. */
+const CREW_CODES=new Set(['no_staffable_crew','crew_no_members','crew_no_lead','crew_member_inactive','availability_clash','uncovered_day']);
+const SHOWN=5;
+function panel({save,onApplied,fetcher,setup}={}){
+  const P={data:null,error:'',loading:true,stage:'idle',results:new Map(),requests:new Map(),busy:false,all:false};
   const root=h('section',{class:'cs-panel dp-wide','aria-labelledby':'cs-panel-title','data-cs-panel':''});
   const draw=()=>{
     const head=h('div',{class:'cs-head'},h('h3',{id:'cs-panel-title'},'Crew staffing'),h('span',{class:'cs-sub'},'Next 14 days'));
     if(P.loading){root.replaceChildren(head,h('p',{class:'cs-muted',role:'status'},'Checking crews and unstaffed jobs…'));return;}
     if(!P.data){root.replaceChildren(head,h('p',{class:'cs-error',role:'alert'},P.error||'Crew staffing is unavailable.'),button('Retry',load));return;}
     const d=P.data,waiting=d.unstaffed,staffable=d.preview.filter(row=>row.crewId),blocked=d.preview.filter(row=>!row.crewId);
-    const body=[head,h('h4',{},d.health.length?plural(d.health.length,'crew problem'):'Crews'),problemList(d.health),
-      h('h4',{},waiting.length?plural(waiting.length,'unstaffed job')+', oldest first':'Unstaffed jobs'),
-      waiting.length?h('ul',{class:'cs-jobs'},waiting.map(row=>jobLine(row,P.results.get(row.jobId)))):h('p',{class:'cs-ok','data-cs-staffed':''},'Every dated job in the next 14 days has its crew.')];
-    if(d.counts.canAutoStaff&&save){
+    const noCrew=d.health.some(p=>p.code==='no_staffable_crew'),crewProblems=d.health.some(p=>CREW_CODES.has(p.code));
+    // The set-up step sits right under the heading, above the problems it fixes, so it is in reach on a phone.
+    const body=[head,h('h4',{},d.health.length?plural(d.health.length,'crew problem'):'Crews'),
+      crewProblems&&setup?h('div',{class:'cs-actions'},button(setup.label,()=>setup.run(),noCrew?'primary':'',{'data-cs-setup':''})):null,problemList(d.health)];
+    // The one action, before the long list: what it would do, or exactly why it cannot run.
+    if(!d.autoAssign)body.push(h('p',{class:'cs-muted','data-cs-auto-off':''},'Automatic crew assignment is off. Assign crews by hand.'));
+    else if(waiting.length&&save&&(noCrew||!staffable.length)&&P.stage==='idle')body.push(h('p',{class:'cs-muted','data-cs-cannot':''},noCrew?'No job can be staffed automatically until a crew has active members. Set up the crews first.'
+      :d.counts.canAutoStaff?'No waiting job can be staffed automatically: '+[...new Set(blocked.map(row=>row.message))].join('; ')+'.':'None of these jobs can be staffed automatically: each one has started, already has people on it, or is split into parts. Assign them by hand.'));
+    else if(staffable.length&&save||P.stage!=='idle'){
       if(P.stage==='idle')body.push(h('div',{class:'cs-actions'},button('Staff waiting jobs',()=>{P.stage='preview';draw();},'primary',{'data-cs-staff':''})));
       else if(P.stage==='preview')body.push(h('div',{class:'cs-preview',role:'region','aria-label':'Staffing preview','data-cs-preview':''},
         h('p',{},h('strong',{},d.previewSummary||'No job can be staffed')),
@@ -61,12 +70,17 @@ function panel({save,onApplied,fetcher}={}){
         h('div',{class:'cs-actions'},button(P.busy?'Staffing…':'Staff '+plural(staffable.length,'job'),apply,'primary',{disabled:P.busy||!staffable.length,'data-cs-apply':''}),button('Cancel',()=>{P.stage='idle';draw();},'',{disabled:P.busy}))));
       else{
         const done=[...P.results.values()],ok=done.filter(r=>r.ok).length,failed=done.filter(r=>!r.ok);
-        body.push(h('div',{class:'cs-preview','data-cs-done':''},h('p',{role:'status'},h('strong',{},'Staffed '+ok+' of '+done.length+'.'),failed.length?' '+plural(failed.length,'job')+' could not be staffed; see each one above.':''),
+        body.push(h('div',{class:'cs-preview','data-cs-done':''},h('p',{role:'status'},h('strong',{},'Staffed '+ok+' of '+done.length+'.'),failed.length?' '+plural(failed.length,'job')+' could not be staffed; see each one below.':''),
           blocked.length?h('p',{class:'cs-muted'},plural(blocked.length,'job')+(blocked.length===1?' was':' were')+' not tried: '+[...new Set(blocked.map(row=>row.message))].join('; ')+'.'):null,
           h('div',{class:'cs-actions'},failed.some(r=>r.retry)?button('Retry the unconfirmed',apply,'',{disabled:P.busy}):null,button('Close and refresh',()=>onApplied?.(),'primary',{'data-cs-close':''}))));
       }
     }
-    root.replaceChildren(...body);
+    // Jobs with a result first after a run, then the rest; the first few unless the full list is asked for.
+    const ordered=P.results.size?[...waiting.filter(row=>P.results.has(row.jobId)),...waiting.filter(row=>!P.results.has(row.jobId))]:waiting,shown=P.all?ordered:ordered.slice(0,Math.max(SHOWN,P.results.size));
+    body.push(h('h4',{},waiting.length?plural(waiting.length,'unstaffed job')+', oldest first':'Unstaffed jobs'),
+      waiting.length?h('ul',{class:'cs-jobs'},shown.map(row=>jobLine(row,P.results.get(row.jobId)))):h('p',{class:'cs-ok','data-cs-staffed':''},'Every dated job in the next 14 days has its crew.'),
+      ordered.length>shown.length?button('Show all '+ordered.length,()=>{P.all=true;draw();},'',{'data-cs-all':''}):null);
+    root.replaceChildren(...body.filter(Boolean));
   };
   async function load(){P.loading=true;P.error='';draw();try{P.data=await getReport(fetcher);P.results.clear();P.requests.clear();P.stage='idle';}catch(error){P.data=null;P.error=error.message;}finally{P.loading=false;draw();}}
   async function apply(){

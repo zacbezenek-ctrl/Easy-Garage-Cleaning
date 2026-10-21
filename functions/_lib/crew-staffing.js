@@ -22,8 +22,8 @@
 import { AUTO_CREW_TYPES, CREW_DAYS, autoCrewJob, crewJobDates, crewServiceDays, eligibleCrews, sortCrews, staffableCrew } from './dispatch-crew-assign.js';
 import { jobCrewNames, assignmentKey } from './job-assignment.js';
 import { crewNeededOf, weekdayOf } from './dispatch-rules.js';
-import { jobSegments, segmented } from './dispatch-segments.js';
-import { addDays, availabilityInterval, overlaps, scheduleInterval, validDate } from './dispatch-time.js';
+import { jobSegments, segmentDays, segmented } from './dispatch-segments.js';
+import { addDays, availabilityInterval, occupiedDays, overlaps, scheduleInterval, validDate } from './dispatch-time.js';
 
 export const STAFFING_DAYS = 14;
 export const DAY_NAMES = Object.freeze({ mon: 'Monday', tue: 'Tuesday', wed: 'Wednesday', thu: 'Thursday', fri: 'Friday', sat: 'Saturday', sun: 'Sunday' });
@@ -69,33 +69,48 @@ export function rosterHealth({ crews = [], roster = [], today }) {
 }
 
 const liveJob = job => plain(job) && typeof job.id === 'string' && !job.recordType && AUTO_CREW_TYPES.includes(job.type) && !DONE.has(String(job.pipelineStatus || job.status || '').toLowerCase());
-const memberCount = row => jobCrewNames(row).length;
+const inWindow = (days, { startDate, endDate }) => days.filter(date => date >= startDate && date <= endDate);
+/** A roster id for an assignment value: the stable username, or a legacy display name matched to one person. */
+function personKey(value, roster) {
+  const key = assignmentKey(value);
+  if (!key) return '';
+  const matches = (Array.isArray(roster) ? roster : []).filter(person => assignmentKey(person.id) === key || assignmentKey(person.name) === key);
+  return matches.length === 1 ? assignmentKey(matches[0].id) : key;
+}
+const people = (row, roster) => [...new Set(jobCrewNames(row).map(value => personKey(value, roster)).filter(Boolean))];
 
-/** Dated jobs in the window with no crew or short of their crew size, oldest date (then time, then id) first. */
-export function unstaffedJobs(jobs = [], { today }) {
-  const { startDate, endDate } = staffingWindow(today), out = [];
+/** Jobs with a day in the window that have no crew or are short of their crew size, earliest day in the window (then
+ * time, then id) first. A multi-day job that started before today counts when it runs into the window; a split job is
+ * judged by its segments on days in the window. canAutoStaff: the server can try a crew (one job-level schedule, nobody
+ * on it) and the visit has not started yet at `now` (an ISO time). */
+export function unstaffedJobs(jobs = [], { today, now = null, roster = [] }) {
+  const window = staffingWindow(today), out = [], seen = new Set(), at = Date.parse(now);
   for (const job of Array.isArray(jobs) ? jobs : []) {
-    if (!liveJob(job) || !validDate(job.date) || job.date < startDate || job.date > endDate) continue;
-    const rows = segmented(job) ? jobSegments(job).filter(Boolean) : [job], needed = crewNeededOf(job);
-    const counts = rows.map(memberCount), fewest = counts.length ? Math.min(...counts) : 0;
+    if (!liveJob(job) || seen.has(job.id)) continue;
+    const days = inWindow(segmentDays(job), window);
+    if (!days.length) continue;
+    seen.add(job.id);
+    const rows = segmented(job) ? jobSegments(job).filter(row => row && inWindow(occupiedDays(row), window).length) : [job], needed = crewNeededOf(job);
+    const counts = rows.map(row => people(row, roster).length), fewest = counts.length ? Math.min(...counts) : 0;
     if (fewest >= needed) continue;
-    out.push({ jobId: job.id, date: job.date, time: job.time || '', endTime: job.endTime || '', endDate: job.endDate || job.date, customer: String(job.customer || '').slice(0, 180), title: String(job.title || '').slice(0, 200),
-      type: job.type, crewId: job.crewId || null, assigned: fewest, needed, status: fewest === 0 ? 'no_crew' : 'short', segmented: segmented(job), revision: job.revision || null,
-      canAutoStaff: autoCrewJob(job) && fewest === 0 && !job.crewId });
+    const interval = scheduleInterval(job), started = !interval || !Number.isFinite(at) || interval.start <= at;
+    out.push({ jobId: job.id, date: days[0], startDate: job.date, time: days[0] === job.date ? job.time || '' : '', endTime: job.endTime || '', endDate: job.endDate || job.date, customer: String(job.customer || '').slice(0, 180), title: String(job.title || '').slice(0, 200),
+      type: job.type, crewId: job.crewId || null, assigned: fewest, needed, status: fewest === 0 ? 'no_crew' : 'short', segmented: segmented(job), started, revision: job.revision || null,
+      canAutoStaff: autoCrewJob(job) && fewest === 0 && !job.crewId && !started });
   }
   return out.sort((a, b) => a.date.localeCompare(b.date) || a.time.localeCompare(b.time) || a.jobId.localeCompare(b.jobId));
 }
 
-/** Who is busy when: every active dated job's people with its interval, plus time off. */
-function busyRows(jobs, availability) {
+/** Who is busy when: every active dated job's people (legacy names resolved to roster ids) with its interval, plus time off. */
+function busyRows(jobs, availability, roster) {
   const rows = [];
   for (const job of Array.isArray(jobs) ? jobs : []) {
     if (!plain(job) || job.recordType || DONE.has(String(job.pipelineStatus || job.status || '').toLowerCase())) continue;
-    for (const row of jobSegments(job).filter(Boolean)) { const interval = scheduleInterval(row); if (interval) rows.push({ jobId: job.id, interval, people: jobCrewNames(row).map(assignmentKey) }); }
+    for (const row of jobSegments(job).filter(Boolean)) { const interval = scheduleInterval(row); if (interval) rows.push({ jobId: job.id, interval, people: people(row, roster) }); }
   }
   for (const row of Array.isArray(availability) ? availability : []) {
     if (!plain(row) || row.status === 'cancelled') continue;
-    const interval = availabilityInterval(row), person = assignmentKey(row.employeeId || row.employee);
+    const interval = availabilityInterval(row), person = personKey(row.employeeId || row.employee, roster);
     if (interval && person) rows.push({ jobId: null, interval, people: [person] });
   }
   return rows;
@@ -103,7 +118,7 @@ function busyRows(jobs, availability) {
 
 /** The batch a "Staff waiting jobs" run would make: [{jobId, date, crewId, crewName} | {jobId, date, reason, message}]. */
 export function staffingPreview({ waiting = [], jobs = [], crews = [], roster = [], availability = [] }) {
-  const busy = busyRows(jobs, availability), plan = [];
+  const busy = busyRows(jobs, availability, roster), plan = [];
   const byId = new Map((Array.isArray(jobs) ? jobs : []).map(job => [job.id, job]));
   for (const row of waiting.filter(item => item.canAutoStaff)) {
     const job = byId.get(row.jobId), interval = job && scheduleInterval(job);
@@ -131,10 +146,10 @@ export function previewSummary(plan) {
   return [staffed.join(', ') || 'No job can be staffed', failed.length ? `${failed.length} can't be staffed: ${reasons.join('; ')}` : ''].filter(Boolean).join('; ');
 }
 
-/** The whole report. */
-export function crewStaffing({ crews = [], roster = [], jobs = [], availability = [], today, asOf }) {
-  const health = rosterHealth({ crews, roster, today }), waiting = unstaffedJobs(jobs, { today });
-  const preview = staffingPreview({ waiting, jobs, crews, roster, availability });
-  return { ok: true, asOf, today, window: staffingWindow(today), health, unstaffed: waiting, preview, previewSummary: preview.length ? previewSummary(preview) : '',
-    counts: { problems: health.length, unstaffed: waiting.length, canAutoStaff: waiting.filter(row => row.canAutoStaff).length } };
+/** The whole report. autoAssign: EGC_DISPATCH_CREW_AUTO_ASSIGN, without which no dispatch save can pick a crew. */
+export function crewStaffing({ crews = [], roster = [], jobs = [], availability = [], today, asOf, autoAssign = true }) {
+  const health = rosterHealth({ crews, roster, today }), waiting = unstaffedJobs(jobs, { today, now: asOf, roster });
+  const preview = autoAssign ? staffingPreview({ waiting, jobs, crews, roster, availability }) : [];
+  return { ok: true, asOf, today, window: staffingWindow(today), autoAssign: autoAssign === true, health, unstaffed: waiting, preview, previewSummary: preview.length ? previewSummary(preview) : '',
+    counts: { problems: health.length, unstaffed: waiting.length, canAutoStaff: waiting.filter(row => row.canAutoStaff).length, staffable: preview.filter(row => row.crewId).length } };
 }

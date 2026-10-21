@@ -108,6 +108,30 @@ class CrewStaffingScreenTests(unittest.TestCase):
         self.assertEqual(page.evaluate('window.__went'), ['schedule'])
         page.screenshot(path=str(RESULTS / 'crew-staffing-1280.png'), full_page=True)
 
+    def test_phone_390_empty_crews_say_what_to_tap(self):
+        """Production today: Crew 1/2/3 exist with nobody on them. No dead-end button, one reason, the set-up step in reach."""
+        self.control(reset=True, empty=True)
+        page = self.open(390, 844, mobile=True)
+        panel = page.locator('[data-cs-panel]')
+        expect(panel.locator('[data-cs-problem="no_staffable_crew"]')).to_contain_text('No crew can take work')
+        self.assertEqual(panel.locator('[data-cs-problem="uncovered_day"]').count(), 0, 'one reason, not one per weekday')
+        expect(panel.locator('[data-cs-staff]')).to_have_count(0)
+        expect(panel.locator('[data-cs-cannot]')).to_contain_text('Set up the crews first')
+        setup = panel.locator('[data-cs-setup]')
+        expect(setup).to_have_text('Create Crew 1/2/3')
+        self.assertLess(setup.bounding_box()['y'], 600, 'the set-up step is near the top, not under the job list')
+        setup.click()
+        self.assertTrue(page.evaluate('window.__setup'))
+        self.assert_layout(page, True)
+        page.screenshot(path=str(RESULTS / 'crew-staffing-390-empty.png'), full_page=True)
+
+    def test_auto_assign_off_offers_nothing(self):
+        self.control(reset=True, auto=False)
+        page = self.open(390, 844, mobile=True)
+        expect(page.locator('[data-cs-auto-off]')).to_have_text('Automatic crew assignment is off. Assign crews by hand.')
+        expect(page.locator('[data-cs-staff]')).to_have_count(0)
+        expect(page.locator('[data-cs-job]')).to_have_count(3)
+
     def test_crew_get_nothing(self):
         self.control(who='crew')
         page = self.open(390, 844, mobile=True)

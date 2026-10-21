@@ -620,6 +620,8 @@ async function executeDispatch(store, session, input, now, options = {}, context
     next = { ...current, ...patch };
     // AUTO-CREW: what this save asks of the server crew pick (null: nothing, exactly as before).
     const autoPlan = autoCrewPlan({mode:autoMode,input,options,create,current,next,patch,resources,roster}), autoWarnings = [];
+    // CREW-STAFFING: a visit that has started (or ended) is never staffed after the fact; nothing is saved.
+    if (autoPlan?.kind === 'staff' && (!interval || interval.start <= Date.parse(now))) throw fail('dispatch_visit_started','This visit has already started, so it is not staffed automatically. Assign people by hand if they did the work.',409,{reason:'started',jobId:id});
     // Segments lock only their own days, one entry each (`${jobId}~${segmentId}`). A crew pick
     // never changes the days, so each day's lock is read here and written once the crew is known.
     const days = [...new Set([...segmentDays(current),...segmentDays(next)])].sort(), locks = [];
@@ -667,8 +669,13 @@ async function executeDispatch(store, session, input, now, options = {}, context
         for (const key of Object.keys(NO_CREW)) { if (current[key] === undefined) delete patch[key]; else patch[key] = current[key]; }
       } else if (autoPlan.kind === 'staff') {
         // Staffing a waiting job that no crew can take changes nothing: the job stays as it is, Sold: needs crew.
-        const why = eligibleCrews(resources,crewJobDates(next),roster).length ? 'busy' : 'no_crew_works';
-        throw fail('dispatch_no_crew_free',why === 'busy' ? 'Every crew that works this day is busy for the whole visit. Pick another time, or assign people by hand.' : 'No active crew with members works this day. Add members to a crew that works it, or move the visit.',409,{reason:why,jobId:id});
+        // Why: no crew works the day, every crew is busy, or a rule the owner made blocking stops each one (its codes).
+        const codes = [...new Set(crewOptions.flatMap(option => conflictsOf(option.job,finalJobs,resources,roster,inspection).map(warning => warning.code)))].sort();
+        const rules = codes.filter(code => !['schedule_overlap','employee_unavailable','unverifiable_assignment'].includes(code));
+        const why = !crewOptions.length ? 'no_crew_works' : rules.length ? 'rule' : 'busy';
+        throw fail('dispatch_no_crew_free',why === 'no_crew_works' ? 'No active crew with members works this day. Add members to a crew that works it, or move the visit.'
+          : why === 'rule' ? `No crew can take this visit without breaking a dispatch rule the owner set to block (${rules.join(', ')}). Assign people by hand, or change the visit.`
+          : 'Every crew that works this day is busy for the whole visit. Pick another time, or assign people by hand.',409,{reason:why,jobId:id,codes});
       } else {
         autoResult = {status:'unassigned',mode:autoPlan.kind,crewId:null};
         Object.assign(patch,NO_CREW,current?.crewAutoAssigned !== undefined ? {crewAutoAssigned:null} : {});
@@ -787,7 +794,8 @@ function autoCrewPlan({mode,input,options,create,current,next,patch,resources,ro
   if (byHand) return null;
   // CREW-STAFFING: a dispatcher's "Staff waiting jobs" (the Hub's opt-in save, never a booker's) asks (autoCrew:true) for a
   // crew on a dated, unstaffed job without moving it; the pick is the same as a booking's, and with no crew free nothing is saved (dispatch_no_crew_free).
-  if (!placed) return mode === 'opt_in' && input.action === 'schedule.update' && input.autoCrew === true && current && !legacyMembers(next,roster).length && !next.crewId ? {kind:'staff',preferred:null} : null;
+  // Only the panel's pure staffing request (no other change) is a 'staff' pick; a form save that also edits the visit is as before.
+  if (!placed) return mode === 'opt_in' && input.action === 'schedule.update' && input.autoCrew === true && !Object.keys(changes).length && current && !legacyMembers(next,roster).length && !next.crewId ? {kind:'staff',preferred:null} : null;
   if (!legacyMembers(next,roster).length) return wants ? {kind:'pick',preferred:null} : null;
   if (!autoAssignedCrew(current)) return null;
   const crew = resources.find(row => row.recordType === 'crew' && row.id === current.crewId);
