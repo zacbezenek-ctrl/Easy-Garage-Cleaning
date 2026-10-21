@@ -143,11 +143,19 @@ try {
   for (const label of ['Earned commission', 'Customer collected', 'Payable commission', 'Commission paid (recorded)']) {
     await page.getByText(label, { exact: true }).waitFor();
   }
-  assert.match(await page.locator('#knock-main').textContent(), /Compensation is unconfigured/);
-  assert.match(await page.locator('#knock-main').textContent(), /settlement unverified/);
-  assert.match(await page.locator('#knock-main').textContent(), /no junk-removal commission/);
-  assert.match(await page.locator('#knock-main').textContent(), /Payroll anchor unconfigured/);
-  assert.match(await page.locator('#knock-main').textContent(), /payouts every two weeks/);
+  // Since D2D the rep reached Knock at /crew/knock (Crew home → Open EGC Knock above), so the goto above loads the page
+  // again instead of changing the hash: Knock's boot draws My money up to three times (the phone's copy, after the sign-in
+  // check, after the first sync), each from an empty loading placeholder. The text is read from one finished drawing,
+  // never across two reads that a redraw can fall between.
+  const moneyScreenText = await (await page.waitForFunction(() => {
+    const text = document.querySelector('#knock-main')?.textContent || '';
+    return /How commission works/.test(text) ? text : false;
+  })).jsonValue();
+  assert.match(moneyScreenText, /Compensation is unconfigured/);
+  assert.match(moneyScreenText, /settlement unverified/);
+  assert.match(moneyScreenText, /no junk-removal commission/);
+  assert.match(moneyScreenText, /Payroll anchor unconfigured/);
+  assert.match(moneyScreenText, /payouts every two weeks/);
   await page.getByRole('heading', { name: 'Walkthrough setting — 13%', exact: true }).waitFor();
   // D2D (owner, 2026-10-19): My money never sends a rep out of Knock to the Hub (that link landed on Hub onboarding).
   assert.equal(await page.getByRole('link', { name: 'Book a walkthrough in the Hub', exact: true }).count(), 0, 'My money never sends a rep out to the Hub');
