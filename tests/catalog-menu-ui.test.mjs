@@ -8,6 +8,11 @@ import vm from 'node:vm';
 import { createDocument, storage } from './helpers/hub-dom.mjs';
 import { catalogHandlers } from '../functions/api/catalog.js';
 import { quoteDraftHandlers } from '../functions/api/quote-draft.js';
+import { HELD_RELEASE_MARKER, heldJobsHandlers } from '../functions/api/held-jobs.js';
+import { randomUUID } from 'node:crypto';
+import { priceCompositeQuote } from '../functions/_lib/composite-quote.js';
+import { saveWalkthroughHandoff } from '../functions/_lib/walkthrough-handoff.js';
+import { builderState, fixture, menuItem, owner as fixtureOwner, selection, signedPlan, NOW as SIGNED_AT, ON_ENV } from './helpers/estimator-fixture.mjs';
 import { catalogStorage, readCompositeState } from '../functions/_lib/catalog-store.js';
 import { validatePricingSettings } from '../functions/_lib/catalog.js';
 import { decodeFirestoreFields, encodeFirestoreFields } from '../functions/_lib/firestore-job.js';
@@ -46,15 +51,18 @@ function firestore() {
     const key = path.slice(1), doc = docs.get(key);
     return doc ? Response.json({ name: ROOT + key, fields: doc.fields, updateTime: doc.updateTime }) : error('NOT_FOUND', 404, `Document "${ROOT}${key}" not found.`);
   }
-  return { docs, posts, gets: [], fetcher, get: key => docs.has(key) ? decodeFirestoreFields(docs.get(key).fields) : null, put: (key, data) => docs.set(key, { fields: encodeFirestoreFields(data), updateTime: time() }) };
+  return { docs, posts, sweeps: [], gets: [], fetcher, get: key => docs.has(key) ? decodeFirestoreFields(docs.get(key).fields) : null, put: (key, data) => docs.set(key, { fields: encodeFirestoreFields(data), updateTime: time() }) };
 }
 
-function screen({ who = OWNER, env = BUILDER, fs = firestore() } = {}) {
+function screen({ who = OWNER, env = BUILDER, fs = firestore(), jobs = { heldJobIds: async () => [] } } = {}) {
   const document = createDocument(), session = storage({ egc_u: who.user });
   const catalog = catalogHandlers({ session: async () => who, storage: e => catalogStorage(e, fs.fetcher), now: () => new Date(NOW), cache: new Map() });
   const quotes = quoteDraftHandlers({ session: async () => who, storage: () => { throw new Error('the builder menu reads no jobs'); }, now: () => new Date(NOW), compositeState: e => readCompositeState(catalogStorage(e, fs.fetcher)) });
+  // Opening the screen sweeps the held jobs (POST /api/held-jobs); jobs: the held jobs' storage (none held by default).
+  const held = heldJobsHandlers({ session: async () => who, storage: e => catalogStorage(e, fs.fetcher), held: () => jobs, now: () => new Date(NOW) });
   async function hubFetch(url, init = {}) {
     const method = init.method || 'GET', request = new Request(ORIGIN + url, { method, headers: { ...(init.headers || {}), Origin: ORIGIN }, body: init.body });
+    if (url === '/api/held-jobs') { fs.sweeps.push(JSON.parse(init.body)); return held.post({ request, env }); }
     const handler = url.startsWith('/api/quote-draft') ? quotes : catalog;
     if (method === 'POST') fs.posts.push(JSON.parse(init.body)); else fs.gets.push(url);
     return method === 'POST' ? handler.post({ request, env }) : handler.get({ request, env });
@@ -248,4 +256,31 @@ test('the owner sees the $53.00 labor rate on Menu prices, changes it, reviews i
   const manager = screen({ who: MANAGER, fs: ui.fs });
   await manager.settle(() => manager.root()?.querySelector('#cat-menu-labor-rate'), 'the rate');
   assert.ok(off(manager.root().querySelector('#cat-menu-labor-rate')));
+});
+
+// A job held for a price the owner has not approved stays held through the sweep; once the owner approves it (here: the
+// job's draft price approved since, outside this screen), the owner's Release held jobs button releases it on demand.
+test('Menu prices shows the booked jobs waiting for prices, and the owner releases them with Release held jobs', async () => {
+  const state = builderState();
+  const priced = priceCompositeQuote(state, selection({ removal: [{ id: menuItem('Full truck load').id, quantity: 1 }, { id: mattress.id, quantity: 1 }], shelving: [], storage: [], labor: { manHours: null, fullness: 'medium' } }), { complete: true });
+  const quote = { composite_pricing: priced.compositePricing, line_items: priced.lineItems.map(({ id, kind, name, description, quantity, unitCents, totalCents }) => ({ id, kind, name, description, quantity, unitCents, totalCents })), catalog_version: priced.menuVersion, total: priced.totalCents / 100 };
+  const f = fixture(), signed = await saveWalkthroughHandoff(f.store, fixtureOwner, { actorId: fixtureOwner.user, requestId: randomUUID(), customerId: 'c1', sourceWalkthroughId: 'w1', sourceRevision: 'w1r', plan: signedPlan(1, { quote, total: quote.total }) }, SIGNED_AT, { env: ON_ENV, compositeState: async () => state });
+  const jobs = { ...f.store, heldJobIds: async () => [...f.rows.values()].filter(row => row.pricesPendingApproval?.status === 'pending').map(row => row.id) };
+  const fs = firestore();
+  // This menu version was swept already: opening the screen only counts the held jobs.
+  fs.put(`pricingMenuApprovals/${HELD_RELEASE_MARKER}`, { menuVersion: menu.menuVersion });
+  const ui = screen({ fs, jobs });
+  await ui.settle(() => ui.root()?.textContent.includes('Booked jobs waiting for prices'), 'the held jobs');
+  assert.match(ui.root().textContent, /1 booked job still waits for prices/);
+  assert.deepEqual(fs.sweeps, [{ action: 'sweep' }]);
+  // The mattress price is approved at the amount signed: the button releases the job.
+  fs.put('pricingMenuApprovals/current', { approvals: builderState({ [mattress.id]: 7000 }).approvals.items, updatedBy: 'zacb' });
+  ui.button('Release held jobs (1)').click();
+  await ui.settle(() => ui.root().textContent.includes('1 booked job was released'), 'the release');
+  assert.deepEqual([fs.sweeps.at(-1), f.job(signed.job.id).pricesPendingApproval, f.job(signed.job.id).pricesRelease.source], [{ action: 'release' }, null, 'held.release']);
+  assert.equal(ui.root().textContent.includes('Release held jobs'), false, 'nothing left to release');
+  // A manager sees the count but has no button.
+  const manager = screen({ who: MANAGER, fs, jobs: { heldJobIds: async () => ['held-1'] } });
+  await manager.settle(() => manager.root()?.textContent.includes('Booked jobs waiting for prices'), 'the manager view');
+  assert.equal(manager.root().textContent.includes('Release held jobs'), false);
 });

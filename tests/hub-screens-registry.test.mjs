@@ -101,7 +101,8 @@ test('render lazily loads the kit then the screen once, mounts with the Hub cont
   page.api.go('fixture_lazy');
   assert.ok(page.main().querySelector('.hub-screen-loading'), 'a skeleton shows while assets load');
   await page.flush();
-  assert.deepEqual(requested.sort(), ['employee-ui-kit.css?v=20260929mobilehub', 'employee-ui-kit.js?v=20260929mobilehub', 'fixture-lazy.css?v=t1', 'fixture-lazy.js?v=t1']);
+  // The owner's Command center (install) also loads the held-jobs home widget (employee-held-jobs.js).
+  assert.deepEqual(requested.sort(), ['employee-held-jobs.js?v=20261021held1', 'employee-ui-kit.css?v=20260929mobilehub', 'employee-ui-kit.js?v=20260929mobilehub', 'fixture-lazy.css?v=t1', 'fixture-lazy.js?v=t1']);
   assert.equal(mounts.length, 1);
   const { host, ctx } = mounts[0];
   assert.equal(host, page.main());
@@ -125,7 +126,7 @@ test('render lazily loads the kit then the screen once, mounts with the Hub cont
   page.api.go('fixture_lazy');
   await page.flush();
   assert.equal(mounts.length, 2);
-  assert.equal(requested.length, 4, 'assets load once per page');
+  assert.equal(requested.length, 5, 'assets load once per page');
 });
 
 test('a registered screen that cannot leave blocks go() until its changes are finished', async () => {

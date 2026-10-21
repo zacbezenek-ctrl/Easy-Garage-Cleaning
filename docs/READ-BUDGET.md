@@ -44,6 +44,7 @@ stop while the tab is hidden.
 | Time off (`employee-availability.js`) | `GET /api/crew-availability`, 60 s while open | **N_J** + resources + accounts |
 | My day (`employee-field-today.js`) | `GET /api/field-jobs`, 60 s | about 30 (dated queries) |
 | Crew job page (`crew/job.js`) | `field-jobs?view=timer` + `employee-hub?view=own-job-time`, 30 s | about 3 |
+| Booked jobs waiting for prices (`employee-held-jobs.js` on the Command center, and Catalog & pricing; owner and managers, builder on) | `POST /api/held-jobs` `sweep`, once when the home or screen opens and on Refresh (never polled) | 1 marker document + the held job names (one query per 100); once per pricing-menu version, the owner's 2 pricing documents and each held job |
 | Open quotes (`employee-open-quotes.js`, office) | `GET /api/open-quotes`, on open and Refresh only (never polled) | quotes sent in the last 120 days (one `quoteDraft.sentAt` range query) + signed walkthrough receipts of the last 90 days; the owner's 2 pricing documents only when an open quote is a builder quote |
 | Customer portal (`customer-portal.html`) | `GET /api/customer-portal`, 20 s while visible | about 5 |
 | Knock app (`crew/knock-app.js`) | `knock-sync` after each door, `knock-territory` deltas | about 10–15k per rep per 100 doors |

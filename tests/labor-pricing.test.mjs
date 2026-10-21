@@ -331,9 +331,10 @@ test('the $1,000 truck: a job signed at $750 keeps its price and deposit; an uns
   assert.equal(unsent.blocked[0].resave, true, 'flagged as a re-save: no owner approval is needed');
 });
 
-// A job held at signing for one draft price is released by the owner's approval of that price, at the amounts it was
-// signed at: a truck load approved at signing ($750 then) stays at $750 under the $1,000 menu, and a partial load that
-// was a draft at signing is accepted at its signed amount once the owner approves the load.
+// A job held at signing for one draft price is released by the owner's approval of that item, at the amounts it was
+// signed at (the customer keeps the price signed): a truck load signed at $750 stays at $750 under the $1,000 menu, a
+// partial load that was a draft at signing is accepted at its signed amount, and a mattress signed at $70 stays $70 when
+// the owner approves it at $80.
 test('the $1,000 truck: jobs signed under the $750 menu and held for a draft price release at their signed amounts', async () => {
   const menuAt750 = structuredClone(builderState().menu);
   menuAt750.menuVersion = '2026-10-16.1';
@@ -353,11 +354,12 @@ test('the $1,000 truck: jobs signed under the $750 menu and held for a draft pri
   assert.deepEqual([withMattress.compositeQuote.approval.pending, withHalf.compositeQuote.approval.pending].map(rows => rows.map(row => row.id)), [[menuItem('Mattress').id], [menuItem('Half load').id]]);
   // Today's menu: the truck is $1,000 and the half load approved at $500; the mattress still waits for the owner.
   await assert.rejects(release(withMattress, builderState()), error => error.code === 'quote_draft_composite_prices_unapproved' && error.details.unapproved.map(row => row.id).join() === menuItem('Mattress').id, 'only the mattress holds it, not the $750 truck');
-  // Without the signing record (an older job), the exact amounts are still required: the $750 truck would hold it.
-  const approved = builderState({ [menuItem('Mattress').id]: 7000 });
-  assert.deepEqual(compositeApproval(withMattress.compositeQuote.breakdown, approved, { signed: true }).blocked.map(row => row.id), [menuItem('Full truck load').id]);
-  // The owner approves the mattress at the $70 it was signed at: both jobs release at their signed totals.
-  for (const [job, total] of [[withMattress, 820], [withHalf, 1125]]) {
+  // The owner approves the mattress at $80, not the $70 it was signed at: the customer keeps the $70 signed, and both jobs
+  // release at their signed totals. A signed job is never told to save the quote again.
+  const approved = builderState({ [menuItem('Mattress').id]: 8000 });
+  assert.deepEqual(compositeApproval(withMattress.compositeQuote.breakdown, approved, { signed: true }), { ready: true, blocked: [] });
+  assert.deepEqual(compositeApproval(withMattress.compositeQuote.breakdown, approved).blocked.map(row => [row.id, row.resave]), [[menuItem('Full truck load').id, true], [menuItem('Mattress').id, true]], 'the same lines unsent are saved again');
+  for (const [job, total] of [[withMattress, 820], [withHalf, 1125]]) { // $750 + $70; $750 + $375
     const result = await release(job, approved);
     assert.deepEqual([result.released, f.job(job.id).total, f.job(job.id).estimate.amountCents, f.job(job.id).pricesPendingApproval, f.job(job.id).pricesRelease.gate], [true, total, total * 100, null, 'approved_prices'], `job ${job.id}`);
   }

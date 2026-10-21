@@ -508,7 +508,7 @@ async function load(){
     if(generation!==S.generation)return;
     S.data=data;S.loadedAt=now();S.base=data.enabled?data.catalog:null;
     // The overview says whether the quote builder is on; only then is its pricing menu loaded.
-    if(data.quoteBuilder===true)void loadMenu();else{S.menu=null;S.menuError=null;}
+    if(data.quoteBuilder===true){void loadMenu();void sweepHeld('sweep');}else{S.menu=null;S.menuError=null;S.held=null;}
     if(data.enabled){
       if(!S.draftLoaded){
         S.draftLoaded=true;const saved=readDraft();
@@ -781,6 +781,30 @@ async function loadMenu(){
   }
   render();
 }
+// Signed jobs held for the owner's prices (POST /api/held-jobs). Opening this screen sweeps them once per pricing-menu
+// version (a price the menu file itself approves releases them, with no approval saved here); the owner's Release held
+// jobs button runs the same release on demand. S.held: {held, released, more} from the last answer.
+const validHeld=data=>data?.enabled===false||data?.enabled===true&&Number.isSafeInteger(data.held)&&Array.isArray(data.released)&&typeof data.more==='boolean';
+async function sweepHeld(action){
+  if(!S.root||!S.kit||S.heldBusy)return;
+  const mount=S.mountId;S.heldBusy=action==='release';if(S.heldBusy)render();
+  try{
+    const data=await S.kit.requestJSON('/api/held-jobs',{method:'POST',body:{action},prefix:'held_jobs',fetcher:fetcher(),validate:validHeld});
+    if(mount!==S.mountId)return;
+    S.held=data.enabled?{held:data.held,released:data.released.length,more:data.more,error:null}:null;
+  }catch(error){if(mount!==S.mountId)return;S.held={...(S.held||{held:0,released:0,more:false}),error:S.kit.errorText?.(error)||error?.message||'The held jobs could not be checked.'};}
+  finally{if(mount===S.mountId){S.heldBusy=false;render();}}
+}
+function heldCard(){
+  const held=S.held;if(!held)return null;
+  const owner=S.menu?.viewer?.canApprove===true,count=held.held+(held.more?'+':'');
+  if(!held.held&&!held.released&&!held.error)return null;
+  return h('section',{class:'hub-card cat-card','data-held-jobs':''},h('h2',{},'Booked jobs waiting for prices'),
+    held.released?h('p',{},`${held.released} booked job${held.released===1?' was':'s were'} released: the customer${held.released===1?' gets its':'s get their'} estimate and deposit request.`):null,
+    held.held?h('p',{},`${count} booked job${held.held===1&&!held.more?' still waits':'s still wait'} for prices: an unapproved price on the quote, or a walkthrough-priced quote you release from the job.`):null,
+    held.error?h('p',{class:'cat-error'},held.error):null,
+    owner&&held.held?h('div',{class:'hub-actions'},btn(`Release held jobs (${count})`,()=>void sweepHeld('release'),'',{disabled:S.heldBusy===true})):null);
+}
 const menuItems=()=>S.menu?[...S.menu.services.map(item=>({...item,kind:'service'})),...S.menu.products.map(item=>({...item,kind:'product'}))]:[];
 const menuDrafts=()=>menuItems().filter(item=>!item.approved&&Number.isSafeInteger(item.unitCents));
 function menuPick(){return S.menuPick||(S.menuPick={approve:{},revoke:{}});}
@@ -857,6 +881,7 @@ function menuPanel(){
   return h('div',{class:'cat-menu'},
     h('div',{class:'hub-notice'+(drafts.length?' warning':' success')},drafts.length?`${drafts.length} pricing-menu price${drafts.length===1?' is a draft':'s are drafts'}. A builder quote that uses a draft price can be saved but not sent until you approve it here. Pricing menu ${m.menuVersion} · settings ${m.settingsVersion}.`:'Every pricing-menu price is approved.'),
     !canApprove?h('div',{class:'hub-notice'},'Only the owner can approve pricing-menu prices.'):null,
+    heldCard(),
     laborCard(m,frozen),
     installationCard(m,frozen),
     chosen>MENU_MAX?h('div',{class:'hub-notice warning'},`Approve or revoke at most ${MENU_MAX} prices at a time: untick ${chosen-MENU_MAX}, save, then tick the rest.`):null,

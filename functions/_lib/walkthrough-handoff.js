@@ -470,9 +470,8 @@ function walkthroughHold(previous, actor, requestId, now) {
 const builderRequired = () => Object.assign(new Error('With the quote builder on, a walkthrough-priced quote is sent only after it is built in the quote builder from the owner\'s pricing menu. The job stays booked: build the quote in the builder and have the customer sign it, or ask the owner to release these prices.'),
   { code: 'quote_draft_builder_required', status: 409, details: { unapproved: [{ ...WALKTHROUGH_PRICED, unitCents: null, reason: 'Its lines were priced from the walkthrough tables, which the owner has not approved for the quote builder. Rebuild it in the quote builder (removal, then shelving, then extra storage) and sign that quote, or the owner releases this signed price.' }] } });
 // The builder's send gate for a held job: a builder quote passes when every price on its signed breakdown is
-// owner-approved now: a line approved at signing keeps its signed amount while its item is still approved, a junk load
-// still a draft then is accepted at its signed amount once approved, and any other line needs exactly its signed
-// amount approved (compositeApproval signedPending, else approvalRefusal: 409
+// owner-approved now, each line at the amount the customer signed whatever amount the owner approved (compositeApproval
+// signed, else approvalRefusal: 409
 // quote_draft_composite_prices_unapproved); a walkthrough-priced one never passes it (409 quote_draft_builder_required)
 // unless the owner, who approves prices, releases it (owner).
 // The labor on a signed breakdown keeps the rate the customer signed (approved then: the owner's own rate), so a rate
@@ -480,7 +479,7 @@ const builderRequired = () => Object.assign(new Error('With the quote builder on
 // earlier rules: its signed total has no labor, and goods in it still wait for the owner's installation answer.
 function releaseGate(job, pricing, { owner = false } = {}) {
   if (plain(job.compositeQuote)) {
-    const approval = compositeApproval(job.compositeQuote.breakdown, pricing, { signed: true, signedPending: Array.isArray(job.compositeQuote.approval?.pending) ? job.compositeQuote.approval.pending : null });
+    const approval = compositeApproval(job.compositeQuote.breakdown, pricing, { signed: true });
     if (!approval.ready) throw approvalRefusal(approval);
     return 'approved_prices';
   }
@@ -543,9 +542,15 @@ export async function releaseHandoffPrices(store, actor, input, now = new Date()
 export const HELD_RELEASE_LIMIT = 25;
 export async function releaseHeldHandoffs(store, actor, now = new Date().toISOString(), { env = {}, compositeState = compositeStateDefault, source = 'menu.approve', requestId: approvalRequest = '', limit = HELD_RELEASE_LIMIT } = {}) {
   if (!quoteBuilderEnabled(env)) return null;
-  const ids = await store.heldJobIds(limit + 1), pricing = await compositeState(env), released = [];
+  const { released, waiting, more } = await releaseHeldPage(store, actor, now, await compositeState(env), { source, requestId: approvalRequest, limit });
+  return { released, waiting, more };
+}
+// One bounded page of held jobs after the id `after` (store.heldJobIds(limit + 1, after), in id order): next is the last
+// id this page read, where the following page starts.
+async function releaseHeldPage(store, actor, now, pricing, { source, requestId: approvalRequest = '', limit = HELD_RELEASE_LIMIT, after = '' }) {
+  const ids = [...new Set(await store.heldJobIds(limit + 1, after))], page = ids.slice(0, limit), released = [];
   let waiting = 0;
-  for (const id of [...new Set(ids)].slice(0, limit)) {
+  for (const id of page) {
     const job = safeId(id) ? await store.read('jobs', id) : null;
     if (!job || !plain(job.pricesPendingApproval)) continue;
     if (!operational(job) || CLOSED_STATES.includes(state(job)) || !plain(job.compositeQuote) || typeof job.revision !== 'string' || !job.revision) { waiting++; continue; }
@@ -553,7 +558,26 @@ export async function releaseHeldHandoffs(store, actor, now = new Date().toISOSt
     try { await store.commit([{ collection: 'jobs', id: job.id, revision: job.revision, patch: releasePatch(job, actor, now, { source, requestId: approvalRequest, gate: 'approved_prices' }) }]); released.push(job.id); }
     catch { waiting++; }
   }
-  return { released, waiting, more: ids.length > limit };
+  return { released, waiting, more: ids.length > limit, next: page.at(-1) || '' };
+}
+
+/** EGC_QUOTE_BUILDER_ENABLED: every held job, page by page (HELD_RELEASE_LIMIT each, in id order), so jobs that keep
+ * waiting never starve the ones after them; at most maxPages pages per run. Used after a pricing-menu change, when no
+ * owner approval is saved (POST /api/held-jobs: the menu file's own approvals, e.g. the truck loads of 2026-10-21) and
+ * by the owner's Release held jobs button. complete: every held job was checked (false: the page limit stopped the run).
+ * => {released:[jobId], waiting:int, complete:boolean} or null with the builder off. */
+export const HELD_RELEASE_MAX_PAGES = 40;
+export async function releaseAllHeldHandoffs(store, actor, now = new Date().toISOString(), { env = {}, compositeState = compositeStateDefault, source = 'menu.version', requestId = '', limit = HELD_RELEASE_LIMIT, maxPages = HELD_RELEASE_MAX_PAGES } = {}) {
+  if (!quoteBuilderEnabled(env)) return null;
+  const pricing = await compositeState(env), released = [];
+  let waiting = 0, after = '';
+  for (let pages = 0; pages < maxPages; pages++) {
+    const page = await releaseHeldPage(store, actor, now, pricing, { source, requestId, limit, after });
+    released.push(...page.released); waiting += page.waiting;
+    if (!page.more || !page.next) return { released, waiting, complete: true };
+    after = page.next;
+  }
+  return { released, waiting, complete: false };
 }
 
 /** options.checkouts(job) (the API passes quote-draft expireStaleCheckout): a
