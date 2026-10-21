@@ -102,7 +102,38 @@ test('a split job keeps only tomorrow\'s segment warnings, counts tomorrow\'s cr
 });
 
 test('price and deposit warnings say the office has a follow-up, with no figure', () => {
-  const row = plain(widget().readinessReport(board([job('x')], [{ jobId: 'x', code: 'no_price' }, { jobId: 'x', code: 'deposit_unpaid', depositDueCents: 12345 }]), DATE)).jobs[0];
+  const row = plain(widget().readinessReport(board([job('x')], [{ jobId: 'x', code: 'no_price', message: 'No approved price: price it before the job' }, { jobId: 'x', code: 'deposit_unpaid', message: 'Deposit unpaid: $123.45 is still due before this job.', depositDueCents: 12345 }]), DATE)).jobs[0];
   assert.deepEqual([row.state, row.check], ['check', ['Office follow-up needed before the job']]);
   assert.doesNotMatch(JSON.stringify(row), /123|\$/);
+});
+
+// Review findings on #182, third round.
+test('finished jobs in any of Dispatch\'s terminal states are left off, never shown as ready, and an empty crew is never ready', () => {
+  const terminal = ['paid', 'invoiced', 'closed', 'review_requested', 'completed', 'cancelled', 'no-show'].map((status, index) => job(`t${index}`, { status: 'scheduled', pipelineStatus: status, assignedCrew: [], crewLead: null }));
+  assert.deepEqual(plain(widget().readinessReport(board(terminal), DATE)).jobs, [], 'no false green for a paid job with nobody on it');
+  // Dispatch compares exactly, so a differently cased state is not finished there and is judged here.
+  const odd = plain(widget().readinessReport(board([job('odd', { pipelineStatus: 'Paid', assignedCrew: [], crewLead: null })]), DATE)).jobs[0];
+  assert.deepEqual([odd.state, odd.blocking], ['blocked', ['No crew assigned']], 'no crew blocks even without a Dispatch warning');
+});
+
+test('back-to-back segments each need the full crew, and the lead comes from tomorrow\'s segment', () => {
+  const split = job('b2b', { crewNeeded: 2, crewLead: 'crew.two', assignedCrew: ['crew.one', 'crew.two'], assignmentSegments: [
+    { id: 'am', date: DATE, time: '08:00', endTime: '12:00', assignedCrew: ['crew.one'], crewLead: 'crew.one', vehicleId: 'truck-1' },
+    { id: 'pm', date: DATE, time: '13:00', endTime: '17:00', assignedCrew: ['crew.two'], vehicleId: 'truck-1' }] });
+  const row = plain(widget().readinessReport(board([split]), DATE)).jobs[0];
+  assert.deepEqual([row.state, row.blocking, row.lead], ['blocked', ['Fewer crew than needed'], 'Crew One'], 'one person per half-day is short of two');
+  const noLead = job('nolead', { crewLead: 'crew.one', assignmentSegments: [{ id: 'x', date: DATE, assignedCrew: ['crew.one', 'crew.two'], vehicleId: 'truck-1' }] });
+  assert.deepEqual(plain(widget().readinessReport(board([noLead]), DATE)).jobs[0].lead, '', 'the job-level lead of another day is not tomorrow\'s');
+});
+
+test('a day-specific warning with no day on a multi-day job says to check Dispatch, still blocking; scoped ones stay specific', () => {
+  const multi = job('multi', { date: '2026-10-21', endDate: '2026-10-23' });
+  const row = plain(widget().readinessReport(board([multi], [{ jobId: 'multi', code: 'employee_unavailable' }, { jobId: 'multi', code: 'travel_buffer_short' }]), DATE)).jobs[0];
+  assert.deepEqual([row.state, row.blocking, row.check], ['blocked', ['Check Dispatch: a warning on this multi-day job may be about another day'], []], 'listed once, blocking because one of them could block');
+  const soft = plain(widget().readinessReport(board([multi], [{ jobId: 'multi', code: 'travel_buffer_short' }]), DATE)).jobs[0];
+  assert.deepEqual([soft.state, soft.check], ['check', ['Check Dispatch: a warning on this multi-day job may be about another day']]);
+  const dated = plain(widget().readinessReport(board([multi], [{ jobId: 'multi', code: 'employee_unavailable', date: DATE }, { jobId: 'multi', code: 'schedule_overlap', date: '2026-10-23' }]), DATE)).jobs[0];
+  assert.deepEqual(dated.blocking, ['Someone assigned is off or unavailable'], 'a dated warning for tomorrow is named; one for another day is left out');
+  const single = plain(widget().readinessReport(board([job('one')], [{ jobId: 'one', code: 'employee_unavailable' }]), DATE)).jobs[0];
+  assert.deepEqual(single.blocking, ['Someone assigned is off or unavailable'], 'on a one-day job an undated warning is tomorrow\'s');
 });

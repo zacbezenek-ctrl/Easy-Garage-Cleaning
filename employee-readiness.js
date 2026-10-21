@@ -19,7 +19,13 @@ const CHECK={missing_crew_lead:'No crew lead chosen',missing_scope:'No work scop
 // Warnings that are only about the office or HighLevel, not whether the crew can roll out.
 const IGNORED=new Set(['provider_sync_pending','missing_customer_link','completion_sync_pending','completion_sync_error','completion_sync_blocked']);
 const CACHE_MS=5*60000,CACHE=new Map();
-const DONE=new Set(['completed','cancelled','canceled','no_show','archived']);
+// Dispatch's own finished states (functions/_lib/dispatch-service.js TERMINAL, compared as Dispatch does: exact, on
+// pipelineStatus or else status). Dispatch raises no warning for these, so the card leaves them off rather than calling
+// them ready.
+const DONE=new Set(['cancelled','canceled','completed','invoiced','paid','review_requested','closed','noshow','no_show','no-show','archived']);
+// Warnings about one day or one booking: on a multi-day job such a warning without a date or segment may be about another
+// day, so the card says to check Dispatch instead of naming the problem as tomorrow's.
+const DAY_CODES=new Set(['employee_unavailable','schedule_overlap','outside_working_hours','employee_daily_capacity','travel_buffer_short','unverifiable_assignment','inactive_assignment']);
 const S={host:null,root:null,ctx:{},generation:0,controller:null,date:'',clock:null};
 const record=value=>Boolean(value)&&typeof value==='object'&&!Array.isArray(value);
 const denverDate=at=>new Intl.DateTimeFormat('en-CA',{timeZone:TZ,year:'numeric',month:'2-digit',day:'2-digit'}).format(at);
@@ -31,7 +37,7 @@ function readinessReport(board,date){
   if(!record(board)||!Array.isArray(board.jobs)||!Array.isArray(board.warnings)||!Array.isArray(board.roster)||!Array.isArray(board.vehicles))throw Object.assign(new Error('readiness_unverified'),{code:'readiness_unverified'});
   const people=new Map(board.roster.filter(record).map(person=>[String(person.id),String(person.name||person.id)]));
   const trucks=new Map(board.vehicles.filter(record).map(truck=>[String(truck.id),String(truck.name||truck.id)]));
-  const jobs=board.jobs.filter(job=>record(job)&&job.type!=='walkthrough'&&job.type!=='blocked'&&job.type!=='availability'&&!DONE.has(String(job.status||'').toLowerCase())&&job.date&&job.date<=date&&(job.endDate||job.date)>=date);
+  const jobs=board.jobs.filter(job=>record(job)&&job.type!=='walkthrough'&&job.type!=='blocked'&&job.type!=='availability'&&!DONE.has(String(job.pipelineStatus||job.status||'unscheduled'))&&job.date&&job.date<=date&&(job.endDate||job.date)>=date);
   const rows=[];
   for(const job of jobs){
     // A split job is judged by its segments working tomorrow only, and is not tomorrow's at all without one.
@@ -39,10 +45,15 @@ function readinessReport(board,date){
     const segments=split?job.assignmentSegments.filter(row=>record(row)&&row.date&&row.date<=date&&(row.endDate||row.date)>=date):[];
     if(split&&!segments.length)continue;
     const ids=new Set(segments.map(row=>String(row.id)));
-    const crew=split?[...new Set(segments.flatMap(row=>Array.isArray(row.assignedCrew)?row.assignedCrew:[]))]:Array.isArray(job.assignedCrew)?job.assignedCrew:[];
+    const segmentCrew=row=>Array.isArray(row.assignedCrew)?row.assignedCrew:[];
+    const crew=split?[...new Set(segments.flatMap(segmentCrew))]:Array.isArray(job.assignedCrew)?job.assignedCrew:[];
     const truckIds=split?segments.map(row=>row.vehicleId).filter(Boolean):job.vehicleId?[job.vehicleId]:[];
-    const lead=(split?segments.find(row=>row.crewLead)?.crewLead:null)||job.crewLead||(crew.length===1?crew[0]:null);
+    // A split job's lead is tomorrow's segment lead, never the job-level lead of another day.
+    const lead=split?segments.find(row=>row.crewLead)?.crewLead||(segments.length===1&&segmentCrew(segments[0]).length===1?segmentCrew(segments[0])[0]:null):job.crewLead||(crew.length===1?crew[0]:null);
     const needed=Number(job.crewNeeded)||1;
+    // Back-to-back segments each need the full crew: the smallest of tomorrow's segments is what counts.
+    const smallest=split?Math.min(...segments.map(row=>new Set(segmentCrew(row)).size)):crew.length;
+    const multiDay=split||Boolean(job.endDate&&job.endDate!==job.date);
     // Tomorrow's warnings: a segment's own only when that segment works tomorrow, a dated one only for tomorrow. On a
     // split job Dispatch's crew count covers every day, so tomorrow's crew is counted here instead. A code blocks when
     // any of its warnings does, whatever order they arrive in.
@@ -52,15 +63,19 @@ function readinessReport(board,date){
       const tomorrows=split&&warning.segmentId?ids.has(String(warning.segmentId)):!warning.date||warning.date===date;
       if(!tomorrows)continue;
       if(split&&warning.code==='crew_size_short')continue;
-      codes.set(warning.code,codes.get(warning.code)===true||warning.blocking===true);
+      // A day-specific warning on a multi-day job that names no day or segment: kept (conservative), worded as a check.
+      const code=multiDay&&DAY_CODES.has(warning.code)&&!warning.date&&!warning.segmentId?'check_dispatch_day':warning.code;
+      codes.set(code,codes.get(code)===true||warning.blocking===true||BLOCKING[warning.code]!==undefined);
     }
-    if(split&&crew.length<needed)codes.set('crew_size_short',true);
+    if(split&&smallest<needed)codes.set('crew_size_short',true);
+    // A job with nobody on it is never ready, even if Dispatch sent no warning for it.
+    if(!crew.length&&!codes.has('unassigned')&&!codes.has('sold_needs_crew'))codes.set('unassigned',true);
     const blocking=[],check=[],seen=new Set(codes.keys());
     for(const [code,blocks] of codes){
       // A warning this card has no words for is still shown, never dropped.
-      const label=BLOCKING[code]||CHECK[code]||(IGNORED.has(code)?'':'Dispatch shows a warning for this job');
+      const label=code==='check_dispatch_day'?'Check Dispatch: a warning on this multi-day job may be about another day':BLOCKING[code]||CHECK[code]||(IGNORED.has(code)?'':'Dispatch shows a warning for this job');
       if(!label)continue;
-      const list=BLOCKING[code]||blocks?blocking:check;
+      const list=BLOCKING[code]&&code!=='check_dispatch_day'||blocks?blocking:check;
       if(!list.includes(label))list.push(label);
     }
     // Readiness-only checks the Dispatch board does not warn about: a job going out with no truck, a crew of two or more
@@ -111,12 +126,14 @@ async function load(force=false){
   const date=addDays(denverDate(now()),1);S.date=date;
   try{
     // One Dispatch board read per Denver day every few minutes: moving between homes reuses it; Refresh reads again.
-    const held=CACHE.get(date);let data=held&&!force&&Date.now()-held.at<CACHE_MS?held.data:null;
+    // Keyed by viewer and day: another login on the same device never sees this viewer's board.
+    const key=`${String(S.ctx.identity||'').toLowerCase()}|${date}`;
+    const held=CACHE.get(key);let data=held&&!force&&Date.now()-held.at<CACHE_MS?held.data:null;
     if(!data){
       const response=await fetcher()(`/api/dispatch?startDate=${date}&endDate=${addDays(date,1)}`,{cache:'no-store',credentials:'same-origin',signal:controller.signal});
       data=await response.json().catch(()=>null);
       if(!response.ok||!record(data)||data.ok!==true)throw Object.assign(new Error('readiness_unavailable'),{status:response.status});
-      CACHE.clear();CACHE.set(date,{at:Date.now(),data});
+      CACHE.clear();CACHE.set(key,{at:Date.now(),data});
     }
     const report=readinessReport(data,date);
     if(generation===S.generation)show(view(report));

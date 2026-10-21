@@ -98,6 +98,13 @@ class ReadinessWidgetTests(unittest.TestCase):
         expect(page.locator('.egc-readiness')).to_contain_text('Friday, Oct 23')
         self.assertEqual(self.asked[-1], {'startDate': ['2026-10-23'], 'endDate': ['2026-10-24']})
 
+    def test_the_cached_board_belongs_to_one_viewer(self):
+        page = self.open(1280)
+        expect(page.locator('[data-rd-job]')).to_have_count(3)
+        page.evaluate("EGCReadiness.unmount(); EGCReadiness.mount(document.querySelector('#host'), {identity: 'other.manager', now: () => new Date(window.__now)})")
+        expect(page.locator('[data-rd-job]')).to_have_count(3)
+        self.assertEqual(len(self.asked), 2, 'another viewer reads the board again instead of reusing the first one')
+
     def test_phone_layout_fits_and_a_failed_load_is_never_all_ready(self):
         page = self.open(390, 844)
         expect(page.locator('[data-rd-job]')).to_have_count(3)
