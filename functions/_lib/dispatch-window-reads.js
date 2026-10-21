@@ -87,9 +87,11 @@ export function windowQueries(startDate, bound = null, everyStart = false) {
   ];
 }
 
+// A field path's value on a decoded row: 'date' or a nested map path such as 'quoteDraft.sentAt'.
+const valueAt = (row, field) => String(field).split('.').reduce((value, key) => value !== null && typeof value === 'object' && !Array.isArray(value) ? value[key] : undefined, row);
 // Range filters only match values of their own type, as on Firestore.
 function matches(row, { field, op, value }) {
-  const found = row[field];
+  const found = valueAt(row, field);
   if (op === 'GREATER_THAN_OR_EQUAL') return typeof found === 'string' && found >= value;
   if (op === 'RANGE') return typeof found === 'string' && found >= value[0] && found <= value[1];
   if (op === 'EQUAL') return found === value;
@@ -128,7 +130,7 @@ export async function pagedQuery({ post, decode, collection, spec, fields, limit
       ids.add(row.id); rows.push(row);
     }
     if (documents.length < PAGE) return rows;
-    after = { name: documents.at(-1).name, value: rows.at(-1)[spec.field] };
+    after = { name: documents.at(-1).name, value: valueAt(rows.at(-1), spec.field) };
   }
   throw fail('dispatch_storage_incomplete', 'Dispatch query pagination did not finish. Retry before scheduling.');
 }
