@@ -142,26 +142,38 @@
       if(active)return active;
       active=perform(recoverOriginal).finally(()=>{active=null;}); return active;
     }
-    // PORTAL-LINKS (B): the server runs the first CRM sync and the portal invitation itself right after the save
-    // (serverSync 'started'), for every quote author. A manager's page still calls /api/highlevel (business access),
-    // which replays the server's result or waits for it, so nothing is written twice. A quote author's page follows the
-    // server's sync instead (view=sync, up to SERVER_SYNC_POLLS checks). A save the server did not start syncing (an
-    // older server) is left 'pending' for a manager's Hub, as before.
+    // PORTAL-LINKS (B): a quote author's page (no business access) asks the server for the first CRM sync and the
+    // portal invitation right after its save and its photo uploads (POST action 'sync', a request of its own; the save
+    // says serverSync 'ready' while the job is unsynced). When another sync holds the job (a manager's Hub retry) or the
+    // answer is lost, it follows that sync instead (view=sync, up to SERVER_SYNC_POLLS checks). A manager's page still
+    // calls /api/highlevel (business access), which replays an earlier sync's result or waits for one, so nothing is
+    // written twice. A save the server does not offer to sync (an older server) is left 'pending' for a manager's Hub.
     const SERVER_SYNC_POLLS = 10, SERVER_SYNC_WAIT_MS = 3000;
     const pause = ms => typeof d.sleep === 'function' ? d.sleep(ms) : new Promise(resolve => setTimeout(resolve, ms));
     async function followServer(saved) {
       let last = null;
       for (let round = 0; round < SERVER_SYNC_POLLS; round += 1) {
         try { last = await request('/api/walkthrough-handoff?' + new URLSearchParams({view:'sync',jobId:String(saved.result.job.id)})); } catch { last = null; }
-        if (last && ['synced', 'error'].includes(last.sync?.status) && last.portalInvitation?.status !== 'sending') break;
+        if (settled(last)) break;
         if (round < SERVER_SYNC_POLLS - 1) await pause(SERVER_SYNC_WAIT_MS);
       }
       const status = last?.sync?.status === 'synced' ? 'synced' : last?.sync?.status === 'error' ? 'server_error' : 'server_pending';
       return {ok:true,server:true,handoffSync:{status},portalInvitation:last?.portalInvitation || {status:'server_pending'}};
     }
+    const settled = answer => answer && ['synced', 'error'].includes(answer.sync?.status) && !['sending', 'busy'].includes(answer.portalInvitation?.status);
+    async function serverSync(saved) {
+      let answer = null;
+      try { answer = await request('/api/walkthrough-handoff',{action:'sync',requestId:saved.pending.requestId,jobId:String(saved.result.job.id)}); } catch { answer = null; }
+      // Skipped for a reason no wait changes (HighLevel or the operations bridge not set up, a Dispatch move since):
+      // the office's Hub finishes it.
+      const skipped = answer?.result?.status === 'skipped' && answer.result.reason !== 'sync_in_progress' && !settled(answer);
+      if (skipped) return {ok:true,server:true,handoffSync:{status:'server_pending'},portalInvitation:answer.portalInvitation || {status:'server_pending'}};
+      if (!settled(answer)) return followServer(saved);
+      return {ok:true,server:true,handoffSync:{status:answer.sync.status === 'synced' ? 'synced' : 'server_error'},portalInvitation:answer.portalInvitation || {status:'server_pending'}};
+    }
     async function sync(saved) {
       if (await d.actor() !== saved.pending.actor) throw new Error('The signed-in account changed. Sign in again before synchronizing.');
-      if (typeof d.managerSync === 'function' && !d.managerSync()) return saved.result?.serverSync === 'started' ? followServer(saved) : {ok:true,handoffSync:{status:'manager_required'},portalInvitation:{status:'manager_required'}};
+      if (typeof d.managerSync === 'function' && !d.managerSync()) return ['ready', 'started'].includes(saved.result?.serverSync) ? serverSync(saved) : {ok:true,handoffSync:{status:'manager_required'},portalInvitation:{status:'manager_required'}};
       return request('/api/highlevel',{tool:'game_plan',job_id:saved.result.job.id,handoff_request_id:saved.pending.requestId});
     }
     function release(saved) {
@@ -215,7 +227,7 @@
       const pricingText=!pending?'':saved.result.pricing.source==='walkthrough'?'Walkthrough prices wait for the owner: the estimate and deposit request go to the customer once this quote is built in the quote builder and signed, or the owner releases these prices. ':`Prices pending owner approval${saved.result.pricing.pending?.length?` (${saved.result.pricing.pending.slice(0,4).join(', ')})`:''}: the estimate and deposit request go to the customer once the owner approves them. `;
       const crewText=crewOutcome(saved.result.crew);
       const serverWait=synced.handoffSync?.status==='server_pending';
-      const portalText=managerSync||pending?'':portal?.status==='submitted'?(portal.channel==='Email'?'Portal email queued in HighLevel. ':'Portal text queued in HighLevel. '):portal?.status==='covered'?'The customer already has the portal link sent with the quote. ':portal?.status==='suppressed'?'Portal delivery is paused. ':portal?.status==='deferred'?(portal.reason==='quiet_hours'?'Portal invitation goes out after 8 AM (quiet hours). ':'Portal invitation waits: automatic messages are paused. '):serverWait||portal?.status==='server_pending'?'':'Portal delivery needs attention in Estimates & payments. ';
+      const portalText=managerSync||pending?'':portal?.status==='submitted'?(portal.channel==='Email'?'Portal email queued in HighLevel. ':'Portal text queued in HighLevel. '):portal?.status==='covered'?'The customer already has the portal link sent with the quote. ':portal?.status==='suppressed'?'Portal delivery is paused. ':portal?.status==='deferred'?(portal.reason==='quiet_hours'?'Portal invitation goes out after 8 AM (quiet hours); the office\'s Hub or the messaging server sends it. ':portal.reason==='quote_ready_in_flight'?'Portal invitation in progress: check Estimates & payments. ':'Portal invitation waits: automatic messages are paused. '):['busy','sending'].includes(portal?.status)?'Portal invitation in progress: check Estimates & payments. ':serverWait||portal?.status==='server_pending'?'':'Portal delivery needs attention in Estimates & payments. ';
       const scheduleText=managerSync?'Job saved. A manager completes the CRM sync and the portal invitation from the Hub. ':serverWait?'Job saved. The server is finishing the CRM sync and the portal invitation; the office sees the result in the Hub. ':synced.handoffSync?.status==='server_error'?'Job saved. The CRM sync needs another try; the office\'s Hub retries it. ':synced.handoffSync?.status==='synced'?'Job and CRM schedule verified. ':'Job saved; CRM reconciliation still needs attention. ';
       const photoText=photos.status==='synced'?'Walkthrough photos uploaded. ':photos.status==='needs_setup'?'Drive needs setup; photos remain on this device. ':'Photos remain on this device; upload needs attention. ';
       const staffing=!crewText&&saved.result.warnings.some(x=>['unassigned','crew_size_short','missing_crew_lead'].includes(x.code))?'Assign the required crew in Dispatch before work. ':'';

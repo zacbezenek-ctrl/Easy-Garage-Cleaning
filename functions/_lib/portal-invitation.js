@@ -6,9 +6,11 @@ import { pricesPendingApproval } from './quote-model.js';
 // message-policies.js imports businessAccountJob from this module. The cycle is
 // safe because neither module uses the other's bindings while it loads.
 import { closedJob, quietHoursDecision } from './message-policies.js';
-import { MESSAGING_SETTINGS, MESSAGING_SETTINGS_ID, PORTAL_LINK_TOGGLES, normalizeMessagingSettings } from './messaging-settings.js';
+import { MESSAGING_SETTINGS, MESSAGING_SETTINGS_ID, PORTAL_LINK_ON_AT, PORTAL_LINK_TOGGLES, normalizeMessagingSettings } from './messaging-settings.js';
 import { maskRecipient } from './ghl-messenger.js';
-import { customerMoneyTotals } from './money-core.js';
+import { moneyTotalsMode, servedMoneyTotals } from './money-core.js';
+import { customerPaymentNeedsReview } from './customer-payments.js';
+import { denverToday } from './dispatch-time.js';
 
 const API = 'https://services.leadconnectorhq.com';
 const PORTAL = 'https://easygaragecleaning.com/api/customer-portal-session';
@@ -25,14 +27,22 @@ const email = value => String(value || '').trim().toLowerCase();
    owner's messaging pause for automatic sends).
    - 'approved': the accepted-quote invitation, sent as before.
    - 'quote_ready': when an estimator sends a quote for review, only while the owner's switch
-     messaging_settings/automation portalLinkQuoteReady is true (off by default).
+     messaging_settings/automation portalLinkQuoteReady is true (off by default), and only while the quote is unexpired.
+     It asks for the deposit only when one is still due.
    - 'job_done': when the crew completes the job, only while portalLinkJobDone is true (off by default); a fresh link.
-   Every customer-facing word of these messages is here. */
+     Not for a completion with an open crew follow-up, nor more than JOB_DONE_FRESH_HOURS after the completion. It names
+     a remaining balance only when the portal shows one and no payment waits for the office's review.
+   Turning a switch off ends the texts of that kind still waiting (status 'off'); a text requested before the switch was
+   last turned on is never sent. Every customer-facing word of these messages is here. */
 export const APPROVED = 'approved';
 export const PORTAL_LINK_KINDS = Object.freeze(['quote_ready', 'job_done']);
 const LINK_DAYS = 30;
 // The accepted-quote invitation is not sent while a delivered quote-ready link still has this many days to run.
 export const QUOTE_READY_COVER_MIN_DAYS_LEFT = 3;
+// A quote-ready send still claimed ('sending') this long after its attempt is treated as possibly delivered.
+const SENDING_SETTLED_MS = 2 * 60000;
+// The job-done text goes out only this long after the completion (a long quiet-hours or pause hold ends it).
+export const JOB_DONE_FRESH_HOURS = 48;
 const opening = first => first ? `Hi ${first}, your` : 'Your';
 const button = url => `<p><a href="${url}">Open your Easy Garage Cleaning project portal</a></p>`;
 export const PORTAL_MESSAGES = Object.freeze({
@@ -45,6 +55,12 @@ export const PORTAL_MESSAGES = Object.freeze({
     sms: (first, url) => `${opening(first)} Easy Garage Cleaning quote is ready. You can review it, approve it and pay the deposit in your private project portal: ${url}`,
     subject: 'Your Easy Garage Cleaning quote is ready',
     html: url => `<p>Your Easy Garage Cleaning quote is ready. You can review it, approve it and pay the deposit in your private project portal.</p>${button(url)}`,
+  }),
+  // No deposit due (already paid, none required, a payment waiting for review, or the figures cannot be read).
+  quote_ready_no_deposit: Object.freeze({
+    sms: (first, url) => `${opening(first)} Easy Garage Cleaning quote is ready. You can review it and approve it in your private project portal: ${url}`,
+    subject: 'Your Easy Garage Cleaning quote is ready',
+    html: url => `<p>Your Easy Garage Cleaning quote is ready. You can review it and approve it in your private project portal.</p>${button(url)}`,
   }),
   job_done_balance: Object.freeze({
     sms: (first, url) => `${opening(first)} Easy Garage Cleaning job is done — thank you! Your remaining balance, receipts and photos are in your private project portal: ${url}`,
@@ -61,7 +77,7 @@ export const PORTAL_MESSAGES = Object.freeze({
  * first name and the private link. */
 export function portalLinkPreviews() {
   const show = message => message.sms('{first}', '{portal link}');
-  return { quote_ready: show(PORTAL_MESSAGES.quote_ready), job_done: { balance: show(PORTAL_MESSAGES.job_done_balance), paid: show(PORTAL_MESSAGES.job_done_paid) } };
+  return { quote_ready: { deposit: show(PORTAL_MESSAGES.quote_ready), no_deposit: show(PORTAL_MESSAGES.quote_ready_no_deposit) }, job_done: { balance: show(PORTAL_MESSAGES.job_done_balance), paid: show(PORTAL_MESSAGES.job_done_paid) } };
 }
 
 // The accepted-quote invitation keeps its ledger in portal_invitations/{jobId}. The owner-switched portal link texts
@@ -114,11 +130,13 @@ export function quoteApproved(job = {}) {
     Number(job.estimate?.amount || job.total || job.priceQuoted || 0) > 0;
 }
 
-// quote_ready: a quote sent for review (estimate status 'sent') and not approved yet.
-export function quoteReadyForReview(job = {}) {
+// quote_ready: a quote sent for review (estimate status 'sent'), not approved yet and not expired on the Denver date of
+// `at` (the portal marks a quote past its validUntil expired and refuses its approval: customer-portal.js estimateState).
+const quoteExpired = (job, at) => { const validUntil = String(job.estimate?.validUntil || ''); return Boolean(validUntil) && validUntil < denverToday(at); };
+export function quoteReadyForReview(job = {}, at = new Date()) {
   return job.type === 'job' && !pricesPendingApproval(job) && !closedJob(job) &&
     String(job.estimate?.status || '').toLowerCase() === 'sent' && !['accepted', 'approved'].includes(String(job.customerApproval?.status || '').toLowerCase()) &&
-    Number(job.estimate?.amountCents || 0) > 0;
+    Number(job.estimate?.amountCents || 0) > 0 && !quoteExpired(job, at);
 }
 
 // job_done: the crew completed the job (field completion, or a later money stage). Cancelled, no-show and superseded
@@ -131,18 +149,29 @@ export function jobDone(job = {}) {
     (stages.some(stage => DONE.has(stage)) || Number.isFinite(Date.parse(job.completedAt || '')));
 }
 
-// Why this kind of message does not apply to the job right now, or null.
-function ineligible(kind, job) {
+// The crew completed the job with a follow-up still open (field-execution.js complete with hasIssues: missing materials,
+// damage, a return visit): "your job is done" is not true yet. A later completion without one sends it.
+const followUpOpen = job => job.fieldExecution?.completion?.hasIssues === true || String(job.fieldExecution?.attention?.status || '').toLowerCase() === 'open';
+const completedTime = job => [job.completedAt, job.fieldExecution?.completion?.completedAt].map(value => Date.parse(value || '')).find(Number.isFinite);
+
+// Why this kind of message does not apply to the job at `at`, or null.
+function ineligible(kind, job, at = new Date()) {
   if (kind === APPROVED) return null;
   if (pricesPendingApproval(job)) return { status: 'not_eligible', reason: 'prices_pending_approval' };
   if (kind === 'quote_ready') {
     if (job.type === 'job' && closedJob(job)) return { status: 'not_eligible', reason: 'job_closed' };
-    return quoteReadyForReview(job) ? null : { status: 'not_eligible', reason: ['accepted', 'approved'].includes(String(job.estimate?.status || '').toLowerCase()) ? 'quote_already_approved' : 'quote_not_sent' };
+    if (['accepted', 'approved'].includes(String(job.estimate?.status || '').toLowerCase())) return { status: 'not_eligible', reason: 'quote_already_approved' };
+    if (String(job.estimate?.status || '').toLowerCase() === 'sent' && quoteExpired(job, at)) return { status: 'not_eligible', reason: 'quote_expired' };
+    return quoteReadyForReview(job, at) ? null : { status: 'not_eligible', reason: 'quote_not_sent' };
   }
   if ([job.status, job.pipelineStatus].some(value => STOPPED.has(String(value || '').toLowerCase()))) return { status: 'not_eligible', reason: 'job_closed' };
-  return jobDone(job) ? null : { status: 'not_eligible', reason: 'job_not_done' };
+  if (!jobDone(job)) return { status: 'not_eligible', reason: 'job_not_done' };
+  if (followUpOpen(job)) return { status: 'not_eligible', reason: 'follow_up_open' };
+  const done = completedTime(job);
+  if (!Number.isFinite(done) || at.getTime() - done > JOB_DONE_FRESH_HOURS * 3600000) return { status: 'not_eligible', reason: 'job_done_too_long_ago' };
+  return null;
 }
-const eligibleNow = (kind, job) => kind === APPROVED ? quoteApproved(job) : !ineligible(kind, job);
+const eligibleNow = (kind, job, at) => kind === APPROVED ? quoteApproved(job) : !ineligible(kind, job, at);
 
 // The owner's messaging_settings record, read the way the scheduler reads it. An
 // invalid record throws messaging_settings_invalid (fail closed).
@@ -206,20 +235,44 @@ async function recipient(c, job) {
   return { id, channel };
 }
 
-// A quote-ready link the customer was sent and that still works for QUOTE_READY_COVER_MIN_DAYS_LEFT more days: the
-// accepted-quote invitation is not sent again (the portal itself shows the approval). Unread ledger: throws.
+// A quote-ready link the customer was (or may have been) sent and that still works for QUOTE_READY_COVER_MIN_DAYS_LEFT
+// more days: the accepted-quote invitation is not sent again (the portal itself shows the approval). An unconfirmed
+// send ('uncertain', or 'sending' for longer than SENDING_SETTLED_MS) counts as sent, because an ambiguous send is never
+// followed by a second text automatically; one still in flight answers {wait: true}. Unread ledger: throws.
 async function quoteReadyCover(env, jobId, at) {
   const { state } = await readState(env, jobId, 'quote_ready');
-  const sentAt = Date.parse(state.completedAt || '');
-  if (state.status !== 'submitted' || !Number.isFinite(sentAt)) return null;
-  return sentAt + (LINK_DAYS - QUOTE_READY_COVER_MIN_DAYS_LEFT) * 86400000 > at.getTime() ? { kind: 'quote_ready', sentAt: state.completedAt, channel: state.channel || '' } : null;
+  if (!['submitted', 'uncertain', 'sending'].includes(state.status)) return null;
+  const attempted = Date.parse(state.attemptedAt || '');
+  if (state.status === 'sending' && (!Number.isFinite(attempted) || at.getTime() - attempted < SENDING_SETTLED_MS)) return { wait: true };
+  const sentAt = state.completedAt || state.attemptedAt || '', time = Date.parse(sentAt);
+  if (!Number.isFinite(time) || time + (LINK_DAYS - QUOTE_READY_COVER_MIN_DAYS_LEFT) * 86400000 <= at.getTime()) return null;
+  return { kind: 'quote_ready', sentAt, channel: state.channel || '', ...(state.status === 'submitted' ? {} : { unconfirmed: true }) };
 }
 
-// What the customer reads for this kind of message. job_done names the remaining balance only when one is due.
-function messageFor(kind, job) {
-  if (kind !== 'job_done') return { variant: kind, ...PORTAL_MESSAGES[kind] };
-  const balance = customerMoneyTotals(job).balanceCents;
-  return Number.isSafeInteger(balance) && balance > 0 ? { variant: 'balance_due', ...PORTAL_MESSAGES.job_done_balance } : { variant: 'paid', ...PORTAL_MESSAGES.job_done_paid };
+// What the customer reads for this kind of message, from the money the portal shows (MONEY_UNIFIED_TOTALS:
+// money-core servedMoneyTotals in moneyTotalsMode(env)). A payment waiting for the office's review (a crew cash or check
+// receipt: customer-payments.js customerPaymentNeedsReview) is not in those figures yet, so its customer is never told
+// that a deposit or a balance is due. Unreadable figures: the wording that names no money.
+function messageFor(kind, job, env) {
+  if (kind === APPROVED) return { variant: kind, ...PORTAL_MESSAGES[kind] };
+  const review = customerPaymentNeedsReview(job), totals = review ? null : servedMoneyTotals(job, moneyTotalsMode(env), { surface: 'portal_link' });
+  const due = value => Number.isSafeInteger(value) && value > 0;
+  if (kind === 'quote_ready') return due(totals?.depositDueCents) ? { variant: 'deposit_due', ...PORTAL_MESSAGES.quote_ready } : { variant: review ? 'payment_in_review' : 'no_deposit_due', ...PORTAL_MESSAGES.quote_ready_no_deposit };
+  return due(totals?.balanceCents) ? { variant: 'balance_due', ...PORTAL_MESSAGES.job_done_balance } : { variant: review ? 'payment_in_review' : 'paid', ...PORTAL_MESSAGES.job_done_paid };
+}
+
+// PORTAL-LINKS: a portal link text whose switch is off, or one requested before the switch was last turned on, is
+// closed on its ledger ('off', reason owner_switch_off) so automatic retries stop and the Hub says why. A link that was
+// never requested records nothing. A final state (sent, unconfirmed, not eligible, suppressed) is left as it is.
+const FINAL = new Set([...terminal, 'not_eligible', 'off', 'suppressed', 'contact_mismatch']);
+async function closeSwitchedOff(env, jobId, kind, clock, prior = null) {
+  const off = { kind, status: 'off', reason: 'owner_switch_off' };
+  let ledger = prior;
+  if (!ledger) { try { ledger = await readState(env, jobId, kind); } catch { return off; } }
+  if (!ledger.state.status || FINAL.has(ledger.state.status)) return off;
+  const state = { ...ledger.state, ...off, checkedAt: clock().toISOString() };
+  try { await writeState(env, jobId, state, ledger.updateTime, kind); await mirrorState(env, jobId, state, kind); return state; }
+  catch { return { kind, status: 'busy', jobId }; }
 }
 
 // One invitation per job, not per browser timestamp or save. A compare-and-set
@@ -237,9 +290,10 @@ export function sendAcceptedQuotePortal(env, jobId, options = {}) {
 }
 
 /** PORTAL-LINKS: the owner-switched portal link texts ('quote_ready', 'job_done'), through the same delivery path as
- * the accepted-quote invitation. Off (nothing read beyond the switch, nothing recorded) unless the owner's switch for
- * the kind is on: {status:'off', reason:'owner_switch_off'}. A kind that does not apply to the job (yet) answers
- * {status:'not_eligible', reason} and is recorded only to end an earlier wait. */
+ * the accepted-quote invitation. Off unless the owner's switch for the kind is on: {status:'off', reason:
+ * 'owner_switch_off'}, recorded only to end an earlier wait (closeSwitchedOff); a wait requested before the switch was
+ * last turned on (messaging_settings portalLink…OnAt) ends the same way. A kind that does not apply to the job (yet)
+ * answers {status:'not_eligible', reason} and is recorded only to end an earlier wait. */
 export function sendPortalLink(env, jobId, kind, options = {}) {
   if (!PORTAL_LINK_KINDS.includes(kind)) return Promise.resolve({ status: 'needs_kind' });
   return deliver(env, jobId, kind, options);
@@ -249,26 +303,29 @@ async function deliver(env, jobId, kind, { requireRequested = false, automatic =
   if (!/^[A-Za-z0-9_-]{1,120}$/.test(String(jobId || ''))) return { status: 'needs_job' };
   if (!firebaseServiceAccountConfigured(env)) return { status: 'not_configured', reason: 'secure_storage' };
   const link = kind !== APPROVED, tag = link ? { kind } : {};
-  // A portal link text is the owner's choice: off (the default) sends nothing and records nothing.
+  // A portal link text is the owner's choice: off (the default) sends nothing, and ends a wait recorded while it was on.
   let current = settings;
   if (link) {
     if (!current) {
       try { current = await readMessagingSettingsRecord(env); }
       catch (error) { return error?.code === 'messaging_settings_invalid' ? { kind, status: 'off', reason: 'messaging_settings_invalid' } : { kind, status: 'storage_unavailable' }; }
     }
-    if (current[PORTAL_LINK_TOGGLES[kind]] !== true) return { kind, status: 'off', reason: 'owner_switch_off' };
+    if (current[PORTAL_LINK_TOGGLES[kind]] !== true) return closeSwitchedOff(env, jobId, kind, clock);
   }
   let job;
   try { job = await readJob(env, jobId); } catch { return { ...tag, status: 'storage_unavailable' }; }
   if (!job) return { ...tag, status: 'needs_job' };
   if (link) {
-    const gate = ineligible(kind, job);
+    const gate = ineligible(kind, job, clock());
     if (gate) {
       // An earlier wait that no longer applies (the quote was approved, the job cancelled) is ended, so retries stop.
+      // A finished job held back for its open crew follow-up is recorded too, so the office sees why no text went.
       let prior;
       try { prior = await readState(env, jobId, kind); } catch { return { kind, ...gate }; }
-      if (!prior.state.status || terminal.has(prior.state.status) || prior.state.status === 'not_eligible') return { kind, ...gate };
-      const state = { ...prior.state, kind, status: gate.status, reason: gate.reason, checkedAt: clock().toISOString() };
+      const record = !prior.state.status && gate.reason === 'follow_up_open';
+      if (!record && (!prior.state.status || terminal.has(prior.state.status) || prior.state.status === 'not_eligible')) return { kind, ...gate };
+      const checkedAt = clock().toISOString();
+      const state = { ...(record ? { jobId, requestedAt: checkedAt, attempts: 0 } : prior.state), kind, status: gate.status, reason: gate.reason, checkedAt };
       try { await writeState(env, jobId, state, prior.updateTime, kind); await mirrorState(env, jobId, state, kind); return state; }
       catch { return { kind, status: 'busy', jobId }; }
     }
@@ -285,9 +342,13 @@ async function deliver(env, jobId, kind, { requireRequested = false, automatic =
   const previous = ledger.state;
   if (terminal.has(previous.status)) { await mirrorState(env, jobId, previous, kind); return previous; }
   if (!link && previous.status === 'covered' && automatic) return previous;
+  // Waiting since before the owner last turned the switch on (it was off in between): never sent.
+  if (link && previous.status && !FINAL.has(previous.status) && Date.parse(previous.requestedAt || '') < Date.parse(current[PORTAL_LINK_ON_AT[kind]] || '')) return closeSwitchedOff(env, jobId, kind, clock, ledger);
   const now = clock().toISOString();
-  const base = { ...tag, jobId, requestedAt: previous.requestedAt || now, attemptedAt: now, attempts: Number(previous.attempts || 0) + 1 };
-  const waiting = { ...tag, jobId, requestedAt: base.requestedAt, attempts: Number(previous.attempts || 0), ...(previous.attemptedAt ? { attemptedAt: previous.attemptedAt } : {}) };
+  // A portal link text that ended unsent (not eligible, switched off, suppressed) starts a new request when asked again.
+  const restart = link && FINAL.has(previous.status), requestedAt = restart ? now : previous.requestedAt || now, attempts = restart ? 0 : Number(previous.attempts || 0);
+  const base = { ...tag, jobId, requestedAt, attemptedAt: now, attempts: attempts + 1 };
+  const waiting = { ...tag, jobId, requestedAt, attempts, ...(previous.attemptedAt ? { attemptedAt: previous.attemptedAt } : {}) };
   const save = async (value, from = base) => {
     const state = { ...from, ...value };
     try {
@@ -300,6 +361,8 @@ async function deliver(env, jobId, kind, { requireRequested = false, automatic =
   if (!link) {
     let cover;
     try { cover = await quoteReadyCover(env, jobId, clock()); } catch { return { status: 'storage_unavailable' }; }
+    // A quote-ready text still in flight: decide once it settles (the next automatic retry), nothing recorded.
+    if (cover?.wait) return { status: 'busy', reason: 'quote_ready_in_flight', jobId };
     if (cover) return save({ status: 'covered', reason: 'quote_ready_link_delivered', coveredBy: cover, checkedAt: now }, waiting);
   }
   if (businessAccountJob(job)) return save({ status: 'suppressed', reason: 'business_account_job' });
@@ -324,7 +387,7 @@ async function deliver(env, jobId, kind, { requireRequested = false, automatic =
   let latestJob;
   try { latestJob = await readJob(env, jobId); } catch { return { ...tag, status: 'storage_unavailable' }; }
   if (latestJob && businessAccountJob(latestJob)) return save({ status: 'suppressed', reason: 'business_account_job' });
-  if (!latestJob || !eligibleNow(kind, latestJob) || latestJob.notify === false || phone(latestJob.phone) !== phone(job.phone) || email(latestJob.email) !== email(job.email) || latestJob.highlevelContactId !== job.highlevelContactId) return { ...tag, status: 'busy', jobId };
+  if (!latestJob || !eligibleNow(kind, latestJob, clock()) || latestJob.notify === false || phone(latestJob.phone) !== phone(job.phone) || email(latestJob.email) !== email(job.email) || latestJob.highlevelContactId !== job.highlevelContactId) return { ...tag, status: 'busy', jobId };
   // The link carries the account's current version and root, so a later staff
   // revocation (or re-parenting) also ends this invitation. An unverifiable
   // account never sends.
@@ -333,7 +396,7 @@ async function deliver(env, jobId, kind, { requireRequested = false, automatic =
   const token = await createCustomerPortalAccessToken(env, jobId, clock().getTime(), linkVersion, account.id);
   const url = `${PORTAL}?access=${encodeURIComponent(token)}`;
   const firstName = String(job.customer || '').trim().split(/\s+/)[0].replace(/[<>]/g, '').slice(0, 50);
-  const text = messageFor(kind, latestJob), message = text.sms(firstName, url);
+  const text = messageFor(kind, latestJob, env), message = text.sms(firstName, url);
   const attemptId = crypto.randomUUID();
   const masked = maskRecipient(to.channel, to.channel === 'SMS' ? phone(job.phone) : email(job.email));
   // Every kind records where it went (masked) on the job's display copy; never the full number, email or link.
@@ -356,11 +419,18 @@ async function deliver(env, jobId, kind, { requireRequested = false, automatic =
   // A business link or opt-out saved after the last check (link_project does
   // not consult this ledger) still wins: release the claim before HighLevel is
   // called. A job that cannot be re-read never sends.
+  // PORTAL-LINKS: so does a portal link text that stopped applying meanwhile (the quote was approved or expired), and
+  // a quote-ready text that started meanwhile for the accepted-quote invitation (covered, or retried once it settles).
   let halt;
   try {
     const latest = await readJob(env, jobId);
     halt = !latest ? { status: 'needs_job' } : pricesPendingApproval(latest) ? { status: link ? 'not_eligible' : 'not_approved', reason: 'prices_pending_approval' } : businessAccountJob(latest) ? { status: 'suppressed', reason: 'business_account_job' }
-      : latest.notify === false ? { status: 'suppressed', reason: 'job_notifications_off' } : null;
+      : latest.notify === false ? { status: 'suppressed', reason: 'job_notifications_off' } : link ? ineligible(kind, latest, clock()) : null;
+    if (!halt && !link) {
+      const cover = await quoteReadyCover(env, jobId, clock());
+      if (cover?.wait) { const state = { ...waiting, status: 'deferred', reason: 'quote_ready_in_flight', deferredAt: clock().toISOString() }; return await settle(state) ? state : claimed; }
+      if (cover) { const state = { ...waiting, status: 'covered', reason: 'quote_ready_link_delivered', coveredBy: cover, checkedAt: clock().toISOString() }; return await settle(state) ? state : claimed; }
+    }
   } catch { halt = { status: 'storage_unavailable' }; }
   if (halt) { const state = { ...base, ...halt }; return await settle(state) ? state : claimed; }
   let result;

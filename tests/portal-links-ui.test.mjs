@@ -36,6 +36,13 @@ test('Hub: the Estimates & payments row shows every portal link send and copy, s
   const covered = { id: 'job-3', customerPortalInvitationRequestedAt: DAY, customerPortalInvitation: { jobId: 'job-3', status: 'covered', reason: 'quote_ready_link_delivered', coveredBy: { kind: 'quote_ready', sentAt: '2026-10-21T20:14:00.000Z', channel: 'SMS' } } };
   assert.equal(context.portalInvitationLabel(covered), 'Portal invitation not needed · quote-ready link texted 10/21 2:14 PM still works');
   assert.doesNotMatch(context.portalInvitationControl(covered), /<button/);
+  // Covered by a quote-ready text whose delivery is unconfirmed; waiting for one being sent; the invitation's own send
+  // shows when and where it went.
+  assert.equal(context.portalInvitationLabel({ ...covered, customerPortalInvitation: { ...covered.customerPortalInvitation, coveredBy: { ...covered.customerPortalInvitation.coveredBy, unconfirmed: true } } }), 'Portal invitation not sent · quote-ready link 10/21 2:14 PM unconfirmed · check HighLevel');
+  assert.equal(context.portalInvitationLabel({ id: 'job-4', customerPortalInvitation: { jobId: 'job-4', status: 'deferred', reason: 'quote_ready_in_flight' } }), 'Portal invitation waits · the quote-ready link was being sent · the server sends it automatically');
+  assert.equal(context.portalInvitationLabel({ id: 'job-5', customerPortalInvitation: { jobId: 'job-5', status: 'submitted', channel: 'SMS', recipient: '(•••) •••-0100', completedAt: '2026-10-21T20:14:00.000Z' } }), 'Portal text queued in HighLevel 10/21 2:14 PM · (•••) •••-0100');
+  assert.equal(context.portalInvitationLabel({ id: 'job-5', customerPortalInvitation: { jobId: 'job-5', status: 'uncertain', channel: 'SMS', recipient: '(•••) •••-0100', completedAt: '2026-10-21T20:14:00.000Z' } }), 'Portal delivery unconfirmed 10/21 2:14 PM · (•••) •••-0100 · check HighLevel');
+  for (const [reason, why] of [['quote_expired', 'quote expired'], ['follow_up_open', 'crew follow-up is open'], ['job_done_too_long_ago', 'job finished more than 2 days ago'], ['owner_switch_off', 'switched off']]) assert.match(context.portalLinkLabel('job_done', { status: reason === 'owner_switch_off' ? 'off' : 'not_eligible', reason }), new RegExp(`not sent · ${why}$`));
   // Page-load retries: the waiting link at its notBefore, as an automatic (unmarked) request; the covered invitation is left alone.
   context.jobsCache = [{ ...job, portalLinks: waiting }, { ...covered, type: 'job', estimate: { status: 'accepted' } }];
   await context.runPortalInvitationRetries();
@@ -51,7 +58,8 @@ test('send screen: the estimator is told what happened to the portal link, in pl
   const text = context.window.EGCQuoteDraft.portalLinkText;
   assert.equal(text({ status: 'submitted', channel: 'SMS', recipient: '(•••) •••-1234' }), 'Portal link texted to (•••) •••-1234.');
   assert.equal(text({ status: 'submitted', channel: 'Email', recipient: 't•••@example.invalid' }), 'Portal link emailed to t•••@example.invalid.');
-  assert.equal(text({ status: 'deferred', reason: 'quiet_hours' }), 'Waiting for 8 AM: the portal link goes out automatically after quiet hours.');
+  assert.equal(text({ status: 'deferred', reason: 'quiet_hours' }), 'Waiting for 8 AM: the portal link goes out after quiet hours (the office’s Hub or the messaging server sends it).');
+  assert.equal(text({ status: 'not_eligible', reason: 'quote_expired' }), 'Not texted: the quote has expired.');
   assert.equal(text({ status: 'off', reason: 'owner_switch_off' }), 'Off — share the quote yourself (the owner can turn on texting in Hub → Message templates).');
   assert.equal(text({ status: 'suppressed', reason: 'contact_dnd' }), 'Not texted: the customer is on Do Not Disturb.');
   assert.equal(text({ status: 'not_eligible', reason: 'prices_pending_approval' }), 'Not texted: prices wait for the owner’s approval.');
@@ -60,26 +68,45 @@ test('send screen: the estimator is told what happened to the portal link, in pl
   assert.equal(text(null), '', 'an older server says nothing about it');
 });
 
-test('B: a quote author\'s walkthrough page follows the server\'s sync instead of waiting for a manager; a manager\'s page still syncs directly', async () => {
+test('B: a quote author\'s walkthrough page asks the server for the sync (after its photos), and follows another sync that holds the job; a manager\'s page still syncs directly', async () => {
   const context = vm.createContext({ window: {}, URLSearchParams, AbortController, setTimeout, clearTimeout });
   vm.runInContext(readFileSync(new URL('../crew/gameplan-handoff.js', import.meta.url), 'utf8'), context);
-  const answers = [{ ok: true, sync: { status: 'pending' }, portalInvitation: null }, { ok: true, sync: { status: 'syncing' }, portalInvitation: null }, { ok: true, sync: { status: 'synced' }, portalInvitation: { status: 'deferred', reason: 'quiet_hours', notBefore: '2026-09-23T14:00:00.000Z' } }];
+  let answers = [];
   const urls = [], sleeps = [];
   const client = manager => context.window.EGCWalkthroughHandoffClient({ actor: async () => 'sales.person', managerSync: () => manager, sleep: async ms => { sleeps.push(ms); }, storage: { getItem: () => null, setItem() {}, removeItem() {} },
     fetch: async (url, options) => { urls.push([url, options?.method || 'GET', options?.body ? JSON.parse(options.body) : null]); return { ok: true, status: 200, json: async () => manager ? { ok: true, handoffSync: { status: 'synced' }, portalInvitation: { status: 'submitted' } } : answers.shift() }; } });
-  const saved = { pending: { actor: 'sales.person', requestId: 'synthetic-request' }, result: { job: { id: 'job-9' }, serverSync: 'started' } };
+  const saved = { pending: { actor: 'sales.person', requestId: 'synthetic-request' }, result: { job: { id: 'job-9' }, serverSync: 'ready' } };
+  // The server runs it in the page's request and answers where it stands.
+  answers = [{ ok: true, sync: { status: 'synced' }, portalInvitation: { status: 'deferred', reason: 'quiet_hours', notBefore: '2026-09-23T14:00:00.000Z' }, result: { status: 'synced' } }];
+  const direct = await client(false).sync(saved);
+  assert.deepEqual(JSON.parse(JSON.stringify(direct)), { ok: true, server: true, handoffSync: { status: 'synced' }, portalInvitation: { status: 'deferred', reason: 'quiet_hours', notBefore: '2026-09-23T14:00:00.000Z' } });
+  assert.deepEqual(JSON.parse(JSON.stringify(urls)), [['/api/walkthrough-handoff', 'POST', { action: 'sync', requestId: 'synthetic-request', jobId: 'job-9' }]]);
+  // A manager's Hub retry holds the job: the page follows that sync (view=sync) until it settles.
+  urls.length = 0;
+  answers = [{ ok: true, sync: { status: 'syncing' }, portalInvitation: null, result: { status: 'skipped', reason: 'sync_in_progress' } }, { ok: true, sync: { status: 'syncing' }, portalInvitation: null }, { ok: true, sync: { status: 'synced' }, portalInvitation: { status: 'sending' } }, { ok: true, sync: { status: 'synced' }, portalInvitation: { status: 'submitted', channel: 'SMS' } }];
   const followed = await client(false).sync(saved);
-  assert.deepEqual(JSON.parse(JSON.stringify(followed)), { ok: true, server: true, handoffSync: { status: 'synced' }, portalInvitation: { status: 'deferred', reason: 'quiet_hours', notBefore: '2026-09-23T14:00:00.000Z' } });
-  assert.deepEqual(urls.map(([url, method]) => [url, method]), Array(3).fill(['/api/walkthrough-handoff?view=sync&jobId=job-9', 'GET']));
+  assert.deepEqual(JSON.parse(JSON.stringify(followed)), { ok: true, server: true, handoffSync: { status: 'synced' }, portalInvitation: { status: 'submitted', channel: 'SMS' } });
+  assert.deepEqual(urls.map(([url, method]) => [url, method]), [['/api/walkthrough-handoff', 'POST'], ...Array(3).fill(['/api/walkthrough-handoff?view=sync&jobId=job-9', 'GET'])]);
   assert.equal(sleeps.length, 2);
-  // An older server that did not start a sync: the page says a manager finishes it, and calls nothing.
+  // HighLevel is not set up: nothing to wait for; the office's Hub finishes it.
+  urls.length = 0;
+  answers = [{ ok: true, sync: { status: 'pending' }, portalInvitation: null, result: { status: 'skipped', reason: 'highlevel_not_configured' } }];
+  const skipped = await client(false).sync(saved);
+  assert.deepEqual([skipped.handoffSync.status, urls.length], ['server_pending', 1]);
+  // An older server that does not offer the sync: the page says a manager finishes it, and calls nothing.
   urls.length = 0;
   const old = await client(false).sync({ ...saved, result: { job: { id: 'job-9' } } });
   assert.deepEqual([old.handoffSync.status, urls.length], ['manager_required', 0]);
   // A manager's page calls /api/highlevel as before (which replays the server's result when it ran first).
-  const direct = await client(true).sync(saved);
-  assert.deepEqual([direct.handoffSync.status, urls.at(-1)[0], urls.at(-1)[2]], ['synced', '/api/highlevel', { tool: 'game_plan', job_id: 'job-9', handoff_request_id: 'synthetic-request' }]);
+  const managed = await client(true).sync(saved);
+  assert.deepEqual([managed.handoffSync.status, urls.at(-1)[0], urls.at(-1)[2]], ['synced', '/api/highlevel', { tool: 'game_plan', job_id: 'job-9', handoff_request_id: 'synthetic-request' }]);
   const page = readFileSync(new URL('../crew/gameplan-handoff.js', import.meta.url), 'utf8');
   assert.match(page, /The server is finishing the CRM sync and the portal invitation; the office sees the result in the Hub\./);
+  // The sync is asked for only after the photo uploads (each carries the job's revision), and an invitation still being
+  // sent by another sync reads as in progress, not as needing attention.
+  const send = page.slice(page.indexOf('async function send(button'), page.indexOf('async function openings('));
+  assert.ok(send.indexOf('syncWalkthroughPhotos()') < send.indexOf('client.sync(saved)'), 'photos first, then the sync');
+  assert.match(send, /\['busy','sending'\]\.includes\(portal\?\.status\)\?'Portal invitation in progress: check Estimates & payments\. '/);
+  assert.match(send, /the office\\'s Hub or the messaging server sends it/);
 });
 

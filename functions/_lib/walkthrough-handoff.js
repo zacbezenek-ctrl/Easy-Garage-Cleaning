@@ -416,12 +416,17 @@ export async function prepareHandoff(store, actor, query = {}, { env = {} } = {}
  * sync:{status:'pending'|'syncing'|'synced'|'error'}, portalInvitation:{status, reason?, channel?, notBefore?}|null}.
  * Statuses and reasons only: no contact, link, money or crew. The same jobs prepareHandoff opens (authorsJob). */
 const HANDOFF_SYNC_CLAIM_MS = 10 * 60000;
-export async function handoffSyncView(store, actor, query = {}, { env = {}, now = new Date() } = {}) {
+async function syncJob(store, actor, jobId, env) {
   const access = requireQuoteAuthor(actor, env);
-  if (!plain(query) || Object.keys(query).some(key => !['view', 'jobId'].includes(key)) || query.view !== 'sync' || !safeId(query.jobId)) throw fail('invalid_request', 'Choose the saved job whose sync to check.', 400);
-  const job = await store.read('jobs', query.jobId);
+  const job = await store.read('jobs', jobId);
   if (!job || !operational(job)) throw fail('job_missing', 'The saved job no longer exists. Review its history.', 404);
   if (!access.dispatcher && !authorsJob(job, null, actor)) throw fail('job_forbidden', 'Only an operations manager or owner can open this job. Start from its walkthrough or quote draft.', 403);
+  return job;
+}
+export async function handoffSyncView(store, actor, query = {}, { env = {}, now = new Date() } = {}) {
+  requireQuoteAuthor(actor, env);
+  if (!plain(query) || Object.keys(query).some(key => !['view', 'jobId'].includes(key)) || query.view !== 'sync' || !safeId(query.jobId)) throw fail('invalid_request', 'Choose the saved job whose sync to check.', 400);
+  const job = await syncJob(store, actor, query.jobId, env);
   const synced = job.syncStatus === 'synced' || job.handoffSyncStatus === 'synced' && job.handoffSyncedRequestId === job.handoffRequestId;
   const claimed = plain(job.handoffSyncClaim) && now.getTime() - (Date.parse(job.handoffSyncClaim.at || '') || 0) < HANDOFF_SYNC_CLAIM_MS;
   const status = synced ? 'synced' : claimed || job.syncStatus === 'syncing' ? 'syncing' : job.syncStatus === 'error' ? 'error' : 'pending';
@@ -429,6 +434,23 @@ export async function handoffSyncView(store, actor, query = {}, { env = {}, now 
   const portal = invite ? Object.fromEntries(['status', 'reason', 'channel', 'notBefore'].filter(key => typeof invite[key] === 'string' && invite[key]).map(key => [key, invite[key]]))
     : plain(job.pricesPendingApproval) ? { status: 'not_approved', reason: 'prices_pending_approval' } : null;
   return { ok: true, authority: 'employee_hub', jobId: job.id, sync: { status }, portalInvitation: portal };
+}
+
+/** PORTAL-LINKS (B): the walkthrough page asks the server to run a signed handoff's first HighLevel sync (POST
+ * /api/walkthrough-handoff {action:'sync', requestId, jobId}) after its save and its photo uploads, in a request of its
+ * own: its own Cloudflare subrequest budget, and no job writes while the page uploads photos (each photo carries the
+ * job's revision). Any quote author who may open the job (handoffSyncView's rule) may ask, for the job's current signed
+ * request only. run(jobId, requestId) is highlevel.js syncSavedHandoff, which skips a synced job, a job Dispatch moved
+ * since, and one another sync holds. => handoffSyncView's answer plus result {status, reason?, code?}. */
+export async function requestHandoffSync(store, actor, input = {}, { env = {}, now = new Date(), run } = {}) {
+  requireQuoteAuthor(actor, env);
+  if (!plain(input) || Object.keys(input).some(key => !['action', 'requestId', 'jobId'].includes(key)) || input.action !== 'sync' || !requestId(input.requestId) || !safeId(input.jobId)) throw fail('invalid_request', 'Choose the saved signed job to synchronize.', 400);
+  const job = await syncJob(store, actor, input.jobId, env);
+  if (String(job.handoffRequestId || '').toLowerCase() !== input.requestId.toLowerCase()) throw fail('sync_changed', 'The signed handoff changed. Review the current saved job before synchronizing it.', 409);
+  let result;
+  try { result = await run(job.id, job.handoffRequestId); } catch { result = { status: 'error', code: 'highlevel_sync_failed' }; }
+  const view = await handoffSyncView(store, actor, { view: 'sync', jobId: job.id }, { env, now });
+  return { ...view, result: Object.fromEntries(['status', 'reason', 'code'].filter(key => typeof result?.[key] === 'string' && result[key]).map(key => [key, result[key].slice(0, 80)])) };
 }
 
 /** EGC_DISPATCH_CREW_AUTO_ASSIGN: the crew openings a quote author may offer the customer (GET

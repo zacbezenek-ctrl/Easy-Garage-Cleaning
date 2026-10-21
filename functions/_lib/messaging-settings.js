@@ -27,6 +27,10 @@ export const DEFAULT_MESSAGING_SETTINGS = Object.freeze({
 });
 // Message kind → its switch in this record.
 export const PORTAL_LINK_TOGGLES = Object.freeze({ quote_ready: 'portalLinkQuoteReady', job_done: 'portalLinkJobDone' });
+// Message kind → when its switch was last turned on (an ISO instant, written by portal-link-settings.js): a text of that
+// kind still waiting from before then is never sent (portal-invitation.js).
+export const PORTAL_LINK_ON_AT = Object.freeze({ quote_ready: 'portalLinkQuoteReadyOnAt', job_done: 'portalLinkJobDoneOnAt' });
+const onAt = value => typeof value === 'string' && Number.isFinite(Date.parse(value)) ? new Date(value).toISOString() : '';
 
 const KEYS = Object.keys(DEFAULT_MESSAGING_SETTINGS);
 const HHMM = /^(?:[01]\d|2[0-3]):[0-5]\d$/;
@@ -54,6 +58,7 @@ export function normalizeMessagingSettings(doc) {
     paused: settings.paused, depositReminderDaysBefore: [...settings.depositReminderDaysBefore],
     estimateExpiringDaysBefore: settings.estimateExpiringDaysBefore, dayBeforeWindow: { start: window.start, end: window.end },
     maxSendsPerTick: settings.maxSendsPerTick, portalLinkQuoteReady: settings.portalLinkQuoteReady, portalLinkJobDone: settings.portalLinkJobDone,
+    ...Object.fromEntries(Object.values(PORTAL_LINK_ON_AT).filter(key => onAt(doc[key])).map(key => [key, onAt(doc[key])])),
     source: 'saved', revision: doc.revision || '',
   };
 }

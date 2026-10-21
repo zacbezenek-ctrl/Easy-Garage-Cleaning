@@ -66,14 +66,14 @@ function config(env) {
 }
 
 // PORTAL-LINKS (B): the server's own first sync of a signed handoff (syncSavedHandoff) is trusted like a business user:
-// the quote author's save of this exact handoff is its authority.
+// the quote author's save of this exact handoff, and their page's request for its sync, are its authority.
 async function mayChangeJob(business, job, access) {
   if (business) return true;
   return access.assigned(job);
 }
 
-/* PORTAL-LINKS (B): one sync of a signed handoff at a time. Whoever starts one (the server's first sync after the save,
-   the walkthrough iPad of a business user, a manager's Hub retry) claims it on the job (handoffSyncClaim {by, id, at,
+/* PORTAL-LINKS (B): one sync of a signed handoff at a time. Whoever starts one (the server's first sync a quote
+   author's page asks for, the walkthrough iPad of a business user, a manager's Hub retry) claims it on the job (handoffSyncClaim {by, id, at,
    requestId}, a compare-and-set on the job's revision) and releases it when done; a claim older than
    HANDOFF_SYNC_CLAIM_MINUTES is abandoned and may be taken over. A sync that finds the handoff already synced for its
    request and its current appointment request (handoffSyncedRequestId, handoffSyncedKey: a Dispatch move since then
@@ -106,6 +106,13 @@ async function claimHandoffSync(env, jobId, requestId, by, { wait = false } = {}
     catch { /* Another writer changed the job first: read it again. */ }
   }
   return { error: 'busy' };
+}
+// The invitation a replayed sync reports: the one asked for before the wait, unless it was only in flight (another sync
+// was sending it: 'busy', 'sending'), then the settled display copy the finished sync left on the job.
+export function settledInvitation(job, asked) {
+  const copy = job?.customerPortalInvitation;
+  if (!['busy', 'sending'].includes(asked?.status) || !copy || typeof copy !== 'object' || copy.jobId !== job.id) return asked;
+  return Object.fromEntries(['status', 'reason', 'channel', 'notBefore', 'recipient', 'completedAt'].filter(key => typeof copy[key] === 'string' && copy[key]).map(key => [key, copy[key]]));
 }
 // Best effort: an unreleased claim lapses after HANDOFF_SYNC_CLAIM_MINUTES.
 async function releaseHandoffSync(env, jobId, claim) {
@@ -642,9 +649,9 @@ export async function onRequestPost({ request, env, waitUntil }) {
   return highLevelPost(env, session, payload, waitUntil);
 }
 
-/** PORTAL-LINKS (B): the server's first HighLevel sync of a signed walkthrough handoff, run right after the save
- * commits (functions/api/walkthrough-handoff.js, through waitUntil) for whoever signed it, a Sales estimator with no
- * business access included: exactly what POST tool=game_plan does for a manager's page (the contact, the pinned
+/** PORTAL-LINKS (B): the server's first HighLevel sync of a signed walkthrough handoff, run when the quote author's
+ * walkthrough page asks for it right after the save and its photo uploads (functions/api/walkthrough-handoff.js action
+ * 'sync', a request of its own), a Sales estimator with no business access included: exactly what POST tool=game_plan does for a manager's page (the contact, the pinned
  * internal brief note, the job appointment when a calendar is configured, the existing tags and stage, and the
  * accepted-quote portal invitation under its own rules), from the saved snapshot. It shares the page's claim
  * (claimHandoffSync): a manager's Hub retry or the iPad's own sync racing it waits for it and replays its outcome.
@@ -749,8 +756,10 @@ async function highLevelPost(env, session, payload, waitUntil, { trusted = false
     const done = gate.synced || (gate.held && handoffSynced(gate.held, handoffRequestId) ? gate.held : null);
     if (done) return reply(200, { ok: true, replayed: true, contactId: done.highlevelContactId || '', appointmentId: done.highlevelAppointmentId || '', noteId: done.handoffNoteId || '', pipeline: done.pipelineSync || {},
       ...(done.calendarMirror?.status === 'skipped' ? { calendarMirror: done.calendarMirror } : {}), handoffSync: { status: 'synced', noteId: done.handoffNoteId || '', pipeline: done.pipelineSync || {} },
-      portalInvitation, automation: { replayed: true, tagSynced: done.automationTagSynced !== false }, salesFollowupExit: await exitForJob() });
-    if (gate.held) return reply(409, { ok: false, code: 'HANDOFF_SYNC_IN_PROGRESS', error: 'This signed job is already being synchronized with HighLevel. Retry in a minute; nothing is written twice.', portalInvitation });
+      portalInvitation: settledInvitation(done, portalInvitation), automation: { replayed: true, tagSynced: done.automationTagSynced !== false }, salesFollowupExit: await exitForJob() });
+    // A claim is released when its sync ends; one whose request was cut short (a closed connection, the platform's
+    // subrequest or time limit) lapses after HANDOFF_SYNC_CLAIM_MINUTES.
+    if (gate.held) return reply(409, { ok: false, code: 'HANDOFF_SYNC_IN_PROGRESS', error: `This signed job is already being synchronized with HighLevel. The Hub retries it on its own; an interrupted sync clears within ${HANDOFF_SYNC_CLAIM_MINUTES} minutes. Nothing is written twice.`, portalInvitation });
     if (gate.error) return reply(gate.error === 'changed' ? 409 : 503, { ok: false, code: gate.error === 'changed' ? 'HANDOFF_SYNC_CHANGED' : 'HANDOFF_STORAGE_READBACK_PENDING', error: gate.error === 'changed' ? 'The signed handoff changed. Review the current saved job before synchronizing it.' : 'The Hub job is saved. CRM results need exact storage read-back before retrying.', portalInvitation });
     handoffClaim = gate.claim;
   }

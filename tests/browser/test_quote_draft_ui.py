@@ -182,7 +182,7 @@ class QuoteDraftBrowserTests(unittest.TestCase):
     def test_the_send_screen_says_what_happened_to_the_portal_link(self):
         cases = [({'kind': 'quote_ready', 'status': 'submitted', 'channel': 'SMS', 'recipient': '(•••) •••-0100', 'completedAt': '2026-09-22T18:00:00.000Z'}, 'Portal link texted to (•••) •••-0100.', 'texted'),
                  ({'kind': 'quote_ready', 'status': 'submitted', 'channel': 'Email', 'recipient': 't•••@example.invalid'}, 'Portal link emailed to t•••@example.invalid.', 'emailed'),
-                 ({'kind': 'quote_ready', 'status': 'deferred', 'reason': 'quiet_hours', 'notBefore': '2026-09-23T14:00:00.000Z'}, 'Waiting for 8 AM: the portal link goes out automatically after quiet hours.', 'waiting'),
+                 ({'kind': 'quote_ready', 'status': 'deferred', 'reason': 'quiet_hours', 'notBefore': '2026-09-23T14:00:00.000Z'}, 'Waiting for 8 AM: the portal link goes out after quiet hours (the office\u2019s Hub or the messaging server sends it).', 'waiting'),
                  ({'kind': 'quote_ready', 'status': 'suppressed', 'reason': 'contact_dnd'}, 'Not texted: the customer is on Do Not Disturb.', 'dnd'),
                  ({'kind': 'quote_ready', 'status': 'off', 'reason': 'owner_switch_off'}, 'Off \u2014 share the quote yourself (the owner can turn on texting in Hub \u2192 Message templates).', 'off')]
         for link, text, name in cases:

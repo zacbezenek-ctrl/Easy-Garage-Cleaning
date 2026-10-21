@@ -21,7 +21,8 @@ def templates():
     ]
 
 # PORTAL-LINKS: the owner's switches as GET /api/message-templates returns them (functions/_lib/portal-link-settings.js).
-QUOTE_READY = 'Hi {first}, your Easy Garage Cleaning quote is ready. You can review it, approve it and pay the deposit in your private project portal: {portal link}'
+QUOTE_READY = {'deposit': 'Hi {first}, your Easy Garage Cleaning quote is ready. You can review it, approve it and pay the deposit in your private project portal: {portal link}',
+               'no_deposit': 'Hi {first}, your Easy Garage Cleaning quote is ready. You can review it and approve it in your private project portal: {portal link}'}
 JOB_DONE = {'balance': 'Hi {first}, your Easy Garage Cleaning job is done — thank you! Your remaining balance, receipts and photos are in your private project portal: {portal link}',
             'paid': 'Hi {first}, your Easy Garage Cleaning job is done — thank you! Your receipts and job details are in your private project portal: {portal link}'}
 def portal_links(**extra):
@@ -209,7 +210,10 @@ class MessageTemplatesBrowserTests(unittest.TestCase):
             section = self.page.get_by_role('region', name='Portal link texts'); expect(section).to_be_visible()
             quote, done = section.locator('[data-link="quote_ready"]'), section.locator('[data-link="job_done"]')
             expect(quote).to_contain_text('Text the portal link when a quote is sent'); expect(quote).to_contain_text('What it does: When an estimator sends a quote for review')
-            expect(quote.locator('.mt-exact')).to_have_text(QUOTE_READY); expect(quote.locator('.mt-pill')).to_have_text('Off')
+            expect(quote.locator('.mt-exact')).to_have_count(2); expect(quote.locator('.mt-pill')).to_have_text('Off')
+            expect(quote.locator('.mt-exact').nth(0)).to_have_text(QUOTE_READY['deposit']); expect(quote.locator('.mt-exact').nth(1)).to_have_text(QUOTE_READY['no_deposit'])
+            expect(quote).to_contain_text('If no deposit is due:'); expect(quote).to_contain_text('egc-estimate-ready')
+            expect(done).to_contain_text('egc-job-complete'); expect(done).to_contain_text('follow-up required')
             expect(done).to_contain_text('Text a fresh portal link when a job is done'); expect(done.locator('.mt-exact')).to_have_count(2)
             expect(done.locator('.mt-exact').nth(0)).to_have_text(JOB_DONE['balance']); expect(done.locator('.mt-exact').nth(1)).to_have_text(JOB_DONE['paid'])
             self.assertLessEqual(self.page.evaluate('document.documentElement.scrollWidth'), width, f'horizontal scroll at {width}px')
@@ -219,7 +223,8 @@ class MessageTemplatesBrowserTests(unittest.TestCase):
         quote = self.page.locator('[data-link="quote_ready"]')
         quote.get_by_role('button', name='Turn on: Text the portal link when a quote is sent').click()
         dialog = self.page.get_by_role('dialog', name='Turn on: Text the portal link when a quote is sent?'); expect(dialog).to_be_visible()
-        expect(dialog.locator('.mt-exact')).to_have_text(QUOTE_READY); expect(dialog).to_contain_text('between 8 AM and 8 PM Denver time')
+        expect(dialog.locator('.mt-exact')).to_have_text(QUOTE_READY['deposit'] + '\n\n' + QUOTE_READY['no_deposit']); expect(dialog).to_contain_text('between 8 AM and 8 PM Denver time')
+        expect(dialog).to_contain_text('egc-estimate-ready')
         dialog.get_by_role('button', name='Cancel', exact=True).click(); expect(dialog).to_have_count(0); self.assertEqual(self.calls, [])
         quote.get_by_role('button', name='Turn on: Text the portal link when a quote is sent').click(); self.page.get_by_role('button', name='Turn on', exact=True).click()
         expect(quote.locator('.mt-pill')).to_have_text('On'); expect(self.page.locator('.mt-notice')).to_contain_text('Text the portal link when a quote is sent: on.')
@@ -227,6 +232,7 @@ class MessageTemplatesBrowserTests(unittest.TestCase):
         self.assertEqual({key: call[key] for key in ['action', 'link', 'enabled']}, {'action': 'set_portal_link', 'link': 'quote_ready', 'enabled': True}); self.assertEqual(len(call['requestId']), 36)
         expect(self.page.locator('[data-link="job_done"] .mt-pill')).to_have_text('Off')
         quote.get_by_role('button', name='Turn off: Text the portal link when a quote is sent').click()
+        expect(self.page.get_by_role('dialog')).to_contain_text('including any still waiting for 8 AM')
         self.page.get_by_role('dialog').get_by_role('button', name='Turn off', exact=True).click()
         expect(quote.locator('.mt-pill')).to_have_text('Off'); self.assertEqual(self.calls[-1]['enabled'], False)
         self.page.screenshot(path=str(ROOT / 'test-results' / 'portal-link-switches-390-after.png'), full_page=True)

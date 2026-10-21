@@ -368,14 +368,15 @@
   // PORTAL-LINKS (A): what happened to the quote-ready portal link text when the quote was sent (the owner's switch in
   // Hub → Message templates, off by default), in the estimator's words.
   const LINK_WHY = { contact_dnd: 'the customer is on Do Not Disturb', job_notifications_off: 'notifications are off for this job', business_account_job: 'this is a Business Hub project', no_phone_or_email: 'no valid phone or email is saved',
-    prices_pending_approval: 'prices wait for the owner\u2019s approval', job_closed: 'the job is closed', quote_already_approved: 'the quote is already approved', quote_not_sent: 'the quote is not marked sent' };
+    prices_pending_approval: 'prices wait for the owner\u2019s approval', job_closed: 'the job is closed', quote_already_approved: 'the quote is already approved', quote_not_sent: 'the quote is not marked sent', quote_expired: 'the quote has expired' };
   const LINK_STATUS = { needs_contact: 'the customer has no matching HighLevel contact', contact_mismatch: 'the HighLevel contact does not match this customer', not_configured: 'portal texting is not set up', failed: 'HighLevel refused the message', storage_unavailable: 'it could not be recorded (the office\u2019s Hub retries it)', busy: 'another send was in progress (the office\u2019s Hub retries it)', needs_job: 'the quote job could not be read' };
   function portalLinkText(link) {
     if (!link || typeof link !== 'object' || !link.status) return '';
     const status = link.status, reason = link.reason || '';
     if (status === 'off') return reason === 'messaging_settings_invalid' ? 'Not texted: the messaging settings need review.' : 'Off \u2014 share the quote yourself (the owner can turn on texting in Hub \u2192 Message templates).';
     if (status === 'submitted') return link.channel === 'Email' ? `Portal link emailed${link.recipient ? ` to ${link.recipient}` : ''}.` : `Portal link texted to ${link.recipient || 'the customer'}.`;
-    if (status === 'deferred') return reason === 'quiet_hours' ? 'Waiting for 8 AM: the portal link goes out automatically after quiet hours.' : reason === 'messaging_paused' ? 'Not texted yet: automatic messages are paused.' : 'Not texted yet: the messaging settings need review.';
+    // Who sends a held link: the messaging server when it is on, otherwise the office's next Hub load (employee-suite.js portalRetryNote).
+    if (status === 'deferred') return reason === 'quiet_hours' ? 'Waiting for 8 AM: the portal link goes out after quiet hours (the office\u2019s Hub or the messaging server sends it).' : reason === 'messaging_paused' ? 'Not texted yet: automatic messages are paused.' : 'Not texted yet: the messaging settings need review.';
     if (['sending', 'uncertain'].includes(status)) return 'Portal link delivery is unconfirmed: check HighLevel before sharing the link again.';
     return `Not texted: ${LINK_WHY[reason] || LINK_STATUS[status] || 'it needs attention in the Hub'}.`;
   }

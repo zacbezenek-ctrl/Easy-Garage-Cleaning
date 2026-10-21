@@ -8,7 +8,7 @@ import { randomUUID } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import { firestoreMemory } from './helpers/firestore-memory.mjs';
 import { saveWalkthroughHandoff } from '../functions/_lib/walkthrough-handoff.js';
-import { HANDOFF_SYNC_WAIT, onRequestPost as highLevelPost, syncSavedHandoff } from '../functions/api/highlevel.js';
+import { HANDOFF_SYNC_WAIT, onRequestPost as highLevelPost, settledInvitation, syncSavedHandoff } from '../functions/api/highlevel.js';
 import { handoffHandlers } from '../functions/api/walkthrough-handoff.js';
 import { PORTAL_MESSAGES, QUOTE_READY_COVER_MIN_DAYS_LEFT, portalLinkPreviews, sendAcceptedQuotePortal, sendPortalLink } from '../functions/_lib/portal-invitation.js';
 import { verifyCustomerPortalAccessToken } from '../functions/_lib/customer-portal.js';
@@ -144,7 +144,14 @@ test('B: a manager\'s Hub retry racing the server\'s sync waits for it and repla
     assert.deepEqual([response.status, body.ok, body.replayed], [200, true, true], JSON.stringify(body));
     assert.deepEqual([briefs(w).length, appointments(w, id).length, w.messages.length], [1, 1, 1], 'nothing written twice');
     assert.equal(w.job(id).handoffSyncClaim ?? null, null, 'the claim is released');
+    assert.equal(body.portalInvitation.status, 'submitted');
   } finally { Object.assign(HANDOFF_SYNC_WAIT, wait); w.restore(); }
+  // A page that asked while the other sync was still sending the invitation ('busy' lost the claim, or 'sending')
+  // reports what that sync settled, not "needs attention".
+  const job = { id: 'job-1', customerPortalInvitation: { jobId: 'job-1', status: 'submitted', channel: 'SMS', recipient: '(•••) •••-0100', completedAt: DAY, attemptId: 'synthetic', messageId: 'synthetic-message' } };
+  for (const status of ['busy', 'sending']) assert.deepEqual(settledInvitation(job, { status, jobId: 'job-1' }), { status: 'submitted', channel: 'SMS', recipient: '(•••) •••-0100', completedAt: DAY });
+  assert.deepEqual(settledInvitation(job, { status: 'deferred', reason: 'quiet_hours' }), { status: 'deferred', reason: 'quiet_hours' }, 'a settled answer is kept');
+  assert.deepEqual(settledInvitation({ id: 'job-1' }, { status: 'busy' }), { status: 'busy' });
 });
 
 test('B: a page sync holding the claim makes the server\'s sync stand down without recording anything; an abandoned claim lapses', async t => {
@@ -178,26 +185,56 @@ test('B: a failed server sync records the page\'s backoff so the Hub retry finis
   } finally { w.restore(); }
 });
 
-test('B: the walkthrough save starts the server sync after the response for every quote author, only while the job is unsynced and only with waitUntil', async () => {
+test('B: the save starts nothing in the background, so no job write races the page\'s photo uploads; the page\'s sync request runs it, for the job\'s own author and its current signed request', async () => {
   const f = handoffFixture(), started = [], waits = [];
-  const serverSync = async (env, actor, input) => { started.push([actor.user, input.jobId, input.handoffRequestId, typeof input.waitUntil]); return { status: 'synced' }; };
+  const serverSync = async (env, actor, input) => {
+    started.push([actor.user, input.jobId, input.handoffRequestId, typeof input.waitUntil]);
+    f.rows.set(`jobs/${input.jobId}`, { ...f.rows.get(`jobs/${input.jobId}`), syncStatus: 'synced', customerPortalInvitation: { jobId: input.jobId, status: 'submitted', channel: 'SMS', recipient: '(•••) •••-0100' }, revision: 'synced-revision' });
+    return { status: 'synced' };
+  };
   const post = (actor, body, waitUntil) => handoffHandlers({ session: async () => actor, storage: () => f.store, now: () => new Date(NOW), serverSync, stripe: () => null })
     .post({ request: new Request('https://easygaragecleaning.com/api/walkthrough-handoff', { method: 'POST', headers: { Origin: 'https://easygaragecleaning.com', 'Content-Type': 'application/json' }, body: JSON.stringify(body) }), env: ON, ...(waitUntil ? { waitUntil } : {}) });
   const input = f.input(), response = await post(sales, input, promise => waits.push(promise)), body = await response.json();
   assert.equal(response.status, 200, JSON.stringify(body));
+  // The page now uploads its photos, each carrying the job's revision (field-jobs.js FIELD_REVISION_CONFLICT): the save
+  // left nothing running that could change it meanwhile.
+  const revision = f.rows.get(`jobs/${body.job.id}`).revision;
   await Promise.all(waits);
-  assert.equal(body.serverSync, 'started');
+  assert.deepEqual([body.serverSync, waits.length, started.length, f.rows.get(`jobs/${body.job.id}`).revision], ['ready', 0, 0, revision]);
+  // Then it asks for the sync, in a request of its own; waitUntil keeps it running if the page closes.
+  const sync = body => post(sales, { action: 'sync', requestId: input.requestId, jobId: body.job.id, ...body.extra }, promise => waits.push(promise));
+  const synced = await sync(body), answer = await synced.json();
+  assert.equal(synced.status, 200, JSON.stringify(answer));
+  assert.deepEqual([answer.sync, answer.portalInvitation, answer.result, waits.length], [{ status: 'synced' }, { status: 'submitted', channel: 'SMS' }, { status: 'synced' }, 1]);
   assert.deepEqual(started, [['sales.person', body.job.id, input.requestId, 'function']]);
-  // The same save again (a lost answer) asks again; the sync itself skips a synced job.
-  await (await post(sales, input, promise => waits.push(promise))).json(); await Promise.all(waits);
-  assert.equal(started.length, 2);
-  // A synced job starts nothing; no waitUntil (tests, older runtimes) starts nothing.
-  f.rows.set(`jobs/${body.job.id}`, { ...f.rows.get(`jobs/${body.job.id}`), syncStatus: 'synced' });
+  assert.doesNotMatch(JSON.stringify(answer), /•••|1400|Synthetic Customer/, 'statuses only');
+  // Another estimator's job, another signed request, a malformed request: refused, nothing run.
+  const refused = async (actor, extra) => { const r = await post(actor, { action: 'sync', requestId: input.requestId, jobId: body.job.id, ...extra }); return r.status; };
+  assert.deepEqual([await refused(otherSales, {}), await refused(sales, { requestId: randomUUID() }), await refused(sales, { extra: 1 }), await refused(crew, {})], [403, 409, 400, 403]);
+  assert.equal(started.length, 1);
+  // A synced job's save says nothing about a sync; nor does a runtime without waitUntil (tests, older runtimes).
   const replay = await (await post(sales, input, promise => waits.push(promise))).json();
-  assert.deepEqual([replay.serverSync, started.length], [undefined, 2]);
-  const g = handoffFixture(), plain = await (await handoffHandlers({ session: async () => owner, storage: () => g.store, now: () => new Date(NOW), serverSync, stripe: () => null })
+  assert.deepEqual([replay.ok, replay.serverSync], [true, undefined]);
+  const g = handoffFixture(), plain = await (await handoffHandlers({ session: async () => sales, storage: () => g.store, now: () => new Date(NOW), serverSync, stripe: () => null })
     .post({ request: new Request('https://easygaragecleaning.com/api/walkthrough-handoff', { method: 'POST', headers: { Origin: 'https://easygaragecleaning.com', 'Content-Type': 'application/json' }, body: JSON.stringify(g.input()) }), env: ON })).json();
-  assert.deepEqual([plain.ok, plain.serverSync, started.length], [true, undefined, 2]);
+  assert.deepEqual([plain.ok, plain.serverSync, started.length], [true, undefined, 1]);
+});
+
+test('B: the page\'s sync request runs the real first sync in its own request: one brief, one appointment, one text, inside the Free plan\'s 50 subrequests', async t => {
+  t.mock.timers.enable({ apis: ['Date'], now: Date.parse(DAY) });
+  const f = handoffFixture(), saved = await saveWalkthroughHandoff(f.store, sales, f.input(), NOW, { env: ON }), id = saved.job.id;
+  const w = world(f.rows), inner = globalThis.fetch;
+  let calls = 0;
+  globalThis.fetch = async (...args) => { calls += 1; return inner(...args); };
+  try {
+    const waits = [];
+    const response = await handoffHandlers({ session: async () => sales, now: () => new Date(DAY) }).post({ request: new Request('https://easygaragecleaning.com/api/walkthrough-handoff', { method: 'POST', headers: { Origin: 'https://easygaragecleaning.com', 'Content-Type': 'application/json' }, body: JSON.stringify({ action: 'sync', requestId: saved.requestId, jobId: id }) }), env: ENV, waitUntil: promise => waits.push(promise) });
+    const body = await response.json();
+    await Promise.all(waits);
+    assert.deepEqual([response.status, body.sync, body.portalInvitation, body.result], [200, { status: 'synced' }, { status: 'submitted', channel: 'SMS' }, { status: 'synced' }], JSON.stringify(body));
+    assert.deepEqual([briefs(w).length, appointments(w, id).length, w.messages.length, w.job(id).syncStatus, w.job(id).handoffSyncClaim ?? null], [1, 1, 1, 'synced', null]);
+    assert.ok(calls <= 45, `the sync request made ${calls} subrequests (the Free plan allows 50)`);
+  } finally { w.restore(); }
 });
 
 test('B: held prices send no invitation at the sync; the release asks the server to send it, under its own rules', async t => {
@@ -381,6 +418,138 @@ test('A: a delivered quote-ready link means the "quote is approved" text is not 
   } finally { old.restore(); }
 });
 
+test('A: an unconfirmed quote-ready send (uncertain, or stuck sending) also stands in for the "quote is approved" text: the customer is texted once', async () => {
+  const approve = w => w.put('jobs/job-1', { ...w.job('job-1'), estimate: { status: 'accepted', amount: 1400, amountCents: 140000 }, customerPortalInvitationRequestedAt: DAY });
+  // HighLevel answers 502 to the quote-ready text (it may still have delivered it): uncertain, never resent.
+  const w = linkWorld(), inner = globalThis.fetch;
+  let first = true;
+  globalThis.fetch = async (input, init = {}) => {
+    if (first && String(input).includes('/conversations/messages')) { first = false; w.messages.push(JSON.parse(init.body)); return Response.json({}, { status: 502 }); }
+    return inner(input, init);
+  };
+  try {
+    assert.equal((await sendPortalLink(ENV, 'job-1', 'quote_ready', { automatic: true, now: clockAt(DAY) })).status, 'uncertain');
+    approve(w);
+    const state = await sendAcceptedQuotePortal(ENV, 'job-1', { requireRequested: true, automatic: true, now: clockAt(DAY) });
+    assert.deepEqual([state.status, state.reason, state.coveredBy.unconfirmed, w.messages.length], ['covered', 'quote_ready_link_delivered', true, 1]);
+  } finally { w.restore(); }
+  // Still 'sending' (another request is texting it right now): the invitation waits, unrecorded, for the next retry;
+  // a 'sending' claim older than two minutes counts as possibly delivered.
+  const sending = linkWorld();
+  try {
+    sending.put('portal_link_sends/quote_ready~job-1', { kind: 'quote_ready', jobId: 'job-1', status: 'sending', attemptId: 'synthetic', attemptedAt: DAY, channel: 'SMS', requestedAt: DAY, attempts: 1 });
+    approve(sending);
+    const waiting = await sendAcceptedQuotePortal(ENV, 'job-1', { requireRequested: true, automatic: true, now: clockAt(DAY) });
+    assert.deepEqual([waiting.status, waiting.reason, sending.memory.get('portal_invitations/job-1'), sending.messages.length], ['busy', 'quote_ready_in_flight', null, 0]);
+    const later = new Date(Date.parse(DAY) + 3 * 60000).toISOString();
+    const covered = await sendAcceptedQuotePortal(ENV, 'job-1', { requireRequested: true, automatic: true, now: clockAt(later) });
+    assert.deepEqual([covered.status, covered.coveredBy.unconfirmed, sending.messages.length], ['covered', true, 0]);
+  } finally { sending.restore(); }
+});
+
+test('A: an approval landing while the quote-ready text is being claimed stops that text before HighLevel; the "quote is approved" text then goes once', async () => {
+  const w = linkWorld(), inner = globalThis.fetch;
+  // Right after the quote-ready claim is written, the office records the approval.
+  globalThis.fetch = async (input, init = {}) => {
+    const response = await inner(input, init);
+    if (init.method === 'PATCH' && String(input).includes('portal_link_sends') && String(init.body).includes('"sending"')) w.put('jobs/job-1', { ...w.job('job-1'), estimate: { status: 'accepted', amount: 1400, amountCents: 140000 }, customerPortalInvitationRequestedAt: DAY });
+    return response;
+  };
+  try {
+    const halted = await sendPortalLink(ENV, 'job-1', 'quote_ready', { automatic: true, now: clockAt(DAY) });
+    assert.deepEqual([halted.status, halted.reason, w.messages.length], ['not_eligible', 'quote_already_approved', 0]);
+    const approved = await sendAcceptedQuotePortal(ENV, 'job-1', { requireRequested: true, automatic: true, now: clockAt(DAY) });
+    assert.deepEqual([approved.status, w.messages.length], ['submitted', 1]);
+    assert.match(w.messages[0].message, /^Hi Synthetic, your quote is approved\./);
+  } finally { w.restore(); }
+  // The other order: the quote-ready text starts while the invitation holds its claim. The invitation stands down
+  // (deferred, quote_ready_in_flight) and its next retry finds the quote-ready text sent: covered, one text in all.
+  const v = linkWorld(quoteJob({ estimate: { status: 'accepted', amount: 1400, amountCents: 140000 }, customerPortalInvitationRequestedAt: DAY })), wrapped = globalThis.fetch;
+  globalThis.fetch = async (input, init = {}) => {
+    const response = await wrapped(input, init);
+    if (init.method === 'PATCH' && String(input).includes('portal_invitations/job-1') && String(init.body).includes('"sending"')) v.put('portal_link_sends/quote_ready~job-1', { kind: 'quote_ready', jobId: 'job-1', status: 'sending', attemptId: 'synthetic', attemptedAt: DAY, requestedAt: DAY, attempts: 1, channel: 'SMS' });
+    return response;
+  };
+  try {
+    const held = await sendAcceptedQuotePortal(ENV, 'job-1', { requireRequested: true, automatic: true, now: clockAt(DAY) });
+    assert.deepEqual([held.status, held.reason, held.attempts, v.messages.length], ['deferred', 'quote_ready_in_flight', 0, 0]);
+    const { portalRetries } = await import('../functions/_lib/messaging-scheduler.js');
+    assert.equal(portalRetries([{ ...v.job('job-1'), id: 'job-1' }], { now: new Date(EIGHT) }).length, 1, 'the next automatic retry picks it up');
+    v.put('portal_link_sends/quote_ready~job-1', { ...v.memory.get('portal_link_sends/quote_ready~job-1'), status: 'submitted', completedAt: DAY, messageId: 'm-1' });
+    globalThis.fetch = wrapped;
+    const after = await sendAcceptedQuotePortal(ENV, 'job-1', { requireRequested: true, automatic: true, now: clockAt(EIGHT) });
+    assert.deepEqual([after.status, v.messages.length], ['covered', 0]);
+  } finally { v.restore(); }
+});
+
+test('A: a quote sent on its last evening and held for quiet hours is not texted after it expires', async () => {
+  const job = quoteJob({ estimate: { status: 'sent', number: 'EST-1', revision: 1, amountCents: 140000, amount: 1400, validUntil: '2026-09-22' } });
+  const w = linkWorld(job);
+  try {
+    const night = await sendPortalLink(ENV, 'job-1', 'quote_ready', { automatic: true, now: clockAt(LATE) }); // 11:30 PM Denver, 2026-09-22
+    assert.equal(night.status, 'deferred');
+    const morning = await cronPortalInvite(ENV, clockAt(EIGHT))('job-1', new Date(EIGHT), normalizeMessagingSettings(w.memory.get(SETTINGS)), 'quote_ready');
+    assert.deepEqual([morning.status, morning.reason, w.job('job-1').portalLinks.quote_ready.status, w.messages.length], ['not_eligible', 'quote_expired', 'not_eligible', 0]);
+    assert.deepEqual(portalLinkRetries([{ ...w.job('job-1'), id: 'job-1' }], { now: new Date(EIGHT) }), [], 'the retries stop');
+  } finally { w.restore(); }
+  // Sent on its last valid day, during the day: texted.
+  const today = linkWorld(job);
+  try { assert.equal((await sendPortalLink(ENV, 'job-1', 'quote_ready', { automatic: true, now: clockAt(DAY) })).status, 'submitted'); } finally { today.restore(); }
+});
+
+test('A: a revised quote whose deposit is already paid (or under review) is texted without "pay the deposit"', async () => {
+  const revised = quoteJob({ estimate: { status: 'sent', number: 'EST-1', revision: 2, amountCents: 150000, amount: 1500 }, customerApproval: { status: 'superseded', reason: 'estimate_revised' },
+    payment: { amount: 350, verified: true }, deposit: { amount: 350, verified: true, paidAmount: 350 }, customerPortalInvitation: { jobId: 'job-1', status: 'submitted' } });
+  const w = linkWorld(revised);
+  try {
+    const state = await sendPortalLink(ENV, 'job-1', 'quote_ready', { automatic: true, now: clockAt(DAY) });
+    assert.deepEqual([state.status, state.variant], ['submitted', 'no_deposit_due']);
+    assert.equal(w.messages[0].message, `Hi Synthetic, your Easy Garage Cleaning quote is ready. You can review it and approve it in your private project portal: ${linkOf(w.messages[0]).href}`);
+    assert.equal(templateMatches(automationById(AUTOMATION_REGISTRY, 'hub.portal_quote_ready_no_deposit').templateText, w.messages[0].message), true);
+  } finally { w.restore(); }
+  const review = linkWorld(quoteJob({ fieldPaymentPendingId: 'fp-1', payment: { amount: 350, verified: false } }));
+  try {
+    assert.equal((await sendPortalLink(ENV, 'job-1', 'quote_ready', { automatic: true, now: clockAt(DAY) })).variant, 'payment_in_review');
+    assert.doesNotMatch(review.messages[0].message, /deposit/);
+  } finally { review.restore(); }
+  // A new quote with its deposit due keeps the deposit wording (the first A test checks the exact text).
+  const fresh = linkWorld();
+  try { assert.equal((await sendPortalLink(ENV, 'job-1', 'quote_ready', { automatic: true, now: clockAt(DAY) })).variant, 'deposit_due'); } finally { fresh.restore(); }
+});
+
+test('switches: turning a switch off ends a waiting text, and turning it on again never sends one that waited from before', async () => {
+  const w = linkWorld(quoteJob(), { portalLinkQuoteReady: true, portalLinkJobDone: false });
+  const store = (await import('../functions/_lib/message-send-store.js')).messagingStorage(ENV);
+  const flip = async (enabled, at) => setPortalLinkSwitch(store, owner, { action: 'set_portal_link', requestId: randomUUID(), link: 'quote_ready', enabled }, at);
+  try {
+    assert.equal((await sendPortalLink(ENV, 'job-1', 'quote_ready', { automatic: true, now: clockAt(LATE) })).status, 'deferred');
+    await flip(false, LATE);
+    // The 8 AM retry finds the switch off: the wait is closed, the retries stop and the Hub says why.
+    const closed = await cronPortalInvite(ENV, clockAt(EIGHT))('job-1', new Date(EIGHT), normalizeMessagingSettings(w.memory.get(SETTINGS)), 'quote_ready');
+    assert.deepEqual([closed.status, closed.reason, ledger(w, 'quote_ready').status, w.job('job-1').portalLinks.quote_ready.status, w.messages.length], ['off', 'owner_switch_off', 'off', 'off', 0]);
+    assert.deepEqual(portalLinkRetries([{ ...w.job('job-1'), id: 'job-1' }], { now: new Date('2026-10-14T16:00:00.000Z') }), []);
+    // Weeks later the owner turns it on again: no retry (the cron's or the Hub's) picks the old text up.
+    await flip(true, '2026-10-30T16:00:00.000Z');
+    assert.deepEqual(portalLinkRetries([{ ...w.job('job-1'), id: 'job-1' }], { now: new Date('2026-10-30T16:30:00.000Z') }), []);
+    assert.equal(w.messages.length, 0);
+    // Only a new send of the quote while the switch is on texts it, as a new request.
+    const resent = await sendPortalLink(ENV, 'job-1', 'quote_ready', { automatic: true, now: clockAt('2026-10-30T16:30:00.000Z') });
+    assert.deepEqual([resent.status, resent.requestedAt, w.messages.length], ['submitted', '2026-10-30T16:30:00.000Z', 1]);
+  } finally { w.restore(); }
+  // Off and on again with no retry in between (a manager's Hub was not opened): the wait from before still never sends.
+  const v = linkWorld(quoteJob(), { portalLinkQuoteReady: true, portalLinkJobDone: false });
+  const vstore = (await import('../functions/_lib/message-send-store.js')).messagingStorage(ENV);
+  try {
+    assert.equal((await sendPortalLink(ENV, 'job-1', 'quote_ready', { automatic: true, now: clockAt(LATE) })).status, 'deferred');
+    for (const enabled of [false, true]) await setPortalLinkSwitch(vstore, owner, { action: 'set_portal_link', requestId: randomUUID(), link: 'quote_ready', enabled }, '2026-09-23T13:00:00.000Z');
+    assert.equal(portalLinkRetries([{ ...v.job('job-1'), id: 'job-1' }], { now: new Date(EIGHT) }).length, 1);
+    const result = await cronPortalInvite(ENV, clockAt(EIGHT))('job-1', new Date(EIGHT), normalizeMessagingSettings(v.memory.get(SETTINGS)), 'quote_ready');
+    assert.deepEqual([result.status, result.reason, v.messages.length], ['off', 'owner_switch_off', 0]);
+    // A new request after that (a later quote send) goes out normally.
+    assert.equal((await sendPortalLink(ENV, 'job-1', 'quote_ready', { automatic: true, now: clockAt(EIGHT) })).status, 'submitted');
+  } finally { v.restore(); }
+});
+
 // ---------------------------------------------------------------- C: a fresh link when the job is done
 const doneJob = (extra = {}) => quoteJob({ status: 'completed', pipelineStatus: 'completed', completedAt: DAY, estimate: { status: 'accepted', amount: 1400, amountCents: 140000 }, total: 1400, ...extra });
 
@@ -427,6 +596,56 @@ test('C: a reopened and re-completed job is not texted again; not-done, cancelle
       assert.deepEqual([state.status, state.reason, s.messages.length], [...expected, 0], JSON.stringify(expected));
     } finally { s.restore(); }
   }
+});
+
+test('C: a customer who paid the crew in cash or check (not reviewed yet) is never told a balance remains; the balance is the one the portal shows', async () => {
+  const cash = linkWorld(doneJob({ payment: { amount: 350, verified: true }, fieldPaymentPendingId: 'fp-1', fieldPaymentLastId: 'fp-1' }));
+  try {
+    const state = await sendPortalLink(ENV, 'job-1', 'job_done', { automatic: true, now: clockAt(DAY) });
+    assert.deepEqual([state.status, state.variant], ['submitted', 'payment_in_review']);
+    assert.equal(cash.messages[0].message, PORTAL_MESSAGES.job_done_paid.sms('Synthetic', linkOf(cash.messages[0]).href));
+    assert.doesNotMatch(cash.messages[0].message, /balance/);
+  } finally { cash.restore(); }
+  // An approved change that is not billed yet: today's figures say $200 due, the unified figures (MONEY_UNIFIED_TOTALS,
+  // what the portal then shows) say nothing is. The text follows the portal.
+  const change = () => doneJob({ payment: { amount: 1400, verified: true }, customerDecisions: [{ id: 'd1', status: 'approved', priceDelta: 200 }] });
+  for (const [env, variant] of [[ENV, 'balance_due'], [{ ...ENV, MONEY_UNIFIED_TOTALS: 'true' }, 'paid']]) {
+    const w = linkWorld(change());
+    try { assert.equal((await sendPortalLink(env, 'job-1', 'job_done', { automatic: true, now: clockAt(DAY) })).variant, variant, env.MONEY_UNIFIED_TOTALS || 'off'); } finally { w.restore(); }
+  }
+});
+
+test('C: a completion with an open crew follow-up is not texted (recorded so the office sees why); completed again without one, it is', async () => {
+  const followUp = { activity: 'completed', completion: { completedAt: DAY, hasIssues: true, issueNotes: 'Two shelving brackets missing; return visit needed' }, attention: { status: 'open', visibility: 'crew', reason: 'Two shelving brackets missing; return visit needed', at: DAY } };
+  const w = linkWorld(doneJob({ payment: { amount: 350, verified: true }, fieldExecution: followUp }));
+  try {
+    const held = await sendPortalLink(ENV, 'job-1', 'job_done', { automatic: true, now: clockAt(DAY) });
+    assert.deepEqual([held.status, held.reason, ledger(w, 'job_done').status, w.job('job-1').portalLinks.job_done.reason, w.messages.length], ['not_eligible', 'follow_up_open', 'not_eligible', 'follow_up_open', 0]);
+    assert.deepEqual(portalLinkRetries([{ ...w.job('job-1'), id: 'job-1' }], { now: new Date(EIGHT) }), []);
+    // The return visit completes the job again with nothing open.
+    const done = new Date(Date.parse(DAY) + 86400000).toISOString();
+    w.put('jobs/job-1', { ...w.job('job-1'), completedAt: done, fieldExecution: { activity: 'completed', completion: { completedAt: done, hasIssues: false }, attention: { ...followUp.attention, status: 'resolved' } } });
+    const sent = await sendPortalLink(ENV, 'job-1', 'job_done', { automatic: true, now: clockAt(done) });
+    assert.deepEqual([sent.status, w.messages.length], ['submitted', 1]);
+  } finally { w.restore(); }
+});
+
+test('C: a job-done text never goes out more than 48 hours after the completion, however long it was held', async () => {
+  const w = linkWorld(doneJob({ completedAt: LATE }), { portalLinkQuoteReady: false, portalLinkJobDone: true, paused: true });
+  try {
+    assert.deepEqual([(await sendPortalLink(ENV, 'job-1', 'job_done', { automatic: true, now: clockAt(LATE) })).reason], ['quiet_hours']);
+    // The owner pauses automatic messages for three days; the first retry after the pause ends finds the job stale.
+    w.put(SETTINGS, { portalLinkJobDone: true, paused: false });
+    const late = new Date(Date.parse(LATE) + 3 * 86400000 + 9 * 3600000).toISOString();
+    const result = await cronPortalInvite(ENV, clockAt(late))('job-1', new Date(late), normalizeMessagingSettings(w.memory.get(SETTINGS)), 'job_done');
+    assert.deepEqual([result.status, result.reason, w.job('job-1').portalLinks.job_done.status, w.messages.length], ['not_eligible', 'job_done_too_long_ago', 'not_eligible', 0]);
+  } finally { w.restore(); }
+  // Held overnight only: the 8 AM retry sends it.
+  const v = linkWorld(doneJob({ completedAt: LATE }));
+  try {
+    assert.equal((await sendPortalLink(ENV, 'job-1', 'job_done', { automatic: true, now: clockAt(LATE) })).status, 'deferred');
+    assert.equal((await cronPortalInvite(ENV, clockAt(EIGHT))('job-1', new Date(EIGHT), normalizeMessagingSettings(v.memory.get(SETTINGS)), 'job_done')).status, 'submitted');
+  } finally { v.restore(); }
 });
 
 test('C: the crew\'s completion hands the job-done link to waitUntil after the commit', () => {
@@ -501,14 +720,15 @@ test('switches: Hub → Message templates shows both off with their exact text; 
     const view = await portalLinkSwitches(store, owner);
     assert.deepEqual([view.quoteReady, view.jobDone, view.canChange, view.paused], [false, false, true, false]);
     assert.deepEqual(view.texts, portalLinkPreviews());
-    assert.equal(view.texts.quote_ready, 'Hi {first}, your Easy Garage Cleaning quote is ready. You can review it, approve it and pay the deposit in your private project portal: {portal link}');
+    assert.deepEqual(view.texts.quote_ready, { deposit: 'Hi {first}, your Easy Garage Cleaning quote is ready. You can review it, approve it and pay the deposit in your private project portal: {portal link}', no_deposit: 'Hi {first}, your Easy Garage Cleaning quote is ready. You can review it and approve it in your private project portal: {portal link}' });
     assert.deepEqual(view.texts.job_done, { balance: 'Hi {first}, your Easy Garage Cleaning job is done — thank you! Your remaining balance, receipts and photos are in your private project portal: {portal link}', paid: 'Hi {first}, your Easy Garage Cleaning job is done — thank you! Your receipts and job details are in your private project portal: {portal link}' });
     await assert.rejects(setPortalLinkSwitch(store, sales, { action: 'set_portal_link', requestId: randomUUID(), link: 'quote_ready', enabled: true }, DAY), error => error.status === 403);
     for (const bad of [{ link: 'everything', enabled: true }, { link: 'quote_ready', enabled: 'yes' }, { link: 'quote_ready', enabled: true, extra: 1 }]) await assert.rejects(setPortalLinkSwitch(store, owner, { action: 'set_portal_link', requestId: randomUUID(), ...bad }, DAY), error => error.code === 'messaging_request_invalid', JSON.stringify(bad));
     const requestId = randomUUID(), input = { action: 'set_portal_link', requestId, link: 'quote_ready', enabled: true };
     const on = await setPortalLinkSwitch(store, owner, input, DAY);
     assert.deepEqual([on.portalLinks.quoteReady, on.portalLinks.jobDone], [true, false]);
-    assert.deepEqual([w.memory.get(SETTINGS).portalLinkQuoteReady, w.memory.get(SETTINGS).portalLinksUpdatedBy], [true, 'zacb']);
+    assert.deepEqual([w.memory.get(SETTINGS).portalLinkQuoteReady, w.memory.get(SETTINGS).portalLinksUpdatedBy, w.memory.get(SETTINGS).portalLinkQuoteReadyOnAt], [true, 'zacb', DAY]);
+    assert.equal(normalizeMessagingSettings(w.memory.get(SETTINGS)).portalLinkQuoteReadyOnAt, DAY, 'the scheduler sees when it was turned on');
     assert.equal((await setPortalLinkSwitch(store, owner, input, DAY)).replayed, true);
     await assert.rejects(setPortalLinkSwitch(store, owner, { ...input, enabled: false }, DAY), error => error.code === 'messaging_idempotency_conflict');
     // The record keeps the pause and the cadence it had; the scheduler still reads it.
@@ -535,7 +755,7 @@ test('switches: the message templates API returns them and changes them through 
 });
 
 test('registry: the two new kinds are registered with their exact texts, off by default, and the approved invitation text is unchanged', () => {
-  for (const id of ['hub.portal_quote_ready', 'hub.portal_quote_ready_email', 'hub.portal_job_done', 'hub.portal_job_done_paid', 'hub.portal_job_done_email', 'hub.portal_job_done_paid_email']) {
+  for (const id of ['hub.portal_quote_ready', 'hub.portal_quote_ready_no_deposit', 'hub.portal_quote_ready_email', 'hub.portal_quote_ready_no_deposit_email', 'hub.portal_job_done', 'hub.portal_job_done_paid', 'hub.portal_job_done_email', 'hub.portal_job_done_paid_email']) {
     const entry = automationById(AUTOMATION_REGISTRY, id);
     assert.deepEqual([entry.sendsToday, entry.classification, entry.disposition, entry.contentSource], ['no', 'owner_automation', 'needs_owner_approval', 'fixed_template'], id);
     assert.match(entry.notes, /default false/);
@@ -543,7 +763,7 @@ test('registry: the two new kinds are registered with their exact texts, off by 
   assert.equal(automationById(AUTOMATION_REGISTRY, 'hub.portal_invitation').templateText, '{{opening}} quote is approved. Here is your private Easy Garage Cleaning project portal for job details, messages, and payments: {{portalLink}}');
   assert.equal(PORTAL_MESSAGES.approved.sms('Pat', 'https://x.invalid/l'), 'Hi Pat, your quote is approved. Here is your private Easy Garage Cleaning project portal for job details, messages, and payments: https://x.invalid/l');
   const doc = readFileSync(new URL('../docs/automation-registry.md', import.meta.url), 'utf8');
-  for (const name of ['Quote-ready portal link (SMS)', 'Job-done portal link, balance due (SMS)', 'Job-done portal link, nothing due (SMS)']) assert.ok(doc.includes(name), name);
+  for (const name of ['Quote-ready portal link, deposit due (SMS)', 'Quote-ready portal link, no deposit due (SMS)', 'Job-done portal link, balance due (SMS)', 'Job-done portal link, nothing due (SMS)']) assert.ok(doc.includes(name), name);
 });
 
 test('cron: a waiting portal link is retried by the signed messaging run while server messaging is on', async () => {

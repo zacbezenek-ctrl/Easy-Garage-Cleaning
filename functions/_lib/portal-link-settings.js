@@ -1,5 +1,5 @@
 import { hasBusinessAccess } from './hub-session.js';
-import { MESSAGING_SETTINGS, MESSAGING_SETTINGS_ID, PORTAL_LINK_TOGGLES, normalizeMessagingSettings } from './messaging-settings.js';
+import { MESSAGING_SETTINGS, MESSAGING_SETTINGS_ID, PORTAL_LINK_ON_AT, PORTAL_LINK_TOGGLES, normalizeMessagingSettings } from './messaging-settings.js';
 import { MESSAGE_OPERATIONS } from './message-send-store.js';
 import { messageDigest } from './message-templates.js';
 import { portalLinkPreviews } from './portal-invitation.js';
@@ -9,7 +9,8 @@ import { portalLinkPreviews } from './portal-invitation.js';
    portalLinkQuoteReady, portalLinkJobDone; both false by default). Hub → Message templates shows them with the exact
    text each sends; only business users change them, through POST /api/message-templates
    {action:'set_portal_link', requestId, link:'quote_ready'|'job_done', enabled}. Each change is idempotent per
-   requestId (message_operations) and written under the record's revision. */
+   requestId (message_operations) and written under the record's revision. Turning one on also records when
+   (portalLinkQuoteReadyOnAt, portalLinkJobDoneOnAt): a text of that kind still waiting from before is never sent. */
 const UUID = /^[a-f0-9]{8}-[a-f0-9]{4}-[1-8][a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$/i;
 const KEYS = ['action', 'requestId', 'link', 'enabled'];
 const fail = (code, message, status = 400) => Object.assign(new Error(message), { code, status });
@@ -42,7 +43,7 @@ export async function setPortalLinkSwitch(store, session, input, now = new Date(
   const field = PORTAL_LINK_TOGGLES[input.link];
   if ((doc?.[field] === true) === input.enabled) return { ok: true, requestId: input.requestId, unchanged: true, portalLinks: await portalLinkSwitches(store, session) };
   await store.commit([
-    { collection: MESSAGING_SETTINGS, id: MESSAGING_SETTINGS_ID, ...(doc?.revision ? { revision: doc.revision } : {}), patch: { [field]: input.enabled, portalLinksUpdatedBy: session.user, portalLinksUpdatedAt: now } },
+    { collection: MESSAGING_SETTINGS, id: MESSAGING_SETTINGS_ID, ...(doc?.revision ? { revision: doc.revision } : {}), patch: { [field]: input.enabled, ...(input.enabled ? { [PORTAL_LINK_ON_AT[input.link]]: now } : {}), portalLinksUpdatedBy: session.user, portalLinksUpdatedAt: now } },
     { collection: MESSAGE_OPERATIONS, id: receiptId, patch: { scope: 'portal_link_switch', fingerprint, actorId: session.user, action: input.action, link: input.link, enabled: input.enabled, requestId: input.requestId, createdAt: now } },
   ]).catch(error => {
     if (error?.code === 'messaging_revision_conflict') throw fail('messaging_settings_revision_conflict', 'The messaging settings changed at the same time. Refresh and try again.', 409);

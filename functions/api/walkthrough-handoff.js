@@ -1,7 +1,7 @@
 import { getHubSession } from '../_lib/hub-session.js';
 import { dispatchStorage } from '../_lib/dispatch-storage.js';
 import { requireQuoteAuthor } from '../_lib/quote-permissions.js';
-import { handoffCrewOpenings, handoffSyncView, prepareHandoff, releaseHandoffPrices, saveWalkthroughHandoff } from '../_lib/walkthrough-handoff.js';
+import { handoffCrewOpenings, handoffSyncView, prepareHandoff, releaseHandoffPrices, requestHandoffSync, saveWalkthroughHandoff } from '../_lib/walkthrough-handoff.js';
 import { sendAcceptedQuotePortal } from '../_lib/portal-invitation.js';
 import { syncSavedHandoff } from './highlevel.js';
 import { expireStaleCheckout } from '../_lib/quote-draft.js';
@@ -32,12 +32,15 @@ function failure(error) {
   return reply(503, {ok:false,code:'handoff_unavailable',error:'The handoff could not be verified. Keep the saved request and retry; do not create another job.'});
 }
 const stripeFor=env=>{const secret=stripeSecretKey(env);return secret?(path,options)=>stripeRequest(secret,path,options):null;};
-// PORTAL-LINKS (B): after a signed save commits, the server runs the walkthrough's first HighLevel sync itself (highlevel.js
-// syncSavedHandoff: the contact, the pinned internal brief, the appointment, the existing tags, then the accepted-quote
-// portal invitation under its own rules), for every quote author, after the response (waitUntil). A save that is
-// already synced starts nothing. The answer says serverSync:'started' so the walkthrough page can follow it (view=sync).
-// After the owner releases held prices the job's portal invitation goes out the same way. Without waitUntil (tests)
-// nothing runs in the background and the Hub's page-load retry stays the only sender, as before.
+// PORTAL-LINKS (B): a quote author's walkthrough page asks the server for a signed job's first HighLevel sync (action
+// 'sync': highlevel.js syncSavedHandoff, the contact, the pinned internal brief, the appointment, the existing tags,
+// then the accepted-quote portal invitation under its own rules) right after its save and its photo uploads, in a
+// request of its own, so a Sales estimator's customer gets the invitation without waiting for a manager's Hub. The save
+// itself starts nothing in the background (its answer says serverSync:'ready' while the job is unsynced): no job writes
+// race the page's photo uploads, and the sync never shares the save's Cloudflare subrequest budget. The sync also runs
+// under waitUntil, so a page that closes mid-request does not cut it short (up to the platform's 30 seconds). A
+// manager's page keeps calling /api/highlevel itself. After the owner releases held prices the job's portal invitation
+// goes out after the response the same way. The Hub's page-load retry stays the fallback.
 const defaultSync=(env,actor,input)=>syncSavedHandoff(env,actor,input);
 const defaultInvite=(env,jobId)=>sendAcceptedQuotePortal(env,jobId,{requireRequested:true,automatic:true});
 // compositeState (tests): the builder's pricing state; by default the library reads it (catalog-store.js readCompositeState).
@@ -76,13 +79,16 @@ export function handoffHandlers({session=getHubSession,storage=dispatchStorage,w
           if(released.released&&typeof waitUntil==='function')waitUntil(Promise.resolve().then(()=>invite(env,released.job.id)).catch(()=>null));
           return reply(200,released);
         }
+        // action sync (PORTAL-LINKS B): the signed job's first HighLevel sync, asked for by the walkthrough page (requestHandoffSync).
+        if(input&&typeof input==='object'&&!Array.isArray(input)&&input.action==='sync'){
+          const run=(jobId,handoffRequestId)=>{const job=Promise.resolve().then(()=>serverSync(env,actor,{jobId,handoffRequestId,waitUntil}));if(typeof waitUntil==='function')waitUntil(job.catch(()=>null));return job;};
+          return reply(200,{...await requestHandoffSync(store,actor,input,{env,now:now(),run}),viewer:{id:actor.user}});
+        }
         // A signed revision closes an open portal checkout for the earlier terms.
         const saved=await saveWalkthroughHandoff(store,actor,input,at,{env,...priced,checkouts:job=>expireStaleCheckout({store,job,stripe:stripe(env),now:at,mode:moneyTotalsMode(env)})});
-        if(typeof waitUntil==='function'&&saved?.ok&&saved.job?.id&&saved.job.syncStatus!=='synced'){
-          waitUntil(Promise.resolve().then(()=>serverSync(env,actor,{jobId:saved.job.id,handoffRequestId:saved.requestId,waitUntil})).catch(()=>null));
-          return reply(200,{...saved,serverSync:'started'});
-        }
-        return reply(200,saved);
+        // serverSync 'ready': the page may ask for the sync (action 'sync'). Offered only where the runtime keeps a sync
+        // running past a closed page (waitUntil); elsewhere (tests, older runtimes) the answer is unchanged.
+        return reply(200,typeof waitUntil==='function'&&saved?.ok&&saved.job?.id&&saved.job.syncStatus!=='synced'?{...saved,serverSync:'ready'}:saved);
       } catch(error) { return failure(error); }
     }
   };
