@@ -7,6 +7,7 @@ import { storage } from './helpers/field-fixture.mjs';
 import { FIELD_EXPENSE_KINDS, createFieldExpenseStore, fieldExpenseChange, fieldExpenseCloseout, fieldExpenseCloseoutMissing, fieldExpenseCloseoutStatus, fieldExpenseCosts, fieldExpenseJobCosts, fieldExpenseRange, fieldExpenseShareId, fieldExpenseShareParts, fieldExpenseValues, splitSharedCents, sumFieldExpenses, summarizeFieldExpenses } from '../functions/_lib/field-expenses.js';
 import { fieldExpenseHandlers } from '../functions/api/field-expenses.js';
 import * as fieldJobs from '../functions/api/field-jobs.js';
+import { withoutRandomValues } from './helpers/leak-text.mjs';
 
 const NOW = '2026-09-22T18:00:00.000Z';
 const users = { ZacB: { passwordHash: 'test', role: 'owner', displayName: 'Owner' }, 'Crew.One': { passwordHash: 'test', role: 'crew', displayName: 'Crew One' }, 'Crew.Two': { passwordHash: 'test', role: 'crew', displayName: 'Crew Two' } };
@@ -364,7 +365,7 @@ test('completion is only prompted by default; FIELD_EXPENSE_CLOSEOUT_REQUIRED=tr
   await client.post('Crew.One', entry({ kind: 'dump_fee', amountCents: 4200 }));
   const done = await complete(fixture, required); assert.equal(done.status, 200, await done.clone().text());
   assert.equal(fixture.get('jobs/job-1').status, 'completed');
-  const text = JSON.stringify(await done.json()); for (const secret of ['4200', 'amountCents', 'fieldExpenses', 'Synthetic County Landfill']) assert.equal(text.includes(secret), false, secret);
+  const text = withoutRandomValues(JSON.stringify(await done.json())); for (const secret of ['4200', '42.00', '$42', 'amountCents', 'fieldExpenses', 'Synthetic County Landfill']) assert.equal(text.includes(secret), false, secret);
   fixture.put('jobs/job-1', { ...completable(), status: 'completed', pipelineStatus: 'completed' });
   const closed = await complete(fixture, required); assert.equal((await closed.json()).code, 'FIELD_JOB_CLOSED', 'a closed job is not re-gated on costs');
   fixture.put('jobs/job-1', completable());

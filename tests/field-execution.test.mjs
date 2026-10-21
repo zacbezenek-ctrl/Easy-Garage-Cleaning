@@ -7,6 +7,7 @@ import { decodeFieldPhoto } from '../functions/_lib/field-execution-photos.js';
 import { createFieldStore } from '../functions/_lib/field-execution-store.js';
 import { syncFieldCompletion } from '../functions/_lib/field-execution-sync.js';
 import * as route from '../functions/api/field-jobs.js';
+import { withoutRandomValues } from './helpers/leak-text.mjs';
 
 const env = { HUB_SESSION_SECRET: 'field-test-session-secret', FIREBASE_API_KEY: 'firebase-test-field', HUB_AUTH_USERS_JSON: JSON.stringify({ ZacB: { passwordHash: 'test', role: 'owner', displayName: 'Owner' }, 'Crew.One': { passwordHash: 'test', role: 'crew', displayName: 'Crew One' }, 'Crew-One': { passwordHash: 'test', role: 'crew', displayName: 'Crew Other' } }), GOOGLE_CLIENT_ID: 'test', GOOGLE_CLIENT_SECRET: 'test', GOOGLE_REFRESH_TOKEN: 'test' };
 const cookies = new Map(await Promise.all(['ZacB', 'Crew.One', 'Crew-One'].map(async user => [user, (await createHubSessionCookie(env, user)).split(';')[0]])));
@@ -21,7 +22,7 @@ async function post(store, data, user = 'Crew.One') { return route.onRequestPost
 test('field detail is an allowlist: no money, provider linkage, credentials or private notes', () => {
   const j = baseline(); j.fieldExecution = { photos: [{ id: uuid(), fileId: 'file-1', verified: true, category: 'after' }] };
   const projected = fieldJobProjection(j, [{ id: uuid(), state: 'applied', action: 'note', visibility: 'management', body: 'Private salary discussion' }]);
-  const text = JSON.stringify(projected);
+  const text = withoutRandomValues(JSON.stringify(projected));
   for (const secret of ['1500', 'Sensitive management', 'private-link', 'secret-payment', 'file-1', 'Private salary']) assert.equal(text.includes(secret), false, secret);
   assert.equal(projected.scope, 'Clean out garage'); assert.deepEqual(projected.assignedCrew, ['Crew.One']); assert.equal(projected.vehicleId, 'truck-1');
   assert.equal(fieldJobProjection({ ...j, jobInstructions: 'Dispatch-created scope' }).scope, 'Dispatch-created scope');
