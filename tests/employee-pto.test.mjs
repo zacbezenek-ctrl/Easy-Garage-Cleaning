@@ -669,3 +669,17 @@ test('the generic employee record endpoint no longer accepts request writes from
     }
   }
 });
+
+// NO-SELF-APPROVAL: a manager never approves, denies or reprices their own request; another manager or the owner does.
+test('a manager cannot approve, deny or change the pay of their own time off; the owner can',async()=>{
+  const f=fixture(),tyler={user:'tylerg',displayName:'Synthetic Manager',role:'manager',businessAccess:true};
+  f.roster.push({id:'tylerg',name:'Synthetic Manager',role:'manager'});
+  const own=(await f.request({},tyler)).request;
+  for (const action of ['approve','deny']) await assert.rejects(f.act(action,own.id,{note:'Synthetic'},tyler),{code:'pto_self_approval',status:403},action);
+  assert.equal(f.record(own.id).status,'pending','nothing changed');
+  // Another employee's request is still the manager's to decide, and the owner decides the manager's own.
+  const crewRow=(await f.request()).request;
+  assert.equal((await f.act('deny',crewRow.id,{note:'Synthetic'},tyler)).request.status,'denied');
+  assert.equal((await f.act('approve',own.id,{note:'Synthetic'})).request.status,'approved');
+  await assert.rejects(f.act('amend',own.id,{paid:true,hoursPerDay:4},tyler),{code:'pto_self_approval'});
+});

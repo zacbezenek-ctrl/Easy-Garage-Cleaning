@@ -652,6 +652,13 @@ service cloud.firestore {
       allow read, write: if false;
     }
 
+    // Client portal messages waiting for the office (PORTAL-INBOX): written only
+    // in the portal's message commit, read and marked handled through
+    // /api/customer-messages.
+    match /customerMessageAlerts/{documentId} {
+      allow read, write: if false;
+    }
+
     // HighLevel tag outbox (GHL-TRACK-1): written only in the server commit of a
     // schedule change or walkthrough outcome, drained by /api/ghl-tag-drain.
     match /ghlTagOutbox/{documentId} {
