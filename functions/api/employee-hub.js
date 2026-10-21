@@ -158,9 +158,16 @@ const manager = session => hasBusinessAccess(session);
 const withJobTime = (entry, now) => isRecord(entry) ? { ...entry, jobTime: jobTimeView(entry, now) } : entry;
 const same = (left, right) => String(left || '').trim().toLowerCase() === String(right || '').trim().toLowerCase();
 const personKey = value => String(value || '').trim().toLowerCase();
-// The Hub's read-marker ID (employee-suite.js opsMarkChatRead): letters and digits of the person and the channel.
+// A read marker's ID: a hash of the exact lowercased username and the channel, so two accounts that differ only in
+// punctuation (crew.static and crew_static) never share one. Markers saved before kept only letters and digits
+// (legacyReadMarkerId); the first save in the new format starts from that one when it is the caller's.
+const markerChannel = channel => String(channel || '').trim().slice(0, 180);
+async function readMarkerId(user, channel) {
+  const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(`${personKey(user)}\n${markerChannel(channel)}`));
+  return `read-${[...new Uint8Array(digest)].slice(0, 20).map(byte => byte.toString(16).padStart(2, '0')).join('')}`;
+}
 const markerKey = value => String(value || '').toLowerCase().replace(/[^a-z0-9]/g, '');
-const readMarkerId = (user, channel) => `read-${markerKey(user)}-${markerKey(String(channel || '').trim().slice(0, 180))}`;
+const legacyReadMarkerId = (user, channel) => `read-${markerKey(user)}-${markerKey(markerChannel(channel))}`;
 const legacyPersonKeys = value => [...new Set([
   personKey(value).replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '') || 'employee',
   personKey(value).replace(/[^a-z0-9]/g, ''),
@@ -559,7 +566,7 @@ export async function onRequestPost({ request, env }) {
   const collection = String(body.collection || '');
   // A read marker's ID is the caller's own, built from who is signed in and the channel (as the Hub names it), never
   // the ID a request sends: nobody can claim another person's marker document.
-  const id = collection === 'messageReads' && isRecord(body.data) ? readMarkerId(session.user, body.data.channel) : String(body.id || '').trim();
+  const id = collection === 'messageReads' && isRecord(body.data) ? await readMarkerId(session.user, body.data.channel) : String(body.id || '').trim();
   if (!COLLECTIONS.has(collection) || !id || id.length > 180) return reply(400, { ok: false, error: 'Invalid employee record' });
   // Requests change only through /api/employee-pto: field whitelist, decision history and availability locks.
   if (collection === 'requests') return reply(403, { ok: false, code: 'EMPLOYEE_HUB_REQUEST_WORKFLOW_REQUIRED', error: 'Requests are sent and reviewed through the request workflow. Refresh the Hub and try again.' });
@@ -590,6 +597,10 @@ export async function onRequestPost({ request, env }) {
           const legacy = await readEmployeeProfile(env, username);
           if (legacy.data) current = legacy;
         }
+      }
+      if (collection === 'messageReads' && !current.data) {
+        const legacy = await readOne(env, collection, legacyReadMarkerId(session.user, incoming.channel));
+        if (legacy.data && same(legacy.data.employee, session.user)) current = legacy;
       }
       // A different vault key changes IDs; a 404 alone cannot prove this is new. One stored record opening with this key
       // proves it (WP15: one document read, not a decrypt of the whole vault on every clock-in and chat message).

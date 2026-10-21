@@ -58,6 +58,37 @@ class ChatSeenBrowserTests(HubShell, unittest.TestCase):
         self.box('box.scrollTop = box.scrollHeight; box.dispatchEvent(new Event("scroll")); return 0')
         page.wait_for_timeout(300)
         self.assertEqual(self.reads[-1]['seenThrough'], message(21)['createdAt'])
+        # Scrolled up, the reader leaves the room; coming back opens it at the newest message again.
+        self.box('box.scrollTop = 0; box.dispatchEvent(new Event("scroll")); return 0')
+        page.wait_for_timeout(200)
+        page.evaluate("opsGo('my_day')"); page.evaluate("opsGo('crew_chat')")
+        page.wait_for_function("document.querySelectorAll('.ops-chat-messages article[data-at]').length >= 21")
+        page.wait_for_timeout(200)
+        self.assertTrue(self.box('return box.scrollTop + box.clientHeight >= box.scrollHeight - 2'), 'coming back opens at the newest message')
+
+
+    def test_a_short_window_scrolled_past_the_room_marks_nothing_new(self):
+        # A phone on its side (667x375): with the page scrolled to its end the compose box fills the window, and the
+        # room's newest messages sit above the window or behind the sticky top bar.
+        self.messages = [message(index) for index in range(1, 21)]
+        page = self.open('crew_chat', width=667, height=375, profile=CREW)
+        page.wait_for_function("document.querySelectorAll('.ops-chat-messages article[data-at]').length >= 20")
+        page.wait_for_timeout(300)
+        page.evaluate('window.scrollTo({top: document.documentElement.scrollHeight, behavior: "instant"}); window.dispatchEvent(new Event("scroll"))')
+        page.wait_for_timeout(200)
+        self.assertLess(self.box('return box.getBoundingClientRect().bottom'), self.page.evaluate("document.querySelector('.ops-topbar').getBoundingClientRect().bottom") + 20, 'the room is scrolled out of view')
+        marked = len(self.reads)
+        self.messages.append(message(21))
+        page.evaluate('opsRefresh()')
+        page.wait_for_function("[...document.querySelectorAll('.ops-chat-messages article[data-at]')].some(item => item.textContent.includes('number 21'))")
+        page.wait_for_timeout(300)
+        page.evaluate('window.dispatchEvent(new Event("scroll"))')
+        page.wait_for_timeout(200)
+        self.assertEqual([read['seenThrough'] for read in self.reads[marked:]], [], 'a message off screen is not marked seen')
+        # Scrolling the page back to the room's newest message marks it.
+        self.box('box.scrollTop = box.scrollHeight; box.scrollIntoView({block: "end", behavior: "instant"}); window.dispatchEvent(new Event("scroll")); return 0')
+        page.wait_for_timeout(300)
+        self.assertEqual(self.reads[-1]['seenThrough'], message(21)['createdAt'])
 
 
 if __name__ == '__main__':
