@@ -17,7 +17,7 @@ import { PRICING_MENU_JSON } from '../_data/pricing-menu.js';
  *              cleaning bases, cleaning add-ons, special items and access until the owner approves a price.
  *   approvals  pricingMenuApprovals/current: {items: {[menuItemId]: {unitCents, identity}}, revision,
  *              goodsInstallationIncluded?}, written only by the owner's bulk approval (catalog-store.js menu.approve).
- * A price is approved when the menu itself records an owner-approved amount (the $750 full truck) or the owner
+ * A price is approved when the menu itself records an owner-approved amount (the $1,000 full truck) or the owner
  * approved that item at exactly that amount. An owner-approved service amount is the price; a product approval
  * holds only while cost x goodsMarkup still gives the approved amount. An approval also names the item it was
  * given for (menuItemIdentity): a re-import that renames or re-maps an item id puts it back into draft. Draft prices may
@@ -39,15 +39,15 @@ import { PRICING_MENU_JSON } from '../_data/pricing-menu.js';
  * a Labor line also passes once the estimator set the man-hours by hand (labor.adjusted) after being told which goods
  * the estimate leaves out.
  *
- * Junk removal (owner decision D-JUNK, 2026-10-18: "$750 per truck covers the crew's time"): the truck-load prices (the
- * $750 full truck and the partial loads drafted from it) already pay for loading, hauling and disposal, and so do the
+ * Junk removal (owner decision D-JUNK, 2026-10-18: "$750 per truck covers the crew's time"; the full truck is $1,000 since the
+ * owner decision of 2026-10-21): the truck-load prices (the $1,000 full truck and the partial loads drafted from it) already pay for loading, hauling and disposal, and so do the
  * special-handling items ("incremental disposal/handling") and access charges ("incremental labor only") that go with
  * them (HAULING_GROUPS). So (1) the labor estimate never counts truck-load, hauling or disposal time: of the walkthrough
  * time model it keeps the set-up and sweep-out (base), the sorting of the garage's contents (the fullness minutes, with a
  * garage cleaning base), the cleaning add-ons and the install time of the goods, and drops the per-load minutes, the
  * special-item minutes and the access minutes (laborTime); (2) a junk-only quote (junkOnly: at least one truck load, and
  * otherwise only special-handling items and access charges; no cleaning base, cleaning add-on, shelving or storage) has
- * no Labor line at all and is complete, sendable and signable without one: it is $750 per truck. Special items and
+ * no Labor line at all and is complete, sendable and signable without one: it is $1,000 per truck. Special items and
  * access charges are priced on top of a truck already on the job, so a quote of only those (no truck load) is not
  * junk-only: nothing else would pay the crew's time, and it keeps its Labor line. Every quote with garage work (sorting
  * and organizing, shelving, storage, installation, cleaning) still needs its Labor line.
@@ -97,7 +97,7 @@ export const LABOR_ID = 'labor';
 // (quote-model.js BUILDER_LABOR_VERSION, which the customer surfaces read too.)
 export const LABOR_VERSION = BUILDER_LABOR_VERSION;
 // D-JUNK: the removal groups whose own prices pay the crew's time (truck loads; special-handling items and access charges,
-// which go with them). A quote of at least one truck load and nothing else is junk-only (junkOnly): no Labor line, $750
+// which go with them). A quote of at least one truck load and nothing else is junk-only (junkOnly): no Labor line, $1,000
 // per truck.
 export { HAULING_GROUPS };
 /** A junk-only quote (D-JUNK; quote-model.js builderJunkOnly): its builder lines (breakdown lines, or anything with section
@@ -347,7 +347,7 @@ export const manHoursOf = personMinutes => Math.min(LABOR_MAN_HOURS.max, Math.ma
  * are elapsed minutes for its calibrated crew (calibratedCrew, 2), each multiplied by that crew. Unlike the schedule's
  * wall-clock estimate, nothing is divided by the crew chosen on the Schedule tab, rounded to 30 minutes or kept within
  * one working day, so the same work has the same man-hours for any crew and any length of job.
- * D-JUNK ("$750 per truck covers the crew's time"): the model's minutes are kept or dropped by what they time, per the
+ * D-JUNK (the truck price covers the crew's time): the model's minutes are kept or dropped by what they time, per the
  * walkthrough's own model and the menu's scope notes.
  *   base       kept: once per quote (arrival, set-up and sweep-out)
  *   fill       kept, with a garage cleaning base: the fullness minutes of the walkthrough's "How full is it?" (unknown:
@@ -387,7 +387,7 @@ function laborTime(state) {
  * cleanout step's garage work: set-up and sweep-out, sorting and cleaning; never hauling), installPersonMinutes, fullness,
  * installNotEstimated:[{id, name, packs}], manHours (manHoursOf)}, or null without the time model. Example: a two-car
  * base, one full truck load in a medium-full garage and two shelving units = 2 x (60 + 30) + 2 x 60 = 300 person-minutes
- * = 5 man-hours ($265.00 at $53.00), for a crew of 2 or of 4; the truck load's own $750 pays its loading and hauling.
+ * = 5 man-hours ($265.00 at $53.00), for a crew of 2 or of 4; the truck load's own price pays its loading and hauling.
  */
 export function laborEstimate(selection, state) {
   const time = laborTime(state);
@@ -583,7 +583,7 @@ function checkRemoval(entries, prices, garageSize = null) {
  *   steps             [{id,label,subtotalCents,runningTotalCents}] for the completed steps, then labor once priced
  *   labor             {version, manHours, rateCents, rateSource, totalCents, prefilledManHours, adjusted, belowEstimate,
  *                     estimate} (pricedLabor) or null when the selection sent none (a step preview) or is junk-only
- *   junkOnly          true for a junk-only selection: $750 per truck, no Labor line
+ *   junkOnly          true for a junk-only selection: $1,000 per truck, no Labor line
  *   approval          {ready, blocked:[{id,name,unitCents,reason}]}: ready false blocks sending
  */
 export function priceCompositeQuote(state, descriptor, { complete = false, requireLabor = true } = {}) {
@@ -654,7 +654,7 @@ export function priceCompositeQuote(state, descriptor, { complete = false, requi
     splits.set(line.id, { productCents, laborCents: 0, laborMinutes: 0, markupCents: totalCents - productCents, disposalCents: 0 });
   }
   if (!model.length) throw fail('empty', 'Add at least one removal, shelving or storage item to price the quote.');
-  // D-JUNK: a junk-only quote is $750 per truck. It has no Labor line, so labor the browser sent for it is dropped and
+  // D-JUNK: a junk-only quote is $1,000 per truck. It has no Labor line, so labor the browser sent for it is dropped and
   // the saved selection carries none; every other complete quote needs its labor.
   const junk = junkOnly(detail);
   if (junk) delete selection.labor;
@@ -713,15 +713,25 @@ function purchaseList(lines) {
 // is refused unless requireLabor is false (a job the customer already signed that way: it keeps the earlier rules) or the
 // quote is junk-only (D-JUNK: it has no Labor line; an unsent one that still has one is saved again first).
 // signed: the breakdown is a signed job's, whose labor keeps the rate and line it was signed at (laborBlock).
+// The customer keeps the price signed (owner decision 2026-10-21, with the $1,000 truck), but never pays more than the
+// owner approved: on a signed job (signed) a line passes once its item is owner-approved at the signed amount or more
+// ($750 signed, $1,000 approved), as the signed labor rate does. A line signed above the approved amount (a draft
+// placeholder the owner approved lower, e.g. a cleaning base priced with hauling) stays held until the customer signs
+// the rebuilt quote. A draft price is never released by this: its item must be approved first.
 function approvalOf(lines, prices, state, labor, { requireLabor = true, signed = false } = {}) {
   const junk = junkOnly(lines);
   const blocked = lines.filter(line => {
     const price = prices.get(line.id);
+    if (signed && price?.approved && line.unitCents <= price.unitCents) return false;
     return !price || !price.approved || price.unitCents !== line.unitCents;
   }).map(line => {
     const price = prices.get(line.id);
-    return { id: line.id, name: line.name, unitCents: line.unitCents,
+    // resave (an unsent quote only; a signed job is never saved again): the item is owner-approved at another
+    // amount (the owner changed the price, e.g. the $1,000 truck), so the estimator saves the quote again; nothing waits
+    // for the owner (crew/quote-draft.js held()).
+    return { id: line.id, name: line.name, unitCents: line.unitCents, ...(price?.approved && !signed ? { resave: true } : {}),
       reason: !price ? `${line.name} is no longer on the pricing menu. Rebuild the quote before sending.`
+        : price.approved && signed ? `The owner approved ${money(price.unitCents)} for ${line.name}, less than the ${money(line.unitCents)} the customer signed. The customer is never charged more than the approved price: rebuild the quote and have the customer sign it again.`
         : price.approved ? `The owner approved ${money(price.unitCents)} for ${line.name}, but this quote has ${money(line.unitCents)}. Save the quote again to use the approved price.`
           : `${line.name}: ${price.reason.charAt(0).toLowerCase()}${price.reason.slice(1)}` };
   });
@@ -744,7 +754,8 @@ function approvalOf(lines, prices, state, labor, { requireLabor = true, signed =
 
 /** Send-time check of a saved breakdown against today's menu, settings, approvals and labor rate: {ready, blocked}.
  * signed (a job the customer already signed, releaseGate): a breakdown without labor is judged by the earlier rules,
- * and its labor keeps the (then approved) rate it was signed at. */
+ * its labor keeps the (then approved) rate it was signed at, and each line keeps its signed amount once its item is
+ * owner-approved. */
 export function compositeApproval(breakdown, state, { signed = false, requireLabor = !signed } = {}) {
   if (!plain(breakdown) || breakdown.source !== 'composite' || !Array.isArray(breakdown.lines)) return { ready: false, blocked: [{ id: null, name: 'This quote', unitCents: null, reason: 'The saved builder breakdown is missing. Rebuild the quote before sending.' }] };
   return approvalOf(breakdown.lines, menuPrices(state), state, breakdown.labor, { requireLabor, signed });
@@ -754,8 +765,11 @@ export function compositeApproval(breakdown, state, { signed = false, requireLab
 export function approvalRefusal(approval) {
   const names = approval.blocked.map(line => line.name);
   const listed = names.slice(0, 8).join(', ') + (names.length > 8 ? ` and ${names.length - 8} more` : '');
-  return fail('prices_unapproved', `This quote has ${names.length} price${names.length === 1 ? '' : 's'} the owner has not approved: ${listed}. It stays saved as a draft and can be sent once the owner approves ${names.length === 1 ? 'it' : 'them'} in Hub > Catalog & pricing.`, 409,
-    { unapproved: approval.blocked.map(({ id, name, unitCents, reason }) => ({ id, name, unitCents, reason })) });
+  const message = approval.blocked.every(line => line.resave === true)
+    ? `The owner changed ${names.length === 1 ? 'the price' : 'the prices'} of ${listed} since this quote was saved. It stays saved as a draft: save the quote again to use the approved ${names.length === 1 ? 'price' : 'prices'}; no owner approval is needed.`
+    : `This quote has ${names.length} price${names.length === 1 ? '' : 's'} the owner has not approved: ${listed}. It stays saved as a draft and can be sent once the owner approves ${names.length === 1 ? 'it' : 'them'} in Hub > Catalog & pricing.`;
+  return fail('prices_unapproved', message, 409,
+    { unapproved: approval.blocked.map(({ id, name, unitCents, reason, resave }) => ({ id, name, unitCents, reason, ...(resave === true ? { resave: true } : {}) })) });
 }
 
 /** The builder step a garage-catalog product belongs to (the Hub catalog quote): shelving or extra storage. */

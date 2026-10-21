@@ -615,7 +615,8 @@ service cloud.firestore {
     match /catalogOperations/{documentId} {
       allow read, write: if false;
     }
-    // Owner approvals of pricing-menu prices (quote builder), written by /api/catalog menu.approve.
+    // Owner approvals of pricing-menu prices (quote builder), written by /api/catalog menu.approve, and the menu version
+    // whose held jobs were last swept (heldRelease, /api/held-jobs).
     match /pricingMenuApprovals/{documentId} {
       allow read, write: if false;
     }
