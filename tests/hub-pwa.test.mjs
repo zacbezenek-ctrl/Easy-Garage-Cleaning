@@ -490,8 +490,8 @@ test('a sign-out while a Hub file is loading: the worker answers, does not keep 
 test('a tapped Hub alert closes, focuses an open Hub window as it is, and otherwise opens the Hub on the screen it names', async () => {
   const sw = await installed();
   const tap = async (data, windows) => {
-    const calls = { closed: 0, focused: [], opened: [], matched: [] };
-    sw.context.clients.matchAll = async options => { calls.matched.push(options); return windows.map(url => ({ url: new URL(url, ORIGIN).href, focus: async () => { calls.focused.push(url); } })); };
+    const calls = { closed: 0, focused: [], opened: [], matched: [], posted: [] };
+    sw.context.clients.matchAll = async options => { calls.matched.push(options); return windows.map(url => ({ url: new URL(url, ORIGIN).href, focus: async () => { calls.focused.push(url); }, postMessage: message => { calls.posted.push(message); } })); };
     sw.context.clients.openWindow = async url => { calls.opened.push(url); };
     await sw.dispatch('notificationclick', { notification: { data, close: () => { calls.closed++; } } });
     return calls;
@@ -505,4 +505,16 @@ test('a tapped Hub alert closes, focuses an open Hub window as it is, and otherw
   assert.deepEqual((await tap({ view: 'my_day' }, [])).opened, ['/employee?view=my_day']);
   assert.deepEqual((await tap({ view: 'javascript:alert(1)' }, [])).opened, ['/employee?view=my_day'], 'an unknown screen opens My day');
   assert.deepEqual((await tap(undefined, [])).opened, ['/employee?view=my_day']);
+  assert.deepEqual(open.posted, [], 'only a slip alert tells the open Hub a job');
+  // MANAGER-SLIP-ALERTS: a slip alert opens Today on its job, the URL built only from the fixed screens and a plain doc id.
+  assert.deepEqual((await tap({ view: 'today', job: 'late-job_2' }, [])).opened, ['/employee?view=today&job=late-job_2']);
+  for (const job of ['late&view=finance', '../x', 'a b', '<img>', 'x'.repeat(129), '', 42, null, ['late']])
+    assert.deepEqual((await tap({ view: 'today', job }, [])).opened, ['/employee?view=today'], `job ${JSON.stringify(job)} is dropped, never put in the URL`);
+  assert.deepEqual((await tap({ view: 'my_day', job: 'late-job' }, [])).opened, ['/employee?view=my_day'], 'only Today takes a job');
+  assert.deepEqual((await tap({ view: 'finance', job: 'late-job' }, [])).opened, ['/employee?view=my_day'], 'an unlisted screen opens My day, without the job');
+  // An open Hub is focused as it is (nothing typed there is lost) and told the job, so it opens the row itself.
+  const running = await tap({ view: 'today', job: 'late-job' }, ['/employee?view=my_day']);
+  assert.deepEqual([running.focused, running.opened], [['/employee?view=my_day'], []]);
+  assert.deepEqual(JSON.parse(JSON.stringify(running.posted)), [{ type: 'egc-alert-open', view: 'today', job: 'late-job' }]);
+  assert.deepEqual((await tap({ view: 'today', job: 'late&x' }, ['/employee'])).posted, [], 'an unsafe job id is not posted either');
 });

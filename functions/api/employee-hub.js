@@ -14,6 +14,7 @@ import { ptoOffOn } from '../_lib/pto-pay.js';
 import { SELF_PERSONAL_FIELDS, legacyManagerProfile, legacyProfileView, mirrorLegacyPay, personalInput, profileHourlyRate, staffDirectoryEnabled } from '../_lib/staff-directory.js';
 import { assertNoOthersPay, assertPayUnchanged, canSetPay, payHidden, payOwnerField, seesOthersPay, visiblePay, withoutPayWrites } from '../_lib/pay-visibility.js';
 import { can, staffPasswordResetEnabled } from '../_lib/staff-roles.js';
+import { slipAlertsFor } from '../_lib/manager-slip-alerts.js';
 
 const PROJECT_ID = 'egcw-1ec83';
 const COLLECTIONS = EMPLOYEE_HUB_COLLECTIONS;
@@ -543,7 +544,7 @@ export async function onRequestGet({ request, env }) {
     for (const name of ['profiles', 'timeEntries', 'requests']) collections[name] = collections[name].map(row => visiblePay(session, env, name, row));
     // Each timecard's job time (current segment, per-job work and travel, general time) for the Hub's labels.
     collections.timeEntries = collections.timeEntries.map(row => withJobTime(row, viewedAt));
-    return reply(200, { ok: true, collections, payVisibility: seesOthersPay(session, env) ? 'all' : 'own', paySet: canSetPay(session, env), clockInWithoutFix: clockInWithoutFix(env), timecardCorrections: manager(session) && can(session, 'time.approve', env) && timecardCorrectionsEnabled(env), ...(includeAccounts ? { accounts: seesOthersPay(session, env) ? accounts : accounts.map(account => payHidden('accounts', account)) } : {}) });
+    return reply(200, { ok: true, collections, payVisibility: seesOthersPay(session, env) ? 'all' : 'own', paySet: canSetPay(session, env), clockInWithoutFix: clockInWithoutFix(env), timecardCorrections: manager(session) && can(session, 'time.approve', env) && timecardCorrectionsEnabled(env), slipAlerts: slipAlertsFor(session, env), ...(includeAccounts ? { accounts: seesOthersPay(session, env) ? accounts : accounts.map(account => payHidden('accounts', account)) } : {}) });
   } catch (error) {
     return reply(502, { ok: false, ...(error.code ? { code: error.code } : {}), error: String(error.message || 'Employee Hub storage failed') });
   }
