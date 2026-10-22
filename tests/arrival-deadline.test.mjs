@@ -429,18 +429,28 @@ test('Start today\'s work is offered only to someone who works the job today', (
   assert.equal(project(single, morning).startTodayOffered, false, 'the next day');
 });
 
-// Review of #224: two phones. The stored tap time never moves back, so a second phone's queued day-1 Pause synced after
-// day 2's Start today's work cannot turn day 2 back to Late (main shows no flag here either).
+// Review of #224: two phones. A tap made before the stored one is stale: it goes into the history but replaces neither
+// the activity nor its time, so the stored pair stays honest and a second phone's queued day-1 tap synced on day 2
+// cannot change day 2's flags (main shows no flag in these cases either).
 for (const [name, command] of [['FIELD_MULTIDAY_VISITS off', fieldCommand], ['FIELD_MULTIDAY_VISITS on', fieldVisitCommand]]) {
-  test(`an older tap from a second phone never moves the stored tap time back (${name})`, () => {
-    const started = tapAt(command, working(command), 'in_progress', denver('2026-09-23', '08:02'), denver('2026-09-23', '08:02'));
-    const replayed = tapAt(command, started, 'paused', denver('2026-09-22', '16:00'), denver('2026-09-23', '08:30'));
-    assert.deepEqual([replayed.fieldExecution.activity, replayed.fieldExecution.activityTappedAt], ['paused', denver('2026-09-23', '08:02')]);
-    assert.deepEqual(flags(visitRow(replayed, replayed.assignmentSegments[1]), { now: at(denver('2026-09-23', '08:40')) }), []);
-    // End day keeps the floor too.
+  test(`an older tap from a second phone replaces neither the activity nor its time (${name})`, () => {
+    for (const startAt of ['07:50', '08:02']) {
+      // Phone A taps Start today's work (before or after the 08:00 start); phone B's queued day-1 Pause syncs at 08:30.
+      const started = tapAt(command, working(command), 'in_progress', denver('2026-09-23', startAt), denver('2026-09-23', startAt));
+      const replayed = tapAt(command, started, 'paused', denver('2026-09-22', '16:00'), denver('2026-09-23', '08:30'));
+      assert.deepEqual([replayed.fieldExecution.activity, replayed.fieldExecution.activityTappedAt], ['in_progress', denver('2026-09-23', startAt)], startAt);
+      assert.deepEqual(flags(visitRow(replayed, replayed.assignmentSegments[1]), { now: at(denver('2026-09-23', '08:40')) }), [], `Start at ${startAt}`);
+    }
+    // Delayed at 07:30 on day 2 (not an arrival), then phone B's queued day-1 Waiting: it does not become today's arrival.
+    const delayed = tapAt(command, working(command), 'delayed', denver('2026-09-23', '07:30'), denver('2026-09-23', '07:30'));
+    const waiting = tapAt(command, delayed, 'waiting', denver('2026-09-22', '15:00'), denver('2026-09-23', '07:40'));
+    assert.deepEqual([waiting.fieldExecution.activity, waiting.fieldExecution.activityTappedAt], ['delayed', denver('2026-09-23', '07:30')]);
+    assert.deepEqual(kinds(flags(visitRow(waiting, waiting.assignmentSegments[1]), { now: at(denver('2026-09-23', '08:15')) })), ['late'], 'still Late');
+    // End day keeps the pair too: a stale End day does not replace today's Start.
     if (command === fieldVisitCommand) {
-      const ended = fieldVisitCommand(replayed, tapper, { action: 'end_day', requestId: '00000000-0000-4000-8000-0000000000f3', tappedAt: denver('2026-09-22', '17:00'), notes: 'Synthetic day two notes, done for today.' }, denver('2026-09-23', '15:00')).patch.fieldExecution;
-      assert.equal(ended.activityTappedAt, denver('2026-09-23', '08:02'));
+      const started = tapAt(command, working(command), 'in_progress', denver('2026-09-23', '08:02'), denver('2026-09-23', '08:02'));
+      const ended = fieldVisitCommand(started, tapper, { action: 'end_day', requestId: '00000000-0000-4000-8000-0000000000f3', tappedAt: denver('2026-09-23', '07:00'), notes: 'Synthetic day two notes, an old queued end.' }, denver('2026-09-23', '15:00')).patch.fieldExecution;
+      assert.deepEqual([ended.activity, ended.activityTappedAt], ['in_progress', denver('2026-09-23', '08:02')]);
     }
   });
 }

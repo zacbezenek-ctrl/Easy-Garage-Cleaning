@@ -107,7 +107,8 @@ export function fieldVisitCommand(job, actor, input, now = new Date().toISOStrin
     // today's visit has not started; once it has, the clock is today's work.
     const notes = input.notes.trim(), stop = !late || !visit, time = stop ? advanceFieldTime(job, null, actor, input.requestId, now) : { clock: null, segment: null };
     const ended = { ...(target || { startedAt: null, startedBy: null }), status: 'ended', endedAt: now, endedBy: actorId, endedByName: actorName, notes, requestId: input.requestId, ...(late ? { endedLate: true } : {}) };
-    const fieldExecution = { ...state, ...(stop ? { activity: 'day_ended', activityAt: now, activityTappedAt: fieldTapStamps(state, input, now).activityTappedAt, activityBy: actorId, activityReason: fieldText(notes, 1000) } : {}), visits: { ...visits, [date]: ended }, ...(time.clock ? { jobTime: time.clock } : {}) };
+    const tap = fieldTapStamps(state, input, now);
+    const fieldExecution = { ...state, ...(stop && !tap.stale ? { activity: 'day_ended', activityAt: now, activityTappedAt: tap.activityTappedAt, activityBy: actorId, activityReason: fieldText(notes, 1000) } : {}), visits: { ...visits, [date]: ended }, ...(time.clock ? { jobTime: time.clock } : {}) };
     const event = { id: input.requestId, action: 'end_day', actorId, actorName, createdAt: now, state: 'applied', visibility: 'crew', summary: late ? `Day ended (${date}, synced late)` : 'Day ended', body: notes, visitDate: date, ...(time.segment ? { timeSegment: time.segment } : {}) };
     return reviewOvernight(job, { patch: { fieldExecution, updatedAt: now, fieldLastActionAt: now }, event }, today, now, late && stop);
   }

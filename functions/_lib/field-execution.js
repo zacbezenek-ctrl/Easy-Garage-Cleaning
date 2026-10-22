@@ -143,16 +143,18 @@ export function fieldTapTime(input, now) {
   const nowMs = Date.parse(now), tapped = Date.parse(typeof input?.tappedAt === 'string' ? input.tappedAt : '');
   return Number.isFinite(tapped) && Number.isFinite(nowMs) ? new Date(Math.min(nowMs, Math.max(nowMs - TAP_WINDOW_MS, tapped))).toISOString() : now;
 }
-/* The tap times one status or End day tap records. activityTappedAt never moves back: an older tap synced after a
-   newer one (a second phone's queued Pause from yesterday) keeps the stored time, as the timecards floor a device
-   clock, so it cannot turn today's recorded arrival back into Late. stampAt dates the arrival, dispatch and first
-   start the tap writes: the tap's own time when it was made on an earlier Denver day than the server's (an Arrived
-   queued offline yesterday is yesterday's arrival), else the server's time as before. Both only ever move a time into
-   the past, so a forged phone time cannot make a crew look on site today. The phone's time is never proof of when
-   the crew arrived. */
+/* The tap times one status or End day tap records. activity and activityTappedAt stay an honest pair: a tap made
+   before the one stored (a second phone's queued Pause from yesterday, synced after today's Start) is stale. It is
+   recorded in the job's history but describes neither the job's current activity nor its time, so it cannot turn
+   today's recorded arrival back into Late or lend its activity to a newer tap's time. stampAt dates the arrival,
+   dispatch and first start the tap writes: the tap's own time when it was made on an earlier Denver day than the
+   server's (an Arrived queued offline yesterday is yesterday's arrival), else the server's time as before. Only an
+   offline tap carries a phone time (crew/job.js), and these rules only ever move a time into the past, so a wrong or
+   forged phone clock cannot make a crew look on site today. The phone's time is never proof of when the crew
+   arrived. */
 export function fieldTapStamps(state, input, now) {
   const tapped = fieldTapTime(input, now), stored = Date.parse(state?.activityTappedAt || '');
-  return { activityTappedAt: Number.isFinite(stored) && stored > Date.parse(tapped) && stored <= Date.parse(now) ? state.activityTappedAt : tapped,
+  return { activityTappedAt: tapped, stale: Number.isFinite(stored) && stored > Date.parse(tapped),
     stampAt: earlierDenverDay(tapped, now) ? tapped : now, earlierDay: earlierDenverDay(tapped, now) };
 }
 export function fieldJobProjection(job, events = [], options = {}) {
@@ -262,8 +264,8 @@ export function fieldCommand(job, actor, input, now = new Date().toISOString()) 
         if (missing.length) throw fieldFailure('Complete arrival preparation before starting work.', 409, 'FIELD_START_INCOMPLETE', { missing });
       }
       if (['paused', 'waiting', 'delayed'].includes(next) && fieldText(input.reason).length < 3) throw fieldFailure('Add a short reason so dispatch knows what is happening.');
-      const canonical = ['paused', 'waiting', 'delayed'].includes(next) ? current : next, { activityTappedAt, stampAt } = fieldTapStamps(state, input, now);
-      patch = { status: canonical, pipelineStatus: canonical, fieldExecution: { ...state, activity: next, activityAt: now, activityTappedAt, activityBy: actorId, activityReason: fieldText(input.reason, 1000) }, ...(next === 'in_progress' && !job.startedAt ? { startedAt: stampAt, startedBy: actorId } : {}), ...(next === 'arrived' ? { arrivedAt: stampAt, arrivedBy: actorId } : {}), ...(next === 'dispatched' ? { dispatchedAt: stampAt, dispatchedBy: actorId } : {}) };
+      const canonical = ['paused', 'waiting', 'delayed'].includes(next) ? current : next, { activityTappedAt, stale, stampAt } = fieldTapStamps(state, input, now);
+      patch = { status: canonical, pipelineStatus: canonical, fieldExecution: stale ? { ...state } : { ...state, activity: next, activityAt: now, activityTappedAt, activityBy: actorId, activityReason: fieldText(input.reason, 1000) }, ...(next === 'in_progress' && !job.startedAt ? { startedAt: stampAt, startedBy: actorId } : {}), ...(next === 'arrived' ? { arrivedAt: stampAt, arrivedBy: actorId } : {}), ...(next === 'dispatched' ? { dispatchedAt: stampAt, dispatchedBy: actorId } : {}) };
       if (next === 'in_progress' && current !== 'in_progress') {
         const items = fieldChecklist(job).filter(item => ['departure', 'arrival'].includes(item.stage));
         const progress = { completedAt: now, completedBy: actorId, completedCount: items.filter(item => item.completed).length, totalCount: items.length, standardItems: items };

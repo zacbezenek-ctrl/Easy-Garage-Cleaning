@@ -83,10 +83,10 @@ try {
   await page.getByRole('button', { name: 'Start my travel time here', exact: true }).click();
   await page.getByRole('button', { name: 'Recording travel here', exact: true }).waitFor();
   await page.getByRole('button', { name: 'Mark en route', exact: true }).click(); await settled();
-  // #219: the tap carries when it was made on the phone; the server keeps it (never later than its own time).
+  // #219: an online tap sends no phone time, so the server dates it with its own clock.
   const enRoute = store.get('jobs/browser-job').fieldExecution;
   assert.equal(enRoute.activity, 'dispatched');
-  assert.ok(Date.parse(enRoute.activityTappedAt) <= Date.parse(enRoute.activityAt) && Date.parse(enRoute.activityAt) - Date.parse(enRoute.activityTappedAt) < 60000, 'the phone\'s tap time is stored');
+  assert.equal(enRoute.activityTappedAt, enRoute.activityAt, 'an online tap is dated by the server');
   await page.getByRole('button', { name: 'Mark arrived', exact: true }).click(); await settled();
   await page.getByRole('button', { name: 'Start work', exact: true }).click(); await settled();
   await page.getByRole('alert').filter({ hasText: 'Complete arrival preparation' }).waitFor();

@@ -510,9 +510,10 @@
     // Asked before anything is saved. A completion's time move waits until the completion is confirmed.
     const follow = followingTime(payload), afterComplete = payload.action === 'complete' ? follow.splice(0) : [];
     // Controls lock at once, before the action is stored, so a second tap cannot race it.
-    // A status or End day tap carries when it was made on this phone, set once here so an offline retry sends the same
-    // action (and fingerprint); the Hub dates today's arrival by it, not by when it reached the server.
-    const tapped = ['status', 'end_day'].includes(payload.action) ? { tappedAt: new Date().toISOString() } : {};
+    // A status or End day tap made offline carries when it was made on this phone, set once here so its replay sends
+    // the same action (and fingerprint); the Hub dates that tap by it, not by when it reached the server. An online tap
+    // sends none, so the server's clock dates it and a wrong phone clock cannot move it to another day.
+    const tapped = ['status', 'end_day'].includes(payload.action) && offline() ? { tappedAt: new Date().toISOString() } : {};
     const input = { ...payload, ...tapped, jobId, requestId: crypto.randomUUID(), expectedRevision: S.job.expectedRevision, expectedUser: S.user.user };
     const item = { requestId: input.requestId, kind: 'field', user: S.user.user, jobId, payload: input };
     S.actionError = null; S.busy = true; S.saving = { ...item, queuedAt: new Date().toISOString(), attempts: 0, state: 'queued' }; renderJob();
