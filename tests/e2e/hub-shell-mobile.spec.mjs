@@ -137,3 +137,19 @@ test('On a phone with a status bar and a home indicator, every dialog keeps its 
  await page.locator('.ops-modal .ops-action-dialog').waitFor();
  await check('Post announcement','.ops-modal .ops-action-dialog','header>button','footer button.primary');
 });
+
+// FIELD-FLAGS: the fixture's 08:00 job has no arrival at noon and its crew never clocked in, so the Command center
+// agenda shows a red Late chip and an amber Not clocked in chip, Needs attention counts it, and both fit the phone.
+test('Command center: today\'s field flags show on the agenda row and in Needs attention, and fit the screen',async({page})=>{
+ await hub(page,'today',MANAGER);
+ const row=page.locator('.ops-agenda article',{has:page.locator('.ops-field-flags')});
+ await expect(row).toHaveCount(1);
+ await expect(row.locator('.ops-field-flags li.red')).toHaveText('Late · due 8:15 AM');
+ await expect(row.locator('.ops-field-flags li.amber')).toHaveText('Not clocked in: synthetic.crew');
+ await expect(page.locator('.ops-attention button',{hasText:'1 job flagged today'})).toContainText('1 late · 1 crew member not clocked in.');
+ await assertNoHorizontalScroll(page);
+ const box=await row.locator('.ops-field-flags').evaluate(el=>{const r=el.getBoundingClientRect();return{left:r.left,right:innerWidth-r.right}});
+ expect(Math.min(box.left,box.right),'the chips stay inside the viewport').toBeGreaterThanOrEqual(0);
+ const low=Object.entries(await contrast(page,['.ops-field-flags li.red','.ops-field-flags li.amber'])).filter(([,ratio])=>ratio<4.5);
+ expect(low,'chip text under 4.5:1').toEqual([]);
+});

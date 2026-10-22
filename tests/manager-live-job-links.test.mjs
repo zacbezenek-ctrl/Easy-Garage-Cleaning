@@ -25,13 +25,15 @@ test('Job delivery sends Pre-job and Closeout to the live job page and keeps the
   const html = p.api.views.delivery();
   assert.match(html, /<a href="\/crew\/job\.html\?jobId=synthetic-job-1">Pre-job<\/a><a href="\/crew\/job\.html\?jobId=synthetic-job-1">Closeout<\/a><a class="ops-playbook-link" href="\/crew\/postjob\.html\?jobId=synthetic-job-1">Playbook \(reference\)<\/a>/);
   assert.doesNotMatch(html, /href="\/crew\/postjob\.html\?jobId=[^"]*">Closeout/);
-  // The header's primary action opens the live jobs; both playbooks stay as secondary buttons.
-  assert.match(html, /<a class="ops-button primary" href="\/crew\/">Open live jobs<\/a><a class="ops-button " href="\/crew\/prejob\.html">Pre-job playbook \(reference\)<\/a><a class="ops-button " href="\/crew\/postjob\.html">Post-job playbook \(reference\)<\/a>/);
+  // The header's primary action opens today's field agenda in the Hub (/crew/ lists only the viewer's own assignments,
+  // so an owner or manager who is not on a crew would land on an empty list); both playbooks stay as secondary buttons.
+  assert.match(html, /<button class="ops-button primary" onclick="opsGo\('today'\)">Today’s field agenda<\/button><a class="ops-button " href="\/crew\/prejob\.html">Pre-job playbook \(reference\)<\/a><a class="ops-button " href="\/crew\/postjob\.html">Post-job playbook \(reference\)<\/a>/);
+  assert.doesNotMatch(html, /href="\/crew\/">/);
 });
 
-test('the proof loop opens the live jobs first and keeps the post-job playbook', () => {
+test('the proof loop opens today\'s field agenda first and keeps the post-job playbook', () => {
   const html = suite().api.views.proof();
-  assert.match(html, /<a class="ops-button primary" href="\/crew\/">Open live jobs<\/a><a class="ops-button " href="\/crew\/postjob\.html">Post-job playbook \(reference\)<\/a>/);
+  assert.match(html, /<button class="ops-button primary" onclick="opsGo\('today'\)">Today’s field agenda<\/button><a class="ops-button " href="\/crew\/postjob\.html">Post-job playbook \(reference\)<\/a>/);
   assert.doesNotMatch(html, /Open post-job capture/);
 });
 
