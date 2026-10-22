@@ -98,6 +98,9 @@
   // INSTALLATION_ID, and a junk-only quote on a walkthrough that records garage work): never a wait for the owner's
   // approval alone.
   const JUNK_GARAGE_WORK = 'junk-garage-work', ESTIMATOR_FIXES = new Set(['labor', 'goods-installation', JUNK_GARAGE_WORK]);
+  // A held row the estimator fixes by saving again: the Labor line, installation time, junk-only garage work, or a price
+  // the owner has approved at another amount since the quote was saved (resave, e.g. the $1,000 truck).
+  const estimatorFix = row => ESTIMATOR_FIXES.has(row?.id) || row?.resave === true;
   const laborLimits = menu => ({ min: Number(menu?.labor?.minManHours) || LABOR_LIMITS.min, max: Number(menu?.labor?.maxManHours) || LABOR_LIMITS.max });
   const validManHours = (value, menu) => typeof value === 'number' && Number.isFinite(value) && Math.abs(value * 4 - Math.round(value * 4)) < 1e-9 && value >= laborLimits(menu).min && value <= laborLimits(menu).max;
   const hoursText = hours => `${Number(Number(hours).toFixed(2))} man-hour${hours === 1 ? '' : 's'}`;
@@ -420,7 +423,15 @@
     const close = () => { S.generation++; if (dialog.open) dialog.close(); dialog.remove(); active = null; window.removeEventListener('egc:signout', signout); if (opener?.focus) opener.focus(); };
     const signout = () => { client.clear(); close(); };
     const plan = () => { try { return options.plan() || {}; } catch { return {}; } };
-    const draft = () => typeof options.draft === 'function' ? options.draft(S.validUntil) : S.mode === 'builder' ? compositeDraft(plan(), S.priced, S.validUntil) : draftFromWalkthrough(options.plan(), S.validUntil);
+    const draft = () => typeof options.draft === 'function' ? options.draft(S.validUntil) : S.mode === 'builder' ? { ...compositeDraft(plan(), S.priced, S.validUntil), ...saleField() } : draftFromWalkthrough(options.plan(), S.validUntil);
+    // EGC_WINTER_SALE: the builder only asks for the sale; the server decides, adds the line and says why when it does not.
+    // The owner may ask to apply it anyway with a reason (audited). Nothing is sent when the sale is off.
+    // After the sign-by day the choice is gone, except on a quote whose sale the customer accepted by then: it stays ticked
+    // and can only be unticked (the server keeps it on its saved terms). Unticking a saved sale says so (apply:false), so a
+    // revision drops it.
+    const saleEnded = () => denverDate(options.now ? options.now() : Date.now()) > S.menu.winterSale.signBy;
+    const saleOpen = () => S.menu?.winterSale?.enabled === true && (!saleEnded() || S.sale?.accepted === true);
+    const saleField = () => !saleOpen() ? {} : S.sale?.apply ? { winter_sale: { apply: true, ...(S.menu.viewer?.canApprove === true && S.sale.reason.trim() ? { override: { reason: S.sale.reason.trim() } } : {}) } } : S.sale?.saved ? { winter_sale: { apply: false } } : {};
     // An earlier save whose answer was lost, and the quote job this walkthrough already saved (its walkthrough sync
     // status and, for a builder quote, its selection), read once when the dialog opens.
     const opening = (async () => {
@@ -474,11 +485,11 @@
         // (its labor rate changed, it has no Labor line, or its man-hours leave out installing some goods), (builder
         // on) a walkthrough-priced quote must be rebuilt in the builder first, or its payment dates wait for a job date.
         const rebuild = S.heldKind === 'builder', resave = S.heldKind === 'resave', reasons = h('ul', { class: 'qb-reasons' }, (S.held || []).map(row => h('li', {}, String(row?.reason || row?.name || ''))));
-        const editable = S.mode === 'builder' && S.savedBuild && (S.held || []).some(row => ESTIMATOR_FIXES.has(row?.id));
+        const editable = S.mode === 'builder' && S.savedBuild && (S.held || []).some(estimatorFix);
         children.push(h('p', { class: 'qd-done' }, S.status), S.heldKind === 'date' ? datesNotice() : rebuild
           ? h('div', { class: 'qd-notice', role: 'status' }, h('p', {}, 'Sending is blocked: with the quote builder on, this quote must be built in the builder before it is sent.'), reasons, h('p', {}, 'The saved draft is kept. Build the quote in the builder (removal, then shelving, then extra storage) and send that one.'))
-          : resave ? h('div', { class: 'qd-notice', role: 'status' }, h('p', {}, 'Sending is blocked until you edit this quote and save it again:'), reasons, h('p', {}, (S.held || []).some(row => row?.id === JUNK_GARAGE_WORK) ? 'The saved draft is kept; no owner approval is needed for this.' : 'The saved draft is kept. Choose Edit quote, check the Labor line on the review step and save the quote again; no owner approval is needed for this.'))
-            : h('div', { class: 'qd-notice', role: 'status' }, h('p', {}, editable ? 'Sending is blocked until the owner approves the draft prices below and you save the quote again:' : `Sending is blocked until the owner approves ${S.held.length === 1 ? 'this price' : `these ${S.held.length} prices`}:`), reasons, h('p', {}, `The owner approves draft prices in the Hub under Catalog & pricing.${editable ? ' The Labor or installation reason is yours to fix: choose Edit quote, check the man-hours and save the quote again.' : ''} The saved draft is kept: reopen this quote from the walkthrough and choose Send saved quote once they are approved.`)));
+          : resave ? h('div', { class: 'qd-notice', role: 'status' }, h('p', {}, 'Sending is blocked until you edit this quote and save it again:'), reasons, h('p', {}, (S.held || []).some(row => row?.id === JUNK_GARAGE_WORK) ? 'The saved draft is kept; no owner approval is needed for this.' : (S.held || []).every(row => row?.resave === true) ? 'The saved draft is kept. Choose Edit quote and save the quote again to use the approved prices; no owner approval is needed for this.' : 'The saved draft is kept. Choose Edit quote, check the Labor line on the review step and save the quote again; no owner approval is needed for this.'))
+            : h('div', { class: 'qd-notice', role: 'status' }, h('p', {}, editable ? 'Sending is blocked until the owner approves the draft prices below and you save the quote again:' : `Sending is blocked until the owner approves ${S.held.length === 1 ? 'this price' : `these ${S.held.length} prices`}:`), reasons, h('p', {}, `The owner approves draft prices in the Hub under Catalog & pricing.${editable ? ((S.held || []).some(row => row?.resave === true) ? ' A price the owner changed since this quote was saved (and any Labor or installation reason) is yours to fix, with no owner approval needed: choose Edit quote, check the man-hours and save the quote again.' : ' The Labor or installation reason is yours to fix: choose Edit quote, check the man-hours and save the quote again.') : ''} The saved draft is kept: reopen this quote from the walkthrough and choose Send saved quote once they are approved.`)));
         body.replaceChildren(...children);
         const edit = () => { Object.assign(S, { step: 'removal', held: null, heldKind: '', status: '', error: '' }); render(); };
         foot.replaceChildren(...(rebuild && typeof client.builder === 'function' ? [h('button', { type: 'button', class: 'qd-secondary', onclick: close }, 'Close'), h('button', { type: 'button', class: 'qd-primary', onclick: openBuilder }, 'Open the quote builder')]
@@ -706,6 +717,7 @@
           : h('p', { class: 'qb-help' }, 'Nothing in this step.'))),
         laborSection(priced),
         h('p', { class: 'qd-total' }, 'Quote total ', h('b', {}, money(priced.totalCents))),
+        saleChoice(priced),
         // D-JUNK: a junk-only quote on a walkthrough that records garage work is saved but never sent (the server refuses it).
         priced.approval.ready ? h('p', { class: 'qd-mode' }, priced.junkOnly === true && walkthroughGarageWork(plan()).length ? 'Every price on this quote is owner-approved, but it cannot be sent while the walkthrough records garage work it does not price (see above). You can save it as a draft.' : 'Every price on this quote is owner-approved, so it can be sent after you save it.') : !blocked.length ? null
           : h('div', { class: 'qd-notice', role: 'status' }, h('p', {}, `You can save this quote as a draft, but it cannot be sent until the owner approves ${blocked.length === 1 ? 'this draft price' : `these ${blocked.length} draft prices`}:`), h('ul', { class: 'qb-reasons' }, blocked.map(row => h('li', {}, row.reason)))),
@@ -714,6 +726,22 @@
         h('input', { id: 'qd-valid', class: 'qd-input', type: 'date', value: S.validUntil, min: denverDate(options.now ? options.now() : Date.now()), required: true, oninput: event => { S.validUntil = event.target.value; } }),
       ];
     }
+    // The Early-bird winter sale (EGC_WINTER_SALE): a choice with its terms; the server checks them when the quote is saved
+    // and sent. Estimators see only eligible or not and the plain reason, never a margin or a cost.
+    function saleChoice(priced) {
+      const terms = S.menu?.winterSale;
+      if (terms?.enabled !== true || !saleOpen()) return null;
+      S.sale = S.sale || { apply: false, reason: '', saved: false, accepted: false };
+      const untickOnly = saleEnded();
+      return h('div', { class: 'qb-section qb-sale' },
+        h('label', { class: 'qd-check' }, h('input', { type: 'checkbox', checked: S.sale.apply, disabled: S.busy || untickOnly && !S.sale.apply, onchange: event => { S.sale.apply = event.target.checked; render(); } }), ` Early-bird winter sale (up to \u2212${money(terms.amountCents)})`),
+        h('p', { class: 'qb-help' }, `For jobs dated ${dayText(terms.jobFrom)} \u2013 ${dayText(terms.jobTo)} (the job's booked day), accepted by ${dayText(terms.signBy)}. The customer sees it as its own line. Saving works out the amount for this job (it can be less on a small job) and sending checks it again with the booked day.`),
+        untickOnly ? h('p', { class: 'qb-help' }, 'The customer accepted this sale before it ended, so the revision keeps it. Untick it only to remove it.') : null,
+        S.sale.apply && S.menu.viewer?.canApprove === true ? [h('label', { class: 'qd-label', for: 'qd-sale-reason' }, 'Owner: give the full amount anyway (reason, only if the margin check cuts or refuses it)'),
+          h('input', { id: 'qd-sale-reason', class: 'qd-input', type: 'text', maxLength: 500, value: S.sale.reason, oninput: event => { S.sale.reason = event.target.value; } })] : null);
+    }
+    // The saved winter sale: applied, or why not (job.winterSale from the server).
+    const savedSale = sale => !sale || sale.requested !== true ? null : h('p', { class: sale.applied ? 'qd-mode qb-sale-saved' : 'qd-notice qb-sale-saved', role: 'status' }, sale.applied ? `Early-bird winter sale applied: \u2212${money(sale.amountCents)}${sale.overridden ? ' (owner override)' : ''}.${sale.code === 'capped' ? ` ${sale.reason}` : ''}` : `Early-bird winter sale not applied. ${sale.reason || ''}`.trim());
     // The saved Labor line: its man-hours and rate, how they relate to the estimate, and what the estimator must fix before
     // sending (a Labor line priced before the owner's Labor decisions of 2026-10-18, a labor rate the owner changed since,
     // or goods the estimate has no install time for).
@@ -740,6 +768,7 @@
         junkOnlyLines(S.menu, lines) ? h('div', { class: 'qb-junk' }, h('p', { class: breakdown.labor ? 'qd-notice' : 'qd-mode', role: 'status', 'data-labor': 'none' }, breakdown.labor ? 'This junk-only quote still has a Labor line from before the owner\u2019s decision of 2026-10-18: the truck-load price covers the crew\u2019s time. Edit the quote and save it again to drop it before sending it.' : 'Junk-only quote: the truck-load price covers the crew\u2019s time, so it has no Labor line.'), garageWorkNote(walkthroughGarageWork(plan())))
           : typeof breakdown?.labor?.manHours === 'number' ? savedLabor(breakdown.labor)
             : breakdown ? h('p', { class: 'qd-notice', role: 'status' }, 'This quote has no Labor line yet. Edit the quote to add the man-hours before sending it.') : null,
+        savedSale(job.winterSale),
         h('p', { class: 'qd-total' }, 'Quote total ', h('b', {}, money(job.estimate.amountCents)), job.estimate.validUntil ? ` · valid through ${dayText(job.estimate.validUntil)}` : ''),
         h('p', { class: 'qd-mode' }, 'Sending checks every price against the owner\u2019s approvals now. To change the quote, edit it: it opens on the saved selection.'),
         S.busy ? h('div', { class: 'qd-skeleton', 'aria-hidden': 'true' }, h('span')) : null,
@@ -827,7 +856,7 @@
       // Man-hours this device kept from a quote saved before the owner's Labor decisions of 2026-10-18 follow the new
       // estimate too, unless the estimator set them by hand.
       if (staleLabor(menu, job?.breakdown) && sel.labor?.adjusted !== true) sel.labor = { manHours: null, adjusted: false };
-      Object.assign(S, { mode: 'builder', menu, sel, priced: null, group: '', search: '', limit: 12, savedBuild: unsent });
+      Object.assign(S, { mode: 'builder', menu, sel, priced: null, group: '', search: '', limit: 12, savedBuild: unsent, sale: { apply: job?.winterSale?.requested === true, reason: '', saved: job?.winterSale?.applied === true, accepted: job?.winterSale?.accepted === true } });
       // An unconfirmed earlier save (detectFrozen) keeps the review step until it is retried.
       if (!S.frozen && !S.busy && S.step === 'review') S.step = unsent ? 'saved' : 'removal';
       kicker.textContent = 'Removal, then shelving, then extra storage'; heading.textContent = 'Build the itemized quote'; dialog.classList.add('qb-dialog');
@@ -857,8 +886,8 @@
       } finally { if (generation === S.generation) { S.busy = false; render(); } }
     }
     // A send preview or send the server refused because the quote may not be sent yet: show why and keep the draft.
-    // A refusal whose every reason is the estimator's to fix (the Labor line, or installation the man-hours leave out) is
-    // a re-save, not a wait for the owner. Payment dates that wait for a job date (datesNotice) are neither.
+    // A refusal whose every reason is the estimator's to fix (the Labor line, installation the man-hours leave out, or a
+    // price the owner approved at another amount since the quote was saved) is a re-save, not a wait for the owner. Payment dates that wait for a job date (datesNotice) are neither.
     function held(error) {
       if (error?.code === 'quote_draft_payment_dates_pending') { S.step = 'held'; S.held = []; S.heldKind = 'date'; S.error = ''; return true; }
       // D-JUNK: a junk-only quote on a walkthrough that records garage work: the estimator adds the work or corrects the
@@ -867,7 +896,7 @@
       if (!['quote_draft_composite_prices_unapproved', 'quote_draft_builder_required'].includes(error?.code)) return false;
       const rows = Array.isArray(error.details?.unapproved) ? error.details.unapproved : [];
       S.step = 'held'; S.held = rows; S.error = '';
-      S.heldKind = error.code === 'quote_draft_builder_required' ? 'builder' : S.mode === 'builder' && rows.length && rows.every(row => ESTIMATOR_FIXES.has(row?.id)) ? 'resave' : 'prices';
+      S.heldKind = error.code === 'quote_draft_builder_required' ? 'builder' : S.mode === 'builder' && rows.length && rows.every(estimatorFix) ? 'resave' : 'prices';
       return true;
     }
     async function refreshPrices() {

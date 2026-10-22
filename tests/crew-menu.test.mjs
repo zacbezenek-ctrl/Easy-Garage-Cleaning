@@ -36,7 +36,7 @@ test('every Hub employee reads what we sell; only a quote author gets prices, th
     const priced = await api(who)();
     assert.equal(priced.status, 200, who.user);
     assert.equal(priced.body.prices, true);
-    assert.deepEqual(priced.body.services.find(item => item.name === 'Full truck load'), { id: 'egc-026', section: 'removal', group: 'junk', name: 'Full truck load', unit: 'load', junkFraction: 1, unitCents: 75000, approved: true });
+    assert.deepEqual(priced.body.services.find(item => item.name === 'Full truck load'), { id: 'egc-026', section: 'removal', group: 'junk', name: 'Full truck load', unit: 'load', junkFraction: 1, unitCents: 100000, approved: true });
     assert.deepEqual(priced.body.products.find(item => item.id === 'hd-100006678'), { id: 'hd-100006678', section: 'shelving', group: 'shelving', name: 'HDX plastic shelving, 36×72×24', unitsPerPack: 1, size: '36 W × 72 H × 24 D in', unitCents: 11570, approved: false });
     assert.deepEqual(priced.body.labor, { rateCents: 5300, approved: true });
     assert.doesNotMatch(JSON.stringify(priced.body), /retailPerPackCents|goodsMarkup|evidence|productUrl|photoUrl|homedepot|https?:|"internal"|reason/, 'no cost basis, retailer, link or internal note, even for the owner');
@@ -114,8 +114,8 @@ test('an estimator reads EGC\'s customer prices with their Draft or Approved chi
   assert.match(p.text(), /EGC’s customer prices from the owner’s pricing menu\./);
   assert.match(p.text(), /Labor · \$53\.00 per man-hourEvery quote with garage work has one Labor line/);
   const row = id => p.main.querySelectorAll('li').find(node => node.getAttribute('data-item') === id).textContent;
-  assert.equal(row('egc-026'), 'Full truck load$750.00per loadApproved');
-  assert.equal(row('egc-023'), 'Quarter load25% of a truck$187.50per loadDraft price');
+  assert.equal(row('egc-026'), 'Full truck load$1,000.00per loadApproved');
+  assert.equal(row('egc-023'), 'Quarter load25% of a truck$250.00per loadApproved', 'the truck loads are owner-approved (2026-10-21)');
   assert.equal(row('egc-027'), 'Mattress$70.00eachDraft price');
   assert.equal(row('hd-100006678'), 'HDX plastic shelving, 36×72×2436 W × 72 H × 24 D in$115.70per packDraft price');
   assert.doesNotMatch(p.text(), /retail|cost|homedepot/i);
@@ -151,6 +151,6 @@ test('the page says when to sign in, when the menu is off, offline, or failing, 
 test('the crew home links What we sell at its clean URL, and the page loads only its own script and the Hub sign-in', () => {
   assert.match(homeHtml, /<a class="tool" id="menu-tool" href="\/crew\/menu"><span class="num">&#9636;<\/span><span class="tx"><h2>What we sell<\/h2>/);
   assert.doesNotMatch(homeHtml.slice(homeHtml.indexOf('id="menu-tool"'), homeHtml.indexOf('</a>', homeHtml.indexOf('id="menu-tool"'))), /\$/);
-  assert.deepEqual([...pageHtml.matchAll(/<script src="([^"]+)"/g)].map(match => match[1]), ['/crew/hub-auth.js?v=20261021roles', '/crew/menu.js?v=20261019catalog']);
+  assert.deepEqual([...pageHtml.matchAll(/<script src="([^"]+)"/g)].map(match => match[1]), ['/crew/hub-auth.js?v=20261021refbiz', '/crew/menu.js?v=20261019catalog']);
   assert.deepEqual(plain(Object.keys(answer(false))).sort(), ['authority', 'enabled', 'menuVersion', 'ok', 'prices', 'products', 'sections', 'services']);
 });

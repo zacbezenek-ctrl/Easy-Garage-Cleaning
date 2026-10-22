@@ -8,6 +8,11 @@ import { moneyTotalsMode } from '../_lib/money-core.js';
 import { gameplanWalkthroughs, gameplanWalkthroughStorage } from '../_lib/gameplan-walkthroughs.js';
 import { crewAutoAssignEnabled } from '../_lib/dispatch-crew-assign.js';
 import { quoteBuilderEnabled } from '../_lib/catalog-store.js';
+import { winterSaleReaders } from '../_lib/winter-sale.js';
+import { createKnockStore } from '../_lib/knock-store.js';
+// EGC_WINTER_SALE: a signed sale quote's margin check costs a walkthrough a door-to-door setter booked at the setter's
+// channel (knock_setters, one document read, only when the signed job carries the sale), as the quote draft API does.
+const winterSale = { ...winterSaleReaders, setter: async (env, walkthroughId) => Boolean((await createKnockStore(env).getMany('knock_setters', [walkthroughId])).get(walkthroughId)) };
 const reply = (status, body) => Response.json(body, {status, headers:{'Cache-Control':'no-store','X-Content-Type-Options':'nosniff'}});
 // A refused save names each owner rule (or overlapping work) that stopped it. Only
 // each conflict's code and message leave the server, and no other details are
@@ -30,8 +35,8 @@ function failure(error) {
   return reply(503, {ok:false,code:'handoff_unavailable',error:'The handoff could not be verified. Keep the saved request and retry; do not create another job.'});
 }
 const stripeFor=env=>{const secret=stripeSecretKey(env);return secret?(path,options)=>stripeRequest(secret,path,options):null;};
-// compositeState (tests): the builder's pricing state; by default the library reads it (catalog-store.js readCompositeState).
-export function handoffHandlers({session=getHubSession,storage=dispatchStorage,walkthroughs=gameplanWalkthroughStorage,now=()=>new Date(),stripe=stripeFor,compositeState=null}={}) {
+// winterSale (tests): the sale's readers (winter-sale.js). compositeState (tests): the builder's pricing state; by default the library reads it (catalog-store.js readCompositeState).
+export function handoffHandlers({session=getHubSession,storage=dispatchStorage,walkthroughs=gameplanWalkthroughStorage,now=()=>new Date(),stripe=stripeFor,compositeState=null,winterSale:saleReaders=winterSale}={}) {
   const priced = compositeState ? {compositeState} : {};
   return {
     async get({request,env}) {
@@ -61,7 +66,7 @@ export function handoffHandlers({session=getHubSession,storage=dispatchStorage,w
         // Off, the request is refused as before (not a signed walkthrough).
         if(quoteBuilderEnabled(env)&&input&&typeof input==='object'&&!Array.isArray(input)&&input.action==='prices.release')return reply(200,await releaseHandoffPrices(store,actor,input,at,{env,...priced}));
         // A signed revision closes an open portal checkout for the earlier terms.
-        return reply(200,await saveWalkthroughHandoff(store,actor,input,at,{env,...priced,checkouts:job=>expireStaleCheckout({store,job,stripe:stripe(env),now:at,mode:moneyTotalsMode(env)})}));
+        return reply(200,await saveWalkthroughHandoff(store,actor,input,at,{env,...priced,winterSale:saleReaders,checkouts:job=>expireStaleCheckout({store,job,stripe:stripe(env),now:at,mode:moneyTotalsMode(env)})}));
       } catch(error) { return failure(error); }
     }
   };

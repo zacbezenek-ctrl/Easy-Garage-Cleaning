@@ -430,3 +430,54 @@ test('a manager sees no amount for a job whose tip goes to one person, and the w
   assert.deepEqual(manager.totals, { jobs: 2, tipCents: 3000, allocatedCents: 3000, unallocatedCents: 0, hiddenJobs: 1 });
   assert.doesNotMatch(JSON.stringify(manager), /1700|"17\.00"/, 'the solo tip appears nowhere in the manager\'s answer');
 });
+
+// Review of #200: a held tip whose only assigned crew member has no job time is still that one person's tip.
+test('a manager sees no amount when a job\'s only assigned crew member has no job time, nor its payment references', async t => {
+  const MANAGER = { user: 'AlexK', role: 'manager', businessAccess: true, owner: false };
+  const jobs = [job('job-held', [tip('h', 2500, '2026-09-23T22:00:00.000Z')], { assignedCrew: ['crew.one'] }),
+    job('job-pair', [tip('p', 4000, '2026-09-24T22:00:00.000Z')], { assignedCrew: ['crew.one', 'crew.two'] })];
+  const query = 'start=2026-09-21&end=2026-09-28';
+  const owner = byJob(await (await api(t, { jobs, timecards: [] }).get(query)).json());
+  assert.deepEqual([owner['job-held'].employees, owner['job-held'].crewWithoutJobTime, owner['job-held'].tipCents], [[], ['crew.one'], 2500], 'the owner sees the held tip');
+  const manager = await (await api(t, { jobs, timecards: [], actor: MANAGER }).get(query)).json(), rows = byJob(manager);
+  assert.deepEqual([rows['job-held'].amountHidden, rows['job-held'].tipCents], [true, null], 'one person, held: no amount');
+  assert.ok(rows['job-held'].tips.every(entry => !('amountCents' in entry) && !('processorRef' in entry)), 'no amount or payment reference on its tips');
+  assert.deepEqual([rows['job-pair'].amountHidden, rows['job-pair'].tipCents], [undefined, 4000], 'two people without time: the total stays');
+  assert.equal(manager.totals.hiddenJobs, 1);
+  assert.doesNotMatch(JSON.stringify(manager), /2500|"25\.00"|pi_h/);
+});
+
+// PAY-VIEW-GRANT (#192): a view-only pay viewer (EGC_STAFF_PAY_VIEWERS) sees each person's tip share, but the tip file
+// is a payroll export and follows the payroll CSV's rule (canSetPay): the owner's alone.
+test('a view-only pay viewer sees the tip shares but cannot download the tip file; the owner can', async t => {
+  const VIEWER = { user: 'AlexK', role: 'manager', businessAccess: true, owner: false }, env = { EGC_STAFF_PAY_VIEWERS: 'alexk' };
+  const jobs = [job('job-a', [tip('a', 3000, '2026-09-23T22:00:00.000Z')])];
+  const timecards = [tracked('one', 'crew.one', '2026-09-23', '08:00', '10:00', [['work', 'job-a', '08:00']]), tracked('two', 'crew.two', '2026-09-23', '08:00', '09:00', [['work', 'job-a', '08:00']])];
+  const query = 'start=2026-09-21&end=2026-09-28';
+  const viewer = api(t, { jobs, timecards, actor: VIEWER, env }), seen = await (await viewer.get(query)).json();
+  assert.deepEqual([seen.payShown, seen.exportAllowed], [true, false]);
+  assert.deepEqual(seen.jobs[0].employees.map(share => share.tipCents), [2000, 1000], 'the viewer sees each share');
+  const reads = viewer.calls.jobs, csv = await viewer.get(`${query}&format=csv`);
+  assert.deepEqual([csv.status, (await csv.json()).code], [403, 'tip_allocation_pay_owner_only']);
+  assert.equal(viewer.calls.jobs, reads, 'refused before any read');
+  const owner = api(t, { jobs, timecards, env });
+  assert.equal((await (await owner.get(query)).json()).exportAllowed, true);
+  assert.equal((await owner.get(`${query}&format=csv`)).status, 200);
+  // Not on the list: a manager sees no shares and no file, as before.
+  const plain = await (await api(t, { jobs, timecards, actor: { ...VIEWER, user: 'AlexK2' }, env }).get(query)).json();
+  assert.ok(plain.ok === false || plain.payShown === false);
+});
+
+// Review of #210: a legacy job saved with a display name (assignedTo 'Synthetic crew.alpha', no assignedCrew) and worked
+// alone by crew.alpha lists that name as without job time, but it is the same one person: the manager sees no amount.
+test('a legacy job assigned by display name and worked by that one person hides its tip from a manager', async t => {
+  const MANAGER = { user: 'AlexK', role: 'manager', businessAccess: true, owner: false };
+  const jobs = [job('job-legacy', [tip('l', 1700, '2026-09-23T22:00:00.000Z')], { assignedCrew: [], assignedTo: 'Synthetic crew.alpha' })];
+  const timecards = [tracked('alpha', 'crew.alpha', '2026-09-23', '08:00', '10:00', [['work', 'job-legacy', '08:00']])];
+  const query = 'start=2026-09-21&end=2026-09-28';
+  const owner = byJob(await (await api(t, { jobs, timecards }).get(query)).json())['job-legacy'];
+  assert.deepEqual([owner.employees.map(row => [row.employee, row.name]), owner.crewWithoutJobTime], [[['crew.alpha', 'Synthetic crew.alpha']], ['Synthetic crew.alpha']], 'the display name shows as without job time');
+  const manager = byJob(await (await api(t, { jobs, timecards, actor: MANAGER }).get(query)).json())['job-legacy'];
+  assert.deepEqual([manager.amountHidden, manager.tipCents], [true, null]);
+  assert.ok(manager.tips.every(entry => !('amountCents' in entry) && !('processorRef' in entry)));
+});

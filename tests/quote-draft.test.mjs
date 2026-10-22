@@ -1042,13 +1042,13 @@ test('builder quote: the server re-prices and saves its lines, breakdown and sel
   const labor = job.estimate.lineItems.at(-1);
   // D-LABOR-TEXT: the customer's line is one amount, "Labor"; the man-hours stay in the breakdown.
   assert.deepEqual([labor.kind, labor.name, labor.description, labor.quantity, labor.unitCents, labor.totalCents, labor.split], ['labor', 'Labor', 'Includes installing the shelving and storage.', 1, BUILDER_LABOR_CENTS, BUILDER_LABOR_CENTS, null]);
-  assert.equal(job.estimate.amountCents, 97500 + 75000 + 14000 + 23140 + BUILDER_LABOR_CENTS);
+  assert.equal(job.estimate.amountCents, 97500 + 100000 + 14000 + 23140 + BUILDER_LABOR_CENTS);
   assert.equal(job.estimate.depositRequiredCents, Math.round(job.estimate.amountCents / 2), 'the deposit (50% for this policy-free draft) is on the total with labor');
   assert.deepEqual(job.quoteDraft.breakdown.labor, { version: 2, manHours: 6, rateCents: 5300, rateSource: 'default', totalCents: BUILDER_LABOR_CENTS, prefilledManHours: 5, adjusted: false, belowEstimate: false,
     estimate: { personMinutes: 300, removalPersonMinutes: 180, installPersonMinutes: 120, fullness: 'medium', installNotEstimated: [] } }, 'the server\'s own estimate (5 man-hours: no truck-load or mattress time) is recorded next to the 6 sold');
   assert.deepEqual(job.quoteDraft.compositePricing, priced.compositePricing);
   assert.deepEqual(job.quoteDraft.breakdown, priced.breakdown);
-  assert.deepEqual(result.job.breakdown.sections.map(section => [section.id, section.subtotalCents]), [['removal', 97500 + 75000 + 14000], ['shelving', 23140], ['storage', 0]]);
+  assert.deepEqual(result.job.breakdown.sections.map(section => [section.id, section.subtotalCents]), [['removal', 97500 + 100000 + 14000], ['shelving', 23140], ['storage', 0]]);
   assert.deepEqual(result.job.breakdown.purchaseList.map(row => [row.sku, row.packs, row.productUrl]), [[SHELF.sku, 2, SHELF.productUrl]]);
   assert.doesNotMatch(JSON.stringify(result), /"split"|productCents|markupCents|retailPerPackCents/, 'the quote author DTO carries no cost');
   // Draft prices: the save stands, the send preview and the send are refused with every reason, nothing is sent.
@@ -1104,15 +1104,15 @@ test('builder on: a walkthrough-priced quote saves as before but is not sent unt
   assert.ok((await previewQuoteSend(g.store, owner, { jobId: catalogJob.id, expectedRevision: catalogJob.revision }, CATALOG_NOW, { env, compositeState: unused })).confirmToken);
 });
 
-test('builder quote: a junk-only quote is the owner-approved $750 per truck, with no Labor line, and sends without any further approval', async () => {
+test('builder quote: a junk-only quote is the owner-approved $1,000 per truck, with no Labor line, and sends without any further approval', async () => {
   const f = fixture(), state = builderState(), selection = builderSelection({ removal: [{ id: menuItem('Full truck load').id, quantity: 2 }], shelving: [] });
   const { priced, input } = builderInput(f, selection, state);
-  assert.deepEqual([priced.totalCents, priced.approval.ready, priced.junkOnly, priced.labor], [150000, true, true, null], 'D-JUNK: $750 per truck covers the crew\'s time');
+  assert.deepEqual([priced.totalCents, priced.approval.ready, priced.junkOnly, priced.labor], [200000, true, true, null], 'D-JUNK: $1,000 per truck covers the crew\'s time');
   const result = await saveQuoteDraft(f.store, owner, input, NOW, { env: BUILDER_ENV, compositeState: async () => state });
   book(f, result.job.id);
   const job = f.job(result.job.id), preview = await previewQuoteSend(f.store, owner, { jobId: job.id, expectedRevision: job.revision }, NOW, { env: BUILDER_ENV, compositeState: async () => state });
-  assert.deepEqual([job.estimate.amountCents, job.estimate.lineItems.map(line => line.id), job.quoteDraft.compositePricing.labor, job.quoteDraft.breakdown.labor], [150000, ['removal-junk-full'], undefined, undefined], 'the labor the page sent is dropped');
-  assert.match(preview.summary, /\$1,500\.00/);
+  assert.deepEqual([job.estimate.amountCents, job.estimate.lineItems.map(line => line.id), job.quoteDraft.compositePricing.labor, job.quoteDraft.breakdown.labor], [200000, ['removal-junk-full'], undefined, undefined], 'the labor the page sent is dropped');
+  assert.match(preview.summary, /\$2,000\.00/);
   // A saved builder quote is kept but cannot be sent once the builder flag is turned off.
   await assert.rejects(previewQuoteSend(f.store, owner, { jobId: job.id, expectedRevision: job.revision }, NOW, { env: ENV, compositeState: async () => state }), error => error.code === 'quote_draft_builder_disabled' && error.status === 404);
 });
@@ -1144,7 +1144,7 @@ test('builder quote: a junk-only quote on a walkthrough that records garage work
   for (const capture of [{ sortMethod: 'remove_all', finish: ['cleanout'], hazards: [] }, { sortMethod: 'labels', finish: ['cleanout', 'shelving'], shelfQty: 0 }, null]) {
     const { f, job } = await savedJunk(capture);
     const preview = await previewQuoteSend(f.store, owner, { jobId: job.id, expectedRevision: job.revision }, NOW, options);
-    assert.match(preview.summary, /\$1,500\.00/, JSON.stringify(capture));
+    assert.match(preview.summary, /\$2,000\.00/, JSON.stringify(capture));
     if (capture?.sortMethod !== 'remove_all') continue;
     const { input } = builderInput(f, selection, state);
     await saveQuoteDraft(f.store, owner, { ...input, jobId: job.id, expectedRevision: job.revision, draft: { ...input.draft, walkthrough_capture: { ...capture, sortMethod: 'zones' } } }, NOW, options);
@@ -1279,13 +1279,13 @@ test('builder labor: a draft saved at the earlier $40.00 rate is held at send no
   assert.equal(DEFAULT_LABOR_RATE_CENTS, 5300);
   // The pricing state of 2026-10-18: the same approved prices with the $40.00 rate in force.
   const yesterday = { ...today, approvals: { ...today.approvals, laborRatePerManHourCents: 4000 } }, then = { env: BUILDER_ENV, compositeState: async () => yesterday };
-  // Removal $975 + $750 + 2 × $70, shelving 2 × $115.70, and labor 6 man-hours × $40.00 = $240.00: $2,336.40. Sent, its
-  // deposit is 25% (SENT_25_75): $584.10.
+  // Removal $975 + $1,000 + 2 × $70, shelving 2 × $115.70, and labor 6 man-hours × $40.00 = $240.00: $2,586.40. Sent, its
+  // deposit is 25% (SENT_25_75): $646.60.
   const saveAt = async (f, state, extra = {}) => { const result = await saveQuoteDraft(f.store, owner, { ...builderInput(f, builderSelection(), state).input, ...extra }, NOW, { env: BUILDER_ENV, compositeState: async () => state }); book(f, result.job.id); return f.job(result.job.id); };
   const f = fixture(), draftAt40 = await saveAt(f, yesterday);
   draftAt40.quoteDraft.breakdown.labor.rateSource = 'default'; // as the default rate of 2026-10-18 was recorded
   assert.deepEqual([draftAt40.quoteDraft.breakdown.labor.rateCents, draftAt40.quoteDraft.breakdown.labor.totalCents, draftAt40.estimate.lineItems.at(-1).totalCents, draftAt40.estimate.amountCents],
-    [4000, 24000, 24000, 233640]);
+    [4000, 24000, 24000, 258640]);
   const yesterdayToken = (await previewQuoteSend(f.store, owner, { jobId: draftAt40.id, expectedRevision: draftAt40.revision }, NOW, then)).confirmToken;
   assert.ok(yesterdayToken, 'at $40.00 it was sendable');
   // Today: the send preview and the send itself are refused for the labor rate alone; nothing is delivered or written.
@@ -1295,19 +1295,19 @@ test('builder labor: a draft saved at the earlier $40.00 rate is held at send no
   const writes = f.calls.length;
   await assert.rejects(sendQuoteDraft(f.store, owner, { jobId: draftAt40.id, expectedRevision: draftAt40.revision, requestId: randomUUID(), confirmToken: yesterdayToken }, NOW, { ...options, deliver: f.deliver }), held);
   assert.deepEqual([f.calls.length, f.delivered.length, f.job(draftAt40.id).estimate.status], [writes, 0, 'draft']);
-  // Edited and saved again: 6 × $53.00 = $318.00, total $2,414.40, and it sends with its 25% deposit, $603.60.
+  // Edited and saved again: 6 × $53.00 = $318.00, total $2,664.40, and it sends with its 25% deposit, $666.10.
   const resaved = await saveAt(f, today, { jobId: draftAt40.id, expectedRevision: f.job(draftAt40.id).revision });
   assert.deepEqual([resaved.quoteDraft.breakdown.labor.rateCents, resaved.quoteDraft.breakdown.labor.rateSource, resaved.quoteDraft.breakdown.labor.totalCents, resaved.estimate.lineItems.at(-1).totalCents, resaved.estimate.amountCents],
-    [5300, 'default', 31800, 31800, 241440]);
+    [5300, 'default', 31800, 31800, 266440]);
   const preview = await previewQuoteSend(f.store, owner, { jobId: resaved.id, expectedRevision: resaved.revision }, NOW, options);
   await sendQuoteDraft(f.store, owner, { jobId: resaved.id, expectedRevision: resaved.revision, requestId: randomUUID(), confirmToken: preview.confirmToken }, NOW, options);
-  assert.deepEqual([f.job(resaved.id).estimate.status, f.job(resaved.id).estimate.amountCents, f.job(resaved.id).estimate.depositRequiredCents], ['sent', 241440, 60360]);
+  assert.deepEqual([f.job(resaved.id).estimate.status, f.job(resaved.id).estimate.amountCents, f.job(resaved.id).estimate.depositRequiredCents], ['sent', 266440, 66610]);
   // A quote sent on 2026-10-18 at $40.00 keeps what was sent: nothing reprices it, and the customer surfaces still treat it
-  // as the current, sent quote (not stale, not withheld), at its $240.00 Labor line and $584.10 deposit.
+  // as the current, sent quote (not stale, not withheld), at its $240.00 Labor line and $646.60 deposit.
   const g = fixture(), sentAt40 = await saveAt(g, yesterday), sentPreview = await previewQuoteSend(g.store, owner, { jobId: sentAt40.id, expectedRevision: sentAt40.revision }, NOW, then);
   await sendQuoteDraft(g.store, owner, { jobId: sentAt40.id, expectedRevision: sentAt40.revision, requestId: randomUUID(), confirmToken: sentPreview.confirmToken }, NOW, then);
   const sent = g.job(sentAt40.id);
-  assert.deepEqual([sent.estimate.status, sent.estimate.amountCents, sent.estimate.depositRequiredCents, sent.estimate.lineItems.at(-1).totalCents, sent.quoteDraft.breakdown.labor.rateCents], ['sent', 233640, 58410, 24000, 4000]);
+  assert.deepEqual([sent.estimate.status, sent.estimate.amountCents, sent.estimate.depositRequiredCents, sent.estimate.lineItems.at(-1).totalCents, sent.quoteDraft.breakdown.labor.rateCents], ['sent', 258640, 64660, 24000, 4000]);
   assert.deepEqual([staleBuilderQuote(sent), unsentQuoteDraft(sent)], [false, false]);
   // A job the customer signed at $40.00 keeps that rate: its labor is checked against its own man-hours × $40.00.
   const signed = { ...sent.quoteDraft.breakdown };
