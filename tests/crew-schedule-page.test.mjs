@@ -216,7 +216,8 @@ test('back online, a schedule loaded under five minutes ago is not read again; a
 // 09:00 Mountain Time; 14:30Z is 08:30 that morning and 2026-10-15T16:00Z is Thursday.
 const TODAY_AT = '2026-10-16T14:30:00.000Z', YESTERDAY_AT = '2026-10-15T16:00:00.000Z';
 const marked = (id, stage, activity, at = TODAY_AT, changes = {}) => job(id, { crewId: 'crew_one', assignedCrew: ['ben.crew'], customer: `${id} Synthetic`, status: stage, pipelineStatus: stage,
-  fieldExecution: { activity, activityAt: at, activityReason: 'Synthetic reason the crew typed' }, ...changes });
+  // Day ended is today's own visit ending (field-execution-visits.js end_day), never a late sync of yesterday's.
+  fieldExecution: { activity, activityAt: at, activityReason: 'Synthetic reason the crew typed', ...(activity === 'day_ended' ? { visits: { '2026-10-16': { status: 'ended', endedAt: at } } } : {}) }, ...changes });
 const liveBadges = row => row.querySelectorAll('em.badge').map(text).filter(label => ['En route', 'On site', 'Paused', 'Waiting', 'Delayed', 'Day ended', 'In progress'].includes(label));
 
 for (const [stage, activity, label, kind] of [['dispatched', 'dispatched', 'En route', 'live'], ['arrived', 'arrived', 'On site', 'live'], ['in_progress', 'paused', 'Paused', 'warn'],
@@ -268,4 +269,28 @@ test('a visible page showing today reads again every 3 minutes; a hidden tab, an
   clock.now = NOW + 10 * 60000;
   await view.tick();
   assert.equal(view.calls.length, 3, 'an offline phone never reads');
+});
+
+test('a slow answer does not push the next 3-minute read a whole interval later', async () => {
+  const clock = { now: NOW };
+  // Each read takes 5 seconds to answer.
+  const view = await page({ respond: url => { clock.now += 5000; return answer('ben', url); }, clock });
+  assert.equal(view.calls.length, 1);
+  clock.now = NOW + 3 * 60000;
+  await view.tick();
+  assert.equal(view.calls.length, 2, 'three minutes after the read started: read again, though it answered 5 s later');
+  clock.now = NOW + 6 * 60000;
+  await view.tick();
+  assert.equal(view.calls.length, 3);
+});
+
+test('past Denver midnight the Today view reads the new day at the next tick', async () => {
+  // 23:50 Mountain Time on Friday 2026-10-16 (05:50Z the next day).
+  const clock = { now: Date.parse('2026-10-17T05:50:00.000Z') };
+  const view = await page({ respond: url => answer('ben', url), clock });
+  assert.deepEqual(view.calls, ['/api/crew-schedule?from=2026-10-16&to=2026-10-16&scope=mine']);
+  clock.now = Date.parse('2026-10-17T06:01:00.000Z');
+  await view.tick();
+  assert.equal(view.calls.at(-1), '/api/crew-schedule?from=2026-10-17&to=2026-10-17&scope=mine', 'Saturday is read at the first tick after midnight');
+  assert.equal(view.main.querySelector('.day').getAttribute('data-day'), '2026-10-17');
 });

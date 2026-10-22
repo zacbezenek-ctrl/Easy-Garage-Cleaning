@@ -44,14 +44,17 @@ const DEFAULT_PRIORITY = 99;
  * instructions. */
 export const CREW_SCHEDULE_FIELDS = Object.freeze(['type', 'recordType', 'status', 'pipelineStatus', 'date', 'endDate', 'time', 'endTime', 'allDay',
   'arrivalWindow', 'serviceType', 'customer', 'address', 'assignedCrew', 'assignedTo', 'crewLead', 'crewId', 'crewName', 'crewNeeded', 'requiredCrewSize',
-  'crewSize', 'assignmentSegments', 'durationMin', 'estimatedDurationMin', 'fieldExecution.activity', 'fieldExecution.activityAt', 'startedAt', 'completedAt', 'cancelledAt']);
+  'crewSize', 'assignmentSegments', 'durationMin', 'estimatedDurationMin', 'fieldExecution.activity', 'fieldExecution.activityAt', 'fieldExecution.visits', 'startedAt', 'completedAt', 'cancelledAt']);
 /** The live states a schedule row names (fieldStatus): en route, on site, and the crew's own paused, waiting, delayed
  * and day-ended marks. The stage is the whole job's, so a state shows only on today's row and only when the crew set it
  * today (fieldExecution.activityAt, written with every crew status change): a multi-day job marked on site yesterday
- * shows nothing on today's row until the crew marks it again. Never the reason the crew typed. */
+ * shows nothing on today's row until the crew marks it again. Day ended shows only when today's own visit ended: an end of
+ * day saved offline for yesterday and synced after midnight (endedLate, field-execution-visits.js) stamps day_ended with
+ * the sync time, but today's work has not started. Never the reason, or the visit notes, the crew typed. */
 export const CREW_SCHEDULE_LIVE = Object.freeze(['dispatched', 'arrived', 'paused', 'waiting', 'delayed', 'day_ended']);
 function liveStatus(job, days, today) {
-  const status = fieldActivity(job), at = Date.parse(job.fieldExecution?.activityAt || '');
+  const status = fieldActivity(job), at = Date.parse(job.fieldExecution?.activityAt || ''), visit = job.fieldExecution?.visits?.[today];
+  if (status === 'day_ended' && !(visit?.status === 'ended' && visit.endedLate !== true)) return '';
   return CREW_SCHEDULE_LIVE.includes(status) && days.includes(today) && Number.isFinite(at) && denverToday(new Date(at)) === today ? status : '';
 }
 

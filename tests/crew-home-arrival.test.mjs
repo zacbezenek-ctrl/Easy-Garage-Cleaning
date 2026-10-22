@@ -31,3 +31,16 @@ test('the next-job card shows the arrival window, escaped, and nothing when the 
   assert.doesNotMatch(none, /Arrive/);
   assert.match(none, /<span>Time<\/span>/);
 });
+
+test('on a split job the window shows only for the crew whose segment is the job’s first day', async () => {
+  const split = viewer => crewJobProjection({ id: 'job-split', type: 'job', status: 'scheduled', pipelineStatus: 'scheduled', customer: 'Synthetic Customer', address: '1 Fixture Way, Fort Collins, CO 80525',
+    serviceType: 'Garage cleanout', date: '2026-09-22', endDate: '2026-09-23', time: '09:00', endTime: '15:00', arrivalWindow: '9:00–10:00 AM', assignedCrew: ['crew.one', 'crew.two'], assignmentSegments: [
+      { id: 'seg-a', date: '2026-09-22', time: '09:00', endDate: '2026-09-22', endTime: '15:00', assignedCrew: ['crew.one'] },
+      { id: 'seg-b', date: '2026-09-23', time: '13:00', endDate: '2026-09-23', endTime: '17:00', assignedCrew: ['crew.two'] },
+    ] }, { viewer, now: new Date(NOW) });
+  const first = split('crew.one'), later = split('crew.two');
+  assert.deepEqual([first.date, first.arrivalWindow], ['2026-09-22', '9:00–10:00 AM']);
+  assert.deepEqual([later.date, later.time, later.arrivalWindow], ['2026-09-23', '13:00', ''], 'the later segment never carries the first visit’s window');
+  assert.match(await crewHome([first]), /<span>Arrive<\/span><strong>9:00–10:00 AM<\/strong>/);
+  assert.doesNotMatch(await crewHome([later]), /Arrive/);
+});

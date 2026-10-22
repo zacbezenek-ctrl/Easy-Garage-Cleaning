@@ -286,15 +286,17 @@ test('lead names: configured users cost no read; employee accounts are read only
 test('today\u2019s live state shows on today\u2019s row only, only when the crew set it today, and never the reason they typed', async () => {
   // NOW is Friday 2026-10-16 09:00 Mountain Time; 14:30Z is 08:30 that morning, 2026-10-15T16:00Z is Thursday.
   const today = '2026-10-16T14:30:00.000Z', yesterday = '2026-10-15T16:00:00.000Z';
-  const live = (id, stage, activity, activityAt, changes = {}) => job(id, { assignedCrew: ['ben.crew'], crewId: 'crew_one', status: stage, pipelineStatus: stage,
-    fieldExecution: { activity, activityAt, activityReason: 'Synthetic reason: customer gate locked' }, ...changes });
+  const live = (id, stage, activity, activityAt, changes = {}, visits) => job(id, { assignedCrew: ['ben.crew'], crewId: 'crew_one', status: stage, pipelineStatus: stage,
+    fieldExecution: { activity, activityAt, activityReason: 'Synthetic reason: customer gate locked', ...(visits ? { visits } : {}) }, ...changes });
   const jobs = [
     live('job_en_route', 'dispatched', 'dispatched', today),
     live('job_on_site', 'arrived', 'arrived', today),
     live('job_paused', 'in_progress', 'paused', today),
     live('job_waiting', 'arrived', 'waiting', today),
     live('job_delayed', 'dispatched', 'delayed', today),
-    live('job_day_ended_today', 'in_progress', 'day_ended', today, { date: '2026-10-15', endDate: '2026-10-17' }),
+    live('job_day_ended_today', 'in_progress', 'day_ended', today, { date: '2026-10-15', endDate: '2026-10-17' }, { '2026-10-16': { status: 'ended', endedAt: today, notes: 'Synthetic visit notes: two bays left' } }),
+    // An end of day saved offline on Thursday and synced at 08:30 Friday (endedLate): today's work has not started.
+    live('job_day_ended_late', 'in_progress', 'day_ended', today, { date: '2026-10-15', endDate: '2026-10-17' }, { '2026-10-15': { status: 'ended', endedAt: today, endedLate: true, notes: 'Synthetic visit notes: two bays left' } }),
     live('job_day_two', 'arrived', 'arrived', yesterday, { date: '2026-10-15', endDate: '2026-10-17' }),
     live('job_day_ended_yesterday', 'in_progress', 'day_ended', yesterday, { date: '2026-10-15', endDate: '2026-10-17' }),
     live('job_tomorrow', 'dispatched', 'dispatched', today, { date: '2026-10-17', endDate: '2026-10-17' }),
@@ -307,12 +309,12 @@ test('today\u2019s live state shows on today\u2019s row only, only when the crew
   const states = Object.fromEntries(rows(body).map(row => [row.id, row.fieldStatus]));
   assert.deepEqual(states, {
     job_en_route: 'dispatched', job_on_site: 'arrived', job_paused: 'paused', job_waiting: 'waiting', job_delayed: 'delayed', job_day_ended_today: 'day_ended',
-    job_day_two: '', job_day_ended_yesterday: '', job_tomorrow: '', job_working: '', job_no_time: '', walk_live: '',
+    job_day_ended_late: '', job_day_two: '', job_day_ended_yesterday: '', job_tomorrow: '', job_working: '', job_no_time: '', walk_live: '',
   });
   const day2 = rows(body).find(row => row.id === 'job_day_two');
   assert.equal(day2.status, 'arrived', 'the stage is the whole job\u2019s and is unchanged');
   assert.deepEqual(day2.days, ['2026-10-16', '2026-10-17']);
   const text = JSON.stringify(body);
-  for (const secret of ['Synthetic reason', 'gate locked', 'activityReason', 'statusReason', 'activityAt', '9705550142', '1250', 'Synthetic office note'])
+  for (const secret of ['Synthetic reason', 'gate locked', 'Synthetic visit notes', 'bays left', 'visits', 'endedLate', 'activityReason', 'statusReason', 'activityAt', '9705550142', '1250', 'Synthetic office note'])
     assert.ok(!text.includes(secret), `${secret} must not leave`);
 });

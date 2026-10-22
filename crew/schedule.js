@@ -63,7 +63,7 @@
   async function load() {
     if (!main) return;
     const seq = ++S.seq;
-    S.loading = true; S.error = ''; render();
+    S.loading = true; S.error = ''; S.startedAt = Date.now(); render();
     if (offline()) { S.loading = false; S.error = OFFLINE; render(); return; }
     let scope = S.scope || (viewsAllHint() ? 'all' : 'mine'), data = null, error = null;
     try { data = await request(scope); }
@@ -196,19 +196,20 @@
     S.error = ''; render();
   }
 
-  // LIVE-STATUS: while the page is visible and shows today, it reads again every 3 minutes, so the badges keep up with
-  // the crews; a hidden tab, an offline phone or a range without today never reads. Back from hidden, an answer older
-  // than that is read again at once.
+  // LIVE-STATUS: while the page is visible, it reads again every 3 minutes, so the badges keep up with the crews; a
+  // hidden tab or an offline phone never reads. The age counts from when the last read started, so a slow answer does
+  // not push the next read a whole interval later. Past Denver midnight the shown days no longer hold today: the next
+  // tick reads the new days at once. Back from hidden, an answer that old is read again at once.
   const LIVE_REFRESH_MS = 3 * 60000;
-  function liveRefresh() {
-    const day = today(), age = Date.now() - Date.parse(S.loadedAt || '');
-    if (document.hidden || S.loading || offline() || S.signedOut || S.disabled || !S.data || S.data.from > day || S.data.to < day || age >= 0 && age < LIVE_REFRESH_MS - 1000) return;
-    load();
+  function liveRefresh(minAge = LIVE_REFRESH_MS / 2) {
+    const { from, to } = shownDates(), age = Date.now() - (S.startedAt || 0), stale = !S.data || S.data.from !== from || S.data.to !== to;
+    if (document.hidden || S.loading || offline() || S.signedOut || S.disabled || !S.data && !S.error) return;
+    if (stale || age >= minAge) load();
   }
 
   readPrefs();
-  setInterval(liveRefresh, LIVE_REFRESH_MS);
-  document.addEventListener('visibilitychange', liveRefresh);
+  setInterval(() => liveRefresh(), LIVE_REFRESH_MS);
+  document.addEventListener('visibilitychange', () => liveRefresh(LIVE_REFRESH_MS));
   addEventListener('online', reconnected);
   addEventListener('offline', () => { if (!S.loading) { S.error = OFFLINE; render(); } });
   window.EGCCrewSchedule = { load, state: S };
