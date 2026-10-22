@@ -24,7 +24,7 @@ import { catalogStorage, quoteBuilderEnabled, readCompositeState, requireCatalog
 import { GARAGE_SIZES, approvalRefusal, compositeApproval, compositeScope, fullnessOf, priceCompositeQuote } from './composite-quote.js';
 import { customerMoneyTotals } from './money-core.js';
 import { hasWinterSaleLine, signedWinterSale, winterSaleReaders } from './winter-sale.js';
-import { confirmNearbyTruck, pickupReaders, waiverAudit, waiverRecord } from './pickup-minimum.js';
+import { confirmNearbyTruck, pickupReaders, savedOwnerWaiver, waiverAudit, waiverRecord } from './pickup-minimum.js';
 import { auditWrite } from './hub-audit.js';
 import { PAYMENT_TIME_ZONE, SIGNED_25_75, businessPaymentDate, quotePaymentDates, quotePaymentSchedule } from './quote-payment-policy.js';
 
@@ -709,8 +709,10 @@ export async function saveWalkthroughHandoff(store, actor, input, now = new Date
     catch (error) { if (['winter_sale_ineligible', 'winter_sale_disabled'].includes(error?.code)) throw Object.assign(error, { code: `handoff_${error.code}`, status: 409 }); throw error; }
     // Minimum pickup (pickup-minimum.js): a truck-nearby waiver is confirmed for the booked day and the signed address, or
     // refused (409 handoff_pickup_waiver_unconfirmed, nothing saved).
-    const confirmed = await confirmNearbyTruck({ priced: builder, owner: isOwner(actor), jobId: previous?.id || '', date: plan.quote.job_date || '', address: plan.client.address, nearbyJobs: date => pickup.nearby(env, date), prefix: 'handoff_' });
-    if (confirmed) pickupWaiver = waiverRecord(confirmed, { reason: builder.compositePricing.nearbyTruck.reason, by: actor.user, at: now });
+    // The owner's override saved for this very day (and reason) carries to anyone's signature.
+    const owned = builder?.compositePricing?.nearbyTruck ? savedOwnerWaiver(previous?.minimumWaiver || previous?.quoteDraft?.minimumWaiver, { date: plan.quote.job_date || '', reason: builder.compositePricing.nearbyTruck.reason }) : null;
+    const confirmed = owned || await confirmNearbyTruck({ priced: builder, owner: isOwner(actor), jobId: previous?.id || '', date: plan.quote.job_date || '', address: plan.client.address, nearbyJobs: date => pickup.nearby(env, date), prefix: 'handoff_' });
+    if (confirmed) pickupWaiver = owned || waiverRecord(confirmed, { reason: builder.compositePricing.nearbyTruck.reason, by: actor.user, at: now });
     const mismatch = builderMismatch(signedInput.quote, builder, Math.round(plan.quote.total * 100));
     if (mismatch) throw mismatch;
     // D-JUNK: a junk-only quote is $1,000 per truck with no Labor line, so it prices no garage work; the walkthrough the

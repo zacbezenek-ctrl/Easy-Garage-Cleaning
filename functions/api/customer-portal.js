@@ -24,6 +24,7 @@ import { liveSale, portalApprovalWrites, portalFunnelWrite, vocabularyValue } fr
 import { dispatchReviewPatch, queued } from '../_lib/dispatch-queue.js';
 import { publicQuotePaymentSchedule, quotePaymentSummary, sentQuotePaymentPolicy, withheldQuotePaymentSummary } from '../_lib/quote-payment-policy.js';
 import { winterSaleDateProblem } from '../_lib/winter-sale.js';
+import { pickupWaiverProblem } from '../_lib/pickup-minimum.js';
 
 const HOST = /^(?:easygaragecleaning\.com|www\.easygaragecleaning\.com|easy-garage-cleaning\.pages\.dev|localhost(?::\d+)?|127\.0\.0\.1(?::\d+)?)$/;
 const DEFAULT_REVIEW_URL = 'https://search.google.com/local/writereview?placeid=ChIJ17AGfBiyRIsRyJ3k4mDtX8Q';
@@ -548,6 +549,9 @@ async function handlePost({ request, env, waitUntil }, { clock, read, alerts, li
     // EGC_WINTER_SALE: a sale price covers work done inside the sale's window (its expiry already holds it to the sign-by
     // day). A job moved outside the window after the quote was sent is not approved at the sale price (winter-sale.js
     // winterSaleDateProblem; the sale line decides, whatever the flag).
+    // Minimum pickup: a truck-nearby price holds for the day it was confirmed (pickup-minimum.js); the customer is asked to
+    // let the team update it rather than shown the staff's reason.
+    if (pickupWaiverProblem(result.job, null, { approving: true })) return reply(409, { ok: false, code: 'CUSTOMER_PORTAL_PICKUP_DAY', error: 'This estimate\'s price was for a day our truck is already in your area. Ask the team to update your estimate for your new job date.' });
     if (winterSaleDateProblem(result.job)) return reply(409, { ok: false, code: 'CUSTOMER_PORTAL_SALE_DATE', error: 'This estimate\'s winter sale price covers work scheduled in the sale window. Ask the team to update your estimate or your job date.' });
     if (approvalBlocked(result.job, rejectDrafts(env))) return reply(409, { ok: false, code: 'CUSTOMER_PORTAL_ESTIMATE_NOT_APPROVABLE', error: 'This estimate is being updated and cannot be approved yet. Refresh the page or ask the team for the current estimate.' });
     // The approval binds to the exact revision, total and shown content the

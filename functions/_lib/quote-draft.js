@@ -5,7 +5,7 @@ import { identityMatches } from './walkthrough-handoff.js';
 import { authorCustomer, authorOpensJob, jobCustomerAccess, refPatch, shownCustomerId } from './estimator-customer-access.js';
 import { auditWrite } from './hub-audit.js';
 import { addDays, denverToday, validDate } from './dispatch-time.js';
-import { PICKUP_MINIMUM_CENTS, PICKUP_MINIMUM_LINE_ID, confirmNearbyTruck, haulingOnly, pickupFloorCents, pickupReaders, waiverAudit, waiverRecord } from './pickup-minimum.js';
+import { PICKUP_MINIMUM_CENTS, PICKUP_MINIMUM_LINE_ID, confirmNearbyTruck, savedOwnerWaiver, haulingOnly, pickupFloorCents, pickupReaders, waiverAudit, waiverRecord } from './pickup-minimum.js';
 import { builderJunkOnly, depositCents, estimateFingerprint, estimateChanged, estimateTotals, included, junkOnlyGarageWork, normalizeLineItems, packageTotals, validateSelection } from './quote-model.js';
 import { customerMoneyTotals, invoiceNumber } from './money-core.js';
 import { moneySnapshot } from './money-service.js';
@@ -619,6 +619,9 @@ async function pickupSendable(job, actor, env, pickup, now) {
   const lines = (Array.isArray(job.estimate?.lineItems) ? job.estimate.lineItems : []).filter(line => !isWinterSaleLine(line));
   if (!pricing.nearbyTruck && !lines.some(line => line?.id === PICKUP_MINIMUM_LINE_ID) && estimateTotals(lines).totalCents < PICKUP_MINIMUM_CENTS) throw fail('pickup_minimum_resave', 'Pickups now have a $250 minimum. Open the quote in the builder and save it again before sending.', 409);
   if (!pricing.nearbyTruck) return null;
+  // The owner's override saved for this very day (and reason) carries to anyone's send.
+  const owned = savedOwnerWaiver(job.quoteDraft?.minimumWaiver, { date: job.date || '', reason: pricing.nearbyTruck.reason });
+  if (owned) return owned;
   const confirmed = await confirmNearbyTruck({ priced: { breakdown }, owner: isHubOwner(actor), jobId: job.id, date: job.date || '', address: job.address || '', nearbyJobs: date => pickup.nearby(env, date), prefix: 'quote_draft_' });
   return confirmed ? waiverRecord(confirmed, { reason: pricing.nearbyTruck.reason, by: actor.user, at: now }) : null;
 }

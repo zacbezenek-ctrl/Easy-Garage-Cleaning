@@ -10,11 +10,15 @@
  * date is known (a save of a booked job, the send, the in-person signature): another scheduled job, not cancelled, on
  * the same day whose service address has the same 5-digit ZIP code. The owner may waive it without one (an override).
  * Unconfirmed, the save, send or signature is refused with a plain reason. Each confirmation is audited (who, when, the
- * nearby job's id); the id stays in the audit and the Hub record, never in customer text.
+ * nearby job's id); the id stays in the audit and the Hub record, never in customer text. A confirmed waiver is for its
+ * day: the owner's override carries to the send and the signature only on that day (savedOwnerWaiver), and a job moved
+ * to another day is checked again at portal approval, Hub Record approval and a reschedule (pickupWaiverProblem).
  *
  * The winter sale (winter-sale.js) runs on the minimum's total and never takes a pickup below it (pickupFloorCents), so
  * a pickup at the minimum gets no sale credit and the two lines never show together. */
 import { HAULING_GROUPS } from './quote-model.js';
+import { AUTO_CREW_TYPES } from './dispatch-crew-assign.js';
+import { jobClosed } from './change-orders.js';
 
 export const PICKUP_MINIMUM_CENTS = 25000;
 export const PICKUP_MINIMUM_LINE_ID = 'minimum-pickup';
@@ -34,20 +38,46 @@ export function normalizeNearbyTruck(value, refuse) {
   return { reason: value.reason.trim() };
 }
 
-/** The total a sale may never take a pickup below: the minimum, unless the quote is not a pickup or its minimum is waived. */
-export const pickupFloorCents = breakdown => plain(breakdown?.pickup) && breakdown.pickup.haulingOnly === true && breakdown.pickup.waived !== true ? PICKUP_MINIMUM_CENTS : 0;
-
-/** The 5-digit ZIP code of a service address (its last one), or ''. */
-export function serviceZip(address) {
-  const found = String(address || '').match(/\b\d{5}(?:-\d{4})?\b/g);
-  return found ? found.at(-1).slice(0, 5) : '';
+/** The total a sale may never take a pickup below: the minimum, unless the quote is not a pickup or its minimum is waived.
+ * A builder breakdown saved before the minimum (no pickup facts) that is all hauling is a pickup: no waiver predates it. */
+export function pickupFloorCents(breakdown) {
+  if (!plain(breakdown)) return 0;
+  if (!plain(breakdown.pickup)) return haulingOnly(breakdown.lines) ? PICKUP_MINIMUM_CENTS : 0;
+  return breakdown.pickup.haulingOnly === true && breakdown.pickup.waived !== true ? PICKUP_MINIMUM_CENTS : 0;
 }
-const CLOSED = new Set(['cancelled', 'canceled', 'no_show', 'noshow', 'no-show']);
-/** The first scheduled job (not this one, not cancelled) on date whose address has zip, or null. */
+
+/** The 5-digit ZIP code ending a service address ("…, CO 80521", "80521-1234", optionally then the country), or ''.
+ * A 5-digit house number is never read as one: only the address's end is. */
+export function serviceZip(address) {
+  const found = String(address || '').trim().match(/(?:^|[\s,])(\d{5})(?:-\d{4})?\s*(?:,?\s*(?:USA|US|United States))?\.?$/i);
+  return found ? found[1] : '';
+}
+/** The first operational job (dispatch's job, cleanout or reorg: AUTO_CREW_TYPES; never this one, never a closed one:
+ * change-orders.js jobClosed) on date whose address has zip, or null. */
 export function nearbyJob(jobs, { jobId = '', date, zip }) {
   if (!zip) return null;
-  return (Array.isArray(jobs) ? jobs : []).filter(plain).find(job => job.id !== jobId && (job.type || 'job') === 'job' && job.date === date
-    && !CLOSED.has(String(job.pipelineStatus || job.status || '').toLowerCase()) && serviceZip(job.address) === zip) || null;
+  return (Array.isArray(jobs) ? jobs : []).filter(plain).find(job => job.id !== jobId && AUTO_CREW_TYPES.includes(job.type || 'job') && job.date === date
+    && !jobClosed(job) && serviceZip(job.address) === zip) || null;
+}
+/** The waiver a job's record holds (the signed job's, else its quote draft's), or null. */
+export const jobWaiver = job => plain(job?.minimumWaiver) ? job.minimumWaiver : plain(job?.quoteDraft?.minimumWaiver) ? job.quoteDraft.minimumWaiver : null;
+/** The owner's saved override, carried to a send or signature only for its own day and its own reason. */
+export const savedOwnerWaiver = (saved, { date, reason }) => plain(saved) && saved.ownerOverride === true && saved.pending !== true && Boolean(date) && saved.date === date && saved.reason === reason ? saved : null;
+/**
+ * Why a job's truck-nearby price no longer holds, or null: the job moved to another day than the one its waiver was
+ * confirmed for and no other job is booked on the new day in its ZIP code (sameDayJobs: the jobs dated the new day;
+ * null when they cannot be read, which refuses). An owner override is for its own day only. approving: an unconfirmed
+ * (pending) waiver is refused too. The reason is the staff's; a customer gets a plain request to ask the team.
+ */
+export function pickupWaiverProblem(job, sameDayJobs = null, { approving = false } = {}) {
+  const waiver = jobWaiver(job), lines = Array.isArray(job?.estimate?.lineItems) ? job.estimate.lineItems : [];
+  if (!waiver || lines.some(line => line?.id === PICKUP_MINIMUM_LINE_ID)) return null;
+  if (waiver.pending) return approving ? 'The truck-nearby waiver on this quote has not been confirmed for a booked day yet. Send the quote again, which checks it.' : null;
+  const date = String(job?.date || '');
+  if (!date || date === waiver.date) return null;
+  const confirmed = `The truck-nearby price on this quote was confirmed for ${waiver.date || 'another day'}.`;
+  if (waiver.ownerOverride || !Array.isArray(sameDayJobs)) return `${confirmed} Save the quote again for ${date}: the $250 minimum pickup applies unless another job is booked that day in the same ZIP code, or the owner waives it.`;
+  return nearbyJob(sameDayJobs, { jobId: job.id, date, zip: serviceZip(job.address) }) ? null : `${confirmed} No other job is booked on ${date} in this job's ZIP code. Save the quote again (the $250 minimum pickup applies) or ask the owner.`;
 }
 
 /**

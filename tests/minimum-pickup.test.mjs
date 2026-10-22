@@ -9,7 +9,9 @@ import { estimateTotals } from '../functions/_lib/quote-model.js';
 import { previewQuoteSend, saveQuoteDraft, sendQuoteDraft } from '../functions/_lib/quote-draft.js';
 import { saveWalkthroughHandoff } from '../functions/_lib/walkthrough-handoff.js';
 import { SENT_25_75 } from '../functions/_lib/quote-payment-policy.js';
-import { PICKUP_MINIMUM_CENTS, PICKUP_MINIMUM_LINE_ID, nearbyJob, serviceZip } from '../functions/_lib/pickup-minimum.js';
+import { PICKUP_MINIMUM_CENTS, PICKUP_MINIMUM_LINE_ID, nearbyJob, pickupFloorCents, pickupWaiverProblem, serviceZip } from '../functions/_lib/pickup-minimum.js';
+import { mutateMoney } from '../functions/_lib/money-service.js';
+import { mutateDispatch } from '../functions/_lib/dispatch-service.js';
 import { WINTER_SALE_DEFAULTS, WINTER_SALE_LINE_ID, winterSaleDecision } from '../functions/_lib/winter-sale.js';
 import { HUB_AUDIT_COLLECTION } from '../functions/_lib/hub-audit.js';
 import { builderState, client, estimator, fixture, menuItem, owner, selection, signedPlan } from './helpers/estimator-fixture.mjs';
@@ -196,4 +198,102 @@ test('the public curbside copy says $139 applies when the truck is in the area, 
   // The generator's own copy (every service page), regenerated from it.
   const generator = readFileSync(new URL('../_generate_site.py', import.meta.url), 'utf8');
   assert.match(generator, /Curbside pickup is \$139 flat for up to 4 cubic yards when our truck is already in your area \(\$250 minimum pickup otherwise\)/);
+});
+
+// Every public page (the site root, blog/ and projects/) that states the $139 curbside price states its condition in
+// the same passage: a paragraph, list item, table row, FAQ answer (schema too) or meta description of more than a
+// label's length that names $139 also names the $250 minimum pickup. Short labels (titles, buttons, badges) are exempt.
+export function unconditionedCurbside(html) {
+  const passages = [], strip = text => text.replace(/<[^>]+>/g, ' ').replace(/&[a-z]+;/g, ' ').replace(/\s+/g, ' ').trim();
+  for (const [, content] of html.matchAll(/<meta\b[^>]*\bcontent="([^"]*)"/g)) passages.push(content);
+  for (const [, text] of html.matchAll(/"text": "((?:[^"\\]|\\.)*)"/g)) passages.push(text);
+  const body = html.replace(/<script[\s\S]*?<\/script>/g, ' ').replace(/<style[\s\S]*?<\/style>/g, ' ');
+  for (const [, inner] of body.matchAll(/<(?:p|li|tr|summary|figcaption|blockquote)\b[^>]*>([\s\S]*?)<\/(?:p|li|tr|summary|figcaption|blockquote)>/g)) passages.push(strip(inner));
+  return passages.map(strip).filter(text => text.includes('$139') && text.length > 60 && !/\$250/.test(text));
+}
+test('every public page that names the $139 curbside price names the $250 minimum pickup with it', async () => {
+  const { sourceFiles } = await import('./source-files.mjs');
+  const { join, relative } = await import('node:path');
+  const root = new URL('..', import.meta.url).pathname, pages = sourceFiles(root).map(entry => join(entry.parentPath, entry.name))
+    .filter(path => path.endsWith('.html') && ['', 'blog', 'projects'].includes(relative(root, path).split('/').slice(0, -1).join('/')));
+  assert.ok(pages.length > 40, String(pages.length));
+  const found = pages.flatMap(path => unconditionedCurbside(readFileSync(path, 'utf8')).map(text => `${relative(root, path)}: ${text.slice(0, 160)}`));
+  assert.deepEqual(found, []);
+  assert.deepEqual(unconditionedCurbside('<p>Set it at the curb for a flat $139 for up to 4 cubic yards, no walkthrough needed.</p>').length, 1, 'the check finds an unconditioned price');
+});
+
+test('a sale draft saved before the minimum is checked against it at send (no floor key: still a pickup)', async () => {
+  assert.equal(pickupFloorCents({ lines: [{ section: 'removal', group: 'junk' }] }), PICKUP_MINIMUM_CENTS, 'all hauling, no pickup facts: a pickup');
+  assert.equal(pickupFloorCents({ lines: [{ section: 'removal', group: 'cleaning-base' }] }), 0);
+  // A $500 half load saved with $400 off before deploy: its breakdown has no pickup facts.
+  const q = quote(selection({ removal: [{ id: id('Half load'), quantity: 1 }], shelving: [], storage: [] })), f = fixture(ON), saved = await save(f, estimator, q, { extra: { winter_sale: { apply: true } } }), jobId = saved.job.id, job = f.job(jobId);
+  const old = [...job.estimate.lineItems.filter(line => line.id !== WINTER_SALE_LINE_ID), { ...job.estimate.lineItems.find(line => line.id === WINTER_SALE_LINE_ID), unitCents: -40000, totalCents: -40000, amount: -400 }];
+  Object.assign(job.estimate, { lineItems: old, amountCents: 10000, amount: 100 });
+  Object.assign(job.quoteDraft.winterSale, { amountCents: 40000 });
+  delete job.quoteDraft.breakdown.pickup;
+  job.date = DAY;
+  await assert.rejects(preview(f, q, jobId), { code: 'quote_draft_winter_sale_ineligible', details: { code: 'amount_changed' } });
+});
+
+test('the owner\'s override, saved for the booked day, carries to an estimator\'s send and in-person signature', async () => {
+  const q = quote(SOFA({ nearbyTruck: NEARBY }));
+  const booked = async () => { const f = fixture(ON), first = await save(f, estimator, quote(SOFA())); Object.assign(f.job(first.job.id), { date: DAY, time: '09:30', endTime: '12:30', address: ZIP_ADDRESS }); await save(f, owner, q, { jobId: first.job.id }); return { f, jobId: first.job.id }; };
+  // The send: no nearby job, the estimator sends on the owner's override.
+  const sent = await booked();
+  assert.equal(sent.f.job(sent.jobId).quoteDraft.minimumWaiver.ownerOverride, true);
+  const ok = await preview(sent.f, q, sent.jobId);
+  await sendQuoteDraft(sent.f.store, estimator, { requestId: randomUUID(), jobId: sent.jobId, expectedRevision: sent.f.job(sent.jobId).revision, confirmToken: ok.confirmToken }, NOW, { env: ON, compositeState: async () => q.state, winterSale: saleReaders, pickup: nearby() });
+  assert.deepEqual([sent.f.job(sent.jobId).estimate.status, sent.f.job(sent.jobId).quoteDraft.minimumWaiver.ownerOverride], ['sent', true]);
+  // Another day: the override is not that day's.
+  const moved = await booked();
+  moved.f.job(moved.jobId).date = '2026-12-15';
+  await assert.rejects(preview(moved.f, q, moved.jobId), { code: 'quote_draft_pickup_waiver_unconfirmed' });
+  // The signature: an estimator signs in person on the override's day.
+  const signed = await booked(), job = signed.f.job(signed.jobId);
+  const plan = signedPlan(1, { total: job.estimate.amountCents / 100, date: DAY, quote: { composite_pricing: q.priced.compositePricing, catalog_version: q.priced.menuVersion, line_items: job.estimate.lineItems.map(({ id, kind, name, description, quantity, unitCents, totalCents }) => ({ id, kind, name, description, quantity, unitCents, totalCents })) } });
+  plan.client.address = ZIP_ADDRESS;
+  const result = await saveWalkthroughHandoff(signed.f.store, estimator, { actorId: estimator.user, requestId: randomUUID(), customerId: 'c1', sourceWalkthroughId: 'w1', sourceRevision: signed.f.rows.get('jobs/w1').revision, jobId: job.id, expectedRevision: job.revision, plan }, NOW, { env: ON, compositeState: async () => q.state, winterSale: saleReaders, pickup: nearby() });
+  assert.deepEqual([signed.f.job(result.job.id).estimate.status, signed.f.job(result.job.id).minimumWaiver.ownerOverride], ['accepted', true]);
+});
+
+test('the nearby rule reads operational job types, skips every closed stage and takes the ZIP only from the address end', () => {
+  for (const type of ['job', 'cleanout', 'reorg']) assert.equal(nearbyJob([{ ...NEIGHBOUR, type }], { jobId: 'self', date: DAY, zip: '80521' })?.type, type);
+  for (const type of ['walkthrough', 'blocked']) assert.equal(nearbyJob([{ ...NEIGHBOUR, type }], { jobId: 'self', date: DAY, zip: '80521' }), null, type);
+  for (const stage of ['cancelled', 'canceled', 'superseded', 'lost', 'declined', 'no_show', 'noshow', 'no-show']) {
+    assert.equal(nearbyJob([{ ...NEIGHBOUR, status: stage }], { jobId: 'self', date: DAY, zip: '80521' }), null, `status ${stage}`);
+    assert.equal(nearbyJob([{ ...NEIGHBOUR, status: 'scheduled', pipelineStatus: stage }], { jobId: 'self', date: DAY, zip: '80521' }), null, `pipeline ${stage}`);
+  }
+  assert.equal(serviceZip('12345 Main Street'), '', 'a 5-digit house number is not a ZIP code');
+  assert.equal(serviceZip('12345 Main Street, Fort Collins'), '');
+  assert.equal(serviceZip('12345 Main Street, Fort Collins, CO 80521'), '80521');
+  assert.equal(serviceZip('12345 Main Street, Fort Collins, CO 80521, USA'), '80521');
+});
+
+test('a waived job moved to another day is checked again: portal approval, Hub Record approval and a reschedule', async t => {
+  const waiver = { by: estimator.user, at: NOW, reason: NEARBY.reason, nearbyJobId: 'job_neighbour', ownerOverride: false, date: DAY, pending: false };
+  const job = { id: 'job_self', date: DAY, address: ZIP_ADDRESS, estimate: { lineItems: [{ id: 'removal-special', totalCents: 7000 }] }, quoteDraft: { minimumWaiver: waiver } };
+  assert.equal(pickupWaiverProblem(job, []), null, 'on its own day');
+  const moved = { ...job, date: '2026-12-16' };
+  assert.match(pickupWaiverProblem(moved, []), /No other job is booked on 2026-12-16 in this job's ZIP code/);
+  assert.equal(pickupWaiverProblem(moved, [{ ...NEIGHBOUR, date: '2026-12-16' }]), null, 'another job that day in the ZIP code still qualifies');
+  assert.match(pickupWaiverProblem(moved, null), /Save the quote again for 2026-12-16/, 'unreadable: refused');
+  assert.match(pickupWaiverProblem({ ...moved, quoteDraft: { minimumWaiver: { ...waiver, ownerOverride: true, nearbyJobId: null } } }, [{ ...NEIGHBOUR, date: '2026-12-16' }]), /confirmed for 2026-12-14/, 'an owner override is for its own day only');
+  assert.match(pickupWaiverProblem({ ...job, quoteDraft: { minimumWaiver: { ...waiver, pending: true, date: null } } }, null, { approving: true }), /not been confirmed/);
+  assert.equal(pickupWaiverProblem({ ...moved, estimate: { lineItems: [{ id: PICKUP_MINIMUM_LINE_ID, totalCents: 100 }] } }, []), null, 'priced at the minimum: nothing waived');
+  // The flows: a sent waived sofa quote whose job then moved to a day with no nearby job.
+  const q = quote(SOFA({ nearbyTruck: NEARBY })), f = fixture(ON), saved = await save(f, estimator, q), jobId = saved.job.id;
+  Object.assign(f.job(jobId), { date: DAY, address: ZIP_ADDRESS });
+  const ok = await preview(f, q, jobId, estimator, nearby([NEIGHBOUR]));
+  await sendQuoteDraft(f.store, estimator, { requestId: randomUUID(), jobId, expectedRevision: f.job(jobId).revision, confirmToken: ok.confirmToken }, NOW, { env: ON, compositeState: async () => q.state, winterSale: saleReaders, pickup: nearby([NEIGHBOUR]) });
+  // Dispatch refuses the move to a day without a nearby job.
+  f.rows.set('jobs/job_neighbour', { ...NEIGHBOUR, revision: 'n1', customerId: 'c2', time: '13:00', endTime: '15:00' });
+  await assert.rejects(mutateDispatch(f.store, owner, { action: 'schedule.update', requestId: randomUUID(), jobId, expectedRevision: f.job(jobId).revision, changes: { date: '2026-12-16', time: '09:30', endTime: '12:30' } }, NOW), { code: 'dispatch_pickup_waiver_moved', status: 409 });
+  // Moved anyway (another path): Hub Record approval and the portal refuse it.
+  f.job(jobId).date = '2026-12-16';
+  await assert.rejects(mutateMoney(f.store, owner, { action: 'estimate.record_approval', requestId: randomUUID(), jobId, expectedRevision: f.job(jobId).revision, approvedBy: 'Synthetic Customer' }, NOW), { code: 'money_pickup_waiver_moved', status: 409 });
+  portalStore(t, { [jobId]: structuredClone(f.job(jobId)) });
+  const handlers = portalHandlers(NOW), cookie = await portalCookie(jobId, {}, Date.parse(NOW)), view = await portalView(handlers, cookie, portalEnv), shown = view.body.estimate;
+  const refused = await portalPost(handlers, cookie, { action: 'approve_estimate', signed_name: 'Synthetic Customer', confirmed: true, estimate_revision: shown.revision, amount_cents: Math.round(shown.amount * 100), estimate_fingerprint: shown.fingerprint, terms_version: shown.termsVersion, request_id: randomUUID() }, portalEnv);
+  assert.deepEqual([refused.status, refused.body.code], [409, 'CUSTOMER_PORTAL_PICKUP_DAY']);
+  assert.doesNotMatch(refused.body.error, /ZIP|job_|nearby job/i, 'the customer gets a plain request, never the staff reason');
 });

@@ -23,6 +23,7 @@ import { walkthroughStatusFields } from './walkthrough-state.js';
 import { dispatchReviewCleared, withQueueFacts } from './dispatch-queue.js';
 import { jobStartProblem } from './job-start-policy.js';
 import { winterSaleDateProblem, winterSaleLastDay } from './winter-sale.js';
+import { pickupWaiverProblem } from './pickup-minimum.js';
 import { DEFAULT_CREWS, NO_CREW, autoAssignedCrew, autoCrewJob, crewAssignment, crewAutoRecord, crewCode, crewCodeInput, crewJobDates, crewPickOrder, crewServes, eligibleCrews, handStaffed, projectCrewOpenings, serviceDaysInput } from './dispatch-crew-assign.js';
 import { dispatchOpenings } from './dispatch-openings.js';
 import { normalizeJobMaterials } from './job-materials.js';
@@ -643,6 +644,10 @@ async function executeDispatch(store, session, input, now, options = {}, context
     // reads every row starting from the floor on (everyStart): a malformed date string sorting after the bound is
     // conservative evidence (rowsConflict), so a crew is never committed past a row the complete scan would refuse on.
     const finalJobs = days.length ? await jobsForWindow(store,{startDate:days[0],endDate:addDays(days.at(-1),1),bound:addDays(days.at(-1),SAVE_BOUND_DAYS),everyStart:true},'save') : await reads.near(() => rowsWindow([current,next],new Date(now)));
+    // Minimum pickup: a truck-nearby price holds for the day it was confirmed (pickup-minimum.js); a move to another day
+    // needs another job booked that day in the same ZIP code. A signed handoff checks its own waiver (saleChecked).
+    const waiverMoved = !cancel && current && options.saleChecked !== true && next.date && next.date !== current.date ? pickupWaiverProblem(next, finalJobs.filter(row => row?.date === next.date)) : null;
+    if (waiverMoved) throw fail('dispatch_pickup_waiver_moved', waiverMoved, 409);
     // Each eligible crew in pick order (a preferred crew first), as the job it would make.
     const crewOptions = autoPlan ? autoCrewOptions(autoPlan,next,resources,roster,interval) : [];
     const inspection=await withTravel(scheduleInspection(finalJobs,resources,roster,rules),[next,...crewOptions.map(option => option.job)],roster,options.travel);
