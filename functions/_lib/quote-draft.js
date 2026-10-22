@@ -2,6 +2,7 @@ import { mutateDispatch } from './dispatch-service.js';
 import { saveJobReads } from './dispatch-window-reads.js';
 import { requireQuoteAuthor } from './quote-permissions.js';
 import { identityMatches } from './walkthrough-handoff.js';
+import { authorCustomer, authorOpensJob, jobCustomerAccess, refPatch, shownCustomerId } from './estimator-customer-access.js';
 import { auditWrite } from './hub-audit.js';
 import { addDays, denverToday, validDate } from './dispatch-time.js';
 import { builderJunkOnly, depositCents, estimateFingerprint, estimateChanged, estimateTotals, included, junkOnlyGarageWork, normalizeLineItems, packageTotals, validateSelection } from './quote-model.js';
@@ -257,11 +258,13 @@ async function winterSaleSendable(job, now, env, readers) {
   if (Math.abs(Number(sale.totalCents)) !== decision.amountCents) throw fail('winter_sale_ineligible', 'The winter sale amount for this quote changed since it was saved (the sale settings or the cost settings changed). Save the quote again before sending.', 409, { code: 'amount_changed' });
 }
 
-/** Quote author DTO: the quote, its options and send state; never signatures, payment evidence, notes or provider IDs. */
-export function quoteDraftView(job) {
+/** Quote author DTO: the quote, its options and send state; never signatures, payment evidence, notes or provider IDs.
+ * seen (estimator-customer-access.js jobCustomerAccess): an estimator who may not see the job's customer gets their own
+ * customer reference, or no customer id. */
+export function quoteDraftView(job, seen = null) {
   const estimate = plain(job?.estimate) ? job.estimate : {}, lines = Array.isArray(estimate.lineItems) ? normalizeLineItems(estimate.lineItems).lineItems : [];
   return {
-    id: job.id, revision: job.revision, customerId: job.customerId || '', customer: String(job.customer || '').slice(0, 200), projectId: job.projectId || '', sourceWalkthroughId: job.sourceWalkthroughId || '', status: stage(job), quoteStatus: job.quoteStatus || '',
+    id: job.id, revision: job.revision, customerId: seen ? shownCustomerId(job.customerId, seen) : job.customerId || '', customer: seen && !seen.full ? String(seen.name || '').slice(0, 200) : String(job.customer || '').slice(0, 200), projectId: job.projectId || '', sourceWalkthroughId: job.sourceWalkthroughId || '', status: stage(job), quoteStatus: job.quoteStatus || '',
     estimate: { number: estimate.number || '', revision: Number.isSafeInteger(estimate.revision) ? estimate.revision : null, status: estimate.status || 'draft', amountCents: Number.isSafeInteger(estimate.amountCents) ? estimate.amountCents : null, depositRequiredCents: Number.isSafeInteger(estimate.depositRequiredCents) ? estimate.depositRequiredCents : null, validUntil: validDate(estimate.validUntil) ? estimate.validUntil : null, scope: String(estimate.scope || '').slice(0, 1600), sentAt: estimate.sentAt || null, sentRevision: Number.isSafeInteger(estimate.sentRevision) ? estimate.sentRevision : null, fingerprint: estimateFingerprint(estimate),
       ...(estimate.pricingSettingsVersion ? { catalogVersion: estimate.catalogVersion, pricingSettingsVersion: estimate.pricingSettingsVersion, depositPct: estimate.depositPct } : {}),
       ...(estimate.commercialPolicy !== undefined ? { commercialPolicy: estimate.commercialPolicy, depositPct: estimate.depositPct } : {}),
@@ -279,17 +282,21 @@ export function quoteDraftView(job) {
   };
 }
 
-function outcome(job, action, requestId, replayed, warnings, extra = {}) {
-  return { ok: true, authority: 'employee_hub', action, requestId, replayed, job: quoteDraftView(job), warnings, ...extra };
+function outcome(job, action, requestId, replayed, warnings, extra = {}, seen = null) {
+  return { ok: true, authority: 'employee_hub', action, requestId, replayed, job: quoteDraftView(job, seen), warnings, ...extra };
 }
 
-async function readJobFor(store, jobId) {
+// author ({actor, access, env}): an estimator opens only a draft they started or one whose customer they may see
+// (estimator-customer-access.js authorOpensJob); owners, managers and dispatchers open any.
+async function readJobFor(store, jobId, author = null) {
   const job = await store.read('jobs', jobId);
   if (!operational(job)) throw fail('job_not_found', 'This quote job could not be found.', 404);
   requireRevision(job);
   if (!plain(job.quoteDraft)) throw fail('not_a_draft', 'This job\'s quote was not drafted here. Revise it in Estimates & payments.');
+  if (author && !await authorOpensJob(store, author.actor, author.access, job, author.env)) throw fail('job_forbidden', 'This quote belongs to another estimator. Ask the office to open it.', 403);
   return job;
 }
+const seenBy = (store, actor, access, env) => job => jobCustomerAccess(store, actor, access, job, { env });
 
 function editable(job) {
   if (CLOSED.has(stage(job))) throw fail('job_closed', 'A closed or cancelled job cannot take a quote revision.');
@@ -318,14 +325,15 @@ export async function expireStaleCheckout({ store, job, stripe, now = new Date()
 }
 
 export async function readQuoteDraft(store, actor, query = {}, { env = {} } = {}) {
-  requireQuoteAuthor(actor, env);
+  const access = requireQuoteAuthor(actor, env);
   keys(query, ['jobId'], 'The quote lookup is invalid.');
   if (!safeId(query.jobId)) throw fail('invalid_request', 'Choose a valid quote job.', 400);
-  return { ok: true, authority: 'employee_hub', job: quoteDraftView(await readJobFor(store, query.jobId)) };
+  const job = await readJobFor(store, query.jobId, { actor, access, env });
+  return { ok: true, authority: 'employee_hub', job: quoteDraftView(job, await seenBy(store, actor, access, env)(job)) };
 }
 
 export async function saveQuoteDraft(store, actor, input, now = new Date().toISOString(), { env = {}, checkouts = null, catalogState = catalogStateDefault, compositeState = compositeStateDefault, newQuotePaymentPolicy, winterSale: readers = winterSaleReaders } = {}) {
-  requireQuoteAuthor(actor, env);
+  const access = requireQuoteAuthor(actor, env), seen = seenBy(store, actor, access, env);
   keys(input, SAVE_KEYS, 'The quote draft needs a stable request and customer identity.');
   if (!uuid(input.requestId) || !safeId(input.customerId) || input.jobId && !safeId(input.jobId) || input.sourceWalkthroughId && !safeId(input.sourceWalkthroughId)) throw fail('invalid_request', 'The quote draft needs a stable request and customer identity.', 400);
   if (input.jobId && (typeof input.expectedRevision !== 'string' || !input.expectedRevision)) throw fail('invalid_request', 'Reload the quote before revising it.', 400);
@@ -339,7 +347,7 @@ export async function saveQuoteDraft(store, actor, input, now = new Date().toISO
     if (!saved || saved.customerId !== receipt.customerId || saved.quoteDraft?.requestId !== input.requestId) throw fail('changed_since_save', 'The earlier save succeeded, but this quote has changed since. Reload it before revising.');
     const checkout = receipt.revisedRelease && typeof checkouts === 'function' ? await checkouts(saved).catch(() => ({ status: 'needs_review', reason: 'checkout_unconfirmed' })) : null;
     const warnings = [...(receipt.warnings || []), ...(checkout && !['none', 'current', 'expired'].includes(checkout.status) ? [{ code: 'checkout_needs_review', message: 'An open card checkout for the earlier quote could not be closed. Review it in Stripe before the customer pays.' }] : [])];
-    return outcome(saved, 'save', input.requestId, replayed, warnings, checkout ? { checkout } : {});
+    return outcome(saved, 'save', input.requestId, replayed, warnings, checkout ? { checkout } : {}, await seen(saved));
   }
   // A committed save replays before validation, so a retry after the Denver date
   // (and the quote's expiry window) moved on still returns the saved quote.
@@ -385,7 +393,10 @@ export async function saveQuoteDraft(store, actor, input, now = new Date().toISO
     draft = normalizeQuoteDraft(input.draft, now);
     if (draft.lineItems.some(line => line.catalog)) throw fail('catalog_descriptor_required', 'Catalog products must be saved from a current server price preview.', 409);
   }
-  const customer = await store.read('customers', input.customerId); requireRevision(customer);
+  // An estimator names a customer they may not see only by their own customer-resolve reference, under an agreeing name.
+  const named = await authorCustomer(store, actor, access, input.customerId, { env, clientName: draft.client.name, prefix: 'quote_draft_',
+    source: input.sourceWalkthroughId ? await store.read('jobs', input.sourceWalkthroughId) : null, job: input.jobId ? await store.read('jobs', input.jobId) : null });
+  const customer = named.customer; requireRevision(customer);
   if (!identityMatches(draft.client, customer)) throw fail('customer_mismatch', 'The quote\'s customer details do not match the selected customer. Review the phone, email and CRM link.');
   const record = (job, plan, jobId) => ({ quoteDraft: { ...(plain(job?.quoteDraft) ? job.quoteDraft : { version: 1, createdAt: now, createdBy: actor.user }), requestId: input.requestId, fingerprint, savedAt: now, savedBy: actor.user, sourceWalkthroughId: input.sourceWalkthroughId || '',
       ...(draft.catalogPricing ? { catalogPricing: draft.catalogPricing } : job?.quoteDraft?.catalogPricing ? { catalogPricing: null } : {}),
@@ -395,7 +406,7 @@ export async function saveQuoteDraft(store, actor, input, now = new Date().toISO
   const audit = (job, patch, jobId) => auditWrite({ actor: { id: actor.user, kind: 'human', role: actor.role }, via: 'hub', action: 'quote.draft.save', entity: { collection: 'jobs', id: jobId }, before: job ? moneySnapshot(job) : null, after: moneySnapshot({ ...(job || {}), ...patch }), requestId: input.requestId, reason: null, now });
   try {
     if (input.jobId) {
-      const job = await readJobFor(store, input.jobId);
+      const job = await readJobFor(store, input.jobId, { actor, access, env });
       if (job.customerId !== customer.id || (job.sourceWalkthroughId || '') !== (input.sourceWalkthroughId || '')) throw fail('job_mismatch', 'This quote belongs to a different customer or walkthrough. Reload it before revising.');
       if (job.revision !== input.expectedRevision) throw fail('revision_conflict', 'This quote changed after you opened it. Reload it and review the latest version.');
       editable(job);
@@ -406,7 +417,7 @@ export async function saveQuoteDraft(store, actor, input, now = new Date().toISO
       if (saleResult) draft = { ...saleResult.draft, winterSale: saleResult.record };
       const plan = quotePatch(job, draft, actor, now, job.id);
       if (saleResult) plan.warnings.push(...saleResult.warnings);
-      const saved = record(job, plan, job.id), patch = { ...plan.patch, ...capturePatch(job, draft, actor, now), ...serviceTypeRevision(job, junkOnlyQuote), quoteDraft: saved.quoteDraft, updatedAt: now };
+      const saved = record(job, plan, job.id), patch = { ...plan.patch, ...capturePatch(job, draft, actor, now), ...serviceTypeRevision(job, junkOnlyQuote), quoteDraft: saved.quoteDraft, ...refPatch(named, actor, draft.client.name), updatedAt: now };
       // FUN-03: a material revision ends the job's live sale (a portal approval of
       // an earlier revision), as the Hub estimate editor does: deal.approval_superseded
       // and the cleared funnelSale are in this revision's commit.
@@ -429,7 +440,7 @@ export async function saveQuoteDraft(store, actor, input, now = new Date().toISO
       // A new quote has no job date yet: the sale's window is checked again when it is sent (winterSaleSendable).
       const saleResult = sale ? await applyWinterSale(draft, sale, { actor, now, env, readers, sourceWalkthroughId: input.sourceWalkthroughId || '', junkOnly: junkOnlyQuote, requestId: input.requestId }) : null;
       if (saleResult) draft = { ...saleResult.draft, winterSale: saleResult.record };
-      await createDraft(store, actor, input, draft, customer, now, env, { record, audit, receiptId, newQuotePaymentPolicy, junkOnlyQuote, sale: saleResult });
+      await createDraft(store, actor, input, draft, customer, now, env, { record, audit, receiptId, newQuotePaymentPolicy, junkOnlyQuote, sale: saleResult, ref: refPatch(named, actor, draft.client.name) });
     }
   } catch (error) {
     if (FINAL.has(error.code)) throw error;
@@ -443,7 +454,7 @@ export async function saveQuoteDraft(store, actor, input, now = new Date().toISO
   return saved;
 }
 
-async function createDraft(store, actor, input, draft, customer, now, env, { record, audit, receiptId, newQuotePaymentPolicy, junkOnlyQuote = false, sale = null }) {
+async function createDraft(store, actor, input, draft, customer, now, env, { record, audit, receiptId, newQuotePaymentPolicy, junkOnlyQuote = false, sale = null, ref = {} }) {
   let source = null, sourceProject = null;
   if (input.sourceWalkthroughId) {
     source = await store.read('jobs', input.sourceWalkthroughId); requireRevision(source);
@@ -474,7 +485,7 @@ async function createDraft(store, actor, input, draft, customer, now, env, { rec
       const plan = quotePatch(null, draft, actor, now, target.id, newQuotePaymentPolicy);
       if (sale) plan.warnings.push(...sale.warnings);
       const saved = record(null, plan, target.id);
-      Object.assign(target.patch, plan.patch, capturePatch(target.patch, draft, actor, now), { quoteDraft: saved.quoteDraft });
+      Object.assign(target.patch, plan.patch, capturePatch(target.patch, draft, actor, now), { quoteDraft: saved.quoteDraft }, ref);
       // A review can finish before its quote exists. Preserve the finalized
       // source receipt and create the same gated note intent as finalize-after-
       // quote, using the new canonical job/contact identity, never the old one.
@@ -585,19 +596,21 @@ async function compositeSendable(job, env, compositeState) {
 }
 
 export async function previewQuoteSend(store, actor, input, now = new Date().toISOString(), { env = {}, compositeState = compositeStateDefault, winterSale: readers = winterSaleReaders } = {}) {
-  requireQuoteAuthor(actor, env);
+  const access = requireQuoteAuthor(actor, env);
   keys(input, PREVIEW_KEYS, 'Choose the saved quote to send.');
   if (!safeId(input.jobId) || typeof input.expectedRevision !== 'string' || !input.expectedRevision) throw fail('invalid_request', 'Choose the saved quote to send.', 400);
   actorMatches(input, actor);
-  const job = await readJobFor(store, input.jobId);
+  const job = await readJobFor(store, input.jobId, { actor, access, env });
   if (job.revision !== input.expectedRevision) throw fail('revision_conflict', 'This quote changed after you opened it. Reload it and review the latest version.');
   sendable(job, now, env);
   await compositeSendable(job, env, compositeState);
   await winterSaleSendable(job, now, env, readers);
   const delivery = deliveryPlan(job, env), estimate = sendingEstimate(job.estimate), paymentSchedule = await paymentScheduleFor(store,job,estimate), sending = { ...job, estimate };
-  const summary = `Send ${estimate.number} revision ${estimate.revision} (${usd(estimate.amountCents)}) to ${String(job.customer || 'the customer').slice(0, 80)}`+(paymentSchedule?'. '+scheduleSummary(paymentSchedule,estimate.commercialPolicy):'');
+  // An estimator who may not see the customer is shown the name they typed (jobCustomerAccess), never the stored one.
+  const seen = await seenBy(store, actor, access, env)(job), shownName = seen.full ? job.customer : seen.name;
+  const summary = `Send ${estimate.number} revision ${estimate.revision} (${usd(estimate.amountCents)}) to ${String(shownName || 'the customer').slice(0, 80)}`+(paymentSchedule?'. '+scheduleSummary(paymentSchedule,estimate.commercialPolicy):'');
   const confirmation = await issueConfirmation(env, { actorId: actor.user, action: SEND_ACTION, entityId: `jobs/${job.id}`, payload: sendBinding(sending, delivery, paymentSchedule), summary, now });
-  return { ok: true, authority: 'employee_hub', job: quoteDraftView(paymentSchedule?{...job,estimate:{...estimate,paymentSchedule}}:sending), delivery, summary: confirmation.summary, confirmToken: confirmation.token, expiresAt: confirmation.expiresAt };
+  return { ok: true, authority: 'employee_hub', job: quoteDraftView(paymentSchedule?{...job,estimate:{...estimate,paymentSchedule}}:sending, seen), delivery, summary: confirmation.summary, confirmToken: confirmation.token, expiresAt: confirmation.expiresAt };
 }
 
 /**
@@ -606,7 +619,7 @@ export async function previewQuoteSend(store, actor, input, now = new Date().toI
  * lets the deliverer's own ledger decide; it never records a second send.
  */
 export async function sendQuoteDraft(store, actor, input, now = new Date().toISOString(), { env = {}, deliver = null, compositeState = compositeStateDefault, winterSale: readers = winterSaleReaders } = {}) {
-  requireQuoteAuthor(actor, env);
+  const access = requireQuoteAuthor(actor, env);
   keys(input, SEND_KEYS, 'The send request contains unsupported fields.');
   if (!uuid(input.requestId) || !safeId(input.jobId) || typeof input.expectedRevision !== 'string' || !input.expectedRevision || typeof input.confirmToken !== 'string') throw fail('invalid_request', 'Preview the quote and confirm it before sending.', 400);
   actorMatches(input, actor);
@@ -624,11 +637,11 @@ export async function sendQuoteDraft(store, actor, input, now = new Date().toISO
       delivery = await deliver(saved.id, { requestId: input.requestId, actorId: actor.user, actorRole: actor.role, mode: saved.estimateReady.mode }).catch(() => ({ status: 'uncertain', reason: 'delivery_unconfirmed' }));
       saved = await store.read('jobs', receipt.jobId) || saved;
     }
-    return outcome(saved, 'send', input.requestId, replayed, receipt.warnings || [], { delivery });
+    return outcome(saved, 'send', input.requestId, replayed, receipt.warnings || [], { delivery }, await seenBy(store, actor, access, env)(saved));
   }
   const prior = await replay(true);
   if (prior) return prior;
-  const job = await readJobFor(store, input.jobId);
+  const job = await readJobFor(store, input.jobId, { actor, access, env });
   if (job.revision !== input.expectedRevision) throw fail('revision_conflict', 'This quote changed after the preview. Preview it again before sending.');
   sendable(job, now, env);
   await compositeSendable(job, env, compositeState);
