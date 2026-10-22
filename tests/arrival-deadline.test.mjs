@@ -352,7 +352,7 @@ test('an End day saved offline and synced after midnight is not the next day\'s 
 });
 
 // #219 (review of #194): the phone's tap time, stricter arrival evidence, and Start today's work for today's crew only.
-const tapAt = (command, row, status, tappedAt, now) => ({ ...row, ...command(row, tapper, { action: 'status', status, requestId: `00000000-0000-4000-8000-${String(++taps).padStart(12, '0')}`, tappedAt, ...(['paused', 'waiting', 'delayed'].includes(status) ? { reason: 'Synthetic traffic' } : {}) }, now).patch });
+const tapAt = (command, row, status, tappedAt, now, actor = tapper) => ({ ...row, ...command(row, actor, { action: 'status', status, requestId: `00000000-0000-4000-8000-${String(++taps).padStart(12, '0')}`, tappedAt, ...(['paused', 'waiting', 'delayed'].includes(status) ? { reason: 'Synthetic traffic' } : {}) }, now).patch });
 const working = command => {
   let row = tap(command, twoDay(), 'dispatched', denver('2026-09-22', '07:40'));
   row = tap(command, row, 'arrived', denver('2026-09-22', '07:58'));
@@ -429,29 +429,42 @@ test('Start today\'s work is offered only to someone who works the job today', (
   assert.equal(project(single, morning).startTodayOffered, false, 'the next day');
 });
 
-// Review of #224: two phones. A tap made before the stored one is stale: it goes into the history but replaces neither
-// the activity nor its time, so the stored pair stays honest and a second phone's queued day-1 tap synced on day 2
-// cannot change day 2's flags (main shows no flag in these cases either).
+// Review of #224: two phones. A tap made before another person's stored one is stale: it goes into the history but
+// replaces neither the activity, its time nor the job clock, so a second phone's queued day-1 tap synced on day 2
+// cannot change day 2's flags (main shows no flag in these cases either). One phone replays its own taps in order, so
+// a person's own later tap is never stale, however slow their phone's clock.
+const otherPhone = { user: 'crew.two', displayName: 'Crew Two', manager: false };
 for (const [name, command] of [['FIELD_MULTIDAY_VISITS off', fieldCommand], ['FIELD_MULTIDAY_VISITS on', fieldVisitCommand]]) {
-  test(`an older tap from a second phone replaces neither the activity nor its time (${name})`, () => {
+  test(`another person's older tap replaces neither the activity, its time nor the job clock (${name})`, () => {
     for (const startAt of ['07:50', '08:02']) {
-      // Phone A taps Start today's work (before or after the 08:00 start); phone B's queued day-1 Pause syncs at 08:30.
+      // crew.one taps Start today's work (before or after the 08:00 start); crew.two's queued day-1 Pause syncs at 08:30.
       const started = tapAt(command, working(command), 'in_progress', denver('2026-09-23', startAt), denver('2026-09-23', startAt));
-      const replayed = tapAt(command, started, 'paused', denver('2026-09-22', '16:00'), denver('2026-09-23', '08:30'));
+      const replayed = tapAt(command, started, 'paused', denver('2026-09-22', '16:00'), denver('2026-09-23', '08:30'), otherPhone);
       assert.deepEqual([replayed.fieldExecution.activity, replayed.fieldExecution.activityTappedAt], ['in_progress', denver('2026-09-23', startAt)], startAt);
+      assert.deepEqual(replayed.fieldExecution.jobTime, started.fieldExecution.jobTime, 'the job clock keeps running work');
       assert.deepEqual(flags(visitRow(replayed, replayed.assignmentSegments[1]), { now: at(denver('2026-09-23', '08:40')) }), [], `Start at ${startAt}`);
     }
-    // Delayed at 07:30 on day 2 (not an arrival), then phone B's queued day-1 Waiting: it does not become today's arrival.
+    // Delayed at 07:30 on day 2 (not an arrival), then crew.two's queued day-1 Waiting: not today's arrival.
     const delayed = tapAt(command, working(command), 'delayed', denver('2026-09-23', '07:30'), denver('2026-09-23', '07:30'));
-    const waiting = tapAt(command, delayed, 'waiting', denver('2026-09-22', '15:00'), denver('2026-09-23', '07:40'));
+    const waiting = tapAt(command, delayed, 'waiting', denver('2026-09-22', '15:00'), denver('2026-09-23', '07:40'), otherPhone);
     assert.deepEqual([waiting.fieldExecution.activity, waiting.fieldExecution.activityTappedAt], ['delayed', denver('2026-09-23', '07:30')]);
     assert.deepEqual(kinds(flags(visitRow(waiting, waiting.assignmentSegments[1]), { now: at(denver('2026-09-23', '08:15')) })), ['late'], 'still Late');
-    // End day keeps the pair too: a stale End day does not replace today's Start.
+    // A stale End day from crew.two neither replaces today's Start nor stops the clock.
     if (command === fieldVisitCommand) {
       const started = tapAt(command, working(command), 'in_progress', denver('2026-09-23', '08:02'), denver('2026-09-23', '08:02'));
-      const ended = fieldVisitCommand(started, tapper, { action: 'end_day', requestId: '00000000-0000-4000-8000-0000000000f3', tappedAt: denver('2026-09-23', '07:00'), notes: 'Synthetic day two notes, an old queued end.' }, denver('2026-09-23', '15:00')).patch.fieldExecution;
+      const ended = fieldVisitCommand(started, otherPhone, { action: 'end_day', requestId: '00000000-0000-4000-8000-0000000000f3', tappedAt: denver('2026-09-23', '07:00'), notes: 'Synthetic day two notes, an old queued end.' }, denver('2026-09-23', '15:00')).patch.fieldExecution;
       assert.deepEqual([ended.activity, ended.activityTappedAt], ['in_progress', denver('2026-09-23', '08:02')]);
+      assert.deepEqual(ended.jobTime, started.fieldExecution.jobTime, 'the job clock keeps running work');
     }
+  });
+
+  test(`a person's own later tap counts even when their phone's clock runs slow (${name})`, () => {
+    // crew.one taps Start online at 09:00 (server time); their Pause made offline at a real 09:02, with the phone 5
+    // minutes slow (08:57), syncs at 09:03. It is their own next tap, so it is recorded and the clock pauses.
+    const started = tapAt(command, working(command), 'in_progress', undefined, denver('2026-09-23', '09:00'));
+    const paused = tapAt(command, started, 'paused', denver('2026-09-23', '08:57'), denver('2026-09-23', '09:03'));
+    assert.deepEqual([paused.fieldExecution.activity, paused.fieldExecution.activityTappedAt], ['paused', denver('2026-09-23', '08:57')]);
+    assert.notDeepEqual(paused.fieldExecution.jobTime, started.fieldExecution.jobTime, 'the clock moved to the pause');
   });
 }
 

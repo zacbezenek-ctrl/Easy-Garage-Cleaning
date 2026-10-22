@@ -105,9 +105,9 @@ export function fieldVisitCommand(job, actor, input, now = new Date().toISOStrin
     if (!room(date)) throw fieldFailure(`This job already has ${VISIT_LIMIT} recorded visit days. Ask operations to review its schedule.`, 409, 'FIELD_VISIT_LIMIT');
     // A late end of day stops the clock (and ends the job's day) only while
     // today's visit has not started; once it has, the clock is today's work.
-    const notes = input.notes.trim(), stop = !late || !visit, time = stop ? advanceFieldTime(job, null, actor, input.requestId, now) : { clock: null, segment: null };
+    // A stale End day (another person's newer tap is stored, fieldTapStamps) leaves the job clock running.
+    const tap = fieldTapStamps(state, input, now, actorId), notes = input.notes.trim(), stop = !late || !visit, time = stop && !tap.stale ? advanceFieldTime(job, null, actor, input.requestId, now) : { clock: null, segment: null };
     const ended = { ...(target || { startedAt: null, startedBy: null }), status: 'ended', endedAt: now, endedBy: actorId, endedByName: actorName, notes, requestId: input.requestId, ...(late ? { endedLate: true } : {}) };
-    const tap = fieldTapStamps(state, input, now);
     const fieldExecution = { ...state, ...(stop && !tap.stale ? { activity: 'day_ended', activityAt: now, activityTappedAt: tap.activityTappedAt, activityBy: actorId, activityReason: fieldText(notes, 1000) } : {}), visits: { ...visits, [date]: ended }, ...(time.clock ? { jobTime: time.clock } : {}) };
     const event = { id: input.requestId, action: 'end_day', actorId, actorName, createdAt: now, state: 'applied', visibility: 'crew', summary: late ? `Day ended (${date}, synced late)` : 'Day ended', body: notes, visitDate: date, ...(time.segment ? { timeSegment: time.segment } : {}) };
     return reviewOvernight(job, { patch: { fieldExecution, updatedAt: now, fieldLastActionAt: now }, event }, today, now, late && stop);
@@ -124,7 +124,7 @@ export function fieldVisitCommand(job, actor, input, now = new Date().toISOStrin
   const result = fieldCommand(job, actor, input, now), base = result.patch.fieldExecution || state;
   if (input.action === 'status') {
     // A tap made on an earlier day and synced today (queued offline) neither opens nor reopens today's visit.
-    const next = fieldTapStamps(state, input, now).earlierDay ? null : !visit ? room(today) && { status: 'in_progress', startedAt: now, startedBy: actorId } : visit.status === 'ended' ? { ...archived(visit), status: 'in_progress', reopenedAt: now, reopenedBy: actorId } : null;
+    const next = fieldTapStamps(state, input, now, actorId).earlierDay ? null : !visit ? room(today) && { status: 'in_progress', startedAt: now, startedBy: actorId } : visit.status === 'ended' ? { ...archived(visit), status: 'in_progress', reopenedAt: now, reopenedBy: actorId } : null;
     if (next) { result.patch.fieldExecution = { ...base, visits: { ...visits, [today]: next } }; result.event.visitDate = today; }
   } else if (input.action === 'complete') {
     const completed = { ...(archived(visit) || { startedAt: null, startedBy: null }), status: 'completed', endedAt: now, endedBy: actorId, endedByName: actorName, notes: base.completion.notes, requestId: input.requestId };
