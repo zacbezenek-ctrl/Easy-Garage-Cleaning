@@ -190,14 +190,17 @@ export function computeTipAllocation({ jobs, timecards, start, end, now, refundR
  * A job with one person in its split is that person's tip: its amounts (and its tips' amounts and payment references)
  * are withheld (amountHidden), and the week's totals leave it out, or subtracting the other jobs would give it back;
  * totals.hiddenJobs counts the jobs left out. The split's people are those with job time and the assigned crew without
- * it (a held tip goes to them by hand), counted once each. */
-export function tipAllocationForViewer(allocation, { payShown = false } = {}) {
+ * it (a held tip goes to them by hand), counted once each. rosterNames (optional): Map of lowercase username to that
+ * account's display name, the names a legacy job's crew may have been saved under. */
+export function tipAllocationForViewer(allocation, { payShown = false, rosterNames = null } = {}) {
   if (payShown === true) return { ...allocation, payShown: true };
   const person = ({ employee, name }) => ({ employee, name }), who = value => String(value || '').trim().toLowerCase();
   // A name listed without job time may be someone who did track time under their username (a legacy job saved with
-  // display names): it is the same person when it matches an employee row's username or name.
+  // display names): it is the same person when it matches an employee row's username, the name on their timecard, or
+  // their account's display name, which can differ from the timecard's.
+  const roster = rosterNames instanceof Map ? rosterNames : new Map();
   const solo = job => {
-    const tracked = job.employees.map(row => [who(row.employee), who(row.name)]);
+    const tracked = job.employees.map(row => [who(row.employee), who(row.name), who(roster.get(who(row.employee)))].filter(Boolean));
     const others = new Set((job.crewWithoutJobTime || []).map(who).filter(name => name && !tracked.some(keys => keys.includes(name))));
     return tracked.length + others.size === 1;
   };
