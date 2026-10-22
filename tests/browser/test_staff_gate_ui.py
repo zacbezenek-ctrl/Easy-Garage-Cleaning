@@ -12,7 +12,7 @@ OUT = ROOT / 'test-results' / 'staff-gate'
 MANAGER = ('tylerg', 'synthetic-manager-password')
 CREW = ('synthetic.crew', 'synthetic-crew-password')
 PUBLIC_SHELL = ['/app-touch.css?v=20260930mobiletouch', '/crew/field-outbox.js?v=20260929crewtime2', '/crew/manifest-knock.webmanifest', '/crew/manifest.webmanifest', '/crew/offline.html']
-STAFF_SHELL = ['/crew/field-expenses.css?v=20260928fun19', '/crew/field-expenses.js?v=20261013compat', '/crew/field-payments.css?v=20260929fieldpay2', '/crew/field-payments.js?v=20261013compat', '/crew/job-photo-sharing.css?v=20260927photo', '/crew/job-photo-sharing.js?v=20261012storage', '/crew/job-completion-handoff.js?v=20261016w19verify', '/crew/job.css?v=20261017buylinks', '/crew/job.html', '/crew/job.js?v=20261021starttoday',
+STAFF_SHELL = ['/crew/field-expenses.css?v=20260928fun19', '/crew/field-expenses.js?v=20261013compat', '/crew/field-payments.css?v=20260929fieldpay2', '/crew/field-payments.js?v=20261013compat', '/crew/job-photo-sharing.css?v=20260927photo', '/crew/job-photo-sharing.js?v=20261012storage', '/crew/job-completion-handoff.js?v=20261016w19verify', '/crew/job.css?v=20261017buylinks', '/crew/job.html', '/crew/job.js?v=20261022taptime',
                # KNOCK: the canvassing page and its modules are gated and join the shell on a signed-in install.
                '/crew/knock-app.js?v=20261021roles', '/crew/knock-areas.js', '/crew/knock-doors.js', '/crew/knock-leaflet.css?v=1.9.4', '/crew/knock-leaflet.js?v=1.9.4', '/crew/knock-map.js', '/crew/knock-money.js', '/crew/knock-native-form.js', '/crew/knock-outbox.js', '/crew/knock-rep.js', '/crew/knock-sale-rules.js', '/crew/knock-sale.js', '/crew/knock-settings.js', '/crew/knock-stats-ui.js', '/crew/knock-stats.js', '/crew/knock-time.js', '/crew/knock-ui.js', '/crew/knock-walkthrough.js', '/crew/knock.css?v=20261017knockbridge', '/crew/knock.html',
                # CREW-SCHEDULE: the crew schedule page and its script are gated with the rest of the crew shell.
@@ -232,8 +232,8 @@ class StaffGateBrowserTests(unittest.TestCase):
         self.assertLessEqual(page.evaluate('document.documentElement.scrollWidth'), 375)
         page.screenshot(path=str(OUT / 'crew-offline.png'), full_page=True)
         shell = page.evaluate(WORKER_SHELL)
-        self.assertEqual(shell, {'names': ['egc-crew-shell-20261021starttoday'], 'keys': PUBLIC_SHELL}, 'the outbox import and the public shell load signed out; gated files are skipped, not fatal')
-        self.assertEqual(self.context.request.get(self.url + '/crew/job.js?v=20261021starttoday', max_redirects=0).status, 401, 'the gated shell files were refused, not cached')
+        self.assertEqual(shell, {'names': ['egc-crew-shell-20261022taptime'], 'keys': PUBLIC_SHELL}, 'the outbox import and the public shell load signed out; gated files are skipped, not fatal')
+        self.assertEqual(self.context.request.get(self.url + '/crew/job.js?v=20261022taptime', max_redirects=0).status, 401, 'the gated shell files were refused, not cached')
 
     def test_the_crew_worker_installs_signed_in_with_the_whole_shell_and_reloads_offline(self):
         page = self.page
@@ -242,7 +242,7 @@ class StaffGateBrowserTests(unittest.TestCase):
         expect(page).to_have_url(self.url + '/crew/job')
         expect(page).to_have_title("Today's work · Easy Garage Cleaning")
         shell = page.evaluate(WORKER_SHELL)
-        self.assertEqual(shell, {'names': ['egc-crew-shell-20261021starttoday'], 'keys': sorted(PUBLIC_SHELL + STAFF_SHELL)})
+        self.assertEqual(shell, {'names': ['egc-crew-shell-20261022taptime'], 'keys': sorted(PUBLIC_SHELL + STAFF_SHELL)})
         self.context.set_offline(True)
         page.reload()
         expect(page).to_have_title("Today's work · Easy Garage Cleaning")

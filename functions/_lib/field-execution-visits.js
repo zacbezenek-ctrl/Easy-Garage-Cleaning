@@ -2,7 +2,7 @@ import { assignmentKey } from './job-assignment.js';
 import { segmented, jobSegments, segmentDays } from './dispatch-segments.js';
 import { addDays, denverToday, occupiedDays, validDate } from './dispatch-time.js';
 import { advanceFieldTime, fieldJobTime } from './field-execution-time.js';
-import { fieldCommand, fieldFailure, fieldStage, fieldText } from './field-execution.js';
+import { fieldCommand, fieldFailure, fieldStage, fieldTapTime, fieldText } from './field-execution.js';
 
 /** Multi-day visits (FIELD-MULTIDAY). With FIELD_MULTIDAY_VISITS=true a job
  * keeps one visit per Denver day in the optional map
@@ -107,7 +107,7 @@ export function fieldVisitCommand(job, actor, input, now = new Date().toISOStrin
     // today's visit has not started; once it has, the clock is today's work.
     const notes = input.notes.trim(), stop = !late || !visit, time = stop ? advanceFieldTime(job, null, actor, input.requestId, now) : { clock: null, segment: null };
     const ended = { ...(target || { startedAt: null, startedBy: null }), status: 'ended', endedAt: now, endedBy: actorId, endedByName: actorName, notes, requestId: input.requestId, ...(late ? { endedLate: true } : {}) };
-    const fieldExecution = { ...state, ...(stop ? { activity: 'day_ended', activityAt: now, activityBy: actorId, activityReason: fieldText(notes, 1000) } : {}), visits: { ...visits, [date]: ended }, ...(time.clock ? { jobTime: time.clock } : {}) };
+    const fieldExecution = { ...state, ...(stop ? { activity: 'day_ended', activityAt: now, activityTappedAt: fieldTapTime(input, now), activityBy: actorId, activityReason: fieldText(notes, 1000) } : {}), visits: { ...visits, [date]: ended }, ...(time.clock ? { jobTime: time.clock } : {}) };
     const event = { id: input.requestId, action: 'end_day', actorId, actorName, createdAt: now, state: 'applied', visibility: 'crew', summary: late ? `Day ended (${date}, synced late)` : 'Day ended', body: notes, visitDate: date, ...(time.segment ? { timeSegment: time.segment } : {}) };
     return reviewOvernight(job, { patch: { fieldExecution, updatedAt: now, fieldLastActionAt: now }, event }, today, now, late && stop);
   }

@@ -128,6 +128,21 @@ export function fieldViewerWorksOn(job, viewer, start, end) {
 }
 
 const earlierDenverDay = (at, now = Date.now()) => { const ms = Date.parse(at || ''), current = typeof now === 'number' ? now : Date.parse(now); return Number.isFinite(ms) && Number.isFinite(current) && denverToday(new Date(ms)) < denverToday(new Date(current)); };
+// The viewer works the job today (Denver): a day of their own segment, or of the job when it has none. A manager counts
+// any segment on today.
+function worksToday(job, options) {
+  const ms = typeof options.now === 'number' ? options.now : Date.parse(options.now || new Date().toISOString()), today = denverToday(new Date(ms)), viewer = assignmentKey(options.viewer);
+  return jobSegments(job).some(row => row && (options.manager === true || !row.segmentId || ownsSegment(row, viewer)) && occupiedDays(row).includes(today));
+}
+// FIELD-TAP-TIME: when a status or End day tap was made on the phone (crew/job.js sends tappedAt once per action, so an
+// offline retry repeats it). It is the device's clock, so it is kept within the 48 hours before the server's time and
+// never after it; a missing or unreadable one is the server's time. The Hub's Today flags read its Denver day
+// (employee-arrival-deadline.js), so a tap queued offline yesterday and synced today is not today's arrival.
+const TAP_WINDOW_MS = 48 * 3600000;
+export function fieldTapTime(input, now) {
+  const nowMs = Date.parse(now), tapped = Date.parse(typeof input?.tappedAt === 'string' ? input.tappedAt : '');
+  return Number.isFinite(tapped) && Number.isFinite(nowMs) ? new Date(Math.min(nowMs, Math.max(nowMs - TAP_WINDOW_MS, tapped))).toISOString() : now;
+}
 export function fieldJobProjection(job, events = [], options = {}) {
   const { view, segments } = fieldSegmentView(job, options), names = options.resourceNames || {};
   const instructions = job.jobInstructions && typeof job.jobInstructions === 'object' ? job.jobInstructions : job.instructions && typeof job.instructions === 'object' ? job.instructions : {}, scope = job.scope || {}, logistics = job.logistics || {};
@@ -176,8 +191,9 @@ export function fieldJobProjection(job, events = [], options = {}) {
     canEdit: !frozen, canManageChecklist: options.manager === true && !frozen, capabilities: options.capabilities || null,
     // A job left in Working overnight (the crew went home without Pause or End day) still offers "Start today's work":
     // the Working tap is how today's arrival is recorded (employee-arrival-deadline.js), and the page otherwise hides the
-    // status the job already has. The day is Denver's; options.now is injected in tests.
-    startTodayOffered: !frozen && stage === 'in_progress' && fieldActivity(job) === 'in_progress' && earlierDenverDay(state.activityAt || job.startedAt, options.now),
+    // status the job already has. The day is Denver's, read from when the last tap was made on the phone; options.now is
+    // injected in tests. Only someone who works the job today is offered it.
+    startTodayOffered: !frozen && stage === 'in_progress' && fieldActivity(job) === 'in_progress' && earlierDenverDay(state.activityTappedAt || state.activityAt || job.startedAt, options.now) && worksToday(job, options),
     allowedStatuses: frozen ? [] : ({ scheduled: ['dispatched'], confirmed: ['dispatched'], crew_assigned: ['dispatched'], dispatched: ['arrived', 'delayed'], arrived: ['in_progress', 'waiting'], in_progress: ['paused', 'waiting', 'delayed', 'in_progress'] }[stage] || []).filter(status => status !== 'paused' || fieldActivity(job) !== 'day_ended'),
   };
 }
@@ -235,7 +251,7 @@ export function fieldCommand(job, actor, input, now = new Date().toISOString()) 
       }
       if (['paused', 'waiting', 'delayed'].includes(next) && fieldText(input.reason).length < 3) throw fieldFailure('Add a short reason so dispatch knows what is happening.');
       const canonical = ['paused', 'waiting', 'delayed'].includes(next) ? current : next;
-      patch = { status: canonical, pipelineStatus: canonical, fieldExecution: { ...state, activity: next, activityAt: now, activityBy: actorId, activityReason: fieldText(input.reason, 1000) }, ...(next === 'in_progress' && !job.startedAt ? { startedAt: now, startedBy: actorId } : {}), ...(next === 'arrived' ? { arrivedAt: now, arrivedBy: actorId } : {}), ...(next === 'dispatched' ? { dispatchedAt: now, dispatchedBy: actorId } : {}) };
+      patch = { status: canonical, pipelineStatus: canonical, fieldExecution: { ...state, activity: next, activityAt: now, activityTappedAt: fieldTapTime(input, now), activityBy: actorId, activityReason: fieldText(input.reason, 1000) }, ...(next === 'in_progress' && !job.startedAt ? { startedAt: now, startedBy: actorId } : {}), ...(next === 'arrived' ? { arrivedAt: now, arrivedBy: actorId } : {}), ...(next === 'dispatched' ? { dispatchedAt: now, dispatchedBy: actorId } : {}) };
       if (next === 'in_progress' && current !== 'in_progress') {
         const items = fieldChecklist(job).filter(item => ['departure', 'arrival'].includes(item.stage));
         const progress = { completedAt: now, completedBy: actorId, completedCount: items.filter(item => item.completed).length, totalCount: items.length, standardItems: items };

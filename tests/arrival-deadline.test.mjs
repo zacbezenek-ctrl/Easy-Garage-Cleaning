@@ -314,8 +314,10 @@ const pageButtons = (() => {
   const line = read => read.split(/\r?\n/).find(row => row.trim().startsWith('function statusButtons('));
   const context = {}; vm.createContext(context);
   vm.runInContext(`${line(source('crew/job.js')).trim()}\nglobalThis.statusButtons = statusButtons;`, context);
-  return (row, now) => { const view = fieldJobProjection(row, [], { now }); return [...context.statusButtons({ ...view, statusQueued: false })]; };
+  return (row, now, viewer = 'crew.one') => { const view = fieldJobProjection(row, [], { now, viewer }); return [...context.statusButtons({ ...view, statusQueued: false })]; };
 })();
+// The crew job page's projection for the crew member on both days (#219: Start today's work is for today's crew).
+const project = (row, now, viewer = 'crew.one') => fieldJobProjection(row, [], { now, viewer });
 const press = (command, row, status, now) => { assert.ok(pageButtons(row, at(now)).includes(status), `the page offers ${status} at ${now}`); return tap(command, row, status, now); };
 
 for (const [name, command] of [['FIELD_MULTIDAY_VISITS off', fieldCommand], ['FIELD_MULTIDAY_VISITS on, End day skipped', fieldVisitCommand]]) {
@@ -327,10 +329,10 @@ for (const [name, command] of [['FIELD_MULTIDAY_VISITS off', fieldCommand], ['FI
     // Day 2: the job is still in Working; the page offers it as Start today's work.
     const morning = at(denver('2026-09-23', '07:55'));
     assert.deepEqual(pageButtons(row, morning), ['paused', 'waiting', 'delayed', 'in_progress']);
-    assert.equal(fieldJobProjection(row, [], { now: morning }).startTodayOffered, true);
+    assert.equal(project(row, morning).startTodayOffered, true);
     assert.deepEqual(kinds(flags(visitRow(row, row.assignmentSegments[1]), { now: at(denver('2026-09-23', '08:15')) })), ['late'], 'no tap yet: Late');
     const started = press(command, row, 'in_progress', denver('2026-09-23', '08:02'));
-    assert.equal(fieldJobProjection(started, [], { now: at(denver('2026-09-23', '09:00')) }).startTodayOffered, false, 'offered once a day');
+    assert.equal(project(started, at(denver('2026-09-23', '09:00'))).startTodayOffered, false, 'offered once a day');
     for (const time of ['08:15', '12:00', '16:30']) assert.deepEqual(flags(visitRow(started, started.assignmentSegments[1]), { now: at(denver('2026-09-23', time)) }), [], time);
   });
 }
@@ -347,4 +349,77 @@ test('an End day saved offline and synced after midnight is not the next day\'s 
   let today = tap(fieldVisitCommand, late, 'in_progress', denver('2026-09-23', '08:05'));
   today = { ...today, ...fieldVisitCommand(today, tapper, { action: 'end_day', requestId: '00000000-0000-4000-8000-0000000000e2', notes: 'Synthetic day two notes, done for today.' }, denver('2026-09-23', '15:00')).patch };
   assert.deepEqual(flags(visitRow(today, today.assignmentSegments[1]), { now: at(denver('2026-09-23', '16:00')) }), []);
+});
+
+// #219 (review of #194): the phone's tap time, stricter arrival evidence, and Start today's work for today's crew only.
+const tapAt = (command, row, status, tappedAt, now) => ({ ...row, ...command(row, tapper, { action: 'status', status, requestId: `00000000-0000-4000-8000-${String(++taps).padStart(12, '0')}`, tappedAt, ...(['paused', 'waiting', 'delayed'].includes(status) ? { reason: 'Synthetic traffic' } : {}) }, now).patch });
+const working = command => {
+  let row = tap(command, twoDay(), 'dispatched', denver('2026-09-22', '07:40'));
+  row = tap(command, row, 'arrived', denver('2026-09-22', '07:58'));
+  return tap(command, row, 'in_progress', denver('2026-09-22', '08:05'));
+};
+
+test('the server keeps the phone\'s tap time, within the 48 hours before its own time and never after it', () => {
+  const now = denver('2026-09-23', '09:00'), saved = tappedAt => tapAt(fieldCommand, working(fieldCommand), 'paused', tappedAt, now).fieldExecution;
+  assert.equal(saved(denver('2026-09-23', '08:40')).activityTappedAt, denver('2026-09-23', '08:40'));
+  assert.equal(saved(denver('2026-09-23', '08:40')).activityAt, now, 'when it reached the server is kept too');
+  assert.equal(saved(denver('2026-09-23', '09:30')).activityTappedAt, now, 'a phone clock ahead of the server is the server\'s time');
+  assert.equal(saved(denver('2026-09-20', '09:00')).activityTappedAt, denver('2026-09-21', '09:00'), 'older than 48 hours is held at 48 hours');
+  for (const value of [undefined, 'yesterday', 42]) assert.equal(saved(value).activityTappedAt, now, `${value}: the server's time`);
+  // End day carries it too.
+  const ended = fieldVisitCommand(working(fieldVisitCommand), tapper, { action: 'end_day', requestId: '00000000-0000-4000-8000-0000000000f1', tappedAt: denver('2026-09-22', '16:30'), notes: 'Synthetic day one notes, done for today.' }, denver('2026-09-22', '16:35')).patch.fieldExecution;
+  assert.deepEqual([ended.activity, ended.activityTappedAt], ['day_ended', denver('2026-09-22', '16:30')]);
+});
+
+for (const [name, command] of [['FIELD_MULTIDAY_VISITS off', fieldCommand], ['FIELD_MULTIDAY_VISITS on', fieldVisitCommand]]) {
+  test(`a day-1 tap queued offline and synced on day 2 is not day 2's arrival (${name})`, () => {
+    const synced = tapAt(command, working(command), 'paused', denver('2026-09-22', '16:00'), denver('2026-09-23', '07:30'));
+    assert.equal(synced.fieldExecution.activityAt, denver('2026-09-23', '07:30'), 'it reached the server on day 2');
+    assert.deepEqual(kinds(flags(visitRow(synced, synced.assignmentSegments[1]), { now: at(denver('2026-09-23', '08:15')) })), ['late'], 'no false green on day 2');
+    // An on-site tap saved offline at 07:58 on day 2: Late until it syncs, then clear.
+    const offline = tapAt(command, synced, 'in_progress', denver('2026-09-23', '07:58'), denver('2026-09-23', '09:00'));
+    assert.deepEqual(flags(visitRow(offline, offline.assignmentSegments[1]), { now: at(denver('2026-09-23', '09:05')) }), [], 'once synced, the arrival counts');
+  });
+}
+
+test('an End day counts as arrival only for a visit started that day; a Pause before a later visit\'s start is not arrival', () => {
+  // Day 2's End day with no tap first: the visit record has no start, so the crew is still Late.
+  const row = working(fieldVisitCommand);
+  const ended = { ...row, ...fieldVisitCommand(row, tapper, { action: 'end_day', requestId: '00000000-0000-4000-8000-0000000000f2', notes: 'Synthetic day two notes, never started.' }, denver('2026-09-23', '07:50')).patch };
+  assert.equal(ended.fieldExecution.visits['2026-09-23'].startedAt, null);
+  assert.deepEqual(kinds(flags(visitRow(ended, ended.assignmentSegments[1]), { now: at(denver('2026-09-23', '08:15')) })), ['late']);
+  // A Pause tapped at 07:30 on day 2, before the 08:00 start, is not day 2's arrival; one after the start is.
+  for (const command of [fieldCommand, fieldVisitCommand]) {
+    const early = tap(command, working(command), 'paused', denver('2026-09-23', '07:30'));
+    assert.deepEqual(kinds(flags(visitRow(early, early.assignmentSegments[1]), { now: at(denver('2026-09-23', '08:15')) })), ['late'], 'pre-start Pause');
+    const after = tap(command, working(command), 'waiting', denver('2026-09-23', '08:05'));
+    assert.deepEqual(flags(visitRow(after, after.assignmentSegments[1]), { now: at(denver('2026-09-23', '08:15')) }), [], 'Waiting after the start');
+  }
+});
+
+test('a job\'s status from an earlier day is not today\'s arrival when the job is moved to today', () => {
+  const job = (patch = {}) => ({ id: 'synthetic-moved', type: 'job', customer: 'Synthetic Moved', date: '2026-09-23', time: '08:00', endTime: '12:00', assignedCrew: ['crew.one'], ...patch });
+  const now = at(denver('2026-09-23', '08:15'));
+  // Left in progress on the 22nd and moved to the 23rd: Late.
+  assert.deepEqual(kinds(flags(job({ status: 'in_progress', startedAt: denver('2026-09-22', '08:05'), arrivedAt: denver('2026-09-22', '07:58') }), { now })), ['late']);
+  assert.deepEqual(kinds(flags(job({ status: 'in_progress', fieldExecution: { activity: 'in_progress', activityAt: denver('2026-09-22', '08:05') } }), { now })), ['late'], 'an earlier tap alone');
+  // Dispatched on the 22nd: not en route on the 23rd.
+  assert.deepEqual(kinds(flags(job({ status: 'dispatched', dispatchedAt: denver('2026-09-22', '15:00') }), { now: at(denver('2026-09-23', '07:35')) })), ['not_en_route']);
+  // Recorded today, or a status with nothing dated (set by hand), still counts; a restore after the earlier work clears it.
+  assert.deepEqual(flags(job({ status: 'in_progress', startedAt: denver('2026-09-23', '08:05') }), { now }), []);
+  assert.deepEqual(flags(job({ status: 'in_progress' }), { now }), []);
+  assert.deepEqual(flags(job({ status: 'arrived', arrivedAt: denver('2026-09-22', '07:58'), restoredAt: denver('2026-09-22', '18:00') }), { now }), []);
+});
+
+test('Start today\'s work is offered only to someone who works the job today', () => {
+  // Worked on day 1 by crew.one and left in Working; day 2's segment is crew.two's.
+  const base = working(fieldCommand), row = { ...base, assignmentSegments: [base.assignmentSegments[0], { ...base.assignmentSegments[1], assignedCrew: ['crew.two'] }] };
+  const morning = at(denver('2026-09-23', '07:55'));
+  assert.equal(project(row, morning, 'crew.two').startTodayOffered, true, 'day 2\'s crew');
+  assert.equal(project(row, morning, 'crew.one').startTodayOffered, false, 'day 1\'s crew, off on day 2');
+  assert.equal(fieldJobProjection(row, [], { now: morning, manager: true }).startTodayOffered, true, 'a manager, for a job worked today');
+  // A one-day job left in Working is not offered the next day: nobody works it then.
+  const single = { ...working(fieldCommand), assignmentSegments: null, endDate: '2026-09-22', endTime: '17:00' };
+  assert.equal(project(single, at(denver('2026-09-22', '15:00'))).startTodayOffered, false, 'the same day');
+  assert.equal(project(single, morning).startTodayOffered, false, 'the next day');
 });
