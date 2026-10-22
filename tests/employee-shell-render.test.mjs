@@ -551,3 +551,31 @@ test('crew chat marks a polled message read once it is drawn on a visible screen
   page.api.render(); await page.flush();
   assert.equal(posts.length, 1, 'once marked, a later render writes nothing');
 });
+
+// CHAT-SEEN on a shared phone: a read-marker save still in flight when its person signs out never marks the next
+// person's rooms, and the next person's first save is not blocked by the one that was in flight.
+test('a chat read save that answers after sign-out leaves no mark for the next person', async () => {
+  const posts = [], releases = [];
+  const fetcher = async (url, init = {}) => {
+    if (url.startsWith('/api/employee-hub') && init.method === 'POST' && JSON.parse(init.body).collection === 'messageReads') {
+      const body = JSON.parse(init.body); posts.push(body);
+      await new Promise(resolve => { releases.push(resolve); });
+      return json({ ok: true, record: { id: body.id, employee: 'crew.one', channel: body.data.channel, lastReadAt: body.data.seenThrough } });
+    }
+    return hubApi(url);
+  };
+  const page = loaded({ user: 'crew.one', business: false, role: 'crew', fetcher });
+  page.api.install(); await page.flush();
+  const S = page.api.S;
+  S.people.teamMessages = [{ id: 'm1', body: 'Synthetic m1', sender: 'ZacB', senderName: 'Synthetic Owner', createdAt: '2026-09-22T15:10:00.000Z', status: 'active' }];
+  S.people.messageReads = [];
+  page.document.visibilityState = 'visible';
+  page.api.go('crew_chat'); await page.runTimers();
+  assert.equal(posts.length, 1, 'the save is in flight');
+  assert.ok(S.chatReadBusy.team, 'the room is busy while it saves');
+  page.fire('egc:signout');
+  assert.deepEqual([{ ...S.chatReadThrough }, { ...S.chatReadBusy }], [{}, {}], 'sign-out clears both');
+  releases[0](); await page.flush();
+  assert.deepEqual({ ...S.chatReadThrough }, {}, 'the late answer does not mark the next person\'s room');
+  assert.deepEqual({ ...S.chatReadBusy }, {}, 'and does not leave the room busy');
+});
