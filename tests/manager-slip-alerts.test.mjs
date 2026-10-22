@@ -162,7 +162,7 @@ function hub({ slipAlerts = true, alerts = 'on', role = 'owner', business = true
   class PageAlert { static permission = 'granted'; constructor(title, options) { this.title = title; this.options = options; made.push(this); } close() {} }
   const context = { Date: FixedDate, Intl, URLSearchParams, console, Notification: PageAlert,
     sessionStorage: storage({ egc_u: role === 'owner' ? 'ZacB' : 'Crew.One', ...(business ? { egc_business_access: 'true', egc_owner: 'true' } : {}), egc_role: role }),
-    localStorage: local, navigator: {}, location: { search: '' }, jobsCache: [], timers: [],
+    localStorage: local, navigator: { serviceWorker: { addEventListener(type, fn) { if (type === 'message') context.workerMessage = fn; } } }, location: { search: '' }, jobsCache: [], timers: [],
     managerScheduleState: { loaded: true, loading: false, error: '', fromCache: false, pending: false }, setTimeout: () => 1, clearTimeout() {}, setInterval(fn, ms) { context.timers.push({ fn, ms }); return context.timers.length; }, clearInterval() {}, addEventListener() {}, focus() {},
     document: { readyState: 'loading', hidden: false, querySelector: () => null, querySelectorAll: () => [], addEventListener() {} } };
   context.window = context; vm.createContext(context);
@@ -196,6 +196,22 @@ test('the Hub shows nothing with the switch off, alerts browser-alert users with
   assert.match(on.context.api.agenda(), /<div data-agenda-job="late">/, 'the agenda row carries the job its alert opens');
   on.made[0].onclick();
   assert.equal(on.S.active, 'today');
+});
+
+test('an open installed Hub told a job by its service worker opens that row; anything else is ignored', () => {
+  const p = hub();
+  p.S.active = 'my_day';
+  for (const data of [{ type: 'egc-alert-open', view: 'today', job: 'late&view=finance' }, { type: 'egc-alert-open', view: 'finance', job: 'late' }, { type: 'other', view: 'today', job: 'late' }, null]) {
+    p.context.workerMessage({ data });
+    assert.equal(p.S.active, 'my_day', JSON.stringify(data));
+  }
+  p.context.workerMessage({ data: { type: 'egc-alert-open', view: 'today', job: 'late' } });
+  assert.equal(p.S.active, 'today');
+  assert.match(p.context.api.agenda(), /<article class="ops-agenda-focus">/, 'that job\'s row is outlined');
+  const crew = hub({ role: 'crew', business: false });
+  crew.S.active = 'my_day';
+  crew.context.workerMessage({ data: { type: 'egc-alert-open', view: 'today', job: 'late' } });
+  assert.equal(crew.S.active, 'my_day', 'a crew session never opens Today from it');
 });
 
 test('a hidden tab re-checks once a minute and skips Not clocked in from old time entries', () => {
