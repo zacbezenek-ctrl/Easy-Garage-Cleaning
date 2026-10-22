@@ -18,7 +18,7 @@ const HARNESS = `<!doctype html><html lang="en"><head><meta charset="utf-8"><met
 <body><main id="host"></main><script src="/employee-ui-kit.js"></script><script src="/employee-crew-performance.js"></script>
 <script>EGCCrewPerformance.mount(document.getElementById('host'),{identity:'zacb'});</script></body></html>`;
 const line = (id, kind, quantity, unitCents) => ({ id, kind, name: id, quantity, unitCents, totalCents: quantity * unitCents, optional: false, selected: true, taxable: false });
-const job = (id, date, extra = {}) => ({ id, type: 'job', date, time: '08:00', arrivalWindowEnd: '09:00', customer: 'Synthetic Garage', status: 'completed', completedAt: `${date}T22:00:00.000Z`, crewLead: 'Crew.One',
+const job = (id, date, extra = {}) => ({ id, type: 'job', date, time: '08:00', arrivalWindowStart: '08:00', arrivalWindowEnd: '09:00', customer: 'Synthetic Garage', status: 'completed', completedAt: `${date}T22:00:00.000Z`, crewLead: 'Crew.One',
   estimate: { status: 'accepted', amount: 1500, lineItems: [line('removal-base', 'service', 1, 100000), line('labor', 'labor', 1, 50000)] }, jobInstructions: { laborManHours: 8 }, serviceType: 'Garage transformation', ...extra });
 const JOBS = [job('job-recent', '2026-10-18'), job('job-issue', '2026-10-05', { fieldExecution: { completion: { hasIssues: true } } }), job('job-older', '2026-08-20', { crewLead: 'Crew.Two' })];
 const at = (date, time) => `${date}T${time}:00-06:00`;

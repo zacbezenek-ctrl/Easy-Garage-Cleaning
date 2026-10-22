@@ -5,8 +5,8 @@
  * - On-time arrivals: of the jobs they logged work on, how many their first work segment started by their own arrival
  *   deadline. On a job split into assignment segments, that is the segment they are assigned to on the Denver day of
  *   their first work start; otherwise the job itself, and only on its start day (a later day of a multi-day job has
- *   no scheduled start). The deadline is the end of the customer's arrival window (arrivalWindowEnd, else the end of
- *   the saved `arrivalWindow` label) on the job's first day, else 15 minutes after the scheduled start. Jobs without a
+ *   no scheduled start). The deadline is the Hub's late rule (arrival-deadline.js): the end of the customer's arrival
+ *   window on the job's first visit, else 15 minutes after the scheduled start. Jobs without a
  *   scheduled time, rejected timecards and jobs with no work segment are not counted either way.
  * - Billed vs actual: over the completed jobs they worked that have both billed man-hours (the Labor line) and actual
  *   man-hours (job actuals: timecards first, else the crew lead's count), the crew's actual hours against the billed
@@ -19,34 +19,21 @@ import { scheduleInterval } from './dispatch-time.js';
 import { jobSegments, segmented } from './dispatch-segments.js';
 import { denverWorkDate } from './timesheet-week.js';
 import { completedJob, workJob } from './job-actuals.js';
+import { arrivalDeadline as visitDeadline, LATE_GRACE_MS } from './arrival-deadline.js';
 
-export const CREW_PERFORMANCE_GRACE_MINUTES = 15;
+export const CREW_PERFORMANCE_GRACE_MINUTES = LATE_GRACE_MS / 60000;
 const plain = value => value !== null && typeof value === 'object' && !Array.isArray(value);
 const key = value => String(value || '').trim().toLowerCase();
 const round = (value, places = 2) => Math.round(value * 10 ** places) / 10 ** places;
 const HHMM = /^([01]\d|2[0-3]):[0-5]\d$/;
 
-// '9:00 AM – 10:00 AM' (formatArrivalWindow in dispatch-arrival.js) -> '10:00', or null.
-function labelEnd(label) {
-  const match = /(\d{1,2}):([0-5]\d)\s*([AP])M\s*$/i.exec(String(label || '').trim());
-  if (!match || Number(match[1]) < 1 || Number(match[1]) > 12) return null;
-  const hour = Number(match[1]) % 12 + (match[3].toUpperCase() === 'P' ? 12 : 0);
-  return `${String(hour).padStart(2, '0')}:${match[2]}`;
-}
-/** The end of the job's customer arrival window as HH:MM, or null. */
-export function arrivalWindowEnd(job) {
-  const end = HHMM.test(String(job?.arrivalWindowEnd || '')) ? String(job.arrivalWindowEnd) : job?.arrivalWindowEnd ? null : labelEnd(job?.arrivalWindow);
-  return end && end >= String(job?.time || '') ? end : null;
-}
-
-/** The instant a crew member is late after, for a job with a scheduled date and time, or null. The window applies on
- * the job's own start day and time; a segment starting at another time is late 15 minutes after its start. */
+/** The instant a crew member is late after, for a job with a scheduled date and time, or null: the Hub's own late rule
+ * (functions/_lib/arrival-deadline.js, the Today agenda's FIELD-FLAGS), run on the visit they were scheduled for. The
+ * customer's arrival window applies on the job's own start day and time; another segment is late 15 minutes after its
+ * start. */
 export function arrivalDeadline(job, slot = job) {
   if (!plain(job) || !plain(slot) || !slot.date || !HHMM.test(String(slot.time || ''))) return null;
-  const window = slot.date === job.date && slot.time === job.time ? arrivalWindowEnd(job) : null;
-  const at = scheduleInterval({ date: slot.date, time: window || slot.time, endDate: slot.date, endTime: '23:59' });
-  if (!at) return null;
-  return at.start + (window ? 0 : CREW_PERFORMANCE_GRACE_MINUTES * 60000);
+  return visitDeadline({ ...job, date: slot.date, time: slot.time, firstVisit: slot.date === job.date && slot.time === job.time });
 }
 
 /** What one person was scheduled for on a job, on the Denver day they first clocked in: {date, time, lead} or null.

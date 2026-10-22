@@ -11,7 +11,7 @@ const MANAGER = { user: 'AlexK', role: 'manager', businessAccess: true, owner: f
 const CREW = { user: 'Synthetic.Crew', role: 'crew', businessAccess: false };
 const line = (id, kind, quantity, unitCents) => ({ id, kind, name: id, quantity, unitCents, totalCents: quantity * unitCents, optional: false, selected: true, taxable: false });
 // A completed job sold with 8 man-hours of Labor, scheduled 08:00 Denver with an 08:00–09:00 arrival window.
-const job = (id, extra = {}) => ({ id, type: 'job', date: '2026-10-10', time: '08:00', arrivalWindowEnd: '09:00', customer: 'Synthetic Garage', status: 'completed', completedAt: '2026-10-10T22:00:00.000Z', crewLead: 'Crew.One',
+const job = (id, extra = {}) => ({ id, type: 'job', date: '2026-10-10', time: '08:00', arrivalWindowStart: '08:00', arrivalWindowEnd: '09:00', customer: 'Synthetic Garage', status: 'completed', completedAt: '2026-10-10T22:00:00.000Z', crewLead: 'Crew.One',
   estimate: { status: 'accepted', amount: 1500, lineItems: [line('removal-base', 'service', 1, 100000), line('labor', 'labor', 1, 50000)] }, jobInstructions: { laborManHours: 8 }, serviceType: 'Garage transformation', ...extra });
 const at = time => `2026-10-10T${time}:00-06:00`;
 const card = (id, employee, jobId, from, to, extra = {}) => ({ id, employee, employeeName: employee, payType: 'hourly', hourlyRate: 31, clockInAt: at(from), clockOutAt: at(to), status: 'submitted', approvalStatus: 'approved', breaks: [],
@@ -76,7 +76,7 @@ test('GET /api/crew-performance: business accounts read 30- and 90-day rows with
   const { handlers, calls } = api({ actor: MANAGER }), response = await get(handlers), body = await response.json();
   assert.equal(response.status, 200); assert.equal(response.headers.get('Cache-Control'), 'private, no-store');
   assert.deepEqual([calls[0].start, calls[0].end], ['2026-07-24', '2026-10-21']);
-  assert.ok(['time', 'crewLead', 'arrivalWindowEnd', 'fieldExecution.completion.hasIssues'].every(field => CREW_PERFORMANCE_FIELDS.includes(field)));
+  assert.ok(['time', 'crewLead', 'arrivalWindowStart', 'arrivalWindowEnd', 'fieldExecution.completion.hasIssues'].every(field => CREW_PERFORMANCE_FIELDS.includes(field)));
   assert.deepEqual(body.window, { start: '2026-07-24', end: '2026-10-22', shortStart: '2026-09-22', today: '2026-10-21' });
   const [row] = body.last30;
   assert.deepEqual([row.employee, row.name, row.hours, row.jobsWorked, row.jobsLed, row.onTime, row.arrivalsCounted], ['crew.one', 'Synthetic Crew One', 4, 1, 1, 1, 1]);
@@ -92,9 +92,9 @@ test('GET keeps jobs led when timecards cannot be read, and says so', async () =
 });
 
 test('the saved arrival window label stands in for a missing window end; no window at all falls back to start + 15 minutes', () => {
-  assert.equal(new Date(arrivalDeadline(job('l', { arrivalWindowEnd: null, arrivalWindow: '8:00 AM – 10:30 AM' }))).toISOString(), '2026-10-10T16:30:00.000Z', '10:30 MDT from the label');
-  assert.equal(new Date(arrivalDeadline(job('p', { time: '13:00', arrivalWindowEnd: null, arrivalWindow: '1:00 PM – 2:00 PM' }))).toISOString(), '2026-10-10T20:00:00.000Z', 'PM label');
-  assert.equal(new Date(arrivalDeadline(job('g', { arrivalWindowEnd: null, arrivalWindow: 'Morning' }))).toISOString(), '2026-10-10T14:15:00.000Z', 'an unreadable label is no window');
+  assert.equal(new Date(arrivalDeadline(job('l', { arrivalWindowStart: null, arrivalWindowEnd: null, arrivalWindow: '8:00 AM – 10:30 AM' }))).toISOString(), '2026-10-10T16:30:00.000Z', '10:30 MDT from the label');
+  assert.equal(new Date(arrivalDeadline(job('p', { time: '13:00', arrivalWindowStart: null, arrivalWindowEnd: null, arrivalWindow: '1:00 PM – 2:00 PM' }))).toISOString(), '2026-10-10T20:00:00.000Z', 'PM label');
+  assert.equal(new Date(arrivalDeadline(job('g', { arrivalWindowStart: null, arrivalWindowEnd: null, arrivalWindow: 'Morning' }))).toISOString(), '2026-10-10T14:15:00.000Z', 'an unreadable label is no window');
   assert.ok(CREW_PERFORMANCE_FIELDS.includes('arrivalWindow'));
 });
 
