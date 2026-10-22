@@ -136,6 +136,7 @@ export function firebaseCommand(env=process.env){
 }
 
 async function attempt({project,config,script,keepLogs,root,cwd,env,stdio,onChild,log,pickPorts,claimsDir}){
+ let signaled=false;
  // Separate sandbox/process namespaces can report the same PID while sharing
  // this checkout. A per-attempt UUID prevents config and log collisions there.
  const baseConfig=resolve(root,config),id=`${process.pid}-${randomUUID()}`;
@@ -151,25 +152,27 @@ async function attempt({project,config,script,keepLogs,root,cwd,env,stdio,onChil
    // Output is teed so a port conflict can be recognized; it is still shown live.
    const child=spawn(command,[...prefix,'emulators:exec','--only','firestore','--project',project,'--config',privateConfig,'--non-interactive',shellCommand(cwd,script,process.platform,started)],{cwd:logDir,env,stdio:[stdio==='inherit'?'inherit':'ignore','pipe','pipe']});
    for(const [stream,sink] of[[child.stdout,process.stdout],[child.stderr,process.stderr]])stream.on('data',chunk=>{output=tail(output+chunk);if(stdio==='inherit')sink.write(chunk);});
-   onChild(child);child.once('error',fail);child.once('exit',(status,signal)=>done(signal?1:status??1));
+   onChild(child);child.once('error',fail);child.once('exit',(status,signal)=>{signaled=Boolean(signal);done(signal?1:status??1);});
   });
  }catch(error){log(`[emulator-exec] could not run firebase: ${error.message}`);code=127;}
  finally{rmSync(privateConfig,{force:true});claim.release();}
  // A failure before the command started is the emulator's start-up (safe to retry), whatever firebase printed:
  // a logging or hub port taken mid-start reads only "An unexpected error has occurred." portConflict says
  // whether the output also named a taken port.
- const commandStarted=existsSync(started),startFailed=code!==0&&code!==127&&!commandStarted,portConflict=startFailed&&PORT_CONFLICT.test(output+'\n'+logTail(logDir));
+ const commandStarted=existsSync(started),startFailed=code!==0&&code!==127&&!commandStarted&&!signaled,portConflict=startFailed&&PORT_CONFLICT.test(output+'\n'+logTail(logDir));
  return {code,ports:{firestore,websocket,hub,logging},config:privateConfig,logDir,commandStarted,startFailed,portConflict};
 }
 
 // retries: how many times a start-up failure (firebase exited before the command
 // started) is retried with fresh ports (default once). A failure after the command
-// started is never retried. claimsDir: where port claims live (tests use their own).
-export async function runEmulatorExec({project='demo-egc-field-rules',config='firebase.emulator.json',script,keepLogs=false,root=ROOT,cwd=process.cwd(),env=process.env,stdio='inherit',onChild=()=>{},log=message=>process.stderr.write(message+'\n'),retries=1,pickPorts=freePorts,claimsDir=DEFAULT_CLAIMS_DIR}){
+// started, firebase killed by a signal, or a stop requested through `signal` (an
+// AbortSignal: Ctrl-C or SIGTERM in the CLI) is never retried. claimsDir: where port
+// claims live (tests use their own).
+export async function runEmulatorExec({project='demo-egc-field-rules',config='firebase.emulator.json',script,keepLogs=false,root=ROOT,cwd=process.cwd(),env=process.env,stdio='inherit',onChild=()=>{},log=message=>process.stderr.write(message+'\n'),retries=1,pickPorts=freePorts,claimsDir=DEFAULT_CLAIMS_DIR,signal=null}){
  const retriedPorts=[];let result;
  for(let run=0;;run++){
   result=await attempt({project,config,script,keepLogs,root,cwd,env,stdio,onChild,log,pickPorts,claimsDir});
-  if(!result.startFailed||run>=retries)break;
+  if(!result.startFailed||run>=retries||signal?.aborted)break;
   log(`[emulator-exec] ${result.portConflict?'port conflict':`emulator start-up failed (exit ${result.code})`} before the command started (firestore ${result.ports.firestore}); retrying with fresh ports`);
   retriedPorts.push(result.ports);rmSync(result.logDir,{recursive:true,force:true});
  }
@@ -184,9 +187,10 @@ if(process.argv[1]&&import.meta.url===pathToFileURL(resolve(process.argv[1])).hr
  let options;
  try{options=parseArgs(process.argv.slice(2));}catch(error){console.error(error.message);process.exit(2);}
  // Ctrl-C already reaches firebase through the process group; a second SIGINT would
- // force-quit it and orphan the Java emulator, so only SIGTERM is forwarded.
- let child;
- process.on('SIGINT',()=>{});process.on('SIGTERM',()=>{child?.kill('SIGTERM');});
- const result=await runEmulatorExec({...options,onChild:value=>{child=value;}});
+ // force-quit it and orphan the Java emulator, so only SIGTERM is forwarded. Either
+ // one stops the run: a start-up cut short by it is not retried.
+ let child;const stop=new AbortController();
+ process.on('SIGINT',()=>{stop.abort();});process.on('SIGTERM',()=>{stop.abort();child?.kill('SIGTERM');});
+ const result=await runEmulatorExec({...options,signal:stop.signal,onChild:value=>{child=value;}});
  process.exitCode=result.code;
 }
