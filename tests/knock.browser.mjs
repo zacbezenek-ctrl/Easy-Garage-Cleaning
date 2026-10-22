@@ -22,7 +22,7 @@ async function startServer() {
     const { startEmulatorHarness } = await import('./helpers/emulator-harness.mjs');
     const hub = await startEmulatorHarness({
       projectId: process.env.GCLOUD_PROJECT || 'demo-egc-knock', password: PASSWORD, now: clock,
-      users: [['ZacB', 'Zac', 'owner'], ['Rep.One', 'Rep One', 'sales'], ['Rep.Two', 'Rep Two', 'sales'], ['Lead.One', 'Lead One', 'sales']],
+      users: [['ZacB', 'Zac', 'owner'], ['Rep.One', 'Rep One', 'sales'], ['Rep.Two', 'Rep Two', 'sales'], ['Lead.One', 'Lead One', 'sales'], ['AlexK', 'Synthetic Manager', 'manager']],
     });
     await hub.seed(db => Promise.all(Object.entries(previewSeed()).map(([path, data]) => db.doc(path).set(data))));
     const knocks = async () => {
@@ -176,6 +176,26 @@ try {
         periodKey: report.period.key, amount: 77, note: 'Synthetic recorded payment only' }) })).json();
   });
   assert.equal(recorded.ok, true);
+  // Door-to-door pay is the owner's (owner decision 2026-10-21): a manager's Money shows each rep's sales and training
+  // time, never an amount, a payout or a pay file, and offers no Record payout; Estimators lists the rows without amounts.
+  const managerContext = await browser.newContext({ ...phone, serviceWorkers: 'block' });
+  await managerContext.clock.install({ time: T0 + (Date.now() - startedAt) });
+  const manager = await managerContext.newPage();
+  manager.on('pageerror', error => errors.push(String(error)));
+  await signIn(manager, server.base, 'AlexK');
+  await manager.waitForFunction(() => document.querySelector('#knock-tabs a[href="#admin"]'));
+  await manager.goto(`${server.base}/crew/knock.html#admin?s=money`);
+  await manager.locator('.banner', { hasText: 'Rep pay is the owner\'s' }).waitFor();
+  const managerMoney = await manager.locator('#knock-main').textContent();
+  assert.match(managerMoney, /Sales booked/);
+  assert.match(managerMoney, /Rep One/);
+  assert.doesNotMatch(managerMoney, /\$|Payouts recorded|Payable commission|Synthetic recorded payment/, 'no amount or payout reaches a manager');
+  for (const name of ['Record payout…', 'Commission CSV', 'Training CSV', 'Sales CSV']) assert.equal(await manager.getByRole('button', { name, exact: true }).count(), 0, name);
+  assert.equal(await manager.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true, 'manager money fits the phone');
+  await manager.goto(`${server.base}/crew/knock.html#admin?s=estimators`);
+  await manager.locator('.banner', { hasText: 'Amounts are the owner\'s' }).waitFor();
+  assert.doesNotMatch(await manager.locator('#knock-main').textContent(), /\$/);
+  await managerContext.close();
   await page.reload();
   const payment = page.locator('.stat').filter({ has: page.getByText('Commission paid (recorded)', { exact: true }) });
   await payment.getByText('$77.00', { exact: true }).waitFor();

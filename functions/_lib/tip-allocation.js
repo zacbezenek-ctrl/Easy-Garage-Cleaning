@@ -187,14 +187,22 @@ export function computeTipAllocation({ jobs, timecards, start, end, now, refundR
  * who sees others' pay (pay-visibility.js seesOthersPay: the owner by default) gets each person's share and the job
  * minutes it was split by (minutes with the job's tip would give the share back). Everyone else keeps each job's tip
  * totals, who is in its split and how many tipped jobs each person worked. payShown tells the screen which view it got.
- * A job with one person in its split is that person's tip: its amounts (and its tips' amounts) are withheld
- * (amountHidden), and the week's totals leave it out, or subtracting the other jobs would give it back; totals.hiddenJobs
- * counts the jobs left out. */
+ * A job with one person in its split is that person's tip: its amounts (and its tips' amounts and payment references)
+ * are withheld (amountHidden), and the week's totals leave it out, or subtracting the other jobs would give it back;
+ * totals.hiddenJobs counts the jobs left out. The split's people are those with job time and the assigned crew without
+ * it (a held tip goes to them by hand), counted once each. */
 export function tipAllocationForViewer(allocation, { payShown = false } = {}) {
   if (payShown === true) return { ...allocation, payShown: true };
-  const person = ({ employee, name }) => ({ employee, name }), solo = job => job.employees.length === 1;
+  const person = ({ employee, name }) => ({ employee, name }), who = value => String(value || '').trim().toLowerCase();
+  // A name listed without job time may be someone who did track time under their username (a legacy job saved with
+  // display names): it is the same person when it matches an employee row's username or name.
+  const solo = job => {
+    const tracked = job.employees.map(row => [who(row.employee), who(row.name)]);
+    const others = new Set((job.crewWithoutJobTime || []).map(who).filter(name => name && !tracked.some(keys => keys.includes(name))));
+    return tracked.length + others.size === 1;
+  };
   const jobs = allocation.jobs.map(job => solo(job)
-    ? { ...job, employees: job.employees.map(person), tipCents: null, allocatedCents: null, unallocatedCents: null, amountHidden: true, tips: job.tips.map(({ amountCents, ...tip }) => tip) }
+    ? { ...job, employees: job.employees.map(person), tipCents: null, allocatedCents: null, unallocatedCents: null, amountHidden: true, tips: job.tips.map(({ amountCents, processorRef, ...tip }) => tip) }
     : { ...job, employees: job.employees.map(person) });
   const shown = jobs.filter(job => !job.amountHidden), sum = key => shown.reduce((total, job) => total + job[key], 0);
   return { ...allocation, payShown: false, jobs,
