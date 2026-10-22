@@ -10,6 +10,19 @@ import { priceCatalogQuote } from '../_lib/catalog-quote.js';
 import { builderMenu, offeringsMenu, priceCompositeQuote } from '../_lib/composite-quote.js';
 import { syncWalkthroughCapture, walkthroughCaptureSyncEnabled } from '../_lib/walkthrough-capture-sync.js';
 import { SENT_25_75 } from '../_lib/quote-payment-policy.js';
+import { winterSaleReaders } from '../_lib/quote-draft.js';
+import { winterSaleEnabled } from '../_lib/winter-sale.js';
+import { createKnockStore } from '../_lib/knock-store.js';
+
+// EGC_WINTER_SALE: the margin check costs a walkthrough a door-to-door setter booked at the setter's channel
+// (knock_setters, one document read, only for a quote that asks for or carries the sale).
+const saleReaders = { ...winterSaleReaders, setter: async (env, walkthroughId) => Boolean((await createKnockStore(env).getMany('knock_setters', [walkthroughId])).get(walkthroughId)) };
+// The sale's public terms for the builder (never the margin floor): the page offers the sale only when they are present.
+async function saleTerms(env, readers) {
+  if (!winterSaleEnabled(env)) return {};
+  const settings = await readers.settings(env);
+  return { winterSale: { enabled: true, amountCents: settings.amountCents, signBy: settings.signBy, jobFrom: settings.jobFrom, jobTo: settings.jobTo } };
+}
 
 /** Quote drafts (P2-07). Same-origin JSON, quote authors only (P2-12).
  * GET  /api/quote-draft?jobId=ID  => {ok, job: quote author DTO}
@@ -44,7 +57,7 @@ import { SENT_25_75 } from '../_lib/quote-payment-policy.js';
 const LIMIT = 64000;
 const reply = (status, body) => Response.json(body, { status, headers: { 'Cache-Control': 'no-store', 'X-Content-Type-Options': 'nosniff' } });
 function failure(error) {
-  if (/^(quote_|dispatch_|confirm_token_|purpose_key_)/.test(error?.code || '')) return reply(error.status || 503, { ok: false, code: error.code, error: error.message, ...(error.details ? { details: error.details } : {}) });
+  if (/^(quote_|dispatch_|confirm_token_|purpose_key_|winter_sale_)/.test(error?.code || '')) return reply(error.status || 503, { ok: false, code: error.code, error: error.message, ...(error.details ? { details: error.details } : {}) });
   return reply(503, { ok: false, code: 'quote_draft_unavailable', error: 'The quote could not be verified. Keep the saved request and retry it; do not start another quote.' });
 }
 function sameOrigin(request) {
@@ -55,7 +68,7 @@ function sameOrigin(request) {
 const stripeFor = env => { const secret = stripeSecretKey(env); return secret ? (path, options) => stripeRequest(secret, path, options) : null; };
 
 export function quoteDraftHandlers({ session = getHubSession, storage = dispatchStorage, now = () => new Date(), delivery = (env, store) => createEstimateReadyDelivery({ store, env, clock: now }), stripe = stripeFor,
-  catalogState = env => readCatalogState(catalogStorage(env)), compositeState = env => readCompositeState(catalogStorage(env)), captureNote } = {}) {
+  catalogState = env => readCatalogState(catalogStorage(env)), compositeState = env => readCompositeState(catalogStorage(env)), captureNote, winterSale = saleReaders } = {}) {
   return {
     async get({ request, env }) {
       try {
@@ -69,7 +82,7 @@ export function quoteDraftHandlers({ session = getHubSession, storage = dispatch
         const access = requireQuoteAuthor(actor, env);
         if ([...params.keys()].length !== new Set(params.keys()).size) return reply(400, { ok: false, code: 'quote_draft_invalid_request', error: 'The quote lookup is invalid.' });
         if (quoteBuilderEnabled(env) && params.get('view') === 'builder' && [...params.keys()].length === 1) {
-          return reply(200, { ok: true, authority: 'employee_hub', enabled: true, ...builderMenu(await compositeState(env), { internal: access.dispatcher === true, canApprove: isHubOwner(actor) && actor.role === 'owner' }) });
+          return reply(200, { ok: true, authority: 'employee_hub', enabled: true, ...builderMenu(await compositeState(env), { internal: access.dispatcher === true, canApprove: isHubOwner(actor) && actor.role === 'owner' }), ...await saleTerms(env, winterSale) });
         }
         return reply(200, { ...await readQuoteDraft(storage(env), actor, Object.fromEntries(params), { env }), viewer: { id: actor.user }, captureSyncEnabled: walkthroughCaptureSyncEnabled(env) });
       } catch (error) { return failure(error); }
@@ -96,13 +109,13 @@ export function quoteDraftHandlers({ session = getHubSession, storage = dispatch
           const { storedLineItems, ...priced } = priceCompositeQuote(await compositeState(env), input.compositePricing);
           return reply(200, { ok: true, authority: 'employee_hub', ...priced });
         }
-        if (action === 'save') return reply(200, { ...await saveQuoteDraft(store, actor, input, at, { env, catalogState, compositeState, newQuotePaymentPolicy: SENT_25_75, checkouts: job => expireStaleCheckout({ store, job, stripe: stripe(env), now: at, mode: moneyTotalsMode(env) }) }), captureSyncEnabled: walkthroughCaptureSyncEnabled(env) });
+        if (action === 'save') return reply(200, { ...await saveQuoteDraft(store, actor, input, at, { env, catalogState, compositeState, newQuotePaymentPolicy: SENT_25_75, winterSale, checkouts: job => expireStaleCheckout({ store, job, stripe: stripe(env), now: at, mode: moneyTotalsMode(env) }) }), captureSyncEnabled: walkthroughCaptureSyncEnabled(env) });
         if (action === 'sync_capture') {
           const sync = await syncWalkthroughCapture(store, actor, input, at, { env, ...(captureNote ? { note: captureNote } : {}) });
           return reply(200, { ...await readQuoteDraft(store, actor, { jobId: input.jobId }, { env }), captureSyncEnabled: sync.enabled });
         }
-        if (action === 'send_preview') return reply(200, await previewQuoteSend(store, actor, input, at, { env, compositeState }));
-        if (action === 'send') return reply(200, await sendQuoteDraft(store, actor, input, at, { env, compositeState, deliver: delivery(env, store).deliver }));
+        if (action === 'send_preview') return reply(200, await previewQuoteSend(store, actor, input, at, { env, compositeState, winterSale }));
+        if (action === 'send') return reply(200, await sendQuoteDraft(store, actor, input, at, { env, compositeState, winterSale, deliver: delivery(env, store).deliver }));
         return reply(400, { ok: false, code: 'quote_draft_invalid_request', error: 'Choose save, sync_capture, catalog_preview, send_preview or send.' });
       } catch (error) { return failure(error); }
     },

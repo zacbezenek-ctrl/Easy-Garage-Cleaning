@@ -52,6 +52,9 @@ const HOME_WIDGETS=[
   {id:'shift_swap_review',label:'Shift swaps to approve',homes:['today'],capability:'business',module:'EGCShiftSwapsReview',load:{js:'employee-shift-swaps.js',css:'employee-shift-swaps.css',v:'20261021swaps1'}},
   // Signed jobs held for the owner's prices: opening the Command center releases those a new pricing menu approves (POST /api/held-jobs).
   {id:'held_jobs',label:'Booked jobs waiting for prices',homes:['today'],capability:'business',module:'EGCHeldJobsHome',load:{js:'employee-held-jobs.js',v:'20261021held1'}},
+  // Crew staffing (crew-ops): one line on the Command center; GET /api/crew-staffing also needs dispatch.write, and the line
+  // stays empty for anyone it refuses. employee.html loads its files (Dispatch's Crews & vehicles uses them too).
+  {id:'crew_staffing',label:'Crew staffing',homes:['today'],capability:'business',module:'EGCCrewStaffing'},
 ];
 const HOMES=new Set(['today','my_day']);
 const ID=/^[a-z][a-z0-9_]{1,47}$/,CAPABILITY=/^[a-z][a-z0-9_]{1,40}$/,MODULE=/^EGC[A-Za-z0-9]{1,40}$/,VERSION=/^[A-Za-z0-9._-]{1,40}$/,ICON=/^[MmLlHhVvCcSsQqTtAaZz0-9 .,-]{1,800}$/;

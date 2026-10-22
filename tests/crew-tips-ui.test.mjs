@@ -223,3 +223,14 @@ test('a manager sees "Tip recorded · 1 person" for a one-person job, and the no
   assert.doesNotMatch(html, /\$90\.00|\$NaN|null|undefined/);
   assert.match(html, /the totals leave out 1 such job\./);
 });
+
+test('a view-only pay viewer sees the amounts but no tip file button', async () => {
+  const ui = fixture();
+  ui.state.json = allocation({ payShown: true, exportAllowed: false });
+  ui.mount(); await settle();
+  assert.match(ui.host.innerHTML, /240 job minutes · 1 job<\/small><\/div><strong>\$90\.00/);
+  assert.doesNotMatch(ui.host.innerHTML, /Download tips CSV/);
+  assert.match(ui.host.innerHTML, /The tip file is a payroll export, so only the owner downloads it\./);
+  const owner = fixture(); owner.state.json = allocation({ payShown: true, exportAllowed: true }); owner.mount(); await settle();
+  assert.match(owner.host.innerHTML, /Download tips CSV/); assert.doesNotMatch(owner.host.innerHTML, /only the owner downloads it/);
+});
