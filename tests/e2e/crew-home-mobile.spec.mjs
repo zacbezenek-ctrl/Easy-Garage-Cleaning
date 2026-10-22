@@ -26,6 +26,9 @@ test('manager: the next job opens the live job page, the playbook stays one tap 
  await expect(page.locator('#assigned-jobs a.job-row[href="/crew/job.html?jobId=job-today"]')).toHaveCount(1);
  await expect(page.locator('#prejob-tool')).toHaveAttribute('href','/crew/prejob');
  await expect(page.locator('#closeout-tool')).toHaveAttribute('href','/crew/postjob');
+ await expect(page.locator('#prejob-tool h2')).toHaveText('Pre-job (reference)');
+ await expect(page.locator('#closeout-tool h2')).toHaveText('Closeout (reference)');
+ await expect(page.locator('.crew-utility a',{hasText:'Pre-job (reference)'})).toHaveCount(1);
  await assertNoHorizontalScroll(page);
 });
 
@@ -33,5 +36,7 @@ test('crew: the next job opens the live job page with no playbook link',async({p
  await home(page,CREW);
  await expect(page.locator('#next-work a.primary')).toHaveAttribute('href','/crew/job.html?jobId=job-today');
  await expect(page.locator('#next-work a',{hasText:'Playbook'})).toHaveCount(0);
+ await expect(page.locator('#prejob-tool h2')).toHaveText('Pre-job');
+ await expect(page.locator('#prejob-tool')).toHaveAttribute('href','/crew/job');
  await assertNoHorizontalScroll(page);
 });

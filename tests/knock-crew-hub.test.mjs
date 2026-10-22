@@ -33,7 +33,7 @@ const T = Date.parse('2026-10-19T15:00:00.000Z');
 test('the crew hub offers Door-to-door to Knock\'s admins and to accounts Knock already knows on this phone, never creating anything', () => {
   const business = crewPage(signedIn('ZacB', { egc_business_access: 'true' }));
   assert.equal(business.auth.canUseKnock(), true, 'business users are Knock admins');
-  assert.deepEqual(business.nav(), [['/crew/', 'Crew home'], ['/crew/gameplan', 'Walkthrough'], ['/crew/knock', 'Door-to-door'], ['/crew/prejob', 'Pre-job'], ['/crew/postjob', 'Closeout'], ['/employee?view=my_day', 'My Hub']]);
+  assert.deepEqual(business.nav(), [['/crew/', 'Crew home'], ['/crew/gameplan', 'Walkthrough'], ['/crew/knock', 'Door-to-door'], ['/crew/prejob', 'Pre-job (reference)'], ['/crew/postjob', 'Closeout (reference)'], ['/employee?view=my_day', 'My Hub']]);
 
   const crew = crewPage(signedIn('Crew.One'));
   assert.equal(crew.auth.canUseKnock(), false, 'a crew member who never opened Knock here sees no tile');
@@ -111,6 +111,6 @@ test('six crew links (Walkthrough and Door-to-door) form two full rows on a phon
   assert.match(css, /\.crew-utility a:first-of-type:nth-last-of-type\(6\),\.crew-utility a:first-of-type:nth-last-of-type\(6\)~a\{grid-column:span 2\}/);
   for (const page of ['crew/index.html', 'crew/gameplan.html', 'crew/prejob.html', 'crew/postjob.html', 'crew/schedule.html', 'crew/menu.html']) {
     assert.match(read(page), /\/crew\/crew-brand\.css\?v=20261019d2d/, page);
-    assert.match(read(page), /\/crew\/hub-auth\.js\?v=20261021roles/, page);
+    assert.match(read(page), /\/crew\/hub-auth\.js\?v=20261021refbiz/, page);
   }
 });
