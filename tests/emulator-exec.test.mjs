@@ -71,7 +71,7 @@ test('free ports are distinct and immediately bindable',async()=>{
 
 test('two concurrent runs get separate emulators, run in the caller cwd and clean up',async t=>{
  const {root,env}=workspace(t);
- const runs=await Promise.all(['a','b'].map(name=>runEmulatorExec({...quiet,root,env,cwd:root,project:'demo-egc-parallel-'+name,script:`node probe.mjs out-${name}.json 400`})));
+ const runs=await Promise.all(['a','b'].map(name=>runEmulatorExec({...quiet,root,claimsDir:join(root,'claims'),env,cwd:root,project:'demo-egc-parallel-'+name,script:`node probe.mjs out-${name}.json 400`})));
  assert.deepEqual(runs.map(run=>run.code),[0,0]);
  const seen=['a','b'].map(name=>JSON.parse(readFileSync(join(root,`out-${name}.json`),'utf8')));
  assert.deepEqual(seen.map(probe=>probe.project),['demo-egc-parallel-a','demo-egc-parallel-b']);
@@ -85,7 +85,7 @@ test('two concurrent runs get separate emulators, run in the caller cwd and clea
 test('independent module instances with the same PID cannot collide on config or logs',async t=>{
  const {root,env}=workspace(t);
  const instances=await Promise.all(['namespace-a','namespace-b'].map(key=>import(`../scripts/emulator-exec.mjs?${key}`)));
- const runs=await Promise.all(instances.map((module,index)=>module.runEmulatorExec({...quiet,root,env,cwd:root,keepLogs:true,project:`demo-egc-isolated-${index}`,script:`node probe.mjs isolated-${index}.json 200`})));
+ const runs=await Promise.all(instances.map((module,index)=>module.runEmulatorExec({...quiet,root,claimsDir:join(root,'claims'),env,cwd:root,keepLogs:true,project:`demo-egc-isolated-${index}`,script:`node probe.mjs isolated-${index}.json 200`})));
  assert.deepEqual(runs.map(run=>run.code),[0,0]);
  assert.notEqual(runs[0].config,runs[1].config);assert.notEqual(runs[0].logDir,runs[1].logDir);
  for(const [index,run] of runs.entries()){
@@ -98,10 +98,10 @@ test('independent module instances with the same PID cannot collide on config or
 
 test('a failing command keeps its exit code and emulator log but still removes the private config',async t=>{
  const {root,env}=workspace(t);
- const run=await runEmulatorExec({...quiet,root,env,cwd:root,script:'node probe.mjs out.json 0 3'});
+ const run=await runEmulatorExec({...quiet,root,claimsDir:join(root,'claims'),env,cwd:root,script:'node probe.mjs out.json 0 3'});
  assert.equal(run.code,3);assert.equal(run.kept,true);assert.equal(existsSync(run.config),false);
  assert.equal(readFileSync(join(run.logDir,'firestore-debug.log'),'utf8'),'synthetic emulator log for '+run.ports.firestore);
- const missing=await runEmulatorExec({...quiet,root,env:{...env,EGC_FIREBASE_BIN:join(root,'no-such-firebase')},cwd:root,script:'node probe.mjs never.json'});
+ const missing=await runEmulatorExec({...quiet,root,claimsDir:join(root,'claims'),env:{...env,EGC_FIREBASE_BIN:join(root,'no-such-firebase')},cwd:root,script:'node probe.mjs never.json'});
  assert.equal(missing.code,127);assert.equal(existsSync(missing.config),false);assert.equal(existsSync(join(root,'never.json')),false);
  assert.deepEqual(leftovers(root),[]);
 });
@@ -122,19 +122,19 @@ test('a port taken before the emulator starts is retried once with fresh ports, 
  const holder=createServer();await new Promise((done,fail)=>{holder.once('error',fail);holder.listen(0,'127.0.0.1',done);});t.after(()=>new Promise(done=>holder.close(done)));
  const taken=holder.address().port;let picks=0;
  const firstTaken=async count=>{const fresh=await freePorts(count);return picks++===0?[taken,...fresh.slice(1)]:fresh;};
- const run=await runEmulatorExec({stdio:'ignore',log:message=>logs.push(message),root,env,cwd:root,pickPorts:firstTaken,script:'node probe.mjs retried.json'});
+ const run=await runEmulatorExec({stdio:'ignore',log:message=>logs.push(message),root,claimsDir:join(root,'claims'),env,cwd:root,pickPorts:firstTaken,script:'node probe.mjs retried.json'});
  assert.equal(run.code,0);assert.equal(run.attempts,2);assert.equal(picks,2);assert.equal(run.kept,false);
  assert.equal(run.retriedPorts[0].firestore,taken);assert.notEqual(run.ports.firestore,taken);
  assert.equal(JSON.parse(readFileSync(join(root,'retried.json'),'utf8')).host,`127.0.0.1:${run.ports.firestore}`);
  assert.match(logs.join('\n'),new RegExp(`port conflict before the command started \\(firestore ${taken}\\); retrying with fresh ports`));
  assert.deepEqual(readdirSync(join(root,'test-results')),[]);assert.deepEqual(leftovers(root),[]);
  const alwaysTaken=async count=>{const fresh=await freePorts(count);return [taken,...fresh.slice(1)];};
- const stuck=await runEmulatorExec({...quiet,root,env,cwd:root,pickPorts:alwaysTaken,script:'node probe.mjs never.json'});
+ const stuck=await runEmulatorExec({...quiet,root,claimsDir:join(root,'claims'),env,cwd:root,pickPorts:alwaysTaken,script:'node probe.mjs never.json'});
  assert.equal(stuck.code,1);assert.equal(stuck.attempts,2);assert.equal(stuck.portConflict,true);assert.equal(stuck.kept,true);
  assert.equal(existsSync(join(root,'never.json')),false);assert.match(readFileSync(join(stuck.logDir,'firebase-debug.log'),'utf8'),/EADDRINUSE/);
- const once=await runEmulatorExec({...quiet,root,env,cwd:root,retries:0,pickPorts:alwaysTaken,script:'node probe.mjs never.json'});
+ const once=await runEmulatorExec({...quiet,root,claimsDir:join(root,'claims'),env,cwd:root,retries:0,pickPorts:alwaysTaken,script:'node probe.mjs never.json'});
  assert.deepEqual([once.code,once.attempts],[1,1]);
- const own=await runEmulatorExec({...quiet,root,env,cwd:root,script:`node -e "require('node:fs').appendFileSync('runs.txt','run;');console.error('Error: listen EADDRINUSE: address already in use 127.0.0.1:3000');process.exit(5)"`});
+ const own=await runEmulatorExec({...quiet,root,claimsDir:join(root,'claims'),env,cwd:root,script:`node -e "require('node:fs').appendFileSync('runs.txt','run;');console.error('Error: listen EADDRINUSE: address already in use 127.0.0.1:3000');process.exit(5)"`});
  assert.deepEqual([own.code,own.attempts,own.portConflict],[5,1,false]);assert.equal(readFileSync(join(root,'runs.txt'),'utf8'),'run;');
  assert.equal(existsSync(join(own.logDir,'.command-started')),false);assert.deepEqual(leftovers(root),[]);
  for(const text of['Port 41001 is not open on 127.0.0.1, could not start Cloud Firestore Emulator.','Could not start Cloud Firestore Emulator, port taken.','java.net.BindException: Address already in use','Error: listen EADDRINUSE: address already in use'])assert.match(text,PORT_CONFLICT);
