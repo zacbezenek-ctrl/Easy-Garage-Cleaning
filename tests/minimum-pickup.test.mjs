@@ -270,16 +270,17 @@ test('the nearby rule reads operational job types, skips every closed stage and 
 });
 
 test('a waived job moved to another day is checked again: portal approval, Hub Record approval and a reschedule', async t => {
-  const waiver = { by: estimator.user, at: NOW, reason: NEARBY.reason, nearbyJobId: 'job_neighbour', ownerOverride: false, date: DAY, pending: false };
-  const job = { id: 'job_self', date: DAY, address: ZIP_ADDRESS, estimate: { lineItems: [{ id: 'removal-special', totalCents: 7000 }] }, quoteDraft: { minimumWaiver: waiver } };
+  const waiver = { by: estimator.user, at: NOW, reason: NEARBY.reason, nearbyJobId: 'job_neighbour', ownerOverride: false, date: DAY, pending: false }, WAIVED = { lines: [], pickup: { haulingOnly: true, minimumCents: 0, waived: true, waivedCents: 8000 } };
+  const job = { id: 'job_self', date: DAY, address: ZIP_ADDRESS, estimate: { lineItems: [{ id: 'removal-special', totalCents: 7000 }] }, quoteDraft: { minimumWaiver: waiver, breakdown: WAIVED } };
   assert.equal(pickupWaiverProblem(job, []), null, 'on its own day');
   const moved = { ...job, date: '2026-12-16' };
   assert.match(pickupWaiverProblem(moved, []), /No other job is booked on 2026-12-16 in this job's ZIP code/);
   assert.equal(pickupWaiverProblem(moved, [{ ...NEIGHBOUR, date: '2026-12-16' }]), null, 'another job that day in the ZIP code still qualifies');
   assert.match(pickupWaiverProblem(moved, null), /Save the quote again for 2026-12-16/, 'unreadable: refused');
-  assert.match(pickupWaiverProblem({ ...moved, quoteDraft: { minimumWaiver: { ...waiver, ownerOverride: true, nearbyJobId: null } } }, [{ ...NEIGHBOUR, date: '2026-12-16' }]), /confirmed for 2026-12-14/, 'an owner override is for its own day only');
-  assert.match(pickupWaiverProblem({ ...job, quoteDraft: { minimumWaiver: { ...waiver, pending: true, date: null } } }, null, { approving: true }), /not been confirmed/);
+  assert.match(pickupWaiverProblem({ ...moved, quoteDraft: { minimumWaiver: { ...waiver, ownerOverride: true, nearbyJobId: null }, breakdown: WAIVED } }, [{ ...NEIGHBOUR, date: '2026-12-16' }]), /confirmed for 2026-12-14/, 'an owner override is for its own day only');
+  assert.match(pickupWaiverProblem({ ...job, quoteDraft: { minimumWaiver: { ...waiver, pending: true, date: null }, breakdown: WAIVED } }, null, { approving: true }), /not been confirmed/);
   assert.equal(pickupWaiverProblem({ ...moved, estimate: { lineItems: [{ id: PICKUP_MINIMUM_LINE_ID, totalCents: 100 }] } }, []), null, 'priced at the minimum: nothing waived');
+  assert.equal(pickupWaiverProblem({ ...moved, quoteDraft: { minimumWaiver: waiver, breakdown: { lines: [], pickup: { haulingOnly: true, minimumCents: 0, waived: false, waivedCents: 0 } } } }, []), null, 'a record left from an earlier waived revision is not live');
   // The flows: a sent waived sofa quote whose job then moved to a day with no nearby job.
   const q = quote(SOFA({ nearbyTruck: NEARBY })), f = fixture(ON), saved = await save(f, estimator, q), jobId = saved.job.id;
   Object.assign(f.job(jobId), { date: DAY, address: ZIP_ADDRESS });
@@ -296,4 +297,75 @@ test('a waived job moved to another day is checked again: portal approval, Hub R
   const refused = await portalPost(handlers, cookie, { action: 'approve_estimate', signed_name: 'Synthetic Customer', confirmed: true, estimate_revision: shown.revision, amount_cents: Math.round(shown.amount * 100), estimate_fingerprint: shown.fingerprint, terms_version: shown.termsVersion, request_id: randomUUID() }, portalEnv);
   assert.deepEqual([refused.status, refused.body.code], [409, 'CUSTOMER_PORTAL_PICKUP_DAY']);
   assert.doesNotMatch(refused.body.error, /ZIP|job_|nearby job/i, 'the customer gets a plain request, never the staff reason');
+});
+
+// A waived sofa job signed in person on DAY with the job next door (job_neighbour, same ZIP code, same day).
+async function signedWaived() {
+  const q = quote(SOFA({ nearbyTruck: NEARBY })), f = fixture(ON), saved = await save(f, estimator, q), draft = f.job(saved.job.id);
+  f.rows.set('jobs/job_neighbour', { ...NEIGHBOUR, revision: 'n1', customerId: 'c2', time: '13:00', endTime: '15:00' });
+  const sign = async (actor, priced, pickup = nearby([NEIGHBOUR])) => {
+    const job = f.job(draft.id), plan = signedPlan(1, { total: priced.totalCents / 100, date: DAY, quote: { composite_pricing: priced.compositePricing, catalog_version: priced.menuVersion, line_items: priced.lineItems.map(({ id, kind, name, description, quantity, unitCents, totalCents }) => ({ id, kind, name, description, quantity, unitCents, totalCents })) } });
+    plan.client.address = ZIP_ADDRESS;
+    return saveWalkthroughHandoff(f.store, actor, { actorId: actor.user, requestId: randomUUID(), customerId: 'c1', sourceWalkthroughId: 'w1', sourceRevision: f.rows.get('jobs/w1').revision, jobId: job.id, expectedRevision: job.revision, plan }, NOW, { env: ON, compositeState: async () => q.state, winterSale: saleReaders, pickup });
+  };
+  const signed = await sign(estimator, q.priced);
+  const move = date => mutateDispatch(f.store, owner, { action: 'schedule.update', requestId: randomUUID(), jobId: signed.job.id, expectedRevision: f.job(signed.job.id).revision, changes: { date, time: '09:30', endTime: '12:30' } }, NOW);
+  return { f, q, jobId: signed.job.id, sign, move };
+}
+const movedAudits = f => f.writesTo(HUB_AUDIT_COLLECTION).filter(write => write.patch.action === 'quote.minimum_pickup.waiver_moved');
+
+test('a job re-signed without its waiver drops the old waiver record, so it moves like any other job', async () => {
+  const { f, q, jobId, sign, move } = await signedWaived();
+  assert.equal(f.job(jobId).minimumWaiver.nearbyJobId, 'job_neighbour');
+  // The customer adds two items and signs again above $250, with no waiver.
+  const three = quote(selection({ removal: [{ id: id('Sofa / loveseat'), quantity: 1 }, { id: id('Mattress'), quantity: 1 }, { id: id('Recliner'), quantity: 1 }], shelving: [], storage: [], labor: { manHours: null, fullness: 'medium' } }), q.state);
+  await sign(owner, three.priced, nearby());
+  const job = f.job(jobId);
+  assert.deepEqual([job.minimumWaiver, job.quoteDraft.minimumWaiver, job.estimate.amountCents], [null, null, three.priced.totalCents]);
+  await move('2026-12-16');
+  assert.equal(f.job(jobId).date, '2026-12-16');
+});
+
+test('an approved or signed waived job keeps its waiver and price when it moves, with an audited note', async () => {
+  // Signed in person: Dispatch moves it to a day with no nearby job.
+  const signed = await signedWaived(), before = signed.f.job(signed.jobId).estimate.amountCents;
+  await signed.move('2026-12-16');
+  const job = signed.f.job(signed.jobId);
+  assert.deepEqual([job.date, job.estimate.amountCents, job.minimumWaiver.date], ['2026-12-16', before, DAY]);
+  assert.deepEqual(movedAudits(signed.f).map(write => [write.patch.reason, JSON.parse(write.patch.after).date]), [['moved after approval; waiver kept', '2026-12-16']]);
+  // Approved in the portal (a sent quote the customer approved): the same.
+  const q = quote(SOFA({ nearbyTruck: NEARBY })), f = fixture(ON), saved = await save(f, estimator, q), id = saved.job.id;
+  Object.assign(f.job(id), { date: DAY, time: '09:30', endTime: '12:30', address: ZIP_ADDRESS });
+  const ok = await preview(f, q, id, estimator, nearby([NEIGHBOUR]));
+  await sendQuoteDraft(f.store, estimator, { requestId: randomUUID(), jobId: id, expectedRevision: f.job(id).revision, confirmToken: ok.confirmToken }, NOW, { env: ON, compositeState: async () => q.state, winterSale: saleReaders, pickup: nearby([NEIGHBOUR]) });
+  Object.assign(f.job(id).estimate, { status: 'accepted', acceptedAt: NOW, acceptanceMethod: 'customer_portal' });
+  f.job(id).customerApproval = { status: 'approved', approvedAt: NOW, source: 'customer_portal' };
+  const price = f.job(id).estimate.amountCents;
+  await mutateDispatch(f.store, owner, { action: 'schedule.update', requestId: randomUUID(), jobId: id, expectedRevision: f.job(id).revision, changes: { date: '2026-12-16', time: '09:30', endTime: '12:30' } }, NOW);
+  assert.deepEqual([f.job(id).date, f.job(id).estimate.amountCents], ['2026-12-16', price]);
+  assert.equal(movedAudits(f).length, 1);
+});
+
+test('an unapproved waived job moved to a day with another job in its ZIP code carries the waiver to that day', async t => {
+  const q = quote(SOFA({ nearbyTruck: NEARBY })), f = fixture(ON), saved = await save(f, estimator, q), id = saved.job.id;
+  Object.assign(f.job(id), { date: DAY, time: '09:30', endTime: '12:30', address: ZIP_ADDRESS });
+  const ok = await preview(f, q, id, estimator, nearby([NEIGHBOUR]));
+  await sendQuoteDraft(f.store, estimator, { requestId: randomUUID(), jobId: id, expectedRevision: f.job(id).revision, confirmToken: ok.confirmToken }, NOW, { env: ON, compositeState: async () => q.state, winterSale: saleReaders, pickup: nearby([NEIGHBOUR]) });
+  // Another job is booked on the new day in the same ZIP code.
+  f.rows.set('jobs/job_other', { ...NEIGHBOUR, id: 'job_other', date: '2026-12-16', revision: 'o1', customerId: 'c3', time: '13:00', endTime: '15:00', address: '7 Third Street, Fort Collins, CO 80521' });
+  await mutateDispatch(f.store, owner, { action: 'schedule.update', requestId: randomUUID(), jobId: id, expectedRevision: f.job(id).revision, changes: { date: '2026-12-16', time: '09:30', endTime: '12:30' } }, NOW);
+  assert.deepEqual([f.job(id).date, f.job(id).quoteDraft.minimumWaiver.date, f.job(id).quoteDraft.minimumWaiver.nearbyJobId], ['2026-12-16', '2026-12-16', 'job_other']);
+  assert.equal(JSON.parse(movedAudits(f)[0].patch.after).nearbyJobId, 'job_other');
+  // The portal now approves it on its new day.
+  portalStore(t, { [id]: structuredClone(f.job(id)) });
+  const handlers = portalHandlers(NOW), cookie = await portalCookie(id, {}, Date.parse(NOW)), view = await portalView(handlers, cookie, portalEnv), shown = view.body.estimate;
+  const approved = await portalPost(handlers, cookie, { action: 'approve_estimate', signed_name: 'Synthetic Customer', confirmed: true, estimate_revision: shown.revision, amount_cents: Math.round(shown.amount * 100), estimate_fingerprint: shown.fingerprint, terms_version: shown.termsVersion, request_id: randomUUID() }, portalEnv);
+  assert.equal(approved.status, 200, JSON.stringify(approved.body));
+});
+
+test('the Business Hub rate card states the curbside condition too', () => {
+  const source = readFileSync(new URL('../functions/_lib/pricing-config.js', import.meta.url), 'utf8');
+  const sentences = [...source.matchAll(/'([^']*\$139[^']*)'/g)].map(match => match[1]);
+  assert.ok(sentences.length >= 1);
+  for (const text of sentences) assert.match(text, /when our truck is already in the area that day; otherwise the minimum pickup is \$250/);
 });

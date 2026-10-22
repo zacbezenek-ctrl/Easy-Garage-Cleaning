@@ -23,7 +23,8 @@ import { walkthroughStatusFields } from './walkthrough-state.js';
 import { dispatchReviewCleared, withQueueFacts } from './dispatch-queue.js';
 import { jobStartProblem } from './job-start-policy.js';
 import { winterSaleDateProblem, winterSaleLastDay } from './winter-sale.js';
-import { pickupWaiverProblem } from './pickup-minimum.js';
+import { approvedJob, liveWaiver, pickupWaiverMove, pickupWaiverProblem, waiverNoteAudit } from './pickup-minimum.js';
+import { auditWrite } from './hub-audit.js';
 import { DEFAULT_CREWS, NO_CREW, autoAssignedCrew, autoCrewJob, crewAssignment, crewAutoRecord, crewCode, crewCodeInput, crewJobDates, crewPickOrder, crewServes, eligibleCrews, handStaffed, projectCrewOpenings, serviceDaysInput } from './dispatch-crew-assign.js';
 import { dispatchOpenings } from './dispatch-openings.js';
 import { normalizeJobMaterials } from './job-materials.js';
@@ -646,8 +647,18 @@ async function executeDispatch(store, session, input, now, options = {}, context
     const finalJobs = days.length ? await jobsForWindow(store,{startDate:days[0],endDate:addDays(days.at(-1),1),bound:addDays(days.at(-1),SAVE_BOUND_DAYS),everyStart:true},'save') : await reads.near(() => rowsWindow([current,next],new Date(now)));
     // Minimum pickup: a truck-nearby price holds for the day it was confirmed (pickup-minimum.js); a move to another day
     // needs another job booked that day in the same ZIP code. A signed handoff checks its own waiver (saleChecked).
-    const waiverMoved = !cancel && current && options.saleChecked !== true && next.date && next.date !== current.date ? pickupWaiverProblem(next, finalJobs.filter(row => row?.date === next.date)) : null;
-    if (waiverMoved) throw fail('dispatch_pickup_waiver_moved', waiverMoved, 409);
+    // A job the customer approved or signed keeps its waiver (the terms it was signed on), with an audited note; a waiver
+    // confirmed again for a same-ZIP day moves with the job in this commit.
+    if (!cancel && current && options.saleChecked !== true && next.date && next.date !== current.date && liveWaiver(next)) {
+      const sameDay = finalJobs.filter(row => row?.date === next.date), audit = (waiver, note) => waiverNoteAudit(auditWrite, waiver, { actor: { id: session.user, kind: 'human', role: session.role }, jobId: id, requestId: input.requestId, now, note, fromDate: current.date, toDate: next.date });
+      if (approvedJob(current)) writes.push(audit(liveWaiver(next), 'moved after approval; waiver kept'));
+      else {
+        const waiverMoved = pickupWaiverProblem(next, sameDay);
+        if (waiverMoved) throw fail('dispatch_pickup_waiver_moved', waiverMoved, 409);
+        const moved = pickupWaiverMove(next, sameDay);
+        if (moved) { patch.quoteDraft = { ...current.quoteDraft, minimumWaiver: moved }; next = { ...next, quoteDraft: patch.quoteDraft }; writes.push(audit(moved, 'moved to a day with another job in the ZIP code; waiver confirmed again')); }
+      }
+    }
     // Each eligible crew in pick order (a preferred crew first), as the job it would make.
     const crewOptions = autoPlan ? autoCrewOptions(autoPlan,next,resources,roster,interval) : [];
     const inspection=await withTravel(scheduleInspection(finalJobs,resources,roster,rules),[next,...crewOptions.map(option => option.job)],roster,options.travel);

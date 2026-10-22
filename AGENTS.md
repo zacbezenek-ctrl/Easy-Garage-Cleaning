@@ -141,7 +141,8 @@ Each rule is an owner decision recorded in the code. Changing one needs the owne
   waiver applies. A builder quote whose menu lines are all hauling (`HAULING_GROUPS`, with or without a truck load) and
   totals under $250 gets a "Minimum pickup" line up to $250 (`functions/_lib/pickup-minimum.js`, server-only). The waiver
   needs a reason and a same-day scheduled job in the same 5-digit ZIP code, or the owner. The winter sale never takes a
-  pickup below $250.
+  pickup below $250. Approved or signed jobs keep their waiver when moved (an audited note); an unapproved one is
+  checked again for its new day.
 - **Customers see Labor as one amount**, "Labor", never the man-hours, the rate or hourly wording (D-LABOR-TEXT,
   `functions/_lib/composite-quote.js`). Man-hours stay in the staff breakdown.
 - **Draft prices can be saved but never sent.** Owner-unapproved menu prices may sit on an unsent draft;

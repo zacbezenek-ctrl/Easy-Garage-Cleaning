@@ -12,7 +12,10 @@
  * Unconfirmed, the save, send or signature is refused with a plain reason. Each confirmation is audited (who, when, the
  * nearby job's id); the id stays in the audit and the Hub record, never in customer text. A confirmed waiver is for its
  * day: the owner's override carries to the send and the signature only on that day (savedOwnerWaiver), and a job moved
- * to another day is checked again at portal approval, Hub Record approval and a reschedule (pickupWaiverProblem).
+ * to another day is checked again at portal approval, Hub Record approval and a reschedule (pickupWaiverProblem); a
+ * reschedule to a day with another job in the ZIP code moves the waiver with it (pickupWaiverMove). A job the customer
+ * approved or signed keeps the terms it was signed on (AGENTS.md section 4), its waiver included: it moves freely, with
+ * an audited note (waiverNoteAudit).
  *
  * The winter sale (winter-sale.js) runs on the minimum's total and never takes a pickup below it (pickupFloorCents), so
  * a pickup at the minimum gets no sale credit and the two lines never show together. */
@@ -61,6 +64,17 @@ export function nearbyJob(jobs, { jobId = '', date, zip }) {
 }
 /** The waiver a job's record holds (the signed job's, else its quote draft's), or null. */
 export const jobWaiver = job => plain(job?.minimumWaiver) ? job.minimumWaiver : plain(job?.quoteDraft?.minimumWaiver) ? job.quoteDraft.minimumWaiver : null;
+// The job's current builder pricing: the signed quote's, else its draft's.
+const currentBreakdown = job => plain(job?.compositeQuote?.breakdown) ? job.compositeQuote.breakdown : plain(job?.quoteDraft?.breakdown) ? job.quoteDraft.breakdown : null;
+/** The waiver that prices the job now: its record, while its current pricing is waived (breakdown.pickup.waived) and
+ * carries no Minimum pickup line; a record left from an earlier, waived revision is not live. */
+export function liveWaiver(job) {
+  const waiver = jobWaiver(job), lines = Array.isArray(job?.estimate?.lineItems) ? job.estimate.lineItems : [];
+  return waiver && currentBreakdown(job)?.pickup?.waived === true && !lines.some(line => line?.id === PICKUP_MINIMUM_LINE_ID) ? waiver : null;
+}
+const acceptedStatus = value => ['accepted', 'approved'].includes(String(value || '').toLowerCase());
+/** A job the customer approved (portal or Hub Record approval) or signed in person: it keeps the terms it was signed on. */
+export const approvedJob = job => acceptedStatus(job?.estimate?.status) || acceptedStatus(job?.customerApproval?.status) || job?.estimate?.acceptanceMethod === 'in_person_signature';
 /** The owner's saved override, carried to a send or signature only for its own day and its own reason. */
 export const savedOwnerWaiver = (saved, { date, reason }) => plain(saved) && saved.ownerOverride === true && saved.pending !== true && Boolean(date) && saved.date === date && saved.reason === reason ? saved : null;
 /**
@@ -70,8 +84,8 @@ export const savedOwnerWaiver = (saved, { date, reason }) => plain(saved) && sav
  * (pending) waiver is refused too. The reason is the staff's; a customer gets a plain request to ask the team.
  */
 export function pickupWaiverProblem(job, sameDayJobs = null, { approving = false } = {}) {
-  const waiver = jobWaiver(job), lines = Array.isArray(job?.estimate?.lineItems) ? job.estimate.lineItems : [];
-  if (!waiver || lines.some(line => line?.id === PICKUP_MINIMUM_LINE_ID)) return null;
+  const waiver = liveWaiver(job);
+  if (!waiver) return null;
   if (waiver.pending) return approving ? 'The truck-nearby waiver on this quote has not been confirmed for a booked day yet. Send the quote again, which checks it.' : null;
   const date = String(job?.date || '');
   if (!date || date === waiver.date) return null;
@@ -79,6 +93,17 @@ export function pickupWaiverProblem(job, sameDayJobs = null, { approving = false
   if (waiver.ownerOverride || !Array.isArray(sameDayJobs)) return `${confirmed} Save the quote again for ${date}: the $250 minimum pickup applies unless another job is booked that day in the same ZIP code, or the owner waives it.`;
   return nearbyJob(sameDayJobs, { jobId: job.id, date, zip: serviceZip(job.address) }) ? null : `${confirmed} No other job is booked on ${date} in this job's ZIP code. Save the quote again (the $250 minimum pickup applies) or ask the owner.`;
 }
+/** The waiver confirmed again for a job moved to a day with another job in its ZIP code (sameDayJobs: that day's jobs):
+ * the record with its new day and nearby job, or null when nothing moves with it. */
+export function pickupWaiverMove(job, sameDayJobs) {
+  const waiver = liveWaiver(job), date = String(job?.date || '');
+  if (!waiver || waiver.pending || waiver.ownerOverride || !date || date === waiver.date) return null;
+  const found = nearbyJob(sameDayJobs, { jobId: job.id, date, zip: serviceZip(job.address) });
+  return found ? { ...waiver, date, nearbyJobId: found.id } : null;
+}
+/** The audit of a waiver that moved with its job: kept (an approved or signed job) or confirmed again for the new day. */
+export const waiverNoteAudit = (auditWrite, waiver, { actor, via = 'hub', jobId, requestId, now, note, fromDate, toDate }) => auditWrite({ actor, via, action: 'quote.minimum_pickup.waiver_moved',
+  entity: { collection: 'jobs', id: jobId }, before: { date: fromDate, nearbyJobId: waiver.nearbyJobId ?? null }, after: { date: toDate, nearbyJobId: waiver.nearbyJobId ?? null, ownerOverride: waiver.ownerOverride === true }, requestId, reason: note, now });
 
 /**
  * Confirms a quote's waiver. priced: the builder pricing (breakdown.pickup); date/address: the job's booked day and

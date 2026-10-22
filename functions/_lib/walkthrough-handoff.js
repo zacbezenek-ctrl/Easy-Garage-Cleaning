@@ -825,7 +825,11 @@ export async function saveWalkthroughHandoff(store, actor, input, now = new Date
       const saleRecord = signedSale || (hasWinterSaleLine(finance.estimate.lineItems) && previous?.quoteDraft?.winterSale) || null;
       if (plain(previous?.quoteDraft) && (saleRecord || plain(previous.quoteDraft.winterSale))) target.patch.quoteDraft = { ...(target.patch.quoteDraft || previous.quoteDraft), winterSale: saleRecord };
       // The confirmed truck-nearby waiver, on the job and its quote draft (audited below).
-      if (pickupWaiver) { target.patch.minimumWaiver = pickupWaiver; if (plain(previous?.quoteDraft)) target.patch.quoteDraft = { ...(target.patch.quoteDraft || previous.quoteDraft), minimumWaiver: pickupWaiver }; }
+      // A signature without one clears an earlier revision's record, so it never holds the job to a day.
+      if (pickupWaiver || plain(previous?.minimumWaiver) || plain(previous?.quoteDraft?.minimumWaiver)) {
+        target.patch.minimumWaiver = pickupWaiver || null;
+        if (plain(previous?.quoteDraft)) target.patch.quoteDraft = { ...(target.patch.quoteDraft || previous.quoteDraft), minimumWaiver: pickupWaiver || null };
+      }
       const pendingNames = pricesPending ? builder.approval.blocked.map(row => row.name) : [];
       const roleWarnings = [...(crewIgnored ? [{ code: 'crew_assignment_ignored', jobId: target.id, message: 'Crew names were not saved. A manager assigns the crew in Dispatch.' }] : []), ...(soldNeedsCrew ? [{ code: 'sold_needs_crew', jobId: target.id, message: 'Sold: needs crew. A manager assigns the crew in Dispatch.' }] : []),
         ...(choiceDropped ? [{ code: 'crew_choice_unavailable', jobId: target.id, message: 'The chosen crew can no longer take this visit, so Dispatch assigned the first free crew instead.' }] : []),
