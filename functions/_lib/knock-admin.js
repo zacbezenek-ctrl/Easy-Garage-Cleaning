@@ -99,18 +99,34 @@ export async function readSettings(store, viewer = null) {
 /* Saves the settings field only. The owner's compensationApproval and planApproval live
    beside it in the same document and must survive an unrelated edit (a map tile, a
    holiday). They are bound to the exact commission/payroll and plan/gate they approved,
-   so changing those terms stops them verifying until the owner approves again. */
-export async function updateSettings(store, admin, { settings }, nowIso) {
+   so changing those terms stops them verifying until the owner approves again.
+   keepPayroll (anyone who is not the owner, api/knock-admin.js): the payroll block saved is the one stored, read in the
+   same read the save commits against; a request that changes it is refused (403 knock_pay_owner_only). Every save is
+   bound to that read's revision, so an owner's payroll change landing mid-save is never written back over: the save
+   reads again and retries, and answers 409 knock_conflict if the document keeps changing. */
+const SAVE_ATTEMPTS = 3;
+export async function updateSettings(store, admin, { settings } = {}, nowIso, { keepPayroll = false } = {}) {
   if (!settings || typeof settings !== 'object' || Array.isArray(settings)) throw knockFailure('Send the settings to save.', 400, 'knock_invalid_settings');
-  const candidate = overlaySettings(settings);
-  const problems = validateSettings(candidate);
-  if (problems.length) throw knockFailure('Some settings are out of range.', 400, 'knock_invalid_settings', { problems });
-  const stored = await store.get('knock_settings', 'current');
-  const fields = { settings: candidate, updatedAt: nowIso, updatedBy: admin.user };
-  const [before, after] = await Promise.all([fromDoc(stored), fromDoc({ ...(stored || {}), ...fields })]);
-  await store.commit([write.upsert('knock_settings', 'current', fields)]);
-  return { settings: mergeSettings(candidate),
-    compensation: { verified: after.commission.verified, approvalInvalidated: before.commission.verified && !after.commission.verified } };
+  for (let attempt = 1; ; attempt++) {
+    const stored = await store.get('knock_settings', 'current'), payroll = mergeSettings(stored?.settings || {}).payroll, incoming = settings.payroll;
+    // The first read checks what the request asked for; a retry only carries the payroll stored now.
+    if (keepPayroll && attempt === 1 && incoming !== undefined && (!incoming || typeof incoming !== 'object' || Array.isArray(incoming) || Object.entries(incoming).some(([key, value]) => JSON.stringify(value) !== JSON.stringify(payroll[key]))))
+      throw knockFailure('Only the owner changes the pay period or training pay.', 403, 'knock_pay_owner_only');
+    const candidate = overlaySettings(keepPayroll ? { ...settings, payroll } : settings);
+    const problems = validateSettings(candidate);
+    if (problems.length) throw knockFailure('Some settings are out of range.', 400, 'knock_invalid_settings', { problems });
+    const fields = { settings: candidate, updatedAt: nowIso, updatedBy: admin.user };
+    const [before, after] = await Promise.all([fromDoc(stored), fromDoc({ ...(stored || {}), ...fields })]);
+    try {
+      await store.commit([stored ? write.patch('knock_settings', 'current', fields, stored.__updateTime) : write.create('knock_settings', 'current', fields)]);
+    } catch (error) {
+      if (['knock_conflict', 'knock_exists'].includes(error?.code) && attempt < SAVE_ATTEMPTS) continue;
+      if (error?.code === 'knock_exists') throw knockFailure('The settings changed while saving. Reload and retry.', 409, 'knock_conflict');
+      throw error;
+    }
+    return { settings: mergeSettings(candidate),
+      compensation: { verified: after.commission.verified, approvalInvalidated: before.commission.verified && !after.commission.verified } };
+  }
 }
 
 /* ---- Compensation approval (owner only) ---- */

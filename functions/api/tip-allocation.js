@@ -1,4 +1,4 @@
-import { getHubSession, hasBusinessAccess } from '../_lib/hub-session.js';
+import { getHubSession, hasBusinessAccess, listHubUserProfiles } from '../_lib/hub-session.js';
 import { moneyStorage } from '../_lib/money-storage.js';
 import { TIP_ALLOCATION_ACKNOWLEDGEABLE, TIP_ALLOCATION_JOB_FIELDS, computeTipAllocation, tipAllocationForViewer, validateTipAllocationRange } from '../_lib/tip-allocation.js';
 import { canSetPay, seesOthersPay } from '../_lib/pay-visibility.js';
@@ -10,6 +10,8 @@ const headers = { 'Cache-Control': 'no-store', 'X-Content-Type-Options': 'nosnif
 const reply = (status, body) => Response.json(body, { status, headers });
 const fail = (message, code, status = 400, details) => Object.assign(new Error(message), { code, status, ...(details ? { details } : {}) });
 const PARAMS = new Set(['start', 'end', 'format', 'acknowledge']);
+// Each Hub account's display name, the name a legacy job may list its crew under (tipAllocationForViewer).
+const rosterNames = env => new Map(listHubUserProfiles(env).map(profile => [String(profile.user || '').trim().toLowerCase(), String(profile.displayName || '')]));
 
 // A payroll read refuses other sites; a missing header is allowed only because the SameSite=Strict cookie is required.
 function sameSite(request) {
@@ -69,7 +71,7 @@ export function tipAllocationHandlers({ session = getHubSession, storage = money
         const refundReviews = tippedIds.length ? await readReviews(env, tippedIds) : new Map();
         if (!(refundReviews instanceof Map)) throw fail('Refunds on tipped card payments could not be checked.', 'tip_allocation_records_invalid', 503);
         const allocation = computeTipAllocation({ ...range, refundReviews });
-        if (!input.csv) return reply(200, { ok: true, authority: 'employee_hub', ...tipAllocationForViewer(allocation, { payShown }), exportAllowed });
+        if (!input.csv) return reply(200, { ok: true, authority: 'employee_hub', ...tipAllocationForViewer(allocation, { payShown, rosterNames: payShown ? null : rosterNames(env) }), exportAllowed });
         // Like payroll, tips export only when every share is final, or its one acknowledgeable gap was named.
         const blocking = allocation.coverage.reasons.filter(reason => !input.acknowledged.has(reason));
         if (blocking.length) {
