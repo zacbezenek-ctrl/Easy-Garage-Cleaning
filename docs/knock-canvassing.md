@@ -327,7 +327,13 @@ and every sync answer and record is as before. Code: `functions/_lib/knock-bridg
   see customers anyway, still self-run. Every switch change is kept in `walkthroughSelfLog` (newest last, capped).
   The right lasts only while the walkthrough is under way (`selfRunOpen`, `selfRunDraft`): the visit until it is
   converted by the signed handoff, cancelled or lost, the job saved from it until it is signed or sent, and never past
-  `SELF_RUN_DAYS` (3) after the visit's date; after that the rep gets a refusal, never the live customer record.
+  `SELF_RUN_DAYS` (3) after the visit's date; after that the rep gets a refusal, never the live customer record. Two
+  narrow exceptions in that window: the rep who started a visit the signed handoff converted still records its Finish
+  or No-show (`selfRunFinishable`, `/api/walkthrough-visit` only), and the phone's unchanged resend of a signed save is
+  answered from its receipt with no new write (`selfWalkthroughReplay`, `replayOnly`). `/api/field-jobs` drops the card
+  from the rep's day once neither applies (`selfRunCardHidden`). Walkthrough photos upload to the sold job through
+  `/api/field-jobs`, which only the job's crew and managers can open, so (as for an estimator) they stay on the rep's
+  device and the walkthrough page says the upload needs attention.
   Not covered: the audio recorder and walkthrough notes, so on these walkthroughs the rep types notes at Finish. The door and a `walkthrough` event with `selfRun: true`, today and the tapped time,
   are sent at once; the bridge books the Hub visit to the rep (no openings search; `bookSelfRun`) and answers
   `selfRun` with the Hub walkthrough id, and the phone opens `/crew/gameplan?walkthroughId=…` on it (the full builder

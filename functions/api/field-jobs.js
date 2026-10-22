@@ -18,6 +18,7 @@ import { jobStatusMovesTime } from '../_lib/employee-job-time.js';
 import { clockInWithoutFix } from '../_lib/employee-timecards.js';
 import { addDays } from '../_lib/dispatch-time.js';
 import { walkthroughCard } from '../_lib/walkthrough-state.js';
+import { selfRunCardHidden } from '../_lib/knock-self-walkthrough.js';
 import { storageBin, storageItems } from '../_lib/customer-photo-visibility.js';
 import { jobMaterialsEnabled } from '../_lib/job-materials.js';
 import { fieldCompletionTagsEnabled, fieldCompletionTagWrites, firstGhlTagAttempt, ghlTagOutboxStorage, GHL_TAG_OUTBOX, ghlTagStatusView } from '../_lib/ghl-tag-outbox.js';
@@ -134,6 +135,8 @@ export async function onRequestGet({ request, env }) {
       if (!await assignedDuring(job, date, end.toISOString().slice(0, 10), ctx.access)) continue;
       // WT-OUTCOME: the rep's own walkthroughs are read-only cards; the job actions below never take one.
       if (job.type === 'walkthrough') {
+        // REP-WALKTHROUGH: a Knock rep's own self-run visit leaves their day once their right to it ends.
+        if (!ctx.manager && selfRunCardHidden(job, ctx.session, new Date())) continue;
         const card = walkthroughCard(job), cancelled = card.walkthroughState === 'cancelled';
         if (status === 'active' && (card.walkthroughClosed || cancelled) || status === 'completed' && !card.walkthroughClosed || status === 'cancelled' && !cancelled) continue;
         // A sold card links to its job only when this viewer can open that job (the authorizedJob rule); a rep who

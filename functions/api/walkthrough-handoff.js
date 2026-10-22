@@ -1,7 +1,7 @@
 import { getHubSession } from '../_lib/hub-session.js';
 import { dispatchStorage } from '../_lib/dispatch-storage.js';
 import { quoteAuthorAccess, requireQuoteAuthor } from '../_lib/quote-permissions.js';
-import { selfWalkthroughSession, walkthroughRep } from '../_lib/knock-self-walkthrough.js';
+import { SELF_WALKTHROUGH_REPLAY, selfWalkthroughReplay, selfWalkthroughSession, walkthroughRep } from '../_lib/knock-self-walkthrough.js';
 import { handoffCrewOpenings, prepareHandoff, releaseHandoffPrices, saveWalkthroughHandoff } from '../_lib/walkthrough-handoff.js';
 import { expireStaleCheckout } from '../_lib/quote-draft.js';
 import { stripeRequest, stripeSecretKey } from '../_lib/customer-payments.js';
@@ -69,12 +69,14 @@ export function handoffHandlers({session=getHubSession,storage=dispatchStorage,w
         const raw=await request.text(); if(new TextEncoder().encode(raw).byteLength>320000)return reply(413,{ok:false,error:'The walkthrough is too large.'});
         let input; try{input=JSON.parse(raw);}catch{return reply(400,{ok:false,error:'The walkthrough request is incomplete.'});}
         const store=storage(env),at=now().toISOString(),plainInput=input&&typeof input==='object'&&!Array.isArray(input);
-        const actor=plainInput?await ownWalkthrough(signedIn,env,()=>store,knock,[input.sourceWalkthroughId,input.jobId],now()):signedIn; requireQuoteAuthor(actor,env);
+        const granted=plainInput?await ownWalkthrough(signedIn,env,()=>store,knock,[input.sourceWalkthroughId,input.jobId],now()):signedIn;
+        // A signed save the rep's phone sends again unchanged (photo or CRM retry) after the right ended: its replay only.
+        const actor=plainInput&&!quoteAuthorAccess(granted,env).author?await selfWalkthroughReplay(signedIn,env,input.requestId,{readReceipt:id=>store.read('walkthroughHandoffs',id),readJob:id=>store.read('jobs',id),knock:knock(env),now:now()}):granted; requireQuoteAuthor(actor,env);
         // action prices.release (EGC_QUOTE_BUILDER_ENABLED): a job booked with unapproved builder prices passes the builder's send gate.
         // Off, the request is refused as before (not a signed walkthrough).
-        if(quoteBuilderEnabled(env)&&input&&typeof input==='object'&&!Array.isArray(input)&&input.action==='prices.release')return reply(200,await releaseHandoffPrices(store,actor,input,at,{env,...priced}));
+        if(quoteBuilderEnabled(env)&&input&&typeof input==='object'&&!Array.isArray(input)&&input.action==='prices.release'&&actor[SELF_WALKTHROUGH_REPLAY]!==true)return reply(200,await releaseHandoffPrices(store,actor,input,at,{env,...priced}));
         // A signed revision closes an open portal checkout for the earlier terms.
-        return reply(200,await saveWalkthroughHandoff(store,actor,input,at,{env,...priced,winterSale:saleReaders,checkouts:job=>expireStaleCheckout({store,job,stripe:stripe(env),now:at,mode:moneyTotalsMode(env)})}));
+        return reply(200,await saveWalkthroughHandoff(store,actor,input,at,{replayOnly:actor[SELF_WALKTHROUGH_REPLAY]===true,env,...priced,winterSale:saleReaders,checkouts:job=>expireStaleCheckout({store,job,stripe:stripe(env),now:at,mode:moneyTotalsMode(env)})}));
       } catch(error) { return failure(error); }
     }
   };

@@ -14,7 +14,7 @@ import { pricingConfigHandlers } from '../functions/api/pricing-config.js';
 import { dispatchHandlers } from '../functions/api/dispatch.js';
 import { customerResolveHandler } from '../functions/api/customer-resolve.js';
 import { createJobAssignmentAccess } from '../functions/_lib/job-assignment.js';
-import { SELF_RUN_DAYS, SELF_WALKTHROUGH, selfRunVisit, selfWalkthroughSession } from '../functions/_lib/knock-self-walkthrough.js';
+import { SELF_RUN_DAYS, SELF_WALKTHROUGH, selfRunCardHidden, selfRunVisit, selfWalkthroughSession } from '../functions/_lib/knock-self-walkthrough.js';
 
 const ORIGIN = 'https://easygaragecleaning.com';
 const NOW = new Date('2026-10-17T15:00:00.000Z');
@@ -175,4 +175,57 @@ test('the walkthrough page opens for a rep without a walkthrough role only when 
     const refused = await page(search, answer);
     assert.deepEqual([refused.user, refused.replaced], [null, '/crew/?notice=walkthrough-restricted'], JSON.stringify([search, answer]));
   }
+});
+
+// FUN-05 with a self-run walkthrough: Start, then sign (the handoff converts the visit and leaves its Finish to the rep),
+// then Finish; the rep's next Start is not held up. And the phone's unchanged resend of a signed save replays it.
+const visitAction = (w, env, body) => call(w.visit.post, post('/api/walkthrough-visit', { requestId: randomUUID(), expectedRevision: w.f.rows.get(`jobs/${body.visitId}`).revision, skipTimecard: true, ...body }), env);
+for (const [label, env] of ENVS) {
+  test(`${label}: start, sign, then finish the rep's own walkthrough; their next start is not blocked`, async () => {
+    const w = world();
+    w.f.rows.set('jobs/w5', { ...w.f.rows.get('jobs/w2'), id: 'w5', revision: 'w5r', ...selfRun('rep.two'), time: '13:00', endTime: '14:00' });
+    const started = await visitAction(w, env, { action: 'start', visitId: 'w1', recordingStatus: 'declined' });
+    assert.equal(started.status, 200, JSON.stringify(started.body));
+    const signed = await sign(w, env, 1);
+    assert.equal(signed.status, 200, JSON.stringify(signed.body));
+    assert.ok(w.f.rows.get('jobs/w1').convertedJobId, 'the handoff converted the visit');
+    assert.equal(w.f.rows.get('jobs/w1').walkthroughOutcome, undefined, 'a started visit keeps its Finish for the rep');
+    assert.equal((await call(w.visit.get, get('/api/walkthrough-visit?visitId=w1'), env)).status, 200, 'the recorder still opens it to finish');
+    assert.equal((await lookup(w, env, 'w1')).status, 403, 'but not the walkthrough itself');
+    const finished = await visitAction(w, env, { action: 'finish', visitId: 'w1', outcome: 'sold_on_site', recordingStatus: 'declined' });
+    assert.equal(finished.status, 200, JSON.stringify(finished.body));
+    assert.equal(w.f.rows.get('jobs/w1').walkthroughOutcome?.outcome, 'sold_on_site');
+    // Finished: nothing more on that visit.
+    assert.equal((await call(w.visit.get, get('/api/walkthrough-visit?visitId=w1'), env)).status, 403);
+    const next = await visitAction(w, env, { action: 'start', visitId: 'w5', recordingStatus: 'declined' });
+    assert.equal(next.status, 200, JSON.stringify(next.body));
+  });
+
+  test(`${label}: the phone's unchanged resend of a signed save replays it; a changed one is refused and nothing is written`, async () => {
+    const w = world(), body = { requestId: randomUUID(), customerId: 'c1', sourceWalkthroughId: 'w1', sourceRevision: w.f.rows.get('jobs/w1').revision, plan: signedPlan(1) };
+    const first = await call(w.handoff.post, post('/api/walkthrough-handoff', body), env);
+    assert.equal(first.status, 200, JSON.stringify(first.body));
+    const writes = w.f.calls.length;
+    const again = await call(w.handoff.post, post('/api/walkthrough-handoff', body), env);
+    assert.equal(again.status, 200, JSON.stringify(again.body));
+    assert.deepEqual([again.body.replayed, again.body.job.id], [true, first.body.job.id]);
+    const changed = await call(w.handoff.post, post('/api/walkthrough-handoff', { ...body, plan: signedPlan(1, { total: 1500 }) }), env);
+    assert.notEqual(changed.status, 200);
+    const fresh = await call(w.handoff.post, post('/api/walkthrough-handoff', { ...body, requestId: randomUUID() }), env);
+    assert.equal(fresh.status, 403, 'a new request after signing gets nothing');
+    assert.equal(w.f.calls.length, writes, 'no writes after the signed save');
+  });
+}
+
+test('/api/field-jobs leaves the rep\'s own self-run card out of their day once their right to it ends', () => {
+  const visit = { id: 'w1', type: 'walkthrough', date: '2026-10-17', status: 'scheduled', ...selfRun('rep.two') };
+  assert.equal(selfRunCardHidden(visit, rep, NOW), false, 'open: shown');
+  const converted = { ...visit, convertedJobId: 'j1', walkthroughVisit: { startedBy: 'rep.two', startedAt: '2026-10-17T15:00:00Z' } };
+  assert.equal(selfRunCardHidden(converted, rep, NOW), false, 'signed, Finish still to record: shown');
+  assert.equal(selfRunCardHidden({ ...converted, walkthroughOutcome: { outcome: 'sold_on_site' } }, rep, NOW), true, 'signed and finished: hidden');
+  assert.equal(selfRunCardHidden(visit, rep, new Date('2026-10-25T15:00:00Z')), true, 'past the window: hidden');
+  assert.equal(selfRunCardHidden({ ...visit, status: 'cancelled' }, rep, NOW), true, 'cancelled: hidden');
+  assert.equal(selfRunCardHidden({ ...visit, d2d: { ...visit.d2d, selfRun: false } }, rep, new Date('2026-10-25T15:00:00Z')), false, 'an ordinary visit is untouched');
+  const source = readFileSync(new URL('../functions/api/field-jobs.js', import.meta.url), 'utf8');
+  assert.match(source, /if \(!ctx\.manager && selfRunCardHidden\(job, ctx\.session, new Date\(\)\)\) continue;/);
 });

@@ -21,7 +21,8 @@ function sameOrigin(request) {
 }
 
 // REP-WALKTHROUGH: a Knock rep with Walkthroughs on records their own self-run walkthrough, and only that visit.
-const ownVisit = (actor, env, store, knock, visitId, at) => selfWalkthroughSession(actor, env, [visitId], { readJob: id => store().read('jobs', id), knock: knock(env), performer: person => walkthroughPerformer(person, env), now: at });
+// purpose 'finish': a converted visit the rep started still takes its Finish or No-show (knock-self-walkthrough.js).
+const ownVisit = (actor, env, store, knock, visitId, at, purpose = '') => selfWalkthroughSession(actor, env, [visitId], { readJob: id => store().read('jobs', id), knock: knock(env), performer: person => walkthroughPerformer(person, env), now: at, purpose });
 
 export function walkthroughVisitHandlers({ session = getHubSession, storage = walkthroughVisitStorage, now = () => new Date(), ghlTags = firstGhlTagAttempt, knock = createKnockStore } = {}) {
   return {
@@ -33,7 +34,7 @@ export function walkthroughVisitHandlers({ session = getHubSession, storage = wa
         if (keys.some(key => key !== 'visitId') || new Set(keys).size !== keys.length) return reply(400, { ok: false, code: 'walkthrough_visit_invalid', error: 'Choose one walkthrough visit.' });
         // Switched off, the answer is only that: no visit, lock or timecard read (the gameplan asks on every open).
         if (!walkthroughVisitEnabled(env)) return reply(200, { ok: true, enabled: false });
-        const store = storage(env), viewer = params.has('visitId') ? await ownVisit(actor, env, () => store, knock, params.get('visitId'), now()) : actor;
+        const store = storage(env), viewer = params.has('visitId') ? await ownVisit(actor, env, () => store, knock, params.get('visitId'), now(), 'finish') : actor;
         return reply(200, { ...await walkthroughVisitState(store, viewer, Object.fromEntries(params), now().toISOString()), enabled: walkthroughVisitEnabled(env) });
       } catch (error) { return failure(error); }
     },
@@ -49,7 +50,7 @@ export function walkthroughVisitHandlers({ session = getHubSession, storage = wa
         if (new TextEncoder().encode(raw).byteLength > LIMIT) return reply(413, { ok: false, code: 'walkthrough_visit_too_large', error: 'The walkthrough action is too large.' });
         let input;
         try { input = JSON.parse(raw); } catch { return reply(400, { ok: false, code: 'walkthrough_visit_json_invalid', error: 'The walkthrough action could not be read.' }); }
-        const store = storage(env), viewer = input && typeof input === 'object' && !Array.isArray(input) ? await ownVisit(actor, env, () => store, knock, input.visitId, now()) : actor;
+        const store = storage(env), viewer = input && typeof input === 'object' && !Array.isArray(input) ? await ownVisit(actor, env, () => store, knock, input.visitId, now(), input.action === 'start' ? '' : 'finish') : actor;
         const at = now().toISOString(), result = await recordWalkthroughVisit(store, viewer, input, at);
         // EGC_GHL_TAG_OUTBOX: an outcome's HighLevel tags (if it queued any) get their first attempt after the response.
         if (ghlTagOutboxEnabled(env) && result.action !== 'start') ghlTags({ env, waitUntil }, [await ghlTagEntryId(result.visit?.id, ghlTagChangeKey('walkthrough-outcome', result.requestId))], at);
