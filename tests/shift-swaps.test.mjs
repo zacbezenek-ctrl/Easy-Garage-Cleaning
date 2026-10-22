@@ -323,3 +323,30 @@ test('a refusal after the job moved finishes the approval, and two managers appr
   assert.deepEqual(g.job(other).assignedCrew, ['crew3', 'crew2']);
   assert.equal(receipts(), before + 1, 'one dispatch save for the swap');
 });
+
+test('a second approver who finds the job already moved by the first finishes it as approved, never reopens it', async () => {
+  // The order: A claims 'approving'; B reads it and finds no receipt yet; A's Dispatch save lands; B reads the job, sees
+  // the coworker already on it (no change left to make). B must record the approval, and A's own finish is a replay.
+  const f = fixture(), jobId = await seedJob(f), swapId = await accepted(f, jobId);
+  const commit = f.store.commit, read = f.store.read;
+  let bWindow = false, second = null, bAtJob, aMoved;
+  const atJob = new Promise(resolve => { bAtJob = resolve; }), moved = new Promise(resolve => { aMoved = resolve; });
+  f.store.read = async (collection, id) => {
+    if (bWindow && collection === 'jobs' && id === jobId) { bWindow = false; bAtJob(); await moved; }
+    return read(collection, id);
+  };
+  f.store.commit = async writes => {
+    if (!second && writes.some(write => write.collection === 'jobs')) {
+      bWindow = true; f.as(OWNER); second = f.post({ action: 'approve', swapId });
+      await atJob; await commit(writes); aMoved(); return;
+    }
+    return commit(writes);
+  };
+  f.as(MANAGER);
+  const first = await f.post({ action: 'approve', swapId }), other = await second;
+  assert.deepEqual([first.status, first.body.swap?.status, other.status, other.body.swap?.status], [200, 'approved', 200, 'approved'], JSON.stringify([first.body, other.body]));
+  assert.equal(f.rows.get(`shiftSwaps/${swapId}`).status, 'approved');
+  assert.deepEqual(f.job(jobId).assignedCrew, ['crew3', 'crew2'], 'moved once');
+  f.as(crew('crew1'));
+  assert.equal((await f.post({ action: 'cancel', swapId })).status, 409, 'the moved swap cannot be cancelled');
+});

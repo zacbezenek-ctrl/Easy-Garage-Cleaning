@@ -143,6 +143,7 @@ export function shiftSwapHandlers({ session = getHubSession, dispatch = dispatch
           throw fail('shift_swap_state', swap.status === 'requested' ? 'The coworker has not accepted yet.' : 'This swap is closed or the job has started.', 409);
         }
         const requestId = await swapDispatchRequestId(swap.id), receipt = await store.read('dispatchOperations', requestId);
+        const movedNow = () => store.read('dispatchOperations', requestId).catch(() => null);
         let current = swap;
         if (!receipt) {
           // Not moved yet: the live job must still be the one the coworker accepted.
@@ -150,40 +151,47 @@ export function shiftSwapHandlers({ session = getHubSession, dispatch = dispatch
           if (why) { await save(expireSwap(swap, at, why)); throw fail(why === RESCHEDULED_TEXT ? 'shift_swap_rescheduled' : 'shift_swap_job_unavailable', `${why} The request has expired.`, 409); }
           const blocker = swapBlocker(job, nowMs), changes = blocker ? null : swapDispatchChanges(job, swap);
           const back = () => ({ ...current, status: 'accepted', dispatchRequestId: '', updatedAt: at });
-          if (!changes) {
+          // No change to make: on an approving swap that is because another manager's approval of it already moved the
+          // job (its receipt says so), and then it is done; otherwise the job changed under the swap.
+          if (!changes && !(swap.status === 'approving' && await movedNow())) {
             if (swap.status === 'approving') await save(back());
             throw fail('shift_swap_job_unavailable', blocker || 'The crew on this job changed since the request. Deny it, or change the job in Dispatch.', 409);
           }
-          if (swap.status === 'accepted') {
-            // Claim the approval first: a cancel, decline or denial racing it now fails its revision check.
-            await save({ ...swap, status: 'approving', dispatchRequestId: requestId, updatedAt: at });
-            current = await store.read('shiftSwaps', swap.id);
-            if (current?.status !== 'approving' || current.dispatchRequestId !== requestId) throw fail('shift_swap_changed', 'This changed while you were looking at it. Refresh and try again.', 409);
-          }
-          try {
-            await mutateDispatch(store, actor, { action: 'schedule.update', requestId, jobId: job.id, expectedRevision: job.revision, changes }, at,
-              { travel: travel({ env, store, now, googleLimit: 0, cacheWrites: false }), crewAlternatives: false });
-          } catch (error) {
-            // A refusal can come after the move saved (another manager's approval of the same swap, or a Dispatch edit
-            // between the save and its read-back): then the receipt exists and the approval finishes. Otherwise a refusal
-            // never saved, so the swap goes back to accepted; an unknown outcome stays approving for a retry.
-            const moved = await store.read('dispatchOperations', requestId).catch(() => null);
-            if (!moved) {
-              if (error?.status && error.status < 500) await save(back(), current).catch(() => null);
-              throw error;
+          if (changes) {
+            if (swap.status === 'accepted') {
+              // Claim the approval first: a cancel, decline or denial racing it now fails its revision check.
+              await save({ ...swap, status: 'approving', dispatchRequestId: requestId, updatedAt: at });
+              current = await store.read('shiftSwaps', swap.id);
+              if (current?.status !== 'approving' || current.dispatchRequestId !== requestId) throw fail('shift_swap_changed', 'This changed while you were looking at it. Refresh and try again.', 409);
+            }
+            try {
+              await mutateDispatch(store, actor, { action: 'schedule.update', requestId, jobId: job.id, expectedRevision: job.revision, changes }, at,
+                { travel: travel({ env, store, now, googleLimit: 0, cacheWrites: false }), crewAlternatives: false });
+            } catch (error) {
+              // A refusal can come after the move saved (another manager's approval of the same swap, or a Dispatch edit
+              // between the save and its read-back): then the receipt exists and the approval finishes. Otherwise a refusal
+              // never saved, so the swap goes back to accepted; an unknown outcome stays approving for a retry.
+              if (!await movedNow()) {
+                if (error?.status && error.status < 500) await save(back(), current).catch(() => null);
+                throw error;
+              }
             }
           }
         }
-        const history = [...(Array.isArray(current.history) ? current.history : []), { action: 'approved', by: actor.user, at }].slice(-30);
-        let next;
-        try { next = await save({ ...current, status: 'approved', decidedBy: actor.user, decidedAt: at, dispatchRequestId: requestId, updatedAt: at, history }, current); }
-        catch (error) {
-          // Another manager's approval of the same swap finished it first: the same result, so a replay.
-          const latest = error?.code === 'dispatch_revision_conflict' ? await store.read('shiftSwaps', swap.id) : null;
-          if (latest?.status === 'approved' && latest.dispatchRequestId === requestId) return reply(200, { ok: true, swap: swapView(latest, nowMs), replayed: true });
-          throw error;
+        // The job has moved: record the approval on the latest copy of the swap. Another manager's approval may have
+        // finished it (a replay) or, racing, put it back to accepted or approving; the receipt says the move stands.
+        for (let attempt = 0; ; attempt += 1) {
+          const history = [...(Array.isArray(current.history) ? current.history : []), { action: 'approved', by: actor.user, at }].slice(-30);
+          try {
+            const next = await save({ ...current, status: 'approved', decidedBy: actor.user, decidedAt: at, dispatchRequestId: requestId, updatedAt: at, history }, current);
+            return reply(200, { ok: true, swap: swapView(next, nowMs), replayed: Boolean(receipt) });
+          } catch (error) {
+            const latest = error?.code === 'dispatch_revision_conflict' ? await store.read('shiftSwaps', swap.id) : null;
+            if (latest?.status === 'approved' && latest.dispatchRequestId === requestId) return reply(200, { ok: true, swap: swapView(latest, nowMs), replayed: true });
+            if (attempt >= 2 || !latest || !['accepted', 'approving'].includes(latest.status)) throw error;
+            current = latest;
+          }
         }
-        return reply(200, { ok: true, swap: swapView(next, nowMs), replayed: Boolean(receipt) });
       } catch (error) { return errorResponse(error); }
     },
   };
