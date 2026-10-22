@@ -121,7 +121,7 @@ export async function startPreview({ now = null, houses = null, demo = false, br
   const env = {
     HUB_SESSION_SECRET: 'synthetic-knock-preview-session-secret-0123456789',
     FIREBASE_API_KEY: 'firebase-test-knock-preview',
-    HUB_AUTH_USERS_JSON: JSON.stringify(await hubUsers(bridge ? BRIDGE_USERS : [['ZacB', 'Zac', 'owner'], ['Rep.One', 'Rep One', 'sales'], ['Rep.Two', 'Rep Two', 'sales'], ['Lead.One', 'Lead One', 'sales']], PASSWORD)),
+    HUB_AUTH_USERS_JSON: JSON.stringify(await hubUsers(bridge ? BRIDGE_USERS : [['ZacB', 'Zac', 'owner'], ['Rep.One', 'Rep One', 'sales'], ['Rep.Two', 'Rep Two', 'sales'], ['Lead.One', 'Lead One', 'sales'], ['AlexK', 'Synthetic Manager', 'manager']], PASSWORD)),
     ...(bridge ? { EGC_KNOCK_JOB_BRIDGE: 'true', EGC_DISPATCH_CREW_AUTO_ASSIGN: 'true' } : {}),
   };
   const hub = await createHubServer({ env, now, password: PASSWORD });
