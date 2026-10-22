@@ -1,7 +1,7 @@
 import { getHubSession, isHubOwner } from '../_lib/hub-session.js';
 import { dispatchStorage } from '../_lib/dispatch-storage.js';
 import { quoteAuthorAccess, requireQuoteAuthor } from '../_lib/quote-permissions.js';
-import { selfWalkthroughSession, walkthroughRep } from '../_lib/knock-self-walkthrough.js';
+import { setterChannel, selfWalkthroughSession, walkthroughRep } from '../_lib/knock-self-walkthrough.js';
 import { expireStaleCheckout, previewQuoteSend, readQuoteDraft, saveQuoteDraft, sendQuoteDraft } from '../_lib/quote-draft.js';
 import { createEstimateReadyDelivery } from '../_lib/estimate-ready.js';
 import { stripeRequest, stripeSecretKey } from '../_lib/customer-payments.js';
@@ -17,7 +17,7 @@ import { createKnockStore } from '../_lib/knock-store.js';
 
 // EGC_WINTER_SALE: the margin check costs a walkthrough a door-to-door setter booked at the setter's channel
 // (knock_setters, one document read, only for a quote that asks for or carries the sale).
-const saleReaders = { ...winterSaleReaders, setter: async (env, walkthroughId) => Boolean((await createKnockStore(env).getMany('knock_setters', [walkthroughId])).get(walkthroughId)) };
+const saleReaders = { ...winterSaleReaders, setter: async (env, walkthroughId) => setterChannel((await createKnockStore(env).getMany('knock_setters', [walkthroughId])).get(walkthroughId)) };
 // The sale's public terms for the builder (never the margin floor): the page offers the sale only when they are present.
 async function saleTerms(env, readers) {
   if (!winterSaleEnabled(env)) return {};

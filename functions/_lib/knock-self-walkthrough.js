@@ -55,7 +55,8 @@ export const selfRunFinishable = (visit, session, now = new Date()) => inWindow(
   Boolean(assignmentKey(session?.user)) && assignmentKey(visit.walkthroughVisit.startedBy) === assignmentKey(session.user) && !plain(visit.walkthroughOutcome) && !CANCELLED.has(state(visit));
 
 /** The job saved from it, still a draft: never signed (handoff), accepted or sent, nor cancelled. */
-export const selfRunDraft = (job, visit, now = new Date()) => inWindow(visit, now) && !CANCELLED.has(state(visit)) &&
+// The visit must still be open: marking it lost, no-show or rescheduled (or signing it) also closes its draft.
+export const selfRunDraft = (job, visit, now = new Date()) => selfRunOpen(visit, now) &&
   !CLOSED.has(state(job)) && !plain(job.acceptance) && !job.handoffRequestId && !job.quoteDraft?.sentAt && !['sent', 'approved', 'accepted'].includes(String(job.estimate?.status || '').toLowerCase());
 
 /** Whether `visit` is the rep's own self-run walkthrough (booked by the bridge for their "Do the walkthrough now"). */
@@ -104,3 +105,25 @@ export async function selfWalkthroughReplay(session, env, requestId, { readRecei
 /** Whether the rep's own self-run visit card is past its right (not open, nothing left to finish): /api/field-jobs then
  * leaves it out of their day, so a past walkthrough never shows them the customer's name, phone or address. */
 export const selfRunCardHidden = (visit, session, now = new Date()) => selfRunVisit(visit, session) && !selfRunOpen(visit, now) && !selfRunFinishable(visit, session, now);
+
+/** The winter sale's commission channel for a walkthrough's knock_setters record (winter-sale.js saleChannel): the rep's
+ * own self-run walkthrough is their door sale (25%), any other setter record 13% + 7%, none false. */
+export const setterChannel = record => record?.selfRun === true ? 'door_sale' : record ? 'appointment_setter' : false;
+
+// The stored fields selfRunCardHidden reads, for the lists that mask their reads (/api/crew-jobs, /api/crew-schedule).
+export const SELF_RUN_CARD_FIELDS = Object.freeze(['type', 'recordType', 'source', 'd2d.kind', 'd2d.repKey', 'd2d.selfRun', 'assignedCrew', 'date', 'status',
+  'pipelineStatus', 'convertedJobId', 'walkthroughVisit.startedBy', 'walkthroughOutcome.outcome']);
+
+/** REP-WALKTHROUGH: a Start, Finish or No-show of the rep's own self-run visit that already saved, sent again after a
+ * lost answer once the right has ended (a saved Finish ends it): the session that replays exactly that request. The
+ * receipt (walkthroughVisitOperations) must be this rep's, for that visit, in its window; the recorder then answers
+ * from it and writes nothing (walkthrough-visit.js). Else the session unchanged. */
+export async function selfVisitReplay(session, env, input, { readReceipt, readJob, knock, now = new Date() }) {
+  if (!knockJobBridgeEnabled(env) || typeof session?.user !== 'string' || !plain(input) || typeof input.requestId !== 'string' || !/^[0-9a-f-]{36}$/i.test(input.requestId) || !safeId(input.visitId)) return session;
+  if (!await walkthroughRep(session, env, knock)) return session;
+  const receipt = await Promise.resolve().then(() => readReceipt(input.requestId.toLowerCase())).catch(() => null);
+  if (!plain(receipt) || receipt.actorId !== assignmentKey(session.user) || receipt.visitId !== input.visitId) return session;
+  const visit = await Promise.resolve().then(() => readJob(input.visitId)).catch(() => null);
+  if (!selfRunVisit(visit, session) || !inWindow(visit, now)) return session;
+  return { ...session, [SELF_WALKTHROUGH]: visit.id, [SELF_WALKTHROUGH_REPLAY]: true };
+}

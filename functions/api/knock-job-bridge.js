@@ -4,7 +4,8 @@ import { ensureRep, isAdmin, requireActive } from '../_lib/knock-access.js';
 import { dispatchStorage } from '../_lib/dispatch-storage.js';
 import { bookSale, bookWalkthrough, knockJobBridgeEnabled } from '../_lib/knock-bridge.js';
 import { errorResponse, forbiddenOrigin, readJson, reply, sameOrigin, signInRequired } from '../_lib/knock-http.js';
-import { walkthroughPerformer } from '../_lib/walkthrough-visit.js';
+import { quoteAuthorAccess } from '../_lib/quote-permissions.js';
+import { restrictedAuthor } from '../_lib/estimator-customer-access.js';
 import { repRunsWalkthroughs } from '../_lib/knock-self-walkthrough.js';
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
@@ -30,10 +31,12 @@ export function knockJobBridgeHandlers({ session = getHubSession, storage = crea
         // REP-WALKTHROUGH: a rep with Walkthroughs on in Knock Admin (or anyone who already runs walkthroughs: an owner, a
         // manager, an estimator) is booked to do their own "Do the walkthrough now" (knock-bridge.js bookSelfRun): only
         // their own record (ownRepKey, also for an admin), never one an admin books for another rep.
-        // Only someone who already runs walkthroughs (knownCustomers) self-runs one for a customer the Hub already had; a
-        // Knock-only rep's goes to an estimator (knock-bridge.js EXISTING_CUSTOMER).
-        const performer = walkthroughPerformer(viewer, env), self = repRunsWalkthroughs(rep) || performer;
-        const options = { env, now: at, rep: isAdmin(viewer) ? null : rep, ownRepKey: rep.repKey, selfKey: self ? String(viewer.user).trim().toLowerCase() : '', knownCustomers: performer };
+        // Self-run for a quote author (the walkthrough app opens for them) or a rep with Walkthroughs on. Only an author who
+        // already sees full customer records (knownCustomers: not an estimator #215 masks) self-runs one for a customer the
+        // Hub already had; anyone else's goes to an estimator (knock-bridge.js EXISTING_CUSTOMER).
+        const access = quoteAuthorAccess(viewer, env), self = repRunsWalkthroughs(rep) || access.author;
+        const options = { env, now: at, rep: isAdmin(viewer) ? null : rep, ownRepKey: rep.repKey, selfKey: self ? String(viewer.user).trim().toLowerCase() : '',
+          knownCustomers: access.author && !restrictedAuthor(viewer, access, env) };
         const result = body.kind === 'sale' ? await bookSale(store, dispatch(env), body.id, options) : await bookWalkthrough(store, dispatch(env), body.id, options);
         return reply(200, { ok: true, serverTime: at.toISOString(), booking: result.view });
       } catch (error) {

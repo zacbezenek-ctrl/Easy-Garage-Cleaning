@@ -324,14 +324,14 @@ and every sync answer and record is as before. Code: `functions/_lib/knock-bridg
   customer that booking created: when the door's phone or email links a customer the Hub already had, a Knock-only
   rep's walkthrough goes to an estimator ("An estimator will do this one.", the same words as any other "do it now" that ends with an estimator, so it never says whether the customer was known) and
   the answer carries nothing stored about that customer (`EXISTING_CUSTOMER`); owners, managers and estimators, who
-  see customers anyway, still self-run. Every switch change is kept in `walkthroughSelfLog` (newest last, capped).
+  see full customer records anyway, still self-run; an estimator #215 masks (a quote author without booking rights) does not. The button and the self-run booking need someone the walkthrough app opens for (a quote author) or a rep with Walkthroughs on. Every switch change is kept in `walkthroughSelfLog` (newest last, capped).
   The right lasts only while the walkthrough is under way (`selfRunOpen`, `selfRunDraft`): the visit until it is
   converted by the signed handoff, cancelled or lost, the job saved from it until it is signed or sent, and never past
   `SELF_RUN_DAYS` (3) after the visit's date; after that the rep gets a refusal, never the live customer record. Two
   narrow exceptions in that window: the rep who started a visit the signed handoff converted still records its Finish
   or No-show (`selfRunFinishable`, `/api/walkthrough-visit` only), and the phone's unchanged resend of a signed save is
   answered from its receipt with no new write (`selfWalkthroughReplay`, `replayOnly`). `/api/field-jobs` drops the card
-  from the rep's day once neither applies (`selfRunCardHidden`). Walkthrough photos upload to the sold job through
+  from the rep's day once neither applies (`selfRunCardHidden`), and so do `/api/crew-jobs` and the crew schedule. A saved Finish the phone sends again after a lost answer replays from its receipt (`selfVisitReplay`). The winter sale costs a self-run quote at the rep's 25% (`setterChannel`). Walkthrough photos upload to the sold job through
   `/api/field-jobs`, which only the job's crew and managers can open, so (as for an estimator) they stay on the rep's
   device and the walkthrough page says the upload needs attention.
   Not covered: the audio recorder and walkthrough notes, so on these walkthroughs the rep types notes at Finish. The door and a `walkthrough` event with `selfRun: true`, today and the tapped time,

@@ -4,7 +4,7 @@ import { validDate } from './dispatch-time.js';
 import { hasBusinessAccess } from './hub-session.js';
 import { can, capabilityMode, staffRoleAccessEnabled } from './staff-roles.js';
 import { WALKTHROUGH_DENIAL } from './quote-permissions.js';
-import { selfWalkthroughVisitId } from './knock-self-walkthrough.js';
+import { SELF_WALKTHROUGH_REPLAY, selfWalkthroughVisitId } from './knock-self-walkthrough.js';
 import { assignmentKey, createJobAssignmentAccess } from './job-assignment.js';
 import { employeeVaultReadOnly, employeeVaultSecret } from './employee-vault-key.js';
 import { commitVaultDocuments, readCollectionRecords, readOne, sealedFields } from './employee-vault.js';
@@ -189,6 +189,8 @@ export async function recordWalkthroughVisit(store, session, input, now = new Da
     return result(saved, receipt, true);
   }
   const prior = await replay(); if (prior) return prior;
+  // A Knock rep's resend after their right ended (knock-self-walkthrough.js selfVisitReplay) only replays.
+  if (session[SELF_WALKTHROUGH_REPLAY] === true) throw denied(roles);
 
   const visit = await store.read('jobs', request.visitId);
   if (!visit || visit.type !== 'walkthrough' || visit.recordType || !safeId(visit.id)) throw fail('not_found', 'This walkthrough visit could not be found. Refresh your schedule.', 404);

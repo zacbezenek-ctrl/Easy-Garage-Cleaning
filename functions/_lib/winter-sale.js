@@ -252,7 +252,7 @@ export function saleRequest(value) {
 }
 
 // What the sale's checks read. settings and costs are the owner's saved settings; setter says whether a door-to-door
-// setter booked the walkthrough (its commission channel). Read only when a quote asks for the sale or carries it.
+// setter booked the walkthrough (its commission channel: 'door_sale' for one the rep runs themselves, else true). Read only when a quote asks for the sale or carries it.
 export const winterSaleReaders = {
   settings: env => readWinterSaleSettings(winterSaleSettingsStorage(env)),
   costs: env => readJobActualsSettings(jobActualsSettingsStorage(env)),
@@ -262,7 +262,10 @@ export const winterSaleReaders = {
 export async function saleChannel(env, readers, { junkOnly, sourceWalkthroughId }) {
   if (junkOnly) return 'junk_only';
   if (!sourceWalkthroughId) return 'none';
-  return await readers.setter(env, sourceWalkthroughId) ? 'appointment_setter' : 'direct_estimator';
+  // REP-WALKTHROUGH: a walkthrough a Knock rep runs themselves pays their door-sale 25% (setter reader 'door_sale'), costed
+  // at that even if an estimator takes it over (then 13% + 7%, less), so the floor holds either way.
+  const setter = await readers.setter(env, sourceWalkthroughId);
+  return setter === 'door_sale' ? 'door_sale' : setter ? 'appointment_setter' : 'direct_estimator';
 }
 export const saleManHours = draft => { const hours = draft?.compositePricing?.labor?.manHours ?? draft?.breakdown?.labor?.manHours; return typeof hours === 'number' && hours > 0 ? hours : null; };
 // The terms a sale line was saved on (never the margin floor: that stays in the owner's settings).

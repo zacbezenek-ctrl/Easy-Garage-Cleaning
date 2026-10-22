@@ -563,8 +563,11 @@ function walkthroughMessage(booking) {
 function bookedWalkthrough(job, roster, customerId, requested) {
   const estimatorKey = job.date && Array.isArray(job.assignedCrew) && typeof job.assignedCrew[0] === 'string' ? job.assignedCrew[0] : '';
   const person = estimatorKey ? roster.find(row => row.id === estimatorKey) : null;
+  // REP-WALKTHROUGH: a visit saved as the rep's own (d2d.selfRun, assigned to them) stays that whoever reads it back:
+  // an office Book in Hub after a lost answer keeps its 25% record (recordD2dSetter), never the setter's review.
+  const selfRun = job.d2d?.selfRun === true && Boolean(estimatorKey) && job.date ? { selfRun: true } : {};
   const out = { status: job.date ? 'booked' : 'requested', jobId: job.id, revision: job.revision || '', customerId: customerId || job.customerId || '', date: job.date || '', time: job.time || '',
-    endTime: job.endTime || '', estimator: person ? firstName(person.name) : '', estimatorKey, requested, code: '', error: '' };
+    endTime: job.endTime || '', estimator: person ? firstName(person.name) : '', estimatorKey, requested, code: '', error: '', ...selfRun };
   return { ...out, message: walkthroughMessage(out) };
 }
 

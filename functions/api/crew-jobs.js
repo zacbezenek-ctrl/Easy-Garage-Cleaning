@@ -10,6 +10,7 @@ import { travelEstimator } from '../_lib/dispatch-travel.js';
 import { seesLaborCost } from '../_lib/pay-visibility.js';
 import { withoutJobLabor } from '../_lib/job-labor-private.js';
 import { walkthroughStatusFields } from '../_lib/walkthrough-state.js';
+import { SELF_RUN_CARD_FIELDS, selfRunCardHidden } from '../_lib/knock-self-walkthrough.js';
 
 const reply = (status, body) => new Response(JSON.stringify(body), {
   status,
@@ -86,7 +87,7 @@ const OPEN_SHIFT_FIELDS = ['time', 'endTime', 'serviceType', 'crewNeeded', 'crew
 const MANAGER_VIEW_FIELDS = ['customer', 'address', 'time', 'endTime', 'serviceType',
   'customerName', 'name', 'timeWindow', 'scheduledTime', 'quoteAmount', 'total', 'priceQuoted', 'amount', 'cubicYards',
   'customerAddress', 'customerPhone', 'phone', 'notes'];
-export const CREW_LISTING_FIELDS = Object.freeze([...new Set([...FILTER_FIELDS, ...CREW_PROJECTION_FIELDS, ...OPEN_SHIFT_FIELDS, ...MANAGER_VIEW_FIELDS])]);
+export const CREW_LISTING_FIELDS = Object.freeze([...new Set([...FILTER_FIELDS, ...CREW_PROJECTION_FIELDS, ...OPEN_SHIFT_FIELDS, ...MANAGER_VIEW_FIELDS, ...SELF_RUN_CARD_FIELDS])]);
 
 export function crewJobsHandlers({ session = getHubSession, storage = dispatchStorage, now = () => new Date(), travel = travelEstimator } = {}) {
   return {
@@ -99,8 +100,10 @@ export function crewJobsHandlers({ session = getHubSession, storage = dispatchSt
       catch (error) { return reply(503, { ok: false, code: error.code || 'schedule_storage_unavailable', error: error.code ? error.message : 'Schedule storage is unavailable' }); }
       const manager = hasBusinessAccess(actor);
       const access = createJobAssignmentAccess(env, actor);
-      const jobs = [];
+      const jobs = [], at = now();
       for (const job of rows.filter(row => !privateRecord(row))) {
+        // REP-WALKTHROUGH: a Knock rep's own self-run visit leaves their list once their right to it ends.
+        if (!manager && job.type === 'walkthrough' && selfRunCardHidden(job, actor, at)) continue;
         // A manager's walkthrough row also says where it stands (WT-OUTCOME), as the crew projection does.
         if (manager || await access.assigned(job) || await availabilityOwner(job, access)) jobs.push(manager ? job.type === 'walkthrough' ? { ...job, ...walkthroughStatusFields(job) } : job : crewJobProjection(job, { viewer: actor.user }));
         else if (availableOpenShift(job)) jobs.push(publicOpenShift(job));

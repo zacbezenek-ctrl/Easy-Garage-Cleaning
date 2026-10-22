@@ -1,7 +1,7 @@
 import { getHubSession } from '../_lib/hub-session.js';
-import { recordWalkthroughVisit, walkthroughPerformer, walkthroughVisitEnabled, walkthroughVisitState, walkthroughVisitStorage } from '../_lib/walkthrough-visit.js';
+import { WALKTHROUGH_VISIT_OPERATIONS, recordWalkthroughVisit, walkthroughPerformer, walkthroughVisitEnabled, walkthroughVisitState, walkthroughVisitStorage } from '../_lib/walkthrough-visit.js';
 import { createKnockStore } from '../_lib/knock-store.js';
-import { selfWalkthroughSession } from '../_lib/knock-self-walkthrough.js';
+import { selfVisitReplay, selfWalkthroughSession } from '../_lib/knock-self-walkthrough.js';
 import { firstGhlTagAttempt, ghlTagChangeKey, ghlTagEntryId, ghlTagOutboxEnabled } from '../_lib/ghl-tag-outbox.js';
 
 const LIMIT = 8192;
@@ -50,7 +50,10 @@ export function walkthroughVisitHandlers({ session = getHubSession, storage = wa
         if (new TextEncoder().encode(raw).byteLength > LIMIT) return reply(413, { ok: false, code: 'walkthrough_visit_too_large', error: 'The walkthrough action is too large.' });
         let input;
         try { input = JSON.parse(raw); } catch { return reply(400, { ok: false, code: 'walkthrough_visit_json_invalid', error: 'The walkthrough action could not be read.' }); }
-        const store = storage(env), viewer = input && typeof input === 'object' && !Array.isArray(input) ? await ownVisit(actor, env, () => store, knock, input.visitId, now(), input.action === 'start' ? '' : 'finish') : actor;
+        const store = storage(env), plainInput = input && typeof input === 'object' && !Array.isArray(input);
+        const granted = plainInput ? await ownVisit(actor, env, () => store, knock, input.visitId, now(), input.action === 'start' ? '' : 'finish') : actor;
+        // A saved action the rep's phone sends again after a lost answer, once their right ended: its replay only.
+        const viewer = plainInput && !walkthroughPerformer(granted, env) ? await selfVisitReplay(actor, env, input, { readReceipt: id => store.read(WALKTHROUGH_VISIT_OPERATIONS, id), readJob: id => store.read('jobs', id), knock: knock(env), now: now() }) : granted;
         const at = now().toISOString(), result = await recordWalkthroughVisit(store, viewer, input, at);
         // EGC_GHL_TAG_OUTBOX: an outcome's HighLevel tags (if it queued any) get their first attempt after the response.
         if (ghlTagOutboxEnabled(env) && result.action !== 'start') ghlTags({ env, waitUntil }, [await ghlTagEntryId(result.visit?.id, ghlTagChangeKey('walkthrough-outcome', result.requestId))], at);

@@ -1,5 +1,5 @@
 import { getHubSession } from '../_lib/hub-session.js';
-import { walkthroughPerformer } from '../_lib/walkthrough-visit.js';
+import { quoteAuthorAccess } from '../_lib/quote-permissions.js';
 import { createKnockStore } from '../_lib/knock-store.js';
 import { ensureRep, isAdmin, loadSettings, shiftEligibility } from '../_lib/knock-access.js';
 import { repHome } from '../_lib/knock-territory.js';
@@ -25,8 +25,9 @@ export function knockMeHandlers({ session = getHubSession, storage = createKnock
             // KNOCK-BRIDGE: the phone offers crew slots, ZIP and "Walkthrough set" only while EGC_KNOCK_JOB_BRIDGE is on.
             ...(knockJobBridgeEnabled(env) ? { jobBridge: true } : {}),
             // REP-WALKTHROUGH: the phone offers "Do the walkthrough now" to a rep with Walkthroughs on in Knock Admin, and to
-            // anyone who already runs walkthroughs (an owner, a manager, an estimator); the bridge and the walkthrough check it again.
-            ...(knockJobBridgeEnabled(env) && (repRunsWalkthroughs(rep) || walkthroughPerformer(viewer, env)) ? { walkthroughNow: true } : {}) },
+            // anyone the walkthrough app opens for (a quote author: an owner, a manager, an estimator); the bridge and the
+            // walkthrough check it again.
+            ...(knockJobBridgeEnabled(env) && (repRunsWalkthroughs(rep) || quoteAuthorAccess(viewer, env).author) ? { walkthroughNow: true } : {}) },
           rep, settings, eligibility: shiftEligibility(rep),
         };
         if (rep.status === 'active') Object.assign(body, await repHome(store, rep, settings, at.getTime()));

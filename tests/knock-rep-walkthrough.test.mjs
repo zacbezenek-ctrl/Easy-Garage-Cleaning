@@ -4,7 +4,8 @@
 // 7%. Synthetic data only.
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { NOW, MIN, bridgeWorld, id, iso } from './helpers/knock-bridge-fixture.mjs';
+import { NOW, MIN, USERS, bridgeWorld, id, iso } from './helpers/knock-bridge-fixture.mjs';
+const USERS_JSON = JSON.stringify(USERS);
 import { projectSetterAttribution, repRanWalkthrough } from '../functions/_lib/knock-setters.js';
 import { channelLedger } from '../functions/_lib/estimator-commission.js';
 import { commissionCsv, periodStatement } from '../crew/knock-money.js';
@@ -32,7 +33,10 @@ const turnOn = (w, repKey = 'rep.two', on = true) => w.admin({ action: 'rep.upda
 
 test('Knock offers "Do the walkthrough now" to a rep an admin turned Walkthroughs on for (no Sales role needed), and only with the bridge on', async () => {
   const w = await bridgeWorld();
-  assert.equal((await w.me()).body.viewer.walkthroughNow, true, 'Rep One holds the Sales role: an estimator already runs walkthroughs');
+  // Rep One holds the Sales role without the staff-role switches: the walkthrough app does not open for that, so no button.
+  assert.equal((await w.me()).body.viewer.walkthroughNow, undefined, 'a Sales role the walkthrough app refuses gets no button');
+  const roles = await bridgeWorld({ env: { EGC_STAFF_ROLE_ACCESS: 'true' } });
+  assert.equal((await roles.me()).body.viewer.walkthroughNow, true, 'with role access an estimator runs walkthroughs: the button');
   assert.equal((await w.me(w.cookies.two)).body.viewer.walkthroughNow, undefined, 'Rep Two is crew, with Walkthroughs off: no button');
   const on = await turnOn(w);
   assert.equal(on.status, 200, JSON.stringify(on.body));
@@ -53,6 +57,7 @@ test('Knock offers "Do the walkthrough now" to a rep an admin turned Walkthrough
 
 test('the rep\'s own walkthrough is booked to them today at the tapped time and opens by its Hub id; the setter record says they ran it', async () => {
   const w = await bridgeWorld();
+  await turnOn(w, 'rep.one');
   const { walkId, events } = selfRunBatch();
   const synced = await w.send(events);
   assert.deepEqual(synced.body.results.map(row => row.status), ['applied', 'applied', 'applied'], JSON.stringify(synced.body));
@@ -259,4 +264,52 @@ test('the phone opens the walkthrough app on the Hub visit by id once it is book
   answers.push({ booking: { status: 'booked', estimator: 'Bea', message: 'Walkthrough booked: Mon Oct 26, 10:00 am with Bea' } });
   const instead = await openOwnWalkthrough('walk-2', { wait: 5000, open: url => opened.push(url) });
   assert.deepEqual([opened.length, instead.estimator], [1, 'Bea'], 'an estimator\'s visit is never opened on the rep\'s phone');
+});
+
+// #215: an estimator who may see only masked customers (a quote author without booking rights) never gets a known
+// customer's record through "Do the walkthrough now".
+test('a restricted estimator\'s "do it now" on a customer the Hub already has goes to an estimator, with nothing stored in the answer', async () => {
+  const users = JSON.parse(USERS_JSON);
+  users['Rep.One'] = { ...users['Rep.One'], staffRoles: ['sales'] };
+  const w = await bridgeWorld({ env: { EGC_STAFF_ROLE_PERMISSIONS: 'true', HUB_AUTH_USERS_JSON: JSON.stringify(users) } });
+  assert.equal((await w.me()).body.viewer.walkthroughNow, true, 'a quote author gets the button');
+  // Rep Two sets an ordinary walkthrough for the customer on Monday: the Hub now has them.
+  const first = selfRunBatch({ n: 2904, walk: { selfRun: undefined, date: MON_SET, time: undefined, dayPart: 'am' } });
+  assert.deepEqual((await w.send(first.events, w.cookies.two)).body.results.map(row => row.status), ['applied', 'applied', 'applied']);
+  assert.equal((await w.book('walkthrough', first.walkId, w.cookies.two)).status, 200);
+  const known = w.docs('customers/')[0];
+  const probe = selfRunBatch({ n: 2906, walk: { customer: { name: 'Pat Synthetic', phone: '970-555-1904', email: '' } } });
+  probe.events.forEach(event => { if (event.houseId) event.houseId = 'h-2906-blue-leaf-dr'; });
+  assert.deepEqual((await w.send(probe.events)).body.results.map(row => row.status), ['applied', 'applied', 'applied']);
+  const booked = await w.book('walkthrough', probe.walkId);
+  assert.equal(booked.status, 200, JSON.stringify(booked.body));
+  assert.deepEqual([booked.body.booking.selfRun, booked.body.booking.walkthroughId], [undefined, undefined]);
+  assert.match(booked.body.booking.message, /^An estimator will do this one\. /);
+  const answer = JSON.stringify(booked.body);
+  for (const stored of ['Synthetic 2904', 'kim@example.invalid', '2904', known.id]) assert.ok(!answer.includes(stored), stored);
+  const visit = visits(w).find(row => row.knockWalkthroughId === probe.walkId);
+  assert.notDeepEqual(visit.assignedCrew, ['rep.one']);
+  assert.equal(visit.d2d.selfRun, undefined);
+});
+
+test('an office Book in Hub after a lost answer keeps the rep\'s own walkthrough theirs: the setter record still pays them as the rep who ran it', async () => {
+  const w = await bridgeWorld({ seed: { 'knock_reps/rep.two': { repKey: 'rep.two', username: 'Rep.Two', displayName: 'Rep Two', role: 'knocker', status: 'active', permitListed: true, premiumCleared: false, leadKey: '', walkthroughSelf: true } } });
+  const own = selfRunBatch({ n: 2906 });
+  own.events.forEach(event => { if (event.houseId) event.houseId = 'h-2906-blue-leaf-dr'; });
+  assert.deepEqual((await w.send(own.events, w.cookies.two)).body.results.map(row => row.status), ['applied', 'applied', 'applied']);
+  // The rep's booking saves the visit, but its answer is lost before Knock records it (no booking, no setter record).
+  const booked = await w.book('walkthrough', own.walkId, w.cookies.two);
+  assert.equal(booked.body.booking.selfRun, true);
+  const [visit] = visits(w);
+  w.fake.documents.delete(`knock_setters/${visit.id}`);
+  w.fake.documents.delete(`knock_receipts/setter_${own.walkId}`);
+  const { revision, ...lost } = w.fake.get(`knock_walkthroughs/${own.walkId}`);
+  w.fake.put(`knock_walkthroughs/${own.walkId}`, { ...lost, status: 'set', booking: { status: 'review', code: 'synthetic_lost_answer', jobId: '', date: '', time: '', endTime: '', estimator: '', at: null, by: '' } });
+  // Before this fix the office's booking read the saved visit back without its self-run mark (13% + 7%, held for review).
+  // The office books it from Admin > Sales: the saved visit is found by its receipt and stays the rep's.
+  const office = await w.book('walkthrough', own.walkId, w.cookies.zac);
+  assert.equal(office.status, 200, JSON.stringify(office.body));
+  const setter = w.fake.get(`knock_setters/${visit.id}`);
+  assert.deepEqual([setter?.selfRun, setter?.repStaffKey, setter?.estimatorKey], [true, 'rep.two', ''], JSON.stringify(setter));
+  assert.equal(visits(w).length, 1, 'no second visit');
 });

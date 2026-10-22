@@ -15,9 +15,12 @@ import { dispatchHandlers } from '../functions/api/dispatch.js';
 import { customerResolveHandler } from '../functions/api/customer-resolve.js';
 import { createJobAssignmentAccess } from '../functions/_lib/job-assignment.js';
 import { fieldJobsHandlers } from '../functions/api/field-jobs.js';
+import { crewJobsHandlers } from '../functions/api/crew-jobs.js';
+import { crewSchedule } from '../functions/_lib/crew-schedule.js';
+import { saleChannel, winterSaleCap, estimatedSaleMargin } from '../functions/_lib/winter-sale.js';
 import { createHubSessionCookie } from '../functions/_lib/hub-session.js';
 import { storage as fieldStorage } from './helpers/field-fixture.mjs';
-import { SELF_RUN_DAYS, SELF_WALKTHROUGH, selfRunCardHidden, selfRunVisit, selfWalkthroughSession } from '../functions/_lib/knock-self-walkthrough.js';
+import { SELF_RUN_DAYS, SELF_WALKTHROUGH, selfRunCardHidden, setterChannel, selfRunVisit, selfWalkthroughSession } from '../functions/_lib/knock-self-walkthrough.js';
 
 const ORIGIN = 'https://easygaragecleaning.com';
 const NOW = new Date('2026-10-17T15:00:00.000Z');
@@ -154,6 +157,8 @@ test('the right is time-limited: the open visit and its unsigned draft, never pa
     ['cancelled visit', { w1: { ...visit, status: 'cancelled' } }, 'w1'],
     ['draft of a cancelled visit', { w1: { ...visit, pipelineStatus: 'cancelled' }, d1: draft }, 'd1'],
     ['no-show', { w1: { ...visit, walkthroughOutcome: { outcome: 'customer_no_show' } } }, 'w1'],
+    ['draft of a visit marked lost', { w1: { ...visit, walkthroughOutcome: { outcome: 'not_interested' } }, d1: draft }, 'd1'],
+    ['draft of a visit marked no-show', { w1: { ...visit, walkthroughOutcome: { outcome: 'customer_no_show' } }, d1: draft }, 'd1'],
     ['no date', { w1: { ...visit, date: '' } }, 'w1'],
   ]) assert.equal(await grant(rows, id, now), '', why);
   // A Finish recording the sale keeps it open for the signature.
@@ -195,8 +200,17 @@ for (const [label, env] of ENVS) {
     assert.equal(w.f.rows.get('jobs/w1').walkthroughOutcome, undefined, 'a started visit keeps its Finish for the rep');
     assert.equal((await call(w.visit.get, get('/api/walkthrough-visit?visitId=w1'), env)).status, 200, 'the recorder still opens it to finish');
     assert.equal((await lookup(w, env, 'w1')).status, 403, 'but not the walkthrough itself');
-    const finished = await visitAction(w, env, { action: 'finish', visitId: 'w1', outcome: 'sold_on_site', recordingStatus: 'declined' });
+    const finish = { action: 'finish', visitId: 'w1', outcome: 'sold_on_site', recordingStatus: 'declined', requestId: randomUUID(), expectedRevision: w.f.rows.get('jobs/w1').revision, skipTimecard: true };
+    const finished = await call(w.visit.post, post('/api/walkthrough-visit', finish), env);
     assert.equal(finished.status, 200, JSON.stringify(finished.body));
+    // The answer is lost and the phone sends the same Finish again: it replays, and nothing new is written.
+    const writes = w.f.calls.length;
+    const again = await call(w.visit.post, post('/api/walkthrough-visit', finish), env);
+    assert.equal(again.status, 200, JSON.stringify(again.body));
+    assert.deepEqual([again.body.replayed, w.f.calls.length], [true, writes]);
+    // A different action on the finished visit gets nothing.
+    assert.notEqual((await visitAction(w, env, { action: 'no_show', visitId: 'w1' })).status, 200);
+    assert.equal(w.f.calls.length, writes);
     assert.equal(w.f.rows.get('jobs/w1').walkthroughOutcome?.outcome, 'sold_on_site');
     // Finished: nothing more on that visit.
     assert.equal((await call(w.visit.get, get('/api/walkthrough-visit?visitId=w1'), env)).status, 403);
@@ -244,4 +258,37 @@ test('/api/field-jobs on an injected clock: the rep\'s self-run card shows insid
   assert.deepEqual(late.walkthroughs, [], 'past the cap: gone, though the day asked for is the visit\'s');
   assert.equal(JSON.stringify(late).includes('555-0199'), false);
   assert.equal(late.generatedAt, '2026-10-25T15:00:00.000Z', 'the answer is stamped with the injected clock');
+});
+
+test('/api/crew-jobs and the crew schedule drop the rep\'s own self-run visit once their right ends (injected clock)', async () => {
+  const env = { FIREBASE_API_KEY: 'firebase-test-self-run' }, actor = { user: 'Rep.Two', displayName: 'Rep Two', role: 'crew', businessAccess: false };
+  const open = { id: 'w9', revision: 'w9r', type: 'walkthrough', status: 'scheduled', pipelineStatus: 'scheduled', customer: 'Synthetic Door Customer', phone: '(970) 555-0199',
+    address: '9 Synthetic Way, Fort Collins, CO', date: '2026-10-17', endDate: '2026-10-17', time: '11:00', endTime: '12:00', ...selfRun('rep.two') };
+  const finished = { ...open, convertedJobId: 'j9', walkthroughVisit: { startedBy: 'rep.two', startedAt: '2026-10-17T17:00:00Z' }, walkthroughOutcome: { outcome: 'sold_on_site' } };
+  const toFinish = { ...finished, walkthroughOutcome: undefined };
+  const list = async (row, at) => (await (await crewJobsHandlers({ session: async () => actor, storage: () => ({ jobRecords: async () => [row] }), now: () => at })
+    .get({ request: new Request(`${ORIGIN}/api/crew-jobs`), env })).json()).jobs.map(job => job.id);
+  const schedule = async (row, at) => (await crewSchedule({ session: actor, env, crews: [], jobs: [row], access: createJobAssignmentAccess(env, actor), from: '2026-10-17', to: '2026-10-17', scope: 'mine', now: at })).unassigned.map(row => row.id);
+  const inside = new Date('2026-10-19T15:00:00Z'), past = new Date('2026-10-21T15:00:00Z');
+  for (const read of [list, schedule]) {
+    assert.deepEqual(await read(open, inside), ['w9'], 'inside SELF_RUN_DAYS: listed');
+    assert.deepEqual(await read(toFinish, inside), ['w9'], 'signed, its Finish still to record: listed');
+    assert.deepEqual(await read(open, past), [], 'past the cap: gone');
+    assert.deepEqual(await read(finished, inside), [], 'finished: gone');
+    assert.deepEqual(await read({ ...open, d2d: { ...open.d2d, selfRun: false } }, past), ['w9'], 'an ordinary walkthrough is untouched');
+  }
+});
+
+test('the winter sale costs a self-run quote at the rep\'s 25%, so its cap is never looser than at 13% + 7%', async () => {
+  assert.deepEqual([setterChannel({ selfRun: true }), setterChannel({ setterKey: 'rep.one' }), setterChannel(null)], ['door_sale', 'appointment_setter', false]);
+  const channel = record => saleChannel({}, { setter: async () => setterChannel(record) }, { junkOnly: false, sourceWalkthroughId: 'w1' });
+  assert.deepEqual([await channel({ selfRun: true }), await channel({ setterKey: 'rep.one' }), await channel(null)], ['door_sale', 'appointment_setter', 'direct_estimator']);
+  const costs = { wageCentsPerManHour: 2000, workersCompBp: 0, payrollTaxBp: 0, burdenCentsPerManHour: 0, dumpFeeCentsPerLoad: 0, truckCentsPerJob: 1000, goodsTaxBp: 0 };
+  const lines = [{ id: 'svc', kind: 'service', name: 'Work', quantity: 1, unitCents: 60000, totalCents: 60000 }];
+  const settings = { amountCents: 40000, signBy: '2026-12-31', jobFrom: '2026-11-01', jobTo: '2027-02-28', marginFloorBp: 4000 };
+  const at = channel => estimatedSaleMargin({ lineItems: lines, manHours: 10, costs, channel }).marginBp;
+  assert.ok(at('door_sale') < at('appointment_setter'), 'the rep\'s 25% costs more than 13% + 7%');
+  const capOf = channel => winterSaleCap({ lineItems: lines, manHours: 10, costs, channel, settings });
+  const door = capOf('door_sale'), setter = capOf('appointment_setter');
+  assert.ok(door.known && setter.known && door.capCents < setter.capCents, JSON.stringify([door, setter]));
 });

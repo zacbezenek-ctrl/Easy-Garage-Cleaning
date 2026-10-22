@@ -1,7 +1,7 @@
 import { getHubSession } from '../_lib/hub-session.js';
 import { dispatchStorage } from '../_lib/dispatch-storage.js';
 import { quoteAuthorAccess, requireQuoteAuthor } from '../_lib/quote-permissions.js';
-import { SELF_WALKTHROUGH_REPLAY, selfWalkthroughReplay, selfWalkthroughSession, walkthroughRep } from '../_lib/knock-self-walkthrough.js';
+import { SELF_WALKTHROUGH_REPLAY, setterChannel, selfWalkthroughReplay, selfWalkthroughSession, walkthroughRep } from '../_lib/knock-self-walkthrough.js';
 import { handoffCrewOpenings, prepareHandoff, releaseHandoffPrices, saveWalkthroughHandoff } from '../_lib/walkthrough-handoff.js';
 import { expireStaleCheckout } from '../_lib/quote-draft.js';
 import { stripeRequest, stripeSecretKey } from '../_lib/customer-payments.js';
@@ -13,7 +13,7 @@ import { winterSaleReaders } from '../_lib/winter-sale.js';
 import { createKnockStore } from '../_lib/knock-store.js';
 // EGC_WINTER_SALE: a signed sale quote's margin check costs a walkthrough a door-to-door setter booked at the setter's
 // channel (knock_setters, one document read, only when the signed job carries the sale), as the quote draft API does.
-const winterSale = { ...winterSaleReaders, setter: async (env, walkthroughId) => Boolean((await createKnockStore(env).getMany('knock_setters', [walkthroughId])).get(walkthroughId)) };
+const winterSale = { ...winterSaleReaders, setter: async (env, walkthroughId) => setterChannel((await createKnockStore(env).getMany('knock_setters', [walkthroughId])).get(walkthroughId)) };
 const reply = (status, body) => Response.json(body, {status, headers:{'Cache-Control':'no-store','X-Content-Type-Options':'nosniff'}});
 // A refused save names each owner rule (or overlapping work) that stopped it. Only
 // each conflict's code and message leave the server, and no other details are
