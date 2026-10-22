@@ -1,5 +1,5 @@
 // Firestore REST fake for windowed dispatch reads: document GET, masked list
-// scans with page tokens, :runQuery (field EQUAL/GREATER_THAN_OR_EQUAL/LESS_THAN_OR_EQUAL/LESS_THAN/IN/
+// scans with page tokens, :runQuery at the root or under a parent document (field EQUAL/GREATER_THAN_OR_EQUAL/LESS_THAN_OR_EQUAL/LESS_THAN/IN/
 // ARRAY_CONTAINS, unary IS_NULL, orderBy ASCENDING or DESCENDING with the implicit __name__ tiebreak,
 // startAt cursors, select, limit), :runAggregationQuery (count; a requested
 // readTime is recorded, not replayed), masked :batchGet, :commit with
@@ -43,13 +43,13 @@ export function firestoreRest(seed = {}) {
   }
   const key = (document, path) => path === '__name__' ? document.name : field(document, path);
   const compare = (a, b) => a < b ? -1 : a > b ? 1 : 0;
-  function runQuery(query) {
+  function runQuery(query, parent = '') {
     const orderBy = query.orderBy || [], range = query.where?.fieldFilter?.op === 'GREATER_THAN_OR_EQUAL' ? query.where.fieldFilter.field.fieldPath : null;
     if (range && orderBy[0]?.field.fieldPath !== range) return json({ error: { status: 'INVALID_ARGUMENT', message: 'The first orderBy must be the inequality field.' } }, 400);
     // Each orderBy field in its direction (DESCENDING reverses it), then the document name.
     const sign = item => item?.direction === 'DESCENDING' ? -1 : 1;
     const paths = [...orderBy.filter(item => item.field.fieldPath !== '__name__').map(item => [item.field.fieldPath, sign(item)]), ['__name__', sign(orderBy.find(item => item.field.fieldPath === '__name__'))]];
-    let rows = collection(query.from[0].collectionId).filter(document => !query.where || filter(query.where, document))
+    let rows = collection((parent ? parent + '/' : '') + query.from[0].collectionId).filter(document => !query.where || filter(query.where, document))
       .sort((a, b) => { for (const [path, direction] of paths) { const order = compare(key(a, path), key(b, path)) * direction; if (order) return order; } return 0; });
     if (query.startAt) {
       const values = query.startAt.values.map(value => value.referenceValue ?? decode(value));
@@ -91,6 +91,7 @@ export function firestoreRest(seed = {}) {
     const path = decodeURIComponent(url.pathname.slice(marker.length)).replace(/^\//, ''), body = options.body ? JSON.parse(options.body) : null;
     calls.push({ method, path, body, query: url.search });
     if (method === 'POST' && path === ':runQuery') return runQuery(body.structuredQuery);
+    if (method === 'POST' && path.endsWith(':runQuery')) return runQuery(body.structuredQuery, path.slice(0, -':runQuery'.length));
     if (method === 'POST' && path === ':runAggregationQuery') return aggregate(body.structuredAggregationQuery);
     if (method === 'POST' && path === ':batchGet') return json(body.documents.map(name => {
       const document = documents.get(name.split('/documents/')[1]);
