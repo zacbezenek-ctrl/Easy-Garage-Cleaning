@@ -195,7 +195,8 @@ class CrewJobDraftsBrowserTests(unittest.TestCase):
         expect(page.locator('.section-heading .badge').first).to_have_text('paused')
         self.assertEqual(len(self.posts), 1)
         post = self.posts[0]
-        self.assertEqual(sorted(post), ['action', 'expectedRevision', 'expectedUser', 'jobId', 'reason', 'requestId', 'status'])
+        self.assertEqual(sorted(post), ['action', 'expectedRevision', 'expectedUser', 'jobId', 'reason', 'requestId', 'status', 'tappedAt'])
+        self.assertRegex(post['tappedAt'], r'^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$', 'the tap carries when it was made on the phone (#219)')
         self.assertEqual({key: post[key] for key in ['action', 'status', 'reason', 'jobId', 'expectedRevision', 'expectedUser']},
                          {'action': 'status', 'status': 'paused', 'reason': 'Customer asked us to stop until 2 PM', 'jobId': 'job-1', 'expectedRevision': 'rev-synced', 'expectedUser': 'Crew.One'})
         self.assertTrue(UUID.match(post['requestId']))
@@ -439,7 +440,8 @@ class CrewJobDraftsBrowserTests(unittest.TestCase):
         expect(page.locator('#feedback')).to_contain_text('Saved to the job.')
         expect(page.locator('#status-form')).to_have_count(0); expect(badge).to_have_text('paused')
         self.assertEqual(len(self.posts), 3); post = self.posts[2]
-        self.assertEqual(sorted(post), ['action', 'expectedRevision', 'expectedUser', 'jobId', 'reason', 'requestId', 'status'])
+        self.assertEqual(sorted(post), ['action', 'expectedRevision', 'expectedUser', 'jobId', 'reason', 'requestId', 'status', 'tappedAt'])
+        self.assertRegex(post['tappedAt'], r'^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$', 'the tap carries when it was made on the phone (#219)')
         self.assertEqual({key: post[key] for key in ['action', 'status', 'reason', 'jobId', 'expectedRevision', 'expectedUser']},
                          {'action': 'status', 'status': 'paused', 'reason': 'Back after the dump run', 'jobId': 'job-1', 'expectedRevision': 'rev-3', 'expectedUser': 'Crew.One'})
         self.assertTrue(UUID.match(post['requestId'])); self.assertNotIn(post['requestId'], [earlier['requestId'] for earlier in self.posts[:2]])
