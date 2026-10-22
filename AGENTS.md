@@ -68,7 +68,7 @@ In a Claude Code container, Chromium is at `/opt/pw-browsers`; follow "Container
 (build-1243 symlinks, per-agent Postgres cluster). Never run `playwright install` there.
 
 **Known flaky spots**, all with fixes already in place; do not paper over a new failure as "flaky":
-- Emulator port races: `emulator-exec.mjs` retries once with fresh ports on `EADDRINUSE` before the command starts.
+- Emulator port races: `emulator-exec.mjs` claims each run's ports under a cross-process lock, and retries once with fresh ports when firebase exits before the command starts.
 - Two cold emulators downloading the jar together: CI runs `firebase setup:emulators:firestore` first.
 - Feed tests once flaked on random ids containing `1437`/`7777`; they now use deterministic ids. Use fixed ids too.
 - Tests that read the real clock fail only under the shifted clock or after a date passes. Inject time.
