@@ -1,7 +1,7 @@
 import { mutateDispatch } from './dispatch-service.js';
 import { saveJobReads } from './dispatch-window-reads.js';
 import { requireQuoteAuthor } from './quote-permissions.js';
-import { authorCustomer, fullCustomerAccess, jobCustomerAccess, jobRef, maskedCustomer, refPatch, restrictedAuthor, shownCustomerId } from './estimator-customer-access.js';
+import { authorCustomer, fullCustomerAccess, walkthroughVisible, jobCustomerAccess, jobRef, maskedCustomer, refPatch, restrictedAuthor, shownCustomerId } from './estimator-customer-access.js';
 import { assignmentKey, jobCrewNames } from './job-assignment.js';
 import { localInstant } from './operations-portal-records.js';
 import { customerIdentityPatch } from './customer-identity.js';
@@ -46,9 +46,11 @@ const customerProjection = row => row ? Object.fromEntries(['id', 'name', 'phone
 // The jobs a quote author who is not a dispatcher may open or revise (P2-12): a
 // quote draft, the job of the walkthrough being handed off, or a job they
 // created. Every other job stays with Dispatch. An estimator (restricted:
-// estimator-customer-access.js) opens only a quote draft they started or saved.
+// estimator-customer-access.js) opens only a quote draft they started or saved, and
+// reaches a job through its walkthrough only when that walkthrough is theirs
+// (sourceOk: assigned to them or started by them).
 const ownDraft = (job, actor) => assignmentKey(job.quoteDraft.createdBy) === assignmentKey(actor.user) && Boolean(assignmentKey(actor.user)) || Boolean(jobRef(job, actor));
-const authorsJob = (job, source, actor, restricted = false) => plain(job?.quoteDraft) && (!restricted || ownDraft(job, actor)) || Boolean(source) && job.sourceWalkthroughId === source.id || Boolean(job?.createdBy) && job.createdBy === actor.user;
+const authorsJob = (job, source, actor, restricted = false, sourceOk = false) => plain(job?.quoteDraft) && (!restricted || ownDraft(job, actor)) || Boolean(source) && job.sourceWalkthroughId === source.id && (!restricted || sourceOk) || Boolean(job?.createdBy) && job.createdBy === actor.user;
 // DISPATCH-RULES: a quote author who is not a dispatcher never sees the roster
 // (prepareHandoff), so the Dispatch rows of a save (its warnings, replayed or
 // fresh, and a refusal's details.conflicts) reach them as a code and a message
@@ -418,7 +420,7 @@ export async function prepareHandoff(store, actor, query = {}, { env = {} } = {}
     if (job && (!operational(job) || job.sourceWalkthroughId !== source.id || source.customerId && job.customerId !== source.customerId)) throw fail('job_mismatch', 'The existing job and walkthrough do not share the same customer and source.');
   }
   const restricted = restrictedAuthor(actor, access, env);
-  if (job && !access.dispatcher && !authorsJob(job, source, actor, restricted)) throw fail('job_forbidden', 'Only an operations manager or owner can open this job. Start from its walkthrough or quote draft.', 403);
+  if (job && !access.dispatcher && !authorsJob(job, source, actor, restricted, restricted && await walkthroughVisible(source, actor, env))) throw fail('job_forbidden', 'Only an operations manager or owner can open this job. Start from its walkthrough or quote draft.', 403);
   const customerId = job?.customerId || source?.customerId || '';
   const customer = customerId ? await store.read('customers', customerId) : null;
   if (customerId && !customer) throw fail('customer_missing', 'The linked customer is unavailable. Repair the customer link before saving.');
@@ -675,10 +677,11 @@ export async function saveWalkthroughHandoff(store, actor, input, now = new Date
   // service address and required crew size stay exactly as Dispatch saved them.
   let placedAddress = null;
   if (previous && !access.dispatcher) {
-    if (!authorsJob(previous, source, actor, restrictedAuthor(actor, access, env))) throw fail('revision_forbidden', 'Only an operations manager or owner can revise this job. Start from its walkthrough or quote draft.', 403);
+    const restricted = restrictedAuthor(actor, access, env);
+    if (!authorsJob(previous, source, actor, restricted, restricted && await walkthroughVisible(source, actor, env))) throw fail('revision_forbidden', 'Only an operations manager or owner can revise this job. Start from its walkthrough or quote draft.', 403);
     const unplaced = state(previous) === 'unscheduled' && !previous.date && !previous.time;
     if (!unplaced && (plan.quote.job_date !== previous.date || (previous.endDate || previous.date) !== plan.quote.job_date || plan.quote.start_time !== previous.time || plan.quote.end_time !== previous.endTime)) throw fail('schedule_change_forbidden', `Only an operations manager or owner can move a scheduled job. Keep its saved schedule${previous.date ? ` (${previous.date} ${previous.time || ''}–${previous.endTime || ''})` : ''} or ask Dispatch to move it.`, 403);
-    if (!unplaced && !sameAddress(plan.client.address, previous.address)) throw fail('schedule_change_forbidden', `Only an operations manager or owner can change the service address of a scheduled job. Keep its saved address (${String(previous.address || 'none on file').slice(0, 200)}) or ask Dispatch to change it.`, 403);
+    if (!unplaced && !sameAddress(plan.client.address, previous.address)) throw fail('schedule_change_forbidden', `Only an operations manager or owner can change the service address of a scheduled job. Keep its saved address or ask Dispatch to change it.`, 403);
     if (!unplaced) placedAddress = previous.address;
     const savedCrew = Number(previous.crewNeeded);
     if (!unplaced && savedCrew !== plan.logistics.crew_size) throw fail('schedule_change_forbidden', `Only an operations manager or owner can change the crew size of a scheduled job. Keep its saved crew size${Number.isInteger(savedCrew) && savedCrew > 0 ? ` (${savedCrew})` : ''} or ask Dispatch to change it.`, 403);
