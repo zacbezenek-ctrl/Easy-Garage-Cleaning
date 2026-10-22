@@ -4,8 +4,9 @@
  * - Jobs worked: customer jobs the person logged job time on. Jobs led: completed jobs where they were the crew lead.
  * - On-time arrivals: of the jobs they logged work on, how many their first work segment started by their own arrival
  *   deadline. On a job split into assignment segments, that is the segment they are assigned to on the Denver day of
- *   their first work start; otherwise the job itself, and only on its start day (a later day of a multi-day job has
- *   no scheduled start). The deadline is the Hub's late rule (arrival-deadline.js): the end of the customer's arrival
+ *   their first work start; otherwise the job itself, only on its start day (a later day of a multi-day job has
+ *   no scheduled start) and only when it was their first job that Denver day: someone sent to it after another job
+ *   started their day elsewhere, so the job's own start does not say when they were due. The deadline is the Hub's late rule (arrival-deadline.js): the end of the customer's arrival
  *   window on the job's first visit, else 15 minutes after the scheduled start. Jobs without a
  *   scheduled time, rejected timecards and jobs with no work segment are not counted either way.
  * - Billed vs actual: over the completed jobs they worked that have both billed man-hours (the Labor line) and actual
@@ -37,8 +38,9 @@ export function arrivalDeadline(job, slot = job) {
 }
 
 /** What one person was scheduled for on a job, on the Denver day they first clocked in: {date, time, lead} or null.
- * On a split job it is their segment that day; otherwise the job, on its start day only. */
-export function personSlot(job, person, firstStart) {
+ * On a split job it is their segment that day; otherwise the job, on its start day only, and only when no other job
+ * they worked started earlier that day. others: their first work starts by job id (firstWorkStarts()). */
+export function personSlot(job, person, firstStart, others = new Map()) {
   if (!plain(job) || !Number.isFinite(firstStart)) return null;
   const day = denverWorkDate(new Date(firstStart).toISOString());
   if (segmented(job)) {
@@ -46,7 +48,9 @@ export function personSlot(job, person, firstStart) {
     const row = rows.sort((a, b) => String(a.time).localeCompare(String(b.time)))[0];
     return row ? { date: row.date, time: row.time, lead: row.crewLead } : null;
   }
-  return job.date === day ? { date: job.date, time: job.time, lead: job.crewLead } : null;
+  if (job.date !== day) return null;
+  for (const [jobId, at] of others instanceof Map ? others : []) if (jobId !== job.id && at < firstStart && denverWorkDate(new Date(at).toISOString()) === day) return null;
+  return { date: job.date, time: job.time, lead: job.crewLead };
 }
 
 /** Each person's first work segment start on each job: Map(person -> Map(jobId -> ms)). */
@@ -90,7 +94,7 @@ export function crewPerformanceWindow({ jobs = [], labor = { jobs: [] }, actuals
       if (!id || hours + pending <= 0) continue;
       const entry = row(id, person.name);
       entry.hours += hours; entry.pendingHours += pending; entry.jobsWorked++;
-      const arrived = starts.get(id)?.get(job.id), slot = personSlot(job, id, arrived), deadline = slot ? arrivalDeadline(job, slot) : null;
+      const arrived = starts.get(id)?.get(job.id), slot = personSlot(job, id, arrived, starts.get(id)), deadline = slot ? arrivalDeadline(job, slot) : null;
       if (deadline !== null) { entry.arrivalsCounted++; if (arrived <= deadline) entry.onTime++; }
       if (compared) { entry.comparedJobs++; entry.billedManHours += actual.billed.manHours; entry.actualManHours += actual.actual.manHours; }
     }

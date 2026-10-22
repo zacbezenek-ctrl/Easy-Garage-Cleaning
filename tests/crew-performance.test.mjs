@@ -33,14 +33,17 @@ test('first work starts are per person and per job, earliest first, and ignore t
 });
 
 test('one row per person: hours, jobs worked and led, on-time arrivals, crew hours vs billed and issues', () => {
-  const jobs = [job('on-time'), job('late', { fieldExecution: { completion: { hasIssues: true } } }), job('open', { status: 'scheduled', completedAt: null, crewLead: 'Crew.Two', fieldExecution: { attention: { status: 'open' } } }), job('old', { date: '2026-08-01' })];
+  // The late job is the next day: on one day only a person's first job judges their arrival (see the helper test below).
+  const jobs = [job('on-time'), job('late', { date: '2026-10-11', completedAt: '2026-10-11T22:00:00.000Z', fieldExecution: { completion: { hasIssues: true } } }), job('open', { status: 'scheduled', completedAt: null, crewLead: 'Crew.Two', fieldExecution: { attention: { status: 'open' } } }), job('old', { date: '2026-08-01' })];
   const labor = { jobs: [
     { jobId: 'on-time', employees: [{ employee: 'crew.one', name: 'Crew One', approvedHours: 5, pendingHours: 0 }, { employee: 'crew.two', name: 'Crew Two', approvedHours: 5, pendingHours: 0 }] },
     { jobId: 'late', employees: [{ employee: 'crew.one', name: 'Crew One', approvedHours: 4, pendingHours: 1 }] },
     { jobId: 'open', employees: [{ employee: 'crew.two', name: 'Crew Two', approvedHours: 0, pendingHours: 2 }] },
     { jobId: 'old', employees: [{ employee: 'crew.one', name: 'Crew One', approvedHours: 9, pendingHours: 0 }] }] };
   const actuals = new Map([['on-time', { billed: { manHours: 8 }, actual: { manHours: 10 } }], ['late', { billed: { manHours: 8 }, actual: { manHours: 5 } }]]);
-  const starts = firstWorkStarts([card('a', 'Crew.One', 'on-time', '08:40', '13:40'), card('b', 'Crew.Two', 'on-time', '09:20', '14:20'), card('c', 'Crew.One', 'late', '09:30', '14:30')]);
+  const nextDay = card('c', 'Crew.One', 'late', '09:30', '14:30');
+  for (const segment of nextDay.jobTracking.segments) segment.startedAt = '2026-10-11T09:30:00-06:00';
+  const starts = firstWorkStarts([card('a', 'Crew.One', 'on-time', '08:40', '13:40'), card('b', 'Crew.Two', 'on-time', '09:20', '14:20'), nextDay]);
   const rows = crewPerformanceWindow({ jobs, labor, actuals, starts, roster: ROSTER, start: '2026-10-01', end: '2026-10-22' });
   const by = Object.fromEntries(rows.map(row => [row.employee, row]));
   assert.deepEqual(rows.map(row => row.employee), ['crew.one', 'crew.two'], 'most hours first; the job outside the window is left out');
@@ -130,4 +133,16 @@ test('a job that closed with issues counts once, and a lead saved as a display n
   const jobs = [job('both', { crewLead: 'Synthetic Crew One', fieldExecution: { completion: { hasIssues: true }, attention: { status: 'open' } } }), job('led', { crewLead: 'crew.one' })];
   const rows = crewPerformanceWindow({ jobs, roster: ROSTER, start: '2026-10-01', end: '2026-10-22' });
   assert.deepEqual(rows.map(row => [row.employee, row.jobsLed, row.issueJobs, row.followUps]), [['crew.one', 2, 1, 0]]);
+});
+
+test('a helper sent to a job after starting the day on another one is not judged by that job\'s start', () => {
+  // Crew Two works an 08:00 job first, then Dispatch adds them to a second 08:00 job they reach at noon. Only the first
+  // job judges their arrival; the second, which they could not have reached at 08:00, is not counted either way.
+  const jobs = [job('first'), job('second', { crewLead: 'Crew.One' })];
+  const labor = { jobs: [{ jobId: 'first', employees: [{ employee: 'crew.two', name: 'Two', approvedHours: 3, pendingHours: 0 }] },
+    { jobId: 'second', employees: [{ employee: 'crew.one', name: 'One', approvedHours: 6, pendingHours: 0 }, { employee: 'crew.two', name: 'Two', approvedHours: 4, pendingHours: 0 }] }] };
+  const starts = firstWorkStarts([card('two-a', 'Crew.Two', 'first', '08:05', '11:30'), card('two-b', 'Crew.Two', 'second', '12:00', '16:00'), card('one', 'Crew.One', 'second', '08:30', '14:30')]);
+  const by = Object.fromEntries(crewPerformanceWindow({ jobs, labor, starts, roster: ROSTER, start: '2026-10-01', end: '2026-10-22' }).map(row => [row.employee, row]));
+  assert.deepEqual([by['crew.two'].jobsWorked, by['crew.two'].onTime, by['crew.two'].arrivalsCounted, by['crew.two'].onTimePercent], [2, 1, 1, 100], 'judged on the first job only');
+  assert.deepEqual([by['crew.one'].onTime, by['crew.one'].arrivalsCounted], [1, 1], 'the crew who started there are still judged');
 });

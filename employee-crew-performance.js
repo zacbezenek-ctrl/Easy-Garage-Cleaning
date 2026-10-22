@@ -48,7 +48,7 @@ function notes(){
   return h('section',{class:'hub-card cp-notes','aria-label':'How these are counted'},h('h2',{},'How these are counted'),
     h('ul',{},
       h('li',{},'Hours and jobs come from job time on timecards. Pending hours are not approved yet.'),
-      h('li',{},'On time means the person\'s first work clock-in on the job was by the end of the customer\'s arrival window, or within 15 minutes of the start time when there is no window. On a split job, each person is judged by their own segment that day; a later day of a multi-day job without its own segment is not counted.'),
+      h('li',{},'On time means the person\'s first work clock-in on the job was by the end of the customer\'s arrival window, or within 15 minutes of the start time when there is no window. On a split job, each person is judged by their own segment that day. A job is not counted when the person started another job earlier that day, or on a later day of a multi-day job without its own segment.'),
       h('li',{},'Crew hours vs billed compares everyone\'s actual hours on completed jobs this person worked against the Labor line sold. It is a crew figure, not one person\'s speed.'),
       h('li',{},'Issues count completed jobs this person led that closed with issues, and their other jobs with an open crew follow-up. A job counts once.'),
       h('li',{},'Not tracked yet, so not shown: callbacks or redo visits, and customer reviews that name a crew member.')));
