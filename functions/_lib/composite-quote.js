@@ -1,6 +1,7 @@
 import { goodsMarkupOf, roundCents, validatePricingSettings } from './catalog.js';
 import { BUILDER_LABOR_VERSION, HAULING_GROUPS, LABOR_INSTALL_NOTE, LABOR_LINE_NAME, builderJunkOnly, estimateTotals, included, normalizeLineItems } from './quote-model.js';
 import { PRICING_MENU_JSON } from '../_data/pricing-menu.js';
+import { PICKUP_MINIMUM_CENTS, PICKUP_MINIMUM_LINE_ID, PICKUP_MINIMUM_LINE_NAME, haulingOnly, normalizeNearbyTruck, pickupMinimumLine } from './pickup-minimum.js';
 
 /**
  * Guided estimator quote builder (WP14a/b). Pure: no I/O, no clock (the bundled menu is parsed lazily, once).
@@ -515,7 +516,7 @@ export function offeringsMenu(state, { prices = false } = {}) {
 // cleaning base (a quote with truck loads) it sizes the deep clean and allows the one-car pressure wash (checkRemoval).
 // It is kept only when sent, so a selection saved without it reads exactly as before. The signed handoff replaces it
 // with the signed plan's own (scope.garages).
-const DESCRIPTOR_KEYS = ['menuVersion', 'settingsVersion', 'steps', 'removal', 'shelving', 'storage', 'labor', 'garageSize'];
+const DESCRIPTOR_KEYS = ['menuVersion', 'settingsVersion', 'steps', 'removal', 'shelving', 'storage', 'labor', 'garageSize', 'nearbyTruck'];
 function normalizeDescriptor(descriptor, { complete }) {
   if (!keysOnly(descriptor, DESCRIPTOR_KEYS) || typeof descriptor.menuVersion !== 'string' || typeof descriptor.settingsVersion !== 'string' || !Array.isArray(descriptor.steps)) {
     throw fail('invalid_selection', 'The quote builder selection is incomplete. Reload the builder and try again.');
@@ -547,6 +548,8 @@ function normalizeDescriptor(descriptor, { complete }) {
     if (!GARAGE_SIZES.includes(descriptor.garageSize)) throw fail('invalid_selection', 'The walkthrough garage size is invalid: 1, 2, 3 or other.');
     out.garageSize = descriptor.garageSize;
   }
+  // The truck-nearby waiver of the minimum pickup (pickup-minimum.js): asked for with a reason, confirmed by the server.
+  if (descriptor.nearbyTruck !== undefined && descriptor.nearbyTruck !== null) out.nearbyTruck = normalizeNearbyTruck(descriptor.nearbyTruck, message => fail('invalid_selection', message));
   return out;
 }
 
@@ -671,22 +674,29 @@ export function priceCompositeQuote(state, descriptor, { complete = false, requi
     model.push({ id: LABOR_ID, kind: 'labor', name: LABOR_LINE_NAME, description: goodsSold ? LABOR_INSTALL_NOTE : '',
       quantity: 1, unitCents: lineCents(labor.totalCents, 1), totalCents: labor.totalCents, optional: false, selected: true, taxable: false });
   }
+  // Minimum pickup (pickup-minimum.js, owner decision 2026-10-21): a quote of hauling lines only, below $250 in all, gets
+  // the line that raises it to $250, unless its selection asks for the truck-nearby waiver (confirmed where the job is
+  // booked: quote-draft.js, walkthrough-handoff.js). It is not a menu line, so junkOnly and the Labor line are unchanged.
+  const hauling = haulingOnly(detail), short = hauling ? Math.max(0, PICKUP_MINIMUM_CENTS - detail.reduce((sum, line) => sum + line.totalCents, 0) - (labor?.totalCents ?? 0)) : 0;
+  const minimumCents = selection.nearbyTruck ? 0 : short, pickup = { haulingOnly: hauling, minimumCents, waived: Boolean(selection.nearbyTruck) && short > 0, waivedCents: selection.nearbyTruck ? short : 0 };
+  if (minimumCents) model.push(pickupMinimumLine(minimumCents));
   if (model.filter(line => line.totalCents > 0).length > MAX_CHARGED_LINES) throw fail('too_many_lines', `A quote can charge at most ${MAX_CHARGED_LINES} lines so the customer portal shows every charge. Remove a removal item or split the work into two quotes.`, 400, { maxChargedLines: MAX_CHARGED_LINES });
   const stored = model.map(line => splits.has(line.id) ? { ...line, split: splits.get(line.id) } : line);
   let storedLineItems;
   try { storedLineItems = normalizeLineItems(stored, { strict: true }).lineItems; }
   catch (error) { throw fail('unavailable', `The builder quote could not be verified: ${error.message}`, 503); }
   const laborCents = labor?.totalCents ?? 0;
-  const totals = estimateTotals(storedLineItems), totalCents = detail.reduce((sum, line) => sum + line.totalCents, 0) + laborCents;
+  const totals = estimateTotals(storedLineItems), totalCents = detail.reduce((sum, line) => sum + line.totalCents, 0) + laborCents + minimumCents;
   if (!totals.complete || totals.totalCents !== totalCents || totalCents <= 0 || storedLineItems.some(line => !included(line))) throw fail('unavailable', 'The builder quote total could not be verified. Keep the selections and retry.', 503);
   const lineItems = storedLineItems.map(({ split, durationMinutes, ...line }) => line);
   const sections = BUILDER_STEPS.map(id => ({ id, label: SECTION_LABEL.get(id), completed: selection.steps.includes(id), subtotalCents: detail.filter(line => line.section === id).reduce((sum, line) => sum + line.totalCents, 0), lineIds: detail.filter(line => line.section === id).map(line => line.id) }));
   let running = 0;
   const steps = sections.filter(section => section.completed).map(section => ({ id: section.id, label: section.label, subtotalCents: section.subtotalCents, runningTotalCents: running += section.subtotalCents }));
   if (laborCents) steps.push({ id: LABOR_ID, label: 'Labor', subtotalCents: laborCents, runningTotalCents: running += laborCents });
+  if (minimumCents) steps.push({ id: PICKUP_MINIMUM_LINE_ID, label: PICKUP_MINIMUM_LINE_NAME, subtotalCents: minimumCents, runningTotalCents: running += minimumCents });
   const breakdown = { version: COMPOSITE_SCHEMA_VERSION, source: 'composite', menuVersion: version, settingsVersion: settings.settingsVersion,
-    sections: sections.map(({ completed, ...section }) => section), lines: detail, purchaseList: purchaseList(detail), ...(labor ? { labor } : {}), totalCents };
-  return { compositePricing: selection, menuVersion: version, settingsVersion: settings.settingsVersion, lineItems, storedLineItems, breakdown, steps, labor, junkOnly: junk, totalCents, approval: approvalOf(detail, prices, state, labor, { requireLabor }) };
+    sections: sections.map(({ completed, ...section }) => section), lines: detail, purchaseList: purchaseList(detail), ...(labor ? { labor } : {}), pickup, totalCents };
+  return { compositePricing: selection, menuVersion: version, settingsVersion: settings.settingsVersion, lineItems, storedLineItems, breakdown, steps, labor, junkOnly: junk, pickup, totalCents, approval: approvalOf(detail, prices, state, labor, { requireLabor }) };
 }
 
 /** The customer-facing scope of a priced builder quote (priceCompositeQuote's result, or {breakdown, labor}): each step's
