@@ -127,7 +127,9 @@ function flags(job,{now,crew=[],timeEntries=null}={}){
   return output;
 }
 // underway(row): the crew of this visit (a job or a visitRow) is en route or on site today: the same evidence that
-// clears Not en route. MANAGER-SLIP-ALERTS (employee-slip-alerts.js) stops alerting a visit once this is true.
-function underway(job,{now}={}){const nowMs=typeof now==='number'?now:Date.parse(now);if(!Number.isFinite(nowMs))return false;const row=job?.firstVisit===undefined?{...job,firstVisit:true}:job;return row.date===denverDate(nowMs)&&(moving(row)||row.firstVisit===false&&ARRIVED.has(stage(row)))}
+// clears Not en route. MANAGER-SLIP-ALERTS (employee-slip-alerts.js) stops alerting a visit once this is true. Only the
+// visit's own evidence counts: a later visit never inherits the job's canonical status, because End day leaves a job
+// worked on day 1 in_progress and day 2 would then look underway with nobody there.
+function underway(job,{now}={}){const nowMs=typeof now==='number'?now:Date.parse(now);if(!Number.isFinite(nowMs))return false;const row=job?.firstVisit===undefined?{...job,firstVisit:true}:job;return row.date===denverDate(nowMs)&&moving(row)}
 root.EGCArrivalDeadline=Object.freeze({flags,underway,visitRow,arrivalDeadline,enRouteDeadline,startAt,denverDate,denverInstant,LATE_GRACE_MS,EN_ROUTE_LEAD_MS});
 })(typeof window!=='undefined'?window:globalThis);

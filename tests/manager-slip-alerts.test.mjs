@@ -89,6 +89,27 @@ test('no alert once the crew is en route or on site, whatever is still flagged',
   assert.equal(rule.underway(job('x', { date: '2026-09-23', dispatchedAt: '2026-09-22T15:40:00Z' }), { now }), false, 'only today\'s visit');
 });
 
+// Review of #236 — finding 1: End day leaves a job worked on day 1 in_progress, and day 2's visit inherits that status;
+// only day 2's own evidence (a tap, an arrival or a dispatch today) may stop its alerts.
+const twoDay = (fields = {}) => job('two-day', { date: '2026-09-21', endDate: TODAY, time: '08:00', endTime: '16:00', status: 'in_progress', pipelineStatus: 'in_progress',
+  arrivedAt: '2026-09-21T14:05:00Z', startedAt: '2026-09-21T14:10:00Z', assignedCrew: ['crew-b'],
+  assignmentSegments: [{ id: 'day-1', date: '2026-09-21', time: '08:00', endTime: '16:00', assignedCrew: ['crew-b'] }, { id: 'day-2', date: TODAY, time: '08:00', endTime: '16:00', assignedCrew: ['crew-b'] }], ...fields });
+const dayTwo = row => { const visit = visitRow(row, row.assignmentSegments[1]); return [{ visit, flags: flags(visit, { now: NOW, crew: visit.assignedCrew, timeEntries: entries }) }]; };
+
+test('day 2 of a multi-day job worked on day 1 alerts when nobody has arrived or clocked in today', () => {
+  const visits = dayTwo(twoDay());
+  assert.deepEqual(visits[0].flags.map(flag => flag.kind), ['late', 'not_clocked_in'], 'the Field agenda flags day 2');
+  assert.equal(visits[0].visit.firstVisit, false);
+  assert.equal(rule.underway(visits[0].visit, { now: NOW }), false, 'day 1\'s in_progress status says nothing about day 2');
+  assert.deepEqual(pending({ visits, now: NOW, seen: [] }).map(row => [row.kind, row.title]), [['late', 'Crew late: Synthetic two-day'], ['not_clocked_in', 'Not clocked in: Synthetic two-day']]);
+  // Today's own evidence still stops them: a Working tap today, or today's arrival.
+  for (const today of [{ fieldExecution: { activity: 'in_progress', activityAt: '2026-09-22T14:20:00Z' } }, { arrivedAt: '2026-09-22T14:05:00Z' }, { dispatchedAt: '2026-09-22T13:40:00Z' }]) {
+    const visit = visitRow(twoDay(today), twoDay(today).assignmentSegments[1]);
+    assert.equal(rule.underway(visit, { now: NOW }), true, JSON.stringify(today));
+    assert.deepEqual(pending({ visits: [{ visit, flags: flags(visit, { now: NOW, crew: visit.assignedCrew, timeEntries: entries }) }], now: NOW, seen: [] }), [], JSON.stringify(today));
+  }
+});
+
 test('Not clocked in waits for fresh time entries; a burst is capped and the rest come next time; the text has no money', () => {
   const jobs = Array.from({ length: 7 }, (_, i) => job(`job-${i}`, { time: '10:00', customer: `Synthetic Customer ${i}`, priceQuoted: 125000, total: 99900, assignedCrew: ['crew-b'] }));
   const stale = pending({ visits: flagged(jobs), now: NOW, seen: [], clockInsFresh: false });
@@ -212,6 +233,14 @@ test('an open installed Hub told a job by its service worker opens that row; any
   crew.S.active = 'my_day';
   crew.context.workerMessage({ data: { type: 'egc-alert-open', view: 'today', job: 'late' } });
   assert.equal(crew.S.active, 'my_day', 'a crew session never opens Today from it');
+});
+
+test('the Hub alerts day 2 of a multi-day job worked on day 1 (review of #236, finding 1)', () => {
+  const p = hub();
+  p.context.jobsCache = [twoDay()];
+  assert.match(p.context.api.agenda(), /Late · due 8:15 AM/, 'the Field agenda shows the slip');
+  p.context.api.notifySlips();
+  assert.deepEqual(p.made.map(row => row.title), ['Crew late: Synthetic two-day', 'Not clocked in: Synthetic two-day']);
 });
 
 test('a hidden tab re-checks once a minute and skips Not clocked in from old time entries', () => {
