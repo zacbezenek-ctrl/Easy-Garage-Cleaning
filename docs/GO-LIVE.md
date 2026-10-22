@@ -353,15 +353,15 @@ Every website lead already goes to HighLevel. Stage 2 makes that durable (nothin
 | 3.2 | Booking in Dispatch | No switch |
 | 3.3 | Recording in the Hub | Website transcription ([3.7](#37-walkthrough-transcripts-and-job-notes-owner-decision-on)); the Railway bridge (B5) only with notes off |
 | 3.4 | `EGC_WALKTHROUGH_VISIT_ENABLED` (on by launch default, 2026-10-19) | Nothing to set; `false` turns it off |
-| 3.5 | `EGC_STAFF_ROLE_ACCESS=true` (owner decision: on) | Cloudflare, plain |
+| 3.5 | `EGC_STAFF_ROLE_ACCESS` (owner decision: on, a launch default) | Nothing to set; `false` in Cloudflare turns it off |
 | 3.6 | `EGC_STAFF_PASSWORD_RESET=true`, `EGC_STAFF_MANAGER_GRANTS=accounts.reset,accounts.approve` | Cloudflare, plain |
 | 3.7 | `EGC_WALKTHROUGH_NOTES` (on by launch default, 2026-10-19): OpenAI credits on the website key, Workers Paid, a 60-second iPad canary | Nothing to set; `false` turns it off |
 
 ### 3.1 Team roles (staff directory)
 
-- **Set:** `EGC_STAFF_DIRECTORY_ENABLED=true`
-- **Where:** Cloudflare Pages, plain.
-- **Turns on:** Hub → Staff directory: roles (including **Sales** for the walkthrough rep and **Phone** for the phone person), skills, pay history with future-dated raises, and weekly availability. While `EGC_STAFF_ROLE_PERMISSIONS` stays off (recommended for now), saved roles are recorded but do not change what anyone can open.
+- **Set:** nothing. `EGC_STAFF_DIRECTORY_ENABLED` and `EGC_STAFF_ROLE_PERMISSIONS` are on by your launch default of 2026-10-20 (`functions/_lib/launch-defaults.js`). Setting either to `false` in Cloudflare turns it off.
+- **Where:** nothing to set in Cloudflare.
+- **Turns on:** Hub → Staff directory: roles (including **Sales** for the walkthrough rep and **Phone** for the phone person), skills, pay history with future-dated raises, and weekly availability. Only you can change roles and pay. A saved Sales role opens the Walkthrough for that person.
 - **Also turns on (D10, 2026-10-17):** Hub → My EGC → **Team directory** for every signed-in staff member: names, approved photos, roles, crews, shirt sizes and birthdays (month and day, only for people who leave "Show my birthday" on). Birth year, age, phones, emergency contacts and the HighLevel user ID are shown only to the owner and managers, who also get the shirt-size totals and a CSV for uniform orders. Each employee sets their own shirt size and birthday there or on Getting started; managers edit anyone's. Customers and the public never see any of it.
 - **Needs first:**
   1. Run the two staff migrations (`staff-profile-pay-roles-v1` and `employee-account-staff-roles-v1`): open Hub → Staff directory signed in as you and tap **Finish staff setup**. The banner shows only while they have records to fill, and tapping it again after a lost connection does nothing twice. It comes back after a new hire's first sign-in; tap it again then. The console steps in `docs/employee-vault-migrations.md` still work.
@@ -369,7 +369,7 @@ Every website lead already goes to HighLevel. Stage 2 makes that durable (nothin
 - **Check it worked (phone):**
   1. Open Hub → Staff directory as the owner. Everyone is listed; no card says "unrecognized id" or "pay needs review".
   2. Give the phone person the "Phone · calls and follow-ups" role and save. They stay signed in: the new role applies to their next action, and their open Hub, crew app or Knock screen updates within about a minute.
-- **Roll back:** delete the variable. The screen says "turned off"; saved roles stay.
+- **Roll back:** set `EGC_STAFF_DIRECTORY_ENABLED=false`. The screen says "turned off"; saved roles stay.
 
 ### 3.2 Booking a walkthrough (no switch)
 
@@ -412,8 +412,8 @@ With walkthrough notes on (the launch default, [3.7](#37-walkthrough-transcripts
 
 ### 3.5 Staff roles grant access (owner decision: on)
 
-- **Set:** `EGC_STAFF_ROLE_ACCESS=true`
-- **Where:** Cloudflare Pages, plain. Preview first, then Production.
+- **Set:** nothing once the launch default that turns it on is merged (owner decision, 2026-10-21). Until then it is off. Setting `EGC_STAFF_ROLE_ACCESS=false` in Cloudflare turns it off again.
+- **Where:** a launch default (`functions/_lib/launch-defaults.js`), not Cloudflare. A Preview deployment of that change gets it first.
 - **Turns on:** the roles you set in the staff directory ([3.1](#31-team-roles-staff-directory)) decide what each person can do. It also turns on `EGC_STAFF_ROLE_PERMISSIONS`.
   - **Manager** role: the Hub treats that person as a manager, with business access to Hub screens, Firebase data and Action Center Hub commands.
   - **Sales** and **Phone**: book, move, cancel and mark no-shows for walkthroughs **and** jobs in Dispatch. They never assign crew and never see pay, cost or money. The crew-size rule stays a warning for them.
@@ -425,8 +425,8 @@ With walkthrough notes on (the launch default, [3.7](#37-walkthrough-transcripts
   - You always keep owner access. A saved role never makes anyone the owner.
 - **Needs first:**
   1. The staff directory is on and its two migrations have run ([3.1](#31-team-roles-staff-directory)).
-  2. **Set every staff member's role before you turn this on.** Give each manager the Manager role, including the managers who sign in with the configured Hub accounts. Because this also turns on `EGC_STAFF_ROLE_PERMISSIONS`, a business account whose saved roles lack Manager loses the business screens.
-  3. Only Sales and Phone people should have those roles, since they will see all customer contacts.
+  2. **Set every directory account's role before you turn this on.** Give each manager who signs in with their own employee account the Manager role. The configured Hub accounts (`HUB_AUTH_USERS_JSON`, `HUB_AUTH_ADDITIONAL_USERS_JSON`) cannot get a directory role and do not need one: they keep the roles and business access set in the Hub user configuration.
+  3. Only Sales and Phone people should have those roles, since they will see all customer contacts. An employee account with no saved role acts on the role its account already names: a signed Sales invitation is Sales, anyone else is crew.
   4. The Firebase service account has the **Firebase Authentication Admin** role ([1.3](#13-security-steps-with-no-switch), step 3). Otherwise the Firebase sign-outs below stay pending.
   5. No Hub sign-in username (`HUB_AUTH_USERS_JSON`, `HUB_AUTH_ADDITIONAL_USERS_JSON`) contains `'` `"` `\` `` ` `` `<` `>` `&`, a tab or a line break. Such accounts can no longer clock in from the crew app ([4.12](#412-correct-timecards-and-close-forgotten-shifts-optional)).
 - **Role changes while it is on:** the person stays signed in. The server uses the new roles from their next action, so a removed role stops working at once, and their open screens update within about a minute. Their existing Firebase data session is ended and the page starts a new one with the new roles. If the staff directory says "Ending their old Firebase data access is pending" or "could not be confirmed", open Hub → Integrations until the pending sign-out clears. Until it clears, a data session issued before the change keeps its old access; once it clears, an already-issued ID token can last up to one more hour.
@@ -437,7 +437,7 @@ With walkthrough notes on (the launch default, [3.7](#37-walkthrough-transcripts
   4. Take the Manager role away again while that account has the Hub open. Within about a minute its business screens close without a sign-in, and Hub → Integrations shows no pending Firebase sign-out.
   5. Sign in as yourself. You still have owner access.
   6. As the Sales test account, open New HighLevel leads and tap **Open in HighLevel** on a lead. In Production it must open that contact in HighLevel. **Book walkthrough** opens Create job with the lead's name and phone.
-- **Roll back:** delete the variable and retry the deployment. Business access goes back to the configured business users, and Sales and Phone can no longer book. Saved roles stay. A stored manager's Firebase data session ends the next time a business user loads the Hub on easygaragecleaning.com. A session issued in the half minute before that load ends on a later load. Hub → Integrations shows any sign-out still pending.
+- **Roll back:** set `EGC_STAFF_ROLE_ACCESS=false` in Cloudflare and retry the deployment. Business access goes back to the configured business users, and Sales and Phone can no longer book. Saved roles stay. A stored manager's Firebase data session ends the next time a business user loads the Hub on easygaragecleaning.com. A session issued in the half minute before that load ends on a later load. Hub → Integrations shows any sign-out still pending.
 
 
 ### 3.6 Staff sign-in resets, password change and approvals
