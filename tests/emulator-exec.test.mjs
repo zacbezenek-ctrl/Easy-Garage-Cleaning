@@ -6,7 +6,7 @@ import {createServer} from 'node:net';
 import {tmpdir} from 'node:os';
 import {join} from 'node:path';
 import {fileURLToPath} from 'node:url';
-import {PORT_CONFLICT,emulatorConfig,firebaseCommand,freePorts,parseArgs,runEmulatorExec,shellCommand} from '../scripts/emulator-exec.mjs';
+import {PORT_CONFLICT,claimPorts,emulatorConfig,firebaseCommand,freePorts,parseArgs,runEmulatorExec,shellCommand} from '../scripts/emulator-exec.mjs';
 
 const SCRIPT=fileURLToPath(new URL('../scripts/emulator-exec.mjs',import.meta.url));
 // Stands in for firebase-tools: binds the configured Firestore port exclusively,
@@ -139,4 +139,75 @@ test('a port taken before the emulator starts is retried once with fresh ports, 
  assert.equal(existsSync(join(own.logDir,'.command-started')),false);assert.deepEqual(leftovers(root),[]);
  for(const text of['Port 41001 is not open on 127.0.0.1, could not start Cloud Firestore Emulator.','Could not start Cloud Firestore Emulator, port taken.','java.net.BindException: Address already in use','Error: listen EADDRINUSE: address already in use'])assert.match(text,PORT_CONFLICT);
  assert.doesNotMatch('Error: firestore.rules:3:1 syntax error',PORT_CONFLICT);
+});
+
+// Review of #228: the OS can hand two parallel runs the same just-released ports. Two real processes are given the
+// same four ports by their pickers; the shared claims must still leave them disjoint.
+test('two processes allocating at once never claim the same port, and their claims go when they end',async t=>{
+ const claims=mkdtempSync(join(tmpdir(),'egc-emulator-claims-'));t.after(()=>rmSync(claims,{recursive:true,force:true}));
+ const same=await freePorts(4);
+ const child=name=>new Promise((done,fail)=>{
+  const code=`import {claimPorts,freePorts} from ${JSON.stringify(SCRIPT)};let first=true;
+const pick=async count=>{if(first){first=false;return ${JSON.stringify(same)};}return freePorts(count);};
+const claim=await claimPorts(4,{id:${JSON.stringify(name)},pickPorts:pick,claimsDir:${JSON.stringify(claims)}});
+console.log(JSON.stringify(claim.ports));await new Promise(done=>setTimeout(done,300));claim.release();`;
+  const run=spawn(process.execPath,['--input-type=module','-e',code],{stdio:['ignore','pipe','inherit']});let out='';
+  run.stdout.on('data',chunk=>{out+=chunk;});run.on('error',fail);run.on('exit',status=>status===0?done(JSON.parse(out)):fail(new Error(`${name} exited ${status}`)));
+ });
+ const [a,b]=await Promise.all([child('run-a'),child('run-b')]);
+ assert.equal(new Set([...a,...b]).size,8,'disjoint');
+ assert.ok([a,b].some(ports=>ports.join()===same.join()),'one run kept the ports it was given; the other was given fresh ones');
+ assert.deepEqual(readdirSync(claims),[],'both claims and the lock are gone');
+});
+
+test('an expired claim and a stale lock left by a killed run do not block a new run',async t=>{
+ const claims=mkdtempSync(join(tmpdir(),'egc-emulator-claims-'));t.after(()=>rmSync(claims,{recursive:true,force:true}));
+ const [port]=await freePorts(1),old=Date.now()-4*3600000;
+ writeFileSync(join(claims,'killed.json'),JSON.stringify({ports:[port],at:old}));writeFileSync(join(claims,'.lock'),JSON.stringify({at:old}));
+ const claim=await claimPorts(4,{id:'fresh',pickPorts:async count=>[port,...(await freePorts(count)).slice(1)],claimsDir:claims});
+ assert.equal(claim.ports[0],port,'the expired claim no longer holds its port');
+ assert.deepEqual(readdirSync(claims).sort(),['fresh.json']);
+ // A live claim does hold its port: the next run is given another.
+ let calls=0;const next=await claimPorts(4,{id:'next',pickPorts:async count=>calls++===0?claim.ports:freePorts(count),claimsDir:claims});
+ // The OS may also hand back a just-released port that is claimed, so the picker can run more than twice.
+ assert.ok(calls>=2);assert.equal(new Set([...claim.ports,...next.ports]).size,8);
+ claim.release();next.release();assert.deepEqual(readdirSync(claims),[]);
+});
+
+test('firebase dying before the command started is retried whatever it printed; once the command ran it is not',async t=>{
+ const {root,env}=workspace(t),logs=[];
+ // Fails once the way a taken logging port surfaced in CI ("An unexpected error has occurred.", exit 2), then
+ // behaves like the normal fake.
+ writeFileSync(join(root,'flaky-firebase.mjs'),`import {existsSync,readFileSync,writeFileSync} from 'node:fs';import {spawn} from 'node:child_process';import {dirname,resolve} from 'node:path';
+const args=process.argv.slice(2),config=args[args.indexOf('--config')+1],marker=resolve(dirname(config),'flaked-once');
+if(!existsSync(marker)){writeFileSync(marker,'x');console.error('Error: An unexpected error has occurred.');process.exit(2);}
+const child=spawn(process.execPath,[resolve(dirname(config),'fake-firebase.mjs'),...args],{stdio:'inherit'});child.on('exit',code=>process.exit(code??1));`);
+ const flaky={...env,EGC_FIREBASE_BIN:join(root,'flaky-firebase.mjs')};
+ const run=await runEmulatorExec({stdio:'ignore',log:message=>logs.push(message),root,env:flaky,cwd:root,claimsDir:join(root,'claims'),script:'node probe.mjs flaky.json'});
+ assert.deepEqual([run.code,run.attempts,run.portConflict],[0,2,false]);
+ assert.match(logs.join('\n'),/emulator start-up failed \(exit 2\) before the command started/);
+ assert.equal(JSON.parse(readFileSync(join(root,'flaky.json'),'utf8')).host,`127.0.0.1:${run.ports.firestore}`);
+ assert.deepEqual(readdirSync(join(root,'claims')),[],'no claim is left behind');
+ const failed=await runEmulatorExec({...quiet,root,env,cwd:root,claimsDir:join(root,'claims'),script:'node probe.mjs ran.json 0 2'});
+ assert.deepEqual([failed.code,failed.attempts],[2,1],'a command that ran and failed is never retried');
+});
+
+// Review of #231: stopping the CLI (SIGTERM, as CI cancelling a job does) while firebase is still starting ends the run;
+// it is not a start-up failure to retry with a second emulator.
+test('a stop during the emulator start-up ends the run without a retry',async t=>{
+ const {root,env}=workspace(t);
+ writeFileSync(join(root,'slow-firebase.mjs'),"import {writeFileSync} from 'node:fs';writeFileSync('started-firebase','x');setTimeout(()=>process.exit(0),20000);");
+ const slow={...env,EGC_FIREBASE_BIN:join(root,'slow-firebase.mjs')};
+ // In-process: firebase killed by a signal is not a start-up failure.
+ const run=await runEmulatorExec({...quiet,root,env:slow,cwd:root,claimsDir:join(root,'claims'),onChild:child=>setTimeout(()=>child.kill('SIGTERM'),300),script:'node probe.mjs never.json'});
+ assert.deepEqual([run.code,run.attempts],[1,1]);
+ // The CLI: SIGTERM while firebase starts stops it once and exits non-zero, with one start logged.
+ const cli=spawn(process.execPath,[SCRIPT,'--project','demo-egc-stop','node probe.mjs never.json'],{cwd:root,env:slow,stdio:['ignore','ignore','pipe']});let stderr='';
+ cli.stderr.on('data',chunk=>{stderr+=chunk;});
+ for(let wait=0;wait<100&&!/firestore 127\.0\.0\.1/.test(stderr);wait++)await new Promise(done=>setTimeout(done,50));
+ await new Promise(done=>setTimeout(done,300));cli.kill('SIGTERM');
+ const code=await new Promise(done=>cli.on('exit',status=>done(status)));
+ assert.notEqual(code,0);assert.equal((stderr.match(/\[emulator-exec\] demo-egc-stop: firestore/g)||[]).length,1,'one start, no retry');
+ assert.doesNotMatch(stderr,/retrying with fresh ports/);assert.equal(existsSync(join(root,'never.json')),false);
+ const kept=/emulator logs kept in (.+)$/m.exec(stderr)?.[1];if(kept)t.after(()=>rmSync(kept,{recursive:true,force:true}));
 });
