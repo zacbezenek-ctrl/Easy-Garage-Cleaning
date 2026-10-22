@@ -236,3 +236,59 @@ test('a stored name with no name words attaches under no typed name, and a CRM c
   const { fullCustomerAccess } = await import('../functions/_lib/estimator-customer-access.js');
   assert.deepEqual([await fullCustomerAccess(g.rows.get('customers/crm_made'), sales, { env: ROLES }), await fullCustomerAccess(g.rows.get('customers/typed_made'), sales, { env: ROLES })], [false, true]);
 });
+
+test('the walkthrough capture never confirms a guessed stored name: an estimator who may not see the customer is compared with the name they typed', async () => {
+  const { walkthroughCaptureHandlers } = await import('../functions/api/walkthrough-capture.js');
+  const f = fixture(), resolved = await resolve(f, sales, typed('Casey Example'));
+  const saved = await saveDraft(f, sales, { requestId: randomUUID(), customerId: resolved.body.customer.id, draft: draft('Casey Example') });
+  assert.equal(saved.status, 200, saved.text);
+  const id = saved.body.job.id, capture = actor => walkthroughCaptureHandlers({ session: async () => actor, storage: () => f.store, now: () => new Date(NOW) });
+  const nameGap = async (actor, customerName) => {
+    const response = await call(capture(actor).post({ request: json('/api/walkthrough-capture', { action: 'save', jobId: id, requestId: randomUUID(), expectedRevision: f.job(id).walkthroughReview?.revision ?? 0, data: { customerName } }), env: ROLES }));
+    assert.equal(response.status, 200, response.text);
+    assert.deepEqual(leaks(response.text), []);
+    return response.body.gaps.some(gap => gap.field === 'customerName' && /differs/.test(gap.message));
+  };
+  // The stored first name and a wrong guess look the same; only the name the estimator typed matches.
+  assert.deepEqual([await nameGap(sales, 'Jordan Example'), await nameGap(sales, 'Riley Example'), await nameGap(sales, 'Casey Example')], [true, true, false]);
+  // The office compares with the stored record, as before.
+  assert.deepEqual([await nameGap(owner, 'Casey Example'), await nameGap(owner, 'Jordan Example')], [true, false]);
+});
+
+test('another estimator\'s job is not reachable through a walkthrough that is not theirs', async () => {
+  const f = fixture();
+  f.rows.get('jobs/w1').assignedCrew = [otherSales.user];
+  // Estimator A (assigned) drafts the walkthrough's quote.
+  const own = await saveDraft(f, otherSales, { requestId: randomUUID(), customerId: 'ghl_provider7', sourceWalkthroughId: 'w1', sourceRevision: 'w1r', draft: draft() });
+  assert.equal(own.status, 200, own.text);
+  const id = own.body.job.id;
+  // Estimator B names A's walkthrough: the job is not opened, revised or signed.
+  const opened = await prepare(f, sales, { sourceWalkthroughId: 'w1' });
+  assert.deepEqual([opened.status, opened.body.code], [403, 'handoff_job_forbidden']);
+  const resolved = await resolve(f, sales, typed());
+  const signed = await sign(f, sales, { requestId: randomUUID(), customerId: resolved.body.customer.id, sourceWalkthroughId: 'w1', sourceRevision: f.rows.get('jobs/w1').revision, jobId: id, expectedRevision: f.job(id).revision, plan: plan() });
+  assert.deepEqual([signed.status, signed.body.code], [403, 'handoff_revision_forbidden']);
+  assert.equal(f.job(id).acceptance, undefined, 'nothing was signed');
+  // Once the office reassigns the walkthrough to B, B may take it over.
+  f.rows.get('jobs/w1').assignedCrew = [sales.user];
+  const reassigned = await prepare(f, sales, { sourceWalkthroughId: 'w1' });
+  assert.deepEqual([reassigned.status, reassigned.body.jobId], [200, id]);
+  // A scheduled job's address refusal does not print the stored address.
+  const placed = f.job(id);
+  Object.assign(placed, { status: 'scheduled', pipelineStatus: 'scheduled', date: '2026-09-24', endDate: '2026-09-24', time: '09:00', endTime: '12:00', address: '742 Synthetic Way', crewNeeded: 2 });
+  const moved = await sign(f, sales, { requestId: randomUUID(), customerId: 'ghl_provider7', sourceWalkthroughId: 'w1', sourceRevision: f.rows.get('jobs/w1').revision, jobId: id, expectedRevision: placed.revision, plan: plan() });
+  assert.deepEqual([moved.status, moved.body.code], [403, 'handoff_schedule_change_forbidden'], moved.text);
+  assert.deepEqual(leaks(moved.text), []);
+});
+
+test('a placeholder stored name ("Customer", "Unknown", "Test Lead") names nobody, so no typed name attaches to it', async () => {
+  const { estimatorNamesAgree } = await import('../functions/_lib/estimator-customer-access.js');
+  for (const stored of ['Customer', 'Unknown Customer', 'Test Lead', 'Web Lead', 'New Client', 'TBD', 'Guest']) {
+    for (const name of ['Casey Example', 'Unknown Customer', 'Test Lead', 'New Client']) assert.equal(estimatorNamesAgree(stored, name), false, `${stored} / ${name}`);
+    const f = fixture();
+    f.rows.get('customers/ghl_provider7').name = stored;
+    const refused = await resolve(f, sales, typed('Casey Customer'));
+    assert.deepEqual([refused.status, refused.body.code], [409, 'customer_resolve_identity_review'], stored);
+  }
+  assert.equal(estimatorNamesAgree('Jordan Example', 'Casey Example'), true, 'a real shared surname still agrees');
+});

@@ -18,7 +18,6 @@ import { csvResponse, errorResponse, forbiddenOrigin, readJson, reply, sameOrigi
 import { dispatchStorage } from '../_lib/dispatch-storage.js';
 import { bookSale, bookWalkthrough, followSaleStatus, knockJobBridgeEnabled, moveSaleJob } from '../_lib/knock-bridge.js';
 import { canSetPay, seesOthersPay } from '../_lib/pay-visibility.js';
-import { mergeSettings } from '../../crew/knock-settings.js';
 
 /* Pay privacy (docs/FUNNEL-METRICS.md §8.3: a manager sees no per-employee pay). An estimator's 7% on a named job is
    that person's pay: a viewer who does not see others' pay (pay-visibility.js seesOthersPay, the owner by default) gets
@@ -40,17 +39,16 @@ const statementWithoutPay = only(STATEMENT_ROW_FIELDS);
 const SETTER_ROW_FIELDS = Object.freeze(['id', 'walkthroughId', 'jobId', 'jobDate', 'channel', 'setterKey', 'estimatorKey', 'estimatorEvidence', 'serviceClassification', 'state', 'rate',
   'qualifyingAt', 'earnedAt', 'reviewReasons', 'settlement', 'recordedAt']);
 const setterWithoutPay = only(SETTER_ROW_FIELDS);
-// The training pay rate times a rep's training minutes is that rep's training pay: anyone who does not see others' pay
-// gets every payroll block without it (the code's own default in `defaults` is public and stays), and only the owner
-// changes a payroll setting (canSetPay). A manager's save keeps the stored payroll block as it is.
+// The training rate is the role's published company rate (owner decision 2026-10-22), not one person's pay: every rep
+// sees it on their own statement, and a manager sees it through /api/knock-me and their own My money. It is the owner's
+// to set, like the pay period (canSetPay), so the admin payroll card and the admin views of it are the owner's and the
+// named pay viewers': anyone else gets the admin views without it, and their save keeps the stored payroll block
+// (updateSettings keepPayroll, which also binds the save to the read it took that block from).
 const withoutTrainingRate = value => Array.isArray(value) ? value.map(withoutTrainingRate)
   : value && typeof value === 'object' ? Object.fromEntries(Object.entries(value).filter(([key]) => key !== 'trainingHourlyRate').map(([key, item]) => [key, withoutTrainingRate(item)])) : value;
 async function updateSettingsFor(store, admin, body, nowIso, env) {
-  if (canSetPay(admin, env)) return updateSettings(store, admin, body, nowIso);
-  const stored = mergeSettings((await store.get('knock_settings', 'current'))?.settings || {}).payroll, incoming = body?.settings?.payroll;
-  if (incoming !== undefined && (!incoming || typeof incoming !== 'object' || Object.entries(incoming).some(([key, value]) => JSON.stringify(value) !== JSON.stringify(stored[key]))))
-    throw knockFailure('Only the owner changes the pay period or training pay.', 403, 'knock_pay_owner_only');
-  return withoutTrainingRate(await updateSettings(store, admin, { ...body, settings: { ...body.settings, payroll: stored } }, nowIso));
+  const saved = await updateSettings(store, admin, body || {}, nowIso, { keepPayroll: !canSetPay(admin, env) });
+  return seesOthersPay(admin, env) ? saved : withoutTrainingRate(saved);
 }
 import { officeWalkthroughs } from '../_lib/knock-walkthroughs.js';
 

@@ -486,7 +486,8 @@ test('a sales author cannot re-sign a placed job to another service address or c
   const placed = structuredClone(f.rows.get(`jobs/${id}`)), commits = f.calls.length;
   assert.deepEqual([placed.address, placed.crewNeeded, placed.assignedCrew, placed.date], ['100 Fixture Lane', 2, ['crew1', 'crew2'], '2026-09-24']);
   const revise = (actor, change, env = ON) => { const value = plan(); change(value); return saveWalkthroughHandoff(f.store, actor, f.input(undefined, { jobId: id, expectedRevision: f.rows.get(`jobs/${id}`).revision, sourceRevision: f.rows.get('jobs/w1').revision, plan: value }), NOW, { env }); };
-  await assert.rejects(revise(sales, value => { value.client.address = '999 Different Road, Other Town'; Object.assign(value.quote, { total: 400, deposit: 100 }); }), error => error.code === 'handoff_schedule_change_forbidden' && error.status === 403 && /service address/.test(error.message) && error.message.includes('(100 Fixture Lane)'));
+  // The refusal names no stored address: a non-dispatcher keeps the saved one or asks Dispatch.
+  await assert.rejects(revise(sales, value => { value.client.address = '999 Different Road, Other Town'; Object.assign(value.quote, { total: 400, deposit: 100 }); }), error => error.code === 'handoff_schedule_change_forbidden' && error.status === 403 && /service address/.test(error.message) && !error.message.includes('100 Fixture Lane'));
   for (const crewSize of [5, 1]) await assert.rejects(revise(sales, value => { value.logistics.crew_size = crewSize; }), error => error.code === 'handoff_schedule_change_forbidden' && error.status === 403 && /crew size/.test(error.message) && error.message.includes('(2)'));
   assert.deepEqual(f.rows.get(`jobs/${id}`), placed); assert.equal(f.calls.length, commits);
   // The same place written differently, and the price the author sold, may be re-signed; Dispatch's address is kept verbatim.
