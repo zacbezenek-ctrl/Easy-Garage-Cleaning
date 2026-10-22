@@ -75,6 +75,10 @@ export async function validateWalkthroughEvent(store, rep, event, { accepted = [
   if (event.city != null && (typeof event.city !== 'string' || event.city.length > 60)) return refuse('knock_walkthrough_invalid', 'Town must be at most 60 characters.');
   if (event.note != null && String(event.note).length > 500) return refuse('knock_walkthrough_invalid', 'Note is too long.');
   if (typeof event.textConsent !== 'boolean') return refuse('knock_walkthrough_invalid', 'Say whether the customer agreed to a text.');
+  // REP-WALKTHROUGH: "Do the walkthrough now" (selfRun) asks the bridge to book the visit to the rep, today, at the time
+  // tapped. Whether the rep may run it is decided when it books (knock-bridge.js), from their Hub sign-in.
+  if (event.selfRun != null && typeof event.selfRun !== 'boolean') return refuse('knock_walkthrough_invalid', 'Choose who does the walkthrough.');
+  if (event.selfRun === true && (event.time == null || event.estimatorRef != null)) return refuse('knock_walkthrough_invalid', 'A walkthrough you do yourself needs the time you start it.');
   const house = houses.get(knock.houseId) || await store.get('knock_houses', knock.houseId);
   if (!house) return refuse('knock_house_missing', 'That house is not in canvassing.');
   houses.set(knock.houseId, house);
@@ -91,7 +95,8 @@ export function applyWalkthroughEvent(rep, event, nowIso, { house = null, cityNa
     customer: { name: String(event.customer.name).trim(), phone: normalizePhone(event.customer.phone), email: String(event.customer.email || '').trim().toLowerCase() },
     textConsent: event.textConsent === true,
     // What the rep asked for. A picked slot names its estimator only by an opaque reference (knock-bridge.js).
-    requested: { date: event.date, time: event.time || null, part: event.dayPart || null, estimatorRef: event.estimatorRef || null, source: event.time && event.estimatorRef ? 'slot' : 'preference' },
+    requested: { date: event.date, time: event.time || null, part: event.dayPart || null, estimatorRef: event.estimatorRef || null, source: event.selfRun === true ? 'self' : event.time && event.estimatorRef ? 'slot' : 'preference' },
+    ...(event.selfRun === true ? { selfRun: true } : {}),
     note: event.note ? String(event.note).slice(0, 500) : '',
     setAt: event.at, status: 'set',
     booking: { status: 'pending', jobId: '', date: '', time: '', endTime: '', estimator: '', at: null, by: '' },
@@ -107,7 +112,10 @@ export function repWalkthroughView(row) {
   return {
     id: row.id, houseId: row.houseId, address: { number: row.address?.number || '', street: row.address?.street || '', unit: row.address?.unit || '' },
     customer: { name: row.customer?.name || '' }, setAt: row.setAt, requested: { date: row.requested?.date || '', time: row.requested?.time || null, part: row.requested?.part || null },
-    status: row.status || 'set', booking: { status: booking.status || 'pending', date: booking.date || '', time: booking.time || '', endTime: booking.endTime || '', estimator: booking.estimator || '', message: booking.message || '' },
+    status: row.status || 'set', booking: { status: booking.status || 'pending', date: booking.date || '', time: booking.time || '', endTime: booking.endTime || '', estimator: booking.estimator || '', message: booking.message || '',
+      // REP-WALKTHROUGH: the Hub walkthrough a rep runs themselves, to open it in the walkthrough app (/crew/gameplan checks
+      // it is assigned to them). Never another estimator's visit.
+      ...(booking.selfRun === true && booking.jobId ? { selfRun: true, walkthroughId: booking.jobId } : {}) },
   };
 }
 

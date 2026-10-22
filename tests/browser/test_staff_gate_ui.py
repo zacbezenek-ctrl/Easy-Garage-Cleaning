@@ -232,7 +232,7 @@ class StaffGateBrowserTests(unittest.TestCase):
         self.assertLessEqual(page.evaluate('document.documentElement.scrollWidth'), 375)
         page.screenshot(path=str(OUT / 'crew-offline.png'), full_page=True)
         shell = page.evaluate(WORKER_SHELL)
-        self.assertEqual(shell, {'names': ['egc-crew-shell-20261022livestatus'], 'keys': PUBLIC_SHELL}, 'the outbox import and the public shell load signed out; gated files are skipped, not fatal')
+        self.assertEqual(shell, {'names': ['egc-crew-shell-20261022repwalk2'], 'keys': PUBLIC_SHELL}, 'the outbox import and the public shell load signed out; gated files are skipped, not fatal')
         self.assertEqual(self.context.request.get(self.url + '/crew/job.js?v=20261021starttoday', max_redirects=0).status, 401, 'the gated shell files were refused, not cached')
 
     def test_the_crew_worker_installs_signed_in_with_the_whole_shell_and_reloads_offline(self):
@@ -242,7 +242,7 @@ class StaffGateBrowserTests(unittest.TestCase):
         expect(page).to_have_url(self.url + '/crew/job')
         expect(page).to_have_title("Today's work · Easy Garage Cleaning")
         shell = page.evaluate(WORKER_SHELL)
-        self.assertEqual(shell, {'names': ['egc-crew-shell-20261022livestatus'], 'keys': sorted(PUBLIC_SHELL + STAFF_SHELL)})
+        self.assertEqual(shell, {'names': ['egc-crew-shell-20261022repwalk2'], 'keys': sorted(PUBLIC_SHELL + STAFF_SHELL)})
         self.context.set_offline(True)
         page.reload()
         expect(page).to_have_title("Today's work · Easy Garage Cleaning")

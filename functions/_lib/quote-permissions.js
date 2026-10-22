@@ -1,5 +1,6 @@
 import { hasBusinessAccess } from './hub-session.js';
 import { can, capabilityMode, staffRoleAccessEnabled } from './staff-roles.js';
+import { selfWalkthroughVisitId } from './knock-self-walkthrough.js';
 
 // P2-12: who may author quotes (unsigned drafts, sending options for review and
 // signed walkthrough handoffs). Owners and managers (requireDispatcher) always
@@ -23,7 +24,10 @@ const signed = session => Boolean(session) && typeof session === 'object' && typ
 
 export const isDispatcher = session => signed(session) && hasBusinessAccess(session) && ['owner', 'manager'].includes(session.role);
 
+// REP-WALKTHROUGH: a Knock rep's session for their own self-run walkthrough (knock-self-walkthrough.js, given only to a
+// request naming that visit or the job saved from it) authors that one walkthrough and is never a dispatcher.
 export function quoteAuthorAccess(session, env = {}) {
+  if (signed(session) && selfWalkthroughVisitId(session)) return { dispatcher: false, author: true };
   if (staffRoleAccessEnabled(env)) {
     const dispatcher = signed(session) && can(session, 'dispatch.write', env);
     return { dispatcher, author: dispatcher || signed(session) && can(session, 'walkthrough.perform', env) };

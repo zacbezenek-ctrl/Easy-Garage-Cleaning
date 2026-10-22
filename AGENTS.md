@@ -143,7 +143,9 @@ Each rule is an owner decision recorded in the code. Changing one needs the owne
   `functions/_lib/quote-draft.js` re-checks `compositeApproval()` at send preview and send
   (`quote_draft_composite_prices_unapproved`).
 - **Commission rates** (`CHANNEL_PERCENTS` in `crew/knock-money.js`): door-to-door direct sale 25%, appointment setter
-  13%, estimator 7%. One job pays once and the shares never stack (`functions/_lib/estimator-commission.js`,
+  13%, estimator 7%. A walkthrough a rep runs and signs themselves at the door (Knock "Do the walkthrough now") is their
+  direct sale: 25% only, never with the 13% or the 7% (owner decision 2026-10-21, `repRanWalkthrough` in
+  `functions/_lib/knock-setters.js`). One job pays once and the shares never stack (`functions/_lib/estimator-commission.js`,
   `functions/_lib/knock-setters.js`). Rows show no amount until the owner approves the terms.
 - **The Hub is the source of truth; HighLevel is a second record.** HighLevel owns customer messages and follow-ups;
   the Hub owns the schedule, jobs and money and only tells HighLevel. Never add a HighLevel write or a customer send

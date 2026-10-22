@@ -6,6 +6,7 @@ import { assignmentKey, createJobAssignmentAccess } from './job-assignment.js';
 import { requireQuoteAuthor } from './quote-permissions.js';
 import { can } from './staff-roles.js';
 import { walkthroughCard } from './walkthrough-state.js';
+import { selfWalkthroughVisitId } from './knock-self-walkthrough.js';
 
 /** WP5 read fix: the walkthrough gameplan (crew/gameplan.html) reads its walkthroughs from the server, not the
  * Firestore SDK, so a Sales estimator (no business_access claim, firestore.rules) can open them.
@@ -18,7 +19,9 @@ import { walkthroughCard } from './walkthrough-state.js';
  * handoff_walkthrough_forbidden. A row is the gameplan's prefill: the crew card (walkthrough-state.js
  * walkthroughCard: time, customer, phone, address and where the visit stands) plus email, the HighLevel ids,
  * the lead source and the customer's request. Never notes, estimates, signatures, crew or other jobs.
- * One masked equality query on today's jobs (the reads the SDK list made) and one document read for requested. */
+ * One masked equality query on today's jobs (the reads the SDK list made) and one document read for requested.
+ * REP-WALKTHROUGH: a Knock rep's session for their own self-run walkthrough (knock-self-walkthrough.js) lists that one
+ * visit only and answers selfRun: true, which opens the gameplan for it. */
 export const GAMEPLAN_WALKTHROUGH_FIELDS = Object.freeze(['type', 'recordType', 'date', 'time', 'endDate', 'endTime', 'status', 'pipelineStatus', 'customer', 'name', 'title', 'phone', 'email', 'address',
   'arrivalWindow', 'arrivalWindowStart', 'arrivalWindowEnd', 'highlevelContactId', 'contactId', 'highlevelOpportunityId', 'highlevelAppointmentId', 'source', 'customerInstructions',
   'assignedCrew', 'assignedTo', 'crewLead', 'walkthroughVisit.startedBy', 'walkthroughOutcome.outcome', 'walkthroughOutcome.reasonCode', 'walkthroughOutcome.finishedAt', 'walkthroughOutcome.occurrence',
@@ -82,5 +85,7 @@ export async function gameplanWalkthroughs(store, actor, query = {}, { env = {},
   const date = denverToday(now), rows = [];
   for (const visit of await store.walkthroughsOn(date)) if (walkthrough(visit) && !closed(visit) && await visible(visit)) rows.push(gameplanWalkthroughRow(visit));
   rows.sort((a, b) => String(a.time).localeCompare(String(b.time)) || a.id.localeCompare(b.id));
+  const own = selfWalkthroughVisitId(actor);
+  if (own) return { ok: true, authority: 'employee_hub', date, walkthroughs: rows.filter(row => row.id === own), requested, selfRun: true };
   return { ok: true, authority: 'employee_hub', date, walkthroughs: rows, requested };
 }

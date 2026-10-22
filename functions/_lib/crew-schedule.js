@@ -5,6 +5,7 @@ import { jobSegments } from './dispatch-segments.js';
 import { crewJobProjection } from './crew-job-projection.js';
 import { fieldActivity, fieldCancelled, fieldId } from './field-execution.js';
 import { assignmentKey } from './job-assignment.js';
+import { SELF_RUN_CARD_FIELDS, selfRunCardHidden } from './knock-self-walkthrough.js';
 
 /** CREW-SCHEDULE (WP6, owner decision D6 2026-10-17): the crew app's schedule by crew, read only.
  * GET /api/crew-schedule?from=YYYY-MM-DD&to=YYYY-MM-DD&scope=mine|all (Denver dates, at most 14 days, starting no more
@@ -44,7 +45,9 @@ const DEFAULT_PRIORITY = 99;
  * instructions. */
 export const CREW_SCHEDULE_FIELDS = Object.freeze(['type', 'recordType', 'status', 'pipelineStatus', 'date', 'endDate', 'time', 'endTime', 'allDay',
   'arrivalWindow', 'serviceType', 'customer', 'address', 'assignedCrew', 'assignedTo', 'crewLead', 'crewId', 'crewName', 'crewNeeded', 'requiredCrewSize',
-  'crewSize', 'assignmentSegments', 'durationMin', 'estimatedDurationMin', 'fieldExecution.activity', 'fieldExecution.activityAt', 'fieldExecution.visits', 'startedAt', 'completedAt', 'cancelledAt']);
+  'crewSize', 'assignmentSegments', 'durationMin', 'estimatedDurationMin', 'fieldExecution.activity', 'fieldExecution.activityAt', 'fieldExecution.visits', 'startedAt', 'completedAt', 'cancelledAt',
+  // REP-WALKTHROUGH: whether a walkthrough is a Knock rep's own self-run visit past its right (selfRunCardHidden).
+  ...SELF_RUN_CARD_FIELDS.filter(field => !['type', 'recordType', 'status', 'pipelineStatus', 'date', 'assignedCrew'].includes(field))]);
 /** The live states a schedule row names (fieldStatus): en route, on site, and the crew's own paused, waiting, delayed
  * and day-ended marks. The stage is the whole job's, so a state shows only on today's row and only when the crew set it
  * today (fieldExecution.activityAt, written with every crew status change): a multi-day job marked on site yesterday
@@ -128,6 +131,8 @@ export async function crewSchedule({ session, env = {}, crews, jobs, access, nam
   for (const job of jobs) {
     const visit = job?.type === 'walkthrough';
     if (!job || !(CREW_WORK.has(job.type) || visit) || job.recordType || !fieldId(job.id) || fieldCancelled(job)) continue;
+    // REP-WALKTHROUGH: a Knock rep's own self-run visit leaves their schedule once their right to it ends.
+    if (visit && !manager && selfRunCardHidden(job, session, now)) continue;
     let open = null;
     for (const row of jobSegments(job)) {
       const days = windowDays(row, from, to);

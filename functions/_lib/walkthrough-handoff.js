@@ -618,7 +618,8 @@ export async function releaseAllHeldHandoffs(store, actor, now = new Date().toIS
  * signed revision re-prices and re-approves an existing job, so an open portal
  * card checkout opened for the earlier terms is expired, or reported as
  * checkout_needs_review, exactly as a quote draft revision does. */
-export async function saveWalkthroughHandoff(store, actor, input, now = new Date().toISOString(), { env = {}, checkouts = null, compositeState = compositeStateDefault, winterSale = winterSaleReaders } = {}) {
+// replayOnly (REP-WALKTHROUGH, a Knock rep's unchanged resend): answer an earlier save from its receipt, never write.
+export async function saveWalkthroughHandoff(store, actor, input, now = new Date().toISOString(), { env = {}, checkouts = null, compositeState = compositeStateDefault, winterSale = winterSaleReaders, replayOnly = false } = {}) {
   const access = requireQuoteAuthor(actor, env);
   if (!plain(input) || Object.keys(input).some(key => !['actorId', 'requestId', 'customerId', 'sourceWalkthroughId', 'sourceRevision', 'jobId', 'expectedRevision', 'plan'].includes(key)) || !requestId(input.requestId) || !safeId(input.customerId) || input.jobId && !safeId(input.jobId)) throw fail('invalid_request', 'The accepted walkthrough needs a stable request and customer identity.', 400);
   if (input.actorId && input.actorId !== actor.user) throw fail('actor_changed', 'The signed-in employee changed. Reopen the original account to recover this request.', 403);
@@ -654,6 +655,7 @@ export async function saveWalkthroughHandoff(store, actor, input, now = new Date
       ...(plain(crew) ? { crew: { ...crew, date: saved.date || '', time: saved.time || '', endTime: saved.endTime || '' } } : {}), ...(plain(saved.compositeQuote) || plain(saved.pricesPendingApproval) ? { pricing: pricingView(saved) } : {}) };
   }
   const prior = await replay(); if (prior) return prior;
+  if (replayOnly) throw fail('forbidden', 'This walkthrough is no longer open to you. Ask the office.', 403);
   // D-DEPOSIT: a new signature is on the current terms. A page still showing the earlier 50% terms (opened before they
   // changed) is refused, and nothing is saved; a save it made before is replayed above, on the terms it was signed on.
   if (plan.terms_version !== CURRENT_SIGNED_TERMS) throw fail('terms_outdated', 'This signature is on the earlier deposit terms (50% upfront). Nothing was saved. Reload the walkthrough so the homeowner reviews and signs the current terms: a 25% deposit now and the remaining 75% on the job day.');

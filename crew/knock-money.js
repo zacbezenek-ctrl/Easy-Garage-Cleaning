@@ -367,9 +367,10 @@ function reviewScope(sale, issues, period, timeZone, tiered) {
    paid     - payouts recorded against the period
    Review reasons come only from sales that touch the period (see reviewScope).
    channels - only once the owner approved the setter terms (SETTER_TERMS): the appointment-setter and estimator shares
-              earned so far, [{repKey, role:'setter'|'estimator', amount, earnedAt (ms), name?, share?, sourceAt?}]. Each
-              adds to its recipient's earned commission in the period it was earned, and every row then also has
-              setterCommission and estimatorCommission. A share whose sourceAt (ms, or null when unknown) is more than
+              earned so far, [{repKey, role:'setter'|'estimator'|'direct_rep', amount, earnedAt (ms), name?, share?, sourceAt?}].
+              Each adds to its recipient's earned commission in the period it was earned, and every row then also has
+              setterCommission and estimatorCommission (and doorWalkthroughCommission once any 'direct_rep' share, a
+              walkthrough a rep ran themselves at the door, REP-WALKTHROUGH, is among them). A share whose sourceAt (ms, or null when unknown) is more than
               CHANNEL_LOOKBACK_DAYS before the period's start is not counted and holds its recipient
               (statement_lookback_exceeded). channelReview: reasons that hold every row (the shares could not all be
               read). channelHolds: [{repKey, reasons, dates?, from?, all?}] hold one recipient's row in the periods
@@ -390,7 +391,7 @@ export function periodStatement({ sales = [], payouts = [], training = [], reps 
   const overrides = leadOverrides(sales, commission, { now });
   // Reps with any receipt counted under an enabled monthly accelerator.
   const tieredReps = new Set(sales.filter(sale => saleTerms(sale, commission) && saleTerms(sale, commission).acceleratorEnabled !== false).map(sale => sale.repKey));
-  const byRep = new Map(), withChannels = Array.isArray(channels);
+  const byRep = new Map(), withChannels = Array.isArray(channels), doorWalks = withChannels && channels.some(item => item?.role === 'direct_rep');
   const row = (repKey, name = '') => {
     if (!byRep.has(repKey)) {
       const rep = reps.find(r => r.repKey === repKey);
@@ -398,7 +399,7 @@ export function periodStatement({ sales = [], payouts = [], training = [], reps 
         repKey, name: rep?.displayName || name || repKey, salesBooked: 0, booked: 0, pending: 0,
         earned: 0, accelerator: 0, override: 0, paid: 0, trainingMinutes: 0, trainingPay: 0,
         projectedCommission: 0, customerCollectedRevenue: 0, customerRefundedRevenue: 0,
-        collectionUnknownCount: 0, reviewReasons: [], ...(withChannels ? { setterCommission: 0, estimatorCommission: 0 } : {}),
+        collectionUnknownCount: 0, reviewReasons: [], ...(withChannels ? { setterCommission: 0, estimatorCommission: 0 } : {}), ...(doorWalks ? { doorWalkthroughCommission: 0 } : {}),
       });
     }
     return byRep.get(repKey);
@@ -442,7 +443,7 @@ export function periodStatement({ sales = [], payouts = [], training = [], reps 
   const windowStart = Date.parse(addDays(period.start, -CHANNEL_LOOKBACK_DAYS)), counted = [];
   for (const item of withChannels ? channels : []) {
     if (!Number.isFinite(item?.earnedAt) || !Number.isFinite(item.amount) || !inPeriod(zonedDate(item.earnedAt, timeZone), period)) continue;
-    const r = row(item.repKey, item.name), key = item.role === 'setter' ? 'setterCommission' : 'estimatorCommission';
+    const r = row(item.repKey, item.name), key = item.role === 'setter' ? 'setterCommission' : item.role === 'direct_rep' ? 'doorWalkthroughCommission' : 'estimatorCommission';
     if (item.sourceAt !== undefined && !(item.sourceAt >= windowStart)) { r.reviewReasons.push('statement_lookback_exceeded'); continue; }
     counted.push(item);
     r[key] = money(r[key] + item.amount);
@@ -491,7 +492,7 @@ export function periodStatement({ sales = [], payouts = [], training = [], reps 
       r.earned = r.accelerator = r.override = r.balance = null;
       if (r.reviewReasons.includes('commission_terms_missing_or_invalid')) r.projectedCommission = r.pending = null;
     }
-    if (withChannels && r.earned === null) r.setterCommission = r.estimatorCommission = null;
+    if (withChannels && r.earned === null) { r.setterCommission = r.estimatorCommission = null; if (doorWalks) r.doorWalkthroughCommission = null; }
     r.earnedCommission = r.earned === null ? null : money(r.earned + r.override);
     r.payableCommission = r.compensationState === 'configured' ? Math.max(0, r.balance) : null;
   }
@@ -513,12 +514,12 @@ export function toCsv(header, rows) {
 
 export function commissionCsv(statement, period) {
   // A statement with the approved setter and estimator shares (periodStatement channels) adds their two columns.
-  const channels = statement.some(r => Object.hasOwn(r, 'setterCommission'));
+  const channels = statement.some(r => Object.hasOwn(r, 'setterCommission')), doorWalks = statement.some(r => Object.hasOwn(r, 'doorWalkthroughCommission'));
   return toCsv(
     ['period_start', 'period_end', 'rep', 'username', 'sales_booked', 'booked_revenue', 'pending_commission', 'earned_commission', 'accelerator_included', 'lead_override', 'rep_payments_recorded', 'calculated_balance', 'projected_commission', 'customer_collected_revenue', 'customer_refunded_revenue', 'payable_commission', 'compensation_state', 'review_reasons', 'collection_unknown_count', 'rep_payment_evidence', 'settled_commission',
-      ...(channels ? ['setter_commission_included', 'estimator_commission_included'] : [])],
+      ...(channels ? ['setter_commission_included', 'estimator_commission_included'] : []), ...(doorWalks ? ['door_walkthrough_commission_included'] : [])],
     statement.map(r => [period.start, period.end, r.name, r.repKey, r.salesBooked, ...[r.booked, r.pending, r.earned, r.accelerator, r.override, r.commissionPaid, r.balance, r.projectedCommission, r.customerCollectedRevenue, r.customerRefundedRevenue, r.payableCommission].map(v => v == null ? '' : v.toFixed(2)), r.compensationState, r.reviewReasons.join(';'), r.collectionUnknownCount, r.commissionPaymentEvidence, r.commissionSettled == null ? '' : r.commissionSettled.toFixed(2),
-      ...(channels ? [r.setterCommission, r.estimatorCommission].map(v => v == null ? '' : v.toFixed(2)) : [])]),
+      ...(channels ? [r.setterCommission, r.estimatorCommission].map(v => v == null ? '' : v.toFixed(2)) : []), ...(doorWalks ? [r.doorWalkthroughCommission == null ? '' : r.doorWalkthroughCommission.toFixed(2)] : [])]),
   );
 }
 

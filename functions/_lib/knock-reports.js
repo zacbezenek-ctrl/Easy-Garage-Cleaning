@@ -44,13 +44,14 @@ async function loadMoney(store, { repKey = null } = {}) {
   return { sales: sales.map(clean), payouts: payouts.map(clean), training: training.map(clean) };
 }
 
-/* A rep's own setter records (appointment setting, 13% / 7%), as the rep sees them: the estimator, whoever closed the job
+/* A rep's own setter records (appointment setting, 13% / 7%; a walkthrough they ran themselves, the door-sale 25%), as
+   the rep sees them: the estimator, whoever closed the job
    and any other rep's direct sale stay with the office (Admin > Setters lists them); of the allocations only the rep's own
    setter share is shown, never the estimator's pay. The bridge (knock-bridge.js) records the estimator on every door
    walkthrough, whose staff key a rep otherwise never learns (estimatorRef). */
 export function repSetterRows(setters, repKey) {
   const rows = (setters?.rows || []).filter(row => row?.setterKey === repKey).map(({ estimatorKey, closingActorKey, directSaleRepKey, allocations, adjustment, ...row }) => ({
-    ...row, allocations: (Array.isArray(allocations) ? allocations : []).filter(item => item?.role === 'setter' && item.repKey === repKey) }));
+    ...row, allocations: (Array.isArray(allocations) ? allocations : []).filter(item => ['setter', 'direct_rep'].includes(item?.role) && item.repKey === repKey) }));
   return { ...setters, rows };
 }
 

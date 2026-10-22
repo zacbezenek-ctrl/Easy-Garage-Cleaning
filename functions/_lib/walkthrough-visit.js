@@ -4,6 +4,7 @@ import { validDate } from './dispatch-time.js';
 import { hasBusinessAccess } from './hub-session.js';
 import { can, capabilityMode, staffRoleAccessEnabled } from './staff-roles.js';
 import { WALKTHROUGH_DENIAL } from './quote-permissions.js';
+import { SELF_WALKTHROUGH_REPLAY, selfWalkthroughVisitId } from './knock-self-walkthrough.js';
 import { assignmentKey, createJobAssignmentAccess } from './job-assignment.js';
 import { employeeVaultReadOnly, employeeVaultSecret } from './employee-vault-key.js';
 import { commitVaultDocuments, readCollectionRecords, readOne, sealedFields } from './employee-vault.js';
@@ -60,9 +61,11 @@ const occurrenceView = value => plain(value) ? { number: Number.isInteger(value.
  * quotes.author capability (owner, manager, sales); otherwise the dispatch-level owner or
  * manager (business access) or the signed sales role. With EGC_STAFF_ROLE_ACCESS
  * (AUTH-ROLES) it is walkthrough.perform, the same capability the gameplan, its handoff
- * and customer-resolve check. */
+ * and customer-resolve check. REP-WALKTHROUGH: also a Knock rep's session for their own self-run walkthrough
+ * (knock-self-walkthrough.js, given only to a request naming that visit). */
 export function walkthroughPerformer(session, env = {}) {
   if (!plain(session) || typeof session.user !== 'string' || !session.user.trim()) return false;
+  if (selfWalkthroughVisitId(session)) return true;
   if (staffRoleAccessEnabled(env)) return can(session, 'walkthrough.perform', env);
   if (capabilityMode(session, env) === 'staff_roles') return can(session, 'quotes.author', env);
   return hasBusinessAccess(session) && ['owner', 'manager'].includes(session.role) || session.role === 'sales';
@@ -186,6 +189,8 @@ export async function recordWalkthroughVisit(store, session, input, now = new Da
     return result(saved, receipt, true);
   }
   const prior = await replay(); if (prior) return prior;
+  // A Knock rep's resend after their right ended (knock-self-walkthrough.js selfVisitReplay) only replays.
+  if (session[SELF_WALKTHROUGH_REPLAY] === true) throw denied(roles);
 
   const visit = await store.read('jobs', request.visitId);
   if (!visit || visit.type !== 'walkthrough' || visit.recordType || !safeId(visit.id)) throw fail('not_found', 'This walkthrough visit could not be found. Refresh your schedule.', 404);

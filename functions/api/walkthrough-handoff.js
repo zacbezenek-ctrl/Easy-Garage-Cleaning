@@ -1,6 +1,7 @@
 import { getHubSession } from '../_lib/hub-session.js';
 import { dispatchStorage } from '../_lib/dispatch-storage.js';
-import { requireQuoteAuthor } from '../_lib/quote-permissions.js';
+import { quoteAuthorAccess, requireQuoteAuthor } from '../_lib/quote-permissions.js';
+import { SELF_WALKTHROUGH_REPLAY, setterChannel, selfWalkthroughReplay, selfWalkthroughSession, walkthroughRep } from '../_lib/knock-self-walkthrough.js';
 import { handoffCrewOpenings, prepareHandoff, releaseHandoffPrices, saveWalkthroughHandoff } from '../_lib/walkthrough-handoff.js';
 import { expireStaleCheckout } from '../_lib/quote-draft.js';
 import { stripeRequest, stripeSecretKey } from '../_lib/customer-payments.js';
@@ -12,7 +13,7 @@ import { winterSaleReaders } from '../_lib/winter-sale.js';
 import { createKnockStore } from '../_lib/knock-store.js';
 // EGC_WINTER_SALE: a signed sale quote's margin check costs a walkthrough a door-to-door setter booked at the setter's
 // channel (knock_setters, one document read, only when the signed job carries the sale), as the quote draft API does.
-const winterSale = { ...winterSaleReaders, setter: async (env, walkthroughId) => Boolean((await createKnockStore(env).getMany('knock_setters', [walkthroughId])).get(walkthroughId)) };
+const winterSale = { ...winterSaleReaders, setter: async (env, walkthroughId) => setterChannel((await createKnockStore(env).getMany('knock_setters', [walkthroughId])).get(walkthroughId)) };
 const reply = (status, body) => Response.json(body, {status, headers:{'Cache-Control':'no-store','X-Content-Type-Options':'nosniff'}});
 // A refused save names each owner rule (or overlapping work) that stopped it. Only
 // each conflict's code and message leave the server, and no other details are
@@ -35,14 +36,19 @@ function failure(error) {
   return reply(503, {ok:false,code:'handoff_unavailable',error:'The handoff could not be verified. Keep the saved request and retry; do not create another job.'});
 }
 const stripeFor=env=>{const secret=stripeSecretKey(env);return secret?(path,options)=>stripeRequest(secret,path,options):null;};
+// REP-WALKTHROUGH: a Knock rep with Walkthroughs on runs their own self-run walkthrough: a request naming only that visit
+// (walkthroughId, sourceWalkthroughId) or the job saved from it (jobId) runs as its quote author (knock-self-walkthrough.js).
+// Anything else, crew openings included, is refused as before.
+const ownWalkthrough=(actor,env,store,knock,ids,at)=>selfWalkthroughSession(actor,env,ids,{readJob:id=>store().read('jobs',id),knock:knock(env),performer:person=>quoteAuthorAccess(person,env).author,now:at});
 // winterSale (tests): the sale's readers (winter-sale.js). compositeState (tests): the builder's pricing state; by default the library reads it (catalog-store.js readCompositeState).
-export function handoffHandlers({session=getHubSession,storage=dispatchStorage,walkthroughs=gameplanWalkthroughStorage,now=()=>new Date(),stripe=stripeFor,compositeState=null,winterSale:saleReaders=winterSale}={}) {
+export function handoffHandlers({session=getHubSession,storage=dispatchStorage,walkthroughs=gameplanWalkthroughStorage,now=()=>new Date(),stripe=stripeFor,compositeState=null,winterSale:saleReaders=winterSale,knock=createKnockStore}={}) {
   const priced = compositeState ? {compositeState} : {};
   return {
     async get({request,env}) {
       try {
-        const actor=await session(request,env); requireQuoteAuthor(actor,env);
         const query=Object.fromEntries(new URL(request.url).searchParams);
+        const ids=query.view===undefined?[query.sourceWalkthroughId,query.jobId]:query.view==='walkthroughs'?[query.walkthroughId]:[];
+        const actor=await ownWalkthrough(await session(request,env),env,()=>storage(env),knock,ids,now()); requireQuoteAuthor(actor,env);
         // view=crew_openings (EGC_DISPATCH_CREW_AUTO_ASSIGN): rep-safe crew openings for the sold job (handoffCrewOpenings).
         // Off, the view is refused as before (an unknown walkthroughs lookup).
         if(query.view==='crew_openings'&&crewAutoAssignEnabled(env))return reply(200,{...await handoffCrewOpenings(storage(env),actor,query,now(),{env}),viewer:{id:actor.user}});
@@ -56,17 +62,21 @@ export function handoffHandlers({session=getHubSession,storage=dispatchStorage,w
       try {
         const origin=request.headers.get('Origin')||request.headers.get('Referer');
         if(request.headers.get('Sec-Fetch-Site')==='cross-site'||origin&&new URL(origin).origin!==new URL(request.url).origin)return reply(403,{ok:false,code:'handoff_origin_forbidden',error:'Open the walkthrough in the Employee Hub before saving.'});
-        const actor=await session(request,env); requireQuoteAuthor(actor,env);
+        const signedIn=await session(request,env);
+        if(!quoteAuthorAccess(signedIn,env).author&&!await walkthroughRep(signedIn,env,knock(env)))requireQuoteAuthor(signedIn,env);
         if(request.headers.get('Content-Type')?.split(';')[0].trim().toLowerCase()!=='application/json')return reply(415,{ok:false,error:'The handoff must use JSON.'});
         if(Number(request.headers.get('Content-Length'))>320000)return reply(413,{ok:false,error:'The walkthrough is too large.'});
         const raw=await request.text(); if(new TextEncoder().encode(raw).byteLength>320000)return reply(413,{ok:false,error:'The walkthrough is too large.'});
         let input; try{input=JSON.parse(raw);}catch{return reply(400,{ok:false,error:'The walkthrough request is incomplete.'});}
-        const store=storage(env),at=now().toISOString();
+        const store=storage(env),at=now().toISOString(),plainInput=input&&typeof input==='object'&&!Array.isArray(input);
+        const granted=plainInput?await ownWalkthrough(signedIn,env,()=>store,knock,[input.sourceWalkthroughId,input.jobId],now()):signedIn;
+        // A signed save the rep's phone sends again unchanged (photo or CRM retry) after the right ended: its replay only.
+        const actor=plainInput&&!quoteAuthorAccess(granted,env).author?await selfWalkthroughReplay(signedIn,env,input.requestId,{readReceipt:id=>store.read('walkthroughHandoffs',id),readJob:id=>store.read('jobs',id),knock:knock(env),now:now()}):granted; requireQuoteAuthor(actor,env);
         // action prices.release (EGC_QUOTE_BUILDER_ENABLED): a job booked with unapproved builder prices passes the builder's send gate.
         // Off, the request is refused as before (not a signed walkthrough).
-        if(quoteBuilderEnabled(env)&&input&&typeof input==='object'&&!Array.isArray(input)&&input.action==='prices.release')return reply(200,await releaseHandoffPrices(store,actor,input,at,{env,...priced}));
+        if(quoteBuilderEnabled(env)&&input&&typeof input==='object'&&!Array.isArray(input)&&input.action==='prices.release'&&actor[SELF_WALKTHROUGH_REPLAY]!==true)return reply(200,await releaseHandoffPrices(store,actor,input,at,{env,...priced}));
         // A signed revision closes an open portal checkout for the earlier terms.
-        return reply(200,await saveWalkthroughHandoff(store,actor,input,at,{env,...priced,winterSale:saleReaders,checkouts:job=>expireStaleCheckout({store,job,stripe:stripe(env),now:at,mode:moneyTotalsMode(env)})}));
+        return reply(200,await saveWalkthroughHandoff(store,actor,input,at,{replayOnly:actor[SELF_WALKTHROUGH_REPLAY]===true,env,...priced,winterSale:saleReaders,checkouts:job=>expireStaleCheckout({store,job,stripe:stripe(env),now:at,mode:moneyTotalsMode(env)})}));
       } catch(error) { return failure(error); }
     }
   };

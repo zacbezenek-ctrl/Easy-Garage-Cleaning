@@ -312,7 +312,41 @@ and every sync answer and record is as before. Code: `functions/_lib/knock-bridg
   cannot match safely) is listed in Admin > Sales under **Door walkthroughs not in the Hub yet** (one bounded query on
   `knock_walkthroughs.status == 'set'`) with its reason and **Book in Hub**. The same request writes
   `knock_setters/<Hub walkthrough id>` (13% setter + 7% estimator, D6b; nothing is earned until the walkthrough
-  converts and is collected). The walkthrough is on the estimator's own day (crew home's walkthrough cards,
+  converts and is collected).
+* **Do the walkthrough now** (REP-WALKTHROUGH, owner decision 2026-10-21): on the same form, a rep an admin turned
+  **Walkthroughs** on for in Knock Admin → Reps (`knock_reps.walkthroughSelf`, recorded with `walkthroughSelfBy` and
+  `walkthroughSelfAt`), or anyone who already runs walkthroughs (an owner, a manager, an estimator; `knock-me` answers
+  `walkthroughNow`) does the walkthrough themselves. It is Knock's own right, not the Sales role
+  (`functions/_lib/knock-self-walkthrough.js`): the walkthrough APIs (`/api/walkthrough-handoff`, `/api/walkthrough-visit`,
+  `/api/quote-draft`, `/api/pricing-config?parts=walkthrough`) accept such a rep only for a request naming their own
+  self-run visit (`d2d.selfRun`, assigned to them alone) or the job its handoff saved, and never give Dispatch,
+  customer lookups, crew openings, other visits or a place in the estimator pool. A self-run visit is booked only for a
+  customer that booking created: when the door's phone or email links a customer the Hub already had, a Knock-only
+  rep's walkthrough goes to an estimator ("An estimator will do this one.", the same words as any other "do it now" that ends with an estimator, so it never says whether the customer was known) and
+  the answer carries nothing stored about that customer (`EXISTING_CUSTOMER`); owners, managers and estimators, who
+  see full customer records anyway, still self-run; an estimator #215 masks (a quote author without booking rights) does not. The button and the self-run booking need someone the walkthrough app opens for (a quote author) or a rep with Walkthroughs on. Every switch change is kept in `walkthroughSelfLog` (newest last, capped).
+  The right lasts only while the walkthrough is under way (`selfRunOpen`, `selfRunDraft`): the visit until it is
+  converted by the signed handoff, cancelled or lost, the job saved from it until it is signed or sent, and never past
+  `SELF_RUN_DAYS` (3) after the visit's date; after that the rep gets a refusal, never the live customer record. Two
+  narrow exceptions in that window: the rep who started a visit the signed handoff converted still records its Finish
+  or No-show (`selfRunFinishable`, `/api/walkthrough-visit` only), and the phone's unchanged resend of a signed save is
+  answered from its receipt with no new write (`selfWalkthroughReplay`, `replayOnly`). `/api/field-jobs` drops the card
+  from the rep's day once neither applies (`selfRunCardHidden`), and so do `/api/crew-jobs` and the crew schedule. A saved Finish the phone sends again after a lost answer replays from its receipt (`selfVisitReplay`). The winter sale costs a self-run quote at the rep's 25% (`setterChannel`). Walkthrough photos upload to the sold job through
+  `/api/field-jobs`, which only the job's crew and managers can open, so (as for an estimator) they stay on the rep's
+  device and the walkthrough page says the upload needs attention.
+  Not covered: the audio recorder and walkthrough notes, so on these walkthroughs the rep types notes at Finish. The door and a `walkthrough` event with `selfRun: true`, today and the tapped time,
+  are sent at once; the bridge books the Hub visit to the rep (no openings search; `bookSelfRun`) and answers
+  `selfRun` with the Hub walkthrough id, and the phone opens `/crew/gameplan?walkthroughId=…` on it (the full builder
+  menu, vehicles, pricing and signing; customer details come from the Hub visit, never the address bar). Offline the
+  button says so and offers Set walkthrough. A rep who may not run walkthroughs, or a visit the Hub refuses to book to
+  them, gets an estimator as above; an admin's own tap books the admin, and an admin booking another rep's door from
+  Admin > Sales books an estimator. A refused one is fixed and sent again like any walkthrough (Edit and resend), as
+  "do it now" or for an estimator. The setter record carries `selfRun` and the rep's staff key, and no estimator: when
+  the rep signs the handoff the job pays the rep's direct-sale 25% alone (`repRanWalkthrough`), never 13% + 7%; if
+  anyone else signs it (an estimator took it over), it is an ordinary door walkthrough: 13% to the rep and 7% to the
+  signer. Admin > Money shows it as "walkthrough the rep ran (25%)" (CSV
+  `door_walkthrough_commission_included`).
+* The walkthrough is on the estimator's own day (crew home's walkthrough cards,
   `/api/field-jobs`), on their crew schedule page (`/crew/schedule`: a walkthrough shows only to the person it is
   assigned to, on no crew, as "Walkthrough", opening the walkthrough page) and in Hub dispatch. Customer details live
   only on `knock_walkthroughs` (server-only, like `knock_sales`). The estimator handle (`ref`) is an HMAC of the staff
@@ -355,7 +389,8 @@ and every sync answer and record is as before. Code: `functions/_lib/knock-bridg
 ## Money
 
 * **Commission:** D2D direct close is 25%; appointment setter is 13% plus estimator 7% (20% total, owner decision 2026-10-17);
-  direct estimator is 7%. Junk removal is excluded, and there is no team lead commission or accelerator
+  direct estimator is 7%. A walkthrough a rep runs and signs themselves is their direct close: 25% only (owner decision
+  2026-10-21). Junk removal is excluded, and there is no team lead commission or accelerator
   enabled by default. These channel rates must not stack. Service classification, calculation base,
   attribution and contract approval remain required before monetary results are payable.
 * **Earning:** current `knock-collected-v3` terms earn on recorded full customer collection, independently of

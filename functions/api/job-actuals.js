@@ -16,7 +16,7 @@
 import { getHubSession, isHubOwner } from '../_lib/hub-session.js';
 import { dispatchStorage } from '../_lib/dispatch-storage.js';
 import { createKnockStore } from '../_lib/knock-store.js';
-import { directSalesFor } from '../_lib/knock-setters.js';
+import { directSalesFor, repRanWalkthrough } from '../_lib/knock-setters.js';
 import { MONEY_JOB_FIELDS } from '../_lib/money-storage.js';
 import { hubEligibilityFields } from '../_lib/funnel-definitions.js';
 import { denverWorkDate, overtimePolicy } from '../_lib/timesheet-week.js';
@@ -30,7 +30,7 @@ import { WINTER_SALE_SETTINGS_ACTION, mutateWinterSaleSettings, readWinterSaleSe
 
 const LIMIT = 8000;
 const ID = /^[A-Za-z0-9_-]{1,180}$/;
-export const JOB_ACTUALS_FIELDS = Object.freeze([...new Set([...MONEY_JOB_FIELDS, ...hubEligibilityFields(), 'sourceWalkthroughId', 'jobInstructions.laborManHours',
+export const JOB_ACTUALS_FIELDS = Object.freeze([...new Set([...MONEY_JOB_FIELDS, ...hubEligibilityFields(), 'sourceWalkthroughId', 'acceptance.recordedBy', 'jobInstructions.laborManHours',
   'compositeQuote.breakdown.labor.manHours', 'compositeQuote.breakdown.lines', 'quoteDraft.breakdown.source', 'quoteDraft.breakdown.labor.manHours', 'quoteDraft.breakdown.lines', 'fieldExecution.completion.crewOnSite', 'fieldExecution.completion.truckLoads', ...ESTIMATOR_FIELDS])]);
 const reply = (status, body) => Response.json(body, { status, headers: { 'Cache-Control': 'private, no-store', 'X-Content-Type-Options': 'nosniff' } });
 function sameOrigin(request) {
@@ -59,7 +59,8 @@ export function jobActualsHandlers({ session = getHubSession, dispatch = dispatc
         catch { timecardSource = 'unavailable'; }
         const kstore = knock(env), walkthroughs = [...new Set(jobs.map(job => job.sourceWalkthroughId).filter(id => ID.test(String(id || ''))))];
         const [setters, sales] = await Promise.all([walkthroughs.length ? kstore.getMany('knock_setters', walkthroughs) : new Map(), directSalesFor(kstore, jobs.map(job => job.id))]);
-        const report = buildJobActuals({ jobs, labor, settings, setterWalkthroughs: new Set([...setters.keys()].filter(id => setters.get(id))), doorSaleJobs: new Set(sales.map(sale => sale?.handoff?.job?.ref).filter(Boolean)), timecardsAvailable: timecardSource === 'ok', today: window.today, asOf });
+        const report = buildJobActuals({ jobs, labor, settings, setterWalkthroughs: new Set([...setters.keys()].filter(id => setters.get(id))), doorSaleJobs: new Set(sales.map(sale => sale?.handoff?.job?.ref).filter(Boolean)),
+          repWalkthroughJobs: new Set(jobs.filter(job => repRanWalkthrough(setters.get(job.sourceWalkthroughId), job)).map(job => job.id)), timecardsAvailable: timecardSource === 'ok', today: window.today, asOf });
         // EGC_WINTER_SALE: the owner's sale settings (amount, dates, margin floor) beside the cost settings.
         // The margin floor is the owner's alone: a manager sees the sale's terms without it.
         const saleView = settings => { if (isHubOwner(actor)) return settings; const { marginFloorBp, ...rest } = settings; return rest; };
