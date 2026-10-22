@@ -243,6 +243,21 @@ test('the Hub alerts day 2 of a multi-day job worked on day 1 (review of #236, f
   assert.deepEqual(p.made.map(row => row.title), ['Crew late: Synthetic two-day', 'Not clocked in: Synthetic two-day']);
 });
 
+test('Not clocked in names each person by their display name, falls back to the username, and a rename never alerts again', () => {
+  const p = hub();
+  p.context.jobsCache = [job('late', { assignedCrew: ['crew-b', 'crew-c'] })];
+  p.S.people.profiles = [{ id: 'crew-b', username: 'crew-b', displayName: 'Synthetic Crew Bee', status: 'active' }];
+  assert.match(p.context.api.agenda(), /<li class="amber">Not clocked in: Synthetic Crew Bee, crew-c<\/li>/, 'the chip: display name, and the username where there is no profile');
+  p.context.api.notifySlips();
+  assert.deepEqual(p.made.map(row => [row.title, row.options.body]), [['Crew late: Synthetic late', 'Due by 10:15 AM and not arrived. Tap to open the Field agenda.'],
+    ['Not clocked in: Synthetic late', 'Synthetic Crew Bee, crew-c not clocked in for the 10:00 AM start. Tap to open the Field agenda.']]);
+  assert.deepEqual(JSON.parse(p.local.getItem(KEY)), [`${TODAY}|late|late`, `${TODAY}|late|not_clocked_in`], 'the keys name the job and kind, never a person');
+  p.S.people.profiles = [{ id: 'crew-b', username: 'crew-b', displayName: 'Synthetic Crew Bee Renamed', preferredName: 'Bee', status: 'active' }];
+  p.context.api.notifySlips();
+  assert.equal(p.made.length, 2, 'renaming someone the same day sends nothing new');
+  assert.match(p.context.api.agenda(), /Not clocked in: Bee, crew-c/, 'a preferred name wins, as in chat');
+});
+
 test('a hidden tab re-checks once a minute and skips Not clocked in from old time entries', () => {
   const p = hub();
   p.context.jobsCache = [job('late', { assignedCrew: ['crew-b'] })];

@@ -19,16 +19,17 @@ const KEY='egc_slip_alerts_seen',LIMIT=5,KINDS=['late','not_en_route','not_clock
 const TIME=new Intl.DateTimeFormat('en-US',{timeZone:'America/Denver',hour:'numeric',minute:'2-digit'});
 const timeOf=ms=>Number.isFinite(ms)?TIME.format(new Date(ms)):'';
 const text=(value,max)=>String(value||'').replace(/\s+/g,' ').trim().slice(0,max);
-function message(visit,flag,rule){
+function message(visit,flag,rule,name=member=>member){
   const who=text(visit.customer||visit.title,80)||'a job',start=timeOf(rule.startAt?.(visit));
   if(flag.kind==='late'){const due=timeOf(rule.arrivalDeadline?.(visit));return{title:`Crew late: ${who}`,body:`${due?`Due by ${due}`:'Past its arrival time'} and not arrived. Tap to open the Field agenda.`}}
   if(flag.kind==='not_en_route')return{title:`Not en route: ${who}`,body:`${start?`Starts ${start}`:'Starts soon'} and the crew has not left. Tap to open the Field agenda.`};
-  const members=(Array.isArray(flag.members)?flag.members:[]).map(name=>text(name,40)).filter(Boolean);
+  const members=(Array.isArray(flag.members)?flag.members:[]).map(member=>{let shown=member;try{shown=name(member)||member}catch{}return text(shown,40)}).filter(Boolean);
   return{title:`Not clocked in: ${who}`,body:`${members.length?members.join(', '):'A crew member'} not clocked in${start?` for the ${start} start`:''}. Tap to open the Field agenda.`};
 }
-/* pending({visits,now,seen,rule,clockInsFresh}) → [{key,jobId,kind,title,body}], earliest-visit order kept.
-   visits: [{visit,flags}] (employee-suite.js flaggedToday). seen: keys already alerted. */
-function pending({visits=[],now,seen=[],rule=root.EGCArrivalDeadline,clockInsFresh=true}={}){
+/* pending({visits,now,seen,rule,clockInsFresh,name}) → [{key,jobId,kind,title,body}], earliest-visit order kept.
+   visits: [{visit,flags}] (employee-suite.js flaggedToday). seen: keys already alerted. name(username) gives the
+   display name shown for Not clocked in (the key stays on the job and kind, so a rename never alerts again). */
+function pending({visits=[],now,seen=[],rule=root.EGCArrivalDeadline,clockInsFresh=true,name}={}){
   const nowMs=typeof now==='number'?now:Date.parse(now);
   if(!rule||!Number.isFinite(nowMs))return[];
   const date=rule.denverDate(nowMs),done=new Set(seen),out=[];
@@ -40,7 +41,7 @@ function pending({visits=[],now,seen=[],rule=root.EGCArrivalDeadline,clockInsFre
       if(!KINDS.includes(flag?.kind)||flag.kind==='not_clocked_in'&&!clockInsFresh)continue;
       const key=`${date}|${jobId}|${flag.kind}`;
       if(done.has(key))continue;
-      done.add(key);out.push({key,jobId,kind:flag.kind,...message(visit,flag,rule)});
+      done.add(key);out.push({key,jobId,kind:flag.kind,...message(visit,flag,rule,name)});
     }
   }
   return out;
@@ -58,11 +59,11 @@ function deliver(title,options,onTap){
 }
 /* check({visits,now,storage,show,open,rule,clockInsFresh}) → the alerts shown. The seen keys are saved first, so a
    delivery that throws is not repeated every refresh. */
-function check({visits,now,storage=root.localStorage,show=deliver,open=()=>{},rule=root.EGCArrivalDeadline,clockInsFresh=true}={}){
+function check({visits,now,storage=root.localStorage,show=deliver,open=()=>{},rule=root.EGCArrivalDeadline,clockInsFresh=true,name}={}){
   const nowMs=typeof now==='number'?now:Date.parse(now);
   if(!rule||!Number.isFinite(nowMs))return[];
   const date=rule.denverDate(nowMs),seen=readSeen(storage).filter(key=>key.startsWith(date+'|'));
-  const fresh=pending({visits,now:nowMs,seen,rule,clockInsFresh}).slice(0,LIMIT);
+  const fresh=pending({visits,now:nowMs,seen,rule,clockInsFresh,name}).slice(0,LIMIT);
   writeSeen(storage,[...seen,...fresh.map(row=>row.key)].slice(-300));
   for(const row of fresh)try{show(row.title,{body:row.body,tag:'egc-slip-'+row.key,data:{view:'today',job:row.jobId}},()=>open(row.jobId))}catch{}
   return fresh;
