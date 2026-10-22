@@ -137,6 +137,11 @@ Each rule is an owner decision recorded in the code. Changing one needs the owne
   from it). At least one truck load and otherwise only special-handling
   items and access charges (`junkOnly`, `HAULING_GROUPS` in `functions/_lib/composite-quote.js`). Special items or
   access without a truck are not junk-only and keep the Labor line. Any garage work needs the Labor line.
+- **Minimum pickup $250 on hauling-only quotes** (owner decision 2026-10-21), unless an audited "truck already nearby"
+  waiver applies. A builder quote whose menu lines are all hauling (`HAULING_GROUPS`, with or without a truck load) and
+  totals under $250 gets a "Minimum pickup" line up to $250 (`functions/_lib/pickup-minimum.js`, server-only). The waiver
+  needs a reason and a same-day scheduled job in the same 5-digit ZIP code, or the owner. The winter sale never takes a
+  pickup below $250.
 - **Customers see Labor as one amount**, "Labor", never the man-hours, the rate or hourly wording (D-LABOR-TEXT,
   `functions/_lib/composite-quote.js`). Man-hours stay in the staff breakdown.
 - **Draft prices can be saved but never sent.** Owner-unapproved menu prices may sit on an unsent draft;

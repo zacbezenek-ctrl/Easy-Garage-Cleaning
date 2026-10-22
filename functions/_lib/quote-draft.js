@@ -4,6 +4,7 @@ import { requireQuoteAuthor } from './quote-permissions.js';
 import { identityMatches } from './walkthrough-handoff.js';
 import { auditWrite } from './hub-audit.js';
 import { addDays, denverToday, validDate } from './dispatch-time.js';
+import { PICKUP_MINIMUM_CENTS, PICKUP_MINIMUM_LINE_ID, confirmNearbyTruck, haulingOnly, pickupFloorCents, pickupReaders, waiverAudit, waiverRecord } from './pickup-minimum.js';
 import { builderJunkOnly, depositCents, estimateFingerprint, estimateChanged, estimateTotals, included, junkOnlyGarageWork, normalizeLineItems, packageTotals, validateSelection } from './quote-model.js';
 import { customerMoneyTotals, invoiceNumber } from './money-core.js';
 import { moneySnapshot } from './money-service.js';
@@ -324,7 +325,7 @@ export async function readQuoteDraft(store, actor, query = {}, { env = {} } = {}
   return { ok: true, authority: 'employee_hub', job: quoteDraftView(await readJobFor(store, query.jobId)) };
 }
 
-export async function saveQuoteDraft(store, actor, input, now = new Date().toISOString(), { env = {}, checkouts = null, catalogState = catalogStateDefault, compositeState = compositeStateDefault, newQuotePaymentPolicy, winterSale: readers = winterSaleReaders } = {}) {
+export async function saveQuoteDraft(store, actor, input, now = new Date().toISOString(), { env = {}, checkouts = null, catalogState = catalogStateDefault, compositeState = compositeStateDefault, newQuotePaymentPolicy, winterSale: readers = winterSaleReaders, pickup = pickupReaders } = {}) {
   requireQuoteAuthor(actor, env);
   keys(input, SAVE_KEYS, 'The quote draft needs a stable request and customer identity.');
   if (!uuid(input.requestId) || !safeId(input.customerId) || input.jobId && !safeId(input.jobId) || input.sourceWalkthroughId && !safeId(input.sourceWalkthroughId)) throw fail('invalid_request', 'The quote draft needs a stable request and customer identity.', 400);
@@ -357,7 +358,7 @@ export async function saveQuoteDraft(store, actor, input, now = new Date().toISO
   const catalogMode = input.draft?.catalog_pricing !== undefined;
   // With the builder flag off a composite_pricing field stays an unsupported draft field, as before.
   const compositeMode = quoteBuilderEnabled(env) && plain(input.draft) && input.draft.composite_pricing !== undefined;
-  let draft, junkOnlyQuote = false;
+  let draft, junkOnlyQuote = false, builderPriced = null;
   if (compositeMode) {
     if (catalogMode) throw fail('invalid_draft', 'A quote is priced by the builder or by the catalog, not both.', 400);
     const priced = priceCompositeQuote(await compositeState(env), input.draft.composite_pricing, { complete: true });
@@ -368,7 +369,7 @@ export async function saveQuoteDraft(store, actor, input, now = new Date().toISO
     delete material.composite_pricing;
     draft = normalizeQuoteDraft(material, now);
     if (draft.totalCents !== priced.totalCents) throw fail('composite_price_changed', 'The builder quote total changed. Review the quote in the builder again before saving.', 409);
-    junkOnlyQuote = priced.junkOnly === true;
+    junkOnlyQuote = priced.junkOnly === true; builderPriced = priced;
     Object.assign(draft, { pricingSettingsVersion: priced.settingsVersion, compositePricing: structuredClone(priced.compositePricing), breakdown: structuredClone(priced.breakdown) });
   } else if (catalogMode) {
     if (!catalogQuotesEnabled(env)) throw fail('catalog_disabled', 'Catalog quotes are turned off. Keep this draft for review.', 404);
@@ -390,7 +391,8 @@ export async function saveQuoteDraft(store, actor, input, now = new Date().toISO
   const record = (job, plan, jobId) => ({ quoteDraft: { ...(plain(job?.quoteDraft) ? job.quoteDraft : { version: 1, createdAt: now, createdBy: actor.user }), requestId: input.requestId, fingerprint, savedAt: now, savedBy: actor.user, sourceWalkthroughId: input.sourceWalkthroughId || '',
       ...(draft.catalogPricing ? { catalogPricing: draft.catalogPricing } : job?.quoteDraft?.catalogPricing ? { catalogPricing: null } : {}),
       ...(draft.compositePricing ? { compositePricing: draft.compositePricing, breakdown: draft.breakdown } : job?.quoteDraft?.compositePricing ? { compositePricing: null, breakdown: null } : {}),
-      ...(draft.winterSale ? { winterSale: draft.winterSale } : job?.quoteDraft?.winterSale ? { winterSale: null } : {}) },
+      ...(draft.winterSale ? { winterSale: draft.winterSale } : job?.quoteDraft?.winterSale ? { winterSale: null } : {}),
+      ...(draft.minimumWaiver ? { minimumWaiver: draft.minimumWaiver } : job?.quoteDraft?.minimumWaiver ? { minimumWaiver: null } : {}) },
     receipt: { fingerprint, actorId: actor.user, action: 'save', customerId: customer.id, jobId, sourceWalkthroughId: input.sourceWalkthroughId || '', estimateRevision: plan.patch.estimate.revision, material: plan.material, revisedRelease: plan.revisedRelease, warnings: plan.warnings, createdAt: now } });
   const audit = (job, patch, jobId) => auditWrite({ actor: { id: actor.user, kind: 'human', role: actor.role }, via: 'hub', action: 'quote.draft.save', entity: { collection: 'jobs', id: jobId }, before: job ? moneySnapshot(job) : null, after: moneySnapshot({ ...(job || {}), ...patch }), requestId: input.requestId, reason: null, now });
   try {
@@ -401,6 +403,9 @@ export async function saveQuoteDraft(store, actor, input, now = new Date().toISO
       editable(job);
       // An in-person signature is revised only through a new signed walkthrough handoff.
       if (approved(job.estimate?.status) && job.estimate?.acceptanceMethod === 'in_person_signature') throw fail('signed', 'The customer signed this quote in person. Start a signed revision in the walkthrough instead.');
+      // Minimum pickup: a truck-nearby waiver is confirmed now when the job is booked, else when it is sent.
+      const waiver = await pickupWaiver(builderPriced, { actor, job, env, pickup, address: job.address || draft.client.address, now });
+      if (waiver) draft.minimumWaiver = waiver;
       const accepted = saleDropped ? null : acceptedSaleOn(job), ask = sale || (accepted ? { apply: true } : null);
       const saleResult = ask ? await applyWinterSale(draft, ask, { job, actor, now, env, readers, sourceWalkthroughId: input.sourceWalkthroughId || '', junkOnly: junkOnlyQuote, requestId: input.requestId, accepted }) : null;
       if (saleResult) draft = { ...saleResult.draft, winterSale: saleResult.record };
@@ -422,11 +427,15 @@ export async function saveQuoteDraft(store, actor, input, now = new Date().toISO
         { collection: QUOTE_DRAFT_RECEIPTS, id: receiptId, patch: saved.receipt },
         audit(job, patch, job.id),
         ...(saleResult ? saleResult.audits(job.id) : []),
+        ...(waiver ? [waiverAudit(auditWrite, waiver, { actor, jobId: job.id, requestId: input.requestId, now })] : []),
         ...(retired ? [retired] : []),
         ...crossing.writes,
       ]);
     } else {
-      // A new quote has no job date yet: the sale's window is checked again when it is sent (winterSaleSendable).
+      // A new quote has no job date yet: the sale's window is checked again when it is sent (winterSaleSendable), and a
+      // truck-nearby waiver is confirmed then (pickupSendable).
+      const waiver = await pickupWaiver(builderPriced, { actor, env, pickup, address: draft.client.address, now });
+      if (waiver) draft.minimumWaiver = waiver;
       const saleResult = sale ? await applyWinterSale(draft, sale, { actor, now, env, readers, sourceWalkthroughId: input.sourceWalkthroughId || '', junkOnly: junkOnlyQuote, requestId: input.requestId }) : null;
       if (saleResult) draft = { ...saleResult.draft, winterSale: saleResult.record };
       await createDraft(store, actor, input, draft, customer, now, env, { record, audit, receiptId, newQuotePaymentPolicy, junkOnlyQuote, sale: saleResult });
@@ -493,7 +502,7 @@ async function createDraft(store, actor, input, draft, customer, now, env, { rec
       if (sourceProject) fence('projects', sourceProject);
       // The walkthrough keeps its status, completion, signature and money.
       if (source) fence('jobs', source, source.customerId ? null : { customerId: customer.id, updatedAt: now });
-      writes.push({ collection: QUOTE_DRAFT_RECEIPTS, id: receiptId, patch: saved.receipt }, audit(null, target.patch, target.id), ...(sale ? sale.audits(target.id) : []));
+      writes.push({ collection: QUOTE_DRAFT_RECEIPTS, id: receiptId, patch: saved.receipt }, audit(null, target.patch, target.id), ...(sale ? sale.audits(target.id) : []), ...(draft.minimumWaiver ? [waiverAudit(auditWrite, draft.minimumWaiver, { actor, jobId: target.id, requestId: input.requestId, now })] : []));
       await store.commit(writes);
     },
   };
@@ -584,7 +593,26 @@ async function compositeSendable(job, env, compositeState) {
   if (!approval.ready) throw approvalRefusal(approval);
 }
 
-export async function previewQuoteSend(store, actor, input, now = new Date().toISOString(), { env = {}, compositeState = compositeStateDefault, winterSale: readers = winterSaleReaders } = {}) {
+// Minimum pickup (pickup-minimum.js): the waiver a builder save asks for (selection.nearbyTruck), confirmed against the
+// job's booked day (pending until it has one) or the owner's override; null when nothing is waived.
+async function pickupWaiver(priced, { actor, job = null, env, pickup, address, now, pending = true }) {
+  if (!priced) return null;
+  const confirmed = await confirmNearbyTruck({ priced, owner: isHubOwner(actor), jobId: job?.id || '', date: job?.date || '', address, nearbyJobs: date => pickup.nearby(env, date), pending, prefix: 'quote_draft_' });
+  return confirmed ? waiverRecord(confirmed, { reason: priced.compositePricing.nearbyTruck.reason, by: actor.user, at: now }) : null;
+}
+/** Minimum pickup at send: a pickup draft saved below the minimum before it applied is saved again first, and a waiver
+ * is confirmed now against the booked day (the send records and audits it). Returns the waiver record or null. */
+async function pickupSendable(job, actor, env, pickup, now) {
+  const breakdown = plain(job.quoteDraft?.breakdown) ? job.quoteDraft.breakdown : null, pricing = plain(job.quoteDraft?.compositePricing) ? job.quoteDraft.compositePricing : null;
+  if (!breakdown || !pricing || !haulingOnly(breakdown.lines)) return null;
+  const lines = (Array.isArray(job.estimate?.lineItems) ? job.estimate.lineItems : []).filter(line => !isWinterSaleLine(line));
+  if (!pricing.nearbyTruck && !lines.some(line => line?.id === PICKUP_MINIMUM_LINE_ID) && estimateTotals(lines).totalCents < PICKUP_MINIMUM_CENTS) throw fail('pickup_minimum_resave', 'Pickups now have a $250 minimum. Open the quote in the builder and save it again before sending.', 409);
+  if (!pricing.nearbyTruck) return null;
+  const confirmed = await confirmNearbyTruck({ priced: { breakdown }, owner: isHubOwner(actor), jobId: job.id, date: job.date || '', address: job.address || '', nearbyJobs: date => pickup.nearby(env, date), prefix: 'quote_draft_' });
+  return confirmed ? waiverRecord(confirmed, { reason: pricing.nearbyTruck.reason, by: actor.user, at: now }) : null;
+}
+
+export async function previewQuoteSend(store, actor, input, now = new Date().toISOString(), { env = {}, compositeState = compositeStateDefault, winterSale: readers = winterSaleReaders, pickup = pickupReaders } = {}) {
   requireQuoteAuthor(actor, env);
   keys(input, PREVIEW_KEYS, 'Choose the saved quote to send.');
   if (!safeId(input.jobId) || typeof input.expectedRevision !== 'string' || !input.expectedRevision) throw fail('invalid_request', 'Choose the saved quote to send.', 400);
@@ -594,6 +622,7 @@ export async function previewQuoteSend(store, actor, input, now = new Date().toI
   sendable(job, now, env);
   await compositeSendable(job, env, compositeState);
   await winterSaleSendable(job, now, env, readers);
+  await pickupSendable(job, actor, env, pickup, now);
   const delivery = deliveryPlan(job, env), estimate = sendingEstimate(job.estimate), paymentSchedule = await paymentScheduleFor(store,job,estimate), sending = { ...job, estimate };
   const summary = `Send ${estimate.number} revision ${estimate.revision} (${usd(estimate.amountCents)}) to ${String(job.customer || 'the customer').slice(0, 80)}`+(paymentSchedule?'. '+scheduleSummary(paymentSchedule,estimate.commercialPolicy):'');
   const confirmation = await issueConfirmation(env, { actorId: actor.user, action: SEND_ACTION, entityId: `jobs/${job.id}`, payload: sendBinding(sending, delivery, paymentSchedule), summary, now });
@@ -605,7 +634,7 @@ export async function previewQuoteSend(store, actor, input, now = new Date().toI
  * notify the customer. A retry of the same request replays the saved send and
  * lets the deliverer's own ledger decide; it never records a second send.
  */
-export async function sendQuoteDraft(store, actor, input, now = new Date().toISOString(), { env = {}, deliver = null, compositeState = compositeStateDefault, winterSale: readers = winterSaleReaders } = {}) {
+export async function sendQuoteDraft(store, actor, input, now = new Date().toISOString(), { env = {}, deliver = null, compositeState = compositeStateDefault, winterSale: readers = winterSaleReaders, pickup = pickupReaders } = {}) {
   requireQuoteAuthor(actor, env);
   keys(input, SEND_KEYS, 'The send request contains unsupported fields.');
   if (!uuid(input.requestId) || !safeId(input.jobId) || typeof input.expectedRevision !== 'string' || !input.expectedRevision || typeof input.confirmToken !== 'string') throw fail('invalid_request', 'Preview the quote and confirm it before sending.', 400);
@@ -633,6 +662,7 @@ export async function sendQuoteDraft(store, actor, input, now = new Date().toISO
   sendable(job, now, env);
   await compositeSendable(job, env, compositeState);
   await winterSaleSendable(job, now, env, readers);
+  const waiver = await pickupSendable(job, actor, env, pickup, now);
   const delivery = deliveryPlan(job, env), estimate = sendingEstimate(job.estimate), paymentSchedule = await paymentScheduleFor(store,job,estimate);
   const patch = {
     estimate: { ...estimate, ...(paymentSchedule?{paymentSchedule}:{}), status: 'sent', sentAt: now, sentBy: actor.user, sentChannel: 'estimate_ready', sentRevision: estimate.revision, sentFingerprint: estimateFingerprint(paymentSchedule?{...estimate,paymentSchedule}:estimate), sentRequestId: input.requestId, updatedAt: now },
@@ -641,7 +671,7 @@ export async function sendQuoteDraft(store, actor, input, now = new Date().toISO
     ...(estimate.depositRequiredCents !== job.estimate.depositRequiredCents ? { deposit: depositDue(plain(job.deposit) ? job.deposit : {}, estimate.depositRequiredCents) } : {}),
     // The confirmed delivery mode: the deliverer never goes further than the person agreed to.
     estimateReady: { requestId: input.requestId, revision: estimate.revision, mode: delivery.mode, status: ['automation', 'dry_run'].includes(delivery.mode) ? 'pending' : delivery.mode === 'suppressed' ? 'suppressed' : 'messaging_disabled', attempts: 0, recipient: delivery.recipient.masked, requestedAt: now, requestedBy: actor.user },
-    quoteDraft: { ...job.quoteDraft, sentAt: now, sentBy: actor.user },
+    quoteDraft: { ...job.quoteDraft, ...(waiver ? { minimumWaiver: waiver } : {}), sentAt: now, sentBy: actor.user },
     updatedAt: now,
   };
   const warnings = delivery.mode === 'off' ? [{ code: 'messaging_disabled', message: 'Customer messaging is turned off, so HighLevel was not asked to notify the customer. Share the quote with the customer yourself.' }] : delivery.mode === 'suppressed' ? [{ code: 'notifications_off', message: 'Customer notifications are off for this job, so HighLevel was not asked to notify the customer.' }] : [];
@@ -650,6 +680,7 @@ export async function sendQuoteDraft(store, actor, input, now = new Date().toISO
     { collection: QUOTE_DRAFT_RECEIPTS, id: receiptId, patch: { fingerprint, actorId: actor.user, action: 'send', customerId: job.customerId || '', jobId: job.id, estimateRevision: estimate.revision, delivery: delivery.mode, warnings, createdAt: now } },
     auditWrite({ actor: { id: actor.user, kind: 'human', role: actor.role }, via: 'hub', action: SEND_ACTION, entity: { collection: 'jobs', id: job.id }, before: moneySnapshot(job), after: moneySnapshot({ ...job, ...patch }), requestId: input.requestId, reason: `delivery:${delivery.mode}`, now }),
   ];
+  if (waiver) writes.push(waiverAudit(auditWrite, waiver, { actor, jobId: job.id, requestId: input.requestId, now }));
   if (paymentSchedule && !reusesSchedule(job, estimate)) writes.push({collection:'jobs',id:paymentSchedule.sourceWalkthroughId,revision:paymentSchedule.sourceRevision,verify:true});
   try { await consumeConfirmation(env, store, input.confirmToken, { actorId: actor.user, action: SEND_ACTION, entityId: `jobs/${job.id}`, payload: sendBinding({ ...job, estimate }, delivery, paymentSchedule), now, requestId: input.requestId }, writes); }
   catch (error) {

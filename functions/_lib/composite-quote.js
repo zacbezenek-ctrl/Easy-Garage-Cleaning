@@ -679,7 +679,8 @@ export function priceCompositeQuote(state, descriptor, { complete = false, requi
   // booked: quote-draft.js, walkthrough-handoff.js). It is not a menu line, so junkOnly and the Labor line are unchanged.
   const hauling = haulingOnly(detail), short = hauling ? Math.max(0, PICKUP_MINIMUM_CENTS - detail.reduce((sum, line) => sum + line.totalCents, 0) - (labor?.totalCents ?? 0)) : 0;
   const minimumCents = selection.nearbyTruck ? 0 : short, pickup = { haulingOnly: hauling, minimumCents, waived: Boolean(selection.nearbyTruck) && short > 0, waivedCents: selection.nearbyTruck ? short : 0 };
-  if (minimumCents) model.push(pickupMinimumLine(minimumCents));
+  // The line follows the menu lines, before Labor (the Labor line stays last).
+  if (minimumCents) { const at = model.findIndex(line => line.id === LABOR_ID); model.splice(at < 0 ? model.length : at, 0, pickupMinimumLine(minimumCents)); }
   if (model.filter(line => line.totalCents > 0).length > MAX_CHARGED_LINES) throw fail('too_many_lines', `A quote can charge at most ${MAX_CHARGED_LINES} lines so the customer portal shows every charge. Remove a removal item or split the work into two quotes.`, 400, { maxChargedLines: MAX_CHARGED_LINES });
   const stored = model.map(line => splits.has(line.id) ? { ...line, split: splits.get(line.id) } : line);
   let storedLineItems;

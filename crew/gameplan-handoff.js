@@ -40,7 +40,9 @@
   // The refusals that mean nothing was saved and the signed request can never succeed unchanged (perform releases them).
   const RELEASED = new Set(['dispatch_conflict', 'handoff_terms_outdated', 'handoff_builder_price_mismatch', 'handoff_builder_junk_only_garage_work', 'quote_draft_composite_labor_required', 'quote_draft_composite_version_changed', 'quote_draft_composite_invalid_selection',
     // EGC_WINTER_SALE: the signed sale no longer qualifies (its job day, the margin floor, its terms) or the sale is off.
-    'handoff_winter_sale_ineligible', 'handoff_winter_sale_disabled']);
+    'handoff_winter_sale_ineligible', 'handoff_winter_sale_disabled',
+    // The truck-nearby waiver of the minimum pickup could not be confirmed (no same-day job in the ZIP code).
+    'handoff_pickup_waiver_unconfirmed']);
   // This controller owns one frozen, actor-scoped request through lost responses.
   // Neither a reload nor a CRM outage creates a second dispatch request.
   function createClient(d) {

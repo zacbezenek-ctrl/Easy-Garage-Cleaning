@@ -57,6 +57,17 @@ export function nearbyJob(jobs, { jobId = '', date, zip }) {
  * where pending is), else {nearbyJobId, ownerOverride, date}. An unconfirmable waiver throws 409
  * `${prefix}pickup_waiver_unconfirmed` (quote_draft_ or handoff_).
  */
+// What the waiver's check reads: the jobs dated one day (dispatch storage), only for a quote that asks for the waiver.
+export const pickupReaders = {
+  nearby: async (env, date) => (await import('./dispatch-storage.js')).dispatchStorage(env).datedJobs(date, date, ['id', 'date', 'address', 'type', 'status', 'pipelineStatus']),
+};
+/** The Hub record of a confirmed waiver (quoteDraft.minimumWaiver): {by, at, reason, nearbyJobId, ownerOverride, date,
+ * pending}. The nearby job's id stays here and in the audit, never in customer text. */
+export const waiverRecord = (confirmed, { reason, by, at }) => ({ by, at, reason, nearbyJobId: confirmed.nearbyJobId ?? null, ownerOverride: confirmed.ownerOverride === true, date: confirmed.date ?? null, pending: confirmed.pending === true });
+/** The audit of a waiver (hub_audit, in the same commit): who, when, the reason and the nearby job. */
+export const waiverAudit = (auditWrite, record, { actor, jobId, requestId, now, via = 'hub' }) => auditWrite({ actor: { id: actor.user, kind: 'human', role: actor.role }, via, action: 'quote.minimum_pickup.waive',
+  entity: { collection: 'jobs', id: jobId }, before: null, after: { nearbyJobId: record.nearbyJobId, ownerOverride: record.ownerOverride, date: record.date, pending: record.pending }, requestId, reason: record.reason, now });
+
 export async function confirmNearbyTruck({ priced, owner = false, jobId = '', date = '', address = '', nearbyJobs, pending = false, prefix = '' }) {
   const pickup = priced?.breakdown?.pickup;
   if (!plain(pickup) || pickup.waived !== true || !(pickup.waivedCents > 0)) return null;

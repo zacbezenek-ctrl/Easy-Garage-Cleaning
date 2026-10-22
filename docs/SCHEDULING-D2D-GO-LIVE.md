@@ -233,7 +233,10 @@ Each has a recommendation. Until you decide, the Hub keeps doing what the item s
   the estimated man-hours × $53.00 per man-hour (*decided 2026-10-19*; $40.00 before), and installation is billed
   through it. The man-hours are filled in from the app's estimate of the garage work and the estimator can adjust them. Change the rate in Menu prices.
 - **Junk removal.** *Decided 2026-10-18:* "the truck price covers the crew's time": $1,000 per truck since 2026-10-21;
-  $750 before (quarter, half and three-quarter loads $250, $500 and $750). A junk-only quote has no Labor line,
+  $750 before (quarter, half and three-quarter loads $250, $500 and $750). *Decided 2026-10-21:* "minimum pickup should
+  be 250, unless they are booking when a truck is nearby": a quote of hauling lines only (truck loads, special items,
+  access) under $250 gets a "Minimum pickup" line up to $250, unless the estimator applies the "Truck already nearby"
+  waiver (a reason, and another job booked that day in the same ZIP code, or your override). A junk-only quote has no Labor line,
   and no quote's labor estimate counts truck-load, hauling or disposal time. Builder quotes saved earlier that day (an
   estimate with truck-load time, a line naming the man-hours) are saved again before they are sent; signed jobs keep
   what was signed.
