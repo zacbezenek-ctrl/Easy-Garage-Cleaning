@@ -20,11 +20,13 @@
  *   walkthroughHandoffs receipts, walkthrough-handoff.js), which is sent and closed the same day (0 days). Closed counts
  *   the approved or signed ones. Days to close is the Denver days from the latest send to the approval or signature. A
  *   job counts once: a sent quote later signed in person is a sent quote that closed on the signature day. The estimator
- *   is the quote's author (quoteDraft.createdBy), else its sender; for an on-site signature, the employee who recorded it.
+ *   is the one Estimator accuracy credits (estimator-attribution.js): whoever recorded an on-site signature, else the
+ *   quote's builder (quoteDraft.createdBy), else its sender. The board reads no setter records.
  * Money is integer cents. Customer names are plain text here; the screen renders them as text nodes, never as HTML. */
 import { addDays, denverToday, validDate } from './dispatch-time.js';
 import { pricesPendingApproval } from './quote-model.js';
 import { compositeApproval } from './composite-quote.js';
+import { ESTIMATOR_FIELDS, estimatorOf as estimatorFor, staffKey } from './estimator-attribution.js';
 
 export const OPEN_QUOTES_DAYS = 120;
 export const CLOSE_RATE_WINDOWS = Object.freeze({ last30: 30, last90: 90 });
@@ -41,7 +43,7 @@ export const BUCKETS = Object.freeze([
 export const OPEN_QUOTE_FIELDS = Object.freeze(['type', 'recordType', 'status', 'pipelineStatus', 'customer', 'sourceWalkthroughId', 'quoteStatus',
   'estimate.status', 'estimate.amountCents', 'estimate.amount', 'estimate.validUntil', 'estimate.acceptedAt', 'estimate.sentAt',
   'customerApproval.status', 'customerApproval.approvedAt', 'pricesPendingApproval.status',
-  'quoteDraft.sentAt', 'quoteDraft.sentBy', 'quoteDraft.createdBy', 'quoteDraft.savedBy', 'quoteDraft.breakdown']);
+  'quoteDraft.sentAt', 'quoteDraft.savedBy', 'quoteDraft.breakdown', ...ESTIMATOR_FIELDS]);
 const ID = /^[A-Za-z0-9_-]{1,180}$/;
 const WORK = new Set(['job', 'cleanout', 'reorg']);
 const CLOSED = new Set(['cancelled', 'canceled', 'completed', 'invoiced', 'paid', 'review_requested', 'closed', 'noshow', 'no_show', 'no-show']);
@@ -70,7 +72,8 @@ export function quoteClosed(job) {
 }
 /** When the quote closed (ISO), or null. */
 export const closedAt = job => quoteClosed(job) ? isoTime(job?.customerApproval?.approvedAt) || isoTime(job?.estimate?.acceptedAt) : null;
-export const estimatorOf = job => String(job?.quoteDraft?.createdBy || job?.quoteDraft?.sentBy || job?.quoteDraft?.savedBy || '').trim().slice(0, 120) || null;
+// The estimator a quote is credited to: the same attribution Estimator accuracy uses (estimator-attribution.js).
+export const estimatorOf = job => estimatorFor(job)?.key || null;
 /** The quote total in integer cents, or null. */
 export function quoteTotalCents(job) {
   const estimate = plain(job?.estimate) ? job.estimate : {};
@@ -145,7 +148,7 @@ export function closeEvents(jobs, signed = []) {
       if (!sent.closed && day >= sent.sentDay) Object.assign(sent, { closed: true, closeDays: daysBetween(sent.sentDay, day), lost: false });
       continue;
     }
-    events.set(jobId, { jobId, estimator: String(row.actorId || '').trim().slice(0, 120) || null, sentDay: day, closed: true, closeDays: 0, source: 'signed_on_site', lost: false });
+    events.set(jobId, { jobId, estimator: staffKey(row.actorId) || null, sentDay: day, closed: true, closeDays: 0, source: 'signed_on_site', lost: false });
   }
   return [...events.values()];
 }

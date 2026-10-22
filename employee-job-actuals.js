@@ -338,7 +338,10 @@ function jobRow(r){
 /* Estimator accuracy (functions/_lib/estimator-accuracy.js): estimated vs actual man-hours per job and a scorecard per
    estimator. Hours only: no revenue, margin, cost or pay is shown here. */
 const EXCLUDED={junk_only:'Junk only (sold by the truck, no labor estimate)',no_labor_estimate:'No Labor line on the quote',actual_not_recorded:'Actual hours not recorded',timecards_incomplete:'Timecards incomplete',timecards_unavailable:'Timecards could not be read',no_estimator:'No estimator on record',estimator_conflict:'The setter record names a different estimator'};
-const EVIDENCE={walkthrough_signer:'Signed the walkthrough',quote_sender:'Sent the quote',setter_record:'Setter record'};
+const EVIDENCE={walkthrough_signer:'Signed the walkthrough',quote_builder:'Built the quote',quote_sender:'Sent the quote',setter_record:'Setter record'};
+// Why a job is not scored; an unsettled estimator conflict names the other person (who signed it).
+const unscored=r=>'Not scored: '+(EXCLUDED[r.excluded]||r.excluded)+(r.excluded==='estimator_conflict'&&r.estimatorConflict?` (${r.estimatorConflict} signed it; settle it in Knock Admin)`:'');
+const ACCURACY_FIRST=20;
 const bias=value=>typeof value!=='number'?'—':value===0?'Spot on':value>0?`Under by ${pct(value)}`:`Over by ${pct(-value)}`;
 function accuracyCard(){
   const a=S.data.estimatorAccuracy;if(!a)return null;
@@ -346,8 +349,8 @@ function accuracyCard(){
   // Every estimator tied at the best average miss is named.
   const leaders=Array.isArray(a.last30.leaders)?a.last30.leaders:a.last30.top?[a.last30.top]:[],top=leaders[0];
   const names=leaders.map(l=>`${l.estimator} (${l.jobs} jobs)`),joined=names.length>1?`${names.slice(0,-1).join(', ')} and ${names.at(-1)}`:`${top?.estimator||''}`;
-  const callout=top?h('div',{class:'hub-notice success ja-callout',role:'status'},h('strong',{},`Most accurate this month: ${joined}`),leaders.length>1?` — tied, off by ${pct(top.averageErrorPercent)} on average.`:` — off by ${pct(top.averageErrorPercent)} on average across ${top.jobs} jobs.`)
-    :h('p',{class:'ja-muted'},`No one is ranked this month yet: an estimator needs ${a.minJobs} scored jobs in the last 30 days.`);
+  const callout=top?h('div',{class:'hub-notice success ja-callout',role:'status'},h('strong',{},`Most accurate in the last 30 days: ${joined}`),leaders.length>1?` — tied, off by ${pct(top.averageErrorPercent)} on average.`:` — off by ${pct(top.averageErrorPercent)} on average across ${top.jobs} jobs.`)
+    :h('p',{class:'ja-muted'},`No one is ranked in the last 30 days yet: an estimator needs ${a.minJobs} scored jobs in that time.`);
   const rows=card.estimators.map(e=>h('tr',{'data-estimator':e.estimator,class:e.ranked?'':'ja-unranked'},
     h('th',{scope:'row','data-label':'Estimator'},h('span',{class:'ja-cell'},e.estimator,e.ranked?null:h('small',{},`Not ranked: ${e.jobs} of ${a.minJobs} jobs`))),
     h('td',{class:'num','data-label':'Jobs'},h('span',{class:'ja-cell'},String(e.jobs))),
@@ -357,14 +360,15 @@ function accuracyCard(){
     h('td',{class:'num','data-label':'Within 20%'},h('span',{class:'ja-cell'},pct(e.within20Percent))),
     h('td',{class:'num','data-label':'Estimated → actual h'},h('span',{class:'ja-cell'},`${hours(e.estimatedManHours)} → ${hours(e.actualManHours)}`))));
   // The job list and the exclusions follow the selected period.
-  const ids=Array.isArray(card.jobIds)?new Set(card.jobIds):null,jobs=ids?a.rows.filter(r=>ids.has(r.jobId)):a.rows,visible=S.accuracyAll?jobs:jobs.slice(0,20);
-  const jobRows=visible.map(r=>h('tr',{'data-accuracy-job':r.jobId,class:r.scored?'':'ja-unscored'},
+  const ids=Array.isArray(card.jobIds)?new Set(card.jobIds):null,jobs=ids?a.rows.filter(r=>ids.has(r.jobId)):a.rows,visible=S.accuracyAll?jobs:jobs.slice(0,ACCURACY_FIRST);
+  // Show all moves focus to the first row it adds (tabindex -1), so the page stays where the reader is.
+  const jobRows=visible.map((r,i)=>h('tr',{'data-accuracy-job':r.jobId,class:r.scored?'':'ja-unscored',...(i===ACCURACY_FIRST?{tabindex:'-1','data-accuracy-first-added':''}:{})},
     h('td',{'data-label':'Date'},h('span',{class:'ja-cell'},day(r.date))),
     h('th',{scope:'row','data-label':'Job'},h('span',{class:'ja-cell'},r.customer||r.jobId,h('small',{},r.serviceType||''))),
     h('td',{'data-label':'Estimator'},h('span',{class:'ja-cell'},r.estimator||'—',r.estimatorEvidence?h('small',{},EVIDENCE[r.estimatorEvidence]||''):null)),
     h('td',{class:'num','data-label':'Estimated h'},h('span',{class:'ja-cell'},hours(r.estimatedManHours))),
     h('td',{class:'num','data-label':'Actual h'},h('span',{class:'ja-cell'},hours(r.actualManHours),h('small',{},SOURCE[r.actualSource]||''))),
-    h('td',{class:'num','data-label':'Difference'},h('span',{class:'ja-cell'},r.differenceManHours===null?'—':`${signed(r.differenceManHours,hours)} h (${signed(r.differencePercent,pct)})`,r.excluded?h('small',{class:'ja-reason','data-excluded':r.excluded},'Not scored: '+(EXCLUDED[r.excluded]||r.excluded)):null))));
+    h('td',{class:'num','data-label':'Difference'},h('span',{class:'ja-cell'},r.differenceManHours===null?'—':`${signed(r.differenceManHours,hours)} h (${signed(r.differencePercent,pct)})`,r.excluded?h('small',{class:'ja-reason','data-excluded':r.excluded},unscored(r)):null))));
   const excluded=Object.entries(card.excluded||a.excluded||{}).filter(([,n])=>n>0).map(([code,n])=>`${EXCLUDED[code]||code}: ${n}`).join(' · ');
   return h('section',{class:'hub-card ja-accuracy','aria-label':'Estimator accuracy'},
     h('h2',{},'Estimator accuracy'),
@@ -380,7 +384,7 @@ function accuracyCard(){
       h('div',{class:'hub-table-scroll ja-table-scroll'},h('table',{class:'ja-table'},
         h('thead',{},h('tr',{},['Date','Job','Estimator','Estimated h','Actual h','Difference'].map(text=>h('th',{scope:'col'},text)))),
         h('tbody',{},jobRows))),
-      jobs.length>visible.length?kit().button(`Show all ${jobs.length} jobs`,()=>{S.accuracyAll=true;S.accuracyJobsOpen=true;S.accuracyFocus='[data-accuracy-jobs-summary]';render();}):null):null,
+      jobs.length>visible.length?kit().button(`Show all ${jobs.length} jobs`,()=>{S.accuracyAll=true;S.accuracyJobsOpen=true;S.accuracyFocus='[data-accuracy-first-added]';render();}):null):null,
     excluded?h('p',{class:'ja-muted'},`Not scored ${span}: `+excluded+'.'):null);
 }
 function table(){
