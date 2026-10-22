@@ -481,3 +481,20 @@ test('a legacy job assigned by display name and worked by that one person hides 
   assert.deepEqual([manager.amountHidden, manager.tipCents], [true, null]);
   assert.ok(manager.tips.every(entry => !('amountCents' in entry) && !('processorRef' in entry)));
 });
+
+// Review of #210, round 3: the legacy name can be the account's display name, which differs from the name on the
+// timecard. It is matched through the Hub roster, so the one person's tip stays hidden from a manager.
+test('a legacy job assigned by the account\'s display name (not the timecard\'s name) hides its one person\'s tip from a manager', async t => {
+  const MANAGER = { user: 'AlexK', role: 'manager', businessAccess: true, owner: false };
+  const jobs = [job('job-roster', [tip('r', 1900, '2026-09-23T22:00:00.000Z')], { assignedCrew: [], assignedTo: 'Synthetic Alpha Roster' })];
+  const timecards = [tracked('alpha', 'crew.alpha', '2026-09-23', '08:00', '10:00', [['work', 'job-roster', '08:00']])];
+  const query = 'start=2026-09-21&end=2026-09-28';
+  const roster = { HUB_AUTH_USERS_JSON: JSON.stringify({ 'crew.alpha': { passwordHash: 'test', role: 'crew', displayName: 'Synthetic Alpha Roster' } }) };
+  const manager = byJob(await (await api(t, { jobs, timecards, actor: MANAGER, env: roster }).get(query)).json())['job-roster'];
+  assert.deepEqual([manager.employees.map(row => row.name), manager.crewWithoutJobTime], [['Synthetic crew.alpha'], ['Synthetic Alpha Roster']], 'the timecard and the job use different names');
+  assert.deepEqual([manager.amountHidden, manager.tipCents], [true, null]);
+  assert.ok(manager.tips.every(entry => !('amountCents' in entry) && !('processorRef' in entry)));
+  // Without that account on the roster the name is someone else, so two people share the job and its totals show.
+  const unknown = byJob(await (await api(t, { jobs, timecards, actor: MANAGER }).get(query)).json())['job-roster'];
+  assert.deepEqual([unknown.amountHidden, unknown.tipCents], [undefined, 1900]);
+});
