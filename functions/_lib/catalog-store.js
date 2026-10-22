@@ -16,7 +16,7 @@
  *                                  laborRatePerManHourCents is the owner's labor rate for the builder's Labor line, stored
  *                                  once the owner changes it ($53.00, DEFAULT_LABOR_RATE_CENTS, until then; composite-quote.js)
  *   pricingMenuApprovals/heldRelease  {menuVersion, releasedAt, releasedBy, released, sweepVersion, sweepAfter, sweepRetry,
- *                                  failures:{[jobId]:tries}, closedIds, signedAboveIds}:
+ *                                  failures:{[jobId]:tries}, signedAboveIds}:
  *                                  the pricing-menu version whose held jobs were all checked, and where an unfinished
  *                                  sweep continues (functions/api/held-jobs.js)
  * With no pointer the seed catalog (functions/_data/garage-catalog.json) is the published catalog, and with

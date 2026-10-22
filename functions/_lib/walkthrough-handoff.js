@@ -563,9 +563,9 @@ export async function releaseHeldHandoffs(store, actor, now = new Date().toISOSt
 // (stopped). next: the last id this page finished, where the following page starts.
 async function releaseHeldPage(store, actor, now, pricing, { source, requestId: approvalRequest = '', limit = HELD_RELEASE_LIMIT, after = '', budget = null }) {
   const spend = cost => { if (budget) budget.left -= cost; };
-  const released = [], failed = [], closed = [], signedAbove = [];
+  const released = [], failed = [], closed = [], signedAbove = [], seen = [];
   let waiting = 0, next = after;
-  const done = (more, stopped) => ({ released, failed, closed, signedAbove, waiting, more, next, stopped });
+  const done = (more, stopped) => ({ released, failed, closed, signedAbove, seen, waiting, more, next, stopped });
   if (budget && budget.left < 3) return done(true, true);
   spend(1);
   const ids = [...new Set(await store.heldJobIds(limit + 1, after))], page = ids.slice(0, limit);
@@ -574,7 +574,7 @@ async function releaseHeldPage(store, actor, now, pricing, { source, requestId: 
     spend(1);
     let job = null;
     try { job = safeId(id) ? await store.read('jobs', id) : null; } catch { job = undefined; }
-    next = id;
+    next = id; seen.push(id);
     if (job === undefined) { waiting++; continue; }
     if (!job || !plain(job.pricesPendingApproval)) continue;
     if (CLOSED_STATES.includes(state(job))) { closed.push(job.id); continue; }
@@ -594,19 +594,20 @@ async function releaseHeldPage(store, actor, now, pricing, { source, requestId: 
  * Release held jobs button. budget: the storage calls the run may make (HELD_SUBREQUEST_BUDGET: with the route's own
  * reads and its count, at most 44 per open, measured in tests/held-jobs.test.mjs, under Cloudflare's 50 per invocation);
  * a run that reaches it stops cleanly and answers where to continue (next).
- * complete: every held job after `after` was checked; closed, signedAbove: as releaseHeldPage; failed: jobs that passed
+ * complete: every held job after `after` was checked; closed, signedAbove: as releaseHeldPage; seen: every held job id
+ * this run read; failed: jobs that passed
  * the gate but did not commit (they stay
  * held). => {released:[jobId], failed:[jobId], waiting:int, complete:boolean, next} or null with the builder off. */
 export const HELD_SUBREQUEST_BUDGET = 30;
 export async function releaseAllHeldHandoffs(store, actor, now = new Date().toISOString(), { env = {}, compositeState = compositeStateDefault, source = 'menu.version', requestId = '', limit = HELD_RELEASE_LIMIT, after = '', budget = HELD_SUBREQUEST_BUDGET } = {}) {
   if (!quoteBuilderEnabled(env)) return null;
-  const pricing = await compositeState(env), left = { left: budget }, released = [], failed = [], closed = [], signedAbove = [];
+  const pricing = await compositeState(env), left = { left: budget }, released = [], failed = [], closed = [], signedAbove = [], seen = [];
   let waiting = 0, cursor = after;
   for (;;) {
     const page = await releaseHeldPage(store, actor, now, pricing, { source, requestId, limit, after: cursor, budget: left });
-    released.push(...page.released); failed.push(...page.failed); closed.push(...page.closed); signedAbove.push(...page.signedAbove); waiting += page.waiting;
-    if (page.stopped) return { released, failed, closed, signedAbove, waiting, complete: false, next: page.next };
-    if (!page.more || !page.next || page.next === cursor) return { released, failed, closed, signedAbove, waiting, complete: true, next: '' };
+    released.push(...page.released); failed.push(...page.failed); closed.push(...page.closed); signedAbove.push(...page.signedAbove); seen.push(...page.seen); waiting += page.waiting;
+    if (page.stopped) return { released, failed, closed, signedAbove, seen, waiting, complete: false, next: page.next };
+    if (!page.more || !page.next || page.next === cursor) return { released, failed, closed, signedAbove, seen, waiting, complete: true, next: '' };
     cursor = page.next;
   }
 }

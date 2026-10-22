@@ -9,7 +9,7 @@ import { approvalRefusal, compositeApproval, priceCompositeQuote } from '../func
 import { HELD_SUBREQUEST_BUDGET, releaseAllHeldHandoffs, saveWalkthroughHandoff } from '../functions/_lib/walkthrough-handoff.js';
 import { readCompositeState } from '../functions/_lib/catalog-store.js';
 import { HELD_QUERY_MAX, countHeldJobs, heldJobIds, heldJobsQuery } from '../functions/_lib/handoff-price-holds.js';
-import { HELD_RELEASE_MARKER, HELD_RETRY_LIMIT, heldJobsHandlers } from '../functions/api/held-jobs.js';
+import { HELD_FAILURES_KEPT, HELD_RELEASE_MARKER, HELD_RETRY_LIMIT, heldJobsHandlers } from '../functions/api/held-jobs.js';
 import { BASE_ENV, LATER, NOW, ON_ENV, builderState, fixture, menuItem, owner, selection, signedPlan } from './helpers/estimator-fixture.mjs';
 
 const manager = { user: 'AlexK', role: 'manager', businessAccess: true };
@@ -184,16 +184,70 @@ test('a release that fails every time gives up after three tries: the version is
   assert.deepEqual([button.released, button.held, button.stuck, marker().failures[job.id]], [[job.id], 0, 0, undefined]);
 });
 
-// A held job that was cancelled or finished waits for nothing: it leaves the held count, on the run and on later counts.
-test('a cancelled or finished held job leaves the held count', async () => {
+// The tries are forgotten once the job is no longer held, so a job held again later is not labelled stuck; and only the
+// latest HELD_FAILURES_KEPT jobs' tries are kept.
+test('a stuck job that leaves the held set is forgotten, so held again later it is not labelled stuck', async () => {
+  const f = fixture(), job = await signHalfLoad(f), saved = structuredClone(f.job(job.id));
+  const catalog = catalogStore(), marker = () => catalog.rows.get(`pricingMenuApprovals/${HELD_RELEASE_MARKER}`);
+  // Stuck from three failed tries of an earlier pass, and 400 tries of jobs long gone.
+  const failures = { [job.id]: 3 };
+  for (let i = 0; i < 400; i++) failures[`gone-${i}`] = 1;
+  catalog.rows.set(`pricingMenuApprovals/${HELD_RELEASE_MARKER}`, { failures, revision: 'm0' });
+  // The job leaves the held set (its hold cleared elsewhere); a pass from the start forgets its tries and the gone ones.
+  f.rows.set(`jobs/${job.id}`, { ...saved, pricesPendingApproval: null });
+  const handlers = heldJobsHandlers({ session: async () => owner, storage: () => catalog, held: () => heldStore(f), compositeState: async () => before(), now: () => new Date(LATER) });
+  await post(handlers, { action: 'release' });
+  assert.deepEqual(marker().failures, {});
+  // Held again (re-signed), still waiting for a price: counted, not stuck.
+  f.rows.set(`jobs/${job.id}`, saved);
+  const counted = await (await post(handlers, { action: 'sweep' })).json();
+  assert.deepEqual([counted.held, counted.stuck], [1, 0]);
+});
+
+test('at most HELD_FAILURES_KEPT jobs\' tries are kept', async () => {
+  const f = fixture(), job = await signHalfLoad(f), catalog = catalogStore();
+  const failures = {};
+  for (let i = 0; i < 400; i++) failures[`old-${String(i).padStart(3, '0')}`] = 1;
+  catalog.rows.set(`pricingMenuApprovals/${HELD_RELEASE_MARKER}`, { failures, sweepVersion: builderState().menu.menuVersion, sweepAfter: 'a', revision: 'm0' });
+  const base = heldStore(f), store = { ...base, commit: async writes => { if (writes.some(write => write.id === job.id)) throw new Error('unavailable'); return base.commit(writes); } };
+  const handlers = heldJobsHandlers({ session: async () => owner, storage: () => catalog, held: () => store, compositeState: async () => builderState(), now: () => new Date(LATER) });
+  await post(handlers, { action: 'sweep' });
+  const kept = catalog.rows.get(`pricingMenuApprovals/${HELD_RELEASE_MARKER}`).failures;
+  assert.equal(HELD_FAILURES_KEPT, 300);
+  assert.deepEqual([Object.keys(kept).length, kept[job.id], 'old-000' in kept], [300, 1, false], 'the latest kept, this job among them');
+});
+
+// A held job the run reads as cancelled or finished waits for nothing: it leaves that answer's count. Cancelling does not
+// clear the hold, so a job restored in Dispatch is held again: later opens count every held job (one too many is safe;
+// one too few would hide the owner's card while a job still has no estimate).
+test('a cancelled held job leaves the run\'s count, and once restored it is counted again', async () => {
   const f = fixture(), job = await signHalfLoad(f);
-  for (const [id, status] of [['a-cancelled', 'cancelled'], ['a-done', 'completed']]) f.rows.set(`jobs/${id}`, { ...structuredClone(job), id, revision: `${id}r`, status, pipelineStatus: status });
+  const setStatus = (id, status) => f.rows.set(`jobs/${id}`, { ...f.job(id), status, pipelineStatus: status });
+  for (const id of ['a-cancelled', 'a-done']) f.rows.set(`jobs/${id}`, { ...structuredClone(job), id, revision: `${id}r` });
+  setStatus('a-cancelled', 'cancelled'); setStatus('a-done', 'completed');
   const catalog = catalogStore(), handlers = heldJobsHandlers({ session: async () => owner, storage: () => catalog, held: () => heldStore(f), compositeState: async () => before(), now: () => new Date(LATER) });
   const run = await (await post(handlers, { action: 'sweep' })).json();
   assert.deepEqual([run.ran, run.released, run.held], [true, [], 1], 'the open job still waits for the half load; the closed two are not counted');
+  // A manager restores the cancelled job (schedule.restore): still held, so the next open counts it.
+  setStatus('a-cancelled', 'scheduled');
   const counted = await (await post(handlers, { action: 'sweep' })).json();
-  assert.deepEqual([counted.ran, counted.held, counted.more], [false, 1, false]);
-  assert.deepEqual(catalog.rows.get(`pricingMenuApprovals/${HELD_RELEASE_MARKER}`).closedIds, ['a-cancelled', 'a-done']);
+  assert.deepEqual([counted.ran, counted.held, counted.more], [false, 3, false], 'every held job is counted; nothing remembered hides the restored one');
+});
+
+test('a pass that resumes partway counts a job restored since its first part', async () => {
+  const f = fixture(), job = await signHalfLoad(f);
+  const setStatus = (id, status) => f.rows.set(`jobs/${id}`, { ...f.job(id), status, pipelineStatus: status });
+  // 20 held jobs, the first cancelled; a budget of 10 checks it in the first part only.
+  for (let i = 0; i < 20; i++) f.rows.set(`jobs/a-held-${String(i).padStart(2, '0')}`, { ...structuredClone(job), id: `a-held-${String(i).padStart(2, '0')}`, revision: `ar${i}` });
+  f.rows.delete(`jobs/${job.id}`);
+  setStatus('a-held-00', 'cancelled');
+  const catalog = catalogStore(), handlers = heldJobsHandlers({ session: async () => owner, storage: () => catalog, held: () => heldStore(f), compositeState: async () => before(), budget: 10, now: () => new Date(LATER) });
+  const first = await (await post(handlers, { action: 'sweep' })).json();
+  assert.deepEqual([first.ran, first.more, first.held], [true, true, 7], 'the first part: 8 jobs read, the cancelled one not counted');
+  setStatus('a-held-00', 'scheduled');
+  let answer = first;
+  while (answer.more) answer = await (await post(handlers, { action: 'sweep' })).json();
+  assert.deepEqual([answer.ran, answer.held], [true, 20], 'the last part counts every held job, the restored one too');
 });
 
 test('a failed run records nothing, so the next open tries again; the owner\'s button runs it on demand; managers cannot press it; builder off answers nothing', async () => {
