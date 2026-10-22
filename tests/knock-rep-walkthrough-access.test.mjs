@@ -14,6 +14,9 @@ import { pricingConfigHandlers } from '../functions/api/pricing-config.js';
 import { dispatchHandlers } from '../functions/api/dispatch.js';
 import { customerResolveHandler } from '../functions/api/customer-resolve.js';
 import { createJobAssignmentAccess } from '../functions/_lib/job-assignment.js';
+import { fieldJobsHandlers } from '../functions/api/field-jobs.js';
+import { createHubSessionCookie } from '../functions/_lib/hub-session.js';
+import { storage as fieldStorage } from './helpers/field-fixture.mjs';
 import { SELF_RUN_DAYS, SELF_WALKTHROUGH, selfRunCardHidden, selfRunVisit, selfWalkthroughSession } from '../functions/_lib/knock-self-walkthrough.js';
 
 const ORIGIN = 'https://easygaragecleaning.com';
@@ -226,6 +229,19 @@ test('/api/field-jobs leaves the rep\'s own self-run card out of their day once 
   assert.equal(selfRunCardHidden(visit, rep, new Date('2026-10-25T15:00:00Z')), true, 'past the window: hidden');
   assert.equal(selfRunCardHidden({ ...visit, status: 'cancelled' }, rep, NOW), true, 'cancelled: hidden');
   assert.equal(selfRunCardHidden({ ...visit, d2d: { ...visit.d2d, selfRun: false } }, rep, new Date('2026-10-25T15:00:00Z')), false, 'an ordinary visit is untouched');
-  const source = readFileSync(new URL('../functions/api/field-jobs.js', import.meta.url), 'utf8');
-  assert.match(source, /if \(!ctx\.manager && selfRunCardHidden\(job, ctx\.session, new Date\(\)\)\) continue;/);
+});
+
+test('/api/field-jobs on an injected clock: the rep\'s self-run card shows inside its window and is gone past the cap', async t => {
+  const env = { HUB_SESSION_SECRET: 'knock-self-run-field-jobs-secret-synthetic', FIREBASE_API_KEY: 'firebase-test-self-run',
+    HUB_AUTH_USERS_JSON: JSON.stringify({ 'Rep.Two': { passwordHash: 'unused-synthetic', role: 'crew', displayName: 'Rep Two' } }) };
+  const cookie = (await createHubSessionCookie(env, 'Rep.Two')).split(';')[0], store = fieldStorage(t);
+  const card = { type: 'walkthrough', status: 'scheduled', pipelineStatus: 'scheduled', customerId: 'c9', customer: 'Synthetic Door Customer', phone: '(970) 555-0199',
+    address: '9 Synthetic Way, Fort Collins, CO', date: '2026-10-17', endDate: '2026-10-17', time: '11:00', endTime: '12:00', ...selfRun('rep.two') };
+  store.put('jobs/w9', card);
+  const day = async now => (await (await fieldJobsHandlers({ now: () => now }).get({ env, request: new Request(`${ORIGIN}/api/field-jobs?date=2026-10-17&days=1&status=all`, { headers: { Cookie: cookie } }) })).json());
+  assert.deepEqual((await day(NOW)).walkthroughs.map(row => row.id), ['w9'], 'the visit day: shown');
+  const late = await day(new Date('2026-10-25T15:00:00.000Z'));
+  assert.deepEqual(late.walkthroughs, [], 'past the cap: gone, though the day asked for is the visit\'s');
+  assert.equal(JSON.stringify(late).includes('555-0199'), false);
+  assert.equal(late.generatedAt, '2026-10-25T15:00:00.000Z', 'the answer is stamped with the injected clock');
 });
