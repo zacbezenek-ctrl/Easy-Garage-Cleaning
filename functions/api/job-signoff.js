@@ -7,14 +7,15 @@
  *   completed in the last SIGNOFF_LOOKBACK_DAYS days, and jobs needing follow-up) and the roster for names.
  * GET /api/job-signoff?view=mine (any signed-in staff member) => {ok, followUps:[{jobId,date,service,reason,by,at}]}:
  *   the open supervisor follow-ups on jobs the viewer leads (one query).
- * POST {action:'sign_off'|'flag', jobId, requestId (UUID), reason, expected:'none'|'flagged'} =>
+ * POST {action:'sign_off'|'flag', jobId, requestId (UUID), reason, expected:'none'|'flagged'} (refused for anyone but the
+ *   owner who worked the job: its fields, or field work in its jobs/{id}/fieldEvents audit log under their username) =>
  *   {ok, jobId, signoff, followUp:'opened'|'added'|'closed'|null, replayed}. Guarded by the job's revision: a job that
  *   changed since it was read answers 409, and the same requestId again is a safe replay.
  * Errors: {ok:false, code, error}; 400, 401, 403 (job_signoff_forbidden, job_signoff_self), 404, 409, 413, 415, 503. */
 import { getHubSession } from '../_lib/hub-session.js';
 import { dispatchStorage } from '../_lib/dispatch-storage.js';
 import { assignmentKey, createJobAssignmentAccess } from '../_lib/job-assignment.js';
-import { SIGNOFF_FIELDS, SIGNOFF_LOOKBACK_DAYS, SIGNOFF_STALE_HOURS, SIGNOFF_WINDOW_DAYS, leadFollowUps, requireSignoffManager, signoffCommand, signoffList, workerMatcher } from '../_lib/job-signoff.js';
+import { SIGNOFF_FIELDS, SIGNOFF_LOOKBACK_DAYS, SIGNOFF_STALE_HOURS, SIGNOFF_WINDOW_DAYS, leadFollowUps, requireSignoffManager, signoffCommand, signoffList, workedByEvents, workerMatcher } from '../_lib/job-signoff.js';
 
 const ID = /^[A-Za-z0-9_-]{1,180}$/;
 const reply = (status, body) => Response.json(body, { status, headers: { 'Cache-Control': 'private, no-store', 'X-Content-Type-Options': 'nosniff' } });
@@ -66,7 +67,11 @@ export function jobSignoffHandlers({ session = getHubSession, dispatch = dispatc
         if (!input || typeof input !== 'object' || !ID.test(String(input.jobId || ''))) throw fail('job_signoff_request_invalid', 'Choose a job.');
         const store = dispatch(env), job = await store.read('jobs', input.jobId);
         if (!job) throw fail('job_signoff_not_found', 'This job no longer exists.', 404);
-        const at = now().toISOString(), result = signoffCommand(job, actor, input, at, await matcherFor(env, actor));
+        // Who worked the job is decided now, from the job's server-only audit log as well as its fields: a manager who
+        // did field work while off the crew, or a crew list rewritten since, still counts.
+        const matcher = await matcherFor(env, actor), actors = [actor.user, assignmentKey(actor.user)];
+        const fieldWork = workedByEvents(await store.fieldEventsBy(job.id, actors), matcher);
+        const at = now().toISOString(), result = signoffCommand(job, actor, input, at, matcher, { fieldWork });
         if (result.replayed) return reply(200, { ok: true, jobId: job.id, signoff: job.supervisorSignoff || null, followUp: null, replayed: true });
         await store.commit([{ collection: 'jobs', id: job.id, revision: job.revision, patch: result.patch }]);
         return reply(200, { ok: true, jobId: job.id, signoff: result.signoff, followUp: result.followUp, replayed: false });

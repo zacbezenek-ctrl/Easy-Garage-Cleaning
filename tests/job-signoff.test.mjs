@@ -7,8 +7,9 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { firestoreRest } from './helpers/firestore-rest-queries.mjs';
 import { dispatchStorage } from '../functions/_lib/dispatch-storage.js';
-import { SIGNOFF_FIELDS, completedJob, leadFollowUps, requireSignoffManager, signoffCommand, signoffList, workedJob, workerMatcher } from '../functions/_lib/job-signoff.js';
+import { SIGNOFF_FIELDS, completedJob, leadFollowUps, requireSignoffManager, signoffCommand, signoffList, workedByEvents, workedJob, workerMatcher } from '../functions/_lib/job-signoff.js';
 import { jobSignoffHandlers } from '../functions/api/job-signoff.js';
+import { fieldCommand } from '../functions/_lib/field-execution.js';
 
 const OWNER = { user: 'ZacB', displayName: 'Synthetic Owner', role: 'owner', businessAccess: true };
 const MANAGER = { user: 'TylerG', displayName: 'Synthetic Manager', role: 'manager', businessAccess: true };
@@ -178,4 +179,45 @@ test('the widgets are registered (Command center for managers, My day for crew l
   assert.match(registry, /\{id:'supervisor_followups',label:'Supervisor follow-ups',homes:\['my_day'\],crewVisible:true,quiet:true,module:'EGCSupervisorFollowUps',/);
   assert.doesNotMatch(source, /price|amount|deposit|Cents|phone|invoice/i);
   assert.match(source, /crew\/job\.html\?jobId=/, 'Open job goes to the live job page');
+});
+
+// The audit log (jobs/{id}/fieldEvents) decides "worked this job" too, so a manager's field work counts even when the job's
+// own fields no longer show it. The events come from the real field command and the photo receipt's shape.
+test('a manager who moved the job through the field and took its photos while off the crew cannot sign it off', async () => {
+  const LEAD_CREW = { user: 'crew.one', displayName: 'Crew One', role: 'crew_lead' };
+  let worked = job('fw', { status: 'scheduled', pipelineStatus: 'scheduled', completedAt: null, completedBy: null, fieldExecution: {} }), n = 10;
+  const events = [];
+  const apply = (actor, input) => { const result = fieldCommand(worked, actor, { requestId: id(++n), ...input }, NOW); worked = { ...worked, ...result.patch }; events.push(result.event); };
+  for (const itemId of ['departure-address', 'departure-equipment', 'arrival-scope', 'arrival-protection']) apply(LEAD_CREW, { action: 'checklist', itemId, completed: true });
+  apply(MANAGER, { action: 'status', status: 'dispatched' }); apply(MANAGER, { action: 'status', status: 'arrived' });
+  // The manager's photos: the photo receipt the upload path writes, and the photo it adds to the job.
+  for (const category of ['before', 'after']) {
+    const photo = { id: id(++n), fileId: `synthetic-file-${n}`, category, actorId: MANAGER.user, actorName: MANAGER.displayName, createdAt: NOW, verified: true };
+    worked = { ...worked, fieldExecution: { ...worked.fieldExecution, photos: [...(worked.fieldExecution.photos || []), photo] } };
+    events.push({ id: photo.id, action: 'photo', actorId: MANAGER.user, actorName: MANAGER.displayName, createdAt: NOW, state: 'applied', visibility: 'crew', category, photoId: photo.id });
+  }
+  apply(MANAGER, { action: 'status', status: 'in_progress' });
+  // The lead pauses and resumes (activityBy becomes theirs) and finishes.
+  for (const status of ['paused', 'in_progress']) apply(LEAD_CREW, { action: 'status', status, reason: 'Synthetic break' });
+  worked = { ...worked, status: 'completed', pipelineStatus: 'completed', ...done('2026-10-19T22:00:00.000Z'), fieldExecution: { ...worked.fieldExecution, ...done('2026-10-19T22:00:00.000Z').fieldExecution } };
+  assert.equal(worked.fieldExecution.activityBy, 'crew.one');
+  assert.equal(workedJob(worked, as(MANAGER)), true, 'the job\'s start and photos name the manager');
+  // A business SDK user can rewrite the job's own fields (firestore.rules), not its audit log: with those names gone
+  // the log still shows the field work.
+  const { dispatchedBy, arrivedBy, startedBy, ...rewritten } = worked;
+  worked = { ...rewritten, fieldExecution: { ...worked.fieldExecution, photos: worked.fieldExecution.photos.map(photo => ({ ...photo, actorId: 'crew.one' })) } };
+  assert.equal(workedJob(worked, as(MANAGER)), false, 'the rewritten fields alone no longer show the manager');
+  assert.equal(workedByEvents(events, as(MANAGER)), true);
+  const seed = Object.fromEntries([[`jobs/fw`, worked], ...events.map(event => [`jobs/fw/fieldEvents/${event.id}`, event])]);
+  const fs = firestoreRest(seed);
+  const handlers = jobSignoffHandlers({ session: async () => MANAGER, dispatch: env => ({ ...dispatchStorage(env, fs.fetcher), roster: async () => ROSTER }), now: () => new Date(NOW) });
+  const post = async body => { const response = await handlers.post({ request: new Request('https://easygaragecleaning.com/api/job-signoff', { method: 'POST', headers: { 'Content-Type': 'application/json', Origin: 'https://easygaragecleaning.com' }, body: JSON.stringify(body) }) }); return { status: response.status, body: await response.json() }; };
+  const refused = await post({ action: 'sign_off', jobId: 'fw', requestId: id(90), expected: 'none' });
+  assert.deepEqual([refused.status, refused.body.code], [403, 'job_signoff_self']);
+  const read = fs.calls.find(call => call.path === 'jobs/fw:runQuery');
+  assert.deepEqual(read.body.structuredQuery.select.fields.map(field => field.fieldPath), ['actorId', 'action', 'state', 'category'], 'the log is read masked, by actor');
+  // Office actions on the log are supervision: a manager who only resolved an issue or shared photos still signs off.
+  const office = [{ id: id(91), action: 'resolve_issue', actorId: 'TylerG', state: 'applied' }, { id: id(92), action: 'photo_visibility', actorId: 'TylerG', state: 'applied' }, { id: id(93), action: 'photo', category: 'walkthrough', actorId: 'TylerG', state: 'applied' }, { id: id(94), action: 'status', actorId: 'TylerG', state: 'pending' }];
+  assert.equal(workedByEvents(office, as(MANAGER)), false);
+  assert.equal(workedByEvents(events, as(OWNER)), false, 'another person\'s field work is not theirs');
 });

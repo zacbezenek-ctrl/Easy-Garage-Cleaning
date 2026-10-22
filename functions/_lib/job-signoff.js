@@ -62,12 +62,22 @@ export function workerMatcher(session, identities = [session?.user]) {
   return { loose, exact };
 }
 
+// Field work in the job's audit log (jobs/{id}/fieldEvents, server-only, so no SDK edit to the job hides it): moving the
+// job through its stages, checklist items, materials, completing it, and job photos. Office actions on the same log (notes,
+// resolving an issue, the checklist setup, customer photo sharing, purchase marks, completion sync, the signed
+// walkthrough's reference photos) are supervision, not field work.
+const FIELD_WORK = new Set(['status', 'checklist', 'material', 'complete', 'photo']);
+export const fieldWorkEvent = event => record(event) && event.state === 'applied' && FIELD_WORK.has(event.action) && !(event.action === 'photo' && event.category === 'walkthrough');
+/** Whether these audit-log entries show this viewer did field work on the job. */
+export const workedByEvents = (events, matcher) => (Array.isArray(events) ? events : []).some(event => fieldWorkEvent(event) && matcher.exact(event.actorId));
+
 /** Whether this viewer worked the job (see the module comment). */
 export function workedJob(job, matcher) {
   const assigned = [...jobCrewNames(job), ...(Array.isArray(job?.assignedCrew) && job.assignedTo ? jobCrewNames({ assignedTo: job.assignedTo }) : [])];
   if (assigned.some(matcher.loose) || matcher.loose(job?.crewLead)) return true;
   const fe = record(job?.fieldExecution) ? job.fieldExecution : {};
-  const exact = [job?.completedBy, job?.completionEvidence?.actorId, fe.completion?.actorId, fe.completion?.earlyCompletion?.approvedBy, fe.activityBy];
+  const exact = [job?.completedBy, job?.completionEvidence?.actorId, fe.completion?.actorId, fe.completion?.earlyCompletion?.approvedBy, fe.activityBy, job?.dispatchedBy, job?.arrivedBy, job?.startedBy,
+    ...(Array.isArray(fe.photos) ? fe.photos.filter(photo => record(photo) && photo.category !== 'walkthrough').map(photo => photo.actorId) : [])];
   for (const segment of Array.isArray(job?.assignmentSegments) ? job.assignmentSegments.filter(record) : []) exact.push(segment.crewLead, ...(Array.isArray(segment.assignedCrew) ? segment.assignedCrew : []));
   for (const visit of Object.values(record(fe.visits) ? fe.visits : {}).filter(record)) exact.push(visit.startedBy, visit.endedBy, visit.reopenedBy, ...(Array.isArray(visit.closures) ? visit.closures.map(row => row?.endedBy) : []));
   for (const check of Object.values(record(fe.checks) ? fe.checks : {}).filter(record)) exact.push(check.actorId);
@@ -112,7 +122,8 @@ export function signoffList(jobs, session, now, { matcher = workerMatcher(sessio
 /** The job patch for a sign-off or a Needs follow-up, or {replayed:true} for a request already applied.
  * input: {action:'sign_off'|'flag', requestId (UUID), reason (flag: 3–1,000 characters; sign-off: optional note),
  * expected:'none'|'flagged' (what the card showed; a job that changed since answers 409)}. */
-export function signoffCommand(job, session, input, now, matcher = workerMatcher(session)) {
+// fieldWork: workedByEvents over the job's audit log, read by the caller at save time.
+export function signoffCommand(job, session, input, now, matcher = workerMatcher(session), { fieldWork = false } = {}) {
   if (!record(input) || !['sign_off', 'flag'].includes(input.action)) throw fail('job_signoff_request_invalid', 'Choose Sign off or Needs follow-up.');
   if (typeof input.requestId !== 'string' || !REQUEST_ID.test(input.requestId)) throw fail('job_signoff_request_invalid', 'This request needs a new request ID. Refresh and try again.');
   const reason = typeof input.reason === 'string' ? input.reason.trim() : '';
@@ -125,7 +136,7 @@ export function signoffCommand(job, session, input, now, matcher = workerMatcher
     return { replayed: true };
   }
   if (!completedJob(job)) throw fail('job_signoff_not_completed', 'Only a completed job can be signed off.', 409);
-  if (workedJob(job, matcher) && !isHubOwner(session)) throw fail('job_signoff_self', 'You worked this job, so another manager or the owner signs it off.', 403);
+  if ((fieldWork || workedJob(job, matcher)) && !isHubOwner(session)) throw fail('job_signoff_self', 'You worked this job, so another manager or the owner signs it off.', 403);
   if (current?.status === 'signed') throw fail('job_signoff_already_signed', `This job was already signed off by ${current.byName || current.by || 'a manager'}.`, 409);
   if (input.expected !== undefined && input.expected !== (current?.status || 'none')) throw fail('job_signoff_changed', 'Someone else updated this job\'s sign-off. Refresh to see it.', 409);
   if (current?.status === 'flagged' && input.action === 'flag') throw fail('job_signoff_already_flagged', 'This job already needs follow-up. Sign it off once the follow-up is done.', 409);
