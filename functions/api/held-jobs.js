@@ -9,14 +9,22 @@
  * on the next open). A failed run records nothing and is tried again on the next open; a release commits under the
  * job's revision, so two sweeps never release one job twice. The owner's "Release held jobs" button runs the same
  * release on demand, from the same place.
+ * A held job this run read as cancelled or finished leaves this answer's count (a later open counts it again: a job
+ * restored in Dispatch is held again, and counting one too many is safe), and one held because the
+ * customer signed more than the owner approved is listed apart (signedAboveIds: the owner has the quote rebuilt and
+ * signed again; no approval releases it). A release that fails to commit is tried again on the next open, up to
+ * HELD_RETRY_LIMIT times in a row for that job (failures); after that it no longer holds the version back and is listed
+ * as couldn't release automatically (stuck) until the owner's button or a later pass releases it. A pass from the
+ * start forgets the tries of jobs it no longer finds held, and at most HELD_FAILURES_KEPT jobs' tries are kept.
  * Session cookie: owner and managers sweep; only the owner releases on demand.
- * POST {action:'sweep'}   => {ok, enabled, ran, menuVersion, released:[jobId], held, more}
+ * POST {action:'sweep'}   => {ok, enabled, ran, menuVersion, released:[jobId], held, more, signedAbove, stuck}
  * POST {action:'release'} => the same, always run (owner).
  *   ran: a release ran (false: this version was swept already; only counted).
- *   held: the jobs still waiting (for prices the owner has not approved, a walkthrough-priced quote the owner releases
- *   from the job, a closed job); more: there are more held jobs than were counted or checked. enabled:false with the
- *   builder off (nothing else). Customers and HighLevel get nothing new here: a released job asks for its portal invitation
- *   exactly as an approval save does (releasePatch).
+ *   held: the open jobs still waiting (for prices the owner has not approved, a walkthrough-priced quote the owner
+ *   releases from the job, a signed price above the approved one, a release that failed); signedAbove, stuck: how many
+ *   of them are held for those two reasons; more: there are more held jobs than were counted or checked. enabled:false
+ *   with the builder off (nothing else). Customers and HighLevel get nothing new here: a released job asks for its
+ *   portal invitation exactly as an approval save does (releasePatch).
  * READ-BUDGET: a sweep with nothing to do reads the marker and the held job names (one query per 100, at most 10); a
  *   run reads the owner's two pricing documents and each held job once, at most 30 storage calls for the run and 44 in
  *   all per open (the measured worst case, tests/held-jobs.test.mjs), under Cloudflare's 50 subrequests.
@@ -27,7 +35,9 @@ import { bundledPricingMenu } from '../_lib/composite-quote.js';
 import { HELD_SUBREQUEST_BUDGET, releaseAllHeldHandoffs } from '../_lib/walkthrough-handoff.js';
 import { countHeldJobs, heldReleaseStorage } from '../_lib/handoff-price-holds.js';
 
-export const HELD_RELEASE_MARKER = 'heldRelease';
+export const HELD_RELEASE_MARKER = 'heldRelease', HELD_RETRY_LIMIT = 3, HELD_FAILURES_KEPT = 300;
+const LISTED = 500;
+const ids = value => Array.isArray(value) ? value.filter(id => typeof id === 'string') : [];
 const reply = (status, body) => Response.json(body, { status, headers: { 'Cache-Control': 'private, no-store', 'X-Content-Type-Options': 'nosniff' } });
 function sameOrigin(request) {
   if (request.headers.get('Sec-Fetch-Site') === 'cross-site') return false;
@@ -52,22 +62,41 @@ export function heldJobsHandlers({ session = getHubSession, storage = catalogSto
         if (!quoteBuilderEnabled(env)) return reply(200, { ok: true, enabled: false });
         const catalog = storage(env), jobs = held(env), version = menuVersion(), marker = await catalog.read(MENU_APPROVALS, HELD_RELEASE_MARKER);
         const resume = marker?.sweepVersion === version ? marker : null, after = resume && typeof resume.sweepAfter === 'string' ? resume.sweepAfter : '';
-        if (input.action === 'sweep' && marker?.menuVersion === version && !resume) {
-          const { count, more } = await countHeldJobs(jobs);
-          return reply(200, { ok: true, enabled: true, ran: false, menuVersion: version, released: [], held: count, more });
-        }
+        const failures = marker?.failures && typeof marker.failures === 'object' && !Array.isArray(marker.failures) ? { ...marker.failures } : {};
+        const stuckOf = () => Object.keys(failures).filter(id => Number(failures[id]) >= HELD_RETRY_LIMIT);
+        // The answer's counts against the held jobs listed now: the ones this run read as closed leave the count (only
+        // those: a closed job may be restored since), the others are told apart.
+        const answer = (counted, extra, closedNow = []) => {
+          const now = new Set(counted.ids), known = list => ids(list).filter(id => now.has(id)).length;
+          return { ok: true, enabled: true, menuVersion: version, held: counted.count - known([...new Set(closedNow)]), more: counted.more, signedAbove: known(lists.signedAboveIds), stuck: known(stuckOf()), ...extra };
+        };
+        let lists = { signedAboveIds: ids(marker?.signedAboveIds) };
+        if (input.action === 'sweep' && marker?.menuVersion === version && !resume) return reply(200, answer(await countHeldJobs(jobs), { ran: false, released: [] }));
         const at = now().toISOString();
         const run = await releaseAllHeldHandoffs(jobs, actor, at, { env, after, budget, source: input.action === 'sweep' ? 'menu.version' : 'held.release', compositeState: compositeState || (() => readCompositeState(catalog)) });
-        const retry = Boolean(resume?.sweepRetry) || run.failed.length > 0;
-        // Done: every held job was checked and every release committed. Otherwise the next open continues (or restarts the
-        // pass after a failed release). A sweep that wrote the marker first wins and this one changes nothing.
-        const patch = run.complete && !retry ? { menuVersion: version, sweepVersion: '', sweepAfter: '', sweepRetry: false, releasedAt: at, releasedBy: actor.user, released: run.released.length }
-          : { sweepVersion: version, sweepAfter: run.complete ? '' : run.next, sweepRetry: !run.complete && retry, updatedAt: at };
+        for (const id of run.released) delete failures[id];
+        for (const id of run.failed) failures[id] = (Number(failures[id]) || 0) + 1;
+        // A complete pass from the start read every held job: tries of jobs no longer held are forgotten, so one held again
+        // later starts over. At most HELD_FAILURES_KEPT are kept (the latest).
+        if (run.complete && !after) { const held = new Set(run.seen); for (const id of Object.keys(failures)) if (!held.has(id)) delete failures[id]; }
+        for (const id of Object.keys(failures).slice(0, -HELD_FAILURES_KEPT)) delete failures[id];
+        // A pass that starts over forgets what the last one found; one that continues adds to it.
+        const merge = (key, found) => [...new Set([...(after ? lists[key] : []), ...found])].filter(id => !run.released.includes(id)).slice(-LISTED);
+        lists = { signedAboveIds: merge('signedAboveIds', run.signedAbove) };
+        // A failed release holds the version back until it has failed HELD_RETRY_LIMIT times in a row.
+        const retry = Boolean(resume?.sweepRetry) || run.failed.some(id => failures[id] < HELD_RETRY_LIMIT);
+        // Done: every held job was checked and every release committed or gave up. Otherwise the next open continues (or
+        // restarts the pass after a failed release). A sweep that wrote the marker first wins and this one changes nothing.
+        const kept = { failures, ...lists };
+        const patch = run.complete && !retry ? { menuVersion: version, sweepVersion: '', sweepAfter: '', sweepRetry: false, releasedAt: at, releasedBy: actor.user, released: run.released.length, ...kept }
+          : { sweepVersion: version, sweepAfter: run.complete ? '' : run.next, sweepRetry: !run.complete && retry, updatedAt: at, ...kept };
         try { await catalog.commit([{ collection: MENU_APPROVALS, id: HELD_RELEASE_MARKER, revision: marker?.revision || null, patch }]); }
         catch (error) { if (error?.code !== 'catalog_revision_conflict') throw error; }
         // A pass that began mid-way counts the jobs before it too; a stopped run says there are more.
-        const counted = run.complete && after ? await countHeldJobs(jobs) : { count: run.waiting, more: false };
-        return reply(200, { ok: true, enabled: true, ran: true, menuVersion: version, released: run.released, held: counted.count, more: !run.complete || counted.more });
+        if (run.complete && after) return reply(200, answer(await countHeldJobs(jobs), { ran: true, released: run.released }, run.closed));
+        const stuck = stuckOf();
+        return reply(200, { ok: true, enabled: true, ran: true, menuVersion: version, released: run.released, held: run.waiting, more: !run.complete,
+          signedAbove: run.signedAbove.length, stuck: run.failed.filter(id => stuck.includes(id)).length });
       } catch (error) {
         if (/^catalog_(sign_in_required|forbidden|owner_required)$/.test(error?.code || '')) return reply(error.status, { ok: false, code: error.code, error: error.message });
         return reply(503, { ok: false, code: 'held_jobs_unavailable', error: 'The held jobs could not be checked. They stay held; try again in a moment.' });

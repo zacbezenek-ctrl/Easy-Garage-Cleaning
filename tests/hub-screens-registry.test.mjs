@@ -29,7 +29,7 @@ const tabs = page => page.document.querySelectorAll('[data-ops-tab]').map(button
 // WP14c's Purchase list (employee-purchase-list.js) follows Walkthroughs in RUN THE BUSINESS.
 // Job actuals (owner report, business access) registers just before Review queues in RUN THE BUSINESS; Open quotes
 // (business access, read only) follows it.
-const SHIPPED = ['job_actuals', 'open_quotes', 'reviews', 'message_templates', 'stocked_costs', 'staff', 'invoicing', 'walkthroughs', 'purchase_list'];
+const SHIPPED = ['job_actuals', 'crew_performance', 'open_quotes', 'reviews', 'message_templates', 'stocked_costs', 'staff', 'invoicing', 'walkthroughs', 'purchase_list'];
 const OWNER_SHIPPED = ['followup_settings', 'ad_spend', 'catalog', 'dispatch_rules'];
 const CREW_SHIPPED = ['crew_alerts'];
 const PASSWORD_SHIPPED = ['password'];
@@ -103,9 +103,9 @@ test('render lazily loads the kit then the screen once, mounts with the Hub cont
   page.api.go('fixture_lazy');
   assert.ok(page.main().querySelector('.hub-screen-loading'), 'a skeleton shows while assets load');
   await page.flush();
-  // The Command center's tomorrow readiness widget (READINESS) and held-jobs widget (employee-held-jobs.js) load their own
-  // files on the home before the screen is opened.
-  assert.deepEqual(requested.sort(), ['employee-held-jobs.js?v=20261021held1', 'employee-readiness.css?v=20261021ready1', 'employee-readiness.js?v=20261021ready1', 'employee-ui-kit.css?v=20260929mobilehub', 'employee-ui-kit.js?v=20260929mobilehub', 'fixture-lazy.css?v=t1', 'fixture-lazy.js?v=t1']);
+  // The Command center's home widgets load their own files before the screen is opened: tomorrow readiness (READINESS),
+  // needs sign-off (SIGNOFF) and held jobs (employee-held-jobs.js).
+  assert.deepEqual(requested.sort(), ['employee-held-jobs.js?v=20261021held1', 'employee-job-signoff.css?v=20261021signoff1', 'employee-job-signoff.js?v=20261021signoff1', 'employee-readiness.css?v=20261021ready1', 'employee-readiness.js?v=20261021ready1', 'employee-ui-kit.css?v=20260929mobilehub', 'employee-ui-kit.js?v=20260929mobilehub', 'fixture-lazy.css?v=t1', 'fixture-lazy.js?v=t1']);
   assert.equal(mounts.length, 1);
   const { host, ctx } = mounts[0];
   assert.equal(host, page.main());
@@ -129,7 +129,7 @@ test('render lazily loads the kit then the screen once, mounts with the Hub cont
   page.api.go('fixture_lazy');
   await page.flush();
   assert.equal(mounts.length, 2);
-  assert.equal(requested.length, 7, 'assets load once per page (the four above, the readiness widget pair and the held-jobs widget)');
+  assert.equal(requested.length, 9, 'assets load once per page (the four above, the readiness and sign-off widget pairs and the held-jobs widget)');
 });
 
 test('a registered screen that cannot leave blocks go() until its changes are finished', async () => {
