@@ -37,7 +37,12 @@ const ROLE_CHANGE_SESSIONS = ['"sessionsKept":true', '"sessionsRevoked":true'];
 // STAFF-SETUP (owner request, 2026-10-21): the owner's staff directory answer says whether the one-tap Finish staff setup
 // has records to fill (setup.needed). Exactly that field is taken back out; every other byte still compares.
 const STAFF_SETUP = [['"setup":{"needed":true},', ''], ['"setup":{"needed":false},', '']];
-const withoutAdditions = body => [...CATALOG_ADDITIONS, SESSION_EXPIRY, ROLE_CHANGE_SESSIONS, ...STAFF_SETUP].reduce((text, [added, before]) => text.replaceAll(added, before), body);
+// ESTIMATOR-CUSTOMER-ACCESS (security fix, 2026-10-21): customer-resolve names the customer it matched for an estimator
+// (a quote author who is not a dispatcher or booker) by a reference to that estimator's own request, cref_<requestId>,
+// instead of the record id, which can embed a CRM contact id (estimator-customer-access.js). Exactly that id is mapped
+// back to the one recorded for the harness's request; the masked hints and every other byte still compare.
+const ESTIMATOR_CUSTOMER_REF = ['"id":"cref_0b6f6c525a0d4d2e9a517d0e1c2a0008"', '"id":"customer_d0d9e25bbc37dfaa218c027d48844acc694ccb93"'];
+const withoutAdditions = body => [...CATALOG_ADDITIONS, SESSION_EXPIRY, ROLE_CHANGE_SESSIONS, ...STAFF_SETUP, ESTIMATOR_CUSTOMER_REF].reduce((text, [added, before]) => text.replaceAll(added, before), body);
 function render(matrix) {
   const bodies = new Map(), index = [];
   for (const [key, rows] of matrix) for (const [label, body] of rows) { bodies.set(sha(body), body); index.push(`${key} | ${label} | ${sha(body)}`); }

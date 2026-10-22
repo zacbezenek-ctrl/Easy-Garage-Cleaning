@@ -133,6 +133,13 @@ class CrewStaffingScreenTests(unittest.TestCase):
         expect(page.locator('[data-cs-staff]')).to_have_count(0)
         expect(page.locator('[data-cs-job]')).to_have_count(3)
 
+    def test_old_display_name_shows_as_stored(self):
+        self.control(reset=True, renamed=True)
+        page = self.open(390, 844, mobile=True)
+        note = page.locator('[data-cs-job="renamed"] [data-cs-note="inactive"]')
+        expect(note).to_have_text('Not matched to an active employee: Synthetic Old Name. Reassign by hand.')
+        self.assert_layout(page, True)
+
     def test_crew_get_nothing(self):
         self.control(who='crew')
         page = self.open(390, 844, mobile=True)

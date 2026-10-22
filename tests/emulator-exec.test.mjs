@@ -169,7 +169,8 @@ test('an expired claim and a stale lock left by a killed run do not block a new 
  assert.deepEqual(readdirSync(claims).sort(),['fresh.json']);
  // A live claim does hold its port: the next run is given another.
  let calls=0;const next=await claimPorts(4,{id:'next',pickPorts:async count=>calls++===0?claim.ports:freePorts(count),claimsDir:claims});
- assert.equal(calls,2);assert.equal(new Set([...claim.ports,...next.ports]).size,8);
+ // The OS may also hand back a just-released port that is claimed, so the picker can run more than twice.
+ assert.ok(calls>=2);assert.equal(new Set([...claim.ports,...next.ports]).size,8);
  claim.release();next.release();assert.deepEqual(readdirSync(claims),[]);
 });
 
@@ -189,4 +190,24 @@ const child=spawn(process.execPath,[resolve(dirname(config),'fake-firebase.mjs')
  assert.deepEqual(readdirSync(join(root,'claims')),[],'no claim is left behind');
  const failed=await runEmulatorExec({...quiet,root,env,cwd:root,claimsDir:join(root,'claims'),script:'node probe.mjs ran.json 0 2'});
  assert.deepEqual([failed.code,failed.attempts],[2,1],'a command that ran and failed is never retried');
+});
+
+// Review of #231: stopping the CLI (SIGTERM, as CI cancelling a job does) while firebase is still starting ends the run;
+// it is not a start-up failure to retry with a second emulator.
+test('a stop during the emulator start-up ends the run without a retry',async t=>{
+ const {root,env}=workspace(t);
+ writeFileSync(join(root,'slow-firebase.mjs'),"import {writeFileSync} from 'node:fs';writeFileSync('started-firebase','x');setTimeout(()=>process.exit(0),20000);");
+ const slow={...env,EGC_FIREBASE_BIN:join(root,'slow-firebase.mjs')};
+ // In-process: firebase killed by a signal is not a start-up failure.
+ const run=await runEmulatorExec({...quiet,root,env:slow,cwd:root,claimsDir:join(root,'claims'),onChild:child=>setTimeout(()=>child.kill('SIGTERM'),300),script:'node probe.mjs never.json'});
+ assert.deepEqual([run.code,run.attempts],[1,1]);
+ // The CLI: SIGTERM while firebase starts stops it once and exits non-zero, with one start logged.
+ const cli=spawn(process.execPath,[SCRIPT,'--project','demo-egc-stop','node probe.mjs never.json'],{cwd:root,env:slow,stdio:['ignore','ignore','pipe']});let stderr='';
+ cli.stderr.on('data',chunk=>{stderr+=chunk;});
+ for(let wait=0;wait<100&&!/firestore 127\.0\.0\.1/.test(stderr);wait++)await new Promise(done=>setTimeout(done,50));
+ await new Promise(done=>setTimeout(done,300));cli.kill('SIGTERM');
+ const code=await new Promise(done=>cli.on('exit',status=>done(status)));
+ assert.notEqual(code,0);assert.equal((stderr.match(/\[emulator-exec\] demo-egc-stop: firestore/g)||[]).length,1,'one start, no retry');
+ assert.doesNotMatch(stderr,/retrying with fresh ports/);assert.equal(existsSync(join(root,'never.json')),false);
+ const kept=/emulator logs kept in (.+)$/m.exec(stderr)?.[1];if(kept)t.after(()=>rmSync(kept,{recursive:true,force:true}));
 });
