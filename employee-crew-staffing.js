@@ -39,7 +39,7 @@ function jobLine(row,result){
   return h('li',{class:'cs-job '+(row.status==='short'?'short':'none'),'data-cs-job':row.jobId},
     h('span',{class:'cs-when'},when||day(row.date)),h('span',{class:'cs-who'},row.customer||row.title||'Unnamed job'),result?.ok?null:h('span',{class:'cs-need'},need),
     row.needsTime?h('span',{class:'cs-note','data-cs-note':'time'},'Needs a time: it cannot be staffed until it has one.'):null,
-    Array.isArray(row.inactive)&&row.inactive.length?h('span',{class:'cs-note','data-cs-note':'inactive'},'No longer active: '+row.inactive.join(', ')+'. Reassign by hand.'):null,
+    Array.isArray(row.inactive)&&row.inactive.length?h('span',{class:'cs-note','data-cs-note':'inactive'},'Not matched to an active employee: '+(Array.isArray(row.unmatched)&&row.unmatched.length?row.unmatched:row.inactive).join(', ')+'. Reassign by hand.'):null,
     result?h('span',{class:'cs-result '+(result.ok?'ok':'bad'),'data-cs-result':result.ok?'assigned':'failed'},result.text):null);
 }
 

@@ -449,7 +449,9 @@ test('EGC_JOB_MATERIALS: a signed revision keeps Dispatch entries and the purcha
 test('EGC_JOB_MATERIALS: equipment added in Dispatch survives a signed revision; only the earlier bring list is swapped', async () => {
   const sales = { user: 'sales.person', role: 'sales', businessAccess: false, displayName: 'Synthetic Sales', source: 'employee-account', staffRoles: ['sales'] };
   for (const [actor, env] of [[owner, MATERIALS_ON], [sales, { ...MATERIALS_ON, EGC_STAFF_ROLE_PERMISSIONS: 'true' }]]) {
-    const f = fixture(withKit()), saved = await saveWalkthroughHandoff(f.store, actor, f.input, NOW, { env }), id = saved.job.id;
+    const f = fixture(withKit());
+    f.rows.get('jobs/w1').assignedCrew = [actor.user]; // the estimator's own walkthrough (estimator-customer-access.js)
+    const saved = await saveWalkthroughHandoff(f.store, actor, f.input, NOW, { env }), id = saved.job.id;
     assert.deepEqual(f.rows.get(`jobs/${id}`).requiredEquipment, KIT, actor.user);
     // A manager adds equipment in Dispatch (dispatch-service schedulePatch replaces requiredEquipment with the edited list).
     const job = f.rows.get(`jobs/${id}`);
