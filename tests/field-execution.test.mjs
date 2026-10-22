@@ -409,3 +409,65 @@ for (const type of ['cleanout','reorg']) test(`legacy ${type} work uses the same
   const rows=await createFieldStore(env).listDays('2026-09-22','2026-09-22');assert.ok(rows.some(j=>j.id==='job-1'));
   assert.equal((await route.onRequestGet({env,request:req('Crew-One',undefined,'?jobId=job-1')})).status,403);
 });
+
+// A second crew issue while one is open is added to it, never written over it. Fixed request ids, synthetic text.
+const ISSUE_A = '11111111-1111-4111-8111-111111111111', ISSUE_B = '22222222-2222-4222-8222-222222222222', ISSUE_C = '33333333-3333-4333-8333-333333333333';
+const managerView = async () => (await (await route.onRequestGet({ env, request: req('ZacB', undefined, '?jobId=job-1') })).json()).job.attention;
+
+test('flagging a second issue adds it to the open one: both texts, each later one with its time and author, and the first issue’s id', async t => {
+  const store = storage(t); store.put('jobs/job-1', baseline());
+  assert.equal((await post(store, { action: 'note', requestId: ISSUE_A, body: 'Synthetic issue A: the side door sticks.', issue: true, visibility: 'crew' })).status, 200);
+  assert.equal((await post(store, { action: 'note', requestId: ISSUE_B, body: 'Synthetic issue B: a shelf bracket is loose.', issue: true, visibility: 'crew' })).status, 200);
+  const stored = store.get('jobs/job-1').fieldExecution.attention;
+  assert.equal(stored.status, 'open');
+  assert.equal(stored.requestId, ISSUE_A, 'the open issue keeps its id, so a resolve form already open still matches');
+  assert.match(stored.reason, /^Synthetic issue A: the side door sticks\.\n\n\S+ · Crew One: Synthetic issue B: a shelf bracket is loose\.$/);
+  const issue = await managerView();
+  assert.equal(issue.id, ISSUE_A);
+  assert.match(issue.reason, /issue A[\s\S]*issue B/);
+  // Resolving with the id the manager saw before B arrived still works, and resolves both.
+  const resolved = await post(store, { action: 'resolve_issue', issueId: ISSUE_A, resolution: 'Synthetic resolution: door planed and bracket replaced.' }, 'ZacB');
+  assert.equal(resolved.status, 200);
+  assert.equal(store.get('jobs/job-1').fieldExecution.attention.status, 'resolved');
+});
+
+test('a new issue after a resolved one starts fresh with its own id, and the resolved one is kept in the history', async t => {
+  const store = storage(t); store.put('jobs/job-1', baseline());
+  await post(store, { action: 'note', requestId: ISSUE_A, body: 'Synthetic issue A: the side door sticks.', issue: true, visibility: 'crew' });
+  assert.equal((await post(store, { action: 'resolve_issue', issueId: ISSUE_A, resolution: 'Synthetic resolution: door planed.' }, 'ZacB')).status, 200);
+  assert.equal((await post(store, { action: 'note', requestId: ISSUE_C, body: 'Synthetic issue C: a new scuff on the floor.', issue: true, visibility: 'crew' })).status, 200);
+  const state = store.get('jobs/job-1').fieldExecution;
+  assert.deepEqual([state.attention.requestId, state.attention.status, state.attention.reason], [ISSUE_C, 'open', 'Synthetic issue C: a new scuff on the floor.']);
+  assert.deepEqual(state.attentionHistory.map(row => [row.requestId, row.status]), [[ISSUE_A, 'resolved']]);
+  assert.equal((await post(store, { action: 'resolve_issue', issueId: ISSUE_A, resolution: 'Synthetic: an old form for the earlier issue.' }, 'ZacB')).status, 409, 'an old resolve form never closes the new issue');
+});
+
+test('completing with issues while one is open keeps the open issue and adds the completion issue to it', async t => {
+  const store = storage(t); store.put('jobs/job-1', baseline());
+  for (const status of ['dispatched', 'arrived']) await post(store, { action: 'status', status });
+  await post(store, { action: 'photo', category: 'before', caption: '', dataUrl: picture });
+  for (const item of fieldChecklist(store.get('jobs/job-1'))) await post(store, { action: 'checklist', itemId: item.id, completed: true });
+  await post(store, { action: 'status', status: 'in_progress' });
+  await post(store, { action: 'photo', category: 'after', caption: 'Garage finished', dataUrl: picture });
+  assert.equal((await post(store, { action: 'note', requestId: ISSUE_A, body: 'Synthetic issue A: the side door sticks.', issue: true, visibility: 'crew' })).status, 200);
+  const done = await (await post(store, { action: 'complete', notes: 'Synthetic: garage cleaned and walked through.', hasIssues: true, issueNotes: 'Synthetic completion issue: one bin left for pickup.' })).json();
+  assert.equal(done.ok, true);
+  const attention = store.get('jobs/job-1').fieldExecution.attention;
+  assert.equal(attention.requestId, ISSUE_A);
+  assert.match(attention.reason, /^Synthetic issue A[\s\S]*Crew One: Synthetic completion issue: one bin left for pickup\.$/);
+  assert.equal(done.job.attention.id, ISSUE_A);
+});
+
+test('the combined issue text stops at 4,000 characters, and a management-only addition hides the whole issue from crew', () => {
+  const open = { at: '2026-09-22T15:00:00.000Z', actorId: 'Crew.One', actorName: 'Crew One', requestId: ISSUE_A, visibility: 'crew', reason: 'x'.repeat(3990), status: 'open' };
+  const long = fieldCommand({ ...baseline(), fieldExecution: { attention: open } }, actor, { action: 'note', requestId: ISSUE_B, body: 'Synthetic issue B.', issue: true, visibility: 'crew' }, '2026-09-22T16:00:00.000Z');
+  assert.equal(long.patch.fieldExecution.attention.reason.length, 4000);
+  assert.equal(long.patch.fieldExecution.attention.requestId, ISSUE_A);
+  const owner = { user: 'ZacB', displayName: 'Owner', manager: true };
+  const shortOpen = { ...open, reason: 'Synthetic issue A: the side door sticks.' };
+  const merged = fieldCommand({ ...baseline(), fieldExecution: { attention: shortOpen } }, owner, { action: 'note', requestId: ISSUE_B, body: 'Synthetic private: billing adjustment needed.', issue: true, visibility: 'management' }, '2026-09-22T16:00:00.000Z');
+  const job = { ...baseline(), fieldExecution: merged.patch.fieldExecution };
+  assert.equal(job.fieldExecution.attention.visibility, 'management');
+  assert.equal(fieldJobProjection(job).attention, null, 'crew never see the private addition');
+  assert.match(fieldJobProjection(job, [], { manager: true }).attention.reason, /side door[\s\S]*billing adjustment/);
+});
