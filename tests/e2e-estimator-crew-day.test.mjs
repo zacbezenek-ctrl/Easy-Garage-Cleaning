@@ -15,6 +15,7 @@ import { readFileSync } from 'node:fs';
 import { randomUUID } from 'node:crypto';
 import vm from 'node:vm';
 import { crewDayFirestore } from './helpers/crew-day-firestore.mjs';
+import { withoutRandomValues } from './helpers/leak-text.mjs';
 import { createHubSessionCookie } from '../functions/_lib/hub-session.js';
 import { dispatchHandlers } from '../functions/api/dispatch.js';
 import { dispatchOpeningsHandlers } from '../functions/api/dispatch-openings.js';
@@ -304,15 +305,15 @@ test('estimator to crew, one day through the real handlers: walkthrough, builder
   assert.deepEqual([once.replayed, twice.replayed, 'heldJobs' in twice, once.approvals.laborRatePerManHourCents], [false, true, false, 5300]);
   assert.deepEqual((await api.ok('Sales.Person', '/api/quote-draft?view=builder')).labor.source, 'owner');
 
-  // 2, continued) The $750 full truck is the one price the menu itself approves: the estimator's junk-only quote for the
+  // 2, continued) The $1,000 full truck is the one price the menu itself approves: the estimator's junk-only quote for the
   // afternoon walkthrough is ready at once and goes to the customer (no draft price, no installation question).
   const second = (await api.ok('TylerG', '/api/dispatch', { action: 'schedule.create', requestId: randomUUID(), customerId: 'c2', kind: 'walkthrough', changes: { date: MON, time: '13:00', endTime: '14:00', title: 'Junk walkthrough', assignedCrew: ['sales.person'] } })).job;
   clock(at(MON, '13:40'));
-  // D-JUNK (owner, 2026-10-18: "$750 per truck covers the crew's time"): a junk-only quote has no Labor line. Even a page
-  // that still sends the labor pre-fill gets $750 for the truck and nothing else.
+  // D-JUNK (owner, 2026-10-18: the truck price covers the crew's time; $1,000 since 2026-10-21): a junk-only quote has no Labor line. Even a page
+  // that still sends the labor pre-fill gets $1,000 for the truck and nothing else.
   const truck = selection({ removal: [{ id: menuItem('Full truck load').id, quantity: 1 }], shelving: [], storage: [], labor: { manHours: null, fullness: 'light' } });
   const truckPriced = await api.ok('Sales.Person', '/api/quote-draft', { action: 'composite_preview', compositePricing: truck });
-  assert.deepEqual([truckPriced.totalCents, truckPriced.approval, truckPriced.labor, truckPriced.junkOnly, truckPriced.compositePricing.labor, truckPriced.lineItems.map(line => line.id)], [75000, { ready: true, blocked: [] }, null, true, undefined, ['removal-junk-full']]);
+  assert.deepEqual([truckPriced.totalCents, truckPriced.approval, truckPriced.labor, truckPriced.junkOnly, truckPriced.compositePricing.labor, truckPriced.lineItems.map(line => line.id)], [100000, { ready: true, blocked: [] }, null, true, undefined, ['removal-junk-full']]);
   const truckSource = await api.ok('Sales.Person', `/api/walkthrough-handoff?sourceWalkthroughId=${second.id}`);
   const truckDraft = (await api.ok('Sales.Person', '/api/quote-draft', { action: 'save', requestId: randomUUID(), customerId: 'c2', sourceWalkthroughId: second.id, sourceRevision: truckSource.sourceRevision, draft: { client: client(2), title: 'Junk removal', scope: 'One full truck load.', line_items: truckPriced.lineItems, valid_until: '2026-11-02', catalog_version: truckPriced.menuVersion, crew_size: 2, estimated_duration_min: 120, composite_pricing: truckPriced.compositePricing } })).job;
   // A new quote's 25/75 payment dates need the job's date, so the send waits for it (an unchanged rule since 2026-10-14).
@@ -325,9 +326,9 @@ test('estimator to crew, one day through the real handlers: walkthrough, builder
   assert.deepEqual(fire.list(GHL_SCHEDULE_MIRROR).filter(row => row.jobId === truckDraft.id).map(row => [row.kind, row.stage, row.status]), [['scheduled', 'job_scheduled', 'pending']]);
   assert.ok(api.sent.mirror.some(row => row.jobId === truckDraft.id));
   const truckPreview = await api.ok('Sales.Person', '/api/quote-draft', { action: 'send_preview', jobId: truckDraft.id, expectedRevision: fire.get(`jobs/${truckDraft.id}`).updateTime });
-  assert.match(truckPreview.summary, /\$750\.00/, 'the $750 truck, with no Labor line');
+  assert.match(truckPreview.summary, /\$1,000\.00/, 'the $1,000 truck, with no Labor line');
   const truckSent = await api.ok('Sales.Person', '/api/quote-draft', { action: 'send', requestId: randomUUID(), jobId: truckDraft.id, expectedRevision: fire.get(`jobs/${truckDraft.id}`).updateTime, confirmToken: truckPreview.confirmToken });
-  assert.deepEqual([fire.get(`jobs/${truckDraft.id}`).estimate.status, fire.get(`jobs/${truckDraft.id}`).estimate.amount, fire.get(`jobs/${truckDraft.id}`).estimate.sentBy], ['sent', 750, 'Sales.Person']);
+  assert.deepEqual([fire.get(`jobs/${truckDraft.id}`).estimate.status, fire.get(`jobs/${truckDraft.id}`).estimate.amount, fire.get(`jobs/${truckDraft.id}`).estimate.sentBy], ['sent', 1000, 'Sales.Person']);
   // Customer messaging is not switched on here: the send is recorded and says so; HighLevel was not asked to text anyone.
   assert.deepEqual([truckSent.delivery.status, truckSent.warnings.map(row => row.code), api.sent.estimates], ['messaging_disabled', ['messaging_disabled'], []]);
 
@@ -441,7 +442,8 @@ test('estimator to crew, one day through the real handlers: walkthrough, builder
     const card = await seenBy(teammate);
     assert.deepEqual([card.shirtSize, card.birthday, card.crews.map(crew => crew.name)], ['L', { month: 5, day: 14 }, ['Crew 1']], teammate);
     assert.deepEqual(['birthDate', 'age', 'phone', 'emergencyContact', 'highlevelUserId'].filter(key => key in card), [], `${teammate} sees no birth year or age`);
-    assert.doesNotMatch(JSON.stringify(card), /1998/);
+    // Random ids (a crew id's hex can hold the digits 1998) are stripped first, so only a real birth year matches.
+    assert.doesNotMatch(withoutRandomValues(JSON.stringify(card)), /1998/);
   }
   const managed = await seenBy('TylerG');
   assert.deepEqual([managed.shirtSize, managed.birthday, managed.birthDate, managed.age], ['L', { month: 5, day: 14 }, '1998-05-14', 28]);

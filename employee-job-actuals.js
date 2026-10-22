@@ -1,12 +1,18 @@
 /* Job actuals (owner): every completed job in the last 90 days with billed versus actual man-hours, truck loads, goods
    at retail, commission by channel and an estimated gross margin and contribution, with totals for the last 30 and 90
-   days and a CSV export. The server computes every figure (functions/_lib/job-actuals.js, GET /api/job-actuals) in
+   days and a CSV export, and the estimator accuracy scorecard (estimated vs actual man-hours per estimator). The server computes every figure (functions/_lib/job-actuals.js, GET /api/job-actuals) in
    integer cents; this screen only formats them. No margin shows until the owner enters the crew wage, and margins read
    "upper bound" until all seven cost settings are entered (wage, workers' comp, payroll tax, burden, dump fee, truck
    cost, goods tax) on the Cost settings card (POST /api/job-actuals, owner only; managers see them read-only). The owner
    also gets an Owner targets card (GET/POST /api/owner-economics, owner only, never shown to a manager): the labor
    baseline, lead wage, truck rental and sales targets the Playbook and Scorecard read. Registered in
-   employee-hub-screens.js and runs standalone with the UI kit (window.EGCHubKit). */
+   employee-hub-screens.js and runs standalone with the UI kit (window.EGCHubKit).
+   Commission (the per-job lines, the totals and the contribution after them) is the owner's only: the server leaves it
+   out for a manager (commissionShown false, FUNNEL-METRICS §8.3) and this screen then shows no commission column,
+   Contribution figure or CSV commission column.
+   EGC_WINTER_SALE: the Early-bird winter sale card (amount, accept-by day, work window, margin floor, man-hours per truck
+   load) shows when the server answers winterSale; the owner saves it (POST action winter_sale.settings.set), managers see
+   it read-only without the margin floor. A sale settings record the server cannot verify shows its reason on the card. */
 (function(){
 'use strict';
 const SCREEN='job_actuals',PATH='/api/job-actuals',PREFIX='job_actuals';
@@ -36,7 +42,14 @@ const CHANNEL={direct_estimator:'Estimator 7%',appointment_setter:'Setter 13% + 
 // warning above the totals and 'actual_hours_missing' by the Actual cell, so neither repeats here.
 const REASON={loads_quoted:'Dump cost from quoted loads',loads_unknown:'Truck loads not recorded',revenue_unreconciled:'Revenue not final: refund or unbilled change',timecards_unavailable:'Timecards could not be read',timecards_incomplete:'Timecards incomplete (open shift or review)',crew_lead_exceeds_timecards:'Crew lead count used: above timecards',wage_unset:'No crew wage set',goods_unknown:'Goods unknown: no estimate lines',revenue_unknown:'Revenue unknown'};
 const SOURCE={timecards:'Timecards',crew_lead:'Crew lead',not_recorded:'Not recorded'};
-const S={host:null,ctx:null,data:null,error:null,loading:false,busy:false,pending:null,drafts:{},feedback:'',feedbackError:false,generation:0,showAll:false};
+const S={host:null,ctx:null,data:null,error:null,loading:false,busy:false,pending:null,drafts:{},feedback:'',feedbackError:false,generation:0,showAll:false,accuracyWindow:'last30',accuracyAll:false,accuracyJobsOpen:false,sale:{drafts:{},busy:false,feedback:'',error:false,requestId:''}};
+const SALE=[
+  {key:'amountCents',label:'Discount, up to',kind:'money',help:'Shown to the customer as its own line, "Early-bird winter sale", with the amount given: less where the margin floor caps it. At most $400.'},
+  {key:'signBy',label:'Accepted by',kind:'date',help:'Last Denver day the customer can accept a sale quote; a sale quote expires on it at the latest. It must fall inside the work days.'},
+  {key:'jobFrom',label:'Work from',kind:'date',help:'First day the job can be booked. The work days stay between Nov 1 and Mar 31, at most 92 days in all.'},
+  {key:'jobTo',label:'Work through',kind:'date',help:'Last day the job can be booked.'},
+  {key:'marginFloorBp',label:'Margin floor',kind:'percent',help:'The discount on a quote is cut to keep its estimated margin at this floor (none if the job is already below it). Blank: no quote gets the sale until you enter it. Only you see this; estimators see "ask Zac".'},
+  {key:'junkManHoursPerLoad',label:'Man-hours per truck load',kind:'hours',help:'Crew time a truck load takes that the Labor line does not price (junk-only quotes have no Labor line). The margin floor adds it for every load on a quote. Blank: quotes with truck loads get no sale.'}];
 const O={data:null,error:null,busy:false,pending:null,drafts:{},feedback:'',feedbackError:false,generation:0};
 const kit=()=>window.EGCHubKit;
 const h=(...args)=>kit().h(...args);
@@ -47,12 +60,18 @@ const hours=value=>typeof value==='number'&&Number.isFinite(value)?value.toFixed
 const signed=(value,format)=>typeof value==='number'&&Number.isFinite(value)?(value>0?'+':'')+format(value):'—';
 const pct=value=>typeof value==='number'&&Number.isFinite(value)?value.toFixed(1)+'%':'—';
 const day=value=>{try{return value?new Intl.DateTimeFormat('en-US',{timeZone:'UTC',month:'short',day:'numeric',year:'numeric'}).format(new Date(value+'T12:00:00Z')):'—';}catch{return'—';}};
-function validTotals(t){return Boolean(t&&int(t.jobs)&&int(t.revenueCents)&&int(t.commissionCents)&&int(t.marginCommissionCents)&&int(t.grossMarginCents)&&typeof t.upperBound==='boolean');}
-function validRow(r){return Boolean(r&&typeof r.jobId==='string'&&r.billed&&r.actual&&r.truckLoads&&int(r.truckLoads.count)&&r.commission&&Array.isArray(r.commission.lines)&&int(r.commission.totalCents)&&(r.revenueCents===null||int(r.revenueCents))&&(r.grossMarginCents===null||int(r.grossMarginCents))&&Array.isArray(r.reasons));}
+// The commission view is the owner's (the server's commissionShown); a manager's response carries none of it.
+const paid=()=>S.data?.commissionShown===true;
+function validTotals(t,pay){return Boolean(t&&int(t.jobs)&&int(t.revenueCents)&&(!pay||int(t.commissionCents)&&int(t.marginCommissionCents))&&int(t.grossMarginCents)&&typeof t.upperBound==='boolean');}
+function validRow(r,pay){return Boolean(r&&typeof r.jobId==='string'&&r.billed&&r.actual&&r.truckLoads&&int(r.truckLoads.count)&&(!pay||r.commission&&Array.isArray(r.commission.lines)&&int(r.commission.totalCents))&&(r.revenueCents===null||int(r.revenueCents))&&(r.grossMarginCents===null||int(r.grossMarginCents))&&Array.isArray(r.reasons));}
 function valid(data){
-  return Boolean(data&&data.ok===true&&data.window&&data.totals&&validTotals(data.totals.last30)&&validTotals(data.totals.last90)&&Array.isArray(data.rows)&&data.rows.every(validRow)
-    &&data.settings&&typeof data.canEdit==='boolean'&&SETTINGS.every(s=>data.settings[s.key]===null||int(data.settings[s.key])));
+  const pay=data?.commissionShown===true;
+  return Boolean(data&&data.ok===true&&data.window&&data.totals&&validTotals(data.totals.last30,pay)&&validTotals(data.totals.last90,pay)&&Array.isArray(data.rows)&&data.rows.every(r=>validRow(r,pay))
+    &&data.settings&&typeof data.canEdit==='boolean'&&SETTINGS.every(s=>data.settings[s.key]===null||int(data.settings[s.key]))
+    &&(data.estimatorAccuracy===undefined||validAccuracy(data.estimatorAccuracy)));
 }
+function validScorecard(c){return Boolean(c&&int(c.minJobs)&&Array.isArray(c.estimators)&&c.estimators.every(e=>e&&typeof e.estimator==='string'&&int(e.jobs)&&typeof e.ranked==='boolean'));}
+function validAccuracy(a){return Boolean(a&&int(a.minJobs)&&Array.isArray(a.rows)&&a.rows.every(r=>r&&typeof r.jobId==='string'&&typeof r.scored==='boolean')&&validScorecard(a.last30)&&validScorecard(a.last90));}
 const validSave=data=>Boolean(data&&data.ok===true&&data.settings&&SETTINGS.every(s=>data.settings[s.key]===null||int(data.settings[s.key])));
 // Settings text as the owner typed it, and what it means: {value: integer|null} or {bad:true}.
 const shown=(setting,value)=>value===null||value===undefined?'':setting.kind==='percent'?String(value/100):(value/100).toFixed(2);
@@ -121,8 +140,9 @@ async function save(){
 function exportCsv(){
   const rows=S.data?.rows||[];
   const num=value=>value===null||value===undefined?'':String(value),dollars=value=>int(value)?(value/100).toFixed(2):'';
-  const head=['Job ID','Date','Customer','Revenue','Billed man-hours','Actual man-hours','Actual source','Variance man-hours','Variance %','Truck loads','Loads source','Goods retail','Goods cost','Labor cost','Dump','Truck','Commission channel','Commission','Gross margin','Gross margin %','Contribution','Upper bound','Notes'];
-  const body=rows.map(r=>[r.jobId,r.date||'',r.customer,dollars(r.revenueCents),num(r.billed.manHours),num(r.actual.manHours),r.actual.source,num(r.varianceManHours),num(r.variancePercent),num(r.truckLoads.count),r.truckLoads.source,dollars(r.goodsRetailCents),dollars(r.goodsCostCents),dollars(r.laborCents),dollars(r.dumpCents),dollars(r.truckCents),r.commission.channel,dollars(r.commission.totalCents),dollars(r.grossMarginCents),num(r.grossMarginPercent),dollars(r.contributionCents),r.upperBound?'yes':'no',r.reasons.join(' ')]);
+  const pay=paid();
+  const head=['Job ID','Date','Customer','Revenue','Billed man-hours','Actual man-hours','Actual source','Variance man-hours','Variance %','Truck loads','Loads source','Goods retail','Goods cost','Labor cost','Dump','Truck',...(pay?['Commission channel','Commission']:[]),'Gross margin','Gross margin %',...(pay?['Contribution']:[]),'Upper bound','Notes'];
+  const body=rows.map(r=>[r.jobId,r.date||'',r.customer,dollars(r.revenueCents),num(r.billed.manHours),num(r.actual.manHours),r.actual.source,num(r.varianceManHours),num(r.variancePercent),num(r.truckLoads.count),r.truckLoads.source,dollars(r.goodsRetailCents),dollars(r.goodsCostCents),dollars(r.laborCents),dollars(r.dumpCents),dollars(r.truckCents),...(pay?[r.commission.channel,dollars(r.commission.totalCents)]:[]),dollars(r.grossMarginCents),num(r.grossMarginPercent),...(pay?[dollars(r.contributionCents)]:[]),r.upperBound?'yes':'no',r.reasons.join(' ')]);
   // Numbers stay plain (a leading minus is a number, not a formula); text cells get the kit's formula guard.
   const cell=value=>/^-?\d+(?:\.\d+)?$/.test(value)?value:kit().csvCell(value);
   const text=[head,...body].map(row=>row.map(cell).join(',')).join('\r\n');
@@ -137,8 +157,53 @@ function totalsCard(title,t){
       stat('Revenue',money(t.revenueCents),`${t.jobs} completed job${t.jobs===1?'':'s'}`),
       stat('Billed vs actual',`${hours(t.billedManHours)} → ${hours(t.actualManHours)} h`,t.comparedJobs?`${signed(t.varianceManHours,hours)} h (${signed(t.variancePercent,pct)}) on ${t.comparedJobs} job${t.comparedJobs===1?'':'s'}`:'No job has both yet'),
       stat('Gross margin'+bound,money(t.marginJobs?t.grossMarginCents:null),t.marginJobs?`${pct(t.grossMarginPercent)} on ${money(t.marginRevenueCents)} (${t.marginJobs} job${t.marginJobs===1?'':'s'} with hours)`:'Needs actual hours'),
-      stat('Contribution'+bound,money(t.marginJobs?t.contributionCents:null),t.marginJobs?`after ${money(t.marginCommissionCents)} commission on those jobs (${money(t.commissionCents)} on all)`:`${money(t.commissionCents)} commission on all jobs`),
+      paid()?stat('Contribution'+bound,money(t.marginJobs?t.contributionCents:null),t.marginJobs?`after ${money(t.marginCommissionCents)} commission on those jobs (${money(t.commissionCents)} on all)`:`${money(t.commissionCents)} commission on all jobs`):null,
       stat('Truck loads',String(t.truckLoads),`Goods at retail ${money(t.goodsRetailCents)}`)));
+}
+// The winter sale settings (EGC_WINTER_SALE). A failed save keeps its requestId, so a retry is never applied twice.
+const saleShown=(s,value)=>value===null||value===undefined?'':s.kind==='hours'?String(value):s.kind==='money'?(value/100).toFixed(2):s.kind==='percent'?String(value/100):String(value);
+function saleParsed(s,text){
+  const t=String(text??'').trim();
+  if(s.kind==='date')return /^\d{4}-\d{2}-\d{2}$/.test(t)?{value:t}:{bad:true};
+  if(s.kind==='hours')return t===''?{value:null}:/^\d+(\.\d{1,2})?$/.test(t)&&Number.isInteger(Number(t)*4)&&Number(t)>0?{value:Number(t)}:{bad:true};
+  if(s.kind==='percent'&&t==='')return{value:null};
+  if(!/^\d+(\.\d{1,2})?$/.test(t))return{bad:true};
+  return{value:Math.round(Number(t)*100)};
+}
+async function saveSale(){
+  const d=S.data?.winterSale,sale=S.sale;if(!d||sale.busy||!S.data.canEdit)return;
+  const settings={},bad=[];
+  for(const s of SALE){const r=saleParsed(s,Object.hasOwn(sale.drafts,s.key)?sale.drafts[s.key]:saleShown(s,d.settings[s.key]));if(r.bad)bad.push(s.label);else settings[s.key]=r.value;}
+  if(bad.length){sale.feedback=`Fix: ${bad.join(', ')} (dollars like 400.00, dates like 2027-01-31, hours in quarters like 1.5).`;sale.error=true;render();return;}
+  sale.requestId=sale.requestId||crypto.randomUUID();sale.busy=true;sale.feedback='';render();
+  try{
+    await kit().requestJSON(PATH,{method:'POST',prefix:PREFIX,fetcher:fetcher(),body:{action:'winter_sale.settings.set',requestId:sale.requestId,expectedRevision:d.settings.revision??null,settings},validate:data=>Boolean(data?.ok===true&&data.winterSale?.settings)});
+    Object.assign(sale,{drafts:{},requestId:'',feedback:'Winter sale settings saved. Quotes saved from now on use them.',error:false});
+  }catch(error){
+    // A definite refusal can never succeed unchanged: the next save is a new request. A lost answer retries this one.
+    if(error.status>=400&&error.status<500&&![401,403,408,429].includes(error.status))sale.requestId='';
+    Object.assign(sale,{feedback:kit().errorText(error),error:true});
+  }
+  sale.busy=false;await load();
+}
+function saleCard(){
+  const d=S.data?.winterSale;if(!d||d.enabled!==true)return null;
+  if(!d.settings)return d.error?h('section',{class:'hub-card ja-settings ja-sale','aria-label':'Early-bird winter sale'},h('h2',{},'Early-bird winter sale'),h('p',{role:'alert',class:'ja-feedback error'},String(d.error))):null;
+  const editable=S.data.canEdit,sale=S.sale;
+  const rows=SALE.map(s=>{
+    const saved=d.settings[s.key];
+    // The margin floor is the owner's alone: the server leaves it out for anyone else.
+    if(!editable&&!Object.hasOwn(d.settings,s.key))return null;
+    if(!editable)return h('div',{class:'ja-setting'},h('span',{},s.label),h('strong',{},s.kind==='hours'?(saved===null?'Not set':saved+' h'):s.kind==='money'?money(saved):s.kind==='percent'?(saved===null?'Not set':(saved/100)+'%'):day(saved)));
+    const input=h('input',{type:s.kind==='date'?'date':'text',inputmode:s.kind==='date'?null:'decimal',autocomplete:'off',maxlength:12,placeholder:s.kind==='hours'||s.kind==='percent'?'Not set':null,value:Object.hasOwn(sale.drafts,s.key)?sale.drafts[s.key]:saleShown(s,saved),disabled:sale.busy,'aria-label':s.label,'data-sale':s.key,oninput:event=>{sale.drafts[s.key]=event.target.value;}});
+    return h('label',{class:'ja-setting ja-setting-edit'},h('span',{},s.label,h('small',{},s.help)),h('span',{class:'ja-input'},s.kind==='money'?h('span',{'aria-hidden':'true'},'$'):null,input,s.kind==='percent'?h('span',{'aria-hidden':'true'},'%'):null));
+  });
+  return h('section',{class:'hub-card ja-settings ja-sale','aria-label':'Early-bird winter sale'},
+    h('h2',{},'Early-bird winter sale'),
+    h('p',{class:'ja-muted'},'Estimators ask for the sale on the quote; the server applies it inside these dates and cuts the amount where the margin floor needs it, using the cost settings above. Until every cost setting and your margin floor are entered the sale is never applied. Advertise it as "up to" the discount.'+(editable?' You can apply it anyway on a quote, with a reason (audited).':' Only the owner can change these.')),
+    h('div',{class:'ja-setting-list'},rows),
+    editable?h('div',{class:'ja-save'},kit().button(sale.busy?'Saving…':sale.requestId?'Retry save':'Save winter sale',saveSale,'primary',{disabled:sale.busy,'data-sale-save':''})):null,
+    sale.feedback?h('p',{role:sale.error?'alert':'status',class:'ja-feedback'+(sale.error?' error':'')},sale.feedback):null);
 }
 function settingsCard(){
   const d=S.data,editable=d.canEdit,{bad,changed}=changes();
@@ -253,22 +318,70 @@ function refreshOwnerBar(){
 }
 function jobRow(r){
   const variance=r.varianceManHours===null?'—':`${signed(r.varianceManHours,hours)} (${signed(r.variancePercent,pct)})`;
-  const commission=r.commission.lines.length?r.commission.lines.map(line=>`${line.role} ${money(line.cents)}`).join(' + '):'—';
+  const pay=paid(),commission=pay&&r.commission.lines.length?r.commission.lines.map(line=>`${line.role} ${money(line.cents)}`).join(' + '):'—';
   const margin=r.grossMarginCents===null?'—':`${money(r.grossMarginCents)} · ${pct(r.grossMarginPercent)}${r.upperBound?' ≤':''}`;
   // Each cell's content sits in one span, so on a phone the cell is one "label: value" row.
   const cell=(label,cls,...children)=>h('td',{'data-label':label,class:cls},h('span',{class:'ja-cell'},...children));
   return h('tr',{'data-job':r.jobId,class:r.varianceManHours>0?'over':''},
     cell('Date','',day(r.date)),
-    h('th',{scope:'row','data-label':'Customer'},h('span',{class:'ja-cell'},h('a',{href:`/crew/job.html?jobId=${encodeURIComponent(r.jobId)}`},r.customer||r.jobId),h('small',{},CHANNEL[r.commission.channel]||''))),
+    h('th',{scope:'row','data-label':'Customer'},h('span',{class:'ja-cell'},h('a',{href:`/crew/job.html?jobId=${encodeURIComponent(r.jobId)}`},r.customer||r.jobId),pay?h('small',{},CHANNEL[r.commission.channel]||''):null)),
     cell('Revenue','num',money(r.revenueCents)),
     cell('Billed h','num',r.billed.manHours===null?(r.billed.source==='junk_only'?'Junk only':'No labor line'):hours(r.billed.manHours)),
     cell('Actual h','num',hours(r.actual.manHours),h('small',{},SOURCE[r.actual.source]||'')),
     cell('Variance','num ja-variance',variance),
     cell('Loads','num',String(r.truckLoads.count),h('small',{},r.truckLoads.source==='crew_lead'?'Crew lead':r.truckLoads.source==='quote'?'Quoted':'Not recorded')),
     cell('Goods (retail)','num',money(r.goodsRetailCents)),
-    cell('Commission','num',money(r.commission.totalCents),r.commission.lines.length>1?h('small',{},commission):null),
+    pay?cell('Commission','num',money(r.commission.totalCents),r.commission.lines.length>1?h('small',{},commission):null):null,
     cell('Gross margin','num',margin,...r.reasons.filter(code=>REASON[code]).map(code=>h('small',{class:'ja-reason','data-reason':code},REASON[code]))),
-    cell('Contribution','num',money(r.contributionCents)));
+    pay?cell('Contribution','num',money(r.contributionCents)):null);
+}
+/* Estimator accuracy (functions/_lib/estimator-accuracy.js): estimated vs actual man-hours per job and a scorecard per
+   estimator. Hours only: no revenue, margin, cost or pay is shown here. */
+const EXCLUDED={junk_only:'Junk only (sold by the truck, no labor estimate)',no_labor_estimate:'No Labor line on the quote',actual_not_recorded:'Actual hours not recorded',timecards_incomplete:'Timecards incomplete',timecards_unavailable:'Timecards could not be read',no_estimator:'No estimator on record',estimator_conflict:'The setter record names a different estimator'};
+const EVIDENCE={walkthrough_signer:'Signed the walkthrough',quote_sender:'Sent the quote',setter_record:'Setter record'};
+const bias=value=>typeof value!=='number'?'—':value===0?'Spot on':value>0?`Under by ${pct(value)}`:`Over by ${pct(-value)}`;
+function accuracyCard(){
+  const a=S.data.estimatorAccuracy;if(!a)return null;
+  const card=a[S.accuracyWindow],label=S.accuracyWindow==='last30'?'Last 30 days':'Last 90 days',span=S.accuracyWindow==='last30'?'in the last 30 days':'in the last 90 days';
+  // Every estimator tied at the best average miss is named.
+  const leaders=Array.isArray(a.last30.leaders)?a.last30.leaders:a.last30.top?[a.last30.top]:[],top=leaders[0];
+  const names=leaders.map(l=>`${l.estimator} (${l.jobs} jobs)`),joined=names.length>1?`${names.slice(0,-1).join(', ')} and ${names.at(-1)}`:`${top?.estimator||''}`;
+  const callout=top?h('div',{class:'hub-notice success ja-callout',role:'status'},h('strong',{},`Most accurate this month: ${joined}`),leaders.length>1?` — tied, off by ${pct(top.averageErrorPercent)} on average.`:` — off by ${pct(top.averageErrorPercent)} on average across ${top.jobs} jobs.`)
+    :h('p',{class:'ja-muted'},`No one is ranked this month yet: an estimator needs ${a.minJobs} scored jobs in the last 30 days.`);
+  const rows=card.estimators.map(e=>h('tr',{'data-estimator':e.estimator,class:e.ranked?'':'ja-unranked'},
+    h('th',{scope:'row','data-label':'Estimator'},h('span',{class:'ja-cell'},e.estimator,e.ranked?null:h('small',{},`Not ranked: ${e.jobs} of ${a.minJobs} jobs`))),
+    h('td',{class:'num','data-label':'Jobs'},h('span',{class:'ja-cell'},String(e.jobs))),
+    h('td',{class:'num','data-label':'Average miss'},h('span',{class:'ja-cell'},pct(e.averageErrorPercent))),
+    h('td',{class:'num','data-label':'Tends to'},h('span',{class:'ja-cell'},bias(e.biasPercent))),
+    h('td',{class:'num','data-label':'Within 10%'},h('span',{class:'ja-cell'},pct(e.within10Percent))),
+    h('td',{class:'num','data-label':'Within 20%'},h('span',{class:'ja-cell'},pct(e.within20Percent))),
+    h('td',{class:'num','data-label':'Estimated → actual h'},h('span',{class:'ja-cell'},`${hours(e.estimatedManHours)} → ${hours(e.actualManHours)}`))));
+  // The job list and the exclusions follow the selected period.
+  const ids=Array.isArray(card.jobIds)?new Set(card.jobIds):null,jobs=ids?a.rows.filter(r=>ids.has(r.jobId)):a.rows,visible=S.accuracyAll?jobs:jobs.slice(0,20);
+  const jobRows=visible.map(r=>h('tr',{'data-accuracy-job':r.jobId,class:r.scored?'':'ja-unscored'},
+    h('td',{'data-label':'Date'},h('span',{class:'ja-cell'},day(r.date))),
+    h('th',{scope:'row','data-label':'Job'},h('span',{class:'ja-cell'},r.customer||r.jobId,h('small',{},r.serviceType||''))),
+    h('td',{'data-label':'Estimator'},h('span',{class:'ja-cell'},r.estimator||'—',r.estimatorEvidence?h('small',{},EVIDENCE[r.estimatorEvidence]||''):null)),
+    h('td',{class:'num','data-label':'Estimated h'},h('span',{class:'ja-cell'},hours(r.estimatedManHours))),
+    h('td',{class:'num','data-label':'Actual h'},h('span',{class:'ja-cell'},hours(r.actualManHours),h('small',{},SOURCE[r.actualSource]||''))),
+    h('td',{class:'num','data-label':'Difference'},h('span',{class:'ja-cell'},r.differenceManHours===null?'—':`${signed(r.differenceManHours,hours)} h (${signed(r.differencePercent,pct)})`,r.excluded?h('small',{class:'ja-reason','data-excluded':r.excluded},'Not scored: '+(EXCLUDED[r.excluded]||r.excluded)):null))));
+  const excluded=Object.entries(card.excluded||a.excluded||{}).filter(([,n])=>n>0).map(([code,n])=>`${EXCLUDED[code]||code}: ${n}`).join(' · ');
+  return h('section',{class:'hub-card ja-accuracy','aria-label':'Estimator accuracy'},
+    h('h2',{},'Estimator accuracy'),
+    h('p',{class:'ja-muted'},'Man-hours each estimate sold against the man-hours the job took. "Average miss" is how far off the estimates were, either way; lower is better. "Tends to" shows whether the estimator usually estimates under or over.'),
+    callout,
+    h('div',{class:'hub-actions ja-window',role:'group','aria-label':'Scorecard period'},
+      kit().button('Last 30 days',()=>{S.accuracyWindow='last30';S.accuracyFocus='[data-accuracy-window="last30"]';render();},S.accuracyWindow==='last30'?'primary':'',{'aria-pressed':String(S.accuracyWindow==='last30'),'data-accuracy-window':'last30'}),
+      kit().button('Last 90 days',()=>{S.accuracyWindow='last90';S.accuracyFocus='[data-accuracy-window="last90"]';render();},S.accuracyWindow==='last90'?'primary':'',{'aria-pressed':String(S.accuracyWindow==='last90'),'data-accuracy-window':'last90'})),
+    card.estimators.length?h('div',{class:'hub-table-scroll ja-table-scroll'},h('table',{class:'ja-table ja-scorecard','aria-label':`Estimator scorecard, ${label}`},
+      h('thead',{},h('tr',{},['Estimator','Jobs','Average miss','Tends to','Within 10%','Within 20%','Estimated → actual h'].map(text=>h('th',{scope:'col'},text)))),
+      h('tbody',{},rows))):h('p',{},`No scored jobs in the ${label.toLowerCase()}.`),
+    jobs.length?h('details',{class:'ja-accuracy-jobs',open:S.accuracyJobsOpen||null,ontoggle:event=>{S.accuracyJobsOpen=event.target.open;}},h('summary',{'data-accuracy-jobs-summary':''},`Estimate vs actual, job by job ${span} (${jobs.length})`),
+      h('div',{class:'hub-table-scroll ja-table-scroll'},h('table',{class:'ja-table'},
+        h('thead',{},h('tr',{},['Date','Job','Estimator','Estimated h','Actual h','Difference'].map(text=>h('th',{scope:'col'},text)))),
+        h('tbody',{},jobRows))),
+      jobs.length>visible.length?kit().button(`Show all ${jobs.length} jobs`,()=>{S.accuracyAll=true;S.accuracyJobsOpen=true;S.accuracyFocus='[data-accuracy-jobs-summary]';render();}):null):null,
+    excluded?h('p',{class:'ja-muted'},`Not scored ${span}: `+excluded+'.'):null);
 }
 function table(){
   const rows=S.data.rows,visible=S.showAll?rows:rows.slice(0,50);
@@ -276,7 +389,7 @@ function table(){
   return h('section',{class:'hub-card ja-jobs','aria-label':'Completed jobs'},
     h('h2',{},'Completed jobs'),
     h('div',{class:'hub-table-scroll ja-table-scroll'},h('table',{class:'ja-table'},
-      h('thead',{},h('tr',{},['Date','Customer','Revenue','Billed h','Actual h','Variance','Loads','Goods (retail)','Commission','Gross margin','Contribution'].map(text=>h('th',{scope:'col'},text)))),
+      h('thead',{},h('tr',{},['Date','Customer','Revenue','Billed h','Actual h','Variance','Loads','Goods (retail)',...(paid()?['Commission']:[]),'Gross margin',...(paid()?['Contribution']:[])].map(text=>h('th',{scope:'col'},text)))),
       h('tbody',{},visible.map(jobRow)))),
     rows.length>visible.length?kit().button(`Show all ${rows.length} jobs`,()=>{S.showAll=true;render();}):null,
     h('p',{class:'ja-muted'},'Actual hours come from timecards clocked onto the job; without them, the crew lead\'s people × hours at Complete. ≤ marks a margin that is an upper bound.'));
@@ -293,13 +406,15 @@ function render(){
     if(!d.settingsComplete)notices.push(h('div',{class:'hub-notice warning'},d.missingSettings.includes('wageCentsPerManHour')?'No margins yet: enter the crew wage in Cost settings below.':`Margins are an upper bound: ${d.missingSettings.length} of ${SETTINGS.length} cost settings ${d.missingSettings.length===1?'is':'are'} blank.`));
     if(d.sources?.timecards==='unavailable')notices.push(h('div',{class:'hub-notice warning'},'Timecards could not be read, so actual hours show only where the crew lead confirmed them. Refresh to try again.'));
     if(S.error)notices.push(h('div',{class:'hub-notice error',role:'alert'},kit().errorText(S.error)));
-    body=[...notices,h('div',{class:'ja-totals-grid'},totalsCard('Last 30 days',d.totals.last30),totalsCard('Last 90 days',d.totals.last90)),table(),settingsCard(),...(d.canEdit?[ownerCard()]:[])];
+    body=[...notices,h('div',{class:'ja-totals-grid'},totalsCard('Last 30 days',d.totals.last30),totalsCard('Last 90 days',d.totals.last90)),accuracyCard(),table(),settingsCard(),saleCard(),...(d.canEdit?[ownerCard()]:[])].filter(Boolean);
   }
   const root=h('section',{class:'hub-screen egc-job-actuals'},head,...body);
   S.host.querySelector('.egc-job-actuals')?.remove();
   S.host.append(root);
+  // A control that redraws the card (the period buttons, Show all) keeps keyboard focus where it was.
+  if(S.accuracyFocus){const target=root.querySelector(S.accuracyFocus);S.accuracyFocus=null;target?.focus?.();}
 }
-function mount(host,ctx){S.host=host;S.ctx=ctx||{};S.data=null;S.error=null;S.drafts={};S.feedback='';S.showAll=false;Object.assign(O,{data:null,error:null,busy:false,pending:null,drafts:{},feedback:'',feedbackError:false});return load();}
+function mount(host,ctx){S.host=host;S.ctx=ctx||{};S.data=null;S.error=null;S.drafts={};S.feedback='';S.showAll=false;S.accuracyWindow='last30';S.accuracyAll=false;S.accuracyJobsOpen=false;S.accuracyFocus=null;Object.assign(O,{data:null,error:null,busy:false,pending:null,drafts:{},feedback:'',feedbackError:false});return load();}
 function unmount(){S.generation++;O.generation++;S.host?.querySelector('.egc-job-actuals')?.remove();S.host=null;S.ctx=null;}
 window.addEventListener('egc:signout',()=>{try{for(let i=sessionStorage.length-1;i>=0;i--){const name=sessionStorage.key(i);if(String(name||'').startsWith(EDITED)||String(name||'').startsWith(OWNER_EDITED))sessionStorage.removeItem(name);}}catch{}});
 window.EGCJobActuals={mount,unmount,canLeave:()=>{const costs=changes().changed,targets=Boolean(O.data)&&ownerChanges().changed;return!costs&&!targets||window.confirm(`Discard unsaved ${costs&&targets?'cost settings and owner targets':costs?'cost settings':'owner targets'}?`);},refresh:load};

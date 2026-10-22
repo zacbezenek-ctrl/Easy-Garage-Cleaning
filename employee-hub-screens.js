@@ -6,6 +6,10 @@ const KIT={js:'employee-ui-kit.js',css:'employee-ui-kit.css',v:'20260929mobilehu
 // One line per screen: {id, group, label, iconPath, capability:'business'|'owner' or crewVisible:true, load:{js, css, v}, module:'EGCName'}.
 // team_directory (Team directory, D10) is every signed-in viewer's, but employee-suite.js adds that capability only while the
 // server reports the staff directory on (/api/integration-status flags.teamDirectory, EGC_STAFF_DIRECTORY_ENABLED).
+// customer_messages (PORTAL-INBOX, screen and home widget) needs customer_contact: employee-suite.js adds it when the server's
+// capability list holds customer.send (business users, and Sales or Phone with staff-role permissions); the API checks it again.
+// open_quotes (Open quotes) is the office's read-only board of sent, unapproved estimator quotes and close rates; its
+// API (/api/open-quotes) refuses anyone without business access, so the capability here only hides the nav.
 // my_commission (My commission, D6b) is the signed-in employee's own estimator 7%, read only; empty for anyone who sells no walkthroughs.
 // Capabilities come from the signed-in server profile (businessAccess and the owner flag), never a client staff list.
 // Group and label are plain text (the shell escapes them, so 'Estimates & payments' is fine); angle brackets,
@@ -24,6 +28,7 @@ const MANIFEST=[
 {id:'catalog',group:'SYSTEM',label:'Catalog & pricing',iconPath:'M4 4h7l9 9-7 7-9-9zM8 8h.01',capability:'owner',load:{js:'employee-catalog.js',css:'employee-catalog.css',v:'20261021field3'},module:'EGCCatalog'},
 {id:'dispatch_rules',group:'RUN THE BUSINESS',label:'Dispatch rules',iconPath:'M4 6h11M4 12h7M4 18h5M14 15l2.5 2.5L21 13',capability:'owner',load:{js:'employee-dispatch-settings.js',css:'employee-dispatch-settings.css',v:'20260929rules4'},module:'EGCDispatchSettings'},
 {id:'job_actuals',group:'RUN THE BUSINESS',label:'Job actuals',iconPath:'M4 20V10M10 20V4M16 20v-7M22 20H2',capability:'business',load:{js:'employee-job-actuals.js',css:'employee-job-actuals.css',v:'20261021ownerecon2'},module:'EGCJobActuals'},
+{id:'open_quotes',group:'RUN THE BUSINESS',label:'Open quotes',iconPath:'M6 3h9l3 3v15H6zM9 10h6M9 14h4M16 17l2 2 3-4',capability:'business',load:{js:'employee-open-quotes.js',css:'employee-open-quotes.css',v:'20261021openquotes2'},module:'EGCOpenQuotes'},
 {id:'reviews',group:'RUN THE BUSINESS',label:'Review queues',iconPath:'M9 3h6v3H9zM6 5h3v1h6V5h3v16H6zM9 13l2 2 4-4',capability:'business',load:{js:'employee-reviews.js',css:'employee-reviews.css',v:'20260930launchpolish'},module:'EGCReviews'},
 {id:'message_templates',group:'SYSTEM',label:'Message templates',iconPath:'M4 5h16v11H9l-5 4z',capability:'business',load:{js:'message-templates.js',css:'message-templates.css',v:'20260928crew'},module:'EGCMessageTemplates'},
 {id:'stocked_costs',group:'SYSTEM',label:'Stocked item costs',capability:'business',iconPath:'M4 7l8-4 8 4v10l-8 4-8-4zM4 7l8 4 8-4M12 11v10',load:{js:'employee-standard-costs.js',css:'employee-standard-costs.css',v:'20260928fun19'},module:'EGCStandardCosts'},
@@ -31,6 +36,7 @@ const MANIFEST=[
 {id:'invoicing',group:'CLIENT WORK',label:'Invoicing',iconPath:'M6 3h9l3 3v15H6z M9 9h6 M9 13h6 M9 17h4',capability:'business',load:{js:'employee-money.js',css:'employee-money.css',v:'20260929invoicingr3'},module:'EGCMoney'},
 {id:'walkthroughs',group:'RUN THE BUSINESS',label:'Walkthroughs',iconPath:'M9 4h6l1 2h3v14H5V6h3zM9 13l2 2 4-4',capability:'business',load:{js:'employee-walkthroughs.js',css:'employee-walkthroughs.css',v:'20260929hubready1'},module:'EGCWalkthroughs'},
 {id:'purchase_list',group:'RUN THE BUSINESS',label:'Purchase list',iconPath:'M3 4h2l2.4 11h11.2L21 7H6.2M9 20a1 1 0 1 0 0-2 1 1 0 0 0 0 2zM18 20a1 1 0 1 0 0-2 1 1 0 0 0 0 2z',capability:'business',load:{js:'employee-purchase-list.js',css:'employee-purchase-list.css',v:'20261017purchase'},module:'EGCPurchaseList'},
+{id:'customer_messages',group:'CLIENT WORK',label:'Customer messages',iconPath:'M4 5h16v11H9l-5 4zM8 9h8M8 12h5',capability:'customer_contact',load:{js:'employee-customer-messages.js',css:'employee-customer-messages.css',v:'20261021inbox4'},module:'EGCCustomerMessages'},
 ];
 // Home widgets, one line each: {id, label, homes:['today'|'my_day',...], capability:'business'|'owner' or crewVisible:true, module:'EGCName', load?:{js, css, v}}.
 // employee-suite.js renders one #ops-home-widgets node on the Command center (today) and on My day. mountHome() gives each
@@ -38,7 +44,12 @@ const MANIFEST=[
 // leaves that home. Without load the module is already on the page (a script tag in employee.html). The widget file defines
 // window.EGCName={mount(host,ctx), unmount(), refresh()}; ctx is the screen ctx plus {home, widget}.
 const HOME_WIDGETS=[
+  {id:'customer_messages',label:'Customer messages',homes:['today','my_day'],capability:'customer_contact',module:'EGCCustomerMessagesHome',load:{js:'employee-customer-messages.js',css:'employee-customer-messages.css',v:'20261021inbox4'}},
   {id:'overdue_followups',label:'Overdue follow-ups',homes:['today','my_day'],capability:'business',module:'EGCFollowupsHome'},
+  // READINESS: tomorrow's jobs and what still stops each from rolling out ready (crew, lead, truck, time off, access notes).
+  {id:'crew_readiness',label:'Tomorrow readiness',homes:['today','my_day'],capability:'business',module:'EGCReadiness',load:{js:'employee-readiness.js',css:'employee-readiness.css',v:'20261021ready1'}},
+  // Signed jobs held for the owner's prices: opening the Command center releases those a new pricing menu approves (POST /api/held-jobs).
+  {id:'held_jobs',label:'Booked jobs waiting for prices',homes:['today'],capability:'business',module:'EGCHeldJobsHome',load:{js:'employee-held-jobs.js',v:'20261021held1'}},
 ];
 const HOMES=new Set(['today','my_day']);
 const ID=/^[a-z][a-z0-9_]{1,47}$/,CAPABILITY=/^[a-z][a-z0-9_]{1,40}$/,MODULE=/^EGC[A-Za-z0-9]{1,40}$/,VERSION=/^[A-Za-z0-9._-]{1,40}$/,ICON=/^[MmLlHhVvCcSsQqTtAaZz0-9 .,-]{1,800}$/;

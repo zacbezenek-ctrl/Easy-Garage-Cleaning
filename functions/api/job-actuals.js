@@ -2,10 +2,16 @@
  * truck loads, goods at retail, commission by channel and an estimated margin. Rules: functions/_lib/job-actuals.js;
  * cost settings: functions/_lib/job-actuals-settings.js. Session cookie: business accounts read; only the owner saves
  * the cost settings. Hub > Job actuals (employee-job-actuals.js) shows it.
- * GET /api/job-actuals => {ok, window, rates, totals:{last30,last90}, rows, settings:{...,revision,complete,missing},
- *   canEdit, sources:{timecards:'ok'|'unavailable'}, laborCoverage}. Labor is costed at the flat loaded wage, never an
- *   employee's own rate, so the report shows hours and dollars without revealing anyone's pay.
+ * GET /api/job-actuals => {ok, window, rates, totals:{last30,last90}, rows, estimatorAccuracy (estimator-accuracy.js: estimated vs
+ *   actual man-hours per job and a 30/90-day scorecard per estimator, hours only), settings:{...,revision,complete,missing},
+ *   canEdit, commissionShown, sources:{timecards:'ok'|'unavailable'}, laborCoverage}. Labor is costed at the flat loaded
+ *   wage, never an employee's own rate. Commission lines, the commission totals and rates, and the contribution after
+ *   commission go to the owner only (jobActualsForViewer, FUNNEL-METRICS §8.3): with estimator accuracy naming the
+ *   estimator, a job's commission is that person's pay.
  * POST {action:'job_actuals.settings.set', requestId, expectedRevision, settings} (owner) => {ok, settings, requestId, replayed}.
+ * EGC_WINTER_SALE (winter-sale.js): GET also answers winterSale:{enabled:true, settings:{amountCents, signBy,
+ *   jobFrom, jobTo, marginFloorBp (owner only), revision, ...}}; POST {action:'winter_sale.settings.set', requestId, expectedRevision,
+ *   settings} (owner) saves them => {ok, winterSale, canEdit, requestId, replayed}. Flag off: neither exists.
  * Errors: {ok:false, code, error}; 400, 401, 403, 409 revision/idempotency, 413, 415, 503 retry the same request. */
 import { getHubSession, isHubOwner } from '../_lib/hub-session.js';
 import { dispatchStorage } from '../_lib/dispatch-storage.js';
@@ -16,14 +22,16 @@ import { hubEligibilityFields } from '../_lib/funnel-definitions.js';
 import { denverWorkDate, overtimePolicy } from '../_lib/timesheet-week.js';
 import { addDays } from '../_lib/dispatch-time.js';
 import { computeJobLaborCost } from '../_lib/job-labor-cost.js';
-import { buildJobActuals, jobActualsWindow } from '../_lib/job-actuals.js';
+import { buildJobActuals, jobActualsForViewer, jobActualsWindow } from '../_lib/job-actuals.js';
+import { ESTIMATOR_FIELDS, buildEstimatorAccuracy } from '../_lib/estimator-accuracy.js';
 import { jobActualsSettingsStorage, mutateJobActualsSettings, readJobActualsSettings, requireJobActualsOwner, requireJobActualsViewer } from '../_lib/job-actuals-settings.js';
 import { readJobCostingTimecards } from './job-costing.js';
+import { WINTER_SALE_SETTINGS_ACTION, mutateWinterSaleSettings, readWinterSaleSettings, winterSaleEnabled, winterSaleSettingsStorage } from '../_lib/winter-sale.js';
 
 const LIMIT = 8000;
 const ID = /^[A-Za-z0-9_-]{1,180}$/;
 export const JOB_ACTUALS_FIELDS = Object.freeze([...new Set([...MONEY_JOB_FIELDS, ...hubEligibilityFields(), 'sourceWalkthroughId', 'jobInstructions.laborManHours',
-  'compositeQuote.breakdown.labor.manHours', 'compositeQuote.breakdown.lines', 'fieldExecution.completion.crewOnSite', 'fieldExecution.completion.truckLoads'])]);
+  'compositeQuote.breakdown.labor.manHours', 'compositeQuote.breakdown.lines', 'quoteDraft.breakdown.source', 'quoteDraft.breakdown.labor.manHours', 'quoteDraft.breakdown.lines', 'fieldExecution.completion.crewOnSite', 'fieldExecution.completion.truckLoads', ...ESTIMATOR_FIELDS])]);
 const reply = (status, body) => Response.json(body, { status, headers: { 'Cache-Control': 'private, no-store', 'X-Content-Type-Options': 'nosniff' } });
 function sameOrigin(request) {
   if (request.headers.get('Sec-Fetch-Site') === 'cross-site') return false;
@@ -32,12 +40,12 @@ function sameOrigin(request) {
   try { return new URL(source).origin === new URL(request.url).origin; } catch { return false; }
 }
 function errorResponse(error) {
-  if (/^job_actuals_/.test(error?.code || '')) return reply(error.status || 503, { ok: false, code: error.code, error: error.message, ...(error.details ? { details: error.details } : {}) });
+  if (/^(job_actuals|winter_sale)_/.test(error?.code || '')) return reply(error.status || 503, { ok: false, code: error.code, error: error.message, ...(error.details ? { details: error.details } : {}) });
   return reply(503, { ok: false, code: 'job_actuals_unavailable', error: 'Job actuals could not be loaded. Retry in a moment.' });
 }
 const settingsView = (settings, session) => ({ settings, canEdit: isHubOwner(session) });
 
-export function jobActualsHandlers({ session = getHubSession, dispatch = dispatchStorage, knock = createKnockStore, timecards = readJobCostingTimecards, settingsStore = jobActualsSettingsStorage, now = () => new Date() } = {}) {
+export function jobActualsHandlers({ session = getHubSession, dispatch = dispatchStorage, knock = createKnockStore, timecards = readJobCostingTimecards, settingsStore = jobActualsSettingsStorage, saleStore = winterSaleSettingsStorage, now = () => new Date() } = {}) {
   return {
     async get({ request, env }) {
       try {
@@ -52,7 +60,19 @@ export function jobActualsHandlers({ session = getHubSession, dispatch = dispatc
         const kstore = knock(env), walkthroughs = [...new Set(jobs.map(job => job.sourceWalkthroughId).filter(id => ID.test(String(id || ''))))];
         const [setters, sales] = await Promise.all([walkthroughs.length ? kstore.getMany('knock_setters', walkthroughs) : new Map(), directSalesFor(kstore, jobs.map(job => job.id))]);
         const report = buildJobActuals({ jobs, labor, settings, setterWalkthroughs: new Set([...setters.keys()].filter(id => setters.get(id))), doorSaleJobs: new Set(sales.map(sale => sale?.handoff?.job?.ref).filter(Boolean)), timecardsAvailable: timecardSource === 'ok', today: window.today, asOf });
-        return reply(200, { ...report, ...settingsView(settings, actor), sources: { timecards: timecardSource } });
+        // EGC_WINTER_SALE: the owner's sale settings (amount, dates, margin floor) beside the cost settings.
+        // The margin floor is the owner's alone: a manager sees the sale's terms without it.
+        const saleView = settings => { if (isHubOwner(actor)) return settings; const { marginFloorBp, ...rest } = settings; return rest; };
+        // A sale settings record that fails verification hides only the sale card (settings null, its plain reason), never the report.
+        let sale = {};
+        if (winterSaleEnabled(env)) {
+          try { sale = { winterSale: { enabled: true, settings: saleView(await readWinterSaleSettings(saleStore(env))) } }; }
+          catch (error) { if (error?.code !== 'winter_sale_settings_unreadable') throw error; sale = { winterSale: { enabled: true, settings: null, error: error.message } }; }
+        }
+        // Estimator accuracy (estimator-accuracy.js): the same jobs and hours, scored per estimator; nothing more is read.
+        const estimatorAccuracy = buildEstimatorAccuracy({ rows: report.rows, jobs, setters, shortStart: report.window.shortStart });
+        // Commission lines and totals are the owner's only (jobActualsForViewer); accuracy above is hours only.
+        return reply(200, { ...jobActualsForViewer(report, { owner: isHubOwner(actor) }), estimatorAccuracy, ...settingsView(settings, actor), ...sale, sources: { timecards: timecardSource } });
       } catch (error) { return errorResponse(error); }
     },
     async post({ request, env }) {
@@ -64,6 +84,10 @@ export function jobActualsHandlers({ session = getHubSession, dispatch = dispatc
         const raw = await request.text();
         if (new TextEncoder().encode(raw).byteLength > LIMIT) return reply(413, { ok: false, code: 'job_actuals_request_too_large', error: 'The cost-settings request is too large.' });
         let input; try { input = JSON.parse(raw); } catch { return reply(400, { ok: false, code: 'job_actuals_json_invalid', error: 'The cost-settings request was incomplete. Reload and try again.' }); }
+        if (winterSaleEnabled(env) && input?.action === WINTER_SALE_SETTINGS_ACTION) {
+          const sale = await mutateWinterSaleSettings(saleStore(env), actor, input, now().toISOString());
+          return reply(200, { ok: true, winterSale: { enabled: true, settings: sale.settings }, canEdit: isHubOwner(actor), requestId: sale.requestId, replayed: sale.replayed });
+        }
         const result = await mutateJobActualsSettings(settingsStore(env), actor, input, now().toISOString());
         return reply(200, { ok: true, ...settingsView(result.settings, actor), requestId: result.requestId, replayed: result.replayed });
       } catch (error) { return errorResponse(error); }

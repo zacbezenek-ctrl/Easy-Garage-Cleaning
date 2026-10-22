@@ -264,9 +264,33 @@ test('GET /api/job-actuals: business accounts only, a 90-day masked read, timeca
   const [row] = body.rows;
   assert.deepEqual(row.actual, { manHours: 8, paidManHours: 9, source: 'timecards' });
   assert.equal(row.laborCents, 9 * 1010, 'the owner-entered wage, never the employee\'s own $31 rate');
-  assert.equal(row.commission.channel, 'appointment_setter');
+  assert.equal(row.commission, undefined, 'a manager gets no per-job commission (FUNNEL-METRICS §8.3)');
+  assert.equal(body.commissionShown, false);
   assert.equal(body.canEdit, false); assert.equal(body.settings.revision, 'rev-pay'); assert.deepEqual(body.sources, { timecards: 'ok' });
   assert.doesNotMatch(JSON.stringify(body), /hourlyRate|"31"|Crew One/, 'no employee pay or names reach the report');
+});
+
+test('GET: per-job commission lines, commission totals and contribution are the owner\'s only; a manager keeps hours, revenue and the wage-costed margin', async () => {
+  const setters = new Map([['walk-1', { walkthroughId: 'walk-1' }]]);
+  const owner = await (await get(api({ actor: OWNER, setters }).handlers)).json();
+  const manager = await (await get(api({ actor: MANAGER, setters }).handlers)).json();
+  assert.equal(owner.commissionShown, true);
+  assert.equal(owner.rows[0].commission.channel, 'appointment_setter');
+  assert.deepEqual(owner.rows[0].commission.lines.map(line => line.role), ['setter', 'estimator']);
+  assert.ok('contributionCents' in owner.rows[0], 'the owner keeps the contribution field (null here: no hours recorded)');
+  for (const window of ['last30', 'last90']) for (const key of ['commissionCents', 'marginCommissionCents', 'contributionCents']) assert.ok(Number.isSafeInteger(owner.totals[window][key]), `${window}.${key}`);
+  assert.deepEqual(owner.rates.commissionBp, { estimator: 700, setter: 1300, door: 2500 });
+
+  assert.equal(manager.commissionShown, false);
+  assert.doesNotMatch(JSON.stringify({ rows: manager.rows, totals: manager.totals, rates: manager.rates }), /commission|contribution/i, 'no commission line, total, rate or contribution reaches a manager');
+  assert.deepEqual(manager.rates, {});
+  // Everything else is the owner's figure for figure: hours, revenue, loads, goods and the margin at the flat loaded wage.
+  const strip = row => Object.fromEntries(Object.entries(row).filter(([key]) => !['commission', 'contributionCents'].includes(key)));
+  assert.deepEqual(manager.rows, owner.rows.map(strip));
+  for (const window of ['last30', 'last90']) assert.deepEqual(manager.totals[window], Object.fromEntries(Object.entries(owner.totals[window]).filter(([key]) => !['commissionCents', 'marginCommissionCents', 'contributionCents'].includes(key))));
+  assert.equal(manager.rows[0].laborCents, owner.rows[0].laborCents);
+  assert.equal(manager.rows[0].grossMarginCents, owner.rows[0].grossMarginCents);
+  assert.deepEqual(manager.estimatorAccuracy, owner.estimatorAccuracy, 'estimator accuracy is hours only and the same for both');
 });
 
 test('GET keeps the crew-lead hours when timecards cannot be read, and says so', async () => {
@@ -311,4 +335,31 @@ test('the Hub sign-out clears the job-actuals edited keys even when the screen n
   const prefix = /const EDITED='([^']+)'/.exec(screen)?.[1];
   assert.equal(prefix, 'egc.jobactuals.edited.v1.');
   assert.match(suite, /\['egc\.hub\.pending\.v1\.','egc\.jobactuals\.edited\.v1\.'\]\.some\(prefix=>String\(key\|\|''\)\.startsWith\(prefix\)\)\)sessionStorage\.removeItem\(key\)/);
+});
+
+test('the Job actuals screen shows commission and contribution to the owner only, on screen and in the CSV', async () => {
+  const { readFileSync } = await import('node:fs'), vm = (await import('node:vm')).default;
+  const setters = new Map([['walk-1', { walkthroughId: 'walk-1' }]]), jobs = [garageJob({ fieldExecution: { completion: { crewOnSite: { people: 2, hours: 4 } } } })];
+  const responses = { owner: await (await get(api({ actor: OWNER, jobs, setters }).handlers)).json(), manager: await (await get(api({ actor: MANAGER, jobs, setters }).handlers)).json() };
+  assert.ok(Number.isSafeInteger(responses.owner.rows[0].contributionCents), 'with hours on record the owner\'s contribution is a figure');
+  const screen = data => {
+    const el = (tag, props = {}, ...children) => ({ tag, props, children: children.flat(Infinity).filter(child => child !== null && child !== undefined && child !== false) });
+    const text = node => typeof node === 'string' ? node : node ? node.children.map(text).join(' ') : '';
+    let csv = '';
+    const context = { sessionStorage: { getItem: () => null }, Intl, Date, Number, String, Array, Object, JSON, Math, Set, Map, console, setTimeout: () => 1, addEventListener() {},
+      Blob: class { constructor(parts) { csv = parts.join(''); } }, URL: { createObjectURL: () => 'blob:synthetic', revokeObjectURL() {} },
+      document: { createElement: () => ({ click() {}, remove() {} }), body: { append() {} } } };
+    context.window = context;
+    context.EGCHubKit = { h: el, button: (label, onclick, kind, props) => el('button', { onclick, kind, ...props }, label), money: cents => `$${(cents / 100).toFixed(2)}`, pending: () => ({ get: () => null }), csvCell: value => String(value) };
+    vm.runInNewContext(readFileSync(new URL('../employee-job-actuals.js', import.meta.url), 'utf8').replace(/\}\)\(\);\s*$/, 'globalThis.__ja={S,valid,table,totalsCard,exportCsv};})();'), context);
+    const ja = context.__ja; ja.S.data = JSON.parse(JSON.stringify(data));
+    ja.exportCsv();
+    return { valid: ja.valid(ja.S.data), table: text(ja.table()), totals: text(ja.totalsCard('Last 30 days', ja.S.data.totals.last30)), csvHead: csv.split('\r\n')[0] };
+  };
+  const owner = screen(responses.owner), manager = screen(responses.manager);
+  assert.equal(owner.valid, true); assert.equal(manager.valid, true, 'a manager\'s response without commission is a valid report');
+  assert.match(owner.table, /Commission/); assert.match(owner.table, /Contribution/); assert.match(owner.table, /Setter walkthrough|setter/i);
+  assert.match(owner.totals, /Contribution/); assert.match(owner.csvHead, /Commission channel,Commission,.*Contribution/);
+  for (const [label, value] of Object.entries(manager)) if (typeof value === 'string') assert.doesNotMatch(value, /commission|contribution/i, label);
+  assert.match(manager.table, /Gross margin/); assert.match(manager.totals, /Gross margin/); assert.match(manager.csvHead, /Labor cost,Dump,Truck,Gross margin,Gross margin %,Upper bound,Notes/);
 });

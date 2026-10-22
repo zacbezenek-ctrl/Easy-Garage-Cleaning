@@ -22,6 +22,7 @@ import { dispatchOpenings } from './dispatch-openings.js';
 import { catalogStorage, quoteBuilderEnabled, readCompositeState, requireCatalogOwner } from './catalog-store.js';
 import { GARAGE_SIZES, approvalRefusal, compositeApproval, compositeScope, fullnessOf, priceCompositeQuote } from './composite-quote.js';
 import { customerMoneyTotals } from './money-core.js';
+import { hasWinterSaleLine, signedWinterSale, winterSaleReaders } from './winter-sale.js';
 import { PAYMENT_TIME_ZONE, SIGNED_25_75, businessPaymentDate, quotePaymentDates, quotePaymentSchedule } from './quote-payment-policy.js';
 
 // FIX-CREW-PRICE-LEAK: every crew-visible copy of the brief is written without currency amounts.
@@ -145,7 +146,7 @@ export function customerScopeSummary(scope) {
 }
 /**
  * D-JUNK: the garage work a signed walkthrough records beyond junk removal (quote-model.js walkthroughGarageWork, with
- * its rule). A junk-only builder quote ($750 per truck, no Labor line) prices none of it, so it is signed only on a
+ * its rule). A junk-only builder quote ($1,000 per truck, no Labor line) prices none of it, so it is signed only on a
  * walkthrough that records none of it (saveWalkthroughHandoff, handoff_builder_junk_only_garage_work), and sent only on
  * one whose saved capture records none (quote-draft.js). The walkthrough page (crew/gameplan.html walkthroughGarageWork)
  * applies the same rule before the homeowner signs.
@@ -470,7 +471,8 @@ function walkthroughHold(previous, actor, requestId, now) {
 const builderRequired = () => Object.assign(new Error('With the quote builder on, a walkthrough-priced quote is sent only after it is built in the quote builder from the owner\'s pricing menu. The job stays booked: build the quote in the builder and have the customer sign it, or ask the owner to release these prices.'),
   { code: 'quote_draft_builder_required', status: 409, details: { unapproved: [{ ...WALKTHROUGH_PRICED, unitCents: null, reason: 'Its lines were priced from the walkthrough tables, which the owner has not approved for the quote builder. Rebuild it in the quote builder (removal, then shelving, then extra storage) and sign that quote, or the owner releases this signed price.' }] } });
 // The builder's send gate for a held job: a builder quote passes when every price on its signed breakdown is
-// owner-approved now, at exactly the signed amount (compositeApproval, else approvalRefusal: 409
+// owner-approved now, each line at the amount the customer signed whatever amount the owner approved (compositeApproval
+// signed, else approvalRefusal: 409
 // quote_draft_composite_prices_unapproved); a walkthrough-priced one never passes it (409 quote_draft_builder_required)
 // unless the owner, who approves prices, releases it (owner).
 // The labor on a signed breakdown keeps the rate the customer signed (approved then: the owner's own rate), so a rate
@@ -541,24 +543,65 @@ export async function releaseHandoffPrices(store, actor, input, now = new Date()
 export const HELD_RELEASE_LIMIT = 25;
 export async function releaseHeldHandoffs(store, actor, now = new Date().toISOString(), { env = {}, compositeState = compositeStateDefault, source = 'menu.approve', requestId: approvalRequest = '', limit = HELD_RELEASE_LIMIT } = {}) {
   if (!quoteBuilderEnabled(env)) return null;
-  const ids = await store.heldJobIds(limit + 1), pricing = await compositeState(env), released = [];
-  let waiting = 0;
-  for (const id of [...new Set(ids)].slice(0, limit)) {
-    const job = safeId(id) ? await store.read('jobs', id) : null;
+  const { released, waiting, more } = await releaseHeldPage(store, actor, now, await compositeState(env), { source, requestId: approvalRequest, limit });
+  return { released, waiting, more };
+}
+// One bounded page of held jobs after the id `after` (store.heldJobIds(limit + 1, after), in id order). A job whose read
+// fails waits, like one still unapproved; failed: the ids of jobs that passed the gate but whose release did not commit.
+// budget (optional, {left}): the storage calls this page may still make (Cloudflare caps an invocation's subrequests):
+// the query costs one, each job a read and, when it passes, a commit; the page stops before a job that might not fit
+// (stopped). next: the last id this page finished, where the following page starts.
+async function releaseHeldPage(store, actor, now, pricing, { source, requestId: approvalRequest = '', limit = HELD_RELEASE_LIMIT, after = '', budget = null }) {
+  const spend = cost => { if (budget) budget.left -= cost; };
+  const released = [], failed = [];
+  let waiting = 0, next = after;
+  if (budget && budget.left < 3) return { released, failed, waiting, more: true, next, stopped: true };
+  spend(1);
+  const ids = [...new Set(await store.heldJobIds(limit + 1, after))], page = ids.slice(0, limit);
+  for (const id of page) {
+    if (budget && budget.left < 2) return { released, failed, waiting, more: true, next, stopped: true };
+    spend(1);
+    let job = null;
+    try { job = safeId(id) ? await store.read('jobs', id) : null; } catch { job = undefined; }
+    next = id;
+    if (job === undefined) { waiting++; continue; }
     if (!job || !plain(job.pricesPendingApproval)) continue;
     if (!operational(job) || CLOSED_STATES.includes(state(job)) || !plain(job.compositeQuote) || typeof job.revision !== 'string' || !job.revision) { waiting++; continue; }
     try { releaseGate(job, pricing); } catch { waiting++; continue; }
+    spend(1);
     try { await store.commit([{ collection: 'jobs', id: job.id, revision: job.revision, patch: releasePatch(job, actor, now, { source, requestId: approvalRequest, gate: 'approved_prices' }) }]); released.push(job.id); }
-    catch { waiting++; }
+    catch { waiting++; failed.push(job.id); }
   }
-  return { released, waiting, more: ids.length > limit };
+  return { released, failed, waiting, more: ids.length > limit, next, stopped: false };
+}
+
+/** EGC_QUOTE_BUILDER_ENABLED: the held jobs after the id `after`, page by page (HELD_RELEASE_LIMIT each, in id order), so
+ * jobs that keep waiting never starve the ones after them. Used after a pricing-menu change, when no owner approval is
+ * saved (POST /api/held-jobs: the menu file's own approvals, e.g. the truck loads of 2026-10-21) and by the owner's
+ * Release held jobs button. budget: the storage calls the run may make (HELD_SUBREQUEST_BUDGET: with the route's own
+ * reads and its count, at most 44 per open, measured in tests/held-jobs.test.mjs, under Cloudflare's 50 per invocation);
+ * a run that reaches it stops cleanly and answers where to continue (next).
+ * complete: every held job after `after` was checked; failed: jobs that passed the gate but did not commit (they stay
+ * held). => {released:[jobId], failed:[jobId], waiting:int, complete:boolean, next} or null with the builder off. */
+export const HELD_SUBREQUEST_BUDGET = 30;
+export async function releaseAllHeldHandoffs(store, actor, now = new Date().toISOString(), { env = {}, compositeState = compositeStateDefault, source = 'menu.version', requestId = '', limit = HELD_RELEASE_LIMIT, after = '', budget = HELD_SUBREQUEST_BUDGET } = {}) {
+  if (!quoteBuilderEnabled(env)) return null;
+  const pricing = await compositeState(env), left = { left: budget }, released = [], failed = [];
+  let waiting = 0, cursor = after;
+  for (;;) {
+    const page = await releaseHeldPage(store, actor, now, pricing, { source, requestId, limit, after: cursor, budget: left });
+    released.push(...page.released); failed.push(...page.failed); waiting += page.waiting;
+    if (page.stopped) return { released, failed, waiting, complete: false, next: page.next };
+    if (!page.more || !page.next || page.next === cursor) return { released, failed, waiting, complete: true, next: '' };
+    cursor = page.next;
+  }
 }
 
 /** options.checkouts(job) (the API passes quote-draft expireStaleCheckout): a
  * signed revision re-prices and re-approves an existing job, so an open portal
  * card checkout opened for the earlier terms is expired, or reported as
  * checkout_needs_review, exactly as a quote draft revision does. */
-export async function saveWalkthroughHandoff(store, actor, input, now = new Date().toISOString(), { env = {}, checkouts = null, compositeState = compositeStateDefault } = {}) {
+export async function saveWalkthroughHandoff(store, actor, input, now = new Date().toISOString(), { env = {}, checkouts = null, compositeState = compositeStateDefault, winterSale = winterSaleReaders } = {}) {
   const access = requireQuoteAuthor(actor, env);
   if (!plain(input) || Object.keys(input).some(key => !['actorId', 'requestId', 'customerId', 'sourceWalkthroughId', 'sourceRevision', 'jobId', 'expectedRevision', 'plan'].includes(key)) || !requestId(input.requestId) || !safeId(input.customerId) || input.jobId && !safeId(input.jobId)) throw fail('invalid_request', 'The accepted walkthrough needs a stable request and customer identity.', 400);
   if (input.actorId && input.actorId !== actor.user) throw fail('actor_changed', 'The signed-in employee changed. Reopen the original account to recover this request.', 403);
@@ -635,21 +678,28 @@ export async function saveWalkthroughHandoff(store, actor, input, now = new Date
   // handoff_builder_price_mismatch). Prices the owner has not approved still book the job (pricesPendingApproval).
   // The labor estimate reads the signed plan's fullness. A job signed before the Labor line, revised with its own
   // selection, keeps its signed price by the earlier rules (signedWithoutLabor); any other selection with garage work
-  // needs labor, and a junk-only one is $750 per truck with no Labor line (D-JUNK). The Labor line the customer signs is
+  // needs labor, and a junk-only one is $1,000 per truck with no Labor line (D-JUNK). The Labor line the customer signs is
   // the server's own, "Labor" and its amount (D-LABOR-TEXT): a page still showing the man-hours is refused like any
   // other line that differs (builderMismatch), so the quote is built again before the homeowner signs.
   const chosen = !builderOn ? null : builderSent ? signedInput.quote.composite_pricing : savedSelection(previous);
   const legacy = signedWithoutLabor(previous, chosen), selection = withSignedGarage(withSignedFullness(chosen, plan), plan);
-  let builder = null;
+  let builder = null, signedSale = null;
   if (selection) {
     builder = priceCompositeQuote(await compositeState(env), selection, { complete: true, requireLabor: !legacy });
+    // EGC_WINTER_SALE: a saved sale quote signed in person gets the server's sale line for the signing day and the booked
+    // day (winter-sale.js signedWinterSale), or is refused when it no longer qualifies (409 handoff_winter_sale_*: nothing
+    // was saved, and the page releases the request so the quote is built again).
+    try { ({ builder, record: signedSale } = await signedWinterSale(previous, builder, { quote: signedInput.quote, jobDate: plan.quote.job_date, now, env, readers: winterSale, sourceWalkthroughId: source?.id || '', actor: actor.user })); }
+    // Only the sale's own refusals are final; anything else (settings that fail verification, a read outage) stays a
+    // retryable 503 handoff_unavailable.
+    catch (error) { if (['winter_sale_ineligible', 'winter_sale_disabled'].includes(error?.code)) throw Object.assign(error, { code: `handoff_${error.code}`, status: 409 }); throw error; }
     const mismatch = builderMismatch(signedInput.quote, builder, Math.round(plan.quote.total * 100));
     if (mismatch) throw mismatch;
-    // D-JUNK: a junk-only quote is $750 per truck with no Labor line, so it prices no garage work; the walkthrough the
+    // D-JUNK: a junk-only quote is $1,000 per truck with no Labor line, so it prices no garage work; the walkthrough the
     // homeowner signs must record none (walkthroughGarageWork). Nothing is saved: the quote is built again or the
     // walkthrough corrected, and the homeowner signs that.
     const work = builder.junkOnly ? walkthroughGarageWork(plan.scope) : [];
-    if (work.length) throw fail('builder_junk_only_garage_work', `This junk-only quote prices the hauling only ($750 per truck covers the crew's time; it has no Labor line), but the walkthrough records garage work: ${listNames(work)}. Nothing was saved. Add that work in the quote builder (a garage cleaning base for sorting and reset, cleaning, shelving or storage), or, if the homeowner wants junk removal only, choose Everything goes or Customer labels before arrival as the sorting plan and remove those finish options. Then have the homeowner sign again.`);
+    if (work.length) throw fail('builder_junk_only_garage_work', `This junk-only quote prices the hauling only (the truck price covers the crew's time; it has no Labor line), but the walkthrough records garage work: ${listNames(work)}. Nothing was saved. Add that work in the quote builder (a garage cleaning base for sorting and reset, cleaning, shelving or storage), or, if the homeowner wants junk removal only, choose Everything goes or Customer labels before arrival as the sorting plan and remove those finish options. Then have the homeowner sign again.`);
     plan = normalizeHandoffPlan(withoutQuoteLines(signedInput), now, { builder, purchase });
   }
   // EGC_QUOTE_BUILDER_ENABLED: a quote the builder did not price (no builder selection sent or saved) is held as well
@@ -741,6 +791,9 @@ export async function saveWalkthroughHandoff(store, actor, input, now = new Date
       else if (walkthroughPriced) Object.assign(target.patch, walkthroughHold(previous, actor, input.requestId, now));
       // A walkthrough-priced revision (the builder switched off) or a catalog-priced one leaves no stale builder prices behind.
       else if (plain(previous?.compositeQuote) || plain(previous?.pricesPendingApproval)) Object.assign(target.patch, { compositeQuote: null, pricesPendingApproval: null });
+      // The signed job's winter sale record: the one signed with it, else none once the signed estimate has no sale line.
+      const saleRecord = signedSale || (hasWinterSaleLine(finance.estimate.lineItems) && previous?.quoteDraft?.winterSale) || null;
+      if (plain(previous?.quoteDraft) && (saleRecord || plain(previous.quoteDraft.winterSale))) target.patch.quoteDraft = { ...(target.patch.quoteDraft || previous.quoteDraft), winterSale: saleRecord };
       const pendingNames = pricesPending ? builder.approval.blocked.map(row => row.name) : [];
       const roleWarnings = [...(crewIgnored ? [{ code: 'crew_assignment_ignored', jobId: target.id, message: 'Crew names were not saved. A manager assigns the crew in Dispatch.' }] : []), ...(soldNeedsCrew ? [{ code: 'sold_needs_crew', jobId: target.id, message: 'Sold: needs crew. A manager assigns the crew in Dispatch.' }] : []),
         ...(choiceDropped ? [{ code: 'crew_choice_unavailable', jobId: target.id, message: 'The chosen crew can no longer take this visit, so Dispatch assigned the first free crew instead.' }] : []),
@@ -783,7 +836,7 @@ export async function saveWalkthroughHandoff(store, actor, input, now = new Date
   // block applies, and its refusal names the rule (details.conflicts).
   const staffingLeftToDispatch = !access.dispatcher || !assignedCrew.length;
   const enforce = warning => !(staffingLeftToDispatch && warning.code === 'crew_size_short');
-  const options = { authorize: session => requireQuoteAuthor(session, env), enforce, ...(autoCrew ? { autoCrew: true } : {}) };
+  const options = { authorize: session => requireQuoteAuthor(session, env), enforce, saleChecked: true, ...(autoCrew ? { autoCrew: true } : {}) };
   let dispatched = null;
   try {
     try { dispatched = await mutateDispatch(adapter, actor, choiceInput || dispatchInput, now, choiceInput ? { ...options, crewChoice: true } : options); }

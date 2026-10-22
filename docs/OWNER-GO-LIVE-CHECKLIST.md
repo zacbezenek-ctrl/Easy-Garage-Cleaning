@@ -39,7 +39,7 @@ The rule behind all of it: **HighLevel sends every customer message and owns eve
 24. [ ] **Set `EGC_STAFF_PAGE_GATE=on` in Preview, check it, and watch the Preview logs for 401s.** Staff pages stop being downloadable by anyone. [1.1](GO-LIVE.md#11-lock-the-staff-pages)
 25. [ ] **Then set it in Production and do the crew-phone offline check.** Locks the live site without breaking the crew app. [1.1](GO-LIVE.md#11-lock-the-staff-pages)
     - [ ] **If `EGC_STAFF_PAGE_GATE` is already set to `true` (any case): from this build it locks the staff pages like `on`, from the next deployment. Check `HUB_SESSION_SECRET` is set (item 9) and that Hub → Integrations does not name an unrecognized gate value.** `true`, `TRUE` and `on` with spaces around it now turn the gate on; any other value leaves the pages public. [1.1](GO-LIVE.md#11-lock-the-staff-pages)
-26. [ ] **Leave `EGC_STAFF_PAY_OWNER_ONLY` unset and check a manager sees hours, not pay.** Pay stays owner-only. [1.2](GO-LIVE.md#12-keep-pay-owner-only)
+26. [ ] **Leave `EGC_STAFF_PAY_OWNER_ONLY` unset and check a manager sees hours, not pay.** Pay stays owner-only. Only if you choose to, list a manager in `EGC_STAFF_PAY_VIEWERS` so they can view (not change or export) pay. [1.2](GO-LIVE.md#12-keep-pay-owner-only)
 27. [ ] **Turn on Cloudflare Access for preview deployments.** Preview links otherwise serve staff files with no sign-in. [1.3](GO-LIVE.md#13-security-steps-with-no-switch)
 28. [ ] **Delete deployments older than the gate.** They still serve staff files with no check. [1.3](GO-LIVE.md#13-security-steps-with-no-switch)
 29. [ ] **Give the Firebase service account the Firebase Authentication Admin role.** Removed staff are then signed out of the database too. [1.3](GO-LIVE.md#13-security-steps-with-no-switch)
@@ -60,7 +60,7 @@ The rule behind all of it: **HighLevel sends every customer message and owns eve
 
 ## Stage 3: Walkthroughs
 
-41. [ ] **Run the two staff migrations from the Hub, signed in as you (dry run, then apply).** Only the owner can run them. The staff directory needs them. [3.1](GO-LIVE.md#31-team-roles-staff-directory)
+41. [ ] **Open Hub → Staff directory and tap Finish staff setup (it runs the two staff migrations; no banner means they are done).** The staff directory needs them. [3.1](GO-LIVE.md#31-team-roles-staff-directory)
 42. [ ] **Tell managers that pay changes now go through you.** The old profile form stops changing pay. [3.1](GO-LIVE.md#31-team-roles-staff-directory)
 43. [ ] **Open Hub → Staff directory and check nobody shows "pay needs review" or "unrecognized id".** It is on by your launch default (nothing to set); it holds roles, skills, pay history and availability. [3.1](GO-LIVE.md#31-team-roles-staff-directory)
 44. [ ] **Record the Phone role for the phone person and the Sales role for the walkthrough rep.** Roles, not names, describe who does what. [3.1](GO-LIVE.md#31-team-roles-staff-directory)

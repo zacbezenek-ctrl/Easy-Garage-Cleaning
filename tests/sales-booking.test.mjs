@@ -298,10 +298,10 @@ const MANAGER_CAPS = ['dispatch.write', 'time.approve', 'accounts.approve', 'cus
 const EMPLOYEE_VIEWS = ['my_day', 'my_shifts', 'open_shifts', 'earnings', 'crew_chat', 'availability', 'requests', 'training', 'safety', 'onboarding', 'crew_alerts', 'my_commission'];
 // Recorded from the suite before SALES-BOOKING (merge base b04a617) with tests/helpers/hub-dom.mjs.
 // WP14c added the business Purchase list screen (RUN THE BUSINESS) after it; D6b added every viewer's My commission (MY EGC).
-// Job actuals (business, RUN THE BUSINESS) joins before Review queues.
+// Job actuals (business, RUN THE BUSINESS) joins before Review queues, and Open quotes (business) after it.
 const BASE_NAV = {
-  owner: [...EMPLOYEE_VIEWS, 'today', 'action_center', 'schedule', 'timesheets', 'people', 'walkthroughs', 'delivery', 'dispatch_rules', 'job_actuals', 'reviews', 'staff', 'customers', 'finance', 'communications', 'invoicing', 'pipeline', 'scorecard', 'proof', 'playbook', 'ad_spend', 'settings', 'followup_settings', 'catalog', 'message_templates', 'stocked_costs', 'purchase_list'],
-  manager: [...EMPLOYEE_VIEWS, 'today', 'action_center', 'schedule', 'timesheets', 'people', 'walkthroughs', 'delivery', 'job_actuals', 'reviews', 'staff', 'customers', 'finance', 'communications', 'invoicing', 'pipeline', 'scorecard', 'proof', 'playbook', 'settings', 'message_templates', 'stocked_costs', 'purchase_list'],
+  owner: [...EMPLOYEE_VIEWS, 'today', 'action_center', 'schedule', 'timesheets', 'people', 'walkthroughs', 'delivery', 'dispatch_rules', 'job_actuals', 'open_quotes', 'reviews', 'staff', 'customers', 'finance', 'communications', 'invoicing', 'pipeline', 'scorecard', 'proof', 'playbook', 'ad_spend', 'settings', 'followup_settings', 'catalog', 'message_templates', 'stocked_costs', 'purchase_list'],
+  manager: [...EMPLOYEE_VIEWS, 'today', 'action_center', 'schedule', 'timesheets', 'people', 'walkthroughs', 'delivery', 'job_actuals', 'open_quotes', 'reviews', 'staff', 'customers', 'finance', 'communications', 'invoicing', 'pipeline', 'scorecard', 'proof', 'playbook', 'settings', 'message_templates', 'stocked_costs', 'purchase_list'],
   employee: EMPLOYEE_VIEWS,
 };
 const PROFILES = {
@@ -328,22 +328,27 @@ const businessFirst = (page, ids) => {
 const baseNav = (page, base) => businessFirst(page, BASE_NAV[base]);
 
 test('with EGC_STAFF_ROLE_ACCESS off (no roleAccess from /api/hub-auth), navigation is identical to before for every kind of account', () => {
-  for (const [name, [profile, base]] of Object.entries(PROFILES)) { const page = shell(profile); assert.deepEqual(views(page), baseNav(page, base), name); }
+  for (const [name, [profile, base]] of Object.entries(PROFILES)) {
+    const page = shell(profile);
+    // PORTAL-INBOX: Customer messages follows the server's customer.send; everything else is as before.
+    assert.deepEqual(views(page).filter(id => id !== 'customer_messages'), baseNav(page, base), name);
+    assert.equal(views(page).includes('customer_messages'), Boolean(profile.caps?.includes('customer.send')), `${name} customer messages`);
+  }
 });
 
 test('with roleAccess, Sales and Phone see leads, walkthroughs, the team schedule and the Action Center, as their server capabilities allow', () => {
-  const booker = [...EMPLOYEE_VIEWS, 'action_center', 'schedule', 'walkthroughs', 'pipeline'];
+  const booker = [...EMPLOYEE_VIEWS, 'action_center', 'schedule', 'walkthroughs', 'pipeline', 'customer_messages'];
   for (const name of ['sales', 'phone']) {
     const page = shell(PROFILES[name][0], { roleAccess: true });
     assert.deepEqual(views(page), booker, name);
     for (const view of ['today', 'customers', 'finance', 'timesheets', 'people', 'delivery', 'communications', 'staff']) assert.equal(page.api.canView(view), false, `${name} ${view}`);
-    assert.deepEqual(Array.from(page.api.hubCapabilities()), ['crew'], 'business screens stay closed');
+    assert.deepEqual(Array.from(page.api.hubCapabilities()), ['crew', 'customer_contact'], 'business screens stay closed; Customer messages follows customer.send');
   }
   // The Action Center follows followups.own alone; the booking views follow schedule.book alone.
   assert.deepEqual(views(shell({ user: 'Synthetic.Follow', business: false, role: 'sales', caps: ['followups.own'] }, { roleAccess: true })), [...EMPLOYEE_VIEWS, 'action_center']);
   assert.deepEqual(views(shell({ user: 'Synthetic.Book', business: false, role: 'phone', caps: ['schedule.book'] }, { roleAccess: true })), [...EMPLOYEE_VIEWS, 'schedule', 'walkthroughs', 'pipeline']);
   // A crew account, a manager and the owner are exactly as they were.
-  for (const name of ['crew', 'crewRoles', 'owner', 'manager', 'storedManager']) { const page = shell(PROFILES[name][0], { roleAccess: true }); assert.deepEqual(views(page), baseNav(page, PROFILES[name][1]), name); }
+  for (const name of ['crew', 'crewRoles', 'owner', 'manager', 'storedManager']) { const page = shell(PROFILES[name][0], { roleAccess: true }); assert.deepEqual(views(page).filter(id => id !== 'customer_messages'), baseNav(page, PROFILES[name][1]), name); }
   // A deep link opens a booker's view; one they cannot open lands on My day.
   for (const [search, active] of [['?view=action_center', 'action_center'], ['?view=pipeline', 'pipeline'], ['?view=finance', 'my_day']]) {
     const page = shell(PROFILES.phone[0], { roleAccess: true, before: context => { context.location.search = search; context.location.href += search; } });

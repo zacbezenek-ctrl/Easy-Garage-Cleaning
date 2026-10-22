@@ -12,7 +12,7 @@
    people whose roles the owner saves change; everyone else keeps the hard-coded checks.
 
    Staff role access (owner decision, 2026-10-21): EGC_STAFF_ROLE_ACCESS is on, so a stored Manager role gives business
-   access (Nick and Eli as managers) and Sales and Phone book, move and cancel walkthroughs and jobs and see every
+   access and Sales and Phone book, move and cancel walkthroughs and jobs and see every
    customer's contact details in Dispatch (never crew assignment, pay, cost or money). Its go-live checks
    (docs/GO-LIVE.md 3.5) come first: every manager's role saved, the Firebase Authentication Admin role in place.
 
@@ -31,6 +31,10 @@ export const LAUNCH_DEFAULTS = Object.freeze({
   // job notes the estimator confirms for the crew, on the website's own OpenAI key (the openaiapi secret).
   EGC_WALKTHROUGH_VISIT_ENABLED: 'true',
   EGC_WALKTHROUGH_NOTES: 'true',
+  // Owner decisions 2026-10-21: the Early-bird winter sale (up to $400 off any job, accepted by Jan 31, work Dec 1 to
+  // Feb 28, the amount capped by the owner's margin floor on the Job actuals cost settings; no sale applies until the
+  // owner enters that floor and the cost settings; functions/_lib/winter-sale.js).
+  EGC_WINTER_SALE: 'true',
 });
 
 /** Fills each unset launch default into env, in place; a value already present (any value) is kept. An env that
