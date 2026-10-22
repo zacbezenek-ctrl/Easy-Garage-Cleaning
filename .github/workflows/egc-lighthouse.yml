@@ -4,9 +4,9 @@ name: EGC Lighthouse (mobile)
 on:
   push:
     branches: ['main']
-    paths: ['*.html', '*.css', '*.js', 'styles.css', 'site-enhancements.js', 'analytics-loader.js', 'images/**', 'blog/*.html', 'functions/before-after.js', 'crew/**', 'customer-portal.html', 'business-hub.*', 'client-login.*', 'client-login/**', 'functions/client-login*.js', 'functions/client-login/**', 'employee-field-today.*', '_headers', 'tests/lighthouse/**', 'tests/lighthouse-ci.test.mjs', 'tests/browser/test_lighthouse_pages_ui.py', '.github/workflows/egc-lighthouse.yml']
+    paths: ['*.html', '*.css', '*.js', 'styles.css', 'site-enhancements.js', 'analytics-loader.js', 'images/**', 'fonts/**', 'blog/*.html', 'functions/before-after.js', 'crew/**', 'customer-portal.html', 'business-hub.*', 'client-login.*', 'client-login/**', 'functions/client-login*.js', 'functions/client-login/**', 'employee-field-today.*', '_headers', 'tests/lighthouse/**', 'tests/lighthouse-ci.test.mjs', 'tests/browser/test_lighthouse_pages_ui.py', '.github/workflows/egc-lighthouse.yml']
   pull_request:
-    paths: ['*.html', '*.css', '*.js', 'styles.css', 'site-enhancements.js', 'analytics-loader.js', 'images/**', 'blog/*.html', 'functions/before-after.js', 'crew/**', 'customer-portal.html', 'business-hub.*', 'client-login.*', 'client-login/**', 'functions/client-login*.js', 'functions/client-login/**', 'employee-field-today.*', '_headers', 'tests/lighthouse/**', 'tests/lighthouse-ci.test.mjs', 'tests/browser/test_lighthouse_pages_ui.py', '.github/workflows/egc-lighthouse.yml']
+    paths: ['*.html', '*.css', '*.js', 'styles.css', 'site-enhancements.js', 'analytics-loader.js', 'images/**', 'fonts/**', 'blog/*.html', 'functions/before-after.js', 'crew/**', 'customer-portal.html', 'business-hub.*', 'client-login.*', 'client-login/**', 'functions/client-login*.js', 'functions/client-login/**', 'employee-field-today.*', '_headers', 'tests/lighthouse/**', 'tests/lighthouse-ci.test.mjs', 'tests/browser/test_lighthouse_pages_ui.py', '.github/workflows/egc-lighthouse.yml']
 permissions:
   contents: read
 concurrency:

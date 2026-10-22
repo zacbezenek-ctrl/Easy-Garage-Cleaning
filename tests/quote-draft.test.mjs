@@ -5,6 +5,8 @@ import { QUOTE_DRAFT_RECEIPTS, expireStaleCheckout, normalizeQuoteDraft, preview
 import { quoteDraftHandlers } from '../functions/api/quote-draft.js';
 import { createEstimateReadyDelivery, estimateReadySendKey, ESTIMATE_READY_TAG } from '../functions/_lib/estimate-ready.js';
 import { prepareHandoff, saveWalkthroughHandoff } from '../functions/_lib/walkthrough-handoff.js';
+import { resolveCustomer } from '../functions/_lib/customer-resolution.js';
+import { requireQuoteAuthor } from '../functions/_lib/quote-permissions.js';
 import { handoffHandlers } from '../functions/api/walkthrough-handoff.js';
 import { projectReleased } from '../functions/_lib/business-hub-core.js';
 import { checkoutFingerprint } from '../functions/_lib/customer-payments.js';
@@ -732,15 +734,26 @@ test('a send confirmed as a dry run never becomes a live HighLevel call after me
   assert.equal(posts.length, 0);
 });
 
+// An estimator's draft for an existing customer who is not theirs (no walkthrough of theirs, not created by them): before
+// the estimator-customer-access fix this test saved it with the raw record id and expected prepareHandoff to return the
+// full customer, which let a phone number alone reveal any stored customer. Now the customer is named by the estimator's
+// own customer-resolve reference and stays masked; signing and the schedule rules are unchanged.
 test('a sales author signs their unplaced quote draft into a scheduled job but cannot move it afterwards', async () => {
-  const f = fixture(), value = f.input({ sourceWalkthroughId: '', sourceRevision: '' }), created = await save(f, value, sales, ROLES), id = created.job.id;
-  // Without a walkthrough the draft is still the author's to open.
+  const f = fixture();
+  await assert.rejects(save(f, f.input({ sourceWalkthroughId: '', sourceRevision: '' }), sales, ROLES), error => error.code === 'quote_draft_customer_ref_required' && error.status === 403);
+  const resolved = await resolveCustomer(f.store, sales, { requestId: randomUUID(), customer: { name: 'Synthetic Customer', phone: '9705550100', email: '', address: '', highlevelContactId: '' } }, { authorize: session => requireQuoteAuthor(session, ROLES), restricted: true, now: NOW });
+  const ref = resolved.customer.id;
+  assert.match(ref, /^cref_[a-f0-9]{32}$/);
+  const value = f.input({ customerId: ref, sourceWalkthroughId: '', sourceRevision: '' }), created = await save(f, value, sales, ROLES), id = created.job.id;
+  assert.deepEqual([created.job.customerId, f.job(id).customerId], [ref, 'c1']);
+  // Without a walkthrough the draft is still the author's to open, with the customer masked.
   const prepared = await prepareHandoff(f.store, sales, { jobId: id }, { env: ROLES });
-  assert.deepEqual([prepared.jobId, prepared.customerId, prepared.customer.id], [id, 'c1', 'c1']);
+  assert.deepEqual([prepared.jobId, prepared.customerId, prepared.customer.id, prepared.customer.contactDetails], [id, ref, ref, 'masked']);
+  assert.doesNotMatch(JSON.stringify(prepared), /100 Fixture Lane|provider1|test@example\.invalid|9705550100|"c1"/);
   const plan = (date, start, end) => ({ client: client(), quote: { title: 'Garage reset', total: 1400, deposit: 350, job_date: date, start_time: start, end_time: end, estimated_duration_min: 180 }, acceptance: { accepted_at: '2026-09-22T17:45:00.000Z', accepted_by: 'Synthetic Customer', signature_captured: true, method: 'in_person_signature', terms_version: '2026-10-deposit25' }, signature: 'data:image/png;base64,iVBORw0KGgo=', terms_version: '2026-10-deposit25', terms_accepted: true, photos: { before: 3 }, scope: { keep_items: 'Blue bicycle' }, discovery: {}, logistics: { crew_size: 2 }, internal_notes: 'Synthetic brief', client_checklists: { preJob: [], postJob: [] }, notes: '' });
-  const sign = (date, start, end) => saveWalkthroughHandoff(f.store, sales, { requestId: randomUUID(), customerId: 'c1', jobId: id, expectedRevision: f.job(id).revision, plan: plan(date, start, end) }, NOW, { env: ROLES });
+  const sign = (date, start, end) => saveWalkthroughHandoff(f.store, sales, { requestId: randomUUID(), customerId: ref, jobId: id, expectedRevision: f.job(id).revision, plan: plan(date, start, end) }, NOW, { env: ROLES });
   const signed = await sign('2026-09-24', '09:00', '12:00');
-  assert.deepEqual([signed.job.id, f.job(id).status, f.job(id).date, f.job(id).estimate.status], [id, 'scheduled', '2026-09-24', 'accepted']);
+  assert.deepEqual([signed.job.id, signed.job.customerId, signed.job.highlevelContactId, f.job(id).status, f.job(id).date, f.job(id).estimate.status], [id, ref, '', 'scheduled', '2026-09-24', 'accepted']);
   await assert.rejects(sign('2026-09-25', '09:00', '12:00'), error => error.code === 'handoff_schedule_change_forbidden');
   // Another author's job that is neither a quote draft nor from this walkthrough stays with Dispatch.
   f.rows.set('jobs/other', { id: 'other', revision: 'or', type: 'job', status: 'unscheduled', pipelineStatus: 'unscheduled', customerId: 'c1', date: '', time: '', createdBy: 'tylerg' });
@@ -750,7 +763,9 @@ test('a sales author signs their unplaced quote draft into a scheduled job but c
 
 test('with role permissions on, a manager lowered to sales drafts quotes as an author, not a dispatcher; with them off, as a dispatcher', async () => {
   const lowered = { user: 'tylerg', role: 'manager', businessAccess: true, displayName: 'Synthetic Manager', staffRoles: ['sales'] };
-  const f = fixture(), open = (actor, query, env) => handoffHandlers({ session: async () => actor, storage: () => f.store }).get({ request: new Request(`https://easygaragecleaning.com/api/walkthrough-handoff?${query}`), env });
+  const f = fixture();
+  f.rows.get('jobs/w1').assignedCrew = [lowered.user]; // their own walkthrough
+  const open = (actor, query, env) => handoffHandlers({ session: async () => actor, storage: () => f.store }).get({ request: new Request(`https://easygaragecleaning.com/api/walkthrough-handoff?${query}`), env });
   const drafts = actor => quoteDraftHandlers({ session: async () => actor, storage: () => f.store, now: () => new Date(NOW), delivery: () => ({ deliver: f.deliver }), stripe: () => null });
   const saved = await drafts(lowered).post({ request: request('POST', { action: 'save', ...f.input() }), env: ROLES }), id = (await saved.json()).job.id;
   assert.equal(saved.status, 200, 'a quote author');
@@ -885,12 +900,21 @@ test('quote draft API: quote authors only, same origin, bounded JSON and a proje
     assert.equal(response.status, person ? 403 : 401);
     assert.match((await response.json()).code, /^quote_(sign_in_required|forbidden)$/);
   }
+  // An estimator attaches a walkthrough's customer by its record id only when the walkthrough is theirs: before the
+  // estimator-customer-access fix this saved for any walkthrough, which let any estimator attach (and then read) any
+  // customer. Unassigned it is refused; assigned to them it saves as before.
   actor = sales;
+  const w2 = () => post({ action: 'save', ...f.input({ sourceWalkthroughId: 'w2', customerId: 'c2', sourceRevision: 'w2r', draft: draft(d => { d.client = { name: 'Synthetic Other', phone: '9705550199', email: 'other@example.invalid', address: '200 Fixture Lane', highlevel_contact_id: 'provider2' }; }) }) }, {}, ROLES);
+  const unassigned = await w2();
+  assert.deepEqual([unassigned.status, (await unassigned.json()).code], [403, 'quote_draft_customer_ref_required']);
+  f.rows.get('jobs/w2').assignedCrew = [sales.user];
   assert.equal((await post({ action: 'save', ...f.input({ sourceWalkthroughId: 'w2', customerId: 'c2', sourceRevision: 'w2r', draft: draft(d => { d.client = { name: 'Synthetic Other', phone: '9705550199', email: 'other@example.invalid', address: '200 Fixture Lane', highlevel_contact_id: 'provider2' }; }) }) }, {}, ROLES)).status, 200, 'a sales author may draft with role permissions on');
 });
 
 test('a sales author drafts and sends through the same confirmed path; a crew account cannot', async () => {
-  const f = fixture(), created = await save(f, f.input(), sales, ROLES), id = created.job.id;
+  const f = fixture();
+  f.rows.get('jobs/w1').assignedCrew = [sales.user]; // their own walkthrough
+  const created = await save(f, f.input(), sales, ROLES), id = created.job.id;
   assert.equal(f.job(id).createdBy, 'sales.person'); assert.equal(f.job(id).quoteDraft.createdBy, 'sales.person');
   const { result } = await sendFlow(f, id, { actor: sales, env: ROLES });
   assert.equal(result.job.estimate.status, 'sent'); assert.equal(f.job(id).estimate.sentBy, 'sales.person');

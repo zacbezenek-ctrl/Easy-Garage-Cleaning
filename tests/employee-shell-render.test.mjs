@@ -482,3 +482,72 @@ test('the phone drawer returns focus to the menu button whenever it closes, and 
   }
   assert.equal(observers.length, 3);
 });
+
+// CHAT-SEEN: under the latest message a manager sees who has read it and which assigned crew have not; crew never do.
+test('a manager sees who read the latest message in a job room and which assigned crew have not; crew see no receipts', async () => {
+  const room = { id: 'job-room', type: 'job', customer: 'Synthetic Room', date: '2026-09-22', time: '09:00', status: 'scheduled', assignedCrew: ['crew.one', 'crew.two', 'crew.three'] };
+  const seed = page => {
+    const S = page.api.S;
+    S.people.profiles = [{ username: 'crew.one', displayName: 'Synthetic Crew One' }, { username: 'crew.two', displayName: 'Synthetic Crew Two' }, { username: 'crew.three', displayName: 'Synthetic Crew Three' }];
+    S.people.jobMessages = [{ id: 'm1', jobId: 'job-room', body: 'Bring the tall ladder', sender: 'ZacB', senderName: 'Synthetic Owner', createdAt: '2026-09-22T15:00:00.000Z', status: 'active' }];
+    S.people.messageReads = [
+      { id: 'r1', employee: 'crew.one', channel: 'job:job-room', lastReadAt: '2026-09-22T15:05:00.000Z' },
+      { id: 'r2', employee: 'crew.two', channel: 'job:job-room', lastReadAt: '2026-09-22T14:00:00.000Z' },
+      { id: 'r3', employee: 'crew.three', channel: 'team', lastReadAt: '2026-09-22T16:00:00.000Z' }];
+    S.chatChannel = 'job:job-room';
+  };
+  const manager = loaded();
+  manager.context.jobsCache = [structuredClone(room)];
+  manager.api.install(); await manager.flush(); seed(manager);
+  manager.api.go('crew_chat');
+  const seen = manager.main().querySelector('[data-chat-seen]');
+  assert.ok(seen, 'the receipt line shows under the latest message');
+  assert.equal(seen.textContent, 'Seen by Synthetic Crew One · Not seen yet: Synthetic Crew Two, Synthetic Crew Three', 'a read before the message, or of another room, is not a read of it');
+
+  const crew = loaded({ user: 'crew.one', business: false, role: 'crew' });
+  crew.context.jobsCache = [structuredClone(room)];
+  crew.api.install(); await crew.flush(); seed(crew);
+  crew.api.go('crew_chat');
+  assert.equal(crew.main().querySelector('[data-chat-seen]'), null, 'crew never see who read what');
+});
+
+// CHAT-SEEN: a message that arrives by poll while the chat is open and visible is marked read through the newest
+// message on screen (seenThrough), at most one write at a time per channel; a hidden tab marks nothing.
+test('crew chat marks a polled message read once it is drawn on a visible screen, through the newest message shown', async () => {
+  const posts = [];
+  let release;
+  const fetcher = async (url, init = {}) => {
+    if (url.startsWith('/api/employee-hub') && init.method === 'POST' && JSON.parse(init.body).collection === 'messageReads') {
+      const body = JSON.parse(init.body); posts.push(body);
+      await new Promise(resolve => { release = resolve; });
+      return json({ ok: true, record: { id: body.id, employee: 'crew.one', channel: body.data.channel, lastReadAt: body.data.seenThrough } });
+    }
+    if (url.startsWith('/api/employee-hub') && init.method === 'POST') { const body = JSON.parse(init.body); return json({ ok: true, record: { ...body.data, id: body.id } }); }
+    return hubApi(url);
+  };
+  const page = loaded({ user: 'crew.one', business: false, role: 'crew', fetcher });
+  page.api.install(); await page.flush();
+  const S = page.api.S, message = (id, createdAt, sender = 'ZacB') => ({ id, body: `Synthetic ${id}`, sender, senderName: 'Synthetic Owner', createdAt, status: 'active' });
+  S.people.teamMessages = [message('m1', '2026-09-22T15:00:00.000Z')];
+  S.people.messageReads = [{ id: 'read-crewone-team', employee: 'crew.one', channel: 'team', lastReadAt: '2026-09-22T15:00:00.000Z' }];
+  page.document.visibilityState = 'visible';
+  page.api.go('crew_chat'); await page.runTimers();
+  assert.equal(posts.length, 0, 'nothing new to mark');
+
+  S.people.teamMessages = [...S.people.teamMessages, message('m2', '2026-09-22T15:10:00.000Z')];
+  page.document.visibilityState = 'hidden';
+  page.api.render(); await page.flush();
+  assert.equal(posts.length, 0, 'a hidden tab has not seen the new message');
+
+  page.document.visibilityState = 'visible';
+  page.api.render(); await page.flush();
+  assert.equal(posts.length, 1);
+  assert.equal(posts[0].collection, 'messageReads');
+  assert.deepEqual([posts[0].data.channel, posts[0].data.seenThrough, posts[0].data.lastReadAt], ['team', '2026-09-22T15:10:00.000Z', undefined], 'the newest message drawn, not the clock');
+  page.api.render(); await page.flush();
+  assert.equal(posts.length, 1, 'one write per channel while one is in flight');
+  release(); await page.flush();
+  assert.equal(S.people.messageReads.find(row => row.channel === 'team').lastReadAt, '2026-09-22T15:10:00.000Z');
+  page.api.render(); await page.flush();
+  assert.equal(posts.length, 1, 'once marked, a later render writes nothing');
+});

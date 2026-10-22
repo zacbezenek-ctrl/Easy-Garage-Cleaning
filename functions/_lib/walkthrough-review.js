@@ -3,6 +3,7 @@ import { requireQuoteAuthor } from './quote-permissions.js';
 import { estimateFingerprint } from './quote-model.js';
 import { stripCrewMoneyDeep } from './crew-money.js';
 import { prepareWalkthroughCaptureSync } from './walkthrough-capture-sync.js';
+import { jobCustomerAccess } from './estimator-customer-access.js';
 const COLLECTION = 'quoteDraftOperations';
 const TEXT = ['customerName','phone','address','serviceType','scopeSummary','sortMethod','garageSize','fullness','loadEstimate','shelfType','keepItems','removeItems','donateItems','exclusions','hazardPlan','damageNotes','accessNotes','parkingNotes','measurements','equipment','photoUnavailableReason','customerQuestions','pricingStatus','pricingReviewNote','quoteJobId','handoffNotes'];
 const BOOL = ['customerConfirmed','addressConfirmed','accessReviewed','boundariesReviewed','decisionsReviewed','hazardsReviewed','damageReviewed','measurementsReviewed','measurementsNeeded','equipmentReviewed','questionsReviewed','pricingReviewed'];
@@ -52,24 +53,32 @@ async function access(store,actor,jobId,env) {
   if(!job||job.recordType||!['walkthrough','job','cleanout','reorg'].includes(job.type))throw fail('not_found','Choose an existing Hub walkthrough or job.',404);
   const assigned=(job.assignedCrew||[]).some(x=>String(x).toLowerCase()===String(actor.user).toLowerCase());
   if(!rights.dispatcher&&!assigned&&job.quoteDraft?.createdBy!==actor.user)throw fail('forbidden','Only the assigned walkthrough author or a manager can open this capture.',403);
-  return job;
+  return {job,who:{actor,rights,env}};
+}
+// The linked customer the capture's gaps compare with. An estimator who may not see it (estimator-customer-access.js)
+// is compared with the name they typed and no stored address, so repeated saves never confirm the stored name.
+async function customerFor(store,job,who){
+  const customer=id(job.customerId)?await store.read('customers',job.customerId):null;
+  if(!customer||!who)return customer;
+  const seen=await jobCustomerAccess(store,who.actor,who.rights,job,{env:who.env});
+  return seen.full?customer:{id:customer.id,revision:customer.revision,name:seen.name,address:''};
 }
 const stateOf=job=>job.walkthroughReview||{version:1,revision:0,stage:'draft',draft:{},latestFinalized:null};
 const verifiedPhotos=job=>(job.fieldExecution?.photos||[]).filter(x=>x&&typeof x.id==='string'&&x.category==='walkthrough').length;
 async function quoteFor(store,job,data){const quoteId=data.quoteJobId||(job.type!=='walkthrough'?job.id:'');if(!quoteId)return null;const quote=quoteId===job.id?job:await store.read('jobs',quoteId);if(!quote||quote.customerId!==job.customerId||(quote.id!==job.id&&quote.sourceWalkthroughId!==job.id))return null;return quote;}
-async function view(store,job){const review=stateOf(job),quote=await quoteFor(store,job,review.draft),customer=id(job.customerId)?await store.read('customers',job.customerId):null;return{ok:true,jobId:job.id,review,gaps:walkthroughReviewGaps(review.draft,{verifiedPhotos:verifiedPhotos(job),quote,customer,job}),verifiedPhotos:verifiedPhotos(job),quoteSummary:quote?.estimate?.number?{jobId:quote.id,number:quote.estimate.number,revision:quote.estimate.revision,amountCents:quote.estimate.amountCents??Math.round(Number(quote.estimate.amount)*100)}:null,pricingChanged:Boolean(review.latestFinalized?.quote&&(!quote||estimateFingerprint(quote.estimate)!==review.latestFinalized.quote.fingerprint))};}
-export async function readWalkthroughReview(store,actor,jobId,{env={}}={}){return view(store,await access(store,actor,jobId,env));}
+async function view(store,job,who=null){const review=stateOf(job),quote=await quoteFor(store,job,review.draft),customer=await customerFor(store,job,who);return{ok:true,jobId:job.id,review,gaps:walkthroughReviewGaps(review.draft,{verifiedPhotos:verifiedPhotos(job),quote,customer,job}),verifiedPhotos:verifiedPhotos(job),quoteSummary:quote?.estimate?.number?{jobId:quote.id,number:quote.estimate.number,revision:quote.estimate.revision,amountCents:quote.estimate.amountCents??Math.round(Number(quote.estimate.amount)*100)}:null,pricingChanged:Boolean(review.latestFinalized?.quote&&(!quote||estimateFingerprint(quote.estimate)!==review.latestFinalized.quote.fingerprint))};}
+export async function readWalkthroughReview(store,actor,jobId,{env={}}={}){const {job,who}=await access(store,actor,jobId,env);return view(store,job,who);}
 export async function saveWalkthroughReview(store,actor,input,now,{env={}}={}) {
   if(!plain(input)||Object.keys(input).some(k=>!['jobId','action','requestId','expectedRevision','data','reason','actorId'].includes(k))||!['save','finalize','amend'].includes(input.action)||!/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(input.requestId||''))throw fail('invalid','Use a valid capture action and stable request ID.',400);
-  const job=await access(store,actor,input.jobId,env),state=stateOf(job);
+  const {job,who}=await access(store,actor,input.jobId,env),state=stateOf(job);
   if(input.actorId&&input.actorId!==actor.user)throw fail('actor_changed','The signed-in employee changed.',403);
   const fingerprint=digest([actor.user,input]),receipt=await store.read(COLLECTION,input.requestId);
-  if(receipt){if(receipt.fingerprint!==fingerprint||receipt.action!=='capture.'+input.action)throw fail('idempotency_conflict','That request ID belongs to different content.');return{...await view(store,job),replayed:true,savedRevision:receipt.savedRevision};}
+  if(receipt){if(receipt.fingerprint!==fingerprint||receipt.action!=='capture.'+input.action)throw fail('idempotency_conflict','That request ID belongs to different content.');return{...await view(store,job,who),replayed:true,savedRevision:receipt.savedRevision};}
   if(input.expectedRevision!==state.revision)throw fail('revision_conflict','Another save changed this capture. Reload before saving.');
   if(state.stage==='finalized'&&input.action!=='amend')throw fail('amend_required','This revision is finalized. Start an amendment to change it.');
   let data={...state.draft,...normalizeWalkthroughReview(input.data||{})},reason='';
   if(input.action==='amend'){if(state.stage!=='finalized')throw fail('invalid','Only a finalized capture needs an amendment.',400);reason=typeof input.reason==='string'?input.reason.trim():'';if(reason.length<3||reason.length>1000)throw fail('invalid','Explain the amendment in 3–1,000 characters.',400);data=state.draft;}
-  const quote=await quoteFor(store,job,data),customer=id(job.customerId)?await store.read('customers',job.customerId):null,gaps=walkthroughReviewGaps(data,{verifiedPhotos:verifiedPhotos(job),quote,customer,job});
+  const quote=await quoteFor(store,job,data),customer=await customerFor(store,job,who),gaps=walkthroughReviewGaps(data,{verifiedPhotos:verifiedPhotos(job),quote,customer,job});
   if(input.action==='finalize'&&gaps.length)throw fail('incomplete','Review the listed gaps before finalizing.',400,{gaps});
   const revision=state.revision+1;
   const finalized=input.action==='finalize'?{revision,requestId:input.requestId,at:now,by:actor.user,quote:quote?.estimate?.number?{jobId:quote.id,revision:quote.estimate.revision,fingerprint:estimateFingerprint(quote.estimate)}:null}:state.latestFinalized;
@@ -85,6 +94,6 @@ export async function saveWalkthroughReview(store,actor,input,now,{env={}}={}) {
     else if(job.quoteDraft)patch.walkthroughCaptureSync=prepareWalkthroughCaptureSync({...job,...patch},now);
   }
   writes.push({collection:'jobs',id:job.id,revision:job.revision,patch},{collection:COLLECTION,id:input.requestId,patch:{action:'capture.'+input.action,fingerprint,jobId:job.id,savedRevision:revision,actorId:actor.user,createdAt:now,amendmentReason:next.amendmentReason,...(input.action==='finalize'?{finalizedSnapshot:data,finalized}: {})}});
-  try{await store.commit(writes);}catch(error){let committed;try{committed=await store.read(COLLECTION,input.requestId);}catch{throw fail('outcome_unknown','The save result is unknown. Retry the original request without editing.',503);}if(committed?.fingerprint===fingerprint)return{...await view(store,await store.read('jobs',job.id)),replayed:true,savedRevision:revision};if(error.code==='dispatch_revision_conflict')throw fail('revision_conflict','The capture or linked quote changed while saving. Reload before retrying.');throw fail('outcome_unknown','The save result is unknown. Retry the original request without editing.',503);}
-  return{...await view(store,{...job,...patch}),replayed:false,savedRevision:revision};
+  try{await store.commit(writes);}catch(error){let committed;try{committed=await store.read(COLLECTION,input.requestId);}catch{throw fail('outcome_unknown','The save result is unknown. Retry the original request without editing.',503);}if(committed?.fingerprint===fingerprint)return{...await view(store,await store.read('jobs',job.id),who),replayed:true,savedRevision:revision};if(error.code==='dispatch_revision_conflict')throw fail('revision_conflict','The capture or linked quote changed while saving. Reload before retrying.');throw fail('outcome_unknown','The save result is unknown. Retry the original request without editing.',503);}
+  return{...await view(store,{...job,...patch},who),replayed:false,savedRevision:revision};
 }

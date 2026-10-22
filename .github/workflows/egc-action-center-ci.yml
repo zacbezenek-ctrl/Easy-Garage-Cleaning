@@ -176,7 +176,14 @@ jobs:
         working-directory: egc-platform
   functions-bundle:
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    # 20, not 10: an uncached npx download of Wrangler 3 once took ~7 minutes on its own and the job was cancelled at 10
+    # with the check itself passing. The npm cache below makes that rare; this is the backstop.
+    timeout-minutes: 20
+    # One exact release per Wrangler major Pages may build with, so the npm cache key is stable and every run bundles
+    # with the same code. Raise them deliberately (npm view wrangler@3 version / wrangler@4 version).
+    env:
+      WRANGLER_3: 3.114.17
+      WRANGLER_4: 4.151.3
     steps:
       - uses: actions/checkout@v4
         with:
@@ -185,13 +192,22 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 22
+      # npm's download cache (~/.npm, which holds npx's _npx installs too), keyed by the runner OS, the two pinned
+      # Wrangler releases and the lockfile. A miss only costs the download; the checks below are the same either way.
+      - uses: actions/cache@v4
+        with:
+          path: ~/.npm
+          key: ${{ runner.os }}-npm-wrangler-${{ env.WRANGLER_3 }}-${{ env.WRANGLER_4 }}-${{ hashFiles('package-lock.json') }}
+          restore-keys: |
+            ${{ runner.os }}-npm-wrangler-${{ env.WRANGLER_3 }}-${{ env.WRANGLER_4 }}-
       - run: npm install --ignore-scripts --no-audit --no-fund
       # PRICE-SCRUB: the walkthrough prices must bundle on the Wrangler majors Pages may build with; the check fails on a
       # leftover runtime import(), an unsupported dynamic import or [ERROR] in the build log, or a missing walkthrough service.
       - name: Pages Functions bundle builds on Wrangler 3 and 4
         run: |
           for major in 3 4; do
-            npx --yes wrangler@$major pages functions build functions --outdir /tmp/pages-fn$major > /tmp/pages-fn$major.log 2>&1 || { cat /tmp/pages-fn$major.log; exit 1; }
+            version_var=WRANGLER_$major; version=${!version_var}
+            npx --yes wrangler@$version pages functions build functions --outdir /tmp/pages-fn$major > /tmp/pages-fn$major.log 2>&1 || { cat /tmp/pages-fn$major.log; exit 1; }
             node scripts/check-functions-bundle.mjs /tmp/pages-fn$major/index.js /tmp/pages-fn$major.log
           done
   browser:
@@ -256,6 +272,8 @@ jobs:
         run: python tests/browser/test_crew_job_drafts_ui.py
       - name: Hub chat and customer thread keep text typed during a send
         run: python tests/browser/test_chat_drafts_ui.py
+      - name: Crew chat read receipts cover only messages on screen (long room, scroll, poll)
+        run: python tests/browser/test_chat_seen_ui.py
       - name: Job labor dollars owner-only on the finance board and cost dialog
         run: python tests/browser/test_job_cost_privacy_ui.py
       - name: Follow-up owner and due-time settings on a phone
@@ -306,6 +324,10 @@ jobs:
         run: python tests/browser/test_job_actuals_ui.py
       - name: Open quotes board at 1280 and 390 px, close rates, portal-link copy and business-only access
         run: python tests/browser/test_open_quotes_ui.py
+      - name: Crew staffing at 390 and 1280 px, roster health, unstaffed jobs and Staff waiting jobs
+        run: python tests/browser/test_crew_staffing_ui.py
+      - name: Manager slip alerts at 390 px, one per slip, the tap opens the job's Field agenda row
+        run: python tests/browser/test_manager_slip_alerts_ui.py
       - name: Crew pre-job customer texts are idempotent and never re-sent
         run: python tests/browser/test_prejob_sms_ui.py
       - name: Server-rendered estimate, invoice and receipt documents on a phone
