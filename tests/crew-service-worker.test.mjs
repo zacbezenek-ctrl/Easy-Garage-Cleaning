@@ -15,9 +15,9 @@ const basic = response => Object.defineProperty(response, 'type', { value: 'basi
 // Inside a worker, relative request URLs resolve against the worker's origin.
 class WorkerRequest extends Request { constructor(input, init) { super(typeof input === 'string' ? new URL(input, ORIGIN).href : input, init); } }
 const NOW = Date.parse('2026-09-22T15:00:00.000Z');
-const SHELL_CACHE = 'egc-crew-shell-20261021starttoday';
+const SHELL_CACHE = 'egc-crew-shell-20261022livestatus';
 // CREW-SCHEDULE: the crew schedule page and its script join the shell (the schedule itself is /api data, never stored).
-const SCHEDULE_ASSETS = ['/crew/schedule.html', '/crew/schedule.js?v=20261018readfix'];
+const SCHEDULE_ASSETS = ['/crew/schedule.html', '/crew/schedule.js?v=20261022livestatus'];
 // LANE catalog: the read-only "What we sell" page and its script join the shell (the menu itself is /api data, never stored).
 const MENU_ASSETS = ['/crew/menu.html', '/crew/menu.js?v=20261019catalog'];
 // KNOCK: the canvassing page (crew/knock.html) and its modules share the crew shell. Its ES modules import each other
@@ -227,7 +227,7 @@ test('the precached shell matches the versioned files Today’s work and the off
   // the sign-in helper are the public crew files the home page loads too, and the page works without them.
   const schedule = read('crew/schedule.html');
   for (const path of [...schedule.matchAll(/(?:src|href)="(\/(?:crew\/schedule[^"]*|app-touch\.css)\?v=[^"]+)"/g)].map(match => match[1])) assert.ok(assets.includes(path), `${path} must be precached for offline reloads`);
-  assert.match(schedule, /<script src="\/crew\/schedule\.js\?v=20261018readfix" defer><\/script>/);
+  assert.match(schedule, /<script src="\/crew\/schedule\.js\?v=20261022livestatus" defer><\/script>/);
   assert.match(read('crew/schedule.js'), /navigator\.serviceWorker\.register\('\/crew\/sw\.js', \{ scope: '\/crew\/' \}\)/);
 });
 

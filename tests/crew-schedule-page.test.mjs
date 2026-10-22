@@ -39,10 +39,12 @@ async function answer(who, url, jobs = JOBS) {
 }
 
 async function page({ respond, hint = null, online = true, prefs = {}, clock = { now: NOW } } = {}) {
-  const document = createDocument(), main = document.createElement('main'), calls = [], local = storage(prefs), listeners = {};
+  const document = createDocument(), main = document.createElement('main'), calls = [], local = storage(prefs), listeners = {}, intervals = [];
   main.id = 'schedule-main'; document.body.append(main);
   class FixedDate extends Date { constructor(...args) { super(...(args.length ? args : [clock.now])); } static now() { return clock.now; } }
   const context = vm.createContext({ document, console, URL, URLSearchParams, Intl, Date: FixedDate, Promise, JSON, Math, Number, String, Array, Object, Set, Map, Error, Boolean, encodeURIComponent, AbortController, setTimeout, clearTimeout,
+    // The live refresh's interval is run by the test (tick), never by the host clock.
+    setInterval(callback, delay) { intervals.push({ callback, delay }); return intervals.length; },
     navigator: { onLine: online }, localStorage: local, addEventListener(type, listener) { listeners[type] = listener; },
     fetch: async (url, init) => { calls.push(url); assert.equal(init.credentials, 'same-origin'); return respond(url); } });
   context.window = context;
@@ -50,7 +52,8 @@ async function page({ respond, hint = null, online = true, prefs = {}, clock = {
   vm.runInContext(source, context);
   const settle = async () => { for (let index = 0; index < 20; index++) await new Promise(resolve => setImmediate(resolve)); };
   await settle();
-  return { document, main, calls, local, settle, context, listeners, clock };
+  const tick = async () => { for (const { callback } of intervals) callback(); await settle(); };
+  return { document, main, calls, local, settle, context, listeners, clock, intervals, tick };
 }
 // Each text node is a separate word group, as a browser lays the row's blocks out.
 const leaves = node => node.nodeType === 3 ? [node.data] : node.childNodes.flatMap(leaves);
@@ -167,7 +170,7 @@ test('the page is a gated staff page that loads its own versioned script and the
   for (const path of ['/crew/schedule', '/crew/schedule.html', '/crew/schedule.js']) assert.equal(staffGatedPath(path), true, path);
   assert.match(html, /<meta name="robots" content="noindex,nofollow">/);
   assert.match(html, /<link rel="stylesheet" href="\/crew\/crew-brand\.css\?v=[^"]+">/);
-  assert.match(html, /<script src="\/crew\/hub-auth\.js\?v=[^"]+" defer><\/script>\n<script src="\/crew\/schedule\.js\?v=20261018readfix" defer><\/script>/);
+  assert.match(html, /<script src="\/crew\/hub-auth\.js\?v=[^"]+" defer><\/script>\n<script src="\/crew\/schedule\.js\?v=20261022livestatus" defer><\/script>/);
   assert.match(html, /<main id="schedule-main">/);
   assert.match(html, /\.job-row\{[^}]*min-height:64px/);
   assert.match(html, /:is\(\.seg,\.chips\) button:focus-visible/);
@@ -207,4 +210,62 @@ test('back online, a schedule loaded under five minutes ago is not read again; a
   failed.context.navigator.onLine = true; await failed.listeners.online(); await failed.settle();
   assert.equal(failed.calls.length, 2);
   assert.equal(failed.main.querySelectorAll('.job-row').length, 2);
+});
+
+// LIVE-STATUS: the crew's live marks show on today's row from the real server projection. NOW is Friday 2026-10-16
+// 09:00 Mountain Time; 14:30Z is 08:30 that morning and 2026-10-15T16:00Z is Thursday.
+const TODAY_AT = '2026-10-16T14:30:00.000Z', YESTERDAY_AT = '2026-10-15T16:00:00.000Z';
+const marked = (id, stage, activity, at = TODAY_AT, changes = {}) => job(id, { crewId: 'crew_one', assignedCrew: ['ben.crew'], customer: `${id} Synthetic`, status: stage, pipelineStatus: stage,
+  fieldExecution: { activity, activityAt: at, activityReason: 'Synthetic reason the crew typed' }, ...changes });
+const liveBadges = row => row.querySelectorAll('em.badge').map(text).filter(label => ['En route', 'On site', 'Paused', 'Waiting', 'Delayed', 'Day ended', 'In progress'].includes(label));
+
+for (const [stage, activity, label, kind] of [['dispatched', 'dispatched', 'En route', 'live'], ['arrived', 'arrived', 'On site', 'live'], ['in_progress', 'paused', 'Paused', 'warn'],
+  ['arrived', 'waiting', 'Waiting', 'warn'], ['dispatched', 'delayed', 'Delayed', 'warn'], ['in_progress', 'day_ended', 'Day ended', 'done']]) {
+  test(`today\u2019s row shows ${label} when the crew marked it ${activity} today`, async () => {
+    const { main } = await page({ respond: url => answer('ben', url, [marked('job_live', stage, activity)]) });
+    const row = main.querySelector('[data-job="job_live"]');
+    assert.deepEqual(liveBadges(row), [label], 'one live badge, in place of In progress');
+    assert.ok(row.querySelectorAll('em.badge').some(node => text(node) === label && node.getAttribute('class') === `badge ${kind}`));
+    assert.doesNotMatch(text(main), /Synthetic reason/, 'the crew\u2019s typed reason never shows');
+  });
+}
+
+test('a multi-day job marked on site yesterday shows no On site today, and a live mark never shows on another day\u2019s row', async () => {
+  const jobs = [
+    marked('job_day_two', 'arrived', 'arrived', YESTERDAY_AT, { date: '2026-10-15', endDate: '2026-10-17', time: '08:00', endTime: '15:00' }),
+    marked('job_three_days', 'arrived', 'arrived', TODAY_AT, { date: '2026-10-16', endDate: '2026-10-18', time: '08:00', endTime: '15:00' }),
+  ];
+  const view = await page({ respond: url => answer('ben', url, jobs), prefs: { 'egc.crew-schedule.v1': JSON.stringify({ range: 'week', crew: 'all' }) } });
+  const day = date => view.main.querySelector(`[data-day="${date}"]`);
+  assert.deepEqual(liveBadges(day('2026-10-16').querySelector('[data-job="job_day_two"]')), [], 'yesterday\u2019s On site is not today\u2019s');
+  assert.deepEqual(liveBadges(day('2026-10-16').querySelector('[data-job="job_three_days"]')), ['On site']);
+  assert.deepEqual(liveBadges(day('2026-10-17').querySelector('[data-job="job_three_days"]')), [], 'tomorrow\u2019s row of the same job shows nothing live');
+});
+
+test('a visible page showing today reads again every 3 minutes; a hidden tab, an offline phone or a fresh answer does not', async () => {
+  const clock = { now: NOW };
+  let stage = 'dispatched';
+  const view = await page({ respond: url => answer('ben', url, [marked('job_live', stage, stage)]), clock });
+  assert.deepEqual(view.intervals.map(interval => interval.delay), [180000]);
+  assert.deepEqual(liveBadges(view.main.querySelector('[data-job="job_live"]')), ['En route']);
+  clock.now = NOW + 60000;
+  await view.tick();
+  assert.equal(view.calls.length, 1, 'one minute later: no read');
+  stage = 'arrived';
+  clock.now = NOW + 3 * 60000;
+  await view.tick();
+  assert.equal(view.calls.length, 2, 'three minutes later: read again');
+  assert.deepEqual(liveBadges(view.main.querySelector('[data-job="job_live"]')), ['On site'], 'the badge follows the crew');
+  view.document.hidden = true;
+  clock.now = NOW + 6 * 60000;
+  await view.tick();
+  assert.equal(view.calls.length, 2, 'a hidden tab never reads');
+  view.document.hidden = false;
+  for (const listener of view.document.listeners.visibilitychange || []) listener();
+  await view.settle();
+  assert.equal(view.calls.length, 3, 'back in view with an answer older than 3 minutes: read at once');
+  view.context.navigator.onLine = false;
+  clock.now = NOW + 10 * 60000;
+  await view.tick();
+  assert.equal(view.calls.length, 3, 'an offline phone never reads');
 });

@@ -149,7 +149,7 @@ test('scope=all: a team lead reads every crew by priority plus the work on no cr
 
 test('no money, phone, street, notes or roster ever leaves; cancelled work, other people\'s walkthroughs, blocks and private rows never show', async () => {
   const { get } = harness(), env = { ...ENV, ...ACCESS };
-  const keys = ['area', 'arrivalWindow', 'canOpen', 'crewId', 'crewName', 'crewNeeded', 'crewSize', 'customer', 'date', 'days', 'endDate', 'endTime', 'id', 'lead', 'mine', 'serviceType', 'status', 'time', 'type'];
+  const keys = ['area', 'arrivalWindow', 'canOpen', 'crewId', 'crewName', 'crewNeeded', 'crewSize', 'customer', 'date', 'days', 'endDate', 'endTime', 'fieldStatus', 'id', 'lead', 'mine', 'serviceType', 'status', 'time', 'type'];
   for (const [who, query] of [['eli', '?from=2026-10-14&to=2026-10-27&scope=all'], ['ben', '?from=2026-10-14&to=2026-10-27'], ['tyler', '?from=2026-10-14&to=2026-10-27&scope=all']]) {
     const { status, body } = await get(who, query, env), text = JSON.stringify(body);
     assert.equal(status, 200, who);
@@ -281,4 +281,38 @@ test('lead names: configured users cost no read; employee accounts are read only
   assert.deepEqual(await leadNames(env, new Set(['ana.lead'])), { 'ana.lead': 'Synthetic Ana' });
   assert.deepEqual(await leadNames(env, new Set(['ana.lead', 'nobody.here'])), { 'ana.lead': 'Synthetic Ana' }, 'employee accounts are not configured, so the username stands in');
   assert.equal(CREW_SCHEDULE_LOOKBACK_DAYS, 32);
+});
+
+test('today\u2019s live state shows on today\u2019s row only, only when the crew set it today, and never the reason they typed', async () => {
+  // NOW is Friday 2026-10-16 09:00 Mountain Time; 14:30Z is 08:30 that morning, 2026-10-15T16:00Z is Thursday.
+  const today = '2026-10-16T14:30:00.000Z', yesterday = '2026-10-15T16:00:00.000Z';
+  const live = (id, stage, activity, activityAt, changes = {}) => job(id, { assignedCrew: ['ben.crew'], crewId: 'crew_one', status: stage, pipelineStatus: stage,
+    fieldExecution: { activity, activityAt, activityReason: 'Synthetic reason: customer gate locked' }, ...changes });
+  const jobs = [
+    live('job_en_route', 'dispatched', 'dispatched', today),
+    live('job_on_site', 'arrived', 'arrived', today),
+    live('job_paused', 'in_progress', 'paused', today),
+    live('job_waiting', 'arrived', 'waiting', today),
+    live('job_delayed', 'dispatched', 'delayed', today),
+    live('job_day_ended_today', 'in_progress', 'day_ended', today, { date: '2026-10-15', endDate: '2026-10-17' }),
+    live('job_day_two', 'arrived', 'arrived', yesterday, { date: '2026-10-15', endDate: '2026-10-17' }),
+    live('job_day_ended_yesterday', 'in_progress', 'day_ended', yesterday, { date: '2026-10-15', endDate: '2026-10-17' }),
+    live('job_tomorrow', 'dispatched', 'dispatched', today, { date: '2026-10-17', endDate: '2026-10-17' }),
+    live('job_working', 'in_progress', 'in_progress', today),
+    live('job_no_time', 'arrived', 'arrived', undefined),
+    live('walk_live', 'arrived', 'arrived', today, { type: 'walkthrough' }),
+  ];
+  const access = { assigned: async row => (row.assignedCrew || []).includes('ben.crew'), exactly: id => id === 'ben.crew' };
+  const body = await crewSchedule({ session: SESSIONS.ben, env: {}, from: '2026-10-16', to: '2026-10-17', scope: 'mine', now: NOW, crews: CREWS, jobs, access, names: {} });
+  const states = Object.fromEntries(rows(body).map(row => [row.id, row.fieldStatus]));
+  assert.deepEqual(states, {
+    job_en_route: 'dispatched', job_on_site: 'arrived', job_paused: 'paused', job_waiting: 'waiting', job_delayed: 'delayed', job_day_ended_today: 'day_ended',
+    job_day_two: '', job_day_ended_yesterday: '', job_tomorrow: '', job_working: '', job_no_time: '', walk_live: '',
+  });
+  const day2 = rows(body).find(row => row.id === 'job_day_two');
+  assert.equal(day2.status, 'arrived', 'the stage is the whole job\u2019s and is unchanged');
+  assert.deepEqual(day2.days, ['2026-10-16', '2026-10-17']);
+  const text = JSON.stringify(body);
+  for (const secret of ['Synthetic reason', 'gate locked', 'activityReason', 'statusReason', 'activityAt', '9705550142', '1250', 'Synthetic office note'])
+    assert.ok(!text.includes(secret), `${secret} must not leave`);
 });
