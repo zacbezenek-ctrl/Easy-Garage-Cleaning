@@ -17,6 +17,7 @@ import {commitConflict,commitFailure} from './firestore-errors.js';
 import {bridgeCommandDenial,bridgeCommandPolicy} from '../../egc-platform/services/operations/src/bridge-command-policy.ts';
 import {dispatchReviewCleared} from './dispatch-queue.js';
 import {jobStartProblem} from './job-start-policy.js';
+import {winterSaleDateProblem} from './winter-sale.js';
 import {autoAssignedCrew,crewAssignment,crewAutoAssignEnabled,crewAutoRecord,crewPickOrder,eligibleCrews,pickCrew} from './dispatch-crew-assign.js';
 const ROOT='projects/egcw-1ec83/databases/(default)/documents';
 const URL=`https://firestore.googleapis.com/v1/${ROOT}`;
@@ -156,6 +157,8 @@ export async function mutateScheduledVisit(store,actor,input,now=new Date().toIS
   if(Object.keys(changes).some(k=>!allowed.has(k)))throw failure('schedule_patch_not_allowed',400);
   if(Object.entries(changes).some(([key,value])=>typeof value!=='string'||value.length>({title:500,assignedTo:200,address:1000}[key]||10)))throw failure('schedule_patch_invalid',400);
   if(current?.assignedCrew?.length&&changes.assignedTo!==undefined&&changes.assignedTo!==current.assignedTo)throw failure('schedule_assignment_requires_dispatch');
+  // EGC_WINTER_SALE: an accepted sale price covers work done inside the sale's window (winter-sale.js), as in Dispatch.
+  if(input.mode==='update'&&changes.date&&changes.date!==current.date&&[current.estimate?.status,current.customerApproval?.status].some(status=>['accepted','approved'].includes(String(status||'').toLowerCase()))&&winterSaleDateProblem({...current,date:changes.date}))throw failure('schedule_winter_sale_date');
   const kind=visitKind(current?.type)||input.kind;if(!['walkthrough','job'].includes(kind))throw failure('schedule_visit_kind_required',400);
   const patch={...changes,id,type:current?.type||kind,customerId:customer.id,customer:current?.customer||customer.name||'',
     highlevelContactId:current?.highlevelContactId||customer.highlevelContactId||'',scheduleSource:'egc_hub',providerSyncOwner:'operations',syncStatus:'pending',syncIdempotencyKey:scheduleMutateSyncKey(input.requestId),updatedAt:now};

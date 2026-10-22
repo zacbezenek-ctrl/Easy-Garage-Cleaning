@@ -10,6 +10,11 @@ import { moneyTotalsMode } from '../_lib/money-core.js';
 import { gameplanWalkthroughs, gameplanWalkthroughStorage } from '../_lib/gameplan-walkthroughs.js';
 import { crewAutoAssignEnabled } from '../_lib/dispatch-crew-assign.js';
 import { quoteBuilderEnabled } from '../_lib/catalog-store.js';
+import { winterSaleReaders } from '../_lib/winter-sale.js';
+import { createKnockStore } from '../_lib/knock-store.js';
+// EGC_WINTER_SALE: a signed sale quote's margin check costs a walkthrough a door-to-door setter booked at the setter's
+// channel (knock_setters, one document read, only when the signed job carries the sale), as the quote draft API does.
+const winterSale = { ...winterSaleReaders, setter: async (env, walkthroughId) => Boolean((await createKnockStore(env).getMany('knock_setters', [walkthroughId])).get(walkthroughId)) };
 const reply = (status, body) => Response.json(body, {status, headers:{'Cache-Control':'no-store','X-Content-Type-Options':'nosniff'}});
 // A refused save names each owner rule (or overlapping work) that stopped it. Only
 // each conflict's code and message leave the server, and no other details are
@@ -43,8 +48,8 @@ const stripeFor=env=>{const secret=stripeSecretKey(env);return secret?(path,opti
 // goes out after the response the same way. The Hub's page-load retry stays the fallback.
 const defaultSync=(env,actor,input)=>syncSavedHandoff(env,actor,input);
 const defaultInvite=(env,jobId)=>sendAcceptedQuotePortal(env,jobId,{requireRequested:true,automatic:true});
-// compositeState (tests): the builder's pricing state; by default the library reads it (catalog-store.js readCompositeState).
-export function handoffHandlers({session=getHubSession,storage=dispatchStorage,walkthroughs=gameplanWalkthroughStorage,now=()=>new Date(),stripe=stripeFor,compositeState=null,serverSync=defaultSync,invite=defaultInvite}={}) {
+// winterSale (tests): the sale's readers (winter-sale.js). compositeState (tests): the builder's pricing state; by default the library reads it (catalog-store.js readCompositeState).
+export function handoffHandlers({session=getHubSession,storage=dispatchStorage,walkthroughs=gameplanWalkthroughStorage,now=()=>new Date(),stripe=stripeFor,compositeState=null,serverSync=defaultSync,invite=defaultInvite,winterSale:saleReaders=winterSale}={}) {
   const priced = compositeState ? {compositeState} : {};
   return {
     async get({request,env}) {
@@ -85,7 +90,7 @@ export function handoffHandlers({session=getHubSession,storage=dispatchStorage,w
           return reply(200,{...await requestHandoffSync(store,actor,input,{env,now:now(),run}),viewer:{id:actor.user}});
         }
         // A signed revision closes an open portal checkout for the earlier terms.
-        const saved=await saveWalkthroughHandoff(store,actor,input,at,{env,...priced,checkouts:job=>expireStaleCheckout({store,job,stripe:stripe(env),now:at,mode:moneyTotalsMode(env)})});
+        const saved=await saveWalkthroughHandoff(store,actor,input,at,{env,...priced,winterSale:saleReaders,checkouts:job=>expireStaleCheckout({store,job,stripe:stripe(env),now:at,mode:moneyTotalsMode(env)})});
         // serverSync 'ready': the page may ask for the sync (action 'sync'). Offered only where the runtime keeps a sync
         // running past a closed page (waitUntil); elsewhere (tests, older runtimes) the answer is unchanged.
         return reply(200,typeof waitUntil==='function'&&saved?.ok&&saved.job?.id&&saved.job.syncStatus!=='synced'?{...saved,serverSync:'ready'}:saved);
