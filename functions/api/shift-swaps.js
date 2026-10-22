@@ -164,13 +164,25 @@ export function shiftSwapHandlers({ session = getHubSession, dispatch = dispatch
             await mutateDispatch(store, actor, { action: 'schedule.update', requestId, jobId: job.id, expectedRevision: job.revision, changes }, at,
               { travel: travel({ env, store, now, googleLimit: 0, cacheWrites: false }), crewAlternatives: false });
           } catch (error) {
-            // A refusal never saved, so the swap goes back to accepted; an unknown outcome stays approving for a retry.
-            if (error?.status && error.status < 500) await save(back(), current).catch(() => null);
-            throw error;
+            // A refusal can come after the move saved (another manager's approval of the same swap, or a Dispatch edit
+            // between the save and its read-back): then the receipt exists and the approval finishes. Otherwise a refusal
+            // never saved, so the swap goes back to accepted; an unknown outcome stays approving for a retry.
+            const moved = await store.read('dispatchOperations', requestId).catch(() => null);
+            if (!moved) {
+              if (error?.status && error.status < 500) await save(back(), current).catch(() => null);
+              throw error;
+            }
           }
         }
         const history = [...(Array.isArray(current.history) ? current.history : []), { action: 'approved', by: actor.user, at }].slice(-30);
-        const next = await save({ ...current, status: 'approved', decidedBy: actor.user, decidedAt: at, dispatchRequestId: requestId, updatedAt: at, history }, current);
+        let next;
+        try { next = await save({ ...current, status: 'approved', decidedBy: actor.user, decidedAt: at, dispatchRequestId: requestId, updatedAt: at, history }, current); }
+        catch (error) {
+          // Another manager's approval of the same swap finished it first: the same result, so a replay.
+          const latest = error?.code === 'dispatch_revision_conflict' ? await store.read('shiftSwaps', swap.id) : null;
+          if (latest?.status === 'approved' && latest.dispatchRequestId === requestId) return reply(200, { ok: true, swap: swapView(latest, nowMs), replayed: true });
+          throw error;
+        }
         return reply(200, { ok: true, swap: swapView(next, nowMs), replayed: Boolean(receipt) });
       } catch (error) { return errorResponse(error); }
     },

@@ -295,3 +295,31 @@ test('one open request per job and requester, even when two are sent at once', a
   assert.equal((await f.post({ action: 'request', requestId: randomUUID(), jobId, to: 'crew3' })).status, 200);
   assert.equal([...f.rows.keys()].filter(id => id.startsWith('shiftSwapLocks/')).length, 1);
 });
+
+test('a refusal after the job moved finishes the approval, and two managers approving at once both end approved', async () => {
+  // A Dispatch edit lands between the move's save and its read-back: the save stands, so the swap is approved, not reopened.
+  const f = fixture(), jobId = await seedJob(f), swapId = await accepted(f, jobId);
+  const commit = f.store.commit, read = f.store.read;
+  let moved = false, late = false;
+  f.store.commit = async writes => { await commit(writes); if (writes.some(write => write.collection === 'jobs')) moved = true; };
+  // The read-back after the move sees another Dispatch save on the job, so Dispatch answers dispatch_changed_since_operation.
+  f.store.read = async (collection, id) => { const row = await read(collection, id); if (moved && !late && collection === 'jobs' && id === jobId) { late = true; return { ...row, dispatchRequestId: randomUUID() }; } return row; };
+  f.as(MANAGER);
+  const approved = await f.post({ action: 'approve', swapId });
+  assert.ok(late, 'Dispatch saw the later edit');
+  assert.deepEqual([approved.status, approved.body.swap?.status], [200, 'approved'], JSON.stringify(approved.body));
+  assert.equal(f.rows.get(`shiftSwaps/${swapId}`).status, 'approved');
+  f.as(crew('crew1'));
+  assert.equal((await f.post({ action: 'cancel', swapId })).status, 409, 'a moved job\'s swap cannot be cancelled');
+  assert.deepEqual(f.job(jobId).assignedCrew, ['crew3', 'crew2']);
+  // Two managers press Approve together: both answers say approved, the job moves once, the swap ends approved.
+  const g = fixture(), other = await seedJob(g), second = await accepted(g, other);
+  const receipts = () => [...g.rows.keys()].filter(key => key.startsWith('dispatchOperations/')).length, before = receipts();
+  g.as(MANAGER);
+  const both = await Promise.all([g.post({ action: 'approve', swapId: second }), (async () => { await Promise.resolve(); g.as(OWNER); return g.post({ action: 'approve', swapId: second }); })()]);
+  assert.equal(g.rows.get(`shiftSwaps/${second}`).status, 'approved', JSON.stringify(both.map(row => row.body)));
+  assert.ok(both.some(row => row.status === 200 && row.body.swap.status === 'approved'));
+  assert.ok(both.every(row => row.status === 200 || row.body.code === 'shift_swap_changed'), JSON.stringify(both.map(row => row.body)));
+  assert.deepEqual(g.job(other).assignedCrew, ['crew3', 'crew2']);
+  assert.equal(receipts(), before + 1, 'one dispatch save for the swap');
+});
