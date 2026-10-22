@@ -9,7 +9,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
-import { DEFAULT_LABOR_RATE_CENTS, HAULING_GROUPS, LABOR_ID, LABOR_MAN_HOURS, compositeApproval, junkOnly, laborEstimate, laborRate, laborTotalCents, manHoursOf, menuPrices, priceCompositeQuote, validManHours } from '../functions/_lib/composite-quote.js';
+import { DEFAULT_LABOR_RATE_CENTS, approvalRefusal, HAULING_GROUPS, LABOR_ID, LABOR_MAN_HOURS, compositeApproval, junkOnly, laborEstimate, laborRate, laborTotalCents, manHoursOf, menuPrices, priceCompositeQuote, validManHours } from '../functions/_lib/composite-quote.js';
 import { builderLaborLine, customerLaborLine, estimateChanged } from '../functions/_lib/quote-model.js';
 import { invoiceLineItems } from '../functions/_lib/money-core.js';
 import { moneyProjection } from '../functions/_lib/money-service.js';
@@ -368,4 +368,15 @@ test('the $1,000 truck: jobs signed under the $750 menu and held for a draft pri
 test('a draft price is never flagged as a re-save: it needs the owner', () => {
   const priced = priceCompositeQuote(builderState(), selection({ removal: [pick('Full truck load'), pick('Mattress')], shelving: [], storage: [], labor: { manHours: null, fullness: 'medium' } }), { complete: true });
   assert.deepEqual(priced.approval.blocked.map(row => [row.id, row.resave ?? null]), [[menuItem('Mattress').id, null]]);
+});
+
+// The refusal's headline names only what waits for the owner; a price the owner changed since (the estimator saves the
+// quote again) is said apart.
+test('a refused send with a changed truck price and a draft price names only the draft price as unapproved', () => {
+  const now = builderState(), menuAt750 = structuredClone(now.menu);
+  menuAt750.services.find(item => item.basis?.kind === 'junk' && item.basis.fraction === 1).approvedPriceCents = 75000;
+  const priced = priceCompositeQuote({ ...now, menu: menuAt750 }, selection({ removal: [pick('Full truck load'), pick('Mattress')], shelving: [], storage: [], labor: { manHours: null, fullness: 'medium' } }), { complete: true });
+  const refusal = approvalRefusal(compositeApproval(priced.breakdown, now));
+  assert.equal(refusal.message, 'This quote has 1 price the owner has not approved: Mattress. It stays saved as a draft and can be sent once the owner approves it in Hub > Catalog & pricing. The owner changed the price of Full truck load since it was saved: save the quote again to use the approved price; no owner approval is needed for that.');
+  assert.deepEqual(refusal.details.unapproved.map(row => [row.name, row.resave ?? false]), [['Full truck load', true], ['Mattress', false]]);
 });

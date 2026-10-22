@@ -105,14 +105,24 @@ self.addEventListener('fetch', event => {
 
 // A tapped Hub alert (employee-suite.js showBrowserAlert) closes and brings the Hub forward: an open Hub window is
 // focused as it is, so nothing typed there is lost; otherwise the Hub opens on the screen the alert names.
-const ALERT_VIEWS = new Set(['my_day', 'crew_chat']);
+// MANAGER-SLIP-ALERTS (employee-slip-alerts.js): a slip alert names view 'today' and its job. The URL is built only from
+// this fixed list of screens and a job id that is a plain document id; anything else opens the screen without a job, or
+// My day. An open Hub is not reloaded: it is focused and told the job (message egc-alert-open), and opens the row itself.
+const ALERT_VIEWS = new Set(['my_day', 'crew_chat', 'today']);
+const ALERT_JOB = /^[A-Za-z0-9_-]{1,128}$/;
 self.addEventListener('notificationclick', event => {
   event.notification.close();
-  const view = ALERT_VIEWS.has(event.notification.data?.view) ? event.notification.data.view : 'my_day';
+  const data = event.notification.data;
+  const view = ALERT_VIEWS.has(data?.view) ? data.view : 'my_day';
+  const job = view === 'today' && typeof data?.job === 'string' && ALERT_JOB.test(data.job) ? data.job : '';
   event.waitUntil((async () => {
     const windows = await self.clients.matchAll({ type: 'window', includeUncontrolled: true });
     const hub = windows.find(client => { try { return /^\/employee(?:\.html)?\/?$/.test(new URL(client.url).pathname); } catch { return false; } });
-    if (hub) return hub.focus();
-    return self.clients.openWindow(`/employee?view=${view}`);
+    if (hub) {
+      const focused = await hub.focus();
+      if (job) try { (focused || hub).postMessage({ type: 'egc-alert-open', view, job }); } catch {}
+      return focused;
+    }
+    return self.clients.openWindow(`/employee?view=${view}${job ? `&job=${job}` : ''}`);
   })().catch(() => {}));
 });

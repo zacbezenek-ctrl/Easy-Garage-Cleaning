@@ -44,3 +44,15 @@ test('on a split job the window shows only for the crew whose segment is the job
   assert.match(await crewHome([first]), /<span>Arrive<\/span><strong>9:00–10:00 AM<\/strong>/);
   assert.doesNotMatch(await crewHome([later]), /Arrive/);
 });
+
+test('on a same-day split the afternoon crew gets no morning arrival window', async () => {
+  const split = viewer => crewJobProjection({ id: 'job-day', type: 'job', status: 'scheduled', pipelineStatus: 'scheduled', customer: 'Synthetic Customer', address: '1 Fixture Way, Fort Collins, CO 80525',
+    serviceType: 'Garage cleanout', date: '2026-09-22', endDate: '2026-09-22', time: '08:00', endTime: '17:00', arrivalWindow: '8:00 AM – 9:00 AM', assignedCrew: ['crew.one', 'crew.two'], assignmentSegments: [
+      { id: 'seg-am', date: '2026-09-22', time: '08:00', endDate: '2026-09-22', endTime: '12:00', assignedCrew: ['crew.one'] },
+      { id: 'seg-pm', date: '2026-09-22', time: '13:00', endDate: '2026-09-22', endTime: '17:00', assignedCrew: ['crew.two'] },
+    ] }, { viewer, now: new Date(NOW) });
+  const morning = split('crew.one'), afternoon = split('crew.two');
+  assert.deepEqual([morning.time, morning.arrivalWindow], ['08:00', '8:00 AM – 9:00 AM']);
+  assert.deepEqual([afternoon.date, afternoon.time, afternoon.arrivalWindow], ['2026-09-22', '13:00', ''], 'the same day, a later visit: no window');
+  assert.doesNotMatch(await crewHome([afternoon]), /Arrive/);
+});
