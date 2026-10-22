@@ -42,6 +42,9 @@ export function crewJobProjection(job, options = {}) {
   const ownClaim = claim => claim && typeof claim === 'object' ? {employee:text(claim.employee,120),claimedAt:text(claim.claimedAt,40)} : {employee:text(claim,120)};
   return {
     ...field,type:text(job.type||'job',40),pipelineStatus:field.status,revision:field.expectedRevision,
+    // The arrival window is the customer's for the job's first visit: a viewer whose own segments start on a later day
+    // (a split job) gets none, so crew home never pairs it with that later day and time.
+    arrivalWindow:split&&field.date!==text(job.date,10)?'':field.arrivalWindow,
     assignedTo:field.assignedCrew.join(' + '),title:text(job.title,300),
     durationMin:Number.isFinite(Number(job.durationMin))?Number(job.durationMin):null,
     // Dispatch clears a saved length with null; that reads as no estimate, not 0.

@@ -584,14 +584,16 @@ test('Admin > Money: a manager sees counts without pay and cannot record a payou
   assert.match(JSON.stringify(mine.body), /sale-1/);
 });
 
-test('training pay and the pay period are the owner\'s: a manager reads settings without the rate and saves only the non-pay settings', async () => {
+// The training rate is the role's published company rate (owner decision 2026-10-22), not one person's pay; it and the pay
+// period are the owner's to set, so the admin payroll card is the owner's and a manager's save keeps the stored block.
+test('the training rate and the pay period are set by the owner: the admin payroll card is the owner\'s, and a manager saves only the other settings', async () => {
   const env = knockEnv({ HUB_AUTH_USERS_JSON: JSON.stringify({ ...JSON.parse(knockEnv().HUB_AUTH_USERS_JSON), AlexK: { passwordHash: 'test', role: 'manager', displayName: 'Synthetic Manager' } }) });
   const seed = approvedKnockSettings(), world = replacingWorld({ 'knock_settings/current': seed });
   const handlers = knockAdminHandlers({ storage: world.storage, now: () => new Date(now) });
   const [manager, owner] = [await cookieFor(env, 'AlexK'), await cookieFor(env, 'ZacB')];
   const view = (await call(handlers.get, get('/api/knock-admin?view=settings', manager), env)).body;
   assert.equal(view.payrollEditable, false);
-  assert.doesNotMatch(JSON.stringify(view), /trainingHourlyRate/, 'no training rate anywhere in a manager\'s settings');
+  assert.doesNotMatch(JSON.stringify(view), /trainingHourlyRate/, 'the payroll card (and its rate) is the owner\'s screen');
   assert.equal(view.settings.payroll.anchorDate, seed.settings.payroll.anchorDate);
   const ownerView = (await call(handlers.get, get('/api/knock-admin?view=settings', owner), env)).body;
   assert.deepEqual([ownerView.payrollEditable, ownerView.settings.payroll.trainingHourlyRate], [true, seed.settings.payroll.trainingHourlyRate]);
@@ -617,4 +619,35 @@ test('training pay and the pay period are the owner\'s: a manager reads settings
   const changed = await call(handlers.post, post('/api/knock-admin', { action: 'settings.update', settings: ownerSettings }, owner), env);
   assert.equal(changed.status, 200);
   assert.equal(world.fake.get('knock_settings/current').settings.payroll.trainingHourlyRate, 16);
+});
+
+test('a manager\'s settings save never writes back an owner\'s payroll change that lands mid-save, and a missing settings body is refused', async () => {
+  const env = knockEnv({ HUB_AUTH_USERS_JSON: JSON.stringify({ ...JSON.parse(knockEnv().HUB_AUTH_USERS_JSON), AlexK: { passwordHash: 'test', role: 'manager', displayName: 'Synthetic Manager' } }) });
+  const seed = approvedKnockSettings(), world = replacingWorld({ 'knock_settings/current': seed }), manager = await cookieFor(env, 'AlexK');
+  const view = (await call(knockAdminHandlers({ storage: world.storage, now: () => new Date(now) }).get, get('/api/knock-admin?view=settings', manager), env)).body;
+  // The owner's new training rate lands right after the manager's save reads the settings (synthetic values).
+  let reads = 0;
+  const racing = env => { const store = world.storage(env); return { ...store, get: async (...args) => {
+    const doc = await store.get(...args);
+    if (args[0] === 'knock_settings' && ++reads === 1) world.fake.put('knock_settings/current', { ...world.fake.get('knock_settings/current'), settings: { ...seed.settings, payroll: { ...seed.settings.payroll, trainingHourlyRate: 18 } } });
+    return doc;
+  } }; };
+  const handlers = knockAdminHandlers({ storage: racing, now: () => new Date(now) });
+  const settings = structuredClone(view.settings);
+  settings.map.attribution = 'Synthetic tiles';
+  const saved = await call(handlers.post, post('/api/knock-admin', { action: 'settings.update', settings }, manager), env);
+  assert.equal(saved.status, 200);
+  assert.ok(reads >= 2, 'the save read again after its first commit was refused');
+  const doc = world.fake.get('knock_settings/current');
+  assert.deepEqual([doc.settings.map.attribution, doc.settings.payroll.trainingHourlyRate], ['Synthetic tiles', 18], 'the manager\'s change and the owner\'s rate are both kept');
+  // A save with no settings, or settings that are not an object, is refused before anything is read or written.
+  for (const value of [null, 'all', 7, []]) {
+    const commits = world.fake.calls.filter(item => String(item.path).endsWith(':commit')).length;
+    for (const user of ['AlexK', 'ZacB']) {
+      const refused = await call(handlers.post, post('/api/knock-admin', { action: 'settings.update', settings: value }, await cookieFor(env, user)), env);
+      assert.deepEqual([refused.status, refused.body.code], [400, 'knock_invalid_settings'], `${user}: ${JSON.stringify(value)}`);
+    }
+    assert.equal(world.fake.calls.filter(item => String(item.path).endsWith(':commit')).length, commits);
+  }
+  assert.equal(world.fake.get('knock_settings/current').settings.map.attribution, 'Synthetic tiles', 'nothing was reset to defaults');
 });

@@ -63,7 +63,7 @@
   async function load() {
     if (!main) return;
     const seq = ++S.seq;
-    S.loading = true; S.error = ''; render();
+    S.loading = true; S.error = ''; S.startedAt = Date.now(); render();
     if (offline()) { S.loading = false; S.error = OFFLINE; render(); return; }
     let scope = S.scope || (viewsAllHint() ? 'all' : 'mine'), data = null, error = null;
     try { data = await request(scope); }
@@ -104,6 +104,9 @@
   }
 
   function badge(text, kind = '') { return h('em', { class: `badge ${kind}`.trim() }, text); }
+  // LIVE-STATUS: en route, on site and the crew's own marks, on today's row only. The server sends fieldStatus only for
+  // work the crew marked today, so a multi-day job marked on site yesterday shows nothing until it is marked again.
+  const LIVE = { dispatched: ['En route', 'live'], arrived: ['On site', 'live'], paused: ['Paused', 'warn'], waiting: ['Waiting', 'warn'], delayed: ['Delayed', 'warn'], day_ended: ['Day ended', 'done'] };
   function jobRow(crew, row, day) {
     const continuing = row.date && row.date < day, multi = row.endDate && row.date && row.endDate > row.date;
     // A multi-day job runs on from its first day: later days show when it ends, or All day in between.
@@ -113,8 +116,8 @@
     // D2D-BOARD: an estimator's own walkthrough is a Walkthrough row that opens its game plan; it has no crew.
     const visit = row.type === 'walkthrough';
     const detail = visit ? ['Walkthrough', row.serviceType].filter(Boolean).join(' · ') : [row.serviceType, crew?.name || row.crewName || (row.crewSize ? '' : 'No crew yet'), row.lead ? `Lead: ${row.lead}` : ''].filter(Boolean).join(' · ');
-    const status = String(row.status || '');
-    const badges = [visit ? badge('Walkthrough', 'visit') : null, row.mine ? badge(visit ? 'Your walkthrough' : 'You’re on this job', 'you') : null, status === 'in_progress' ? badge('In progress', 'live') : null,
+    const status = String(row.status || ''), live = !visit && day === today() && Object.prototype.hasOwnProperty.call(LIVE, row.fieldStatus || '') ? LIVE[row.fieldStatus] : null;
+    const badges = [visit ? badge('Walkthrough', 'visit') : null, row.mine ? badge(visit ? 'Your walkthrough' : 'You’re on this job', 'you') : null, live ? badge(live[0], live[1]) : status === 'in_progress' ? badge('In progress', 'live') : null,
       ['completed', 'invoiced', 'paid', 'review_requested'].includes(status) ? badge('Done', 'done') : null,
       !visit && row.crewSize < row.crewNeeded ? badge(row.crewSize ? `Needs ${row.crewNeeded - row.crewSize} more` : 'Needs crew', 'warn') : null,
       multi ? badge(continuing ? `Continues · through ${dayLabel(row.endDate, { weekday: 'short' })}` : `Multi-day · through ${dayLabel(row.endDate, { weekday: 'short', month: 'short', day: 'numeric' })}`) : null].filter(Boolean);
@@ -193,7 +196,20 @@
     S.error = ''; render();
   }
 
+  // LIVE-STATUS: while the page is visible, it reads again every 3 minutes, so the badges keep up with the crews; a
+  // hidden tab or an offline phone never reads. The age counts from when the last read started, so a slow answer does
+  // not push the next read a whole interval later. Past Denver midnight the shown days no longer hold today: the next
+  // tick reads the new days at once. Back from hidden, an answer that old is read again at once.
+  const LIVE_REFRESH_MS = 3 * 60000;
+  function liveRefresh(minAge = LIVE_REFRESH_MS / 2) {
+    const { from, to } = shownDates(), age = Date.now() - (S.startedAt || 0), stale = !S.data || S.data.from !== from || S.data.to !== to;
+    if (document.hidden || S.loading || offline() || S.signedOut || S.disabled || !S.data && !S.error) return;
+    if (stale || age >= minAge) load();
+  }
+
   readPrefs();
+  setInterval(() => liveRefresh(), LIVE_REFRESH_MS);
+  document.addEventListener('visibilitychange', () => liveRefresh(LIVE_REFRESH_MS));
   addEventListener('online', reconnected);
   addEventListener('offline', () => { if (!S.loading) { S.error = OFFLINE; render(); } });
   window.EGCCrewSchedule = { load, state: S };
