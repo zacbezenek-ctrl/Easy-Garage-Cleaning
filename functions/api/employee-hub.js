@@ -14,6 +14,7 @@ import { ptoOffOn } from '../_lib/pto-pay.js';
 import { SELF_PERSONAL_FIELDS, legacyManagerProfile, legacyProfileView, mirrorLegacyPay, personalInput, profileHourlyRate, staffDirectoryEnabled } from '../_lib/staff-directory.js';
 import { assertNoOthersPay, assertPayUnchanged, canSetPay, payHidden, payOwnerField, seesOthersPay, visiblePay, withoutPayWrites } from '../_lib/pay-visibility.js';
 import { can, staffPasswordResetEnabled } from '../_lib/staff-roles.js';
+import { slipAlertsFor } from '../_lib/manager-slip-alerts.js';
 
 const PROJECT_ID = 'egcw-1ec83';
 const COLLECTIONS = EMPLOYEE_HUB_COLLECTIONS;
@@ -158,6 +159,16 @@ const manager = session => hasBusinessAccess(session);
 const withJobTime = (entry, now) => isRecord(entry) ? { ...entry, jobTime: jobTimeView(entry, now) } : entry;
 const same = (left, right) => String(left || '').trim().toLowerCase() === String(right || '').trim().toLowerCase();
 const personKey = value => String(value || '').trim().toLowerCase();
+// A read marker's ID: a hash of the exact lowercased username and the channel, so two accounts that differ only in
+// punctuation (crew.static and crew_static) never share one. Markers saved before kept only letters and digits
+// (legacyReadMarkerId); the first save in the new format starts from that one when it is the caller's.
+const markerChannel = channel => String(channel || '').trim().slice(0, 180);
+async function readMarkerId(user, channel) {
+  const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(`${personKey(user)}\n${markerChannel(channel)}`));
+  return `read-${[...new Uint8Array(digest)].slice(0, 20).map(byte => byte.toString(16).padStart(2, '0')).join('')}`;
+}
+const markerKey = value => String(value || '').toLowerCase().replace(/[^a-z0-9]/g, '');
+const legacyReadMarkerId = (user, channel) => `read-${markerKey(user)}-${markerKey(markerChannel(channel))}`;
 const legacyPersonKeys = value => [...new Set([
   personKey(value).replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '') || 'employee',
   personKey(value).replace(/[^a-z0-9]/g, ''),
@@ -303,7 +314,11 @@ async function authorizeMutation(env, session, collection, id, incoming, existin
   incoming = await payGuard(env, session, collection, incoming, existing, now);
   if (collection === 'timeEntries') return authorizeTimecard({ session, manager: manager(session), id, incoming, existing,
     hourlyRate: existing?.hourlyRate ?? await employeeRate(env, session, now), now, env, queued, jobLabel: await correctionJobLabel(env, session, incoming, existing) });
-  if (manager(session) && !(collection === 'training' && incoming.moduleId)) return collection === 'profiles' ? legacyManagerProfile({ env, session, existing, incoming, id, now }) : { ...(existing || {}), ...incoming, id };
+  // A read marker is always the caller's own, managers included: the messageReads branch below sets employee = session.user.
+  // A manager's new team or job message takes the server's time and their own name, as crew messages do, so read markers
+  // (clamped to server time) compare against the same clock.
+  if (manager(session) && collection !== 'messageReads' && !(collection === 'training' && incoming.moduleId)) return collection === 'profiles' ? legacyManagerProfile({ env, session, existing, incoming, id, now })
+    : { ...(existing || {}), ...incoming, id, ...(!existing && ['teamMessages', 'jobMessages'].includes(collection) ? { sender: session.user, senderName: session.displayName, createdAt: now, updatedAt: now } : {}) };
 
   if (collection === 'profiles') {
     if (id !== personKey(session.user)) throw new Error('You can only update your own employee profile');
@@ -398,7 +413,18 @@ async function authorizeMutation(env, session, collection, id, incoming, existin
   if (collection === 'messageReads') {
     const channel = String(incoming.channel || '').trim().slice(0, 180);
     if (!channel) throw new Error('Message channel is required');
-    return { ...(existing || {}), id, employee: session.user, channel, lastReadAt: now, updatedAt: now };
+    // A job room's marker only for someone in that room, so nobody else shows under its "Seen by".
+    if (channel.startsWith('job:') && !manager(session)) {
+      const job = await readJob(env, channel.slice(4));
+      if (!job || !await jobMember(session, job, createJobAssignmentAccess(env, session))) throw new Error('This job room is limited to assigned crew');
+    }
+    if (existing && !same(existing.employee, session.user)) throw new Error('This read marker belongs to another employee');
+    // How far the person has seen: the newest message their screen showed (seenThrough), never later than now and never
+    // moving back. A client that sends no seenThrough (an older cached Hub) marks now, as before.
+    const sent = Object.hasOwn(incoming, 'seenThrough') ? Date.parse(String(incoming.seenThrough || '')) : Date.parse(now);
+    if (!Number.isFinite(sent)) throw new Error('Read marker time is invalid');
+    const seen = new Date(Math.min(sent, Date.parse(now))).toISOString(), before = String(existing?.lastReadAt || '');
+    return { id, employee: session.user, channel, lastReadAt: before > seen ? before : seen, updatedAt: now };
   }
 
   if (['incidents', 'equipment'].includes(collection)) {
@@ -518,7 +544,7 @@ export async function onRequestGet({ request, env }) {
     for (const name of ['profiles', 'timeEntries', 'requests']) collections[name] = collections[name].map(row => visiblePay(session, env, name, row));
     // Each timecard's job time (current segment, per-job work and travel, general time) for the Hub's labels.
     collections.timeEntries = collections.timeEntries.map(row => withJobTime(row, viewedAt));
-    return reply(200, { ok: true, collections, payVisibility: seesOthersPay(session, env) ? 'all' : 'own', paySet: canSetPay(session, env), clockInWithoutFix: clockInWithoutFix(env), timecardCorrections: manager(session) && can(session, 'time.approve', env) && timecardCorrectionsEnabled(env), ...(includeAccounts ? { accounts: seesOthersPay(session, env) ? accounts : accounts.map(account => payHidden('accounts', account)) } : {}) });
+    return reply(200, { ok: true, collections, payVisibility: seesOthersPay(session, env) ? 'all' : 'own', paySet: canSetPay(session, env), clockInWithoutFix: clockInWithoutFix(env), timecardCorrections: manager(session) && can(session, 'time.approve', env) && timecardCorrectionsEnabled(env), slipAlerts: slipAlertsFor(session, env), ...(includeAccounts ? { accounts: seesOthersPay(session, env) ? accounts : accounts.map(account => payHidden('accounts', account)) } : {}) });
   } catch (error) {
     return reply(502, { ok: false, ...(error.code ? { code: error.code } : {}), error: String(error.message || 'Employee Hub storage failed') });
   }
@@ -539,7 +565,9 @@ export async function onRequestPost({ request, env }) {
   if (body.expectedUser !== undefined && !same(body.expectedUser, session.user)) return reply(409, { ok: false, code: 'EMPLOYEE_HUB_ACCOUNT_CHANGED', error: 'This action was saved on this device by another account. Sign in as that employee to send it.' });
   if (typeof body.collection !== 'string' || typeof body.id !== 'string') return reply(400, { ok: false, error: 'Invalid employee record' });
   const collection = String(body.collection || '');
-  const id = String(body.id || '').trim();
+  // A read marker's ID is the caller's own, built from who is signed in and the channel (as the Hub names it), never
+  // the ID a request sends: nobody can claim another person's marker document.
+  const id = collection === 'messageReads' && isRecord(body.data) ? await readMarkerId(session.user, body.data.channel) : String(body.id || '').trim();
   if (!COLLECTIONS.has(collection) || !id || id.length > 180) return reply(400, { ok: false, error: 'Invalid employee record' });
   // Requests change only through /api/employee-pto: field whitelist, decision history and availability locks.
   if (collection === 'requests') return reply(403, { ok: false, code: 'EMPLOYEE_HUB_REQUEST_WORKFLOW_REQUIRED', error: 'Requests are sent and reviewed through the request workflow. Refresh the Hub and try again.' });
@@ -555,7 +583,8 @@ export async function onRequestPost({ request, env }) {
       try { return reply(200, await moveCrewJobTime(env, session, incoming.crewJobAction)); }
       catch (error) { if (error.crewMove) return reply(error.status, { ok: false, code: error.code, error: error.message, details: error.crewMove }); throw error; }
     }
-    const attempts = collection === 'profiles' ? 4 : 1;
+    // A read marker is saved against the revision read, so two of one person's devices racing never move it back.
+    const attempts = collection === 'profiles' ? 4 : collection === 'messageReads' ? 3 : 1;
     for (let attempt = 0; attempt < attempts; attempt += 1) {
       // Keep the target version separate from any legacy data used to seed it.
       const target = await readOne(env, collection, id);
@@ -570,6 +599,10 @@ export async function onRequestPost({ request, env }) {
           if (legacy.data) current = legacy;
         }
       }
+      if (collection === 'messageReads' && !current.data) {
+        const legacy = await readOne(env, collection, legacyReadMarkerId(session.user, incoming.channel));
+        if (legacy.data && same(legacy.data.employee, session.user)) current = legacy;
+      }
       // A different vault key changes IDs; a 404 alone cannot prove this is new. One stored record opening with this key
       // proves it (WP15: one document read, not a decrypt of the whole vault on every clock-in and chat message).
       if (!current.data) await proveVaultKey(env);
@@ -581,7 +614,7 @@ export async function onRequestPost({ request, env }) {
         // it repeats may have landed without its mark (an older deployment) and polls must show it.
         const replay = data === current.data && ['teamMessages', 'jobMessages'].includes(collection);
         if (replay) await markVaultFamiliesChanged(env, [collection]);
-        const saved = replay ? data : await writeOne(env, collection, id, data, collection === 'profiles' ? target : null);
+        const saved = replay ? data : await writeOne(env, collection, id, data, ['profiles', 'messageReads'].includes(collection) ? target : null);
         return reply(200, { ok: true, record: visiblePay(session, env, collection, collection === 'profiles' ? legacyProfileView(saved, new Date().toISOString()) : saved) });
       } catch (error) {
         if (error.code !== 'EMPLOYEE_HUB_WRITE_CONFLICT' || attempt + 1 === attempts) throw error;

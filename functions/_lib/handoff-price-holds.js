@@ -39,16 +39,17 @@ export async function heldJobIds(env, limit, fetcher = firestoreFetch, after = '
   }).slice(0, limit);
 }
 
-/** How many jobs are held, by pages of HELD_QUERY_MAX names (at most maxPages): {count, more}. */
+/** The held jobs, by pages of HELD_QUERY_MAX names (at most maxPages): {count, more, ids}. */
 export async function countHeldJobs(store, { maxPages = 10 } = {}) {
-  let count = 0, after = '';
+  const all = [];
+  let after = '';
   for (let pages = 0; pages < maxPages; pages++) {
     const ids = await store.heldJobIds(HELD_QUERY_MAX, after);
-    count += ids.length;
-    if (ids.length < HELD_QUERY_MAX) return { count, more: false };
+    all.push(...ids);
+    if (ids.length < HELD_QUERY_MAX) return { count: all.length, more: false, ids: all };
     after = ids.at(-1);
   }
-  return { count, more: true };
+  return { count: all.length, more: true, ids: all };
 }
 
 /** dispatchStorage(env) (job reads and revision-guarded commits) plus heldJobIds(limit, after). */

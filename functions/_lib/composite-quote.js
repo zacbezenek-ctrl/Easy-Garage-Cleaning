@@ -740,7 +740,8 @@ function approvalOf(lines, prices, state, labor, { requireLabor = true, signed =
     // resave (an unsent quote only; a signed job is never saved again): the item is owner-approved at another
     // amount (the owner changed the price, e.g. the $1,000 truck), so the estimator saves the quote again; nothing waits
     // for the owner (crew/quote-draft.js held()).
-    return { id: line.id, name: line.name, unitCents: line.unitCents, ...(price?.approved && !signed ? { resave: true } : {}),
+    // signedAbove (a signed job only): the customer signed more than the owner approved; the quote is signed again.
+    return { id: line.id, name: line.name, unitCents: line.unitCents, ...(price?.approved ? signed ? { signedAbove: true } : { resave: true } : {}),
       reason: !price ? `${line.name} is no longer on the pricing menu. Rebuild the quote before sending.`
         : price.approved && signed ? `The owner approved ${money(price.unitCents)} for ${line.name}, less than the ${money(line.unitCents)} the customer signed. The customer is never charged more than the approved price: rebuild the quote and have the customer sign it again.`
         : price.approved ? `The owner approved ${money(price.unitCents)} for ${line.name}, but this quote has ${money(line.unitCents)}. Save the quote again to use the approved price.`
@@ -772,15 +773,21 @@ export function compositeApproval(breakdown, state, { signed = false, requireLab
   return approvalOf(breakdown.lines, menuPrices(state), state, breakdown.labor, { requireLabor, signed });
 }
 
-/** The message and details a refused send carries: the reasons, in quote order, at most 8 named. */
+/** The message and details a refused send carries: the reasons, in quote order, at most 8 named. The headline names
+ * only what truly waits for the owner; a price the owner changed since the quote was saved (resave: the estimator saves
+ * it again) and a signed line above the approved price (signedAbove: the customer signs again) are said apart. */
 export function approvalRefusal(approval) {
-  const names = approval.blocked.map(line => line.name);
-  const listed = names.slice(0, 8).join(', ') + (names.length > 8 ? ` and ${names.length - 8} more` : '');
-  const message = approval.blocked.every(line => line.resave === true)
-    ? `The owner changed ${names.length === 1 ? 'the price' : 'the prices'} of ${listed} since this quote was saved. It stays saved as a draft: save the quote again to use the approved ${names.length === 1 ? 'price' : 'prices'}; no owner approval is needed.`
-    : `This quote has ${names.length} price${names.length === 1 ? '' : 's'} the owner has not approved: ${listed}. It stays saved as a draft and can be sent once the owner approves ${names.length === 1 ? 'it' : 'them'} in Hub > Catalog & pricing.`;
-  return fail('prices_unapproved', message, 409,
-    { unapproved: approval.blocked.map(({ id, name, unitCents, reason, resave }) => ({ id, name, unitCents, reason, ...(resave === true ? { resave: true } : {}) })) });
+  const list = rows => { const names = rows.map(line => line.name); return names.slice(0, 8).join(', ') + (names.length > 8 ? ` and ${names.length - 8} more` : ''); };
+  const above = approval.blocked.filter(line => line.signedAbove === true), resave = approval.blocked.filter(line => line.resave === true);
+  const unapproved = approval.blocked.filter(line => line.signedAbove !== true && line.resave !== true), one = rows => rows.length === 1;
+  const parts = [];
+  if (above.length) parts.push(`The customer signed more than the approved price: rebuild the quote and have them sign again (${list(above)}).`);
+  if (unapproved.length) parts.push(`This quote has ${unapproved.length} price${one(unapproved) ? '' : 's'} the owner has not approved: ${list(unapproved)}. It stays saved as a draft and can be sent once the owner approves ${one(unapproved) ? 'it' : 'them'} in Hub > Catalog & pricing.`);
+  if (resave.length) parts.push(unapproved.length
+    ? `The owner changed ${one(resave) ? 'the price' : 'the prices'} of ${list(resave)} since it was saved: save the quote again to use the approved ${one(resave) ? 'price' : 'prices'}; no owner approval is needed for ${one(resave) ? 'that' : 'those'}.`
+    : `The owner changed ${one(resave) ? 'the price' : 'the prices'} of ${list(resave)} since this quote was saved. It stays saved as a draft: save the quote again to use the approved ${one(resave) ? 'price' : 'prices'}; no owner approval is needed.`);
+  return fail('prices_unapproved', parts.join(' '), 409,
+    { unapproved: approval.blocked.map(({ id, name, unitCents, reason, resave: again, signedAbove }) => ({ id, name, unitCents, reason, ...(again === true ? { resave: true } : {}), ...(signedAbove === true ? { signedAbove: true } : {}) })) });
 }
 
 /** The builder step a garage-catalog product belongs to (the Hub catalog quote): shelving or extra storage. */

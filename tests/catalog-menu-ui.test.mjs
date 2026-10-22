@@ -284,3 +284,14 @@ test('Menu prices shows the booked jobs waiting for prices, and the owner releas
   await manager.settle(() => manager.root()?.textContent.includes('Booked jobs waiting for prices'), 'the manager view');
   assert.equal(manager.root().textContent.includes('Release held jobs'), false);
 });
+
+// A capped count (more than 1,000 held jobs) keeps its +, on the card and on the button.
+test('Menu prices keeps the + on a capped held-jobs count', async () => {
+  const fs = firestore();
+  fs.put(`pricingMenuApprovals/${HELD_RELEASE_MARKER}`, { menuVersion: menu.menuVersion });
+  const page = after => { const start = after ? Number(after.slice(5)) + 1 : 0; return Array.from({ length: 100 }, (_, i) => `held-${String(start + i).padStart(5, '0')}`); };
+  const ui = screen({ fs, jobs: { heldJobIds: async (limit, after = '') => page(after).slice(0, limit) } });
+  await ui.settle(() => ui.root()?.textContent.includes('Booked jobs waiting for prices'), 'the held jobs');
+  assert.match(ui.root().textContent, /1000\+ booked jobs still wait for prices/);
+  assert.ok(ui.button('Release held jobs (1000+)'));
+});

@@ -28,10 +28,13 @@ export const isCustomerRef = value => typeof value === 'string' && REF.test(valu
 const receiptOf = ref => ref.slice(5).replace(/^(.{8})(.{4})(.{4})(.{4})(.{12})$/, '$1-$2-$3-$4-$5');
 
 /** The Knock bridge's namesAgree, stricter for an estimator: a full typed name (two words or more) whose last word is a
- * word of the stored name. One word, or a stored name with no name words ('The Homeowner Family'), goes to the office. */
+ * word of the stored name. One word, or a stored name with no name words ('The Homeowner Family') or only a placeholder
+ * ('Customer', 'Unknown', 'Test Lead': every word a placeholder), goes to the office: such a record names nobody, so no typed name can agree. */
+const PLACEHOLDER_WORDS = new Set(['customer', 'customers', 'client', 'unknown', 'test', 'testing', 'lead', 'leads', 'name', 'noname', 'none', 'na', 'tbd', 'tba', 'new', 'guest', 'resident', 'occupant', 'person', 'contact', 'user', 'anonymous', 'placeholder', 'sample', 'demo', 'prospect', 'walkin', 'walk', 'in', 'web', 'form', 'website', 'caller', 'egc']);
+const placeholder = name => nameWords(name).every(word => PLACEHOLDER_WORDS.has(word));
 export function estimatorNamesAgree(storedName, typedName) {
   const stored = nameWords(storedName), typed = nameWords(typedName);
-  return stored.length > 0 && typed.length >= 2 && stored.includes(typed[typed.length - 1]) && namesAgree(storedName, typedName);
+  return stored.length > 0 && !placeholder(storedName) && typed.length >= 2 && stored.includes(typed[typed.length - 1]) && namesAgree(storedName, typedName);
 }
 
 /** access: requireQuoteAuthor's (or requireCustomerResolver's) answer for this actor. */
@@ -42,7 +45,8 @@ const maskPhone = value => { const digits = phone(value); return digits ? '(•�
 const maskEmail = value => { const [name, domain] = email(value).split('@'); return name && domain ? name[0] + '•••@' + domain : ''; };
 export const maskedCustomer = (row, id) => ({ id: id || '', revision: row.revision, phone: maskPhone(row.phone), email: maskEmail(row.email), contactDetails: 'masked' });
 
-async function walkthroughVisible(source, actor, env) {
+/** Whether a walkthrough is the estimator's own: assigned to them or started by them. */
+export async function walkthroughVisible(source, actor, env) {
   if (!plain(source) || source.type !== 'walkthrough' || source.recordType) return false;
   return same(source.walkthroughVisit?.startedBy, actor.user) || await createJobAssignmentAccess(env, actor).assigned(source);
 }
