@@ -146,15 +146,24 @@ test('a port taken before the emulator starts is retried once with fresh ports, 
 test('two processes allocating at once never claim the same port, and their claims go when they end',async t=>{
  const claims=mkdtempSync(join(tmpdir(),'egc-emulator-claims-'));t.after(()=>rmSync(claims,{recursive:true,force:true}));
  const same=await freePorts(4);
- const child=name=>new Promise((done,fail)=>{
+ // Each child prints its ports and keeps its claim until the parent, having seen both, sends a line on stdin: the two
+ // claims always overlap in time, however slowly a loaded machine starts the second process.
+ const child=name=>{
   const code=`import {claimPorts,freePorts} from ${JSON.stringify(SCRIPT)};let first=true;
 const pick=async count=>{if(first){first=false;return ${JSON.stringify(same)};}return freePorts(count);};
 const claim=await claimPorts(4,{id:${JSON.stringify(name)},pickPorts:pick,claimsDir:${JSON.stringify(claims)}});
-console.log(JSON.stringify(claim.ports));await new Promise(done=>setTimeout(done,300));claim.release();`;
-  const run=spawn(process.execPath,['--input-type=module','-e',code],{stdio:['ignore','pipe','inherit']});let out='';
-  run.stdout.on('data',chunk=>{out+=chunk;});run.on('error',fail);run.on('exit',status=>status===0?done(JSON.parse(out)):fail(new Error(`${name} exited ${status}`)));
- });
- const [a,b]=await Promise.all([child('run-a'),child('run-b')]);
+console.log(JSON.stringify(claim.ports));process.stdin.once('data',()=>{claim.release();process.exit(0);});`;
+  const run=spawn(process.execPath,['--input-type=module','-e',code],{stdio:['pipe','pipe','inherit']});let out='';
+  const ports=new Promise((done,fail)=>{run.stdout.on('data',chunk=>{out+=chunk;if(out.includes('\n'))done(JSON.parse(out));});run.on('error',fail);run.on('exit',status=>fail(new Error(`${name} exited ${status} before printing its ports`)));});
+  const exited=new Promise((done,fail)=>run.on('exit',status=>status===0?done():fail(new Error(`${name} exited ${status}`))));
+  return {run,ports,exited};
+ };
+ const runs=[child('run-a'),child('run-b')];t.after(()=>runs.forEach(({run})=>run.exitCode===null&&run.kill()));
+ const [a,b]=await Promise.all(runs.map(({ports})=>ports));
+ // Both claims are live here; only now may either run end.
+ assert.equal(readdirSync(claims).filter(name=>name.endsWith('.json')).length,2,'both claims are held at once');
+ for(const {run} of runs)run.stdin.end('release\n');
+ await Promise.all(runs.map(({exited})=>exited));
  assert.equal(new Set([...a,...b]).size,8,'disjoint');
  assert.ok([a,b].some(ports=>ports.join()===same.join()),'one run kept the ports it was given; the other was given fresh ones');
  assert.deepEqual(readdirSync(claims),[],'both claims and the lock are gone');
