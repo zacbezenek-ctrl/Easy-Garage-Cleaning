@@ -53,20 +53,33 @@ async function access(store,actor,jobId,env) {
   if(!job||job.recordType||!['walkthrough','job','cleanout','reorg'].includes(job.type))throw fail('not_found','Choose an existing Hub walkthrough or job.',404);
   const assigned=(job.assignedCrew||[]).some(x=>String(x).toLowerCase()===String(actor.user).toLowerCase());
   if(!rights.dispatcher&&!assigned&&job.quoteDraft?.createdBy!==actor.user)throw fail('forbidden','Only the assigned walkthrough author or a manager can open this capture.',403);
-  return {job,who:{actor,rights,env}};
+  return {job,who:{actor,rights,env,seen:await jobCustomerAccess(store,actor,rights,job,{env})}};
 }
 // The linked customer the capture's gaps compare with. An estimator who may not see it (estimator-customer-access.js)
 // is compared with the name they typed and no stored address, so repeated saves never confirm the stored name.
 async function customerFor(store,job,who){
   const customer=id(job.customerId)?await store.read('customers',job.customerId):null;
-  if(!customer||!who)return customer;
-  const seen=await jobCustomerAccess(store,who.actor,who.rights,job,{env:who.env});
-  return seen.full?customer:{id:customer.id,revision:customer.revision,name:seen.name,address:''};
+  if(!customer||!who||who.seen.full)return customer;
+  return {id:customer.id,revision:customer.revision,name:who.seen.name,address:''};
+}
+// What such an estimator reads back of a capture someone else may have filled in: a name, phone or address another
+// person wrote there (identityBy) shows as what the estimator typed on the quote (the name; the phone or address only
+// when it is the one they typed), never the stored details. What they wrote themselves shows as they wrote it.
+const IDENTITY=['customerName','phone','address'];
+const sameText=value=>String(value||'').normalize('NFKC').toLowerCase().replace(/[^\p{L}\p{N}]/gu,'');
+const mine=(state,key,who)=>String(state.identityBy?.[key]||'').toLowerCase()===String(who.actor.user).toLowerCase();
+function shownDraft(state,who){
+  const draft=state.draft;
+  if(!who||who.seen.full||!plain(draft))return draft;
+  const out={...draft},typed={customerName:who.seen.name,phone:who.seen.typed?.phone||'',address:who.seen.typed?.address||''};
+  // An empty entry stays empty, so the estimator sees (and fills) what the capture still needs.
+  for(const key of IDENTITY)if(key in out&&out[key]&&!mine(state,key,who))out[key]=key==='customerName'?typed.customerName:sameText(out[key])===sameText(typed[key])?out[key]:'';
+  return out;
 }
 const stateOf=job=>job.walkthroughReview||{version:1,revision:0,stage:'draft',draft:{},latestFinalized:null};
 const verifiedPhotos=job=>(job.fieldExecution?.photos||[]).filter(x=>x&&typeof x.id==='string'&&x.category==='walkthrough').length;
 async function quoteFor(store,job,data){const quoteId=data.quoteJobId||(job.type!=='walkthrough'?job.id:'');if(!quoteId)return null;const quote=quoteId===job.id?job:await store.read('jobs',quoteId);if(!quote||quote.customerId!==job.customerId||(quote.id!==job.id&&quote.sourceWalkthroughId!==job.id))return null;return quote;}
-async function view(store,job,who=null){const review=stateOf(job),quote=await quoteFor(store,job,review.draft),customer=await customerFor(store,job,who);return{ok:true,jobId:job.id,review,gaps:walkthroughReviewGaps(review.draft,{verifiedPhotos:verifiedPhotos(job),quote,customer,job}),verifiedPhotos:verifiedPhotos(job),quoteSummary:quote?.estimate?.number?{jobId:quote.id,number:quote.estimate.number,revision:quote.estimate.revision,amountCents:quote.estimate.amountCents??Math.round(Number(quote.estimate.amount)*100)}:null,pricingChanged:Boolean(review.latestFinalized?.quote&&(!quote||estimateFingerprint(quote.estimate)!==review.latestFinalized.quote.fingerprint))};}
+async function view(store,job,who=null){const stored=stateOf(job),review={...stored,draft:shownDraft(stored,who)},quote=await quoteFor(store,job,stored.draft),customer=await customerFor(store,job,who);return{ok:true,jobId:job.id,review,gaps:walkthroughReviewGaps(review.draft,{verifiedPhotos:verifiedPhotos(job),quote,customer,job}),verifiedPhotos:verifiedPhotos(job),quoteSummary:quote?.estimate?.number?{jobId:quote.id,number:quote.estimate.number,revision:quote.estimate.revision,amountCents:quote.estimate.amountCents??Math.round(Number(quote.estimate.amount)*100)}:null,pricingChanged:Boolean(review.latestFinalized?.quote&&(!quote||estimateFingerprint(quote.estimate)!==review.latestFinalized.quote.fingerprint))};}
 export async function readWalkthroughReview(store,actor,jobId,{env={}}={}){const {job,who}=await access(store,actor,jobId,env);return view(store,job,who);}
 export async function saveWalkthroughReview(store,actor,input,now,{env={}}={}) {
   if(!plain(input)||Object.keys(input).some(k=>!['jobId','action','requestId','expectedRevision','data','reason','actorId'].includes(k))||!['save','finalize','amend'].includes(input.action)||!/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(input.requestId||''))throw fail('invalid','Use a valid capture action and stable request ID.',400);
@@ -76,13 +89,18 @@ export async function saveWalkthroughReview(store,actor,input,now,{env={}}={}) {
   if(receipt){if(receipt.fingerprint!==fingerprint||receipt.action!=='capture.'+input.action)throw fail('idempotency_conflict','That request ID belongs to different content.');return{...await view(store,job,who),replayed:true,savedRevision:receipt.savedRevision};}
   if(input.expectedRevision!==state.revision)throw fail('revision_conflict','Another save changed this capture. Reload before saving.');
   if(state.stage==='finalized'&&input.action!=='amend')throw fail('amend_required','This revision is finalized. Start an amendment to change it.');
-  let data={...state.draft,...normalizeWalkthroughReview(input.data||{})},reason='';
+  const incoming=normalizeWalkthroughReview(input.data||{}),shown=shownDraft(state,who);
+  // Resaving what such an estimator was shown in place of someone else's entry keeps that entry.
+  if(shown!==state.draft)for(const key of IDENTITY)if(key in incoming&&!mine(state,key,who)&&incoming[key]===(shown[key]??''))delete incoming[key];
+  // A field is credited to whoever last changed it; resending it unchanged (the gameplan sends all three) credits no one.
+  const identityBy={...(plain(state.identityBy)?state.identityBy:{}),...(input.action==='amend'?{}:Object.fromEntries(IDENTITY.filter(key=>key in incoming&&incoming[key]!==(state.draft?.[key]??'')).map(key=>[key,actor.user])))};
+  let data={...state.draft,...incoming},reason='';
   if(input.action==='amend'){if(state.stage!=='finalized')throw fail('invalid','Only a finalized capture needs an amendment.',400);reason=typeof input.reason==='string'?input.reason.trim():'';if(reason.length<3||reason.length>1000)throw fail('invalid','Explain the amendment in 3–1,000 characters.',400);data=state.draft;}
-  const quote=await quoteFor(store,job,data),customer=await customerFor(store,job,who),gaps=walkthroughReviewGaps(data,{verifiedPhotos:verifiedPhotos(job),quote,customer,job});
+  const quote=await quoteFor(store,job,data),customer=await customerFor(store,job,who),gaps=walkthroughReviewGaps(shownDraft({...state,draft:data,identityBy},who),{verifiedPhotos:verifiedPhotos(job),quote,customer,job});
   if(input.action==='finalize'&&gaps.length)throw fail('incomplete','Review the listed gaps before finalizing.',400,{gaps});
   const revision=state.revision+1;
   const finalized=input.action==='finalize'?{revision,requestId:input.requestId,at:now,by:actor.user,quote:quote?.estimate?.number?{jobId:quote.id,revision:quote.estimate.revision,fingerprint:estimateFingerprint(quote.estimate)}:null}:state.latestFinalized;
-  const next={version:1,revision,stage:input.action==='finalize'?'finalized':'draft',draft:data,latestFinalized:finalized,amendmentReason:reason||state.amendmentReason||'',updatedAt:now,updatedBy:actor.user};
+  const next={version:1,revision,identityBy,stage:input.action==='finalize'?'finalized':'draft',draft:data,latestFinalized:finalized,amendmentReason:reason||state.amendmentReason||'',updatedAt:now,updatedBy:actor.user};
   const patch={walkthroughReview:next},writes=[];
   if(input.action==='finalize'){
     if(!customer?.revision)throw fail('customer_unavailable','The canonical customer revision could not be verified.',503);
