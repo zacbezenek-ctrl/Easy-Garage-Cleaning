@@ -279,6 +279,8 @@ export function quoteDraftView(job, seen = null) {
     ...(plain(job.quoteDraft?.winterSale) ? { winterSale: { ...winterSalePublic(job.quoteDraft.winterSale), accepted: Boolean(acceptedSaleOn(job)) } } : {}),
     ...(walkthroughCaptureSyncView(job) ? { captureSync: walkthroughCaptureSyncView(job) } : {}),
     delivery: pick(job.estimateReady, ['requestId', 'revision', 'mode', 'status', 'reason', 'attempts', 'recipient', 'tagReset', 'at']),
+    // PORTAL-LINKS (A): what happened to this quote's quote-ready portal link (portal-invitation.js), masked recipient only.
+    ...(plain(job.portalLinks?.quote_ready) ? { portalLink: pick(job.portalLinks.quote_ready, ['kind', 'status', 'reason', 'channel', 'recipient', 'notBefore', 'completedAt', 'deferredAt']) } : {}),
   };
 }
 

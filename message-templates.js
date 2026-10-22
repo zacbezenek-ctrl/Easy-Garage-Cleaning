@@ -199,6 +199,63 @@ function failureView() {
     conflict ? btn('Keep my draft and load latest', () => { S.failure = null; load(); }) : null);
 }
 
+// PORTAL-LINKS: the owner's switches for the two portal link texts (functions/_lib/portal-link-settings.js), each shown
+// with what it does and the exact text it sends. Both are off until a business user turns them on here.
+// overlap: the HighLevel workflow that may text the customer at the same moment (docs/portal-invitations.md).
+const LINKS = [
+  { link: 'quote_ready', field: 'quoteReady', title: 'Text the portal link when a quote is sent', what: 'When an estimator sends a quote for review, the customer gets their private project portal link (30 days) to review and approve it, and to pay the deposit when one is due. Not sent for a quote that has expired. While that link still works, the later "your quote is approved" text is not sent again.',
+    overlap: 'Before turning this on, check the HighLevel workflow started by the egc-estimate-ready tag (it fires on the same Send) and turn it off or change it, so the customer does not get two texts.',
+    labels: ['If a deposit is due:', 'If no deposit is due:'] },
+  { link: 'job_done', field: 'jobDone', title: 'Text a fresh portal link when a job is done', what: 'When the crew marks the job completed, the customer gets a fresh 30-day portal link. The wording names a remaining balance only when the portal shows one and no crew cash or check payment is waiting for the office\u2019s review. Not sent when the crew marks a follow-up required (it goes when the job is completed again without one), nor more than 2 days after the completion.',
+    overlap: 'Before turning this on, check the HighLevel workflows started by the egc-job-complete and egc-review-ready tags (they fire on the same completion) and turn them off or change them, so the customer does not get two texts.',
+    labels: ['If a balance is due:', 'If nothing is due:'] },
+];
+const linkTexts = (portal, link) => link === 'quote_ready' ? [portal.texts?.quote_ready?.deposit, portal.texts?.quote_ready?.no_deposit] : [portal.texts?.job_done?.balance, portal.texts?.job_done?.paid];
+async function setPortalLink(item, enabled) {
+  if (S.busy) return;
+  S.busy = true; S.failure = null; S.notice = ''; render();
+  const generation = S.generation, body = { action: 'set_portal_link', requestId: crypto.randomUUID(), link: item.link, enabled };
+  try {
+    const data = await api(body);
+    if (generation !== S.generation) return;
+    if (data.requestId !== body.requestId || !data.portalLinks || typeof data.portalLinks[item.field] !== 'boolean') throw Object.assign(new Error('The change could not be verified. Refresh and check the switch.'), { status: 503, code: 'messaging_response_unverified' });
+    S.data.portalLinks = data.portalLinks;
+    S.notice = `${item.title}: ${data.portalLinks[item.field] ? 'on' : 'off'}.`;
+  } catch (error) {
+    if (generation === S.generation) S.failure = error;
+  } finally {
+    if (generation === S.generation) { S.busy = false; closeDialog(); render(); }
+  }
+}
+function confirmPortalLink(item) {
+  const portal = S.data.portalLinks, enabled = portal[item.field] !== true;
+  confirmDialog({
+    title: enabled ? `Turn on: ${item.title}?` : `Turn off: ${item.title}?`,
+    copy: enabled ? `${item.what} Sent from HighLevel (email when there is no mobile number), once per job, only between 8 AM and 8 PM Denver time and never while automatic messages are paused, to customers whose job notifications are on and who are not on Do Not Disturb. ${item.overlap}` : 'No new texts of this kind go out, including any still waiting for 8 AM or for the pause to end. Texts already sent stay sent. Turning it on again later never sends the ones that waited.',
+    text: linkTexts(portal, item.link).filter(Boolean).join('\n\n'), confirmLabel: enabled ? 'Turn on' : 'Turn off', danger: !enabled,
+    onConfirm: () => setPortalLink(item, enabled),
+  });
+}
+function portalLinksView() {
+  const portal = S.data?.portalLinks;
+  if (!portal || typeof portal !== 'object') return null;
+  return h('section', { class: 'mt-portal', 'aria-labelledby': 'mt-portal-title', 'data-testid': 'portal-links' },
+    h('h2', { id: 'mt-portal-title', text: 'Portal link texts' }),
+    h('p', { class: 'mt-muted', text: 'Automatic texts with the customer\u2019s private project portal link. Each stays off until it is turned on here.' }),
+    portal.error ? h('p', { class: 'mt-alert', role: 'alert', text: portal.error === 'invalid' ? 'The messaging settings need review, so every automatic message is held.' : 'The switches could not be read. Retry.' }) : null,
+    portal.paused ? h('p', { class: 'mt-delivery', role: 'status', text: 'Automatic messages are paused: nothing below is sent until the pause ends.' }) : null,
+    LINKS.map(item => {
+      const on = portal[item.field] === true;
+      return h('article', { class: 'mt-portal-row', 'data-link': item.link },
+        h('div', { class: 'mt-card-head' }, h('h3', { text: item.title }), pill(on ? 'On' : 'Off', on ? 'auto' : '')),
+        h('p', { class: 'mt-muted', text: `What it does: ${item.what}` }),
+        h('p', { class: 'mt-muted', 'data-overlap': item.link, text: item.overlap }),
+        linkTexts(portal, item.link).map((text, index) => text ? [h('p', { class: 'mt-muted', text: item.labels[index] }), h('pre', { class: 'mt-exact', text })] : null),
+        portal.canChange ? btn(on ? 'Turn off' : 'Turn on', () => confirmPortalLink(item), on ? 'danger' : 'primary', { disabled: S.busy || Boolean(portal.error), 'aria-label': `${on ? 'Turn off' : 'Turn on'}: ${item.title}` })
+          : h('p', { class: 'mt-muted', text: 'Only Zac, Tyler or Alex can change this.' }));
+    }));
+}
+
 function deliveryBanner() {
   const delivery = S.data.delivery || {};
   const text = !delivery.enabled ? 'Messaging is off. Approving wording does not send anything.' : delivery.dryRun ? 'Dry run: confirmed sends are recorded but not delivered.' : 'Live: approved messages send only after a person confirms each one, or by automation you turn on.';
@@ -290,7 +347,7 @@ function render() {
     if (row) children.push(editorView(row));
     else {
       if (S.notice) children.push(h('p', { class: 'mt-notice', role: 'status', text: S.notice }));
-      children.push(failureView(), listView());
+      children.push(failureView(), portalLinksView(), listView());
     }
   }
   S.root.replaceChildren(...children.filter(Boolean));

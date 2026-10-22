@@ -381,16 +381,22 @@ test('the owner\'s menu approval releases the held builder jobs it now covers (b
   let tick = 0;
   const catalogStore = { read: async (collection, id) => structuredClone(catalogRows.get(`${collection}/${id}`) || null), commit: async writes => { const at = `rev-${++tick}`; for (const write of writes) catalogRows.set(`${write.collection}/${write.id}`, { ...structuredClone(write.patch), id: write.id, revision: at }); return { writeResults: writes.map(() => ({ updateTime: at })) }; } };
   const pricing = async () => { const saved = catalogRows.get('pricingMenuApprovals/current'); return saved ? { ...state, approvals: { items: saved.approvals, revision: saved.revision } } : state; };
-  const approvalId = randomUUID(), approve = (items, expectedRevision = null) => catalogHandlers({ session: async () => owner, storage: () => catalogStore, now: () => new Date(LATER), compositeState: pricing, held }).post({ request: new Request('https://easygaragecleaning.com/api/catalog', { method: 'POST', headers: { Origin: 'https://easygaragecleaning.com', 'Content-Type': 'application/json' }, body: JSON.stringify({ action: 'menu.approve', requestId: approvalId, expectedRevision, menuVersion: state.menu.menuVersion, settingsVersion: state.settings.settingsVersion, approve: items, revoke: [] }) }), env: ON_ENV });
+  // PORTAL-LINKS (B): each job the approval releases gets its pending portal invitation from the server after the response.
+  const invited = [], waits = [], invite = async (env, jobId) => { invited.push(jobId); };
+  const approvalId = randomUUID(), approve = (items, expectedRevision = null) => catalogHandlers({ session: async () => owner, storage: () => catalogStore, now: () => new Date(LATER), compositeState: pricing, held, invite }).post({ request: new Request('https://easygaragecleaning.com/api/catalog', { method: 'POST', headers: { Origin: 'https://easygaragecleaning.com', 'Content-Type': 'application/json' }, body: JSON.stringify({ action: 'menu.approve', requestId: approvalId, expectedRevision, menuVersion: state.menu.menuVersion, settingsVersion: state.settings.settingsVersion, approve: items, revoke: [] }) }), env: ON_ENV, waitUntil: promise => waits.push(promise) });
   const response = await approve([{ id: base.id, unitCents: a.priced.breakdown.lines.find(line => line.id === base.id).unitCents }]), result = await response.json();
   assert.equal(response.status, 200, JSON.stringify(result));
   assert.deepEqual(result.heldJobs, { released: [signedA.job.id], waiting: 1, more: false }, 'A is covered now; the walkthrough-priced B keeps waiting');
+  await Promise.all(waits);
+  assert.deepEqual(invited, [signedA.job.id], 'the released job\'s invitation is sent by the server; the waiting one is not');
   assert.deepEqual(reads, [26], 'one bounded query');
   const releasedA = f.job(signedA.job.id);
   assert.deepEqual([releasedA.pricesPendingApproval, releasedA.customerPortalInvitationRequestedAt, releasedA.pricesRelease, releasedA.compositeQuote.approval], [null, LATER, { at: LATER, by: owner.user, source: 'menu.approve', requestId: approvalId, gate: 'approved_prices' }, { ready: true, pending: [] }]);
   // A retried approval (a lost response) replays and runs nothing again.
   const replayed = await (await approve([{ id: base.id, unitCents: a.priced.breakdown.lines.find(line => line.id === base.id).unitCents }])).json();
   assert.deepEqual([replayed.replayed, 'heldJobs' in replayed, reads.length], [true, false, 1]);
+  await Promise.all(waits);
+  assert.deepEqual(invited, [signedA.job.id], 'a replayed approval asks for nothing again');
   assert.deepEqual(heldEverywhere(releasedA), RELEASED);
   assert.deepEqual([f.job(signedB.job.id).pricesPendingApproval.reason, f.job(signedB.job.id).customerPortalInvitationRequestedAt], ['walkthrough_priced', undefined]);
   // A builder job still waiting for some prices (the totes) is not released by a partial approval; the rest releases it
@@ -524,7 +530,7 @@ test('the gameplan page: crew-mode slot choices, the builder quote it signs and 
   assert.deepEqual([sent.quote.total, sent.quote.deposit, sent.quote.catalog_version, sent.quote.composite_pricing, sent.quote.line_items, sent.logistics.crew_id], [priced.totalCents / 100, Math.round(priced.totalCents / 4) / 100, priced.menuVersion, priced.compositePricing, builder.lineItems, 'crew_one']);
   assert.match(lineOf('function chooseSlot('), /S\.requestedCrewId=slot\.crewId\|\|''/);
   assert.match(lineOf('function updateField('), /if\(\['jobDate','startTime','endTime'\]\.includes\(key\)&&S\.requestedCrewId\)S\.requestedCrewId=''/, 'a time typed by hand drops the offered crew');
-  assert.match(html, /\/crew\/gameplan-handoff\.js\?v=20261021sale1/);
+  assert.match(html, /\/crew\/gameplan-handoff\.js\?v=20261021portalsale/);
 });
 
 test('the employee-leak check names employees, never the tail of a random request or job id', () => {

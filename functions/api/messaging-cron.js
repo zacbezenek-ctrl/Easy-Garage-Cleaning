@@ -7,7 +7,7 @@ import { createGhlMessenger } from '../_lib/ghl-messenger.js';
 import { createApprovedSendService, messagingFlags } from '../_lib/approved-send.js';
 import { messagingStorage } from '../_lib/message-send-store.js';
 import { messageDigest } from '../_lib/message-templates.js';
-import { sendAcceptedQuotePortal } from '../_lib/portal-invitation.js';
+import { sendAcceptedQuotePortal, sendPortalLink } from '../_lib/portal-invitation.js';
 import { portalLinkProviders } from '../_lib/message-links.js';
 import { serverMessagingEnabled } from '../_lib/messaging-settings.js';
 import { CLAIM_COST, CRON_ACTOR_ID, finishRun, runDueMessages, startRun } from '../_lib/messaging-scheduler.js';
@@ -47,9 +47,17 @@ function authFailure(error) {
   return failure(503, 'messaging_cron_unavailable', 'The signed service request could not be checked. Retry with a new signature.');
 }
 
+// The scheduler's portal-invitation retry: an automatic send. The tick has already read the messaging settings (and
+// stops while they are paused or in quiet hours); the invitation rechecks quiet hours on the handler's clock and reuses
+// those settings rather than reading them again. link (PORTAL-LINKS): a waiting 'quote_ready' or 'job_done' portal
+// link text, which also rechecks the owner's switch in those settings.
+export const cronPortalInvite = (env, now = () => new Date()) => (jobId, at, settings, link) => link
+  ? sendPortalLink(env, jobId, link, { automatic: true, ...(settings ? { settings } : {}), now })
+  : sendAcceptedQuotePortal(env, jobId, { requireRequested: true, automatic: true, ...(settings ? { settings } : {}), now });
+
 export function messagingCronHandlers({
   verify = verifyApiServiceEnvelope, storage = messagingStorage, messenger = env => createGhlMessenger({ env }), now = () => new Date(),
-  portalInvite = env => jobId => sendAcceptedQuotePortal(env, jobId, { requireRequested: true }),
+  portalInvite = env => cronPortalInvite(env, now),
   links = (env, { store, clock }) => portalLinkProviders({ env, read: id => store.read('jobs', id), now: () => clock().getTime() }),
   options = () => ({}), crewOutbox = () => null, webLeads = env => webLeadRetryRunner(env), jobberGuard = jobberGuardSends,
   // EGC_CREW_NOTIFICATIONS_ENABLED: the dispatch crew-notice outbox and its send hooks (null when off).

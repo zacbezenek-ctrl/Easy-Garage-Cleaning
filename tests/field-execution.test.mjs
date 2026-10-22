@@ -402,6 +402,106 @@ test('walkthrough reference photos remain private, replayable and separate from 
   assert.equal((await route.onRequestGet({env,request:req('Crew-One',undefined,`?jobId=job-1&photoId=${id}`)})).status,403);
 });
 
+// PORTAL-LINKS (B): the Sales estimator who signed the walkthrough (no business access, not on the crew) uploads its
+// reference photos from the walkthrough page before the server's sync, and nothing else: they read back only the job's
+// revision and its reference photos, and another estimator, a crew member, a later signer or a closed job are refused.
+test('the estimator who signed a walkthrough attaches its reference photos to the signed job, and only those', async t => {
+  const users = { ZacB: { passwordHash: 'test', role: 'owner', displayName: 'Owner' }, 'Crew.One': { passwordHash: 'test', role: 'crew', displayName: 'Crew One' }, 'Sales.Person': { passwordHash: 'test', role: 'sales', displayName: 'Synthetic Sales', staffRoles: ['sales'] }, 'Other.Sales': { passwordHash: 'test', role: 'sales', displayName: 'Synthetic Other Sales', staffRoles: ['sales'] } };
+  const salesEnv = { ...env, EGC_STAFF_ROLE_PERMISSIONS: 'true', FIELD_MULTIDAY_VISITS: 'true', HUB_AUTH_USERS_JSON: JSON.stringify(users) }, noRoles = { ...salesEnv, EGC_STAFF_ROLE_PERMISSIONS: 'false' };
+  const jar = new Map(await Promise.all(Object.keys(users).map(async user => [user, (await createHubSessionCookie(salesEnv, user)).split(';')[0]])));
+  const at = (user, data, search = '') => new Request(`https://easygaragecleaning.com/api/field-jobs${search}`, { method: data ? 'POST' : 'GET', headers: { Cookie: jar.get(user), Origin: 'https://easygaragecleaning.com', 'Content-Type': 'application/json' }, ...(data ? { body: JSON.stringify(data) } : {}) });
+  const get = (user, search = '?jobId=job-1', e = salesEnv) => route.onRequestGet({ env: e, request: at(user, undefined, search) });
+  const send = (user, data, e = salesEnv) => route.onRequestPost({ env: e, request: at(user, { jobId: 'job-1', requestId: uuid(), expectedRevision: store.revision('job-1'), expectedUser: user, ...data }) });
+  const store = storage(t), signed = { ...baseline(), date: '2026-09-24', handoffVersion: 1, handoffRequestId: uuid(), createdBy: 'Sales.Person', acceptance: { acceptedAt: '2026-09-22T17:45:00.000Z', acceptedBy: 'Test Customer', recordedBy: 'Sales.Person' } };
+  store.put('jobs/job-1', signed);
+  // The signer reads the job's revision and its reference photos, nothing of the crew's record.
+  const first = await get('Sales.Person');
+  assert.equal(first.status, 200);
+  const view = await first.json();
+  assert.deepEqual(Object.keys(view.job).sort(), ['expectedRevision', 'id', 'photos', 'reference']);
+  assert.deepEqual([view.job.id, view.job.expectedRevision, view.job.photos, view.photosAvailable], ['job-1', store.revision('job-1'), [], true]);
+  for (const secret of ['Test Customer', '123 Test Street', 'Clean out garage', 'Crew.One', 'Oil on floor', 'truck-1', '1500', 'private-link']) assert.equal(JSON.stringify(view).includes(secret), false, secret);
+  // Two days before the job, on no crew: the reference photo is accepted once and replays.
+  const photo = { action: 'photo', requestId: uuid(), category: 'walkthrough', caption: 'Walkthrough reference — confirm conditions on arrival.', dataUrl: picture };
+  const uploaded = await send('Sales.Person', photo);
+  const body = await uploaded.json();
+  assert.equal(uploaded.status, 200, JSON.stringify(body));
+  assert.deepEqual([body.job.reference, body.job.photos.map(p => [p.id, p.category])], [true, [[photo.requestId, 'walkthrough']]]);
+  const again = await route.onRequestPost({ env: salesEnv, request: at('Sales.Person', { jobId: 'job-1', expectedRevision: store.revision('job-1'), expectedUser: 'Sales.Person', ...photo }) });
+  assert.deepEqual([again.status, (await again.json()).alreadyApplied, store.calls.uploads], [200, true, 1]);
+  const saved = store.get('jobs/job-1');
+  assert.deepEqual([saved.photoSyncStatus, saved.fieldLastActionAt, saved.fieldExecution.photos[0].actorId], ['verified_in_job', undefined, 'Sales.Person']);
+  // Only the reference photo: no other photo, note or status, no image, no timer.
+  for (const data of [{ action: 'photo', category: 'before', caption: '', dataUrl: picture }, { action: 'note', body: 'Synthetic note' }, { action: 'status', status: 'dispatched' }]) assert.equal((await send('Sales.Person', data)).status, 403, data.action);
+  for (const search of [`?jobId=job-1&photoId=${photo.requestId}`, '?jobId=job-1&view=timer']) assert.equal((await get('Sales.Person', search)).status, 403, search);
+  // Another estimator, the assigned crew member (a work photo is theirs, the reference photo is not) and the signer
+  // without the quote author role are refused.
+  assert.deepEqual([(await get('Other.Sales')).status, (await send('Other.Sales', { ...photo, requestId: uuid() })).status], [403, 403]);
+  assert.equal((await send('Crew.One', { ...photo, requestId: uuid() })).status, 403);
+  assert.deepEqual([(await get('Sales.Person', '?jobId=job-1', noRoles)).status, (await send('Sales.Person', { ...photo, requestId: uuid() }, noRoles)).status], [403, 403]);
+  // Signed again by the office, or the job done: the earlier signer is refused.
+  store.put('jobs/job-1', { ...store.get('jobs/job-1'), acceptance: { ...signed.acceptance, recordedBy: 'ZacB' } });
+  assert.deepEqual([(await get('Sales.Person')).status, (await send('Sales.Person', { ...photo, requestId: uuid() })).status], [403, 403]);
+  store.put('jobs/job-1', { ...store.get('jobs/job-1'), acceptance: signed.acceptance, status: 'completed', pipelineStatus: 'completed' });
+  assert.deepEqual([(await get('Sales.Person')).status, (await send('Sales.Person', { ...photo, requestId: uuid() })).status], [403, 403]);
+  assert.equal(store.calls.uploads, 1);
+});
+
+// Review finding: the signer's window is the walkthrough's own (before field work starts: the handoff's 'work_started'
+// rule), and reference photos have their own cap (WALKTHROUGH_PHOTO_LIMIT), so a walkthrough, however large and whoever
+// attaches it, never uses up the room the crew's before and after photos need to complete the job.
+test('the signer adds reference photos only before field work starts, and reference photos never use up the crew\'s photo room', async t => {
+  const users = { ZacB: { passwordHash: 'test', role: 'owner', displayName: 'Owner' }, 'Crew.One': { passwordHash: 'test', role: 'crew', displayName: 'Crew One' }, 'Sales.Person': { passwordHash: 'test', role: 'sales', displayName: 'Synthetic Sales', staffRoles: ['sales'] } };
+  const salesEnv = { ...env, EGC_STAFF_ROLE_PERMISSIONS: 'true', HUB_AUTH_USERS_JSON: JSON.stringify(users) };
+  const jar = new Map(await Promise.all(Object.keys(users).map(async user => [user, (await createHubSessionCookie(salesEnv, user)).split(';')[0]])));
+  const at = (user, data, search = '') => new Request(`https://easygaragecleaning.com/api/field-jobs${search}`, { method: data ? 'POST' : 'GET', headers: { Cookie: jar.get(user), Origin: 'https://easygaragecleaning.com', 'Content-Type': 'application/json' }, ...(data ? { body: JSON.stringify(data) } : {}) });
+  const get = async user => { const response = await route.onRequestGet({ env: salesEnv, request: at(user, undefined, '?jobId=job-1') }); return [response.status, (await response.json()).code]; };
+  const send = async (user, category) => { const response = await route.onRequestPost({ env: salesEnv, request: at(user, { action: 'photo', jobId: 'job-1', requestId: uuid(), expectedRevision: store.revision('job-1'), expectedUser: user, category, caption: '', dataUrl: picture }) }); return [response.status, (await response.json()).code]; };
+  const store = storage(t), signed = { ...baseline(), date: '2026-09-24', handoffVersion: 1, handoffRequestId: uuid(), createdBy: 'Sales.Person', acceptance: { acceptedAt: '2026-09-22T17:45:00.000Z', acceptedBy: 'Test Customer', recordedBy: 'Sales.Person' } };
+  const photos = (category, count) => Array.from({ length: count }, (_, index) => ({ id: uuid(), fileId: `file-${category}-${index}`, verified: true, category, caption: '', createdAt: '2026-09-22T15:00:00.000Z', actorId: category === 'walkthrough' ? 'ZacB' : 'Crew.One' }));
+  const put = (extra, field = {}) => store.put('jobs/job-1', { ...signed, ...extra, fieldExecution: { ...field } });
+  const count = category => store.get('jobs/job-1').fieldExecution.photos.filter(photo => category ? photo.category === category : true).length;
+  assert.deepEqual([route.FIELD_PHOTO_LIMIT, route.WALKTHROUGH_PHOTO_LIMIT, route.FIELD_PHOTO_LIMIT - route.WALKTHROUGH_PHOTO_LIMIT], [100, 40, 60], 'the crew keeps 60 places');
+
+  // The finding: a job in progress with 99 photos. The signer (not on the crew) is refused, and the crew's 'after' photo,
+  // which completion needs, still goes in.
+  put({ status: 'in_progress', pipelineStatus: 'in_progress', fieldLastActionAt: '2026-09-24T15:00:00.000Z' }, { activity: 'in_progress', photos: photos('before', 99) });
+  assert.deepEqual(await get('Sales.Person'), [403, 'FIELD_REFERENCE_PHOTO_WORK_STARTED']);
+  assert.deepEqual(await send('Sales.Person', 'walkthrough'), [403, 'FIELD_REFERENCE_PHOTO_WORK_STARTED']);
+  assert.deepEqual(await send('Crew.One', 'after'), [200, undefined]);
+  assert.deepEqual([count(), store.calls.uploads], [100, 1]);
+
+  // Field work has started once the crew dispatched or arrived, recorded any action (a checked item: fieldLastActionAt),
+  // or added a photo of its own; before that (Dispatch's confirmed and crew_assigned too) the window stays open.
+  for (const [extra, field, open] of [
+    [{ status: 'dispatched', pipelineStatus: 'dispatched' }, {}, false],
+    [{ status: 'arrived', pipelineStatus: 'arrived' }, {}, false],
+    [{ fieldLastActionAt: '2026-09-23T15:00:00.000Z' }, {}, false],
+    [{}, { photos: photos('before', 1) }, false],
+    [{}, { checks: { 'departure-address': { completed: true } } }, false],
+    [{ status: 'cancelled', pipelineStatus: 'cancelled' }, {}, false],
+    [{}, {}, true],
+    [{ status: 'confirmed', pipelineStatus: 'confirmed' }, {}, true],
+    [{ status: 'crew_assigned', pipelineStatus: 'crew_assigned' }, {}, true],
+    [{}, { photos: photos('walkthrough', 3) }, true],
+  ]) {
+    put(extra, field);
+    const [status, code] = await get('Sales.Person');
+    assert.deepEqual([status, code], open ? [200, undefined] : [403, 'FIELD_REFERENCE_PHOTO_WORK_STARTED'], JSON.stringify([extra, Object.keys(field)]));
+  }
+
+  // Before field work, a large walkthrough stops at 40 reference photos, whoever attaches them (the signer or a manager);
+  // the crew's own photos still go in.
+  put({}, { photos: photos('walkthrough', 39) });
+  assert.deepEqual(await send('Sales.Person', 'walkthrough'), [200, undefined]);
+  assert.deepEqual(await send('Sales.Person', 'walkthrough'), [409, 'FIELD_WALKTHROUGH_PHOTO_LIMIT']);
+  assert.deepEqual(await send('ZacB', 'walkthrough'), [409, 'FIELD_WALKTHROUGH_PHOTO_LIMIT']);
+  assert.deepEqual(await send('Crew.One', 'before'), [200, undefined]);
+  assert.deepEqual([count('walkthrough'), count('before')], [40, 1]);
+  // After the crew's first photo the signer's window has closed too.
+  assert.deepEqual(await send('Sales.Person', 'walkthrough'), [403, 'FIELD_REFERENCE_PHOTO_WORK_STARTED']);
+});
+
 for (const type of ['cleanout','reorg']) test(`legacy ${type} work uses the same assigned field workflow`,async t=>{
   const store=storage(t);store.put('jobs/job-1',{...baseline(),type});
   const response=await route.onRequestGet({env,request:req('Crew.One',undefined,'?jobId=job-1')});assert.equal(response.status,200);

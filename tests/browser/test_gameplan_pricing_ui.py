@@ -8,6 +8,11 @@ guessing when it has neither. No production service is contacted.
 FIX-CREW-PRICE-LEAK: a walkthrough signed with priced add-ons is saved through the real
 /api/walkthrough-handoff and read back by crew through the real /api/field-jobs
 (tests/browser/crew_scope_fixture.mjs), and the crew job page shows no amount.
+
+PORTAL-LINKS (B): a Sales estimator (no business access, on no crew) saves a signed walkthrough
+through the same real handlers: its photos upload through the real POST /api/field-jobs, the
+server's first sync runs once, and "Saved — verify again" keeps saying what that sync and the
+portal invitation did instead of handing them to a manager.
 """
 import json, os, pathlib, re, subprocess, threading, unittest, urllib.error, urllib.request
 from functools import partial
@@ -22,6 +27,9 @@ UNAVAILABLE = 'Prices could not be loaded from the Hub. Retry shortly or tell th
 CREW = {'ok': True, 'user': 'crew.one', 'displayName': 'Crew One', 'role': 'crew'}
 MONEY = re.compile(r'\$\s?\d')
 PROFILE = {'ok': True, 'user': 'zacb', 'displayName': 'Synthetic Owner', 'role': 'owner', 'businessAccess': True, 'owner': True, 'capabilities': ['quotes.author']}
+SALES = {'ok': True, 'user': 'sales.person', 'displayName': 'Synthetic Sales', 'role': 'sales', 'businessAccess': False, 'capabilities': ['quotes.author']}
+# A 14-byte JPEG (SOI, JFIF APP0 marker, EOI): the real field photo check accepts it.
+JPEG = 'data:image/jpeg;base64,/9j/4AAQSkZJRgAB/9k='
 # Stands in for the gstatic Firebase compat scripts (every external host is aborted):
 # sign-in succeeds and today's walkthrough list is empty.
 FIREBASE_STUB = """
@@ -69,6 +77,7 @@ class GameplanPricingBrowserTests(unittest.TestCase):
     def setUp(self):
         self.errors = []; self.online = True; self.signed_in = True; self.pricing_calls = 0; self.pricing_failure = None
         self.fixture_port = None; self.handoff_posts = []; self.builder = False; self.menu_calls = 0; self.menu_down = False; self.menu_held = None
+        self.employee = 'zacb'; self.profile = PROFILE; self.forwarded = []
         self.context = self.browser.new_context(viewport={'width': 375, 'height': 812}, timezone_id='Asia/Tokyo', is_mobile=True, has_touch=True, device_scale_factor=2)
         self.context.add_init_script(FIREBASE_STUB)
         self.context.route('**/*', self.route)
@@ -83,7 +92,7 @@ class GameplanPricingBrowserTests(unittest.TestCase):
         send = lambda body, status=200: route.fulfill(status=status, content_type='application/json', headers={'Cache-Control': 'no-store'}, body=json.dumps(body))
         if url.path == '/api/hub-auth':
             if route.request.method == 'DELETE': self.signed_in = False; send({'ok': True}); return
-            send(PROFILE) if self.signed_in else send({'ok': False, 'error': 'Sign in required'}, 401); return
+            send(self.profile) if self.signed_in else send({'ok': False, 'error': 'Sign in required'}, 401); return
         if url.path == '/api/firebase-session': send({'ok': True, 'token': 'synthetic-custom-token'}); return
         if url.path == '/api/pricing-config':
             self.pricing_calls += 1
@@ -97,7 +106,7 @@ class GameplanPricingBrowserTests(unittest.TestCase):
             # A slow connection: the test answers the held request later.
             if self.menu_held is not None: self.menu_held.append(lambda: send(self.menu)); return
             send(self.menu); return
-        if self.fixture_port and url.path in ('/api/walkthrough-handoff', '/api/field-jobs'): self.forward(route, 'zacb'); return
+        if self.fixture_port and url.path in ('/api/walkthrough-handoff', '/api/field-jobs'): self.forward(route, self.employee); return
         if self.fixture_port and url.path == '/api/highlevel': send({'ok': True, 'handoffSync': {'status': 'synced'}, 'portalInvitation': {'status': 'suppressed'}}); return
         if url.path.startswith('/api/'): send({'ok': False, 'error': 'Synthetic service unavailable'}, 503); return
         route.continue_()
@@ -112,6 +121,8 @@ class GameplanPricingBrowserTests(unittest.TestCase):
         try:
             with urllib.request.urlopen(target, timeout=30) as response: status, payload = response.status, response.read()
         except urllib.error.HTTPError as error: status, payload = error.code, error.read()
+        action = json.loads(body).get('action') if body else None
+        self.forwarded.append((request.method, url.path + (f'?{url.query}' if url.query else ''), action, status))
         route.fulfill(status=status, content_type='application/json', headers={'Cache-Control': 'no-store'}, body=payload)
 
     def crew_route(self, route):
@@ -281,6 +292,66 @@ class GameplanPricingBrowserTests(unittest.TestCase):
         # The brief wraps inside the phone (the header's long job ID is a separate, older layout issue).
         self.assertEqual(job.evaluate("() => [...document.querySelectorAll('#scope-card, #scope-card *')].filter(el => el.getBoundingClientRect().right > 391).length"), 0, 'crew brief: horizontal overflow')
         out = ROOT / 'test-results'; out.mkdir(exist_ok=True); job.screenshot(path=str(out / 'crew-job-no-prices-mobile.png'), full_page=True)
+
+    def fixture(self, path, body=None):
+        target = urllib.request.Request(f'http://127.0.0.1:{self.fixture_port}{path}', data=json.dumps(body).encode() if body is not None else None, method='POST' if body is not None else 'GET', headers={'Content-Type': 'application/json'})
+        with urllib.request.urlopen(target, timeout=30) as response: return json.loads(response.read())
+
+    def sales_walkthrough_saved_then_verified_again(self, invite, says):
+        """PORTAL-LINKS (B) for a Sales estimator: the photos upload, the server syncs once, and the retry reads that sync."""
+        fixture = subprocess.Popen(['node', str(ROOT / 'tests' / 'browser' / 'crew_scope_fixture.mjs')], cwd=ROOT, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+        self.addCleanup(lambda: (fixture.kill(), fixture.wait(), fixture.stdout.close(), fixture.stderr.close()))
+        ready = fixture.stdout.readline()
+        self.assertTrue(ready.startswith('READY '), ready or fixture.stderr.read())
+        self.fixture_port = int(ready.split()[1]); self.employee = 'sales.person'; self.profile = SALES
+        self.fixture('/__fixture/invite', invite)
+        page = self.open()
+        page.wait_for_function('() => PRICING !== null')
+        # Three walkthrough photos (the fewest a walkthrough takes) stored on this iPad exactly as the Photos step keeps them.
+        count = page.evaluate("""async jpeg => { S.jobId = S.jobId || 'synthetic-draft'; const db = await dbOpen();
+          await new Promise(done => { const tx = db.transaction('p', 'readwrite'); for (let i = 0; i < 3; i++) tx.objectStore('p').put({ id: 'synthetic-photo-' + i, job: S.photoDraftJobId || S.jobId, tag: 'before', dataUrl: jpeg, at: i }); tx.oncomplete = done; });
+          await refreshPhotoCount(); return PHOTO_COUNT; }""", JPEG)
+        self.assertEqual(count, 3)
+        self.screen(page, 5, {'sourceWalkthroughId': 'w1', 'name': 'Synthetic Customer', 'phone': '9705550100', 'email': 'test@example.invalid', 'address': '100 Fixture Lane', 'highlevelContactId': 'provider1',
+            'whyNow': 'Moving soon', 'outcome': 'Park two cars', 'garageSize': '1', 'fill': 'medium', 'loads': '1', 'sortMethod': 'keep_donate_trash', 'truckPlacement': 'Driveway', 'hazards': [],
+            'finish': ['cleanout'], 'keepNotes': 'Blue bicycle', 'jobDate': '2026-09-24', 'startTime': '08:00', 'endTime': '13:00', 'crewSize': '1', 'assignedTo': '',
+            'notes': 'Dog in the yard', 'signature': 'data:image/png;base64,iVBORw0KGgo=', 'approved': True, 'acceptanceAt': '2026-09-22T14:45:00.000Z', 'acceptanceBy': 'Synthetic Customer'})
+        button = page.get_by_role('button', name='Save brief + schedule')
+        button.click()
+        status = page.locator('#send-status')
+        expect(status).to_contain_text('Job and CRM schedule verified', timeout=20000)
+        expect(status).to_contain_text(says)
+        expect(status).to_contain_text('Walkthrough photos uploaded.')
+        expect(status).not_to_contain_text('A manager completes')
+        expect(status).not_to_contain_text('Photos remain on this device')
+        first = list(self.forwarded)
+        # Save, the photo record, three photo uploads (each verified on the job), then the server's sync: in that order.
+        self.assertEqual([(m, p.split('?')[0], a, s) for m, p, a, s in first if not p.startswith('/api/walkthrough-handoff?') or 'view=sync' in p],
+            [('POST', '/api/walkthrough-handoff', None, 200), ('GET', '/api/field-jobs', None, 200), *[('POST', '/api/field-jobs', 'photo', 200)] * 3, ('POST', '/api/walkthrough-handoff', 'sync', 200)])
+        state = self.fixture('/__fixture/state')
+        job_id = page.evaluate('S.handoffJobId')
+        self.assertEqual(state['syncs'], [{'jobId': job_id, 'by': 'sales.person'}])
+        self.assertEqual([job['photos'] for job in state['jobs'] if job['id'] == job_id], [[{'category': 'walkthrough', 'actorId': 'sales.person'}] * 3])
+        retry = page.get_by_role('button', name='Saved — verify again')
+        expect(retry).to_be_enabled()
+        # The retry replays the save (the job is synced, so no sync is offered) and reads where the sync stands.
+        retry.click()
+        expect(retry).to_be_enabled(timeout=20000)
+        expect(status).to_contain_text('Job and CRM schedule verified')
+        expect(status).to_contain_text(says)
+        expect(status).to_contain_text('Walkthrough photos uploaded.')
+        expect(status).not_to_contain_text('A manager completes')
+        again = self.forwarded[len(first):]
+        self.assertIn(('GET', f'/api/walkthrough-handoff?view=sync&jobId={job_id}', None, 200), again)
+        self.assertNotIn('sync', [a for m, p, a, s in again if m == 'POST'])
+        self.assertEqual([a for m, p, a, s in again if m == 'POST' and p == '/api/field-jobs'], [], 'the uploaded photos are not sent again')
+        self.assertEqual(len(self.fixture('/__fixture/state')['syncs']), 1, 'one sync, one "quote is approved" text')
+
+    def test_a_sales_estimators_walkthrough_uploads_its_photos_and_a_retry_keeps_the_verified_sync_and_the_text(self):
+        self.sales_walkthrough_saved_then_verified_again({'status': 'submitted', 'channel': 'SMS'}, 'Portal text queued in HighLevel.')
+
+    def test_a_sales_estimators_retry_at_night_keeps_the_quiet_hours_invitation(self):
+        self.sales_walkthrough_saved_then_verified_again({'status': 'deferred', 'reason': 'quiet_hours', 'notBefore': '2026-09-23T14:00:00.000Z'}, 'Portal invitation goes out after 8 AM (quiet hours)')
 
     def test_with_the_quote_builder_on_review_has_no_flat_rate_and_signing_waits_for_the_builder_total(self):
         # D-SIGN: the Hub says the quote builder is on (EGC_QUOTE_BUILDER_ENABLED: quoteBuilder in the pricing answer).

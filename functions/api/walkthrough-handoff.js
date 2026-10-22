@@ -1,7 +1,9 @@
 import { getHubSession } from '../_lib/hub-session.js';
 import { dispatchStorage } from '../_lib/dispatch-storage.js';
 import { requireQuoteAuthor } from '../_lib/quote-permissions.js';
-import { handoffCrewOpenings, prepareHandoff, releaseHandoffPrices, saveWalkthroughHandoff } from '../_lib/walkthrough-handoff.js';
+import { handoffCrewOpenings, handoffSyncView, prepareHandoff, releaseHandoffPrices, requestHandoffSync, saveWalkthroughHandoff } from '../_lib/walkthrough-handoff.js';
+import { sendAcceptedQuotePortal } from '../_lib/portal-invitation.js';
+import { syncSavedHandoff } from './highlevel.js';
 import { expireStaleCheckout } from '../_lib/quote-draft.js';
 import { stripeRequest, stripeSecretKey } from '../_lib/customer-payments.js';
 import { moneyTotalsMode } from '../_lib/money-core.js';
@@ -35,8 +37,19 @@ function failure(error) {
   return reply(503, {ok:false,code:'handoff_unavailable',error:'The handoff could not be verified. Keep the saved request and retry; do not create another job.'});
 }
 const stripeFor=env=>{const secret=stripeSecretKey(env);return secret?(path,options)=>stripeRequest(secret,path,options):null;};
+// PORTAL-LINKS (B): a quote author's walkthrough page asks the server for a signed job's first HighLevel sync (action
+// 'sync': highlevel.js syncSavedHandoff, the contact, the pinned internal brief, the appointment, the existing tags,
+// then the accepted-quote portal invitation under its own rules) right after its save and its photo uploads, in a
+// request of its own, so a Sales estimator's customer gets the invitation without waiting for a manager's Hub. The save
+// itself starts nothing in the background (its answer says serverSync:'ready' while the job is unsynced): no job writes
+// race the page's photo uploads, and the sync never shares the save's Cloudflare subrequest budget. The sync also runs
+// under waitUntil, so a page that closes mid-request does not cut it short (up to the platform's 30 seconds). A
+// manager's page keeps calling /api/highlevel itself. After the owner releases held prices the job's portal invitation
+// goes out after the response the same way. The Hub's page-load retry stays the fallback.
+const defaultSync=(env,actor,input)=>syncSavedHandoff(env,actor,input);
+const defaultInvite=(env,jobId)=>sendAcceptedQuotePortal(env,jobId,{requireRequested:true,automatic:true});
 // winterSale (tests): the sale's readers (winter-sale.js). compositeState (tests): the builder's pricing state; by default the library reads it (catalog-store.js readCompositeState).
-export function handoffHandlers({session=getHubSession,storage=dispatchStorage,walkthroughs=gameplanWalkthroughStorage,now=()=>new Date(),stripe=stripeFor,compositeState=null,winterSale:saleReaders=winterSale}={}) {
+export function handoffHandlers({session=getHubSession,storage=dispatchStorage,walkthroughs=gameplanWalkthroughStorage,now=()=>new Date(),stripe=stripeFor,compositeState=null,serverSync=defaultSync,invite=defaultInvite,winterSale:saleReaders=winterSale}={}) {
   const priced = compositeState ? {compositeState} : {};
   return {
     async get({request,env}) {
@@ -46,13 +59,15 @@ export function handoffHandlers({session=getHubSession,storage=dispatchStorage,w
         // view=crew_openings (EGC_DISPATCH_CREW_AUTO_ASSIGN): rep-safe crew openings for the sold job (handoffCrewOpenings).
         // Off, the view is refused as before (an unknown walkthroughs lookup).
         if(query.view==='crew_openings'&&crewAutoAssignEnabled(env))return reply(200,{...await handoffCrewOpenings(storage(env),actor,query,now(),{env}),viewer:{id:actor.user}});
+        // view=sync (PORTAL-LINKS): where the server's first HighLevel sync of a signed job stands (handoffSyncView).
+        if(query.view==='sync')return reply(200,{...await handoffSyncView(storage(env),actor,query,{env,now:now()}),viewer:{id:actor.user}});
         // view=walkthroughs: the gameplan's Today list and its requested walkthrough (gameplan-walkthroughs.js), no SDK read.
         if('view' in query)return reply(200,{...await gameplanWalkthroughs(walkthroughs(env),actor,query,{env,now:now()}),viewer:{id:actor.user}});
         return reply(200,{...await prepareHandoff(storage(env),actor,query,{env}),viewer:{id:actor.user}});
       }
       catch(error) { return failure(error); }
     },
-    async post({request,env}) {
+    async post({request,env,waitUntil}) {
       try {
         const origin=request.headers.get('Origin')||request.headers.get('Referer');
         if(request.headers.get('Sec-Fetch-Site')==='cross-site'||origin&&new URL(origin).origin!==new URL(request.url).origin)return reply(403,{ok:false,code:'handoff_origin_forbidden',error:'Open the walkthrough in the Employee Hub before saving.'});
@@ -64,9 +79,21 @@ export function handoffHandlers({session=getHubSession,storage=dispatchStorage,w
         const store=storage(env),at=now().toISOString();
         // action prices.release (EGC_QUOTE_BUILDER_ENABLED): a job booked with unapproved builder prices passes the builder's send gate.
         // Off, the request is refused as before (not a signed walkthrough).
-        if(quoteBuilderEnabled(env)&&input&&typeof input==='object'&&!Array.isArray(input)&&input.action==='prices.release')return reply(200,await releaseHandoffPrices(store,actor,input,at,{env,...priced}));
+        if(quoteBuilderEnabled(env)&&input&&typeof input==='object'&&!Array.isArray(input)&&input.action==='prices.release'){
+          const released=await releaseHandoffPrices(store,actor,input,at,{env,...priced});
+          if(released.released&&typeof waitUntil==='function')waitUntil(Promise.resolve().then(()=>invite(env,released.job.id)).catch(()=>null));
+          return reply(200,released);
+        }
+        // action sync (PORTAL-LINKS B): the signed job's first HighLevel sync, asked for by the walkthrough page (requestHandoffSync).
+        if(input&&typeof input==='object'&&!Array.isArray(input)&&input.action==='sync'){
+          const run=(jobId,handoffRequestId)=>{const job=Promise.resolve().then(()=>serverSync(env,actor,{jobId,handoffRequestId,waitUntil}));if(typeof waitUntil==='function')waitUntil(job.catch(()=>null));return job;};
+          return reply(200,{...await requestHandoffSync(store,actor,input,{env,now:now(),run}),viewer:{id:actor.user}});
+        }
         // A signed revision closes an open portal checkout for the earlier terms.
-        return reply(200,await saveWalkthroughHandoff(store,actor,input,at,{env,...priced,winterSale:saleReaders,checkouts:job=>expireStaleCheckout({store,job,stripe:stripe(env),now:at,mode:moneyTotalsMode(env)})}));
+        const saved=await saveWalkthroughHandoff(store,actor,input,at,{env,...priced,winterSale:saleReaders,checkouts:job=>expireStaleCheckout({store,job,stripe:stripe(env),now:at,mode:moneyTotalsMode(env)})});
+        // serverSync 'ready': the page may ask for the sync (action 'sync'). Offered only where the runtime keeps a sync
+        // running past a closed page (waitUntil); elsewhere (tests, older runtimes) the answer is unchanged.
+        return reply(200,typeof waitUntil==='function'&&saved?.ok&&saved.job?.id&&saved.job.syncStatus!=='synced'?{...saved,serverSync:'ready'}:saved);
       } catch(error) { return failure(error); }
     }
   };

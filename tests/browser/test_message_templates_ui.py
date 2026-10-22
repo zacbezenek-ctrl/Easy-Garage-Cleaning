@@ -20,6 +20,15 @@ def templates():
         {'kind': 'b2b_invite', 'label': 'Business hub invitation', 'audience': 'customer', 'allowedVariables': BASE + ['inviteLink'], 'versions': [version(1, 'Hi {{firstName}},\n\nYour business hub invitation is ready: {{inviteLink}}', 'approved', 'Email', 'Your {{firstName}} business hub invitation', approvedBy='zacb', approvedAt=NOW)], 'activeVersion': 1, 'latestVersion': 1, 'automationEnabled': False, 'seeded': False, 'automatable': False},
     ]
 
+# PORTAL-LINKS: the owner's switches as GET /api/message-templates returns them (functions/_lib/portal-link-settings.js).
+QUOTE_READY = {'deposit': 'Hi {first}, your Easy Garage Cleaning quote is ready. You can review it, approve it and pay the deposit in your private project portal: {portal link}',
+               'no_deposit': 'Hi {first}, your Easy Garage Cleaning quote is ready. You can review it and approve it in your private project portal: {portal link}'}
+JOB_DONE = {'balance': 'Hi {first}, your Easy Garage Cleaning job is done. Thank you! Your remaining balance, receipts and photos are in your private project portal: {portal link}',
+            'paid': 'Hi {first}, your Easy Garage Cleaning job is done. Thank you! Your receipts and job details are in your private project portal: {portal link}'}
+def portal_links(**extra):
+    row = {'quoteReady': False, 'jobDone': False, 'paused': False, 'canChange': True, 'texts': {'quote_ready': QUOTE_READY, 'job_done': JOB_DONE}}
+    row.update(extra); return row
+
 class Handler(SimpleHTTPRequestHandler):
     def log_message(self, *args): pass
 
@@ -38,7 +47,7 @@ class MessageTemplatesBrowserTests(unittest.TestCase):
         self.page = self.context.new_page(); self.page.set_default_timeout(5000)
         self.page.clock.install(time=NOW)
         self.rows = templates(); self.viewer = {'id': 'zacb', 'role': 'owner', 'canApprove': True}; self.delivery = {'enabled': False, 'dryRun': True}
-        self.calls = []; self.errors = []; self.fail_once = None; self.lost_once = False; self.read_status = 200; self.completed = {}
+        self.calls = []; self.errors = []; self.fail_once = None; self.lost_once = False; self.read_status = 200; self.completed = {}; self.portal = None
         self.page.on('pageerror', lambda error: self.errors.append(str(error))); self.page.route('**/*', self.route)
     def tearDown(self):
         self.assertEqual(self.errors, []); self.context.close()
@@ -49,8 +58,12 @@ class MessageTemplatesBrowserTests(unittest.TestCase):
         def send(data, status=200): route.fulfill(status=status, content_type='application/json', body=json.dumps(data))
         if req.method == 'GET':
             if self.read_status != 200: send({'ok': False, 'code': 'messaging_sign_in_required', 'error': 'Sign in'}, self.read_status); return
-            send({'ok': True, 'templates': self.rows, 'variables': [], 'linkVariables': [], 'smsLimit': 320, 'delivery': self.delivery, 'viewer': self.viewer}); return
+            send({'ok': True, 'templates': self.rows, 'variables': [], 'linkVariables': [], 'smsLimit': 320, 'delivery': self.delivery, 'viewer': self.viewer, **({'portalLinks': self.portal} if self.portal else {})}); return
         body = req.post_data_json; self.calls.append(copy.deepcopy(body))
+        if body['action'] == 'set_portal_link':
+            if not self.portal['canChange']: send({'ok': False, 'code': 'messaging_portal_link_forbidden', 'error': 'Only Zac, Tyler or Alex can turn the portal link texts on or off.'}, 403); return
+            self.portal[{'quote_ready': 'quoteReady', 'job_done': 'jobDone'}[body['link']]] = body['enabled']
+            send({'ok': True, 'requestId': body['requestId'], 'portalLinks': copy.deepcopy(self.portal)}); return
         if self.fail_once:
             status, code, message = self.fail_once; self.fail_once = None; send({'ok': False, 'code': code, 'error': message}, status); return
         if body['requestId'] in self.completed: send(self.completed[body['requestId']]); return
@@ -189,6 +202,47 @@ class MessageTemplatesBrowserTests(unittest.TestCase):
         self.page.evaluate('window.dispatchEvent(new Event("egc:signout"))')
         expect(self.page.locator('#templates-root')).to_be_empty()
         self.assertEqual(self.page.evaluate('Object.keys(sessionStorage).filter(k=>k.startsWith("egc.templates.v1.")).length'), 0)
+
+    def test_portal_link_switches_show_the_exact_text_and_turn_on_after_confirming_at_desktop_and_phone_widths(self):
+        self.portal = portal_links()
+        for width, height in [(1280, 900), (390, 844)]:
+            self.page.set_viewport_size({'width': width, 'height': height}); self.open()
+            section = self.page.get_by_role('region', name='Portal link texts'); expect(section).to_be_visible()
+            quote, done = section.locator('[data-link="quote_ready"]'), section.locator('[data-link="job_done"]')
+            expect(quote).to_contain_text('Text the portal link when a quote is sent'); expect(quote).to_contain_text('What it does: When an estimator sends a quote for review')
+            expect(quote.locator('.mt-exact')).to_have_count(2); expect(quote.locator('.mt-pill')).to_have_text('Off')
+            expect(quote.locator('.mt-exact').nth(0)).to_have_text(QUOTE_READY['deposit']); expect(quote.locator('.mt-exact').nth(1)).to_have_text(QUOTE_READY['no_deposit'])
+            expect(quote).to_contain_text('If no deposit is due:'); expect(quote).to_contain_text('egc-estimate-ready')
+            expect(done).to_contain_text('egc-job-complete'); expect(done).to_contain_text('follow-up required')
+            expect(done).to_contain_text('Text a fresh portal link when a job is done'); expect(done.locator('.mt-exact')).to_have_count(2)
+            expect(done.locator('.mt-exact').nth(0)).to_have_text(JOB_DONE['balance']); expect(done.locator('.mt-exact').nth(1)).to_have_text(JOB_DONE['paid'])
+            self.assertLessEqual(self.page.evaluate('document.documentElement.scrollWidth'), width, f'horizontal scroll at {width}px')
+            for box in section.locator('.mt-btn').evaluate_all('nodes=>nodes.map(node=>node.getBoundingClientRect().height)'): self.assertGreaterEqual(box, 44)
+            self.page.screenshot(path=str(ROOT / 'test-results' / f'portal-link-switches-{width}.png'), full_page=True)
+        self.assertEqual(self.calls, [], 'looking sends nothing')
+        quote = self.page.locator('[data-link="quote_ready"]')
+        quote.get_by_role('button', name='Turn on: Text the portal link when a quote is sent').click()
+        dialog = self.page.get_by_role('dialog', name='Turn on: Text the portal link when a quote is sent?'); expect(dialog).to_be_visible()
+        expect(dialog.locator('.mt-exact')).to_have_text(QUOTE_READY['deposit'] + '\n\n' + QUOTE_READY['no_deposit']); expect(dialog).to_contain_text('between 8 AM and 8 PM Denver time')
+        expect(dialog).to_contain_text('egc-estimate-ready')
+        dialog.get_by_role('button', name='Cancel', exact=True).click(); expect(dialog).to_have_count(0); self.assertEqual(self.calls, [])
+        quote.get_by_role('button', name='Turn on: Text the portal link when a quote is sent').click(); self.page.get_by_role('button', name='Turn on', exact=True).click()
+        expect(quote.locator('.mt-pill')).to_have_text('On'); expect(self.page.locator('.mt-notice')).to_contain_text('Text the portal link when a quote is sent: on.')
+        call = self.calls[-1]
+        self.assertEqual({key: call[key] for key in ['action', 'link', 'enabled']}, {'action': 'set_portal_link', 'link': 'quote_ready', 'enabled': True}); self.assertEqual(len(call['requestId']), 36)
+        expect(self.page.locator('[data-link="job_done"] .mt-pill')).to_have_text('Off')
+        quote.get_by_role('button', name='Turn off: Text the portal link when a quote is sent').click()
+        expect(self.page.get_by_role('dialog')).to_contain_text('including any still waiting for 8 AM')
+        self.page.get_by_role('dialog').get_by_role('button', name='Turn off', exact=True).click()
+        expect(quote.locator('.mt-pill')).to_have_text('Off'); self.assertEqual(self.calls[-1]['enabled'], False)
+        self.page.screenshot(path=str(ROOT / 'test-results' / 'portal-link-switches-390-after.png'), full_page=True)
+
+    def test_portal_link_switches_are_read_only_for_a_manager_and_say_when_messages_are_paused(self):
+        self.viewer = {'id': 'tylerg', 'role': 'manager', 'canApprove': False}; self.portal = portal_links(canChange=False, paused=True, jobDone=True)
+        self.open()
+        section = self.page.get_by_role('region', name='Portal link texts')
+        expect(section.locator('.mt-btn')).to_have_count(0); expect(section).to_contain_text('Only Zac, Tyler or Alex can change this.')
+        expect(section).to_contain_text('Automatic messages are paused'); expect(section.locator('[data-link="job_done"] .mt-pill')).to_have_text('On')
 
 if __name__ == '__main__':
     unittest.main()

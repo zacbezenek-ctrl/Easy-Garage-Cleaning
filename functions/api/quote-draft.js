@@ -1,7 +1,8 @@
 import { getHubSession, isHubOwner } from '../_lib/hub-session.js';
 import { dispatchStorage } from '../_lib/dispatch-storage.js';
 import { quoteAuthorAccess, requireQuoteAuthor } from '../_lib/quote-permissions.js';
-import { expireStaleCheckout, previewQuoteSend, readQuoteDraft, saveQuoteDraft, sendQuoteDraft } from '../_lib/quote-draft.js';
+import { expireStaleCheckout, previewQuoteSend, quoteDraftView, readQuoteDraft, saveQuoteDraft, sendQuoteDraft } from '../_lib/quote-draft.js';
+import { sendPortalLink } from '../_lib/portal-invitation.js';
 import { createEstimateReadyDelivery } from '../_lib/estimate-ready.js';
 import { stripeRequest, stripeSecretKey } from '../_lib/customer-payments.js';
 import { moneyTotalsMode } from '../_lib/money-core.js';
@@ -67,8 +68,17 @@ function sameOrigin(request) {
 }
 const stripeFor = env => { const secret = stripeSecretKey(env); return secret ? (path, options) => stripeRequest(secret, path, options) : null; };
 
+// PORTAL-LINKS (A): once a send is recorded (Send to customer, Send saved quote, Mark as sent), the quote-ready portal
+// link goes out through the portal invitation path (portal-invitation.js sendPortalLink 'quote_ready': once per job,
+// only while the owner's switch is on, which it is not by default), and the answer carries what happened (portalLink)
+// so the send screen tells the estimator the truth. The job is read again for the answer, because recording the
+// message changes its revision. fresh: a send is the quote-ready text's own trigger, so it may start again a text that
+// ended unsent (not eligible, switched off, suppressed); the automatic retries never do.
+const quoteReadyLink = (env, jobId, now) => sendPortalLink(env, jobId, 'quote_ready', { automatic: true, fresh: true, now });
+const PORTAL_LINK_VIEW = ['kind', 'status', 'reason', 'channel', 'recipient', 'notBefore', 'completedAt', 'deferredAt'];
+export const portalLinkView = state => state && typeof state === 'object' ? Object.fromEntries(PORTAL_LINK_VIEW.filter(key => typeof state[key] === 'string' && state[key]).map(key => [key, state[key]])) : null;
 export function quoteDraftHandlers({ session = getHubSession, storage = dispatchStorage, now = () => new Date(), delivery = (env, store) => createEstimateReadyDelivery({ store, env, clock: now }), stripe = stripeFor,
-  catalogState = env => readCatalogState(catalogStorage(env)), compositeState = env => readCompositeState(catalogStorage(env)), captureNote, winterSale = saleReaders } = {}) {
+  catalogState = env => readCatalogState(catalogStorage(env)), compositeState = env => readCompositeState(catalogStorage(env)), captureNote, portalLink = quoteReadyLink, winterSale = saleReaders } = {}) {
   return {
     async get({ request, env }) {
       try {
@@ -115,7 +125,13 @@ export function quoteDraftHandlers({ session = getHubSession, storage = dispatch
           return reply(200, { ...await readQuoteDraft(store, actor, { jobId: input.jobId }, { env }), captureSyncEnabled: sync.enabled });
         }
         if (action === 'send_preview') return reply(200, await previewQuoteSend(store, actor, input, at, { env, compositeState, winterSale }));
-        if (action === 'send') return reply(200, await sendQuoteDraft(store, actor, input, at, { env, compositeState, winterSale, deliver: delivery(env, store).deliver }));
+        if (action === 'send') {
+          const sent = await sendQuoteDraft(store, actor, input, at, { env, compositeState, winterSale, deliver: delivery(env, store).deliver });
+          let link;
+          try { link = await portalLink(env, sent.job.id, now); } catch { link = { kind: 'quote_ready', status: 'storage_unavailable' }; }
+          const latest = await store.read('jobs', sent.job.id).catch(() => null);
+          return reply(200, { ...sent, ...(latest ? { job: quoteDraftView(latest) } : {}), portalLink: portalLinkView(link) });
+        }
         return reply(400, { ok: false, code: 'quote_draft_invalid_request', error: 'Choose save, sync_capture, catalog_preview, send_preview or send.' });
       } catch (error) { return failure(error); }
     },

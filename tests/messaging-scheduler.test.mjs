@@ -343,6 +343,26 @@ test('portal-invitation retries keep the legacy rule and move from the browser t
   assert.deepEqual([summary.sent, summary.counts, summary.kinds.portal_invitation], [2, { uncertain: 1, submitted: 1, busy: 1 }, 'ready']);
 });
 
+// A closed job (cancelled, no-show, finished) is never told its quote is approved, and an invitation held for Denver
+// quiet hours (portal-invitation.js 'deferred') waits for its notBefore time. The tick hands the invitation the
+// settings it already read, so the sender honours the owner's pause without reading them again.
+test('portal-invitation retries skip closed jobs and wait for a quiet-hours hold to end', async () => {
+  const requested = '2026-09-22T10:00:00.000Z', held = (notBefore, extra = {}) => ({ status: 'deferred', reason: 'quiet_hours', notBefore, attempts: 0, deferredAt: '2026-09-22T05:30:00.000Z', ...extra });
+  const jobs = {
+    'invite-open': quiet({ customerPortalInvitationRequestedAt: requested }),
+    ...Object.fromEntries(['no_show', 'canceled', 'completed', 'invoiced', 'paid', 'closed', 'review_requested'].map(stage => [`invite-${stage.replace('_', '-')}`, quiet({ customerPortalInvitationRequestedAt: requested, status: stage })])),
+    'invite-noshow-pipeline': quiet({ customerPortalInvitationRequestedAt: requested, status: 'scheduled', pipelineStatus: 'no_show' }),
+    'invite-held-over': quiet({ customerPortalInvitationRequestedAt: requested, customerPortalInvitation: { ...held('2026-09-22T14:00:00.000Z'), jobId: 'invite-held-over' } }),
+    'invite-held-later': quiet({ customerPortalInvitationRequestedAt: requested, customerPortalInvitation: { ...held('2026-09-23T14:00:00.000Z'), jobId: 'invite-held-later' } }),
+    'invite-paused': quiet({ customerPortalInvitationRequestedAt: requested, customerPortalInvitation: { status: 'deferred', reason: 'messaging_paused', attempts: 1, attemptedAt: '2026-09-22T09:00:00.000Z', deferredAt: '2026-09-22T17:00:00.000Z', jobId: 'invite-paused' } }),
+  };
+  assert.deepEqual(portalRetries(Object.entries(jobs).map(([id, fields]) => ({ ...fields, id })), { now: new Date(NOW) }).map(row => row.jobId), ['invite-held-over', 'invite-open', 'invite-paused']);
+  const f = await setup({ jobs, approved: [] }), calls = [];
+  const summary = await f.run({}, { portalInvite: async (jobId, when, settings) => { calls.push([jobId, when.toISOString(), settings.paused, settings.source]); return { status: 'submitted' }; } });
+  assert.deepEqual(calls, [['invite-held-over', NOW, false, 'default'], ['invite-open', NOW, false, 'default'], ['invite-paused', NOW, false, 'default']]);
+  assert.equal(summary.sent, 3);
+});
+
 test('reminders quote the dispatch arrival window the customer was promised', async () => {
   const f = await setup({ jobs: { explicit: tomorrow({ time: '09:30', arrivalWindowStart: '09:00', arrivalWindowEnd: '11:00' }), stale: tomorrow({ time: '13:00', arrivalWindowStart: '09:00', arrivalWindowEnd: '11:00' }) }, approved: ['day_before_reminder'] });
   await f.run();

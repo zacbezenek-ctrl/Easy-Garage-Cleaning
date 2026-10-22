@@ -37,11 +37,20 @@ const msgCore = (kind, name, channel, fields = {}) => entry({ id: `hub.msgcore.$
   code: [...code('functions/_lib/ghl-messenger.js', 'ghl_message_send', 'ghl_contact_write'), ...code('functions/api/messages.js', 'hub_send_helper_call')], evidence: ['functions/_lib/message-policies.js', 'functions/_lib/message-template-defaults.js'],
   notes: 'Text comes from the owner-approved version in message_templates/' + kind + '. EGC_MESSAGING_ENABLED gates every send; automatic sending also needs the owner\'s per-kind automation switch (off by default).', ...fields });
 
+// PORTAL-LINKS: an owner-switched portal link message (functions/_lib/portal-invitation.js sendPortalLink), off by default:
+// it sends nothing today; the switch in Hub → Message templates (shown with this exact text) is the owner's approval.
+const portalLink = (id, name, channel, kind, triggerText, templateText, templateHash, callers, note, fields = {}) => entry({ id, name, system: 'hub', trigger: triggerText, audience: 'customer', channel,
+  contentSource: 'fixed_template', classification: 'owner_automation', disposition: 'needs_owner_approval', sendsToday: 'no', speedToLead: 'none', templateText, templateHash,
+  code: [...code('functions/_lib/portal-invitation.js', 'ghl_message_send', 'ghl_contact_write'), ...code('functions/api/customer-portal-invitation.js', 'hub_send_helper_call'), ...code(MESSAGING_CRON, 'hub_send_helper_call'), ...callers],
+  evidence: ['docs/portal-invitations.md', 'functions/_lib/portal-invitation.js', 'functions/_lib/portal-link-settings.js'],
+  notes: `Kind ${kind}. {{opening}} is "Hi <first name>, your", or "Your" when no name is saved. Off unless the owner's switch for ${kind} is on (messaging_settings/automation ${kind === 'quote_ready' ? 'portalLinkQuoteReady' : 'portalLinkJobDone'}, default false); turning it off ends the ones still waiting, and one waiting from before the switch was last turned on is never sent. One per job (portal_link_sends ledger); never to business-account jobs, jobs with notifications off, HighLevel DND contacts, cancelled or no-show jobs${kind === 'quote_ready' ? ', approved, expired or closed quotes' : ', completions with an open crew follow-up, more than 48 hours after the completion'} or jobs held for the owner\'s price approval; automatic sends wait outside 08:00-20:00 Denver time and while messaging is paused, and a manager\'s Hub load or the messaging cron retries them. The wording follows the money the portal shows (MONEY_UNIFIED_TOTALS); a payment waiting for the office\'s review never gets a deposit or balance wording.${note ? ' ' + note : ''}`,
+  ownerCheck: 'Off by default. Read this exact text in Hub → Message templates (Portal link texts) and turn its switch on only when it should go to customers.', ...fields });
+
 const deepFreeze = value => { if (value && typeof value === 'object') { Object.values(value).forEach(deepFreeze); Object.freeze(value); } return value; };
 
 export const AUTOMATION_REGISTRY = deepFreeze({
   schemaVersion: 1,
-  registryVersion: '2026-10-17.2',
+  registryVersion: '2026-10-21.3',
   timeZone: 'America/Denver',
   ghlLocationId: 'KlgLwRaQSPz5G1YXsmc6',
   sources: {
@@ -312,18 +321,44 @@ export const AUTOMATION_REGISTRY = deepFreeze({
       code: [...code('functions/_lib/ghl-messenger.js', 'ghl_message_send', 'ghl_contact_write'), ...code('functions/_lib/knock-handoff.js', 'hub_send_helper_call')], evidence: ['functions/_lib/knock-handoff.js', 'docs/knock-canvassing.md'],
       notes: 'KNOCK: one text per sale, ever (a knock_receipts claim before HighLevel is called; an unclear answer is never retried), only with the customer\'s consent recorded at the door, only when settings.integrations.text is highlevel and the HighLevel key and location are set, and never to a contact on Do Not Disturb or tagged egc-no-sms-consent. The contact is upserted from the sale first (contact:upsert). Without a deposit link it says "Your deposit is $[DEPOSIT]." There is no bulk send.',
       ownerCheck: 'Before switching integrations.text to highlevel, confirm no Contact Created workflow would also text a new canvassing customer (ghl.contact_change_workflows).' }),
-    entry({ id: 'hub.portal_invitation', name: 'Accepted-quote portal invitation (SMS)', system: 'hub', trigger: 'A recorded approval (estimate-approved) or a signed walkthrough sync requests it; staff retry definite failures and a manager Hub refresh retries them',
+    entry({ id: 'hub.portal_invitation', name: 'Accepted-quote portal invitation (SMS)', system: 'hub', trigger: 'A recorded approval (estimate-approved, or the money service\'s estimate.record_approval), a signed walkthrough\'s first HighLevel sync (run by the server right after the save and its photo uploads, at the request of the estimator\'s walkthrough page, for every estimator) or the owner releasing held prices requests it; staff retry definite failures and a manager Hub refresh retries them',
       audience: 'customer', channel: 'SMS', contentSource: 'fixed_template', classification: 'owner_automation', disposition: 'approved_automatic', sendsToday: 'yes', speedToLead: 'none', msgCoreKind: 'portal_invitation_adapter',
       templateText: '{{opening}} quote is approved. Here is your private Easy Garage Cleaning project portal for job details, messages, and payments: {{portalLink}}',
       templateHash: '395348e3879bad2f0ede856a9df9db79d62b4438413c7c3c6a90da7fa2d9c972',
-      code: [...code('functions/_lib/portal-invitation.js', 'ghl_message_send', 'ghl_contact_write'), ...code(HL, 'hub_send_helper_call'), ...code('functions/api/customer-portal-invitation.js', 'hub_send_helper_call'), ...code(SUITE, 'hub_send_endpoint_call')],
-      evidence: ['docs/portal-invitations.md', 'functions/_lib/portal-invitation.js'], notes: '{{opening}} is "Hi <first name>, your", or "Your" when no name is saved. One invitation per job (portal_invitations ledger); never sent to business-account jobs or when notify is off.',
+      code: [...code('functions/_lib/portal-invitation.js', 'ghl_message_send', 'ghl_contact_write'), ...code(HL, 'hub_send_helper_call'), ...code('functions/api/customer-portal-invitation.js', 'hub_send_helper_call'), ...code(SUITE, 'hub_send_endpoint_call'),
+        ...code('functions/api/walkthrough-handoff.js', 'hub_send_helper_call'), ...code('functions/api/catalog.js', 'hub_send_helper_call'), ...code('functions/api/money.js', 'hub_send_helper_call')],
+      evidence: ['docs/portal-invitations.md', 'functions/_lib/portal-invitation.js'], notes: '{{opening}} is "Hi <first name>, your", or "Your" when no name is saved. One invitation per job (portal_invitations ledger); never sent to business-account jobs, closed jobs (cancelled, no-show, completed, invoiced, paid, closed) or when notify is off. PORTAL-LINKS: not sent while a quote-ready portal link the customer was sent, or whose send is unconfirmed (hub.portal_quote_ready), still has 3 or more of its 30 days to run (ledger status covered); while one is being sent it waits for the next automatic retry. Automatic sends (the approval and walkthrough sync, a manager Hub refresh, the scheduler) wait outside 08:00-20:00 Denver time and while messaging_settings paused is true, recorded as deferred; only a manager\'s Retry click sends then. EGC_MESSAGING_ENABLED and EGC_MESSAGING_DRY_RUN do not stop it.',
       ownerCheck: 'Approve this exact text (it keeps sending unchanged meanwhile, as it does today).' }),
     entry({ id: 'hub.portal_invitation_email', name: 'Accepted-quote portal invitation (email fallback)', system: 'hub', trigger: 'Same as the SMS invitation when the saved customer has no valid phone', audience: 'customer', channel: 'Email',
       contentSource: 'fixed_template', classification: 'owner_automation', disposition: 'approved_automatic', sendsToday: 'yes', speedToLead: 'none', subject: 'Your Easy Garage Cleaning project portal',
       templateText: '<p>Your quote is approved. You can view job details, messages, and payments in your private project portal.</p><p><a href="{{portalLink}}">Open your Easy Garage Cleaning project portal</a></p>',
       templateHash: '294525806b9204c7145403816c02995db0e49d0ee51c2d22f19ddbc19d26921a', code: code('functions/_lib/portal-invitation.js', 'ghl_message_send'), evidence: ['docs/portal-invitations.md'],
       ownerCheck: 'Approve this exact email (it keeps sending unchanged meanwhile).' }),
+    // PORTAL-LINKS: two more portal link messages through the same delivery path (functions/_lib/portal-invitation.js), each off
+    // until a business user turns its switch on in Hub → Message templates (messaging_settings/automation portalLinkQuoteReady,
+    // portalLinkJobDone). Same skips and holds as the invitation; one per job per kind (portal_link_sends ledger).
+    portalLink('hub.portal_quote_ready', 'Quote-ready portal link, deposit due (SMS)', 'SMS', 'quote_ready', 'An estimator sends a quote for review (Send to customer, Send saved quote or Mark as sent: POST /api/quote-draft action=send), only while the owner\'s switch "Text the portal link when a quote is sent" is on (off by default); this wording when a deposit is due',
+      '{{opening}} Easy Garage Cleaning quote is ready. You can review it, approve it and pay the deposit in your private project portal: {{portalLink}}', '476f3ed1cf4a1162a1a91091a027e0880315c28c3cb1ea250f4e70fdac00e3ff',
+      [...code('functions/api/quote-draft.js', 'hub_send_helper_call')], 'While this link still works (or its send is unconfirmed), the accepted-quote invitation (hub.portal_invitation) is not sent again. Check the HighLevel workflow on egc-estimate-ready (the same Send adds it) before turning the switch on.'),
+    portalLink('hub.portal_quote_ready_no_deposit', 'Quote-ready portal link, no deposit due (SMS)', 'SMS', 'quote_ready', 'Same as the deposit-due quote-ready text when no deposit is due (already paid, none required, a payment waiting for the office\'s review, or the figures cannot be read)',
+      '{{opening}} Easy Garage Cleaning quote is ready. You can review it and approve it in your private project portal: {{portalLink}}', '6a9c2100a9454a61a4680cdf3fbbdf8106003e964a2d84e45bd4bc31861424c6', [], ''),
+    portalLink('hub.portal_quote_ready_email', 'Quote-ready portal link, deposit due (email fallback)', 'Email', 'quote_ready', 'Same as the deposit-due quote-ready text when the saved customer has no valid phone',
+      '<p>Your Easy Garage Cleaning quote is ready. You can review it, approve it and pay the deposit in your private project portal.</p><p><a href="{{portalLink}}">Open your Easy Garage Cleaning project portal</a></p>', '8d0d3f9942d3ff94292c07ceddfbcec6093bdb940c9cc24315cb0aef92a67334',
+      [], '', { subject: 'Your Easy Garage Cleaning quote is ready' }),
+    portalLink('hub.portal_quote_ready_no_deposit_email', 'Quote-ready portal link, no deposit due (email fallback)', 'Email', 'quote_ready', 'Same as the no-deposit quote-ready text when the saved customer has no valid phone',
+      '<p>Your Easy Garage Cleaning quote is ready. You can review it and approve it in your private project portal.</p><p><a href="{{portalLink}}">Open your Easy Garage Cleaning project portal</a></p>', 'abdadb6fc17de6b706414c7ce4030b813af27ba2b17646577ab85b59c32134fd',
+      [], '', { subject: 'Your Easy Garage Cleaning quote is ready' }),
+    portalLink('hub.portal_job_done', 'Job-done portal link, balance due (SMS)', 'SMS', 'job_done', 'The crew completes the job (POST /api/field-jobs action=complete), only while the owner\'s switch "Text a fresh portal link when a job is done" is on (off by default); this wording when a balance is due',
+      '{{opening}} Easy Garage Cleaning job is done. Thank you! Your remaining balance, receipts and photos are in your private project portal: {{portalLink}}', '86342f0342d4d37148ba6f4003ab6b9229446c99658a25067a7781675fad23f8',
+      [...code('functions/api/field-jobs.js', 'hub_send_helper_call')], 'A fresh 30-day link. GSM-7 characters only, so it stays a plain SMS (3 segments with a typical link; the earlier em dash made it 7 Unicode segments). Check the HighLevel workflows on egc-job-complete and egc-review-ready (the same completion adds them) before turning the switch on.'),
+    portalLink('hub.portal_job_done_paid', 'Job-done portal link, nothing due (SMS)', 'SMS', 'job_done', 'Same as the balance-due job-done text when nothing is due (or a payment waits for the office\'s review, or the balance cannot be read)',
+      '{{opening}} Easy Garage Cleaning job is done. Thank you! Your receipts and job details are in your private project portal: {{portalLink}}', '3f369798969f8b1d757e940d2fa2207807ae85cdd0d6094879a23624c9325dee', [], ''),
+    portalLink('hub.portal_job_done_email', 'Job-done portal link, balance due (email fallback)', 'Email', 'job_done', 'Same as the balance-due job-done text when the saved customer has no valid phone',
+      '<p>Your Easy Garage Cleaning job is done — thank you! Your remaining balance, receipts and photos are in your private project portal.</p><p><a href="{{portalLink}}">Open your Easy Garage Cleaning project portal</a></p>', 'bd51f854405b9ecd1d0ad5ab4fed09b11e68df7489b966abdb51e255599069a9',
+      [], '', { subject: 'Your Easy Garage Cleaning job is done' }),
+    portalLink('hub.portal_job_done_paid_email', 'Job-done portal link, nothing due (email fallback)', 'Email', 'job_done', 'Same as the nothing-due job-done text when the saved customer has no valid phone',
+      '<p>Your Easy Garage Cleaning job is done — thank you! Your receipts and job details are in your private project portal.</p><p><a href="{{portalLink}}">Open your Easy Garage Cleaning project portal</a></p>', '52d6c510bc7afbe60abd0e7869e751c160f7cc7fc56d014684ff7c7f1ba36e7d',
+      [], '', { subject: 'Your Easy Garage Cleaning job is done' }),
     entry({ id: 'hub.staff_customer_message', name: 'Crew or manager message to the customer (HighLevel SMS)', system: 'hub', trigger: 'Assigned crew or a manager types a message in the job thread (POST /api/crew-jobs send_customer_message)',
       audience: 'customer', channel: 'SMS', contentSource: 'human_authored', classification: 'human_approved', disposition: 'approved_human', sendsToday: 'yes', speedToLead: 'human_touch',
       code: [...code('functions/_lib/customer-messaging.js', 'ghl_message_send', 'hub_send_helper_call'), ...code('functions/api/crew-jobs.js', 'hub_send_helper_call')], evidence: ['functions/api/crew-jobs.js'] }),
@@ -468,7 +503,8 @@ export const AUTOMATION_REGISTRY = deepFreeze({
     'egc-platform/services/operations/src/communication-execution.ts': { ghl_client_write: 1 },
     'egc-platform/services/operations/src/note-outbox.ts': { ghl_client_write: 1 },
     'employee-dispatch.js': { hub_send_endpoint_call: 1 },
-    'employee-suite.js': { hub_lifecycle_trigger: 2, hub_send_endpoint_call: 11 },
+    // PORTAL-LINKS: the Hub's retry of a held or failed portal link text posts to /api/customer-portal-invitation with its kind.
+    'employee-suite.js': { hub_lifecycle_trigger: 2, hub_send_endpoint_call: 12 },
     'employee.html': { hub_send_endpoint_call: 2 },
     'fb-capture.js': { hub_send_endpoint_call: 2 },
     'functions/_lib/business-hub-invite-delivery.js': { hub_send_helper_call: 2 },
@@ -502,7 +538,15 @@ export const AUTOMATION_REGISTRY = deepFreeze({
     'functions/api/crew-jobs.js': { hub_send_helper_call: 1 },
     // CLIENT-LOGIN: /api/customer-login builds the approved send service and its GHL messenger for portal_magic_link.
     'functions/api/customer-login.js': { hub_send_helper_call: 2 },
-    'functions/api/customer-portal-invitation.js': { hub_send_helper_call: 1 },
+    // PORTAL-LINKS: the accepted-quote invitation and, with a kind, the quote-ready or job-done portal link.
+    'functions/api/customer-portal-invitation.js': { hub_send_helper_call: 2 },
+    // PORTAL-LINKS (B): the server sends the pending invitation after a held-price release (walkthrough-handoff, catalog) or a recorded approval (money).
+    'functions/api/walkthrough-handoff.js': { hub_send_helper_call: 1 },
+    'functions/api/catalog.js': { hub_send_helper_call: 1 },
+    'functions/api/money.js': { hub_send_helper_call: 1 },
+    // PORTAL-LINKS (A, C): the quote-ready link after a quote send; the job-done link after a field completion.
+    'functions/api/quote-draft.js': { hub_send_helper_call: 1 },
+    'functions/api/field-jobs.js': { hub_send_helper_call: 1 },
     // FUN-03: a replayed portal approval (same request_id) re-runs the idempotent sales-exit sync, so the portal calls it twice plus its message delivery.
     'functions/api/customer-portal.js': { hub_send_helper_call: 3 },
     'functions/api/email-confirmation.js': { emailjs_send: 1 },
@@ -511,7 +555,7 @@ export const AUTOMATION_REGISTRY = deepFreeze({
     'functions/api/integration-status.js': { zapier_hook: 5 },
     'functions/api/job-payment.js': { stripe_receipt_email: 1 },
     'functions/api/messages.js': { hub_send_helper_call: 2 },
-    'functions/api/messaging-cron.js': { hub_send_helper_call: 3 },
+    'functions/api/messaging-cron.js': { hub_send_helper_call: 4 },
     'functions/api/operations-event.js': { zapier_hook: 4 },
     'functions/api/quo-send.js': { quo_send: 4 },
     'functions/api/stripe-webhook.js': { zapier_hook: 2 },

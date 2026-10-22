@@ -43,7 +43,7 @@ export const SIGNATURES=Object.freeze({
   quo_send:/api\.openphone\.com|api\.quo\.com/g,
   emailjs_send:/api\.emailjs\.com/g,
   stripe_receipt_email:/receipt_email/g,
-  hub_send_helper_call:/(?<!function\s)(?<![\w$.])(?:deliverHighLevelMessage|sendAcceptedQuotePortal|syncSalesFollowupExit|createApprovedSendService|createGhlMessenger)\(/g,
+  hub_send_helper_call:/(?<!function\s)(?<![\w$.])(?:deliverHighLevelMessage|sendAcceptedQuotePortal|sendPortalLink|syncSalesFollowupExit|createApprovedSendService|createGhlMessenger)\(/g,
   hub_lifecycle_trigger:/tool\s*:\s*['"]lifecycle['"]/g,
   hub_send_endpoint_call:/['"`]\/api\/(?:highlevel|quo-send|crew-hook|operations-event|email-confirmation|messages|customer-portal-invitation|web-lead)(?=['"`?])/g,
 });

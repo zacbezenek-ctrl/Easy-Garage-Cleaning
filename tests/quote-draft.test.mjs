@@ -1407,3 +1407,45 @@ test('a quote draft saved with no terms before 2026-10-14 is sent on SENT_25_75;
   assert.deepEqual([withheld.withheld, withheld.termsVersion], [true, SENT_25_75.version]);
   assert.equal(withheld.terms, 'This flat-rate estimate covers the scope shown. 25% deposit due when you approve your estimate; 75% remainder due on the job day. The amounts are shown when your estimate is sent to you, and nothing is due before then. Any material scope change requires your approval before additional work or charges.');
 });
+
+// PORTAL-LINKS (A): once the send is recorded (Send to customer, Send saved quote or Mark as sent all post action=send),
+// the quote-ready portal link goes out through the portal invitation path and its outcome comes back to the send screen
+// (portalLink: status, reason, channel and the masked recipient, never the link); the answer's job is read again,
+// because recording the message moves the revision. A refused send asks for no link. The link itself (the owner's
+// switch, once per job, the skips) is tests/portal-links.test.mjs.
+test('a recorded quote send asks for the quote-ready portal link once and answers with its outcome and the current revision', async () => {
+  const f = fixture(), calls = [];
+  const portalLink = async (env, jobId, now) => {
+    calls.push([jobId, now().toISOString()]);
+    const row = f.rows.get(`jobs/${jobId}`);
+    f.rows.set(`jobs/${jobId}`, { ...row, portalLinks: { quote_ready: { kind: 'quote_ready', jobId, status: 'submitted', channel: 'SMS', recipient: '(•••) •••-0100', completedAt: NOW } }, revision: `${row.revision}-link` });
+    return { kind: 'quote_ready', jobId, status: 'submitted', channel: 'SMS', recipient: '(•••) •••-0100', completedAt: NOW, messageId: 'synthetic-message', attemptId: 'synthetic-attempt' };
+  };
+  const handlers = quoteDraftHandlers({ session: async () => owner, storage: () => f.store, now: () => new Date(NOW), delivery: () => ({ deliver: f.deliver }), stripe: () => null, portalLink });
+  const post = async body => { const response = await handlers.post({ request: request('POST', body), env: ENV }); return { status: response.status, body: await response.json() }; };
+  const id = (await post({ action: 'save', ...f.input() })).body.job.id;
+  f.job(id).date = '2026-10-02';
+  const preview = (await post({ action: 'send_preview', jobId: id, expectedRevision: f.job(id).revision })).body;
+  const refused = await post({ action: 'send', requestId: randomUUID(), jobId: id, expectedRevision: f.job(id).revision, confirmToken: 'not-a-token' });
+  assert.notEqual(refused.status, 200);
+  assert.equal(calls.length, 0, 'a refused send asks for no link');
+  const send = { action: 'send', requestId: randomUUID(), jobId: id, expectedRevision: f.job(id).revision, confirmToken: preview.confirmToken }, sent = await post(send);
+  assert.equal(sent.status, 200, JSON.stringify(sent.body));
+  assert.deepEqual(calls, [[id, NOW]]);
+  assert.deepEqual(sent.body.portalLink, { kind: 'quote_ready', status: 'submitted', channel: 'SMS', recipient: '(•••) •••-0100', completedAt: NOW }, 'the outcome without ids or the link');
+  assert.equal(sent.body.job.revision, f.job(id).revision, 'the answer carries the revision after the link was recorded');
+  assert.deepEqual(sent.body.job.portalLink, { kind: 'quote_ready', status: 'submitted', channel: 'SMS', recipient: '(•••) •••-0100', completedAt: NOW });
+  assert.doesNotMatch(JSON.stringify(sent.body), /access=|synthetic-message|synthetic-attempt/);
+  // A retried send (a lost answer) replays the send and asks the link path again; its own ledger keeps it to one message.
+  const again = await post(send);
+  assert.equal(again.status, 200);
+  assert.equal(calls.length, 2);
+  // An unreachable link path never fails the recorded send: the screen says it could not be recorded.
+  const g = fixture(), broken = quoteDraftHandlers({ session: async () => owner, storage: () => g.store, now: () => new Date(NOW), delivery: () => ({ deliver: g.deliver }), stripe: () => null, portalLink: async () => { throw new Error('down'); } });
+  const postG = async body => (await broken.post({ request: request('POST', body), env: ENV })).json();
+  const gid = (await postG({ action: 'save', ...g.input() })).job.id;
+  g.job(gid).date = '2026-10-02';
+  const gPreview = await postG({ action: 'send_preview', jobId: gid, expectedRevision: g.job(gid).revision });
+  const gSent = await postG({ action: 'send', requestId: randomUUID(), jobId: gid, expectedRevision: g.job(gid).revision, confirmToken: gPreview.confirmToken });
+  assert.deepEqual([gSent.ok, g.job(gid).estimate.status, gSent.portalLink], [true, 'sent', { kind: 'quote_ready', status: 'storage_unavailable' }]);
+});

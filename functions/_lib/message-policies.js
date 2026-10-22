@@ -20,6 +20,12 @@ export const APPROVAL_MODES = Object.freeze([...HUMAN_APPROVALS, 'owner_automati
 const TERMINAL = new Set(['cancelled','canceled','completed','invoiced','paid','review_requested','closed','noshow','no_show','no-show','superseded']);
 const DONE = new Set(['completed','invoiced','paid','review_requested','closed']);
 const stage = job => String(job?.pipelineStatus || job?.status || '').toLowerCase();
+// A job whose status or pipeline stage is one of the closed stages above. The
+// accepted-quote portal invitation (portal-invitation.js) checks both fields, so
+// a finished, cancelled or no-show job is never told its quote is approved.
+export function closedJob(job) {
+  return [job?.status, job?.pipelineStatus].some(value => TERMINAL.has(String(value || '').toLowerCase()));
+}
 const accepted = value => ['accepted','approved'].includes(String(value || '').toLowerCase());
 const reason = (why) => ({ eligible: false, reason: why });
 const ok = { eligible: true };
@@ -141,7 +147,8 @@ export const MESSAGE_POLICIES = Object.freeze({
     dedupe: c => `b2b_invite:${c.account.id}`,
   }),
   // Documents the existing automatic portal invitation on quote acceptance.
-  // It keeps running through portal-invitation.js unchanged.
+  // It keeps running through portal-invitation.js, which applies QUIET_HOURS
+  // (quietHoursDecision) and the messaging pause to its automatic callers itself.
   portal_invitation_adapter: policy('portal_invitation_adapter', {
     template: null, roles: ['business'], triggers: ['portal', 'hub'], approvals: ['customer_initiated'], adapterOnly: true, maxAttempts: 1,
     dedupe: c => `portal_invitation:${c.job.id}`,

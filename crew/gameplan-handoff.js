@@ -146,12 +146,47 @@
       if(active)return active;
       active=perform(recoverOriginal).finally(()=>{active=null;}); return active;
     }
-    // The CRM sync and portal invitation run only for managers (/api/highlevel
-    // requires business access). A quote author's signed job is left 'pending'
-    // for a manager's Hub to synchronize from the saved snapshot.
+    // PORTAL-LINKS (B): a quote author's page (no business access) asks the server for the first CRM sync and the
+    // portal invitation right after its save and its photo uploads (POST action 'sync', a request of its own; the save
+    // says serverSync 'ready' while the job is unsynced). When another sync holds the job (a manager's Hub retry) or the
+    // answer is lost, it follows that sync instead (view=sync, up to SERVER_SYNC_POLLS checks). A manager's page still
+    // calls /api/highlevel (business access), which replays an earlier sync's result or waits for one, so nothing is
+    // written twice. A retried save of a job already synced (no serverSync, job.syncStatus 'synced') reads view=sync, so
+    // the page keeps saying what that sync and the invitation did. A save the server does not offer to sync (an older
+    // server) is left 'pending' for a manager's Hub.
+    const SERVER_SYNC_POLLS = 10, SERVER_SYNC_WAIT_MS = 3000;
+    const pause = ms => typeof d.sleep === 'function' ? d.sleep(ms) : new Promise(resolve => setTimeout(resolve, ms));
+    async function followServer(saved) {
+      let last = null;
+      for (let round = 0; round < SERVER_SYNC_POLLS; round += 1) {
+        try { last = await request('/api/walkthrough-handoff?' + new URLSearchParams({view:'sync',jobId:String(saved.result.job.id)})); } catch { last = null; }
+        if (settled(last)) break;
+        if (round < SERVER_SYNC_POLLS - 1) await pause(SERVER_SYNC_WAIT_MS);
+      }
+      const status = last?.sync?.status === 'synced' ? 'synced' : last?.sync?.status === 'error' ? 'server_error' : 'server_pending';
+      return {ok:true,server:true,handoffSync:{status},portalInvitation:last?.portalInvitation || {status:'server_pending'}};
+    }
+    const settled = answer => answer && ['synced', 'error'].includes(answer.sync?.status) && !['sending', 'busy'].includes(answer.portalInvitation?.status);
+    async function serverSync(saved) {
+      let answer = null;
+      try { answer = await request('/api/walkthrough-handoff',{action:'sync',requestId:saved.pending.requestId,jobId:String(saved.result.job.id)}); } catch { answer = null; }
+      // Skipped for a reason no wait changes (HighLevel or the operations bridge not set up, a Dispatch move since):
+      // the office's Hub finishes it.
+      const skipped = answer?.result?.status === 'skipped' && answer.result.reason !== 'sync_in_progress' && !settled(answer);
+      if (skipped) return {ok:true,server:true,handoffSync:{status:'server_pending'},portalInvitation:answer.portalInvitation || {status:'server_pending'}};
+      if (!settled(answer)) return followServer(saved);
+      return {ok:true,server:true,handoffSync:{status:answer.sync.status === 'synced' ? 'synced' : 'server_error'},portalInvitation:answer.portalInvitation || {status:'server_pending'}};
+    }
     async function sync(saved) {
       if (await d.actor() !== saved.pending.actor) throw new Error('The signed-in account changed. Sign in again before synchronizing.');
-      if (typeof d.managerSync === 'function' && !d.managerSync()) return {ok:true,handoffSync:{status:'manager_required'},portalInvitation:{status:'manager_required'}};
+      if (typeof d.managerSync === 'function' && !d.managerSync()) {
+        if (['ready', 'started'].includes(saved.result?.serverSync)) return serverSync(saved);
+        // A save replayed after the first sync finished (Retry remaining synchronization, Saved — verify again): the
+        // server offers no sync for a synced job, so the page reads where that sync and the invitation stand (view=sync)
+        // instead of handing a finished sync to a manager.
+        if (saved.result?.job?.syncStatus === 'synced') return followServer(saved);
+        return {ok:true,handoffSync:{status:'manager_required'},portalInvitation:{status:'manager_required'}};
+      }
       return request('/api/highlevel',{tool:'game_plan',job_id:saved.result.job.id,handoff_request_id:saved.pending.requestId});
     }
     function release(saved) {
@@ -204,14 +239,15 @@
       // A walkthrough-priced quote (the builder on, not priced in it) waits until it is built in the builder or the owner releases it.
       const pricingText=!pending?'':saved.result.pricing.source==='walkthrough'?'Walkthrough prices wait for the owner: the estimate and deposit request go to the customer once this quote is built in the quote builder and signed, or the owner releases these prices. ':`Prices pending owner approval${saved.result.pricing.pending?.length?` (${saved.result.pricing.pending.slice(0,4).join(', ')})`:''}: the estimate and deposit request go to the customer once the owner approves them. `;
       const crewText=crewOutcome(saved.result.crew);
-      const portalText=managerSync||pending?'':portal?.status==='submitted'?(portal.channel==='Email'?'Portal email queued in HighLevel. ':'Portal text queued in HighLevel. '):portal?.status==='suppressed'?'Portal delivery is paused. ':'Portal delivery needs attention in Estimates & payments. ';
-      const scheduleText=managerSync?'Job saved. A manager completes the CRM sync and the portal invitation from the Hub. ':synced.handoffSync?.status==='synced'?'Job and CRM schedule verified. ':'Job saved; CRM reconciliation still needs attention. ';
-      const photoText=photos.status==='synced'?'Walkthrough photos uploaded. ':photos.status==='needs_setup'?'Drive needs setup; photos remain on this device. ':'Photos remain on this device; upload needs attention. ';
+      const serverWait=synced.handoffSync?.status==='server_pending';
+      const portalText=managerSync||pending?'':portal?.status==='submitted'?(portal.channel==='Email'?'Portal email queued in HighLevel. ':'Portal text queued in HighLevel. '):portal?.status==='covered'?'The customer already has the portal link sent with the quote. ':portal?.status==='suppressed'?'Portal delivery is paused. ':portal?.status==='deferred'?(portal.reason==='quiet_hours'?'Portal invitation goes out after 8 AM (quiet hours); the office\'s Hub or the messaging server sends it. ':portal.reason==='quote_ready_in_flight'?'Portal invitation in progress: check Estimates & payments. ':'Portal invitation waits: automatic messages are paused. '):['busy','sending'].includes(portal?.status)?'Portal invitation in progress: check Estimates & payments. ':serverWait||portal?.status==='server_pending'?'':'Portal delivery needs attention in Estimates & payments. ';
+      const scheduleText=managerSync?'Job saved. A manager completes the CRM sync and the portal invitation from the Hub. ':serverWait?'Job saved. The server is finishing the CRM sync and the portal invitation; the office sees the result in the Hub. ':synced.handoffSync?.status==='server_error'?'Job saved. The CRM sync needs another try; the office\'s Hub retries it. ':synced.handoffSync?.status==='synced'?'Job and CRM schedule verified. ':'Job saved; CRM reconciliation still needs attention. ';
+      const photoText=photos.status==='synced'?'Walkthrough photos uploaded. ':['limit','work_started'].includes(photos.status)?`${photos.message} ${photos.kept} ${photos.status==='limit'?'more ':''}photo${photos.kept===1?' stays':'s stay'} on this device. `:photos.status==='needs_setup'?'Drive needs setup; photos remain on this device. ':'Photos remain on this device; upload needs attention. ';
       const staffing=!crewText&&saved.result.warnings.some(x=>['unassigned','crew_size_short','missing_crew_lead'].includes(x.code))?'Assign the required crew in Dispatch before work. ':'';
       const arrival=saved.arrivalNotice?saved.arrivalNotice+' ':'';
       const checkout=saved.result.warnings.filter(x=>x?.code==='checkout_needs_review').map(x=>String(x.message||'')+' ').join('');
       status.textContent=portalText+scheduleText+crewText+pricingText+photoText+staffing+arrival+checkout+(recoverOriginal?'The original signed version was recovered; review any later form edits separately.':'');
-      button.disabled=false;button.textContent=photos.status==='synced'&&['synced','manager_required'].includes(synced.handoffSync?.status)?'Saved — verify again':'Retry remaining synchronization';
+      button.disabled=false;button.textContent=['synced','limit','work_started'].includes(photos.status)&&['synced','manager_required','server_pending'].includes(synced.handoffSync?.status)?'Saved — verify again':'Retry remaining synchronization';
       // Keep the same immutable request for photo/CRM retries. A signed revision
       // is a separate explicit action only after the original save is confirmed.
       const revise=document.createElement('button');revise.type='button';revise.textContent='Start a signed revision';
@@ -260,13 +296,28 @@
       tx.onabort=()=>reject(tx.error || new Error('Photo is no longer on this device.'));
     });
   }
+  // The job keeps at most 40 walkthrough reference photos (FIELD_WALKTHROUGH_PHOTO_LIMIT: the crew's own photos keep
+  // their room), and the estimator who signed adds them only before field work starts (FIELD_REFERENCE_PHOTO_WORK_STARTED).
+  // Either ends the upload as a final result ('limit', 'work_started'): the rest stay on this device and the page says so,
+  // instead of asking for a retry that cannot succeed.
+  const PHOTO_ENDS={FIELD_WALKTHROUGH_PHOTO_LIMIT:'limit',FIELD_REFERENCE_PHOTO_WORK_STARTED:'work_started'};
   async function photos() {
-    const originals=await photoList(),user=await actor();
+    const originals=await photoList(),user=await actor(),done=new Set();
+    try{return await uploadPhotos(originals,user,id=>done.add(id));}
+    catch(error){
+      if(!PHOTO_ENDS[error.code])throw error;
+      // kept: this device's photos not on the job (verified in this run or an earlier one); none left is a finished upload.
+      const kept=originals.filter(photo=>!photo.uploaded&&!done.has(photo.id)).length;
+      return kept?{status:PHOTO_ENDS[error.code],verified:originals.length-kept,kept,message:error.message}:{status:'synced',verified:originals.length};
+    }
+  }
+  async function uploadPhotos(originals,user,counted) {
     if(!user||!S.handoffJobId||S.handoffJobId!==S.jobId)throw new Error('Save the canonical job before uploading its reference photos.');
-    const get=async()=>{const r=await EGCHubAuth.fetch('/api/field-jobs?jobId='+encodeURIComponent(S.jobId),{cache:'no-store'}),j=await r.json();if(!r.ok||!j.ok)throw new Error(j.error || 'The job photo record could not be read.');return j;};
+    const refused=(data,fallback)=>Object.assign(new Error(data.error || fallback),{code:data.code});
+    const get=async()=>{const r=await EGCHubAuth.fetch('/api/field-jobs?jobId='+encodeURIComponent(S.jobId),{cache:'no-store'}),j=await r.json();if(!r.ok||!j.ok)throw refused(j,'The job photo record could not be read.');return j;};
     let current=await get(); if(!current.photosAvailable)return{status:'needs_setup'};
     for(let photo of originals) {
-      if(photo.fieldPhotoRequestId&&current.job.photos.some(p=>p.id===photo.fieldPhotoRequestId&&p.category==='walkthrough')){await photoState(photo.id,{uploaded:true,uploadedToJobId:S.jobId});continue;}
+      if(photo.fieldPhotoRequestId&&current.job.photos.some(p=>p.id===photo.fieldPhotoRequestId&&p.category==='walkthrough')){await photoState(photo.id,{uploaded:true,uploadedToJobId:S.jobId});counted(photo.id);continue;}
       if(photo.uploadedToJobId&&photo.uploadedToJobId!==S.jobId)throw new Error('This photo belongs to a different saved job. Review the photo queue.');
       if(!photo.fieldPhotoRequestId)photo=await photoState(photo.id,{fieldPhotoRequestId:crypto.randomUUID(),fieldPhotoRevision:current.job.expectedRevision,fieldPhotoActor:user,uploadedToJobId:S.jobId,uploaded:false});
       if(photo.fieldPhotoActor!==user)throw new Error('Reopen the original employee account to recover its photo upload.');
@@ -274,14 +325,14 @@
       let r=await EGCHubAuth.fetch('/api/field-jobs',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)}),data=await r.json().catch(()=>({}));
       if(r.status===409&&data.code==='FIELD_REVISION_CONFLICT') {
         current=await get();
-        if(current.job.photos.some(p=>p.id===body.requestId&&p.category==='walkthrough')){await photoState(photo.id,{uploaded:true});continue;}
+        if(current.job.photos.some(p=>p.id===body.requestId&&p.category==='walkthrough')){await photoState(photo.id,{uploaded:true});counted(photo.id);continue;}
         // Retain the same upload identity. If an earlier request did commit,
         // its fingerprint guard prevents a second file or overwritten evidence.
         photo=await photoState(photo.id,{fieldPhotoRevision:current.job.expectedRevision});body.expectedRevision=photo.fieldPhotoRevision;
         r=await EGCHubAuth.fetch('/api/field-jobs',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});data=await r.json().catch(()=>({}));
       }
-      if(!r.ok||!data.ok||!data.job?.photos.some(p=>p.id===body.requestId&&p.category==='walkthrough'))throw new Error(data.error || 'The photo upload has not been verified. Keep it on this device and retry.');
-      current=data;await photoState(photo.id,{uploaded:true,uploadedToJobId:S.jobId});
+      if(!r.ok||!data.ok||!data.job?.photos.some(p=>p.id===body.requestId&&p.category==='walkthrough'))throw refused(data,'The photo upload has not been verified. Keep it on this device and retry.');
+      current=data;await photoState(photo.id,{uploaded:true,uploadedToJobId:S.jobId});counted(photo.id);
     }
     return{status:originals.length?'synced':'none',verified:originals.length};
   }

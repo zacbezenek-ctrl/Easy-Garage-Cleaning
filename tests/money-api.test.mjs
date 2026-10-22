@@ -202,3 +202,24 @@ test('integration-status surfaces the money API flag to signed-in Hub users only
   const anonymous = await onRequestGet({ request: new Request('https://easygaragecleaning.com/api/integration-status'), env: { ...env, MONEY_API_ENABLED: 'true' } });
   assert.equal(anonymous.status, 401); assert.equal((await anonymous.json()).flags, undefined);
 });
+
+// PORTAL-LINKS (B): a recorded approval asks for the accepted-quote portal invitation; the server sends it after the
+// response (waitUntil) under its own rules, rather than waiting for the page's HighLevel call. No other action asks.
+test('a recorded approval hands the pending portal invitation to the server after the response; other actions do not', async () => {
+  const f = fixture(), invited = [], waits = [];
+  const api = moneyHandlers({ session: async () => owner, storage: () => f.store, now: () => new Date(NOW), invite: async (env, jobId) => { invited.push(jobId); } });
+  const send = async body => json(await api.post({ request: post(body), env: ENABLED, waitUntil: promise => waits.push(promise) }));
+  const saved = await send(save(f));
+  assert.equal(saved.status, 200, JSON.stringify(saved.body));
+  await Promise.all(waits);
+  assert.deepEqual(invited, [], 'saving an estimate asks for nothing');
+  const approved = await send({ action: 'estimate.record_approval', requestId: randomUUID(), jobId: 'job-abc123', expectedRevision: f.job().revision, approvedBy: 'Synthetic Customer' });
+  assert.equal(approved.status, 200, JSON.stringify(approved.body));
+  await Promise.all(waits);
+  assert.deepEqual(invited, ['job-abc123']);
+  assert.equal(typeof f.job().customerPortalInvitationRequestedAt, 'string', 'the approval requested it, as before');
+  // Without waitUntil (an older runtime) nothing runs in the background; the page's lifecycle call still sends it.
+  const plain = await json(await api.post({ request: post({ action: 'estimate.mark_sent', requestId: randomUUID(), jobId: 'job-abc123', expectedRevision: f.job().revision, channel: 'email' }), env: ENABLED }));
+  assert.notEqual(plain.status, 500);
+  assert.deepEqual(invited, ['job-abc123']);
+});

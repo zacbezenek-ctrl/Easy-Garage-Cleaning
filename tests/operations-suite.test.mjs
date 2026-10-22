@@ -439,7 +439,9 @@ test('walkthrough access stays limited to Zac Tyler and Alex while employees get
   assert.match(crewHome,/\(walkthroughs\|\|job\.type!==\'walkthrough\'\)/);
   assert.match(crewHome,/document\.getElementById\('walkthrough-tool'\)\.hidden=!EGCHubAuth\.canRunWalkthrough\(profile\.user\)/);
   assert.match(crewHome,/Pre-job → closeout/);
-  for(const marker of ["view === 'walkthroughs' && !hasBusinessAccess(session)","payload.tool === 'game_plan' && !hasBusinessAccess(session)",'BUSINESS_ACCESS_REQUIRED'])assert.match(highlevel,new RegExp(marker.replace(/[.*+?^${}()|[\]\\]/g,'\\$&')));
+  // PORTAL-LINKS (B): a page request needs business access; only the server's own first sync of a signed handoff
+  // (syncSavedHandoff, trusted) runs it for the quote author who signed it.
+  for(const marker of ["view === 'walkthroughs' && !hasBusinessAccess(session)","const business = trusted || hasBusinessAccess(session)","payload.tool === 'game_plan' && !business",'BUSINESS_ACCESS_REQUIRED'])assert.match(highlevel,new RegExp(marker.replace(/[.*+?^${}()|[\]\\]/g,'\\$&')));
 });
 
 test('walkthrough APIs reject a signed-in regular employee',async()=>{

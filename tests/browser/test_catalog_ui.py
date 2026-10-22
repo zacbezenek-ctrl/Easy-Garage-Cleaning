@@ -229,8 +229,8 @@ class CatalogScreenTests(unittest.TestCase):
         launch.click()
         expect(self.page.get_by_role('dialog', name='Build a catalog quote')).to_be_visible()
         self.assertEqual(set(self.page.locator('[data-egc-catalog-quote-asset]').evaluate_all('nodes => nodes.map(node => node.getAttribute("data-egc-catalog-quote-asset"))')),
-                         {'/employee-catalog-quote.css?v=20261021sale4', '/crew/quote-draft.css?v=20261021sale4',
-                          '/crew/quote-draft.js?v=20261021sale4', '/employee-catalog-quote.js?v=20261021sale4'})
+                         {'/employee-catalog-quote.css?v=20261021portalsale', '/crew/quote-draft.css?v=20261021portalsale',
+                          '/crew/quote-draft.js?v=20261021portalsale', '/employee-catalog-quote.js?v=20261021portalsale'})
         self.page.get_by_role('button', name='Close catalog quote').click()
 
     def test_pricing_actions_only_stick_after_edits_and_quote_needs_approved_settings(self):

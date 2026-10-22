@@ -65,9 +65,66 @@ function config(env) {
   };
 }
 
-async function mayChangeJob(session, job, access) {
-  if (hasBusinessAccess(session)) return true;
+// PORTAL-LINKS (B): the server's own first sync of a signed handoff (syncSavedHandoff) is trusted like a business user:
+// the quote author's save of this exact handoff, and their page's request for its sync, are its authority.
+async function mayChangeJob(business, job, access) {
+  if (business) return true;
   return access.assigned(job);
+}
+
+/* PORTAL-LINKS (B): one sync of a signed handoff at a time. Whoever starts one (the server's first sync a quote
+   author's page asks for, the walkthrough iPad of a business user, a manager's Hub retry) claims it on the job (handoffSyncClaim {by, id, at,
+   requestId}, a compare-and-set on the job's revision) and releases it when done; a claim older than
+   HANDOFF_SYNC_CLAIM_MINUTES is abandoned and may be taken over. A sync that finds the handoff already synced for its
+   request and its current appointment request (handoffSyncedRequestId, handoffSyncedKey: a Dispatch move since then
+   still syncs the moved appointment) replays the saved outcome instead of writing to HighLevel again, so whichever runs
+   second sees it synced and no note, appointment, opportunity or tag is written twice. A page request that finds
+   another sync running waits for it (HANDOFF_SYNC_WAIT), then replays it; the server's own sync never waits. */
+export const HANDOFF_SYNC_CLAIM_MINUTES = 10;
+export const HANDOFF_SYNC_WAIT = { attempts: 10, ms: 1500 };
+const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
+const handoffSynced = (job, requestId) => job?.handoffRequestId === requestId && job.handoffSyncStatus === 'synced' && job.handoffSyncedRequestId === requestId &&
+  typeof job.syncIdempotencyKey === 'string' && job.handoffSyncedKey === job.syncIdempotencyKey;
+function claimHeld(job, at = Date.now()) {
+  const claim = job?.handoffSyncClaim, started = Date.parse(claim?.at || '');
+  return Boolean(claim && typeof claim.id === 'string' && claim.id) && Number.isFinite(started) && at - started < HANDOFF_SYNC_CLAIM_MINUTES * 60000;
+}
+// {synced: job} | {held: job} | {claim: {id}} | {error}
+async function claimHandoffSync(env, jobId, requestId, by, { wait = false } = {}) {
+  for (let round = 0; round <= (wait ? HANDOFF_SYNC_WAIT.attempts : 1); round += 1) {
+    let job;
+    try { job = await readJob(env, jobId); } catch { return { error: 'storage_unavailable' }; }
+    if (!job || job.handoffRequestId !== requestId) return { error: 'changed' };
+    if (handoffSynced(job, requestId)) return { synced: job };
+    if (claimHeld(job)) {
+      if (!wait || round === HANDOFF_SYNC_WAIT.attempts) return { held: job };
+      await sleep(HANDOFF_SYNC_WAIT.ms);
+      continue;
+    }
+    const claim = { by, id: crypto.randomUUID(), at: new Date().toISOString(), requestId };
+    try { await patchJob(env, jobId, { handoffSyncClaim: claim }, job.__updateTime); return { claim }; }
+    catch { /* Another writer changed the job first: read it again. */ }
+  }
+  return { error: 'busy' };
+}
+// The invitation a replayed sync reports: the one asked for before the wait, unless it was only in flight (another sync
+// was sending it: 'busy', 'sending'), then the settled display copy the finished sync left on the job.
+export function settledInvitation(job, asked) {
+  const copy = job?.customerPortalInvitation;
+  if (!['busy', 'sending'].includes(asked?.status) || !copy || typeof copy !== 'object' || copy.jobId !== job.id) return asked;
+  return Object.fromEntries(['status', 'reason', 'channel', 'notBefore', 'recipient', 'completedAt'].filter(key => typeof copy[key] === 'string' && copy[key]).map(key => [key, copy[key]]));
+}
+// Best effort: an unreleased claim lapses after HANDOFF_SYNC_CLAIM_MINUTES.
+async function releaseHandoffSync(env, jobId, claim) {
+  if (!claim) return;
+  for (let round = 0; round < 3; round += 1) {
+    try {
+      const job = await readJob(env, jobId);
+      if (job?.handoffSyncClaim?.id !== claim.id) return;
+      await patchJob(env, jobId, { handoffSyncClaim: null }, job.__updateTime);
+      return;
+    } catch { /* retry */ }
+  }
 }
 
 // GHL-TRACK-1: once the sync has written the appointment and linked the contact, the outbox entry that owns the
@@ -582,7 +639,6 @@ export async function onRequestPost({ request, env, waitUntil }) {
   const session = await getHubSession(request, env);
   if (!session) return reply(401, { ok: false, code: 'HUB_AUTH_REQUIRED', error: 'Sign in to the EGC Hub' });
   if (!hasBusinessAccess(session)) return reply(403, { ok: false, code: 'BUSINESS_ACCESS_REQUIRED', error: 'Business access is required for CRM records and handoffs. Open the assigned field job for crew actions.' });
-  const assignments = createJobAssignmentAccess(env, session);
   const c = config(env);
   if (!c.token || !c.locationId) return reply(501, { ok: false, code: 'HIGHLEVEL_NOT_CONFIGURED', error: 'HighLevel needs an API key and location ID' });
   const raw = await request.text();
@@ -590,13 +646,69 @@ export async function onRequestPost({ request, env, waitUntil }) {
   let payload;
   try { payload = JSON.parse(raw); } catch { return reply(400, { ok: false, error: 'Invalid JSON' }); }
   payload.idempotency_key ||= request.headers.get('Idempotency-Key') || '';
+  return highLevelPost(env, session, payload, waitUntil);
+}
+
+/** PORTAL-LINKS (B): the server's first HighLevel sync of a signed walkthrough handoff, run when the quote author's
+ * walkthrough page asks for it right after the save and its photo uploads (functions/api/walkthrough-handoff.js action
+ * 'sync', a request of its own), a Sales estimator with no business access included: exactly what POST tool=game_plan does for a manager's page (the contact, the pinned
+ * internal brief note, the job appointment when a calendar is configured, the existing tags and stage, and the
+ * accepted-quote portal invitation under its own rules), from the saved snapshot. It shares the page's claim
+ * (claimHandoffSync): a manager's Hub retry or the iPad's own sync racing it waits for it and replays its outcome.
+ * Then the job records the page's sync result (syncStatus 'synced', or 'error' with the page's backoff), so the Hub's
+ * page-load retry is the fallback, not the first attempt.
+ * => {status:'synced'|'error'|'skipped', reason?, code?, portalInvitation?} */
+export async function syncSavedHandoff(env, actor, { jobId, handoffRequestId, waitUntil = null, now = () => new Date() } = {}) {
+  const c = config(env);
+  if (!c.token || !c.locationId) return { status: 'skipped', reason: 'highlevel_not_configured' };
+  if (!operationsEnabled(env)) return { status: 'skipped', reason: 'operations_bridge_off' };
+  if (!actor?.user || typeof jobId !== 'string' || !jobId || typeof handoffRequestId !== 'string' || !handoffRequestId) return { status: 'skipped', reason: 'invalid_request' };
+  let job;
+  try { job = await readJob(env, jobId); } catch { return { status: 'skipped', reason: 'storage_unavailable' }; }
+  // Only a signed handoff's own first sync: Dispatch has not moved it since (that is tool=schedule's), and the page
+  // has not synced it already.
+  const key = `walkthrough-handoff:${handoffRequestId}`;
+  if (!job || job.handoffVersion !== 1 || job.handoffRequestId !== handoffRequestId || job.syncIdempotencyKey !== key) return { status: 'skipped', reason: 'not_this_handoff' };
+  if (job.syncStatus === 'synced' || handoffSynced(job, handoffRequestId)) return { status: 'skipped', reason: 'already_synced' };
+  const response = await highLevelPost(env, actor, { tool: 'game_plan', job_id: jobId, handoff_request_id: handoffRequestId, idempotency_key: key }, waitUntil, { trusted: true });
+  const result = await response.json().catch(() => ({}));
+  // Another sync of this handoff holds the claim (a manager's page, the iPad): it records its own result.
+  if (['HANDOFF_SYNC_IN_PROGRESS', 'HANDOFF_SYNC_CHANGED'].includes(result.code)) return { status: 'skipped', reason: result.code === 'HANDOFF_SYNC_CHANGED' ? 'not_this_handoff' : 'sync_in_progress', portalInvitation: result.portalInvitation };
+  const attemptedAt = now().toISOString();
+  // The page's result record (employee-suite.js syncJobRecord), written only while the job still waits on this very
+  // handoff sync and no page attempt is running.
+  for (let round = 0; round < 3; round += 1) {
+    let current;
+    try { current = await readJob(env, jobId); } catch { break; }
+    if (!current?.__updateTime || current.handoffRequestId !== handoffRequestId || current.syncIdempotencyKey !== key || current.syncStatus === 'synced' || current.syncStatus === 'syncing') break;
+    let patch;
+    if (response.ok && result.ok !== false) {
+      patch = { syncStatus: 'synced', syncError: '', syncNextRetryAt: '', highlevelContactId: result.contactId || current.highlevelContactId || '', highlevelAppointmentId: result.appointmentId || current.highlevelAppointmentId || '',
+        highlevelOpportunityId: result.pipeline?.opportunityId || current.highlevelOpportunityId || '', pipelineSync: result.pipeline || {},
+        ...(result.calendarMirror?.status === 'skipped' ? { calendarMirror: { status: 'skipped', reason: String(result.calendarMirror.reason || '').slice(0, 40), at: attemptedAt } } : current.calendarMirror ? { calendarMirror: null } : {}),
+        automationTagSynced: result.automation?.tagSynced !== false, automationReminderTag: result.automation?.tagOwner === 'outbox' ? 'outbox' : typeof result.automation?.reminderTrigger === 'string' ? result.automation.reminderTrigger : '',
+        handoffServerSync: { status: 'synced', at: attemptedAt, by: actor.user }, updatedAt: attemptedAt };
+    } else {
+      const attempts = Number(current.syncAttempts || 0) + 1, delay = Math.min(24 * 60, Math.pow(2, Math.min(attempts, 8)) * 5);
+      patch = { syncStatus: 'error', syncError: String(result.code || result.error || 'HighLevel sync failed').slice(0, 160), syncNextRetryAt: new Date(Date.parse(attemptedAt) + delay * 60000).toISOString(), syncAttempts: attempts, syncLastAttemptAt: attemptedAt,
+        handoffServerSync: { status: 'error', at: attemptedAt, by: actor.user, code: String(result.code || 'highlevel_sync_failed').slice(0, 80) }, updatedAt: attemptedAt };
+    }
+    try { await patchJob(env, jobId, patch, current.__updateTime); break; } catch { /* the job changed meanwhile: read it again */ }
+  }
+  return response.ok && result.ok !== false ? { status: 'synced', portalInvitation: result.portalInvitation } : { status: 'error', code: String(result.code || 'highlevel_sync_failed'), portalInvitation: result.portalInvitation };
+}
+
+async function highLevelPost(env, session, payload, waitUntil, { trusted = false } = {}) {
+  const business = trusted || hasBusinessAccess(session);
+  const assignments = createJobAssignmentAccess(env, session);
+  const c = config(env);
   if (!['game_plan','post_job','schedule','lifecycle','sales_exit'].includes(payload.tool)) return reply(400, { ok: false, error: 'Unsupported HighLevel handoff' });
   if (payload.tool === 'lifecycle') {
     payload.event = String(payload.event || '').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '');
     if (['garage-sales-exit', 'junk-sales-exit'].includes(payload.event)) return reply(400, { ok: false, error: 'Sales exits require a verified saved job' });
   }
   if (payload.tool === 'sales_exit') {
-    if (!hasBusinessAccess(session)) return reply(403, { ok: false, error: 'Business access required' });
+    if (!business) return reply(403, { ok: false, error: 'Business access required' });
     return reply(200, { ok: true, salesFollowupExit: await syncSalesFollowupExit(env, payload.job_id) });
   }
   // New signed walkthroughs are synchronized from their persisted snapshot.
@@ -606,7 +718,7 @@ export async function onRequestPost({ request, env, waitUntil }) {
     try {
       const saved = handoffRequestId ? await readJob(env, payload.job_id) : await readJob(env, payload.job_id).catch(()=>null);
       if (handoffRequestId || saved?.handoffVersion === 1) {
-        requireDispatcher(session, env);
+        if (!trusted) requireDispatcher(session, env);
         if (!operationsEnabled(env)) return reply(503,{ok:false,code:'HANDOFF_NATIVE_SYNC_REQUIRED',error:'The signed job is saved. The native operations bridge must be available before CRM synchronization.'});
         if (!saved || saved.id !== payload.job_id) return reply(409,{ok:false,error:'The saved handoff job could not be verified.'});
         payload = savedHandoffPayload(saved, handoffRequestId);
@@ -614,33 +726,50 @@ export async function onRequestPost({ request, env, waitUntil }) {
     } catch (error) { return reply(error.status || 503,{ok:false,code:error.code || 'HANDOFF_SNAPSHOT_UNAVAILABLE',error:'The signed handoff could not be verified. Open the saved Hub job before synchronizing.'}); }
   }
   const inviteRequested = payload.tool === 'game_plan' || (payload.tool === 'lifecycle' && payload.event === 'estimate-approved');
-  if (inviteRequested && !hasBusinessAccess(session)) return reply(403, { ok: false, code: 'BUSINESS_ACCESS_REQUIRED', error: 'Business access required for quote approvals' });
-  if (payload.job_id && !hasBusinessAccess(session)) {
+  if (inviteRequested && !business) return reply(403, { ok: false, code: 'BUSINESS_ACCESS_REQUIRED', error: 'Business access required for quote approvals' });
+  if (payload.job_id && !business) {
     const savedJob = await readJob(env, payload.job_id).catch(() => null);
-    if (!await mayChangeJob(session, savedJob, assignments)) return reply(403, { ok: false, error: 'This job is not assigned to you' });
+    if (!await mayChangeJob(business, savedJob, assignments)) return reply(403, { ok: false, error: 'This job is not assigned to you' });
   }
-  if (payload.tool === 'game_plan' && !hasBusinessAccess(session)) return reply(403, { ok: false, code: 'BUSINESS_ACCESS_REQUIRED', error: 'Walkthrough access is limited to Zac, Tyler, and Alex' });
-  if (payload.tool === 'schedule' && !hasBusinessAccess(session)) return reply(403, { ok: false, code: 'BUSINESS_ACCESS_REQUIRED', error: 'Schedule changes are limited to managers' });
+  if (payload.tool === 'game_plan' && !business) return reply(403, { ok: false, code: 'BUSINESS_ACCESS_REQUIRED', error: 'Walkthrough access is limited to Zac, Tyler, and Alex' });
+  if (payload.tool === 'schedule' && !business) return reply(403, { ok: false, code: 'BUSINESS_ACCESS_REQUIRED', error: 'Schedule changes are limited to managers' });
   c.operationsEnv=env;c.operationsSession=session;
   if(operationsEnabled(env)&&['schedule','game_plan'].includes(payload.tool)&&!payload.job_id)return reply(409,{ok:false,code:'SCHEDULE_STABLE_IDENTITY_REQUIRED',error:'Save the exact Hub visit before synchronizing its provider appointment.'});
   // This runs independently of notes/calendar writes, and validates approval and
   // recipient from storage. Repeating the handoff cannot send another invitation.
-  const portalInvitation = inviteRequested ? await sendAcceptedQuotePortal(env, payload.job_id, { requireRequested: true }) : undefined;
+  // An automatic send: outside 08:00-20:00 Denver time or while automatic messages
+  // are paused it is recorded as deferred, and a Hub retry or the scheduler sends it.
+  const portalInvitation = inviteRequested ? await sendAcceptedQuotePortal(env, payload.job_id, { requireRequested: true, automatic: true }) : undefined;
   const client = payload.client || payload.job || {};
   const exitForJob = async () => {
-    if (!hasBusinessAccess(session)) {
+    if (!business) {
       const current = payload.job_id ? await readJob(env, payload.job_id).catch(() => null) : null;
-      if (!await mayChangeJob(session, current, assignments)) return { status: 'not_authorized' };
+      if (!await mayChangeJob(business, current, assignments)) return { status: 'not_authorized' };
     }
     return syncSalesFollowupExit(env, payload.job_id);
   };
+  // PORTAL-LINKS (B): one sync of a signed handoff at a time (claimHandoffSync); a handoff already synced for this
+  // request replays its saved outcome.
+  let handoffClaim = null;
+  if (handoffRequestId) {
+    const gate = await claimHandoffSync(env, payload.job_id, handoffRequestId, trusted ? 'server' : 'page', { wait: !trusted });
+    const done = gate.synced || (gate.held && handoffSynced(gate.held, handoffRequestId) ? gate.held : null);
+    if (done) return reply(200, { ok: true, replayed: true, contactId: done.highlevelContactId || '', appointmentId: done.highlevelAppointmentId || '', noteId: done.handoffNoteId || '', pipeline: done.pipelineSync || {},
+      ...(done.calendarMirror?.status === 'skipped' ? { calendarMirror: done.calendarMirror } : {}), handoffSync: { status: 'synced', noteId: done.handoffNoteId || '', pipeline: done.pipelineSync || {} },
+      portalInvitation: settledInvitation(done, portalInvitation), automation: { replayed: true, tagSynced: done.automationTagSynced !== false }, salesFollowupExit: await exitForJob() });
+    // A claim is released when its sync ends; one whose request was cut short (a closed connection, the platform's
+    // subrequest or time limit) lapses after HANDOFF_SYNC_CLAIM_MINUTES.
+    if (gate.held) return reply(409, { ok: false, code: 'HANDOFF_SYNC_IN_PROGRESS', error: `This signed job is already being synchronized with HighLevel. The Hub retries it on its own; an interrupted sync clears within ${HANDOFF_SYNC_CLAIM_MINUTES} minutes. Nothing is written twice.`, portalInvitation });
+    if (gate.error) return reply(gate.error === 'changed' ? 409 : 503, { ok: false, code: gate.error === 'changed' ? 'HANDOFF_SYNC_CHANGED' : 'HANDOFF_STORAGE_READBACK_PENDING', error: gate.error === 'changed' ? 'The signed handoff changed. Review the current saved job before synchronizing it.' : 'The Hub job is saved. CRM results need exact storage read-back before retrying.', portalInvitation });
+    handoffClaim = gate.claim;
+  }
   const finish = async (contactId, result) => {
     let handoffSync = handoffRequestId ? {status:'pending',reason:'storage_readback_required'} : undefined;
     // Preserve durable links before evaluating the saved job. Never trust an
     // incoming contact ID as authority to stop that person's sales workflows.
     try {
       const job = payload.job_id ? await readJob(env, payload.job_id) : null;
-      if (job?.__updateTime && await mayChangeJob(session, job, assignments) && (!job.highlevelContactId || job.highlevelContactId === contactId)) {
+      if (job?.__updateTime && await mayChangeJob(business, job, assignments) && (!job.highlevelContactId || job.highlevelContactId === contactId)) {
         const contact = await contactById(c, contactId);
         const digits = value => String(value || '').replace(/\D/g, '').replace(/^1(?=\d{10}$)/, '');
         const samePhone = digits(job.phone) && digits(job.phone) === digits(contact.phone);
@@ -652,7 +781,7 @@ export async function onRequestPost({ request, env, waitUntil }) {
           if (handoffRequestId) {
             savedHandoffPayload(job,handoffRequestId);
             const verified=operationsEnabled(env)&&(result.providerSync==='verified'||result.calendarMirror?.status==='skipped')&&Boolean(result.noteId);
-            Object.assign(patch,{handoffSyncStatus:verified?'synced':'pending',handoffSyncError:verified?'':'provider_evidence_incomplete',handoffLastSyncAt:new Date().toISOString(),handoffNoteId:result.noteId || '',pipelineSync:result.pipeline || {}});
+            Object.assign(patch,{handoffSyncStatus:verified?'synced':'pending',handoffSyncError:verified?'':'provider_evidence_incomplete',handoffLastSyncAt:new Date().toISOString(),handoffNoteId:result.noteId || '',pipelineSync:result.pipeline || {},...(verified?{handoffSyncedRequestId:handoffRequestId,handoffSyncedKey:payload.idempotency_key||''}:{}),...(handoffClaim?{handoffSyncClaim:null}:{})});
           }
           await patchJob(env, payload.job_id, patch, job.__updateTime);
           if (handoffRequestId) {
@@ -663,6 +792,7 @@ export async function onRequestPost({ request, env, waitUntil }) {
         }
       }
     } catch { /* Missing/ambiguous storage is handled by the verification below. */ }
+    await releaseHandoffSync(env, payload.job_id, handoffClaim);
     if(handoffRequestId&&handoffSync.reason==='storage_readback_required')return reply(503,{ok:false,code:'HANDOFF_STORAGE_READBACK_PENDING',error:'The Hub job is saved. CRM results need exact storage read-back before retrying.',portalInvitation,handoffSync});
     return reply(200, { ...result, ...(handoffSync?{handoffSync}:{}), salesFollowupExit: await exitForJob() });
   };
@@ -794,7 +924,8 @@ export async function onRequestPost({ request, env, waitUntil }) {
     }
     return reply(200, { ok: true, contactId, noteId: note.note && note.note.id || '', taskId, automation: { trigger: 'egc-walkthrough-complete' } });
   } catch (error) {
-    if(handoffRequestId)try{const current=await readJob(env,payload.job_id);if(current?.__updateTime&&current.handoffRequestId===handoffRequestId)await patchJob(env,payload.job_id,{handoffSyncStatus:'pending',handoffSyncError:'provider_handoff_unconfirmed',handoffLastAttemptAt:new Date().toISOString()},current.__updateTime);}catch{/* The signed job and original request remain recoverable. */}
-    return reply(502, { ok: false, error: 'HighLevel rejected the field handoff', detail: error.code||error.detail || error.message,...(error.operationId?{operationId:error.operationId}:{}), portalInvitation, salesFollowupExit: await exitForJob() });
+    if(handoffRequestId)try{const current=await readJob(env,payload.job_id);if(current?.__updateTime&&current.handoffRequestId===handoffRequestId)await patchJob(env,payload.job_id,{handoffSyncStatus:'pending',handoffSyncError:'provider_handoff_unconfirmed',handoffLastAttemptAt:new Date().toISOString(),...(handoffClaim&&current.handoffSyncClaim?.id===handoffClaim.id?{handoffSyncClaim:null}:{})},current.__updateTime);}catch{/* The signed job and original request remain recoverable. */}
+    await releaseHandoffSync(env, payload.job_id, handoffClaim);
+    return reply(502, { ok: false, code: 'HIGHLEVEL_HANDOFF_REJECTED', error: 'HighLevel rejected the field handoff', detail: error.code||error.detail || error.message,...(error.operationId?{operationId:error.operationId}:{}), portalInvitation, salesFollowupExit: await exitForJob() });
   }
 }

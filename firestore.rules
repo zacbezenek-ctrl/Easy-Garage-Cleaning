@@ -395,6 +395,10 @@ service cloud.firestore {
     match /portal_invitations/{documentId} {
       allow read, write: if false;
     }
+    // PORTAL-LINKS: the quote-ready and job-done portal link claims ({kind}~{jobId}), server-only like the invitations.
+    match /portal_link_sends/{documentId} {
+      allow read, write: if false;
+    }
 
     // Customer portal link revocation receipts (idempotency, audit) are written
     // only by the server with the service account.

@@ -25,3 +25,6 @@
 .qb-labor-fields{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:8px}.qb-labor-field{display:grid;gap:4px;font-size:14px;font-weight:700}.qb-labor-field .qd-input{margin:0}
 .qb-labor-result{margin:8px 0 0;font-weight:700}
 @media(max-width:560px){.qb-option{grid-template-columns:auto minmax(0,1fr)}.qb-option .qb-price{grid-column:2;justify-content:flex-start}.qb-row{grid-template-columns:minmax(0,1fr) auto}.qb-row .qb-price{grid-column:1;justify-content:flex-start}.qb-row .qb-qty{grid-column:2;grid-row:1/span 2}.qb-product{grid-template-columns:48px minmax(0,1fr)}.qb-product img,.qb-thumb{width:48px;height:48px}.qb-product>.qb-qty,.qb-product>.qb-add{grid-column:2}.qb-filters{grid-template-columns:1fr}}
+/* PORTAL-LINKS: the quote-ready portal link outcome and the estimator's Copy portal link (crew/quote-draft.js). */
+.qd-portal-link{font-weight:600}
+.qd-copy{display:grid;gap:6px;justify-items:start;margin:10px 0 0;min-width:0}.qd-copy p{margin:0}.qd-copy button{min-height:44px;padding:10px 16px;border-radius:8px;font:inherit;font-weight:700;max-width:100%}

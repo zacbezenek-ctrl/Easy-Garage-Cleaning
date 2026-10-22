@@ -41,7 +41,7 @@ export const SCHEDULER_JOB_FIELDS = Object.freeze([
   'type','recordType','date','time','status','pipelineStatus','notify','customerAutomationEnabled','phone','email','businessAccountId',
   'estimate','invoice','payment','deposit','total','priceQuoted','lockedTotal','rate','customerApproval.amount','customerDecisions','approvedChangeTotal','changeOrders',
   'giftWallet.redemptions','refunds','completedAt','postJobChecklist.completedAt','postJobProgress.standardItems',
-  'customerPortalInvitationRequestedAt','customerPortalInvitation','communicationLog','automationMilestones',
+  'customerPortalInvitationRequestedAt','customerPortalInvitation','communicationLog','automationMilestones','portalLinks',
 ]);
 // Cost model in Cloudflare subrequests, as in /api/messages: an item starts
 // only when a whole send fits and a claim only when its provider call and
@@ -65,7 +65,8 @@ const TERMINAL = new Set(['cancelled','canceled','completed','invoiced','paid','
 // A dispatch no-show (FUN-02) stops automatic estimate reminders like a cancel; staff collect any fee by hand.
 const UNPAYABLE_JOB = new Set(['cancelled','canceled','superseded','lost','noshow','no_show','no-show']);
 const CLOSED_ESTIMATE = new Set(['accepted','approved','draft','declined','rejected','superseded','void','expired','cancelled','canceled','lost']);
-const PORTAL_HELD = new Set(['submitted','sending','uncertain','suppressed','contact_mismatch']);
+// PORTAL-LINKS: 'covered' (a delivered quote-ready link still works) is final for every automatic retry.
+const PORTAL_HELD = new Set(['submitted','sending','uncertain','suppressed','contact_mismatch','covered']);
 const HELD = new Set(['submitted','uncertain','sending']);
 const SENT = new Set(['submitted','failed','uncertain','dry_run']);
 const NOT_READY = new Set(['messaging_template_not_approved','messaging_automation_disabled','messaging_disabled']);
@@ -172,14 +173,41 @@ export function dueMessages(jobs, { now, settings, kinds = new Set(SCHEDULED_KIN
   return { today, due: due.sort(order), skipped };
 }
 
-/** The legacy browser rule for retrying the automatic portal invitation. */
+/** The legacy browser rule for retrying the automatic portal invitation. A
+ * closed job (cancelled, no-show, finished) is never retried, and one held for
+ * quiet hours waits for its notBefore time. */
 export function portalRetries(jobs, { now }) {
   const nowMs = new Date(now).getTime();
   return (Array.isArray(jobs) ? jobs : []).filter(job => {
     if (!safeId(job?.id) || job.recordType || job.type !== 'job' || !job.customerPortalInvitationRequestedAt || !accepted(job.estimate?.status) || job.notify === false) return false;
+    if ([job.status, job.pipelineStatus].some(value => TERMINAL.has(String(value || '').toLowerCase()))) return false;
     const state = job.customerPortalInvitation?.jobId === job.id ? job.customerPortalInvitation : null;
+    if (state?.status === 'deferred' && state.notBefore) return nowMs >= (Date.parse(state.notBefore) || Infinity) && Number(state.attempts || 0) < PORTAL_MAX_ATTEMPTS;
     return !PORTAL_HELD.has(state?.status) && Number(state?.attempts || 0) < PORTAL_MAX_ATTEMPTS && nowMs - (Date.parse(state?.attemptedAt || '') || 0) > PORTAL_RETRY_AFTER_MS;
   }).map(job => ({ kind: 'portal_invitation', jobId: job.id, anchor: '', step: 0 })).sort(order);
+}
+
+/** PORTAL-LINKS: the owner-switched portal link texts (portal-invitation.js 'quote_ready', 'job_done') that waited for
+ * quiet hours or the messaging pause, or failed definitely, retry here like the invitation: a held one at its
+ * notBefore, a failed one ten minutes after its last attempt, at most five attempts. Only kinds with a display copy on
+ * the job (portalLinks.<kind>) are retried: a link never attempted (the switch was off) is never started here. The
+ * send path rechecks the owner's switch and whether the kind still applies. */
+const LINK_RETRY_KINDS = ['quote_ready', 'job_done'];
+const LINK_HELD = new Set([...PORTAL_HELD, 'not_eligible', 'off']);
+export function portalLinkRetries(jobs, { now }) {
+  const nowMs = new Date(now).getTime(), items = [];
+  for (const job of Array.isArray(jobs) ? jobs : []) {
+    if (!safeId(job?.id) || job.recordType || job.notify === false || businessAccountJob(job)) continue;
+    if ([job.status, job.pipelineStatus].some(value => UNPAYABLE_JOB.has(String(value || '').toLowerCase()))) continue;
+    for (const kind of LINK_RETRY_KINDS) {
+      const state = job.portalLinks?.[kind];
+      if (!state || typeof state !== 'object' || state.jobId !== job.id || Number(state.attempts || 0) >= PORTAL_MAX_ATTEMPTS) continue;
+      const due = state.status === 'deferred' && state.notBefore ? nowMs >= (Date.parse(state.notBefore) || Infinity)
+        : !LINK_HELD.has(state.status) && nowMs - Math.max(Date.parse(state.attemptedAt || '') || 0, Date.parse(state.deferredAt || '') || 0) > PORTAL_RETRY_AFTER_MS;
+      if (due) items.push({ kind: 'portal_invitation', jobId: job.id, anchor: kind, step: 0, link: kind });
+    }
+  }
+  return items.sort(order);
 }
 
 function order(left, right) {
@@ -305,7 +333,7 @@ export async function runDueMessages(deps, { now, dryRun = false, requestId } = 
     skipped.business_account_job = (skipped.business_account_job || 0) + 1;
     return true;
   };
-  const items = [...selected.due.filter(item => !business(item)), ...(portalInvite ? portalRetries(jobs, { now: at }) : []), ...crew].sort((left, right) => heldLast(left) - heldLast(right) || order(left, right));
+  const items = [...selected.due.filter(item => !business(item)), ...(portalInvite ? [...portalRetries(jobs, { now: at }), ...portalLinkRetries(jobs, { now: at })] : []), ...crew].sort((left, right) => heldLast(left) - heldLast(right) || order(left, right));
   Object.assign(summary, { scanned: jobs.length, due: items.length, held: items.filter(heldLast).length, skipped });
   const clock = denverClock(at), window = settings.dayBeforeWindow, outcomes = [];
   let calls = 0;
@@ -326,7 +354,7 @@ export async function runDueMessages(deps, { now, dryRun = false, requestId } = 
         else { const preview = await service.preview(CRON_ACTOR, input); outcome = { status: preview.status === 'ready' ? 'would_send' : safeCode(preview.status) || 'unknown', reason: safeCode(preview.reason) }; }
       } else if (!approved) {
         charge(PORTAL_COST);
-        const state = await portalInvite(item.jobId, at);
+        const state = item.link ? await portalInvite(item.jobId, at, settings, item.link) : await portalInvite(item.jobId, at, settings);
         outcome = { status: safeCode(state?.status) || 'unknown', reason: safeCode(state?.reason), sent: SENT.has(state?.status) };
       } else {
         const result = await service.send(CRON_ACTOR, { ...input, ...(requestId ? { requestId } : {}) });

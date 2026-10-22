@@ -43,6 +43,8 @@ class QuoteDraftBrowserTests(unittest.TestCase):
         self.page = self.context.new_page(); self.page.set_default_timeout(5000)
         self.page.clock.install(time=datetime.datetime(2026, 9, 22, 18, tzinfo=datetime.timezone.utc))
         self.posts = []; self.errors = []; self.mode = 'off'; self.abort_sends = 0; self.abort_saves = 0; self.refuse_send = None; self.revision = 0
+        # PORTAL-LINKS: what the send answers about the quote-ready portal link (None: an older server says nothing), and the copy answer.
+        self.portal_link = None; self.copies = []; self.copy_status = 200
         self.page.on('pageerror', lambda error: self.errors.append(str(error)))
         self.page.route('**/*', self.route)
     def tearDown(self):
@@ -58,6 +60,10 @@ class QuoteDraftBrowserTests(unittest.TestCase):
         if parsed.path == '/api/walkthrough-handoff':
             self.assertEqual(parse_qs(parsed.query), {'sourceWalkthroughId': ['walk-1']})
             send({'ok': True, 'viewer': {'id': 'sales.person'}, 'sourceRevision': 'w1r', 'customerId': 'customer-1', 'jobId': '', 'expectedRevision': '', 'roster': []}); return
+        if parsed.path == '/api/customer-portal-link':
+            self.copies.append(req.post_data_json)
+            if self.copy_status != 200: send({'ok': False, 'code': 'PORTAL_LINK_NOT_YOURS', 'error': 'Only the estimator who owns this quote, or the office, can copy this customer\u2019s portal link.'}, self.copy_status); return
+            send({'ok': True, 'url': 'https://easygaragecleaning.com/api/customer-portal-session?access=synthetic-access-token', 'customer': 'Synthetic Customer', 'expiresInDays': 30}); return
         if parsed.path != '/api/quote-draft': route.continue_(); return
         body = req.post_data_json; self.posts.append(copy.deepcopy(body))
         if body['action'] == 'save' and self.abort_saves: self.abort_saves -= 1; route.abort('connectionreset'); return
@@ -71,7 +77,7 @@ class QuoteDraftBrowserTests(unittest.TestCase):
             code, self.refuse_send = self.refuse_send, None
             send({'ok': False, 'code': code, 'error': 'This confirmation does not match the requested change. Review the action and confirm again.'}, 403); return
         self.revision += 1
-        send({'ok': True, 'requestId': body['requestId'], 'job': self.job('sent'), 'warnings': [], 'delivery': {'status': 'submitted' if self.mode == 'automation' else 'messaging_disabled'}})
+        send({'ok': True, 'requestId': body['requestId'], 'job': self.job('sent'), 'warnings': [], 'delivery': {'status': 'submitted' if self.mode == 'automation' else 'messaging_disabled'}, **({'portalLink': self.portal_link} if self.portal_link else {})})
     def open(self):
         self.page.goto(self.url + '/'); self.page.get_by_role('button', name='Send options for review').click()
         dialog = self.page.get_by_role('dialog', name='Send options for review'); expect(dialog).to_be_visible(); return dialog
@@ -168,6 +174,42 @@ class QuoteDraftBrowserTests(unittest.TestCase):
         self.assertEqual([post['action'] for post in self.posts], ['save', 'save', 'save', 'send_preview'])
         self.assertNotEqual(self.posts[2]['requestId'], self.posts[0]['requestId'])
         self.assertEqual(self.posts[2]['draft']['line_items'][0]['totalCents'], 55555)
+
+    def send_with_link(self, link):
+        self.portal_link = link; dialog = self.open()
+        dialog.get_by_role('button', name='Save draft').click(); dialog.get_by_role('button', name='Mark as sent').click()
+        expect(dialog.get_by_text('is marked sent')).to_be_visible(); return dialog
+    def test_the_send_screen_says_what_happened_to_the_portal_link(self):
+        cases = [({'kind': 'quote_ready', 'status': 'submitted', 'channel': 'SMS', 'recipient': '(•••) •••-0100', 'completedAt': '2026-09-22T18:00:00.000Z'}, 'Portal link texted to (•••) •••-0100.', 'texted'),
+                 ({'kind': 'quote_ready', 'status': 'submitted', 'channel': 'Email', 'recipient': 't•••@example.invalid'}, 'Portal link emailed to t•••@example.invalid.', 'emailed'),
+                 ({'kind': 'quote_ready', 'status': 'deferred', 'reason': 'quiet_hours', 'notBefore': '2026-09-23T14:00:00.000Z'}, 'Waiting for 8 AM: the portal link goes out after quiet hours (the office\u2019s Hub or the messaging server sends it).', 'waiting'),
+                 ({'kind': 'quote_ready', 'status': 'suppressed', 'reason': 'contact_dnd'}, 'Not texted: the customer is on Do Not Disturb.', 'dnd'),
+                 ({'kind': 'quote_ready', 'status': 'off', 'reason': 'owner_switch_off'}, 'Off \u2014 share the quote yourself (the owner can turn on texting in Hub \u2192 Message templates).', 'off')]
+        for link, text, name in cases:
+            dialog = self.send_with_link(link)
+            status = dialog.locator('.qd-portal-link'); expect(status).to_have_text(text); expect(status).to_have_attribute('data-link-status', link['status'])
+            done = dialog.locator('.qd-done')
+            if link['status'] in ('submitted', 'deferred'): expect(done).to_have_text('EST-JOB1 revision 1 is marked sent.')
+            else: expect(done).to_have_text('EST-JOB1 revision 1 is marked sent. Share the quote with the customer yourself.')
+            self.assert_phone_layout()
+            self.page.screenshot(path=str(ROOT / 'test-results' / f'quote-send-portal-link-{name}-mobile.png'))
+            dialog.get_by_role('button', name='Done').click(); expect(self.page.locator('.qd-dialog')).to_have_count(0)
+            self.page.evaluate('sessionStorage.clear()')
+        # An older server says nothing about the link: nor does the screen.
+        dialog = self.send_with_link(None); expect(dialog.locator('.qd-portal-link')).to_have_count(0)
+    def test_the_estimator_copies_the_customers_portal_link_from_the_send_screen(self):
+        self.context.grant_permissions(['clipboard-read', 'clipboard-write'], origin=self.url)
+        dialog = self.send_with_link({'kind': 'quote_ready', 'status': 'off', 'reason': 'owner_switch_off'})
+        copy_button = dialog.get_by_role('button', name='Copy portal link'); expect(copy_button).to_be_visible()
+        self.assertEqual(self.copies, [], 'nothing is created before the click')
+        copy_button.click()
+        expect(dialog.get_by_text('Private portal link copied for Synthetic Customer. It works for 30 days; share it only with them.')).to_be_visible()
+        self.assertEqual(self.copies, [{'job_id': 'dispatch_job1'}])
+        self.assertEqual(self.page.evaluate('navigator.clipboard.readText()'), 'https://easygaragecleaning.com/api/customer-portal-session?access=synthetic-access-token')
+        self.assert_phone_layout()
+        self.page.screenshot(path=str(ROOT / 'test-results' / 'quote-send-copy-link-mobile.png'))
+        self.copy_status = 403; copy_button.click()
+        expect(dialog.get_by_role('alert')).to_contain_text('Only the estimator who owns this quote, or the office, can copy')
 
 if __name__ == '__main__':
     unittest.main()

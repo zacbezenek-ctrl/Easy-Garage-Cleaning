@@ -20,7 +20,17 @@ export const DEFAULT_MESSAGING_SETTINGS = Object.freeze({
   // Denver wall-clock window for day-before reminders (inside 08:00-20:00).
   dayBeforeWindow: Object.freeze({ start: '09:00', end: '19:00' }),
   maxSendsPerTick: MAX_SENDS_PER_TICK,
+  // PORTAL-LINKS (portal-invitation.js): the owner's switches for the two portal link texts, off until the owner
+  // turns them on in Hub → Message templates (POST /api/message-templates action set_portal_link).
+  portalLinkQuoteReady: false,
+  portalLinkJobDone: false,
 });
+// Message kind → its switch in this record.
+export const PORTAL_LINK_TOGGLES = Object.freeze({ quote_ready: 'portalLinkQuoteReady', job_done: 'portalLinkJobDone' });
+// Message kind → when its switch was last turned on (an ISO instant, written by portal-link-settings.js): a text of that
+// kind still waiting from before then is never sent (portal-invitation.js).
+export const PORTAL_LINK_ON_AT = Object.freeze({ quote_ready: 'portalLinkQuoteReadyOnAt', job_done: 'portalLinkJobDoneOnAt' });
+const onAt = value => typeof value === 'string' && Number.isFinite(Date.parse(value)) ? new Date(value).toISOString() : '';
 
 const KEYS = Object.keys(DEFAULT_MESSAGING_SETTINGS);
 const HHMM = /^(?:[01]\d|2[0-3]):[0-5]\d$/;
@@ -42,11 +52,14 @@ export function normalizeMessagingSettings(doc) {
   const window = settings.dayBeforeWindow;
   if (!object(window) || !HHMM.test(window.start || '') || !HHMM.test(window.end || '') || window.start >= window.end || window.start < '08:00' || window.end > '20:00') invalid.push('dayBeforeWindow');
   if (!Number.isInteger(settings.maxSendsPerTick) || settings.maxSendsPerTick < 0 || settings.maxSendsPerTick > MAX_SENDS_PER_TICK) invalid.push('maxSendsPerTick');
+  for (const key of Object.values(PORTAL_LINK_TOGGLES)) if (typeof settings[key] !== 'boolean') invalid.push(key);
   if (invalid.length) throw fail('The messaging schedule settings need review. Automatic messages are paused until they are fixed.', { fields: invalid });
   return {
     paused: settings.paused, depositReminderDaysBefore: [...settings.depositReminderDaysBefore],
     estimateExpiringDaysBefore: settings.estimateExpiringDaysBefore, dayBeforeWindow: { start: window.start, end: window.end },
-    maxSendsPerTick: settings.maxSendsPerTick, source: 'saved', revision: doc.revision || '',
+    maxSendsPerTick: settings.maxSendsPerTick, portalLinkQuoteReady: settings.portalLinkQuoteReady, portalLinkJobDone: settings.portalLinkJobDone,
+    ...Object.fromEntries(Object.values(PORTAL_LINK_ON_AT).filter(key => onAt(doc[key])).map(key => [key, onAt(doc[key])])),
+    source: 'saved', revision: doc.revision || '',
   };
 }
 
