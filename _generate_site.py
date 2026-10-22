@@ -3751,7 +3751,7 @@ def patch_index_iteration7(text):
     )
     if 'class="hero-result"' not in text and 'class="hero-visual"' in text:
         hero_result = '''<figure class="hero-result">
-        <picture><source type="image/webp" srcset="/images/job-before-after-1-824.webp 824w, /images/job-before-after-1.webp 1646w" sizes="(max-width: 899px) calc(100vw - 32px), 50vw"><img src="/images/job-before-after-1.jpg" alt="A Fort Collins garage before and after an Easy Garage Cleaning cleanout" width="1646" height="615" decoding="async" fetchpriority="high"></picture>
+        <picture><source type="image/webp" srcset="/images/job-before-after-1-824.webp 824w, /images/job-before-after-1-1080.webp 1080w, /images/job-before-after-1.webp 1646w" sizes="(max-width: 899px) calc(100vw - 32px), 50vw"><img src="/images/job-before-after-1.jpg" alt="A Fort Collins garage before and after an Easy Garage Cleaning cleanout" width="1646" height="615" decoding="async" fetchpriority="high"></picture>
         <figcaption><span>Real Fort Collins cleanout</span><strong>One-day result</strong></figcaption>
       </figure>'''
         text = text.replace('<div class="hero-visual">', '<div class="hero-visual">\n      ' + hero_result, 1)
@@ -4095,7 +4095,77 @@ def patch_legacy_meta_redirect(text, filename):
     return text
 
 
-def patch_performance_and_tracking(text, is_home=False):
+HOME_HERO_SRCSET = "/images/job-before-after-1-824.webp 824w, /images/job-before-after-1-1080.webp 1080w, /images/job-before-after-1.webp 1646w"
+HOME_GALLERY_PAIR_SIZES = "(min-width: 768px) 17vw, calc(50vw - 20px)"
+HOME_GALLERY_PHOTO_SIZES = "(min-width: 768px) 33vw, calc(100vw - 36px)"
+_HOME_GALLERY_PAIR = re.compile(
+    r'<picture><source srcset="/images/garage-(before|after)\.webp" type="image/webp">'
+    r'<img src="/images/garage-\1\.jpg" alt="([^"]*)" loading="lazy" width="1200" height="1200"></picture>'
+)
+_HOME_GALLERY_PHOTOS = {
+    "job-before-after-2": ("/images/job-before-after-2-824.webp 824w, /images/job-before-after-2-1080.webp 1080w, /images/job-before-after-2.webp 1646w", 'width="1646" height="615"'),
+    "job-pile": ("/images/job-pile-600.webp 600w, /images/job-pile.webp 1000w", 'width="1000" height="750"'),
+}
+
+
+_HOME_FONT_FACES = (
+    # Same families, weights and files Google Fonts served (latin and latin-ext subsets), hosted in /fonts/ (OFL-*.txt).
+    ("Inter", "normal", "400 900", "inter"),
+    ("JetBrains Mono", "normal", "400", "jetbrains-mono"),
+    ("Fraunces", "normal", "400 700", "fraunces"),
+    ("Fraunces", "italic", "400", "fraunces-italic"),
+)
+_HOME_FONT_VERSIONS = {"inter": "v20", "jetbrains-mono": "v24", "fraunces": "v38", "fraunces-italic": "v38"}
+_HOME_FONT_RANGES = {
+    "latin": "U+0000-00FF,U+0131,U+0152-0153,U+02BB-02BC,U+02C6,U+02DA,U+02DC,U+0304,U+0308,U+0329,U+2000-206F,U+20AC,U+2122,U+2191,U+2193,U+2212,U+2215,U+FEFF,U+FFFD",
+    "latin-ext": "U+0100-02BA,U+02BD-02C5,U+02C7-02CC,U+02CE-02D7,U+02DD-02FF,U+0304,U+0308,U+0329,U+1D00-1DBF,U+1E00-1E9F,U+1EF2-1EFF,U+2020,U+20A0-20AB,U+20AD-20C4,U+2113,U+2C60-2C7F,U+A720-A7FF",
+}
+
+
+def home_font_head():
+    """Self-hosted @font-face for the home page. Declared before the first layout, so the page lays out once instead of
+    again when the Google Fonts stylesheet applies and again when its files arrive (mobile Lighthouse TBT on /)."""
+    faces = []
+    for family, style, weight, name in _HOME_FONT_FACES:
+        for subset in ("latin-ext", "latin"):
+            faces.append(f"@font-face{{font-family:'{family}';font-style:{style};font-weight:{weight};font-display:swap;"
+                         f"src:url(/fonts/{name}-{subset}-{_HOME_FONT_VERSIONS[name]}.woff2) format('woff2');unicode-range:{_HOME_FONT_RANGES[subset]}}}")
+    return ('<link rel="preload" href="/fonts/inter-latin-v20.woff2" as="font" type="font/woff2" crossorigin>\n'
+            '<style id="egc-fonts">' + "".join(faces) + '</style>')
+
+
+def patch_home_fonts(text):
+    if 'id="egc-fonts"' in text:
+        return text
+    text = re.sub(r'<link rel="preconnect" href="https://fonts\.(?:googleapis|gstatic)\.com"(?: crossorigin)?>\s*', "", text)
+    return re.sub(
+        r'<link href="https://fonts\.googleapis\.com/css2\?[^"]*" rel="stylesheet" media="print" onload="this\.media=\'all\'">\s*'
+        r'<noscript><link href="https://fonts\.googleapis\.com/css2\?[^"]*" rel="stylesheet"></noscript>',
+        lambda _m: home_font_head(),
+        text,
+        count=1,
+    )
+
+
+def patch_home_gallery_images(text):
+    """Home Results gallery: phones take sized WebP files instead of the 1200-1646px originals (Lighthouse LCP on /)."""
+    text = _HOME_GALLERY_PAIR.sub(
+        lambda m: (f'<picture><source type="image/webp" srcset="/images/garage-{m.group(1)}-600.webp 600w, '
+                   f'/images/garage-{m.group(1)}-768.webp 768w, /images/garage-{m.group(1)}.webp 1200w" sizes="{HOME_GALLERY_PAIR_SIZES}">'
+                   f'<img src="/images/garage-{m.group(1)}.jpg" alt="{m.group(2)}" loading="lazy" decoding="async" width="1200" height="1200"></picture>'),
+        text,
+    )
+    for name, (srcset, dims) in _HOME_GALLERY_PHOTOS.items():
+        text = re.sub(
+            rf'<img src="/images/{name}\.jpg" alt="([^"]*)" loading="lazy" {dims}>',
+            lambda m: (f'<picture><source type="image/webp" srcset="{srcset}" sizes="{HOME_GALLERY_PHOTO_SIZES}">'
+                       f'<img src="/images/{name}.jpg" alt="{m.group(1)}" loading="lazy" decoding="async" {dims}></picture>'),
+            text,
+        )
+    return text
+
+
+def patch_performance_and_tracking(text, is_home=False, is_root_home=None):
     """Keep analytics out of the critical path and give the home LCP image priority."""
     for label in ("MERCHANT SETUP CHECKLIST", "HOSTING CSP", "CALLRAIL / DYNAMIC NUMBER INSERTION"):
         text = re.sub(rf'<!--\s*{re.escape(label)}[\s\S]*?-->\s*', '', text)
@@ -4153,11 +4223,18 @@ def patch_performance_and_tracking(text, is_home=False):
         "",
         text,
     )
-    hero_preload = '<link rel="preload" as="image" type="image/webp" href="/images/job-before-after-1-824.webp" imagesrcset="/images/job-before-after-1-824.webp 824w, /images/job-before-after-1.webp 1646w" imagesizes="(max-width: 899px) calc(100vw - 32px), 50vw" fetchpriority="high">'
+    if is_root_home is False:
+        # blog/index.html is named like the home page but shows no hero photo and keeps its Google Fonts weights.
+        return re.sub(r'<link rel="preload" as="image"[^>]+job-before-after-1-824\.webp[^>]*>\s*', "", text)
+    hero_preload = '<link rel="preload" as="image" type="image/webp" href="/images/job-before-after-1-824.webp" imagesrcset="/images/job-before-after-1-824.webp 824w, /images/job-before-after-1-1080.webp 1080w, /images/job-before-after-1.webp 1646w" imagesizes="(max-width: 899px) calc(100vw - 32px), 50vw" fetchpriority="high">'
     if "job-before-after-1-824.webp" not in text.split("</head>", 1)[0]:
         text = text.replace('<link rel="stylesheet" href="/styles.css', hero_preload + '\n<link rel="stylesheet" href="/styles.css', 1)
+    # A 375px phone at 3x needs about 1030 device pixels for the hero photo; without the 1080w file it took the 1646w one.
+    text = text.replace("/images/job-before-after-1-824.webp 824w, /images/job-before-after-1.webp 1646w", HOME_HERO_SRCSET)
+    text = patch_home_gallery_images(text)
+    text = patch_home_fonts(text)
     old_hero = '<img src="/images/job-before-after-1.jpg" alt="A Fort Collins garage before and after an Easy Garage Cleaning cleanout" width="1648" height="615" decoding="async">'
-    new_hero = '<picture><source type="image/webp" srcset="/images/job-before-after-1-824.webp 824w, /images/job-before-after-1.webp 1646w" sizes="(max-width: 899px) calc(100vw - 32px), 50vw"><img src="/images/job-before-after-1.jpg" alt="A Fort Collins garage before and after an Easy Garage Cleaning cleanout" width="1646" height="615" decoding="async" fetchpriority="high"></picture>'
+    new_hero = '<picture><source type="image/webp" srcset="/images/job-before-after-1-824.webp 824w, /images/job-before-after-1-1080.webp 1080w, /images/job-before-after-1.webp 1646w" sizes="(max-width: 899px) calc(100vw - 32px), 50vw"><img src="/images/job-before-after-1.jpg" alt="A Fort Collins garage before and after an Easy Garage Cleaning cleanout" width="1646" height="615" decoding="async" fetchpriority="high"></picture>'
     text = text.replace(old_hero, new_hero, 1)
     return text
 
@@ -4317,7 +4394,7 @@ def patch_static_pages():
             text = patch_nav_hamburger(text)
             text = inject_polish_css(text)
             text = patch_a11y_shell(text)
-            text = patch_performance_and_tracking(text, is_home)
+            text = patch_performance_and_tracking(text, is_home, is_root_home=path == ROOT / "index.html")
             text = patch_lazy_images(text)
             text = add_noopener_external(text)
             text = fix_blog_canonicals(text)

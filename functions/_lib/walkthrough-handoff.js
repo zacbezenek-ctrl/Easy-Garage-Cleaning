@@ -22,6 +22,7 @@ import { dispatchOpenings } from './dispatch-openings.js';
 import { catalogStorage, quoteBuilderEnabled, readCompositeState, requireCatalogOwner } from './catalog-store.js';
 import { GARAGE_SIZES, approvalRefusal, compositeApproval, compositeScope, fullnessOf, priceCompositeQuote } from './composite-quote.js';
 import { customerMoneyTotals } from './money-core.js';
+import { hasWinterSaleLine, signedWinterSale, winterSaleReaders } from './winter-sale.js';
 import { PAYMENT_TIME_ZONE, SIGNED_25_75, businessPaymentDate, quotePaymentDates, quotePaymentSchedule } from './quote-payment-policy.js';
 
 // FIX-CREW-PRICE-LEAK: every crew-visible copy of the brief is written without currency amounts.
@@ -600,7 +601,7 @@ export async function releaseAllHeldHandoffs(store, actor, now = new Date().toIS
  * signed revision re-prices and re-approves an existing job, so an open portal
  * card checkout opened for the earlier terms is expired, or reported as
  * checkout_needs_review, exactly as a quote draft revision does. */
-export async function saveWalkthroughHandoff(store, actor, input, now = new Date().toISOString(), { env = {}, checkouts = null, compositeState = compositeStateDefault } = {}) {
+export async function saveWalkthroughHandoff(store, actor, input, now = new Date().toISOString(), { env = {}, checkouts = null, compositeState = compositeStateDefault, winterSale = winterSaleReaders } = {}) {
   const access = requireQuoteAuthor(actor, env);
   if (!plain(input) || Object.keys(input).some(key => !['actorId', 'requestId', 'customerId', 'sourceWalkthroughId', 'sourceRevision', 'jobId', 'expectedRevision', 'plan'].includes(key)) || !requestId(input.requestId) || !safeId(input.customerId) || input.jobId && !safeId(input.jobId)) throw fail('invalid_request', 'The accepted walkthrough needs a stable request and customer identity.', 400);
   if (input.actorId && input.actorId !== actor.user) throw fail('actor_changed', 'The signed-in employee changed. Reopen the original account to recover this request.', 403);
@@ -682,9 +683,16 @@ export async function saveWalkthroughHandoff(store, actor, input, now = new Date
   // other line that differs (builderMismatch), so the quote is built again before the homeowner signs.
   const chosen = !builderOn ? null : builderSent ? signedInput.quote.composite_pricing : savedSelection(previous);
   const legacy = signedWithoutLabor(previous, chosen), selection = withSignedGarage(withSignedFullness(chosen, plan), plan);
-  let builder = null;
+  let builder = null, signedSale = null;
   if (selection) {
     builder = priceCompositeQuote(await compositeState(env), selection, { complete: true, requireLabor: !legacy });
+    // EGC_WINTER_SALE: a saved sale quote signed in person gets the server's sale line for the signing day and the booked
+    // day (winter-sale.js signedWinterSale), or is refused when it no longer qualifies (409 handoff_winter_sale_*: nothing
+    // was saved, and the page releases the request so the quote is built again).
+    try { ({ builder, record: signedSale } = await signedWinterSale(previous, builder, { quote: signedInput.quote, jobDate: plan.quote.job_date, now, env, readers: winterSale, sourceWalkthroughId: source?.id || '', actor: actor.user })); }
+    // Only the sale's own refusals are final; anything else (settings that fail verification, a read outage) stays a
+    // retryable 503 handoff_unavailable.
+    catch (error) { if (['winter_sale_ineligible', 'winter_sale_disabled'].includes(error?.code)) throw Object.assign(error, { code: `handoff_${error.code}`, status: 409 }); throw error; }
     const mismatch = builderMismatch(signedInput.quote, builder, Math.round(plan.quote.total * 100));
     if (mismatch) throw mismatch;
     // D-JUNK: a junk-only quote is $1,000 per truck with no Labor line, so it prices no garage work; the walkthrough the
@@ -783,6 +791,9 @@ export async function saveWalkthroughHandoff(store, actor, input, now = new Date
       else if (walkthroughPriced) Object.assign(target.patch, walkthroughHold(previous, actor, input.requestId, now));
       // A walkthrough-priced revision (the builder switched off) or a catalog-priced one leaves no stale builder prices behind.
       else if (plain(previous?.compositeQuote) || plain(previous?.pricesPendingApproval)) Object.assign(target.patch, { compositeQuote: null, pricesPendingApproval: null });
+      // The signed job's winter sale record: the one signed with it, else none once the signed estimate has no sale line.
+      const saleRecord = signedSale || (hasWinterSaleLine(finance.estimate.lineItems) && previous?.quoteDraft?.winterSale) || null;
+      if (plain(previous?.quoteDraft) && (saleRecord || plain(previous.quoteDraft.winterSale))) target.patch.quoteDraft = { ...(target.patch.quoteDraft || previous.quoteDraft), winterSale: saleRecord };
       const pendingNames = pricesPending ? builder.approval.blocked.map(row => row.name) : [];
       const roleWarnings = [...(crewIgnored ? [{ code: 'crew_assignment_ignored', jobId: target.id, message: 'Crew names were not saved. A manager assigns the crew in Dispatch.' }] : []), ...(soldNeedsCrew ? [{ code: 'sold_needs_crew', jobId: target.id, message: 'Sold: needs crew. A manager assigns the crew in Dispatch.' }] : []),
         ...(choiceDropped ? [{ code: 'crew_choice_unavailable', jobId: target.id, message: 'The chosen crew can no longer take this visit, so Dispatch assigned the first free crew instead.' }] : []),
@@ -825,7 +836,7 @@ export async function saveWalkthroughHandoff(store, actor, input, now = new Date
   // block applies, and its refusal names the rule (details.conflicts).
   const staffingLeftToDispatch = !access.dispatcher || !assignedCrew.length;
   const enforce = warning => !(staffingLeftToDispatch && warning.code === 'crew_size_short');
-  const options = { authorize: session => requireQuoteAuthor(session, env), enforce, ...(autoCrew ? { autoCrew: true } : {}) };
+  const options = { authorize: session => requireQuoteAuthor(session, env), enforce, saleChecked: true, ...(autoCrew ? { autoCrew: true } : {}) };
   let dispatched = null;
   try {
     try { dispatched = await mutateDispatch(adapter, actor, choiceInput || dispatchInput, now, choiceInput ? { ...options, crewChoice: true } : options); }

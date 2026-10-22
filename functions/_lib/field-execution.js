@@ -1,7 +1,7 @@
 import { jobCrewNames, assignmentKey } from './job-assignment.js';
 import { advanceFieldTime, fieldJobTime } from './field-execution-time.js';
 import { segmented, jobSegments } from './dispatch-segments.js';
-import { occupiedDays } from './dispatch-time.js';
+import { denverToday, occupiedDays } from './dispatch-time.js';
 import { signedBriefJob, stripCrewMoney } from './crew-money.js';
 import { walkthroughCrewBrief } from './walkthrough-crew-brief.js';
 import { crewVisitNotes } from './visit-notes.js';
@@ -127,6 +127,7 @@ export function fieldViewerWorksOn(job, viewer, start, end) {
   return jobSegments(job).some(row => (!row.segmentId || ownsSegment(row, key)) && occupiedDays(row).some(day => day >= start && day <= end));
 }
 
+const earlierDenverDay = (at, now = Date.now()) => { const ms = Date.parse(at || ''), current = typeof now === 'number' ? now : Date.parse(now); return Number.isFinite(ms) && Number.isFinite(current) && denverToday(new Date(ms)) < denverToday(new Date(current)); };
 export function fieldJobProjection(job, events = [], options = {}) {
   const { view, segments } = fieldSegmentView(job, options), names = options.resourceNames || {};
   const instructions = job.jobInstructions && typeof job.jobInstructions === 'object' ? job.jobInstructions : job.instructions && typeof job.instructions === 'object' ? job.instructions : {}, scope = job.scope || {}, logistics = job.logistics || {};
@@ -173,6 +174,10 @@ export function fieldJobProjection(job, events = [], options = {}) {
     startedAt: job.startedAt || null, completedAt: job.completedAt || null,
     completionMissing: frozen ? [] : fieldCompletionMissing(job),
     canEdit: !frozen, canManageChecklist: options.manager === true && !frozen, capabilities: options.capabilities || null,
+    // A job left in Working overnight (the crew went home without Pause or End day) still offers "Start today's work":
+    // the Working tap is how today's arrival is recorded (employee-arrival-deadline.js), and the page otherwise hides the
+    // status the job already has. The day is Denver's; options.now is injected in tests.
+    startTodayOffered: !frozen && stage === 'in_progress' && fieldActivity(job) === 'in_progress' && earlierDenverDay(state.activityAt || job.startedAt, options.now),
     allowedStatuses: frozen ? [] : ({ scheduled: ['dispatched'], confirmed: ['dispatched'], crew_assigned: ['dispatched'], dispatched: ['arrived', 'delayed'], arrived: ['in_progress', 'waiting'], in_progress: ['paused', 'waiting', 'delayed', 'in_progress'] }[stage] || []).filter(status => status !== 'paused' || fieldActivity(job) !== 'day_ended'),
   };
 }
